@@ -2,15 +2,16 @@ package renderpdf
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"errors"
 	"path/filepath"
-	"slices"
 
 	"go.kenn.io/docbank/document/internal/providerutil/sandbox"
 )
 
+// Runner executes each stage with a verified executable and runtime snapshot.
+// Injected runners must enforce and attest the same isolation and byte identities
+// as the native runner, including hashing every runtime file before launch.
+// Run may mutate request slices and retains ownership of its returned output.
 type Runner interface {
 	Identity() string
 	Run(ctx context.Context, request Request) (StageResult, error)
@@ -37,8 +38,6 @@ type Request struct {
 	RuntimeIdentity   string
 }
 
-type RunRequest = Request
-
 type Attestation struct {
 	RunnerIdentity       string
 	PolicyFingerprint    string
@@ -58,63 +57,41 @@ type Attestation struct {
 
 type StageResult struct {
 	Output      []byte
-	Stdout      []byte
 	Attestation Attestation
 }
 
-type RunnerResult = StageResult
-type RunResult = StageResult
-
-type nativeRunner struct {
-	runtime         []RuntimeFile
-	runtimeSymlinks []RuntimeSymlink
-	runtimeIdentity string
-}
-
-func newNativeRunner(renderer Renderer) (Runner, error) {
-	if len(renderer.Runtime) == 0 || renderer.RuntimeIdentity == "" {
-		return nil, sandbox.ErrRuntimeIdentityMismatch
-	}
-	_, err := sandbox.NewNativeRunner()
-	if err != nil {
-		return nil, err
-	}
-	return nativeRunner{
-		runtime: slices.Clone(renderer.Runtime), runtimeSymlinks: slices.Clone(renderer.RuntimeSymlinks),
-		runtimeIdentity: renderer.RuntimeIdentity,
-	}, nil
-}
+type nativeRunner struct{}
 
 func (runner nativeRunner) Identity() string { return sandbox.NativeRunnerIdentity }
 
 func (runner nativeRunner) Run(ctx context.Context, request Request) (StageResult, error) {
 	if err := validateRequest(request); err != nil {
-		return StageResult{}, sandbox.ErrUnavailable
+		return StageResult{}, err
 	}
 	policy := sandbox.Policy{
-		Mode:       sandbox.SupervisedFileMode,
+		Mode:       sandbox.LibreOfficeMode,
 		Executable: request.Executable, ExecutableSHA256: request.ExecutableSHA256,
-		Arguments: slices.Clone(request.Arguments), Environment: slices.Clone(request.Environment),
+		Arguments: request.Arguments, Environment: request.Environment,
 		Directory: request.Directory, MaxStdinBytes: max(int64(len(request.Input)), 1),
 		MaxStdoutBytes: request.MaxOutputBytes,
 		PrivateRoot: &sandbox.PrivateRoot{
-			Runtime: slices.Clone(request.Runtime), Symlinks: slices.Clone(request.RuntimeSymlinks),
+			Runtime: request.Runtime, Symlinks: request.RuntimeSymlinks,
 			RuntimeIdentity: request.RuntimeIdentity, WorkBytes: request.MaxWorkBytes,
 			InputName: request.InputName, OutputName: request.OutputName,
 			MaxOutputBytes: request.MaxOutputBytes,
-			WarmupInput:    slices.Clone(request.WarmupInput), WarmupInputSHA256: request.WarmupInputSHA256,
+			WarmupInput:    request.WarmupInput, WarmupInputSHA256: request.WarmupInputSHA256,
 		},
 	}
 	sandboxResult, err := sandbox.Run(ctx, sandbox.Request{
 		PolicyFingerprint: request.PolicyFingerprint, Policy: policy,
-		Stdin: slices.Clone(request.Input), StdinSHA256: request.InputSHA256,
+		Stdin: request.Input, StdinSHA256: request.InputSHA256,
 	})
 	result := StageResult{
-		Output: slices.Clone(sandboxResult.Output), Stdout: slices.Clone(sandboxResult.Stdout),
+		Output: sandboxResult.Stdout,
 		Attestation: Attestation{
 			RunnerIdentity: runner.Identity(), PolicyFingerprint: request.PolicyFingerprint,
 			ExecutableSHA256: request.ExecutableSHA256, InputSHA256: request.InputSHA256,
-			OutputSHA256:         digestBytes(sandboxResult.Output),
+			OutputSHA256:         digest(sandboxResult.Stdout),
 			NetworkDisabled:      sandboxResult.Attestation.NetworkDisabled,
 			ProcessTreeContained: sandboxResult.Attestation.ProcessTreeContained,
 			DigestVerifiedLaunch: sandboxResult.Attestation.DigestVerifiedLaunch,
@@ -126,10 +103,7 @@ func (runner nativeRunner) Run(ctx context.Context, request Request) (StageResul
 			RestartCount:         sandboxResult.Attestation.RestartCount,
 		},
 	}
-	if err != nil {
-		return result, err
-	}
-	return result, nil
+	return result, err
 }
 
 func validateRequest(request Request) error {
@@ -143,9 +117,4 @@ func validateRequest(request Request) error {
 		return errors.New("render PDF stage names are invalid")
 	}
 	return nil
-}
-
-func digestBytes(data []byte) string {
-	sum := sha256.Sum256(data)
-	return hex.EncodeToString(sum[:])
 }

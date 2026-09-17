@@ -56,6 +56,9 @@ func main() {
 	}
 
 	switch mode {
+	case "exec-descriptor":
+		target, _ := os.Readlink("/proc/self/fd/3")
+		fmt.Print(target)
 	case "echo", "replacement":
 		data, err := io.ReadAll(os.Stdin)
 		if err != nil {

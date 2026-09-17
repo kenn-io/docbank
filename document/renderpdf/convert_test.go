@@ -11,6 +11,7 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/go-pdf/fpdf"
 	"github.com/stretchr/testify/assert"
@@ -23,18 +24,19 @@ import (
 const testRunnerIdentity = "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
 
 type recordingRunner struct {
-	identity string
-	output   []byte
-	pdf      []byte
-	calls    []Request
-	err      error
+	identity  string
+	output    []byte
+	pdf       []byte
+	calls     []Request
+	err       error
+	failStage string
 }
 
 func (runner *recordingRunner) Identity() string { return runner.identity }
 
 func (runner *recordingRunner) Run(_ context.Context, request Request) (StageResult, error) {
 	runner.calls = append(runner.calls, request)
-	if runner.err != nil {
+	if runner.err != nil && (runner.failStage == "" || runner.failStage == request.Stage) {
 		return StageResult{}, runner.err
 	}
 	output := runner.output
@@ -164,13 +166,35 @@ func TestConvertCloseFailureDiscardsResult(t *testing.T) {
 	runner := &recordingRunner{identity: testRunnerIdentity, output: flatODF(FlatTextKind, "<text:p/>")}
 	policy := testPolicy(t, runner)
 	original := zipDocument(t, "docx")
-	content := &closeErrorReader{Reader: bytes.NewReader(original)}
+	closeErr := errors.New("synthetic close failure")
+	content := &closeErrorReader{Reader: bytes.NewReader(original), err: closeErr}
 	digestValue := digest(original)
 	source, err := ocr.NewSource(content, docxMediaType, int64(len(original)), digestValue)
 	require.NoError(t, err)
 	result, err := Convert(t.Context(), source, "docx", policy)
 	assert.Nil(t, result)
 	require.ErrorContains(t, err, "close render PDF source")
+	require.ErrorIs(t, err, closeErr)
+}
+
+func TestConvertPreservesStageFailureCause(t *testing.T) {
+	for _, stage := range []string{"normalize", "pdf"} {
+		t.Run(stage, func(t *testing.T) {
+			cause := errors.New("synthetic runner failure")
+			runner := &recordingRunner{identity: testRunnerIdentity,
+				output: flatODF(FlatTextKind, "<text:p/>"), err: cause, failStage: stage}
+			policy := testPolicy(t, runner)
+			result, err := Convert(t.Context(), testSource(t, zipDocument(t, "docx"), docxMediaType), "docx", policy)
+			assert.Nil(t, result)
+			require.ErrorIs(t, err, cause)
+		})
+	}
+}
+
+func TestStageErrorPreservesDeadline(t *testing.T) {
+	ctx, cancel := context.WithDeadline(t.Context(), time.Time{})
+	defer cancel()
+	require.ErrorIs(t, stageError(ctx, "normalize", context.DeadlineExceeded), context.DeadlineExceeded)
 }
 
 func testPolicy(t *testing.T, runner Runner) Policy {
@@ -266,9 +290,11 @@ func testPDFBytesPages(pages int) []byte {
 
 type closeErrorReader struct {
 	io.Reader
+
+	err error
 }
 
-func (*closeErrorReader) Close() error { return errors.New("synthetic close failure") }
+func (reader *closeErrorReader) Close() error { return reader.err }
 
 type mismatchedRunner struct {
 	recordingRunner

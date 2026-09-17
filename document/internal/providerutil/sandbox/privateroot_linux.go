@@ -3,7 +3,6 @@
 package sandbox
 
 import (
-	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
@@ -19,155 +18,56 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-const (
-	privateRootMountPath = "/tmp/root"
-	privateRootSize      = 64 << 20
-	runtimeFDBase        = launcherStatusFD + 1
-)
+const privateRootSize = 64 << 20
 
-func preflightRuntimeFDLimit(runtimeEntries int) error {
-	if runtimeEntries < 0 || runtimeEntries > MaxRuntimeEntries {
-		return ErrPrivateRootUnavailable
-	}
-	var limit unix.Rlimit
-	if err := unix.Getrlimit(unix.RLIMIT_NOFILE, &limit); err != nil {
-		return fmt.Errorf("%w: query file descriptor limit: %w", ErrPrivateRootUnavailable, err)
-	}
-	required := requiredRuntimeFDs(runtimeEntries)
-	if limit.Cur < required && limit.Max >= required {
-		limit.Cur = limit.Max
-		if err := unix.Setrlimit(unix.RLIMIT_NOFILE, &limit); err == nil {
-			return nil
-		}
-	}
-	if limit.Cur < required {
-		return fmt.Errorf("%w: need %d file descriptors, have %d", ErrPrivateRootUnavailable, required, limit.Cur)
-	}
-	return nil
-}
-
-func requiredRuntimeFDs(runtimeEntries int) uint64 {
-	if runtimeEntries < 0 {
-		return 0
-	}
-	return uint64(runtimeFDBase) + uint64(runtimeEntries) + 64
-}
-
-func prepareRuntimeFiles(ctx context.Context, root *PrivateRoot) ([]*os.File, error) {
-	// ponytail: per-file snapshot and mount cost, upgrade trigger: content-addressed runtime image.
-	if err := preflightRuntimeFDLimit(len(root.Runtime)); err != nil {
-		return nil, err
-	}
-	files := make([]*os.File, 0, len(root.Runtime))
-	var total int64
-	ok := false
-	defer func() {
-		if !ok {
-			for _, file := range files {
-				_ = file.Close()
-			}
-		}
-	}()
-	for _, entry := range root.Runtime {
-		file, size, err := sealRuntimeFile(ctx, entry, MaxRuntimeBytes-total)
-		if err != nil {
-			return nil, err
-		}
-		total += size
-		files = append(files, file)
-	}
-	ok = true
-	return files, nil
-}
-
-func sealRuntimeFile(ctx context.Context, entry RuntimeFile, remaining int64) (*os.File, int64, error) {
+// copyRuntimeFile verifies the bytes written into the launcher's private tmpfs.
+// No untrusted process runs until the complete runtime has been verified.
+func copyRuntimeFile(entry RuntimeFile, target string, remaining int64) (int64, error) {
 	if remaining <= 0 {
-		return nil, 0, errors.New("sandbox runtime byte limit exceeded")
+		return 0, errors.New("sandbox runtime byte limit exceeded")
 	}
 	fd, err := unix.Open(entry.SourcePath, unix.O_RDONLY|unix.O_CLOEXEC|unix.O_NOFOLLOW|unix.O_NONBLOCK, 0)
 	if err != nil {
 		if errors.Is(err, unix.ELOOP) || errors.Is(err, unix.ENXIO) {
-			return nil, 0, fmt.Errorf("%w: %s", ErrRuntimeSpecialFile, entry.SourcePath)
+			return 0, fmt.Errorf("%w: %s", ErrRuntimeSpecialFile, entry.SourcePath)
 		}
-		return nil, 0, fmt.Errorf("%w: open runtime %s: %w", ErrPrivateRootUnavailable, entry.SourcePath, err)
+		return 0, privateRootError("open runtime source", err)
 	}
 	source := os.NewFile(uintptr(fd), "sandbox-runtime-source")
 	defer func() { _ = source.Close() }()
-	var stat unix.Stat_t
-	if err := unix.Fstat(fd, &stat); err != nil {
-		return nil, 0, fmt.Errorf("%w: stat runtime %s: %w", ErrPrivateRootUnavailable, entry.SourcePath, err)
-	}
-	if stat.Mode&unix.S_IFMT != unix.S_IFREG {
-		return nil, 0, fmt.Errorf("%w: %s", ErrRuntimeSpecialFile, entry.SourcePath)
-	}
-	if stat.Size < 0 || stat.Size > remaining {
-		return nil, 0, errors.New("sandbox runtime byte limit exceeded")
-	}
-	memfd, err := unix.MemfdCreate("docbank-runtime", unix.MFD_CLOEXEC|unix.MFD_ALLOW_SEALING)
+	info, err := source.Stat()
 	if err != nil {
-		return nil, 0, fmt.Errorf("%w: create runtime memfd: %w", ErrPrivateRootUnavailable, err)
+		return 0, privateRootError("stat runtime source", err)
 	}
-	result := os.NewFile(uintptr(memfd), "sandbox-runtime")
-	valid := false
-	defer func() {
-		if !valid {
-			_ = result.Close()
-		}
-	}()
-	hash := sha256.New()
-	written, copyErr := io.Copy(io.MultiWriter(result, hash),
-		io.LimitReader(contextReader{ctx: ctx, reader: source}, remaining+1))
-	if copyErr != nil {
-		return nil, 0, copyErr
+	if !info.Mode().IsRegular() {
+		return 0, fmt.Errorf("%w: %s", ErrRuntimeSpecialFile, entry.SourcePath)
 	}
-	if written != stat.Size || written > remaining {
-		return nil, 0, errors.New("sandbox runtime changed during sealing")
+	if info.Size() < 0 || info.Size() > remaining {
+		return 0, errors.New("sandbox runtime byte limit exceeded")
 	}
-	if hex.EncodeToString(hash.Sum(nil)) != entry.SHA256 {
-		return nil, 0, fmt.Errorf("%w: %s", ErrRuntimeIdentityMismatch, entry.SourcePath)
-	}
-	mode := uint32(0o400)
+	mode := os.FileMode(0o400)
 	if entry.Executable {
 		mode = 0o500
 	}
-	if err := unix.Fchmod(memfd, mode); err != nil {
-		return nil, 0, fmt.Errorf("%w: chmod runtime memfd: %w", ErrPrivateRootUnavailable, err)
+	destination, err := os.OpenFile(target, os.O_WRONLY|os.O_CREATE|os.O_EXCL, mode)
+	if err != nil {
+		return 0, privateRootError("create runtime file", err)
 	}
-	seals := unix.F_SEAL_WRITE | unix.F_SEAL_GROW | unix.F_SEAL_SHRINK | unix.F_SEAL_SEAL
-	if _, err := unix.FcntlInt(result.Fd(), unix.F_ADD_SEALS, seals); err != nil {
-		return nil, 0, fmt.Errorf("%w: seal runtime memfd: %w", ErrPrivateRootUnavailable, err)
+	hash := sha256.New()
+	written, copyErr := io.Copy(io.MultiWriter(destination, hash), io.LimitReader(source, remaining+1))
+	closeErr := destination.Close()
+	if err := errors.Join(copyErr, closeErr); err != nil {
+		return 0, privateRootError("copy runtime file", err)
 	}
-	if _, err := unix.FcntlInt(result.Fd(), unix.F_GET_SEALS, 0); err != nil {
-		return nil, 0, fmt.Errorf("%w: verify runtime seals: %w", ErrPrivateRootUnavailable, err)
+	if written != info.Size() || written > remaining || hex.EncodeToString(hash.Sum(nil)) != entry.SHA256 {
+		return 0, fmt.Errorf("%w: %s", ErrRuntimeIdentityMismatch, entry.SourcePath)
 	}
-	if _, err := result.Seek(0, io.SeekStart); err != nil {
-		return nil, 0, err
-	}
-	valid = true
-	return result, written, nil
+	return written, nil
 }
 
 func installPrivateRoot(control launchControl, executableFD int) error {
-	defer func() {
-		_ = unix.Close(executableFD)
-		if control.Policy.PrivateRoot != nil {
-			for index := range control.Policy.PrivateRoot.Runtime {
-				_ = unix.Close(runtimeFDBase + index)
-			}
-		}
-	}()
-	root := privateRootMountPath
-	stage := filepath.Join("/tmp", fmt.Sprintf("docbank-runtime-stage-%d", os.Getpid()))
-	if err := os.MkdirAll(stage, 0o700); err != nil {
-		return privateRootError("create runtime staging root", err)
-	}
-	if err := unix.Mount("tmpfs", stage, "tmpfs", unix.MS_NOSUID|unix.MS_NODEV,
-		fmt.Sprintf("size=%d,mode=755", MaxRuntimeBytes)); err != nil {
-		return privateRootError("mount runtime staging root", err)
-	}
-	if err := os.MkdirAll(root, 0o700); err != nil {
-		return privateRootError("create root mount point", err)
-	}
+	defer func() { _ = unix.Close(executableFD) }()
+	root := control.RootDirectory
 	devices, err := openPrivateRootDevices()
 	if err != nil {
 		return err
@@ -178,7 +78,7 @@ func installPrivateRoot(control launchControl, executableFD int) error {
 		}
 	}()
 	if err := unix.Mount("tmpfs", root, "tmpfs",
-		unix.MS_NOSUID|unix.MS_NODEV, fmt.Sprintf("size=%d,mode=755", privateRootSize)); err != nil {
+		unix.MS_NOSUID|unix.MS_NODEV, fmt.Sprintf("size=%d,mode=755", MaxRuntimeBytes+MaxExecutableBytes+privateRootSize)); err != nil {
 		return privateRootError("mount private root", err)
 	}
 	if err := makePrivateRootSkeleton(root, control.Policy.PrivateRoot.WorkBytes); err != nil {
@@ -187,10 +87,10 @@ func installPrivateRoot(control launchControl, executableFD int) error {
 	if err := mountPrivateDevices(root, devices); err != nil {
 		return err
 	}
-	if err := attachRuntimeFiles(root, stage, control.Policy.PrivateRoot, runtimeFDBase, control.Policy.Executable); err != nil {
+	if err := attachRuntimeFiles(root, control.Policy); err != nil {
 		return err
 	}
-	if err := attachExecutable(root, stage, control.Policy.Executable, executableFD); err != nil {
+	if err := attachExecutable(root, control.Policy.Executable, executableFD); err != nil {
 		return err
 	}
 	if err := pivotAndDetachRoot(root); err != nil {
@@ -289,46 +189,31 @@ func mountPrivateDevices(root string, devices []int) error {
 	return nil
 }
 
-func attachRuntimeFiles(root, stage string, private *PrivateRoot, firstFD int, executablePath string) error {
+func attachRuntimeFiles(root string, policy Policy) error {
+	private := policy.PrivateRoot
+	// ponytail: per-file mounts preserve noexec policy; use a runtime image if measured mount cost dominates.
+	var total int64
 	for _, entry := range private.Runtime {
-		if entry.GuestPath == executablePath {
+		if entry.GuestPath == policy.Executable {
+			if entry.SHA256 != policy.ExecutableSHA256 {
+				return ErrRuntimeIdentityMismatch
+			}
 			continue
 		}
 		target := filepath.Join(root, filepath.FromSlash(strings.TrimPrefix(entry.GuestPath, "/")))
 		if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
 			return privateRootError("create runtime parent", err)
 		}
-		file, err := os.OpenFile(target, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o400)
+		size, err := copyRuntimeFile(entry, target, MaxRuntimeBytes-total)
 		if err != nil {
-			return privateRootError("create runtime target", err)
+			return err
 		}
-		_ = file.Close()
-	}
-	for index, entry := range private.Runtime {
-		if entry.GuestPath == executablePath {
-			continue
-		}
-		target := filepath.Join(root, filepath.FromSlash(strings.TrimPrefix(entry.GuestPath, "/")))
-		stageTarget := filepath.Join(stage, filepath.FromSlash(strings.TrimPrefix(entry.GuestPath, "/")))
-		if err := os.MkdirAll(filepath.Dir(stageTarget), 0o755); err != nil {
-			return privateRootError("create runtime staging parent", err)
-		}
-		file, err := os.OpenFile(stageTarget, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o400)
-		if err != nil {
-			return privateRootError("create runtime staging target", err)
-		}
-		_ = file.Close()
-		if err := materializeDescriptor(firstFD+index, stageTarget, entry.Executable); err != nil {
-			return privateRootError("materialize runtime file", err)
-		}
-		if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
-			return privateRootError("create runtime parent", err)
-		}
+		total += size
 		flags := uintptr(unix.MS_BIND | unix.MS_REMOUNT | unix.MS_RDONLY | unix.MS_NOSUID | unix.MS_NODEV)
 		if !entry.Executable {
 			flags |= unix.MS_NOEXEC
 		}
-		if err := unix.Mount(stageTarget, target, "", unix.MS_BIND, ""); err != nil {
+		if err := unix.Mount(target, target, "", unix.MS_BIND, ""); err != nil {
 			return privateRootError("bind runtime file", err)
 		}
 		if err := unix.Mount("", target, "", flags, ""); err != nil {
@@ -352,60 +237,22 @@ func attachRuntimeFiles(root, stage string, private *PrivateRoot, firstFD int, e
 	return nil
 }
 
-func attachExecutable(root, stage, path string, executableFD int) error {
+func attachExecutable(root, path string, executableFD int) error {
 	target := filepath.Join(root, filepath.FromSlash(strings.TrimPrefix(path, "/")))
-	stageTarget := filepath.Join(stage, ".executable")
-	file, err := os.OpenFile(stageTarget, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
-	if err != nil {
-		return privateRootError("create executable staging target", err)
-	}
-	_ = file.Close()
-	if err := materializeDescriptor(executableFD, stageTarget, true); err != nil {
-		return privateRootError("materialize executable", err)
-	}
 	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
 		return privateRootError("create executable parent", err)
 	}
-	file, err = os.OpenFile(target, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	source, err := os.Open(procFD(executableFD))
+	if err != nil {
+		return privateRootError("open sealed executable", err)
+	}
+	defer func() { _ = source.Close() }()
+	file, err := os.OpenFile(target, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o500) //nolint:gosec // the pinned renderer must be executable inside the private root
 	if err != nil {
 		return privateRootError("create executable target", err)
 	}
-	_ = file.Close()
-	if err := unix.Mount(stageTarget, target, "", unix.MS_BIND, ""); err != nil {
-		return privateRootError("bind executable", err)
-	}
-	if err := unix.Mount("", target, "", unix.MS_BIND|unix.MS_REMOUNT|unix.MS_RDONLY|unix.MS_NOSUID, ""); err != nil {
-		return privateRootError("remount executable", err)
-	}
-	return nil
-}
-
-func materializeDescriptor(fd int, target string, executable bool) error {
-	source, err := os.Open(procFD(fd))
-	if err != nil {
-		return err
-	}
-	defer func() { _ = source.Close() }()
-	destination, err := os.OpenFile(target, os.O_WRONLY|os.O_TRUNC, 0o400)
-	if err != nil {
-		return err
-	}
-	_, copyErr := io.Copy(destination, source)
-	closeErr := destination.Close()
-	if copyErr != nil {
-		return copyErr
-	}
-	if closeErr != nil {
-		return closeErr
-	}
-	mode := uint32(0o400)
-	if executable {
-		mode = 0o500
-	}
-	if err := unix.Chmod(target, mode); err != nil {
-		return fmt.Errorf("chmod materialized descriptor: %w", err)
-	}
-	return nil
+	_, copyErr := io.Copy(file, source)
+	return errors.Join(copyErr, file.Close())
 }
 
 func procFD(fd int) string {

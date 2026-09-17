@@ -45,14 +45,41 @@ func TestNativeRunnerUsesExactStdinArgumentsAndCleanEnvironment(t *testing.T) {
 	assert.False(t, result.Attestation.PrivateRootInstalled)
 }
 
+func TestNativeRunnerPreservesSetupFailure(t *testing.T) {
+	request := sandboxTestRequest(t, buildSandboxHelper(t, "echo", "", ""), []byte("input"), 1<<20)
+	request.Policy.Executable = filepath.Join(t.TempDir(), "missing")
+	_, err := Run(t.Context(), request)
+	require.ErrorIs(t, err, ErrUnavailable)
+	require.ErrorIs(t, err, os.ErrNotExist)
+}
+
+func TestPrivateRootCleansTemporaryRoot(t *testing.T) {
+	request := privateTestRequest(t, buildSandboxHelper(t, "file-output", "", "result.bin"))
+	temporary := t.TempDir()
+	t.Setenv("TMPDIR", temporary)
+	// Check cleanup after both normal completion and launcher setup failure.
+	_, err := Run(t.Context(), request)
+	entries, readErr := os.ReadDir(temporary)
+	require.NoError(t, readErr)
+	assert.Empty(t, entries)
+	requireNativeNoError(t, err)
+}
+
+func TestExecClosesSealedExecutableDescriptor(t *testing.T) {
+	request := sandboxTestRequest(t, buildSandboxHelper(t, "exec-descriptor", "", ""), []byte("input"), 1<<20)
+	result, err := Run(t.Context(), request)
+	requireNativeNoError(t, err)
+	assert.NotContains(t, string(result.Stdout), "docbank-sandbox-executable")
+}
+
 func TestStrictExecProvidesPrivateProcAndTemporaryDirectory(t *testing.T) {
 	runner, err := NewNativeRunner()
 	requireNativeNoError(t, err)
 	result, err := runner.Run(t.Context(), sandboxTestRequest(t,
 		buildSandboxHelper(t, "strict-fs", "", ""), []byte("probe"), 1<<20))
 	requireNativeNoError(t, err)
-	t.Logf("strict filesystem probe: %s", result.Output)
-	assert.Contains(t, string(result.Output), "proc=true;tmp=true")
+	t.Logf("strict filesystem probe: %s", result.Stdout)
+	assert.Contains(t, string(result.Stdout), "proc=true;tmp=true")
 }
 
 func TestPrivateProfileSettingsContract(t *testing.T) {
@@ -68,7 +95,7 @@ func TestPrivateProfileSettingsContract(t *testing.T) {
 
 func TestAuthenticatedLaunchChecksTokenSealFstatAndExecutableBinding(t *testing.T) {
 	request := sandboxTestRequest(t, buildSandboxHelper(t, "echo", "", ""), []byte("input"), 1<<20)
-	control, token, err := openLaunchControl(request)
+	control, token, err := openLaunchControl(request, "")
 	requireNativeNoError(t, err)
 	defer func() { _ = control.Close() }()
 	arguments := []string{"/proc/self/exe", launcherMarker, token, request.Policy.Executable}
@@ -92,8 +119,8 @@ func TestAuthenticatedLaunchChecksTokenSealFstatAndExecutableBinding(t *testing.
 }
 
 func TestLauncherRejectsOutOfBandStatus(t *testing.T) {
-	assert.False(t, launcherReadyStatusRead(bytes.NewReader([]byte{launcherFailureStatus})))
-	assert.True(t, launcherReadyStatusRead(bytes.NewReader([]byte{launcherReadyStatus})))
+	assert.False(t, launcherStatusRead(bytes.NewReader([]byte{launcherFailureStatus})).ready)
+	assert.True(t, launcherStatusRead(bytes.NewReader([]byte{launcherReadyStatus})).ready)
 }
 
 func TestLauncherStatusProtocolIsModeSpecific(t *testing.T) {
@@ -150,7 +177,7 @@ func TestPrivateRootDeniesHostPathnameUnixSockets(t *testing.T) {
 	result, err := runner.Run(t.Context(), privateTestRequest(t,
 		buildSandboxHelper(t, "file-unix-network", socketPath, "result.bin")))
 	requireNativeNoError(t, err)
-	assert.Equal(t, []byte("denied"), result.Output)
+	assert.Equal(t, []byte("denied"), result.Stdout)
 }
 
 func TestPrivateRootDeniesSocketInsertedAfterRuntimeDiscovery(t *testing.T) {
@@ -171,7 +198,7 @@ func TestPrivateRootDeniesSocketInsertedAfterRuntimeDiscovery(t *testing.T) {
 	requireNativeNoError(t, err)
 	result, err := runner.Run(t.Context(), request)
 	requireNativeNoError(t, err)
-	assert.Equal(t, []byte("denied"), result.Output)
+	assert.Equal(t, []byte("denied"), result.Stdout)
 }
 
 func TestNativeRunnerCannotReadOrModifyHostFiles(t *testing.T) {
@@ -211,7 +238,7 @@ func TestPrivateRootAllowsOnlyUnixSockets(t *testing.T) {
 	result, err := runner.Run(t.Context(), privateTestRequest(t,
 		buildSandboxHelper(t, "local-ipc", "", "result.bin")))
 	requireNativeNoError(t, err)
-	assert.Equal(t, []byte("allowed"), result.Output)
+	assert.Equal(t, []byte("allowed"), result.Stdout)
 	assert.True(t, result.Attestation.PrivateRootInstalled)
 	assert.Equal(t, "sha256:"+strings.Repeat("0", 64), result.Attestation.RuntimeIdentity)
 	assert.True(t, result.Attestation.UnixIPCAllowed)
@@ -222,14 +249,14 @@ func TestPrivateRootAllowsOnlyUnixSockets(t *testing.T) {
 	result, err = runner.Run(t.Context(), privateTestRequest(t,
 		buildSandboxHelper(t, "file-network", listener.Addr().String(), "result.bin")))
 	requireNativeNoError(t, err)
-	assert.Equal(t, []byte("denied"), result.Output)
+	assert.Equal(t, []byte("denied"), result.Stdout)
 
 	hostPath := filepath.Join(t.TempDir(), "host-only.txt")
 	require.NoError(t, os.WriteFile(hostPath, []byte("host-only"), 0o600))
 	result, err = runner.Run(t.Context(), privateTestRequest(t,
 		buildSandboxHelper(t, "file-host", hostPath, "result.bin")))
 	requireNativeNoError(t, err)
-	assert.Equal(t, []byte("denied"), result.Output)
+	assert.Equal(t, []byte("denied"), result.Stdout)
 }
 
 func TestSupervisedRunnerReapsAdoptedDescendantAfterDirectExit(t *testing.T) {
@@ -240,7 +267,7 @@ func TestSupervisedRunnerReapsAdoptedDescendantAfterDirectExit(t *testing.T) {
 		buildSandboxHelper(t, "file-descendant-exit", "", "result.bin")))
 	requireNativeNoError(t, err)
 	t.Log("descendant readiness handshake completed before direct parent exit; Run returned after reaping")
-	assert.Equal(t, []byte("supervised output"), result.Output)
+	assert.Equal(t, []byte("supervised output"), result.Stdout)
 	assert.Less(t, time.Since(started), 2*time.Second)
 }
 
@@ -250,7 +277,7 @@ func TestSupervisedRunnerTrustedWarmupCleansStateAndRunsCallerOnce(t *testing.T)
 	result, err := runner.Run(t.Context(), privateTestRequest(t,
 		buildSandboxHelper(t, "warmup-contract", "", "result.bin")))
 	requireNativeNoError(t, err)
-	assert.Equal(t, []byte("caller output"), result.Output)
+	assert.Equal(t, []byte("caller output"), result.Stdout)
 	assert.Equal(t, 1, result.Attestation.RestartCount)
 }
 
@@ -263,7 +290,7 @@ func TestSupervisedRunnerWarmupFollowsSequentialWorkBudget(t *testing.T) {
 	request.Policy.MaxStdoutBytes = 12 << 20
 	result, err := runner.Run(t.Context(), request)
 	requireNativeNoError(t, err)
-	assert.Len(t, result.Output, 12<<20)
+	assert.Len(t, result.Stdout, 12<<20)
 	assert.Equal(t, 1, result.Attestation.RestartCount)
 }
 
@@ -274,7 +301,7 @@ func TestSupervisedRunnerCallerExit81DoesNotRetryOrPublishOutput(t *testing.T) {
 		buildSandboxHelper(t, "caller-exit81-hidden", "", "result.bin")))
 	skipUnavailable(t, err)
 	require.ErrorIs(t, err, ErrChildFailed)
-	assert.Empty(t, result.Output)
+	assert.Empty(t, result.Stdout)
 }
 
 func TestSupervisedRunnerRejectsWarmupFailuresBeforeCaller(t *testing.T) {
@@ -307,7 +334,7 @@ func TestSupervisedRunnerRejectsWarmupFailuresBeforeCaller(t *testing.T) {
 			} else {
 				require.Error(t, err)
 			}
-			assert.Empty(t, result.Output)
+			assert.Empty(t, result.Stdout)
 		})
 	}
 }
@@ -319,7 +346,7 @@ func TestSupervisedRunnerPassesOnlyPolicyArguments(t *testing.T) {
 	request.Policy.Arguments = []string{"--alpha", "beta"}
 	result, err := runner.Run(t.Context(), request)
 	requireNativeNoError(t, err)
-	assert.Equal(t, "--alpha\x00beta", string(result.Output))
+	assert.Equal(t, "--alpha\x00beta", string(result.Stdout))
 }
 
 func TestPrivateRootStagesRuntimeFilesAndMountModes(t *testing.T) {
@@ -343,8 +370,8 @@ func TestPrivateRootStagesRuntimeFilesAndMountModes(t *testing.T) {
 	request.Policy.PrivateRoot.Symlinks = []RuntimeSymlink{{GuestPath: "/usr/runtime/link", Target: "data"}}
 	result, err := runner.Run(t.Context(), request)
 	requireNativeNoError(t, err)
-	assert.Contains(t, string(result.Output), "exec=true,data=false,link=false")
-	assert.Contains(t, string(result.Output), ";exec-content=exec runtime;data-content=data runtime")
+	assert.Contains(t, string(result.Stdout), "exec=true,data=false,link=false")
+	assert.Contains(t, string(result.Stdout), ";exec-content=exec runtime;data-content=data runtime")
 }
 
 func TestPrivateRootClosesRuntimeDescriptorsBeforeRendererExec(t *testing.T) {
@@ -360,9 +387,23 @@ func TestPrivateRootClosesRuntimeDescriptorsBeforeRendererExec(t *testing.T) {
 	}}
 	result, err := runner.Run(t.Context(), request)
 	requireNativeNoError(t, err)
-	count, err := strconv.Atoi(string(result.Output))
+	count, err := strconv.Atoi(string(result.Stdout))
 	requireNativeNoError(t, err)
 	assert.LessOrEqual(t, count, 8)
+}
+
+func TestPrivateRootReportsChangedRuntime(t *testing.T) {
+	request := privateTestRequest(t, buildSandboxHelper(t, "file-output", "", "result.bin"))
+	path := filepath.Join(t.TempDir(), "runtime")
+	original := []byte("original")
+	digest := sha256.Sum256(original)
+	require.NoError(t, os.WriteFile(path, []byte("modified"), 0o600))
+	request.Policy.PrivateRoot.Runtime = []RuntimeFile{{
+		SourcePath: path, GuestPath: "/usr/runtime/data", SHA256: hex.EncodeToString(digest[:]),
+	}}
+	_, err := Run(t.Context(), request)
+	skipUnavailable(t, err)
+	require.ErrorIs(t, err, ErrRuntimeIdentityMismatch)
 }
 
 func TestSupervisedRunnerClassifiesChildExit125(t *testing.T) {
@@ -513,7 +554,7 @@ func TestPrivateRootRejectsRuntimeEntryCeilingAtPolicyOwner(t *testing.T) {
 		WarmupInput: []byte("warmup"), WarmupInputSHA256: "c6cf1309cd700e5a84e18d0b1d5877b9a608141037ac40445d484398256fc56c",
 	}
 	policy := Policy{
-		Mode: SupervisedFileMode, Executable: "/renderer", ExecutableSHA256: strings.Repeat("b", 64),
+		Mode: LibreOfficeMode, Executable: "/renderer", ExecutableSHA256: strings.Repeat("b", 64),
 		Arguments: []string{"renderer"}, Environment: []string{"LANG=C"},
 		MaxStdinBytes: 1, MaxStdoutBytes: 1, PrivateRoot: root,
 	}
@@ -552,7 +593,7 @@ func privateTestRequest(t *testing.T, executable string) Request {
 	target, err := filepath.Abs(file.Name())
 	requireNativeNoError(t, err)
 	request := sandboxTestRequest(t, target, []byte("input"), 1<<20)
-	request.Policy.Mode = SupervisedFileMode
+	request.Policy.Mode = LibreOfficeMode
 	request.Policy.PrivateRoot = &PrivateRoot{
 		RuntimeIdentity: "sha256:" + strings.Repeat("0", 64),
 		WorkBytes:       64 << 20, InputName: "source.docx", OutputName: "result.bin",

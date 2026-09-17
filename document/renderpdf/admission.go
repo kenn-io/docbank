@@ -190,11 +190,6 @@ func inspectAttribute(attribute xml.Attr) error {
 		}
 		return errors.New("normalized ODF contains an external or relative link")
 	}
-	if local == "formula" || local == "f" {
-		if hasUnsafeFormula(attribute.Value) {
-			return errors.New("normalized ODF contains an external or linked formula")
-		}
-	}
 	if local == "event-name" || local == "event-handler" || local == "script" || local == "script-name" ||
 		local == "listener" || local == "macro" {
 		return errors.New("normalized ODF contains an event handler")

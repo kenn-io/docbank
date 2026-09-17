@@ -3,11 +3,9 @@
 package sandbox
 
 import (
-	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -25,72 +23,39 @@ func TestRuntimePreparationRejectsSpecialFiles(t *testing.T) {
 	require.NoError(t, os.WriteFile(path, data, 0o600))
 	require.NoError(t, os.Remove(path))
 	require.NoError(t, unix.Mkfifo(path, 0o600))
-	root := &PrivateRoot{
-		Runtime:         []RuntimeFile{{SourcePath: path, GuestPath: "/usr/bin/socket", SHA256: hex.EncodeToString(sum[:])}},
-		RuntimeIdentity: "sha256:" + strings.Repeat("b", 64),
-		WorkBytes:       1, InputName: "input", OutputName: "output", MaxOutputBytes: 1,
-		WarmupInput: []byte("warmup"), WarmupInputSHA256: "c6cf1309cd700e5a84e18d0b1d5877b9a608141037ac40445d484398256fc56c",
-	}
-	_, err := prepareRuntimeFiles(context.Background(), root)
+	entry := RuntimeFile{SourcePath: path, GuestPath: "/usr/bin/socket", SHA256: hex.EncodeToString(sum[:])}
+	_, err := copyRuntimeFile(entry, filepath.Join(t.TempDir(), "snapshot"), MaxRuntimeBytes)
 	require.ErrorIs(t, err, ErrRuntimeSpecialFile)
 }
 
 func TestRuntimeIdentityMismatchFailsClosed(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "runtime")
 	require.NoError(t, os.WriteFile(path, []byte("original"), 0o600))
-	root := &PrivateRoot{
-		Runtime:         []RuntimeFile{{SourcePath: path, GuestPath: "/usr/bin/runtime", SHA256: strings.Repeat("a", 64)}},
-		RuntimeIdentity: "sha256:" + strings.Repeat("b", 64),
-		WorkBytes:       1, InputName: "input", OutputName: "output", MaxOutputBytes: 1,
-		WarmupInput: []byte("warmup"), WarmupInputSHA256: "c6cf1309cd700e5a84e18d0b1d5877b9a608141037ac40445d484398256fc56c",
-	}
-	_, err := prepareRuntimeFiles(context.Background(), root)
+	entry := RuntimeFile{SourcePath: path, GuestPath: "/usr/bin/runtime", SHA256: strings.Repeat("a", 64)}
+	_, err := copyRuntimeFile(entry, filepath.Join(t.TempDir(), "snapshot"), MaxRuntimeBytes)
 	require.ErrorIs(t, err, ErrRuntimeIdentityMismatch)
 }
 
-func TestRuntimeSourceMutationAfterSealingCannotChangeBytes(t *testing.T) {
+func TestRuntimeSourceMutationAfterCopyCannotChangeBytes(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "runtime")
 	original := []byte("original runtime bytes")
 	require.NoError(t, os.WriteFile(path, original, 0o600))
 	sum := sha256.Sum256(original)
 	entry := RuntimeFile{SourcePath: path, GuestPath: "/usr/bin/runtime", SHA256: hex.EncodeToString(sum[:])}
-	memfd, _, err := sealRuntimeFile(context.Background(), entry, MaxRuntimeBytes)
+	target := filepath.Join(t.TempDir(), "snapshot")
+	_, err := copyRuntimeFile(entry, target, MaxRuntimeBytes)
 	require.NoError(t, err)
-	defer func() { _ = memfd.Close() }()
 	require.NoError(t, os.WriteFile(path, []byte("replacement"), 0o600))
-	got, err := os.ReadFile("/proc/self/fd/" + strconv.Itoa(int(memfd.Fd())))
+	got, err := os.ReadFile(target)
 	require.NoError(t, err)
 	assert.Equal(t, original, got)
 }
 
-func TestRuntimePreflightRequiresHeadroom(t *testing.T) {
-	if os.Getenv("DOCBANK_PREFLIGHT_HELPER") == "1" {
-		runtimeEntries := 1
-		required := requiredRuntimeFDs(runtimeEntries)
-		limit := unix.Rlimit{Cur: required - 1, Max: required + 64}
-		require.NoError(t, unix.Setrlimit(unix.RLIMIT_NOFILE, &limit))
-		require.NoError(t, preflightRuntimeFDLimit(runtimeEntries))
-		var raised unix.Rlimit
-		require.NoError(t, unix.Getrlimit(unix.RLIMIT_NOFILE, &raised))
-		require.GreaterOrEqual(t, raised.Cur, required)
-
-		limit = unix.Rlimit{Cur: required - 1, Max: required - 1}
-		require.NoError(t, unix.Setrlimit(unix.RLIMIT_NOFILE, &limit))
-		require.ErrorIs(t, preflightRuntimeFDLimit(runtimeEntries), ErrPrivateRootUnavailable)
-		return
-	}
-	command := exec.Command(os.Args[0], "-test.run", "^TestRuntimePreflightRequiresHeadroom$", "-test.v") //nolint:gosec // fixed selector runs this test binary only
-	command.Env = append(os.Environ(), "DOCBANK_PREFLIGHT_HELPER=1")
-	output, err := command.CombinedOutput()
-	require.NoError(t, err, "%s", output)
-}
-
 func TestPrivateRootControlCapacity(t *testing.T) {
-	executable, err := filepath.Abs("runtime")
+	executable, err := filepath.Abs(filepath.Join(t.TempDir(), "runtime"))
 	require.NoError(t, err)
 	content := []byte("discovered runtime bytes")
 	require.NoError(t, os.WriteFile(executable, content, 0o600))
-	t.Cleanup(func() { _ = os.Remove(executable) })
 	digest := sha256.Sum256(content)
 	files := make([]RuntimeFile, 0, 1000)
 	for index := range 1000 {
@@ -105,7 +70,7 @@ func TestPrivateRootControlCapacity(t *testing.T) {
 		WarmupInput: []byte("warmup"), WarmupInputSHA256: "c6cf1309cd700e5a84e18d0b1d5877b9a608141037ac40445d484398256fc56c",
 	}
 	policy := Policy{
-		Mode: SupervisedFileMode, Executable: executable, ExecutableSHA256: strings.Repeat("a", 64),
+		Mode: LibreOfficeMode, Executable: executable, ExecutableSHA256: strings.Repeat("a", 64),
 		Arguments: []string{"x"}, Environment: []string{"LANG=C"},
 		MaxStdinBytes: 1, MaxStdoutBytes: 1, PrivateRoot: root,
 	}

@@ -15,7 +15,6 @@ import (
 
 	"go.kenn.io/docbank/document/internal/formatdetect"
 	"go.kenn.io/docbank/document/internal/providerutil"
-	"go.kenn.io/docbank/document/internal/providerutil/sandbox"
 	"go.kenn.io/docbank/document/media"
 	"go.kenn.io/docbank/document/ocr"
 )
@@ -42,7 +41,7 @@ func Convert(ctx context.Context, source ocr.Source, extension string, policy Po
 		defer func() {
 			if closeErr := source.Content.Close(); closeErr != nil {
 				result = nil
-				err = errors.Join(err, errors.New("close render PDF source failed"))
+				err = errors.Join(err, fmt.Errorf("close render PDF source: %w", closeErr))
 			}
 		}()
 	}
@@ -72,9 +71,9 @@ func Convert(ctx context.Context, source ocr.Source, extension string, policy Po
 			return nil, ctxErr
 		}
 		if runCtxErr := runCtx.Err(); runCtxErr != nil {
-			return nil, errors.New("render PDF conversion timed out")
+			return nil, fmt.Errorf("render PDF conversion timed out: %w", runCtxErr)
 		}
-		return nil, errors.New("read render PDF source failed")
+		return nil, fmt.Errorf("read render PDF source: %w", err)
 	}
 	if int64(len(content)) != source.Size || digest(content) != source.SHA256 {
 		return nil, errors.New("render PDF source does not match declared size and SHA-256")
@@ -97,9 +96,9 @@ func Convert(ctx context.Context, source ocr.Source, extension string, policy Po
 		return nil, err
 	}
 	normalizeRequest := stageRequest(policy, profile, "normalize", content)
-	normalizedResult, err := runStage(runCtx, policy, normalizeRequest)
+	normalizedResult, err := policy.runner.Run(runCtx, normalizeRequest)
 	if err != nil {
-		return nil, stageError(runCtx, "normalize")
+		return nil, stageError(runCtx, "normalize", err)
 	}
 	normalized, err := validateStageResult(normalizeRequest, normalizedResult, policy.runnerID)
 	if err != nil {
@@ -118,9 +117,9 @@ func Convert(ctx context.Context, source ocr.Source, extension string, policy Po
 		return nil, err
 	}
 	pdfRequest := stageRequest(policy, profile, "pdf", normalized)
-	pdfResult, err := runStage(runCtx, policy, pdfRequest)
+	pdfResult, err := policy.runner.Run(runCtx, pdfRequest)
 	if err != nil {
-		return nil, stageError(runCtx, "render")
+		return nil, stageError(runCtx, "render", err)
 	}
 	pdf, err := validateStageResult(pdfRequest, pdfResult, policy.runnerID)
 	if err != nil {
@@ -149,7 +148,7 @@ func Convert(ctx context.Context, source ocr.Source, extension string, policy Po
 		PolicyFingerprint: policy.fingerprint, ConverterVersion: ConverterVersion,
 		RuntimeIdentity: policy.renderer.RuntimeIdentity, RunnerIdentity: policy.runnerID,
 	}
-	return &Result{pdf: bytes.Clone(pdf), receipt: receipt}, nil
+	return &Result{pdf: pdf, receipt: receipt}, nil
 }
 
 func profileFor(id string) (formatProfile, bool) {
@@ -180,7 +179,7 @@ func stageRequest(policy Policy, profile formatProfile, stage string, input []by
 		Arguments:        libreOfficeArguments(inputName, outputName, filter),
 		Environment:      libreOfficeEnvironment(), Directory: filepath.Dir(policy.renderer.Executable),
 		InputName: inputName, OutputName: outputName, Input: bytes.Clone(input), InputSHA256: stdinDigest,
-		WarmupInput: bytes.Clone(warmup), WarmupInputSHA256: warmupFixtureDigest(stage),
+		WarmupInput: warmup, WarmupInputSHA256: warmupFixtureDigest(stage),
 		MaxOutputBytes: stageOutputLimit(policy.limits, stage), MaxWorkBytes: policy.limits.MaxWorkBytes,
 		PolicyFingerprint: policy.fingerprint, Runtime: slices.Clone(policy.renderer.Runtime),
 		RuntimeSymlinks: slices.Clone(policy.renderer.RuntimeSymlinks), RuntimeIdentity: policy.renderer.RuntimeIdentity,
@@ -269,27 +268,13 @@ func verifyRenderer(policy Policy) error {
 		return errors.New("render PDF runner identity changed")
 	}
 	if _, err := providerutil.LoadPinnedExecutable(policy.renderer.Executable, policy.renderer.ExecutableSHA256, MaxExecutableBytes); err != nil {
-		return errors.New("render PDF renderer identity changed")
-	}
-	identity, err := runtimeIdentityForManifest(policy.renderer.Runtime, policy.renderer.RuntimeSymlinks)
-	if err != nil || identity != policy.renderer.RuntimeIdentity {
-		return sandbox.ErrRuntimeIdentityMismatch
+		return fmt.Errorf("render PDF renderer identity changed: %w", err)
 	}
 	return nil
 }
 
-func runStage(ctx context.Context, policy Policy, request Request) (StageResult, error) {
-	return policy.runner.Run(ctx, request)
-}
-
 func validateStageResult(request Request, result StageResult, runnerIdentity string) ([]byte, error) {
-	if result.Output != nil && result.Stdout != nil && !bytes.Equal(result.Output, result.Stdout) {
-		return nil, errors.New("stage returned two different outputs")
-	}
 	output := result.Output
-	if output == nil {
-		output = result.Stdout
-	}
 	if len(output) == 0 || int64(len(output)) > request.MaxOutputBytes {
 		return nil, errors.New("stage output is outside its byte bound")
 	}
@@ -305,14 +290,11 @@ func validateStageResult(request Request, result StageResult, runnerIdentity str
 	return bytes.Clone(output), nil
 }
 
-func stageError(ctx context.Context, stage string) error {
-	if contextErr := ctx.Err(); contextErr != nil {
-		if errors.Is(contextErr, context.DeadlineExceeded) {
-			return errors.New("render PDF conversion timed out")
-		}
-		return contextErr
+func stageError(ctx context.Context, stage string, cause error) error {
+	if contextErr := ctx.Err(); contextErr != nil && !errors.Is(cause, contextErr) {
+		cause = errors.Join(contextErr, cause)
 	}
-	return fmt.Errorf("render PDF %s stage failed", stage)
+	return fmt.Errorf("render PDF %s stage failed: %w", stage, cause)
 }
 
 func validExtension(extension string) bool {

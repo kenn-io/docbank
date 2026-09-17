@@ -53,6 +53,6 @@ func (result *Result) Source() (ocr.Source, error) {
 	if result == nil || len(result.pdf) == 0 {
 		return ocr.Source{}, errors.New("render PDF result is invalid")
 	}
-	return ocr.NewSource(io.NopCloser(bytes.NewReader(bytes.Clone(result.pdf))),
+	return ocr.NewSource(io.NopCloser(bytes.NewReader(result.pdf)),
 		"application/pdf", result.receipt.PDFBytes, result.receipt.PDFSHA256)
 }

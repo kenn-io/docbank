@@ -28,7 +28,7 @@ func TestPolicyValidateRejectsUnsafeRuntimeEntries(t *testing.T) {
 		Runtime: []RuntimeFile{{SourcePath: executable, GuestPath: "relative", SHA256: strings.Repeat("c", sha256.Size*2)}},
 	}
 	policy := base
-	policy.Mode = SupervisedFileMode
+	policy.Mode = LibreOfficeMode
 	policy.PrivateRoot = root
 	require.Error(t, policy.Validate())
 	root.Runtime[0].GuestPath = "/usr/bin/renderer"
@@ -65,7 +65,7 @@ func TestPrivateRootControlUsesEightMiBCeiling(t *testing.T) {
 		WarmupInput: []byte("warmup"), WarmupInputSHA256: "c6cf1309cd700e5a84e18d0b1d5877b9a608141037ac40445d484398256fc56c",
 	}
 	policy := Policy{
-		Mode: SupervisedFileMode, Executable: executable, ExecutableSHA256: strings.Repeat("a", sha256.Size*2),
+		Mode: LibreOfficeMode, Executable: executable, ExecutableSHA256: strings.Repeat("a", sha256.Size*2),
 		Arguments: []string{"--fixed"}, Environment: []string{"LANG=C"},
 		Directory: filepath.Dir(executable), MaxStdinBytes: 1, MaxStdoutBytes: 1,
 		PrivateRoot: root,
@@ -85,7 +85,7 @@ func TestPolicyValidateBindsWarmupBytesToDigestAndLimit(t *testing.T) {
 		WarmupInput: []byte("warmup"), WarmupInputSHA256: "c6cf1309cd700e5a84e18d0b1d5877b9a608141037ac40445d484398256fc56c",
 	}
 	policy := Policy{
-		Mode: SupervisedFileMode, Executable: executable, ExecutableSHA256: strings.Repeat("a", sha256.Size*2),
+		Mode: LibreOfficeMode, Executable: executable, ExecutableSHA256: strings.Repeat("a", sha256.Size*2),
 		Arguments: []string{"--fixed"}, Environment: []string{"LANG=C"},
 		Directory: filepath.Dir(executable), MaxStdinBytes: 1, MaxStdoutBytes: 1,
 		PrivateRoot: root,

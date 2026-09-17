@@ -107,7 +107,7 @@ func TestDiscoveredRuntimeManifestControlCapacity(t *testing.T) {
 	require.NoError(t, err)
 	digestBytes := sha256.Sum256([]byte("renderer"))
 	policy := sandbox.Policy{
-		Mode: sandbox.SupervisedFileMode, Executable: "/renderer",
+		Mode: sandbox.LibreOfficeMode, Executable: "/renderer",
 		ExecutableSHA256: hex.EncodeToString(digestBytes[:]), Arguments: []string{"renderer"},
 		Environment: []string{"LANG=C"}, MaxStdinBytes: 1, MaxStdoutBytes: 1,
 		PrivateRoot: &sandbox.PrivateRoot{
@@ -151,7 +151,7 @@ func TestRuntimeSymlinkValidationRejectsParentTraversal(t *testing.T) {
 		Symlinks: []sandbox.RuntimeSymlink{{GuestPath: "/lib/link", Target: "../usr/lib"}},
 	}
 	policy := sandbox.Policy{
-		Mode: sandbox.SupervisedFileMode, Executable: "/usr/bin/renderer",
+		Mode: sandbox.LibreOfficeMode, Executable: "/usr/bin/renderer",
 		ExecutableSHA256: strings.Repeat("a", 64), Arguments: []string{"renderer"},
 		Environment: []string{"LANG=C"}, MaxStdinBytes: 1, MaxStdoutBytes: 1,
 		PrivateRoot: &root,

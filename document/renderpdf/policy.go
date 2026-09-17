@@ -22,6 +22,17 @@ const (
 	MaxExecutableBytes    = sandbox.MaxExecutableBytes
 )
 
+// Native stage failures retain these identities through errors.Is.
+var (
+	ErrUnavailable             = sandbox.ErrUnavailable
+	ErrPrivateRootUnavailable  = sandbox.ErrPrivateRootUnavailable
+	ErrRuntimeSpecialFile      = sandbox.ErrRuntimeSpecialFile
+	ErrRuntimeIdentityMismatch = sandbox.ErrRuntimeIdentityMismatch
+	ErrCanceledBeforeLaunch    = sandbox.ErrCanceledBeforeLaunch
+	ErrOutputTooLarge          = sandbox.ErrOutputTooLarge
+	ErrChildFailed             = sandbox.ErrChildFailed
+)
+
 type Renderer struct {
 	Executable       string
 	ExecutableSHA256 string
@@ -65,7 +76,7 @@ func NewPolicy(renderer Renderer, limits Limits) (Policy, error) {
 		return Policy{}, errors.New("render PDF executable must be an absolute clean path")
 	}
 	if _, err := providerutil.LoadPinnedExecutable(renderer.Executable, renderer.ExecutableSHA256, MaxExecutableBytes); err != nil {
-		return Policy{}, errors.New("render PDF executable is not pinned")
+		return Policy{}, fmt.Errorf("render PDF executable is not pinned: %w", err)
 	}
 	if err := validateImmutableIdentity(renderer.RuntimeIdentity, "renderer runtime identity"); err != nil {
 		return Policy{}, err
@@ -81,11 +92,7 @@ func NewPolicy(renderer Renderer, limits Limits) (Policy, error) {
 		if runtime.GOOS != "linux" {
 			return Policy{}, sandbox.ErrUnavailable
 		}
-		native, err := newNativeRunner(renderer)
-		if err != nil {
-			return Policy{}, err
-		}
-		runner = native
+		runner = nativeRunner{}
 	}
 	if err := validateImmutableIdentity(runner.Identity(), "runner identity"); err != nil {
 		return Policy{}, err
@@ -101,57 +108,43 @@ func NewPolicy(renderer Renderer, limits Limits) (Policy, error) {
 }
 
 func encodePolicyFingerprint(renderer Renderer, runnerID string, limits Limits, warmupDigests []string) ([]byte, error) {
+	profile, _ := profileFor("docx")
 	return canonical.Marshal(struct {
-		Version          string           `json:"version"`
-		Executable       string           `json:"executable"`
-		ExecutableSHA256 string           `json:"executable_sha256"`
-		RuntimeIdentity  string           `json:"runtime_identity"`
-		RunnerIdentity   string           `json:"runner_identity"`
-		Runtime          []RuntimeFile    `json:"runtime"`
-		RuntimeSymlinks  []RuntimeSymlink `json:"runtime_symlinks"`
-		WarmupContract   string           `json:"warmup_contract"`
-		WarmupDigests    []string         `json:"warmup_digests"`
-		Arguments        []string         `json:"arguments"`
-		Environment      []string         `json:"environment"`
-		Profiles         []string         `json:"profiles"`
-		PrivateRoot      bool             `json:"private_root"`
+		Version          string              `json:"version"`
+		Executable       string              `json:"executable"`
+		ExecutableSHA256 string              `json:"executable_sha256"`
+		RuntimeIdentity  string              `json:"runtime_identity"`
+		RunnerIdentity   string              `json:"runner_identity"`
+		Runtime          []RuntimeFile       `json:"runtime"`
+		RuntimeSymlinks  []RuntimeSymlink    `json:"runtime_symlinks"`
+		WarmupContract   string              `json:"warmup_contract"`
+		WarmupDigests    []string            `json:"warmup_digests"`
+		Arguments        map[string][]string `json:"arguments"`
+		Environment      []string            `json:"environment"`
+		Profiles         []string            `json:"profiles"`
+		PrivateRoot      bool                `json:"private_root"`
 		Limits           struct {
-			MaxSourceBytes     int64 `json:"max_source_bytes"`
-			MaxNormalizedBytes int64 `json:"max_normalized_bytes"`
-			MaxPDFBytes        int64 `json:"max_pdf_bytes"`
-			MaxWorkBytes       int64 `json:"max_work_bytes"`
-			MaxXMLElements     int   `json:"max_xml_elements"`
-			MaxXMLDepth        int   `json:"max_xml_depth"`
-			MaxPages           int   `json:"max_pages"`
-			MaxRuntimeEntries  int   `json:"max_runtime_entries"`
-			Timeout            int64 `json:"timeout_ns"`
+			Limits
+
+			Timeout int64 `json:"timeout_ns"`
 		} `json:"limits"`
 	}{
 		Version: ConverterVersion, Executable: renderer.Executable,
 		ExecutableSHA256: renderer.ExecutableSHA256, RuntimeIdentity: renderer.RuntimeIdentity,
 		RunnerIdentity: runnerID, Runtime: renderer.Runtime,
-		RuntimeSymlinks: renderer.RuntimeSymlinks, Arguments: []string{
-			"--headless", "--norestore", "--nolockcheck", "--nodefault", "--nofirststartwizard",
-		}, Environment: libreOfficeEnvironment(), Profiles: []string{"docx->fodt"},
+		RuntimeSymlinks: renderer.RuntimeSymlinks,
+		Arguments: map[string][]string{
+			"normalize": libreOfficeArguments(profile.inputName, profile.outputName, profile.normalizeMime),
+			"pdf":       libreOfficeArguments(profile.outputName, "source.pdf", profile.pdfFilter),
+		},
+		Environment: libreOfficeEnvironment(), Profiles: []string{"docx->fodt"},
 		WarmupContract: WarmupContractVersion, WarmupDigests: warmupDigests,
 		PrivateRoot: true,
 		Limits: struct {
-			MaxSourceBytes     int64 `json:"max_source_bytes"`
-			MaxNormalizedBytes int64 `json:"max_normalized_bytes"`
-			MaxPDFBytes        int64 `json:"max_pdf_bytes"`
-			MaxWorkBytes       int64 `json:"max_work_bytes"`
-			MaxXMLElements     int   `json:"max_xml_elements"`
-			MaxXMLDepth        int   `json:"max_xml_depth"`
-			MaxPages           int   `json:"max_pages"`
-			MaxRuntimeEntries  int   `json:"max_runtime_entries"`
-			Timeout            int64 `json:"timeout_ns"`
-		}{
-			MaxSourceBytes: limits.MaxSourceBytes, MaxNormalizedBytes: limits.MaxNormalizedBytes,
-			MaxPDFBytes: limits.MaxPDFBytes, MaxWorkBytes: limits.MaxWorkBytes,
-			MaxXMLElements: limits.MaxXMLElements, MaxXMLDepth: limits.MaxXMLDepth,
-			MaxPages: limits.MaxPages, MaxRuntimeEntries: limits.MaxRuntimeEntries,
-			Timeout: int64(limits.Timeout),
-		},
+			Limits
+
+			Timeout int64 `json:"timeout_ns"`
+		}{Limits: limits, Timeout: int64(limits.Timeout)},
 	})
 }
 
@@ -166,7 +159,7 @@ func validateRuntimeEntries(renderer Renderer, maxEntries int) error {
 		return errors.New("renderer runtime exceeds configured entry limit")
 	}
 	if err := (sandbox.Policy{
-		Mode:       sandbox.SupervisedFileMode,
+		Mode:       sandbox.LibreOfficeMode,
 		Executable: renderer.Executable, ExecutableSHA256: renderer.ExecutableSHA256,
 		Arguments: []string{"runtime"}, Environment: []string{"LANG=C"},
 		MaxStdinBytes: 1, MaxStdoutBytes: 1,

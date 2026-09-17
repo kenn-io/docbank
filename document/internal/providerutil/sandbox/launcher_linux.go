@@ -27,6 +27,14 @@ func init() {
 		if statusErr, ok := errors.AsType[launcherStatusError](err); ok {
 			status = statusErr.status
 		}
+		if errors.Is(err, ErrRuntimeIdentityMismatch) {
+			status = launcherRuntimeMismatchStatus
+		} else if errors.Is(err, ErrRuntimeSpecialFile) {
+			status = launcherRuntimeSpecialStatus
+		} else if errors.Is(err, ErrPrivateRootUnavailable) {
+			status = launcherPrivateRootStatus
+		}
+		_, _ = fmt.Fprintln(os.Stderr, err)
 		_ = writeLauncherStatus(launcherStatusFD, status)
 		if errors.Is(err, ErrOutputTooLarge) {
 			os.Exit(launcherOutputExitCode)
@@ -49,7 +57,7 @@ func runLauncher(control launchControl, executableFD, statusFD int) error {
 		if err := installStrictExecFilesystem(); err != nil {
 			return err
 		}
-	case SupervisedFileMode:
+	case LibreOfficeMode:
 		if err := installPrivateRoot(control, executableFD); err != nil {
 			return err
 		}
@@ -81,7 +89,8 @@ func runLauncher(control launchControl, executableFD, statusFD int) error {
 		return err
 	}
 	unix.CloseOnExec(statusFD)
-	if control.Policy.Mode == SupervisedFileMode {
+	unix.CloseOnExec(executableFD)
+	if control.Policy.Mode == LibreOfficeMode {
 		restarts, err := runSupervisedChild(control, control.Policy.Executable)
 		if err != nil {
 			status := launcherFailureStatus
@@ -178,7 +187,7 @@ func runSupervisedChild(control launchControl, executablePath string) (int, erro
 	command.Dir = "/work"
 	command.Env = control.Policy.Environment
 	command.Stdout = io.Discard
-	command.Stderr = io.Discard
+	command.Stderr = os.Stderr
 	command.WaitDelay = childDrainWindow
 	if err := command.Start(); err != nil {
 		return 0, fmt.Errorf("start sandbox supervised child: %w", err)
@@ -226,7 +235,7 @@ func runWarmup(spec commandSpec) (int, error) {
 		command.Dir = "/work"
 		command.Env = spec.environment
 		command.Stdout = io.Discard
-		command.Stderr = io.Discard
+		command.Stderr = os.Stderr
 		command.WaitDelay = childDrainWindow
 		if err := command.Start(); err != nil {
 			return 0, fmt.Errorf("start sandbox warm-up: %w", err)
@@ -241,8 +250,7 @@ func runWarmup(spec commandSpec) (int, error) {
 			}
 			return restarts, nil
 		}
-		var exitError *exec.ExitError
-		if launch == 0 && errors.As(runErr, &exitError) && exitError.ExitCode() == 81 {
+		if exitError, ok := errors.AsType[*exec.ExitError](runErr); launch == 0 && ok && exitError.ExitCode() == 81 {
 			restarts = 1
 			continue
 		}
@@ -273,9 +281,6 @@ func cleanupWarmupState() error {
 	}
 	if err := clearDirectory("/work/tmp"); err != nil {
 		return err
-	}
-	if err := os.RemoveAll("/work/home/cache"); err != nil {
-		return fmt.Errorf("clear sandbox warm-up cache: %w", err)
 	}
 	if err := os.MkdirAll("/work/home/cache", 0o700); err != nil {
 		return fmt.Errorf("recreate sandbox warm-up cache: %w", err)
@@ -343,7 +348,7 @@ func recreatePrivateProfile() error {
 	if err := unix.Unlinkat(int(user.Fd()), privateProfileSettingsName, 0); err != nil && !errors.Is(err, unix.ENOENT) {
 		return fmt.Errorf("remove sandbox profile settings: %w", err)
 	}
-	settings := []byte(privateProfileSettings())
+	settings := []byte(PrivateProfileSettings())
 	if err := writeRegularFileAt(int(user.Fd()), privateProfileSettingsName, settings); err != nil {
 		return fmt.Errorf("write sandbox profile settings: %w", err)
 	}
@@ -396,7 +401,8 @@ func profileSecuritySettingsPresent(data []byte) bool {
 	return true
 }
 
-func privateProfileSettings() string {
+// PrivateProfileSettings returns the fixed LibreOffice profile XML.
+func PrivateProfileSettings() string {
 	return "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n" +
 		"<oor:items xmlns:oor=\"http://openoffice.org/2001/registry\">\n" +
 		" <item oor:path=\"/org.openoffice.Office.Common/Security/Scripting\">\n" +
@@ -407,9 +413,6 @@ func privateProfileSettings() string {
 		" </item>\n" +
 		"</oor:items>"
 }
-
-// PrivateProfileSettings returns the profile XML used by supervised launches.
-func PrivateProfileSettings() string { return privateProfileSettings() }
 
 func readBoundedInput(maxBytes int64) ([]byte, error) {
 	data, err := io.ReadAll(io.LimitReader(os.Stdin, maxBytes+1))

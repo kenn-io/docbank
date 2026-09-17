@@ -1,6 +1,7 @@
 package renderpdf
 
 import (
+	"encoding/json/v2"
 	"os"
 	"strings"
 	"testing"
@@ -8,6 +9,22 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+func TestPolicyFingerprintIncludesExecutedStageArguments(t *testing.T) {
+	runner := &recordingRunner{identity: testRunnerIdentity, output: flatODF(FlatTextKind, "<text:p/>")}
+	policy := testPolicy(t, runner)
+	_, err := Convert(t.Context(), testSource(t, zipDocument(t, "docx"), docxMediaType), "docx", policy)
+	require.NoError(t, err)
+	encoded, err := encodePolicyFingerprint(policy.renderer, policy.runnerID, policy.limits, warmupFixtureDigests())
+	require.NoError(t, err)
+	var fingerprint struct {
+		Arguments map[string][]string `json:"arguments"`
+	}
+	require.NoError(t, json.Unmarshal(encoded, &fingerprint))
+	for _, request := range runner.calls {
+		assert.Equal(t, request.Arguments, fingerprint.Arguments[request.Stage])
+	}
+}
 
 func TestNewPolicyValidatesIdentityAndTighteningLimits(t *testing.T) {
 	executable, err := os.Executable()

@@ -39,8 +39,9 @@ var (
 type Mode string
 
 const (
-	ExecMode           Mode = "exec"
-	SupervisedFileMode Mode = "supervised-file"
+	ExecMode Mode = "exec"
+	// LibreOfficeMode installs a private runtime, profile, and trusted warm-up.
+	LibreOfficeMode Mode = "libreoffice"
 )
 
 // RuntimeFile identifies one regular file attached to a private root.
@@ -91,10 +92,6 @@ type Request struct {
 	StdinSHA256       string `json:"stdin_sha256"`
 }
 
-type ExecRequest = Request
-type SupervisedRequest = Request
-type RunRequest = Request
-
 // Attestation records the controls applied to a completed run.
 type Attestation struct {
 	RunnerIdentity       string
@@ -115,11 +112,11 @@ type Attestation struct {
 // Result owns the bounded bytes returned by a sandbox run.
 type Result struct {
 	Stdout      []byte
-	Output      []byte
 	Attestation Attestation
 }
 
 type launchControl struct {
+	RootDirectory     string `json:"root_directory,omitempty"`
 	Policy            Policy `json:"policy"`
 	PolicyFingerprint string `json:"policy_fingerprint,omitempty"`
 	StdinSHA256       string `json:"stdin_sha256"`
@@ -127,7 +124,7 @@ type launchControl struct {
 
 // Validate checks the portable parts of a launch policy in the parent.
 func (policy Policy) Validate() error {
-	if policy.Mode != ExecMode && policy.Mode != SupervisedFileMode {
+	if policy.Mode != ExecMode && policy.Mode != LibreOfficeMode {
 		return errors.New("sandbox mode is invalid")
 	}
 	if !filepath.IsAbs(policy.Executable) || filepath.Clean(policy.Executable) != policy.Executable {
@@ -329,7 +326,7 @@ func (control launchControl) validate() error {
 }
 
 func controlLimit(mode Mode) int64 {
-	if mode == SupervisedFileMode {
+	if mode == LibreOfficeMode {
 		return MaxPrivateRootControlBytes
 	}
 	return MaxExecControlBytes

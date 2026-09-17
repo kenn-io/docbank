@@ -27,7 +27,7 @@ type RuntimeManifest struct {
 	Identity string
 }
 
-// DefaultRuntimeRoots returns the measured Debian/Ubuntu LibreOffice roots.
+// DefaultRuntimeRoots returns the Debian/Ubuntu LibreOffice roots.
 func DefaultRuntimeRoots() []string {
 	return defaultRuntimeRootsForArch(runtime.GOARCH)
 }

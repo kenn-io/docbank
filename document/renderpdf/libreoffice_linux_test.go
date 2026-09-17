@@ -56,7 +56,9 @@ func (runner *countingRunner) call(index int) Request {
 func TestLibreOfficeConvertsSafeDOCX(t *testing.T) {
 	policy := realLibreOfficePolicy(t, nil)
 	content := realDOCX(false, "", "")
+	started := time.Now()
 	result, err := Convert(t.Context(), testSource(t, content, docxMediaType), "docx", policy)
+	t.Logf("DOCX conversion elapsed=%s runtime-files=%d", time.Since(started), len(policy.renderer.Runtime))
 	require.NoError(t, err)
 	require.NotNil(t, result)
 	assert.NotEmpty(t, result.PDF())
@@ -267,8 +269,7 @@ func realLibreOfficePolicy(t *testing.T, runner Runner) Policy {
 	manifest, err := DiscoverRuntime(DefaultRuntimeRoots())
 	require.NoError(t, err)
 	if runner == nil {
-		runner, err = newNativeRunner(Renderer{Runtime: manifest.Files, RuntimeSymlinks: manifest.Symlinks, RuntimeIdentity: manifest.Identity})
-		require.NoError(t, err)
+		runner = nativeRunner{}
 	}
 	policy, err := NewPolicy(Renderer{
 		Executable: executable, ExecutableSHA256: digest(content),

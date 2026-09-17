@@ -15,6 +15,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"slices"
+	"strings"
 	"syscall"
 	"time"
 
@@ -24,20 +25,23 @@ import (
 )
 
 const (
-	NativeRunnerIdentity        = "sha256:afc3202c30a20fbb62fe6b7a4ccf282dea0ba16e40d22e7bdfa3f1d28819db16"
-	launcherMarker              = "--docbank-internal-sandbox-launch-v1"
-	launcherExecutableFD        = 3
-	launcherControlFD           = 4
-	launcherStatusFD            = 5
-	launcherTokenBytes          = 32
-	launcherFailureExitCode     = 125
-	launcherOutputExitCode      = 124
-	launcherReadyStatus         = byte(1)
-	launcherFailureStatus       = byte(2)
-	launcherChildFailureStatus  = byte(3)
-	launcherOutputFailureStatus = byte(4)
-	launcherRestartStatusBase   = byte(16)
-	childDrainWindow            = 250 * time.Millisecond
+	NativeRunnerIdentity          = "sha256:afc3202c30a20fbb62fe6b7a4ccf282dea0ba16e40d22e7bdfa3f1d28819db16"
+	launcherMarker                = "--docbank-internal-sandbox-launch-v1"
+	launcherExecutableFD          = 3
+	launcherControlFD             = 4
+	launcherStatusFD              = 5
+	launcherTokenBytes            = 32
+	launcherFailureExitCode       = 125
+	launcherOutputExitCode        = 124
+	launcherReadyStatus           = byte(1)
+	launcherFailureStatus         = byte(2)
+	launcherChildFailureStatus    = byte(3)
+	launcherOutputFailureStatus   = byte(4)
+	launcherRuntimeMismatchStatus = byte(5)
+	launcherRuntimeSpecialStatus  = byte(6)
+	launcherPrivateRootStatus     = byte(7)
+	launcherRestartStatusBase     = byte(16)
+	childDrainWindow              = 250 * time.Millisecond
 )
 
 // Runner is the platform process boundary used by document providers.
@@ -64,9 +68,9 @@ func Run(ctx context.Context, request Request) (Result, error) {
 
 func (nativeRunner) Identity() string { return NativeRunnerIdentity }
 
-func (nativeRunner) Run(ctx context.Context, request Request) (Result, error) {
+func (nativeRunner) Run(ctx context.Context, request Request) (result Result, err error) {
 	if err := request.validate(); err != nil {
-		return Result{}, ErrUnavailable
+		return Result{}, fmt.Errorf("%w: %w", ErrUnavailable, err)
 	}
 	if err := ctx.Err(); err != nil {
 		return Result{}, errors.Join(ErrCanceledBeforeLaunch, err)
@@ -76,29 +80,29 @@ func (nativeRunner) Run(ctx context.Context, request Request) (Result, error) {
 		if ctx.Err() != nil {
 			return Result{}, errors.Join(ErrCanceledBeforeLaunch, ctx.Err())
 		}
-		return Result{}, ErrUnavailable
+		return Result{}, fmt.Errorf("%w: %w", ErrUnavailable, err)
 	}
 	defer func() { _ = executable.Close() }()
-	var runtimeFiles []*os.File
-	if request.Policy.Mode == SupervisedFileMode {
-		runtimeFiles, err = prepareRuntimeFiles(ctx, request.Policy.PrivateRoot)
+	rootDirectory := ""
+	if request.Policy.Mode == LibreOfficeMode {
+		rootDirectory, err = os.MkdirTemp("", "docbank-render-*")
 		if err != nil {
-			return Result{}, ErrUnavailable
+			return Result{}, fmt.Errorf("%w: create private root: %w", ErrUnavailable, err)
 		}
 		defer func() {
-			for _, file := range runtimeFiles {
-				_ = file.Close()
+			if cleanupErr := os.Remove(rootDirectory); cleanupErr != nil {
+				err = errors.Join(err, fmt.Errorf("remove sandbox temporary root: %w", cleanupErr))
 			}
 		}()
 	}
-	control, launchToken, err := openLaunchControl(request)
+	control, launchToken, err := openLaunchControl(request, rootDirectory)
 	if err != nil {
-		return Result{}, ErrUnavailable
+		return Result{}, fmt.Errorf("%w: %w", ErrUnavailable, err)
 	}
 	defer func() { _ = control.Close() }()
 	statusReader, statusWriter, err := os.Pipe()
 	if err != nil {
-		return Result{}, ErrUnavailable
+		return Result{}, fmt.Errorf("%w: %w", ErrUnavailable, err)
 	}
 	defer func() { _ = statusReader.Close() }()
 	defer func() { _ = statusWriter.Close() }()
@@ -119,8 +123,9 @@ func (nativeRunner) Run(ctx context.Context, request Request) (Result, error) {
 	command.Env = slices.Clone(request.Policy.Environment)
 	command.Stdin = bytes.NewReader(request.Stdin)
 	command.Stdout = output
-	command.Stderr = io.Discard
-	command.ExtraFiles = append([]*os.File{executable, control, statusWriter}, runtimeFiles...)
+	diagnostics := providerutil.NewBoundedBuffer(16<<10, nil)
+	command.Stderr = diagnostics
+	command.ExtraFiles = []*os.File{executable, control, statusWriter}
 	command.SysProcAttr = &syscall.SysProcAttr{
 		Cloneflags: syscall.CLONE_NEWUSER | syscall.CLONE_NEWNET |
 			syscall.CLONE_NEWPID | syscall.CLONE_NEWNS,
@@ -131,12 +136,9 @@ func (nativeRunner) Run(ctx context.Context, request Request) (Result, error) {
 	}
 	command.WaitDelay = childDrainWindow
 	if err := command.Start(); err != nil {
-		return Result{}, ErrUnavailable
+		return Result{}, fmt.Errorf("%w: %w", ErrUnavailable, err)
 	}
 	_ = executable.Close()
-	for _, file := range runtimeFiles {
-		_ = file.Close()
-	}
 	_ = statusWriter.Close()
 
 	waited := make(chan error, 1)
@@ -151,40 +153,45 @@ func (nativeRunner) Run(ctx context.Context, request Request) (Result, error) {
 		runErr = <-waited
 	}
 	status := <-launcherStatus
-	result := Result{
+	result = Result{
 		Stdout: output.Bytes(),
 		Attestation: Attestation{
 			RunnerIdentity: NativeRunnerIdentity, PolicyFingerprint: request.PolicyFingerprint,
 			ExecutableSHA256: request.Policy.ExecutableSHA256, StdinSHA256: request.StdinSHA256,
 			NetworkDisabled: true, ProcessTreeContained: true, DigestVerifiedLaunch: true,
 			FilesystemIsolated: true, FilesystemMode: filesystemMode(request.Policy.Mode),
-			PrivateRootInstalled: request.Policy.Mode == SupervisedFileMode,
+			PrivateRootInstalled: request.Policy.Mode == LibreOfficeMode,
 			RuntimeIdentity:      runtimeIdentity(request.Policy),
-			UnixIPCAllowed:       request.Policy.Mode == SupervisedFileMode,
+			UnixIPCAllowed:       request.Policy.Mode == LibreOfficeMode,
 			RestartCount:         status.restarts,
 		},
 	}
-	result.Output = slices.Clone(result.Stdout)
 	if output.Exceeded() {
 		return result, ErrOutputTooLarge
 	}
 	if err := ctx.Err(); err != nil {
 		return result, err
 	}
-	if !status.ready {
-		return result, ErrUnavailable
-	}
-	if status.detail == launcherFailureStatus {
-		return result, ErrUnavailable
+	if !status.ready || status.detail == launcherFailureStatus {
+		cause := ErrUnavailable
+		switch status.detail {
+		case launcherRuntimeMismatchStatus:
+			cause = ErrRuntimeIdentityMismatch
+		case launcherRuntimeSpecialStatus:
+			cause = ErrRuntimeSpecialFile
+		case launcherPrivateRootStatus:
+			cause = errors.Join(ErrUnavailable, ErrPrivateRootUnavailable)
+		}
+		return result, fmt.Errorf("%w: launcher: %s", errors.Join(cause, runErr), strings.TrimSpace(string(diagnostics.Bytes())))
 	}
 	if status.detail == launcherOutputFailureStatus {
 		return result, ErrOutputTooLarge
 	}
 	if status.detail == launcherChildFailureStatus {
-		return result, ErrChildFailed
+		return result, fmt.Errorf("%w: %s", errors.Join(ErrChildFailed, runErr), strings.TrimSpace(string(diagnostics.Bytes())))
 	}
 	if runErr != nil {
-		return result, ErrChildFailed
+		return result, fmt.Errorf("%w: %s", errors.Join(ErrChildFailed, runErr), strings.TrimSpace(string(diagnostics.Bytes())))
 	}
 	return result, nil
 }
@@ -197,8 +204,11 @@ type launcherRunStatus struct {
 
 func launcherStatusRead(reader io.Reader) launcherRunStatus {
 	data, err := io.ReadAll(io.LimitReader(reader, 3))
-	if err != nil || len(data) == 0 || data[0] != launcherReadyStatus {
+	if err != nil || len(data) == 0 {
 		return launcherRunStatus{}
+	}
+	if data[0] != launcherReadyStatus {
+		return launcherRunStatus{detail: data[0]}
 	}
 	status := launcherRunStatus{ready: true}
 	if len(data) < 2 {
@@ -219,10 +229,6 @@ func launcherStatusRead(reader io.Reader) launcherRunStatus {
 	return status
 }
 
-func launcherReadyStatusRead(reader io.Reader) bool {
-	return launcherStatusRead(reader).ready
-}
-
 func runtimeIdentity(policy Policy) string {
 	if policy.PrivateRoot == nil {
 		return ""
@@ -231,15 +237,16 @@ func runtimeIdentity(policy Policy) string {
 }
 
 func filesystemMode(mode Mode) string {
-	if mode == SupervisedFileMode {
+	if mode == LibreOfficeMode {
 		return "private-root-v1"
 	}
 	return "strict-exec"
 }
 
-func openLaunchControl(request Request) (*os.File, string, error) {
+func openLaunchControl(request Request, rootDirectory string) (*os.File, string, error) {
 	encoded, err := encodeControl(launchControl{
-		Policy: request.Policy, PolicyFingerprint: request.PolicyFingerprint,
+		RootDirectory: rootDirectory,
+		Policy:        request.Policy, PolicyFingerprint: request.PolicyFingerprint,
 		StdinSHA256: request.StdinSHA256,
 	})
 	if err != nil {
