@@ -25,6 +25,7 @@ func ApplyMapping(records []Record, mapping Mapping, profile Profile, reserve fu
 			return diagnostics, err
 		}
 		recordDiagnosticStart := len(diagnostics)
+		singleValueTargets := make(map[string]bool)
 		rawByOrdinal := make(map[int]string, len(record.Fields))
 		for _, field := range record.Fields {
 			rawByOrdinal[field.Ordinal] = field.Raw
@@ -38,6 +39,9 @@ func ApplyMapping(records []Record, mapping Mapping, profile Profile, reserve fu
 			}
 			if !ok || column.Canonical == nil {
 				continue
+			}
+			if err := claimSingleValueTarget(*column.Canonical, singleValueTargets); err != nil {
+				return diagnostics, err
 			}
 			if err := reserve(int64(len(*column.Canonical))); err != nil {
 				return diagnostics, err

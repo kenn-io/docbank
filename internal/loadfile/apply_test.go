@@ -82,3 +82,16 @@ func TestApplyMappingHydratesConventionalColumnsWithDefaultCustodian(t *testing.
 	assert.Equal(t, "synthetic", records[0].Fields[2].Raw)
 	assert.NotEmpty(t, records[0].RowID)
 }
+
+func TestApplyMappingRejectsConflictingConventionalColumns(t *testing.T) {
+	for _, columns := range [][]string{{"DOCID", "BEGDOC"}, {"PARENT", "PARENTID"}} {
+		t.Run(columns[0], func(t *testing.T) {
+			records := []Record{{Fields: []Field{
+				{Column: columns[0], Ordinal: 0, Raw: "DOC-A"},
+				{Column: columns[1], Ordinal: 1, Raw: "DOC-B"},
+			}}}
+			_, err := ApplyMapping(records, Mapping{}, Profile{}, func(int64) error { return nil })
+			require.ErrorIs(t, err, ErrInvalidMapping)
+		})
+	}
+}

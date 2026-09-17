@@ -78,6 +78,23 @@ func TestMappingPinsSourceAndPairedOrdinalsWithoutAmbiguity(t *testing.T) {
 	assert.Equal(t, 3, *mapping.Columns[2].SourceOrdinal)
 }
 
+func TestMappingRejectsDuplicateSingleValueTargets(t *testing.T) {
+	for _, target := range []string{"loadfile.document.id", "loadfile.family.parent", "loadfile.family.id"} {
+		t.Run(target, func(t *testing.T) {
+			raw := `{"contract":"loadfile-mapping/v1","columns":[{"source":"A","canonical":"` + target + `"},{"source":"B","canonical":"` + target + `"}]}`
+			_, _, err := DecodeMapping([]byte(raw), []string{"A", "B"})
+			require.ErrorIs(t, err, ErrInvalidMapping)
+		})
+	}
+	for _, target := range []string{"loadfile.file.native", "loadfile.file.produced_pdf", "loadfile.file.supplied_text", "loadfile.family.children", "loadfile.actor.recipient"} {
+		t.Run(target, func(t *testing.T) {
+			raw := `{"contract":"loadfile-mapping/v1","columns":[{"source":"A","canonical":"` + target + `"},{"source":"B","canonical":"` + target + `"}]}`
+			_, _, err := DecodeMapping([]byte(raw), []string{"A", "B"})
+			require.NoError(t, err)
+		})
+	}
+}
+
 func TestMappingRejectsNonPortableVolumeRoots(t *testing.T) {
 	badRoots := []string{
 		"/srv/production",
