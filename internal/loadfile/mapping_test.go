@@ -83,7 +83,7 @@ func TestMappingRejectsDuplicateSingleValueTargets(t *testing.T) {
 		t.Run(target, func(t *testing.T) {
 			raw := `{"contract":"loadfile-mapping/v1","columns":[{"source":"A","canonical":"` + target + `"},{"source":"B","canonical":"` + target + `"}]}`
 			_, _, err := DecodeMapping([]byte(raw), []string{"A", "B"})
-			require.ErrorIs(t, err, ErrInvalidMapping)
+			require.ErrorIs(t, err, ErrMappingAmbiguous)
 		})
 	}
 	for _, target := range []string{"loadfile.file.native", "loadfile.file.produced_pdf", "loadfile.file.supplied_text", "loadfile.family.children", "loadfile.actor.recipient"} {

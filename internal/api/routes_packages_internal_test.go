@@ -2,7 +2,6 @@ package api
 
 import (
 	"context"
-	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -30,28 +29,6 @@ func TestPackageMemoryBudgetRejectsAggregateGrowth(t *testing.T) {
 	require.NoError(t, budget.add(8))
 	require.ErrorIs(t, budget.add(3), loadfile.ErrLoadfileLimit)
 	assert.Equal(t, int64(8), budget.used)
-}
-
-func TestPackageHashingRejectsCancellationAndSourceGrowth(t *testing.T) {
-	root := t.TempDir()
-	require.NoError(t, os.Mkdir(filepath.Join(root, "VOL001"), 0o700))
-	require.NoError(t, os.WriteFile(filepath.Join(root, "VOL001", "source.txt"), []byte("synthetic content"), 0o600))
-	resolver, err := loadfile.NewResolver(t.Context(), root, nil)
-	require.NoError(t, err)
-	defer func() { require.NoError(t, resolver.Close()) }()
-	volume := loadfile.Volume{Name: "VOL001", DeclaredRoot: "VOL001"}
-	files := []packageLoadFile{{volume: volume, relPath: "source.txt"}}
-	hashed, err := hashPackageFiles(t.Context(), resolver, []loadfile.Volume{volume}, nil, nil, files)
-	require.NoError(t, err)
-	require.Len(t, hashed, 1)
-	assert.Equal(t, int64(len("synthetic content")), hashed[0].Size)
-	ctx, cancel := context.WithCancel(t.Context())
-	cancel()
-	_, err = hashPackageFiles(ctx, resolver, []loadfile.Volume{volume}, nil, nil, files)
-	require.ErrorIs(t, err, context.Canceled)
-	require.NoError(t, os.WriteFile(filepath.Join(root, "VOL001", "source.txt"), []byte("synthetic content with appended bytes"), 0o600))
-	_, err = hashPackageFiles(t.Context(), resolver, []loadfile.Volume{volume}, nil, nil, files)
-	require.ErrorIs(t, err, loadfile.ErrMalformedInput)
 }
 
 func TestPackageInventoryDoesNotWaitForVaultMaintenance(t *testing.T) {

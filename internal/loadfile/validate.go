@@ -18,9 +18,11 @@ type ValidateInput struct {
 	PageCount func(file io.ReadSeeker) (int, error)
 }
 
-func Validate(ctx context.Context, in ValidateInput) ([]Diagnostic, error) {
+// Validate hashes each referenced file while validating it. PDF page counts use a
+// private snapshot of those same bytes; this does not snapshot the whole package.
+func Validate(ctx context.Context, in ValidateInput) ([]FileRef, []Diagnostic, error) {
 	if in.Resolver == nil {
-		return nil, ErrUnsafeReference
+		return nil, nil, ErrUnsafeReference
 	}
 	volumes := make(map[string]Volume, len(in.Volumes))
 	for _, volume := range in.Volumes {
@@ -32,6 +34,7 @@ func Validate(ctx context.Context, in ValidateInput) ([]Diagnostic, error) {
 			declaredPages[image.ImageKey] = image.DeclaredPageCount
 		}
 	}
+	files := make([]FileRef, 0, len(in.Images))
 	diagnostics := make([]Diagnostic, 0)
 	addDiagnostic := func(diagnostic Diagnostic) error {
 		return appendDiagnosticBounded(&diagnostics, diagnostic)
@@ -39,15 +42,15 @@ func Validate(ctx context.Context, in ValidateInput) ([]Diagnostic, error) {
 	records := make(map[string]Record, len(in.Records))
 	for _, record := range in.Records {
 		if err := ctx.Err(); err != nil {
-			return diagnostics, err
+			return files, diagnostics, err
 		}
 		if record.DocID == "" {
 			if err := addDiagnostic(packageDiagnostic("missing_document_id", record, "record has no mapped document id")); err != nil {
-				return diagnostics, err
+				return files, diagnostics, err
 			}
 		} else if previous, exists := records[record.DocID]; exists {
 			if err := addDiagnostic(packageDiagnostic("duplicate_document_id", record, "document id is also used by row "+previous.RowID)); err != nil {
-				return diagnostics, err
+				return files, diagnostics, err
 			}
 		} else {
 			records[record.DocID] = record
@@ -55,103 +58,105 @@ func Validate(ctx context.Context, in ValidateInput) ([]Diagnostic, error) {
 	}
 	for _, record := range in.Records {
 		if err := ctx.Err(); err != nil {
-			return diagnostics, err
+			return files, diagnostics, err
 		}
 		if parent := record.Family.ParentDocID; parent != "" {
 			if _, exists := records[parent]; !exists {
 				if err := addDiagnostic(packageDiagnostic("family_edge_unresolved", record, "parent document id is absent")); err != nil {
-					return diagnostics, err
+					return files, diagnostics, err
 				}
 			}
 		}
 		for _, child := range record.Family.AttachmentDocIDs {
 			if _, exists := records[child]; !exists {
 				if err := addDiagnostic(packageDiagnostic("family_edge_unresolved", record, "attachment document id is absent")); err != nil {
-					return diagnostics, err
+					return files, diagnostics, err
 				}
 			}
 		}
-		for _, fileRef := range record.Files {
+		for fileIndex := range record.Files {
+			fileRef := &record.Files[fileIndex]
 			if fileRef.Status != "" && fileRef.Status != "available" {
 				continue
 			}
 			volume, exists := volumes[fileRef.Volume]
-			if !exists {
-				if err := addDiagnostic(packageDiagnostic("file_missing", record, "file names an undeclared volume")); err != nil {
-					return diagnostics, err
+			var checkPDF func(io.ReadSeeker) error
+			if in.PageCount != nil && (fileRef.Role == "native" || fileRef.Role == "produced_pdf") && strings.EqualFold(filepath.Ext(fileRef.RelPath), ".pdf") {
+				checkPDF = func(file io.ReadSeeker) error {
+					actual, countErr := in.PageCount(file)
+					if countErr != nil {
+						return addDiagnostic(packageDiagnostic("page_count_unavailable", record, countErr.Error()))
+					}
+					if declared := declaredPages[record.DocID]; declared > 0 && actual != declared {
+						return addDiagnostic(packageDiagnostic("page_count_mismatch", record, fmt.Sprintf("declared %d pages; source has %d", declared, actual)))
+					}
+					return nil
 				}
-				continue
 			}
-			file, err := in.Resolver.Open(volume, fileRef.RelPath)
+			var err error
+			if exists {
+				*fileRef, err = validatePackageFile(ctx, in.Resolver, volume, *fileRef, checkPDF)
+			} else {
+				err = ErrUnsafeReference
+			}
 			if err != nil {
 				if !errors.Is(err, ErrUnsafeReference) {
-					return diagnostics, err
+					return files, diagnostics, err
 				}
+				fileRef.Status = "missing"
 				if err := addDiagnostic(packageDiagnostic("file_missing", record, "declared file is absent or unsafe")); err != nil {
-					return diagnostics, err
-				}
-				continue
-			}
-			if in.PageCount != nil && (fileRef.Role == "native" || fileRef.Role == "produced_pdf") && strings.EqualFold(filepath.Ext(fileRef.RelPath), ".pdf") {
-				actual, countErr := in.PageCount(file)
-				if countErr != nil {
-					if err := addDiagnostic(packageDiagnostic("page_count_unavailable", record, countErr.Error())); err != nil {
-						return diagnostics, err
-					}
-				} else if declared := declaredPages[record.DocID]; declared > 0 && actual != declared {
-					if err := addDiagnostic(packageDiagnostic("page_count_mismatch", record, fmt.Sprintf("declared %d pages; source has %d", declared, actual))); err != nil {
-						return diagnostics, err
-					}
+					return files, diagnostics, err
 				}
 			}
-			if err := file.Close(); err != nil {
-				return diagnostics, fmt.Errorf("close validated package file: %w", err)
-			}
+			files = append(files, *fileRef)
 		}
 	}
 	for index, image := range in.Images {
 		if err := ctx.Err(); err != nil {
-			return diagnostics, err
+			return files, diagnostics, err
+		}
+		if index == 0 && !image.DocumentBreak {
+			if err := addDiagnostic(Diagnostic{Code: "image_boundary_missing", Severity: diagnosticSeverityBlocking, RowID: image.ImageKey, RowOrdinal: 1, Detail: "first page-map image must start a document"}); err != nil {
+				return files, diagnostics, err
+			}
 		}
 		if image.DocumentBreak {
 			record, exists := records[image.ImageKey]
 			if !exists {
 				if err := addDiagnostic(Diagnostic{Code: "image_identity_unresolved", Severity: diagnosticSeverityBlocking, RowID: image.ImageKey, RowOrdinal: index + 1, Detail: "page-map document boundary has no metadata record"}); err != nil {
-					return diagnostics, err
+					return files, diagnostics, err
 				}
 			} else if image.Boundary == "child" && record.Family.ParentDocID == "" {
 				if err := addDiagnostic(Diagnostic{Code: "family_edge_unresolved", Severity: diagnosticSeverityBlocking, RowID: image.ImageKey, RowOrdinal: index + 1, Detail: "child page-map boundary has no metadata parent"}); err != nil {
-					return diagnostics, err
+					return files, diagnostics, err
 				}
 			}
 		}
 		volume, exists := volumes[image.Volume]
-		if !exists {
-			if err := addDiagnostic(Diagnostic{Code: "image_missing", Severity: diagnosticSeverityBlocking, RowID: image.ImageKey, RowOrdinal: index + 1, Detail: "image names an undeclared volume"}); err != nil {
-				return diagnostics, err
-			}
-			continue
+		ref := FileRef{Role: "page_image", Volume: image.Volume, RelPath: image.RelPath, Declared: image.RelPath}
+		var err error
+		if exists {
+			ref, err = validatePackageFile(ctx, in.Resolver, volume, ref, nil)
+		} else {
+			err = ErrUnsafeReference
 		}
-		file, err := in.Resolver.Open(volume, image.RelPath)
 		if err != nil {
 			if !errors.Is(err, ErrUnsafeReference) {
-				return diagnostics, err
+				return files, diagnostics, err
 			}
+			ref.Status = "missing"
 			if err := addDiagnostic(Diagnostic{Code: "image_missing", Severity: diagnosticSeverityBlocking, RowID: image.ImageKey, RowOrdinal: index + 1, Detail: "declared image is absent or unsafe"}); err != nil {
-				return diagnostics, err
+				return files, diagnostics, err
 			}
-			continue
 		}
-		if err := file.Close(); err != nil {
-			return diagnostics, fmt.Errorf("close validated image: %w", err)
-		}
+		files = append(files, ref)
 	}
 	for _, diagnostic := range familyCycleDiagnostics(in.Records) {
 		if err := addDiagnostic(diagnostic); err != nil {
-			return diagnostics, err
+			return files, diagnostics, err
 		}
 	}
-	return diagnostics, nil
+	return files, diagnostics, nil
 }
 
 func packageDiagnostic(code string, record Record, detail string) Diagnostic {

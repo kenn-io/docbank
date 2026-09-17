@@ -91,7 +91,7 @@ func TestApplyMappingRejectsConflictingConventionalColumns(t *testing.T) {
 				{Column: columns[1], Ordinal: 1, Raw: "DOC-B"},
 			}}}
 			_, err := ApplyMapping(records, Mapping{}, Profile{}, func(int64) error { return nil })
-			require.ErrorIs(t, err, ErrInvalidMapping)
+			require.ErrorIs(t, err, ErrMappingAmbiguous)
 		})
 	}
 }

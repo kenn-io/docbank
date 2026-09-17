@@ -137,7 +137,7 @@ func claimSingleValueTarget(target string, claimed map[string]bool) error {
 	switch target {
 	case "loadfile.document.id", "loadfile.family.parent", "loadfile.family.id":
 		if claimed[target] {
-			return invalidMapping("canonical target %q is claimed more than once", target)
+			return fmt.Errorf("%w: canonical target %q is claimed more than once", ErrMappingAmbiguous, target)
 		}
 		claimed[target] = true
 	}

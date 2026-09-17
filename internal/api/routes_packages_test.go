@@ -3,6 +3,8 @@ package api_test
 import (
 	"bufio"
 	"context"
+	"crypto/sha256"
+	"encoding/json/jsontext"
 	"encoding/json/v2"
 	"fmt"
 	"net/http"
@@ -17,6 +19,7 @@ import (
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/canonical"
 	"go.kenn.io/docbank/internal/loadfile"
+	"golang.org/x/text/encoding/unicode"
 )
 
 func TestPreflightPersistsOneExpiringRowAndMutatesNothingElse(t *testing.T) {
@@ -296,6 +299,90 @@ func TestPreflightReadsLFPPageMap(t *testing.T) {
 	require.NoError(t, os.WriteFile(path, []byte("VN,VOL001\n"), 0o600))
 	response = srv.post(t, string(body))
 	assert.Equal(t, 422, response.Code, response.Body.String())
+}
+
+func TestPreflightRequiresFirstPageDocumentBoundary(t *testing.T) {
+	srv, _ := newPackageTestServer(t)
+	for extension, pageMap := range map[string]string{
+		"opt": "DOC-A,VOL001,IMAGES\\001\\DOC-A-1.tif,,,,\nDOC-B,VOL001,IMAGES\\001\\DOC-B-1.tif,Y,,,1\n",
+		"lfp": "IM,DOC-A,,0,@VOL001;IMAGES\\001;DOC-A-1.tif;2,0\nIM,DOC-B,D,0,@VOL001;IMAGES\\001;DOC-B-1.tif;2,0\n",
+	} {
+		t.Run(extension, func(t *testing.T) {
+			root := syntheticPackageRoot(t)
+			require.NoError(t, os.Remove(filepath.Join(root, "VOL001", "DATA", "ab-package.opt")))
+			require.NoError(t, os.WriteFile(filepath.Join(root, "VOL001", "DATA", "ab-package."+extension), []byte(pageMap), 0o600))
+			body, err := json.Marshal(api.PackagePreflightRequest{Profile: "dat-concordance-v1", Encoding: "utf-8", SourceKind: "root", SourceRef: root})
+			require.NoError(t, err)
+			response := srv.post(t, string(body))
+			require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+			var out api.PackagePreflight
+			require.NoError(t, json.Unmarshal(response.Body.Bytes(), &out))
+			assert.True(t, out.Blocking)
+			require.Len(t, out.Diagnostics, 1)
+			assert.Equal(t, "image_boundary_missing", out.Diagnostics[0].Code)
+			assert.Equal(t, "blocking", out.Diagnostics[0].Severity)
+			assert.Equal(t, "DOC-A", out.Diagnostics[0].RowID)
+			assert.Equal(t, 1, out.Diagnostics[0].RowOrdinal)
+		})
+	}
+}
+
+func TestPreflightHashesExactEncodedLoadFileBytes(t *testing.T) {
+	srv, catalog := newPackageTestServer(t)
+	for extension, pageMap := range map[string]string{
+		"opt": "DOC-A,VOL001,IMAGES\\001\\DOC-A-1.tif,Y,,,2\r\n",
+		"lfp": "## synthetic page map\r\nIM,DOC-A,D,0,@VOL001;IMAGES\\001;DOC-A-1.tif;2,0\r\n",
+	} {
+		t.Run(extension, func(t *testing.T) {
+			root := syntheticPackageRoot(t)
+			require.NoError(t, os.Remove(filepath.Join(root, "VOL001", "DATA", "ab-package.opt")))
+			rawFiles := map[string][]byte{
+				"DATA/ab-package.dat":          []byte("DOCID\x14NOTE\r\nDOC-A\x14café\r\n"),
+				"DATA/ab-package." + extension: []byte(pageMap),
+			}
+			for name, source := range rawFiles {
+				encoded, err := unicode.UTF16(unicode.LittleEndian, unicode.UseBOM).NewEncoder().Bytes(source)
+				require.NoError(t, err)
+				rawFiles[name] = encoded
+				require.NoError(t, os.WriteFile(filepath.Join(root, "VOL001", filepath.FromSlash(name)), encoded, 0o600))
+			}
+			body, err := json.Marshal(api.PackagePreflightRequest{Profile: "dat-concordance-v1", Encoding: "utf-16le", SourceKind: "root", SourceRef: root})
+			require.NoError(t, err)
+			response := srv.post(t, string(body))
+			require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+			var out api.PackagePreflight
+			require.NoError(t, json.Unmarshal(response.Body.Bytes(), &out))
+			require.False(t, out.Blocking, "%+v", out.Diagnostics)
+			manifest, err := catalog.Blobs.OpenContext(t.Context(), out.ManifestSHA256)
+			require.NoError(t, err)
+			defer func() { require.NoError(t, manifest.Close()) }()
+			scanner := bufio.NewScanner(manifest)
+			found := 0
+			for scanner.Scan() {
+				var item struct {
+					Kind  string         `json:"kind"`
+					Value jsontext.Value `json:"value"`
+				}
+				require.NoError(t, json.Unmarshal(scanner.Bytes(), &item))
+				if item.Kind != "file" {
+					continue
+				}
+				var ref loadfile.FileRef
+				require.NoError(t, json.Unmarshal(item.Value, &ref))
+				if ref.Role != "raw_load_file" {
+					continue
+				}
+				found++
+				source, exists := rawFiles[ref.RelPath]
+				require.True(t, exists)
+				assert.Equal(t, "VOL001", ref.Volume)
+				assert.Equal(t, int64(len(source)), ref.Size)
+				assert.Equal(t, fmt.Sprintf("%x", sha256.Sum256(source)), ref.SHA256)
+			}
+			require.NoError(t, scanner.Err())
+			assert.Equal(t, 2, found)
+		})
+	}
 }
 
 func TestPreflightCancellationDoesNotPersistReceipt(t *testing.T) {

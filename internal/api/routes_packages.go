@@ -266,7 +266,8 @@ func buildPackagePreflight(ctx context.Context, d Deps, g *gate, owner string, r
 	if profile.ID == "csv-rfc4180-v1" {
 		scan = loadfile.ScanCSV
 	}
-	diagnostics, parseErr := scan(dat, profile, func(record loadfile.Record) error {
+	datDigest := sha256.New()
+	diagnostics, parseErr := scan(io.TeeReader(dat, datDigest), profile, func(record loadfile.Record) error {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
@@ -280,9 +281,13 @@ func buildPackagePreflight(ctx context.Context, d Deps, g *gate, owner string, r
 		records = append(records, record)
 		return nil
 	})
+	datSize, positionErr := dat.Seek(0, io.SeekCurrent)
 	closeErr := dat.Close()
-	if parseErr != nil || closeErr != nil {
-		return PackagePreflight{}, errors.Join(parseErr, closeErr)
+	if err := errors.Join(parseErr, positionErr, closeErr); err != nil {
+		return PackagePreflight{}, err
+	}
+	if datSize != dat.Size() {
+		return PackagePreflight{}, fmt.Errorf("%w: metadata load file size changed during preflight", loadfile.ErrMalformedInput)
 	}
 	mapping := loadfile.Mapping{Contract: loadfile.MappingContractV1}
 	mappingSHA, err := packageMappingSHA256(mapping)
@@ -316,6 +321,7 @@ func buildPackagePreflight(ctx context.Context, d Deps, g *gate, owner string, r
 		return PackagePreflight{}, err
 	}
 	images := []loadfile.ImageRef{}
+	var pageMapFile loadfile.FileRef
 	if pageMapPath != "" {
 		pageMapVolume, pageMapRel, pathErr := packagePathReference(resolver.Root, pageMapPath, volumes, mapping.VolumeRoots)
 		if pathErr != nil {
@@ -341,6 +347,8 @@ func buildPackagePreflight(ctx context.Context, d Deps, g *gate, owner string, r
 		if openErr != nil {
 			return PackagePreflight{}, openErr
 		}
+		pageMapDigest := sha256.New()
+		pageMapSource := io.TeeReader(opt, pageMapDigest)
 		var optDiagnostics []loadfile.Diagnostic
 		visit := func(image loadfile.ImageRef) error {
 			if err := ctx.Err(); err != nil {
@@ -356,17 +364,30 @@ func buildPackagePreflight(ctx context.Context, d Deps, g *gate, owner string, r
 			return nil
 		}
 		if mapProfileID == "lfp-ipro-v1" {
-			parseErr = loadfile.ScanLFP(ctx, opt, pageMapProfile, visit)
+			parseErr = loadfile.ScanLFP(ctx, pageMapSource, pageMapProfile, visit)
 		} else {
-			optDiagnostics, parseErr = loadfile.ScanOPT(ctx, opt, pageMapProfile, visit)
+			optDiagnostics, parseErr = loadfile.ScanOPT(ctx, pageMapSource, pageMapProfile, visit)
 		}
+		pageMapSize, positionErr := opt.Seek(0, io.SeekCurrent)
 		closeErr = opt.Close()
 		diagnostics = append(diagnostics, optDiagnostics...)
-		if parseErr != nil || closeErr != nil {
-			return PackagePreflight{}, errors.Join(parseErr, closeErr)
+		if err := errors.Join(parseErr, positionErr, closeErr); err != nil {
+			return PackagePreflight{}, err
 		}
+		if pageMapSize != opt.Size() {
+			return PackagePreflight{}, fmt.Errorf("%w: page map size changed during preflight", loadfile.ErrMalformedInput)
+		}
+		pageMapFile = loadfile.FileRef{Role: "raw_load_file", Volume: pageMapVolume.Name, RelPath: pageMapRel, Declared: pageMapRel,
+			SHA256: hex.EncodeToString(pageMapDigest.Sum(nil)), Size: pageMapSize, Status: "available"}
 	}
-	validated, err := loadfile.Validate(ctx, loadfile.ValidateInput{Records: records, Images: images, Volumes: volumes, Resolver: resolver, PageCount: func(file io.ReadSeeker) (int, error) {
+	loadFileCount := 1
+	if pageMapPath != "" {
+		loadFileCount++
+	}
+	if err := memoryBudget.add(packageManifestFilesMemory(records, images, loadFileCount)); err != nil {
+		return PackagePreflight{}, err
+	}
+	files, validated, err := loadfile.Validate(ctx, loadfile.ValidateInput{Records: records, Images: images, Volumes: volumes, Resolver: resolver, PageCount: func(file io.ReadSeeker) (int, error) {
 		return pdfapi.PageCount(file, nil)
 	}})
 	if err != nil {
@@ -381,27 +402,10 @@ func buildPackagePreflight(ctx context.Context, d Deps, g *gate, owner string, r
 	if err != nil {
 		return PackagePreflight{}, err
 	}
-	loadFileCount := 1
+	files = append(files, loadfile.FileRef{Role: "raw_load_file", Volume: datVolume.Name, RelPath: datRel, Declared: datRel,
+		SHA256: hex.EncodeToString(datDigest.Sum(nil)), Size: datSize, Status: "available"})
 	if pageMapPath != "" {
-		loadFileCount++
-	}
-	if err := memoryBudget.add(packageManifestFilesMemory(records, images, loadFileCount)); err != nil {
-		return PackagePreflight{}, err
-	}
-	files, err := hashPackageFiles(ctx, resolver, volumes, records, images, []packageLoadFile{{volume: datVolume, relPath: datRel}})
-	if err != nil {
-		return PackagePreflight{}, err
-	}
-	if pageMapPath != "" {
-		pageMapVolume, pageMapRel, pathErr := packagePathReference(resolver.Root, pageMapPath, volumes, mapping.VolumeRoots)
-		if pathErr != nil {
-			return PackagePreflight{}, pathErr
-		}
-		extra, hashErr := hashPackageFile(ctx, resolver, pageMapVolume, pageMapRel, "raw_load_file")
-		if hashErr != nil {
-			return PackagePreflight{}, hashErr
-		}
-		files = append(files, extra)
+		files = append(files, pageMapFile)
 	}
 	manifest := loadfile.Manifest{ProfileSHA256: profileSHA, MappingSHA256: mappingSHA, Mapping: mapping, Volumes: volumes, Records: records, Images: images, Files: files}
 	manifestSHA, err := manifest.SHA256()
@@ -636,97 +640,6 @@ func packagePathReference(root, path string, volumes []loadfile.Volume, volumeRo
 		return best, strings.TrimPrefix(rel, bestRoot+"/"), nil
 	}
 	return loadfile.Volume{}, "", loadfile.ErrUnsafeReference
-}
-
-type packageLoadFile struct {
-	volume  loadfile.Volume
-	relPath string
-}
-
-func hashPackageFiles(ctx context.Context, resolver *loadfile.Resolver, volumes []loadfile.Volume, records []loadfile.Record, images []loadfile.ImageRef, loadFiles []packageLoadFile) ([]loadfile.FileRef, error) {
-	byName := make(map[string]loadfile.Volume, len(volumes))
-	for _, volume := range volumes {
-		byName[volume.Name] = volume
-	}
-	files := make([]loadfile.FileRef, 0, len(images)+len(loadFiles))
-	for recordIndex := range records {
-		for fileIndex := range records[recordIndex].Files {
-			ref := &records[recordIndex].Files[fileIndex]
-			volume, ok := byName[ref.Volume]
-			if !ok || ref.Status != "available" {
-				continue
-			}
-			hashed, err := hashPackageFile(ctx, resolver, volume, ref.RelPath, ref.Role)
-			if err != nil {
-				if errors.Is(err, loadfile.ErrUnsafeReference) {
-					ref.Status = "missing"
-					files = append(files, *ref)
-					continue
-				}
-				return nil, err
-			}
-			hashed.Declared = ref.Declared
-			*ref = hashed
-			files = append(files, hashed)
-		}
-	}
-	for _, image := range images {
-		volume, ok := byName[image.Volume]
-		if !ok {
-			continue
-		}
-		hashed, err := hashPackageFile(ctx, resolver, volume, image.RelPath, "page_image")
-		if err != nil {
-			if errors.Is(err, loadfile.ErrUnsafeReference) {
-				files = append(files, loadfile.FileRef{Role: "page_image", Volume: volume.Name, RelPath: image.RelPath, Declared: image.RelPath, Status: "missing"})
-				continue
-			}
-			return nil, err
-		}
-		files = append(files, hashed)
-	}
-	for _, loadFile := range loadFiles {
-		hashed, err := hashPackageFile(ctx, resolver, loadFile.volume, loadFile.relPath, "raw_load_file")
-		if err != nil {
-			return nil, err
-		}
-		files = append(files, hashed)
-	}
-	return files, nil
-}
-
-func hashPackageFile(ctx context.Context, resolver *loadfile.Resolver, volume loadfile.Volume, relPath, role string) (loadfile.FileRef, error) {
-	if err := ctx.Err(); err != nil {
-		return loadfile.FileRef{}, err
-	}
-	file, err := resolver.Open(volume, relPath)
-	if err != nil {
-		return loadfile.FileRef{}, err
-	}
-	digest := sha256.New()
-	defer func() { _ = file.Close() }()
-	var size int64
-	buffer := make([]byte, 32<<10)
-	for {
-		if err := ctx.Err(); err != nil {
-			return loadfile.FileRef{}, err
-		}
-		n, readErr := file.Read(buffer)
-		if n > 0 {
-			_, _ = digest.Write(buffer[:n])
-			size += int64(n)
-		}
-		if errors.Is(readErr, io.EOF) {
-			break
-		}
-		if readErr != nil {
-			return loadfile.FileRef{}, readErr
-		}
-	}
-	if err := file.Close(); err != nil {
-		return loadfile.FileRef{}, err
-	}
-	return loadfile.FileRef{Role: role, Volume: volume.Name, RelPath: relPath, Declared: relPath, SHA256: hex.EncodeToString(digest.Sum(nil)), Status: "available", Size: size}, nil
 }
 
 func packageMappingSHA256(mapping loadfile.Mapping) (string, error) {
