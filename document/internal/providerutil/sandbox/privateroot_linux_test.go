@@ -7,6 +7,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -61,8 +62,25 @@ func TestRuntimeSourceMutationAfterSealingCannotChangeBytes(t *testing.T) {
 }
 
 func TestRuntimePreflightRequiresHeadroom(t *testing.T) {
-	err := preflightRuntimeFDLimitValues(1_000, 100, 100)
-	require.ErrorIs(t, err, ErrPrivateRootUnavailable)
+	if os.Getenv("DOCBANK_PREFLIGHT_HELPER") == "1" {
+		runtimeEntries := 1
+		required := requiredRuntimeFDs(runtimeEntries)
+		limit := unix.Rlimit{Cur: required - 1, Max: required + 64}
+		require.NoError(t, unix.Setrlimit(unix.RLIMIT_NOFILE, &limit))
+		require.NoError(t, preflightRuntimeFDLimit(runtimeEntries))
+		var raised unix.Rlimit
+		require.NoError(t, unix.Getrlimit(unix.RLIMIT_NOFILE, &raised))
+		require.GreaterOrEqual(t, raised.Cur, required)
+
+		limit = unix.Rlimit{Cur: required - 1, Max: required - 1}
+		require.NoError(t, unix.Setrlimit(unix.RLIMIT_NOFILE, &limit))
+		require.ErrorIs(t, preflightRuntimeFDLimit(runtimeEntries), ErrPrivateRootUnavailable)
+		return
+	}
+	command := exec.Command(os.Args[0], "-test.run", "^TestRuntimePreflightRequiresHeadroom$", "-test.v") //nolint:gosec // fixed selector runs this test binary only
+	command.Env = append(os.Environ(), "DOCBANK_PREFLIGHT_HELPER=1")
+	output, err := command.CombinedOutput()
+	require.NoError(t, err, "%s", output)
 }
 
 func TestPrivateRootControlCapacity(t *testing.T) {

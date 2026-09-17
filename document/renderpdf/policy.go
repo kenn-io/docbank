@@ -69,10 +69,10 @@ func NewPolicy(renderer Renderer, limits Limits) (Policy, error) {
 	if err := validateImmutableIdentity(renderer.RuntimeIdentity, "renderer runtime identity"); err != nil {
 		return Policy{}, err
 	}
-	if err := validateRuntimeEntries(renderer); err != nil {
+	if err := validateLimits(limits); err != nil {
 		return Policy{}, err
 	}
-	if err := validateLimits(limits); err != nil {
+	if err := validateRuntimeEntries(renderer, limits.MaxRuntimeEntries); err != nil {
 		return Policy{}, err
 	}
 	runner := renderer.Runner
@@ -147,12 +147,15 @@ func NewPolicy(renderer Renderer, limits Limits) (Policy, error) {
 		runnerID: runner.Identity(), fingerprint: digest(encoded)}, nil
 }
 
-func validateRuntimeEntries(renderer Renderer) error {
+func validateRuntimeEntries(renderer Renderer, maxEntries int) error {
 	if len(renderer.Runtime)+len(renderer.RuntimeSymlinks) == 0 {
 		return errors.New("renderer runtime is required")
 	}
 	if len(renderer.Runtime)+len(renderer.RuntimeSymlinks) > sandbox.MaxRuntimeEntries {
 		return errors.New("renderer runtime exceeds entry limit")
+	}
+	if len(renderer.Runtime)+len(renderer.RuntimeSymlinks) > maxEntries {
+		return errors.New("renderer runtime exceeds configured entry limit")
 	}
 	if err := (sandbox.Policy{
 		Mode:       sandbox.SupervisedFileMode,

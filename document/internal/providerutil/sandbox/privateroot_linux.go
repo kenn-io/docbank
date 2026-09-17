@@ -52,17 +52,6 @@ func requiredRuntimeFDs(runtimeEntries int) uint64 {
 	return uint64(runtimeFDBase) + uint64(runtimeEntries) + 64
 }
 
-func preflightRuntimeFDLimitValues(runtimeEntries int, current, maximum uint64) error {
-	if runtimeEntries < 0 || runtimeEntries > MaxRuntimeEntries {
-		return ErrPrivateRootUnavailable
-	}
-	required := requiredRuntimeFDs(runtimeEntries)
-	if current < required && maximum < required {
-		return ErrPrivateRootUnavailable
-	}
-	return nil
-}
-
 func prepareRuntimeFiles(ctx context.Context, root *PrivateRoot) ([]*os.File, error) {
 	// ponytail: per-file snapshot and mount cost, upgrade trigger: content-addressed runtime image.
 	if err := preflightRuntimeFDLimit(len(root.Runtime)); err != nil {

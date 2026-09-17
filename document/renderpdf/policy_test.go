@@ -30,6 +30,27 @@ func TestNewPolicyValidatesIdentityAndTighteningLimits(t *testing.T) {
 	assert.Equal(t, testRunnerIdentity, policy.RunnerIdentity())
 }
 
+func TestNewPolicyEnforcesSelectedRuntimeEntryLimit(t *testing.T) {
+	executable, err := os.Executable()
+	require.NoError(t, err)
+	content, err := os.ReadFile(executable)
+	require.NoError(t, err)
+	runtimeFiles := []RuntimeFile{
+		{SourcePath: executable, GuestPath: "/usr/bin/test-runner", SHA256: digest(content), Executable: true},
+		{SourcePath: executable, GuestPath: "/usr/lib/test-runtime", SHA256: digest(content)},
+	}
+	runtimeIdentity, err := runtimeIdentityForManifest(runtimeFiles, nil)
+	require.NoError(t, err)
+	limits := DefaultLimits()
+	limits.MaxRuntimeEntries = 1
+	_, err = NewPolicy(Renderer{
+		Executable: executable, ExecutableSHA256: digest(content),
+		Runtime: runtimeFiles, RuntimeIdentity: runtimeIdentity,
+		Runner: &recordingRunner{identity: testRunnerIdentity},
+	}, limits)
+	require.ErrorContains(t, err, "configured entry limit")
+}
+
 func TestNewPolicyRejectsInvalidIdentitiesAndLimits(t *testing.T) {
 	executable, err := os.Executable()
 	require.NoError(t, err)

@@ -10,6 +10,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -133,12 +134,81 @@ func TestLibreOfficeRejectsOrStripsExternalDOCXTargets(t *testing.T) {
 
 func TestLibreOfficeCancellationReapsProcessTree(t *testing.T) {
 	policy := realLibreOfficePolicy(t, nil)
-	ctx, cancel := context.WithTimeout(t.Context(), 100*time.Millisecond)
+	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
-	result, err := Convert(ctx, testSource(t, realDOCX(false, "", ""), docxMediaType), "docx", policy)
+	source := testSource(t, realDOCX(false, "", ""), docxMediaType)
+	outcome := make(chan struct {
+		result *Result
+		err    error
+	}, 1)
+	go func() {
+		result, err := Convert(ctx, source, "docx", policy)
+		outcome <- struct {
+			result *Result
+			err    error
+		}{result: result, err: err}
+	}()
+	pids := waitForLibreOfficeStart(t, policy.renderer.Executable)
+	t.Logf("owner cancellation observed LibreOffice pids=%v", pids)
+	cancel()
+	finished := <-outcome
+	result, err := finished.result, finished.err
 	assert.Nil(t, result)
 	require.Error(t, err)
-	assert.True(t, strings.Contains(err.Error(), "timed out") || strings.Contains(err.Error(), "deadline exceeded"))
+	require.ErrorIs(t, err, context.Canceled)
+	waitForLibreOfficeExit(t, policy.renderer.Executable)
+	assert.Empty(t, matchingLibreOfficePIDs(policy.renderer.Executable))
+}
+
+func waitForLibreOfficeStart(t *testing.T, executable string) map[int]struct{} {
+	t.Helper()
+	deadline := time.Now().Add(30 * time.Second)
+	for time.Now().Before(deadline) {
+		pids := matchingLibreOfficePIDs(executable)
+		if len(pids) != 0 {
+			return pids
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Fatalf("LibreOffice did not start: executable=%s", executable)
+	return nil
+}
+
+func waitForLibreOfficeExit(t *testing.T, executable string) {
+	t.Helper()
+	deadline := time.Now().Add(30 * time.Second)
+	for time.Now().Before(deadline) {
+		if len(matchingLibreOfficePIDs(executable)) == 0 {
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Fatalf("LibreOffice descendant survived cancellation: executable=%s pids=%v", executable, matchingLibreOfficePIDs(executable))
+}
+
+func matchingLibreOfficePIDs(executable string) map[int]struct{} {
+	result := make(map[int]struct{})
+	entries, err := os.ReadDir("/proc")
+	if err != nil {
+		return result
+	}
+	base := filepath.Base(executable)
+	for _, entry := range entries {
+		pid, err := strconv.Atoi(entry.Name())
+		if err != nil {
+			continue
+		}
+		path := filepath.Join("/proc", entry.Name())
+		commandLine, err := os.ReadFile(filepath.Join(path, "cmdline"))
+		if err != nil {
+			continue
+		}
+		arguments := bytes.Split(commandLine, []byte{0})
+		if len(arguments) > 0 && filepath.Base(string(arguments[0])) == base {
+			result[pid] = struct{}{}
+		}
+	}
+	return result
 }
 
 //nolint:unparam // the wrapper permits injected runners for owner variants.
