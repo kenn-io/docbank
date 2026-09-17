@@ -3,6 +3,7 @@
 package sandbox
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -41,6 +42,36 @@ func TestNativeRunnerUsesExactStdinArgumentsAndCleanEnvironment(t *testing.T) {
 	assert.Equal(t, cleanSandboxEnvironment(), response.Environment)
 	assert.Equal(t, "strict-exec", result.Attestation.FilesystemMode)
 	assert.False(t, result.Attestation.PrivateRootInstalled)
+}
+
+func TestAuthenticatedLaunchChecksTokenSealFstatAndExecutableBinding(t *testing.T) {
+	request := sandboxTestRequest(t, buildSandboxHelper(t, "echo", "", ""), []byte("input"), 1<<20)
+	control, token, err := openLaunchControl(request)
+	require.NoError(t, err)
+	defer func() { _ = control.Close() }()
+	arguments := []string{"/proc/self/exe", launcherMarker, token, request.Policy.Executable}
+	_, authenticated := authenticatedLaunch(arguments, int(control.Fd()))
+	assert.True(t, authenticated)
+	badToken := append([]string(nil), arguments...)
+	badToken[2] = strings.Repeat("0", launcherTokenBytes*2)
+	_, authenticated = authenticatedLaunch(badToken, int(control.Fd()))
+	assert.False(t, authenticated)
+	badExecutable := append([]string(nil), arguments...)
+	badExecutable[3] = filepath.Join(filepath.Dir(request.Policy.Executable), "other")
+	_, authenticated = authenticatedLaunch(badExecutable, int(control.Fd()))
+	assert.False(t, authenticated)
+	_, authenticated = authenticatedLaunch(arguments, -1)
+	assert.False(t, authenticated)
+	unsealedFD, err := unix.MemfdCreate("unsealed", unix.MFD_CLOEXEC)
+	require.NoError(t, err)
+	defer func() { _ = unix.Close(unsealedFD) }()
+	_, authenticated = authenticatedLaunch(arguments, unsealedFD)
+	assert.False(t, authenticated)
+}
+
+func TestLauncherRejectsOutOfBandStatus(t *testing.T) {
+	assert.False(t, launcherReadyStatusRead(bytes.NewReader([]byte{launcherFailureStatus})))
+	assert.True(t, launcherReadyStatusRead(bytes.NewReader([]byte{launcherReadyStatus})))
 }
 
 func TestNativeRunnerDeniesLoopbackNetworkAccess(t *testing.T) {
@@ -144,6 +175,78 @@ func TestSupervisedRunnerRetriesExit81Once(t *testing.T) {
 		buildSandboxHelper(t, "file-exit81-once", "", "result.bin")))
 	require.NoError(t, err)
 	assert.Equal(t, []byte("retried output"), result.Output)
+	assert.Equal(t, 1, result.Attestation.RestartCount)
+}
+
+func TestSupervisedRunnerPassesOnlyPolicyArguments(t *testing.T) {
+	runner, err := NewNativeRunner()
+	require.NoError(t, err)
+	request := privateTestRequest(t, buildSandboxHelper(t, "argv", "", "result.bin"))
+	request.Policy.Arguments = []string{"--alpha", "beta"}
+	result, err := runner.Run(t.Context(), request)
+	require.NoError(t, err)
+	assert.Equal(t, "--alpha\x00beta", string(result.Output))
+}
+
+func TestPrivateRootStagesRuntimeFilesAndMountModes(t *testing.T) {
+	runner, err := NewNativeRunner()
+	require.NoError(t, err)
+	request := privateTestRequest(t, buildSandboxHelper(t, "runtime-mounts", "", "result.bin"))
+	runtimeDir := t.TempDir()
+	executablePath := filepath.Join(runtimeDir, "exec")
+	dataPath := filepath.Join(runtimeDir, "data")
+	executableBytes := []byte("exec runtime")
+	dataBytes := []byte("data runtime")
+	require.NoError(t, os.WriteFile(executablePath, executableBytes, 0o644))
+	require.NoError(t, os.WriteFile(dataPath, dataBytes, 0o644))
+	executableDigest := sha256.Sum256(executableBytes)
+	dataDigest := sha256.Sum256(dataBytes)
+	request.Policy.Arguments = []string{"--runtime-mounts", "/usr/runtime/exec", "/usr/runtime/data", "/usr/runtime/link"}
+	request.Policy.PrivateRoot.Runtime = []RuntimeFile{
+		{SourcePath: dataPath, GuestPath: "/usr/runtime/data", SHA256: hex.EncodeToString(dataDigest[:])},
+		{SourcePath: executablePath, GuestPath: "/usr/runtime/exec", SHA256: hex.EncodeToString(executableDigest[:]), Executable: true},
+	}
+	request.Policy.PrivateRoot.Symlinks = []RuntimeSymlink{{GuestPath: "/usr/runtime/link", Target: "data"}}
+	result, err := runner.Run(t.Context(), request)
+	require.NoError(t, err)
+	assert.Contains(t, string(result.Output), "exec=true,data=false,link=false")
+	assert.Contains(t, string(result.Output), ";exec-content=exec runtime;data-content=data runtime")
+}
+
+func TestPrivateRootClosesRuntimeDescriptorsBeforeRendererExec(t *testing.T) {
+	runner, err := NewNativeRunner()
+	require.NoError(t, err)
+	request := privateTestRequest(t, buildSandboxHelper(t, "fd-count", "", "result.bin"))
+	runtimePath := filepath.Join(t.TempDir(), "runtime")
+	content := []byte("runtime")
+	require.NoError(t, os.WriteFile(runtimePath, content, 0o644))
+	digest := sha256.Sum256(content)
+	request.Policy.PrivateRoot.Runtime = []RuntimeFile{{
+		SourcePath: runtimePath, GuestPath: "/usr/runtime/data", SHA256: hex.EncodeToString(digest[:]),
+	}}
+	result, err := runner.Run(t.Context(), request)
+	require.NoError(t, err)
+	count, err := strconv.Atoi(string(result.Output))
+	require.NoError(t, err)
+	assert.LessOrEqual(t, count, 8)
+}
+
+func TestSupervisedRunnerClassifiesChildExit125(t *testing.T) {
+	runner, err := NewNativeRunner()
+	require.NoError(t, err)
+	_, err = runner.Run(t.Context(), privateTestRequest(t,
+		buildSandboxHelper(t, "exit-125", "", "result.bin")))
+	require.ErrorIs(t, err, ErrChildFailed)
+}
+
+func TestNativeRunnerCancellationBeforePreparation(t *testing.T) {
+	runner, err := NewNativeRunner()
+	require.NoError(t, err)
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	_, err = runner.Run(ctx, sandboxTestRequest(t,
+		buildSandboxHelper(t, "echo", "", ""), []byte("input"), 1<<20))
+	require.ErrorIs(t, err, ErrCanceledBeforeLaunch)
 }
 
 func TestNativeRunnerCancellationReapsDescendantProcessTree(t *testing.T) {
@@ -226,6 +329,20 @@ func TestPrivateRootUnixSocketFilters(t *testing.T) {
 	assert.Equal(t, uint32(unix.SECCOMP_RET_ALLOW), evaluateSeccompDomain(t, filters, uint32(unix.SYS_SOCKET), unix.AF_UNIX))
 	assert.Equal(t, uint32(unix.SECCOMP_RET_ALLOW), evaluateSeccompDomain(t, filters, uint32(unix.SYS_SOCKETPAIR), unix.AF_UNIX))
 	assert.Equal(t, denied, evaluateSeccompDomain(t, filters, uint32(unix.SYS_SENDMSG), unix.AF_UNIX))
+}
+
+func TestPrivateRootRejectsRuntimeEntryCeilingAtPolicyOwner(t *testing.T) {
+	root := &PrivateRoot{
+		Runtime:         make([]RuntimeFile, MaxRuntimeEntries+1),
+		RuntimeIdentity: "sha256:" + strings.Repeat("a", 64),
+		WorkBytes:       1, InputName: "input", OutputName: "output", MaxOutputBytes: 1,
+	}
+	policy := Policy{
+		Mode: SupervisedFileMode, Executable: "/renderer", ExecutableSHA256: strings.Repeat("b", 64),
+		Arguments: []string{"renderer"}, Environment: []string{"LANG=C"},
+		MaxStdinBytes: 1, MaxStdoutBytes: 1, PrivateRoot: root,
+	}
+	require.ErrorContains(t, policy.Validate(), "entry count")
 }
 
 func sandboxTestRequest(t *testing.T, executable string, stdin []byte, maxStdout int64) Request {

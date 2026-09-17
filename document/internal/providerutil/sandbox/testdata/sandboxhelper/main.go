@@ -9,6 +9,9 @@ import (
 	"net"
 	"os"
 	"os/exec"
+	"path/filepath"
+	"strconv"
+	"strings"
 	"time"
 
 	"golang.org/x/sys/unix"
@@ -152,6 +155,42 @@ func main() {
 			os.Exit(81)
 		}
 		if err := os.WriteFile("/work/"+outputName, []byte("retried output"), 0o600); err != nil {
+			os.Exit(5)
+		}
+	case "argv":
+		if err := os.WriteFile("/work/"+outputName, []byte(strings.Join(os.Args[1:], "\x00")), 0o600); err != nil {
+			os.Exit(5)
+		}
+	case "runtime-mounts":
+		if len(os.Args) < 4 {
+			os.Exit(6)
+		}
+		statuses := make([]string, 0, len(os.Args)-2)
+		for _, path := range os.Args[2:] {
+			var stat unix.Statfs_t
+			if err := unix.Statfs(path, &stat); err != nil {
+				os.Exit(7)
+			}
+			statuses = append(statuses, filepath.Base(path)+"="+strconv.FormatBool(stat.Flags&unix.ST_NOEXEC == 0))
+		}
+		execBytes, err := os.ReadFile("/usr/runtime/exec")
+		if err != nil {
+			os.Exit(8)
+		}
+		dataBytes, err := os.ReadFile("/usr/runtime/data")
+		if err != nil {
+			os.Exit(8)
+		}
+		payload := strings.Join(statuses, ",") + ";exec-content=" + string(execBytes) + ";data-content=" + string(dataBytes)
+		if err := os.WriteFile("/work/"+outputName, []byte(payload), 0o600); err != nil {
+			os.Exit(5)
+		}
+	case "fd-count":
+		entries, err := os.ReadDir("/proc/self/fd")
+		if err != nil {
+			os.Exit(9)
+		}
+		if err := os.WriteFile("/work/"+outputName, []byte(strconv.Itoa(len(entries))), 0o600); err != nil {
 			os.Exit(5)
 		}
 	case "exit-125":

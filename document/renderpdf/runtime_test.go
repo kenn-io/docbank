@@ -1,8 +1,14 @@
 package renderpdf
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
+	"net"
 	"os"
 	"path/filepath"
+	"runtime"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -12,16 +18,17 @@ import (
 )
 
 func TestRuntimeDiscoveryRejectsSpecialFiles(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("the owner proof uses a Linux Unix socket")
+	}
 	root := t.TempDir()
 	socketPath := filepath.Join(root, "socket")
-	file, err := os.Create(socketPath)
+	listener, err := net.Listen("unix", socketPath)
 	require.NoError(t, err)
-	require.NoError(t, file.Close())
-	require.NoError(t, os.Remove(socketPath))
+	defer func() { _ = listener.Close() }()
 	require.NoError(t, os.WriteFile(filepath.Join(root, "safe"), []byte("safe"), 0o644))
-	manifest, err := DiscoverRuntime([]string{root})
-	require.NoError(t, err)
-	assert.NotEmpty(t, manifest.Identity)
+	_, err = DiscoverRuntime([]string{root})
+	require.ErrorIs(t, err, sandbox.ErrRuntimeSpecialFile)
 }
 
 func TestRuntimeExecutableMappingIncludesMode0644ELF(t *testing.T) {
@@ -32,6 +39,33 @@ func TestRuntimeExecutableMappingIncludesMode0644ELF(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, manifest.Files, 1)
 	assert.True(t, manifest.Files[0].Executable)
+}
+
+func TestDiscoveredRuntimeManifestControlCapacity(t *testing.T) {
+	root := t.TempDir()
+	for index := range 1_000 {
+		path := filepath.Join(root, "runtime-"+strings.Repeat("0", 4-len(strconv.Itoa(index)))+strconv.Itoa(index))
+		require.NoError(t, os.WriteFile(path, []byte("runtime"), 0o644))
+	}
+	manifest, err := DiscoverRuntime([]string{root})
+	require.NoError(t, err)
+	digestBytes := sha256.Sum256([]byte("renderer"))
+	policy := sandbox.Policy{
+		Mode: sandbox.SupervisedFileMode, Executable: "/renderer",
+		ExecutableSHA256: hex.EncodeToString(digestBytes[:]), Arguments: []string{"renderer"},
+		Environment: []string{"LANG=C"}, MaxStdinBytes: 1, MaxStdoutBytes: 1,
+		PrivateRoot: &sandbox.PrivateRoot{
+			Runtime: manifest.Files, Symlinks: manifest.Symlinks,
+			RuntimeIdentity: manifest.Identity, WorkBytes: 1,
+			InputName: "input", OutputName: "output", MaxOutputBytes: 1,
+		},
+	}
+	encoded, err := json.Marshal(struct {
+		Policy      sandbox.Policy `json:"policy"`
+		StdinSHA256 string         `json:"stdin_sha256"`
+	}{Policy: policy, StdinSHA256: strings.Repeat("a", 64)})
+	require.NoError(t, err)
+	assert.Less(t, len(encoded), int(sandbox.MaxPrivateRootControlBytes))
 }
 
 func TestRuntimeIdentityChangesAfterSourceMutation(t *testing.T) {

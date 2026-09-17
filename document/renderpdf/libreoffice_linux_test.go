@@ -20,9 +20,10 @@ import (
 )
 
 type countingRunner struct {
-	inner Runner
-	mu    sync.Mutex
-	calls []Request
+	inner   Runner
+	mu      sync.Mutex
+	calls   []Request
+	results []StageResult
 }
 
 func (runner *countingRunner) Identity() string { return runner.inner.Identity() }
@@ -31,7 +32,11 @@ func (runner *countingRunner) Run(ctx context.Context, request Request) (StageRe
 	runner.mu.Lock()
 	runner.calls = append(runner.calls, request)
 	runner.mu.Unlock()
-	return runner.inner.Run(ctx, request)
+	result, err := runner.inner.Run(ctx, request)
+	runner.mu.Lock()
+	runner.results = append(runner.results, result)
+	runner.mu.Unlock()
+	return result, err
 }
 
 func (runner *countingRunner) count() int {
@@ -58,9 +63,19 @@ func TestLibreOfficeConvertsSafeDOCX(t *testing.T) {
 
 func TestLibreOfficeColdProfileRestartsExactlyOnce(t *testing.T) {
 	policy := realLibreOfficePolicy(t, nil)
+	runner := &countingRunner{inner: policy.runner}
+	policy.runner = runner
 	result, err := Convert(t.Context(), testSource(t, realDOCX(false, "", ""), docxMediaType), "docx", policy)
 	require.NoError(t, err)
 	require.NotNil(t, result)
+	runner.mu.Lock()
+	results := append([]StageResult(nil), runner.results...)
+	runner.mu.Unlock()
+	require.Len(t, results, 2)
+	for _, stage := range results {
+		assert.Equal(t, 1, stage.Attestation.RestartCount)
+	}
+	t.Logf("owner restart counts: normalize=%d pdf=%d", results[0].Attestation.RestartCount, results[1].Attestation.RestartCount)
 	t.Log("cold-profile owner conversion completed through the launcher's single retry contract")
 }
 
@@ -103,13 +118,16 @@ func TestLibreOfficeRejectsOrStripsExternalDOCXTargets(t *testing.T) {
 		require.NotNil(t, result)
 		assert.Equal(t, 2, runner.count())
 		stage := runner.call(1)
-		assert.NotContains(t, string(stage.Input), "external.png")
+		normalized := string(stage.Input)
+		assert.NotContains(t, normalized, "WEBSERVICE")
+		assert.NotContains(t, normalized, httpTarget)
+		assert.NotContains(t, normalized, fileTarget)
 		assert.Equal(t, digest(stage.Input), stage.InputSHA256)
 		t.Logf("admission branch: strip; stage calls=%d; normalized input sha256=%s", runner.count(), stage.InputSHA256)
 	} else {
 		assert.Nil(t, result)
 		assert.Equal(t, 1, runner.count())
-		t.Logf("admission branch: reject; stage calls=%d; error=%v", runner.count(), err)
+		t.Logf("admission branch: reject; stage calls=%d; listener hits=0; file sentinel=%q; error=%v", runner.count(), contentAfter, err)
 	}
 }
 
@@ -154,7 +172,7 @@ func realDOCX(external bool, httpTarget, fileTarget string) []byte {
 		"word/document.xml":   `<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><w:body><w:p><w:r><w:t>safe synthetic document</w:t></w:r></w:p>`,
 	}
 	if external {
-		entries["word/document.xml"] += `<w:p><w:r><w:drawing><wp:inline><wp:extent cx="1" cy="1"/><a:graphic><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/picture"><pic:pic><pic:blipFill><a:blip r:embed="rId2"/></pic:blipFill></pic:pic></a:graphicData></a:graphic></wp:inline></w:drawing></w:r></w:p><w:p><w:r><w:drawing><wp:inline><wp:extent cx="1" cy="1"/><a:graphic><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/picture"><pic:pic><pic:blipFill><a:blip r:embed="rId3"/></pic:blipFill></pic:pic></a:graphicData></a:graphic></wp:inline></w:drawing></w:r></w:p>`
+		entries["word/document.xml"] += `<w:p><w:r><w:drawing><wp:inline><wp:extent cx="1" cy="1"/><a:graphic><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/picture"><pic:pic><pic:blipFill><a:blip r:embed="rId2"/></pic:blipFill></pic:pic></a:graphicData></a:graphic></wp:inline></w:drawing></w:r></w:p><w:p><w:r><w:drawing><wp:inline><wp:extent cx="1" cy="1"/><a:graphic><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/picture"><pic:pic><pic:blipFill><a:blip r:embed="rId3"/></pic:blipFill></pic:pic></a:graphicData></a:graphic></wp:inline></w:drawing></w:r></w:p><w:p><w:fldSimple w:instr="WEBSERVICE(&quot;` + httpTarget + `&quot;)"><w:r><w:t>external field</w:t></w:r></w:fldSimple></w:p>`
 		entries["word/_rels/document.xml.rels"] = `<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="` + httpTarget + `" TargetMode="External"/><Relationship Id="rId3" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="` + fileTarget + `" TargetMode="External"/></Relationships>`
 	}
 	entries["word/document.xml"] += `</w:body></w:document>`

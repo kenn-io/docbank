@@ -24,17 +24,18 @@ import (
 )
 
 const (
-	NativeRunnerIdentity    = "sha256:afc3202c30a20fbb62fe6b7a4ccf282dea0ba16e40d22e7bdfa3f1d28819db16"
-	launcherMarker          = "--docbank-internal-sandbox-launch-v1"
-	launcherExecutableFD    = 3
-	launcherControlFD       = 4
-	launcherStatusFD        = 5
-	launcherTokenBytes      = 32
-	launcherFailureExitCode = 125
-	launcherOutputExitCode  = 124
-	launcherReadyStatus     = byte(1)
-	launcherFailureStatus   = byte(2)
-	childDrainWindow        = 250 * time.Millisecond
+	NativeRunnerIdentity      = "sha256:afc3202c30a20fbb62fe6b7a4ccf282dea0ba16e40d22e7bdfa3f1d28819db16"
+	launcherMarker            = "--docbank-internal-sandbox-launch-v1"
+	launcherExecutableFD      = 3
+	launcherControlFD         = 4
+	launcherStatusFD          = 5
+	launcherTokenBytes        = 32
+	launcherFailureExitCode   = 125
+	launcherOutputExitCode    = 124
+	launcherReadyStatus       = byte(1)
+	launcherFailureStatus     = byte(2)
+	launcherRestartStatusBase = byte(16)
+	childDrainWindow          = 250 * time.Millisecond
 )
 
 // Runner is the platform process boundary used by document providers.
@@ -130,6 +131,10 @@ func (nativeRunner) Run(ctx context.Context, request Request) (Result, error) {
 	if err := command.Start(); err != nil {
 		return Result{}, ErrUnavailable
 	}
+	_ = executable.Close()
+	for _, file := range runtimeFiles {
+		_ = file.Close()
+	}
 	_ = statusWriter.Close()
 
 	waited := make(chan error, 1)
@@ -144,6 +149,7 @@ func (nativeRunner) Run(ctx context.Context, request Request) (Result, error) {
 		runErr = <-waited
 	}
 	ready := <-launcherReady
+	restarts := launcherRestartCountRead(statusReader)
 	result := Result{
 		Stdout: output.Bytes(),
 		Attestation: Attestation{
@@ -154,6 +160,7 @@ func (nativeRunner) Run(ctx context.Context, request Request) (Result, error) {
 			PrivateRootInstalled: request.Policy.Mode == SupervisedFileMode,
 			RuntimeIdentity:      runtimeIdentity(request.Policy),
 			UnixIPCAllowed:       request.Policy.Mode == SupervisedFileMode && request.Policy.PrivateRoot.UnixIPC,
+			RestartCount:         restarts,
 		},
 	}
 	result.Output = slices.Clone(result.Stdout)
@@ -180,6 +187,14 @@ func launcherReadyStatusRead(reader io.Reader) bool {
 	status := []byte{0}
 	_, err := io.ReadFull(reader, status)
 	return err == nil && status[0] == launcherReadyStatus
+}
+
+func launcherRestartCountRead(reader io.Reader) int {
+	status := []byte{0}
+	if _, err := io.ReadFull(reader, status); err != nil || status[0] < launcherRestartStatusBase {
+		return 0
+	}
+	return int(status[0] - launcherRestartStatusBase)
 }
 
 func runtimeIdentity(policy Policy) string {

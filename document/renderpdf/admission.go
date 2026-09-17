@@ -174,6 +174,12 @@ func inspectAttribute(attribute xml.Attr) error {
 		return nil
 	}
 	local := strings.ToLower(attribute.Name.Local)
+	if (local == "value" && strings.Contains(attribute.Name.Space, "field")) ||
+		local == "formula" || local == "f" || local == "instr" || local == "command" {
+		if hasUnsafeFormula(attribute.Value) {
+			return errors.New("normalized ODF contains an external or linked formula")
+		}
+	}
 	if attribute.Name.Space == "http://www.w3.org/1999/xlink" && local == "href" {
 		if allowedInternalLink(attribute.Value) {
 			return nil

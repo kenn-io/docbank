@@ -516,10 +516,10 @@ The receipt does not authorize upload. Your application must:
 
 This Go API does not add CSV OCR to the daemon or CLI.
 
-## Convert DOCX or XLSX locally to PDF
+## Convert DOCX locally to PDF
 
 Use `document/renderpdf` when an application needs a local PDF derived from a
-DOCX or XLSX source. The converter uses an operator-pinned LibreOffice
+DOCX source. The converter uses an operator-pinned LibreOffice
 executable. It first writes flat ODF inside the Linux sandbox, checks the
 normalized XML for external or active content, and then renders only admitted
 bytes to PDF.
@@ -541,10 +541,10 @@ if err != nil {
 // Keep receipt with pdfSource before a later caller authorizes upload.
 ```
 
-The initial profiles accept DOCX to FODT and XLSX to FODS. The normalized scan
-rejects external and relative links, DDE and database sources, scripts, event
-handlers, linked fields, external formulas, and opaque active objects. Local
-formulas, internal fragment links, and embedded raster images remain valid.
+The DOCX profile emits FODT. Normalization strips unsafe external and active
+constructs where LibreOffice can remove them; the normalized scan rejects any
+such constructs that survive. Local formulas, internal fragment links, and
+embedded raster images remain valid.
 
 The receipt records both source and normalized identities, the exact PDF hash,
 the page count, the policy, and the runtime identities. `Result.Source` is a

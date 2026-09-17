@@ -145,6 +145,11 @@ func TestConvertCloseFailureDiscardsResult(t *testing.T) {
 
 func testPolicy(t *testing.T, runner Runner) Policy {
 	t.Helper()
+	return testPolicyWithLimits(t, runner, DefaultLimits())
+}
+
+func testPolicyWithLimits(t *testing.T, runner Runner, limits Limits) Policy {
+	t.Helper()
 	executable, err := os.Executable()
 	require.NoError(t, err)
 	content, err := os.ReadFile(executable)
@@ -155,7 +160,7 @@ func testPolicy(t *testing.T, runner Runner) Policy {
 	policy, err := NewPolicy(Renderer{
 		Executable: executable, ExecutableSHA256: digest(content),
 		Runtime: []RuntimeFile{runtimeFile}, RuntimeIdentity: runtimeIdentity, Runner: runner,
-	}, DefaultLimits())
+	}, limits)
 	require.NoError(t, err)
 	return policy
 }
@@ -212,10 +217,16 @@ func flatODF(kind, body string) []byte {
 }
 
 func testPDFBytes() []byte {
+	return testPDFBytesPages(1)
+}
+
+func testPDFBytesPages(pages int) []byte {
 	pdf := fpdf.New("P", "pt", "A4", "")
-	pdf.AddPage()
-	pdf.SetFont("Arial", "", 12)
-	pdf.Cell(40, 10, "synthetic")
+	for range pages {
+		pdf.AddPage()
+		pdf.SetFont("Arial", "", 12)
+		pdf.Cell(40, 10, "synthetic")
+	}
 	var output bytes.Buffer
 	if err := pdf.Output(&output); err != nil {
 		return nil

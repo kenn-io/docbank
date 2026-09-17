@@ -6,7 +6,6 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"errors"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -62,21 +61,22 @@ func TestRuntimeSourceMutationAfterSealingCannotChangeBytes(t *testing.T) {
 }
 
 func TestRuntimePreflightRequiresHeadroom(t *testing.T) {
-	err := preflightRuntimeFDLimit(MaxRuntimeEntries)
-	if errors.Is(err, ErrPrivateRootUnavailable) {
-		return
-	}
-	require.NoError(t, err)
+	err := preflightRuntimeFDLimitValues(1_000, 100, 100)
+	require.ErrorIs(t, err, ErrPrivateRootUnavailable)
 }
 
 func TestPrivateRootControlCapacity(t *testing.T) {
 	executable, err := filepath.Abs("runtime")
 	require.NoError(t, err)
+	content := []byte("discovered runtime bytes")
+	require.NoError(t, os.WriteFile(executable, content, 0o600))
+	t.Cleanup(func() { _ = os.Remove(executable) })
+	digest := sha256.Sum256(content)
 	files := make([]RuntimeFile, 0, 1000)
 	for index := range 1000 {
 		files = append(files, RuntimeFile{
-			SourcePath: executable, GuestPath: "/usr/runtime/" + filepath.Base(executable) + string(rune('a'+index%26)),
-			SHA256: strings.Repeat("a", 64),
+			SourcePath: executable, GuestPath: "/usr/runtime/file-" + strconv.Itoa(index),
+			SHA256: hex.EncodeToString(digest[:]),
 		})
 	}
 	root := &PrivateRoot{

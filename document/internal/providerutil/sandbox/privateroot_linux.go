@@ -32,7 +32,7 @@ func preflightRuntimeFDLimit(runtimeEntries int) error {
 	if err := unix.Getrlimit(unix.RLIMIT_NOFILE, &limit); err != nil {
 		return fmt.Errorf("%w: query file descriptor limit: %w", ErrPrivateRootUnavailable, err)
 	}
-	required := uint64(runtimeFDBase+runtimeEntries) + 64
+	required := requiredRuntimeFDs(runtimeEntries)
 	if limit.Cur < required && limit.Max >= required {
 		limit.Cur = limit.Max
 		if err := unix.Setrlimit(unix.RLIMIT_NOFILE, &limit); err == nil {
@@ -41,6 +41,24 @@ func preflightRuntimeFDLimit(runtimeEntries int) error {
 	}
 	if limit.Cur < required {
 		return fmt.Errorf("%w: need %d file descriptors, have %d", ErrPrivateRootUnavailable, required, limit.Cur)
+	}
+	return nil
+}
+
+func requiredRuntimeFDs(runtimeEntries int) uint64 {
+	if runtimeEntries < 0 {
+		return 0
+	}
+	return uint64(runtimeFDBase) + uint64(runtimeEntries) + 64
+}
+
+func preflightRuntimeFDLimitValues(runtimeEntries int, current, maximum uint64) error {
+	if runtimeEntries < 0 || runtimeEntries > MaxRuntimeEntries {
+		return ErrPrivateRootUnavailable
+	}
+	required := requiredRuntimeFDs(runtimeEntries)
+	if current < required && maximum < required {
+		return ErrPrivateRootUnavailable
 	}
 	return nil
 }
@@ -140,6 +158,14 @@ func sealRuntimeFile(ctx context.Context, entry RuntimeFile, remaining int64) (*
 }
 
 func installPrivateRoot(control launchControl, executableFD int) error {
+	defer func() {
+		_ = unix.Close(executableFD)
+		if control.Policy.PrivateRoot != nil {
+			for index := range control.Policy.PrivateRoot.Runtime {
+				_ = unix.Close(runtimeFDBase + index)
+			}
+		}
+	}()
 	root := privateRootMountPath
 	stage := filepath.Join("/tmp", fmt.Sprintf("docbank-runtime-stage-%d", os.Getpid()))
 	if err := os.MkdirAll(stage, 0o700); err != nil {
@@ -214,7 +240,6 @@ func openPrivateRootDevices() ([]int, error) {
 func makePrivateRootSkeleton(root string, workBytes int64) error {
 	for _, directory := range []string{
 		"bin", "dev", "etc", "lib", "lib64", "proc", "usr", "work", "tmp",
-		"mnt",
 		"work/home", "work/home/cache", "work/out", "work/profile", "work/profile/user",
 		"work/tmp", "oldroot",
 	} {
@@ -393,19 +418,6 @@ func materializeDescriptor(fd int, target string, executable bool) error {
 	return nil
 }
 
-//nolint:unused // descriptor-backed mount path for kernels that support it.
-func moveDescriptorMount(fd int, target string) error {
-	tree, err := unix.OpenTree(unix.AT_FDCWD, procFD(fd), unix.OPEN_TREE_CLONE|unix.OPEN_TREE_CLOEXEC)
-	if err != nil {
-		return fmt.Errorf("open descriptor tree: %w", err)
-	}
-	defer func() { _ = unix.Close(tree) }()
-	if err := unix.MoveMount(tree, "", unix.AT_FDCWD, target, unix.MOVE_MOUNT_F_EMPTY_PATH); err != nil {
-		return fmt.Errorf("move descriptor tree: %w", err)
-	}
-	return nil
-}
-
 func procFD(fd int) string {
 	return filepath.Join("/proc/self/fd", strconv.Itoa(fd))
 }
@@ -435,15 +447,15 @@ func pivotAndDetachRoot(root string) error {
 	return nil
 }
 
-func installPrivateLandlock() error {
-	return installLandlock(privateRootLandlockPaths(), privateRootLandlockFiles(), privateRootLandlockDevices(), true)
+func installPrivateLandlock(executablePath string) error {
+	return installLandlock(privateRootLandlockPaths(), privateRootLandlockFiles(), privateRootLandlockDevices(), true, filepath.Dir(executablePath))
 }
 
 func installExecLandlock() error {
 	return installLandlock(execLandlockPaths(), execLandlockFiles(), execLandlockDevices(), false)
 }
 
-func installLandlock(paths, files []string, devices map[string]uint64, private bool) error {
+func installLandlock(paths, files []string, devices map[string]uint64, private bool, extraPaths ...string) error {
 	version, _, errno := unix.Syscall6(
 		unix.SYS_LANDLOCK_CREATE_RULESET, 0, 0, unix.LANDLOCK_CREATE_RULESET_VERSION, 0, 0, 0,
 	)
@@ -479,6 +491,11 @@ func installLandlock(paths, files []string, devices map[string]uint64, private b
 	defer func() { _ = unix.Close(int(rulesetFD)) }()
 	readOnly := uint64(unix.LANDLOCK_ACCESS_FS_EXECUTE | unix.LANDLOCK_ACCESS_FS_READ_FILE | unix.LANDLOCK_ACCESS_FS_READ_DIR)
 	for _, path := range paths {
+		if err := addLandlockPath(rulesetFD, path, readOnly); err != nil {
+			return err
+		}
+	}
+	for _, path := range extraPaths {
 		if err := addLandlockPath(rulesetFD, path, readOnly); err != nil {
 			return err
 		}

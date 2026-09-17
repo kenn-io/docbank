@@ -58,7 +58,7 @@ func runLauncher(control launchControl, executableFD, statusFD int) error {
 			return err
 		}
 	} else {
-		if err := installPrivateLandlock(); err != nil {
+		if err := installPrivateLandlock(control.Policy.Executable); err != nil {
 			return err
 		}
 		if err := installNetworkSeccomp(unixOnlyNetworkFilters); err != nil {
@@ -73,7 +73,11 @@ func runLauncher(control launchControl, executableFD, statusFD int) error {
 	}
 	unix.CloseOnExec(statusFD)
 	if control.Policy.Mode == SupervisedFileMode {
-		if err := runSupervisedChild(control, control.Policy.Executable); err != nil {
+		restarts, err := runSupervisedChild(control, control.Policy.Executable)
+		if err != nil {
+			return err
+		}
+		if err := writeLauncherRestartStatus(statusFD, restarts); err != nil {
 			return err
 		}
 		return nil
@@ -86,53 +90,65 @@ func runLauncher(control launchControl, executableFD, statusFD int) error {
 	return nil
 }
 
-func runSupervisedChild(control launchControl, executablePath string) error {
+func runSupervisedChild(control launchControl, executablePath string) (int, error) {
 	private := control.Policy.PrivateRoot
 	if private == nil || private.InputName == private.OutputName {
-		return errors.New("sandbox supervised private root is invalid")
+		return 0, errors.New("sandbox supervised private root is invalid")
 	}
 	if err := os.Mkdir("/work", 0o700); err != nil && !errors.Is(err, os.ErrExist) {
-		return fmt.Errorf("create sandbox work directory: %w", err)
+		return 0, fmt.Errorf("create sandbox work directory: %w", err)
 	}
 	if err := writePrivateProfile(); err != nil {
-		return err
+		return 0, err
 	}
 	inputPath := filepath.Join("/work", private.InputName)
 	outputPath := filepath.Join("/work", private.OutputName)
 	input, err := os.OpenFile(inputPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
 	if err != nil {
-		return fmt.Errorf("create sandbox supervised input: %w", err)
+		return 0, fmt.Errorf("create sandbox supervised input: %w", err)
 	}
 	readErr := writeBoundedInput(input, control.Policy.MaxStdinBytes)
 	closeErr := input.Close()
 	if readErr != nil || closeErr != nil {
-		return errors.New("write sandbox supervised input failed")
+		return 0, errors.New("write sandbox supervised input failed")
 	}
+	var restarts int
 	for attempt := 0; ; attempt++ {
 		command := exec.Command( //nolint:gosec // authenticated sealed executable and policy
-			executablePath, append([]string{control.Policy.Executable}, control.Policy.Arguments...)...)
+			executablePath, control.Policy.Arguments...)
 		command.Dir = "/work"
 		command.Env = control.Policy.Environment
 		command.Stdout = io.Discard
 		command.Stderr = io.Discard
 		command.WaitDelay = childDrainWindow
 		if err := command.Start(); err != nil {
-			return fmt.Errorf("start sandbox supervised child: %w", err)
+			return 0, fmt.Errorf("start sandbox supervised child: %w", err)
 		}
 		runErr := command.Wait()
 		if err := reapSupervisedDescendants(); err != nil {
-			return err
+			return 0, err
 		}
 		if runErr == nil {
+			restarts = attempt
 			break
 		}
 		var exitError *exec.ExitError
 		if attempt == 0 && errors.As(runErr, &exitError) && exitError.ExitCode() == 81 {
 			continue
 		}
-		return fmt.Errorf("sandbox supervised child failed: %w", runErr)
+		return 0, fmt.Errorf("sandbox supervised child failed: %w", runErr)
 	}
-	return copySupervisedOutput(outputPath, private.MaxOutputBytes)
+	if err := copySupervisedOutput(outputPath, private.MaxOutputBytes); err != nil {
+		return 0, err
+	}
+	return restarts, nil
+}
+
+func writeLauncherRestartStatus(fd, restarts int) error {
+	if restarts < 0 || restarts > 255-int(launcherRestartStatusBase) {
+		return errors.New("sandbox launcher restart count is outside the status range")
+	}
+	return writeLauncherStatus(fd, launcherRestartStatusBase+byte(restarts))
 }
 
 func reapSupervisedDescendants() error {

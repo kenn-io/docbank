@@ -51,6 +51,7 @@ type Attestation struct {
 	PrivateRootInstalled bool
 	RuntimeIdentity      string
 	UnixIPCAllowed       bool
+	RestartCount         int
 }
 
 type StageResult struct {
@@ -119,6 +120,7 @@ func (runner nativeRunner) Run(ctx context.Context, request Request) (StageResul
 			PrivateRootInstalled: sandboxResult.Attestation.PrivateRootInstalled,
 			RuntimeIdentity:      sandboxResult.Attestation.RuntimeIdentity,
 			UnixIPCAllowed:       sandboxResult.Attestation.UnixIPCAllowed,
+			RestartCount:         sandboxResult.Attestation.RestartCount,
 		},
 	}
 	if err != nil {

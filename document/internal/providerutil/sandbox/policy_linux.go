@@ -41,7 +41,7 @@ func execLandlockDevices() map[string]uint64 {
 func privateRootLandlockPaths() []string {
 	return []string{
 		rootPath("bin"), rootPath("dev"), rootPath("etc"), rootPath("lib"),
-		rootPath("lib64"), rootPath("mnt"), rootPath("proc"), rootPath("usr"),
+		rootPath("lib64"), rootPath("proc"), rootPath("usr"),
 	}
 }
 

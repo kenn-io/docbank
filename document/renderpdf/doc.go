@@ -1,5 +1,5 @@
-// Package renderpdf converts byte-verified DOCX and XLSX sources to bounded
-// PDFs through a pinned LibreOffice installation.
+// Package renderpdf converts byte-verified DOCX sources to bounded PDFs
+// through a pinned LibreOffice installation.
 //
 // Conversion first normalizes the source to flat ODF inside the provider
 // sandbox. A bounded ODF scan then decides whether those exact bytes may reach

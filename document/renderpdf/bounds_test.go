@@ -69,3 +69,39 @@ func TestBoundsRuntimeEntries(t *testing.T) {
 	limits.MaxRuntimeEntries = 250_001
 	require.Error(t, validateLimits(limits))
 }
+
+func TestBoundsConvertOwnsSourceAndWorkLimits(t *testing.T) {
+	original := zipDocument(t, "docx")
+	runner := &recordingRunner{identity: testRunnerIdentity,
+		output: flatODF(FlatTextKind, "<text:p/>")}
+	limits := DefaultLimits()
+	limits.MaxSourceBytes = int64(len(original) - 1)
+	policy := testPolicyWithLimits(t, runner, limits)
+	_, err := Convert(t.Context(), testSource(t, original, docxMediaType), "docx", policy)
+	require.ErrorContains(t, err, "source exceeds")
+
+	runner = &recordingRunner{identity: testRunnerIdentity,
+		output: flatODF(FlatTextKind, "<text:p/>")}
+	limits = DefaultLimits()
+	limits.MaxWorkBytes = int64(len(original) - 1)
+	policy = testPolicyWithLimits(t, runner, limits)
+	_, err = Convert(t.Context(), testSource(t, original, docxMediaType), "docx", policy)
+	require.ErrorContains(t, err, "work-byte")
+}
+
+func TestBoundsScanOwnsNormalizedBytes(t *testing.T) {
+	limits := DefaultLimits()
+	limits.MaxNormalizedBytes = 1
+	_, err := Scan(flatODF(FlatTextKind, "<text:p/>"), FlatTextKind, limits)
+	require.ErrorContains(t, err, "byte limit")
+}
+
+func TestBoundsConvertOwnsPageLimit(t *testing.T) {
+	normalized := flatODF(FlatTextKind, "<text:p/>")
+	runner := &recordingRunner{identity: testRunnerIdentity, output: normalized, pdf: testPDFBytesPages(2)}
+	limits := DefaultLimits()
+	limits.MaxPages = 1
+	policy := testPolicyWithLimits(t, runner, limits)
+	_, err := Convert(t.Context(), testSource(t, zipDocument(t, "docx"), docxMediaType), "docx", policy)
+	require.ErrorContains(t, err, "page limit")
+}

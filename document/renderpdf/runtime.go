@@ -2,7 +2,6 @@ package renderpdf
 
 import (
 	"crypto/sha256"
-	"debug/elf"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -199,19 +198,7 @@ func hashRuntimeFile(path string, info os.FileInfo) (string, bool, error) {
 		return "", false, err
 	}
 	executable := info.Mode()&0o111 != 0 || string(head) == "\x7fELF"
-	if !executable && strings.Contains(strings.ToLower(filepath.Base(path)), ".so") {
-		executable = isELF(path)
-	}
 	return hex.EncodeToString(sum.Sum(nil)), executable, nil
-}
-
-func isELF(path string) bool {
-	file, err := elf.Open(path)
-	if err != nil {
-		return false
-	}
-	_ = file.Close()
-	return true
 }
 
 func runtimeDepth(path string) int {

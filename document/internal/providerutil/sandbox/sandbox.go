@@ -18,7 +18,6 @@ const (
 	MaxResponseBytes           = int64(256 << 20)
 	MaxExecControlBytes        = int64(64 << 10)
 	MaxPrivateRootControlBytes = int64(8 << 20)
-	MaxControlBytes            = MaxExecControlBytes
 	MaxWorkBytes               = int64(512 << 20)
 	MaxRuntimeEntries          = 250_000
 	MaxRuntimeDepth            = 64
@@ -108,6 +107,7 @@ type Attestation struct {
 	PrivateRootInstalled bool
 	RuntimeIdentity      string
 	UnixIPCAllowed       bool
+	RestartCount         int
 }
 
 // Result owns the bounded bytes returned by a sandbox run.
