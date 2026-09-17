@@ -177,6 +177,12 @@ GC and ingest cross SQLite/filesystem boundaries. The daemon maintenance gate
 prevents a mutation from deduplicating against bytes between GC's reachability
 decision and physical deletion.
 
+Operator-requested maintenance keeps its existing operation lifetime. Scheduled
+packing requests cancellation at its interval and releases the gate only after
+the canceled operation returns. Kit owns safe physical cancellation, and each
+retry re-derives indexed loose work. A filesystem call that ignores context can
+delay the return.
+
 Loose bytes can be removed immediately and reported as reclaimed. Removing a
 packed mapping makes its immutable range logically dead; disk space is pending
 repack and must be reported separately.

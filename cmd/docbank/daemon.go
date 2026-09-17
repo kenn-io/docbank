@@ -360,7 +360,7 @@ func runServe(ctx context.Context) (retErr error) {
 			return fmt.Errorf("starting watch %q: %w", watchConfig.Name, err)
 		}
 	}
-	textWorker, err := extract.New(s, blobs, operationGate.Mutate)
+	textWorker, err := extract.New(s, blobs, operationGate.MutateContext)
 	if err != nil {
 		return fmt.Errorf("configuring text extraction: %w", err)
 	}
@@ -370,7 +370,7 @@ func runServe(ctx context.Context) (retErr error) {
 	if cfg.Storage.PackInterval.Std() > 0 {
 		packRun := func(ctx context.Context) (internalmaintenance.PackReport, error) {
 			var report internalmaintenance.PackReport
-			err := operationGate.Maintain(func() error {
+			err := operationGate.MaintainContext(ctx, func() error {
 				var err error
 				report, err = internalmaintenance.Pack(
 					ctx, s, blobs, cfg.Storage.PackMaxBytes)
