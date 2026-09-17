@@ -163,6 +163,18 @@ func observeUnitBound(
 		}
 		result.UnitBoundMethod = UnitBoundLocalExact
 		result.LocalUnits = snapshot.localUnits
+	case UnitBoundLocalCounted:
+		snapshot, err := fixture.snapshot()
+		if err != nil {
+			result.ReasonCode = reasonBoundRequestFailed
+			return
+		}
+		if snapshot.localUnits <= 0 || snapshot.localUnits > client.policy.values.MaxUnits {
+			result.ReasonCode = reasonBoundFixtureOutOfRange
+			return
+		}
+		result.UnitBoundMethod = UnitBoundLocalCounted
+		result.LocalUnits = snapshot.localUnits
 	}
 }
 

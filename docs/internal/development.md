@@ -20,12 +20,15 @@ lists the checks contributors must preserve.
 | `cmd/docbank` | Cobra ergonomics and human output | store business logic |
 | root package `docbank` | lifecycle and bounded public operations for one exclusively owned embedded vault | standalone CLI paths or a second storage implementation |
 
-The Mistral text lane currently grants local exact authority only to JSON and
-EML. JSON counts one complete top-level value. EML counts one outer RFC 822
-message. The authenticated capability probe must record the same count that
-Mistral reports before either format can be uploaded. Keep TXT, Markdown, CSV,
-JSONL, YAML, source code, RST, LaTeX, XML, and MSG out of both Mistral bound
-registries until exact provider evidence supports them.
+The Mistral text lane uses `UnitBoundLocalCounted` for TXT, Markdown, CSV,
+JSON, JSONL, YAML, Go, Python, JavaScript, RST, LaTeX, XML, EML, and MSG. Line
+formats count lines, CSV and JSONL count records, JSON and XML count one
+document, YAML counts documents, and mail formats count one outer message. The
+local count must be positive and within `MaxUnits` before upload. Provider pages
+must agree with `pages_processed` and stay within the limit, but may differ from
+the local source count. `UnitBoundLocalExact` still requires equality and
+remains the PPTX contract. The authenticated capability probe supplies
+primary-fixture evidence for each registered text format.
 
 ## Common change paths
 

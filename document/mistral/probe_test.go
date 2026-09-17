@@ -46,11 +46,16 @@ func TestRunCapabilityProbeProducesCompleteSanitizedAuthority(t *testing.T) {
 	assert.Equal(t, UnitBoundLocalExact, pptx.UnitBoundMethod)
 	assert.Equal(t, 1, pptx.LocalUnits)
 	t.Logf("pptx status=%q unit_bound_method=%q local_units=%d", pptx.Status, pptx.UnitBoundMethod, pptx.LocalUnits)
-	for _, formatID := range []string{"json", "eml"} {
+	wantTextUnits := map[string]int{
+		"txt": 1, "markdown": 3, "csv": 2, "json": 1, "jsonl": 1,
+		"yaml": 1, "go": 3, "python": 1, "javascript": 1, "rst": 4,
+		"latex": 1, "xml": 1, "eml": 1, "msg": 1,
+	}
+	for formatID, wantUnits := range wantTextUnits {
 		result := findManifestResult(t, manifest, formatID)
 		assert.Equal(t, ProbeStatusPassed, result.Status)
-		assert.Equal(t, UnitBoundLocalExact, result.UnitBoundMethod)
-		assert.Equal(t, 1, result.LocalUnits)
+		assert.Equal(t, UnitBoundLocalCounted, result.UnitBoundMethod)
+		assert.Equal(t, wantUnits, result.LocalUnits)
 		_, err = policy.Authorize(manifest, formatID)
 		require.NoError(t, err)
 	}
@@ -73,18 +78,18 @@ func TestRunCapabilityProbeProducesCompleteSanitizedAuthority(t *testing.T) {
 	}
 }
 
-func TestTextProbeMismatchLeavesAuthorityUnverified(t *testing.T) {
+func TestRunCapabilityProbeWithholdsCountedAuthorityOnInvalidFixtureCount(t *testing.T) {
 	policy := testPolicy(t, 1<<20, 10)
-	fixtures, err := loadProbeFixtures(t.Context(), policy, generatedProbeFixtureConfig(t))
-	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, releaseProbeFixtures(fixtures)) })
 	candidate, found := CandidateFormatByID("json")
 	require.True(t, found)
-	fixture := fixtures[candidate.ID]
-	result := CapabilityResult{UnitCount: 2, UnitsProcessed: 2, UnitBoundMethod: UnitBoundNone}
+	fixture := probeFixture{prepared: &PreparedDocument{
+		path: "synthetic", format: candidate, size: 1, sha256: strings.Repeat("a", 64),
+		mediaType: candidate.MediaType,
+	}}
+	result := CapabilityResult{UnitCount: 1, UnitsProcessed: 1, UnitBoundMethod: UnitBoundNone}
 	observeUnitBound(t.Context(), &Client{policy: policy}, fixture, candidate, &result)
 	assert.Equal(t, UnitBoundNone, result.UnitBoundMethod)
-	assert.Equal(t, reasonBoundUnitsMismatch, result.ReasonCode)
+	assert.Equal(t, reasonBoundFixtureOutOfRange, result.ReasonCode)
 }
 
 func TestRunCapabilityProbeRecordsUnverifiedProviderBoundWithoutAuthority(t *testing.T) {

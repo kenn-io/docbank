@@ -51,7 +51,7 @@ provider descriptor and profile, not to a filename extension.
 | [`document/unstructured`](https://github.com/kenn-io/docbank/tree/main/document/unstructured) | Operator-hosted | Pinned broad-format compatibility profile for the standard rendition bridge |
 | [`document/tika`](https://github.com/kenn-io/docbank/tree/main/document/tika) | Operator-hosted | Pinned Apache Tika compatibility profile for the standard rendition bridge |
 | [`document/datalab`](https://github.com/kenn-io/docbank/tree/main/document/datalab) | Hosted | Uploaded files through Datalab Convert |
-| [`document/mistral`](https://github.com/kenn-io/docbank/tree/main/document/mistral) | Hosted | Capability-probed PDF and conditional PPTX OCR, including the rendition-provider adapter |
+| [`document/mistral`](https://github.com/kenn-io/docbank/tree/main/document/mistral) | Hosted | Capability-probed PDF, PPTX, and fourteen text-family OCR formats, including the rendition-provider adapter |
 | [`document/llamaparse`](https://github.com/kenn-io/docbank/tree/main/document/llamaparse) | Hosted | Resumable PDF parsing through the fixed LlamaParse v1 API |
 | [`document/reducto`](https://github.com/kenn-io/docbank/tree/main/document/reducto) | Hosted | Resumable PDF and PPTX parsing through the fixed Reducto API |
 | [`document/bridge`](https://github.com/kenn-io/docbank/tree/main/document/bridge) | Declared service | `docbank-rendition/v1`: submit, poll, cancel, and validate canonical source evidence |
@@ -187,16 +187,22 @@ The operator prepares that evidence in this order:
 3. Create `NewClient(API key)` and call `RunCapabilityProbe`.
 4. Review and retain the resulting `CapabilityManifest`.
 
-Fixture generation creates 21 formats deterministically. Five legacy formats
-require operator-supplied synthetic seeds named `doc`, `ppt`, `xls`, `numbers`,
-and `msg`. Fixture and staging directories must be private. The initial
-capability contract authorizes PDF through a provider-request bound. PPTX is
-eligible when the authenticated probe records a local slide count and the
-provider reports the same number of processed units. JSON is counted as one
-complete top-level value, and EML as one outer RFC 822 message. Those local
-counts must match the provider's processed units before either format can be
-authorized. TXT, Markdown, CSV, JSONL, YAML, Go, Python, JavaScript, RST,
-LaTeX, XML, and MSG remain unauthorized until their own exact evidence exists.
+Fixture generation creates the candidate formats deterministically. Five legacy
+formats require operator-supplied synthetic seeds named `doc`, `ppt`, `xls`,
+`numbers`, and `msg`. Fixture and staging directories must be private. The
+authenticated probe authorizes PDF through a provider-request bound. It can
+authorize PPTX when its local slide count matches the provider's processed
+units. It records
+primary-fixture evidence for TXT, Markdown, CSV, JSON, JSONL, YAML, Go,
+Python, JavaScript, RST, LaTeX, XML, EML, and MSG after provider acceptance.
+
+The text counters run before upload. TXT, Markdown, Go, Python, JavaScript,
+RST, and LaTeX count lines. CSV and JSONL count records. JSON and XML count one
+document, YAML counts YAML documents, and EML and MSG count one outer message.
+Each local count must be positive and within `MaxUnits`. Mistral may return a
+different number of pages for text input, so Docbank checks that its returned
+pages and `pages_processed` agree and stay within `MaxUnits` without comparing
+them with the local source count.
 
 If manifest validation reports that a registered format "does not explain its
 unverified bound", rerun the authenticated capability probe to replace the
@@ -222,9 +228,9 @@ The rendition adapter counts source units locally before submission. For PDFs it
 compares the returned page count with that inspected count. For PPTX it counts
 the listed PresentationML slides, rejects invalid slide references or
 over-limit decks before upload, and compares the provider's processed count with
-that local count. For JSON it counts one complete top-level value. For EML it
-counts one outer RFC 822 message. It compares both results with the provider's
-processed count. See
+that local count. The text counters enforce the same `MaxUnits` limit before
+upload. Text source counts and provider page counts are separate measurements,
+while the two provider counts must agree. See
 [Mistral rendition processing](https://github.com/kenn-io/docbank/blob/main/document/mistral/rendition.go)
 for the exact source and result checks.
 

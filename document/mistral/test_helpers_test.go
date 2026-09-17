@@ -64,8 +64,13 @@ func syntheticManifest(t *testing.T, policy Policy, pdfBound bool) CapabilityMan
 				result.ReasonCode = reasonBoundUnitsMismatch
 			}
 		default:
-			if expectedUnitBound(candidate.ID) == UnitBoundLocalExact {
+			switch expectedUnitBound(candidate.ID) {
+			case UnitBoundNone, UnitBoundProviderRequest:
+				// Unverified non-local methods remain unbounded in synthetic manifests.
+			case UnitBoundLocalExact:
 				result.ReasonCode = reasonBoundUnitsMismatch
+			case UnitBoundLocalCounted:
+				result.ReasonCode = reasonBoundRequestFailed
 			}
 		}
 		manifest.Results = append(manifest.Results, result)

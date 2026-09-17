@@ -7,7 +7,8 @@ func TestPolicyDoesNotAuthorizeUnprovedNonPDFFormats(t *testing.T) {
 	manifest := syntheticManifest(t, policy, true)
 
 	for _, formatID := range []string{
-		"docx", "pptx", "xlsx", "odt", "epub",
+		"docx", "doc", "odt", "rtf", "ppt", "pptx",
+		"xlsx", "xls", "ods", "numbers", "epub",
 		"txt", "markdown", "csv", "json", "jsonl", "yaml",
 		"go", "python", "javascript", "eml", "msg", "rst", "latex", "xml",
 	} {
@@ -19,10 +20,9 @@ func TestPolicyDoesNotAuthorizeUnprovedNonPDFFormats(t *testing.T) {
 		})
 	}
 	for _, formatID := range []string{
-		"docx", "xlsx", "odt", "epub", "txt", "markdown", "csv", "jsonl", "yaml",
-		"go", "python", "javascript", "msg", "rst", "latex", "xml",
+		"docx", "doc", "odt", "rtf", "ppt", "xlsx", "xls", "ods", "numbers", "epub",
 	} {
-		if expectedUnitBound(formatID) == UnitBoundLocalExact || localUnitCounters[formatID] != nil {
+		if expectedUnitBound(formatID).usesLocalCounter() || localUnitCounters[formatID] != nil {
 			t.Fatalf("unmeasured format %q is registered for local authority", formatID)
 		}
 	}

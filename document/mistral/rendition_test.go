@@ -289,9 +289,22 @@ func TestRenditionClientCountsTextUnitsBeforeEgress(t *testing.T) {
 	for _, test := range []struct {
 		format  string
 		content []byte
+		want    int64
 	}{
-		{format: "json", content: []byte(`{"value":"synthetic"}`)},
-		{format: "eml", content: []byte("From: sender@example.test\r\nDate: Thu, 13 Aug 2026 00:00:00 +0000\r\nSubject: Synthetic\r\n\r\nbody\r\n")},
+		{format: "txt", content: []byte("synthetic\n"), want: 1},
+		{format: "markdown", content: []byte("# Synthetic\n\nbody\n"), want: 3},
+		{format: "csv", content: []byte("name,value\nsynthetic,1\n"), want: 2},
+		{format: "json", content: []byte(`{"value":"synthetic"}`), want: 1},
+		{format: "jsonl", content: []byte(`{"value":"synthetic"}` + "\n"), want: 1},
+		{format: "yaml", content: []byte("---\nvalue: synthetic\n"), want: 1},
+		{format: "go", content: []byte("package synthetic\n"), want: 1},
+		{format: "python", content: []byte("value = \"synthetic\"\n"), want: 1},
+		{format: "javascript", content: []byte("const value = \"synthetic\";\n"), want: 1},
+		{format: "rst", content: []byte("Synthetic\n========\n"), want: 2},
+		{format: "latex", content: []byte(`\documentclass{article}\begin{document}synthetic\end{document}`), want: 1},
+		{format: "xml", content: append([]byte{0xef, 0xbb, 0xbf}, []byte("<synthetic/>\n")...), want: 1},
+		{format: "eml", content: []byte("From: sender@example.test\r\nDate: Thu, 13 Aug 2026 00:00:00 +0000\r\nSubject: Synthetic\r\n\r\nbody\r\n"), want: 1},
+		{format: "msg", content: compoundDocument(t, "__properties_version1.0"), want: 1},
 	} {
 		t.Run(test.format, func(t *testing.T) {
 			candidate, found := CandidateFormatByID(test.format)
@@ -301,9 +314,34 @@ func TestRenditionClientCountsTextUnitsBeforeEgress(t *testing.T) {
 			})
 			require.NoError(t, err)
 			assert.Equal(t, candidate, verified)
-			assert.Equal(t, int64(1), localUnits)
+			assert.Equal(t, test.want, localUnits)
 		})
 	}
+}
+
+func TestRenditionClientRejectsTextOverLimitBeforeHTTP(t *testing.T) {
+	policy := testPolicy(t, 1<<20, MaxUnits)
+	manifest := textAuthorityManifest(t, policy, "txt")
+	descriptor := renditionDescriptor(t, policy, manifest, "txt")
+	source := []byte(strings.Repeat("line\n", MaxUnits+1))
+	fixture := renditionFixture(t, descriptor, source)
+	candidate, found := CandidateFormatByID("txt")
+	require.True(t, found)
+	fixture.metadata.Filename = "document.txt"
+	fixture.metadata.MediaFamily = candidate.Family
+	fixture.metadata.MediaType = candidate.MediaType
+	fixture.authorization.MediaFamily = candidate.Family
+	fixture.authorization.MediaType = candidate.MediaType
+	var requests atomic.Int64
+	client := newRenditionTestClient(t, policy, manifest, descriptor,
+		renditionSecrets{"mistral-ocr": "synthetic-key"}, roundTripFunc(func(*http.Request) (*http.Response, error) {
+			requests.Add(1)
+			return nil, errors.New("unexpected provider request")
+		}))
+
+	_, err := client.Render(t.Context(), fixture.upload(), fixture.authorization)
+	assertRenditionCode(t, err, document.RenditionErrorPolicyRejected)
+	assert.Zero(t, requests.Load())
 }
 
 func TestRenditionClientClassifiesHTTPAndModelFailures(t *testing.T) {
