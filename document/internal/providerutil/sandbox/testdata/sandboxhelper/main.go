@@ -1,9 +1,11 @@
 package main
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -177,15 +179,70 @@ func main() {
 		if err := os.WriteFile("/work/"+outputName, []byte("supervised output"), 0o600); err != nil {
 			os.Exit(5)
 		}
-	case "file-exit81-once":
-		if _, err := os.Stat("/work/profile/retry-marker"); err != nil {
-			if err := os.WriteFile("/work/profile/retry-marker", []byte("retry"), 0o600); err != nil {
+	case "file-exit81-reconstruct":
+		if err := runReconstructedRetry(); err != nil {
+			os.Exit(6)
+		}
+	case "file-exit81-no-output":
+		if retryMarkerMissing() {
+			if err := os.WriteFile("/work/"+outputName, []byte("stale output"), 0o600); err != nil {
+				os.Exit(5)
+			}
+			if err := markRetry(); err != nil {
 				os.Exit(5)
 			}
 			os.Exit(81)
 		}
-		if err := os.WriteFile("/work/"+outputName, []byte("retried output"), 0o600); err != nil {
-			os.Exit(5)
+	case "file-exit81-hardlink":
+		if retryMarkerMissing() {
+			if err := os.WriteFile("/work/"+outputName, []byte("stale output"), 0o600); err != nil {
+				os.Exit(5)
+			}
+			if err := os.Link("/work/"+outputName, "/work/stale-output-link"); err != nil {
+				os.Exit(5)
+			}
+			if err := markRetry(); err != nil {
+				os.Exit(5)
+			}
+			os.Exit(81)
+		}
+		if err := os.Rename("/work/stale-output-link", "/work/"+outputName); err != nil {
+			os.Exit(6)
+		}
+	case "file-exit81-profile-symlink":
+		if profileParentRetryMarkerMissing() {
+			if err := markProfileParentRetry(); err != nil {
+				os.Exit(5)
+			}
+			if err := os.MkdirAll("/work/home/user", 0o700); err != nil {
+				os.Exit(5)
+			}
+			if err := os.RemoveAll("/work/profile"); err != nil {
+				os.Exit(5)
+			}
+			if err := os.Symlink("/work/home", "/work/profile"); err != nil {
+				os.Exit(5)
+			}
+			os.Exit(81)
+		}
+		if err := writeRetryOutput(); err != nil {
+			os.Exit(6)
+		}
+	case "file-exit81-user-symlink":
+		if profileParentRetryMarkerMissing() {
+			if err := markProfileParentRetry(); err != nil {
+				os.Exit(5)
+			}
+			if err := os.RemoveAll("/work/profile/user"); err != nil {
+				os.Exit(5)
+			}
+			if err := os.Symlink("/work/home", "/work/profile/user"); err != nil {
+				os.Exit(5)
+			}
+			os.Exit(81)
+		}
+		if err := writeRetryOutput(); err != nil {
+			os.Exit(6)
 		}
 	case "argv":
 		if err := os.WriteFile("/work/"+outputName, []byte(strings.Join(os.Args[1:], "\x00")), 0o600); err != nil {
@@ -230,6 +287,76 @@ func main() {
 	default:
 		os.Exit(4)
 	}
+}
+
+const expectedProfileSettings = `<?xml version="1.0" encoding="UTF-8"?>
+<oor:items xmlns:oor="http://openoffice.org/2001/registry">
+ <item oor:path="/org.openoffice.Office.Common/Security/Scripting">
+  <prop oor:name="MacroSecurityLevel" oor:op="fuse"><value>3</value></prop>
+  <prop oor:name="DisableMacrosExecution" oor:op="fuse"><value>true</value></prop>
+  <prop oor:name="DisableActiveContent" oor:op="fuse"><value>true</value></prop>
+  <prop oor:name="BlockUntrustedRefererLinks" oor:op="fuse"><value>true</value></prop>
+ </item>
+</oor:items>`
+
+func retryMarkerMissing() bool {
+	_, err := os.Stat("/work/profile/retry-marker")
+	return errors.Is(err, os.ErrNotExist)
+}
+
+func markRetry() error {
+	return os.WriteFile("/work/profile/retry-marker", []byte("retry"), 0o600)
+}
+
+func profileParentRetryMarkerMissing() bool {
+	_, err := os.Stat("/work/retry-marker")
+	return errors.Is(err, os.ErrNotExist)
+}
+
+func markProfileParentRetry() error {
+	return os.WriteFile("/work/retry-marker", []byte("retry"), 0o600)
+}
+
+func writeRetryOutput() error {
+	return os.WriteFile("/work/"+outputName, []byte("unexpected retry output"), 0o600)
+}
+
+func runReconstructedRetry() error {
+	if retryMarkerMissing() {
+		input, err := os.ReadFile("/work/source.docx")
+		if err != nil || !bytes.Equal(input, []byte("input")) {
+			return fmt.Errorf("initial input: %v", err)
+		}
+		settings, err := os.ReadFile("/work/profile/user/registrymodifications.xcu")
+		if err != nil || !bytes.Equal(settings, []byte(expectedProfileSettings)) {
+			return fmt.Errorf("initial profile: %v", err)
+		}
+		if err := os.WriteFile("/work/source.docx", []byte("mutated input"), 0o600); err != nil {
+			return err
+		}
+		if err := os.WriteFile("/work/profile/user/registrymodifications.xcu", []byte("mutated settings"), 0o600); err != nil {
+			return err
+		}
+		if err := os.WriteFile("/work/"+outputName, []byte("stale output"), 0o600); err != nil {
+			return err
+		}
+		if err := markRetry(); err != nil {
+			return err
+		}
+		os.Exit(81)
+	}
+	input, err := os.ReadFile("/work/source.docx")
+	if err != nil || !bytes.Equal(input, []byte("input")) {
+		return fmt.Errorf("restored input: %v", err)
+	}
+	settings, err := os.ReadFile("/work/profile/user/registrymodifications.xcu")
+	if err != nil || !bytes.Equal(settings, []byte(expectedProfileSettings)) {
+		return fmt.Errorf("restored profile: %v", err)
+	}
+	if _, err := os.Lstat("/work/" + outputName); !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("stale output remains: %v", err)
+	}
+	return os.WriteFile("/work/"+outputName, []byte("fresh retried output"), 0o600)
 }
 
 func waitForFile(path string) error {

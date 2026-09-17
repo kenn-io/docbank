@@ -248,10 +248,50 @@ func TestSupervisedRunnerRetriesExit81Once(t *testing.T) {
 	runner, err := NewNativeRunner()
 	requireNativeNoError(t, err)
 	result, err := runner.Run(t.Context(), privateTestRequest(t,
-		buildSandboxHelper(t, "file-exit81-once", "", "result.bin")))
+		buildSandboxHelper(t, "file-exit81-reconstruct", "", "result.bin")))
 	requireNativeNoError(t, err)
-	assert.Equal(t, []byte("retried output"), result.Output)
+	assert.Equal(t, []byte("fresh retried output"), result.Output)
 	assert.Equal(t, 1, result.Attestation.RestartCount)
+}
+
+func TestSupervisedRunnerRejectsRetryWithoutFreshOutput(t *testing.T) {
+	runner, err := NewNativeRunner()
+	requireNativeNoError(t, err)
+	result, err := runner.Run(t.Context(), privateTestRequest(t,
+		buildSandboxHelper(t, "file-exit81-no-output", "", "result.bin")))
+	if errors.Is(err, ErrUnavailable) && os.Getenv("DOCBANK_TEST_REQUIRE_SANDBOX") != "1" {
+		t.Skipf("native Linux namespace isolation unavailable: %v", err)
+	}
+	require.Error(t, err)
+	assert.Empty(t, result.Output)
+}
+
+func TestSupervisedRunnerRejectsRetryHardlinkReuse(t *testing.T) {
+	runner, err := NewNativeRunner()
+	requireNativeNoError(t, err)
+	result, err := runner.Run(t.Context(), privateTestRequest(t,
+		buildSandboxHelper(t, "file-exit81-hardlink", "", "result.bin")))
+	if errors.Is(err, ErrUnavailable) && os.Getenv("DOCBANK_TEST_REQUIRE_SANDBOX") != "1" {
+		t.Skipf("native Linux namespace isolation unavailable: %v", err)
+	}
+	require.Error(t, err)
+	assert.Empty(t, result.Output)
+}
+
+func TestSupervisedRunnerRejectsSymlinkedRetryProfileParents(t *testing.T) {
+	for _, mode := range []string{"file-exit81-profile-symlink", "file-exit81-user-symlink"} {
+		t.Run(mode, func(t *testing.T) {
+			runner, err := NewNativeRunner()
+			requireNativeNoError(t, err)
+			result, err := runner.Run(t.Context(), privateTestRequest(t,
+				buildSandboxHelper(t, mode, "", "result.bin")))
+			if errors.Is(err, ErrUnavailable) && os.Getenv("DOCBANK_TEST_REQUIRE_SANDBOX") != "1" {
+				t.Skipf("native Linux namespace isolation unavailable: %v", err)
+			}
+			require.Error(t, err)
+			assert.Empty(t, result.Output)
+		})
+	}
 }
 
 func TestSupervisedRunnerPassesOnlyPolicyArguments(t *testing.T) {
