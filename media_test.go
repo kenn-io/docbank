@@ -198,6 +198,148 @@ func TestMediaSuppliedTranscriptConsumer(t *testing.T) {
 	}
 }
 
+func TestRemoteRecordingManualEmbedded(t *testing.T) {
+	root := t.TempDir()
+	vault, err := New(t.Context(), Config{Root: root})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, vault.Close()) })
+
+	remote, err := vault.SubmitRemoteRecording(t.Context(), RemoteRecordingRequest{
+		OperationID:  "00000000-0000-4000-8000-000000000441",
+		ReferenceURL: "https://private.invalid/share/embedded?token=synthetic-secret",
+		CanonicalURL: "HTTPS://Recordings.INVALID:443/share/embedded#fragment",
+		Occurrence:   MediaOccurrenceInput{Ref: "embedded-call", Revision: "1", Filename: "embedded.wav"},
+	})
+	require.NoError(t, err)
+	require.Equal(t, "unsupported", remote.Outcome)
+	require.Empty(t, remote.ContentVersionID)
+
+	raw := mediatest.WAV()
+	identity := contentIdentity(raw)
+	original, err := vault.ImportRecordingArtifact(t.Context(), MediaArtifactRequest{
+		OperationID: "00000000-0000-4000-8000-000000000442", SourceID: remote.SourceID,
+		OccurrenceID: remote.OccurrenceID, Kind: "media", Origin: "supplied",
+		Filename: "embedded.wav", MediaType: "audio/wav", SHA256: identity.SHA256,
+		ByteLength: identity.Size, Content: bytes.NewReader(raw),
+	})
+	require.NoError(t, err)
+	require.Equal(t, "content_available", original.Outcome)
+
+	transcript := []byte("embedded remote recording transcript phrase\n")
+	transcriptIdentity := contentIdentity(transcript)
+	input, err := vault.ImportRecordingArtifact(t.Context(), MediaArtifactRequest{
+		OperationID: "00000000-0000-4000-8000-000000000443", SourceID: remote.SourceID,
+		OccurrenceID: remote.OccurrenceID, Kind: "transcript", Origin: "supplied",
+		Filename: "embedded.txt", MediaType: "text/plain", SHA256: transcriptIdentity.SHA256,
+		ByteLength: transcriptIdentity.Size, Content: bytes.NewReader(transcript),
+	})
+	require.NoError(t, err)
+
+	node, err := vault.Stat(t.Context(), "/media/"+remote.SourceID+"/"+identity.SHA256+".wav")
+	require.NoError(t, err)
+	selector := ProcessingSelector{NodeID: node.ID, ContentVersionID: original.ContentVersionID,
+		Profile: "supplied-transcript"}
+	plan, err := vault.PlanProcessing(t.Context(), ProcessingPlanRequest{Selector: selector})
+	require.NoError(t, err)
+	_, err = vault.GrantProcessingPlanConsent(t.Context(), ProcessingConsentGrantRequest{
+		PlanRequest: ProcessingPlanRequest{Selector: selector}, PlanFingerprint: plan.Fingerprint})
+	require.NoError(t, err)
+	vault.processingCancel()
+	vault.processingWG.Wait()
+	queued, err := vault.RetryMedia(t.Context(), "00000000-0000-4000-8000-000000000444",
+		remote.SourceID, MediaProcessingRequest{Profile: "supplied-transcript", SuppliedInputID: input.SuppliedInputID})
+	require.NoError(t, err)
+	require.Equal(t, "queued", queued.OperationState)
+	require.NoError(t, vault.Close())
+	vault, err = New(t.Context(), Config{Root: root})
+	require.NoError(t, err)
+
+	var status MediaReceipt
+	require.Eventually(t, func() bool {
+		status, err = vault.MediaStatus(t.Context(), remote.SourceID)
+		return err == nil && status.OperationID == queued.OperationID &&
+			status.OperationState == "succeeded" && status.CoverageState == "transcribed"
+	}, 30*time.Second, 20*time.Millisecond)
+	require.Equal(t, remote.SourceID, status.SourceID)
+	require.Equal(t, original.SourceVersionID, status.SourceVersionID)
+	require.Equal(t, original.ContentVersionID, status.ContentVersionID)
+	results, err := vault.SearchDocuments(t.Context(), DocumentSearchRequest{
+		Query: "embedded remote recording transcript phrase", Mode: DocumentSearchLexical,
+		Profile: "supplied-transcript", Limit: 10,
+		Fence: DocumentSourceFence{VaultUID: vault.ID(), ContentVersionIDs: []string{original.ContentVersionID}},
+	})
+	require.NoError(t, err)
+	require.NotEmpty(t, results.Results)
+	require.Equal(t, original.ContentVersionID, results.Results[0].ContentVersionID)
+}
+
+func TestRemoteRecordingEqualBytesKeepOrdinaryProcessingSource(t *testing.T) {
+	vault, err := New(t.Context(), Config{Root: t.TempDir()})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, vault.Close()) })
+
+	first, err := vault.SubmitRemoteRecording(t.Context(), RemoteRecordingRequest{
+		OperationID:  "00000000-0000-4000-8000-000000000451",
+		ReferenceURL: "https://private.invalid/a",
+		CanonicalURL: "https://recordings.invalid/a",
+		Occurrence:   MediaOccurrenceInput{Ref: "equal-a", Revision: "1", Filename: "a.wav"},
+	})
+	require.NoError(t, err)
+	second, err := vault.SubmitRemoteRecording(t.Context(), RemoteRecordingRequest{
+		OperationID:  "00000000-0000-4000-8000-000000000452",
+		ReferenceURL: "https://private.invalid/b",
+		CanonicalURL: "https://recordings.invalid/b",
+		Occurrence:   MediaOccurrenceInput{Ref: "equal-b", Revision: "1", Filename: "b.wav"},
+	})
+	require.NoError(t, err)
+
+	raw := mediatest.WAV()
+	identity := contentIdentity(raw)
+	firstMedia, err := vault.ImportRecordingArtifact(t.Context(), MediaArtifactRequest{
+		OperationID: "00000000-0000-4000-8000-000000000453", SourceID: first.SourceID,
+		OccurrenceID: first.OccurrenceID, Kind: "media", Origin: "supplied",
+		Filename: "a.wav", MediaType: "audio/wav", SHA256: identity.SHA256,
+		ByteLength: identity.Size, Content: bytes.NewReader(raw),
+	})
+	require.NoError(t, err)
+	secondMedia, err := vault.ImportRecordingArtifact(t.Context(), MediaArtifactRequest{
+		OperationID: "00000000-0000-4000-8000-000000000454", SourceID: second.SourceID,
+		OccurrenceID: second.OccurrenceID, Kind: "media", Origin: "supplied",
+		Filename: "b.wav", MediaType: "audio/wav", SHA256: identity.SHA256,
+		ByteLength: identity.Size, Content: bytes.NewReader(raw),
+	})
+	require.NoError(t, err)
+	require.NotEqual(t, firstMedia.ContentVersionID, secondMedia.ContentVersionID)
+
+	transcript := []byte("second source only transcript\n")
+	transcriptIdentity := contentIdentity(transcript)
+	_, err = vault.ImportRecordingArtifact(t.Context(), MediaArtifactRequest{
+		OperationID: "00000000-0000-4000-8000-000000000455", SourceID: second.SourceID,
+		OccurrenceID: second.OccurrenceID, Kind: "transcript", Origin: "supplied",
+		Filename: "b.txt", MediaType: "text/plain", SHA256: transcriptIdentity.SHA256,
+		ByteLength: transcriptIdentity.Size, Content: bytes.NewReader(transcript),
+	})
+	require.NoError(t, err)
+	_, err = vault.SubmitSuppliedMedia(t.Context(), SuppliedMediaRequest{
+		OperationID: "00000000-0000-4000-8000-000000000456", Content: bytes.NewReader(raw),
+		Filename: "supplied.wav", MediaType: "audio/wav", SHA256: identity.SHA256,
+		ByteLength: identity.Size, Processing: &MediaProcessingRequest{Profile: "supplied-transcript"},
+		Occurrence: MediaOccurrenceInput{Ref: "equal-supplied", Revision: "1", Filename: "supplied.wav"},
+	})
+	require.ErrorIs(t, err, store.ErrNotFound)
+
+	node, err := vault.Stat(t.Context(), "/media/"+first.SourceID+"/"+identity.SHA256+".wav")
+	require.NoError(t, err)
+	selector := ProcessingSelector{NodeID: node.ID, ContentVersionID: firstMedia.ContentVersionID,
+		Profile: "supplied-transcript"}
+	plan, err := vault.PlanProcessing(t.Context(), ProcessingPlanRequest{Selector: selector})
+	require.NoError(t, err)
+	_, err = vault.StartProcessing(t.Context(), StartProcessingRequest{
+		PlanRequest: ProcessingPlanRequest{Selector: selector}, PlanFingerprint: plan.Fingerprint, Consent: true,
+	})
+	require.ErrorIs(t, err, store.ErrNotFound)
+}
+
 // TestMediaExistingVersionBindingKeepsOriginalPath catches media retention
 // cloning a package-owned version into the managed /media namespace.
 func TestMediaExistingVersionBindingKeepsOriginalPath(t *testing.T) {

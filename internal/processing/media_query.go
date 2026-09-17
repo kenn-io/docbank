@@ -107,6 +107,10 @@ func (service *Service) mediaSourceReceipt(
 	ctx context.Context, item store.MediaSourceProjection,
 ) (MediaReceipt, error) {
 	receipt := mediaReceiptFromStore(item.Receipt)
+	if item.Kind == "remote_recording" && item.ContentVersionID != "" {
+		receipt.Outcome = "content_available"
+		receipt.CoverageState = "unprocessed"
+	}
 	if item.ProcessingReceipt != nil {
 		receipt.OperationState = item.ProcessingReceipt.OperationState
 		receipt.OperationID = item.ProcessingReceipt.OperationID

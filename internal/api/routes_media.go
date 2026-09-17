@@ -276,7 +276,7 @@ func handleMediaSourceSubmission(w http.ResponseWriter, r *http.Request, d Deps)
 	case "application/json":
 		var body MediaReferenceBody
 		if err := decodeBoundedJSON(r.Body, 64<<10, &body); err != nil {
-			writeError(w, NewError(http.StatusUnprocessableEntity, "validation", err.Error()))
+			writeError(w, NewError(http.StatusUnprocessableEntity, "validation", "invalid media reference body"))
 			return
 		}
 		receipt, err := d.Processing.SubmitRemoteRecording(r.Context(), toRemoteRecording(body))
@@ -419,6 +419,7 @@ func decodeBoundedJSON(r io.Reader, limit int64, out any) error {
 
 func toRemoteRecording(body MediaReferenceBody) processing.RemoteRecordingRequest {
 	return processing.RemoteRecordingRequest{OperationID: body.OperationID, ReferenceURL: body.ReferenceURL,
+		CanonicalURL: body.CanonicalURL,
 		ProviderHint: body.ProviderHint, CredentialBinding: body.CredentialBinding, Acquire: body.Acquire,
 		Occurrence: toMediaOccurrence(body.Occurrence), Processing: toOptionalMediaProcessing(body.Processing)}
 }

@@ -59,15 +59,20 @@ func validateMediaProcessing(processing *MediaProcessingRequest) error {
 	return nil
 }
 
+type mediaSourceBinding struct {
+	sourceID, sourceVersionID string
+}
+
 // EnqueueAuthorized validates one exact current plan and an existing consent
 // grant, then durably admits rendition work without running a provider or
 // waiting for worker completion.
 func (service *Service) EnqueueAuthorized(
 	ctx context.Context,
 	selector Selector,
+	source mediaSourceBinding,
 	planFingerprint string,
 	authorization store.ProviderOperationAuthorizationRequest,
-	suppliedInputID ...string,
+	suppliedInputID string,
 ) (Job, error) {
 	node, version, _, err := service.resolve(ctx, selector)
 	if err != nil {
@@ -93,7 +98,8 @@ func (service *Service) EnqueueAuthorized(
 			return Job{}, processingConsentBoundaryError(err)
 		}
 	}
-	inputBinding, err := service.resolveMediaInputBinding(ctx, selector.Profile, version.BlobHash, suppliedInputID)
+	inputBinding, err := service.resolveMediaInputBinding(ctx, selector.Profile, version.BlobHash,
+		source, suppliedInputID)
 	if err != nil {
 		return Job{}, err
 	}
@@ -133,25 +139,25 @@ func (service *Service) enqueueRendition(
 }
 
 func (service *Service) resolveMediaInputBinding(
-	ctx context.Context, profile, sourceSHA256 string, suppliedInputIDs []string,
+	ctx context.Context, profile, sourceSHA256 string, source mediaSourceBinding, inputID string,
 ) (string, error) {
-	requested := ""
-	if len(suppliedInputIDs) > 0 {
-		requested = suppliedInputIDs[0]
-	}
 	if profile != SuppliedMediaProfileName {
-		if requested != "" {
+		if inputID != "" {
 			return "", ErrPlanChanged
 		}
 		return "", nil
 	}
+	if source.sourceID == "" {
+		return "", store.ErrNotFound
+	}
 	var input store.SuppliedTranscriptInput
 	var err error
-	if requested == "" {
-		input, err = service.catalog.SuppliedTranscriptForSource(ctx, service.principal, sourceSHA256)
+	if source.sourceVersionID != "" {
+		input, err = service.catalog.SuppliedTranscriptForSourceVersion(
+			ctx, service.principal, source.sourceID, source.sourceVersionID, inputID)
 	} else {
-		input, err = service.catalog.SuppliedTranscriptBindingForSource(
-			ctx, service.principal, sourceSHA256, requested)
+		input, err = service.catalog.SuppliedTranscriptForSourceID(
+			ctx, service.principal, source.sourceID, sourceSHA256, inputID)
 	}
 	if err != nil {
 		return "", err
@@ -231,8 +237,9 @@ func (worker *MediaContinuationWorker) runContinuation(
 	if err != nil {
 		return worker.failContinuation(ctx, continuation, err)
 	}
+	source := mediaSourceBinding{sourceID: continuation.SourceID, sourceVersionID: continuation.SourceVersionID}
 	if _, err := service.resolveMediaInputBinding(ctx, continuation.ProcessingProfile,
-		version.BlobHash, []string{continuation.SuppliedInputID}); err != nil {
+		version.BlobHash, source, continuation.SuppliedInputID); err != nil {
 		return worker.failContinuation(ctx, continuation, err)
 	}
 	if continuation.JobID == "" {
@@ -242,7 +249,7 @@ func (worker *MediaContinuationWorker) runContinuation(
 		if err != nil {
 			return worker.failContinuation(ctx, continuation, err)
 		}
-		job, err := service.EnqueueAuthorized(ctx, selector, plan.Fingerprint,
+		job, err := service.EnqueueAuthorized(ctx, selector, source, plan.Fingerprint,
 			continuation.ProcessingAuthorization, continuation.SuppliedInputID)
 		if err != nil {
 			return worker.failContinuation(ctx, continuation, err)

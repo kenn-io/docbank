@@ -115,6 +115,6 @@ func TestMediaEnqueueRejectsEmbeddingOnlyProfile(t *testing.T) {
 	selector := Selector{NodeID: version.NodeID, ContentVersionID: version.ID, Profile: "direct"}
 	plan, err := service.Plan(t.Context(), selector)
 	require.NoError(t, err)
-	_, err = service.EnqueueAuthorized(t.Context(), selector, plan.Fingerprint, store.ProviderOperationAuthorizationRequest{})
+	_, err = service.EnqueueAuthorized(t.Context(), selector, mediaSourceBinding{}, plan.Fingerprint, store.ProviderOperationAuthorizationRequest{}, "")
 	require.ErrorContains(t, err, "rendition")
 }

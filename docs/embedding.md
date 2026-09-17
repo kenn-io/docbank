@@ -1,5 +1,5 @@
 ---
-last_edited: 2026-09-14
+last_edited: 2026-09-16
 title: Embed in Go
 description: Own one or more independently rooted Docbank vaults inside a Go application, with CGO or pure-Go SQLite.
 ---
@@ -237,6 +237,101 @@ destination but does not configure its transport. Import `document` from
 for provider construction and [Document processing](usage/document-processing.md)
 for planning, consent, retained results, and the private-deployment acceptance
 runner.
+
+## Retain and process a remote recording
+
+Embedded callers can keep the recording identity separate from the protected
+reference used to obtain a local file. Submission stores the pending occurrence
+and performs no network access. The `canonical_url` field is optional for
+configured-origin requests, and is the identity input for a generic URL
+reference when present. See the [canonical URL rules](architecture/http-api.md#remote-recording-references)
+for the permanent source identity.
+
+```go
+remote, err := vault.SubmitRemoteRecording(ctx, docbank.RemoteRecordingRequest{
+    OperationID:  "00000000-0000-4000-8000-000000000451",
+    ReferenceURL: "https://private.invalid/share/call?token=synthetic",
+    CanonicalURL: "https://recordings.invalid/share/call",
+    Occurrence: docbank.MediaOccurrenceInput{
+        Ref: "call-1", Revision: "1", Filename: "call.wav",
+    },
+})
+if err != nil {
+    return err
+}
+```
+
+Obtain the file through the caller's own approved path, then attach it with
+the exact SHA-256 and byte count. WAV and MP3 files use the existing media
+admission rules. The service's default byte limit is 512 MiB, its hard maximum
+is 1 GiB, and the duration limit is 24 hours.
+
+```go
+original, err := vault.ImportRecordingArtifact(
+    ctx, docbank.MediaArtifactRequest{
+    OperationID: "00000000-0000-4000-8000-000000000452",
+    SourceID:    remote.SourceID,
+    OccurrenceID: remote.OccurrenceID,
+    Kind:        "media",
+    Origin:      "supplied",
+    Filename:    "call.wav",
+    MediaType:   "audio/wav",
+    SHA256:      recordingHash,
+    ByteLength:  recordingSize,
+    Content:     recording,
+})
+if err != nil {
+    return err
+}
+```
+
+Import a caption or transcript only after the original is bound. A caption is
+retained as input bytes. A transcript uses the built-in
+`supplied-transcript` profile after an explicit plan and consent grant.
+
+```go
+transcript, err := vault.ImportRecordingArtifact(
+    ctx, docbank.MediaArtifactRequest{
+    OperationID: "00000000-0000-4000-8000-000000000453",
+    SourceID: remote.SourceID, OccurrenceID: original.OccurrenceID,
+    Kind: "transcript", Origin: "supplied", Filename: "call.txt",
+    MediaType: "text/plain", SHA256: transcriptHash,
+    ByteLength: transcriptSize, Content: transcriptReader,
+})
+if err != nil {
+    return err
+}
+selector := docbank.ProcessingSelector{
+    NodeID: nodeID, ContentVersionID: original.ContentVersionID,
+    Profile: "supplied-transcript",
+}
+plan, err := vault.PlanProcessing(ctx, docbank.ProcessingPlanRequest{
+    Selector: selector,
+})
+if err != nil {
+    return err
+}
+if _, err := vault.GrantProcessingPlanConsent(
+    ctx, docbank.ProcessingConsentGrantRequest{
+    PlanRequest: docbank.ProcessingPlanRequest{Selector: selector},
+    PlanFingerprint: plan.Fingerprint,
+}); err != nil {
+    return err
+}
+receipt, err := vault.RetryMedia(ctx, "00000000-0000-4000-8000-000000000454",
+    remote.SourceID, docbank.MediaProcessingRequest{
+        Profile: "supplied-transcript",
+        SuppliedInputID: transcript.SuppliedInputID,
+    })
+```
+
+`RetryMedia` selects the caller's newest visible occurrence for the source
+and returns after durable queue admission. It cannot select an older occurrence;
+use `PlanProcessing` and `StartProcessing` with that recording's node and current
+content version instead. Read `MediaStatus` for the newest attempt and its
+coverage. Coverage follows the exact source version selected by the visible occurrence, so a transcript for older bytes cannot
+cover a later recording revision. Remote acquisition remains unavailable until
+a provider-specific acquisition owner is added.
 
 ## Extract and read source metadata
 

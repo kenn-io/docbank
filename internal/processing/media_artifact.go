@@ -10,6 +10,7 @@ import (
 	"path"
 	"strings"
 
+	"go.kenn.io/docbank/document/media"
 	"go.kenn.io/docbank/internal/canonical"
 	"go.kenn.io/docbank/internal/store"
 )
@@ -68,7 +69,13 @@ func (service *Service) ImportRecordingArtifact(
 		return MediaReceipt{}, replayErr
 	}
 	current, err := service.catalog.MediaOccurrence(ctx, service.principal, request.OccurrenceID)
-	if err != nil || current.SourceID != request.SourceID || current.SourceVersionID == "" {
+	if err != nil || current.SourceID != request.SourceID {
+		return MediaReceipt{}, store.ErrNotFound
+	}
+	if current.Kind == "remote_recording" && request.Kind == "media" {
+		return service.importRemoteRecordingMedia(ctx, request, current, operation)
+	}
+	if current.SourceVersionID == "" {
 		return MediaReceipt{}, store.ErrNotFound
 	}
 	staged, owned, err := service.mediaStagedContent(ctx, request.Content,
@@ -114,6 +121,63 @@ func (service *Service) ImportRecordingArtifact(
 	return mediaReceiptFromStore(stored), err
 }
 
+func (service *Service) importRemoteRecordingMedia(
+	ctx context.Context, request MediaArtifactRequest, current store.MediaOccurrenceProjection,
+	operation store.MediaOperation,
+) (MediaReceipt, error) {
+	if err := validateMediaArtifactFile(request.Filename, request.MediaType); err != nil {
+		return MediaReceipt{}, err
+	}
+	staged, owned, err := service.mediaStagedContent(ctx, request.Content, request.ByteLength,
+		service.mediaMaxBytes, request.SHA256)
+	if err != nil {
+		return MediaReceipt{}, err
+	}
+	if owned {
+		defer func() { _ = staged.Close() }()
+	}
+	record, err := media.InspectCapability(staged, mediaInspectionPolicyForFile(request.Filename,
+		request.MediaType, request.SHA256, request.ByteLength, service.mediaMaxBytes))
+	if err != nil {
+		return MediaReceipt{}, err
+	}
+	if !record.Eligible || (record.Format != "wav" && record.Format != "mp3") {
+		return MediaReceipt{}, fmt.Errorf("unqualified_codec: %s", record.Reason)
+	}
+	if err := staged.rewind(); err != nil {
+		return MediaReceipt{}, err
+	}
+	inputID := hashMediaArtifactID(request.SourceID, request.OccurrenceID, request.Kind, request.SHA256)
+	var stored store.MediaPublicationReceipt
+	err = service.mediaMutation(ctx, func() error {
+		return service.blobs.WithMutation(ctx, func() error {
+			written, err := service.blobs.WriteDetailedContext(ctx, staged)
+			if err != nil {
+				return err
+			}
+			if written.Hash != request.SHA256 || written.Size != request.ByteLength {
+				return errors.New("media artifact staged identity changed during seal")
+			}
+			encoding, err := written.EncodingName()
+			if err != nil {
+				return err
+			}
+			stored, err = service.catalog.RetainRemoteRecordingMedia(ctx, store.MediaInputArtifactRequest{
+				Operation: operation, InputID: inputID, OccurrenceID: request.OccurrenceID,
+				SourceVersionID: current.SourceVersionID,
+				VirtualPath:     path.Join("/media", request.SourceID, request.SHA256+"."+record.Format),
+				MediaType:       record.MediaType, ByteLength: written.Size,
+				Physical: store.BlobPhysical{Encoding: encoding, StoredBytes: written.StoredSize,
+					PackEligible: written.PackEligible, MD5: written.MD5, Created: written.Created},
+				Kind: request.Kind, Origin: request.Origin, Provider: request.Provider,
+				Language: request.Language, InputSHA: written.Hash,
+			})
+			return err
+		})
+	})
+	return mediaReceiptFromStore(stored), err
+}
+
 func (service *Service) RetryMedia(
 	ctx context.Context, operationID, sourceID string, processingRequest MediaProcessingRequest,
 ) (MediaReceipt, error) {
@@ -148,8 +212,9 @@ func (service *Service) RetryMedia(
 	if err != nil {
 		return MediaReceipt{}, err
 	}
+	source := mediaSourceBinding{sourceID: current.SourceID, sourceVersionID: current.SourceVersionID}
 	binding, err := service.resolveMediaInputBinding(ctx, processingRequest.Profile,
-		version.BlobHash, []string{processingRequest.SuppliedInputID})
+		version.BlobHash, source, processingRequest.SuppliedInputID)
 	if err != nil {
 		return MediaReceipt{}, err
 	}
@@ -182,7 +247,7 @@ func (service *Service) RetryMedia(
 	if err != nil || stored.JobID != "" {
 		return mediaReceiptFromStore(stored), err
 	}
-	job, err := service.EnqueueAuthorized(ctx, selector, plan.Fingerprint,
+	job, err := service.EnqueueAuthorized(ctx, selector, source, plan.Fingerprint,
 		authorization, processingRequest.SuppliedInputID)
 	if err != nil {
 		return MediaReceipt{}, errors.Join(err, service.failMediaProcessing(ctx, stored, err))

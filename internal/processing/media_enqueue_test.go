@@ -90,7 +90,7 @@ func TestMediaEnqueueAuthorizedReturnsBeforeProvider(t *testing.T) {
 	require.NoError(t, err)
 	authorization := service.renditionConsentRequest(service.profiles["speech"])
 
-	_, err = service.EnqueueAuthorized(t.Context(), selector, plan.Fingerprint, authorization)
+	_, err = service.EnqueueAuthorized(t.Context(), selector, mediaSourceBinding{}, plan.Fingerprint, authorization, "")
 	require.ErrorIs(t, err, ErrConsentRequired)
 	require.Zero(t, provider.calls)
 	_, err = fixture.catalog.GrantConsent(t.Context(), store.ProcessingConsentGrantRequest{
@@ -123,7 +123,9 @@ func TestMediaEnqueueAuthorizedReturnsBeforeProvider(t *testing.T) {
 		bytes.Count(grantsAfter.Bytes(), []byte(`"type":"processing_consent_grant"`)),
 		"media admission must not create processing consent")
 
-	job, err := service.EnqueueAuthorized(t.Context(), selector, plan.Fingerprint, authorization)
+	// A plan obtained before media admission must remain valid with source binding.
+	source := mediaSourceBinding{sourceID: mediaReceipt.SourceID, sourceVersionID: mediaReceipt.SourceVersionID}
+	job, err := service.EnqueueAuthorized(t.Context(), selector, source, plan.Fingerprint, authorization, "")
 	require.NoError(t, err)
 	require.NotEmpty(t, job.ID)
 	require.Zero(t, provider.calls, "enqueue must not invoke the provider")

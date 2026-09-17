@@ -58,11 +58,29 @@ func installErrorFormatter() {
 		e := NewError(status, code, strings.ToValidUTF8(msg, "\ufffd"))
 		for _, err := range errs {
 			if err != nil {
-				e.Errors = append(e.Errors, strings.ToValidUTF8(err.Error(), "\ufffd"))
+				detail := strings.ToValidUTF8(err.Error(), "\ufffd")
+				if validation, ok := errors.AsType[*huma.ErrorDetail](err); ok && privateMediaValidation(validation) {
+					detail = "invalid media reference body"
+				}
+				e.Errors = append(e.Errors, detail)
 			}
 		}
 		return e
 	}
+}
+
+func privateMediaValidation(detail *huma.ErrorDetail) bool {
+	if strings.HasSuffix(detail.Location, ".canonical_url") ||
+		strings.HasSuffix(detail.Location, ".reference_url") {
+		return true
+	}
+	values, ok := detail.Value.(map[string]any)
+	if !ok || !strings.HasPrefix(detail.Location, "body") {
+		return false
+	}
+	_, canonical := values["canonical_url"]
+	_, reference := values["reference_url"]
+	return canonical || reference
 }
 
 var storeErrCodes = []struct {
