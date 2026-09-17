@@ -44,6 +44,16 @@ func TestNativeRunnerUsesExactStdinArgumentsAndCleanEnvironment(t *testing.T) {
 	assert.False(t, result.Attestation.PrivateRootInstalled)
 }
 
+func TestStrictExecProvidesPrivateProcAndTemporaryDirectory(t *testing.T) {
+	runner, err := NewNativeRunner()
+	require.NoError(t, err)
+	result, err := runner.Run(t.Context(), sandboxTestRequest(t,
+		buildSandboxHelper(t, "strict-fs", "", ""), []byte("probe"), 1<<20))
+	require.NoError(t, err)
+	t.Logf("strict filesystem probe: %s", result.Output)
+	assert.Contains(t, string(result.Output), "proc=true;tmp=true")
+}
+
 func TestAuthenticatedLaunchChecksTokenSealFstatAndExecutableBinding(t *testing.T) {
 	request := sandboxTestRequest(t, buildSandboxHelper(t, "echo", "", ""), []byte("input"), 1<<20)
 	control, token, err := openLaunchControl(request)
@@ -74,6 +84,25 @@ func TestLauncherRejectsOutOfBandStatus(t *testing.T) {
 	assert.True(t, launcherReadyStatusRead(bytes.NewReader([]byte{launcherReadyStatus})))
 }
 
+func TestLauncherStatusProtocolIsModeSpecific(t *testing.T) {
+	status := launcherStatusRead(bytes.NewReader([]byte{launcherReadyStatus}))
+	assert.True(t, status.ready)
+	assert.Zero(t, status.detail)
+	assert.Zero(t, status.restarts)
+
+	status = launcherStatusRead(bytes.NewReader([]byte{launcherReadyStatus, launcherRestartStatusBase + 1}))
+	assert.True(t, status.ready)
+	assert.Equal(t, 1, status.restarts)
+
+	status = launcherStatusRead(bytes.NewReader([]byte{launcherReadyStatus, launcherFailureStatus}))
+	assert.True(t, status.ready)
+	assert.Equal(t, launcherFailureStatus, status.detail)
+	status = launcherStatusRead(bytes.NewReader([]byte{launcherReadyStatus, launcherChildFailureStatus}))
+	assert.Equal(t, launcherChildFailureStatus, status.detail)
+	status = launcherStatusRead(bytes.NewReader([]byte{launcherReadyStatus, launcherOutputFailureStatus}))
+	assert.Equal(t, launcherOutputFailureStatus, status.detail)
+}
+
 func TestNativeRunnerDeniesLoopbackNetworkAccess(t *testing.T) {
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	require.NoError(t, err)
@@ -97,6 +126,40 @@ func TestNativeRunnerDeniesHostPathnameUnixSocketAccess(t *testing.T) {
 		buildSandboxHelper(t, "unix-network", socketPath, ""), []byte("probe"), 1<<20))
 	require.NoError(t, err)
 	assert.Equal(t, "denied", string(result.Stdout))
+}
+
+func TestPrivateRootDeniesHostPathnameUnixSockets(t *testing.T) {
+	socketPath := filepath.Join(t.TempDir(), "host.sock")
+	listener, err := net.Listen("unix", socketPath)
+	require.NoError(t, err)
+	defer func() { _ = listener.Close() }()
+	runner, err := NewNativeRunner()
+	require.NoError(t, err)
+	result, err := runner.Run(t.Context(), privateTestRequest(t,
+		buildSandboxHelper(t, "file-unix-network", socketPath, "result.bin")))
+	require.NoError(t, err)
+	assert.Equal(t, []byte("denied"), result.Output)
+}
+
+func TestPrivateRootDeniesSocketInsertedAfterRuntimeDiscovery(t *testing.T) {
+	runtimeDir := t.TempDir()
+	declaredPath := filepath.Join(runtimeDir, "declared")
+	declared := []byte("declared runtime")
+	require.NoError(t, os.WriteFile(declaredPath, declared, 0o600))
+	digest := sha256.Sum256(declared)
+	// This manifest represents the regular file discovered before the socket exists.
+	entry := RuntimeFile{SourcePath: declaredPath, GuestPath: "/usr/runtime/socket-dir/declared", SHA256: hex.EncodeToString(digest[:])}
+	socketPath := filepath.Join(runtimeDir, "inserted.sock")
+	listener, err := net.Listen("unix", socketPath)
+	require.NoError(t, err)
+	defer func() { _ = listener.Close() }()
+	request := privateTestRequest(t, buildSandboxHelper(t, "file-unix-network", "/usr/runtime/socket-dir/inserted.sock", "result.bin"))
+	request.Policy.PrivateRoot.Runtime = []RuntimeFile{entry}
+	runner, err := NewNativeRunner()
+	require.NoError(t, err)
+	result, err := runner.Run(t.Context(), request)
+	require.NoError(t, err)
+	assert.Equal(t, []byte("denied"), result.Output)
 }
 
 func TestNativeRunnerCannotReadOrModifyHostFiles(t *testing.T) {
@@ -164,6 +227,7 @@ func TestSupervisedRunnerReapsAdoptedDescendantAfterDirectExit(t *testing.T) {
 	result, err := runner.Run(t.Context(), privateTestRequest(t,
 		buildSandboxHelper(t, "file-descendant-exit", "", "result.bin")))
 	require.NoError(t, err)
+	t.Log("descendant readiness handshake completed before direct parent exit; Run returned after reaping")
 	assert.Equal(t, []byte("supervised output"), result.Output)
 	assert.Less(t, time.Since(started), 2*time.Second)
 }
@@ -237,6 +301,40 @@ func TestSupervisedRunnerClassifiesChildExit125(t *testing.T) {
 	_, err = runner.Run(t.Context(), privateTestRequest(t,
 		buildSandboxHelper(t, "exit-125", "", "result.bin")))
 	require.ErrorIs(t, err, ErrChildFailed)
+}
+
+func TestSupervisedRunnerClassifiesChildExit124(t *testing.T) {
+	runner, err := NewNativeRunner()
+	require.NoError(t, err)
+	_, err = runner.Run(t.Context(), privateTestRequest(t,
+		buildSandboxHelper(t, "exit-124", "", "result.bin")))
+	require.ErrorIs(t, err, ErrChildFailed)
+}
+
+func TestSupervisedRunnerClassifiesOutputOverflowSeparately(t *testing.T) {
+	runner, err := NewNativeRunner()
+	require.NoError(t, err)
+	request := privateTestRequest(t, buildSandboxHelper(t, "file-overflow", "", "result.bin"))
+	request.Policy.PrivateRoot.MaxOutputBytes = 1 << 10
+	_, err = runner.Run(t.Context(), request)
+	require.ErrorIs(t, err, ErrOutputTooLarge)
+}
+
+func TestStrictExecClassifiesChildExit124AsFailure(t *testing.T) {
+	runner, err := NewNativeRunner()
+	require.NoError(t, err)
+	_, err = runner.Run(t.Context(), sandboxTestRequest(t,
+		buildSandboxHelper(t, "exit-124", "", ""), []byte("probe"), 1<<20))
+	require.ErrorIs(t, err, ErrChildFailed)
+}
+
+func TestStrictExecFailureAfterReadyIsUnavailable(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "not-an-executable")
+	require.NoError(t, os.WriteFile(path, []byte("not an executable"), 0o700))
+	runner, err := NewNativeRunner()
+	require.NoError(t, err)
+	_, err = runner.Run(t.Context(), sandboxTestRequest(t, path, []byte("probe"), 1<<20))
+	require.ErrorIs(t, err, ErrUnavailable)
 }
 
 func TestNativeRunnerCancellationBeforePreparation(t *testing.T) {

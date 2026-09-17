@@ -441,10 +441,14 @@ func installPrivateLandlock(executablePath string) error {
 }
 
 func installExecLandlock() error {
-	return installLandlock(execLandlockPaths(), execLandlockFiles(), execLandlockDevices(), false)
+	return installLandlockWithWritable(execLandlockPaths(), execLandlockFiles(), execLandlockDevices(), false, nil, []string{rootPath("tmp")})
 }
 
 func installLandlock(paths, files []string, devices map[string]uint64, private bool, extraPaths ...string) error {
+	return installLandlockWithWritable(paths, files, devices, private, extraPaths, nil)
+}
+
+func installLandlockWithWritable(paths, files []string, devices map[string]uint64, private bool, extraPaths, writablePaths []string) error {
 	version, _, errno := unix.Syscall6(
 		unix.SYS_LANDLOCK_CREATE_RULESET, 0, 0, unix.LANDLOCK_CREATE_RULESET_VERSION, 0, 0, 0,
 	)
@@ -486,6 +490,12 @@ func installLandlock(paths, files []string, devices map[string]uint64, private b
 	}
 	for _, path := range extraPaths {
 		if err := addLandlockPath(rulesetFD, path, readOnly); err != nil {
+			return err
+		}
+	}
+	for _, path := range writablePaths {
+		writableAccess := handledAccess &^ (unix.LANDLOCK_ACCESS_FS_EXECUTE | unix.LANDLOCK_ACCESS_FS_IOCTL_DEV)
+		if err := addLandlockPath(rulesetFD, path, writableAccess); err != nil {
 			return err
 		}
 	}

@@ -31,6 +31,14 @@ type echoResponse struct {
 
 func main() {
 	if len(os.Args) == 2 && os.Args[1] == "--descendant" {
+		if mode == "file-descendant-exit" {
+			if err := os.WriteFile("/work/descendant-ready", []byte("ready"), 0o600); err != nil {
+				os.Exit(6)
+			}
+			for {
+				time.Sleep(time.Hour)
+			}
+		}
 		if _, err := fmt.Fprintln(os.Stdout, "descendant-ready"); err != nil || os.Stdout.Sync() != nil {
 			os.Exit(6)
 		}
@@ -58,9 +66,28 @@ func main() {
 		}
 		_ = connection.Close()
 		fmt.Print("connected")
+	case "strict-fs":
+		probePath := "/tmp/docbank-strict-probe"
+		writeErr := os.WriteFile(probePath, []byte("temp"), 0o600)
+		data, readErr := os.ReadFile(probePath)
+		removeErr := os.Remove(probePath)
+		comm, commErr := os.ReadFile("/proc/1/comm")
+		privateProc := commErr == nil && !strings.Contains(strings.ToLower(string(comm)), "init")
+		tmpAllowed := writeErr == nil && readErr == nil && string(data) == "temp" && removeErr == nil
+		fmt.Printf("proc=%t;tmp=%t;comm=%s;write=%v;read=%v;remove=%v", privateProc, tmpAllowed, strings.TrimSpace(string(comm)), writeErr, readErr, removeErr)
 	case "file-network":
 		status := "denied"
 		connection, err := net.DialTimeout("tcp", networkAddress, time.Second)
+		if err == nil {
+			status = "connected"
+			_ = connection.Close()
+		}
+		if err := os.WriteFile("/work/"+outputName, []byte(status), 0o600); err != nil {
+			os.Exit(5)
+		}
+	case "file-unix-network":
+		status := "denied"
+		connection, err := net.DialTimeout("unix", networkAddress, time.Second)
 		if err == nil {
 			status = "connected"
 			_ = connection.Close()
@@ -144,6 +171,9 @@ func main() {
 		if err := command.Start(); err != nil {
 			os.Exit(3)
 		}
+		if err := waitForFile("/work/descendant-ready"); err != nil {
+			os.Exit(4)
+		}
 		if err := os.WriteFile("/work/"+outputName, []byte("supervised output"), 0o600); err != nil {
 			os.Exit(5)
 		}
@@ -195,7 +225,20 @@ func main() {
 		}
 	case "exit-125":
 		os.Exit(125)
+	case "exit-124":
+		os.Exit(124)
 	default:
 		os.Exit(4)
 	}
+}
+
+func waitForFile(path string) error {
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if _, err := os.Stat(path); err == nil {
+			return nil
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	return fmt.Errorf("timed out waiting for %s", path)
 }

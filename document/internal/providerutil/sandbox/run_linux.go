@@ -24,18 +24,20 @@ import (
 )
 
 const (
-	NativeRunnerIdentity      = "sha256:afc3202c30a20fbb62fe6b7a4ccf282dea0ba16e40d22e7bdfa3f1d28819db16"
-	launcherMarker            = "--docbank-internal-sandbox-launch-v1"
-	launcherExecutableFD      = 3
-	launcherControlFD         = 4
-	launcherStatusFD          = 5
-	launcherTokenBytes        = 32
-	launcherFailureExitCode   = 125
-	launcherOutputExitCode    = 124
-	launcherReadyStatus       = byte(1)
-	launcherFailureStatus     = byte(2)
-	launcherRestartStatusBase = byte(16)
-	childDrainWindow          = 250 * time.Millisecond
+	NativeRunnerIdentity        = "sha256:afc3202c30a20fbb62fe6b7a4ccf282dea0ba16e40d22e7bdfa3f1d28819db16"
+	launcherMarker              = "--docbank-internal-sandbox-launch-v1"
+	launcherExecutableFD        = 3
+	launcherControlFD           = 4
+	launcherStatusFD            = 5
+	launcherTokenBytes          = 32
+	launcherFailureExitCode     = 125
+	launcherOutputExitCode      = 124
+	launcherReadyStatus         = byte(1)
+	launcherFailureStatus       = byte(2)
+	launcherChildFailureStatus  = byte(3)
+	launcherOutputFailureStatus = byte(4)
+	launcherRestartStatusBase   = byte(16)
+	childDrainWindow            = 250 * time.Millisecond
 )
 
 // Runner is the platform process boundary used by document providers.
@@ -139,8 +141,8 @@ func (nativeRunner) Run(ctx context.Context, request Request) (Result, error) {
 
 	waited := make(chan error, 1)
 	go func() { waited <- command.Wait() }()
-	launcherReady := make(chan bool, 1)
-	go func() { launcherReady <- launcherReadyStatusRead(statusReader) }()
+	launcherStatus := make(chan launcherRunStatus, 1)
+	go func() { launcherStatus <- launcherStatusRead(statusReader) }()
 	var runErr error
 	select {
 	case runErr = <-waited:
@@ -148,8 +150,7 @@ func (nativeRunner) Run(ctx context.Context, request Request) (Result, error) {
 		_ = command.Process.Kill()
 		runErr = <-waited
 	}
-	ready := <-launcherReady
-	restarts := launcherRestartCountRead(statusReader)
+	status := <-launcherStatus
 	result := Result{
 		Stdout: output.Bytes(),
 		Attestation: Attestation{
@@ -160,7 +161,7 @@ func (nativeRunner) Run(ctx context.Context, request Request) (Result, error) {
 			PrivateRootInstalled: request.Policy.Mode == SupervisedFileMode,
 			RuntimeIdentity:      runtimeIdentity(request.Policy),
 			UnixIPCAllowed:       request.Policy.Mode == SupervisedFileMode && request.Policy.PrivateRoot.UnixIPC,
-			RestartCount:         restarts,
+			RestartCount:         status.restarts,
 		},
 	}
 	result.Output = slices.Clone(result.Stdout)
@@ -170,31 +171,56 @@ func (nativeRunner) Run(ctx context.Context, request Request) (Result, error) {
 	if err := ctx.Err(); err != nil {
 		return result, err
 	}
-	if !ready {
+	if !status.ready {
 		return result, ErrUnavailable
 	}
+	if status.detail == launcherFailureStatus {
+		return result, ErrUnavailable
+	}
+	if status.detail == launcherOutputFailureStatus {
+		return result, ErrOutputTooLarge
+	}
+	if status.detail == launcherChildFailureStatus {
+		return result, ErrChildFailed
+	}
 	if runErr != nil {
-		var exitError *exec.ExitError
-		if errors.As(runErr, &exitError) && exitError.ExitCode() == launcherOutputExitCode {
-			return result, ErrOutputTooLarge
-		}
 		return result, ErrChildFailed
 	}
 	return result, nil
 }
 
-func launcherReadyStatusRead(reader io.Reader) bool {
-	status := []byte{0}
-	_, err := io.ReadFull(reader, status)
-	return err == nil && status[0] == launcherReadyStatus
+type launcherRunStatus struct {
+	ready    bool
+	detail   byte
+	restarts int
 }
 
-func launcherRestartCountRead(reader io.Reader) int {
-	status := []byte{0}
-	if _, err := io.ReadFull(reader, status); err != nil || status[0] < launcherRestartStatusBase {
-		return 0
+func launcherStatusRead(reader io.Reader) launcherRunStatus {
+	data, err := io.ReadAll(io.LimitReader(reader, 3))
+	if err != nil || len(data) == 0 || data[0] != launcherReadyStatus {
+		return launcherRunStatus{}
 	}
-	return int(status[0] - launcherRestartStatusBase)
+	status := launcherRunStatus{ready: true}
+	if len(data) < 2 {
+		return status
+	}
+	switch data[1] {
+	case launcherRestartStatusBase:
+		status.restarts = 0
+	case launcherFailureStatus, launcherChildFailureStatus, launcherOutputFailureStatus:
+		status.detail = data[1]
+	default:
+		if data[1] >= launcherRestartStatusBase {
+			status.restarts = int(data[1] - launcherRestartStatusBase)
+		} else {
+			status.detail = launcherFailureStatus
+		}
+	}
+	return status
+}
+
+func launcherReadyStatusRead(reader io.Reader) bool {
+	return launcherStatusRead(reader).ready
 }
 
 func runtimeIdentity(policy Policy) string {

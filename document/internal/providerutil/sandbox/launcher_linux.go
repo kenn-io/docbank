@@ -21,7 +21,11 @@ func init() {
 		return
 	}
 	if err := runLauncher(control, launcherExecutableFD, launcherStatusFD); err != nil {
-		_ = writeLauncherStatus(launcherStatusFD, launcherFailureStatus)
+		status := launcherFailureStatus
+		if statusErr, ok := errors.AsType[launcherStatusError](err); ok {
+			status = statusErr.status
+		}
+		_ = writeLauncherStatus(launcherStatusFD, status)
 		if errors.Is(err, ErrOutputTooLarge) {
 			os.Exit(launcherOutputExitCode)
 		}
@@ -39,6 +43,9 @@ func runLauncher(control launchControl, executableFD, statusFD int) error {
 		if err := unix.MountSetattr(unix.AT_FDCWD, "/", unix.AT_RECURSIVE,
 			&unix.MountAttr{Attr_set: unix.MOUNT_ATTR_RDONLY}); err != nil {
 			return fmt.Errorf("make inherited host mounts read-only: %w", err)
+		}
+		if err := installStrictExecFilesystem(); err != nil {
+			return err
 		}
 	case SupervisedFileMode:
 		if err := installPrivateRoot(control, executableFD); err != nil {
@@ -75,7 +82,13 @@ func runLauncher(control launchControl, executableFD, statusFD int) error {
 	if control.Policy.Mode == SupervisedFileMode {
 		restarts, err := runSupervisedChild(control, control.Policy.Executable)
 		if err != nil {
-			return err
+			status := launcherFailureStatus
+			if errors.Is(err, ErrChildFailed) {
+				status = launcherChildFailureStatus
+			} else if errors.Is(err, ErrOutputTooLarge) {
+				status = launcherOutputFailureStatus
+			}
+			return launcherStatusError{status: status, err: err}
 		}
 		if err := writeLauncherRestartStatus(statusFD, restarts); err != nil {
 			return err
@@ -89,6 +102,29 @@ func runLauncher(control launchControl, executableFD, statusFD int) error {
 	}
 	return nil
 }
+
+func installStrictExecFilesystem() error {
+	if err := unix.Mount("tmpfs", "/tmp", "tmpfs", unix.MS_NOSUID|unix.MS_NODEV|unix.MS_NOEXEC,
+		"mode=1777,size=256m"); err != nil {
+		return fmt.Errorf("mount private temporary directory: %w", err)
+	}
+	if err := unix.Mount("proc", "/proc", "proc", unix.MS_NOSUID|unix.MS_NODEV|unix.MS_RDONLY, ""); err != nil {
+		return fmt.Errorf("mount private proc: %w", err)
+	}
+	if err := unix.Chdir("/tmp"); err != nil {
+		return fmt.Errorf("enter private working directory: %w", err)
+	}
+	return nil
+}
+
+type launcherStatusError struct {
+	status byte
+	err    error
+}
+
+func (err launcherStatusError) Error() string { return err.err.Error() }
+
+func (err launcherStatusError) Unwrap() error { return err.err }
 
 func runSupervisedChild(control launchControl, executablePath string) (int, error) {
 	private := control.Policy.PrivateRoot
@@ -136,7 +172,7 @@ func runSupervisedChild(control launchControl, executablePath string) (int, erro
 		if attempt == 0 && errors.As(runErr, &exitError) && exitError.ExitCode() == 81 {
 			continue
 		}
-		return 0, fmt.Errorf("sandbox supervised child failed: %w", runErr)
+		return 0, fmt.Errorf("%w: sandbox supervised child failed: %w", ErrChildFailed, runErr)
 	}
 	if err := copySupervisedOutput(outputPath, private.MaxOutputBytes); err != nil {
 		return 0, err
