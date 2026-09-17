@@ -260,6 +260,11 @@ func procFD(fd int) string {
 }
 
 func pivotAndDetachRoot(root string) error {
+	// User namespaces require an existing visible proc mount when creating one.
+	// Install our PID namespace's proc before detaching the inherited filesystem.
+	if err := unix.Mount("proc", filepath.Join(root, "proc"), "proc", unix.MS_NOSUID|unix.MS_NODEV|unix.MS_RDONLY, ""); err != nil {
+		return privateRootError("mount private proc", err)
+	}
 	if err := unix.PivotRoot(root, filepath.Join(root, "oldroot")); err != nil {
 		return privateRootError("pivot private root", err)
 	}
@@ -271,9 +276,6 @@ func pivotAndDetachRoot(root string) error {
 	}
 	if err := os.RemoveAll("/oldroot"); err != nil {
 		return privateRootError("remove old root", err)
-	}
-	if err := unix.Mount("proc", "/proc", "proc", unix.MS_NOSUID|unix.MS_NODEV|unix.MS_RDONLY, ""); err != nil {
-		return privateRootError("mount private proc", err)
 	}
 	if err := unix.Mount("", "/", "", unix.MS_REMOUNT|unix.MS_RDONLY, ""); err != nil {
 		return privateRootError("remount private root", err)
