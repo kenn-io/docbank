@@ -11,6 +11,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"unsafe"
@@ -436,8 +437,27 @@ func pivotAndDetachRoot(root string) error {
 	return nil
 }
 
-func installPrivateLandlock(executablePath string) error {
-	return installLandlock(privateRootLandlockPaths(), privateRootLandlockFiles(), privateRootLandlockDevices(), true, filepath.Dir(executablePath))
+func installPrivateLandlock(executablePath string, root *PrivateRoot) error {
+	paths := runtimeLandlockPaths(executablePath, root)
+	return installLandlock(privateRootLandlockPaths(), privateRootLandlockFiles(), privateRootLandlockDevices(), true, paths...)
+}
+
+func runtimeLandlockPaths(executablePath string, root *PrivateRoot) []string {
+	seen := map[string]struct{}{filepath.Dir(executablePath): {}}
+	if root != nil {
+		for _, file := range root.Runtime {
+			seen[filepath.Dir(file.GuestPath)] = struct{}{}
+		}
+		for _, link := range root.Symlinks {
+			seen[filepath.Dir(link.GuestPath)] = struct{}{}
+		}
+	}
+	paths := make([]string, 0, len(seen))
+	for path := range seen {
+		paths = append(paths, path)
+	}
+	sort.Strings(paths)
+	return paths
 }
 
 func installExecLandlock() error {

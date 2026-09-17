@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
 
@@ -28,14 +29,31 @@ type RuntimeManifest struct {
 
 // DefaultRuntimeRoots returns the measured Debian/Ubuntu LibreOffice roots.
 func DefaultRuntimeRoots() []string {
+	return defaultRuntimeRootsForArch(runtime.GOARCH)
+}
+
+func defaultRuntimeRootsForArch(goarch string) []string {
 	// ponytail: Debian/Ubuntu discovery roots, upgrade trigger: measured non-Debian runtime manifest.
-	return []string{
+	roots := []string{
 		"/usr/lib/libreoffice", "/usr/share/libreoffice", "/etc/libreoffice",
-		"/var/lib/libreoffice", "/usr/lib/x86_64-linux-gnu", "/usr/lib64",
+		"/var/lib/libreoffice",
 		"/usr/share/fonts", "/usr/share/fontconfig", "/var/cache/fontconfig",
 		"/etc/fonts", "/usr/lib/locale", "/etc/ld.so.cache", "/etc/localtime",
-		"/lib64",
 	}
+	switch goarch {
+	case "amd64":
+		roots = append(roots,
+			"/usr/lib/x86_64-linux-gnu",
+			"/usr/lib64",
+			"/lib64/ld-linux-x86-64.so.2",
+		)
+	case "arm64":
+		roots = append(roots,
+			"/usr/lib/aarch64-linux-gnu",
+			"/lib/ld-linux-aarch64.so.1",
+		)
+	}
+	return roots
 }
 
 // DiscoverRuntime snapshots declared regular files and explicit safe symlinks.
@@ -47,7 +65,7 @@ func DiscoverRuntime(roots []string) (RuntimeManifest, error) {
 		if !filepath.IsAbs(root) || filepath.Clean(root) != root {
 			return RuntimeManifest{}, errors.New("runtime root must be absolute and clean")
 		}
-		if err := discoverRuntimePath(root, root, &manifest, seen, &total); err != nil {
+		if err := discoverRuntimePath(root, root, true, &manifest, seen, &total); err != nil {
 			return RuntimeManifest{}, err
 		}
 	}
@@ -68,7 +86,7 @@ func DiscoverRuntime(roots []string) (RuntimeManifest, error) {
 	return manifest, nil
 }
 
-func discoverRuntimePath(path, guest string, manifest *RuntimeManifest, seen map[string]struct{}, total *int64) error {
+func discoverRuntimePath(path, guest string, selectedRoot bool, manifest *RuntimeManifest, seen map[string]struct{}, total *int64) error {
 	info, err := os.Lstat(path)
 	if err != nil {
 		return err
@@ -96,7 +114,7 @@ func discoverRuntimePath(path, guest string, manifest *RuntimeManifest, seen map
 				return errors.New("runtime path depth exceeds limit")
 			}
 			if entry.Type()&os.ModeSymlink != 0 {
-				return discoverRuntimeSymlink(current, target, manifest, seen, total)
+				return discoverRuntimeSymlink(current, target, false, manifest, seen, total)
 			}
 			if entry.IsDir() {
 				return nil
@@ -111,22 +129,16 @@ func discoverRuntimePath(path, guest string, manifest *RuntimeManifest, seen map
 			return addRuntimeFile(current, target, info, manifest, seen, total)
 		})
 	case os.ModeSymlink:
-		return discoverRuntimeSymlink(path, guest, manifest, seen, total)
+		return discoverRuntimeSymlink(path, guest, selectedRoot, manifest, seen, total)
 	default:
 		return sandbox.ErrRuntimeSpecialFile
 	}
 }
 
-func discoverRuntimeSymlink(path, guest string, manifest *RuntimeManifest, seen map[string]struct{}, total *int64) error {
+func discoverRuntimeSymlink(path, guest string, selectedRoot bool, manifest *RuntimeManifest, seen map[string]struct{}, total *int64) error {
 	target, err := os.Readlink(path)
 	if err != nil {
 		return err
-	}
-	if target != "" && !filepath.IsAbs(target) &&
-		filepath.Clean(target) == target && !strings.Contains(target, "..") {
-		if err := addRuntimeSymlink(guest, target, manifest, seen); err == nil {
-			return nil
-		}
 	}
 	resolved, err := filepath.EvalSymlinks(path)
 	if err != nil {
@@ -137,7 +149,13 @@ func discoverRuntimeSymlink(path, guest string, manifest *RuntimeManifest, seen 
 		return err
 	}
 	if info.IsDir() {
-		return nil
+		return discoverRuntimePath(resolved, guest, false, manifest, seen, total)
+	}
+	if !selectedRoot && target != "" && !filepath.IsAbs(target) &&
+		filepath.Clean(target) == target && !strings.Contains(target, "..") {
+		if err := addRuntimeSymlink(guest, target, manifest, seen); err == nil {
+			return nil
+		}
 	}
 	if !info.Mode().IsRegular() {
 		return sandbox.ErrRuntimeSpecialFile

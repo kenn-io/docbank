@@ -33,6 +33,8 @@ func TestAdmissionRejectsLinkedAndActiveConstructs(t *testing.T) {
 		{name: "nested document", body: `<office:embedded-document/>`},
 		{name: "webservice element text", body: `<f>WEBSERVICE("https://example.test")</f>`},
 		{name: "external formula", body: `<table:table-cell xmlns:table="urn:oasis:names:tc:opendocument:xmlns:table:1.0" table:formula="of:=DDE(\"https://example.test\")"/>`},
+		{name: "SVG data", body: `<draw:image xmlns:draw="urn:oasis:names:tc:opendocument:xmlns:drawing:1.0" xmlns:xlink="http://www.w3.org/1999/xlink" xlink:href="data:image/svg+xml;base64,PHN2Zy8+"/>`},
+		{name: "unknown image data", body: `<draw:image xmlns:draw="urn:oasis:names:tc:opendocument:xmlns:drawing:1.0" xmlns:xlink="http://www.w3.org/1999/xlink" xlink:href="data:image/tiff;base64,AA=="/>`},
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
 			_, err := Scan(flatODF(FlatTextKind, testCase.body), FlatTextKind, DefaultLimits())

@@ -65,7 +65,7 @@ func runLauncher(control launchControl, executableFD, statusFD int) error {
 			return err
 		}
 	} else {
-		if err := installPrivateLandlock(control.Policy.Executable); err != nil {
+		if err := installPrivateLandlock(control.Policy.Executable, control.Policy.PrivateRoot); err != nil {
 			return err
 		}
 		if err := installNetworkSeccomp(unixOnlyNetworkFilters); err != nil {

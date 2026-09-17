@@ -110,3 +110,17 @@ func TestPrivateRootControlCapacity(t *testing.T) {
 	require.NoError(t, err)
 	assert.Less(t, len(encoded), int(MaxPrivateRootControlBytes))
 }
+
+func TestRuntimeLandlockPathsUseGuestParents(t *testing.T) {
+	root := &PrivateRoot{
+		Runtime: []RuntimeFile{
+			{SourcePath: "/host/cache/libfoo.so", GuestPath: "/usr/lib/libfoo.so"},
+			{SourcePath: "/host/cache/font.ttf", GuestPath: "/usr/share/fonts/font.ttf"},
+		},
+		Symlinks: []RuntimeSymlink{{GuestPath: "/lib/libfoo.so", Target: "../usr/lib/libfoo.so"}},
+	}
+
+	paths := runtimeLandlockPaths("/usr/lib/libreoffice/program/soffice.bin", root)
+	assert.Equal(t, []string{"/lib", "/usr/lib", "/usr/lib/libreoffice/program", "/usr/share/fonts"}, paths)
+	assert.NotContains(t, paths, "/host/cache")
+}

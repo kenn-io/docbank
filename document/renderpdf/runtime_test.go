@@ -41,6 +41,54 @@ func TestRuntimeExecutableMappingIncludesMode0644ELF(t *testing.T) {
 	assert.True(t, manifest.Files[0].Executable)
 }
 
+func TestDefaultRuntimeRootsFollowArchitecture(t *testing.T) {
+	assert.Contains(t, defaultRuntimeRootsForArch("amd64"), "/usr/lib/x86_64-linux-gnu")
+	assert.Contains(t, defaultRuntimeRootsForArch("amd64"), "/lib64/ld-linux-x86-64.so.2")
+	assert.NotContains(t, defaultRuntimeRootsForArch("amd64"), "/usr/lib/aarch64-linux-gnu")
+	assert.Contains(t, defaultRuntimeRootsForArch("arm64"), "/usr/lib/aarch64-linux-gnu")
+	assert.Contains(t, defaultRuntimeRootsForArch("arm64"), "/lib/ld-linux-aarch64.so.1")
+	assert.NotContains(t, defaultRuntimeRootsForArch("arm64"), "/usr/lib/x86_64-linux-gnu")
+}
+
+func TestRuntimeDiscoveryExpandsDirectorySymlinkRoot(t *testing.T) {
+	for _, relative := range []bool{false, true} {
+		t.Run(strconv.FormatBool(relative), func(t *testing.T) {
+			parent := t.TempDir()
+			target := filepath.Join(parent, "runtime")
+			require.NoError(t, os.Mkdir(target, 0o755))
+			require.NoError(t, os.WriteFile(filepath.Join(target, "file"), []byte("runtime"), 0o644))
+			link := filepath.Join(parent, "runtime-link")
+			linkTarget := target
+			if relative {
+				linkTarget = "runtime"
+			}
+			require.NoError(t, os.Symlink(linkTarget, link))
+
+			manifest, err := DiscoverRuntime([]string{link})
+			require.NoError(t, err)
+			require.Len(t, manifest.Files, 1)
+			assert.Equal(t, filepath.Join(link, "file"), manifest.Files[0].GuestPath)
+		})
+	}
+}
+
+func TestRuntimeDiscoveryMaterializesSelectedFileSymlink(t *testing.T) {
+	parent := t.TempDir()
+	targetDirectory := filepath.Join(parent, "architecture")
+	require.NoError(t, os.Mkdir(targetDirectory, 0o755))
+	target := filepath.Join(targetDirectory, "loader")
+	require.NoError(t, os.WriteFile(target, []byte("loader"), 0o755))
+	link := filepath.Join(parent, "ld-linux.so.1")
+	require.NoError(t, os.Symlink(filepath.Join("architecture", "loader"), link))
+
+	manifest, err := DiscoverRuntime([]string{link})
+	require.NoError(t, err)
+	require.Len(t, manifest.Files, 1)
+	assert.Equal(t, link, manifest.Files[0].GuestPath)
+	assert.Equal(t, target, manifest.Files[0].SourcePath)
+	assert.Empty(t, manifest.Symlinks)
+}
+
 func TestDiscoveredRuntimeManifestControlCapacity(t *testing.T) {
 	root := t.TempDir()
 	for index := range 1_000 {

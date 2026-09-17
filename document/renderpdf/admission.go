@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io"
 	"net/url"
+	"slices"
 	"strings"
 )
 
@@ -205,11 +206,20 @@ func allowedInternalLink(value string) bool {
 	if strings.HasPrefix(value, "#") && len(value) > 1 {
 		return true
 	}
-	if !strings.HasPrefix(strings.ToLower(value), "data:image/") {
+	lower := strings.ToLower(value)
+	if !strings.HasPrefix(lower, "data:image/") {
 		return false
 	}
 	parsed, err := url.Parse(value)
-	return err == nil && parsed.Scheme == "data"
+	if err != nil || parsed.Scheme != "data" {
+		return false
+	}
+	header, _, ok := strings.Cut(lower, ",")
+	if !ok || !strings.HasSuffix(header, ";base64") {
+		return false
+	}
+	mediaType := strings.TrimSuffix(strings.TrimPrefix(header, "data:"), ";base64")
+	return slices.Contains([]string{"image/png", "image/jpeg", "image/gif", "image/webp", "image/bmp"}, mediaType)
 }
 
 func formulaElement(element xml.Name) bool {
