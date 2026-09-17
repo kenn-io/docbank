@@ -12,7 +12,8 @@
 <script lang="ts">
   import { onDestroy, untrack } from "svelte";
   import { Button, Checkbox, Chip, Modal, Spinner } from "@kenn-io/kit-ui";
-  import { APIError, type Tag } from "./api.js";
+  import { APIError } from "./api-transport.js";
+  import type { Tag } from "./generated/docbank.js";
   import { ACTION_MAX_BYTES, encodeRecovery } from "./actionRecovery.js";
   import { runAction, type ActionProgress } from "./actionRunner.js";
 

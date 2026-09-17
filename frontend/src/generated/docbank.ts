@@ -9401,7 +9401,7 @@ export const getCreateWorkspaceQueryUrl = () => {
 /**
  * @summary Create an exact bounded query snapshot
  */
-export const createWorkspaceQuery = async (workspaceQueryCreateRequest: NonReadonly<WorkspaceQueryCreateRequest>, options?: Parameters<typeof sessionJSON>[1]): Promise<WorkspaceQueryResponse> => {
+export const createWorkspaceQuery = (workspaceQueryCreateRequest: NonReadonly<WorkspaceQueryCreateRequest>, options?: Parameters<typeof sessionResponse>[1]) => {
 
     const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
     if (!h) return {};
@@ -9417,7 +9417,7 @@ export const createWorkspaceQuery = async (workspaceQueryCreateRequest: NonReado
     }
     return headers;
   };
-return sessionJSON<WorkspaceQueryResponse>(getCreateWorkspaceQueryUrl(),
+return sessionResponse<WorkspaceQueryResponse>(getCreateWorkspaceQueryUrl(),
   {
     ...options,
     method: 'POST',
@@ -9439,8 +9439,8 @@ export const getReadWorkspaceQueryPageUrl = (id: string,) => {
 /**
  * @summary Read one exact snapshot page
  */
-export const readWorkspaceQueryPage = async (id: string,
-    workspaceQueryPageRequest: NonReadonly<WorkspaceQueryPageRequest>, options?: Parameters<typeof sessionJSON>[1]): Promise<WorkspaceQueryResponse> => {
+export const readWorkspaceQueryPage = (id: string,
+    workspaceQueryPageRequest: NonReadonly<WorkspaceQueryPageRequest>, options?: Parameters<typeof sessionResponse>[1]) => {
 
     const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
     if (!h) return {};
@@ -9456,7 +9456,7 @@ export const readWorkspaceQueryPage = async (id: string,
     }
     return headers;
   };
-return sessionJSON<WorkspaceQueryResponse>(getReadWorkspaceQueryPageUrl(id),
+return sessionResponse<WorkspaceQueryResponse>(getReadWorkspaceQueryPageUrl(id),
   {
     ...options,
     method: 'POST',

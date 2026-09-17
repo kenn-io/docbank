@@ -1169,7 +1169,7 @@
     operation: ReturnType<typeof beginSnapshotAction>,
   ): Promise<void> {
     if (!operation.current()) return;
-    const currentTag = await tagByID(operation.session, action.tag_id).catch((cause) => {
+    const currentTag = await generated.getTag(action.tag_id, { session: operation.session }).catch((cause) => {
       if (cause instanceof APIError && cause.status === 404) return null;
       throw cause;
     });

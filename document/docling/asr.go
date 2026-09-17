@@ -2,7 +2,7 @@ package docling
 
 import (
 	"context"
-	"encoding/json"
+	"encoding/json/v2"
 	"errors"
 	"math"
 	"net/http"

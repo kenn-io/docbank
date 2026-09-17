@@ -1,4 +1,4 @@
-import { requestResponse } from "./api.js";
+import { createWorkspaceQuery, readWorkspaceQueryPage, type WorkspaceQueryCreateRequestFacetsItem } from "./generated/docbank.js";
 import { canonicalQuery, parseQuery, queryFingerprint as fingerprintQuery, type Query } from "./query.js";
 import { snapshotTargetRevision, type SnapshotReceiptOverlay } from "./snapshotOverlays.js";
 
@@ -420,7 +420,7 @@ async function boundedJSON(response: Response): Promise<unknown> {
   }
 }
 
-function normalizedOptions(options: SnapshotOptions): SnapshotOptions {
+function normalizedOptions(options: SnapshotOptions): SnapshotOptions & { facets?: WorkspaceQueryCreateRequestFacetsItem[] } {
   if (typeof options !== "object" || options === null || Array.isArray(options)) throw new Error("Snapshot options are invalid.");
   const profile = options.profile;
   if (profile !== undefined && (typeof profile !== "string" || !validUnicode(profile) || encoder.encode(profile).length > 128)) {
@@ -434,7 +434,7 @@ function normalizedOptions(options: SnapshotOptions): SnapshotOptions {
     if (typeof value !== "string" || !facetDimensions.has(value as WorkspaceQueryResponse["facets"][number]["dimension"])) {
       throw new Error("Snapshot facets contain an unknown dimension.");
     }
-    return value;
+    return value as WorkspaceQueryCreateRequestFacetsItem;
   });
   if (facets !== undefined && new Set(facets).size !== facets.length) throw new Error("Snapshot facets repeat a dimension.");
   return {
@@ -463,12 +463,7 @@ export async function createSnapshot(
 ): Promise<SnapshotPage> {
   const normalized = normalizedOptions(options);
   const canonical = canonicalQuery(query);
-  const response = await requestResponse("/api/v1/workspace/queries", session, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ query: JSON.parse(canonical), ...normalized }),
-    signal,
-  });
+  const response = await createWorkspaceQuery({ query: JSON.parse(canonical), ...normalized }, { session, signal });
   const result = await parseSnapshot(await boundedJSON(response), query);
   validateFirstPage(result, normalized);
   return result;
@@ -495,13 +490,7 @@ export async function readSnapshotPage(
   const forward = requestedCursor === snapshot.next_cursor;
   const backward = requestedCursor === snapshot.previous_cursor;
   if (forward === backward) throw new Error("Snapshot cursor does not belong to the supplied page.");
-  const response = await requestResponse(
-    `/api/v1/workspace/queries/${encodeURIComponent(snapshot.snapshot_id)}/pages`, session,
-    {
-      method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ cursor: requestedCursor }), signal,
-    },
-  );
+  const response = await readWorkspaceQueryPage(snapshot.snapshot_id, { cursor: requestedCursor }, { session, signal });
   const result = await parseSnapshot(await boundedJSON(response), snapshot.query);
   if (!sameAuthority(snapshot, result)) malformed("page does not match immutable snapshot authority");
   if (Date.parse(result.expires_at) < Date.parse(snapshot.expires_at)) malformed("page expiry moved backward");
