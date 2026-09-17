@@ -85,7 +85,11 @@ func TestRuntimeDiscoveryMaterializesSelectedFileSymlink(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, manifest.Files, 1)
 	assert.Equal(t, link, manifest.Files[0].GuestPath)
-	assert.Equal(t, target, manifest.Files[0].SourcePath)
+	targetInfo, err := os.Stat(target)
+	require.NoError(t, err)
+	sourceInfo, err := os.Stat(manifest.Files[0].SourcePath)
+	require.NoError(t, err)
+	assert.True(t, os.SameFile(targetInfo, sourceInfo))
 	assert.Empty(t, manifest.Symlinks)
 }
 
