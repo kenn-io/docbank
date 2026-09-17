@@ -142,7 +142,8 @@ func runSupervisedChild(control launchControl, executablePath string) (int, erro
 	inputPath := filepath.Join("/work", private.InputName)
 	outputPath := filepath.Join("/work", private.OutputName)
 	var restarts int
-	var priorOutput *supervisedFileIdentity
+	var priorOutput supervisedFileIdentity
+	var hadPriorOutput bool
 	for attempt := 0; ; attempt++ {
 		if err := recreateSupervisedInput(inputPath, inputBytes); err != nil {
 			return 0, err
@@ -151,7 +152,7 @@ func runSupervisedChild(control launchControl, executablePath string) (int, erro
 			return 0, err
 		}
 		var err error
-		priorOutput, err = removeSupervisedOutput(outputPath)
+		priorOutput, hadPriorOutput, err = removeSupervisedOutput(outputPath)
 		if err != nil {
 			return 0, err
 		}
@@ -179,7 +180,7 @@ func runSupervisedChild(control launchControl, executablePath string) (int, erro
 		}
 		return 0, fmt.Errorf("%w: sandbox supervised child failed: %w", ErrChildFailed, runErr)
 	}
-	if err := copySupervisedOutput(outputPath, private.MaxOutputBytes, priorOutput); err != nil {
+	if err := copySupervisedOutput(outputPath, private.MaxOutputBytes, priorOutput, hadPriorOutput); err != nil {
 		return 0, err
 	}
 	return restarts, nil
@@ -281,7 +282,7 @@ func recreateSupervisedInput(path string, data []byte) error {
 	return nil
 }
 
-func copySupervisedOutput(path string, maxBytes int64, prior *supervisedFileIdentity) error {
+func copySupervisedOutput(path string, maxBytes int64, prior supervisedFileIdentity, hadPrior bool) error {
 	info, err := os.Lstat(path)
 	if err != nil || info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() || info.Size() <= 0 {
 		return errors.New("sandbox supervised child produced no output")
@@ -303,8 +304,8 @@ func copySupervisedOutput(path string, maxBytes int64, prior *supervisedFileIden
 		_ = file.Close()
 		return errors.New("sandbox supervised output has unexpected links")
 	}
-	identity := supervisedFileIdentity{device: uint64(stat.Dev), inode: uint64(stat.Ino)}
-	if prior != nil && identity == *prior {
+	identity := supervisedFileIdentity{device: stat.Dev, inode: stat.Ino}
+	if hadPrior && identity == prior {
 		_ = file.Close()
 		return errors.New("sandbox supervised output reused a prior file")
 	}
@@ -324,26 +325,26 @@ type supervisedFileIdentity struct {
 	inode  uint64
 }
 
-func removeSupervisedOutput(path string) (*supervisedFileIdentity, error) {
+func removeSupervisedOutput(path string) (supervisedFileIdentity, bool, error) {
 	identity, err := lstatSupervisedFile(path)
 	if err != nil {
 		if errors.Is(err, unix.ENOENT) {
-			return nil, nil
+			return supervisedFileIdentity{}, false, nil
 		}
-		return nil, fmt.Errorf("stat sandbox supervised output: %w", err)
+		return supervisedFileIdentity{}, false, fmt.Errorf("stat sandbox supervised output: %w", err)
 	}
 	if err := removeSupervisedPath(path); err != nil {
-		return nil, fmt.Errorf("remove sandbox supervised output: %w", err)
+		return supervisedFileIdentity{}, false, fmt.Errorf("remove sandbox supervised output: %w", err)
 	}
-	return identity, nil
+	return *identity, true, nil
 }
 
 func lstatSupervisedFile(path string) (*supervisedFileIdentity, error) {
 	var stat unix.Stat_t
 	if err := unix.Lstat(path, &stat); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("lstat sandbox supervised output: %w", err)
 	}
-	return &supervisedFileIdentity{device: uint64(stat.Dev), inode: uint64(stat.Ino)}, nil
+	return &supervisedFileIdentity{device: stat.Dev, inode: stat.Ino}, nil
 }
 
 func removeSupervisedPath(path string) error {
@@ -356,7 +357,7 @@ func removeSupervisedPath(path string) error {
 func openNoFollowDirectory(path string) (*os.File, error) {
 	fd, err := unix.Open(path, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("open sandbox profile directory: %w", err)
 	}
 	return verifyDirectoryFD(fd)
 }
@@ -364,7 +365,7 @@ func openNoFollowDirectory(path string) (*os.File, error) {
 func openNoFollowDirectoryAt(dirfd int, name string) (*os.File, error) {
 	fd, err := unix.Openat(dirfd, name, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("open sandbox profile child directory: %w", err)
 	}
 	return verifyDirectoryFD(fd)
 }
@@ -374,7 +375,7 @@ func verifyDirectoryFD(fd int) (*os.File, error) {
 	if err := unix.Fstat(fd, &stat); err != nil || stat.Mode&unix.S_IFMT != unix.S_IFDIR {
 		_ = unix.Close(fd)
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("stat sandbox profile parent: %w", err)
 		}
 		return nil, errors.New("sandbox profile parent is not a directory")
 	}
@@ -384,7 +385,7 @@ func verifyDirectoryFD(fd int) (*os.File, error) {
 func writeRegularFile(path string, data []byte) error {
 	fd, err := unix.Open(path, unix.O_WRONLY|unix.O_CREAT|unix.O_EXCL|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0o600)
 	if err != nil {
-		return err
+		return fmt.Errorf("create sandbox attempt file: %w", err)
 	}
 	return writeRegularFileFD(fd, data)
 }
@@ -392,7 +393,7 @@ func writeRegularFile(path string, data []byte) error {
 func writeRegularFileAt(dirfd int, name string, data []byte) error {
 	fd, err := unix.Openat(dirfd, name, unix.O_WRONLY|unix.O_CREAT|unix.O_EXCL|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0o600)
 	if err != nil {
-		return err
+		return fmt.Errorf("create sandbox attempt file relative to parent: %w", err)
 	}
 	return writeRegularFileFD(fd, data)
 }
@@ -413,7 +414,7 @@ func writeRegularFileFD(fd int, data []byte) error {
 func validateRegularFile(path string, expected []byte) error {
 	fd, err := unix.Open(path, unix.O_RDONLY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
 	if err != nil {
-		return err
+		return fmt.Errorf("open sandbox attempt file: %w", err)
 	}
 	file := os.NewFile(uintptr(fd), "sandbox-attempt-file")
 	defer func() { _ = file.Close() }()
@@ -421,13 +422,13 @@ func validateRegularFile(path string, expected []byte) error {
 	if err := unix.Fstat(fd, &stat); err != nil || stat.Mode&unix.S_IFMT != unix.S_IFREG {
 		return errors.New("sandbox attempt file is not regular")
 	}
-	return validateRegularFileContents(file, int64(stat.Size), expected)
+	return validateRegularFileContents(file, stat.Size, expected)
 }
 
 func validateRegularFileAt(dirfd int, name string, expected []byte) error {
 	fd, err := unix.Openat(dirfd, name, unix.O_RDONLY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
 	if err != nil {
-		return err
+		return fmt.Errorf("open sandbox profile settings: %w", err)
 	}
 	file := os.NewFile(uintptr(fd), "sandbox-attempt-file")
 	defer func() { _ = file.Close() }()
@@ -435,7 +436,7 @@ func validateRegularFileAt(dirfd int, name string, expected []byte) error {
 	if err := unix.Fstat(fd, &stat); err != nil || stat.Mode&unix.S_IFMT != unix.S_IFREG {
 		return errors.New("sandbox profile settings are not regular")
 	}
-	return validateRegularFileContents(file, int64(stat.Size), expected)
+	return validateRegularFileContents(file, stat.Size, expected)
 }
 
 func validateRegularFileContents(file *os.File, size int64, expected []byte) error {
