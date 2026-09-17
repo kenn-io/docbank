@@ -154,6 +154,39 @@ func TestNativeRunnerDeniesLoopbackNetworkAccess(t *testing.T) {
 	assert.Equal(t, "denied", string(result.Stdout))
 }
 
+func TestNativeRunnerIsolatesHostIPC(t *testing.T) {
+	content := []byte("synthetic host IPC")
+	id, err := unix.SysvShmGet(unix.IPC_PRIVATE, len(content), unix.IPC_CREAT|0o600)
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		_, err := unix.SysvShmCtl(id, unix.IPC_RMID, nil)
+		require.NoError(t, err)
+	})
+	memory, err := unix.SysvShmAttach(id, 0, 0)
+	require.NoError(t, err)
+	copy(memory, content)
+	require.NoError(t, unix.SysvShmDetach(memory))
+	executable := buildSandboxHelper(t, "ipc", strconv.Itoa(id), "")
+	// The same probe can read this object outside the sandbox.
+	command := exec.CommandContext(t.Context(), executable)
+	command.Env = cleanSandboxEnvironment()
+	output, err := command.CombinedOutput()
+	require.NoError(t, err, "%s", output)
+	require.Equal(t, "host=synthetic host IPC;private=allowed", string(output))
+	for _, mode := range []Mode{ExecMode, LibreOfficeMode} {
+		t.Run(string(mode), func(t *testing.T) {
+			request := sandboxTestRequest(t, executable, []byte("probe"), 1<<20)
+			if mode == LibreOfficeMode {
+				request = privateTestRequest(t,
+					buildSandboxHelper(t, "file-ipc", strconv.Itoa(id), "result.bin"))
+			}
+			result, err := Run(t.Context(), request)
+			requireNativeNoError(t, err)
+			assert.Equal(t, "host=denied;private=allowed", string(result.Stdout))
+		})
+	}
+}
+
 func TestNativeRunnerDeniesHostPathnameUnixSocketAccess(t *testing.T) {
 	socketPath := filepath.Join(t.TempDir(), "host.sock")
 	listener, err := net.Listen("unix", socketPath)

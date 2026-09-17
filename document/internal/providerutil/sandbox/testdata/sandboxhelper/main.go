@@ -56,6 +56,42 @@ func main() {
 	}
 
 	switch mode {
+	case "ipc", "file-ipc":
+		id, err := strconv.Atoi(networkAddress)
+		if err != nil {
+			os.Exit(2)
+		}
+		host := "denied"
+		memory, err := unix.SysvShmAttach(id, 0, unix.SHM_RDONLY)
+		if err == nil {
+			host = string(memory)
+			if err := unix.SysvShmDetach(memory); err != nil {
+				os.Exit(2)
+			}
+		} else if !errors.Is(err, unix.EINVAL) && !errors.Is(err, unix.EIDRM) {
+			fmt.Fprint(os.Stderr, err)
+			os.Exit(2)
+		}
+		privateID, err := unix.SysvShmGet(unix.IPC_PRIVATE, 1, unix.IPC_CREAT|0o600)
+		if err != nil {
+			os.Exit(2)
+		}
+		private, err := unix.SysvShmAttach(privateID, 0, 0)
+		if err == nil {
+			private[0] = 1
+			err = unix.SysvShmDetach(private)
+		}
+		_, removeErr := unix.SysvShmCtl(privateID, unix.IPC_RMID, nil)
+		if err := errors.Join(err, removeErr); err != nil {
+			fmt.Fprint(os.Stderr, err)
+			os.Exit(2)
+		}
+		status := "host=" + host + ";private=allowed"
+		if mode == "ipc" {
+			fmt.Print(status)
+		} else if err := os.WriteFile("/work/"+outputName, []byte(status), 0o600); err != nil {
+			os.Exit(2)
+		}
 	case "exec-descriptor":
 		target, _ := os.Readlink("/proc/self/fd/3")
 		fmt.Print(target)

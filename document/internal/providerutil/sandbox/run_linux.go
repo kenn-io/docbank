@@ -128,7 +128,7 @@ func (nativeRunner) Run(ctx context.Context, request Request) (result Result, er
 	command.ExtraFiles = []*os.File{executable, control, statusWriter}
 	command.SysProcAttr = &syscall.SysProcAttr{
 		Cloneflags: syscall.CLONE_NEWUSER | syscall.CLONE_NEWNET |
-			syscall.CLONE_NEWPID | syscall.CLONE_NEWNS,
+			syscall.CLONE_NEWPID | syscall.CLONE_NEWNS | syscall.CLONE_NEWIPC,
 		UidMappings:                []syscall.SysProcIDMap{{ContainerID: 0, HostID: os.Getuid(), Size: 1}},
 		GidMappings:                []syscall.SysProcIDMap{{ContainerID: 0, HostID: os.Getgid(), Size: 1}},
 		GidMappingsEnableSetgroups: false,
