@@ -65,7 +65,6 @@ type PrivateRoot struct {
 	InputName       string           `json:"input_name"`
 	OutputName      string           `json:"output_name"`
 	MaxOutputBytes  int64            `json:"max_output_bytes"`
-	UnixIPC         bool             `json:"unix_ipc"`
 }
 
 // Policy is the complete fixed authority supplied to the launcher.

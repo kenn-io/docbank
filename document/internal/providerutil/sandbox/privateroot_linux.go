@@ -503,10 +503,8 @@ func installLandlockWithWritable(paths, files []string, devices map[string]uint6
 	}
 	defer func() { _ = unix.Close(int(rulesetFD)) }()
 	readOnly := uint64(unix.LANDLOCK_ACCESS_FS_EXECUTE | unix.LANDLOCK_ACCESS_FS_READ_FILE | unix.LANDLOCK_ACCESS_FS_READ_DIR)
-	for _, path := range paths {
-		if err := addLandlockPath(rulesetFD, path, readOnly); err != nil {
-			return err
-		}
+	if err := addLandlockPaths(rulesetFD, paths, readOnly, !private); err != nil {
+		return err
 	}
 	for _, path := range extraPaths {
 		if err := addLandlockPath(rulesetFD, path, readOnly); err != nil {
@@ -519,10 +517,8 @@ func installLandlockWithWritable(paths, files []string, devices map[string]uint6
 			return err
 		}
 	}
-	for _, path := range files {
-		if err := addLandlockPath(rulesetFD, path, unix.LANDLOCK_ACCESS_FS_READ_FILE); err != nil {
-			return err
-		}
+	if err := addLandlockPaths(rulesetFD, files, unix.LANDLOCK_ACCESS_FS_READ_FILE, !private); err != nil {
+		return err
 	}
 	for path, access := range devices {
 		if err := addLandlockPath(rulesetFD, path, access); err != nil {
@@ -539,6 +535,18 @@ func installLandlockWithWritable(paths, files []string, devices map[string]uint6
 	}
 	if _, _, errno := unix.Syscall(unix.SYS_LANDLOCK_RESTRICT_SELF, rulesetFD, 0, 0); errno != 0 {
 		return fmt.Errorf("enforce Landlock ruleset: %w", errno)
+	}
+	return nil
+}
+
+func addLandlockPaths(rulesetFD uintptr, paths []string, access uint64, ignoreMissing bool) error {
+	for _, path := range paths {
+		if err := addLandlockPath(rulesetFD, path, access); err != nil {
+			if ignoreMissing && errors.Is(err, unix.ENOENT) {
+				continue
+			}
+			return err
+		}
 	}
 	return nil
 }

@@ -124,3 +124,16 @@ func TestRuntimeLandlockPathsUseGuestParents(t *testing.T) {
 	assert.Equal(t, []string{"/lib", "/usr/lib", "/usr/lib/libreoffice/program", "/usr/share/fonts"}, paths)
 	assert.NotContains(t, paths, "/host/cache")
 }
+
+func TestAddLandlockPathsHandlesMissingEntriesByMode(t *testing.T) {
+	missing := filepath.Join(t.TempDir(), "missing")
+	require.NoError(t, addLandlockPaths(^uintptr(0), []string{missing}, unix.LANDLOCK_ACCESS_FS_READ_FILE, true))
+
+	err := addLandlockPaths(^uintptr(0), []string{missing}, unix.LANDLOCK_ACCESS_FS_READ_FILE, false)
+	require.ErrorIs(t, err, unix.ENOENT)
+
+	existing := filepath.Join(t.TempDir(), "existing")
+	require.NoError(t, os.WriteFile(existing, []byte("path"), 0o600))
+	err = addLandlockPaths(^uintptr(0), []string{existing}, unix.LANDLOCK_ACCESS_FS_READ_FILE, true)
+	require.ErrorContains(t, err, "add Landlock path")
+}

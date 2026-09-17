@@ -543,8 +543,9 @@ if err != nil {
 
 The DOCX profile emits FODT. Normalization strips unsafe external and active
 constructs where LibreOffice can remove them; the normalized scan rejects any
-such constructs that survive. Local formulas, internal fragment links, and
-embedded raster images remain valid.
+such constructs that survive. It rejects every `xml:base` attribute, so local
+fragment links cannot inherit an external base URI. Local formulas, internal
+fragment links, and embedded raster images remain valid.
 
 The receipt records both source and normalized identities, the exact PDF hash,
 the page count, the policy, and the runtime identities. `Result.Source` is a

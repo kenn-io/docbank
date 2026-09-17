@@ -174,6 +174,9 @@ func inspectAttribute(attribute xml.Attr) error {
 	if attribute.Name.Space == "xmlns" || attribute.Name.Local == "xmlns" {
 		return nil
 	}
+	if attribute.Name.Space == "http://www.w3.org/XML/1998/namespace" && attribute.Name.Local == "base" {
+		return errors.New("normalized ODF XML Base is not admitted")
+	}
 	local := strings.ToLower(attribute.Name.Local)
 	if (local == "value" && strings.Contains(attribute.Name.Space, "field")) ||
 		local == "formula" || local == "f" || local == "instr" || local == "command" {

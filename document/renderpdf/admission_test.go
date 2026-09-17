@@ -22,6 +22,7 @@ func TestAdmissionRejectsLinkedAndActiveConstructs(t *testing.T) {
 		body string
 	}{
 		{name: "external href", body: `<draw:image xmlns:draw="urn:oasis:names:tc:opendocument:xmlns:drawing:1.0" xmlns:xlink="http://www.w3.org/1999/xlink" xlink:href="../outside.png"/>`},
+		{name: "inherited XML Base fragment", body: `<text:p xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0" xmlns:xlink="http://www.w3.org/1999/xlink" xml:base="https://example.test/links/"><xlink:a xlink:href="#local"/></text:p>`},
 		{name: "script", body: `<office:script/>`},
 		{name: "event", body: `<office:event-listeners/>`},
 		{name: "dde", body: `<office:dde-link/>`},

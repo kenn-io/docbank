@@ -44,12 +44,14 @@ func defaultRuntimeRootsForArch(goarch string) []string {
 	case "amd64":
 		roots = append(roots,
 			"/usr/lib/x86_64-linux-gnu",
+			"/lib/x86_64-linux-gnu",
 			"/usr/lib64",
 			"/lib64/ld-linux-x86-64.so.2",
 		)
 	case "arm64":
 		roots = append(roots,
 			"/usr/lib/aarch64-linux-gnu",
+			"/lib/aarch64-linux-gnu",
 			"/lib/ld-linux-aarch64.so.1",
 		)
 	}

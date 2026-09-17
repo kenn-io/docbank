@@ -43,11 +43,15 @@ func TestRuntimeExecutableMappingIncludesMode0644ELF(t *testing.T) {
 
 func TestDefaultRuntimeRootsFollowArchitecture(t *testing.T) {
 	assert.Contains(t, defaultRuntimeRootsForArch("amd64"), "/usr/lib/x86_64-linux-gnu")
+	assert.Contains(t, defaultRuntimeRootsForArch("amd64"), "/lib/x86_64-linux-gnu")
 	assert.Contains(t, defaultRuntimeRootsForArch("amd64"), "/lib64/ld-linux-x86-64.so.2")
 	assert.NotContains(t, defaultRuntimeRootsForArch("amd64"), "/usr/lib/aarch64-linux-gnu")
+	assert.NotContains(t, defaultRuntimeRootsForArch("amd64"), "/lib/aarch64-linux-gnu")
 	assert.Contains(t, defaultRuntimeRootsForArch("arm64"), "/usr/lib/aarch64-linux-gnu")
+	assert.Contains(t, defaultRuntimeRootsForArch("arm64"), "/lib/aarch64-linux-gnu")
 	assert.Contains(t, defaultRuntimeRootsForArch("arm64"), "/lib/ld-linux-aarch64.so.1")
 	assert.NotContains(t, defaultRuntimeRootsForArch("arm64"), "/usr/lib/x86_64-linux-gnu")
+	assert.NotContains(t, defaultRuntimeRootsForArch("arm64"), "/lib/x86_64-linux-gnu")
 }
 
 func TestRuntimeDiscoveryExpandsDirectorySymlinkRoot(t *testing.T) {

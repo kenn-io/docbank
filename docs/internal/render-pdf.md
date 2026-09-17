@@ -15,7 +15,9 @@ a bounded FODT file. The converter scans those exact bytes with
 `encoding/xml`. The scan rejects external and relative links, DDE and
 database sources, scripts, event handlers, linked sections, external formulas,
 and opaque active objects such as OLE, plugins, applets, and nested documents.
-Internal fragment links and embedded raster image data remain accepted.
+It also rejects every `xml:base` attribute, so internal fragment links cannot
+inherit an external base URI. Internal fragment links and embedded raster image
+data remain accepted when no XML Base is present.
 
 Only admitted FODT reaches the second private-root LibreOffice process. That
 process writes the PDF. The converter verifies each stage attestation, binds
@@ -33,7 +35,8 @@ Private-root-v1 discovers the declared runtime during operator setup. Each
 regular runtime file is opened, hashed, copied to a sealed memfd, and attached
 at its declared guest path. Special files and runtime identity mismatches fail
 before launch. The old root is detached with `pivot_root` before the
-renderer can create an AF_UNIX socket. IP and netlink socket creation remains
+renderer can create an AF_UNIX socket. Supervised private-root mode permits
+AF_UNIX as a fixed launcher policy. IP and netlink socket creation remains
 denied.
 
 The root contains only generated configuration, declared runtime files, a

@@ -160,7 +160,7 @@ func (nativeRunner) Run(ctx context.Context, request Request) (Result, error) {
 			FilesystemIsolated: true, FilesystemMode: filesystemMode(request.Policy.Mode),
 			PrivateRootInstalled: request.Policy.Mode == SupervisedFileMode,
 			RuntimeIdentity:      runtimeIdentity(request.Policy),
-			UnixIPCAllowed:       request.Policy.Mode == SupervisedFileMode && request.Policy.PrivateRoot.UnixIPC,
+			UnixIPCAllowed:       request.Policy.Mode == SupervisedFileMode,
 			RestartCount:         status.restarts,
 		},
 	}

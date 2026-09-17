@@ -497,7 +497,7 @@ func privateTestRequest(t *testing.T, executable string) Request {
 	request.Policy.PrivateRoot = &PrivateRoot{
 		RuntimeIdentity: "sha256:" + strings.Repeat("0", 64),
 		WorkBytes:       64 << 20, InputName: "source.docx", OutputName: "result.bin",
-		MaxOutputBytes: 1 << 20, UnixIPC: true,
+		MaxOutputBytes: 1 << 20,
 	}
 	return request
 }

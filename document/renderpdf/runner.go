@@ -99,7 +99,7 @@ func (runner nativeRunner) Run(ctx context.Context, request Request) (StageResul
 			Runtime: slices.Clone(request.Runtime), Symlinks: slices.Clone(request.RuntimeSymlinks),
 			RuntimeIdentity: request.RuntimeIdentity, WorkBytes: request.MaxWorkBytes,
 			InputName: request.InputName, OutputName: request.OutputName,
-			MaxOutputBytes: request.MaxOutputBytes, UnixIPC: true,
+			MaxOutputBytes: request.MaxOutputBytes,
 		},
 	}
 	sandboxResult, err := sandbox.Run(ctx, sandbox.Request{
