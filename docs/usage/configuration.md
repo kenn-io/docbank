@@ -61,9 +61,11 @@ with the Docling origin, request and polling bounds, allowed CIDRs, proxy
 mode, and transport timeouts. The qualified adapter accepts original WAV and
 MP3 input and publishes generated `media-transcript/v1` evidence. Its plan
 discloses the destination before consent, and provider responses do not become
-portable policy. The transcript limit comes from the selecting processing
-profile's `max_document_chars`; all profiles selecting that rendition must use
-the same value. A runtime that no processing profile selects stays staged.
+portable policy. Set the rendition's `max_transcript_chars` independently of
+each processing profile's `max_document_chars`. A runtime that no processing
+profile selects stays staged. See the [audio configuration reference](../configuration.md#supplied-audio-transcription)
+for disclosure-fingerprint calculation and the restriction on sharing a descriptor
+across deployments.
 
 The embedded Go API follows the same boundary: `ProcessingOptions` receives
 provider values and their secret handling directly, while

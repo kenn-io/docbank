@@ -36,8 +36,6 @@ func recoverEmbeddingRuntimeSpool(ctx context.Context, spoolDirectory string) er
 
 type environmentCredentialSecrets struct{ variables map[string]string }
 
-type environmentEmbeddingSecrets = environmentCredentialSecrets
-
 func (resolver environmentCredentialSecrets) ResolveSecret(_ context.Context, name string) (string, error) {
 	variable, ok := resolver.variables[name]
 	if !ok {
@@ -67,7 +65,6 @@ func configureEmbeddingRuntimeBundle(cfg config.Config, blobs embeddingRuntimeBl
 	for name, binding := range cfg.CredentialBindings {
 		portable := "credential:" + name
 		secrets.variables[portable] = binding.EnvironmentVariable
-		secrets.variables[name] = binding.EnvironmentVariable
 	}
 	for name, configured := range cfg.EmbeddingProfiles {
 		if configured.Runtime == nil {
@@ -92,9 +89,7 @@ func configureEmbeddingRuntimeBundle(cfg config.Config, blobs embeddingRuntimeBl
 				RequestTimeout:         configured.Runtime.RequestTimeout.Std(), MaxBatchItems: configured.MaxBatchItems,
 				MaxInputBytes: configured.MaxInputBytes, MaxRequestBytes: configured.Runtime.MaxRequestBytes,
 				MaxResponseBytes: configured.MaxResponseBytes,
-				EgressPolicy: providerEgressPolicy(configured.Runtime.Endpoint, configured.Runtime.AllowedCIDRs,
-					configured.Runtime.SPKISHA256, configured.Runtime.ProxyMode, configured.Runtime.ConnectTimeout.Std(),
-					configured.Runtime.KeepAlive.Std(), configured.Runtime.TLSHandshakeTimeout.Std())}
+				EgressPolicy:     providerEgressPolicy(configured.Runtime.ProviderEgressConfig)}
 			descriptor, profile, err = finalizeOpenAIEmbeddingDescriptor(profile)
 			if err == nil {
 				profile.Descriptor = descriptor
@@ -267,9 +262,7 @@ func configuredVoyageProvider(profile config.EmbeddingProfileConfig, modelInput 
 	}
 	descriptor := configuredEmbeddingDescriptor(profile, modelInput)
 	configured := voyage.EmbeddingProfile{Mode: voyage.EmbeddingModeDirectFile,
-		Endpoint: profile.Runtime.Endpoint, EgressPolicy: providerEgressPolicy(profile.Runtime.Endpoint,
-			profile.Runtime.AllowedCIDRs, profile.Runtime.SPKISHA256, profile.Runtime.ProxyMode,
-			profile.Runtime.ConnectTimeout.Std(), profile.Runtime.KeepAlive.Std(), profile.Runtime.TLSHandshakeTimeout.Std()),
+		Endpoint: profile.Runtime.Endpoint, EgressPolicy: providerEgressPolicy(profile.Runtime.ProviderEgressConfig),
 		Descriptor: descriptor, ModelInput: modelInput, SecretBinding: profile.CredentialBinding,
 		RequestTimeout: profile.Runtime.RequestTimeout.Std(), MaxRetries: 1,
 		MaxBatchItems: profile.MaxBatchItems, MaxInputBytes: profile.MaxInputBytes,
@@ -294,15 +287,9 @@ func configuredVoyageProvider(profile config.EmbeddingProfileConfig, modelInput 
 	return provider, final, err
 }
 
-func configuredEmbeddingEgress(runtime config.EmbeddingRuntimeConfig) providerhttp.EgressPolicy {
-	return providerEgressPolicy(runtime.Endpoint, runtime.AllowedCIDRs, runtime.SPKISHA256,
-		runtime.ProxyMode, runtime.ConnectTimeout.Std(), runtime.KeepAlive.Std(), runtime.TLSHandshakeTimeout.Std())
-}
-
-func providerEgressPolicy(endpoint string, allowedCIDRs, spkiSHA256 []string, proxyMode string,
-	connectTimeout, keepAlive, tlsHandshakeTimeout time.Duration,
-) providerhttp.EgressPolicy {
-	parsed, _ := url.Parse(endpoint)
+// providerEgressPolicy converts config after Config.Validate has checked it.
+func providerEgressPolicy(runtime config.ProviderEgressConfig) providerhttp.EgressPolicy {
+	parsed, _ := url.Parse(runtime.Endpoint)
 	port := uint16(443)
 	if parsed.Scheme == "http" {
 		port = 80
@@ -311,15 +298,16 @@ func providerEgressPolicy(endpoint string, allowedCIDRs, spkiSHA256 []string, pr
 		value, _ := strconv.ParseUint(parsed.Port(), 10, 16)
 		port = uint16(value)
 	}
-	prefixes := make([]netip.Prefix, 0, len(allowedCIDRs))
-	for _, value := range allowedCIDRs {
+	prefixes := make([]netip.Prefix, 0, len(runtime.AllowedCIDRs))
+	for _, value := range runtime.AllowedCIDRs {
 		prefix, _ := netip.ParsePrefix(value)
 		prefixes = append(prefixes, prefix)
 	}
 	return providerhttp.EgressPolicy{Scheme: parsed.Scheme, Host: parsed.Hostname(), Port: port,
-		AllowedCIDRs: prefixes, ProxyMode: providerhttp.ProxyMode(proxyMode),
-		ConnectTimeout: connectTimeout, KeepAlive: keepAlive, TLSHandshakeTimeout: tlsHandshakeTimeout,
-		TLS: providerhttp.TLSPolicy{SPKISHA256: spkiSHA256}}
+		AllowedCIDRs: prefixes, ProxyMode: providerhttp.ProxyMode(runtime.ProxyMode),
+		ConnectTimeout: runtime.ConnectTimeout.Std(), KeepAlive: runtime.KeepAlive.Std(), TLSHandshakeTimeout: runtime.TLSHandshakeTimeout.Std(),
+		// Omitted pins and an explicit empty list both mean no pins.
+		TLS: providerhttp.TLSPolicy{SPKISHA256: append([]string(nil), runtime.SPKISHA256...)}}
 }
 
 func classifyOpenAIEmbeddingError(err error) (processing.EmbeddingProviderFailure, time.Duration) {

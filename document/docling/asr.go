@@ -21,7 +21,7 @@ const (
 )
 
 // ASRProfile fixes the qualified audio contract and its transcript evidence bound.
-// MaxTranscriptChars must match the consuming processing profile's document limit.
+// MaxTranscriptChars bounds generated transcript evidence independently of later processing limits.
 type ASRProfile struct {
 	Profile
 
@@ -53,6 +53,14 @@ func ASRPolicyFingerprint(maxTranscriptChars int) (string, error) {
 		return "", err
 	}
 	return providerutil.SHA256Hex(identity), nil
+}
+
+// ASRDisclosureFingerprint binds a portable ASR profile to its exact endpoint and
+// deployment. Recompute it whenever the descriptor, endpoint, or deployment changes.
+func ASRDisclosureFingerprint(descriptor document.RenditionDescriptor, endpoint, deployment string) string {
+	return providerutil.SHA256Hex([]byte(strings.Join([]string{
+		"docbank-docling-asr/v1", descriptor.ID, descriptor.Fingerprint, endpoint, deployment,
+	}, "\x00")))
 }
 
 // NewASR constructs the transcript provider for the qualified WAV/MP3 deployment.

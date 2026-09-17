@@ -2,8 +2,6 @@ package main
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"net/http"
@@ -28,7 +26,7 @@ type renditionProviderInputs struct {
 }
 
 type registeredRenditionProvider struct {
-	provider document.RenditionProvider
+	provider *configuredRenditionProvider
 	inputs   renditionProviderInputs
 }
 
@@ -43,7 +41,12 @@ func (provider *configuredRenditionProvider) Render(
 	authorization document.RenditionAuthorization,
 ) (document.RenditionResult, error) {
 	if _, ok := provider.allowedRenditionRequests[authorization.RenditionRequestFingerprint]; !ok {
-		return document.RenditionResult{}, document.ErrRenditionAuthorizationInvalid
+		failure, err := document.NewRenditionProviderError(document.RenditionErrorPolicyRejected, 0,
+			document.ErrRenditionAuthorizationInvalid)
+		if err != nil {
+			return document.RenditionResult{}, err
+		}
+		return document.RenditionResult{}, failure
 	}
 	return provider.RenditionProvider.Render(ctx, upload, authorization)
 }
@@ -56,7 +59,6 @@ func configureRenditionProviders(cfg config.Config) (
 	registered := make(map[string]registeredRenditionProvider)
 	secrets := environmentCredentialSecrets{variables: make(map[string]string)}
 	for name, binding := range cfg.CredentialBindings {
-		secrets.variables["credential:"+name] = binding.EnvironmentVariable
 		secrets.variables[name] = binding.EnvironmentVariable
 	}
 	names := make([]string, 0, len(cfg.RenditionProfiles))
@@ -66,107 +68,21 @@ func configureRenditionProviders(cfg config.Config) (
 	slices.Sort(names)
 	for _, name := range names {
 		configured := cfg.RenditionProfiles[name]
-		if configured.AdapterContract != plaintextRenditionAdapter {
-			if configured.AdapterContract != config.DoclingASRAdapterContract || configured.Runtime == nil {
-				continue
-			}
-			transcriptChars, err := cfg.RenditionTranscriptChars(name)
-			if err != nil {
-				return nil, nil, err
-			}
-			if transcriptChars == 0 {
-				continue
-			}
-			policyFingerprint, err := docling.ASRPolicyFingerprint(transcriptChars)
-			if err != nil {
-				return nil, nil, fmt.Errorf("configuring rendition runtime %q: %w", name, err)
-			}
-			descriptor, err := document.NewRenditionDescriptor(document.RenditionDescriptor{
-				ID: "docling.serve-v1", ContractVersion: document.RenditionProviderContractVersion,
-				PolicyFingerprint: policyFingerprint,
-				TrustBoundary:     document.RenditionTrustBoundary(configured.TrustBoundary),
-				SupportedFormats: []document.RenditionFormatCapability{
-					{MediaFamily: "audio", MediaType: "audio/mpeg", InputKind: document.RenditionInputOriginalFile},
-					{MediaFamily: "audio", MediaType: "audio/wav", InputKind: document.RenditionInputOriginalFile},
-				},
-				ReturnsStructured: true,
-				ArtifactRoles:     []document.EvidenceArtifactRole{document.EvidenceArtifactTranscript},
-			})
-			if err != nil {
-				return nil, nil, fmt.Errorf("configuring rendition runtime %q: %w", name, err)
-			}
-			if descriptor.ID != configured.DescriptorID || descriptor.Fingerprint != configured.DescriptorFingerprint ||
-				string(descriptor.TrustBoundary) != configured.TrustBoundary {
-				return nil, nil, fmt.Errorf("configuring rendition runtime %q: descriptor differs from portable binding", name)
-			}
-			expectedDisclosure := doclingASRDisclosureFingerprint(descriptor, configured.Runtime.Endpoint,
-				configured.DeploymentFingerprint)
-			if configured.DisclosureFingerprint != expectedDisclosure {
-				return nil, nil, fmt.Errorf("configuring rendition runtime %q: disclosure fingerprint does not bind the runtime endpoint", name)
-			}
-			requestFingerprints, err := configuredRenditionRequestFingerprints(cfg, name)
-			if err != nil {
-				return nil, nil, fmt.Errorf("configuring rendition runtime %q: %w", name, err)
-			}
-			secretBinding := strings.TrimPrefix(configured.CredentialBinding, "credential:")
-			environmentVariable, ok := secrets.variables[secretBinding]
-			if !ok {
-				return nil, nil, errors.New("rendition credential binding is not configured")
-			}
-			egress := providerEgressPolicy(configured.Runtime.Endpoint, configured.Runtime.AllowedCIDRs,
-				configured.Runtime.SPKISHA256, configured.Runtime.ProxyMode, configured.Runtime.ConnectTimeout.Std(),
-				configured.Runtime.KeepAlive.Std(), configured.Runtime.TLSHandshakeTimeout.Std())
-			inputs := renditionProviderInputs{profile: docling.ASRProfile{
-				Profile: docling.Profile{Origin: configured.Runtime.Endpoint, Descriptor: descriptor,
-					SecretBinding: secretBinding, RequestTimeout: configured.Runtime.RequestTimeout.Std(),
-					TotalTimeout: configured.Runtime.TotalTimeout.Std(), PollInterval: configured.Runtime.PollInterval.Std(),
-					MaxPollAttempts: configured.Runtime.MaxPollAttempts, MaxResponseBytes: configured.MaxResponseBytes,
-					MaxDocumentBytes: configured.MaxDocumentBytes},
-				MaxTranscriptChars: transcriptChars}, egress: egress,
-				credentialEnvironment: environmentVariable}
-			disclosure := processing.RuntimeDisclosure{ImmediateProcessor: config.DoclingASRAdapterContract,
-				UltimateProcessor: descriptor.ID, Endpoint: configured.Runtime.Endpoint,
-				Deployment: configured.DeploymentFingerprint}
-			if existing, ok := registered[descriptor.Fingerprint]; ok {
-				if !sameRenditionProviderInputs(existing.inputs, inputs) {
-					return nil, nil, fmt.Errorf("configuring rendition runtime %q conflicts with another profile's provider for the same descriptor", name)
-				}
-				bound, ok := existing.provider.(*configuredRenditionProvider)
-				if !ok {
-					return nil, nil, fmt.Errorf("configuring rendition runtime %q: registered provider has an invalid binding", name)
-				}
-				for fingerprint := range requestFingerprints {
-					bound.allowedRenditionRequests[fingerprint] = struct{}{}
-				}
-				providers[name] = existing.provider
-				disclosures[name] = disclosure
-				continue
-			}
-			transport, err := providerhttp.NewTransport(egress, nil)
-			if err != nil {
-				return nil, nil, fmt.Errorf("configuring rendition runtime %q: %w", name, err)
-			}
-			provider, err := docling.NewASR(inputs.profile, secrets, &http.Client{Transport: transport})
-			if err != nil {
-				return nil, nil, fmt.Errorf("configuring rendition runtime %q: %w", name, err)
-			}
-			if provider.Descriptor().ID != descriptor.ID || provider.Descriptor().Fingerprint != descriptor.Fingerprint ||
-				provider.Descriptor().TrustBoundary != descriptor.TrustBoundary {
-				return nil, nil, fmt.Errorf("configuring rendition runtime %q: provider descriptor differs from portable binding", name)
-			}
-			bound := &configuredRenditionProvider{RenditionProvider: provider,
-				allowedRenditionRequests: requestFingerprints}
-			registered[descriptor.Fingerprint] = registeredRenditionProvider{provider: bound, inputs: inputs}
-			providers[name] = bound
-			disclosures[name] = disclosure
+		var provider document.RenditionProvider
+		var err error
+		switch configured.AdapterContract {
+		case plaintextRenditionAdapter:
+			provider, err = plaintext.New(plaintext.Profile{MaxDocumentBytes: configured.MaxDocumentBytes})
+		case config.DoclingASRAdapterContract:
+			provider, disclosures[name], err = configureDoclingASR(cfg, name, secrets, registered)
+		default:
 			continue
 		}
-		if configured.AdapterContract != plaintextRenditionAdapter {
-			continue
-		}
-		provider, err := plaintext.New(plaintext.Profile{MaxDocumentBytes: configured.MaxDocumentBytes})
 		if err != nil {
 			return nil, nil, fmt.Errorf("configuring rendition runtime %q: %w", name, err)
+		}
+		if provider == nil {
+			continue
 		}
 		descriptor := provider.Descriptor()
 		if descriptor.ID != configured.DescriptorID || descriptor.Fingerprint != configured.DescriptorFingerprint ||
@@ -176,6 +92,93 @@ func configureRenditionProviders(cfg config.Config) (
 		providers[name] = provider
 	}
 	return providers, disclosures, nil
+}
+
+func configureDoclingASR(cfg config.Config, name string, secrets environmentCredentialSecrets,
+	registered map[string]registeredRenditionProvider,
+) (document.RenditionProvider, processing.RuntimeDisclosure, error) {
+	var disclosure processing.RuntimeDisclosure
+	configured := cfg.RenditionProfiles[name]
+	if configured.Runtime == nil {
+		return nil, disclosure, nil
+	}
+	requestFingerprints, err := configuredRenditionRequestFingerprints(cfg, name)
+	if err != nil || len(requestFingerprints) == 0 {
+		return nil, disclosure, err
+	}
+	profile, err := configuredDoclingASRProfile(configured)
+	if err != nil {
+		return nil, disclosure, err
+	}
+	expectedDisclosure := docling.ASRDisclosureFingerprint(profile.Descriptor, profile.Origin,
+		configured.DeploymentFingerprint)
+	if configured.DisclosureFingerprint != expectedDisclosure {
+		return nil, disclosure, errors.New("disclosure fingerprint does not bind the runtime endpoint")
+	}
+	environmentVariable, ok := secrets.variables[profile.SecretBinding]
+	if !ok {
+		return nil, disclosure, errors.New("rendition credential binding is not configured")
+	}
+	egress := providerEgressPolicy(configured.Runtime.ProviderEgressConfig)
+	inputs := renditionProviderInputs{profile: profile, egress: egress, credentialEnvironment: environmentVariable}
+	disclosure = processing.RuntimeDisclosure{ImmediateProcessor: config.DoclingASRAdapterContract,
+		UltimateProcessor: profile.Descriptor.ID, Endpoint: profile.Origin,
+		Deployment: configured.DeploymentFingerprint}
+	if existing, ok := registered[profile.Descriptor.Fingerprint]; ok {
+		if !reflect.DeepEqual(existing.inputs, inputs) {
+			return nil, disclosure, errors.New("conflicts with another profile's provider for the same descriptor")
+		}
+		for fingerprint := range requestFingerprints {
+			existing.provider.allowedRenditionRequests[fingerprint] = struct{}{}
+		}
+		return existing.provider, disclosure, nil
+	}
+	transport, err := providerhttp.NewTransport(egress, nil)
+	if err != nil {
+		return nil, disclosure, err
+	}
+	provider, err := docling.NewASR(profile, secrets, &http.Client{Transport: transport})
+	if err != nil {
+		return nil, disclosure, err
+	}
+	bound := &configuredRenditionProvider{RenditionProvider: provider,
+		allowedRenditionRequests: requestFingerprints}
+	registered[profile.Descriptor.Fingerprint] = registeredRenditionProvider{provider: bound, inputs: inputs}
+	return bound, disclosure, nil
+}
+
+func configuredDoclingASRProfile(configured config.RenditionProfileConfig) (docling.ASRProfile, error) {
+	policyFingerprint, err := docling.ASRPolicyFingerprint(configured.MaxTranscriptChars)
+	if err != nil {
+		return docling.ASRProfile{}, err
+	}
+	descriptor, err := document.NewRenditionDescriptor(document.RenditionDescriptor{
+		ID: "docling.serve-v1", ContractVersion: document.RenditionProviderContractVersion,
+		PolicyFingerprint: policyFingerprint,
+		TrustBoundary:     document.RenditionTrustBoundary(configured.TrustBoundary),
+		SupportedFormats: []document.RenditionFormatCapability{
+			{MediaFamily: "audio", MediaType: "audio/mpeg", InputKind: document.RenditionInputOriginalFile},
+			{MediaFamily: "audio", MediaType: "audio/wav", InputKind: document.RenditionInputOriginalFile},
+		},
+		ReturnsStructured: true,
+		ArtifactRoles:     []document.EvidenceArtifactRole{document.EvidenceArtifactTranscript},
+	})
+	if err != nil {
+		return docling.ASRProfile{}, err
+	}
+	if descriptor.ID != configured.DescriptorID || descriptor.Fingerprint != configured.DescriptorFingerprint ||
+		string(descriptor.TrustBoundary) != configured.TrustBoundary {
+		return docling.ASRProfile{}, errors.New("descriptor differs from portable binding")
+	}
+	runtime := configured.Runtime
+	return docling.ASRProfile{
+		Origin: runtime.Endpoint, Descriptor: descriptor,
+		SecretBinding:  strings.TrimPrefix(configured.CredentialBinding, "credential:"),
+		RequestTimeout: runtime.RequestTimeout.Std(), TotalTimeout: runtime.TotalTimeout.Std(),
+		PollInterval: runtime.PollInterval.Std(), MaxPollAttempts: runtime.MaxPollAttempts,
+		MaxResponseBytes: configured.MaxResponseBytes, MaxDocumentBytes: configured.MaxDocumentBytes,
+		MaxTranscriptChars: configured.MaxTranscriptChars,
+	}, nil
 }
 
 func configuredRenditionRequestFingerprints(cfg config.Config, renditionName string) (map[string]struct{}, error) {
@@ -194,24 +197,5 @@ func configuredRenditionRequestFingerprints(cfg config.Config, renditionName str
 		}
 		fingerprints[derived.RenditionRequest] = struct{}{}
 	}
-	if len(fingerprints) == 0 {
-		return nil, errors.New("no processing profile selects the rendition")
-	}
 	return fingerprints, nil
-}
-
-func sameRenditionProviderInputs(left, right renditionProviderInputs) bool {
-	return left.credentialEnvironment == right.credentialEnvironment && reflect.DeepEqual(left.profile, right.profile) &&
-		left.egress.Scheme == right.egress.Scheme && left.egress.Host == right.egress.Host &&
-		left.egress.Port == right.egress.Port && slices.Equal(left.egress.AllowedCIDRs, right.egress.AllowedCIDRs) &&
-		left.egress.ProxyMode == right.egress.ProxyMode && left.egress.ConnectTimeout == right.egress.ConnectTimeout &&
-		left.egress.KeepAlive == right.egress.KeepAlive && left.egress.TLSHandshakeTimeout == right.egress.TLSHandshakeTimeout &&
-		slices.Equal(left.egress.TLS.SPKISHA256, right.egress.TLS.SPKISHA256)
-}
-
-func doclingASRDisclosureFingerprint(descriptor document.RenditionDescriptor, endpoint, deployment string) string {
-	digest := sha256.Sum256([]byte(strings.Join([]string{
-		config.DoclingASRAdapterContract, descriptor.ID, descriptor.Fingerprint, endpoint, deployment,
-	}, "\x00")))
-	return hex.EncodeToString(digest[:])
 }

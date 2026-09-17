@@ -135,7 +135,7 @@ func syntheticLoopbackOpenAIConfig(t *testing.T, endpoint, environmentName strin
 		ModelInput: contract, SecretBinding: profile.CredentialBinding, DeploymentEpoch: profile.Runtime.DeploymentEpoch,
 		RequestTimeout: profile.Runtime.RequestTimeout.Std(), MaxBatchItems: profile.MaxBatchItems,
 		MaxInputBytes: profile.MaxInputBytes, MaxRequestBytes: profile.Runtime.MaxRequestBytes,
-		MaxResponseBytes: profile.MaxResponseBytes, EgressPolicy: configuredEmbeddingEgress(*profile.Runtime)})
+		MaxResponseBytes: profile.MaxResponseBytes, EgressPolicy: providerEgressPolicy(profile.Runtime.ProviderEgressConfig)})
 	require.NoError(t, err)
 	profile.DescriptorFingerprint = final.Fingerprint
 	cfg.EmbeddingProfiles["semantic"] = profile
@@ -182,7 +182,7 @@ func TestConfigureEmbeddingRuntimesRegistersCapabilityAttestedVoyageOriginal(t *
 			ConnectTimeout: config.Duration(time.Second), KeepAlive: config.Duration(time.Second),
 			TLSHandshakeTimeout: config.Duration(time.Second)},
 	}
-	secrets := environmentEmbeddingSecrets{variables: map[string]string{"credential:voyage": "DOCBANK_TEST_VOYAGE_KEY"}}
+	secrets := environmentCredentialSecrets{variables: map[string]string{"credential:voyage": "DOCBANK_TEST_VOYAGE_KEY"}}
 	_, final, err := configuredVoyageProvider(profile, contract, secrets)
 	require.NoError(t, err)
 	profile.DescriptorFingerprint = final.Fingerprint

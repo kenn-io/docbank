@@ -73,8 +73,10 @@ func TestExecutableProcessingProfilesDoclingASRIdentityAndReuse(t *testing.T) {
 		cfg, descriptor := doclingASRProcessingConfig(t, "http://127.0.0.1:5001")
 		cfg.RenditionProfiles["alternate"] = cfg.RenditionProfiles["asr"]
 		alternateProfile := cfg.RenditionProfiles["alternate"]
+		alternateProfile.Runtime = cloneRenditionRuntime(alternateProfile.Runtime)
+		alternateProfile.Runtime.SPKISHA256 = []string{}
 		alternateProfile.DeploymentFingerprint = strings.Repeat("a", 64)
-		alternateProfile.DisclosureFingerprint = doclingASRDisclosureFingerprint(
+		alternateProfile.DisclosureFingerprint = docling.ASRDisclosureFingerprint(
 			descriptor, alternateProfile.Runtime.Endpoint, alternateProfile.DeploymentFingerprint)
 		cfg.RenditionProfiles["alternate"] = alternateProfile
 		cfg.ProcessingProfiles["alternate"] = cfg.ProcessingProfiles["asr"]
@@ -125,6 +127,7 @@ func TestExecutableProcessingProfilesDoclingASRIdentityAndReuse(t *testing.T) {
 			RenditionRequestFingerprint: strings.Repeat("0", 64),
 		})
 		require.ErrorIs(t, err, document.ErrRenditionAuthorizationInvalid)
+		require.NoError(t, document.ValidateRenditionProviderError(err))
 	})
 
 	t.Run("missing credential mapping", func(t *testing.T) {
@@ -141,7 +144,7 @@ func TestExecutableProcessingProfilesDoclingASRIdentityAndReuse(t *testing.T) {
 		alternate := cfg.RenditionProfiles["alternate"]
 		alternate.Runtime = cloneRenditionRuntime(alternate.Runtime)
 		alternate.Runtime.Endpoint = "http://127.0.0.1:5002"
-		alternate.DisclosureFingerprint = doclingASRDisclosureFingerprint(
+		alternate.DisclosureFingerprint = docling.ASRDisclosureFingerprint(
 			descriptor, alternate.Runtime.Endpoint, alternate.DeploymentFingerprint)
 		cfg.RenditionProfiles["alternate"] = alternate
 		cfg.ProcessingProfiles["alternate"] = cfg.ProcessingProfiles["asr"]
@@ -163,6 +166,46 @@ func TestExecutableProcessingProfilesAllowsUnselectedDoclingASRRuntime(t *testin
 	profiles, err := executableProcessingProfiles(cfg, embeddingRuntimeBundle{})
 	require.NoError(t, err)
 	assert.Empty(t, profiles)
+}
+
+func TestDoclingASRRuntimeBounds(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		set  func(*config.RenditionProfileConfig)
+		want string
+	}{
+		{"document bytes", func(profile *config.RenditionProfileConfig) {
+			profile.MaxDocumentBytes = docling.MaxDocumentBytes + 1
+		}, "bounds are invalid"},
+		{"response bytes", func(profile *config.RenditionProfileConfig) {
+			profile.MaxResponseBytes = docling.MaxResponseBytes + 1
+		}, "bounds are invalid"},
+		{"transcript policy drift", func(profile *config.RenditionProfileConfig) {
+			profile.MaxTranscriptChars++
+		}, "descriptor differs from portable binding"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			cfg, _ := doclingASRProcessingConfig(t, "http://127.0.0.1:5001")
+			profile := cfg.RenditionProfiles["asr"]
+			test.set(&profile)
+			cfg.RenditionProfiles["asr"] = profile
+			require.NoError(t, cfg.Validate())
+			_, _, err := configureRenditionProviders(cfg)
+			require.ErrorContains(t, err, test.want)
+		})
+	}
+}
+
+func TestDoclingASRDescriptorIsIndependentOfProcessingLimits(t *testing.T) {
+	cfg, descriptor := doclingASRProcessingConfig(t, "http://127.0.0.1:5001")
+	second := cfg.ProcessingProfiles["asr"]
+	second.MaxDocumentChars--
+	cfg.ProcessingProfiles["second"] = second
+	require.NoError(t, cfg.Validate())
+	profiles, err := executableProcessingProfiles(cfg, embeddingRuntimeBundle{})
+	require.NoError(t, err)
+	assert.Equal(t, descriptor, profiles["second"].RenditionProvider.Descriptor())
+	assert.Same(t, profiles["asr"].RenditionProvider, profiles["second"].RenditionProvider)
 }
 
 func cloneRenditionRuntime(runtime *config.RenditionRuntimeConfig) *config.RenditionRuntimeConfig {
@@ -194,8 +237,8 @@ func doclingASRProcessingConfig(t *testing.T, endpoint string) (config.Config, d
 		AdapterContract: config.DoclingASRAdapterContract, AuthorizationFingerprint: strings.Repeat("1", 64),
 		CredentialBinding: "credential:docling", DeploymentFingerprint: strings.Repeat("2", 64),
 		DescriptorID: descriptor.ID, DescriptorFingerprint: descriptor.Fingerprint,
-		DisclosureFingerprint: doclingASRDisclosureFingerprint(descriptor, endpoint, strings.Repeat("2", 64)), MaxDocumentBytes: 1 << 20,
-		MaxResponseBytes: 1 << 20, MaxUnits: 100,
+		DisclosureFingerprint: docling.ASRDisclosureFingerprint(descriptor, endpoint, strings.Repeat("2", 64)), MaxDocumentBytes: 1 << 20,
+		MaxResponseBytes: 1 << 20, MaxUnits: 100, MaxTranscriptChars: maxDocumentChars,
 		RequestedArtifacts: []string{string(document.EvidenceArtifactTranscript)},
 		TrustBoundary:      string(document.RenditionTrustOperatorNetwork), UploadOptionsFingerprint: strings.Repeat("4", 64),
 		Runtime: &config.RenditionRuntimeConfig{

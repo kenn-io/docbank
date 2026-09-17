@@ -1,7 +1,6 @@
 package config
 
 import (
-	"fmt"
 	"maps"
 	"os"
 	"path/filepath"
@@ -378,6 +377,15 @@ func TestEmbeddingRuntimeConfigIsExactBoundedAndPortable(t *testing.T) {
 			changed.Runtime.Endpoint = "https://secret@embedding.example.invalid"
 			value.EmbeddingProfiles["semantic"] = changed
 		},
+		"HTTP with pins": func(value *Config) {
+			value.EmbeddingProfiles["semantic"].Runtime.Endpoint = "http://embedding.example.invalid"
+		},
+		"zero endpoint port": func(value *Config) {
+			value.EmbeddingProfiles["semantic"].Runtime.Endpoint = "https://embedding.example.invalid:0"
+		},
+		"overflow endpoint port": func(value *Config) {
+			value.EmbeddingProfiles["semantic"].Runtime.Endpoint = "https://embedding.example.invalid:70000"
+		},
 		"portable model input differs": func(value *Config) {
 			changed := value.EmbeddingProfiles["semantic"]
 			changed.ModelInput = EmbeddingModelInputConfig{Profile: string(document.ModelInputProfileE5)}
@@ -418,6 +426,9 @@ func TestEmbeddingRuntimeConfigIsExactBoundedAndPortable(t *testing.T) {
 			changed := cfg
 			changed.CredentialBindings = maps.Clone(cfg.CredentialBindings)
 			changed.EmbeddingProfiles = maps.Clone(cfg.EmbeddingProfiles)
+			profile := changed.EmbeddingProfiles["semantic"]
+			profile.Runtime = new(*profile.Runtime)
+			changed.EmbeddingProfiles["semantic"] = profile
 			mutate(&changed)
 			require.Error(t, changed.Validate())
 		})
@@ -461,6 +472,11 @@ unknown_runtime_key = "synthetic"
 		want   string
 	}{
 		{"missing credential binding", func(cfg *Config) { cfg.CredentialBindings = nil }, "runtime credential binding"},
+		{"missing transcript limit", func(cfg *Config) {
+			profile := cfg.RenditionProfiles["primary"]
+			profile.MaxTranscriptChars = 0
+			cfg.RenditionProfiles["primary"] = profile
+		}, "max_transcript_chars"},
 		{"zero request timeout", func(cfg *Config) { cfg.RenditionProfiles["primary"].Runtime.RequestTimeout = 0 }, "request and poll bounds"},
 		{"zero total timeout", func(cfg *Config) { cfg.RenditionProfiles["primary"].Runtime.TotalTimeout = 0 }, "request and poll bounds"},
 		{"zero poll interval", func(cfg *Config) { cfg.RenditionProfiles["primary"].Runtime.PollInterval = 0 }, "request and poll bounds"},
@@ -472,13 +488,23 @@ unknown_runtime_key = "synthetic"
 		{"invalid endpoint path", func(cfg *Config) { cfg.RenditionProfiles["primary"].Runtime.Endpoint += "/v1" }, "absolute root origin"},
 		{"invalid endpoint credentials", func(cfg *Config) {
 			cfg.RenditionProfiles["primary"].Runtime.Endpoint = "https://user@provider.example.invalid"
-		}, "absolute root origin"},
+		}, "absolute and credential-free"},
 		{"invalid allowed CIDR", func(cfg *Config) {
 			cfg.RenditionProfiles["primary"].Runtime.AllowedCIDRs = []string{"not-a-cidr"}
 		}, "allowed CIDR"},
 		{"invalid SPKI pin", func(cfg *Config) {
 			cfg.RenditionProfiles["primary"].Runtime.SPKISHA256 = []string{"ABC"}
 		}, "SPKI pin"},
+		{"HTTP with pins", func(cfg *Config) {
+			cfg.RenditionProfiles["primary"].Runtime.Endpoint = "http://provider.example.invalid"
+			cfg.RenditionProfiles["primary"].Runtime.SPKISHA256 = []string{strings.Repeat("a", 64)}
+		}, "[rendition_profiles.primary] runtime spki_sha256 requires an HTTPS endpoint"},
+		{"zero endpoint port", func(cfg *Config) {
+			cfg.RenditionProfiles["primary"].Runtime.Endpoint = "https://provider.example.invalid:0"
+		}, "[rendition_profiles.primary] runtime endpoint port"},
+		{"overflow endpoint port", func(cfg *Config) {
+			cfg.RenditionProfiles["primary"].Runtime.Endpoint = "https://provider.example.invalid:70000"
+		}, "[rendition_profiles.primary] runtime endpoint port"},
 		{"ambient proxy", func(cfg *Config) { cfg.RenditionProfiles["primary"].Runtime.ProxyMode = "environment" }, "proxy-disabled"},
 		{"hosted HTTP", func(cfg *Config) {
 			profile := cfg.RenditionProfiles["primary"]
@@ -511,81 +537,14 @@ unknown_runtime_key = "synthetic"
 	}
 }
 
-func TestRenditionRuntimeRejectsDoclingProviderBounds(t *testing.T) {
-	for _, test := range []struct {
-		name  string
-		limit int64
-		set   func(*RenditionProfileConfig, int64)
-		field string
-	}{
-		{
-			name:  "max response bytes",
-			limit: docling.MaxResponseBytes,
-			set:   func(profile *RenditionProfileConfig, value int64) { profile.MaxResponseBytes = value },
-			field: "max response bytes",
-		},
-		{
-			name:  "max document bytes",
-			limit: docling.MaxDocumentBytes,
-			set:   func(profile *RenditionProfileConfig, value int64) { profile.MaxDocumentBytes = value },
-			field: "max document bytes",
-		},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			cfg := validRenditionRuntimeConfig(t)
-			profile := cfg.RenditionProfiles["primary"]
-			test.set(&profile, test.limit)
-			cfg.RenditionProfiles["primary"] = profile
-			require.NoError(t, cfg.Validate())
-
-			test.set(&profile, test.limit+1)
-			cfg.RenditionProfiles["primary"] = profile
-			require.EqualError(t, cfg.Validate(), fmt.Sprintf(
-				"[rendition_profiles.primary] %s must be at most %d for Docling ASR",
-				test.field, test.limit))
-		})
-	}
-}
-
-func TestRenditionRuntimeTranscriptBounds(t *testing.T) {
+func TestRenditionRuntimeAllowsIndependentProcessingLimits(t *testing.T) {
 	cfg := validRenditionRuntimeConfig(t)
-	bound, err := cfg.RenditionTranscriptChars("primary")
-	require.NoError(t, err)
-	assert.Equal(t, 100_000, bound)
-
 	second := cfg.ProcessingProfiles["archive"]
-	second.Rendition = "primary"
-	second.MaxDocumentChars = 100_000
-	cfg.ProcessingProfiles["second"] = second
-	bound, err = cfg.RenditionTranscriptChars("primary")
-	require.NoError(t, err)
-	assert.Equal(t, 100_000, bound)
-	require.NoError(t, cfg.Validate())
-
 	second.MaxDocumentChars = 99_999
 	cfg.ProcessingProfiles["second"] = second
-	_, err = cfg.RenditionTranscriptChars("primary")
-	require.ErrorContains(t, err, "conflicting")
-	require.ErrorContains(t, cfg.Validate(), "conflicting")
-}
+	require.NoError(t, cfg.Validate())
 
-func TestRenditionRuntimeAllowsUnselectedStagedProfile(t *testing.T) {
-	cfg := validRenditionRuntimeConfig(t)
 	cfg.ProcessingProfiles = map[string]ProcessingProfileConfig{}
-	require.NoError(t, cfg.Validate())
-	bound, err := cfg.RenditionTranscriptChars("primary")
-	require.NoError(t, err)
-	assert.Zero(t, bound)
-}
-
-func TestRenditionRuntimeAllowsConflictingStagedBounds(t *testing.T) {
-	cfg := validRenditionRuntimeConfig(t)
-	profile := cfg.RenditionProfiles["primary"]
-	profile.Runtime = nil
-	cfg.RenditionProfiles["primary"] = profile
-	second := cfg.ProcessingProfiles["archive"]
-	second.MaxDocumentChars = 99_999
-	cfg.ProcessingProfiles["second"] = second
 	require.NoError(t, cfg.Validate())
 }
 
@@ -613,7 +572,7 @@ func validRenditionRuntimeConfig(t *testing.T) Config {
 		CredentialBinding: "credential:ocr-primary", DeploymentFingerprint: strings.Repeat("2", 64),
 		DescriptorID: descriptor.ID, DescriptorFingerprint: descriptor.Fingerprint,
 		DisclosureFingerprint: strings.Repeat("4", 64), MaxDocumentBytes: 1 << 20,
-		MaxResponseBytes: 1 << 20, MaxUnits: 100,
+		MaxResponseBytes: 1 << 20, MaxUnits: 100, MaxTranscriptChars: 100_000,
 		RequestedArtifacts: []string{string(document.EvidenceArtifactTranscript)},
 		TrustBoundary:      string(document.RenditionTrustOperatorNetwork), UploadOptionsFingerprint: strings.Repeat("5", 64),
 		Runtime: &RenditionRuntimeConfig{

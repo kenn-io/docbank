@@ -373,6 +373,67 @@ func TestDaemonDoclingASRRestoredWork(t *testing.T) {
 	assert.Equal(t, beforeRestart, provider.requests.Load(), "a restart must not replay a held claim")
 }
 
+func TestDaemonDoclingASRQueuedWorkAfterProfileChange(t *testing.T) {
+	provider := newDaemonDoclingServer(t)
+	provider.resultGate = make(chan struct{})
+	root, daemon, stop := startDaemonASRTest(t, provider, daemonASRProviderKey, false)
+	var queued api.MediaReceipt
+	for index, source := range []struct {
+		filename, mediaType string
+		content             []byte
+	}{
+		{"running.wav", "audio/wav", mediatest.WAV()},
+		{"queued.mp3", "audio/mpeg", mediatest.MP3()},
+	} {
+		receipt, selector, plan := daemonASRSourceAndPlanWith(t, daemon,
+			fmt.Sprintf("00000000-0000-4000-8000-%012d", 801+index*2),
+			source.filename, source.mediaType, source.content)
+		_, err := daemon.GrantProcessingConsent(t.Context(), api.ProcessingConsentGrantRequest{
+			Selector: selector, PlanFingerprint: plan.Fingerprint,
+		})
+		require.NoError(t, err)
+		queued, err = daemon.RetryMedia(t.Context(), receipt.SourceID, api.MediaRetryBody{
+			OperationID: fmt.Sprintf("00000000-0000-4000-8000-%012d", 802+index*2),
+			Processing:  &api.MediaProcessingBody{Profile: "asr"},
+		})
+		require.NoError(t, err)
+		if index == 0 {
+			select {
+			case <-provider.resultStarted:
+			case <-time.After(10 * time.Second):
+				t.Fatal("first provider request did not start")
+			}
+		}
+	}
+	status, err := daemon.ProcessingStatus(t.Context(), queued.JobID)
+	require.NoError(t, err)
+	require.Equal(t, "queued", status.State)
+	stop()
+	waitForDaemonStop(t, root)
+	closeProviderResultGate(provider)
+	beforeRestart := provider.requests.Load()
+
+	cfg := config.Default()
+	_, err = toml.DecodeFile(filepath.Join(root, "config.toml"), &cfg)
+	require.NoError(t, err)
+	profile := cfg.RenditionProfiles["asr"]
+	profile.MaxUnits++
+	cfg.RenditionProfiles["asr"] = profile
+	require.NoError(t, cfg.Validate())
+	require.NoError(t, writeDaemonASRConfig(root, cfg))
+	startServe(t)
+	record := waitForDaemon(t, root)
+	restarted := client.New("http://"+record.Address, cfg.Server.APIKey)
+	t.Cleanup(func() { require.NoError(t, restarted.Close()) })
+	require.EventuallyWithT(t, func(collect *assert.CollectT) {
+		status, err := restarted.ProcessingStatus(t.Context(), queued.JobID)
+		require.NoError(collect, err)
+		require.Equal(collect, "failed", status.State)
+		require.Equal(collect, "terminal", status.FailureCode)
+	}, 10*time.Second, 20*time.Millisecond)
+	require.Equal(t, beforeRestart, provider.requests.Load())
+}
+
 func TestDaemonDoclingASRMetadataRestoreRequiresFreshConsent(t *testing.T) {
 	provider := newDaemonDoclingServer(t)
 	provider.resultGate = make(chan struct{})
@@ -932,8 +993,9 @@ func writeDaemonASRConfig(root string, cfg config.Config) error {
 			"descriptor_id": profile.DescriptorID, "descriptor_fingerprint": profile.DescriptorFingerprint,
 			"disclose_filename": profile.DiscloseFilename, "disclosure_fingerprint": profile.DisclosureFingerprint,
 			"max_document_bytes": profile.MaxDocumentBytes, "max_response_bytes": profile.MaxResponseBytes,
-			"max_units": profile.MaxUnits, "requested_artifacts": profile.RequestedArtifacts,
-			"trust_boundary": profile.TrustBoundary, "upload_options_fingerprint": profile.UploadOptionsFingerprint,
+			"max_units": profile.MaxUnits, "max_transcript_chars": profile.MaxTranscriptChars,
+			"requested_artifacts": profile.RequestedArtifacts,
+			"trust_boundary":      profile.TrustBoundary, "upload_options_fingerprint": profile.UploadOptionsFingerprint,
 		}
 		if runtime := profile.Runtime; runtime != nil {
 			value["runtime"] = map[string]any{
