@@ -186,12 +186,8 @@ func (s *Store) latestMediaProcessingReceiptForVersion(
 ) (*MediaPublicationReceipt, error) {
 	query := `SELECT receipt_json FROM media_operations
 		WHERE principal=? AND source_id=? AND verb IN ('submit_supplied_media','retry_media')
-			AND receipt_json LIKE '%"processing_profile"%'`
-	args := []any{principal, sourceID}
-	if sourceVersionID != "" {
-		query += ` AND json_extract(receipt_json, '$.source_version_id') = ?`
-		args = append(args, sourceVersionID)
-	}
+			AND receipt_json LIKE '%"processing_profile"%'
+			AND json_extract(receipt_json, '$.source_version_id') = ?`
 	if succeededOnly {
 		query += ` AND state='succeeded'`
 	}
@@ -199,7 +195,7 @@ func (s *Store) latestMediaProcessingReceiptForVersion(
 	// later must not hide a retry that was already admitted.
 	query += ` ORDER BY created_at DESC,operation_id DESC LIMIT 1`
 	var raw string
-	err := s.db.QueryRowContext(ctx, query, args...).Scan(&raw)
+	err := s.db.QueryRowContext(ctx, query, principal, sourceID, sourceVersionID).Scan(&raw)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}

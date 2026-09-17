@@ -122,7 +122,6 @@ func TestRetainRemoteRecordingMedia(t *testing.T) {
 	var versions int
 	require.NoError(t, s.db.QueryRow(`SELECT count(*) FROM media_source_versions WHERE source_id=?`, sourceID).Scan(&versions))
 	require.Equal(t, 2, versions)
-	t.Log("source_conflict")
 }
 
 func TestRemoteRecordingManualMetadata(t *testing.T) {
@@ -173,5 +172,4 @@ func TestRemoteRecordingManualMetadata(t *testing.T) {
 	var inputCount int
 	require.NoError(t, restored.db.QueryRow(`SELECT count(*) FROM media_input_artifacts WHERE input_id=?`, request.InputID).Scan(&inputCount))
 	require.Equal(t, 1, inputCount)
-	t.Log("durable_replay")
 }

@@ -16,24 +16,25 @@ func TestMediaRetryAdmissionOrderWithEqualClockTimes(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		s := newTestStore(t)
 		ctx := t.Context()
-		sourceID := strings.Repeat("a", 64)
-		_, err := s.db.Exec(`INSERT INTO media_sources VALUES(?, 'supplied_media','','',?,?)`, sourceID, sourceID, nowRFC3339())
+		retained, err := s.RetainSuppliedMedia(ctx, suppliedMediaPublicationFixture(t, s))
 		require.NoError(t, err)
+		sourceID, sourceVersionID := retained.SourceID, retained.SourceVersionID
 		older := "00000000-0000-4000-8000-000000000002"
 		newer := "00000000-0000-4000-8000-000000000001"
 		for _, id := range []string{older, newer} {
 			receipt := MediaPublicationReceipt{VaultUID: s.VaultID(), SourceID: sourceID,
-				OperationID: id, OperationState: "queued", CoverageState: "pending", ProcessingProfile: "speech"}
+				SourceVersionID: sourceVersionID,
+				OperationID:     id, OperationState: "queued", CoverageState: "pending", ProcessingProfile: "speech"}
 			_, err := s.QueueMediaRetry(ctx, MediaOperation{ID: id, Principal: "operator", Verb: "retry_media",
 				SourceID: sourceID, RequestSHA256: strings.Repeat("b", 64)}, receipt)
 			require.NoError(t, err)
 		}
 		_, err = s.FinishMediaProcessing(ctx, older, "operator", true)
 		require.NoError(t, err)
-		current, err := s.latestMediaProcessingReceiptForVersion(ctx, "operator", sourceID, "", false)
+		current, err := s.latestMediaProcessingReceiptForVersion(ctx, "operator", sourceID, sourceVersionID, false)
 		require.NoError(t, err)
 		require.Equal(t, newer, current.OperationID)
-		coverage, err := s.latestMediaProcessingReceiptForVersion(ctx, "operator", sourceID, "", true)
+		coverage, err := s.latestMediaProcessingReceiptForVersion(ctx, "operator", sourceID, sourceVersionID, true)
 		require.NoError(t, err)
 		require.Equal(t, older, coverage.OperationID)
 
@@ -41,10 +42,10 @@ func TestMediaRetryAdmissionOrderWithEqualClockTimes(t *testing.T) {
 		require.NoError(t, s.ExportMetadata(ctx, &exported))
 		restored := newTestStore(t)
 		require.NoError(t, restored.ImportMetadata(ctx, &exported))
-		current, err = restored.latestMediaProcessingReceiptForVersion(ctx, "operator", sourceID, "", false)
+		current, err = restored.latestMediaProcessingReceiptForVersion(ctx, "operator", sourceID, sourceVersionID, false)
 		require.NoError(t, err)
 		require.Equal(t, newer, current.OperationID)
-		coverage, err = restored.latestMediaProcessingReceiptForVersion(ctx, "operator", sourceID, "", true)
+		coverage, err = restored.latestMediaProcessingReceiptForVersion(ctx, "operator", sourceID, sourceVersionID, true)
 		require.NoError(t, err)
 		require.Equal(t, older, coverage.OperationID)
 	})

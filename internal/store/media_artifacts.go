@@ -57,36 +57,8 @@ func (s *Store) ImportMediaInputArtifact(
 			sourceVersionID != request.SourceVersionID {
 			return "", ErrNotFound
 		}
-		var versionID string
-		var matches bool
-		err := tx.QueryRowContext(ctx, `SELECT i.content_version_id,
-			i.occurrence_id=? AND i.source_id=? AND i.source_version_id=?
-			AND i.kind=? AND i.origin=? AND i.provider=? AND i.language=? AND i.input_sha256=?
-			AND c.blob_hash=? AND c.size=? AND COALESCE(c.mime_type,'')=?
-			FROM media_input_artifacts i JOIN content_versions c ON c.version_id=i.content_version_id
-			WHERE i.input_id=?`,
-			request.OccurrenceID, sourceID, sourceVersionID, request.Kind, request.Origin,
-			request.Provider, request.Language, request.InputSHA, request.InputSHA,
-			request.ByteLength, request.MediaType, request.InputID).Scan(&versionID, &matches)
-		switch {
-		case err == nil && !matches:
-			return "", ErrMediaOperationConflict
-		case errors.Is(err, sql.ErrNoRows):
-			version, err := s.sealMediaContentTx(ctx, tx, request.VirtualPath, ContentVersion{
-				BlobHash: request.InputSHA, Size: request.ByteLength, MimeType: request.MediaType}, request.Physical)
-			if err != nil {
-				return "", err
-			}
-			versionID = version.ID
-			if _, err := tx.ExecContext(ctx, `INSERT INTO media_input_artifacts(
-				input_id,occurrence_id,source_id,source_version_id,content_version_id,kind,
-				origin,provider,language,input_sha256,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)`,
-				request.InputID, request.OccurrenceID, sourceID, sourceVersionID,
-				versionID, request.Kind, request.Origin, request.Provider,
-				request.Language, request.InputSHA, nowRFC3339()); err != nil {
-				return "", err
-			}
-		case err != nil:
+		versionID, err := s.retainMediaInputArtifactTx(ctx, tx, request, "")
+		if err != nil {
 			return "", err
 		}
 		receipt := MediaPublicationReceipt{VaultUID: s.vaultID, SourceID: sourceID,
@@ -219,33 +191,11 @@ func (s *Store) RetainRemoteRecordingMedia(
 			return "", err
 		}
 
-		var matches bool
-		err = tx.QueryRowContext(ctx, `SELECT i.content_version_id,
-			i.occurrence_id=? AND i.source_id=? AND i.source_version_id=?
-			AND i.content_version_id=? AND i.kind=? AND i.origin=? AND i.provider=?
-			AND i.language=? AND i.input_sha256=? AND c.blob_hash=? AND c.size=?
-			AND COALESCE(c.mime_type,'')=?
-			FROM media_input_artifacts i JOIN content_versions c ON c.version_id=i.content_version_id
-			WHERE i.input_id=?`, request.OccurrenceID, sourceID, sourceVersionID, contentVersionID,
-			request.Kind, request.Origin, request.Provider, request.Language, request.InputSHA,
-			request.InputSHA, request.ByteLength, request.MediaType, request.InputID).Scan(
-			new(string), &matches)
-		switch {
-		case err == nil && !matches:
-			return "", ErrMediaOperationConflict
-		case errors.Is(err, sql.ErrNoRows):
-			if _, err := tx.ExecContext(ctx, `INSERT INTO media_input_artifacts(
-				input_id,occurrence_id,source_id,source_version_id,content_version_id,kind,
-				origin,provider,language,input_sha256,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)`,
-				request.InputID, request.OccurrenceID, sourceID, sourceVersionID, contentVersionID,
-				request.Kind, request.Origin, request.Provider, request.Language, request.InputSHA,
-				nowRFC3339()); err != nil {
-				if s.driver.IsUniqueViolation(err) {
-					return "", ErrMediaOperationConflict
-				}
-				return "", err
+		request.SourceVersionID = sourceVersionID
+		if _, err := s.retainMediaInputArtifactTx(ctx, tx, request, contentVersionID); err != nil {
+			if s.driver.IsUniqueViolation(err) {
+				return "", ErrMediaOperationConflict
 			}
-		case err != nil:
 			return "", err
 		}
 		receipt := MediaPublicationReceipt{VaultUID: s.vaultID, SourceID: sourceID,
@@ -260,6 +210,48 @@ func (s *Store) RetainRemoteRecordingMedia(
 		return MediaPublicationReceipt{}, err
 	}
 	return canonical.Decode[MediaPublicationReceipt]([]byte(receiptRaw))
+}
+
+// retainMediaInputArtifactTx reuses exact input authority or seals a new input.
+// A supplied content version keeps a remote original on its source version.
+func (s *Store) retainMediaInputArtifactTx(
+	ctx context.Context, tx *sql.Tx, request MediaInputArtifactRequest, contentVersionID string,
+) (string, error) {
+	var versionID string
+	var matches bool
+	err := tx.QueryRowContext(ctx, `SELECT i.content_version_id,
+		i.occurrence_id=? AND i.source_id=? AND i.source_version_id=?
+		AND i.kind=? AND i.origin=? AND i.provider=? AND i.language=? AND i.input_sha256=?
+		AND c.blob_hash=? AND c.size=? AND COALESCE(c.mime_type,'')=?
+		FROM media_input_artifacts i JOIN content_versions c ON c.version_id=i.content_version_id
+		WHERE i.input_id=?`,
+		request.OccurrenceID, request.Operation.SourceID, request.SourceVersionID, request.Kind, request.Origin,
+		request.Provider, request.Language, request.InputSHA, request.InputSHA,
+		request.ByteLength, request.MediaType, request.InputID).Scan(&versionID, &matches)
+	if err == nil {
+		if !matches || (contentVersionID != "" && contentVersionID != versionID) {
+			return "", ErrMediaOperationConflict
+		}
+		return versionID, nil
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		return "", err
+	}
+	if contentVersionID == "" {
+		version, err := s.sealMediaContentTx(ctx, tx, request.VirtualPath, ContentVersion{
+			BlobHash: request.InputSHA, Size: request.ByteLength, MimeType: request.MediaType}, request.Physical)
+		if err != nil {
+			return "", err
+		}
+		contentVersionID = version.ID
+	}
+	_, err = tx.ExecContext(ctx, `INSERT INTO media_input_artifacts(
+		input_id,occurrence_id,source_id,source_version_id,content_version_id,kind,
+		origin,provider,language,input_sha256,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)`,
+		request.InputID, request.OccurrenceID, request.Operation.SourceID, request.SourceVersionID,
+		contentVersionID, request.Kind, request.Origin, request.Provider,
+		request.Language, request.InputSHA, nowRFC3339())
+	return contentVersionID, err
 }
 
 // sealMediaContentTx commits core content and its source fact only with
