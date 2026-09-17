@@ -3,9 +3,10 @@ import { afterEach, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/svelte";
 import App from "./App.svelte";
 import { canonicalQuery, type Query } from "./query.js";
+import { batchTagRequestDigest } from "./batch-tags.js";
 import type { SnapshotPage, SnapshotRow } from "./snapshots.js";
 
-afterEach(() => { cleanup(); history.replaceState(null, "", "/"); vi.unstubAllGlobals(); vi.restoreAllMocks(); });
+afterEach(() => { cleanup(); history.replaceState(null, "", "/"); vi.unstubAllGlobals(); vi.restoreAllMocks(); Reflect.deleteProperty(Element.prototype, "scrollIntoView"); });
 
 const initialQuery: Query = {
   v: 1, text: "report AND NOT tag:obsolete", syntax: "advanced", mode: "lexical",
@@ -40,7 +41,7 @@ function snapshot(query: Query, rows: SnapshotRow[], cursors: { previous_cursor?
   };
 }
 
-it("keeps rapid runs bound to the accepted frozen snapshot without live node refreshes", async () => {
+it("keeps rapid runs bound to the accepted frozen snapshot while live observations load separately", async () => {
   history.replaceState(null, "", `/#web_session=synthetic&web_upload_secret=proof&query=${encodeURIComponent(JSON.stringify(initialQuery))}`);
   vi.stubGlobal("ResizeObserver", class { observe() {} unobserve() {} disconnect() {} });
   const root = { id: 1000, name: "", kind: "dir", path: "/", revision: 1, size: 0, created_at: "2026-09-11T00:00:00Z", modified_at: "2026-09-11T00:00:00Z" };
@@ -69,6 +70,28 @@ it("keeps rapid runs bound to the accepted frozen snapshot without live node ref
       if (creates === 1) return oldRun;
       return json(snapshot(query, [row(1, "new-result.pdf")], {}, 1));
     }
+    if (url === "/api/v1/nodes/1") {
+      return json({
+        id: 1,
+        parent_id: 1000,
+        name: "new-result.pdf",
+        kind: "file",
+        current_version_id: "99999999-9999-4999-8999-999999999999",
+        blob_hash: "d".repeat(64),
+        size: 2000,
+        mime_type: "application/pdf",
+        revision: 9,
+        created_at: "2026-09-11T12:00:00Z",
+        modified_at: "2026-09-11T12:40:00Z",
+        path: "/records/new-result.pdf",
+      });
+    }
+    if (url === "/api/v1/nodes/1/tags?limit=1000&offset=0") {
+      return json({ items: [], total: 0, limit: 1000, offset: 0 });
+    }
+    if (url === "/api/v1/audit/status?node_id=1") {
+      return json({ enabled: false, scopes: [] });
+    }
     throw new Error(`unexpected request: ${url}`);
   });
 
@@ -93,7 +116,11 @@ it("keeps rapid runs bound to the accepted frozen snapshot without live node ref
   ] });
 
   expect(creates).toBe(2);
-  expect(requests.some((url) => url.includes("/nodes/1/tags") || url.includes("audit/status?node_id=1"))).toBe(false);
+  await fireEvent.click(screen.getByRole("cell", { name: "/records/new-result.pdf" }));
+  await waitFor(() => expect(requests.some((url) => url.includes("/nodes/1/tags"))).toBe(true));
+  expect(requests.some((url) => url.includes("/nodes/1/tags"))).toBe(true);
+  expect(requests.some((url) => url.includes("audit/status?node_id=1"))).toBe(true);
+  expect(requests.some((url) => url === "/api/daemon/web-download")).toBe(false);
   expect(screen.getByText("a".repeat(64))).toBeTruthy();
 });
 
@@ -173,4 +200,68 @@ it("hides the live detail card when a snapshot has no selected row", async () =>
   await fireEvent.click(screen.getByRole("button", { name: "Run query" }));
   await screen.findByRole("region", { name: "Frozen query results" });
   expect(screen.queryByLabelText("Folder for live-folder")).toBeNull();
+});
+
+it("refreshes live metadata and download authority after tagging an inspected frozen row", async () => {
+  history.replaceState(null, "", `/#web_session=synthetic&web_upload_secret=proof&query=${encodeURIComponent(JSON.stringify(initialQuery))}`);
+  vi.stubGlobal("ResizeObserver", class { observe() {} unobserve() {} disconnect() {} });
+  Object.defineProperty(Element.prototype, "scrollIntoView", { configurable: true, value: vi.fn() });
+  vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => undefined);
+  const frozen = row(1);
+  const root = { id: 1000, name: "", kind: "dir", path: "/", revision: 1, size: 0, created_at: "2026-09-11T00:00:00Z", modified_at: "2026-09-11T00:00:00Z" };
+  const tag = { id: "55555555-5555-4555-8555-555555555555", name: "Reviewed", revision: 1, assignment_count: 0 };
+  let changed = false;
+  const prepared: Record<string, unknown>[] = [];
+  const json = (value: unknown, status = 200) => new Response(JSON.stringify(value), { status, headers: { "Content-Type": "application/json" } });
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    const url = String(input);
+    if (url === "/api/v1/path?path=%2F") return json(root);
+    if (url.includes("/children?")) return json({ directory: root, items: [], total: 0, limit: 1000, offset: 0 });
+    if (url === "/api/v1/tags?limit=1000&offset=0") return json({ items: [tag], total: 1, limit: 1000, offset: 0 });
+    if (url === "/api/v1/workspace/queries") return json(snapshot(initialQuery, [frozen], {}, 1));
+    if (url === "/api/v1/nodes/1") return json({ ...root, id: 1, parent_id: 1000, kind: "file",
+      name: frozen.name, path: frozen.path, revision: changed ? 4 : 3, current_version_id: frozen.content_version_id,
+      blob_hash: frozen.blob_hash, size: frozen.size, mime_type: frozen.mime_type });
+    if (url === "/api/v1/nodes/1/tags?limit=1000&offset=0") {
+      return json({ items: [...frozen.tags, ...(changed ? [tag] : [])], total: changed ? 2 : 1, limit: 1000, offset: 0 });
+    }
+    if (url === "/api/v1/audit/status?node_id=1") return json({ enabled: false, scopes: [] });
+    if (url === `/api/v1/tags/${tag.id}`) return json(tag);
+    if (url === "/api/v1/batch/tags/preview") return json({ tag_id: tag.id, tag_revision: changed ? 2 : 1,
+      nodes: [{ node_id: 1, revision: changed ? 4 : 3, assigned: changed }] });
+    if (url === "/api/v1/batch/tags") {
+      const request = JSON.parse(String(init?.body));
+      changed = true;
+      return json({ version: 1, operation_id: request.operation_id, request_digest: await batchTagRequestDigest(request),
+        tag_id: tag.id, assign: true, tag_revision: 2, assignment_count: 1, completed_at: "2026-09-11T13:00:00.000000000Z",
+        nodes: [{ node_id: 1, expected_revision: 3, revision: 4, changed: true }] });
+    }
+    if (url === "/api/daemon/web-download") {
+      const request = JSON.parse(String(init?.body));
+      prepared.push(request);
+      if (request.revision !== (changed ? 4 : 3)) return json({ detail: "Stale download revision" }, 409);
+      return new Response(`${JSON.stringify({ phase: "ready", received: frozen.size, total: frozen.size,
+        url: "/api/daemon/web-download/file?ticket=synthetic", name: frozen.name,
+        version_id: frozen.content_version_id, blob_hash: frozen.blob_hash })}\n`);
+    }
+    throw new Error(`unexpected request: ${url}`);
+  });
+  render(App);
+  await fireEvent.click(await screen.findByRole("button", { name: "Run query" }));
+  await screen.findByText("Revision 3");
+  await fireEvent.click(screen.getByRole("checkbox", { name: `Select ${frozen.path}` }));
+  await fireEvent.click(screen.getByRole("button", { name: "Tag or recover" }));
+  await fireEvent.click(screen.getByRole("combobox", { name: /Tag for snapshot action/ }));
+  await fireEvent.click(screen.getByRole("option", { name: "Reviewed" }));
+  await fireEvent.click(screen.getByRole("button", { name: "Add tag to visible selection" }));
+  await screen.findByText("0 of 1 selected documents have this tag.");
+  await fireEvent.click(screen.getByRole("button", { name: "Add to all" }));
+  await screen.findByText("1 of 1 selected documents have this tag.");
+  await fireEvent.click(screen.getByRole("button", { name: "Done" }));
+  const live = screen.getByText("Current live observations").closest(".live-observations")! as HTMLElement;
+  expect(await within(live).findByText("Revision 4")).toBeTruthy();
+  expect(within(live).getByRole("group", { name: "Current live tags" }).textContent).toContain("Reviewed");
+  expect(screen.getByText("Original snapshot facts")).toBeTruthy();
+  await fireEvent.click(screen.getByRole("button", { name: "Download verified original" }));
+  await waitFor(() => expect(prepared.at(-1)).toMatchObject({ revision: 4, version_id: frozen.content_version_id, blob_hash: frozen.blob_hash }));
 });

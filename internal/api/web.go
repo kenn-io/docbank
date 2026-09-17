@@ -45,7 +45,7 @@ func setWebHeaders(w http.ResponseWriter, webURL string) {
 		}
 	}
 	w.Header().Set("Content-Security-Policy",
-		"default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; "+
+		"default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; "+
 			"connect-src "+connectSources+"; object-src 'none'; "+
 			"base-uri 'none'; frame-ancestors 'none'")
 	w.Header().Set("Referrer-Policy", "no-referrer")

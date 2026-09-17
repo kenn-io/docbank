@@ -624,6 +624,46 @@ export async function deleteTag(
   return receipt;
 }
 
+export async function liveNodeTags(
+  session: string,
+  nodeID: number,
+): Promise<{ node: Node; items: Tag[]; total: number }> {
+  const before = await generated.getNode(nodeID, { session });
+  if (before.id !== nodeID || before.revision < 1 || before.trashed_at) {
+    throw new Error("The daemon returned invalid live node authority for tag inspection.");
+  }
+  const items: Tag[] = [];
+  const identities = new Set<string>();
+  let total: number | undefined;
+  while (total === undefined || items.length < total) {
+    const page = await generated.listNodeTags(nodeID, { limit: 1000, offset: items.length }, { session });
+    if (
+      !Number.isSafeInteger(page.total) || page.total < 0 ||
+      page.limit !== 1000 || page.offset !== items.length ||
+      (total !== undefined && page.total !== total) ||
+      page.items.length !== Math.min(1000, page.total - items.length)
+    ) {
+      throw new Error("The live tag listing was incomplete or inconsistent.");
+    }
+    total = page.total;
+    for (const tag of page.items) {
+      if (!tag.id || identities.has(tag.id)) {
+        throw new Error("The live tag listing was incomplete or inconsistent.");
+      }
+      identities.add(tag.id);
+      items.push(tag);
+    }
+  }
+  const after = await generated.getNode(nodeID, { session });
+  if (after.id !== before.id || after.revision !== before.revision || after.trashed_at) {
+    throw new Error("The selected node changed while tags were loading; refresh and try again.");
+  }
+  if (items.length !== total || identities.size !== total) {
+    throw new Error("The live tag listing was incomplete or inconsistent.");
+  }
+  return { node: after, items, total };
+}
+
 export async function changeNodeTag(
   session: string,
   nodeID: number,
