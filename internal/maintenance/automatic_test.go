@@ -97,9 +97,11 @@ func TestRunPackScheduleReleasesAStalledRunAndRetries(t *testing.T) {
 		require.ErrorIs(t, <-done, context.Canceled)
 		assert.Equal(t, int32(2), calls.Load())
 		assert.Contains(t, logOutput.String(), `msg="automatic packing canceled at interval; retrying"`)
+		assert.Contains(t, logOutput.String(), "interval=200ms")
 		assert.Contains(t, logOutput.String(), "blobs=2")
 		assert.Contains(t, logOutput.String(), "raw_bytes=123")
 		assert.Contains(t, logOutput.String(), "packs=1")
+		assert.Contains(t, logOutput.String(), "context canceled")
 		assert.NotContains(t, logOutput.String(), "more=")
 	})
 }
