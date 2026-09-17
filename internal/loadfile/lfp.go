@@ -10,8 +10,6 @@ import (
 	"strings"
 )
 
-var ErrUnrepresentable = errors.New("invalid_package_profile: value cannot be represented in the declared profile")
-
 const maxLFPLineBytes = 4*MaxFieldValueBytes + 128
 
 // ScanLFP reads supported IPRO image records and ignores comment records.

@@ -265,7 +265,7 @@ func TestLoadfileWritersBeyondReaderPage(t *testing.T) {
 		var output bytes.Buffer
 		require.NoError(t, WriteOPT(&output, images, profile))
 		count := 0
-		diagnostics, err := ScanOPT(&output, profile, func(image ImageRef) error {
+		diagnostics, err := ScanOPT(t.Context(), &output, profile, func(image ImageRef) error {
 			assert.Equal(t, images[count], image)
 			count++
 			return nil
