@@ -243,8 +243,9 @@ runner.
 Embedded callers can keep the recording identity separate from the protected
 reference used to obtain a local file. Submission stores the pending occurrence
 and performs no network access. The `canonical_url` field is optional for
-legacy configured-origin requests, and is the identity input for a generic URL
-reference when present.
+configured-origin requests, and is the identity input for a generic URL
+reference when present. See the [canonical URL rules](architecture/http-api.md#remote-recording-references)
+for the permanent source identity.
 
 ```go
 remote, err := vault.SubmitRemoteRecording(ctx, docbank.RemoteRecordingRequest{
@@ -324,9 +325,11 @@ receipt, err := vault.RetryMedia(ctx, "00000000-0000-4000-8000-000000000454",
     })
 ```
 
-`RetryMedia` returns after durable queue admission. Read `MediaStatus` for the
-newest attempt and its coverage. Coverage follows the exact source version
-selected by the visible occurrence, so a transcript for older bytes cannot
+`RetryMedia` selects the caller's newest visible occurrence for the source
+and returns after durable queue admission. It cannot select an older occurrence;
+use `PlanProcessing` and `StartProcessing` with that recording's node and current
+content version instead. Read `MediaStatus` for the newest attempt and its
+coverage. Coverage follows the exact source version selected by the visible occurrence, so a transcript for older bytes cannot
 cover a later recording revision. Remote acquisition remains unavailable until
 a provider-specific acquisition owner is added.
 

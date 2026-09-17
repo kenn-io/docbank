@@ -171,8 +171,10 @@ authorize a provider call by itself.
 input, including any occurrence-specific query. `canonical_url` is optional,
 write-only, and limited to 8,192 bytes. It is the caller's sanitized identity
 URL. It must be an absolute HTTP(S) URL without userinfo. Docbank lowercases
-the scheme and hostname, removes the default port and fragment, and keeps the
-meaningful path and query encoding.
+the scheme and hostname, converts Unicode domains to punycode, and removes
+the default port and fragment. An empty path becomes `/`. A trailing dot in
+the hostname stays distinct. Other path and query encoding stays unchanged.
+These rules determine the permanent source identity.
 
 ```json
 {
@@ -192,9 +194,11 @@ The canonical path uses the generic `url` provider identity. It does not
 resolve DNS, follow redirects, read credentials, or download a recording.
 `provider_hint` is a bounded replay value and does not prove a provider. A
 fresh canonical submission returns `outcome: "unsupported"` with a pending
-occurrence. A legacy submission that omits `canonical_url` keeps its configured
-origin policy and its existing `access_required` outcome. `acquire: true`
+occurrence. A submission that omits `canonical_url` uses its configured
+origin policy and returns `access_required`. `acquire: true`
 returns `503 capability_unavailable` until a provider acquisition owner exists.
+Acquisition planning uses the configured origin and `reference_url`;
+`canonical_url` does not affect its plan.
 
 To add a local original, send exactly the two multipart parts required by the
 artifact route, with metadata `kind: "media"` and a WAV or MP3 file. The
@@ -211,6 +215,10 @@ source head. A changed original for a bound occurrence returns
 `409 source_conflict`. A caption or transcript must follow the original. A
 caption stays a retained input. A transcript requires an explicit processing
 plan, consent, and retry before it can produce `transcribed` coverage.
+
+Media retry selects the caller's newest visible occurrence for the source.
+It cannot target an older occurrence. To process an older recording, use the
+ordinary processing API with that recording's node and current content version.
 
 Status and list responses select the source version bound to the visible
 occurrence they report. They show `content_available` and `unprocessed` after

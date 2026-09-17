@@ -110,8 +110,40 @@ func TestRemoteRecordingManualReference(t *testing.T) {
 	replayed, err := restarted.SubmitRemoteRecording(t.Context(), legacyRequest)
 	require.NoError(t, err)
 	require.Equal(t, legacy, replayed)
+}
 
-	t.Log("canonical_identity")
+// Canonicalization is permanent source identity, so equivalent URL spellings
+// must select the same source before any recording is imported.
+func TestRemoteRecordingCanonicalURLIdentity(t *testing.T) {
+	fixture := newPublicationFixture(t)
+	service := newRemoteRecordingTestService(t, fixture, "operator:canonical", 0, nil)
+	for _, tc := range []struct {
+		name, first, second string
+		same                bool
+	}{
+		{"https empty path", "https://example.com", "https://example.com/", true},
+		{"http empty path", "http://example.com", "http://example.com/", true},
+		{"unicode domain", "https://bücher.example/", "https://xn--bcher-kva.example/", true},
+		{"unicode case mapping", "https://İ.example/", "https://xn--i-9bb.example/", true},
+		{"trailing dot", "https://example.com./", "https://example.com/", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			first, err := service.SubmitRemoteRecording(t.Context(), remoteRecordingTestRequest(
+				uuid.New().String(), tc.first, tc.first, tc.name+"-first"))
+			require.NoError(t, err)
+			second, err := service.SubmitRemoteRecording(t.Context(), remoteRecordingTestRequest(
+				uuid.New().String(), tc.second, tc.second, tc.name+"-second"))
+			require.NoError(t, err)
+			if tc.same {
+				require.Equal(t, first.SourceID, second.SourceID)
+			} else {
+				require.NotEqual(t, first.SourceID, second.SourceID)
+			}
+		})
+	}
+	_, err := service.SubmitRemoteRecording(t.Context(), remoteRecordingTestRequest(
+		uuid.New().String(), "https://example.com/", "https://\u00ad/", "empty-normalized-host"))
+	require.ErrorIs(t, err, ErrMediaPlanInvalid)
 }
 
 func TestRemoteRecordingManualImport(t *testing.T) {
@@ -180,9 +212,6 @@ func TestRemoteRecordingManualImport(t *testing.T) {
 	require.NoError(t, fixture.catalog.ExportMetadata(t.Context(), &metadata))
 	require.Contains(t, metadata.String(), `"kind":"media"`)
 	require.Contains(t, metadata.String(), `"kind":"caption"`)
-
-	t.Log("caption_retained")
-	t.Log("content_available")
 }
 
 func TestRemoteRecordingManualIsolation(t *testing.T) {
@@ -263,8 +292,6 @@ func TestRemoteRecordingManualIsolation(t *testing.T) {
 	require.True(t, importResult == nil || errors.Is(importResult, store.ErrNotFound), importResult)
 	_, err = fixture.catalog.MediaOccurrence(t.Context(), service.principal, racing.OccurrenceID)
 	require.ErrorIs(t, err, store.ErrNotFound)
-
-	t.Log("source_conflict")
 }
 
 func TestRemoteRecordingManualBounds(t *testing.T) {
@@ -339,8 +366,6 @@ func TestRemoteRecordingManualBounds(t *testing.T) {
 	require.Equal(t, "content_available", accepted.Outcome)
 	require.NotEmpty(t, accepted.ContentVersionID)
 	require.Zero(t, service.mediaStagedBytes)
-
-	t.Log("no_catalog_authority")
 }
 
 func TestRemoteRecordingManualStatus(t *testing.T) {
@@ -403,8 +428,6 @@ func TestRemoteRecordingManualStatus(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, page.Items, 1)
 	require.Equal(t, "transcribed", page.Items[0].CoverageState)
-
-	t.Log("exact_version_coverage")
 }
 
 func TestRemoteRecordingEqualBytesKeepTranscriptBindingsBySource(t *testing.T) {
@@ -438,13 +461,12 @@ func TestRemoteRecordingEqualBytesKeepTranscriptBindingsBySource(t *testing.T) {
 	require.Equal(t, second.SourceID, secondSource)
 	require.Equal(t, secondImport.SourceVersionID, secondSourceVersion)
 	_, err = service.resolveMediaInputBinding(t.Context(), SuppliedMediaProfileName, hash,
-		first.SourceID, firstImport.SourceVersionID, nil)
+		mediaSourceBinding{sourceID: first.SourceID, sourceVersionID: firstImport.SourceVersionID}, "")
 	require.ErrorIs(t, err, store.ErrNotFound)
 	bound, err := service.resolveMediaInputBinding(t.Context(), SuppliedMediaProfileName, hash,
-		second.SourceID, secondImport.SourceVersionID, nil)
+		mediaSourceBinding{sourceID: second.SourceID, sourceVersionID: secondImport.SourceVersionID}, "")
 	require.NoError(t, err)
 	require.Equal(t, secondTranscript, bound)
-	t.Log("equal_bytes_source_binding")
 }
 
 func importRemoteTranscript(

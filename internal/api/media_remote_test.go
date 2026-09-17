@@ -154,9 +154,6 @@ func TestRemoteRecordingManualHTTP(t *testing.T) {
 	captured := badBody + missingBody + browserBody + metadata.String()
 	require.NotContains(t, captured, protectedReference)
 	require.NotContains(t, captured, "private-binding-value")
-	t.Log("private_values_absent boundary=8192")
-	t.Log("envelope_rejected")
-	t.Log("transcribed")
 }
 
 func TestRemoteRecordingManualHTTPRejectsExtraArtifactPart(t *testing.T) {
@@ -199,7 +196,6 @@ func TestRemoteRecordingManualHTTPRejectsExtraArtifactPart(t *testing.T) {
 	status, err := c.MediaStatus(t.Context(), remote.SourceID)
 	require.NoError(t, err)
 	require.Empty(t, status.ContentVersionID)
-	t.Log("envelope_rejected remote_artifact_extra_part")
 }
 
 func TestMediaAcquisitionPlanRejectsOversizedCanonicalURLWithoutEcho(t *testing.T) {
@@ -211,7 +207,6 @@ func TestMediaAcquisitionPlanRejectsOversizedCanonicalURLWithoutEcho(t *testing.
 	require.Equal(t, http.StatusUnprocessableEntity, response.StatusCode, responseBody)
 	require.NotContains(t, responseBody, secret)
 	require.Contains(t, responseBody, "invalid media reference body")
-	t.Log("canonical_validation_private")
 }
 
 func TestMediaAcquisitionPlanRejectsOversizedReferenceURLWithoutEcho(t *testing.T) {

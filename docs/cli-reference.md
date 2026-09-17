@@ -1239,7 +1239,10 @@ receipt returns the input ID. Pass that value with
 for the recording. The selected input remains fixed for the job; importing
 another transcript does not change work already queued.
 Artifact imports retain inputs only. Use
-`media retry` to request processing after the import.
+`media retry` to request processing after the import. Retry selects the caller's
+newest visible occurrence for the source; it cannot target an older occurrence.
+Use ordinary document processing with the older recording's node and current
+content version when needed.
 
 Processing is explicit. The built-in `supplied-transcript` profile turns the
 selected retained input into the ordinary sanitized Markdown rendition used by
@@ -1257,11 +1260,11 @@ only produce embeddings are rejected.
 
 Remote references submitted by the CLI are read from `--reference-file PATH`,
 or from stdin with `--reference-file -`. They are never accepted as a
-command-line URL. The existing CLI reference submission follows the legacy
+command-line URL. CLI reference submission uses the
 configured-origin policy, performs no network access by itself, and rejects
-processing requests. A canonical URL for the generic manual path is submitted
-through the HTTP or embedded API, then the CLI can use `--kind media` followed
-by transcript import and retry. Acquisition planning, grant, and revoke
+processing requests. The CLI has no canonical URL option. Submit a canonical
+URL for the generic manual path through the HTTP or embedded API, then use the
+CLI for `--kind media`, transcript import, and retry. Acquisition planning, grant, and revoke
 commands are available under `media acquisition-plan` and `media consent`; a
 daemon without a registered acquisition policy reports the capability as
 unavailable.

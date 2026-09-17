@@ -128,9 +128,6 @@ func (service *Service) importRemoteRecordingMedia(
 	if err := validateMediaArtifactFile(request.Filename, request.MediaType); err != nil {
 		return MediaReceipt{}, err
 	}
-	if request.ByteLength > service.mediaMaxBytes {
-		return MediaReceipt{}, errors.New("byte_limit")
-	}
 	staged, owned, err := service.mediaStagedContent(ctx, request.Content, request.ByteLength,
 		service.mediaMaxBytes, request.SHA256)
 	if err != nil {
@@ -215,15 +212,14 @@ func (service *Service) RetryMedia(
 	if err != nil {
 		return MediaReceipt{}, err
 	}
+	source := mediaSourceBinding{sourceID: current.SourceID, sourceVersionID: current.SourceVersionID}
 	binding, err := service.resolveMediaInputBinding(ctx, processingRequest.Profile,
-		version.BlobHash, current.SourceID, current.SourceVersionID,
-		[]string{processingRequest.SuppliedInputID})
+		version.BlobHash, source, processingRequest.SuppliedInputID)
 	if err != nil {
 		return MediaReceipt{}, err
 	}
 	processingRequest.SuppliedInputID = binding
-	selector := Selector{NodeID: version.NodeID, ContentVersionID: version.ID, Profile: processingRequest.Profile,
-		SourceID: current.SourceID, SourceVersionID: current.SourceVersionID}
+	selector := Selector{NodeID: version.NodeID, ContentVersionID: version.ID, Profile: processingRequest.Profile}
 	plan, err := service.Plan(ctx, selector)
 	if err != nil {
 		return MediaReceipt{}, err
@@ -251,7 +247,7 @@ func (service *Service) RetryMedia(
 	if err != nil || stored.JobID != "" {
 		return mediaReceiptFromStore(stored), err
 	}
-	job, err := service.EnqueueAuthorized(ctx, selector, plan.Fingerprint,
+	job, err := service.EnqueueAuthorized(ctx, selector, source, plan.Fingerprint,
 		authorization, processingRequest.SuppliedInputID)
 	if err != nil {
 		return MediaReceipt{}, errors.Join(err, service.failMediaProcessing(ctx, stored, err))

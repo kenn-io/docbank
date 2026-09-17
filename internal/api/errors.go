@@ -59,8 +59,7 @@ func installErrorFormatter() {
 		for _, err := range errs {
 			if err != nil {
 				detail := strings.ToValidUTF8(err.Error(), "\ufffd")
-				var validation *huma.ErrorDetail
-				if errors.As(err, &validation) && privateMediaValidation(validation) {
+				if validation, ok := errors.AsType[*huma.ErrorDetail](err); ok && privateMediaValidation(validation) {
 					detail = "invalid media reference body"
 				}
 				e.Errors = append(e.Errors, detail)

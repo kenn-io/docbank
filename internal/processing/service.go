@@ -137,8 +137,6 @@ type Selector struct {
 	NodeID           int64
 	ContentVersionID string
 	Profile          string
-	SourceID         string
-	SourceVersionID  string
 }
 
 type FlowHop struct {
@@ -977,17 +975,17 @@ type renditionRun struct{ jobID, waiterID, attachmentID, authorizationGrantID st
 func (service *Service) runRendition(ctx context.Context, node store.Node, version store.ContentVersion,
 	profileName string, profile configuredProfile, principal, scope string, onEnqueued func(renditionRun),
 ) (renditionRun, error) {
-	sourceID, sourceVersionID := "", ""
+	var source mediaSourceBinding
 	if profileName == SuppliedMediaProfileName {
 		var err error
-		sourceID, sourceVersionID, err = service.catalog.MediaSourceBindingForContentVersion(
+		source.sourceID, source.sourceVersionID, err = service.catalog.MediaSourceBindingForContentVersion(
 			ctx, service.principal, version.ID)
 		if err != nil {
 			return renditionRun{}, err
 		}
 	}
 	inputBinding, err := service.resolveMediaInputBinding(
-		ctx, profileName, version.BlobHash, sourceID, sourceVersionID, nil)
+		ctx, profileName, version.BlobHash, source, "")
 	if err != nil {
 		return renditionRun{}, err
 	}
@@ -1202,16 +1200,11 @@ func (service *Service) renditionFromView(ctx context.Context, node store.Node, 
 	if inputBinding != "" {
 		sourceID, sourceVersionID, bindingErr := service.catalog.MediaSourceBindingForContentVersion(
 			ctx, service.principal, contentVersionID)
-		if bindingErr != nil && !errors.Is(bindingErr, store.ErrNotFound) {
+		if bindingErr != nil {
 			return Rendition{}, bindingErr
 		}
-		if bindingErr == nil {
-			_, bindingErr = service.catalog.SuppliedTranscriptBindingForSourceVersion(
-				ctx, service.principal, sourceID, sourceVersionID, inputBinding)
-		} else {
-			_, bindingErr = service.catalog.SuppliedTranscriptBindingForSource(
-				ctx, service.principal, view.Build.SourceSHA256, inputBinding)
-		}
+		_, bindingErr = service.catalog.SuppliedTranscriptForSourceVersion(
+			ctx, service.principal, sourceID, sourceVersionID, inputBinding)
 		if bindingErr != nil {
 			return Rendition{}, store.ErrNotFound
 		}

@@ -15,6 +15,8 @@ import (
 	"strings"
 	"unicode/utf8"
 
+	"golang.org/x/net/idna"
+
 	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/document/media"
 	"go.kenn.io/docbank/internal/canonical"
@@ -170,14 +172,8 @@ func canonicalRemoteRecordingReference(raw string) (canonicalURL, origin string,
 	if scheme != "http" && scheme != "https" || parsed.Hostname() == "" {
 		return "", "", errors.New("invalid canonical media reference")
 	}
-	explicitPort := strings.HasPrefix(parsed.Host, "[")
-	if !explicitPort {
-		explicitPort = strings.Count(parsed.Host, ":") == 1
-	} else if closeBracket := strings.LastIndex(parsed.Host, "]"); closeBracket >= 0 {
-		explicitPort = len(parsed.Host) > closeBracket+1
-	}
 	port := parsed.Port()
-	if explicitPort {
+	if strings.HasSuffix(parsed.Host, ":") || port != "" {
 		if port == "" {
 			return "", "", errors.New("invalid canonical media reference")
 		}
@@ -187,7 +183,14 @@ func canonicalRemoteRecordingReference(raw string) (canonicalURL, origin string,
 		}
 		port = strconv.Itoa(portNumber)
 	}
-	hostname := strings.ToLower(parsed.Hostname())
+	hostname := parsed.Hostname()
+	if !strings.Contains(hostname, ":") {
+		hostname, err = idna.Lookup.ToASCII(hostname)
+		if err != nil || hostname == "" {
+			return "", "", errors.New("invalid canonical media reference")
+		}
+	}
+	hostname = strings.ToLower(hostname)
 	host := hostname
 	if strings.Contains(hostname, ":") {
 		host = "[" + hostname + "]"
@@ -196,6 +199,9 @@ func canonicalRemoteRecordingReference(raw string) (canonicalURL, origin string,
 		host = net.JoinHostPort(hostname, port)
 	}
 	parsed.Scheme, parsed.Host, parsed.Fragment, parsed.RawFragment = scheme, host, "", ""
+	if parsed.Path == "" {
+		parsed.Path = "/"
+	}
 	return parsed.String(), scheme + "://" + host, nil
 }
 
@@ -280,7 +286,7 @@ func (service *Service) SubmitSuppliedMedia(
 			return MediaReceipt{}, err
 		}
 		binding, bindingErr := service.resolveMediaInputBinding(ctx, request.Processing.Profile,
-			request.SHA256, sourceID, "", []string{request.Processing.SuppliedInputID})
+			request.SHA256, mediaSourceBinding{sourceID: sourceID}, request.Processing.SuppliedInputID)
 		if bindingErr != nil {
 			return MediaReceipt{}, bindingErr
 		}
@@ -350,13 +356,13 @@ func (service *Service) SubmitSuppliedMedia(
 	}
 	if mediaProcessingRequested(request.Processing) && stored.JobID == "" && stored.OperationState == "queued" {
 		selector := Selector{NodeID: stored.ProcessingNodeID, ContentVersionID: stored.ContentVersionID,
-			Profile: request.Processing.Profile, SourceID: stored.SourceID,
-			SourceVersionID: stored.SourceVersionID}
+			Profile: request.Processing.Profile}
+		source := mediaSourceBinding{sourceID: stored.SourceID, sourceVersionID: stored.SourceVersionID}
 		plan, planErr := service.Plan(ctx, selector)
 		if planErr != nil {
 			return MediaReceipt{}, errors.Join(planErr, service.failMediaProcessing(ctx, stored, planErr))
 		}
-		job, enqueueErr := service.EnqueueAuthorized(ctx, selector, plan.Fingerprint,
+		job, enqueueErr := service.EnqueueAuthorized(ctx, selector, source, plan.Fingerprint,
 			processingAuthorization, request.Processing.SuppliedInputID)
 		if enqueueErr != nil {
 			return MediaReceipt{}, errors.Join(enqueueErr, service.failMediaProcessing(ctx, stored, enqueueErr))

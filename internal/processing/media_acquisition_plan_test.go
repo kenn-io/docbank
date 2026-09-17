@@ -234,5 +234,4 @@ func TestRemoteRecordingAcquireUnavailable(t *testing.T) {
 	var metadata bytes.Buffer
 	require.NoError(t, fixture.catalog.ExportMetadata(t.Context(), &metadata))
 	require.NotContains(t, metadata.String(), `"type":"media_acquisition_receipt"`)
-	t.Log("capability_unavailable")
 }

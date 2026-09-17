@@ -196,7 +196,6 @@ func TestMediaSuppliedTranscriptConsumer(t *testing.T) {
 			require.Equal(t, receipt.ContentVersionID, results.Results[0].ContentVersionID)
 		})
 	}
-	t.Log("supplied_preserved")
 }
 
 func TestRemoteRecordingManualEmbedded(t *testing.T) {
@@ -272,7 +271,6 @@ func TestRemoteRecordingManualEmbedded(t *testing.T) {
 	require.NoError(t, err)
 	require.NotEmpty(t, results.Results)
 	require.Equal(t, original.ContentVersionID, results.Results[0].ContentVersionID)
-	t.Log("embedded_parity")
 }
 
 func TestRemoteRecordingEqualBytesKeepOrdinaryProcessingSource(t *testing.T) {
@@ -340,8 +338,6 @@ func TestRemoteRecordingEqualBytesKeepOrdinaryProcessingSource(t *testing.T) {
 		PlanRequest: ProcessingPlanRequest{Selector: selector}, PlanFingerprint: plan.Fingerprint, Consent: true,
 	})
 	require.ErrorIs(t, err, store.ErrNotFound)
-
-	t.Log("equal_bytes_source_processing")
 }
 
 // TestMediaExistingVersionBindingKeepsOriginalPath catches media retention

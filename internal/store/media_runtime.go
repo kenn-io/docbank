@@ -104,23 +104,16 @@ func (s *Store) SuppliedTranscriptForSource(
 }
 
 // SuppliedTranscriptForSourceID selects a transcript for a known source while
-// its source version is still being established.
+// its source version is still being established. An empty inputID selects the
+// newest visible input; a nonempty inputID selects that exact input.
 func (s *Store) SuppliedTranscriptForSourceID(
-	ctx context.Context, principal, sourceID, sourceSHA256 string,
-) (SuppliedTranscriptInput, error) {
-	return s.suppliedTranscriptForSourceID(ctx, principal, sourceID, sourceSHA256, "")
-}
-
-func (s *Store) suppliedTranscriptForSourceID(
 	ctx context.Context, principal, sourceID, sourceSHA256, inputID string,
 ) (SuppliedTranscriptInput, error) {
 	if err := validateBoundedMediaText("media principal", principal, 256, false); err != nil {
 		return SuppliedTranscriptInput{}, err
 	}
-	for name, value := range map[string]string{"media source": sourceID} {
-		if err := validateBoundedMediaText(name, value, 256, false); err != nil {
-			return SuppliedTranscriptInput{}, err
-		}
+	if err := validateBoundedMediaText("media source", sourceID, 256, false); err != nil {
+		return SuppliedTranscriptInput{}, err
 	}
 	if !canonical.IsSHA256Hex(sourceSHA256) {
 		return SuppliedTranscriptInput{}, ErrNotFound
@@ -149,13 +142,8 @@ func (s *Store) suppliedTranscriptForSourceID(
 
 // SuppliedTranscriptForSourceVersion selects one caller-authorized transcript
 // bound to one exact source version, even when another source has equal bytes.
+// An empty inputID selects the newest visible input; otherwise it must match.
 func (s *Store) SuppliedTranscriptForSourceVersion(
-	ctx context.Context, principal, sourceID, sourceVersionID string,
-) (SuppliedTranscriptInput, error) {
-	return s.suppliedTranscriptForSourceVersion(ctx, principal, sourceID, sourceVersionID, "")
-}
-
-func (s *Store) suppliedTranscriptForSourceVersion(
 	ctx context.Context, principal, sourceID, sourceVersionID, inputID string,
 ) (SuppliedTranscriptInput, error) {
 	if err := validateBoundedMediaText("media principal", principal, 256, false); err != nil {
@@ -214,22 +202,6 @@ func (s *Store) SuppliedTranscriptBindingForSource(
 		return SuppliedTranscriptInput{}, ErrNotFound
 	}
 	return result, err
-}
-
-// SuppliedTranscriptBindingForSourceID resolves one input without allowing an
-// equal-byte transcript from another source to satisfy the binding.
-func (s *Store) SuppliedTranscriptBindingForSourceID(
-	ctx context.Context, principal, sourceID, sourceSHA256, inputID string,
-) (SuppliedTranscriptInput, error) {
-	return s.suppliedTranscriptForSourceID(ctx, principal, sourceID, sourceSHA256, inputID)
-}
-
-// SuppliedTranscriptBindingForSourceVersion resolves one exact visible input
-// without crossing equal-byte sources or source revisions.
-func (s *Store) SuppliedTranscriptBindingForSourceVersion(
-	ctx context.Context, principal, sourceID, sourceVersionID, inputID string,
-) (SuppliedTranscriptInput, error) {
-	return s.suppliedTranscriptForSourceVersion(ctx, principal, sourceID, sourceVersionID, inputID)
 }
 
 func (s *Store) querySuppliedTranscript(
