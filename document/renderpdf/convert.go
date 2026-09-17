@@ -1,14 +1,17 @@
 package renderpdf
 
 import (
+	"archive/zip"
 	"bytes"
 	"context"
 	"errors"
 	"fmt"
+	"hash/crc32"
 	"io"
 	"path/filepath"
 	"slices"
 	"strings"
+	"time"
 
 	"go.kenn.io/docbank/document/internal/formatdetect"
 	"go.kenn.io/docbank/document/internal/providerutil"
@@ -18,7 +21,9 @@ import (
 )
 
 const (
-	docxMediaType = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+	docxMediaType           = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+	trustedDOCXWarmupSHA256 = "41186d7d336070c089c233ef1caa439eefcdb7e502b37da7debd46ecc1495cfd"
+	trustedFODTWarmupSHA256 = "ce828df33329c6e60317883a2c0f26a81a60f590497dee9b20625131acb25814"
 )
 
 type formatProfile struct {
@@ -168,16 +173,66 @@ func stageRequest(policy Policy, profile formatProfile, stage string, input []by
 		inputName = profile.outputName
 	}
 	stdinDigest := digest(input)
+	warmup := warmupFixture(stage)
 	return Request{
 		Stage: stage, Executable: policy.renderer.Executable,
 		ExecutableSHA256: policy.renderer.ExecutableSHA256,
 		Arguments:        libreOfficeArguments(inputName, outputName, filter),
 		Environment:      libreOfficeEnvironment(), Directory: filepath.Dir(policy.renderer.Executable),
 		InputName: inputName, OutputName: outputName, Input: bytes.Clone(input), InputSHA256: stdinDigest,
+		WarmupInput: bytes.Clone(warmup), WarmupInputSHA256: warmupFixtureDigest(stage),
 		MaxOutputBytes: stageOutputLimit(policy.limits, stage), MaxWorkBytes: policy.limits.MaxWorkBytes,
 		PolicyFingerprint: policy.fingerprint, Runtime: slices.Clone(policy.renderer.Runtime),
 		RuntimeSymlinks: slices.Clone(policy.renderer.RuntimeSymlinks), RuntimeIdentity: policy.renderer.RuntimeIdentity,
 	}
+}
+
+func warmupFixture(stage string) []byte {
+	if stage == "normalize" {
+		return trustedDOCXFixture()
+	}
+	return []byte(trustedFODTFixture)
+}
+
+func warmupFixtureDigests() []string {
+	return []string{trustedDOCXWarmupSHA256, trustedFODTWarmupSHA256}
+}
+
+func warmupFixtureDigest(stage string) string {
+	if stage == "normalize" {
+		return trustedDOCXWarmupSHA256
+	}
+	return trustedFODTWarmupSHA256
+}
+
+const trustedFODTFixture = `<?xml version="1.0" encoding="UTF-8"?><office:document xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0" office:mimetype="application/vnd.oasis.opendocument.text"><office:body><office:text><text:p>Docbank warm-up</text:p></office:text></office:body></office:document>`
+
+func trustedDOCXFixture() []byte {
+	entries := []struct{ name, value string }{
+		{"[Content_Types].xml", `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/><Override PartName="/word/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml"/></Types>`},
+		{"_rels/.rels", `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>`},
+		{"word/document.xml", `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body><w:p><w:r><w:t>Docbank warm-up</w:t></w:r></w:p><w:sectPr><w:pgSz w:w="12240" w:h="15840"/><w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="1440"/></w:sectPr></w:body></w:document>`},
+		{"word/styles.xml", `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:style w:type="paragraph" w:default="1" w:styleId="Normal"><w:name w:val="Normal"/></w:style></w:styles>`},
+	}
+	var buffer bytes.Buffer
+	archive := zip.NewWriter(&buffer)
+	for _, entry := range entries {
+		data := []byte(entry.value)
+		header := &zip.FileHeader{Name: entry.name, Method: zip.Store}
+		header.Modified = time.Date(1980, time.January, 1, 0, 0, 0, 0, time.UTC)
+		header.CRC32 = crc32.ChecksumIEEE(data)
+		header.CompressedSize64 = uint64(len(data))
+		header.UncompressedSize64 = uint64(len(data))
+		file, err := archive.CreateRaw(header)
+		if err != nil {
+			return nil
+		}
+		_, _ = file.Write(data)
+	}
+	if err := archive.Close(); err != nil {
+		return nil
+	}
+	return buffer.Bytes()
 }
 
 func libreOfficeArguments(inputName, outputName, filter string) []string {

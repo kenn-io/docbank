@@ -114,6 +114,7 @@ func TestDiscoveredRuntimeManifestControlCapacity(t *testing.T) {
 			Runtime: manifest.Files, Symlinks: manifest.Symlinks,
 			RuntimeIdentity: manifest.Identity, WorkBytes: 1,
 			InputName: "input", OutputName: "output", MaxOutputBytes: 1,
+			WarmupInput: []byte("warmup"), WarmupInputSHA256: "c6cf1309cd700e5a84e18d0b1d5877b9a608141037ac40445d484398256fc56c",
 		},
 	}
 	encoded, err := json.Marshal(struct {
@@ -146,6 +147,7 @@ func TestRuntimeSymlinkValidationRejectsParentTraversal(t *testing.T) {
 	root := sandbox.PrivateRoot{
 		RuntimeIdentity: "sha256:" + strings.Repeat("a", 64),
 		WorkBytes:       1, InputName: "in", OutputName: "out", MaxOutputBytes: 1,
+		WarmupInput: []byte("warmup"), WarmupInputSHA256: "c6cf1309cd700e5a84e18d0b1d5877b9a608141037ac40445d484398256fc56c",
 		Symlinks: []sandbox.RuntimeSymlink{{GuestPath: "/lib/link", Target: "../usr/lib"}},
 	}
 	policy := sandbox.Policy{

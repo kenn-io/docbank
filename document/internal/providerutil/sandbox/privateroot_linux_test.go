@@ -29,6 +29,7 @@ func TestRuntimePreparationRejectsSpecialFiles(t *testing.T) {
 		Runtime:         []RuntimeFile{{SourcePath: path, GuestPath: "/usr/bin/socket", SHA256: hex.EncodeToString(sum[:])}},
 		RuntimeIdentity: "sha256:" + strings.Repeat("b", 64),
 		WorkBytes:       1, InputName: "input", OutputName: "output", MaxOutputBytes: 1,
+		WarmupInput: []byte("warmup"), WarmupInputSHA256: "c6cf1309cd700e5a84e18d0b1d5877b9a608141037ac40445d484398256fc56c",
 	}
 	_, err := prepareRuntimeFiles(context.Background(), root)
 	require.ErrorIs(t, err, ErrRuntimeSpecialFile)
@@ -41,6 +42,7 @@ func TestRuntimeIdentityMismatchFailsClosed(t *testing.T) {
 		Runtime:         []RuntimeFile{{SourcePath: path, GuestPath: "/usr/bin/runtime", SHA256: strings.Repeat("a", 64)}},
 		RuntimeIdentity: "sha256:" + strings.Repeat("b", 64),
 		WorkBytes:       1, InputName: "input", OutputName: "output", MaxOutputBytes: 1,
+		WarmupInput: []byte("warmup"), WarmupInputSHA256: "c6cf1309cd700e5a84e18d0b1d5877b9a608141037ac40445d484398256fc56c",
 	}
 	_, err := prepareRuntimeFiles(context.Background(), root)
 	require.ErrorIs(t, err, ErrRuntimeIdentityMismatch)
@@ -100,6 +102,7 @@ func TestPrivateRootControlCapacity(t *testing.T) {
 	root := &PrivateRoot{
 		Runtime: files, RuntimeIdentity: "sha256:" + strings.Repeat("b", 64),
 		WorkBytes: 1, InputName: "input", OutputName: "output", MaxOutputBytes: 1,
+		WarmupInput: []byte("warmup"), WarmupInputSHA256: "c6cf1309cd700e5a84e18d0b1d5877b9a608141037ac40445d484398256fc56c",
 	}
 	policy := Policy{
 		Mode: SupervisedFileMode, Executable: executable, ExecutableSHA256: strings.Repeat("a", 64),

@@ -48,6 +48,12 @@ func main() {
 			time.Sleep(time.Hour)
 		}
 	}
+	if os.Getenv("DOCBANK_SANDBOX_WARMUP") == "1" {
+		if err := runWarmup(); err != nil {
+			os.Exit(6)
+		}
+		return
+	}
 
 	switch mode {
 	case "echo", "replacement":
@@ -179,70 +185,49 @@ func main() {
 		if err := os.WriteFile("/work/"+outputName, []byte("supervised output"), 0o600); err != nil {
 			os.Exit(5)
 		}
-	case "file-exit81-reconstruct":
-		if err := runReconstructedRetry(); err != nil {
+	case "caller-exit81-hidden":
+		if err := verifyCallerBoundary(); err != nil {
 			os.Exit(6)
 		}
-	case "file-exit81-no-output":
-		if retryMarkerMissing() {
-			if err := os.WriteFile("/work/"+outputName, []byte("stale output"), 0o600); err != nil {
+		if _, err := os.Stat("/work/profile/caller-launch"); err == nil {
+			if err := os.WriteFile("/work/"+outputName, []byte("unexpected caller retry"), 0o600); err != nil {
 				os.Exit(5)
 			}
-			if err := markRetry(); err != nil {
-				os.Exit(5)
-			}
-			os.Exit(81)
-		}
-	case "file-exit81-hardlink":
-		if retryMarkerMissing() {
-			if err := os.WriteFile("/work/"+outputName, []byte("stale output"), 0o600); err != nil {
-				os.Exit(5)
-			}
-			if err := os.Link("/work/"+outputName, "/work/stale-output-link"); err != nil {
-				os.Exit(5)
-			}
-			if err := markRetry(); err != nil {
-				os.Exit(5)
-			}
-			os.Exit(81)
-		}
-		if err := os.Rename("/work/stale-output-link", "/work/"+outputName); err != nil {
+			return
+		} else if !errors.Is(err, os.ErrNotExist) {
 			os.Exit(6)
 		}
-	case "file-exit81-profile-symlink":
-		if profileParentRetryMarkerMissing() {
-			if err := markProfileParentRetry(); err != nil {
-				os.Exit(5)
-			}
-			if err := os.MkdirAll("/work/home/user", 0o700); err != nil {
-				os.Exit(5)
-			}
-			if err := os.RemoveAll("/work/profile"); err != nil {
-				os.Exit(5)
-			}
-			if err := os.Symlink("/work/home", "/work/profile"); err != nil {
-				os.Exit(5)
-			}
-			os.Exit(81)
+		if err := os.WriteFile("/work/profile/caller-launch", []byte("one"), 0o600); err != nil {
+			os.Exit(5)
 		}
-		if err := writeRetryOutput(); err != nil {
-			os.Exit(6)
+		if err := os.WriteFile("/work/.caller-hidden", []byte("hidden"), 0o600); err != nil {
+			os.Exit(5)
 		}
-	case "file-exit81-user-symlink":
-		if profileParentRetryMarkerMissing() {
-			if err := markProfileParentRetry(); err != nil {
-				os.Exit(5)
-			}
-			if err := os.RemoveAll("/work/profile/user"); err != nil {
-				os.Exit(5)
-			}
-			if err := os.Symlink("/work/home", "/work/profile/user"); err != nil {
-				os.Exit(5)
-			}
-			os.Exit(81)
+		os.Exit(81)
+	case "warmup-no-output", "warmup-cleanup-failure":
+		if err := os.WriteFile("/work/"+outputName, []byte("caller output"), 0o600); err != nil {
+			os.Exit(5)
 		}
-		if err := writeRetryOutput(); err != nil {
-			os.Exit(6)
+	case "warmup-contract", "warmup-budget", "warmup-input-mutation", "warmup-second81", "warmup-non81":
+		if mode == "warmup-budget" {
+			if err := os.WriteFile("/work/profile/caller-launch", []byte("one"), 0o600); err != nil {
+				os.Exit(5)
+			}
+			if err := os.WriteFile("/work/"+outputName, make([]byte, 12<<20), 0o600); err != nil {
+				os.Exit(5)
+			}
+			return
+		}
+		if mode != "warmup-second81" && mode != "warmup-non81" {
+			if err := verifyCallerBoundary(); err != nil {
+				os.Exit(6)
+			}
+		}
+		if err := os.WriteFile("/work/profile/caller-launch", []byte("one"), 0o600); err != nil {
+			os.Exit(5)
+		}
+		if err := os.WriteFile("/work/"+outputName, []byte("caller output"), 0o600); err != nil {
+			os.Exit(5)
 		}
 	case "argv":
 		if err := os.WriteFile("/work/"+outputName, []byte(strings.Join(os.Args[1:], "\x00")), 0o600); err != nil {
@@ -299,64 +284,144 @@ const expectedProfileSettings = `<?xml version="1.0" encoding="UTF-8"?>
  </item>
 </oor:items>`
 
-func retryMarkerMissing() bool {
-	_, err := os.Stat("/work/profile/retry-marker")
-	return errors.Is(err, os.ErrNotExist)
-}
-
-func markRetry() error {
-	return os.WriteFile("/work/profile/retry-marker", []byte("retry"), 0o600)
-}
-
-func profileParentRetryMarkerMissing() bool {
-	_, err := os.Stat("/work/retry-marker")
-	return errors.Is(err, os.ErrNotExist)
-}
-
-func markProfileParentRetry() error {
-	return os.WriteFile("/work/retry-marker", []byte("retry"), 0o600)
-}
-
-func writeRetryOutput() error {
-	return os.WriteFile("/work/"+outputName, []byte("unexpected retry output"), 0o600)
-}
-
-func runReconstructedRetry() error {
-	if retryMarkerMissing() {
-		input, err := os.ReadFile("/work/source.docx")
-		if err != nil || !bytes.Equal(input, []byte("input")) {
-			return fmt.Errorf("initial input: %v", err)
+func runWarmup() error {
+	input, err := os.ReadFile("/work/source.docx")
+	if err != nil {
+		return fmt.Errorf("read warm-up input: %w", err)
+	}
+	if mode == "warmup-non81" {
+		if !bytes.Equal(input, []byte("warmup")) {
+			return fmt.Errorf("unexpected trusted input: %q", input)
 		}
-		settings, err := os.ReadFile("/work/profile/user/registrymodifications.xcu")
-		if err != nil || !bytes.Equal(settings, []byte(expectedProfileSettings)) {
-			return fmt.Errorf("initial profile: %v", err)
-		}
-		if err := os.WriteFile("/work/source.docx", []byte("mutated input"), 0o600); err != nil {
+		if err := writeWarmupState(); err != nil {
 			return err
 		}
-		if err := os.WriteFile("/work/profile/user/registrymodifications.xcu", []byte("mutated settings"), 0o600); err != nil {
+		if err := os.WriteFile("/work/"+outputName, []byte("warm-up output"), 0o600); err != nil {
 			return err
 		}
-		if err := os.WriteFile("/work/"+outputName, []byte("stale output"), 0o600); err != nil {
-			return err
+		os.Exit(82)
+	}
+	if mode == "warmup-second81" {
+		if !bytes.Equal(input, []byte("warmup")) {
+			return fmt.Errorf("unexpected trusted input: %q", input)
 		}
-		if err := markRetry(); err != nil {
+		marker, err := os.ReadFile("/work/profile/warmup-launches")
+		if errors.Is(err, os.ErrNotExist) {
+			if err := writeWarmupState(); err != nil {
+				return err
+			}
+			if err := os.WriteFile("/work/profile/warmup-launches", []byte("one"), 0o600); err != nil {
+				return err
+			}
+		} else if err != nil || string(marker) != "one" {
+			return fmt.Errorf("warm-up launch marker: %v", err)
+		} else if err := os.WriteFile("/work/profile/warmup-launches", []byte("two"), 0o600); err != nil {
+			return err
+		} else if err := os.WriteFile("/work/"+outputName, []byte("warm-up output"), 0o600); err != nil {
 			return err
 		}
 		os.Exit(81)
 	}
-	input, err := os.ReadFile("/work/source.docx")
-	if err != nil || !bytes.Equal(input, []byte("input")) {
-		return fmt.Errorf("restored input: %v", err)
+	if mode == "warmup-no-output" {
+		return nil
 	}
-	settings, err := os.ReadFile("/work/profile/user/registrymodifications.xcu")
-	if err != nil || !bytes.Equal(settings, []byte(expectedProfileSettings)) {
-		return fmt.Errorf("restored profile: %v", err)
+	if mode == "warmup-overflow" {
+		return os.WriteFile("/work/"+outputName, make([]byte, 2048), 0o600)
+	}
+	marker, err := os.ReadFile("/work/profile/warmup-marker")
+	if errors.Is(err, os.ErrNotExist) {
+		if !bytes.Equal(input, []byte("warmup")) {
+			return fmt.Errorf("unexpected trusted input: %q", input)
+		}
+		if err := writeWarmupState(); err != nil {
+			return err
+		}
+		if mode == "warmup-input-mutation" {
+			if err := os.WriteFile("/work/source.docx", []byte("tampered"), 0o600); err != nil {
+				return err
+			}
+		}
+		os.Exit(81)
+	}
+	if err != nil || string(marker) != "trusted" {
+		return fmt.Errorf("trusted profile marker: %v", err)
+	}
+	if mode != "warmup-input-mutation" && !bytes.Equal(input, []byte("warmup")) {
+		return fmt.Errorf("unexpected trusted input: %q", input)
+	}
+	if mode == "warmup-input-mutation" && bytes.Equal(input, []byte("warmup")) {
+		return errors.New("warm-up input mutation was not observed")
 	}
 	if _, err := os.Lstat("/work/" + outputName); !errors.Is(err, os.ErrNotExist) {
-		return fmt.Errorf("stale output remains: %v", err)
+		return fmt.Errorf("stale warm-up output remains: %v", err)
 	}
-	return os.WriteFile("/work/"+outputName, []byte("fresh retried output"), 0o600)
+	if err := os.WriteFile("/work/"+outputName, []byte("warm-up output"), 0o600); err != nil {
+		return err
+	}
+	if err := os.WriteFile("/work/profile/warmup-launches", []byte("two"), 0o600); err != nil {
+		return err
+	}
+	if mode == "warmup-budget" {
+		if err := os.WriteFile("/work/warmup-fill", make([]byte, 56<<20), 0o600); err != nil {
+			return err
+		}
+	}
+	if mode == "warmup-cleanup-failure" {
+		if err := os.RemoveAll("/work/home"); err != nil {
+			return err
+		}
+		return os.WriteFile("/work/home", []byte("not a directory"), 0o600)
+	}
+	return nil
+}
+
+func writeWarmupState() error {
+	for path, data := range map[string][]byte{
+		"/work/profile/warmup-marker":   []byte("trusted"),
+		"/work/profile/warmup-launches": []byte("one"),
+		"/work/.warmup-root":            []byte("root"),
+		"/work/home/warmup-home":        []byte("home"),
+		"/work/home/cache/warmup-cache": []byte("cache"),
+		"/work/out/warmup-out":          []byte("out"),
+		"/work/tmp/warmup-tmp":          []byte("tmp"),
+		"/work/" + outputName:           []byte("stale warm-up output"),
+	} {
+		if err := os.WriteFile(path, data, 0o600); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func verifyCallerBoundary() error {
+	marker, err := os.ReadFile("/work/profile/warmup-marker")
+	if err != nil || string(marker) != "trusted" {
+		return fmt.Errorf("warm-up profile marker: %v", err)
+	}
+	launches, err := os.ReadFile("/work/profile/warmup-launches")
+	if err != nil || string(launches) != "two" {
+		return fmt.Errorf("warm-up launch count: %v", err)
+	}
+	settings, err := os.ReadFile("/work/profile/user/registrymodifications.xcu")
+	if err != nil || string(settings) != expectedProfileSettings {
+		return fmt.Errorf("profile security settings: %v", err)
+	}
+	input, err := os.ReadFile("/work/source.docx")
+	if err != nil || !bytes.Equal(input, []byte("input")) {
+		return fmt.Errorf("caller input: %v", err)
+	}
+	if _, err := os.Lstat("/work/" + outputName); !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("caller output was preexisting: %v", err)
+	}
+	for _, path := range []string{
+		"/work/.warmup-root", "/work/home/warmup-home", "/work/home/cache/warmup-cache",
+		"/work/out/warmup-out", "/work/tmp/warmup-tmp",
+	} {
+		if _, err := os.Lstat(path); !errors.Is(err, os.ErrNotExist) {
+			return fmt.Errorf("warm-up sentinel remains at %s: %v", path, err)
+		}
+	}
+	return nil
 }
 
 func waitForFile(path string) error {

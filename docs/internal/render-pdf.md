@@ -45,10 +45,13 @@ Runtime data mounts are noexec. ELF executables and shared objects, including
 mode-0644 `libmergedlo.so`, keep executable mappings. The private
 profile disables macros and active content and prevents link updates.
 
-The launcher verifies the sealed executable, bounds runtime descriptors and
-bytes, retries one exit-81 cold-profile failure, and reaps adopted descendants
-after every supervised attempt. Non-Linux callers need an injected audited
-runner.
+The launcher verifies the sealed executable and bounds runtime descriptors and
+bytes. Before caller bytes enter `/work`, each stage converts a fixed,
+digest-pinned trusted fixture with the exact stage arguments. A trusted
+fixture conversion may retry exit 81 once in the same profile. The launcher
+then removes every non-profile warm-up artifact, verifies the security
+settings, writes the caller input, and runs that conversion once. Caller
+failures publish no bytes. Non-Linux callers need an injected audited runner.
 
 ## Receipt and source
 

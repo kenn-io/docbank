@@ -17,8 +17,9 @@ import (
 )
 
 const (
-	ConverterVersion   = "renderpdf-v1-libreoffice-flat-odf"
-	MaxExecutableBytes = sandbox.MaxExecutableBytes
+	ConverterVersion      = "renderpdf-v1-libreoffice-flat-odf"
+	WarmupContractVersion = "renderpdf-warmup-v1"
+	MaxExecutableBytes    = sandbox.MaxExecutableBytes
 )
 
 type Renderer struct {
@@ -91,7 +92,16 @@ func NewPolicy(renderer Renderer, limits Limits) (Policy, error) {
 	}
 	renderer.Runtime = slices.Clone(renderer.Runtime)
 	renderer.RuntimeSymlinks = slices.Clone(renderer.RuntimeSymlinks)
-	encoded, err := canonical.Marshal(struct {
+	encoded, err := encodePolicyFingerprint(renderer, runner.Identity(), limits, warmupFixtureDigests())
+	if err != nil {
+		return Policy{}, err
+	}
+	return Policy{renderer: renderer, limits: limits, runner: runner,
+		runnerID: runner.Identity(), fingerprint: digest(encoded)}, nil
+}
+
+func encodePolicyFingerprint(renderer Renderer, runnerID string, limits Limits, warmupDigests []string) ([]byte, error) {
+	return canonical.Marshal(struct {
 		Version          string           `json:"version"`
 		Executable       string           `json:"executable"`
 		ExecutableSHA256 string           `json:"executable_sha256"`
@@ -99,6 +109,8 @@ func NewPolicy(renderer Renderer, limits Limits) (Policy, error) {
 		RunnerIdentity   string           `json:"runner_identity"`
 		Runtime          []RuntimeFile    `json:"runtime"`
 		RuntimeSymlinks  []RuntimeSymlink `json:"runtime_symlinks"`
+		WarmupContract   string           `json:"warmup_contract"`
+		WarmupDigests    []string         `json:"warmup_digests"`
 		Arguments        []string         `json:"arguments"`
 		Environment      []string         `json:"environment"`
 		Profiles         []string         `json:"profiles"`
@@ -117,10 +129,11 @@ func NewPolicy(renderer Renderer, limits Limits) (Policy, error) {
 	}{
 		Version: ConverterVersion, Executable: renderer.Executable,
 		ExecutableSHA256: renderer.ExecutableSHA256, RuntimeIdentity: renderer.RuntimeIdentity,
-		RunnerIdentity: runner.Identity(), Runtime: renderer.Runtime,
+		RunnerIdentity: runnerID, Runtime: renderer.Runtime,
 		RuntimeSymlinks: renderer.RuntimeSymlinks, Arguments: []string{
 			"--headless", "--norestore", "--nolockcheck", "--nodefault", "--nofirststartwizard",
 		}, Environment: libreOfficeEnvironment(), Profiles: []string{"docx->fodt"},
+		WarmupContract: WarmupContractVersion, WarmupDigests: warmupDigests,
 		PrivateRoot: true,
 		Limits: struct {
 			MaxSourceBytes     int64 `json:"max_source_bytes"`
@@ -140,11 +153,6 @@ func NewPolicy(renderer Renderer, limits Limits) (Policy, error) {
 			Timeout: int64(limits.Timeout),
 		},
 	})
-	if err != nil {
-		return Policy{}, err
-	}
-	return Policy{renderer: renderer, limits: limits, runner: runner,
-		runnerID: runner.Identity(), fingerprint: digest(encoded)}, nil
 }
 
 func validateRuntimeEntries(renderer Renderer, maxEntries int) error {
@@ -166,6 +174,7 @@ func validateRuntimeEntries(renderer Renderer, maxEntries int) error {
 			Runtime: renderer.Runtime, Symlinks: renderer.RuntimeSymlinks,
 			RuntimeIdentity: renderer.RuntimeIdentity, WorkBytes: 1,
 			InputName: "input", OutputName: "output", MaxOutputBytes: 1,
+			WarmupInput: []byte("warmup"), WarmupInputSHA256: digest([]byte("warmup")),
 		},
 	}).Validate(); err != nil {
 		return fmt.Errorf("renderer runtime is invalid: %w", err)

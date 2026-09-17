@@ -27,6 +27,8 @@ type Request struct {
 	OutputName        string
 	Input             []byte
 	InputSHA256       string
+	WarmupInput       []byte
+	WarmupInputSHA256 string
 	MaxOutputBytes    int64
 	MaxWorkBytes      int64
 	PolicyFingerprint string
@@ -100,6 +102,7 @@ func (runner nativeRunner) Run(ctx context.Context, request Request) (StageResul
 			RuntimeIdentity: request.RuntimeIdentity, WorkBytes: request.MaxWorkBytes,
 			InputName: request.InputName, OutputName: request.OutputName,
 			MaxOutputBytes: request.MaxOutputBytes,
+			WarmupInput:    slices.Clone(request.WarmupInput), WarmupInputSHA256: request.WarmupInputSHA256,
 		},
 	}
 	sandboxResult, err := sandbox.Run(ctx, sandbox.Request{
@@ -132,7 +135,8 @@ func (runner nativeRunner) Run(ctx context.Context, request Request) (StageResul
 func validateRequest(request Request) error {
 	if request.Stage == "" || request.Executable == "" || request.ExecutableSHA256 == "" ||
 		request.InputName == "" || request.OutputName == "" || request.MaxOutputBytes <= 0 ||
-		request.MaxWorkBytes <= 0 || len(request.Input) == 0 || request.RuntimeIdentity == "" {
+		request.MaxWorkBytes <= 0 || len(request.Input) == 0 || request.RuntimeIdentity == "" ||
+		len(request.WarmupInput) == 0 || request.WarmupInputSHA256 == "" {
 		return errors.New("render PDF stage request is incomplete")
 	}
 	if filepath.Base(request.InputName) != request.InputName || filepath.Base(request.OutputName) != request.OutputName {

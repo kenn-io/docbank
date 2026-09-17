@@ -24,6 +24,7 @@ func TestPolicyValidateRejectsUnsafeRuntimeEntries(t *testing.T) {
 	root := &PrivateRoot{
 		RuntimeIdentity: "sha256:" + strings.Repeat("b", sha256.Size*2),
 		WorkBytes:       1, InputName: "input", OutputName: "output", MaxOutputBytes: 1,
+		WarmupInput: []byte("warmup"), WarmupInputSHA256: "c6cf1309cd700e5a84e18d0b1d5877b9a608141037ac40445d484398256fc56c",
 		Runtime: []RuntimeFile{{SourcePath: executable, GuestPath: "relative", SHA256: strings.Repeat("c", sha256.Size*2)}},
 	}
 	policy := base
@@ -61,6 +62,7 @@ func TestPrivateRootControlUsesEightMiBCeiling(t *testing.T) {
 	root := &PrivateRoot{
 		RuntimeIdentity: "sha256:" + strings.Repeat("b", sha256.Size*2),
 		WorkBytes:       1, InputName: "input", OutputName: "output", MaxOutputBytes: 1,
+		WarmupInput: []byte("warmup"), WarmupInputSHA256: "c6cf1309cd700e5a84e18d0b1d5877b9a608141037ac40445d484398256fc56c",
 	}
 	policy := Policy{
 		Mode: SupervisedFileMode, Executable: executable, ExecutableSHA256: strings.Repeat("a", sha256.Size*2),
@@ -72,6 +74,27 @@ func TestPrivateRootControlUsesEightMiBCeiling(t *testing.T) {
 	encoded, err := encodeControl(control)
 	require.NoError(t, err)
 	assert.LessOrEqual(t, len(encoded), int(MaxPrivateRootControlBytes))
+}
+
+func TestPolicyValidateBindsWarmupBytesToDigestAndLimit(t *testing.T) {
+	executable, err := filepath.Abs("renderer")
+	require.NoError(t, err)
+	root := &PrivateRoot{
+		RuntimeIdentity: "sha256:" + strings.Repeat("b", sha256.Size*2),
+		WorkBytes:       1, InputName: "input", OutputName: "output", MaxOutputBytes: 1,
+		WarmupInput: []byte("warmup"), WarmupInputSHA256: "c6cf1309cd700e5a84e18d0b1d5877b9a608141037ac40445d484398256fc56c",
+	}
+	policy := Policy{
+		Mode: SupervisedFileMode, Executable: executable, ExecutableSHA256: strings.Repeat("a", sha256.Size*2),
+		Arguments: []string{"--fixed"}, Environment: []string{"LANG=C"},
+		Directory: filepath.Dir(executable), MaxStdinBytes: 1, MaxStdoutBytes: 1,
+		PrivateRoot: root,
+	}
+	root.WarmupInputSHA256 = strings.Repeat("0", sha256.Size*2)
+	require.ErrorContains(t, policy.Validate(), "does not match content")
+	root.WarmupInput = make([]byte, MaxWarmupBytes+1)
+	root.WarmupInputSHA256 = hex.EncodeToString(make([]byte, sha256.Size))
+	require.ErrorContains(t, policy.Validate(), "outside the supported bound")
 }
 
 func TestRunUnavailableOffLinux(t *testing.T) {

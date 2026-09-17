@@ -244,51 +244,69 @@ func TestSupervisedRunnerReapsAdoptedDescendantAfterDirectExit(t *testing.T) {
 	assert.Less(t, time.Since(started), 2*time.Second)
 }
 
-func TestSupervisedRunnerRetriesExit81Once(t *testing.T) {
+func TestSupervisedRunnerTrustedWarmupCleansStateAndRunsCallerOnce(t *testing.T) {
 	runner, err := NewNativeRunner()
 	requireNativeNoError(t, err)
 	result, err := runner.Run(t.Context(), privateTestRequest(t,
-		buildSandboxHelper(t, "file-exit81-reconstruct", "", "result.bin")))
+		buildSandboxHelper(t, "warmup-contract", "", "result.bin")))
 	requireNativeNoError(t, err)
-	assert.Equal(t, []byte("fresh retried output"), result.Output)
+	assert.Equal(t, []byte("caller output"), result.Output)
 	assert.Equal(t, 1, result.Attestation.RestartCount)
 }
 
-func TestSupervisedRunnerRejectsRetryWithoutFreshOutput(t *testing.T) {
+func TestSupervisedRunnerWarmupFollowsSequentialWorkBudget(t *testing.T) {
+	runner, err := NewNativeRunner()
+	requireNativeNoError(t, err)
+	request := privateTestRequest(t, buildSandboxHelper(t, "warmup-budget", "", "result.bin"))
+	request.Policy.PrivateRoot.WorkBytes = 64 << 20
+	request.Policy.PrivateRoot.MaxOutputBytes = 12 << 20
+	request.Policy.MaxStdoutBytes = 12 << 20
+	result, err := runner.Run(t.Context(), request)
+	requireNativeNoError(t, err)
+	assert.Len(t, result.Output, 12<<20)
+	assert.Equal(t, 1, result.Attestation.RestartCount)
+}
+
+func TestSupervisedRunnerCallerExit81DoesNotRetryOrPublishOutput(t *testing.T) {
 	runner, err := NewNativeRunner()
 	requireNativeNoError(t, err)
 	result, err := runner.Run(t.Context(), privateTestRequest(t,
-		buildSandboxHelper(t, "file-exit81-no-output", "", "result.bin")))
-	if errors.Is(err, ErrUnavailable) && os.Getenv("DOCBANK_TEST_REQUIRE_SANDBOX") != "1" {
-		t.Skipf("native Linux namespace isolation unavailable: %v", err)
-	}
-	require.Error(t, err)
+		buildSandboxHelper(t, "caller-exit81-hidden", "", "result.bin")))
+	skipUnavailable(t, err)
+	require.ErrorIs(t, err, ErrChildFailed)
 	assert.Empty(t, result.Output)
 }
 
-func TestSupervisedRunnerRejectsRetryHardlinkReuse(t *testing.T) {
-	runner, err := NewNativeRunner()
-	requireNativeNoError(t, err)
-	result, err := runner.Run(t.Context(), privateTestRequest(t,
-		buildSandboxHelper(t, "file-exit81-hardlink", "", "result.bin")))
-	if errors.Is(err, ErrUnavailable) && os.Getenv("DOCBANK_TEST_REQUIRE_SANDBOX") != "1" {
-		t.Skipf("native Linux namespace isolation unavailable: %v", err)
-	}
-	require.Error(t, err)
-	assert.Empty(t, result.Output)
-}
-
-func TestSupervisedRunnerRejectsSymlinkedRetryProfileParents(t *testing.T) {
-	for _, mode := range []string{"file-exit81-profile-symlink", "file-exit81-user-symlink"} {
-		t.Run(mode, func(t *testing.T) {
+func TestSupervisedRunnerRejectsWarmupFailuresBeforeCaller(t *testing.T) {
+	for _, testCase := range []struct {
+		name      string
+		mode      string
+		maxOutput int64
+		errIs     error
+	}{
+		{name: "second exit 81", mode: "warmup-second81", errIs: ErrChildFailed},
+		{name: "non-81", mode: "warmup-non81", errIs: ErrChildFailed},
+		{name: "input mutation", mode: "warmup-input-mutation"},
+		{name: "missing output", mode: "warmup-no-output"},
+		{name: "output overflow", mode: "warmup-overflow", maxOutput: 1 << 10, errIs: ErrOutputTooLarge},
+		{name: "cleanup failure", mode: "warmup-cleanup-failure"},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
 			runner, err := NewNativeRunner()
 			requireNativeNoError(t, err)
-			result, err := runner.Run(t.Context(), privateTestRequest(t,
-				buildSandboxHelper(t, mode, "", "result.bin")))
+			request := privateTestRequest(t, buildSandboxHelper(t, testCase.mode, "", "result.bin"))
+			if testCase.maxOutput != 0 {
+				request.Policy.PrivateRoot.MaxOutputBytes = testCase.maxOutput
+			}
+			result, err := runner.Run(t.Context(), request)
 			if errors.Is(err, ErrUnavailable) && os.Getenv("DOCBANK_TEST_REQUIRE_SANDBOX") != "1" {
 				t.Skipf("native Linux namespace isolation unavailable: %v", err)
 			}
-			require.Error(t, err)
+			if testCase.errIs != nil {
+				require.ErrorIs(t, err, testCase.errIs)
+			} else {
+				require.Error(t, err)
+			}
 			assert.Empty(t, result.Output)
 		})
 	}
@@ -492,6 +510,7 @@ func TestPrivateRootRejectsRuntimeEntryCeilingAtPolicyOwner(t *testing.T) {
 		Runtime:         make([]RuntimeFile, MaxRuntimeEntries+1),
 		RuntimeIdentity: "sha256:" + strings.Repeat("a", 64),
 		WorkBytes:       1, InputName: "input", OutputName: "output", MaxOutputBytes: 1,
+		WarmupInput: []byte("warmup"), WarmupInputSHA256: "c6cf1309cd700e5a84e18d0b1d5877b9a608141037ac40445d484398256fc56c",
 	}
 	policy := Policy{
 		Mode: SupervisedFileMode, Executable: "/renderer", ExecutableSHA256: strings.Repeat("b", 64),
@@ -538,6 +557,7 @@ func privateTestRequest(t *testing.T, executable string) Request {
 		RuntimeIdentity: "sha256:" + strings.Repeat("0", 64),
 		WorkBytes:       64 << 20, InputName: "source.docx", OutputName: "result.bin",
 		MaxOutputBytes: 1 << 20,
+		WarmupInput:    []byte("warmup"), WarmupInputSHA256: "c6cf1309cd700e5a84e18d0b1d5877b9a608141037ac40445d484398256fc56c",
 	}
 	return request
 }

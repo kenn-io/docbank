@@ -16,6 +16,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"go.kenn.io/docbank/document/internal/formatdetect"
 	"go.kenn.io/docbank/document/ocr"
 )
 
@@ -76,6 +77,35 @@ func TestConvertSafeDOCXAndReceiptSource(t *testing.T) {
 	assert.Equal(t, pdf, got)
 	pdf[0] ^= 1
 	assert.NotEqual(t, pdf[0], result.PDF()[0])
+}
+
+func TestTrustedWarmupFixturesArePinnedAndAdmitted(t *testing.T) {
+	docx := trustedDOCXFixture()
+	assert.Equal(t, trustedDOCXWarmupSHA256, digest(docx))
+	reader, err := zip.NewReader(bytes.NewReader(docx), int64(len(docx)))
+	require.NoError(t, err)
+	fixedTime := reader.File[0].Modified
+	fixedDate, fixedClock := reader.File[0].ModifiedDate, reader.File[0].ModifiedTime
+	assert.Equal(t, []string{"[Content_Types].xml", "_rels/.rels", "word/document.xml", "word/styles.xml"}, func() []string {
+		names := make([]string, 0, len(reader.File))
+		for _, file := range reader.File {
+			names = append(names, file.Name)
+			assert.Equal(t, uint16(0), file.Flags)
+			assert.Equal(t, zip.Store, file.Method)
+			assert.Equal(t, fixedTime, file.Modified)
+			assert.Equal(t, fixedDate, file.ModifiedDate)
+			assert.Equal(t, fixedClock, file.ModifiedTime)
+			assert.Equal(t, file.UncompressedSize64, file.CompressedSize64)
+		}
+		return names
+	}())
+	candidate, err := formatdetect.DetectFormat(bytes.NewReader(docx), int64(len(docx)), docxMediaType)
+	require.NoError(t, err)
+	assert.Equal(t, "docx", candidate.ID)
+	fodt := []byte(trustedFODTFixture)
+	assert.Equal(t, trustedFODTWarmupSHA256, digest(fodt))
+	_, err = Scan(fodt, FlatTextKind, DefaultLimits())
+	require.NoError(t, err)
 }
 
 func TestConvertRejectsUnsafeNormalizedOutputBeforePDFStage(t *testing.T) {

@@ -18,6 +18,7 @@ const (
 	MaxResponseBytes           = int64(256 << 20)
 	MaxExecControlBytes        = int64(64 << 10)
 	MaxPrivateRootControlBytes = int64(8 << 20)
+	MaxWarmupBytes             = int64(1 << 20)
 	MaxWorkBytes               = int64(512 << 20)
 	MaxRuntimeEntries          = 250_000
 	MaxRuntimeDepth            = 64
@@ -58,13 +59,15 @@ type RuntimeSymlink struct {
 
 // PrivateRoot describes the complete supervised filesystem authority.
 type PrivateRoot struct {
-	Runtime         []RuntimeFile    `json:"runtime"`
-	Symlinks        []RuntimeSymlink `json:"symlinks,omitempty"`
-	RuntimeIdentity string           `json:"runtime_identity"`
-	WorkBytes       int64            `json:"work_bytes"`
-	InputName       string           `json:"input_name"`
-	OutputName      string           `json:"output_name"`
-	MaxOutputBytes  int64            `json:"max_output_bytes"`
+	Runtime           []RuntimeFile    `json:"runtime"`
+	Symlinks          []RuntimeSymlink `json:"symlinks,omitempty"`
+	RuntimeIdentity   string           `json:"runtime_identity"`
+	WorkBytes         int64            `json:"work_bytes"`
+	InputName         string           `json:"input_name"`
+	OutputName        string           `json:"output_name"`
+	MaxOutputBytes    int64            `json:"max_output_bytes"`
+	WarmupInput       []byte           `json:"warmup_input"`
+	WarmupInputSHA256 string           `json:"warmup_input_sha256"`
 }
 
 // Policy is the complete fixed authority supplied to the launcher.
@@ -181,6 +184,16 @@ func (policy Policy) Validate() error {
 	}
 	if root.InputName == root.OutputName {
 		return errors.New("sandbox supervised input and output names must differ")
+	}
+	if len(root.WarmupInput) == 0 || int64(len(root.WarmupInput)) > MaxWarmupBytes {
+		return errors.New("sandbox supervised warm-up input is outside the supported bound")
+	}
+	if err := validateSHA256(root.WarmupInputSHA256, "sandbox warm-up input SHA-256"); err != nil {
+		return err
+	}
+	warmupDigest := sha256.Sum256(root.WarmupInput)
+	if hex.EncodeToString(warmupDigest[:]) != root.WarmupInputSHA256 {
+		return errors.New("sandbox warm-up input SHA-256 does not match content")
 	}
 	return nil
 }
@@ -354,6 +367,7 @@ func decodeControl(encoded []byte) (launchControl, error) {
 	if control.Policy.PrivateRoot != nil {
 		control.Policy.PrivateRoot.Runtime = slices.Clone(control.Policy.PrivateRoot.Runtime)
 		control.Policy.PrivateRoot.Symlinks = slices.Clone(control.Policy.PrivateRoot.Symlinks)
+		control.Policy.PrivateRoot.WarmupInput = slices.Clone(control.Policy.PrivateRoot.WarmupInput)
 	}
 	return control, nil
 }

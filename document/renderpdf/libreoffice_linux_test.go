@@ -100,7 +100,7 @@ func TestLibreOfficeInstalledProfileSchema(t *testing.T) {
 	t.Log("installed main.xcd Security/Scripting and generated profile values match; UpdateDocMode absent")
 }
 
-func TestLibreOfficeColdProfileRestartsExactlyOnce(t *testing.T) {
+func TestLibreOfficeTrustedWarmupRestartsExactlyOnce(t *testing.T) {
 	policy := realLibreOfficePolicy(t, nil)
 	runner := &countingRunner{inner: policy.runner}
 	policy.runner = runner
@@ -108,14 +108,20 @@ func TestLibreOfficeColdProfileRestartsExactlyOnce(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, result)
 	runner.mu.Lock()
+	calls := append([]Request(nil), runner.calls...)
 	results := append([]StageResult(nil), runner.results...)
 	runner.mu.Unlock()
 	require.Len(t, results, 2)
+	require.Len(t, calls, 2)
+	assert.Equal(t, trustedDOCXWarmupSHA256, calls[0].WarmupInputSHA256)
+	assert.Equal(t, trustedFODTWarmupSHA256, calls[1].WarmupInputSHA256)
 	for _, stage := range results {
 		assert.Equal(t, 1, stage.Attestation.RestartCount)
 	}
-	t.Logf("owner restart counts: normalize=%d pdf=%d", results[0].Attestation.RestartCount, results[1].Attestation.RestartCount)
-	t.Log("cold-profile owner conversion completed through the launcher's single retry contract")
+	t.Logf("owner trusted fixture digests: normalize=%s pdf=%s; warm-up restart counts: normalize=%d pdf=%d; caller launches: normalize=%d pdf=%d",
+		calls[0].WarmupInputSHA256, calls[1].WarmupInputSHA256,
+		results[0].Attestation.RestartCount, results[1].Attestation.RestartCount,
+		1, 1)
 }
 
 func TestLibreOfficeRejectsOrStripsExternalDOCXTargets(t *testing.T) {
