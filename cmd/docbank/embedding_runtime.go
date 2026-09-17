@@ -34,16 +34,16 @@ func recoverEmbeddingRuntimeSpool(ctx context.Context, spoolDirectory string) er
 	return err
 }
 
-type environmentEmbeddingSecrets struct{ variables map[string]string }
+type environmentCredentialSecrets struct{ variables map[string]string }
 
-func (resolver environmentEmbeddingSecrets) ResolveSecret(_ context.Context, name string) (string, error) {
+func (resolver environmentCredentialSecrets) ResolveSecret(_ context.Context, name string) (string, error) {
 	variable, ok := resolver.variables[name]
 	if !ok {
-		return "", errors.New("embedding credential binding is unavailable")
+		return "", errors.New("credential binding is unavailable")
 	}
 	value, ok := os.LookupEnv(variable)
 	if !ok || value == "" {
-		return "", errors.New("embedding credential environment variable is unavailable")
+		return "", errors.New("credential environment variable is unavailable")
 	}
 	return value, nil
 }
@@ -61,7 +61,7 @@ func configureEmbeddingRuntimeBundle(cfg config.Config, blobs embeddingRuntimeBl
 		providers:   make(map[string]document.EmbeddingProvider),
 		classifiers: make(map[string]func(error) (processing.EmbeddingProviderFailure, time.Duration))}
 	registered := make(map[string]document.EmbeddingProvider)
-	secrets := environmentEmbeddingSecrets{variables: make(map[string]string)}
+	secrets := environmentCredentialSecrets{variables: make(map[string]string)}
 	for name, binding := range cfg.CredentialBindings {
 		portable := "credential:" + name
 		secrets.variables[portable] = binding.EnvironmentVariable
@@ -89,7 +89,7 @@ func configureEmbeddingRuntimeBundle(cfg config.Config, blobs embeddingRuntimeBl
 				RequestTimeout:         configured.Runtime.RequestTimeout.Std(), MaxBatchItems: configured.MaxBatchItems,
 				MaxInputBytes: configured.MaxInputBytes, MaxRequestBytes: configured.Runtime.MaxRequestBytes,
 				MaxResponseBytes: configured.MaxResponseBytes,
-				EgressPolicy:     configuredEmbeddingEgress(*configured.Runtime)}
+				EgressPolicy:     providerEgressPolicy(configured.Runtime.ProviderEgressConfig)}
 			descriptor, profile, err = finalizeOpenAIEmbeddingDescriptor(profile)
 			if err == nil {
 				profile.Descriptor = descriptor
@@ -133,7 +133,7 @@ func configureEmbeddingRuntimeBundle(cfg config.Config, blobs embeddingRuntimeBl
 func executableProcessingProfiles(cfg config.Config,
 	bundle embeddingRuntimeBundle,
 ) (map[string]processing.ProfileConfig, error) {
-	renditionProviders, err := configureRenditionProviders(cfg)
+	renditionProviders, renditionDisclosures, err := configureRenditionProviders(cfg)
 	if err != nil {
 		return nil, err
 	}
@@ -163,6 +163,7 @@ func executableProcessingProfiles(cfg config.Config,
 			if configured.RenditionProvider == nil {
 				continue
 			}
+			configured.RenditionDisclosure = renditionDisclosures[portable.Rendition.Name]
 		}
 		for _, binding := range portable.Embeddings {
 			provider := bundle.providers[binding.Name]
@@ -241,7 +242,7 @@ func finalizeOpenAIEmbeddingDescriptor(profile openaicompat.Profile) (document.E
 }
 
 func configuredVoyageProvider(profile config.EmbeddingProfileConfig, modelInput document.ModelInputContract,
-	secrets environmentEmbeddingSecrets,
+	secrets environmentCredentialSecrets,
 ) (document.EmbeddingProvider, document.EmbeddingDescriptor, error) {
 	file, err := os.Open(profile.Runtime.CapabilityManifest)
 	if err != nil {
@@ -261,7 +262,7 @@ func configuredVoyageProvider(profile config.EmbeddingProfileConfig, modelInput 
 	}
 	descriptor := configuredEmbeddingDescriptor(profile, modelInput)
 	configured := voyage.EmbeddingProfile{Mode: voyage.EmbeddingModeDirectFile,
-		Endpoint: profile.Runtime.Endpoint, EgressPolicy: configuredEmbeddingEgress(*profile.Runtime),
+		Endpoint: profile.Runtime.Endpoint, EgressPolicy: providerEgressPolicy(profile.Runtime.ProviderEgressConfig),
 		Descriptor: descriptor, ModelInput: modelInput, SecretBinding: profile.CredentialBinding,
 		RequestTimeout: profile.Runtime.RequestTimeout.Std(), MaxRetries: 1,
 		MaxBatchItems: profile.MaxBatchItems, MaxInputBytes: profile.MaxInputBytes,
@@ -286,7 +287,8 @@ func configuredVoyageProvider(profile config.EmbeddingProfileConfig, modelInput 
 	return provider, final, err
 }
 
-func configuredEmbeddingEgress(runtime config.EmbeddingRuntimeConfig) providerhttp.EgressPolicy {
+// providerEgressPolicy converts config after Config.Validate has checked it.
+func providerEgressPolicy(runtime config.ProviderEgressConfig) providerhttp.EgressPolicy {
 	parsed, _ := url.Parse(runtime.Endpoint)
 	port := uint16(443)
 	if parsed.Scheme == "http" {
@@ -302,10 +304,10 @@ func configuredEmbeddingEgress(runtime config.EmbeddingRuntimeConfig) providerht
 		prefixes = append(prefixes, prefix)
 	}
 	return providerhttp.EgressPolicy{Scheme: parsed.Scheme, Host: parsed.Hostname(), Port: port,
-		AllowedCIDRs: prefixes, ProxyMode: providerhttp.ProxyDisabled,
-		ConnectTimeout: runtime.ConnectTimeout.Std(), KeepAlive: runtime.KeepAlive.Std(),
-		TLSHandshakeTimeout: runtime.TLSHandshakeTimeout.Std(),
-		TLS:                 providerhttp.TLSPolicy{SPKISHA256: runtime.SPKISHA256}}
+		AllowedCIDRs: prefixes, ProxyMode: providerhttp.ProxyMode(runtime.ProxyMode),
+		ConnectTimeout: runtime.ConnectTimeout.Std(), KeepAlive: runtime.KeepAlive.Std(), TLSHandshakeTimeout: runtime.TLSHandshakeTimeout.Std(),
+		// Omitted pins and an explicit empty list both mean no pins.
+		TLS: providerhttp.TLSPolicy{SPKISHA256: append([]string(nil), runtime.SPKISHA256...)}}
 }
 
 func classifyOpenAIEmbeddingError(err error) (processing.EmbeddingProviderFailure, time.Duration) {

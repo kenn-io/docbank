@@ -54,6 +54,19 @@ proxy policy in the embedding profile. These are deployment controls. The
 daemon validates them before it creates a hosted provider and refuses redirects
 and unexpected provider behavior according to the adapter contract.
 
+A rendition profile can use the same deployment-local boundary for supplied
+audio transcription. Set `adapter_contract` to
+`docbank-docling-asr/v1`, bind `credential:<name>`, and add a `runtime` block
+with the Docling origin, request and polling bounds, allowed CIDRs, proxy
+mode, and transport timeouts. The qualified adapter accepts original WAV and
+MP3 input and publishes generated `media-transcript/v1` evidence. Its plan
+discloses the destination before consent, and provider responses do not become
+portable policy. Set the rendition's `max_transcript_chars` independently of
+each processing profile's `max_document_chars`. A runtime that no processing
+profile selects stays staged. See the [audio configuration reference](../configuration.md#supplied-audio-transcription)
+for disclosure-fingerprint calculation and the restriction on sharing a descriptor
+across deployments.
+
 The embedded Go API follows the same boundary: `ProcessingOptions` receives
 provider values and their secret handling directly, while
 `document.ProcessingProfileV1` remains immutable non-secret policy. A caller

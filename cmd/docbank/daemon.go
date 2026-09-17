@@ -248,6 +248,7 @@ func runServe(ctx context.Context) (retErr error) {
 	if err != nil {
 		return fmt.Errorf("configuring processing service: %w", err)
 	}
+	runtimeRegistry.Seal()
 	if err := startProcessingJobs(
 		jobSupervisor, s, blobs, layout.BlobTmpDir(), runtimeRegistry, operationGate, logger,
 	); err != nil {

@@ -45,12 +45,17 @@ type RenditionResumeRuntime interface {
 // no provider egress.
 var ErrRenditionRuntimeUnavailable = errors.New("rendition runtime is unavailable")
 
+// ErrRenditionRuntimeStale means registration is complete and the immutable
+// descriptor no longer has a configured runtime.
+var ErrRenditionRuntimeStale = errors.New("rendition runtime is no longer configured")
+
 // RenditionRuntimeRegistry resolves immutable descriptor fingerprints without
 // adding provider enumerations or provider-specific state to SQLite.
 type RenditionRuntimeRegistry struct {
 	mu       sync.RWMutex
 	runtimes map[string]RenditionRuntime
 	ready    chan struct{}
+	sealed   bool
 }
 
 // NewRenditionRuntimeRegistry returns an empty process-local registry.
@@ -98,6 +103,9 @@ func (registry *RenditionRuntimeRegistry) Register(
 	}
 	registry.mu.Lock()
 	defer registry.mu.Unlock()
+	if registry.sealed {
+		return errors.New("rendition runtime registration is sealed")
+	}
 	if _, exists := registry.runtimes[descriptorFingerprint]; exists {
 		return errors.New("rendition runtime descriptor is already registered")
 	}
@@ -107,6 +115,29 @@ func (registry *RenditionRuntimeRegistry) Register(
 		close(registry.ready)
 	}
 	return nil
+}
+
+// Seal ends registration for a fixed configuration. Missing descriptors are
+// stale after this point, rather than awaiting a later registration.
+func (registry *RenditionRuntimeRegistry) Seal() {
+	registry.mu.Lock()
+	defer registry.mu.Unlock()
+	registry.sealed = true
+}
+
+func (registry *RenditionRuntimeRegistry) lookup(fingerprint string) (RenditionRuntime, error) {
+	if registry == nil {
+		return nil, ErrRenditionRuntimeUnavailable
+	}
+	registry.mu.RLock()
+	defer registry.mu.RUnlock()
+	if runtime := registry.runtimes[fingerprint]; runtime != nil {
+		return runtime, nil
+	}
+	if registry.sealed {
+		return nil, ErrRenditionRuntimeStale
+	}
+	return nil, ErrRenditionRuntimeUnavailable
 }
 
 // Prepare dispatches to the exact registered descriptor runtime.
@@ -122,11 +153,9 @@ func (registry *RenditionRuntimeRegistry) Prepare(
 		profile.Rendition == nil {
 		return RenditionExecution{}, errors.New("rendition runtime profile is invalid")
 	}
-	registry.mu.RLock()
-	runtime := registry.runtimes[profile.Rendition.Descriptor.Fingerprint]
-	registry.mu.RUnlock()
-	if runtime == nil {
-		return RenditionExecution{}, ErrRenditionRuntimeUnavailable
+	runtime, err := registry.lookup(profile.Rendition.Descriptor.Fingerprint)
+	if err != nil {
+		return RenditionExecution{}, err
 	}
 	return runtime.Prepare(ctx, work, now)
 }
@@ -136,12 +165,10 @@ func (registry *RenditionRuntimeRegistry) ResumeProvider(
 	ctx context.Context, work store.RenditionJobWork,
 	snapshot document.RenditionExecutionSnapshotV1,
 ) (document.RenditionProvider, error) {
-	if registry == nil {
-		return nil, ErrRenditionRuntimeUnavailable
+	runtime, err := registry.lookup(snapshot.Identity.Authorization.DescriptorFingerprint)
+	if err != nil {
+		return nil, err
 	}
-	registry.mu.RLock()
-	runtime := registry.runtimes[snapshot.Identity.Authorization.DescriptorFingerprint]
-	registry.mu.RUnlock()
 	resumable, ok := runtime.(RenditionResumeRuntime)
 	if !ok || renditionInterfaceNil(resumable) {
 		return nil, ErrRenditionRuntimeUnavailable
@@ -457,7 +484,7 @@ func (worker *RenditionWorker) runClaim(ctx context.Context,
 		resumeWork, resumeSnapshot := renditionResumeRuntimeInputs(work, snapshot)
 		provider, err := resumeRuntime.ResumeProvider(ctx, resumeWork, resumeSnapshot)
 		if err != nil || renditionInterfaceNil(provider) {
-			return true, worker.markSafeTransient(ctx, claim)
+			return true, worker.classifyRuntimeError(ctx, claim, err)
 		}
 		evidencePolicy, renditionPolicy, err := snapshot.Policies()
 		if err != nil {
@@ -484,7 +511,7 @@ func (worker *RenditionWorker) runClaim(ctx context.Context,
 		prepareWork := renditionProviderRuntimeWork(work)
 		execution, err = worker.runtime.Prepare(ctx, prepareWork, worker.clock().UTC())
 		if err != nil {
-			return true, worker.markSafeTransient(ctx, claim)
+			return true, worker.classifyRuntimeError(ctx, claim, err)
 		}
 		if renditionInterfaceNil(execution.Upload) || renditionInterfaceNil(execution.Provider) {
 			if !renditionInterfaceNil(execution.Upload) {
@@ -905,6 +932,13 @@ func (worker *RenditionWorker) classifyAuthorityError(
 			ctx, claim, store.RenditionFailureConsent, worker.clock().UTC())
 	}
 	return err
+}
+
+func (worker *RenditionWorker) classifyRuntimeError(ctx context.Context, claim store.RenditionJobClaim, err error) error {
+	if errors.Is(err, ErrRenditionRuntimeStale) {
+		return worker.markFailed(ctx, claim, store.RenditionFailureStaleAuthority, worker.clock().UTC())
+	}
+	return worker.markSafeTransient(ctx, claim)
 }
 
 func (worker *RenditionWorker) markSafeTransient(

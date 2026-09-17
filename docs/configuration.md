@@ -288,6 +288,77 @@ identity are preserved in portable metadata. The watcher does not pack content
 itself. Configure `[storage] pack_interval` when accumulated loose content
 should be packed automatically; GC and repack remain explicit.
 
+### Supplied audio transcription
+
+The daemon can transcribe supplied WAV and MP3 files through a configured
+Docling Serve deployment. The profile's descriptor, artifact policy, filename
+disclosure, and trust boundary remain portable; the endpoint, transport
+policy, and secret binding remain local to the daemon.
+
+Use `adapter_contract = "docbank-docling-asr/v1"` and set
+`credential_binding = "credential:<name>"` on the rendition profile. Its
+`runtime` section requires `endpoint`, `request_timeout`, `total_timeout`,
+`poll_interval`, `max_poll_attempts`, `allowed_cidrs`, `proxy_mode`, and the
+transport timeout fields. `spki_sha256` can pin the deployment certificate.
+The endpoint must be a root origin. `allowed_cidrs` must contain at least one
+network, and `proxy_mode` must be `"disabled"`. HTTP endpoints require the
+`operator_network` trust boundary; certificate pins require HTTPS. An explicit
+port must be between 1 and 65535. Redirects are not followed.
+
+Set a positive `max_transcript_chars` on the rendition profile. This limit
+bounds generated transcript evidence and is part of the descriptor's policy
+fingerprint. Each processing profile keeps its own `max_document_chars` limit
+for subsequent processing. A runtime with no selecting profile remains staged
+and isn't executable.
+
+After a restart, queued work whose descriptor is no longer configured fails
+with `stale_authority`. Plan the work and grant consent for the changed profile
+before retrying it.
+
+For this adapter, `disclosure_fingerprint` binds the descriptor, endpoint, and
+deployment fingerprint. Recompute it when the endpoint or deployment changes;
+the daemon rejects a mismatched binding before it starts provider work.
+Go applications can use `docling.ASRDisclosureFingerprint` from
+`go.kenn.io/docbank/document/docling`. Operators can compute the same value
+from their config with Python 3.11 or later. Replace the path and profile name
+in this command, then copy the output into that profile's
+`disclosure_fingerprint`:
+
+```sh
+python3 - /path/to/config.toml asr <<'PY'
+import hashlib
+import sys
+import tomllib
+
+with open(sys.argv[1], "rb") as source:
+    profile = tomllib.load(source)["rendition_profiles"][sys.argv[2]]
+values = [profile["adapter_contract"], profile["descriptor_id"],
+          profile["descriptor_fingerprint"], profile["runtime"]["endpoint"],
+          profile["deployment_fingerprint"]]
+print(hashlib.sha256("\0".join(values).encode()).hexdigest())
+PY
+```
+
+The daemon registers one provider per descriptor fingerprint. Profiles with
+the same descriptor must use identical endpoint, credentials, and runtime
+settings. Two Docling deployments with the same descriptor cannot run together
+in one daemon; conflicting settings prevent startup.
+
+The daemon reads the credential from the named environment binding when the
+adapter sends a provider request. A missing secret fails that processing
+attempt but leaves supplied-media retention, plaintext processing, and the
+built-in supplied-transcript path available. Restart the daemon after changing
+the endpoint, transport policy, or environment binding.
+
+| Runtime field | Meaning |
+| --- | --- |
+| `endpoint` | Absolute root Docling Serve origin. |
+| `request_timeout`, `total_timeout` | Per-request and complete operation limits, each positive and at most 24 hours. |
+| `poll_interval`, `max_poll_attempts` | Delay and count bounds for polling. The interval cannot exceed `total_timeout`, and attempts range from 1 to 10,000. |
+| `allowed_cidrs`, `proxy_mode` | Non-empty IP network allowlist and `proxy_mode = "disabled"`. |
+| `spki_sha256` | Optional lowercase SHA-256 SPKI pins for the provider certificate; requires HTTPS. |
+| `connect_timeout`, `keep_alive`, `tls_handshake_timeout` | Positive transport limits, each at most five minutes. |
+
 ### Embedding workers and credentials
 
 The daemon runs retained embedding jobs for its configured OpenAI-compatible

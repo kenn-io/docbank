@@ -61,6 +61,13 @@ Use the ID to inspect aggregate state and any failure code:
 docbank processing status <job-id>
 ```
 
+For supplied recordings, `media submit` retains the original bytes and caller
+occurrence before processing starts. Review the ASR plan and grant its exact
+disclosure, then use `media status` to track the attempt. `media retry` queues
+a later attempt after a transient or credential failure; it still requires the
+same consent and returns before the provider finishes. `coverage_state` keeps
+the last successful transcript separate from the newest attempt.
+
 For automation, `processing profiles`, `plan`, and `status` support `--json`.
 `processing build --ndjson` writes the job event immediately, followed by one
 terminal status or error event. If the stream ends early, retain the first job
@@ -83,6 +90,9 @@ useful shapes:
   The reviewed plan identifies the provider and the exact input class it
   receives: the original file, a rendition chunk, an original-file embedding
   input, or query text. Docbank does not treat a hosted profile as private.
+  A configured Docling ASR profile can receive an original supplied WAV or MP3
+  file and publish generated transcript evidence. The daemon reports the
+  provider destination before the operator grants consent.
 - **Direct embedding.** A profile can embed an original file without a
   rendition provider. That flow has no readable rendition or lexical body
   index; direct-file results can be relevant without a fabricated text excerpt.
