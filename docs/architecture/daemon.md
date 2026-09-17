@@ -90,7 +90,7 @@ stale state:
   daemon status` and `docbank daemon stop` report *any* live daemon
   regardless of version (they only discover, never start). Everything
   that starts a daemon — `daemon start`, `daemon restart`, and the data
-  commands' auto-start — goes through one path (`client.EnsureDaemon`)
+  commands' auto-start — goes through one path (`daemonconn.EnsureDaemon`)
   that requires the exact match and, on a mismatch, stops the old daemon
   and starts a fresh one under the launch lock. There is deliberately no
   way to start a daemon that leaves a stale-version daemon running: the
@@ -132,7 +132,7 @@ new listener that reused the port.
 
 ## Auto-start and idle shutdown
 
-Every data command calls `client.Ensure`, which discovers a version- and
+Every data command calls `daemonconn.Ensure`, which discovers a version- and
 protocol-matched daemon or starts one — the CLI never fails with "no daemon
 running" for `add`, `ls`, `cat`, and the rest. The protocol revision in the
 runtime record distinguishes incompatible development builds that share the

@@ -7,7 +7,7 @@ import {
   waitFor,
 } from "@testing-library/svelte";
 import AuditHistoryDrawer from "./AuditHistoryDrawer.svelte";
-import type { AuditEvent, AuditEventPage, Node } from "./api.js";
+import type { AuditEvent, AuditEventPage, Node } from "./generated/docbank.js";
 
 const node: Node = {
   id: 42,

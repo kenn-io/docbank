@@ -1,10 +1,9 @@
 package sandbox
 
 import (
-	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	pathpkg "path"
@@ -348,9 +347,7 @@ func decodeControl(encoded []byte) (launchControl, error) {
 		return launchControl{}, errors.New("sandbox control exceeds its byte limit")
 	}
 	var control launchControl
-	decoder := json.NewDecoder(bytes.NewReader(encoded))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&control); err != nil {
+	if err := json.Unmarshal(encoded, &control, json.RejectUnknownMembers(true)); err != nil {
 		return launchControl{}, errors.New("sandbox control is malformed")
 	}
 	if int64(len(encoded)) > controlLimit(control.Policy.Mode) {

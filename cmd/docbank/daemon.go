@@ -25,9 +25,9 @@ import (
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/backupapp"
 	"go.kenn.io/docbank/internal/blob"
-	"go.kenn.io/docbank/internal/client"
 	"go.kenn.io/docbank/internal/config"
 	"go.kenn.io/docbank/internal/daemon"
+	"go.kenn.io/docbank/internal/daemonconn"
 	"go.kenn.io/docbank/internal/emailmime"
 	"go.kenn.io/docbank/internal/extract"
 	"go.kenn.io/docbank/internal/home"
@@ -48,8 +48,8 @@ var daemonRunCmd = &cobra.Command{
 	Args: cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, _ []string) error {
 		err := runServe(cmd.Context())
-		if err != nil && os.Getenv(client.EnvBackgroundDaemon) == "1" {
-			_ = client.WriteDaemonStartProblem(cmd.ErrOrStderr(), err)
+		if err != nil && os.Getenv(daemonconn.EnvBackgroundDaemon) == "1" {
+			_ = daemonconn.WriteDaemonStartProblem(cmd.ErrOrStderr(), err)
 		}
 		return err
 	},
@@ -148,7 +148,7 @@ func runServe(ctx context.Context) (retErr error) {
 		return err
 	}
 
-	background := os.Getenv(client.EnvBackgroundDaemon) == "1"
+	background := os.Getenv(daemonconn.EnvBackgroundDaemon) == "1"
 	logger, loggingResult, err := buildServeLogger(layout, background)
 	if err != nil {
 		return err
@@ -248,6 +248,7 @@ func runServe(ctx context.Context) (retErr error) {
 	if err != nil {
 		return fmt.Errorf("configuring processing service: %w", err)
 	}
+	runtimeRegistry.Seal()
 	if err := startProcessingJobs(
 		jobSupervisor, s, blobs, layout.BlobTmpDir(), runtimeRegistry, operationGate, logger,
 	); err != nil {
@@ -338,12 +339,12 @@ func runServe(ctx context.Context) (retErr error) {
 	}
 	cfg.Server.APIKey = apiKey
 
-	rtStore := client.RuntimeStore(layout.Root)
+	rtStore := daemonconn.RuntimeStore(layout.Root)
 	webAddress := ""
 	if webListener != nil {
 		webAddress = webListener.Addr().String()
 	}
-	recPath, err = rtStore.Write(client.NewRecord(addr, apiKey, shutdownToken, webAddress))
+	recPath, err = rtStore.Write(daemonconn.NewRecord(addr, apiKey, shutdownToken, webAddress))
 	if err != nil {
 		return fmt.Errorf("writing daemon runtime record: %w", err)
 	}

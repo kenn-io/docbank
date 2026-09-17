@@ -1,4 +1,4 @@
-import type { Tag } from "./api.js";
+import type { Tag } from "./generated/docbank.js";
 import { hashColor } from "@kenn-io/kit-ui";
 
 const NEUTRAL_TAG_COLOR = "#6e7781";

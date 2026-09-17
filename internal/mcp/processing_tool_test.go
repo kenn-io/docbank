@@ -15,7 +15,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/internal/api"
-	"go.kenn.io/docbank/internal/client"
+	"go.kenn.io/docbank/internal/daemonconn"
 )
 
 const testProcessingNodeID int64 = 7
@@ -209,10 +209,10 @@ func TestStartProcessingCancellationAfterDaemonAcceptsRequestIsUnknown(t *testin
 	}))
 	t.Cleanup(daemon.Close)
 	var ensures, closes atomic.Int32
-	lease := newDaemonLeaseWith(func(context.Context) (*client.Client, error) {
+	lease := newDaemonLeaseWith(func(context.Context) (*daemonconn.Connection, error) {
 		ensures.Add(1)
-		return client.New(daemon.URL, "synthetic-key"), nil
-	}, func(*client.Client) error {
+		return daemonconn.New(daemon.URL, "synthetic-key"), nil
+	}, func(*daemonconn.Connection) error {
 		closes.Add(1)
 		return nil
 	})
@@ -288,7 +288,7 @@ func TestProcessingPlanRegistryRetainsReviewedProfileAndEvictsOldest(t *testing.
 	}
 
 	_, err := registry.reviewed(first.Selector.ContentVersionID, first.Fingerprint)
-	require.ErrorIs(t, err, client.ErrProcessingPlanChanged)
+	require.ErrorIs(t, err, daemonconn.ErrProcessingPlanChanged)
 	reviewed, err := registry.reviewed(newest.Selector.ContentVersionID, newest.Fingerprint)
 	require.NoError(t, err)
 	assert.Equal(t, newest.Selector, reviewed.Selector)
@@ -375,10 +375,10 @@ func (harness *processingToolHarness) serveHTTP(response http.ResponseWriter, re
 
 func (harness *processingToolHarness) lease(t *testing.T) *daemonLease {
 	t.Helper()
-	return newDaemonLeaseWith(func(context.Context) (*client.Client, error) {
+	return newDaemonLeaseWith(func(context.Context) (*daemonconn.Connection, error) {
 		harness.ensures.Add(1)
-		return client.New(harness.serverInstance.URL, "synthetic-key"), nil
-	}, func(*client.Client) error {
+		return daemonconn.New(harness.serverInstance.URL, "synthetic-key"), nil
+	}, func(*daemonconn.Connection) error {
 		harness.closes.Add(1)
 		return nil
 	})

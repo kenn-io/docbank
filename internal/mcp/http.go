@@ -19,7 +19,7 @@ import (
 	"sync"
 	"time"
 
-	"go.kenn.io/docbank/internal/client"
+	"go.kenn.io/docbank/internal/daemonconn"
 )
 
 const (
@@ -97,7 +97,7 @@ func (server *Server) prepareHTTP(ctx context.Context, bearer string) error {
 	if server == nil || !ValidHTTPBearerToken(bearer) {
 		return errHTTPConfiguration
 	}
-	policy := client.NewAPIKeyExclusionPolicy(bearer)
+	policy := daemonconn.NewAPIKeyExclusionPolicy(bearer)
 	if err := server.daemon.bindAPIKeyExclusion(policy); err != nil {
 		return err
 	}

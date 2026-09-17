@@ -85,6 +85,11 @@ func TestHydrateEmbeddingInputGenerationRequiresExactCanonicalArtifact(t *testin
 	projection := record.InputGeneration
 	artifact := append([]byte(nil), projection.GenerationJSON...)
 	projection.GenerationJSON = nil
+	var legacyGeneration document.EmbeddingInputGeneration
+	require.NoError(t, json.Unmarshal(artifact, &legacyGeneration))
+	legacyContext, err := json.Marshal(legacyGeneration.AttachmentContext)
+	require.NoError(t, err)
+	projection.AttachmentContextFingerprint = hashCatalogText(string(legacyContext))
 
 	hydrated, err := HydrateEmbeddingInputGeneration(projection, artifact, record.InputGeneration.EvidenceJSON)
 	require.NoError(t, err)
@@ -1214,7 +1219,7 @@ func embeddingCatalogGeneration(profile document.ProcessingProfileV1, lexicalFin
 	}
 	var attachment *document.AttachmentContextSnapshot
 	if attachmentID != "" {
-		context, contextErr := document.NewAttachmentContextSnapshot("Synthetic title", "Synthetic context")
+		context, contextErr := document.NewAttachmentContextSnapshot("Synthetic <title> &", "Synthetic context\u2028\u2029")
 		if contextErr != nil {
 			panic(contextErr)
 		}

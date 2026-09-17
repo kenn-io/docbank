@@ -1,4 +1,5 @@
 <script lang="ts">
+  import * as generated from "./generated/docbank.js";
   import { onMount } from "svelte";
   import MapPinIcon from "@lucide/svelte/icons/map-pin";
   import XIcon from "@lucide/svelte/icons/x";
@@ -13,13 +14,8 @@
     Timeline,
     TimelineItem,
   } from "@kenn-io/kit-ui";
-  import {
-    APIError,
-    provenance,
-    type Node,
-    type ProvenanceFact,
-    type ProvenancePage,
-  } from "./api.js";
+  import { APIError } from "./api-transport.js";
+  import { type Node, type ProvenanceFact, type ProvenancePage } from "./generated/docbank.js";
   import { basename, formatDate } from "./format.js";
 
   interface Props {
@@ -64,7 +60,7 @@
     loading = true;
     error = "";
     try {
-      const next = await provenance(session, node.id);
+      const next = await generated.listNodeProvenance((node.id), { limit: 1000, offset: 0 }, { session });
       if (request !== generation) return;
       page = next;
       selectedIdentity = next.items[0]?.identity ?? "";

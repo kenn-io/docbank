@@ -1,4 +1,5 @@
 <script lang="ts">
+  import * as generated from "./generated/docbank.js";
   import { onMount } from "svelte";
   import FileIcon from "@lucide/svelte/icons/file";
   import FolderIcon from "@lucide/svelte/icons/folder";
@@ -17,7 +18,8 @@
     Spinner,
   } from "@kenn-io/kit-ui";
   import RestoreNodeModal from "./RestoreNodeModal.svelte";
-  import { APIError, trashRoots, type Node, type TrashPage } from "./api.js";
+  import { APIError } from "./api-transport.js";
+  import { type Node, type TrashPage } from "./generated/docbank.js";
   import { formatBytes, formatDate } from "./format.js";
 
   interface Props {
@@ -48,7 +50,7 @@
     loading = true;
     error = "";
     try {
-      const next = await trashRoots(session);
+      const next = await generated.listTrash({ limit: 1000, offset: 0 }, { session });
       if (request !== generation) return;
       page = next;
     } catch (cause) {

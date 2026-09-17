@@ -1,4 +1,5 @@
 <script lang="ts">
+  import * as generated from "./generated/docbank.js";
   import { onMount } from "svelte";
   import ShieldCheckIcon from "@lucide/svelte/icons/shield-check";
   import XIcon from "@lucide/svelte/icons/x";
@@ -15,14 +16,8 @@
     TimelineItem,
     type TimelineTone,
   } from "@kenn-io/kit-ui";
-  import {
-    APIError,
-    auditHistory,
-    type AuditAttachmentState,
-    type AuditEvent,
-    type AuditEventPage,
-    type Node,
-  } from "./api.js";
+  import { APIError } from "./api-transport.js";
+  import { type AuditAttachmentState, type AuditEvent, type AuditEventPage, type Node } from "./generated/docbank.js";
   import {
     auditEventLabel,
     auditEventSummary,
@@ -73,7 +68,7 @@
     else loading = true;
     error = "";
     try {
-      const next = await auditHistory(session, node.id, cursor);
+      const next = await generated.auditNodeHistory({ node_id: node.id, limit: 50, ...((cursor) ? { cursor: cursor } : {}) }, { session });
       if (request !== generation) return;
       page = next;
       items = append ? [...items, ...next.items] : next.items;

@@ -4,7 +4,8 @@ package mcp
 import (
 	"bytes"
 	"context"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"fmt"
 	"io"
 	"log/slog"
@@ -224,9 +225,9 @@ func validateRequest(request *jsonrpc.Request) *jsonrpc.Error {
 	return nil
 }
 
-func requestProtocolVersion(params json.RawMessage) string {
+func requestProtocolVersion(params jsontext.Value) string {
 	var envelope struct {
-		Meta map[string]json.RawMessage `json:"_meta"`
+		Meta map[string]jsontext.Value `json:"_meta"`
 	}
 	if err := json.Unmarshal(params, &envelope); err != nil || envelope.Meta == nil {
 		return ""
@@ -238,7 +239,7 @@ func requestProtocolVersion(params json.RawMessage) string {
 	return version
 }
 
-func initializeVersion(params json.RawMessage) string {
+func initializeVersion(params jsontext.Value) string {
 	var initialize struct {
 		ProtocolVersion string `json:"protocolVersion"`
 	}

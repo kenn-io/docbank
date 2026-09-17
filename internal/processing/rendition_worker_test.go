@@ -1734,6 +1734,27 @@ func TestRenditionRuntimeRegistryStartsWorkerOnlyAfterRegistration(t *testing.T)
 	})
 }
 
+func TestRenditionRuntimeRegistryMissingDescriptorAfterRegistration(t *testing.T) {
+	provider := newWorkerProvider(t)
+	work := store.RenditionJobWork{Profile: workerProcessingProfile(t, provider.Descriptor())}
+	var snapshot document.RenditionExecutionSnapshotV1
+	snapshot.Identity.Authorization.DescriptorFingerprint = provider.Descriptor().Fingerprint
+	registry := NewRenditionRuntimeRegistry()
+
+	_, err := registry.Prepare(t.Context(), work, time.Now())
+	require.ErrorIs(t, err, ErrRenditionRuntimeUnavailable)
+	_, err = registry.ResumeProvider(t.Context(), work, snapshot)
+	require.ErrorIs(t, err, ErrRenditionRuntimeUnavailable)
+
+	registry.Seal()
+	_, err = registry.Prepare(t.Context(), work, time.Now())
+	require.ErrorIs(t, err, ErrRenditionRuntimeStale)
+	_, err = registry.ResumeProvider(t.Context(), work, snapshot)
+	require.ErrorIs(t, err, ErrRenditionRuntimeStale)
+	require.ErrorContains(t, registry.Register(provider.Descriptor().Fingerprint,
+		workerRuntime{provider: provider}), "registration is sealed")
+}
+
 func TestRenditionProviderRetryDelayEscalatesAndCaps(t *testing.T) {
 	assert.Equal(t, time.Second, renditionProviderRetryDelay(1))
 	assert.Equal(t, 2*time.Second, renditionProviderRetryDelay(2))

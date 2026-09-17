@@ -1,4 +1,5 @@
 <script lang="ts">
+  import * as generated from "./generated/docbank.js";
   import { onMount } from "svelte";
   import ActivityIcon from "@lucide/svelte/icons/activity";
   import RefreshCwIcon from "@lucide/svelte/icons/refresh-cw";
@@ -13,7 +14,8 @@
     Spinner,
     type ChipTone,
   } from "@kenn-io/kit-ui";
-  import { APIError, listJobs, type Job } from "./api.js";
+  import { APIError } from "./api-transport.js";
+  import { type Job } from "./generated/docbank.js";
   import { formatDate } from "./format.js";
 
   interface Props {
@@ -45,7 +47,7 @@
     loading = true;
     error = "";
     try {
-      const next = await listJobs(session);
+      const next = await generated.listJobs({ session }).then((result) => result.items);
       if (request !== generation) return;
       items = next;
     } catch (cause) {

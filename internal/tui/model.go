@@ -35,7 +35,7 @@ const (
 )
 
 // Backend is the bounded daemon surface needed by the TUI.
-// *client.Client satisfies it without exposing a direct vault path.
+// The CLI adapter uses generated API operations and receipt validation.
 type Backend interface {
 	Stat(ctx context.Context, path string) (api.Node, error)
 	Node(ctx context.Context, nodeID int64) (api.Node, error)

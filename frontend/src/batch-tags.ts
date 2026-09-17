@@ -1,4 +1,4 @@
-import { requestJSON } from "./api.js";
+import * as generated from "./generated/docbank.js";
 import type { SelectionTarget } from "./selection.js";
 
 export interface BatchTagRequest {
@@ -110,18 +110,14 @@ export async function changeBatchTags(session: string, request: BatchTagRequest)
   // Compute before egress so unavailable local crypto cannot turn a committed
   // operation into an avoidable client-validation failure.
   await batchTagRequestDigest(normalized);
-  const value = await requestJSON<unknown>("/api/v1/batch/tags", session, {
-    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(normalized),
-  });
+  const value = await generated.changeBatchTags(normalized, { session });
   return validateBatchTagReceipt(normalized, value);
 }
 
 export async function previewBatchTags(session: string, tagID: string, targets: readonly SelectionTarget[]): Promise<BatchTagPreview> {
   if (!validUUID(tagID)) throw new Error("Choose a valid tag identity.");
   const nodes = canonicalTargets(targets);
-  const value = await requestJSON<unknown>("/api/v1/batch/tags/preview", session, {
-    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ tag_id: tagID, nodes }),
-  });
+  const value = await generated.previewBatchTags({ tag_id: tagID, nodes }, { session });
   const invalid = () => new Error("The daemon returned an incomplete or invalid tag membership preview.");
   if (!record(value) || value.tag_id !== tagID || !positiveInteger(value.tag_revision) ||
       !Array.isArray(value.nodes) || value.nodes.length !== nodes.length) throw invalid();

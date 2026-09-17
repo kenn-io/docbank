@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { prepareCurrentDownload, prepareVersionDownload } from "./download.js";
-import type { ContentVersion, Node } from "./api.js";
+import type { ContentVersion, Node } from "./generated/docbank.js";
 
 const node: Node = {
   id: 7,

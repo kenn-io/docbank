@@ -1,5 +1,5 @@
 import { afterEach, expect, it, vi } from "vitest";
-import { APIError } from "./api.js";
+import { APIError } from "./api-transport.js";
 import { collectionByID, collectionLabel, collectionMembers, collections, setCollectionLabel } from "./collections.js";
 
 const id = "11111111-1111-4111-8111-111111111111";

@@ -9,7 +9,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"go.kenn.io/docbank/internal/client"
+	"go.kenn.io/docbank/internal/daemonconn"
 )
 
 const daemonAcquisitionTimeout = 45 * time.Second
@@ -25,7 +25,7 @@ var (
 
 type daemonBoundaryError struct {
 	message    error
-	facts      client.ProblemFacts
+	facts      daemonconn.ProblemFacts
 	diagnostic string
 }
 
@@ -35,34 +35,34 @@ func (e *daemonBoundaryError) Is(target error) bool { return target == e.message
 
 type daemonLease struct {
 	mu         sync.Mutex
-	client     *client.Client
+	daemonconn *daemonconn.Connection
 	generation uint64
 	acquiring  *daemonAcquisition
 	acquireErr error
-	ensure     func(context.Context) (*client.Client, error)
-	close      func(*client.Client) error
+	ensure     func(context.Context) (*daemonconn.Connection, error)
+	close      func(*daemonconn.Connection) error
 	newContext func() (context.Context, context.CancelFunc)
-	keyPolicy  client.APIKeyExclusionPolicy
+	keyPolicy  daemonconn.APIKeyExclusionPolicy
 }
 
 type leasedDaemonClient struct {
-	client     *client.Client
+	daemonconn *daemonconn.Connection
 	generation uint64
 }
 
 type daemonAcquisition struct {
-	done   chan struct{}
-	client leasedDaemonClient
-	err    error
+	done       chan struct{}
+	daemonconn leasedDaemonClient
+	err        error
 }
 
 func newDaemonLease() *daemonLease {
-	return newDaemonLeaseWith(client.Ensure, func(c *client.Client) error { return c.Close() })
+	return newDaemonLeaseWith(daemonconn.Ensure, func(c *daemonconn.Connection) error { return c.Close() })
 }
 
 func newDaemonLeaseWith(
-	ensure func(context.Context) (*client.Client, error),
-	closeClient func(*client.Client) error,
+	ensure func(context.Context) (*daemonconn.Connection, error),
+	closeClient func(*daemonconn.Connection) error,
 ) *daemonLease {
 	return newDaemonLeaseWithAcquisitionContext(ensure, closeClient, func() (context.Context, context.CancelFunc) {
 		return context.WithTimeout(context.Background(), daemonAcquisitionTimeout)
@@ -70,8 +70,8 @@ func newDaemonLeaseWith(
 }
 
 func newDaemonLeaseWithAcquisitionContext(
-	ensure func(context.Context) (*client.Client, error),
-	closeClient func(*client.Client) error,
+	ensure func(context.Context) (*daemonconn.Connection, error),
+	closeClient func(*daemonconn.Connection) error,
 	newContext func() (context.Context, context.CancelFunc),
 ) *daemonLease {
 	return &daemonLease{ensure: ensure, close: closeClient, newContext: newContext}
@@ -79,7 +79,7 @@ func newDaemonLeaseWithAcquisitionContext(
 
 // bindAPIKeyExclusion fixes the HTTP credential policy before the listener is
 // opened. Once bound, the policy gates every current and future daemon client.
-func (lease *daemonLease) bindAPIKeyExclusion(policy client.APIKeyExclusionPolicy) error {
+func (lease *daemonLease) bindAPIKeyExclusion(policy daemonconn.APIKeyExclusionPolicy) error {
 	if lease == nil || policy == nil {
 		return errDaemonCredentialPolicy
 	}
@@ -89,10 +89,10 @@ func (lease *daemonLease) bindAPIKeyExclusion(policy client.APIKeyExclusionPolic
 		return errDaemonCredentialPolicy
 	}
 	lease.keyPolicy = policy
-	current := lease.client
+	current := lease.daemonconn
 	rejected := current != nil && !policy.Allows(current)
 	if rejected {
-		lease.client = nil
+		lease.daemonconn = nil
 		lease.generation++
 		lease.acquireErr = errDaemonCredentialReuse
 	}
@@ -109,8 +109,8 @@ func (lease *daemonLease) acquire(ctx context.Context) (leasedDaemonClient, erro
 		return leasedDaemonClient{}, err
 	}
 	lease.mu.Lock()
-	if lease.client != nil {
-		current := leasedDaemonClient{client: lease.client, generation: lease.generation}
+	if lease.daemonconn != nil {
+		current := leasedDaemonClient{daemonconn: lease.daemonconn, generation: lease.generation}
 		lease.mu.Unlock()
 		return current, nil
 	}
@@ -135,16 +135,16 @@ func (lease *daemonLease) replace(
 		return leasedDaemonClient{}, err
 	}
 	lease.mu.Lock()
-	if lease.generation != failed.generation || lease.client != failed.client {
+	if lease.generation != failed.generation || lease.daemonconn != failed.daemonconn {
 		if lease.acquiring != nil {
 			acquiring := lease.acquiring
 			lease.mu.Unlock()
 			return waitForDaemonAcquisition(ctx, acquiring)
 		}
-		current := leasedDaemonClient{client: lease.client, generation: lease.generation}
+		current := leasedDaemonClient{daemonconn: lease.daemonconn, generation: lease.generation}
 		acquireErr := lease.acquireErr
 		lease.mu.Unlock()
-		if current.client == nil {
+		if current.daemonconn == nil {
 			if acquireErr != nil {
 				return leasedDaemonClient{}, acquireErr
 			}
@@ -153,13 +153,13 @@ func (lease *daemonLease) replace(
 		}
 		return current, nil
 	}
-	lease.client = nil
+	lease.daemonconn = nil
 	lease.generation++
 	lease.acquireErr = nil
 	acquiring := &daemonAcquisition{done: make(chan struct{})}
 	lease.acquiring = acquiring
 	lease.mu.Unlock()
-	_ = lease.close(failed.client)
+	_ = lease.close(failed.daemonconn)
 	go lease.completeAcquisition(acquiring)
 	return waitForDaemonAcquisition(ctx, acquiring)
 }
@@ -171,16 +171,16 @@ func (lease *daemonLease) completeAcquisition(acquiring *daemonAcquisition) {
 	if err == nil && c == nil {
 		err = errors.New("daemon acquisition returned no client")
 	}
-	var rejected *client.Client
+	var rejected *daemonconn.Connection
 	lease.mu.Lock()
 	if err == nil && lease.keyPolicy != nil && !lease.keyPolicy.Allows(c) {
 		acquiring.err = errDaemonCredentialReuse
 		lease.acquireErr = acquiring.err
 		rejected = c
 	} else if err == nil {
-		lease.client = c
+		lease.daemonconn = c
 		lease.acquireErr = nil
-		acquiring.client = leasedDaemonClient{client: c, generation: lease.generation}
+		acquiring.daemonconn = leasedDaemonClient{daemonconn: c, generation: lease.generation}
 	} else {
 		acquiring.err = sanitizedDaemonError(errDaemonUnavailable, err)
 		lease.acquireErr = acquiring.err
@@ -203,27 +203,27 @@ func waitForDaemonAcquisition(
 		if err := contextCancellation(ctx, nil); err != nil {
 			return leasedDaemonClient{}, err
 		}
-		return acquiring.client, acquiring.err
+		return acquiring.daemonconn, acquiring.err
 	}
 }
 
 func (lease *daemonLease) discard(failed leasedDaemonClient) {
 	lease.mu.Lock()
-	if lease.generation != failed.generation || lease.client != failed.client {
+	if lease.generation != failed.generation || lease.daemonconn != failed.daemonconn {
 		lease.mu.Unlock()
 		return
 	}
-	lease.client = nil
+	lease.daemonconn = nil
 	lease.generation++
 	lease.acquireErr = nil
 	lease.mu.Unlock()
-	_ = lease.close(failed.client)
+	_ = lease.close(failed.daemonconn)
 }
 
 func daemonRead[T any](
 	ctx context.Context,
 	lease *daemonLease,
-	read func(context.Context, *client.Client) (T, error),
+	read func(context.Context, *daemonconn.Connection) (T, error),
 ) (T, error) {
 	var zero T
 	current, err := lease.acquire(ctx)
@@ -236,14 +236,14 @@ func daemonRead[T any](
 	ctx = httptrace.WithClientTrace(ctx, &httptrace.ClientTrace{
 		GotFirstResponseByte: func() { responseStarted.Store(true) },
 	})
-	result, err := read(ctx, current.client)
+	result, err := read(ctx, current.daemonconn)
 	if err == nil {
 		return result, nil
 	}
 	if canceled := contextCancellation(ctx, err); canceled != nil {
 		return zero, canceled
 	}
-	if !client.IsTransportError(err) {
+	if !daemonconn.IsTransportError(err) {
 		return zero, sanitizedDaemonError(errDaemonRequestFailed, err)
 	}
 	if responseStarted.Load() {
@@ -255,14 +255,14 @@ func daemonRead[T any](
 	if replaceErr != nil {
 		return zero, replaceErr
 	}
-	result, err = read(ctx, replacement.client)
+	result, err = read(ctx, replacement.daemonconn)
 	if err == nil {
 		return result, nil
 	}
 	if canceled := contextCancellation(ctx, err); canceled != nil {
 		return zero, canceled
 	}
-	if client.IsTransportError(err) {
+	if daemonconn.IsTransportError(err) {
 		lease.discard(replacement)
 	}
 	return zero, sanitizedDaemonError(errDaemonRequestFailed, err)
@@ -271,18 +271,18 @@ func daemonRead[T any](
 func daemonProcessingStart[T any](
 	ctx context.Context,
 	lease *daemonLease,
-	start func(*client.Client) (T, error),
+	start func(*daemonconn.Connection) (T, error),
 ) (T, error) {
 	var zero T
 	current, err := lease.acquire(ctx)
 	if err != nil {
 		return zero, err
 	}
-	result, err := start(current.client)
+	result, err := start(current.daemonconn)
 	if err == nil {
 		return result, nil
 	}
-	if client.IsTransportError(err) || client.IsResponseDecodeError(err) {
+	if daemonconn.IsTransportError(err) || daemonconn.IsResponseDecodeError(err) {
 		lease.discard(current)
 		return zero, sanitizedDaemonError(errProcessingOutcomeUnknown, err)
 	}
@@ -294,21 +294,21 @@ func daemonProcessingStart[T any](
 }
 
 func sanitizedDaemonError(message, cause error) error {
-	facts, _ := client.ExtractProblemFacts(cause)
+	facts, _ := daemonconn.ExtractProblemFacts(cause)
 	diagnostic := "daemon_request_failed"
 	switch {
-	case client.IsTransportError(cause):
+	case daemonconn.IsTransportError(cause):
 		diagnostic = "daemon_transport_failure"
-	case client.IsResponseDecodeError(cause):
+	case daemonconn.IsResponseDecodeError(cause):
 		diagnostic = "daemon_invalid_response"
 	}
 	return &daemonBoundaryError{message: message, facts: facts, diagnostic: diagnostic}
 }
 
-func daemonProblemFacts(err error) (client.ProblemFacts, bool) {
+func daemonProblemFacts(err error) (daemonconn.ProblemFacts, bool) {
 	var boundary *daemonBoundaryError
 	if !errors.As(err, &boundary) || boundary.facts.Code == "" {
-		return client.ProblemFacts{}, false
+		return daemonconn.ProblemFacts{}, false
 	}
 	return boundary.facts, true
 }

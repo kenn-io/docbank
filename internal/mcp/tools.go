@@ -2,7 +2,8 @@ package mcp
 
 import (
 	"context"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"log/slog"
 	"slices"
@@ -11,7 +12,7 @@ import (
 	"github.com/google/jsonschema-go/jsonschema"
 	"github.com/modelcontextprotocol/go-sdk/jsonrpc"
 	sdkmcp "github.com/modelcontextprotocol/go-sdk/mcp"
-	"go.kenn.io/docbank/internal/client"
+	"go.kenn.io/docbank/internal/daemonconn"
 	"go.kenn.io/docbank/internal/store"
 )
 
@@ -115,7 +116,7 @@ func validateToolInputs(tools []*sdkmcp.Tool) func(sdkmcp.MethodHandler) sdkmcp.
 	}
 }
 
-func decodeToolArguments(raw json.RawMessage) (map[string]any, error) {
+func decodeToolArguments(raw jsontext.Value) (map[string]any, error) {
 	arguments := map[string]any{}
 	if len(raw) == 0 {
 		return arguments, nil
@@ -204,7 +205,7 @@ func normalizeToolCatalog(next sdkmcp.MethodHandler) sdkmcp.MethodHandler {
 type toolErrorOutput struct {
 	Code               string `json:"code"`
 	Message            string `json:"message"`
-	ObservedScopeCount int    `json:"observed_scope_count,omitempty"`
+	ObservedScopeCount int    `json:"observed_scope_count,omitzero"`
 }
 
 func domainToolError(err error) (*sdkmcp.CallToolResult, bool) {
@@ -228,7 +229,7 @@ func stableDomainError(err error) (string, int) {
 	if err == nil {
 		return "", 0
 	}
-	var scope *client.SourceFenceScopeTooLargeError
+	var scope *daemonconn.SourceFenceScopeTooLargeError
 	switch {
 	case errors.As(err, &scope):
 		return "scope_too_large", scope.ObservedScopeCount
@@ -236,9 +237,9 @@ func stableDomainError(err error) (string, int) {
 		return "not_found", 0
 	case errors.Is(err, store.ErrProcessingSourceFenceStaleVersion):
 		return "stale_version", 0
-	case errors.Is(err, client.ErrProcessingPlanChanged):
+	case errors.Is(err, daemonconn.ErrProcessingPlanChanged):
 		return "plan_changed", 0
-	case errors.Is(err, client.ErrProcessingConsent):
+	case errors.Is(err, daemonconn.ErrProcessingConsent):
 		return "consent_required", 0
 	case errors.Is(err, errProcessingOutcomeUnknown):
 		return "processing_outcome_unknown", 0
@@ -251,7 +252,7 @@ func stableDomainError(err error) (string, int) {
 	}
 	facts, ok := daemonProblemFacts(err)
 	if !ok {
-		facts, ok = client.ExtractProblemFacts(err)
+		facts, ok = daemonconn.ExtractProblemFacts(err)
 	}
 	if !ok {
 		return "", 0

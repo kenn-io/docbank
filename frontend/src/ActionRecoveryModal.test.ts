@@ -3,7 +3,7 @@ import { webcrypto } from "node:crypto";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/svelte";
 import ActionRecoveryModal, { type ActionRecoveryJournal } from "./ActionRecoveryModal.svelte";
-import { APIError } from "./api.js";
+import { APIError } from "./api-transport.js";
 import { type PersistedAction } from "./actionJournal.js";
 import { ACTION_MAX_BYTES, encodeRecovery } from "./actionRecovery.js";
 import type { BatchTagReceipt } from "./batch-tags.js";

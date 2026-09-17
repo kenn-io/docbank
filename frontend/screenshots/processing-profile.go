@@ -6,7 +6,7 @@
 package main
 
 import (
-	"encoding/json"
+	"encoding/json/v2"
 	"fmt"
 	"net/netip"
 	"net/url"
@@ -101,7 +101,7 @@ func main() {
 		EmbeddingID: descriptor.ID, EmbeddingFingerprint: descriptor.Fingerprint,
 		CompatibilityID: contract.CompatibilityID,
 	}
-	if err := json.NewEncoder(os.Stdout).Encode(result); err != nil {
+	if err := json.MarshalWrite(os.Stdout, result); err != nil {
 		panic(fmt.Errorf("encode identities: %w", err))
 	}
 }

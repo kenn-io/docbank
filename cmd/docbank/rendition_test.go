@@ -15,7 +15,7 @@ import (
 
 	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/internal/api"
-	"go.kenn.io/docbank/internal/client"
+	"go.kenn.io/docbank/internal/daemonconn"
 )
 
 func TestRenditionCLIEmitsExactSelfDescribingMarkdown(t *testing.T) {
@@ -61,7 +61,7 @@ func TestRenditionCLIEmitsExactSelfDescribingMarkdown(t *testing.T) {
 	t.Cleanup(server.Close)
 
 	command, output := processingTestCommand()
-	require.NoError(t, runRenditionGet(command, client.New(server.URL, "test-key"), attachmentID, 1<<20))
+	require.NoError(t, runRenditionGet(command, daemonconn.New(server.URL, "test-key"), attachmentID, 1<<20))
 	assert.True(t, bytes.Equal(artifact, output.Bytes()))
 	assert.True(t, bytes.HasPrefix(output.Bytes(), []byte("---\ndocbank:\n")))
 }

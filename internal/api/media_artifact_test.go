@@ -11,7 +11,7 @@ import (
 
 	"go.kenn.io/docbank/document/media/mediatest"
 	"go.kenn.io/docbank/internal/api"
-	"go.kenn.io/docbank/internal/client"
+	"go.kenn.io/docbank/internal/daemonconn"
 )
 
 func TestMediaArtifactImportReusesImmutableInputBeforeCreatingNodes(t *testing.T) {
@@ -27,7 +27,7 @@ func TestMediaArtifactImportReusesImmutableInputBeforeCreatingNodes(t *testing.T
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			ts, catalog := newTestServer(t, configureMediaTestService(t))
-			c := client.New(ts.URL, testAPIKey)
+			c := daemonconn.New(ts.URL, testAPIKey)
 			wav := mediatest.WAV()
 			source, err := c.SubmitSuppliedMedia(t.Context(), api.MediaSuppliedMetadata{
 				OperationID: "00000000-0000-4000-8000-000000000701", Filename: "call.wav",
@@ -57,7 +57,7 @@ func TestMediaArtifactImportReusesImmutableInputBeforeCreatingNodes(t *testing.T
 			}
 			replayed, err := c.ImportMediaArtifact(t.Context(), source.SourceID, metadata, strings.NewReader(transcript))
 			if test.conflict {
-				code, ok := client.ProblemCode(err)
+				code, ok := daemonconn.ProblemCode(err)
 				require.True(t, ok, "expected conflict, got %v", err)
 				require.Equal(t, "operation_conflict", code)
 			} else {
@@ -76,7 +76,7 @@ func TestMediaArtifactImportReusesImmutableInputBeforeCreatingNodes(t *testing.T
 
 func TestMediaArtifactConcurrentConflictsDoNotCreateExtraNodes(t *testing.T) {
 	ts, catalog := newTestServer(t, configureMediaTestService(t))
-	c := client.New(ts.URL, testAPIKey)
+	c := daemonconn.New(ts.URL, testAPIKey)
 	wav := mediatest.WAV()
 	source, err := c.SubmitSuppliedMedia(t.Context(), api.MediaSuppliedMetadata{
 		OperationID: "00000000-0000-4000-8000-000000000711", Filename: "call.wav",
@@ -109,7 +109,7 @@ func TestMediaArtifactConcurrentConflictsDoNotCreateExtraNodes(t *testing.T) {
 			succeeded++
 			continue
 		}
-		code, ok := client.ProblemCode(err)
+		code, ok := daemonconn.ProblemCode(err)
 		require.True(t, ok)
 		require.Equal(t, "operation_conflict", code)
 	}

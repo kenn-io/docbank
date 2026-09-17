@@ -51,7 +51,7 @@ export interface QueryFilters {
 }
 
 export interface Query {
-  v: number;
+  v: 1;
   text: string;
   syntax: "simple" | "advanced";
   mode: "lexical" | "semantic" | "hybrid";
@@ -65,7 +65,7 @@ export interface HighlightTerm {
 }
 
 export interface HighlightSet {
-  v: number;
+  v: 1;
   terms: HighlightTerm[];
 }
 
@@ -186,7 +186,7 @@ function parseFilters(input: Record<string, unknown>): QueryFilters {
   };
 }
 
-function normalizeQuery(value: Query): Query {
+function normalizeQuery(value: Omit<Query, "v"> & { v: number }): Query {
   const v = value.v;
   const syntax = value.syntax;
   const mode = value.mode;
@@ -230,7 +230,7 @@ function normalizeFilters(value: QueryFilters): QueryFilters {
   return result;
 }
 
-function normalizeHighlightSet(value: HighlightSet): HighlightSet {
+function normalizeHighlightSet(value: Omit<HighlightSet, "v"> & { v: number }): HighlightSet {
   const v = value.v;
   if (v !== 1) throw new Error("highlight set version must be 1");
   if (!Array.isArray(value.terms) || value.terms.length < 1 || value.terms.length > 64) {

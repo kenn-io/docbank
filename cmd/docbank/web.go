@@ -10,8 +10,8 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"go.kenn.io/docbank/internal/client"
 	"go.kenn.io/docbank/internal/config"
+	"go.kenn.io/docbank/internal/daemonconn"
 	"go.kenn.io/docbank/internal/home"
 	docweb "go.kenn.io/docbank/internal/web"
 )
@@ -47,7 +47,7 @@ browser credentials: do not paste it into logs, issue trackers, or chat.`,
 		if !cfg.Web.Enabled {
 			return errors.New("the web application is disabled by [web] enabled = false")
 		}
-		c, err := client.EnsureWeb(cmd.Context())
+		c, err := daemonconn.EnsureWeb(cmd.Context())
 		if err != nil {
 			return err
 		}
@@ -60,7 +60,7 @@ func runWeb(
 	ctx context.Context,
 	out io.Writer,
 	root string,
-	c *client.Client,
+	c *daemonconn.Connection,
 	noBrowser bool,
 	open func(context.Context, string) error,
 ) error {

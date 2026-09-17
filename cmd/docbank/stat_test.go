@@ -13,7 +13,8 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"go.kenn.io/docbank/internal/api"
-	"go.kenn.io/docbank/internal/client"
+	"go.kenn.io/docbank/internal/apiclient"
+	"go.kenn.io/docbank/internal/daemonconn"
 )
 
 func TestStatCLIInspectsLiveAndTrashedNodes(t *testing.T) {
@@ -22,9 +23,10 @@ func TestStatCLIInspectsLiveAndTrashedNodes(t *testing.T) {
 	_, err := runCLI(t, "add", source, "--dest", "/archive")
 	require.NoError(t, err)
 
-	c, err := client.Ensure(context.Background())
+	c, err := daemonconn.Ensure(context.Background())
 	require.NoError(t, err)
-	node, err := c.Stat(context.Background(), "/archive/record.txt")
+	node, err := c.API().ResolvePath(context.Background(), &apiclient.ResolvePathRequestOptions{Query: &apiclient.ResolvePathQuery{Path: "/archive/record.txt"}})
+
 	require.NoError(t, err)
 	selector := formatNodeSelector(node.ID)
 
@@ -45,7 +47,7 @@ func TestStatCLIInspectsLiveAndTrashedNodes(t *testing.T) {
 	require.NoError(t, json.Unmarshal([]byte(out), &got))
 	// The metadata worker may publish between the first stat and this read.
 	node.SourceMetadata = got.SourceMetadata
-	assert.Equal(t, node, got)
+	assert.Equal(t, *node, got)
 
 	_, err = runCLI(t, "rm", selector)
 	require.NoError(t, err)

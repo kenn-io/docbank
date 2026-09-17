@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount, untrack } from "svelte";
   import { Button, DetailDrawer, Spinner, TextInput } from "@kenn-io/kit-ui";
-  import { APIError } from "./api.js";
+  import { APIError } from "./api-transport.js";
   import { canonicalQuery, parseHighlightSet, parseQuery, type HighlightTerm, type Query } from "./query.js";
   import { createSavedQuery, deleteSavedQuery, listSavedQueries, SavedQueryReceiptError, updateSavedQuery, type Definition, type SavedQuery, type SavedQueryKind } from "./savedQueries.js";
 

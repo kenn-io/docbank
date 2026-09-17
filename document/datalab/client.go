@@ -4,10 +4,10 @@ package datalab
 import (
 	"bytes"
 	"context"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
-	"io"
 	"mime"
 	"net/http"
 	"slices"
@@ -51,7 +51,7 @@ type Profile struct {
 	Descriptor       document.RenditionDescriptor
 	SecretBinding    string
 	Mode             string
-	ExpectedVersions json.RawMessage
+	ExpectedVersions jsontext.Value
 	RequestTimeout   time.Duration
 	TotalTimeout     time.Duration
 	PollInterval     time.Duration
@@ -199,16 +199,16 @@ func (client *Client) Render(
 type initialResponse struct {
 	success  bool
 	id       string
-	versions json.RawMessage
+	versions jsontext.Value
 }
 
 type finalResponse struct {
 	status     string
 	success    *bool
 	markdown   []byte
-	structured json.RawMessage
+	structured jsontext.Value
 	pageCount  int
-	versions   json.RawMessage
+	versions   jsontext.Value
 }
 
 func (client *Client) submit(run *rendering) (string, error) {
@@ -358,10 +358,10 @@ func (client *Client) buildResult(
 
 func parseInitial(body []byte) (initialResponse, error) {
 	var wire struct {
-		Success         *bool           `json:"success"`
-		RequestID       string          `json:"request_id"`
-		RequestCheckURL string          `json:"request_check_url"`
-		Versions        json.RawMessage `json:"versions"`
+		Success         *bool          `json:"success"`
+		RequestID       string         `json:"request_id"`
+		RequestCheckURL string         `json:"request_check_url"`
+		Versions        jsontext.Value `json:"versions"`
 	}
 	if err := json.Unmarshal(body, &wire); err != nil {
 		return initialResponse{}, provider.Malformed("Datalab submission JSON is invalid", err)
@@ -380,13 +380,13 @@ func parseInitial(body []byte) (initialResponse, error) {
 
 func parseFinal(body []byte, requireMarkdown bool) (finalResponse, error) {
 	var wire struct {
-		Status       string          `json:"status"`
-		Success      *bool           `json:"success"`
-		OutputFormat string          `json:"output_format"`
-		Markdown     *string         `json:"markdown"`
-		JSON         json.RawMessage `json:"json"`
-		PageCount    *int            `json:"page_count"`
-		Versions     json.RawMessage `json:"versions"`
+		Status       string         `json:"status"`
+		Success      *bool          `json:"success"`
+		OutputFormat string         `json:"output_format"`
+		Markdown     *string        `json:"markdown"`
+		JSON         jsontext.Value `json:"json"`
+		PageCount    *int           `json:"page_count"`
+		Versions     jsontext.Value `json:"versions"`
 	}
 	if err := json.Unmarshal(body, &wire); err != nil {
 		return finalResponse{}, provider.Malformed("Datalab result JSON is invalid", err)
@@ -417,7 +417,7 @@ func parseFinal(body []byte, requireMarkdown bool) (finalResponse, error) {
 	return result, nil
 }
 
-func mapEvidence(raw json.RawMessage, family string, pageCount int) (document.SourceEvidenceV1, []byte, bool) {
+func mapEvidence(raw jsontext.Value, family string, pageCount int) (document.SourceEvidenceV1, []byte, bool) {
 	if len(raw) == 0 {
 		return document.SourceEvidenceV1{}, nil, false
 	}
@@ -560,7 +560,7 @@ func htmlText(value string) (string, error) {
 	return strings.Join(parts, " "), nil
 }
 
-func (state *versionState) observe(raw json.RawMessage) error {
+func (state *versionState) observe(raw jsontext.Value) error {
 	fingerprint, err := versionsFingerprint(raw)
 	if err != nil {
 		return provider.Classified(document.RenditionErrorPolicyRejected, "Datalab provider versions are malformed", err)
@@ -579,32 +579,22 @@ func (state *versionState) observe(raw json.RawMessage) error {
 	return nil
 }
 
-func versionsFingerprint(raw json.RawMessage) (string, error) {
+func versionsFingerprint(raw jsontext.Value) (string, error) {
 	if len(raw) == 0 || string(raw) == "null" {
 		return "", nil
 	}
-	decoder := json.NewDecoder(bytes.NewReader(raw))
-	decoder.UseNumber()
-	var value any
-	if err := decoder.Decode(&value); err != nil {
-		return "", err
-	}
-	if decoder.Decode(new(any)) != io.EOF {
-		return "", errors.New("trailing JSON")
-	}
-	switch value.(type) {
-	case map[string]any, string:
-	default:
+	value := raw.Clone()
+	if value.Kind() != '{' && value.Kind() != '"' {
 		return "", errors.New("versions are not an object or string")
 	}
-	canonical, err := json.Marshal(value)
-	if err != nil {
+	if err := value.Format(jsontext.ReorderRawObjects(true), jsontext.EscapeForHTML(true), jsontext.EscapeForJS(true)); err != nil {
 		return "", err
 	}
+	canonical := []byte(value)
 	return providerutil.SHA256Hex(canonical), nil
 }
 
-func decodeStructured(raw json.RawMessage) (json.RawMessage, error) {
+func decodeStructured(raw jsontext.Value) (jsontext.Value, error) {
 	if len(raw) == 0 || string(raw) == "null" {
 		return nil, nil
 	}
@@ -647,4 +637,4 @@ func pageIndex(value string) (int, bool) {
 	return index, err == nil && index >= 0
 }
 
-func cloneRaw(value json.RawMessage) json.RawMessage { return append(json.RawMessage(nil), value...) }
+func cloneRaw(value jsontext.Value) jsontext.Value { return append(jsontext.Value(nil), value...) }

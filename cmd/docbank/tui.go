@@ -5,13 +5,16 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strconv"
 	"sync"
+	"uuid"
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/spf13/cobra"
 
 	"go.kenn.io/docbank/internal/api"
-	"go.kenn.io/docbank/internal/client"
+	"go.kenn.io/docbank/internal/apiclient"
+	"go.kenn.io/docbank/internal/daemonconn"
 	doctui "go.kenn.io/docbank/internal/tui"
 )
 
@@ -41,11 +44,11 @@ deletion, storage maintenance, backup creation/restore, and permanent-audit
 enrollment remain outside the TUI.`,
 	Args: cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, _ []string) error {
-		c, err := client.Ensure(cmd.Context())
+		c, err := daemonconn.Ensure(cmd.Context())
 		if err != nil {
 			return err
 		}
-		backend := &tuiDaemonBackend{ensure: client.Ensure, initial: c}
+		backend := &tuiDaemonBackend{ensure: daemonconn.Ensure, initial: c}
 		defer func() { _ = backend.Close() }()
 		model, err := doctui.New(cmd.Context(), backend)
 		if err != nil {
@@ -69,7 +72,7 @@ func (b *tuiDaemonBackend) Close() error {
 	return nil
 }
 
-type tuiClientFactory func(context.Context) (*client.Client, error)
+type tuiClientFactory func(context.Context) (*daemonconn.Connection, error)
 
 // tuiDaemonBackend reacquires the daemon around each bounded interaction. A
 // TUI can remain open longer than the configured daemon idle timeout, and a
@@ -78,10 +81,10 @@ type tuiClientFactory func(context.Context) (*client.Client, error)
 type tuiDaemonBackend struct {
 	mu      sync.Mutex
 	ensure  tuiClientFactory
-	initial *client.Client
+	initial *daemonconn.Connection
 }
 
-func (b *tuiDaemonBackend) acquire(ctx context.Context) (*client.Client, error) {
+func (b *tuiDaemonBackend) acquire(ctx context.Context) (*daemonconn.Connection, error) {
 	b.mu.Lock()
 	if b.initial != nil {
 		c := b.initial
@@ -95,14 +98,14 @@ func (b *tuiDaemonBackend) acquire(ctx context.Context) (*client.Client, error) 
 
 func withTUIClient[T any](
 	ctx context.Context, backend *tuiDaemonBackend,
-	request func(*client.Client) (T, error),
+	request func(*daemonconn.Connection) (T, error),
 ) (T, error) {
 	var zero T
 	for attempt := range 2 {
 		c, err := backend.acquire(ctx)
 		if err != nil {
 			if attempt == 0 &&
-				errors.Is(err, client.ErrTransientDaemonAcquisition) &&
+				errors.Is(err, daemonconn.ErrTransientDaemonAcquisition) &&
 				!errors.Is(err, context.Canceled) &&
 				!errors.Is(err, context.DeadlineExceeded) {
 				continue
@@ -114,7 +117,7 @@ func withTUIClient[T any](
 		if requestErr == nil {
 			return result, nil
 		}
-		if !client.IsTransportError(requestErr) ||
+		if !daemonconn.IsTransportError(requestErr) ||
 			errors.Is(requestErr, context.Canceled) ||
 			errors.Is(requestErr, context.DeadlineExceeded) {
 			return zero, requestErr
@@ -131,14 +134,14 @@ func withTUIClient[T any](
 // send the revision-bound operation again.
 func withTUIMutationClient[T any](
 	ctx context.Context, backend *tuiDaemonBackend,
-	request func(*client.Client) (T, error),
+	request func(*daemonconn.Connection) (T, error),
 ) (T, error) {
 	var zero T
 	for attempt := range 2 {
 		c, err := backend.acquire(ctx)
 		if err != nil {
 			if attempt == 0 &&
-				errors.Is(err, client.ErrTransientDaemonAcquisition) &&
+				errors.Is(err, daemonconn.ErrTransientDaemonAcquisition) &&
 				!errors.Is(err, context.Canceled) &&
 				!errors.Is(err, context.DeadlineExceeded) {
 				continue
@@ -153,21 +156,31 @@ func withTUIMutationClient[T any](
 }
 
 func (b *tuiDaemonBackend) Stat(ctx context.Context, path string) (api.Node, error) {
-	return withTUIClient(ctx, b, func(c *client.Client) (api.Node, error) {
-		return c.Stat(ctx, path)
+	return withTUIClient(ctx, b, func(c *daemonconn.Connection) (api.Node, error) {
+		result, err := c.API().ResolvePath(ctx, &apiclient.ResolvePathRequestOptions{Query: &apiclient.ResolvePathQuery{Path: path}})
+		if err != nil {
+			var zero api.Node
+			return zero, err
+		}
+		return *result, nil
 	})
 }
 
 func (b *tuiDaemonBackend) Node(ctx context.Context, nodeID int64) (api.Node, error) {
-	return withTUIClient(ctx, b, func(c *client.Client) (api.Node, error) {
-		return c.Node(ctx, nodeID)
+	return withTUIClient(ctx, b, func(c *daemonconn.Connection) (api.Node, error) {
+		result, err := c.API().GetNode(ctx, &apiclient.GetNodeRequestOptions{PathParams: &apiclient.GetNodePath{ID: nodeID}})
+		if err != nil {
+			var zero api.Node
+			return zero, err
+		}
+		return *result, nil
 	})
 }
 
 func (b *tuiDaemonBackend) ChildrenPage(
 	ctx context.Context, nodeID int64, limit, offset int,
 ) (api.NodePage, error) {
-	return withTUIClient(ctx, b, func(c *client.Client) (api.NodePage, error) {
+	return withTUIClient(ctx, b, func(c *daemonconn.Connection) (api.NodePage, error) {
 		return c.ChildrenPage(ctx, nodeID, limit, offset)
 	})
 }
@@ -175,7 +188,7 @@ func (b *tuiDaemonBackend) ChildrenPage(
 func (b *tuiDaemonBackend) Search(
 	ctx context.Context, query string, limit int,
 ) (api.SearchReport, error) {
-	return withTUIClient(ctx, b, func(c *client.Client) (api.SearchReport, error) {
+	return withTUIClient(ctx, b, func(c *daemonconn.Connection) (api.SearchReport, error) {
 		return c.Search(ctx, query, limit)
 	})
 }
@@ -183,59 +196,90 @@ func (b *tuiDaemonBackend) Search(
 func (b *tuiDaemonBackend) NodeTags(
 	ctx context.Context, nodeID int64, limit, offset int,
 ) (api.TagPage, error) {
-	return withTUIClient(ctx, b, func(c *client.Client) (api.TagPage, error) {
+	return withTUIClient(ctx, b, func(c *daemonconn.Connection) (api.TagPage, error) {
 		return c.NodeTags(ctx, nodeID, limit, offset)
 	})
 }
 
 func (b *tuiDaemonBackend) Jobs(ctx context.Context) ([]api.Job, error) {
-	return withTUIClient(ctx, b, func(c *client.Client) ([]api.Job, error) {
-		return c.Jobs(ctx)
+	return withTUIClient(ctx, b, func(c *daemonconn.Connection) ([]api.Job, error) {
+		response, err := c.API().ListJobs(ctx)
+		if err != nil {
+			return nil, err
+		}
+		return response.Items, nil
 	})
 }
 
 func (b *tuiDaemonBackend) Info(ctx context.Context) (api.VaultInfo, error) {
-	return withTUIClient(ctx, b, func(c *client.Client) (api.VaultInfo, error) {
-		return c.Info(ctx)
+	return withTUIClient(ctx, b, func(c *daemonconn.Connection) (api.VaultInfo, error) {
+		result, err := c.API().VaultInfo(ctx)
+		if err != nil {
+			var zero api.VaultInfo
+			return zero, err
+		}
+		return *result, nil
 	})
 }
 
 func (b *tuiDaemonBackend) BackupList(
 	ctx context.Context,
 ) ([]api.BackupSnapshot, error) {
-	return withTUIClient(ctx, b, func(c *client.Client) ([]api.BackupSnapshot, error) {
-		return c.BackupList(ctx, "")
+	return withTUIClient(ctx, b, func(c *daemonconn.Connection) ([]api.BackupSnapshot, error) {
+		response, err := c.API().ListBackupSnapshots(ctx, &apiclient.ListBackupSnapshotsRequestOptions{Query: &apiclient.ListBackupSnapshotsQuery{Repo: new("")}})
+		if err != nil {
+			return nil, err
+		}
+		return response.Items, nil
 	})
 }
 
 func (b *tuiDaemonBackend) ProcessingProfiles(
 	ctx context.Context,
 ) ([]api.ProcessingProfileSummary, error) {
-	return withTUIClient(ctx, b, func(c *client.Client) ([]api.ProcessingProfileSummary, error) {
-		return c.ProcessingProfiles(ctx)
+	return withTUIClient(ctx, b, func(c *daemonconn.Connection) ([]api.ProcessingProfileSummary, error) {
+		result, err := c.API().ListDocumentProcessingProfiles(ctx)
+		if err != nil {
+			var zero []api.ProcessingProfileSummary
+			return zero, err
+		}
+		return *result, nil
 	})
 }
 
 func (b *tuiDaemonBackend) PlanProcessing(
 	ctx context.Context, request api.ProcessingPlanRequest,
 ) (api.ProcessingPlan, error) {
-	return withTUIClient(ctx, b, func(c *client.Client) (api.ProcessingPlan, error) {
-		return c.PlanProcessing(ctx, request)
+	return withTUIClient(ctx, b, func(c *daemonconn.Connection) (api.ProcessingPlan, error) {
+		result, err := c.API().PlanDocumentProcessing(ctx, &apiclient.PlanDocumentProcessingRequestOptions{Body: new(request)})
+		if err != nil {
+			var zero api.ProcessingPlan
+			return zero, err
+		}
+		return *result, nil
 	})
 }
 
 func (b *tuiDaemonBackend) DocumentCoverage(
 	ctx context.Context, profile string, fence api.DocumentSourceFence,
 ) (api.CoverageReport, error) {
-	return withTUIClient(ctx, b, func(c *client.Client) (api.CoverageReport, error) {
-		return c.DocumentCoverage(ctx, profile, fence)
+	return withTUIClient(ctx, b, func(c *daemonconn.Connection) (api.CoverageReport, error) {
+		vaultID, err := uuid.Parse(fence.VaultUID)
+		if err != nil {
+			return api.CoverageReport{}, fmt.Errorf("parsing coverage vault ID: %w", err)
+		}
+		report, err := c.API().GetDocumentProcessingCoverage(ctx, &apiclient.GetDocumentProcessingCoverageRequestOptions{Query: &apiclient.GetDocumentProcessingCoverageQuery{Profile: profile, VaultUID: vaultID, ContentVersionID: fence.ContentVersionIDs}})
+		if err != nil {
+			return api.CoverageReport{}, err
+		}
+		return *report, nil
 	})
 }
 
 func (b *tuiDaemonBackend) SearchDocuments(
 	ctx context.Context, request api.DocumentSearchRequest,
 ) (api.DocumentSearchReport, error) {
-	return withTUIClient(ctx, b, func(c *client.Client) (api.DocumentSearchReport, error) {
+	return withTUIClient(ctx, b, func(c *daemonconn.Connection) (api.DocumentSearchReport, error) {
 		return c.SearchDocuments(ctx, request)
 	})
 }
@@ -243,7 +287,7 @@ func (b *tuiDaemonBackend) SearchDocuments(
 func (b *tuiDaemonBackend) StartProcessingStream(
 	ctx context.Context, request api.StartProcessingRequest, profileFingerprint string,
 ) (doctui.ProcessingEventStream, error) {
-	return withTUIMutationClient(ctx, b, func(c *client.Client) (doctui.ProcessingEventStream, error) {
+	return withTUIMutationClient(ctx, b, func(c *daemonconn.Connection) (doctui.ProcessingEventStream, error) {
 		return c.StartProcessingStream(ctx, request, profileFingerprint)
 	})
 }
@@ -251,7 +295,7 @@ func (b *tuiDaemonBackend) StartProcessingStream(
 func (b *tuiDaemonBackend) ProcessingStatus(
 	ctx context.Context, jobID string,
 ) (api.ProcessingStatus, error) {
-	return withTUIClient(ctx, b, func(c *client.Client) (api.ProcessingStatus, error) {
+	return withTUIClient(ctx, b, func(c *daemonconn.Connection) (api.ProcessingStatus, error) {
 		return c.ProcessingStatus(ctx, jobID)
 	})
 }
@@ -259,7 +303,7 @@ func (b *tuiDaemonBackend) ProcessingStatus(
 func (b *tuiDaemonBackend) RenditionForSelector(
 	ctx context.Context, selector api.ProcessingSelector, maxBytes int64,
 ) (doctui.Rendition, error) {
-	return withTUIClient(ctx, b, func(c *client.Client) (doctui.Rendition, error) {
+	return withTUIClient(ctx, b, func(c *daemonconn.Connection) (doctui.Rendition, error) {
 		stream, err := c.RenditionForSelector(ctx, selector, maxBytes)
 		if err != nil {
 			return doctui.Rendition{}, err
@@ -281,18 +325,28 @@ func (b *tuiDaemonBackend) RenditionForSelector(
 func (b *tuiDaemonBackend) TrashPage(
 	ctx context.Context, limit, offset int,
 ) (api.TrashPage, error) {
-	return withTUIClient(ctx, b, func(c *client.Client) (api.TrashPage, error) {
-		return c.TrashPage(ctx, limit, offset)
+	return withTUIClient(ctx, b, func(c *daemonconn.Connection) (api.TrashPage, error) {
+		result, err := c.API().ListTrash(ctx, &apiclient.ListTrashRequestOptions{Query: &apiclient.ListTrashQuery{Limit: new(int64(limit)), Offset: new(int64(offset))}})
+		if err != nil {
+			var zero api.TrashPage
+			return zero, err
+		}
+		return *result, nil
 	})
 }
 
 func (b *tuiDaemonBackend) Trash(
 	ctx context.Context, nodeID, revision int64,
 ) (api.Node, error) {
-	node, err := withTUIMutationClient(ctx, b, func(c *client.Client) (api.Node, error) {
-		return c.Trash(ctx, nodeID, revision)
+	node, err := withTUIMutationClient(ctx, b, func(c *daemonconn.Connection) (api.Node, error) {
+		result, err := c.API().TrashNode(ctx, &apiclient.TrashNodeRequestOptions{PathParams: &apiclient.TrashNodePath{ID: nodeID}, Header: &apiclient.TrashNodeHeaders{IfMatch: strconv.Quote(strconv.FormatInt(revision, 10))}})
+		if err != nil {
+			var zero api.Node
+			return zero, err
+		}
+		return *result, nil
 	})
-	if client.IsTransportError(err) || client.IsResponseDecodeError(err) {
+	if daemonconn.IsTransportError(err) || daemonconn.IsResponseDecodeError(err) {
 		return api.Node{}, doctui.NewMutationUnconfirmedError("trash", err)
 	}
 	return node, err
@@ -301,10 +355,15 @@ func (b *tuiDaemonBackend) Trash(
 func (b *tuiDaemonBackend) Restore(
 	ctx context.Context, nodeID, revision int64,
 ) (api.Node, error) {
-	node, err := withTUIMutationClient(ctx, b, func(c *client.Client) (api.Node, error) {
-		return c.Restore(ctx, nodeID, revision)
+	node, err := withTUIMutationClient(ctx, b, func(c *daemonconn.Connection) (api.Node, error) {
+		result, err := c.API().RestoreNode(ctx, &apiclient.RestoreNodeRequestOptions{PathParams: &apiclient.RestoreNodePath{ID: nodeID}, Header: &apiclient.RestoreNodeHeaders{IfMatch: strconv.Quote(strconv.FormatInt(revision, 10))}})
+		if err != nil {
+			var zero api.Node
+			return zero, err
+		}
+		return *result, nil
 	})
-	if client.IsTransportError(err) || client.IsResponseDecodeError(err) {
+	if daemonconn.IsTransportError(err) || daemonconn.IsResponseDecodeError(err) {
 		return api.Node{}, doctui.NewMutationUnconfirmedError("restore", err)
 	}
 	return node, err
@@ -313,7 +372,7 @@ func (b *tuiDaemonBackend) Restore(
 func (b *tuiDaemonBackend) AuditHistory(
 	ctx context.Context, path string, nodeID int64, limit int, cursor string,
 ) (api.AuditEventPage, error) {
-	return withTUIClient(ctx, b, func(c *client.Client) (api.AuditEventPage, error) {
+	return withTUIClient(ctx, b, func(c *daemonconn.Connection) (api.AuditEventPage, error) {
 		return c.AuditHistory(ctx, path, nodeID, limit, cursor)
 	})
 }

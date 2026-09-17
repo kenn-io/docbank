@@ -189,6 +189,7 @@ func NewServer(d Deps) *Server {
 	registerMediaRoutes(mux, humaAPI, d, g)
 	clearLongRunningBodyReadDeadlines(humaAPI)
 	markRevisionPreconditionsRequired(humaAPI)
+	registerDaemonOpenAPI(humaAPI)
 	s.registerHealth(mux)
 	mux.Handle("GET "+kitPingPath, kitdaemon.NewPingHandler(kitdaemon.PingHandlerOptions{
 		Service: "docbank", Version: version.Version, PID: os.Getpid(),

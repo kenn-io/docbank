@@ -3,7 +3,8 @@ package embedding
 import (
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"net"
@@ -60,7 +61,7 @@ func (identity VectorSpaceIdentity) CanonicalJSON() ([]byte, error) {
 			return nil, err
 		}
 	}
-	encoded, err := json.Marshal(identity)
+	encoded, err := json.Marshal(identity, jsontext.EscapeForHTML(true), jsontext.EscapeForJS(true))
 	if err != nil {
 		return nil, fmt.Errorf("encode vector space identity: %w", err)
 	}
@@ -100,7 +101,7 @@ func (identity EgressIdentity) CanonicalJSON() ([]byte, error) {
 		return nil, err
 	}
 	identity.Endpoint = endpoint
-	encoded, err := json.Marshal(identity)
+	encoded, err := json.Marshal(identity, jsontext.EscapeForHTML(true), jsontext.EscapeForJS(true))
 	if err != nil {
 		return nil, fmt.Errorf("encode embedding egress identity: %w", err)
 	}

@@ -238,10 +238,12 @@ func TestBackupCaptureBlocksGCButAllowsLiveDeletion(t *testing.T) {
 			})
 		captured <- captureResult{snapshot: snapshot, err: err}
 	}()
+	// Real backup I/O is bounded by the Go test timeout, not a speed requirement.
 	select {
 	case <-metadataCaptured:
-	case <-time.After(5 * time.Second):
-		t.Fatal("backup did not reach the post-metadata capture boundary")
+	case result := <-captured:
+		require.NoError(t, result.err)
+		t.Fatal("backup finished before the post-metadata capture boundary")
 	}
 
 	// The short exclusive freeze is over: an ordinary mutation can remove
@@ -282,21 +284,11 @@ func TestBackupCaptureBlocksGCButAllowsLiveDeletion(t *testing.T) {
 	}
 
 	resumeOnce.Do(func() { close(resumeBackup) })
-	var result captureResult
-	select {
-	case result = <-captured:
-	case <-time.After(5 * time.Second):
-		t.Fatal("backup did not finish after content capture resumed")
-	}
+	result := <-captured
 	require.NoError(t, result.err)
 	assert.Equal(t, int64(1), result.snapshot.Files)
 
-	var gc gcResult
-	select {
-	case gc = <-collected:
-	case <-time.After(5 * time.Second):
-		t.Fatal("GC did not resume after backup completion")
-	}
+	gc := <-collected
 	require.NoError(t, gc.err)
 	assert.Equal(t, 1, gc.report.Removed)
 

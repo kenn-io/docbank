@@ -6,7 +6,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"go.kenn.io/docbank/internal/client"
+	"go.kenn.io/docbank/internal/daemonconn"
 )
 
 var renditionMaxBytes int64
@@ -31,7 +31,7 @@ var renditionGetCmd = &cobra.Command{
 		if !canonicalSHA256(args[0]) {
 			return usageError(errors.New("attachment ID must be lowercase SHA-256"))
 		}
-		c, err := client.Ensure(cmd.Context())
+		c, err := daemonconn.Ensure(cmd.Context())
 		if err != nil {
 			return err
 		}
@@ -39,7 +39,7 @@ var renditionGetCmd = &cobra.Command{
 	},
 }
 
-func runRenditionGet(cmd *cobra.Command, c *client.Client, attachmentID string, maxBytes int64) error {
+func runRenditionGet(cmd *cobra.Command, c *daemonconn.Connection, attachmentID string, maxBytes int64) error {
 	stream, err := c.Rendition(cmd.Context(), attachmentID, maxBytes)
 	if err != nil {
 		return err

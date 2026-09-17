@@ -20,7 +20,7 @@ import (
 	sdkmcp "github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"go.kenn.io/docbank/internal/client"
+	"go.kenn.io/docbank/internal/daemonconn"
 )
 
 const testMCPBearer = "synthetic-mcp-http-token"
@@ -735,10 +735,10 @@ func TestHTTPStartupAcquiresDaemonAndRejectsItsEffectiveRuntimeKey(t *testing.T)
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			var acquired int
-			lease := newDaemonLeaseWith(func(context.Context) (*client.Client, error) {
+			lease := newDaemonLeaseWith(func(context.Context) (*daemonconn.Connection, error) {
 				acquired++
-				return client.New("http://127.0.0.1:1", runtimeKey), nil
-			}, func(*client.Client) error { return nil })
+				return daemonconn.New("http://127.0.0.1:1", runtimeKey), nil
+			}, func(*daemonconn.Connection) error { return nil })
 			server := newServerWithOptionsAndDaemon(testImplementation(), ServerOptions{}, lease)
 
 			err := server.prepareHTTP(t.Context(), test.bearer)
@@ -757,9 +757,9 @@ func TestHTTPStartupAcquiresDaemonAndRejectsItsEffectiveRuntimeKey(t *testing.T)
 
 func TestHTTPStartupFailsClosedWhenDaemonCannotBeEstablished(t *testing.T) {
 	const sensitive = "synthetic-daemon-secret"
-	lease := newDaemonLeaseWith(func(context.Context) (*client.Client, error) {
+	lease := newDaemonLeaseWith(func(context.Context) (*daemonconn.Connection, error) {
 		return nil, errors.New("daemon failed with " + sensitive)
-	}, func(*client.Client) error { return nil })
+	}, func(*daemonconn.Connection) error { return nil })
 	server := newServerWithOptionsAndDaemon(testImplementation(), ServerOptions{}, lease)
 
 	err := server.prepareHTTP(t.Context(), testMCPBearer)

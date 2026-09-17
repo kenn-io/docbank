@@ -62,7 +62,7 @@ complete timing and source-identity rules.
 The canonical contract is generated from the running route definitions:
 
 ```bash
-docbank openapi --json > docbank-openapi.json   # offline; no vault needed
+docbank openapi > docbank-openapi.yaml   # offline; no vault needed
 ```
 
 A running daemon also serves `/openapi.json`, `/openapi.yaml`, and interactive

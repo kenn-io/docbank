@@ -1,4 +1,5 @@
 <script lang="ts">
+  import * as generated from "./generated/docbank.js";
   import { onMount } from "svelte";
   import ArchiveIcon from "@lucide/svelte/icons/archive";
   import DatabaseIcon from "@lucide/svelte/icons/database";
@@ -14,11 +15,8 @@
     IconButton,
     Spinner,
   } from "@kenn-io/kit-ui";
-  import {
-    APIError,
-    storageStatus,
-    type StorageStatus,
-  } from "./api.js";
+  import { APIError } from "./api-transport.js";
+  import { type StorageStatus } from "./generated/docbank.js";
   import { formatBytes } from "./format.js";
 
   interface Props {
@@ -57,7 +55,7 @@
     loading = true;
     error = "";
     try {
-      const next = await storageStatus(session, true);
+      const next = await generated.storageStatus((true) ? { refresh: true } : undefined, { session });
       if (request !== generation) return;
       status = next;
     } catch (cause) {

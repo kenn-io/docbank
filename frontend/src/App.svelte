@@ -1,4 +1,5 @@
 <script lang="ts">
+  import * as generated from "./generated/docbank.js";
   import { onMount, tick } from "svelte";
   import ActivityIcon from "@lucide/svelte/icons/activity";
   import ArchiveIcon from "@lucide/svelte/icons/archive";
@@ -71,25 +72,10 @@
   import TrashNodeModal from "./TrashNodeModal.svelte";
   import UploadDrawer from "./UploadDrawer.svelte";
   import VersionHistoryDrawer from "./VersionHistoryDrawer.svelte";
-  import {
-    APIError,
-    auditStatusForNode,
-    changeNodeTag,
-    children,
-    liveTaggedNodes,
-    nodeTags,
-    revokeSession,
-    search,
-    statPath,
-    tagByID,
-    tags,
-    takeFragmentSession,
-    type AuditStatus,
-    type Node,
-    type SearchHit,
-    type Tag,
-    type TagAssignmentReceipt,
-  } from "./api.js";
+  import { APIError } from "./api-transport.js";
+  import { changeNodeTag } from "./receipts.js";
+  import { takeFragmentSession } from "./browser-session.js";
+  import { type AuditStatus, type Node, type SearchHit, type Tag, type TagAssignmentReceipt } from "./generated/docbank.js";
   import { downloadVisiblePageCSV, selectedVisibleCSVRows } from "./csv.js";
   import { basename, formatBytes, formatDate } from "./format.js";
   import { orderRows, reconcileSearchView, type SortField } from "./rows.js";
@@ -119,7 +105,7 @@
   } from "./tag-hotkeys.js";
   import { VerifiedUploadChannel } from "./upload.js";
 
-  type Row = { node: Node; path: string; match?: "name" | "content" };
+  type Row = { node: Node; path: string; match?: generated.SearchHitMatch };
   type Snapshot = {
     directory: Node;
     rows: Row[];
@@ -612,7 +598,7 @@
     loading = true;
     error = "";
     try {
-      const root = await statPath(session, "/");
+      const root = await generated.resolvePath({ path: "/" }, { session });
       if (request !== generation || session !== webSession) return;
       await loadDirectory(root.id, false);
     } catch (cause) {
@@ -637,10 +623,10 @@
     loading = true;
     error = "";
     try {
-      const page = await children(webSession, nodeID);
+      const page = await generated.listChildren(nodeID, { limit: 1000, offset: 0 }, { session: webSession });
       if (request !== generation) return;
       if (preferredRow && !page.items.some((item) => item.id === preferredSelectedID)) {
-        const current = await statPath(webSession, preferredRow.path);
+        const current = await generated.resolvePath({ path: preferredRow.path }, { session: webSession });
         if (request !== generation) return;
         if (
           current.id !== preferredSelectedID || current.parent_id !== nodeID ||
@@ -736,7 +722,7 @@
     loading = true;
     error = "";
     try {
-      const report = await search(webSession, query, requestedTagID);
+      const report = await generated.search({ q: query, limit: 1000, ...((requestedTagID) ? { tag_id: requestedTagID } : {}) }, { session: webSession });
       if (request !== generation) return;
       if ((report.tag_id ?? "") !== requestedTagID) {
         throw new Error("Search results did not honor the selected tag filter.");
@@ -788,7 +774,7 @@
     loading = true;
     error = "";
     try {
-      const page = await liveTaggedNodes(webSession, tagID);
+      const page = await generated.listTagNodes(tagID, { limit: 1000, offset: 0, live_only: true }, { session: webSession });
       if (request !== generation) return;
       const liveRows = page.items.map((item) => ({ node: item.node, path: item.path! }));
       replaceRows(liveRows, refreshing);
@@ -901,7 +887,7 @@
     tagCatalogLoading = true;
     tagCatalogError = "";
     try {
-      const page = await tags(session);
+      const page = await generated.listTags({ limit: 1000, offset: 0 }, { session });
       if (request !== tagCatalogGeneration || session !== webSession) return;
       let items = page.items;
       let selectedMissing = false;
@@ -912,7 +898,7 @@
       ) {
         if (page.total > page.items.length) {
           try {
-            const selectedTag = await tagByID(session, selectedTagID);
+            const selectedTag = await generated.getTag(selectedTagID, { session });
             if (request !== tagCatalogGeneration || session !== webSession) return;
             items = [selectedTag, ...items];
           } catch (cause) {
@@ -957,7 +943,7 @@
     const session = webSession;
     selectedTagsLoading = true;
     try {
-      const page = await nodeTags(session, nodeID);
+      const page = await generated.listNodeTags(nodeID, { limit: 1000, offset: 0 }, { session });
       if (request !== tagGeneration || session !== webSession || selectedID !== nodeID) return;
       selectedTags = sortTags(page.items);
       selectedTagsTotal = page.total;
@@ -978,7 +964,7 @@
     const session = webSession;
     auditLoading = true;
     try {
-      const status = await auditStatusForNode(session, nodeID);
+      const status = await generated.auditStatus({ node_id: nodeID }, { session });
       if (request !== auditGeneration || session !== webSession || selectedID !== nodeID) return;
       selectedAudit = status;
       if (isTagHotkeyVaultID(status.vault_id)) {
@@ -1183,7 +1169,7 @@
     operation: ReturnType<typeof beginSnapshotAction>,
   ): Promise<void> {
     if (!operation.current()) return;
-    const currentTag = await tagByID(operation.session, action.tag_id).catch((cause) => {
+    const currentTag = await generated.getTag(action.tag_id, { session: operation.session }).catch((cause) => {
       if (cause instanceof APIError && cause.status === 404) return null;
       throw cause;
     });
@@ -1313,7 +1299,7 @@
       throw new Error("This collection member no longer has a live document path.");
     }
     const session = webSession;
-    const exact = await statPath(session, path);
+    const exact = await generated.resolvePath({ path: path }, { session });
     if (session !== webSession || !current()) return;
     if (exact.id !== member.id || exact.kind !== "file") {
       throw new Error(
@@ -1322,7 +1308,7 @@
     }
     const split = path.lastIndexOf("/");
     const parentPath = split === 0 ? "/" : path.slice(0, split);
-    const parent = await statPath(session, parentPath);
+    const parent = await generated.resolvePath({ path: parentPath }, { session });
     if (session !== webSession || !current()) return;
     if (parent.kind !== "dir") {
       throw new Error("The collection member's parent is no longer a live directory.");
@@ -1587,7 +1573,7 @@
     tagFilterID = "";
     error = "";
     try {
-      await revokeSession(session);
+      if (session) await generated.revokeWebSession({ session });
     } catch {
       // The local UI is locked even if the daemon disappeared first. Its
       // in-memory session disappears with it.

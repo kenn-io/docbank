@@ -1,4 +1,4 @@
-import { requestJSON, requestResponse } from "./api.js";
+import * as generated from "./generated/docbank.js";
 import {
   canonicalHighlightSet, canonicalQuery, highlightSetFingerprint,
   parseHighlightSet, parseQuery, queryFingerprint,
@@ -31,7 +31,6 @@ export interface SavedQueryPatch {
   payload?: Query | HighlightSet;
 }
 
-const route = "/api/v1/saved-queries";
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 const encoder = new TextEncoder();
 
@@ -106,14 +105,13 @@ async function receipt(value: unknown): Promise<SavedQuery> {
   };
 }
 
-function path(id: string): string {
+function validateID(id: string): void {
   if (!uuid.test(id)) throw new Error("Invalid saved definition ID.");
-  return `${route}/${id}`;
 }
 
-function fence(value: SavedQuery): HeadersInit {
+function fence(value: SavedQuery): { "If-Match": string } {
   if (!positiveInteger(value.revision)) throw new Error("A positive saved definition revision is required.");
-  return { "Content-Type": "application/json", "If-Match": `"${value.revision}"` };
+  return { "If-Match": `"${value.revision}"` };
 }
 
 async function readResponse(response: Response): Promise<SavedQuery> {
@@ -131,9 +129,7 @@ export async function listSavedQueries(
 ): Promise<SavedQueryPage> {
   if (!Number.isSafeInteger(offset) || offset < 0 || !positiveInteger(limit) || limit > 1000 ||
     kind !== undefined && kind !== "query" && kind !== "highlight_set") throw new Error("Invalid saved definition page.");
-  const params = new URLSearchParams({ limit: String(limit), offset: String(offset) });
-  if (kind) params.set("kind", kind);
-  const page = object(await requestJSON<unknown>(`${route}?${params}`, session));
+  const page = object(await generated.listSavedQueries({ limit, offset, kind }, { session }));
   requireReceipt(page.limit === limit && page.offset === offset &&
     typeof page.total === "number" && Number.isSafeInteger(page.total) && page.total >= 0 && Array.isArray(page.items));
   requireReceipt(page.items.length === Math.min(limit, Math.max(0, page.total - offset)));
@@ -143,16 +139,15 @@ export async function listSavedQueries(
 }
 
 export async function getSavedQuery(session: string, id: string): Promise<SavedQuery> {
-  const saved = await readResponse(await requestResponse(path(id), session));
+  validateID(id);
+  const saved = await readResponse(await generated.getSavedQuery(id, { session }));
   requireReceipt(saved.id === id);
   return saved;
 }
 
 export async function createSavedQuery(session: string, input: SavedQueryCreate): Promise<SavedQuery> {
   const expected = { ...definition(input.kind, input.payload), name: nameValue(input.name), description: descriptionValue(input.description ?? "") };
-  const saved = await readResponse(await requestResponse(route, session, {
-    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(expected),
-  }));
+  const saved = await readResponse(await generated.createSavedQuery(expected, { session }));
   requireReceipt(saved.revision === 1 && sameDefinition(saved, expected));
   return saved;
 }
@@ -162,6 +157,7 @@ function sameDefinition(left: SavedQuery, right: Definition & { name: string; de
 }
 
 export async function updateSavedQuery(session: string, observed: SavedQuery, patch: SavedQueryPatch): Promise<SavedQuery> {
+  validateID(observed.id);
   const headers = fence(observed);
   if (Object.keys(patch).some((key) => !["name", "description", "payload"].includes(key))) throw new Error("Unknown saved definition patch field.");
   const body: SavedQueryPatch = {};
@@ -175,13 +171,14 @@ export async function updateSavedQuery(session: string, observed: SavedQuery, pa
   };
   const revision = observed.revision + (sameDefinition(observed, expected) ? 0 : 1);
   requireReceipt(Number.isSafeInteger(revision));
-  const saved = await readResponse(await requestResponse(path(observed.id), session, { method: "PATCH", headers, body: JSON.stringify(body) }));
+  const saved = await readResponse(await generated.updateSavedQuery(observed.id, body, headers, { session }));
   requireReceipt(saved.id === observed.id && saved.revision === revision && saved.created_at === observed.created_at && sameDefinition(saved, expected));
   return saved;
 }
 
 export async function deleteSavedQuery(session: string, observed: SavedQuery): Promise<SavedQuery> {
-  const saved = await readResponse(await requestResponse(path(observed.id), session, { method: "DELETE", headers: fence(observed) }));
+  validateID(observed.id);
+  const saved = await readResponse(await generated.deleteSavedQuery(observed.id, fence(observed), { session }));
   requireReceipt(saved.id === observed.id && saved.revision === observed.revision &&
     saved.created_at === observed.created_at && saved.updated_at === observed.updated_at && sameDefinition(saved, observed));
   return saved;

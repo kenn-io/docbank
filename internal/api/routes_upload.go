@@ -30,8 +30,8 @@ func registerUploadRoute(mux *http.ServeMux, api huma.API, d Deps, g *gate) {
 
 func registerUploadOpenAPI(api huma.API) {
 	registry := api.OpenAPI().Components.Schemas
-	receiptSchema := huma.SchemaFromType(registry, reflect.TypeFor[UploadReceipt]())
-	errorSchema := huma.SchemaFromType(registry, reflect.TypeFor[Error]())
+	receiptSchema := registry.Schema(reflect.TypeFor[UploadReceipt](), true, "")
+	errorSchema := registry.Schema(reflect.TypeFor[Error](), true, "")
 	response := func(description string) *huma.Response {
 		return &huma.Response{Description: description, Content: map[string]*huma.MediaType{
 			"application/json": {Schema: receiptSchema},

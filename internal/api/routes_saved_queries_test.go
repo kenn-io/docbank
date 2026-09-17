@@ -13,7 +13,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"go.kenn.io/docbank/internal/api"
-	"go.kenn.io/docbank/internal/client"
+	"go.kenn.io/docbank/internal/daemonconn"
 )
 
 const fullSavedQueryPayload = `{"v":1,"text":"status:open AND (owner:me OR owner:team)","syntax":"advanced","mode":"hybrid","filters":{"paths":["/records"],"extensions":["md","txt"]},"sort":{"field":"modified_at","direction":"desc"}}`
@@ -530,8 +530,8 @@ func TestSavedQueryHTTPRequiresDaemonAuthentication(t *testing.T) {
 func TestSavedQueryHTTPRejectsMutationsAfterAuditEnrollmentAndKeepsReads(t *testing.T) {
 	ts, s := newTestServer(t, nil)
 	created, _ := createSavedQuery(t, ts.URL, "Audit boundary", `{}`)
-	c := client.New(ts.URL, testAPIKey)
-	preview, err := c.PreviewAudit(t.Context(), client.AuditPreviewOptions{NodeID: s.RootID()})
+	c := daemonconn.New(ts.URL, testAPIKey)
+	preview, err := c.PreviewAudit(t.Context(), daemonconn.AuditPreviewOptions{NodeID: s.RootID()})
 	require.NoError(t, err)
 	_, err = c.EnableAudit(t.Context(), preview.PreviewToken, true)
 	require.NoError(t, err)

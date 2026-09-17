@@ -9,7 +9,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"go.kenn.io/docbank/internal/api"
-	"go.kenn.io/docbank/internal/client"
+	"go.kenn.io/docbank/internal/daemonconn"
 )
 
 var watchCmd = &cobra.Command{
@@ -24,18 +24,19 @@ var watchListCmd = &cobra.Command{
 	Short: "List effective watch configuration and runner status",
 	Args:  cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, _ []string) error {
-		c, err := client.Ensure(cmd.Context())
+		c, err := daemonconn.Ensure(cmd.Context())
 		if err != nil {
 			return err
 		}
-		items, err := c.WatchedInboxes(cmd.Context())
+		items, err := c.API().ListWatchedInboxes(cmd.Context())
+
 		if err != nil {
 			return err
 		}
 		if watchListJSON {
-			return writeCLIJSON(cmd.OutOrStdout(), api.WatchedInboxList{Items: items})
+			return writeCLIJSON(cmd.OutOrStdout(), *items)
 		}
-		return writeWatchedInboxes(cmd.OutOrStdout(), items)
+		return writeWatchedInboxes(cmd.OutOrStdout(), items.Items)
 	},
 }
 

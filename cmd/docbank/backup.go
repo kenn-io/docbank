@@ -13,7 +13,8 @@ import (
 	"github.com/spf13/cobra"
 
 	"go.kenn.io/docbank/internal/api"
-	"go.kenn.io/docbank/internal/client"
+	"go.kenn.io/docbank/internal/apiclient"
+	"go.kenn.io/docbank/internal/daemonconn"
 )
 
 var backupCmd = &cobra.Command{
@@ -35,11 +36,12 @@ var backupInitCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		c, err := client.Ensure(cmd.Context())
+		c, err := daemonconn.Ensure(cmd.Context())
 		if err != nil {
 			return err
 		}
-		created, err := c.BackupInit(cmd.Context(), repo)
+		created, err := c.API().InitBackupRepository(cmd.Context(), &apiclient.InitBackupRepositoryRequestOptions{Body: &apiclient.InitBackupRepositoryBody{Repo: new(repo)}})
+
 		if err != nil {
 			return err
 		}
@@ -73,17 +75,22 @@ var backupCreateCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		c, err := client.Ensure(cmd.Context())
+		c, err := daemonconn.Ensure(cmd.Context())
 		if err != nil {
 			return err
 		}
-		opts := client.BackupCreateOptions{
+		opts := daemonconn.BackupCreateOptions{
 			Repo: repo, Tag: backupCreateTag, Jobs: backupCreateJobs,
 			ForceUnlock: backupCreateForceUnlock,
 		}
 		var snapshot api.BackupSnapshot
 		if backupCreateJSON {
-			snapshot, err = c.BackupCreate(cmd.Context(), opts)
+			response, requestErr := c.API().CreateBackupSnapshot(cmd.Context(), &apiclient.CreateBackupSnapshotRequestOptions{Body: &apiclient.CreateBackupSnapshotBody{Repo: new(opts.Repo), Tag: new(opts.Tag), Jobs: new(int64(opts.Jobs)), ForceUnlock: new(opts.ForceUnlock)}})
+			err = requestErr
+			if err == nil {
+				snapshot = *response
+			}
+
 		} else {
 			mode, modeErr := backupProgressModeFromFlag(backupCreateProgress)
 			if modeErr != nil {
@@ -127,18 +134,19 @@ var backupListCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		c, err := client.Ensure(cmd.Context())
+		c, err := daemonconn.Ensure(cmd.Context())
 		if err != nil {
 			return err
 		}
-		snapshots, err := c.BackupList(cmd.Context(), repo)
+		snapshots, err := c.API().ListBackupSnapshots(cmd.Context(), &apiclient.ListBackupSnapshotsRequestOptions{Query: &apiclient.ListBackupSnapshotsQuery{Repo: new(repo)}})
+
 		if err != nil {
 			return err
 		}
 		if backupListJSON {
-			return writeBackupJSON(cmd.OutOrStdout(), api.BackupSnapshotList{Items: snapshots})
+			return writeBackupJSON(cmd.OutOrStdout(), *snapshots)
 		}
-		return writeBackupList(cmd.OutOrStdout(), snapshots)
+		return writeBackupList(cmd.OutOrStdout(), snapshots.Items)
 	},
 }
 
@@ -165,11 +173,11 @@ var backupVerifyCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		c, err := client.Ensure(cmd.Context())
+		c, err := daemonconn.Ensure(cmd.Context())
 		if err != nil {
 			return err
 		}
-		opts := client.BackupVerifyOptions{
+		opts := daemonconn.BackupVerifyOptions{
 			Repo: repo, All: backupVerifyAll, Quick: backupVerifyQuick,
 			Jobs: backupVerifyJobs, ForceUnlock: backupVerifyForceUnlock,
 		}
@@ -178,7 +186,12 @@ var backupVerifyCmd = &cobra.Command{
 		}
 		var report api.BackupVerifyReport
 		if backupVerifyJSON {
-			report, err = c.BackupVerify(cmd.Context(), opts)
+			response, requestErr := c.API().VerifyBackupRepository(cmd.Context(), &apiclient.VerifyBackupRepositoryRequestOptions{Body: &apiclient.VerifyBackupRepositoryBody{Repo: new(opts.Repo), SnapshotID: new(opts.SnapshotID), All: new(opts.All), Quick: new(opts.Quick), Jobs: new(int64(opts.Jobs)), ForceUnlock: new(opts.ForceUnlock)}})
+			err = requestErr
+			if err == nil {
+				report = *response
+			}
+
 		} else {
 			mode, modeErr := backupProgressModeFromFlag(backupVerifyProgress)
 			if modeErr != nil {
@@ -248,11 +261,11 @@ var backupRestoreCmd = &cobra.Command{
 			}
 			storeMap = filepath.Clean(storeMap)
 		}
-		c, err := client.Ensure(cmd.Context())
+		c, err := daemonconn.Ensure(cmd.Context())
 		if err != nil {
 			return err
 		}
-		opts := client.BackupRestoreOptions{
+		opts := daemonconn.BackupRestoreOptions{
 			Repo: repo, Target: target, Overwrite: backupRestoreOverwrite,
 			Jobs: backupRestoreJobs, ForceUnlock: backupRestoreForceUnlock,
 			StoreMap: storeMap,
@@ -262,7 +275,12 @@ var backupRestoreCmd = &cobra.Command{
 		}
 		var report api.BackupRestoreReport
 		if backupRestoreJSON {
-			report, err = c.BackupRestore(cmd.Context(), opts)
+			response, requestErr := c.API().RestoreBackupSnapshot(cmd.Context(), &apiclient.RestoreBackupSnapshotRequestOptions{Body: &apiclient.RestoreBackupSnapshotBody{Repo: new(opts.Repo), Target: opts.Target, SnapshotID: new(opts.SnapshotID), Overwrite: new(opts.Overwrite), Jobs: new(int64(opts.Jobs)), ForceUnlock: new(opts.ForceUnlock), StoreMap: new(opts.StoreMap)}})
+			err = requestErr
+			if err == nil {
+				report = *response
+			}
+
 		} else {
 			mode, modeErr := backupProgressModeFromFlag(backupRestoreProgress)
 			if modeErr != nil {

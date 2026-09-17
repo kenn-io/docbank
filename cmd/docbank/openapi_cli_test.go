@@ -1,7 +1,6 @@
 package main
 
 import (
-	"encoding/json/v2"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -11,12 +10,6 @@ import (
 func TestOpenAPICommand(t *testing.T) {
 	out, err := runCLI(t, "openapi")
 	require.NoError(t, err)
-	assert.Contains(t, out, "openapi: 3", "default output is the YAML document")
+	assert.Contains(t, out, "openapi: 3", "output is the YAML document")
 	assert.Contains(t, out, "/api/v1/nodes")
-
-	out, err = runCLI(t, "openapi", "--json")
-	require.NoError(t, err)
-	var doc map[string]any
-	require.NoError(t, json.Unmarshal([]byte(out), &doc))
-	assert.Contains(t, doc, "paths")
 }

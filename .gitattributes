@@ -29,3 +29,8 @@ document/testdata/scanassessment/*.pdf binary
 document/internal/scanfixture/testdata/*.pdf binary
 # Transfer canonical bytes must survive Windows checkout unchanged.
 document/transfer/testdata/msgvault-transfer-v1.golden.jsonl -text
+# Generated API artifacts and dependency resolution output.
+openapi.yaml linguist-generated=true
+internal/apiclient/*.gen.go linguist-generated=true
+frontend/src/generated/** linguist-generated=true
+frontend/package-lock.json linguist-generated=true

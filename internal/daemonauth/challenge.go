@@ -9,7 +9,7 @@ import (
 )
 
 const (
-	// ChallengePath is lifecycle plumbing and intentionally absent from OpenAPI.
+	// ChallengePath is lifecycle plumbing and absent from the running server's public OpenAPI.
 	ChallengePath = "/api/daemon/challenge"
 	// NonceBytes keeps every ownership challenge fresh and replay-resistant.
 	NonceBytes  = 32

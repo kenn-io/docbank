@@ -6,7 +6,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"go.kenn.io/docbank/document"
-	"go.kenn.io/docbank/internal/client"
+	"go.kenn.io/docbank/internal/daemonconn"
 )
 
 func init() {
@@ -20,7 +20,7 @@ func init() {
 			if err := document.ValidateEmailDocumentOperationID(args[0]); err != nil {
 				return usageError(err)
 			}
-			c, err := client.Ensure(cmd.Context())
+			c, err := daemonconn.Ensure(cmd.Context())
 			if err != nil {
 				return err
 			}
@@ -39,7 +39,7 @@ func init() {
 			if _, err := document.NormalizeEmailDocumentRelationQuery(query); err != nil {
 				return usageError(err)
 			}
-			c, err := client.Ensure(cmd.Context())
+			c, err := daemonconn.Ensure(cmd.Context())
 			if err != nil {
 				return err
 			}
@@ -66,7 +66,7 @@ func init() {
 			if err := document.ValidateEmailDocumentOperationID(args[0]); err != nil {
 				return usageError(err)
 			}
-			c, err := client.Ensure(cmd.Context())
+			c, err := daemonconn.Ensure(cmd.Context())
 			if err != nil {
 				return err
 			}

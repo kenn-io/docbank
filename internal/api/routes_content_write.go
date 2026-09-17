@@ -22,8 +22,8 @@ func registerContentWriteRoute(mux *http.ServeMux, api huma.API, d Deps, g *gate
 
 func registerContentWriteOpenAPI(api huma.API) {
 	registry := api.OpenAPI().Components.Schemas
-	receiptSchema := huma.SchemaFromType(registry, reflect.TypeFor[ContentReplacementReceipt]())
-	errorSchema := huma.SchemaFromType(registry, reflect.TypeFor[Error]())
+	receiptSchema := registry.Schema(reflect.TypeFor[ContentReplacementReceipt](), true, "")
+	errorSchema := registry.Schema(reflect.TypeFor[Error](), true, "")
 	api.OpenAPI().AddOperation(&huma.Operation{
 		OperationID: "replaceNodeContent", Method: http.MethodPut,
 		Path: "/api/v1/nodes/{id}/content", Summary: "Replace a file's content with a new immutable head",

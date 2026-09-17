@@ -11,7 +11,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"go.kenn.io/docbank/internal/api"
-	"go.kenn.io/docbank/internal/client"
+	"go.kenn.io/docbank/internal/daemonconn"
 )
 
 var auditCmd = &cobra.Command{
@@ -48,7 +48,7 @@ var auditEnableCmd = &cobra.Command{
 					"audit enable --run requires --acknowledge-permanent-retention",
 				))
 			}
-			c, err := client.Ensure(cmd.Context())
+			c, err := daemonconn.Ensure(cmd.Context())
 			if err != nil {
 				return err
 			}
@@ -72,7 +72,7 @@ var auditEnableCmd = &cobra.Command{
 		if nodeIDSet && auditEnableNodeID < 1 {
 			return usageError(errors.New("audit enable --node-id must be positive"))
 		}
-		opts := client.AuditPreviewOptions{
+		opts := daemonconn.AuditPreviewOptions{
 			NodeID: auditEnableNodeID, AgentLabel: auditEnableAgentLabel,
 		}
 		if len(args) == 1 {
@@ -86,7 +86,7 @@ var auditEnableCmd = &cobra.Command{
 				opts.Path = selector.path
 			}
 		}
-		c, err := client.Ensure(cmd.Context())
+		c, err := daemonconn.Ensure(cmd.Context())
 		if err != nil {
 			return err
 		}
@@ -132,7 +132,7 @@ var auditStatusCmd = &cobra.Command{
 				path = selector.path
 			}
 		}
-		c, err := client.Ensure(cmd.Context())
+		c, err := daemonconn.Ensure(cmd.Context())
 		if err != nil {
 			return err
 		}

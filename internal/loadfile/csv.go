@@ -11,7 +11,10 @@ import (
 const maxCSVRawRowBytes = 1 << 20
 
 func ScanCSV(source io.Reader, profile Profile, emit func(Record) error) ([]Diagnostic, error) {
-	if err := validateCSVProfile(profile, emit); err != nil {
+	if emit == nil {
+		return nil, ErrInvalidProfile
+	}
+	if err := validateCSVProfile(profile); err != nil {
 		return nil, err
 	}
 	decoder, err := Decoder(profile.Encoding)
@@ -130,8 +133,8 @@ func decodeCSVRow(raw []byte, comma rune) ([]string, error) {
 	return values, nil
 }
 
-func validateCSVProfile(profile Profile, emit func(Record) error) error {
-	if emit == nil || profile.Field != ',' || profile.Qualifier != '"' {
+func validateCSVProfile(profile Profile) error {
+	if profile.Field != ',' || profile.Qualifier != '"' {
 		return ErrInvalidProfile
 	}
 	if !profile.HeaderRow && len(profile.Columns) == 0 {

@@ -24,8 +24,9 @@ import (
 	"go.kenn.io/kit/packstore"
 
 	"go.kenn.io/docbank/internal/api"
+	"go.kenn.io/docbank/internal/apiclient"
 	"go.kenn.io/docbank/internal/backupapp"
-	"go.kenn.io/docbank/internal/client"
+	"go.kenn.io/docbank/internal/daemonconn"
 	"go.kenn.io/docbank/internal/store"
 )
 
@@ -82,7 +83,7 @@ func startTestDaemon(t *testing.T, dir string) {
 	t.Helper()
 	startServe(t)
 	require.Eventually(t, func() bool {
-		_, _, ok, err := client.Find(t.Context(), dir)
+		_, _, ok, err := daemonconn.Find(t.Context(), dir)
 		return err == nil && ok
 	}, 30*time.Second, 25*time.Millisecond, "test daemon never became ready")
 }
@@ -122,11 +123,13 @@ func TestAddLsTreeCat(t *testing.T) {
 	assert.Contains(t, out, "notes.txt")
 	assert.Regexp(t, `\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z`, out)
 	assert.NotRegexp(t, `T\d{2}:\d{2}:\d{2}\.\d+Z`, out)
-	c, err := client.Ensure(context.Background())
+	c, err := daemonconn.Ensure(context.Background())
 	require.NoError(t, err)
-	inbox, err := c.Stat(context.Background(), "/inbox")
+	inbox, err := c.API().ResolvePath(context.Background(), &apiclient.ResolvePathRequestOptions{Query: &apiclient.ResolvePathQuery{Path: "/inbox"}})
+
 	require.NoError(t, err)
-	note, err := c.Stat(context.Background(), "/inbox/notes.txt")
+	note, err := c.API().ResolvePath(context.Background(), &apiclient.ResolvePathRequestOptions{Query: &apiclient.ResolvePathQuery{Path: "/inbox/notes.txt"}})
+
 	require.NoError(t, err)
 	out, err = runCLI(t, "ls", "/inbox", "--json")
 	require.NoError(t, err)
@@ -172,19 +175,22 @@ func TestAddReplaceVersionsExactDestination(t *testing.T) {
 	src := writeSourceFile(t, "notes.txt", "first draft")
 	_, err := runCLI(t, "add", src, "--dest", "/inbox")
 	require.NoError(t, err)
-	c, err := client.Ensure(t.Context())
+	c, err := daemonconn.Ensure(t.Context())
 	require.NoError(t, err)
-	before, err := c.Stat(t.Context(), "/inbox/notes.txt")
+	before, err := c.API().ResolvePath(t.Context(), &apiclient.ResolvePathRequestOptions{Query: &apiclient.ResolvePathQuery{Path: "/inbox/notes.txt"}})
+
 	require.NoError(t, err)
 	require.NoError(t, os.WriteFile(src, []byte("second draft"), 0o644))
 
 	_, err = runCLI(t, "add", src, "--dest", "/inbox", "--replace")
 	require.NoError(t, err)
-	after, err := c.Stat(t.Context(), "/inbox/notes.txt")
+	after, err := c.API().ResolvePath(t.Context(), &apiclient.ResolvePathRequestOptions{Query: &apiclient.ResolvePathQuery{Path: "/inbox/notes.txt"}})
+
 	require.NoError(t, err)
 	assert.Equal(t, before.ID, after.ID)
 	assert.Equal(t, before.Revision+2, after.Revision)
-	_, err = c.Stat(t.Context(), "/inbox/notes (2).txt")
+	_, err = c.API().ResolvePath(t.Context(), &apiclient.ResolvePathRequestOptions{Query: &apiclient.ResolvePathQuery{Path: "/inbox/notes (2).txt"}})
+
 	assert.ErrorIs(t, err, store.ErrNotFound)
 }
 
@@ -196,14 +202,16 @@ func TestAddReplaceRejectsPreflightBeforeEnsure(t *testing.T) {
 
 func TestTreeBoundsAndReportsOmissions(t *testing.T) {
 	_ = setupVaultHome(t)
-	c, err := client.Ensure(context.Background())
+	c, err := daemonconn.Ensure(context.Background())
 	require.NoError(t, err)
-	root, err := c.Stat(context.Background(), "/")
+	root, err := c.API().ResolvePath(context.Background(), &apiclient.ResolvePathRequestOptions{Query: &apiclient.ResolvePathQuery{Path: "/"}})
+
 	require.NoError(t, err)
 
 	parent := root
 	for _, name := range []string{"one", "two", "three", "four", "five"} {
-		parent, err = c.Mkdir(context.Background(), parent.ID, name)
+		parent, err = c.API().CreateNode(context.Background(), &apiclient.CreateNodeRequestOptions{Body: &apiclient.CreateNodeBody{ParentID: parent.ID, Name: name, Kind: "dir"}})
+
 		require.NoError(t, err)
 	}
 
@@ -334,11 +342,13 @@ func TestAuditEnableIsPreviewFirstAndReportsProtection(t *testing.T) {
 	contractSource := writeSourceFile(t, "contract.txt", "signed agreement")
 	_, err = runCLI(t, "add", contractSource, "--dest", "/Contracts")
 	require.NoError(t, err)
-	c, err := client.Ensure(context.Background())
+	c, err := daemonconn.Ensure(context.Background())
 	require.NoError(t, err)
-	taxes, err := c.Stat(context.Background(), "/Taxes")
+	taxes, err := c.API().ResolvePath(context.Background(), &apiclient.ResolvePathRequestOptions{Query: &apiclient.ResolvePathQuery{Path: "/Taxes"}})
+
 	require.NoError(t, err)
-	returnNode, err := c.Stat(context.Background(), "/Taxes/return.txt")
+	returnNode, err := c.API().ResolvePath(context.Background(), &apiclient.ResolvePathRequestOptions{Query: &apiclient.ResolvePathQuery{Path: "/Taxes/return.txt"}})
+
 	require.NoError(t, err)
 
 	out, err := runCLI(t, "audit", "status", "--json")
@@ -427,9 +437,10 @@ func TestPutReplacesContentAndRetainsHistory(t *testing.T) {
 	initial := writeSourceFile(t, "document.txt", "initial content")
 	_, err := runCLI(t, "add", initial, "--dest", "/inbox")
 	require.NoError(t, err)
-	c, err := client.Ensure(context.Background())
+	c, err := daemonconn.Ensure(context.Background())
 	require.NoError(t, err)
-	document, err := c.Stat(context.Background(), "/inbox/document.txt")
+	document, err := c.API().ResolvePath(context.Background(), &apiclient.ResolvePathRequestOptions{Query: &apiclient.ResolvePathQuery{Path: "/inbox/document.txt"}})
+
 	require.NoError(t, err)
 	documentSelector := formatNodeSelector(document.ID)
 
@@ -510,9 +521,10 @@ func TestVersionsPruneIsPreviewFirstAndKeepsCurrentContent(t *testing.T) {
 	var before api.ContentVersionPage
 	require.NoError(t, json.Unmarshal([]byte(out), &before))
 	require.Len(t, before.Items, 3)
-	c, err := client.Ensure(context.Background())
+	c, err := daemonconn.Ensure(context.Background())
 	require.NoError(t, err)
-	document, err := c.Stat(context.Background(), "/inbox/document.txt")
+	document, err := c.API().ResolvePath(context.Background(), &apiclient.ResolvePathRequestOptions{Query: &apiclient.ResolvePathQuery{Path: "/inbox/document.txt"}})
+
 	require.NoError(t, err)
 	documentSelector := formatNodeSelector(document.ID)
 	_, err = runCLI(t, "versions", "prune", "/inbox/document.txt",
@@ -556,9 +568,10 @@ func TestTagCLIOrganizesNodesByNameOrStableID(t *testing.T) {
 	source := writeSourceFile(t, "return.pdf", "tax return")
 	_, err := runCLI(t, "add", source, "--dest", "/records")
 	require.NoError(t, err)
-	c, err := client.Ensure(context.Background())
+	c, err := daemonconn.Ensure(context.Background())
 	require.NoError(t, err)
-	returnNode, err := c.Stat(context.Background(), "/records/return.pdf")
+	returnNode, err := c.API().ResolvePath(context.Background(), &apiclient.ResolvePathRequestOptions{Query: &apiclient.ResolvePathQuery{Path: "/records/return.pdf"}})
+
 	require.NoError(t, err)
 
 	out, err := runCLI(t, "tag", "list")
@@ -653,9 +666,10 @@ func TestRefsFindsCurrentHistoricalAndTrashedContent(t *testing.T) {
 	require.NoError(t, err)
 	sum := sha256.Sum256(initialBytes)
 	hash := hex.EncodeToString(sum[:])
-	c, err := client.Ensure(t.Context())
+	c, err := daemonconn.Ensure(t.Context())
 	require.NoError(t, err)
-	node, err := c.Stat(t.Context(), "/inbox/lookup.txt")
+	node, err := c.API().ResolvePath(t.Context(), &apiclient.ResolvePathRequestOptions{Query: &apiclient.ResolvePathQuery{Path: "/inbox/lookup.txt"}})
+
 	require.NoError(t, err)
 
 	out, err := runCLI(t, "refs", hash)
@@ -742,19 +756,19 @@ func TestConfiguredAutomaticPackingPacksAndKeepsDaemonAlive(t *testing.T) {
 			"[storage]\npack_interval = \"250ms\"\npack_max_bytes = 1048576\n",
 	), 0o600))
 	t.Setenv("DOCBANK_HOME", home)
-	t.Setenv(client.EnvBackgroundDaemon, "1")
+	t.Setenv(daemonconn.EnvBackgroundDaemon, "1")
 	startTestDaemon(t, home)
 
 	var err error
 	require.Eventually(t, func() bool {
 		_, err = runCLI(t, "mkdir", "/agents")
-		return err == nil || !errors.Is(err, client.ErrMaintenanceBusy)
+		return err == nil || !errors.Is(err, daemonconn.ErrMaintenanceBusy)
 	}, 10*time.Second, 25*time.Millisecond)
 	require.NoError(t, err)
 	source := writeSourceFile(t, "session.jsonl", "{\"kind\":\"session\"}\n")
 	require.Eventually(t, func() bool {
 		_, err = runCLI(t, "add", source, "--dest", "/agents")
-		return err == nil || !errors.Is(err, client.ErrMaintenanceBusy)
+		return err == nil || !errors.Is(err, daemonconn.ErrMaintenanceBusy)
 	}, 10*time.Second, 25*time.Millisecond)
 	require.NoError(t, err)
 	require.Eventually(t, func() bool {
@@ -778,7 +792,7 @@ func TestConfiguredAutomaticPackingPacksAndKeepsDaemonAlive(t *testing.T) {
 	assert.Equal(t, "running", requireJob(t, got, "storage:pack").Status)
 
 	time.Sleep(100 * time.Millisecond)
-	_, _, found, err := client.Find(t.Context(), home)
+	_, _, found, err := daemonconn.Find(t.Context(), home)
 	require.NoError(t, err)
 	assert.True(t, found)
 }
@@ -795,7 +809,7 @@ func TestConfiguredWatchIngestsStableFilesAndRemainsObservable(t *testing.T) {
 			"destination = \"/agents\"\nsettle_time = \"50ms\"\nscan_interval = \"10ms\"\n",
 	), 0o600))
 	t.Setenv("DOCBANK_HOME", home)
-	t.Setenv(client.EnvBackgroundDaemon, "1")
+	t.Setenv(daemonconn.EnvBackgroundDaemon, "1")
 	startTestDaemon(t, home)
 
 	require.Eventually(t, func() bool {
@@ -837,7 +851,7 @@ func TestConfiguredWatchIngestsStableFilesAndRemainsObservable(t *testing.T) {
 	// A configured watcher keeps a background daemon alive even when the
 	// ordinary request-idle timeout is deliberately tiny.
 	time.Sleep(100 * time.Millisecond)
-	_, _, found, err := client.Find(t.Context(), home)
+	_, _, found, err := daemonconn.Find(t.Context(), home)
 	require.NoError(t, err)
 	assert.True(t, found)
 
@@ -988,9 +1002,10 @@ func TestMvIntoDirAndRename(t *testing.T) {
 	// Rename in place (dest is a non-existent name in an existing dir).
 	_, err = runCLI(t, "mv", "/inbox/a.txt", "/inbox/b.txt")
 	require.NoError(t, err)
-	c, err := client.Ensure(context.Background())
+	c, err := daemonconn.Ensure(context.Background())
 	require.NoError(t, err)
-	movedByID, err := c.Stat(context.Background(), "/inbox/b.txt")
+	movedByID, err := c.API().ResolvePath(context.Background(), &apiclient.ResolvePathRequestOptions{Query: &apiclient.ResolvePathQuery{Path: "/inbox/b.txt"}})
+
 	require.NoError(t, err)
 
 	out, err := runCLI(t, "ls", "/inbox")
@@ -1021,9 +1036,10 @@ func TestMvBatchAppliesOnePlan(t *testing.T) {
 	require.NoError(t, err)
 	_, err = runCLI(t, "add", secondSource, "--dest", "/right")
 	require.NoError(t, err)
-	c, err := client.Ensure(context.Background())
+	c, err := daemonconn.Ensure(context.Background())
 	require.NoError(t, err)
-	second, err := c.Stat(context.Background(), "/right/second.txt")
+	second, err := c.API().ResolvePath(context.Background(), &apiclient.ResolvePathRequestOptions{Query: &apiclient.ResolvePathQuery{Path: "/right/second.txt"}})
+
 	require.NoError(t, err)
 	plan := filepath.Join(t.TempDir(), "move-plan.json")
 	planBody := fmt.Sprintf(`{"moves":[
@@ -1056,7 +1072,7 @@ func TestMvBatchRejectsUnknownPlanFieldsBeforeDaemonStart(t *testing.T) {
 	var classified *exitError
 	require.ErrorAs(t, err, &classified)
 	assert.Equal(t, exitUsage, classified.code)
-	records, listErr := client.RuntimeStore(home).List()
+	records, listErr := daemonconn.RuntimeStore(home).List()
 	require.NoError(t, listErr)
 	assert.Empty(t, records)
 }
@@ -1077,9 +1093,10 @@ func TestRmRestoreRoundTrip(t *testing.T) {
 	_, err := runCLI(t, "add", src, "--dest", "/inbox")
 	require.NoError(t, err)
 
-	c, err := client.Ensure(context.Background())
+	c, err := daemonconn.Ensure(context.Background())
 	require.NoError(t, err)
-	node, err := c.Stat(context.Background(), "/inbox/a.txt")
+	node, err := c.API().ResolvePath(context.Background(), &apiclient.ResolvePathRequestOptions{Query: &apiclient.ResolvePathQuery{Path: "/inbox/a.txt"}})
+
 	require.NoError(t, err)
 
 	// rm prints the same copyable selector accepted by restore.
@@ -1107,11 +1124,13 @@ func TestTrashedIDSelectorsRespectLiveCommandBoundary(t *testing.T) {
 	src := writeSourceFile(t, "record.txt", "retained while trashed")
 	_, err := runCLI(t, "add", src, "--dest", "/archive")
 	require.NoError(t, err)
-	c, err := client.Ensure(t.Context())
+	c, err := daemonconn.Ensure(t.Context())
 	require.NoError(t, err)
-	dir, err := c.Stat(t.Context(), "/archive")
+	dir, err := c.API().ResolvePath(t.Context(), &apiclient.ResolvePathRequestOptions{Query: &apiclient.ResolvePathQuery{Path: "/archive"}})
+
 	require.NoError(t, err)
-	file, err := c.Stat(t.Context(), "/archive/record.txt")
+	file, err := c.API().ResolvePath(t.Context(), &apiclient.ResolvePathRequestOptions{Query: &apiclient.ResolvePathQuery{Path: "/archive/record.txt"}})
+
 	require.NoError(t, err)
 	dirSelector := formatNodeSelector(dir.ID)
 	fileSelector := formatNodeSelector(file.ID)

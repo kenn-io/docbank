@@ -1,4 +1,4 @@
-import { APIError } from "./api.js";
+import { APIError } from "./api-transport.js";
 import { canonicalQuery, parseQuery, type Query } from "./query.js";
 import {
   createSnapshot,

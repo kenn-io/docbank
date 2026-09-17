@@ -10,7 +10,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/internal/api"
-	"go.kenn.io/docbank/internal/client"
+	"go.kenn.io/docbank/internal/daemonconn"
 )
 
 func TestRenditionResourceURIIsCanonicalAndStrict(t *testing.T) {
@@ -62,9 +62,9 @@ func TestRenditionResourceTemplatePinsRFC6570Window(t *testing.T) {
 
 func TestServerRegistersReadHandlersAndEmptyResourceCatalog(t *testing.T) {
 	daemon := newReadToolDaemon(t)
-	lease := newDaemonLeaseWith(func(context.Context) (*client.Client, error) {
-		return client.New(daemon.URL, "synthetic-key"), nil
-	}, func(*client.Client) error { return nil })
+	lease := newDaemonLeaseWith(func(context.Context) (*daemonconn.Connection, error) {
+		return daemonconn.New(daemon.URL, "synthetic-key"), nil
+	}, func(*daemonconn.Connection) error { return nil })
 	server := newServerWithOptionsAndDaemon(testImplementation(), ServerOptions{}, lease)
 
 	toolResult := decodeResult(t, exchangeRaw(t, server, requestFor("tools/call", map[string]any{
@@ -129,9 +129,9 @@ func TestRenditionToolAndResourceRejectOversizedWindowMetadata(t *testing.T) {
 		})
 	}))
 	t.Cleanup(daemon.Close)
-	lease := newDaemonLeaseWith(func(context.Context) (*client.Client, error) {
-		return client.New(daemon.URL, ""), nil
-	}, func(*client.Client) error { return nil })
+	lease := newDaemonLeaseWith(func(context.Context) (*daemonconn.Connection, error) {
+		return daemonconn.New(daemon.URL, ""), nil
+	}, func(*daemonconn.Connection) error { return nil })
 	server := newServerWithOptionsAndDaemon(testImplementation(), ServerOptions{}, lease)
 
 	toolErr := decodeWireError(t, exchangeRaw(t, server, requestFor("tools/call", map[string]any{
@@ -150,9 +150,9 @@ func TestRenditionToolAndResourceRejectOversizedWindowMetadata(t *testing.T) {
 
 func TestSearchToolWireResultIncludesExactCanonicalRenditionLink(t *testing.T) {
 	daemon := newReadToolDaemon(t)
-	lease := newDaemonLeaseWith(func(context.Context) (*client.Client, error) {
-		return client.New(daemon.URL, "synthetic-key"), nil
-	}, func(*client.Client) error { return nil })
+	lease := newDaemonLeaseWith(func(context.Context) (*daemonconn.Connection, error) {
+		return daemonconn.New(daemon.URL, "synthetic-key"), nil
+	}, func(*daemonconn.Connection) error { return nil })
 	server := newServerWithOptionsAndDaemon(testImplementation(), ServerOptions{}, lease)
 
 	result := decodeResult(t, exchangeRaw(t, server, requestFor("tools/call", map[string]any{

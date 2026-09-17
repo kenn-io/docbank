@@ -1324,9 +1324,9 @@ function prepareKeyboardApp(): Storage {
       return entries.size;
     },
     clear: () => entries.clear(),
-    getItem: (key) => entries.get(key) ?? null,
-    key: (index) => [...entries.keys()][index] ?? null,
-    removeItem: (key) => entries.delete(key),
+    getItem: key => entries.get(key) ?? null,
+    key: index => [...entries.keys()][index] ?? null,
+    removeItem: key => entries.delete(key),
     setItem: (key, value) => entries.set(key, value),
   };
   vi.stubGlobal("localStorage", storage);

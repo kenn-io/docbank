@@ -7,11 +7,13 @@ import (
 	"fmt"
 	"log/slog"
 	"slices"
+	"uuid"
 
 	"github.com/google/jsonschema-go/jsonschema"
 	sdkmcp "github.com/modelcontextprotocol/go-sdk/mcp"
 	"go.kenn.io/docbank/internal/api"
-	"go.kenn.io/docbank/internal/client"
+	"go.kenn.io/docbank/internal/apiclient"
+	"go.kenn.io/docbank/internal/daemonconn"
 	"go.kenn.io/docbank/internal/store"
 )
 
@@ -113,7 +115,9 @@ func getVaultInfo(ctx context.Context, lease *daemonLease, raw []byte) (vaultInf
 	if err := decodeReadArguments(raw, &input); err != nil {
 		return vaultInfoOutput{}, err
 	}
-	info, err := daemonRead(ctx, lease, func(ctx context.Context, c *client.Client) (api.VaultInfo, error) { return c.Info(ctx) })
+	info, err := daemonRead(ctx, lease, func(ctx context.Context, c *daemonconn.Connection) (*api.VaultInfo, error) {
+		return c.API().VaultInfo(ctx)
+	})
 	if err != nil {
 		return vaultInfoOutput{}, err
 	}
@@ -148,14 +152,18 @@ func listDocuments(
 		page api.DocumentPage
 		info api.VaultInfo
 	}
-	result, err := daemonRead(ctx, lease, func(ctx context.Context, c *client.Client) (response, error) {
+	result, err := daemonRead(ctx, lease, func(ctx context.Context, c *daemonconn.Connection) (response, error) {
 		page, callErr := c.ListDocuments(ctx, api.DocumentQuery{PathPrefix: input.PathPrefix,
 			Sort: input.Sort, Direction: input.Direction, PageSize: input.PageSize, Cursor: input.Cursor})
 		if callErr != nil {
 			return response{}, callErr
 		}
-		info, callErr := c.Info(ctx)
-		return response{page: page, info: info}, callErr
+		info, callErr := c.API().VaultInfo(ctx)
+
+		if callErr != nil {
+			return response{}, callErr
+		}
+		return response{page: page, info: *info}, nil
 	})
 	if err != nil {
 		return listDocumentsOutput{}, nil, err
@@ -224,7 +232,7 @@ func searchDocuments(
 		report     api.DocumentSearchReport
 		documents  []api.DocumentSummary
 	}
-	result, err := daemonRead(ctx, lease, func(ctx context.Context, c *client.Client) (response, error) {
+	result, err := daemonRead(ctx, lease, func(ctx context.Context, c *daemonconn.Connection) (response, error) {
 		resolution, callErr := c.ResolveDocumentSourceFence(ctx, api.DocumentSourceFenceResolveRequest{
 			ContentVersionIDs: input.ContentVersionIDs, Filters: input.Filters})
 		if callErr != nil {
@@ -340,8 +348,9 @@ func getDocument(
 		document api.DocumentSummary
 		vaultID  string
 	}
-	result, err := daemonRead(ctx, lease, func(ctx context.Context, c *client.Client) (response, error) {
-		node, callErr := c.Node(ctx, input.NodeID)
+	result, err := daemonRead(ctx, lease, func(ctx context.Context, c *daemonconn.Connection) (response, error) {
+		node, callErr := c.API().GetNode(ctx, &apiclient.GetNodeRequestOptions{PathParams: &apiclient.GetNodePath{ID: input.NodeID}})
+
 		if callErr != nil {
 			return response{}, callErr
 		}
@@ -357,8 +366,11 @@ func getDocument(
 			page.Items[0].ContentVersionID != input.ContentVersionID || page.Items[0].Path != node.Path {
 			return response{}, store.ErrProcessingSourceFenceStaleVersion
 		}
-		info, callErr := c.Info(ctx)
-		return response{document: page.Items[0], vaultID: info.VaultID}, callErr
+		info, callErr := c.API().VaultInfo(ctx)
+		if callErr != nil {
+			return response{}, callErr
+		}
+		return response{document: page.Items[0], vaultID: info.VaultID}, nil
 	})
 	if err != nil {
 		return documentOutput{}, nil, err
@@ -410,16 +422,21 @@ func listDocumentVersions(
 		current string
 		page    api.ContentVersionPage
 	}
-	result, err := daemonRead(ctx, lease, func(ctx context.Context, c *client.Client) (response, error) {
-		node, callErr := c.Node(ctx, input.NodeID)
+	result, err := daemonRead(ctx, lease, func(ctx context.Context, c *daemonconn.Connection) (response, error) {
+		node, callErr := c.API().GetNode(ctx, &apiclient.GetNodeRequestOptions{PathParams: &apiclient.GetNodePath{ID: input.NodeID}})
+
 		if callErr != nil {
 			return response{}, callErr
 		}
 		if node.Kind != "file" || node.TrashedAt != "" || node.Path == "" || node.CurrentVersionID == "" {
 			return response{}, store.ErrNotFound
 		}
-		page, callErr := c.Versions(ctx, input.NodeID, input.Limit, input.Offset)
-		return response{current: node.CurrentVersionID, page: page}, callErr
+		page, callErr := c.API().ListContentVersions(ctx, &apiclient.ListContentVersionsRequestOptions{PathParams: &apiclient.ListContentVersionsPath{ID: input.NodeID}, Query: &apiclient.ListContentVersionsQuery{Limit: new(int64(input.Limit)), Offset: new(int64(input.Offset))}})
+
+		if callErr != nil {
+			return response{}, callErr
+		}
+		return response{current: node.CurrentVersionID, page: *page}, nil
 	})
 	if err != nil {
 		return listDocumentVersionsOutput{}, err
@@ -452,7 +469,7 @@ func readRenditionText(ctx context.Context, lease *daemonLease, raw []byte) (any
 	if input.MaxChars == 0 {
 		input.MaxChars = defaultRenditionChars
 	}
-	window, err := daemonRead(ctx, lease, func(ctx context.Context, c *client.Client) (api.RenditionTextWindow, error) {
+	window, err := daemonRead(ctx, lease, func(ctx context.Context, c *daemonconn.Connection) (api.RenditionTextWindow, error) {
 		return c.RenditionTextWindow(ctx, input)
 	})
 	if err != nil {
@@ -474,8 +491,8 @@ func getProcessingPlan(ctx context.Context, lease *daemonLease, raw []byte) (any
 	if err := decodeReadArguments(raw, &input); err != nil {
 		return nil, err
 	}
-	plan, err := daemonRead(ctx, lease, func(ctx context.Context, c *client.Client) (api.ProcessingPlan, error) {
-		return c.PlanProcessing(ctx, api.ProcessingPlanRequest{Selector: input})
+	plan, err := daemonRead(ctx, lease, func(ctx context.Context, c *daemonconn.Connection) (*api.ProcessingPlan, error) {
+		return c.API().PlanDocumentProcessing(ctx, &apiclient.PlanDocumentProcessingRequestOptions{Body: &api.ProcessingPlanRequest{Selector: input}})
 	})
 	if err != nil {
 		return nil, err
@@ -483,7 +500,7 @@ func getProcessingPlan(ctx context.Context, lease *daemonLease, raw []byte) (any
 	if plan.Selector != input {
 		return nil, errors.New("processing plan response does not bind its selector")
 	}
-	return processingPlanOutput{ProcessingPlan: plan, privateCache: newPrivateCache()}, nil
+	return processingPlanOutput{ProcessingPlan: *plan, privateCache: newPrivateCache()}, nil
 }
 
 func getProcessingStatus(ctx context.Context, lease *daemonLease, raw []byte) (any, error) {
@@ -493,7 +510,7 @@ func getProcessingStatus(ctx context.Context, lease *daemonLease, raw []byte) (a
 	if err := decodeReadArguments(raw, &input); err != nil {
 		return nil, err
 	}
-	status, err := daemonRead(ctx, lease, func(ctx context.Context, c *client.Client) (api.ProcessingStatus, error) {
+	status, err := daemonRead(ctx, lease, func(ctx context.Context, c *daemonconn.Connection) (api.ProcessingStatus, error) {
 		return c.ProcessingStatus(ctx, input.JobID)
 	})
 	if err != nil {
@@ -542,9 +559,13 @@ func getProcessingCoverage(
 	if err := decodeReadArguments(raw, &input); err != nil {
 		return processingCoverageOutput{}, err
 	}
-	report, err := daemonRead(ctx, lease, func(ctx context.Context, c *client.Client) (api.CoverageReport, error) {
-		return c.DocumentCoverage(ctx, input.Profile, api.DocumentSourceFence{
-			VaultUID: input.VaultID, ContentVersionIDs: input.ContentVersionIDs})
+	vaultID, err := uuid.Parse(input.VaultID)
+	if err != nil {
+		return processingCoverageOutput{}, fmt.Errorf("parsing coverage vault ID: %w", err)
+	}
+	report, err := daemonRead(ctx, lease, func(ctx context.Context, c *daemonconn.Connection) (*api.CoverageReport, error) {
+		return c.API().GetDocumentProcessingCoverage(ctx, &apiclient.GetDocumentProcessingCoverageRequestOptions{Query: &apiclient.GetDocumentProcessingCoverageQuery{
+			Profile: input.Profile, VaultUID: vaultID, ContentVersionID: input.ContentVersionIDs}})
 	})
 	if err != nil {
 		return processingCoverageOutput{}, err

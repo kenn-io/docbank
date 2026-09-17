@@ -13,7 +13,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"go.kenn.io/docbank/internal/api"
-	"go.kenn.io/docbank/internal/client"
+	"go.kenn.io/docbank/internal/daemonconn"
 	"go.kenn.io/docbank/internal/store"
 )
 
@@ -81,7 +81,7 @@ func runGet(cmd *cobra.Command, rawSelector, rawOutput string) (retErr error) {
 		}
 	}()
 
-	c, err := client.Ensure(cmd.Context())
+	c, err := daemonconn.Ensure(cmd.Context())
 	if err != nil {
 		return err
 	}
@@ -107,7 +107,7 @@ func runGet(cmd *cobra.Command, rawSelector, rawOutput string) (retErr error) {
 			return fmt.Errorf("destination %s already exists; pass --overwrite to replace it: %w",
 				strconv.Quote(outputPath), os.ErrExist)
 		}
-		if errors.Is(err, client.ErrIntegrity) {
+		if errors.Is(err, daemonconn.ErrIntegrity) {
 			return integrityError(fmt.Errorf("downloading %q: %w", rawSelector, err))
 		}
 		return err
@@ -133,7 +133,7 @@ func runGet(cmd *cobra.Command, rawSelector, rawOutput string) (retErr error) {
 func stageAndPublishGet(
 	ctx context.Context,
 	staging *privateStaging,
-	stream *client.ContentStream,
+	stream *daemonconn.ContentStream,
 	total int64,
 	outputPath string,
 	overwrite bool,
@@ -214,7 +214,7 @@ func prepareGetDestination(raw string, overwrite bool) (string, error) {
 	return abs, nil
 }
 
-func validateGetStreamAuthority(stream *client.ContentStream, node api.Node) error {
+func validateGetStreamAuthority(stream *daemonconn.ContentStream, node api.Node) error {
 	if stream.VersionID == node.CurrentVersionID && stream.BlobHash == node.BlobHash &&
 		stream.Size == node.Size {
 		return nil

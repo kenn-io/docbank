@@ -4,7 +4,8 @@
   import RefreshCwIcon from "@lucide/svelte/icons/refresh-cw";
   import XIcon from "@lucide/svelte/icons/x";
   import { Button, Card, Chip, DetailDrawer, IconButton, Spinner } from "@kenn-io/kit-ui";
-  import { APIError, renditionArtifact, type RenditionArtifact } from "./api.js";
+  import { APIError } from "./api-transport.js";
+  import { renditionArtifact, type RenditionArtifact } from "./receipts.js";
 
   interface Props {
     session: string;

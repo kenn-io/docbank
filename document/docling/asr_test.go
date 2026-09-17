@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"math"
 	"mime"
@@ -33,6 +34,14 @@ var asrSpokenWAV []byte
 
 //go:embed testdata/asr-spoken.mp3
 var asrSpokenMP3 []byte
+
+func ExampleASRDisclosureFingerprint() {
+	descriptor := document.RenditionDescriptor{
+		ID: "docling.serve-v1", Fingerprint: strings.Repeat("1", 64),
+	}
+	fmt.Println(ASRDisclosureFingerprint(descriptor, "https://asr.example.com", strings.Repeat("2", 64)))
+	// Output: 2ea4e1d745be754b8e9ec61f625a860d265387bf7010401239c334817795e78f
+}
 
 func TestDoclingASRClampsEndToMeasuredDuration(t *testing.T) {
 	for _, end := range []float64{2.007, 2.008, 2.02} {

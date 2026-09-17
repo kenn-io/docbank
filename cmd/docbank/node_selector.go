@@ -8,7 +8,8 @@ import (
 	"strings"
 
 	"go.kenn.io/docbank/internal/api"
-	"go.kenn.io/docbank/internal/client"
+	"go.kenn.io/docbank/internal/apiclient"
+	"go.kenn.io/docbank/internal/daemonconn"
 	"go.kenn.io/docbank/internal/store"
 )
 
@@ -40,7 +41,7 @@ func parseNodeSelector(raw string) (nodeSelector, error) {
 	return selector, nil
 }
 
-func (s nodeSelector) resolve(ctx context.Context, c *client.Client) (api.Node, error) {
+func (s nodeSelector) resolve(ctx context.Context, c *daemonconn.Connection) (api.Node, error) {
 	n, err := s.resolveIncludingTrash(ctx, c)
 	if err != nil {
 		return api.Node{}, err
@@ -52,21 +53,21 @@ func (s nodeSelector) resolve(ctx context.Context, c *client.Client) (api.Node, 
 }
 
 func (s nodeSelector) resolveIncludingTrash(
-	ctx context.Context, c *client.Client,
+	ctx context.Context, c *daemonconn.Connection,
 ) (api.Node, error) {
 	var (
-		n   api.Node
+		n   *api.Node
 		err error
 	)
 	if s.id != 0 {
-		n, err = c.Node(ctx, s.id)
+		n, err = c.API().GetNode(ctx, &apiclient.GetNodeRequestOptions{PathParams: &apiclient.GetNodePath{ID: s.id}})
 	} else {
-		n, err = c.Stat(ctx, s.path)
+		n, err = c.API().ResolvePath(ctx, &apiclient.ResolvePathRequestOptions{Query: &apiclient.ResolvePathQuery{Path: s.path}})
 	}
 	if err != nil {
 		return api.Node{}, fmt.Errorf("resolving %q: %w", s.raw, err)
 	}
-	return n, nil
+	return *n, nil
 }
 
 func (s nodeSelector) isID() bool { return s.id != 0 }

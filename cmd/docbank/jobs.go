@@ -11,7 +11,8 @@ import (
 	"github.com/spf13/cobra"
 
 	"go.kenn.io/docbank/internal/api"
-	"go.kenn.io/docbank/internal/client"
+	"go.kenn.io/docbank/internal/apiclient"
+	"go.kenn.io/docbank/internal/daemonconn"
 )
 
 var jobsJSON bool
@@ -21,18 +22,19 @@ var jobsCmd = &cobra.Command{
 	Short: "Show daemon background-job status",
 	Args:  cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, _ []string) error {
-		c, err := client.Ensure(cmd.Context())
+		c, err := daemonconn.Ensure(cmd.Context())
 		if err != nil {
 			return err
 		}
-		items, err := c.Jobs(cmd.Context())
+		items, err := c.API().ListJobs(cmd.Context())
+
 		if err != nil {
 			return err
 		}
 		if jobsJSON {
-			return writeJobsJSON(cmd.OutOrStdout(), items)
+			return writeJobsJSON(cmd.OutOrStdout(), items.Items)
 		}
-		return writeJobs(cmd.OutOrStdout(), items)
+		return writeJobs(cmd.OutOrStdout(), items.Items)
 	},
 }
 
@@ -43,14 +45,15 @@ var jobsShowCmd = &cobra.Command{
 	Short: "Show one durable storage operation and its receipt",
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		if !client.IsCanonicalUUIDv4(args[0]) {
+		if !daemonconn.IsCanonicalUUIDv4(args[0]) {
 			return usageError(errors.New("operation ID must be a canonical UUIDv4"))
 		}
-		c, err := client.Ensure(cmd.Context())
+		c, err := daemonconn.Ensure(cmd.Context())
 		if err != nil {
 			return err
 		}
-		operation, err := c.StorageOperation(cmd.Context(), args[0])
+		operation, err := c.API().GetStorageOperation(cmd.Context(), &apiclient.GetStorageOperationRequestOptions{PathParams: &apiclient.GetStorageOperationPath{OperationID: args[0]}})
+
 		if err != nil {
 			return err
 		}
@@ -77,14 +80,15 @@ var jobsCancelCmd = &cobra.Command{
 	Short: "Request cancellation at the next durable object boundary",
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		if !client.IsCanonicalUUIDv4(args[0]) {
+		if !daemonconn.IsCanonicalUUIDv4(args[0]) {
 			return usageError(errors.New("operation ID must be a canonical UUIDv4"))
 		}
-		c, err := client.Ensure(cmd.Context())
+		c, err := daemonconn.Ensure(cmd.Context())
 		if err != nil {
 			return err
 		}
-		operation, err := c.CancelStorageOperation(cmd.Context(), args[0])
+		operation, err := c.API().CancelStorageOperation(cmd.Context(), &apiclient.CancelStorageOperationRequestOptions{PathParams: &apiclient.CancelStorageOperationPath{OperationID: args[0]}})
+
 		if err != nil {
 			return err
 		}

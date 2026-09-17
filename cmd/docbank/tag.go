@@ -11,7 +11,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"go.kenn.io/docbank/internal/api"
-	"go.kenn.io/docbank/internal/client"
+	"go.kenn.io/docbank/internal/daemonconn"
 )
 
 const maxTagLimit = 1000
@@ -44,7 +44,7 @@ var tagListCmd = &cobra.Command{
 		if err := validateTagPagination(tagListLimit, tagListOffset); err != nil {
 			return err
 		}
-		c, err := client.Ensure(cmd.Context())
+		c, err := daemonconn.Ensure(cmd.Context())
 		if err != nil {
 			return err
 		}
@@ -83,7 +83,7 @@ var tagShowCmd = &cobra.Command{
 	Short: "Inspect one tag",
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		c, err := client.Ensure(cmd.Context())
+		c, err := daemonconn.Ensure(cmd.Context())
 		if err != nil {
 			return err
 		}
@@ -103,7 +103,7 @@ var tagCreateCmd = &cobra.Command{
 	Short: "Define a tag with a new stable ID",
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		c, err := client.Ensure(cmd.Context())
+		c, err := daemonconn.Ensure(cmd.Context())
 		if err != nil {
 			return err
 		}
@@ -124,7 +124,7 @@ var tagRenameCmd = &cobra.Command{
 	Short: "Rename a tag without changing its stable ID",
 	Args:  cobra.ExactArgs(2),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		c, err := client.Ensure(cmd.Context())
+		c, err := daemonconn.Ensure(cmd.Context())
 		if err != nil {
 			return err
 		}
@@ -150,7 +150,7 @@ var tagDeleteCmd = &cobra.Command{
 	Short: "Delete a tag and all of its assignments",
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		c, err := client.Ensure(cmd.Context())
+		c, err := daemonconn.Ensure(cmd.Context())
 		if err != nil {
 			return err
 		}
@@ -197,7 +197,7 @@ var tagNodesCmd = &cobra.Command{
 		if err := validateTagPagination(tagNodesLimit, tagNodesOffset); err != nil {
 			return err
 		}
-		c, err := client.Ensure(cmd.Context())
+		c, err := daemonconn.Ensure(cmd.Context())
 		if err != nil {
 			return err
 		}
@@ -247,7 +247,7 @@ func changeTagAssignmentCLI(
 	if err != nil {
 		return err
 	}
-	c, err := client.Ensure(cmd.Context())
+	c, err := daemonconn.Ensure(cmd.Context())
 	if err != nil {
 		return err
 	}
@@ -298,8 +298,8 @@ func changeTagAssignmentCLI(
 	return nil
 }
 
-func resolveTag(cmd *cobra.Command, c *client.Client, selector string) (api.Tag, error) {
-	if client.IsCanonicalUUIDv4(selector) {
+func resolveTag(cmd *cobra.Command, c *daemonconn.Connection, selector string) (api.Tag, error) {
+	if daemonconn.IsCanonicalUUIDv4(selector) {
 		tag, err := c.Tag(cmd.Context(), selector)
 		if err != nil {
 			return api.Tag{}, fmt.Errorf("resolving tag %q: %w", selector, err)

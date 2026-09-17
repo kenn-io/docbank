@@ -1,26 +1,14 @@
 <script lang="ts">
+  import * as generated from "./generated/docbank.js";
   import { onMount } from "svelte";
   import ActivityIcon from "@lucide/svelte/icons/activity";
   import RefreshCwIcon from "@lucide/svelte/icons/refresh-cw";
   import SearchIcon from "@lucide/svelte/icons/search";
   import XIcon from "@lucide/svelte/icons/x";
   import { Button, Card, Chip, DetailDrawer, IconButton, SearchInput, Spinner } from "@kenn-io/kit-ui";
-  import {
-    APIError,
-    documentCoverage,
-    documentSearch,
-    processingPlan,
-    processingProfiles,
-    revokeProcessingConsent,
-    startProcessing,
-    type CoverageReport,
-    type DocumentSearchReport,
-    type Node,
-    type ProcessingPlan,
-    type ProcessingProfileSummary,
-    type ProcessingJob,
-    type ProcessingStatus,
-  } from "./api.js";
+  import { APIError } from "./api-transport.js";
+  import { documentSearch, startProcessing } from "./receipts.js";
+  import { type CoverageReport, type DocumentSearchReport, type Node, type ProcessingPlan, type ProcessingProfileSummary, type ProcessingJob, type ProcessingStatus } from "./generated/docbank.js";
 
   interface Props {
     session: string;
@@ -80,7 +68,7 @@
     loading = true;
     error = "";
     try {
-      profiles = await processingProfiles(session);
+      profiles = await generated.listDocumentProcessingProfiles({ session });
       if (request !== generation) return;
       profileName = profiles[0]?.name ?? "";
       if (profileName) await preview(request);
@@ -104,14 +92,14 @@
     searchReport = null;
     searching = false;
     try {
-      const next = await processingPlan(session, {
+      const next = await generated.planDocumentProcessing({ selector: ({
         node_id: node.id,
         content_version_id: node.current_version_id,
         profile: profileName,
-      });
+      }) }, { session });
       if (request !== generation) return;
       plan = next;
-      const nextCoverage = await documentCoverage(session, profileName, next.vault_uid, [node.current_version_id]);
+      const nextCoverage = await generated.getDocumentProcessingCoverage({ profile: profileName, vault_uid: next.vault_uid, content_version_id: [node.current_version_id] }, { session });
       if (request !== generation) return;
       coverage = nextCoverage;
     } catch (cause) {
@@ -137,7 +125,7 @@
       if (processingController !== active) return;
       job = result.job;
       status = result.status;
-      const nextCoverage = await documentCoverage(session, profileName, plan.vault_uid, [node.current_version_id], active.signal);
+      const nextCoverage = await generated.getDocumentProcessingCoverage({ profile: profileName, vault_uid: plan.vault_uid, content_version_id: [node.current_version_id] }, { session, signal: active.signal });
       if (processingController !== active) return;
       coverage = nextCoverage;
     } catch (cause) {
@@ -157,7 +145,7 @@
     loading = true;
     error = "";
     try {
-      await revokeProcessingConsent(session);
+      await generated.revokeDocumentProcessingConsent({ session });
       if (request !== generation) return;
       await preview(request);
     } catch (cause) {

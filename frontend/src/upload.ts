@@ -1,7 +1,9 @@
 import { hmac } from "@noble/hashes/hmac.js";
 import { sha256 } from "@noble/hashes/sha2.js";
 import { bytesToHex, utf8ToBytes } from "@noble/hashes/utils.js";
-import { APIError, type BrowserSession, type UploadReceipt } from "./api.js";
+import { APIError } from "./api-transport.js";
+import { type BrowserSession } from "./browser-session.js";
+import type { UploadReceipt } from "./generated/docbank.js";
 
 const hashChunkBytes = 1024 * 1024;
 const uploadSocketPath = "/api/daemon/web-upload";
