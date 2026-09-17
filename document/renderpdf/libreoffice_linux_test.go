@@ -18,6 +18,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/docbank/document/internal/providerutil/sandbox"
 )
 
 type countingRunner struct {
@@ -60,6 +61,43 @@ func TestLibreOfficeConvertsSafeDOCX(t *testing.T) {
 	require.NotNil(t, result)
 	assert.NotEmpty(t, result.PDF())
 	assert.Positive(t, result.Receipt().Pages)
+}
+
+func TestLibreOfficeInstalledProfileSchema(t *testing.T) {
+	executable := os.Getenv("DOCBANK_TEST_LIBREOFFICE_EXECUTABLE")
+	if executable == "" {
+		t.Skip("DOCBANK_TEST_LIBREOFFICE_EXECUTABLE is unset")
+	}
+	require.FileExists(t, executable)
+	var installed []byte
+	for _, path := range []string{
+		"/etc/libreoffice/registry/main.xcd",
+		"/usr/lib/libreoffice/share/registry/main.xcd",
+		"/usr/lib/libreoffice/share/.registry/main.xcd",
+	} {
+		data, err := os.ReadFile(path)
+		if err == nil {
+			installed = data
+			break
+		}
+	}
+	require.NotEmpty(t, installed)
+	text := string(installed)
+	assert.Contains(t, text, `<group oor:name="Security">`)
+	assert.Contains(t, text, `<group oor:name="Scripting">`)
+	for _, name := range []string{
+		"MacroSecurityLevel", "DisableMacrosExecution", "DisableActiveContent", "BlockUntrustedRefererLinks",
+	} {
+		assert.Contains(t, text, `oor:name="`+name+`"`)
+	}
+	settings := sandbox.PrivateProfileSettings()
+	assert.Contains(t, settings, `oor:path="/org.openoffice.Office.Common/Security/Scripting"`)
+	assert.Contains(t, settings, `oor:name="MacroSecurityLevel" oor:op="fuse"><value>3</value>`)
+	assert.Contains(t, settings, `oor:name="DisableMacrosExecution" oor:op="fuse"><value>true</value>`)
+	assert.Contains(t, settings, `oor:name="DisableActiveContent" oor:op="fuse"><value>true</value>`)
+	assert.Contains(t, settings, `oor:name="BlockUntrustedRefererLinks" oor:op="fuse"><value>true</value>`)
+	assert.NotContains(t, settings, "UpdateDocMode")
+	t.Log("installed main.xcd Security/Scripting and generated profile values match; UpdateDocMode absent")
 }
 
 func TestLibreOfficeColdProfileRestartsExactlyOnce(t *testing.T) {
@@ -216,7 +254,7 @@ func realLibreOfficePolicy(t *testing.T, runner Runner) Policy {
 	t.Helper()
 	executable := os.Getenv("DOCBANK_TEST_LIBREOFFICE_EXECUTABLE")
 	if executable == "" {
-		executable = "/usr/lib/libreoffice/program/soffice.bin"
+		t.Skip("DOCBANK_TEST_LIBREOFFICE_EXECUTABLE is unset")
 	}
 	content, err := os.ReadFile(executable)
 	require.NoError(t, err)

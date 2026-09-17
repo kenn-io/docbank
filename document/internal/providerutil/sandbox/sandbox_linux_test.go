@@ -54,36 +54,15 @@ func TestStrictExecProvidesPrivateProcAndTemporaryDirectory(t *testing.T) {
 	assert.Contains(t, string(result.Output), "proc=true;tmp=true")
 }
 
-func TestPrivateProfileSchemaMatchesInstalledRegistry(t *testing.T) {
-	var installed []byte
-	for _, path := range []string{
-		"/etc/libreoffice/registry/main.xcd",
-		"/usr/lib/libreoffice/share/registry/main.xcd",
-		"/usr/lib/libreoffice/share/.registry/main.xcd",
-	} {
-		data, err := os.ReadFile(path)
-		if err == nil {
-			installed = data
-			break
-		}
-	}
-	require.NotEmpty(t, installed)
-	text := string(installed)
-	assert.Contains(t, text, `<group oor:name="Security">`)
-	assert.Contains(t, text, `<group oor:name="Scripting">`)
-	for _, name := range []string{
-		"MacroSecurityLevel", "DisableMacrosExecution", "DisableActiveContent", "BlockUntrustedRefererLinks",
-	} {
-		assert.Contains(t, text, `oor:name="`+name+`"`)
-	}
-	settings := privateProfileSettings()
+func TestPrivateProfileSettingsContract(t *testing.T) {
+	settings := PrivateProfileSettings()
 	assert.Contains(t, settings, `oor:path="/org.openoffice.Office.Common/Security/Scripting"`)
 	assert.Contains(t, settings, `oor:name="MacroSecurityLevel" oor:op="fuse"><value>3</value>`)
 	assert.Contains(t, settings, `oor:name="DisableMacrosExecution" oor:op="fuse"><value>true</value>`)
 	assert.Contains(t, settings, `oor:name="DisableActiveContent" oor:op="fuse"><value>true</value>`)
 	assert.Contains(t, settings, `oor:name="BlockUntrustedRefererLinks" oor:op="fuse"><value>true</value>`)
 	assert.NotContains(t, settings, "UpdateDocMode")
-	t.Log("main.xcd Security/Scripting properties and generated registry path/values match; UpdateDocMode absent")
+	t.Log("synthetic profile contract matches Security/Scripting path and values; UpdateDocMode absent")
 }
 
 func TestAuthenticatedLaunchChecksTokenSealFstatAndExecutableBinding(t *testing.T) {

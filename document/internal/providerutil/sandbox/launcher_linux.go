@@ -234,6 +234,9 @@ func privateProfileSettings() string {
 		"</oor:items>"
 }
 
+// PrivateProfileSettings returns the profile XML used by supervised launches.
+func PrivateProfileSettings() string { return privateProfileSettings() }
+
 func writeBoundedInput(file *os.File, maxBytes int64) error {
 	data, err := io.ReadAll(io.LimitReader(os.Stdin, maxBytes+1))
 	if err != nil {
