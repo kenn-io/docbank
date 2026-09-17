@@ -29,7 +29,11 @@ Trafilatura and this package. It launches a sealed, SHA-256-verified
 executable, uses user, network, PID, and mount namespaces, remounts inherited
 host files read-only, and provides bounded private temporary storage. Landlock
 limits runtime reads. Seccomp limits network operations. The PID namespace
-owner reaps descendants when the context is canceled.
+owner reaps descendants after each supervised attempt and on cancellation.
+
+Render stages enable a policy-scoped local IPC allowance for LibreOffice's
+AF_UNIX socket transport. AF_INET and AF_INET6 socket creation and outbound
+network operations remain denied. Trafilatura keeps the strict default.
 
 Both LibreOffice stages use the same executable digest, fixed arguments,
 private profile, clean environment, and read-only runtime roots. The private

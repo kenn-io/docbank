@@ -10,6 +10,8 @@ import (
 	"os"
 	"os/exec"
 	"time"
+
+	"golang.org/x/sys/unix"
 )
 
 var (
@@ -53,6 +55,26 @@ func main() {
 		}
 		_ = connection.Close()
 		fmt.Print("connected")
+	case "file-network":
+		status := "denied"
+		connection, err := net.DialTimeout("tcp", networkAddress, time.Second)
+		if err == nil {
+			status = "connected"
+			_ = connection.Close()
+		}
+		if err := os.WriteFile("/tmp/work/"+outputName, []byte(status), 0o600); err != nil {
+			os.Exit(5)
+		}
+	case "local-ipc":
+		pair, err := unix.Socketpair(unix.AF_UNIX, unix.SOCK_STREAM, 0)
+		if err != nil {
+			os.Exit(7)
+		}
+		_ = unix.Close(pair[0])
+		_ = unix.Close(pair[1])
+		if err := os.WriteFile("/tmp/work/"+outputName, []byte("allowed"), 0o600); err != nil {
+			os.Exit(5)
+		}
 	case "unix-network":
 		connection, err := net.DialTimeout("unix", networkAddress, time.Second)
 		if err != nil {
@@ -97,6 +119,16 @@ func main() {
 		}
 	case "file-overflow":
 		if err := os.WriteFile("/tmp/work/"+outputName, make([]byte, 2048), 0o600); err != nil {
+			os.Exit(5)
+		}
+	case "file-descendant-exit":
+		command := exec.Command("/proc/self/exe", "--descendant")
+		command.Stdout = io.Discard
+		command.Stderr = io.Discard
+		if err := command.Start(); err != nil {
+			os.Exit(3)
+		}
+		if err := os.WriteFile("/tmp/work/"+outputName, []byte("supervised output"), 0o600); err != nil {
 			os.Exit(5)
 		}
 	case "exit-125":

@@ -112,6 +112,7 @@ func NewPolicy(renderer Renderer, limits Limits) (Policy, error) {
 		Profiles         []string `json:"profiles"`
 		RuntimePaths     []string `json:"runtime_paths"`
 		PrivateProfile   string   `json:"private_profile"`
+		AllowLocalIPC    bool     `json:"allow_local_ipc"`
 		Limits           struct {
 			MaxSourceBytes     int64 `json:"max_source_bytes"`
 			MaxNormalizedBytes int64 `json:"max_normalized_bytes"`
@@ -130,6 +131,7 @@ func NewPolicy(renderer Renderer, limits Limits) (Policy, error) {
 		}, Environment: libreOfficeEnvironment(),
 		Profiles: []string{"docx->fodt", "xlsx->fods"}, RuntimePaths: renderer.ReadOnlyPaths,
 		PrivateProfile: "file:///tmp/work/profile",
+		AllowLocalIPC:  true,
 		Limits: struct {
 			MaxSourceBytes     int64 `json:"max_source_bytes"`
 			MaxNormalizedBytes int64 `json:"max_normalized_bytes"`

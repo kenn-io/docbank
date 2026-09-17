@@ -190,6 +190,7 @@ func stageResult(request Request, output []byte) StageResult {
 			ExecutableSHA256: request.ExecutableSHA256, InputSHA256: request.InputSHA256,
 			OutputSHA256: digest(output), NetworkDisabled: true,
 			ProcessTreeContained: true, DigestVerifiedLaunch: true, FilesystemIsolated: true,
+			LocalIPCAllowed: request.AllowLocalIPC,
 		},
 	}
 }

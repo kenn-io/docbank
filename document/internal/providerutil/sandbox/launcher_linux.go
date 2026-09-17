@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"time"
 	"unsafe"
 
 	"golang.org/x/sys/unix"
@@ -108,7 +109,7 @@ func runLauncher(control launchControl, executableFD, statusFD int) error {
 	if err := installFilesystemLandlock(control.Policy.ReadOnlyPaths); err != nil {
 		return err
 	}
-	if err := installNetworkSeccomp(); err != nil {
+	if err := installNetworkSeccomp(control.Policy.AllowLocalIPC); err != nil {
 		return err
 	}
 	if err := unix.Close(launcherControlFD); err != nil {
@@ -217,6 +218,9 @@ func runSupervisedChild(control launchControl, executablePath string) error {
 			return fmt.Errorf("start sandbox supervised child: %w", err)
 		}
 		runErr := command.Wait()
+		if err := reapSupervisedDescendants(); err != nil {
+			return err
+		}
 		if runErr == nil {
 			break
 		}
@@ -227,6 +231,30 @@ func runSupervisedChild(control launchControl, executablePath string) error {
 		return fmt.Errorf("sandbox supervised child failed: %w", runErr)
 	}
 	return copySupervisedOutput(outputPath, supervision.MaxOutputBytes)
+}
+
+func reapSupervisedDescendants() error {
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		if err := unix.Kill(-1, unix.SIGKILL); err != nil && !errors.Is(err, unix.ESRCH) {
+			return fmt.Errorf("terminate sandbox supervised descendants: %w", err)
+		}
+		var status unix.WaitStatus
+		pid, err := unix.Wait4(-1, &status, unix.WNOHANG, nil)
+		if errors.Is(err, unix.ECHILD) {
+			return nil
+		}
+		if err != nil {
+			return fmt.Errorf("reap sandbox supervised descendants: %w", err)
+		}
+		if pid > 0 {
+			continue
+		}
+		if time.Now().After(deadline) {
+			return errors.New("sandbox supervised descendants did not exit")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
 }
 
 func writePrivateProfile() error {
@@ -389,12 +417,12 @@ func writeLauncherStatus(fd int, status byte) error {
 	return nil
 }
 
-func installNetworkSeccomp() error {
+func installNetworkSeccomp(allowLocalIPC bool) error {
 	architecture, ok := auditArchitecture()
 	if !ok {
 		return unix.ENOTSUP
 	}
-	filters, err := buildNetworkSeccompFilters(architecture)
+	filters, err := buildNetworkSeccompFilters(architecture, allowLocalIPC)
 	if err != nil {
 		return err
 	}
@@ -408,7 +436,7 @@ func installNetworkSeccomp() error {
 	return nil
 }
 
-func buildNetworkSeccompFilters(architecture uint32) ([]unix.SockFilter, error) {
+func buildNetworkSeccompFilters(architecture uint32, allowLocalIPC bool) ([]unix.SockFilter, error) {
 	if architecture != unix.AUDIT_ARCH_X86_64 && architecture != unix.AUDIT_ARCH_AARCH64 {
 		return nil, unix.ENOTSUP
 	}
@@ -424,20 +452,22 @@ func buildNetworkSeccompFilters(architecture uint32) ([]unix.SockFilter, error) 
 			unix.SockFilter{Code: unix.BPF_RET | unix.BPF_K, K: unix.SECCOMP_RET_ERRNO | uint32(unix.EPERM)},
 		)
 	}
-	filters = append(filters,
-		unix.SockFilter{Code: unix.BPF_JMP | unix.BPF_JEQ | unix.BPF_K, Jf: 4, K: uint32(unix.SYS_SOCKET)},
-		unix.SockFilter{Code: unix.BPF_LD | unix.BPF_W | unix.BPF_ABS, K: 16},
-		unix.SockFilter{Code: unix.BPF_JMP | unix.BPF_JEQ | unix.BPF_K, Jt: 1, K: uint32(unix.AF_UNIX)},
-		unix.SockFilter{Code: unix.BPF_RET | unix.BPF_K, K: unix.SECCOMP_RET_ERRNO | uint32(unix.EPERM)},
-		unix.SockFilter{Code: unix.BPF_RET | unix.BPF_K, K: unix.SECCOMP_RET_ALLOW},
-		unix.SockFilter{Code: unix.BPF_JMP | unix.BPF_JEQ | unix.BPF_K, Jf: 4, K: uint32(unix.SYS_SOCKETPAIR)},
-		unix.SockFilter{Code: unix.BPF_LD | unix.BPF_W | unix.BPF_ABS, K: 16},
-		unix.SockFilter{Code: unix.BPF_JMP | unix.BPF_JEQ | unix.BPF_K, Jt: 1, K: uint32(unix.AF_UNIX)},
-		unix.SockFilter{Code: unix.BPF_RET | unix.BPF_K, K: unix.SECCOMP_RET_ERRNO | uint32(unix.EPERM)},
-		unix.SockFilter{Code: unix.BPF_RET | unix.BPF_K, K: unix.SECCOMP_RET_ALLOW},
-		unix.SockFilter{Code: unix.BPF_LD | unix.BPF_W | unix.BPF_ABS, K: 0},
-	)
-	for _, syscallNumber := range blockedNetworkSyscalls() {
+	if allowLocalIPC {
+		filters = append(filters,
+			unix.SockFilter{Code: unix.BPF_JMP | unix.BPF_JEQ | unix.BPF_K, Jf: 4, K: uint32(unix.SYS_SOCKET)},
+			unix.SockFilter{Code: unix.BPF_LD | unix.BPF_W | unix.BPF_ABS, K: 16},
+			unix.SockFilter{Code: unix.BPF_JMP | unix.BPF_JEQ | unix.BPF_K, Jt: 1, K: uint32(unix.AF_UNIX)},
+			unix.SockFilter{Code: unix.BPF_RET | unix.BPF_K, K: unix.SECCOMP_RET_ERRNO | uint32(unix.EPERM)},
+			unix.SockFilter{Code: unix.BPF_RET | unix.BPF_K, K: unix.SECCOMP_RET_ALLOW},
+			unix.SockFilter{Code: unix.BPF_JMP | unix.BPF_JEQ | unix.BPF_K, Jf: 4, K: uint32(unix.SYS_SOCKETPAIR)},
+			unix.SockFilter{Code: unix.BPF_LD | unix.BPF_W | unix.BPF_ABS, K: 16},
+			unix.SockFilter{Code: unix.BPF_JMP | unix.BPF_JEQ | unix.BPF_K, Jt: 1, K: uint32(unix.AF_UNIX)},
+			unix.SockFilter{Code: unix.BPF_RET | unix.BPF_K, K: unix.SECCOMP_RET_ERRNO | uint32(unix.EPERM)},
+			unix.SockFilter{Code: unix.BPF_RET | unix.BPF_K, K: unix.SECCOMP_RET_ALLOW},
+			unix.SockFilter{Code: unix.BPF_LD | unix.BPF_W | unix.BPF_ABS, K: 0},
+		)
+	}
+	for _, syscallNumber := range blockedNetworkSyscalls(allowLocalIPC) {
 		filters = append(filters,
 			unix.SockFilter{Code: unix.BPF_JMP | unix.BPF_JEQ | unix.BPF_K, Jf: 1, K: uint32(syscallNumber)}, //nolint:gosec // Linux syscall numbers are nonnegative uint32 values
 			unix.SockFilter{Code: unix.BPF_RET | unix.BPF_K, K: unix.SECCOMP_RET_ERRNO | uint32(unix.EPERM)},
@@ -458,8 +488,19 @@ func auditArchitecture() (uint32, bool) {
 	}
 }
 
-func blockedNetworkSyscalls() []uintptr {
+func blockedNetworkSyscalls(localIPC bool) []uintptr {
+	if localIPC {
+		return []uintptr{
+			unix.SYS_SENDTO, unix.SYS_SENDMSG, unix.SYS_SENDMMSG,
+			unix.SYS_RECVFROM, unix.SYS_RECVMSG, unix.SYS_RECVMMSG,
+			unix.SYS_SHUTDOWN, unix.SYS_GETSOCKNAME, unix.SYS_GETPEERNAME,
+			unix.SYS_SETSOCKOPT, unix.SYS_GETSOCKOPT,
+			unix.SYS_IO_URING_SETUP, unix.SYS_IO_URING_ENTER, unix.SYS_IO_URING_REGISTER,
+		}
+	}
 	return []uintptr{
+		unix.SYS_SOCKET, unix.SYS_SOCKETPAIR,
+		unix.SYS_CONNECT, unix.SYS_BIND, unix.SYS_LISTEN, unix.SYS_ACCEPT, unix.SYS_ACCEPT4,
 		unix.SYS_SENDTO, unix.SYS_SENDMSG, unix.SYS_SENDMMSG,
 		unix.SYS_RECVFROM, unix.SYS_RECVMSG, unix.SYS_RECVMMSG,
 		unix.SYS_SHUTDOWN, unix.SYS_GETSOCKNAME, unix.SYS_GETPEERNAME,

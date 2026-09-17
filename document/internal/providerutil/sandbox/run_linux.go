@@ -142,7 +142,7 @@ func (nativeRunner) Run(ctx context.Context, request Request) (Result, error) {
 			RunnerIdentity: NativeRunnerIdentity, PolicyFingerprint: request.PolicyFingerprint,
 			ExecutableSHA256: request.Policy.ExecutableSHA256, StdinSHA256: request.StdinSHA256,
 			NetworkDisabled: true, ProcessTreeContained: true, DigestVerifiedLaunch: true,
-			FilesystemIsolated: true,
+			FilesystemIsolated: true, LocalIPCAllowed: request.Policy.AllowLocalIPC,
 		},
 	}
 	result.Output = slices.Clone(result.Stdout)

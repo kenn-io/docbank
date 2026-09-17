@@ -178,7 +178,7 @@ func stageRequest(policy Policy, profile formatProfile, stage string, input []by
 		Environment:      libreOfficeEnvironment(), Directory: filepath.Dir(policy.renderer.Executable),
 		InputName: inputName, OutputName: outputName, Input: bytes.Clone(input), InputSHA256: stdinDigest,
 		MaxOutputBytes: stageOutputLimit(policy.limits, stage), MaxWorkBytes: policy.limits.MaxWorkBytes,
-		PolicyFingerprint: policy.fingerprint,
+		PolicyFingerprint: policy.fingerprint, AllowLocalIPC: true,
 	}
 }
 
@@ -254,7 +254,8 @@ func validateStageResult(request Request, result StageResult, runnerIdentity str
 	if attestation.RunnerIdentity != runnerIdentity || attestation.PolicyFingerprint != request.PolicyFingerprint ||
 		attestation.ExecutableSHA256 != request.ExecutableSHA256 || attestation.InputSHA256 != request.InputSHA256 ||
 		attestation.OutputSHA256 != digest(output) || !attestation.NetworkDisabled ||
-		!attestation.ProcessTreeContained || !attestation.DigestVerifiedLaunch || !attestation.FilesystemIsolated {
+		!attestation.ProcessTreeContained || !attestation.DigestVerifiedLaunch || !attestation.FilesystemIsolated ||
+		attestation.LocalIPCAllowed != request.AllowLocalIPC {
 		return nil, errors.New("stage did not attest exact policy and bytes")
 	}
 	return bytes.Clone(output), nil

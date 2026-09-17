@@ -32,6 +32,7 @@ type Request struct {
 	MaxOutputBytes    int64
 	MaxWorkBytes      int64
 	PolicyFingerprint string
+	AllowLocalIPC     bool
 }
 
 type RunRequest = Request
@@ -47,6 +48,7 @@ type Attestation struct {
 	ProcessTreeContained bool
 	DigestVerifiedLaunch bool
 	FilesystemIsolated   bool
+	LocalIPCAllowed      bool
 }
 
 // StageResult owns the bytes returned by a stage and its attestation.
@@ -82,7 +84,8 @@ func (runner nativeRunner) Run(ctx context.Context, request Request) (StageResul
 		Arguments: slices.Clone(request.Arguments), Environment: slices.Clone(request.Environment),
 		Directory: request.Directory, ReadOnlyPaths: slices.Clone(runner.readOnlyPaths),
 		MaxStdinBytes: max(int64(len(request.Input)), 1), MaxStdoutBytes: request.MaxOutputBytes,
-		WorkBytes: request.MaxWorkBytes,
+		WorkBytes:     request.MaxWorkBytes,
+		AllowLocalIPC: request.AllowLocalIPC,
 		Supervision: sandbox.Supervision{
 			Mode: sandbox.SupervisedFileMode, InputName: request.InputName, OutputName: request.OutputName,
 			WorkBytes: request.MaxWorkBytes, MaxOutputBytes: request.MaxOutputBytes,
@@ -100,6 +103,7 @@ func (runner nativeRunner) Run(ctx context.Context, request Request) (StageResul
 		ProcessTreeContained: sandboxResult.Attestation.ProcessTreeContained,
 		DigestVerifiedLaunch: sandboxResult.Attestation.DigestVerifiedLaunch,
 		FilesystemIsolated:   sandboxResult.Attestation.FilesystemIsolated,
+		LocalIPCAllowed:      sandboxResult.Attestation.LocalIPCAllowed,
 	}}
 	if err != nil {
 		return result, err

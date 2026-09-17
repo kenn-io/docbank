@@ -39,6 +39,12 @@ func (runner *countingRunner) count() int {
 	return len(runner.calls)
 }
 
+func (runner *countingRunner) call(index int) Request {
+	runner.mu.Lock()
+	defer runner.mu.Unlock()
+	return runner.calls[index]
+}
+
 func TestLibreOfficeConvertsSafeDOCX(t *testing.T) {
 	policy := realLibreOfficePolicy(t, nil)
 	content := realDOCX(false)
@@ -91,9 +97,14 @@ func TestLibreOfficeRejectsOrStripsExternalDOCXRelationship(t *testing.T) {
 	if err == nil {
 		require.NotNil(t, result)
 		assert.Equal(t, 2, runner.count())
+		stage := runner.call(1)
+		assert.NotContains(t, string(stage.Input), "external.png")
+		assert.Equal(t, digest(stage.Input), stage.InputSHA256)
+		t.Logf("admission branch: strip; stage calls=%d; normalized input sha256=%s", runner.count(), stage.InputSHA256)
 	} else {
 		assert.Nil(t, result)
 		assert.Equal(t, 1, runner.count())
+		t.Logf("admission branch: reject; stage calls=%d; error=%v", runner.count(), err)
 	}
 }
 
@@ -107,9 +118,15 @@ func TestLibreOfficeRejectsOrStripsLinkedXLSXField(t *testing.T) {
 	if err == nil {
 		require.NotNil(t, result)
 		assert.Equal(t, 2, runner.count())
+		stage := runner.call(1)
+		assert.NotContains(t, string(stage.Input), "WEBSERVICE")
+		assert.NotContains(t, string(stage.Input), "example.test")
+		assert.Equal(t, digest(stage.Input), stage.InputSHA256)
+		t.Logf("admission branch: strip; stage calls=%d; normalized input sha256=%s", runner.count(), stage.InputSHA256)
 	} else {
 		assert.Nil(t, result)
 		assert.Equal(t, 1, runner.count())
+		t.Logf("admission branch: reject; stage calls=%d; error=%v", runner.count(), err)
 	}
 }
 

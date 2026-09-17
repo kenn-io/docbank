@@ -156,7 +156,7 @@ func TestSeccompDeniesPathnameUnixSockets(t *testing.T) {
 		if err := unix.Prctl(unix.PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0); err != nil {
 			os.Exit(10)
 		}
-		if err := installNetworkSeccomp(); err != nil {
+		if err := installNetworkSeccomp(false); err != nil {
 			os.Exit(11)
 		}
 		connection, err := net.DialTimeout("unix", socketPath, time.Second)
@@ -187,7 +187,7 @@ func TestSeccompFilterDeniesX32ABI(t *testing.T) {
 	if runtime.GOARCH != "amd64" {
 		t.Skip("x32 ABI exists only on amd64")
 	}
-	filters, err := buildNetworkSeccompFilters(unix.AUDIT_ARCH_X86_64)
+	filters, err := buildNetworkSeccompFilters(unix.AUDIT_ARCH_X86_64, false)
 	require.NoError(t, err)
 	denied := unix.SECCOMP_RET_ERRNO | uint32(unix.EPERM)
 	for name, syscallNumber := range map[string]uint32{
@@ -196,16 +196,36 @@ func TestSeccompFilterDeniesX32ABI(t *testing.T) {
 		"io_uring": unix.SYS_IO_URING_SETUP,
 	} {
 		t.Run(name, func(t *testing.T) {
-			if name == "connect" || name == "socket" {
-				assert.Equal(t, uint32(unix.SECCOMP_RET_ALLOW), evaluateSeccomp(t, filters, syscallNumber))
-			} else {
-				assert.Equal(t, denied, evaluateSeccomp(t, filters, syscallNumber))
-			}
+			assert.Equal(t, denied, evaluateSeccomp(t, filters, syscallNumber))
 			assert.Equal(t, denied, evaluateSeccomp(t, filters, syscallNumber|nativeX32SyscallBit))
 		})
 	}
 	assert.Equal(t, uint32(unix.SECCOMP_RET_ALLOW), evaluateSeccomp(t, filters, unix.SYS_GETPID))
 	assert.Equal(t, denied, evaluateSeccomp(t, filters, unix.SYS_GETPID|nativeX32SyscallBit))
+}
+
+func TestSeccompPolicyScopedLocalIPC(t *testing.T) {
+	strict, err := buildNetworkSeccompFilters(unix.AUDIT_ARCH_X86_64, false)
+	require.NoError(t, err)
+	local, err := buildNetworkSeccompFilters(unix.AUDIT_ARCH_X86_64, true)
+	require.NoError(t, err)
+	denied := unix.SECCOMP_RET_ERRNO | uint32(unix.EPERM)
+	for _, syscallNumber := range []uint32{
+		unix.SYS_SOCKET, unix.SYS_SOCKETPAIR, unix.SYS_CONNECT, unix.SYS_BIND,
+		unix.SYS_LISTEN, unix.SYS_ACCEPT, unix.SYS_ACCEPT4,
+	} {
+		assert.Equal(t, denied, evaluateSeccompDomain(t, strict, syscallNumber, unix.AF_UNIX))
+	}
+	for _, domain := range []uint32{unix.AF_INET, unix.AF_INET6, unix.AF_NETLINK} {
+		assert.Equal(t, denied, evaluateSeccompDomain(t, local, unix.SYS_SOCKET, domain))
+		assert.Equal(t, denied, evaluateSeccompDomain(t, local, unix.SYS_SOCKETPAIR, domain))
+	}
+	assert.Equal(t, uint32(unix.SECCOMP_RET_ALLOW), evaluateSeccompDomain(t, local, unix.SYS_SOCKET, unix.AF_UNIX))
+	assert.Equal(t, uint32(unix.SECCOMP_RET_ALLOW), evaluateSeccompDomain(t, local, unix.SYS_SOCKETPAIR, unix.AF_UNIX))
+	for _, syscallNumber := range []uint32{unix.SYS_CONNECT, unix.SYS_BIND, unix.SYS_LISTEN, unix.SYS_ACCEPT, unix.SYS_ACCEPT4} {
+		assert.Equal(t, uint32(unix.SECCOMP_RET_ALLOW), evaluateSeccompDomain(t, local, syscallNumber, unix.AF_UNIX))
+	}
+	assert.Equal(t, denied, evaluateSeccompDomain(t, local, unix.SYS_SENDMSG, unix.AF_UNIX))
 }
 
 func TestLauncherRequiresSealedMatchingInheritedControl(t *testing.T) {
@@ -214,6 +234,11 @@ func TestLauncherRequiresSealedMatchingInheritedControl(t *testing.T) {
 	_, err := newNativeRunner()
 	require.NoError(t, err)
 	request := sandboxTestRequest(t, executable, stdin, 1<<20)
+	request.Policy.AllowLocalIPC = true
+	request.Policy.Supervision = Supervision{
+		Mode: SupervisedFileMode, InputName: "input", OutputName: "output",
+		WorkBytes: 1 << 20, MaxOutputBytes: 1 << 20,
+	}
 	control, token, err := openLaunchControl(request)
 	require.NoError(t, err)
 	defer func() { _ = control.Close() }()
@@ -221,6 +246,7 @@ func TestLauncherRequiresSealedMatchingInheritedControl(t *testing.T) {
 	decoded, authenticated := authenticatedLaunch(arguments, int(control.Fd()))
 	assert.True(t, authenticated)
 	assert.Equal(t, request.Policy.Executable, decoded.Policy.Executable)
+	assert.True(t, decoded.Policy.AllowLocalIPC)
 	_, authenticated = authenticatedLaunch(arguments, -1)
 	assert.False(t, authenticated)
 	arguments[2] = strings.Repeat("0", launcherTokenBytes*2)
@@ -238,12 +264,39 @@ func TestSupervisedRunnerReturnsDeclaredOutput(t *testing.T) {
 		Mode: SupervisedFileMode, InputName: "source.docx", OutputName: "result.bin",
 		WorkBytes: 1 << 20, MaxOutputBytes: 1 << 20,
 	}
+	request.Policy.AllowLocalIPC = true
 	require.NoError(t, request.validate())
 	result, err := runner.Run(t.Context(), request)
 	skipUnavailableSandbox(t, err)
 	require.NoError(t, err)
 	assert.Equal(t, []byte("supervised output"), result.Stdout)
 	assert.Equal(t, result.Stdout, result.Output)
+}
+
+func TestSupervisedRunnerLocalIPCScope(t *testing.T) {
+	runner, err := newNativeRunner()
+	require.NoError(t, err)
+	localIPC := sandboxTestRequest(t, buildSandboxHelper(t, "local-ipc", "", "result.bin"), []byte("input"), 1<<20)
+	localIPC.Policy.AllowLocalIPC = true
+	localIPC.Policy.Supervision = Supervision{
+		Mode: SupervisedFileMode, InputName: "source.docx", OutputName: "result.bin",
+		WorkBytes: 1 << 20, MaxOutputBytes: 1 << 20,
+	}
+	result, err := runner.Run(t.Context(), localIPC)
+	skipUnavailableSandbox(t, err)
+	require.NoError(t, err)
+	assert.Equal(t, []byte("allowed"), result.Output)
+
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	defer func() { _ = listener.Close() }()
+	network := sandboxTestRequest(t, buildSandboxHelper(t, "file-network", listener.Addr().String(), "result.bin"), []byte("input"), 1<<20)
+	network.Policy.AllowLocalIPC = true
+	network.Policy.Supervision = localIPC.Policy.Supervision
+	result, err = runner.Run(t.Context(), network)
+	skipUnavailableSandbox(t, err)
+	require.NoError(t, err)
+	assert.Equal(t, []byte("denied"), result.Output)
 }
 
 func TestSupervisedRunnerRejectsOutputOverflow(t *testing.T) {
@@ -259,6 +312,24 @@ func TestSupervisedRunnerRejectsOutputOverflow(t *testing.T) {
 	skipUnavailableSandbox(t, err)
 	require.ErrorIs(t, err, ErrOutputTooLarge)
 	assert.LessOrEqual(t, int64(len(result.Stdout)), request.Policy.MaxStdoutBytes)
+}
+
+func TestSupervisedRunnerReapsAdoptedDescendantAfterDirectExit(t *testing.T) {
+	executable := buildSandboxHelper(t, "file-descendant-exit", "", "result.bin")
+	runner, err := newNativeRunner()
+	require.NoError(t, err)
+	request := sandboxTestRequest(t, executable, []byte("input"), 1<<20)
+	request.Policy.AllowLocalIPC = true
+	request.Policy.Supervision = Supervision{
+		Mode: SupervisedFileMode, InputName: "source.docx", OutputName: "result.bin",
+		WorkBytes: 1 << 20, MaxOutputBytes: 1 << 20,
+	}
+	started := time.Now()
+	result, err := runner.Run(t.Context(), request)
+	skipUnavailableSandbox(t, err)
+	require.NoError(t, err)
+	assert.Equal(t, []byte("supervised output"), result.Output)
+	assert.Less(t, time.Since(started), 2*time.Second)
 }
 
 func TestSupervisedRunnerNeverLaunchesReplacementExecutable(t *testing.T) {
@@ -417,6 +488,11 @@ func skipUnavailableSandbox(t *testing.T, err error) {
 
 func evaluateSeccomp(t *testing.T, filters []unix.SockFilter, syscallNumber uint32) uint32 {
 	t.Helper()
+	return evaluateSeccompDomain(t, filters, syscallNumber, unix.AF_UNIX)
+}
+
+func evaluateSeccompDomain(t *testing.T, filters []unix.SockFilter, syscallNumber, domain uint32) uint32 {
+	t.Helper()
 	accumulator := uint32(0)
 	for programCounter, steps := 0, 0; programCounter < len(filters) && steps <= len(filters); steps++ {
 		instruction := filters[programCounter]
@@ -428,7 +504,7 @@ func evaluateSeccomp(t *testing.T, filters []unix.SockFilter, syscallNumber uint
 			case 4:
 				accumulator = unix.AUDIT_ARCH_X86_64
 			case 16:
-				accumulator = unix.AF_UNIX
+				accumulator = domain
 			default:
 				require.FailNow(t, "unexpected seccomp load offset", "%d", instruction.K)
 			}

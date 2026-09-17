@@ -28,6 +28,18 @@ func TestPolicyValidateRejectsUnsafeWorkNames(t *testing.T) {
 	}
 }
 
+func TestPolicyValidateRejectsLocalIPCOutsideSupervisedMode(t *testing.T) {
+	executable, err := filepath.Abs("renderer")
+	require.NoError(t, err)
+	policy := Policy{
+		Executable: executable, ExecutableSHA256: strings.Repeat("a", sha256.Size*2),
+		Arguments: []string{"--fixed"}, Environment: []string{"LANG=C"},
+		Directory: filepath.Dir(executable), MaxStdinBytes: 1, MaxStdoutBytes: 1,
+		WorkBytes: 1, AllowLocalIPC: true,
+	}
+	require.Error(t, policy.Validate())
+}
+
 func TestControlRoundTripIsBoundedAndAuthenticated(t *testing.T) {
 	executable, err := filepath.Abs("renderer")
 	require.NoError(t, err)

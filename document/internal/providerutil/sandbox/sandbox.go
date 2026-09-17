@@ -59,6 +59,7 @@ type Policy struct {
 	Environment      []string    `json:"environment"`
 	Directory        string      `json:"directory"`
 	ReadOnlyPaths    []string    `json:"read_only_paths,omitempty"`
+	AllowLocalIPC    bool        `json:"allow_local_ipc,omitempty"`
 	WorkBytes        int64       `json:"work_bytes,omitempty"`
 	MaxStdinBytes    int64       `json:"max_stdin_bytes,omitempty"`
 	MaxStdoutBytes   int64       `json:"max_stdout_bytes"`
@@ -89,6 +90,7 @@ type Attestation struct {
 	ProcessTreeContained bool
 	DigestVerifiedLaunch bool
 	FilesystemIsolated   bool
+	LocalIPCAllowed      bool
 }
 
 // Result owns the bounded bytes returned by a sandbox run.
@@ -141,6 +143,9 @@ func (policy Policy) Validate() error {
 	supervision := policy.supervision()
 	if supervision.Mode != ExecMode && supervision.Mode != SupervisedFileMode {
 		return errors.New("sandbox mode is invalid")
+	}
+	if policy.AllowLocalIPC && supervision.Mode != SupervisedFileMode {
+		return errors.New("sandbox local IPC is available only for supervised file mode")
 	}
 	if supervision.Mode == SupervisedFileMode {
 		if err := validateWorkName(supervision.InputName, "input"); err != nil {
