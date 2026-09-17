@@ -9,8 +9,9 @@ import (
 )
 
 var (
-	ErrInvalidProfile = errors.New("invalid_package_profile: unknown or unusable load-file profile")
-	ErrMalformedInput = errors.New("malformed_package_input: corrupt or out-of-bounds load-file content")
+	ErrInvalidProfile  = errors.New("invalid_package_profile: unknown or unusable load-file profile")
+	ErrUnrepresentable = errors.New("package_unrepresentable: output cannot preserve the supplied value")
+	ErrMalformedInput  = errors.New("malformed_package_input: corrupt or out-of-bounds load-file content")
 )
 
 type Profile struct {

@@ -33,6 +33,9 @@ func TestMediaRetryAdmissionOrderWithEqualClockTimes(t *testing.T) {
 		current, err := s.latestMediaProcessingReceipt(ctx, "operator", sourceID, false)
 		require.NoError(t, err)
 		require.Equal(t, newer, current.OperationID)
+		coverage, err := s.latestMediaProcessingReceipt(ctx, "operator", sourceID, true)
+		require.NoError(t, err)
+		require.Equal(t, older, coverage.OperationID)
 
 		var exported bytes.Buffer
 		require.NoError(t, s.ExportMetadata(ctx, &exported))
@@ -41,6 +44,9 @@ func TestMediaRetryAdmissionOrderWithEqualClockTimes(t *testing.T) {
 		current, err = restored.latestMediaProcessingReceipt(ctx, "operator", sourceID, false)
 		require.NoError(t, err)
 		require.Equal(t, newer, current.OperationID)
+		coverage, err = restored.latestMediaProcessingReceipt(ctx, "operator", sourceID, true)
+		require.NoError(t, err)
+		require.Equal(t, older, coverage.OperationID)
 	})
 }
 

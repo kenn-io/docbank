@@ -7,6 +7,7 @@ import (
 	"io"
 	"unicode/utf8"
 
+	"golang.org/x/text/encoding"
 	"golang.org/x/text/encoding/charmap"
 	"golang.org/x/text/encoding/unicode"
 )
@@ -25,39 +26,27 @@ const (
 	encodingISO88591
 )
 
+var loadfileEncodings = map[string]struct {
+	kind          sourceEncoding
+	input, output encoding.Encoding
+}{
+	"utf-8":        {encodingUTF8, encoding.Nop, encoding.Nop},
+	"utf-8-bom":    {encodingUTF8, encoding.Nop, unicode.UTF8BOM},
+	"utf-16le":     {encodingUTF16LE, unicode.UTF16(unicode.LittleEndian, unicode.IgnoreBOM), unicode.UTF16(unicode.LittleEndian, unicode.UseBOM)},
+	"utf-16be":     {encodingUTF16BE, unicode.UTF16(unicode.BigEndian, unicode.IgnoreBOM), unicode.UTF16(unicode.BigEndian, unicode.UseBOM)},
+	"windows-1252": {encodingWindows1252, charmap.Windows1252, charmap.Windows1252},
+	"iso-8859-1":   {encodingISO88591, charmap.ISO8859_1, charmap.ISO8859_1},
+}
+
 func Decoder(name string) (func(io.Reader) io.Reader, error) {
-	var (
-		kind      sourceEncoding
-		converter func(io.Reader) io.Reader
-	)
-	switch name {
-	case encodingNameUTF8, "utf-8-bom":
-		kind = encodingUTF8
-		converter = func(r io.Reader) io.Reader { return r }
-	case "utf-16le":
-		kind = encodingUTF16LE
-		converter = func(reader io.Reader) io.Reader {
-			return unicode.UTF16(unicode.LittleEndian, unicode.IgnoreBOM).NewDecoder().Reader(reader)
-		}
-	case "utf-16be":
-		kind = encodingUTF16BE
-		converter = func(reader io.Reader) io.Reader {
-			return unicode.UTF16(unicode.BigEndian, unicode.IgnoreBOM).NewDecoder().Reader(reader)
-		}
-	case "windows-1252":
-		kind = encodingWindows1252
-		converter = charmap.Windows1252.NewDecoder().Reader
-	case "iso-8859-1":
-		kind = encodingISO88591
-		converter = charmap.ISO8859_1.NewDecoder().Reader
-	default:
+	codec, ok := loadfileEncodings[name]
+	if !ok {
 		return nil, fmt.Errorf("%w: unsupported encoding %q", ErrInvalidProfile, name)
 	}
-
 	return func(source io.Reader) io.Reader {
 		bomChecked := &bomReader{source: source, declared: name}
-		validated := &validatingReader{source: bomChecked, kind: kind}
-		return converter(validated)
+		validated := &validatingReader{source: bomChecked, kind: codec.kind}
+		return codec.input.NewDecoder().Reader(validated)
 	}, nil
 }
 
