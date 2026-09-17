@@ -95,6 +95,28 @@ func (r *webSessionRegistry) authenticate(token string) (string, context.Context
 	return hex.EncodeToString(digest[:]), state.ctx, true
 }
 
+// withActiveOwner serializes a browser-owned publication with revocation.
+// If publication wins, revoke's owner callback removes the new resource. If
+// revocation wins, action is never called. The master credential does not use
+// this browser-session fence.
+func (r *webSessionRegistry) withActiveOwner(owner string, action func() error) (bool, error) {
+	decoded, err := hex.DecodeString(owner)
+	if err != nil || len(decoded) != sha256.Size {
+		return false, nil
+	}
+	var digest [sha256.Size]byte
+	copy(digest[:], decoded)
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.closing {
+		return false, nil
+	}
+	if _, ok := r.tokens[digest]; !ok {
+		return false, nil
+	}
+	return true, action()
+}
+
 func (r *webSessionRegistry) uploadSecret(token string) ([sha256.Size]byte, bool) {
 	if token == "" {
 		return [sha256.Size]byte{}, false
@@ -233,8 +255,13 @@ func webSessionRequestAllowed(r *http.Request) bool {
 			return true
 		}
 	}
-	if method == http.MethodPost && path == webDownloadPreparePath {
+	if method == http.MethodPost && path == webDownloadPreparePath && r.URL.RawQuery == "" {
 		return true
+	}
+	if method == http.MethodDelete && path == webDownloadPreparePath {
+		values, err := url.ParseQuery(r.URL.RawQuery)
+		return err == nil && len(values) == 1 && len(values["ticket"]) == 1 &&
+			values.Get("ticket") != ""
 	}
 	if method == http.MethodPost && path == "/api/v1/audit/verify" &&
 		r.URL.RawQuery == "" {

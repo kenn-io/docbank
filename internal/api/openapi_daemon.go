@@ -45,4 +45,11 @@ func registerDaemonOpenAPI(api huma.API) {
 			},
 		}},
 	})
+	api.OpenAPI().AddOperation(&huma.Operation{
+		OperationID: "cancelWebDownload", Method: http.MethodDelete, Path: webDownloadPreparePath,
+		Summary: "Discard a prepared browser download",
+		Parameters: []*huma.Param{{Name: "ticket", In: "query", Required: true,
+			Schema: &huma.Schema{Type: openAPIStringType}}},
+		Responses: map[string]*huma.Response{"204": {Description: "Download discarded"}},
+	})
 }

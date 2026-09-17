@@ -141,6 +141,46 @@ func (c *Client) ShutdownDaemon(ctx context.Context, options *ShutdownDaemonRequ
 	return responseParser(ctx, resp)
 }
 
+// CancelWebDownload Discard a prepared browser download
+func (c *Client) CancelWebDownload(ctx context.Context, options *CancelWebDownloadRequestOptions, reqEditors ...runtime.RequestEditorFn) (*struct{}, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL: c.apiClient.GetBaseURL() + "/api/daemon/web-download",
+		Method:     "DELETE",
+		Options:    options,
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*struct{}, error) {
+		switch resp.StatusCode {
+
+		case 204:
+
+			target := new(struct{})
+
+			return target, nil
+
+		default:
+
+			return nil, runtime.NewClientAPIError(fmt.Errorf("unexpected status code: %d", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/daemon/web-download")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 204)
+	}
+	return responseParser(ctx, resp)
+}
+
 // PrepareWebDownload Verify a document and prepare a browser download
 func (c *Client) PrepareWebDownload(ctx context.Context, options *PrepareWebDownloadRequestOptions, reqEditors ...runtime.RequestEditorFn) (*PrepareWebDownloadResponse, error) {
 	var err error
@@ -7201,6 +7241,37 @@ func (o *ShutdownDaemonRequestOptions) GetHeader() (map[string]string, error) {
 	return headers, err
 }
 
+// CancelWebDownloadRequestOptions is the options needed to make a request to CancelWebDownload.
+type CancelWebDownloadRequestOptions struct {
+	Query *CancelWebDownloadQuery
+}
+
+// GetPathParams returns the path params as a map.
+func (o *CancelWebDownloadRequestOptions) GetPathParams() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetQuery returns the query params as a map.
+func (o *CancelWebDownloadRequestOptions) GetQuery() (map[string]any, error) {
+	encoded, err := json.Marshal(o.Query, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *CancelWebDownloadRequestOptions) GetBody() any {
+	return nil
+}
+
+// GetHeader returns the headers as a map.
+func (o *CancelWebDownloadRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
 // PrepareWebDownloadRequestOptions is the options needed to make a request to PrepareWebDownload.
 type PrepareWebDownloadRequestOptions struct {
 	Body *PrepareWebDownloadBody
@@ -11926,11 +11997,12 @@ type ReadWorkspaceQueryPagePath struct {
 }
 
 type PrepareWebDownloadBody struct {
-	BlobHash  string `json:"blob_hash"`
-	NodeID    int64  `json:"node_id"`
-	Revision  int64  `json:"revision"`
-	Size      int64  `json:"size"`
-	VersionID string `json:"version_id"`
+	BlobHash  string  `json:"blob_hash"`
+	NodeID    int64   `json:"node_id"`
+	Purpose   *string `json:"purpose,omitempty"`
+	Revision  int64   `json:"revision"`
+	Size      int64   `json:"size"`
+	VersionID string  `json:"version_id"`
 }
 
 type EnableAuditBody = EnableAuditRequest
@@ -12096,6 +12168,10 @@ type ReadWorkspaceQueryPageBody = WorkspaceQueryPageRequest
 
 type ChallengeDaemonQuery struct {
 	Nonce string `json:"nonce"`
+}
+
+type CancelWebDownloadQuery struct {
+	Ticket string `json:"ticket"`
 }
 
 type AuditNodeHistoryQuery struct {

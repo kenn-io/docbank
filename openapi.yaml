@@ -10091,6 +10091,18 @@ paths:
         "202":
           description: Shutdown accepted
   /api/daemon/web-download:
+    delete:
+      operationId: cancelWebDownload
+      parameters:
+        - in: query
+          name: ticket
+          required: true
+          schema:
+            type: string
+      responses:
+        "204":
+          description: Download discarded
+      summary: Discard a prepared browser download
     post:
       operationId: prepareWebDownload
       requestBody:
@@ -10104,6 +10116,8 @@ paths:
                 node_id:
                   format: int64
                   type: integer
+                purpose:
+                  type: string
                 revision:
                   format: int64
                   type: integer

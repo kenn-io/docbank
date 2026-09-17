@@ -3990,9 +3990,14 @@ export type ShutdownDaemonHeaders = {
 'X-Docbank-Daemon-Token': string;
 };
 
+export type CancelWebDownloadParams = {
+ticket: string;
+};
+
 export type PrepareWebDownloadBody = {
   blob_hash: string;
   node_id: number;
+  purpose?: string;
   revision: number;
   size: number;
   version_id: string;
@@ -4573,6 +4578,37 @@ return sessionEmpty<void>(getShutdownDaemonUrl(),
     ...options,
     method: 'POST',
     headers: { ...headers, ...getHeaders(options?.headers) }
+
+  }
+);}
+
+
+
+export const getCancelWebDownloadUrl = (params: CancelWebDownloadParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/daemon/web-download?${stringifiedParams}` : `/api/daemon/web-download`
+}
+
+/**
+ * @summary Discard a prepared browser download
+ */
+export const cancelWebDownload = async (params: CancelWebDownloadParams, options?: Parameters<typeof sessionJSON>[1]): Promise<void> => {
+
+  return sessionJSON<void>(getCancelWebDownloadUrl(params),
+  {
+    ...options,
+    method: 'DELETE'
+
 
   }
 );}

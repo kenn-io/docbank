@@ -4,12 +4,15 @@ import (
 	"bytes"
 	"crypto/sha256"
 	"encoding/base64"
+	"encoding/binary"
 	"encoding/json/jsontext"
 	"encoding/json/v2"
 	"errors"
+	"hash/crc32"
 	"io"
 	"mime"
 	"net/http"
+	"net/http/httptest"
 	"strconv"
 	"strings"
 	"testing"
@@ -221,4 +224,214 @@ func TestWebDownloadRejectsAStaleSelectionBeforeStaging(t *testing.T) {
 	require.NoError(t, json.UnmarshalRead(response.Body, &problem))
 	require.NoError(t, response.Body.Close())
 	assert.Equal(t, "download_selection_stale", problem.Code)
+}
+
+func TestWebPreviewRejectsIneligibleAndOversizedSourcesBeforeStaging(t *testing.T) {
+	t.Run("active document MIME", func(t *testing.T) {
+		ts, s := newTestServer(t, nil)
+		hash, size, err := s.Blobs.Write(strings.NewReader("<script>top.location='https://example.invalid'</script>"))
+		require.NoError(t, err)
+		document, err := s.CreateFile(t.Context(), s.RootID(), "hostile.html", hash, size, "text/html")
+		require.NoError(t, err)
+
+		response := prepareWebDownload(t, ts, "", map[string]any{
+			"node_id": document.ID, "revision": document.Revision,
+			"version_id": document.CurrentVersionID, "blob_hash": document.BlobHash,
+			"size": document.Size, "purpose": "preview",
+		})
+		assert.Equal(t, http.StatusUnprocessableEntity, response.StatusCode)
+		var problem struct {
+			Code string `json:"code"`
+		}
+		require.NoError(t, json.UnmarshalRead(response.Body, &problem))
+		require.NoError(t, response.Body.Close())
+		assert.Equal(t, "preview_unsupported", problem.Code)
+	})
+
+	t.Run("text larger than sixteen MiB", func(t *testing.T) {
+		ts, s := newTestServer(t, nil)
+		document := createFileWithContent(t, ts, s, "/oversized.txt", strings.Repeat("x", (16<<20)+1))
+
+		response := prepareWebDownload(t, ts, "", map[string]any{
+			"node_id": document.ID, "revision": document.Revision,
+			"version_id": document.CurrentVersionID, "blob_hash": document.BlobHash,
+			"size": document.Size, "purpose": "preview",
+		})
+		assert.Equal(t, http.StatusRequestEntityTooLarge, response.StatusCode)
+		var problem struct {
+			Code string `json:"code"`
+		}
+		require.NoError(t, json.UnmarshalRead(response.Body, &problem))
+		require.NoError(t, response.Body.Close())
+		assert.Equal(t, "preview_too_large", problem.Code)
+	})
+}
+
+func TestWebPreviewTicketCancellationIsOwnerScopedAndSessionRevoked(t *testing.T) {
+	ts, s := newTestServer(t, nil)
+	document := createFileWithContent(t, ts, s, "/report.txt", "selected preview\n")
+	firstSession := issueWebSession(t, ts)
+	otherSession := issueWebSession(t, ts)
+	authority := map[string]any{
+		"node_id": document.ID, "revision": document.Revision,
+		"version_id": document.CurrentVersionID, "blob_hash": document.BlobHash,
+		"size": document.Size, "purpose": "preview",
+	}
+
+	firstURL := readyWebDownloadURL(t, prepareWebDownload(t, ts, firstSession, authority))
+	response := cancelWebDownload(t, ts, otherSession, firstURL)
+	assert.Equal(t, http.StatusNotFound, response.StatusCode)
+	require.NoError(t, response.Body.Close())
+	response, err := ts.Client().Get(ts.URL + firstURL)
+	require.NoError(t, err)
+	assert.Equal(t, http.StatusOK, response.StatusCode)
+	require.NoError(t, response.Body.Close())
+
+	cancelledURL := readyWebDownloadURL(t, prepareWebDownload(t, ts, firstSession, authority))
+	response = cancelWebDownload(t, ts, firstSession, cancelledURL)
+	assert.Equal(t, http.StatusNoContent, response.StatusCode)
+	require.NoError(t, response.Body.Close())
+	response, err = ts.Client().Get(ts.URL + cancelledURL)
+	require.NoError(t, err)
+	assert.Equal(t, http.StatusNotFound, response.StatusCode)
+	require.NoError(t, response.Body.Close())
+
+	revokedURL := readyWebDownloadURL(t, prepareWebDownload(t, ts, firstSession, authority))
+	revoke, err := http.NewRequest(http.MethodDelete, ts.URL+"/api/daemon/web-session", nil)
+	require.NoError(t, err)
+	revoke.Header.Set(api.WebSessionHeader, firstSession)
+	response, err = ts.Client().Do(revoke)
+	require.NoError(t, err)
+	assert.Equal(t, http.StatusNoContent, response.StatusCode)
+	require.NoError(t, response.Body.Close())
+	response, err = ts.Client().Get(ts.URL + revokedURL)
+	require.NoError(t, err)
+	assert.Equal(t, http.StatusNotFound, response.StatusCode)
+	require.NoError(t, response.Body.Close())
+}
+
+func TestWebPreviewRejectsRasterDimensionsBeforePublishingTicket(t *testing.T) {
+	ts, s := newTestServer(t, nil)
+	content := oversizedPNGHeader(100_000, 100_000)
+	hash, size, err := s.Blobs.Write(bytes.NewReader(content))
+	require.NoError(t, err)
+	document, err := s.CreateFile(t.Context(), s.RootID(), "oversized.png", hash, size, "image/png")
+	require.NoError(t, err)
+
+	response := prepareWebDownload(t, ts, "", map[string]any{
+		"node_id": document.ID, "revision": document.Revision,
+		"version_id": document.CurrentVersionID, "blob_hash": document.BlobHash,
+		"size": document.Size, "purpose": "preview",
+	})
+	require.Equal(t, http.StatusOK, response.StatusCode)
+	decoder := jsontext.NewDecoder(response.Body)
+	var phases []string
+	for {
+		var event struct {
+			Phase string `json:"phase"`
+		}
+		err := json.UnmarshalDecode(decoder, &event)
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		require.NoError(t, err)
+		phases = append(phases, event.Phase)
+	}
+	require.NoError(t, response.Body.Close())
+	assert.Contains(t, phases, "error")
+	assert.NotContains(t, phases, "ready")
+}
+
+func oversizedPNGHeader(width, height uint32) []byte {
+	var out bytes.Buffer
+	out.Write([]byte{137, 80, 78, 71, 13, 10, 26, 10})
+	ihdr := make([]byte, 13)
+	binary.BigEndian.PutUint32(ihdr[0:4], width)
+	binary.BigEndian.PutUint32(ihdr[4:8], height)
+	ihdr[8], ihdr[9], ihdr[10], ihdr[11], ihdr[12] = 8, 2, 0, 0, 0
+	writePNGChunk(&out, "IHDR", ihdr)
+	writePNGChunk(&out, "IEND", nil)
+	return out.Bytes()
+}
+
+func writePNGChunk(out *bytes.Buffer, kind string, payload []byte) {
+	_ = binary.Write(out, binary.BigEndian, uint32(len(payload)))
+	_, _ = out.WriteString(kind)
+	_, _ = out.Write(payload)
+	crc := crc32.NewIEEE()
+	_, _ = crc.Write([]byte(kind))
+	_, _ = crc.Write(payload)
+	_ = binary.Write(out, binary.BigEndian, crc.Sum32())
+}
+
+func issueWebSession(t *testing.T, ts *httptest.Server) string {
+	t.Helper()
+	response, err := ts.Client().Post(ts.URL+"/api/daemon/web-session", "", nil)
+	require.NoError(t, err)
+	require.Equal(t, http.StatusCreated, response.StatusCode)
+	var session struct {
+		Token string `json:"token"`
+	}
+	require.NoError(t, json.UnmarshalRead(response.Body, &session))
+	require.NoError(t, response.Body.Close())
+	return session.Token
+}
+
+func prepareWebDownload(
+	t *testing.T, ts *httptest.Server, session string, authority map[string]any,
+) *http.Response {
+	t.Helper()
+	body, err := json.Marshal(authority)
+	require.NoError(t, err)
+	request, err := http.NewRequest(http.MethodPost, ts.URL+"/api/daemon/web-download", bytes.NewReader(body))
+	require.NoError(t, err)
+	request.Header.Set("Content-Type", "application/json")
+	if session != "" {
+		request.Header["X-Api-Key"] = []string{""}
+		request.Header.Set(api.WebSessionHeader, session)
+	}
+	response, err := ts.Client().Do(request)
+	require.NoError(t, err)
+	return response
+}
+
+func readyWebDownloadURL(t *testing.T, response *http.Response) string {
+	t.Helper()
+	require.Equal(t, http.StatusOK, response.StatusCode)
+	decoder := jsontext.NewDecoder(response.Body)
+	var readyURL string
+	for {
+		var event struct {
+			Phase string `json:"phase"`
+			URL   string `json:"url"`
+		}
+		err := json.UnmarshalDecode(decoder, &event)
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		require.NoError(t, err)
+		if event.Phase == "ready" {
+			readyURL = event.URL
+		}
+	}
+	require.NoError(t, response.Body.Close())
+	require.NotEmpty(t, readyURL)
+	return readyURL
+}
+
+func cancelWebDownload(
+	t *testing.T, ts *httptest.Server, session, readyURL string,
+) *http.Response {
+	t.Helper()
+	ticket := strings.TrimPrefix(readyURL, "/api/daemon/web-download/file?ticket=")
+	require.NotEqual(t, readyURL, ticket)
+	request, err := http.NewRequest(
+		http.MethodDelete, ts.URL+"/api/daemon/web-download?ticket="+ticket, nil,
+	)
+	require.NoError(t, err)
+	request.Header["X-Api-Key"] = []string{""}
+	request.Header.Set(api.WebSessionHeader, session)
+	response, err := ts.Client().Do(request)
+	require.NoError(t, err)
+	return response
 }
