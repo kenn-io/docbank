@@ -34,7 +34,7 @@ func (v *Vault) SubmitRemoteRecording(ctx context.Context, request RemoteRecordi
 	}
 	defer v.lifecycle.RUnlock()
 	receipt, err := v.processing.SubmitRemoteRecording(ctx, internalprocessing.RemoteRecordingRequest{
-		OperationID: request.OperationID, ReferenceURL: request.ReferenceURL,
+		OperationID: request.OperationID, ReferenceURL: request.ReferenceURL, CanonicalURL: request.CanonicalURL,
 		ProviderHint: request.ProviderHint, CredentialBinding: request.CredentialBinding,
 		Acquire: request.Acquire, Occurrence: toInternalMediaOccurrence(request.Occurrence),
 		Processing: toInternalMediaProcessing(request.Processing),

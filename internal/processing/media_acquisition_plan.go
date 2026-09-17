@@ -73,7 +73,7 @@ func (service *Service) PlanMediaAcquisition(
 	if service == nil || len(service.mediaOrigins) == 0 {
 		return MediaAcquisitionPlan{}, ErrMediaCapabilityUnavailable
 	}
-	if request.ReferenceURL == "" || len(request.ReferenceURL) > 8192 {
+	if request.ReferenceURL == "" || len(request.ReferenceURL) > 8192 || len(request.CanonicalURL) > 8192 {
 		return MediaAcquisitionPlan{}, ErrMediaPlanInvalid
 	}
 	policy, ok := service.recognizeMediaOrigin(request.ReferenceURL, request.ProviderHint)

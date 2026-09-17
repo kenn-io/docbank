@@ -5659,6 +5659,10 @@ components:
           type: string
         acquire:
           type: boolean
+        canonical_url:
+          maxLength: 8192
+          type: string
+          writeOnly: true
         credential_binding:
           type: string
         occurrence:

@@ -24,6 +24,7 @@ type MediaAcquisitionRevokeBody struct {
 type MediaReferenceBody struct {
 	OperationID       string               `json:"operation_id"`
 	ReferenceURL      string               `json:"reference_url" maxLength:"8192" writeOnly:"true"`
+	CanonicalURL      string               `json:"canonical_url,omitempty" maxLength:"8192" writeOnly:"true"`
 	ProviderHint      string               `json:"provider_hint,omitempty"`
 	CredentialBinding string               `json:"credential_binding,omitempty"`
 	Acquire           bool                 `json:"acquire"`

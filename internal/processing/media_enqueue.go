@@ -93,7 +93,8 @@ func (service *Service) EnqueueAuthorized(
 			return Job{}, processingConsentBoundaryError(err)
 		}
 	}
-	inputBinding, err := service.resolveMediaInputBinding(ctx, selector.Profile, version.BlobHash, suppliedInputID)
+	inputBinding, err := service.resolveMediaInputBinding(ctx, selector.Profile, version.BlobHash,
+		selector.SourceID, selector.SourceVersionID, suppliedInputID)
 	if err != nil {
 		return Job{}, err
 	}
@@ -133,7 +134,7 @@ func (service *Service) enqueueRendition(
 }
 
 func (service *Service) resolveMediaInputBinding(
-	ctx context.Context, profile, sourceSHA256 string, suppliedInputIDs []string,
+	ctx context.Context, profile, sourceSHA256, sourceID, sourceVersionID string, suppliedInputIDs []string,
 ) (string, error) {
 	requested := ""
 	if len(suppliedInputIDs) > 0 {
@@ -147,7 +148,21 @@ func (service *Service) resolveMediaInputBinding(
 	}
 	var input store.SuppliedTranscriptInput
 	var err error
-	if requested == "" {
+	if sourceID != "" && sourceVersionID != "" {
+		if requested == "" {
+			input, err = service.catalog.SuppliedTranscriptForSourceVersion(
+				ctx, service.principal, sourceID, sourceVersionID)
+		} else {
+			input, err = service.catalog.SuppliedTranscriptBindingForSourceVersion(
+				ctx, service.principal, sourceID, sourceVersionID, requested)
+		}
+	} else if sourceID != "" && requested == "" {
+		input, err = service.catalog.SuppliedTranscriptForSourceID(
+			ctx, service.principal, sourceID, sourceSHA256)
+	} else if sourceID != "" {
+		input, err = service.catalog.SuppliedTranscriptBindingForSourceID(
+			ctx, service.principal, sourceID, sourceSHA256, requested)
+	} else if requested == "" {
 		input, err = service.catalog.SuppliedTranscriptForSource(ctx, service.principal, sourceSHA256)
 	} else {
 		input, err = service.catalog.SuppliedTranscriptBindingForSource(
@@ -232,12 +247,14 @@ func (worker *MediaContinuationWorker) runContinuation(
 		return worker.failContinuation(ctx, continuation, err)
 	}
 	if _, err := service.resolveMediaInputBinding(ctx, continuation.ProcessingProfile,
-		version.BlobHash, []string{continuation.SuppliedInputID}); err != nil {
+		version.BlobHash, continuation.SourceID, continuation.SourceVersionID,
+		[]string{continuation.SuppliedInputID}); err != nil {
 		return worker.failContinuation(ctx, continuation, err)
 	}
 	if continuation.JobID == "" {
 		selector := Selector{NodeID: continuation.ProcessingNodeID,
-			ContentVersionID: continuation.ContentVersionID, Profile: continuation.ProcessingProfile}
+			ContentVersionID: continuation.ContentVersionID, Profile: continuation.ProcessingProfile,
+			SourceID: continuation.SourceID, SourceVersionID: continuation.SourceVersionID}
 		plan, err := service.Plan(ctx, selector)
 		if err != nil {
 			return worker.failContinuation(ctx, continuation, err)

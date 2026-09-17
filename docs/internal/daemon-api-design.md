@@ -200,6 +200,40 @@ untracked physical object. It cannot leave a readable blob row. GC reclaims
 that residue. A successful retry returns the existing node, so the receipt
 continues to identify the same document.
 
+## Manual remote recording publication
+
+`POST /api/v1/media/sources` accepts a JSON reference before any recording
+bytes exist. `canonical_url` is the sanitized identity URL. It accepts only an
+absolute HTTP(S) URL, stores its normalized identity as bounded digests, and
+is write-only. `reference_url` remains the required protected input. Its raw
+value and any credential binding stay out of receipts, logs, errors, and
+portable metadata. `acquire: true` remains unavailable until a provider
+acquisition owner exists.
+
+The manual path publishes an original through the existing artifact route.
+The caller sends one complete multipart request to
+`POST /api/v1/media/sources/{source_id}/artifacts` with `kind: "media"` and
+the exact WAV or MP3 bytes. The handler checks the envelope, declared size,
+and digest. The processing service checks the filename, MIME type, media
+format, and the 24-hour duration limit. It stages the file under the service
+byte limit, then rewinds it for the blob writer.
+
+The service holds the application mutation gate before the Kit mutation lease.
+The store transaction then checks the caller, visible occurrence, remote
+source kind, and observed source version again. It seals the core content,
+appends or reuses the exact source version, binds only the selected occurrence,
+records the `media` input, and writes the operation receipt. A rejected
+transaction can leave physical bytes for GC, but it cannot leave catalog
+authority.
+
+The original must exist before a caption or transcript artifact can be
+retained. Captions remain retained input bytes. A transcript reaches a
+rendition only after the caller reviews a processing plan, grants consent, and
+requests an explicit retry. Status and list reads use the source version bound
+to the selected visible occurrence. They filter processing receipts to that
+same immutable version, so a transcript for an older recording revision cannot
+cover newer bytes.
+
 ## Change constraints
 
 - New data commands must be HTTP clients, never direct store callers.

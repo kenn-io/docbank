@@ -1,5 +1,5 @@
 ---
-last_edited: 2026-09-14
+last_edited: 2026-09-16
 title: HTTP API
 description: The agent-first HTTP API — filesystem-shaped endpoints, revision preconditions, and the daemon's error contract.
 ---
@@ -161,7 +161,64 @@ granting consent or starting work. The runtime disclosure contains:
 | `metadata_classes` | Metadata disclosed alongside the content or query |
 | `retained_artifact_roles` | Artifacts retained for this hop; query embedding retains none |
 
-These values enter the plan fingerprint. Consent state is advisory and does not.
+These values enter the plan fingerprint. Consent state is advisory and does not
+authorize a provider call by itself.
+
+#### Remote recording references
+
+`POST /api/v1/media/sources` also accepts a JSON remote recording reference.
+`reference_url` is required and write-only. It is the protected acquisition
+input, including any occurrence-specific query. `canonical_url` is optional,
+write-only, and limited to 8,192 bytes. It is the caller's sanitized identity
+URL. It must be an absolute HTTP(S) URL without userinfo. Docbank lowercases
+the scheme and hostname, removes the default port and fragment, and keeps the
+meaningful path and query encoding.
+
+```json
+{
+  "operation_id": "00000000-0000-4000-8000-000000000451",
+  "reference_url": "https://private.invalid/share/call?token=synthetic",
+  "canonical_url": "https://recordings.invalid/share/call?clip=2",
+  "occurrence": {
+    "ref": "call-1",
+    "revision": "1",
+    "filename": "call.wav",
+    "message": {}
+  }
+}
+```
+
+The canonical path uses the generic `url` provider identity. It does not
+resolve DNS, follow redirects, read credentials, or download a recording.
+`provider_hint` is a bounded replay value and does not prove a provider. A
+fresh canonical submission returns `outcome: "unsupported"` with a pending
+occurrence. A legacy submission that omits `canonical_url` keeps its configured
+origin policy and its existing `access_required` outcome. `acquire: true`
+returns `503 capability_unavailable` until a provider acquisition owner exists.
+
+To add a local original, send exactly the two multipart parts required by the
+artifact route, with metadata `kind: "media"` and a WAV or MP3 file. The
+metadata's filename and media type must agree with the inspected bytes. WAV
+uses `audio/wav` or `audio/x-wav`; MP3 uses `audio/mpeg`. MIME parameters are
+accepted. The service applies its configured byte limit, which defaults to
+512 MiB and cannot exceed 1 GiB, and rejects media longer than 24 hours. It
+checks the declared size and SHA-256 before publication.
+
+The store publishes the verified original and binds it to the selected visible
+occurrence in one transaction. A pending occurrence receives a new source
+version, while an existing exact version can be reused without moving the
+source head. A changed original for a bound occurrence returns
+`409 source_conflict`. A caption or transcript must follow the original. A
+caption stays a retained input. A transcript requires an explicit processing
+plan, consent, and retry before it can produce `transcribed` coverage.
+
+Status and list responses select the source version bound to the visible
+occurrence they report. They show `content_available` and `unprocessed` after
+the original is retained, then use processing receipts for that same source
+version. A failed retry can leave an earlier successful transcript visible for
+the same version. A transcript from an older version cannot cover newer bytes.
+Raw URLs and credential bindings never appear in receipts, errors, logs,
+renditions, search results, or portable metadata.
 
 #### Processing consent
 

@@ -484,6 +484,12 @@ func TestOpenAPIDeclaresMediaSubmissionBodies(t *testing.T) {
 					assert.Contains(t, reference.Properties, field)
 					assert.Contains(t, reference.Required, field)
 				}
+				canonicalURL := reference.Properties["canonical_url"]
+				require.NotNil(t, canonicalURL)
+				require.NotNil(t, canonicalURL.MaxLength)
+				assert.Equal(t, 8192, *canonicalURL.MaxLength)
+				assert.True(t, canonicalURL.WriteOnly)
+				assert.NotContains(t, reference.Required, "canonical_url")
 			} else {
 				require.Len(t, op.Parameters, 1)
 				parameter := op.Parameters[0]

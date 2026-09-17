@@ -103,6 +103,91 @@ func (s *Store) SuppliedTranscriptForSource(
 	return result, err
 }
 
+// SuppliedTranscriptForSourceID selects a transcript for a known source while
+// its source version is still being established.
+func (s *Store) SuppliedTranscriptForSourceID(
+	ctx context.Context, principal, sourceID, sourceSHA256 string,
+) (SuppliedTranscriptInput, error) {
+	return s.suppliedTranscriptForSourceID(ctx, principal, sourceID, sourceSHA256, "")
+}
+
+func (s *Store) suppliedTranscriptForSourceID(
+	ctx context.Context, principal, sourceID, sourceSHA256, inputID string,
+) (SuppliedTranscriptInput, error) {
+	if err := validateBoundedMediaText("media principal", principal, 256, false); err != nil {
+		return SuppliedTranscriptInput{}, err
+	}
+	for name, value := range map[string]string{"media source": sourceID} {
+		if err := validateBoundedMediaText(name, value, 256, false); err != nil {
+			return SuppliedTranscriptInput{}, err
+		}
+	}
+	if !canonical.IsSHA256Hex(sourceSHA256) {
+		return SuppliedTranscriptInput{}, ErrNotFound
+	}
+	if inputID != "" && !canonical.IsSHA256Hex(inputID) {
+		return SuppliedTranscriptInput{}, ErrNotFound
+	}
+	query := `SELECT i.input_id,i.occurrence_id,i.source_version_id,
+		i.content_version_id,i.input_sha256,i.provider
+		FROM media_input_artifacts i
+		JOIN media_occurrences o ON o.occurrence_id=i.occurrence_id
+		JOIN media_source_versions v ON v.source_version_id=i.source_version_id
+		WHERE o.caller_principal=? AND o.visible=1 AND i.kind='transcript'
+		  AND i.source_id=? AND i.source_id=o.source_id
+		  AND o.source_version_id=v.source_version_id AND v.source_id=?
+		  AND v.source_sha256=?`
+	args := []any{principal, sourceID, sourceID, sourceSHA256}
+	if inputID != "" {
+		query += " AND i.input_id=?"
+		args = append(args, inputID)
+	} else {
+		query += " ORDER BY i.created_at DESC,i.input_id DESC LIMIT 1"
+	}
+	return s.querySuppliedTranscript(ctx, query, args...)
+}
+
+// SuppliedTranscriptForSourceVersion selects one caller-authorized transcript
+// bound to one exact source version, even when another source has equal bytes.
+func (s *Store) SuppliedTranscriptForSourceVersion(
+	ctx context.Context, principal, sourceID, sourceVersionID string,
+) (SuppliedTranscriptInput, error) {
+	return s.suppliedTranscriptForSourceVersion(ctx, principal, sourceID, sourceVersionID, "")
+}
+
+func (s *Store) suppliedTranscriptForSourceVersion(
+	ctx context.Context, principal, sourceID, sourceVersionID, inputID string,
+) (SuppliedTranscriptInput, error) {
+	if err := validateBoundedMediaText("media principal", principal, 256, false); err != nil {
+		return SuppliedTranscriptInput{}, err
+	}
+	for name, value := range map[string]string{
+		"media source": sourceID, "media source version": sourceVersionID,
+	} {
+		if err := validateBoundedMediaText(name, value, 256, false); err != nil {
+			return SuppliedTranscriptInput{}, err
+		}
+	}
+	if inputID != "" && !canonical.IsSHA256Hex(inputID) {
+		return SuppliedTranscriptInput{}, ErrNotFound
+	}
+	query := `SELECT i.input_id,i.occurrence_id,i.source_version_id,
+		i.content_version_id,i.input_sha256,i.provider
+		FROM media_input_artifacts i
+		JOIN media_occurrences o ON o.occurrence_id=i.occurrence_id
+		WHERE o.caller_principal=? AND o.visible=1 AND i.kind='transcript'
+		  AND i.source_id=? AND i.source_version_id=?
+		  AND o.source_id=i.source_id AND o.source_version_id=i.source_version_id`
+	args := []any{principal, sourceID, sourceVersionID}
+	if inputID != "" {
+		query += " AND i.input_id=?"
+		args = append(args, inputID)
+	} else {
+		query += " ORDER BY i.created_at DESC,i.input_id DESC LIMIT 1"
+	}
+	return s.querySuppliedTranscript(ctx, query, args...)
+}
+
 // SuppliedTranscriptBindingForSource resolves one exact retained input only
 // while its occurrence and source-version authority remain visible.
 func (s *Store) SuppliedTranscriptBindingForSource(
@@ -124,6 +209,34 @@ func (s *Store) SuppliedTranscriptBindingForSource(
 		  AND i.source_id=o.source_id AND v.source_id=o.source_id
 		  AND o.source_version_id=v.source_version_id AND v.source_sha256=?`,
 		inputID, principal, sourceSHA256).Scan(&result.InputID, &result.OccurrenceID,
+		&result.SourceVersionID, &result.ContentVersionID, &result.InputSHA256, &result.Provider)
+	if errors.Is(err, sql.ErrNoRows) {
+		return SuppliedTranscriptInput{}, ErrNotFound
+	}
+	return result, err
+}
+
+// SuppliedTranscriptBindingForSourceID resolves one input without allowing an
+// equal-byte transcript from another source to satisfy the binding.
+func (s *Store) SuppliedTranscriptBindingForSourceID(
+	ctx context.Context, principal, sourceID, sourceSHA256, inputID string,
+) (SuppliedTranscriptInput, error) {
+	return s.suppliedTranscriptForSourceID(ctx, principal, sourceID, sourceSHA256, inputID)
+}
+
+// SuppliedTranscriptBindingForSourceVersion resolves one exact visible input
+// without crossing equal-byte sources or source revisions.
+func (s *Store) SuppliedTranscriptBindingForSourceVersion(
+	ctx context.Context, principal, sourceID, sourceVersionID, inputID string,
+) (SuppliedTranscriptInput, error) {
+	return s.suppliedTranscriptForSourceVersion(ctx, principal, sourceID, sourceVersionID, inputID)
+}
+
+func (s *Store) querySuppliedTranscript(
+	ctx context.Context, query string, args ...any,
+) (SuppliedTranscriptInput, error) {
+	var result SuppliedTranscriptInput
+	err := s.db.QueryRowContext(ctx, query, args...).Scan(&result.InputID, &result.OccurrenceID,
 		&result.SourceVersionID, &result.ContentVersionID, &result.InputSHA256, &result.Provider)
 	if errors.Is(err, sql.ErrNoRows) {
 		return SuppliedTranscriptInput{}, ErrNotFound

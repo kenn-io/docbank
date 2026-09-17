@@ -1,5 +1,5 @@
 ---
-last_edited: 2026-09-14
+last_edited: 2026-09-16
 title: CLI Reference
 description: Every docbank command, flag, output format, and error behavior.
 ---
@@ -1206,10 +1206,14 @@ tasks. See [Daemon](architecture/daemon.md) for what each job does.
 ## docbank media
 
 ```
-docbank media submit --file CALL.wav --operation-id UUID --occurrence-ref REF --revision REV
+docbank media submit --file CALL.wav --operation-id UUID \
+  --occurrence-ref REF --revision REV
 docbank media list
 docbank media status SOURCE_ID
-docbank media import-artifact SOURCE_ID --kind transcript --file TRANSCRIPT.txt \
+docbank media import-artifact SOURCE_ID --kind media --file CALL.wav \
+  --occurrence-id OCCURRENCE_ID --operation-id UUID
+docbank media import-artifact SOURCE_ID --kind transcript \
+  --file TRANSCRIPT.txt \
   --occurrence-id OCCURRENCE_ID --operation-id UUID
 docbank media retry SOURCE_ID --processing-profile supplied-transcript \
   --operation-id UUID
@@ -1226,11 +1230,14 @@ the caller occurrence separately. Repeating the same bytes reuses one source
 version while a different occurrence remains independently revocable. An
 empty processing profile means retention only.
 
-Use `media import-artifact` to bind supplied transcript text to the exact
-visible occurrence and recording version. Its receipt returns the input ID.
-Pass that value with `media retry --supplied-input-id INPUT_ID` when more than one
-transcript exists for the recording. The selected input remains fixed for the
-job; importing another transcript does not change work already queued.
+Use `media import-artifact --kind media` to bind a supplied WAV or MP3 to the
+exact visible occurrence of a remote source registered through the HTTP or
+embedded API. The original must be retained before a caption or transcript can
+be imported. Use `--kind transcript` to retain supplied transcript text. Its
+receipt returns the input ID. Pass that value with
+`media retry --supplied-input-id INPUT_ID` when more than one transcript exists
+for the recording. The selected input remains fixed for the job; importing
+another transcript does not change work already queued.
 Artifact imports retain inputs only. Use
 `media retry` to request processing after the import.
 
@@ -1248,13 +1255,16 @@ successful processing, coverage describes the current attempt.
 Media processing requires a profile with a rendition provider. Profiles that
 only produce embeddings are rejected.
 
-Remote references are read from `--reference-file PATH`, or from stdin with
-`--reference-file -`. They are never accepted as a command-line URL. Reference
-submission performs no network access by itself and rejects processing requests.
-Acquisition planning, grant,
-and revoke commands are available under `media acquisition-plan` and
-`media consent`; a daemon without a registered acquisition policy reports the
-capability as unavailable.
+Remote references submitted by the CLI are read from `--reference-file PATH`,
+or from stdin with `--reference-file -`. They are never accepted as a
+command-line URL. The existing CLI reference submission follows the legacy
+configured-origin policy, performs no network access by itself, and rejects
+processing requests. A canonical URL for the generic manual path is submitted
+through the HTTP or embedded API, then the CLI can use `--kind media` followed
+by transcript import and retry. Acquisition planning, grant, and revoke
+commands are available under `media acquisition-plan` and `media consent`; a
+daemon without a registered acquisition policy reports the capability as
+unavailable.
 
 ## docbank watch
 

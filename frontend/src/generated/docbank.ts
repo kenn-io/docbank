@@ -2462,6 +2462,8 @@ export interface MediaReferenceBody {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
   acquire: boolean;
+  /** @maxLength 8192 */
+  canonical_url?: string;
   credential_binding?: string;
   occurrence: MediaOccurrenceBody;
   operation_id: string;

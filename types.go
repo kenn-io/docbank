@@ -137,6 +137,7 @@ type SuppliedMediaRequest struct {
 type RemoteRecordingRequest struct {
 	OperationID       string
 	ReferenceURL      string
+	CanonicalURL      string
 	ProviderHint      string
 	CredentialBinding string
 	Acquire           bool

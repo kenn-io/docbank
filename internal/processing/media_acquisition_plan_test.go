@@ -1,6 +1,7 @@
 package processing
 
 import (
+	"bytes"
 	"encoding/base64"
 	"strings"
 	"testing"
@@ -198,4 +199,40 @@ func TestRemoteRecordingReplaysBeforeOriginAdmission(t *testing.T) {
 	other := newService("operator:other", nil)
 	_, err = other.SubmitRemoteRecording(t.Context(), request)
 	require.ErrorIs(t, err, ErrMediaCapabilityUnavailable)
+}
+
+func TestRemoteRecordingAcquireUnavailable(t *testing.T) {
+	fixture := newPublicationFixture(t)
+	service := newRemoteRecordingTestService(t, fixture, "operator:acquire", 0,
+		remoteRecordingTestOrigins())
+	request := remoteRecordingTestRequest(uuid.New().String(),
+		"https://recordings.invalid/acquire", "", "acquire")
+	request.Acquire = true
+	_, err := service.SubmitRemoteRecording(t.Context(), request)
+	require.ErrorIs(t, err, ErrMediaCapabilityUnavailable)
+	canonical := request
+	canonical.OperationID = uuid.New().String()
+	canonical.CanonicalURL = "https://recordings.invalid/acquire"
+	_, err = service.SubmitRemoteRecording(t.Context(), canonical)
+	require.ErrorIs(t, err, ErrMediaCapabilityUnavailable)
+	hinted := canonical
+	hinted.OperationID = uuid.New().String()
+	hinted.Acquire = false
+	hinted.ProviderHint = strings.Repeat("h", 129)
+	_, err = service.SubmitRemoteRecording(t.Context(), hinted)
+	require.ErrorContains(t, err, "provider hint")
+	hinted = canonical
+	hinted.OperationID = uuid.New().String()
+	hinted.Acquire = false
+	hinted.CredentialBinding = strings.Repeat("c", 257)
+	_, err = service.SubmitRemoteRecording(t.Context(), hinted)
+	require.ErrorContains(t, err, "credential binding")
+	items, total, err := fixture.catalog.MediaSources(t.Context(), service.principal, 0, 10)
+	require.NoError(t, err)
+	require.Empty(t, items)
+	require.Zero(t, total)
+	var metadata bytes.Buffer
+	require.NoError(t, fixture.catalog.ExportMetadata(t.Context(), &metadata))
+	require.NotContains(t, metadata.String(), `"type":"media_acquisition_receipt"`)
+	t.Log("capability_unavailable")
 }
