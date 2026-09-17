@@ -173,7 +173,8 @@ func runSupervisedChild(control launchControl, executablePath string) (int, erro
 	if err := cleanupWarmupState(); err != nil {
 		return 0, err
 	}
-	if err := validatePrivateProfile(); err != nil {
+	// Restore the fixed settings after warm-up, preserving the initialized profile.
+	if err := recreatePrivateProfile(); err != nil {
 		return 0, err
 	}
 	if err := recreateSupervisedInput(inputPath, inputBytes); err != nil {
@@ -356,49 +357,6 @@ func recreatePrivateProfile() error {
 		return fmt.Errorf("validate sandbox profile settings: %w", err)
 	}
 	return nil
-}
-
-func validatePrivateProfile() error {
-	profile, err := openNoFollowDirectory("/work/profile")
-	if err != nil {
-		return fmt.Errorf("open sandbox profile: %w", err)
-	}
-	defer func() { _ = profile.Close() }()
-	user, err := openNoFollowDirectoryAt(int(profile.Fd()), "user")
-	if err != nil {
-		return fmt.Errorf("open sandbox profile user directory: %w", err)
-	}
-	defer func() { _ = user.Close() }()
-	fd, err := unix.Openat(int(user.Fd()), privateProfileSettingsName,
-		unix.O_RDONLY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
-	if err != nil {
-		return fmt.Errorf("open sandbox profile settings: %w", err)
-	}
-	file := os.NewFile(uintptr(fd), "sandbox-profile-settings")
-	defer func() { _ = file.Close() }()
-	var stat unix.Stat_t
-	if err := unix.Fstat(fd, &stat); err != nil || stat.Mode&unix.S_IFMT != unix.S_IFREG {
-		return errors.New("sandbox profile settings are not regular")
-	}
-	data, err := io.ReadAll(io.LimitReader(file, 1<<20))
-	if err != nil || !profileSecuritySettingsPresent(data) {
-		return errors.New("sandbox profile settings lost required security values")
-	}
-	return nil
-}
-
-func profileSecuritySettingsPresent(data []byte) bool {
-	for _, value := range []string{
-		`oor:name="MacroSecurityLevel" oor:op="fuse"><value>3</value>`,
-		`oor:name="DisableMacrosExecution" oor:op="fuse"><value>true</value>`,
-		`oor:name="DisableActiveContent" oor:op="fuse"><value>true</value>`,
-		`oor:name="BlockUntrustedRefererLinks" oor:op="fuse"><value>true</value>`,
-	} {
-		if !bytes.Contains(data, []byte(value)) {
-			return false
-		}
-	}
-	return true
 }
 
 // PrivateProfileSettings returns the fixed LibreOffice profile XML.

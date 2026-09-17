@@ -305,6 +305,8 @@ func TestSupervisedRunnerReapsAdoptedDescendantAfterDirectExit(t *testing.T) {
 }
 
 func TestSupervisedRunnerTrustedWarmupCleansStateAndRunsCallerOnce(t *testing.T) {
+	// The helper leaves conflicting settings after warm-up and requires the
+	// complete fixed profile before accepting caller input.
 	runner, err := NewNativeRunner()
 	requireNativeNoError(t, err)
 	result, err := runner.Run(t.Context(), privateTestRequest(t,
@@ -570,7 +572,7 @@ func TestPrivateRootUnixSocketFilters(t *testing.T) {
 	filters, err := unixOnlyNetworkFilters(unix.AUDIT_ARCH_X86_64)
 	requireNativeNoError(t, err)
 	denied := unix.SECCOMP_RET_ERRNO | uint32(unix.EPERM)
-	for _, domain := range []uint32{unix.AF_INET, unix.AF_INET6, unix.AF_NETLINK} {
+	for _, domain := range []uint32{unix.AF_INET, unix.AF_INET6, unix.AF_NETLINK, unix.AF_VSOCK, ^uint32(0)} {
 		assert.Equal(t, denied, evaluateSeccompDomain(t, filters, uint32(unix.SYS_SOCKET), domain))
 		assert.Equal(t, denied, evaluateSeccompDomain(t, filters, uint32(unix.SYS_SOCKETPAIR), domain))
 	}

@@ -527,7 +527,7 @@ bytes to PDF.
 ### Set up the renderer
 
 The built-in runner targets Linux on amd64 and arm64. It requires user, mount,
-PID, and network namespaces, seccomp filters, and Landlock filesystem ABI 3
+PID, network, and IPC namespaces, seccomp filters, and Landlock filesystem ABI 3
 or newer. The application must be allowed to create those namespaces.
 On Ubuntu, AppArmor may block unprivileged user namespaces; the operator's
 AppArmor policy must allow the launcher to create them. Container policy must

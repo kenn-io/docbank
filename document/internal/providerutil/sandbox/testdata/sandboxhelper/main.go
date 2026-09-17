@@ -143,6 +143,16 @@ func main() {
 			os.Exit(5)
 		}
 	case "local-ipc":
+		for _, domain := range []int{unix.AF_INET, unix.AF_INET6, unix.AF_NETLINK, unix.AF_VSOCK, -1} {
+			if _, err := unix.Socket(domain, unix.SOCK_STREAM, 0); !errors.Is(err, unix.EPERM) {
+				fmt.Fprintf(os.Stderr, "socket domain %d: %v", domain, err)
+				os.Exit(7)
+			}
+			if _, err := unix.Socketpair(domain, unix.SOCK_STREAM, 0); !errors.Is(err, unix.EPERM) {
+				fmt.Fprintf(os.Stderr, "socketpair domain %d: %v", domain, err)
+				os.Exit(7)
+			}
+		}
 		pair, err := unix.Socketpair(unix.AF_UNIX, unix.SOCK_STREAM, 0)
 		if err != nil {
 			os.Exit(7)
@@ -404,6 +414,11 @@ func runWarmup() error {
 		if err := os.WriteFile("/work/warmup-fill", make([]byte, 56<<20), 0o600); err != nil {
 			return err
 		}
+	}
+	if mode == "warmup-contract" {
+		conflict := `<item oor:path="/org.openoffice.Office.Common/Security/Scripting"><prop oor:name="DisableMacrosExecution" oor:op="fuse"><value>false</value></prop></item>`
+		settings := strings.Replace(expectedProfileSettings, "</oor:items>", conflict+"</oor:items>", 1)
+		return os.WriteFile("/work/profile/user/registrymodifications.xcu", []byte(settings), 0o600)
 	}
 	if mode == "warmup-cleanup-failure" {
 		if err := os.RemoveAll("/work/home"); err != nil {

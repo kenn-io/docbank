@@ -44,8 +44,8 @@ copies each regular runtime file once to its declared guest path, and checks
 the copied bytes against the manifest. Special files and runtime identity
 mismatches fail before the renderer starts. The old root is detached with
 `pivot_root` before the renderer can create an AF_UNIX socket. LibreOffice
-mode permits AF_UNIX as a fixed launcher policy. IP and netlink socket
-creation remains denied.
+mode permits AF_UNIX as a fixed launcher policy. All other socket families
+are denied.
 
 The root contains only generated configuration, declared runtime files, a
 bounded `/work` tmpfs, private `/tmp`, and proc and device entries.
@@ -57,9 +57,10 @@ The launcher verifies the sealed executable and bounds runtime entries and
 bytes. Before caller bytes enter `/work`, each stage converts a fixed,
 digest-pinned trusted fixture with the exact stage arguments. A trusted
 fixture conversion may retry exit 81 once in the same profile. The launcher
-then removes every non-profile warm-up artifact, verifies the security
-settings, writes the caller input, and runs that conversion once. Caller
-failures publish no bytes. Non-Linux callers need an injected audited runner.
+then removes every non-profile warm-up artifact, restores and verifies the
+exact fixed security settings, writes the caller input, and runs that conversion
+once. Caller failures publish no bytes. Non-Linux callers need an injected
+audited runner.
 
 ## Receipt and source
 
