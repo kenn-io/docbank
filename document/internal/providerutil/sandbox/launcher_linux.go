@@ -212,17 +212,7 @@ func reapSupervisedDescendants() error {
 }
 
 func writePrivateProfile() error {
-	const settings = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n" +
-		"<oor:items xmlns:oor=\"http://openoffice.org/2001/registry\">\n" +
-		" <item oor:path=\"/org.openoffice.Office.Common/Security\">\n" +
-		"  <prop oor:name=\"MacroSecurityLevel\" oor:op=\"fuse\"><value>3</value></prop>\n" +
-		"  <prop oor:name=\"DisableMacrosExecution\" oor:op=\"fuse\"><value>true</value></prop>\n" +
-		"  <prop oor:name=\"DisableActiveContent\" oor:op=\"fuse\"><value>true</value></prop>\n" +
-		" </item>\n" +
-		" <item oor:path=\"/org.openoffice.Office.Common/Load\">\n" +
-		"  <prop oor:name=\"UpdateDocMode\" oor:op=\"fuse\"><value>0</value></prop>\n" +
-		" </item>\n" +
-		"</oor:items>"
+	settings := privateProfileSettings()
 	if err := os.MkdirAll("/work/profile/user", 0o700); err != nil {
 		return fmt.Errorf("create sandbox profile: %w", err)
 	}
@@ -230,6 +220,18 @@ func writePrivateProfile() error {
 		return fmt.Errorf("write sandbox profile: %w", err)
 	}
 	return nil
+}
+
+func privateProfileSettings() string {
+	return "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n" +
+		"<oor:items xmlns:oor=\"http://openoffice.org/2001/registry\">\n" +
+		" <item oor:path=\"/org.openoffice.Office.Common/Security/Scripting\">\n" +
+		"  <prop oor:name=\"MacroSecurityLevel\" oor:op=\"fuse\"><value>3</value></prop>\n" +
+		"  <prop oor:name=\"DisableMacrosExecution\" oor:op=\"fuse\"><value>true</value></prop>\n" +
+		"  <prop oor:name=\"DisableActiveContent\" oor:op=\"fuse\"><value>true</value></prop>\n" +
+		"  <prop oor:name=\"BlockUntrustedRefererLinks\" oor:op=\"fuse\"><value>true</value></prop>\n" +
+		" </item>\n" +
+		"</oor:items>"
 }
 
 func writeBoundedInput(file *os.File, maxBytes int64) error {

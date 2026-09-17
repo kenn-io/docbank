@@ -54,6 +54,38 @@ func TestStrictExecProvidesPrivateProcAndTemporaryDirectory(t *testing.T) {
 	assert.Contains(t, string(result.Output), "proc=true;tmp=true")
 }
 
+func TestPrivateProfileSchemaMatchesInstalledRegistry(t *testing.T) {
+	var installed []byte
+	for _, path := range []string{
+		"/etc/libreoffice/registry/main.xcd",
+		"/usr/lib/libreoffice/share/registry/main.xcd",
+		"/usr/lib/libreoffice/share/.registry/main.xcd",
+	} {
+		data, err := os.ReadFile(path)
+		if err == nil {
+			installed = data
+			break
+		}
+	}
+	require.NotEmpty(t, installed)
+	text := string(installed)
+	assert.Contains(t, text, `<group oor:name="Security">`)
+	assert.Contains(t, text, `<group oor:name="Scripting">`)
+	for _, name := range []string{
+		"MacroSecurityLevel", "DisableMacrosExecution", "DisableActiveContent", "BlockUntrustedRefererLinks",
+	} {
+		assert.Contains(t, text, `oor:name="`+name+`"`)
+	}
+	settings := privateProfileSettings()
+	assert.Contains(t, settings, `oor:path="/org.openoffice.Office.Common/Security/Scripting"`)
+	assert.Contains(t, settings, `oor:name="MacroSecurityLevel" oor:op="fuse"><value>3</value>`)
+	assert.Contains(t, settings, `oor:name="DisableMacrosExecution" oor:op="fuse"><value>true</value>`)
+	assert.Contains(t, settings, `oor:name="DisableActiveContent" oor:op="fuse"><value>true</value>`)
+	assert.Contains(t, settings, `oor:name="BlockUntrustedRefererLinks" oor:op="fuse"><value>true</value>`)
+	assert.NotContains(t, settings, "UpdateDocMode")
+	t.Log("main.xcd Security/Scripting properties and generated registry path/values match; UpdateDocMode absent")
+}
+
 func TestAuthenticatedLaunchChecksTokenSealFstatAndExecutableBinding(t *testing.T) {
 	request := sandboxTestRequest(t, buildSandboxHelper(t, "echo", "", ""), []byte("input"), 1<<20)
 	control, token, err := openLaunchControl(request)
@@ -493,6 +525,18 @@ func buildSandboxHelper(t *testing.T, mode, networkAddress, outputName string) s
 	}, " ")
 	command := exec.Command("go", "build", "-trimpath", "-ldflags", ldflags,
 		"-o", target, "./testdata/sandboxhelper")
+	environment := os.Environ()
+	set := false
+	for index, entry := range environment {
+		if strings.HasPrefix(entry, "CGO_ENABLED=") {
+			environment[index] = "CGO_ENABLED=0"
+			set = true
+		}
+	}
+	if !set {
+		environment = append(environment, "CGO_ENABLED=0")
+	}
+	command.Env = environment
 	output, err := command.CombinedOutput()
 	require.NoError(t, err, "%s", output)
 	return target
