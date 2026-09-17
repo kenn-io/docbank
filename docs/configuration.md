@@ -311,6 +311,10 @@ fingerprint. Each processing profile keeps its own `max_document_chars` limit
 for subsequent processing. A runtime with no selecting profile remains staged
 and isn't executable.
 
+After a restart, queued work whose descriptor is no longer configured fails
+with `stale_authority`. Plan the work and grant consent for the changed profile
+before retrying it.
+
 For this adapter, `disclosure_fingerprint` binds the descriptor, endpoint, and
 deployment fingerprint. Recompute it when the endpoint or deployment changes;
 the daemon rejects a mismatched binding before it starts provider work.
