@@ -266,6 +266,66 @@ func TestOpenAPIDeclaresEmailMetadataAndBinaryParts(t *testing.T) {
 	}
 }
 
+func TestOpenAPIDeclaresPackagePreflightContract(t *testing.T) {
+	doc := api.NewOfflineServer().API().OpenAPI()
+	schemas := doc.Components.Schemas.Map()
+	create := doc.Paths["/api/v1/packages/preflights"].Post
+	read := doc.Paths["/api/v1/packages/preflights/{preflight_id}"].Get
+	diagnostics := doc.Paths["/api/v1/packages/preflights/{preflight_id}/diagnostics"].Get
+	require.NotNil(t, create.RequestBody)
+	assert.True(t, create.RequestBody.Required)
+	request := resolveOpenAPISchema(t, schemas, create.RequestBody.Content["application/json"].Schema)
+	assert.ElementsMatch(t, []string{"profile", "encoding", "source_kind", "source_ref"}, request.Required)
+	assert.Contains(t, request.Properties, "page_map_profile")
+	assert.Contains(t, request.Properties, "mapping")
+	assert.Equal(t, false, request.AdditionalProperties)
+	for _, operation := range []*huma.Operation{create, read, diagnostics} {
+		require.NotNil(t, operation.Responses["200"])
+		body := resolveOpenAPISchema(t, schemas, operation.Responses["200"].Content["application/json"].Schema)
+		assert.Contains(t, body.Properties, "diagnostics")
+		if operation == diagnostics {
+			assert.Contains(t, body.Properties, "total")
+			assert.Contains(t, body.Properties, "next_cursor")
+		} else {
+			assert.Equal(t, "uuid", body.Properties["preflight_id"].Format)
+			assert.Contains(t, body.Properties, "manifest_sha256")
+			assert.Equal(t, "date-time", body.Properties["expires_at"].Format)
+		}
+		for _, status := range []string{"401", "403", "500"} {
+			require.NotNil(t, operation.Responses[status])
+			errorSchema := resolveOpenAPISchema(t, schemas, operation.Responses[status].Content["application/problem+json"].Schema)
+			assert.Contains(t, errorSchema.Properties, "code")
+			assert.Contains(t, errorSchema.Properties, "status")
+		}
+	}
+	for _, status := range []string{"413", "422", "503"} {
+		assert.Contains(t, create.Responses, status)
+	}
+	for _, operation := range []*huma.Operation{read, diagnostics} {
+		assert.Contains(t, operation.Responses, "404")
+		parameters := map[string]*huma.Param{}
+		for _, parameter := range operation.Parameters {
+			parameters[parameter.Name] = parameter
+		}
+		require.Contains(t, parameters, "preflight_id")
+		assert.Equal(t, "path", parameters["preflight_id"].In)
+		assert.True(t, parameters["preflight_id"].Required)
+		assert.Equal(t, "uuid", parameters["preflight_id"].Schema.Format)
+		if operation == diagnostics {
+			require.Contains(t, parameters, "limit")
+			assert.Equal(t, "query", parameters["limit"].In)
+			assert.Equal(t, "integer", parameters["limit"].Schema.Type)
+			assert.Equal(t, 100, parameters["limit"].Schema.Default)
+			assert.Equal(t, new(float64(1)), parameters["limit"].Schema.Minimum)
+			assert.Equal(t, new(float64(250)), parameters["limit"].Schema.Maximum)
+			require.Contains(t, parameters, "cursor")
+			assert.Equal(t, "query", parameters["cursor"].In)
+			assert.Equal(t, "string", parameters["cursor"].Schema.Type)
+			assert.Contains(t, operation.Responses, "422")
+		}
+	}
+}
+
 func openAPISchemaBlock(t *testing.T, doc, schema string) string {
 	t.Helper()
 	marker := "\n    " + schema + ":\n"

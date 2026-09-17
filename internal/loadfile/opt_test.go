@@ -2,6 +2,7 @@ package loadfile
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"os"
 	"strings"
@@ -110,7 +111,7 @@ func TestOPTScannerBoundsFieldsAndStreamsBeyondOnePage(t *testing.T) {
 	require.ErrorIs(t, err, ErrMalformedInput)
 
 	count := 0
-	diagnostics, err := ScanOPT(strings.NewReader(strings.Repeat("I,V,P,,,,1\n", MaxRowsPerPage+1)), p, func(image ImageRef) error {
+	diagnostics, err := ScanOPT(t.Context(), strings.NewReader(strings.Repeat("I,V,P,,,,1\n", MaxRowsPerPage+1)), p, func(image ImageRef) error {
 		count++
 		assert.Equal(t, count, image.PageOrdinal)
 		return nil
@@ -121,10 +122,30 @@ func TestOPTScannerBoundsFieldsAndStreamsBeyondOnePage(t *testing.T) {
 
 	stop := errors.New("stop scanning")
 	count = 0
-	_, err = ScanOPT(strings.NewReader("I,V,P,Y,,,1\nI,V,P,,,,1\n"), p, func(ImageRef) error {
+	_, err = ScanOPT(t.Context(), strings.NewReader("I,V,P,Y,,,1\nI,V,P,,,,1\n"), p, func(ImageRef) error {
 		count++
 		return stop
 	})
 	require.ErrorIs(t, err, stop)
 	assert.Equal(t, 1, count)
+}
+
+func TestOPTScannerCancelsBeforeMalformedRows(t *testing.T) {
+	profile := mustProfile(t, "opt-standard-v1")
+	for _, afterValidRow := range []bool{false, true} {
+		ctx, cancel := context.WithCancel(t.Context())
+		input := "malformed\nmalformed\n"
+		if afterValidRow {
+			input = "I,V,P,Y,,,1\n" + input
+		} else {
+			cancel()
+		}
+		diagnostics, err := ScanOPT(ctx, strings.NewReader(input), profile, func(ImageRef) error {
+			cancel()
+			return nil
+		})
+		cancel()
+		require.ErrorIs(t, err, context.Canceled)
+		assert.Empty(t, diagnostics, "malformed rows after cancellation must not be processed")
+	}
 }

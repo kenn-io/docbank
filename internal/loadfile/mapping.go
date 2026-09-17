@@ -16,7 +16,10 @@ const (
 	MaxMappingBytes   = 256 << 10
 )
 
-var ErrInvalidMapping = errors.New("invalid_package_mapping: mapping document is malformed or out of catalog")
+var (
+	ErrInvalidMapping   = errors.New("invalid_package_mapping: mapping document is malformed or out of catalog")
+	ErrMappingAmbiguous = errors.New("package_mapping_ambiguous: mapping requires an explicit choice")
+)
 
 type MappingColumn struct {
 	Source            string  `json:"source"`
@@ -56,6 +59,7 @@ func DecodeMapping(raw []byte, columns []string) (Mapping, string, error) {
 	}
 	claimed := make([]bool, len(columns))
 	targets := make([]string, len(columns))
+	singleValueTargets := make(map[string]bool)
 	for index := range mapping.Columns {
 		column := &mapping.Columns[index]
 		matches := ordinals[column.Source]
@@ -86,6 +90,9 @@ func DecodeMapping(raw []byte, columns []string) (Mapping, string, error) {
 			return Mapping{}, "", invalidMapping("column %d has unknown canonical target %q", index, *column.Canonical)
 		}
 		if column.Canonical != nil {
+			if err := claimSingleValueTarget(*column.Canonical, singleValueTargets); err != nil {
+				return Mapping{}, "", err
+			}
 			targets[ordinal] = *column.Canonical
 		}
 		if column.DateFormat != "" && declaredDateLayout(column.DateFormat) == "" {
@@ -124,6 +131,17 @@ func DecodeMapping(raw []byte, columns []string) (Mapping, string, error) {
 	}
 	digest := sha256.Sum256(encoded)
 	return mapping, hex.EncodeToString(digest[:]), nil
+}
+
+func claimSingleValueTarget(target string, claimed map[string]bool) error {
+	switch target {
+	case "loadfile.document.id", "loadfile.family.parent", "loadfile.family.id":
+		if claimed[target] {
+			return fmt.Errorf("%w: canonical target %q is claimed more than once", ErrMappingAmbiguous, target)
+		}
+		claimed[target] = true
+	}
+	return nil
 }
 
 func portableRelativeRoot(root string) bool {

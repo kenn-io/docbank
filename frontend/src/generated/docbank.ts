@@ -2542,6 +2542,70 @@ export interface NodePage {
   total: number;
 }
 
+export interface PackageDiagnostic {
+  code: string;
+  column?: string;
+  detail?: string;
+  load_file?: string;
+  row_id?: string;
+  row_ordinal?: number;
+  severity: string;
+}
+
+export interface PackageDiagnosticPage {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  diagnostics: PackageDiagnostic[];
+  next_cursor?: string;
+  total: number;
+}
+
+export interface PackageVolume {
+  declared_root: string;
+  ordinal: number;
+  volume_name: string;
+}
+
+export interface PackagePreflight {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  blocking: boolean;
+  created_at: string;
+  diagnostic_count: number;
+  diagnostics: PackageDiagnostic[];
+  expires_at: string;
+  manifest_sha256: string;
+  mapping_sha256: string;
+  pages: number;
+  preflight_id: string;
+  profile_sha256: string;
+  records: number;
+  source_kind: string;
+  source_ref: string;
+  volumes: PackageVolume[];
+}
+
+export type PackagePreflightRequestSourceKind = typeof PackagePreflightRequestSourceKind[keyof typeof PackagePreflightRequestSourceKind];
+
+
+export const PackagePreflightRequestSourceKind = {
+  root: 'root',
+} as const;
+
+export interface PackagePreflightRequest {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  /** @minLength 1 */
+  encoding: string;
+  mapping?: string;
+  page_map_profile?: string;
+  /** @minLength 1 */
+  profile: string;
+  source_kind: PackagePreflightRequestSourceKind;
+  /** @minLength 1 */
+  source_ref: string;
+}
+
 export interface PreviewAuditEnrollmentRequest {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
@@ -4265,6 +4329,19 @@ offset?: number;
 
 export type PruneNodeContentVersionsHeaders = {
 'If-Match': string;
+};
+
+export type ReadPackagePreflightDiagnosticsParams = {
+/**
+ * Maximum diagnostics to return
+ * @minimum 1
+ * @maximum 250
+ */
+limit?: number;
+/**
+ * Opaque next_cursor returned by this preflight's previous diagnostic page
+ */
+cursor?: string;
 };
 
 export type ResolvePathParams = {
@@ -7150,6 +7227,101 @@ return sessionJSON<VersionPruneReport>(getPruneNodeContentVersionsUrl(id),
     method: 'POST',
     headers: { 'Content-Type': 'application/json',...headers, ...getHeaders(options?.headers) },
     body: JSON.stringify(versionPruneRequest)
+  }
+);}
+
+
+
+export const getCreatePackagePreflightUrl = () => {
+
+
+
+
+  return `/api/v1/packages/preflights`
+}
+
+/**
+ * @summary Preview a load-file package
+ */
+export const createPackagePreflight = async (packagePreflightRequest: NonReadonly<PackagePreflightRequest>, options?: Parameters<typeof sessionJSON>[1]): Promise<PackagePreflight> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return sessionJSON<PackagePreflight>(getCreatePackagePreflightUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(packagePreflightRequest)
+  }
+);}
+
+
+
+export const getReadPackagePreflightUrl = (preflightId: string,) => {
+
+
+
+
+  return `/api/v1/packages/preflights/${encodeURIComponent(String(preflightId))}`
+}
+
+/**
+ * @summary Read an expiring package preview
+ */
+export const readPackagePreflight = async (preflightId: string, options?: Parameters<typeof sessionJSON>[1]): Promise<PackagePreflight> => {
+
+  return sessionJSON<PackagePreflight>(getReadPackagePreflightUrl(preflightId),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+export const getReadPackagePreflightDiagnosticsUrl = (preflightId: string,
+    params?: ReadPackagePreflightDiagnosticsParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/v1/packages/preflights/${encodeURIComponent(String(preflightId))}/diagnostics?${stringifiedParams}` : `/api/v1/packages/preflights/${encodeURIComponent(String(preflightId))}/diagnostics`
+}
+
+/**
+ * @summary Read one bounded page of package diagnostics
+ */
+export const readPackagePreflightDiagnostics = async (preflightId: string,
+    params?: ReadPackagePreflightDiagnosticsParams, options?: Parameters<typeof sessionJSON>[1]): Promise<PackageDiagnosticPage> => {
+
+  return sessionJSON<PackageDiagnosticPage>(getReadPackagePreflightDiagnosticsUrl(preflightId,params),
+  {
+    ...options,
+    method: 'GET'
+
+
   }
 );}
 

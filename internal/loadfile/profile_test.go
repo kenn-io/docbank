@@ -28,7 +28,7 @@ func TestReadProfilesAreFixedAndHashStably(t *testing.T) {
 		"opt-standard-v1":   {"ImageKey", "VolumeName", "ImagePath", "DocumentBreak", "FolderBreak", "BoxBreak", "PageCount"},
 		"opt-pagecount5-v1": {"ImageKey", "VolumeName", "ImagePath", "DocumentBreak", "PageCount", "FolderBreak", "BoxBreak"},
 	}
-	for _, id := range []string{"csv-rfc4180-v1", "opt-standard-v1", "opt-pagecount5-v1"} {
+	for _, id := range []string{"csv-rfc4180-v1", "opt-standard-v1", "opt-pagecount5-v1", "lfp-ipro-v1"} {
 		profile, readErr := ReadProfile(id)
 		require.NoError(t, readErr, id)
 		assert.Equal(t, id, profile.ID)

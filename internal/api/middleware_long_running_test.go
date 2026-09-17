@@ -176,3 +176,11 @@ func TestMediaRetryOutlivesRequestTimeout(t *testing.T) {
 		require.JSONEq(t, `"queued"`, string(body))
 	})
 }
+
+func TestPackagePreflightHasNoRequestDeadline(t *testing.T) {
+	handler := timeoutMiddleware(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+		_, present := r.Context().Deadline()
+		assert.False(t, present)
+	}))
+	handler.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodPost, "/api/v1/packages/preflights", nil))
+}

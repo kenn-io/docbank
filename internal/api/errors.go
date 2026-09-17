@@ -9,6 +9,7 @@ import (
 	"github.com/danielgtaylor/huma/v2"
 	"go.kenn.io/kit/packstore"
 
+	"go.kenn.io/docbank/internal/loadfile"
 	"go.kenn.io/docbank/internal/store"
 )
 
@@ -128,6 +129,13 @@ var storeErrCodes = []struct {
 	{packstore.ErrPhysicalMissing, http.StatusServiceUnavailable, "content_missing"},
 	{packstore.ErrPhysicalCorrupt, http.StatusInternalServerError, "content_corrupt"},
 	{packstore.ErrPhysicalAuthorityMissing, http.StatusInternalServerError, "physical_authority_missing"},
+	{loadfile.ErrInvalidProfile, http.StatusUnprocessableEntity, "invalid_package_profile"},
+	{loadfile.ErrInvalidMapping, http.StatusUnprocessableEntity, "invalid_package_mapping"},
+	{loadfile.ErrMappingAmbiguous, http.StatusUnprocessableEntity, "package_mapping_ambiguous"},
+	{loadfile.ErrUnsafeReference, http.StatusUnprocessableEntity, "package_reference_unsafe"},
+	{loadfile.ErrMalformedInput, http.StatusUnprocessableEntity, "invalid_package_data"},
+	{loadfile.ErrLoadfileLimit, http.StatusRequestEntityTooLarge, "package_too_large"},
+	{loadfile.ErrUnrepresentable, http.StatusUnprocessableEntity, "invalid_package_profile"},
 }
 
 // FromStoreError maps the store's typed errors onto the wire envelope; an

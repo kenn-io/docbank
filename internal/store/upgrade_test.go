@@ -71,6 +71,9 @@ func TestOpenCutsOverReleasedV090ThroughJSONL(t *testing.T) {
 			var collectionLabels int
 			require.NoError(t, s.db.QueryRow(`SELECT COUNT(*) FROM collection_labels`).Scan(&collectionLabels))
 			assert.Zero(t, collectionLabels, "released metadata predates collection labels")
+			var preflights int
+			require.NoError(t, s.db.QueryRow(`SELECT COUNT(*) FROM package_preflights`).Scan(&preflights))
+			assert.Zero(t, preflights)
 			var upgraded bytes.Buffer
 			require.NoError(t, s.ExportMetadata(t.Context(), &upgraded))
 			assertReleasedMetadataWithEmptyLexicalHead(t, fixture.metadata, upgraded.Bytes())
@@ -306,6 +309,26 @@ func TestOpenRejectsCurrentDatabaseWithoutPersonAuthority(t *testing.T) {
 			}
 			require.ErrorContains(t, err, "unexpected persons layout")
 		})
+	}
+}
+
+func TestOpenRejectsInvalidPackagePreflightLayout(t *testing.T) {
+	for _, driver := range v090UpgradeDrivers() {
+		for _, change := range []string{"DROP TABLE package_preflights", "ALTER TABLE package_preflights DROP COLUMN source_ref"} {
+			t.Run(driver.name+"/"+change, func(t *testing.T) {
+				dbPath := filepath.Join(t.TempDir(), "docbank.db")
+				s, err := Open(dbPath, driver.driver)
+				require.NoError(t, err)
+				_, err = s.db.Exec(change)
+				require.NoError(t, err)
+				require.NoError(t, s.Close())
+				reopened, err := Open(dbPath, driver.driver)
+				if reopened != nil {
+					require.NoError(t, reopened.Close())
+				}
+				require.ErrorContains(t, err, "unexpected package_preflights layout")
+			})
+		}
 	}
 }
 

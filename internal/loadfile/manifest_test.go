@@ -94,7 +94,7 @@ func TestManifestWritesCanonicalJSONLIncrementallyInDeclaredOrder(t *testing.T) 
 		Files:   []FileRef{{RelPath: "z.dat", Size: 2}, {RelPath: "a.dat", Size: 1}},
 	}
 	want := "" +
-		`{"kind":"manifest","mapping_sha256":"mapping","profile_sha256":"profile"}` + "\n" +
+		`{"kind":"manifest","mapping":{"columns":[],"contract":""},"mapping_sha256":"mapping","profile_sha256":"profile"}` + "\n" +
 		`{"kind":"volume","value":{"declared_root":"second","name":"VOL002","ordinal":2}}` + "\n" +
 		`{"kind":"volume","value":{"declared_root":"first","name":"VOL001","ordinal":1}}` + "\n" +
 		`{"kind":"record","value":{"column_order":[],"doc_id":"","family":{"attachment_doc_ids":[],"group_id":"","parent_doc_id":"","range_begin":"","range_end":""},"fields":[],"files":[],"load_file":"","row_id":"second","row_ordinal":0}}` + "\n" +

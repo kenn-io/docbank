@@ -30,9 +30,10 @@ import (
 	"go.kenn.io/docbank/document/media/mediatest"
 	"go.kenn.io/docbank/document/plaintext"
 	"go.kenn.io/docbank/internal/api"
+	"go.kenn.io/docbank/internal/apiclient"
 	"go.kenn.io/docbank/internal/blob"
-	"go.kenn.io/docbank/internal/client"
 	"go.kenn.io/docbank/internal/config"
+	"go.kenn.io/docbank/internal/daemonconn"
 	"go.kenn.io/docbank/internal/home"
 	"go.kenn.io/docbank/internal/store"
 )
@@ -66,18 +67,18 @@ func TestDaemonDoclingASRMedia(t *testing.T) {
 			require.NotEmpty(t, receipt.SourceID)
 			require.NotEmpty(t, receipt.ContentVersionID)
 
-			node, err := daemon.Stat(t.Context(), "/media/"+sha[:2]+"/"+sha+test.extension)
+			node, err := daemon.API().ResolvePath(t.Context(), &apiclient.ResolvePathRequestOptions{Query: &apiclient.ResolvePathQuery{Path: "/media/" + sha[:2] + "/" + sha + test.extension}})
 			require.NoError(t, err)
 			selector := api.ProcessingSelector{NodeID: node.ID, ContentVersionID: receipt.ContentVersionID, Profile: "asr"}
-			plan, err := daemon.PlanProcessing(t.Context(), api.ProcessingPlanRequest{Selector: selector})
+			plan, err := daemon.API().PlanDocumentProcessing(t.Context(), &apiclient.PlanDocumentProcessingRequestOptions{Body: &api.ProcessingPlanRequest{Selector: selector}})
 			require.NoError(t, err)
 			require.Len(t, plan.Flow, 1)
 			assert.Equal(t, provider.URL(), plan.Flow[0].RuntimeDisclosure.Endpoint)
 			assert.Equal(t, "docbank-docling-asr/v1", plan.Flow[0].RuntimeDisclosure.ImmediateProcessor)
 			assert.Equal(t, "docling.serve-v1", plan.Flow[0].RuntimeDisclosure.UltimateProcessor)
-			_, err = daemon.GrantProcessingConsent(t.Context(), api.ProcessingConsentGrantRequest{
+			_, err = daemon.API().GrantDocumentProcessingConsent(t.Context(), &apiclient.GrantDocumentProcessingConsentRequestOptions{Body: &api.ProcessingConsentGrantRequest{
 				Selector: selector, PlanFingerprint: plan.Fingerprint,
-			})
+			}})
 			require.NoError(t, err)
 
 			queued, err := daemon.RetryMedia(t.Context(), receipt.SourceID, api.MediaRetryBody{
@@ -153,17 +154,17 @@ func TestDaemonDoclingASRFailures(t *testing.T) {
 			Occurrence: api.MediaOccurrenceBody{Ref: "missing-key", Revision: "1", Filename: "missing.wav"},
 		}, bytes.NewReader(content))
 		require.NoError(t, err)
-		_, err = daemon.Stat(t.Context(), "/media/"+sha[:2]+"/"+sha+".wav")
+		_, err = daemon.API().ResolvePath(t.Context(), &apiclient.ResolvePathRequestOptions{Query: &apiclient.ResolvePathQuery{Path: "/media/" + sha[:2] + "/" + sha + ".wav"}})
 		require.NoError(t, err)
 
-		node, err := daemon.Stat(t.Context(), "/media/"+sha[:2]+"/"+sha+".wav")
+		node, err := daemon.API().ResolvePath(t.Context(), &apiclient.ResolvePathRequestOptions{Query: &apiclient.ResolvePathQuery{Path: "/media/" + sha[:2] + "/" + sha + ".wav"}})
 		require.NoError(t, err)
 		selector := api.ProcessingSelector{NodeID: node.ID, ContentVersionID: receipt.ContentVersionID, Profile: "asr"}
-		plan, err := daemon.PlanProcessing(t.Context(), api.ProcessingPlanRequest{Selector: selector})
+		plan, err := daemon.API().PlanDocumentProcessing(t.Context(), &apiclient.PlanDocumentProcessingRequestOptions{Body: &api.ProcessingPlanRequest{Selector: selector}})
 		require.NoError(t, err)
-		_, err = daemon.GrantProcessingConsent(t.Context(), api.ProcessingConsentGrantRequest{
+		_, err = daemon.API().GrantDocumentProcessingConsent(t.Context(), &apiclient.GrantDocumentProcessingConsentRequestOptions{Body: &api.ProcessingConsentGrantRequest{
 			Selector: selector, PlanFingerprint: plan.Fingerprint,
-		})
+		}})
 		require.NoError(t, err)
 		queued, err := daemon.RetryMedia(t.Context(), receipt.SourceID, api.MediaRetryBody{
 			OperationID: "00000000-0000-4000-8000-000000000612", Processing: &api.MediaProcessingBody{Profile: "asr"},
@@ -183,9 +184,9 @@ func TestDaemonDoclingASRFailures(t *testing.T) {
 		provider.resultSchemaVersion = "1.11.0"
 		_, daemon, _ := startDaemonASRTest(t, provider, "synthetic-provider-secret", false)
 		receipt, selector, plan := daemonASRSourceAndPlan(t, daemon, "malformed.wav", mediatest.WAV())
-		_, err := daemon.GrantProcessingConsent(t.Context(), api.ProcessingConsentGrantRequest{
+		_, err := daemon.API().GrantDocumentProcessingConsent(t.Context(), &apiclient.GrantDocumentProcessingConsentRequestOptions{Body: &api.ProcessingConsentGrantRequest{
 			Selector: selector, PlanFingerprint: plan.Fingerprint,
-		})
+		}})
 		require.NoError(t, err)
 		queued, err := daemon.RetryMedia(t.Context(), receipt.SourceID, api.MediaRetryBody{
 			OperationID: "00000000-0000-4000-8000-000000000622", Processing: &api.MediaProcessingBody{Profile: "asr"},
@@ -204,9 +205,9 @@ func TestDaemonDoclingASRFailures(t *testing.T) {
 		provider.transientPolls.Store(1)
 		_, daemon, _ := startDaemonASRTest(t, provider, "synthetic-provider-secret", false)
 		receipt, selector, plan := daemonASRSourceAndPlan(t, daemon, "retry.wav", mediatest.WAV())
-		_, err := daemon.GrantProcessingConsent(t.Context(), api.ProcessingConsentGrantRequest{
+		_, err := daemon.API().GrantDocumentProcessingConsent(t.Context(), &apiclient.GrantDocumentProcessingConsentRequestOptions{Body: &api.ProcessingConsentGrantRequest{
 			Selector: selector, PlanFingerprint: plan.Fingerprint,
-		})
+		}})
 		require.NoError(t, err)
 		queued, err := daemon.RetryMedia(t.Context(), receipt.SourceID, api.MediaRetryBody{
 			OperationID: "00000000-0000-4000-8000-000000000632", Processing: &api.MediaProcessingBody{Profile: "asr"},
@@ -244,10 +245,10 @@ func TestDaemonDoclingASRFailures(t *testing.T) {
 func TestDaemonDoclingASRAdjacentProfiles(t *testing.T) {
 	provider := newDaemonDoclingServer(t)
 	_, daemon, _ := startDaemonASRTest(t, provider, "", true)
-	profiles, err := daemon.ProcessingProfiles(t.Context())
+	profiles, err := daemon.API().ListDocumentProcessingProfiles(t.Context())
 	require.NoError(t, err)
 	var names []string
-	for _, profile := range profiles {
+	for _, profile := range *profiles {
 		names = append(names, profile.Name)
 	}
 	assert.Contains(t, names, "asr")
@@ -272,14 +273,14 @@ func TestDaemonDoclingASRAdjacentProfiles(t *testing.T) {
 		SHA256: transcriptSHA, ByteLength: int64(len(transcript)),
 	}, bytes.NewReader(transcript))
 	require.NoError(t, err)
-	node, err := daemon.Stat(t.Context(), "/media/"+sha[:2]+"/"+sha+".wav")
+	node, err := daemon.API().ResolvePath(t.Context(), &apiclient.ResolvePathRequestOptions{Query: &apiclient.ResolvePathQuery{Path: "/media/" + sha[:2] + "/" + sha + ".wav"}})
 	require.NoError(t, err)
 	selector := api.ProcessingSelector{NodeID: node.ID, ContentVersionID: receipt.ContentVersionID, Profile: "supplied-transcript"}
-	plan, err := daemon.PlanProcessing(t.Context(), api.ProcessingPlanRequest{Selector: selector})
+	plan, err := daemon.API().PlanDocumentProcessing(t.Context(), &apiclient.PlanDocumentProcessingRequestOptions{Body: &api.ProcessingPlanRequest{Selector: selector}})
 	require.NoError(t, err)
-	_, err = daemon.GrantProcessingConsent(t.Context(), api.ProcessingConsentGrantRequest{
+	_, err = daemon.API().GrantDocumentProcessingConsent(t.Context(), &apiclient.GrantDocumentProcessingConsentRequestOptions{Body: &api.ProcessingConsentGrantRequest{
 		Selector: selector, PlanFingerprint: plan.Fingerprint,
-	})
+	}})
 	require.NoError(t, err)
 	queued, err := daemon.RetryMedia(t.Context(), receipt.SourceID, api.MediaRetryBody{
 		OperationID: "00000000-0000-4000-8000-000000000653",
@@ -306,11 +307,11 @@ func TestDaemonDoclingASRAdjacentProfiles(t *testing.T) {
 	plainSource := writeSourceFile(t, "ordinary.txt", "plaintext remains available without the ASR secret\n")
 	_, err = runCLI(t, "add", plainSource, "--dest", "/plain")
 	require.NoError(t, err)
-	plainNode, err := daemon.Stat(t.Context(), "/plain/ordinary.txt")
+	plainNode, err := daemon.API().ResolvePath(t.Context(), &apiclient.ResolvePathRequestOptions{Query: &apiclient.ResolvePathQuery{Path: "/plain/ordinary.txt"}})
 	require.NoError(t, err)
 	plainSelector := api.ProcessingSelector{NodeID: plainNode.ID,
 		ContentVersionID: plainNode.CurrentVersionID, Profile: "private-text"}
-	plainPlan, err := daemon.PlanProcessing(t.Context(), api.ProcessingPlanRequest{Selector: plainSelector})
+	plainPlan, err := daemon.API().PlanDocumentProcessing(t.Context(), &apiclient.PlanDocumentProcessingRequestOptions{Body: &api.ProcessingPlanRequest{Selector: plainSelector}})
 	require.NoError(t, err)
 	plainJob, err := daemon.StartProcessing(t.Context(), api.StartProcessingRequest{
 		Selector: plainSelector, PlanFingerprint: plainPlan.Fingerprint, Consent: true,
@@ -336,9 +337,9 @@ func TestDaemonDoclingASRRestoredWork(t *testing.T) {
 	provider.resultGate = make(chan struct{})
 	root, daemon, stop := startDaemonASRTest(t, provider, "synthetic-provider-secret", false)
 	receipt, selector, plan := daemonASRSourceAndPlan(t, daemon, "restored.wav", mediatest.WAV())
-	_, err := daemon.GrantProcessingConsent(t.Context(), api.ProcessingConsentGrantRequest{
+	_, err := daemon.API().GrantDocumentProcessingConsent(t.Context(), &apiclient.GrantDocumentProcessingConsentRequestOptions{Body: &api.ProcessingConsentGrantRequest{
 		Selector: selector, PlanFingerprint: plan.Fingerprint,
-	})
+	}})
 	require.NoError(t, err)
 	_, err = daemon.RetryMedia(t.Context(), receipt.SourceID, api.MediaRetryBody{
 		OperationID: "00000000-0000-4000-8000-000000000662", Processing: &api.MediaProcessingBody{Profile: "asr"},
@@ -360,11 +361,11 @@ func TestDaemonDoclingASRRestoredWork(t *testing.T) {
 	assert.NotEqual(t, "succeeded", status.OperationState)
 	assert.Equal(t, beforeRestart, provider.requests.Load(), "an interrupted provider submission is not replayed on restart")
 
-	newPlan, err := restarted.PlanProcessing(t.Context(), api.ProcessingPlanRequest{Selector: selector})
+	newPlan, err := restarted.API().PlanDocumentProcessing(t.Context(), &apiclient.PlanDocumentProcessingRequestOptions{Body: &api.ProcessingPlanRequest{Selector: selector}})
 	require.NoError(t, err)
-	_, err = restarted.GrantProcessingConsent(t.Context(), api.ProcessingConsentGrantRequest{
+	_, err = restarted.API().GrantDocumentProcessingConsent(t.Context(), &apiclient.GrantDocumentProcessingConsentRequestOptions{Body: &api.ProcessingConsentGrantRequest{
 		Selector: selector, PlanFingerprint: newPlan.Fingerprint,
-	})
+	}})
 	require.NoError(t, err)
 	retried, err := restarted.RetryMedia(t.Context(), receipt.SourceID, api.MediaRetryBody{
 		OperationID: "00000000-0000-4000-8000-000000000663", Processing: &api.MediaProcessingBody{Profile: "asr"},
@@ -392,9 +393,9 @@ func TestDaemonDoclingASRQueuedWorkAfterProfileChange(t *testing.T) {
 				receipt, selector, plan := daemonASRSourceAndPlanWith(t, daemon,
 					fmt.Sprintf("00000000-0000-4000-8000-%012d", 801+index*2),
 					source.filename, source.mediaType, source.content)
-				_, err := daemon.GrantProcessingConsent(t.Context(), api.ProcessingConsentGrantRequest{
+				_, err := daemon.API().GrantDocumentProcessingConsent(t.Context(), &apiclient.GrantDocumentProcessingConsentRequestOptions{Body: &api.ProcessingConsentGrantRequest{
 					Selector: selector, PlanFingerprint: plan.Fingerprint,
-				})
+				}})
 				require.NoError(t, err)
 				queued, err = daemon.RetryMedia(t.Context(), receipt.SourceID, api.MediaRetryBody{
 					OperationID: fmt.Sprintf("00000000-0000-4000-8000-%012d", 802+index*2),
@@ -444,7 +445,7 @@ func TestDaemonDoclingASRQueuedWorkAfterProfileChange(t *testing.T) {
 			require.NoError(t, writeDaemonASRConfig(root, cfg))
 			startServe(t)
 			record := waitForDaemon(t, root)
-			restarted := client.New("http://"+record.Address, cfg.Server.APIKey)
+			restarted := daemonconn.New("http://"+record.Address, cfg.Server.APIKey)
 			t.Cleanup(func() { require.NoError(t, restarted.Close()) })
 			require.EventuallyWithT(t, func(collect *assert.CollectT) {
 				status, err := restarted.ProcessingStatus(t.Context(), queued.JobID)
@@ -495,9 +496,9 @@ func TestDaemonDoclingASRMetadataRestoreRequiresFreshConsent(t *testing.T) {
 			t, daemon, testCase.submitOperationID, testCase.filename,
 			testCase.mediaType, testCase.content)
 		testCase.receipt, testCase.selector = receipt, selector
-		_, err := daemon.GrantProcessingConsent(t.Context(), api.ProcessingConsentGrantRequest{
+		_, err := daemon.API().GrantDocumentProcessingConsent(t.Context(), &apiclient.GrantDocumentProcessingConsentRequestOptions{Body: &api.ProcessingConsentGrantRequest{
 			Selector: selector, PlanFingerprint: plan.Fingerprint,
-		})
+		}})
 		require.NoError(t, err)
 		queued, err := daemon.RetryMedia(t.Context(), receipt.SourceID, api.MediaRetryBody{
 			OperationID: testCase.retryOperationID,
@@ -550,13 +551,13 @@ func TestDaemonDoclingASRMetadataRestoreRequiresFreshConsent(t *testing.T) {
 
 	for index := range cases {
 		testCase := &cases[index]
-		freshPlan, err := restored.PlanProcessing(t.Context(), api.ProcessingPlanRequest{
+		freshPlan, err := restored.API().PlanDocumentProcessing(t.Context(), &apiclient.PlanDocumentProcessingRequestOptions{Body: &api.ProcessingPlanRequest{
 			Selector: testCase.selector,
-		})
+		}})
 		require.NoError(t, err)
-		_, err = restored.GrantProcessingConsent(t.Context(), api.ProcessingConsentGrantRequest{
+		_, err = restored.API().GrantDocumentProcessingConsent(t.Context(), &apiclient.GrantDocumentProcessingConsentRequestOptions{Body: &api.ProcessingConsentGrantRequest{
 			Selector: testCase.selector, PlanFingerprint: freshPlan.Fingerprint,
-		})
+		}})
 		require.NoError(t, err)
 		retried, err := restored.RetryMedia(t.Context(), testCase.receipt.SourceID, api.MediaRetryBody{
 			OperationID: testCase.freshOperationID,
@@ -967,7 +968,7 @@ func writeDaemonJSON(response http.ResponseWriter, value any) {
 	_, _ = response.Write(data)
 }
 
-func startDaemonASRTest(t *testing.T, provider *daemonDoclingServer, secret string, withPlaintext bool, existingRoot ...string) (string, *client.Client, func()) {
+func startDaemonASRTest(t *testing.T, provider *daemonDoclingServer, secret string, withPlaintext bool, existingRoot ...string) (string, *daemonconn.Connection, func()) {
 	t.Helper()
 	root := t.TempDir()
 	if len(existingRoot) != 0 {
@@ -993,7 +994,7 @@ func startDaemonASRTest(t *testing.T, provider *daemonDoclingServer, secret stri
 	t.Setenv("DOCBANK_HOME", root)
 	stop := startServe(t)
 	record := waitForDaemon(t, root)
-	daemon := client.New("http://"+record.Address, cfg.Server.APIKey)
+	daemon := daemonconn.New("http://"+record.Address, cfg.Server.APIKey)
 	t.Cleanup(func() { require.NoError(t, daemon.Close()) })
 	return root, daemon, stop
 }
@@ -1044,14 +1045,14 @@ func writeDaemonASRConfig(root string, cfg config.Config) error {
 	return os.WriteFile(filepath.Join(root, "config.toml"), encoded.Bytes(), 0o600)
 }
 
-func daemonASRSourceAndPlan(t *testing.T, daemon *client.Client, filename string, content []byte) (api.MediaReceipt, api.ProcessingSelector, api.ProcessingPlan) {
+func daemonASRSourceAndPlan(t *testing.T, daemon *daemonconn.Connection, filename string, content []byte) (api.MediaReceipt, api.ProcessingSelector, api.ProcessingPlan) {
 	t.Helper()
 	return daemonASRSourceAndPlanWith(t, daemon,
 		"00000000-0000-4000-8000-000000000671", filename, "audio/wav", content)
 }
 
 func daemonASRSourceAndPlanWith(
-	t *testing.T, daemon *client.Client, operationID, filename, mediaType string, content []byte,
+	t *testing.T, daemon *daemonconn.Connection, operationID, filename, mediaType string, content []byte,
 ) (api.MediaReceipt, api.ProcessingSelector, api.ProcessingPlan) {
 	t.Helper()
 	digest := sha256.Sum256(content)
@@ -1063,18 +1064,18 @@ func daemonASRSourceAndPlanWith(
 		Occurrence: api.MediaOccurrenceBody{Ref: filename, Revision: "1", Filename: filename},
 	}, bytes.NewReader(content))
 	require.NoError(t, err)
-	node, err := daemon.Stat(t.Context(), "/media/"+sha[:2]+"/"+sha+extension)
+	node, err := daemon.API().ResolvePath(t.Context(), &apiclient.ResolvePathRequestOptions{Query: &apiclient.ResolvePathQuery{Path: "/media/" + sha[:2] + "/" + sha + extension}})
 	require.NoError(t, err)
 	selector := api.ProcessingSelector{NodeID: node.ID, ContentVersionID: receipt.ContentVersionID, Profile: "asr"}
-	plan, err := daemon.PlanProcessing(t.Context(), api.ProcessingPlanRequest{Selector: selector})
+	plan, err := daemon.API().PlanDocumentProcessing(t.Context(), &apiclient.PlanDocumentProcessingRequestOptions{Body: &api.ProcessingPlanRequest{Selector: selector}})
 	require.NoError(t, err)
-	return receipt, selector, plan
+	return receipt, selector, *plan
 }
 
 func waitForDaemonStop(t *testing.T, root string) {
 	t.Helper()
 	require.Eventually(t, func() bool {
-		records, listErr := client.RuntimeStore(root).List()
+		records, listErr := daemonconn.RuntimeStore(root).List()
 		return listErr == nil && len(records) == 0
 	}, daemonShutdownTimeout, 50*time.Millisecond)
 }

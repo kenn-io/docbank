@@ -102,11 +102,11 @@ func registerEmailDocumentRoutes(mux *http.ServeMux, api huma.API, d Deps, g *ga
 		OperationID: "listEmailDocumentRelations", Method: http.MethodGet,
 		Path: "/api/v1/email-document-relations", Summary: "Read a bounded page of exact parent or child occurrences",
 		Parameters: []*huma.Param{
-			{Name: "parent_version_id", In: "query", Schema: &huma.Schema{Type: "string"}},
-			{Name: "child_version_id", In: "query", Schema: &huma.Schema{Type: "string"}},
-			{Name: "after_operation_id", In: "query", Schema: &huma.Schema{Type: "string"}},
-			{Name: "after_order", In: "query", Schema: &huma.Schema{Type: "integer"}},
-			{Name: "limit", In: "query", Schema: &huma.Schema{Type: "integer"}},
+			{Name: "parent_version_id", In: openAPIQueryLocation, Schema: &huma.Schema{Type: "string"}},
+			{Name: "child_version_id", In: openAPIQueryLocation, Schema: &huma.Schema{Type: "string"}},
+			{Name: "after_operation_id", In: openAPIQueryLocation, Schema: &huma.Schema{Type: "string"}},
+			{Name: "after_order", In: openAPIQueryLocation, Schema: &huma.Schema{Type: "integer"}},
+			{Name: "limit", In: openAPIQueryLocation, Schema: &huma.Schema{Type: "integer"}},
 		},
 	}, nil, reflect.TypeFor[document.EmailDocumentRelationPage](), func(w http.ResponseWriter, r *http.Request) {
 		values := r.URL.Query()

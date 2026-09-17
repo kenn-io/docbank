@@ -44,7 +44,7 @@ func OpenAPIYAML() ([]byte, error) {
 		Parameters: []*huma.Param{{Name: "X-Docbank-Daemon-Token", In: "header", Required: true, Schema: &huma.Schema{Type: "string"}}},
 		Responses:  map[string]*huma.Response{"202": {Description: "Shutdown accepted"}}})
 	doc.AddOperation(&huma.Operation{OperationID: "challengeDaemon", Method: http.MethodGet, Path: daemonauth.ChallengePath,
-		Parameters: []*huma.Param{{Name: "nonce", In: "query", Required: true, Schema: &huma.Schema{Type: "string"}}},
+		Parameters: []*huma.Param{{Name: "nonce", In: openAPIQueryLocation, Required: true, Schema: &huma.Schema{Type: "string"}}},
 		Responses: map[string]*huma.Response{"200": {Description: "Daemon ownership proof", Content: map[string]*huma.MediaType{jsonMediaType: {Schema: huma.SchemaFromType(doc.Components.Schemas, reflect.TypeFor[struct {
 			Proof string `json:"proof"`
 		}]())}}}}})
