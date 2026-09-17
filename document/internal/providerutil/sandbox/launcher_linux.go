@@ -212,7 +212,7 @@ type commandSpec struct {
 
 func runWarmup(spec commandSpec) (int, error) {
 	var restarts int
-	for launch := 0; launch < 2; launch++ {
+	for launch := range 2 {
 		if err := validateRegularFile(spec.inputPath, spec.input); err != nil {
 			return 0, fmt.Errorf("validate sandbox warm-up input: %w", err)
 		}
