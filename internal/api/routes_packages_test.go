@@ -311,3 +311,30 @@ func TestPreflightCancellationDoesNotPersistReceipt(t *testing.T) {
 	assert.Contains(t, response.Body.String(), "context canceled")
 	assert.Zero(t, tableCounts(t, catalog).packagePreflights)
 }
+
+func TestPreflightBlocksEveryRecordWithoutDocumentID(t *testing.T) {
+	srv, _ := newPackageTestServer(t)
+	for header, values := range map[string]string{"DOCID": "þþ\nþþ\n", "UNMAPPED": "SOURCE-A\nSOURCE-B\n"} {
+		t.Run(header, func(t *testing.T) {
+			root := t.TempDir()
+			require.NoError(t, os.Mkdir(filepath.Join(root, "VOL001"), 0o700))
+			require.NoError(t, os.WriteFile(filepath.Join(root, "VOL001", "package.dat"), []byte(header+"\n"+values), 0o600))
+			body, err := json.Marshal(api.PackagePreflightRequest{Profile: "dat-concordance-v1", Encoding: "utf-8", SourceKind: "root", SourceRef: root})
+			require.NoError(t, err)
+			response := srv.post(t, string(body))
+			require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+			var out api.PackagePreflight
+			require.NoError(t, json.Unmarshal(response.Body.Bytes(), &out))
+			assert.True(t, out.Blocking)
+			require.Len(t, out.Diagnostics, 2)
+			for i, diagnostic := range out.Diagnostics {
+				assert.Equal(t, "missing_document_id", diagnostic.Code)
+				assert.Equal(t, "blocking", diagnostic.Severity)
+				assert.Equal(t, "package.dat", diagnostic.LoadFile)
+				assert.Equal(t, i+2, diagnostic.RowOrdinal)
+				assert.NotEmpty(t, diagnostic.RowID)
+			}
+			assert.NotEqual(t, out.Diagnostics[0].RowID, out.Diagnostics[1].RowID)
+		})
+	}
+}

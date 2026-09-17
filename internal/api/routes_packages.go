@@ -269,6 +269,7 @@ func buildPackagePreflight(ctx context.Context, d Deps, g *gate, owner string, r
 		if len(records) == maxPackageRecords {
 			return loadfile.ErrLoadfileLimit
 		}
+		record.LoadFile = filepath.Base(datPath)
 		if err := memoryBudget.add(packageRecordMemory(record)); err != nil {
 			return err
 		}
@@ -278,9 +279,6 @@ func buildPackagePreflight(ctx context.Context, d Deps, g *gate, owner string, r
 	closeErr := dat.Close()
 	if parseErr != nil || closeErr != nil {
 		return PackagePreflight{}, errors.Join(parseErr, closeErr)
-	}
-	for i := range records {
-		records[i].LoadFile = filepath.Base(datPath)
 	}
 	mapping := loadfile.Mapping{Contract: loadfile.MappingContractV1}
 	mappingSHA, err := packageMappingSHA256(mapping)
@@ -297,7 +295,7 @@ func buildPackagePreflight(ctx context.Context, d Deps, g *gate, owner string, r
 			return PackagePreflight{}, err
 		}
 	}
-	mappedDiagnostics, err := loadfile.ApplyMapping(records, mapping, profile)
+	mappedDiagnostics, err := loadfile.ApplyMapping(records, mapping, profile, memoryBudget.add)
 	if err != nil {
 		return PackagePreflight{}, err
 	}

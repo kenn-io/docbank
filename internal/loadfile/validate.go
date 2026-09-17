@@ -41,11 +41,15 @@ func Validate(ctx context.Context, in ValidateInput) ([]Diagnostic, error) {
 		if err := ctx.Err(); err != nil {
 			return diagnostics, err
 		}
-		if previous, exists := records[record.DocID]; exists {
+		if record.DocID == "" {
+			if err := addDiagnostic(packageDiagnostic("missing_document_id", record, "record has no mapped document id")); err != nil {
+				return diagnostics, err
+			}
+		} else if previous, exists := records[record.DocID]; exists {
 			if err := addDiagnostic(packageDiagnostic("duplicate_document_id", record, "document id is also used by row "+previous.RowID)); err != nil {
 				return diagnostics, err
 			}
-		} else if record.DocID != "" {
+		} else {
 			records[record.DocID] = record
 		}
 	}

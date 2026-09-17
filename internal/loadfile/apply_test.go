@@ -20,7 +20,7 @@ func TestApplyMappingPopulatesRecordAuthorityFromConfirmedOrdinals(t *testing.T)
 		{Source: "Parent", SourceOrdinal: &one, Canonical: &parent},
 		{Source: "Native", SourceOrdinal: &two, Canonical: &native},
 	}}
-	diagnostics, err := ApplyMapping(records, mapping, Profile{})
+	diagnostics, err := ApplyMapping(records, mapping, Profile{}, func(int64) error { return nil })
 	require.NoError(t, err)
 	NormalizeFileReferences(records, []Volume{{Name: "VOL002", DeclaredRoot: "VOL002"}})
 	assert.Empty(t, diagnostics)
@@ -54,7 +54,7 @@ func TestApplyMappingCombinesExplicitlyPairedDateAndTime(t *testing.T) {
 	diagnostics, err := ApplyMapping(records, Mapping{Columns: []MappingColumn{
 		{SourceOrdinal: &zero, Canonical: &dateKey},
 		{SourceOrdinal: &one, Canonical: &timeKey, PairedDateOrdinal: &zero},
-	}}, Profile{DateFormat: "YYYY-MM-DD"})
+	}}, Profile{DateFormat: "YYYY-MM-DD"}, func(int64) error { return nil })
 	require.NoError(t, err)
 	require.Empty(t, diagnostics)
 	require.NotNil(t, records[0].Fields[1].Value.Time)
@@ -65,7 +65,7 @@ func TestApplyMappingCombinesExplicitlyPairedDateAndTime(t *testing.T) {
 func TestApplyMappingBoundsDateDiagnostics(t *testing.T) {
 	key := "loadfile.date.sent"
 	diagnostics := make([]Diagnostic, maxDiagnosticsPerOperation)
-	_, err := mappedValue("ambiguous", MappingColumn{Canonical: &key}, Profile{}, &diagnostics)
+	_, err := mappedValue("ambiguous", MappingColumn{Canonical: &key}, Profile{}, &diagnostics, func(int64) error { return nil })
 	require.ErrorIs(t, err, ErrLoadfileLimit)
 }
 
@@ -73,7 +73,7 @@ func TestApplyMappingHydratesConventionalColumnsWithDefaultCustodian(t *testing.
 	profile, err := ReadProfile("dat-concordance-v1")
 	require.NoError(t, err)
 	records := []Record{{LoadFile: "package.dat", RowOrdinal: 1, Fields: []Field{{Column: "DOCID", Raw: "DOC-A"}, {Column: "NATIVE", Raw: "NATIVES/a.pdf"}}}}
-	_, err = ApplyMapping(records, Mapping{Contract: MappingContractV1, DefaultCustodian: "synthetic"}, profile)
+	_, err = ApplyMapping(records, Mapping{Contract: MappingContractV1, DefaultCustodian: "synthetic"}, profile, func(int64) error { return nil })
 	require.NoError(t, err)
 	assert.Equal(t, "DOC-A", records[0].DocID)
 	require.Len(t, records[0].Files, 1)

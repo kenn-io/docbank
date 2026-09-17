@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -64,4 +65,37 @@ func TestPackageInventoryDoesNotWaitForVaultMaintenance(t *testing.T) {
 		require.ErrorIs(t, err, loadfile.ErrMalformedInput)
 		return nil
 	}))
+}
+
+func TestPackageMappingReservesMemoryBeforeExpandingFields(t *testing.T) {
+	for _, multiValue := range []bool{false, true} {
+		records := []loadfile.Record{{Fields: []loadfile.Field{{Column: "Children", Raw: strings.Repeat(";", loadfile.MaxFieldValueBytes)}}}}
+		mapping := loadfile.Mapping{Columns: []loadfile.MappingColumn{{SourceOrdinal: new(0), Canonical: new("loadfile.family.children"), MultiValue: multiValue}}}
+		budget := packageMemoryBudget{maximum: 256 << 10}
+		require.NoError(t, budget.add(packageRecordsMemory(records)))
+		_, err := loadfile.ApplyMapping(records, mapping, loadfile.Profile{}, budget.add)
+		require.ErrorIs(t, err, loadfile.ErrLoadfileLimit)
+		assert.Nil(t, records[0].Fields[0].Value.List)
+		assert.Nil(t, records[0].Family.AttachmentDocIDs)
+	}
+	records := []loadfile.Record{{}}
+	budget := packageMemoryBudget{maximum: 512}
+	require.NoError(t, budget.add(packageRecordsMemory(records)))
+	_, err := loadfile.ApplyMapping(records, loadfile.Mapping{DefaultCustodian: strings.Repeat("x", 1024)}, loadfile.Profile{}, budget.add)
+	require.ErrorIs(t, err, loadfile.ErrLoadfileLimit)
+	assert.Empty(t, records[0].Fields, "the custodian field must not be appended before reserving memory")
+}
+
+func TestPackageMappingSharesBudgetAcrossRecords(t *testing.T) {
+	records := []loadfile.Record{
+		{Fields: []loadfile.Field{{Raw: strings.Repeat(";", 64)}}},
+		{Fields: []loadfile.Field{{Raw: strings.Repeat(";", 64)}}},
+	}
+	mapping := loadfile.Mapping{Columns: []loadfile.MappingColumn{{SourceOrdinal: new(0), Canonical: new("loadfile.custodian"), MultiValue: true}}}
+	budget := packageMemoryBudget{maximum: packageRecordsMemory(records) + 1500}
+	require.NoError(t, budget.add(packageRecordsMemory(records)))
+	_, err := loadfile.ApplyMapping(records, mapping, loadfile.Profile{}, budget.add)
+	require.ErrorIs(t, err, loadfile.ErrLoadfileLimit)
+	assert.Len(t, records[0].Fields[0].Value.List, 65)
+	assert.Nil(t, records[1].Fields[0].Value.List)
 }
