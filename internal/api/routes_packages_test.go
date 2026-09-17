@@ -1,6 +1,7 @@
 package api_test
 
 import (
+	"bufio"
 	"context"
 	"encoding/json/v2"
 	"fmt"
@@ -337,4 +338,43 @@ func TestPreflightBlocksEveryRecordWithoutDocumentID(t *testing.T) {
 			assert.NotEqual(t, out.Diagnostics[0].RowID, out.Diagnostics[1].RowID)
 		})
 	}
+}
+
+func TestPreflightUsesCSVNormalizationForQuotedMultilineFields(t *testing.T) {
+	srv, catalog := newPackageTestServer(t)
+	root := t.TempDir()
+	require.NoError(t, os.Mkdir(filepath.Join(root, "VOL001"), 0o700))
+	source := "DOCID,NOTE\r\nDOC-A,\"first line\r\nsecond line, \"\"quoted\"\"\"\r\nDOC-B,plain\r\n"
+	require.NoError(t, os.WriteFile(filepath.Join(root, "VOL001", "package.dat"), []byte(source), 0o600))
+	body, err := json.Marshal(api.PackagePreflightRequest{Profile: "csv-rfc4180-v1", Encoding: "utf-8", SourceKind: "root", SourceRef: root})
+	require.NoError(t, err)
+	response := srv.post(t, string(body))
+	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+	var out api.PackagePreflight
+	require.NoError(t, json.Unmarshal(response.Body.Bytes(), &out))
+	require.False(t, out.Blocking, "%+v", out.Diagnostics)
+	require.Equal(t, 2, out.Records)
+	manifest, err := catalog.Blobs.OpenContext(t.Context(), out.ManifestSHA256)
+	require.NoError(t, err)
+	defer func() { require.NoError(t, manifest.Close()) }()
+	var records []loadfile.Record
+	scanner := bufio.NewScanner(manifest)
+	for scanner.Scan() {
+		var item struct {
+			Kind  string          `json:"kind"`
+			Value loadfile.Record `json:"value"`
+		}
+		require.NoError(t, json.Unmarshal(scanner.Bytes(), &item))
+		if item.Kind == "record" {
+			records = append(records, item.Value)
+		}
+	}
+	require.NoError(t, scanner.Err())
+	require.Len(t, records, 2)
+	assert.Equal(t, "DOC-A", records[0].DocID)
+	require.Len(t, records[0].Fields, 2)
+	assert.Equal(t, "first line\nsecond line, \"quoted\"", records[0].Fields[1].Raw)
+	assert.Equal(t, "DOC-B", records[1].DocID)
+	require.Len(t, records[1].Fields, 2)
+	assert.Equal(t, "plain", records[1].Fields[1].Raw)
 }

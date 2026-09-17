@@ -262,7 +262,11 @@ func buildPackagePreflight(ctx context.Context, d Deps, g *gate, owner string, r
 	}
 	records := make([]loadfile.Record, 0, 100)
 	memoryBudget := packageMemoryBudget{maximum: maxPackageNormalizedMemory}
-	diagnostics, parseErr := loadfile.ScanDAT(dat, profile, func(record loadfile.Record) error {
+	scan := loadfile.ScanDAT
+	if profile.ID == "csv-rfc4180-v1" {
+		scan = loadfile.ScanCSV
+	}
+	diagnostics, parseErr := scan(dat, profile, func(record loadfile.Record) error {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
