@@ -16,6 +16,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/document/ocr"
+	"go.kenn.io/docbank/document/renderpdf"
 )
 
 func TestProcessorSnapshotsCapabilityManifest(t *testing.T) {
@@ -67,6 +68,8 @@ func TestProcessorSnapshotsCapabilityManifest(t *testing.T) {
 	require.NotEmpty(t, result.Document.Chunks)
 	assert.Equal(t, []string{"Synthetic snapshot"}, result.Document.Chunks[0].HeadingPath)
 	assert.Equal(t, processor.policyFingerprint, result.PolicyFingerprint)
+	assert.Equal(t, source.SHA256, result.SourceSHA256)
+	assert.Empty(t, result.UploadSHA256)
 }
 
 func TestProcessorClassifiesStagingAndSourceFailures(t *testing.T) {
@@ -162,6 +165,93 @@ func TestProcessorCancellationDoesNotWaitForSpoolReservation(t *testing.T) {
 	removed, err := ScavengeSpoolDirectory(directory, time.Now().Add(time.Second))
 	require.NoError(t, err)
 	assert.Equal(t, 1, removed)
+}
+
+func TestProcessorDOCXRoute(t *testing.T) {
+	pdf := testMultipagePDF(2)
+	policy := testPolicyWithRenderPDF(t, testRenderPDFPolicy(t, pdf, nil), 1<<20, 10)
+	manifest := syntheticManifest(t, policy, true)
+	var requests int
+	client, err := NewClient(policy, ClientConfig{
+		APIKey: "synthetic-key", HTTPClient: &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+			requests++
+			_, readErr := io.Copy(io.Discard, request.Body)
+			if readErr != nil {
+				return nil, readErr
+			}
+			return &http.Response{
+				StatusCode: http.StatusOK, Header: http.Header{"Content-Type": []string{"application/json"}},
+				Body: io.NopCloser(strings.NewReader(ocrResponse(2, len(pdf)))), Request: request,
+			}, nil
+		})},
+	})
+	require.NoError(t, err)
+	spoolDirectory := filepath.Join(t.TempDir(), "spool")
+	makePrivateDirectory(t, spoolDirectory)
+	processor, err := NewProcessor(ProcessorConfig{
+		Client: client, Policy: policy, CapabilityManifest: manifest,
+		SpoolDirectory: spoolDirectory, MaxSpoolBytes: policy.values.MaxDocumentBytes, MinFreeBytes: 1,
+	})
+	require.NoError(t, err)
+	sourceBytes := loadDOCXFixture(t, "realistic-word.docx")
+	sourceDigest := digestBytes(sourceBytes)
+	source, err := ocr.NewSource(io.NopCloser(bytes.NewReader(sourceBytes)),
+		"application/vnd.openxmlformats-officedocument.wordprocessingml.document", int64(len(sourceBytes)), sourceDigest)
+	require.NoError(t, err)
+
+	result, err := processor.Process(t.Context(), source)
+	require.NoError(t, err)
+	assert.Equal(t, sourceDigest, result.SourceSHA256)
+	assert.Equal(t, digestBytes(pdf), result.UploadSHA256)
+	assert.Equal(t, "word", result.Source.Family)
+	assert.Equal(t, 2, result.UnitsProcessed)
+	assert.Equal(t, 1, requests)
+	requireOnlySpoolReservationFile(t, spoolDirectory)
+}
+
+func TestProcessorDOCXConversionError(t *testing.T) {
+	tests := []struct {
+		name      string
+		pdf       []byte
+		runnerErr error
+		wantKind  ocr.ErrorKind
+		wantCause error
+	}{
+		{name: "invalid PDF", pdf: []byte("not a PDF"), wantKind: ocr.ErrorCapabilityChanged, wantCause: ErrCapabilityContract},
+		{name: "over limit", pdf: testMultipagePDF(11), wantKind: ocr.ErrorCapabilityChanged, wantCause: ErrCapabilityContract},
+		{name: "renderer unavailable", pdf: testMultipagePDF(1), runnerErr: renderpdf.ErrUnavailable, wantKind: ocr.ErrorTransient, wantCause: renderpdf.ErrUnavailable},
+	}
+	for _, testCase := range tests {
+		t.Run(testCase.name, func(t *testing.T) {
+			maxUnits := 10
+			policy := testPolicyWithRenderPDF(t, testRenderPDFPolicy(t, testCase.pdf, testCase.runnerErr), 1<<20, maxUnits)
+			manifest := syntheticManifest(t, policy, true)
+			requests := 0
+			client, err := NewClient(policy, ClientConfig{
+				APIKey: "synthetic-key", HTTPClient: &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+					requests++
+					return nil, errors.New("unexpected provider request")
+				})},
+			})
+			require.NoError(t, err)
+			directory := filepath.Join(t.TempDir(), "spool")
+			makePrivateDirectory(t, directory)
+			processor, err := NewProcessor(ProcessorConfig{
+				Client: client, Policy: policy, CapabilityManifest: manifest,
+				SpoolDirectory: directory, MaxSpoolBytes: policy.values.MaxDocumentBytes, MinFreeBytes: 1,
+			})
+			require.NoError(t, err)
+			content := loadDOCXFixture(t, "realistic-word.docx")
+			source, err := ocr.NewSource(io.NopCloser(bytes.NewReader(content)),
+				"application/vnd.openxmlformats-officedocument.wordprocessingml.document", int64(len(content)), digestBytes(content))
+			require.NoError(t, err)
+			_, err = processor.Process(t.Context(), source)
+			require.Error(t, err)
+			assert.Equal(t, testCase.wantKind, ocr.ErrorKindOf(err))
+			require.ErrorIs(t, err, testCase.wantCause)
+			assert.Zero(t, requests)
+		})
+	}
 }
 
 func newProcessorWithoutRequests(t *testing.T, spoolDirectory string) *Processor {

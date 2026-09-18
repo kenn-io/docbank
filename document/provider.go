@@ -251,6 +251,7 @@ type RenditionReceipt struct {
 	RenditionRequestFingerprint string         `json:"rendition_request_fingerprint"`
 	AuthorizationFingerprint    string         `json:"authorization_fingerprint"`
 	SourceSHA256                string         `json:"source_sha256"`
+	UploadSHA256                string         `json:"upload_sha256,omitempty"`
 	OperationID                 string         `json:"operation_id"`
 	StartedAt                   string         `json:"started_at"`
 	CompletedAt                 string         `json:"completed_at"`
@@ -1320,6 +1321,11 @@ func validateRenditionReceipt(
 	}
 	if err := validateRenditionUsage(receipt.Usage); err != nil {
 		return err
+	}
+	if receipt.UploadSHA256 != "" {
+		if err := validateFingerprint(receipt.UploadSHA256, "upload SHA-256"); err != nil {
+			return err
+		}
 	}
 	if receipt.Usage.Retries > receipt.Usage.Requests {
 		return errors.New("receipt retries cannot exceed requests")

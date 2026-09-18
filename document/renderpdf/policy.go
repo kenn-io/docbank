@@ -31,6 +31,11 @@ var (
 	ErrCanceledBeforeLaunch    = sandbox.ErrCanceledBeforeLaunch
 	ErrOutputTooLarge          = sandbox.ErrOutputTooLarge
 	ErrChildFailed             = sandbox.ErrChildFailed
+	ErrPageLimit               = errors.New("render PDF page limit exceeded")
+	ErrRendererChanged         = errors.New("render PDF renderer changed")
+	ErrXMLLimit                = errors.New("render PDF XML limit exceeded")
+	ErrSourceRejected          = errors.New("render PDF source rejected")
+	ErrSourceTooLarge          = errors.New("render PDF source too large")
 )
 
 type Renderer struct {

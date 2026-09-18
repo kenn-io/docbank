@@ -52,7 +52,7 @@ provider descriptor and profile, not to a filename extension.
 | [`document/unstructured`](https://github.com/kenn-io/docbank/tree/main/document/unstructured) | Operator-hosted | Pinned broad-format compatibility profile for the standard rendition bridge |
 | [`document/tika`](https://github.com/kenn-io/docbank/tree/main/document/tika) | Operator-hosted | Pinned Apache Tika compatibility profile for the standard rendition bridge |
 | [`document/datalab`](https://github.com/kenn-io/docbank/tree/main/document/datalab) | Hosted | Uploaded files through Datalab Convert |
-| [`document/mistral`](https://github.com/kenn-io/docbank/tree/main/document/mistral) | Hosted | Capability-probed PDF, PPTX, and fourteen text-family OCR formats, including the rendition-provider adapter |
+| [`document/mistral`](https://github.com/kenn-io/docbank/tree/main/document/mistral) | Hosted | Capability-probed PDF, PPTX, optional renderpdf-backed DOCX, and fourteen text-family OCR formats, including the rendition-provider adapter |
 | [`document/llamaparse`](https://github.com/kenn-io/docbank/tree/main/document/llamaparse) | Hosted | Resumable PDF parsing through the fixed LlamaParse v1 API |
 | [`document/reducto`](https://github.com/kenn-io/docbank/tree/main/document/reducto) | Hosted | Resumable PDF and PPTX parsing through the fixed Reducto API |
 | [`document/bridge`](https://github.com/kenn-io/docbank/tree/main/document/bridge) | Declared service | `docbank-rendition/v1`: submit, poll, cancel, and validate canonical source evidence |
@@ -217,6 +217,13 @@ replace the manifest before processing documents. Also rerun the probe if
 validation reports that a registered format "does not explain its unverified
 bound". Review application consent against the resulting policy fingerprint.
 
+DOCX has a separate production route. Set `PolicyConfig.RenderPDF` to a
+validated `renderpdf.Policy` and supply PDF capability evidence in the same
+manifest. `Policy.Authorize` keeps the original DOCX identity but grants a
+local-exact bound for the render route. A native DOCX probe result remains a
+diagnostic `UnitBoundNone` observation and does not authorize native DOCX
+bytes.
+
 For each production document:
 
 1. Call `Policy.Authorize(validated manifest, declared format)`.
@@ -228,16 +235,23 @@ For each production document:
    successful result.
 
 `Prepare` copies one input into a private, bounded, immutable staging file.
-`Process` reopens and verifies those bytes for every attempt, derives request
-options from the policy and authorization, bounds the response, and converts
-validated provider output into `document.SourceDocument`. Call `Release` on
-every success or failure path.
+For direct formats, `Process` reopens and verifies those bytes for every attempt.
+It derives request options from the policy and authorization, bounds the
+response, and converts
+validated provider output into `document.SourceDocument`. For configured DOCX,
+it calls `renderpdf.Convert` once, counts the generated PDF, checks
+`MaxUnits` and `MaxDocumentBytes` before HTTP, and uploads that PDF on every
+retry. The returned document keeps the original `word` family and page
+evidence. Its result carries the original and generated PDF hashes. Call
+`Release` on every success or failure path.
 
-The rendition adapter counts source units locally before submission. For PDFs it
+The rendition adapter verifies source identity before submission. For PDFs it
 compares the returned page count with that inspected count. For PPTX it counts
 the listed PresentationML slides, rejects invalid slide references or
 over-limit decks before upload, and compares the provider's processed count with
-that local count. Text formats use the response checks described above. See
+that local count. Configured DOCX uses the shared render route and keeps the
+original `word` page evidence while the receipt records the generated PDF hash
+and input bytes. Text formats use the response checks described above. See
 [Mistral rendition processing](https://github.com/kenn-io/docbank/blob/main/document/mistral/rendition.go)
 for the exact source and result checks.
 
@@ -636,8 +650,9 @@ when it contains a large embedded image.
 
 The receipt records both source and normalized identities, the exact PDF hash,
 the page count, the policy, and the runtime identities. `Result.Source` is a
-fresh `application/pdf` source. The receipt does not authorize upload, and the
-package adds no DOCX route or daemon operation.
+fresh `application/pdf` source. The receipt does not authorize upload. The
+Mistral adapter reuses this receipt for its configured DOCX route; no daemon
+option or CLI operation is added.
 
 ## Package boundary
 

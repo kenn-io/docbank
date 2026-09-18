@@ -127,7 +127,7 @@ func TestConvertRejectsUnsafeNormalizedOutputBeforePDFStage(t *testing.T) {
 			runner := &recordingRunner{identity: testRunnerIdentity, output: []byte(testCase.normalized)}
 			policy := testPolicy(t, runner)
 			_, err := Convert(t.Context(), testSource(t, zipDocument(t, "docx"), docxMediaType), "docx", policy)
-			require.Error(t, err)
+			require.ErrorIs(t, err, ErrSourceRejected)
 			assert.Len(t, runner.calls, 1)
 		})
 	}
@@ -140,11 +140,38 @@ func TestConvertRejectsSourceIdentityAndExtensionBeforeRunner(t *testing.T) {
 	bad := testSource(t, original, docxMediaType)
 	bad.SHA256 = strings.Repeat("0", sha256.Size*2)
 	_, err := Convert(t.Context(), bad, "docx", policy)
-	require.Error(t, err)
+	require.ErrorIs(t, err, ErrSourceRejected)
 	assert.Empty(t, runner.calls)
 	_, err = Convert(t.Context(), testSource(t, original, docxMediaType), "DOCX", policy)
-	require.Error(t, err)
+	require.ErrorIs(t, err, ErrSourceRejected)
 	assert.Empty(t, runner.calls)
+}
+
+func TestConvertDistinguishesSourceAndOutputLimits(t *testing.T) {
+	for _, limit := range []string{"source", "work", "output"} {
+		t.Run(limit, func(t *testing.T) {
+			limits := DefaultLimits()
+			want := ErrSourceTooLarge
+			switch limit {
+			case "source":
+				limits.MaxSourceBytes = 1
+			case "work":
+				limits.MaxWorkBytes = 1
+			case "output":
+				limits.MaxWorkBytes = 1024
+				want = ErrOutputTooLarge
+			}
+			runner := &recordingRunner{identity: testRunnerIdentity, output: flatODF(FlatTextKind, strings.Repeat("x", 2048))}
+			policy := testPolicyWithLimits(t, runner, limits)
+			_, err := Convert(t.Context(), testSource(t, zipDocument(t, "docx"), docxMediaType), "docx", policy)
+			require.ErrorIs(t, err, want)
+			if errors.Is(want, ErrSourceTooLarge) {
+				require.NotErrorIs(t, err, ErrOutputTooLarge)
+			} else {
+				require.NotErrorIs(t, err, ErrSourceTooLarge)
+			}
+		})
+	}
 }
 
 func TestConvertRejectsStageAttestationMismatch(t *testing.T) {

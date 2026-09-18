@@ -126,9 +126,14 @@ func (p *Processor) Process(ctx context.Context, source ocr.Source) (result ocr.
 			Kind: ocr.ErrorMalformedOutput, Metrics: toOCRMetrics(providerResult.Metrics), Cause: err,
 		}
 	}
+	var uploadSHA256 string
+	if providerResult.ConversionReceipt != nil {
+		uploadSHA256 = providerResult.ConversionReceipt.PDFSHA256
+	}
 	return ocr.Result{
 		Source: providerResult.Document, Document: normalized,
 		Identity: p.identity, PolicyFingerprint: p.policyFingerprint,
+		SourceSHA256: prepared.SHA256(), UploadSHA256: uploadSHA256,
 		UnitsProcessed: providerResult.UnitsProcessed, ProviderBytes: providerResult.ProviderBytes,
 		Metrics: toOCRMetrics(providerResult.Metrics),
 	}, nil

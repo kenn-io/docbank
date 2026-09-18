@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/xml"
 	"errors"
+	"fmt"
 	"io"
 	"net/url"
 	"slices"
@@ -82,11 +83,11 @@ func Scan(data []byte, expectedKind string, limits Limits) (Admission, error) {
 			}
 			maxDepth = max(maxDepth, depth)
 			if depth > limits.MaxXMLDepth {
-				return Admission{}, errors.New("normalized ODF exceeds XML depth limit")
+				return Admission{}, fmt.Errorf("%w: normalized ODF exceeds XML depth limit", ErrXMLLimit)
 			}
 			elements++
 			if elements > limits.MaxXMLElements {
-				return Admission{}, errors.New("normalized ODF exceeds XML element limit")
+				return Admission{}, fmt.Errorf("%w: normalized ODF exceeds XML element limit", ErrXMLLimit)
 			}
 			if err := inspectStartElement(value); err != nil {
 				return Admission{}, err

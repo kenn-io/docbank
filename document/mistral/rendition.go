@@ -183,13 +183,20 @@ func (client *RenditionClient) Render(
 	if len(markdown) > authorization.MaxProviderMarkdownBytes {
 		return document.RenditionResult{}, renditionProvider.Malformed("Mistral OCR Markdown exceeds authorization", nil)
 	}
+	inputBytes := metadata.ByteLength
+	uploadSHA256 := ""
+	if providerResult.ConversionReceipt != nil {
+		inputBytes = providerResult.ConversionReceipt.PDFBytes
+		uploadSHA256 = providerResult.ConversionReceipt.PDFSHA256
+	}
 	receipt, err := providerutil.NewReceipt(renditionProvider, providerutil.Receipt{
 		Descriptor: client.descriptor, Authorization: authorization, SourceSHA256: metadata.SHA256,
-		OperationID: "mistral-" + authorization.RenditionRequestFingerprint,
-		StartedAt:   startedAt, CompletedAt: completedAt,
+		UploadSHA256: uploadSHA256,
+		OperationID:  "mistral-" + authorization.RenditionRequestFingerprint,
+		StartedAt:    startedAt, CompletedAt: completedAt,
 		Usage: document.RenditionUsage{
 			Requests: int64(providerResult.Metrics.Requests), Retries: int64(providerResult.Metrics.Retries),
-			InputBytes: metadata.ByteLength, OutputBytes: providerResult.ResponseBytes,
+			InputBytes: inputBytes, OutputBytes: providerResult.ResponseBytes,
 			Units: int64(providerResult.UnitsProcessed),
 		},
 	})
@@ -419,6 +426,9 @@ func classifyRenditionError(cause error) error {
 		return renditionProvider.Classified(code, message, cause)
 	}
 	switch {
+	case errors.Is(cause, ErrInvalidSource):
+		return renditionProvider.Classified(document.RenditionErrorUnsupportedInput,
+			"Mistral DOCX conversion rejected the source", cause)
 	case errors.Is(cause, ErrTransientResponse):
 		return renditionProvider.Classified(document.RenditionErrorTransient,
 			"Mistral request retries were exhausted", cause)

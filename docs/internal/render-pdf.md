@@ -73,3 +73,12 @@ the exact counted bytes.
 
 The receipt records provenance. It grants no upload permission. A later caller
 must perform its own capability, consent, and upload authorization checks.
+
+The Mistral adapter is one such caller. When its `PolicyConfig.RenderPDF` is
+configured, a DOCX authorization uses the manifest's PDF request authority,
+then `renderpdf.Convert` produces one counted PDF before provider egress.
+Mistral checks the generated PDF against its own byte and page limits, keeps
+that PDF for retries, and returns the original DOCX family and source hash
+alongside the generated PDF hash. The render policy fingerprint becomes part
+of the Mistral policy identity. A native DOCX capability-probe observation
+still records `UnitBoundNone` and does not authorize this route.

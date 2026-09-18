@@ -9,6 +9,7 @@ import (
 	"slices"
 
 	"go.kenn.io/docbank/document"
+	"go.kenn.io/docbank/document/renderpdf"
 )
 
 const (
@@ -53,28 +54,31 @@ type PolicyConfig struct {
 	ExtractHeader    bool
 	ExtractFooter    bool
 	NormalizePolicy  document.NormalizePolicy
+	RenderPDF        *renderpdf.Policy
 }
 
 // PolicyValues is a read-only copy of every effective policy value.
 type PolicyValues struct {
-	Provider         string                           `json:"provider"`
-	Endpoint         string                           `json:"endpoint"`
-	Region           string                           `json:"region"`
-	Model            string                           `json:"model"`
-	Retention        string                           `json:"retention"`
-	Training         string                           `json:"training"`
-	MaxDocumentBytes int64                            `json:"max_document_bytes"`
-	MaxResponseBytes int64                            `json:"max_response_bytes"`
-	MaxUnits         int                              `json:"max_units"`
-	ExtractHeader    bool                             `json:"extract_header"`
-	ExtractFooter    bool                             `json:"extract_footer"`
-	Normalization    document.NormalizePolicyIdentity `json:"normalization"`
+	Provider             string                           `json:"provider"`
+	Endpoint             string                           `json:"endpoint"`
+	Region               string                           `json:"region"`
+	Model                string                           `json:"model"`
+	Retention            string                           `json:"retention"`
+	Training             string                           `json:"training"`
+	MaxDocumentBytes     int64                            `json:"max_document_bytes"`
+	MaxResponseBytes     int64                            `json:"max_response_bytes"`
+	MaxUnits             int                              `json:"max_units"`
+	ExtractHeader        bool                             `json:"extract_header"`
+	ExtractFooter        bool                             `json:"extract_footer"`
+	Normalization        document.NormalizePolicyIdentity `json:"normalization"`
+	RenderPDFFingerprint string                           `json:"render_pdf_fingerprint,omitzero"`
 }
 
 // Policy is an opaque reusable Mistral processing policy.
 type Policy struct {
 	values          PolicyValues
 	normalizePolicy document.NormalizePolicy
+	renderPDF       *renderpdf.Policy
 	digest          string
 }
 
@@ -99,18 +103,33 @@ func NewPolicy(config PolicyConfig) (Policy, error) {
 	if normalization.Version <= 0 || normalization.MaxDocumentChars <= 0 {
 		return Policy{}, errors.New("mistral policy normalization is invalid; use document.NewNormalizePolicy")
 	}
+	var renderPDF *renderpdf.Policy
+	if config.RenderPDF != nil {
+		renderPolicyCopy := *config.RenderPDF
+		if renderPolicyCopy.Fingerprint() == "" {
+			return Policy{}, errors.New("mistral render PDF policy is invalid; use renderpdf.NewPolicy")
+		}
+		renderPDF = &renderPolicyCopy
+	}
 	values := PolicyValues{
 		Provider: defaultProvider, Endpoint: endpoint, Region: config.Region, Model: config.Model,
 		Retention: config.Retention, Training: config.Training,
 		MaxDocumentBytes: config.MaxDocumentBytes, MaxResponseBytes: config.MaxResponseBytes,
 		MaxUnits: config.MaxUnits, ExtractHeader: config.ExtractHeader, ExtractFooter: config.ExtractFooter,
-		Normalization: normalization,
+		Normalization: normalization, RenderPDFFingerprint: renderPDFFingerprint(renderPDF),
 	}
 	digest, err := policyValuesDigest(values)
 	if err != nil {
 		return Policy{}, err
 	}
-	return Policy{values: values, normalizePolicy: config.NormalizePolicy, digest: digest}, nil
+	return Policy{values: values, normalizePolicy: config.NormalizePolicy, renderPDF: renderPDF, digest: digest}, nil
+}
+
+func renderPDFFingerprint(policy *renderpdf.Policy) string {
+	if policy == nil {
+		return ""
+	}
+	return policy.Fingerprint()
 }
 
 // regionalOCREndpoint is the package-pinned region and model allowlist. Live
@@ -137,20 +156,21 @@ type capabilityIdentity struct {
 }
 
 type canonicalPolicy struct {
-	Version           int                              `json:"version"`
-	Provider          string                           `json:"provider"`
-	Endpoint          string                           `json:"endpoint"`
-	Region            string                           `json:"region"`
-	Model             string                           `json:"model"`
-	Retention         string                           `json:"retention"`
-	Training          string                           `json:"training"`
-	MaxDocumentBytes  int64                            `json:"max_document_bytes"`
-	MaxResponseBytes  int64                            `json:"max_response_bytes"`
-	MaxUnits          int                              `json:"max_units"`
-	ExtractHeader     bool                             `json:"extract_header"`
-	ExtractFooter     bool                             `json:"extract_footer"`
-	Normalization     document.NormalizePolicyIdentity `json:"normalization"`
-	FormatAuthorities []capabilityIdentity             `json:"format_authorities"`
+	Version              int                              `json:"version"`
+	Provider             string                           `json:"provider"`
+	Endpoint             string                           `json:"endpoint"`
+	Region               string                           `json:"region"`
+	Model                string                           `json:"model"`
+	Retention            string                           `json:"retention"`
+	Training             string                           `json:"training"`
+	MaxDocumentBytes     int64                            `json:"max_document_bytes"`
+	MaxResponseBytes     int64                            `json:"max_response_bytes"`
+	MaxUnits             int                              `json:"max_units"`
+	ExtractHeader        bool                             `json:"extract_header"`
+	ExtractFooter        bool                             `json:"extract_footer"`
+	Normalization        document.NormalizePolicyIdentity `json:"normalization"`
+	RenderPDFFingerprint string                           `json:"render_pdf_fingerprint,omitzero"`
+	FormatAuthorities    []capabilityIdentity             `json:"format_authorities"`
 }
 
 // CanonicalJSON returns the canonical reusable policy identity.
@@ -202,7 +222,8 @@ func (p Policy) CanonicalJSON(manifest CapabilityManifest) ([]byte, error) {
 		Model: p.values.Model, Retention: p.values.Retention, Training: p.values.Training,
 		MaxDocumentBytes: p.values.MaxDocumentBytes, MaxResponseBytes: p.values.MaxResponseBytes,
 		MaxUnits: p.values.MaxUnits, ExtractHeader: p.values.ExtractHeader, ExtractFooter: p.values.ExtractFooter,
-		Normalization: p.values.Normalization, FormatAuthorities: authorities,
+		Normalization: p.values.Normalization, RenderPDFFingerprint: p.values.RenderPDFFingerprint,
+		FormatAuthorities: authorities,
 	})
 }
 
@@ -254,9 +275,11 @@ func (p Policy) Authorize(manifest CapabilityManifest, formatID string) (FormatA
 			p.values.MaxUnits, manifest.MaxUnits,
 		)
 	}
+	originalCandidate := candidate
+	uploadCandidate := p.uploadCandidate(candidate)
 	var result CapabilityResult
 	for _, candidateResult := range manifest.Results {
-		if candidateResult.FormatID == candidate.ID {
+		if candidateResult.FormatID == uploadCandidate.ID {
 			result = candidateResult
 			break
 		}
@@ -264,8 +287,8 @@ func (p Policy) Authorize(manifest CapabilityManifest, formatID string) (FormatA
 	if result.Status != ProbeStatusPassed || result.UnitBoundMethod == UnitBoundNone {
 		return FormatAuthorization{}, noUploadAuthority(fmt.Errorf("format %q has no enforceable unit bound", formatID))
 	}
-	expected := requestFingerprint(candidate, probeRequestOptions(
-		candidate, manifest.MaxUnits, p.values.ExtractHeader, p.values.ExtractFooter,
+	expected := requestFingerprint(uploadCandidate, probeRequestOptions(
+		uploadCandidate, manifest.MaxUnits, p.values.ExtractHeader, p.values.ExtractFooter,
 	))
 	if result.RequestFingerprint != expected {
 		return FormatAuthorization{}, noUploadAuthority(fmt.Errorf("format %q was probed with a different request policy", formatID))
@@ -274,8 +297,12 @@ func (p Policy) Authorize(manifest CapabilityManifest, formatID string) (FormatA
 	if err != nil {
 		return FormatAuthorization{}, noUploadAuthority(err)
 	}
+	method := result.UnitBoundMethod
+	if originalCandidate.ID == formatIDDOCX && p.renderPDF != nil {
+		method = UnitBoundLocalExact
+	}
 	return FormatAuthorization{
-		format: candidate, method: result.UnitBoundMethod,
+		format: originalCandidate, method: method,
 		policyFingerprint: fingerprint, policyDigest: p.digest,
 	}, nil
 }
