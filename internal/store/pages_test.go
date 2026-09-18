@@ -97,6 +97,79 @@ func TestPageJobRestartCannotPublishAnOldClaim(t *testing.T) {
 	require.Error(t, s.FinishPageJob(t.Context(), current, "completed", ""), "completion requires every requested receipt")
 }
 
+func TestPageJobNewOperationRetriesFailedAndCanceledRequests(t *testing.T) {
+	for _, state := range []string{PageJobFailed, "canceled"} {
+		t.Run(state, func(t *testing.T) {
+			s := newTestStore(t)
+			request := pageStoreRequest(t, s)
+			first, err := s.QueuePageJob(t.Context(), uuid.NewString(), request)
+			require.NoError(t, err)
+			claim, err := s.ClaimPageJob(t.Context())
+			require.NoError(t, err)
+			if state == PageJobFailed {
+				require.NoError(t, s.FinishPageJob(t.Context(), claim, state, "interrupted"))
+			} else {
+				require.NoError(t, s.CancelPageJob(t.Context(), first.ID, request.Binding()))
+			}
+			same, err := s.QueuePageJob(t.Context(), first.ID, request)
+			require.NoError(t, err)
+			require.Equal(t, state, same.State, "retries of an operation retain its result")
+			next, err := s.QueuePageJob(t.Context(), uuid.NewString(), request)
+			require.NoError(t, err)
+			require.NotEqual(t, first.ID, next.ID)
+			require.Equal(t, "queued", next.State)
+			require.ErrorIs(t, s.PublishPageFrames(t.Context(), claim, pageStoreFrames(t, request)), ErrPageFenced)
+			var metadata bytes.Buffer
+			require.NoError(t, s.ExportMetadata(t.Context(), &metadata))
+			restored := newTestStore(t)
+			require.NoError(t, restored.ImportMetadata(t.Context(), &metadata))
+			for _, id := range []string{first.ID, next.ID} {
+				_, err := restored.PageJob(t.Context(), id, request.Binding())
+				require.NoError(t, err)
+			}
+		})
+	}
+}
+
+func TestPageJobStaleCompletionRetiresClaim(t *testing.T) {
+	s := newTestStore(t)
+	request := pageStoreRequest(t, s)
+	request.Pages = []int{1}
+	job, err := s.QueuePageJob(t.Context(), uuid.NewString(), request)
+	require.NoError(t, err)
+	claim, err := s.ClaimPageJob(t.Context())
+	require.NoError(t, err)
+	frames := pageStoreFrames(t, request)
+	require.NoError(t, s.PublishPageFrames(t.Context(), claim, frames))
+	recipe := pageStoreRecipe()
+	require.NoError(t, s.PublishPageImage(t.Context(), claim, pageStoreImage(t, frames[0], recipe), recipe, &BlobPhysical{Encoding: looseEncodingRaw, StoredBytes: 10}))
+	_, err = s.db.ExecContext(t.Context(), `UPDATE nodes SET revision=revision+1 WHERE id=?`, request.NodeID)
+	require.NoError(t, err)
+	require.NoError(t, s.FinishPageJob(t.Context(), claim, PageJobCompleted, ""))
+	finished, err := loadPageJob(t.Context(), s.db, `id=?`, job.ID)
+	require.NoError(t, err)
+	require.Equal(t, PageJobFailed, finished.State)
+	require.Equal(t, "stale_source", finished.FailureCode)
+	require.ErrorIs(t, s.CheckPageClaim(t.Context(), claim), ErrPageFenced)
+}
+
+func TestQueuePageJobRejectsUnsupportedPDFDPI(t *testing.T) {
+	s := newTestStore(t)
+	request := pageStoreRequest(t, s)
+	for _, dpi := range []float64{0.5, 1201} {
+		request.DPI = dpi
+		_, err := s.QueuePageJob(t.Context(), uuid.NewString(), request)
+		require.ErrorIs(t, err, ErrPageLimit)
+	}
+	_, err := s.ClaimPageJob(t.Context())
+	require.ErrorIs(t, err, ErrNotFound, "unsupported DPI must not leave durable jobs")
+	for _, dpi := range []float64{0, 1, 1200} {
+		request.DPI = dpi
+		_, err := s.QueuePageJob(t.Context(), uuid.NewString(), request)
+		require.NoError(t, err)
+	}
+}
+
 func TestPageJobsConcurrentIdentityLimitsAndSourceFences(t *testing.T) {
 	s := newTestStore(t)
 	request := pageStoreRequest(t, s)

@@ -3,10 +3,12 @@ package processing_test
 import (
 	"bytes"
 	"encoding/binary"
+	"encoding/json"
 	"fmt"
 	"hash/crc32"
 	"image/color"
 	"image/png"
+	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
@@ -98,6 +100,19 @@ func TestRealPageAPIBackupRestoreAndGC(t *testing.T) {
 		return store.PageBinding{NodeID: node.ID, Revision: node.Revision, Source: document.PageSource{VersionID: node.CurrentVersionID, SHA256: hash, Size: size}}
 	}
 	selection := add("geometry.pdf", "application/pdf", pageProofPDF())
+	for _, dpi := range []float64{0.5, 1201} {
+		body, err := json.Marshal(api.PageRenderRequest{OperationID: uuid.New().String(), Selection: selection, Pages: []int{1}, DPI: dpi})
+		require.NoError(t, err)
+		request := httptest.NewRequest(http.MethodPost, "/api/v1/pages/jobs", bytes.NewReader(body))
+		request.Header.Set("Content-Type", "application/json")
+		request.Header.Set("X-Api-Key", cfg.Server.APIKey)
+		response := httptest.NewRecorder()
+		server.Handler().ServeHTTP(response, request)
+		require.Equal(t, http.StatusUnprocessableEntity, response.Code, response.Body.String())
+	}
+	processed, err := worker.RunOne(t.Context())
+	require.NoError(t, err)
+	require.False(t, processed, "rejected DPI must not queue work")
 	run := func(selection store.PageBinding, pages []int, dpi float64) store.PageRenderJob {
 		request := api.PageRenderRequest{OperationID: uuid.New().String(), Selection: selection, Pages: pages, DPI: dpi}
 		job, err := httpClient.CreatePageRenderJob(t.Context(), request)

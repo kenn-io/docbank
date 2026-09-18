@@ -31,7 +31,7 @@ func NewPageWorker(catalog *store.Store, blobs *blob.Store, runtime *pagerender.
 }
 
 func (w *PageWorker) Run(ctx context.Context) error {
-	if err := w.gate.MutateContext(ctx, func() error { return w.catalog.RequeuePageJobs(ctx) }); err != nil {
+	if err := w.retryCatalogMutation(ctx, func() error { return w.catalog.RequeuePageJobs(ctx) }); err != nil {
 		return err
 	}
 	for {
@@ -47,6 +47,18 @@ func (w *PageWorker) Run(ctx context.Context) error {
 	}
 }
 
+func (w *PageWorker) retryCatalogMutation(ctx context.Context, operation func() error) error {
+	for {
+		err := w.gate.MutateContext(ctx, operation)
+		if !w.catalog.RenditionJobErrorRetryable(err) {
+			return err
+		}
+		if err := waitRenditionWorker(ctx, 250*time.Millisecond); err != nil {
+			return err
+		}
+	}
+}
+
 func (w *PageWorker) RunOne(ctx context.Context) (bool, error) {
 	if err := ctx.Err(); err != nil {
 		return false, err
@@ -58,7 +70,7 @@ func (w *PageWorker) RunOne(ctx context.Context) (bool, error) {
 		return false, ctx.Err()
 	}
 	var claim store.PageJobClaim
-	err := w.gate.MutateContext(ctx, func() error { var err error; claim, err = w.catalog.ClaimPageJob(ctx); return err })
+	err := w.retryCatalogMutation(ctx, func() error { var err error; claim, err = w.catalog.ClaimPageJob(ctx); return err })
 	if errors.Is(err, store.ErrNotFound) {
 		return false, nil
 	}
@@ -67,26 +79,8 @@ func (w *PageWorker) RunOne(ctx context.Context) (bool, error) {
 	}
 	work, cancel := context.WithTimeout(ctx, 10*time.Minute)
 	defer cancel()
-	stopped := make(chan struct{})
-	go func() {
-		defer close(stopped)
-		ticker := time.NewTicker(100 * time.Millisecond)
-		defer ticker.Stop()
-		for {
-			select {
-			case <-work.Done():
-				return
-			case <-ticker.C:
-				if w.catalog.CheckPageClaim(work, claim) != nil {
-					cancel()
-					return
-				}
-			}
-		}
-	}()
 	err = w.process(work, claim)
 	cancel()
-	<-stopped
 	if ctx.Err() != nil {
 		return true, ctx.Err()
 	}
@@ -104,11 +98,13 @@ func (w *PageWorker) RunOne(ctx context.Context) (bool, error) {
 			failure = "stale_source"
 		case errors.Is(err, context.Canceled), errors.Is(err, context.DeadlineExceeded):
 			failure = "interrupted"
+		case errors.Is(err, store.ErrPageLimit):
+			failure = "limit"
 		default:
 			failure = "storage"
 		}
 	}
-	finishErr := w.gate.MutateContext(ctx, func() error { return w.catalog.FinishPageJob(ctx, claim, state, failure) })
+	finishErr := w.retryCatalogMutation(ctx, func() error { return w.catalog.FinishPageJob(ctx, claim, state, failure) })
 	if errors.Is(finishErr, store.ErrPageFenced) {
 		return true, nil
 	}

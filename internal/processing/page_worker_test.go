@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"database/sql"
 	"encoding/hex"
 	"os"
 	"os/exec"
@@ -69,11 +70,31 @@ func TestRealPageWorkerPublishesVerifiedImagesAndResumesExactJobs(t *testing.T) 
 	request := store.PageJobRequest{NodeID: node.ID, Revision: node.Revision, Source: document.PageSource{VersionID: node.CurrentVersionID, SHA256: hash, Size: size}, Pages: []int{1}, DPI: 144, RuntimeFingerprint: engine.Fingerprint()}
 	job, err := catalog.QueuePageJob(t.Context(), uuid.New().String(), request)
 	require.NoError(t, err)
-	worker, err := processing.NewPageWorker(catalog, blobs, engine, api.NewOperationGate())
+	gate := api.NewOperationGate()
+	retried := map[string]bool{}
+	worker, err := processing.NewPageWorker(catalog, blobs, engine, pageMutationFunc(func(ctx context.Context, fn func() error) error {
+		current, err := catalog.PageJob(ctx, job.ID, request.Binding())
+		if err != nil {
+			return err
+		}
+		// Fail once before claiming and once after publication, before finishing.
+		phase := ""
+		if current.State == "queued" {
+			phase = "claim"
+		} else if current.State == "running" && len(current.Results) == 1 {
+			phase = "finish"
+		}
+		if phase != "" && !retried[phase] {
+			retried[phase] = true
+			return sql.ErrConnDone
+		}
+		return gate.MutateContext(ctx, fn)
+	}))
 	require.NoError(t, err)
 	processed, err := worker.RunOne(t.Context())
 	require.NoError(t, err)
 	require.True(t, processed)
+	require.Equal(t, map[string]bool{"claim": true, "finish": true}, retried)
 	complete, err := catalog.PageJob(t.Context(), job.ID, request.Binding())
 	require.NoError(t, err)
 	require.Equal(t, "completed", complete.State)
@@ -86,4 +107,10 @@ func TestRealPageWorkerPublishesVerifiedImagesAndResumesExactJobs(t *testing.T) 
 	cancel()
 	_, err = worker.RunOne(canceled)
 	require.ErrorIs(t, err, context.Canceled)
+}
+
+type pageMutationFunc func(context.Context, func() error) error
+
+func (f pageMutationFunc) MutateContext(ctx context.Context, fn func() error) error {
+	return f(ctx, fn)
 }

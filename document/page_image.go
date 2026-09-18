@@ -12,6 +12,11 @@ import (
 	"go.kenn.io/docbank/internal/canonical"
 )
 
+const (
+	MinPDFPageDPI = 1
+	MaxPDFPageDPI = 1200
+)
+
 // PageRuntimeIdentity records executable observations and an operator-declared
 // dependency identity. It does not claim hermetic library/font verification.
 type PageRuntimeIdentity struct {
@@ -84,8 +89,15 @@ func ValidatePageRecipeV1(r PageRecipeV1) error {
 		}
 	}
 	if p := r.RendererIdentity.Runtime; p != nil {
-		if !canonical.IsSHA256Hex(p.InspectorSHA256) || !canonical.IsSHA256Hex(p.RendererSHA256) || !canonical.IsSHA256Hex(p.LimiterSHA256) || !pageText(p.InspectorVersion, 512) || !pageText(p.LimiterVersion, 512) || !pageText(p.DeploymentIdentity, 512) || p.Platform != "linux/amd64" || p.MemoryEnforcement != "rlimit-as" || p.InspectorMemoryBytes != 2<<30 || p.RendererMemoryBytes != 512<<20 || p.MaxSourceBytes != MaxPageSourceBytes || p.MaxPages != MaxDocumentPages || p.MaxOutputBytes != MaxPageImageBytes || p.MaxPixels != MaxPagePixels || p.MaxAxis != MaxPageAxis || p.MaxGeometryBytes != 16<<20 || p.MaxDiagnosticBytes != 64<<10 || p.PhaseSeconds != 60 {
+		if !canonical.IsSHA256Hex(p.InspectorSHA256) || !canonical.IsSHA256Hex(p.RendererSHA256) || !canonical.IsSHA256Hex(p.LimiterSHA256) || !pageText(p.InspectorVersion, 512) || !pageText(p.LimiterVersion, 512) || !pageText(p.DeploymentIdentity, 512) || !pageText(p.Platform, 128) || !pageText(p.MemoryEnforcement, 128) {
 			return errors.New("invalid page runtime limits or identity")
+		}
+		// Retained limits describe a past render; current launch policy belongs
+		// to the runtime, not the persisted recipe's validity.
+		for _, limit := range []int64{p.InspectorMemoryBytes, p.RendererMemoryBytes, p.MaxSourceBytes, int64(p.MaxPages), p.MaxOutputBytes, p.MaxPixels, p.MaxAxis, p.MaxGeometryBytes, p.MaxDiagnosticBytes, p.PhaseSeconds} {
+			if limit < 1 || limit > MaxPageInteger {
+				return errors.New("invalid page runtime limits or identity")
+			}
 		}
 	}
 	return nil
@@ -132,8 +144,9 @@ func DecodePageImageV1(b []byte) (PageImageV1, string, error) {
 	return i, hash, err
 }
 
-// PageImageDimensions derives expected raster dimensions without allocating
-// image memory. PNG native density must match the returned numeric recipe.
+// PageImageDimensions derives nominal raster dimensions without allocating
+// image memory. PDF box quantization can shift the renderer's final pixel edge;
+// ValidatePageImageBinding accounts for that bounded rounding difference.
 func PageImageDimensions(f PageFrameV1, r PageRecipeV1) (int64, int64, error) {
 	if err := ValidatePageFrameV1(f); err != nil {
 		return 0, 0, err
@@ -200,7 +213,14 @@ func ValidatePageImageBinding(i PageImageV1, f PageFrameV1, r PageRecipeV1) erro
 	if err != nil {
 		return err
 	}
-	if i.Width != w || i.Height != h {
+	var tolerance int64
+	if f.InputUnits == "point/10000" {
+		// Each PDF corner rounds by at most 0.00005pt. Preserve the rendered
+		// pixels at the requested DPI, allowing the resulting ceil difference
+		// (one pixel at supported PDF DPIs) without rescaling or cropping.
+		tolerance = int64(math.Ceil(r.DPI / 720000))
+	}
+	if i.Width < w-tolerance || i.Width > w+tolerance || i.Height < h-tolerance || i.Height > h+tolerance {
 		return errors.New("page image dimensions disagree with physical frame")
 	}
 	return nil

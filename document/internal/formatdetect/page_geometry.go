@@ -61,7 +61,9 @@ func ReadPDFPageGeometry(data []byte, maxPages int) ([]PDFPageGeometry, error) {
 		if crop == nil {
 			crop = attrs.MediaBox
 		}
-		coordinates := func(r *types.Rectangle) [4]float64 { return [4]float64{r.LL.X, r.LL.Y, r.UR.X, r.UR.Y} }
+		coordinates := func(r *types.Rectangle) [4]float64 {
+			return [4]float64{min(r.LL.X, r.UR.X), min(r.LL.Y, r.UR.Y), max(r.LL.X, r.UR.X), max(r.LL.Y, r.UR.Y)}
+		}
 		frames[page-1] = PDFPageGeometry{MediaBox: coordinates(attrs.MediaBox), CropBox: coordinates(crop), Rotation: ((attrs.Rotate % 360) + 360) % 360}
 	}
 	return frames, nil

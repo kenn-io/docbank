@@ -7816,13 +7816,27 @@ export const getReadPageImageUrl = (params?: ReadPageImageParams,) => {
 /**
  * @summary Read verified PNG bytes for an exact retained page receipt
  */
-export const readPageImage = async (params?: ReadPageImageParams, options?: Parameters<typeof sessionJSON>[1]): Promise<Blob> => {
+export const readPageImage = (params?: ReadPageImageParams, options?: Parameters<typeof sessionResponse>[1]) => {
 
-  return sessionJSON<Blob>(getReadPageImageUrl(params),
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return sessionResponse<Blob>(getReadPageImageUrl(params),
   {
     ...options,
-    method: 'GET'
-
+    method: 'GET',
+    headers: { 'Accept': `image/png`, ...getHeaders(options?.headers) }
 
   }
 );}

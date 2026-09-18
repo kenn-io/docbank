@@ -135,13 +135,20 @@ func (s *Store) QueuePageJob(ctx context.Context, id string, r PageJobRequest) (
 		if !errors.Is(err, ErrNotFound) {
 			return err
 		}
-		existing, err = loadPageJob(ctx, tx, `request_sha256=?`, digest)
+		existing, err = loadPageJob(ctx, tx, `request_sha256=? AND state IN ('queued','running','completed')`, digest)
 		if err == nil {
 			job = existing
 			return nil
 		}
 		if !errors.Is(err, ErrNotFound) {
 			return err
+		}
+		var mediaType string
+		if err := tx.QueryRowContext(ctx, `SELECT COALESCE(mime_type,'') FROM content_versions WHERE version_id=?`, r.Source.VersionID).Scan(&mediaType); err != nil {
+			return err
+		}
+		if mediaType == "application/pdf" && r.DPI != 0 && (r.DPI < document.MinPDFPageDPI || r.DPI > document.MaxPDFPageDPI) {
+			return ErrPageLimit
 		}
 		var pending int
 		if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM page_render_jobs WHERE state IN ('queued','running')`).Scan(&pending); err != nil {
@@ -207,7 +214,7 @@ func validatePageJob(j PageRenderJob) error {
 		return ErrPageConflict
 	}
 	switch j.FailureCode {
-	case "", "unavailable", "unsupported", "invalid_output", "stale_source", "interrupted", "storage":
+	case "", "unavailable", "unsupported", "invalid_output", "stale_source", "interrupted", "storage", "limit":
 	default:
 		return ErrPageConflict
 	}
@@ -287,7 +294,7 @@ func pageClaimTx(ctx context.Context, tx *sql.Tx, claim PageJobClaim) (PageRende
 		return job, ErrPageFenced
 	}
 	if err := pageSourceTx(ctx, tx, job.Request.Binding()); err != nil {
-		return job, ErrPageFenced
+		return job, err
 	}
 	return job, nil
 }
@@ -324,11 +331,21 @@ func (s *Store) FinishPageJob(ctx context.Context, claim PageJobClaim, state, fa
 	return s.withStorageTx(ctx, func(tx *sql.Tx) error {
 		// A stale source still permits retiring this exact claim, but never output.
 		job, err := loadPageJob(ctx, tx, `id=? AND epoch=? AND token=? AND state='running'`, claim.Job.ID, claim.Epoch, claim.Token)
-		if err != nil {
+		if errors.Is(err, ErrNotFound) {
 			return ErrPageFenced
+		}
+		if err != nil {
+			return err
 		}
 		if state != PageJobCompleted && state != PageJobFailed {
 			return ErrPageConflict
+		}
+		if state == PageJobCompleted {
+			if err := pageSourceTx(ctx, tx, job.Request.Binding()); errors.Is(err, ErrPageFenced) || errors.Is(err, ErrNotFound) {
+				state, failure = PageJobFailed, "stale_source"
+			} else if err != nil {
+				return err
+			}
 		}
 		job.State = state
 		job.FailureCode = failure
@@ -336,9 +353,6 @@ func (s *Store) FinishPageJob(ctx context.Context, claim PageJobClaim, state, fa
 			return err
 		}
 		if state == PageJobCompleted {
-			if err := pageSourceTx(ctx, tx, job.Request.Binding()); err != nil {
-				return ErrPageFenced
-			}
 			if err := validatePageJobClosure(ctx, tx, job); err != nil {
 				return err
 			}

@@ -1,5 +1,5 @@
 ---
-last_edited: 2026-09-11
+last_edited: 2026-09-18
 title: Verified Page Images
 description: Exact-version page geometry and bounded local page rendering.
 ---
@@ -74,8 +74,10 @@ Requests are bounded to 16 explicit pages, documents to 1,000 pages, and source
 bytes to 64 MiB. Output is limited to 40 million decoded pixels, 16,384 pixels
 per axis, 32 MiB per PNG and 256 MiB per job. Geometry output has a 16 MiB cap;
 diagnostics have a 64 KiB cap. One worker executes jobs, with at most 64 queued
-or running. Full decoding, expected dimensions, size and SHA-256 are verified;
-successful process exit alone does not establish success.
+or running. Full decoding, dimensions, size and SHA-256 are verified. PDF output
+may differ by one pixel per axis from the rounded frame at supported DPI;
+the receipt records the actual dimensions. PNG dimensions must match exactly.
+Successful process exit alone does not establish success.
 
 ## API and retained authority
 
@@ -93,11 +95,14 @@ size. No operation falls back to the current head.
 The OpenAPI document describes request fields. Inventory returns complete
 frame/count authority separately from available images and their actual recipes.
 A completed job covers its requested pages, not necessarily the whole document.
-Identical retries return the original operation and progress. Inventory rejects
-more than 16,000 retained image receipts in one response.
+Requests for identical work already queued, running or completed return that
+job. Reusing the retained job's operation UUID returns its original result;
+submit a new UUID to retry failed or canceled work. Inventory rejects more than
+16,000 retained image receipts in one response.
 
 Frames, recipes and receipts are immutable. Cancellation, source revision changes
-and obsolete claims fence later publication. Restart requeues unfinished jobs
+and obsolete claims fence later publication. Cancellation lets the current
+render finish but blocks its publication. Restart requeues unfinished jobs
 with fresh claims. Partial images remain usable and participate in backup,
 restore verification and garbage-collection reachability.
 

@@ -28,8 +28,8 @@ type VersionPruneSelector struct {
 
 // VersionPruneResult is the complete dry-run inventory or execution receipt.
 // LogicalBytes counts version references and may count a deduplicated blob
-// more than once. UniqueBlobs includes both selected content blobs and visual
-// preview outputs owned by the selected versions. ReleasableBytes counts
+// more than once. UniqueBlobs includes selected content blobs, visual previews,
+// and page images owned by the selected versions. ReleasableBytes counts
 // unique blobs that become eligible for a later GC; pruning itself never
 // reports physical bytes as reclaimed. Loose and packed maintenance counts may
 // overlap when one blob has both location kinds across stores;
@@ -400,7 +400,7 @@ func populateVersionPruneBlobStats(
 		selectedByHash[version.BlobHash]++
 		versionIDs = append(versionIDs, version.ID)
 	}
-	if err := addVersionPruneVisualPreviewRefsTx(tx, versionIDs, selectedByHash); err != nil {
+	if err := addVersionPruneOutputRefsTx(tx, versionIDs, selectedByHash); err != nil {
 		return err
 	}
 	result.UniqueBlobs = len(selectedByHash)
@@ -460,13 +460,13 @@ func populateVersionPruneBlobStats(
 	return nil
 }
 
-func addVersionPruneVisualPreviewRefsTx(
+func addVersionPruneOutputRefsTx(
 	tx *sql.Tx, versionIDs []string, selectedByHash map[string]int,
 ) error {
 	const batchSize = 500
 	for start := 0; start < len(versionIDs); start += batchSize {
 		end := min(start+batchSize, len(versionIDs))
-		if err := addVersionPruneVisualPreviewRefsBatchTx(
+		if err := addVersionPruneOutputRefsBatchTx(
 			tx, versionIDs[start:end], selectedByHash,
 		); err != nil {
 			return err
@@ -475,7 +475,7 @@ func addVersionPruneVisualPreviewRefsTx(
 	return nil
 }
 
-func addVersionPruneVisualPreviewRefsBatchTx(
+func addVersionPruneOutputRefsBatchTx(
 	tx *sql.Tx, versionIDs []string, selectedByHash map[string]int,
 ) (retErr error) {
 	args := make([]any, len(versionIDs))
@@ -483,30 +483,35 @@ func addVersionPruneVisualPreviewRefsBatchTx(
 		args[index] = id
 	}
 	rows, err := tx.Query(`
-		SELECT output_blob_hash, COUNT(*)
-		FROM visual_preview_generations
-		WHERE content_version_id IN (`+placeholders(len(args))+`)
-		  AND output_blob_hash IS NOT NULL
-		GROUP BY output_blob_hash`, args...)
+		SELECT blob_hash, COUNT(*)
+		FROM (
+			SELECT content_version_id AS version_id, output_blob_hash AS blob_hash
+			FROM visual_preview_generations
+			WHERE output_blob_hash IS NOT NULL
+			UNION ALL
+			SELECT version_id, blob_hash FROM page_images
+		)
+		WHERE version_id IN (`+placeholders(len(args))+`)
+		GROUP BY blob_hash`, args...)
 	if err != nil {
-		return fmt.Errorf("inventorying version-prune visual previews: %w", err)
+		return fmt.Errorf("inventorying version-prune outputs: %w", err)
 	}
 	defer func() {
 		if err := rows.Close(); err != nil {
 			retErr = errors.Join(retErr,
-				fmt.Errorf("closing version-prune visual preview inventory: %w", err))
+				fmt.Errorf("closing version-prune output inventory: %w", err))
 		}
 	}()
 	for rows.Next() {
 		var hash string
 		var refs int
 		if err := rows.Scan(&hash, &refs); err != nil {
-			return fmt.Errorf("inventorying version-prune visual previews: %w", err)
+			return fmt.Errorf("inventorying version-prune outputs: %w", err)
 		}
 		selectedByHash[hash] += refs
 	}
 	if err := rows.Err(); err != nil {
-		return fmt.Errorf("inventorying version-prune visual previews: %w", err)
+		return fmt.Errorf("inventorying version-prune outputs: %w", err)
 	}
 	return nil
 }

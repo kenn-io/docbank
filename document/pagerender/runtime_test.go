@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"hash/crc32"
 	"image/color"
+	"image/png"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -35,6 +36,10 @@ func syntheticPDF(pages []string, parent string) []byte {
 		objects = append(objects, "<< /Type /Page /Parent 2 0 R /Resources << >> "+p+" >>")
 	}
 	objects[1] = fmt.Sprintf("<< /Type /Pages /Kids [%s] /Count %d %s >>", kids.String(), len(pages), parent)
+	return syntheticPDFObjects(objects)
+}
+
+func syntheticPDFObjects(objects []string) []byte {
 	var out bytes.Buffer
 	out.WriteString("%PDF-1.7\n")
 	var offsets []int
@@ -82,6 +87,14 @@ func TestInspectorPreservesInheritedCropAndRejectsUnsupportedGeometry(t *testing
 		_, err = InspectSource(data, testSource(data), "application/pdf")
 		require.Error(t, err)
 	}
+}
+
+func TestInspectorNormalizesOppositePDFBoxCorners(t *testing.T) {
+	data := syntheticPDF([]string{"/MediaBox [220 330 -20 -30]"}, "/CropBox [170.625 20.25 10.125 250.75]")
+	frames, err := InspectSource(data, testSource(data), "application/pdf")
+	require.NoError(t, err)
+	require.Equal(t, [4]int64{-200000, -300000, 2200000, 3300000}, frames[0].MediaBox)
+	require.Equal(t, [4]int64{101250, 202500, 1706250, 2507500}, frames[0].CropBox)
 }
 
 func TestPNGInspectionRequiresPhysicalDensityAndRejectsOrientation(t *testing.T) {
@@ -154,6 +167,76 @@ func TestRealRuntimeInspectAndRenderPDFAndPNG(t *testing.T) {
 		require.Equal(t, want[0], image.Width)
 		require.Equal(t, want[1], image.Height)
 		require.NotEmpty(t, pixels)
+	}
+	t.Run("renderer diagnostics", func(t *testing.T) {
+		// Poppler tolerates an unknown content operator and emits diagnostics
+		// alongside a successful image. Geometry inspection accepts this PDF.
+		content := "1 0 0 rg 0 0 72 144 re f\nUnknownOperator\n"
+		pdf := syntheticPDFObjects([]string{
+			"<< /Type /Catalog /Pages 2 0 R >>",
+			"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+			"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 72 144] /Resources << >> /Contents 4 0 R >>",
+			fmt.Sprintf("<< /Length %d >>\nstream\n%sendstream", len(content), content),
+		})
+		frames, err := engine.Inspect(t.Context(), pdf, testSource(pdf), "application/pdf")
+		require.NoError(t, err)
+		recipe, err := engine.Recipe(frames[0], 144)
+		require.NoError(t, err)
+		_, pixels, err := engine.Render(t.Context(), pdf, frames[0], recipe)
+		require.NoError(t, err)
+		image, err := png.Decode(bytes.NewReader(pixels))
+		require.NoError(t, err)
+		require.Equal(t, color.RGBA{R: 255, A: 255}, color.RGBAModel.Convert(image.At(72, 144)))
+		wrongFrame, err := document.NewPDFPageFrame(frames[0].Source, 1, [4]float64{0, 0, 72, 72}, [4]float64{0, 0, 72, 72}, 0)
+		require.NoError(t, err)
+		_, _, err = engine.Render(t.Context(), pdf, wrongFrame, recipe)
+		require.ErrorIs(t, err, ErrInvalidOutput, "diagnostics tolerance must still verify rendered dimensions")
+	})
+	for _, crop := range []struct {
+		name, box     string
+		dpi           float64
+		width, height int64
+	}{
+		{"round down", "[0 0 72.000001 144.000001]", 144, 145, 289},
+		{"round up", "[0 0 72.00008 144.00016]", 143.99982, 144, 288},
+		{"opposite corners", "[72.000001 144.000001 0 0]", 144, 145, 289},
+	} {
+		for _, rotation := range []struct {
+			degrees      int
+			redX, redY   int
+			blueX, blueY int
+		}{
+			{0, 12, 276, 132, 12},
+			{90, 12, 12, 276, 132},
+			{180, 132, 12, 12, 276},
+			{270, 276, 132, 12, 12},
+		} {
+			t.Run(fmt.Sprintf("quantized crop/%s/%d", crop.name, rotation.degrees), func(t *testing.T) {
+				content := "1 0 0 rg 0 0 12 12 re f\n0 0 1 rg 60 132 12 12 re f\n"
+				pdf := syntheticPDFObjects([]string{
+					"<< /Type /Catalog /Pages 2 0 R >>",
+					"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+					fmt.Sprintf("<< /Type /Page /Parent 2 0 R /MediaBox [-10 -10 612.000001 792.000001] /CropBox %s /Rotate %d /Resources << >> /Contents 4 0 R >>", crop.box, rotation.degrees),
+					fmt.Sprintf("<< /Length %d >>\nstream\n%sendstream", len(content), content),
+				})
+				frames, err := engine.Inspect(t.Context(), pdf, testSource(pdf), "application/pdf")
+				require.NoError(t, err)
+				recipe, err := engine.Recipe(frames[0], crop.dpi)
+				require.NoError(t, err)
+				receipt, pixels, err := engine.Render(t.Context(), pdf, frames[0], recipe)
+				require.NoError(t, err)
+				width, height := crop.width, crop.height
+				if rotation.degrees == 90 || rotation.degrees == 270 {
+					width, height = height, width
+				}
+				require.Equal(t, width, receipt.Width)
+				require.Equal(t, height, receipt.Height)
+				image, err := png.Decode(bytes.NewReader(pixels))
+				require.NoError(t, err)
+				require.Equal(t, color.RGBA{R: 255, A: 255}, color.RGBAModel.Convert(image.At(rotation.redX, rotation.redY)))
+				require.Equal(t, color.RGBA{B: 255, A: 255}, color.RGBAModel.Convert(image.At(rotation.blueX, rotation.blueY)))
+			})
+		}
 	}
 	data = densityPNG(10000)
 	source = testSource(data)

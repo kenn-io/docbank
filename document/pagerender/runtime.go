@@ -25,6 +25,14 @@ var (
 	ErrInvalidOutput = errors.New("page renderer output failed verification")
 )
 
+const (
+	inspectorMemoryBytes = 2 << 30
+	rendererMemoryBytes  = 512 << 20
+	maxGeometryBytes     = 16 << 20
+	maxDiagnosticBytes   = 64 << 10
+	phaseTimeout         = 60 * time.Second
+)
+
 type Executable struct {
 	Path   string `toml:"path"`
 	SHA256 string `toml:"sha256"`
@@ -102,7 +110,7 @@ func New(ctx context.Context, p Profile) (*Runtime, error) {
 		return nil, fmt.Errorf("limiter: %w", ErrUnavailable)
 	}
 	version := func(exe *providerutil.PinnedExecutable, memory int64, arg string) (string, error) {
-		out, diagnostics, err := engine.command(ctx, exe, nil, memory, 64<<10, arg)
+		out, diagnostics, err := engine.command(ctx, exe, nil, memory, maxDiagnosticBytes, arg)
 		if err != nil {
 			return "", err
 		}
@@ -113,19 +121,19 @@ func New(ctx context.Context, p Profile) (*Runtime, error) {
 		}
 		return line, nil
 	}
-	inspectorVersion, err := version(engine.inspector, 2<<30, "--version")
+	inspectorVersion, err := version(engine.inspector, inspectorMemoryBytes, "--version")
 	if err != nil || !strings.HasPrefix(inspectorVersion, Protocol+" ") {
 		return nil, ErrUnavailable
 	}
-	limiterVersion, err := version(engine.limiter, 512<<20, "--version")
+	limiterVersion, err := version(engine.limiter, rendererMemoryBytes, "--version")
 	if err != nil || !strings.HasPrefix(limiterVersion, "prlimit from util-linux ") {
 		return nil, ErrUnavailable
 	}
-	engine.rendererVersion, err = version(engine.renderer, 512<<20, "-v")
+	engine.rendererVersion, err = version(engine.renderer, rendererMemoryBytes, "-v")
 	if err != nil || !strings.HasPrefix(engine.rendererVersion, "pdftoppm version ") {
 		return nil, ErrUnavailable
 	}
-	engine.identity = document.PageRuntimeIdentity{InspectorSHA256: p.Inspector.SHA256, InspectorVersion: inspectorVersion, RendererSHA256: p.Renderer.SHA256, LimiterSHA256: p.Limiter.SHA256, LimiterVersion: limiterVersion, DeploymentIdentity: p.DeploymentIdentity, Platform: "linux/amd64", MemoryEnforcement: "rlimit-as", InspectorMemoryBytes: 2 << 30, RendererMemoryBytes: 512 << 20, MaxSourceBytes: document.MaxPageSourceBytes, MaxPages: document.MaxDocumentPages, MaxOutputBytes: document.MaxPageImageBytes, MaxPixels: document.MaxPagePixels, MaxAxis: document.MaxPageAxis, MaxGeometryBytes: 16 << 20, MaxDiagnosticBytes: 64 << 10, PhaseSeconds: 60}
+	engine.identity = document.PageRuntimeIdentity{InspectorSHA256: p.Inspector.SHA256, InspectorVersion: inspectorVersion, RendererSHA256: p.Renderer.SHA256, LimiterSHA256: p.Limiter.SHA256, LimiterVersion: limiterVersion, DeploymentIdentity: p.DeploymentIdentity, Platform: "linux/amd64", MemoryEnforcement: "rlimit-as", InspectorMemoryBytes: inspectorMemoryBytes, RendererMemoryBytes: rendererMemoryBytes, MaxSourceBytes: document.MaxPageSourceBytes, MaxPages: document.MaxDocumentPages, MaxOutputBytes: document.MaxPageImageBytes, MaxPixels: document.MaxPagePixels, MaxAxis: document.MaxPageAxis, MaxGeometryBytes: maxGeometryBytes, MaxDiagnosticBytes: maxDiagnosticBytes, PhaseSeconds: int64(phaseTimeout / time.Second)}
 	recipe := engine.pdfRecipe(144)
 	if err := document.ValidatePageRecipeV1(recipe); err != nil {
 		return nil, err
@@ -149,7 +157,7 @@ func (e *Runtime) acquire(ctx context.Context) (func(), error) {
 }
 
 func (e *Runtime) command(ctx context.Context, pinned *providerutil.PinnedExecutable, source []byte, memory, limit int64, args ...string) (output, diagnostics []byte, result error) {
-	phase, cancel := context.WithTimeout(ctx, 60*time.Second)
+	phase, cancel := context.WithTimeout(ctx, phaseTimeout)
 	defer cancel()
 	executable, cleanup, err := pinned.Materialize()
 	if err != nil {
@@ -175,7 +183,7 @@ func (e *Runtime) command(ctx context.Context, pinned *providerutil.PinnedExecut
 		}
 	}
 	stdout := providerutil.NewBoundedBuffer(limit, kill)
-	stderr := providerutil.NewBoundedBuffer(64<<10, kill)
+	stderr := providerutil.NewBoundedBuffer(maxDiagnosticBytes, kill)
 	command.Stdout = stdout
 	command.Stderr = stderr
 	managed, err = providerutil.NewManagedCommand(command)
@@ -207,7 +215,7 @@ func (e *Runtime) Inspect(ctx context.Context, data []byte, source document.Page
 	if mediaType != "application/pdf" && mediaType != "image/png" {
 		return nil, ErrUnsupported
 	}
-	out, diag, err := e.command(ctx, e.inspector, data, 2<<30, 16<<20, "--protocol", Protocol, "--version-id", source.VersionID, "--media-type", mediaType)
+	out, diag, err := e.command(ctx, e.inspector, data, inspectorMemoryBytes, maxGeometryBytes, "--protocol", Protocol, "--version-id", source.VersionID, "--media-type", mediaType)
 	if err != nil {
 		return nil, err
 	}
@@ -252,7 +260,7 @@ func (e *Runtime) Recipe(frame document.PageFrameV1, dpi float64) (document.Page
 		if dpi == 0 {
 			recipe.DPI = 144
 		}
-		if recipe.DPI < 1 || recipe.DPI > 1200 {
+		if recipe.DPI < document.MinPDFPageDPI || recipe.DPI > document.MaxPDFPageDPI {
 			return document.PageRecipeV1{}, ErrUnsupported
 		}
 	}
@@ -283,26 +291,20 @@ func (e *Runtime) Render(ctx context.Context, data []byte, frame document.PageFr
 	if err != nil || !bytes.Equal(actualJSON, requestedJSON) {
 		return document.PageImageV1{}, nil, ErrUnavailable
 	}
-	width, height, err := document.PageImageDimensions(frame, recipe)
-	if err != nil {
-		return document.PageImageV1{}, nil, err
-	}
 	var output []byte
 	if frame.InputUnits == "pixel" {
 		output = bytes.Clone(data)
 	} else {
 		options := []string{"-f", strconv.Itoa(frame.Page), "-l", strconv.Itoa(frame.Page), "-singlefile", "-r", strconv.FormatFloat(recipe.DPI, 'f', -1, 64), "-cropbox", "-png", "-aa", "yes", "-aaVector", "yes", "-thinlinemode", "none", "-freetype", "yes", "-"}
-		var diagnostics []byte
-		output, diagnostics, err = e.command(ctx, e.renderer, data, 512<<20, document.MaxPageImageBytes, options...)
+		// Poppler may emit diagnostics on success. command bounds both streams;
+		// verify the image below without retaining source-bearing diagnostics.
+		output, _, err = e.command(ctx, e.renderer, data, rendererMemoryBytes, document.MaxPageImageBytes, options...)
 		if err != nil {
 			return document.PageImageV1{}, nil, err
 		}
-		if len(diagnostics) != 0 {
-			return document.PageImageV1{}, nil, ErrInvalidOutput
-		}
 	}
 	w, h, _, _, err := inspectPNG(output, false)
-	if err != nil || w != width || h != height {
+	if err != nil {
 		return document.PageImageV1{}, nil, ErrInvalidOutput
 	}
 	_, frameHash, err := document.MarshalPageFrameV1(frame)
@@ -312,7 +314,7 @@ func (e *Runtime) Render(ctx context.Context, data []byte, frame document.PageFr
 	hash := sha256.Sum256(output)
 	receipt := document.PageImageV1{Contract: document.PageImageContractV1, Source: frame.Source, Page: frame.Page, FrameSHA256: frameHash, RecipeSHA256: recipeHash, SHA256: hex.EncodeToString(hash[:]), Size: int64(len(output)), Width: w, Height: h}
 	if err := document.ValidatePageImageBinding(receipt, frame, recipe); err != nil {
-		return document.PageImageV1{}, nil, err
+		return document.PageImageV1{}, nil, fmt.Errorf("%w: %w", ErrInvalidOutput, err)
 	}
 	if err := ctx.Err(); err != nil {
 		return document.PageImageV1{}, nil, err
