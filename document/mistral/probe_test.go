@@ -54,6 +54,11 @@ func TestRunCapabilityProbeProducesCompleteSanitizedAuthority(t *testing.T) {
 		_, err = policy.Authorize(manifest, formatID)
 		require.NoError(t, err)
 	}
+	xlsx := findManifestResult(t, manifest, "xlsx")
+	assert.Equal(t, ProbeStatusPassed, xlsx.Status)
+	assert.Equal(t, UnitBoundNone, xlsx.UnitBoundMethod)
+	assert.Zero(t, xlsx.LocalUnits)
+	t.Logf("xlsx status=%q unit_bound_method=%q local_units=%d", xlsx.Status, xlsx.UnitBoundMethod, xlsx.LocalUnits)
 
 	authorization, err := policy.Authorize(manifest, "pdf")
 	require.NoError(t, err)
@@ -61,6 +66,8 @@ func TestRunCapabilityProbeProducesCompleteSanitizedAuthority(t *testing.T) {
 	assert.NotEmpty(t, authorization.PolicyFingerprint())
 	_, err = policy.Authorize(manifest, "pptx")
 	require.NoError(t, err)
+	_, err = policy.Authorize(manifest, "xlsx")
+	require.ErrorContains(t, err, "no enforceable unit bound")
 	_, err = policy.Authorize(manifest, "docx")
 	require.ErrorContains(t, err, "run the authenticated capability probe and supply its manifest")
 
