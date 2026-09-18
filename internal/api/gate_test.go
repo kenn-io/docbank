@@ -114,7 +114,7 @@ func TestQueuedMaintenanceRejectsRouteMutation(t *testing.T) {
 
 		maintenanceDone := make(chan error, 1)
 		go func() {
-			maintenanceDone <- g.maintain(func() error { return nil })
+			maintenanceDone <- g.MaintainContext(t.Context(), func() error { return nil })
 		}()
 		synctest.Wait()
 		g.admission.RLock()
@@ -411,7 +411,7 @@ func TestBackupCaptureBlocksGCButAllowsLiveDeletion(t *testing.T) {
 	go func() {
 		close(maintenanceAttempted)
 		var report GCReport
-		err := g.maintain(func() error {
+		err := g.MaintainContext(t.Context(), func() error {
 			close(maintenanceEntered)
 			return blobs.WithMutation(ctx, func() error {
 				var err error

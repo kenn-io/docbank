@@ -50,14 +50,8 @@ func (g *OperationGate) MutateContext(ctx context.Context, fn func() error) erro
 	return fn()
 }
 
-// Maintain runs daemon-owned physical maintenance with the same exclusion and
-// admission behavior as an HTTP maintenance request.
-func (g *OperationGate) Maintain(fn func() error) error {
-	return g.maintainContext(context.Background(), fn)
-}
-
-// MaintainContext is Maintain with cancellation while waiting for exclusive
-// daemon-owned maintenance admission.
+// MaintainContext runs daemon-owned physical maintenance with cancellation
+// while waiting for exclusive admission, using the same gate as HTTP maintenance.
 func (g *OperationGate) MaintainContext(ctx context.Context, fn func() error) error {
 	return g.maintainContext(ctx, fn)
 }
@@ -91,10 +85,6 @@ func (g *OperationGate) mutate(fn func() error) error {
 	}
 	defer g.mu.Release(1)
 	return fn()
-}
-
-func (g *OperationGate) maintain(fn func() error) error {
-	return g.maintainContext(context.Background(), fn)
 }
 
 func (g *OperationGate) maintainContext(ctx context.Context, fn func() error) error {

@@ -72,7 +72,7 @@ func TestBrowserUploadUsesAuthenticatedPinnedChannel(t *testing.T) {
 	releaseMaintenance := make(chan struct{})
 	maintenanceDone := make(chan error, 1)
 	go func() {
-		maintenanceDone <- gate.Maintain(func() error {
+		maintenanceDone <- gate.MaintainContext(t.Context(), func() error {
 			close(maintenanceHeld)
 			<-releaseMaintenance
 			return nil
@@ -195,5 +195,5 @@ func TestServerShutdownDrainsActiveBrowserUpload(t *testing.T) {
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
 	require.NoError(t, s.Server.Shutdown(shutdownCtx))
-	require.NoError(t, gate.Maintain(func() error { return nil }))
+	require.NoError(t, gate.MaintainContext(t.Context(), func() error { return nil }))
 }
