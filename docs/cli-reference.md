@@ -1224,6 +1224,12 @@ docbank media occurrences revoke OCCURRENCE_ID --operation-id UUID --revision RE
 docbank media origins
 ```
 
+`media origins` prints each registered origin's ID, provider,
+`acquisition_available` value, and any probe evidence. Probe evidence includes
+`adapter_contract`, `deployment_revision`, `probe_state`, and `probed_at`.
+Self-hosted Cap registrations report `acquisition_available: false` until a
+later acquisition owner exists.
+
 `media submit` accepts bounded WAV and MP3 files. It verifies the declared
 size and SHA-256 computed by the CLI, retains the original bytes, and records
 the caller occurrence separately. Repeating the same bytes reuses one source

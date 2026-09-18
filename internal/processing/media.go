@@ -70,6 +70,8 @@ type MediaReceipt struct {
 	SuppliedInputID                                                     string
 }
 
+var ErrMediaCredentialScope = errors.New("media credential binding is not scoped to the recognized origin")
+
 // SubmitRemoteRecording retains one sanitized reference and occurrence. The
 // manual original import path can later bind bytes to that occurrence.
 func (service *Service) SubmitRemoteRecording(
@@ -111,7 +113,30 @@ func (service *Service) SubmitRemoteRecording(
 		return MediaReceipt{}, ErrMediaProcessingUnsupported
 	}
 	provider, originScope, sourceKey, outcome := "", "", referenceSHA, ""
-	if request.CanonicalURL != "" {
+	policy, mediaIdentity, recognized := service.recognizeMediaOrigin(request.ReferenceURL, request.ProviderHint)
+	if recognized && mediaIdentity != "" {
+		if policy.ExactOrigin != "" && request.ProviderHint != "" && request.ProviderHint != policy.Provider {
+			return MediaReceipt{}, ErrMediaPlanInvalid
+		}
+		if request.CanonicalURL != "" {
+			canonicalPolicy, canonicalIdentity, canonicalOK := service.recognizeMediaOrigin(request.CanonicalURL, request.ProviderHint)
+			if !canonicalOK || canonicalPolicy.OriginID != policy.OriginID || canonicalIdentity != mediaIdentity {
+				return MediaReceipt{}, ErrMediaPlanInvalid
+			}
+		}
+		if err := validateRemoteRecordingHints(request); err != nil {
+			return MediaReceipt{}, err
+		}
+		if request.CredentialBinding != "" && request.CredentialBinding != policy.CredentialBinding {
+			return MediaReceipt{}, ErrMediaCredentialScope
+		}
+		if request.Acquire {
+			return MediaReceipt{}, ErrMediaCapabilityUnavailable
+		}
+		provider = policy.Provider
+		originScope = hashMediaPrivateValue(policy.ExactOrigin)
+		sourceKey = hashMediaPrivateValue(mediaIdentity)
+	} else if request.CanonicalURL != "" {
 		canonicalURL, origin, canonicalErr := canonicalRemoteRecordingReference(request.CanonicalURL)
 		if canonicalErr != nil {
 			return MediaReceipt{}, ErrMediaPlanInvalid
@@ -119,24 +144,39 @@ func (service *Service) SubmitRemoteRecording(
 		if err := validateRemoteRecordingHints(request); err != nil {
 			return MediaReceipt{}, err
 		}
-		videoID, capCloud := capCloudRecording(canonicalURL)
-		if request.Acquire && !capCloud {
-			return MediaReceipt{}, ErrMediaCapabilityUnavailable
+		canonicalPolicy, canonicalIdentity, canonicalRecognized := service.recognizeMediaOrigin(request.CanonicalURL, request.ProviderHint)
+		if canonicalRecognized && canonicalIdentity != "" {
+			if canonicalPolicy.ExactOrigin != "" && request.ProviderHint != "" && request.ProviderHint != canonicalPolicy.Provider {
+				return MediaReceipt{}, ErrMediaPlanInvalid
+			}
+			if request.CredentialBinding != "" && request.CredentialBinding != canonicalPolicy.CredentialBinding {
+				return MediaReceipt{}, ErrMediaCredentialScope
+			}
+			if request.Acquire {
+				return MediaReceipt{}, ErrMediaCapabilityUnavailable
+			}
+			provider = canonicalPolicy.Provider
+			originScope = hashMediaPrivateValue(canonicalPolicy.ExactOrigin)
+			sourceKey = hashMediaPrivateValue(canonicalIdentity)
+		} else {
+			videoID, capCloud := capCloudRecording(canonicalURL)
+			if request.Acquire && !capCloud {
+				return MediaReceipt{}, ErrMediaCapabilityUnavailable
+			}
+			provider = "url"
+			originScope = hashMediaPrivateValue(origin)
+			sourceKey = hashMediaPrivateValue(canonicalURL)
+			if capCloud {
+				// Cap documents no download route for received links, so an
+				// acquisition request keeps the manual import path.
+				provider = "cap"
+				originScope = hashMediaPrivateValue(capCloudOrigin)
+				sourceKey = hashMediaPrivateValue(videoID)
+			}
+			outcome = "unsupported"
 		}
-		provider = "url"
-		originScope = hashMediaPrivateValue(origin)
-		sourceKey = hashMediaPrivateValue(canonicalURL)
-		if capCloud {
-			// Cap documents no download route for received links, so an
-			// acquisition request keeps the manual import path.
-			provider = "cap"
-			originScope = hashMediaPrivateValue(capCloudOrigin)
-			sourceKey = hashMediaPrivateValue(videoID)
-		}
-		outcome = "unsupported"
 	} else {
-		policy, ok := service.recognizeMediaOrigin(request.ReferenceURL, request.ProviderHint)
-		if !ok || request.Acquire {
+		if !recognized || request.Acquire {
 			return MediaReceipt{}, ErrMediaCapabilityUnavailable
 		}
 		provider, originScope = policy.Provider, policy.OriginID
@@ -211,6 +251,15 @@ func canonicalRemoteRecordingReference(raw string) (canonicalURL, origin string,
 		parsed.Path = "/"
 	}
 	return parsed.String(), scheme + "://" + host, nil
+}
+
+// CanonicalRemoteOrigin returns the canonical root origin for a reference.
+func CanonicalRemoteOrigin(raw string) (string, error) {
+	canonicalURL, origin, err := canonicalRemoteRecordingReference(raw)
+	if err != nil || canonicalURL != origin+"/" {
+		return "", errors.New("media reference is not a canonical root origin")
+	}
+	return origin, nil
 }
 
 func validateRemoteRecordingHints(request RemoteRecordingRequest) error {

@@ -190,8 +190,25 @@ These rules determine the permanent source identity.
 }
 ```
 
-The canonical path does not resolve DNS, follow redirects, read credentials,
-or download a recording. `provider_hint` is a bounded replay value and does not
+When the daemon has a registered self-hosted Cap origin, an exact `/s/<id>` or
+`/embed/<id>` path on that origin takes the registered branch. The source
+identity is the Cap video ID, so the two route forms identify one source. A
+present `canonical_url` must name the same registered origin and video ID;
+otherwise the request returns `422 invalid_media_plan`. A credential binding
+must be empty or the binding registered for that origin. A foreign binding
+returns `422 credential_cross_origin`.
+
+`GET /api/v1/media/origins` reports `adapter_contract`,
+`deployment_revision`, `probe_state`, and `probed_at` when a registered
+origin has a probe. Probe results cover the configured network and TLS policy.
+Recognized self-hosted Cap references remain `access_required`, and `acquire: true` still
+returns `503 capability_unavailable`.
+
+Registration affects new submissions only. A generic source retained before
+registration remains separate, and its manual import remains unchanged.
+
+Outside registered self-hosted origins, the canonical path does not resolve
+DNS, follow redirects, read credentials, or download a recording. `provider_hint` is a bounded replay value and does not
 prove a provider. A fresh canonical submission returns
 `outcome: "unsupported"` with a pending occurrence. A submission that omits
 `canonical_url` uses its configured origin policy and returns

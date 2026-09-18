@@ -120,6 +120,10 @@ type MediaOrigin struct {
 	OriginID             string `json:"origin_id"`
 	Provider             string `json:"provider"`
 	AcquisitionAvailable bool   `json:"acquisition_available"`
+	AdapterContract      string `json:"adapter_contract,omitempty"`
+	DeploymentRevision   string `json:"deployment_revision,omitempty"`
+	ProbeState           string `json:"probe_state,omitempty"`
+	ProbedAt             string `json:"probed_at,omitempty"`
 }
 
 type MediaOriginPage struct {

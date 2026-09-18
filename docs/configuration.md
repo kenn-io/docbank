@@ -461,6 +461,40 @@ their separate bounded storage-retry behavior. Terminal jobs do not retain
 superseded generations after their last embedding set is collected, while
 queued/running jobs and explicit retention roots keep their inputs.
 
+### Self-hosted Cap origins
+
+Register a self-hosted Cap deployment under `[media_origins.<name>]`. The
+endpoint is one exact HTTP(S) origin. Cap share and embed paths are recognized
+only on that origin. The deployment revision, credential binding, network
+allowlist, TLS pins, and probe timeout are part of the daemon configuration.
+
+```toml
+[credential_bindings.team-cap]
+environment_variable = "CAP_API_KEY"
+
+[media_origins.team-cap]
+provider = "cap.self-hosted"
+endpoint = "https://cap.example.test"
+allowed_cidrs = ["127.0.0.0/8"]
+proxy_mode = "disabled"
+connect_timeout = "30s"
+keep_alive = "30s"
+tls_handshake_timeout = "10s"
+spki_sha256 = []
+credential_binding = "credential:team-cap"
+deployment_revision = "v-synthetic"
+probe_timeout = "30s"
+```
+
+HTTPS uses the system trust store. A private deployment may use HTTP when its
+configuration names explicit allowed CIDRs. The daemon resolves the named
+credential only for the registered origin and runs a bounded probe at startup.
+Recognized recordings remain `access_required`; this slice has no byte
+download path.
+
+Registration affects new submissions. A generic source retained earlier stays
+separate from a later registered-origin submission.
+
 ### Store bindings
 
 `[store_bindings.<name>]` profiles describe machine-local filesystem or

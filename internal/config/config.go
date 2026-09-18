@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/BurntSushi/toml"
+	"golang.org/x/net/idna"
 
 	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/document/embedding"
@@ -200,6 +201,15 @@ type CredentialBindingConfig struct {
 	EnvironmentVariable string `toml:"environment_variable"`
 }
 
+type MediaOriginConfig struct {
+	ProviderEgressConfig
+
+	Provider           string   `toml:"provider"`
+	CredentialBinding  string   `toml:"credential_binding"`
+	DeploymentRevision string   `toml:"deployment_revision"`
+	ProbeTimeout       Duration `toml:"probe_timeout"`
+}
+
 // EmbeddingProfileConfig names a deployment binding for one pinned embedding
 // descriptor and semantic input kind.
 type EmbeddingProfileConfig struct {
@@ -281,6 +291,7 @@ type Config struct {
 	RenditionProfiles  map[string]RenditionProfileConfig  `toml:"rendition_profiles"`
 	EmbeddingProfiles  map[string]EmbeddingProfileConfig  `toml:"embedding_profiles"`
 	CredentialBindings map[string]CredentialBindingConfig `toml:"credential_bindings"`
+	MediaOrigins       map[string]MediaOriginConfig       `toml:"media_origins"`
 	RetrievalProfiles  map[string]RetrievalProfileConfig  `toml:"retrieval_profiles"`
 	ProcessingProfiles map[string]ProcessingProfileConfig `toml:"processing_profiles"`
 	Watches            []WatchConfig                      `toml:"watch"`
@@ -298,6 +309,7 @@ func Default() Config {
 		RenditionProfiles:  make(map[string]RenditionProfileConfig),
 		EmbeddingProfiles:  make(map[string]EmbeddingProfileConfig),
 		CredentialBindings: make(map[string]CredentialBindingConfig),
+		MediaOrigins:       make(map[string]MediaOriginConfig),
 		RetrievalProfiles:  make(map[string]RetrievalProfileConfig),
 		ProcessingProfiles: make(map[string]ProcessingProfileConfig),
 	}
@@ -492,6 +504,9 @@ func (c Config) Validate() error {
 	if err := validateMCPConfig(c); err != nil {
 		return err
 	}
+	if err := validateMediaOrigins(c); err != nil {
+		return err
+	}
 	for _, watch := range c.Watches {
 		if err := validateWatch(watch); err != nil {
 			return err
@@ -519,6 +534,77 @@ func validateMCPConfig(c Config) error {
 	name := strings.TrimPrefix(reference, "credential:")
 	if _, ok := c.CredentialBindings[name]; !ok {
 		return fmt.Errorf("[mcp.http] credential binding %q is not defined", reference)
+	}
+	return nil
+}
+
+var mediaOriginRevisionPattern = regexp.MustCompile(`^[A-Za-z0-9._+-]{1,128}$`)
+
+func validateMediaOrigins(c Config) error {
+	const capSelfHostedProvider = "cap.self-hosted"
+	seenAuthorities := make(map[string]string, len(c.MediaOrigins))
+	for name, origin := range c.MediaOrigins {
+		prefix := fmt.Sprintf("[media_origins.%s]", name)
+		if err := validateProfileName(name, prefix); err != nil {
+			return err
+		}
+		if origin.Provider != capSelfHostedProvider {
+			return fmt.Errorf("%s provider must be %s", prefix, capSelfHostedProvider)
+		}
+		parsed, err := validateProviderEgressConfig(origin.ProviderEgressConfig, prefix)
+		if err != nil {
+			return err
+		}
+		if parsed.Path != "" && parsed.Path != "/" {
+			return fmt.Errorf("%s endpoint must be an absolute root origin", prefix)
+		}
+		hostname := parsed.Hostname()
+		if strings.HasSuffix(hostname, ".") {
+			return fmt.Errorf("%s endpoint host must not have a trailing dot", prefix)
+		}
+		for _, character := range hostname {
+			if character > 127 {
+				return fmt.Errorf("%s endpoint host must be ASCII", prefix)
+			}
+		}
+		if net.ParseIP(hostname) == nil {
+			asciiHostname, err := idna.Lookup.ToASCII(strings.ToLower(hostname))
+			if err != nil || asciiHostname != strings.ToLower(hostname) {
+				return fmt.Errorf("%s endpoint host is not valid under IDNA lookup rules", prefix)
+			}
+		}
+		if !credentialReferencePattern.MatchString(origin.CredentialBinding) {
+			return fmt.Errorf("%s credential_binding must use credential:<name>", prefix)
+		}
+		credentialName := strings.TrimPrefix(origin.CredentialBinding, "credential:")
+		if _, ok := c.CredentialBindings[credentialName]; !ok {
+			return fmt.Errorf("%s credential binding %q is not defined", prefix, origin.CredentialBinding)
+		}
+		if !mediaOriginRevisionPattern.MatchString(origin.DeploymentRevision) {
+			return fmt.Errorf("%s deployment_revision must contain 1-128 ASCII revision characters", prefix)
+		}
+		if origin.ProbeTimeout.Std() <= 0 || origin.ProbeTimeout.Std() > time.Minute {
+			return fmt.Errorf("%s probe_timeout must be between 1ns and 1m", prefix)
+		}
+		port := parsed.Port()
+		if port == "" {
+			if parsed.Scheme == "https" {
+				port = "443"
+			} else {
+				port = "80"
+			}
+		} else {
+			portNumber, portErr := strconv.ParseUint(port, 10, 16)
+			if portErr != nil {
+				return fmt.Errorf("%s endpoint port is invalid", prefix)
+			}
+			port = strconv.FormatUint(portNumber, 10)
+		}
+		authority := strings.ToLower(parsed.Scheme) + "://" + strings.ToLower(hostname) + ":" + port
+		if previous, exists := seenAuthorities[authority]; exists {
+			return fmt.Errorf("%s endpoint duplicates [media_origins.%s]", prefix, previous)
+		}
+		seenAuthorities[authority] = name
 	}
 	return nil
 }

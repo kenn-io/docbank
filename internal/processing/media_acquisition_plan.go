@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"encoding/json/v2"
 	"errors"
+	"net/url"
 	"slices"
 	"sort"
 	"strings"
@@ -31,13 +32,23 @@ type MediaOriginPolicy struct {
 	OriginID, Provider, ResolverFingerprint, IdentityFingerprint, DisclosureFingerprint string
 	InputClasses, RetainedClasses                                                       []string
 	ReferencePrefixes                                                                   []string
+	ExactOrigin                                                                         string                                  `json:",omitzero"`
+	CredentialBinding                                                                   string                                  `json:",omitzero"`
+	RecognizePath                                                                       func(escapedPath string) (string, bool) `json:"-"`
 	AcquisitionAvailable                                                                bool
 }
 
 type MediaOrigin struct {
-	OriginID, Provider   string
-	AcquisitionAvailable bool
+	OriginID, Provider, AdapterContract, DeploymentRevision, ProbeState string
+	AcquisitionAvailable                                                bool
+	ProbedAt                                                            time.Time
 }
+
+type MediaOriginEvidence struct {
+	AdapterContract, DeploymentRevision, ProbeState string
+}
+
+type MediaOriginProbe func(context.Context) (MediaOriginEvidence, error)
 
 type MediaAcquisitionPlan struct {
 	PlanToken, PlanFingerprint, OriginID, Provider, GrantState string
@@ -56,13 +67,51 @@ func (service *Service) MediaOrigins() ([]MediaOrigin, error) {
 	if service == nil || len(service.mediaOrigins) == 0 {
 		return nil, ErrMediaCapabilityUnavailable
 	}
+	service.mediaOriginMu.Lock()
+	defer service.mediaOriginMu.Unlock()
 	result := make([]MediaOrigin, 0, len(service.mediaOrigins))
 	for id, policy := range service.mediaOrigins {
-		result = append(result, MediaOrigin{OriginID: id, Provider: policy.Provider,
-			AcquisitionAvailable: policy.AcquisitionAvailable})
+		origin := MediaOrigin{OriginID: id, Provider: policy.Provider,
+			AcquisitionAvailable: policy.AcquisitionAvailable}
+		if probe, ok := service.mediaOriginProbes[id]; ok && probe != nil {
+			if observation, observed := service.mediaOriginEvidence[id]; observed {
+				origin.AdapterContract = observation.Evidence.AdapterContract
+				origin.DeploymentRevision = observation.Evidence.DeploymentRevision
+				origin.ProbeState = observation.Evidence.ProbeState
+				origin.ProbedAt = observation.ProbedAt
+			} else {
+				origin.ProbeState = "pending"
+			}
+		}
+		result = append(result, origin)
 	}
 	sort.Slice(result, func(i, j int) bool { return result[i].OriginID < result[j].OriginID })
 	return result, nil
+}
+
+// ProbeMediaOrigins runs each configured probe and retains its bounded result.
+func (service *Service) ProbeMediaOrigins(ctx context.Context) error {
+	if service == nil {
+		return ErrMediaCapabilityUnavailable
+	}
+	ids := make([]string, 0, len(service.mediaOriginProbes))
+	for id := range service.mediaOriginProbes {
+		ids = append(ids, id)
+	}
+	slices.Sort(ids)
+	for _, id := range ids {
+		evidence, err := service.mediaOriginProbes[id](ctx)
+		if contextErr := ctx.Err(); contextErr != nil {
+			return contextErr
+		}
+		if err != nil && evidence.ProbeState == "" {
+			evidence.ProbeState = "provider_unavailable"
+		}
+		service.mediaOriginMu.Lock()
+		service.mediaOriginEvidence[id] = mediaOriginObservation{Evidence: evidence, ProbedAt: service.clock().UTC()}
+		service.mediaOriginMu.Unlock()
+	}
+	return nil
 }
 
 // PlanMediaAcquisition recognizes a private reference locally. The signed
@@ -76,7 +125,7 @@ func (service *Service) PlanMediaAcquisition(
 	if request.ReferenceURL == "" || len(request.ReferenceURL) > 8192 || len(request.CanonicalURL) > 8192 {
 		return MediaAcquisitionPlan{}, ErrMediaPlanInvalid
 	}
-	policy, ok := service.recognizeMediaOrigin(request.ReferenceURL, request.ProviderHint)
+	policy, _, ok := service.recognizeMediaOrigin(request.ReferenceURL, request.ProviderHint)
 	if !ok || !policy.AcquisitionAvailable {
 		return MediaAcquisitionPlan{}, ErrMediaCapabilityUnavailable
 	}
@@ -226,18 +275,34 @@ func (service *Service) verifyCurrentMediaPlan(
 	return claim, policy, nil
 }
 
-func (service *Service) recognizeMediaOrigin(reference, providerHint string) (MediaOriginPolicy, bool) {
+func (service *Service) recognizeMediaOrigin(reference, providerHint string) (MediaOriginPolicy, string, bool) {
+	for _, policy := range service.mediaOrigins {
+		if policy.ExactOrigin == "" {
+			continue
+		}
+		canonicalReference, origin, err := canonicalRemoteRecordingReference(reference)
+		if err != nil || origin != policy.ExactOrigin || policy.RecognizePath == nil {
+			continue
+		}
+		parsed, err := url.Parse(canonicalReference)
+		if err != nil {
+			continue
+		}
+		if identity, ok := policy.RecognizePath(parsed.EscapedPath()); ok {
+			return policy, identity, true
+		}
+	}
 	for _, policy := range service.mediaOrigins {
 		if providerHint != "" && providerHint != policy.Provider {
 			continue
 		}
 		for _, prefix := range policy.ReferencePrefixes {
 			if strings.HasPrefix(reference, prefix) {
-				return policy, true
+				return policy, "", true
 			}
 		}
 	}
-	return MediaOriginPolicy{}, false
+	return MediaOriginPolicy{}, "", false
 }
 
 func mediaOriginFingerprint(policy MediaOriginPolicy) (string, error) {

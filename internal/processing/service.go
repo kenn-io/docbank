@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"math"
 	"mime"
 	"net/url"
@@ -81,6 +82,7 @@ type ServiceConfig struct {
 	Lifecycle         context.Context
 	MediaMaxBytes     int64
 	MediaOrigins      map[string]MediaOriginPolicy
+	MediaOriginProbes map[string]MediaOriginProbe
 	MediaTokenKey     [32]byte
 }
 
@@ -96,29 +98,37 @@ type configuredProfile struct {
 }
 
 type Service struct {
-	catalog          *store.Store
-	blobs            *blob.Store
-	gate             processingOperationGate
-	profiles         map[string]configuredProfile
-	principal        string
-	scope            string
-	spoolDirectory   string
-	clock            func() time.Time
-	lifecycle        context.Context
-	renditions       *RenditionRuntimeRegistry
-	embeddings       *EmbeddingRuntimeRegistry
-	mediaEvidence    *retrieval.MediaEvidenceResolver
-	runsMu           sync.Mutex
-	runs             int
-	stopping         bool
-	stop             context.CancelFunc
-	drained          chan struct{}
-	formatCoverage   document.FormatCoverageV1
-	mediaMaxBytes    int64
-	mediaMu          sync.Mutex
-	mediaStagedBytes int64
-	mediaOrigins     map[string]MediaOriginPolicy
-	mediaTokenKey    [32]byte
+	catalog             *store.Store
+	blobs               *blob.Store
+	gate                processingOperationGate
+	profiles            map[string]configuredProfile
+	principal           string
+	scope               string
+	spoolDirectory      string
+	clock               func() time.Time
+	lifecycle           context.Context
+	renditions          *RenditionRuntimeRegistry
+	embeddings          *EmbeddingRuntimeRegistry
+	mediaEvidence       *retrieval.MediaEvidenceResolver
+	runsMu              sync.Mutex
+	runs                int
+	stopping            bool
+	stop                context.CancelFunc
+	drained             chan struct{}
+	formatCoverage      document.FormatCoverageV1
+	mediaMaxBytes       int64
+	mediaMu             sync.Mutex
+	mediaStagedBytes    int64
+	mediaOrigins        map[string]MediaOriginPolicy
+	mediaOriginProbes   map[string]MediaOriginProbe
+	mediaOriginMu       sync.Mutex
+	mediaOriginEvidence map[string]mediaOriginObservation
+	mediaTokenKey       [32]byte
+}
+
+type mediaOriginObservation struct {
+	Evidence MediaOriginEvidence
+	ProbedAt time.Time
 }
 
 func (service *Service) mediaMutation(ctx context.Context, fn func() error) error {
@@ -346,6 +356,10 @@ func NewService(config ServiceConfig) (*Service, error) {
 	if renditionRuntimes == nil {
 		renditionRuntimes = NewRenditionRuntimeRegistry()
 	}
+	mediaOrigins := make(map[string]MediaOriginPolicy, len(config.MediaOrigins))
+	maps.Copy(mediaOrigins, config.MediaOrigins)
+	mediaOriginProbes := make(map[string]MediaOriginProbe, len(config.MediaOriginProbes))
+	maps.Copy(mediaOriginProbes, config.MediaOriginProbes)
 	service := &Service{catalog: config.Catalog, blobs: config.Blobs, gate: config.Gate,
 		profiles:       make(map[string]configuredProfile, len(config.Profiles)),
 		principal:      config.Principal,
@@ -354,7 +368,34 @@ func NewService(config ServiceConfig) (*Service, error) {
 		renditions: renditionRuntimes, embeddings: NewEmbeddingRuntimeRegistry(),
 		mediaEvidence: retrieval.NewMediaEvidenceResolver(config.Blobs),
 		mediaMaxBytes: config.MediaMaxBytes,
-		mediaOrigins:  config.MediaOrigins, mediaTokenKey: config.MediaTokenKey}
+		mediaOrigins:  mediaOrigins, mediaOriginProbes: mediaOriginProbes,
+		mediaOriginEvidence: make(map[string]mediaOriginObservation, len(mediaOriginProbes)),
+		mediaTokenKey:       config.MediaTokenKey}
+	for id, probe := range service.mediaOriginProbes {
+		if _, ok := service.mediaOrigins[id]; !ok {
+			return nil, errors.New("processing service media origin probe has no registered origin")
+		}
+		if probe == nil {
+			return nil, fmt.Errorf("processing service media origin probe %q is nil", id)
+		}
+	}
+	exactOrigins := make(map[string]string)
+	for id, policy := range service.mediaOrigins {
+		if policy.ExactOrigin == "" {
+			continue
+		}
+		if policy.RecognizePath == nil {
+			return nil, fmt.Errorf("processing service media origin %q has no recognizer", id)
+		}
+		canonicalOrigin, originErr := CanonicalRemoteOrigin(policy.ExactOrigin)
+		if originErr != nil || canonicalOrigin != policy.ExactOrigin {
+			return nil, fmt.Errorf("processing service media origin %q exact origin is not canonical", id)
+		}
+		if previous, exists := exactOrigins[policy.ExactOrigin]; exists {
+			return nil, fmt.Errorf("processing service media origins %q and %q have duplicate exact origin", previous, id)
+		}
+		exactOrigins[policy.ExactOrigin] = id
+	}
 	if len(service.mediaOrigins) > 0 && service.mediaTokenKey == ([32]byte{}) {
 		return nil, errors.New("processing service media token key is required when origins are configured")
 	}
