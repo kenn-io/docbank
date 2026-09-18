@@ -237,48 +237,81 @@ func TestRenditionTextHTTPKeepsUnavailableStatesDistinct(t *testing.T) {
 }
 
 func TestRenditionTextHTTPKeepsSnapshotWithoutRenditionFrozenAfterPublication(t *testing.T) {
-	var cfg config.Config
-	ts, s := newTestServer(t, func(d *api.Deps) { renditionTextConfig(d); cfg = d.Cfg })
-	hash, size, err := s.Blobs.Write(strings.NewReader("%PDF-1.4 synthetic source"))
-	require.NoError(t, err)
-	node, err := s.CreateFile(t.Context(), s.RootID(), "synthetic.pdf", hash, size, "application/pdf")
-	require.NoError(t, err)
-	resp, body := do(t, ts, http.MethodPost, "/api/v1/workspace/queries", nil,
-		map[string]any{"query": map[string]any{}, "profile": "archive"})
-	require.Equal(t, http.StatusOK, resp.StatusCode, body)
-	var snapshot api.WorkspaceQueryResponse
-	require.NoError(t, json.Unmarshal([]byte(body), &snapshot))
-	require.Len(t, snapshot.Rows, 1)
-	row := snapshot.Rows[0]
-	require.Equal(t, "unprocessed", row.CoverageState)
-	require.Empty(t, row.CoverageAttachmentID)
-	require.Empty(t, row.CoverageBuildID)
-	require.Empty(t, snapshot.Generation.GenerationID)
-	request := map[string]any{"node_id": row.NodeID, "revision": row.Revision,
-		"version_id": row.ContentVersionID, "blob_hash": row.BlobHash, "size": row.Size,
-		"profile": "archive", "observed": map[string]any{
-			"configuration":       snapshot.Coverage.Configuration,
-			"profile_fingerprint": snapshot.Coverage.ProfileFingerprint, "coverage_state": row.CoverageState,
-		}}
+	for _, sharedBuild := range []bool{false, true} {
+		t.Run("shared_build="+strconv.FormatBool(sharedBuild), func(t *testing.T) {
+			var cfg config.Config
+			ts, s := newTestServer(t, func(d *api.Deps) { renditionTextConfig(d); cfg = d.Cfg })
+			hash, size, err := s.Blobs.Write(strings.NewReader("%PDF-1.4 synthetic source"))
+			require.NoError(t, err)
+			node, err := s.CreateFile(t.Context(), s.RootID(), "synthetic.pdf", hash, size, "application/pdf")
+			require.NoError(t, err)
+			var fixture renditionTextFixture
+			if sharedBuild {
+				processed, err := s.CreateFile(t.Context(), s.RootID(), "processed.pdf", hash, size, "application/pdf")
+				require.NoError(t, err)
+				fixture = publishRenditionTextFixture(t, s, cfg, processed)
+			}
+			resp, body := do(t, ts, http.MethodPost, "/api/v1/workspace/queries", nil,
+				map[string]any{"query": map[string]any{}, "profile": "archive"})
+			require.Equal(t, http.StatusOK, resp.StatusCode, body)
+			var snapshot api.WorkspaceQueryResponse
+			require.NoError(t, json.Unmarshal([]byte(body), &snapshot))
+			require.NotEmpty(t, snapshot.Rows)
+			row := snapshot.Rows[0]
+			for _, candidate := range snapshot.Rows {
+				if candidate.NodeID == node.ID {
+					row = candidate
+					break
+				}
+			}
+			require.Equal(t, node.ID, row.NodeID)
+			require.Equal(t, "unprocessed", row.CoverageState)
+			require.Empty(t, row.CoverageAttachmentID)
+			require.Empty(t, row.CoverageBuildID)
+			require.Equal(t, fixture.generation, snapshot.Generation.GenerationID)
+			observed := map[string]any{
+				"configuration":       snapshot.Coverage.Configuration,
+				"profile_fingerprint": snapshot.Coverage.ProfileFingerprint, "coverage_state": row.CoverageState,
+			}
+			if snapshot.Generation.GenerationID != "" {
+				observed["generation_id"] = snapshot.Generation.GenerationID
+			}
+			request := map[string]any{"node_id": row.NodeID, "revision": row.Revision,
+				"version_id": row.ContentVersionID, "blob_hash": row.BlobHash, "size": row.Size,
+				"profile": "archive", "observed": observed}
 
-	fixture := publishRenditionTextFixture(t, s, cfg, node)
-	resp, body = do(t, ts, http.MethodPost, "/api/v1/renditions/text", nil, request)
-	require.Equal(t, http.StatusOK, resp.StatusCode, body)
-	var frozen map[string]any
-	require.NoError(t, json.Unmarshal([]byte(body), &frozen))
-	require.Equal(t, "unprocessed", frozen["state"])
-	require.Empty(t, frozen["attachment_id"])
-	require.Empty(t, frozen["build_id"])
-	require.NotContains(t, frozen, "artifact")
+			if sharedBuild {
+				// The build is already in the frozen generation, but this row was not attached to it.
+				fixture.attachment = testHash("later-attachment")
+				require.NoError(t, s.PublishRenditionAndLexicalHeads(t.Context(), store.RenditionAttachmentRecord{
+					ID: fixture.attachment, VaultID: s.VaultID(), ContentVersionID: node.CurrentVersionID,
+					BuildID: fixture.build, Profile: fixture.profile, AttachedAt: "2026-09-11T12:03:00.000000000Z",
+				}, store.RenditionHeadRecord{
+					ContentVersionID: node.CurrentVersionID, ProcessingProfileFingerprint: fixture.profile.Fingerprint,
+					AttachmentID: fixture.attachment, PublishedAt: "2026-09-11T12:04:00.000000000Z",
+				}, fixture.generation))
+			} else {
+				fixture = publishRenditionTextFixture(t, s, cfg, node)
+			}
+			resp, body = do(t, ts, http.MethodPost, "/api/v1/renditions/text", nil, request)
+			require.Equal(t, http.StatusOK, resp.StatusCode, body)
+			var frozen map[string]any
+			require.NoError(t, json.Unmarshal([]byte(body), &frozen))
+			require.Equal(t, "unprocessed", frozen["state"])
+			require.Empty(t, frozen["attachment_id"])
+			require.Empty(t, frozen["build_id"])
+			require.NotContains(t, frozen, "artifact")
 
-	delete(request, "observed")
-	resp, body = do(t, ts, http.MethodPost, "/api/v1/renditions/text", nil, request)
-	require.Equal(t, http.StatusOK, resp.StatusCode, body)
-	var live map[string]any
-	require.NoError(t, json.Unmarshal([]byte(body), &live))
-	require.Equal(t, "ready", live["state"])
-	require.Equal(t, fixture.attachment, live["attachment_id"])
-	require.Equal(t, fixture.build, live["build_id"])
+			delete(request, "observed")
+			resp, body = do(t, ts, http.MethodPost, "/api/v1/renditions/text", nil, request)
+			require.Equal(t, http.StatusOK, resp.StatusCode, body)
+			var live map[string]any
+			require.NoError(t, json.Unmarshal([]byte(body), &live))
+			require.Equal(t, "ready", live["state"])
+			require.Equal(t, fixture.attachment, live["attachment_id"])
+			require.Equal(t, fixture.build, live["build_id"])
+		})
+	}
 }
 
 func mustDecodeTestHash(t *testing.T, value string) []byte {

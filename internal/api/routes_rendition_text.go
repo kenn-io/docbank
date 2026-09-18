@@ -145,8 +145,9 @@ func resolveRenditionText(ctx context.Context, d Deps, request renditionTextRequ
 		receipt.State = profile.Configuration
 		return receipt, nil
 	}
-	if request.Observed != nil && binding.AttachmentID == "" && binding.BuildID == "" && binding.GenerationID == "" {
-		// The absence of a rendition is frozen too; do not adopt a later head.
+	if request.Observed != nil && binding.AttachmentID == "" && binding.BuildID == "" {
+		// A collection-wide generation does not establish a rendition for this row.
+		// Keep its absence frozen instead of adopting a later attachment.
 		receipt.State = absentRenditionState(coverage)
 		return receipt, nil
 	}
