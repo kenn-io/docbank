@@ -19,7 +19,7 @@ func capCloudRecording(canonicalURL string) (string, bool) {
 		return "", false
 	}
 	route, videoID, ok := strings.Cut(strings.TrimPrefix(parsed.Path, "/"), "/")
-	if !ok || (route != "s" && route != "embed") || videoID == "" || strings.Contains(videoID, "/") {
+	if !ok || (route != "s" && route != "embed" && route != "dev") || videoID == "" || strings.Contains(videoID, "/") {
 		return "", false
 	}
 	return videoID, true

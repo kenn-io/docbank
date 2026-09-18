@@ -211,7 +211,8 @@ portable metadata.
 
 The service recognizes Cap Cloud locally from the canonical URL. An `https`
 URL on `cap.so` or `www.cap.so`, with the default port and an unescaped
-`/s/<id>` or `/embed/<id>` path, uses provider `cap`. Its origin scope is the
+`/s/<id>`, `/embed/<id>`, or documented SDK `/dev/<id>` path, uses provider
+`cap`. Its origin scope is the
 digest of the fixed `https://cap.so` scope, and its source key is the digest of
 the video ID, so both hosts, both routes, and every query select one source.
 Cap's sharing documentation establishes that share and embed URLs name the
@@ -227,8 +228,7 @@ route, and it covers only videos created through the calling developer app. A
 received share link therefore has no supported acquisition owner. Every other
 canonical URL keeps the generic `url` identity, and `acquire: true` still
 returns `503 capability_unavailable`. Recognition makes no claim about a
-video's visibility or password state, or about `/dev/<id>` SDK links, which
-stay generic.
+video's visibility or password state.
 
 The manual path publishes an original through the existing artifact route.
 The caller sends one complete multipart request to

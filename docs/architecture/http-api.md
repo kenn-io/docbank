@@ -201,18 +201,19 @@ prove a provider. A fresh canonical submission returns
 The canonical URL selects the provider identity:
 
 - **Cap Cloud.** A `canonical_url` on `https://cap.so` or `https://www.cap.so`
-  whose path is exactly `/s/<id>` or `/embed/<id>` uses the `cap` provider
-  identity, keyed by that video ID. Either host, either route, and any query or
-  fragment select the same source. The ID is case-sensitive and must not be
-  percent-encoded. The submission returns `outcome: "unsupported"` whether or
-  not `acquire` is set, because Cap documents no download route for received
-  links. Import the file with the artifact route described below.
+  whose path is exactly `/s/<id>`, `/embed/<id>`, or the documented SDK
+  `/dev/<id>` route uses the `cap` provider identity, keyed by that video ID.
+  Either host, either route, and any query or fragment select the same source.
+  The ID is case-sensitive and must not be percent-encoded. The submission
+  returns `outcome: "unsupported"` whether or not `acquire` is set, because Cap
+  documents no download route for received links. Import the file with the
+  artifact route described below.
 - **Any other URL.** The generic `url` identity uses the whole canonical URL.
   `acquire: true` returns `503 capability_unavailable`.
 
 Docbank recognizes Cap links from the URL alone. It does not check whether a
 Cap video is public, private, or password-protected, and it does not contact
-Cap. Other Cap paths, such as `/dev/<id>`, keep the generic `url` identity.
+Cap. Other Cap paths keep the generic `url` identity.
 
 ```json
 {

@@ -21,7 +21,6 @@ var capCloudRejectedURLs = []string{
 	"https://cap.so.example/s/synthcap01",
 	"https://cap.so./s/synthcap01",
 	"https://example.com/s/synthcap01",
-	"https://cap.so/dev/synthcap01",
 	"https://cap.so/s/",
 	"https://cap.so/s/synthcap01/extra",
 	"https://cap.so/s/synth%63ap01",
@@ -32,6 +31,7 @@ func TestCapCloudRecording(t *testing.T) {
 	for _, test := range []struct{ raw, videoID string }{
 		{"https://cap.so/s/synthcap01", "synthcap01"},
 		{"https://www.cap.so/embed/synthcap01", "synthcap01"},
+		{"https://cap.so/dev/synthcap01", "synthcap01"},
 		{"https://cap.so/embed/synthcap01?sdk=1", "synthcap01"},
 	} {
 		t.Run(test.raw, func(t *testing.T) {
@@ -121,9 +121,10 @@ func TestCapCloudRecordingIdentity(t *testing.T) {
 	for index, raw := range []string{
 		"https://cap.so/s/synthcap02",
 		"HTTPS://WWW.CAP.SO:443/s/synthcap02#t=5",
+		"https://cap.so/dev/synthcap02",
 		"https://cap.so/embed/synthcap02?sdk=1",
 	} {
-		receipt, err := submit(t, raw, []string{"a", "b", "c"}[index], false)
+		receipt, err := submit(t, raw, []string{"a", "b", "c", "d"}[index], false)
 		require.NoError(t, err)
 		if sourceID == "" {
 			sourceID = receipt.SourceID
@@ -131,7 +132,7 @@ func TestCapCloudRecordingIdentity(t *testing.T) {
 		require.Equal(t, sourceID, receipt.SourceID, raw)
 		occurrences[receipt.OccurrenceID] = true
 	}
-	require.Len(t, occurrences, 3)
+	require.Len(t, occurrences, 4)
 	for index, raw := range []string{"https://cap.so/s/SynthCap02", "https://cap.so/s/synthcap03"} {
 		receipt, err := submit(t, raw, "distinct-"+strconv.Itoa(index), false)
 		require.NoError(t, err)
