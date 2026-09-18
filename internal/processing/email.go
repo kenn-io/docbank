@@ -20,6 +20,7 @@ type emailCatalog interface {
 	EmailGenerationForSource(ctx context.Context, hash string, size int64, recipe string) (store.EmailGenerationRecord, error)
 	PublishEmailGeneration(ctx context.Context, publication store.EmailPublication) (store.EmailMetadataView, error)
 	PublishEmailBody(ctx context.Context, publication store.EmailBodyPublication) error
+	StageEmailBodyBuild(ctx context.Context, record store.RenditionBuildRecord) error
 	RecordEmailBodyUnavailable(ctx context.Context, attachmentID string, recipe string, path *string, reason string) error
 	RenditionBuild(ctx context.Context, buildID string) (store.RenditionBuildRecord, error)
 	MigrateLegacyPlainText(ctx context.Context) (store.LegacyMigrationReport, error)

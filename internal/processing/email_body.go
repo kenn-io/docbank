@@ -173,6 +173,10 @@ type emailRenditionCatalog struct {
 	attachmentID, partPath, recipe string
 }
 
+func (c emailRenditionCatalog) StageRenditionBuild(ctx context.Context, record store.RenditionBuildRecord) error {
+	return c.StageEmailBodyBuild(ctx, record)
+}
+
 func (c emailRenditionCatalog) PublishRenditionAndLexicalHeads(ctx context.Context, attachment store.RenditionAttachmentRecord, head store.RenditionHeadRecord, generationID string) error {
 	return c.PublishEmailBody(ctx,
 		store.EmailBodyPublication{EmailAttachmentID: c.attachmentID,

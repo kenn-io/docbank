@@ -196,11 +196,11 @@ func (f emailFaultCatalog) PublishEmailBody(ctx context.Context, p store.EmailBo
 	}
 	return f.Store.PublishEmailBody(ctx, p)
 }
-func (f emailFaultCatalog) StageRenditionBuild(ctx context.Context, b store.RenditionBuildRecord) error {
+func (f emailFaultCatalog) StageEmailBodyBuild(ctx context.Context, b store.RenditionBuildRecord) error {
 	if f.stage != nil {
 		return f.stage(ctx, b)
 	}
-	return f.Store.StageRenditionBuild(ctx, b)
+	return f.Store.StageEmailBodyBuild(ctx, b)
 }
 
 type emailFaultBlobs struct {
@@ -550,7 +550,7 @@ func TestEmailPipelineSuppressionRaces(t *testing.T) {
 			case "body staging fence":
 				catalog.stage = func(ctx context.Context, b store.RenditionBuildRecord) error {
 					pause()
-					return f.catalog.StageRenditionBuild(ctx, b)
+					return f.catalog.StageEmailBodyBuild(ctx, b)
 				}
 			default:
 				catalog.body = func(ctx context.Context, p store.EmailBodyPublication) error {
@@ -676,7 +676,7 @@ func TestEmailPipelineBodyObservationsAndStagedRetry(t *testing.T) {
 		},
 		stage: func(ctx context.Context, b store.RenditionBuildRecord) error {
 			staged = b
-			return f.catalog.StageRenditionBuild(ctx, b)
+			return f.catalog.StageEmailBodyBuild(ctx, b)
 		},
 		body: func(context.Context, store.EmailBodyPublication) error { return injected },
 	}
@@ -691,7 +691,7 @@ func TestEmailPipelineBodyObservationsAndStagedRetry(t *testing.T) {
 	mismatch := emailFaultCatalog{Store: f.catalog, stage: func(ctx context.Context, b store.RenditionBuildRecord) error {
 		require.Equal(t, first.CompletedAt, b.CompletedAt)
 		b.AuthorizationChecksum = processingHash("synthetic mismatched declaration")
-		return f.catalog.StageRenditionBuild(ctx, b)
+		return f.catalog.StageEmailBodyBuild(ctx, b)
 	}}
 	_, err = ensureEmailTarget(t.Context(), mismatch, f.blobs, f.spool, target)
 	require.Error(t, err)
@@ -730,11 +730,12 @@ func TestEmailPipelineBodyObservationsAndStagedRetry(t *testing.T) {
 	require.NotEqual(t, active.Attachment.ID, other.Attachment.ID)
 	f.emptySpool(t)
 }
-func TestEmailPipelineConcurrentFirstBuildInsertionRemainsRetryable(t *testing.T) {
+func TestEmailPipelineConcurrentFirstBuildInsertionReusesCompletion(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		f := newEmailPipelineFixture(t)
 		target := f.add(t, "message.eml", emailPipelineSource, "message/rfc822")
 		injected := errors.New("synthetic competing staged-only producer")
+		var first store.RenditionBuildRecord
 		competing := emailFaultCatalog{Store: f.catalog, body: func(context.Context, store.EmailBodyPublication) error { return injected }}
 		catalog := emailFaultCatalog{Store: f.catalog, buildRead: func(ctx context.Context, id string) (store.RenditionBuildRecord, error) {
 			// Hold the actual absent read result across the competing first insertion.
@@ -744,16 +745,16 @@ func TestEmailPipelineConcurrentFirstBuildInsertionRemainsRetryable(t *testing.T
 			time.Sleep(time.Nanosecond)
 			_, competingErr := ensureEmailTarget(ctx, competing, f.blobs, f.spool, target)
 			require.ErrorIs(t, competingErr, injected)
+			first, competingErr = f.catalog.RenditionBuild(ctx, id)
+			require.NoError(t, competingErr)
 			return absent, err
 		}}
-		_, err := ensureEmailTarget(t.Context(), catalog, f.blobs, f.spool, target)
-		require.ErrorContains(t, err, "different immutable metadata")
-		view, err := f.catalog.EmailMetadata(t.Context(), target.Version.ID)
-		require.NoError(t, err)
-		require.Equal(t, "pending", view.BodySearch.State)
-		view, err = EnsureEmailTarget(t.Context(), f.catalog, f.blobs, f.spool, target)
+		view, err := ensureEmailTarget(t.Context(), catalog, f.blobs, f.spool, target)
 		require.NoError(t, err)
 		require.Equal(t, "available", view.BodySearch.State)
+		stored, err := f.catalog.RenditionBuild(t.Context(), *view.BodySearch.RenditionBuildID)
+		require.NoError(t, err)
+		require.Equal(t, first, stored)
 		f.emptySpool(t)
 	})
 }
