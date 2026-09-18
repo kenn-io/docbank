@@ -1,11 +1,42 @@
 package store
 
 import (
+	"fmt"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+func TestResolveRenditionTextReportsExactFailedAttempts(t *testing.T) {
+	for _, operator := range []bool{false, true} {
+		t.Run(fmt.Sprintf("operator_required=%t", operator), func(t *testing.T) {
+			s, _, nodes, profile := collectionCoverageFixture(t, 1)
+			node := nodes[0]
+			collectionCoverageFail(t, s, node, profile, operator)
+			binding := RenditionTextBinding{NodeID: node.ID, NodeRevision: node.Revision,
+				ContentVersionID: node.CurrentVersionID, SourceSHA256: node.BlobHash,
+				SourceSize: node.Size, ProfileFingerprint: profile.Fingerprint}
+			_, err := s.ResolveRenditionText(t.Context(), binding)
+			require.ErrorIs(t, err, ErrRenditionTextFailed)
+
+			otherProfile := binding
+			otherProfile.ProfileFingerprint = catalogProcessingProfile(t, true).Fingerprint
+			_, err = s.ResolveRenditionText(t.Context(), otherProfile)
+			require.ErrorIs(t, err, ErrNotFound)
+
+			collectionCoveragePublish(t, s, node, profile, "complete")
+			_, err = s.ResolveRenditionText(t.Context(), binding)
+			require.NoError(t, err, "retained readable text takes precedence over a failed attempt")
+
+			replaced, version, err := s.ReplaceContent(t.Context(), node.ID, node.Revision, node.BlobHash, node.Size, node.MimeType)
+			require.NoError(t, err)
+			binding.NodeRevision, binding.ContentVersionID = replaced.Revision, version.ID
+			_, err = s.ResolveRenditionText(t.Context(), binding)
+			require.ErrorIs(t, err, ErrNotFound, "same bytes in a new version must not inherit the old failure")
+		})
+	}
+}
 
 func TestResolveRenditionTextBindsLiveNodeSourceHeadAndGeneration(t *testing.T) {
 	s, versions := newRenditionCatalogFixture(t)

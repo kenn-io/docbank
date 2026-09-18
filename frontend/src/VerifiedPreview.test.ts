@@ -230,3 +230,30 @@ it("loads one exact rendition only while Text is active and keeps hostile markup
   await waitFor(() => expect(document.querySelectorAll("mark")).toHaveLength(3));
   expect(fetchMock).toHaveBeenCalledTimes(2);
 });
+
+it.each([
+  ["failed", "Text processing failed for this selected version."],
+  ["unprocessed", "This selected version has not been processed for text."],
+  ["unconfigured", "Text processing is not configured for this vault."],
+])("keeps the %s reason visible with verified original-text fallback", async (state, message) => {
+  const bytes = new TextEncoder().encode("Synthetic fallback evidence");
+  const selected = source(bytes, "66666666-6666-4666-8666-666666666666");
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    const path = String(input);
+    if (path === "/api/v1/renditions/text") return new Response(JSON.stringify({
+      state,
+      source: { node_id: selected.nodeID, revision: 8, version_id: selected.versionID,
+        blob_hash: selected.blobHash, size: selected.size, media_type: selected.mimeType },
+      profile: { name: "", configuration: state === "unconfigured" ? "unconfigured" : "configured",
+        fingerprint: state === "unconfigured" ? "" : "b".repeat(64) },
+      generation_id: "", attachment_id: "", build_id: "",
+    }), { headers: { "Content-Type": "application/json" } });
+    if (init?.method === "POST") return ready(selected, "fallback");
+    if (path.endsWith("ticket=fallback")) return body(selected, bytes);
+    throw new Error(`unexpected request ${path}`);
+  });
+  render(VerifiedPreview, { session: "session", source: selected, authorizationRevision: 8,
+    activeTab: "text", onauthfailure: vi.fn() });
+  expect(await screen.findByText("Synthetic fallback evidence")).toBeTruthy();
+  expect(screen.getByText(message).getAttribute("role")).toBe("status");
+});

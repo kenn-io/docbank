@@ -101,7 +101,7 @@ func renditionTextState(request renditionTextRequest, selection collectionProfil
 			return profile, binding, coverageState, NewError(http.StatusUnprocessableEntity,
 				"invalid_rendition_selection", "A configured rendition observation requires a profile fingerprint.")
 		}
-		if selection.Coverage.Configuration == "configured" && request.Profile != "" &&
+		if selection.Coverage.Configuration == "configured" &&
 			observed.Configuration == "configured" &&
 			selection.Coverage.ProfileFingerprint != observed.ProfileFingerprint {
 			return profile, binding, coverageState, NewError(http.StatusConflict,
@@ -112,18 +112,14 @@ func renditionTextState(request renditionTextRequest, selection collectionProfil
 	return profile, binding, coverageState, nil
 }
 
-func absentRenditionState(coverage string, binding store.RenditionTextBinding) string {
+func absentRenditionState(coverage string) string {
 	switch coverage {
 	case "failed":
 		return "failed"
 	case "unprocessed", "none", "":
 		return "unprocessed"
 	default:
-		if binding.GenerationID != "" || binding.AttachmentID != "" || binding.BuildID != "" ||
-			coverage == "complete" || coverage == "partial" || coverage == "unavailable" {
-			return "historical_unavailable"
-		}
-		return "unprocessed"
+		return "historical_unavailable"
 	}
 }
 
@@ -150,8 +146,12 @@ func resolveRenditionText(ctx context.Context, d Deps, request renditionTextRequ
 		return receipt, nil
 	}
 	view, err := d.Store.ResolveRenditionText(ctx, binding)
-	if errors.Is(err, store.ErrNotFound) || errors.Is(err, store.ErrRenditionTextUnavailable) {
-		receipt.State = absentRenditionState(coverage, binding)
+	if errors.Is(err, store.ErrNotFound) || errors.Is(err, store.ErrRenditionTextUnavailable) ||
+		errors.Is(err, store.ErrRenditionTextFailed) {
+		if request.Observed == nil && errors.Is(err, store.ErrRenditionTextFailed) {
+			coverage = "failed"
+		}
+		receipt.State = absentRenditionState(coverage)
 		return receipt, nil
 	}
 	if errors.Is(err, store.ErrRenditionTextStale) {
@@ -208,7 +208,7 @@ func registerRenditionTextRoutes(api huma.API, d Deps) {
 				SourceSize: in.Size, ProfileFingerprint: in.ProfileFingerprint,
 				GenerationID: in.GenerationID, AttachmentID: in.AttachmentID, BuildID: in.BuildID})
 			if errors.Is(err, store.ErrRenditionTextStale) || errors.Is(err, store.ErrNotFound) ||
-				errors.Is(err, store.ErrRenditionTextUnavailable) {
+				errors.Is(err, store.ErrRenditionTextUnavailable) || errors.Is(err, store.ErrRenditionTextFailed) {
 				return nil, NewError(http.StatusConflict, "rendition_selection_stale",
 					"The selected rendition is no longer available; refresh the snapshot.")
 			}

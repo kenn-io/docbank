@@ -8,6 +8,7 @@ import (
 	"encoding/json/v2"
 	"net/http"
 	"net/url"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
@@ -16,6 +17,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"go.kenn.io/docbank/document"
+	"go.kenn.io/docbank/document/plaintext"
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/config"
 	"go.kenn.io/docbank/internal/processing"
@@ -241,4 +243,68 @@ func mustDecodeTestHash(t *testing.T, value string) []byte {
 	require.NoError(t, err)
 	require.Len(t, decoded, 32)
 	return decoded
+}
+
+func TestRenditionTextHTTPRejectsChangedNamedAndImplicitProfiles(t *testing.T) {
+	ts, s := newTestServer(t, renditionTextConfig)
+	node := createFileWithContent(t, ts, s, "/notes.txt", "synthetic original text")
+	for _, profile := range []string{"archive", ""} {
+		t.Run("profile="+profile, func(t *testing.T) {
+			resp, body := do(t, ts, http.MethodPost, "/api/v1/renditions/text", nil, map[string]any{
+				"node_id": node.ID, "revision": node.Revision, "version_id": node.CurrentVersionID,
+				"blob_hash": node.BlobHash, "size": node.Size, "profile": profile,
+				"observed": map[string]any{"configuration": "configured", "profile_fingerprint": testHash("old-profile")},
+			})
+			require.Equal(t, http.StatusConflict, resp.StatusCode, body)
+			require.Contains(t, body, `"code":"rendition_selection_stale"`)
+		})
+	}
+}
+
+func TestRenditionTextHTTPReportsFailedLiveProcessing(t *testing.T) {
+	provider, err := plaintext.New(plaintext.Profile{MaxDocumentBytes: 1 << 20})
+	require.NoError(t, err)
+	ts, s := newTestServer(t, func(d *api.Deps) {
+		renditionTextConfig(d)
+		binding := d.Cfg.RenditionProfiles["primary"]
+		binding.AdapterContract = "plaintext.in-process/v1"
+		binding.DescriptorID = provider.Descriptor().ID
+		binding.DescriptorFingerprint = provider.Descriptor().Fingerprint
+		binding.TrustBoundary = string(provider.Descriptor().TrustBoundary)
+		d.Cfg.RenditionProfiles["primary"] = binding
+		profile, err := d.Cfg.ProcessingProfile("archive")
+		require.NoError(t, err)
+		d.Gate = api.NewOperationGate()
+		d.Processing, err = processing.NewService(processing.ServiceConfig{
+			Catalog: d.Store, Blobs: d.Blobs, Gate: d.Gate,
+			SpoolDirectory: filepath.Join(d.VaultRoot, "blobs", "tmp"),
+			Profiles: map[string]processing.ProfileConfig{"archive": {
+				Profile: profile.Document, RenditionProvider: provider,
+			}},
+		})
+		require.NoError(t, err)
+	})
+	// Blank evidence is rejected by the real rendition worker.
+	node := createFileWithContent(t, ts, s, "/blank.txt", "   \n")
+	selector := map[string]any{"node_id": node.ID, "content_version_id": node.CurrentVersionID, "profile": "archive"}
+	resp, body := do(t, ts, http.MethodPost, "/api/v1/processing/plans", nil, map[string]any{"selector": selector})
+	require.Equal(t, http.StatusOK, resp.StatusCode, body)
+	var plan api.ProcessingPlan
+	require.NoError(t, json.Unmarshal([]byte(body), &plan))
+	resp, body = do(t, ts, http.MethodPost, "/api/v1/processing/jobs", nil, map[string]any{
+		"selector": selector, "plan_fingerprint": plan.Fingerprint, "consent": true,
+	})
+	require.Equal(t, http.StatusOK, resp.StatusCode, body)
+	require.Contains(t, body, `"failure_code":"rendition_failed"`)
+	request := map[string]any{"node_id": node.ID, "revision": node.Revision,
+		"version_id": node.CurrentVersionID, "blob_hash": node.BlobHash, "size": node.Size}
+	resp, body = do(t, ts, http.MethodPost, "/api/v1/renditions/text", nil, request)
+	require.Equal(t, http.StatusOK, resp.StatusCode, body)
+	require.Contains(t, body, `"state":"failed"`)
+
+	request["observed"] = map[string]any{"configuration": "configured",
+		"profile_fingerprint": plan.ProfileFingerprint, "coverage_state": "unprocessed"}
+	resp, body = do(t, ts, http.MethodPost, "/api/v1/renditions/text", nil, request)
+	require.Equal(t, http.StatusOK, resp.StatusCode, body)
+	require.Contains(t, body, `"state":"unprocessed"`, "a frozen observation must not become a live failure")
 }

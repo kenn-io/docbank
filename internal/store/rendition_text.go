@@ -15,6 +15,10 @@ var ErrRenditionTextStale = errors.New("rendition text authority is stale")
 // verified sanitized-text artifact.
 var ErrRenditionTextUnavailable = errors.New("rendition text artifact is unavailable")
 
+// ErrRenditionTextFailed means the latest attempt for the exact version and
+// profile failed without a retained rendition head.
+var ErrRenditionTextFailed = errors.New("rendition text processing failed")
+
 // RenditionTextBinding fences a text read to one live node, retained source
 // version, active rendition head, and optional accepted lexical generation.
 type RenditionTextBinding struct {
@@ -94,6 +98,19 @@ func (s *Store) ResolveRenditionText(
 		binding.ContentVersionID, binding.ProfileFingerprint,
 	).Scan(&rendition.Head.AttachmentID, &rendition.Head.PublishedAt)
 	if errors.Is(err, sql.ErrNoRows) {
+		var failed bool
+		err = tx.QueryRowContext(ctx, `SELECT w.state='rejected' OR j.state IN ('failed','operator_required')
+			FROM rendition_job_waiters w JOIN rendition_jobs j ON j.job_id=w.job_id
+			WHERE w.content_version_id=? AND w.profile_fingerprint=?
+			ORDER BY MAX(w.updated_at,j.updated_at) DESC,w.updated_at DESC,j.updated_at DESC,
+			 w.waiter_id DESC,j.job_id DESC LIMIT 1`,
+			binding.ContentVersionID, binding.ProfileFingerprint).Scan(&failed)
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return RenditionTextView{}, fmt.Errorf("reading rendition text attempt: %w", err)
+		}
+		if failed {
+			return RenditionTextView{}, ErrRenditionTextFailed
+		}
 		return RenditionTextView{}, ErrNotFound
 	}
 	if err != nil {

@@ -26,15 +26,15 @@
   let highlightSetID = $state("");
   let activeMatch = $state(0);
   let textBox: HTMLElement | undefined = $state();
-	const loadKey = $derived([session, source.key, authorizationRevision, profileName,
-		observed?.configuration ?? "", observed?.profileFingerprint ?? "", observed?.generationID ?? "",
-		observed?.coverageState ?? "", observed?.attachmentID ?? "", observed?.buildID ?? ""].join(":"));
+  const loadKey = $derived([session, source.key, authorizationRevision, profileName,
+    observed?.configuration ?? "", observed?.profileFingerprint ?? "", observed?.generationID ?? "",
+    observed?.coverageState ?? "", observed?.attachmentID ?? "", observed?.buildID ?? ""].join(":"));
   const highlightTerms = $derived(highlightSets.find((item) => item.id === highlightSetID)?.terms ?? []);
   const marked = $derived(markText(text, { find, highlightTerms, queryTerms }));
 
   $effect(() => {
-		const key = loadKey;
-		const inputs = untrack(() => ({ session, source, authorizationRevision, profileName, observed }));
+    const key = loadKey;
+    const inputs = untrack(() => ({ session, source, authorizationRevision, profileName, observed }));
     const controller = new AbortController();
     let current = true;
     void key;
@@ -44,23 +44,23 @@
     originalFallback = false;
     loading = true;
     activeMatch = 0;
-		void resolveRenditionText(inputs.session, inputs.source, inputs.authorizationRevision,
-			inputs.profileName, inputs.observed, controller.signal)
+    void resolveRenditionText(inputs.session, inputs.source, inputs.authorizationRevision,
+      inputs.profileName, inputs.observed, controller.signal)
       .then(async (next) => {
         if (!current) return;
         resolution = next;
         if (next.state === "ready") {
-					const received = await readVerifiedRenditionText(inputs.session, inputs.source,
-						inputs.authorizationRevision, next, controller.signal);
+          const received = await readVerifiedRenditionText(inputs.session, inputs.source,
+            inputs.authorizationRevision, next, controller.signal);
           if (current) text = received;
           return;
         }
         if (next.state === "verified_empty") return;
         let eligibility;
-				try { eligibility = previewEligibility(inputs.source.mimeType, inputs.source.size); } catch { return; }
+        try { eligibility = previewEligibility(inputs.source.mimeType, inputs.source.size); } catch { return; }
         if (eligibility.kind !== "text") return;
-				const fallback = await readVerifiedPreview(inputs.session, inputs.source,
-					inputs.authorizationRevision, controller.signal, () => undefined);
+        const fallback = await readVerifiedPreview(inputs.session, inputs.source,
+          inputs.authorizationRevision, controller.signal, () => undefined);
         if (!current) {
           if (fallback.kind === "image") URL.revokeObjectURL(fallback.url);
           return;
@@ -121,7 +121,10 @@
   {:else if error}
     <p class="notice" role="alert">{error}</p>
   {:else if text}
-		<pre bind:this={textBox} aria-label={`Verified text of ${source.name}`}>{#each marked.segments as segment}{#if segment.match}<mark
+    {#if originalFallback && resolution && resolution.state !== "ready"}
+      <p class="notice" role="status">{stateMessage(resolution.state)}</p>
+    {/if}
+    <pre bind:this={textBox} aria-label={`Verified text of ${source.name}`}>{#each marked.segments as segment}{#if segment.match}<mark
       class:active={segment.match.index === activeMatch}
       data-match-index={segment.match.index}
       data-source={segment.match.source}
