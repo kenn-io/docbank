@@ -27,6 +27,7 @@ canonical evidence is the validated text and source locations behind it.
 | Stage exact bytes for an authorized provider upload | `document/upload` |
 | Bind outbound connections to a declared destination | `document/providerhttp` |
 | Convert CSV locally for PDF OCR | `document/csvpdf` |
+| Convert DOCX locally to a bounded PDF | `document/renderpdf` |
 
 These are reusable Go contracts. Vault-owned publication, consent, backup, and
 search are described in [Document processing](architecture/document-processing.md).
@@ -493,7 +494,7 @@ pdfSource, err := converted.Source()
 if err != nil {
     return err
 }
-// Retain receipt with the source and pass pdfSource to the authorized PDF processor.
+// Keep the receipt with pdfSource before a later caller authorizes upload.
 ```
 
 The defaults are also hard ceilings. `NewPolicy` accepts positive, tighter
@@ -531,6 +532,98 @@ The receipt does not authorize upload. Your application must:
 3. Retain the conversion policy with that consent.
 
 This Go API does not add CSV OCR to the daemon or CLI.
+
+## Convert DOCX locally to PDF
+
+Use `document/renderpdf` when an application needs a local PDF derived from a
+DOCX source. The converter uses an operator-pinned LibreOffice
+executable. It first writes flat ODF inside the Linux sandbox, checks the
+normalized XML for external or active content, and then renders only admitted
+bytes to PDF.
+
+### Set up the renderer
+
+The built-in runner targets Linux on amd64 and arm64. It requires user, mount,
+PID, network, and IPC namespaces, seccomp filters, and Landlock filesystem ABI 3
+or newer. The application must be allowed to create those namespaces.
+On Ubuntu, AppArmor may block unprivileged user namespaces; the operator's
+AppArmor policy must allow the launcher to create them. Container policy must
+also permit the required namespaces. Conversion fails if the required
+isolation cannot be installed. macOS and Windows require an
+application-supplied audited `renderpdf.Runner`.
+
+On Debian or Ubuntu, install LibreOffice Writer and record the approved
+executable's SHA-256 during operator setup:
+
+```bash
+sudo apt-get update
+sudo apt-get install --no-install-recommends -y libreoffice-writer
+sha256sum /usr/lib/libreoffice/program/soffice.bin
+```
+
+`DefaultRuntimeRoots` selects Debian/Ubuntu paths for amd64 and arm64,
+including LibreOffice, its libraries, and fonts. Other layouts need an
+explicit list of runtime roots. Discover and retain the manifest during
+operator setup, then build a policy from its files, symlinks, and identity.
+Pass the approved executable digest as `executableSHA256`:
+
+```go
+package renderer
+
+import "go.kenn.io/docbank/document/renderpdf"
+
+func newDOCXPolicy(executableSHA256 string) (renderpdf.Policy, error) {
+    manifest, err := renderpdf.DiscoverRuntime(renderpdf.DefaultRuntimeRoots())
+    if err != nil {
+        return renderpdf.Policy{}, err
+    }
+    return renderpdf.NewPolicy(renderpdf.Renderer{
+        Executable:       "/usr/lib/libreoffice/program/soffice.bin",
+        ExecutableSHA256: executableSHA256,
+        Runtime:          manifest.Files,
+        RuntimeSymlinks:  manifest.Symlinks,
+        RuntimeIdentity:  manifest.Identity,
+    }, renderpdf.DefaultLimits())
+}
+```
+
+Keep the policy for subsequent conversions. Changed runtime bytes or a changed
+executable fail verification; approve the updated installation and rebuild the
+policy after a LibreOffice, library, or font update. Do not rediscover the
+runtime or replace the approved digest for each input document.
+
+### Convert a source
+
+```go
+converted, err := renderpdf.Convert(ctx, source, "docx", policy)
+if err != nil {
+    return err
+}
+receipt := converted.Receipt()
+pdfSource, err := converted.Source()
+if err != nil {
+    return err
+}
+// Keep receipt with pdfSource before a later caller authorizes upload.
+```
+
+The DOCX profile emits FODT. Normalization strips unsafe external and active
+constructs where LibreOffice can remove them; the normalized scan rejects any
+such constructs that survive. It rejects every `xml:base` attribute, so local
+fragment links cannot inherit an external base URI. Local formulas, internal
+fragment links, and embedded raster images remain valid. Ordinary hyperlinks
+to external sites or relative files are rejected if they survive normalization.
+Embedded OLE objects, plugins, applets, and nested documents are also rejected;
+this profile does not preserve every Word feature.
+
+Each XML character-data token, including base64 image data, is limited to
+1 MiB. A document within the overall byte limit can still exceed this limit
+when it contains a large embedded image.
+
+The receipt records both source and normalized identities, the exact PDF hash,
+the page count, the policy, and the runtime identities. `Result.Source` is a
+fresh `application/pdf` source. The receipt does not authorize upload, and the
+package adds no DOCX route or daemon operation.
 
 ## Package boundary
 
