@@ -1,6 +1,25 @@
 package mistral
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/stretchr/testify/require"
+)
+
+func TestPolicyRejectsXLSXSheetCountEvidence(t *testing.T) {
+	policy := testPolicy(t, 1<<20, 10)
+	manifest := syntheticManifest(t, policy, true)
+	for index := range manifest.Results {
+		result := &manifest.Results[index]
+		if result.FormatID == "xlsx" {
+			result.ReasonCode = ""
+			result.UnitBoundMethod = UnitBoundLocalExact
+			result.LocalUnits = result.UnitsProcessed
+		}
+	}
+	_, err := policy.Authorize(manifest, "xlsx")
+	require.ErrorContains(t, err, "invalid local-exact bound evidence")
+}
 
 func TestPolicyDoesNotAuthorizeUnprovedNonPDFFormats(t *testing.T) {
 	policy := testPolicy(t, 1<<20, 10)

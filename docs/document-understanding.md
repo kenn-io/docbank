@@ -196,6 +196,8 @@ authorize PPTX when its local slide count matches the provider's processed
 units. It records
 primary-fixture evidence for TXT, Markdown, CSV, JSON, JSONL, YAML, Go,
 Python, JavaScript, RST, LaTeX, XML, EML, and MSG after provider acceptance.
+XLSX remains unauthorized for production uploads, even when extraction succeeds
+during a probe.
 
 Text formats use `provider_response` enforcement. Docbank does not count lines,
 records, or messages as pages. It checks that Mistral returns at least one page,
@@ -243,6 +245,18 @@ The PPTX count includes hidden slides. This assumes Mistral processes every
 listed slide; the probe fixture contains one visible slide and does not verify
 hidden-slide behavior. If Mistral skips hidden slides, the count comparison
 fails after upload and may incur provider charges.
+
+XLSX production uploads remain blocked because the provider's billable unit is
+unverified. The generated probe has one worksheet with one cell. The recorded
+worksheet-only control returned HTTP 200 with `pages_processed=1`; that result
+does not distinguish worksheet counts from rendered-page counts. A paired
+worksheet plus chartsheet request returned HTTP 500 with code `3700`.
+
+Representative multi-sheet workbooks with long worksheets are needed to
+establish how Mistral counts XLSX usage. A mismatch check after upload cannot
+prevent charges. Even a successful XLSX extraction probe records no enforceable
+unit bound and cannot authorize a production upload; manifests claiming a local
+exact XLSX bound are rejected.
 
 The importing application remains responsible for credentials, human consent,
 spending and scheduling limits, durable manifests, job orchestration,
