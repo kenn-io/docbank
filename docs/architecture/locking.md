@@ -66,6 +66,16 @@ inode; Windows uses volume serial and file ID. Parent and descendant trees
 consequently conflict in either acquisition order, while disjoint sibling vault
 daemons remain independent.
 
+An isolated environment with an unwritable account home can explicitly set
+`DOCBANK_LOCK_DIR` to an absolute directory outside its vaults and restore
+targets. This replaces the registry location for all lock operations, including
+embedded vaults, daemon startup, and restore. The existing private-directory
+checks still apply. This is an operator-selected coordination domain, not an
+automatic fallback: every process accessing overlapping trees must use the same
+setting, and the environment must not change while a process is running. Stop
+all such processes before changing the setting. Different settings do not
+coordinate hierarchy locks.
+
 The persistent registry files contain no vault data and must not be removed;
 their stable names are coordination state keyed by the platform filesystem
 identity above. These locks coordinate Docbank daemons and restores that retain

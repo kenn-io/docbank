@@ -455,3 +455,27 @@ func TestTargetLockRegistryIgnoresProcessHomeEnvironment(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, before, after)
 }
+
+func TestExplicitTargetLockDirectory(t *testing.T) {
+	require.Empty(t, targetLockRegistryTestBase)
+	registry := filepath.Join(t.TempDir(), "locks")
+	t.Setenv("DOCBANK_LOCK_DIR", registry)
+	t.Setenv("HOME", filepath.Join(t.TempDir(), "unavailable"))
+	root := t.TempDir()
+	lock, err := (Layout{Root: root}).TryLockExclusive()
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, lock.Release()) })
+	entries, err := os.ReadDir(registry)
+	require.NoError(t, err)
+	require.NotEmpty(t, entries)
+	nested := filepath.Join(root, "nested")
+	require.NoError(t, os.Mkdir(nested, 0o700))
+	_, err = (Layout{Root: nested}).TryLockExclusive()
+	require.ErrorIs(t, err, ErrVaultLocked)
+}
+
+func TestExplicitTargetLockDirectoryRejectsRelativePath(t *testing.T) {
+	t.Setenv("DOCBANK_LOCK_DIR", "relative-locks")
+	_, err := (Layout{Root: t.TempDir()}).TryLockExclusive()
+	require.ErrorContains(t, err, "DOCBANK_LOCK_DIR must be absolute")
+}

@@ -891,6 +891,12 @@ var targetLockRegistryTestBase string
 func targetLockRegistryPath() (string, error) {
 	dir := targetLockRegistryTestBase
 	if dir == "" {
+		dir = os.Getenv("DOCBANK_LOCK_DIR")
+		if dir != "" && !filepath.IsAbs(dir) {
+			return "", fmt.Errorf("DOCBANK_LOCK_DIR must be absolute: %q", dir)
+		}
+	}
+	if dir == "" {
 		var err error
 		dir, err = targetLockRegistryBase()
 		if err != nil {
