@@ -59,5 +59,5 @@ func TestWebUploadInactivityReleasesMutationGate(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("stalled upload did not release its mutation lease")
 	}
-	require.NoError(t, g.Maintain(func() error { return nil }))
+	require.NoError(t, g.MaintainContext(t.Context(), func() error { return nil }))
 }

@@ -172,9 +172,15 @@ exclude = [".DS_Store", "cache/"]
 Scheduled packing is visible as the `storage:pack` job and keeps an auto-started
 daemon alive so the schedule is meaningful. It uses the same maintenance gate
 as `docbank storage pack`: ordinary mutations may briefly receive
-`maintenance_busy` and can retry. Automatic packing does not delete logical
-content and does not run GC or repack; those reclamation operations remain
-explicit operator choices.
+`maintenance_busy` and can retry. Each scheduled pass requests cancellation at
+`pack_interval` and releases the gate when the pass returns. Remaining indexed
+loose content is retried on the next pass. Work that ignores context can delay
+gate release. Set `pack_interval` comfortably above the time needed to build
+and seal one pack so each pass can make progress; repeated
+`automatic packing canceled at interval; retrying` warnings can indicate that
+the interval is too short. Automatic packing does not delete logical content
+and does not run GC or repack; those reclamation operations remain explicit
+operator choices.
 
 ### MCP HTTP credential
 

@@ -21,7 +21,7 @@ func TestSavedQueryRunGatesOnlyReceiptMutation(t *testing.T) {
 	t.Cleanup(func() { once.Do(func() { close(release) }) })
 	done := make(chan error, 1)
 	go func() {
-		done <- gate.Maintain(func() error {
+		done <- gate.MaintainContext(t.Context(), func() error {
 			close(entered)
 			<-release
 			return nil

@@ -50,17 +50,21 @@ type blobReader interface {
 type Worker struct {
 	catalog  catalog
 	blobs    blobReader
-	mutate   func(func() error) error
+	mutate   func(context.Context, func() error) error
 	interval time.Duration
 	retry    time.Duration
 }
 
-func New(catalog catalog, blobs blobReader, mutate func(func() error) error) (*Worker, error) {
+func New(
+	catalog catalog,
+	blobs blobReader,
+	mutate func(context.Context, func() error) error,
+) (*Worker, error) {
 	if catalog == nil || blobs == nil {
 		return nil, errors.New("text extractor requires catalog and blob reader")
 	}
 	if mutate == nil {
-		mutate = func(fn func() error) error { return fn() }
+		mutate = func(_ context.Context, fn func() error) error { return fn() }
 	}
 	return &Worker{
 		catalog: catalog, blobs: blobs, mutate: mutate,
@@ -71,9 +75,11 @@ func New(catalog catalog, blobs blobReader, mutate func(func() error) error) (*W
 // Run performs an immediate scan, drains all current work in bounded batches,
 // and then watches for newly admitted versions until the daemon stops.
 func (w *Worker) Run(ctx context.Context) error {
-	if err := w.catalog.SeedTextExtractionQueue(
-		ctx, TextExtractorName, TextExtractorVersion,
-	); err != nil {
+	if err := w.mutate(ctx, func() error {
+		return w.catalog.SeedTextExtractionQueue(
+			ctx, TextExtractorName, TextExtractorVersion,
+		)
+	}); err != nil {
 		return err
 	}
 	for {
@@ -114,7 +120,7 @@ func (w *Worker) ScanOnce(ctx context.Context) (int, error) {
 			return i, err
 		}
 		var extractErr error
-		err := w.mutate(func() error {
+		err := w.mutate(ctx, func() error {
 			extractErr = w.extractOne(ctx, item)
 			if !errors.Is(extractErr, errExtractionRetry) {
 				return extractErr

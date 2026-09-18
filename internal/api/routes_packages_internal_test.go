@@ -33,7 +33,7 @@ func TestPackageMemoryBudgetRejectsAggregateGrowth(t *testing.T) {
 
 func TestPackageInventoryDoesNotWaitForVaultMaintenance(t *testing.T) {
 	gate := NewOperationGate()
-	require.NoError(t, gate.Maintain(func() error {
+	require.NoError(t, gate.MaintainContext(t.Context(), func() error {
 		ctx, cancel := context.WithTimeout(t.Context(), time.Second)
 		defer cancel()
 		_, err := buildPackagePreflight(ctx, Deps{}, gate, "synthetic", PackagePreflightRequest{

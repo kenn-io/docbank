@@ -2,8 +2,13 @@ package api
 
 import (
 	"context"
+	"fmt"
+	"log/slog"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"testing/synctest"
@@ -15,7 +20,9 @@ import (
 
 	"go.kenn.io/docbank/internal/backupapp"
 	"go.kenn.io/docbank/internal/blob"
+	internalconfig "go.kenn.io/docbank/internal/config"
 	"go.kenn.io/docbank/internal/ingest"
+	internalmaintenance "go.kenn.io/docbank/internal/maintenance"
 	"go.kenn.io/docbank/internal/store"
 )
 
@@ -107,7 +114,7 @@ func TestQueuedMaintenanceRejectsRouteMutation(t *testing.T) {
 
 		maintenanceDone := make(chan error, 1)
 		go func() {
-			maintenanceDone <- g.maintain(func() error { return nil })
+			maintenanceDone <- g.MaintainContext(t.Context(), func() error { return nil })
 		}()
 		synctest.Wait()
 		g.admission.RLock()
@@ -185,6 +192,144 @@ func TestCanceledQueuedMaintenanceStopsRejectingRouteMutation(t *testing.T) {
 		releaseOnce.Do(func() { close(releaseCapture) })
 		synctest.Wait()
 	})
+}
+
+func TestScheduledPackDeadlineClearsAdmissionAfterBackupCapture(t *testing.T) {
+	root := t.TempDir()
+	metadata, err := store.Open(filepath.Join(root, "docbank.db"))
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = metadata.Close() })
+	blobsDir := filepath.Join(root, "blobs")
+	require.NoError(t, os.MkdirAll(filepath.Join(blobsDir, "tmp"), 0o700))
+	blobs, err := blob.New(store.NewPackCatalog(metadata), blobsDir)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = blobs.Close() })
+
+	hash, size, err := blobs.Write(strings.NewReader("scheduled pack capture"))
+	require.NoError(t, err)
+	_, err = metadata.CreateFile(t.Context(), metadata.RootID(), "capture.txt", hash, size, "text/plain")
+	require.NoError(t, err)
+	repo, err := backup.Init(filepath.Join(root, "backup"))
+	require.NoError(t, err)
+
+	g := NewOperationGate()
+	cfg := internalconfig.Default()
+	cfg.Server.APIKey = "test-api-key"
+	server := NewServer(Deps{
+		Store: metadata, Blobs: blobs, VaultRoot: root, Cfg: cfg, Gate: g,
+	})
+	t.Cleanup(server.Close)
+	ts := httptest.NewServer(server.Handler())
+	t.Cleanup(ts.Close)
+
+	captureDone := make(chan error, 1)
+	metadataCaptured := make(chan struct{})
+	releaseCapture := make(chan struct{})
+	var releaseOnce sync.Once
+	t.Cleanup(func() { releaseOnce.Do(func() { close(releaseCapture) }) })
+	go func() {
+		var pauseOnce sync.Once
+		_, captureErr := createBackupSnapshot(t.Context(), repo,
+			Deps{Store: metadata, Blobs: blobs, Cfg: cfg}, g,
+			backupCreateRequest{Jobs: 1}, func(event backup.ProgressEvent) {
+				if event.Stage == backup.ProgressStageMetadata && event.Final {
+					pauseOnce.Do(func() {
+						close(metadataCaptured)
+						<-releaseCapture
+					})
+				}
+			})
+		captureDone <- captureErr
+	}()
+	select {
+	case <-metadataCaptured:
+	case captureErr := <-captureDone:
+		require.NoError(t, captureErr)
+		t.Fatal("backup capture finished before the preservation boundary")
+	case <-time.After(5 * time.Second):
+		t.Fatal("backup capture did not reach the preservation boundary")
+	}
+
+	schedulerCtx, cancelScheduler := context.WithCancel(t.Context())
+	defer cancelScheduler()
+	packStarted := make(chan struct{})
+	packReturned := make(chan struct{})
+	var runCount int
+	var returnOnce sync.Once
+	schedulerDone := make(chan error, 1)
+	go func() {
+		schedulerDone <- internalmaintenance.RunPackSchedule(
+			schedulerCtx, 50*time.Millisecond,
+			func(runCtx context.Context) (internalmaintenance.PackReport, error) {
+				runCount++
+				if runCount > 1 {
+					<-runCtx.Done()
+					return internalmaintenance.PackReport{}, runCtx.Err()
+				}
+				close(packStarted)
+				var report internalmaintenance.PackReport
+				err := g.MaintainContext(runCtx, func() error {
+					var err error
+					report, err = internalmaintenance.Pack(
+						runCtx, metadata, blobs, 1<<20)
+					return err
+				})
+				returnOnce.Do(func() { close(packReturned) })
+				return report, err
+			},
+			slog.New(slog.DiscardHandler),
+		)
+	}()
+	select {
+	case <-packStarted:
+	case <-time.After(5 * time.Second):
+		t.Fatal("scheduled pack did not start")
+	}
+	select {
+	case <-packReturned:
+	case <-time.After(5 * time.Second):
+		t.Fatal("scheduled pack admission did not release at its interval")
+	}
+	select {
+	case <-captureDone:
+		t.Fatal("backup capture ended before the HTTP mutation")
+	default:
+	}
+	select {
+	case <-schedulerDone:
+		t.Fatal("scheduled pack scheduler stopped before the HTTP mutation")
+	default:
+	}
+
+	body := strings.NewReader(fmt.Sprintf(
+		`{"parent_id":%d,"name":"during-capture","kind":"dir"}`,
+		metadata.RootID(),
+	))
+	req, err := http.NewRequestWithContext(
+		t.Context(), http.MethodPost, ts.URL+"/api/v1/nodes", body,
+	)
+	require.NoError(t, err)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Api-Key", cfg.Server.APIKey)
+	resp, err := http.DefaultClient.Do(req)
+	require.NoError(t, err)
+	require.NoError(t, resp.Body.Close())
+	assert.Equal(t, http.StatusCreated, resp.StatusCode)
+
+	cancelScheduler()
+	select {
+	case schedulerErr := <-schedulerDone:
+		require.ErrorIs(t, schedulerErr, context.Canceled)
+	case <-time.After(5 * time.Second):
+		t.Fatal("scheduled pack did not stop")
+	}
+	releaseOnce.Do(func() { close(releaseCapture) })
+	select {
+	case captureErr := <-captureDone:
+		require.NoError(t, captureErr)
+	case <-time.After(5 * time.Second):
+		t.Fatal("backup capture did not finish after release")
+	}
 }
 
 func TestBackupCaptureBlocksGCButAllowsLiveDeletion(t *testing.T) {
@@ -266,7 +411,7 @@ func TestBackupCaptureBlocksGCButAllowsLiveDeletion(t *testing.T) {
 	go func() {
 		close(maintenanceAttempted)
 		var report GCReport
-		err := g.maintain(func() error {
+		err := g.MaintainContext(t.Context(), func() error {
 			close(maintenanceEntered)
 			return blobs.WithMutation(ctx, func() error {
 				var err error
