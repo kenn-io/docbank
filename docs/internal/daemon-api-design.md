@@ -207,8 +207,28 @@ bytes exist. `canonical_url` is the sanitized identity URL. It accepts only an
 absolute HTTP(S) URL, stores its normalized identity as bounded digests, and
 is write-only. `reference_url` remains the required protected input. Its raw
 value and any credential binding stay out of receipts, logs, errors, and
-portable metadata. `acquire: true` remains unavailable until a provider
-acquisition owner exists.
+portable metadata.
+
+The service recognizes Cap Cloud locally from the canonical URL. An `https`
+URL on `cap.so` or `www.cap.so`, with the default port and an unescaped
+`/s/<id>`, `/embed/<id>`, or documented SDK `/dev/<id>` path, uses provider
+`cap`. Its origin scope is the
+digest of the fixed `https://cap.so` scope, and its source key is the digest of
+the video ID, so both hosts, both routes, and every query select one source.
+Cap's sharing documentation establishes that share and embed URLs name the
+same video. Treating `www.cap.so` as the same service follows the #240 design;
+no Cap document states it.
+Recognition performs no DNS lookup, HTTP request, or credential resolution.
+
+For a recognized Cap URL, `acquire: true` is admitted and retained as an
+`unsupported` outcome. It creates no acquisition queue row, so the caller
+continues through the manual artifact path below. Cap's documented Developer
+API lists videos, status, deletion, and usage, but has no download or caption
+route, and it covers only videos created through the calling developer app. A
+received share link therefore has no supported acquisition owner. Every other
+canonical URL keeps the generic `url` identity, and `acquire: true` still
+returns `503 capability_unavailable`. Recognition makes no claim about a
+video's visibility or password state.
 
 The manual path publishes an original through the existing artifact route.
 The caller sends one complete multipart request to

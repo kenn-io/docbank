@@ -190,15 +190,45 @@ These rules determine the permanent source identity.
 }
 ```
 
-The canonical path uses the generic `url` provider identity. It does not
-resolve DNS, follow redirects, read credentials, or download a recording.
-`provider_hint` is a bounded replay value and does not prove a provider. A
-fresh canonical submission returns `outcome: "unsupported"` with a pending
-occurrence. A submission that omits `canonical_url` uses its configured
-origin policy and returns `access_required`. `acquire: true`
-returns `503 capability_unavailable` until a provider acquisition owner exists.
-Acquisition planning uses the configured origin and `reference_url`;
-`canonical_url` does not affect its plan.
+The canonical path does not resolve DNS, follow redirects, read credentials,
+or download a recording. `provider_hint` is a bounded replay value and does not
+prove a provider. A fresh canonical submission returns
+`outcome: "unsupported"` with a pending occurrence. A submission that omits
+`canonical_url` uses its configured origin policy and returns
+`access_required`. Acquisition planning uses the configured origin and
+`reference_url`; `canonical_url` does not affect its plan.
+
+The canonical URL selects the provider identity:
+
+- **Cap Cloud.** A `canonical_url` on `https://cap.so` or `https://www.cap.so`
+  whose path is exactly `/s/<id>`, `/embed/<id>`, or the documented SDK
+  `/dev/<id>` route uses the `cap` provider identity, keyed by that video ID.
+  Either host, either route, and any query or fragment select the same source.
+  The ID is case-sensitive and must not be percent-encoded. The submission
+  returns `outcome: "unsupported"` whether or not `acquire` is set, because Cap
+  documents no download route for received links. Import the file with the
+  artifact route described below.
+- **Any other URL.** The generic `url` identity uses the whole canonical URL.
+  `acquire: true` returns `503 capability_unavailable`.
+
+Docbank recognizes Cap links from the URL alone. It does not check whether a
+Cap video is public, private, or password-protected, and it does not contact
+Cap. Other Cap paths keep the generic `url` identity.
+
+```json
+{
+  "operation_id": "00000000-0000-4000-8000-000000000461",
+  "reference_url": "https://cap.so/s/synthcap01?t=synthetic",
+  "canonical_url": "https://cap.so/s/synthcap01",
+  "acquire": true,
+  "occurrence": {
+    "ref": "cap-1",
+    "revision": "1",
+    "filename": "cap.wav",
+    "message": {}
+  }
+}
+```
 
 To add a local original, send exactly the two multipart parts required by the
 artifact route, with metadata `kind: "media"` and a WAV or MP3 file. The

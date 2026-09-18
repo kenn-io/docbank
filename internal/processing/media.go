@@ -119,12 +119,20 @@ func (service *Service) SubmitRemoteRecording(
 		if err := validateRemoteRecordingHints(request); err != nil {
 			return MediaReceipt{}, err
 		}
-		if request.Acquire {
+		videoID, capCloud := capCloudRecording(canonicalURL)
+		if request.Acquire && !capCloud {
 			return MediaReceipt{}, ErrMediaCapabilityUnavailable
 		}
 		provider = "url"
 		originScope = hashMediaPrivateValue(origin)
 		sourceKey = hashMediaPrivateValue(canonicalURL)
+		if capCloud {
+			// Cap documents no download route for received links, so an
+			// acquisition request keeps the manual import path.
+			provider = "cap"
+			originScope = hashMediaPrivateValue(capCloudOrigin)
+			sourceKey = hashMediaPrivateValue(videoID)
+		}
 		outcome = "unsupported"
 	} else {
 		policy, ok := service.recognizeMediaOrigin(request.ReferenceURL, request.ProviderHint)
