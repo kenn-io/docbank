@@ -12,6 +12,27 @@ import (
 	"go.kenn.io/docbank/document"
 )
 
+// StageEmailBodyBuild preserves the first completion time of a shared body build.
+func (s *Store) StageEmailBodyBuild(ctx context.Context, record RenditionBuildRecord) error {
+	normalized, err := normalizeRenditionBuildRecord(record)
+	if err != nil {
+		return fmt.Errorf("staging email body build: %w", err)
+	}
+	if normalized.VaultID != s.vaultID {
+		return fmt.Errorf("staging email body build: vault %q does not match store vault %q", normalized.VaultID, s.vaultID)
+	}
+	return s.withStorageTx(ctx, func(tx *sql.Tx) error {
+		var completedAt string
+		err := tx.QueryRowContext(ctx, `SELECT completed_at FROM rendition_builds WHERE build_id=?`, normalized.ID).Scan(&completedAt)
+		if err == nil {
+			normalized.CompletedAt = completedAt
+		} else if !errors.Is(err, sql.ErrNoRows) {
+			return fmt.Errorf("reading email body completion: %w", err)
+		}
+		return stageRenditionBuildTx(ctx, tx, normalized)
+	})
+}
+
 func emailBodyProfileRecord(recipe document.EmailRecipeV1) (ProcessingProfileRecord, error) {
 	profile, err := document.EmailBodyProfileV1(recipe)
 	if err != nil {
