@@ -505,4 +505,5 @@ The daemon validates its listening address at startup. An invalid setting makes
 | Variable | Effect |
 |----------|--------|
 | `DOCBANK_HOME` | Vault location; see [Vault location](#vault-location) above. |
+| `DOCBANK_LOCK_DIR` | Absolute lock-registry directory for an isolated environment whose account home is unwritable. Defaults to the operating-system account home's `.local/state/docbank/target-locks`, independent of `HOME` and XDG settings. All processes sharing or restoring overlapping vault trees must use the same directory; stop them before changing this setting. Keep it outside vaults and restore targets. Never delete it while any participating process runs. |
 | `DOCBANK_LOG_LEVEL` | Log level (`debug`, `info`, `warn`, `error`) for `docbank daemon run` and `docbank mcp`, foreground or background. Invalid values are ignored and fall back to `info`. |
