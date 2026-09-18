@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"errors"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -36,7 +37,8 @@ type CompiledQuery struct {
 	Query        query.Query
 	Dependencies []query.Dependency
 
-	predicate compiledQueryFragment
+	predicate         compiledQueryFragment
+	positiveTextTerms []string
 }
 
 // compileQuery resolves references and compiles one bounded query without
@@ -54,12 +56,19 @@ func compileQuery(
 	}
 	compiled := CompiledQuery{
 		Query: resolved.Query, Dependencies: resolved.Dependencies,
-		predicate: predicate,
+		predicate:         predicate,
+		positiveTextTerms: query.PositiveTextTerms(resolved),
 	}
 	if _, err := compiled.bind(""); err != nil {
 		return CompiledQuery{}, err
 	}
 	return compiled, nil
+}
+
+// PositiveTextTerms returns the compiler-derived, bounded literal document
+// terms suitable for inert visual highlighting.
+func (compiled CompiledQuery) PositiveTextTerms() []string {
+	return slices.Clone(compiled.positiveTextTerms)
 }
 
 func compileResolvedQuery(resolved query.ResolvedQuery) (compiledQueryFragment, error) {

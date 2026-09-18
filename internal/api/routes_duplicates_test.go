@@ -75,6 +75,27 @@ func TestDuplicatesHTTPCurrentIdentityAndHistoricalBoundary(t *testing.T) {
 	require.Equal(t, 4, retained.Total, "historical and trash lookup remains separate and complete")
 }
 
+func TestDuplicateByHashHTTPReturnsOnlyTheExactCurrentGroup(t *testing.T) {
+	ts, s := newTestServer(t, nil)
+	first := createFileWithContent(t, ts, s, "/exact-a.txt", "same exact bytes")
+	second := createFileWithContent(t, ts, s, "/exact-b.txt", "same exact bytes")
+	createFileWithContent(t, ts, s, "/other-a.txt", "other duplicate")
+	createFileWithContent(t, ts, s, "/other-b.txt", "other duplicate")
+
+	resp, body := get(t, ts, fmt.Sprintf("/api/v1/duplicates/by-hash?sha256=%s&size=%d", first.BlobHash, first.Size), nil)
+	require.Equal(t, http.StatusOK, resp.StatusCode, body)
+	var group api.DuplicateContextGroup
+	require.NoError(t, json.Unmarshal([]byte(body), &group))
+	require.Equal(t, first.BlobHash, group.SHA256)
+	require.Equal(t, 2, group.ReferenceCount)
+	require.Equal(t, []int64{first.ID, second.ID}, []int64{
+		group.References[0].NodeID, group.References[1].NodeID,
+	})
+
+	resp, body = get(t, ts, "/api/v1/duplicates/by-hash?sha256="+testHash("missing")+"&size=1", nil)
+	require.Equal(t, http.StatusNotFound, resp.StatusCode, body)
+}
+
 func TestDuplicatesHTTPPreviewBoundsAndExhaustion(t *testing.T) {
 	ts, s := newTestServer(t, nil)
 	for i := range 17 {

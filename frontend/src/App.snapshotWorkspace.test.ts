@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { afterEach, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/svelte";
 import App from "./App.svelte";
-import { canonicalQuery, type Query } from "./query.js";
+import { canonicalQuery, highlightSetFingerprint, type HighlightSet, type Query } from "./query.js";
 import { batchTagRequestDigest } from "./batch-tags.js";
 import type { SnapshotPage, SnapshotRow } from "./snapshots.js";
 
@@ -40,6 +40,92 @@ function snapshot(query: Query, rows: SnapshotRow[], cursors: { previous_cursor?
     created_at: "2026-09-11T12:34:00Z", expires_at: "2026-09-11T13:04:00Z", ...cursors,
   };
 }
+
+it("navigates frozen documents across pages and stops at the boundary or expiry", async () => {
+  history.replaceState(null, "", `/#web_session=synthetic&web_upload_secret=proof&query=${encodeURIComponent(JSON.stringify(initialQuery))}`);
+  vi.stubGlobal("ResizeObserver", class { observe() {} unobserve() {} disconnect() {} });
+  const first = snapshot(initialQuery, Array.from({ length: 100 }, (_, index) => row(index + 1)), { next_cursor: "next" });
+  const last = snapshot(initialQuery, [row(101)], { previous_cursor: "previous" });
+  const root = { id: 1000, name: "", kind: "dir", path: "/", revision: 1, size: 0,
+    created_at: "2026-09-11T00:00:00Z", modified_at: "2026-09-11T00:00:00Z" };
+  const json = (value: unknown, status = 200) => new Response(JSON.stringify(value), { status, headers: { "Content-Type": "application/json" } });
+  const cursors: string[] = [];
+  let highlightRequests = 0;
+  const payload: HighlightSet = { v: 1, terms: [{ text: "evidence", color: "#ffcc00" }] };
+  const highlightSet = { id: "44444444-4444-4444-8444-444444444444", name: "Review terms",
+    description: "Synthetic highlights", kind: "highlight_set", payload,
+    fingerprint: await highlightSetFingerprint(payload), revision: 1,
+    created_at: first.created_at, updated_at: first.created_at };
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    const url = String(input);
+    if (url === "/api/v1/path?path=%2F") return json(root);
+    if (url === "/api/v1/nodes/1000/children?limit=1000&offset=0") return json({ directory: root, items: [], total: 0, limit: 1000, offset: 0 });
+    if (url === "/api/v1/tags?limit=1000&offset=0") {
+      return json({ items: [], total: 0, limit: 1000, offset: 0 });
+    }
+    if (url === "/api/v1/saved-queries?limit=1000&offset=0&kind=highlight_set") {
+      return json({ items: [highlightSet], total: 1, limit: 1000, offset: 0 });
+    }
+    if (url === "/api/v1/queries/parse") return json({ query: initialQuery, query_fingerprint: first.query_fingerprint, dependencies: [] });
+    if (url === "/api/v1/queries/highlights") {
+      highlightRequests++;
+      return json({ query_fingerprint: first.query_fingerprint, dependencies: [], terms: ["report"] });
+    }
+    if (url === "/api/v1/workspace/queries") return json(first);
+    if (url === "/api/v1/renditions/text") {
+      const request = JSON.parse(String(init?.body));
+      return json({ state: "unconfigured", source: { node_id: request.node_id, revision: request.revision,
+        version_id: request.version_id, blob_hash: request.blob_hash, size: request.size, media_type: "application/pdf" },
+        profile: { name: "", configuration: "unconfigured", fingerprint: "" },
+        generation_id: "", attachment_id: "", build_id: "" });
+    }
+    if (url === `/api/v1/workspace/queries/${first.snapshot_id}/pages`) {
+      const { cursor } = JSON.parse(String(init?.body));
+      cursors.push(cursor);
+      return cursor === "next" ? json(last) : json({ code: "snapshot_gone", detail: "Snapshot expired" }, 410);
+    }
+    const node = /^\/api\/v1\/nodes\/(\d+)$/.exec(url);
+    if (node) {
+      const selected = row(Number(node[1]));
+      return json({ ...root, id: selected.node_id, parent_id: root.id, kind: "file",
+        name: selected.name, path: selected.path, revision: selected.revision, size: selected.size,
+        current_version_id: selected.content_version_id, blob_hash: selected.blob_hash, mime_type: selected.mime_type });
+    }
+    if (/^\/api\/v1\/nodes\/\d+\/tags\?/.test(url)) return json({ items: [], total: 0, limit: 1000, offset: 0 });
+    if (url.startsWith("/api/v1/audit/status?node_id=")) return json({ enabled: false, scopes: [] });
+    throw new Error(`unexpected request: ${url}`);
+  });
+
+  render(App);
+  await fireEvent.click(await screen.findByRole("button", { name: "Run query" }));
+  await screen.findByText("Document 1 of 101");
+  await waitFor(() => expect(highlightRequests).toBe(1));
+  await fireEvent.click(screen.getByRole("cell", { name: "/records/report-100.pdf" }));
+  await screen.findByText("Document 100 of 101");
+  await fireEvent.click(within(screen.getByRole("navigation", { name: "Snapshot document navigation" })).getByRole("button", { name: "Next" }));
+  await screen.findByText("Document 101 of 101");
+  expect(cursors).toEqual(["next"]);
+  expect(screen.getByRole("region", { name: "Verified content of report-101.pdf" })).toBeTruthy();
+  const lastNavigation = within(screen.getByRole("navigation", { name: "Snapshot document navigation" }));
+  expect((lastNavigation.getByRole("button", { name: "Next" }) as HTMLButtonElement).disabled).toBe(true);
+  await fireEvent.click(lastNavigation.getByRole("button", { name: "Previous" }));
+  await screen.findByText("This frozen snapshot expired. Run the query again to continue navigation.");
+  const expiredNavigation = within(screen.getByRole("navigation", { name: "Snapshot document navigation" }));
+  for (const name of ["Previous", "Next"]) {
+    expect((expiredNavigation.getByRole("button", { name }) as HTMLButtonElement).disabled).toBe(true);
+  }
+  expect(cursors).toEqual(["next", "previous"]);
+  expect(highlightRequests).toBe(1);
+  await fireEvent.click(screen.getByRole("tab", { name: "Text" }));
+  const choices = await screen.findByRole("combobox", { name: "Saved highlight set" });
+  expect(within(choices).getByRole("option", { name: "Review terms" })).toBeTruthy();
+
+  first.snapshot_id = "1123456789abcdef0123456789abcdef";
+  await fireEvent.click(screen.getByRole("button", { name: "Edit query" }));
+  await fireEvent.click(screen.getByRole("button", { name: "Run query" }));
+  await screen.findByText("Document 1 of 101");
+  await waitFor(() => expect(highlightRequests).toBe(2));
+});
 
 it("keeps rapid runs bound to the accepted frozen snapshot while live observations load separately", async () => {
   history.replaceState(null, "", `/#web_session=synthetic&web_upload_secret=proof&query=${encodeURIComponent(JSON.stringify(initialQuery))}`);

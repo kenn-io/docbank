@@ -3179,6 +3179,90 @@ components:
       x-go-type-import:
         path: go.kenn.io/docbank/internal/api
         name: api
+    DuplicateContextGroup:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/DuplicateContextGroup.json
+          format: uri
+          readOnly: true
+          type: string
+        reference_count:
+          format: int64
+          minimum: 2
+          type: integer
+        references:
+          items:
+            $ref: "#/components/schemas/DuplicateContextReference"
+          maxItems: 16
+          type: array
+        references_truncated:
+          type: boolean
+        sha256:
+          pattern: ^[0-9a-f]{64}$
+          type: string
+        size:
+          format: int64
+          minimum: 0
+          type: integer
+      required:
+        - sha256
+        - size
+        - reference_count
+        - references
+        - references_truncated
+      type: object
+      x-go-type: api.DuplicateContextGroup
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
+    DuplicateContextReference:
+      additionalProperties: false
+      properties:
+        media_type:
+          type: string
+        modified_at:
+          format: date-time
+          type: string
+        name:
+          type: string
+        node_id:
+          format: int64
+          minimum: 1
+          type: integer
+        path:
+          type: string
+        revision:
+          format: int64
+          minimum: 1
+          type: integer
+        sha256:
+          pattern: ^[0-9a-f]{64}$
+          type: string
+        size:
+          format: int64
+          minimum: 0
+          type: integer
+        version_id:
+          format: uuid
+          type: string
+      required:
+        - node_id
+        - revision
+        - version_id
+        - sha256
+        - size
+        - name
+        - path
+        - media_type
+        - modified_at
+      type: object
+      x-go-type: api.DuplicateContextReference
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     DuplicateGroup:
       additionalProperties: false
       properties:
@@ -7221,6 +7305,38 @@ components:
       x-go-type-import:
         path: go.kenn.io/docbank/internal/api
         name: api
+    QueryHighlightPreview:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/QueryHighlightPreview.json
+          format: uri
+          readOnly: true
+          type: string
+        dependencies:
+          items:
+            $ref: "#/components/schemas/QueryDependency"
+          maxItems: 256
+          type: array
+        query_fingerprint:
+          pattern: ^sha256:[0-9a-f]{64}$
+          type: string
+        terms:
+          items:
+            type: string
+          maxItems: 64
+          type: array
+      required:
+        - query_fingerprint
+        - dependencies
+        - terms
+      type: object
+      x-go-type: api.QueryHighlightPreview
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     QueryPreview:
       additionalProperties: false
       properties:
@@ -7497,6 +7613,181 @@ components:
       x-go-type-import:
         path: go.kenn.io/docbank/internal/api
         name: api
+    RenditionTextArtifact:
+      additionalProperties: false
+      properties:
+        id:
+          type: string
+        media_type:
+          type: string
+        sha256:
+          type: string
+        size:
+          format: int64
+          type: integer
+      required:
+        - id
+        - sha256
+        - size
+        - media_type
+      type: object
+    RenditionTextObserved:
+      additionalProperties: false
+      properties:
+        attachment_id:
+          pattern: ^[0-9a-f]{64}$
+          type: string
+        build_id:
+          pattern: ^[0-9a-f]{64}$
+          type: string
+        configuration:
+          enum:
+            - configured
+            - unconfigured
+            - profile_required
+          type: string
+        coverage_state:
+          enum:
+            - complete
+            - partial
+            - failed
+            - unprocessed
+            - none
+            - unavailable
+          type: string
+        generation_id:
+          pattern: ^[0-9a-f]{64}$
+          type: string
+        profile_fingerprint:
+          pattern: ^[0-9a-f]{64}$
+          type: string
+      required:
+        - configuration
+      type: object
+    RenditionTextProfile:
+      additionalProperties: false
+      properties:
+        configuration:
+          enum:
+            - configured
+            - unconfigured
+            - profile_required
+          type: string
+        fingerprint:
+          type: string
+        name:
+          type: string
+      required:
+        - name
+        - configuration
+        - fingerprint
+      type: object
+    RenditionTextReceipt:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/RenditionTextReceipt.json
+          format: uri
+          readOnly: true
+          type: string
+        artifact:
+          $ref: "#/components/schemas/RenditionTextArtifact"
+        attachment_id:
+          type: string
+        build_id:
+          type: string
+        generation_id:
+          type: string
+        profile:
+          $ref: "#/components/schemas/RenditionTextProfile"
+        source:
+          $ref: "#/components/schemas/RenditionTextSource"
+        state:
+          enum:
+            - ready
+            - verified_empty
+            - failed
+            - unprocessed
+            - unconfigured
+            - profile_required
+            - historical_unavailable
+          type: string
+      required:
+        - state
+        - source
+        - profile
+        - generation_id
+        - attachment_id
+        - build_id
+      type: object
+    RenditionTextRequest:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/RenditionTextRequest.json
+          format: uri
+          readOnly: true
+          type: string
+        blob_hash:
+          pattern: ^[0-9a-f]{64}$
+          type: string
+        node_id:
+          format: int64
+          minimum: 1
+          type: integer
+        observed:
+          $ref: "#/components/schemas/RenditionTextObserved"
+        profile:
+          maxLength: 128
+          type: string
+        revision:
+          format: int64
+          minimum: 1
+          type: integer
+        size:
+          format: int64
+          minimum: 0
+          type: integer
+        version_id:
+          format: uuid
+          type: string
+      required:
+        - node_id
+        - revision
+        - version_id
+        - blob_hash
+        - size
+      type: object
+    RenditionTextSource:
+      additionalProperties: false
+      properties:
+        blob_hash:
+          type: string
+        media_type:
+          type: string
+        node_id:
+          format: int64
+          type: integer
+        revision:
+          format: int64
+          type: integer
+        size:
+          format: int64
+          type: integer
+        version_id:
+          type: string
+      required:
+        - node_id
+        - revision
+        - version_id
+        - blob_hash
+        - size
+        - media_type
+      type: object
     RenditionTextWindow:
       additionalProperties: false
       properties:
@@ -11092,6 +11383,37 @@ paths:
                 $ref: "#/components/schemas/Error"
           description: Error
       summary: Find live documents that share current content
+  /api/v1/duplicates/by-hash:
+    get:
+      operationId: getDuplicateContentByHash
+      parameters:
+        - explode: false
+          in: query
+          name: sha256
+          schema:
+            pattern: ^[0-9a-f]{64}$
+            type: string
+        - explode: false
+          in: query
+          name: size
+          schema:
+            format: int64
+            minimum: 0
+            type: integer
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DuplicateContextGroup"
+          description: OK
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: Read one exact live-current duplicate group
   /api/v1/email-document-processing:
     post:
       operationId: requestEmailDocumentProcessing
@@ -12978,6 +13300,30 @@ paths:
                 $ref: "#/components/schemas/Error"
           description: Error
       summary: Resolve exact current live document search authority
+  /api/v1/queries/highlights:
+    post:
+      description: Returns only bounded positive text operands from the resolved compiler AST; structured, name-only, and negated operands are excluded.
+      operationId: previewQueryHighlights
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SavedQueryV1Schema"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/QueryHighlightPreview"
+          description: OK
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: Preview positive document-text highlight terms
   /api/v1/queries/parse:
     post:
       description: Returns canonical query intent and observed dependency revisions, without executing a search.
@@ -13067,6 +13413,106 @@ paths:
                 $ref: "#/components/schemas/Error"
           description: Error
       summary: Stream the active rendition for one exact source selector
+  /api/v1/renditions/text:
+    post:
+      operationId: resolveRenditionText
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RenditionTextRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RenditionTextReceipt"
+          description: OK
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: Resolve exact verified text for one selected document version
+  /api/v1/renditions/text/content:
+    get:
+      operationId: readRenditionText
+      parameters:
+        - explode: false
+          in: query
+          name: node_id
+          schema:
+            format: int64
+            minimum: 1
+            type: integer
+        - explode: false
+          in: query
+          name: revision
+          schema:
+            format: int64
+            minimum: 1
+            type: integer
+        - explode: false
+          in: query
+          name: version_id
+          schema:
+            format: uuid
+            type: string
+        - explode: false
+          in: query
+          name: blob_hash
+          schema:
+            pattern: ^[0-9a-f]{64}$
+            type: string
+        - explode: false
+          in: query
+          name: size
+          schema:
+            format: int64
+            minimum: 0
+            type: integer
+        - explode: false
+          in: query
+          name: profile_fingerprint
+          schema:
+            pattern: ^[0-9a-f]{64}$
+            type: string
+        - explode: false
+          in: query
+          name: generation_id
+          schema:
+            pattern: ^[0-9a-f]{64}$
+            type: string
+        - explode: false
+          in: query
+          name: attachment_id
+          schema:
+            pattern: ^[0-9a-f]{64}$
+            type: string
+        - explode: false
+          in: query
+          name: build_id
+          schema:
+            pattern: ^[0-9a-f]{64}$
+            type: string
+        - explode: false
+          in: query
+          name: artifact_id
+          schema:
+            maxLength: 128
+            type: string
+      responses:
+        "200":
+          description: OK
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: Read one exact verified text rendition artifact
   /api/v1/renditions/windows:
     post:
       operationId: readDocumentRenditionWindow
