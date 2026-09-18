@@ -245,7 +245,8 @@ reference used to obtain a local file. Submission stores the pending occurrence
 and performs no network access. The `canonical_url` field is optional for
 configured-origin requests, and is the identity input for a generic URL
 reference when present. See the [canonical URL rules](architecture/http-api.md#remote-recording-references)
-for the permanent source identity.
+for the permanent source identity. A Cap Cloud share or embed URL uses one
+[Cap source per video ID](architecture/http-api.md#remote-recording-references).
 
 ```go
 remote, err := vault.SubmitRemoteRecording(ctx, docbank.RemoteRecordingRequest{
@@ -330,8 +331,10 @@ and returns after durable queue admission. It cannot select an older occurrence;
 use `PlanProcessing` and `StartProcessing` with that recording's node and current
 content version instead. Read `MediaStatus` for the newest attempt and its
 coverage. Coverage follows the exact source version selected by the visible occurrence, so a transcript for older bytes cannot
-cover a later recording revision. Remote acquisition remains unavailable until
-a provider-specific acquisition owner is added.
+cover a later recording revision. A recognized Cap Cloud link returns
+`unsupported` even when `Acquire` is set, because Cap documents no download
+route for received links; import its file with `ImportRecordingArtifact`. Other
+remote acquisition remains unavailable.
 
 ## Extract and read source metadata
 
