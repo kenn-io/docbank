@@ -739,6 +739,61 @@ func TestPruneContentVersionsAccountsForVisualPreviewOutputs(t *testing.T) {
 	assert.NotContains(t, unreachable, BlobInfo{Hash: fakeHash("94"), Size: 9})
 }
 
+func TestPruneContentVersionsAccountsForPageImages(t *testing.T) {
+	s := newTestStore(t)
+	ctx := t.Context()
+	historical := pageStoreRequest(t, s)
+	current, _, err := s.ReplaceContent(ctx, historical.NodeID, historical.Revision,
+		fakeHash("d1"), 20, "application/pdf")
+	require.NoError(t, err)
+	historical.Revision = current.Revision
+	currentRequest := historical
+	currentRequest.Source.VersionID = current.CurrentVersionID
+	currentRequest.Source.SHA256 = current.BlobHash
+	currentRequest.Source.Size = current.Size
+	recipe := pageStoreRecipe()
+	for index, request := range []PageJobRequest{historical, currentRequest} {
+		_, err := s.QueuePageJob(ctx, fmt.Sprintf("00000000-0000-4000-8000-%012d", index+1), request)
+		require.NoError(t, err)
+		claim, err := s.ClaimPageJob(ctx)
+		require.NoError(t, err)
+		frames := pageStoreFrames(t, request)
+		require.NoError(t, s.PublishPageFrames(ctx, claim, frames))
+		for _, frame := range frames {
+			image := pageStoreImage(t, frame, recipe)
+			if index == 0 && frame.Page == 1 {
+				image.SHA256 = fakeHash("c2")
+			}
+			require.NoError(t, s.PublishPageImage(ctx, claim, image, recipe,
+				&BlobPhysical{Encoding: looseEncodingRaw, StoredBytes: image.Size}))
+		}
+		require.NoError(t, s.FinishPageJob(ctx, claim, PageJobCompleted, ""))
+	}
+	addTestPack(t, s, "page-image-pack", 1, 6, nowRFC3339())
+	addTestPackEntry(t, s, fakeHash("c2"), "page-image-pack", 0, 6, 10)
+	_, err = s.db.Exec(`UPDATE blob_locations SET kind='packed',encoding=NULL,stored_size=6
+		WHERE blob_hash=? AND store_id=?`, fakeHash("c2"), s.primaryStoreID)
+	require.NoError(t, err)
+
+	for _, run := range []bool{false, true} {
+		result, err := s.PruneContentVersions(ctx, current.ID, current.Revision,
+			VersionPruneSelector{KeepNewest: 1}, run)
+		require.NoError(t, err)
+		assert.Equal(t, 3, result.UniqueBlobs)
+		assert.Equal(t, 1, result.SharedBlobs)
+		assert.Equal(t, 2, result.ReleasableBlobs)
+		assert.Equal(t, int64(133), result.ReleasableBytes)
+		assert.Equal(t, 1, result.LooseBlobsPendingGC)
+		assert.Equal(t, int64(123), result.LooseBytesPendingGC)
+		assert.Equal(t, 1, result.PackedBlobsPendingRepack)
+		assert.Equal(t, int64(6), result.PackedBytesPendingRepack)
+	}
+	unreachable, err := s.UnreachableBlobs(ctx)
+	require.NoError(t, err)
+	assert.Contains(t, unreachable, BlobInfo{Hash: fakeHash("c2"), Size: 10})
+	assert.NotContains(t, unreachable, BlobInfo{Hash: fakeHash("c1"), Size: 10})
+}
+
 func TestPruneContentVersionsReportsPackedAndSharedConsequences(t *testing.T) {
 	s := newTestStore(t)
 	ctx := t.Context()

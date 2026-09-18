@@ -65,3 +65,19 @@ it("accepts the empty shutdown acknowledgement", async () => {
   vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(null, { status: 202 }));
   await expect(api.shutdownDaemon({ "X-Docbank-Daemon-Token": "synthetic" })).resolves.toBeUndefined();
 });
+
+it("reads page images as PNG bytes through the browser session", async () => {
+  const png = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+ip1sAAAAASUVORK5CYII=", "base64");
+  const fetch = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(png, {
+    headers: { "Content-Type": "image/png" },
+  }));
+  const response = await api.readPageImage({
+    node_id: 1, revision: 2, version_id: "11111111-1111-4111-8111-111111111111",
+    source_sha256: "a".repeat(64), source_size: 100, page: 1,
+    recipe_sha256: "b".repeat(64), frame_sha256: "c".repeat(64), image_sha256: "d".repeat(64),
+  }, { session: "synthetic-session" });
+  expect(Buffer.from(await response.arrayBuffer())).toEqual(png);
+  const headers = new Headers(fetch.mock.calls[0][1]?.headers);
+  expect(headers.get("Accept")).toBe("image/png");
+  expect(headers.get("X-Docbank-Web-Session")).toBe("synthetic-session");
+});

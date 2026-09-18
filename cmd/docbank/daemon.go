@@ -216,6 +216,10 @@ func runServe(ctx context.Context) (retErr error) {
 		}
 	}()
 	operationGate := api.NewOperationGate()
+	pageRuntime, err := startPageRuntime(sigCtx, cfg, jobSupervisor, s, blobs, operationGate, logger)
+	if err != nil {
+		return err
+	}
 	runtimeRegistry := processing.NewRenditionRuntimeRegistry()
 	embeddingRuntimes, err := configureEmbeddingRuntimeBundle(cfg, blobs, layout.BlobTmpDir())
 	if err != nil {
@@ -397,6 +401,7 @@ func runServe(ctx context.Context) (retErr error) {
 		Jobs: jobSupervisor, Gate: operationGate, WebURL: webURL, BlobRegistry: blobRegistry,
 		Processing: processingService, EnsureEmail: processing.EnsureEmailTarget,
 		PublishEmailDocuments: processing.PublishEmailDocuments,
+		PageRuntime:           pageRuntime,
 	})
 	defer srv.Close()
 	newHTTPServer := func() *http.Server {

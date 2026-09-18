@@ -30,10 +30,19 @@ jobs:
           go-version-file: go.mod
           cache: true
 
-      - name: Install LibreOffice Writer runtime
+      - name: Install LibreOffice Writer and Poppler runtimes
         run: |
           sudo apt-get update
-          sudo apt-get install --no-install-recommends -y libreoffice-writer
+          sudo apt-get install --no-install-recommends -y libreoffice-writer poppler-utils
+
+      - name: Run mandatory page rendering proof
+        env:
+          CGO_ENABLED: "0"
+        run: |
+          set -eu
+          command -v pdftoppm
+          command -v prlimit
+          go test -tags fts5 -v ./document/pagerender/ ./internal/processing/ -run '^(TestRealRuntimeInspectAndRenderPDFAndPNG|TestRealPageWorkerPublishesVerifiedImagesAndResumesExactJobs|TestRealPageAPIBackupRestoreAndGC)$' -count=1
 
       - name: Run mandatory owner proof
         env:

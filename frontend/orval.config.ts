@@ -25,6 +25,10 @@ export default defineConfig({
         mutator: { path: "src/api-transport.ts", name: "sessionJSON" },
         operations: {
           shutdownDaemon: { mutator: { path: "src/api-transport.ts", name: "sessionEmpty" } },
+          readPageImage: {
+            mutator: { path: "src/api-transport.ts", name: "sessionResponse", inferred: true },
+            requestOptions: { headers: { Accept: "image/png" } },
+          },
           submitMediaSource: { formData: { path: "src/media-form-data.ts", name: "mediaFormData" } },
           importMediaArtifact: { formData: { path: "src/media-form-data.ts", name: "mediaFormData" } },
           ...Object.fromEntries([
