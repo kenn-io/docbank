@@ -80,6 +80,28 @@ func TestRunCapabilityProbeProducesCompleteSanitizedAuthority(t *testing.T) {
 	}
 }
 
+func TestDOCXRouteLeavesNativeProbeUnchanged(t *testing.T) {
+	policy := testPolicyWithRenderPDF(t, testRenderPDFPolicy(t, testMultipagePDF(1), nil), 1<<20, 10)
+	transport := &probeTransport{t: t}
+	client, err := NewClient(policy, ClientConfig{APIKey: "synthetic-key", HTTPClient: &http.Client{Transport: transport}})
+	require.NoError(t, err)
+	manifest, err := RunCapabilityProbe(t.Context(), client, ProbeConfig{
+		Fixtures:   generatedProbeFixtureConfig(t),
+		ObservedAt: time.Date(2026, 8, 17, 12, 0, 0, 0, time.UTC),
+	})
+	require.NoError(t, err)
+	docx := findManifestResult(t, manifest, "docx")
+	candidate, ok := CandidateFormatByID("docx")
+	require.True(t, ok)
+	assert.Equal(t, UnitBoundNone, docx.UnitBoundMethod)
+	assert.Equal(t, requestFingerprint(candidate, probeRequestOptions(
+		candidate, manifest.MaxUnits, policy.values.ExtractHeader, policy.values.ExtractFooter,
+	)), docx.RequestFingerprint)
+	authorization, err := policy.Authorize(manifest, "docx")
+	require.NoError(t, err)
+	assert.Equal(t, UnitBoundLocalExact, authorization.method)
+}
+
 func TestRunCapabilityProbeRecordsUnverifiedProviderBoundWithoutAuthority(t *testing.T) {
 	tests := []struct {
 		name       string

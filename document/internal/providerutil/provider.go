@@ -292,6 +292,7 @@ type Receipt struct {
 	Descriptor    document.RenditionDescriptor
 	Authorization document.RenditionAuthorization
 	SourceSHA256  string
+	UploadSHA256  string
 	OperationID   string
 	StartedAt     time.Time
 	CompletedAt   time.Time
@@ -313,6 +314,7 @@ func NewReceipt(provider Provider, input Receipt) (document.RenditionReceipt, er
 		RenditionRequestFingerprint: input.Authorization.RenditionRequestFingerprint,
 		AuthorizationFingerprint:    authorizationFingerprint,
 		SourceSHA256:                input.SourceSHA256,
+		UploadSHA256:                input.UploadSHA256,
 		OperationID:                 input.OperationID,
 		StartedAt:                   input.StartedAt.UTC().Format(TimestampForm),
 		CompletedAt:                 input.CompletedAt.UTC().Format(TimestampForm),

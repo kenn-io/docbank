@@ -52,16 +52,16 @@ func Convert(ctx context.Context, source ocr.Source, extension string, policy Po
 		return nil, errors.New("render PDF policy is invalid; use NewPolicy")
 	}
 	if policy.runner.Identity() != policy.runnerID {
-		return nil, errors.New("render PDF runner identity changed")
+		return nil, fmt.Errorf("%w: render PDF runner identity changed", ErrRendererChanged)
 	}
 	if err := source.Validate(); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("%w: %w", ErrSourceRejected, err)
 	}
 	if !validExtension(extension) {
-		return nil, errors.New("render PDF extension must be lowercase alphanumeric")
+		return nil, fmt.Errorf("%w: render PDF extension must be lowercase alphanumeric", ErrSourceRejected)
 	}
 	if source.Size > policy.limits.MaxSourceBytes {
-		return nil, errors.New("render PDF source exceeds byte limit")
+		return nil, fmt.Errorf("%w: render PDF source exceeds byte limit", ErrSourceTooLarge)
 	}
 	runCtx, cancel := context.WithTimeout(ctx, policy.limits.Timeout)
 	defer cancel()
@@ -76,21 +76,21 @@ func Convert(ctx context.Context, source ocr.Source, extension string, policy Po
 		return nil, fmt.Errorf("read render PDF source: %w", err)
 	}
 	if int64(len(content)) != source.Size || digest(content) != source.SHA256 {
-		return nil, errors.New("render PDF source does not match declared size and SHA-256")
+		return nil, fmt.Errorf("%w: render PDF source does not match declared size and SHA-256", ErrSourceRejected)
 	}
 	if err := runCtx.Err(); err != nil {
 		return nil, err
 	}
 	candidate, err := formatdetect.DetectFormat(bytes.NewReader(content), int64(len(content)), source.MediaType)
 	if err != nil {
-		return nil, errors.New("render PDF source format is invalid")
+		return nil, fmt.Errorf("%w: render PDF source format is invalid", ErrSourceRejected)
 	}
 	profile, ok := profileFor(candidate.ID)
 	if !ok || extension != profile.ID {
-		return nil, errors.New("render PDF source format has no admitted profile")
+		return nil, fmt.Errorf("%w: render PDF source format has no admitted profile", ErrSourceRejected)
 	}
 	if int64(len(content)) > policy.limits.MaxWorkBytes {
-		return nil, errors.New("render PDF source exceeds work-byte limit")
+		return nil, fmt.Errorf("%w: render PDF source exceeds work-byte limit", ErrSourceTooLarge)
 	}
 	if err := verifyRenderer(policy); err != nil {
 		return nil, err
@@ -105,10 +105,10 @@ func Convert(ctx context.Context, source ocr.Source, extension string, policy Po
 		return nil, errors.New("render PDF normalization attestation is invalid")
 	}
 	if int64(len(normalized)) > policy.limits.MaxNormalizedBytes || int64(len(normalized)) > policy.limits.MaxWorkBytes {
-		return nil, errors.New("render PDF normalized output exceeds byte limit")
+		return nil, fmt.Errorf("%w: render PDF normalized output exceeds byte limit", ErrOutputTooLarge)
 	}
 	if _, err := Scan(normalized, profile.kind, policy.limits); err != nil {
-		return nil, fmt.Errorf("render PDF normalized output is not admitted: %w", err)
+		return nil, fmt.Errorf("%w: render PDF normalized output is not admitted: %w", ErrSourceRejected, err)
 	}
 	if err := runCtx.Err(); err != nil {
 		return nil, err
@@ -126,14 +126,14 @@ func Convert(ctx context.Context, source ocr.Source, extension string, policy Po
 		return nil, errors.New("render PDF attestation is invalid")
 	}
 	if int64(len(pdf)) > policy.limits.MaxPDFBytes {
-		return nil, errors.New("render PDF output exceeds byte limit")
+		return nil, fmt.Errorf("%w: render PDF output exceeds byte limit", ErrOutputTooLarge)
 	}
 	pages, err := media.CountPDFPages(pdf)
 	if err != nil {
 		return nil, errors.New("render PDF output is not a valid PDF")
 	}
 	if pages <= 0 || pages > int64(policy.limits.MaxPages) {
-		return nil, errors.New("render PDF output exceeds page limit")
+		return nil, fmt.Errorf("%w: render PDF output exceeds page limit", ErrPageLimit)
 	}
 	if err := runCtx.Err(); err != nil {
 		return nil, err
@@ -265,10 +265,10 @@ func stageOutputLimit(limits Limits, stage string) int64 {
 
 func verifyRenderer(policy Policy) error {
 	if policy.runner == nil || policy.runner.Identity() != policy.runnerID {
-		return errors.New("render PDF runner identity changed")
+		return fmt.Errorf("%w: render PDF runner identity changed", ErrRendererChanged)
 	}
 	if _, err := providerutil.LoadPinnedExecutable(policy.renderer.Executable, policy.renderer.ExecutableSHA256, MaxExecutableBytes); err != nil {
-		return fmt.Errorf("render PDF renderer identity changed: %w", err)
+		return fmt.Errorf("%w: render PDF renderer identity changed: %w", ErrRendererChanged, err)
 	}
 	return nil
 }

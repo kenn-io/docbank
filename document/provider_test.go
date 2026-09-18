@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"io"
@@ -402,6 +403,27 @@ func TestRenditionProviderContractRejectsUnsafeReceiptFields(t *testing.T) {
 				ValidateRenditionResult(descriptor, authorization, result), testCase.want)
 		})
 	}
+}
+
+func TestRenditionReceiptUploadSHA256(t *testing.T) {
+	descriptor := validRenditionDescriptor(t)
+	metadata := validAuthorizedUploadMetadata()
+	authorization := validRenditionAuthorization(descriptor, metadata)
+	result := validRenditionResult(descriptor, authorization)
+
+	encoded, err := json.Marshal(result)
+	require.NoError(t, err)
+	assert.NotContains(t, string(encoded), "upload_sha256")
+	require.NoError(t, ValidateRenditionResult(descriptor, authorization, result))
+
+	result.Receipt.UploadSHA256 = strings.Repeat("a", 64)
+	require.NoError(t, ValidateRenditionResult(descriptor, authorization, result))
+	encoded, err = json.Marshal(result)
+	require.NoError(t, err)
+	assert.Contains(t, string(encoded), `"upload_sha256":"`+strings.Repeat("a", 64)+`"`)
+
+	result.Receipt.UploadSHA256 = strings.Repeat("A", 64)
+	require.ErrorContains(t, ValidateRenditionResult(descriptor, authorization, result), "upload SHA-256")
 }
 
 func TestRenditionProviderContractRejectsReceiptFromDifferentAuthorization(t *testing.T) {

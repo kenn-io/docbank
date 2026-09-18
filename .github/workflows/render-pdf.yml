@@ -54,3 +54,4 @@ jobs:
           test -x "$DOCBANK_TEST_LIBREOFFICE_EXECUTABLE"
           go test -tags fts5 -v ./document/internal/providerutil/sandbox/ ./document/trafilatura/ -count=1
           go test -tags fts5 -v ./document/renderpdf/ -run '^TestLibreOffice' -count=1
+          go test -tags fts5 -v ./document/mistral/ -run '^TestDOCXLibreOfficeRoute$' -count=1

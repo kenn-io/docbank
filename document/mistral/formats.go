@@ -10,6 +10,7 @@ const (
 	mediaTypeJSON = "application/json"
 	mediaTypePDF  = "application/pdf"
 	formatIDPDF   = "pdf"
+	formatIDDOCX  = "docx"
 )
 
 // CandidateFormat describes one locally detectable document format. A

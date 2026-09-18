@@ -207,6 +207,7 @@ components:
         rendition_request_fingerprint: {$ref: '#/components/schemas/SHA256'}
         authorization_fingerprint: {$ref: '#/components/schemas/SHA256'}
         source_sha256: {$ref: '#/components/schemas/SHA256'}
+        upload_sha256: {$ref: '#/components/schemas/SHA256'}
         operation_id: {$ref: '#/components/schemas/CoreStableToken'}
         started_at: {$ref: '#/components/schemas/RenditionTimestamp'}
         completed_at: {$ref: '#/components/schemas/RenditionTimestamp'}

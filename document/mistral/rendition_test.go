@@ -22,6 +22,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/document"
+	"go.kenn.io/docbank/document/renderpdf"
 )
 
 var _ document.RenditionProvider = (*RenditionClient)(nil)
@@ -116,46 +117,12 @@ func TestRenditionClientMapsExactMistralOCRResponse(t *testing.T) {
 	assert.NotContains(t, fmt.Sprintf("%+v", result.Receipt), "synthetic-key")
 }
 
-func TestRenditionClientUsesLocalExactUnitsForAuthorizedNonPDF(t *testing.T) {
-	// Keep this test and its subtests sequential: the synthetic authority below
-	// replaces package globals until cleanup. It does not enable DOCX in production.
-	policy := testPolicy(t, 1<<20, 10)
+func TestRenditionClientDOCXRoute(t *testing.T) {
+	pdf := testMultipagePDF(2)
+	policy := testPolicyWithRenderPDF(t, testRenderPDFPolicy(t, pdf, nil), 1<<20, 10)
 	manifest := syntheticManifest(t, policy, true)
-
-	previousMethod, hadMethod := expectedUnitBounds["docx"]
-	previousCounter, hadCounter := localUnitCounters["docx"]
-	t.Cleanup(func() {
-		if hadMethod {
-			expectedUnitBounds["docx"] = previousMethod
-		} else {
-			delete(expectedUnitBounds, "docx")
-		}
-		if hadCounter {
-			localUnitCounters["docx"] = previousCounter
-		} else {
-			delete(localUnitCounters, "docx")
-		}
-	})
-	expectedUnitBounds["docx"] = UnitBoundLocalExact
-	localUnitCounters["docx"] = func(io.ReaderAt, int64) (int, error) { return 2, nil }
-	for index := range manifest.Results {
-		if manifest.Results[index].FormatID == "docx" {
-			manifest.Results[index].UnitCount = 2
-			manifest.Results[index].UnitsProcessed = 2
-			manifest.Results[index].LocalUnits = 2
-			manifest.Results[index].UnitBoundMethod = UnitBoundLocalExact
-		}
-	}
-
 	descriptor := renditionDescriptor(t, policy, manifest, "docx")
-	source := documentZIP(t, map[string]string{
-		ooxmlContentTypesName: docxContentTypes("application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"),
-		"word/document.xml":   "<document/>",
-	})
-	response := fmt.Sprintf(
-		`{"model":"mistral-ocr-4-0","pages":[{"index":0,"markdown":"first"},{"index":1,"markdown":"second"}],"usage_info":{"pages_processed":2,"doc_size_bytes":%d}}`,
-		len(source),
-	)
+	source := loadDOCXFixture(t, "realistic-word.docx")
 	digest := sha256.Sum256(source)
 	metadata := document.AuthorizedUploadMetadata{
 		Filename: "document.docx", MediaFamily: "word", MediaType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
@@ -163,35 +130,113 @@ func TestRenditionClientUsesLocalExactUnitsForAuthorizedNonPDF(t *testing.T) {
 		CapabilityRecordChecksum: strings.Repeat("2", 64), ProviderMetadataChecksum: strings.Repeat("3", 64),
 		InputKind: document.RenditionInputOriginalFile,
 	}
+	started := time.Now().UTC().Add(-time.Minute)
 	authorization := document.RenditionAuthorization{
 		ProviderID: descriptor.ID, DescriptorFingerprint: descriptor.Fingerprint, PolicyFingerprint: descriptor.PolicyFingerprint,
 		RenditionRequestFingerprint: strings.Repeat("4", 64), SourceSHA256: metadata.SHA256, SourceBytes: metadata.ByteLength,
 		CapabilityRecordChecksum: metadata.CapabilityRecordChecksum, ProviderMetadataChecksum: metadata.ProviderMetadataChecksum,
 		MediaFamily: metadata.MediaFamily, MediaType: metadata.MediaType, InputKind: metadata.InputKind,
 		MaxProviderMarkdownBytes: 4096, MaxTotalResultBytes: 32768,
-		AuthorizedAt: time.Now().UTC().Add(-time.Minute).Format("2006-01-02T15:04:05.000000000Z"),
-		ExpiresAt:    time.Now().UTC().Add(10 * time.Minute).Format("2006-01-02T15:04:05.000000000Z"),
+		AuthorizedAt: started.Format("2006-01-02T15:04:05.000000000Z"),
+		ExpiresAt:    started.Add(10 * time.Minute).Format("2006-01-02T15:04:05.000000000Z"),
 	}
-	client := newRenditionTestClient(t, policy, manifest, descriptor,
-		renditionSecrets{"mistral-ocr": "synthetic-key"}, roundTripFunc(func(request *http.Request) (*http.Response, error) {
-			return &http.Response{
-				StatusCode: http.StatusOK, Header: http.Header{"Content-Type": []string{"application/json"}},
-				Body: io.NopCloser(strings.NewReader(response)), Request: request,
-			}, nil
-		}))
-
-	result, err := client.Render(t.Context(), &renditionUpload{Reader: bytes.NewReader(source), metadata: metadata}, authorization)
+	var uploaded []byte
+	client, err := NewRenditionProvider(Profile{
+		Policy: policy, CapabilityManifest: manifest, Descriptor: descriptor,
+		SecretBinding: "mistral-ocr", Timeout: time.Second, MaxRetries: 1,
+		MaxRetryDelay: time.Millisecond,
+	}, renditionSecrets{"mistral-ocr": "synthetic-key"}, &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+		body, err := io.ReadAll(request.Body)
+		require.NoError(t, err)
+		var wire struct {
+			Document struct {
+				URL string `json:"document_url"`
+			} `json:"document"`
+		}
+		require.NoError(t, json.Unmarshal(body, &wire))
+		uploaded, err = base64.StdEncoding.DecodeString(strings.TrimPrefix(wire.Document.URL, "data:application/pdf;base64,"))
+		require.NoError(t, err)
+		return &http.Response{
+			StatusCode: http.StatusOK, Header: http.Header{"Content-Type": []string{"application/json"}},
+			Body: io.NopCloser(strings.NewReader(ocrResponse(2, len(pdf)))), Request: request,
+		}, nil
+	})})
 	require.NoError(t, err)
-	assert.Equal(t, int64(2), result.Receipt.Usage.Units)
-	assert.Len(t, result.Evidence.Units, 2)
 
-	response = fmt.Sprintf(
-		`{"model":"mistral-ocr-4-0","pages":[{"index":0,"markdown":"first"},{"index":1,"markdown":"second"},{"index":2,"markdown":"third"}],"usage_info":{"pages_processed":3,"doc_size_bytes":%d}}`,
-		len(source),
-	)
-	_, err = client.Render(t.Context(), &renditionUpload{Reader: bytes.NewReader(source), metadata: metadata}, authorization)
-	assertRenditionCode(t, err, document.RenditionErrorPolicyRejected)
-	require.ErrorIs(t, err, ErrCapabilityContract)
+	result, err := document.RenderRendition(t.Context(), client,
+		&renditionUpload{Reader: bytes.NewReader(source), metadata: metadata}, authorization)
+	require.NoError(t, err)
+	assert.Equal(t, pdf, uploaded)
+	assert.Equal(t, int64(2), result.Receipt.Usage.Units)
+	assert.Equal(t, int64(len(pdf)), result.Receipt.Usage.InputBytes)
+	assert.Equal(t, metadata.SHA256, result.Receipt.SourceSHA256)
+	assert.Equal(t, digestBytes(pdf), result.Receipt.UploadSHA256)
+	assert.Equal(t, "word", result.Evidence.Family)
+	assert.Len(t, result.Evidence.Units, 2)
+}
+
+func TestRenditionClientDOCXConversionError(t *testing.T) {
+	tests := []struct {
+		name      string
+		pdf       []byte
+		runnerErr error
+		code      document.RenditionErrorCode
+		cause     error
+	}{
+		{name: "invalid PDF", pdf: []byte("not a PDF"), code: document.RenditionErrorPolicyRejected, cause: ErrCapabilityContract},
+		{name: "unknown renderer failure", runnerErr: errors.New("unclassified renderer failure"), code: document.RenditionErrorPolicyRejected, cause: ErrCapabilityContract},
+		{name: "over limit", pdf: testMultipagePDF(11), code: document.RenditionErrorPolicyRejected, cause: ErrCapabilityContract},
+		{name: "renderer unavailable", pdf: testMultipagePDF(1), runnerErr: renderpdf.ErrUnavailable, code: document.RenditionErrorTransient, cause: renderpdf.ErrUnavailable},
+	}
+	for _, testCase := range tests {
+		t.Run(testCase.name, func(t *testing.T) {
+			policy := testPolicyWithRenderPDF(t, testRenderPDFPolicy(t, testCase.pdf, testCase.runnerErr), 1<<20, 10)
+			manifest := syntheticManifest(t, policy, true)
+			descriptor := renditionDescriptor(t, policy, manifest, "docx")
+			source := loadDOCXFixture(t, "realistic-word.docx")
+			fixture := docxRenditionFixture(t, descriptor, source)
+			requests := 0
+			client := newRenditionTestClient(t, policy, manifest, descriptor,
+				renditionSecrets{"mistral-ocr": "synthetic-key"}, roundTripFunc(func(*http.Request) (*http.Response, error) {
+					requests++
+					return nil, errors.New("unexpected provider request")
+				}))
+			_, err := document.RenderRendition(t.Context(), client, fixture.upload(), fixture.authorization)
+			assertRenditionCode(t, err, testCase.code)
+			require.ErrorIs(t, err, testCase.cause)
+			assert.Zero(t, requests)
+		})
+	}
+}
+
+func TestRenditionClientDOCXCancellation(t *testing.T) {
+	started := make(chan struct{})
+	runner := &testRenderRunner{
+		start: started, pdf: testMultipagePDF(1),
+		normalized: []byte(`<?xml version="1.0" encoding="UTF-8"?><office:document xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0" office:mimetype="application/vnd.oasis.opendocument.text"><office:body><office:text><text:p>Synthetic</text:p></office:text></office:body></office:document>`),
+	}
+	policy := testPolicyWithRenderPDF(t, testRenderPDFPolicyWithRunner(t, runner), 1<<20, 10)
+	manifest := syntheticManifest(t, policy, true)
+	descriptor := renditionDescriptor(t, policy, manifest, "docx")
+	source := loadDOCXFixture(t, "realistic-word.docx")
+	fixture := docxRenditionFixture(t, descriptor, source)
+	requests := 0
+	client := newRenditionTestClient(t, policy, manifest, descriptor,
+		renditionSecrets{"mistral-ocr": "synthetic-key"}, roundTripFunc(func(*http.Request) (*http.Response, error) {
+			requests++
+			return nil, errors.New("unexpected provider request")
+		}))
+	ctx, cancel := context.WithCancel(t.Context())
+	done := make(chan error, 1)
+	go func() {
+		_, err := document.RenderRendition(ctx, client, fixture.upload(), fixture.authorization)
+		done <- err
+	}()
+	<-started
+	cancel()
+	err := <-done
+	require.ErrorIs(t, err, context.Canceled)
+	assert.Zero(t, requests)
 }
 
 func TestRenditionClientCountsPPTXSlidesForAuthorizedLocalExact(t *testing.T) {
@@ -798,6 +843,32 @@ func renditionFixture(
 		CapabilityRecordChecksum: strings.Repeat("2", 64),
 		ProviderMetadataChecksum: strings.Repeat("3", 64),
 		InputKind:                document.RenditionInputOriginalFile,
+	}
+	started := time.Now().UTC().Add(-time.Minute)
+	return renditionTestFixture{metadata: metadata, source: source, authorization: document.RenditionAuthorization{
+		ProviderID: descriptor.ID, DescriptorFingerprint: descriptor.Fingerprint,
+		PolicyFingerprint:           descriptor.PolicyFingerprint,
+		RenditionRequestFingerprint: strings.Repeat("4", 64), SourceSHA256: metadata.SHA256,
+		SourceBytes: metadata.ByteLength, CapabilityRecordChecksum: metadata.CapabilityRecordChecksum,
+		ProviderMetadataChecksum: metadata.ProviderMetadataChecksum, MediaFamily: metadata.MediaFamily,
+		MediaType: metadata.MediaType, InputKind: metadata.InputKind,
+		MaxProviderMarkdownBytes: 4096, MaxTotalResultBytes: 32768,
+		AuthorizedAt: started.Format("2006-01-02T15:04:05.000000000Z"),
+		ExpiresAt:    started.Add(10 * time.Minute).Format("2006-01-02T15:04:05.000000000Z"),
+	}}
+}
+
+func docxRenditionFixture(
+	t *testing.T, descriptor document.RenditionDescriptor, source []byte,
+) renditionTestFixture {
+	t.Helper()
+	digest := sha256.Sum256(source)
+	metadata := document.AuthorizedUploadMetadata{
+		Filename: "document.docx", MediaFamily: "word",
+		MediaType:  "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+		ByteLength: int64(len(source)), SHA256: hex.EncodeToString(digest[:]),
+		CapabilityRecordChecksum: strings.Repeat("2", 64), ProviderMetadataChecksum: strings.Repeat("3", 64),
+		InputKind: document.RenditionInputOriginalFile,
 	}
 	started := time.Now().UTC().Add(-time.Minute)
 	return renditionTestFixture{metadata: metadata, source: source, authorization: document.RenditionAuthorization{

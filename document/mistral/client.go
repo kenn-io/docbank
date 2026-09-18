@@ -19,6 +19,7 @@ import (
 	"unicode/utf8"
 
 	"go.kenn.io/docbank/document"
+	"go.kenn.io/docbank/document/renderpdf"
 )
 
 const (
@@ -61,12 +62,13 @@ type ClientConfig struct {
 
 // Result contains provider-neutral document evidence and request accounting.
 type Result struct {
-	Document       document.SourceDocument
-	ReturnedModel  string
-	UnitsProcessed int
-	ProviderBytes  *int64
-	ResponseBytes  int64
-	Metrics        RequestMetrics
+	Document          document.SourceDocument
+	ReturnedModel     string
+	UnitsProcessed    int
+	ProviderBytes     *int64
+	ResponseBytes     int64
+	Metrics           RequestMetrics
+	ConversionReceipt *renderpdf.Receipt
 }
 
 // RequestMetrics describes actual provider HTTP work for one logical request.
@@ -190,9 +192,11 @@ func newClientWithCredential(
 }
 
 // Process verifies an opaque staged document and its capability authorization
-// before sending bytes. Each request attempt holds one immutable in-memory copy
-// up to PolicyValues.MaxDocumentBytes, so applications must bound concurrent
-// calls according to their memory budget.
+// before sending bytes. Direct formats hold one in-memory document copy per
+// attempt, up to PolicyValues.MaxDocumentBytes. DOCX conversion also holds source,
+// normalized, and PDF buffers within the render policy limits; uploads retain
+// the PDF plus one copy per attempt, each up to PolicyValues.MaxDocumentBytes.
+// Applications must bound concurrent calls according to their memory budget.
 func (c *Client) Process(
 	ctx context.Context,
 	prepared *PreparedDocument,
@@ -252,13 +256,52 @@ func (c *Client) processWith(
 ) (Result, error) {
 	requests := 0
 	var providerLatency time.Duration
+	initialSnapshot, err := snapshotForAttempt()
+	if err != nil {
+		return Result{}, newProcessError(err, requests, providerLatency)
+	}
+	converted := initialSnapshot.format.ID == formatIDDOCX && method == UnitBoundLocalExact
+	var originalSnapshot preparedSnapshot
+	var uploadSnapshot preparedSnapshot
+	var retainedPDF []byte
+	var conversionReceipt *renderpdf.Receipt
+	if converted {
+		originalSnapshot = initialSnapshot
+		source, readErr := readDocument(ctx, originalSnapshot)
+		if readErr != nil {
+			return Result{}, newProcessError(readErr, requests, providerLatency)
+		}
+		var receipt renderpdf.Receipt
+		var convertErr error
+		retainedPDF, uploadSnapshot, receipt, convertErr = c.prepareDOCXUpload(ctx, source, originalSnapshot)
+		clear(source)
+		if convertErr != nil {
+			return Result{}, newProcessError(convertErr, requests, providerLatency)
+		}
+		conversionReceipt = &receipt
+		options = probeRequestOptions(
+			uploadSnapshot.format, maxUnits, c.policy.values.ExtractHeader, c.policy.values.ExtractFooter,
+		)
+		defer clear(retainedPDF)
+	}
 	for attempt := 0; attempt <= c.maxRetries; attempt++ {
 		if err := ctx.Err(); err != nil {
 			return Result{}, newProcessError(err, requests, providerLatency)
 		}
-		snapshot, err := snapshotForAttempt()
-		if err != nil {
-			return Result{}, newProcessError(err, requests, providerLatency)
+		var snapshot preparedSnapshot
+		if attempt == 0 {
+			snapshot = initialSnapshot
+		} else {
+			snapshot, err = snapshotForAttempt()
+			if err != nil {
+				return Result{}, newProcessError(err, requests, providerLatency)
+			}
+		}
+		if converted {
+			if snapshot != originalSnapshot {
+				return Result{}, newProcessError(errors.New("mistral DOCX source changed before retry"), requests, providerLatency)
+			}
+			snapshot = uploadSnapshot
 		}
 		prefix, suffix, encodedLength, err := requestEnvelope(
 			c.policy.values.Model, snapshot.mediaType, snapshot.size, options,
@@ -266,8 +309,14 @@ func (c *Client) processWith(
 		if err != nil {
 			return Result{}, newProcessError(err, requests, providerLatency)
 		}
+		attemptReader := readDocument
+		if converted {
+			attemptReader = func(attemptCtx context.Context, attempt preparedSnapshot) ([]byte, error) {
+				return readDOCXUpload(attemptCtx, retainedPDF, attempt)
+			}
+		}
 		result, retryHeader, requested, latency, processErr := c.processOnce(
-			ctx, snapshot, readDocument, beforeEgress, prefix, suffix, encodedLength, method, maxUnits,
+			ctx, snapshot, attemptReader, beforeEgress, prefix, suffix, encodedLength, method, maxUnits,
 			maxResponseBytes,
 		)
 		if requested {
@@ -275,6 +324,11 @@ func (c *Client) processWith(
 			providerLatency += latency
 		}
 		if processErr == nil {
+			if converted {
+				result.Document.Family = originalSnapshot.format.Family
+				result.Document.UnitKind = originalSnapshot.format.UnitKind
+				result.ConversionReceipt = conversionReceipt
+			}
 			result.Metrics = requestMetrics(requests, providerLatency)
 			return result, nil
 		}
@@ -305,6 +359,7 @@ func (c *Client) validatePreparedSnapshot(
 			snapshot.size, c.policy.values.MaxDocumentBytes)
 	}
 	if authorization.method == UnitBoundLocalExact &&
+		(snapshot.format.ID != formatIDDOCX || c.policy.renderPDF == nil) &&
 		(snapshot.localUnits <= 0 || snapshot.localUnits > c.policy.values.MaxUnits) {
 		return fmt.Errorf("mistral OCR local unit count exceeds authorized limit: %w", ErrCapabilityContract)
 	}
@@ -342,7 +397,7 @@ func (c *Client) processOnce(
 		_ = waitForStream()
 		clear(documentBytes)
 	}()
-	request, err := http.NewRequestWithContext(ctx, http.MethodPost, c.policy.values.Endpoint, reader)
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, c.policy.values.Endpoint, reader) //nolint:gosec // policy pins the endpoint and rejects alternate regions.
 	if err != nil {
 		return Result{}, "", false, 0, fmt.Errorf("build Mistral OCR request: %w", err)
 	}
@@ -369,7 +424,7 @@ func (c *Client) processOnce(
 	}
 
 	started := time.Now()
-	response, err := c.http.Do(request)
+	response, err := c.http.Do(request) //nolint:gosec // the HTTP client is isolated and the endpoint is policy-pinned.
 	latency := time.Since(started)
 	if err != nil {
 		if ctxErr := ctx.Err(); ctxErr != nil {

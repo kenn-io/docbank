@@ -29,6 +29,57 @@ func TestPolicyAuthorizesOnlyProbeTestedBounds(t *testing.T) {
 	require.ErrorContains(t, err, "no enforceable unit bound")
 }
 
+func TestDOCXRouteAuthority(t *testing.T) {
+	unconfigured := testPolicy(t, 1<<20, 11)
+	manifest := syntheticManifest(t, unconfigured, true)
+	_, err := unconfigured.Authorize(manifest, "docx")
+	require.ErrorContains(t, err, "no enforceable unit bound")
+
+	renderPolicy := testRenderPDFPolicy(t, testMultipagePDF(1), nil)
+	configured := testPolicyWithRenderPDF(t, renderPolicy, 1<<20, 11)
+	configuredManifest := syntheticManifest(t, configured, true)
+	authorization, err := configured.Authorize(configuredManifest, "docx")
+	require.NoError(t, err)
+	assert.Equal(t, "docx", authorization.Format().ID)
+	assert.Equal(t, UnitBoundLocalExact, authorization.method)
+
+	withoutPDF := syntheticManifest(t, configured, false)
+	_, err = configured.Authorize(withoutPDF, "docx")
+	require.ErrorContains(t, err, "no enforceable unit bound")
+
+	wrongOptions := configuredManifest
+	wrongOptions.Results = append([]CapabilityResult(nil), configuredManifest.Results...)
+	for index := range wrongOptions.Results {
+		if wrongOptions.Results[index].FormatID == formatIDPDF {
+			wrongOptions.Results[index].RequestFingerprint = strings.Repeat("0", 64)
+		}
+	}
+	_, err = configured.Authorize(wrongOptions, "docx")
+	require.ErrorContains(t, err, "different request policy")
+}
+
+func TestDOCXPolicyIdentity(t *testing.T) {
+	base := testPolicy(t, 1<<20, 11)
+	manifest := syntheticManifest(t, base, true)
+	baseFingerprint, err := base.Fingerprint(manifest)
+	require.NoError(t, err)
+
+	renderPolicy := testRenderPDFPolicy(t, testMultipagePDF(1), nil)
+	configured := testPolicyWithRenderPDF(t, renderPolicy, 1<<20, 11)
+	configuredManifest := syntheticManifest(t, configured, true)
+	configuredFingerprint, err := configured.Fingerprint(configuredManifest)
+	require.NoError(t, err)
+	assert.NotEqual(t, baseFingerprint, configuredFingerprint)
+	assert.Empty(t, base.Values().RenderPDFFingerprint)
+	assert.Equal(t, renderPolicy.Fingerprint(), configured.Values().RenderPDFFingerprint)
+
+	authorization, err := configured.Authorize(configuredManifest, "docx")
+	require.NoError(t, err)
+	_, err = baseClientForTest(t, base).Process(t.Context(),
+		prepareTestDOCX(t, configured, loadDOCXFixture(t, "explicit-breaks.docx")), authorization)
+	require.ErrorContains(t, err, "different policy")
+}
+
 func TestPolicyFingerprintExcludesObservationDate(t *testing.T) {
 	policy := testPolicy(t, 1<<20, 500)
 	first := syntheticManifest(t, policy, true)

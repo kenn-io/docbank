@@ -126,6 +126,8 @@ type Result struct {
 	Structure         []UnitStructure
 	Identity          Identity
 	PolicyFingerprint string
+	SourceSHA256      string
+	UploadSHA256      string
 	UnitsProcessed    int
 	ProviderBytes     *int64
 	Metrics           RequestMetrics

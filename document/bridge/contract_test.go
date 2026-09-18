@@ -139,6 +139,30 @@ func TestBridgeContractNormativeDocumentsAreStrictAndVersioned(t *testing.T) {
 		contractObject(t, schema, "$defs", "omission", "properties", "locator")["$ref"])
 }
 
+func TestBridgeContractNormativeDocumentsUploadSHA256(t *testing.T) {
+	var openAPI map[string]any
+	require.NoError(t, yaml.Unmarshal(openAPIContract, &openAPI))
+	receipt := contractObject(t, openAPI, "components", "schemas", "RenditionReceipt")
+	properties := contractObject(t, receipt, "properties")
+	uploadSHA256, ok := properties["upload_sha256"].(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, "#/components/schemas/SHA256", uploadSHA256["$ref"])
+	required, ok := receipt["required"].([]any)
+	require.True(t, ok)
+	assert.NotContains(t, required, "upload_sha256")
+
+	value := document.RenditionReceipt{UploadSHA256: strings.Repeat("a", 64)}
+	encoded, err := json.Marshal(value)
+	require.NoError(t, err)
+	assert.Contains(t, string(encoded), `"upload_sha256":"`+strings.Repeat("a", 64)+`"`)
+	var decoded document.RenditionReceipt
+	require.NoError(t, json.Unmarshal(encoded, &decoded))
+	assert.Equal(t, value.UploadSHA256, decoded.UploadSHA256)
+	encoded, err = json.Marshal(document.RenditionReceipt{})
+	require.NoError(t, err)
+	assert.NotContains(t, string(encoded), "upload_sha256")
+}
+
 func TestBridgeContractNormativeDocumentsSourceEvidenceBoundsMatchValidator(t *testing.T) {
 	var schema map[string]any
 	require.NoError(t, json.Unmarshal(sourceEvidenceSchema, &schema))
