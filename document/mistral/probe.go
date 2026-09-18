@@ -163,6 +163,9 @@ func observeUnitBound(
 		}
 		result.UnitBoundMethod = UnitBoundLocalExact
 		result.LocalUnits = snapshot.localUnits
+	case UnitBoundProviderResponse:
+		// The successful probe proves acceptance, not a pre-upload page bound.
+		result.UnitBoundMethod = UnitBoundProviderResponse
 	}
 }
 

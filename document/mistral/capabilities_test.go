@@ -157,6 +157,10 @@ func TestCapabilityManifestRejectsInvalidAuthorityEvidence(t *testing.T) {
 			manifest.Results[1].UnitBoundMethod = UnitBoundLocalExact
 			manifest.Results[1].LocalUnits = manifest.Results[1].UnitsProcessed
 		}, want: "local-exact bound evidence"},
+		{name: "provider response without claim", mutate: func(manifest *CapabilityManifest) {
+			manifest.Results[1].UnitBoundMethod = UnitBoundProviderResponse
+			manifest.Results[1].LocalUnits = manifest.Results[1].UnitsProcessed
+		}, want: "provider-response evidence"},
 		{name: "provider bound without claim", mutate: func(manifest *CapabilityManifest) {
 			manifest.Results[1].UnitBoundMethod = UnitBoundProviderRequest
 			manifest.Results[1].FixtureUnits = 2
@@ -184,6 +188,69 @@ func TestCapabilityManifestRejectsInvalidAuthorityEvidence(t *testing.T) {
 			require.ErrorContains(t, manifest.ValidateComplete(), test.want)
 		})
 	}
+}
+
+func TestProviderResponseManifestValidation(t *testing.T) {
+	policy := testPolicy(t, 1<<20, 10)
+	for _, test := range []struct {
+		name   string
+		mutate func(*CapabilityResult)
+		want   string
+	}{
+		{name: "zero provider units", mutate: func(value *CapabilityResult) {
+			value.UnitCount = 0
+		}, want: "passing result \"json\" is incomplete"},
+		{name: "provider fields differ", mutate: func(value *CapabilityResult) {
+			value.UnitsProcessed++
+		}, want: "passing result \"json\" is incomplete"},
+		{name: "provider units exceed limit", mutate: func(value *CapabilityResult) {
+			value.UnitCount = policy.values.MaxUnits + 1
+			value.UnitsProcessed = value.UnitCount
+		}, want: "invalid provider-response evidence"},
+		{name: "unexpected local units", mutate: func(value *CapabilityResult) {
+			value.LocalUnits = 1
+		}, want: "invalid provider-response evidence"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			manifest := textAuthorityManifest(t, policy, "json")
+			for index := range manifest.Results {
+				if manifest.Results[index].FormatID == "json" {
+					test.mutate(&manifest.Results[index])
+				}
+			}
+			require.ErrorContains(t, manifest.ValidateComplete(), test.want)
+		})
+	}
+}
+
+func TestTextManifestRequiresProviderResponseEvidence(t *testing.T) {
+	policy := testPolicy(t, 1<<20, 10)
+	manifest := syntheticManifest(t, policy, true)
+	_, err := policy.Authorize(manifest, "json")
+	require.ErrorContains(t, err, "no enforceable unit bound")
+
+	for index := range manifest.Results {
+		if manifest.Results[index].FormatID == "json" {
+			manifest.Results[index].ReasonCode = ""
+			manifest.Results[index].UnitBoundMethod = UnitBoundProviderResponse
+		}
+	}
+	require.NoError(t, manifest.ValidateComplete())
+	_, err = policy.Authorize(manifest, "json")
+	require.NoError(t, err)
+
+	stale := manifest
+	stale.Results = append([]CapabilityResult(nil), manifest.Results...)
+	for index := range stale.Results {
+		if stale.Results[index].FormatID == "json" {
+			stale.Results[index].UnitBoundMethod = UnitBoundNone
+			stale.Results[index].ReasonCode = reasonBoundUnitsMismatch
+		}
+	}
+	require.NoError(t, stale.ValidateComplete())
+	_, err = policy.Authorize(stale, "json")
+	require.ErrorContains(t, err, "no enforceable unit bound")
+	t.Logf("stale_manifest_error=%v", err)
 }
 
 func TestPolicyRejectsIdentityBeyondManifestAuthority(t *testing.T) {

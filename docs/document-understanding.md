@@ -51,7 +51,7 @@ provider descriptor and profile, not to a filename extension.
 | [`document/unstructured`](https://github.com/kenn-io/docbank/tree/main/document/unstructured) | Operator-hosted | Pinned broad-format compatibility profile for the standard rendition bridge |
 | [`document/tika`](https://github.com/kenn-io/docbank/tree/main/document/tika) | Operator-hosted | Pinned Apache Tika compatibility profile for the standard rendition bridge |
 | [`document/datalab`](https://github.com/kenn-io/docbank/tree/main/document/datalab) | Hosted | Uploaded files through Datalab Convert |
-| [`document/mistral`](https://github.com/kenn-io/docbank/tree/main/document/mistral) | Hosted | Capability-probed PDF and conditional PPTX OCR, including the rendition-provider adapter |
+| [`document/mistral`](https://github.com/kenn-io/docbank/tree/main/document/mistral) | Hosted | Capability-probed PDF, PPTX, and fourteen text-family OCR formats, including the rendition-provider adapter |
 | [`document/llamaparse`](https://github.com/kenn-io/docbank/tree/main/document/llamaparse) | Hosted | Resumable PDF parsing through the fixed LlamaParse v1 API |
 | [`document/reducto`](https://github.com/kenn-io/docbank/tree/main/document/reducto) | Hosted | Resumable PDF and PPTX parsing through the fixed Reducto API |
 | [`document/bridge`](https://github.com/kenn-io/docbank/tree/main/document/bridge) | Declared service | `docbank-rendition/v1`: submit, poll, cancel, and validate canonical source evidence |
@@ -187,16 +187,32 @@ The operator prepares that evidence in this order:
 3. Create `NewClient(API key)` and call `RunCapabilityProbe`.
 4. Review and retain the resulting `CapabilityManifest`.
 
-Fixture generation creates 21 formats deterministically. Five legacy formats
-require operator-supplied synthetic seeds named `doc`, `ppt`, `xls`, `numbers`,
-and `msg`. Fixture and staging directories must be private. The initial
-capability contract authorizes PDF through a provider-request bound. PPTX is
-eligible only when the authenticated probe records a local slide count and the
-provider reports the same number of processed units. Other formats may extract
-during a probe but remain unauthorized for production uploads.
+Fixture generation creates the candidate formats deterministically. Five legacy
+formats require operator-supplied synthetic seeds named `doc`, `ppt`, `xls`,
+`numbers`, and `msg`. Fixture and staging directories must be private. The
+authenticated probe authorizes PDF through a provider-request bound. It can
+authorize PPTX when its local slide count matches the provider's processed
+units. It records
+primary-fixture evidence for TXT, Markdown, CSV, JSON, JSONL, YAML, Go,
+Python, JavaScript, RST, LaTeX, XML, EML, and MSG after provider acceptance.
 
-If manifest validation reports that PPTX "does not explain its unverified
-bound", rerun the authenticated capability probe to replace the manifest.
+Text formats use `provider_response` enforcement. Docbank does not count lines,
+records, or messages as pages. It checks that Mistral returns at least one page,
+that the number of returned pages equals `pages_processed`, and that both stay
+within `MaxUnits`. A CSV with more than 5,000 rows can therefore be submitted
+when it fits the input byte limits.
+
+Before upload, `MaxDocumentBytes` limits every file. Text detection also rejects
+text inputs above 50 MiB. These byte limits do not establish a provider page or
+spending limit. Mistral may process and charge for a document before Docbank
+rejects an over-limit response. Applications that require a pre-upload page or
+spending bound must not authorize text formats through this route.
+
+Capability manifests use schema v4. Existing v3 manifests are rejected for all
+formats, including PDF and PPTX. Rerun the authenticated capability probe and
+replace the manifest before processing documents. Also rerun the probe if
+validation reports that a registered format "does not explain its unverified
+bound". Review application consent against the resulting policy fingerprint.
 
 For each production document:
 
@@ -216,8 +232,9 @@ every success or failure path.
 
 The rendition adapter counts source units locally before submission. For PDFs it
 compares the returned page count with that inspected count. For PPTX it counts
-the listed PresentationML slides, rejects invalid slide references or over-limit decks before
-upload, and compares the provider's processed count with that local count. See
+the listed PresentationML slides, rejects invalid slide references or
+over-limit decks before upload, and compares the provider's processed count with
+that local count. Text formats use the response checks described above. See
 [Mistral rendition processing](https://github.com/kenn-io/docbank/blob/main/document/mistral/rendition.go)
 for the exact source and result checks.
 

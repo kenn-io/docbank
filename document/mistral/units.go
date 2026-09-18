@@ -15,8 +15,7 @@ import (
 
 type localUnitCounter func(io.ReaderAt, int64) (int, error)
 
-// localUnitCounters is the Mistral-owned authority registry. Only formats
-// with provider-authentic unit evidence may be added here.
+// localUnitCounters is the Mistral-owned source-unit counter registry.
 var localUnitCounters = map[string]localUnitCounter{
 	"pptx": countPPTXSlides,
 }

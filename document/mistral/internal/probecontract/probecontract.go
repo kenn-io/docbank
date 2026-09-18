@@ -11,6 +11,7 @@ import (
 const (
 	FixtureVersion            = 2
 	RequestFingerprintVersion = 2
+	ReasonBoundRequestFailed  = "bound_request_failed"
 	ReasonBoundUnitsMismatch  = "bound_units_mismatch"
 )
 

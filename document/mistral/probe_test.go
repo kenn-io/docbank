@@ -46,6 +46,14 @@ func TestRunCapabilityProbeProducesCompleteSanitizedAuthority(t *testing.T) {
 	assert.Equal(t, UnitBoundLocalExact, pptx.UnitBoundMethod)
 	assert.Equal(t, 1, pptx.LocalUnits)
 	t.Logf("pptx status=%q unit_bound_method=%q local_units=%d", pptx.Status, pptx.UnitBoundMethod, pptx.LocalUnits)
+	for _, formatID := range textFormatIDs() {
+		result := findManifestResult(t, manifest, formatID)
+		assert.Equal(t, ProbeStatusPassed, result.Status)
+		assert.Equal(t, UnitBoundProviderResponse, result.UnitBoundMethod)
+		assert.Zero(t, result.LocalUnits)
+		_, err = policy.Authorize(manifest, formatID)
+		require.NoError(t, err)
+	}
 
 	authorization, err := policy.Authorize(manifest, "pdf")
 	require.NoError(t, err)

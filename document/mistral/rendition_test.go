@@ -283,6 +283,39 @@ func TestRenditionClientCountsPPTXSlidesForAuthorizedLocalExact(t *testing.T) {
 	t.Logf("provider_mismatch local_units=3 provider_units=2 requests=%d error=%v", requests.Load(), err)
 }
 
+func TestRenditionClientAcceptsTextWithMoreLinesThanPageLimit(t *testing.T) {
+	policy := testPolicy(t, 1<<20, MaxUnits)
+	manifest := textAuthorityManifest(t, policy, "txt")
+	descriptor := renditionDescriptor(t, policy, manifest, "txt")
+	source := []byte(strings.Repeat("line\n", MaxUnits+1))
+	fixture := renditionFixture(t, descriptor, source)
+	candidate, found := CandidateFormatByID("txt")
+	require.True(t, found)
+	fixture.metadata.Filename = "document.txt"
+	fixture.metadata.MediaFamily = candidate.Family
+	fixture.metadata.MediaType = candidate.MediaType
+	fixture.authorization.MediaFamily = candidate.Family
+	fixture.authorization.MediaType = candidate.MediaType
+	var requests atomic.Int64
+	client := newRenditionTestClient(t, policy, manifest, descriptor,
+		renditionSecrets{"mistral-ocr": "synthetic-key"}, roundTripFunc(func(request *http.Request) (*http.Response, error) {
+			requests.Add(1)
+			_, err := io.Copy(io.Discard, request.Body)
+			if err != nil {
+				return nil, err
+			}
+			return &http.Response{
+				StatusCode: http.StatusOK, Header: http.Header{"Content-Type": []string{"application/json"}},
+				Body: io.NopCloser(strings.NewReader(`{"model":"mistral-ocr-4-0","pages":[{"index":0,"markdown":"Synthetic"}],"usage_info":{"pages_processed":1}}`)), Request: request,
+			}, nil
+		}))
+
+	result, err := client.Render(t.Context(), fixture.upload(), fixture.authorization)
+	require.NoError(t, err)
+	assert.Equal(t, int64(1), result.Receipt.Usage.Units)
+	assert.Equal(t, int64(1), requests.Load())
+}
+
 func TestRenditionClientClassifiesHTTPAndModelFailures(t *testing.T) {
 	for _, testCase := range []struct {
 		name   string

@@ -15,19 +15,20 @@ import (
 )
 
 const (
-	CapabilitySchemaVersion = 3
+	CapabilitySchemaVersion = 4
 	probeFixtureContract    = probecontract.FixtureVersion
 	maxManifestBytes        = int64(1 << 20)
 )
 
-// UnitBoundMethod identifies how a format's per-document unit limit is
-// enforced before upload.
+// UnitBoundMethod identifies when and how a format's per-document unit limit
+// is enforced. Provider-response enforcement does not bound processing before upload.
 type UnitBoundMethod string
 
 const (
-	UnitBoundNone            UnitBoundMethod = "none"
-	UnitBoundProviderRequest UnitBoundMethod = "provider_request"
-	UnitBoundLocalExact      UnitBoundMethod = "local_exact"
+	UnitBoundNone             UnitBoundMethod = "none"
+	UnitBoundProviderRequest  UnitBoundMethod = "provider_request"
+	UnitBoundLocalExact       UnitBoundMethod = "local_exact"
+	UnitBoundProviderResponse UnitBoundMethod = "provider_response"
 )
 
 // ProbeStatus describes the result of one authenticated format probe.
@@ -41,7 +42,7 @@ const (
 
 const (
 	reasonBoundFixtureOutOfRange = "bound_fixture_out_of_range"
-	reasonBoundRequestFailed     = "bound_request_failed"
+	reasonBoundRequestFailed     = probecontract.ReasonBoundRequestFailed
 	reasonBoundUnitsMismatch     = probecontract.ReasonBoundUnitsMismatch
 )
 
@@ -61,8 +62,22 @@ var failureReasonCodes = []string{
 }
 
 var expectedUnitBounds = map[string]UnitBoundMethod{
-	formatIDPDF: UnitBoundProviderRequest,
-	"pptx":      UnitBoundLocalExact,
+	formatIDPDF:  UnitBoundProviderRequest,
+	"pptx":       UnitBoundLocalExact,
+	"txt":        UnitBoundProviderResponse,
+	"markdown":   UnitBoundProviderResponse,
+	"csv":        UnitBoundProviderResponse,
+	"json":       UnitBoundProviderResponse,
+	"jsonl":      UnitBoundProviderResponse,
+	"yaml":       UnitBoundProviderResponse,
+	"go":         UnitBoundProviderResponse,
+	"python":     UnitBoundProviderResponse,
+	"javascript": UnitBoundProviderResponse,
+	"rst":        UnitBoundProviderResponse,
+	"latex":      UnitBoundProviderResponse,
+	"xml":        UnitBoundProviderResponse,
+	"eml":        UnitBoundProviderResponse,
+	"msg":        UnitBoundProviderResponse,
 }
 
 func expectedUnitBound(formatID string) UnitBoundMethod {
@@ -178,9 +193,17 @@ func validateCapabilityResult(manifest CapabilityManifest, candidate CandidateFo
 		}
 	case UnitBoundLocalExact:
 		if expectedMethod != UnitBoundLocalExact || result.ReasonCode != "" || result.LocalUnits <= 0 ||
-			result.LocalUnits != result.UnitsProcessed || result.FixtureUnits != 0 ||
+			result.LocalUnits > manifest.MaxUnits || result.LocalUnits != result.UnitsProcessed ||
+			result.FixtureUnits != 0 ||
 			result.BoundRequestedUnits != 0 || result.BoundUnitsProcessed != 0 {
 			return fmt.Errorf("mistral capability manifest result %q has invalid local-exact bound evidence", candidate.ID)
+		}
+	case UnitBoundProviderResponse:
+		if expectedMethod != UnitBoundProviderResponse || result.ReasonCode != "" || result.LocalUnits != 0 ||
+			result.UnitCount > manifest.MaxUnits || result.UnitsProcessed > manifest.MaxUnits ||
+			result.FixtureUnits != 0 || result.BoundRequestedUnits != 0 ||
+			result.BoundUnitsProcessed != 0 {
+			return fmt.Errorf("mistral capability manifest result %q has invalid provider-response evidence", candidate.ID)
 		}
 	case UnitBoundNone:
 		if result.FixtureUnits != 0 || result.BoundRequestedUnits != 0 ||

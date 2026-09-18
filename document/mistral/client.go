@@ -46,8 +46,7 @@ var (
 	ErrResponseTooLarge = errors.New("mistral OCR response too large")
 	// ErrTransientResponse marks an exhausted retryable provider or transport failure.
 	ErrTransientResponse = errors.New("mistral OCR transient response")
-	// ErrCapabilityContract marks provider unit behavior that contradicts the
-	// evidence used to authorize a format.
+	// ErrCapabilityContract marks provider behavior outside the authorized bounds.
 	ErrCapabilityContract = errors.New("mistral OCR capability contract changed")
 )
 
@@ -609,7 +608,7 @@ func decodeWirePages(
 	pages := make([]wirePage, 0, min(maxUnits, 16))
 	for decoder.PeekKind() != jsontext.KindEndArray {
 		if len(pages) == maxUnits {
-			if method == UnitBoundProviderRequest || method == UnitBoundLocalExact {
+			if method != UnitBoundNone {
 				return nil, fmt.Errorf("provider returned more than %d authorized units: %w",
 					maxUnits, ErrCapabilityContract)
 			}
@@ -732,7 +731,7 @@ func validateWireResult(
 		return errors.New("mistral OCR response returned no pages")
 	}
 	if len(result.Pages) > maxUnits {
-		if method == UnitBoundProviderRequest || method == UnitBoundLocalExact {
+		if method != UnitBoundNone {
 			return fmt.Errorf("provider returned %d units above authorized limit %d: %w",
 				len(result.Pages), maxUnits, ErrCapabilityContract)
 		}
@@ -755,8 +754,7 @@ func validateWireResult(
 		(result.UsageInfo.DocSizeBytes != nil && *result.UsageInfo.DocSizeBytes < 0) {
 		return errors.New("mistral OCR response has invalid usage")
 	}
-	if result.UsageInfo.PagesProcessed > maxUnits &&
-		(method == UnitBoundProviderRequest || method == UnitBoundLocalExact) {
+	if result.UsageInfo.PagesProcessed > maxUnits && method != UnitBoundNone {
 		return fmt.Errorf("provider processed %d units above authorized limit %d: %w",
 			result.UsageInfo.PagesProcessed, maxUnits, ErrCapabilityContract)
 	}

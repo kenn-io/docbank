@@ -65,6 +65,9 @@ func SyntheticManifest(policy mistral.Policy, pdfBound bool) (mistral.Capability
 			}
 		case "pptx":
 			result.ReasonCode = probecontract.ReasonBoundUnitsMismatch
+		case "txt", "markdown", "csv", "json", "jsonl", "yaml", "go",
+			"python", "javascript", "rst", "latex", "xml", "eml", "msg":
+			result.ReasonCode = probecontract.ReasonBoundRequestFailed
 		}
 		manifest.Results = append(manifest.Results, result)
 	}

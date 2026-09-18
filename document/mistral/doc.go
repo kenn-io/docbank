@@ -2,8 +2,10 @@
 // Mistral OCR API.
 //
 // Uploads fail closed unless an operator has run the authenticated capability
-// probe and supplied its validated manifest. PDF uses a provider-request bound;
-// PPTX also needs a local slide count that matches the provider's processed
-// units. Other formats remain unavailable until they have a probe-tested unit
-// bound.
+// probe and supplied its validated manifest. PDF uses a provider-request bound
+// and PPTX uses a local slide count that must match the provider. Text formats
+// use provider-response enforcement: returned pages must be positive, agree
+// with pages_processed, and fit MaxUnits. Input byte limits apply before upload;
+// text lines and records are not counted. A rejected response may still incur
+// provider charges, so this is not a pre-upload page or spending bound.
 package mistral

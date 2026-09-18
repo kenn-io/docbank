@@ -20,6 +20,13 @@ lists the checks contributors must preserve.
 | `cmd/docbank` | Cobra ergonomics and human output | store business logic |
 | root package `docbank` | lifecycle and bounded public operations for one exclusively owned embedded vault | standalone CLI paths or a second storage implementation |
 
+The Mistral text lane uses `UnitBoundProviderResponse`. The authenticated probe
+records provider acceptance and page usage for each format; text results have
+no `LocalUnits`. This method is part of the policy fingerprint and authorizes
+response checks, not a pre-upload page bound. `UnitBoundLocalExact` remains the
+PPTX contract. See [Run Mistral OCR safely](../document-understanding.md#run-mistral-ocr-safely)
+for the supported text formats, byte limits, response checks, and manifest upgrade.
+
 ## Common change paths
 
 ### Add a data operation
