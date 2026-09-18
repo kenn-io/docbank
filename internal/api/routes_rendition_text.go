@@ -145,6 +145,11 @@ func resolveRenditionText(ctx context.Context, d Deps, request renditionTextRequ
 		receipt.State = profile.Configuration
 		return receipt, nil
 	}
+	if request.Observed != nil && binding.AttachmentID == "" && binding.BuildID == "" && binding.GenerationID == "" {
+		// The absence of a rendition is frozen too; do not adopt a later head.
+		receipt.State = absentRenditionState(coverage)
+		return receipt, nil
+	}
 	view, err := d.Store.ResolveRenditionText(ctx, binding)
 	if errors.Is(err, store.ErrNotFound) || errors.Is(err, store.ErrRenditionTextUnavailable) ||
 		errors.Is(err, store.ErrRenditionTextFailed) {

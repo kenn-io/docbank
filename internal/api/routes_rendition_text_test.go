@@ -54,13 +54,8 @@ type renditionTextFixture struct {
 	markdown   []byte
 }
 
-func publishRenditionTextFixture(t *testing.T, s *testStore, cfg config.Config) renditionTextFixture {
+func publishRenditionTextFixture(t *testing.T, s *testStore, cfg config.Config, node store.Node) renditionTextFixture {
 	t.Helper()
-	source := []byte("%PDF-1.4 synthetic source")
-	sourceHash, sourceSize, err := s.Blobs.Write(bytes.NewReader(source))
-	require.NoError(t, err)
-	node, err := s.CreateFile(t.Context(), s.RootID(), "synthetic.pdf", sourceHash, sourceSize, "application/pdf")
-	require.NoError(t, err)
 	resolved, err := cfg.ProcessingProfile("archive")
 	require.NoError(t, err)
 	canonicalProfile, fingerprints, err := document.CanonicalProfile(resolved.Document)
@@ -107,7 +102,7 @@ func publishRenditionTextFixture(t *testing.T, s *testStore, cfg config.Config) 
 	attachmentID := testHash("rendition-attachment")
 	artifactID := "artifact_" + testHash("markdown-artifact")
 	build := store.RenditionBuildRecord{
-		ID: buildID, VaultID: s.VaultID(), SourceSHA256: sourceHash,
+		ID: buildID, VaultID: s.VaultID(), SourceSHA256: node.BlobHash,
 		RenditionRequestFingerprint:       profile.RenditionRequestFingerprint,
 		EvidenceLexicalFingerprint:        profile.EvidenceLexicalFingerprint,
 		CapturedArtifactPolicyFingerprint: testHash(string(policy)), CapturedArtifactPolicy: policy,
@@ -149,7 +144,11 @@ func publishRenditionTextFixture(t *testing.T, s *testStore, cfg config.Config) 
 func TestRenditionTextHTTPResolvesAndStreamsOneVerifiedExactArtifact(t *testing.T) {
 	var cfg config.Config
 	ts, s := newTestServer(t, func(d *api.Deps) { renditionTextConfig(d); cfg = d.Cfg })
-	fixture := publishRenditionTextFixture(t, s, cfg)
+	sourceHash, sourceSize, err := s.Blobs.Write(strings.NewReader("%PDF-1.4 synthetic source"))
+	require.NoError(t, err)
+	node, err := s.CreateFile(t.Context(), s.RootID(), "synthetic.pdf", sourceHash, sourceSize, "application/pdf")
+	require.NoError(t, err)
+	fixture := publishRenditionTextFixture(t, s, cfg, node)
 	body := map[string]any{
 		"node_id": fixture.node.ID, "revision": fixture.node.Revision,
 		"version_id": fixture.node.CurrentVersionID, "blob_hash": fixture.node.BlobHash,
@@ -235,6 +234,51 @@ func TestRenditionTextHTTPKeepsUnavailableStatesDistinct(t *testing.T) {
 		require.Equal(t, http.StatusOK, resp.StatusCode, body)
 		require.Contains(t, body, `"state":"`+state+`"`)
 	}
+}
+
+func TestRenditionTextHTTPKeepsSnapshotWithoutRenditionFrozenAfterPublication(t *testing.T) {
+	var cfg config.Config
+	ts, s := newTestServer(t, func(d *api.Deps) { renditionTextConfig(d); cfg = d.Cfg })
+	hash, size, err := s.Blobs.Write(strings.NewReader("%PDF-1.4 synthetic source"))
+	require.NoError(t, err)
+	node, err := s.CreateFile(t.Context(), s.RootID(), "synthetic.pdf", hash, size, "application/pdf")
+	require.NoError(t, err)
+	resp, body := do(t, ts, http.MethodPost, "/api/v1/workspace/queries", nil,
+		map[string]any{"query": map[string]any{}, "profile": "archive"})
+	require.Equal(t, http.StatusOK, resp.StatusCode, body)
+	var snapshot api.WorkspaceQueryResponse
+	require.NoError(t, json.Unmarshal([]byte(body), &snapshot))
+	require.Len(t, snapshot.Rows, 1)
+	row := snapshot.Rows[0]
+	require.Equal(t, "unprocessed", row.CoverageState)
+	require.Empty(t, row.CoverageAttachmentID)
+	require.Empty(t, row.CoverageBuildID)
+	require.Empty(t, snapshot.Generation.GenerationID)
+	request := map[string]any{"node_id": row.NodeID, "revision": row.Revision,
+		"version_id": row.ContentVersionID, "blob_hash": row.BlobHash, "size": row.Size,
+		"profile": "archive", "observed": map[string]any{
+			"configuration":       snapshot.Coverage.Configuration,
+			"profile_fingerprint": snapshot.Coverage.ProfileFingerprint, "coverage_state": row.CoverageState,
+		}}
+
+	fixture := publishRenditionTextFixture(t, s, cfg, node)
+	resp, body = do(t, ts, http.MethodPost, "/api/v1/renditions/text", nil, request)
+	require.Equal(t, http.StatusOK, resp.StatusCode, body)
+	var frozen map[string]any
+	require.NoError(t, json.Unmarshal([]byte(body), &frozen))
+	require.Equal(t, "unprocessed", frozen["state"])
+	require.Empty(t, frozen["attachment_id"])
+	require.Empty(t, frozen["build_id"])
+	require.NotContains(t, frozen, "artifact")
+
+	delete(request, "observed")
+	resp, body = do(t, ts, http.MethodPost, "/api/v1/renditions/text", nil, request)
+	require.Equal(t, http.StatusOK, resp.StatusCode, body)
+	var live map[string]any
+	require.NoError(t, json.Unmarshal([]byte(body), &live))
+	require.Equal(t, "ready", live["state"])
+	require.Equal(t, fixture.attachment, live["attachment_id"])
+	require.Equal(t, fixture.build, live["build_id"])
 }
 
 func mustDecodeTestHash(t *testing.T, value string) []byte {
