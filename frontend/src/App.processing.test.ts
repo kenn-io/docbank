@@ -38,7 +38,11 @@ it("opens processing for the selected exact document version", async () => {
   expect(screen.getByText(`Exact version ${versionID}`)).toBeTruthy();
   expect(await screen.findByText("Consent active")).toBeTruthy();
   await fireEvent.click(screen.getByRole("button", { name: "Close document processing" }));
-  await fireEvent.click(screen.getByRole("button", { name: "Find documents similar to report.pdf" }));
+  const similarButton = screen.getByRole("button", { name: "Find documents similar to report.pdf" });
+  const enter = new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true });
+  similarButton.dispatchEvent(enter);
+  expect(enter.defaultPrevented).toBe(false);
+  await fireEvent.click(similarButton);
   expect(await screen.findByText("Search the 1 loaded file versions using stored embeddings.")).toBeTruthy();
   expect(screen.getByRole("region", { name: "Similar documents" })).toBeTruthy();
 });

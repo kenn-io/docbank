@@ -2313,7 +2313,7 @@
                   {#if activeQuery}
                     <td><Chip size="xs" tone={row.match === "content" ? "info" : "neutral"}>{row.match}</Chip></td>
                   {/if}
-                  <td>
+                  <td onkeydown={(event) => event.stopPropagation()}>
                     {#if row.node.kind === "file" && row.node.current_version_id}
                       <IconButton size="sm" ariaLabel={`Find documents similar to ${row.node.name}`} onclick={(event) => {
                         event.stopPropagation();
