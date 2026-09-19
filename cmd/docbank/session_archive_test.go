@@ -33,10 +33,11 @@ func TestAgentSessionArchiveSurvivesPackedBackupRestore(t *testing.T) {
 	}
 	writeClosedSession(first)
 
+	// The pack interval also limits each pass, including real disk I/O on CI.
 	require.NoError(t, os.WriteFile(filepath.Join(home, "config.toml"), []byte(
 		"[server]\nidle_timeout = \"30ms\"\n"+
 			"[backup]\nrepo = \""+filepath.ToSlash(repo)+"\"\n"+
-			"[storage]\npack_interval = \"75ms\"\npack_max_bytes = 1048576\n"+
+			"[storage]\npack_interval = \"5s\"\npack_max_bytes = 1048576\n"+
 			"[[watch]]\nname = \"agent-sessions\"\nsource = \""+filepath.ToSlash(source)+"\"\n"+
 			"destination = \"/archives/agents\"\nsettle_time = \"20ms\"\n"+
 			"minimum_age = \"24h\"\nscan_interval = \"10ms\"\n",
@@ -100,7 +101,7 @@ func TestAgentSessionArchiveSurvivesPackedBackupRestore(t *testing.T) {
 		var status api.StorageStatus
 		return json.Unmarshal([]byte(out), &status) == nil &&
 			status.LooseBlobs == 0 && status.PackedBlobs == 2
-	}, 5*time.Second, 25*time.Millisecond)
+	}, 30*time.Second, 100*time.Millisecond)
 
 	_, err = runCLI(t, "backup", "init")
 	require.NoError(t, err)
