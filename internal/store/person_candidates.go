@@ -68,7 +68,7 @@ func normalizePersonCandidate(candidate PersonMatchCandidate) (PersonMatchCandid
 	if candidate.CandidateID != "" && validateUUIDv4(candidate.CandidateID) != nil {
 		return invalid("candidate id")
 	}
-	if candidate.ActorKey == "" || len(candidate.ActorKey) > document.MaxActorKeyBytes || !document.ValidPersonIdentityText(candidate.ActorKey) ||
+	if document.ValidateActorKeyV1(candidate.ActorKey) != nil || !document.ValidPersonIdentityText(candidate.ActorKey) ||
 		!validPersonName(candidate.DisplayName) ||
 		!slices.Contains([]string{"name_only", "identifier_conflict", "external_uid_conflict", "transfer_unresolved"}, candidate.Reason) ||
 		(candidate.State != "" && candidate.State != "open") {

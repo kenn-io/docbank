@@ -1862,6 +1862,15 @@ CREATE TABLE IF NOT EXISTS document_people_state (
     updated_at TEXT NOT NULL
 );
 
+-- Invalidate before version or node deletion cascades remove assertions.
+CREATE TRIGGER IF NOT EXISTS content_versions_invalidate_person_bindings
+BEFORE DELETE ON content_versions
+WHEN EXISTS (SELECT 1 FROM person_document_assertions WHERE content_version_id=OLD.version_id)
+BEGIN
+    UPDATE document_people_state SET binding_epoch=binding_epoch+1,
+        updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE singleton=1;
+END;
+
 CREATE TABLE IF NOT EXISTS person_splits (
     operation_id TEXT PRIMARY KEY NOT NULL,
     request_sha256 TEXT NOT NULL,

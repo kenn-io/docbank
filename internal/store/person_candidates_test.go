@@ -467,3 +467,72 @@ func TestCandidateRejectionDoesNotNeedEvidenceDecode(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "rejected", decided.State)
 }
+
+func TestCandidateRejectsInvalidActorKeys(t *testing.T) {
+	s := newTestStore(t)
+	_, version := seedPeopleVersion(t, s)
+	for _, key := range []string{"missing-kind", "unknown:person", "name_alias:Not Folded", "external_uid:not-a-digest"} {
+		t.Run(key, func(t *testing.T) {
+			candidate := candidateForTest(t, key, "Example Person", "", []PersonCandidateOccurrence{{
+				ContentVersionID: version, Role: "author", EvidenceKind: "source_metadata", EvidenceID: "claim",
+			}})
+			err := s.withLogicalTx(t.Context(), func(tx *sql.Tx) error {
+				_, _, err := s.OpenPersonCandidate(t.Context(), tx, candidate)
+				return err
+			})
+			require.ErrorIs(t, err, ErrInvalidPerson)
+		})
+	}
+}
+
+func TestPersonAssertionDeletionAdvancesBindingEpoch(t *testing.T) {
+	for _, operation := range []string{"prune", "trash"} {
+		for _, asserted := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/asserted=%t", operation, asserted), func(t *testing.T) {
+				s := newTestStore(t)
+				ctx := t.Context()
+				folder, err := s.Mkdir(ctx, s.RootID(), "records")
+				require.NoError(t, err)
+				original, err := s.CreateFile(ctx, folder.ID, "history.txt", fakeHash("a1"), 10, "text/plain")
+				require.NoError(t, err)
+				current, _, err := s.ReplaceContent(ctx, original.ID, original.Revision, fakeHash("b2"), 20, "text/plain")
+				require.NoError(t, err)
+				if asserted {
+					person, err := s.CreatePerson(ctx, "Example Person", "operator")
+					require.NoError(t, err)
+					_, err = s.AssertDocumentPerson(ctx, PersonDocumentAssertion{
+						ContentVersionID: original.CurrentVersionID, PersonID: person.PersonID, Role: "author", Action: "assert", Revision: 1,
+					})
+					require.NoError(t, err)
+				}
+				if operation == "trash" {
+					_, _, err := s.Trash(ctx, folder.ID, -1)
+					require.NoError(t, err)
+				}
+				remove := func(run bool) error {
+					if operation == "prune" {
+						_, err := s.PruneContentVersions(ctx, current.ID, current.Revision, VersionPruneSelector{AllPrior: true}, run)
+						return err
+					}
+					_, err := s.TrashEmpty(ctx, 0, run)
+					return err
+				}
+				var before, preview, after int64
+				require.NoError(t, s.db.QueryRow(`SELECT binding_epoch FROM document_people_state WHERE singleton=1`).Scan(&before))
+				require.NoError(t, remove(false))
+				require.NoError(t, s.db.QueryRow(`SELECT binding_epoch FROM document_people_state WHERE singleton=1`).Scan(&preview))
+				require.Equal(t, before, preview)
+				require.NoError(t, remove(true))
+				assertions, err := s.DocumentPersonAssertions(ctx, original.CurrentVersionID)
+				require.NoError(t, err)
+				require.Empty(t, assertions)
+				require.NoError(t, s.db.QueryRow(`SELECT binding_epoch FROM document_people_state WHERE singleton=1`).Scan(&after))
+				if asserted {
+					require.Greater(t, after, before)
+				} else {
+					require.Equal(t, before, after)
+				}
+			})
+		}
+	}
+}
