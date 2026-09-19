@@ -25,11 +25,14 @@ func New(profile typesafe.Profile, score ScoreFunc) *Fake {
 	return &Fake{profile: profile, score: score}
 }
 
-func (fake *Fake) Rerank(_ context.Context, request typesafe.RerankRequest) (typesafe.Result, error) {
+func (fake *Fake) Rerank(ctx context.Context, request typesafe.RerankRequest) (typesafe.Result, error) {
 	if fake == nil || fake.score == nil {
 		return typesafe.Result{}, errors.New("typesafetest: score function is required")
 	}
 	if err := typesafe.CheckRequest(fake.profile, request); err != nil {
+		return typesafe.Result{}, err
+	}
+	if err := ctx.Err(); err != nil {
 		return typesafe.Result{}, err
 	}
 	fingerprint, err := typesafe.PolicyFingerprint(fake.profile)
@@ -42,6 +45,9 @@ func (fake *Fake) Rerank(_ context.Context, request typesafe.RerankRequest) (typ
 	fake.mu.Unlock()
 	scores := make([]float64, len(request.Candidates))
 	for index, candidate := range request.Candidates {
+		if err := ctx.Err(); err != nil {
+			return typesafe.Result{}, err
+		}
 		score, err := fake.score(request.Query, candidate)
 		if err != nil {
 			return typesafe.Result{}, err

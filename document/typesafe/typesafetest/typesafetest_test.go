@@ -37,6 +37,43 @@ func TestFakeEnforcesClientBounds(t *testing.T) {
 	}
 }
 
+func TestFakeHonorsCanceledContextBeforeRecording(t *testing.T) {
+	profile := typesafe.Profile{SecretBinding: "test", EgressPolicy: providerhttp.EgressPolicy{Scheme: "https", Host: "api.typesafe.ai", Port: 443, AllowedCIDRs: []netip.Prefix{netip.MustParsePrefix("0.0.0.0/0")}}}
+	fake := New(profile, func(_, _ string) (float64, error) {
+		t.Fatal("score function called")
+		return 0, nil
+	})
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	_, err := fake.Rerank(ctx, typesafe.RerankRequest{Query: "q", Candidates: []string{"x"}})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("got %v", err)
+	}
+	if len(fake.Requests()) != 0 {
+		t.Fatal("canceled request was recorded")
+	}
+}
+
+func TestFakeStopsScoringAfterCancellation(t *testing.T) {
+	var calls int
+	ctx, cancel := context.WithCancel(context.Background())
+	profile := typesafe.Profile{SecretBinding: "test", EgressPolicy: providerhttp.EgressPolicy{Scheme: "https", Host: "api.typesafe.ai", Port: 443, AllowedCIDRs: []netip.Prefix{netip.MustParsePrefix("0.0.0.0/0")}}}
+	fake := New(profile, func(_, _ string) (float64, error) {
+		calls++
+		cancel()
+		return 0.5, nil
+	})
+
+	_, err := fake.Rerank(ctx, typesafe.RerankRequest{Query: "q", Candidates: []string{"first", "second"}})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("got %v", err)
+	}
+	if calls != 1 {
+		t.Fatalf("score calls = %d, want 1", calls)
+	}
+}
+
 func TestFakeMatchesClientReceiptAndRejectsInvalidScores(t *testing.T) {
 	profile := typesafe.Profile{SecretBinding: "test", EgressPolicy: providerhttp.EgressPolicy{Scheme: "https", Host: "api.typesafe.ai", Port: 443, AllowedCIDRs: []netip.Prefix{netip.MustParsePrefix("0.0.0.0/0")}}}
 	fake := New(profile, func(_, _ string) (float64, error) { return 1.1, nil })
