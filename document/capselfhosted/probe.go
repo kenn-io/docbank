@@ -172,6 +172,9 @@ func (client *Client) Probe(ctx context.Context) (Evidence, error) {
 	if contextErr := ctx.Err(); contextErr != nil {
 		return Evidence{}, contextErr
 	}
+	if probeContext.Err() != nil {
+		return withProbeState(evidence, ProbeProviderUnavailable), nil
+	}
 	if err != nil {
 		if errors.Is(err, providerutil.ErrResponseTooLarge) {
 			return withProbeState(evidence, ProbeContractMismatch), nil

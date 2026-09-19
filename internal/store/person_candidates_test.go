@@ -2,28 +2,13 @@ package store
 
 import (
 	"database/sql"
+	"fmt"
 	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/internal/canonical"
 )
-
-func TestCandidateEvidenceIdentity(t *testing.T) {
-	values := []PersonCandidateOccurrence{{
-		ContentVersionID: "version-a", Role: "author",
-		EvidenceKind: "source_metadata", EvidenceID: "generation-a",
-	}}
-	first, err := candidateEvidenceDigest(values)
-	require.NoError(t, err)
-	again, err := candidateEvidenceDigest(values)
-	require.NoError(t, err)
-	require.Equal(t, first, again)
-	values[0].EvidenceID = "generation-b"
-	changed, err := candidateEvidenceDigest(values)
-	require.NoError(t, err)
-	require.NotEqual(t, first, changed)
-}
 
 func TestOpenPersonCandidateReplaysDecisionAndSeparatesNewEvidence(t *testing.T) {
 	s := newTestStore(t)
@@ -52,6 +37,7 @@ func TestOpenPersonCandidateReplaysDecisionAndSeparatesNewEvidence(t *testing.T)
 	}})
 	second := openCandidateForTest(t, s, secondInput)
 	require.NotEqual(t, first.CandidateID, second.CandidateID)
+	require.NotEqual(t, first.EvidenceSHA256, second.EvidenceSHA256)
 	require.Equal(t, "open", second.State)
 
 	open, total, err := s.PersonCandidates(t.Context(), "open", 10, 0)
@@ -289,11 +275,9 @@ func candidateForTest(t *testing.T, actorKey, displayName, suggestedPersonID str
 	t.Helper()
 	raw, err := canonical.Marshal(occurrences)
 	require.NoError(t, err)
-	digest, err := candidateEvidenceDigest(occurrences)
-	require.NoError(t, err)
 	return PersonMatchCandidate{
 		ActorKey: actorKey, DisplayName: displayName, SuggestedPersonID: suggestedPersonID,
-		Reason: "name_only", Evidence: raw, EvidenceSHA256: digest, OccurrenceCount: int64(len(occurrences)),
+		Reason: "name_only", Evidence: raw, OccurrenceCount: int64(len(occurrences)),
 	}
 }
 
@@ -325,6 +309,11 @@ func TestCandidateAuthoritySurvivesPersonMerge(t *testing.T) {
 	candidate := openCandidateForTest(t, s, candidateForTest(t, "name_alias:absorbed", "Absorbed", absorbed.PersonID, []PersonCandidateOccurrence{{
 		ContentVersionID: version, Role: "author", EvidenceKind: "source_metadata", EvidenceID: "claim",
 	}}))
+	linked := openCandidateForTest(t, s, candidateForTest(t, "name_alias:linked", "Absorbed", "", []PersonCandidateOccurrence{{
+		ContentVersionID: version, Role: "author", EvidenceKind: "source_metadata", EvidenceID: "linked-claim",
+	}}))
+	_, err = s.DecidePersonCandidate(t.Context(), CandidateDecision{CandidateID: linked.CandidateID, Action: "link", PersonID: absorbed.PersonID, ExpectedRevision: linked.Revision})
+	require.NoError(t, err)
 	operation, err := newUUIDv4()
 	require.NoError(t, err)
 	_, err = s.MergePersons(t.Context(), survivor.PersonID, absorbed.PersonID, operation, survivor.Revision, absorbed.Revision)
@@ -339,12 +328,20 @@ func TestCandidateAuthoritySurvivesPersonMerge(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, superseded, 1)
 	require.Equal(t, candidate.CandidateID, superseded[0].CandidateID)
+	linkedCandidates, _, err := s.PersonCandidates(t.Context(), "linked", 10, 0)
+	require.NoError(t, err)
+	require.Len(t, linkedCandidates, 1)
+	require.Equal(t, survivor.PersonID, linkedCandidates[0].DecidedPersonID)
 }
 
-func TestCandidateSuggestionIsSupersededOnRetirement(t *testing.T) {
+func TestCandidateRetirementPreservesAssertionsAndSupersedesSuggestions(t *testing.T) {
 	s := newTestStore(t)
 	_, version := seedPeopleVersion(t, s)
 	person, err := s.CreatePerson(t.Context(), "Example Person", "operator")
+	require.NoError(t, err)
+	assertion, err := s.AssertDocumentPerson(t.Context(), PersonDocumentAssertion{
+		ContentVersionID: version, PersonID: person.PersonID, Role: "speaker", Action: "assert", Revision: 1,
+	})
 	require.NoError(t, err)
 	candidate := openCandidateForTest(t, s, candidateForTest(t, "name_alias:example", "Example Person", person.PersonID, []PersonCandidateOccurrence{{
 		ContentVersionID: version, Role: "author", EvidenceKind: "source_metadata", EvidenceID: "claim",
@@ -355,28 +352,53 @@ func TestCandidateSuggestionIsSupersededOnRetirement(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, superseded, 1)
 	require.Equal(t, candidate.CandidateID, superseded[0].CandidateID)
-}
-
-func TestCandidateAssertionsRejectMergeCollisions(t *testing.T) {
-	s := newTestStore(t)
-	_, version := seedPeopleVersion(t, s)
-	left, err := s.CreatePerson(t.Context(), "Left", "operator")
-	require.NoError(t, err)
-	right, err := s.CreatePerson(t.Context(), "Right", "operator")
-	require.NoError(t, err)
-	for _, person := range []Person{left, right} {
-		_, err = s.AssertDocumentPerson(t.Context(), PersonDocumentAssertion{
-			ContentVersionID: version, PersonID: person.PersonID, Role: "author", Action: "assert", Revision: 1,
-		})
-		require.NoError(t, err)
-	}
-	operation, err := newUUIDv4()
-	require.NoError(t, err)
-	_, err = s.MergePersons(t.Context(), left.PersonID, right.PersonID, operation, left.Revision, right.Revision)
-	require.ErrorIs(t, err, ErrPersonMergeConflict)
 	assertions, err := s.DocumentPersonAssertions(t.Context(), version)
 	require.NoError(t, err)
-	require.Len(t, assertions, 2)
+	require.Equal(t, []PersonDocumentAssertion{assertion}, assertions)
+	_, err = s.AssertDocumentPerson(t.Context(), PersonDocumentAssertion{
+		ContentVersionID: version, PersonID: person.PersonID, Role: "author", Action: "assert", Revision: 1,
+	})
+	require.ErrorIs(t, err, ErrNotFound)
+}
+
+func TestCandidateAssertionsMergeMatchingActions(t *testing.T) {
+	for _, actions := range [][2]string{{"assert", "assert"}, {"suppress", "suppress"}, {"assert", "suppress"}, {"suppress", "assert"}} {
+		t.Run(actions[0]+"/"+actions[1], func(t *testing.T) {
+			s := newTestStore(t)
+			_, version := seedPeopleVersion(t, s)
+			left, err := s.CreatePerson(t.Context(), "Left", "operator")
+			require.NoError(t, err)
+			right, err := s.CreatePerson(t.Context(), "Right", "operator")
+			require.NoError(t, err)
+			var originals []PersonDocumentAssertion
+			for i, person := range []Person{left, right} {
+				assertion, err := s.AssertDocumentPerson(t.Context(), PersonDocumentAssertion{
+					ContentVersionID: version, PersonID: person.PersonID, Role: "author", Action: actions[i], Note: person.DisplayName + " note", Revision: 1,
+				})
+				require.NoError(t, err)
+				originals = append(originals, assertion)
+			}
+			operation, err := newUUIDv4()
+			require.NoError(t, err)
+			receipt, err := s.MergePersons(t.Context(), left.PersonID, right.PersonID, operation, left.Revision, right.Revision)
+			if actions[0] != actions[1] {
+				require.ErrorIs(t, err, ErrPersonMergeConflict)
+				assertions, err := s.DocumentPersonAssertions(t.Context(), version)
+				require.NoError(t, err)
+				require.ElementsMatch(t, originals, assertions)
+				return
+			}
+			require.NoError(t, err)
+			assertions, err := s.DocumentPersonAssertions(t.Context(), version)
+			require.NoError(t, err)
+			require.Equal(t, []PersonDocumentAssertion{originals[0]}, assertions)
+			require.Contains(t, receipt.Moved.AssertionIDs, originals[1].AssertionID)
+			require.Equal(t, []PersonMergeDeduplicatedAssertion{{Assertion: originals[1], RetainedAssertionID: originals[0].AssertionID}}, receipt.Moved.DeduplicatedAssertions)
+			replayed, err := s.MergePersons(t.Context(), left.PersonID, right.PersonID, operation, left.Revision, right.Revision)
+			require.NoError(t, err)
+			require.Equal(t, receipt, replayed)
+		})
+	}
 }
 
 func TestCandidateAuthorityPreventsMetadataImport(t *testing.T) {
@@ -388,4 +410,60 @@ func TestCandidateAuthorityPreventsMetadataImport(t *testing.T) {
 		return requirePristineMetadataTarget(t.Context(), tx)
 	})
 	require.ErrorContains(t, err, "not pristine")
+}
+
+func TestCandidateLinksSkipPrunedVersions(t *testing.T) {
+	for _, action := range []string{"link", "new_person"} {
+		for _, allPruned := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/all_pruned=%t", action, allPruned), func(t *testing.T) {
+				s := newTestStore(t)
+				ctx := t.Context()
+				created, err := s.CreateFile(ctx, s.RootID(), "history.txt", fakeHash("a1"), 10, "text/plain")
+				require.NoError(t, err)
+				replaced, current, err := s.ReplaceContent(ctx, created.ID, created.Revision, fakeHash("b2"), 20, "text/plain")
+				require.NoError(t, err)
+				occurrences := []PersonCandidateOccurrence{{ContentVersionID: created.CurrentVersionID, Role: "author", EvidenceKind: "source_metadata", EvidenceID: "old-claim"}}
+				if !allPruned {
+					occurrences = append(occurrences, PersonCandidateOccurrence{ContentVersionID: current.ID, Role: "author", EvidenceKind: "source_metadata", EvidenceID: "current-claim"})
+				}
+				candidate := openCandidateForTest(t, s, candidateForTest(t, "name_alias:example", "Example Person", "", occurrences))
+				pruned, err := s.PruneContentVersions(ctx, created.ID, replaced.Revision, VersionPruneSelector{AllPrior: true}, true)
+				require.NoError(t, err)
+				require.Equal(t, 1, pruned.DeletedVersions)
+				decision := CandidateDecision{CandidateID: candidate.CandidateID, Action: action, ExpectedRevision: candidate.Revision}
+				if action == "link" {
+					person, err := s.CreatePerson(ctx, "Example Person", "operator")
+					require.NoError(t, err)
+					decision.PersonID = person.PersonID
+				}
+				decided, err := s.DecidePersonCandidate(ctx, decision)
+				require.NoError(t, err)
+				require.Equal(t, "linked", decided.State)
+				require.Equal(t, candidate.Evidence, decided.Evidence)
+				assertions, err := s.DocumentPersonAssertions(ctx, current.ID)
+				require.NoError(t, err)
+				if allPruned {
+					require.Empty(t, assertions)
+				} else {
+					require.Len(t, assertions, 1)
+					require.Equal(t, decided.DecidedPersonID, assertions[0].PersonID)
+				}
+				_, err = s.AssertDocumentPerson(ctx, PersonDocumentAssertion{ContentVersionID: created.CurrentVersionID, PersonID: decided.DecidedPersonID, Role: "author", Action: "assert", Revision: 1})
+				require.ErrorIs(t, err, ErrNotFound)
+			})
+		}
+	}
+}
+
+func TestCandidateRejectionDoesNotNeedEvidenceDecode(t *testing.T) {
+	s := newTestStore(t)
+	_, version := seedPeopleVersion(t, s)
+	candidate := openCandidateForTest(t, s, candidateForTest(t, "name_alias:example", "Example Person", "", []PersonCandidateOccurrence{{
+		ContentVersionID: version, Role: "author", EvidenceKind: "source_metadata", EvidenceID: "claim",
+	}}))
+	_, err := s.db.Exec(`UPDATE person_match_candidates SET evidence_json=? WHERE candidate_id=?`, []byte("{"), candidate.CandidateID)
+	require.NoError(t, err)
+	decided, err := s.DecidePersonCandidate(t.Context(), CandidateDecision{CandidateID: candidate.CandidateID, Action: "reject", ExpectedRevision: candidate.Revision})
+	require.NoError(t, err)
+	require.Equal(t, "rejected", decided.State)
 }

@@ -1849,9 +1849,11 @@ CREATE TABLE IF NOT EXISTS person_match_candidates (
     created_at TEXT NOT NULL,
     decided_at TEXT
 );
-CREATE UNIQUE INDEX IF NOT EXISTS person_candidate_open
+CREATE INDEX IF NOT EXISTS person_candidate_state
+    ON person_match_candidates(state, created_at, candidate_id);
+CREATE UNIQUE INDEX IF NOT EXISTS person_candidate_identity
     ON person_match_candidates(actor_key, suggested_person_id, reason, evidence_sha256) WHERE suggested_person_id IS NOT NULL;
-CREATE UNIQUE INDEX IF NOT EXISTS person_candidate_open_unsuggested
+CREATE UNIQUE INDEX IF NOT EXISTS person_candidate_identity_unsuggested
     ON person_match_candidates(actor_key, reason, evidence_sha256) WHERE suggested_person_id IS NULL;
 
 CREATE TABLE IF NOT EXISTS document_people_state (

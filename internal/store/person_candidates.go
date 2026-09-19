@@ -10,7 +10,6 @@ import (
 	"fmt"
 	"slices"
 	"strings"
-	"unicode"
 	"unicode/utf8"
 
 	"go.kenn.io/docbank/document"
@@ -51,16 +50,6 @@ type PersonCandidateOccurrence struct {
 	EvidenceID       string `json:"evidence_id"`
 }
 
-func candidateEvidenceDigest(values []PersonCandidateOccurrence) (string, error) {
-	values = normalizedCandidateOccurrences(values)
-	raw, err := canonical.Marshal(values)
-	if err != nil {
-		return "", err
-	}
-	digest := sha256.Sum256(raw)
-	return hex.EncodeToString(digest[:]), nil
-}
-
 func normalizedCandidateOccurrences(values []PersonCandidateOccurrence) []PersonCandidateOccurrence {
 	values = slices.Clone(values)
 	key := func(value PersonCandidateOccurrence) string {
@@ -72,14 +61,15 @@ func normalizedCandidateOccurrences(values []PersonCandidateOccurrence) []Person
 	return slices.Compact(values)
 }
 
-func normalizePersonCandidate(candidate PersonMatchCandidate) (PersonMatchCandidate, []PersonCandidateOccurrence, error) {
-	invalid := func(detail string) (PersonMatchCandidate, []PersonCandidateOccurrence, error) {
-		return PersonMatchCandidate{}, nil, fmt.Errorf("%w: %s", ErrInvalidPerson, detail)
+func normalizePersonCandidate(candidate PersonMatchCandidate) (PersonMatchCandidate, error) {
+	invalid := func(detail string) (PersonMatchCandidate, error) {
+		return PersonMatchCandidate{}, fmt.Errorf("%w: %s", ErrInvalidPerson, detail)
 	}
 	if candidate.CandidateID != "" && validateUUIDv4(candidate.CandidateID) != nil {
 		return invalid("candidate id")
 	}
-	if !validCandidateText(candidate.ActorKey, document.MaxActorKeyBytes, false) || !validPersonName(candidate.DisplayName) ||
+	if candidate.ActorKey == "" || len(candidate.ActorKey) > document.MaxActorKeyBytes || !document.ValidPersonIdentityText(candidate.ActorKey) ||
+		!validPersonName(candidate.DisplayName) ||
 		!slices.Contains([]string{"name_only", "identifier_conflict", "external_uid_conflict", "transfer_unresolved"}, candidate.Reason) ||
 		(candidate.State != "" && candidate.State != "open") {
 		return invalid("candidate fields")
@@ -100,15 +90,15 @@ func normalizePersonCandidate(candidate PersonMatchCandidate) (PersonMatchCandid
 	}
 	for _, occurrence := range occurrences {
 		if validateUUIDv4(occurrence.ContentVersionID) != nil ||
-			!validCandidateRole(occurrence.Role) ||
+			!document.ValidPersonRole(occurrence.Role) ||
 			!slices.Contains(document.PersonEvidenceKinds(), document.PersonEvidenceKind(occurrence.EvidenceKind)) ||
-			!validCandidateText(occurrence.EvidenceID, document.MaxPersonEvidenceIDBytes, false) {
+			occurrence.EvidenceID == "" || len(occurrence.EvidenceID) > document.MaxPersonEvidenceIDBytes || !document.ValidPersonIdentityText(occurrence.EvidenceID) {
 			return invalid("candidate occurrence")
 		}
 	}
 	raw, err := canonical.Marshal(occurrences)
 	if err != nil {
-		return PersonMatchCandidate{}, nil, err
+		return PersonMatchCandidate{}, err
 	}
 	if len(raw) > maxPersonCandidateEvidence {
 		return invalid("canonical candidate evidence size")
@@ -125,16 +115,7 @@ func normalizePersonCandidate(candidate PersonMatchCandidate) (PersonMatchCandid
 	candidate.State = "open"
 	candidate.DecidedPersonID = ""
 	candidate.DecidedAt = ""
-	return candidate, occurrences, nil
-}
-
-func validCandidateRole(role string) bool {
-	return document.ValidEventRole(document.EventRole(role)) || role == "speaker"
-}
-
-func validCandidateText(value string, maxBytes int, allowEmpty bool) bool {
-	return (allowEmpty || value != "") && len(value) <= maxBytes && utf8.ValidString(value) &&
-		!strings.ContainsFunc(value, unicode.IsControl)
+	return candidate, nil
 }
 
 // OpenPersonCandidate returns the existing or newly retained candidate. The
@@ -146,7 +127,7 @@ func (s *Store) OpenPersonCandidate(
 	if tx == nil {
 		return PersonMatchCandidate{}, false, fmt.Errorf("%w: nil candidate transaction", ErrInvalidPerson)
 	}
-	candidate, _, err := normalizePersonCandidate(candidate)
+	candidate, err := normalizePersonCandidate(candidate)
 	if err != nil {
 		return PersonMatchCandidate{}, false, err
 	}
@@ -183,7 +164,7 @@ func (s *Store) OpenPersonCandidate(
 		occurrence_count,revision,state,decided_person_id,created_at,decided_at
 	) VALUES(?,?,?,?,?,?,?,?,1,'open',NULL,?,NULL)`,
 		candidate.CandidateID, candidate.ActorKey, candidate.DisplayName,
-		nullableCandidateString(candidate.SuggestedPersonID), candidate.Reason, candidate.Evidence,
+		nullableString(candidate.SuggestedPersonID), candidate.Reason, candidate.Evidence,
 		candidate.EvidenceSHA256, candidate.OccurrenceCount, candidate.CreatedAt)
 	if s.driver.IsUniqueViolation(err) {
 		existing, lookupErr := personCandidateByIdentityTx(ctx, tx, candidate)
@@ -263,10 +244,6 @@ func (s *Store) DecidePersonCandidate(ctx context.Context, decision CandidateDec
 		if candidate.Revision != decision.ExpectedRevision {
 			return ErrStaleRevision
 		}
-		occurrences, err := decodeStoredCandidateEvidence(candidate.Evidence)
-		if err != nil {
-			return err
-		}
 		personID := ""
 		switch decision.Action {
 		case "link":
@@ -278,6 +255,10 @@ func (s *Store) DecidePersonCandidate(ctx context.Context, decision CandidateDec
 			return err
 		}
 		if personID != "" {
+			occurrences, err := decodeStoredCandidateEvidence(candidate.Evidence)
+			if err != nil {
+				return err
+			}
 			err = materializeCandidateAssertionsTx(ctx, tx, personID, occurrences)
 			if err != nil {
 				return err
@@ -289,7 +270,7 @@ func (s *Store) DecidePersonCandidate(ctx context.Context, decision CandidateDec
 		}
 		now := nowRFC3339()
 		result, err := tx.ExecContext(ctx, `UPDATE person_match_candidates SET state=?,decided_person_id=?,decided_at=?,revision=revision+1 WHERE candidate_id=? AND revision=? AND state='open'`,
-			state, nullableCandidateString(personID), now, candidate.CandidateID, candidate.Revision)
+			state, nullableString(personID), now, candidate.CandidateID, candidate.Revision)
 		if err != nil {
 			return err
 		}
@@ -399,7 +380,7 @@ func validatePersonAssertion(assertion PersonDocumentAssertion) error {
 		return ErrInvalidPerson
 	}
 	if validateUUIDv4(assertion.ContentVersionID) != nil || validateUUIDv4(assertion.PersonID) != nil || assertion.Revision < 1 ||
-		!validCandidateRole(assertion.Role) ||
+		!document.ValidPersonRole(assertion.Role) ||
 		!slices.Contains([]string{"assert", "suppress"}, assertion.Action) ||
 		len(assertion.Note) > maxPersonAssertionNoteBytes || !utf8.ValidString(assertion.Note) {
 		return ErrInvalidPerson
@@ -456,7 +437,9 @@ func materializeCandidateAssertionsTx(
 		if !errors.Is(err, sql.ErrNoRows) {
 			return err
 		}
-		if err := requireCandidateVersionTx(ctx, tx, occurrence.ContentVersionID); err != nil {
+		if err := requireCandidateVersionTx(ctx, tx, occurrence.ContentVersionID); errors.Is(err, ErrNotFound) {
+			continue
+		} else if err != nil {
 			return err
 		}
 		assertionID, err := newUUIDv4()
@@ -542,11 +525,4 @@ func scanPersonAssertion(row scanner) (PersonDocumentAssertion, error) {
 	err := row.Scan(&assertion.AssertionID, &assertion.ContentVersionID, &assertion.PersonID, &assertion.Role,
 		&assertion.Action, &assertion.Note, &assertion.RecordedAt, &assertion.Revision)
 	return assertion, err
-}
-
-func nullableCandidateString(value string) any {
-	if value == "" {
-		return nil
-	}
-	return value
 }

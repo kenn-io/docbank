@@ -17,12 +17,18 @@ import (
 var ErrPersonMergeConflict = errors.New("person merge conflict")
 
 type PersonMergeMoved struct {
-	AssertionIDs           []string                          `json:"assertion_ids"`
-	SupersededCandidate    []string                          `json:"superseded_candidate_ids"`
-	IdentityIDs            []string                          `json:"identity_ids"`
-	DeduplicatedIdentities []PersonMergeDeduplicatedIdentity `json:"deduplicated_identities"`
-	ExternalUIDs           []PersonExternalUID               `json:"external_uids"`
-	AssignmentIDs          []string                          `json:"assignment_ids"`
+	DeduplicatedAssertions []PersonMergeDeduplicatedAssertion `json:"deduplicated_assertions"`
+	AssertionIDs           []string                           `json:"assertion_ids"`
+	SupersededCandidates   []string                           `json:"superseded_candidate_ids"`
+	IdentityIDs            []string                           `json:"identity_ids"`
+	DeduplicatedIdentities []PersonMergeDeduplicatedIdentity  `json:"deduplicated_identities"`
+	ExternalUIDs           []PersonExternalUID                `json:"external_uids"`
+	AssignmentIDs          []string                           `json:"assignment_ids"`
+}
+
+type PersonMergeDeduplicatedAssertion struct {
+	Assertion           PersonDocumentAssertion `json:"assertion"`
+	RetainedAssertionID string                  `json:"retained_assertion_id"`
 }
 
 type PersonMergeDeduplicatedIdentity struct {
@@ -159,7 +165,17 @@ func (s *Store) MergePersons(ctx context.Context, survivorID, absorbedID, operat
 		if _, err := tx.ExecContext(ctx, `UPDATE custodian_assignments SET person_id=?,revision=revision+1 WHERE person_id=?`, survivorID, absorbedID); err != nil {
 			return err
 		}
+		if _, err := tx.ExecContext(ctx, `DELETE FROM person_document_assertions WHERE person_id=? AND EXISTS(
+			SELECT 1 FROM person_document_assertions keep WHERE keep.person_id=?
+			AND keep.content_version_id=person_document_assertions.content_version_id
+			AND keep.role=person_document_assertions.role AND keep.action=person_document_assertions.action
+		)`, absorbedID, survivorID); err != nil {
+			return err
+		}
 		if _, err := tx.ExecContext(ctx, `UPDATE person_document_assertions SET person_id=?,revision=revision+1 WHERE person_id=?`, survivorID, absorbedID); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `UPDATE person_match_candidates SET decided_person_id=?,revision=revision+1 WHERE decided_person_id=?`, survivorID, absorbedID); err != nil {
 			return err
 		}
 		if _, err := tx.ExecContext(ctx, `UPDATE person_match_candidates SET state='superseded',revision=revision+1 WHERE suggested_person_id=? AND state='open'`, absorbedID); err != nil {
@@ -214,7 +230,7 @@ func collectPersonMergeMovedTx(ctx context.Context, tx *sql.Tx, survivorID, abso
 	moved := PersonMergeMoved{
 		IdentityIDs: []string{}, DeduplicatedIdentities: []PersonMergeDeduplicatedIdentity{},
 		ExternalUIDs: []PersonExternalUID{}, AssignmentIDs: []string{},
-		AssertionIDs: []string{}, SupersededCandidate: []string{},
+		AssertionIDs: []string{}, SupersededCandidates: []string{},
 	}
 	queries := []struct {
 		query string
@@ -223,7 +239,7 @@ func collectPersonMergeMovedTx(ctx context.Context, tx *sql.Tx, survivorID, abso
 		{`SELECT identity_id FROM person_identities WHERE person_id=? ORDER BY identity_id`, &moved.IdentityIDs},
 		{`SELECT assignment_id FROM custodian_assignments WHERE person_id=? ORDER BY assignment_id`, &moved.AssignmentIDs},
 		{`SELECT assertion_id FROM person_document_assertions WHERE person_id=? ORDER BY assertion_id`, &moved.AssertionIDs},
-		{`SELECT candidate_id FROM person_match_candidates WHERE suggested_person_id=? AND state='open' ORDER BY candidate_id`, &moved.SupersededCandidate},
+		{`SELECT candidate_id FROM person_match_candidates WHERE suggested_person_id=? AND state='open' ORDER BY candidate_id`, &moved.SupersededCandidates},
 	}
 	for _, item := range queries {
 		values, err := collectPersonMergeColumnTx(ctx, tx, item.query, absorbedID)
@@ -234,6 +250,10 @@ func collectPersonMergeMovedTx(ctx context.Context, tx *sql.Tx, survivorID, abso
 	}
 	var err error
 	moved.ExternalUIDs, err = collectPersonExternalUIDsTx(ctx, tx, absorbedID)
+	if err != nil {
+		return PersonMergeMoved{}, err
+	}
+	moved.DeduplicatedAssertions, err = collectPersonMergeDeduplicatedAssertionsTx(ctx, tx, survivorID, absorbedID)
 	if err != nil {
 		return PersonMergeMoved{}, err
 	}
@@ -254,6 +274,27 @@ func collectPersonExternalUIDsTx(ctx context.Context, tx *sql.Tx, personID strin
 	for rows.Next() {
 		var value PersonExternalUID
 		if err := rows.Scan(&value.System, &value.ArchiveID, &value.UID); err != nil {
+			return nil, err
+		}
+		values = append(values, value)
+	}
+	return values, rows.Err()
+}
+
+func collectPersonMergeDeduplicatedAssertionsTx(ctx context.Context, tx *sql.Tx, survivorID, absorbedID string) (_ []PersonMergeDeduplicatedAssertion, retErr error) {
+	rows, err := tx.QueryContext(ctx, `SELECT a.assertion_id,a.content_version_id,a.person_id,a.role,a.action,a.note,a.recorded_at,a.revision,k.assertion_id
+		FROM person_document_assertions a JOIN person_document_assertions k
+		ON k.person_id=? AND k.content_version_id=a.content_version_id AND k.role=a.role AND k.action=a.action
+		WHERE a.person_id=? ORDER BY a.assertion_id`, survivorID, absorbedID)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { retErr = errors.Join(retErr, rows.Close()) }()
+	values := []PersonMergeDeduplicatedAssertion{}
+	for rows.Next() {
+		var value PersonMergeDeduplicatedAssertion
+		a := &value.Assertion
+		if err := rows.Scan(&a.AssertionID, &a.ContentVersionID, &a.PersonID, &a.Role, &a.Action, &a.Note, &a.RecordedAt, &a.Revision, &value.RetainedAssertionID); err != nil {
 			return nil, err
 		}
 		values = append(values, value)
@@ -320,7 +361,7 @@ func validatePersonMergeBoundsTx(ctx context.Context, tx *sql.Tx, survivorID, ab
 	var conflict bool
 	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM person_document_assertions a
 		JOIN person_document_assertions s ON s.person_id=? AND a.person_id=?
-		AND s.content_version_id=a.content_version_id AND s.role=a.role)`, survivorID, absorbedID).Scan(&conflict); err != nil {
+		AND s.content_version_id=a.content_version_id AND s.role=a.role AND s.action<>a.action)`, survivorID, absorbedID).Scan(&conflict); err != nil {
 		return err
 	}
 	if conflict {
