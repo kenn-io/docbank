@@ -1,6 +1,7 @@
 import { sha256 } from "@noble/hashes/sha2.js";
 import { bytesToHex } from "@noble/hashes/utils.js";
 import * as generated from "./generated/docbank.js";
+import { readExactBody, digestHeaderMatches } from "./download.js";
 import { parseRenditionMarkdown } from "./receipts.js";
 import type { SelectedSource } from "./selectedSource.js";
 
@@ -179,9 +180,9 @@ export async function readVerifiedRenditionText(
       headers.get("X-Docbank-Rendition-Artifact") !== ready.artifact.id) {
     throw new Error("The received text disagreed with the selected rendition.");
   }
-  const bytes = await readExactBody(response, ready.artifact.size);
+  const bytes = await readExactBody(response, ready.artifact.size, signal, "The received text disagreed with the selected rendition.");
   const computed = bytesToHex(sha256(bytes));
-  if (computed !== ready.artifact.sha256 || !digestMatches(headers, computed)) {
+  if (computed !== ready.artifact.sha256 || !digestHeaderMatches(headers, computed)) {
     throw new Error("The received text disagreed with the selected rendition.");
   }
   let artifact: string;
@@ -195,35 +196,4 @@ export async function readVerifiedRenditionText(
     throw new Error("The received text disagreed with the selected rendition.");
   }
   return parsed.markdown;
-}
-
-async function readExactBody(response: Response, expectedSize: number): Promise<Uint8Array> {
-  if (!response.body) throw new Error("The text response did not contain rendition bytes.");
-  const bytes = new Uint8Array(expectedSize);
-  const reader = response.body.getReader();
-  let received = 0;
-  try {
-    while (true) {
-      const next = await reader.read();
-      if (next.done) break;
-      if (received + next.value.length > expectedSize) throw new Error("The received text disagreed with the selected rendition.");
-      bytes.set(next.value, received);
-      received += next.value.length;
-    }
-  } catch (cause) {
-    await reader.cancel().catch(() => undefined);
-    throw cause;
-  }
-  if (received !== expectedSize) throw new Error("The received text disagreed with the selected rendition.");
-  return bytes;
-}
-
-function digestMatches(headers: Headers, expected: string): boolean {
-  const match = /^sha-256=:([A-Za-z0-9+/]+={0,2}):$/.exec(headers.get("Content-Digest") ?? "");
-  if (!match) return false;
-  try {
-    return [...atob(match[1] ?? "")].map((value) => value.charCodeAt(0).toString(16).padStart(2, "0")).join("") === expected;
-  } catch {
-    return false;
-  }
 }
