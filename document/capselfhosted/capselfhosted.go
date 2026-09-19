@@ -32,6 +32,8 @@ func RecognizeSharePath(escapedPath string) (identity string, ok bool) {
 	case strings.HasPrefix(escapedPath, "/s/"):
 	case strings.HasPrefix(escapedPath, "/embed/"):
 		prefix = "/embed/"
+	case strings.HasPrefix(escapedPath, "/dev/"):
+		prefix = "/dev/"
 	default:
 		return "", false
 	}

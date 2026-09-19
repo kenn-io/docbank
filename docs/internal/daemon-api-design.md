@@ -232,9 +232,9 @@ video's visibility or password state.
 
 Daemon configuration can register a self-hosted Cap origin with
 `[media_origins.<name>]`. The processing service canonicalizes the exact root
-origin, accepts only Cap's `/s/<id>` and `/embed/<id>` paths there, and binds
-one named credential to that origin. The daemon starts one `probe:media-origins`
-job for the documented usage endpoint. `providerhttp` enforces the configured
+origin, accepts Cap's `/s/<id>`, `/embed/<id>`, and SDK `/dev/<id>` paths there,
+and binds one named credential to that origin. The daemon starts one
+`probe:media-origins` job for the documented usage endpoint. `providerhttp` enforces the configured
 scheme, host, port, DNS allowlist, SPKI pins, and redirect refusal. Probe
 evidence is exposed through the existing media-origins listing. Cap references
 remain `access_required` because this slice has no acquisition worker.

@@ -276,20 +276,19 @@ func (service *Service) verifyCurrentMediaPlan(
 }
 
 func (service *Service) recognizeMediaOrigin(reference, providerHint string) (MediaOriginPolicy, string, bool) {
-	for _, policy := range service.mediaOrigins {
-		if policy.ExactOrigin == "" {
-			continue
-		}
-		canonicalReference, origin, err := canonicalRemoteRecordingReference(reference)
-		if err != nil || origin != policy.ExactOrigin || policy.RecognizePath == nil {
-			continue
-		}
+	canonicalReference, origin, canonicalErr := canonicalRemoteRecordingReference(reference)
+	if canonicalErr == nil {
 		parsed, err := url.Parse(canonicalReference)
-		if err != nil {
-			continue
-		}
-		if identity, ok := policy.RecognizePath(parsed.EscapedPath()); ok {
-			return policy, identity, true
+		if err == nil {
+			escapedPath := parsed.EscapedPath()
+			for _, policy := range service.mediaOrigins {
+				if origin != policy.ExactOrigin || policy.RecognizePath == nil {
+					continue
+				}
+				if identity, ok := policy.RecognizePath(escapedPath); ok {
+					return policy, identity, true
+				}
+			}
 		}
 	}
 	for _, policy := range service.mediaOrigins {

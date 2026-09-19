@@ -54,6 +54,8 @@ func TestRegisteredCapOriginSubmission(t *testing.T) {
 	}{
 		{"share-case", "https://CAP.example.test:443/s/vid-1?token=x", "https://cap.example.test/s/vid-1?canonical=1"},
 		{"embed-fragment", "https://cap.example.test/embed/vid-1#t", "https://CAP.example.test:443/embed/vid-1"},
+		{"sdk-share", "https://cap.example.test/dev/vid-1", "https://cap.example.test/dev/vid-1"},
+		{"sdk-share-and-embed", "https://cap.example.test/dev/vid-1", "https://cap.example.test/embed/vid-1?sdk=1"},
 		{"share-without-canonical", "https://cap.example.test/s/vid-1?token=y", ""},
 		{"canonical-recognizes-reference-with-trailing-slash", "https://cap.example.test/s/vid-1/", "https://cap.example.test/s/vid-1"},
 	}

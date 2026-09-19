@@ -1225,8 +1225,10 @@ docbank media origins
 ```
 
 `media origins` prints each registered origin's ID, provider,
-`acquisition_available` value, and any probe evidence. Probe evidence includes
-`adapter_contract`, `deployment_revision`, `probe_state`, and `probed_at`.
+`acquisition_available` value, adapter contract, operator-declared deployment
+revision, and startup probe result. The fields are `adapter_contract`,
+`deployment_revision`, `probe_state`, and `probed_at`; see the
+[origin listing contract](architecture/http-api.md#remote-recording-references).
 Self-hosted Cap registrations report `acquisition_available: false` until a
 later acquisition owner exists.
 
