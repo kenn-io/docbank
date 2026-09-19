@@ -1879,11 +1879,54 @@ CREATE UNIQUE INDEX IF NOT EXISTS custodian_primary_collection
 CREATE UNIQUE INDEX IF NOT EXISTS custodian_primary_document
     ON custodian_assignments(content_version_id) WHERE scope_kind='document' AND rank='primary' AND retired_at IS NULL;
 
+CREATE TABLE IF NOT EXISTS person_document_assertions (
+    assertion_id TEXT PRIMARY KEY NOT NULL,
+    content_version_id TEXT NOT NULL REFERENCES content_versions(version_id) ON DELETE CASCADE,
+    person_id TEXT NOT NULL REFERENCES persons(person_id) ON DELETE CASCADE,
+    role TEXT NOT NULL,
+    action TEXT NOT NULL,
+    note TEXT NOT NULL,
+    recorded_at TEXT NOT NULL,
+    revision INTEGER NOT NULL DEFAULT 1 CHECK (revision >= 1),
+    UNIQUE (content_version_id, person_id, role)
+);
+
+CREATE TABLE IF NOT EXISTS person_match_candidates (
+    candidate_id TEXT PRIMARY KEY NOT NULL,
+    actor_key TEXT NOT NULL,
+    display_name TEXT NOT NULL,
+    suggested_person_id TEXT,
+    reason TEXT NOT NULL,
+    evidence_json BLOB NOT NULL,
+    evidence_sha256 TEXT NOT NULL,
+    occurrence_count INTEGER NOT NULL CHECK (occurrence_count >= 1),
+    revision INTEGER NOT NULL DEFAULT 1 CHECK (revision >= 1),
+    state TEXT NOT NULL,
+    decided_person_id TEXT,
+    created_at TEXT NOT NULL,
+    decided_at TEXT
+);
+CREATE INDEX IF NOT EXISTS person_candidate_state
+    ON person_match_candidates(state, created_at, candidate_id);
+CREATE UNIQUE INDEX IF NOT EXISTS person_candidate_identity
+    ON person_match_candidates(actor_key, suggested_person_id, reason, evidence_sha256) WHERE suggested_person_id IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS person_candidate_identity_unsuggested
+    ON person_match_candidates(actor_key, reason, evidence_sha256) WHERE suggested_person_id IS NULL;
+
 CREATE TABLE IF NOT EXISTS document_people_state (
     singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
     binding_epoch INTEGER NOT NULL CHECK (binding_epoch > 0),
     updated_at TEXT NOT NULL
 );
+
+-- Invalidate before version or node deletion cascades remove assertions.
+CREATE TRIGGER IF NOT EXISTS content_versions_invalidate_person_bindings
+BEFORE DELETE ON content_versions
+WHEN EXISTS (SELECT 1 FROM person_document_assertions WHERE content_version_id=OLD.version_id)
+BEGIN
+    UPDATE document_people_state SET binding_epoch=binding_epoch+1,
+        updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE singleton=1;
+END;
 
 CREATE TABLE IF NOT EXISTS person_splits (
     operation_id TEXT PRIMARY KEY NOT NULL,

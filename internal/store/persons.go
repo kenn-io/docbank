@@ -89,6 +89,8 @@ func (s *Store) UpdatePerson(ctx context.Context, id string, revision int64, nam
 	return person, err
 }
 
+// RetirePerson keeps document assertions as historical operator decisions.
+// They remain readable, but the retired person cannot receive new assertions.
 func (s *Store) RetirePerson(ctx context.Context, id string, revision int64) (Person, error) {
 	var retired Person
 	err := s.withLogicalTx(ctx, func(tx *sql.Tx) error {
@@ -114,6 +116,9 @@ func (s *Store) RetirePerson(ctx context.Context, id string, revision int64) (Pe
 			return err
 		}
 		if _, err := tx.ExecContext(ctx, `UPDATE custodian_assignments SET person_id=NULL,revision=revision+1 WHERE person_id=? AND retired_at IS NULL`, id); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `UPDATE person_match_candidates SET state='superseded',revision=revision+1 WHERE suggested_person_id=? AND state='open'`, id); err != nil {
 			return err
 		}
 		if err := tx.QueryRowContext(ctx, `SELECT person_id,display_name,display_name_folded,origin,state,revision,created_at,updated_at FROM persons WHERE person_id=?`, id).Scan(

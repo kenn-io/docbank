@@ -55,7 +55,7 @@ func NormalizeScopedPersonIdentity(kind PersonIdentityKind, raw, scopeKind, scop
 	bad := func() (NormalizedIdentity, error) {
 		return NormalizedIdentity{}, errors.New("invalid person identity")
 	}
-	if !validPersonIdentityText(raw) || len(raw) > MaxPersonIdentityValueBytes || strings.TrimSpace(raw) == "" {
+	if !ValidPersonIdentityText(raw) || len(raw) > MaxPersonIdentityValueBytes || strings.TrimSpace(raw) == "" {
 		return bad()
 	}
 	if len(scopeKind) > MaxPersonIdentityScopeKindBytes || len(scopeValue) > MaxPersonIdentityScopeValueBytes ||
@@ -63,7 +63,7 @@ func NormalizeScopedPersonIdentity(kind PersonIdentityKind, raw, scopeKind, scop
 		return bad()
 	}
 	if scopeKind != "" && (strings.TrimSpace(scopeKind) == "" || strings.TrimSpace(scopeValue) == "" ||
-		!validPersonIdentityText(scopeKind) || !validPersonIdentityText(scopeValue)) {
+		!ValidPersonIdentityText(scopeKind) || !ValidPersonIdentityText(scopeValue)) {
 		return bad()
 	}
 
@@ -137,7 +137,9 @@ func NormalizeScopedPersonIdentity(kind PersonIdentityKind, raw, scopeKind, scop
 	return out, nil
 }
 
-func validPersonIdentityText(value string) bool {
+// ValidPersonIdentityText accepts UTF-8 person evidence without control characters.
+// Callers apply the size and empty-value rules for each field.
+func ValidPersonIdentityText(value string) bool {
 	return utf8.ValidString(value) && !strings.ContainsFunc(value, unicode.IsControl)
 }
 
@@ -165,7 +167,7 @@ func ActorKey(identity NormalizedIdentity) (string, error) {
 
 func ValidateExternalPersonTuple(system, archiveID, uid string) error {
 	if system != "msgvault" || archiveID == "" || uid == "" || len(archiveID) > MaxPersonArchiveIDBytes || len(uid) > MaxPersonExternalUIDBytes ||
-		!validPersonIdentityText(archiveID) || !validPersonIdentityText(uid) {
+		!ValidPersonIdentityText(archiveID) || !ValidPersonIdentityText(uid) {
 		return errors.New("invalid external person tuple")
 	}
 	return nil
@@ -181,4 +183,10 @@ func ExternalPersonActorKey(system, archiveID, uid string) (string, error) {
 
 func PersonEvidenceKinds() []PersonEvidenceKind {
 	return []PersonEvidenceKind{"source_metadata", "email_generation", "provenance_binding", "content_version", "package_row", "output_receipt", "transfer_record", "custodian_assignment", "operator_assertion"}
+}
+
+// ValidPersonRole accepts document actor roles and the person credited with
+// speaking in a transcript. A speaker label alone does not establish identity.
+func ValidPersonRole(role string) bool {
+	return ValidEventRole(EventRole(role)) || role == "speaker"
 }
