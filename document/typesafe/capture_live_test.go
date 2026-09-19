@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/netip"
 	"os"
@@ -20,16 +21,31 @@ func TestLiveCaptureSystemOne(t *testing.T) {
 	if key == "" {
 		t.Skip("TYPESAFE_API_KEY is not set")
 	}
-	directory := os.Getenv("DOCBANK_TYPESAFE_CAPTURE_DIR")
-	if directory == "" {
-		t.Fatal("DOCBANK_TYPESAFE_CAPTURE_DIR is required")
+	for _, test := range []struct {
+		name       string
+		shape      RequestShape
+		candidates []string
+	}{{"per_candidate", RequestShapePerCandidate, []string{"synthetic candidate"}},
+		{"batched", RequestShapeBatched, []string{"synthetic first", "synthetic second"}}} {
+		t.Run(test.name, func(t *testing.T) {
+			profile := testProfile()
+			profile.RequestShape = test.shape
+			calls, err := encodeCalls(profile, RerankRequest{Query: "synthetic question", Candidates: test.candidates})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(calls) != 1 {
+				t.Fatalf("encoded calls = %d", len(calls))
+			}
+			captureCall(t, key, calls[0].payload, capturePath(test.name))
+		})
 	}
-	calls, err := encodeCalls(testProfile(), RerankRequest{Query: "synthetic question", Candidates: []string{"synthetic candidate"}})
-	if err != nil || len(calls) != 1 {
-		t.Fatalf("encode synthetic request: %v", err)
-	}
-	requestBody := calls[0].payload
-	request, err := http.NewRequestWithContext(context.Background(), http.MethodPost, "https://api.typesafe.ai/v1/systemone", bytes.NewReader(requestBody))
+}
+
+func captureCall(t *testing.T, key string, requestBody []byte, path string) {
+	t.Helper()
+	request, err := http.NewRequestWithContext(context.Background(), http.MethodPost,
+		"https://api.typesafe.ai/v1/systemone", bytes.NewReader(requestBody))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -48,8 +64,8 @@ func TestLiveCaptureSystemOne(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer response.Body.Close()
-	var body json.RawMessage
-	if err := json.NewDecoder(response.Body).Decode(&body); err != nil {
+	responseBody, err := io.ReadAll(response.Body)
+	if err != nil {
 		t.Fatal(err)
 	}
 	record := struct {
@@ -57,12 +73,19 @@ func TestLiveCaptureSystemOne(t *testing.T) {
 		Status      int             `json:"status"`
 		ContentType string          `json:"content_type"`
 		Response    json.RawMessage `json:"response"`
-	}{requestBody, response.StatusCode, response.Header.Get("Content-Type"), body}
+	}{requestBody, response.StatusCode, response.Header.Get("Content-Type"), responseBody}
 	encoded, err := json.MarshalIndent(record, "", "  ")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(directory, "capture.json"), encoded, 0600); err != nil {
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.WriteFile(path, encoded, 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func capturePath(shape string) string {
+	return filepath.Join("testdata", "capture_"+shape+".json")
 }

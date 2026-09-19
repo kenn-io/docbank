@@ -48,16 +48,26 @@ type Result struct {
 	Receipt Receipt
 }
 
-type wireRequest struct {
-	State     wireState               `json:"state"`
+type wirePerCandidateRequest struct {
+	State     wirePerCandidateState   `json:"state"`
 	Model     string                  `json:"model"`
 	Questions map[string]wireQuestion `json:"questions"`
 }
 
-type wireState struct {
+type wirePerCandidateState struct {
+	Query     string `json:"query"`
+	Candidate string `json:"candidate"`
+}
+
+type wireBatchedRequest struct {
+	State     wireBatchedState        `json:"state"`
+	Model     string                  `json:"model"`
+	Questions map[string]wireQuestion `json:"questions"`
+}
+
+type wireBatchedState struct {
 	Query      string   `json:"query"`
-	Candidate  *string  `json:"candidate,omitempty"`
-	Candidates []string `json:"candidates,omitempty"`
+	Candidates []string `json:"candidates"`
 }
 
 type wireQuestion struct {
@@ -122,9 +132,6 @@ func encodeCalls(profile Profile, request RerankRequest) ([]preparedCall, error)
 		return nil, &ProviderError{Kind: ErrCapacityResponse}
 	}
 	for _, candidate := range request.Candidates {
-		if candidate == "" {
-			return nil, &ProviderError{Kind: ErrPermanentResponse}
-		}
 		if !utf8.ValidString(candidate) || len(candidate) > normalized.MaxCandidateBytes {
 			return nil, &ProviderError{Kind: ErrCapacityResponse}
 		}
@@ -134,8 +141,8 @@ func encodeCalls(profile Profile, request RerankRequest) ([]preparedCall, error)
 	case RequestShapePerCandidate:
 		calls := make([]preparedCall, len(request.Candidates))
 		for index, candidate := range request.Candidates {
-			payload, encodeErr := encodeRequest(wireRequest{
-				State: wireState{Query: request.Query, Candidate: new(candidate)},
+			payload, encodeErr := encodeRequest(wirePerCandidateRequest{
+				State: wirePerCandidateState{Query: request.Query, Candidate: candidate},
 				Model: normalized.Model,
 				Questions: map[string]wireQuestion{
 					rankingQuestionID: rankingQuestion("candidate"),
@@ -161,8 +168,8 @@ func encodeCalls(profile Profile, request RerankRequest) ([]preparedCall, error)
 			ids[index] = id
 			questions[id] = rankingQuestion(fmt.Sprintf("candidates[%d]", index))
 		}
-		payload, encodeErr := encodeRequest(wireRequest{
-			State: wireState{Query: request.Query, Candidates: slices.Clone(request.Candidates)},
+		payload, encodeErr := encodeRequest(wireBatchedRequest{
+			State: wireBatchedState{Query: request.Query, Candidates: slices.Clone(request.Candidates)},
 			Model: normalized.Model, Questions: questions,
 		})
 		if encodeErr != nil {
@@ -178,7 +185,7 @@ func encodeCalls(profile Profile, request RerankRequest) ([]preparedCall, error)
 	}
 }
 
-func encodeRequest(request wireRequest) ([]byte, error) {
+func encodeRequest[T wirePerCandidateRequest | wireBatchedRequest](request T) ([]byte, error) {
 	payload, err := json.Marshal(request, json.Deterministic(true))
 	if err != nil {
 		return nil, errors.New("typesafe rerank: request encoding failed")

@@ -9,7 +9,6 @@ import (
 	"io"
 	"net/http"
 	"os"
-	"path/filepath"
 	"slices"
 	"strings"
 	"sync/atomic"
@@ -27,6 +26,16 @@ func (fn roundTripFunc) RoundTrip(request *http.Request) (*http.Response, error)
 type countingSecrets struct {
 	calls atomic.Int32
 	value string
+}
+
+type blockingSecrets struct {
+	started chan struct{}
+}
+
+func (secrets *blockingSecrets) ResolveSecret(ctx context.Context, _ string) (string, error) {
+	close(secrets.started)
+	<-ctx.Done()
+	return "", ctx.Err()
 }
 
 func (secrets *countingSecrets) ResolveSecret(context.Context, string) (string, error) {
@@ -91,11 +100,11 @@ func TestRerankBatchedSendsOneCallWithIndexedQuestions(t *testing.T) {
 	if err != nil || !slices.Equal(result.Scores, []float64{0.2, 0.8}) {
 		t.Fatalf("result=%+v err=%v", result, err)
 	}
-	var decoded wireRequest
+	var decoded wireBatchedRequest
 	if err := json.Unmarshal([]byte(body), &decoded); err != nil {
 		t.Fatal(err)
 	}
-	if decoded.State.Candidate != nil || !slices.Equal(decoded.State.Candidates, []string{"first", "second"}) || len(decoded.Questions) != 2 {
+	if !slices.Equal(decoded.State.Candidates, []string{"first", "second"}) || len(decoded.Questions) != 2 {
 		t.Fatalf("request = %+v", decoded)
 	}
 	for index := range 2 {
@@ -146,21 +155,26 @@ func TestRerankRejectsOverBoundRequestsBeforeSecretsOrEgress(t *testing.T) {
 	}
 }
 
-func TestRerankRejectsEmptyCandidateBeforeProvider(t *testing.T) {
+func TestRerankPreservesEmptyCandidateBeforeSecretAndProvider(t *testing.T) {
 	secrets := &countingSecrets{value: "synthetic-secret"}
 	client, err := New(testProfile(), secrets, nil, http.DefaultClient)
 	if err != nil {
 		t.Fatal(err)
 	}
 	var requests atomic.Int32
-	client.http.Transport = roundTripFunc(func(*http.Request) (*http.Response, error) {
+	var body []byte
+	client.http.Transport = roundTripFunc(func(request *http.Request) (*http.Response, error) {
 		requests.Add(1)
-		return nil, errors.New("unexpected provider request")
+		body, err = io.ReadAll(request.Body)
+		if err != nil {
+			return nil, err
+		}
+		return jsonResponse("{\"model\":\"jev-1.13.0\",\"answers\":{\"matches\":{\"type\":\"noul\",\"noul\":0.5}},\"usage\":{\"input_tokens\":1,\"output_tokens\":1}}", request), nil
 	})
-	if _, err := client.Rerank(context.Background(), RerankRequest{Query: "q", Candidates: []string{""}}); !errors.Is(err, ErrPermanentResponse) {
+	if _, err := client.Rerank(context.Background(), RerankRequest{Query: "q", Candidates: []string{""}}); err != nil {
 		t.Fatalf("got %v", err)
 	}
-	if secrets.calls.Load() != 0 || requests.Load() != 0 {
+	if secrets.calls.Load() != 1 || requests.Load() != 1 || !bytes.Contains(body, []byte(`"candidate":""`)) {
 		t.Fatalf("secret calls=%d provider requests=%d", secrets.calls.Load(), requests.Load())
 	}
 }
@@ -328,17 +342,94 @@ func TestRerankDistinguishesClientTimeoutFromCallerCancellation(t *testing.T) {
 			<-request.Context().Done()
 			return nil, request.Context().Err()
 		})
-		caller, cancel := context.WithCancel(context.Background())
-		cancel()
-		_, err = client.Rerank(caller, RerankRequest{Query: "q", Candidates: []string{"x"}})
-		if !errors.Is(err, context.Canceled) {
-			t.Fatalf("caller cancellation: %v", err)
+		caller, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+		defer cancel()
+		done := make(chan error, 1)
+		go func() {
+			_, callErr := client.Rerank(caller, RerankRequest{Query: "q", Candidates: []string{"x"}})
+			done <- callErr
+		}()
+		time.Sleep(500 * time.Millisecond)
+		if err := <-done; !errors.Is(err, context.DeadlineExceeded) {
+			t.Fatalf("caller deadline: %v", err)
 		}
-		_, err = client.Rerank(context.Background(), RerankRequest{Query: "q", Candidates: []string{"x"}})
-		if !errors.Is(err, ErrTransientResponse) {
+		profile.RequestTimeout = 500 * time.Millisecond
+		client, err = New(profile, &countingSecrets{value: "synthetic-secret"}, nil, http.DefaultClient)
+		if err != nil {
+			t.Fatal(err)
+		}
+		client.http.Transport = roundTripFunc(func(request *http.Request) (*http.Response, error) {
+			<-request.Context().Done()
+			return nil, request.Context().Err()
+		})
+		caller, cancel = context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+		done = make(chan error, 1)
+		go func() {
+			_, callErr := client.Rerank(caller, RerankRequest{Query: "q", Candidates: []string{"x"}})
+			done <- callErr
+		}()
+		time.Sleep(500 * time.Millisecond)
+		if err := <-done; !errors.Is(err, ErrTransientResponse) {
 			t.Fatalf("client timeout: %v", err)
 		}
 	})
+}
+
+func TestRerankCancelsCredentialResolution(t *testing.T) {
+	secrets := &blockingSecrets{started: make(chan struct{})}
+	client, err := New(testProfile(), secrets, nil, http.DefaultClient)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() {
+		_, callErr := client.Rerank(ctx, RerankRequest{Query: "q", Candidates: []string{"x"}})
+		done <- callErr
+	}()
+	<-secrets.started
+	cancel()
+	if err := <-done; !errors.Is(err, context.Canceled) {
+		t.Fatalf("credential cancellation: %v", err)
+	}
+}
+
+type cancelingBody struct {
+	started chan struct{}
+	release chan struct{}
+}
+
+func (body *cancelingBody) Read([]byte) (int, error) {
+	close(body.started)
+	<-body.release
+	return 0, context.Canceled
+}
+
+func (body *cancelingBody) Close() error { return nil }
+
+func TestRerankReportsResponseBodyCancellation(t *testing.T) {
+	client := newTestClient(t, "")
+	body := &cancelingBody{started: make(chan struct{}), release: make(chan struct{})}
+	client.http.Transport = roundTripFunc(func(request *http.Request) (*http.Response, error) {
+		go func() {
+			<-request.Context().Done()
+			close(body.release)
+		}()
+		return &http.Response{StatusCode: http.StatusOK,
+			Header: http.Header{"Content-Type": []string{"application/json"}}, Body: body, Request: request}, nil
+	})
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() {
+		_, callErr := client.Rerank(ctx, RerankRequest{Query: "q", Candidates: []string{"x"}})
+		done <- callErr
+	}()
+	<-body.started
+	cancel()
+	if err := <-done; !errors.Is(err, context.Canceled) {
+		t.Fatalf("response cancellation: %v", err)
+	}
 }
 
 func TestRerankClassifiesTransportFailures(t *testing.T) {
@@ -364,37 +455,69 @@ func TestRerankClassifiesTransportFailures(t *testing.T) {
 }
 
 func TestCaptureReplayMatchesClientEncoding(t *testing.T) {
-	path := filepath.Join("testdata", "capture.json")
-	record, err := os.ReadFile(path)
-	if errors.Is(err, os.ErrNotExist) {
-		t.Skip("capture.json is absent")
-	}
-	if err != nil {
-		t.Fatal(err)
-	}
-	var capture struct {
-		Request     json.RawMessage `json:"request"`
-		Status      int             `json:"status"`
-		ContentType string          `json:"content_type"`
-		Response    json.RawMessage `json:"response"`
-	}
-	if err := json.Unmarshal(record, &capture); err != nil {
-		t.Fatal(err)
-	}
-	client := newTestClient(t, string(capture.Response))
-	client.http.Transport = roundTripFunc(func(request *http.Request) (*http.Response, error) {
-		body, readErr := io.ReadAll(request.Body)
-		if readErr != nil {
-			return nil, readErr
-		}
-		if !bytes.Equal(canonicalJSON(body), canonicalJSON(capture.Request)) {
-			return nil, fmt.Errorf("generated request differs from capture: %s != %s", body, capture.Request)
-		}
-		return &http.Response{StatusCode: capture.Status, Header: http.Header{"Content-Type": []string{capture.ContentType}}, Body: io.NopCloser(bytes.NewReader(capture.Response)), Request: request}, nil
-	})
-	result, err := client.Rerank(context.Background(), RerankRequest{Query: "synthetic question", Candidates: []string{"synthetic candidate"}})
-	if err != nil || len(result.Scores) != 1 || result.Receipt.InputTokens == 0 || result.Receipt.OutputTokens == 0 {
-		t.Fatalf("replay result=%+v err=%v", result, err)
+	for _, test := range []struct {
+		name       string
+		shape      RequestShape
+		candidates []string
+		ids        []string
+	}{{"per_candidate", RequestShapePerCandidate, []string{"synthetic candidate"}, []string{rankingQuestionID}},
+		{"batched", RequestShapeBatched, []string{"synthetic first", "synthetic second"}, []string{"candidate_0", "candidate_1"}}} {
+		t.Run(test.name, func(t *testing.T) {
+			record, err := os.ReadFile("testdata/capture_" + test.name + ".json")
+			if errors.Is(err, os.ErrNotExist) {
+				t.Skip("capture is absent")
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			var capture struct {
+				Request     json.RawMessage `json:"request"`
+				Status      int             `json:"status"`
+				ContentType string          `json:"content_type"`
+				Response    json.RawMessage `json:"response"`
+			}
+			if err := json.Unmarshal(record, &capture); err != nil {
+				t.Fatal(err)
+			}
+			var response wireResponse
+			if err := json.Unmarshal(capture.Response, &response); err != nil {
+				t.Fatal(err)
+			}
+			expected, usage, valid := validResponse(response, test.ids, ModelJev113)
+			if !valid {
+				t.Fatal("captured response is not a valid TypeSafe response")
+			}
+			wantScores := make([]float64, len(test.ids))
+			for index, id := range test.ids {
+				wantScores[index] = expected[id]
+			}
+			profile := testProfile()
+			profile.RequestShape = test.shape
+			client, err := New(profile, &countingSecrets{value: "synthetic-secret"}, nil, http.DefaultClient)
+			if err != nil {
+				t.Fatal(err)
+			}
+			client.http.Transport = roundTripFunc(func(request *http.Request) (*http.Response, error) {
+				body, readErr := io.ReadAll(request.Body)
+				if readErr != nil {
+					return nil, readErr
+				}
+				if !bytes.Equal(canonicalJSON(body), canonicalJSON(capture.Request)) {
+					return nil, fmt.Errorf("generated request differs from capture: %s != %s", body, capture.Request)
+				}
+				return &http.Response{StatusCode: capture.Status, Header: http.Header{"Content-Type": []string{capture.ContentType}}, Body: io.NopCloser(bytes.NewReader(capture.Response)), Request: request}, nil
+			})
+			result, err := client.Rerank(context.Background(), RerankRequest{Query: "synthetic question", Candidates: test.candidates})
+			if err != nil {
+				t.Fatalf("replay: %v", err)
+			}
+			if !slices.Equal(result.Scores, wantScores) {
+				t.Fatalf("scores = %v, want captured scores %v", result.Scores, wantScores)
+			}
+			if result.Receipt.InputTokens != usage.inputTokens || result.Receipt.OutputTokens != usage.outputTokens {
+				t.Fatalf("usage = %d/%d, want %d/%d", result.Receipt.InputTokens, result.Receipt.OutputTokens, usage.inputTokens, usage.outputTokens)
+			}
+		})
 	}
 }
 

@@ -41,7 +41,7 @@ func (failure *ProviderError) Unwrap() error {
 
 func RetryAfter(err error) (time.Duration, bool) {
 	failure, ok := errors.AsType[*ProviderError](err)
-	if !ok || !failure.RetrySet {
+	if !ok || failure == nil || !failure.RetrySet {
 		return 0, false
 	}
 	return failure.RetryDelay, true

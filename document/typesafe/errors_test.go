@@ -44,3 +44,10 @@ func TestProviderErrorZeroValueIsSafe(t *testing.T) {
 		t.Fatal("zero ProviderError is unsafe")
 	}
 }
+
+func TestRetryAfterTypedNilProviderErrorIsSafe(t *testing.T) {
+	var failure *ProviderError
+	if delay, ok := RetryAfter(failure); ok || delay != 0 {
+		t.Fatalf("typed nil retry-after = %v, %v", delay, ok)
+	}
+}
