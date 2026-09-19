@@ -95,7 +95,7 @@ func (searcher *Searcher) Similar(ctx context.Context, query SimilarQuery) (_ Si
 	if err := ctx.Err(); err != nil {
 		return SimilarReport{}, err
 	}
-	neighbors, err := generation.SearchSimilarRows(authority.SourceRows, authority.ANNRows)
+	neighbors, err := generation.SearchSimilarRows(ctx, authority.SourceRows, authority.ANNRows)
 	if err != nil {
 		return SimilarReport{}, err
 	}

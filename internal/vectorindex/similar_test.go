@@ -11,11 +11,11 @@ import (
 func TestSearchSimilarRowsAllMetricsAndTies(t *testing.T) {
 	for _, metric := range []string{document.VectorMetricCosine, document.VectorMetricDotProduct, document.VectorMetricL2} {
 		t.Run(metric, func(t *testing.T) {
-			set := testVectorSet(metric, document.VectorNormalizationNone, []string{"source-a", "source-b", "candidate-a", "candidate-b", "far"}, [][]float32{{1, 0}, {0, 2}, {0, 2}, {0, 2}, {-1, 0}})
+			set := testVectorSet(metric, document.VectorNormalizationNone, []string{"source-a", "source-c", "source-b", "candidate-a", "candidate-b", "far"}, [][]float32{{1, 0}, {0, 2}, {0, 2}, {0, 2}, {0, 2}, {-1, 0}})
 			generation, err := BuildGeneration(testManifest(t, []document.VectorSetV1{set}), []document.VectorSetV1{set}, Options{})
 			require.NoError(t, err)
 			rows := generation.rows
-			got, err := generation.SearchSimilarRows(rows[:2], rows[2:])
+			got, err := generation.SearchSimilarRows(t.Context(), rows[:3], rows[3:])
 			require.NoError(t, err)
 			require.Len(t, got, 3)
 			assert.Equal(t, "candidate-a", got[0].InputKey)
@@ -30,7 +30,7 @@ func TestSearchSimilarRowsAllMetricsAndTies(t *testing.T) {
 				assert.Zero(t, got[0].Distance)
 				assert.Positive(t, got[2].Distance)
 			}
-			reversed, err := generation.SearchSimilarRows([]RowIdentity{rows[1], rows[0]}, rows[2:])
+			reversed, err := generation.SearchSimilarRows(t.Context(), []RowIdentity{rows[2], rows[1], rows[0]}, []RowIdentity{rows[5], rows[4], rows[3]})
 			require.NoError(t, err)
 			assert.Equal(t, got, reversed)
 		})
@@ -42,12 +42,16 @@ func TestSearchSimilarRowsRejectsInvalidIdentityAndAcceptsEmptyCandidates(t *tes
 	generation, err := BuildGeneration(testManifest(t, []document.VectorSetV1{set}), []document.VectorSetV1{set}, Options{})
 	require.NoError(t, err)
 	for _, sources := range [][]RowIdentity{nil, {generation.rows[0], generation.rows[0]}, {{InputKey: "absent"}}} {
-		_, err := generation.SearchSimilarRows(sources, nil)
+		_, err := generation.SearchSimilarRows(t.Context(), sources, nil)
 		require.Error(t, err)
 	}
-	_, err = (*Generation)(nil).SearchSimilarRows(generation.rows, nil)
+	for _, candidates := range [][]RowIdentity{{generation.rows[0], generation.rows[0]}, {{InputKey: "absent"}}} {
+		_, err := generation.SearchSimilarRows(t.Context(), generation.rows, candidates)
+		require.Error(t, err)
+	}
+	_, err = (*Generation)(nil).SearchSimilarRows(t.Context(), generation.rows, nil)
 	require.Error(t, err)
-	got, err := generation.SearchSimilarRows(generation.rows, nil)
+	got, err := generation.SearchSimilarRows(t.Context(), generation.rows, nil)
 	require.NoError(t, err)
 	assert.Empty(t, got)
 }

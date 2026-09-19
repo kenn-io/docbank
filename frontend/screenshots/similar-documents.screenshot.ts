@@ -138,7 +138,7 @@ trust_boundary = "local_process"
     },{timeout:60_000}).toBe(true);
     baseURL = "http://"+record!.address;
     const headers={"X-Api-Key":record!.metadata.api_key!};
-    for (const [name,text] of [["source.txt","Synthetic solar panel maintenance."],["solar-guide.txt","Synthetic solar panel cleaning."],["solar-copy.txt","Synthetic solar panel cleaning."],["garden.txt","Synthetic garden planting schedule."]]) {
+    for (const [name,text] of [["source.txt","Synthetic solar panel maintenance."],["solar-guide.txt","Synthetic solar panel cleaning."],["solar-copy.txt","Synthetic solar panel cleaning."],["garden.txt","Synthetic garden planting schedule."],["z-unembedded.txt","Synthetic document awaiting processing."]]) {
       await generated.uploadFile({file:new Blob([text!],{type:"text/plain"})},{parent_id:1,name:name!},
         {"X-Docbank-Blob-Hash":createHash("sha256").update(text!).digest("hex"),"X-Docbank-Blob-Size":String(Buffer.byteLength(text!))},{headers});
     }
@@ -151,6 +151,7 @@ trust_boundary = "local_process"
     const sessionOptions={session,headers:{Host:new URL(browser.url).host}};
       const children=await generated.listChildren(1,{limit:1000,offset:0},sessionOptions);
       for (const node of children.items) {
+        if (node.name === "z-unembedded.txt") continue;
         const selector={node_id:node.id,content_version_id:node.current_version_id!,profile:"private_text"};
         const plan=await generated.planDocumentProcessing({selector},sessionOptions);
         const started=await generated.startDocumentProcessing({selector,plan_fingerprint:plan.fingerprint,consent:true},sessionOptions);
@@ -158,6 +159,14 @@ trust_boundary = "local_process"
         if (!started.ok || !body.includes('"state":"completed"')) throw Error(body);
       }
     calls=0;
+    const action=page.getByRole("button",{name:"Find documents similar to source.txt"});
+    for (const width of [1440,1280,768,400]) {
+      await page.setViewportSize({width,height:960});
+      await action.scrollIntoViewIfNeeded();
+      await expect(action).toBeInViewport();
+      await action.hover();
+      await page.screenshot({path:path.join(output!,"web-similar-action-"+width+".png")});
+    }
     await page.getByRole("button",{name:"Find documents similar to source.txt"}).click();
     const section=page.getByRole("region",{name:"Similar documents"});
     await expect(section.getByText("+1 identical")).toBeVisible();
@@ -168,7 +177,16 @@ trust_boundary = "local_process"
       await section.scrollIntoViewIfNeeded();
       await page.screenshot({path:path.join(output!,"web-similar-"+width+".png")});
     }
-    console.log("similar screenshot: provider_calls=0 duplicate_count=1 widths=1440,1280,768,400");
+    await page.getByRole("button",{name:"Close document processing"}).click();
+    await page.getByRole("button",{name:"Find documents similar to z-unembedded.txt"}).click();
+    await expect(section.getByText(/Unavailable: no current embedding/)).toBeVisible();
+    for (const width of [1440,1280,768,400]) {
+      await page.setViewportSize({width,height:960});
+      await section.scrollIntoViewIfNeeded();
+      await page.screenshot({path:path.join(output!,"web-similar-unavailable-"+width+".png")});
+    }
+    expect(calls).toBe(0);
+    console.log("similar screenshot: row_action=visible ready=true unavailable=true provider_calls=0 duplicate_count=1 scope=5 widths=1440,1280,768,400");
     const socket = `docbank-similar-${process.pid}`;
     const tmux = async (args: string[]) => (await exec(process.platform === "win32" ? "wsl.exe" : "tmux",
       process.platform === "win32" ? ["-d","Ubuntu","--","tmux","-L",socket,...args] : ["-L",socket,...args],

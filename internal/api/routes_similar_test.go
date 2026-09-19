@@ -15,6 +15,7 @@ import (
 	"go.kenn.io/docbank/internal/apiclient"
 	"go.kenn.io/docbank/internal/daemonconn"
 	"go.kenn.io/docbank/internal/store"
+	"go.kenn.io/docbank/sqlite"
 )
 
 type similarCountingProvider struct {
@@ -76,6 +77,27 @@ func TestSimilarDocumentsRouteGroupsCopiesAndNeverEmbeds(t *testing.T) {
 	require.NoError(t, err)
 	assert.Empty(t, empty.Results)
 	assert.Equal(t, "ready", empty.State)
+
+	db, err := catalog.SQLiteDriver().Open(catalog.DBPath, sqlite.OpenOptions{Access: sqlite.ReadWriteExisting, TransactionMode: sqlite.Deferred})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, db.Close()) })
+	_, err = db.ExecContext(t.Context(), `UPDATE vector_index_generations SET source_manifest_checksum=?`, strings.Repeat("f", 64))
+	require.NoError(t, err)
+	for _, test := range []struct {
+		path   string
+		body   any
+		status int
+		code   string
+	}{
+		{"/api/v1/search/similar", request, http.StatusConflict, "stale_index"},
+		{"/api/v1/search", api.DocumentSearchRequest{Query: "synthetic", Mode: "semantic", Profile: "private", BindingID: "semantic", Limit: 20, Fence: request.Fence}, http.StatusInternalServerError, "processing_failed"},
+	} {
+		t.Run(test.path+"/stale_index", func(t *testing.T) {
+			response, body := do(t, ts, http.MethodPost, test.path, nil, test.body)
+			assert.Equal(t, test.status, response.StatusCode, body)
+			assert.Contains(t, body, `"code":"`+test.code+`"`)
+		})
+	}
 }
 
 func TestSimilarMissingCoverageRequiresSourceFenceAndCurrentIdentity(t *testing.T) {

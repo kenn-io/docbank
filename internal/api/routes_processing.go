@@ -401,6 +401,9 @@ func registerProcessingRoutes(api huma.API, d Deps) {
 			Selector:  processing.Selector{NodeID: input.Body.Selector.NodeID, ContentVersionID: input.Body.Selector.ContentVersionID, Profile: input.Body.Selector.Profile},
 			BindingID: input.Body.BindingID, Limit: input.Body.Limit,
 			Fence: processing.SourceFence{VaultUID: input.Body.Fence.VaultUID, ContentVersionIDs: input.Body.Fence.ContentVersionIDs}})
+		if errors.Is(err, store.ErrVectorIndexSourceStale) {
+			return nil, NewError(http.StatusConflict, "stale_index", "vector index source changed")
+		}
 		if err != nil {
 			return nil, fromProcessingError(err)
 		}
@@ -678,7 +681,6 @@ func fromProcessingError(err error) error {
 		code   string
 		detail string
 	}{
-		{store.ErrVectorIndexSourceStale, http.StatusConflict, "stale_index", "vector index source changed"},
 		{processing.ErrRenditionFailed, http.StatusUnprocessableEntity, "rendition_failed", "document rendition failed"},
 		{processing.ErrRenditionOperatorRequired, http.StatusConflict, "rendition_operator_required", "document rendition requires operator intervention"},
 		{processing.ErrForeignVault, http.StatusUnprocessableEntity, "foreign_vault", "source fence belongs to another vault"},

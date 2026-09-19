@@ -11,6 +11,34 @@ afterEach(() => {
 });
 
 describe("document processing drawer", () => {
+  it.each(["report", "error"])("ignores a stale similar %s after a profile change", async (outcome) => {
+    let finish!: (report: DocumentSimilarReport) => void;
+    let fail!: (error: Error) => void;
+    const pending = new Promise<DocumentSimilarReport>((resolve, reject) => { finish = resolve; fail = reject; });
+    const similar = vi.spyOn(processingAPI, "documentSimilar").mockReturnValueOnce(pending);
+    const view = renderProcessingResponse(Promise.resolve(completedProcessingResponse()), ["private", "other"]);
+    await screen.findByRole("button", { name: "Run processing" });
+    await view.rerender({ scopeVersionIDs: [processingJob.content_version_id] });
+    await fireEvent.click(screen.getByRole("button", { name: "Find similar" }));
+    expect(similar).toHaveBeenCalledTimes(1);
+    await fireEvent.change(screen.getByLabelText("Profile"), { target: { value: "other" } });
+    await screen.findByRole("button", { name: "Run processing" });
+    if (outcome === "report") similar.mockRejectedValueOnce(new Error("Latest request failed"));
+    else similar.mockResolvedValueOnce({ ...contract.similar_report, results: [] } as DocumentSimilarReport);
+    await fireEvent.click(screen.getByRole("button", { name: "Find similar" }));
+    const latest = outcome === "report" ? "Latest request failed" : "No similar documents inside this view.";
+    expect(await screen.findByText(latest)).toBeTruthy();
+    expect(similar.mock.calls[1]?.[1].selector.profile).toBe("other");
+    await act(async () => {
+      if (outcome === "report") finish(contract.similar_report as DocumentSimilarReport);
+      else fail(new Error("Stale request failed"));
+      await pending.catch(() => {});
+    });
+    expect(screen.getByText(latest)).toBeTruthy();
+    expect(screen.queryByText("Stale request failed")).toBeNull();
+    expect(screen.queryByText(contract.similar_report.results[0]!.path)).toBeNull();
+  });
+
   it("captures the loaded scope and ignores completion after close", async () => {
     let finish!: (report: DocumentSimilarReport) => void;
     const similar = vi.spyOn(processingAPI, "documentSimilar").mockImplementation(() => new Promise((resolve) => { finish = resolve; }));
@@ -485,11 +513,11 @@ function completedProcessingResponse(): Response {
   })}\n`, { headers: { "Content-Type": "application/x-ndjson" } });
 }
 
-function renderProcessingResponse(response: Promise<Response>) {
+function renderProcessingResponse(response: Promise<Response>, profiles = ["private"]) {
   let revoked = false;
   const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
     const path = String(input);
-    if (path === "/api/v1/processing/profiles") return Response.json([{ name: "private", fingerprint: processingJob.profile_fingerprint, rendition: false, embedding_bindings: ["semantic"] }]);
+    if (path === "/api/v1/processing/profiles") return Response.json(profiles.map((name) => ({ name, fingerprint: processingJob.profile_fingerprint, rendition: false, embedding_bindings: ["semantic"] })));
     if (path === "/api/v1/processing/plans") return Response.json({
       fingerprint: processingJob.profile_fingerprint, vault_uid: processingJob.content_version_id,
       selector: JSON.parse(String(init?.body)).selector, profile_fingerprint: processingJob.profile_fingerprint,

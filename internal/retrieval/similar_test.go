@@ -36,6 +36,22 @@ func (b *similarBackendStub) ResolveSimilarCandidates(_ context.Context, _, _ st
 
 type forbiddenSimilarEncoder struct{ t *testing.T }
 
+type scoringContext struct {
+	context.Context
+
+	remaining int
+	scoring   chan struct{}
+}
+
+func (ctx *scoringContext) Err() error {
+	ctx.remaining--
+	if ctx.remaining == 0 {
+		close(ctx.scoring)
+		<-ctx.Done()
+	}
+	return ctx.Context.Err()
+}
+
 func (p forbiddenSimilarEncoder) ResolveQueryEncoder(context.Context, document.EmbeddingDescriptor) (document.EmbeddingProvider, error) {
 	p.t.Fatal("similar search invoked a query encoder")
 	return nil, errors.New("forbidden encoder")
@@ -69,6 +85,36 @@ func TestSimilarStoredMetricsNoEncoderAndLeaseCleanup(t *testing.T) {
 			if metric == document.VectorMetricL2 {
 				assert.Equal(t, []float64{-1, -2}, b.scores)
 			}
+			t.Run("cancel_during_scoring", func(t *testing.T) {
+				backend.releasedAt = time.Time{}
+				b.scores = nil
+				ctx, cancel := context.WithCancel(t.Context())
+				defer cancel()
+				// One precheck, six selection checks, then source and two candidate checks.
+				scoring := &scoringContext{Context: ctx, remaining: 10, scoring: make(chan struct{})}
+				done := make(chan error, 1)
+				go func() {
+					_, err := searcher.Similar(scoring, query)
+					done <- err
+				}()
+				select {
+				case <-scoring.scoring:
+				case err := <-done:
+					t.Fatalf("returned before reaching candidate scoring: %v", err)
+				case <-time.After(time.Second):
+					t.Fatal("did not reach candidate scoring")
+				}
+				cancel()
+				select {
+				case err := <-done:
+					require.ErrorIs(t, err, context.Canceled)
+				case <-time.After(time.Second):
+					t.Fatal("scoring did not stop promptly")
+				}
+				assert.False(t, backend.releasedAt.IsZero(), "scoring cancellation releases lease")
+				require.NoError(t, backend.releaseContextErr, "lease release uses an uncancelled context")
+				assert.Empty(t, b.scores, "cancelled scoring never reaches candidate resolution")
+			})
 			backend.releasedAt = time.Time{}
 			cancelled, cancel := context.WithCancel(t.Context())
 			cancel()
