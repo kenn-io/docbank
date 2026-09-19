@@ -220,6 +220,52 @@ func TestRerankBoundsResponseRead(t *testing.T) {
 	}
 }
 
+func TestRerankClassifiesStatusBeforeReadingBody(t *testing.T) {
+	client := newTestClient(t, "")
+	body := &readFailingBody{}
+	client.http.Transport = roundTripFunc(func(request *http.Request) (*http.Response, error) {
+		return &http.Response{
+			StatusCode: http.StatusTooManyRequests,
+			Header:     http.Header{"Retry-After": []string{"7"}},
+			Body:       body,
+			Request:    request,
+		}, nil
+	})
+
+	_, err := client.Rerank(context.Background(), RerankRequest{Query: "q", Candidates: []string{"x"}})
+	if !errors.Is(err, ErrTransientResponse) {
+		t.Fatalf("got %v, want transient response", err)
+	}
+	failure, ok := errors.AsType[*ProviderError](err)
+	if !ok || failure.StatusCode != http.StatusTooManyRequests {
+		t.Fatalf("provider error = %+v, %v; want HTTP 429", failure, ok)
+	}
+	if delay, ok := RetryAfter(err); !ok || delay != 7*time.Second {
+		t.Fatalf("RetryAfter = %v, %v; want 7s, true", delay, ok)
+	}
+	if body.read {
+		t.Fatal("response body was read")
+	}
+	if !body.closed {
+		t.Fatal("response body was not closed")
+	}
+}
+
+type readFailingBody struct {
+	read   bool
+	closed bool
+}
+
+func (body *readFailingBody) Read([]byte) (int, error) {
+	body.read = true
+	return 0, errors.New("response body read")
+}
+
+func (body *readFailingBody) Close() error {
+	body.closed = true
+	return nil
+}
+
 type countingReader struct {
 	reader io.Reader
 	reads  *atomic.Int64
