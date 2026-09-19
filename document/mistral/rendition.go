@@ -170,8 +170,8 @@ func (client *RenditionClient) Render(
 		return document.RenditionResult{}, err
 	}
 	includeMarkdown := authorization.MaxProviderMarkdownBytes > 0
-	evidence, markdown, err := mistralEvidence(
-		providerResult.Document, includeMarkdown, int64(authorization.MaxTotalResultBytes),
+	evidence, markdown, err := renditionEvidence(
+		providerResult, candidate, includeMarkdown, int64(authorization.MaxTotalResultBytes),
 	)
 	if err != nil {
 		return document.RenditionResult{}, renditionProvider.Malformed("Mistral OCR output is malformed", err)
@@ -354,6 +354,39 @@ func mistralEvidence(
 	return evidence, markdown, nil
 }
 
+func renditionEvidence(
+	result Result, candidate CandidateFormat, includeMarkdown bool, maxResultBytes int64,
+) (document.SourceEvidenceV1, []byte, error) {
+	source := result.Document
+	if result.ConversionReceipt == nil {
+		return mistralEvidence(source, includeMarkdown, maxResultBytes)
+	}
+	if candidate.Family == "word" {
+		source.Family = "word"
+		source.UnitKind = "page"
+		return mistralEvidence(source, includeMarkdown, maxResultBytes)
+	}
+	pdfSource := source
+	pdfSource.Family = "pdf"
+	pdfSource.UnitKind = "page"
+	pdfEvidence, markdown, err := mistralEvidence(pdfSource, includeMarkdown, maxResultBytes)
+	if err != nil {
+		return document.SourceEvidenceV1{}, nil, err
+	}
+	combined := make([]string, 0, len(pdfEvidence.Units))
+	for _, unit := range pdfEvidence.Units {
+		combined = append(combined, unit.Text)
+	}
+	degraded := providerutil.DegradedEvidence(
+		candidate.Family, strings.Join(combined, "\n\n---\n\n"),
+		"rendered PDF pages do not identify the original units",
+	)
+	if err := document.ValidateSourceEvidenceV1(degraded); err != nil {
+		return document.SourceEvidenceV1{}, nil, err
+	}
+	return degraded, markdown, nil
+}
+
 func mistralUnitBytes(unit document.SourceUnit) int64 {
 	parts := int64(0)
 	total := int64(0)
@@ -428,7 +461,7 @@ func classifyRenditionError(cause error) error {
 	switch {
 	case errors.Is(cause, ErrInvalidSource):
 		return renditionProvider.Classified(document.RenditionErrorUnsupportedInput,
-			"Mistral DOCX conversion rejected the source", cause)
+			"Mistral rendered PDF conversion rejected the source", cause)
 	case errors.Is(cause, ErrTransientResponse):
 		return renditionProvider.Classified(document.RenditionErrorTransient,
 			"Mistral request retries were exhausted", cause)

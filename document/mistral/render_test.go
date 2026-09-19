@@ -88,11 +88,25 @@ func testRenderPDFPolicy(t *testing.T, pdf []byte, runnerErr error) renderpdf.Po
 
 func testRenderPDFPolicyAndRunner(t *testing.T, pdf []byte, runnerErr error) (renderpdf.Policy, *testRenderRunner) {
 	t.Helper()
+	return testRenderPDFPolicyAndRunnerForFormat(t, "docx", pdf, runnerErr)
+}
+
+func testRenderPDFPolicyAndRunnerForFormat(
+	t *testing.T, formatID string, pdf []byte, runnerErr error,
+) (renderpdf.Policy, *testRenderRunner) {
+	t.Helper()
 	runner := &testRenderRunner{
 		pdf: pdf, err: runnerErr,
-		normalized: []byte(`<?xml version="1.0" encoding="UTF-8"?><office:document xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0" office:mimetype="application/vnd.oasis.opendocument.text"><office:body><office:text><text:p>Synthetic DOCX conversion</text:p></office:text></office:body></office:document>`),
+		normalized: syntheticFlatODF(formatID),
 	}
 	return testRenderPDFPolicyWithRunner(t, runner), runner
+}
+
+//nolint:unparam // render tests keep the format explicit for lane coverage.
+func testRenderPDFPolicyForFormat(t *testing.T, formatID string, pdf []byte, runnerErr error) renderpdf.Policy {
+	t.Helper()
+	policy, _ := testRenderPDFPolicyAndRunnerForFormat(t, formatID, pdf, runnerErr)
+	return policy
 }
 
 func testRenderPDFPolicyWithRunner(t *testing.T, runner *testRenderRunner) renderpdf.Policy {
@@ -166,17 +180,64 @@ func loadDOCXFixture(t *testing.T, name string) []byte {
 
 func prepareTestDOCX(t *testing.T, policy Policy, content []byte) *PreparedDocument {
 	t.Helper()
+	return prepareTestRenderLane(t, policy, "docx", content)
+}
+
+func prepareTestRenderLane(t *testing.T, policy Policy, formatID string, content []byte) *PreparedDocument {
+	t.Helper()
 	digest := sha256.Sum256(content)
 	directory := filepath.Join(t.TempDir(), "spool")
 	makePrivateDirectory(t, directory)
+	candidate, ok := CandidateFormatByID(formatID)
+	require.True(t, ok)
 	prepared, err := Prepare(t.Context(), io.NopCloser(bytes.NewReader(content)), policy, PrepareOptions{
-		Directory: directory, DeclaredMediaType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+		Directory: directory, DeclaredMediaType: candidate.MediaType,
 		ExpectedSize: int64(len(content)), ExpectedSHA256: hex.EncodeToString(digest[:]),
 		MaxSpoolBytes: policy.values.MaxDocumentBytes, MinFreeBytes: 1,
 	})
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, prepared.Release()) })
 	return prepared
+}
+
+func renderLaneFixture(t *testing.T, formatID string) []byte {
+	t.Helper()
+	switch formatID {
+	case "docx":
+		return loadDOCXFixture(t, "explicit-breaks.docx")
+	case "doc":
+		return compoundDocument(t, "WordDocument")
+	case "odt", "rtf", "ods", "xlsx":
+		content, generated, err := generatedFixture(formatID)
+		require.NoError(t, err)
+		require.True(t, generated)
+		return content
+	case "ppt":
+		return compoundDocument(t, "PowerPoint Document")
+	case "xls":
+		return compoundDocument(t, "Workbook")
+	default:
+		t.Fatalf("unknown render lane format %q", formatID)
+		return nil
+	}
+}
+
+func syntheticFlatODF(formatID string) []byte {
+	mimeType := "application/vnd.oasis.opendocument.text"
+	text := "Synthetic render conversion"
+	if formatID == "docx" {
+		text = "Synthetic DOCX conversion"
+	}
+	body := `<office:text xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0"><text:p xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0">` + text + `</text:p></office:text>`
+	switch formatID {
+	case "ppt":
+		mimeType = "application/vnd.oasis.opendocument.presentation"
+		body = `<office:presentation xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0"><draw:page xmlns:draw="urn:oasis:names:tc:opendocument:xmlns:drawing:1.0" draw:name="Slide 1"/></office:presentation>`
+	case "xls", "ods", "xlsx":
+		mimeType = "application/vnd.oasis.opendocument.spreadsheet"
+		body = `<office:spreadsheet xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:table="urn:oasis:names:tc:opendocument:xmlns:table:1.0"><table:table table:name="Sheet 1"/></office:spreadsheet>`
+	}
+	return []byte(`<?xml version="1.0" encoding="UTF-8"?><office:document xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" office:mimetype="` + mimeType + `"><office:body>` + body + `</office:body></office:document>`)
 }
 
 func TestDOCXExplicitBreakLimit(t *testing.T) {
@@ -279,6 +340,152 @@ func TestDOCXClientUpload(t *testing.T) {
 	assert.Len(t, runner.calls, 2)
 }
 
+func TestRenderLaneClientUpload(t *testing.T) {
+	for _, formatID := range []string{"doc", "odt", "rtf", "ppt", "xls", "ods", "xlsx"} {
+		t.Run(formatID, func(t *testing.T) {
+			pdf := testMultipagePDF(2)
+			renderPolicy, runner := testRenderPDFPolicyAndRunnerForFormat(t, formatID, pdf, nil)
+			policy := testPolicyWithRenderPDF(t, renderPolicy, 1<<20, 10)
+			manifest := syntheticManifest(t, policy, true)
+			authorization, err := policy.Authorize(manifest, formatID)
+			require.NoError(t, err)
+			original := renderLaneFixture(t, formatID)
+			prepared := prepareTestRenderLane(t, policy, formatID, original)
+
+			var bodies [][]byte
+			var mediaTypes []string
+			requestCount := 0
+			server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
+				requestCount++
+				body, readErr := io.ReadAll(request.Body)
+				if !assert.NoError(t, readErr) {
+					return
+				}
+				var wire struct {
+					Document struct {
+						URL string `json:"document_url"`
+					} `json:"document"`
+				}
+				if !assert.NoError(t, json.Unmarshal(body, &wire)) {
+					return
+				}
+				encoded := strings.SplitN(wire.Document.URL, ";base64,", 2)
+				if !assert.Len(t, encoded, 2) {
+					return
+				}
+				uploaded, decodeErr := decodeBase64(encoded[1])
+				if !assert.NoError(t, decodeErr) {
+					return
+				}
+				bodies = append(bodies, uploaded)
+				mediaTypes = append(mediaTypes, encoded[0])
+				if requestCount == 1 {
+					w.Header().Set("Retry-After", "0")
+					w.WriteHeader(http.StatusServiceUnavailable)
+					return
+				}
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = io.WriteString(w, ocrResponse(2, len(pdf)))
+			}))
+			defer server.Close()
+
+			client := newServerClient(t, server, policy, ClientConfig{MaxRetries: 1, MaxRetryDelay: time.Millisecond})
+			result, err := client.Process(t.Context(), prepared, authorization)
+			require.NoError(t, err)
+			require.Len(t, bodies, 2)
+			assert.Equal(t, bodies[0], bodies[1])
+			assert.Equal(t, pdf, bodies[0])
+			assert.Equal(t, []string{"data:" + mediaTypePDF, "data:" + mediaTypePDF}, mediaTypes)
+			candidate, ok := CandidateFormatByID(formatID)
+			require.True(t, ok)
+			assert.Equal(t, candidate.Family, result.Document.Family)
+			assert.Equal(t, "page", result.Document.UnitKind)
+			require.NotNil(t, result.ConversionReceipt)
+			assert.Equal(t, formatID, result.ConversionReceipt.SourceFormat)
+			assert.Equal(t, digestBytes(pdf), result.ConversionReceipt.PDFSHA256)
+			assert.Equal(t, int64(len(pdf)), result.ConversionReceipt.PDFBytes)
+			assert.Equal(t, 2, result.ConversionReceipt.Pages)
+			assert.Equal(t, 2, result.Metrics.Requests)
+			assert.Len(t, runner.calls, 2)
+		})
+	}
+}
+
+func TestRenderLaneRejectsOverLimitPDFBeforeUpload(t *testing.T) {
+	pdf := testMultipagePDF(11)
+	policy := testPolicyWithRenderPDF(t, testRenderPDFPolicyForFormat(t, "xlsx", pdf, nil), 1<<20, 10)
+	authorization, err := policy.Authorize(syntheticManifest(t, policy, true), "xlsx")
+	require.NoError(t, err)
+	requests := 0
+	client := clientWithTransport(t, policy, roundTripFunc(func(*http.Request) (*http.Response, error) {
+		requests++
+		return nil, errors.New("unexpected provider request")
+	}))
+	_, err = client.Process(t.Context(), prepareTestRenderLane(t, policy, "xlsx", renderLaneFixture(t, "xlsx")), authorization)
+	require.ErrorIs(t, err, ErrCapabilityContract)
+	assert.Contains(t, err.Error(), "generated PDF")
+	assert.Zero(t, requests)
+}
+
+func TestRenderLaneConversionFailures(t *testing.T) {
+	tests := []struct {
+		name       string
+		normalized []byte
+		runnerErr  error
+		want       error
+	}{
+		{name: "wrong kind", normalized: syntheticFlatODF("docx"), want: ErrInvalidSource},
+		{name: "unsafe XML", normalized: bytes.Replace(syntheticFlatODF("xlsx"), []byte("<office:body>"), []byte("<office:body><office:object/>"), 1), want: ErrInvalidSource},
+		{name: "renderer failure", runnerErr: renderpdf.ErrUnavailable, want: ErrTransientResponse},
+	}
+	for _, testCase := range tests {
+		t.Run(testCase.name, func(t *testing.T) {
+			pdf := testMultipagePDF(1)
+			renderPolicy, runner := testRenderPDFPolicyAndRunnerForFormat(t, "xlsx", pdf, testCase.runnerErr)
+			if testCase.normalized != nil {
+				runner.normalized = testCase.normalized
+			}
+			policy := testPolicyWithRenderPDF(t, renderPolicy, 1<<20, 10)
+			authorization, err := policy.Authorize(syntheticManifest(t, policy, true), "xlsx")
+			require.NoError(t, err)
+			requests := 0
+			client := clientWithTransport(t, policy, roundTripFunc(func(*http.Request) (*http.Response, error) {
+				requests++
+				return nil, errors.New("unexpected provider request")
+			}))
+			_, err = client.Process(t.Context(), prepareTestRenderLane(t, policy, "xlsx", renderLaneFixture(t, "xlsx")), authorization)
+			require.ErrorIs(t, err, testCase.want)
+			assert.Zero(t, requests)
+			if testCase.name == "unsafe XML" || testCase.name == "wrong kind" {
+				require.ErrorIs(t, err, renderpdf.ErrSourceRejected)
+			}
+		})
+	}
+}
+
+func TestRenderLaneRetryIdentity(t *testing.T) {
+	pdf := testMultipagePDF(1)
+	policy := testPolicyWithRenderPDF(t, testRenderPDFPolicyForFormat(t, "xlsx", pdf, nil), 1<<20, 10)
+	authorization, err := policy.Authorize(syntheticManifest(t, policy, true), "xlsx")
+	require.NoError(t, err)
+	prepared := prepareTestRenderLane(t, policy, "xlsx", renderLaneFixture(t, "xlsx"))
+	requests := 0
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		requests++
+		prepared.mu.Lock()
+		prepared.sha256 = strings.Repeat("0", sha256.Size*2)
+		prepared.mu.Unlock()
+		w.Header().Set("Retry-After", "0")
+		w.WriteHeader(http.StatusServiceUnavailable)
+	}))
+	defer server.Close()
+	client := newServerClient(t, server, policy, ClientConfig{MaxRetries: 1, MaxRetryDelay: time.Millisecond})
+	_, err = client.Process(t.Context(), prepared, authorization)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "source changed before retry")
+	assert.Equal(t, 1, requests)
+}
+
 func TestDOCXConversionErrorClassification(t *testing.T) {
 	_, runner := testRenderPDFPolicyAndRunner(t, testMultipagePDF(2), nil)
 	limits := renderpdf.DefaultLimits()
@@ -291,21 +498,21 @@ func TestDOCXConversionErrorClassification(t *testing.T) {
 	_, err = client.Process(t.Context(), prepareTestDOCX(t, policy, loadDOCXFixture(t, "explicit-breaks.docx")), authorization)
 	require.ErrorIs(t, err, ErrCapabilityContract)
 	require.ErrorIs(t, err, renderpdf.ErrPageLimit)
-	require.ErrorIs(t, classifyDOCXConversionError(t.Context(), renderpdf.ErrRendererChanged), ErrTransientResponse)
+	require.ErrorIs(t, classifyRenderConversionError(t.Context(), renderpdf.ErrRendererChanged), ErrTransientResponse)
 
-	deadlineErr := classifyDOCXConversionError(t.Context(), fmt.Errorf("render PDF conversion timed out: %w", context.DeadlineExceeded))
+	deadlineErr := classifyRenderConversionError(t.Context(), fmt.Errorf("render PDF conversion timed out: %w", context.DeadlineExceeded))
 	require.ErrorIs(t, deadlineErr, ErrTransientResponse)
 	require.ErrorIs(t, deadlineErr, context.DeadlineExceeded)
 
 	canceled, cancel := context.WithCancel(t.Context())
 	cancel()
-	canceledErr := classifyDOCXConversionError(canceled, context.Canceled)
+	canceledErr := classifyRenderConversionError(canceled, context.Canceled)
 	require.ErrorIs(t, canceledErr, context.Canceled)
 	require.NotErrorIs(t, canceledErr, ErrTransientResponse)
 
 	parentDeadline, stop := context.WithDeadline(t.Context(), time.Now().Add(-time.Second))
 	defer stop()
-	parentDeadlineErr := classifyDOCXConversionError(parentDeadline, context.DeadlineExceeded)
+	parentDeadlineErr := classifyRenderConversionError(parentDeadline, context.DeadlineExceeded)
 	require.ErrorIs(t, parentDeadlineErr, context.DeadlineExceeded)
 	require.NotErrorIs(t, parentDeadlineErr, ErrTransientResponse)
 

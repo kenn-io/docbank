@@ -13,9 +13,17 @@ import (
 
 const (
 	FlatTextKind     = "fodt"
+	FlatPresKind     = "fodp"
+	FlatCalcKind     = "fods"
 	maxXMLTokenBytes = 1 << 20
 	maxXMLAttributes = 128
 )
+
+var flatKindMIMETypes = map[string]string{
+	FlatTextKind: "application/vnd.oasis.opendocument.text",
+	FlatPresKind: "application/vnd.oasis.opendocument.presentation",
+	FlatCalcKind: "application/vnd.oasis.opendocument.spreadsheet",
+}
 
 // Admission records the bounded normalized document accepted by the scanner.
 type Admission struct {
@@ -30,7 +38,7 @@ func Scan(data []byte, expectedKind string, limits Limits) (Admission, error) {
 	if int64(len(data)) <= 0 || int64(len(data)) > limits.MaxNormalizedBytes {
 		return Admission{}, errors.New("normalized ODF exceeds byte limit")
 	}
-	if expectedKind != FlatTextKind {
+	if _, ok := flatKindMIMETypes[expectedKind]; !ok {
 		return Admission{}, errors.New("normalized ODF kind is unsupported")
 	}
 	decoder := xml.NewDecoder(bytes.NewReader(data))
@@ -66,7 +74,7 @@ func Scan(data []byte, expectedKind string, limits Limits) (Admission, error) {
 					return Admission{}, errors.New("normalized ODF document root is invalid")
 				}
 				rootSeen = true
-				if !hasExpectedMimeType(value.Attr) {
+				if !hasExpectedMimeType(value.Attr, expectedKind) {
 					return Admission{}, errors.New("normalized ODF document kind does not match profile")
 				}
 			}
@@ -133,8 +141,11 @@ func Scan(data []byte, expectedKind string, limits Limits) (Admission, error) {
 	}
 }
 
-func hasExpectedMimeType(attributes []xml.Attr) bool {
-	want := "application/vnd.oasis.opendocument.text"
+func hasExpectedMimeType(attributes []xml.Attr, kind string) bool {
+	want, ok := flatKindMIMETypes[kind]
+	if !ok {
+		return false
+	}
 	for _, attr := range attributes {
 		if attr.Name.Local == "mimetype" && attr.Name.Space == "urn:oasis:names:tc:opendocument:xmlns:office:1.0" {
 			return attr.Value == want
