@@ -87,8 +87,8 @@ func TestRenderLaneLibreOfficeRoute(t *testing.T) {
 	renderPolicy, runner := realRenderLanePolicy(t, executable)
 	policy := testPolicyWithRenderPDF(t, renderPolicy, 50<<20, 11)
 	legacy := map[string][]byte{
-		"doc": deriveLegacySeed(t, executable, syntheticFlatODF("docx"), "fodt", "doc", "MS Word 97"),
-		"ppt": deriveLegacySeed(t, executable, syntheticFlatODF("ppt"), "fodp", "ppt", "MS PowerPoint 97"),
+		"doc": deriveLegacySeed(t, executable, loadDOCXFixture(t, "libreoffice.docx"), "docx", "doc", "MS Word 97"),
+		"ppt": deriveLegacySeed(t, executable, generatedRenderFixture(t, "pptx"), "pptx", "ppt", "MS PowerPoint 97"),
 		"xls": deriveLegacySeed(t, executable, syntheticFlatODF("xls"), "fods", "xls", "MS Excel 97"),
 	}
 	testCases := []struct {

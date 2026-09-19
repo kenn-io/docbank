@@ -24,9 +24,13 @@ database sources, scripts, event handlers, linked sections, external formulas,
 and opaque active objects such as OLE, plugins, applets, and nested documents.
 It also rejects every `xml:base` attribute, so internal fragment links cannot
 inherit an external base URI. Internal fragment links and embedded raster image
-data remain accepted when no XML Base is present. The unchanged scanner also
-rejects database ranges, charts, and active objects that survive normalization;
-this slice preserves those safety rules and adds no bypass.
+data remain accepted when no XML Base is present. The scanner admits two
+LibreOffice metadata forms: an empty Basic script container whose library list
+is empty or contains only the Standard embedded-library marker, and
+presentation layout object attributes whose values are handout, title, or
+subtitle. It still rejects script code,
+event handlers, external or relative links, DDE, external formulas, database
+ranges, charts, OLE, plugins, embedded documents, and other active objects.
 
 Only admitted flat ODF reaches the second private-root LibreOffice process.
 That process writes the PDF. The converter verifies each stage attestation, binds

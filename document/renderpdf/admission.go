@@ -12,11 +12,16 @@ import (
 )
 
 const (
-	FlatTextKind     = "fodt"
-	FlatPresKind     = "fodp"
-	FlatCalcKind     = "fods"
-	maxXMLTokenBytes = 1 << 20
-	maxXMLAttributes = 128
+	FlatTextKind          = "fodt"
+	FlatPresKind          = "fodp"
+	FlatCalcKind          = "fods"
+	maxXMLTokenBytes      = 1 << 20
+	maxXMLAttributes      = 128
+	officeNamespace       = "urn:oasis:names:tc:opendocument:xmlns:office:1.0"
+	libreOfficeNamespace  = "http://openoffice.org/2004/office"
+	scriptNamespace       = "urn:oasis:names:tc:opendocument:xmlns:script:1.0"
+	presentationNamespace = "urn:oasis:names:tc:opendocument:xmlns:presentation:1.0"
+	chartNamespace        = "urn:oasis:names:tc:opendocument:xmlns:chart:1.0"
 )
 
 var flatKindMIMETypes = map[string]string{
@@ -49,6 +54,8 @@ func Scan(data []byte, expectedKind string, limits Limits) (Admission, error) {
 	rootSeen := false
 	rootClosed := false
 	scriptDepth := 0
+	scriptLibrariesDepth := 0
+	scriptLibraryEmbedded := false
 	stack := make([]xml.Name, 0, 16)
 	for {
 		token, err := decoder.Token()
@@ -70,7 +77,7 @@ func Scan(data []byte, expectedKind string, limits Limits) (Admission, error) {
 				return Admission{}, errors.New("normalized ODF token exceeds limit")
 			}
 			if depth == 0 {
-				if rootSeen || value.Name.Local != "document" || value.Name.Space != "urn:oasis:names:tc:opendocument:xmlns:office:1.0" {
+				if rootSeen || value.Name.Local != "document" || value.Name.Space != officeNamespace {
 					return Admission{}, errors.New("normalized ODF document root is invalid")
 				}
 				rootSeen = true
@@ -80,14 +87,18 @@ func Scan(data []byte, expectedKind string, limits Limits) (Admission, error) {
 			}
 			depth++
 			local := strings.ToLower(value.Name.Local)
-			if scriptDepth > 0 && depth > scriptDepth && local != "libraries" {
-				return Admission{}, errors.New("normalized ODF contains a script or event handler")
+			if scriptDepth > 0 {
+				if err := inspectLibreOfficeScriptMetadata(value, depth, scriptDepth, stack, &scriptLibrariesDepth, &scriptLibraryEmbedded); err != nil {
+					return Admission{}, err
+				}
 			}
-			if local == "script" && value.Name.Space == "urn:oasis:names:tc:opendocument:xmlns:office:1.0" {
+			if local == "script" && value.Name.Space == officeNamespace {
 				if !hasLibreOfficeScriptLanguage(value.Attr) {
 					return Admission{}, errors.New("normalized ODF contains a script or event handler")
 				}
 				scriptDepth = depth
+				scriptLibrariesDepth = 0
+				scriptLibraryEmbedded = false
 			}
 			maxDepth = max(maxDepth, depth)
 			if depth > limits.MaxXMLDepth {
@@ -115,7 +126,12 @@ func Scan(data []byte, expectedKind string, limits Limits) (Admission, error) {
 			}
 			stack = stack[:len(stack)-1]
 			if depth == scriptDepth {
+				if scriptLibrariesDepth == 0 {
+					return Admission{}, errors.New("normalized ODF contains a script or event handler")
+				}
 				scriptDepth = 0
+				scriptLibrariesDepth = 0
+				scriptLibraryEmbedded = false
 			}
 			depth--
 			if depth == 0 {
@@ -157,7 +173,9 @@ func hasExpectedMimeType(attributes []xml.Attr, kind string) bool {
 func inspectStartElement(element xml.StartElement) error {
 	local := strings.ToLower(element.Name.Local)
 	switch {
-	case local == "scripts" || local == "script" && element.Name.Space == "urn:oasis:names:tc:opendocument:xmlns:office:1.0":
+	case element.Name.Space == chartNamespace:
+		return errors.New("normalized ODF contains a chart")
+	case local == "scripts" || local == "script" && element.Name.Space == officeNamespace:
 		return nil
 	case local == "script" || local == "event-listener" || local == "event-listeners":
 		return errors.New("normalized ODF contains a script or event handler")
@@ -175,11 +193,48 @@ func inspectStartElement(element xml.StartElement) error {
 
 func hasLibreOfficeScriptLanguage(attributes []xml.Attr) bool {
 	for _, attribute := range attributes {
-		if attribute.Name.Local == "language" && attribute.Name.Space == "urn:oasis:names:tc:opendocument:xmlns:script:1.0" {
+		if attribute.Name.Local == "language" && attribute.Name.Space == scriptNamespace {
 			return attribute.Value == "ooo:Basic"
 		}
 	}
 	return false
+}
+
+func inspectLibreOfficeScriptMetadata(
+	element xml.StartElement, depth, scriptDepth int, stack []xml.Name,
+	librariesDepth *int, libraryEmbedded *bool,
+) error {
+	if depth == scriptDepth+1 {
+		if element.Name.Space != libreOfficeNamespace || element.Name.Local != "libraries" ||
+			len(stack) == 0 || stack[len(stack)-1].Space != officeNamespace || stack[len(stack)-1].Local != "script" ||
+			*librariesDepth != 0 {
+			return errors.New("normalized ODF contains a script or event handler")
+		}
+		*librariesDepth = depth
+		return nil
+	}
+	if depth == scriptDepth+2 && *librariesDepth == scriptDepth+1 &&
+		element.Name.Space == libreOfficeNamespace && element.Name.Local == "library-embedded" &&
+		!*libraryEmbedded && hasLibreOfficeStandardLibrary(element.Attr) {
+		*libraryEmbedded = true
+		return nil
+	}
+	return errors.New("normalized ODF contains a script or event handler")
+}
+
+func hasLibreOfficeStandardLibrary(attributes []xml.Attr) bool {
+	seenName := false
+	for _, attribute := range attributes {
+		if attribute.Name.Space == "xmlns" || attribute.Name.Local == "xmlns" {
+			continue
+		}
+		if attribute.Name.Space != libreOfficeNamespace || attribute.Name.Local != "name" ||
+			attribute.Value != "Standard" || seenName {
+			return false
+		}
+		seenName = true
+	}
+	return seenName
 }
 
 func inspectAttribute(attribute xml.Attr) error {
@@ -190,6 +245,11 @@ func inspectAttribute(attribute xml.Attr) error {
 		return errors.New("normalized ODF XML Base is not admitted")
 	}
 	local := strings.ToLower(attribute.Name.Local)
+	if local == "object" && attribute.Name.Space == presentationNamespace {
+		if attribute.Value == "handout" || attribute.Value == "title" || attribute.Value == "subtitle" {
+			return nil
+		}
+	}
 	if (local == "value" && strings.Contains(attribute.Name.Space, "field")) ||
 		local == "formula" || local == "f" || local == "instr" || local == "command" {
 		if hasUnsafeFormula(attribute.Value) {

@@ -646,9 +646,13 @@ fragment links cannot inherit an external base URI. Local formulas, internal
 fragment links, and embedded raster images remain valid. Ordinary hyperlinks
 to external sites or relative files are rejected if they survive normalization.
 Embedded OLE objects, plugins, applets, and nested documents are also rejected.
-The unchanged scanner also rejects database ranges, charts, and active objects
-that survive normalization. This slice preserves those safety rules and adds
-no bypass.
+The scanner admits two LibreOffice metadata forms: an empty Basic script
+container whose library list is empty or contains only the Standard
+embedded-library marker, and presentation layout object attributes whose
+values are handout, title, or subtitle. It still rejects script code, event
+handlers, external or relative links, DDE,
+external formulas, database ranges, charts, OLE, plugins, embedded documents,
+and other active objects.
 The render policy bounds normalized bytes, PDF bytes, work bytes, XML depth and
 elements, and generated PDF pages through `MaxPages`.
 

@@ -41,6 +41,19 @@ func TestAdmissionMatchesFlatKindMimeType(t *testing.T) {
 	}
 }
 
+func TestAdmissionAllowsLibreOfficeMetadata(t *testing.T) {
+	textMetadata := `<office:scripts xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:script="urn:oasis:names:tc:opendocument:xmlns:script:1.0" xmlns:ooo="http://openoffice.org/2004/office"><office:script script:language="ooo:Basic"><ooo:libraries><ooo:library-embedded ooo:name="Standard"/></ooo:libraries></office:script></office:scripts>`
+	_, err := Scan(flatODF(FlatTextKind, textMetadata), FlatTextKind, DefaultLimits())
+	require.NoError(t, err)
+	emptyTextMetadata := `<office:scripts xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:script="urn:oasis:names:tc:opendocument:xmlns:script:1.0" xmlns:ooo="http://openoffice.org/2004/office"><office:script script:language="ooo:Basic"><ooo:libraries/></office:script></office:scripts>`
+	_, err = Scan(flatODF(FlatTextKind, emptyTextMetadata), FlatTextKind, DefaultLimits())
+	require.NoError(t, err)
+
+	presentationMetadata := `<presentation:placeholder xmlns:presentation="urn:oasis:names:tc:opendocument:xmlns:presentation:1.0" presentation:object="handout"/><presentation:placeholder xmlns:presentation="urn:oasis:names:tc:opendocument:xmlns:presentation:1.0" presentation:object="title"/><presentation:placeholder xmlns:presentation="urn:oasis:names:tc:opendocument:xmlns:presentation:1.0" presentation:object="subtitle"/>`
+	_, err = Scan(flatODF(FlatPresKind, presentationMetadata), FlatPresKind, DefaultLimits())
+	require.NoError(t, err)
+}
+
 func TestAdmissionRejectsLinkedAndActiveConstructs(t *testing.T) {
 	for _, kind := range []string{FlatTextKind, FlatPresKind, FlatCalcKind} {
 		t.Run(kind, func(t *testing.T) {
@@ -51,11 +64,14 @@ func TestAdmissionRejectsLinkedAndActiveConstructs(t *testing.T) {
 				{name: "external href", body: `<draw:image xmlns:draw="urn:oasis:names:tc:opendocument:xmlns:drawing:1.0" xmlns:xlink="http://www.w3.org/1999/xlink" xlink:href="../outside.png"/>`},
 				{name: "inherited XML Base fragment", body: `<text:p xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0" xmlns:xlink="http://www.w3.org/1999/xlink" xml:base="https://example.test/links/"><xlink:a xlink:href="#local"/></text:p>`},
 				{name: "script", body: `<office:script/>`},
+				{name: "script code", body: `<office:script xmlns:script="urn:oasis:names:tc:opendocument:xmlns:script:1.0" script:language="ooo:Basic"><ooo:libraries xmlns:ooo="http://openoffice.org/2004/office"><ooo:library-embedded ooo:name="Standard"/></ooo:libraries><text:p xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0">code</text:p></office:script>`},
 				{name: "event", body: `<office:event-listeners/>`},
 				{name: "dde", body: `<office:dde-link/>`},
 				{name: "database", body: `<table:database-range xmlns:table="urn:oasis:names:tc:opendocument:xmlns:table:1.0"/>`},
 				{name: "section", body: `<text:section-source xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0"/>`},
 				{name: "ole", body: `<draw:object-ole xmlns:draw="urn:oasis:names:tc:opendocument:xmlns:drawing:1.0"/>`},
+				{name: "chart", body: `<chart:chart xmlns:chart="urn:oasis:names:tc:opendocument:xmlns:chart:1.0"/>`},
+				{name: "presentation object", body: `<presentation:placeholder xmlns:presentation="urn:oasis:names:tc:opendocument:xmlns:presentation:1.0" presentation:object="slide"/>`},
 				{name: "plugin", body: `<draw:plugin xmlns:draw="urn:oasis:names:tc:opendocument:xmlns:drawing:1.0"/>`},
 				{name: "applet", body: `<draw:applet xmlns:draw="urn:oasis:names:tc:opendocument:xmlns:drawing:1.0"/>`},
 				{name: "nested document", body: `<office:embedded-document/>`},
