@@ -6762,14 +6762,28 @@ export const getGetExportJobEventsUrl = (id: string,
 /**
  * @summary Stream current export progress for up to 30 seconds
  */
-export const getExportJobEvents = async (id: string,
-    params?: GetExportJobEventsParams, options?: Parameters<typeof sessionJSON>[1]): Promise<Response> => {
+export const getExportJobEvents = (id: string,
+    params?: GetExportJobEventsParams, options?: Parameters<typeof sessionResponse>[1]) => {
 
-  return sessionJSON<Response>(getGetExportJobEventsUrl(id,params),
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return sessionResponse<Response>(getGetExportJobEventsUrl(id,params),
   {
     ...options,
-    method: 'GET'
-
+    method: 'GET',
+    headers: { 'Accept': `application/x-ndjson`, ...getHeaders(options?.headers) }
 
   }
 );}

@@ -29,6 +29,10 @@ export default defineConfig({
             mutator: { path: "src/api-transport.ts", name: "sessionResponse", inferred: true },
             requestOptions: { headers: { Accept: "image/png" } },
           },
+          getExportJobEvents: {
+            mutator: { path: "src/api-transport.ts", name: "sessionResponse", inferred: true },
+            requestOptions: { headers: { Accept: "application/x-ndjson" } },
+          },
           submitMediaSource: { formData: { path: "src/media-form-data.ts", name: "mediaFormData" } },
           importMediaArtifact: { formData: { path: "src/media-form-data.ts", name: "mediaFormData" } },
           ...Object.fromEntries([
