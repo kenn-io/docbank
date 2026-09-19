@@ -96,3 +96,35 @@ func TestSharedProcessingResponseContract(t *testing.T) {
 		})
 	}
 }
+
+func TestSharedSimilarResponseContract(t *testing.T) {
+	var fixture struct {
+		Request api.DocumentSimilarRequest `json:"similar_request"`
+		Report  map[string]any             `json:"similar_report"`
+		Cases   []struct {
+			Name  string         `json:"name"`
+			Patch map[string]any `json:"patch"`
+			Valid bool           `json:"valid"`
+		} `json:"similar_cases"`
+	}
+	data, err := os.ReadFile("testdata/processing_responses.json")
+	require.NoError(t, err)
+	require.NoError(t, json.Unmarshal(data, &fixture))
+	for _, tc := range fixture.Cases {
+		t.Run(tc.Name, func(t *testing.T) {
+			report := maps.Clone(fixture.Report)
+			maps.Copy(report, tc.Patch)
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				assert.Equal(t, "/api/v1/search/similar", r.URL.Path)
+				assert.NoError(t, json.MarshalWrite(w, report))
+			}))
+			t.Cleanup(server.Close)
+			_, err := daemonconn.New(server.URL, serverKey).SimilarDocuments(t.Context(), fixture.Request)
+			if tc.Valid {
+				require.NoError(t, err)
+			} else {
+				require.Error(t, err)
+			}
+		})
+	}
+}

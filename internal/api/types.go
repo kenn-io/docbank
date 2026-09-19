@@ -234,6 +234,47 @@ type DocumentSearchRequest struct {
 	Explain   bool                `json:"explain,omitzero"`
 }
 
+type DocumentSimilarRequest struct {
+	Selector  ProcessingSelector  `json:"selector"`
+	BindingID string              `json:"binding_id,omitzero" maxLength:"128"`
+	Limit     int                 `json:"limit,omitzero" minimum:"1" maximum:"100"`
+	Fence     DocumentSourceFence `json:"fence"`
+}
+
+type DocumentSimilarSource struct {
+	NodeID           int64  `json:"node_id" minimum:"1"`
+	ContentVersionID string `json:"content_version_id" format:"uuid"`
+}
+
+type DocumentMissingCoverage struct {
+	Kind               string `json:"kind" enum:"embedding"`
+	BindingID          string `json:"binding_id" minLength:"1" maxLength:"128"`
+	ProfileFingerprint string `json:"profile_fingerprint" pattern:"^[0-9a-f]{64}$"`
+	ContentVersionID   string `json:"content_version_id" format:"uuid"`
+}
+
+type DocumentSimilarResult struct {
+	VaultUID         string                      `json:"vault_uid" format:"uuid"`
+	NodeID           int64                       `json:"node_id" minimum:"1"`
+	ContentVersionID string                      `json:"content_version_id" format:"uuid"`
+	Rank             int                         `json:"rank" minimum:"1"`
+	Score            float64                     `json:"score"`
+	Path             string                      `json:"path" minLength:"2" maxLength:"16384" pattern:"^/"`
+	BlobHash         string                      `json:"blob_hash" pattern:"^[0-9a-f]{64}$"`
+	DuplicateCount   int                         `json:"duplicate_count" minimum:"0"`
+	Evidence         []DocumentEvidenceReference `json:"evidence"`
+}
+
+type DocumentSimilarReport struct {
+	State           string                   `json:"state" enum:"ready,unavailable"`
+	Source          DocumentSimilarSource    `json:"source"`
+	BindingID       string                   `json:"binding_id" minLength:"1" maxLength:"128"`
+	MissingCoverage *DocumentMissingCoverage `json:"missing_coverage,omitzero"`
+	Coverage        DocumentSearchCoverage   `json:"coverage"`
+	Results         []DocumentSimilarResult  `json:"results"`
+	Truncated       bool                     `json:"truncated"`
+}
+
 // MediaTimeSpan identifies one exact half-open interval in retained media.
 type MediaTimeSpan struct {
 	StartMS int64 `json:"start_ms" minimum:"0"`

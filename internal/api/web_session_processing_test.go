@@ -21,6 +21,7 @@ func TestWebSessionProcessingSurfaceIsNarrowlyAllowed(t *testing.T) {
 		{http.MethodGet, "/api/v1/renditions/" + strings.Repeat("b", 64)},
 		{http.MethodGet, "/api/v1/coverage?profile=private&vault_uid=v&content_version_id=x"},
 		{http.MethodPost, "/api/v1/search"},
+		{http.MethodPost, "/api/v1/search/similar"},
 	}
 	for _, test := range allowed {
 		request, err := http.NewRequest(test.method, "http://localhost"+test.path, nil)
@@ -30,6 +31,8 @@ func TestWebSessionProcessingSurfaceIsNarrowlyAllowed(t *testing.T) {
 	for _, test := range []struct{ method, path string }{
 		{http.MethodPost, "/api/v1/derivatives/purge-plans"},
 		{http.MethodPost, "/api/v1/derivatives/purge-jobs"},
+		{http.MethodGet, "/api/v1/search/similar"},
+		{http.MethodPost, "/api/v1/search/similar?x=1"},
 	} {
 		request, err := http.NewRequest(test.method, "http://localhost"+test.path, nil)
 		require.NoError(t, err)

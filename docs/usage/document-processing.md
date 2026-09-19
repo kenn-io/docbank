@@ -75,6 +75,22 @@ ID and query its status. The authenticated HTTP API provides the same preview, c
 status, rendition, coverage, and source-fenced search contracts; see the
 [HTTP API](../architecture/http-api.md).
 
+## Find similar documents
+
+Choose a file's **Find similar** row action in the web app. The processing
+drawer searches the file versions loaded in the current view. Select a profile
+with embeddings; results use the selected file's stored embeddings locally.
+An unavailable report names the missing binding. Run processing to build it,
+then retry. Views above 4,096 file versions must be narrowed first.
+
+In the TUI, press uppercase `S` on a file to search the current listing.
+Lowercase `s` still sorts. The selected file is excluded, while another file
+with identical bytes can appear. Results group identical content and show the
+number of other eligible copies. Coverage describes this bounded scope.
+The [CLI reference](../cli-reference.md#find-similar-files) describes the
+equivalent `--similar-to` command.
+
+
 ## Processing flows and boundaries
 
 Each profile makes its disclosure visible before execution. There are three

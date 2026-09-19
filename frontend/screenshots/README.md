@@ -4,6 +4,14 @@ last_edited: 2026-09-11
 
 # Web screenshots
 
+The PR-only `similar-documents.screenshot.ts` capture requires
+`DOCBANK_SIMILAR_SCREENSHOT_DIR` and accepts `DOCBANK_SCREENSHOT_BINARY`.
+It processes four synthetic files through a loopback embedding stub, verifies
+that similarity sends no provider request, and captures widths 1440, 1280,
+768, and 400. Its cleanup stops the daemon and removes the temporary vault.
+The same run captures the actual TUI through tmux, using WSL Ubuntu on Windows,
+or records the terminal availability blocker.
+
 This Playwright harness captures the actual daemon-served Docbank interface
 against a temporary synthetic vault. It does not use mocked API responses or a
 developer's existing vault.

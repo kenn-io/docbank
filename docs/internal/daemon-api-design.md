@@ -137,6 +137,13 @@ need it unless their contract requires a globally quiescent snapshot.
 
 ## API shape and errors
 
+Similar-document reads use the processing service and store authority through
+`POST /api/v1/search/similar`. Keep query encoding and provider authorization
+outside that call path. The store owns source validation, fenced membership,
+content grouping, and the final manifest check. Daemon and browser clients
+validate the receipt before rendering it. See the
+[wire contract](../architecture/http-api.md#similar-documents).
+
 Huma route definitions generate the OpenAPI contract used by agents and client
 generation. Request/response wire types live in `internal/api`; the internal
 CLI client shares them so contract drift fails at compile or test time.

@@ -62,6 +62,8 @@ type RowIdentity struct {
 type Neighbor struct {
 	RowIdentity
 
+	SourceRow RowIdentity
+
 	Score    float64
 	Distance float64
 }
@@ -309,6 +311,78 @@ func (generation *Generation) SearchRows(query []float32, identities []RowIdenti
 		return nil, errors.New("vector index selected row is absent from generation")
 	}
 	return generation.searchRows(query, rows, len(rows))
+}
+
+// SearchSimilarRows scores candidates against every stored source row.
+func (generation *Generation) SearchSimilarRows(sources, identities []RowIdentity) ([]Neighbor, error) {
+	if generation == nil || len(generation.rows) == 0 {
+		return nil, errors.New("vector index generation is not open")
+	}
+	if len(sources) == 0 {
+		return nil, errors.New("vector index source rows are required")
+	}
+	selected := make(map[RowIdentity]bool, len(sources))
+	for _, source := range sources {
+		if _, duplicate := selected[source]; duplicate {
+			return nil, errors.New("vector index source rows contain a duplicate identity")
+		}
+		selected[source] = false
+	}
+	var best []Neighbor
+	// ponytail: exact source-by-candidate scoring; revisit its bounded cost after rerank evaluation.
+	for index, identity := range generation.rows {
+		if _, wanted := selected[identity]; !wanted {
+			continue
+		}
+		selected[identity] = true
+		neighbors, err := generation.SearchRows(generation.vector(index), identities)
+		if err != nil {
+			return nil, err
+		}
+		slices.SortFunc(neighbors, func(a, b Neighbor) int { return compareIdentity(a.RowIdentity, b.RowIdentity) })
+		for i := range neighbors {
+			neighbors[i].SourceRow = identity
+		}
+		if best == nil {
+			best = neighbors
+			continue
+		}
+		for i, candidate := range neighbors {
+			better := candidate.Score > best[i].Score
+			tied := candidate.Score == best[i].Score
+			if generation.metric == document.VectorMetricL2 {
+				better = candidate.Distance < best[i].Distance
+				tied = candidate.Distance == best[i].Distance
+			}
+			if better || tied && compareIdentity(candidate.SourceRow, best[i].SourceRow) < 0 {
+				best[i] = candidate
+			}
+		}
+	}
+	for _, found := range selected {
+		if !found {
+			return nil, errors.New("vector index source row is absent from generation")
+		}
+	}
+	slices.SortFunc(best, func(a, b Neighbor) int {
+		if generation.metric == document.VectorMetricL2 {
+			if a.Distance < b.Distance {
+				return -1
+			}
+			if a.Distance > b.Distance {
+				return 1
+			}
+		} else {
+			if a.Score > b.Score {
+				return -1
+			}
+			if a.Score < b.Score {
+				return 1
+			}
+		}
+		return compareIdentity(a.RowIdentity, b.RowIdentity)
+	})
+	return best, nil
 }
 
 func (generation *Generation) searchRows(query []float32, rows []int, k int) ([]Neighbor, error) {

@@ -806,7 +806,22 @@ Semantic and hybrid search require active query-text consent; lexical and
 auto do not. Follow [Consent before semantic or hybrid search](usage/search.md#consent-before-semantic-or-hybrid-search)
 to grant consent through a reviewed processing build or the HTTP consent API.
 
+### Find similar files
+
+Use `docbank search --similar-to id:42 --profile private_text` with repeated
+`--source-version <uuid>` values to find files like one selected current
+version. Include that version in the source fence. `--version <uuid>` pins the
+selection; omission uses the node's current version. The fence accepts 1 to
+4,096 versions. `--binding`, `--limit` from 1 to 100, and `--json` are supported.
+The default limit is 20 content groups.
+
+Similarity uses stored embeddings locally. It excludes the source node, groups
+identical content, and reports how many other eligible copies each group has.
+Missing source embeddings return `unavailable`. Query text, `--mode`,
+`--explain`, and lexical filters cannot accompany `--similar-to`.
+
 ## docbank processing
+
 
 ```
 docbank processing profiles [--json]

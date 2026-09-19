@@ -510,6 +510,7 @@ func (s *Store) RevalidateSearchCandidates(ctx context.Context, candidates []Sea
 // SemanticSearchCandidate is one vector neighbor reduced to a current,
 // scope-eligible document. Only the lexical lane supplies excerpts.
 type SemanticSearchCandidate struct {
+	BlobHash          string
 	VaultID           string
 	NodeID            int64
 	NodeRevision      int64
@@ -556,6 +557,12 @@ type SemanticSearchAuthority struct {
 func (s *Store) AcquireSemanticSearchAuthority(ctx context.Context, profileFingerprint,
 	bindingID, owner string, at time.Time, duration time.Duration, opts SearchOptions,
 ) (SemanticSearchAuthority, error) {
+	return s.acquireSemanticSearchAuthority(ctx, profileFingerprint, bindingID, owner, at, duration, opts, nil)
+}
+
+func (s *Store) acquireSemanticSearchAuthority(ctx context.Context, profileFingerprint,
+	bindingID, owner string, at time.Time, duration time.Duration, opts SearchOptions, similar *similarSourceCapture,
+) (SemanticSearchAuthority, error) {
 	normalized, err := s.NormalizeSearchOptions(ctx, opts)
 	if err != nil {
 		return SemanticSearchAuthority{}, err
@@ -565,6 +572,14 @@ func (s *Store) AcquireSemanticSearchAuthority(ctx context.Context, profileFinge
 		return SemanticSearchAuthority{}, err
 	}
 	vectorSpaceID := fingerprints.VectorSpace[bindingID]
+	if similar != nil {
+		err := s.withStorageTx(ctx, func(tx *sql.Tx) error {
+			return similar.load(ctx, tx, profileFingerprint, bindingID, binding.InputKind, vectorSpaceID, normalized)
+		})
+		if err != nil {
+			return SemanticSearchAuthority{}, err
+		}
+	}
 	var space EmbeddingVectorSpaceRecord
 	err = s.withStorageTx(ctx, func(tx *sql.Tx) error {
 		var loadErr error
@@ -589,7 +604,7 @@ func (s *Store) AcquireSemanticSearchAuthority(ctx context.Context, profileFinge
 		_ = s.ReleaseVectorIndexGeneration(context.WithoutCancel(ctx), lease.ID, lease.FencingToken, at)
 	}
 	current, required, complete, annRows, err := s.semanticSearchAuthorityFence(ctx,
-		profileFingerprint, bindingID, binding.InputKind, vectorSpaceID, normalized)
+		profileFingerprint, bindingID, binding.InputKind, vectorSpaceID, normalized, similar)
 	if err != nil || current.ManifestChecksum != lease.Generation.SourceManifestChecksum {
 		release()
 		if err != nil {
@@ -603,10 +618,15 @@ func (s *Store) AcquireSemanticSearchAuthority(ctx context.Context, profileFinge
 }
 
 func (s *Store) semanticSearchAuthorityFence(ctx context.Context, profileFingerprint, bindingID string,
-	inputKind document.EmbeddingInputKind, vectorSpaceID string, opts SearchOptions,
+	inputKind document.EmbeddingInputKind, vectorSpaceID string, opts SearchOptions, similar *similarSourceCapture,
 ) (source VectorIndexSource, required, complete int, annRows []vectorindex.RowIdentity, retErr error) {
 	err := s.withStorageTx(ctx, func(tx *sql.Tx) error {
 		var err error
+		if similar != nil {
+			if err := similar.load(ctx, tx, profileFingerprint, bindingID, inputKind, vectorSpaceID, opts); err != nil {
+				return err
+			}
+		}
 		source, err = captureVectorIndexSourceTx(ctx, tx, vectorSpaceID)
 		if err != nil {
 			return err
@@ -739,13 +759,27 @@ type semanticEligibilityKey struct {
 func loadSemanticEligibility(ctx context.Context, tx metadataQuerier, profileFingerprint, bindingID string,
 	inputKind document.EmbeddingInputKind, vectorSpaceID, filterSQL string, filterArgs []any,
 ) (_ map[semanticEligibilityKey]SemanticSearchCandidate, retErr error) {
+	members, err := loadSemanticMemberships(ctx, tx, profileFingerprint, bindingID, inputKind, vectorSpaceID, filterSQL, filterArgs)
+	if err != nil {
+		return nil, err
+	}
+	eligible := make(map[semanticEligibilityKey]SemanticSearchCandidate, len(members))
+	for key, entries := range members {
+		eligible[key] = entries[len(entries)-1]
+	}
+	return eligible, nil
+}
+
+func loadSemanticMemberships(ctx context.Context, tx metadataQuerier, profileFingerprint, bindingID string,
+	inputKind document.EmbeddingInputKind, vectorSpaceID, filterSQL string, filterArgs []any,
+) (_ map[semanticEligibilityKey][]SemanticSearchCandidate, retErr error) {
 	args := append([]any{vectorSpaceID, profileFingerprint, bindingID, inputKind}, filterArgs...)
 	rows, err := tx.QueryContext(ctx, `SELECT n.id,n.revision,n.current_version_id,
 			es.embedding_set_id,es.input_generation_id,es.input_kind,
 			evr.vector_set_id,evr.input_id,evr.checksum,
 			COALESCE(ra.build_id,''),COALESCE(eig.generation_blob_hash,''),
 			eig.generation_encoded_size,eig.generation_checksum,eig.evidence_fingerprint,
-			COALESCE(evidence_blob.size,0),eig.input_count
+			COALESCE(evidence_blob.size,0),eig.input_count,cv.blob_hash
 		FROM `+nodeFrom+`
 		JOIN embedding_sets es ON es.content_version_id=cv.version_id
 		JOIN embedding_heads eh ON eh.content_version_id=es.content_version_id
@@ -768,7 +802,7 @@ func loadSemanticEligibility(ctx context.Context, tx metadataQuerier, profileFin
 		return nil, err
 	}
 	defer func() { retErr = errors.Join(retErr, rows.Close()) }()
-	eligible := make(map[semanticEligibilityKey]SemanticSearchCandidate)
+	eligible := make(map[semanticEligibilityKey][]SemanticSearchCandidate)
 	for rows.Next() {
 		var (
 			entry SemanticSearchCandidate
@@ -779,10 +813,10 @@ func loadSemanticEligibility(ctx context.Context, tx metadataQuerier, profileFin
 			&entry.MediaEvidence.BuildID, &entry.MediaEvidence.GenerationBlobHash,
 			&entry.MediaEvidence.GenerationEncodedSize, &entry.MediaEvidence.GenerationChecksum,
 			&entry.MediaEvidence.EvidenceFingerprint, &entry.MediaEvidence.EvidenceEncodedSize,
-			&entry.MediaEvidence.InputCount); err != nil {
+			&entry.MediaEvidence.InputCount, &entry.BlobHash); err != nil {
 			return nil, err
 		}
-		eligible[key] = entry
+		eligible[key] = append(eligible[key], entry)
 	}
 	return eligible, rows.Err()
 }

@@ -299,5 +299,349 @@
       },
       "valid": false
     }
+  ],
+  "similar_request": {
+    "selector": {
+      "node_id": 6,
+      "content_version_id": "33333333-3333-4333-8333-333333333333",
+      "profile": "private"
+    },
+    "binding_id": "semantic",
+    "limit": 20,
+    "fence": {
+      "vault_uid": "22222222-2222-4222-8222-222222222222",
+      "content_version_ids": [
+        "33333333-3333-4333-8333-333333333333",
+        "11111111-1111-4111-8111-111111111111"
+      ]
+    }
+  },
+  "similar_report": {
+    "state": "ready",
+    "source": {
+      "node_id": 6,
+      "content_version_id": "33333333-3333-4333-8333-333333333333"
+    },
+    "binding_id": "semantic",
+    "coverage": {
+      "binding_required": false,
+      "state": "complete",
+      "scoped_documents": 2,
+      "complete_documents": 2
+    },
+    "results": [
+      {
+        "vault_uid": "22222222-2222-4222-8222-222222222222",
+        "node_id": 7,
+        "content_version_id": "11111111-1111-4111-8111-111111111111",
+        "rank": 1,
+        "score": 1,
+        "path": "/synthetic.pdf",
+        "evidence": [
+          {
+            "kind": "embedding",
+            "build_id": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+            "vector_space_id": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+            "embedding_set_id": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+            "input_generation_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "input_id": "chunk-000000-synthetic",
+            "input_kind": "rendition_chunk",
+            "source_manifest_checksum": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+          }
+        ],
+        "blob_hash": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "duplicate_count": 0
+      }
+    ],
+    "truncated": false
+  },
+  "similar_cases": [
+    {
+      "name": "ready",
+      "patch": {},
+      "valid": true
+    },
+    {
+      "name": "empty",
+      "patch": {
+        "results": []
+      },
+      "valid": true
+    },
+    {
+      "name": "unavailable",
+      "patch": {
+        "state": "unavailable",
+        "results": [],
+        "missing_coverage": {
+          "kind": "embedding",
+          "binding_id": "semantic",
+          "profile_fingerprint": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "content_version_id": "33333333-3333-4333-8333-333333333333"
+        },
+        "coverage": {
+          "binding_required": false,
+          "state": "unknown",
+          "scoped_documents": 0,
+          "complete_documents": 0
+        }
+      },
+      "valid": true
+    },
+    {
+      "name": "source mismatch",
+      "patch": {
+        "source": {
+          "node_id": 9,
+          "content_version_id": "33333333-3333-4333-8333-333333333333"
+        }
+      },
+      "valid": false
+    },
+    {
+      "name": "source result",
+      "patch": {
+        "results": [
+          {
+            "vault_uid": "22222222-2222-4222-8222-222222222222",
+            "node_id": 6,
+            "content_version_id": "11111111-1111-4111-8111-111111111111",
+            "rank": 1,
+            "score": 1,
+            "path": "/synthetic.pdf",
+            "evidence": [
+              {
+                "kind": "embedding",
+                "build_id": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+                "vector_space_id": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+                "embedding_set_id": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+                "input_generation_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "input_id": "chunk-000000-synthetic",
+                "input_kind": "rendition_chunk",
+                "source_manifest_checksum": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+              }
+            ],
+            "blob_hash": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+            "duplicate_count": 0
+          }
+        ]
+      },
+      "valid": false
+    },
+    {
+      "name": "duplicate hashes",
+      "patch": {
+        "results": [
+          {
+            "vault_uid": "22222222-2222-4222-8222-222222222222",
+            "node_id": 7,
+            "content_version_id": "11111111-1111-4111-8111-111111111111",
+            "rank": 1,
+            "score": 1,
+            "path": "/synthetic.pdf",
+            "evidence": [
+              {
+                "kind": "embedding",
+                "build_id": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+                "vector_space_id": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+                "embedding_set_id": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+                "input_generation_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "input_id": "chunk-000000-synthetic",
+                "input_kind": "rendition_chunk",
+                "source_manifest_checksum": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+              }
+            ],
+            "blob_hash": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+            "duplicate_count": 0
+          },
+          {
+            "vault_uid": "22222222-2222-4222-8222-222222222222",
+            "node_id": 8,
+            "content_version_id": "11111111-1111-4111-8111-111111111111",
+            "rank": 2,
+            "score": 1,
+            "path": "/synthetic.pdf",
+            "evidence": [
+              {
+                "kind": "embedding",
+                "build_id": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+                "vector_space_id": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+                "embedding_set_id": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+                "input_generation_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "input_id": "chunk-000000-synthetic",
+                "input_kind": "rendition_chunk",
+                "source_manifest_checksum": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+              }
+            ],
+            "blob_hash": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+            "duplicate_count": 0
+          }
+        ]
+      },
+      "valid": false
+    },
+    {
+      "name": "negative count",
+      "patch": {
+        "results": [
+          {
+            "vault_uid": "22222222-2222-4222-8222-222222222222",
+            "node_id": 7,
+            "content_version_id": "11111111-1111-4111-8111-111111111111",
+            "rank": 1,
+            "score": 1,
+            "path": "/synthetic.pdf",
+            "evidence": [
+              {
+                "kind": "embedding",
+                "build_id": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+                "vector_space_id": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+                "embedding_set_id": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+                "input_generation_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "input_id": "chunk-000000-synthetic",
+                "input_kind": "rendition_chunk",
+                "source_manifest_checksum": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+              }
+            ],
+            "blob_hash": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+            "duplicate_count": -1
+          }
+        ]
+      },
+      "valid": false
+    },
+    {
+      "name": "foreign fence",
+      "patch": {
+        "results": [
+          {
+            "vault_uid": "22222222-2222-4222-8222-222222222222",
+            "node_id": 7,
+            "content_version_id": "44444444-4444-4444-8444-444444444444",
+            "rank": 1,
+            "score": 1,
+            "path": "/synthetic.pdf",
+            "evidence": [
+              {
+                "kind": "embedding",
+                "build_id": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+                "vector_space_id": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+                "embedding_set_id": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+                "input_generation_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "input_id": "chunk-000000-synthetic",
+                "input_kind": "rendition_chunk",
+                "source_manifest_checksum": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+              }
+            ],
+            "blob_hash": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+            "duplicate_count": 0
+          }
+        ]
+      },
+      "valid": false
+    },
+    {
+      "name": "ready missing coverage",
+      "patch": {
+        "missing_coverage": {
+          "kind": "embedding",
+          "binding_id": "semantic",
+          "profile_fingerprint": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "content_version_id": "33333333-3333-4333-8333-333333333333"
+        }
+      },
+      "valid": false
+    },
+    {
+      "name": "unavailable without reason",
+      "patch": {
+        "state": "unavailable",
+        "results": []
+      },
+      "valid": false
+    },
+    {
+      "name": "bad evidence",
+      "patch": {
+        "results": [
+          {
+            "vault_uid": "22222222-2222-4222-8222-222222222222",
+            "node_id": 7,
+            "content_version_id": "11111111-1111-4111-8111-111111111111",
+            "rank": 1,
+            "score": 1,
+            "path": "/synthetic.pdf",
+            "evidence": [
+              {
+                "kind": "node_name"
+              }
+            ],
+            "blob_hash": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+            "duplicate_count": 0
+          }
+        ]
+      },
+      "valid": false
+    },
+    {
+      "name": "bad hash",
+      "patch": {
+        "results": [
+          {
+            "vault_uid": "22222222-2222-4222-8222-222222222222",
+            "node_id": 7,
+            "content_version_id": "11111111-1111-4111-8111-111111111111",
+            "rank": 1,
+            "score": 1,
+            "path": "/synthetic.pdf",
+            "evidence": [
+              {
+                "kind": "embedding",
+                "build_id": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+                "vector_space_id": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+                "embedding_set_id": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+                "input_generation_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "input_id": "chunk-000000-synthetic",
+                "input_kind": "rendition_chunk",
+                "source_manifest_checksum": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+              }
+            ],
+            "blob_hash": "BAD",
+            "duplicate_count": 0
+          }
+        ]
+      },
+      "valid": false
+    },
+    {
+      "name": "bad rank",
+      "patch": {
+        "results": [
+          {
+            "vault_uid": "22222222-2222-4222-8222-222222222222",
+            "node_id": 7,
+            "content_version_id": "11111111-1111-4111-8111-111111111111",
+            "rank": 2,
+            "score": 1,
+            "path": "/synthetic.pdf",
+            "evidence": [
+              {
+                "kind": "embedding",
+                "build_id": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+                "vector_space_id": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+                "embedding_set_id": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+                "input_generation_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "input_id": "chunk-000000-synthetic",
+                "input_kind": "rendition_chunk",
+                "source_manifest_checksum": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+              }
+            ],
+            "blob_hash": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+            "duplicate_count": 0
+          }
+        ]
+      },
+      "valid": false
+    }
   ]
 }

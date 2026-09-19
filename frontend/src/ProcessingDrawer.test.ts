@@ -2,6 +2,8 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { act, cleanup, fireEvent, render, screen } from "@testing-library/svelte";
 import ProcessingDrawer from "./ProcessingDrawer.svelte";
 import * as processingAPI from "./receipts.js";
+import contract from "../../internal/daemonconn/testdata/processing_responses.json";
+import type { DocumentSimilarReport } from "./generated/docbank.js";
 
 afterEach(() => {
   cleanup();
@@ -9,6 +11,37 @@ afterEach(() => {
 });
 
 describe("document processing drawer", () => {
+  it("captures the loaded scope and ignores completion after close", async () => {
+    let finish!: (report: DocumentSimilarReport) => void;
+    const similar = vi.spyOn(processingAPI, "documentSimilar").mockImplementation(() => new Promise((resolve) => { finish = resolve; }));
+    const view = renderProcessingResponse(Promise.resolve(completedProcessingResponse()));
+    await screen.findByRole("button", { name: "Run processing" });
+    await view.rerender({ scopeVersionIDs: [processingJob.content_version_id, contract.similar_report.source.content_version_id] });
+    await fireEvent.click(screen.getByRole("button", { name: "Find similar" }));
+    expect(similar.mock.calls[0]?.[1].fence.content_version_ids).toEqual([processingJob.content_version_id, contract.similar_report.source.content_version_id]);
+    view.unmount();
+    await act(async () => { finish(contract.similar_report as DocumentSimilarReport); await similar.mock.results[0]!.value; });
+    expect(view.onclose).not.toHaveBeenCalled();
+    expect(screen.queryByText("/synthetic.pdf")).toBeNull();
+  });
+
+  it("renders similar groups and unavailable coverage", async () => {
+    const similar = vi.spyOn(processingAPI, "documentSimilar").mockResolvedValue({...contract.similar_report, results:[{...contract.similar_report.results[0]!,duplicate_count:1}]} as DocumentSimilarReport);
+    const view = renderProcessingResponse(Promise.resolve(completedProcessingResponse()));
+    await screen.findByRole("button", { name: "Run processing" });
+    await view.rerender({ scopeVersionIDs: [processingJob.content_version_id] });
+    await fireEvent.click(screen.getByRole("button", { name: "Find similar" }));
+    expect(await screen.findByText("+1 identical")).toBeTruthy();
+    similar.mockResolvedValue({...contract.similar_report,state:"unavailable",results:[]} as DocumentSimilarReport);
+    await fireEvent.click(screen.getByRole("button", { name: "Find similar" }));
+    expect(await screen.findByText(/Unavailable: no current embedding/)).toBeTruthy();
+    similar.mockResolvedValue({...contract.similar_report,results:[]} as DocumentSimilarReport);
+    await fireEvent.click(screen.getByRole("button", { name: "Find similar" }));
+    expect(await screen.findByText("No similar documents inside this view.")).toBeTruthy();
+    await view.rerender({ scopeVersionIDs: Array.from({length:4097},(_,i) => `00000000-0000-4000-8000-${i.toString().padStart(12,"0")}`) });
+    expect(screen.getByText("Narrow this view to at most 4,096 file versions.")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Find similar" })).toBeNull();
+  });
   it("uses the success tone for a completed job", async () => {
     renderProcessingResponse(Promise.resolve(completedProcessingResponse()));
     await fireEvent.click(await screen.findByRole("button", { name: "Run processing" }));

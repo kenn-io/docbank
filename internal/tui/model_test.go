@@ -345,6 +345,10 @@ func (f *fakeBackend) SearchDocuments(_ context.Context, request api.DocumentSea
 	return f.processingSearch, nil
 }
 
+func (f *fakeBackend) SimilarDocuments(_ context.Context, request api.DocumentSimilarRequest) (api.DocumentSimilarReport, error) {
+	return api.DocumentSimilarReport{State: "ready", Source: api.DocumentSimilarSource{NodeID: request.Selector.NodeID, ContentVersionID: request.Selector.ContentVersionID}, BindingID: "fixture"}, f.err
+}
+
 func (f *fakeBackend) StartProcessingStream(ctx context.Context, request api.StartProcessingRequest, profileFingerprint string) (ProcessingEventStream, error) {
 	f.processingStarts = append(f.processingStarts, request)
 	if request.Selector != f.plan.Selector || request.PlanFingerprint != f.plan.Fingerprint || request.Consent != f.plan.ConsentRequired || profileFingerprint != f.plan.ProfileFingerprint {
@@ -1607,6 +1611,33 @@ func TestProcessingLatestSearchWins(t *testing.T) {
 	backend.processingSearch = api.DocumentSearchReport{ActualMode: "lexical"}
 	model = runModelCommand(t, model, earlier)
 	assert.Equal(t, "semantic", model.processingSearchReport.ActualMode)
+}
+
+func TestSimilarActionCapturesScopeAndRejectsStaleResponses(t *testing.T) {
+	backend := newFakeBackend()
+	model, err := New(t.Context(), backend)
+	require.NoError(t, err)
+	model.rows = []row{{node: api.Node{ID: backend.plan.Selector.NodeID, Kind: "file", CurrentVersionID: backend.plan.Selector.ContentVersionID}}}
+	model, _ = updateModel(t, model, runeKey('S'))
+	require.True(t, model.processingOpen)
+	assert.True(t, model.processingSimilarPending)
+	t.Log("S captures the listing scope and renders similar results")
+	assert.Equal(t, []string{backend.plan.Selector.ContentVersionID}, model.processingSimilarScope)
+	model.processingProfiles = backend.profiles
+	model, command := updateModel(t, model, processingPlanLoadedMsg{requestID: model.processingRequestID, plan: backend.plan})
+	model = runModelCommand(t, model, command)
+	require.NotNil(t, model.processingSimilarReport)
+	assert.Contains(t, strings.Join(model.processingLines(100), "\n"), "No similar documents inside this view")
+	model, earlier := updateModel(t, model, runeKey('S'))
+	model, latest := updateModel(t, model, runeKey('S'))
+	model = runModelCommand(t, model, latest)
+	model.processingSimilarReport.BindingID = "latest"
+	model = runModelCommand(t, model, earlier)
+	assert.Equal(t, "latest", model.processingSimilarReport.BindingID)
+	model.processingSimilarReport.State = "unavailable"
+	assert.Contains(t, strings.Join(model.processingLines(100), "\n"), "press b to build it")
+	model, _ = updateModel(t, model, key(tea.KeyEscape))
+	assert.Nil(t, model.processingSimilarReport)
 }
 
 func TestProcessingLatestRenditionWins(t *testing.T) {

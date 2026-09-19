@@ -1281,6 +1281,25 @@ export interface DocumentIdentity {
   path: string;
 }
 
+export type DocumentMissingCoverageKind = typeof DocumentMissingCoverageKind[keyof typeof DocumentMissingCoverageKind];
+
+
+export const DocumentMissingCoverageKind = {
+  embedding: 'embedding',
+} as const;
+
+export interface DocumentMissingCoverage {
+  /**
+     * @minLength 1
+     * @maxLength 128
+     */
+  binding_id: string;
+  content_version_id: string;
+  kind: DocumentMissingCoverageKind;
+  /** @pattern ^[0-9a-f]{64}$ */
+  profile_fingerprint: string;
+}
+
 export type DocumentPageDirection = typeof DocumentPageDirection[keyof typeof DocumentPageDirection];
 
 
@@ -1472,6 +1491,83 @@ export interface DocumentSearchValidationRequest {
      * @maxLength 8192
      */
   query: string;
+}
+
+export type DocumentSimilarReportState = typeof DocumentSimilarReportState[keyof typeof DocumentSimilarReportState];
+
+
+export const DocumentSimilarReportState = {
+  ready: 'ready',
+  unavailable: 'unavailable',
+} as const;
+
+export interface DocumentSimilarResult {
+  /** @pattern ^[0-9a-f]{64}$ */
+  blob_hash: string;
+  content_version_id: string;
+  /** @minimum 0 */
+  duplicate_count: number;
+  evidence: DocumentEvidenceReference[];
+  /** @minimum 1 */
+  node_id: number;
+  /**
+     * @minLength 2
+     * @maxLength 16384
+     * @pattern ^/
+     */
+  path: string;
+  /** @minimum 1 */
+  rank: number;
+  score: number;
+  vault_uid: string;
+}
+
+export interface DocumentSimilarSource {
+  content_version_id: string;
+  /** @minimum 1 */
+  node_id: number;
+}
+
+export interface DocumentSimilarReport {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  /**
+     * @minLength 1
+     * @maxLength 128
+     */
+  binding_id: string;
+  coverage: DocumentSearchCoverage;
+  missing_coverage?: DocumentMissingCoverage;
+  results: DocumentSimilarResult[];
+  source: DocumentSimilarSource;
+  state: DocumentSimilarReportState;
+  truncated: boolean;
+}
+
+export interface ProcessingSelector {
+  content_version_id: string;
+  /** @minimum 1 */
+  node_id: number;
+  /**
+     * @minLength 1
+     * @maxLength 128
+     * @pattern ^[a-z][a-z0-9_-]*$
+     */
+  profile: string;
+}
+
+export interface DocumentSimilarRequest {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  /** @maxLength 128 */
+  binding_id?: string;
+  fence: DocumentSourceFence;
+  /**
+     * @minimum 1
+     * @maximum 100
+     */
+  limit?: number;
+  selector: ProcessingSelector;
 }
 
 export interface DocumentSourceFenceFilters {
@@ -3039,18 +3135,6 @@ export interface ProcessingConsentGrant {
   plan_fingerprint: string;
   /** @pattern ^[0-9a-f]{64}$ */
   profile_fingerprint: string;
-}
-
-export interface ProcessingSelector {
-  content_version_id: string;
-  /** @minimum 1 */
-  node_id: number;
-  /**
-     * @minLength 1
-     * @maxLength 128
-     * @pattern ^[a-z][a-z0-9_-]*$
-     */
-  profile: string;
 }
 
 export interface ProcessingConsentGrantRequest {
@@ -9878,6 +9962,44 @@ return sessionJSON<DocumentSearchReport>(getSearchDocumentsUrl(),
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
     body: JSON.stringify(documentSearchRequest)
+  }
+);}
+
+
+
+export const getFindSimilarDocumentsUrl = () => {
+
+
+
+
+  return `/api/v1/search/similar`
+}
+
+/**
+ * @summary Find similar documents using stored embeddings
+ */
+export const findSimilarDocuments = async (documentSimilarRequest: NonReadonly<DocumentSimilarRequest>, options?: Parameters<typeof sessionJSON>[1]): Promise<DocumentSimilarReport> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return sessionJSON<DocumentSimilarReport>(getFindSimilarDocumentsUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(documentSimilarRequest)
   }
 );}
 

@@ -53,6 +53,7 @@
   import BatchTagsModal from "./BatchTagsModal.svelte";
   import type { BatchTagReceipt } from "./batch-tags.js";
   import ProcessingDrawer from "./ProcessingDrawer.svelte";
+  import ScanSearchIcon from "@lucide/svelte/icons/scan-search";
   import ProvenanceDrawer from "./ProvenanceDrawer.svelte";
   import SelectionDock from "./SelectionDock.svelte";
   import type { SelectionTarget } from "./selection.js";
@@ -176,6 +177,8 @@
   let versionsOpen = $state(false);
   let provenanceOpen = $state(false);
   let processingTarget = $state<Row | null>(null);
+  let processingIntent = $state<"similar" | null>(null);
+  let processingScope = $state<string[]>([]);
   let renditionTarget = $state<{ attachmentID: string; path: string } | null>(null);
   let jobsOpen = $state(false);
   let auditEvidenceOpen = $state(false);
@@ -2258,6 +2261,7 @@
                 onsort={() => sortBy("modified")}
               />
               {#if activeQuery}<TableHeaderCell label="Match" />{/if}
+              <TableHeaderCell label="Actions" />
             {/snippet}
             {#snippet children()}
               {#each sortedRows as row (row.node.id)}
@@ -2309,6 +2313,19 @@
                   {#if activeQuery}
                     <td><Chip size="xs" tone={row.match === "content" ? "info" : "neutral"}>{row.match}</Chip></td>
                   {/if}
+                  <td>
+                    {#if row.node.kind === "file" && row.node.current_version_id}
+                      <IconButton size="sm" ariaLabel={`Find documents similar to ${row.node.name}`} onclick={(event) => {
+                        event.stopPropagation();
+                        historyOpen = false; versionsOpen = false; provenanceOpen = false; jobsOpen = false;
+                        auditEvidenceOpen = false; storageOpen = false; backupsOpen = false; trashOpen = false;
+                        uploadTarget = null; renditionTarget = null;
+                        processingScope = [...new Set(rows.filter((item) => item.node.kind === "file").flatMap((item) => item.node.current_version_id ? [item.node.current_version_id] : []))];
+                        processingIntent = "similar";
+                        processingTarget = row;
+                      }}><ScanSearchIcon size="14" aria-hidden="true" /></IconButton>
+                    {/if}
+                  </td>
                 </tr>
               {/each}
             {/snippet}
@@ -2565,6 +2582,8 @@
                       uploadTarget = null;
                       renditionTarget = null;
                       processingTarget = selected;
+                      processingIntent = null;
+                      processingScope = [...new Set(rows.filter((item) => item.node.kind === "file").flatMap((item) => item.node.current_version_id ? [item.node.current_version_id] : []))];
                     }}
                   >
                     <ActivityIcon size="14" aria-hidden="true" />
@@ -2765,10 +2784,13 @@
       />
     {/if}
     {#if processingTarget?.node.kind === "file"}
+      {#key `${processingTarget.node.id}:${processingTarget.node.current_version_id}:${processingIntent}`}
       <ProcessingDrawer
         session={webSession}
         node={processingTarget.node}
         path={processingTarget.path}
+        scopeVersionIDs={processingScope}
+        intent={processingIntent}
         onclose={() => (processingTarget = null)}
         onauthfailure={handleFailure}
         onrendition={(attachmentID) => {
@@ -2777,6 +2799,7 @@
           processingTarget = null;
         }}
       />
+      {/key}
     {/if}
     {#if renditionTarget}
       <RenditionDrawer

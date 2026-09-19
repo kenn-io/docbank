@@ -385,6 +385,28 @@ func (m Model) processingLines(width int) []string {
 	plan := *m.processingPlan
 	lines = appendWrapped(lines, fmt.Sprintf(" Profile: %s (%d/%d)", plan.Selector.Profile, m.processingProfile+1, len(m.processingProfiles)), width, lipgloss.NewStyle())
 	lines = appendWrapped(lines, " Exact version: "+plan.Selector.ContentVersionID, width, m.styles.muted)
+	lines = append(lines, separator, m.styles.heading.Render(pad(fit(" Similar documents in this view", width), width)), separator)
+	lines = appendWrapped(lines, fmt.Sprintf(" Scope: %d loaded file versions. S similar", len(m.processingSimilarScope)), width, m.styles.muted)
+	if m.processingSimilarBusy {
+		lines = appendWrapped(lines, " Finding similar files...", width, m.styles.muted)
+	} else if m.processingSimilarErr != nil {
+		lines = appendWrapped(lines, " Similar search failed: "+quoted(m.processingSimilarErr.Error()), width, m.styles.error)
+	} else if report := m.processingSimilarReport; report != nil {
+		if report.State == "unavailable" {
+			lines = appendWrapped(lines, " Unavailable: no current embedding for binding "+quoted(report.BindingID)+"; press b to build it", width, m.styles.muted)
+		} else {
+			lines = appendWrapped(lines, " Coverage: "+report.Coverage.State, width, m.styles.muted)
+			if len(report.Results) == 0 {
+				lines = appendWrapped(lines, " No similar documents inside this view", width, m.styles.muted)
+			}
+			for _, result := range report.Results {
+				lines = appendWrapped(lines, fmt.Sprintf(" %d. %s score %.6g +%d identical", result.Rank, quoted(result.Path), result.Score, result.DuplicateCount), width, lipgloss.NewStyle())
+			}
+			if report.Truncated {
+				lines = appendWrapped(lines, " Showing the first 20 content groups", width, m.styles.muted)
+			}
+		}
+	}
 	lines = append(lines, separator,
 		m.styles.heading.Render(pad(fit(" Reviewed provider flow", width), width)), separator)
 	for _, hop := range plan.Flow {
@@ -1307,6 +1329,7 @@ func (m Model) renderFooter() string {
 		hint{text: "J jobs", priority: 68},
 		hint{text: "O operations", priority: 66},
 		hint{text: "P processing", priority: 67},
+		hint{text: "S similar", priority: 68},
 		hint{text: "s sort", priority: 85},
 		hint{text: "v reverse", priority: 25},
 		hint{text: "r refresh", priority: 20},
@@ -1353,6 +1376,7 @@ func (m Model) renderProcessingFooter() string {
 	hints := []hint{
 		{text: "[/] profile", priority: 95},
 		{text: "b build", priority: 94},
+		{text: "S similar", priority: 95},
 		{text: "R rendition", priority: 93},
 		{text: "↑/↓ scroll", priority: 100},
 		{text: "/ search exact version", priority: 100},
@@ -1792,6 +1816,7 @@ func (m Model) helpLines() []string {
 		"a              Browse permanent audited history",
 		"J              Inspect daemon background jobs",
 		"P              Inspect document processing and coverage",
+		"S              Find documents similar to the selected file in this view",
 		"Esc/←/h        Return to the previous view",
 		"/              Search names and extracted text",
 		"s              Cycle the sort column",

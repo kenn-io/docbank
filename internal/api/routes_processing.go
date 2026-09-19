@@ -16,6 +16,7 @@ import (
 	"github.com/danielgtaylor/huma/v2"
 
 	"go.kenn.io/docbank/internal/processing"
+	"go.kenn.io/docbank/internal/retrieval"
 	"go.kenn.io/docbank/internal/store"
 )
 
@@ -387,6 +388,24 @@ func registerProcessingRoutes(api huma.API, d Deps) {
 	})
 
 	type searchInput struct{ Body DocumentSearchRequest }
+	type similarInput struct{ Body DocumentSimilarRequest }
+	type similarOutput struct{ Body DocumentSimilarReport }
+	huma.Register(api, huma.Operation{
+		OperationID: "findSimilarDocuments", Method: http.MethodPost,
+		Path: "/api/v1/search/similar", Summary: "Find similar documents using stored embeddings",
+	}, func(ctx context.Context, input *similarInput) (*similarOutput, error) {
+		if d.Processing == nil {
+			return nil, processingUnavailable()
+		}
+		report, err := d.Processing.FindSimilar(ctx, processing.SimilarRequest{
+			Selector:  processing.Selector{NodeID: input.Body.Selector.NodeID, ContentVersionID: input.Body.Selector.ContentVersionID, Profile: input.Body.Selector.Profile},
+			BindingID: input.Body.BindingID, Limit: input.Body.Limit,
+			Fence: processing.SourceFence{VaultUID: input.Body.Fence.VaultUID, ContentVersionIDs: input.Body.Fence.ContentVersionIDs}})
+		if err != nil {
+			return nil, fromProcessingError(err)
+		}
+		return &similarOutput{Body: fromDocumentSimilarReport(report)}, nil
+	})
 	type searchOutput struct{ Body DocumentSearchReport }
 	type searchValidationInput struct {
 		Body DocumentSearchValidationRequest
@@ -603,6 +622,28 @@ func fromDocumentSearchReport(report processing.SearchReport, explain bool) Docu
 	return result
 }
 
+func fromDocumentSimilarReport(report retrieval.SimilarReport) DocumentSimilarReport {
+	result := DocumentSimilarReport{State: "ready", Source: DocumentSimilarSource{NodeID: report.Source.NodeID, ContentVersionID: report.Source.ContentVersionID},
+		BindingID: report.BindingID, Coverage: DocumentSearchCoverage{BindingRequired: report.Coverage.BindingRequired, State: string(report.Coverage.State),
+			ScopedDocuments: report.Coverage.ScopedDocuments, CompleteDocuments: report.Coverage.CompleteDocuments}, Truncated: report.Truncated,
+		Results: make([]DocumentSimilarResult, len(report.Results))}
+	if missing := report.MissingCoverage; missing != nil {
+		result.State = "unavailable"
+		result.MissingCoverage = &DocumentMissingCoverage{Kind: missing.Kind, BindingID: missing.BindingID, ProfileFingerprint: missing.ProfileFingerprint, ContentVersionID: missing.ContentVersionID}
+	}
+	for i, item := range report.Results {
+		evidence := make([]DocumentEvidenceReference, len(item.Evidence))
+		for j, reference := range item.Evidence {
+			evidence[j] = DocumentEvidenceReference{Kind: reference.Kind, BuildID: reference.BuildID, VectorSpaceID: reference.VectorSpaceID,
+				EmbeddingSetID: reference.EmbeddingSetID, InputGenerationID: reference.InputGenerationID, InputID: reference.InputID,
+				InputKind: string(reference.InputKind), SourceManifestChecksum: reference.SourceManifestChecksum}
+		}
+		result.Results[i] = DocumentSimilarResult{VaultUID: item.Document.VaultID, NodeID: item.Document.NodeID, ContentVersionID: item.Document.ContentVersionID,
+			Rank: item.Rank, Score: item.Score, Path: item.Path, BlobHash: item.BlobHash, DuplicateCount: item.DuplicateCount, Evidence: evidence}
+	}
+	return result
+}
+
 func fromProcessingPlan(plan processing.Plan) ProcessingPlan {
 	result := ProcessingPlan{Fingerprint: plan.Fingerprint, VaultUID: plan.VaultUID,
 		Selector: ProcessingSelector{NodeID: plan.Selector.NodeID,
@@ -637,6 +678,7 @@ func fromProcessingError(err error) error {
 		code   string
 		detail string
 	}{
+		{store.ErrVectorIndexSourceStale, http.StatusConflict, "stale_index", "vector index source changed"},
 		{processing.ErrRenditionFailed, http.StatusUnprocessableEntity, "rendition_failed", "document rendition failed"},
 		{processing.ErrRenditionOperatorRequired, http.StatusConflict, "rendition_operator_required", "document rendition requires operator intervention"},
 		{processing.ErrForeignVault, http.StatusUnprocessableEntity, "foreign_vault", "source fence belongs to another vault"},
