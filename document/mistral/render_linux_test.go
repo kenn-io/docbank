@@ -9,6 +9,7 @@ import (
 	"encoding/hex"
 	"encoding/json/v2"
 	"encoding/xml"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -120,12 +121,21 @@ func TestRenderLaneLibreOfficeRoute(t *testing.T) {
 			authorization, err := policy.Authorize(syntheticManifest(t, policy, true), testCase.id)
 			require.NoError(t, err)
 			var uploaded []byte
+			var handlerErr error
 			server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
 				body, readErr := io.ReadAll(request.Body)
-				require.NoError(t, readErr)
+				if readErr != nil {
+					handlerErr = readErr
+					http.Error(w, "synthetic test failure", http.StatusInternalServerError)
+					return
+				}
 				uploaded = decodeRequestDocument(t, body, mediaTypePDF)
 				pages, countErr := media.CountPDFPages(uploaded)
-				require.NoError(t, countErr)
+				if countErr != nil {
+					handlerErr = countErr
+					http.Error(w, "synthetic test failure", http.StatusInternalServerError)
+					return
+				}
 				w.Header().Set("Content-Type", "application/json")
 				_, _ = io.WriteString(w, ocrResponse(int(pages), len(uploaded)))
 			}))
@@ -133,6 +143,7 @@ func TestRenderLaneLibreOfficeRoute(t *testing.T) {
 			client := newServerClient(t, server, policy, ClientConfig{MaxRetries: 0})
 			result, err := client.Process(t.Context(), prepared, authorization)
 			require.NoError(t, err)
+			require.NoError(t, handlerErr)
 			require.NotNil(t, result.ConversionReceipt)
 			pages, err := media.CountPDFPages(uploaded)
 			require.NoError(t, err)
@@ -184,8 +195,8 @@ func deriveLegacySeed(t *testing.T, executable string, content []byte, inputExt,
 	profileURL := (&url.URL{Scheme: "file", Path: filepath.ToSlash(profile)}).String()
 	var output []byte
 	var err error
-	for attempt := 0; attempt < 2; attempt++ {
-		command := exec.CommandContext(t.Context(), executable,
+	for range 2 {
+		command := exec.CommandContext(t.Context(), executable, //nolint:gosec // executable is the configured LibreOffice binary.
 			"--headless", "--norestore", "--nolockcheck", "--nodefault", "--nofirststartwizard",
 			"-env:UserInstallation="+profileURL, "--convert-to", outputExt+":"+filter,
 			"--outdir", outputDir, inputPath)
@@ -194,8 +205,8 @@ func deriveLegacySeed(t *testing.T, executable string, content []byte, inputExt,
 		if err == nil {
 			break
 		}
-		exitErr, ok := err.(*exec.ExitError)
-		if !ok || exitErr.ExitCode() != 81 {
+		var exitErr *exec.ExitError
+		if !errors.As(err, &exitErr) || exitErr.ExitCode() != 81 {
 			break
 		}
 	}
