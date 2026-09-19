@@ -1,6 +1,7 @@
 package vectorindex
 
 import (
+	"fmt"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -54,4 +55,24 @@ func TestSearchSimilarRowsRejectsInvalidIdentityAndAcceptsEmptyCandidates(t *tes
 	got, err := generation.SearchSimilarRows(t.Context(), generation.rows, nil)
 	require.NoError(t, err)
 	assert.Empty(t, got)
+}
+
+func TestSearchSimilarRowsRejectsUnboundedScoringWork(t *testing.T) {
+	const sourceCount = 1_000
+	const candidateCount = 1_001
+	keys := make([]string, sourceCount+candidateCount)
+	vectors := make([][]float32, len(keys))
+	for i := range keys {
+		keys[i] = fmt.Sprintf("row-%d", i)
+		vectors[i] = []float32{1, 0}
+	}
+	set := testVectorSet(document.VectorMetricDotProduct, document.VectorNormalizationNone, keys, vectors)
+	for i := range set.InputChecksums {
+		set.InputChecksums[i] = fmt.Sprintf("%064x", i)
+	}
+	generation, err := BuildGeneration(testManifest(t, []document.VectorSetV1{set}), []document.VectorSetV1{set}, Options{})
+	require.NoError(t, err)
+
+	_, err = generation.SearchSimilarRows(t.Context(), generation.rows[:sourceCount], generation.rows[sourceCount:])
+	assert.ErrorIs(t, err, ErrSimilarSearchScoringBudgetExceeded)
 }

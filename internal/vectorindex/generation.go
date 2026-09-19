@@ -314,6 +314,10 @@ func (generation *Generation) SearchRows(query []float32, identities []RowIdenti
 	return generation.searchRows(query, rows, len(rows))
 }
 
+var ErrSimilarSearchScoringBudgetExceeded = errors.New("similar search scoring budget exceeded")
+
+const maxSimilarScoringPairs = 1_000_000
+
 // SearchSimilarRows scores candidates against every stored source row.
 func (generation *Generation) SearchSimilarRows(ctx context.Context, sources, identities []RowIdentity) ([]Neighbor, error) {
 	if generation == nil || len(generation.rows) == 0 {
@@ -362,6 +366,9 @@ func (generation *Generation) SearchSimilarRows(ctx context.Context, sources, id
 		if !found {
 			return nil, errors.New("vector index source row is absent from generation")
 		}
+	}
+	if len(candidateRows) > 0 && len(sourceRows) > maxSimilarScoringPairs/len(candidateRows) {
+		return nil, ErrSimilarSearchScoringBudgetExceeded
 	}
 	best := make([]Neighbor, len(candidateRows))
 	// ponytail: exact source-by-candidate scoring; revisit its bounded cost after rerank evaluation.

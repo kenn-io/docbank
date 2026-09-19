@@ -18,6 +18,7 @@ import (
 	"go.kenn.io/docbank/internal/processing"
 	"go.kenn.io/docbank/internal/retrieval"
 	"go.kenn.io/docbank/internal/store"
+	"go.kenn.io/docbank/internal/vectorindex"
 )
 
 func registerProcessingRoutes(api huma.API, d Deps) {
@@ -697,6 +698,7 @@ func fromProcessingError(err error) error {
 		{processing.ErrConsentRequired, http.StatusPreconditionRequired, "processing_consent_required", "processing consent is required"},
 		{processing.ErrInvalidRenditionWindow, http.StatusRequestedRangeNotSatisfiable, "invalid_rendition_window", "rendition text window is invalid"},
 		{processing.ErrInvalidRenditionEncoding, http.StatusUnprocessableEntity, "invalid_rendition_encoding", "rendition text is not valid UTF-8"},
+		{vectorindex.ErrSimilarSearchScoringBudgetExceeded, http.StatusUnprocessableEntity, "similar_search_too_large", "similar search scope exceeds the scoring budget; narrow the source scope"},
 	} {
 		if errors.Is(err, item.target) {
 			return NewError(item.status, item.code, item.detail)
