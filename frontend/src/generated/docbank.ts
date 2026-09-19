@@ -1524,9 +1524,10 @@ export interface DocumentSummaryResolveResponse {
   items: DocumentSummary[];
 }
 
-export interface DownloadExportArchiveRequest {
+export interface DownloadRequest {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
+  basename?: string;
 }
 
 export interface DuplicateCollection {
@@ -2920,6 +2921,25 @@ export interface Plan {
   toolchain: string;
   total: number;
   vault_id: string;
+}
+
+export interface RoleSummary {
+  available_members: number;
+  bytes: number;
+  files: number;
+  role: string;
+  unavailable_members: number;
+  unavailable_reason?: string;
+}
+
+export interface PlanPreview {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  fingerprint: string;
+  member_hash: string;
+  plan_id: string;
+  roles: RoleSummary[];
+  total: number;
 }
 
 export interface PlanRequest {
@@ -6580,7 +6600,7 @@ export const getCreateExportJobWithJsonUrl = () => {
 /**
  * @summary Admit a durable verified export job
  */
-export const createExportJobWithJson = async (jobRequest: NonReadonly<JobRequest>, options?: Parameters<typeof sessionJSON>[1]): Promise<ExportJob> => {
+export const createExportJobWithJson = (jobRequest: NonReadonly<JobRequest>, options?: Parameters<typeof sessionResponse>[1]) => {
 
     const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
     if (!h) return {};
@@ -6596,7 +6616,7 @@ export const createExportJobWithJson = async (jobRequest: NonReadonly<JobRequest
     }
     return headers;
   };
-return sessionJSON<ExportJob>(getCreateExportJobWithJsonUrl(),
+return sessionResponse<ExportJob>(getCreateExportJobWithJsonUrl(),
   {
     ...options,
     method: 'POST',
@@ -6618,7 +6638,7 @@ export const getCreateExportJobWithBlobUrl = () => {
 /**
  * @summary Admit a durable verified export job
  */
-export const createExportJobWithBlob = async (createExportJobBody: Blob, options?: Parameters<typeof sessionJSON>[1]): Promise<ExportJob> => {
+export const createExportJobWithBlob = (createExportJobBody: Blob, options?: Parameters<typeof sessionResponse>[1]) => {
 
     const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
     if (!h) return {};
@@ -6634,7 +6654,7 @@ export const createExportJobWithBlob = async (createExportJobBody: Blob, options
     }
     return headers;
   };
-return sessionJSON<ExportJob>(getCreateExportJobWithBlobUrl(),
+return sessionResponse<ExportJob>(getCreateExportJobWithBlobUrl(),
   {
     ...options,
     method: 'POST',
@@ -6656,9 +6676,9 @@ export const getGetExportJobUrl = (id: string,) => {
 /**
  * @summary Read current durable export progress and receipt
  */
-export const getExportJob = async (id: string, options?: Parameters<typeof sessionJSON>[1]): Promise<ExportJob> => {
+export const getExportJob = (id: string, options?: Parameters<typeof sessionResponse>[1]) => {
 
-  return sessionJSON<ExportJob>(getGetExportJobUrl(id),
+  return sessionResponse<ExportJob>(getGetExportJobUrl(id),
   {
     ...options,
     method: 'GET'
@@ -6708,7 +6728,7 @@ return sessionJSON<void>(getCancelExportJobUrl(id),
 
 
 
-export const getDownloadExportArchiveUrl = (id: string,) => {
+export const getDownloadExportArchiveWithJsonUrl = (id: string,) => {
 
 
 
@@ -6719,8 +6739,8 @@ export const getDownloadExportArchiveUrl = (id: string,) => {
 /**
  * @summary Issue a one-use ticket for a reverified archive
  */
-export const downloadExportArchive = async (id: string,
-    downloadExportArchiveRequest: NonReadonly<DownloadExportArchiveRequest>, options?: Parameters<typeof sessionJSON>[1]): Promise<TicketOutputBody> => {
+export const downloadExportArchiveWithJson = (id: string,
+    downloadRequest: NonReadonly<DownloadRequest>, options?: Parameters<typeof sessionResponse>[1]) => {
 
     const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
     if (!h) return {};
@@ -6736,12 +6756,51 @@ export const downloadExportArchive = async (id: string,
     }
     return headers;
   };
-return sessionJSON<TicketOutputBody>(getDownloadExportArchiveUrl(id),
+return sessionResponse<TicketOutputBody>(getDownloadExportArchiveWithJsonUrl(id),
   {
     ...options,
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
-    body: JSON.stringify(downloadExportArchiveRequest)
+    body: JSON.stringify(downloadRequest)
+  }
+);}
+
+
+
+export const getDownloadExportArchiveWithBlobUrl = (id: string,) => {
+
+
+
+
+  return `/api/v1/exports/jobs/${encodeURIComponent(String(id))}/download`
+}
+
+/**
+ * @summary Issue a one-use ticket for a reverified archive
+ */
+export const downloadExportArchiveWithBlob = (id: string,
+    downloadExportArchiveBody: Blob, options?: Parameters<typeof sessionResponse>[1]) => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return sessionResponse<TicketOutputBody>(getDownloadExportArchiveWithBlobUrl(id),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/octet-stream', ...getHeaders(options?.headers) },
+    body: downloadExportArchiveBody
   }
 );}
 
@@ -6805,7 +6864,7 @@ export const getCreateExportPlanWithJsonUrl = () => {
 /**
  * @summary Freeze role availability and exact archive paths
  */
-export const createExportPlanWithJson = async (planRequest: NonReadonly<PlanRequest>, options?: Parameters<typeof sessionJSON>[1]): Promise<Plan> => {
+export const createExportPlanWithJson = (planRequest: NonReadonly<PlanRequest>, options?: Parameters<typeof sessionResponse>[1]) => {
 
     const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
     if (!h) return {};
@@ -6821,7 +6880,7 @@ export const createExportPlanWithJson = async (planRequest: NonReadonly<PlanRequ
     }
     return headers;
   };
-return sessionJSON<Plan>(getCreateExportPlanWithJsonUrl(),
+return sessionResponse<Plan>(getCreateExportPlanWithJsonUrl(),
   {
     ...options,
     method: 'POST',
@@ -6843,7 +6902,7 @@ export const getCreateExportPlanWithBlobUrl = () => {
 /**
  * @summary Freeze role availability and exact archive paths
  */
-export const createExportPlanWithBlob = async (createExportPlanBody: Blob, options?: Parameters<typeof sessionJSON>[1]): Promise<Plan> => {
+export const createExportPlanWithBlob = (createExportPlanBody: Blob, options?: Parameters<typeof sessionResponse>[1]) => {
 
     const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
     if (!h) return {};
@@ -6859,7 +6918,7 @@ export const createExportPlanWithBlob = async (createExportPlanBody: Blob, optio
     }
     return headers;
   };
-return sessionJSON<Plan>(getCreateExportPlanWithBlobUrl(),
+return sessionResponse<Plan>(getCreateExportPlanWithBlobUrl(),
   {
     ...options,
     method: 'POST',
@@ -6894,6 +6953,30 @@ export const getExportPlan = async (id: string, options?: Parameters<typeof sess
 
 
 
+export const getGetExportPlanPreviewUrl = (id: string,) => {
+
+
+
+
+  return `/api/v1/exports/plans/${encodeURIComponent(String(id))}/preview`
+}
+
+/**
+ * @summary Summarize frozen export role availability
+ */
+export const getExportPlanPreview = (id: string, options?: Parameters<typeof sessionResponse>[1]) => {
+
+  return sessionResponse<PlanPreview>(getGetExportPlanPreviewUrl(id),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
 export const getCreateExportSourceWithJsonUrl = () => {
 
 
@@ -6905,7 +6988,7 @@ export const getCreateExportSourceWithJsonUrl = () => {
 /**
  * @summary Freeze exact export membership or begin a chunk upload
  */
-export const createExportSourceWithJson = async (sourceRequest: NonReadonly<SourceRequest>, options?: Parameters<typeof sessionJSON>[1]): Promise<Source> => {
+export const createExportSourceWithJson = (sourceRequest: NonReadonly<SourceRequest>, options?: Parameters<typeof sessionResponse>[1]) => {
 
     const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
     if (!h) return {};
@@ -6921,7 +7004,7 @@ export const createExportSourceWithJson = async (sourceRequest: NonReadonly<Sour
     }
     return headers;
   };
-return sessionJSON<Source>(getCreateExportSourceWithJsonUrl(),
+return sessionResponse<Source>(getCreateExportSourceWithJsonUrl(),
   {
     ...options,
     method: 'POST',
@@ -6943,7 +7026,7 @@ export const getCreateExportSourceWithBlobUrl = () => {
 /**
  * @summary Freeze exact export membership or begin a chunk upload
  */
-export const createExportSourceWithBlob = async (createExportSourceBody: Blob, options?: Parameters<typeof sessionJSON>[1]): Promise<Source> => {
+export const createExportSourceWithBlob = (createExportSourceBody: Blob, options?: Parameters<typeof sessionResponse>[1]) => {
 
     const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
     if (!h) return {};
@@ -6959,7 +7042,7 @@ export const createExportSourceWithBlob = async (createExportSourceBody: Blob, o
     }
     return headers;
   };
-return sessionJSON<Source>(getCreateExportSourceWithBlobUrl(),
+return sessionResponse<Source>(getCreateExportSourceWithBlobUrl(),
   {
     ...options,
     method: 'POST',
@@ -7063,8 +7146,8 @@ export const getSealExportSourceUrl = (id: string,) => {
 /**
  * @summary Verify and seal the complete uploaded membership
  */
-export const sealExportSource = async (id: string,
-    sealExportSourceRequest: NonReadonly<SealExportSourceRequest>, options?: Parameters<typeof sessionJSON>[1]): Promise<Source> => {
+export const sealExportSource = (id: string,
+    sealExportSourceRequest: NonReadonly<SealExportSourceRequest>, options?: Parameters<typeof sessionResponse>[1]) => {
 
     const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
     if (!h) return {};
@@ -7080,7 +7163,7 @@ export const sealExportSource = async (id: string,
     }
     return headers;
   };
-return sessionJSON<Source>(getSealExportSourceUrl(id),
+return sessionResponse<Source>(getSealExportSourceUrl(id),
   {
     ...options,
     method: 'POST',

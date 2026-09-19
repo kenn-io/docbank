@@ -2345,6 +2345,52 @@ func (c *Client) GetExportPlan(ctx context.Context, options *GetExportPlanReques
 	return responseParser(ctx, resp)
 }
 
+// GetExportPlanPreview Summarize frozen export role availability
+func (c *Client) GetExportPlanPreview(ctx context.Context, options *GetExportPlanPreviewRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetExportPlanPreviewResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/exports/plans/{id}/preview",
+		Method:     "GET",
+		Options:    options,
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*GetExportPlanPreviewResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(GetExportPlanPreviewResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "GetExportPlanPreviewResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[GetExportPlanPreviewErrorResponse](resp, "GetExportPlanPreviewErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/exports/plans/{id}/preview")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
 // CreateExportSource Freeze exact export membership or begin a chunk upload
 func (c *Client) CreateExportSource(ctx context.Context, options *CreateExportSourceRequestOptions, reqEditors ...runtime.RequestEditorFn) (*CreateExportSourceResponse, error) {
 	var err error
@@ -9516,6 +9562,37 @@ func (o *GetExportPlanRequestOptions) GetHeader() (map[string]string, error) {
 	return nil, nil
 }
 
+// GetExportPlanPreviewRequestOptions is the options needed to make a request to GetExportPlanPreview.
+type GetExportPlanPreviewRequestOptions struct {
+	PathParams *GetExportPlanPreviewPath
+}
+
+// GetPathParams returns the path params as a map.
+func (o *GetExportPlanPreviewRequestOptions) GetPathParams() (map[string]any, error) {
+	encoded, err := json.Marshal(o.PathParams, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetQuery returns the query params as a map.
+func (o *GetExportPlanPreviewRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *GetExportPlanPreviewRequestOptions) GetBody() any {
+	return nil
+}
+
+// GetHeader returns the headers as a map.
+func (o *GetExportPlanPreviewRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
 // CreateExportSourceRequestOptions is the options needed to make a request to CreateExportSource.
 type CreateExportSourceRequestOptions struct {
 	Body *CreateExportSourceBody
@@ -13355,6 +13432,10 @@ type GetExportPlanPath struct {
 	ID string `json:"id"`
 }
 
+type GetExportPlanPreviewPath struct {
+	ID string `json:"id"`
+}
+
 type PutExportChunkPath struct {
 	ID    string `json:"id"`
 	Index int64  `json:"index"`
@@ -13616,7 +13697,7 @@ type CreateExportJobBody = JobRequest
 
 type CancelExportJobBody = CancelExportJobRequest
 
-type DownloadExportArchiveBody = DownloadExportArchiveRequest
+type DownloadExportArchiveBody = DownloadRequest
 
 type CreateExportPlanBody = PlanRequest
 
@@ -14163,6 +14244,10 @@ type CreateExportPlanErrorResponse = Error
 type GetExportPlanResponse = bundle.Plan
 
 type GetExportPlanErrorResponse = Error
+
+type GetExportPlanPreviewResponse = bundle.PlanPreview
+
+type GetExportPlanPreviewErrorResponse = Error
 
 type CreateExportSourceResponse = bundle.Source
 
@@ -14891,10 +14976,7 @@ type DocumentSummaryResolveRequest = api.DocumentSummaryResolveRequest
 
 type DocumentSummaryResolveResponse = api.DocumentSummaryResolveResponse
 
-type DownloadExportArchiveRequest struct {
-	// Schema A URL to the JSON Schema for this object.
-	Schema *string `json:"$schema,omitempty"`
-}
+type DownloadRequest = bundle.DownloadRequest
 
 type DuplicateCollection = api.DuplicateCollection
 
@@ -15183,6 +15265,8 @@ type PendingFormatV1 = document.PendingFormatV1
 
 type Plan = bundle.Plan
 
+type PlanPreview = bundle.PlanPreview
+
 type PlanRequest = bundle.PlanRequest
 
 type PreviewAuditEnrollmentRequest struct {
@@ -15406,6 +15490,8 @@ type RevertNodeContentRequest struct {
 }
 
 type RolePolicy = bundle.RolePolicy
+
+type RoleSummary = bundle.RoleSummary
 
 type SavedQuery = api.SavedQuery
 

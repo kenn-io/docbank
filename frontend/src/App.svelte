@@ -43,6 +43,9 @@
   import AuditHistoryDrawer from "./AuditHistoryDrawer.svelte";
   import ActionRecoveryModal from "./ActionRecoveryModal.svelte";
   import BackupDrawer from "./BackupDrawer.svelte";
+  import ExportDrawer from "./ExportDrawer.svelte";
+  import { copyExportMembers } from "./exports.js";
+  import type { ExportInput } from "./exportState.js";
   import CollectionsDrawer from "./CollectionsDrawer.svelte";
   import FacetSidebar from "./FacetSidebar.svelte";
   import JobsDrawer from "./JobsDrawer.svelte";
@@ -178,6 +181,10 @@
   let auditEvidenceOpen = $state(false);
   let storageOpen = $state(false);
   let backupsOpen = $state(false);
+  let exportOpen = $state(false);
+  let exportHasJob = $state(false);
+  let exportInput = $state<ExportInput | null>(null);
+  $effect(() => { if (!webSession) { exportOpen = false; exportInput = null; exportHasJob = false; } });
   let savedQueriesOpen = $state(false);
   let queryBarOpen = $state(false);
   let savedQueryDraft = $state<Query | null>(null);
@@ -1263,6 +1270,21 @@
       : new Set();
   }
 
+  function openExport(selectionOnly = false): void {
+    if (exportHasJob) { exportOpen = true; return; }
+    try {
+      if (snapshotActive && snapshotState.firstPage && !selectionOnly) {
+        exportInput = { label: "Whole frozen query", snapshot: snapshotState.firstPage };
+      } else if (snapshotActive && snapshotPage) {
+        exportInput = { label: "Selected documents on frozen page", members: copyExportMembers(snapshotPage.rows.filter(row => snapshotSelection.has(row.node_id))) };
+      } else {
+        const rows = sortedRows.filter(row => row.node.kind === "file" && (!selectionOnly || bulkSelection.selectedIDs.has(row.node.id)));
+        exportInput = { label: selectionOnly ? "Selected documents on this page" : "Documents on this page", members: copyExportMembers(rows.map(({ node }) => ({ node_id: node.id, content_version_id: node.current_version_id ?? "", blob_hash: node.blob_hash ?? "", size: node.size }))) };
+      }
+      exportOpen = true;
+    } catch (cause) { handleFailure(cause); }
+  }
+
   function snapshotOverlay(row: SnapshotRow) {
     return visibleSnapshotOverlay(row, snapshotOverlays);
   }
@@ -1832,6 +1854,7 @@
         </form>
       {/snippet}
       {#snippet right()}
+        <Button size="sm" disabled={!exportHasJob && (snapshotActive ? (snapshotPage?.total ?? 0) === 0 : visibleDocumentCount === 0)} onclick={() => openExport()}>Export</Button>
         <Button size="sm" onclick={() => openQueryEditor()}>Edit query</Button>
         <Button size="sm" disabled={snapshotActive && snapshotState.status !== "ready"}
           onclick={() => { snapshotActionError = ""; snapshotActionsOpen = true; }}>Snapshot actions</Button>
@@ -2685,6 +2708,8 @@
         tagsDisabled={snapshotState.status !== "ready"}
         ontags={() => openSnapshotBatchTags()}
         onwholequerytags={() => { snapshotActionError = ""; snapshotActionsOpen = true; }}
+        onexport={() => openExport(true)}
+        onexportquery={() => openExport()}
       />
     {/if}
     {#if !snapshotActive && selectedCount > 0}
@@ -2697,6 +2722,7 @@
         ontags={() => openBatchTags(bulkTargets)}
         tagsDisabled={loading || pendingTagHotkey !== ""}
         oncsv={exportPageCSV}
+        onexport={() => openExport(true)}
       />
     {/if}
     {#if shortcutHelpOpen}
@@ -2805,6 +2831,9 @@
         onauthfailure={handleFailure}
       />
     {/if}
+    {#key webSession}
+      <ExportDrawer session={webSession} open={exportOpen} input={exportInput} onclose={() => exportOpen = false} onauthfailure={handleFailure} onactivechange={active => exportHasJob = active} />
+    {/key}
     {#if storageOpen}
       <StorageDrawer
         session={webSession}

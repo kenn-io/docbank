@@ -129,6 +129,25 @@ type JobRequest struct {
 	Fingerprint string `json:"fingerprint"`
 }
 
+// PlanPreview is a bounded projection of frozen document receipts. It is not
+// part of the plan fingerprint or the portable archive format.
+type PlanPreview struct {
+	PlanID      string        `json:"plan_id"`
+	Fingerprint string        `json:"fingerprint"`
+	MemberHash  string        `json:"member_hash"`
+	Total       int           `json:"total"`
+	Roles       []RoleSummary `json:"roles"`
+}
+
+type RoleSummary struct {
+	Role               string `json:"role"`
+	AvailableMembers   int    `json:"available_members"`
+	UnavailableMembers int    `json:"unavailable_members"`
+	Files              int    `json:"files"`
+	Bytes              int64  `json:"bytes"`
+	UnavailableReason  string `json:"unavailable_reason,omitzero"`
+}
+
 type Receipt struct {
 	Format          string `json:"format"`
 	PlanFingerprint string `json:"plan_fingerprint"`
