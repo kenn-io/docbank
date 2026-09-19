@@ -228,8 +228,8 @@ The canonical URL selects the provider identity:
   Either host, either route, and any query or fragment select the same source.
   The ID is case-sensitive and must not be percent-encoded. The submission
   returns `outcome: "unsupported"` whether or not `acquire` is set, because Cap
-   documents no download route for received links. Import the file with the
-   artifact route described below.
+  documents no download route for received links. Import the file with the
+  artifact route described below.
 - **Loom.** A `canonical_url` on `https://loom.com` or
   `https://www.loom.com` whose path is exactly `/share/<id>` or
   `/embed/<id>` uses the `loom` provider identity. The route is part of the
@@ -274,10 +274,13 @@ source head. A changed original for a bound occurrence returns
 `409 source_conflict`. A caption or transcript must follow the original. A
 caption with `application/x-subrip` stays a retained input until the caller
 selects the `supplied-captions` profile. That profile publishes timed
-`media-transcript/v1` evidence and supports lexical and auto search. Semantic
-and hybrid search are not configured for supplied captions. A transcript
-requires an explicit processing plan, consent, and retry before it can produce
-`transcribed` coverage.
+`media-transcript/v1` evidence and supports lexical and auto search. The retained
+`origin` label does not restrict caption processing: imported files produce
+supplied evidence, just as imported transcripts do. See the
+[caption timing limits](../document-understanding.md#supplied-caption-timing-limits).
+Semantic and hybrid search are not configured for supplied captions. A
+transcript requires an explicit processing plan, consent, and retry before it
+can produce `transcribed` coverage.
 
 Media retry selects the caller's newest visible occurrence for the source.
 It cannot target an older occurrence. To process an older recording, use the

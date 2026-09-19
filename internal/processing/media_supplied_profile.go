@@ -126,14 +126,6 @@ func (source retainedTranscriptSource) CaptionForBinding(
 	if err != nil {
 		return suppliedtranscript.Caption{}, err
 	}
-	if input.Origin != "supplied" {
-		classified, classifyErr := document.NewRenditionProviderError(
-			document.RenditionErrorPolicyRejected, 0, errors.New("caption input is not supplied"))
-		if classifyErr != nil {
-			return suppliedtranscript.Caption{}, classifyErr
-		}
-		return suppliedtranscript.Caption{}, classified
-	}
 	raw, version, err := source.readInput(ctx, input)
 	if err != nil {
 		if errors.Is(err, errSuppliedInputInvalid) {

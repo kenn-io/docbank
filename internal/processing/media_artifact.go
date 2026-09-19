@@ -201,9 +201,6 @@ func (service *Service) importRemoteRecordingMedia(
 	ctx context.Context, request MediaArtifactRequest, current store.MediaOccurrenceProjection,
 	operation store.MediaOperation, limit int64, video bool,
 ) (MediaReceipt, error) {
-	if request.ByteLength > limit {
-		return MediaReceipt{}, errors.New("byte_limit")
-	}
 	staged, owned, err := service.mediaStagedContent(ctx, request.Content, request.ByteLength,
 		limit, request.SHA256)
 	if err != nil {
@@ -213,7 +210,7 @@ func (service *Service) importRemoteRecordingMedia(
 		defer func() { _ = staged.Close() }()
 	}
 	record, err := media.InspectCapability(staged, remoteRecordingInspectionPolicy(request.Filename,
-		request.MediaType, request.SHA256, request.ByteLength, service.mediaMaxBytes, video))
+		request.MediaType, request.SHA256, request.ByteLength, limit, video))
 	if err != nil {
 		return MediaReceipt{}, err
 	}

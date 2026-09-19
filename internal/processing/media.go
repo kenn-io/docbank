@@ -569,15 +569,17 @@ const (
 // validateRemoteRecordingFile admits the exact original identities for a
 // remote occurrence: the supplied WAV/MP3 set plus MP4 video.
 func validateRemoteRecordingFile(filename, mediaType string) (video bool, err error) {
+	if !strings.EqualFold(path.Ext(filename), ".mp4") {
+		return false, validateMediaArtifactFile(filename, mediaType)
+	}
 	if err := validateMediaArtifactName(filename, mediaType); err != nil {
 		return false, err
 	}
 	parsedMediaType, _, parseErr := mime.ParseMediaType(mediaType)
-	ext := strings.ToLower(path.Ext(filename))
-	if parseErr == nil && ext == ".mp4" && parsedMediaType == "video/mp4" {
-		return true, nil
+	if parseErr != nil || parsedMediaType != "video/mp4" {
+		return false, errors.New("remote MP4 requires video/mp4 media type")
 	}
-	return false, validateMediaArtifactFile(filename, mediaType)
+	return true, nil
 }
 
 func remoteRecordingInspectionPolicy(
@@ -585,8 +587,6 @@ func remoteRecordingInspectionPolicy(
 ) media.InspectionPolicy {
 	policy := mediaInspectionPolicyForFile(filename, mediaType, sha256, byteLength, maxBytes)
 	if video {
-		limit := min(maxBytes, remoteVideoMaxBytes)
-		policy.MaxSourceBytes, policy.MaxExpandedBytes, policy.MaxEntryBytes = limit, limit, limit
 		policy.MaxPixels = remoteVideoMaxPixels
 		policy.MaxFrames = remoteVideoMaxFrames
 		policy.MaxDurationMS = remoteVideoMaxDurationMS

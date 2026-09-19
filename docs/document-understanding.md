@@ -180,6 +180,13 @@ starts must not regress, but adjacent and overlapping cues remain distinct.
 Speaker text participates in evidence identity when present; omitting it keeps
 the supplied form free of invented values.
 
+### Supplied caption timing limits
+
+The `supplied-captions` profile rejects the entire caption file if any cue ends
+after the recording's measured duration, even by one millisecond. It preserves
+the supplied times without rounding, clipping, or adding a tolerance. Check that
+the captions match the exact recording before importing them.
+
 ## Run Mistral OCR safely
 
 Mistral uploads are refused until an operator supplies a validated capability

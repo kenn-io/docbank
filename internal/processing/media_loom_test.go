@@ -126,12 +126,11 @@ func TestLoomRecognitionPreservesLegacyURLIdentity(t *testing.T) {
 
 func TestRemoteRecordingVideoPolicy(t *testing.T) {
 	video := remoteRecordingInspectionPolicy("loom.mp4", "video/mp4", strings.Repeat("a", 64), 123,
-		40<<20, true)
+		20<<20, true)
 	assert.Equal(t, int64(20<<20), video.MaxSourceBytes)
 	assert.Equal(t, int64(1920*1088), video.MaxPixels)
 	assert.Equal(t, int64(300_000), video.MaxDurationMS)
 	assert.Equal(t, int64(18_000), video.MaxFrames)
-	t.Log("limits: 20 MiB, 1920x1088, 300000 ms, 18000 frames")
 	audio := mediaInspectionPolicyForFile("loom.wav", "audio/wav", strings.Repeat("a", 64), 123, 40<<20)
 	assert.Equal(t, audio, remoteRecordingInspectionPolicy("loom.wav", "audio/wav", strings.Repeat("a", 64), 123, 40<<20, false))
 }

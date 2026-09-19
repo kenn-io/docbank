@@ -17,7 +17,9 @@ import (
 )
 
 func TestLoomManualExportEmbedded(t *testing.T) {
-	runLoomManualExportEmbedded(t)
+	for _, origin := range []string{"supplied", "provider"} {
+		t.Run(origin, func(t *testing.T) { runLoomManualExportEmbedded(t, origin) })
+	}
 }
 
 func TestLoomCaptionSearchHonorsExactFence(t *testing.T) {
@@ -113,7 +115,7 @@ func TestLoomCaptionSearchHonorsExactFence(t *testing.T) {
 	assert.Len(t, search(second.original.ContentVersionID).Results, 1)
 }
 
-func runLoomManualExportEmbedded(t *testing.T) {
+func runLoomManualExportEmbedded(t *testing.T, captionOrigin string) {
 	t.Helper()
 	root := t.TempDir()
 	vault, err := New(t.Context(), Config{Root: root})
@@ -144,11 +146,15 @@ func runLoomManualExportEmbedded(t *testing.T) {
 	captionID := contentIdentity(srt)
 	caption, err := vault.ImportRecordingArtifact(t.Context(), MediaArtifactRequest{
 		OperationID: "00000000-0000-4000-8000-000000000503", SourceID: remote.SourceID,
-		OccurrenceID: remote.OccurrenceID, Kind: "caption", Origin: "supplied", Provider: "loom",
+		OccurrenceID: remote.OccurrenceID, Kind: "caption", Origin: captionOrigin, Provider: "loom",
 		Filename: "loom.srt", MediaType: "application/x-subrip", SHA256: captionID.SHA256,
 		ByteLength: captionID.Size, Content: bytes.NewReader(srt),
 	})
 	require.NoError(t, err)
+	retained, err := vault.metadata.SuppliedTranscriptBindingForSource(t.Context(),
+		"embedded:operator", "caption", videoID.SHA256, caption.SuppliedInputID)
+	require.NoError(t, err)
+	assert.Equal(t, captionOrigin, retained.Origin)
 
 	node, err := vault.Stat(t.Context(), "/media/"+remote.SourceID+"/"+videoID.SHA256+".mp4")
 	require.NoError(t, err)
