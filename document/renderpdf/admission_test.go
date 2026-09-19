@@ -49,8 +49,21 @@ func TestAdmissionAllowsLibreOfficeMetadata(t *testing.T) {
 	_, err = Scan(flatODF(FlatTextKind, emptyTextMetadata), FlatTextKind, DefaultLimits())
 	require.NoError(t, err)
 
-	presentationMetadata := `<presentation:placeholder xmlns:presentation="urn:oasis:names:tc:opendocument:xmlns:presentation:1.0" presentation:object="handout"/><presentation:placeholder xmlns:presentation="urn:oasis:names:tc:opendocument:xmlns:presentation:1.0" presentation:object="title"/><presentation:placeholder xmlns:presentation="urn:oasis:names:tc:opendocument:xmlns:presentation:1.0" presentation:object="subtitle"/>`
-	_, err = Scan(flatODF(FlatPresKind, presentationMetadata), FlatPresKind, DefaultLimits())
+	for _, object := range []string{
+		"title", "outline", "subtitle", "text", "graphic", "object", "chart", "table",
+		"orgchart", "page", "notes", "handout", "header", "footer", "date-time", "page-number",
+	} {
+		t.Run(object, func(t *testing.T) {
+			metadata := `<presentation:placeholder xmlns:presentation="urn:oasis:names:tc:opendocument:xmlns:presentation:1.0" presentation:object="` + object + `"/>`
+			_, err := Scan(flatODF(FlatPresKind, metadata), FlatPresKind, DefaultLimits())
+			require.NoError(t, err)
+		})
+	}
+}
+
+func TestAdmissionAllowsLocalDatabaseRanges(t *testing.T) {
+	body := `<office:body><office:spreadsheet xmlns:table="urn:oasis:names:tc:opendocument:xmlns:table:1.0"><table:database-ranges><table:database-range table:name="Inventory" table:target-range-address="Sheet1.A1:Sheet1.B3" table:display-filter-buttons="true"><table:filter><table:filter-condition table:field-number="1" table:operator="&gt;=" table:value="2"/></table:filter><table:sort><table:sort-by table:field-number="0" table:order="ascending"/></table:sort></table:database-range></table:database-ranges></office:spreadsheet></office:body>`
+	_, err := Scan(flatODF(FlatCalcKind, body), FlatCalcKind, DefaultLimits())
 	require.NoError(t, err)
 }
 
@@ -67,7 +80,9 @@ func TestAdmissionRejectsLinkedAndActiveConstructs(t *testing.T) {
 				{name: "script code", body: `<office:script xmlns:script="urn:oasis:names:tc:opendocument:xmlns:script:1.0" script:language="ooo:Basic"><ooo:libraries xmlns:ooo="http://openoffice.org/2004/office"><ooo:library-embedded ooo:name="Standard"/></ooo:libraries><text:p xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0">code</text:p></office:script>`},
 				{name: "event", body: `<office:event-listeners/>`},
 				{name: "dde", body: `<office:dde-link/>`},
-				{name: "database", body: `<table:database-range xmlns:table="urn:oasis:names:tc:opendocument:xmlns:table:1.0"/>`},
+				{name: "database SQL", body: `<table:database-ranges xmlns:table="urn:oasis:names:tc:opendocument:xmlns:table:1.0"><table:database-range><table:database-source-sql table:database-name="external" table:sql-statement="SELECT * FROM inventory"/></table:database-range></table:database-ranges>`},
+				{name: "database query", body: `<table:database-range xmlns:table="urn:oasis:names:tc:opendocument:xmlns:table:1.0"><table:database-source-query table:database-name="external" table:query-name="inventory"/></table:database-range>`},
+				{name: "database table", body: `<table:database-range xmlns:table="urn:oasis:names:tc:opendocument:xmlns:table:1.0"><table:database-source-table table:database-name="external" table:table-name="inventory"/></table:database-range>`},
 				{name: "section", body: `<text:section-source xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0"/>`},
 				{name: "ole", body: `<draw:object-ole xmlns:draw="urn:oasis:names:tc:opendocument:xmlns:drawing:1.0"/>`},
 				{name: "chart", body: `<chart:chart xmlns:chart="urn:oasis:names:tc:opendocument:xmlns:chart:1.0"/>`},

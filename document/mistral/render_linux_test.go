@@ -87,10 +87,14 @@ func TestRenderLaneLibreOfficeRoute(t *testing.T) {
 	}
 	renderPolicy, runner := realRenderLanePolicy(t, executable)
 	policy := testPolicyWithRenderPDF(t, renderPolicy, 50<<20, 11)
+	presentation, err := os.ReadFile(filepath.Join("testdata", "render", "layouts.fodp"))
+	require.NoError(t, err)
+	spreadsheet, err := os.ReadFile(filepath.Join("testdata", "render", "filtered.fods"))
+	require.NoError(t, err)
 	legacy := map[string][]byte{
 		"doc": deriveLegacySeed(t, executable, loadDOCXFixture(t, "libreoffice.docx"), "docx", "doc", "MS Word 97"),
-		"ppt": deriveLegacySeed(t, executable, generatedRenderFixture(t, "pptx"), "pptx", "ppt", "MS PowerPoint 97"),
-		"xls": deriveLegacySeed(t, executable, syntheticFlatODF("xls"), "fods", "xls", "MS Excel 97"),
+		"ppt": deriveLegacySeed(t, executable, presentation, "fodp", "ppt", "MS PowerPoint 97"),
+		"xls": deriveLegacySeed(t, executable, spreadsheet, "fods", "xls", "MS Excel 97"),
 	}
 	testCases := []struct {
 		id        string
@@ -102,8 +106,8 @@ func TestRenderLaneLibreOfficeRoute(t *testing.T) {
 		{id: "rtf", mediaType: "application/rtf", content: generatedRenderFixture(t, "rtf")},
 		{id: "ppt", mediaType: "application/vnd.ms-powerpoint", content: legacy["ppt"]},
 		{id: "xls", mediaType: "application/vnd.ms-excel", content: legacy["xls"]},
-		{id: "ods", mediaType: "application/vnd.oasis.opendocument.spreadsheet", content: generatedRenderFixture(t, "ods")},
-		{id: "xlsx", mediaType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", content: generatedRenderFixture(t, "xlsx")},
+		{id: "ods", mediaType: "application/vnd.oasis.opendocument.spreadsheet", content: deriveLegacySeed(t, executable, spreadsheet, "fods", "ods", "calc8")},
+		{id: "xlsx", mediaType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", content: deriveLegacySeed(t, executable, spreadsheet, "fods", "xlsx", "Calc MS Excel 2007 XML")},
 	}
 	for _, testCase := range testCases {
 		t.Run(testCase.id, func(t *testing.T) {
@@ -166,6 +170,19 @@ func TestRenderLaneLibreOfficeRoute(t *testing.T) {
 			assert.Equal(t, digestBytes(normalize.WarmupInput), normalize.WarmupInputSHA256)
 			assert.Equal(t, digestBytes(render.WarmupInput), render.WarmupInputSHA256)
 			assert.Equal(t, flatMIMEForRender(testCase.id), normalizedRootMIME(render.Input))
+			switch testCase.id {
+			case "ppt":
+				assert.Equal(t, int64(2), pages)
+				assert.Contains(t, string(render.Input), `presentation:object="outline"`)
+				assert.Contains(t, string(render.Input), "Synthetic speaker notes")
+			case "xls", "ods", "xlsx":
+				assert.Contains(t, string(render.Input), "<table:database-range ")
+				assert.Contains(t, string(render.Input), `table:display-filter-buttons="true"`)
+				if testCase.id == "ods" {
+					assert.Contains(t, string(render.Input), "<table:filter-condition ")
+					assert.Contains(t, string(render.Input), "<table:sort-by ")
+				}
+			}
 			t.Logf("format=%s source_sha256=%s upload_sha256=%s pages=%d upload_bytes=%d normalize_args=%q pdf_args=%q normalized_mime=%s warmups=%s,%s",
 				testCase.id, result.ConversionReceipt.SourceSHA256, result.ConversionReceipt.PDFSHA256,
 				result.ConversionReceipt.Pages, result.ConversionReceipt.PDFBytes,

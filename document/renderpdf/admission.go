@@ -21,6 +21,7 @@ const (
 	libreOfficeNamespace  = "http://openoffice.org/2004/office"
 	scriptNamespace       = "urn:oasis:names:tc:opendocument:xmlns:script:1.0"
 	presentationNamespace = "urn:oasis:names:tc:opendocument:xmlns:presentation:1.0"
+	tableNamespace        = "urn:oasis:names:tc:opendocument:xmlns:table:1.0"
 	chartNamespace        = "urn:oasis:names:tc:opendocument:xmlns:chart:1.0"
 )
 
@@ -179,6 +180,9 @@ func inspectStartElement(element xml.StartElement) error {
 		return nil
 	case local == "script" || local == "event-listener" || local == "event-listeners":
 		return errors.New("normalized ODF contains a script or event handler")
+	case element.Name.Space == tableNamespace && (local == "database-ranges" || local == "database-range"):
+		// Local filter and sort metadata; external source children are scanned separately.
+		return nil
 	case local == "dde" || strings.Contains(local, "dde-") || strings.Contains(local, "database") ||
 		local == "datasource" || local == "data-source" || local == "external-data":
 		return errors.New("normalized ODF contains a DDE or database source")
@@ -246,7 +250,11 @@ func inspectAttribute(attribute xml.Attr) error {
 	}
 	local := strings.ToLower(attribute.Name.Local)
 	if local == "object" && attribute.Name.Space == presentationNamespace {
-		if attribute.Value == "handout" || attribute.Value == "title" || attribute.Value == "subtitle" {
+		// ODF placeholder types describe layout, including placeholders for active objects.
+		// Actual charts and embedded objects are rejected by inspectStartElement.
+		switch attribute.Value {
+		case "title", "outline", "subtitle", "text", "graphic", "object", "chart", "table",
+			"orgchart", "page", "notes", "handout", "header", "footer", "date-time", "page-number":
 			return nil
 		}
 	}

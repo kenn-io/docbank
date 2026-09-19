@@ -358,12 +358,7 @@ func renditionEvidence(
 	result Result, candidate CandidateFormat, includeMarkdown bool, maxResultBytes int64,
 ) (document.SourceEvidenceV1, []byte, error) {
 	source := result.Document
-	if result.ConversionReceipt == nil {
-		return mistralEvidence(source, includeMarkdown, maxResultBytes)
-	}
-	if candidate.Family == "word" {
-		source.Family = "word"
-		source.UnitKind = "page"
+	if result.ConversionReceipt == nil || candidate.Family == "word" {
 		return mistralEvidence(source, includeMarkdown, maxResultBytes)
 	}
 	pdfSource := source

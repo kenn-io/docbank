@@ -648,10 +648,10 @@ to external sites or relative files are rejected if they survive normalization.
 Embedded OLE objects, plugins, applets, and nested documents are also rejected.
 The scanner admits two LibreOffice metadata forms: an empty Basic script
 container whose library list is empty or contains only the Standard
-embedded-library marker, and presentation layout object attributes whose
-values are handout, title, or subtitle. It still rejects script code, event
-handlers, external or relative links, DDE,
-external formulas, database ranges, charts, OLE, plugins, embedded documents,
+embedded-library marker, and presentation layout placeholders for all ODF object
+types. Local spreadsheet filter and sort ranges are also admitted. The scanner
+still rejects script code, event handlers, external or relative links, DDE,
+external formulas, database sources, charts, OLE, plugins, embedded documents,
 and other active objects.
 The render policy bounds normalized bytes, PDF bytes, work bytes, XML depth and
 elements, and generated PDF pages through `MaxPages`.
