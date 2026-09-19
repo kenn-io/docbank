@@ -242,6 +242,14 @@ func runServe(ctx context.Context) (retErr error) {
 		return fmt.Errorf("configured processing profile %q conflicts with the built-in media profile", suppliedName)
 	}
 	processingProfiles[suppliedName] = suppliedProfile
+	captionName, captionProfile, err := processing.NewSuppliedCaptionProfile(s, blobs, "daemon:operator")
+	if err != nil {
+		return fmt.Errorf("configuring supplied caption profile: %w", err)
+	}
+	if _, exists := processingProfiles[captionName]; exists {
+		return fmt.Errorf("configured processing profile %q conflicts with the built-in media profile", captionName)
+	}
+	processingProfiles[captionName] = captionProfile
 	var mediaTokenKey [32]byte
 	if _, err := rand.Read(mediaTokenKey[:]); err != nil {
 		return fmt.Errorf("generating daemon media token key: %w", err)

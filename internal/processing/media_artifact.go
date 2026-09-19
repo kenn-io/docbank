@@ -23,6 +23,84 @@ type MediaArtifactRequest struct {
 	Content                             io.Reader
 }
 
+// PrepareMediaArtifactUpload checks replay before deriving the byte ceiling an
+// HTTP artifact upload must use before it reserves staging space.
+func (service *Service) PrepareMediaArtifactUpload(
+	ctx context.Context, request MediaArtifactRequest,
+) (MediaReceipt, int64, bool, error) {
+	if service == nil {
+		return MediaReceipt{}, 0, false, ErrMediaCapabilityUnavailable
+	}
+	if request.Kind != "media" && request.Kind != "caption" && request.Kind != "transcript" {
+		return MediaReceipt{}, 0, false, errors.New("media artifact kind must be media, caption, or transcript")
+	}
+	if request.Origin == "" {
+		request.Origin = "supplied"
+	}
+	if err := store.ValidateMediaInputAuthority(request.Kind, request.Origin, request.Provider,
+		request.Language, request.SHA256); err != nil {
+		return MediaReceipt{}, 0, false, err
+	}
+	if request.ByteLength < 1 || request.SHA256 == "" || request.OperationID == "" {
+		return MediaReceipt{}, 0, false, errors.New("media artifact requires content and exact identity")
+	}
+	operation, err := service.mediaArtifactOperation(request)
+	if err != nil {
+		return MediaReceipt{}, 0, false, err
+	}
+	if replay, replayErr := service.catalog.MediaOperationReceipt(ctx, operation); replayErr == nil {
+		stored, decodeErr := canonical.Decode[store.MediaPublicationReceipt]([]byte(replay))
+		return mediaReceiptFromStore(stored), 0, true, decodeErr
+	} else if !errors.Is(replayErr, store.ErrNotFound) {
+		return MediaReceipt{}, 0, false, replayErr
+	}
+	current, err := service.catalog.MediaOccurrence(ctx, service.principal, request.OccurrenceID)
+	if err != nil || current.SourceID != request.SourceID {
+		return MediaReceipt{}, 0, false, store.ErrNotFound
+	}
+	limit, _, err := service.mediaArtifactLimit(current, request.Kind, request.Filename, request.MediaType)
+	if err != nil {
+		return MediaReceipt{}, 0, false, err
+	}
+	return MediaReceipt{}, limit, false, nil
+}
+
+func (service *Service) mediaArtifactOperation(request MediaArtifactRequest) (store.MediaOperation, error) {
+	identity, err := canonical.Marshal(struct {
+		SourceID, OccurrenceID, Kind, Origin, Provider, Language, SHA256 string
+		Filename, MediaType                                              string
+		ByteLength                                                       int64
+	}{request.SourceID, request.OccurrenceID, request.Kind, request.Origin,
+		request.Provider, request.Language, request.SHA256, request.Filename, request.MediaType,
+		request.ByteLength})
+	if err != nil {
+		return store.MediaOperation{}, err
+	}
+	digest := sha256.Sum256(identity)
+	return store.MediaOperation{ID: request.OperationID, Principal: service.principal,
+		Verb: "import_recording_artifact", RequestSHA256: hex.EncodeToString(digest[:]), SourceID: request.SourceID}, nil
+}
+
+func (service *Service) mediaArtifactLimit(
+	current store.MediaOccurrenceProjection, kind, filename, mediaType string,
+) (int64, bool, error) {
+	limit := service.mediaMaxBytes
+	if kind != "media" || current.Kind != "remote_recording" {
+		if kind != "media" {
+			limit = min(limit, 16<<20)
+		}
+		return limit, false, nil
+	}
+	video, err := validateRemoteRecordingFile(filename, mediaType)
+	if err != nil {
+		return 0, false, err
+	}
+	if video {
+		limit = min(limit, remoteVideoMaxBytes)
+	}
+	return limit, video, nil
+}
+
 func (service *Service) ImportRecordingArtifact(
 	ctx context.Context, request MediaArtifactRequest,
 ) (MediaReceipt, error) {
@@ -49,19 +127,10 @@ func (service *Service) ImportRecordingArtifact(
 	if request.ByteLength > limit {
 		return MediaReceipt{}, errors.New("byte_limit")
 	}
-	identity, err := canonical.Marshal(struct {
-		SourceID, OccurrenceID, Kind, Origin, Provider, Language, SHA256 string
-		Filename, MediaType                                              string
-		ByteLength                                                       int64
-	}{request.SourceID, request.OccurrenceID, request.Kind, request.Origin,
-		request.Provider, request.Language, request.SHA256, request.Filename, request.MediaType,
-		request.ByteLength})
+	operation, err := service.mediaArtifactOperation(request)
 	if err != nil {
 		return MediaReceipt{}, err
 	}
-	digest := sha256.Sum256(identity)
-	operation := store.MediaOperation{ID: request.OperationID, Principal: service.principal,
-		Verb: "import_recording_artifact", RequestSHA256: hex.EncodeToString(digest[:]), SourceID: request.SourceID}
 	if replay, replayErr := service.catalog.MediaOperationReceipt(ctx, operation); replayErr == nil {
 		stored, decodeErr := canonical.Decode[store.MediaPublicationReceipt]([]byte(replay))
 		return mediaReceiptFromStore(stored), decodeErr
@@ -72,8 +141,15 @@ func (service *Service) ImportRecordingArtifact(
 	if err != nil || current.SourceID != request.SourceID {
 		return MediaReceipt{}, store.ErrNotFound
 	}
+	limit, video, err := service.mediaArtifactLimit(current, request.Kind, request.Filename, request.MediaType)
+	if err != nil {
+		return MediaReceipt{}, err
+	}
+	if request.ByteLength > limit {
+		return MediaReceipt{}, errors.New("byte_limit")
+	}
 	if current.Kind == "remote_recording" && request.Kind == "media" {
-		return service.importRemoteRecordingMedia(ctx, request, current, operation)
+		return service.importRemoteRecordingMedia(ctx, request, current, operation, limit, video)
 	}
 	if current.SourceVersionID == "" {
 		return MediaReceipt{}, store.ErrNotFound
@@ -123,25 +199,25 @@ func (service *Service) ImportRecordingArtifact(
 
 func (service *Service) importRemoteRecordingMedia(
 	ctx context.Context, request MediaArtifactRequest, current store.MediaOccurrenceProjection,
-	operation store.MediaOperation,
+	operation store.MediaOperation, limit int64, video bool,
 ) (MediaReceipt, error) {
-	if err := validateMediaArtifactFile(request.Filename, request.MediaType); err != nil {
-		return MediaReceipt{}, err
+	if request.ByteLength > limit {
+		return MediaReceipt{}, errors.New("byte_limit")
 	}
 	staged, owned, err := service.mediaStagedContent(ctx, request.Content, request.ByteLength,
-		service.mediaMaxBytes, request.SHA256)
+		limit, request.SHA256)
 	if err != nil {
 		return MediaReceipt{}, err
 	}
 	if owned {
 		defer func() { _ = staged.Close() }()
 	}
-	record, err := media.InspectCapability(staged, mediaInspectionPolicyForFile(request.Filename,
-		request.MediaType, request.SHA256, request.ByteLength, service.mediaMaxBytes))
+	record, err := media.InspectCapability(staged, remoteRecordingInspectionPolicy(request.Filename,
+		request.MediaType, request.SHA256, request.ByteLength, service.mediaMaxBytes, video))
 	if err != nil {
 		return MediaReceipt{}, err
 	}
-	if !record.Eligible || (record.Format != "wav" && record.Format != "mp3") {
+	if !remoteRecordingFormatAdmitted(record, video) {
 		return MediaReceipt{}, fmt.Errorf("unqualified_codec: %s", record.Reason)
 	}
 	if err := staged.rewind(); err != nil {

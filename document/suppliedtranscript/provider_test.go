@@ -67,6 +67,15 @@ func TestProviderBindsSourceIntoDescriptorIdentity(t *testing.T) {
 	assert.NotEqual(t, first.Descriptor().Fingerprint, second.Descriptor().Fingerprint)
 }
 
+func TestSuppliedTranscriptDescriptorFingerprintIsStable(t *testing.T) {
+	provider, err := New(Profile{Source: &stubSource{}, SourceBinding: strings.Repeat("a", 64), MaxDocumentChars: 16 << 20})
+	require.NoError(t, err)
+	descriptor := provider.Descriptor()
+	assert.Equal(t, "supplied-transcript.in-process-v1", descriptor.ID)
+	assert.Equal(t, "7747a03944819d6d7680421554af291da00b2f71d5bf1946317c05f4796b5908", descriptor.Fingerprint)
+	assert.Equal(t, "1b8113130f962d949e050a4b44d0361dfb0931e11d2d91538c54492076c9b469", descriptor.PolicyFingerprint)
+}
+
 func TestProviderRejectsAuthorizationWithoutTranscriptRole(t *testing.T) {
 	data := mediatest.WAV()
 	for name, mutate := range map[string]func(*document.RenditionAuthorization){

@@ -220,6 +220,13 @@ same video. Treating `www.cap.so` as the same service follows the #240 design;
 no Cap document states it.
 Recognition performs no DNS lookup, HTTP request, or credential resolution.
 
+The service recognizes Loom locally from canonical `https://loom.com` and
+`https://www.loom.com` URLs with an exact `/share/<id>` or `/embed/<id>` path.
+It keys each route separately because Loom does not document that share and
+embed IDs are interchangeable. Loom references use provider `loom`; an
+`acquire: true` request is retained as `unsupported` and uses no network
+access.
+
 For a recognized Cap URL, `acquire: true` is admitted and retained as an
 `unsupported` outcome. It creates no acquisition queue row, so the caller
 continues through the manual artifact path below. Cap's documented Developer
@@ -242,10 +249,15 @@ remain `access_required` because this slice has no acquisition worker.
 The manual path publishes an original through the existing artifact route.
 The caller sends one complete multipart request to
 `POST /api/v1/media/sources/{source_id}/artifacts` with `kind: "media"` and
-the exact WAV or MP3 bytes. The handler checks the envelope, declared size,
-and digest. The processing service checks the filename, MIME type, media
-format, and the 24-hour duration limit. It stages the file under the service
-byte limit, then rewinds it for the blob writer.
+the exact original bytes. WAV and MP3 keep their existing rules. A remote
+recording may also use an MP4 named `.mp4` with `video/mp4`. MP4 admission is
+limited to 20 MiB, 2,088,960 coded pixels, 300,000 milliseconds, and 18,000
+frames. The inspector's MP4 byte ceiling, a 1080p-class coded frame, five
+minutes, and five minutes at 60 frames per second set these limits. The
+handler checks the envelope, declared size, and digest. The processing service
+checks the filename, MIME type, and declared size before staging the file. It
+then inspects the staged bytes for the container, sample authority, and media
+bounds.
 
 The service holds the application mutation gate before the Kit mutation lease.
 The store transaction then checks the caller, visible occurrence, remote
@@ -256,11 +268,16 @@ transaction can leave physical bytes for GC, but it cannot leave catalog
 authority.
 
 The original must exist before a caption or transcript artifact can be
-retained. Captions remain retained input bytes. A transcript reaches a
-rendition only after the caller reviews a processing plan, grants consent, and
-requests an explicit retry. Status and list reads use the source version bound
-to the selected visible occurrence. They filter processing receipts to that
-same immutable version, so a transcript for an older recording revision cannot
+retained. A caption uses `application/x-subrip` and the built-in
+`supplied-captions` profile. The local `document/mediatranscript` parser keeps
+cue timing and styling tags, checks every cue against the measured recording
+duration, and records supplied provenance. The existing
+`supplied-transcript` profile remains unchanged. Captions retained before this
+profile exists need an explicit retry. A transcript reaches a rendition only
+after the caller reviews a processing plan, grants consent, and requests an
+explicit retry. Status and list reads use the source version bound to the
+selected visible occurrence. They filter processing receipts to that same
+immutable version, so a transcript for an older recording revision cannot
 cover newer bytes.
 
 ## Change constraints

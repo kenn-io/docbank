@@ -22,3 +22,19 @@ func TestMediaCLIKeepsPrivateReferencesOutOfArguments(t *testing.T) {
 	require.Empty(t, mediaSubmitFilename(""))
 	require.Equal(t, "recording.wav", mediaSubmitFilename(filepath.Join("private", "recording.wav")))
 }
+
+func TestOpenMediaUploadUsesFixedMediaTypes(t *testing.T) {
+	for extension, want := range map[string]string{
+		".mp4": "video/mp4", ".srt": "application/x-subrip", ".wav": "audio/wav",
+		".mp3": "audio/mpeg", ".txt": "text/plain; charset=utf-8",
+	} {
+		t.Run(extension, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "upload"+extension)
+			require.NoError(t, os.WriteFile(path, []byte("synthetic"), 0o600))
+			file, metadata, err := openMediaUpload(path)
+			require.NoError(t, err)
+			require.NoError(t, file.Close())
+			require.Equal(t, want, metadata.MediaType)
+		})
+	}
+}

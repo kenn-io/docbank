@@ -1,12 +1,14 @@
 package daemonconn
 
 import (
+	"io"
 	"mime"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 
+	"github.com/doordash-oss/oapi-codegen-dd/v3/pkg/runtime"
 	"github.com/stretchr/testify/require"
 
 	"go.kenn.io/docbank/internal/api"
@@ -70,4 +72,22 @@ func TestMediaClientRejectsDuplicateOrMismatchedIdentity(t *testing.T) {
 	require.ErrorContains(t, err, "duplicate")
 	_, err = c.MediaStatus(t.Context(), "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
 	require.ErrorContains(t, err, "different source")
+}
+
+func TestMediaClientAcceptsEarlyReplayResponse(t *testing.T) {
+	var result api.MediaReceipt
+	err := readMediaMultipartReceipt(api.MediaArtifactMetadata{
+		OperationID: "operation", Filename: "file.txt", MediaType: "text/plain",
+	}, "file.txt", "text/plain", strings.NewReader("synthetic"), &result,
+		func(edit runtime.RequestEditorFn) (*http.Response, error) {
+			req := &http.Request{Header: make(http.Header)}
+			require.NoError(t, edit(t.Context(), req))
+			require.NoError(t, req.Body.Close())
+			return &http.Response{StatusCode: http.StatusOK,
+				Body: io.NopCloser(strings.NewReader(
+					`{"vault_uid":"vault","source_id":"source","operation_id":"operation","operation_state":"succeeded"}`,
+				))}, nil
+		})
+	require.NoError(t, err)
+	require.Equal(t, "source", result.SourceID)
 }

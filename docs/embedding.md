@@ -247,6 +247,9 @@ configured-origin requests, and is the identity input for a generic URL
 reference when present. See the [canonical URL rules](architecture/http-api.md#remote-recording-references)
 for the permanent source identity. A Cap Cloud share or embed URL uses one
 [Cap source per video ID](architecture/http-api.md#remote-recording-references).
+A Loom share or embed URL uses a route-qualified source because Loom does not
+document equality between those routes. Submission keeps the Loom reference
+unsupported and performs no network access.
 
 ```go
 remote, err := vault.SubmitRemoteRecording(ctx, docbank.RemoteRecordingRequest{
@@ -264,8 +267,10 @@ if err != nil {
 
 Obtain the file through the caller's own approved path, then attach it with
 the exact SHA-256 and byte count. WAV and MP3 files use the existing media
-admission rules. The service's default byte limit is 512 MiB, its hard maximum
-is 1 GiB, and the duration limit is 24 hours.
+rules. Remote MP4 originals use `video/mp4`, a `.mp4` filename, and limits of
+20 MiB, 2,088,960 coded pixels, 300,000 milliseconds, and 18,000 frames. The
+service's default byte limit is 512 MiB, its hard maximum is 1 GiB, and the
+audio duration limit is 24 hours.
 
 ```go
 original, err := vault.ImportRecordingArtifact(
@@ -286,25 +291,28 @@ if err != nil {
 }
 ```
 
-Import a caption or transcript only after the original is bound. A caption is
-retained as input bytes. A transcript uses the built-in
-`supplied-transcript` profile after an explicit plan and consent grant.
+Import a caption or transcript only after the original is bound. A caption
+uses `application/x-subrip` and the built-in `supplied-captions` profile. It
+keeps cue timing and supplied provenance and supports lexical and auto search.
+Semantic and hybrid search are not configured for supplied captions. A
+transcript uses the built-in `supplied-transcript` profile after an explicit
+plan and consent grant.
 
 ```go
-transcript, err := vault.ImportRecordingArtifact(
+caption, err := vault.ImportRecordingArtifact(
     ctx, docbank.MediaArtifactRequest{
     OperationID: "00000000-0000-4000-8000-000000000453",
     SourceID: remote.SourceID, OccurrenceID: original.OccurrenceID,
-    Kind: "transcript", Origin: "supplied", Filename: "call.txt",
-    MediaType: "text/plain", SHA256: transcriptHash,
-    ByteLength: transcriptSize, Content: transcriptReader,
+    Kind: "caption", Origin: "supplied", Provider: "loom", Filename: "captions.srt",
+    MediaType: "application/x-subrip", SHA256: captionHash,
+    ByteLength: captionSize, Content: captionReader,
 })
 if err != nil {
     return err
 }
 selector := docbank.ProcessingSelector{
     NodeID: nodeID, ContentVersionID: original.ContentVersionID,
-    Profile: "supplied-transcript",
+    Profile: "supplied-captions",
 }
 plan, err := vault.PlanProcessing(ctx, docbank.ProcessingPlanRequest{
     Selector: selector,
@@ -321,8 +329,8 @@ if _, err := vault.GrantProcessingPlanConsent(
 }
 receipt, err := vault.RetryMedia(ctx, "00000000-0000-4000-8000-000000000454",
     remote.SourceID, docbank.MediaProcessingRequest{
-        Profile: "supplied-transcript",
-        SuppliedInputID: transcript.SuppliedInputID,
+        Profile: "supplied-captions",
+        SuppliedInputID: caption.SuppliedInputID,
     })
 ```
 
@@ -331,12 +339,13 @@ and returns after durable queue admission. It cannot select an older occurrence;
 use `PlanProcessing` and `StartProcessing` with that recording's node and current
 content version instead. Read `MediaStatus` for the newest attempt and its
 coverage. Coverage follows the exact source version selected by the visible occurrence, so a transcript for older bytes cannot
-cover a later recording revision. A recognized Cap Cloud link returns
-`unsupported` even when `Acquire` is set, because Cap documents no download
-route for received links; import its file with `ImportRecordingArtifact`. Other
-remote acquisition remains unavailable. Origin registration is daemon
-configuration. Embedded vaults register no self-hosted Cap origins, so the
-embedded API does not apply their registered origin identity rules.
+cover a later recording revision. A recognized Cap Cloud or Loom link returns
+`unsupported` even when `Acquire` is set, because neither manual reference path
+has a supported automatic download owner. Import the caller-held file with
+`ImportRecordingArtifact`. Other remote acquisition remains unavailable.
+Origin registration is daemon configuration. Embedded vaults register no
+self-hosted Cap origins, so the embedded API does not apply their registered
+origin identity rules.
 
 ## Extract and read source metadata
 
