@@ -12,6 +12,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"unicode"
 	"unicode/utf8"
 
 	"go.kenn.io/docbank/document/internal/providerutil"
@@ -20,12 +21,9 @@ import (
 )
 
 const (
-	rankingQuestionID    = "matches"
-	rankingInstructions  = "Could `candidate` be the best answer to `query`?"
-	rankingTrueCriteria  = "The candidate contains the specific information needed to answer the query."
-	rankingFalseCriteria = "The candidate is only topically similar or does not contain the needed evidence."
-	maximumSecretBytes   = 64 << 10
-	maximumUsage         = int64(1 << 50)
+	rankingQuestionID  = "matches"
+	maximumSecretBytes = 64 << 10
+	maximumUsage       = int64(1 << 50)
 )
 
 // RerankRequest contains one query and its ordered candidate texts.
@@ -124,6 +122,9 @@ func encodeCalls(profile Profile, request RerankRequest) ([]preparedCall, error)
 		return nil, &ProviderError{Kind: ErrCapacityResponse}
 	}
 	for _, candidate := range request.Candidates {
+		if candidate == "" {
+			return nil, &ProviderError{Kind: ErrPermanentResponse}
+		}
 		if !utf8.ValidString(candidate) || len(candidate) > normalized.MaxCandidateBytes {
 			return nil, &ProviderError{Kind: ErrCapacityResponse}
 		}
@@ -137,7 +138,7 @@ func encodeCalls(profile Profile, request RerankRequest) ([]preparedCall, error)
 				State: wireState{Query: request.Query, Candidate: new(candidate)},
 				Model: normalized.Model,
 				Questions: map[string]wireQuestion{
-					rankingQuestionID: rankingQuestion(),
+					rankingQuestionID: rankingQuestion("candidate"),
 				},
 			})
 			if encodeErr != nil {
@@ -158,7 +159,7 @@ func encodeCalls(profile Profile, request RerankRequest) ([]preparedCall, error)
 		for index := range request.Candidates {
 			id := fmt.Sprintf("candidate_%d", index)
 			ids[index] = id
-			questions[id] = rankingQuestion()
+			questions[id] = rankingQuestion(fmt.Sprintf("candidates[%d]", index))
 		}
 		payload, encodeErr := encodeRequest(wireRequest{
 			State: wireState{Query: request.Query, Candidates: slices.Clone(request.Candidates)},
@@ -185,10 +186,14 @@ func encodeRequest(request wireRequest) ([]byte, error) {
 	return payload, nil
 }
 
-func rankingQuestion() wireQuestion {
+func rankingQuestion(candidate string) wireQuestion {
 	return wireQuestion{
-		Type: "noul", Instructions: rankingInstructions,
-		Criteria: wireCriteria{True: rankingTrueCriteria, False: rankingFalseCriteria},
+		Type:         "noul",
+		Instructions: fmt.Sprintf("Could `%s` be the best answer to `query`?", candidate),
+		Criteria: wireCriteria{
+			True:  fmt.Sprintf("The %s contains the specific information needed to answer the query.", candidate),
+			False: fmt.Sprintf("The %s is only topically similar or does not contain the needed evidence.", candidate),
+		},
 	}
 }
 
@@ -365,4 +370,14 @@ func isJSONContentType(value string) bool {
 	return err == nil && (mediaType == providerutil.JSONMediaType || strings.HasSuffix(mediaType, "+json"))
 }
 
-func validSecret(value string) bool { return len(value) <= maximumSecretBytes && validToken(value) }
+func validSecret(value string) bool {
+	if value == "" || len(value) > maximumSecretBytes || !utf8.ValidString(value) || value != strings.TrimSpace(value) {
+		return false
+	}
+	for _, current := range value {
+		if unicode.IsControl(current) {
+			return false
+		}
+	}
+	return true
+}

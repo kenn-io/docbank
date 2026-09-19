@@ -5,6 +5,7 @@ package typesafetest
 import (
 	"context"
 	"errors"
+	"math"
 	"slices"
 	"sync"
 
@@ -31,6 +32,10 @@ func (fake *Fake) Rerank(_ context.Context, request typesafe.RerankRequest) (typ
 	if err := typesafe.CheckRequest(fake.profile, request); err != nil {
 		return typesafe.Result{}, err
 	}
+	fingerprint, err := typesafe.PolicyFingerprint(fake.profile)
+	if err != nil {
+		return typesafe.Result{}, err
+	}
 	recorded := typesafe.RerankRequest{Query: request.Query, Candidates: slices.Clone(request.Candidates)}
 	fake.mu.Lock()
 	fake.requests = append(fake.requests, recorded)
@@ -41,12 +46,23 @@ func (fake *Fake) Rerank(_ context.Context, request typesafe.RerankRequest) (typ
 		if err != nil {
 			return typesafe.Result{}, err
 		}
+		if math.IsNaN(score) || math.IsInf(score, 0) || score < 0 || score > 1 {
+			return typesafe.Result{}, &typesafe.ProviderError{Kind: typesafe.ErrPermanentResponse}
+		}
 		scores[index] = score
 	}
 	return typesafe.Result{Scores: scores, Receipt: typesafe.Receipt{
-		Model: typesafe.ModelJev113, RequestShape: fake.profile.RequestShape,
+		PolicyFingerprint: fingerprint, Model: typesafe.ModelJev113,
+		RequestShape:   effectiveRequestShape(fake.profile),
 		CandidateCount: len(scores),
 	}}, nil
+}
+
+func effectiveRequestShape(profile typesafe.Profile) typesafe.RequestShape {
+	if profile.RequestShape == "" {
+		return typesafe.RequestShapePerCandidate
+	}
+	return profile.RequestShape
 }
 
 func (fake *Fake) Requests() []typesafe.RerankRequest {

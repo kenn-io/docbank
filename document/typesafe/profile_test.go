@@ -2,6 +2,7 @@ package typesafe
 
 import (
 	"context"
+	"crypto/x509"
 	"net/http"
 	"net/netip"
 	"testing"
@@ -33,6 +34,7 @@ func TestNewPinsTypeSafeEgressAndModel(t *testing.T) {
 		"host":  func(value *Profile) { value.EgressPolicy.Host = "api.typesafe.ai.example" },
 		"port":  func(value *Profile) { value.EgressPolicy.Port = 8443 },
 		"proxy": func(value *Profile) { value.EgressPolicy.ProxyMode = "proxy" },
+		"roots": func(value *Profile) { value.EgressPolicy.TLS.RootCAs = x509.NewCertPool() },
 		"model": func(value *Profile) { value.Model = "jev-latest" },
 	} {
 		candidate := profile

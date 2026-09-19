@@ -24,7 +24,11 @@ func TestLiveCaptureSystemOne(t *testing.T) {
 	if directory == "" {
 		t.Fatal("DOCBANK_TYPESAFE_CAPTURE_DIR is required")
 	}
-	requestBody := []byte("{\"state\":{\"query\":\"synthetic question\",\"candidate\":\"synthetic candidate\"},\"model\":\"jev-1.13.0\",\"questions\":{\"matches\":{\"type\":\"noul\",\"instructions\":\"Could `candidate` be the best answer to `query`?\",\"criteria\":{\"true\":\"The candidate contains the specific information needed to answer the query.\",\"false\":\"The candidate is only topically similar or does not contain the needed evidence.\"}}}}")
+	calls, err := encodeCalls(testProfile(), RerankRequest{Query: "synthetic question", Candidates: []string{"synthetic candidate"}})
+	if err != nil || len(calls) != 1 {
+		t.Fatalf("encode synthetic request: %v", err)
+	}
+	requestBody := calls[0].payload
 	request, err := http.NewRequestWithContext(context.Background(), http.MethodPost, "https://api.typesafe.ai/v1/systemone", bytes.NewReader(requestBody))
 	if err != nil {
 		t.Fatal(err)

@@ -99,7 +99,10 @@ func TestRerankBatchedSendsOneCallWithIndexedQuestions(t *testing.T) {
 		t.Fatalf("request = %+v", decoded)
 	}
 	for index := range 2 {
-		if decoded.Questions[fmt.Sprintf("candidate_%d", index)].Type != "noul" {
+		question := decoded.Questions[fmt.Sprintf("candidate_%d", index)]
+		candidate := fmt.Sprintf("candidates[%d]", index)
+		if question.Type != "noul" || !strings.Contains(question.Instructions, "`"+candidate+"`") ||
+			!strings.Contains(question.Criteria.True, candidate) || !strings.Contains(question.Criteria.False, candidate) {
 			t.Fatalf("missing question candidate_%d", index)
 		}
 	}
@@ -140,6 +143,34 @@ func TestRerankRejectsOverBoundRequestsBeforeSecretsOrEgress(t *testing.T) {
 	}
 	if secrets.calls.Load() != 0 || requests.Load() != 0 {
 		t.Fatalf("secret calls=%d provider requests=%d", secrets.calls.Load(), requests.Load())
+	}
+}
+
+func TestRerankRejectsEmptyCandidateBeforeProvider(t *testing.T) {
+	secrets := &countingSecrets{value: "synthetic-secret"}
+	client, err := New(testProfile(), secrets, nil, http.DefaultClient)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var requests atomic.Int32
+	client.http.Transport = roundTripFunc(func(*http.Request) (*http.Response, error) {
+		requests.Add(1)
+		return nil, errors.New("unexpected provider request")
+	})
+	if _, err := client.Rerank(context.Background(), RerankRequest{Query: "q", Candidates: []string{""}}); !errors.Is(err, ErrPermanentResponse) {
+		t.Fatalf("got %v", err)
+	}
+	if secrets.calls.Load() != 0 || requests.Load() != 0 {
+		t.Fatalf("secret calls=%d provider requests=%d", secrets.calls.Load(), requests.Load())
+	}
+}
+
+func TestValidSecretUses64KiBBound(t *testing.T) {
+	if !validSecret(strings.Repeat("x", maximumSecretBytes)) {
+		t.Fatal("64 KiB secret was rejected")
+	}
+	if validSecret(strings.Repeat("x", maximumSecretBytes+1)) || validSecret(" secret") || validSecret("secret\nvalue") {
+		t.Fatal("invalid secret was accepted")
 	}
 }
 
@@ -225,10 +256,14 @@ func TestRerankErrorsAndReceiptsCarryNoProviderText(t *testing.T) {
 	for _, status := range []int{http.StatusUnprocessableEntity, 529} {
 		client := newTestClient(t, "")
 		client.http.Transport = roundTripFunc(func(request *http.Request) (*http.Response, error) {
-			return &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": []string{"application/json"}}, Body: io.NopCloser(strings.NewReader("private-body-marker")), Request: request}, nil
+			return &http.Response{StatusCode: status, Header: http.Header{"Content-Type": []string{"application/json"}}, Body: io.NopCloser(strings.NewReader("private-body-marker")), Request: request}, nil
 		})
 		result, err := client.Rerank(context.Background(), RerankRequest{Query: "private-query", Candidates: []string{"private-candidate"}})
-		if err == nil || strings.Contains(err.Error(), "private-") || strings.Contains(fmt.Sprintf("%+v", result.Receipt), "private-") {
+		want := ErrPermanentResponse
+		if status == 529 {
+			want = ErrTransientResponse
+		}
+		if !errors.Is(err, want) || err == nil || strings.Contains(err.Error(), "private-") || strings.Contains(fmt.Sprintf("%+v", result.Receipt), "private-") {
 			t.Fatalf("status %d leaked: result=%+v err=%v", status, result, err)
 		}
 	}
@@ -352,7 +387,7 @@ func TestCaptureReplayMatchesClientEncoding(t *testing.T) {
 		if readErr != nil {
 			return nil, readErr
 		}
-		if !bytes.Equal(body, capture.Request) {
+		if !bytes.Equal(canonicalJSON(body), canonicalJSON(capture.Request)) {
 			return nil, fmt.Errorf("generated request differs from capture: %s != %s", body, capture.Request)
 		}
 		return &http.Response{StatusCode: capture.Status, Header: http.Header{"Content-Type": []string{capture.ContentType}}, Body: io.NopCloser(bytes.NewReader(capture.Response)), Request: request}, nil
@@ -361,4 +396,16 @@ func TestCaptureReplayMatchesClientEncoding(t *testing.T) {
 	if err != nil || len(result.Scores) != 1 || result.Receipt.InputTokens == 0 || result.Receipt.OutputTokens == 0 {
 		t.Fatalf("replay result=%+v err=%v", result, err)
 	}
+}
+
+func canonicalJSON(value []byte) []byte {
+	var decoded any
+	if err := json.Unmarshal(value, &decoded); err != nil {
+		return value
+	}
+	canonical, err := json.Marshal(decoded)
+	if err != nil {
+		return value
+	}
+	return canonical
 }

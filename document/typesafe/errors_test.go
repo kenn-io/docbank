@@ -34,3 +34,13 @@ func TestStatusErrorClassifiesDocumentedStatuses(t *testing.T) {
 		}
 	}
 }
+
+func TestProviderErrorZeroValueIsSafe(t *testing.T) {
+	var failure *ProviderError
+	if failure.Error() == "" || failure.Unwrap() != nil {
+		t.Fatal("nil ProviderError is unsafe")
+	}
+	if got := (&ProviderError{}).Error(); got == "" || (&ProviderError{}).Unwrap() != nil {
+		t.Fatal("zero ProviderError is unsafe")
+	}
+}

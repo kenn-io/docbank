@@ -23,7 +23,7 @@ type ProviderError struct {
 }
 
 func (failure *ProviderError) Error() string {
-	if failure == nil {
+	if failure == nil || failure.Kind == nil {
 		return "typesafe rerank: provider error"
 	}
 	if failure.StatusCode != 0 {
@@ -32,7 +32,12 @@ func (failure *ProviderError) Error() string {
 	return failure.Kind.Error()
 }
 
-func (failure *ProviderError) Unwrap() error { return failure.Kind }
+func (failure *ProviderError) Unwrap() error {
+	if failure == nil {
+		return nil
+	}
+	return failure.Kind
+}
 
 func RetryAfter(err error) (time.Duration, bool) {
 	failure, ok := errors.AsType[*ProviderError](err)
