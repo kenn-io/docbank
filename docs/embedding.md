@@ -334,7 +334,9 @@ coverage. Coverage follows the exact source version selected by the visible occu
 cover a later recording revision. A recognized Cap Cloud link returns
 `unsupported` even when `Acquire` is set, because Cap documents no download
 route for received links; import its file with `ImportRecordingArtifact`. Other
-remote acquisition remains unavailable.
+remote acquisition remains unavailable. Origin registration is daemon
+configuration. Embedded vaults register no self-hosted Cap origins, so the
+embedded API does not apply their registered origin identity rules.
 
 ## Extract and read source metadata
 

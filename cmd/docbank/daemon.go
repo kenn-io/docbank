@@ -242,12 +242,16 @@ func runServe(ctx context.Context) (retErr error) {
 	if _, err := rand.Read(mediaTokenKey[:]); err != nil {
 		return fmt.Errorf("generating daemon media token key: %w", err)
 	}
+	mediaOrigins, mediaOriginProbes, err := configureMediaOrigins(cfg)
+	if err != nil {
+		return fmt.Errorf("configuring media origins: %w", err)
+	}
 	processingService, err := processing.NewService(processing.ServiceConfig{
 		Catalog: s, Blobs: blobs, Gate: operationGate, Profiles: processingProfiles,
 		RenditionRuntimes: runtimeRegistry,
 		Principal:         "daemon:operator", Scope: "document-processing", SpoolDirectory: layout.BlobTmpDir(),
-		Lifecycle:     sigCtx,
-		MediaTokenKey: mediaTokenKey,
+		Lifecycle:    sigCtx,
+		MediaOrigins: mediaOrigins, MediaOriginProbes: mediaOriginProbes, MediaTokenKey: mediaTokenKey,
 	})
 	if err != nil {
 		return fmt.Errorf("configuring processing service: %w", err)
@@ -262,6 +266,11 @@ func runServe(ctx context.Context) (retErr error) {
 		Service: processingService, IdleDelay: time.Second,
 	}).Run); err != nil {
 		return fmt.Errorf("starting media processing continuations: %w", err)
+	}
+	if len(mediaOriginProbes) > 0 {
+		if err := jobSupervisor.Start("probe:media-origins", processingService.ProbeMediaOrigins); err != nil {
+			return fmt.Errorf("starting media origin probes: %w", err)
+		}
 	}
 	if err := startEmbeddingWorkerIfReady(jobSupervisor, embeddingRuntimeRegistry,
 		func() (embeddingJobRunner, error) {

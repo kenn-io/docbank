@@ -847,3 +847,120 @@ func TestValidateAutomaticPacking(t *testing.T) {
 		})
 	}
 }
+
+func TestValidateMediaOrigins(t *testing.T) {
+	valid := func() Config {
+		cfg := Default()
+		cfg.CredentialBindings["cap"] = CredentialBindingConfig{EnvironmentVariable: "CAP_API_KEY"}
+		cfg.MediaOrigins["team-cap"] = MediaOriginConfig{
+			Endpoint: "HTTPS://Cap.Example.Test:443", AllowedCIDRs: []string{"127.0.0.0/8"},
+			ProxyMode: "disabled", ConnectTimeout: Duration(time.Second), KeepAlive: Duration(time.Second),
+			TLSHandshakeTimeout: Duration(time.Second),
+			Provider:            "cap.self-hosted", CredentialBinding: "credential:cap",
+			DeploymentRevision: "v-synthetic", ProbeTimeout: Duration(time.Second),
+		}
+		return cfg
+	}
+	require.NoError(t, valid().Validate())
+	for _, test := range []struct {
+		name string
+		edit func(*Config)
+		want string
+	}{
+		{name: "unknown provider", edit: func(cfg *Config) {
+			origin := cfg.MediaOrigins["team-cap"]
+			origin.Provider = "cap.cloud"
+			cfg.MediaOrigins["team-cap"] = origin
+		}, want: "provider"},
+		{name: "endpoint path", edit: func(cfg *Config) {
+			origin := cfg.MediaOrigins["team-cap"]
+			origin.Endpoint += "/api"
+			cfg.MediaOrigins["team-cap"] = origin
+		}, want: "root origin"},
+		{name: "endpoint query", edit: func(cfg *Config) {
+			origin := cfg.MediaOrigins["team-cap"]
+			origin.Endpoint += "?x=1"
+			cfg.MediaOrigins["team-cap"] = origin
+		}, want: "credential-free"},
+		{name: "endpoint userinfo", edit: func(cfg *Config) {
+			origin := cfg.MediaOrigins["team-cap"]
+			origin.Endpoint = "https://user@example.com:443"
+			cfg.MediaOrigins["team-cap"] = origin
+		}, want: "credential-free"},
+		{name: "trailing dot", edit: func(cfg *Config) {
+			origin := cfg.MediaOrigins["team-cap"]
+			origin.Endpoint = "https://cap.example.test.:443"
+			cfg.MediaOrigins["team-cap"] = origin
+		}, want: "trailing dot"},
+		{name: "non-ascii host", edit: func(cfg *Config) {
+			origin := cfg.MediaOrigins["team-cap"]
+			origin.Endpoint = "https://bücher.example:443"
+			cfg.MediaOrigins["team-cap"] = origin
+		}, want: "ASCII"},
+		{name: "invalid IDNA host", edit: func(cfg *Config) {
+			origin := cfg.MediaOrigins["team-cap"]
+			origin.Endpoint = "https://cap_host.example:443"
+			cfg.MediaOrigins["team-cap"] = origin
+		}, want: "IDNA"},
+		{name: "undefined binding", edit: func(cfg *Config) {
+			origin := cfg.MediaOrigins["team-cap"]
+			origin.CredentialBinding = "credential:missing"
+			cfg.MediaOrigins["team-cap"] = origin
+		}, want: "not defined"},
+		{name: "raw secret", edit: func(cfg *Config) {
+			origin := cfg.MediaOrigins["team-cap"]
+			origin.CredentialBinding = "synthetic-cap-key"
+			cfg.MediaOrigins["team-cap"] = origin
+		}, want: "credential:<name>"},
+		{name: "missing CIDRs", edit: func(cfg *Config) {
+			origin := cfg.MediaOrigins["team-cap"]
+			origin.AllowedCIDRs = nil
+			cfg.MediaOrigins["team-cap"] = origin
+		}, want: "allowed CIDRs"},
+		{name: "proxy", edit: func(cfg *Config) {
+			origin := cfg.MediaOrigins["team-cap"]
+			origin.ProxyMode = "environment"
+			cfg.MediaOrigins["team-cap"] = origin
+		}, want: "proxy-disabled"},
+		{name: "SPKI over HTTP", edit: func(cfg *Config) {
+			origin := cfg.MediaOrigins["team-cap"]
+			origin.Endpoint = "http://cap.example.test:80"
+			origin.SPKISHA256 = []string{strings.Repeat("a", 64)}
+			cfg.MediaOrigins["team-cap"] = origin
+		}, want: "requires an HTTPS"},
+		{name: "duplicate origin", edit: func(cfg *Config) { cfg.MediaOrigins["other"] = cfg.MediaOrigins["team-cap"] }, want: "duplicates"},
+		{name: "missing revision", edit: func(cfg *Config) {
+			origin := cfg.MediaOrigins["team-cap"]
+			origin.DeploymentRevision = ""
+			cfg.MediaOrigins["team-cap"] = origin
+		}, want: "deployment_revision"},
+		{name: "zero timeout", edit: func(cfg *Config) {
+			origin := cfg.MediaOrigins["team-cap"]
+			origin.ProbeTimeout = 0
+			cfg.MediaOrigins["team-cap"] = origin
+		}, want: "probe_timeout"},
+		{name: "long timeout", edit: func(cfg *Config) {
+			origin := cfg.MediaOrigins["team-cap"]
+			origin.ProbeTimeout = Duration(2 * time.Minute)
+			cfg.MediaOrigins["team-cap"] = origin
+		}, want: "probe_timeout"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			cfg := valid()
+			test.edit(&cfg)
+			require.ErrorContains(t, cfg.Validate(), test.want)
+		})
+	}
+}
+
+func TestValidateMediaOriginsAcceptsIPv6(t *testing.T) {
+	cfg := Default()
+	cfg.CredentialBindings["cap"] = CredentialBindingConfig{EnvironmentVariable: "CAP_API_KEY"}
+	cfg.MediaOrigins["local-cap"] = MediaOriginConfig{
+		Endpoint: "http://[::1]:3000", AllowedCIDRs: []string{"::1/128"},
+		ProxyMode: "disabled", ConnectTimeout: Duration(time.Second), KeepAlive: Duration(time.Second),
+		TLSHandshakeTimeout: Duration(time.Second), Provider: "cap.self-hosted",
+		CredentialBinding: "credential:cap", DeploymentRevision: "v-synthetic", ProbeTimeout: Duration(time.Second),
+	}
+	require.NoError(t, cfg.Validate())
+}
