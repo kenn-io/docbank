@@ -214,11 +214,44 @@ func computeDerivativeAuthorityStats(ctx context.Context, q rowQuerier) (*Deriva
 	}(); err != nil {
 		return nil, false, fmt.Errorf("backupapp: page image authority: %w", err)
 	}
+	if err := func() error {
+		var present bool
+		if err := q.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='export_role_roots')`).Scan(&present); err != nil {
+			return err
+		}
+		if !present {
+			return nil
+		}
+		rows, err := q.QueryContext(ctx, `SELECT r.plan_id,r.blob_hash,b.size FROM export_role_roots r JOIN blobs b ON b.hash=r.blob_hash ORDER BY r.plan_id,r.blob_hash`)
+		if err != nil {
+			return err
+		}
+		defer func() { _ = rows.Close() }()
+		for rows.Next() {
+			var id, hash string
+			var size int64
+			if err = rows.Scan(&id, &hash, &size); err != nil {
+				return err
+			}
+			item := get("included", "export_role")
+			if err = addDerivativeClassBytes(&item.LogicalBytes, size); err != nil {
+				return err
+			}
+			item.Count++
+			item.blobs[hash] = struct{}{}
+			for _, field := range []string{id, hash, strconv.FormatInt(size, 10)} {
+				writeDerivativeClassField(item.checksum, field)
+			}
+		}
+		return rows.Err()
+	}(); err != nil {
+		return nil, false, fmt.Errorf("backupapp: export authority: %w", err)
+	}
 	if len(classes) == 0 {
 		return nil, false, nil
 	}
 	// Synthetic classes are local to backupapp and follow persisted roles.
-	roleOrder = append(roleOrder, "visual_preview", "page_image", "lexical_projection")
+	roleOrder = append(roleOrder, "visual_preview", "page_image", "export_role", "lexical_projection")
 	result := &DerivativeAuthorityStats{
 		Version: derivativeAuthorityVersion, ProviderDependent: []string{},
 	}

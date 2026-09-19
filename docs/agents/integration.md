@@ -1,4 +1,5 @@
 ---
+last_edited: 2026-09-12
 title: Agent Integration Guide
 description: Connect an agent to docbank safely using its OpenAPI contract, authenticated HTTP API, revisions, and dry-run maintenance operations.
 ---
@@ -30,6 +31,10 @@ For a small shell workflow, `mv`, `rm`, and `restore` accept `--json` and
 return the daemon's complete resulting node receipt. A trash receipt's `path`
 is only its pre-trash recovery context; carry the stable `id` and `revision`
 forward instead.
+
+For exact-version archives, use the [verified export bundle API](../usage/export-bundles.md).
+It freezes query or explicit membership, stores role receipts, and publishes a
+download ticket only after verifying the complete ZIP.
 
 Before operating on an unfamiliar machine or switching archives, identify the
 selected vault explicitly:

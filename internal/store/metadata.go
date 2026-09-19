@@ -436,6 +436,11 @@ func exportMetadataSnapshotWithVaultIdentity(
 			return err
 		}
 	}
+	if layout.schemaVersion >= 18 {
+		if err := exportBundleMetadata(ctx, tx, write); err != nil {
+			return err
+		}
+	}
 	if err := exportWatchSources(ctx, tx, write); err != nil {
 		return err
 	}
@@ -1032,6 +1037,9 @@ func requirePristineMetadataTarget(ctx context.Context, tx *sql.Tx) error {
 		    + (SELECT COUNT(*) FROM page_recipes)
 		    + (SELECT COUNT(*) FROM page_images)
 		    + (SELECT COUNT(*) FROM page_render_jobs)
+		    + (SELECT COUNT(*) FROM export_sources)
+		    + (SELECT COUNT(*) FROM export_plans)
+		    + (SELECT COUNT(*) FROM export_jobs)
 		    + (SELECT COUNT(*) FROM ingests) + (SELECT COUNT(*) FROM provenance)
 		    + (SELECT COUNT(*) FROM provenance_version_bindings)
 		    + (SELECT COUNT(*) FROM document_event_state)
@@ -1299,6 +1307,8 @@ func (s *Store) importMetadataRecord(
 		return err
 	case metadataPageDocumentType, metadataPageRecipeType, metadataPageImageType, metadataPageJobType:
 		return importPageMetadata(ctx, tx, kind, raw)
+	case metadataExportType:
+		return importBundleMetadata(ctx, tx, raw)
 	case metadataVisualPreviewHeadType:
 		var v metadataVisualPreviewHead
 		if err := decodeMetadataRecord(raw, &v); err != nil {
@@ -1521,6 +1531,7 @@ var metadataRequiredFields = map[string][]string{
 	"email_part_artifact":                  {"type", "generation_id", "part_path", "role", "blob_hash", "size"},
 	"email_generation":                     {"type", "generation_id", "source_sha256", "source_size", "recipe_fingerprint", "canonical_json", "checksum", "created_at"},
 	"email_document_publication":           {"type", "request", "receipt"},
+	metadataExportType:                     {metadataTypeField, "kind", "id", "ordinal", "retain_until", "canonical_json", "checksum"},
 	metadataPageDocumentType:               {metadataTypeField, "canonical_json", metadataPageChecksumField},
 	metadataPageRecipeType:                 {metadataTypeField, "canonical_json", metadataPageChecksumField},
 	metadataPageImageType:                  {metadataTypeField, "canonical_json", metadataPageChecksumField},
@@ -1984,6 +1995,11 @@ func validateMetadataStateWithVaultIdentity(
 	}
 	if layout.schemaVersion >= 17 {
 		if err := exportPageMetadata(ctx, tx, func(any) error { return nil }); err != nil {
+			return err
+		}
+	}
+	if layout.schemaVersion >= 18 {
+		if err := exportBundleMetadata(ctx, tx, func(any) error { return nil }); err != nil {
 			return err
 		}
 	}

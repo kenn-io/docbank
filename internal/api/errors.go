@@ -9,6 +9,7 @@ import (
 	"github.com/danielgtaylor/huma/v2"
 	"go.kenn.io/kit/packstore"
 
+	"go.kenn.io/docbank/document/bundle"
 	"go.kenn.io/docbank/internal/loadfile"
 	"go.kenn.io/docbank/internal/store"
 )
@@ -162,6 +163,9 @@ var storeErrCodes = []struct {
 func FromStoreError(err error) error {
 	if err == nil {
 		return nil
+	}
+	if errors.Is(err, bundle.ErrRetained) {
+		return NewError(http.StatusConflict, "export_retained", err.Error())
 	}
 	var exhausted *packstore.ExhaustedError
 	if errors.As(err, &exhausted) && exhausted.Headline != nil {

@@ -184,3 +184,50 @@ func TestPackagePreflightHasNoRequestDeadline(t *testing.T) {
 	}))
 	handler.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodPost, "/api/v1/packages/preflights", nil))
 }
+
+func TestExportPreparationOutlivesRequestTimeout(t *testing.T) {
+	for _, route := range []string{
+		"/api/v1/exports/sources", "/api/v1/exports/sources/{id}/seal",
+		"/api/v1/exports/plans", "/api/v1/exports/jobs/{id}/download",
+	} {
+		t.Run(route, func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				operation := NewOfflineServer().API().OpenAPI().Paths[route].Post
+				mux := http.NewServeMux()
+				humaAPI := humago.New(mux, huma.DefaultConfig("test", "test"))
+				huma.Register(humaAPI, huma.Operation{
+					OperationID: "testExportPreparation", Method: http.MethodPost, Path: route,
+					BodyReadTimeout: operation.BodyReadTimeout,
+				}, func(ctx context.Context, _ *struct{ Body struct{} }) (*struct{ Body string }, error) {
+					time.Sleep(61 * time.Second)
+					return &struct{ Body string }{Body: "ready"}, ctx.Err()
+				})
+				server := httptest.NewTestServer(t, timeoutMiddleware(mux))
+				reader, writer := io.Pipe()
+				written := make(chan struct{})
+				defer func() {
+					_ = reader.Close()
+					<-written
+				}()
+				go func() {
+					defer close(written)
+					time.Sleep(6 * time.Second)
+					_, err := writer.Write([]byte(`{}`))
+					_ = writer.CloseWithError(err)
+				}()
+				response, err := server.Client().Post(server.URL+strings.ReplaceAll(route, "{id}", "export-1"), "application/json", reader)
+				require.NoError(t, err)
+				defer func() { require.NoError(t, response.Body.Close()) }()
+				body, err := io.ReadAll(response.Body)
+				require.NoError(t, err)
+				require.Equal(t, http.StatusOK, response.StatusCode, string(body))
+				require.JSONEq(t, `"ready"`, string(body))
+			})
+		})
+	}
+}
+
+func TestExportContextErrorsRemainDistinct(t *testing.T) {
+	require.Equal(t, http.StatusGatewayTimeout, exportProblem(context.DeadlineExceeded).Status)
+	require.Equal(t, http.StatusRequestTimeout, exportProblem(context.Canceled).Status)
+}

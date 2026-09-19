@@ -807,6 +807,11 @@ export interface BlobStorePreview {
   takeover: boolean;
 }
 
+export interface CancelExportJobRequest {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+}
+
 export interface CapabilityStateV1 {
   evidence: string;
   note: string;
@@ -1519,6 +1524,11 @@ export interface DocumentSummaryResolveResponse {
   items: DocumentSummary[];
 }
 
+export interface DownloadExportArchiveRequest {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+}
+
 export interface DuplicateCollection {
   id: string;
   /** @nullable */
@@ -2106,6 +2116,53 @@ export interface EnableAuditRequest {
   preview_token: string;
 }
 
+export interface Receipt {
+  entries: number;
+  format: string;
+  plan_fingerprint: string;
+  sha256: string;
+  size: number;
+}
+
+export interface ExportJob {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  attempt: number;
+  completed_bytes: number;
+  completed_roles: number;
+  created_at: string;
+  deadline: string;
+  expires_at: string;
+  failure?: string;
+  fingerprint: string;
+  id: string;
+  plan_id: string;
+  receipt?: Receipt;
+  sequence: number;
+  state: string;
+}
+
+export interface Filters {
+  collapse_duplicates?: boolean;
+  collection_ids?: string[];
+  exclude_collection_ids?: string[];
+  exclude_paths?: string[];
+  exclude_tag_ids?: string[];
+  extensions?: string[];
+  has_duplicates?: boolean;
+  media_families?: string[];
+  mime_types?: string[];
+  modified_after?: string;
+  modified_before?: string;
+  no_tags?: boolean;
+  paths?: string[];
+  /** @nullable */
+  size_max?: number | null;
+  size_min?: number;
+  tag_ids?: string[];
+  text_coverage?: string[];
+}
+
 export type FormatCapabilityV1Capabilities = {[key: string]: CapabilityStateV1};
 
 export type FormatVariantCapabilityV1Capabilities = {[key: string]: CapabilityStateV1};
@@ -2350,6 +2407,14 @@ export interface JobList {
   items: Job[];
 }
 
+export interface JobRequest {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  fingerprint: string;
+  operation_id: string;
+  plan_id: string;
+}
+
 export interface MediaAcquisitionGrantBody {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
@@ -2542,6 +2607,14 @@ export interface MediaSuppliedMetadata {
   operation_id: string;
   processing?: MediaProcessingBody;
   sha256: string;
+}
+
+export interface Member {
+  node_id: number;
+  revision?: number;
+  sha256: string;
+  size: number;
+  version_id: string;
 }
 
 export interface MkdirPathRequest {
@@ -2805,6 +2878,57 @@ export interface PageSelectionRequest {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
   selection: PageBinding;
+}
+
+export interface RolePolicy {
+  allow_unavailable?: boolean;
+  profile_fingerprint?: string;
+  recipe_sha256?: string;
+  role: string;
+}
+
+export interface Source {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  created_at: string;
+  expires_at: string;
+  id: string;
+  kind: string;
+  member_hash: string;
+  query_fingerprint?: string;
+  request_sha256: string;
+  saved_query_id?: string;
+  saved_query_revision?: number;
+  source_bytes: number;
+  state: string;
+  total: number;
+}
+
+export interface Plan {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  created_at: string;
+  expires_at: string;
+  fingerprint: string;
+  format: string;
+  id: string;
+  metadata_bytes: number;
+  role_bytes: number;
+  role_entries: number;
+  roles: RolePolicy[];
+  source: Source;
+  toolchain: string;
+  total: number;
+  vault_id: string;
+}
+
+export interface PlanRequest {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  member_hash: string;
+  operation_id: string;
+  roles: RolePolicy[];
+  source_id: string;
 }
 
 export interface PreviewAuditEnrollmentRequest {
@@ -3162,6 +3286,26 @@ export interface ProvenancePage {
   offset: number;
   /** @minimum 0 */
   total: number;
+}
+
+export interface PutExportChunkRequest {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  members: Member[];
+}
+
+export interface Sort {
+  direction: string;
+  field: string;
+}
+
+export interface Query {
+  filters: Filters;
+  mode: string;
+  sort: Sort;
+  syntax: string;
+  text: string;
+  v: number;
 }
 
 export interface QueryDependency {
@@ -3827,6 +3971,11 @@ export interface SavedQueryRunResult {
   snapshot: WorkspaceQueryResponse;
 }
 
+export interface SealExportSourceRequest {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+}
+
 export type SearchHitMatch = typeof SearchHitMatch[keyof typeof SearchHitMatch];
 
 
@@ -3860,6 +4009,21 @@ export interface SetCollectionLabelRequest {
   readonly $schema?: string;
   /** @nullable */
   label: string | null;
+}
+
+export interface SourceRequest {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  kind: string;
+  member_hash?: string;
+  members?: Member[];
+  node_ids?: number[];
+  operation_id: string;
+  query?: Query;
+  saved_query_id?: string;
+  saved_query_revision?: number;
+  snapshot_id?: string;
+  total?: number;
 }
 
 export interface StartProcessingRequest {
@@ -4070,6 +4234,13 @@ export interface TaggedNodePage {
   /** @minimum 0 */
   omitted_trashed?: number;
   total: number;
+}
+
+export interface TicketOutputBody {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  receipt: Receipt;
+  url: string;
 }
 
 export type TimelineBuildState = typeof TimelineBuildState[keyof typeof TimelineBuildState];
@@ -4510,6 +4681,30 @@ child_version_id?: string;
 after_operation_id?: string;
 after_order?: number;
 limit?: number;
+};
+
+export type GetExportJobEventsParams = {
+/**
+ * Last observed sequence; deliveries report current state, not replayed events
+ * @minimum 0
+ */
+after?: number;
+};
+
+export type GetExportJobEvents200 = {
+  delivery: string;
+  job: ExportJob;
+  requested_after: number;
+};
+
+export type GetExportJobEventsDefault = {
+  code?: string;
+  detail?: string;
+  errors?: string[];
+  observed_scope_count?: number;
+  position?: ErrorPosition;
+  status: number;
+  title: string;
 };
 
 export type ReadFormatCapabilitiesParams = {
@@ -6369,6 +6564,528 @@ export const listEmailDocumentRelations = async (params?: ListEmailDocumentRelat
     method: 'GET'
 
 
+  }
+);}
+
+
+
+export const getCreateExportJobWithJsonUrl = () => {
+
+
+
+
+  return `/api/v1/exports/jobs`
+}
+
+/**
+ * @summary Admit a durable verified export job
+ */
+export const createExportJobWithJson = async (jobRequest: NonReadonly<JobRequest>, options?: Parameters<typeof sessionJSON>[1]): Promise<ExportJob> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return sessionJSON<ExportJob>(getCreateExportJobWithJsonUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(jobRequest)
+  }
+);}
+
+
+
+export const getCreateExportJobWithBlobUrl = () => {
+
+
+
+
+  return `/api/v1/exports/jobs`
+}
+
+/**
+ * @summary Admit a durable verified export job
+ */
+export const createExportJobWithBlob = async (createExportJobBody: Blob, options?: Parameters<typeof sessionJSON>[1]): Promise<ExportJob> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return sessionJSON<ExportJob>(getCreateExportJobWithBlobUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/octet-stream', ...getHeaders(options?.headers) },
+    body: createExportJobBody
+  }
+);}
+
+
+
+export const getGetExportJobUrl = (id: string,) => {
+
+
+
+
+  return `/api/v1/exports/jobs/${encodeURIComponent(String(id))}`
+}
+
+/**
+ * @summary Read current durable export progress and receipt
+ */
+export const getExportJob = async (id: string, options?: Parameters<typeof sessionJSON>[1]): Promise<ExportJob> => {
+
+  return sessionJSON<ExportJob>(getGetExportJobUrl(id),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+export const getCancelExportJobUrl = (id: string,) => {
+
+
+
+
+  return `/api/v1/exports/jobs/${encodeURIComponent(String(id))}/cancel`
+}
+
+/**
+ * @summary Cancel and fence a running export
+ */
+export const cancelExportJob = async (id: string,
+    cancelExportJobRequest: NonReadonly<CancelExportJobRequest>, options?: Parameters<typeof sessionJSON>[1]): Promise<void> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return sessionJSON<void>(getCancelExportJobUrl(id),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(cancelExportJobRequest)
+  }
+);}
+
+
+
+export const getDownloadExportArchiveUrl = (id: string,) => {
+
+
+
+
+  return `/api/v1/exports/jobs/${encodeURIComponent(String(id))}/download`
+}
+
+/**
+ * @summary Issue a one-use ticket for a reverified archive
+ */
+export const downloadExportArchive = async (id: string,
+    downloadExportArchiveRequest: NonReadonly<DownloadExportArchiveRequest>, options?: Parameters<typeof sessionJSON>[1]): Promise<TicketOutputBody> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return sessionJSON<TicketOutputBody>(getDownloadExportArchiveUrl(id),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(downloadExportArchiveRequest)
+  }
+);}
+
+
+
+export const getGetExportJobEventsUrl = (id: string,
+    params?: GetExportJobEventsParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/v1/exports/jobs/${encodeURIComponent(String(id))}/events?${stringifiedParams}` : `/api/v1/exports/jobs/${encodeURIComponent(String(id))}/events`
+}
+
+/**
+ * @summary Stream current export progress for up to 30 seconds
+ */
+export const getExportJobEvents = (id: string,
+    params?: GetExportJobEventsParams, options?: Parameters<typeof sessionResponse>[1]) => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return sessionResponse<Response>(getGetExportJobEventsUrl(id,params),
+  {
+    ...options,
+    method: 'GET',
+    headers: { 'Accept': `application/x-ndjson`, ...getHeaders(options?.headers) }
+
+  }
+);}
+
+
+
+export const getCreateExportPlanWithJsonUrl = () => {
+
+
+
+
+  return `/api/v1/exports/plans`
+}
+
+/**
+ * @summary Freeze role availability and exact archive paths
+ */
+export const createExportPlanWithJson = async (planRequest: NonReadonly<PlanRequest>, options?: Parameters<typeof sessionJSON>[1]): Promise<Plan> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return sessionJSON<Plan>(getCreateExportPlanWithJsonUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(planRequest)
+  }
+);}
+
+
+
+export const getCreateExportPlanWithBlobUrl = () => {
+
+
+
+
+  return `/api/v1/exports/plans`
+}
+
+/**
+ * @summary Freeze role availability and exact archive paths
+ */
+export const createExportPlanWithBlob = async (createExportPlanBody: Blob, options?: Parameters<typeof sessionJSON>[1]): Promise<Plan> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return sessionJSON<Plan>(getCreateExportPlanWithBlobUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/octet-stream', ...getHeaders(options?.headers) },
+    body: createExportPlanBody
+  }
+);}
+
+
+
+export const getGetExportPlanUrl = (id: string,) => {
+
+
+
+
+  return `/api/v1/exports/plans/${encodeURIComponent(String(id))}`
+}
+
+/**
+ * @summary Read an immutable export plan header
+ */
+export const getExportPlan = async (id: string, options?: Parameters<typeof sessionJSON>[1]): Promise<Plan> => {
+
+  return sessionJSON<Plan>(getGetExportPlanUrl(id),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+export const getCreateExportSourceWithJsonUrl = () => {
+
+
+
+
+  return `/api/v1/exports/sources`
+}
+
+/**
+ * @summary Freeze exact export membership or begin a chunk upload
+ */
+export const createExportSourceWithJson = async (sourceRequest: NonReadonly<SourceRequest>, options?: Parameters<typeof sessionJSON>[1]): Promise<Source> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return sessionJSON<Source>(getCreateExportSourceWithJsonUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(sourceRequest)
+  }
+);}
+
+
+
+export const getCreateExportSourceWithBlobUrl = () => {
+
+
+
+
+  return `/api/v1/exports/sources`
+}
+
+/**
+ * @summary Freeze exact export membership or begin a chunk upload
+ */
+export const createExportSourceWithBlob = async (createExportSourceBody: Blob, options?: Parameters<typeof sessionJSON>[1]): Promise<Source> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return sessionJSON<Source>(getCreateExportSourceWithBlobUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/octet-stream', ...getHeaders(options?.headers) },
+    body: createExportSourceBody
+  }
+);}
+
+
+
+export const getPutExportChunkWithJsonUrl = (id: string,
+    index: number,) => {
+
+
+
+
+  return `/api/v1/exports/sources/${encodeURIComponent(String(id))}/chunks/${encodeURIComponent(String(index))}`
+}
+
+/**
+ * @summary Upload one idempotent exact-member chunk
+ */
+export const putExportChunkWithJson = async (id: string,
+    index: number,
+    putExportChunkRequest: NonReadonly<PutExportChunkRequest>, options?: Parameters<typeof sessionJSON>[1]): Promise<void> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return sessionJSON<void>(getPutExportChunkWithJsonUrl(id,index),
+  {
+    ...options,
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(putExportChunkRequest)
+  }
+);}
+
+
+
+export const getPutExportChunkWithBlobUrl = (id: string,
+    index: number,) => {
+
+
+
+
+  return `/api/v1/exports/sources/${encodeURIComponent(String(id))}/chunks/${encodeURIComponent(String(index))}`
+}
+
+/**
+ * @summary Upload one idempotent exact-member chunk
+ */
+export const putExportChunkWithBlob = async (id: string,
+    index: number,
+    putExportChunkBody: Blob, options?: Parameters<typeof sessionJSON>[1]): Promise<void> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return sessionJSON<void>(getPutExportChunkWithBlobUrl(id,index),
+  {
+    ...options,
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/octet-stream', ...getHeaders(options?.headers) },
+    body: putExportChunkBody
+  }
+);}
+
+
+
+export const getSealExportSourceUrl = (id: string,) => {
+
+
+
+
+  return `/api/v1/exports/sources/${encodeURIComponent(String(id))}/seal`
+}
+
+/**
+ * @summary Verify and seal the complete uploaded membership
+ */
+export const sealExportSource = async (id: string,
+    sealExportSourceRequest: NonReadonly<SealExportSourceRequest>, options?: Parameters<typeof sessionJSON>[1]): Promise<Source> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return sessionJSON<Source>(getSealExportSourceUrl(id),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(sealExportSourceRequest)
   }
 );}
 

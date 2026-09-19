@@ -1,5 +1,62 @@
 -- docbank core schema. Idempotent: applied on every Open.
 
+CREATE TABLE IF NOT EXISTS export_sources (
+    id TEXT PRIMARY KEY,
+    owner TEXT NOT NULL,
+    request_sha256 TEXT NOT NULL,
+    request_json BLOB NOT NULL,
+    canonical_json BLOB NOT NULL,
+    state TEXT NOT NULL,
+    expires_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS export_chunks (
+    source_id TEXT NOT NULL REFERENCES export_sources(id) ON DELETE CASCADE,
+    chunk_index INTEGER NOT NULL,
+    canonical_json BLOB NOT NULL,
+    PRIMARY KEY(source_id,chunk_index)
+);
+CREATE TABLE IF NOT EXISTS export_members (
+    source_id TEXT NOT NULL REFERENCES export_sources(id) ON DELETE CASCADE,
+    node_id INTEGER NOT NULL,
+    version_id TEXT NOT NULL REFERENCES content_versions(version_id),
+    blob_hash TEXT NOT NULL REFERENCES blobs(hash),
+    canonical_json BLOB NOT NULL,
+    PRIMARY KEY(source_id,node_id,version_id)
+);
+CREATE INDEX IF NOT EXISTS export_members_version ON export_members(version_id);
+CREATE TABLE IF NOT EXISTS export_plans (
+    id TEXT PRIMARY KEY,
+    owner TEXT NOT NULL,
+    source_id TEXT NOT NULL REFERENCES export_sources(id),
+    request_sha256 TEXT NOT NULL,
+    canonical_json BLOB NOT NULL,
+    expires_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS export_documents (
+    plan_id TEXT NOT NULL REFERENCES export_plans(id) ON DELETE CASCADE,
+    ordinal INTEGER NOT NULL,
+    canonical_json BLOB NOT NULL,
+    PRIMARY KEY(plan_id,ordinal)
+);
+CREATE TABLE IF NOT EXISTS export_role_roots (
+    plan_id TEXT NOT NULL REFERENCES export_plans(id) ON DELETE CASCADE,
+    blob_hash TEXT NOT NULL REFERENCES blobs(hash),
+    PRIMARY KEY(plan_id,blob_hash)
+);
+CREATE TABLE IF NOT EXISTS export_jobs (
+    id TEXT PRIMARY KEY,
+    owner TEXT NOT NULL,
+    plan_id TEXT NOT NULL REFERENCES export_plans(id) ON DELETE CASCADE,
+    request_sha256 TEXT NOT NULL,
+    canonical_json BLOB NOT NULL,
+    state TEXT NOT NULL,
+    epoch INTEGER NOT NULL,
+    token TEXT NOT NULL,
+    archive_name TEXT NOT NULL,
+    expires_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS export_jobs_pending ON export_jobs(state,id);
+
 -- Physical page frames are independent of optional renderer recipes.
 CREATE TABLE IF NOT EXISTS page_documents (
     version_id TEXT PRIMARY KEY REFERENCES content_versions(version_id) ON DELETE CASCADE,

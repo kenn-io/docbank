@@ -22,6 +22,7 @@ import (
 	"go.kenn.io/docbank/internal/blob"
 	"go.kenn.io/docbank/internal/config"
 	"go.kenn.io/docbank/internal/daemonauth"
+	"go.kenn.io/docbank/internal/exporter"
 	"go.kenn.io/docbank/internal/jobs"
 	internalmaintenance "go.kenn.io/docbank/internal/maintenance"
 	"go.kenn.io/docbank/internal/processing"
@@ -78,6 +79,7 @@ type Deps struct {
 	DocumentCursorKey []byte
 	DocumentCursorNow func() time.Time
 	PageRuntime       *pagerender.Runtime // nil reports optional page rendering unavailable
+	Exports           *exporter.Worker
 }
 
 // Server is docbank's HTTP API: a huma-described /api/v1 surface plus a
@@ -150,16 +152,27 @@ func NewServer(d Deps) *Server {
 		snapshots: snapshots, masterOwner: masterOwner,
 		webDownloads: newWebDownloadRegistry(d.VaultRoot),
 	}
-	s.webSessions = newWebSessionRegistry(func(owner string) {
-		if s.snapshots != nil {
-			s.snapshots.Revoke(owner)
-		}
-		s.webDownloads.revokeOwner(owner)
-	})
 	g := d.Gate
 	if g == nil {
 		g = NewOperationGate()
 	}
+	s.webSessions = newWebSessionRegistry(func(owner string) {
+		if d.Exports != nil {
+			d.Exports.CancelOwner(owner)
+		}
+		if s.snapshots != nil {
+			s.snapshots.Revoke(owner)
+		}
+		s.webDownloads.revokeOwner(owner)
+		if d.Store != nil {
+			// The credential is already revoked and active streams interrupted.
+			// Do not abandon its durable cancellation behind a maintenance barrier.
+			ctx := context.Background()
+			if err := g.MutateContext(ctx, func() error { return d.Store.RevokeExportOwner(ctx, owner) }); err != nil {
+				d.Logger.Error("cancel revoked browser exports", "error", err)
+			}
+		}
+	})
 
 	registerReadRoutes(humaAPI, d) // Task 5 (stat-by-id lands in this task)
 	registerCollectionRoutes(humaAPI, d, g)
@@ -186,6 +199,7 @@ func NewServer(d Deps) *Server {
 	registerQueryCompileRoutes(humaAPI, d)
 	registerRenditionTextRoutes(humaAPI, d)
 	registerPageRoutes(humaAPI, d, g)
+	registerExportRoutes(mux, humaAPI, d, g, s.snapshots, s.webDownloads, s.webSessions)
 	registerWorkspaceQueryRoutes(humaAPI, d, s.snapshots)
 	registerAuditRoutes(humaAPI, d, g, s.auditPreviews)
 	registerProcessingRoutes(humaAPI, d)
@@ -251,6 +265,10 @@ func (s *Server) Close() {
 func (s *Server) Shutdown(ctx context.Context) error {
 	if s.deps.Processing != nil {
 		s.deps.Processing.Stop()
+	}
+	if s.webDownloads != nil {
+		s.webDownloads.revokeOwner("master")
+		s.webDownloads.revokeOwner(s.masterOwner)
 	}
 	snapshotDone := make(chan error, 1)
 	go func() {
