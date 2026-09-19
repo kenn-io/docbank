@@ -230,6 +230,15 @@ canonical URL keeps the generic `url` identity, and `acquire: true` still
 returns `503 capability_unavailable`. Recognition makes no claim about a
 video's visibility or password state.
 
+Daemon configuration can register a self-hosted Cap origin with
+`[media_origins.<name>]`. The processing service canonicalizes the exact root
+origin, accepts Cap's `/s/<id>`, `/embed/<id>`, and SDK `/dev/<id>` paths there,
+and binds one named credential to that origin. The daemon starts one
+`probe:media-origins` job for the documented usage endpoint. `providerhttp` enforces the configured
+scheme, host, port, DNS allowlist, SPKI pins, and redirect refusal. Probe
+evidence is exposed through the existing media-origins listing. Cap references
+remain `access_required` because this slice has no acquisition worker.
+
 The manual path publishes an original through the existing artifact route.
 The caller sends one complete multipart request to
 `POST /api/v1/media/sources/{source_id}/artifacts` with `kind: "media"` and

@@ -148,6 +148,50 @@ func TestExportPlanPinsRolesAndCannotInventMissingText(t *testing.T) {
 	require.Empty(t, documents[0].Roles[1].Path)
 }
 
+func TestExportPlanFailureRollsBackAdmissionAndAllowsRetry(t *testing.T) {
+	s, versions := newRenditionCatalogFixture(t)
+	profile := catalogProcessingProfile(t, false)
+	build := catalogRenditionBuild(s, profile)
+	require.NoError(t, s.StageRenditionBuild(t.Context(), build))
+	attachment := RenditionAttachmentRecord{
+		ID: catalogAttachmentFirst, VaultID: s.VaultID(), ContentVersionID: versions[0],
+		BuildID: build.ID, Profile: profile, AttachedAt: nowRFC3339(),
+	}
+	require.NoError(t, publishRenditionForTest(t, s, attachment, nowRFC3339(), fakeHash("c1")))
+	first, err := s.NodeByPath(t.Context(), "/synthetic-source-a.pdf")
+	require.NoError(t, err)
+	second, err := s.NodeByPath(t.Context(), "/synthetic-source-b.pdf")
+	require.NoError(t, err)
+	source, err := s.CreateExportSource(t.Context(), "owner", bundle.SourceRequest{OperationID: uuid.New().String(), Kind: "nodes", NodeIDs: []int64{first.ID, second.ID}}, nil)
+	require.NoError(t, err)
+	request := bundle.PlanRequest{OperationID: uuid.New().String(), SourceID: source.ID, MemberHash: source.MemberHash, Roles: []bundle.RolePolicy{{Role: "original"}, {Role: "text"}}}
+	failed, err := s.CreateExportPlan(t.Context(), "owner", request)
+	require.ErrorIs(t, err, bundle.ErrUnavailable)
+	require.Equal(t, 2, failed.RoleEntries, "the first member was populated before the second member lacked text")
+	var plans, documents, roots int
+	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT (SELECT count(*) FROM export_plans),(SELECT count(*) FROM export_documents),(SELECT count(*) FROM export_role_roots)`).Scan(&plans, &documents, &roots))
+	require.Zero(t, plans, "failed admission must not reserve the operation or quota")
+	require.Zero(t, documents)
+	require.Zero(t, roots)
+
+	attachment.ID = catalogAttachmentSecond
+	attachment.ContentVersionID = versions[1]
+	require.NoError(t, publishRenditionForTest(t, s, attachment, nowRFC3339(), fakeHash("c1")))
+	plan, err := s.CreateExportPlan(t.Context(), "owner", request)
+	require.NoError(t, err)
+	require.NotEmpty(t, plan.Fingerprint)
+	require.Equal(t, 4, plan.RoleEntries)
+	stored, err := s.ExportPlan(t.Context(), "owner", plan.ID)
+	require.NoError(t, err)
+	require.Equal(t, plan, stored)
+	retry, err := s.CreateExportPlan(t.Context(), "owner", request)
+	require.NoError(t, err)
+	require.Equal(t, plan, retry)
+	request.Roles = []bundle.RolePolicy{{Role: "original"}}
+	_, err = s.CreateExportPlan(t.Context(), "owner", request)
+	require.ErrorIs(t, err, bundle.ErrConflict)
+}
+
 func TestExportPlanOptionalPagesRespectMetadataBounds(t *testing.T) {
 	for _, pages := range []int{2, 30, 100} {
 		t.Run(strconv.Itoa(pages), func(t *testing.T) {

@@ -2522,7 +2522,11 @@ export interface MediaOccurrenceRevokeBody {
 
 export interface MediaOrigin {
   acquisition_available: boolean;
+  adapter_contract?: string;
+  deployment_revision?: string;
   origin_id: string;
+  probe_state?: string;
+  probed_at?: string;
   provider: string;
 }
 

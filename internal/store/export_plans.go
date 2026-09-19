@@ -98,7 +98,6 @@ func (s *Store) CreateExportPlan(ctx context.Context, owner string, r bundle.Pla
 	}
 	digest := pageChecksum(request)
 	var plan bundle.Plan
-	created := false
 	err = s.withStorageTx(ctx, func(tx *sql.Tx) error {
 		var oldDigest, oldOwner string
 		e := tx.QueryRowContext(ctx, `SELECT owner,request_sha256 FROM export_plans WHERE id=?`, r.OperationID).Scan(&oldOwner, &oldDigest)
@@ -147,13 +146,9 @@ func (s *Store) CreateExportPlan(ctx context.Context, owner string, r bundle.Pla
 			return e
 		}
 		_, e = tx.ExecContext(ctx, `INSERT INTO export_plans(id,owner,source_id,request_sha256,canonical_json,expires_at) VALUES(?,?,?,?,?,?)`, plan.ID, owner, source.ID, digest, raw, plan.ExpiresAt)
-		created = e == nil
-		return e
-	})
-	if err != nil || !created {
-		return plan, err
-	}
-	err = s.withStorageTx(ctx, func(tx *sql.Tx) error {
+		if e != nil {
+			return e
+		}
 		index := 0
 		csvBytes, directoryBytes := int64(1024), int64(1024)
 		err := walkExportMembers(ctx, tx, r.SourceID, func(m bundle.Member) error {
@@ -212,7 +207,7 @@ func (s *Store) CreateExportPlan(ctx context.Context, owner string, r bundle.Pla
 		if err != nil {
 			return err
 		}
-		raw, err := canonical.Marshal(plan)
+		raw, err = canonical.Marshal(plan)
 		if err != nil {
 			return err
 		}

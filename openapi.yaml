@@ -5810,7 +5810,15 @@ components:
       properties:
         acquisition_available:
           type: boolean
+        adapter_contract:
+          type: string
+        deployment_revision:
+          type: string
         origin_id:
+          type: string
+        probe_state:
+          type: string
+        probed_at:
           type: string
         provider:
           type: string

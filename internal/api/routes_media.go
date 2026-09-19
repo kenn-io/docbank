@@ -147,7 +147,11 @@ func registerMediaRoutes(mux *http.ServeMux, api huma.API, d Deps, g *gate) {
 			items := make([]MediaOrigin, len(origins))
 			for index, origin := range origins {
 				items[index] = MediaOrigin{OriginID: origin.OriginID, Provider: origin.Provider,
-					AcquisitionAvailable: origin.AcquisitionAvailable}
+					AcquisitionAvailable: origin.AcquisitionAvailable, AdapterContract: origin.AdapterContract,
+					DeploymentRevision: origin.DeploymentRevision, ProbeState: origin.ProbeState}
+				if !origin.ProbedAt.IsZero() {
+					items[index].ProbedAt = origin.ProbedAt.UTC().Format(time.RFC3339Nano)
+				}
 			}
 			return &originOutput{Body: MediaOriginPage{Items: items}}, nil
 		})
@@ -496,6 +500,7 @@ func fromMediaError(err error) *Error {
 		code   string
 	}{
 		{processing.ErrMediaCapabilityUnavailable, http.StatusServiceUnavailable, "capability_unavailable"},
+		{processing.ErrMediaCredentialScope, http.StatusUnprocessableEntity, "credential_cross_origin"},
 		{processing.ErrMediaProcessingUnsupported, http.StatusUnprocessableEntity, "media_processing_unsupported"},
 		{processing.ErrMediaCursorInvalid, http.StatusUnprocessableEntity, "invalid_cursor"},
 		{processing.ErrMediaPlanInvalid, http.StatusUnprocessableEntity, "invalid_media_plan"},
