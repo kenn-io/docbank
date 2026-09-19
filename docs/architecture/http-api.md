@@ -228,8 +228,15 @@ The canonical URL selects the provider identity:
   Either host, either route, and any query or fragment select the same source.
   The ID is case-sensitive and must not be percent-encoded. The submission
   returns `outcome: "unsupported"` whether or not `acquire` is set, because Cap
-  documents no download route for received links. Import the file with the
-  artifact route described below.
+   documents no download route for received links. Import the file with the
+   artifact route described below.
+- **Loom.** A `canonical_url` on `https://loom.com` or
+  `https://www.loom.com` whose path is exactly `/share/<id>` or
+  `/embed/<id>` uses the `loom` provider identity. The route is part of the
+  source key because Loom does not document equality between share and embed
+  references. Queries and fragments do not affect identity. Loom returns
+  `outcome: "unsupported"`, even with `acquire: true`, and uses no network
+  access. Import the caller's exact MP4 and SRT files with the artifact route.
 - **Any other URL.** The generic `url` identity uses the whole canonical URL.
   `acquire: true` returns `503 capability_unavailable`.
 
@@ -253,20 +260,24 @@ Cap. Other Cap paths keep the generic `url` identity.
 ```
 
 To add a local original, send exactly the two multipart parts required by the
-artifact route, with metadata `kind: "media"` and a WAV or MP3 file. The
-metadata's filename and media type must agree with the inspected bytes. WAV
-uses `audio/wav` or `audio/x-wav`; MP3 uses `audio/mpeg`. MIME parameters are
-accepted. The service applies its configured byte limit, which defaults to
-512 MiB and cannot exceed 1 GiB, and rejects media longer than 24 hours. It
-checks the declared size and SHA-256 before publication.
+artifact route, with metadata `kind: "media"`. WAV and MP3 keep their existing
+rules. A remote recording may use an MP4 named `.mp4` with `video/mp4`. MP4
+files are limited to 20 MiB, 2,088,960 coded pixels, 300,000 milliseconds,
+and 18,000 frames. The metadata's filename and media type must agree with the
+inspected bytes. The service checks the declared size and SHA-256 before
+publication.
 
 The store publishes the verified original and binds it to the selected visible
 occurrence in one transaction. A pending occurrence receives a new source
 version, while an existing exact version can be reused without moving the
 source head. A changed original for a bound occurrence returns
 `409 source_conflict`. A caption or transcript must follow the original. A
-caption stays a retained input. A transcript requires an explicit processing
-plan, consent, and retry before it can produce `transcribed` coverage.
+caption with `application/x-subrip` stays a retained input until the caller
+selects the `supplied-captions` profile. That profile publishes timed
+`media-transcript/v1` evidence and supports lexical and auto search. Semantic
+and hybrid search are not configured for supplied captions. A transcript
+requires an explicit processing plan, consent, and retry before it can produce
+`transcribed` coverage.
 
 Media retry selects the caller's newest visible occurrence for the source.
 It cannot target an older occurrence. To process an older recording, use the

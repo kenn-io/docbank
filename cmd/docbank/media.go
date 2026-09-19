@@ -333,6 +333,11 @@ func mediaProcessingFlags() *api.MediaProcessingBody {
 	return &api.MediaProcessingBody{Profile: mediaProfile, SuppliedInputID: mediaInputID}
 }
 
+var mediaUploadTypes = map[string]string{
+	".mp3": "audio/mpeg", ".mp4": "video/mp4", ".srt": "application/x-subrip",
+	".txt": "text/plain; charset=utf-8", ".wav": "audio/wav",
+}
+
 func openMediaUpload(path string) (*os.File, api.MediaSuppliedMetadata, error) {
 	file, err := os.Open(path)
 	if err != nil {
@@ -348,7 +353,10 @@ func openMediaUpload(path string) (*os.File, api.MediaSuppliedMetadata, error) {
 		_ = file.Close()
 		return nil, api.MediaSuppliedMetadata{}, err
 	}
-	mediaType := mime.TypeByExtension(strings.ToLower(filepath.Ext(path)))
+	mediaType := mediaUploadTypes[strings.ToLower(filepath.Ext(path))]
+	if mediaType == "" {
+		mediaType = mime.TypeByExtension(strings.ToLower(filepath.Ext(path)))
+	}
 	if mediaType == "" {
 		mediaType = "application/octet-stream"
 	}

@@ -254,6 +254,7 @@ func TestDaemonDoclingASRAdjacentProfiles(t *testing.T) {
 	assert.Contains(t, names, "asr")
 	assert.Contains(t, names, "private-text")
 	assert.Contains(t, names, "supplied-transcript")
+	assert.Contains(t, names, "supplied-captions")
 
 	content := mediatest.WAV()
 	digest := sha256.Sum256(content)

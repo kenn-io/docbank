@@ -276,7 +276,7 @@ func readMediaMultipartReceipt(
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
 		return decodeError(resp)
 	}
-	if writeErr != nil {
+	if writeErr != nil && !errors.Is(writeErr, io.ErrClosedPipe) {
 		return writeErr
 	}
 	if err := json.UnmarshalRead(resp.Body, out); err != nil {

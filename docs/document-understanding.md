@@ -48,7 +48,7 @@ provider descriptor and profile, not to a filename extension.
 | Provider package | Where it runs | Contract and scope |
 |------------------|---------------|--------------------|
 | [`document/plaintext`](https://github.com/kenn-io/docbank/tree/main/document/plaintext) | In process | UTF-8 text, including declared source, structured-text, CSV, and mail formats; one generic unit with degraded provenance |
-| [`document/suppliedtranscript`](https://github.com/kenn-io/docbank/tree/main/document/suppliedtranscript) | In process | Caller-held transcript text resolved by the sealed audio digest for bounded WAV and MP3; one generic unit with degraded provenance and a retained provider transcript |
+| [`document/suppliedtranscript`](https://github.com/kenn-io/docbank/tree/main/document/suppliedtranscript) | In process | Caller-held transcript text for bounded WAV and MP3, plus supplied SubRip captions for WAV, MP3, and MP4 originals; captions produce timed segment units with supplied provenance |
 | [`document/pymupdf`](https://github.com/kenn-io/docbank/tree/main/document/pymupdf) | Local process | PDF text through a pinned, digest-verified executable |
 | [`document/trafilatura`](https://github.com/kenn-io/docbank/tree/main/document/trafilatura) | Local process | Supplied HTML through a pinned isolated runner; the native runner requires Linux namespace and Landlock support |
 | [`document/docling`](https://github.com/kenn-io/docbank/tree/main/document/docling) | Operator-hosted | Uploaded files through Docling Serve; structured output and Markdown |
@@ -172,11 +172,13 @@ a distinct descriptor. Docbank cannot verify that the binding identifies the
 
 Use `document/mediatranscript` when the source supplies segment timing. Its
 `media-transcript/v1` artifact retains ordered text, exact start and end
-milliseconds, and an optional speaker for each segment. `Build` converts that
-artifact into audio or video source evidence and a retained transcript
-artifact. Segment starts must not regress, but adjacent and overlapping cues
-remain distinct. Speaker text participates in evidence identity when present;
-omitting it keeps the untimed and speakerless forms free of invented values.
+milliseconds, and an optional speaker for each segment. `ParseSubRip` accepts
+the bounded `subrip/v1` grammar, keeps styling tags verbatim, and infers
+nothing about language, speakers, or timing. `Build` converts that artifact
+into audio or video source evidence and a retained transcript artifact. Segment
+starts must not regress, but adjacent and overlapping cues remain distinct.
+Speaker text participates in evidence identity when present; omitting it keeps
+the supplied form free of invented values.
 
 ## Run Mistral OCR safely
 

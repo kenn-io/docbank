@@ -77,3 +77,60 @@ func TestImportMediaInputArtifactRejectsChangedImmutableAuthority(t *testing.T) 
 		})
 	}
 }
+
+func TestSuppliedInputSelectorsFilterKind(t *testing.T) {
+	s := newTestStore(t)
+	publication := suppliedMediaPublicationFixture(t, s)
+	retained, err := s.RetainSuppliedMedia(t.Context(), publication)
+	require.NoError(t, err)
+	transcriptHash := testSHA256([]byte("transcript-input"))
+	captionHash := testSHA256([]byte("caption-input"))
+	transcriptID := testSHA256([]byte("transcript-id"))
+	captionID := testSHA256([]byte("caption-id"))
+	input := func(operationID, inputID, inputHash, kind, language string) MediaInputArtifactRequest {
+		return MediaInputArtifactRequest{
+			Operation: MediaOperation{ID: operationID, Principal: "operator", Verb: "import_recording_artifact",
+				SourceID: retained.SourceID, RequestSHA256: testSHA256([]byte(operationID))},
+			InputID: inputID, OccurrenceID: retained.OccurrenceID, SourceVersionID: retained.SourceVersionID,
+			VirtualPath: "/media-input/" + kind + ".txt", MediaType: "text/plain", ByteLength: 10,
+			Physical: BlobPhysical{Encoding: "raw", StoredBytes: 10, Created: true},
+			Kind:     kind, Origin: "supplied", Provider: "loom", Language: language, InputSHA: inputHash,
+		}
+	}
+	_, err = s.ImportMediaInputArtifact(t.Context(), input(
+		"00000000-0000-4000-8000-000000000067", transcriptID, transcriptHash, MediaInputTranscript, "en"))
+	require.NoError(t, err)
+	_, err = s.ImportMediaInputArtifact(t.Context(), input(
+		"00000000-0000-4000-8000-000000000068", captionID, captionHash, MediaInputCaption, ""))
+	require.NoError(t, err)
+
+	transcript, err := s.SuppliedTranscriptForSourceID(t.Context(), "operator", MediaInputTranscript,
+		retained.SourceID, publication.ContentVersion.BlobHash, transcriptID)
+	require.NoError(t, err)
+	require.Equal(t, transcriptID, transcript.InputID)
+	require.Equal(t, MediaInputTranscript, transcript.Kind)
+	require.Equal(t, "supplied", transcript.Origin)
+	require.Equal(t, "en", transcript.Language)
+
+	caption, err := s.SuppliedTranscriptForSourceVersion(t.Context(), "operator", MediaInputCaption,
+		retained.SourceID, retained.SourceVersionID, captionID)
+	require.NoError(t, err)
+	require.Equal(t, captionID, caption.InputID)
+	require.Equal(t, MediaInputCaption, caption.Kind)
+	require.Equal(t, captionHash, caption.InputSHA256)
+
+	binding, err := s.SuppliedTranscriptBindingForSource(t.Context(), "operator", MediaInputCaption,
+		publication.ContentVersion.BlobHash, captionID)
+	require.NoError(t, err)
+	require.Equal(t, captionID, binding.InputID)
+	_, err = s.SuppliedTranscriptBindingForSource(t.Context(), "operator", MediaInputTranscript,
+		publication.ContentVersion.BlobHash, captionID)
+	require.ErrorIs(t, err, ErrNotFound)
+	_, err = s.SuppliedTranscriptForSourceID(t.Context(), "operator", "media", retained.SourceID,
+		publication.ContentVersion.BlobHash, "")
+	require.ErrorContains(t, err, "invalid supplied input kind")
+
+	unbound, err := s.SuppliedTranscriptForSource(t.Context(), "operator", publication.ContentVersion.BlobHash)
+	require.NoError(t, err)
+	require.Equal(t, transcriptID, unbound.InputID)
+}

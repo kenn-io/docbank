@@ -336,9 +336,18 @@ func handleMediaArtifactUpload(w http.ResponseWriter, r *http.Request, d Deps) {
 		writeError(w, parseErr)
 		return
 	}
-	limit := int64(2 << 30)
-	if metadata.Kind != "media" {
-		limit = 16 << 20
+	prepared, limit, replayed, limitErr := d.Processing.PrepareMediaArtifactUpload(r.Context(), processing.MediaArtifactRequest{
+		OperationID: metadata.OperationID, SourceID: r.PathValue("source_id"), OccurrenceID: metadata.OccurrenceID,
+		Kind: metadata.Kind, Origin: metadata.Origin, Provider: metadata.Provider, Language: metadata.Language,
+		Filename: metadata.Filename, MediaType: metadata.MediaType, SHA256: metadata.SHA256,
+		ByteLength: metadata.ByteLength})
+	if limitErr != nil {
+		writeError(w, fromMediaError(limitErr))
+		return
+	}
+	if replayed {
+		writeJSON(w, http.StatusOK, fromMediaReceipt(prepared))
+		return
 	}
 	staged, stageErr := stageCompleteMediaMultipart(r, d.Processing, part, multipartReader,
 		metadata.ByteLength, limit, metadata.SHA256)

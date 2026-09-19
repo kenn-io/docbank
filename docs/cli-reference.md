@@ -1215,7 +1215,11 @@ docbank media import-artifact SOURCE_ID --kind media --file CALL.wav \
 docbank media import-artifact SOURCE_ID --kind transcript \
   --file TRANSCRIPT.txt \
   --occurrence-id OCCURRENCE_ID --operation-id UUID
+docbank media import-artifact SOURCE_ID --kind caption --file CAPTIONS.srt \
+  --provider loom --occurrence-id OCCURRENCE_ID --operation-id UUID
 docbank media retry SOURCE_ID --processing-profile supplied-transcript \
+  --operation-id UUID
+docbank media retry SOURCE_ID --processing-profile supplied-captions \
   --operation-id UUID
 docbank media occurrences list [--source-id SOURCE_ID]
 docbank media occurrences declare SOURCE_ID --operation-id UUID \
@@ -1238,11 +1242,16 @@ the caller occurrence separately. Repeating the same bytes reuses one source
 version while a different occurrence remains independently revocable. An
 empty processing profile means retention only.
 
-Use `media import-artifact --kind media` to bind a supplied WAV or MP3 to the
-exact visible occurrence of a remote source registered through the HTTP or
-embedded API. The original must be retained before a caption or transcript can
-be imported. Use `--kind transcript` to retain supplied transcript text. Its
-receipt returns the input ID. Pass that value with
+Use `media import-artifact --kind media` to bind a supplied WAV, MP3, or
+remote MP4 to the exact visible occurrence of a remote source registered
+through the HTTP or embedded API. MP4 uses the `.mp4` extension and
+`video/mp4`, with limits of 20 MiB, 2,088,960 coded pixels, 300,000
+milliseconds, and 18,000 frames. The original must be retained before a
+caption or transcript can be imported. Use `--kind caption --file
+CAPTIONS.srt --provider loom` for SubRip input, or `--kind transcript --file
+TRANSCRIPT.txt` for supplied transcript text. The fixed upload table maps
+`.mp4` to `video/mp4` and `.srt` to `application/x-subrip`. The receipt returns
+the input ID. Pass that value with
 `media retry --supplied-input-id INPUT_ID` when more than one transcript exists
 for the recording. The selected input remains fixed for the job; importing
 another transcript does not change work already queued.
@@ -1253,10 +1262,13 @@ Use ordinary document processing with the older recording's node and current
 content version when needed.
 
 Processing is explicit. The built-in `supplied-transcript` profile turns the
-selected retained input into the ordinary sanitized Markdown rendition used by
-search and export. `media retry` queues that work only when the exact processing
-consent is still valid, then returns without waiting for the provider. The
-daemon resumes queued work after restart. In `media status`, `operation_id`,
+selected retained transcript into the ordinary sanitized Markdown rendition
+used by search and export. The `supplied-captions` profile retains timed
+`media-transcript/v1` evidence and supports lexical and auto search. Semantic
+and hybrid search are not configured for supplied captions. `media retry`
+queues work only when the exact processing consent is still valid, then
+returns without waiting for the provider. The daemon resumes queued work after
+restart. In `media status`, `operation_id`,
 `operation_state`, `job_id`, and `supplied_input_id` describe the newest processing
 attempt. To wait for a retry, match its operation ID and wait for its operation
 state to become `succeeded` or `failed`. The separate `coverage_state` preserves
