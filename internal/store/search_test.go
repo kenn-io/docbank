@@ -89,6 +89,43 @@ func TestSimilarSharedRowsExpandMembershipBeforeSourceExclusion(t *testing.T) {
 	require.ErrorIs(t, err, ErrProcessingSourceFenceStaleVersion)
 }
 
+func TestSimilarDuplicateGroupUsesHighestScoringRepresentative(t *testing.T) {
+	s, sourceVersion, profile, _ := newEmbeddingCatalogFixture(t)
+	sourceNode, err := s.ContentVersionByID(t.Context(), sourceVersion)
+	require.NoError(t, err)
+	var secondVersion string
+	require.NoError(t, s.db.QueryRow(`SELECT version_id FROM content_versions WHERE version_id<>? AND blob_hash=? LIMIT 1`, sourceVersion, catalogSourceHash).Scan(&secondVersion))
+	third, err := s.CreateFile(t.Context(), s.RootID(), "third.txt", catalogSourceHash, 20, "text/plain")
+	require.NoError(t, err)
+	versions := []string{sourceVersion, secondVersion, third.CurrentVersionID}
+	scores := []float64{0.1, 0.2, 0.9}
+	var records []EmbeddingSetRecord
+	var neighbors []vectorindex.Neighbor
+	for i, version := range versions {
+		record := embeddingSetFixture(s, version, profile.Fingerprint, document.EmbeddingInputOriginalFile, "optional", "")
+		require.NoError(t, s.StageEmbeddingSet(t.Context(), record))
+		require.NoError(t, s.PublishEmbeddingHead(t.Context(), EmbeddingHeadRecord{FencingToken: 1,
+			Key: EmbeddingHeadKey{ContentVersionID: version, BindingID: "optional", InputKind: record.InputKind}, SetID: record.ID,
+			VectorSpaceID: record.VectorSpace.ID, ProcessingProfileFingerprint: profile.Fingerprint, PublishedAt: embeddingCatalogTime}))
+		records = append(records, record)
+		neighbors = append(neighbors, vectorindex.Neighbor{SetID: record.VectorSet.ID, InputKey: version,
+			InputChecksum: record.InputGeneration.Inputs[0].RenderedChecksum, Score: scores[i]})
+	}
+	source, err := s.CaptureVectorIndexSource(t.Context(), records[0].VectorSpace.ID)
+	require.NoError(t, err)
+	resolution, err := s.ResolveSimilarCandidates(t.Context(), profile.Fingerprint, "optional", records[0].InputKind,
+		records[0].VectorSpace.ID, source.ManifestChecksum, neighbors, 1,
+		SearchOptions{ContentVersionIDs: versions}, SimilarSource{NodeID: sourceNode.NodeID, ContentVersionID: sourceVersion})
+	require.NoError(t, err)
+	require.Len(t, resolution.Candidates, 1)
+	assert.Equal(t, third.ID, resolution.Candidates[0].NodeID)
+	assert.Equal(t, third.CurrentVersionID, resolution.Candidates[0].ContentVersionID)
+	assert.Equal(t, "/third.txt", resolution.Candidates[0].Path)
+	assert.Equal(t, third.CurrentVersionID, resolution.Candidates[0].InputID)
+	assert.InDelta(t, 0.9, resolution.Candidates[0].Score, 1e-12)
+	assert.Equal(t, 1, resolution.Candidates[0].DuplicateCount)
+}
+
 func TestSimilarMissingHeadBeforeLeaseAndSourceFenceBeforeCoverage(t *testing.T) {
 	s, version, profile, _ := newEmbeddingCatalogFixture(t)
 	content, err := s.ContentVersionByID(t.Context(), version)
