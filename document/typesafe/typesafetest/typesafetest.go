@@ -49,6 +49,9 @@ func (fake *Fake) Rerank(ctx context.Context, request typesafe.RerankRequest) (t
 			return typesafe.Result{}, err
 		}
 		score, err := fake.score(request.Query, candidate)
+		if err := ctx.Err(); err != nil {
+			return typesafe.Result{}, err
+		}
 		if err != nil {
 			return typesafe.Result{}, err
 		}
