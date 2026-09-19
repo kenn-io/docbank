@@ -175,6 +175,58 @@ func TestRenditionClientDOCXRoute(t *testing.T) {
 	assert.Len(t, result.Evidence.Units, 2)
 }
 
+func TestRenditionClientRenderLaneEvidence(t *testing.T) {
+	for _, formatID := range []string{"xlsx", "ppt"} {
+		t.Run(formatID, func(t *testing.T) {
+			pdf := testMultipagePDF(2)
+			policy := testPolicyWithRenderPDF(t, testRenderPDFPolicyForFormat(t, formatID, pdf, nil), 1<<20, 10)
+			manifest := syntheticManifest(t, policy, true)
+			descriptor := renditionDescriptor(t, policy, manifest, formatID)
+			source := renderLaneFixture(t, formatID)
+			fixture := renderLaneRenditionFixture(t, descriptor, formatID, source)
+			var uploaded []byte
+			client, err := NewRenditionProvider(Profile{
+				Policy: policy, CapabilityManifest: manifest, Descriptor: descriptor,
+				SecretBinding: "mistral-ocr", Timeout: time.Second, MaxRetries: 1,
+				MaxRetryDelay: time.Millisecond,
+			}, renditionSecrets{"mistral-ocr": "synthetic-key"}, &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+				body, readErr := io.ReadAll(request.Body)
+				require.NoError(t, readErr)
+				var wire struct {
+					Document struct {
+						URL string `json:"document_url"`
+					} `json:"document"`
+				}
+				require.NoError(t, json.Unmarshal(body, &wire))
+				assert.True(t, strings.HasPrefix(wire.Document.URL, "data:application/pdf;base64,"))
+				decoded, decodeErr := decodeBase64(strings.TrimPrefix(wire.Document.URL, "data:application/pdf;base64,"))
+				require.NoError(t, decodeErr)
+				uploaded = decoded
+				return &http.Response{
+					StatusCode: http.StatusOK, Header: http.Header{"Content-Type": []string{"application/json"}},
+					Body: io.NopCloser(strings.NewReader(ocrResponse(2, len(pdf)))), Request: request,
+				}, nil
+			})})
+			require.NoError(t, err)
+
+			result, err := document.RenderRendition(t.Context(), client, fixture.upload(), fixture.authorization)
+			require.NoError(t, err)
+			candidate, ok := CandidateFormatByID(formatID)
+			require.True(t, ok)
+			assert.Equal(t, pdf, uploaded)
+			assert.Equal(t, document.EvidenceDegradedProvenance, result.Evidence.Completeness)
+			assert.Equal(t, candidate.Family, result.Evidence.Family)
+			assert.Equal(t, document.EvidenceUnitGeneric, result.Evidence.UnitKind)
+			require.Len(t, result.Evidence.Units, 1)
+			assert.Contains(t, result.Evidence.Units[0].Text, "synthetic")
+			require.Len(t, result.Evidence.Omissions, 1)
+			assert.Contains(t, result.Evidence.Omissions[0].Reason, "PDF pages do not identify the original units")
+			assert.Equal(t, int64(len(pdf)), result.Receipt.Usage.InputBytes)
+			assert.Equal(t, digestBytes(pdf), result.Receipt.UploadSHA256)
+		})
+	}
+}
+
 func TestRenditionClientDOCXConversionError(t *testing.T) {
 	tests := []struct {
 		name      string
@@ -866,6 +918,33 @@ func docxRenditionFixture(
 	metadata := document.AuthorizedUploadMetadata{
 		Filename: "document.docx", MediaFamily: "word",
 		MediaType:  "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+		ByteLength: int64(len(source)), SHA256: hex.EncodeToString(digest[:]),
+		CapabilityRecordChecksum: strings.Repeat("2", 64), ProviderMetadataChecksum: strings.Repeat("3", 64),
+		InputKind: document.RenditionInputOriginalFile,
+	}
+	started := time.Now().UTC().Add(-time.Minute)
+	return renditionTestFixture{metadata: metadata, source: source, authorization: document.RenditionAuthorization{
+		ProviderID: descriptor.ID, DescriptorFingerprint: descriptor.Fingerprint,
+		PolicyFingerprint:           descriptor.PolicyFingerprint,
+		RenditionRequestFingerprint: strings.Repeat("4", 64), SourceSHA256: metadata.SHA256,
+		SourceBytes: metadata.ByteLength, CapabilityRecordChecksum: metadata.CapabilityRecordChecksum,
+		ProviderMetadataChecksum: metadata.ProviderMetadataChecksum, MediaFamily: metadata.MediaFamily,
+		MediaType: metadata.MediaType, InputKind: metadata.InputKind,
+		MaxProviderMarkdownBytes: 4096, MaxTotalResultBytes: 32768,
+		AuthorizedAt: started.Format("2006-01-02T15:04:05.000000000Z"),
+		ExpiresAt:    started.Add(10 * time.Minute).Format("2006-01-02T15:04:05.000000000Z"),
+	}}
+}
+
+func renderLaneRenditionFixture(
+	t *testing.T, descriptor document.RenditionDescriptor, formatID string, source []byte,
+) renditionTestFixture {
+	t.Helper()
+	candidate, ok := CandidateFormatByID(formatID)
+	require.True(t, ok)
+	digest := sha256.Sum256(source)
+	metadata := document.AuthorizedUploadMetadata{
+		Filename: "document." + formatID, MediaFamily: candidate.Family, MediaType: candidate.MediaType,
 		ByteLength: int64(len(source)), SHA256: hex.EncodeToString(digest[:]),
 		CapabilityRecordChecksum: strings.Repeat("2", 64), ProviderMetadataChecksum: strings.Repeat("3", 64),
 		InputKind: document.RenditionInputOriginalFile,

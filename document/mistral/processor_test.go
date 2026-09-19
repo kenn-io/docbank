@@ -209,6 +209,56 @@ func TestProcessorDOCXRoute(t *testing.T) {
 	requireOnlySpoolReservationFile(t, spoolDirectory)
 }
 
+func TestProcessorRenderLaneRoute(t *testing.T) {
+	runProcessorRenderLaneRoute(t, "xlsx")
+}
+
+func runProcessorRenderLaneRoute(t *testing.T, formatID string) {
+	t.Helper()
+	pdf := testMultipagePDF(2)
+	policy := testPolicyWithRenderPDF(t, testRenderPDFPolicyForFormat(t, formatID, pdf, nil), 1<<20, 10)
+	manifest := syntheticManifest(t, policy, true)
+	var requests int
+	client, err := NewClient(policy, ClientConfig{
+		APIKey: "synthetic-key", HTTPClient: &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+			requests++
+			_, readErr := io.Copy(io.Discard, request.Body)
+			if readErr != nil {
+				return nil, readErr
+			}
+			return &http.Response{
+				StatusCode: http.StatusOK, Header: http.Header{"Content-Type": []string{"application/json"}},
+				Body: io.NopCloser(strings.NewReader(ocrResponse(2, len(pdf)))), Request: request,
+			}, nil
+		})},
+	})
+	require.NoError(t, err)
+	spoolDirectory := filepath.Join(t.TempDir(), "spool")
+	makePrivateDirectory(t, spoolDirectory)
+	processor, err := NewProcessor(ProcessorConfig{
+		Client: client, Policy: policy, CapabilityManifest: manifest,
+		SpoolDirectory: spoolDirectory, MaxSpoolBytes: policy.values.MaxDocumentBytes, MinFreeBytes: 1,
+	})
+	require.NoError(t, err)
+	sourceBytes := renderLaneFixture(t, formatID)
+	sourceDigest := digestBytes(sourceBytes)
+	candidate, ok := CandidateFormatByID(formatID)
+	require.True(t, ok)
+	source, err := ocr.NewSource(io.NopCloser(bytes.NewReader(sourceBytes)), candidate.MediaType,
+		int64(len(sourceBytes)), sourceDigest)
+	require.NoError(t, err)
+
+	result, err := processor.Process(t.Context(), source)
+	require.NoError(t, err)
+	assert.Equal(t, sourceDigest, result.SourceSHA256)
+	assert.Equal(t, digestBytes(pdf), result.UploadSHA256)
+	assert.Equal(t, candidate.Family, result.Source.Family)
+	assert.Equal(t, "page", result.Source.UnitKind)
+	assert.Equal(t, 2, result.UnitsProcessed)
+	assert.Equal(t, 1, requests)
+	requireOnlySpoolReservationFile(t, spoolDirectory)
+}
+
 func TestProcessorDOCXConversionError(t *testing.T) {
 	tests := []struct {
 		name      string

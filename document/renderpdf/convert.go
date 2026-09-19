@@ -23,6 +23,8 @@ const (
 	docxMediaType           = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
 	trustedDOCXWarmupSHA256 = "41186d7d336070c089c233ef1caa439eefcdb7e502b37da7debd46ecc1495cfd"
 	trustedFODTWarmupSHA256 = "ce828df33329c6e60317883a2c0f26a81a60f590497dee9b20625131acb25814"
+	trustedFODPWarmupSHA256 = "8a013927e44fddb11c48c3daca1ca00cf3863908182ed15cbcd39b886daf4635" //nolint:gosec // pinned trusted fixture digest
+	trustedFODSWarmupSHA256 = "3bdc0e38457f1a658fb6175e0e172c5c871f2044fece114feed6863aa37bc3f8"
 )
 
 type formatProfile struct {
@@ -32,6 +34,26 @@ type formatProfile struct {
 	outputName    string
 	normalizeMime string
 	pdfFilter     string
+	sourceWarmup  string
+}
+
+var renderProfiles = [...]formatProfile{
+	{ID: "docx", kind: FlatTextKind, inputName: "source.docx", outputName: "source.fodt",
+		normalizeMime: "OpenDocument Text Flat XML", pdfFilter: "writer_pdf_Export", sourceWarmup: "docx"},
+	{ID: "doc", kind: FlatTextKind, inputName: "source.doc", outputName: "source.fodt",
+		normalizeMime: "OpenDocument Text Flat XML", pdfFilter: "writer_pdf_Export", sourceWarmup: FlatTextKind},
+	{ID: "odt", kind: FlatTextKind, inputName: "source.odt", outputName: "source.fodt",
+		normalizeMime: "OpenDocument Text Flat XML", pdfFilter: "writer_pdf_Export", sourceWarmup: FlatTextKind},
+	{ID: "rtf", kind: FlatTextKind, inputName: "source.rtf", outputName: "source.fodt",
+		normalizeMime: "OpenDocument Text Flat XML", pdfFilter: "writer_pdf_Export", sourceWarmup: FlatTextKind},
+	{ID: "ppt", kind: FlatPresKind, inputName: "source.ppt", outputName: "source.fodp",
+		normalizeMime: "OpenDocument Presentation Flat XML", pdfFilter: "impress_pdf_Export", sourceWarmup: FlatPresKind},
+	{ID: "xls", kind: FlatCalcKind, inputName: "source.xls", outputName: "source.fods",
+		normalizeMime: "OpenDocument Spreadsheet Flat XML", pdfFilter: "calc_pdf_Export", sourceWarmup: FlatCalcKind},
+	{ID: "ods", kind: FlatCalcKind, inputName: "source.ods", outputName: "source.fods",
+		normalizeMime: "OpenDocument Spreadsheet Flat XML", pdfFilter: "calc_pdf_Export", sourceWarmup: FlatCalcKind},
+	{ID: "xlsx", kind: FlatCalcKind, inputName: "source.xlsx", outputName: "source.fods",
+		normalizeMime: "OpenDocument Spreadsheet Flat XML", pdfFilter: "calc_pdf_Export", sourceWarmup: FlatCalcKind},
 }
 
 // Convert consumes and closes source.Content on every path, then returns the
@@ -152,59 +174,122 @@ func Convert(ctx context.Context, source ocr.Source, extension string, policy Po
 }
 
 func profileFor(id string) (formatProfile, bool) {
-	switch id {
-	case "docx":
-		return formatProfile{ID: "docx", kind: FlatTextKind, inputName: "source.docx", outputName: "source.fodt", normalizeMime: "OpenDocument Text Flat XML", pdfFilter: "writer_pdf_Export"}, true
-	default:
-		return formatProfile{}, false
+	for index := range renderProfiles {
+		profile := renderProfiles[index]
+		if profile.ID == id {
+			return profile, true
+		}
 	}
+	return formatProfile{}, false
+}
+
+// Supports reports whether formatID has a configured render-to-PDF profile.
+func Supports(formatID string) bool {
+	_, ok := profileFor(formatID)
+	return ok
 }
 
 func stageRequest(policy Policy, profile formatProfile, stage string, input []byte) Request {
 	outputName := profile.outputName
-	filter := profile.normalizeMime
 	if stage == "pdf" {
 		outputName = "source.pdf"
-		filter = profile.pdfFilter
 	}
 	inputName := profile.inputName
 	if stage == "pdf" {
 		inputName = profile.outputName
 	}
 	stdinDigest := digest(input)
-	warmup := warmupFixture(stage)
+	warmup := warmupFixture(profile, stage)
 	return Request{
 		Stage: stage, Executable: policy.renderer.Executable,
 		ExecutableSHA256: policy.renderer.ExecutableSHA256,
-		Arguments:        libreOfficeArguments(inputName, outputName, filter),
+		Arguments:        stageArguments(profile, stage),
 		Environment:      libreOfficeEnvironment(), Directory: filepath.Dir(policy.renderer.Executable),
 		InputName: inputName, OutputName: outputName, Input: bytes.Clone(input), InputSHA256: stdinDigest,
-		WarmupInput: warmup, WarmupInputSHA256: warmupFixtureDigest(stage),
+		WarmupInput: warmup, WarmupInputSHA256: warmupFixtureDigest(profile, stage),
 		MaxOutputBytes: stageOutputLimit(policy.limits, stage), MaxWorkBytes: policy.limits.MaxWorkBytes,
 		PolicyFingerprint: policy.fingerprint, Runtime: slices.Clone(policy.renderer.Runtime),
 		RuntimeSymlinks: slices.Clone(policy.renderer.RuntimeSymlinks), RuntimeIdentity: policy.renderer.RuntimeIdentity,
 	}
 }
 
-func warmupFixture(stage string) []byte {
-	if stage == "normalize" {
-		return trustedDOCXFixture()
+func stageArguments(profile formatProfile, stage string) []string {
+	if stage == "pdf" {
+		return libreOfficeArguments(profile.outputName, "source.pdf", profile.pdfFilter)
 	}
-	return []byte(trustedFODTFixture)
+	return libreOfficeArguments(profile.inputName, profile.outputName, profile.normalizeMime)
+}
+
+func warmupFixture(profile formatProfile, stage string) []byte {
+	return trustedWarmupFixture(warmupKey(profile, stage))
 }
 
 func warmupFixtureDigests() []string {
-	return []string{trustedDOCXWarmupSHA256, trustedFODTWarmupSHA256}
+	keys := make([]string, 0, 4)
+	seen := make(map[string]struct{}, 4)
+	for index := range renderProfiles {
+		profile := renderProfiles[index]
+		for _, key := range []string{profile.sourceWarmup, profile.kind} {
+			if _, ok := seen[key]; ok {
+				continue
+			}
+			seen[key] = struct{}{}
+			keys = append(keys, key)
+		}
+	}
+	digests := make([]string, 0, len(keys))
+	for _, key := range keys {
+		digests = append(digests, trustedWarmupDigest(key))
+	}
+	return digests
 }
 
-func warmupFixtureDigest(stage string) string {
+func warmupFixtureDigest(profile formatProfile, stage string) string {
+	return trustedWarmupDigest(warmupKey(profile, stage))
+}
+
+func warmupKey(profile formatProfile, stage string) string {
 	if stage == "normalize" {
-		return trustedDOCXWarmupSHA256
+		return profile.sourceWarmup
 	}
-	return trustedFODTWarmupSHA256
+	return profile.kind
+}
+
+func trustedWarmupFixture(key string) []byte {
+	switch key {
+	case "docx":
+		return trustedDOCXFixture()
+	case FlatTextKind:
+		return []byte(trustedFODTFixture)
+	case FlatPresKind:
+		return []byte(trustedFODPFixture)
+	case FlatCalcKind:
+		return []byte(trustedFODSFixture)
+	default:
+		return nil
+	}
+}
+
+func trustedWarmupDigest(key string) string {
+	switch key {
+	case "docx":
+		return trustedDOCXWarmupSHA256
+	case FlatTextKind:
+		return trustedFODTWarmupSHA256
+	case FlatPresKind:
+		return trustedFODPWarmupSHA256
+	case FlatCalcKind:
+		return trustedFODSWarmupSHA256
+	default:
+		return ""
+	}
 }
 
 const trustedFODTFixture = `<?xml version="1.0" encoding="UTF-8"?><office:document xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0" office:mimetype="application/vnd.oasis.opendocument.text"><office:body><office:text><text:p>Docbank warm-up</text:p></office:text></office:body></office:document>`
+
+const trustedFODPFixture = `<?xml version="1.0" encoding="UTF-8"?><office:document xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:draw="urn:oasis:names:tc:opendocument:xmlns:drawing:1.0" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0" xmlns:svg="urn:oasis:names:tc:opendocument:xmlns:svg-compatible:1.0" office:version="1.3" office:mimetype="application/vnd.oasis.opendocument.presentation"><office:body><office:presentation><draw:page draw:name="Slide 1"><draw:frame svg:x="1cm" svg:y="1cm" svg:width="10cm" svg:height="3cm"><draw:text-box><text:p>Docbank warm-up</text:p></draw:text-box></draw:frame></draw:page></office:presentation></office:body></office:document>`
+
+const trustedFODSFixture = `<?xml version="1.0" encoding="UTF-8"?><office:document xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:table="urn:oasis:names:tc:opendocument:xmlns:table:1.0" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0" office:version="1.3" office:mimetype="application/vnd.oasis.opendocument.spreadsheet"><office:body><office:spreadsheet><table:table table:name="Sheet 1"><table:table-row><table:table-cell office:value-type="string"><text:p>Docbank warm-up</text:p></table:table-cell></table:table-row></table:table></office:spreadsheet></office:body></office:document>`
 
 func trustedDOCXFixture() []byte {
 	entries := []struct{ name, value string }{

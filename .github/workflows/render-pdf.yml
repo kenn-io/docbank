@@ -30,10 +30,10 @@ jobs:
           go-version-file: go.mod
           cache: true
 
-      - name: Install LibreOffice Writer and Poppler runtimes
+      - name: Install LibreOffice Writer, Impress, Calc, and Poppler runtimes
         run: |
           sudo apt-get update
-          sudo apt-get install --no-install-recommends -y libreoffice-writer poppler-utils
+          sudo apt-get install --no-install-recommends -y libreoffice-writer libreoffice-impress libreoffice-calc poppler-utils
 
       - name: Run mandatory page rendering proof
         env:
@@ -63,4 +63,4 @@ jobs:
           test -x "$DOCBANK_TEST_LIBREOFFICE_EXECUTABLE"
           go test -tags fts5 -v ./document/internal/providerutil/sandbox/ ./document/trafilatura/ -count=1
           go test -tags fts5 -v ./document/renderpdf/ -run '^TestLibreOffice' -count=1
-          go test -tags fts5 -v ./document/mistral/ -run '^TestDOCXLibreOfficeRoute$' -count=1
+          go test -tags fts5 -v ./document/mistral/ -run '^(TestDOCXLibreOfficeRoute|TestRenderLaneLibreOfficeRoute)$' -count=1

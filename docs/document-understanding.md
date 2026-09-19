@@ -27,7 +27,7 @@ canonical evidence is the validated text and source locations behind it.
 | Stage exact bytes for an authorized provider upload | `document/upload` |
 | Bind outbound connections to a declared destination | `document/providerhttp` |
 | Convert CSV locally for PDF OCR | `document/csvpdf` |
-| Convert DOCX locally to a bounded PDF | `document/renderpdf` |
+| Convert office files locally to a bounded PDF | `document/renderpdf` |
 | Inspect exact physical page frames and render verified PNGs locally | `document/pagerender` |
 
 These are reusable Go contracts. Vault-owned publication, consent, backup, and
@@ -56,7 +56,7 @@ provider descriptor and profile, not to a filename extension.
 | [`document/unstructured`](https://github.com/kenn-io/docbank/tree/main/document/unstructured) | Operator-hosted | Pinned broad-format compatibility profile for the standard rendition bridge |
 | [`document/tika`](https://github.com/kenn-io/docbank/tree/main/document/tika) | Operator-hosted | Pinned Apache Tika compatibility profile for the standard rendition bridge |
 | [`document/datalab`](https://github.com/kenn-io/docbank/tree/main/document/datalab) | Hosted | Uploaded files through Datalab Convert |
-| [`document/mistral`](https://github.com/kenn-io/docbank/tree/main/document/mistral) | Hosted | Capability-probed PDF, PPTX, optional renderpdf-backed DOCX, and fourteen text-family OCR formats, including the rendition-provider adapter |
+| [`document/mistral`](https://github.com/kenn-io/docbank/tree/main/document/mistral) | Hosted | Capability-probed PDF, PPTX, optional renderpdf-backed office files, and fourteen text-family OCR formats, including the rendition-provider adapter |
 | [`document/llamaparse`](https://github.com/kenn-io/docbank/tree/main/document/llamaparse) | Hosted | Resumable PDF parsing through the fixed LlamaParse v1 API |
 | [`document/reducto`](https://github.com/kenn-io/docbank/tree/main/document/reducto) | Hosted | Resumable PDF and PPTX parsing through the fixed Reducto API |
 | [`document/bridge`](https://github.com/kenn-io/docbank/tree/main/document/bridge) | Declared service | `docbank-rendition/v1`: submit, poll, cancel, and validate canonical source evidence |
@@ -200,8 +200,9 @@ authorize PPTX when its local slide count matches the provider's processed
 units. It records
 primary-fixture evidence for TXT, Markdown, CSV, JSON, JSONL, YAML, Go,
 Python, JavaScript, RST, LaTeX, XML, EML, and MSG after provider acceptance.
-XLSX remains unauthorized for production uploads, even when extraction succeeds
-during a probe.
+Native XLSX remains unauthorized through the capability probe, even when
+extraction succeeds during a probe. Configured render policies use the PDF
+authority for XLSX instead.
 
 Text formats use `provider_response` enforcement. Docbank does not count lines,
 records, or messages as pages. It checks that Mistral returns at least one page,
@@ -221,12 +222,12 @@ replace the manifest before processing documents. Also rerun the probe if
 validation reports that a registered format "does not explain its unverified
 bound". Review application consent against the resulting policy fingerprint.
 
-DOCX has a separate production route. Set `PolicyConfig.RenderPDF` to a
-validated `renderpdf.Policy` and supply PDF capability evidence in the same
-manifest. `Policy.Authorize` keeps the original DOCX identity but grants a
-local-exact bound for the render route. A native DOCX probe result remains a
-diagnostic `UnitBoundNone` observation and does not authorize native DOCX
-bytes.
+DOCX, DOC, ODT, RTF, PPT, XLS, ODS, and XLSX share one production route. Set
+`PolicyConfig.RenderPDF` to a validated `renderpdf.Policy` and supply PDF
+capability evidence in the same manifest. `Policy.Authorize` keeps the
+original format identity but grants a local-exact bound for the render route.
+Native office probe results remain diagnostic observations and do not authorize
+native office bytes.
 
 For each production document:
 
@@ -242,20 +243,23 @@ For each production document:
 For direct formats, `Process` reopens and verifies those bytes for every attempt.
 It derives request options from the policy and authorization, bounds the
 response, and converts
-validated provider output into `document.SourceDocument`. For configured DOCX,
-it calls `renderpdf.Convert` once, counts the generated PDF, checks
-`MaxUnits` and `MaxDocumentBytes` before HTTP, and uploads that PDF on every
-retry. The returned document keeps the original `word` family and page
-evidence. Its result carries the original and generated PDF hashes. Call
-`Release` on every success or failure path.
+validated provider output into `document.SourceDocument`. For a configured
+render profile, it calls `renderpdf.Convert` once, counts the generated PDF,
+checks `MaxUnits`, `MaxPages`, `MaxPDFBytes`, and `MaxDocumentBytes` before
+HTTP, and uploads that PDF on every retry. The returned document keeps the
+original family and page unit kind. Its result carries the original and
+generated PDF hashes. Call `Release` on every success or failure path.
 
 The rendition adapter verifies source identity before submission. For PDFs it
 compares the returned page count with that inspected count. For PPTX it counts
 the listed PresentationML slides, rejects invalid slide references or
 over-limit decks before upload, and compares the provider's processed count with
-that local count. Configured DOCX uses the shared render route and keeps the
-original `word` page evidence while the receipt records the generated PDF hash
-and input bytes. Text formats use the response checks described above. See
+that local count. Configured office formats use the shared render route.
+Rendered Word keeps complete page evidence. Rendered presentations and
+spreadsheets use one generic degraded evidence unit with an omission because
+PDF pages do not identify the original units. The receipt
+records the generated PDF hash and input bytes. Text formats use the response
+checks described above. See
 [Mistral rendition processing](https://github.com/kenn-io/docbank/blob/main/document/mistral/rendition.go)
 for the exact source and result checks.
 
@@ -264,17 +268,12 @@ listed slide; the probe fixture contains one visible slide and does not verify
 hidden-slide behavior. If Mistral skips hidden slides, the count comparison
 fails after upload and may incur provider charges.
 
-XLSX production uploads remain blocked because the provider's billable unit is
-unverified. The generated probe has one worksheet with one cell. The recorded
-worksheet-only control returned HTTP 200 with `pages_processed=1`; that result
-does not distinguish worksheet counts from rendered-page counts. A paired
-worksheet plus chartsheet request returned HTTP 500 with code `3700`.
-
-Representative multi-sheet workbooks with long worksheets are needed to
-establish how Mistral counts XLSX usage. A mismatch check after upload cannot
-prevent charges. Even a successful XLSX extraction probe records no enforceable
-unit bound and cannot authorize a production upload; manifests claiming a local
-exact XLSX bound are rejected.
+Native XLSX production uploads remain blocked because its native provider
+authority is unverified. With `PolicyConfig.RenderPDF`, XLSX follows the render
+route and Mistral enforces the generated PDF page count before upload. The
+returned processor result keeps the original family and page unit kind;
+rendition evidence for rendered presentations and spreadsheets uses generic
+degraded provenance.
 
 The importing application remains responsible for credentials, human consent,
 spending and scheduling limits, durable manifests, job orchestration,
@@ -565,13 +564,13 @@ The receipt does not authorize upload. Your application must:
 
 This Go API does not add CSV OCR to the daemon or CLI.
 
-## Convert DOCX locally to PDF
+## Convert office files locally to PDF
 
-Use `document/renderpdf` when an application needs a local PDF derived from a
-DOCX source. The converter uses an operator-pinned LibreOffice
-executable. It first writes flat ODF inside the Linux sandbox, checks the
-normalized XML for external or active content, and then renders only admitted
-bytes to PDF.
+Use `document/renderpdf` when an application needs a local PDF derived from
+DOCX, DOC, ODT, RTF, PPT, XLS, ODS, or XLSX. The converter uses an
+operator-pinned LibreOffice executable. It first writes FODT, FODP, or FODS
+inside the Linux sandbox, checks the normalized XML for external or active
+content, and then renders only admitted bytes to PDF.
 
 ### Set up the renderer
 
@@ -589,7 +588,7 @@ executable's SHA-256 during operator setup:
 
 ```bash
 sudo apt-get update
-sudo apt-get install --no-install-recommends -y libreoffice-writer
+sudo apt-get install --no-install-recommends -y libreoffice-writer libreoffice-impress libreoffice-calc
 sha256sum /usr/lib/libreoffice/program/soffice.bin
 ```
 
@@ -604,7 +603,7 @@ package renderer
 
 import "go.kenn.io/docbank/document/renderpdf"
 
-func newDOCXPolicy(executableSHA256 string) (renderpdf.Policy, error) {
+func newOfficeRenderPolicy(executableSHA256 string) (renderpdf.Policy, error) {
     manifest, err := renderpdf.DiscoverRuntime(renderpdf.DefaultRuntimeRoots())
     if err != nil {
         return renderpdf.Policy{}, err
@@ -639,14 +638,23 @@ if err != nil {
 // Keep receipt with pdfSource before a later caller authorizes upload.
 ```
 
-The DOCX profile emits FODT. Normalization strips unsafe external and active
-constructs where LibreOffice can remove them; the normalized scan rejects any
-such constructs that survive. It rejects every `xml:base` attribute, so local
+The DOCX, DOC, ODT, and RTF profiles emit FODT. PPT emits FODP. XLS,
+ODS, and XLSX emit FODS. Normalization strips unsafe external and active constructs
+where LibreOffice can remove them; the normalized scan rejects any such
+constructs that survive. It rejects every `xml:base` attribute, so local
 fragment links cannot inherit an external base URI. Local formulas, internal
 fragment links, and embedded raster images remain valid. Ordinary hyperlinks
 to external sites or relative files are rejected if they survive normalization.
-Embedded OLE objects, plugins, applets, and nested documents are also rejected;
-this profile does not preserve every Word feature.
+Embedded OLE objects, plugins, applets, and nested documents are also rejected.
+The scanner admits two LibreOffice metadata forms: an empty Basic script
+container whose library list is empty or contains only the Standard
+embedded-library marker, and presentation layout placeholders for all ODF object
+types. Local spreadsheet filter and sort ranges are also admitted. The scanner
+still rejects script code, event handlers, external or relative links, DDE,
+external formulas, database sources, charts, OLE, plugins, embedded documents,
+and other active objects.
+The render policy bounds normalized bytes, PDF bytes, work bytes, XML depth and
+elements, and generated PDF pages through `MaxPages`.
 
 Each XML character-data token, including base64 image data, is limited to
 1 MiB. A document within the overall byte limit can still exceed this limit
@@ -655,8 +663,9 @@ when it contains a large embedded image.
 The receipt records both source and normalized identities, the exact PDF hash,
 the page count, the policy, and the runtime identities. `Result.Source` is a
 fresh `application/pdf` source. The receipt does not authorize upload. The
-Mistral adapter reuses this receipt for its configured DOCX route; no daemon
-option or CLI operation is added.
+Mistral adapter reuses this receipt for its configured office route; no daemon
+option or CLI operation is added. Native office authority remains separate
+when the render policy is absent.
 
 ## Package boundary
 

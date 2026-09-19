@@ -298,7 +298,7 @@ func (p Policy) Authorize(manifest CapabilityManifest, formatID string) (FormatA
 		return FormatAuthorization{}, noUploadAuthority(err)
 	}
 	method := result.UnitBoundMethod
-	if originalCandidate.ID == formatIDDOCX && p.renderPDF != nil {
+	if p.rendersToPDF(originalCandidate.ID) {
 		method = UnitBoundLocalExact
 	}
 	return FormatAuthorization{

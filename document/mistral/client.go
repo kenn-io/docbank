@@ -193,7 +193,7 @@ func newClientWithCredential(
 
 // Process verifies an opaque staged document and its capability authorization
 // before sending bytes. Direct formats hold one in-memory document copy per
-// attempt, up to PolicyValues.MaxDocumentBytes. DOCX conversion also holds source,
+// attempt, up to PolicyValues.MaxDocumentBytes. Rendered conversion also holds source,
 // normalized, and PDF buffers within the render policy limits; uploads retain
 // the PDF plus one copy per attempt, each up to PolicyValues.MaxDocumentBytes.
 // Applications must bound concurrent calls according to their memory budget.
@@ -260,7 +260,7 @@ func (c *Client) processWith(
 	if err != nil {
 		return Result{}, newProcessError(err, requests, providerLatency)
 	}
-	converted := initialSnapshot.format.ID == formatIDDOCX && method == UnitBoundLocalExact
+	converted := c.policy.rendersToPDF(initialSnapshot.format.ID) && method == UnitBoundLocalExact
 	var originalSnapshot preparedSnapshot
 	var uploadSnapshot preparedSnapshot
 	var retainedPDF []byte
@@ -273,7 +273,7 @@ func (c *Client) processWith(
 		}
 		var receipt renderpdf.Receipt
 		var convertErr error
-		retainedPDF, uploadSnapshot, receipt, convertErr = c.prepareDOCXUpload(ctx, source, originalSnapshot)
+		retainedPDF, uploadSnapshot, receipt, convertErr = c.prepareRenderedUpload(ctx, source, originalSnapshot)
 		clear(source)
 		if convertErr != nil {
 			return Result{}, newProcessError(convertErr, requests, providerLatency)
@@ -299,7 +299,7 @@ func (c *Client) processWith(
 		}
 		if converted {
 			if snapshot != originalSnapshot {
-				return Result{}, newProcessError(errors.New("mistral DOCX source changed before retry"), requests, providerLatency)
+				return Result{}, newProcessError(errors.New("mistral rendered source changed before retry"), requests, providerLatency)
 			}
 			snapshot = uploadSnapshot
 		}
@@ -312,7 +312,7 @@ func (c *Client) processWith(
 		attemptReader := readDocument
 		if converted {
 			attemptReader = func(attemptCtx context.Context, attempt preparedSnapshot) ([]byte, error) {
-				return readDOCXUpload(attemptCtx, retainedPDF, attempt)
+				return readRenderedUpload(attemptCtx, retainedPDF, attempt)
 			}
 		}
 		result, retryHeader, requested, latency, processErr := c.processOnce(
@@ -326,7 +326,7 @@ func (c *Client) processWith(
 		if processErr == nil {
 			if converted {
 				result.Document.Family = originalSnapshot.format.Family
-				result.Document.UnitKind = originalSnapshot.format.UnitKind
+				result.Document.UnitKind = "page"
 				result.ConversionReceipt = conversionReceipt
 			}
 			result.Metrics = requestMetrics(requests, providerLatency)
@@ -359,7 +359,7 @@ func (c *Client) validatePreparedSnapshot(
 			snapshot.size, c.policy.values.MaxDocumentBytes)
 	}
 	if authorization.method == UnitBoundLocalExact &&
-		(snapshot.format.ID != formatIDDOCX || c.policy.renderPDF == nil) &&
+		!c.policy.rendersToPDF(snapshot.format.ID) &&
 		(snapshot.localUnits <= 0 || snapshot.localUnits > c.policy.values.MaxUnits) {
 		return fmt.Errorf("mistral OCR local unit count exceeds authorized limit: %w", ErrCapabilityContract)
 	}

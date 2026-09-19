@@ -18,11 +18,24 @@ func TestPolicyFingerprintIncludesExecutedStageArguments(t *testing.T) {
 	encoded, err := encodePolicyFingerprint(policy.renderer, policy.runnerID, policy.limits, warmupFixtureDigests())
 	require.NoError(t, err)
 	var fingerprint struct {
-		Arguments map[string][]string `json:"arguments"`
+		Arguments  map[string][]string `json:"arguments"`
+		WarmupKeys map[string]string   `json:"warmup_keys"`
 	}
 	require.NoError(t, json.Unmarshal(encoded, &fingerprint))
+	profile, ok := profileFor("docx")
+	require.True(t, ok)
 	for _, request := range runner.calls {
-		assert.Equal(t, request.Arguments, fingerprint.Arguments[request.Stage])
+		assert.Equal(t, request.Arguments, fingerprint.Arguments[profileStageKey(profile, request.Stage)])
+	}
+	assert.Len(t, fingerprint.Arguments, len(renderProfiles)*2)
+	for _, profile := range renderProfiles {
+		for _, stage := range []string{"normalize", "pdf"} {
+			key := profileStageKey(profile, stage)
+			request := stageRequest(policy, profile, stage, []byte("synthetic input"))
+			assert.Equal(t, request.Arguments, fingerprint.Arguments[key])
+			assert.Equal(t, warmupKey(profile, stage), fingerprint.WarmupKeys[key])
+			assert.Equal(t, digest(request.WarmupInput), request.WarmupInputSHA256)
+		}
 	}
 }
 
@@ -62,8 +75,33 @@ func TestPolicyFingerprintIncludesWarmupDigest(t *testing.T) {
 	warmups := warmupFixtureDigests()
 	first, err := encodePolicyFingerprint(renderer, testRunnerIdentity, DefaultLimits(), warmups)
 	require.NoError(t, err)
-	warmups[0] = strings.Repeat("0", 64)
-	second, err := encodePolicyFingerprint(renderer, testRunnerIdentity, DefaultLimits(), warmups)
+	for index := range warmups {
+		mutated := append([]string(nil), warmups...)
+		mutated[index] = strings.Repeat("0", 64)
+		second, err := encodePolicyFingerprint(renderer, testRunnerIdentity, DefaultLimits(), mutated)
+		require.NoError(t, err)
+		assert.NotEqual(t, digest(first), digest(second), "warm-up digest %d", index)
+	}
+}
+
+func TestPolicyFingerprintIncludesWarmupKeys(t *testing.T) {
+	executable, err := os.Executable()
+	require.NoError(t, err)
+	content, err := os.ReadFile(executable)
+	require.NoError(t, err)
+	runtimeFile := RuntimeFile{SourcePath: executable, GuestPath: "/usr/bin/test-runner", SHA256: digest(content), Executable: true}
+	runtimeIdentity, err := runtimeIdentityForManifest([]RuntimeFile{runtimeFile}, nil)
+	require.NoError(t, err)
+	renderer := Renderer{
+		Executable: executable, ExecutableSHA256: digest(content),
+		Runtime: []RuntimeFile{runtimeFile}, RuntimeIdentity: runtimeIdentity,
+	}
+	first, err := encodePolicyFingerprint(renderer, testRunnerIdentity, DefaultLimits(), warmupFixtureDigests())
+	require.NoError(t, err)
+	original := renderProfiles[1].sourceWarmup
+	defer func() { renderProfiles[1].sourceWarmup = original }()
+	renderProfiles[1].sourceWarmup = "docx"
+	second, err := encodePolicyFingerprint(renderer, testRunnerIdentity, DefaultLimits(), warmupFixtureDigests())
 	require.NoError(t, err)
 	assert.NotEqual(t, digest(first), digest(second))
 }

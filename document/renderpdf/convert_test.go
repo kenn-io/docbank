@@ -108,6 +108,43 @@ func TestTrustedWarmupFixturesArePinnedAndAdmitted(t *testing.T) {
 	assert.Equal(t, trustedFODTWarmupSHA256, digest(fodt))
 	_, err = Scan(fodt, FlatTextKind, DefaultLimits())
 	require.NoError(t, err)
+	for _, kind := range []string{FlatPresKind, FlatCalcKind} {
+		fixture := trustedWarmupFixture(kind)
+		require.NotEmpty(t, fixture)
+		assert.Equal(t, trustedWarmupDigest(kind), digest(fixture))
+		_, err = Scan(fixture, kind, DefaultLimits())
+		require.NoError(t, err)
+	}
+}
+
+func TestRenderProfilesCoverRenderLane(t *testing.T) {
+	want := []struct {
+		id, kind, input, output, normalize, pdf, sourceWarmup string
+	}{
+		{"docx", FlatTextKind, "source.docx", "source.fodt", "OpenDocument Text Flat XML", "writer_pdf_Export", "docx"},
+		{"doc", FlatTextKind, "source.doc", "source.fodt", "OpenDocument Text Flat XML", "writer_pdf_Export", FlatTextKind},
+		{"odt", FlatTextKind, "source.odt", "source.fodt", "OpenDocument Text Flat XML", "writer_pdf_Export", FlatTextKind},
+		{"rtf", FlatTextKind, "source.rtf", "source.fodt", "OpenDocument Text Flat XML", "writer_pdf_Export", FlatTextKind},
+		{"ppt", FlatPresKind, "source.ppt", "source.fodp", "OpenDocument Presentation Flat XML", "impress_pdf_Export", FlatPresKind},
+		{"xls", FlatCalcKind, "source.xls", "source.fods", "OpenDocument Spreadsheet Flat XML", "calc_pdf_Export", FlatCalcKind},
+		{"ods", FlatCalcKind, "source.ods", "source.fods", "OpenDocument Spreadsheet Flat XML", "calc_pdf_Export", FlatCalcKind},
+		{"xlsx", FlatCalcKind, "source.xlsx", "source.fods", "OpenDocument Spreadsheet Flat XML", "calc_pdf_Export", FlatCalcKind},
+	}
+	require.Len(t, renderProfiles, len(want))
+	for index, expected := range want {
+		profile := renderProfiles[index]
+		assert.Equal(t, expected.id, profile.ID)
+		assert.Equal(t, expected.kind, profile.kind)
+		assert.Equal(t, expected.input, profile.inputName)
+		assert.Equal(t, expected.output, profile.outputName)
+		assert.Equal(t, expected.normalize, profile.normalizeMime)
+		assert.Equal(t, expected.pdf, profile.pdfFilter)
+		assert.Equal(t, expected.sourceWarmup, profile.sourceWarmup)
+		assert.True(t, Supports(expected.id))
+	}
+	for _, id := range []string{"pdf", "pptx", "numbers", "csv", "txt"} {
+		assert.False(t, Supports(id))
+	}
 }
 
 func TestConvertRejectsUnsafeNormalizedOutputBeforePDFStage(t *testing.T) {
@@ -290,10 +327,8 @@ func writeZip(archive *zip.Writer, name, content string) error {
 	return err
 }
 
-//nolint:unparam // the helper retains the profile argument for fixture readability.
 func flatODF(kind, body string) []byte {
-	_ = kind
-	mimeType := "application/vnd.oasis.opendocument.text"
+	mimeType := flatKindMIMETypes[kind]
 	return []byte(`<?xml version="1.0" encoding="UTF-8"?><office:document xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" office:mimetype="` + mimeType + `"><office:body>` + body + `</office:body></office:document>`)
 }
 

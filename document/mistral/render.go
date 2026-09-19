@@ -13,8 +13,12 @@ import (
 	"go.kenn.io/docbank/document/renderpdf"
 )
 
+func (p Policy) rendersToPDF(formatID string) bool {
+	return p.renderPDF != nil && renderpdf.Supports(formatID)
+}
+
 func (p Policy) uploadCandidate(candidate CandidateFormat) CandidateFormat {
-	if candidate.ID == formatIDDOCX && p.renderPDF != nil {
+	if p.rendersToPDF(candidate.ID) {
 		if pdf, ok := CandidateFormatByID(formatIDPDF); ok {
 			return pdf
 		}
@@ -22,12 +26,12 @@ func (p Policy) uploadCandidate(candidate CandidateFormat) CandidateFormat {
 	return candidate
 }
 
-func (c *Client) prepareDOCXUpload(
+func (c *Client) prepareRenderedUpload(
 	ctx context.Context, source []byte, snapshot preparedSnapshot,
 ) ([]byte, preparedSnapshot, renderpdf.Receipt, error) {
-	if c.policy.renderPDF == nil {
+	if !c.policy.rendersToPDF(snapshot.format.ID) {
 		return nil, preparedSnapshot{}, renderpdf.Receipt{}, fmt.Errorf(
-			"%w: Mistral DOCX rendering is not configured", ErrCapabilityContract,
+			"%w: Mistral rendered PDF policy is not configured for %q", ErrCapabilityContract, snapshot.format.ID,
 		)
 	}
 	original, err := ocr.NewSource(
@@ -36,17 +40,17 @@ func (c *Client) prepareDOCXUpload(
 	if err != nil {
 		return nil, preparedSnapshot{}, renderpdf.Receipt{}, fmt.Errorf("%w: %w", ErrInvalidSource, err)
 	}
-	converted, err := renderpdf.Convert(ctx, original, formatIDDOCX, *c.policy.renderPDF)
+	converted, err := renderpdf.Convert(ctx, original, snapshot.format.ID, *c.policy.renderPDF)
 	if err != nil {
-		return nil, preparedSnapshot{}, renderpdf.Receipt{}, classifyDOCXConversionError(ctx, err)
+		return nil, preparedSnapshot{}, renderpdf.Receipt{}, classifyRenderConversionError(ctx, err)
 	}
 	pdfBytes := converted.PDF()
 	receipt := converted.Receipt()
-	if receipt.SourceFormat != formatIDDOCX || receipt.OriginalFormat != formatIDDOCX ||
+	if receipt.SourceFormat != snapshot.format.ID || receipt.OriginalFormat != snapshot.format.ID ||
 		receipt.SourceSHA256 != snapshot.sha256 || receipt.SourceBytes != snapshot.size {
 		clear(pdfBytes)
 		return nil, preparedSnapshot{}, renderpdf.Receipt{}, fmt.Errorf(
-			"%w: render PDF receipt does not match the original DOCX", ErrCapabilityContract,
+			"%w: render PDF receipt does not match the original %s", ErrCapabilityContract, snapshot.format.ID,
 		)
 	}
 	digest := sha256.Sum256(pdfBytes)
@@ -71,7 +75,7 @@ func (c *Client) prepareDOCXUpload(
 	}, receipt, nil
 }
 
-func classifyDOCXConversionError(ctx context.Context, err error) error {
+func classifyRenderConversionError(ctx context.Context, err error) error {
 	if err == nil || errors.Is(err, context.Canceled) {
 		return err
 	}
@@ -87,7 +91,7 @@ func classifyDOCXConversionError(ctx context.Context, err error) error {
 	if errors.Is(err, renderpdf.ErrRendererChanged) {
 		return fmt.Errorf("%w: %w", ErrTransientResponse, err)
 	}
-	if isDOCXRendererRuntimeError(err) {
+	if isRenderRendererRuntimeError(err) {
 		return fmt.Errorf("%w: %w", ErrTransientResponse, err)
 	}
 	if errors.Is(err, renderpdf.ErrSourceRejected) {
@@ -96,7 +100,7 @@ func classifyDOCXConversionError(ctx context.Context, err error) error {
 	return fmt.Errorf("%w: %w", ErrCapabilityContract, err)
 }
 
-func isDOCXRendererRuntimeError(err error) bool {
+func isRenderRendererRuntimeError(err error) bool {
 	for _, marker := range []error{
 		renderpdf.ErrUnavailable,
 		renderpdf.ErrPrivateRootUnavailable,
@@ -112,7 +116,7 @@ func isDOCXRendererRuntimeError(err error) bool {
 	return false
 }
 
-func readDOCXUpload(ctx context.Context, pdf []byte, snapshot preparedSnapshot) ([]byte, error) {
+func readRenderedUpload(ctx context.Context, pdf []byte, snapshot preparedSnapshot) ([]byte, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}

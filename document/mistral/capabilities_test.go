@@ -58,6 +58,28 @@ func TestDOCXRouteAuthority(t *testing.T) {
 	require.ErrorContains(t, err, "different request policy")
 }
 
+func TestRenderRouteNegativeSpace(t *testing.T) {
+	configured := testPolicyWithRenderPDF(t, testRenderPDFPolicy(t, testMultipagePDF(1), nil), 1<<20, 11)
+	for _, formatID := range []string{"docx", "doc", "odt", "rtf", "ppt", "xls", "ods", "xlsx"} {
+		assert.True(t, configured.rendersToPDF(formatID), formatID)
+	}
+	for _, formatID := range []string{"pdf", "pptx", "txt", "numbers"} {
+		assert.False(t, configured.rendersToPDF(formatID), formatID)
+	}
+	unconfigured := testPolicy(t, 1<<20, 11)
+	assert.False(t, unconfigured.rendersToPDF("docx"))
+	assert.False(t, unconfigured.rendersToPDF("xlsx"))
+
+	manifest := syntheticManifest(t, configured, true)
+	for _, formatID := range []string{"docx", "doc", "odt", "rtf", "ppt", "xls", "ods", "xlsx"} {
+		authorization, err := configured.Authorize(manifest, formatID)
+		require.NoError(t, err, formatID)
+		assert.Equal(t, UnitBoundLocalExact, authorization.method, formatID)
+	}
+	_, err := unconfigured.Authorize(syntheticManifest(t, unconfigured, true), "xlsx")
+	require.ErrorContains(t, err, "no enforceable unit bound")
+}
+
 func TestDOCXPolicyIdentity(t *testing.T) {
 	base := testPolicy(t, 1<<20, 11)
 	manifest := syntheticManifest(t, base, true)

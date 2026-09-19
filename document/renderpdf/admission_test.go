@@ -16,30 +16,90 @@ func TestAdmissionAllowsLocalLinksFormulasAndRasterData(t *testing.T) {
 	assert.Positive(t, admission.Elements)
 }
 
-func TestAdmissionRejectsLinkedAndActiveConstructs(t *testing.T) {
-	for _, testCase := range []struct {
-		name string
-		body string
+func TestAdmissionMatchesFlatKindMimeType(t *testing.T) {
+	tests := []struct {
+		kind string
+		mime string
 	}{
-		{name: "external href", body: `<draw:image xmlns:draw="urn:oasis:names:tc:opendocument:xmlns:drawing:1.0" xmlns:xlink="http://www.w3.org/1999/xlink" xlink:href="../outside.png"/>`},
-		{name: "inherited XML Base fragment", body: `<text:p xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0" xmlns:xlink="http://www.w3.org/1999/xlink" xml:base="https://example.test/links/"><xlink:a xlink:href="#local"/></text:p>`},
-		{name: "script", body: `<office:script/>`},
-		{name: "event", body: `<office:event-listeners/>`},
-		{name: "dde", body: `<office:dde-link/>`},
-		{name: "database", body: `<table:database-range xmlns:table="urn:oasis:names:tc:opendocument:xmlns:table:1.0"/>`},
-		{name: "section", body: `<text:section-source xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0"/>`},
-		{name: "ole", body: `<draw:object-ole xmlns:draw="urn:oasis:names:tc:opendocument:xmlns:drawing:1.0"/>`},
-		{name: "plugin", body: `<draw:plugin xmlns:draw="urn:oasis:names:tc:opendocument:xmlns:drawing:1.0"/>`},
-		{name: "applet", body: `<draw:applet xmlns:draw="urn:oasis:names:tc:opendocument:xmlns:drawing:1.0"/>`},
-		{name: "nested document", body: `<office:embedded-document/>`},
-		{name: "webservice element text", body: `<f>WEBSERVICE("https://example.test")</f>`},
-		{name: "external formula", body: `<table:table-cell xmlns:table="urn:oasis:names:tc:opendocument:xmlns:table:1.0" table:formula="of:=DDE(\"https://example.test\")"/>`},
-		{name: "SVG data", body: `<draw:image xmlns:draw="urn:oasis:names:tc:opendocument:xmlns:drawing:1.0" xmlns:xlink="http://www.w3.org/1999/xlink" xlink:href="data:image/svg+xml;base64,PHN2Zy8+"/>`},
-		{name: "unknown image data", body: `<draw:image xmlns:draw="urn:oasis:names:tc:opendocument:xmlns:drawing:1.0" xmlns:xlink="http://www.w3.org/1999/xlink" xlink:href="data:image/tiff;base64,AA=="/>`},
+		{kind: FlatTextKind, mime: "application/vnd.oasis.opendocument.text"},
+		{kind: FlatPresKind, mime: "application/vnd.oasis.opendocument.presentation"},
+		{kind: FlatCalcKind, mime: "application/vnd.oasis.opendocument.spreadsheet"},
+	}
+	for _, testCase := range tests {
+		t.Run(testCase.kind, func(t *testing.T) {
+			admission, err := Scan(flatODF(testCase.kind, `<office:body/>`), testCase.kind, DefaultLimits())
+			require.NoError(t, err)
+			assert.Equal(t, testCase.kind, admission.Kind)
+			for _, other := range tests {
+				if other.kind == testCase.kind {
+					continue
+				}
+				_, err := Scan(flatODF(other.kind, `<office:body/>`), testCase.kind, DefaultLimits())
+				require.Error(t, err)
+			}
+		})
+	}
+}
+
+func TestAdmissionAllowsLibreOfficeMetadata(t *testing.T) {
+	textMetadata := `<office:scripts xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:script="urn:oasis:names:tc:opendocument:xmlns:script:1.0" xmlns:ooo="http://openoffice.org/2004/office"><office:script script:language="ooo:Basic"><ooo:libraries><ooo:library-embedded ooo:name="Standard"/></ooo:libraries></office:script></office:scripts>`
+	_, err := Scan(flatODF(FlatTextKind, textMetadata), FlatTextKind, DefaultLimits())
+	require.NoError(t, err)
+	emptyTextMetadata := `<office:scripts xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:script="urn:oasis:names:tc:opendocument:xmlns:script:1.0" xmlns:ooo="http://openoffice.org/2004/office"><office:script script:language="ooo:Basic"><ooo:libraries/></office:script></office:scripts>`
+	_, err = Scan(flatODF(FlatTextKind, emptyTextMetadata), FlatTextKind, DefaultLimits())
+	require.NoError(t, err)
+
+	for _, object := range []string{
+		"title", "outline", "subtitle", "text", "graphic", "object", "chart", "table",
+		"orgchart", "page", "notes", "handout", "header", "footer", "date-time", "page-number",
 	} {
-		t.Run(testCase.name, func(t *testing.T) {
-			_, err := Scan(flatODF(FlatTextKind, testCase.body), FlatTextKind, DefaultLimits())
-			require.Error(t, err)
+		t.Run(object, func(t *testing.T) {
+			metadata := `<presentation:placeholder xmlns:presentation="urn:oasis:names:tc:opendocument:xmlns:presentation:1.0" presentation:object="` + object + `"/>`
+			_, err := Scan(flatODF(FlatPresKind, metadata), FlatPresKind, DefaultLimits())
+			require.NoError(t, err)
+		})
+	}
+}
+
+func TestAdmissionAllowsLocalDatabaseRanges(t *testing.T) {
+	body := `<office:body><office:spreadsheet xmlns:table="urn:oasis:names:tc:opendocument:xmlns:table:1.0"><table:database-ranges><table:database-range table:name="Inventory" table:target-range-address="Sheet1.A1:Sheet1.B3" table:display-filter-buttons="true"><table:filter><table:filter-condition table:field-number="1" table:operator="&gt;=" table:value="2"/></table:filter><table:sort><table:sort-by table:field-number="0" table:order="ascending"/></table:sort></table:database-range></table:database-ranges></office:spreadsheet></office:body>`
+	_, err := Scan(flatODF(FlatCalcKind, body), FlatCalcKind, DefaultLimits())
+	require.NoError(t, err)
+}
+
+func TestAdmissionRejectsLinkedAndActiveConstructs(t *testing.T) {
+	for _, kind := range []string{FlatTextKind, FlatPresKind, FlatCalcKind} {
+		t.Run(kind, func(t *testing.T) {
+			for _, testCase := range []struct {
+				name string
+				body string
+			}{
+				{name: "external href", body: `<draw:image xmlns:draw="urn:oasis:names:tc:opendocument:xmlns:drawing:1.0" xmlns:xlink="http://www.w3.org/1999/xlink" xlink:href="../outside.png"/>`},
+				{name: "inherited XML Base fragment", body: `<text:p xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0" xmlns:xlink="http://www.w3.org/1999/xlink" xml:base="https://example.test/links/"><xlink:a xlink:href="#local"/></text:p>`},
+				{name: "script", body: `<office:script/>`},
+				{name: "script code", body: `<office:script xmlns:script="urn:oasis:names:tc:opendocument:xmlns:script:1.0" script:language="ooo:Basic"><ooo:libraries xmlns:ooo="http://openoffice.org/2004/office"><ooo:library-embedded ooo:name="Standard"/></ooo:libraries><text:p xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0">code</text:p></office:script>`},
+				{name: "event", body: `<office:event-listeners/>`},
+				{name: "dde", body: `<office:dde-link/>`},
+				{name: "database SQL", body: `<table:database-ranges xmlns:table="urn:oasis:names:tc:opendocument:xmlns:table:1.0"><table:database-range><table:database-source-sql table:database-name="external" table:sql-statement="SELECT * FROM inventory"/></table:database-range></table:database-ranges>`},
+				{name: "database query", body: `<table:database-range xmlns:table="urn:oasis:names:tc:opendocument:xmlns:table:1.0"><table:database-source-query table:database-name="external" table:query-name="inventory"/></table:database-range>`},
+				{name: "database table", body: `<table:database-range xmlns:table="urn:oasis:names:tc:opendocument:xmlns:table:1.0"><table:database-source-table table:database-name="external" table:table-name="inventory"/></table:database-range>`},
+				{name: "section", body: `<text:section-source xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0"/>`},
+				{name: "ole", body: `<draw:object-ole xmlns:draw="urn:oasis:names:tc:opendocument:xmlns:drawing:1.0"/>`},
+				{name: "chart", body: `<chart:chart xmlns:chart="urn:oasis:names:tc:opendocument:xmlns:chart:1.0"/>`},
+				{name: "presentation object", body: `<presentation:placeholder xmlns:presentation="urn:oasis:names:tc:opendocument:xmlns:presentation:1.0" presentation:object="slide"/>`},
+				{name: "plugin", body: `<draw:plugin xmlns:draw="urn:oasis:names:tc:opendocument:xmlns:drawing:1.0"/>`},
+				{name: "applet", body: `<draw:applet xmlns:draw="urn:oasis:names:tc:opendocument:xmlns:drawing:1.0"/>`},
+				{name: "nested document", body: `<office:embedded-document/>`},
+				{name: "webservice element text", body: `<f>WEBSERVICE("https://example.test")</f>`},
+				{name: "external formula", body: `<table:table-cell xmlns:table="urn:oasis:names:tc:opendocument:xmlns:table:1.0" table:formula="of:=DDE(\"https://example.test\")"/>`},
+				{name: "SVG data", body: `<draw:image xmlns:draw="urn:oasis:names:tc:opendocument:xmlns:drawing:1.0" xmlns:xlink="http://www.w3.org/1999/xlink" xlink:href="data:image/svg+xml;base64,PHN2Zy8+"/>`},
+				{name: "unknown image data", body: `<draw:image xmlns:draw="urn:oasis:names:tc:opendocument:xmlns:drawing:1.0" xmlns:xlink="http://www.w3.org/1999/xlink" xlink:href="data:image/tiff;base64,AA=="/>`},
+			} {
+				t.Run(testCase.name, func(t *testing.T) {
+					_, err := Scan(flatODF(kind, testCase.body), kind, DefaultLimits())
+					require.Error(t, err)
+				})
+			}
 		})
 	}
 }

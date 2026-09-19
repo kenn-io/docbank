@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/document/renderpdf"
 )
@@ -51,6 +52,55 @@ func TestLiveDOCXRenderedPDF(t *testing.T) {
 	result, err := client.Process(t.Context(), prepared, authorization)
 	require.NoError(t, err)
 	require.NotNil(t, result.ConversionReceipt)
+	if result.UnitsProcessed != result.ConversionReceipt.Pages {
+		t.Fatalf("provider_pages=%d generated_pages=%d", result.UnitsProcessed, result.ConversionReceipt.Pages)
+	}
+	t.Logf("source_sha256=%s upload_sha256=%s pages=%d upload_bytes=%d provider_pages=%d provider_bytes=%v",
+		result.ConversionReceipt.SourceSHA256, result.ConversionReceipt.PDFSHA256,
+		result.ConversionReceipt.Pages, result.ConversionReceipt.PDFBytes,
+		result.UnitsProcessed, result.ProviderBytes)
+}
+
+func TestLiveRenderedPDF(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("live rendered PDF proof requires the Linux native renderer; manual-owner-proof")
+	}
+	apiKey := os.Getenv("MISTRAL_API_KEY")
+	manifestPath := os.Getenv("MISTRAL_CAPABILITY_MANIFEST")
+	executable := os.Getenv("DOCBANK_TEST_LIBREOFFICE_EXECUTABLE")
+	if apiKey == "" || manifestPath == "" || executable == "" {
+		t.Skip("MISTRAL_API_KEY, MISTRAL_CAPABILITY_MANIFEST, and DOCBANK_TEST_LIBREOFFICE_EXECUTABLE are required; manual-owner-proof")
+	}
+	manifestBytes, err := os.ReadFile(manifestPath)
+	require.NoError(t, err)
+	manifest, err := DecodeCapabilityManifest(bytes.NewReader(manifestBytes))
+	require.NoError(t, err)
+	renderPolicy := liveRenderPDFPolicy(t, executable)
+	policy := testPolicyWithRenderPDF(t, renderPolicy, 50<<20, manifest.MaxUnits)
+	authorization, err := policy.Authorize(manifest, "xlsx")
+	require.NoError(t, err)
+	content, generated, err := generatedFixture("xlsx")
+	require.NoError(t, err)
+	require.True(t, generated)
+	candidate, ok := CandidateFormatByID("xlsx")
+	require.True(t, ok)
+	digest := sha256.Sum256(content)
+	spool := filepath.Join(t.TempDir(), "spool")
+	makePrivateDirectory(t, spool)
+	prepared, err := Prepare(t.Context(), io.NopCloser(bytes.NewReader(content)), policy, PrepareOptions{
+		Directory: spool, DeclaredMediaType: candidate.MediaType,
+		ExpectedSize: int64(len(content)), ExpectedSHA256: hex.EncodeToString(digest[:]),
+		MaxSpoolBytes: policy.values.MaxDocumentBytes, MinFreeBytes: 1,
+	})
+	require.NoError(t, err)
+	defer func() { require.NoError(t, prepared.Release()) }()
+	client, err := NewClient(policy, ClientConfig{APIKey: apiKey, Timeout: 2 * time.Minute, MaxRetries: 1})
+	require.NoError(t, err)
+	result, err := client.Process(t.Context(), prepared, authorization)
+	require.NoError(t, err)
+	require.NotNil(t, result.ConversionReceipt)
+	assert.Equal(t, "xlsx", result.ConversionReceipt.SourceFormat)
+	require.Positive(t, result.ConversionReceipt.Pages)
 	if result.UnitsProcessed != result.ConversionReceipt.Pages {
 		t.Fatalf("provider_pages=%d generated_pages=%d", result.UnitsProcessed, result.ConversionReceipt.Pages)
 	}

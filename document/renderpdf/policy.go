@@ -113,7 +113,18 @@ func NewPolicy(renderer Renderer, limits Limits) (Policy, error) {
 }
 
 func encodePolicyFingerprint(renderer Renderer, runnerID string, limits Limits, warmupDigests []string) ([]byte, error) {
-	profile, _ := profileFor("docx")
+	arguments := make(map[string][]string, len(renderProfiles)*2)
+	warmupKeys := make(map[string]string, len(renderProfiles)*2)
+	profiles := make([]string, 0, len(renderProfiles))
+	for index := range renderProfiles {
+		profile := renderProfiles[index]
+		for _, stage := range []string{"normalize", "pdf"} {
+			key := profileStageKey(profile, stage)
+			arguments[key] = stageArguments(profile, stage)
+			warmupKeys[key] = warmupKey(profile, stage)
+		}
+		profiles = append(profiles, profile.ID+"->"+profile.kind)
+	}
 	return canonical.Marshal(struct {
 		Version          string              `json:"version"`
 		Executable       string              `json:"executable"`
@@ -124,6 +135,7 @@ func encodePolicyFingerprint(renderer Renderer, runnerID string, limits Limits, 
 		RuntimeSymlinks  []RuntimeSymlink    `json:"runtime_symlinks"`
 		WarmupContract   string              `json:"warmup_contract"`
 		WarmupDigests    []string            `json:"warmup_digests"`
+		WarmupKeys       map[string]string   `json:"warmup_keys"`
 		Arguments        map[string][]string `json:"arguments"`
 		Environment      []string            `json:"environment"`
 		Profiles         []string            `json:"profiles"`
@@ -138,12 +150,8 @@ func encodePolicyFingerprint(renderer Renderer, runnerID string, limits Limits, 
 		ExecutableSHA256: renderer.ExecutableSHA256, RuntimeIdentity: renderer.RuntimeIdentity,
 		RunnerIdentity: runnerID, Runtime: renderer.Runtime,
 		RuntimeSymlinks: renderer.RuntimeSymlinks,
-		Arguments: map[string][]string{
-			"normalize": libreOfficeArguments(profile.inputName, profile.outputName, profile.normalizeMime),
-			"pdf":       libreOfficeArguments(profile.outputName, "source.pdf", profile.pdfFilter),
-		},
-		Environment: libreOfficeEnvironment(), Profiles: []string{"docx->fodt"},
-		WarmupContract: WarmupContractVersion, WarmupDigests: warmupDigests,
+		Arguments:       arguments, Environment: libreOfficeEnvironment(), Profiles: profiles,
+		WarmupContract: WarmupContractVersion, WarmupDigests: warmupDigests, WarmupKeys: warmupKeys,
 		PrivateRoot: true,
 		Limits: struct {
 			Limits
@@ -151,6 +159,10 @@ func encodePolicyFingerprint(renderer Renderer, runnerID string, limits Limits, 
 			Timeout int64 `json:"timeout_ns"`
 		}{Limits: limits, Timeout: int64(limits.Timeout)},
 	})
+}
+
+func profileStageKey(profile formatProfile, stage string) string {
+	return profile.ID + ":" + stage
 }
 
 func validateRuntimeEntries(renderer Renderer, maxEntries int) error {
