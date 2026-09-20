@@ -34,6 +34,7 @@ var (
 	searchExplain        bool
 	searchSimilarTo      string
 	searchVersion        string
+	searchRerank         bool
 )
 
 type documentSearchCLIOptions struct {
@@ -43,6 +44,7 @@ type documentSearchCLIOptions struct {
 	ContentVersionIDs []string
 	Limit             int
 	Explain           bool
+	Rerank            bool
 	JSON              bool
 }
 
@@ -89,7 +91,7 @@ var searchCmd = &cobra.Command{
 			options := documentSearchCLIOptions{
 				Mode: searchMode, Profile: searchProfile, BindingID: searchBinding,
 				ContentVersionIDs: searchSourceVersions, Limit: searchLimit,
-				Explain: searchExplain, JSON: searchJSON,
+				Explain: searchExplain, Rerank: searchRerank, JSON: searchJSON,
 			}
 			if err := validateDocumentSearchOptions(strings.Join(args, " "), options); err != nil {
 				return err
@@ -212,7 +214,7 @@ var searchCmd = &cobra.Command{
 func documentSearchFlagsChanged(cmd *cobra.Command) bool {
 	return cmd.Flags().Changed("mode") || cmd.Flags().Changed("profile") ||
 		cmd.Flags().Changed("binding") || cmd.Flags().Changed("source-version") ||
-		cmd.Flags().Changed("explain")
+		cmd.Flags().Changed("explain") || searchRerank
 }
 
 func runSimilarSearch(cmd *cobra.Command, c *daemonconn.Connection, selector nodeSelector, version string, options documentSearchCLIOptions) error {
@@ -307,7 +309,7 @@ func runDocumentSearch(cmd *cobra.Command, c *daemonconn.Connection, query strin
 	}
 	report, err := c.SearchDocuments(cmd.Context(), api.DocumentSearchRequest{
 		Query: query, Mode: options.Mode, Limit: options.Limit, Profile: options.Profile,
-		BindingID: bindingID, Explain: options.Explain,
+		BindingID: bindingID, Explain: options.Explain, Rerank: options.Rerank,
 		Fence: api.DocumentSourceFence{VaultUID: info.VaultID, ContentVersionIDs: options.ContentVersionIDs},
 	})
 	if err != nil {
@@ -407,6 +409,15 @@ func writeDocumentSearchReport(cmd *cobra.Command, report api.DocumentSearchRepo
 	for _, degradation := range report.Degradations {
 		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "degraded: %s\n", degradation)
 	}
+	if report.Reranking != nil {
+		if report.Reranking.Cause == "" {
+			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "reranking: %s (%d candidates)\n",
+				report.Reranking.Outcome, report.Reranking.CandidateCount)
+		} else {
+			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "reranking: %s (%s, %d candidates)\n",
+				report.Reranking.Outcome, report.Reranking.Cause, report.Reranking.CandidateCount)
+		}
+	}
 	if len(report.Results) == 0 {
 		_, err := fmt.Fprintln(cmd.OutOrStdout(), "no matches inside the source fence")
 		if err != nil {
@@ -459,6 +470,8 @@ func init() {
 		"allowed content-version UUID (repeat for a bounded source fence)")
 	searchCmd.Flags().BoolVar(&searchExplain, "explain", false,
 		"show bounded retrieval stages without raw similarities or vectors")
+	searchCmd.Flags().BoolVar(&searchRerank, "rerank", false,
+		"rerank the source-fenced processing search results")
 	searchCmd.Flags().BoolVar(&searchJSON, "json", false, "emit machine-readable JSON")
 	rootCmd.AddCommand(searchCmd)
 }

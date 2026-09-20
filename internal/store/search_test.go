@@ -165,6 +165,12 @@ func TestSimilarOrdinarySemanticSearchPreservesIdenticalDocuments(t *testing.T) 
 
 func TestResolveSemanticCandidatesReturnsOnlyCurrentScopedHeads(t *testing.T) {
 	s, versionID, profile, _ := newEmbeddingCatalogFixture(t)
+	version, err := s.ContentVersionByID(t.Context(), versionID)
+	require.NoError(t, err)
+	_, err = s.db.ExecContext(t.Context(),
+		`INSERT INTO content_fts(blob_hash,extractor,text) VALUES(?,?,?)`,
+		version.BlobHash, "synthetic-semantic", "semantic source excerpt")
+	require.NoError(t, err)
 	record := embeddingSetFixture(s, versionID, profile.Fingerprint,
 		document.EmbeddingInputOriginalFile, "optional", "")
 	require.NoError(t, s.StageEmbeddingSet(t.Context(), record))
@@ -194,6 +200,7 @@ func TestResolveSemanticCandidatesReturnsOnlyCurrentScopedHeads(t *testing.T) {
 	assert.Equal(t, versionID, resolution.Candidates[0].ContentVersionID)
 	assert.Equal(t, record.ID, resolution.Candidates[0].EmbeddingSetID)
 	assert.Equal(t, document.EmbeddingInputOriginalFile, resolution.Candidates[0].InputKind)
+	assert.Equal(t, "semantic source excerpt", resolution.Candidates[0].Excerpt)
 
 	filtered, err := s.ResolveSemanticCandidates(t.Context(), profile.Fingerprint, record.BindingID,
 		record.InputKind, record.VectorSpace.ID, source.ManifestChecksum,
@@ -443,6 +450,8 @@ func TestChunkSemanticAuthorityKeepsResultsCoverageAndRevalidationConsistent(t *
 	require.NoError(t, err)
 	require.Len(t, resolution.Candidates, 1)
 	require.Equal(t, 1, resolution.CompleteDocuments)
+	assert.Empty(t, resolution.Candidates[0].Excerpt,
+		"retrieval resolves rendition-chunk text from the exact retained input")
 
 	var nodeID, nodeRevision int64
 	require.NoError(t, s.db.QueryRow(`SELECT n.id,n.revision FROM nodes n JOIN content_versions cv

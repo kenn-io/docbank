@@ -132,7 +132,10 @@ and the [CLI commands](cli-reference.md#docbank-processing).
 [Processing search](usage/search.md) offers lexical, semantic, hybrid, and auto
 modes inside an explicit set of authorized source versions. Semantic and
 hybrid search require active consent to disclose query text. Ordinary name
-and text search remains separate; auto currently uses lexical retrieval.
+and text search remains separate; auto currently uses lexical retrieval. An
+explicit rerank option can reorder the revalidated result prefix through a
+configured ZeroEntropy or Cohere adapter. Reranking has its own consent grant,
+4,096-byte excerpt ceiling, and `applied`, `degraded`, or `skipped` receipt.
 
 Go applications can use the [document packages](document-understanding.md) to
 prepare text and Markdown renditions, call OCR and embedding providers, and

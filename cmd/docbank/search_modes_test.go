@@ -34,6 +34,7 @@ func TestSearchModesRequireExplicitBindingWhenProfileIsAmbiguous(t *testing.T) {
 			assert.NoError(t, json.UnmarshalRead(request.Body, &body))
 			assert.Equal(t, "hybrid", body.Mode)
 			assert.Equal(t, "multilingual", body.BindingID)
+			assert.True(t, body.Rerank)
 			assert.Equal(t, vaultID, body.Fence.VaultUID)
 			assert.Equal(t, []string{processingTestVersionID}, body.Fence.ContentVersionIDs)
 			assert.NoError(t, json.MarshalWrite(w, api.DocumentSearchReport{
@@ -44,7 +45,8 @@ func TestSearchModesRequireExplicitBindingWhenProfileIsAmbiguous(t *testing.T) {
 					ContentVersionID: processingTestVersionID, Rank: 1, Score: 0.75,
 					Path: "/docs/report.pdf", Excerpt: "synthetic match", LexicalRank: 1,
 					Evidence: []api.DocumentEvidenceReference{{Kind: "node_name"}}}},
-				Trace: []api.DocumentSearchTrace{{Code: "source_fence", Count: 1}},
+				Reranking: &api.DocumentSearchRerankingReceipt{Outcome: "applied", CandidateCount: 1},
+				Trace:     []api.DocumentSearchTrace{{Code: "source_fence", Count: 1}},
 			}))
 		default:
 			http.Error(w, request.Method+" "+request.URL.Path, http.StatusNotFound)
@@ -63,13 +65,29 @@ func TestSearchModesRequireExplicitBindingWhenProfileIsAmbiguous(t *testing.T) {
 	command, output := processingTestCommand()
 	require.NoError(t, runDocumentSearch(command, c, "synthetic", documentSearchCLIOptions{
 		Mode: "hybrid", Profile: "private", BindingID: "multilingual",
-		ContentVersionIDs: []string{processingTestVersionID}, Limit: 10, Explain: true, JSON: true,
+		ContentVersionIDs: []string{processingTestVersionID}, Limit: 10, Explain: true, Rerank: true, JSON: true,
 	}))
 	var report api.DocumentSearchReport
 	require.NoError(t, json.Unmarshal(output.Bytes(), &report))
 	assert.Equal(t, "hybrid", report.ActualMode)
 	assert.Equal(t, "source_fence", report.Trace[0].Code)
 	assert.Equal(t, 1, searchRequests)
+}
+
+func TestSearchRerankFlagEntersProcessingSearch(t *testing.T) {
+	flag := searchCmd.Flags().Lookup("rerank")
+	require.NotNil(t, flag)
+	searchRerank = false
+	require.NoError(t, flag.Value.Set("false"))
+	flag.Changed = false
+	t.Cleanup(func() {
+		searchRerank = false
+		_ = flag.Value.Set("false")
+		flag.Changed = false
+	})
+	require.False(t, documentSearchFlagsChanged(searchCmd))
+	require.NoError(t, searchCmd.Flags().Set("rerank", "true"))
+	assert.True(t, documentSearchFlagsChanged(searchCmd))
 }
 
 func TestSearchModesRequireSourceFence(t *testing.T) {

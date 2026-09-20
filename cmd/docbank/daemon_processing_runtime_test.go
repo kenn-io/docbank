@@ -3,6 +3,8 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json/v2"
 	"os"
 	"path/filepath"
@@ -22,6 +24,8 @@ import (
 	"go.kenn.io/docbank/internal/config"
 	"go.kenn.io/docbank/internal/daemonconn"
 	"go.kenn.io/docbank/internal/processing"
+	"go.kenn.io/docbank/internal/retrieval/cohere"
+	"go.kenn.io/docbank/internal/retrieval/zeroentropy"
 )
 
 func TestExecutableProcessingProfilesRegistersPlaintextRendition(t *testing.T) {
@@ -37,6 +41,63 @@ func TestExecutableProcessingProfilesRegistersPlaintextRendition(t *testing.T) {
 	require.NotNil(t, profiles["private-text"].RenditionProvider)
 	assert.Equal(t, descriptor, profiles["private-text"].RenditionProvider.Descriptor())
 	assert.Empty(t, profiles["private-text"].EmbeddingProviders)
+}
+
+func TestExecutableProcessingProfilesConstructsConfiguredRerankers(t *testing.T) {
+	provider, err := plaintext.New(plaintext.Profile{MaxDocumentBytes: plaintext.MaxDocumentBytes})
+	require.NoError(t, err)
+	cfg := plaintextProcessingConfig(provider.Descriptor().Fingerprint)
+	cfg.CredentialBindings["zero"] = config.CredentialBindingConfig{EnvironmentVariable: "DOCBANK_TEST_ZERO_KEY"}
+	cfg.CredentialBindings["cohere"] = config.CredentialBindingConfig{EnvironmentVariable: "DOCBANK_TEST_COHERE_KEY"}
+	cfg.CredentialBindings["only-rerank"] = config.CredentialBindingConfig{EnvironmentVariable: "DOCBANK_TEST_ONLY_RERANK_KEY"}
+	cfg.ProcessingProfiles["zero"] = rerankingOnlyProcessingProfile("zero", validDaemonRerankingConfig("zeroentropy"))
+	cfg.ProcessingProfiles["cohere"] = rerankingOnlyProcessingProfile("cohere", validDaemonRerankingConfig("cohere"))
+	cfg.ProcessingProfiles["only-rerank"] = rerankingOnlyProcessingProfile("only-rerank", validDaemonRerankingConfig("zeroentropy"))
+	onlyRerank := cfg.ProcessingProfiles["only-rerank"]
+	onlyRerank.Rendition = ""
+	cfg.ProcessingProfiles["only-rerank"] = onlyRerank
+	require.NoError(t, cfg.Validate())
+
+	profiles, err := executableProcessingProfiles(cfg, embeddingRuntimeBundle{})
+	require.NoError(t, err)
+	zero, ok := profiles["zero"].RerankingProvider.(*zeroentropy.Client)
+	require.True(t, ok)
+	cohereClient, ok := profiles["cohere"].RerankingProvider.(*cohere.Client)
+	require.True(t, ok)
+	assert.Len(t, zero.PolicyFingerprint(), 64)
+	assert.Len(t, cohereClient.PolicyFingerprint(), 64)
+	assert.Equal(t, 4096, profiles["zero"].RerankingProfile.MaxExcerptBytes)
+	assert.Equal(t, zero.PolicyFingerprint(), profiles["zero"].RerankingDisclosure.Deployment)
+	assert.Equal(t, cohereClient.PolicyFingerprint(), profiles["cohere"].RerankingDisclosure.Deployment)
+	assert.NotContains(t, profiles, "only-rerank")
+}
+
+func rerankingOnlyProcessingProfile(name string, ranking config.RerankingProfileConfig) config.ProcessingProfileConfig {
+	hash := processingHashForRuntimeTest
+	ranking.CredentialBinding = "credential:" + name
+	return config.ProcessingProfileConfig{Rendition: "plaintext", Retrieval: "lexical", Reranking: &ranking,
+		AttachmentPolicyFingerprint: hash("attachment"), CompletenessFingerprint: hash("completeness"),
+		ConsentFingerprint: hash("consent"), LexicalSegmenterFingerprint: hash("segments"),
+		MaxDocumentChars: 100000, MaxSegmentRunes: 1000, MaxUnitRunes: 100000,
+		NormalizerFingerprint: hash("normalizer"), SanitizerFingerprint: hash("sanitizer"),
+		TrustBoundary: "vault"}
+}
+
+func validDaemonRerankingConfig(provider string) config.RerankingProfileConfig {
+	model, endpoint := "zerank-2", "https://api.zeroentropy.dev"
+	if provider == "cohere" {
+		model, endpoint = "rerank-v4.0-pro", "https://api.cohere.com"
+	}
+	return config.RerankingProfileConfig{Provider: provider, Model: model, CandidateCount: 8,
+		ExcerptBytes: 4096, Deadline: config.Duration(time.Second), FailurePolicy: "degrade",
+		Endpoint: endpoint, AllowedCIDRs: []string{"192.0.2.0/24"}, ProxyMode: "disabled",
+		ConnectTimeout: config.Duration(time.Second), KeepAlive: config.Duration(time.Second),
+		TLSHandshakeTimeout: config.Duration(time.Second)}
+}
+
+func processingHashForRuntimeTest(value string) string {
+	digest := sha256.Sum256([]byte(value))
+	return hex.EncodeToString(digest[:])
 }
 
 func TestExecutableProcessingProfilesRegistersDoclingASR(t *testing.T) {

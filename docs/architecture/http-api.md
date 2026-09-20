@@ -348,10 +348,11 @@ It revokes this operator's processing grants across all profiles. A new grant
 must use a reviewed plan; revocation does not delete existing derivatives.
 
 Semantic and hybrid searches require active `query_text` consent for the
-selected binding's provider disclosure. Lexical and auto searches read retained
-local text without query embedding or query-text consent. Provider work checks
-consent before egress and before publication; having stored vectors alone does
-not authorize a query disclosure.
+selected binding's provider disclosure. When `rerank` is true, every mode also
+requires a separate `query_text_and_excerpt` grant for the reranking provider.
+Lexical and auto searches read retained local text without query embedding or
+query-text consent. Provider work checks consent before egress and before
+publication; having stored vectors alone does not authorize a query disclosure.
 
 #### Start work and recover its status
 
@@ -449,7 +450,8 @@ does not grant consent or start provider work.
     "vault_uid": "22222222-2222-4222-8222-222222222222",
     "content_version_ids": ["11111111-1111-4111-8111-111111111111"]
   },
-  "explain": true
+  "explain": true,
+  "rerank": true
 }
 ```
 
@@ -465,7 +467,9 @@ that embeds query text.
 
 The response includes `requested_mode`, `actual_mode`, `coverage`,
 `degradations`, `results`, `truncated`, and `trace` (`explain: true` populates
-the trace). Each result retains its vault, node, and content-version identity
+the trace). An opted-in request also returns a `reranking` receipt with
+`applied`, `degraded`, or `skipped`, a bounded candidate count, and a cause for
+degradation. Each result retains its vault, node, and content-version identity
 with bounded evidence references. The source fence applies before retrieval;
 vector scoring uses only eligible rows from current, live attachments.
 Consumers still check visibility immediately before displaying a result.

@@ -7,7 +7,9 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json/v2"
+	"errors"
 	"fmt"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -29,6 +31,7 @@ import (
 	"go.kenn.io/docbank/internal/apiclient"
 	"go.kenn.io/docbank/internal/daemonconn"
 	"go.kenn.io/docbank/internal/processing"
+	"go.kenn.io/docbank/internal/retrieval"
 	"go.kenn.io/docbank/internal/store"
 	"go.kenn.io/kit/packstore"
 )
@@ -337,7 +340,7 @@ func TestProcessingSourceFenceResolveRouteFailsClosedWithStableSanitizedErrors(t
 	}
 }
 
-func runProcessingForCoverage(t *testing.T, ts *httptest.Server, node store.Node) api.ProcessingJob {
+func runProcessingForCoverage(t *testing.T, ts *httptest.Server, node store.Node) {
 	t.Helper()
 	selector := map[string]any{"node_id": node.ID,
 		"content_version_id": node.CurrentVersionID, "profile": "private"}
@@ -349,7 +352,7 @@ func runProcessingForCoverage(t *testing.T, ts *httptest.Server, node store.Node
 	jobResponse, jobBody := do(t, ts, http.MethodPost, "/api/v1/processing/jobs", nil,
 		map[string]any{"selector": selector, "plan_fingerprint": plan.Fingerprint, "consent": true})
 	require.Equal(t, http.StatusOK, jobResponse.StatusCode, jobBody)
-	return processingJobFromStream(t, jobBody)
+	processingJobFromStream(t, jobBody)
 }
 
 func TestProcessingJobStreamPublishesDurableIdentityAndSurvivesDisconnect(t *testing.T) {
@@ -701,6 +704,114 @@ func TestDocumentSearchRejectsWhitespaceQuery(t *testing.T) {
 	require.Contains(t, body, `"code":"search_query_required"`)
 }
 
+func TestDocumentSearchRerankingReturnsAppliedAndDegradedReceipts(t *testing.T) {
+	t.Run("applied", func(t *testing.T) {
+		provider := &routeRerankingProvider{}
+		ts, catalog := newTestServer(t, configureProcessingTestServiceWithReranker(t, provider,
+			retrieval.ProviderFailureDegrade))
+		first := createFileWithContent(t, ts, catalog, "/first.txt", "needle first result\n")
+		second := createFileWithContent(t, ts, catalog, "/second.txt", "needle second result\n")
+		runProcessingForCoverage(t, ts, first)
+		runProcessingForCoverage(t, ts, second)
+		baseRequest := map[string]any{"query": "needle", "mode": "lexical", "profile": "private",
+			"fence": map[string]any{"vault_uid": catalog.VaultID(),
+				"content_version_ids": []string{first.CurrentVersionID, second.CurrentVersionID}}}
+		baseResponse, baseBody := do(t, ts, http.MethodPost, "/api/v1/search", nil, baseRequest)
+		require.Equal(t, http.StatusOK, baseResponse.StatusCode, baseBody)
+		falseRequest := maps.Clone(baseRequest)
+		falseRequest["rerank"] = false
+		falseResponse, falseBody := do(t, ts, http.MethodPost, "/api/v1/search", nil, falseRequest)
+		require.Equal(t, http.StatusOK, falseResponse.StatusCode, falseBody)
+		assert.Equal(t, baseBody, falseBody)
+		revocationResponse, revocationBody := do(t, ts, http.MethodPost,
+			"/api/v1/processing/consent/revocations", nil, nil)
+		require.Equal(t, http.StatusOK, revocationResponse.StatusCode, revocationBody)
+
+		request := map[string]any{"query": "needle", "mode": "lexical", "profile": "private",
+			"rerank": true, "fence": map[string]any{"vault_uid": catalog.VaultID(),
+				"content_version_ids": []string{first.CurrentVersionID, second.CurrentVersionID}}}
+		deniedResponse, deniedBody := do(t, ts, http.MethodPost, "/api/v1/search", nil, request)
+		require.Equal(t, http.StatusOK, deniedResponse.StatusCode, deniedBody)
+		assert.Contains(t, deniedBody, `"cause":"authorization_denied"`)
+		assert.Zero(t, provider.calls)
+		grantProcessingTestConsent(t, ts, first)
+		response, body := do(t, ts, http.MethodPost, "/api/v1/search", nil, request)
+		require.Equal(t, http.StatusOK, response.StatusCode, body)
+		assert.Contains(t, body, `"outcome":"applied"`)
+		assert.Contains(t, body, `"candidate_count":2`)
+		assert.NotContains(t, body, "private query")
+		assert.Positive(t, provider.calls)
+		var report api.DocumentSearchReport
+		require.NoError(t, json.Unmarshal([]byte(body), &report))
+		require.Len(t, report.Results, 2)
+		assert.Equal(t, second.CurrentVersionID, report.Results[0].ContentVersionID)
+	})
+
+	t.Run("degraded provider", func(t *testing.T) {
+		provider := &routeRerankingProvider{err: errors.New("provider body and secret")}
+		ts, catalog := newTestServer(t, configureProcessingTestServiceWithReranker(t, provider,
+			retrieval.ProviderFailureDegrade))
+		first := createFileWithContent(t, ts, catalog, "/degraded.txt", "needle degraded result\n")
+		runProcessingForCoverage(t, ts, first)
+		grantProcessingTestConsent(t, ts, first)
+		planResponse, planBody := do(t, ts, http.MethodPost, "/api/v1/processing/plans", nil,
+			map[string]any{"selector": map[string]any{"node_id": first.ID,
+				"content_version_id": first.CurrentVersionID, "profile": "private"}})
+		require.Equal(t, http.StatusOK, planResponse.StatusCode, planBody)
+		var plan api.ProcessingPlan
+		require.NoError(t, json.Unmarshal([]byte(planBody), &plan))
+		var rerankingHop *api.ProcessingFlowHop
+		for index := range plan.Flow {
+			if plan.Flow[index].Capability == "reranking" {
+				rerankingHop = &plan.Flow[index]
+			}
+		}
+		require.NotNil(t, rerankingHop)
+		assert.Equal(t, processingTestHash("reranker-policy"), rerankingHop.RuntimeDisclosure.Deployment)
+		assert.Equal(t, 1, plan.Estimate.ProviderCalls)
+		request := map[string]any{"query": "needle", "mode": "lexical", "profile": "private",
+			"rerank": true, "fence": map[string]any{"vault_uid": catalog.VaultID(),
+				"content_version_ids": []string{first.CurrentVersionID}}}
+		response, body := do(t, ts, http.MethodPost, "/api/v1/search", nil, request)
+		require.Equal(t, http.StatusOK, response.StatusCode, body)
+		assert.Contains(t, body, `"reranking_degraded"`)
+		assert.Contains(t, body, `"cause":"unavailable"`)
+		assert.NotContains(t, body, "provider body")
+	})
+}
+
+func TestDocumentSearchRerankingRejectsUnavailableAndFailClosed(t *testing.T) {
+	t.Run("unavailable", func(t *testing.T) {
+		ts, catalog := newTestServer(t, configureProcessingTestService(t))
+		node := createFileWithContent(t, ts, catalog, "/unavailable.txt", "needle unavailable\n")
+		runProcessingForCoverage(t, ts, node)
+		response, body := do(t, ts, http.MethodPost, "/api/v1/search", nil, map[string]any{
+			"query": "needle", "mode": "lexical", "profile": "private", "rerank": true,
+			"fence": map[string]any{"vault_uid": catalog.VaultID(),
+				"content_version_ids": []string{node.CurrentVersionID}},
+		})
+		require.Equal(t, http.StatusUnprocessableEntity, response.StatusCode, body)
+		assert.Contains(t, body, `"code":"reranking_unavailable"`)
+	})
+
+	t.Run("fail closed", func(t *testing.T) {
+		provider := &routeRerankingProvider{err: errors.New("provider failure")}
+		ts, catalog := newTestServer(t, configureProcessingTestServiceWithReranker(t, provider,
+			retrieval.ProviderFailureFailClosed))
+		node := createFileWithContent(t, ts, catalog, "/fail-closed.txt", "needle fail closed\n")
+		runProcessingForCoverage(t, ts, node)
+		grantProcessingTestConsent(t, ts, node)
+		response, body := do(t, ts, http.MethodPost, "/api/v1/search", nil, map[string]any{
+			"query": "needle", "mode": "lexical", "profile": "private", "rerank": true,
+			"fence": map[string]any{"vault_uid": catalog.VaultID(),
+				"content_version_ids": []string{node.CurrentVersionID}},
+		})
+		require.Equal(t, http.StatusBadGateway, response.StatusCode, body)
+		assert.Contains(t, body, `"code":"reranking_failed"`)
+		assert.NotContains(t, body, "provider failure")
+	})
+}
+
 func TestProcessingConsentRoutesRequireReviewedPlanAndRevocationFailsClosed(t *testing.T) {
 	ts, catalog := newTestServer(t, configureProcessingTestService(t))
 	node := createFileWithContent(t, ts, catalog, "/consent.txt", "private consent evidence\n")
@@ -865,6 +976,69 @@ func configureProcessingTestService(t *testing.T) func(*api.Deps) {
 	provider, err := plaintext.New(plaintext.Profile{MaxDocumentBytes: 1 << 20})
 	require.NoError(t, err)
 	return configureProcessingTestServiceWithProviderAndRegistry(t, provider, nil)
+}
+
+func configureProcessingTestServiceWithReranker(t *testing.T, reranker retrieval.RerankingProvider,
+	failurePolicy retrieval.ProviderFailurePolicy,
+) func(*api.Deps) {
+	t.Helper()
+	return func(deps *api.Deps) {
+		rendition, err := plaintext.New(plaintext.Profile{MaxDocumentBytes: 1 << 20})
+		require.NoError(t, err)
+		gate := api.NewOperationGate()
+		deps.Gate = gate
+		service, err := processing.NewService(processing.ServiceConfig{
+			Catalog: deps.Store, Blobs: deps.Blobs, Gate: gate,
+			SpoolDirectory: filepath.Join(deps.VaultRoot, "blobs", "tmp"),
+			Profiles: map[string]processing.ProfileConfig{"private": {
+				Profile: processingTestProfile(rendition.Descriptor()), RenditionProvider: rendition,
+				RerankingProvider: reranker,
+				RerankingProfile: retrieval.RerankingProfile{ID: "synthetic-reranker", MaxCandidates: 2,
+					MaxExcerptBytes: 4096},
+				RerankingDisclosure: processing.RuntimeDisclosure{
+					ImmediateProcessor: "synthetic-reranker", UltimateProcessor: "synthetic-reranker",
+					Endpoint: "https://reranker.example.invalid", Deployment: processingTestHash("reranker-policy"),
+					Model: "synthetic-reranker", ModelRevision: "v1",
+					MetadataClasses: []string{"query_text", "candidate_excerpt", "candidate_identity", "evidence_reference"},
+				},
+				RerankingDeadline: time.Second, RerankingFailurePolicy: failurePolicy,
+			}},
+		})
+		require.NoError(t, err)
+		deps.Processing = service
+	}
+}
+
+func grantProcessingTestConsent(t *testing.T, ts *httptest.Server, node store.Node) {
+	t.Helper()
+	selector := map[string]any{"node_id": node.ID, "content_version_id": node.CurrentVersionID, "profile": "private"}
+	planResponse, planBody := do(t, ts, http.MethodPost, "/api/v1/processing/plans", nil,
+		map[string]any{"selector": selector})
+	require.Equal(t, http.StatusOK, planResponse.StatusCode, planBody)
+	var plan api.ProcessingPlan
+	require.NoError(t, json.Unmarshal([]byte(planBody), &plan))
+	grantResponse, grantBody := do(t, ts, http.MethodPost, "/api/v1/processing/consent/grants", nil,
+		map[string]any{"selector": selector, "plan_fingerprint": plan.Fingerprint})
+	require.Equal(t, http.StatusOK, grantResponse.StatusCode, grantBody)
+}
+
+type routeRerankingProvider struct {
+	err        error
+	calls      int
+	candidates []retrieval.RerankingCandidate
+}
+
+func (provider *routeRerankingProvider) Rerank(_ context.Context, request retrieval.RerankingRequest) ([]retrieval.RerankScore, error) {
+	provider.calls++
+	provider.candidates = append([]retrieval.RerankingCandidate(nil), request.Candidates...)
+	if provider.err != nil {
+		return nil, provider.err
+	}
+	scores := make([]retrieval.RerankScore, len(request.Candidates))
+	for index, candidate := range request.Candidates {
+		scores[index] = retrieval.RerankScore{Document: candidate.Document, Score: float64(index + 1)}
+	}
+	return scores, nil
 }
 
 func configureProcessingTestServiceWithRegistry(t *testing.T,

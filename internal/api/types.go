@@ -232,6 +232,7 @@ type DocumentSearchRequest struct {
 	BindingID string              `json:"binding_id,omitzero" maxLength:"128"`
 	Fence     DocumentSourceFence `json:"fence"`
 	Explain   bool                `json:"explain,omitzero"`
+	Rerank    bool                `json:"rerank,omitzero"`
 }
 
 type DocumentSimilarRequest struct {
@@ -290,6 +291,7 @@ type DocumentSearchValidationRequest struct {
 	Profile   string `json:"profile" minLength:"1" maxLength:"128" pattern:"^[a-z][a-z0-9_-]*$"`
 	BindingID string `json:"binding_id,omitzero" maxLength:"128"`
 	Explain   bool   `json:"explain,omitzero"`
+	Rerank    bool   `json:"rerank,omitzero"`
 }
 
 type DocumentSearchValidation struct {
@@ -334,14 +336,21 @@ type DocumentSearchCoverage struct {
 	State             string `json:"state"`
 }
 
+type DocumentSearchRerankingReceipt struct {
+	Outcome        string `json:"outcome"`
+	Cause          string `json:"cause,omitzero"`
+	CandidateCount int    `json:"candidate_count" minimum:"0" maximum:"1000"`
+}
+
 type DocumentSearchReport struct {
-	RequestedMode string                 `json:"requested_mode"`
-	ActualMode    string                 `json:"actual_mode"`
-	Coverage      DocumentSearchCoverage `json:"coverage"`
-	Degradations  []string               `json:"degradations"`
-	Results       []DocumentSearchResult `json:"results"`
-	Truncated     bool                   `json:"truncated"`
-	Trace         []DocumentSearchTrace  `json:"trace"`
+	RequestedMode string                          `json:"requested_mode"`
+	ActualMode    string                          `json:"actual_mode"`
+	Coverage      DocumentSearchCoverage          `json:"coverage"`
+	Degradations  []string                        `json:"degradations"`
+	Results       []DocumentSearchResult          `json:"results"`
+	Truncated     bool                            `json:"truncated"`
+	Trace         []DocumentSearchTrace           `json:"trace"`
+	Reranking     *DocumentSearchRerankingReceipt `json:"reranking,omitzero"`
 }
 
 // Node is the wire representation of a store.Node. Path is populated on live

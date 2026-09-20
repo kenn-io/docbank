@@ -814,7 +814,7 @@ CLI management command. See [Searching](usage/searching.md).
 ### Processing search
 
 ```
-docbank search <query> --mode <lexical|semantic|hybrid|auto> --profile <name> --source-version <uuid> [--source-version <uuid>...] [--binding <name>] [--limit <n>] [--explain] [--json]
+docbank search <query> --mode <lexical|semantic|hybrid|auto> --profile <name> --source-version <uuid> [--source-version <uuid>...] [--binding <name>] [--limit <n>] [--rerank] [--explain] [--json]
 ```
 
 Searches retained processing results for an explicit source-version set.
@@ -830,6 +830,7 @@ UUIDv4 version IDs; the CLI adds the selected daemon's vault UUID.
 | `auto` | Use lexical retrieval and report the actual mode |
 | `--binding` | Select the semantic/hybrid embedding binding; required when the profile has several, inferred when it has one; rejected for lexical/auto |
 | `--limit` | 1–100 results; default 50 |
+| `--rerank` | Opt into configured provider reranking for the source-fenced results |
 | `--explain` | Include bounded retrieval-stage codes and counts |
 | `--json` | Emit the processing search report, including modes, coverage, degradation, results, truncation, and trace |
 
@@ -838,7 +839,9 @@ Processing search cannot be combined with `--tag`, `--mime-type`, `--under`,
 coverage, degradation, and ranked results inside the source fence.
 
 Semantic and hybrid search require active query-text consent; lexical and
-auto do not. Follow [Consent before semantic or hybrid search](usage/search.md#consent-before-semantic-or-hybrid-search)
+auto do not. `--rerank` adds a separate query-and-excerpt consent grant for
+all modes. Human output prints the reranking outcome and bounded candidate
+count. Follow [Consent before semantic or hybrid search](usage/search.md#consent-before-semantic-or-hybrid-search)
 to grant consent through a reviewed processing build or the HTTP consent API.
 
 ### Find similar files

@@ -508,7 +508,8 @@ func (s *Store) RevalidateSearchCandidates(ctx context.Context, candidates []Sea
 }
 
 // SemanticSearchCandidate is one vector neighbor reduced to a current,
-// scope-eligible document. Only the lexical lane supplies excerpts.
+// scope-eligible document with bounded original-file text when available.
+// Retrieval resolves rendition-chunk text from the exact retained input.
 type SemanticSearchCandidate struct {
 	BlobHash          string
 	VaultID           string
@@ -522,6 +523,7 @@ type SemanticSearchCandidate struct {
 	InputID           string
 	InputKind         document.EmbeddingInputKind
 	Score             float64
+	Excerpt           string
 	MediaEvidence     SearchMediaEvidence
 }
 
@@ -738,6 +740,12 @@ func (s *Store) ResolveSemanticCandidates(ctx context.Context, profileFingerprin
 			if err != nil {
 				return err
 			}
+			if candidate.InputKind == document.EmbeddingInputOriginalFile {
+				candidate.Excerpt, err = searchExcerptByVersionTx(ctx, tx, candidate.ContentVersionID)
+				if err != nil {
+					return err
+				}
+			}
 		}
 		return nil
 	})
@@ -745,6 +753,22 @@ func (s *Store) ResolveSemanticCandidates(ctx context.Context, profileFingerprin
 		return SemanticSearchResolution{}, err
 	}
 	return result, nil
+}
+
+func searchExcerptByVersionTx(ctx context.Context, queryer interface {
+	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
+}, versionID string) (string, error) {
+	var excerpt string
+	err := queryer.QueryRowContext(ctx, `SELECT text FROM content_fts
+		WHERE blob_hash=(SELECT blob_hash FROM content_versions WHERE version_id=? LIMIT 1)
+		ORDER BY extractor LIMIT 1`, versionID).Scan(&excerpt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", nil
+	}
+	if err != nil {
+		return "", err
+	}
+	return boundedExplainedSearchExcerpt(excerpt), nil
 }
 
 type semanticEligibilityKey struct {

@@ -10,6 +10,7 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 	"unicode/utf8"
 
 	"github.com/stretchr/testify/require"
@@ -136,31 +137,92 @@ func TestMediaEvidenceReusesVerifiedGenerationAcrossLookups(t *testing.T) {
 	resolver := NewMediaEvidenceResolver(blobs)
 	for range 2 {
 		for index, want := range []MediaTimeSpan{{StartMS: 0, EndMS: 1000}, {StartMS: 7000, EndMS: 9500}} {
-			span, resolveErr := resolver.resolve(t.Context(), artifacts, generation.Inputs[index].Key)
+			input, resolveErr := resolver.resolveInput(t.Context(), artifacts, generation.Inputs[index].Key)
 			require.NoError(t, resolveErr)
-			require.Equal(t, &want, span)
-			span.EndMS = -1 // A caller cannot change a cached interval.
+			require.Equal(t, &want, input.span)
+			require.Equal(t, []string{"first cue", "second cue"}[index], input.excerpt)
+			input.span.EndMS = -1 // A caller cannot change a cached interval.
 		}
 	}
 	t.Run("concurrent cached lookups", func(t *testing.T) {
 		for range 4 {
 			t.Run("lookup", func(t *testing.T) {
 				t.Parallel()
-				span, resolveErr := resolver.resolve(t.Context(), artifacts, generation.Inputs[0].Key)
+				input, resolveErr := resolver.resolveInput(t.Context(), artifacts, generation.Inputs[0].Key)
 				require.NoError(t, resolveErr)
-				require.Equal(t, &MediaTimeSpan{StartMS: 0, EndMS: 1000}, span)
+				require.Equal(t, &MediaTimeSpan{StartMS: 0, EndMS: 1000}, input.span)
 			})
 		}
 	})
 	require.Equal(t, 2, blobs.opens, "each immutable artifact is read once across all input lookups")
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
-	_, err = resolver.resolve(ctx, artifacts, generation.Inputs[0].Key)
+	_, err = resolver.resolveInput(ctx, artifacts, generation.Inputs[0].Key)
 	require.ErrorIs(t, err, context.Canceled)
 	changed := artifacts
 	changed.GenerationChecksum = strings.Repeat("f", 64)
-	_, err = resolver.resolve(t.Context(), changed, generation.Inputs[0].Key)
+	_, err = resolver.resolveInput(t.Context(), changed, generation.Inputs[0].Key)
 	require.Error(t, err, "cache entries must match all catalog authority")
+}
+
+func TestSearcherSemanticRerankingUsesExactRenditionInputExcerpt(t *testing.T) {
+	policy, err := document.NewEvidencePolicy(4096)
+	require.NoError(t, err)
+	evidence, err := document.NormalizeEvidenceV1(document.SourceEvidenceV1{
+		ContractVersion: document.SourceEvidenceContractV1, Family: "audio",
+		Completeness: document.EvidenceComplete, UnitKind: document.EvidenceUnitSegment,
+		Units: []document.SourceEvidenceUnitV1{
+			{Order: 0, Text: "first cue", Locator: document.SourceEvidenceLocatorV1{
+				Kind: document.EvidenceLocatorSegment, IndexOrigin: document.EvidenceIndexOriginZero, Start: 0, End: 1000}},
+			{Order: 1, Text: "second cue", Locator: document.SourceEvidenceLocatorV1{
+				Kind: document.EvidenceLocatorSegment, IndexOrigin: document.EvidenceIndexOriginZero, Start: 7000, End: 9500}},
+		},
+	}, policy)
+	require.NoError(t, err)
+	contract, err := document.NewModelInputContract(document.ModelInputContractConfig{
+		Profile: document.ModelInputProfileCustom, CompatibilityID: "synthetic-space",
+		Document: document.ModelInputEncoder{Mode: document.ModelInputModeText, Template: "document: {{content}}"},
+		Query:    document.ModelInputEncoder{Mode: document.ModelInputModeText, Template: "query: {{content}}"},
+	})
+	require.NoError(t, err)
+	generation, err := document.BuildEmbeddingInputs(evidence, document.InputPolicy{
+		Chunk: document.EmbeddingChunkPolicyV1{ContextFingerprint: strings.Repeat("b", 64),
+			Formatter: "evidence-text/v1", MaxTokens: 128, Tokenizer: "synthetic-whole",
+			TokenizerRevision: "v1", TruncationPolicy: document.TruncationPolicyReject},
+		Tokenizer: mediaTokenizer{}, ModelInput: contract, LexicalEvidenceFingerprint: strings.Repeat("a", 64),
+		MaxInputTokens: 256, MaxInputBytes: 4096,
+	}, document.GenerationLimits{MaxInputs: 128, MaxTotalContentTokens: 4096, MaxTotalRenderedTokens: 8192,
+		MaxTotalContentBytes: 1 << 20, MaxTotalRenderedBytes: 2 << 20,
+		MaxFittingWorkTokens: 1 << 20, MaxFittingWorkBytes: 8 << 20})
+	require.NoError(t, err)
+	generationBytes, err := document.MarshalEmbeddingInputGeneration(generation)
+	require.NoError(t, err)
+	evidenceBytes, evidenceHash, err := document.MarshalNormalizedEvidenceV1(evidence)
+	require.NoError(t, err)
+	digest := sha256.Sum256(generationBytes)
+	artifacts := store.SearchMediaEvidence{BuildID: "synthetic-build",
+		GenerationBlobHash: hex.EncodeToString(digest[:]), GenerationEncodedSize: int64(len(generationBytes)),
+		GenerationChecksum: generation.Checksum, EvidenceFingerprint: evidenceHash,
+		EvidenceEncodedSize: int64(len(evidenceBytes)), InputCount: len(generation.Inputs)}
+	blobs := &mediaBlobFixture{data: map[string][]byte{
+		artifacts.GenerationBlobHash: generationBytes, evidenceHash: evidenceBytes,
+	}}
+	searcher, backend, _, descriptor := retrievalSearcherFixture(t, true, 1)
+	backend.semantic[0].InputKind = document.EmbeddingInputRenditionChunk
+	backend.semantic[0].InputID = generation.Inputs[1].Key
+	backend.semantic[0].MediaEvidence = artifacts
+	searcher.mediaEvidence = NewMediaEvidenceResolver(blobs)
+	reranker := &stageReranker{}
+	searcher.reranking = RerankingConfig{Enabled: true,
+		Profile: RerankingProfile{ID: "reranking", MaxCandidates: 1}, Provider: reranker,
+		Authorizer: &stageAuthorizer{}, Deadline: time.Second, FailurePolicy: ProviderFailureDegrade}
+
+	_, err = searcher.Search(t.Context(), Query{Text: "query", Mode: ModeSemantic, Limit: 1,
+		ProcessingProfileFingerprint: "profile", BindingID: "required",
+		Authorization: retrievalAuthorization(descriptor)})
+	require.NoError(t, err)
+	require.Len(t, reranker.candidates, 1)
+	require.Equal(t, "second cue", reranker.candidates[0].Excerpt)
 }
 
 type mediaTokenizer struct{}

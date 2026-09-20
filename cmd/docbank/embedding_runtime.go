@@ -137,6 +137,10 @@ func executableProcessingProfiles(cfg config.Config,
 	if err != nil {
 		return nil, err
 	}
+	rerankingRuntimes, err := configureRerankingProviders(cfg)
+	if err != nil {
+		return nil, err
+	}
 	profiles := make(map[string]processing.ProfileConfig)
 	names := make([]string, 0, len(cfg.ProcessingProfiles))
 	for name := range cfg.ProcessingProfiles {
@@ -158,6 +162,9 @@ func executableProcessingProfiles(cfg config.Config,
 			EmbeddingDisclosures: make(map[string]processing.RuntimeDisclosure),
 			EmbeddingClassifiers: make(map[string]func(error) (processing.EmbeddingProviderFailure, time.Duration)),
 			Tokenizers:           make(map[string]document.Tokenizer)}
+		if runtime, ok := rerankingRuntimes[name]; ok {
+			configured = applyRerankingRuntime(configured, runtime)
+		}
 		if portable.Rendition != nil {
 			configured.RenditionProvider = renditionProviders[portable.Rendition.Name]
 			if configured.RenditionProvider == nil {

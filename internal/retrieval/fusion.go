@@ -111,8 +111,12 @@ func addLane(results map[DocumentIdentity]*Result, candidates []Candidate, lane 
 		if lane == LaneLexical {
 			result.LexicalRank = candidate.Rank
 			result.Excerpt = candidate.Excerpt
+			result.rerankExcerpt = candidate.Excerpt
 		} else {
 			result.SemanticRank = candidate.Rank
+			if result.rerankExcerpt == "" {
+				result.rerankExcerpt = candidate.Excerpt
+			}
 		}
 		result.Evidence = append(result.Evidence, candidate.Evidence...)
 	}
