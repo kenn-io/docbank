@@ -4,6 +4,7 @@ import { sessionResponse } from "./api-transport.js";
 import { sha256 } from "@noble/hashes/sha2.js";
 import { bytesToHex } from "@noble/hashes/utils.js";
 import type { SelectedSource } from "./selectedSource.js";
+import { validatePDFReceipt, type EmailPDFReceipt } from "./email-pdf.js";
 
 export interface DownloadProgress {
   received: number;
@@ -30,6 +31,8 @@ interface DownloadEvent {
 }
 
 interface DownloadAuthority {
+  PDFProfile?: string;
+  PDFAttachment?: string;
   nodeID: number;
   revision: number;
   name?: string;
@@ -45,6 +48,12 @@ export type VerifiedPreview =
 
 const previewTextMaxBytes = 16 * 1024 * 1024;
 const previewImageMaxBytes = 32 * 1024 * 1024;
+
+export async function prepareEmailPDFDownload(session: string, node: Node, version: ContentVersion, receipt: EmailPDFReceipt, signal: AbortSignal, onprogress: (progress: DownloadProgress) => void): Promise<PreparedDownload> {
+  validatePDFReceipt(receipt, version.id);
+  if (receipt.source.node_id !== node.id || version.node_id !== node.id || receipt.source.sha256 !== version.blob_hash || receipt.source.size !== version.size) throw new Error("The PDF source disagrees with the selected email.");
+  return prepareDownload(session, { nodeID: node.id, revision: node.revision, name: "message.pdf", versionID: version.id, blobHash: receipt.output.pdf_sha256, size: receipt.output.pdf_size, PDFProfile: receipt.profile_fingerprint, PDFAttachment: receipt.attachment_id }, signal, onprogress, "native");
+}
 
 export async function prepareCurrentDownload(
   session: string,
@@ -152,7 +161,7 @@ async function prepareDownload(
   onprogress: (progress: DownloadProgress) => void,
   purpose: DownloadPurpose,
 ): Promise<PreparedDownload> {
-  const response = await generated.prepareWebDownload({ node_id: authority.nodeID, revision: authority.revision, version_id: authority.versionID, blob_hash: authority.blobHash, size: authority.size, ...(purpose === "preview" ? { purpose: "preview" } : {}) }, { session, signal, headers: { Accept: "application/x-ndjson" } });
+  const response = await generated.prepareWebDownload({ node_id: authority.nodeID, revision: authority.revision, version_id: authority.versionID, blob_hash: authority.blobHash, size: authority.size, email_pdf_profile: authority.PDFProfile, email_pdf_attachment: authority.PDFAttachment, ...(purpose === "preview" ? { purpose: "preview" } : {}) }, { session, signal, headers: { Accept: "application/x-ndjson" } });
   if (!response.body) throw new Error("The download response did not contain a progress stream.");
 
   const reader = response.body.getReader();

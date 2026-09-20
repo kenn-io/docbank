@@ -38,7 +38,7 @@ func TestPackagePreflightMaintenanceExpiresReceiptsHourly(t *testing.T) {
 		logger := slog.New(slog.DiscardHandler)
 		supervisor := jobs.New(t.Context(), logger)
 		defer func() { require.NoError(t, supervisor.Shutdown(context.Background())) }()
-		require.NoError(t, startProcessingJobs(supervisor, catalog, nil, t.TempDir(), processing.NewRenditionRuntimeRegistry(), api.NewOperationGate(), logger))
+		require.NoError(t, startProcessingJobs(supervisor, catalog, nil, t.TempDir(), processing.NewRenditionRuntimeRegistry(), 1, api.NewOperationGate(), logger))
 		synctest.Wait()
 		_, err = catalog.PackagePreflight(t.Context(), record.Owner, record.PreflightID)
 		require.NoError(t, err)

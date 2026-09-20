@@ -20,6 +20,8 @@ import (
 	"go.kenn.io/kit/packstore"
 )
 
+const normalizedEvidenceRole = "normalized_evidence"
+
 // StagedArtifact binds one immutable catalog member to its retained payload.
 // Payload is consumed once by PublishRendition.
 type StagedArtifact struct {
@@ -175,7 +177,7 @@ func (p *ArtifactPublisher) PublishRendition(
 			candidate := artifacts[record.ID]
 			reader := io.LimitReader(candidate.Payload, record.Size+1)
 			var evidence bytes.Buffer
-			if record.Role == "normalized_evidence" {
+			if record.Role == normalizedEvidenceRole {
 				reader = io.TeeReader(reader, &evidence)
 			}
 			receipt, writeErr := p.blobs.WriteDetailedContext(ctx, reader)
@@ -206,7 +208,7 @@ func (p *ArtifactPublisher) PublishRendition(
 					ID: record.ID, Hash: receipt.Hash, MD5: publishedMD5, Size: receipt.Size,
 				},
 			})
-			if record.Role == "normalized_evidence" {
+			if record.Role == normalizedEvidenceRole {
 				normalizedEvidence = evidence.Bytes()
 			}
 		}
@@ -366,7 +368,7 @@ func validateStagedRendition(staged StagedRendition) error {
 		if artifact.Role == "sanitized_markdown" && artifact.BlobHash != staged.Rendition.MarkdownChecksum {
 			return errors.New("staged sanitized Markdown artifact disagrees with rendition bytes")
 		}
-		if artifact.Role == "normalized_evidence" && artifact.BlobHash != staged.Rendition.EvidenceChecksum {
+		if artifact.Role == normalizedEvidenceRole && artifact.BlobHash != staged.Rendition.EvidenceChecksum {
 			return errors.New("staged normalized evidence artifact disagrees with rendition bytes")
 		}
 	}
@@ -389,7 +391,7 @@ func validateRetainedArtifactPolicy(
 	for _, artifact := range artifacts {
 		var requestedRole document.EvidenceArtifactRole
 		switch artifact.Role {
-		case "normalized_evidence":
+		case normalizedEvidenceRole:
 			continue
 		case "sanitized_markdown":
 			if !profile.RetentionDisclosure.RetainSanitizedMarkdown {
@@ -407,6 +409,8 @@ func validateRetainedArtifactPolicy(
 			requestedRole = document.EvidenceArtifactStructured
 		case string(document.EvidenceArtifactTranscript):
 			requestedRole = document.EvidenceArtifactTranscript
+		case string(document.EvidenceArtifactPDF):
+			requestedRole = document.EvidenceArtifactPDF
 		default:
 			return fmt.Errorf("staged rendition artifact role %q is unknown", artifact.Role)
 		}

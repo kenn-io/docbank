@@ -18,6 +18,7 @@
   import { APIError } from "./api-transport.js";
   import { type ContentVersion, type ContentVersionPage, type Node } from "./generated/docbank.js";
   import DownloadButton from "./DownloadButton.svelte";
+  import EmailPDFButton from "./EmailPDFButton.svelte";
   import { basename, formatBytes, formatDate } from "./format.js";
 
   interface Props {
@@ -229,6 +230,11 @@
               />
             {/key}
           </div>
+          {#if selectedVersion.mime_type === "message/rfc822"}
+            {#key selectedVersion.id}
+              <EmailPDFButton {session} {node} version={selectedVersion} {onauthfailure} />
+            {/key}
+          {/if}
         </Card>
       {:else}
         <EmptyState

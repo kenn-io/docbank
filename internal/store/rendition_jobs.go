@@ -199,17 +199,19 @@ func (s *Store) EnqueueRenditionJob(
 	var waiter RenditionJobWaiter
 	err = s.withStorageTx(ctx, func(tx *sql.Tx) error {
 		var sourceSHA256, filename string
-		var currentSource bool
+		var currentSource, liveSource bool
 		if err := tx.QueryRowContext(ctx,
-			`SELECT v.blob_hash,n.name,n.current_version_id=v.version_id AND n.trashed_at IS NULL
+			`SELECT v.blob_hash,n.name,n.current_version_id=v.version_id,n.trashed_at IS NULL
 			 FROM content_versions v JOIN nodes n ON n.id=v.node_id WHERE v.version_id=?`, request.ContentVersionID,
-		).Scan(&sourceSHA256, &filename, &currentSource); errors.Is(err, sql.ErrNoRows) {
+		).Scan(&sourceSHA256, &filename, &currentSource, &liveSource); errors.Is(err, sql.ErrNoRows) {
 			return fmt.Errorf("content version: %w", ErrNotFound)
 		} else if err != nil {
 			return fmt.Errorf("reading content version: %w", err)
 		}
-		if !currentSource || request.ExecutionIdentity.Authorization.DiscloseFilename &&
-			request.ExecutionIdentity.Upload.Filename != filename {
+		// PDFs retain exact historical versions without publishing serving heads.
+		if !liveSource || !currentSource && executableProfile.Rendition.EmailPDF == nil ||
+			request.ExecutionIdentity.Authorization.DiscloseFilename &&
+				request.ExecutionIdentity.Upload.Filename != filename {
 			return ErrRenditionJobStaleAuthority
 		}
 		if binding := request.ExecutionIdentity.Upload.InputBinding; binding != "" {
@@ -355,6 +357,23 @@ func (s *Store) EnqueueRenditionJob(
 			)`, request.ContentVersionID, profile.Fingerprint, attachmentID, jobID).Scan(
 			&alreadyActive); err != nil {
 			return fmt.Errorf("checking active rendition waiter: %w", err)
+		}
+		if binding, err := emailPDFBinding(profile); err != nil {
+			return err
+		} else if binding != nil {
+			attachment, err := loadRenditionAttachment(ctx, tx, attachmentID)
+			if err == nil {
+				build, err := loadRenditionBuild(ctx, tx, jobID)
+				if err != nil {
+					return err
+				}
+				if _, err = validateEmailPDFPublication(ctx, tx, attachment, build); err != nil {
+					return err
+				}
+				alreadyActive = true
+			} else if !errors.Is(err, ErrNotFound) {
+				return err
+			}
 		}
 		if alreadyActive {
 			if _, err := tx.ExecContext(ctx, `UPDATE rendition_job_waiters
@@ -1671,17 +1690,17 @@ func renditionWaiterAuthorizationTx(
 ) (ProviderOperationAuthorizationRequest, error) {
 	var request ProviderOperationAuthorizationRequest
 	var inputJSON, retainedJSON, sourceSHA256, renditionFingerprint, evidenceFingerprint string
-	var policyJSON, executionJSON, filename, grantID, incarnationID string
+	var policyJSON, executionJSON, profileJSON, filename, grantID, incarnationID string
 	var revocationFence int64
-	var currentSource bool
+	var currentSource, liveSource bool
 	err := tx.QueryRowContext(ctx, `
 		SELECT w.principal,w.scope,w.profile_fingerprint,w.disclosure_fingerprint,
 		       w.input_classes_json,w.retained_classes_json,
 		       w.authorization_grant_id,w.authorization_incarnation_id,
 		       w.authorization_revocation_fence,v.blob_hash,
 		       p.rendition_request_fingerprint,p.evidence_lexical_fingerprint,
-		       j.captured_artifact_policy_json,j.execution_identity_json,n.name,
-		       n.current_version_id=v.version_id AND n.trashed_at IS NULL
+		       j.captured_artifact_policy_json,j.execution_identity_json,p.canonical_profile,n.name,
+		       n.current_version_id=v.version_id,n.trashed_at IS NULL
 		FROM rendition_job_waiters w
 		JOIN rendition_jobs j ON j.job_id=w.job_id
 		JOIN content_versions v ON v.version_id=w.content_version_id
@@ -1692,7 +1711,7 @@ func renditionWaiterAuthorizationTx(
 		&request.ProfileFingerprint, &request.DisclosureFingerprint,
 		&inputJSON, &retainedJSON, &grantID, &incarnationID, &revocationFence,
 		&sourceSHA256, &renditionFingerprint, &evidenceFingerprint,
-		&policyJSON, &executionJSON, &filename, &currentSource)
+		&policyJSON, &executionJSON, &profileJSON, &filename, &currentSource, &liveSource)
 	if errors.Is(err, sql.ErrNoRows) {
 		return ProviderOperationAuthorizationRequest{}, ErrNotFound
 	}
@@ -1703,7 +1722,12 @@ func renditionWaiterAuthorizationTx(
 	if err != nil {
 		return ProviderOperationAuthorizationRequest{}, fmt.Errorf("reading rendition execution authority: %w", err)
 	}
-	if !currentSource || execution.Authorization.DiscloseFilename && execution.Upload.Filename != filename ||
+	pdf, err := emailPDFBinding(ProcessingProfileRecord{CanonicalProfile: []byte(profileJSON)})
+	if err != nil {
+		return ProviderOperationAuthorizationRequest{}, fmt.Errorf("reading rendition profile authority: %w", err)
+	}
+	if !liveSource || !currentSource && pdf == nil ||
+		execution.Authorization.DiscloseFilename && execution.Upload.Filename != filename ||
 		sourceSHA256 != job.SourceSHA256 || renditionFingerprint != job.RenditionRequestFingerprint ||
 		evidenceFingerprint != job.EvidenceLexicalFingerprint {
 		return ProviderOperationAuthorizationRequest{}, fmt.Errorf(

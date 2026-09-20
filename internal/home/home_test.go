@@ -39,7 +39,7 @@ func TestEnsureCreatesLayout(t *testing.T) {
 	l := Layout{Root: dir}
 	require.NoError(t, l.Ensure())
 
-	for _, p := range []string{dir, l.BlobsDir(), l.BlobTmpDir(), l.LogsDir()} {
+	for _, p := range []string{dir, l.BlobsDir(), l.BlobTmpDir(), l.EmailPDFSpoolDir(), l.LogsDir()} {
 		info, err := os.Stat(p)
 		require.NoError(t, err)
 		assert.True(t, info.IsDir())

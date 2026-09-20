@@ -220,6 +220,9 @@ func TestEditUnchangedRejectsConcurrentReplacement(t *testing.T) {
 }
 
 func TestMain(m *testing.M) {
+	if len(os.Args) > 1 && os.Args[1] == "internal-email-pdf-worker" {
+		os.Exit(runProcess(os.Args[1:], os.Stdout, os.Stderr))
+	}
 	if os.Getenv("DOCBANK_EDIT_TEST_HELPER") == "1" {
 		os.Exit(runEditHelper())
 	}

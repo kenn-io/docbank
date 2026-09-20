@@ -4245,6 +4245,188 @@ components:
       x-go-type-import:
         path: go.kenn.io/docbank/internal/api
         name: api
+    EmailPDFBindingV1:
+      additionalProperties: false
+      properties:
+        generation_checksum:
+          type: string
+        generation_id:
+          type: string
+        recipe:
+          $ref: "#/components/schemas/EmailPDFRecipeV1"
+      required:
+        - generation_id
+        - generation_checksum
+        - recipe
+      type: object
+      x-go-type: document.EmailPDFBindingV1
+      x-go-type-import:
+        path: go.kenn.io/docbank/document
+        name: document
+    EmailPDFJob:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/EmailPDFJob.json
+          format: uri
+          readOnly: true
+          type: string
+        job_id:
+          type: string
+        profile_fingerprint:
+          type: string
+        receipt:
+          $ref: "#/components/schemas/EmailPDFReceiptV1"
+        state:
+          type: string
+        version_id:
+          type: string
+      required:
+        - job_id
+        - version_id
+        - profile_fingerprint
+        - state
+      type: object
+      x-go-type: document.EmailPDFJob
+      x-go-type-import:
+        path: go.kenn.io/docbank/document
+        name: document
+    EmailPDFJobState:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/EmailPDFJobState.json
+          format: uri
+          readOnly: true
+          type: string
+        state:
+          type: string
+      required:
+        - state
+      type: object
+    EmailPDFOutputV1:
+      additionalProperties: false
+      properties:
+        body_path:
+          type: string
+        body_sha256:
+          type: string
+        body_size:
+          format: int64
+          type: integer
+        pages:
+          format: int64
+          type: integer
+        pdf_sha256:
+          type: string
+        pdf_size:
+          format: int64
+          type: integer
+      required:
+        - body_path
+        - body_sha256
+        - body_size
+        - pdf_sha256
+        - pdf_size
+        - pages
+      type: object
+      x-go-type: document.EmailPDFOutputV1
+      x-go-type-import:
+        path: go.kenn.io/docbank/document
+        name: document
+    EmailPDFReceiptV1:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/EmailPDFReceiptV1.json
+          format: uri
+          readOnly: true
+          type: string
+        attachment_id:
+          type: string
+        binding:
+          $ref: "#/components/schemas/EmailPDFBindingV1"
+        build_id:
+          type: string
+        output:
+          $ref: "#/components/schemas/EmailPDFOutputV1"
+        profile_fingerprint:
+          type: string
+        source:
+          $ref: "#/components/schemas/EmailDocumentIdentity"
+      required:
+        - source
+        - attachment_id
+        - build_id
+        - profile_fingerprint
+        - binding
+        - output
+      type: object
+      x-go-type: document.EmailPDFReceiptV1
+      x-go-type-import:
+        path: go.kenn.io/docbank/document
+        name: document
+    EmailPDFRecipeV1:
+      additionalProperties: false
+      properties:
+        bubblewrap_sha256:
+          type: string
+        contract:
+          type: string
+        fonts_sha256:
+          type: string
+        paper:
+          type: string
+        renderer_sha256:
+          type: string
+        renderer_version:
+          type: string
+        worker_sha256:
+          type: string
+      required:
+        - contract
+        - renderer_version
+        - renderer_sha256
+        - worker_sha256
+        - bubblewrap_sha256
+        - fonts_sha256
+        - paper
+      type: object
+      x-go-type: document.EmailPDFRecipeV1
+      x-go-type-import:
+        path: go.kenn.io/docbank/document
+        name: document
+    EmailPDFRequest:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/EmailPDFRequest.json
+          format: uri
+          readOnly: true
+          type: string
+        generation_id:
+          type: string
+        paper:
+          type: string
+        version_id:
+          type: string
+      required:
+        - version_id
+        - generation_id
+        - paper
+      type: object
+      x-go-type: document.EmailPDFRequest
+      x-go-type-import:
+        path: go.kenn.io/docbank/document
+        name: document
     EmailPartV1:
       additionalProperties: false
       properties:
@@ -9014,6 +9196,8 @@ components:
           type: boolean
         disclosure_fingerprint:
           type: string
+        email_pdf:
+          $ref: "#/components/schemas/EmailPDFBindingV1"
         max_document_bytes:
           format: int64
           type: integer
@@ -12115,6 +12299,10 @@ paths:
               properties:
                 blob_hash:
                   type: string
+                email_pdf_attachment:
+                  type: string
+                email_pdf_profile:
+                  type: string
                 node_id:
                   format: int64
                   type: integer
@@ -13252,6 +13440,104 @@ paths:
                 $ref: "#/components/schemas/Error"
           description: Request failed
       summary: Read a bounded page of exact parent or child occurrences
+  /api/v1/email-pdf-jobs/{job_id}:
+    get:
+      operationId: getEmailPDFJob
+      parameters:
+        - in: path
+          name: job_id
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EmailPDFJobState"
+          description: Read retained PDF job state
+      summary: Read retained PDF job state
+  /api/v1/email-pdfs:
+    post:
+      operationId: renderEmailPDF
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/EmailPDFRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EmailPDFJob"
+          description: Existing rendition job and exact retained receipt
+      summary: Render one exact email version as a retained verified PDF
+  /api/v1/email-pdfs/{version_id}:
+    get:
+      operationId: listEmailPDFs
+      parameters:
+        - in: path
+          name: version_id
+          required: true
+          schema:
+            format: uuid
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                items:
+                  $ref: "#/components/schemas/EmailPDFReceiptV1"
+                type: array
+          description: List verified retained PDFs for one original email version
+      summary: List verified retained PDFs for one original email version
+  /api/v1/email-pdfs/{version_id}/{profile}:
+    get:
+      operationId: getEmailPDF
+      parameters:
+        - in: path
+          name: version_id
+          required: true
+          schema:
+            format: uuid
+            type: string
+        - in: path
+          name: profile
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EmailPDFReceiptV1"
+          description: Read an exact retained PDF receipt
+      summary: Read an exact retained PDF receipt
+  /api/v1/email-pdfs/{version_id}/{profile}/content:
+    get:
+      operationId: downloadEmailPDF
+      parameters:
+        - in: path
+          name: version_id
+          required: true
+          schema:
+            format: uuid
+            type: string
+        - in: path
+          name: profile
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          content:
+            application/pdf: {}
+          description: Exact retained PDF
+      summary: Download independently verified retained PDF bytes
   /api/v1/exports/jobs:
     post:
       operationId: createExportJob

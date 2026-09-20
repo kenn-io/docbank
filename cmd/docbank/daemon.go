@@ -12,6 +12,7 @@ import (
 	"net/url"
 	"os"
 	"os/signal"
+	"runtime"
 	"strconv"
 	"sync"
 	"syscall"
@@ -22,6 +23,8 @@ import (
 	kitlogging "go.kenn.io/kit/logging"
 	"go.kenn.io/kit/packstore"
 
+	"go.kenn.io/docbank/document"
+	"go.kenn.io/docbank/document/emailpdf"
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/backupapp"
 	"go.kenn.io/docbank/internal/blob"
@@ -203,6 +206,11 @@ func runServe(ctx context.Context) (retErr error) {
 	if _, err := emailmime.RecoverStale(sigCtx, layout.BlobTmpDir()); err != nil {
 		return fmt.Errorf("recovering email decoder spool: %w", err)
 	}
+	if cfg.EmailPDF != nil && runtime.GOOS == "linux" {
+		if err := emailpdf.RecoverStale(sigCtx, layout.EmailPDFSpoolDir()); err != nil {
+			logger.Warn("email PDF staging retained; recovery will retry on the next start", "error", err)
+		}
+	}
 	if err := blobs.CleanTmp(); err != nil {
 		return err
 	}
@@ -228,6 +236,18 @@ func runServe(ctx context.Context) (retErr error) {
 		return err
 	}
 	runtimeRegistry := processing.NewRenditionRuntimeRegistry()
+	emailPDFRuntime, err := configureEmailPDF(sigCtx, cfg, s, blobs, layout.BlobTmpDir(), layout.EmailPDFSpoolDir(), runtimeRegistry)
+	var emailPDFUnavailableReason string
+	if errors.Is(err, emailpdf.ErrUnavailable) {
+		emailPDFUnavailableReason = err.Error()
+		logger.Warn("email PDF rendering unavailable; retained downloads remain available", "error", err)
+	} else if err != nil {
+		return err
+	}
+	var requestEmailPDF func(context.Context, document.EmailPDFRequest) (document.EmailPDFJob, error)
+	if emailPDFRuntime != nil {
+		requestEmailPDF = emailPDFRuntime.Submit
+	}
 	embeddingRuntimes, err := configureEmbeddingRuntimeBundle(cfg, blobs, layout.BlobTmpDir())
 	if err != nil {
 		return fmt.Errorf("configuring embedding runtimes: %w", err)
@@ -272,8 +292,12 @@ func runServe(ctx context.Context) (retErr error) {
 		return fmt.Errorf("configuring processing service: %w", err)
 	}
 	runtimeRegistry.Seal()
+	renditionWorkers := 1
+	if emailPDFRuntime != nil {
+		renditionWorkers = 2
+	}
 	if err := startProcessingJobs(
-		jobSupervisor, s, blobs, layout.BlobTmpDir(), runtimeRegistry, operationGate, logger,
+		jobSupervisor, s, blobs, layout.BlobTmpDir(), runtimeRegistry, renditionWorkers, operationGate, logger,
 	); err != nil {
 		return err
 	}
@@ -421,7 +445,9 @@ func runServe(ctx context.Context) (retErr error) {
 	tracker := api.NewActivityTracker()
 	srv := api.NewServer(api.Deps{
 		Store: s, Blobs: blobs, VaultRoot: layout.Root, Cfg: cfg, Logger: logger,
-		StartedAt: time.Now(), ShutdownToken: shutdownToken, Shutdown: stop, Tracker: tracker,
+		RequestEmailPDF:           requestEmailPDF,
+		EmailPDFUnavailableReason: emailPDFUnavailableReason,
+		StartedAt:                 time.Now(), ShutdownToken: shutdownToken, Shutdown: stop, Tracker: tracker,
 		Jobs: jobSupervisor, Gate: operationGate, WebURL: webURL, BlobRegistry: blobRegistry,
 		Processing: processingService, EnsureEmail: processing.EnsureEmailTarget,
 		PublishEmailDocuments: processing.PublishEmailDocuments,
@@ -509,19 +535,25 @@ func runServe(ctx context.Context) (retErr error) {
 func startProcessingJobs(
 	supervisor *jobs.Supervisor, s *store.Store, blobs *blob.Store,
 	spoolParent string,
-	runtimes *processing.RenditionRuntimeRegistry, gate *api.OperationGate, logger *slog.Logger,
+	runtimes *processing.RenditionRuntimeRegistry, renditionWorkers int, gate *api.OperationGate, logger *slog.Logger,
 ) error {
 	if runtimes.Ready() {
-		worker, err := processing.NewRenditionWorker(processing.RenditionWorkerConfig{
-			Catalog: s, Blobs: blobs, Runtime: runtimes, Gate: gate,
-			Owner: "daemon-rendition-worker", LeaseDuration: 5 * time.Minute,
-			IdleDelay: time.Second,
-		})
-		if err != nil {
-			return fmt.Errorf("configuring rendition worker: %w", err)
-		}
-		if err := supervisor.Start("process:renditions", worker.Run); err != nil {
-			return fmt.Errorf("starting rendition worker: %w", err)
+		for index := range renditionWorkers {
+			name := "process:renditions"
+			if index > 0 {
+				name += ":" + strconv.Itoa(index)
+			}
+			worker, err := processing.NewRenditionWorker(processing.RenditionWorkerConfig{
+				Catalog: s, Blobs: blobs, Runtime: runtimes, Gate: gate,
+				Owner: fmt.Sprintf("daemon-rendition-worker-%d", index), LeaseDuration: 5 * time.Minute,
+				IdleDelay: time.Second,
+			})
+			if err != nil {
+				return fmt.Errorf("configuring rendition worker: %w", err)
+			}
+			if err := supervisor.Start(name, worker.Run); err != nil {
+				return fmt.Errorf("starting rendition worker: %w", err)
+			}
 		}
 	}
 	checksums := &processing.Backfill[store.BlobChecksumTarget]{
