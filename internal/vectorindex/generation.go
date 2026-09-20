@@ -377,9 +377,6 @@ func (generation *Generation) SearchSimilarRows(ctx context.Context, sources, id
 			return nil, err
 		}
 		for i, index := range candidateRows {
-			if err := ctx.Err(); err != nil {
-				return nil, err
-			}
 			candidate := generation.scoreRow(generation.vector(source), index)
 			candidate.SourceRow = generation.rows[source]
 			better := candidate.Score > best[i].Score

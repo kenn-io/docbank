@@ -2,6 +2,7 @@ package processing
 
 import (
 	"context"
+	"errors"
 	"slices"
 	"time"
 
@@ -36,7 +37,7 @@ func (service *Service) FindSimilar(ctx context.Context, request SimilarRequest)
 		request.Limit = DefaultSearchLimit
 	}
 	if request.Limit < 1 || request.Limit > MaxSearchLimit {
-		return retrieval.SimilarReport{}, store.ErrInvalidProcessingSourceFence
+		return retrieval.SimilarReport{}, errors.New("similar search limit is invalid")
 	}
 	searcher, err := retrieval.NewSearcher(retrieval.SearcherConfig{Backend: service.catalog, Owner: "embedded-document-similarity", LeaseDuration: 5 * time.Minute})
 	if err != nil {

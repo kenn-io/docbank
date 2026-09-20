@@ -90,8 +90,8 @@ func TestSimilarStoredMetricsNoEncoderAndLeaseCleanup(t *testing.T) {
 				b.scores = nil
 				ctx, cancel := context.WithCancel(t.Context())
 				defer cancel()
-				// One precheck, six selection checks, then source and two candidate checks.
-				scoring := &scoringContext{Context: ctx, remaining: 10, scoring: make(chan struct{})}
+				// One precheck, six selection checks, then one check per source row.
+				scoring := &scoringContext{Context: ctx, remaining: 8, scoring: make(chan struct{})}
 				done := make(chan error, 1)
 				go func() {
 					_, err := searcher.Similar(scoring, query)

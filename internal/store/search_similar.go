@@ -192,7 +192,7 @@ func (s *Store) ResolveSimilarCandidates(ctx context.Context, profile, binding s
 				}
 				if group := groups[hash]; group != nil {
 					group.DuplicateCount++
-					if member.Score > group.Score || member.Score == group.Score && member.NodeID < group.NodeID {
+					if member.Score > group.Score {
 						duplicateCount := group.DuplicateCount
 						*group = SimilarSearchCandidate{SemanticSearchCandidate: member, DuplicateCount: duplicateCount}
 					}
