@@ -9,7 +9,6 @@ import (
 	"errors"
 	"net/http"
 	"net/netip"
-	"reflect"
 	"slices"
 	"strings"
 	"time"
@@ -17,6 +16,7 @@ import (
 	"unicode/utf8"
 
 	"go.kenn.io/docbank/document"
+	"go.kenn.io/docbank/document/internal/providerutil"
 	"go.kenn.io/docbank/document/providerhttp"
 )
 
@@ -38,12 +38,14 @@ const (
 	defaultMaxCandidateBytes = 4096
 	maximumMaxCandidateBytes = 64 << 10
 	defaultMaxRequestBytes   = int64(256 << 10)
-	maximumMaxRequestBytes   = int64(8 << 20)
-	defaultMaxResponseBytes  = int64(1 << 20)
-	maximumMaxResponseBytes  = int64(8 << 20)
-	defaultMaxConcurrent     = 8
-	maximumMaxConcurrent     = 64
-	maximumTokenBytes        = 128
+	// Leave room for JSON escaping of a full batch at the default text limits.
+	defaultMaxBatchedRequestBytes = int64(4 << 20)
+	maximumMaxRequestBytes        = int64(8 << 20)
+	defaultMaxResponseBytes       = int64(1 << 20)
+	maximumMaxResponseBytes       = int64(8 << 20)
+	defaultMaxConcurrent          = 8
+	maximumMaxConcurrent          = 64
+	maximumTokenBytes             = 128
 )
 
 // RequestShape selects how candidate texts reach the System One endpoint.
@@ -142,7 +144,7 @@ func New(profile Profile, secrets SecretResolver, resolver providerhttp.Resolver
 	if err != nil {
 		return nil, err
 	}
-	if nilInterface(secrets) {
+	if providerutil.IsNil(secrets) {
 		return nil, errors.New("typesafe rerank: named API-key resolver is required")
 	}
 	fingerprint, err := PolicyFingerprint(profile)
@@ -208,6 +210,9 @@ func normalizeProfile(profile Profile) (Profile, error) {
 	}
 	if profile.MaxRequestBytes == 0 {
 		profile.MaxRequestBytes = defaultMaxRequestBytes
+		if profile.RequestShape == RequestShapeBatched {
+			profile.MaxRequestBytes = defaultMaxBatchedRequestBytes
+		}
 	}
 	if profile.MaxResponseBytes == 0 {
 		profile.MaxResponseBytes = defaultMaxResponseBytes
@@ -298,17 +303,4 @@ func validToken(value string) bool {
 		}
 	}
 	return true
-}
-
-func nilInterface(value any) bool {
-	if value == nil {
-		return true
-	}
-	reflected := reflect.ValueOf(value)
-	switch reflected.Kind() {
-	case reflect.Chan, reflect.Func, reflect.Interface, reflect.Map, reflect.Pointer, reflect.Slice:
-		return reflected.IsNil()
-	default:
-		return false
-	}
 }

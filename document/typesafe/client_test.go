@@ -155,6 +155,26 @@ func TestRerankRejectsOverBoundRequestsBeforeSecretsOrEgress(t *testing.T) {
 	}
 }
 
+func TestCheckRequestBatchedDefaultsAdmitFullSizeCandidates(t *testing.T) {
+	for name, value := range map[string]string{"plain": "x", "escaped": "\x01"} {
+		t.Run(name, func(t *testing.T) {
+			profile := testProfile()
+			profile.RequestShape = RequestShapeBatched
+			request := RerankRequest{Query: strings.Repeat(value, 4096), Candidates: make([]string, 100)}
+			for index := range request.Candidates {
+				request.Candidates[index] = strings.Repeat(value, 4096)
+			}
+			if err := CheckRequest(profile, request); err != nil {
+				t.Fatalf("full-size batched request: %v", err)
+			}
+			profile.MaxRequestBytes = 256 << 10
+			if err := CheckRequest(profile, request); !errors.Is(err, ErrCapacityResponse) {
+				t.Fatalf("explicit request limit: got %v, want capacity error", err)
+			}
+		})
+	}
+}
+
 func TestRerankPreservesEmptyCandidateBeforeSecretAndProvider(t *testing.T) {
 	secrets := &countingSecrets{value: "synthetic-secret"}
 	client, err := New(testProfile(), secrets, nil, http.DefaultClient)
@@ -248,6 +268,29 @@ func TestRerankClassifiesStatusBeforeReadingBody(t *testing.T) {
 	}
 	if !body.closed {
 		t.Fatal("response body was not closed")
+	}
+}
+
+func TestRerankRejectsContentTypeBeforeReadingBody(t *testing.T) {
+	client := newTestClient(t, "")
+	body := &readFailingBody{}
+	client.http.Transport = roundTripFunc(func(request *http.Request) (*http.Response, error) {
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{"Content-Type": []string{"text/html"}},
+			Body:       body,
+			Request:    request,
+		}, nil
+	})
+	_, err := client.Rerank(context.Background(), RerankRequest{Query: "q", Candidates: []string{"x"}})
+	if !errors.Is(err, ErrPermanentResponse) {
+		t.Errorf("got %v, want permanent response", err)
+	}
+	if body.read {
+		t.Error("response body was read")
+	}
+	if !body.closed {
+		t.Error("response body was not closed")
 	}
 }
 

@@ -293,6 +293,9 @@ func (client *Client) send(callCtx, callerCtx, requestCtx context.Context, call 
 	if response.StatusCode != http.StatusOK {
 		return nil, callUsage{}, statusError(response.StatusCode, response.Header)
 	}
+	if !isJSONContentType(response.Header.Get("Content-Type")) {
+		return nil, callUsage{}, &ProviderError{Kind: ErrPermanentResponse}
+	}
 	body, readErr := providerutil.ReadBounded(response.Body, client.profile.MaxResponseBytes)
 	defer clear(body)
 	if contextErr := callerCtx.Err(); contextErr != nil {
@@ -306,9 +309,6 @@ func (client *Client) send(callCtx, callerCtx, requestCtx context.Context, call 
 			return nil, callUsage{}, &ProviderError{Kind: ErrCapacityResponse}
 		}
 		return nil, callUsage{}, &ProviderError{Kind: ErrTransientResponse}
-	}
-	if !isJSONContentType(response.Header.Get("Content-Type")) {
-		return nil, callUsage{}, &ProviderError{Kind: ErrPermanentResponse}
 	}
 	var decoded wireResponse
 	if err := json.Unmarshal(body, &decoded, json.RejectUnknownMembers(true)); err != nil {
