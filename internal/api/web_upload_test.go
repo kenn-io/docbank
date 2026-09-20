@@ -17,7 +17,46 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"go.kenn.io/docbank/internal/api"
+	"go.kenn.io/docbank/internal/store"
 )
+
+func TestMailboxChunkUsesPinnedBrowserStream(t *testing.T) {
+	ts, s := newTestServer(t, nil)
+	ctx := t.Context()
+	raw := []byte("synthetic source")
+	h := sha256.Sum256(raw)
+	hash := hex.EncodeToString(h[:])
+	_, err := s.BeginMailboxContainer(ctx, store.MailboxContainerRequest{ID: "browser-container", Owner: "vault:" + s.VaultID(), SHA256: hash, Size: int64(len(raw)), Format: "mbox"})
+	require.NoError(t, err)
+	response, body := do(t, ts, http.MethodPost, "/api/daemon/web-session", nil, nil)
+	require.Equal(t, 201, response.StatusCode, body)
+	var session struct {
+		Token string `json:"token"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(body), &session))
+	conn, response, err := websocket.Dial(ctx, "ws"+strings.TrimPrefix(ts.URL, "http")+"/api/daemon/web-upload", &websocket.DialOptions{HTTPHeader: http.Header{"Origin": {strings.TrimSuffix(testWebURL, "/")}}})
+	require.NoError(t, err)
+	if response != nil && response.Body != nil {
+		require.NoError(t, response.Body.Close())
+	}
+	defer func() { _ = conn.CloseNow() }()
+	require.NoError(t, wsjson.Write(ctx, conn, map[string]any{"type": "authenticate", "token": session.Token, "nonce": "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE"}))
+	var message struct {
+		Type  string              `json:"type"`
+		Chunk *store.MailboxChunk `json:"chunk_receipt"`
+	}
+	require.NoError(t, wsjson.Read(ctx, conn, &message))
+	require.Equal(t, "authenticated", message.Type)
+	require.NoError(t, wsjson.Write(ctx, conn, map[string]any{"type": "begin_mailbox_chunk", "request_id": "chunk", "container_id": "browser-container", "chunk_index": 0, "expected_hash": hash, "expected_size": len(raw)}))
+	require.NoError(t, wsjson.Read(ctx, conn, &message))
+	require.Equal(t, "ready", message.Type)
+	require.NoError(t, conn.Write(ctx, websocket.MessageBinary, raw))
+	require.NoError(t, wsjson.Write(ctx, conn, map[string]string{"type": "end", "request_id": "chunk"}))
+	require.NoError(t, wsjson.Read(ctx, conn, &message))
+	require.Equal(t, "mailbox_chunk_receipt", message.Type)
+	require.NotNil(t, message.Chunk)
+	require.Equal(t, hash, message.Chunk.SHA256)
+}
 
 func TestBrowserUploadUsesAuthenticatedPinnedChannel(t *testing.T) {
 	gate := api.NewOperationGate()

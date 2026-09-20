@@ -224,6 +224,9 @@ func runServe(ctx context.Context) (retErr error) {
 	if err != nil {
 		return err
 	}
+	if err := startMailboxJobs(sigCtx, jobSupervisor, s, blobs, layout.BlobTmpDir(), operationGate, logger); err != nil {
+		return err
+	}
 	runtimeRegistry := processing.NewRenditionRuntimeRegistry()
 	embeddingRuntimes, err := configureEmbeddingRuntimeBundle(cfg, blobs, layout.BlobTmpDir())
 	if err != nil {

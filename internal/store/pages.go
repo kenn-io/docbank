@@ -32,12 +32,6 @@ type PageImageView struct {
 	Image  document.PageImageV1 `json:"image"`
 }
 
-// RecordAbandonedPageBlob makes a durable but unpublished output visible to
-// ordinary GC. It creates no page root and cannot enter backup authority.
-func (s *Store) RecordAbandonedPageBlob(ctx context.Context, hash string, size int64, physical BlobPhysical) error {
-	return s.withStorageTx(ctx, func(tx *sql.Tx) error { return s.EnsureBlobTx(tx, hash, size, physical) })
-}
-
 func putPageDocument(ctx context.Context, tx *sql.Tx, d document.PageDocumentV1) error {
 	encoded, hash, err := document.MarshalPageDocumentV1(d)
 	if err != nil {

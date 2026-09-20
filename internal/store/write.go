@@ -248,6 +248,12 @@ func (s *Store) EnsureDir(ctx context.Context, parentID int64, name string) (Nod
 	return next, nil
 }
 
+// RecordBlob records durable bytes without a GC hold. Callers hold a blob
+// mutation lease until publication; unreferenced bytes remain collectible.
+func (s *Store) RecordBlob(ctx context.Context, hash string, size int64, physical BlobPhysical) error {
+	return s.withStorageTx(ctx, func(tx *sql.Tx) error { return s.EnsureBlobTx(tx, hash, size, physical) })
+}
+
 // EnsureBlobTx records a blob row if missing. The blob file must already be
 // durable on disk before the enclosing transaction commits. If a blob row
 // already exists under hash, its recorded size must match size and it must

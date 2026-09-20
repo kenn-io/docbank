@@ -275,3 +275,45 @@ func TestExportContextErrorsRemainDistinct(t *testing.T) {
 	require.Equal(t, http.StatusGatewayTimeout, exportProblem(context.DeadlineExceeded).Status)
 	require.Equal(t, http.StatusRequestTimeout, exportProblem(context.Canceled).Status)
 }
+
+func TestMailboxTimeoutBoundary(t *testing.T) {
+	for _, test := range []struct {
+		method, path string
+		exempt       bool
+	}{
+		{http.MethodPut, "/api/v1/mailbox/containers/source/chunks/0", true},
+		{http.MethodPost, "/api/v1/mailbox/containers/source/seal", true},
+		{http.MethodPost, "/api/v1/mailbox/transfers", true},
+		{http.MethodGet, "/api/v1/mailbox/jobs/job/events", true},
+		{http.MethodPost, "/api/v1/mailbox/containers/source%2Fgroup/seal", true},
+		{http.MethodGet, "/api/v1/mailbox/jobs/job%2Fgroup/events", true},
+		{http.MethodGet, "/api/v1/mailbox/jobs/job", false},
+		{http.MethodPost, "/api/v1/mailbox/containers/source/preview", false},
+		{http.MethodPost, "/api/v1/mailbox/jobs/job/cancel", false},
+		{http.MethodGet, "/api/v1/mailbox/containers/source/seal", false},
+		{http.MethodPost, "/api/v1/mailbox/jobs/job/events", false},
+		{http.MethodPut, "/api/v1/mailbox/containers/source/chunks/0/extra", false},
+	} {
+		t.Run(test.method+test.path, func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				parent, cancel := context.WithTimeout(t.Context(), 2*time.Minute)
+				defer cancel()
+				handler := timeoutMiddleware(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+					time.Sleep(61 * time.Second)
+					if !test.exempt {
+						assert.ErrorIs(t, r.Context().Err(), context.DeadlineExceeded)
+						return
+					}
+					assert.NoError(t, r.Context().Err())
+					want, _ := parent.Deadline()
+					got, ok := r.Context().Deadline()
+					assert.True(t, ok)
+					assert.Equal(t, want, got)
+					cancel()
+					assert.ErrorIs(t, r.Context().Err(), context.Canceled)
+				}))
+				handler.ServeHTTP(httptest.NewRecorder(), httptest.NewRequestWithContext(parent, test.method, test.path, nil))
+			})
+		})
+	}
+}

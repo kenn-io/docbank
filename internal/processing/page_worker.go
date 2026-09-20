@@ -220,7 +220,7 @@ func (w *PageWorker) process(ctx context.Context, claim store.PageJobClaim) erro
 				if err := w.catalog.PublishPageImage(ctx, claim, receipt, recipe, &authority); err != nil {
 					cleanup, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 					defer cancel()
-					return errors.Join(err, w.catalog.RecordAbandonedPageBlob(cleanup, physical.Hash, physical.Size, authority))
+					return errors.Join(err, w.catalog.RecordBlob(cleanup, physical.Hash, physical.Size, authority))
 				}
 				return nil
 			})

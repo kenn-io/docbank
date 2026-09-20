@@ -111,6 +111,7 @@ var storeErrCodes = []struct {
 	{store.ErrInvalidBatchMove, http.StatusUnprocessableEntity, "invalid_batch_move"},
 	{store.ErrInvalidBatchTag, http.StatusUnprocessableEntity, "invalid_batch_tag"},
 	{store.ErrBatchTagOperationConflict, http.StatusConflict, "batch_tag_operation_conflict"},
+	{store.ErrMailboxConflict, http.StatusConflict, "mailbox_conflict"},
 	{store.ErrNotTrashed, http.StatusUnprocessableEntity, "not_trashed"},
 	{store.ErrIsRoot, http.StatusUnprocessableEntity, "is_root"},
 	{store.ErrVersionNodeMismatch, http.StatusUnprocessableEntity, "version_node_mismatch"},

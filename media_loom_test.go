@@ -13,7 +13,6 @@ import (
 	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/document/media/mediatest"
 	"go.kenn.io/docbank/document/mediatranscript"
-	internalprocessing "go.kenn.io/docbank/internal/processing"
 )
 
 func TestLoomManualExportEmbedded(t *testing.T) {
@@ -177,25 +176,6 @@ func runLoomManualExportEmbedded(t *testing.T, captionOrigin string) {
 	require.NoError(t, vault.Close())
 	vault, err = New(t.Context(), Config{Root: root})
 	require.NoError(t, err)
-	vault.processingCancel()
-	vault.processingWG.Wait()
-	waiter, err := vault.metadata.RenditionJobWaiterByID(t.Context(), queued.JobID)
-	require.NoError(t, err)
-	worker, err := internalprocessing.NewRenditionWorker(internalprocessing.RenditionWorkerConfig{
-		Catalog: vault.metadata, Blobs: vault.blobs, Runtime: vault.processing.RenditionRuntimes(),
-		Gate: embeddedMutationGate{vault: vault}, Owner: "embedded-test-rendition-" + vault.ID(),
-		LeaseDuration: time.Minute, IdleDelay: 25 * time.Millisecond,
-	})
-	require.NoError(t, err)
-	processed, err := worker.RunJob(t.Context(), waiter.JobID)
-	require.NoError(t, err)
-	if processed {
-		continuation := &internalprocessing.MediaContinuationWorker{Service: vault.processing, IdleDelay: 25 * time.Millisecond}
-		contProcessed, contErr := continuation.RunOne(t.Context())
-		require.NoError(t, contErr)
-		require.True(t, contProcessed)
-	}
-
 	var status MediaReceipt
 	if !assert.Eventually(t, func() bool {
 		status, err = vault.MediaStatus(t.Context(), remote.SourceID)

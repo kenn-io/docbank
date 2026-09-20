@@ -73,6 +73,11 @@ reference becomes a GC candidate.
 
 ### Release email attachment references
 
+Mailbox imports and explicit EML transfers retain their messages and attachment
+versions for retry receipts. Trash empty skips those nodes and any containing
+folder, so they do not block deletion of unrelated trash. Their receipts cannot
+be released; see [Mailbox archives](importing.md#mailbox-archives).
+
 Published email attachments retain their exact source and child versions.
 If a receipt blocks permanent deletion or version pruning, the error names its
 operation ID. Inspect that receipt before releasing its references:

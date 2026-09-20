@@ -390,10 +390,9 @@ func (s *Store) trashEmpty(
 		where += ` AND trashed_at <= ?`
 		args = append(args, time.Now().UTC().Add(-olderThan).Format(timestampLayout))
 	}
-	// Media source revisions and input artifacts are immutable retained
-	// authority. A root containing either kind is outside trash-empty
-	// eligibility so one pinned document cannot abort deletion of unrelated
-	// roots at the transaction's deferred foreign-key check.
+	// Media authority and mailbox receipts retain exact content versions.
+	// Exclude their source and attachment subtrees so a retained document
+	// cannot abort deletion of unrelated trash roots.
 	where += ` AND NOT EXISTS (
 		WITH RECURSIVE subtree(id) AS (
 			SELECT nodes.id
@@ -405,6 +404,11 @@ func (s *Store) trashEmpty(
 			WHERE source.content_version_id=version.version_id)
 		   OR EXISTS (SELECT 1 FROM media_input_artifacts input
 			WHERE input.content_version_id=version.version_id)
+		   OR EXISTS (SELECT 1 FROM mailbox_transfer_receipts receipt
+			WHERE receipt.target_version_id=version.version_id)
+		   OR EXISTS (SELECT 1 FROM email_document_relations relation
+			JOIN mailbox_transfer_receipts receipt ON receipt.document_publication_id=relation.operation_id
+			WHERE relation.child_version_id=version.version_id)
 	)`
 	selection := `SELECT id FROM nodes WHERE ` + where + ` ORDER BY trashed_at ASC, id ASC`
 	selectionArgs := append([]any(nil), args...)

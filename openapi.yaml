@@ -4645,6 +4645,29 @@ components:
         - preview_token
         - acknowledge_permanent_retention
       type: object
+    Entry:
+      additionalProperties: false
+      properties:
+        index:
+          format: int64
+          type: integer
+        name:
+          type: string
+        sha256:
+          type: string
+        size:
+          format: int64
+          type: integer
+      required:
+        - index
+        - name
+        - sha256
+        - size
+      type: object
+      x-go-type: mailbox.Entry
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/mailbox
+        name: mailbox
     Error:
       additionalProperties: false
       properties:
@@ -5525,6 +5548,509 @@ components:
       x-go-type-import:
         path: go.kenn.io/docbank/document/bundle
         name: bundle
+    MailboxArchive:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/MailboxArchive.json
+          format: uri
+          readOnly: true
+          type: string
+        description:
+          type: string
+        id:
+          type: string
+        owner:
+          type: string
+      required:
+        - id
+        - owner
+        - description
+      type: object
+      x-go-type: store.MailboxArchive
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/store
+        name: store
+    MailboxArchiveInput:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/MailboxArchiveInput.json
+          format: uri
+          readOnly: true
+          type: string
+        description:
+          type: string
+        id:
+          type: string
+      required:
+        - id
+        - description
+      type: object
+      x-go-type: api.MailboxArchiveInput
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
+    MailboxChunk:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/MailboxChunk.json
+          format: uri
+          readOnly: true
+          type: string
+        index:
+          format: int64
+          type: integer
+        sha256:
+          type: string
+        size:
+          format: int64
+          type: integer
+      required:
+        - index
+        - sha256
+        - size
+      type: object
+      x-go-type: store.MailboxChunk
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/store
+        name: store
+    MailboxContainer:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/MailboxContainer.json
+          format: uri
+          readOnly: true
+          type: string
+        chunks:
+          items:
+            $ref: "#/components/schemas/MailboxChunk"
+          type: array
+        created_at:
+          type: string
+        format:
+          type: string
+        id:
+          type: string
+        manifest_sha256:
+          type: string
+        owner:
+          type: string
+        sha256:
+          type: string
+        size:
+          format: int64
+          type: integer
+        state:
+          type: string
+      required:
+        - state
+        - created_at
+        - manifest_sha256
+        - chunks
+        - id
+        - owner
+        - sha256
+        - size
+        - format
+      type: object
+      x-go-type: store.MailboxContainer
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/store
+        name: store
+    MailboxContainerInput:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/MailboxContainerInput.json
+          format: uri
+          readOnly: true
+          type: string
+        format:
+          type: string
+        id:
+          type: string
+        sha256:
+          type: string
+        size:
+          format: int64
+          type: integer
+      required:
+        - id
+        - sha256
+        - size
+        - format
+      type: object
+      x-go-type: api.MailboxContainerInput
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
+    MailboxEvent:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/MailboxEvent.json
+          format: uri
+          readOnly: true
+          type: string
+        error:
+          type: string
+        job:
+          $ref: "#/components/schemas/MailboxJob"
+        type:
+          type: string
+      required:
+        - type
+      type: object
+      x-go-type: api.MailboxEvent
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
+    MailboxJob:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/MailboxJob.json
+          format: uri
+          readOnly: true
+          type: string
+        canceled:
+          format: int64
+          type: integer
+        checkpoint:
+          format: int64
+          type: integer
+        collection_id:
+          type: string
+        container_id:
+          type: string
+        container_sha256:
+          type: string
+        entry_hashes:
+          items:
+            type: string
+          type: array
+        id:
+          type: string
+        imported:
+          format: int64
+          type: integer
+        owner:
+          type: string
+        pending:
+          format: int64
+          type: integer
+        reason:
+          type: string
+        rejected:
+          format: int64
+          type: integer
+        scanned_tail:
+          type: boolean
+        segment_start:
+          format: int64
+          type: integer
+        settings:
+          $ref: "#/components/schemas/MailboxSettings"
+        started_at:
+          type: string
+        state:
+          type: string
+      required:
+        - owner
+        - state
+        - collection_id
+        - started_at
+        - checkpoint
+        - segment_start
+        - imported
+        - rejected
+        - pending
+        - canceled
+        - scanned_tail
+        - reason
+        - id
+        - container_id
+        - container_sha256
+        - settings
+      type: object
+      x-go-type: store.MailboxJob
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/store
+        name: store
+    MailboxJobInput:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/MailboxJobInput.json
+          format: uri
+          readOnly: true
+          type: string
+        container_id:
+          type: string
+        container_sha256:
+          type: string
+        id:
+          type: string
+        settings:
+          $ref: "#/components/schemas/MailboxSettingsInput"
+      required:
+        - id
+        - container_id
+        - container_sha256
+        - settings
+      type: object
+      x-go-type: api.MailboxJobInput
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
+    MailboxLocation:
+      additionalProperties: false
+      properties:
+        container_id:
+          type: string
+        eml_sha256:
+          type: string
+        eml_size:
+          format: int64
+          type: integer
+        end:
+          format: int64
+          type: integer
+        entry:
+          type: string
+        entry_index:
+          format: int64
+          type: integer
+        entry_sha256:
+          type: string
+        labels:
+          items:
+            type: string
+          type: array
+        raw_sha256:
+          type: string
+        separator:
+          type: string
+        sequence:
+          format: int64
+          type: integer
+        start:
+          format: int64
+          type: integer
+      required:
+        - container_id
+        - entry
+        - entry_index
+        - entry_sha256
+        - sequence
+        - start
+        - end
+        - separator
+        - raw_sha256
+        - eml_sha256
+        - eml_size
+        - labels
+      type: object
+      x-go-type: store.MailboxLocation
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/store
+        name: store
+    MailboxOccurrence:
+      additionalProperties: false
+      properties:
+        job_id:
+          type: string
+        location:
+          $ref: "#/components/schemas/MailboxLocation"
+        ordinal:
+          format: int64
+          type: integer
+        outcome:
+          type: string
+        reason:
+          type: string
+        receipt_id:
+          type: string
+        target:
+          $ref: "#/components/schemas/EmailDocumentIdentity"
+      required:
+        - job_id
+        - ordinal
+        - outcome
+        - reason
+        - location
+      type: object
+      x-go-type: store.MailboxOccurrence
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/store
+        name: store
+    MailboxResumeInput:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/MailboxResumeInput.json
+          format: uri
+          readOnly: true
+          type: string
+        continuation:
+          type: boolean
+        request:
+          $ref: "#/components/schemas/MailboxJobInput"
+      required:
+        - request
+        - continuation
+      type: object
+      x-go-type: api.MailboxResumeInput
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
+    MailboxSettings:
+      additionalProperties: false
+      properties:
+        destination_id:
+          format: int64
+          type: integer
+        dialect:
+          type: string
+        label_tags:
+          additionalProperties:
+            type: string
+          type: object
+        recipe:
+          type: string
+      required:
+        - recipe
+        - dialect
+        - destination_id
+        - label_tags
+      type: object
+      x-go-type: store.MailboxSettings
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/store
+        name: store
+    MailboxSettingsInput:
+      additionalProperties: false
+      properties:
+        destination_id:
+          format: int64
+          type: integer
+        dialect:
+          type: string
+        label_tags:
+          additionalProperties:
+            type: string
+          type: object
+        recipe:
+          type: string
+      required:
+        - destination_id
+      type: object
+      x-go-type: api.MailboxSettingsInput
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
+    MailboxTransferReceipt:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/MailboxTransferReceipt.json
+          format: uri
+          readOnly: true
+          type: string
+        created_at:
+          type: string
+        document_publication_id:
+          type: string
+        email_attachment_id:
+          type: string
+        id:
+          type: string
+        location:
+          $ref: "#/components/schemas/MailboxLocation"
+        outcome:
+          type: string
+        request:
+          $ref: "#/components/schemas/MailboxTransferRequest"
+        request_digest:
+          type: string
+        target:
+          $ref: "#/components/schemas/EmailDocumentIdentity"
+        target_revision:
+          format: int64
+          type: integer
+      required:
+        - id
+        - request
+        - request_digest
+        - target
+        - target_revision
+        - email_attachment_id
+        - document_publication_id
+        - created_at
+        - outcome
+      type: object
+      x-go-type: store.MailboxTransferReceipt
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/store
+        name: store
+    MailboxTransferRequest:
+      additionalProperties: false
+      properties:
+        archive_id:
+          type: string
+        destination_id:
+          format: int64
+          type: integer
+        expected_revision:
+          format: int64
+          type: integer
+        name:
+          type: string
+        reference:
+          type: string
+        settings:
+          type: string
+        sha256:
+          type: string
+        size:
+          format: int64
+          type: integer
+      required:
+        - archive_id
+        - reference
+        - sha256
+        - size
+        - settings
+        - destination_id
+        - name
+      type: object
+      x-go-type: store.MailboxTransferRequest
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/store
+        name: store
     MediaAcquisitionGrantBody:
       additionalProperties: false
       properties:
@@ -6140,6 +6666,42 @@ components:
       x-go-type-import:
         path: go.kenn.io/docbank/document/bundle
         name: bundle
+    Message:
+      additionalProperties: false
+      properties:
+        eml_sha256:
+          type: string
+        eml_size:
+          format: int64
+          type: integer
+        end:
+          format: int64
+          type: integer
+        raw_sha256:
+          type: string
+        rejection:
+          type: string
+        separator:
+          type: string
+        sequence:
+          format: int64
+          type: integer
+        start:
+          format: int64
+          type: integer
+      required:
+        - sequence
+        - start
+        - end
+        - separator
+        - raw_sha256
+        - eml_sha256
+        - eml_size
+      type: object
+      x-go-type: mailbox.Message
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/mailbox
+        name: mailbox
     MkdirPathRequest:
       additionalProperties: false
       properties:
@@ -7171,6 +7733,42 @@ components:
       x-go-type-import:
         path: go.kenn.io/docbank/document/bundle
         name: bundle
+    Preview:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/Preview.json
+          format: uri
+          readOnly: true
+          type: string
+        dialect:
+          type: string
+        entries:
+          items:
+            $ref: "#/components/schemas/Entry"
+          type: array
+        entry_count:
+          format: int64
+          type: integer
+        has_more:
+          type: boolean
+        samples:
+          items:
+            $ref: "#/components/schemas/Message"
+          type: array
+      required:
+        - entry_count
+        - dialect
+        - entries
+        - samples
+        - has_more
+      type: object
+      x-go-type: mailbox.Preview
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/mailbox
+        name: mailbox
     PreviewAuditEnrollmentRequest:
       additionalProperties: false
       properties:
@@ -7237,6 +7835,19 @@ components:
       required:
         - name
         - binding
+      type: object
+    PreviewRequest:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/PreviewRequest.json
+          format: uri
+          readOnly: true
+          type: string
+        dialect:
+          type: string
       type: object
     PreviewStorageEvacuationRequest:
       additionalProperties: false
@@ -13193,6 +13804,412 @@ paths:
                 $ref: "#/components/schemas/Error"
           description: Error
       summary: Request cancellation at the next durable object boundary
+  /api/v1/mailbox/archives:
+    post:
+      operationId: registerMailboxArchive
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MailboxArchiveInput"
+        description: JSON body, at most 1 MiB. Owner is derived from authenticated identity.
+        required: true
+      responses:
+        "201":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MailboxArchive"
+          description: Register an application-independent EML archive
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Mailbox request failed
+      summary: Register an application-independent EML archive
+  /api/v1/mailbox/containers:
+    post:
+      operationId: beginMailboxContainer
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MailboxContainerInput"
+        description: JSON body, at most 1 MiB. Owner is derived from authenticated identity.
+        required: true
+      responses:
+        "201":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MailboxContainer"
+          description: Declare an immutable mailbox container
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Mailbox request failed
+      summary: Declare an immutable mailbox container
+  /api/v1/mailbox/containers/{id}:
+    delete:
+      operationId: abortMailboxContainer
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      responses:
+        "204":
+          description: Abort an incomplete upload
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Mailbox request failed
+      summary: Abort an incomplete upload
+    get:
+      operationId: getMailboxContainer
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MailboxContainer"
+          description: Read owned source and verified chunks
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Mailbox request failed
+      summary: Read owned source and verified chunks
+  /api/v1/mailbox/containers/{id}/chunks/{index}:
+    put:
+      operationId: uploadMailboxChunk
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+        - in: path
+          name: index
+          required: true
+          schema:
+            type: integer
+        - in: header
+          name: X-Docbank-Blob-Hash
+          required: true
+          schema:
+            pattern: ^[0-9a-f]{64}$
+            type: string
+        - in: header
+          name: X-Docbank-Blob-Size
+          required: true
+          schema:
+            format: int64
+            type: integer
+      requestBody:
+        content:
+          application/octet-stream:
+            schema:
+              contentMediaType: application/octet-stream
+              format: binary
+              type: string
+        description: One complete 64 MiB chunk, except the exact shorter final chunk.
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MailboxChunk"
+          description: Verify and retain one declared chunk
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Mailbox request failed
+      summary: Verify and retain one declared chunk
+  /api/v1/mailbox/containers/{id}/preview:
+    post:
+      operationId: previewMailboxContainer
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PreviewRequest"
+        description: JSON body, at most 1 MiB. Owner is derived from authenticated identity.
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Preview"
+          description: Preview a bounded sample with an explicit dialect
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Mailbox request failed
+      summary: Preview a bounded sample with an explicit dialect
+  /api/v1/mailbox/containers/{id}/seal:
+    post:
+      operationId: sealMailboxContainer
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MailboxContainer"
+          description: Verify full source and seal ordered chunk authority
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Mailbox request failed
+      summary: Verify full source and seal ordered chunk authority
+  /api/v1/mailbox/jobs:
+    get:
+      operationId: listMailboxJobs
+      parameters:
+        - in: query
+          name: after
+          schema:
+            type: string
+        - description: Page size, 1 through 100
+          in: query
+          name: limit
+          schema:
+            type: integer
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                items:
+                  $ref: "#/components/schemas/MailboxJob"
+                type: array
+          description: Read a bounded page of owned imports
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Mailbox request failed
+      summary: Read a bounded page of owned imports
+    post:
+      operationId: beginMailboxJob
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MailboxJobInput"
+        description: JSON body, at most 1 MiB. Owner is derived from authenticated identity.
+        required: true
+      responses:
+        "201":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MailboxJob"
+          description: Start an immutable resumable mailbox import
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Mailbox request failed
+      summary: Start an immutable resumable mailbox import
+  /api/v1/mailbox/jobs/{id}:
+    get:
+      operationId: getMailboxJob
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MailboxJob"
+          description: Read durable progress and remaining tail
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Mailbox request failed
+      summary: Read durable progress and remaining tail
+  /api/v1/mailbox/jobs/{id}/cancel:
+    post:
+      operationId: cancelMailboxJob
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      responses:
+        "204":
+          description: Fence publication and cancel pending work
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Mailbox request failed
+      summary: Fence publication and cancel pending work
+  /api/v1/mailbox/jobs/{id}/events:
+    get:
+      operationId: mailboxEvents
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          content:
+            application/x-ndjson:
+              schema:
+                $ref: "#/components/schemas/MailboxEvent"
+          description: Observe durable import progress as NDJSON
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Mailbox request failed
+      summary: Observe durable import progress as NDJSON
+  /api/v1/mailbox/jobs/{id}/occurrences:
+    get:
+      operationId: mailboxOccurrences
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+        - in: query
+          name: after
+          schema:
+            format: int64
+            type: integer
+        - description: Page size, 1 through 100
+          in: query
+          name: limit
+          schema:
+            type: integer
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                items:
+                  $ref: "#/components/schemas/MailboxOccurrence"
+                type: array
+          description: Read a bounded occurrence receipt page
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Mailbox request failed
+      summary: Read a bounded occurrence receipt page
+  /api/v1/mailbox/jobs/{id}/resume:
+    post:
+      operationId: resumeMailboxJob
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MailboxResumeInput"
+        description: JSON body, at most 1 MiB. Owner is derived from authenticated identity.
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MailboxJob"
+          description: Resume or explicitly continue the exact source and settings
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Mailbox request failed
+      summary: Resume or explicitly continue the exact source and settings
+  /api/v1/mailbox/transfers:
+    post:
+      operationId: transferMailboxEML
+      parameters:
+        - description: Base64url JSON MailboxTransferRequest (at most 32768 encoded bytes)
+          in: header
+          name: X-Docbank-Transfer
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          message/rfc822:
+            schema:
+              contentMediaType: application/octet-stream
+              format: binary
+              type: string
+        description: Exact declared EML bytes, at most 128 MiB.
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MailboxTransferReceipt"
+          description: Atomically publish an explicitly identified EML and retry receipt
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Mailbox request failed
+      summary: Atomically publish an explicitly identified EML and retry receipt
   /api/v1/media/acquisition-plan:
     post:
       operationId: planMediaAcquisition

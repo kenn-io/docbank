@@ -13,6 +13,7 @@ import (
 	document "go.kenn.io/docbank/document"
 	bundle "go.kenn.io/docbank/document/bundle"
 	api "go.kenn.io/docbank/internal/api"
+	mailbox "go.kenn.io/docbank/internal/mailbox"
 	query "go.kenn.io/docbank/internal/query"
 	store "go.kenn.io/docbank/internal/store"
 )
@@ -2934,6 +2935,685 @@ func (c *Client) CancelStorageOperation(ctx context.Context, options *CancelStor
 	}
 
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/jobs/{operation_id}/cancel")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
+// RegisterMailboxArchive Register an application-independent EML archive
+func (c *Client) RegisterMailboxArchive(ctx context.Context, options *RegisterMailboxArchiveRequestOptions, reqEditors ...runtime.RequestEditorFn) (*RegisterMailboxArchiveResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/mailbox/archives",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*RegisterMailboxArchiveResponse, error) {
+		switch resp.StatusCode {
+
+		case 201:
+
+			target := new(RegisterMailboxArchiveResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "RegisterMailboxArchiveResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[RegisterMailboxArchiveErrorResponse](resp, "RegisterMailboxArchiveErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/mailbox/archives")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 201)
+	}
+	return responseParser(ctx, resp)
+}
+
+// BeginMailboxContainer Declare an immutable mailbox container
+func (c *Client) BeginMailboxContainer(ctx context.Context, options *BeginMailboxContainerRequestOptions, reqEditors ...runtime.RequestEditorFn) (*BeginMailboxContainerResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/mailbox/containers",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*BeginMailboxContainerResponse, error) {
+		switch resp.StatusCode {
+
+		case 201:
+
+			target := new(BeginMailboxContainerResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "BeginMailboxContainerResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[BeginMailboxContainerErrorResponse](resp, "BeginMailboxContainerErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/mailbox/containers")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 201)
+	}
+	return responseParser(ctx, resp)
+}
+
+// AbortMailboxContainer Abort an incomplete upload
+func (c *Client) AbortMailboxContainer(ctx context.Context, options *AbortMailboxContainerRequestOptions, reqEditors ...runtime.RequestEditorFn) (*struct{}, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/mailbox/containers/{id}",
+		Method:     "DELETE",
+		Options:    options,
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*struct{}, error) {
+		switch resp.StatusCode {
+
+		case 204:
+
+			target := new(struct{})
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[AbortMailboxContainerErrorResponse](resp, "AbortMailboxContainerErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/mailbox/containers/{id}")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 204)
+	}
+	return responseParser(ctx, resp)
+}
+
+// GetMailboxContainer Read owned source and verified chunks
+func (c *Client) GetMailboxContainer(ctx context.Context, options *GetMailboxContainerRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetMailboxContainerResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/mailbox/containers/{id}",
+		Method:     "GET",
+		Options:    options,
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*GetMailboxContainerResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(GetMailboxContainerResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "GetMailboxContainerResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[GetMailboxContainerErrorResponse](resp, "GetMailboxContainerErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/mailbox/containers/{id}")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
+// UploadMailboxChunk Verify and retain one declared chunk
+func (c *Client) UploadMailboxChunk(ctx context.Context, options *UploadMailboxChunkRequestOptions, reqEditors ...runtime.RequestEditorFn) (*UploadMailboxChunkResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/mailbox/containers/{id}/chunks/{index}",
+		Method:      "PUT",
+		Options:     options,
+		ContentType: "application/octet-stream",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*UploadMailboxChunkResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(UploadMailboxChunkResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "UploadMailboxChunkResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[UploadMailboxChunkErrorResponse](resp, "UploadMailboxChunkErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/mailbox/containers/{id}/chunks/{index}")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
+// PreviewMailboxContainer Preview a bounded sample with an explicit dialect
+func (c *Client) PreviewMailboxContainer(ctx context.Context, options *PreviewMailboxContainerRequestOptions, reqEditors ...runtime.RequestEditorFn) (*PreviewMailboxContainerResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/mailbox/containers/{id}/preview",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*PreviewMailboxContainerResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(PreviewMailboxContainerResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "PreviewMailboxContainerResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[PreviewMailboxContainerErrorResponse](resp, "PreviewMailboxContainerErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/mailbox/containers/{id}/preview")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
+// SealMailboxContainer Verify full source and seal ordered chunk authority
+func (c *Client) SealMailboxContainer(ctx context.Context, options *SealMailboxContainerRequestOptions, reqEditors ...runtime.RequestEditorFn) (*SealMailboxContainerResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/mailbox/containers/{id}/seal",
+		Method:     "POST",
+		Options:    options,
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*SealMailboxContainerResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(SealMailboxContainerResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "SealMailboxContainerResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[SealMailboxContainerErrorResponse](resp, "SealMailboxContainerErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/mailbox/containers/{id}/seal")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
+// ListMailboxJobs Read a bounded page of owned imports
+func (c *Client) ListMailboxJobs(ctx context.Context, options *ListMailboxJobsRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ListMailboxJobsResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/mailbox/jobs",
+		Method:     "GET",
+		Options:    options,
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*ListMailboxJobsResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(ListMailboxJobsResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "ListMailboxJobsResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[ListMailboxJobsErrorResponse](resp, "ListMailboxJobsErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/mailbox/jobs")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
+// BeginMailboxJob Start an immutable resumable mailbox import
+func (c *Client) BeginMailboxJob(ctx context.Context, options *BeginMailboxJobRequestOptions, reqEditors ...runtime.RequestEditorFn) (*BeginMailboxJobResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/mailbox/jobs",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*BeginMailboxJobResponse, error) {
+		switch resp.StatusCode {
+
+		case 201:
+
+			target := new(BeginMailboxJobResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "BeginMailboxJobResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[BeginMailboxJobErrorResponse](resp, "BeginMailboxJobErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/mailbox/jobs")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 201)
+	}
+	return responseParser(ctx, resp)
+}
+
+// GetMailboxJob Read durable progress and remaining tail
+func (c *Client) GetMailboxJob(ctx context.Context, options *GetMailboxJobRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetMailboxJobResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/mailbox/jobs/{id}",
+		Method:     "GET",
+		Options:    options,
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*GetMailboxJobResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(GetMailboxJobResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "GetMailboxJobResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[GetMailboxJobErrorResponse](resp, "GetMailboxJobErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/mailbox/jobs/{id}")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
+// CancelMailboxJob Fence publication and cancel pending work
+func (c *Client) CancelMailboxJob(ctx context.Context, options *CancelMailboxJobRequestOptions, reqEditors ...runtime.RequestEditorFn) (*struct{}, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/mailbox/jobs/{id}/cancel",
+		Method:     "POST",
+		Options:    options,
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*struct{}, error) {
+		switch resp.StatusCode {
+
+		case 204:
+
+			target := new(struct{})
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[CancelMailboxJobErrorResponse](resp, "CancelMailboxJobErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/mailbox/jobs/{id}/cancel")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 204)
+	}
+	return responseParser(ctx, resp)
+}
+
+// MailboxEvents Observe durable import progress as NDJSON
+func (c *Client) MailboxEvents(ctx context.Context, options *MailboxEventsRequestOptions, reqEditors ...runtime.RequestEditorFn) (*MailboxEventsResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/mailbox/jobs/{id}/events",
+		Method:     "GET",
+		Options:    options,
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*MailboxEventsResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(MailboxEventsResponse(resp.Content))
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[MailboxEventsErrorResponse](resp, "MailboxEventsErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/mailbox/jobs/{id}/events")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
+// MailboxOccurrences Read a bounded occurrence receipt page
+func (c *Client) MailboxOccurrences(ctx context.Context, options *MailboxOccurrencesRequestOptions, reqEditors ...runtime.RequestEditorFn) (*MailboxOccurrencesResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/mailbox/jobs/{id}/occurrences",
+		Method:     "GET",
+		Options:    options,
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*MailboxOccurrencesResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(MailboxOccurrencesResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "MailboxOccurrencesResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[MailboxOccurrencesErrorResponse](resp, "MailboxOccurrencesErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/mailbox/jobs/{id}/occurrences")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
+// ResumeMailboxJob Resume or explicitly continue the exact source and settings
+func (c *Client) ResumeMailboxJob(ctx context.Context, options *ResumeMailboxJobRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ResumeMailboxJobResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/mailbox/jobs/{id}/resume",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*ResumeMailboxJobResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(ResumeMailboxJobResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "ResumeMailboxJobResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[ResumeMailboxJobErrorResponse](resp, "ResumeMailboxJobErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/mailbox/jobs/{id}/resume")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
+// TransferMailboxEML Atomically publish an explicitly identified EML and retry receipt
+func (c *Client) TransferMailboxEML(ctx context.Context, options *TransferMailboxEMLRequestOptions, reqEditors ...runtime.RequestEditorFn) (*TransferMailboxEMLResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/mailbox/transfers",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "message/rfc822",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*TransferMailboxEMLResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(TransferMailboxEMLResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "TransferMailboxEMLResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[TransferMailboxEMLErrorResponse](resp, "TransferMailboxEMLErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/mailbox/transfers")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
@@ -9896,6 +10576,492 @@ func (o *CancelStorageOperationRequestOptions) GetHeader() (map[string]string, e
 	return nil, nil
 }
 
+// RegisterMailboxArchiveRequestOptions is the options needed to make a request to RegisterMailboxArchive.
+type RegisterMailboxArchiveRequestOptions struct {
+	Body *RegisterMailboxArchiveBody
+}
+
+// GetPathParams returns the path params as a map.
+func (o *RegisterMailboxArchiveRequestOptions) GetPathParams() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetQuery returns the query params as a map.
+func (o *RegisterMailboxArchiveRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *RegisterMailboxArchiveRequestOptions) GetBody() any {
+	if o.Body == nil {
+		return nil
+	}
+	return o.Body
+}
+
+// GetHeader returns the headers as a map.
+func (o *RegisterMailboxArchiveRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
+// BeginMailboxContainerRequestOptions is the options needed to make a request to BeginMailboxContainer.
+type BeginMailboxContainerRequestOptions struct {
+	Body *BeginMailboxContainerBody
+}
+
+// GetPathParams returns the path params as a map.
+func (o *BeginMailboxContainerRequestOptions) GetPathParams() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetQuery returns the query params as a map.
+func (o *BeginMailboxContainerRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *BeginMailboxContainerRequestOptions) GetBody() any {
+	if o.Body == nil {
+		return nil
+	}
+	return o.Body
+}
+
+// GetHeader returns the headers as a map.
+func (o *BeginMailboxContainerRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
+// AbortMailboxContainerRequestOptions is the options needed to make a request to AbortMailboxContainer.
+type AbortMailboxContainerRequestOptions struct {
+	PathParams *AbortMailboxContainerPath
+}
+
+// GetPathParams returns the path params as a map.
+func (o *AbortMailboxContainerRequestOptions) GetPathParams() (map[string]any, error) {
+	encoded, err := json.Marshal(o.PathParams, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetQuery returns the query params as a map.
+func (o *AbortMailboxContainerRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *AbortMailboxContainerRequestOptions) GetBody() any {
+	return nil
+}
+
+// GetHeader returns the headers as a map.
+func (o *AbortMailboxContainerRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
+// GetMailboxContainerRequestOptions is the options needed to make a request to GetMailboxContainer.
+type GetMailboxContainerRequestOptions struct {
+	PathParams *GetMailboxContainerPath
+}
+
+// GetPathParams returns the path params as a map.
+func (o *GetMailboxContainerRequestOptions) GetPathParams() (map[string]any, error) {
+	encoded, err := json.Marshal(o.PathParams, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetQuery returns the query params as a map.
+func (o *GetMailboxContainerRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *GetMailboxContainerRequestOptions) GetBody() any {
+	return nil
+}
+
+// GetHeader returns the headers as a map.
+func (o *GetMailboxContainerRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
+// UploadMailboxChunkRequestOptions is the options needed to make a request to UploadMailboxChunk.
+type UploadMailboxChunkRequestOptions struct {
+	PathParams *UploadMailboxChunkPath
+	Body       *UploadMailboxChunkBody
+	Header     *UploadMailboxChunkHeaders
+}
+
+// GetPathParams returns the path params as a map.
+func (o *UploadMailboxChunkRequestOptions) GetPathParams() (map[string]any, error) {
+	encoded, err := json.Marshal(o.PathParams, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetQuery returns the query params as a map.
+func (o *UploadMailboxChunkRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *UploadMailboxChunkRequestOptions) GetBody() any {
+	if o.Body == nil {
+		return nil
+	}
+	return o.Body
+}
+
+// GetHeader returns the headers as a map.
+func (o *UploadMailboxChunkRequestOptions) GetHeader() (map[string]string, error) {
+	encoded, err := json.Marshal(o.Header, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var headers map[string]string
+	err = json.Unmarshal(encoded, &headers)
+	return headers, err
+}
+
+// PreviewMailboxContainerRequestOptions is the options needed to make a request to PreviewMailboxContainer.
+type PreviewMailboxContainerRequestOptions struct {
+	PathParams *PreviewMailboxContainerPath
+	Body       *PreviewMailboxContainerBody
+}
+
+// GetPathParams returns the path params as a map.
+func (o *PreviewMailboxContainerRequestOptions) GetPathParams() (map[string]any, error) {
+	encoded, err := json.Marshal(o.PathParams, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetQuery returns the query params as a map.
+func (o *PreviewMailboxContainerRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *PreviewMailboxContainerRequestOptions) GetBody() any {
+	if o.Body == nil {
+		return nil
+	}
+	return o.Body
+}
+
+// GetHeader returns the headers as a map.
+func (o *PreviewMailboxContainerRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
+// SealMailboxContainerRequestOptions is the options needed to make a request to SealMailboxContainer.
+type SealMailboxContainerRequestOptions struct {
+	PathParams *SealMailboxContainerPath
+}
+
+// GetPathParams returns the path params as a map.
+func (o *SealMailboxContainerRequestOptions) GetPathParams() (map[string]any, error) {
+	encoded, err := json.Marshal(o.PathParams, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetQuery returns the query params as a map.
+func (o *SealMailboxContainerRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *SealMailboxContainerRequestOptions) GetBody() any {
+	return nil
+}
+
+// GetHeader returns the headers as a map.
+func (o *SealMailboxContainerRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
+// ListMailboxJobsRequestOptions is the options needed to make a request to ListMailboxJobs.
+type ListMailboxJobsRequestOptions struct {
+	Query *ListMailboxJobsQuery
+}
+
+// GetPathParams returns the path params as a map.
+func (o *ListMailboxJobsRequestOptions) GetPathParams() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetQuery returns the query params as a map.
+func (o *ListMailboxJobsRequestOptions) GetQuery() (map[string]any, error) {
+	encoded, err := json.Marshal(o.Query, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *ListMailboxJobsRequestOptions) GetBody() any {
+	return nil
+}
+
+// GetHeader returns the headers as a map.
+func (o *ListMailboxJobsRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
+// BeginMailboxJobRequestOptions is the options needed to make a request to BeginMailboxJob.
+type BeginMailboxJobRequestOptions struct {
+	Body *BeginMailboxJobBody
+}
+
+// GetPathParams returns the path params as a map.
+func (o *BeginMailboxJobRequestOptions) GetPathParams() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetQuery returns the query params as a map.
+func (o *BeginMailboxJobRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *BeginMailboxJobRequestOptions) GetBody() any {
+	if o.Body == nil {
+		return nil
+	}
+	return o.Body
+}
+
+// GetHeader returns the headers as a map.
+func (o *BeginMailboxJobRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
+// GetMailboxJobRequestOptions is the options needed to make a request to GetMailboxJob.
+type GetMailboxJobRequestOptions struct {
+	PathParams *GetMailboxJobPath
+}
+
+// GetPathParams returns the path params as a map.
+func (o *GetMailboxJobRequestOptions) GetPathParams() (map[string]any, error) {
+	encoded, err := json.Marshal(o.PathParams, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetQuery returns the query params as a map.
+func (o *GetMailboxJobRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *GetMailboxJobRequestOptions) GetBody() any {
+	return nil
+}
+
+// GetHeader returns the headers as a map.
+func (o *GetMailboxJobRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
+// CancelMailboxJobRequestOptions is the options needed to make a request to CancelMailboxJob.
+type CancelMailboxJobRequestOptions struct {
+	PathParams *CancelMailboxJobPath
+}
+
+// GetPathParams returns the path params as a map.
+func (o *CancelMailboxJobRequestOptions) GetPathParams() (map[string]any, error) {
+	encoded, err := json.Marshal(o.PathParams, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetQuery returns the query params as a map.
+func (o *CancelMailboxJobRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *CancelMailboxJobRequestOptions) GetBody() any {
+	return nil
+}
+
+// GetHeader returns the headers as a map.
+func (o *CancelMailboxJobRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
+// MailboxEventsRequestOptions is the options needed to make a request to MailboxEvents.
+type MailboxEventsRequestOptions struct {
+	PathParams *MailboxEventsPath
+}
+
+// GetPathParams returns the path params as a map.
+func (o *MailboxEventsRequestOptions) GetPathParams() (map[string]any, error) {
+	encoded, err := json.Marshal(o.PathParams, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetQuery returns the query params as a map.
+func (o *MailboxEventsRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *MailboxEventsRequestOptions) GetBody() any {
+	return nil
+}
+
+// GetHeader returns the headers as a map.
+func (o *MailboxEventsRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
+// MailboxOccurrencesRequestOptions is the options needed to make a request to MailboxOccurrences.
+type MailboxOccurrencesRequestOptions struct {
+	PathParams *MailboxOccurrencesPath
+	Query      *MailboxOccurrencesQuery
+}
+
+// GetPathParams returns the path params as a map.
+func (o *MailboxOccurrencesRequestOptions) GetPathParams() (map[string]any, error) {
+	encoded, err := json.Marshal(o.PathParams, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetQuery returns the query params as a map.
+func (o *MailboxOccurrencesRequestOptions) GetQuery() (map[string]any, error) {
+	encoded, err := json.Marshal(o.Query, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *MailboxOccurrencesRequestOptions) GetBody() any {
+	return nil
+}
+
+// GetHeader returns the headers as a map.
+func (o *MailboxOccurrencesRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
+// ResumeMailboxJobRequestOptions is the options needed to make a request to ResumeMailboxJob.
+type ResumeMailboxJobRequestOptions struct {
+	PathParams *ResumeMailboxJobPath
+	Body       *ResumeMailboxJobBody
+}
+
+// GetPathParams returns the path params as a map.
+func (o *ResumeMailboxJobRequestOptions) GetPathParams() (map[string]any, error) {
+	encoded, err := json.Marshal(o.PathParams, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetQuery returns the query params as a map.
+func (o *ResumeMailboxJobRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *ResumeMailboxJobRequestOptions) GetBody() any {
+	if o.Body == nil {
+		return nil
+	}
+	return o.Body
+}
+
+// GetHeader returns the headers as a map.
+func (o *ResumeMailboxJobRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
+// TransferMailboxEMLRequestOptions is the options needed to make a request to TransferMailboxEML.
+type TransferMailboxEMLRequestOptions struct {
+	Body   *TransferMailboxEMLBody
+	Header *TransferMailboxEMLHeaders
+}
+
+// GetPathParams returns the path params as a map.
+func (o *TransferMailboxEMLRequestOptions) GetPathParams() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetQuery returns the query params as a map.
+func (o *TransferMailboxEMLRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *TransferMailboxEMLRequestOptions) GetBody() any {
+	if o.Body == nil {
+		return nil
+	}
+	return o.Body
+}
+
+// GetHeader returns the headers as a map.
+func (o *TransferMailboxEMLRequestOptions) GetHeader() (map[string]string, error) {
+	encoded, err := json.Marshal(o.Header, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var headers map[string]string
+	err = json.Unmarshal(encoded, &headers)
+	return headers, err
+}
+
 // PlanMediaAcquisitionRequestOptions is the options needed to make a request to PlanMediaAcquisition.
 type PlanMediaAcquisitionRequestOptions struct {
 	Body *PlanMediaAcquisitionBody
@@ -13301,6 +14467,16 @@ type SetCollectionLabelHeaders struct {
 	IfMatch string `json:"If-Match"`
 }
 
+type UploadMailboxChunkHeaders struct {
+	XDocbankBlobHash string `json:"X-Docbank-Blob-Hash"`
+	XDocbankBlobSize int64  `json:"X-Docbank-Blob-Size"`
+}
+
+type TransferMailboxEMLHeaders struct {
+	// XDocbankTransfer Base64url JSON MailboxTransferRequest (at most 32768 encoded bytes)
+	XDocbankTransfer string `json:"X-Docbank-Transfer"`
+}
+
 type MoveNodeHeaders struct {
 	IfMatch string `json:"If-Match"`
 }
@@ -13451,6 +14627,47 @@ type GetStorageOperationPath struct {
 
 type CancelStorageOperationPath struct {
 	OperationID string `json:"operation_id"`
+}
+
+type AbortMailboxContainerPath struct {
+	ID string `json:"id"`
+}
+
+type GetMailboxContainerPath struct {
+	ID string `json:"id"`
+}
+
+type UploadMailboxChunkPath struct {
+	ID    string `json:"id"`
+	Index int    `json:"index"`
+}
+
+type PreviewMailboxContainerPath struct {
+	ID string `json:"id"`
+}
+
+type SealMailboxContainerPath struct {
+	ID string `json:"id"`
+}
+
+type GetMailboxJobPath struct {
+	ID string `json:"id"`
+}
+
+type CancelMailboxJobPath struct {
+	ID string `json:"id"`
+}
+
+type MailboxEventsPath struct {
+	ID string `json:"id"`
+}
+
+type MailboxOccurrencesPath struct {
+	ID string `json:"id"`
+}
+
+type ResumeMailboxJobPath struct {
+	ID string `json:"id"`
 }
 
 type RevokeMediaOccurrencePath struct {
@@ -13715,6 +14932,20 @@ type PreflightIngestBody = IngestPreflightRequest
 
 type StreamIngestBody = IngestRequest
 
+type RegisterMailboxArchiveBody = MailboxArchiveInput
+
+type BeginMailboxContainerBody = MailboxContainerInput
+
+type UploadMailboxChunkBody = runtime.File
+
+type PreviewMailboxContainerBody = PreviewRequest
+
+type BeginMailboxJobBody = MailboxJobInput
+
+type ResumeMailboxJobBody = MailboxResumeInput
+
+type TransferMailboxEMLBody = runtime.File
+
 type PlanMediaAcquisitionBody = MediaReferenceBody
 
 type GrantMediaAcquisitionConsentBody = MediaAcquisitionGrantBody
@@ -13931,6 +15162,20 @@ type ReadFormatCapabilitiesQuery struct {
 	Family    *string `json:"family,omitempty"`
 	Format    *string `json:"format,omitempty"`
 	Extension *string `json:"extension,omitempty"`
+}
+
+type ListMailboxJobsQuery struct {
+	After *string `json:"after,omitempty"`
+
+	// Limit Page size, 1 through 100
+	Limit *int `json:"limit,omitempty"`
+}
+
+type MailboxOccurrencesQuery struct {
+	After *int64 `json:"after,omitempty"`
+
+	// Limit Page size, 1 through 100
+	Limit *int `json:"limit,omitempty"`
 }
 
 type ListMediaOccurrencesQuery struct {
@@ -14294,6 +15539,62 @@ type GetStorageOperationErrorResponse = Error
 type CancelStorageOperationResponse = api.StorageOperation
 
 type CancelStorageOperationErrorResponse = Error
+
+type RegisterMailboxArchiveResponse = store.MailboxArchive
+
+type RegisterMailboxArchiveErrorResponse = Error
+
+type BeginMailboxContainerResponse = store.MailboxContainer
+
+type BeginMailboxContainerErrorResponse = Error
+
+type AbortMailboxContainerErrorResponse = Error
+
+type GetMailboxContainerResponse = store.MailboxContainer
+
+type GetMailboxContainerErrorResponse = Error
+
+type UploadMailboxChunkResponse = store.MailboxChunk
+
+type UploadMailboxChunkErrorResponse = Error
+
+type PreviewMailboxContainerResponse = mailbox.Preview
+
+type PreviewMailboxContainerErrorResponse = Error
+
+type SealMailboxContainerResponse = store.MailboxContainer
+
+type SealMailboxContainerErrorResponse = Error
+
+type ListMailboxJobsResponse []MailboxJob
+
+type ListMailboxJobsErrorResponse = Error
+
+type BeginMailboxJobResponse = store.MailboxJob
+
+type BeginMailboxJobErrorResponse = Error
+
+type GetMailboxJobResponse = store.MailboxJob
+
+type GetMailboxJobErrorResponse = Error
+
+type CancelMailboxJobErrorResponse = Error
+
+type MailboxEventsResponse = []byte
+
+type MailboxEventsErrorResponse = Error
+
+type MailboxOccurrencesResponse []MailboxOccurrence
+
+type MailboxOccurrencesErrorResponse = Error
+
+type ResumeMailboxJobResponse = store.MailboxJob
+
+type ResumeMailboxJobErrorResponse = Error
+
+type TransferMailboxEMLResponse = store.MailboxTransferReceipt
+
+type TransferMailboxEMLErrorResponse = Error
 
 type PlanMediaAcquisitionResponse = api.MediaAcquisitionPlan
 
@@ -15076,6 +16377,8 @@ type EnableAuditRequest struct {
 	PreviewToken                  string  `json:"preview_token"`
 }
 
+type Entry = mailbox.Entry
+
 type Error = api.Error
 
 type ErrorPosition = api.ErrorPosition
@@ -15146,6 +16449,36 @@ type JobList = api.JobList
 
 type JobRequest = bundle.JobRequest
 
+type MailboxArchive = store.MailboxArchive
+
+type MailboxArchiveInput = api.MailboxArchiveInput
+
+type MailboxChunk = store.MailboxChunk
+
+type MailboxContainer = store.MailboxContainer
+
+type MailboxContainerInput = api.MailboxContainerInput
+
+type MailboxEvent = api.MailboxEvent
+
+type MailboxJob = store.MailboxJob
+
+type MailboxJobInput = api.MailboxJobInput
+
+type MailboxLocation = store.MailboxLocation
+
+type MailboxOccurrence = store.MailboxOccurrence
+
+type MailboxResumeInput = api.MailboxResumeInput
+
+type MailboxSettings = store.MailboxSettings
+
+type MailboxSettingsInput = api.MailboxSettingsInput
+
+type MailboxTransferReceipt = store.MailboxTransferReceipt
+
+type MailboxTransferRequest = store.MailboxTransferRequest
+
 type MediaAcquisitionGrantBody = api.MediaAcquisitionGrantBody
 
 type MediaAcquisitionPlan = api.MediaAcquisitionPlan
@@ -15189,6 +16522,8 @@ type MediaTimeSpan = api.MediaTimeSpan
 type MediaTimestamp = api.MediaTimestamp
 
 type Member = bundle.Member
+
+type Message = mailbox.Message
 
 type MkdirPathRequest struct {
 	// Schema A URL to the JSON Schema for this object.
@@ -15269,6 +16604,8 @@ type PlanPreview = bundle.PlanPreview
 
 type PlanRequest = bundle.PlanRequest
 
+type Preview = mailbox.Preview
+
 type PreviewAuditEnrollmentRequest struct {
 	// Schema A URL to the JSON Schema for this object.
 	Schema     *string `json:"$schema,omitempty"`
@@ -15290,6 +16627,12 @@ type PreviewBlobStoreRegistrationRequest struct {
 	Binding  string  `json:"binding"`
 	Name     string  `json:"name"`
 	Takeover *bool   `json:"takeover,omitempty"`
+}
+
+type PreviewRequest struct {
+	// Schema A URL to the JSON Schema for this object.
+	Schema  *string `json:"$schema,omitempty"`
+	Dialect *string `json:"dialect,omitempty"`
 }
 
 type PreviewStorageEvacuationRequest struct {

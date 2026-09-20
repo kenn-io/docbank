@@ -249,6 +249,9 @@ func webSessionRequestAllowed(r *http.Request) bool {
 	if path == "/api/v1/queries/parse" || path == "/api/v1/queries/highlights" || path == "/api/v1/renditions/text" {
 		return method == http.MethodPost && r.URL.RawQuery == ""
 	}
+	if mailboxBrowserRequestAllowed(r) {
+		return true
+	}
 	if path == "/api/v1/saved-queries" {
 		return method == http.MethodGet ||
 			(method == http.MethodPost && r.URL.RawQuery == "")

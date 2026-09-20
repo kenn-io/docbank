@@ -39,9 +39,9 @@ const result = spawnSync(
     path.join(here, "playwright.config.ts"),
     "--project",
     "chromium",
-    // Remove this exclusion when collection images join the published, pinned set.
+    // Remove these exclusions when their images join the published, pinned set.
     "--grep-invert",
-    "import collections",
+    "import collections|mailbox import screenshot",
     ...process.argv.slice(2),
   ],
   {

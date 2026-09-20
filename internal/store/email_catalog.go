@@ -219,6 +219,16 @@ func (s *Store) EmailGenerationForSource(ctx context.Context, sourceSHA256 strin
 	return g, err
 }
 func (s *Store) PublishEmailGeneration(ctx context.Context, p EmailPublication) (EmailMetadataView, error) {
+	var result EmailMetadataView
+	err := s.withStorageTx(ctx, func(tx *sql.Tx) error {
+		var err error
+		result, err = s.publishEmailGenerationTx(ctx, tx, p)
+		return err
+	})
+	return result, err
+}
+
+func (s *Store) publishEmailGenerationTx(ctx context.Context, tx *sql.Tx, p EmailPublication) (EmailMetadataView, error) {
 	e, checksum, err := document.DecodeEmailV1(p.CanonicalJSON)
 	if err != nil {
 		return EmailMetadataView{}, fmt.Errorf("%w: %w", ErrEmailCorrupt, err)
@@ -240,7 +250,7 @@ func (s *Store) PublishEmailGeneration(ctx context.Context, p EmailPublication) 
 		return EmailMetadataView{}, err
 	}
 	var view EmailMetadataView
-	err = s.withStorageTx(ctx, func(tx *sql.Tx) error {
+	err = func() error {
 		version, err := emailVersion(ctx, tx, p.ContentVersionID)
 		if err != nil {
 			return err
@@ -309,7 +319,7 @@ func (s *Store) PublishEmailGeneration(ctx context.Context, p EmailPublication) 
 		}
 		view, err = emailMetadataView(ctx, tx, version, g.ID)
 		return err
-	})
+	}()
 	if err != nil {
 		return EmailMetadataView{}, err
 	}

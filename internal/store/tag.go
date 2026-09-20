@@ -281,6 +281,15 @@ func deleteTagTx(tx *sql.Tx, current Tag, recordedAt string) (Tag, error) {
 }
 
 func deleteTagDefinitionTx(tx *sql.Tx, tagID string) error {
+	var active bool
+	if err := tx.QueryRow(`SELECT EXISTS(
+		SELECT 1 FROM mailbox_jobs j, json_each(CAST(j.job_json AS TEXT), '$.settings.label_tags') mapping
+		WHERE j.state IN ('queued','running') AND mapping.value=?)`, tagID).Scan(&active); err != nil {
+		return fmt.Errorf("checking mailbox jobs for tag %s: %w", tagID, err)
+	}
+	if active {
+		return fmt.Errorf("%w: tag %s is used by a queued or running mailbox job; cancel the job before deleting the tag", ErrMailboxConflict, tagID)
+	}
 	if _, err := tx.Exec(`DELETE FROM tags WHERE id = ?`, tagID); err != nil {
 		return fmt.Errorf("deleting tag %s: %w", tagID, err)
 	}

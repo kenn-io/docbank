@@ -2117,6 +2117,13 @@ export interface EnableAuditRequest {
   preview_token: string;
 }
 
+export interface Entry {
+  index: number;
+  name: string;
+  sha256: string;
+  size: number;
+}
+
 export interface Receipt {
   entries: number;
   format: string;
@@ -2416,6 +2423,167 @@ export interface JobRequest {
   plan_id: string;
 }
 
+export interface MailboxArchive {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  description: string;
+  id: string;
+  owner: string;
+}
+
+export interface MailboxArchiveInput {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  description: string;
+  id: string;
+}
+
+export interface MailboxChunk {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  index: number;
+  sha256: string;
+  size: number;
+}
+
+export interface MailboxContainer {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  chunks: MailboxChunk[];
+  created_at: string;
+  format: string;
+  id: string;
+  manifest_sha256: string;
+  owner: string;
+  sha256: string;
+  size: number;
+  state: string;
+}
+
+export interface MailboxContainerInput {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  format: string;
+  id: string;
+  sha256: string;
+  size: number;
+}
+
+export type MailboxSettingsLabelTags = {[key: string]: string};
+
+export interface MailboxSettings {
+  destination_id: number;
+  dialect: string;
+  label_tags: MailboxSettingsLabelTags;
+  recipe: string;
+}
+
+export interface MailboxJob {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  canceled: number;
+  checkpoint: number;
+  collection_id: string;
+  container_id: string;
+  container_sha256: string;
+  entry_hashes?: string[];
+  id: string;
+  imported: number;
+  owner: string;
+  pending: number;
+  reason: string;
+  rejected: number;
+  scanned_tail: boolean;
+  segment_start: number;
+  settings: MailboxSettings;
+  started_at: string;
+  state: string;
+}
+
+export interface MailboxEvent {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  error?: string;
+  job?: MailboxJob;
+  type: string;
+}
+
+export type MailboxSettingsInputLabelTags = {[key: string]: string};
+
+export interface MailboxSettingsInput {
+  destination_id: number;
+  dialect?: string;
+  label_tags?: MailboxSettingsInputLabelTags;
+  recipe?: string;
+}
+
+export interface MailboxJobInput {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  container_id: string;
+  container_sha256: string;
+  id: string;
+  settings: MailboxSettingsInput;
+}
+
+export interface MailboxLocation {
+  container_id: string;
+  eml_sha256: string;
+  eml_size: number;
+  end: number;
+  entry: string;
+  entry_index: number;
+  entry_sha256: string;
+  labels: string[];
+  raw_sha256: string;
+  separator: string;
+  sequence: number;
+  start: number;
+}
+
+export interface MailboxOccurrence {
+  job_id: string;
+  location: MailboxLocation;
+  ordinal: number;
+  outcome: string;
+  reason: string;
+  receipt_id?: string;
+  target?: EmailDocumentIdentity;
+}
+
+export interface MailboxResumeInput {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  continuation: boolean;
+  request: MailboxJobInput;
+}
+
+export interface MailboxTransferRequest {
+  archive_id: string;
+  destination_id: number;
+  expected_revision?: number;
+  name: string;
+  reference: string;
+  settings: string;
+  sha256: string;
+  size: number;
+}
+
+export interface MailboxTransferReceipt {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  created_at: string;
+  document_publication_id: string;
+  email_attachment_id: string;
+  id: string;
+  location?: MailboxLocation;
+  outcome: string;
+  request: MailboxTransferRequest;
+  request_digest: string;
+  target: EmailDocumentIdentity;
+  target_revision: number;
+}
+
 export interface MediaAcquisitionGrantBody {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
@@ -2616,6 +2784,17 @@ export interface Member {
   sha256: string;
   size: number;
   version_id: string;
+}
+
+export interface Message {
+  eml_sha256: string;
+  eml_size: number;
+  end: number;
+  raw_sha256: string;
+  rejection?: string;
+  separator: string;
+  sequence: number;
+  start: number;
 }
 
 export interface MkdirPathRequest {
@@ -2951,6 +3130,16 @@ export interface PlanRequest {
   source_id: string;
 }
 
+export interface Preview {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  dialect: string;
+  entries: Entry[];
+  entry_count: number;
+  has_more: boolean;
+  samples: Message[];
+}
+
 export interface PreviewAuditEnrollmentRequest {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
@@ -2986,6 +3175,12 @@ export interface PreviewBlobStoreRegistrationRequest {
      */
   name: string;
   takeover?: boolean;
+}
+
+export interface PreviewRequest {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  dialect?: string;
 }
 
 export interface PreviewStorageEvacuationRequest {
@@ -4740,6 +4935,37 @@ format?: string;
  * @maxLength 16
  */
 extension?: string;
+};
+
+export type UploadMailboxChunkHeaders = {
+/**
+ * @pattern ^[0-9a-f]{64}$
+ */
+'X-Docbank-Blob-Hash': string;
+'X-Docbank-Blob-Size': string;
+};
+
+export type ListMailboxJobsParams = {
+after?: string;
+/**
+ * Page size, 1 through 100
+ */
+limit?: number;
+};
+
+export type MailboxOccurrencesParams = {
+after?: number;
+/**
+ * Page size, 1 through 100
+ */
+limit?: number;
+};
+
+export type TransferMailboxEMLHeaders = {
+/**
+ * Base64url JSON MailboxTransferRequest (at most 32768 encoded bytes)
+ */
+'X-Docbank-Transfer': string;
 };
 
 export type ListMediaOccurrencesParams = {
@@ -7449,6 +7675,501 @@ export const cancelStorageOperation = async (operationId: string, options?: Para
     method: 'POST'
 
 
+  }
+);}
+
+
+
+export const getRegisterMailboxArchiveUrl = () => {
+
+
+
+
+  return `/api/v1/mailbox/archives`
+}
+
+/**
+ * @summary Register an application-independent EML archive
+ */
+export const registerMailboxArchive = async (mailboxArchiveInput: NonReadonly<MailboxArchiveInput>, options?: Parameters<typeof sessionJSON>[1]): Promise<MailboxArchive> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return sessionJSON<MailboxArchive>(getRegisterMailboxArchiveUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(mailboxArchiveInput)
+  }
+);}
+
+
+
+export const getBeginMailboxContainerUrl = () => {
+
+
+
+
+  return `/api/v1/mailbox/containers`
+}
+
+/**
+ * @summary Declare an immutable mailbox container
+ */
+export const beginMailboxContainer = async (mailboxContainerInput: NonReadonly<MailboxContainerInput>, options?: Parameters<typeof sessionJSON>[1]): Promise<MailboxContainer> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return sessionJSON<MailboxContainer>(getBeginMailboxContainerUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(mailboxContainerInput)
+  }
+);}
+
+
+
+export const getAbortMailboxContainerUrl = (id: string,) => {
+
+
+
+
+  return `/api/v1/mailbox/containers/${encodeURIComponent(String(id))}`
+}
+
+/**
+ * @summary Abort an incomplete upload
+ */
+export const abortMailboxContainer = async (id: string, options?: Parameters<typeof sessionJSON>[1]): Promise<void> => {
+
+  return sessionJSON<void>(getAbortMailboxContainerUrl(id),
+  {
+    ...options,
+    method: 'DELETE'
+
+
+  }
+);}
+
+
+
+export const getGetMailboxContainerUrl = (id: string,) => {
+
+
+
+
+  return `/api/v1/mailbox/containers/${encodeURIComponent(String(id))}`
+}
+
+/**
+ * @summary Read owned source and verified chunks
+ */
+export const getMailboxContainer = async (id: string, options?: Parameters<typeof sessionJSON>[1]): Promise<MailboxContainer> => {
+
+  return sessionJSON<MailboxContainer>(getGetMailboxContainerUrl(id),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+export const getUploadMailboxChunkUrl = (id: string,
+    index: number,) => {
+
+
+
+
+  return `/api/v1/mailbox/containers/${encodeURIComponent(String(id))}/chunks/${encodeURIComponent(String(index))}`
+}
+
+/**
+ * @summary Verify and retain one declared chunk
+ */
+export const uploadMailboxChunk = async (id: string,
+    index: number,
+    uploadMailboxChunkBody: Blob,
+    headers: UploadMailboxChunkHeaders, options?: Parameters<typeof sessionJSON>[1]): Promise<MailboxChunk> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return sessionJSON<MailboxChunk>(getUploadMailboxChunkUrl(id,index),
+  {
+    ...options,
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/octet-stream',...headers, ...getHeaders(options?.headers) },
+    body: uploadMailboxChunkBody
+  }
+);}
+
+
+
+export const getPreviewMailboxContainerUrl = (id: string,) => {
+
+
+
+
+  return `/api/v1/mailbox/containers/${encodeURIComponent(String(id))}/preview`
+}
+
+/**
+ * @summary Preview a bounded sample with an explicit dialect
+ */
+export const previewMailboxContainer = async (id: string,
+    previewRequest: NonReadonly<PreviewRequest>, options?: Parameters<typeof sessionJSON>[1]): Promise<Preview> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return sessionJSON<Preview>(getPreviewMailboxContainerUrl(id),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(previewRequest)
+  }
+);}
+
+
+
+export const getSealMailboxContainerUrl = (id: string,) => {
+
+
+
+
+  return `/api/v1/mailbox/containers/${encodeURIComponent(String(id))}/seal`
+}
+
+/**
+ * @summary Verify full source and seal ordered chunk authority
+ */
+export const sealMailboxContainer = async (id: string, options?: Parameters<typeof sessionJSON>[1]): Promise<MailboxContainer> => {
+
+  return sessionJSON<MailboxContainer>(getSealMailboxContainerUrl(id),
+  {
+    ...options,
+    method: 'POST'
+
+
+  }
+);}
+
+
+
+export const getListMailboxJobsUrl = (params?: ListMailboxJobsParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/v1/mailbox/jobs?${stringifiedParams}` : `/api/v1/mailbox/jobs`
+}
+
+/**
+ * @summary Read a bounded page of owned imports
+ */
+export const listMailboxJobs = async (params?: ListMailboxJobsParams, options?: Parameters<typeof sessionJSON>[1]): Promise<MailboxJob[]> => {
+
+  return sessionJSON<MailboxJob[]>(getListMailboxJobsUrl(params),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+export const getBeginMailboxJobUrl = () => {
+
+
+
+
+  return `/api/v1/mailbox/jobs`
+}
+
+/**
+ * @summary Start an immutable resumable mailbox import
+ */
+export const beginMailboxJob = async (mailboxJobInput: NonReadonly<MailboxJobInput>, options?: Parameters<typeof sessionJSON>[1]): Promise<MailboxJob> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return sessionJSON<MailboxJob>(getBeginMailboxJobUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(mailboxJobInput)
+  }
+);}
+
+
+
+export const getGetMailboxJobUrl = (id: string,) => {
+
+
+
+
+  return `/api/v1/mailbox/jobs/${encodeURIComponent(String(id))}`
+}
+
+/**
+ * @summary Read durable progress and remaining tail
+ */
+export const getMailboxJob = async (id: string, options?: Parameters<typeof sessionJSON>[1]): Promise<MailboxJob> => {
+
+  return sessionJSON<MailboxJob>(getGetMailboxJobUrl(id),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+export const getCancelMailboxJobUrl = (id: string,) => {
+
+
+
+
+  return `/api/v1/mailbox/jobs/${encodeURIComponent(String(id))}/cancel`
+}
+
+/**
+ * @summary Fence publication and cancel pending work
+ */
+export const cancelMailboxJob = async (id: string, options?: Parameters<typeof sessionJSON>[1]): Promise<void> => {
+
+  return sessionJSON<void>(getCancelMailboxJobUrl(id),
+  {
+    ...options,
+    method: 'POST'
+
+
+  }
+);}
+
+
+
+export const getMailboxEventsUrl = (id: string,) => {
+
+
+
+
+  return `/api/v1/mailbox/jobs/${encodeURIComponent(String(id))}/events`
+}
+
+/**
+ * @summary Observe durable import progress as NDJSON
+ */
+export const mailboxEvents = (id: string, options?: Parameters<typeof sessionResponse>[1]) => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return sessionResponse<Response>(getMailboxEventsUrl(id),
+  {
+    ...options,
+    method: 'GET',
+    headers: { 'Accept': `application/x-ndjson`, ...getHeaders(options?.headers) }
+
+  }
+);}
+
+
+
+export const getMailboxOccurrencesUrl = (id: string,
+    params?: MailboxOccurrencesParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/v1/mailbox/jobs/${encodeURIComponent(String(id))}/occurrences?${stringifiedParams}` : `/api/v1/mailbox/jobs/${encodeURIComponent(String(id))}/occurrences`
+}
+
+/**
+ * @summary Read a bounded occurrence receipt page
+ */
+export const mailboxOccurrences = async (id: string,
+    params?: MailboxOccurrencesParams, options?: Parameters<typeof sessionJSON>[1]): Promise<MailboxOccurrence[]> => {
+
+  return sessionJSON<MailboxOccurrence[]>(getMailboxOccurrencesUrl(id,params),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+export const getResumeMailboxJobUrl = (id: string,) => {
+
+
+
+
+  return `/api/v1/mailbox/jobs/${encodeURIComponent(String(id))}/resume`
+}
+
+/**
+ * @summary Resume or explicitly continue the exact source and settings
+ */
+export const resumeMailboxJob = async (id: string,
+    mailboxResumeInput: NonReadonly<MailboxResumeInput>, options?: Parameters<typeof sessionJSON>[1]): Promise<MailboxJob> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return sessionJSON<MailboxJob>(getResumeMailboxJobUrl(id),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(mailboxResumeInput)
+  }
+);}
+
+
+
+export const getTransferMailboxEMLUrl = () => {
+
+
+
+
+  return `/api/v1/mailbox/transfers`
+}
+
+/**
+ * @summary Atomically publish an explicitly identified EML and retry receipt
+ */
+export const transferMailboxEML = async (transferMailboxEMLBody: Blob,
+    headers: TransferMailboxEMLHeaders, options?: Parameters<typeof sessionJSON>[1]): Promise<MailboxTransferReceipt> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return sessionJSON<MailboxTransferReceipt>(getTransferMailboxEMLUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'message/rfc822',...headers, ...getHeaders(options?.headers) },
+    body: transferMailboxEMLBody
   }
 );}
 

@@ -75,6 +75,7 @@
   import TrashNodeModal from "./TrashNodeModal.svelte";
   import UploadDrawer from "./UploadDrawer.svelte";
   import VerifiedPreview from "./VerifiedPreview.svelte";
+  import MailboxImportDrawer from "./MailboxImportDrawer.svelte";
   import VersionHistoryDrawer from "./VersionHistoryDrawer.svelte";
   import { APIError } from "./api-transport.js";
   import { changeNodeTag, liveNodeTags } from "./receipts.js";
@@ -217,6 +218,7 @@
   let batchTagsSnapshotEpoch = 0;
   let tagCatalogOpen = $state(false);
   let uploadTarget = $state<Node | null>(null);
+  let mailboxTarget = $state<Node | null>(null);
   let trashTarget = $state<Row | null>(null);
   let generation = 0;
   let auditGeneration = 0;
@@ -686,6 +688,7 @@
       tagCatalogOpen = false;
       shortcutHelpOpen = false;
       uploadTarget = null;
+      mailboxTarget = null;
       trashTarget = null;
       tagCatalog = [];
       tagCatalogListed = 0;
@@ -1752,6 +1755,7 @@
     tagCatalogOpen = false;
     shortcutHelpOpen = false;
     uploadTarget = null;
+    mailboxTarget = null;
     trashTarget = null;
     activeQuery = "";
     activeTagID = "";
@@ -1874,6 +1878,7 @@
             backupsOpen = false;
             trashOpen = false;
             uploadTarget = null;
+            mailboxTarget = null;
             trashTarget = null;
             collectionsOpen = true;
           }}
@@ -1892,6 +1897,7 @@
             storageOpen = false;
             backupsOpen = false;
             uploadTarget = null;
+            mailboxTarget = null;
             trashTarget = null;
             trashOpen = true;
           }}
@@ -1911,6 +1917,7 @@
             trashOpen = false;
             backupsOpen = true;
             uploadTarget = null;
+            mailboxTarget = null;
           }}
         >
           <ArchiveIcon size="14" aria-hidden="true" />
@@ -1927,6 +1934,7 @@
             backupsOpen = false;
             trashOpen = false;
             uploadTarget = null;
+            mailboxTarget = null;
             storageOpen = true;
           }}
         >
@@ -1944,6 +1952,7 @@
             backupsOpen = false;
             trashOpen = false;
             uploadTarget = null;
+            mailboxTarget = null;
             jobsOpen = true;
           }}
         >
@@ -1961,6 +1970,7 @@
             backupsOpen = false;
             trashOpen = false;
             uploadTarget = null;
+            mailboxTarget = null;
             trashTarget = null;
             auditEvidenceOpen = true;
           }}
@@ -2127,6 +2137,7 @@
                 trashOpen = false;
                 manageTagsTarget = null;
                 uploadTarget = null;
+                mailboxTarget = null;
                 tagCatalogOpen = true;
               }}
             >
@@ -2166,6 +2177,7 @@
                 backupsOpen = false;
                 trashOpen = false;
                 uploadTarget = directory;
+                mailboxTarget = null;
               }}
             >
               <UploadIcon size="14" aria-hidden="true" />
@@ -2177,6 +2189,27 @@
             >
               <RefreshCwIcon size="14" aria-hidden="true" />
             </IconButton>
+            <Button
+              size="sm"
+              disabled={!directory || loading || !uploadChannel || Boolean(uploadChannelError) || Boolean(activeQuery) || tagBrowse}
+              onclick={() => {
+                if (!directory) return;
+                historyOpen = false;
+                versionsOpen = false;
+                provenanceOpen = false;
+                processingTarget = null;
+                renditionTarget = null;
+                jobsOpen = false;
+                auditEvidenceOpen = false;
+                storageOpen = false;
+                backupsOpen = false;
+                collectionsOpen = false;
+                trashOpen = false;
+                tagCatalogOpen = false;
+                uploadTarget = null;
+                mailboxTarget = directory;
+              }}
+            >Import mailbox</Button>
           </div>
         </div>
 
@@ -2524,6 +2557,7 @@
                       backupsOpen = false;
                       trashOpen = false;
                       uploadTarget = null;
+                      mailboxTarget = null;
                       versionsOpen = true;
                     }}
                   >
@@ -2542,6 +2576,7 @@
                       backupsOpen = false;
                       trashOpen = false;
                       uploadTarget = null;
+                      mailboxTarget = null;
                       provenanceOpen = true;
                     }}
                   >
@@ -2563,6 +2598,7 @@
                       backupsOpen = false;
                       trashOpen = false;
                       uploadTarget = null;
+                      mailboxTarget = null;
                       renditionTarget = null;
                       processingTarget = selected;
                     }}
@@ -2585,6 +2621,7 @@
                       backupsOpen = false;
                       trashOpen = false;
                       uploadTarget = null;
+                      mailboxTarget = null;
                       trashTarget = selected;
                     }}
                   >
@@ -2642,6 +2679,7 @@
                       backupsOpen = false;
                       trashOpen = false;
                       uploadTarget = null;
+                      mailboxTarget = null;
                       historyOpen = true;
                     }}
                   >
@@ -2674,6 +2712,7 @@
                       backupsOpen = false;
                       trashOpen = false;
                       uploadTarget = null;
+                      mailboxTarget = null;
                       trashTarget = selected;
                     }}
                   >
@@ -2924,6 +2963,18 @@
         onclose={() => (uploadTarget = null)}
         oncomplete={async () => {
           if (uploadTarget) await loadDirectory(uploadTarget.id, false);
+        }}
+        onauthfailure={handleFailure}
+      />
+    {/if}
+    {#if mailboxTarget && uploadChannel}
+      <MailboxImportDrawer
+        session={webSession}
+        channel={uploadChannel}
+        directory={mailboxTarget}
+        onclose={() => (mailboxTarget = null)}
+        oncomplete={async () => {
+          if (mailboxTarget) await loadDirectory(mailboxTarget.id, false);
         }}
         onauthfailure={handleFailure}
       />
