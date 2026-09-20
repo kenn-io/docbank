@@ -410,6 +410,49 @@ func TestStorageStatusReportsLooseAndPackedUsage(t *testing.T) {
 	assert.Zero(t, status.DeadPackedBytes)
 }
 
+func TestInventoryReadsDuringPacking(t *testing.T) {
+	gate := api.NewOperationGate()
+	ts, s := newTestServer(t, func(d *api.Deps) { d.Gate = gate })
+	const documents = 1000
+	for i := range documents {
+		createFileWithContent(t, ts, s,
+			fmt.Sprintf("/record-%d.txt", i), fmt.Sprintf("synthetic record %d", i))
+	}
+
+	ctx, cancel := context.WithCancel(t.Context())
+	done := make(chan struct{})
+	var packErr error
+	go func() {
+		defer close(done)
+		packErr = gate.MaintainContext(ctx, func() error {
+			_, err := internalmaintenance.Pack(ctx, s.Store, s.Blobs, 0)
+			return err
+		})
+	}()
+	t.Cleanup(func() {
+		cancel()
+		<-done
+	})
+
+reading:
+	for {
+		for _, path := range []string{"/api/v1/info", "/api/v1/storage"} {
+			resp, body := get(t, ts, path, nil)
+			assert.Equal(t, http.StatusOK, resp.StatusCode, "%s: %s", path, body)
+		}
+		select {
+		case <-done:
+			break reading
+		default:
+		}
+	}
+	require.NoError(t, packErr)
+	stats, err := s.Blobs.Stats(t.Context())
+	require.NoError(t, err)
+	assert.EqualValues(t, documents, stats.PackedBlobs)
+	assert.Zero(t, stats.LooseBlobs)
+}
+
 func TestVaultInfoIdentifiesRootAndSummarizesContents(t *testing.T) {
 	ts, s := newTestServer(t, nil)
 	docs, err := s.Mkdir(t.Context(), s.RootID(), "docs")
