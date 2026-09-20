@@ -56,7 +56,7 @@ var searchCmd = &cobra.Command{
 			if len(args) != 0 {
 				return usageError(errors.New("--similar-to does not accept query text"))
 			}
-			for _, flag := range []string{"mode", "explain", "tag", "mime-type", "under", "modified-since", "modified-before"} {
+			for _, flag := range []string{"mode", "explain", "rerank", "tag", "mime-type", "under", "modified-since", "modified-before"} {
 				if cmd.Flags().Changed(flag) {
 					return usageError(fmt.Errorf("--similar-to cannot be combined with --%s", flag))
 				}
