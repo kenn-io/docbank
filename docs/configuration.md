@@ -354,6 +354,12 @@ the same descriptor must use identical endpoint, credentials, and runtime
 settings. Two Docling deployments with the same descriptor cannot run together
 in one daemon; conflicting settings prevent startup.
 
+The daemon also registers two local media profiles. `supplied-transcript`
+processes supplied WAV and MP3 transcript text as untimed evidence.
+`supplied-captions` processes supplied SubRip captions for WAV, MP3, and MP4
+originals as timed evidence. Both names are reserved for these built-in
+profiles; a configured profile with either name prevents startup.
+
 The daemon reads the credential from the named environment binding when the
 adapter sends a provider request. A missing secret fails that processing
 attempt but leaves supplied-media retention, plaintext processing, and the

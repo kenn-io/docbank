@@ -343,6 +343,15 @@ func openVaultWithRootOpener(
 		return nil, fmt.Errorf("configured processing profile %q conflicts with the built-in media profile", suppliedName)
 	}
 	profiles[suppliedName] = suppliedProfile
+	captionName, captionProfile, err := internalprocessing.NewSuppliedCaptionProfile(
+		metadata, blobs, "embedded:operator")
+	if err != nil {
+		return nil, err
+	}
+	if _, exists := profiles[captionName]; exists {
+		return nil, fmt.Errorf("configured processing profile %q conflicts with the built-in media profile", captionName)
+	}
+	profiles[captionName] = captionProfile
 	processingService, err := internalprocessing.NewService(internalprocessing.ServiceConfig{
 		Catalog: metadata, Blobs: blobs, Gate: embeddedMutationGate{vault: vault},
 		Profiles: profiles, SpoolDirectory: spoolDirectory,

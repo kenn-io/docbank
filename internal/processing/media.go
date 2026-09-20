@@ -83,25 +83,12 @@ func (service *Service) SubmitRemoteRecording(
 	if request.OperationID == "" || request.ReferenceURL == "" || len(request.ReferenceURL) > 8192 {
 		return MediaReceipt{}, ErrMediaPlanInvalid
 	}
-	referenceSHA := hashMediaPrivateValue(request.ReferenceURL)
-	// Replay identity records caller input, independent of the policy that
-	// admits a new source or the origin configuration after a restart.
-	identity, err := canonical.Marshal(struct {
-		ReferenceSHA256, ProviderHint, CredentialBindingSHA256 string
-		CanonicalURLSHA256                                     string `json:",omitempty"`
-		Acquire                                                bool
-		Occurrence                                             MediaOccurrenceInput
-		Processing                                             *MediaProcessingRequest
-	}{ReferenceSHA256: referenceSHA, ProviderHint: request.ProviderHint, Acquire: request.Acquire,
-		CanonicalURLSHA256:      hashMediaPrivateValue(request.CanonicalURL),
-		CredentialBindingSHA256: hashMediaPrivateValue(request.CredentialBinding),
-		Occurrence:              request.Occurrence, Processing: request.Processing})
+	referenceSHA, requestSHA, err := remoteRecordingOperationDigest(request)
 	if err != nil {
 		return MediaReceipt{}, err
 	}
-	requestDigest := sha256.Sum256(identity)
 	operation := store.MediaOperation{ID: request.OperationID, Principal: service.principal,
-		Verb: "submit_remote_recording", RequestSHA256: hex.EncodeToString(requestDigest[:])}
+		Verb: "submit_remote_recording", RequestSHA256: requestSHA}
 	if replay, replayErr := service.catalog.MediaOperationReceipt(ctx, operation); replayErr == nil {
 		stored, decodeErr := canonical.Decode[store.MediaPublicationReceipt]([]byte(replay))
 		return mediaReceiptFromStore(stored), decodeErr
@@ -129,7 +116,8 @@ func (service *Service) SubmitRemoteRecording(
 			return MediaReceipt{}, err
 		}
 		videoID, capCloud := capCloudRecording(canonicalURL)
-		if request.Acquire && !capCloud {
+		loomID, loom := loomRecording(canonicalURL)
+		if request.Acquire && !capCloud && !loom {
 			return MediaReceipt{}, ErrMediaCapabilityUnavailable
 		}
 		provider = "url"
@@ -141,6 +129,13 @@ func (service *Service) SubmitRemoteRecording(
 			provider = "cap"
 			originScope = hashMediaPrivateValue(capCloudOrigin)
 			sourceKey = hashMediaPrivateValue(videoID)
+		}
+		if loom {
+			// Loom documents manual MP4 and SRT export but no machine download
+			// route, so an acquisition request keeps the manual import path.
+			provider = "loom"
+			originScope = hashMediaPrivateValue(loomOrigin)
+			sourceKey = hashMediaPrivateValue(loomID)
 		}
 		outcome = "unsupported"
 	} else if !recognized || request.Acquire {
@@ -204,6 +199,28 @@ func (service *Service) resolveRemoteRecordingOrigin(
 		}
 	}
 	return policy, identity, recognized, nil
+}
+
+func remoteRecordingOperationDigest(request RemoteRecordingRequest) (referenceSHA, requestSHA string, err error) {
+	referenceDigest := sha256.Sum256([]byte(request.ReferenceURL))
+	referenceSHA = hex.EncodeToString(referenceDigest[:])
+	// Replay identity records caller input, independent of the policy that
+	// admits a new source or the origin configuration after a restart.
+	identity, err := canonical.Marshal(struct {
+		ReferenceSHA256, ProviderHint, CredentialBindingSHA256 string
+		CanonicalURLSHA256                                     string `json:",omitempty"`
+		Acquire                                                bool
+		Occurrence                                             MediaOccurrenceInput
+		Processing                                             *MediaProcessingRequest
+	}{ReferenceSHA256: referenceSHA, ProviderHint: request.ProviderHint, Acquire: request.Acquire,
+		CanonicalURLSHA256:      hashMediaPrivateValue(request.CanonicalURL),
+		CredentialBindingSHA256: hashMediaPrivateValue(request.CredentialBinding),
+		Occurrence:              request.Occurrence, Processing: request.Processing})
+	if err != nil {
+		return "", "", err
+	}
+	digest := sha256.Sum256(identity)
+	return referenceSHA, hex.EncodeToString(digest[:]), nil
 }
 
 func canonicalRemoteRecordingReference(raw string) (canonicalURL, origin string, err error) {
@@ -538,6 +555,55 @@ func mediaInspectionPolicyForFile(
 	}
 }
 
+// Remote recording video originals are bounded before publication. The byte
+// ceiling is the inspector's MP4 measurement limit; the pixel ceiling is a
+// 1080p-class coded frame; duration and frames allow five minutes at up to 60
+// frames per second.
+const (
+	remoteVideoMaxBytes      = media.MaxBytes
+	remoteVideoMaxPixels     = int64(1920 * 1088)
+	remoteVideoMaxDurationMS = int64(5 * 60 * 1000)
+	remoteVideoMaxFrames     = remoteVideoMaxDurationMS / 1000 * 60
+)
+
+// validateRemoteRecordingFile admits the exact original identities for a
+// remote occurrence: the supplied WAV/MP3 set plus MP4 video.
+func validateRemoteRecordingFile(filename, mediaType string) (video bool, err error) {
+	if !strings.EqualFold(path.Ext(filename), ".mp4") {
+		return false, validateMediaArtifactFile(filename, mediaType)
+	}
+	if err := validateMediaArtifactName(filename, mediaType); err != nil {
+		return false, err
+	}
+	parsedMediaType, _, parseErr := mime.ParseMediaType(mediaType)
+	if parseErr != nil || parsedMediaType != "video/mp4" {
+		return false, errors.New("remote MP4 requires video/mp4 media type")
+	}
+	return true, nil
+}
+
+func remoteRecordingInspectionPolicy(
+	filename, mediaType, sha256 string, byteLength, maxBytes int64, video bool,
+) media.InspectionPolicy {
+	policy := mediaInspectionPolicyForFile(filename, mediaType, sha256, byteLength, maxBytes)
+	if video {
+		policy.MaxPixels = remoteVideoMaxPixels
+		policy.MaxFrames = remoteVideoMaxFrames
+		policy.MaxDurationMS = remoteVideoMaxDurationMS
+	}
+	return policy
+}
+
+func remoteRecordingFormatAdmitted(record media.CapabilityRecord, video bool) bool {
+	if !record.Eligible {
+		return false
+	}
+	if video {
+		return record.Format == "mp4" && record.MediaFamily == "video" && record.MediaType == "video/mp4"
+	}
+	return record.Format == "wav" || record.Format == "mp3"
+}
+
 func (service *Service) reserveMediaBytes(size int64) bool {
 	service.mediaMu.Lock()
 	defer service.mediaMu.Unlock()
@@ -588,6 +654,20 @@ func validateSuppliedMediaRequest(request SuppliedMediaRequest) error {
 }
 
 func validateMediaArtifactFile(filename, mediaType string) error {
+	if err := validateMediaArtifactName(filename, mediaType); err != nil {
+		return err
+	}
+	parsedMediaType, _, err := mime.ParseMediaType(mediaType)
+	ext := strings.ToLower(path.Ext(filename))
+	validIdentity := ext == ".wav" && (parsedMediaType == "audio/wav" || parsedMediaType == "audio/x-wav") ||
+		ext == ".mp3" && parsedMediaType == "audio/mpeg"
+	if err != nil || !validIdentity {
+		return errors.New("supplied media requires a WAV or MP3 filename and media type")
+	}
+	return nil
+}
+
+func validateMediaArtifactName(filename, mediaType string) error {
 	for _, field := range []struct {
 		subject string
 		value   string
@@ -601,13 +681,6 @@ func validateMediaArtifactFile(filename, mediaType string) error {
 	}
 	if strings.ContainsAny(filename, "/\\\x00") || path.Base(filename) != filename {
 		return errors.New("media filename must be a base name")
-	}
-	parsedMediaType, _, err := mime.ParseMediaType(mediaType)
-	ext := strings.ToLower(path.Ext(filename))
-	validIdentity := ext == ".wav" && (parsedMediaType == "audio/wav" || parsedMediaType == "audio/x-wav") ||
-		ext == ".mp3" && parsedMediaType == "audio/mpeg"
-	if err != nil || !validIdentity {
-		return errors.New("supplied media requires a WAV or MP3 filename and media type")
 	}
 	return nil
 }

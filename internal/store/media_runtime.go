@@ -52,7 +52,20 @@ type MediaPublicationReceipt struct {
 // SuppliedTranscriptInput identifies the exact visible retained transcript
 // bytes selected for one sealed recording digest.
 type SuppliedTranscriptInput struct {
-	InputID, OccurrenceID, SourceVersionID, ContentVersionID, InputSHA256, Provider string
+	InputID, OccurrenceID, SourceVersionID, ContentVersionID, InputSHA256 string
+	Kind, Origin, Provider, Language                                      string
+}
+
+const (
+	MediaInputTranscript = "transcript"
+	MediaInputCaption    = "caption"
+)
+
+func validateSuppliedInputKind(kind string) error {
+	if kind != MediaInputTranscript && kind != MediaInputCaption {
+		return errors.New("invalid supplied input kind")
+	}
+	return nil
 }
 
 // SuppliedMediaContentVersion returns the already authoritative original for
@@ -87,7 +100,7 @@ func (s *Store) SuppliedTranscriptForSource(
 	}
 	var result SuppliedTranscriptInput
 	err := s.db.QueryRowContext(ctx, `SELECT i.input_id,i.occurrence_id,i.source_version_id,
-		i.content_version_id,i.input_sha256,i.provider
+		i.content_version_id,i.input_sha256,i.kind,i.origin,i.provider,i.language
 		FROM media_input_artifacts i
 		JOIN media_occurrences o ON o.occurrence_id=i.occurrence_id
 		JOIN media_source_versions v ON v.source_version_id=i.source_version_id
@@ -96,20 +109,25 @@ func (s *Store) SuppliedTranscriptForSource(
 		  AND o.source_version_id=v.source_version_id AND v.source_sha256=?
 		ORDER BY i.created_at DESC,i.input_id DESC LIMIT 1`, principal, sourceSHA256).Scan(
 		&result.InputID, &result.OccurrenceID, &result.SourceVersionID,
-		&result.ContentVersionID, &result.InputSHA256, &result.Provider)
+		&result.ContentVersionID, &result.InputSHA256, &result.Kind,
+		&result.Origin, &result.Provider, &result.Language)
 	if errors.Is(err, sql.ErrNoRows) {
 		return SuppliedTranscriptInput{}, ErrNotFound
 	}
 	return result, err
 }
 
-// SuppliedTranscriptForSourceID selects a transcript for a known source while
+// SuppliedTranscriptForSourceID selects a supplied input of the requested kind
+// for a known source while
 // its source version is still being established. An empty inputID selects the
 // newest visible input; a nonempty inputID selects that exact input.
 func (s *Store) SuppliedTranscriptForSourceID(
-	ctx context.Context, principal, sourceID, sourceSHA256, inputID string,
+	ctx context.Context, principal, kind, sourceID, sourceSHA256, inputID string,
 ) (SuppliedTranscriptInput, error) {
 	if err := validateBoundedMediaText("media principal", principal, 256, false); err != nil {
+		return SuppliedTranscriptInput{}, err
+	}
+	if err := validateSuppliedInputKind(kind); err != nil {
 		return SuppliedTranscriptInput{}, err
 	}
 	if err := validateBoundedMediaText("media source", sourceID, 256, false); err != nil {
@@ -122,15 +140,15 @@ func (s *Store) SuppliedTranscriptForSourceID(
 		return SuppliedTranscriptInput{}, ErrNotFound
 	}
 	query := `SELECT i.input_id,i.occurrence_id,i.source_version_id,
-		i.content_version_id,i.input_sha256,i.provider
+		i.content_version_id,i.input_sha256,i.kind,i.origin,i.provider,i.language
 		FROM media_input_artifacts i
 		JOIN media_occurrences o ON o.occurrence_id=i.occurrence_id
 		JOIN media_source_versions v ON v.source_version_id=i.source_version_id
-		WHERE o.caller_principal=? AND o.visible=1 AND i.kind='transcript'
+		WHERE o.caller_principal=? AND o.visible=1 AND i.kind=?
 		  AND i.source_id=? AND i.source_id=o.source_id
 		  AND o.source_version_id=v.source_version_id AND v.source_id=?
 		  AND v.source_sha256=?`
-	args := []any{principal, sourceID, sourceID, sourceSHA256}
+	args := []any{principal, kind, sourceID, sourceID, sourceSHA256}
 	if inputID != "" {
 		query += " AND i.input_id=?"
 		args = append(args, inputID)
@@ -140,13 +158,16 @@ func (s *Store) SuppliedTranscriptForSourceID(
 	return s.querySuppliedTranscript(ctx, query, args...)
 }
 
-// SuppliedTranscriptForSourceVersion selects one caller-authorized transcript
+// SuppliedTranscriptForSourceVersion selects one caller-authorized supplied input
 // bound to one exact source version, even when another source has equal bytes.
 // An empty inputID selects the newest visible input; otherwise it must match.
 func (s *Store) SuppliedTranscriptForSourceVersion(
-	ctx context.Context, principal, sourceID, sourceVersionID, inputID string,
+	ctx context.Context, principal, kind, sourceID, sourceVersionID, inputID string,
 ) (SuppliedTranscriptInput, error) {
 	if err := validateBoundedMediaText("media principal", principal, 256, false); err != nil {
+		return SuppliedTranscriptInput{}, err
+	}
+	if err := validateSuppliedInputKind(kind); err != nil {
 		return SuppliedTranscriptInput{}, err
 	}
 	for name, value := range map[string]string{
@@ -160,13 +181,13 @@ func (s *Store) SuppliedTranscriptForSourceVersion(
 		return SuppliedTranscriptInput{}, ErrNotFound
 	}
 	query := `SELECT i.input_id,i.occurrence_id,i.source_version_id,
-		i.content_version_id,i.input_sha256,i.provider
+		i.content_version_id,i.input_sha256,i.kind,i.origin,i.provider,i.language
 		FROM media_input_artifacts i
 		JOIN media_occurrences o ON o.occurrence_id=i.occurrence_id
-		WHERE o.caller_principal=? AND o.visible=1 AND i.kind='transcript'
+		WHERE o.caller_principal=? AND o.visible=1 AND i.kind=?
 		  AND i.source_id=? AND i.source_version_id=?
 		  AND o.source_id=i.source_id AND o.source_version_id=i.source_version_id`
-	args := []any{principal, sourceID, sourceVersionID}
+	args := []any{principal, kind, sourceID, sourceVersionID}
 	if inputID != "" {
 		query += " AND i.input_id=?"
 		args = append(args, inputID)
@@ -176,12 +197,16 @@ func (s *Store) SuppliedTranscriptForSourceVersion(
 	return s.querySuppliedTranscript(ctx, query, args...)
 }
 
-// SuppliedTranscriptBindingForSource resolves one exact retained input only
+// SuppliedTranscriptBindingForSource resolves one exact retained input of the
+// requested kind only
 // while its occurrence and source-version authority remain visible.
 func (s *Store) SuppliedTranscriptBindingForSource(
-	ctx context.Context, principal, sourceSHA256, inputID string,
+	ctx context.Context, principal, kind, sourceSHA256, inputID string,
 ) (SuppliedTranscriptInput, error) {
 	if err := validateBoundedMediaText("media principal", principal, 256, false); err != nil {
+		return SuppliedTranscriptInput{}, err
+	}
+	if err := validateSuppliedInputKind(kind); err != nil {
 		return SuppliedTranscriptInput{}, err
 	}
 	if !canonical.IsSHA256Hex(sourceSHA256) || !canonical.IsSHA256Hex(inputID) {
@@ -189,15 +214,16 @@ func (s *Store) SuppliedTranscriptBindingForSource(
 	}
 	var result SuppliedTranscriptInput
 	err := s.db.QueryRowContext(ctx, `SELECT i.input_id,i.occurrence_id,i.source_version_id,
-		i.content_version_id,i.input_sha256,i.provider
+		i.content_version_id,i.input_sha256,i.kind,i.origin,i.provider,i.language
 		FROM media_input_artifacts i
 		JOIN media_occurrences o ON o.occurrence_id=i.occurrence_id
 		JOIN media_source_versions v ON v.source_version_id=i.source_version_id
-		WHERE i.input_id=? AND o.caller_principal=? AND o.visible=1 AND i.kind='transcript'
+		WHERE i.input_id=? AND o.caller_principal=? AND o.visible=1 AND i.kind=?
 		  AND i.source_id=o.source_id AND v.source_id=o.source_id
 		  AND o.source_version_id=v.source_version_id AND v.source_sha256=?`,
-		inputID, principal, sourceSHA256).Scan(&result.InputID, &result.OccurrenceID,
-		&result.SourceVersionID, &result.ContentVersionID, &result.InputSHA256, &result.Provider)
+		inputID, principal, kind, sourceSHA256).Scan(&result.InputID, &result.OccurrenceID,
+		&result.SourceVersionID, &result.ContentVersionID, &result.InputSHA256,
+		&result.Kind, &result.Origin, &result.Provider, &result.Language)
 	if errors.Is(err, sql.ErrNoRows) {
 		return SuppliedTranscriptInput{}, ErrNotFound
 	}
@@ -209,7 +235,8 @@ func (s *Store) querySuppliedTranscript(
 ) (SuppliedTranscriptInput, error) {
 	var result SuppliedTranscriptInput
 	err := s.db.QueryRowContext(ctx, query, args...).Scan(&result.InputID, &result.OccurrenceID,
-		&result.SourceVersionID, &result.ContentVersionID, &result.InputSHA256, &result.Provider)
+		&result.SourceVersionID, &result.ContentVersionID, &result.InputSHA256,
+		&result.Kind, &result.Origin, &result.Provider, &result.Language)
 	if errors.Is(err, sql.ErrNoRows) {
 		return SuppliedTranscriptInput{}, ErrNotFound
 	}

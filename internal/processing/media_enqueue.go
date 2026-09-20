@@ -141,7 +141,8 @@ func (service *Service) enqueueRendition(
 func (service *Service) resolveMediaInputBinding(
 	ctx context.Context, profile, sourceSHA256 string, source mediaSourceBinding, inputID string,
 ) (string, error) {
-	if profile != SuppliedMediaProfileName {
+	kind, supplied := suppliedInputKind(profile)
+	if !supplied {
 		if inputID != "" {
 			return "", ErrPlanChanged
 		}
@@ -154,10 +155,10 @@ func (service *Service) resolveMediaInputBinding(
 	var err error
 	if source.sourceVersionID != "" {
 		input, err = service.catalog.SuppliedTranscriptForSourceVersion(
-			ctx, service.principal, source.sourceID, source.sourceVersionID, inputID)
+			ctx, service.principal, kind, source.sourceID, source.sourceVersionID, inputID)
 	} else {
 		input, err = service.catalog.SuppliedTranscriptForSourceID(
-			ctx, service.principal, source.sourceID, sourceSHA256, inputID)
+			ctx, service.principal, kind, source.sourceID, sourceSHA256, inputID)
 	}
 	if err != nil {
 		return "", err

@@ -1017,7 +1017,7 @@ func (service *Service) runRendition(ctx context.Context, node store.Node, versi
 	profileName string, profile configuredProfile, principal, scope string, onEnqueued func(renditionRun),
 ) (renditionRun, error) {
 	var source mediaSourceBinding
-	if profileName == SuppliedMediaProfileName {
+	if _, supplied := suppliedInputKind(profileName); supplied {
 		var err error
 		source.sourceID, source.sourceVersionID, err = service.catalog.MediaSourceBindingForContentVersion(
 			ctx, service.principal, version.ID)
@@ -1244,9 +1244,9 @@ func (service *Service) renditionFromView(ctx context.Context, node store.Node, 
 		if bindingErr != nil {
 			return Rendition{}, bindingErr
 		}
-		_, bindingErr = service.catalog.SuppliedTranscriptForSourceVersion(
+		visible, bindingErr := service.catalog.MediaInputBindingVisible(
 			ctx, service.principal, sourceID, sourceVersionID, inputBinding)
-		if bindingErr != nil {
+		if bindingErr != nil || !visible {
 			return Rendition{}, store.ErrNotFound
 		}
 	}
@@ -1859,6 +1859,17 @@ func (upload *boundAuthorizedUpload) Metadata() document.AuthorizedUploadMetadat
 	return upload.metadata
 }
 
+// CapabilityProof forwards the bound original's local inspection proof.
+func (upload *boundAuthorizedUpload) CapabilityProof() document.UploadCapability {
+	carrier, ok := upload.AuthorizedUpload.(interface {
+		CapabilityProof() document.UploadCapability
+	})
+	if !ok {
+		return document.UploadCapability{}
+	}
+	return carrier.CapabilityProof()
+}
+
 func (runtime *providerRenditionRuntime) Prepare(ctx context.Context, work store.RenditionJobWork,
 	now time.Time,
 ) (RenditionExecution, error) {
@@ -2281,7 +2292,7 @@ func extensionForMediaType(value string) string {
 		"application/x-tex": ".tex", "application/x-ndjson": ".jsonl",
 		"application/xml": ".xml", "application/yaml": ".yaml",
 		"text/x-go": ".go", "text/x-python": ".py", "text/javascript": ".js",
-		"image/jpeg": ".jpg", "audio/wav": ".wav", "audio/x-wav": ".wav",
+		"image/jpeg": ".jpg", "audio/wav": ".wav", "audio/x-wav": ".wav", "video/mp4": ".mp4",
 		"audio/mpeg": ".mp3", "message/rfc822": ".eml",
 	}[base]; extension != "" {
 		return extension
