@@ -386,24 +386,39 @@ func TestSearcherRerankingRejectsEmptyExcerptAfterUTF8Bound(t *testing.T) {
 		Outcome: ProviderOutcomeMalformed, CandidateCount: 1}}, report.Receipts)
 }
 
-func TestSearcherSemanticRerankingPayloadKeepsPublicExcerpt(t *testing.T) {
-	searcher, backend, _, descriptor := retrievalSearcherFixture(t, true, 1)
-	backend.semantic[0].Excerpt = "current semantic source"
-	query := Query{Text: "query", Mode: ModeSemantic, Limit: 1,
-		ProcessingProfileFingerprint: "profile", BindingID: "required", Authorization: retrievalAuthorization(descriptor)}
-	base, err := searcher.Search(t.Context(), query)
-	require.NoError(t, err)
-
-	reranker := &stageReranker{}
-	searcher.reranking = RerankingConfig{Enabled: true,
-		Profile: RerankingProfile{ID: "reranking", MaxCandidates: 1}, Provider: reranker,
-		Authorizer: &stageAuthorizer{}, Deadline: time.Second, FailurePolicy: ProviderFailureDegrade}
-	ranked, err := searcher.Search(t.Context(), query)
-	require.NoError(t, err)
-	require.Len(t, reranker.candidates, 1)
-	assert.Equal(t, "current semantic source", reranker.candidates[0].Excerpt)
-	assert.Equal(t, base.Results[0].Excerpt, ranked.Results[0].Excerpt)
-	assert.Empty(t, ranked.Results[0].Excerpt)
+func TestSearcherRerankingPayloadKeepsPublicExcerpt(t *testing.T) {
+	for _, test := range []struct {
+		name, kind, lexical, semantic, want string
+		mode                                Mode
+	}{
+		{"semantic", "", "", "current semantic source", "current semantic source", ModeSemantic},
+		{"hybrid name", "node_name", "semantic.pdf", "current semantic source", "current semantic source", ModeHybrid},
+		{"hybrid content", "rendition_segment", "matching lexical text", "current semantic source", "matching lexical text", ModeHybrid},
+		{"hybrid missing content", "node_name", "semantic.pdf", "", "semantic.pdf", ModeHybrid},
+		{"hybrid blank content", "node_name", "semantic.pdf", " \n\t", "semantic.pdf", ModeHybrid},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			searcher, backend, _, descriptor := retrievalSearcherFixture(t, true, 1)
+			backend.semantic[0].Excerpt = test.semantic
+			if test.kind != "" {
+				backend.lexical = []store.ExplainedLexicalCandidate{{
+					Node: store.Node{ID: 8, CurrentVersionID: "version-semantic", Name: "semantic.pdf"},
+					Path: "/semantic.pdf", EvidenceKind: test.kind, Excerpt: test.lexical,
+				}}
+			}
+			reranker := &stageReranker{}
+			searcher.reranking = RerankingConfig{Enabled: true,
+				Profile: RerankingProfile{ID: "reranking", MaxCandidates: 1}, Provider: reranker,
+				Authorizer: &stageAuthorizer{}, Deadline: time.Second, FailurePolicy: ProviderFailureDegrade}
+			ranked, err := searcher.Search(t.Context(), Query{Text: "query", Mode: test.mode, Limit: 1,
+				ProcessingProfileFingerprint: "profile", BindingID: "required", Authorization: retrievalAuthorization(descriptor)})
+			require.NoError(t, err)
+			require.Len(t, reranker.candidates, 1)
+			assert.Equal(t, test.want, reranker.candidates[0].Excerpt)
+			require.Len(t, ranked.Results, 1)
+			assert.Equal(t, test.lexical, ranked.Results[0].Excerpt)
+		})
+	}
 }
 
 func TestSearcherSemanticRerankingFailsClosedWithoutExcerpt(t *testing.T) {
