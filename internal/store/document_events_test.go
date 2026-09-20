@@ -169,6 +169,35 @@ func TestPublishDocumentEventsAcceptsCanonicalEmptyProjection(t *testing.T) {
 	assert.Equal(t, record, view.Events)
 }
 
+func TestPublishDocumentEventsRetainsActorEvidenceInProjections(t *testing.T) {
+	s := newTestStore(t)
+	version, target := ingestDocumentEventTarget(t, s, "actors.txt", "a71")
+	record := documentEventRecord(t, s.VaultID(), version.ID, "a7")
+	record.Events[0].Actors[0].EvidenceKind = "email_generation"
+	record.Events[0].Actors[0].EvidenceID = "email/undated-author"
+	record.Sources = append(record.Sources, document.DocumentEventSourceV1{
+		EvidenceKind: "email_generation", EvidenceID: "email/undated-author",
+		EvidenceSHA256: fakeHash("c7"),
+	})
+	_, err := s.PublishDocumentEvents(t.Context(), target, fakeHash("f71"),
+		requireDocumentEventInputsSHA256(t, s, target), mustMarshalDocumentEvents(t, record))
+	require.NoError(t, err)
+
+	var eventEvidence, actorEvidence, actorEvidenceID, primaryEventID string
+	err = s.db.QueryRowContext(t.Context(), `SELECT e.evidence_kind,a.evidence_kind,a.evidence_id,p.event_id
+		FROM document_event_heads h
+		JOIN document_events e ON e.generation_id=h.generation_id
+		JOIN document_event_actors a ON a.generation_id=e.generation_id AND a.event_id=e.event_id
+		JOIN document_event_primaries p ON p.generation_id=e.generation_id AND p.event_id=e.event_id
+		WHERE h.content_version_id=?`, version.ID).
+		Scan(&eventEvidence, &actorEvidence, &actorEvidenceID, &primaryEventID)
+	require.NoError(t, err)
+	require.Equal(t, "source_metadata", eventEvidence)
+	require.Equal(t, "email_generation", actorEvidence)
+	require.Equal(t, "email/undated-author", actorEvidenceID)
+	require.Equal(t, record.Events[0].EventID, primaryEventID)
+}
+
 func TestDocumentEventsForVersionRejectsHeadFromAnotherVersion(t *testing.T) {
 	s := newTestStore(t)
 	firstVersion, firstTarget := ingestDocumentEventTarget(t, s, "first.txt", "e5")
