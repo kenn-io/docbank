@@ -167,10 +167,14 @@ func TestResolveSemanticCandidatesReturnsOnlyCurrentScopedHeads(t *testing.T) {
 	s, versionID, profile, _ := newEmbeddingCatalogFixture(t)
 	version, err := s.ContentVersionByID(t.Context(), versionID)
 	require.NoError(t, err)
-	_, err = s.db.ExecContext(t.Context(),
-		`INSERT INTO content_fts(blob_hash,extractor,text) VALUES(?,?,?)`,
-		version.BlobHash, "synthetic-semantic", "semantic source excerpt")
-	require.NoError(t, err)
+	require.NoError(t, s.RecordExtraction(t.Context(), ExtractionResult{
+		BlobHash: version.BlobHash, Extractor: "failed-extractor", ExtractorVersion: 1,
+		Status: ExtractionFailed, Error: "synthetic extraction failure",
+	}))
+	require.NoError(t, s.RecordExtraction(t.Context(), ExtractionResult{
+		BlobHash: version.BlobHash, Extractor: "plain-text", ExtractorVersion: 1,
+		Status: ExtractionOK, Text: "semantic source excerpt",
+	}))
 	record := embeddingSetFixture(s, versionID, profile.Fingerprint,
 		document.EmbeddingInputOriginalFile, "optional", "")
 	require.NoError(t, s.StageEmbeddingSet(t.Context(), record))
