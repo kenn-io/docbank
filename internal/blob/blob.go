@@ -871,6 +871,10 @@ func (s *Store) ListDetailed() (map[string]LooseInventory, error) {
 				continue
 			}
 			info, err := entry.Info()
+			if errors.Is(err, fs.ErrNotExist) {
+				// Packing may remove a loose copy after the directory was read.
+				continue
+			}
 			if err != nil {
 				return nil, fmt.Errorf("reading blob %s: %w", logicalName, err)
 			}
