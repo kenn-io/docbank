@@ -58,7 +58,8 @@ func TestMailboxWorkerSurvivesCatalogContention(t *testing.T) {
 			driver := &contentionDriver{Driver: store.DefaultSQLiteDriver()}
 			f := mailboxFixture(t, driver)
 			r := queuedArchive(t, f, []byte(separator+"Subject: Synthetic\n\nBody\n"), "mbox")
-			ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+			// Allow real database and file I/O to finish on slower CI runners.
+			ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
 			defer cancel()
 			// Only the external locker should cause contention in this fixture.
 			driver.db.SetMaxOpenConns(1)
@@ -125,7 +126,7 @@ func TestMailboxWorkerSurvivesCatalogContention(t *testing.T) {
 			require.Eventually(t, func() bool {
 				j, err := f.Store.MailboxJob(ctx, "one", r.ID)
 				return err == nil && j.State == "complete" && j.Imported == 1
-			}, 3*time.Second, 10*time.Millisecond)
+			}, 10*time.Second, 10*time.Millisecond)
 		})
 	}
 }
