@@ -1,5 +1,6 @@
 import type { Node, ProcessingSelector, ProcessingJob, ProcessingStatus, ProcessingJobEvent, DocumentSearchRequest, DocumentSearchReport, Tag, TagAssignmentReceipt, TagDeletionReceipt } from "./generated/docbank.js";
 import * as generated from "./generated/docbank.js";
+import type { DocumentSimilarRequest, DocumentSimilarReport } from "./generated/docbank.js";
 import { APIError } from "./api-transport.js";
 import { sha256 } from "@noble/hashes/sha2.js";
 import { bytesToHex, utf8ToBytes } from "@noble/hashes/utils.js";
@@ -224,6 +225,49 @@ export async function documentSearch(
 ): Promise<DocumentSearchReport> {
   const response = await generated.searchDocuments(request, { session });
   return validateDocumentSearchReport(response, request);
+}
+
+export async function documentSimilar(session: string, request: DocumentSimilarRequest): Promise<DocumentSimilarReport> {
+  return validateDocumentSimilarReport(await generated.findSimilarDocuments(request, { session }), request);
+}
+
+export function validateDocumentSimilarReport(value: unknown, request: DocumentSimilarRequest): DocumentSimilarReport {
+  const invalid = (): never => { throw new Error("The daemon returned an invalid similar response."); };
+  if (!isRecord(value)) return invalid();
+  const source = value.source;
+  if (!isRecord(source) || !positiveInteger(source.node_id) || source.node_id !== request.selector.node_id ||
+      source.content_version_id !== request.selector.content_version_id || !request.fence.content_version_ids.includes(String(source.content_version_id)) ||
+      !boundedSearchIdentity(value.binding_id, 128) || request.binding_id && value.binding_id !== request.binding_id ||
+      !isRecord(value.coverage) || !Array.isArray(value.results) || typeof value.truncated !== "boolean") return invalid();
+  const coverage = value.coverage;
+  if (value.state === "ready") {
+    if (value.missing_coverage !== undefined || coverage.state === "unknown") invalid();
+  } else if (value.state === "unavailable") {
+    const missing = value.missing_coverage;
+    if (!isRecord(missing) || missing.kind !== "embedding" || missing.binding_id !== value.binding_id ||
+        missing.content_version_id !== source.content_version_id || !canonicalHash(missing.profile_fingerprint) ||
+        value.results.length !== 0 || value.truncated || coverage.state !== "unknown" ||
+        coverage.complete_documents !== 0 || coverage.scoped_documents !== 0) invalid();
+  } else invalid();
+  const hashes = new Set<string>();
+  const nodes = new Set<number>();
+  let previous = Infinity;
+  const results = value.results.map((result: unknown) => {
+    if (!isRecord(result) || result.node_id === source.node_id || nodes.has(Number(result.node_id)) ||
+        !canonicalHash(result.blob_hash) || hashes.has(String(result.blob_hash)) ||
+        !nonnegativeInteger(result.duplicate_count) || Number(result.duplicate_count) >= Number(coverage.complete_documents) ||
+        typeof result.score !== "number" || result.score > previous || !Array.isArray(result.evidence) ||
+        result.evidence.length !== 1 || !isRecord(result.evidence[0]) || result.evidence[0].kind !== "embedding" ||
+        result.evidence[0].time_span !== undefined) return invalid();
+    hashes.add(String(result.blob_hash));
+    nodes.add(Number(result.node_id));
+    previous = result.score;
+    return { ...result, semantic_rank: result.rank };
+  });
+  validateDocumentSearchReport({ requested_mode: "semantic", actual_mode: "semantic", coverage, results,
+    truncated: value.truncated, degradations: [], trace: [] }, { query: "stored source", mode: "semantic",
+    profile: request.selector.profile, fence: request.fence, limit: request.limit });
+  return value as unknown as DocumentSimilarReport;
 }
 
 function validateDocumentSearchReport(value: unknown, request: DocumentSearchRequest): DocumentSearchReport {

@@ -101,6 +101,7 @@ Endpoints are filesystem-shaped, under `/api/v1`:
 | `POST /processing/consent/grants` · `POST /processing/consent/revocations` | grant reviewed profile consent / revoke this operator's processing consent | Implemented |
 | `GET /renditions/{attachment_id}` · `POST /renditions/select` | stream retained sanitized Markdown by attachment or exact source selector | Implemented |
 | `GET /coverage?profile=&vault_uid=&content_version_id=` · `POST /search` | inspect separate rendition/embedding coverage / search an authorized source-version set | Implemented |
+| `POST /search/similar` | stored-vector neighbors | Implemented |
 | `POST /derivatives/purge-plans` · `POST /derivatives/purge-jobs` | preview / run a live derivative purge without changing immutable backups | Implemented |
 | `POST /nodes` · `POST /path/mkdir` | create a directory beneath a stable parent ID or at one exact virtual coordinate | Implemented |
 | `POST /ingest` · `POST /ingest/stream` · `POST /ingest/preflight` | import with JSON or streamed progress / inventory server-side paths — see [addendum](#addendum-post-ingest-post-ingeststream-and-post-ingestpreflight) | Implemented |
@@ -399,6 +400,27 @@ rendition; the digest trailer covers only the returned range. Invalid or
 unsatisfiable ranges return `416 invalid_rendition_range`.
 See the [Markdown contract](document-derivatives.md#sanitized-markdown-contract)
 for the envelope and body-relative navigation.
+
+#### Similar documents
+
+`POST /api/v1/search/similar` accepts `selector`, optional `binding_id`,
+optional `limit` from 1 to 100, and `fence`. The selector identifies a current
+live file by `node_id`, `content_version_id`, and configured `profile`. The
+normalized fence must contain that version before coverage is inspected.
+
+The report has `state`, `source`, `binding_id`, `coverage`, `results`, and
+`truncated`. `state: unavailable` includes `missing_coverage` with kind
+`embedding`, binding, profile fingerprint, and source version. It has no
+results. `state: ready` can have an empty result list.
+
+Each result carries a rank, score, path, document identity, `blob_hash`,
+`duplicate_count`, and one embedding evidence reference. The source node is
+excluded; eligible copies with the same bytes share one result. The limit
+applies after grouping. L2 scores are negative distances, so higher wire scores
+always rank first. Invalid source identity, stale source, storage failures,
+and stale index errors remain errors. This read starts no processing and
+makes no provider request. Browser sessions may POST this exact path with an
+empty query string.
 
 #### Coverage and source-fenced search
 

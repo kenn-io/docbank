@@ -11,6 +11,7 @@ import (
 
 	"go.kenn.io/docbank/internal/processing"
 	"go.kenn.io/docbank/internal/store"
+	"go.kenn.io/docbank/internal/vectorindex"
 )
 
 func TestFromMaintenanceErrorPreservesCommittedRetirementBoundary(t *testing.T) {
@@ -63,6 +64,7 @@ func TestProcessingErrorsPreserveRenditionOutcomes(t *testing.T) {
 	}{
 		{processing.ErrRenditionFailed, "rendition_failed"},
 		{processing.ErrRenditionOperatorRequired, "rendition_operator_required"},
+		{vectorindex.ErrSimilarSearchScoringBudgetExceeded, "similar_search_too_large"},
 	} {
 		mapped := &Error{}
 		require.ErrorAs(t, fromProcessingError(test.err), &mapped)

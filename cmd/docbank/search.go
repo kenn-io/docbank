@@ -32,6 +32,8 @@ var (
 	searchBinding        string
 	searchSourceVersions []string
 	searchExplain        bool
+	searchSimilarTo      string
+	searchVersion        string
 )
 
 type documentSearchCLIOptions struct {
@@ -48,6 +50,38 @@ var searchCmd = &cobra.Command{
 	Use:   "search [<query>...]",
 	Short: "Search document names and extracted text",
 	RunE: func(cmd *cobra.Command, args []string) error {
+		if cmd.Flags().Changed("similar-to") {
+			if len(args) != 0 {
+				return usageError(errors.New("--similar-to does not accept query text"))
+			}
+			for _, flag := range []string{"mode", "explain", "tag", "mime-type", "under", "modified-since", "modified-before"} {
+				if cmd.Flags().Changed(flag) {
+					return usageError(fmt.Errorf("--similar-to cannot be combined with --%s", flag))
+				}
+			}
+			options := documentSearchCLIOptions{Mode: "semantic", Profile: searchProfile, BindingID: searchBinding, ContentVersionIDs: searchSourceVersions, Limit: searchLimit, JSON: searchJSON}
+			if !cmd.Flags().Changed("limit") {
+				options.Limit = 20
+			}
+			if err := validateDocumentSearchOptions("stored source", options); err != nil {
+				return err
+			}
+			selector, err := parseNodeSelector(searchSimilarTo)
+			if err != nil {
+				return err
+			}
+			if searchVersion != "" && !daemonconn.IsCanonicalUUIDv4(searchVersion) {
+				return usageError(errors.New("--version must be a canonical UUIDv4"))
+			}
+			c, err := daemonconn.Ensure(cmd.Context())
+			if err != nil {
+				return err
+			}
+			return runSimilarSearch(cmd, c, selector, searchVersion, options)
+		}
+		if cmd.Flags().Changed("version") {
+			return usageError(errors.New("--version requires --similar-to"))
+		}
 		if documentSearchFlagsChanged(cmd) {
 			if searchTag != "" || searchMIME != "" || searchUnder != "" || searchSince != "" || searchBefore != "" {
 				return usageError(errors.New("--mode search cannot be combined with tag, MIME, directory, or time filters"))
@@ -179,6 +213,73 @@ func documentSearchFlagsChanged(cmd *cobra.Command) bool {
 	return cmd.Flags().Changed("mode") || cmd.Flags().Changed("profile") ||
 		cmd.Flags().Changed("binding") || cmd.Flags().Changed("source-version") ||
 		cmd.Flags().Changed("explain")
+}
+
+func runSimilarSearch(cmd *cobra.Command, c *daemonconn.Connection, selector nodeSelector, version string, options documentSearchCLIOptions) error {
+	node, err := selector.resolve(cmd.Context(), c)
+	if err != nil {
+		return err
+	}
+	if version == "" {
+		version = node.CurrentVersionID
+	}
+	if node.Kind != "file" || version != node.CurrentVersionID {
+		return usageError(errors.New("similar source must be a current live file version"))
+	}
+	if !slices.Contains(options.ContentVersionIDs, version) {
+		return usageError(errors.New("the selected version must occur in --source-version"))
+	}
+	profiles, err := c.API().ListDocumentProcessingProfiles(cmd.Context())
+	if err != nil {
+		return err
+	}
+	profile, found := findProcessingProfile(*profiles, options.Profile)
+	if !found {
+		return usageError(errors.New("processing profile is unavailable"))
+	}
+	binding, err := selectDocumentSearchBinding("semantic", options.BindingID, profile.EmbeddingBindings)
+	if err != nil {
+		return usageError(err)
+	}
+	info, err := c.API().VaultInfo(cmd.Context())
+	if err != nil {
+		return err
+	}
+	report, err := c.SimilarDocuments(cmd.Context(), api.DocumentSimilarRequest{
+		Selector: api.ProcessingSelector{NodeID: node.ID, ContentVersionID: version, Profile: options.Profile}, BindingID: binding, Limit: options.Limit,
+		Fence: api.DocumentSourceFence{VaultUID: info.VaultID, ContentVersionIDs: options.ContentVersionIDs}})
+	if err != nil {
+		return err
+	}
+	if options.JSON {
+		return writeCLIJSON(cmd.OutOrStdout(), report)
+	}
+	return writeSimilarSearchReport(cmd, report)
+}
+
+func writeSimilarSearchReport(cmd *cobra.Command, report api.DocumentSimilarReport) error {
+	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "similar to: id:%d (version %s)\nbinding: %s\n", report.Source.NodeID, report.Source.ContentVersionID, report.BindingID)
+	if report.State == "unavailable" {
+		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "unavailable: no current embedding for binding %q on version %s\n", report.BindingID, report.Source.ContentVersionID)
+		return nil
+	}
+	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "coverage: %s (%d/%d source documents complete)\n", report.Coverage.State, report.Coverage.CompleteDocuments, report.Coverage.ScopedDocuments)
+	if len(report.Results) == 0 {
+		_, _ = fmt.Fprintln(cmd.OutOrStdout(), "no similar documents inside the source fence")
+		return nil
+	}
+	w := tabwriter.NewWriter(cmd.OutOrStdout(), 2, 4, 2, ' ', 0)
+	_, _ = fmt.Fprintln(w, "RANK\tSCORE\tSELECTOR\tVERSION\tDUPLICATES\tPATH")
+	for _, result := range report.Results {
+		_, _ = fmt.Fprintf(w, "%d\t%.6g\tid:%d\t%s\t%d\t%s\n", result.Rank, result.Score, result.NodeID, result.ContentVersionID, result.DuplicateCount, result.Path)
+	}
+	if err := w.Flush(); err != nil {
+		return fmt.Errorf("writing similar results: %w", err)
+	}
+	if report.Truncated {
+		_, _ = fmt.Fprintln(cmd.OutOrStdout(), "results truncated at the requested limit")
+	}
+	return nil
 }
 
 func runDocumentSearch(cmd *cobra.Command, c *daemonconn.Connection, query string, options documentSearchCLIOptions) error {
@@ -334,6 +435,8 @@ func writeDocumentSearchReport(cmd *cobra.Command, report api.DocumentSearchRepo
 }
 
 func init() {
+	searchCmd.Flags().StringVar(&searchSimilarTo, "similar-to", "", "find similar files using the stored embedding of id:N or /path")
+	searchCmd.Flags().StringVar(&searchVersion, "version", "", "exact current source version for --similar-to")
 	searchCmd.Flags().IntVar(&searchLimit, "limit", defaultSearchLimit,
 		"maximum results to return (1-1000)")
 	searchCmd.Flags().StringVar(&searchTag, "tag", "",

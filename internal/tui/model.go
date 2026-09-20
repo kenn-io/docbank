@@ -49,6 +49,7 @@ type Backend interface {
 	PlanProcessing(ctx context.Context, request api.ProcessingPlanRequest) (api.ProcessingPlan, error)
 	DocumentCoverage(ctx context.Context, profile string, fence api.DocumentSourceFence) (api.CoverageReport, error)
 	SearchDocuments(ctx context.Context, request api.DocumentSearchRequest) (api.DocumentSearchReport, error)
+	SimilarDocuments(ctx context.Context, request api.DocumentSimilarRequest) (api.DocumentSimilarReport, error)
 	StartProcessingStream(ctx context.Context, request api.StartProcessingRequest, profileFingerprint string) (ProcessingEventStream, error)
 	ProcessingStatus(ctx context.Context, jobID string) (api.ProcessingStatus, error)
 	RenditionForSelector(ctx context.Context, selector api.ProcessingSelector, maxBytes int64) (Rendition, error)
@@ -169,6 +170,12 @@ type processingPlanLoadedMsg struct {
 	requestID uint64
 	plan      api.ProcessingPlan
 	err       error
+}
+
+type processingSimilarLoadedMsg struct {
+	requestID, similarID uint64
+	report               api.DocumentSimilarReport
+	err                  error
 }
 
 type processingCoverageLoadedMsg struct {
@@ -306,93 +313,99 @@ type Model struct {
 	searchQuery  string
 	searchReturn *location
 
-	requestID              uint64
-	loading                bool
-	err                    error
-	quitting               bool
-	helpOpen               bool
-	detailOpen             bool
-	detailOffset           int
-	detailNode             row
-	detailTags             []api.Tag
-	detailTagsTotal        int
-	detailTagsLoading      bool
-	detailTagsErr          error
-	detailRequestID        uint64
-	jobsOpen               bool
-	jobs                   []api.Job
-	jobsTotal              int
-	jobsRunning            int
-	jobsCursor             int
-	jobsOffset             int
-	jobsLoading            bool
-	jobsErr                error
-	jobsRequestID          uint64
-	jobDetail              bool
-	jobDetailOffset        int
-	operationsOpen         bool
-	operationsInfo         api.VaultInfo
-	operationsSnapshots    []api.BackupSnapshot
-	operationsTotal        int
-	operationsOffset       int
-	operationsInfoBusy     bool
-	operationsBackupBusy   bool
-	operationsStorageErr   error
-	operationsBackupErr    error
-	operationsRequestID    uint64
-	processingOpen         bool
-	processingNode         row
-	processingProfiles     []api.ProcessingProfileSummary
-	processingProfile      int
-	processingPlan         *api.ProcessingPlan
-	processingCoverage     *api.CoverageReport
-	processingLoading      bool
-	processingErr          error
-	processingRequestID    uint64
-	processingOffset       int
-	processingSearching    bool
-	processingSearch       string
-	processingSearchBusy   bool
-	processingSearchID     uint64
-	processingSearchErr    error
-	processingSearchReport *api.DocumentSearchReport
-	processingJob          *api.ProcessingJob
-	processingStatus       *api.ProcessingStatus
-	processingStatusErr    error
-	processingRendition    *Rendition
-	processingRenditionID  uint64
-	processingMarkdown     []string
-	processingRenditionErr error
-	processingConfirmation *api.ProcessingPlan
-	processingStarting     bool
-	processingRunID        uint64
-	processingRunErr       error
-	processingStreamID     uint64
-	processingCancel       context.CancelFunc
-	trashOpen              bool
-	trashItems             []api.Node
-	trashTotal             int
-	trashCursor            int
-	trashOffset            int
-	trashChanged           bool
-	trashLoading           bool
-	trashErr               error
-	trashRequestID         uint64
-	confirmation           *mutationConfirmation
-	mutationRunning        bool
-	mutationRequestID      uint64
-	notice                 string
-	historyOpen            bool
-	historyNode            row
-	historyPages           []api.AuditEventPage
-	historyPage            int
-	historyTotal           int
-	historyCursor          int
-	historyOffset          int
-	historyDetail          bool
-	historyDetailOffset    int
-	spinnerFrame           int
-	spinnerActive          bool
+	requestID                uint64
+	loading                  bool
+	err                      error
+	quitting                 bool
+	helpOpen                 bool
+	detailOpen               bool
+	detailOffset             int
+	detailNode               row
+	detailTags               []api.Tag
+	detailTagsTotal          int
+	detailTagsLoading        bool
+	detailTagsErr            error
+	detailRequestID          uint64
+	jobsOpen                 bool
+	jobs                     []api.Job
+	jobsTotal                int
+	jobsRunning              int
+	jobsCursor               int
+	jobsOffset               int
+	jobsLoading              bool
+	jobsErr                  error
+	jobsRequestID            uint64
+	jobDetail                bool
+	jobDetailOffset          int
+	operationsOpen           bool
+	operationsInfo           api.VaultInfo
+	operationsSnapshots      []api.BackupSnapshot
+	operationsTotal          int
+	operationsOffset         int
+	operationsInfoBusy       bool
+	operationsBackupBusy     bool
+	operationsStorageErr     error
+	operationsBackupErr      error
+	operationsRequestID      uint64
+	processingOpen           bool
+	processingNode           row
+	processingProfiles       []api.ProcessingProfileSummary
+	processingProfile        int
+	processingPlan           *api.ProcessingPlan
+	processingCoverage       *api.CoverageReport
+	processingLoading        bool
+	processingErr            error
+	processingRequestID      uint64
+	processingOffset         int
+	processingSearching      bool
+	processingSearch         string
+	processingSearchBusy     bool
+	processingSearchID       uint64
+	processingSearchErr      error
+	processingSearchReport   *api.DocumentSearchReport
+	processingSimilarReport  *api.DocumentSimilarReport
+	processingSimilarScope   []string
+	processingSimilarPending bool
+	processingSimilarBusy    bool
+	processingSimilarID      uint64
+	processingSimilarErr     error
+	processingJob            *api.ProcessingJob
+	processingStatus         *api.ProcessingStatus
+	processingStatusErr      error
+	processingRendition      *Rendition
+	processingRenditionID    uint64
+	processingMarkdown       []string
+	processingRenditionErr   error
+	processingConfirmation   *api.ProcessingPlan
+	processingStarting       bool
+	processingRunID          uint64
+	processingRunErr         error
+	processingStreamID       uint64
+	processingCancel         context.CancelFunc
+	trashOpen                bool
+	trashItems               []api.Node
+	trashTotal               int
+	trashCursor              int
+	trashOffset              int
+	trashChanged             bool
+	trashLoading             bool
+	trashErr                 error
+	trashRequestID           uint64
+	confirmation             *mutationConfirmation
+	mutationRunning          bool
+	mutationRequestID        uint64
+	notice                   string
+	historyOpen              bool
+	historyNode              row
+	historyPages             []api.AuditEventPage
+	historyPage              int
+	historyTotal             int
+	historyCursor            int
+	historyOffset            int
+	historyDetail            bool
+	historyDetailOffset      int
+	spinnerFrame             int
+	spinnerActive            bool
 
 	width  int
 	height int
@@ -535,7 +548,21 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.processingPlan = &msg.plan
+		if m.processingSimilarPending {
+			m.processingSimilarPending = false
+			command := m.beginSimilar()
+			return m, tea.Batch(m.loadProcessingCoverage(msg.plan, msg.requestID), command)
+		}
 		return m, m.loadProcessingCoverage(msg.plan, msg.requestID)
+	case processingSimilarLoadedMsg:
+		if !m.processingOpen || msg.requestID != m.processingRequestID || msg.similarID != m.processingSimilarID {
+			return m, nil
+		}
+		m.processingSimilarBusy, m.processingSimilarErr = false, msg.err
+		if msg.err == nil {
+			m.processingSimilarReport = &msg.report
+		}
+		return m, nil
 	case processingCoverageLoadedMsg:
 		if !m.processingOpen || msg.requestID != m.processingRequestID {
 			return m, nil
@@ -855,7 +882,7 @@ func (m Model) updateKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			m.loadOperationsInfo(m.operationsRequestID),
 			m.loadOperationsBackups(m.operationsRequestID),
 		)
-	case "P":
+	case "P", "S":
 		selected, ok := m.selected()
 		if !ok || selected.node.Kind != nodeKindFile || selected.node.CurrentVersionID == "" {
 			return m, nil
@@ -874,6 +901,17 @@ func (m Model) updateKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		m.processingSearchBusy = false
 		m.processingSearchErr = nil
 		m.processingSearchReport = nil
+		m.clearSimilar()
+		m.processingSimilarScope = nil
+		seenVersions := make(map[string]bool)
+		for _, item := range m.rows {
+			version := item.node.CurrentVersionID
+			if item.node.Kind == nodeKindFile && version != "" && !seenVersions[version] {
+				m.processingSimilarScope = append(m.processingSimilarScope, version)
+				seenVersions[version] = true
+			}
+		}
+		m.processingSimilarPending = msg.String() == "S"
 		m.processingJob, m.processingStatus, m.processingRendition, m.processingRenditionErr = nil, nil, nil, nil
 		m.processingStatusErr = nil
 		m.processingConfirmation = nil
@@ -1217,6 +1255,7 @@ func (m Model) updateProcessingKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		m.processingLoading = false
 		m.processingSearchBusy = false
 		m.searchInput.Placeholder = searchPlaceholder
+		m.clearSimilar()
 		m.processingRequestID++
 		return m, nil
 	case "r":
@@ -1255,6 +1294,9 @@ func (m Model) updateProcessingKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		m.processingRunErr = nil
 		m.processingRequestID++
 		return m, tea.Batch(m.startSpinner(), m.loadProcessingPlan(m.processingProfiles[m.processingProfile].Name, m.processingRequestID))
+	case "S":
+		command := m.beginSimilar()
+		return m, command
 	case "b":
 		if m.processingStarting || m.processingLoading || m.processingPlan == nil {
 			return m, nil
@@ -1553,9 +1595,36 @@ func (m Model) loadOperationsBackups(requestID uint64) tea.Cmd {
 }
 
 func (m *Model) clearProcessingSearch() {
+	m.clearSimilar()
 	m.processingSearchBusy = false
 	m.processingSearchErr = nil
 	m.processingSearchReport = nil
+}
+
+func (m *Model) clearSimilar() {
+	m.processingSimilarID++
+	m.processingSimilarBusy, m.processingSimilarPending = false, false
+	m.processingSimilarErr, m.processingSimilarReport = nil, nil
+}
+
+func (m *Model) beginSimilar() tea.Cmd {
+	m.clearSimilar()
+	if len(m.processingSimilarScope) > 4096 {
+		m.processingSimilarErr = errors.New("narrow this view to at most 4096 file versions")
+		return nil
+	}
+	if m.processingPlan == nil || len(m.processingSimilarScope) == 0 {
+		return nil
+	}
+	m.processingSimilarBusy = true
+	ctx, backend, plan := m.ctx, m.backend, *m.processingPlan
+	requestID, similarID := m.processingRequestID, m.processingSimilarID
+	scope := append([]string(nil), m.processingSimilarScope...)
+	return func() tea.Msg {
+		report, err := backend.SimilarDocuments(ctx, api.DocumentSimilarRequest{Selector: plan.Selector, Limit: maxProcessingSearchItems,
+			Fence: api.DocumentSourceFence{VaultUID: plan.VaultUID, ContentVersionIDs: scope}})
+		return processingSimilarLoadedMsg{requestID: requestID, similarID: similarID, report: report, err: err}
+	}
 }
 
 func (m Model) loadProcessingProfiles(requestID uint64) tea.Cmd {

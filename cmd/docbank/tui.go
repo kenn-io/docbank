@@ -284,6 +284,12 @@ func (b *tuiDaemonBackend) SearchDocuments(
 	})
 }
 
+func (b *tuiDaemonBackend) SimilarDocuments(ctx context.Context, request api.DocumentSimilarRequest) (api.DocumentSimilarReport, error) {
+	return withTUIClient(ctx, b, func(c *daemonconn.Connection) (api.DocumentSimilarReport, error) {
+		return c.SimilarDocuments(ctx, request)
+	})
+}
+
 func (b *tuiDaemonBackend) StartProcessingStream(
 	ctx context.Context, request api.StartProcessingRequest, profileFingerprint string,
 ) (doctui.ProcessingEventStream, error) {

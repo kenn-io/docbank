@@ -4,6 +4,7 @@ package vectorindex
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/binary"
 	"encoding/hex"
@@ -61,6 +62,8 @@ type RowIdentity struct {
 // Score is populated for cosine and dot product; Distance is populated for L2.
 type Neighbor struct {
 	RowIdentity
+
+	SourceRow RowIdentity
 
 	Score    float64
 	Distance float64
@@ -311,6 +314,116 @@ func (generation *Generation) SearchRows(query []float32, identities []RowIdenti
 	return generation.searchRows(query, rows, len(rows))
 }
 
+var ErrSimilarSearchScoringBudgetExceeded = errors.New("similar search scoring budget exceeded")
+
+const maxSimilarScoringPairs = 1_000_000
+
+// SearchSimilarRows scores candidates against every stored source row.
+func (generation *Generation) SearchSimilarRows(ctx context.Context, sources, identities []RowIdentity) ([]Neighbor, error) {
+	if generation == nil || len(generation.rows) == 0 {
+		return nil, errors.New("vector index generation is not open")
+	}
+	if len(sources) == 0 {
+		return nil, errors.New("vector index source rows are required")
+	}
+	selected := make(map[RowIdentity]bool, len(sources))
+	for _, source := range sources {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		if _, duplicate := selected[source]; duplicate {
+			return nil, errors.New("vector index source rows contain a duplicate identity")
+		}
+		selected[source] = false
+	}
+	candidates := make(map[RowIdentity]struct{}, len(identities))
+	for _, identity := range identities {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		if _, duplicate := candidates[identity]; duplicate {
+			return nil, errors.New("vector index selected rows contain a duplicate identity")
+		}
+		candidates[identity] = struct{}{}
+	}
+	var sourceRows, candidateRows []int
+	for index, identity := range generation.rows {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		if _, wanted := selected[identity]; wanted {
+			selected[identity] = true
+			sourceRows = append(sourceRows, index)
+		}
+		if _, wanted := candidates[identity]; wanted {
+			candidateRows = append(candidateRows, index)
+		}
+	}
+	if len(candidateRows) != len(candidates) {
+		return nil, errors.New("vector index selected row is absent from generation")
+	}
+	for _, found := range selected {
+		if !found {
+			return nil, errors.New("vector index source row is absent from generation")
+		}
+	}
+	if len(candidateRows) > 0 && len(sourceRows) > maxSimilarScoringPairs/len(candidateRows) {
+		return nil, ErrSimilarSearchScoringBudgetExceeded
+	}
+	best := make([]Neighbor, len(candidateRows))
+	// ponytail: exact source-by-candidate scoring; revisit its bounded cost after rerank evaluation.
+	for sourcePosition, source := range sourceRows {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		for i, index := range candidateRows {
+			candidate := generation.scoreRow(generation.vector(source), index)
+			candidate.SourceRow = generation.rows[source]
+			better := candidate.Score > best[i].Score
+			tied := candidate.Score == best[i].Score
+			if generation.metric == document.VectorMetricL2 {
+				better = candidate.Distance < best[i].Distance
+				tied = candidate.Distance == best[i].Distance
+			}
+			if sourcePosition == 0 || better || tied && compareIdentity(candidate.SourceRow, best[i].SourceRow) < 0 {
+				best[i] = candidate
+			}
+		}
+	}
+	slices.SortFunc(best, func(a, b Neighbor) int {
+		if generation.metric == document.VectorMetricL2 {
+			if a.Distance < b.Distance {
+				return -1
+			}
+			if a.Distance > b.Distance {
+				return 1
+			}
+		} else {
+			if a.Score > b.Score {
+				return -1
+			}
+			if a.Score < b.Score {
+				return 1
+			}
+		}
+		return compareIdentity(a.RowIdentity, b.RowIdentity)
+	})
+	return best, ctx.Err()
+}
+
+func (generation *Generation) scoreRow(query []float32, index int) Neighbor {
+	neighbor := Neighbor{RowIdentity: generation.rows[index]}
+	switch generation.metric {
+	case document.VectorMetricCosine:
+		neighbor.Score = cosine(query, generation.vector(index))
+	case document.VectorMetricDotProduct:
+		neighbor.Score = dot(query, generation.vector(index))
+	case document.VectorMetricL2:
+		neighbor.Distance = euclidean(query, generation.vector(index))
+	}
+	return neighbor
+}
+
 func (generation *Generation) searchRows(query []float32, rows []int, k int) ([]Neighbor, error) {
 	if generation == nil || len(generation.rows) == 0 {
 		return nil, errors.New("vector index generation is not open")
@@ -335,16 +448,7 @@ func (generation *Generation) searchRows(query []float32, rows []int, k int) ([]
 		if rows != nil {
 			index = rows[position]
 		}
-		neighbor := Neighbor{RowIdentity: generation.rows[index]}
-		switch generation.metric {
-		case document.VectorMetricCosine:
-			neighbor.Score = cosine(query, generation.vector(index))
-		case document.VectorMetricDotProduct:
-			neighbor.Score = dot(query, generation.vector(index))
-		case document.VectorMetricL2:
-			neighbor.Distance = euclidean(query, generation.vector(index))
-		}
-		neighbors[position] = neighbor
+		neighbors[position] = generation.scoreRow(query, index)
 	}
 	sort.Slice(neighbors, func(left, right int) bool {
 		if generation.metric == document.VectorMetricL2 {

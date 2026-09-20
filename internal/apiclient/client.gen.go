@@ -7044,6 +7044,53 @@ func (c *Client) SearchDocuments(ctx context.Context, options *SearchDocumentsRe
 	return responseParser(ctx, resp)
 }
 
+// FindSimilarDocuments Find similar documents using stored embeddings
+func (c *Client) FindSimilarDocuments(ctx context.Context, options *FindSimilarDocumentsRequestOptions, reqEditors ...runtime.RequestEditorFn) (*FindSimilarDocumentsResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/search/similar",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*FindSimilarDocumentsResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(FindSimilarDocumentsResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "FindSimilarDocumentsResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[FindSimilarDocumentsErrorResponse](resp, "FindSimilarDocumentsErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/search/similar")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
 // ValidateDocumentSearch Validate document-search semantics without executing a search
 func (c *Client) ValidateDocumentSearch(ctx context.Context, options *ValidateDocumentSearchRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ValidateDocumentSearchResponse, error) {
 	var err error
@@ -13544,6 +13591,34 @@ func (o *SearchDocumentsRequestOptions) GetHeader() (map[string]string, error) {
 	return nil, nil
 }
 
+// FindSimilarDocumentsRequestOptions is the options needed to make a request to FindSimilarDocuments.
+type FindSimilarDocumentsRequestOptions struct {
+	Body *FindSimilarDocumentsBody
+}
+
+// GetPathParams returns the path params as a map.
+func (o *FindSimilarDocumentsRequestOptions) GetPathParams() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetQuery returns the query params as a map.
+func (o *FindSimilarDocumentsRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *FindSimilarDocumentsRequestOptions) GetBody() any {
+	if o.Body == nil {
+		return nil
+	}
+	return o.Body
+}
+
+// GetHeader returns the headers as a map.
+func (o *FindSimilarDocumentsRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
 // ValidateDocumentSearchRequestOptions is the options needed to make a request to ValidateDocumentSearch.
 type ValidateDocumentSearchRequestOptions struct {
 	Body *ValidateDocumentSearchBody
@@ -15426,6 +15501,8 @@ type RunSavedQueryBody = SavedQueryRunRequest
 
 type SearchDocumentsBody = DocumentSearchRequest
 
+type FindSimilarDocumentsBody = DocumentSimilarRequest
+
 type ValidateDocumentSearchBody = DocumentSearchValidationRequest
 
 type StartStorageEvacuationBody = StartStorageEvacuationRequest
@@ -16291,6 +16368,10 @@ type SearchDocumentsResponse = api.DocumentSearchReport
 
 type SearchDocumentsErrorResponse = Error
 
+type FindSimilarDocumentsResponse = api.DocumentSimilarReport
+
+type FindSimilarDocumentsErrorResponse = Error
+
 type ValidateDocumentSearchResponse = api.DocumentSearchValidation
 
 type ValidateDocumentSearchErrorResponse = Error
@@ -16652,6 +16733,8 @@ type DocumentEvidenceReference = api.DocumentEvidenceReference
 
 type DocumentIdentity = api.DocumentIdentity
 
+type DocumentMissingCoverage = api.DocumentMissingCoverage
+
 type DocumentPage = api.DocumentPage
 
 type DocumentRenditionIdentity = api.DocumentRenditionIdentity
@@ -16669,6 +16752,14 @@ type DocumentSearchTrace = api.DocumentSearchTrace
 type DocumentSearchValidation = api.DocumentSearchValidation
 
 type DocumentSearchValidationRequest = api.DocumentSearchValidationRequest
+
+type DocumentSimilarReport = api.DocumentSimilarReport
+
+type DocumentSimilarRequest = api.DocumentSimilarRequest
+
+type DocumentSimilarResult = api.DocumentSimilarResult
+
+type DocumentSimilarSource = api.DocumentSimilarSource
 
 type DocumentSourceFence = api.DocumentSourceFence
 

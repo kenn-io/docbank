@@ -454,6 +454,54 @@ func (c *Connection) SearchDocuments(ctx context.Context, request api.DocumentSe
 	return result, nil
 }
 
+func (c *Connection) SimilarDocuments(ctx context.Context, request api.DocumentSimilarRequest) (api.DocumentSimilarReport, error) {
+	report, err := c.API().FindSimilarDocuments(ctx, &apiclient.FindSimilarDocumentsRequestOptions{Body: &request})
+	if err != nil {
+		return api.DocumentSimilarReport{}, err
+	}
+	if err := validateDocumentSimilarReport(request, *report); err != nil {
+		return api.DocumentSimilarReport{}, fmt.Errorf("similar response is invalid: %w", err)
+	}
+	return *report, nil
+}
+
+func validateDocumentSimilarReport(request api.DocumentSimilarRequest, report api.DocumentSimilarReport) error {
+	if report.Source.NodeID != request.Selector.NodeID || report.Source.NodeID < 1 ||
+		report.Source.ContentVersionID != request.Selector.ContentVersionID || !slices.Contains(request.Fence.ContentVersionIDs, report.Source.ContentVersionID) ||
+		!validBoundedSearchIdentity(report.BindingID, 128) || request.BindingID != "" && report.BindingID != request.BindingID {
+		return errors.New("similar source or binding identity is inconsistent")
+	}
+	switch report.State {
+	case "ready":
+		if report.MissingCoverage != nil || report.Coverage.State == "unknown" {
+			return errors.New("ready similar report has missing coverage")
+		}
+	case "unavailable":
+		missing := report.MissingCoverage
+		if missing == nil || missing.Kind != "embedding" || missing.BindingID != report.BindingID ||
+			missing.ContentVersionID != report.Source.ContentVersionID || !validSHA256Hex(missing.ProfileFingerprint) ||
+			len(report.Results) != 0 || report.Truncated || report.Coverage.State != "unknown" ||
+			report.Coverage.CompleteDocuments != 0 || report.Coverage.ScopedDocuments != 0 {
+			return errors.New("unavailable similar report is inconsistent")
+		}
+	default:
+		return errors.New("similar state is invalid")
+	}
+	converted := api.DocumentSearchReport{RequestedMode: "semantic", ActualMode: "semantic", Coverage: report.Coverage}
+	hashes, nodes := make(map[string]bool), make(map[int64]bool)
+	for i, result := range report.Results {
+		if result.NodeID == report.Source.NodeID || nodes[result.NodeID] || !validSHA256Hex(result.BlobHash) || hashes[result.BlobHash] ||
+			result.DuplicateCount < 0 || result.DuplicateCount >= report.Coverage.CompleteDocuments ||
+			i > 0 && result.Score > report.Results[i-1].Score || len(result.Evidence) != 1 || result.Evidence[0].Kind != "embedding" || result.Evidence[0].TimeSpan != nil {
+			return errors.New("similar result grouping or score is inconsistent")
+		}
+		hashes[result.BlobHash], nodes[result.NodeID] = true, true
+		converted.Results = append(converted.Results, api.DocumentSearchResult{VaultUID: result.VaultUID, NodeID: result.NodeID,
+			ContentVersionID: result.ContentVersionID, Rank: result.Rank, SemanticRank: result.Rank, Score: result.Score, Path: result.Path, Evidence: result.Evidence})
+	}
+	return validateDocumentSearchReport(api.DocumentSearchRequest{Mode: "semantic", Limit: request.Limit, Fence: request.Fence}, converted)
+}
+
 // ValidateDocumentSearch asks the daemon to apply ordinary search semantics
 // without executing a search. It is used only for an exact empty source fence.
 func (c *Connection) ValidateDocumentSearch(

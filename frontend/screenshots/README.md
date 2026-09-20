@@ -77,3 +77,18 @@ DOCBANK_SNAPSHOT_SCREENSHOT_DIR="$PWD/.superpowers/snapshot-integrated-final" \
   snapshot-workspace.screenshot.ts \
   --config frontend/screenshots/playwright.config.ts --project chromium
 ```
+
+The PR-only similar-documents case processes four synthetic files through a
+loopback embedding stub, verifies that similarity sends no provider request,
+and captures widths 1440, 1280, 768, and 400. The same run captures the actual
+TUI through tmux, using WSL Ubuntu on Windows, or records the terminal
+availability blocker. It accepts `DOCBANK_SCREENSHOT_BINARY` and its cleanup
+stops the daemon and removes the temporary vault:
+
+```sh
+make build
+DOCBANK_SIMILAR_SCREENSHOT_DIR="$PWD/.superpowers/similar-screenshots" \
+  node frontend/node_modules/@playwright/test/cli.js test \
+  similar-documents.screenshot.ts \
+  --config frontend/screenshots/playwright.config.ts --project chromium
+```

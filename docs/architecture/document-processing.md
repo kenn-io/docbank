@@ -215,6 +215,20 @@ request, checks the selected generation, and resolves returned candidates
 against the current vault and requested scope. QMD's index does not become the
 source of document ownership or current-version truth.
 
+Similar-document retrieval scores every stored source row against the fenced
+candidate rows. Cosine and dot product keep the greatest score; L2 keeps the
+smallest distance and returns its negative. The store preserves every document
+membership when several documents share a vector-set row. It deduplicates only
+the scoring inputs, then expands matches before excluding the source node and
+grouping by content hash. For example, two eligible copies of a result appear
+as one row with `duplicate_count: 1`.
+
+Current/live eligibility, binding authority, and vector-index leases apply to
+both source and candidates. The final transaction rechecks source identity and
+the source manifest. Missing source coverage returns an unavailable report;
+it never invokes an encoder or provider. Ordinary processing search keeps its
+existing document results. See the [HTTP contract](http-api.md#similar-documents).
+
 The [searcher](https://github.com/kenn-io/docbank/blob/main/internal/retrieval/search.go)
 and [optional provider stages](https://github.com/kenn-io/docbank/blob/main/internal/retrieval/providers.go)
 own the detailed retrieval contract. These packages are internal integration

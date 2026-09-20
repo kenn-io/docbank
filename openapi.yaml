@@ -2671,6 +2671,33 @@ components:
       x-go-type-import:
         path: go.kenn.io/docbank/internal/api
         name: api
+    DocumentMissingCoverage:
+      additionalProperties: false
+      properties:
+        binding_id:
+          maxLength: 128
+          minLength: 1
+          type: string
+        content_version_id:
+          format: uuid
+          type: string
+        kind:
+          enum:
+            - embedding
+          type: string
+        profile_fingerprint:
+          pattern: ^[0-9a-f]{64}$
+          type: string
+      required:
+        - kind
+        - binding_id
+        - profile_fingerprint
+        - content_version_id
+      type: object
+      x-go-type: api.DocumentMissingCoverage
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     DocumentPage:
       additionalProperties: false
       properties:
@@ -2987,6 +3014,148 @@ components:
         - profile
       type: object
       x-go-type: api.DocumentSearchValidationRequest
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
+    DocumentSimilarReport:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/DocumentSimilarReport.json
+          format: uri
+          readOnly: true
+          type: string
+        binding_id:
+          maxLength: 128
+          minLength: 1
+          type: string
+        coverage:
+          $ref: "#/components/schemas/DocumentSearchCoverage"
+        missing_coverage:
+          $ref: "#/components/schemas/DocumentMissingCoverage"
+        results:
+          items:
+            $ref: "#/components/schemas/DocumentSimilarResult"
+          type: array
+        source:
+          $ref: "#/components/schemas/DocumentSimilarSource"
+        state:
+          enum:
+            - ready
+            - unavailable
+          type: string
+        truncated:
+          type: boolean
+      required:
+        - state
+        - source
+        - binding_id
+        - coverage
+        - results
+        - truncated
+      type: object
+      x-go-type: api.DocumentSimilarReport
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
+    DocumentSimilarRequest:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/DocumentSimilarRequest.json
+          format: uri
+          readOnly: true
+          type: string
+        binding_id:
+          maxLength: 128
+          type: string
+        fence:
+          $ref: "#/components/schemas/DocumentSourceFence"
+        limit:
+          format: int64
+          maximum: 100
+          minimum: 1
+          type: integer
+        selector:
+          $ref: "#/components/schemas/ProcessingSelector"
+      required:
+        - selector
+        - fence
+      type: object
+      x-go-type: api.DocumentSimilarRequest
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
+    DocumentSimilarResult:
+      additionalProperties: false
+      properties:
+        blob_hash:
+          pattern: ^[0-9a-f]{64}$
+          type: string
+        content_version_id:
+          format: uuid
+          type: string
+        duplicate_count:
+          format: int64
+          minimum: 0
+          type: integer
+        evidence:
+          items:
+            $ref: "#/components/schemas/DocumentEvidenceReference"
+          type: array
+        node_id:
+          format: int64
+          minimum: 1
+          type: integer
+        path:
+          maxLength: 16384
+          minLength: 2
+          pattern: ^/
+          type: string
+        rank:
+          format: int64
+          minimum: 1
+          type: integer
+        score:
+          format: double
+          type: number
+        vault_uid:
+          format: uuid
+          type: string
+      required:
+        - vault_uid
+        - node_id
+        - content_version_id
+        - rank
+        - score
+        - path
+        - blob_hash
+        - duplicate_count
+        - evidence
+      type: object
+      x-go-type: api.DocumentSimilarResult
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
+    DocumentSimilarSource:
+      additionalProperties: false
+      properties:
+        content_version_id:
+          format: uuid
+          type: string
+        node_id:
+          format: int64
+          minimum: 1
+          type: integer
+      required:
+        - node_id
+        - content_version_id
+      type: object
+      x-go-type: api.DocumentSimilarSource
       x-go-type-import:
         path: go.kenn.io/docbank/internal/api
         name: api
@@ -16870,6 +17039,29 @@ paths:
                 $ref: "#/components/schemas/Error"
           description: Error
       summary: Search exact source-fenced document versions
+  /api/v1/search/similar:
+    post:
+      operationId: findSimilarDocuments
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DocumentSimilarRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DocumentSimilarReport"
+          description: OK
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: Find similar documents using stored embeddings
   /api/v1/search/validate:
     post:
       operationId: validateDocumentSearch

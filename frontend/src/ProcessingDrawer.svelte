@@ -7,7 +7,8 @@
   import XIcon from "@lucide/svelte/icons/x";
   import { Button, Card, Chip, DetailDrawer, IconButton, SearchInput, Spinner } from "@kenn-io/kit-ui";
   import { APIError } from "./api-transport.js";
-  import { documentSearch, startProcessing } from "./receipts.js";
+  import { documentSearch, documentSimilar, startProcessing } from "./receipts.js";
+  import type { DocumentSimilarReport } from "./generated/docbank.js";
   import { type CoverageReport, type DocumentSearchReport, type Node, type ProcessingPlan, type ProcessingProfileSummary, type ProcessingJob, type ProcessingStatus } from "./generated/docbank.js";
 
   interface Props {
@@ -17,9 +18,16 @@
     onclose: () => void;
     onauthfailure: (cause: unknown) => void;
     onrendition: (attachmentID: string) => void;
+    scopeVersionIDs?: string[];
+    intent?: "similar" | null;
   }
 
-  let { session, node, path, onclose, onauthfailure, onrendition }: Props = $props();
+  let { session, node, path, onclose, onauthfailure, onrendition, scopeVersionIDs = [], intent = null }: Props = $props();
+  let similarReport = $state<DocumentSimilarReport | null>(null);
+  let similarBusy = $state(false);
+  let similarError = $state("");
+  let similarID = 0;
+  let similarAutoRun = false;
   let profiles = $state<ProcessingProfileSummary[]>([]);
   let profileName = $state("");
   let plan = $state<ProcessingPlan | null>(null);
@@ -50,6 +58,8 @@
   }
 
   function closeDrawer(): void {
+    generation += 1;
+    similarID += 1;
     cancelProcessing();
     onclose();
   }
@@ -90,6 +100,10 @@
     job = null;
     status = null;
     searchReport = null;
+    similarID += 1;
+    similarReport = null;
+    similarError = "";
+    similarBusy = false;
     searching = false;
     try {
       const next = await generated.planDocumentProcessing({ selector: ({
@@ -102,6 +116,10 @@
       const nextCoverage = await generated.getDocumentProcessingCoverage({ profile: profileName, vault_uid: next.vault_uid, content_version_id: [node.current_version_id] }, { session });
       if (request !== generation) return;
       coverage = nextCoverage;
+      if (intent === "similar" && !similarAutoRun) {
+        similarAutoRun = true;
+        void findSimilar();
+      }
     } catch (cause) {
       if (request === generation) handleFailure(cause);
     } finally {
@@ -176,6 +194,29 @@
     }
   }
 
+  async function findSimilar(): Promise<void> {
+    if (!plan || scopeVersionIDs.length === 0 || scopeVersionIDs.length > 4096) return;
+    const binding = profiles.find((item) => item.name === profileName)?.embedding_bindings[0];
+    if (!binding) return;
+    const request = generation;
+    const id = ++similarID;
+    similarBusy = true;
+    similarError = "";
+    similarReport = null;
+    try {
+      const report = await documentSimilar(session, { selector: { ...plan.selector }, binding_id: binding, limit: 20,
+        fence: { vault_uid: plan.vault_uid, content_version_ids: [...scopeVersionIDs] } });
+      if (request === generation && id === similarID) similarReport = report;
+    } catch (cause) {
+      if (request === generation && id === similarID) {
+        if (cause instanceof APIError && cause.status === 401) handleFailure(cause);
+        else similarError = cause instanceof Error ? cause.message : String(cause);
+      }
+    } finally {
+      if (request === generation && id === similarID) similarBusy = false;
+    }
+  }
+
   function boundaryLabel(boundary: string): string {
     switch (boundary) {
       case "local_process": return "Local process";
@@ -245,6 +286,34 @@
           {#each profiles as profile}<option value={profile.name}>{profile.name}</option>{/each}
         </select>
       </div>
+
+      <section aria-label="Similar documents">
+        <div class="section-heading"><strong>Similar documents</strong></div>
+        <p>Search the {scopeVersionIDs.length} loaded file versions using stored embeddings.</p>
+        {#if scopeVersionIDs.length > 4096}
+          <p class="warning">Narrow this view to at most 4,096 file versions.</p>
+        {:else if !profiles.find((item) => item.name === profileName)?.embedding_bindings.length}
+          <p>This profile has no embedding binding.</p>
+        {:else}
+          <Button size="sm" disabled={similarBusy || loading || scopeVersionIDs.length === 0} onclick={() => void findSimilar()}>
+            {#if similarBusy}<Spinner size={14} /> Finding similar files{:else}Find similar{/if}
+          </Button>
+        {/if}
+        {#if similarError}<p role="alert">{similarError}</p>{/if}
+        {#if similarReport?.state === "unavailable"}
+          <p>Unavailable: no current embedding for binding "{similarReport.binding_id}". Run processing to build it.</p>
+        {:else if similarReport}
+          <p>Coverage: {similarReport.coverage.state}, {similarReport.coverage.complete_documents}/{similarReport.coverage.scoped_documents} complete.</p>
+          {#if similarReport.results.length === 0}<p>No similar documents inside this view.</p>{/if}
+          {#each similarReport.results as result}
+            <Card level="default" padding="sm" eyebrow={`RANK ${result.rank}`} title={result.path}>
+              <p>Score {result.score.toPrecision(4)}</p>
+              {#if result.duplicate_count > 0}<Chip size="xs">+{result.duplicate_count} identical</Chip>{/if}
+            </Card>
+          {/each}
+          {#if similarReport.truncated}<p>Showing the first 20 content groups.</p>{/if}
+        {/if}
+      </section>
 
       <section aria-label="Reviewed provider flow">
         <div class="section-heading"><div><span>REVIEWED FLOW</span><strong>What leaves the vault, and what stays</strong></div><Chip size="xs" tone={plan.consent_state === "active" ? "success" : "warning"}>{consentLabel(plan.consent_state)}</Chip></div>

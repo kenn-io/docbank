@@ -16,6 +16,153 @@ import (
 	"go.kenn.io/docbank/internal/vectorindex"
 )
 
+func TestSimilarSharedRowsExpandMembershipBeforeSourceExclusion(t *testing.T) {
+	s, sourceVersion, profile, sourceAttachment := newEmbeddingCatalogFixture(t)
+	var buildID string
+	require.NoError(t, s.db.QueryRow(`SELECT build_id FROM rendition_attachments WHERE attachment_id=?`, sourceAttachment).Scan(&buildID))
+	sourceNode, err := s.ContentVersionByID(t.Context(), sourceVersion)
+	require.NoError(t, err)
+	versions := []string{sourceVersion}
+	attachments := []string{sourceAttachment}
+	for _, name := range []string{"same-a.pdf", "same-b.pdf"} {
+		node, err := s.CreateFile(t.Context(), s.RootID(), name, catalogSourceHash, 20, "application/pdf")
+		require.NoError(t, err)
+		attachment := RenditionAttachmentRecord{ID: testSHA256([]byte(name)), VaultID: s.VaultID(), ContentVersionID: node.CurrentVersionID, BuildID: buildID, Profile: profile, AttachedAt: embeddingCatalogTime}
+		require.NoError(t, publishAttachmentForTest(t, s, attachment))
+		versions, attachments = append(versions, node.CurrentVersionID), append(attachments, attachment.ID)
+	}
+	var records []EmbeddingSetRecord
+	for i, version := range versions {
+		record := embeddingSetFixture(s, version, profile.Fingerprint, document.EmbeddingInputRenditionChunk, "chunk", attachments[i])
+		require.NoError(t, s.StageEmbeddingSet(t.Context(), record))
+		require.NoError(t, s.PublishEmbeddingHead(t.Context(), EmbeddingHeadRecord{FencingToken: 1,
+			Key: EmbeddingHeadKey{ContentVersionID: version, BindingID: "chunk", InputKind: record.InputKind}, SetID: record.ID,
+			VectorSpaceID: record.VectorSpace.ID, ProcessingProfileFingerprint: profile.Fingerprint, PublishedAt: embeddingCatalogTime}))
+		records = append(records, record)
+	}
+	require.Equal(t, records[0].VectorSet.ID, records[1].VectorSet.ID, "shared vector-set row fixture")
+	require.Equal(t, records[1].VectorSet.ID, records[2].VectorSet.ID)
+	source, err := s.CaptureVectorIndexSource(t.Context(), records[0].VectorSpace.ID)
+	require.NoError(t, err)
+	var neighbors []vectorindex.Neighbor
+	for _, input := range records[0].InputGeneration.Inputs {
+		neighbors = append(neighbors, vectorindex.Neighbor{SetID: records[0].VectorSet.ID, InputKey: input.ID, InputChecksum: input.RenderedChecksum, Score: 0.8})
+	}
+	resolution, err := s.ResolveSimilarCandidates(t.Context(), profile.Fingerprint, "chunk", records[0].InputKind,
+		records[0].VectorSpace.ID, source.ManifestChecksum, neighbors, 1, SearchOptions{ContentVersionIDs: versions}, SimilarSource{NodeID: sourceNode.NodeID, ContentVersionID: sourceVersion})
+	require.NoError(t, err)
+	require.Len(t, resolution.Candidates, 1)
+	assert.Equal(t, versions[1], resolution.Candidates[0].ContentVersionID)
+	assert.Equal(t, 1, resolution.Candidates[0].DuplicateCount, "duplicate_count=1")
+	t.Log("duplicate_count=1 after shared row expansion and source exclusion")
+	assert.False(t, resolution.Truncated)
+	_, required, complete, rows, err := s.semanticSearchAuthorityFence(t.Context(), profile.Fingerprint, "chunk", records[0].InputKind, records[0].VectorSpace.ID, SearchOptions{ContentVersionIDs: versions}, nil)
+	require.NoError(t, err)
+	assert.Equal(t, 3, required)
+	assert.Equal(t, 3, complete)
+	assert.Len(t, rows, len(neighbors), "only scoring rows are deduplicated")
+	copyVersion, err := s.ContentVersionByID(t.Context(), versions[2])
+	require.NoError(t, err)
+	_, _, err = s.Trash(t.Context(), copyVersion.NodeID, UnconditionalRev)
+	require.NoError(t, err)
+	current, err := s.CaptureVectorIndexSource(t.Context(), records[0].VectorSpace.ID)
+	require.NoError(t, err)
+	resolution, err = s.ResolveSimilarCandidates(t.Context(), profile.Fingerprint, "chunk", records[0].InputKind,
+		records[0].VectorSpace.ID, current.ManifestChecksum, neighbors, 1, SearchOptions{ContentVersionIDs: versions}, SimilarSource{NodeID: sourceNode.NodeID, ContentVersionID: sourceVersion})
+	require.NoError(t, err)
+	require.Len(t, resolution.Candidates, 1)
+	assert.Zero(t, resolution.Candidates[0].DuplicateCount, "trashed copies do not contribute")
+	copyVersion, err = s.ContentVersionByID(t.Context(), versions[1])
+	require.NoError(t, err)
+	_, _, err = s.ReplaceContent(t.Context(), copyVersion.NodeID, UnconditionalRev, fakeHash("replacement"), 1, "application/pdf")
+	require.NoError(t, err)
+	current, err = s.CaptureVectorIndexSource(t.Context(), records[0].VectorSpace.ID)
+	require.NoError(t, err)
+	resolution, err = s.ResolveSimilarCandidates(t.Context(), profile.Fingerprint, "chunk", records[0].InputKind,
+		records[0].VectorSpace.ID, current.ManifestChecksum, neighbors, 1, SearchOptions{ContentVersionIDs: versions}, SimilarSource{NodeID: sourceNode.NodeID, ContentVersionID: sourceVersion})
+	require.NoError(t, err)
+	assert.Empty(t, resolution.Candidates, "historical versions in the fence do not contribute")
+	_, _, err = s.Trash(t.Context(), sourceNode.NodeID, UnconditionalRev)
+	require.NoError(t, err)
+	_, err = s.ResolveSimilarCandidates(t.Context(), profile.Fingerprint, "chunk", records[0].InputKind,
+		records[0].VectorSpace.ID, source.ManifestChecksum, neighbors, 1, SearchOptions{ContentVersionIDs: versions}, SimilarSource{NodeID: sourceNode.NodeID, ContentVersionID: sourceVersion})
+	require.ErrorIs(t, err, ErrProcessingSourceFenceStaleVersion)
+}
+
+func TestSimilarDuplicateGroupUsesHighestScoringRepresentative(t *testing.T) {
+	s, sourceVersion, profile, _ := newEmbeddingCatalogFixture(t)
+	sourceNode, err := s.ContentVersionByID(t.Context(), sourceVersion)
+	require.NoError(t, err)
+	var secondVersion string
+	require.NoError(t, s.db.QueryRow(`SELECT version_id FROM content_versions WHERE version_id<>? AND blob_hash=? LIMIT 1`, sourceVersion, catalogSourceHash).Scan(&secondVersion))
+	third, err := s.CreateFile(t.Context(), s.RootID(), "third.txt", catalogSourceHash, 20, "text/plain")
+	require.NoError(t, err)
+	versions := []string{sourceVersion, secondVersion, third.CurrentVersionID}
+	scores := []float64{0.1, 0.2, 0.9}
+	var records []EmbeddingSetRecord
+	var neighbors []vectorindex.Neighbor
+	for i, version := range versions {
+		record := embeddingSetFixture(s, version, profile.Fingerprint, document.EmbeddingInputOriginalFile, "optional", "")
+		require.NoError(t, s.StageEmbeddingSet(t.Context(), record))
+		require.NoError(t, s.PublishEmbeddingHead(t.Context(), EmbeddingHeadRecord{FencingToken: 1,
+			Key: EmbeddingHeadKey{ContentVersionID: version, BindingID: "optional", InputKind: record.InputKind}, SetID: record.ID,
+			VectorSpaceID: record.VectorSpace.ID, ProcessingProfileFingerprint: profile.Fingerprint, PublishedAt: embeddingCatalogTime}))
+		records = append(records, record)
+		neighbors = append(neighbors, vectorindex.Neighbor{SetID: record.VectorSet.ID, InputKey: version,
+			InputChecksum: record.InputGeneration.Inputs[0].RenderedChecksum, Score: scores[i]})
+	}
+	source, err := s.CaptureVectorIndexSource(t.Context(), records[0].VectorSpace.ID)
+	require.NoError(t, err)
+	resolution, err := s.ResolveSimilarCandidates(t.Context(), profile.Fingerprint, "optional", records[0].InputKind,
+		records[0].VectorSpace.ID, source.ManifestChecksum, neighbors, 1,
+		SearchOptions{ContentVersionIDs: versions}, SimilarSource{NodeID: sourceNode.NodeID, ContentVersionID: sourceVersion})
+	require.NoError(t, err)
+	require.Len(t, resolution.Candidates, 1)
+	assert.Equal(t, third.ID, resolution.Candidates[0].NodeID)
+	assert.Equal(t, third.CurrentVersionID, resolution.Candidates[0].ContentVersionID)
+	assert.Equal(t, "/third.txt", resolution.Candidates[0].Path)
+	assert.Equal(t, third.CurrentVersionID, resolution.Candidates[0].InputID)
+	assert.InDelta(t, 0.9, resolution.Candidates[0].Score, 1e-12)
+	assert.Equal(t, 1, resolution.Candidates[0].DuplicateCount)
+}
+
+func TestSimilarMissingHeadBeforeLeaseAndSourceFenceBeforeCoverage(t *testing.T) {
+	s, version, profile, _ := newEmbeddingCatalogFixture(t)
+	content, err := s.ContentVersionByID(t.Context(), version)
+	require.NoError(t, err)
+	source := SimilarSource{NodeID: content.NodeID, ContentVersionID: version}
+	_, err = s.AcquireSimilarSearchAuthority(t.Context(), profile.Fingerprint, "optional", "similar-test", time.Now(), time.Minute, SearchOptions{ContentVersionIDs: []string{version}}, source)
+	require.ErrorIs(t, err, ErrSimilarSourceUnavailable, "missing head before absent index")
+	t.Log("missing head: unavailable before index lease")
+	_, err = s.AcquireSimilarSearchAuthority(t.Context(), profile.Fingerprint, "optional", "similar-test", time.Now(), time.Minute, SearchOptions{}, source)
+	require.ErrorIs(t, err, ErrInvalidProcessingSourceFence)
+}
+
+func TestSimilarOrdinarySemanticSearchPreservesIdenticalDocuments(t *testing.T) {
+	s, first, profile, _ := newEmbeddingCatalogFixture(t)
+	var second string
+	require.NoError(t, s.db.QueryRow(`SELECT version_id FROM content_versions WHERE version_id<>? AND blob_hash=? LIMIT 1`, first, catalogSourceHash).Scan(&second))
+	var neighbors []vectorindex.Neighbor
+	var space string
+	for _, version := range []string{first, second} {
+		record := embeddingSetFixture(s, version, profile.Fingerprint, document.EmbeddingInputOriginalFile, "optional", "")
+		require.NoError(t, s.StageEmbeddingSet(t.Context(), record))
+		require.NoError(t, s.PublishEmbeddingHead(t.Context(), EmbeddingHeadRecord{FencingToken: 1,
+			Key: EmbeddingHeadKey{ContentVersionID: version, BindingID: "optional", InputKind: record.InputKind}, SetID: record.ID,
+			VectorSpaceID: record.VectorSpace.ID, ProcessingProfileFingerprint: profile.Fingerprint, PublishedAt: embeddingCatalogTime}))
+		space = record.VectorSpace.ID
+		neighbors = append(neighbors, vectorindex.Neighbor{SetID: record.VectorSet.ID, InputKey: version, InputChecksum: record.InputGeneration.Inputs[0].RenderedChecksum, Score: 1})
+	}
+	source, err := s.CaptureVectorIndexSource(t.Context(), space)
+	require.NoError(t, err)
+	result, err := s.ResolveSemanticCandidates(t.Context(), profile.Fingerprint, "optional", document.EmbeddingInputOriginalFile, space, source.ManifestChecksum, neighbors, 20, SearchOptions{ContentVersionIDs: []string{first, second}}, nil)
+	require.NoError(t, err)
+	require.Len(t, result.Candidates, 2, "ordinary search preserves duplicate content")
+	t.Log("duplicate rows remain separate in ordinary semantic search")
+	assert.Equal(t, result.Candidates[0].BlobHash, result.Candidates[1].BlobHash)
+	assert.NotEqual(t, result.Candidates[0].NodeID, result.Candidates[1].NodeID)
+}
+
 func TestResolveSemanticCandidatesReturnsOnlyCurrentScopedHeads(t *testing.T) {
 	s, versionID, profile, _ := newEmbeddingCatalogFixture(t)
 	record := embeddingSetFixture(s, versionID, profile.Fingerprint,
@@ -101,7 +248,7 @@ func TestResolveSemanticCandidatesIsolatesSharedVectorSpace(t *testing.T) {
 			require.NoError(t, err)
 			require.Equal(t, record.VectorSpace.ID, fingerprints.VectorSpace[test.binding])
 			_, _, _, rows, err := s.semanticSearchAuthorityFence(t.Context(), test.profile,
-				test.binding, test.kind, record.VectorSpace.ID, SearchOptions{})
+				test.binding, test.kind, record.VectorSpace.ID, SearchOptions{}, nil)
 			require.NoError(t, err)
 			if test.want {
 				require.Len(t, rows, 1)
