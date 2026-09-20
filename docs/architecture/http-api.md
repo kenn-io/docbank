@@ -339,7 +339,9 @@ returns `plan_fingerprint`, `profile_fingerprint`, and any `expires_at`.
 
 The grant covers this operator's use of the profile across documents and
 searches. It includes the profile's document inputs, retained classes, and
-`query_text` for providers that support query embedding. It is not limited to
+`query_text` for providers that support query embedding. A configured reranker
+adds `query_text_and_excerpt` to the same reviewed approval. These operations
+have separate grant records and are approved together. Consent is not limited to
 the document used for preview. The daemon uses the `daemon:operator` principal
 and `document-processing` scope for these routes.
 
@@ -474,6 +476,14 @@ with bounded evidence references. The source fence applies before retrieval;
 vector scoring uses only eligible rows from current, live attachments.
 Consumers still check visibility immediately before displaying a result.
 See [Processing search](../usage/search.md) for the consumer contract.
+
+The reranking degradation causes are `authorization_denied`, `timed_out`,
+`malformed_output`, and `unavailable`. `malformed_output` covers invalid provider
+scores and local inputs that cannot be reranked: a candidate with no readable
+excerpt or a query that exceeds the reranking size limit. Those local failures
+occur before any reranking provider call. Under `degrade`, the response retains
+the original ordering and includes `reranking_degraded` in `degradations`;
+under `fail_closed`, the request fails with `reranking_failed`.
 
 #### Processing errors and derivative purge
 

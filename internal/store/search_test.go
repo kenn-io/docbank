@@ -167,13 +167,14 @@ func TestResolveSemanticCandidatesReturnsOnlyCurrentScopedHeads(t *testing.T) {
 	s, versionID, profile, _ := newEmbeddingCatalogFixture(t)
 	version, err := s.ContentVersionByID(t.Context(), versionID)
 	require.NoError(t, err)
+	excerpt := strings.Repeat("界", 512)
 	require.NoError(t, s.RecordExtraction(t.Context(), ExtractionResult{
 		BlobHash: version.BlobHash, Extractor: "failed-extractor", ExtractorVersion: 1,
 		Status: ExtractionFailed, Error: "synthetic extraction failure",
 	}))
 	require.NoError(t, s.RecordExtraction(t.Context(), ExtractionResult{
 		BlobHash: version.BlobHash, Extractor: "plain-text", ExtractorVersion: 1,
-		Status: ExtractionOK, Text: "semantic source excerpt",
+		Status: ExtractionOK, Text: excerpt + " beyond the excerpt limit",
 	}))
 	record := embeddingSetFixture(s, versionID, profile.Fingerprint,
 		document.EmbeddingInputOriginalFile, "optional", "")
@@ -204,7 +205,7 @@ func TestResolveSemanticCandidatesReturnsOnlyCurrentScopedHeads(t *testing.T) {
 	assert.Equal(t, versionID, resolution.Candidates[0].ContentVersionID)
 	assert.Equal(t, record.ID, resolution.Candidates[0].EmbeddingSetID)
 	assert.Equal(t, document.EmbeddingInputOriginalFile, resolution.Candidates[0].InputKind)
-	assert.Equal(t, "semantic source excerpt", resolution.Candidates[0].Excerpt)
+	assert.Equal(t, excerpt, resolution.Candidates[0].Excerpt)
 
 	filtered, err := s.ResolveSemanticCandidates(t.Context(), profile.Fingerprint, record.BindingID,
 		record.InputKind, record.VectorSpace.ID, source.ManifestChecksum,

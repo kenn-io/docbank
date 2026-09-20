@@ -505,10 +505,18 @@ minutes. `failure_policy` is `degrade` or `fail_closed`.
 
 The daemon rejects a partial section, an unknown model, an invalid endpoint or
 egress policy, and an undefined credential binding. It reads the named secret
-only when a reranking request reaches the provider. Every request needs the
-separate reranking consent grant. The adapter policy fingerprint binds the
-provider, model, candidate limit, excerpt limit, deadline, endpoint, and
+only when a reranking request reaches the provider. The provider call needs an
+active query-and-excerpt consent grant. The adapter policy fingerprint binds
+the provider, model, candidate limit, excerpt limit, deadline, endpoint, and
 transport policy to the reviewed plan.
+
+Adding this section changes the plan fingerprint and makes the plan report
+consent required until reranking is approved. Existing grants remain valid for
+the operations they already cover, including searches without `--rerank`.
+Granting the revised plan approves all configured profile operations together;
+reranking has its own grant record, but no separate approval step. Follow the
+[search consent walkthrough](usage/search.md#consent-before-semantic-or-hybrid-search)
+to review and grant the revised plan.
 
 ### Self-hosted Cap origins
 

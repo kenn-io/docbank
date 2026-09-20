@@ -839,9 +839,10 @@ Processing search cannot be combined with `--tag`, `--mime-type`, `--under`,
 coverage, degradation, and ranked results inside the source fence.
 
 Semantic and hybrid search require active query-text consent; lexical and
-auto do not. `--rerank` adds a separate query-and-excerpt consent grant for
-all modes. Human output prints the reranking outcome and bounded candidate
-count. Follow [Consent before semantic or hybrid search](usage/search.md#consent-before-semantic-or-hybrid-search)
+auto do not. `--rerank` requires an active query-and-excerpt consent grant for
+all modes; approving the profile's plan grants it together with the other
+configured operations. Human output prints the reranking outcome and bounded
+candidate count. Follow [Consent before semantic or hybrid search](usage/search.md#consent-before-semantic-or-hybrid-search)
 to grant consent through a reviewed processing build or the HTTP consent API.
 
 ### Find similar files

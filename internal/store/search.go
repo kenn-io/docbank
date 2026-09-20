@@ -759,9 +759,9 @@ func searchExcerptByVersionTx(ctx context.Context, queryer interface {
 	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
 }, versionID string) (string, error) {
 	var excerpt string
-	err := queryer.QueryRowContext(ctx, `SELECT text FROM extracted_text
+	err := queryer.QueryRowContext(ctx, `SELECT substr(text, 1, ?) FROM extracted_text
 		WHERE status='ok' AND blob_hash=(SELECT blob_hash FROM content_versions WHERE version_id=? LIMIT 1)
-		ORDER BY extractor LIMIT 1`, versionID).Scan(&excerpt)
+		ORDER BY extractor LIMIT 1`, maxExplainedSearchExcerptRunes, versionID).Scan(&excerpt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return "", nil
 	}
