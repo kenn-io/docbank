@@ -92,7 +92,7 @@ func TestServeRenditionWorkersFollowEmailPDFAvailability(t *testing.T) {
 			want := []string{"process:renditions"}
 			request, err := http.NewRequestWithContext(t.Context(), http.MethodPost, "http://"+record.Address+"/api/v1/email-pdfs", strings.NewReader(`{"paper":"A3"}`))
 			require.NoError(t, err)
-			request.Header.Set("X-API-Key", record.Metadata["api_key"])
+			request.Header.Set("X-Api-Key", record.Metadata["api_key"])
 			request.Header.Set("Content-Type", "application/json")
 			response, err := http.DefaultClient.Do(request)
 			require.NoError(t, err)
