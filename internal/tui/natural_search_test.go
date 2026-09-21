@@ -294,10 +294,13 @@ func TestNaturalSearchQueryInputKeepsLongCursorViewportVisible(t *testing.T) {
 	query := strings.Repeat("q", 48) + "tail-visible"
 	model.searchInput.SetValue(query)
 	model.searchInput.Focus()
+	model, _ = updateModel(t, model, key(tea.KeyLeft))
+	model, _ = updateModel(t, model, runeKey('x'))
 
 	rendered := ansi.Strip(model.render())
 	assert.Equal(t, len(query), model.searchInput.Position())
-	assert.Contains(t, rendered, "tail-visible")
+	assert.Equal(t, strings.Repeat("q", 48)+"tail-visiblxe", model.searchInput.Value())
+	assert.Contains(t, rendered, "tail-visiblxe")
 }
 
 func TestNaturalSearchCtrlRDoesNotRerankDuringRefresh(t *testing.T) {
