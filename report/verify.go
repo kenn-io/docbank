@@ -68,6 +68,12 @@ func verifyFrameEvidence(ctx context.Context, budget Budget, frame Frame) error 
 			len(member.Hits) != len(request.Terms) {
 			return fmt.Errorf("%w: invalid member identity or term bits", ErrInvalidPacket)
 		}
+		coverage := member.Coverage
+		if coverage.SearchState != StateComplete && coverage.SearchState != "missing" ||
+			coverage.DateEvidenceState != StateComplete ||
+			coverage.FamilyState != StateComplete && coverage.FamilyState != "incomplete" {
+			return fmt.Errorf("%w: invalid member coverage state", ErrInvalidPacket)
+		}
 		if _, exists := identities[member.Identity.NodeID]; exists {
 			return fmt.Errorf("%w: conflicting node identities", ErrInvalidPacket)
 		}

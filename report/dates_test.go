@@ -6,6 +6,24 @@ import (
 	"testing"
 )
 
+func TestReviewedChoiceDistinguishesInvalidInputFromStaleEvidence(t *testing.T) {
+	identity := Identity{NodeID: 1, VersionID: "v1", SHA256: strings.Repeat("a", 64)}
+	candidate := DateCandidate{ID: "candidate", Document: identity, Value: "2024-06-01",
+		Locator: Locator{EvidenceSHA256: strings.Repeat("b", 64)}}
+	choice := DateChoice{Document: identity, CandidateID: candidate.ID,
+		EvidenceSHA256: candidate.Locator.EvidenceSHA256, Action: "select"}
+	_, malformed := SelectDate("other", []DateCandidate{candidate}, &choice, Request{Timezone: "UTC"})
+	if !errors.Is(malformed, ErrInvalidChoice) {
+		t.Fatalf("missing reason must be invalid input: %v", malformed)
+	}
+	choice.Reason = "Reviewed source date"
+	choice.EvidenceSHA256 = strings.Repeat("c", 64)
+	_, stale := SelectDate("other", []DateCandidate{candidate}, &choice, Request{Timezone: "UTC"})
+	if !errors.Is(stale, ErrStaleChoice) || errors.Is(stale, ErrInvalidChoice) {
+		t.Fatalf("stale evidence must differ from invalid input: %v", stale)
+	}
+}
+
 func TestEffectiveDateDoesNotReplaceCreation(t *testing.T) {
 	candidates := []DateCandidate{
 		{ID: "created", Role: "created", SourceClass: "native", Value: "2024-05-02", Precision: "date"},

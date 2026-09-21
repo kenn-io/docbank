@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"strings"
 	"testing"
@@ -103,5 +104,20 @@ func TestContentDatesFailInsteadOfTruncatingOrSubstituting(t *testing.T) {
 				t.Fatalf("accepted incomplete extraction: %+v", got)
 			}
 		})
+	}
+}
+
+func TestContentDateLimitIdentifiesDocument(t *testing.T) {
+	budget := NewBudget(1 << 20)
+	defer func() { _ = budget.Close() }()
+	identity := Identity{NodeID: 42, VersionID: "version-42"}
+	text := []byte(strings.Repeat("Document dated 2024-06-03. ", 257))
+	_, err := ExtractContentDates(t.Context(), budget, identity, nativeDateBinding(identity, text), text, "")
+	limit, ok := errors.AsType[*ContentDateLimitError](err)
+	if !ok || limit.Document != identity || limit.Limit != 256 || !strings.Contains(err.Error(), "document 42") {
+		t.Fatalf("candidate limit must identify its document: %v", err)
+	}
+	if budget.Used() != 0 {
+		t.Fatalf("failed extraction retained %d bytes", budget.Used())
 	}
 }

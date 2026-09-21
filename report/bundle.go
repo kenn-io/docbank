@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"reflect"
 	"slices"
 	"time"
 
@@ -99,6 +100,10 @@ func validateBundleResult(ctx context.Context, budget Budget, result Result) err
 	}
 	if !slices.Equal(result.Counts, recomputed.Counts) {
 		return fmt.Errorf("%w: counts differ from frozen members", ErrInvalidPacket)
+	}
+	if !reflect.DeepEqual(frame.Coverage, recomputed.Frame.Coverage) ||
+		!reflect.DeepEqual(frame.RowCoverage, recomputed.Frame.RowCoverage) {
+		return fmt.Errorf("%w: coverage differs from frozen members", ErrInvalidPacket)
 	}
 	for i := range frame.Members {
 		if !slices.Equal(frame.Members[i].Eligible, recomputed.Frame.Members[i].Eligible) ||
@@ -196,10 +201,8 @@ func BuildBundle(ctx context.Context, budget Budget, result Result) ([]byte, err
 func encodePacketPayloads(ctx context.Context, budget Budget, result Result) (map[string][]byte, error) {
 	frame := result.Frame
 	memberOrder := make([]int, len(frame.Members))
-	byIdentity := make(map[Identity]int, len(frame.Members))
-	for i, member := range frame.Members {
+	for i := range frame.Members {
 		memberOrder[i] = i
-		byIdentity[member.Identity] = i
 	}
 	slices.SortFunc(memberOrder, func(a, b int) int {
 		x, y := frame.Members[a].Identity, frame.Members[b].Identity
@@ -222,6 +225,14 @@ func encodePacketPayloads(ctx context.Context, budget Budget, result Result) (ma
 		choice := &frame.Request.DateChoices[i]
 		choiceByIdentity[choice.Document] = choice
 	}
+	fieldsByDocument := make(map[Identity][]RawDateField)
+	for _, field := range frame.RawDateFields {
+		fieldsByDocument[field.Document] = append(fieldsByDocument[field.Document], field)
+	}
+	textsByDocument := make(map[Identity][]TextBinding)
+	for _, binding := range frame.Texts {
+		textsByDocument[binding.Document] = append(textsByDocument[binding.Document], binding)
+	}
 	var members, dates, families bytes.Buffer
 	for _, index := range memberOrder {
 		if err := ctx.Err(); err != nil {
@@ -235,7 +246,8 @@ func encodePacketPayloads(ctx context.Context, budget Budget, result Result) (ma
 			return nil, err
 		}
 		date := packetDate{Document: member.Identity, Candidates: slices.Clone(member.Candidates),
-			Choice: choiceByIdentity[member.Identity]}
+			Choice: choiceByIdentity[member.Identity], RawDateFields: fieldsByDocument[member.Identity],
+			Texts: textsByDocument[member.Identity]}
 		slices.SortFunc(date.Candidates, func(a, b DateCandidate) int {
 			if a.ID < b.ID {
 				return -1
@@ -245,16 +257,6 @@ func encodePacketPayloads(ctx context.Context, budget Budget, result Result) (ma
 			}
 			return 0
 		})
-		for _, field := range frame.RawDateFields {
-			if field.Document == member.Identity {
-				date.RawDateFields = append(date.RawDateFields, field)
-			}
-		}
-		for _, binding := range frame.Texts {
-			if binding.Document == member.Identity {
-				date.Texts = append(date.Texts, binding)
-			}
-		}
 		if err := writePacketLine(ctx, budget, &dates, date); err != nil {
 			return nil, err
 		}
@@ -286,7 +288,6 @@ func encodePacketPayloads(ctx context.Context, budget Budget, result Result) (ma
 			return nil, err
 		}
 	}
-	_ = byIdentity
 	return map[string][]byte{"members.jsonl": members.Bytes(), "dates.jsonl": dates.Bytes(), "families.jsonl": families.Bytes()}, nil
 }
 

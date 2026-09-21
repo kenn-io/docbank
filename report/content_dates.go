@@ -36,6 +36,17 @@ type pageSpan struct {
 
 type byteSpan struct{ start, end int }
 
+// ContentDateLimitError identifies the document whose date candidates exceed
+// the retained-evidence limit. No truncated candidate list is returned.
+type ContentDateLimitError struct {
+	Document Identity
+	Limit    int
+}
+
+func (e *ContentDateLimitError) Error() string {
+	return fmt.Sprintf("document %d (version %s) has more than %d date candidates", e.Document.NodeID, e.Document.VersionID, e.Limit)
+}
+
 // ExtractContentDates scans exact, already verified native or rendition text.
 // pageMap is an optional bounded JSON array of byte spans with one-based pages.
 // The function does no I/O and never requests OCR or another provider.
@@ -86,7 +97,7 @@ func ExtractContentDates(ctx context.Context, budget Budget, identity Identity, 
 	}()
 	add := func(start, end int, raw, role, confidence string) error {
 		if len(result) == maxDocumentDates {
-			return fmt.Errorf("document has more than %d date candidates", maxDocumentDates)
+			return &ContentDateLimitError{Document: identity, Limit: maxDocumentDates}
 		}
 		if end-start > maxQuoteBytes || start < 0 || end > len(text) || start >= end {
 			return fmt.Errorf("date evidence quote exceeds %d bytes", maxQuoteBytes)

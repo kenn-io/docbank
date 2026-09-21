@@ -10,6 +10,7 @@ import (
 	"time"
 )
 
+// DateRuleV1 identifies the deterministic v1 date-selection policy.
 const DateRuleV1 = "report-date/v1"
 
 var numericDatePattern = regexp.MustCompile(`^([0-9]{1,2})/([0-9]{1,2})/([0-9]{4})$`)
@@ -17,9 +18,11 @@ var numericDatePattern = regexp.MustCompile(`^([0-9]{1,2})/([0-9]{1,2})/([0-9]{4
 var (
 	ErrAmbiguousDate = errors.New("report date needs review")
 	ErrInvalidChoice = errors.New("invalid reviewed date choice")
+	ErrStaleChoice   = errors.New("reviewed date evidence is stale")
 	ErrUnusableDate  = errors.New("no usable report date evidence")
 )
 
+// AmbiguousDateError identifies equally preferred candidates with different dates.
 type AmbiguousDateError struct {
 	CandidateIDs []string
 }
@@ -186,7 +189,7 @@ func selectReviewedDate(candidates []DateCandidate, choice DateChoice, request R
 		}
 	}
 	if found == nil {
-		return DateSelection{}, fmt.Errorf("%w: stale or missing candidate binding", ErrInvalidChoice)
+		return DateSelection{}, fmt.Errorf("%w: stale or missing candidate binding", ErrStaleChoice)
 	}
 	date := ""
 	switch choice.Action {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"time"
 
 	"go.kenn.io/docbank/document"
@@ -60,6 +61,8 @@ func Calculate(ctx context.Context, budget Budget, frame Frame) (_ Result, err e
 	defer releaseScratch()
 
 	result := Result{Frame: frame, Counts: make([]Counts, terms)}
+	result.Frame.Coverage = Coverage{Warnings: slices.Clone(frame.Coverage.Warnings)}
+	result.Frame.RowCoverage = make([]Coverage, terms)
 	result.Frame.Request = request
 	result.Frame.Members = make([]Member, memberCount)
 	copy(result.Frame.Members, frame.Members)
@@ -129,10 +132,18 @@ func Calculate(ctx context.Context, budget Budget, frame Frame) (_ Result, err e
 		if dateErr != nil {
 			return Result{}, fmt.Errorf("member %d has invalid selected date: %w", index, dateErr)
 		}
+		included := false
 		for row := range request.Terms {
 			eligible := !date.Before(dateStarts[row]) && !date.After(dateEnds[row])
 			result.Frame.Members[index].Eligible[row] = eligible
 			result.Frame.Members[index].Hits[row] = eligible && member.RawMatches[row]
+			if eligible {
+				included = true
+				chargeCoverageMember(&result.Frame.RowCoverage[row], member)
+			}
+		}
+		if included {
+			chargeCoverageMember(&result.Frame.Coverage, member)
 		}
 	}
 	for _, relation := range frame.Relations {
@@ -197,4 +208,19 @@ func Calculate(ctx context.Context, budget Budget, frame Frame) (_ Result, err e
 		}
 	}
 	return result, nil
+}
+
+func chargeCoverageMember(coverage *Coverage, member Member) {
+	coverage.Scoped++
+	if member.Coverage.SearchState == StateComplete {
+		coverage.Searchable++
+	} else {
+		coverage.MissingText++
+	}
+	if member.Coverage.FamilyState != StateComplete {
+		coverage.IncompleteFamilies++
+	}
+	if member.Selection.Reason == "vault_addition" || member.Selection.Reason == "recorded_fallback" {
+		coverage.FallbackDates++
+	}
 }

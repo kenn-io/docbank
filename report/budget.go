@@ -4,6 +4,14 @@ import (
 	"context"
 	"errors"
 	"sync"
+	"time"
+)
+
+const (
+	// DefaultBudgetBytes bounds retained evidence and artifacts for one report cache.
+	DefaultBudgetBytes = 1 << 30
+	// DefaultTimeout bounds one daemon report creation or revision operation.
+	DefaultTimeout = 60 * time.Second
 )
 
 var (

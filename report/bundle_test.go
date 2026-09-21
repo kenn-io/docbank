@@ -1,12 +1,16 @@
 package report
 
 import (
+	"archive/zip"
 	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"io"
 	"testing"
+
+	"go.kenn.io/docbank/internal/canonical"
 )
 
 func TestBundleRoundTripRecomputesSevenDocumentOracle(t *testing.T) {
@@ -63,4 +67,135 @@ func TestBundleRejectsFalseCollectionWitness(t *testing.T) {
 	if err == nil || errors.Is(err, ErrBudgetExhausted) {
 		t.Fatalf("accepted false witness or wrong error: %v", err)
 	}
+}
+
+func TestVerifyBundleRejectsResealedCoverageChanges(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		edit func(*packetManifest)
+	}{
+		{"whole scoped", func(m *packetManifest) { m.Coverage.Scoped++ }},
+		{"negative missing text", func(m *packetManifest) { m.Coverage.MissingText = -1 }},
+		{"row searchable", func(m *packetManifest) { m.RowCoverage[0].Searchable++ }},
+		{"missing row", func(m *packetManifest) { m.RowCoverage = m.RowCoverage[:1] }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			budget := NewBudget(4 << 20)
+			defer func() { _ = budget.Close() }()
+			result, err := Calculate(t.Context(), budget, oracleFrame())
+			if err != nil {
+				t.Fatal(err)
+			}
+			result.Frame.Coverage = Coverage{Scoped: 7, Searchable: 7, FallbackDates: 7}
+			result.Frame.RowCoverage = []Coverage{result.Frame.Coverage, result.Frame.Coverage}
+			packet, err := BuildBundle(t.Context(), budget, result)
+			if err != nil {
+				t.Fatal(err)
+			}
+			changed := resealBundle(t, packet, func(_ map[string][]byte, manifest *packetManifest) {
+				tc.edit(manifest)
+			})
+			if _, err := VerifyBundle(t.Context(), budget, bytes.NewReader(changed), int64(len(changed))); !errors.Is(err, ErrInvalidPacket) {
+				t.Fatalf("accepted coverage inconsistent with members: %v", err)
+			}
+		})
+	}
+}
+
+func TestVerifyBundleRejectsUnknownMemberCoverage(t *testing.T) {
+	for _, state := range []string{"search", "date", "family"} {
+		t.Run(state, func(t *testing.T) {
+			budget := NewBudget(4 << 20)
+			defer func() { _ = budget.Close() }()
+			result, err := Calculate(t.Context(), budget, oracleFrame())
+			if err != nil {
+				t.Fatal(err)
+			}
+			packet, err := BuildBundle(t.Context(), budget, result)
+			if err != nil {
+				t.Fatal(err)
+			}
+			changed := resealBundle(t, packet, func(payloads map[string][]byte, manifest *packetManifest) {
+				lines := bytes.Split(payloads["members.jsonl"], []byte{'\n'})
+				member, err := canonical.Decode[packetMember](lines[0])
+				if err != nil {
+					t.Fatal(err)
+				}
+				switch state {
+				case "search":
+					member.Coverage.SearchState = "unknown"
+					manifest.Coverage.Searchable--
+					manifest.Coverage.MissingText++
+				case "date":
+					member.Coverage.DateEvidenceState = "unknown"
+				case "family":
+					member.Coverage.FamilyState = "unknown"
+					manifest.Coverage.IncompleteFamilies++
+				}
+				for i := range manifest.RowCoverage {
+					manifest.RowCoverage[i] = manifest.Coverage
+				}
+				lines[0], err = canonical.Marshal(member)
+				if err != nil {
+					t.Fatal(err)
+				}
+				payloads["members.jsonl"] = bytes.Join(lines, []byte{'\n'})
+			})
+			if _, err := VerifyBundle(t.Context(), budget, bytes.NewReader(changed), int64(len(changed))); !errors.Is(err, ErrInvalidPacket) {
+				t.Fatalf("accepted unknown %s coverage with matching totals: %v", state, err)
+			}
+		})
+	}
+}
+
+func resealBundle(t *testing.T, packet []byte, edit func(map[string][]byte, *packetManifest)) []byte {
+	t.Helper()
+	archive, err := zip.NewReader(bytes.NewReader(packet), int64(len(packet)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	payloads := make(map[string][]byte, len(archive.File))
+	for _, file := range archive.File {
+		reader, err := file.Open()
+		if err != nil {
+			t.Fatal(err)
+		}
+		payload, err := io.ReadAll(reader)
+		if closeErr := reader.Close(); err != nil || closeErr != nil {
+			t.Fatal(errors.Join(err, closeErr))
+		}
+		payloads[file.Name] = payload
+	}
+	manifest, err := canonical.Decode[packetManifest](payloads["manifest.json"])
+	if err != nil {
+		t.Fatal(err)
+	}
+	edit(payloads, &manifest)
+	for name := range manifest.Inventory {
+		manifest.Inventory[name] = packetInventory{Bytes: int64(len(payloads[name])), SHA256: packetDigest(payloads[name])}
+	}
+	core, err := canonical.Marshal(manifest.packetManifestCore)
+	if err != nil {
+		t.Fatal(err)
+	}
+	manifest.ID = packetDigest(core)
+	payloads["manifest.json"], err = canonical.Marshal(manifest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var changed bytes.Buffer
+	writer := zip.NewWriter(&changed)
+	for _, name := range bundleNames {
+		entry, err := writer.Create(name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := entry.Write(payloads[name]); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+	return changed.Bytes()
 }

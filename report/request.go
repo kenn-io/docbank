@@ -86,10 +86,10 @@ func NormalizeRequest(r Request) (Request, error) {
 	seenChoices := make(map[Identity]bool, len(r.DateChoices))
 	for _, choice := range r.DateChoices {
 		if err := validateChoiceShape(choice); err != nil {
-			return Request{}, err
+			return Request{}, fmt.Errorf("%w: %w", ErrInvalidChoice, err)
 		}
 		if seenChoices[choice.Document] {
-			return Request{}, fmt.Errorf("duplicate reviewed choice for document %d", choice.Document.NodeID)
+			return Request{}, fmt.Errorf("%w: duplicate reviewed choice for document %d", ErrInvalidChoice, choice.Document.NodeID)
 		}
 		seenChoices[choice.Document] = true
 	}
