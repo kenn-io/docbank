@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
 	"path"
 	"sort"
 	"strings"
@@ -13,6 +14,7 @@ import (
 
 	"charm.land/bubbles/v2/textinput"
 	tea "charm.land/bubbletea/v2"
+	"github.com/doordash-oss/oapi-codegen-dd/v3/pkg/runtime"
 
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/store"
@@ -21,6 +23,7 @@ import (
 const (
 	maxBrowserItems          = 1000
 	maxSearchItems           = 1000
+	maxNaturalSearchItems    = 100
 	maxHistoryItems          = 100
 	maxJobItems              = 1000
 	maxTrashItems            = 1000
@@ -511,11 +514,14 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.requestID != m.naturalProfilesRequest {
 			return m, nil
 		}
-		if msg.err == nil {
-			m.naturalProfiles = append([]api.ProcessingProfileSummary(nil), msg.profiles...)
-			if m.naturalMode == naturalNames && naturalProfileBinding(m.naturalProfiles) != "" {
-				m.naturalMode = naturalAuto
-			}
+		if msg.err != nil {
+			m.notice = "Natural-language search unavailable: " + msg.err.Error() + ". Names and text search remains available."
+			m.clampSelection()
+			return m, nil
+		}
+		m.naturalProfiles = append([]api.ProcessingProfileSummary(nil), msg.profiles...)
+		if m.naturalMode == naturalNames && naturalProfileBinding(m.naturalProfiles) != "" {
+			m.naturalMode = naturalAuto
 		}
 		return m, nil
 	case naturalSearchBaseLoadedMsg:
@@ -906,7 +912,7 @@ func (m Model) updateKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 				if naturalMode == "" {
 					naturalMode = m.naturalMode
 				}
-				return m, m.loadNaturalRerank(m.requestID, m.naturalSearchID, m.naturalSearchRequest, naturalMode)
+				return m, tea.Batch(m.startSpinner(), m.loadNaturalRerank(m.requestID, m.naturalSearchID, m.naturalSearchRequest, naturalMode))
 			}
 		}
 	case "q", keyCtrlC:
@@ -1995,7 +2001,7 @@ func (m Model) loadNaturalSearch(query string, requestID uint64) tea.Cmd {
 		if err != nil {
 			return naturalSearchBaseLoadedMsg{requestID: requestID, searchID: searchID, query: query, naturalMode: mode, err: err}
 		}
-		request := api.DocumentSearchRequest{Query: query, Mode: wireMode, Limit: maxProcessingSearchItems,
+		request := api.DocumentSearchRequest{Query: query, Mode: wireMode, Limit: maxNaturalSearchItems,
 			Profile: profile.Name, BindingID: binding, Fence: api.DocumentSourceFence{
 				VaultUID: resolution.Fence.VaultUID, ContentVersionIDs: resolution.Fence.ContentVersionIDs,
 			}, Explain: true}
@@ -2007,7 +2013,7 @@ func (m Model) loadNaturalSearch(query string, requestID uint64) tea.Cmd {
 		if err != nil {
 			return naturalSearchBaseLoadedMsg{requestID: requestID, searchID: searchID, query: query, naturalMode: mode, request: request, err: err}
 		}
-		rows, err := hydrateNaturalRows(ctx, backend, report, mode)
+		rows, err := hydrateNaturalRows(ctx, backend, report, mode, make(map[int64]api.Node))
 		return naturalSearchBaseLoadedMsg{requestID: requestID, searchID: searchID, query: query, naturalMode: mode,
 			request: request, report: report, rows: rows, err: err}
 	}
@@ -2015,26 +2021,39 @@ func (m Model) loadNaturalSearch(query string, requestID uint64) tea.Cmd {
 
 func (m Model) loadNaturalRerank(requestID, searchID uint64, request api.DocumentSearchRequest, naturalMode string) tea.Cmd {
 	ctx, backend := m.ctx, m.backend
+	nodes := make(map[int64]api.Node, len(m.rows))
+	for _, item := range m.rows {
+		nodes[item.node.ID] = item.node
+	}
 	request.Rerank = true
 	return func() tea.Msg {
 		report, err := backend.SearchDocuments(ctx, request)
 		if err != nil {
 			return naturalSearchRerankLoadedMsg{requestID: requestID, searchID: searchID, naturalMode: naturalMode, err: err}
 		}
-		rows, err := hydrateNaturalRows(ctx, backend, report, naturalMode)
+		rows, err := hydrateNaturalRows(ctx, backend, report, naturalMode, nodes)
 		return naturalSearchRerankLoadedMsg{requestID: requestID, searchID: searchID, naturalMode: naturalMode, report: report, rows: rows, err: err}
 	}
 }
 
-func hydrateNaturalRows(ctx context.Context, backend Backend, report api.DocumentSearchReport, mode string) ([]row, error) {
+func hydrateNaturalRows(ctx context.Context, backend Backend, report api.DocumentSearchReport, mode string, nodes map[int64]api.Node) ([]row, error) {
 	rows := make([]row, 0, len(report.Results))
 	for rank, result := range report.Results {
-		node, err := backend.Node(ctx, result.NodeID)
-		if errors.Is(err, store.ErrNotFound) {
-			continue
-		}
-		if err != nil {
-			return nil, err
+		node, ok := nodes[result.NodeID]
+		if !ok {
+			var err error
+			node, err = backend.Node(ctx, result.NodeID)
+			if err != nil {
+				if apiErr, ok := errors.AsType[*runtime.ClientAPIError](err); ok &&
+					(apiErr.StatusCode() == http.StatusUnauthorized || apiErr.StatusCode() == http.StatusForbidden) {
+					return nil, err
+				}
+				if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+					return nil, err
+				}
+				continue
+			}
+			nodes[result.NodeID] = node
 		}
 		if node.Kind != nodeKindFile || node.TrashedAt != "" || node.CurrentVersionID != result.ContentVersionID {
 			continue
@@ -2091,8 +2110,7 @@ func naturalModeLabel(mode string) string {
 }
 
 func (m Model) selectedNaturalProfile() *api.ProcessingProfileSummary {
-	profiles := append([]api.ProcessingProfileSummary(nil), m.naturalProfiles...)
-	sort.Slice(profiles, func(left, right int) bool { return profiles[left].Name < profiles[right].Name })
+	profiles := m.naturalProfiles
 	for index := range profiles {
 		if len(profiles[index].EmbeddingBindings) > 0 {
 			return &profiles[index]
@@ -2784,6 +2802,10 @@ func (m *Model) clampSelection() {
 	}
 	if m.offset < 0 {
 		m.offset = 0
+	}
+	if m.mode != modeSearch {
+		m.offset = min(m.offset, max(len(m.rows)-visible, 0))
+		return
 	}
 	if !m.rowFitsInViewport(m.offset, m.cursor) {
 		m.offset = m.cursor

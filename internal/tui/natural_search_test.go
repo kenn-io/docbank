@@ -2,6 +2,7 @@ package tui
 
 import (
 	"errors"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -9,6 +10,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
+	"github.com/doordash-oss/oapi-codegen-dd/v3/pkg/runtime"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -36,6 +38,9 @@ func TestNaturalSearchReproductionStaleAndRerankState(t *testing.T) {
 	}}
 	fake.naturalSearch = naturalSearchReport(readme.ID, readme.CurrentVersionID, "base excerpt")
 	fake.naturalRerankSearch = naturalSearchReport(readme.ID, readme.CurrentVersionID, "reranked excerpt")
+	report := fake.nodes["/docs/report.txt"]
+	fake.naturalRerankSearch.Results = append(fake.naturalRerankSearch.Results,
+		naturalSearchReport(report.ID, report.CurrentVersionID, "another result").Results...)
 	fake.naturalRerankSearch.Reranking = &api.DocumentSearchRerankingReceipt{Outcome: "applied", CandidateCount: 1}
 
 	model, err := New(t.Context(), fake)
@@ -55,6 +60,7 @@ func TestNaturalSearchReproductionStaleAndRerankState(t *testing.T) {
 	require.NotNil(t, rerank)
 	require.Len(t, fake.naturalSearchRequests, 1)
 	assert.Equal(t, "lexical", fake.naturalSearchRequests[0].Mode)
+	assert.Equal(t, 100, fake.naturalSearchRequests[0].Limit)
 	assert.Empty(t, fake.naturalSearchRequests[0].BindingID)
 	assert.False(t, fake.naturalSearchRequests[0].Rerank)
 	assert.Equal(t, "base excerpt", baseModel.rows[0].excerpt)
@@ -68,6 +74,7 @@ func TestNaturalSearchReproductionStaleAndRerankState(t *testing.T) {
 	require.True(t, ok)
 	assert.Equal(t, "reranked excerpt", settledModel.rows[0].excerpt)
 	assert.False(t, settledModel.naturalRerankPending)
+	assert.Equal(t, []int64{readme.ID, report.ID}, fake.nodeIDs, "reranking reuses hydrated nodes and fetches new results")
 
 	before := settledModel.rows[0].excerpt
 	stale, _ := settledModel.applyNaturalSearchBase(naturalSearchBaseLoadedMsg{
@@ -77,6 +84,13 @@ func TestNaturalSearchReproductionStaleAndRerankState(t *testing.T) {
 	staleModel, ok := stale.(Model)
 	require.True(t, ok)
 	assert.Equal(t, before, staleModel.rows[0].excerpt)
+
+	readme.CurrentVersionID = report.CurrentVersionID
+	fake.nodes["/README.txt"] = readme
+	refreshed, ok := settledModel.loadNaturalSearch("new query", model.requestID)().(naturalSearchBaseLoadedMsg)
+	require.True(t, ok)
+	require.NoError(t, refreshed.err)
+	assert.Empty(t, refreshed.rows, "a new request fetches current versions instead of reusing earlier nodes")
 }
 
 func TestNaturalSearchGoldenFrame(t *testing.T) {
@@ -241,6 +255,7 @@ func TestNaturalSearchCtrlRUsesAcceptedResultMode(t *testing.T) {
 	model.naturalResultMode = naturalLexical
 	model.naturalProfiles = fake.profiles
 	model.loading = false
+	model.spinnerActive = false
 	model.naturalSearchRequest = api.DocumentSearchRequest{
 		Query: "solar maintenance", Mode: naturalLexical,
 		Fence: api.DocumentSourceFence{ContentVersionIDs: []string{"version"}},
@@ -250,16 +265,82 @@ func TestNaturalSearchCtrlRUsesAcceptedResultMode(t *testing.T) {
 	result, ok := updated.(Model)
 	require.True(t, ok)
 	require.NotNil(t, rerank)
+	assert.True(t, result.spinnerActive)
 
-	message, ok := rerank().(naturalSearchRerankLoadedMsg)
-	require.True(t, ok)
-	assert.Equal(t, naturalLexical, message.naturalMode)
+	settledModel := runModelCommand(t, result, rerank)
 	assert.Equal(t, naturalLexical, fake.naturalSearchRequests[0].Mode)
-
-	settled, _ := result.applyNaturalSearchRerank(message)
-	settledModel, ok := settled.(Model)
-	require.True(t, ok)
 	assert.Equal(t, naturalLexical, settledModel.naturalResultMode)
+}
+
+func TestNaturalSearchSkipsUnavailableRows(t *testing.T) {
+	for _, status := range []int{http.StatusNotFound, http.StatusInternalServerError, http.StatusUnauthorized, http.StatusForbidden} {
+		t.Run(http.StatusText(status), func(t *testing.T) {
+			fake := newFakeBackend()
+			readme, report := fake.nodes["/README.txt"], fake.nodes["/docs/report.txt"]
+			fake.naturalSearch = naturalSearchReport(readme.ID, readme.CurrentVersionID, "unavailable")
+			fake.naturalSearch.Results = append(fake.naturalSearch.Results,
+				naturalSearchReport(report.ID, report.CurrentVersionID, "available").Results...)
+			fake.nodeErrors = map[int64]error{readme.ID: runtime.NewClientAPIError(errors.New("node unavailable"), runtime.WithStatusCode(status))}
+			model, err := New(t.Context(), fake)
+			require.NoError(t, err)
+			model.naturalProfiles = fake.profiles
+			model.naturalMode = naturalLexical
+			message, ok := model.loadNaturalSearch("maintenance", model.requestID)().(naturalSearchBaseLoadedMsg)
+			require.True(t, ok)
+			if status == http.StatusUnauthorized || status == http.StatusForbidden {
+				require.Error(t, message.err)
+				return
+			}
+			require.NoError(t, message.err)
+			assert.Equal(t, []int64{report.ID}, rowIDs(message.rows))
+		})
+	}
+}
+
+func TestBrowseViewportFillsAfterResize(t *testing.T) {
+	model, err := New(t.Context(), newFakeBackend())
+	require.NoError(t, err)
+	model.rows = make([]row, 12)
+	model.cursor, model.offset = 11, 5
+	model, _ = updateModel(t, model, tea.WindowSizeMsg{Width: 100, Height: 14})
+	assert.Equal(t, 9, model.visibleRows())
+	assert.Equal(t, 3, model.offset)
+}
+
+func TestNaturalSearchTruncationShowsDisplayedCount(t *testing.T) {
+	model, err := New(t.Context(), newFakeBackend())
+	require.NoError(t, err)
+	model.width, model.height = 180, 14
+	model.mode = modeSearch
+	model.naturalResultMode = naturalLexical
+	model.rows = make([]row, 100)
+	model.truncated = true
+	model.loading = false
+	assert.Contains(t, ansi.Strip(model.renderLocation()), "first 100 result(s)")
+}
+
+func TestNaturalSearchProfilesFailureIsVisible(t *testing.T) {
+	model, err := New(t.Context(), newFakeBackend())
+	require.NoError(t, err)
+	model.width, model.height = 160, 14
+	model, _ = updateModel(t, model, naturalProfilesLoadedMsg{
+		requestID: model.naturalProfilesRequest, err: errors.New("profiles unavailable"),
+	})
+	assert.Contains(t, ansi.Strip(model.render()), "Natural-language search unavailable: profiles unavailable")
+}
+
+func TestNaturalSearchFooterMatchesCapabilities(t *testing.T) {
+	model, err := New(t.Context(), newFakeBackend())
+	require.NoError(t, err)
+	model.width, model.height = 180, 14
+	model.searching = true
+	assert.NotContains(t, ansi.Strip(model.renderFooter()), "tab mode")
+	assert.NotContains(t, ansi.Strip(model.renderFooter()), "ctrl+r rerank")
+	model.naturalProfiles = []api.ProcessingProfileSummary{{Name: "local", RerankingAvailable: true}}
+	assert.Contains(t, ansi.Strip(model.renderFooter()), "tab mode")
+	assert.NotContains(t, ansi.Strip(model.renderFooter()), "ctrl+r rerank")
+	model.naturalMode = naturalLexical
+	assert.Contains(t, ansi.Strip(model.renderFooter()), "ctrl+r rerank")
 }
 
 func TestNaturalSearchQueryInputShowsRerankStatus(t *testing.T) {

@@ -26,6 +26,7 @@ type fakeBackend struct {
 	childLimit                int
 	searchMax                 int
 	nodeIDs                   []int64
+	nodeErrors                map[int64]error
 	statPaths                 []string
 	history                   map[string]api.AuditEventPage
 	historyErr                error
@@ -237,6 +238,9 @@ func (f *fakeBackend) Stat(_ context.Context, path string) (api.Node, error) {
 
 func (f *fakeBackend) Node(_ context.Context, nodeID int64) (api.Node, error) {
 	f.nodeIDs = append(f.nodeIDs, nodeID)
+	if err := f.nodeErrors[nodeID]; err != nil {
+		return api.Node{}, err
+	}
 	if f.err != nil {
 		return api.Node{}, f.err
 	}

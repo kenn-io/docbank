@@ -261,7 +261,7 @@ func (m Model) renderLocation() string {
 		left = " Search " + quoted(m.searchQuery)
 		right = fmt.Sprintf("%d result(s)", len(m.rows))
 		if m.truncated {
-			right = "first 1,000 result(s)"
+			right = fmt.Sprintf("first %d result(s)", len(m.rows))
 		}
 		if m.naturalResultMode != "" && m.naturalResultMode != naturalNames {
 			right = naturalModeLabel(m.naturalResultMode) + " · " + m.naturalRerankStatus() + " · " + right
@@ -1398,10 +1398,14 @@ func (m Model) renderFooter() string {
 	if m.searching {
 		hints = []hint{
 			{text: "enter search", priority: 100},
-			{text: "tab mode", priority: 95},
-			{text: "ctrl+r rerank", priority: 90},
 			{text: "esc cancel", priority: 90},
 			{text: "ctrl+c quit", priority: 50},
+		}
+		if profile := m.selectedNaturalProfile(); profile != nil {
+			hints = append(hints, hint{text: "tab mode", priority: 95})
+			if m.naturalMode != naturalNames && profile.RerankingAvailable {
+				hints = append(hints, hint{text: "ctrl+r rerank", priority: 90})
+			}
 		}
 	}
 	position := ""
