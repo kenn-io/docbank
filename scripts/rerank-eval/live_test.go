@@ -1,5 +1,3 @@
-//go:build rerank_eval
-
 package rerankeval_test
 
 import (
@@ -21,8 +19,8 @@ import (
 )
 
 func TestLiveRerankComparison(t *testing.T) {
-	if !liveKeysPresent() {
-		t.Skip("COHERE_API_KEY and TYPESAFE_API_KEY are absent; live clients were not constructed")
+	if !liveEvaluationEnabled() {
+		t.Skip("set RERANK_EVAL_LIVE=1 and both provider API keys to run live comparisons")
 	}
 	pricing, err := pricingFromEnvironment()
 	require.NoError(t, err)
@@ -156,7 +154,7 @@ func pricingFromEnvironment() (*pricingInput, error) {
 	typeSafeValue := strings.TrimSpace(os.Getenv("TYPESAFE_MICROS_PER_TOKEN"))
 	cohereValue := strings.TrimSpace(os.Getenv("COHERE_MICROS_PER_SEARCH_UNIT"))
 	if basisDate == "" && typeSafeValue == "" && cohereValue == "" {
-		return nil, nil
+		return nil, nil //nolint:nilnil // missing pricing deliberately leaves cost unavailable
 	}
 	if basisDate == "" || typeSafeValue == "" || cohereValue == "" {
 		return nil, errors.New("all rerank pricing environment values are required together")

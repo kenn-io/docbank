@@ -374,9 +374,17 @@ developer comparison uses a temporary real Docbank store and the existing
 lexical, vector-index, and fusion owners. Its synthetic documents are only
 test data. Offline provider rows and synthetic vector rows validate wiring
 only, so they do not support a quality recommendation. Missing provider runs
-or usage evidence remain unavailable.
+or usage evidence remain unavailable. Skipped rerank calls add no usage or
+pricing basis; cost totals use only observations from stages that ran.
 Applications should keep raw as the default until measured results justify a
 different recipe.
+
+To run the live comparison, set `COHERE_API_KEY` and `TYPESAFE_API_KEY`, then
+run `RERANK_EVAL_LIVE=1 go test -tags fts5 ./scripts/rerank-eval -run
+'^TestLiveRerankComparison$' -count=1 -v` from the repository root. Ordinary
+tests compile the live adapter setup and check pricing inputs without making
+live calls. To include costs, also set `RERANK_PRICING_DATE` (`YYYY-MM-DD`),
+`TYPESAFE_MICROS_PER_TOKEN`, and `COHERE_MICROS_PER_SEARCH_UNIT` together.
 
 ## Choose an embedding provider
 

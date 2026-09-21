@@ -16,7 +16,7 @@ type RerankingRunner interface {
 	Rerank(ctx context.Context, system System, query string, candidates []Document) (RerankResult, error)
 }
 
-// RerankResult contains one score and one usage observation per candidate.
+// RerankResult contains one score per candidate and usage for the rerank call.
 type RerankResult struct {
 	Scores []float64
 	Usage  Usage

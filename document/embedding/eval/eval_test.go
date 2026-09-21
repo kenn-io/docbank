@@ -51,7 +51,7 @@ func (runner staticRunner) Search(_ context.Context, _ embeddingeval.System, _ e
 		DocumentIDs: runner.rankings[query.ID],
 		Usage: embeddingeval.Usage{
 			ProviderCalls: 1, ProviderInputRunes: 11, ProviderOutputUnits: 3,
-			EstimatedCostMicros: 7, Latency: 2 * time.Millisecond,
+			Cost: &embeddingeval.CostObservation{Micros: 7, Basis: "2026-09-21:synthetic-rate"}, Latency: 2 * time.Millisecond,
 		},
 	}, nil
 }

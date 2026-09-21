@@ -98,19 +98,23 @@ func TestComparisonReport(t *testing.T) {
 func TestLiveEnvironmentGate(t *testing.T) {
 	for _, test := range []struct {
 		name     string
+		enabled  string
 		cohere   string
 		typesafe string
 		want     bool
 	}{
 		{name: "missing", want: false},
-		{name: "cohere-only", cohere: "synthetic-key", want: false},
-		{name: "typesafe-only", typesafe: "synthetic-key", want: false},
-		{name: "both", cohere: "synthetic-key", typesafe: "synthetic-key", want: true},
+		{name: "cohere-only", enabled: "1", cohere: "synthetic-key", want: false},
+		{name: "typesafe-only", enabled: "1", typesafe: "synthetic-key", want: false},
+		{name: "keys without opt-in", cohere: "synthetic-key", typesafe: "synthetic-key", want: false},
+		{name: "opt-in without keys", enabled: "1", want: false},
+		{name: "enabled", enabled: "1", cohere: "synthetic-key", typesafe: "synthetic-key", want: true},
 	} {
 		t.Run(test.name, func(t *testing.T) {
+			t.Setenv("RERANK_EVAL_LIVE", test.enabled)
 			t.Setenv("COHERE_API_KEY", test.cohere)
 			t.Setenv("TYPESAFE_API_KEY", test.typesafe)
-			assert.Equal(t, test.want, liveKeysPresent())
+			assert.Equal(t, test.want, liveEvaluationEnabled())
 		})
 	}
 }
@@ -469,17 +473,15 @@ func comparisonRows(report embeddingeval.Report, status, reason string) []compar
 			CorpusID: report.CorpusID, CorpusVersion: report.CorpusVersion,
 			JudgmentProvenance: "fixture:synthetic-public-graded-v1", Mode: mode,
 			Reranker: reranker, RequestShape: requestShape, Status: status,
-			Top1: "unavailable", Top10: "unavailable", NDCG: "unavailable",
-			P95: "unavailable", Requests: "unavailable", RerankRequests: "unavailable",
-			Tokens: "unavailable", RerankTokens: "unavailable",
+			Top1:           fmt.Sprintf("%.3f", system.Aggregate.HitAt1.Mean),
+			Top10:          fmt.Sprintf("%.3f", system.Aggregate.HitAt10.Mean),
+			NDCG:           fmt.Sprintf("%.3f", system.Aggregate.NDCGAt10.Mean),
+			P95:            performance.P95Latency.String(),
+			Requests:       fmt.Sprintf("%.3f", performance.RequestsPerQuery),
+			RerankRequests: fmt.Sprintf("%.3f", performance.RerankRequestsPerQuery),
+			Tokens:         "unavailable", RerankTokens: "unavailable",
 			CostMicros: "unavailable", CostBasis: "unavailable", Reason: reason,
 		}
-		row.Top1 = fmt.Sprintf("%.3f", system.Aggregate.HitAt1.Mean)
-		row.Top10 = fmt.Sprintf("%.3f", system.Aggregate.HitAt10.Mean)
-		row.NDCG = fmt.Sprintf("%.3f", system.Aggregate.NDCGAt10.Mean)
-		row.P95 = performance.P95Latency.String()
-		row.Requests = fmt.Sprintf("%.3f", performance.RequestsPerQuery)
-		row.RerankRequests = fmt.Sprintf("%.3f", performance.RerankRequestsPerQuery)
 		if performance.TokensPerQuery != nil {
 			row.Tokens = fmt.Sprintf("%.3f", *performance.TokensPerQuery)
 		}
@@ -490,17 +492,15 @@ func comparisonRows(report embeddingeval.Report, status, reason string) []compar
 			row.CostMicros = strconv.FormatInt(performance.CostPerQuery.Micros, 10)
 			row.CostBasis = performance.CostPerQuery.Basis
 		}
-		if status != "not-run" {
-			missing := make([]string, 0, 2)
-			if row.Tokens == "unavailable" || row.RerankTokens == "unavailable" {
-				missing = append(missing, "token evidence is unavailable where the provider receipt does not report it")
-			}
-			if row.CostMicros == "unavailable" {
-				missing = append(missing, "cost is unavailable without complete evidence and a caller-supplied dated rate")
-			}
-			if len(missing) > 0 {
-				row.Reason = strings.Join(append([]string{row.Reason}, missing...), "; ")
-			}
+		missing := make([]string, 0, 2)
+		if row.Tokens == "unavailable" || row.RerankTokens == "unavailable" {
+			missing = append(missing, "token evidence is unavailable where receipts omit counts or cannot distinguish zero from missing")
+		}
+		if row.CostMicros == "unavailable" {
+			missing = append(missing, "cost is unavailable without complete evidence and a caller-supplied dated rate")
+		}
+		if len(missing) > 0 {
+			row.Reason = strings.Join(append([]string{row.Reason}, missing...), "; ")
 		}
 		rows = append(rows, row)
 	}
@@ -522,11 +522,6 @@ func renderRows(rows []comparisonRow) string {
 	builder.WriteString("| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |\n")
 	for _, row := range rows {
 		values := []string{row.CorpusID, row.CorpusVersion, row.JudgmentProvenance, row.Mode, row.Reranker, row.RequestShape, row.Status, row.Top1, row.Top10, row.NDCG, row.P95, row.Requests, row.RerankRequests, row.Tokens, row.RerankTokens, row.CostMicros, row.CostBasis, row.Reason}
-		for index := range values {
-			if values[index] == "" {
-				values[index] = "unavailable"
-			}
-		}
 		fmt.Fprintf(&builder, "| %s | %s | %s | %s | %s | %s | %s | %s | %s | %s | %s | %s | %s | %s | %s | %s | %s | %s |\n",
 			values[0], values[1], values[2], values[3], values[4], values[5], values[6], values[7], values[8], values[9], values[10], values[11], values[12], values[13], values[14], values[15], values[16], values[17])
 	}

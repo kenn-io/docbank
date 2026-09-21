@@ -53,14 +53,15 @@ func TestProviderMapping(t *testing.T) {
 			{Document: retrieval.DocumentIdentity{VaultID: "synthetic", NodeID: 2, ContentVersionID: "judgment-grade-candidate-b.txt"}, Score: 0.75},
 			{Document: retrieval.DocumentIdentity{VaultID: "synthetic", NodeID: 1, ContentVersionID: "judgment-grade-candidate-a.txt"}, Score: 0.25},
 		},
-		Receipt: cohere.Receipt{InputTokens: 1.5, OutputTokens: 2.25, SearchUnits: 4.5},
+		Receipt: cohere.Receipt{PolicyFingerprint: "cohere-policy", InputTokens: 1.5, OutputTokens: 2.25, SearchUnits: 4.5},
 	}}
 	cohereAdapter := &cohereProviderAdapter{client: cohereFake, pricing: &pricingInput{CohereSearchUnits: &datedRate{Basis: "2026-09-21:cohere-search-unit", MicrosPerUnit: 2}}}
 	result, err := cohereAdapter.Rerank(context.Background(), embeddingeval.System{RerankerFingerprint: "cohere-policy"}, "synthetic query", candidates)
 	require.NoError(t, err)
 	assert.Equal(t, []float64{0.25, 0.75}, result.Scores)
 	assert.Equal(t, 1, result.Usage.ProviderCalls)
-	assert.Nil(t, result.Usage.TokenUsage, "Cohere receipt has no token-presence bit")
+	require.NotNil(t, result.Usage.TokenUsage)
+	assert.InDelta(t, 3.75, *result.Usage.TokenUsage, 0.0001)
 	require.NotNil(t, result.Usage.Cost)
 	assert.Equal(t, int64(9), result.Usage.Cost.Micros)
 	assert.Equal(t, "2026-09-21:cohere-search-unit", result.Usage.Cost.Basis)
@@ -73,13 +74,14 @@ func TestProviderMapping(t *testing.T) {
 	assert.NotContains(t, cohereFake.requests[0].Candidates[1].Excerpt, "judgment-grade-candidate")
 	zeroReceipt := &fakeCohereClient{execution: cohere.Execution{
 		Scores:  cohereFake.execution.Scores,
-		Receipt: cohere.Receipt{},
+		Receipt: cohere.Receipt{PolicyFingerprint: "cohere-policy"},
 	}}
 	zeroResult, err := (&cohereProviderAdapter{client: zeroReceipt, pricing: &pricingInput{
 		CohereSearchUnits: &datedRate{Basis: "2026-09-21:cohere-search-unit", MicrosPerUnit: 2},
 	}}).Rerank(context.Background(), embeddingeval.System{}, "synthetic query", candidates)
 	require.NoError(t, err)
 	assert.Nil(t, zeroResult.Usage.Cost, "Cohere zero search units have no presence bit")
+	assert.Nil(t, zeroResult.Usage.TokenUsage, "Cohere zero tokens have no presence bit")
 }
 
 func TestProviderAdapterFailures(t *testing.T) {
@@ -138,6 +140,7 @@ func TestProviderAdapterFailures(t *testing.T) {
 			want        string
 		}{
 			{name: "matching", fingerprint: "cohere-policy"},
+			{name: "missing", want: "cohere adapter returned a mismatched policy fingerprint"},
 			{name: "mismatched", fingerprint: "other-policy", want: "cohere adapter returned a mismatched policy fingerprint"},
 		} {
 			t.Run(test.name, func(t *testing.T) {
@@ -168,7 +171,7 @@ func TestProviderAdapterFailures(t *testing.T) {
 		{name: "missing", scores: []retrieval.RerankScore{{Document: identities[0], Score: 0.1}}, want: "cohere adapter returned a missing candidate"},
 	} {
 		t.Run("Cohere "+test.name+" candidate", func(t *testing.T) {
-			adapter := &cohereProviderAdapter{client: &fakeCohereClient{execution: cohere.Execution{Scores: test.scores}}, pricing: &pricingInput{}}
+			adapter := &cohereProviderAdapter{client: &fakeCohereClient{execution: cohere.Execution{Scores: test.scores, Receipt: cohere.Receipt{PolicyFingerprint: "cohere-policy"}}}, pricing: &pricingInput{}}
 			_, err := adapter.Rerank(context.Background(), embeddingeval.System{}, "synthetic query", candidates)
 			require.EqualError(t, err, test.want)
 		})
@@ -233,10 +236,10 @@ func (adapter *typeSafeAdapter) Rerank(ctx context.Context, _ embeddingeval.Syst
 	if err != nil {
 		return embeddingeval.RerankResult{}, err
 	}
-	return embeddingeval.RerankResult{Scores: slices.Clone(result.Scores), Usage: embeddingeval.Usage{
+	return embeddingeval.RerankResult{Scores: result.Scores, Usage: embeddingeval.Usage{
 		ProviderCalls: calls, ProviderInputRunes: inputRunes,
 		ProviderOutputUnits: len(result.Scores), Latency: time.Since(started), TokenUsage: &tokens,
-		EstimatedCostMicros: costMicros(cost), Cost: cost,
+		Cost: cost,
 	}}, nil
 }
 
@@ -268,7 +271,7 @@ func (adapter *cohereProviderAdapter) Rerank(ctx context.Context, _ embeddingeva
 	if err != nil {
 		return embeddingeval.RerankResult{}, err
 	}
-	if execution.Receipt.PolicyFingerprint != "" && execution.Receipt.PolicyFingerprint != adapter.client.PolicyFingerprint() {
+	if execution.Receipt.PolicyFingerprint != adapter.client.PolicyFingerprint() {
 		return embeddingeval.RerankResult{}, errors.New("cohere adapter returned a mismatched policy fingerprint")
 	}
 	expected := make(map[retrieval.DocumentIdentity]struct{}, len(request.Candidates))
@@ -296,6 +299,10 @@ func (adapter *cohereProviderAdapter) Rerank(ctx context.Context, _ embeddingeva
 		}
 		scores[index] = score
 	}
+	var tokens *float64
+	if total := execution.Receipt.InputTokens + execution.Receipt.OutputTokens; total > 0 {
+		tokens = &total
+	}
 	var cost *embeddingeval.CostObservation
 	if execution.Receipt.SearchUnits > 0 {
 		cost, err = adapter.pricing.cohereCost(execution.Receipt.SearchUnits)
@@ -305,7 +312,7 @@ func (adapter *cohereProviderAdapter) Rerank(ctx context.Context, _ embeddingeva
 	}
 	return embeddingeval.RerankResult{Scores: scores, Usage: embeddingeval.Usage{
 		ProviderCalls: 1, ProviderInputRunes: inputRunes, ProviderOutputUnits: len(scores),
-		Latency: time.Since(started), EstimatedCostMicros: costMicros(cost), Cost: cost,
+		Latency: time.Since(started), TokenUsage: tokens, Cost: cost,
 	}}, nil
 }
 
@@ -364,13 +371,6 @@ func (rate *datedRate) cost(units float64) (*embeddingeval.CostObservation, erro
 	return &embeddingeval.CostObservation{Micros: int64(math.Round(value)), Basis: rate.Basis}, nil
 }
 
-func costMicros(cost *embeddingeval.CostObservation) int64 {
-	if cost == nil {
-		return 0
-	}
-	return cost.Micros
-}
-
 type fakeTypeSafeClient struct {
 	shape       typesafe.RequestShape
 	fingerprint string
@@ -413,7 +413,10 @@ func (fake *fakeCohereClient) RerankWithReceipt(_ context.Context, request retri
 
 func (fake *fakeCohereClient) PolicyFingerprint() string { return "cohere-policy" }
 
-func liveKeysPresent() bool {
+func liveEvaluationEnabled() bool {
+	if os.Getenv("RERANK_EVAL_LIVE") != "1" {
+		return false
+	}
 	cohereKey, cohereOK := os.LookupEnv("COHERE_API_KEY")
 	typesafeKey, typesafeOK := os.LookupEnv("TYPESAFE_API_KEY")
 	return cohereOK && strings.TrimSpace(cohereKey) != "" && typesafeOK && strings.TrimSpace(typesafeKey) != ""

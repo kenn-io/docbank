@@ -63,7 +63,7 @@ func TestEvaluateRerankPrefix(t *testing.T) {
 	}}, 1, runner)
 	require.NoError(t, err)
 	assert.Zero(t, runner.rerankCalls)
-	assert.Equal(t, 0, report.Systems[0].Trials[0].RerankUsage.ProviderCalls)
+	assert.Nil(t, report.Systems[0].Trials[0].RerankUsage)
 }
 
 func TestEvaluateRerankExcerptRollsBackPartialRune(t *testing.T) {
@@ -125,6 +125,21 @@ func TestEvaluateQueryObservations(t *testing.T) {
 	assert.Equal(t, int64(15), performance.CostPerQuery.Micros)
 	assert.Equal(t, "2026-09-21:base,2026-09-21:rerank", performance.CostPerQuery.Basis)
 
+	for _, emptyQuery := range []string{"q1", "q2"} {
+		runner.rankings = map[string][]string{emptyQuery: nil}
+		mixed, err := embeddingeval.Evaluate(t.Context(), corpus, []embeddingeval.System{{
+			ID: "mixed", RecipeFingerprint: "recipe", Reranker: "test", RerankerFingerprint: "policy", RerankTopN: 2,
+		}}, 1, runner)
+		require.NoError(t, err)
+		observed := mixed.Systems[0]
+		assert.Equal(t, &embeddingeval.CostObservation{Micros: 13, Basis: "2026-09-21:base,2026-09-21:rerank"}, observed.Performance.CostPerQuery)
+		require.NotNil(t, observed.Trials[0].RerankUsage)
+		assert.Equal(t, runner.rerankUsage.Cost, observed.Trials[0].RerankUsage.Cost)
+		assert.Equal(t, new(0.75), observed.Performance.RerankTokensPerQuery)
+		assert.InDelta(t, 0.5, observed.Performance.RerankRequestsPerQuery, 0.0001)
+	}
+	runner.rankings = nil
+
 	runner.searchUsage["q2"] = embeddingeval.Usage{Latency: 30 * time.Millisecond}
 	report, err = embeddingeval.Evaluate(context.Background(), corpus, []embeddingeval.System{{
 		ID: "missing", RecipeFingerprint: "recipe", Reranker: "test", RerankerFingerprint: "policy", RerankTopN: 2,
@@ -134,6 +149,30 @@ func TestEvaluateQueryObservations(t *testing.T) {
 	assert.Nil(t, report.Systems[0].Performance.CostPerQuery)
 	assert.Nil(t, report.Systems[0].Trials[0].Usage.TokenUsage)
 	assert.Nil(t, report.Systems[0].Trials[0].Usage.Cost)
+}
+
+func TestEvaluateSkippedRerankPreservesSearchCost(t *testing.T) {
+	for _, name := range []string{"search only", "no candidates"} {
+		t.Run(name, func(t *testing.T) {
+			corpus := rerankCorpus(nil, []string{"hit"})
+			system := embeddingeval.System{ID: "search", RecipeFingerprint: "recipe"}
+			runner := &testRerankingRunner{ranking: []string{"hit"}, searchUsage: map[string]embeddingeval.Usage{
+				"query": {ProviderCalls: 1, Cost: &embeddingeval.CostObservation{Micros: 10, Basis: "2026-09-21:base"}},
+			}}
+			if name == "no candidates" {
+				system.Reranker, system.RerankerFingerprint, system.RerankTopN = "test", "policy", 1
+				runner.ranking = nil
+			}
+			report, err := embeddingeval.Evaluate(t.Context(), corpus, []embeddingeval.System{system}, 1, runner)
+			require.NoError(t, err)
+			observed := report.Systems[0]
+			assert.Equal(t, &embeddingeval.CostObservation{Micros: 10, Basis: "2026-09-21:base"}, observed.Performance.CostPerQuery)
+			assert.Nil(t, observed.Trials[0].RerankUsage)
+			assert.Nil(t, observed.Trials[0].Queries[0].RerankUsage)
+			assert.Equal(t, new(0.0), observed.Performance.RerankTokensPerQuery)
+			assert.Zero(t, runner.rerankCalls)
+		})
+	}
 }
 
 func TestEvaluateCostAggregationOverflow(t *testing.T) {
@@ -149,15 +188,14 @@ func TestEvaluateCostAggregationOverflow(t *testing.T) {
 	runner := &testRerankingRunner{
 		ranking: []string{"hit"},
 		searchUsage: map[string]embeddingeval.Usage{
-			"q1": {ProviderCalls: 1, EstimatedCostMicros: costMicros, Cost: &embeddingeval.CostObservation{Micros: costMicros, Basis: "2026-09-21:overflow"}},
-			"q2": {ProviderCalls: 1, EstimatedCostMicros: costMicros, Cost: &embeddingeval.CostObservation{Micros: costMicros, Basis: "2026-09-21:overflow"}},
+			"q1": {ProviderCalls: 1, Cost: &embeddingeval.CostObservation{Micros: costMicros, Basis: "2026-09-21:overflow"}},
+			"q2": {ProviderCalls: 1, Cost: &embeddingeval.CostObservation{Micros: costMicros, Basis: "2026-09-21:overflow"}},
 		},
 	}
 	report, err := embeddingeval.Evaluate(context.Background(), corpus, []embeddingeval.System{{
 		ID: "search", RecipeFingerprint: "recipe",
 	}}, 1, runner)
 	require.NoError(t, err)
-	assert.Equal(t, int64(math.MaxInt64), report.Systems[0].Trials[0].Usage.EstimatedCostMicros)
 	assert.Nil(t, report.Systems[0].Trials[0].Usage.Cost)
 	assert.Nil(t, report.Systems[0].Performance.CostPerQuery)
 }
@@ -302,29 +340,17 @@ func TestEvaluateRerankModesAndFailures(t *testing.T) {
 	assert.ErrorIs(t, canceled.rerankContextErr, context.Canceled)
 }
 
-func TestEvaluateSearchOnlyPreservesContextBehavior(t *testing.T) {
-	corpus := rerankCorpus([]string{"d0"}, []string{"d0"})
-	runner := &contextBehaviorRunner{}
-	var nilContext context.Context
-	_, err := embeddingeval.Evaluate(nilContext, corpus, []embeddingeval.System{{ID: "legacy", RecipeFingerprint: "recipe"}}, 1, runner)
-	require.NoError(t, err)
-	assert.True(t, runner.sawNilContext)
-
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-	_, err = embeddingeval.Evaluate(ctx, corpus, []embeddingeval.System{{ID: "legacy", RecipeFingerprint: "recipe"}}, 1, runner)
-	require.ErrorIs(t, err, runner.canceledError)
-	assert.True(t, runner.sawCanceledContext)
-}
-
-func TestEvaluateNamedRerankerCancellation(t *testing.T) {
+func TestEvaluateCancellation(t *testing.T) {
 	for _, test := range []struct {
 		name             string
+		reranker         string
 		cancelBeforeCall bool
 		searchCalls      int
 	}{
-		{name: "before Search", cancelBeforeCall: true},
-		{name: "during successful Search", searchCalls: 1},
+		{name: "rerank before Search", reranker: "test", cancelBeforeCall: true},
+		{name: "rerank during successful Search", reranker: "test", searchCalls: 1},
+		{name: "search only before Search", cancelBeforeCall: true},
+		{name: "search only during successful Search", searchCalls: 1},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			ctx, cancel := context.WithCancel(context.Background())
@@ -337,7 +363,7 @@ func TestEvaluateNamedRerankerCancellation(t *testing.T) {
 				cancel()
 			}
 			report, err := embeddingeval.Evaluate(ctx, rerankCorpus(runner.ranking, []string{"d0"}), []embeddingeval.System{{
-				ID: "cancel", RecipeFingerprint: "recipe", Reranker: "test", RerankerFingerprint: "policy", RerankTopN: 1,
+				ID: "cancel", RecipeFingerprint: "recipe", Reranker: test.reranker, RerankerFingerprint: "policy", RerankTopN: 1,
 			}}, 1, runner)
 			require.ErrorIs(t, err, context.Canceled)
 			assert.Equal(t, embeddingeval.Report{}, report)
@@ -349,6 +375,7 @@ func TestEvaluateNamedRerankerCancellation(t *testing.T) {
 
 type testRerankingRunner struct {
 	ranking             []string
+	rankings            map[string][]string
 	scores              []float64
 	searchUsage         map[string]embeddingeval.Usage
 	rerankUsage         embeddingeval.Usage
@@ -370,7 +397,11 @@ func (runner *testRerankingRunner) Search(_ context.Context, _ embeddingeval.Sys
 	if runner.cancelSearchContext != nil {
 		runner.cancelSearchContext()
 	}
-	return embeddingeval.SearchResult{DocumentIDs: slices.Clone(runner.ranking), Usage: usage}, nil
+	ranking := runner.ranking
+	if override, ok := runner.rankings[query.ID]; ok {
+		ranking = override
+	}
+	return embeddingeval.SearchResult{DocumentIDs: slices.Clone(ranking), Usage: usage}, nil
 }
 
 func (runner *testRerankingRunner) Rerank(ctx context.Context, _ embeddingeval.System, _ string, candidates []embeddingeval.Document) (embeddingeval.RerankResult, error) {
@@ -410,25 +441,6 @@ func rerankCorpus(ranking, relevant []string) embeddingeval.Corpus {
 	return embeddingeval.Corpus{ID: "synthetic", Version: "1", Documents: documents, Queries: []embeddingeval.Query{{
 		ID: "query", Text: "synthetic query", Judgments: judgmentsFor(relevant),
 	}}}
-}
-
-type contextBehaviorRunner struct {
-	sawNilContext      bool
-	sawCanceledContext bool
-	canceledError      error
-}
-
-func (runner *contextBehaviorRunner) Search(ctx context.Context, _ embeddingeval.System, _ embeddingeval.Corpus, query embeddingeval.Query) (embeddingeval.SearchResult, error) {
-	if ctx == nil {
-		runner.sawNilContext = true
-	} else if err := ctx.Err(); err != nil {
-		runner.sawCanceledContext = true
-		if runner.canceledError == nil {
-			runner.canceledError = errors.New("legacy runner observed cancellation")
-		}
-		return embeddingeval.SearchResult{}, runner.canceledError
-	}
-	return embeddingeval.SearchResult{DocumentIDs: []string{query.Judgments[0].DocumentID}}, nil
 }
 
 func judgmentsFor(ids []string) []embeddingeval.Judgment {
