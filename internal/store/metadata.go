@@ -29,6 +29,7 @@ const (
 	metadataGenerationIDField     = "generation_id"
 	metadataContentVersionIDField = "content_version_id"
 	metadataIngestIDField         = "ingest_id"
+	metadataRevisionField         = "revision"
 )
 
 // MetadataSnapshot owns a dedicated deferred read transaction. Store's normal
@@ -1577,15 +1578,15 @@ var metadataRequiredFields = map[string][]string{
 	metadataCustodianAssignmentType:        personMetadataRequiredFields[metadataCustodianAssignmentType],
 	metadataPersonAssertionType:            personMetadataRequiredFields[metadataPersonAssertionType],
 	metadataPersonCandidateType:            personMetadataRequiredFields[metadataPersonCandidateType],
-	"node":                                 {metadataTypeField, "id", "parent_id", "name", "kind", "current_version_id", "revision", metadataCreatedAtField, "modified_at", "trashed_at", "trash_parent", "trash_name"},
+	"node":                                 {metadataTypeField, "id", "parent_id", "name", "kind", "current_version_id", metadataRevisionField, metadataCreatedAtField, "modified_at", "trashed_at", "trash_parent", "trash_name"},
 	"content_version":                      {metadataTypeField, "version_id", metadataNodeIDField, columnBlobHash, metadataSizeField, "mime_type", auditRecordedAtField, "node_revision", "introduced_operation_id", "transition_kind", auditSourceVersionIDField},
-	metadataIngestType:                     {metadataTypeField, "ingest_id", "started_at", "source_kind", "source_desc"},
-	metadataCollectionLabelType:            {metadataTypeField, "ingest_id", "label", "revision", "updated_at"},
-	metadataProvenanceType:                 {metadataTypeField, "identity", metadataNodeIDField, "ingest_id", "original_path", "original_mtime", "supersedes"},
+	metadataIngestType:                     {metadataTypeField, metadataIngestIDField, "started_at", "source_kind", "source_desc"},
+	metadataCollectionLabelType:            {metadataTypeField, metadataIngestIDField, "label", metadataRevisionField, "updated_at"},
+	metadataProvenanceType:                 {metadataTypeField, "identity", metadataNodeIDField, metadataIngestIDField, "original_path", "original_mtime", "supersedes"},
 	metadataProvenanceVersionBindingType:   {metadataTypeField, "provenance_identity", metadataContentVersionIDField, "observed_at", "basis_ref"},
 	metadataWatchSourceType:                {metadataTypeField, "watch_name", "source_ref", metadataNodeIDField, columnBlobHash, metadataSizeField},
-	"tag":                                  {metadataTypeField, "tag_id", "name", "revision"},
-	metadataSavedQueryType:                 {metadataTypeField, "saved_query_id", "name", "description", "kind", "payload", "fingerprint", "revision", metadataCreatedAtField, "updated_at"},
+	"tag":                                  {metadataTypeField, "tag_id", "name", metadataRevisionField},
+	metadataSavedQueryType:                 {metadataTypeField, "saved_query_id", "name", "description", "kind", "payload", "fingerprint", metadataRevisionField, metadataCreatedAtField, "updated_at"},
 	metadataSavedQueryRunType:              {metadataTypeField, "run_id", "saved_query_id", "saved_query_revision", "query_fingerprint", "snapshot_id", "member_hash", "total", "total_bytes", "ran_at", "expires_at", "previous_run_id", "previous_member_hash", "previous_total", "previous_query_fingerprint"},
 	"node_tag":                             {metadataTypeField, metadataNodeIDField, "tag_id"},
 	metadataBatchTagReceiptType:            {metadataTypeField, auditOperationIDField, "request_digest", "receipt_json"},

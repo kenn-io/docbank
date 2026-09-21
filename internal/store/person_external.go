@@ -43,9 +43,13 @@ func validExternalTuple(system, archiveID, uid string) bool {
 	return document.ValidateExternalPersonTuple(system, archiveID, uid) == nil
 }
 
+func validExternalIdentityClassification(kind, state string) bool {
+	return kind == "vcard_uid" && slices.Contains([]string{"current", "retired", "unlinked"}, state)
+}
+
 func (s *Store) LinkExternalIdentity(ctx context.Context, identity PersonExternalIdentity, revision int64) (PersonExternalIdentity, error) {
-	if !validExternalTuple(identity.System, identity.ArchiveID, identity.UID) || identity.UIDKind != "vcard_uid" ||
-		!slices.Contains([]string{"current", "retired", "unlinked"}, identity.UIDState) ||
+	if !validExternalTuple(identity.System, identity.ArchiveID, identity.UID) ||
+		!validExternalIdentityClassification(identity.UIDKind, identity.UIDState) ||
 		len(identity.DisplayNameSnapshot) > document.MaxPersonDisplayNameSnapshotBytes {
 		return PersonExternalIdentity{}, ErrInvalidPerson
 	}

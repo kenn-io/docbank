@@ -15,7 +15,6 @@ import (
 )
 
 const (
-	metadataPersonRevisionField     = "revision"
 	metadataPersonType              = "person"
 	metadataPersonIdentityType      = "person_identity"
 	metadataPersonExternalType      = "person_external_identity"
@@ -158,16 +157,16 @@ type metadataPersonMatchCandidate struct {
 }
 
 var personMetadataRequiredFields = map[string][]string{
-	metadataPersonType:              {metadataTypeField, "person_id", "display_name", "display_name_folded", "origin", "state", metadataPersonRevisionField, metadataCreatedAtField, "updated_at"},
+	metadataPersonType:              {metadataTypeField, "person_id", "display_name", "display_name_folded", "origin", "state", metadataRevisionField, metadataCreatedAtField, "updated_at"},
 	metadataPersonIdentityType:      {metadataTypeField, "identity_id", "person_id", "kind", "value_normalized", "value_display", "scope_kind", "scope_value", "normalization", "origin", "evidence_kind", "evidence_id", "confidence", "recorded_at"},
 	metadataPersonExternalType:      {metadataTypeField, "person_id", "system", "archive_id", "uid", "uid_kind", "uid_state", "last_seen_revision", "display_name_snapshot", "linked_at", "updated_at"},
 	metadataPersonExternalAliasType: {metadataTypeField, "system", "archive_id", "retired_uid", "surviving_uid", "observed_at"},
 	metadataPersonAliasType:         {metadataTypeField, "retired_person_id", "surviving_person_id", "reason", "retired_at"},
 	metadataPersonMergeType:         {metadataTypeField, "merge_id", "operation_id", "request_sha256", "survivor_person_id", "absorbed_person_id", "absorbed_display_name", "moved_json", "survivor_revision_before", "survivor_revision_after", metadataCreatedAtField},
 	metadataPersonSplitType:         {metadataTypeField, "operation_id", "request_sha256", "receipt_json", metadataCreatedAtField},
-	metadataCustodianAssignmentType: {metadataTypeField, "assignment_id", "scope_kind", metadataIngestIDField, "node_id", metadataContentVersionIDField, "person_id", "raw_label", "raw_label_folded", "rank", "basis", "source_ref", metadataPersonRevisionField, "recorded_at", "retired_at"},
-	metadataPersonAssertionType:     {metadataTypeField, "assertion_id", metadataContentVersionIDField, "person_id", "role", "action", "note", "recorded_at", metadataPersonRevisionField},
-	metadataPersonCandidateType:     {metadataTypeField, "candidate_id", "actor_key", "display_name", "suggested_person_id", "reason", "evidence_json", "evidence_sha256", "occurrence_count", metadataPersonRevisionField, "state", "decided_person_id", metadataCreatedAtField, "decided_at"},
+	metadataCustodianAssignmentType: {metadataTypeField, "assignment_id", "scope_kind", metadataIngestIDField, "node_id", metadataContentVersionIDField, "person_id", "raw_label", "raw_label_folded", "rank", "basis", "source_ref", metadataRevisionField, "recorded_at", "retired_at"},
+	metadataPersonAssertionType:     {metadataTypeField, "assertion_id", metadataContentVersionIDField, "person_id", "role", "action", "note", "recorded_at", metadataRevisionField},
+	metadataPersonCandidateType:     {metadataTypeField, "candidate_id", "actor_key", "display_name", "suggested_person_id", "reason", "evidence_json", "evidence_sha256", "occurrence_count", metadataRevisionField, "state", "decided_person_id", metadataCreatedAtField, "decided_at"},
 }
 
 var personMetadataNullableFields = map[string]map[string]bool{
@@ -426,7 +425,7 @@ func exportPersonCandidates(ctx context.Context, q metadataQuerier, write metada
 func validateMetadataPerson(r metadataPerson) error {
 	if r.Type != metadataPersonType || validateUUIDv4(r.PersonID) != nil || r.Revision < 1 ||
 		!validPersonName(r.DisplayName) || r.DisplayNameFolded != document.FoldPersonName(r.DisplayName) ||
-		!slices.Contains([]string{"operator", "derived", "transfer"}, r.Origin) ||
+		!validPersonOrigin(r.Origin) ||
 		!slices.Contains([]string{"provisional", "curated", "retired"}, r.State) {
 		return errors.New("invalid person metadata")
 	}
@@ -438,10 +437,10 @@ func validateMetadataPerson(r metadataPerson) error {
 
 func validateMetadataPersonIdentity(r metadataPersonIdentity) error {
 	if r.Type != metadataPersonIdentityType || validateUUIDv4(r.IdentityID) != nil || validateUUIDv4(r.PersonID) != nil ||
-		!slices.Contains([]string{"operator", "derived", "transfer"}, r.Origin) ||
+		!validPersonOrigin(r.Origin) ||
 		!slices.Contains(document.PersonEvidenceKinds(), document.PersonEvidenceKind(r.EvidenceKind)) ||
 		r.EvidenceID == "" || len(r.EvidenceID) > document.MaxPersonEvidenceIDBytes ||
-		!slices.Contains([]string{"exact_identifier", "operator_asserted", "supplied_identity", "name_candidate"}, r.Confidence) {
+		!validPersonConfidence(r.Confidence) {
 		return errors.New("invalid person identity metadata")
 	}
 	normalized, err := document.NormalizeScopedPersonIdentity(document.PersonIdentityKind(r.Kind), r.ValueDisplay, r.ScopeKind, r.ScopeValue)
@@ -453,8 +452,7 @@ func validateMetadataPersonIdentity(r metadataPersonIdentity) error {
 
 func validateMetadataPersonExternalIdentity(r metadataPersonExternalIdentity) error {
 	if r.Type != metadataPersonExternalType || validateUUIDv4(r.PersonID) != nil ||
-		!validExternalTuple(r.System, r.ArchiveID, r.UID) || r.UIDKind != "vcard_uid" ||
-		!slices.Contains([]string{"current", "retired", "unlinked"}, r.UIDState) ||
+		!validExternalTuple(r.System, r.ArchiveID, r.UID) || !validExternalIdentityClassification(r.UIDKind, r.UIDState) ||
 		len(r.DisplayNameSnapshot) > document.MaxPersonDisplayNameSnapshotBytes || !utf8.ValidString(r.DisplayNameSnapshot) ||
 		(r.LastSeenRevision != nil && *r.LastSeenRevision < 0) {
 		return errors.New("invalid person external identity metadata")
@@ -567,13 +565,16 @@ func validateMetadataPersonSplit(r metadataPersonSplit) error {
 func validateMetadataCustodianAssignment(r metadataCustodianAssignment) error {
 	if r.Type != metadataCustodianAssignmentType || validateUUIDv4(r.AssignmentID) != nil || r.Revision < 1 ||
 		!validPersonName(r.RawLabel) || r.RawLabelFolded != document.FoldPersonName(r.RawLabel) ||
-		!slices.Contains([]string{"primary", "additional"}, r.Rank) ||
-		!slices.Contains([]string{"operator_assigned", "package_column", "transfer_record"}, r.Basis) ||
+		!validCustodianClassification(r.Rank, r.Basis) ||
 		len(r.SourceRef) > document.MaxCustodianSourceRefBytes || !utf8.ValidString(r.SourceRef) {
 		return errors.New("invalid custodian assignment metadata")
 	}
 	if r.PersonID != nil && validateUUIDv4(*r.PersonID) != nil {
 		return errors.New("invalid custodian assignment person")
+	}
+	if r.ScopeKind == "collection" && (r.NodeID != nil || r.ContentVersionID != nil) ||
+		r.ScopeKind == "document" && r.IngestID != nil {
+		return errors.New("invalid custodian scope coordinates")
 	}
 	scope := CustodianScope{Kind: r.ScopeKind}
 	if r.IngestID != nil {
@@ -613,7 +614,6 @@ func validateMetadataPersonAssertion(r metadataPersonDocumentAssertion) error {
 func validateMetadataPersonCandidate(r metadataPersonMatchCandidate) error {
 	if r.Type != metadataPersonCandidateType || validateUUIDv4(r.CandidateID) != nil || r.Revision < 1 ||
 		document.ValidateActorKeyV1(r.ActorKey) != nil || !document.ValidPersonIdentityText(r.ActorKey) || !validPersonName(r.DisplayName) ||
-		!slices.Contains([]string{"name_only", "identifier_conflict", "external_uid_conflict", "transfer_unresolved"}, r.Reason) ||
 		!slices.Contains([]string{"open", "linked", "rejected", "superseded"}, r.State) ||
 		len(r.EvidenceJSON) == 0 || len(r.EvidenceJSON) > maxPersonCandidateEvidence || r.OccurrenceCount < 1 {
 		return errors.New("invalid person candidate metadata")
@@ -708,6 +708,13 @@ func importPersonMetadataRecord(ctx context.Context, tx *sql.Tx, kind string, ra
 		}
 		_, err := tx.ExecContext(ctx, `INSERT INTO person_aliases(retired_person_id,surviving_person_id,reason,retired_at) VALUES(?,?,?,?)`, r.RetiredPersonID, r.SurvivingPersonID, r.Reason, r.RetiredAt)
 		return err
+	default:
+		return importPersonDecisionMetadataRecord(ctx, tx, kind, raw)
+	}
+}
+
+func importPersonDecisionMetadataRecord(ctx context.Context, tx *sql.Tx, kind string, raw []byte) error {
+	switch kind {
 	case metadataPersonMergeType:
 		var r metadataPersonMerge
 		if err := decodeMetadataRecord(raw, &r); err != nil {
@@ -767,11 +774,12 @@ func validatePersonMetadataState(ctx context.Context, q metadataQuerier) error {
 	if err := exportPersonMetadata(ctx, q, func(any) error { return nil }); err != nil {
 		return fmt.Errorf("validating person metadata records: %w", err)
 	}
-	// Receipts describe past edits. Later merges, retirement, or identity removal
-	// can change membership without invalidating the retained history.
+	// Receipts and candidate evidence describe past edits. Later merges, retirement,
+	// identity removal, or version deletion do not invalidate retained history.
 	checks := []struct {
 		name  string
 		query string
+		args  []any
 	}{
 		{"person alias authority", `SELECT EXISTS(
 			SELECT 1 FROM person_aliases a
@@ -780,28 +788,28 @@ func validatePersonMetadataState(ctx context.Context, q metadataQuerier) error {
 			WHERE (a.reason='merged' AND (retired.person_id IS NOT NULL OR survivor.person_id IS NULL OR
 				EXISTS(SELECT 1 FROM person_aliases next WHERE next.retired_person_id=a.surviving_person_id)))
 			   OR (a.reason='deleted' AND (retired.state<>'retired' OR a.surviving_person_id IS NOT NULL))
-		)`},
+		)`, nil},
 		{"person merge authority", `SELECT EXISTS(
 			SELECT 1 FROM person_merges m
 			LEFT JOIN persons survivor ON survivor.person_id=m.survivor_person_id
 			LEFT JOIN person_aliases survivor_alias ON survivor_alias.retired_person_id=m.survivor_person_id
 			LEFT JOIN person_aliases a ON a.retired_person_id=m.absorbed_person_id
 			WHERE (survivor.person_id IS NULL AND survivor_alias.retired_person_id IS NULL) OR a.retired_person_id IS NULL
-		)`},
+		)`, nil},
 		{"custodian scope authority", `SELECT EXISTS(
 			SELECT 1 FROM custodian_assignments c
 			LEFT JOIN ingests i ON i.id=c.ingest_id
 			LEFT JOIN content_versions v ON v.version_id=c.content_version_id
 			WHERE (c.scope_kind='collection' AND i.id IS NULL)
 			   OR (c.scope_kind='document' AND (v.version_id IS NULL OR v.node_id<>c.node_id))
-		)`},
+		)`, nil},
 		{"person identity bounds", `SELECT EXISTS(
 			SELECT 1 FROM person_identities GROUP BY person_id HAVING COUNT(*)>?
-		)`},
+		)`, []any{document.MaxPersonIdentitiesPerPerson}},
 		{"person external identity bounds", `SELECT EXISTS(
 			SELECT 1 FROM person_external_identities GROUP BY person_id HAVING COUNT(*)>?
-		)`},
-		{"person candidate queue bounds", `SELECT COUNT(*)>? FROM person_match_candidates WHERE state='open'`},
+		)`, []any{document.MaxPersonExternalIdentities}},
+		{"person candidate queue bounds", `SELECT COUNT(*)>? FROM person_match_candidates WHERE state='open'`, []any{maxOpenPersonCandidates}},
 		{"person candidate references", `SELECT EXISTS(
 			SELECT 1 FROM person_match_candidates c
 			WHERE (c.suggested_person_id IS NOT NULL
@@ -810,27 +818,24 @@ func validatePersonMetadataState(ctx context.Context, q metadataQuerier) error {
 			   OR (c.decided_person_id IS NOT NULL
 			  AND NOT EXISTS(SELECT 1 FROM persons p WHERE p.person_id=c.decided_person_id)
 			  AND NOT EXISTS(SELECT 1 FROM person_aliases a WHERE a.retired_person_id=c.decided_person_id))
-		)`},
+		)`, nil},
 	}
 	for _, check := range checks {
 		var invalid bool
-		args := []any{}
-		if check.name == "person identity bounds" {
-			args = append(args, document.MaxPersonIdentitiesPerPerson)
-		}
-		if check.name == "person external identity bounds" {
-			args = append(args, document.MaxPersonExternalIdentities)
-		}
-		if check.name == "person candidate queue bounds" {
-			args = append(args, maxOpenPersonCandidates)
-		}
-		if err := q.QueryRowContext(ctx, check.query, args...).Scan(&invalid); err != nil {
+		if err := q.QueryRowContext(ctx, check.query, check.args...).Scan(&invalid); err != nil {
 			return fmt.Errorf("validating %s: %w", check.name, err)
 		}
 		if invalid {
 			return fmt.Errorf("invalid %s", check.name)
 		}
 	}
+	if err := validatePersonExternalAliasMetadataState(ctx, q); err != nil {
+		return err
+	}
+	return validatePersonSplitMetadataState(ctx, q)
+}
+
+func validatePersonExternalAliasMetadataState(ctx context.Context, q metadataQuerier) error {
 	var externalCycle, externalOverlong bool
 	if err := q.QueryRowContext(ctx, `WITH RECURSIVE chain(system,archive_id,start_uid,uid,depth) AS (
 		SELECT system,archive_id,retired_uid,surviving_uid,1 FROM person_external_uid_aliases
@@ -858,6 +863,10 @@ func validatePersonMetadataState(ctx context.Context, q metadataQuerier) error {
 	if externalOverlong {
 		return errors.New("invalid person external UID alias hop limit")
 	}
+	return nil
+}
+
+func validatePersonSplitMetadataState(ctx context.Context, q metadataQuerier) error {
 	rows, err := q.QueryContext(ctx, `SELECT operation_id,receipt_json FROM person_splits ORDER BY operation_id`)
 	if err != nil {
 		return err
@@ -884,33 +893,5 @@ func validatePersonMetadataState(ctx context.Context, q metadataQuerier) error {
 			return fmt.Errorf("person split %s references missing people", operationID)
 		}
 	}
-	if err := rows.Err(); err != nil {
-		return err
-	}
-	candidates, err := q.QueryContext(ctx, `SELECT candidate_id,evidence_json FROM person_match_candidates ORDER BY candidate_id`)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = candidates.Close() }()
-	for candidates.Next() {
-		var candidateID string
-		var raw []byte
-		if err := candidates.Scan(&candidateID, &raw); err != nil {
-			return err
-		}
-		occurrences, err := decodeStoredCandidateEvidence(raw)
-		if err != nil {
-			return err
-		}
-		for _, occurrence := range occurrences {
-			var exists bool
-			if err := q.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM content_versions WHERE version_id=?)`, occurrence.ContentVersionID).Scan(&exists); err != nil {
-				return err
-			}
-			if !exists {
-				return fmt.Errorf("person candidate %s references missing content version", candidateID)
-			}
-		}
-	}
-	return candidates.Err()
+	return rows.Err()
 }

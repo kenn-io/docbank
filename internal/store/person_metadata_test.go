@@ -89,7 +89,7 @@ func TestPersonMetadataRoundTrip(t *testing.T) {
 	require.NoError(t, target.ExportMetadata(t.Context(), &restoredData))
 	require.Equal(t, data.Bytes(), restoredData.Bytes())
 	require.ErrorContains(t, target.ImportMetadata(t.Context(), bytes.NewReader(data.Bytes())), "not pristine")
-	for _, edit := range []string{"remove split identity", "merge survivor again", "merge split person", "retire survivor"} {
+	for _, edit := range []string{"remove split identity", "merge survivor again", "merge split person", "retire survivor", "empty trash"} {
 		t.Run(edit, func(t *testing.T) {
 			s := newTestStore(t)
 			require.NoError(t, s.ImportMetadata(t.Context(), bytes.NewReader(data.Bytes())))
@@ -100,6 +100,11 @@ func TestPersonMetadataRoundTrip(t *testing.T) {
 			current, _, err := s.PersonByID(t.Context(), personID)
 			require.NoError(t, err)
 			switch edit {
+			case "empty trash":
+				_, _, err = s.Trash(t.Context(), version.NodeID, -1)
+				require.NoError(t, err)
+				_, err = s.TrashEmpty(t.Context(), 0, true)
+				require.NoError(t, err)
 			case "remove split identity":
 				require.NoError(t, s.RemovePersonIdentity(t.Context(), personID, identity.IdentityID, current.Revision))
 			case "retire survivor":
@@ -115,12 +120,35 @@ func TestPersonMetadataRoundTrip(t *testing.T) {
 			}
 			var edited bytes.Buffer
 			require.NoError(t, s.ExportMetadata(t.Context(), &edited))
+			if edit == "empty trash" {
+				snapshot, err := s.BeginMetadataSnapshot(t.Context())
+				require.NoError(t, err)
+				t.Cleanup(func() { require.NoError(t, snapshot.Close()) })
+				var backup bytes.Buffer
+				require.NoError(t, snapshot.ExportBackup(t.Context(), &backup))
+				require.Contains(t, backup.String(), `"type":"person_match_candidate"`)
+			}
 			restored := newTestStore(t)
 			require.NoError(t, restored.ImportMetadata(t.Context(), bytes.NewReader(edited.Bytes())))
 			var roundtrip bytes.Buffer
 			require.NoError(t, restored.ExportMetadata(t.Context(), &roundtrip))
 			require.Equal(t, edited.String(), roundtrip.String())
 		})
+	}
+}
+
+func TestMetadataCustodianScopeRequiresNullUnusedCoordinates(t *testing.T) {
+	const id = "80000000-0000-4000-8000-000000000001"
+	for _, scope := range []metadataCustodianAssignment{
+		{ScopeKind: "document", NodeID: new(int64(2)), ContentVersionID: new(id), IngestID: new("")},
+		{ScopeKind: "collection", IngestID: new(id), NodeID: new(int64(0))},
+		{ScopeKind: "collection", IngestID: new(id), ContentVersionID: new("")},
+	} {
+		scope.Type, scope.AssignmentID, scope.Revision = metadataCustodianAssignmentType, id, 1
+		scope.RawLabel, scope.RawLabelFolded = "Synthetic", "synthetic"
+		scope.Rank, scope.Basis = "primary", "operator_assigned"
+		scope.RecordedAt = "2024-01-02T03:04:05.000000000Z"
+		require.ErrorContains(t, validateMetadataCustodianAssignment(scope), "scope coordinates")
 	}
 }
 

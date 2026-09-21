@@ -82,6 +82,32 @@ func TestRebuildDocumentPeopleDrainsMultipleBatches(t *testing.T) {
 	}
 }
 
+func TestRebuildDocumentPeopleAcceptsUnavailableInputs(t *testing.T) {
+	catalog := openDocumentEventTestStore(t)
+	file, err := catalog.CreateFile(t.Context(), catalog.RootID(), "bounded.txt", testDigest("bounded"), 8, "text/plain")
+	require.NoError(t, err)
+	for i := range document.MaxPersonEdgesPerVersion + 2 {
+		_, err := catalog.SetCustodian(t.Context(), store.CustodianRequest{
+			Scope:    store.CustodianScope{Kind: "document", NodeID: file.ID, ContentVersionID: file.CurrentVersionID},
+			RawLabel: fmt.Sprintf("Synthetic custodian %d", i), Rank: "additional", Basis: "operator_assigned", IfMatchRevision: 1,
+		})
+		require.NoError(t, err)
+	}
+	other, err := catalog.CreateFile(t.Context(), catalog.RootID(), "ordinary.txt", testDigest("ordinary"), 8, "text/plain")
+	require.NoError(t, err)
+	require.NoError(t, RebuildDocumentEvents(t.Context(), catalog))
+	_, err = catalog.PrepareDocumentPeopleInputs(t.Context(), file.CurrentVersionID)
+	require.ErrorIs(t, err, store.ErrPeopleInputsTooLarge)
+	require.NoError(t, RebuildDocumentPeople(t.Context(), catalog))
+	_, head, err := catalog.DocumentPeopleForVersion(t.Context(), file.CurrentVersionID)
+	require.NoError(t, err)
+	require.Equal(t, "unavailable", head.State)
+	require.Equal(t, "input_over_limit", head.FailureReason)
+	_, head, err = catalog.DocumentPeopleForVersion(t.Context(), other.CurrentVersionID)
+	require.NoError(t, err)
+	require.Equal(t, "published", head.State)
+}
+
 type documentPeopleCatalogStub struct {
 	inputs      map[string]store.DocumentPeopleInputs
 	loadErrs    map[string]error
