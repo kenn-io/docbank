@@ -279,6 +279,25 @@ func TestNaturalSearchQueryInputShowsRerankStatus(t *testing.T) {
 	assert.Contains(t, ansi.Strip(model.render()), "Semantic · rerank disabled")
 }
 
+func TestNaturalSearchQueryInputKeepsLongCursorViewportVisible(t *testing.T) {
+	fake := newFakeBackend()
+	model, err := New(t.Context(), fake)
+	require.NoError(t, err)
+	model.width, model.height = 80, 10
+	model.styles = newStyles(false)
+	model.mode = modeSearch
+	model.searching = true
+	model.naturalMode = naturalSemantic
+	model.naturalProfiles = []api.ProcessingProfileSummary{{Name: "private", RerankingAvailable: true}}
+	query := strings.Repeat("long query ", 8) + "visible-tail"
+	model.searchInput.SetValue(query)
+	model.searchInput.Focus()
+
+	rendered := ansi.Strip(model.render())
+	assert.Equal(t, len(query), model.searchInput.Position())
+	assert.Contains(t, rendered, "visible-tail")
+}
+
 func TestNaturalSearchCtrlRDoesNotRerankDuringRefresh(t *testing.T) {
 	fake := newFakeBackend()
 	model, err := New(t.Context(), fake)
