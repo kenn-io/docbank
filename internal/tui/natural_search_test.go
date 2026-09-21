@@ -592,6 +592,42 @@ func TestNaturalSearchProfileDefaultRestartsPendingSubmittedQuery(t *testing.T) 
 	assert.Equal(t, naturalHybrid, fake.naturalSearchRequests[0].Mode)
 }
 
+func TestNaturalSearchProfilesRestartAcceptedQueryAfterFailure(t *testing.T) {
+	fake := newFakeBackend()
+	model, err := New(t.Context(), fake)
+	require.NoError(t, err)
+	model.mode = modeSearch
+	model.searchQuery = "accepted query"
+	model.naturalMode = naturalNames
+	model.loading = true
+	model.submittedSearchQuery = "failed query"
+	model.submittedSearchID = model.requestID
+
+	updated, cmd := model.applySearch(searchLoadedMsg{
+		requestID: model.requestID,
+		query:     "failed query",
+		err:       errors.New("search failed"),
+	})
+	result, ok := updated.(Model)
+	require.True(t, ok)
+	assert.Nil(t, cmd)
+	assert.Equal(t, "accepted query", result.searchQuery)
+	assert.False(t, result.loading)
+
+	updated, cmd = result.Update(naturalProfilesLoadedMsg{
+		requestID: result.naturalProfilesRequest,
+		profiles:  fake.profiles,
+	})
+	result, ok = updated.(Model)
+	require.True(t, ok)
+	assert.Equal(t, naturalAuto, result.naturalMode)
+	require.NotNil(t, cmd)
+
+	runModelCommand(t, result, cmd)
+	require.Len(t, fake.naturalSearchRequests, 1)
+	assert.Equal(t, "accepted query", fake.naturalSearchRequests[0].Query)
+}
+
 func TestNaturalSearchProfileDefaultDoesNotReopenBrowseAfterNavigation(t *testing.T) {
 	fake := newFakeBackend()
 	model, err := New(t.Context(), fake)

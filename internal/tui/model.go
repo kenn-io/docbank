@@ -348,22 +348,20 @@ type Model struct {
 	sortField sortField
 	sortDesc  bool
 
-	searchInput                  textinput.Model
-	searching                    bool
-	searchQuery                  string
-	submittedSearchQuery         string
-	submittedSearchID            uint64
-	searchReturn                 *location
-	naturalProfiles              []api.ProcessingProfileSummary
-	naturalProfilesRequest       uint64
-	naturalMode                  string
-	naturalResultMode            string
-	naturalRerank                bool
-	naturalProfileDefaultPending bool
-	naturalProfileDefaultRequest uint64
-	naturalSearchID              uint64
-	naturalSearchNote            string
-	naturalRerankPending         bool
+	searchInput            textinput.Model
+	searching              bool
+	searchQuery            string
+	submittedSearchQuery   string
+	submittedSearchID      uint64
+	searchReturn           *location
+	naturalProfiles        []api.ProcessingProfileSummary
+	naturalProfilesRequest uint64
+	naturalMode            string
+	naturalResultMode      string
+	naturalRerank          bool
+	naturalSearchID        uint64
+	naturalSearchNote      string
+	naturalRerankPending   bool
 
 	requestID                uint64
 	loading                  bool
@@ -524,8 +522,6 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.naturalProfiles = append([]api.ProcessingProfileSummary(nil), msg.profiles...)
 		if m.naturalMode == naturalNames && naturalProfileBinding(m.naturalProfiles) != "" {
-			m.naturalProfileDefaultPending = false
-			m.naturalProfileDefaultRequest = 0
 			m.naturalMode = naturalAuto
 			m.naturalRerank = false
 			if query := m.activeSearchQuery(); query != "" && (!m.loading || m.submittedSearchID == m.requestID) {
@@ -1943,7 +1939,7 @@ func (m Model) startSearch(query string) (tea.Model, tea.Cmd) {
 }
 
 func (m Model) activeSearchQuery() string {
-	if m.submittedSearchID == m.requestID {
+	if m.loading && m.submittedSearchID == m.requestID {
 		return m.submittedSearchQuery
 	}
 	if m.mode == modeSearch {
@@ -1953,8 +1949,6 @@ func (m Model) activeSearchQuery() string {
 }
 
 func (m Model) updateNaturalSearchSetting(key string) (tea.Model, tea.Cmd) {
-	m.naturalProfileDefaultPending = false
-	m.naturalProfileDefaultRequest = 0
 	mode, rerank := m.naturalMode, m.naturalRerank
 	if key == keyTab {
 		m.cycleNaturalMode()
@@ -2204,8 +2198,6 @@ func (m Model) applyDirectory(msg directoryLoadedMsg) (tea.Model, tea.Cmd) {
 	if msg.requestID != m.requestID {
 		return m, nil
 	}
-	m.naturalProfileDefaultPending = false
-	m.naturalProfileDefaultRequest = 0
 	m.loading = false
 	if msg.err != nil {
 		m.err = msg.err
@@ -2252,8 +2244,6 @@ func (m Model) applySearch(msg searchLoadedMsg) (tea.Model, tea.Cmd) {
 	m.naturalRerankPending = false
 	m.naturalResultMode = ""
 	if msg.err != nil {
-		m.naturalProfileDefaultPending = false
-		m.naturalProfileDefaultRequest = 0
 		m.err = msg.err
 		return m, nil
 	}
@@ -2284,9 +2274,6 @@ func (m Model) applySearch(msg searchLoadedMsg) (tea.Model, tea.Cmd) {
 	}
 	m.err = nil
 	m.clampSelection()
-	if query, ok := m.consumeNaturalProfileDefault(msg.query); ok {
-		return m.startSearch(query)
-	}
 	return m, nil
 }
 
@@ -2297,8 +2284,6 @@ func (m Model) applyNaturalSearchBase(msg naturalSearchBaseLoadedMsg) (tea.Model
 	m.loading = false
 	m.naturalRerankPending = false
 	if msg.err != nil {
-		m.naturalProfileDefaultPending = false
-		m.naturalProfileDefaultRequest = 0
 		m.naturalMode = naturalNames
 		m.naturalRerank = false
 		m.naturalResultMode = ""
@@ -2307,9 +2292,6 @@ func (m Model) applyNaturalSearchBase(msg naturalSearchBaseLoadedMsg) (tea.Model
 		return m, m.loadSearch(msg.query, msg.requestID)
 	}
 	m.applyNaturalRows(msg.query, msg.rows, msg.report.Truncated)
-	if query, ok := m.consumeNaturalProfileDefault(msg.query); ok {
-		return m.startSearch(query)
-	}
 	m.naturalResultMode = msg.naturalMode
 	if len(msg.request.Fence.ContentVersionIDs) == 0 {
 		m.naturalSearchNote = naturalSearchReportNote(msg.report)
@@ -2377,19 +2359,6 @@ func (m *Model) applyNaturalRows(query string, rows []row, truncated bool) {
 	}
 	m.err = nil
 	m.clampSelection()
-}
-
-func (m *Model) consumeNaturalProfileDefault(query string) (string, bool) {
-	if !m.naturalProfileDefaultPending ||
-		m.naturalProfileDefaultRequest != m.naturalProfilesRequest || query == "" ||
-		m.naturalMode != naturalNames || naturalProfileBinding(m.naturalProfiles) == "" {
-		return "", false
-	}
-	m.naturalProfileDefaultPending = false
-	m.naturalProfileDefaultRequest = 0
-	m.naturalMode = naturalAuto
-	m.naturalRerank = false
-	return query, true
 }
 
 func naturalSearchReportNote(report api.DocumentSearchReport) string {
