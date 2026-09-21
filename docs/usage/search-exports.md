@@ -128,6 +128,11 @@ Families come from retained email parent/child evidence. A document without a
 family is a singleton. Family expansion stays within the selected source
 scope and each row's date range.
 
+The ZIP retains relationship groups connected to selected documents, including
+connected documents outside the selected collections when needed to preserve
+grouping. It omits unrelated relationship groups and their warnings. Documents
+outside the selected scope do not contribute to counts.
+
 Date selection prefers source evidence appropriate to the document kind,
 then labeled document dates, then source metadata and recorded import or vault
 dates. Equally preferred conflicting dates require review. Signed, effective,

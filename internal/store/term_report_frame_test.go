@@ -1,6 +1,7 @@
 package store
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -176,6 +177,14 @@ func TestTermReportMatchesSelectedProcessingProfile(t *testing.T) {
 func TestTermReportSharedChildJoinsExactVersionFamily(t *testing.T) {
 	s := newTestStore(t)
 	f := newEmailFixture(t, s, "report-parent.eml")
+	source, err := s.ContentVersionByID(t.Context(), f.publication.ContentVersionID)
+	require.NoError(t, err)
+	selected, err := s.BeginIngest(t.Context(), "cli", "Synthetic selected email")
+	require.NoError(t, err)
+	parentNode, err := s.IngestFileExact(t.Context(), selected, s.RootID(), "selected-parent.eml",
+		source.BlobHash, source.Size, "message/rfc822", "/synthetic/selected-parent.eml", "")
+	require.NoError(t, err)
+	f.publication.ContentVersionID = parentNode.CurrentVersionID
 	view, err := s.PublishEmailGeneration(t.Context(), f.publication)
 	require.NoError(t, err)
 	first, err := s.PublishEmailDocuments(t.Context(), attachmentRequest(t, s, view, "report-family-first"))
@@ -209,6 +218,34 @@ func TestTermReportSharedChildJoinsExactVersionFamily(t *testing.T) {
 	require.NotEmpty(t, families[child.NodeID])
 	require.Equal(t, families[view.Version.NodeID], families[child.NodeID])
 	require.Equal(t, families[other.ID], families[child.NodeID])
+
+	unrelated := createCollectionRun(t, s, "alpha.txt", "ab")
+	for _, tc := range []struct {
+		name, collectionID, familyID string
+		relations, warnings          int
+	}{
+		{name: "unrelated collection", collectionID: unrelated.ID()},
+		{name: "selected parent", collectionID: selected.ID(),
+			familyID: families[parentNode.ID], relations: 2, warnings: 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			request := termFrameRequest()
+			request.AllDocuments, request.CollectionIDs = false, []string{tc.collectionID}
+			svc := reporting.Service{Source: s, Budget: budget}
+			frame, err := svc.Prepare(t.Context(), request)
+			require.NoError(t, err)
+			require.Len(t, frame.Members, 1)
+			require.Equal(t, tc.familyID, frame.Members[0].FamilyID)
+			require.Len(t, frame.Relations, tc.relations)
+			require.Len(t, frame.Coverage.Warnings, tc.warnings)
+			result, err := svc.Finalize(t.Context(), frame, nil)
+			require.NoError(t, err)
+			packet, err := report.BuildBundle(t.Context(), budget, result)
+			require.NoError(t, err)
+			_, err = report.VerifyBundle(t.Context(), budget, bytes.NewReader(packet), int64(len(packet)))
+			require.NoError(t, err)
+		})
+	}
 }
 
 func TestTermReportFamilyStaysWithinCollectionAndCurrentVersions(t *testing.T) {

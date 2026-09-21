@@ -76,6 +76,32 @@ func TestContentDatesKeepAmbiguousAndBareDatesForReview(t *testing.T) {
 	}
 }
 
+func TestContentDatesParseSeptWithoutChangingEvidence(t *testing.T) {
+	for _, raw := range []string{"Sept 2, 2024", "SEPT 2, 2024", "Sept\t2,\n2024", "Sept 31, 2024"} {
+		t.Run(raw, func(t *testing.T) {
+			budget := NewBudget(1 << 20)
+			defer func() { _ = budget.Close() }()
+			identity := Identity{NodeID: 1, VersionID: "v1"}
+			text := []byte("Document dated " + raw)
+			got, err := ExtractContentDates(t.Context(), budget, identity, nativeDateBinding(identity, text), text, "")
+			if err != nil || len(got) != 1 {
+				t.Fatalf("candidates=%+v err=%v", got, err)
+			}
+			if got[0].Raw != raw || got[0].Locator.Quote != string(text) {
+				t.Fatalf("original evidence changed: %+v", got[0])
+			}
+			selection, err := SelectDate("document", got, nil, Request{Timezone: "UTC"})
+			if raw == "Sept 31, 2024" {
+				if got[0].Rejection != "invalid_calendar_date" || !errors.Is(err, ErrUnusableDate) {
+					t.Fatalf("invalid calendar date accepted: %+v err=%v", got[0], err)
+				}
+			} else if err != nil || selection.Date != "2024-09-02" {
+				t.Fatalf("valid September date rejected: %+v err=%v", got[0], err)
+			}
+		})
+	}
+}
+
 func TestContentDatesFailInsteadOfTruncatingOrSubstituting(t *testing.T) {
 	identity := Identity{NodeID: 1, VersionID: "v1"}
 	for _, tc := range []struct {

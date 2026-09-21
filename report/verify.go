@@ -169,14 +169,22 @@ func verifyFrameEvidence(ctx context.Context, budget Budget, frame Frame) error 
 		}
 		groups.join(relation.Parent, relation.Child)
 	}
+	selectedFamilies := make(map[Identity]bool)
 	for _, member := range frame.Members {
 		_, connected := groups.parent[member.Identity]
 		want := ""
 		if connected {
-			want = groups.root(member.Identity).VersionID
+			root := groups.root(member.Identity)
+			selectedFamilies[root] = true
+			want = root.VersionID
 		}
 		if member.FamilyID != want {
 			return fmt.Errorf("%w: family component differs", ErrInvalidPacket)
+		}
+	}
+	for _, relation := range frame.Relations {
+		if !selectedFamilies[groups.root(relation.Parent)] {
+			return fmt.Errorf("%w: family component has no report member", ErrInvalidPacket)
 		}
 	}
 	return nil

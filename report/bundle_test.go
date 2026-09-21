@@ -148,6 +148,34 @@ func TestVerifyBundleRejectsUnknownMemberCoverage(t *testing.T) {
 	}
 }
 
+func TestVerifyBundleRejectsDisconnectedFamilyEvidence(t *testing.T) {
+	budget := NewBudget(4 << 20)
+	defer func() { _ = budget.Close() }()
+	result, err := Calculate(t.Context(), budget, oracleFrame())
+	if err != nil {
+		t.Fatal(err)
+	}
+	packet, err := BuildBundle(t.Context(), budget, result)
+	if err != nil {
+		t.Fatal(err)
+	}
+	changed := resealBundle(t, packet, func(payloads map[string][]byte, _ *packetManifest) {
+		relation := Relation{
+			Parent:     Identity{NodeID: 1001, VersionID: "unrelated-parent", SHA256: packetDigest([]byte("synthetic parent"))},
+			Child:      Identity{NodeID: 1002, VersionID: "unrelated-child", SHA256: packetDigest([]byte("synthetic child"))},
+			EvidenceID: "unrelated-relation", EvidenceSHA256: packetDigest([]byte("synthetic relation")),
+		}
+		encoded, err := canonical.Marshal(relation)
+		if err != nil {
+			t.Fatal(err)
+		}
+		payloads["families.jsonl"] = append(payloads["families.jsonl"], append(encoded, '\n')...)
+	})
+	if _, err := VerifyBundle(t.Context(), budget, bytes.NewReader(changed), int64(len(changed))); !errors.Is(err, ErrInvalidPacket) {
+		t.Fatalf("accepted family evidence unrelated to the report population: %v", err)
+	}
+}
+
 func resealBundle(t *testing.T, packet []byte, edit func(map[string][]byte, *packetManifest)) []byte {
 	t.Helper()
 	archive, err := zip.NewReader(bytes.NewReader(packet), int64(len(packet)))

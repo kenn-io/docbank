@@ -11337,9 +11337,9 @@ export const getDownloadTermReportbundleUrl = (id: string,) => {
 /**
  * @summary Download frozen export bundle
  */
-export const downloadTermReportbundle = async (id: string, options?: Parameters<typeof sessionJSON>[1]): Promise<Blob> => {
+export const downloadTermReportbundle = (id: string, options?: Parameters<typeof sessionResponse>[1]) => {
 
-  return sessionJSON<Blob>(getDownloadTermReportbundleUrl(id),
+  return sessionResponse<Blob>(getDownloadTermReportbundleUrl(id),
   {
     ...options,
     method: 'GET'
@@ -11361,9 +11361,9 @@ export const getDownloadTermReportcsvUrl = (id: string,) => {
 /**
  * @summary Download frozen export csv
  */
-export const downloadTermReportcsv = async (id: string, options?: Parameters<typeof sessionJSON>[1]): Promise<Blob> => {
+export const downloadTermReportcsv = (id: string, options?: Parameters<typeof sessionResponse>[1]) => {
 
-  return sessionJSON<Blob>(getDownloadTermReportcsvUrl(id),
+  return sessionResponse<Blob>(getDownloadTermReportcsvUrl(id),
   {
     ...options,
     method: 'GET'

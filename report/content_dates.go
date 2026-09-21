@@ -203,6 +203,10 @@ func normalizeContentToken(raw string) (value, rejection string) {
 		return "", "ambiguous_numeric_date"
 	}
 	clean := strings.ReplaceAll(strings.TrimSpace(raw), ",", "")
+	fields := strings.Fields(clean)
+	if len(fields) == 3 && strings.EqualFold(fields[0], "Sept") {
+		clean = "Sep " + fields[1] + " " + fields[2]
+	}
 	for _, layout := range []string{"January 2 2006", "Jan 2 2006"} {
 		if date, err := time.Parse(layout, clean); err == nil {
 			return date.Format(time.DateOnly), ""

@@ -170,7 +170,13 @@
       const page = await api.getTermReportDates(id,
         { cursor: reset ? "" : reviewCursor, limit: 20 }, { session });
       if (epoch !== generation || active?.id !== id) return;
-      review = reset ? page.members : [...review, ...page.members];
+      const members = new Map((reset ? [] : review).map(member => [documentKey(member), member]));
+      for (const member of page.members) {
+        const key = documentKey(member);
+        const existing = members.get(key);
+        members.set(key, existing ? { ...member, candidates: [...existing.candidates, ...member.candidates] } : member);
+      }
+      review = [...members.values()];
       reviewCursor = page.next_cursor ?? "";
       reviewLoaded = true;
     } catch (cause) { fail(cause); }

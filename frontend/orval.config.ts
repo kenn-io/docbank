@@ -42,6 +42,7 @@ export default defineConfig({
           ...Object.fromEntries([
           "createExportSource", "sealExportSource", "createExportPlan",
           "getExportPlanPreview", "createExportJob", "getExportJob", "downloadExportArchive",
+          "downloadTermReportcsv", "downloadTermReportbundle",
           "startDocumentProcessing", "getDocumentRendition",
           "streamBackupSnapshotRestore", "streamBackupSnapshotCreation",
           "streamBackupRepositoryVerification", "runDerivativePurge", "streamIngest",

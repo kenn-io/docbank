@@ -62,6 +62,16 @@ it("preserves a ranged Markdown response and repeats coverage IDs", async () => 
   expect(url.searchParams.getAll("content_version_id")).toEqual(["one", "two"]);
 });
 
+it.each([
+  { download: api.downloadTermReportcsv, type: "text/csv", body: Buffer.from("Term #,Terms,Hits\n1,alpha,1\n") },
+  { download: api.downloadTermReportbundle, type: "application/zip", body: Buffer.from([80, 75, 5, 6, ...Array(18).fill(0)]) },
+])("preserves search-export $type download bytes", async ({ download, type, body }) => {
+  vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(body, { headers: { "Content-Type": type } }));
+  const response = await download("a".repeat(48), { headers: { "X-Api-Key": "synthetic-key" } });
+  expect(response).toBeInstanceOf(Response);
+  expect(Buffer.from(await response.arrayBuffer())).toEqual(body);
+});
+
 it("accepts the empty shutdown acknowledgement", async () => {
   vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(null, { status: 202 }));
   await expect(api.shutdownDaemon({ "X-Docbank-Daemon-Token": "synthetic" })).resolves.toBeUndefined();

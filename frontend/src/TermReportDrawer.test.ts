@@ -19,6 +19,43 @@ const json = (value: unknown) => new Response(JSON.stringify(value), { headers: 
 
 afterEach(() => { cleanup(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
+it("merges continued date evidence into one document card and retains its choice", async () => {
+  vi.stubGlobal("ResizeObserver", class { observe() {} unobserve() {} disconnect() {} });
+  const document = { node_id: 1, version_id: "v1", sha256: "a".repeat(64) };
+  const laterDocument = { node_id: 2, version_id: "v2", sha256: "b".repeat(64) };
+  const candidate = { id: "date-1", document, role: "document_date", raw: "2026-01-15",
+    source_class: "content", locator: { evidence_sha256: "c".repeat(64), start_byte: 0, end_byte: 10 } };
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (url, init) => {
+    const path = String(url);
+    if (path.startsWith("/api/v1/collections?") || init?.method === "GET") return json({ items: [], total: 0 });
+    if (path.endsWith("/dates")) {
+      const { cursor } = JSON.parse(String(init?.body));
+      return cursor ? json({ members: [
+        { document, selection: {}, candidates_complete: true, candidates: [{ ...candidate, id: "date-2", raw: "2026-02-16" }] },
+        { document: laterDocument, selection: {}, candidates_complete: true,
+          candidates: [{ ...candidate, id: "date-3", document: laterDocument, raw: "2026-03-17" }] },
+      ] }) : json({ members: [{ document, selection: {}, candidates_complete: false, candidates: [candidate] }], next_cursor: "continued-document" });
+    }
+    return json({ ...oldSummary, state: "needs_review", unresolved_dates: 2 });
+  });
+  render(TermReportDrawer, { session: "session", initialExpression: "alpha", onclose: vi.fn(), onauthfailure: vi.fn() });
+  await fireEvent.click(screen.getByRole("button", { name: "Create export" }));
+  const review = await screen.findByRole("button", { name: "Review dates" });
+  await waitFor(() => expect(review.hasAttribute("disabled")).toBe(false));
+  await fireEvent.click(review);
+  await fireEvent.click(await screen.findByRole("radio", { name: /2026-01-15/ }));
+  await fireEvent.input(screen.getByRole("textbox", { name: "Reason" }), { target: { value: "Checked the first source date" } });
+  await fireEvent.click(screen.getByRole("button", { name: "More evidence" }));
+  expect(await screen.findByText("Document 2")).toBeTruthy();
+  expect(screen.getAllByText("Document 1")).toHaveLength(1);
+  const firstCard = screen.getByText("Document 1").parentElement!;
+  expect(within(firstCard).getByRole("radio", { name: /2026-01-15/ })).toHaveProperty("checked", true);
+  expect(within(firstCard).getByRole("radio", { name: /2026-02-16/ })).toBeTruthy();
+  expect(within(firstCard).getByRole("textbox", { name: "Reason" })).toHaveProperty("value", "Checked the first source date");
+  expect(screen.getByRole("radio", { name: /2026-03-17/ })).toBeTruthy();
+  expect(screen.queryByRole("button", { name: "More evidence" })).toBeNull();
+});
+
 it("requires interpretation fields and submits only fields for the selected date action", async () => {
   vi.stubGlobal("ResizeObserver", class { observe() {} unobserve() {} disconnect() {} });
   const document = { node_id: 1, version_id: "v1", sha256: "a".repeat(64) };

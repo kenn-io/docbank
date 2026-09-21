@@ -164,6 +164,7 @@ func readTermReportFamilies(ctx context.Context, q metadataQuerier, budget repor
 			incomplete[groups.root(versionID)] = true
 		}
 	}
+	selectedFamilies := make(map[string]bool)
 	for i := range frame.Members {
 		id := frame.Members[i].Identity.VersionID
 		if _, connected := groups.parent[id]; !connected {
@@ -173,14 +174,18 @@ func readTermReportFamilies(ctx context.Context, q metadataQuerier, budget repor
 			continue
 		}
 		root := groups.root(id)
+		selectedFamilies[root] = true
 		frame.Members[i].FamilyID = root
 		if incomplete[root] {
 			frame.Members[i].Coverage.FamilyState = "incomplete"
 		}
 	}
+	frame.Relations = slices.DeleteFunc(frame.Relations, func(relation report.Relation) bool {
+		return !selectedFamilies[groups.root(relation.Parent.VersionID)]
+	})
 	sharedChildren := make([]string, 0)
 	for child, parents := range childParents {
-		if parents > 1 {
+		if parents > 1 && selectedFamilies[groups.root(child)] {
 			sharedChildren = append(sharedChildren, child)
 		}
 	}
