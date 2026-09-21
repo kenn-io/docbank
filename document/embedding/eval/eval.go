@@ -503,11 +503,15 @@ func zeroUsage(basis string) Usage {
 }
 
 func sumUsage(left, right Usage) Usage {
+	estimatedCostMicros, ok := sumCost(left.EstimatedCostMicros, right.EstimatedCostMicros)
+	if !ok {
+		estimatedCostMicros = math.MaxInt64
+	}
 	result := Usage{
 		ProviderCalls:       left.ProviderCalls + right.ProviderCalls,
 		ProviderInputRunes:  left.ProviderInputRunes + right.ProviderInputRunes,
 		ProviderOutputUnits: left.ProviderOutputUnits + right.ProviderOutputUnits,
-		EstimatedCostMicros: left.EstimatedCostMicros + right.EstimatedCostMicros,
+		EstimatedCostMicros: estimatedCostMicros,
 		Latency:             left.Latency + right.Latency,
 	}
 	if left.TokenUsage != nil && right.TokenUsage != nil {
@@ -515,10 +519,19 @@ func sumUsage(left, right Usage) Usage {
 		result.TokenUsage = &value
 	}
 	if left.Cost != nil && right.Cost != nil {
-		result.Cost = &CostObservation{Micros: left.Cost.Micros + right.Cost.Micros,
-			Basis: combineBasis(left.Cost.Basis, right.Cost.Basis)}
+		if micros, ok := sumCost(left.Cost.Micros, right.Cost.Micros); ok {
+			result.Cost = &CostObservation{Micros: micros,
+				Basis: combineBasis(left.Cost.Basis, right.Cost.Basis)}
+		}
 	}
 	return result
+}
+
+func sumCost(left, right int64) (int64, bool) {
+	if left > math.MaxInt64-right {
+		return 0, false
+	}
+	return left + right, true
 }
 
 func combineBasis(left, right string) string {
@@ -565,9 +578,14 @@ func performance(trials []TrialReport) PerformanceReport {
 			}
 			if query.Usage.Cost == nil {
 				costKnown = false
-			} else {
-				totalCost += query.Usage.Cost.Micros
-				basis = combineBasis(basis, query.Usage.Cost.Basis)
+			} else if costKnown {
+				var ok bool
+				totalCost, ok = sumCost(totalCost, query.Usage.Cost.Micros)
+				if !ok {
+					costKnown = false
+				} else {
+					basis = combineBasis(basis, query.Usage.Cost.Basis)
+				}
 			}
 		}
 	}

@@ -131,6 +131,32 @@ func TestProviderAdapterFailures(t *testing.T) {
 		{VaultID: "synthetic", NodeID: 1, ContentVersionID: candidates[0].ID},
 		{VaultID: "synthetic", NodeID: 2, ContentVersionID: candidates[1].ID},
 	}
+	t.Run("Cohere receipt fingerprint", func(t *testing.T) {
+		for _, test := range []struct {
+			name        string
+			fingerprint string
+			want        string
+		}{
+			{name: "matching", fingerprint: "cohere-policy"},
+			{name: "mismatched", fingerprint: "other-policy", want: "cohere adapter returned a mismatched policy fingerprint"},
+		} {
+			t.Run(test.name, func(t *testing.T) {
+				adapter := &cohereProviderAdapter{client: &fakeCohereClient{execution: cohere.Execution{
+					Scores: []retrieval.RerankScore{
+						{Document: identities[0], Score: 0.1},
+						{Document: identities[1], Score: 0.2},
+					},
+					Receipt: cohere.Receipt{PolicyFingerprint: test.fingerprint},
+				}}, pricing: &pricingInput{}}
+				_, err := adapter.Rerank(context.Background(), embeddingeval.System{}, "synthetic query", candidates)
+				if test.want == "" {
+					require.NoError(t, err)
+				} else {
+					require.EqualError(t, err, test.want)
+				}
+			})
+		}
+	})
 	unknown := retrieval.DocumentIdentity{VaultID: "synthetic", NodeID: 3, ContentVersionID: "unknown"}
 	for _, test := range []struct {
 		name   string

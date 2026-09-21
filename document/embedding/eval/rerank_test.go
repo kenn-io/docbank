@@ -111,6 +111,32 @@ func TestEvaluateQueryObservations(t *testing.T) {
 	assert.Nil(t, report.Systems[0].Trials[0].Usage.Cost)
 }
 
+func TestEvaluateCostAggregationOverflow(t *testing.T) {
+	const costMicros = int64(1 << 62)
+	corpus := embeddingeval.Corpus{
+		ID: "cost-overflow", Version: "1",
+		Documents: []embeddingeval.Document{{ID: "hit", Text: "synthetic hit"}},
+		Queries: []embeddingeval.Query{
+			{ID: "q1", Text: "first", Judgments: []embeddingeval.Judgment{{DocumentID: "hit", Grade: 1}}},
+			{ID: "q2", Text: "second", Judgments: []embeddingeval.Judgment{{DocumentID: "hit", Grade: 1}}},
+		},
+	}
+	runner := &testRerankingRunner{
+		ranking: []string{"hit"},
+		searchUsage: map[string]embeddingeval.Usage{
+			"q1": {ProviderCalls: 1, EstimatedCostMicros: costMicros, Cost: &embeddingeval.CostObservation{Micros: costMicros, Basis: "2026-09-21:overflow"}},
+			"q2": {ProviderCalls: 1, EstimatedCostMicros: costMicros, Cost: &embeddingeval.CostObservation{Micros: costMicros, Basis: "2026-09-21:overflow"}},
+		},
+	}
+	report, err := embeddingeval.Evaluate(context.Background(), corpus, []embeddingeval.System{{
+		ID: "search", RecipeFingerprint: "recipe",
+	}}, 1, runner)
+	require.NoError(t, err)
+	assert.Equal(t, int64(math.MaxInt64), report.Systems[0].Trials[0].Usage.EstimatedCostMicros)
+	assert.Nil(t, report.Systems[0].Trials[0].Usage.Cost)
+	assert.Nil(t, report.Systems[0].Performance.CostPerQuery)
+}
+
 func TestEvaluateRerankModesAndFailures(t *testing.T) {
 	corpus := rerankCorpus([]string{"d0", "d1"}, []string{"d1"})
 	legacy := &testRerankingRunner{ranking: []string{"d0", "d1"}, scores: []float64{0.1, 0.9}}
