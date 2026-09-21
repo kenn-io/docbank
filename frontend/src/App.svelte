@@ -1461,6 +1461,7 @@
     generation += 1;
     searchPending = false;
     loading = false;
+    naturalRerankPending = false;
     keepQueryDraft(query);
     void snapshotSession().run(query, options);
   }

@@ -68,8 +68,7 @@ func TestNaturalSearchReproductionStaleAndRerankState(t *testing.T) {
 
 	rename := readme
 	rename.Path = "/renamed.txt"
-	delete(fake.nodes, "/README.txt")
-	fake.nodes[rename.Path] = rename
+	fake.nodes["/README.txt"] = rename
 	reranked := rerank()
 	rerankedMessage, ok := reranked.(naturalSearchRerankLoadedMsg)
 	require.True(t, ok)
@@ -546,6 +545,28 @@ func TestNaturalSearchRowsPreserveViewOnlyForRefresh(t *testing.T) {
 	assert.Equal(t, sortByRelevance, model.sortField)
 	assert.False(t, model.sortDesc)
 	assert.Zero(t, model.offset)
+}
+
+func TestNaturalSearchRerankPendingClearsWhenLeavingResults(t *testing.T) {
+	fake := newFakeBackend()
+	model, err := New(t.Context(), fake)
+	require.NoError(t, err)
+	model.mode = modeSearch
+	model.rows = []row{{node: fake.nodes["/README.txt"], path: "/README.txt"}}
+	model.naturalRerankPending = true
+
+	updated, cmd := model.Update(key('a'))
+	result, ok := updated.(Model)
+	require.True(t, ok)
+	assert.False(t, result.naturalRerankPending)
+	assert.True(t, result.historyOpen)
+	require.NotNil(t, cmd)
+
+	result.naturalRerankPending = true
+	updated, _ = result.Update(key(tea.KeyEscape))
+	result, ok = updated.(Model)
+	require.True(t, ok)
+	assert.False(t, result.naturalRerankPending)
 }
 
 func TestNaturalSearchSettingsUseLatestSubmittedQuery(t *testing.T) {

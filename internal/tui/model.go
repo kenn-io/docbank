@@ -1027,6 +1027,7 @@ func (m Model) updateKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		if !ok {
 			return m, nil
 		}
+		m.naturalRerankPending = false
 		m.historyOpen = true
 		m.historyNode = selected
 		m.historyPages = nil
@@ -1493,6 +1494,7 @@ func (m Model) updateHistoryKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		m.helpOpen = true
 		return m, nil
 	case keyEscape, "backspace":
+		m.naturalRerankPending = false
 		m.requestID++
 		m.closeHistory()
 		return m, nil
@@ -1877,6 +1879,7 @@ func (m Model) runMutation(
 }
 
 func (m Model) reloadCurrent() (tea.Model, tea.Cmd) {
+	m.naturalRerankPending = false
 	if query := m.activeSearchQuery(); query != "" {
 		return m.startSearch(query)
 	}
@@ -1889,6 +1892,7 @@ func (m Model) reloadCurrent() (tea.Model, tea.Cmd) {
 }
 
 func (m Model) revisit(state location) (tea.Model, tea.Cmd) {
+	m.naturalRerankPending = false
 	m.restore(state)
 	if !state.stale {
 		m.requestID++
