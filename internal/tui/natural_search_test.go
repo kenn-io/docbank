@@ -226,6 +226,59 @@ func TestNaturalSearchModeProvenanceSurvivesModeChange(t *testing.T) {
 	assert.Contains(t, ansi.Strip(model.renderLocation()), "rerank enabled")
 }
 
+func TestNaturalSearchCtrlRUsesAcceptedResultMode(t *testing.T) {
+	fake := newFakeBackend()
+	readme := fake.nodes["/README.txt"]
+	fake.profiles = []api.ProcessingProfileSummary{{Name: "private", RerankingAvailable: true}}
+	fake.naturalRerankSearch = naturalSearchReport(readme.ID, readme.CurrentVersionID, "reranked excerpt")
+	fake.naturalRerankSearch.Reranking = &api.DocumentSearchRerankingReceipt{Outcome: "applied", CandidateCount: 1}
+	model, err := New(t.Context(), fake)
+	require.NoError(t, err)
+	model.mode = modeSearch
+	model.searchQuery = "solar maintenance"
+	model.naturalMode = naturalSemantic
+	model.naturalResultMode = naturalLexical
+	model.naturalProfiles = fake.profiles
+	model.loading = false
+	model.naturalSearchRequest = api.DocumentSearchRequest{
+		Query: "solar maintenance", Mode: naturalLexical,
+		Fence: api.DocumentSourceFence{ContentVersionIDs: []string{"version"}},
+	}
+
+	updated, rerank := model.updateKeys(tea.KeyPressMsg{Code: 'r', Mod: tea.ModCtrl})
+	result, ok := updated.(Model)
+	require.True(t, ok)
+	require.NotNil(t, rerank)
+
+	message, ok := rerank().(naturalSearchRerankLoadedMsg)
+	require.True(t, ok)
+	assert.Equal(t, naturalLexical, message.naturalMode)
+	assert.Equal(t, naturalLexical, fake.naturalSearchRequests[0].Mode)
+
+	settled, _ := result.applyNaturalSearchRerank(message)
+	settledModel, ok := settled.(Model)
+	require.True(t, ok)
+	assert.Equal(t, naturalLexical, settledModel.naturalResultMode)
+}
+
+func TestNaturalSearchQueryInputShowsRerankStatus(t *testing.T) {
+	fake := newFakeBackend()
+	model, err := New(t.Context(), fake)
+	require.NoError(t, err)
+	model.width, model.height = 100, 10
+	model.styles = newStyles(false)
+	model.mode = modeSearch
+	model.searching = true
+	model.naturalMode = naturalSemantic
+	model.naturalProfiles = []api.ProcessingProfileSummary{{Name: "private", RerankingAvailable: true}}
+	model.searchInput.SetValue("solar maintenance")
+
+	model.naturalRerank = true
+	assert.Contains(t, ansi.Strip(model.render()), "Semantic · rerank enabled")
+	model.naturalRerank = false
+	assert.Contains(t, ansi.Strip(model.render()), "Semantic · rerank disabled")
+}
+
 func TestNaturalSearchCtrlRDoesNotRerankDuringRefresh(t *testing.T) {
 	fake := newFakeBackend()
 	model, err := New(t.Context(), fake)

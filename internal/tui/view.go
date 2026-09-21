@@ -87,7 +87,7 @@ func (m Model) render() string {
 	if m.searching || m.processingSearching {
 		search := m.searchInput.View()
 		if m.searching && m.naturalMode != naturalNames {
-			search = naturalModeLabel(m.naturalMode) + " · " + search
+			search = naturalModeLabel(m.naturalMode) + " · " + m.naturalRerankStatus() + " · " + search
 		}
 		lines = append(lines, fit(search, m.width))
 	}

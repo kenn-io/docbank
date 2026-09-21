@@ -902,7 +902,11 @@ func (m Model) updateKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 				m.requestID++
 				m.naturalSearchID++
 				m.naturalRerankPending = true
-				return m, m.loadNaturalRerank(m.requestID, m.naturalSearchID, m.naturalSearchRequest, m.naturalMode)
+				naturalMode := m.naturalResultMode
+				if naturalMode == "" {
+					naturalMode = m.naturalMode
+				}
+				return m, m.loadNaturalRerank(m.requestID, m.naturalSearchID, m.naturalSearchRequest, naturalMode)
 			}
 		}
 	case "q", keyCtrlC:
