@@ -494,6 +494,7 @@
           naturalProfileDefaultPending = { request, session };
           return;
         }
+        if (loading && activeQuery) return;
         naturalProfileDefaultPending = null;
         naturalSearchMode = defaultMode;
         naturalRerank = false;

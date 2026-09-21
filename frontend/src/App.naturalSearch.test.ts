@@ -102,6 +102,7 @@ interface HarnessOptions {
   legacyFailurePending?: boolean;
   basePending?: boolean;
   legacyPending?: boolean;
+  childrenPending?: boolean;
   rerankReport?: unknown;
   rerankPending?: boolean;
   rerankNode?: ReturnType<typeof node>;
@@ -122,10 +123,12 @@ function installHarness(options: HarnessOptions) {
   let profilesResolve: ((response: Response) => void) | undefined;
   let legacyResolve: ((response: Response) => void) | undefined;
   let legacyFailureResolve: ((response: Response) => void) | undefined;
+  let childrenResolve: ((response: Response) => void) | undefined;
   const basePending = new Promise<Response>((resolve) => { baseResolve = resolve; });
   const profilesPending = new Promise<Response>((resolve) => { profilesResolve = resolve; });
   const legacyPending = new Promise<Response>((resolve) => { legacyResolve = resolve; });
   const legacyFailurePending = new Promise<Response>((resolve) => { legacyFailureResolve = resolve; });
+  const childrenPending = new Promise<Response>((resolve) => { childrenResolve = resolve; });
   let baseCalls = 0;
   let legacyCalls = 0;
   const nodeCalls = new Map<number, number>();
@@ -136,6 +139,10 @@ function installHarness(options: HarnessOptions) {
     if (url === "/api/v1/path?path=%2F") return json(root);
     if (url === "/api/v1/nodes/1/children?limit=1000&offset=0") {
       return json({ directory: root, items: options.files, total: options.files.length, limit: 1000, offset: 0 });
+    }
+    if (url === "/api/v1/nodes/3/children?limit=1000&offset=0") {
+      if (options.childrenPending) return childrenPending;
+      return json({ directory: options.files.find((file) => file.id === 3) ?? root, items: [], total: 0, limit: 1000, offset: 0 });
     }
     if (url === "/api/v1/tags?limit=1000&offset=0") {
       return json({ items: [{ id: tagID, name: "reviewed", revision: 1, assignment_count: 1 }], total: 1, limit: 1000, offset: 0 });
@@ -201,6 +208,7 @@ function installHarness(options: HarnessOptions) {
     resolveProfiles: (response: Response) => profilesResolve?.(response),
     resolveLegacy: (response: Response) => legacyResolve?.(response),
     resolveLegacyFailure: (response: Response) => legacyFailureResolve?.(response),
+    resolveChildren: (response: Response) => childrenResolve?.(response),
     legacyCalls: () => legacyCalls,
   };
 }
@@ -510,6 +518,37 @@ it("does not rerun the accepted query after a pending legacy search fails", asyn
   await waitFor(() => expect(screen.getByRole("alert").textContent).toContain("HTTP 500"));
   await new Promise((resolve) => setTimeout(resolve, 20));
   expect(harness.legacyCalls()).toBe(2);
+  expect(screen.getByRole("combobox", { name: "Search mode: Names and text" })).toBeTruthy();
+});
+
+it("does not rerun an old query while folder navigation is pending", async () => {
+  const folder = { ...node(3, "folder", baseVersion), kind: "dir", mime_type: "", path: "/folder" };
+  const file = node(2, "old-result.txt", baseVersion);
+  const harness = installHarness({
+    profiles: [],
+    profilesPending: true,
+    files: [folder, file],
+    childrenPending: true,
+    baseReport: report("hybrid", [result(file, 1, "old natural result")]),
+    tagSearch: { hits: [{ node: folder, path: folder.path, match: "name" }], limit: 1000, truncated: false },
+  });
+  render(App);
+  await screen.findAllByText("folder");
+  await submitSearch("old query");
+  await screen.findAllByText("/folder");
+  await waitFor(() => expect(document.querySelector('tr[data-node-id="3"]')).not.toBeNull());
+  await fireEvent.dblClick(document.querySelector('tr[data-node-id="3"]')!);
+  harness.resolveProfiles(json([{
+    name: "private",
+    fingerprint: "a".repeat(64),
+    rendition: true,
+    embedding_bindings: ["embed"],
+    reranking_available: false,
+  }]));
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  expect(harness.postBodies).toHaveLength(0);
+  harness.resolveChildren(json({ directory: folder, items: [], total: 0, limit: 1000, offset: 0 }));
+  await screen.findByText("/folder");
   expect(screen.getByRole("combobox", { name: "Search mode: Names and text" })).toBeTruthy();
 });
 
