@@ -101,6 +101,7 @@ interface HarnessOptions {
   rerankReport?: unknown;
   rerankPending?: boolean;
   emptyFence?: boolean;
+  nodeFailure?: { id: number; status: number };
   tagSearch?: unknown;
 }
 
@@ -134,6 +135,7 @@ function installHarness(options: HarnessOptions) {
     }
     const nodeMatch = url.match(/^\/api\/v1\/nodes\/(\d+)$/);
     if (nodeMatch) {
+      if (Number(nodeMatch[1]) === options.nodeFailure?.id) return new Response("node failure", { status: options.nodeFailure.status });
       const file = options.files.find((item) => item.id === Number(nodeMatch[1]));
       return file ? json(file) : new Response("", { status: 404 });
     }
@@ -233,7 +235,7 @@ it("shows base rows while reranking and applies the validated order", async () =
   expect(harness.postBodies[1]?.rerank).toBe(true);
 });
 
-it("ignores a rerank response after changing the next search mode", async () => {
+it("ignores a rerank response after switching to Names and text", async () => {
   const baseFile = node(2, "base.txt", baseVersion);
   const rerankedFile = node(3, "reranked.txt", rerankedVersion);
   const harness = installHarness({
@@ -241,6 +243,7 @@ it("ignores a rerank response after changing the next search mode", async () => 
     files: [baseFile, rerankedFile],
     baseReport: report("hybrid", [result(baseFile, 1, "base excerpt")]),
     rerankPending: true,
+    tagSearch: { hits: [{ node: baseFile, path: baseFile.path, match: "name" }], limit: 1000, truncated: false },
   });
   render(App);
   await screen.findAllByText("base.txt");
@@ -249,7 +252,7 @@ it("ignores a rerank response after changing the next search mode", async () => 
   await submitSearch("annual report");
   await screen.findByText("Reranking results… Base results are shown.");
   await fireEvent.click(screen.getByRole("combobox", { name: "Search mode: Auto" }));
-  await fireEvent.click(screen.getByRole("option", { name: "Lexical" }));
+  await fireEvent.click(screen.getByRole("option", { name: "Names and text" }));
   harness.resolveRerank(json({
     requested_mode: "hybrid",
     actual_mode: "hybrid",
@@ -262,7 +265,7 @@ it("ignores a rerank response after changing the next search mode", async () => 
   }));
   await waitFor(() => expect(screen.queryByText("Reranking results… Base results are shown.")).toBeNull());
   await waitFor(() => expect(screen.queryByText("reranked excerpt")).toBeNull());
-  expect(screen.getByText("base excerpt")).toBeTruthy();
+  expect(screen.getByText("/base.txt")).toBeTruthy();
 });
 
 it("keeps the current selection when reranking replaces the rows", async () => {
@@ -281,7 +284,9 @@ it("keeps the current selection when reranking replaces the rows", async () => {
   await fireEvent.click(screen.getByRole("checkbox", { name: "Rerank results" }));
   await submitSearch("annual report");
   await screen.findByText("second excerpt");
-  await fireEvent.click(screen.getByText("/reranked.txt"));
+  await fireEvent.keyDown(window, { key: "j" });
+  await fireEvent.keyDown(window, { key: "/" });
+  expect(document.activeElement).toBe(screen.getByRole("searchbox", { name: "Search documents" }));
   expect(document.querySelector('tr[data-node-id="3"]')?.getAttribute("aria-selected")).toBe("true");
   harness.resolveRerank(json({
     requested_mode: "hybrid",
@@ -294,6 +299,7 @@ it("keeps the current selection when reranking replaces the rows", async () => {
     reranking: { outcome: "applied", candidate_count: 2 },
   }));
   await screen.findByText("reranked excerpt");
+  expect(harness.fetchMock.mock.calls.filter(([input, init]) => init?.signal && /^\/api\/v1\/nodes\/\d+$/.test(String(input)))).toHaveLength(2);
   expect(document.querySelector('tr[data-node-id="3"]')?.getAttribute("aria-selected")).toBe("true");
 });
 
@@ -398,23 +404,6 @@ it("shows the empty-fence note without posting a search", async () => {
   expect(harness.postBodies).toHaveLength(0);
 });
 
-it("keeps processing evidence visible after changing the next search mode", async () => {
-  const file = node(2, "provenance.txt", baseVersion);
-  installHarness({
-    profiles: [{ name: "private", fingerprint: "a".repeat(64), rendition: true, embedding_bindings: ["embed"], reranking_available: false }],
-    files: [file],
-    baseReport: report("hybrid", [result(file, 1, "hybrid excerpt")]),
-  });
-  render(App);
-  await screen.findAllByText("provenance.txt");
-  await submitSearch("provenance");
-  await screen.findByText("hybrid excerpt");
-  await fireEvent.click(screen.getByRole("combobox", { name: "Search mode: Auto" }));
-  await fireEvent.click(screen.getByRole("option", { name: "Lexical" }));
-  expect(screen.getByText("hybrid excerpt")).toBeTruthy();
-  expect(screen.getAllByText("Text").length).toBeGreaterThan(0);
-});
-
 it("keeps a non-401 processing failure on the legacy GET path", async () => {
   const file = node(2, "fallback.txt", baseVersion);
   const harness = installHarness({
@@ -469,4 +458,77 @@ it("ignores an aborted natural search completion", async () => {
   await new Promise((resolve) => setTimeout(resolve, 0));
   expect(screen.queryByText("stale excerpt")).toBeNull();
   expect(harness.fetchMock.mock.calls.filter(([input]) => String(input).startsWith("/api/v1/search?")).length).toBe(0);
+});
+
+it("shows why natural search controls could not load", async () => {
+  installHarness({ profiles: [], profilesStatus: 503, files: [], baseReport: report("lexical", []) });
+  render(App);
+  expect(await screen.findByText(/Natural-language search unavailable.*503/)).toBeTruthy();
+});
+
+it.each([500, 401])("handles node lookup failures without a Names and text fallback (%i)", async (status) => {
+  const good = node(2, "available.txt", baseVersion);
+  const bad = node(3, "unavailable.txt", rerankedVersion);
+  const harness = installHarness({
+    profiles: [{ name: "private", fingerprint: "a".repeat(64), rendition: true, embedding_bindings: ["embed"], reranking_available: true }],
+    files: [good, bad], nodeFailure: { id: bad.id, status },
+    baseReport: report("hybrid", [result(good, 1, "available excerpt"), result(bad, 2, "unavailable excerpt")]),
+  });
+  render(App);
+  await screen.findByRole("combobox", { name: "Search mode: Auto" });
+  await submitSearch("annual report");
+  if (status === 401) {
+    await screen.findByText(/browser session expired or was rejected/);
+  } else {
+    await screen.findByText("available excerpt");
+    expect(screen.queryByText("unavailable excerpt")).toBeNull();
+    expect(screen.getByRole("combobox", { name: "Search mode: Auto" })).toBeTruthy();
+  }
+  expect(harness.fetchMock.mock.calls.some(([input]) => String(input).startsWith("/api/v1/search?"))).toBe(false);
+});
+
+it("reruns the active query when the search mode or rerank toggle changes", async () => {
+  const file = node(2, "report.txt", baseVersion);
+  const options: HarnessOptions = {
+    profiles: [{ name: "private", fingerprint: "a".repeat(64), rendition: true, embedding_bindings: ["embed"], reranking_available: true }],
+    files: [file],
+    baseReport: report("hybrid", [result(file, 1, "auto excerpt")]),
+  };
+  const harness = installHarness(options);
+  render(App);
+  await screen.findByRole("combobox", { name: "Search mode: Auto" });
+  await submitSearch("annual report");
+  await screen.findByText("auto excerpt");
+  options.baseReport = report("lexical", [result(file, 1, "lexical excerpt")]);
+  await fireEvent.click(screen.getByRole("combobox", { name: "Search mode: Auto" }));
+  await fireEvent.click(screen.getByRole("option", { name: "Lexical" }));
+  await screen.findByText("lexical excerpt");
+  expect(harness.postBodies.at(-1)?.mode).toBe("lexical");
+  options.rerankReport = report("lexical", [result(file, 1, "reranked excerpt")], { outcome: "applied", candidate_count: 1 });
+  await fireEvent.click(screen.getByRole("checkbox", { name: "Rerank results" }));
+  await screen.findByText("reranked excerpt");
+  expect(harness.postBodies.at(-1)?.rerank).toBe(true);
+  await fireEvent.click(screen.getByRole("checkbox", { name: "Rerank results" }));
+  await screen.findByText("lexical excerpt");
+  expect(harness.postBodies.at(-1)?.rerank).toBeUndefined();
+});
+
+it("preserves the chosen sort on a natural search refresh", async () => {
+  const first = node(2, "zebra.txt", baseVersion);
+  const second = node(3, "alpha.txt", rerankedVersion);
+  const harness = installHarness({
+    profiles: [{ name: "private", fingerprint: "a".repeat(64), rendition: true, embedding_bindings: ["embed"], reranking_available: false }],
+    files: [first, second],
+    baseReport: report("hybrid", [result(first, 1, "first excerpt"), result(second, 2, "second excerpt")]),
+  });
+  render(App);
+  await screen.findByRole("combobox", { name: "Search mode: Auto" });
+  await submitSearch("annual report");
+  await screen.findByText("first excerpt");
+  await fireEvent.click(screen.getByRole("button", { name: "Document" }));
+  expect(screen.getByRole("columnheader", { name: "Document" }).getAttribute("aria-sort")).toBe("ascending");
+  await fireEvent.click(screen.getByRole("button", { name: "Refresh current view" }));
+  await waitFor(() => expect(harness.postBodies).toHaveLength(2));
+  await waitFor(() => expect(screen.getByRole("button", { name: "Process and retrieve" })).toBeTruthy());
+  expect(screen.getByRole("columnheader", { name: "Document" }).getAttribute("aria-sort")).toBe("ascending");
 });

@@ -183,6 +183,7 @@
   let naturalSearchMode = $state<NaturalSearchMode>("names");
   let naturalRerank = $state(false);
   let naturalSearchNote = $state("");
+  let naturalProfilesError = $state("");
   let naturalRerankPending = $state(false);
   let profileGeneration = 0;
   let error = $state("");
@@ -478,6 +479,7 @@
       const profiles = await generated.listDocumentProcessingProfiles({ session });
       if (request !== profileGeneration || session !== webSession) return;
       naturalProfiles = profiles;
+      naturalProfilesError = "";
       const selected = selectNaturalSearchProfile(profiles);
       naturalSearchMode = selected?.embedding_bindings.length ? "auto" : "names";
       naturalRerank = false;
@@ -485,6 +487,7 @@
       if (request !== profileGeneration || session !== webSession) return;
       naturalProfiles = [];
       if (cause instanceof APIError && cause.status === 401) handleFailure(cause);
+      else naturalProfilesError = naturalSearchFallbackNote(cause instanceof Error ? cause.message : String(cause));
     }
   }
 
@@ -907,7 +910,7 @@
         requestedTagID ? { tag_id: requestedTagID } : {}, controller.signal);
       if (request !== generation || session !== webSession || controller.signal.aborted) return;
       if (resolution.fence.content_version_ids.length === 0) {
-        applyProcessingSearch([], query, requestedTagID, false, preferredSelectedID, refreshing);
+        applySearchRows([], query, requestedTagID, false, preferredSelectedID, refreshing);
         naturalSearchNote = "No live documents match the current filter.";
         loading = false;
         return;
@@ -923,13 +926,15 @@
       };
       const baseReport = await documentSearch(session, baseRequest, controller.signal);
       if (request !== generation || session !== webSession || controller.signal.aborted) return;
-      const baseRows = await hydrateProcessingRows(baseReport, session, request, controller.signal, mode);
+      const nodes = new Map<number, Node | undefined>();
+      const baseRows = await hydrateProcessingRows(baseReport, session, request, controller.signal, mode, nodes);
       if (request !== generation || session !== webSession || controller.signal.aborted) return;
-      applyProcessingSearch(baseRows, query, requestedTagID, baseReport.truncated, preferredSelectedID, refreshing);
+      applySearchRows(baseRows, query, requestedTagID, baseReport.truncated, preferredSelectedID, refreshing);
       naturalSearchNote = baseReport.degradations.length > 0
         ? `Search note: ${baseReport.degradations.join(", ")}`
         : "";
       loading = false;
+      searchPending = false;
       if (!naturalSearchRerank(profile, mode, naturalRerank)) return;
       naturalRerankPending = true;
       try {
@@ -940,10 +945,10 @@
           naturalSearchNote = rerankingNote(reranked.reranking?.outcome ?? "failed", reranked.reranking?.cause);
           return;
         }
-        const rerankedRows = await hydrateProcessingRows(reranked, session, request, controller.signal, mode);
+        const rerankedRows = await hydrateProcessingRows(reranked, session, request, controller.signal, mode, nodes);
         if (request !== generation || session !== webSession || controller.signal.aborted ||
           naturalSearchMode !== mode || !naturalRerank) return;
-        applyProcessingSearch(rerankedRows, query, requestedTagID, reranked.truncated, preferredSelectedID, true, true);
+        applySearchRows(rerankedRows, query, requestedTagID, reranked.truncated, preferredSelectedID, true, true);
         naturalSearchNote = rerankingNote("applied");
       } catch (cause) {
         if (cause instanceof APIError && cause.status === 401) {
@@ -994,23 +999,12 @@
     if (request !== generation || session !== webSession || signal.aborted) return;
     if ((report.tag_id ?? "") !== requestedTagID) throw new Error("Search results did not honor the selected tag filter.");
     const nextRows = report.hits.map((hit: SearchHit) => ({ node: hit.node, path: hit.path, match: hit.match }));
-    replaceRows(nextRows, refreshing);
-    const view = reconcileSearchView(nextRows, query,
-      requestedTagID === activeTagID ? activeQuery : "", sortField, sortDirection, preferredSelectedID);
-    activeQuery = query;
-    activeTagID = requestedTagID;
-    taggedInspected = 0;
-    taggedTotal = 0;
-    taggedTrashed = 0;
-    truncated = report.truncated;
-    sortField = view.sortField;
-    sortDirection = view.sortDirection;
-    selectNode(view.selectedID);
+    applySearchRows(nextRows, query, requestedTagID, report.truncated, preferredSelectedID, refreshing);
     naturalSearchNote = note;
     loading = false;
   }
 
-  function applyProcessingSearch(
+  function applySearchRows(
     nextRows: Row[],
     query: string,
     requestedTagID: string,
@@ -1021,16 +1015,17 @@
   ): void {
     const selectedBefore = preserveCurrentSelection ? selectedID : preferredSelectedID;
     replaceRows(nextRows, refreshing);
+    const view = reconcileSearchView(nextRows, query,
+      refreshing ? query : "", sortField, sortDirection, selectedBefore);
     activeQuery = query;
     activeTagID = requestedTagID;
     taggedInspected = 0;
     taggedTotal = 0;
     taggedTrashed = 0;
     truncated = isTruncated;
-    sortField = "relevance";
-    sortDirection = "asc";
-    selectNode(refreshing && nextRows.some((row) => row.node.id === selectedBefore)
-      ? selectedBefore : nextRows[0]?.node.id);
+    sortField = view.sortField;
+    sortDirection = view.sortDirection;
+    selectNode(view.selectedID);
   }
 
   async function hydrateProcessingRows(
@@ -1039,16 +1034,23 @@
     request: number,
     signal: AbortSignal,
     naturalMode: NaturalSearchMode,
+    nodes: Map<number, Node | undefined>,
   ): Promise<Row[]> {
-    const hydrated: Array<Row | undefined> = await Promise.all(report.results.map(async (result): Promise<Row | undefined> => {
-      let node: Node;
+    const hydrated: Row[] = [];
+    for (const result of report.results) {
+      if (request !== generation || session !== webSession || signal.aborted) return [];
+      let node = nodes.get(result.node_id);
       try {
-        node = await generated.getNode(result.node_id, { session, signal });
+        if (!nodes.has(result.node_id)) {
+          node = await generated.getNode(result.node_id, { session, signal });
+          nodes.set(result.node_id, node);
+        }
       } catch (cause) {
-        if (cause instanceof APIError && cause.status === 404) return undefined;
-        throw cause;
+        if (cause instanceof APIError && cause.status === 401) throw cause;
+        nodes.set(result.node_id, undefined);
+        continue;
       }
-      if (node.kind !== "file" || node.trashed_at || node.current_version_id !== result.content_version_id) return undefined;
+      if (!node || node.kind !== "file" || node.trashed_at || node.current_version_id !== result.content_version_id) continue;
       const row: Row = {
         node,
         path: node.path || result.path,
@@ -1056,10 +1058,10 @@
         evidence: evidenceKindLabels(result.evidence.map((item) => item.kind)),
         naturalMode,
       };
-      return row;
-    }));
+      hydrated.push(row);
+    }
     if (request !== generation || session !== webSession || signal.aborted) return [];
-    return hydrated.filter((row): row is Row => row !== undefined);
+    return hydrated;
   }
 
   async function loadTaggedNodes(
@@ -1152,6 +1154,12 @@
   function changeNaturalSearchMode(value: string): void {
     naturalSearchMode = value as NaturalSearchMode;
     if (naturalSearchMode === "names") naturalRerank = false;
+    if (activeQuery || searchPending) void runSearch();
+  }
+
+  function changeNaturalRerank(checked: boolean): void {
+    naturalRerank = checked;
+    if (activeQuery || searchPending) void runSearch();
   }
 
   function changeTagFilter(tagID: string): void {
@@ -2056,7 +2064,7 @@
             {#if naturalProfile?.reranking_available && naturalSearchMode !== "names"}
               <label class="rerank-control">
                 <Checkbox checked={naturalRerank} ariaLabel="Rerank results"
-                  onchange={(checked) => (naturalRerank = checked)} />
+                  onchange={changeNaturalRerank} />
                 <span>Rerank results</span>
               </label>
             {/if}
@@ -2425,6 +2433,9 @@
         {/if}
         {#if naturalSearchNote}
           <div class="banner search-note" role="status" aria-live="polite">{naturalSearchNote}</div>
+        {/if}
+        {#if naturalProfilesError}
+          <div class="banner search-note" role="status">{naturalProfilesError}</div>
         {/if}
         {#if naturalRerankPending}
           <div class="banner search-note" role="status" aria-live="polite">Reranking results… Base results are shown.</div>
