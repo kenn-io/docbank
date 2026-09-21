@@ -72,16 +72,27 @@ func TestProviderMapping(t *testing.T) {
 	})
 	assert.NotContains(t, cohereFake.requests[0].Candidates[0].Excerpt, "judgment-grade-candidate")
 	assert.NotContains(t, cohereFake.requests[0].Candidates[1].Excerpt, "judgment-grade-candidate")
-	zeroReceipt := &fakeCohereClient{execution: cohere.Execution{
-		Scores:  cohereFake.execution.Scores,
-		Receipt: cohere.Receipt{PolicyFingerprint: "cohere-policy"},
-	}}
-	zeroResult, err := (&cohereProviderAdapter{client: zeroReceipt, pricing: &pricingInput{
-		CohereSearchUnits: &datedRate{Basis: "2026-09-21:cohere-search-unit", MicrosPerUnit: 2},
-	}}).Rerank(context.Background(), embeddingeval.System{}, "synthetic query", candidates)
-	require.NoError(t, err)
-	assert.Nil(t, zeroResult.Usage.Cost, "Cohere zero search units have no presence bit")
-	assert.Nil(t, zeroResult.Usage.TokenUsage, "Cohere zero tokens have no presence bit")
+	for _, test := range []struct {
+		name          string
+		input, output float64
+	}{
+		{name: "neither token count reported"},
+		{name: "input tokens only", input: 7},
+		{name: "output tokens only", output: 7},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			client := &fakeCohereClient{execution: cohere.Execution{
+				Scores:  cohereFake.execution.Scores,
+				Receipt: cohere.Receipt{PolicyFingerprint: "cohere-policy", InputTokens: test.input, OutputTokens: test.output},
+			}}
+			result, err := (&cohereProviderAdapter{client: client, pricing: &pricingInput{
+				CohereSearchUnits: &datedRate{Basis: "2026-09-21:cohere-search-unit", MicrosPerUnit: 2},
+			}}).Rerank(t.Context(), embeddingeval.System{}, "synthetic query", candidates)
+			require.NoError(t, err)
+			assert.Nil(t, result.Usage.Cost, "Cohere zero search units have no presence bit")
+			assert.Nil(t, result.Usage.TokenUsage, "both token counts must be known")
+		})
+	}
 }
 
 func TestProviderAdapterFailures(t *testing.T) {
@@ -300,8 +311,9 @@ func (adapter *cohereProviderAdapter) Rerank(ctx context.Context, _ embeddingeva
 		scores[index] = score
 	}
 	var tokens *float64
-	if total := execution.Receipt.InputTokens + execution.Receipt.OutputTokens; total > 0 {
-		tokens = &total
+	// Receipt zeros cannot distinguish a reported zero from a missing count.
+	if execution.Receipt.InputTokens > 0 && execution.Receipt.OutputTokens > 0 {
+		tokens = new(execution.Receipt.InputTokens + execution.Receipt.OutputTokens)
 	}
 	var cost *embeddingeval.CostObservation
 	if execution.Receipt.SearchUnits > 0 {
