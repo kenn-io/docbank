@@ -20,6 +20,7 @@ import (
 const (
 	webSessionPath   = "/api/daemon/web-session"
 	WebSessionHeader = "X-Docbank-Web-Session"
+	webLimitQuery    = "limit"
 )
 
 // webSessionRegistry owns browser credentials for exactly one daemon
@@ -238,11 +239,11 @@ func webSessionRequestAllowed(r *http.Request) bool {
 			return false
 		}
 		for key, values := range query {
-			if (key != "offset" && key != "limit") || len(values) != 1 {
+			if (key != "offset" && key != webLimitQuery) || len(values) != 1 {
 				return false
 			}
 			value, err := strconv.Atoi(values[0])
-			if err != nil || value < 0 || value > 100 || key == "limit" && value > 50 {
+			if err != nil || value < 0 || value > 100 || key == webLimitQuery && value > 50 {
 				return false
 			}
 		}
@@ -384,7 +385,7 @@ func webSessionRequestAllowed(r *http.Request) bool {
 			return false
 		}
 		for key, entries := range values {
-			if (key != "limit" && key != "offset") || len(entries) != 1 {
+			if (key != webLimitQuery && key != "offset") || len(entries) != 1 {
 				return false
 			}
 		}
