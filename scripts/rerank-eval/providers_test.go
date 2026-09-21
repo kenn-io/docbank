@@ -82,9 +82,82 @@ func TestProviderMapping(t *testing.T) {
 	assert.Nil(t, zeroResult.Usage.Cost, "Cohere zero search units have no presence bit")
 }
 
+func TestProviderAdapterFailures(t *testing.T) {
+	candidates := []embeddingeval.Document{{ID: "candidate-a", Text: "first synthetic excerpt"}, {ID: "candidate-b", Text: "second synthetic excerpt"}}
+	shape := typesafe.RequestShapeBatched
+
+	t.Run("TypeSafe client error", func(t *testing.T) {
+		providerErr := errors.New("synthetic TypeSafe provider failure")
+		adapter := &typeSafeAdapter{client: &fakeTypeSafeClient{
+			shape: shape, fingerprint: "jev-policy", err: providerErr,
+		}, pricing: &pricingInput{}}
+		_, err := adapter.Rerank(context.Background(), embeddingeval.System{}, "synthetic query", candidates)
+		require.ErrorIs(t, err, providerErr)
+	})
+
+	t.Run("TypeSafe receipt contract", func(t *testing.T) {
+		baseReceipt := typesafe.Receipt{PolicyFingerprint: "jev-policy", RequestShape: shape, CandidateCount: len(candidates)}
+		for _, test := range []struct {
+			name   string
+			mutate func(*typesafe.Receipt)
+			want   string
+		}{
+			{name: "identity", mutate: func(receipt *typesafe.Receipt) { receipt.PolicyFingerprint = "" }, want: "typesafe adapter returned a mismatched policy fingerprint"},
+			{name: "request shape", mutate: func(receipt *typesafe.Receipt) { receipt.RequestShape = "" }, want: "typesafe adapter returned a mismatched request shape"},
+			{name: "candidate count", mutate: func(receipt *typesafe.Receipt) { receipt.CandidateCount = 0 }, want: "typesafe adapter returned a mismatched candidate count"},
+		} {
+			t.Run(test.name, func(t *testing.T) {
+				receipt := baseReceipt
+				test.mutate(&receipt)
+				adapter := &typeSafeAdapter{client: &fakeTypeSafeClient{
+					shape: shape, fingerprint: "jev-policy", result: typesafe.Result{
+						Scores: []float64{0.2, 0.8}, Receipt: receipt,
+					},
+				}, pricing: &pricingInput{}}
+				_, err := adapter.Rerank(context.Background(), embeddingeval.System{}, "synthetic query", candidates)
+				require.EqualError(t, err, test.want)
+			})
+		}
+	})
+
+	t.Run("Cohere client error", func(t *testing.T) {
+		providerErr := errors.New("synthetic Cohere provider failure")
+		adapter := &cohereProviderAdapter{client: &fakeCohereClient{err: providerErr}, pricing: &pricingInput{}}
+		_, err := adapter.Rerank(context.Background(), embeddingeval.System{}, "synthetic query", candidates)
+		require.ErrorIs(t, err, providerErr)
+	})
+
+	identities := []retrieval.DocumentIdentity{
+		{VaultID: "synthetic", NodeID: 1, ContentVersionID: candidates[0].ID},
+		{VaultID: "synthetic", NodeID: 2, ContentVersionID: candidates[1].ID},
+	}
+	unknown := retrieval.DocumentIdentity{VaultID: "synthetic", NodeID: 3, ContentVersionID: "unknown"}
+	for _, test := range []struct {
+		name   string
+		scores []retrieval.RerankScore
+		want   string
+	}{
+		{name: "duplicate", scores: []retrieval.RerankScore{{Document: identities[0], Score: 0.1}, {Document: identities[0], Score: 0.2}, {Document: identities[1], Score: 0.3}}, want: "cohere adapter returned duplicate candidates"},
+		{name: "unknown", scores: []retrieval.RerankScore{{Document: identities[0], Score: 0.1}, {Document: identities[1], Score: 0.2}, {Document: unknown, Score: 0.3}}, want: "cohere adapter returned an unknown candidate"},
+		{name: "missing", scores: []retrieval.RerankScore{{Document: identities[0], Score: 0.1}}, want: "cohere adapter returned a missing candidate"},
+	} {
+		t.Run("Cohere "+test.name+" candidate", func(t *testing.T) {
+			adapter := &cohereProviderAdapter{client: &fakeCohereClient{execution: cohere.Execution{Scores: test.scores}}, pricing: &pricingInput{}}
+			_, err := adapter.Rerank(context.Background(), embeddingeval.System{}, "synthetic query", candidates)
+			require.EqualError(t, err, test.want)
+		})
+	}
+}
+
 func TestDatedRateCostRejectsOverflow(t *testing.T) {
 	rate := &datedRate{Basis: "2026-09-21:overflow", MicrosPerUnit: float64(^uint64(0) >> 1)}
 	_, err := rate.cost(2)
+	require.EqualError(t, err, "pricing result is too large")
+}
+
+func TestDatedRateCostRejectsExactInt64Boundary(t *testing.T) {
+	rate := &datedRate{Basis: "2026-09-21:int64-boundary", MicrosPerUnit: math.Ldexp(1, 63)}
+	_, err := rate.cost(1)
 	require.EqualError(t, err, "pricing result is too large")
 }
 
@@ -114,13 +187,13 @@ func (adapter *typeSafeAdapter) Rerank(ctx context.Context, _ embeddingeval.Syst
 	if err != nil {
 		return embeddingeval.RerankResult{}, err
 	}
-	if result.Receipt.PolicyFingerprint != "" && result.Receipt.PolicyFingerprint != adapter.client.PolicyFingerprint() {
+	if result.Receipt.PolicyFingerprint != adapter.client.PolicyFingerprint() {
 		return embeddingeval.RerankResult{}, errors.New("typesafe adapter returned a mismatched policy fingerprint")
 	}
-	if result.Receipt.RequestShape != "" && result.Receipt.RequestShape != adapter.client.RequestShape() {
+	if result.Receipt.RequestShape != adapter.client.RequestShape() {
 		return embeddingeval.RerankResult{}, errors.New("typesafe adapter returned a mismatched request shape")
 	}
-	if result.Receipt.CandidateCount != 0 && result.Receipt.CandidateCount != len(candidates) {
+	if result.Receipt.CandidateCount != len(candidates) {
 		return embeddingeval.RerankResult{}, errors.New("typesafe adapter returned a mismatched candidate count")
 	}
 	tokens := float64(result.Receipt.InputTokens + result.Receipt.OutputTokens)
@@ -172,12 +245,22 @@ func (adapter *cohereProviderAdapter) Rerank(ctx context.Context, _ embeddingeva
 	if execution.Receipt.PolicyFingerprint != "" && execution.Receipt.PolicyFingerprint != adapter.client.PolicyFingerprint() {
 		return embeddingeval.RerankResult{}, errors.New("cohere adapter returned a mismatched policy fingerprint")
 	}
+	expected := make(map[retrieval.DocumentIdentity]struct{}, len(request.Candidates))
+	for _, candidate := range request.Candidates {
+		expected[candidate.Document] = struct{}{}
+	}
 	byDocument := make(map[retrieval.DocumentIdentity]float64, len(execution.Scores))
 	for _, score := range execution.Scores {
+		if _, ok := expected[score.Document]; !ok {
+			return embeddingeval.RerankResult{}, errors.New("cohere adapter returned an unknown candidate")
+		}
+		if _, duplicate := byDocument[score.Document]; duplicate {
+			return embeddingeval.RerankResult{}, errors.New("cohere adapter returned duplicate candidates")
+		}
 		byDocument[score.Document] = score.Score
 	}
 	if len(byDocument) != len(candidates) {
-		return embeddingeval.RerankResult{}, errors.New("cohere adapter returned duplicate candidates")
+		return embeddingeval.RerankResult{}, errors.New("cohere adapter returned a missing candidate")
 	}
 	scores := make([]float64, len(candidates))
 	for index, candidate := range request.Candidates {
@@ -249,7 +332,7 @@ func (rate *datedRate) cost(units float64) (*embeddingeval.CostObservation, erro
 		return nil, errors.New("provider usage quantity is invalid")
 	}
 	value := units * rate.MicrosPerUnit
-	if math.IsInf(value, 0) || value > float64(^uint64(0)>>1) {
+	if math.IsInf(value, 0) || value >= math.Ldexp(1, 63) {
 		return nil, errors.New("pricing result is too large")
 	}
 	return &embeddingeval.CostObservation{Micros: int64(math.Round(value)), Basis: rate.Basis}, nil
@@ -266,6 +349,7 @@ type fakeTypeSafeClient struct {
 	shape       typesafe.RequestShape
 	fingerprint string
 	result      typesafe.Result
+	err         error
 	requests    []fakeTypeSafeRequest
 }
 
@@ -277,6 +361,9 @@ type fakeTypeSafeRequest struct {
 
 func (fake *fakeTypeSafeClient) Rerank(_ context.Context, request typesafe.RerankRequest) (typesafe.Result, error) {
 	fake.requests = append(fake.requests, fakeTypeSafeRequest{Shape: fake.shape, Query: request.Query, Candidates: slices.Clone(request.Candidates)})
+	if fake.err != nil {
+		return typesafe.Result{}, fake.err
+	}
 	return fake.result, nil
 }
 
@@ -286,11 +373,15 @@ func (fake *fakeTypeSafeClient) PolicyFingerprint() string { return fake.fingerp
 
 type fakeCohereClient struct {
 	execution cohere.Execution
+	err       error
 	requests  []retrieval.RerankingRequest
 }
 
 func (fake *fakeCohereClient) RerankWithReceipt(_ context.Context, request retrieval.RerankingRequest) (cohere.Execution, error) {
 	fake.requests = append(fake.requests, request)
+	if fake.err != nil {
+		return cohere.Execution{}, fake.err
+	}
 	return fake.execution, nil
 }
 
