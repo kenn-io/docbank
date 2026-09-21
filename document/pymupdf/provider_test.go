@@ -197,7 +197,9 @@ func TestProviderEnforcesTimeoutAndCancellation(t *testing.T) {
 		_, err := provider.Render(t.Context(), upload,
 			testAuthorization(provider.Descriptor(), upload.Metadata()))
 		assertProviderCode(t, err, document.RenditionErrorTransient)
-		assert.Less(t, time.Since(started), time.Second)
+		require.ErrorIs(t, err, context.DeadlineExceeded)
+		// Leave room for process startup and cleanup, but stop before the helper's ten-second wait.
+		assert.Less(t, time.Since(started), 5*time.Second)
 	})
 	t.Run("cancellation", func(t *testing.T) {
 		provider := newTestProvider(t, helperExecutable(t, "wait"), time.Second, 1<<20)
