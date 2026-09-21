@@ -26,8 +26,10 @@ import (
 	"go.kenn.io/docbank/internal/jobs"
 	internalmaintenance "go.kenn.io/docbank/internal/maintenance"
 	"go.kenn.io/docbank/internal/processing"
+	"go.kenn.io/docbank/internal/reporting"
 	"go.kenn.io/docbank/internal/store"
 	"go.kenn.io/docbank/internal/version"
+	"go.kenn.io/docbank/report"
 )
 
 const kitPingPath = kitdaemon.DefaultPingPath
@@ -96,6 +98,8 @@ type Server struct {
 	webSessions   *webSessionRegistry
 	webDownloads  *webDownloadRegistry
 	snapshots     *store.QuerySnapshotService
+	termReports   *reporting.Cache
+	reportBudget  report.Budget
 	masterOwner   string
 }
 
@@ -156,6 +160,10 @@ func NewServer(d Deps) *Server {
 		snapshots: snapshots, masterOwner: masterOwner,
 		webDownloads: newWebDownloadRegistry(d.VaultRoot),
 	}
+	if d.Store != nil {
+		s.reportBudget = report.NewBudget(1 << 30)
+		s.termReports = reporting.NewCache(time.Now, s.reportBudget)
+	}
 	g := d.Gate
 	if g == nil {
 		g = NewOperationGate()
@@ -166,6 +174,9 @@ func NewServer(d Deps) *Server {
 		}
 		if s.snapshots != nil {
 			s.snapshots.Revoke(owner)
+		}
+		if s.termReports != nil {
+			s.termReports.Revoke(owner)
 		}
 		s.webDownloads.revokeOwner(owner)
 		if d.Store != nil {
@@ -207,6 +218,7 @@ func NewServer(d Deps) *Server {
 	registerPageRoutes(humaAPI, d, g)
 	registerExportRoutes(mux, humaAPI, d, g, s.snapshots, s.webDownloads, s.webSessions)
 	registerWorkspaceQueryRoutes(humaAPI, d, s.snapshots)
+	registerTermReportRoutes(humaAPI, d, g, s.termReports, s.webDownloads, s.webSessions)
 	registerAuditRoutes(humaAPI, d, g, s.auditPreviews)
 	registerProcessingRoutes(humaAPI, d)
 	registerEmailRoutes(mux, humaAPI, d, g)
@@ -225,7 +237,7 @@ func NewServer(d Deps) *Server {
 	registerWeb(mux, d.Cfg.Web.Enabled, d.WebURL)
 	registerWebSession(mux, d.Cfg.Web.Enabled, d.WebURL, s.webSessions)
 	registerWebUpload(mux, d.Cfg.Web.Enabled, d.WebURL, d, g, s.webSessions)
-	registerWebDownload(mux, d.Cfg.Web.Enabled, d, s.webDownloads, s.webSessions)
+	registerWebDownload(mux, d.Cfg.Web.Enabled, d, s.webDownloads, s.webSessions, s.termReports)
 
 	h := http.Handler(mux)
 	h = authMiddleware(h, d.Cfg.Server.APIKey, s.webSessions, s.masterOwner)
@@ -277,6 +289,9 @@ func (s *Server) Shutdown(ctx context.Context) error {
 		s.webDownloads.revokeOwner(s.masterOwner)
 	}
 	snapshotDone := make(chan error, 1)
+	if s.termReports != nil {
+		s.termReports.InvalidateAll()
+	}
 	go func() {
 		if s.snapshots == nil {
 			snapshotDone <- nil
@@ -290,6 +305,9 @@ func (s *Server) Shutdown(ctx context.Context) error {
 	}
 	select {
 	case snapshotErr := <-snapshotDone:
+		if s.termReports != nil {
+			sessionErr = errors.Join(sessionErr, s.termReports.Shutdown(ctx), s.reportBudget.Close())
+		}
 		return errors.Join(sessionErr, snapshotErr)
 	case <-ctx.Done():
 		return errors.Join(sessionErr, ctx.Err())

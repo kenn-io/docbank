@@ -1619,6 +1619,19 @@ CREATE TABLE IF NOT EXISTS saved_query_runs (
 CREATE INDEX IF NOT EXISTS saved_query_runs_definition
     ON saved_query_runs(saved_query_id, ran_at DESC);
 
+-- Report history stores the reusable request and a small receipt. The frozen
+-- observation and downloadable evidence remain daemon-local and expire.
+CREATE TABLE IF NOT EXISTS term_report_history (
+    id           TEXT PRIMARY KEY NOT NULL,
+    parent_id    TEXT NOT NULL,
+    observed_at  TEXT NOT NULL,
+    request_json BLOB NOT NULL,
+    summary_json BLOB NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS term_report_history_recent
+    ON term_report_history(observed_at DESC, id DESC);
+
 -- Canonical full-audit records are immutable content-addressed authority. The
 -- digest is over Docbank's typed canonical audit encoding, never the JSON
 -- spelling retained here for deterministic metadata-v1 transport.

@@ -45,6 +45,7 @@
   import ActionRecoveryModal from "./ActionRecoveryModal.svelte";
   import BackupDrawer from "./BackupDrawer.svelte";
   import ExportDrawer from "./ExportDrawer.svelte";
+  import TermReportDrawer from "./TermReportDrawer.svelte";
   import { copyExportMembers } from "./exports.js";
   import type { ExportInput } from "./exportState.js";
   import CollectionsDrawer from "./CollectionsDrawer.svelte";
@@ -208,9 +209,10 @@
   let storageOpen = $state(false);
   let backupsOpen = $state(false);
   let exportOpen = $state(false);
+  let termReportsOpen = $state(false);
   let exportHasJob = $state(false);
   let exportInput = $state<ExportInput | null>(null);
-  $effect(() => { if (!webSession) { exportOpen = false; exportInput = null; exportHasJob = false; } });
+  $effect(() => { if (!webSession) { exportOpen = false; exportInput = null; exportHasJob = false; termReportsOpen = false; } });
   let savedQueriesOpen = $state(false);
   let queryBarOpen = $state(false);
   let savedQueryDraft = $state<Query | null>(null);
@@ -2148,6 +2150,7 @@
       {/snippet}
       {#snippet right()}
         <Button size="sm" disabled={!exportHasJob && (snapshotActive ? (snapshotPage?.total ?? 0) === 0 : visibleDocumentCount === 0)} onclick={() => openExport()}>Export</Button>
+        <Button size="sm" onclick={() => termReportsOpen = true}>Search exports</Button>
         <Button size="sm" onclick={() => openQueryEditor()}>Edit query</Button>
         <Button size="sm" disabled={snapshotActive && snapshotState.status !== "ready"}
           onclick={() => { snapshotActionError = ""; snapshotActionsOpen = true; }}>Snapshot actions</Button>
@@ -3203,6 +3206,9 @@
     {#key webSession}
       <ExportDrawer session={webSession} open={exportOpen} input={exportInput} onclose={() => exportOpen = false} onauthfailure={handleFailure} onactivechange={active => exportHasJob = active} />
     {/key}
+    {#if termReportsOpen}
+      <TermReportDrawer session={webSession} initialExpression={searchQuery} onclose={() => termReportsOpen = false} onauthfailure={handleFailure} />
+    {/if}
     {#if storageOpen}
       <StorageDrawer
         session={webSession}

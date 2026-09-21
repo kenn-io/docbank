@@ -232,6 +232,39 @@ func webSessionRequestAllowed(r *http.Request) bool {
 		return true
 	}
 	method, path := r.Method, r.URL.Path
+	if path == "/api/v1/term-reports" && method == http.MethodGet {
+		query := r.URL.Query()
+		if len(query) > 2 {
+			return false
+		}
+		for key, values := range query {
+			if (key != "offset" && key != "limit") || len(values) != 1 {
+				return false
+			}
+			value, err := strconv.Atoi(values[0])
+			if err != nil || value < 0 || value > 100 || key == "limit" && value > 50 {
+				return false
+			}
+		}
+		return true
+	}
+	if r.URL.RawQuery == "" {
+		if path == "/api/v1/term-reports" {
+			return method == http.MethodPost
+		}
+		if after, ok := strings.CutPrefix(path, "/api/v1/term-reports/"); ok {
+			parts := strings.Split(after, "/")
+			if len(parts[0]) != 48 {
+				return false
+			}
+			if _, err := hex.DecodeString(parts[0]); err != nil {
+				return false
+			}
+			return len(parts) == 1 && method == http.MethodGet ||
+				len(parts) == 2 && method == http.MethodPost &&
+					(parts[1] == "dates" || parts[1] == "revisions" || parts[1] == "download")
+		}
+	}
 	if strings.HasPrefix(path, "/api/v1/exports/") {
 		return exportBrowserRouteAllowed(r)
 	}

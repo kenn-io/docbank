@@ -16,6 +16,7 @@ import (
 	mailbox "go.kenn.io/docbank/internal/mailbox"
 	query "go.kenn.io/docbank/internal/query"
 	store "go.kenn.io/docbank/internal/store"
+	report "go.kenn.io/docbank/report"
 )
 
 // Client calls the generated API operations.
@@ -8370,6 +8371,372 @@ func (c *Client) ListTagNodes(ctx context.Context, options *ListTagNodesRequestO
 	return responseParser(ctx, resp)
 }
 
+// ListTermReportHistory List reusable report runs
+func (c *Client) ListTermReportHistory(ctx context.Context, options *ListTermReportHistoryRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ListTermReportHistoryResponse, error) {
+	var err error
+
+	queryEncoding := map[string]runtime.QueryEncoding{
+		"limit":  {Style: "form", Explode: &[]bool{false}[0]},
+		"offset": {Style: "form", Explode: &[]bool{false}[0]},
+	}
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:    c.apiClient.GetBaseURL() + "/api/v1/term-reports",
+		Method:        "GET",
+		Options:       options,
+		QueryEncoding: queryEncoding,
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*ListTermReportHistoryResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(ListTermReportHistoryResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "ListTermReportHistoryResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[ListTermReportHistoryErrorResponse](resp, "ListTermReportHistoryErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/term-reports")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
+// CreateTermReport Prepare a frozen search-term report
+func (c *Client) CreateTermReport(ctx context.Context, options *CreateTermReportRequestOptions, reqEditors ...runtime.RequestEditorFn) (*CreateTermReportResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/term-reports",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*CreateTermReportResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(CreateTermReportResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "CreateTermReportResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[CreateTermReportErrorResponse](resp, "CreateTermReportErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/term-reports")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
+// GetTermReport Read a frozen report summary
+func (c *Client) GetTermReport(ctx context.Context, options *GetTermReportRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetTermReportResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/term-reports/{id}",
+		Method:     "GET",
+		Options:    options,
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*GetTermReportResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(GetTermReportResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "GetTermReportResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[GetTermReportErrorResponse](resp, "GetTermReportErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/term-reports/{id}")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
+// DownloadTermReportbundle Download frozen report bundle
+func (c *Client) DownloadTermReportbundle(ctx context.Context, options *DownloadTermReportbundleRequestOptions, reqEditors ...runtime.RequestEditorFn) (*DownloadTermReportbundleResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/term-reports/{id}/bundle",
+		Method:     "GET",
+		Options:    options,
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*DownloadTermReportbundleResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(DownloadTermReportbundleResponse(resp.Content))
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[DownloadTermReportbundleErrorResponse](resp, "DownloadTermReportbundleErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/term-reports/{id}/bundle")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
+// DownloadTermReportcsv Download frozen report csv
+func (c *Client) DownloadTermReportcsv(ctx context.Context, options *DownloadTermReportcsvRequestOptions, reqEditors ...runtime.RequestEditorFn) (*DownloadTermReportcsvResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/term-reports/{id}/csv",
+		Method:     "GET",
+		Options:    options,
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*DownloadTermReportcsvResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(DownloadTermReportcsvResponse(resp.Content))
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[DownloadTermReportcsvErrorResponse](resp, "DownloadTermReportcsvErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/term-reports/{id}/csv")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
+// GetTermReportDates Inspect frozen report date evidence
+func (c *Client) GetTermReportDates(ctx context.Context, options *GetTermReportDatesRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetTermReportDatesResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/term-reports/{id}/dates",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*GetTermReportDatesResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(GetTermReportDatesResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "GetTermReportDatesResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[GetTermReportDatesErrorResponse](resp, "GetTermReportDatesErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/term-reports/{id}/dates")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
+// IssueTermReportDownload Issue a one-use browser report download
+func (c *Client) IssueTermReportDownload(ctx context.Context, options *IssueTermReportDownloadRequestOptions, reqEditors ...runtime.RequestEditorFn) (*IssueTermReportDownloadResponseJSON, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/term-reports/{id}/download",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*IssueTermReportDownloadResponseJSON, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(IssueTermReportDownloadResponseJSON)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "IssueTermReportDownloadResponseJSON", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[IssueTermReportDownloadErrorResponse](resp, "IssueTermReportDownloadErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/term-reports/{id}/download")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
+// ReviseTermReport Create a frozen reviewed date revision
+func (c *Client) ReviseTermReport(ctx context.Context, options *ReviseTermReportRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ReviseTermReportResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/term-reports/{id}/revisions",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*ReviseTermReportResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(ReviseTermReportResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "ReviseTermReportResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[ReviseTermReportErrorResponse](resp, "ReviseTermReportErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/term-reports/{id}/revisions")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
 // ReadTimelineCoverage Read current-file timeline coverage
 func (c *Client) ReadTimelineCoverage(ctx context.Context, reqEditors ...runtime.RequestEditorFn) (*ReadTimelineCoverageResponse, error) {
 	var err error
@@ -14543,6 +14910,263 @@ func (o *ListTagNodesRequestOptions) GetHeader() (map[string]string, error) {
 	return nil, nil
 }
 
+// ListTermReportHistoryRequestOptions is the options needed to make a request to ListTermReportHistory.
+type ListTermReportHistoryRequestOptions struct {
+	Query *ListTermReportHistoryQuery
+}
+
+// GetPathParams returns the path params as a map.
+func (o *ListTermReportHistoryRequestOptions) GetPathParams() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetQuery returns the query params as a map.
+func (o *ListTermReportHistoryRequestOptions) GetQuery() (map[string]any, error) {
+	encoded, err := json.Marshal(o.Query, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *ListTermReportHistoryRequestOptions) GetBody() any {
+	return nil
+}
+
+// GetHeader returns the headers as a map.
+func (o *ListTermReportHistoryRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
+// CreateTermReportRequestOptions is the options needed to make a request to CreateTermReport.
+type CreateTermReportRequestOptions struct {
+	Body *CreateTermReportBody
+}
+
+// GetPathParams returns the path params as a map.
+func (o *CreateTermReportRequestOptions) GetPathParams() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetQuery returns the query params as a map.
+func (o *CreateTermReportRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *CreateTermReportRequestOptions) GetBody() any {
+	if o.Body == nil {
+		return nil
+	}
+	return o.Body
+}
+
+// GetHeader returns the headers as a map.
+func (o *CreateTermReportRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
+// GetTermReportRequestOptions is the options needed to make a request to GetTermReport.
+type GetTermReportRequestOptions struct {
+	PathParams *GetTermReportPath
+}
+
+// GetPathParams returns the path params as a map.
+func (o *GetTermReportRequestOptions) GetPathParams() (map[string]any, error) {
+	encoded, err := json.Marshal(o.PathParams, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetQuery returns the query params as a map.
+func (o *GetTermReportRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *GetTermReportRequestOptions) GetBody() any {
+	return nil
+}
+
+// GetHeader returns the headers as a map.
+func (o *GetTermReportRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
+// DownloadTermReportbundleRequestOptions is the options needed to make a request to DownloadTermReportbundle.
+type DownloadTermReportbundleRequestOptions struct {
+	PathParams *DownloadTermReportbundlePath
+}
+
+// GetPathParams returns the path params as a map.
+func (o *DownloadTermReportbundleRequestOptions) GetPathParams() (map[string]any, error) {
+	encoded, err := json.Marshal(o.PathParams, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetQuery returns the query params as a map.
+func (o *DownloadTermReportbundleRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *DownloadTermReportbundleRequestOptions) GetBody() any {
+	return nil
+}
+
+// GetHeader returns the headers as a map.
+func (o *DownloadTermReportbundleRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
+// DownloadTermReportcsvRequestOptions is the options needed to make a request to DownloadTermReportcsv.
+type DownloadTermReportcsvRequestOptions struct {
+	PathParams *DownloadTermReportcsvPath
+}
+
+// GetPathParams returns the path params as a map.
+func (o *DownloadTermReportcsvRequestOptions) GetPathParams() (map[string]any, error) {
+	encoded, err := json.Marshal(o.PathParams, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetQuery returns the query params as a map.
+func (o *DownloadTermReportcsvRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *DownloadTermReportcsvRequestOptions) GetBody() any {
+	return nil
+}
+
+// GetHeader returns the headers as a map.
+func (o *DownloadTermReportcsvRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
+// GetTermReportDatesRequestOptions is the options needed to make a request to GetTermReportDates.
+type GetTermReportDatesRequestOptions struct {
+	PathParams *GetTermReportDatesPath
+	Body       *GetTermReportDatesBody
+}
+
+// GetPathParams returns the path params as a map.
+func (o *GetTermReportDatesRequestOptions) GetPathParams() (map[string]any, error) {
+	encoded, err := json.Marshal(o.PathParams, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetQuery returns the query params as a map.
+func (o *GetTermReportDatesRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *GetTermReportDatesRequestOptions) GetBody() any {
+	if o.Body == nil {
+		return nil
+	}
+	return o.Body
+}
+
+// GetHeader returns the headers as a map.
+func (o *GetTermReportDatesRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
+// IssueTermReportDownloadRequestOptions is the options needed to make a request to IssueTermReportDownload.
+type IssueTermReportDownloadRequestOptions struct {
+	PathParams *IssueTermReportDownloadPath
+	Body       *IssueTermReportDownloadBody
+}
+
+// GetPathParams returns the path params as a map.
+func (o *IssueTermReportDownloadRequestOptions) GetPathParams() (map[string]any, error) {
+	encoded, err := json.Marshal(o.PathParams, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetQuery returns the query params as a map.
+func (o *IssueTermReportDownloadRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *IssueTermReportDownloadRequestOptions) GetBody() any {
+	if o.Body == nil {
+		return nil
+	}
+	return o.Body
+}
+
+// GetHeader returns the headers as a map.
+func (o *IssueTermReportDownloadRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
+// ReviseTermReportRequestOptions is the options needed to make a request to ReviseTermReport.
+type ReviseTermReportRequestOptions struct {
+	PathParams *ReviseTermReportPath
+	Body       *ReviseTermReportBody
+}
+
+// GetPathParams returns the path params as a map.
+func (o *ReviseTermReportRequestOptions) GetPathParams() (map[string]any, error) {
+	encoded, err := json.Marshal(o.PathParams, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetQuery returns the query params as a map.
+func (o *ReviseTermReportRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *ReviseTermReportRequestOptions) GetBody() any {
+	if o.Body == nil {
+		return nil
+	}
+	return o.Body
+}
+
+// GetHeader returns the headers as a map.
+func (o *ReviseTermReportRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
 // CreateTimelineRebuildRequestOptions is the options needed to make a request to CreateTimelineRebuild.
 type CreateTimelineRebuildRequestOptions struct {
 	Body *CreateTimelineRebuildBody
@@ -14967,6 +15591,13 @@ type HighlightSetV1SchemaV int64
 
 const (
 	N1 HighlightSetV1SchemaV = 1
+)
+
+type IssueTermReportDownloadRequestFormat string
+
+const (
+	Bundle IssueTermReportDownloadRequestFormat = "bundle"
+	Csv    IssueTermReportDownloadRequestFormat = "csv"
 )
 
 type RenditionTextObservedConfiguration string
@@ -15496,6 +16127,30 @@ type ListTagNodesPath struct {
 	TagID string `json:"tag_id"`
 }
 
+type GetTermReportPath struct {
+	ID string `json:"id"`
+}
+
+type DownloadTermReportbundlePath struct {
+	ID string `json:"id"`
+}
+
+type DownloadTermReportcsvPath struct {
+	ID string `json:"id"`
+}
+
+type GetTermReportDatesPath struct {
+	ID string `json:"id"`
+}
+
+type IssueTermReportDownloadPath struct {
+	ID string `json:"id"`
+}
+
+type ReviseTermReportPath struct {
+	ID string `json:"id"`
+}
+
 type ReadTimelineRebuildPath struct {
 	OperationID uuid.UUID `json:"operation_id"`
 }
@@ -15736,6 +16391,14 @@ type CreateTagBody = CreateTagRequest
 
 type RenameTagBody = RenameTagRequest
 
+type CreateTermReportBody = Request
+
+type GetTermReportDatesBody = DatePageRequest
+
+type IssueTermReportDownloadBody = IssueTermReportDownloadRequest
+
+type ReviseTermReportBody = ReviseTermReportRequest
+
 type CreateTimelineRebuildBody = TimelineRebuildRequest
 
 type EmptyTrashBody = EmptyTrashRequest
@@ -15966,6 +16629,11 @@ type ListTagNodesQuery struct {
 	Limit    *int64 `json:"limit,omitempty"`
 	Offset   *int64 `json:"offset,omitempty"`
 	LiveOnly *bool  `json:"live_only,omitempty"`
+}
+
+type ListTermReportHistoryQuery struct {
+	Offset *int64 `json:"offset,omitempty"`
+	Limit  *int64 `json:"limit,omitempty"`
 }
 
 type ListTrashQuery struct {
@@ -16681,6 +17349,38 @@ type ListTagNodesResponse = api.TaggedNodePage
 
 type ListTagNodesErrorResponse = Error
 
+type ListTermReportHistoryResponse = store.TermReportHistoryPage
+
+type ListTermReportHistoryErrorResponse = Error
+
+type CreateTermReportResponse = report.Summary
+
+type CreateTermReportErrorResponse = Error
+
+type GetTermReportResponse = report.Summary
+
+type GetTermReportErrorResponse = Error
+
+type DownloadTermReportbundleResponse = []byte
+
+type DownloadTermReportbundleErrorResponse = Error
+
+type DownloadTermReportcsvResponse = []byte
+
+type DownloadTermReportcsvErrorResponse = Error
+
+type GetTermReportDatesResponse = report.DatePage
+
+type GetTermReportDatesErrorResponse = Error
+
+type IssueTermReportDownloadResponseJSON = IssueTermReportDownloadResponse
+
+type IssueTermReportDownloadErrorResponse = Error
+
+type ReviseTermReportResponse = report.Summary
+
+type ReviseTermReportErrorResponse = Error
+
 type ReadTimelineCoverageResponse = api.DocumentEventCoverage
 
 type ReadTimelineCoverageErrorResponse = Error
@@ -16910,6 +17610,10 @@ type ContentVersion = api.ContentVersion
 
 type ContentVersionPage = api.ContentVersionPage
 
+type Counts = report.Counts
+
+type Coverage = report.Coverage
+
 type CoverageClass = api.CoverageClass
 
 type CoverageCounts = api.CoverageCounts
@@ -16931,6 +17635,20 @@ type CreateTagRequest struct {
 	Schema *string `json:"$schema,omitempty"`
 	Name   string  `json:"name"`
 }
+
+type DateCandidate = report.DateCandidate
+
+type DateChoice = report.DateChoice
+
+type DatePage = report.DatePage
+
+type DatePageRequest = report.DatePageRequest
+
+type DateRange = report.DateRange
+
+type DateReviewMember = report.DateReviewMember
+
+type DateSelection = report.DateSelection
 
 type DerivativePurgeEvent = api.DerivativePurgeEvent
 
@@ -17150,6 +17868,8 @@ type HighlightSetV1Schema struct {
 	V     *HighlightSetV1SchemaV     `json:"v,omitempty"`
 }
 
+type Identity = report.Identity
+
 type IngestEvent = api.IngestEvent
 
 type IngestFailure = api.IngestFailure
@@ -17176,11 +17896,25 @@ type InitBackupRepositoryRequest struct {
 	Repo   *string `json:"repo,omitempty"`
 }
 
+type IssueTermReportDownloadRequest struct {
+	// Schema A URL to the JSON Schema for this object.
+	Schema *string                              `json:"$schema,omitempty"`
+	Format IssueTermReportDownloadRequestFormat `json:"format"`
+}
+
+type IssueTermReportDownloadResponse struct {
+	// Schema A URL to the JSON Schema for this object.
+	Schema *string `json:"$schema,omitempty"`
+	URL    string  `json:"url"`
+}
+
 type Job = api.Job
 
 type JobList = api.JobList
 
 type JobRequest = bundle.JobRequest
+
+type Locator = report.Locator
 
 type MailboxArchive = store.MailboxArchive
 
@@ -17559,6 +18293,8 @@ type RenditionTextWindow = api.RenditionTextWindow
 
 type RenditionWindowRequest = api.RenditionWindowRequest
 
+type Request = report.Request
+
 type ResolvedDocumentSourceFence = api.ResolvedDocumentSourceFence
 
 type RetentionDisclosurePolicyV1 = document.RetentionDisclosurePolicyV1
@@ -17569,6 +18305,12 @@ type RevertNodeContentRequest struct {
 	// Schema A URL to the JSON Schema for this object.
 	Schema          *string   `json:"$schema,omitempty"`
 	SourceVersionID uuid.UUID `json:"source_version_id"`
+}
+
+type ReviseTermReportRequest struct {
+	// Schema A URL to the JSON Schema for this object.
+	Schema  *string      `json:"$schema,omitempty"`
+	Choices []DateChoice `json:"choices"`
 }
 
 type RolePolicy = bundle.RolePolicy
@@ -17712,6 +18454,8 @@ type StorageStatus = api.StorageStatus
 
 type StorageStoreStatus = api.StorageStoreStatus
 
+type Summary = report.Summary
+
 type Tag = api.Tag
 
 type TagAssignmentReceipt = api.TagAssignmentReceipt
@@ -17723,6 +18467,12 @@ type TagPage = api.TagPage
 type TaggedNode = api.TaggedNode
 
 type TaggedNodePage = api.TaggedNodePage
+
+type Term = report.Term
+
+type TermReportHistory = store.TermReportHistory
+
+type TermReportHistoryPage = store.TermReportHistoryPage
 
 type TicketOutputBody struct {
 	// Schema A URL to the JSON Schema for this object.

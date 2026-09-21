@@ -22,6 +22,7 @@ export default defineConfig({
   },
   test: {
     environment: "jsdom",
+    maxWorkers: 2,
     exclude: ["docs-site/**", "node_modules/**"],
     server: {
       deps: {

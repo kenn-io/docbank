@@ -1072,6 +1072,23 @@ export interface ContentVersionPage {
   total: number;
 }
 
+export interface Counts {
+  hits: number;
+  hits_plus_family: number;
+  unique_families: number;
+  unique_hits: number;
+  unique_hits_plus_family: number;
+}
+
+export interface Coverage {
+  fallback_dates: number;
+  incomplete_families: number;
+  missing_text: number;
+  scoped: number;
+  searchable: number;
+  warnings?: string[];
+}
+
 export interface CoverageClass {
   /** @minimum 0 */
   complete: number;
@@ -1131,6 +1148,86 @@ export interface CreateTagRequest {
   readonly $schema?: string;
   /** @minLength 1 */
   name: string;
+}
+
+export interface Identity {
+  node_id: number;
+  sha256: string;
+  version_id: string;
+}
+
+export interface Locator {
+  end_byte: number;
+  evidence_id?: string;
+  evidence_sha256?: string;
+  page?: number;
+  quote?: string;
+  rendition_id?: string;
+  start_byte: number;
+  text_sha256?: string;
+}
+
+export interface DateCandidate {
+  claim_basis?: string;
+  confidence?: string;
+  document: Identity;
+  id: string;
+  locator: Locator;
+  precision?: string;
+  raw: string;
+  rejection?: string;
+  role: string;
+  source_class: string;
+  source_field?: string;
+  source_namespace?: string;
+  timezone?: string;
+  value?: string;
+}
+
+export interface DateChoice {
+  action: string;
+  candidate_id: string;
+  document: Identity;
+  evidence_sha256: string;
+  reason: string;
+  reviewed_date?: string;
+  reviewed_role?: string;
+  reviewed_timezone?: string;
+}
+
+export interface DateSelection {
+  candidate_id: string;
+  date: string;
+  mode: string;
+  reason: string;
+  rule_id: string;
+}
+
+export interface DateReviewMember {
+  candidates: DateCandidate[];
+  candidates_complete: boolean;
+  choice?: DateChoice;
+  document: Identity;
+  selection: DateSelection;
+}
+
+export interface DatePage {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  members: DateReviewMember[];
+  next_cursor?: string;
+}
+
+export interface DatePageRequest {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  cursor?: string;
+  limit?: number;
+}
+
+export interface DateRange {
+  end: string;
+  start: string;
 }
 
 export type DerivativePurgeEventType = typeof DerivativePurgeEventType[keyof typeof DerivativePurgeEventType];
@@ -2554,6 +2651,26 @@ export interface InitBackupRepositoryRequest {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
   repo?: string;
+}
+
+export type IssueTermReportDownloadRequestFormat = typeof IssueTermReportDownloadRequestFormat[keyof typeof IssueTermReportDownloadRequestFormat];
+
+
+export const IssueTermReportDownloadRequestFormat = {
+  csv: 'csv',
+  bundle: 'bundle',
+} as const;
+
+export interface IssueTermReportDownloadRequest {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  format: IssueTermReportDownloadRequestFormat;
+}
+
+export interface IssueTermReportDownloadResponse {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  url: string;
 }
 
 export type JobStatus = typeof JobStatus[keyof typeof JobStatus];
@@ -4116,6 +4233,28 @@ export interface RenditionWindowRequest {
   vault_id: string;
 }
 
+export interface Term {
+  dates: DateRange;
+  expression: string;
+  number: number;
+  syntax: string;
+}
+
+export interface Request {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  all_documents: boolean;
+  collection_ids?: string[];
+  coverage_mode: string;
+  date_choices?: DateChoice[];
+  numeric_date_order?: string;
+  profile?: string;
+  source_timezone?: string;
+  terms: Term[];
+  timezone: string;
+  version: number;
+}
+
 export interface RevertNodeContentRequest {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
@@ -4124,6 +4263,12 @@ export interface RevertNodeContentRequest {
      * @maxLength 36
      */
   source_version_id: string;
+}
+
+export interface ReviseTermReportRequest {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  choices: DateChoice[];
 }
 
 export type SavedQueryKind = typeof SavedQueryKind[keyof typeof SavedQueryKind];
@@ -4612,6 +4757,25 @@ export interface StorageRepackRequest {
   min_dead_bytes?: number;
 }
 
+export interface Summary {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  bundle_bytes?: number;
+  bundle_sha256?: string;
+  counts?: Counts[];
+  coverage: Coverage;
+  csv_bytes?: number;
+  csv_sha256?: string;
+  expires_at: string;
+  id: string;
+  observed_at: string;
+  parent_id?: string;
+  row_coverage?: Coverage[];
+  state: string;
+  terms: Term[];
+  unresolved_dates: number;
+}
+
 export interface Tag {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
@@ -4661,6 +4825,18 @@ export interface TaggedNodePage {
   offset: number;
   /** @minimum 0 */
   omitted_trashed?: number;
+  total: number;
+}
+
+export interface TermReportHistory {
+  request: Request;
+  summary: Summary;
+}
+
+export interface TermReportHistoryPage {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  items: TermReportHistory[];
   total: number;
 }
 
@@ -5535,6 +5711,19 @@ limit?: number;
  */
 offset?: number;
 live_only?: boolean;
+};
+
+export type ListTermReportHistoryParams = {
+/**
+ * @minimum 0
+ * @maximum 100
+ */
+offset?: number;
+/**
+ * @minimum 0
+ * @maximum 50
+ */
+limit?: number;
 };
 
 export type ListTrashParams = {
@@ -11917,6 +12106,264 @@ export const listTagNodes = async (tagId: string,
     method: 'GET'
 
 
+  }
+);}
+
+
+
+export const getListTermReportHistoryUrl = (params?: ListTermReportHistoryParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/v1/term-reports?${stringifiedParams}` : `/api/v1/term-reports`
+}
+
+/**
+ * @summary List reusable report runs
+ */
+export const listTermReportHistory = async (params?: ListTermReportHistoryParams, options?: Parameters<typeof sessionJSON>[1]): Promise<TermReportHistoryPage> => {
+
+  return sessionJSON<TermReportHistoryPage>(getListTermReportHistoryUrl(params),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+export const getCreateTermReportUrl = () => {
+
+
+
+
+  return `/api/v1/term-reports`
+}
+
+/**
+ * @summary Prepare a frozen search-term report
+ */
+export const createTermReport = async (request: NonReadonly<Request>, options?: Parameters<typeof sessionJSON>[1]): Promise<Summary> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return sessionJSON<Summary>(getCreateTermReportUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(request)
+  }
+);}
+
+
+
+export const getGetTermReportUrl = (id: string,) => {
+
+
+
+
+  return `/api/v1/term-reports/${encodeURIComponent(String(id))}`
+}
+
+/**
+ * @summary Read a frozen report summary
+ */
+export const getTermReport = async (id: string, options?: Parameters<typeof sessionJSON>[1]): Promise<Summary> => {
+
+  return sessionJSON<Summary>(getGetTermReportUrl(id),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+export const getDownloadTermReportbundleUrl = (id: string,) => {
+
+
+
+
+  return `/api/v1/term-reports/${encodeURIComponent(String(id))}/bundle`
+}
+
+/**
+ * @summary Download frozen report bundle
+ */
+export const downloadTermReportbundle = async (id: string, options?: Parameters<typeof sessionJSON>[1]): Promise<Blob> => {
+
+  return sessionJSON<Blob>(getDownloadTermReportbundleUrl(id),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+export const getDownloadTermReportcsvUrl = (id: string,) => {
+
+
+
+
+  return `/api/v1/term-reports/${encodeURIComponent(String(id))}/csv`
+}
+
+/**
+ * @summary Download frozen report csv
+ */
+export const downloadTermReportcsv = async (id: string, options?: Parameters<typeof sessionJSON>[1]): Promise<Blob> => {
+
+  return sessionJSON<Blob>(getDownloadTermReportcsvUrl(id),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+export const getGetTermReportDatesUrl = (id: string,) => {
+
+
+
+
+  return `/api/v1/term-reports/${encodeURIComponent(String(id))}/dates`
+}
+
+/**
+ * @summary Inspect frozen report date evidence
+ */
+export const getTermReportDates = async (id: string,
+    datePageRequest: NonReadonly<DatePageRequest>, options?: Parameters<typeof sessionJSON>[1]): Promise<DatePage> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return sessionJSON<DatePage>(getGetTermReportDatesUrl(id),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(datePageRequest)
+  }
+);}
+
+
+
+export const getIssueTermReportDownloadUrl = (id: string,) => {
+
+
+
+
+  return `/api/v1/term-reports/${encodeURIComponent(String(id))}/download`
+}
+
+/**
+ * @summary Issue a one-use browser report download
+ */
+export const issueTermReportDownload = async (id: string,
+    issueTermReportDownloadRequest: NonReadonly<IssueTermReportDownloadRequest>, options?: Parameters<typeof sessionJSON>[1]): Promise<IssueTermReportDownloadResponse> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return sessionJSON<IssueTermReportDownloadResponse>(getIssueTermReportDownloadUrl(id),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(issueTermReportDownloadRequest)
+  }
+);}
+
+
+
+export const getReviseTermReportUrl = (id: string,) => {
+
+
+
+
+  return `/api/v1/term-reports/${encodeURIComponent(String(id))}/revisions`
+}
+
+/**
+ * @summary Create a frozen reviewed date revision
+ */
+export const reviseTermReport = async (id: string,
+    reviseTermReportRequest: NonReadonly<ReviseTermReportRequest>, options?: Parameters<typeof sessionJSON>[1]): Promise<Summary> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return sessionJSON<Summary>(getReviseTermReportUrl(id),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(reviseTermReportRequest)
   }
 );}
 
