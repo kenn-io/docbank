@@ -260,6 +260,7 @@ it("ignores a rerank response after changing the next search mode", async () => 
     trace: [],
     reranking: { outcome: "applied", candidate_count: 1 },
   }));
+  await waitFor(() => expect(screen.queryByText("Reranking results… Base results are shown.")).toBeNull());
   await waitFor(() => expect(screen.queryByText("reranked excerpt")).toBeNull());
   expect(screen.getByText("base excerpt")).toBeTruthy();
 });
