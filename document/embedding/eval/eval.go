@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"math"
 	"slices"
+	"strings"
 	"time"
 )
 
@@ -45,15 +46,27 @@ type System struct {
 	ID                     string
 	RecipeFingerprint      string
 	VectorSpaceFingerprint string
+	Reranker               string
+	RerankerFingerprint    string
+	RerankTopN             int
 }
 
-// Usage records provider work and observed latency for one query.
+// CostObservation records a caller-priced provider cost. Basis identifies the
+// dated rate or unit price used to calculate Micros.
+type CostObservation struct {
+	Micros int64  `json:"micros"`
+	Basis  string `json:"basis"`
+}
+
+// Usage records provider work and observed latency for one query. Nil token
+// usage or cost means the runner did not provide that evidence.
 type Usage struct {
 	ProviderCalls       int
 	ProviderInputRunes  int
 	ProviderOutputUnits int
-	EstimatedCostMicros int64
 	Latency             time.Duration
+	TokenUsage          *float64
+	Cost                *CostObservation
 }
 
 // SearchResult is one ranked retrieval result.
@@ -76,14 +89,29 @@ type MetricSet struct {
 	RecallAt20     float64
 	NDCGAt10       float64
 	MRR            float64
+	HitAt1         float64
+	HitAt10        float64
 	CriticalMisses int
 }
 
+// QueryReport records the final ranking and stage observations for one query.
+// RerankUsage is nil when no rerank call ran.
+type QueryReport struct {
+	QueryID     string
+	Ranking     []string
+	Metrics     MetricSet
+	Usage       Usage
+	RerankUsage *Usage
+}
+
 // TrialReport contains one complete pass over all benchmark queries.
+// RerankUsage is nil when no query ran a rerank call.
 type TrialReport struct {
-	Repetition int
-	Metrics    MetricSet
-	Usage      Usage
+	Repetition  int
+	Metrics     MetricSet
+	Usage       Usage
+	RerankUsage *Usage
+	Queries     []QueryReport
 }
 
 // MetricInterval is an empirical repeated-trial range and mean. It is not a
@@ -101,14 +129,29 @@ type AggregateReport struct {
 	RecallAt20     MetricInterval
 	NDCGAt10       MetricInterval
 	MRR            MetricInterval
+	HitAt1         MetricInterval
+	HitAt10        MetricInterval
 	CriticalMisses MetricInterval
+}
+
+// PerformanceReport summarizes per-query operational observations. Nil token
+// and cost values mean that at least one contributing query lacked evidence.
+type PerformanceReport struct {
+	QueryCount             int
+	P95Latency             time.Duration
+	RequestsPerQuery       float64
+	RerankRequestsPerQuery float64
+	TokensPerQuery         *float64
+	RerankTokensPerQuery   *float64
+	CostPerQuery           *CostObservation
 }
 
 // SystemReport contains all observations for one retrieval system.
 type SystemReport struct {
-	System    System
-	Trials    []TrialReport
-	Aggregate AggregateReport
+	System      System
+	Trials      []TrialReport
+	Aggregate   AggregateReport
+	Performance PerformanceReport
 }
 
 // Report is attributable evaluation output for one corpus version.
@@ -120,7 +163,8 @@ type Report struct {
 }
 
 // Evaluate executes every system over every query for the requested number of
-// repetitions and computes metrics from observed rankings.
+// repetitions and computes metrics from observed rankings. The context must be
+// non-nil; cancellation stops evaluation for both search-only and reranked systems.
 func Evaluate(ctx context.Context, corpus Corpus, systems []System, repetitions int, runner Runner) (Report, error) {
 	documentIDs, err := validateCorpus(corpus)
 	if err != nil {
@@ -135,16 +179,21 @@ func Evaluate(ctx context.Context, corpus Corpus, systems []System, repetitions 
 		if system.ID == "" || system.RecipeFingerprint == "" || seenSystems[system.ID] {
 			return Report{}, errors.New("evaluation system IDs and recipe fingerprints must be non-empty and unique")
 		}
+		reranker, err := validateReranker(system, runner)
+		if err != nil {
+			return Report{}, err
+		}
 		seenSystems[system.ID] = true
 		systemReport := SystemReport{System: system}
 		for repetition := range repetitions {
-			trial, err := runTrial(ctx, corpus, documentIDs, system, repetition, runner)
+			trial, err := runTrial(ctx, corpus, documentIDs, system, repetition, runner, reranker)
 			if err != nil {
 				return Report{}, fmt.Errorf("evaluate system %q repetition %d: %w", system.ID, repetition+1, err)
 			}
 			systemReport.Trials = append(systemReport.Trials, trial)
 		}
 		systemReport.Aggregate = aggregate(systemReport.Trials)
+		systemReport.Performance = performance(systemReport.Trials)
 		report.Systems = append(report.Systems, systemReport)
 	}
 	return report, nil
@@ -153,32 +202,69 @@ func Evaluate(ctx context.Context, corpus Corpus, systems []System, repetitions 
 func runTrial(
 	ctx context.Context,
 	corpus Corpus,
-	documentIDs map[string]bool,
+	documentIDs map[string]Document,
 	system System,
 	repetition int,
 	runner Runner,
+	reranker RerankingRunner,
 ) (TrialReport, error) {
 	trial := TrialReport{Repetition: repetition + 1}
 	for _, query := range corpus.Queries {
+		if err := ctx.Err(); err != nil {
+			return TrialReport{}, err
+		}
 		result, err := runner.Search(ctx, system, corpus, query)
 		if err != nil {
 			return TrialReport{}, fmt.Errorf("query %q: %w", query.ID, err)
 		}
-		if result.Usage.ProviderCalls < 0 || result.Usage.ProviderInputRunes < 0 || result.Usage.ProviderOutputUnits < 0 ||
-			result.Usage.EstimatedCostMicros < 0 || result.Usage.Latency < 0 {
-			return TrialReport{}, fmt.Errorf("query %q: provider usage cannot be negative", query.ID)
+		if err := validateUsage(result.Usage); err != nil {
+			return TrialReport{}, fmt.Errorf("query %q: %w", query.ID, err)
 		}
 		if err := validateRanking(documentIDs, result.DocumentIDs); err != nil {
 			return TrialReport{}, fmt.Errorf("query %q: %w", query.ID, err)
 		}
-		metrics := score(query.Judgments, result.DocumentIDs)
+		if err := ctx.Err(); err != nil {
+			return TrialReport{}, err
+		}
+
+		ranking := slices.Clone(result.DocumentIDs)
+		totalUsage := result.Usage
+		var rerankUsage *Usage
+		if system.Reranker != "" && len(ranking) > 0 {
+			prefixCount := min(system.RerankTopN, len(ranking))
+			candidates := make([]Document, prefixCount)
+			for index, documentID := range ranking[:prefixCount] {
+				document := documentIDs[documentID]
+				document.Text = boundedExcerpt(document.Text)
+				candidates[index] = document
+			}
+			reranked, err := reranker.Rerank(ctx, system, query.Text, candidates)
+			if err != nil {
+				return TrialReport{}, fmt.Errorf("query %q rerank: %w", query.ID, err)
+			}
+			if err := ctx.Err(); err != nil {
+				return TrialReport{}, err
+			}
+			if err := validateRerankResult(reranked, prefixCount); err != nil {
+				return TrialReport{}, fmt.Errorf("query %q: %w", query.ID, err)
+			}
+			rerankUsage = &reranked.Usage
+			totalUsage = sumUsage(totalUsage, *rerankUsage)
+			ranking = reorderRanking(ranking, reranked.Scores, prefixCount)
+		}
+		metrics := score(query.Judgments, ranking)
 		trial.Metrics.RecallAt5 += metrics.RecallAt5
 		trial.Metrics.RecallAt10 += metrics.RecallAt10
 		trial.Metrics.RecallAt20 += metrics.RecallAt20
 		trial.Metrics.NDCGAt10 += metrics.NDCGAt10
 		trial.Metrics.MRR += metrics.MRR
+		trial.Metrics.HitAt1 += metrics.HitAt1
+		trial.Metrics.HitAt10 += metrics.HitAt10
 		trial.Metrics.CriticalMisses += metrics.CriticalMisses
-		addUsage(&trial.Usage, result.Usage)
+		trial.Queries = append(trial.Queries, QueryReport{
+			QueryID: query.ID, Ranking: ranking, Metrics: metrics,
+			Usage: totalUsage, RerankUsage: rerankUsage,
+		})
 	}
 	count := float64(len(corpus.Queries))
 	trial.Metrics.RecallAt5 /= count
@@ -186,6 +272,22 @@ func runTrial(
 	trial.Metrics.RecallAt20 /= count
 	trial.Metrics.NDCGAt10 /= count
 	trial.Metrics.MRR /= count
+	trial.Metrics.HitAt1 /= count
+	trial.Metrics.HitAt10 /= count
+	for index, query := range trial.Queries {
+		if index == 0 {
+			trial.Usage = query.Usage
+		} else {
+			trial.Usage = sumUsage(trial.Usage, query.Usage)
+		}
+		if query.RerankUsage != nil {
+			if trial.RerankUsage == nil {
+				trial.RerankUsage = query.RerankUsage
+			} else {
+				trial.RerankUsage = new(sumUsage(*trial.RerankUsage, *query.RerankUsage))
+			}
+		}
+	}
 	return trial, nil
 }
 
@@ -205,6 +307,7 @@ func score(judgments []Judgment, ranking []string) MetricSet {
 	metrics := MetricSet{
 		RecallAt5: recallAt(ranking, grades, relevant, 5), RecallAt10: recallAt(ranking, grades, relevant, 10),
 		RecallAt20: recallAt(ranking, grades, relevant, 20), NDCGAt10: ndcgAt(ranking, grades, 10),
+		HitAt1: hitAt(ranking, grades, 1), HitAt10: hitAt(ranking, grades, 10),
 	}
 	for index, documentID := range ranking {
 		if grades[documentID] > 0 {
@@ -219,6 +322,15 @@ func score(judgments []Judgment, ranking []string) MetricSet {
 		}
 	}
 	return metrics
+}
+
+func hitAt(ranking []string, grades map[string]int, cutoff int) float64 {
+	for _, documentID := range ranking[:min(len(ranking), cutoff)] {
+		if grades[documentID] > 0 {
+			return 1
+		}
+	}
+	return 0
 }
 
 func recallAt(ranking []string, grades map[string]int, relevant, cutoff int) float64 {
@@ -270,6 +382,8 @@ func aggregate(trials []TrialReport) AggregateReport {
 		RecallAt20:     interval(trials, func(metric MetricSet) float64 { return metric.RecallAt20 }),
 		NDCGAt10:       interval(trials, func(metric MetricSet) float64 { return metric.NDCGAt10 }),
 		MRR:            interval(trials, func(metric MetricSet) float64 { return metric.MRR }),
+		HitAt1:         interval(trials, func(metric MetricSet) float64 { return metric.HitAt1 }),
+		HitAt10:        interval(trials, func(metric MetricSet) float64 { return metric.HitAt10 }),
 		CriticalMisses: interval(trials, func(metric MetricSet) float64 { return float64(metric.CriticalMisses) }),
 	}
 }
@@ -286,16 +400,16 @@ func interval(trials []TrialReport, value func(MetricSet) float64) MetricInterva
 	return result
 }
 
-func validateCorpus(corpus Corpus) (map[string]bool, error) {
+func validateCorpus(corpus Corpus) (map[string]Document, error) {
 	if corpus.ID == "" || corpus.Version == "" || len(corpus.Documents) == 0 || len(corpus.Queries) == 0 {
 		return nil, errors.New("evaluation corpus ID, version, documents, and queries are required")
 	}
-	documents := make(map[string]bool, len(corpus.Documents))
+	documents := make(map[string]Document, len(corpus.Documents))
 	for _, document := range corpus.Documents {
-		if document.ID == "" || document.Text == "" || documents[document.ID] {
+		if _, exists := documents[document.ID]; document.ID == "" || document.Text == "" || exists {
 			return nil, errors.New("evaluation document IDs and text must be non-empty and IDs unique")
 		}
-		documents[document.ID] = true
+		documents[document.ID] = document
 	}
 	queries := make(map[string]bool, len(corpus.Queries))
 	for _, query := range corpus.Queries {
@@ -306,7 +420,7 @@ func validateCorpus(corpus Corpus) (map[string]bool, error) {
 		judged := make(map[string]bool, len(query.Judgments))
 		relevant := 0
 		for _, judgment := range query.Judgments {
-			if !documents[judgment.DocumentID] || judgment.Grade < 0 || judged[judgment.DocumentID] {
+			if _, exists := documents[judgment.DocumentID]; !exists || judgment.Grade < 0 || judged[judgment.DocumentID] {
 				return nil, fmt.Errorf("evaluation query %q has an invalid judgment", query.ID)
 			}
 			judged[judgment.DocumentID] = true
@@ -321,10 +435,10 @@ func validateCorpus(corpus Corpus) (map[string]bool, error) {
 	return documents, nil
 }
 
-func validateRanking(documents map[string]bool, ranking []string) error {
+func validateRanking(documents map[string]Document, ranking []string) error {
 	seen := make(map[string]bool, len(ranking))
 	for _, documentID := range ranking {
-		if !documents[documentID] || seen[documentID] {
+		if _, exists := documents[documentID]; !exists || seen[documentID] {
 			return errors.New("ranking contains an unknown or duplicate document ID")
 		}
 		seen[documentID] = true
@@ -332,10 +446,163 @@ func validateRanking(documents map[string]bool, ranking []string) error {
 	return nil
 }
 
-func addUsage(total *Usage, observed Usage) {
-	total.ProviderCalls += observed.ProviderCalls
-	total.ProviderInputRunes += observed.ProviderInputRunes
-	total.ProviderOutputUnits += observed.ProviderOutputUnits
-	total.EstimatedCostMicros += observed.EstimatedCostMicros
-	total.Latency += observed.Latency
+func validateReranker(system System, runner Runner) (RerankingRunner, error) {
+	if system.Reranker == "" {
+		return nil, nil //nolint:nilnil // nil reranker denotes a disabled stage
+	}
+	if system.RerankerFingerprint == "" || system.RerankTopN < 1 {
+		return nil, errors.New("reranker fingerprint and positive top-N are required")
+	}
+	reranker, ok := runner.(RerankingRunner)
+	if !ok {
+		return nil, errors.New("runner does not support the requested reranker")
+	}
+	return reranker, nil
+}
+
+func validateUsage(usage Usage) error {
+	if usage.ProviderCalls < 0 || usage.ProviderInputRunes < 0 || usage.ProviderOutputUnits < 0 ||
+		usage.Latency < 0 {
+		return errors.New("provider usage cannot be negative")
+	}
+	if usage.TokenUsage != nil && (*usage.TokenUsage < 0 || math.IsNaN(*usage.TokenUsage) || math.IsInf(*usage.TokenUsage, 0)) {
+		return errors.New("provider token usage must be finite and non-negative")
+	}
+	if usage.Cost != nil && (usage.Cost.Micros < 0 || strings.TrimSpace(usage.Cost.Basis) == "") {
+		return errors.New("provider cost must have a non-negative value and basis")
+	}
+	return nil
+}
+
+func validateRerankResult(result RerankResult, candidateCount int) error {
+	if err := validateUsage(result.Usage); err != nil {
+		return err
+	}
+	if len(result.Scores) != candidateCount {
+		return errors.New("reranker returned an invalid score count")
+	}
+	for _, score := range result.Scores {
+		if math.IsNaN(score) || math.IsInf(score, 0) {
+			return errors.New("reranker returned a non-finite score")
+		}
+	}
+	return nil
+}
+
+func sumUsage(left, right Usage) Usage {
+	result := Usage{
+		ProviderCalls:       left.ProviderCalls + right.ProviderCalls,
+		ProviderInputRunes:  left.ProviderInputRunes + right.ProviderInputRunes,
+		ProviderOutputUnits: left.ProviderOutputUnits + right.ProviderOutputUnits,
+		Latency:             left.Latency + right.Latency,
+	}
+	if left.TokenUsage != nil && right.TokenUsage != nil {
+		value := *left.TokenUsage + *right.TokenUsage
+		result.TokenUsage = &value
+	}
+	if left.Cost != nil && right.Cost != nil {
+		if micros, ok := sumCost(left.Cost.Micros, right.Cost.Micros); ok {
+			result.Cost = &CostObservation{Micros: micros,
+				Basis: combineBasis(left.Cost.Basis, right.Cost.Basis)}
+		}
+	}
+	return result
+}
+
+func sumCost(left, right int64) (int64, bool) {
+	if left > math.MaxInt64-right {
+		return 0, false
+	}
+	return left + right, true
+}
+
+func combineBasis(left, right string) string {
+	parts := make(map[string]struct{})
+	for _, basis := range []string{left, right} {
+		for part := range strings.SplitSeq(basis, ",") {
+			part = strings.TrimSpace(part)
+			if part != "" {
+				parts[part] = struct{}{}
+			}
+		}
+	}
+	ordered := make([]string, 0, len(parts))
+	for part := range parts {
+		ordered = append(ordered, part)
+	}
+	slices.Sort(ordered)
+	return strings.Join(ordered, ",")
+}
+
+func performance(trials []TrialReport) PerformanceReport {
+	result := PerformanceReport{}
+	var latencies []time.Duration
+	var totalRequests, totalRerankRequests int
+	var totalTokens, totalRerankTokens float64
+	var totalCost int64
+	basis := ""
+	tokensKnown, rerankTokensKnown, costKnown := true, true, true
+	for _, trial := range trials {
+		for _, query := range trial.Queries {
+			result.QueryCount++
+			latencies = append(latencies, query.Usage.Latency)
+			totalRequests += query.Usage.ProviderCalls
+			if query.Usage.TokenUsage == nil {
+				tokensKnown = false
+			} else {
+				totalTokens += *query.Usage.TokenUsage
+			}
+			if query.RerankUsage != nil {
+				totalRerankRequests += query.RerankUsage.ProviderCalls
+				if query.RerankUsage.TokenUsage == nil {
+					rerankTokensKnown = false
+				} else {
+					totalRerankTokens += *query.RerankUsage.TokenUsage
+				}
+			}
+			if query.Usage.Cost == nil {
+				costKnown = false
+			} else if costKnown {
+				var ok bool
+				totalCost, ok = sumCost(totalCost, query.Usage.Cost.Micros)
+				if !ok {
+					costKnown = false
+				} else {
+					basis = combineBasis(basis, query.Usage.Cost.Basis)
+				}
+			}
+		}
+	}
+	if result.QueryCount == 0 {
+		return result
+	}
+	result.RequestsPerQuery = float64(totalRequests) / float64(result.QueryCount)
+	result.RerankRequestsPerQuery = float64(totalRerankRequests) / float64(result.QueryCount)
+	if tokensKnown {
+		value := totalTokens / float64(result.QueryCount)
+		result.TokensPerQuery = &value
+	}
+	if rerankTokensKnown {
+		value := totalRerankTokens / float64(result.QueryCount)
+		result.RerankTokensPerQuery = &value
+	}
+	if costKnown {
+		result.CostPerQuery = &CostObservation{
+			Micros: roundedCostPerQuery(totalCost, result.QueryCount), Basis: basis,
+		}
+	}
+	slices.Sort(latencies)
+	rank := int(math.Ceil(0.95 * float64(len(latencies))))
+	rank = max(rank, 1)
+	result.P95Latency = latencies[rank-1]
+	return result
+}
+
+func roundedCostPerQuery(totalCost int64, queryCount int) int64 {
+	divisor := int64(queryCount)
+	quotient, remainder := totalCost/divisor, totalCost%divisor
+	if remainder >= divisor/2+divisor%2 {
+		quotient++
+	}
+	return quotient
 }

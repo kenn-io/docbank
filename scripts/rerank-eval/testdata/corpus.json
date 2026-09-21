@@ -1,0 +1,48 @@
+{
+  "id": "synthetic-rerank-public",
+  "version": "1",
+  "documents": [
+    {
+      "id": "relevant-lantern",
+      "text": "A short filing describes a coastal observatory and its maintenance schedule."
+    },
+    {
+      "id": "relevant-meadow",
+      "text": "A second filing records a warehouse inspection and a planned repair window."
+    },
+    {
+      "id": "near-miss",
+      "text": "A synthetic note discusses a different indexing process and a general review."
+    },
+    {
+      "id": "lexical-distractor-a",
+      "text": "Lumen archive lantern meadow records contain query terms and a synthetic distractor passage."
+    },
+    {
+      "id": "lexical-distractor-b",
+      "text": "Archive lumen lantern meadow notes repeat query terms without the judged evidence."
+    },
+    {
+      "id": "lexical-distractor-c",
+      "text": "Lumen archive lantern meadow index material is synthetic lexical noise."
+    }
+  ],
+  "queries": [
+    {
+      "id": "q-lantern",
+      "text": "lumen archive lantern",
+      "judgments": [
+        {"document_id": "relevant-lantern", "grade": 3, "critical": true},
+        {"document_id": "near-miss", "grade": 1}
+      ]
+    },
+    {
+      "id": "q-meadow",
+      "text": "lumen archive meadow",
+      "judgments": [
+        {"document_id": "relevant-meadow", "grade": 3, "critical": true},
+        {"document_id": "near-miss", "grade": 1}
+      ]
+    }
+  ]
+}
