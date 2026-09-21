@@ -137,6 +137,29 @@ func TestEvaluateCostAggregationOverflow(t *testing.T) {
 	assert.Nil(t, report.Systems[0].Performance.CostPerQuery)
 }
 
+func TestEvaluateCostPerQueryMaxInt64(t *testing.T) {
+	corpus := embeddingeval.Corpus{
+		ID: "cost-boundary", Version: "1",
+		Documents: []embeddingeval.Document{{ID: "hit", Text: "synthetic hit"}},
+		Queries: []embeddingeval.Query{
+			{ID: "q", Text: "query", Judgments: []embeddingeval.Judgment{{DocumentID: "hit", Grade: 1}}},
+		},
+	}
+	runner := &testRerankingRunner{
+		ranking: []string{"hit"},
+		searchUsage: map[string]embeddingeval.Usage{
+			"q": {ProviderCalls: 1, Cost: &embeddingeval.CostObservation{Micros: math.MaxInt64, Basis: "2026-09-21:boundary"}},
+		},
+	}
+	report, err := embeddingeval.Evaluate(context.Background(), corpus, []embeddingeval.System{{
+		ID: "search", RecipeFingerprint: "recipe",
+	}}, 1, runner)
+	require.NoError(t, err)
+	require.NotNil(t, report.Systems[0].Performance.CostPerQuery)
+	assert.GreaterOrEqual(t, report.Systems[0].Performance.CostPerQuery.Micros, int64(0))
+	assert.Equal(t, int64(math.MaxInt64), report.Systems[0].Performance.CostPerQuery.Micros)
+}
+
 func TestEvaluateRerankModesAndFailures(t *testing.T) {
 	corpus := rerankCorpus([]string{"d0", "d1"}, []string{"d1"})
 	legacy := &testRerankingRunner{ranking: []string{"d0", "d1"}, scores: []float64{0.1, 0.9}}

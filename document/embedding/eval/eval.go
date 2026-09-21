@@ -604,7 +604,7 @@ func performance(trials []TrialReport) PerformanceReport {
 	}
 	if costKnown {
 		result.CostPerQuery = &CostObservation{
-			Micros: int64(math.Round(float64(totalCost) / float64(result.QueryCount))), Basis: basis,
+			Micros: roundedCostPerQuery(totalCost, result.QueryCount), Basis: basis,
 		}
 	}
 	slices.Sort(latencies)
@@ -612,4 +612,13 @@ func performance(trials []TrialReport) PerformanceReport {
 	rank = max(rank, 1)
 	result.P95Latency = latencies[rank-1]
 	return result
+}
+
+func roundedCostPerQuery(totalCost int64, queryCount int) int64 {
+	divisor := int64(queryCount)
+	quotient, remainder := totalCost/divisor, totalCost%divisor
+	if remainder >= divisor/2+divisor%2 {
+		quotient++
+	}
+	return quotient
 }
