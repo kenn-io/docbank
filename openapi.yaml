@@ -11624,10 +11624,14 @@ components:
         deleted:
           format: int64
           type: integer
+        retained_roots:
+          format: int64
+          type: integer
         run:
           type: boolean
       required:
         - candidate_roots
+        - retained_roots
         - deleted
         - run
       type: object

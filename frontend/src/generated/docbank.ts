@@ -4654,6 +4654,7 @@ export interface TrashEmptyReport {
   readonly $schema?: string;
   candidate_roots: number;
   deleted: number;
+  retained_roots: number;
   run: boolean;
 }
 
