@@ -621,6 +621,10 @@ func startProcessingJobs(
 	if err := supervisor.Start("derive:document-events", documentEvents.Run); err != nil {
 		return fmt.Errorf("starting document event backfill: %w", err)
 	}
+	documentPeople := processing.NewDocumentPeopleBackfill(s, gate.MutateContext, logger)
+	if err := supervisor.Start("derive:document-people", documentPeople.Run); err != nil {
+		return fmt.Errorf("starting document people derivation: %w", err)
+	}
 	return startPackagePreflightMaintenance(supervisor, s, gate, logger)
 }
 

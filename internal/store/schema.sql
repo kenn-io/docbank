@@ -1968,6 +1968,15 @@ CREATE TABLE IF NOT EXISTS document_people_state (
     updated_at TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS document_people_builds (
+    operation_id TEXT PRIMARY KEY NOT NULL,
+    request_sha256 TEXT NOT NULL, resolver_fingerprint TEXT NOT NULL,
+    target_epoch INTEGER NOT NULL, state TEXT NOT NULL,
+    scanned INTEGER NOT NULL DEFAULT 0, published INTEGER NOT NULL DEFAULT 0,
+    failed INTEGER NOT NULL DEFAULT 0, started_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL, finished_at TEXT NOT NULL DEFAULT ''
+);
+
 CREATE TABLE IF NOT EXISTS document_people_generations (
     generation_id TEXT PRIMARY KEY NOT NULL,
     content_version_id TEXT NOT NULL REFERENCES content_versions(version_id) ON DELETE CASCADE,

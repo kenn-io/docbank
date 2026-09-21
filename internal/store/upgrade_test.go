@@ -332,11 +332,12 @@ func TestOpenRejectsInvalidPackagePreflightLayout(t *testing.T) {
 	}
 }
 
-func TestOpenRejectsCurrentDatabaseWithoutDocumentEventTables(t *testing.T) {
+func TestOpenRejectsCurrentDatabaseWithoutAttributionTables(t *testing.T) {
 	tables := []string{
 		"document_event_state", "document_event_generations", "document_event_heads",
 		"document_event_builds", "document_event_dirty", "document_event_attempts",
 		"document_events", "document_event_actors", "document_event_primaries",
+		"document_people_builds",
 	}
 	for _, table := range tables {
 		for _, test := range v090UpgradeDrivers() {
@@ -501,6 +502,7 @@ func TestOpenRejectsCurrentDatabaseWithMissingExtendedTableColumn(t *testing.T) 
 		{name: "processing_consent_grants", column: "expires_at"},
 		{name: "rendition_job_waiters", column: "failure_code"},
 		{name: "embedding_jobs", column: "receipt_json"},
+		{name: "document_people_builds", column: "target_epoch"},
 	} {
 		for _, test := range v090UpgradeDrivers() {
 			t.Run(table.name+"/"+test.name, func(t *testing.T) {

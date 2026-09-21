@@ -1120,6 +1120,7 @@ func requirePristineMetadataTarget(ctx context.Context, tx *sql.Tx) error {
 		    + (SELECT COUNT(*) FROM person_document_assertions)
 		    + (SELECT COUNT(*) FROM document_people_generations)
 		    + (SELECT COUNT(*) FROM document_people_heads)
+		    + (SELECT COUNT(*) FROM document_people_builds)
 		    + (SELECT COUNT(*) FROM document_people)
 		    + ABS((SELECT COUNT(*) FROM document_people_state) - 1)
 		    + (SELECT COUNT(*) FROM document_people_state

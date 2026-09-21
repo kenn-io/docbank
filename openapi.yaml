@@ -7985,6 +7985,155 @@ components:
       x-go-type-import:
         path: go.kenn.io/docbank/document
         name: document
+    PeopleBuild:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/PeopleBuild.json
+          format: uri
+          readOnly: true
+          type: string
+        failed:
+          format: int64
+          type: integer
+        finished_at:
+          format: date-time
+          type: string
+        operation_id:
+          format: uuid
+          type: string
+        published:
+          format: int64
+          type: integer
+        request_sha256:
+          pattern: ^[0-9a-f]{64}$
+          type: string
+        resolver_fingerprint:
+          pattern: ^[0-9a-f]{64}$
+          type: string
+        scanned:
+          format: int64
+          type: integer
+        started_at:
+          format: date-time
+          type: string
+        state:
+          enum:
+            - running
+            - completed
+            - failed
+          type: string
+        target_epoch:
+          format: int64
+          type: integer
+        updated_at:
+          format: date-time
+          type: string
+      required:
+        - operation_id
+        - request_sha256
+        - resolver_fingerprint
+        - state
+        - target_epoch
+        - scanned
+        - published
+        - failed
+        - started_at
+        - updated_at
+      type: object
+      x-go-type: api.PeopleBuild
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
+    PeopleCoverage:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/PeopleCoverage.json
+          format: uri
+          readOnly: true
+          type: string
+        binding_epoch:
+          format: int64
+          type: integer
+        candidate_queue_full:
+          type: boolean
+        contract_version:
+          type: string
+        failed:
+          format: int64
+          type: integer
+        open_candidates:
+          format: int64
+          type: integer
+        pending:
+          format: int64
+          type: integer
+        publication_epoch:
+          format: int64
+          type: integer
+        published:
+          format: int64
+          type: integer
+        resolver_fingerprint:
+          pattern: ^[0-9a-f]{64}$
+          type: string
+        suppressed_actors:
+          format: int64
+          type: integer
+        unavailable:
+          format: int64
+          type: integer
+        unresolved_actors:
+          format: int64
+          type: integer
+        unresolved_custodians:
+          format: int64
+          type: integer
+      required:
+        - contract_version
+        - resolver_fingerprint
+        - binding_epoch
+        - publication_epoch
+        - published
+        - pending
+        - failed
+        - unavailable
+        - unresolved_actors
+        - suppressed_actors
+        - unresolved_custodians
+        - open_candidates
+        - candidate_queue_full
+      type: object
+      x-go-type: api.PeopleCoverage
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
+    PeopleRebuildRequest:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/PeopleRebuildRequest.json
+          format: uri
+          readOnly: true
+          type: string
+        operation_id:
+          format: uuid
+          pattern: ^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$
+          type: string
+      required:
+        - operation_id
+      type: object
+      x-go-type: api.PeopleRebuildRequest
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     Plan:
       additionalProperties: false
       properties:
@@ -16235,6 +16384,71 @@ paths:
                 $ref: "#/components/schemas/Error"
           description: Error
       summary: Move a virtual path and its subtree to the trash in one transaction
+  /api/v1/people/coverage:
+    get:
+      operationId: getPeopleCoverage
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PeopleCoverage"
+          description: OK
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: Read current-file person attribution coverage
+  /api/v1/people/rebuilds:
+    post:
+      operationId: rebuildDocumentPeople
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PeopleRebuildRequest"
+        required: true
+      responses:
+        "202":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PeopleBuild"
+          description: Accepted
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: Start or replay person attribution rebuild
+  /api/v1/people/rebuilds/{operation_id}:
+    get:
+      operationId: getPeopleRebuild
+      parameters:
+        - in: path
+          name: operation_id
+          required: true
+          schema:
+            format: uuid
+            pattern: ^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PeopleBuild"
+          description: OK
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: Read person attribution rebuild progress
   /api/v1/processing/consent/grants:
     post:
       operationId: grantDocumentProcessingConsent

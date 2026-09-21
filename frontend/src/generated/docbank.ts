@@ -3230,6 +3230,59 @@ export interface PageSelectionRequest {
   selection: PageBinding;
 }
 
+export type PeopleBuildState = typeof PeopleBuildState[keyof typeof PeopleBuildState];
+
+
+export const PeopleBuildState = {
+  running: 'running',
+  completed: 'completed',
+  failed: 'failed',
+} as const;
+
+export interface PeopleBuild {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  failed: number;
+  finished_at?: string;
+  operation_id: string;
+  published: number;
+  /** @pattern ^[0-9a-f]{64}$ */
+  request_sha256: string;
+  /** @pattern ^[0-9a-f]{64}$ */
+  resolver_fingerprint: string;
+  scanned: number;
+  started_at: string;
+  state: PeopleBuildState;
+  target_epoch: number;
+  updated_at: string;
+}
+
+export interface PeopleCoverage {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  binding_epoch: number;
+  candidate_queue_full: boolean;
+  contract_version: string;
+  failed: number;
+  open_candidates: number;
+  pending: number;
+  publication_epoch: number;
+  published: number;
+  /** @pattern ^[0-9a-f]{64}$ */
+  resolver_fingerprint: string;
+  suppressed_actors: number;
+  unavailable: number;
+  unresolved_actors: number;
+  unresolved_custodians: number;
+}
+
+export interface PeopleRebuildRequest {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  /** @pattern ^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$ */
+  operation_id: string;
+}
+
 export interface RolePolicy {
   allow_unavailable?: boolean;
   profile_fingerprint?: string;
@@ -10045,6 +10098,92 @@ return sessionJSON<Node>(getTrashPathUrl(),
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
     body: JSON.stringify(trashPathRequest)
+  }
+);}
+
+
+
+export const getGetPeopleCoverageUrl = () => {
+
+
+
+
+  return `/api/v1/people/coverage`
+}
+
+/**
+ * @summary Read current-file person attribution coverage
+ */
+export const getPeopleCoverage = async ( options?: Parameters<typeof sessionJSON>[1]): Promise<PeopleCoverage> => {
+
+  return sessionJSON<PeopleCoverage>(getGetPeopleCoverageUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+export const getRebuildDocumentPeopleUrl = () => {
+
+
+
+
+  return `/api/v1/people/rebuilds`
+}
+
+/**
+ * @summary Start or replay person attribution rebuild
+ */
+export const rebuildDocumentPeople = async (peopleRebuildRequest: NonReadonly<PeopleRebuildRequest>, options?: Parameters<typeof sessionJSON>[1]): Promise<PeopleBuild> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return sessionJSON<PeopleBuild>(getRebuildDocumentPeopleUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(peopleRebuildRequest)
+  }
+);}
+
+
+
+export const getGetPeopleRebuildUrl = (operationId: string,) => {
+
+
+
+
+  return `/api/v1/people/rebuilds/${encodeURIComponent(String(operationId))}`
+}
+
+/**
+ * @summary Read person attribution rebuild progress
+ */
+export const getPeopleRebuild = async (operationId: string, options?: Parameters<typeof sessionJSON>[1]): Promise<PeopleBuild> => {
+
+  return sessionJSON<PeopleBuild>(getGetPeopleRebuildUrl(operationId),
+  {
+    ...options,
+    method: 'GET'
+
+
   }
 );}
 

@@ -245,6 +245,13 @@ func TestJSONLBackupRestoresPeopleAndRebuildsAttribution(t *testing.T) {
 		ContentVersionID: file.CurrentVersionID, PersonID: person.PersonID, Role: "author", Action: "assert", Revision: 1,
 	})
 	require.NoError(t, err)
+	const operationID = "10000000-0000-4000-8000-000000000011"
+	require.NoError(t, processing.RebuildDocumentEvents(ctx, fixture.metadata))
+	_, err = fixture.metadata.RebuildDocumentPeople(ctx, operationID)
+	require.NoError(t, err)
+	worker := processing.NewDocumentPeopleBackfill(fixture.metadata, nil, nil)
+	worker.DrainOnce = true
+	require.NoError(t, worker.Run(ctx))
 	repo, err := backup.Init(filepath.Join(t.TempDir(), "repo"))
 	require.NoError(t, err)
 	_, err = backupapp.Create(ctx, repo, "test-version", fixture.metadata, fixture.blobs, backup.CreateOptions{})
@@ -255,6 +262,8 @@ func TestJSONLBackupRestoresPeopleAndRebuildsAttribution(t *testing.T) {
 	restored, err := store.Open(filepath.Join(target, "docbank.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, restored.Close()) })
+	_, err = restored.DocumentPeopleBuild(ctx, operationID)
+	require.ErrorIs(t, err, store.ErrNotFound, "restore rebuilds attribution without copying rebuild receipts")
 	restoredPerson, _, err := restored.PersonByID(ctx, person.PersonID)
 	require.NoError(t, err)
 	require.Equal(t, person, restoredPerson)
