@@ -437,6 +437,25 @@ it("reruns the accepted query when profiles arrive after legacy results", async 
   expect(harness.postBodies[0]?.mode).toBe("hybrid");
 });
 
+it("restarts search settings with the accepted query instead of the draft", async () => {
+  const file = node(2, "accepted.txt", baseVersion);
+  const harness = installHarness({
+    profiles: [{ name: "private", fingerprint: "a".repeat(64), rendition: true, embedding_bindings: ["embed"], reranking_available: false }],
+    files: [file],
+    baseReport: report("hybrid", [result(file, 1, "accepted excerpt")]),
+  });
+  render(App);
+  await screen.findByRole("combobox", { name: "Search mode: Auto" });
+  await submitSearch("accepted query");
+  await screen.findByText("accepted excerpt");
+
+  await fireEvent.input(screen.getByRole("searchbox", { name: "Search documents" }), { target: { value: "draft query" } });
+  await fireEvent.click(screen.getByRole("combobox", { name: "Search mode: Auto" }));
+  await fireEvent.click(screen.getByRole("option", { name: "Lexical" }));
+  await waitFor(() => expect(harness.postBodies).toHaveLength(2));
+  expect(harness.postBodies[1]?.query).toBe("accepted query");
+});
+
 it("defers the profile default until a pending legacy search is accepted", async () => {
   const file = node(2, "pending.txt", baseVersion);
   const harness = installHarness({

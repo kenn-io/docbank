@@ -153,6 +153,7 @@
   let bulkSelection = $state<SelectionState>(clearSelection());
   let searchQuery = $state("");
   let activeQuery = $state("");
+  let submittedSearchQuery = $state("");
   let tagFilterID = $state("");
   let activeTagID = $state("");
   let taggedInspected = $state(0);
@@ -483,6 +484,10 @@
       naturalProfilesError = "";
       const selected = selectNaturalSearchProfile(profiles);
       const defaultMode: NaturalSearchMode = selected?.embedding_bindings.length ? "auto" : "names";
+      if (snapshotActive) {
+        naturalProfileDefaultPending = { request, session };
+        return;
+      }
       if (naturalSearchMode !== defaultMode && (activeQuery || searchPending) && !snapshotActive) {
         if (searchPending) {
           naturalProfileDefaultPending = { request, session };
@@ -757,6 +762,7 @@
       naturalProfiles = [];
       naturalSearchMode = "names";
       naturalRerank = false;
+      submittedSearchQuery = "";
       naturalProfileDefaultPending = null;
       invalidateTagHotkeyMutation();
       selectedTags = [];
@@ -798,6 +804,7 @@
     invalidateTagHotkeyMutation();
     leaveSnapshotMode();
     naturalProfileDefaultPending = null;
+    submittedSearchQuery = "";
     const refreshing = !remember && directory?.id === nodeID && !activeQuery && !activeTagID;
     const request = ++generation;
     naturalSearchController?.abort();
@@ -895,6 +902,7 @@
     leaveSnapshotMode();
     const query = (queryOverride ?? searchQuery).trim();
     if (!query) {
+      submittedSearchQuery = "";
       naturalSearchController?.abort();
       naturalSearchNote = "";
       naturalRerankPending = false;
@@ -903,6 +911,7 @@
       return;
     }
     const request = ++generation;
+    submittedSearchQuery = query;
     const requestedTagID = tagFilterID;
     const refreshing = activeQuery === query && activeTagID === requestedTagID;
     naturalSearchController?.abort();
@@ -1113,6 +1122,7 @@
     invalidateTagHotkeyMutation();
     leaveSnapshotMode();
     naturalProfileDefaultPending = null;
+    submittedSearchQuery = "";
     if (!directory) return;
     const request = ++generation;
     const refreshing = activeQuery === "" && activeTagID === tagID;
@@ -1198,13 +1208,15 @@
     naturalProfileDefaultPending = null;
     naturalSearchMode = value as NaturalSearchMode;
     if (naturalSearchMode === "names") naturalRerank = false;
-    if (activeQuery || searchPending) void runSearch();
+    const query = searchPending ? submittedSearchQuery : activeQuery;
+    if (query) void runSearch(selectedID, query);
   }
 
   function changeNaturalRerank(checked: boolean): void {
     naturalProfileDefaultPending = null;
     naturalRerank = checked;
-    if (activeQuery || searchPending) void runSearch();
+    const query = searchPending ? submittedSearchQuery : activeQuery;
+    if (query) void runSearch(selectedID, query);
   }
 
   function changeTagFilter(tagID: string): void {
@@ -1427,12 +1439,26 @@
     if (selectedID !== undefined) void loadSelectedTags(selectedID, selectedSource?.key);
   }
 
-  function leaveSnapshotMode(): void {
+  function leaveSnapshotMode(resumeLive = false): void {
+    const deferredProfileDefault = resumeLive &&
+      naturalProfileDefaultPending?.request === profileGeneration &&
+      naturalProfileDefaultPending.session === webSession;
+    const acceptedQuery = activeQuery;
     invalidateSnapshotActions();
+    if (!resumeLive) naturalProfileDefaultPending = null;
     if (snapshotState.status === "idle" && snapshotController === undefined) return;
     snapshotController?.dispose();
     snapshotController = undefined;
     snapshotState = { status: "idle", offset: 0 };
+    if (deferredProfileDefault) {
+      naturalProfileDefaultPending = null;
+      const defaultMode: NaturalSearchMode = naturalProfile?.embedding_bindings.length ? "auto" : "names";
+      if (acceptedQuery && naturalSearchMode !== defaultMode) {
+        naturalSearchMode = defaultMode;
+        naturalRerank = false;
+        void runSearch(selectedID, acceptedQuery);
+      }
+    }
     selectedSnapshotID = undefined;
     snapshotSelection = new Set();
     snapshotOverlays = {};
@@ -1462,6 +1488,7 @@
     searchPending = false;
     loading = false;
     naturalRerankPending = false;
+    naturalProfileDefaultPending = null;
     keepQueryDraft(query);
     void snapshotSession().run(query, options);
   }
@@ -2280,7 +2307,7 @@
               {#if snapshotState.options?.profile}<span>Profile: {snapshotState.options.profile}</span>{/if}
               <Button size="sm" tone="info" disabled={snapshotState.status !== "ready"}
                 onclick={() => { snapshotActionError = ""; snapshotActionsOpen = true; }}>Tag or recover</Button>
-              <Button size="sm" onclick={leaveSnapshotMode}>Back to live folder</Button>
+              <Button size="sm" onclick={() => leaveSnapshotMode(true)}>Back to live folder</Button>
             </div>
           </div>
           {#if snapshotState.error}
