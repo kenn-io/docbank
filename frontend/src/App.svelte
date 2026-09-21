@@ -934,13 +934,15 @@
       naturalRerankPending = true;
       try {
         const reranked = await documentSearch(session, { ...baseRequest, rerank: true }, controller.signal);
-        if (request !== generation || session !== webSession || controller.signal.aborted) return;
+        if (request !== generation || session !== webSession || controller.signal.aborted ||
+          naturalSearchMode !== mode || !naturalRerank) return;
         if (reranked.reranking?.outcome !== "applied") {
           naturalSearchNote = rerankingNote(reranked.reranking?.outcome ?? "failed", reranked.reranking?.cause);
           return;
         }
         const rerankedRows = await hydrateProcessingRows(reranked, session, request, controller.signal, mode);
-        if (request !== generation || session !== webSession || controller.signal.aborted) return;
+        if (request !== generation || session !== webSession || controller.signal.aborted ||
+          naturalSearchMode !== mode || !naturalRerank) return;
         applyProcessingSearch(rerankedRows, query, requestedTagID, reranked.truncated, preferredSelectedID, true, true);
         naturalSearchNote = rerankingNote("applied");
       } catch (cause) {
@@ -948,7 +950,8 @@
           handleFailure(cause);
           return;
         }
-        if (request === generation && session === webSession && !controller.signal.aborted) {
+        if (request === generation && session === webSession && !controller.signal.aborted &&
+          naturalSearchMode === mode && naturalRerank) {
           naturalSearchNote = `Reranking failed: ${cause instanceof Error ? cause.message : String(cause)}. Base results remain.`;
         }
       }

@@ -233,6 +233,37 @@ it("shows base rows while reranking and applies the validated order", async () =
   expect(harness.postBodies[1]?.rerank).toBe(true);
 });
 
+it("ignores a rerank response after changing the next search mode", async () => {
+  const baseFile = node(2, "base.txt", baseVersion);
+  const rerankedFile = node(3, "reranked.txt", rerankedVersion);
+  const harness = installHarness({
+    profiles: [{ name: "private", fingerprint: "a".repeat(64), rendition: true, embedding_bindings: ["embed"], reranking_available: true }],
+    files: [baseFile, rerankedFile],
+    baseReport: report("hybrid", [result(baseFile, 1, "base excerpt")]),
+    rerankPending: true,
+  });
+  render(App);
+  await screen.findAllByText("base.txt");
+  await screen.findByRole("button", { name: "Process and retrieve" });
+  await fireEvent.click(screen.getByRole("checkbox", { name: "Rerank results" }));
+  await submitSearch("annual report");
+  await screen.findByText("Reranking results… Base results are shown.");
+  await fireEvent.click(screen.getByRole("combobox", { name: "Search mode: Auto" }));
+  await fireEvent.click(screen.getByRole("option", { name: "Lexical" }));
+  harness.resolveRerank(json({
+    requested_mode: "hybrid",
+    actual_mode: "hybrid",
+    coverage: { binding_required: true, scoped_documents: 2, complete_documents: 2, state: "complete" },
+    degradations: [],
+    results: [result(rerankedFile, 1, "reranked excerpt")],
+    truncated: false,
+    trace: [],
+    reranking: { outcome: "applied", candidate_count: 1 },
+  }));
+  await waitFor(() => expect(screen.queryByText("reranked excerpt")).toBeNull());
+  expect(screen.getByText("base excerpt")).toBeTruthy();
+});
+
 it("keeps the current selection when reranking replaces the rows", async () => {
   const baseFile = node(2, "base.txt", baseVersion);
   const rerankedFile = node(3, "reranked.txt", rerankedVersion);
