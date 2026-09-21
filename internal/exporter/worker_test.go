@@ -193,6 +193,8 @@ func TestWorkerDoesNotFenceClaimOnTemporaryReadContention(t *testing.T) {
 	require.True(t, catalog.RenditionJobErrorRetryable(err), "expected read contention, got %v", err)
 	// Allow at least one claim poll to observe the real read lock.
 	time.Sleep(350 * time.Millisecond)
+	// Keep resumed reads from racing the last connection's WAL teardown.
+	driver.db.SetMaxIdleConns(2)
 	require.NoError(t, tx.Rollback())
 	require.NoError(t, locker.Close())
 	close(resume)
