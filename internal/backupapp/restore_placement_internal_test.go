@@ -6,6 +6,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -56,6 +57,8 @@ func TestRestoredRenditionVerificationPreservesPreparedHandoff(t *testing.T) {
 	databasePath := filepath.Join(target, "docbank.db")
 	metadata, err := store.Open(databasePath)
 	require.NoError(t, err)
+	file, err := metadata.CreateFile(t.Context(), metadata.RootID(), "people.txt", strings.Repeat("a", 64), 1, "text/plain")
+	require.NoError(t, err)
 	next := store.NewPackCatalog(metadata).PrimaryOwnership()
 	require.NoError(t, metadata.Close())
 
@@ -68,6 +71,12 @@ func TestRestoredRenditionVerificationPreservesPreparedHandoff(t *testing.T) {
 	require.NoError(t, verifyRestoredRenditionHeads(
 		t.Context(), target, databasePath, store.DefaultSQLiteDriver(),
 	))
+	metadata, err = store.Open(databasePath)
+	require.NoError(t, err)
+	_, head, err := metadata.DocumentPeopleForVersion(t.Context(), file.CurrentVersionID)
+	require.NoError(t, err)
+	require.Equal(t, "published", head.State)
+	require.NoError(t, metadata.Close())
 
 	pending, err := blob.PrimaryRestoreHandoffPending(filepath.Join(target, "blobs"))
 	require.NoError(t, err)

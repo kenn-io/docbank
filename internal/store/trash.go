@@ -356,6 +356,7 @@ func (s *Store) TrashedRootsPage(
 // TrashEmptyResult reports one trash-empty dry run or execution.
 type TrashEmptyResult struct {
 	Candidates int64
+	Retained   int64
 	Deleted    int64
 	More       bool
 	Run        bool
@@ -370,7 +371,8 @@ func (s *Store) TrashEmpty(ctx context.Context, olderThan time.Duration, run boo
 }
 
 // TrashEmptyBounded reports or deletes at most maxRoots eligible trash roots.
-// More reports whether another eligible root existed beyond this batch.
+// More reports whether another deletable root existed beyond this batch.
+// Retained counts all age-matching email-retained roots, outside the batch limit.
 func (s *Store) TrashEmptyBounded(
 	ctx context.Context, olderThan time.Duration, maxRoots int, run bool,
 ) (TrashEmptyResult, error) {
@@ -393,7 +395,7 @@ func (s *Store) trashEmpty(
 	// Media authority and mailbox receipts retain exact content versions.
 	// Exclude their source and attachment subtrees so a retained document
 	// cannot abort deletion of unrelated trash roots.
-	where += ` AND NOT EXISTS (
+	deletable := where + ` AND NOT EXISTS (
 		WITH RECURSIVE subtree(id) AS (
 			SELECT nodes.id
 			UNION ALL
@@ -410,7 +412,17 @@ func (s *Store) trashEmpty(
 			JOIN mailbox_transfer_receipts receipt ON receipt.document_publication_id=relation.operation_id
 			WHERE relation.child_version_id=version.version_id)
 	)`
-	selection := `SELECT id FROM nodes WHERE ` + where + ` ORDER BY trashed_at ASC, id ASC`
+	// Protect the entire trash root when any descendant version is retained.
+	// UNION deduplicates ancestors shared by multiple retained occurrences.
+	const emailRetainedNodes = `WITH RECURSIVE retained(id) AS (
+		SELECT v.node_id FROM content_versions v
+		WHERE EXISTS(SELECT 1 FROM email_document_publications p WHERE p.parent_version_id=v.version_id)
+		   OR EXISTS(SELECT 1 FROM email_document_relations r WHERE r.child_version_id=v.version_id)
+		UNION
+		SELECT n.parent_id FROM nodes n JOIN retained r ON n.id=r.id WHERE n.parent_id IS NOT NULL
+	) SELECT id FROM retained`
+	deletable += ` AND id NOT IN (` + emailRetainedNodes + `)`
+	selection := `SELECT id FROM nodes WHERE ` + deletable + ` ORDER BY trashed_at ASC, id ASC`
 	selectionArgs := append([]any(nil), args...)
 	if maxRoots > 0 {
 		selection += ` LIMIT ?`
@@ -421,13 +433,16 @@ func (s *Store) trashEmpty(
 		runTx = s.withLogicalTx
 	}
 	err := runTx(ctx, func(tx *sql.Tx) error {
+		if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM nodes WHERE `+where+` AND id IN (`+emailRetainedNodes+`)`, args...).Scan(&rep.Retained); err != nil {
+			return fmt.Errorf("counting retained trash roots: %w", err)
+		}
 		if err := tx.QueryRow(`SELECT COUNT(*) FROM (`+selection+`)`, selectionArgs...).Scan(&rep.Candidates); err != nil {
 			return fmt.Errorf("counting trash-empty candidates: %w", err)
 		}
 		if maxRoots > 0 {
 			moreArgs := append(append([]any(nil), args...), maxRoots)
 			if err := tx.QueryRow(
-				`SELECT EXISTS(SELECT 1 FROM nodes WHERE `+where+` ORDER BY trashed_at ASC, id ASC LIMIT 1 OFFSET ?)`,
+				`SELECT EXISTS(SELECT 1 FROM nodes WHERE `+deletable+` ORDER BY trashed_at ASC, id ASC LIMIT 1 OFFSET ?)`,
 				moreArgs...,
 			).Scan(&rep.More); err != nil {
 				return fmt.Errorf("checking for more trash-empty candidates: %w", err)

@@ -106,6 +106,7 @@ func TestAgentSessionArchiveSurvivesPackedBackupRestore(t *testing.T) {
 	_, err = runCLI(t, "backup", "init")
 	require.NoError(t, err)
 	var snapshot api.BackupSnapshot
+	// Retrying maintenance contention also waits for the real backup's disk I/O.
 	require.Eventually(t, func() bool {
 		out, createErr := runCLI(t, "backup", "create", "--tag", "agent-sessions", "--json")
 		if errors.Is(createErr, daemonconn.ErrMaintenanceBusy) {
@@ -117,7 +118,7 @@ func TestAgentSessionArchiveSurvivesPackedBackupRestore(t *testing.T) {
 		}
 		err = json.Unmarshal([]byte(out), &snapshot)
 		return true
-	}, 5*time.Second, 25*time.Millisecond)
+	}, 30*time.Second, 25*time.Millisecond)
 	require.NoError(t, err)
 	require.NotEmpty(t, snapshot.ID)
 
