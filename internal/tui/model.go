@@ -523,27 +523,15 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.naturalProfiles = append([]api.ProcessingProfileSummary(nil), msg.profiles...)
-		if m.naturalMode != naturalNames || naturalProfileBinding(m.naturalProfiles) == "" {
+		if m.naturalMode == naturalNames && naturalProfileBinding(m.naturalProfiles) != "" {
 			m.naturalProfileDefaultPending = false
 			m.naturalProfileDefaultRequest = 0
-			return m, nil
-		}
-		if m.mode == modeSearch {
-			if query := m.searchQuery; query != "" && !m.loading {
-				m.naturalMode = naturalAuto
-				m.naturalRerank = false
+			m.naturalMode = naturalAuto
+			m.naturalRerank = false
+			if query := m.activeSearchQuery(); query != "" && (!m.loading || m.submittedSearchID == m.requestID) {
 				return m.startSearch(query)
 			}
 		}
-		if m.loading && m.activeSearchQuery() != "" {
-			m.naturalProfileDefaultPending = true
-			m.naturalProfileDefaultRequest = msg.requestID
-			return m, nil
-		}
-		m.naturalProfileDefaultPending = false
-		m.naturalProfileDefaultRequest = 0
-		m.naturalMode = naturalAuto
-		m.naturalRerank = false
 		return m, nil
 	case naturalSearchBaseLoadedMsg:
 		return m.applyNaturalSearchBase(msg)

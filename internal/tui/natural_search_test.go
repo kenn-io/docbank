@@ -566,7 +566,7 @@ func TestNaturalSearchProfileDefaultRestartsAcceptedQuery(t *testing.T) {
 	assert.Equal(t, naturalHybrid, fake.naturalSearchRequests[0].Mode)
 }
 
-func TestNaturalSearchProfileDefaultWaitsForAcceptedQuery(t *testing.T) {
+func TestNaturalSearchProfileDefaultRestartsPendingSubmittedQuery(t *testing.T) {
 	fake := newFakeBackend()
 	model, err := New(t.Context(), fake)
 	require.NoError(t, err)
@@ -583,19 +583,7 @@ func TestNaturalSearchProfileDefaultWaitsForAcceptedQuery(t *testing.T) {
 	})
 	result, ok := updated.(Model)
 	require.True(t, ok)
-	assert.Nil(t, cmd)
-	assert.Equal(t, naturalNames, result.naturalMode)
-	assert.True(t, result.naturalProfileDefaultPending)
-
-	updated, cmd = result.applySearch(searchLoadedMsg{
-		requestID: result.requestID,
-		query:     "new query",
-		report:    api.SearchReport{},
-	})
-	result, ok = updated.(Model)
-	require.True(t, ok)
 	assert.Equal(t, naturalAuto, result.naturalMode)
-	assert.Equal(t, "new query", result.searchQuery)
 	require.NotNil(t, cmd)
 
 	runModelCommand(t, result, cmd)
