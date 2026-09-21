@@ -8,7 +8,7 @@ const root = identity(1), child = identity(2), nested = identity(3);
 const selected: SelectedSource = { kind: "snapshot", key: "frozen-root", nodeID: 1, versionID: root.version_id, blobHash: root.sha256, size: 12, mutationRevision: 1, name: "root.eml", path: "/root.eml", mimeType: "message/rfc822", modifiedAt: "2026-09-12T00:00:00Z", observedAt: "2026-09-12T00:00:00Z", originalTags: [], collectionIDs: [] };
 const relation = (parent: typeof root, child: typeof root) => ({ operation_id: `publication-${parent.node_id}`, order: 1, parent, child, generation_id: "c".repeat(64), attachment_id: "d".repeat(64), part_path: "1.2", sibling_order: 1, filename: "nested.eml", outcome: "decoded" });
 const page = (entry?: ReturnType<typeof relation>) => ({ items: entry ? [{ relation: entry, state: "decoded", reason: "processing_not_requested" }] : [], total: entry ? 1 : 0, next_operation_id: "", next_order: 0 });
-const version = (target: typeof root) => ({ id: target.version_id, node_id: target.node_id, blob_hash: target.sha256, size: target.size, mime_type: "message/rfc822" });
+const version = (target: typeof root) => ({ id: target.version_id, node_id: target.node_id, blob_hash: target.sha256, size: target.size, mime_type: "message/rfc822; charset=utf-8" });
 const node = (target: typeof root) => ({ id: target.node_id, kind: "file", revision: 7, name: `message-${target.node_id}.eml`, path: `/message-${target.node_id}.eml`, mime_type: "text/plain", current_version_id: identity(9).version_id, modified_at: "2026-09-12T00:00:00Z" });
 afterEach(() => { cleanup(); vi.restoreAllMocks(); });
 

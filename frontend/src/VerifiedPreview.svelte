@@ -9,7 +9,7 @@
   import DuplicatesTab from "./DuplicatesTab.svelte";
   import OriginalPreview from "./OriginalPreview.svelte";
   import PageViewer from "./PageViewer.svelte";
-  import type { HighlightTerm } from "./query.js";
+  import { parseMediaType, type HighlightTerm } from "./query.js";
   import type { RenditionObservation } from "./renditionText.js";
   import type { LiveSelectedSource, RelatedSelectedSource, SelectedSource } from "./selectedSource.js";
   import VerifiedText from "./VerifiedText.svelte";
@@ -37,7 +37,7 @@
   let frozenKey = "";
   const relatedSource = $derived(relatedSources.at(-1));
   const displayedSource = $derived(relatedSource ?? duplicateSource ?? source);
-  const displayedTab = $derived(activeTab === "email" && displayedSource.mimeType !== "message/rfc822" ? "preview" : activeTab);
+  const displayedTab = $derived(activeTab === "email" && parseMediaType(displayedSource.mimeType) !== "message/rfc822" ? "preview" : activeTab);
   const displayedRevision = $derived(relatedSource?.mutationRevision ?? duplicateSource?.mutationRevision ?? authorizationRevision);
 
   $effect(() => {
@@ -72,7 +72,7 @@
       const next = await readRelatedSource(session, target, pending.signal);
       if (request !== navigationEpoch || pending.signal.aborted) return;
       relatedSources = [...relatedSources, next];
-      activeTab = next.mimeType === "message/rfc822" ? "attachments" : "preview";
+      activeTab = parseMediaType(next.mimeType) === "message/rfc822" ? "attachments" : "preview";
     } catch (cause) {
       if (request !== navigationEpoch || pending.signal.aborted) return;
       if (cause instanceof APIError && cause.status === 401) onauthfailure(cause);
@@ -140,7 +140,7 @@
       onclick={() => chooseTab("duplicates")}>Duplicates</button>
     <button type="button" role="tab" aria-selected={displayedTab === "attachments"}
       onclick={() => chooseTab("attachments")}>Attachments</button>
-    {#if displayedSource.mimeType === "message/rfc822"}
+    {#if parseMediaType(displayedSource.mimeType) === "message/rfc822"}
       <button type="button" role="tab" aria-selected={displayedTab === "email"} onclick={() => chooseTab("email")}>Email</button>
     {/if}
   </div>

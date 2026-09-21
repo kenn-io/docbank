@@ -73,7 +73,7 @@ func TestEmailViewerRealDaemonBrowser(t *testing.T) {
 	hash := func(raw string) string { sum := sha256.Sum256([]byte(raw)); return hex.EncodeToString(sum[:]) }
 	add := func(name, raw string) document.EmailDocumentIdentity {
 		t.Helper()
-		upload, err := c.Upload(t.Context(), root.ID, name, "message/rfc822", hash(raw), int64(len(raw)), strings.NewReader(raw))
+		upload, err := c.Upload(t.Context(), root.ID, name, "message/rfc822; charset=utf-8", hash(raw), int64(len(raw)), strings.NewReader(raw))
 		require.NoError(t, err)
 		_, err = c.EnsureEmailMetadata(t.Context(), upload.Node.CurrentVersionID)
 		require.NoError(t, err)

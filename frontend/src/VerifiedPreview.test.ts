@@ -61,6 +61,15 @@ function body(selected: SelectedSource, bytes: Uint8Array): Response {
   });
 }
 
+it("keeps Email available and selected for a parameterized email MIME type", async () => {
+  const selected = source(new TextEncoder().encode("Subject: Synthetic\r\n\r\nBody"),
+    "11111111-1111-4111-8111-111111111111", "MESSAGE/RFC822\t; charset=utf-8");
+  vi.spyOn(globalThis, "fetch").mockResolvedValue(Response.json({ state: "pending" }, { status: 202 }));
+  render(VerifiedPreview, { session: "session", source: selected, authorizationRevision: 8, activeTab: "email", onauthfailure: vi.fn() });
+  expect(screen.getByRole("tab", { name: "Email" }).getAttribute("aria-selected")).toBe("true");
+  expect(await screen.findByText(/Email decoding is pending/)).toBeTruthy();
+});
+
 it("falls back to verified Preview when an Email tab survives non-email selection", async () => {
   const bytes = new TextEncoder().encode("Selected ordinary document");
   const selected = source(bytes,"11111111-1111-4111-8111-111111111111");
