@@ -151,6 +151,22 @@ test("MAIL07 offline email reader on a real daemon", async ({ page, context }) =
   await page.getByRole("tab",{ name:"Email",exact:true }).click();
   await expect(reader).toContainText("canonical evidence or generation binding failed verification");
   await expect(page.locator("iframe")).toHaveCount(0);
+  // Revoke the real session after the body loads, before its inline image.
+  // The rejected image must lock the reader, not become a placeholder.
+  await page.getByRole("tab",{ name:"Attachments",exact:true }).click();
+  await page.route(`**/versions/${fixture.html.version_id}/email/generations/*/parts/1.2/decoded_payload`,async (route) => {
+    const revoked = await context.request.delete(new URL("/api/daemon/web-session",browserURL!).href,{
+      headers:{ "X-Docbank-Web-Session":route.request().headers()["x-docbank-web-session"]!,Origin:new URL(browserURL!).origin },
+    });
+    expect(revoked.status()).toBe(204);
+    const response = await route.fetch();
+    expect(response.status()).toBe(401);
+    await route.fulfill({ response });
+  },{ times:1 });
+  await page.getByRole("tab",{ name:"Email",exact:true }).click();
+  await expect(page.getByRole("alert")).toContainText("The browser session expired or was rejected.");
+  await expect(reader).toHaveCount(0);
+  await expect(page.locator("iframe")).toHaveCount(0);
   expect(unauthorized).toEqual([]); expect(dialogs).toEqual([]);
   console.log("MAIL07: zero unauthorized browser requests and sender dialogs; CID bytes/dimensions, missing/ambiguous placeholders, quotes, long scrolling, Escape, raw headers, exact original, attachment navigation and stale fetch/decode/frame-load cancellation verified.");
 });

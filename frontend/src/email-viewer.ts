@@ -3,7 +3,7 @@
 // Copyright (c) 2025-2026 Wes McKinney. MIT; see email-viewer.LICENSE.
 import { sha256 } from "@noble/hashes/sha2.js";
 import { bytesToHex } from "@noble/hashes/utils.js";
-import { sessionResponse } from "./api-transport.js";
+import { APIError, sessionResponse } from "./api-transport.js";
 import { getGetEmailMetadataUrl, getEmailPart, type ContentVersion } from "./generated/docbank.js";
 import type { SelectedSource } from "./selectedSource.js";
 import { pageDigest } from "./pages.js";
@@ -252,6 +252,7 @@ export async function prepareEmailHTML(session: string, metadata: EmailMetadata,
       placeholder.replaceWith(img);
     } catch (cause) {
       signal.throwIfAborted();
+      if (cause instanceof APIError && cause.status === 401) throw cause;
       const reason = cause instanceof Error ? cause.message : String(cause);
       placeholder.textContent = `[${image.alt}: ${reason}]`; result.warnings.push(reason);
     }
