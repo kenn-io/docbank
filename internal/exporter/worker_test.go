@@ -167,6 +167,8 @@ func TestWorkerDoesNotFenceClaimOnTemporaryReadContention(t *testing.T) {
 		}
 		return gate.MutateContext(ctx, fn)
 	}))
+	// Only the external locker should cause contention in this fixture.
+	driver.db.SetMaxOpenConns(1)
 	// Let the other SQLite connection take an exclusive lock while no query runs.
 	driver.db.SetMaxIdleConns(0)
 	locker, err := driver.Driver.Open(path, docsqlite.OpenOptions{Access: docsqlite.ReadWriteExisting, TransactionMode: docsqlite.Immediate})
