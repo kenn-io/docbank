@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"slices"
@@ -18,6 +19,7 @@ type termRelationKey struct {
 	operation string
 	order     int
 	child     sql.NullString
+	relation  bool
 }
 
 type termRelationGroups struct {
@@ -52,26 +54,57 @@ func (g *termRelationGroups) join(a, b string) {
 }
 
 func readTermReportFamilies(ctx context.Context, q metadataQuerier, budget report.Budget, frame *report.Frame) error {
-	rows, err := q.QueryContext(ctx, `SELECT p.operation_id,COALESCE(r.occurrence_order,0),r.child_version_id
-		FROM email_document_publications p LEFT JOIN email_document_relations r ON r.operation_id=p.operation_id
-		ORDER BY p.operation_id,r.occurrence_order`)
+	versionIDs := make([]string, len(frame.Members))
+	for i, member := range frame.Members {
+		versionIDs[i] = member.Identity.VersionID
+	}
+	selected, err := json.Marshal(versionIDs)
+	if err != nil {
+		return err
+	}
+	// Traverse both directions so shared children retain connected parents outside
+	// the selected collection. Historical or trashed versions cannot connect groups.
+	rows, err := q.QueryContext(ctx, `WITH RECURSIVE family_versions(version_id) AS (
+		SELECT value FROM json_each(?)
+		UNION
+		SELECT r.child_version_id FROM family_versions f
+		JOIN email_document_publications p ON p.parent_version_id=f.version_id
+		JOIN email_document_relations r ON r.operation_id=p.operation_id
+		JOIN content_versions cv ON cv.version_id=r.child_version_id
+		JOIN nodes n ON n.id=cv.node_id AND n.current_version_id=cv.version_id
+		WHERE n.kind='file' AND n.trashed_at IS NULL
+		UNION
+		SELECT p.parent_version_id FROM family_versions f
+		JOIN email_document_relations r ON r.child_version_id=f.version_id
+		JOIN email_document_publications p ON p.operation_id=r.operation_id
+		JOIN content_versions cv ON cv.version_id=p.parent_version_id
+		JOIN nodes n ON n.id=cv.node_id AND n.current_version_id=cv.version_id
+		WHERE n.kind='file' AND n.trashed_at IS NULL
+	) SELECT p.operation_id,COALESCE(r.occurrence_order,0),r.child_version_id,r.operation_id IS NOT NULL
+		FROM family_versions f JOIN email_document_publications p ON p.parent_version_id=f.version_id
+		LEFT JOIN email_document_relations r ON r.operation_id=p.operation_id
+		ORDER BY p.operation_id,r.occurrence_order`, string(selected))
 	if err != nil {
 		return err
 	}
 	keys := make([]termRelationKey, 0)
+	var relationCount int
 	for rows.Next() {
 		if err := ctx.Err(); err != nil {
 			_ = rows.Close() //nolint:sqlclosecheck // Close the cursor immediately on cancellation.
 			return err
 		}
-		if len(keys) == 100000 {
-			_ = rows.Close()
-			return fmt.Errorf("%w: report family relation limit exceeded", report.ErrReportLimit)
-		}
 		var key termRelationKey
-		if err := rows.Scan(&key.operation, &key.order, &key.child); err != nil {
+		if err := rows.Scan(&key.operation, &key.order, &key.child, &key.relation); err != nil {
 			_ = rows.Close()
 			return err
+		}
+		if key.relation {
+			if relationCount == 100000 {
+				_ = rows.Close()
+				return fmt.Errorf("%w: report family relation limit exceeded", report.ErrReportLimit)
+			}
+			relationCount++
 		}
 		if _, err := budget.Reserve(ctx, int64(256+len(key.operation)+len(key.child.String))); err != nil {
 			_ = rows.Close()
@@ -112,7 +145,7 @@ func readTermReportFamilies(ctx context.Context, q metadataQuerier, budget repor
 				incomplete[parent.VersionID] = true
 			}
 		}
-		if key.order == 0 && len(publication.Receipt.Relations) == 0 {
+		if !key.relation && len(publication.Receipt.Relations) == 0 {
 			continue
 		}
 		if key.order < 1 || key.order > len(publication.Receipt.Relations) {
@@ -164,7 +197,6 @@ func readTermReportFamilies(ctx context.Context, q metadataQuerier, budget repor
 			incomplete[groups.root(versionID)] = true
 		}
 	}
-	selectedFamilies := make(map[string]bool)
 	for i := range frame.Members {
 		id := frame.Members[i].Identity.VersionID
 		if _, connected := groups.parent[id]; !connected {
@@ -174,18 +206,14 @@ func readTermReportFamilies(ctx context.Context, q metadataQuerier, budget repor
 			continue
 		}
 		root := groups.root(id)
-		selectedFamilies[root] = true
 		frame.Members[i].FamilyID = root
 		if incomplete[root] {
 			frame.Members[i].Coverage.FamilyState = "incomplete"
 		}
 	}
-	frame.Relations = slices.DeleteFunc(frame.Relations, func(relation report.Relation) bool {
-		return !selectedFamilies[groups.root(relation.Parent.VersionID)]
-	})
 	sharedChildren := make([]string, 0)
 	for child, parents := range childParents {
-		if parents > 1 && selectedFamilies[groups.root(child)] {
+		if parents > 1 {
 			sharedChildren = append(sharedChildren, child)
 		}
 	}

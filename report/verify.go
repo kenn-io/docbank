@@ -147,11 +147,43 @@ func verifyFrameEvidence(ctx context.Context, budget Budget, frame Frame) error 
 			}
 		}
 	}
+	type contentTextKey struct {
+		document                          Identity
+		sha256, generationID, renditionID string
+	}
+	contentTexts := make(map[contentTextKey]bool, len(frame.Texts))
 	for _, binding := range frame.Texts {
 		if _, found := memberIndex[binding.Document]; !found ||
 			binding.Size < 0 || binding.Size > 16<<20 ||
 			binding.Native != nil && binding.Native.Text != nil {
 			return fmt.Errorf("%w: invalid retained text binding", ErrInvalidPacket)
+		}
+		var textSHA string
+		switch binding.Kind {
+		case "native":
+			if binding.Native == nil || binding.Native.SearchableVersionID != binding.Document.VersionID {
+				continue
+			}
+			textSHA = binding.Native.TextSHA256
+		case "rendition":
+			if binding.Native != nil || binding.RenditionID == "" {
+				continue
+			}
+			textSHA = binding.ArtifactSHA256
+		default:
+			continue
+		}
+		if validSHA256(textSHA) {
+			contentTexts[contentTextKey{binding.Document, textSHA, binding.GenerationID, binding.RenditionID}] = true
+		}
+	}
+	for _, member := range frame.Members {
+		for _, candidate := range member.Candidates {
+			if candidate.SourceClass == "content" && !contentTexts[contentTextKey{
+				candidate.Document, candidate.Locator.TextSHA256, candidate.Locator.EvidenceID, candidate.Locator.RenditionID,
+			}] {
+				return fmt.Errorf("%w: content date lacks matching text binding", ErrInvalidPacket)
+			}
 		}
 	}
 	groups := newRelationGroups()

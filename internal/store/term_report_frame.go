@@ -318,12 +318,13 @@ func (s *Store) readTermReportDateAuthority(ctx context.Context, q metadataQueri
 func readTermReportNativeText(ctx context.Context, q metadataQuerier, info termReportVersion,
 	index int, budget, textBudget report.Budget, frame *report.Frame,
 ) error {
-	var extractor, status, text string
-	err := q.QueryRowContext(ctx, `SELECT e.extractor,e.status,COALESCE(e.text,'')
+	var extractionID, textBytes int64
+	var extractor, status string
+	err := q.QueryRowContext(ctx, `SELECT e.id,e.extractor,e.status,COALESCE(length(CAST(e.text AS BLOB)),0)
 		FROM text_searchable_versions sv JOIN extracted_text e
 		ON e.blob_hash=? WHERE sv.version_id=?
 		ORDER BY e.status='ok' DESC,e.extracted_at DESC,e.extractor DESC LIMIT 1`,
-		info.identity.SHA256, info.identity.VersionID).Scan(&extractor, &status, &text)
+		info.identity.SHA256, info.identity.VersionID).Scan(&extractionID, &extractor, &status, &textBytes)
 	if errors.Is(err, sql.ErrNoRows) {
 		frame.Members[index].Coverage.SearchState = "missing"
 		return nil
@@ -331,17 +332,23 @@ func readTermReportNativeText(ctx context.Context, q metadataQuerier, info termR
 	if err != nil {
 		return err
 	}
-	if status != "ok" || text == "" {
+	if status != "ok" || textBytes == 0 {
 		frame.Members[index].Coverage.SearchState = "missing"
 		return nil
 	}
-	if len(text) > 16<<20 {
+	if textBytes > 16<<20 {
 		return fmt.Errorf("%w: native text exceeds per-document report limit", report.ErrReportLimit)
 	}
 	if _, err := budget.Reserve(ctx, 1024); err != nil {
 		return err
 	}
-	if _, err := textBudget.Reserve(ctx, int64(len(text))); err != nil {
+	if _, err := textBudget.Reserve(ctx, textBytes); err != nil {
+		return err
+	}
+	// The enclosing read snapshot keeps this row fixed between the size check
+	// and payload read. Reserve before asking the driver to allocate the text.
+	var text string
+	if err := q.QueryRowContext(ctx, `SELECT text FROM extracted_text WHERE id=?`, extractionID).Scan(&text); err != nil {
 		return err
 	}
 	bytes := []byte(text)

@@ -176,6 +176,92 @@ func TestVerifyBundleRejectsDisconnectedFamilyEvidence(t *testing.T) {
 	}
 }
 
+func TestVerifyBundleRequiresContentDateTextBinding(t *testing.T) {
+	for _, kind := range []string{"native", "rendition"} {
+		t.Run(kind, func(t *testing.T) {
+			budget := NewBudget(8 << 20)
+			defer func() { _ = budget.Close() }()
+			frame := oracleFrame()
+			text := []byte("Document dated 2024-06-03.")
+			binding := nativeDateBinding(frame.Members[0].Identity, text)
+			if kind == "rendition" {
+				frame.GenerationKind, frame.GenerationID = "rendition", "synthetic-generation"
+				binding = TextBinding{Kind: kind, Document: frame.Members[0].Identity,
+					Size: int64(len(text)), ArtifactSHA256: packetDigest(text),
+					GenerationID: frame.GenerationID, RenditionID: "synthetic-rendition"}
+			}
+			candidates, err := ExtractContentDates(t.Context(), budget, binding.Document, binding, text, "")
+			if err != nil {
+				t.Fatal(err)
+			}
+			frame.Members[0].Candidates = candidates
+			frame.Members[0].Selection, err = SelectDate(frame.Members[0].Kind, candidates, nil, frame.Request)
+			if err != nil {
+				t.Fatal(err)
+			}
+			frame.Texts = []TextBinding{binding}
+			result, err := Calculate(t.Context(), budget, frame)
+			if err != nil {
+				t.Fatal(err)
+			}
+			packet, err := BuildBundle(t.Context(), budget, result)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := ExtractVerifiedCSV(t.Context(), budget, bytes.NewReader(packet), int64(len(packet))); err != nil {
+				t.Fatalf("valid %s content evidence was rejected: %v", kind, err)
+			}
+			for _, mutation := range []string{"missing binding", "other document", "other hash", "other version", "other generation", "other locator rendition"} {
+				t.Run(mutation, func(t *testing.T) {
+					changed := resealBundle(t, packet, func(payloads map[string][]byte, _ *packetManifest) {
+						lines := bytes.Split(payloads["dates.jsonl"], []byte{'\n'})
+						date, err := canonical.Decode[packetDate](lines[0])
+						if err != nil {
+							t.Fatal(err)
+						}
+						switch mutation {
+						case "missing binding":
+							date.Texts = nil
+						case "other document":
+							date.Texts[0].Document = frame.Members[1].Identity
+							if kind == "native" {
+								date.Texts[0].Native.SearchableVersionID = frame.Members[1].Identity.VersionID
+							}
+						case "other hash":
+							if kind == "native" {
+								date.Texts[0].Native.TextSHA256 = packetDigest([]byte("other text"))
+							} else {
+								date.Texts[0].ArtifactSHA256 = packetDigest([]byte("other text"))
+							}
+						case "other version":
+							if kind == "native" {
+								date.Texts[0].Native.SearchableVersionID = "other-version"
+							} else {
+								date.Texts[0].RenditionID = "other-rendition"
+							}
+						case "other generation":
+							date.Texts[0].GenerationID = "other-generation"
+						case "other locator rendition":
+							date.Candidates[0].Locator.RenditionID = "other-rendition"
+						}
+						lines[0], err = canonical.Marshal(date)
+						if err != nil {
+							t.Fatal(err)
+						}
+						payloads["dates.jsonl"] = bytes.Join(lines, []byte{'\n'})
+					})
+					if _, err := VerifyBundle(t.Context(), budget, bytes.NewReader(changed), int64(len(changed))); !errors.Is(err, ErrInvalidPacket) {
+						t.Errorf("accepted content date without matching text evidence: %v", err)
+					}
+					if csv, err := ExtractVerifiedCSV(t.Context(), budget, bytes.NewReader(changed), int64(len(changed))); !errors.Is(err, ErrInvalidPacket) || csv != nil {
+						t.Errorf("extracted CSV without matching text evidence: bytes=%d err=%v", len(csv), err)
+					}
+				})
+			}
+		})
+	}
+}
+
 func resealBundle(t *testing.T, packet []byte, edit func(map[string][]byte, *packetManifest)) []byte {
 	t.Helper()
 	archive, err := zip.NewReader(bytes.NewReader(packet), int64(len(packet)))

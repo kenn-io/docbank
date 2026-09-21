@@ -222,8 +222,10 @@ func (c *Cache) makeEntryWithFrame(ctx context.Context, owner, parent string, sh
 		return nil, ErrUnavailable
 	}
 	artifactScope := c.budget.Child()
+	calculationScope := c.budget.Child()
+	defer func() { _ = calculationScope.Close() }()
 	serviceCopy := *service
-	serviceCopy.Budget = artifactScope
+	serviceCopy.Budget = calculationScope
 	result, err := serviceCopy.Finalize(ctx, frame, nil)
 	entry := &cacheEntry{owner: owner, frame: shared, scope: artifactScope,
 		readers: make(map[*pinnedReader]struct{}), summary: report.Summary{

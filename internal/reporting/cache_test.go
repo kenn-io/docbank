@@ -26,6 +26,32 @@ func cacheFixture(now time.Time, reads *int) *Service {
 	})}
 }
 
+func TestCacheReleasesCalculationBudget(t *testing.T) {
+	now := time.Date(2026, 9, 20, 12, 0, 0, 0, time.UTC)
+	budget := report.NewBudget(16 << 20)
+	defer func() { _ = budget.Close() }()
+	cache := NewCache(func() time.Time { return now }, budget)
+	defer cache.InvalidateAll()
+	reads := 0
+	service := cacheFixture(now, &reads)
+	summary, err := cache.Create(context.Background(), "owner", service, testRequest())
+	if err != nil {
+		t.Fatal(err)
+	}
+	retained := summary.CSVBytes + summary.BundleBytes
+	if used := budget.Used(); used != retained {
+		t.Fatalf("completed export retains %d bytes; artifacts need %d", used, retained)
+	}
+	revision, err := cache.Revise(context.Background(), "owner", summary.ID, service, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	retained += revision.CSVBytes + revision.BundleBytes
+	if used := budget.Used(); used != retained {
+		t.Fatalf("completed revision retains %d bytes; artifacts need %d", used, retained)
+	}
+}
+
 func TestCacheOwnerBoundImmutableRevisionAndExpiry(t *testing.T) {
 	now := time.Date(2026, 9, 20, 12, 0, 0, 0, time.UTC)
 	clock := now
