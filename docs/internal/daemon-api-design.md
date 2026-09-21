@@ -172,6 +172,15 @@ did not opt in, and it rejects a missing or malformed receipt for an opted-in
 request. Errors use stable `reranking_unavailable` and `reranking_failed`
 codes and never include provider bodies, credentials, query text, or excerpts.
 
+The browser and TUI expose Names and text, Auto, Lexical, Semantic, and Hybrid
+as processing choices. UI Auto maps to Hybrid only when an embedding binding
+is present; API Auto remains lexical. Semantic and Hybrid requests require a
+binding. Every processing search resolves one complete live source fence,
+validates its sorted UUIDv4 IDs, observed count, and vault-bound fingerprint,
+then hydrates only live nodes whose current content version matches the result.
+Clients may send `rerank: true` after base results are available; the daemon
+returns a bounded reranking receipt for that opt-in request.
+
 Unmapped internal failures may expose useful detail because this is a local
 single-user tool, but secrets, API keys, shutdown tokens, and document content
 must never enter logs or error strings.

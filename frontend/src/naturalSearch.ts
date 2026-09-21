@@ -38,10 +38,6 @@ export function naturalSearchModes(
   return modes.map((value) => ({ value, label: modeLabels[value] }));
 }
 
-export function naturalSearchModeLabel(mode: NaturalSearchMode): string {
-  return modeLabels[mode];
-}
-
 export function naturalSearchRequest(
   mode: NaturalSearchMode,
   profile: ProcessingProfileSummary,

@@ -9,6 +9,8 @@ const versions = [
   "22222222-2222-4222-8222-222222222222",
   "33333333-3333-4333-8333-333333333333",
 ];
+const crossLanguageFingerprint = "sha256:3c2a6756783fd03230bb89fe15de79ba10b3a6c1511d56be4042994e66d707cc";
+const emptyFenceFingerprint = "sha256:460b958d02d96944be00a74a720c0b8af0248239d91c4351141b65d4b9551700";
 
 function fenceFingerprint(vaultID: string, ids: string[]): string {
   const bytes = [...utf8ToBytes("docbank-document-source-fence/v1")];
@@ -28,12 +30,12 @@ describe("processing receipts", () => {
     expect(validateDocumentSourceFenceResolution({
       fence: { vault_uid: vault, content_version_ids: versions },
       observed_scope_count: 2,
-      fence_fingerprint: fenceFingerprint(vault, versions),
+      fence_fingerprint: crossLanguageFingerprint,
     }).fence.content_version_ids).toEqual(versions);
     expect(validateDocumentSourceFenceResolution({
       fence: { vault_uid: vault, content_version_ids: [] },
       observed_scope_count: 0,
-      fence_fingerprint: fenceFingerprint(vault, []),
+      fence_fingerprint: emptyFenceFingerprint,
     }).fence.content_version_ids).toEqual([]);
   });
 
@@ -41,7 +43,7 @@ describe("processing receipts", () => {
     const valid = {
       fence: { vault_uid: vault, content_version_ids: versions },
       observed_scope_count: 2,
-      fence_fingerprint: fenceFingerprint(vault, versions),
+      fence_fingerprint: crossLanguageFingerprint,
     };
     expect(() => validateDocumentSourceFenceResolution({
       ...valid,
@@ -49,7 +51,7 @@ describe("processing receipts", () => {
     })).toThrow();
     expect(() => validateDocumentSourceFenceResolution({
       ...valid,
-      fence_fingerprint: fenceFingerprint(vault, [versions[0]]),
+      fence_fingerprint: emptyFenceFingerprint,
     })).toThrow();
   });
 
@@ -76,5 +78,21 @@ describe("processing receipts", () => {
     expect(validateDocumentSearchReport(report, request).reranking?.outcome).toBe("applied");
     expect(() => validateDocumentSearchReport({ ...report, reranking: undefined }, request)).toThrow();
     expect(() => validateDocumentSearchReport(report, { ...request, rerank: false })).toThrow();
+  });
+
+  it("accepts the 4096-ID fence and rejects the 4097-ID boundary", () => {
+    const ids = Array.from({ length: 4096 }, (_, index) =>
+      `00000000-0000-4000-8000-${index.toString(16).padStart(12, "0")}`);
+    const valid = {
+      fence: { vault_uid: vault, content_version_ids: ids },
+      observed_scope_count: 4096,
+      fence_fingerprint: "sha256:cbf7dadb0ffdefd1c5024235dfdfdfe835766bc44fa5bc6654ec561df8b11872",
+    };
+    expect(validateDocumentSourceFenceResolution(valid).fence.content_version_ids).toHaveLength(4096);
+    expect(() => validateDocumentSourceFenceResolution({
+      ...valid,
+      fence: { ...valid.fence, content_version_ids: [...ids, "00000000-0000-4000-8000-000000001000"] },
+      observed_scope_count: 4097,
+    })).toThrow();
   });
 });

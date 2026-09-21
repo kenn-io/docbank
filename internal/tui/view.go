@@ -700,6 +700,21 @@ func appendWrapped(
 	return lines
 }
 
+func (m Model) naturalWhyLines(item row, width int) []string {
+	if m.mode != modeSearch || item.naturalMode == "" || item.naturalMode == naturalNames {
+		return nil
+	}
+	excerpt := item.excerpt
+	if excerpt == "" {
+		excerpt = "Direct-file result; no text excerpt."
+	}
+	why := "  Why: " + excerpt
+	if len(item.evidence) > 0 {
+		why += " · " + strings.Join(item.evidence, ", ")
+	}
+	return appendWrapped(nil, why, width, m.styles.muted)
+}
+
 func countLabel(value int64, singular, plural string) string {
 	label := plural
 	if value == 1 {
@@ -807,8 +822,8 @@ func (m Model) renderList(width, height int) string {
 		}
 		lines = append(lines, m.styles.muted.Render(pad(fit(message, width), width)))
 	}
-	end := min(m.offset+visible, len(m.rows))
-	for index := m.offset; index < end; index++ {
+	bodyLines := 0
+	for index := m.offset; index < len(m.rows) && bodyLines < visible; index++ {
 		item := m.rows[index]
 		kind := "FILE"
 		if item.node.Kind == nodeKindDir {
@@ -840,16 +855,13 @@ func (m Model) renderList(width, height int) string {
 		} else {
 			lines = append(lines, line)
 		}
-		if m.mode == modeSearch && m.naturalMode != naturalNames && len(lines) < height {
-			excerpt := item.excerpt
-			if excerpt == "" {
-				excerpt = "Direct-file result; no text excerpt."
+		bodyLines++
+		for _, why := range m.naturalWhyLines(item, width) {
+			if bodyLines >= visible {
+				break
 			}
-			why := "  Why: " + excerpt
-			if len(item.evidence) > 0 {
-				why += " · " + strings.Join(item.evidence, ", ")
-			}
-			lines = append(lines, m.styles.muted.Render(pad(fit(why, width), width)))
+			lines = append(lines, why)
+			bodyLines++
 		}
 	}
 	if len(lines) > height {

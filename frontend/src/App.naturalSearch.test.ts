@@ -92,10 +92,15 @@ function report(
 
 interface HarnessOptions {
   profiles: unknown[];
+  profilesStatus?: number;
   files: ReturnType<typeof node>[];
   baseReport: unknown;
+  baseSearchStatus?: number;
+  legacySearchStatus?: number;
+  basePending?: boolean;
   rerankReport?: unknown;
   rerankPending?: boolean;
+  emptyFence?: boolean;
   tagSearch?: unknown;
 }
 
@@ -105,7 +110,11 @@ function installHarness(options: HarnessOptions) {
   Object.defineProperty(Element.prototype, "scrollIntoView", { configurable: true, value: vi.fn() });
   const root = { id: 1, name: "", kind: "dir", size: 0, revision: 1, created_at: "2026-09-21T00:00:00Z", modified_at: "2026-09-21T00:00:00Z", path: "/" };
   const postBodies: Record<string, unknown>[] = [];
+  const fenceBodies: Record<string, unknown>[] = [];
   let rerankResolve: ((response: Response) => void) | undefined;
+  let baseResolve: ((response: Response) => void) | undefined;
+  const basePending = new Promise<Response>((resolve) => { baseResolve = resolve; });
+  let baseCalls = 0;
   const rerankPending = new Promise<Response>((resolve) => { rerankResolve = resolve; });
   const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
     const url = String(input);
@@ -120,34 +129,44 @@ function installHarness(options: HarnessOptions) {
     if (url === `/api/v1/tags/${tagID}/nodes?limit=1000&offset=0&live_only=true`) {
       return json({ items: options.files.map((file) => ({ node: file, path: file.path })), total: options.files.length, limit: 1000, offset: 0, omitted_trashed: 0 });
     }
-    if (url === "/api/v1/processing/profiles") return json(options.profiles);
+    if (url === "/api/v1/processing/profiles") {
+      return options.profilesStatus ? new Response("profile failure", { status: options.profilesStatus }) : json(options.profiles);
+    }
     const nodeMatch = url.match(/^\/api\/v1\/nodes\/(\d+)$/);
     if (nodeMatch) {
       const file = options.files.find((item) => item.id === Number(nodeMatch[1]));
       return file ? json(file) : new Response("", { status: 404 });
     }
     if (url === "/api/v1/processing/source-fences/resolve" && method === "POST") {
+      fenceBodies.push(JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>);
+      const ids = options.emptyFence ? [] : [baseVersion, rerankedVersion];
       return json({
-        fence: { vault_uid: vaultID, content_version_ids: [baseVersion, rerankedVersion] },
-        observed_scope_count: 2,
-        fence_fingerprint: fenceFingerprint(vaultID, [baseVersion, rerankedVersion]),
+        fence: { vault_uid: vaultID, content_version_ids: ids },
+        observed_scope_count: ids.length,
+        fence_fingerprint: fenceFingerprint(vaultID, ids),
       });
     }
     if (url === "/api/v1/search" && method === "POST") {
       const body = JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>;
       postBodies.push(body);
+      if (options.baseSearchStatus) return new Response("search failure", { status: options.baseSearchStatus });
       if (body.rerank) {
         if (options.rerankPending) return rerankPending;
         return json(options.rerankReport ?? options.baseReport);
       }
+      baseCalls += 1;
+      if (options.basePending && baseCalls === 1) return basePending;
       return json(options.baseReport);
     }
-    if (url.startsWith("/api/v1/search?") && method === "GET") return json(options.tagSearch ?? { hits: [], limit: 1000, truncated: false });
+    if (url.startsWith("/api/v1/search?") && method === "GET") {
+      if (options.legacySearchStatus) return new Response("legacy search failure", { status: options.legacySearchStatus });
+      return json(options.tagSearch ?? { hits: [], limit: 1000, truncated: false });
+    }
     if (url.startsWith("/api/v1/audit/status?")) return json({ enabled: false, scopes: [] });
     if (url.startsWith("/api/v1/nodes/") && url.includes("/tags?")) return json({ items: [], total: 0, limit: 1000, offset: 0 });
     throw new Error(`unexpected request: ${method} ${url}`);
   });
-  return { fetchMock, postBodies, resolveRerank: (response: Response) => rerankResolve?.(response) };
+  return { fetchMock, postBodies, fenceBodies, resolveRerank: (response: Response) => rerankResolve?.(response), resolveBase: (response: Response) => baseResolve?.(response) };
 }
 
 async function submitSearch(value: string): Promise<void> {
@@ -252,4 +271,135 @@ it("allows lexical reranking when the profile has no embedding binding", async (
   expect(harness.postBodies[0]?.mode).toBe("lexical");
   expect(harness.postBodies[0]?.binding_id).toBeUndefined();
   expect(harness.postBodies[1]?.rerank).toBe(true);
+});
+
+it("keeps a legacy profile-load fallback on GET when profiles are empty", async () => {
+  const file = node(2, "legacy.txt", baseVersion);
+  const { fetchMock } = installHarness({
+    profiles: [],
+    files: [file],
+    baseReport: report("lexical", []),
+    tagSearch: { hits: [{ node: file, path: file.path, match: "name" }], limit: 1000, truncated: false },
+  });
+  render(App);
+  await screen.findAllByText("legacy.txt");
+  await submitSearch("legacy");
+  await screen.findByText("/legacy.txt");
+  expect(fetchMock.mock.calls.filter(([input]) => String(input).startsWith("/api/v1/search?")).length).toBe(1);
+  expect(fetchMock.mock.calls.some(([input, init]) => String(input) === "/api/v1/search" && init?.method === "POST")).toBe(false);
+});
+
+it("reports a Names and text GET failure without retrying it as a fallback", async () => {
+  const { fetchMock } = installHarness({
+    profiles: [],
+    files: [node(2, "legacy.txt", baseVersion)],
+    baseReport: report("lexical", []),
+    legacySearchStatus: 500,
+  });
+  render(App);
+  await screen.findAllByText("legacy.txt");
+  await submitSearch("legacy");
+  await waitFor(() => expect(screen.getByRole("alert").textContent).toContain("HTTP 500"));
+  expect(fetchMock.mock.calls.filter(([input]) => String(input).startsWith("/api/v1/search?")).length).toBe(1);
+});
+
+it("sends the selected tag filter in the resolver body", async () => {
+  const file = node(2, "tagged.txt", baseVersion);
+  const harness = installHarness({
+    profiles: [{ name: "private", fingerprint: "a".repeat(64), rendition: true, embedding_bindings: ["embed"], reranking_available: false }],
+    files: [file],
+    baseReport: report("hybrid", [result(file, 1, "tagged excerpt")]),
+  });
+  render(App);
+  await screen.findAllByText("tagged.txt");
+  await fireEvent.click(await screen.findByRole("combobox", { name: "Browse or filter by tag: All tags" }));
+  await fireEvent.click(screen.getByRole("option", { name: "reviewed (1)" }));
+  await submitSearch("tagged");
+  await screen.findByText("tagged excerpt");
+  expect(harness.fenceBodies[0]?.filters).toEqual({ tag_id: tagID });
+});
+
+it("shows the empty-fence note without posting a search", async () => {
+  const file = node(2, "empty.txt", baseVersion);
+  const harness = installHarness({
+    profiles: [{ name: "private", fingerprint: "a".repeat(64), rendition: true, embedding_bindings: ["embed"], reranking_available: false }],
+    files: [file],
+    baseReport: report("hybrid", []),
+    emptyFence: true,
+  });
+  render(App);
+  await screen.findAllByText("empty.txt");
+  await submitSearch("nothing");
+  await screen.findByText("No live documents match the current filter.");
+  expect(harness.postBodies).toHaveLength(0);
+});
+
+it("keeps processing evidence visible after changing the next search mode", async () => {
+  const file = node(2, "provenance.txt", baseVersion);
+  installHarness({
+    profiles: [{ name: "private", fingerprint: "a".repeat(64), rendition: true, embedding_bindings: ["embed"], reranking_available: false }],
+    files: [file],
+    baseReport: report("hybrid", [result(file, 1, "hybrid excerpt")]),
+  });
+  render(App);
+  await screen.findAllByText("provenance.txt");
+  await submitSearch("provenance");
+  await screen.findByText("hybrid excerpt");
+  await fireEvent.click(screen.getByRole("combobox", { name: "Search mode: Auto" }));
+  await fireEvent.click(screen.getByRole("option", { name: "Lexical" }));
+  expect(screen.getByText("hybrid excerpt")).toBeTruthy();
+  expect(screen.getAllByText("Text").length).toBeGreaterThan(0);
+});
+
+it("keeps a non-401 processing failure on the legacy GET path", async () => {
+  const file = node(2, "fallback.txt", baseVersion);
+  const harness = installHarness({
+    profiles: [{ name: "private", fingerprint: "a".repeat(64), rendition: true, embedding_bindings: ["embed"], reranking_available: false }],
+    files: [file],
+    baseReport: report("hybrid", []),
+    baseSearchStatus: 500,
+    tagSearch: { hits: [{ node: file, path: file.path, match: "name" }], limit: 1000, truncated: false },
+  });
+  render(App);
+  await screen.findAllByText("fallback.txt");
+  await submitSearch("fallback");
+  await screen.findByText("/fallback.txt");
+  await screen.findByText(/Natural-language search unavailable/);
+  expect(harness.postBodies).toHaveLength(1);
+  expect(harness.fetchMock.mock.calls.filter(([input]) => String(input).startsWith("/api/v1/search?")).length).toBe(1);
+});
+
+it("does not fall back to GET after a processing 401", async () => {
+  const file = node(2, "unauthorized.txt", baseVersion);
+  const harness = installHarness({
+    profiles: [{ name: "private", fingerprint: "a".repeat(64), rendition: true, embedding_bindings: ["embed"], reranking_available: false }],
+    files: [file],
+    baseReport: report("hybrid", []),
+    baseSearchStatus: 401,
+  });
+  render(App);
+  await screen.findAllByText("unauthorized.txt");
+  await submitSearch("unauthorized");
+  await screen.findByText("Open your Docbank");
+  expect(harness.fetchMock.mock.calls.filter(([input]) => String(input).startsWith("/api/v1/search?")).length).toBe(0);
+});
+
+it("ignores an aborted natural search completion", async () => {
+  const file = node(2, "stale.txt", baseVersion);
+  const harness = installHarness({
+    profiles: [{ name: "private", fingerprint: "a".repeat(64), rendition: true, embedding_bindings: ["embed"], reranking_available: false }],
+    files: [file],
+    baseReport: report("hybrid", [result(file, 1, "current excerpt")]),
+    basePending: true,
+  });
+  render(App);
+  await screen.findAllByText("stale.txt");
+  await submitSearch("old query");
+  await waitFor(() => expect(harness.postBodies).toHaveLength(1));
+  await submitSearch("new query");
+  await screen.findByText("current excerpt");
+  harness.resolveBase(json(report("hybrid", [result(file, 1, "stale excerpt")])));
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  expect(screen.queryByText("stale excerpt")).toBeNull();
+  expect(harness.fetchMock.mock.calls.filter(([input]) => String(input).startsWith("/api/v1/search?")).length).toBe(0);
 });

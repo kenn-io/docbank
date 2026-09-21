@@ -93,12 +93,13 @@ const (
 )
 
 type row struct {
-	node     api.Node
-	path     string
-	match    string
-	rank     int
-	excerpt  string
-	evidence []string
+	node        api.Node
+	path        string
+	match       string
+	rank        int
+	excerpt     string
+	evidence    []string
+	naturalMode string
 }
 
 type location struct {
@@ -146,21 +147,23 @@ type naturalProfilesLoadedMsg struct {
 }
 
 type naturalSearchBaseLoadedMsg struct {
-	requestID uint64
-	searchID  uint64
-	query     string
-	request   api.DocumentSearchRequest
-	report    api.DocumentSearchReport
-	rows      []row
-	err       error
+	requestID   uint64
+	searchID    uint64
+	query       string
+	naturalMode string
+	request     api.DocumentSearchRequest
+	report      api.DocumentSearchReport
+	rows        []row
+	err         error
 }
 
 type naturalSearchRerankLoadedMsg struct {
-	requestID uint64
-	searchID  uint64
-	report    api.DocumentSearchReport
-	rows      []row
-	err       error
+	requestID   uint64
+	searchID    uint64
+	naturalMode string
+	report      api.DocumentSearchReport
+	rows        []row
+	err         error
 }
 
 type historyLoadedMsg struct {
@@ -868,6 +871,7 @@ func (m Model) updateSearchInput(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		m.err = nil
 		m.requestID++
 		m.naturalSearchID++
+		m.naturalSearchRequest = api.DocumentSearchRequest{}
 		m.naturalRerankPending = false
 		m.naturalSearchNote = ""
 		return m, tea.Batch(m.startSpinner(), m.loadSearch(query, m.requestID))
@@ -893,7 +897,7 @@ func (m Model) updateKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 				m.requestID++
 				m.naturalSearchID++
 				m.naturalRerankPending = true
-				return m, m.loadNaturalRerank(m.requestID, m.naturalSearchID, m.naturalSearchRequest)
+				return m, m.loadNaturalRerank(m.requestID, m.naturalSearchID, m.naturalSearchRequest, m.naturalMode)
 			}
 		}
 	case "q", keyCtrlC:
@@ -1962,52 +1966,52 @@ func (m Model) loadNaturalSearch(query string, requestID uint64) tea.Cmd {
 	searchID := m.naturalSearchID
 	return func() tea.Msg {
 		if profile == nil {
-			return naturalSearchBaseLoadedMsg{requestID: requestID, searchID: searchID, query: query,
+			return naturalSearchBaseLoadedMsg{requestID: requestID, searchID: searchID, query: query, naturalMode: mode,
 				err: errors.New("natural search profile is unavailable")}
 		}
 		wireMode, binding, ok := naturalRequestMode(mode, profile)
 		if !ok {
-			return naturalSearchBaseLoadedMsg{requestID: requestID, searchID: searchID, query: query,
+			return naturalSearchBaseLoadedMsg{requestID: requestID, searchID: searchID, query: query, naturalMode: mode,
 				err: fmt.Errorf("%s search requires an embedding binding", mode)}
 		}
 		resolution, err := backend.ResolveDocumentSourceFence(ctx, api.DocumentSourceFenceResolveRequest{
 			Filters: &api.DocumentSourceFenceFilters{},
 		})
 		if err != nil {
-			return naturalSearchBaseLoadedMsg{requestID: requestID, searchID: searchID, query: query, err: err}
+			return naturalSearchBaseLoadedMsg{requestID: requestID, searchID: searchID, query: query, naturalMode: mode, err: err}
 		}
 		request := api.DocumentSearchRequest{Query: query, Mode: wireMode, Limit: maxProcessingSearchItems,
 			Profile: profile.Name, BindingID: binding, Fence: api.DocumentSourceFence{
 				VaultUID: resolution.Fence.VaultUID, ContentVersionIDs: resolution.Fence.ContentVersionIDs,
 			}, Explain: true}
 		if len(resolution.Fence.ContentVersionIDs) == 0 {
-			return naturalSearchBaseLoadedMsg{requestID: requestID, searchID: searchID, query: query, request: request,
+			return naturalSearchBaseLoadedMsg{requestID: requestID, searchID: searchID, query: query, naturalMode: mode, request: request,
 				report: api.DocumentSearchReport{}, rows: []row{}}
 		}
 		report, err := backend.SearchDocuments(ctx, request)
 		if err != nil {
-			return naturalSearchBaseLoadedMsg{requestID: requestID, searchID: searchID, query: query, request: request, err: err}
+			return naturalSearchBaseLoadedMsg{requestID: requestID, searchID: searchID, query: query, naturalMode: mode, request: request, err: err}
 		}
-		rows, err := hydrateNaturalRows(ctx, backend, report)
-		return naturalSearchBaseLoadedMsg{requestID: requestID, searchID: searchID, query: query,
+		rows, err := hydrateNaturalRows(ctx, backend, report, mode)
+		return naturalSearchBaseLoadedMsg{requestID: requestID, searchID: searchID, query: query, naturalMode: mode,
 			request: request, report: report, rows: rows, err: err}
 	}
 }
 
-func (m Model) loadNaturalRerank(requestID, searchID uint64, request api.DocumentSearchRequest) tea.Cmd {
+func (m Model) loadNaturalRerank(requestID, searchID uint64, request api.DocumentSearchRequest, naturalMode string) tea.Cmd {
 	ctx, backend := m.ctx, m.backend
 	request.Rerank = true
 	return func() tea.Msg {
 		report, err := backend.SearchDocuments(ctx, request)
 		if err != nil {
-			return naturalSearchRerankLoadedMsg{requestID: requestID, searchID: searchID, err: err}
+			return naturalSearchRerankLoadedMsg{requestID: requestID, searchID: searchID, naturalMode: naturalMode, err: err}
 		}
-		rows, err := hydrateNaturalRows(ctx, backend, report)
-		return naturalSearchRerankLoadedMsg{requestID: requestID, searchID: searchID, report: report, rows: rows, err: err}
+		rows, err := hydrateNaturalRows(ctx, backend, report, naturalMode)
+		return naturalSearchRerankLoadedMsg{requestID: requestID, searchID: searchID, naturalMode: naturalMode, report: report, rows: rows, err: err}
 	}
 }
 
-func hydrateNaturalRows(ctx context.Context, backend Backend, report api.DocumentSearchReport) ([]row, error) {
+func hydrateNaturalRows(ctx context.Context, backend Backend, report api.DocumentSearchReport, mode string) ([]row, error) {
 	rows := make([]row, 0, len(report.Results))
 	for rank, result := range report.Results {
 		node, err := backend.Node(ctx, result.NodeID)
@@ -2034,7 +2038,7 @@ func hydrateNaturalRows(ctx context.Context, backend Backend, report api.Documen
 			}
 		}
 		rows = append(rows, row{node: node, path: pathValue, rank: rank,
-			excerpt: result.Excerpt, evidence: kinds})
+			excerpt: result.Excerpt, evidence: kinds, naturalMode: mode})
 	}
 	return rows, nil
 }
@@ -2131,6 +2135,10 @@ func (m *Model) cycleNaturalMode() {
 	for index, mode := range modes {
 		if mode == m.naturalMode {
 			m.naturalMode = modes[(index+1)%len(modes)]
+			if m.naturalMode == naturalNames {
+				m.naturalSearchRequest = api.DocumentSearchRequest{}
+				m.naturalRerank = false
+			}
 			return
 		}
 	}
@@ -2204,6 +2212,7 @@ func (m Model) applySearch(msg searchLoadedMsg) (tea.Model, tea.Cmd) {
 	}
 	m.loading = false
 	m.naturalRerankPending = false
+	m.naturalSearchRequest = api.DocumentSearchRequest{}
 	if msg.err != nil {
 		m.err = msg.err
 		return m, nil
@@ -2247,7 +2256,8 @@ func (m Model) applyNaturalSearchBase(msg naturalSearchBaseLoadedMsg) (tea.Model
 	if msg.err != nil {
 		m.naturalMode = naturalNames
 		m.naturalRerank = false
-		m.naturalSearchNote = "Natural-language search unavailable. Showing Names and text."
+		m.naturalSearchRequest = api.DocumentSearchRequest{}
+		m.naturalSearchNote = "Natural-language search unavailable: " + msg.err.Error() + ". Showing Names and text."
 		m.loading = true
 		return m, m.loadSearch(msg.query, msg.requestID)
 	}
@@ -2257,7 +2267,7 @@ func (m Model) applyNaturalSearchBase(msg naturalSearchBaseLoadedMsg) (tea.Model
 	profile := m.selectedNaturalProfile()
 	if m.naturalRerank && profile != nil && profile.RerankingAvailable {
 		m.naturalRerankPending = true
-		return m, m.loadNaturalRerank(msg.requestID, msg.searchID, msg.request)
+		return m, m.loadNaturalRerank(msg.requestID, msg.searchID, msg.request, msg.naturalMode)
 	}
 	return m, nil
 }
@@ -2705,11 +2715,54 @@ func (m *Model) clampSelection() {
 	if m.cursor >= m.offset+visible {
 		m.offset = m.cursor - visible + 1
 	}
-	m.offset = min(max(m.offset, 0), max(len(m.rows)-visible, 0))
+	if m.offset < 0 {
+		m.offset = 0
+	}
+	if !m.rowFitsInViewport(m.offset, m.cursor) {
+		m.offset = m.cursor
+	}
+	if m.offset >= len(m.rows) {
+		m.offset = len(m.rows) - 1
+	}
 }
 
 func (m Model) visibleRows() int {
-	return max(m.bodyViewportHeight()-2, 1)
+	available := max(m.bodyViewportHeight()-2, 1)
+	if m.mode != modeSearch {
+		return available
+	}
+	used, rows := 0, 0
+	for index := m.offset; index < len(m.rows); index++ {
+		rowLines := 1 + len(m.naturalWhyLines(m.rows[index], m.width))
+		if used+rowLines > available && rows > 0 {
+			break
+		}
+		used += min(rowLines, available-used)
+		rows++
+		if used >= available {
+			break
+		}
+	}
+	return max(rows, 1)
+}
+
+func (m Model) rowFitsInViewport(offset, cursor int) bool {
+	if offset < 0 || offset >= len(m.rows) || cursor < offset {
+		return false
+	}
+	available := max(m.bodyViewportHeight()-2, 1)
+	used := 0
+	for index := offset; index <= cursor; index++ {
+		rowLines := 1 + len(m.naturalWhyLines(m.rows[index], m.width))
+		if used+rowLines > available && index == cursor {
+			return used > 0
+		}
+		used += min(rowLines, available-used)
+		if used >= available && index < cursor {
+			return false
+		}
+	}
+	return true
 }
 
 func (m *Model) cycleSortField() {

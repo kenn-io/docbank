@@ -126,7 +126,7 @@
     type NaturalSearchMode,
   } from "./naturalSearch.js";
 
-  type Row = { node: Node; path: string; match?: generated.SearchHitMatch; excerpt?: string; evidence?: string[] };
+  type Row = { node: Node; path: string; match?: generated.SearchHitMatch; excerpt?: string; evidence?: string[]; naturalMode?: NaturalSearchMode };
   type Snapshot = {
     directory: Node;
     rows: Row[];
@@ -182,7 +182,6 @@
   let naturalProfiles = $state<ProcessingProfileSummary[]>([]);
   let naturalSearchMode = $state<NaturalSearchMode>("names");
   let naturalRerank = $state(false);
-  let activeSearchMode = $state<NaturalSearchMode>("names");
   let naturalSearchNote = $state("");
   let naturalRerankPending = $state(false);
   let profileGeneration = 0;
@@ -317,7 +316,6 @@
   const tagBrowse = $derived(activeTagID !== "" && activeQuery === "");
   const naturalProfile = $derived(selectNaturalSearchProfile(naturalProfiles));
   const naturalModeOptions = $derived(naturalSearchModes(naturalProfile));
-  const processingSearchActive = $derived(activeQuery !== "" && activeSearchMode !== "names");
   const sortedRows = $derived(
     orderRows(rows, sortField, sortDirection, activeQuery !== "" || tagBrowse),
   );
@@ -925,7 +923,7 @@
       };
       const baseReport = await documentSearch(session, baseRequest, controller.signal);
       if (request !== generation || session !== webSession || controller.signal.aborted) return;
-      const baseRows = await hydrateProcessingRows(baseReport, session, request, controller.signal);
+      const baseRows = await hydrateProcessingRows(baseReport, session, request, controller.signal, mode);
       if (request !== generation || session !== webSession || controller.signal.aborted) return;
       applyProcessingSearch(baseRows, query, requestedTagID, baseReport.truncated, preferredSelectedID, refreshing);
       naturalSearchNote = baseReport.degradations.length > 0
@@ -941,7 +939,7 @@
           naturalSearchNote = rerankingNote(reranked.reranking?.outcome ?? "failed", reranked.reranking?.cause);
           return;
         }
-        const rerankedRows = await hydrateProcessingRows(reranked, session, request, controller.signal);
+        const rerankedRows = await hydrateProcessingRows(reranked, session, request, controller.signal, mode);
         if (request !== generation || session !== webSession || controller.signal.aborted) return;
         applyProcessingSearch(rerankedRows, query, requestedTagID, reranked.truncated, preferredSelectedID, true);
         naturalSearchNote = rerankingNote("applied");
@@ -957,10 +955,14 @@
     } catch (cause) {
       if (request !== generation || session !== webSession || controller.signal.aborted) return;
       if (cause instanceof APIError && cause.status === 401) handleFailure(cause);
+      else if (mode === "names" || !profile) handleFailure(cause);
       else {
         const note = naturalSearchFallbackNote(cause instanceof Error ? cause.message : String(cause));
-        naturalSearchNote = note;
-        await runLegacySearch(query, requestedTagID, request, preferredSelectedID, refreshing, session, controller.signal, note);
+        try {
+          await runLegacySearch(query, requestedTagID, request, preferredSelectedID, refreshing, session, controller.signal, note);
+        } catch (fallbackCause) {
+          if (request === generation && session === webSession && !controller.signal.aborted) handleFailure(fallbackCause);
+        }
       }
     } finally {
       if (request === generation) {
@@ -991,7 +993,6 @@
       requestedTagID === activeTagID ? activeQuery : "", sortField, sortDirection, preferredSelectedID);
     activeQuery = query;
     activeTagID = requestedTagID;
-    activeSearchMode = "names";
     taggedInspected = 0;
     taggedTotal = 0;
     taggedTrashed = 0;
@@ -1014,7 +1015,6 @@
     replaceRows(nextRows, refreshing);
     activeQuery = query;
     activeTagID = requestedTagID;
-    activeSearchMode = naturalSearchMode;
     taggedInspected = 0;
     taggedTotal = 0;
     taggedTrashed = 0;
@@ -1030,6 +1030,7 @@
     session: string,
     request: number,
     signal: AbortSignal,
+    naturalMode: NaturalSearchMode,
   ): Promise<Row[]> {
     const hydrated: Array<Row | undefined> = await Promise.all(report.results.map(async (result): Promise<Row | undefined> => {
       let node: Node;
@@ -1045,6 +1046,7 @@
         path: node.path || result.path,
         excerpt: result.excerpt || "",
         evidence: evidenceKindLabels(result.evidence.map((item) => item.kind)),
+        naturalMode,
       };
       return row;
     }));
@@ -2011,7 +2013,7 @@
   </main>
 {:else}
   <div class="app-shell">
-    <TopBar>
+    <TopBar class="app-top-bar">
       {#snippet left()}
         <div class="brand">
           <span class="brand-mark">D</span>
@@ -2540,7 +2542,7 @@
                       {/if}
                       <span>{activeQuery || tagBrowse ? row.path : row.node.name}</span>
                     </span>
-                    {#if processingSearchActive && row.node.kind === "file"}
+                    {#if row.naturalMode && row.node.kind === "file"}
                       <span class="search-excerpt">{row.excerpt || directFileEvidenceNote()}</span>
                     {/if}
                   </td>
@@ -3248,14 +3250,58 @@
 
   .search-controls {
     display: flex;
+    flex-wrap: wrap;
     align-items: center;
     gap: 8px;
+    min-width: 0;
     width: min(760px, 100%);
   }
 
   .search-controls .search {
-    min-width: 220px;
+    min-width: 0;
     flex: 1;
+  }
+
+  @media (max-width: 900px) {
+    :global(.app-shell .app-top-bar) {
+      height: auto;
+      min-height: var(--header-height, 44px);
+      flex-wrap: wrap;
+      align-items: center;
+      padding-block: var(--space-2);
+    }
+
+    :global(.app-top-bar .kit-top-bar__right) {
+      flex-wrap: wrap;
+      justify-content: flex-end;
+      min-width: 0;
+      max-width: 100%;
+    }
+
+    :global(.app-top-bar .kit-top-bar__search) {
+      order: 3;
+      flex: 1 0 100%;
+      justify-content: stretch;
+      width: 100%;
+      margin: 0;
+      padding-bottom: var(--space-1);
+    }
+  }
+
+  @media (max-width: 900px) {
+    .search-controls {
+      width: 100%;
+    }
+  }
+
+  @media (max-width: 640px) {
+    :global(.app-top-bar .kit-top-bar__right) {
+      display: none;
+    }
+
+    .search-controls .search {
+      flex-basis: 100%;
+    }
   }
 
   .rerank-control {

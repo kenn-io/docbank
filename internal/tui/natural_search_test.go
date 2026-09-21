@@ -1,11 +1,13 @@
 package tui
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -94,7 +96,7 @@ func TestNaturalSearchGoldenFrame(t *testing.T) {
 	model.loading = false
 	model.rows = []row{{
 		node: readme, path: "/README.txt", rank: 0,
-		excerpt: "Solar maintenance schedule", evidence: []string{"Text", "Semantic"},
+		excerpt: "Solar maintenance schedule", evidence: []string{"Text", "Semantic"}, naturalMode: naturalHybrid,
 	}}
 	model.total = 1
 	model.cursor = 0
@@ -125,4 +127,113 @@ func TestNaturalSearchLexicalProfileKeepsRerankCapability(t *testing.T) {
 	model := Model{naturalProfiles: []api.ProcessingProfileSummary{*profile}, naturalMode: naturalLexical}
 	model.toggleNaturalRerank()
 	assert.True(t, model.naturalRerank)
+}
+
+func TestNaturalSearchWhyStripsTerminalControls(t *testing.T) {
+	fake := newFakeBackend()
+	model, err := New(t.Context(), fake)
+	require.NoError(t, err)
+	model.width, model.height = 100, 9
+	model.styles = newStyles(false)
+	model.mode = modeSearch
+	model.rows = []row{{
+		node: fake.nodes["/README.txt"], path: "/README.txt", naturalMode: naturalLexical,
+		excerpt:  "safe\x1b]8;;https://evil.example\x1b\\visible\x1b]8;;\x1b\\\x1b[2J",
+		evidence: []string{"Text"},
+	}}
+
+	rendered := ansi.Strip(model.renderList(100, 6))
+	assert.Contains(t, rendered, "visible")
+	assert.NotContains(t, rendered, "evil.example")
+	assert.NotContains(t, rendered, "\x1b")
+}
+
+func TestNaturalSearchWhyLinesScrollWithRows(t *testing.T) {
+	fake := newFakeBackend()
+	model, err := New(t.Context(), fake)
+	require.NoError(t, err)
+	model.width, model.height = 100, 9
+	model.styles = newStyles(false)
+	model.mode = modeSearch
+	model.naturalMode = naturalHybrid
+	model.rows = []row{
+		{node: fake.nodes["/README.txt"], path: "/one.txt", naturalMode: naturalLexical, excerpt: "one"},
+		{node: fake.nodes["/README.txt"], path: "/two.txt", naturalMode: naturalLexical, excerpt: "two"},
+		{node: fake.nodes["/README.txt"], path: "/three.txt", naturalMode: naturalLexical, excerpt: "three"},
+	}
+	model.cursor = 2
+	model.clampSelection()
+
+	assert.Equal(t, 1, model.offset)
+	rendered := ansi.Strip(model.renderList(100, 6))
+	assert.NotContains(t, rendered, "/one.txt")
+	assert.Contains(t, rendered, "/two.txt")
+	assert.Contains(t, rendered, "/three.txt")
+}
+
+func TestNaturalSearchFallbackKeepsCause(t *testing.T) {
+	fake := newFakeBackend()
+	readme := fake.nodes["/README.txt"]
+	model, err := New(t.Context(), fake)
+	require.NoError(t, err)
+	model.requestID = 4
+	model.naturalSearchID = 2
+	model.naturalMode = naturalHybrid
+	model.naturalProfiles = fake.profiles
+	model.naturalSearchRequest = api.DocumentSearchRequest{Query: "old", Mode: naturalHybrid}
+
+	updated, fallback := model.applyNaturalSearchBase(naturalSearchBaseLoadedMsg{
+		requestID: model.requestID, searchID: model.naturalSearchID, query: "old",
+		err: errors.New("provider timed out"),
+	})
+	result, ok := updated.(Model)
+	require.True(t, ok)
+	assert.Contains(t, result.naturalSearchNote, "provider timed out")
+	assert.Equal(t, naturalNames, result.naturalMode)
+	assert.Empty(t, result.naturalSearchRequest.Query)
+	require.NotNil(t, fallback)
+
+	loaded, _ := result.applySearch(searchLoadedMsg{
+		requestID: result.requestID, query: "old", report: api.SearchReport{Hits: []api.SearchHit{{Node: readme, Path: readme.Path}}},
+	})
+	loadedModel, ok := loaded.(Model)
+	require.True(t, ok)
+	assert.Empty(t, loadedModel.rows[0].naturalMode)
+}
+
+func TestNaturalSearchModeProvenanceSurvivesModeChange(t *testing.T) {
+	fake := newFakeBackend()
+	readme := fake.nodes["/README.txt"]
+	model, err := New(t.Context(), fake)
+	require.NoError(t, err)
+	model.width, model.height = 100, 9
+	model.styles = newStyles(false)
+	model.mode = modeSearch
+	model.naturalMode = naturalHybrid
+	model.rows = []row{{node: readme, path: readme.Path, naturalMode: naturalLexical, excerpt: "lexical result"}}
+	model.naturalMode = naturalSemantic
+
+	assert.Contains(t, ansi.Strip(model.renderList(100, 6)), "Why: lexical result")
+}
+
+func TestNaturalSearchSubmitClearsRerankRequestBeforeNewSequence(t *testing.T) {
+	fake := newFakeBackend()
+	model, err := New(t.Context(), fake)
+	require.NoError(t, err)
+	model.mode = modeSearch
+	model.naturalMode = naturalNames
+	model.naturalSearchRequest = api.DocumentSearchRequest{Query: "old", Mode: naturalHybrid}
+	model.searchInput.SetValue("new")
+
+	updated, cmd := model.updateSearchInput(tea.KeyPressMsg{Code: tea.KeyEnter})
+	result, ok := updated.(Model)
+	require.True(t, ok)
+	require.NotNil(t, cmd)
+	assert.Empty(t, result.naturalSearchRequest.Query)
+
+	result.naturalMode = naturalLexical
+	result.mode = modeSearch
+	result.naturalRerank = false
+	_, rerank := result.updateKeys(tea.KeyPressMsg{Code: 'r', Mod: tea.ModCtrl})
+	assert.Nil(t, rerank)
 }
