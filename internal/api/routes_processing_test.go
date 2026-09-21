@@ -529,6 +529,8 @@ func assertProcessingSurvivesDisconnect(t *testing.T, ts *httptest.Server, selec
 	started, release chan struct{},
 ) api.ProcessingJob {
 	t.Helper()
+	// These ordering checks include real SQLite, blob, and HTTP work on CI.
+	const waitBudget = 10 * time.Second
 	planResponse, planBody := do(t, ts, http.MethodPost, "/api/v1/processing/plans", nil,
 		map[string]any{"selector": selector})
 	require.Equal(t, http.StatusOK, planResponse.StatusCode, planBody)
@@ -564,7 +566,7 @@ func assertProcessingSurvivesDisconnect(t *testing.T, ts *httptest.Server, selec
 		jobID := event.Job.ID
 		select {
 		case <-started:
-		case <-time.After(time.Second):
+		case <-time.After(waitBudget):
 			t.Fatal("provider did not start after durable job publication")
 		}
 		require.NoError(t, result.response.Body.Close())
@@ -573,10 +575,10 @@ func assertProcessingSurvivesDisconnect(t *testing.T, ts *httptest.Server, selec
 		require.Eventually(t, func() bool {
 			statusResponse, statusBody := get(t, ts, "/api/v1/processing/jobs/"+jobID, nil)
 			return statusResponse.StatusCode == http.StatusOK && strings.Contains(statusBody, `"state":"completed"`)
-		}, 3*time.Second, 10*time.Millisecond,
+		}, waitBudget, 10*time.Millisecond,
 			"accepted processing did not complete after the response stream disconnected")
 		return *event.Job
-	case <-time.After(time.Second):
+	case <-time.After(waitBudget):
 		closeProcessingSignal(release)
 		result := <-responseCh
 		if result.response != nil {

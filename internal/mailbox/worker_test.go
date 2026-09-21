@@ -120,6 +120,9 @@ func TestMailboxWorkerSurvivesCatalogContention(t *testing.T) {
 			}
 			require.NoError(t, tx.Rollback())
 			require.NoError(t, locker.Close())
+			// Reuse connections once the exclusive lock is gone, so cancellation
+			// cannot leave a replacement connection opening during cleanup.
+			driver.db.SetMaxIdleConns(1)
 			if phase == "watch" {
 				close(resume)
 			}
