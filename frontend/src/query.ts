@@ -532,7 +532,7 @@ export function classifyMedia(mediaType: string, filename: string): MediaFamily 
   return extension === null ? "unknown" : queryFamilyByExtension.get(extension) ?? "unknown";
 }
 
-function parseMediaType(value: string): string | null {
+export function parseMediaType(value: string): string | null {
   const semicolon = value.indexOf(";");
   const essence = lowerASCII(trimASCIIWhitespace(value.slice(0, semicolon < 0 ? undefined : semicolon)));
   if (essence === null) return null;
