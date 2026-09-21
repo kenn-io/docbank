@@ -283,19 +283,21 @@ func TestNaturalSearchQueryInputKeepsLongCursorViewportVisible(t *testing.T) {
 	fake := newFakeBackend()
 	model, err := New(t.Context(), fake)
 	require.NoError(t, err)
-	model.width, model.height = 80, 10
+	updated, _ := model.Update(tea.WindowSizeMsg{Width: 80, Height: 10})
+	model, ok := updated.(Model)
+	require.True(t, ok)
 	model.styles = newStyles(false)
 	model.mode = modeSearch
 	model.searching = true
 	model.naturalMode = naturalSemantic
 	model.naturalProfiles = []api.ProcessingProfileSummary{{Name: "private", RerankingAvailable: true}}
-	query := strings.Repeat("long query ", 8) + "visible-tail"
+	query := strings.Repeat("q", 48) + "tail-visible"
 	model.searchInput.SetValue(query)
 	model.searchInput.Focus()
 
 	rendered := ansi.Strip(model.render())
 	assert.Equal(t, len(query), model.searchInput.Position())
-	assert.Contains(t, rendered, "visible-tail")
+	assert.Contains(t, rendered, "tail-visible")
 }
 
 func TestNaturalSearchCtrlRDoesNotRerankDuringRefresh(t *testing.T) {

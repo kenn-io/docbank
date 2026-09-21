@@ -90,6 +90,7 @@ func (m Model) render() string {
 			prefix := naturalModeLabel(m.naturalMode) + " · " + m.naturalRerankStatus() + " · "
 			input := m.searchInput
 			input.SetWidth(max(m.width-4-lipgloss.Width(prefix), 1))
+			input.SetCursor(input.Position())
 			search = prefix + input.View()
 		}
 		lines = append(lines, fit(search, m.width))
