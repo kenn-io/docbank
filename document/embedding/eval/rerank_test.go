@@ -5,6 +5,7 @@ import (
 	"errors"
 	"math"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -158,6 +159,51 @@ func TestEvaluateCostPerQueryMaxInt64(t *testing.T) {
 	require.NotNil(t, report.Systems[0].Performance.CostPerQuery)
 	assert.GreaterOrEqual(t, report.Systems[0].Performance.CostPerQuery.Micros, int64(0))
 	assert.Equal(t, int64(math.MaxInt64), report.Systems[0].Performance.CostPerQuery.Micros)
+}
+
+func TestEvaluateCostPerQueryRoundsHalfUp(t *testing.T) {
+	for _, test := range []struct {
+		name  string
+		costs []int64
+		want  int64
+	}{
+		{name: "3 micros across 2 queries", costs: []int64{1, 2}, want: 2},
+		{name: "4 micros across 3 queries", costs: []int64{1, 1, 2}, want: 1},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			assert.Equal(t, test.want, evaluateCostPerQuery(t, test.costs))
+		})
+	}
+}
+
+func evaluateCostPerQuery(t *testing.T, costs []int64) int64 {
+	t.Helper()
+	corpus := embeddingeval.Corpus{
+		ID: "cost-rounding", Version: "1",
+		Documents: []embeddingeval.Document{{ID: "hit", Text: "synthetic hit"}},
+		Queries:   make([]embeddingeval.Query, len(costs)),
+	}
+	runner := &testRerankingRunner{
+		ranking:     []string{"hit"},
+		searchUsage: make(map[string]embeddingeval.Usage, len(costs)),
+	}
+	for index, cost := range costs {
+		queryID := "q" + strconv.Itoa(index+1)
+		corpus.Queries[index] = embeddingeval.Query{
+			ID: queryID, Text: "query " + queryID,
+			Judgments: []embeddingeval.Judgment{{DocumentID: "hit", Grade: 1}},
+		}
+		runner.searchUsage[queryID] = embeddingeval.Usage{
+			ProviderCalls: 1,
+			Cost:          &embeddingeval.CostObservation{Micros: cost, Basis: "2026-09-21:rounding"},
+		}
+	}
+	report, err := embeddingeval.Evaluate(context.Background(), corpus, []embeddingeval.System{{
+		ID: "search", RecipeFingerprint: "recipe",
+	}}, 1, runner)
+	require.NoError(t, err)
+	require.NotNil(t, report.Systems[0].Performance.CostPerQuery)
+	return report.Systems[0].Performance.CostPerQuery.Micros
 }
 
 func TestEvaluateRerankModesAndFailures(t *testing.T) {
