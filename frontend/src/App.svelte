@@ -911,6 +911,7 @@
     const session = webSession;
     const mode = naturalSearchMode;
     const profile = naturalProfile;
+    let accepted = false;
     searchPending = true;
     loading = true;
     error = "";
@@ -918,7 +919,7 @@
     naturalRerankPending = false;
     try {
       if (mode === "names" || !profile) {
-        await runLegacySearch(query, requestedTagID, request, preferredSelectedID, refreshing, session, controller.signal);
+        accepted = await runLegacySearch(query, requestedTagID, request, preferredSelectedID, refreshing, session, controller.signal);
         return;
       }
       const mapped = naturalSearchRequest(mode, profile);
@@ -928,6 +929,7 @@
       if (request !== generation || session !== webSession || controller.signal.aborted) return;
       if (resolution.fence.content_version_ids.length === 0) {
         applySearchRows([], query, requestedTagID, false, preferredSelectedID, refreshing);
+        accepted = true;
         naturalSearchNote = "No live documents match the current filter.";
         loading = false;
         return;
@@ -947,6 +949,7 @@
       const baseRows = await hydrateProcessingRows(baseReport, session, request, controller.signal, mode, nodes);
       if (request !== generation || session !== webSession || controller.signal.aborted) return;
       applySearchRows(baseRows, query, requestedTagID, baseReport.truncated, preferredSelectedID, refreshing);
+      accepted = true;
       naturalSearchNote = baseReport.degradations.length > 0
         ? `Search note: ${baseReport.degradations.join(", ")}`
         : "";
@@ -987,7 +990,7 @@
         naturalRerank = false;
         naturalRerankPending = false;
         try {
-          await runLegacySearch(query, requestedTagID, request, preferredSelectedID, refreshing, session, controller.signal, note);
+          accepted = await runLegacySearch(query, requestedTagID, request, preferredSelectedID, refreshing, session, controller.signal, note);
         } catch (fallbackCause) {
           if (request === generation && session === webSession && !controller.signal.aborted) handleFailure(fallbackCause);
         }
@@ -996,7 +999,7 @@
       const deferredProfileDefault = request === generation &&
         naturalProfileDefaultPending?.request === profileGeneration &&
         naturalProfileDefaultPending.session === webSession;
-      const acceptedQuery = activeQuery;
+      const acceptedQuery = accepted ? query : "";
       if (request === generation) {
         searchPending = false;
         loading = false;
@@ -1005,11 +1008,13 @@
       if (naturalSearchController === controller) naturalSearchController = undefined;
       if (deferredProfileDefault) {
         naturalProfileDefaultPending = null;
-        const defaultMode: NaturalSearchMode = naturalProfile?.embedding_bindings.length ? "auto" : "names";
-        const rerun = Boolean(acceptedQuery && naturalSearchMode !== defaultMode);
-        naturalSearchMode = defaultMode;
-        naturalRerank = false;
-        if (rerun) void runSearch(selectedID, acceptedQuery);
+        if (acceptedQuery) {
+          const defaultMode: NaturalSearchMode = naturalProfile?.embedding_bindings.length ? "auto" : "names";
+          const rerun = naturalSearchMode !== defaultMode;
+          naturalSearchMode = defaultMode;
+          naturalRerank = false;
+          if (rerun) void runSearch(selectedID, acceptedQuery);
+        }
       }
     }
   }
@@ -1023,14 +1028,15 @@
     session: string,
     signal: AbortSignal,
     note = "",
-  ): Promise<void> {
+  ): Promise<boolean> {
     const report = await generated.search({ q: query, limit: 1000, ...((requestedTagID) ? { tag_id: requestedTagID } : {}) }, { session, signal });
-    if (request !== generation || session !== webSession || signal.aborted) return;
+    if (request !== generation || session !== webSession || signal.aborted) return false;
     if ((report.tag_id ?? "") !== requestedTagID) throw new Error("Search results did not honor the selected tag filter.");
     const nextRows = report.hits.map((hit: SearchHit) => ({ node: hit.node, path: hit.path, match: hit.match }));
     applySearchRows(nextRows, query, requestedTagID, report.truncated, preferredSelectedID, refreshing);
     naturalSearchNote = note;
     loading = false;
+    return true;
   }
 
   function applySearchRows(

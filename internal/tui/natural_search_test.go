@@ -478,6 +478,36 @@ func TestNaturalSearchProfileDefaultWaitsForAcceptedQuery(t *testing.T) {
 	assert.Equal(t, naturalHybrid, fake.naturalSearchRequests[0].Mode)
 }
 
+func TestNaturalSearchProfileDefaultDoesNotReopenBrowseAfterNavigation(t *testing.T) {
+	fake := newFakeBackend()
+	model, err := New(t.Context(), fake)
+	require.NoError(t, err)
+	model.mode = modeSearch
+	model.searchQuery = "old query"
+	model.naturalMode = naturalNames
+
+	updated, cmd := model.applyDirectory(directoryLoadedMsg{
+		requestID: model.requestID,
+		kind:      navigationForward,
+		directory: fake.nodes["/"],
+		page:      fake.children[1],
+	})
+	result, ok := updated.(Model)
+	require.True(t, ok)
+	assert.Nil(t, cmd)
+	assert.Equal(t, modeBrowse, result.mode)
+
+	updated, cmd = result.Update(naturalProfilesLoadedMsg{
+		requestID: result.naturalProfilesRequest,
+		profiles:  []api.ProcessingProfileSummary{{Name: "private", EmbeddingBindings: []string{"embed"}}},
+	})
+	result, ok = updated.(Model)
+	require.True(t, ok)
+	assert.Nil(t, cmd)
+	assert.Equal(t, naturalAuto, result.naturalMode)
+	assert.Empty(t, fake.naturalSearchRequests)
+}
+
 func TestNaturalSearchRowsPreserveViewOnlyForRefresh(t *testing.T) {
 	fake := newFakeBackend()
 	model, err := New(t.Context(), fake)

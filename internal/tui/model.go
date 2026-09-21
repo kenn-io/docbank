@@ -528,10 +528,12 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			m.naturalProfileDefaultRequest = 0
 			return m, nil
 		}
-		if query := m.searchQuery; query != "" && !m.loading {
-			m.naturalMode = naturalAuto
-			m.naturalRerank = false
-			return m.startSearch(query)
+		if m.mode == modeSearch {
+			if query := m.searchQuery; query != "" && !m.loading {
+				m.naturalMode = naturalAuto
+				m.naturalRerank = false
+				return m.startSearch(query)
+			}
 		}
 		if m.loading && m.activeSearchQuery() != "" {
 			m.naturalProfileDefaultPending = true

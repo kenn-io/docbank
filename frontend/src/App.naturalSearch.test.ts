@@ -98,6 +98,8 @@ interface HarnessOptions {
   baseReport: unknown;
   baseSearchStatus?: number;
   legacySearchStatus?: number;
+  legacyFailureAfter?: number;
+  legacyFailurePending?: boolean;
   basePending?: boolean;
   legacyPending?: boolean;
   rerankReport?: unknown;
@@ -118,10 +120,13 @@ function installHarness(options: HarnessOptions) {
   let baseResolve: ((response: Response) => void) | undefined;
   let profilesResolve: ((response: Response) => void) | undefined;
   let legacyResolve: ((response: Response) => void) | undefined;
+  let legacyFailureResolve: ((response: Response) => void) | undefined;
   const basePending = new Promise<Response>((resolve) => { baseResolve = resolve; });
   const profilesPending = new Promise<Response>((resolve) => { profilesResolve = resolve; });
   const legacyPending = new Promise<Response>((resolve) => { legacyResolve = resolve; });
+  const legacyFailurePending = new Promise<Response>((resolve) => { legacyFailureResolve = resolve; });
   let baseCalls = 0;
+  let legacyCalls = 0;
   const rerankPending = new Promise<Response>((resolve) => { rerankResolve = resolve; });
   const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
     const url = String(input);
@@ -168,6 +173,11 @@ function installHarness(options: HarnessOptions) {
       return json(options.baseReport);
     }
     if (url.startsWith("/api/v1/search?") && method === "GET") {
+      legacyCalls += 1;
+      if (options.legacyFailureAfter !== undefined && legacyCalls > options.legacyFailureAfter) {
+        if (options.legacyFailurePending) return legacyFailurePending;
+        return new Response("legacy search failure", { status: 500 });
+      }
       if (options.legacyPending) return legacyPending;
       if (options.legacySearchStatus) return new Response("legacy search failure", { status: options.legacySearchStatus });
       return json(options.tagSearch ?? { hits: [], limit: 1000, truncated: false });
@@ -184,6 +194,8 @@ function installHarness(options: HarnessOptions) {
     resolveBase: (response: Response) => baseResolve?.(response),
     resolveProfiles: (response: Response) => profilesResolve?.(response),
     resolveLegacy: (response: Response) => legacyResolve?.(response),
+    resolveLegacyFailure: (response: Response) => legacyFailureResolve?.(response),
+    legacyCalls: () => legacyCalls,
   };
 }
 
@@ -424,6 +436,37 @@ it("defers the profile default until a pending legacy search is accepted", async
   await screen.findByText("natural excerpt");
   expect(screen.getByRole("combobox", { name: "Search mode: Auto" })).toBeTruthy();
   expect(harness.postBodies[0]?.mode).toBe("hybrid");
+});
+
+it("does not rerun the accepted query after a pending legacy search fails", async () => {
+  const file = node(2, "first.txt", baseVersion);
+  const harness = installHarness({
+    profiles: [],
+    profilesPending: true,
+    files: [file],
+    baseReport: report("hybrid", []),
+    legacyFailureAfter: 1,
+    legacyFailurePending: true,
+    tagSearch: { hits: [{ node: file, path: file.path, match: "name" }], limit: 1000, truncated: false },
+  });
+  render(App);
+  await submitSearch("first query");
+  await screen.findAllByText("/first.txt");
+  await submitSearch("second query");
+  await waitFor(() => expect(harness.legacyCalls()).toBe(2));
+
+  harness.resolveProfiles(json([{
+    name: "private",
+    fingerprint: "a".repeat(64),
+    rendition: true,
+    embedding_bindings: ["embed"],
+    reranking_available: false,
+  }]));
+  harness.resolveLegacyFailure(new Response("legacy search failure", { status: 500 }));
+  await waitFor(() => expect(screen.getByRole("alert").textContent).toContain("HTTP 500"));
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  expect(harness.legacyCalls()).toBe(2);
+  expect(screen.getByRole("combobox", { name: "Search mode: Names and text" })).toBeTruthy();
 });
 
 it("reports a Names and text GET failure without retrying it as a fallback", async () => {
