@@ -90,6 +90,26 @@ transport, credential, and adapter inputs match. Add a typed plan disclosure,
 an authenticated daemon test with synthetic provider responses, and focused
 tests for missing credentials, consent, retries, and restored work.
 
+### Add configured search reranking
+
+Keep reranking deployment settings in the processing profile's `reranking`
+section. Do not add them to `document.ProcessingProfileV1`, because provider
+credentials, endpoints, deadlines, and excerpt limits are daemon policy rather
+than derivative identity.
+
+The config loader validates the complete section without reading a secret. The
+daemon command constructs the existing ZeroEntropy or Cohere adapter, records
+its policy fingerprint in the runtime disclosure, and passes the adapter to
+`processing.Service`. The service adds a separate
+`query_text_and_excerpt` consent request. Retrieval receives only the
+source-fenced, revalidated candidate prefix and holds the provider egress lease
+until the call returns.
+
+The HTTP route and CLI carry the same opt-in bit. The route projects the
+retrieval receipt without requiring `explain`; daemon clients reject an
+unrequested, missing, or malformed receipt. Keep the base search path free of
+provider construction and calls.
+
 ## Design and documentation updates
 
 For every material design change:

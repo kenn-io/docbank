@@ -176,8 +176,8 @@ func TestSearcherRerankingReordersOnlyAuthorizedCandidates(t *testing.T) {
 	assert.Equal(t, int64(2), report.Results[0].Document.NodeID)
 	assert.Equal(t, int64(1), report.Results[1].Document.NodeID)
 	assert.Equal(t, []RerankingCandidate{
-		{Document: DocumentIdentity{VaultID: "vault", NodeID: 1, ContentVersionID: "version-1"}, Evidence: []EvidenceReference{{Kind: "node_name", VaultID: "vault", NodeID: 1, ContentVersionID: "version-1"}}},
-		{Document: DocumentIdentity{VaultID: "vault", NodeID: 2, ContentVersionID: "version-2"}, Evidence: []EvidenceReference{{Kind: "node_name", VaultID: "vault", NodeID: 2, ContentVersionID: "version-2"}}},
+		{Document: DocumentIdentity{VaultID: "vault", NodeID: 1, ContentVersionID: "version-1"}, Excerpt: "one", Evidence: []EvidenceReference{{Kind: "node_name", VaultID: "vault", NodeID: 1, ContentVersionID: "version-1"}}},
+		{Document: DocumentIdentity{VaultID: "vault", NodeID: 2, ContentVersionID: "version-2"}, Excerpt: "two", Evidence: []EvidenceReference{{Kind: "node_name", VaultID: "vault", NodeID: 2, ContentVersionID: "version-2"}}},
 	}, reranker.candidates)
 }
 
@@ -295,6 +295,143 @@ func TestSearcherRerankingAuthorizationPrecedesProviderEgress(t *testing.T) {
 	require.Len(t, authorizer.operations, 1)
 	assert.Equal(t, ProviderInputQueryAndExcerpt, authorizer.operations[0].InputClass)
 	assert.Equal(t, DegradationRerankingDegraded, report.Degradations[0])
+}
+
+func TestSearcherRerankingUsesConfiguredExcerptBoundAndSkipsEmptyResults(t *testing.T) {
+	t.Run("configured excerpt bound", func(t *testing.T) {
+		authorizer := &stageAuthorizer{}
+		reranker := &stageReranker{}
+		searcher, backend := stageSearcher(t, func(config *SearcherConfig) {
+			config.Reranking = RerankingConfig{Enabled: true,
+				Profile:  RerankingProfile{ID: "reranking", MaxCandidates: 1, MaxExcerptBytes: 7},
+				Provider: reranker, Authorizer: authorizer, Deadline: time.Second,
+				FailurePolicy: ProviderFailureDegrade}
+		})
+		backend.hits = []store.ExplainedLexicalCandidate{{
+			Node: store.Node{ID: 1, CurrentVersionID: "version-1"}, Path: "/one",
+			EvidenceKind: "node_name", Excerpt: "abcdefghi",
+		}}
+
+		report, err := searcher.Search(t.Context(), Query{Text: "query", Mode: ModeLexical, Limit: 1})
+		require.NoError(t, err)
+		require.Len(t, report.Receipts, 1)
+		assert.Equal(t, 1, report.Receipts[0].CandidateCount)
+		assert.Equal(t, "abcdefg", reranker.candidates[0].Excerpt)
+		assert.Equal(t, 7, authorizer.operations[0].ExcerptBytes)
+	})
+
+	t.Run("empty results are skipped", func(t *testing.T) {
+		reranker := &stageReranker{}
+		searcher, backend := stageSearcher(t, func(config *SearcherConfig) {
+			config.Reranking = RerankingConfig{Enabled: true,
+				Profile:  RerankingProfile{ID: "reranking", MaxCandidates: 1},
+				Provider: reranker, Authorizer: &stageAuthorizer{}, Deadline: time.Second,
+				FailurePolicy: ProviderFailureDegrade}
+		})
+		backend.hits = []store.ExplainedLexicalCandidate{}
+
+		report, err := searcher.Search(t.Context(), Query{Text: "query", Mode: ModeLexical, Limit: 1})
+		require.NoError(t, err)
+		assert.Zero(t, reranker.calls)
+		require.Len(t, report.Receipts, 1)
+		assert.Equal(t, ProviderOutcomeSkipped, report.Receipts[0].Outcome)
+		assert.Zero(t, report.Receipts[0].CandidateCount)
+	})
+	t.Logf("configured=7 skipped=%s invalid=-1,4097 legacy=%d", ProviderOutcomeSkipped, maxRerankingExcerptBytes)
+}
+
+func TestSearcherRejectsInvalidConfiguredExcerptBounds(t *testing.T) {
+	for _, bound := range []int{-1, maxRerankingExcerptBytes + 1} {
+		_, err := NewSearcher(SearcherConfig{Backend: &stageBackend{}, Owner: "retrieval-test",
+			LeaseDuration: time.Minute, Reranking: RerankingConfig{Enabled: true,
+				Profile:  RerankingProfile{ID: "reranking", MaxCandidates: 1, MaxExcerptBytes: bound},
+				Provider: &stageReranker{}, Authorizer: &stageAuthorizer{}, Deadline: time.Second,
+				FailurePolicy: ProviderFailureDegrade}})
+		require.Error(t, err)
+	}
+}
+
+func TestSearcherRerankingNeverSendsEmptyExcerpt(t *testing.T) {
+	searcher, _, _, descriptor := retrievalSearcherFixture(t, true, 1)
+	reranker := &stageReranker{}
+	searcher.reranking = RerankingConfig{Enabled: true,
+		Profile: RerankingProfile{ID: "reranking", MaxCandidates: 1}, Provider: reranker,
+		Authorizer: &stageAuthorizer{}, Deadline: time.Second, FailurePolicy: ProviderFailureDegrade}
+
+	report, err := searcher.Search(t.Context(), Query{Text: "query", Mode: ModeSemantic, Limit: 1,
+		ProcessingProfileFingerprint: "profile", BindingID: "required", Authorization: retrievalAuthorization(descriptor)})
+	require.NoError(t, err)
+	assert.Zero(t, reranker.calls)
+	assert.Equal(t, []Degradation{DegradationRerankingDegraded}, report.Degradations)
+	assert.Equal(t, []ProviderReceipt{{Stage: ProviderStageReranking,
+		Outcome: ProviderOutcomeMalformed, CandidateCount: 1}}, report.Receipts)
+}
+
+func TestSearcherRerankingRejectsEmptyExcerptAfterUTF8Bound(t *testing.T) {
+	reranker := &stageReranker{}
+	searcher, backend := stageSearcher(t, func(config *SearcherConfig) {
+		config.Reranking = RerankingConfig{Enabled: true,
+			Profile: RerankingProfile{ID: "reranking", MaxCandidates: 1, MaxExcerptBytes: 1}, Provider: reranker,
+			Authorizer: &stageAuthorizer{}, Deadline: time.Second, FailurePolicy: ProviderFailureDegrade}
+	})
+	backend.hits = []store.ExplainedLexicalCandidate{{
+		Node: store.Node{ID: 1, CurrentVersionID: "version-1"}, Path: "/one",
+		EvidenceKind: "node_name", Excerpt: "报告"}}
+
+	report, err := searcher.Search(t.Context(), Query{Text: "query", Mode: ModeLexical, Limit: 1})
+	require.NoError(t, err)
+	assert.Zero(t, reranker.calls)
+	assert.Equal(t, []Degradation{DegradationRerankingDegraded}, report.Degradations)
+	assert.Equal(t, []ProviderReceipt{{Stage: ProviderStageReranking,
+		Outcome: ProviderOutcomeMalformed, CandidateCount: 1}}, report.Receipts)
+}
+
+func TestSearcherRerankingPayloadKeepsPublicExcerpt(t *testing.T) {
+	for _, test := range []struct {
+		name, kind, lexical, semantic, want string
+		mode                                Mode
+	}{
+		{"semantic", "", "", "current semantic source", "current semantic source", ModeSemantic},
+		{"hybrid name", "node_name", "semantic.pdf", "current semantic source", "current semantic source", ModeHybrid},
+		{"hybrid content", "rendition_segment", "matching lexical text", "current semantic source", "matching lexical text", ModeHybrid},
+		{"hybrid missing content", "node_name", "semantic.pdf", "", "semantic.pdf", ModeHybrid},
+		{"hybrid blank content", "node_name", "semantic.pdf", " \n\t", "semantic.pdf", ModeHybrid},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			searcher, backend, _, descriptor := retrievalSearcherFixture(t, true, 1)
+			backend.semantic[0].Excerpt = test.semantic
+			if test.kind != "" {
+				backend.lexical = []store.ExplainedLexicalCandidate{{
+					Node: store.Node{ID: 8, CurrentVersionID: "version-semantic", Name: "semantic.pdf"},
+					Path: "/semantic.pdf", EvidenceKind: test.kind, Excerpt: test.lexical,
+				}}
+			}
+			reranker := &stageReranker{}
+			searcher.reranking = RerankingConfig{Enabled: true,
+				Profile: RerankingProfile{ID: "reranking", MaxCandidates: 1}, Provider: reranker,
+				Authorizer: &stageAuthorizer{}, Deadline: time.Second, FailurePolicy: ProviderFailureDegrade}
+			ranked, err := searcher.Search(t.Context(), Query{Text: "query", Mode: test.mode, Limit: 1,
+				ProcessingProfileFingerprint: "profile", BindingID: "required", Authorization: retrievalAuthorization(descriptor)})
+			require.NoError(t, err)
+			require.Len(t, reranker.candidates, 1)
+			assert.Equal(t, test.want, reranker.candidates[0].Excerpt)
+			require.Len(t, ranked.Results, 1)
+			assert.Equal(t, test.lexical, ranked.Results[0].Excerpt)
+		})
+	}
+}
+
+func TestSearcherSemanticRerankingFailsClosedWithoutExcerpt(t *testing.T) {
+	searcher, _, _, descriptor := retrievalSearcherFixture(t, true, 1)
+	reranker := &stageReranker{}
+	searcher.reranking = RerankingConfig{Enabled: true,
+		Profile: RerankingProfile{ID: "reranking", MaxCandidates: 1}, Provider: reranker,
+		Authorizer: &stageAuthorizer{}, Deadline: time.Second, FailurePolicy: ProviderFailureFailClosed}
+
+	_, err := searcher.Search(t.Context(), Query{Text: "query", Mode: ModeSemantic, Limit: 1,
+		ProcessingProfileFingerprint: "profile", BindingID: "required", Authorization: retrievalAuthorization(descriptor)})
+	require.ErrorIs(t, err, ErrRerankingFailed)
+	assert.Zero(t, reranker.calls)
 }
 
 func TestSearcherRerankOnlyRevalidatesRevokedEvidenceBeforeProviderEgress(t *testing.T) {
@@ -455,7 +592,7 @@ func TestSearcherBoundsRerankingToTheRequestedCandidateLimit(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, report.Results, 1)
 	assert.Equal(t, []RerankingCandidate{{Document: DocumentIdentity{VaultID: "vault", NodeID: 1, ContentVersionID: "version-1"},
-		Evidence: []EvidenceReference{{Kind: "node_name", VaultID: "vault", NodeID: 1, ContentVersionID: "version-1"}}}}, reranker.candidates)
+		Excerpt: "one", Evidence: []EvidenceReference{{Kind: "node_name", VaultID: "vault", NodeID: 1, ContentVersionID: "version-1"}}}}, reranker.candidates)
 }
 
 func TestSearcherBoundsSemanticCandidatesToTheRequestedLimit(t *testing.T) {
@@ -517,8 +654,8 @@ func (backend *stageBackend) SearchExplainedLexicalCandidates(_ context.Context,
 	hits := backend.hits
 	if hits == nil {
 		hits = []store.ExplainedLexicalCandidate{
-			{Node: store.Node{ID: 1, CurrentVersionID: "version-1", Name: "one"}, Path: "/one", EvidenceKind: "node_name"},
-			{Node: store.Node{ID: 2, CurrentVersionID: "version-2", Name: "two"}, Path: "/two", EvidenceKind: "node_name"},
+			{Node: store.Node{ID: 1, CurrentVersionID: "version-1", Name: "one"}, Path: "/one", EvidenceKind: "node_name", Excerpt: "one"},
+			{Node: store.Node{ID: 2, CurrentVersionID: "version-2", Name: "two"}, Path: "/two", EvidenceKind: "node_name", Excerpt: "two"},
 		}
 	}
 	return hits, false, nil

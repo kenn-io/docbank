@@ -36,54 +36,76 @@ func mediaTimeSpan(locator document.EvidenceLocatorV1) (*MediaTimeSpan, error) {
 type MediaEvidenceResolver struct {
 	blobs  MediaEvidenceBlobReader
 	mu     sync.Mutex
-	cache  map[store.SearchMediaEvidence]map[string]*MediaTimeSpan
+	cache  map[store.SearchMediaEvidence]map[string]mediaEvidenceInput
 	inputs int
+	bytes  int64
 }
 
-const maxCachedMediaInputs = 100_000
+const (
+	maxCachedMediaInputs = 100_000
+	maxCachedMediaBytes  = 64 << 20
+)
+
+type mediaEvidenceInput struct {
+	excerpt string
+	span    *MediaTimeSpan
+}
 
 func NewMediaEvidenceResolver(blobs MediaEvidenceBlobReader) *MediaEvidenceResolver {
-	return &MediaEvidenceResolver{blobs: blobs, cache: make(map[store.SearchMediaEvidence]map[string]*MediaTimeSpan)}
+	return &MediaEvidenceResolver{blobs: blobs, cache: make(map[store.SearchMediaEvidence]map[string]mediaEvidenceInput)}
 }
 
-func (resolver *MediaEvidenceResolver) resolve(ctx context.Context, artifacts store.SearchMediaEvidence,
+func (resolver *MediaEvidenceResolver) resolveInput(ctx context.Context, artifacts store.SearchMediaEvidence,
 	inputID string,
-) (*MediaTimeSpan, error) {
+) (mediaEvidenceInput, error) {
 	if err := ctx.Err(); err != nil {
-		return nil, err
+		return mediaEvidenceInput{}, err
 	}
 	resolver.mu.Lock()
-	locators := resolver.cache[artifacts]
+	inputs := resolver.cache[artifacts]
 	resolver.mu.Unlock()
-	if locators == nil {
+	if inputs == nil {
 		var err error
-		locators, err = resolver.load(ctx, artifacts)
+		inputs, err = resolver.load(ctx, artifacts)
 		if err != nil {
-			return nil, err
+			return mediaEvidenceInput{}, err
 		}
 		resolver.mu.Lock()
-		if resolver.cache[artifacts] == nil && len(locators) <= maxCachedMediaInputs {
+		inputBytes := mediaEvidenceInputBytes(inputs)
+		if resolver.cache[artifacts] == nil && len(inputs) <= maxCachedMediaInputs && inputBytes <= maxCachedMediaBytes {
 			// ponytail: clear at the input ceiling; use LRU if large working sets churn it.
-			if resolver.inputs+len(locators) > maxCachedMediaInputs {
+			if resolver.inputs+len(inputs) > maxCachedMediaInputs || resolver.bytes+inputBytes > maxCachedMediaBytes {
 				clear(resolver.cache)
-				resolver.inputs = 0
+				resolver.inputs, resolver.bytes = 0, 0
 			}
-			resolver.cache[artifacts] = locators
-			resolver.inputs += len(locators)
+			resolver.cache[artifacts] = inputs
+			resolver.inputs += len(inputs)
+			resolver.bytes += inputBytes
 		}
 		resolver.mu.Unlock()
 	}
-	span, ok := locators[inputID]
+	input, ok := inputs[inputID]
 	if !ok {
-		return nil, errors.New("embedding input is absent from its exact retained generation")
+		return mediaEvidenceInput{}, errors.New("embedding input is absent from its exact retained generation")
 	}
-	if span == nil {
-		return nil, nil //nolint:nilnil // Untimed inputs have no media interval.
+	if input.span != nil {
+		input.span = new(*input.span)
 	}
-	return new(*span), nil
+	return input, nil
 }
 
-func (resolver *MediaEvidenceResolver) load(ctx context.Context, artifacts store.SearchMediaEvidence) (map[string]*MediaTimeSpan, error) {
+func mediaEvidenceInputBytes(inputs map[string]mediaEvidenceInput) int64 {
+	var total int64
+	for _, input := range inputs {
+		if int64(len(input.excerpt)) > int64(^uint64(0)>>1)-total {
+			return int64(^uint64(0) >> 1)
+		}
+		total += int64(len(input.excerpt))
+	}
+	return total
+}
+
+func (resolver *MediaEvidenceResolver) load(ctx context.Context, artifacts store.SearchMediaEvidence) (map[string]mediaEvidenceInput, error) {
 	if artifacts.BuildID == "" || artifacts.GenerationBlobHash == "" || artifacts.GenerationEncodedSize <= 0 ||
 		artifacts.GenerationChecksum == "" || artifacts.EvidenceFingerprint == "" ||
 		artifacts.EvidenceEncodedSize <= 0 || artifacts.InputCount <= 0 {
@@ -118,15 +140,15 @@ func (resolver *MediaEvidenceResolver) load(ctx context.Context, artifacts store
 	if err := generation.ValidateEvidence(evidence); err != nil {
 		return nil, err
 	}
-	locators := make(map[string]*MediaTimeSpan, len(generation.Inputs))
+	inputs := make(map[string]mediaEvidenceInput, len(generation.Inputs))
 	for _, input := range generation.Inputs {
 		span, err := mediaTimeSpan(evidence.Units[input.SourceSpan.UnitIndex].Locator)
 		if err != nil {
 			return nil, err
 		}
-		locators[input.Key] = span
+		inputs[input.Key] = mediaEvidenceInput{excerpt: input.Content, span: span}
 	}
-	return locators, nil
+	return inputs, nil
 }
 
 func readExactSearchBlob(

@@ -245,28 +245,45 @@ type RetrievalProfileConfig struct {
 	VectorLimit  int `toml:"vector_limit"`
 }
 
+// RerankingProfileConfig names one deployment-local reranking provider for a
+// processing profile. It stays outside the portable document profile.
+type RerankingProfileConfig struct {
+	ProviderEgressConfig
+
+	Provider           string   `toml:"provider"`
+	Model              string   `toml:"model"`
+	CompatibilityEpoch string   `toml:"compatibility_epoch"`
+	ModelRevision      string   `toml:"model_revision"`
+	CredentialBinding  string   `toml:"credential_binding"`
+	CandidateCount     int      `toml:"candidate_count"`
+	ExcerptBytes       int      `toml:"excerpt_bytes"`
+	Deadline           Duration `toml:"deadline"`
+	FailurePolicy      string   `toml:"failure_policy"`
+}
+
 // ProcessingProfileConfig assembles named rendition, embedding, and retrieval
 // policies without copying provider credentials into portable policy.
 type ProcessingProfileConfig struct {
-	AttachmentPolicyFingerprint string   `toml:"attachment_policy_fingerprint"`
-	CompletenessFingerprint     string   `toml:"completeness_fingerprint"`
-	ConsentFingerprint          string   `toml:"consent_fingerprint"`
-	Embeddings                  []string `toml:"embeddings"`
-	LexicalSegmenterFingerprint string   `toml:"lexical_segmenter_fingerprint"`
-	MaxDocumentChars            int      `toml:"max_document_chars"`
-	MaxSegmentRunes             int      `toml:"max_segment_runes"`
-	MaxUnitRunes                int      `toml:"max_unit_runes"`
-	NormalizedEvidenceContract  string   `toml:"normalized_evidence_contract"`
-	NormalizerFingerprint       string   `toml:"normalizer_fingerprint"`
-	Rendition                   string   `toml:"rendition"`
-	RenditionContract           string   `toml:"rendition_contract"`
-	RetainProviderMarkdown      bool     `toml:"retain_provider_markdown"`
-	RetainSanitizedMarkdown     bool     `toml:"retain_sanitized_markdown"`
-	RetainTypedArtifacts        bool     `toml:"retain_typed_artifacts"`
-	Retrieval                   string   `toml:"retrieval"`
-	SanitizerFingerprint        string   `toml:"sanitizer_fingerprint"`
-	SourceEvidenceContract      string   `toml:"source_evidence_contract"`
-	TrustBoundary               string   `toml:"trust_boundary"`
+	AttachmentPolicyFingerprint string                  `toml:"attachment_policy_fingerprint"`
+	CompletenessFingerprint     string                  `toml:"completeness_fingerprint"`
+	ConsentFingerprint          string                  `toml:"consent_fingerprint"`
+	Embeddings                  []string                `toml:"embeddings"`
+	LexicalSegmenterFingerprint string                  `toml:"lexical_segmenter_fingerprint"`
+	MaxDocumentChars            int                     `toml:"max_document_chars"`
+	MaxSegmentRunes             int                     `toml:"max_segment_runes"`
+	MaxUnitRunes                int                     `toml:"max_unit_runes"`
+	NormalizedEvidenceContract  string                  `toml:"normalized_evidence_contract"`
+	NormalizerFingerprint       string                  `toml:"normalizer_fingerprint"`
+	Rendition                   string                  `toml:"rendition"`
+	RenditionContract           string                  `toml:"rendition_contract"`
+	RetainProviderMarkdown      bool                    `toml:"retain_provider_markdown"`
+	RetainSanitizedMarkdown     bool                    `toml:"retain_sanitized_markdown"`
+	RetainTypedArtifacts        bool                    `toml:"retain_typed_artifacts"`
+	Retrieval                   string                  `toml:"retrieval"`
+	Reranking                   *RerankingProfileConfig `toml:"reranking"`
+	SanitizerFingerprint        string                  `toml:"sanitizer_fingerprint"`
+	SourceEvidenceContract      string                  `toml:"source_evidence_contract"`
+	TrustBoundary               string                  `toml:"trust_boundary"`
 }
 
 // ResolvedProcessingProfile pairs the portable document profile with the
@@ -277,6 +294,7 @@ type ResolvedProcessingProfile struct {
 	Document      document.ProcessingProfileV1
 	RetrievalName string
 	Retrieval     embedding.RetrievalPolicy
+	Reranking     *RerankingProfileConfig
 }
 
 // EmailPDFConfig opts into a locally pinned, isolated Chromium renderer.
@@ -677,10 +695,19 @@ func validateProcessingProfiles(c Config) error {
 			return err
 		}
 	}
-	for name := range c.ProcessingProfiles {
+	for name, profile := range c.ProcessingProfiles {
 		prefix := fmt.Sprintf("[processing_profiles.%s]", name)
 		if err := validateProfileName(name, prefix); err != nil {
 			return err
+		}
+		if profile.Reranking != nil {
+			if err := validateRerankingProfileConfig(*profile.Reranking, prefix+".reranking"); err != nil {
+				return err
+			}
+			credentialName := strings.TrimPrefix(profile.Reranking.CredentialBinding, "credential:")
+			if _, ok := c.CredentialBindings[credentialName]; !ok {
+				return fmt.Errorf("%s.reranking credential binding %q is not defined", prefix, profile.Reranking.CredentialBinding)
+			}
 		}
 		assembled, err := c.assembleProcessingProfile(name)
 		if err != nil {
@@ -700,6 +727,55 @@ func validateRetrievalProfileConfig(profile RetrievalProfileConfig, prefix strin
 	}
 	if profile.VectorLimit <= 0 || profile.VectorLimit > embedding.MaxCandidateLimit {
 		return fmt.Errorf("%s vector_limit must be between 1 and %d", prefix, embedding.MaxCandidateLimit)
+	}
+	return nil
+}
+
+func validateRerankingProfileConfig(profile RerankingProfileConfig, prefix string) error {
+	if profile.Provider != "zeroentropy" && profile.Provider != "cohere" {
+		return fmt.Errorf("%s provider must be zeroentropy or cohere", prefix)
+	}
+	if profile.Model == "" {
+		return fmt.Errorf("%s model is required", prefix)
+	}
+	switch profile.Provider {
+	case "zeroentropy":
+		if profile.Model != "zerank-2" {
+			return fmt.Errorf("%s model must be zerank-2 for zeroentropy", prefix)
+		}
+		if profile.Endpoint != "https://api.zeroentropy.dev" {
+			return fmt.Errorf("%s endpoint must be https://api.zeroentropy.dev", prefix)
+		}
+	case "cohere":
+		if profile.Model != "rerank-v4.0-pro" && profile.Model != "rerank-v4.0-fast" {
+			return fmt.Errorf("%s model is invalid for cohere", prefix)
+		}
+		if profile.Endpoint != "https://api.cohere.com" {
+			return fmt.Errorf("%s endpoint must be https://api.cohere.com", prefix)
+		}
+	}
+	if !credentialReferencePattern.MatchString(profile.CredentialBinding) {
+		return fmt.Errorf("%s credential_binding must use credential:<name>", prefix)
+	}
+	if profile.CandidateCount <= 0 || profile.CandidateCount > embedding.MaxCandidateLimit {
+		return fmt.Errorf("%s candidate_count must be between 1 and %d", prefix, embedding.MaxCandidateLimit)
+	}
+	if profile.ExcerptBytes <= 0 || profile.ExcerptBytes > 4<<10 {
+		return fmt.Errorf("%s excerpt_bytes must be between 1 and 4096", prefix)
+	}
+	if profile.Deadline.Std() <= 0 || profile.Deadline.Std() > 5*time.Minute {
+		return fmt.Errorf("%s deadline must be between 1ns and 5m", prefix)
+	}
+	if profile.FailurePolicy != "degrade" && profile.FailurePolicy != "fail_closed" {
+		return fmt.Errorf("%s failure_policy must be degrade or fail_closed", prefix)
+	}
+	if profile.CompatibilityEpoch != "" && profile.ModelRevision == "" ||
+		profile.CompatibilityEpoch == "" && profile.ModelRevision != "" ||
+		profile.CompatibilityEpoch != "" && profile.ModelRevision != profile.CompatibilityEpoch {
+		return fmt.Errorf("%s compatibility_epoch and model_revision must match", prefix)
+	}
+	if _, err := validateProviderEgressConfig(profile.ProviderEgressConfig, prefix); err != nil {
+		return err
 	}
 	return nil
 }
@@ -1037,6 +1113,7 @@ func (c Config) assembleProcessingProfile(name string) (ResolvedProcessingProfil
 	}
 	return ResolvedProcessingProfile{
 		Document: profile, RetrievalName: configured.Retrieval, Retrieval: retrieval,
+		Reranking: configured.Reranking,
 	}, nil
 }
 

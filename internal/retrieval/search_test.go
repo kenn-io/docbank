@@ -440,6 +440,18 @@ func (backend *retrievalBackendStub) ReleaseVectorIndexGeneration(ctx context.Co
 	return backend.releaseErr
 }
 
+func (backend *retrievalBackendStub) RevalidateSearchCandidates(_ context.Context,
+	_ []store.SearchCandidateIdentity, _ store.SearchOptions, _, _ string,
+) (store.SearchCandidateRevalidation, error) {
+	candidates := make([]store.RevalidatedSearchCandidate, 0, len(backend.semantic))
+	for _, candidate := range backend.semantic {
+		candidates = append(candidates, store.RevalidatedSearchCandidate{
+			NodeID: candidate.NodeID, ContentVersionID: candidate.ContentVersionID, Path: candidate.Path,
+		})
+	}
+	return store.SearchCandidateRevalidation{Candidates: candidates}, nil
+}
+
 type retrievalResolver struct {
 	provider  document.EmbeddingProvider
 	err       error

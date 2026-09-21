@@ -41,6 +41,9 @@ func TestOpenAPIDocumentOffline(t *testing.T) {
 	assert.Contains(t, doc, api.ContentVersionHeader)
 	assert.Contains(t, doc, "Content-Digest")
 	assert.Contains(t, doc, "computed_hash")
+	assert.Contains(t, doc, "rerank")
+	assert.Contains(t, doc, "DocumentSearchRerankingReceipt")
+	assert.Contains(t, doc, "candidate_count")
 	for _, schema := range []string{"IngestPreflightRequest", "IngestRequest"} {
 		block := openAPISchemaBlock(t, doc, schema)
 		assert.Contains(t, block, "        include:")

@@ -251,6 +251,70 @@ func TestProcessingProfileRejectsOriginalFileChunkPolicy(t *testing.T) {
 	require.ErrorContains(t, err, "original_file")
 }
 
+func TestRerankingConfigIsStrictAndStaysOutsidePortableProfile(t *testing.T) {
+	base := validProcessingConfig()
+	base.CredentialBindings = map[string]CredentialBindingConfig{
+		"rerank": {EnvironmentVariable: "DOCBANK_TEST_RERANK_KEY"},
+	}
+	ranking := validRerankingProfileConfig("zeroentropy")
+	profile := base.ProcessingProfiles["archive"]
+	profile.Reranking = &ranking
+	base.ProcessingProfiles["archive"] = profile
+
+	require.NoError(t, base.Validate())
+	resolved, err := base.ProcessingProfile("archive")
+	require.NoError(t, err)
+	require.NotNil(t, resolved.Reranking)
+
+	changed := base
+	changed.CredentialBindings = map[string]CredentialBindingConfig{
+		"rerank": {EnvironmentVariable: "DOCBANK_OTHER_RERANK_KEY"},
+	}
+	changedProfile := changed.ProcessingProfiles["archive"]
+	changedRanking := *changedProfile.Reranking
+	changedRanking.Endpoint = "https://api.zeroentropy.dev"
+	changedProfile.Reranking = &changedRanking
+	changed.ProcessingProfiles["archive"] = changedProfile
+	require.NoError(t, changed.Validate())
+	changedResolved, err := changed.ProcessingProfile("archive")
+	require.NoError(t, err)
+	assert.Equal(t, resolved.Document, changedResolved.Document)
+
+	for name, mutate := range map[string]func(*RerankingProfileConfig){
+		"partial":         func(value *RerankingProfileConfig) { *value = RerankingProfileConfig{} },
+		"candidate count": func(value *RerankingProfileConfig) { value.CandidateCount = 0 },
+		"excerpt bytes":   func(value *RerankingProfileConfig) { value.ExcerptBytes = 4097 },
+		"endpoint":        func(value *RerankingProfileConfig) { value.Endpoint = "https://other.example.invalid" },
+		"failure policy":  func(value *RerankingProfileConfig) { value.FailurePolicy = "retry" },
+	} {
+		t.Run(name, func(t *testing.T) {
+			cfg := base
+			cfg.ProcessingProfiles = maps.Clone(base.ProcessingProfiles)
+			cfg.CredentialBindings = maps.Clone(base.CredentialBindings)
+			cfgProfile := cfg.ProcessingProfiles["archive"]
+			cfgRanking := *cfgProfile.Reranking
+			mutate(&cfgRanking)
+			cfgProfile.Reranking = &cfgRanking
+			cfg.ProcessingProfiles["archive"] = cfgProfile
+			require.Error(t, cfg.Validate())
+		})
+	}
+}
+
+func validRerankingProfileConfig(provider string) RerankingProfileConfig {
+	model, endpoint := "zerank-2", "https://api.zeroentropy.dev"
+	if provider == "cohere" {
+		model, endpoint = "rerank-v4.0-pro", "https://api.cohere.com"
+	}
+	return RerankingProfileConfig{
+		Provider: provider, Model: model, CredentialBinding: "credential:rerank",
+		CandidateCount: 8, ExcerptBytes: 4096, Deadline: Duration(time.Second),
+		FailurePolicy: "degrade", Endpoint: endpoint, AllowedCIDRs: []string{"192.0.2.0/24"},
+		ProxyMode: "disabled", ConnectTimeout: Duration(time.Second), KeepAlive: Duration(time.Second),
+		TLSHandshakeTimeout: Duration(time.Second),
+	}
+}
+
 func TestProcessingProfilesRejectUnknownKeys(t *testing.T) {
 	for _, key := range []string{"unknown_policy", "api_key"} {
 		t.Run(key, func(t *testing.T) {

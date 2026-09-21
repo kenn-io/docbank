@@ -2814,6 +2814,8 @@ components:
           type: array
         requested_mode:
           type: string
+        reranking:
+          $ref: "#/components/schemas/DocumentSearchRerankingReceipt"
         results:
           items:
             $ref: "#/components/schemas/DocumentSearchResult"
@@ -2875,6 +2877,8 @@ components:
           maxLength: 8192
           minLength: 1
           type: string
+        rerank:
+          type: boolean
       required:
         - query
         - mode
@@ -2882,6 +2886,26 @@ components:
         - fence
       type: object
       x-go-type: api.DocumentSearchRequest
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
+    DocumentSearchRerankingReceipt:
+      additionalProperties: false
+      properties:
+        candidate_count:
+          format: int64
+          maximum: 1000
+          minimum: 0
+          type: integer
+        cause:
+          type: string
+        outcome:
+          type: string
+      required:
+        - outcome
+        - candidate_count
+      type: object
+      x-go-type: api.DocumentSearchRerankingReceipt
       x-go-type-import:
         path: go.kenn.io/docbank/internal/api
         name: api
@@ -3008,6 +3032,8 @@ components:
           maxLength: 8192
           minLength: 1
           type: string
+        rerank:
+          type: boolean
       required:
         - query
         - mode

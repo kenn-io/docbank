@@ -157,6 +157,21 @@ branch on the code, not human detail. Adding a store error normally requires:
 4. documenting the public code; and
 5. testing the non-2xx response envelope.
 
+Document search accepts `rerank: true` as an explicit opt-in. The daemon checks
+the separate provider grant for `query_text_and_excerpt` before it sends the
+query and bounded excerpts to ZeroEntropy or Cohere. The searcher revalidates
+the source-fenced candidates first. Semantic and hybrid search keep their
+query egress fence while checking the reranking grant, so the check never
+reenters the same revocation lock.
+
+The response may include one `reranking` receipt. Its outcome is `applied`,
+`degraded`, or `skipped`; degraded receipts carry a bounded cause and every
+receipt carries the candidate count. The receipt is returned independently of
+the optional retrieval trace. The client rejects a receipt when the request
+did not opt in, and it rejects a missing or malformed receipt for an opted-in
+request. Errors use stable `reranking_unavailable` and `reranking_failed`
+codes and never include provider bodies, credentials, query text, or excerpts.
+
 Unmapped internal failures may expose useful detail because this is a local
 single-user tool, but secrets, API keys, shutdown tokens, and document content
 must never enter logs or error strings.

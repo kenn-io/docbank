@@ -471,6 +471,53 @@ their separate bounded storage-retry behavior. Terminal jobs do not retain
 superseded generations after their last embedding set is collected, while
 queued/running jobs and explicit retention roots keep their inputs.
 
+### Search reranking
+
+A processing profile can opt into one hosted reranking adapter. The section is
+deployment configuration, so it stays outside the portable document profile
+and does not change rendition or embedding identities.
+
+```toml
+[credential_bindings.search-rerank]
+environment_variable = "DOCBANK_SEARCH_RERANK_KEY"
+
+[processing_profiles.private.reranking]
+provider = "zeroentropy"
+model = "zerank-2"
+credential_binding = "credential:search-rerank"
+candidate_count = 20
+excerpt_bytes = 4096
+deadline = "5s"
+failure_policy = "degrade"
+endpoint = "https://api.zeroentropy.dev"
+allowed_cidrs = ["192.0.2.0/24"]
+proxy_mode = "disabled"
+connect_timeout = "5s"
+keep_alive = "30s"
+tls_handshake_timeout = "5s"
+```
+
+`provider` can be `zeroentropy` with model `zerank-2`, or `cohere` with
+`rerank-v4.0-pro` or `rerank-v4.0-fast`. `candidate_count` must be between 1
+and 1,000. `excerpt_bytes` must be between 1 and 4,096 and limits each UTF-8
+excerpt sent to the provider. `deadline` must be positive and at most five
+minutes. `failure_policy` is `degrade` or `fail_closed`.
+
+The daemon rejects a partial section, an unknown model, an invalid endpoint or
+egress policy, and an undefined credential binding. It reads the named secret
+only when a reranking request reaches the provider. The provider call needs an
+active query-and-excerpt consent grant. The adapter policy fingerprint binds
+the provider, model, candidate limit, excerpt limit, deadline, endpoint, and
+transport policy to the reviewed plan.
+
+Adding this section changes the plan fingerprint and makes the plan report
+consent required until reranking is approved. Existing grants remain valid for
+the operations they already cover, including searches without `--rerank`.
+Granting the revised plan approves all configured profile operations together;
+reranking has its own grant record, but no separate approval step. Follow the
+[search consent walkthrough](usage/search.md#consent-before-semantic-or-hybrid-search)
+to review and grant the revised plan.
+
 ### Self-hosted Cap origins
 
 Register a self-hosted Cap deployment under `[media_origins.<name>]`. The

@@ -504,6 +504,89 @@ func TestProcessingClientValidatesSearchResponseAgainstExactFence(t *testing.T) 
 	assert.Equal(t, versionID, report.Results[0].ContentVersionID)
 }
 
+func TestProcessingClientValidatesRerankingReceiptAgainstRequest(t *testing.T) {
+	const vaultID = "11111111-1111-4111-8111-111111111111"
+	const versionID = "22222222-2222-4222-8222-222222222222"
+	request := api.DocumentSearchRequest{Query: "needle", Mode: "lexical", Limit: 20, Profile: "private",
+		Rerank: true, Fence: api.DocumentSourceFence{VaultUID: vaultID, ContentVersionIDs: []string{versionID}}}
+	base := api.DocumentSearchReport{RequestedMode: "lexical", ActualMode: "lexical",
+		Coverage:     api.DocumentSearchCoverage{ScopedDocuments: 1, CompleteDocuments: 1, State: "complete"},
+		Degradations: []string{}, Results: []api.DocumentSearchResult{{VaultUID: vaultID, NodeID: 1,
+			ContentVersionID: versionID, Rank: 1, LexicalRank: 1, Score: 1, Path: "/needle.txt",
+			Evidence: []api.DocumentEvidenceReference{{Kind: "node_name"}}}}}
+	tests := []struct {
+		name   string
+		mutate func(*api.DocumentSearchReport)
+	}{
+		{name: "missing", mutate: func(report *api.DocumentSearchReport) {}},
+		{name: "bad outcome", mutate: func(report *api.DocumentSearchReport) {
+			report.Reranking = &api.DocumentSearchRerankingReceipt{Outcome: "unknown", CandidateCount: 1}
+		}},
+		{name: "bad degraded cause", mutate: func(report *api.DocumentSearchReport) {
+			report.Reranking = &api.DocumentSearchRerankingReceipt{Outcome: "degraded", Cause: "provider-error", CandidateCount: 1}
+			report.Degradations = []string{"reranking_degraded"}
+		}},
+		{name: "unrequested", mutate: func(report *api.DocumentSearchReport) {
+			report.Reranking = &api.DocumentSearchRerankingReceipt{Outcome: "applied", CandidateCount: 1}
+		}},
+		{name: "applied with degradation", mutate: func(report *api.DocumentSearchReport) {
+			report.Reranking = &api.DocumentSearchRerankingReceipt{Outcome: "applied", CandidateCount: 1}
+			report.Degradations = []string{"reranking_degraded"}
+		}},
+		{name: "skipped with results", mutate: func(report *api.DocumentSearchReport) {
+			report.Reranking = &api.DocumentSearchRerankingReceipt{Outcome: "skipped", CandidateCount: 0}
+		}},
+	}
+	for _, testCase := range tests {
+		t.Run(testCase.name, func(t *testing.T) {
+			report := base
+			testCase.mutate(&report)
+			requestValue := request
+			if testCase.name == "unrequested" {
+				requestValue.Rerank = false
+			}
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				assert.NoError(t, json.MarshalWrite(w, report))
+			}))
+			t.Cleanup(server.Close)
+			_, err := daemonconn.New(server.URL, serverKey).SearchDocuments(t.Context(), requestValue)
+			require.ErrorContains(t, err, "search response")
+		})
+	}
+
+	valid := base
+	valid.Reranking = &api.DocumentSearchRerankingReceipt{Outcome: "applied", CandidateCount: 1}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		assert.NoError(t, json.MarshalWrite(w, valid))
+	}))
+	t.Cleanup(server.Close)
+	_, err := daemonconn.New(server.URL, serverKey).SearchDocuments(t.Context(), request)
+	require.NoError(t, err)
+
+	for _, receipt := range []*api.DocumentSearchRerankingReceipt{
+		{Outcome: "degraded", Cause: "unavailable", CandidateCount: 1},
+		{Outcome: "skipped", CandidateCount: 0},
+	} {
+		report := base
+		if receipt.Outcome == "skipped" {
+			report.Results = nil
+		} else {
+			report.Degradations = []string{"reranking_degraded"}
+		}
+		report.Reranking = receipt
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			assert.NoError(t, json.MarshalWrite(w, report))
+		}))
+		result, err := daemonconn.New(server.URL, serverKey).SearchDocuments(t.Context(), request)
+		server.Close()
+		require.NoError(t, err)
+		assert.Equal(t, receipt.Outcome, result.Reranking.Outcome)
+	}
+}
+
 func TestProcessingClientValidatesSourceFenceRequestBeforeSending(t *testing.T) {
 	requests := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {

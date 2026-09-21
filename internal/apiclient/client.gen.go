@@ -16745,6 +16745,8 @@ type DocumentSearchReport = api.DocumentSearchReport
 
 type DocumentSearchRequest = api.DocumentSearchRequest
 
+type DocumentSearchRerankingReceipt = api.DocumentSearchRerankingReceipt
+
 type DocumentSearchResult = api.DocumentSearchResult
 
 type DocumentSearchTrace = api.DocumentSearchTrace

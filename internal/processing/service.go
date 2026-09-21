@@ -55,16 +55,22 @@ var (
 	ErrPurgePlanChanged          = errors.New("derivative purge plan changed after preview")
 	ErrInvalidPurgeRequest       = errors.New("derivative purge request is invalid")
 	ErrInvalidConsentExpiry      = errors.New("processing consent expiry is invalid")
+	ErrRerankingUnavailable      = errors.New("reranking is not configured")
 )
 
 type ProfileConfig struct {
-	Profile              document.ProcessingProfileV1
-	RenditionProvider    document.RenditionProvider
-	RenditionDisclosure  RuntimeDisclosure
-	EmbeddingProviders   map[string]document.EmbeddingProvider
-	EmbeddingDisclosures map[string]RuntimeDisclosure
-	EmbeddingClassifiers map[string]func(error) (EmbeddingProviderFailure, time.Duration)
-	Tokenizers           map[string]document.Tokenizer
+	Profile                document.ProcessingProfileV1
+	RenditionProvider      document.RenditionProvider
+	RenditionDisclosure    RuntimeDisclosure
+	RerankingProvider      retrieval.RerankingProvider
+	RerankingProfile       retrieval.RerankingProfile
+	RerankingDisclosure    RuntimeDisclosure
+	RerankingDeadline      time.Duration
+	RerankingFailurePolicy retrieval.ProviderFailurePolicy
+	EmbeddingProviders     map[string]document.EmbeddingProvider
+	EmbeddingDisclosures   map[string]RuntimeDisclosure
+	EmbeddingClassifiers   map[string]func(error) (EmbeddingProviderFailure, time.Duration)
+	Tokenizers             map[string]document.Tokenizer
 }
 
 type ServiceConfig struct {
@@ -87,14 +93,19 @@ type ServiceConfig struct {
 }
 
 type configuredProfile struct {
-	portable          document.ProcessingProfileV1
-	record            store.ProcessingProfileRecord
-	provider          document.RenditionProvider
-	embedders         map[string]document.EmbeddingProvider
-	embeddingRuntimes map[string]*ProviderEmbeddingRuntime
-	tokenizers        map[string]document.Tokenizer
-	renderDisclosure  RuntimeDisclosure
-	embedDisclosures  map[string]RuntimeDisclosure
+	portable               document.ProcessingProfileV1
+	record                 store.ProcessingProfileRecord
+	provider               document.RenditionProvider
+	rerankingProvider      retrieval.RerankingProvider
+	rerankingProfile       retrieval.RerankingProfile
+	rerankingDisclosure    RuntimeDisclosure
+	rerankingDeadline      time.Duration
+	rerankingFailurePolicy retrieval.ProviderFailurePolicy
+	embedders              map[string]document.EmbeddingProvider
+	embeddingRuntimes      map[string]*ProviderEmbeddingRuntime
+	tokenizers             map[string]document.Tokenizer
+	renderDisclosure       RuntimeDisclosure
+	embedDisclosures       map[string]RuntimeDisclosure
 }
 
 type Service struct {
@@ -329,6 +340,7 @@ type SearchRequest struct {
 	Limit                           int
 	Fence                           SourceFence
 	Explain                         bool
+	Rerank                          bool
 }
 
 type SearchReport = retrieval.Report
@@ -421,6 +433,8 @@ func NewService(config ServiceConfig) (*Service, error) {
 			return nil, fmt.Errorf("processing profile %q canonical decode: %w", name, err)
 		}
 		configured := configuredProfile{portable: profile, provider: supplied.RenditionProvider,
+			rerankingProvider: supplied.RerankingProvider, rerankingProfile: supplied.RerankingProfile,
+			rerankingDeadline: supplied.RerankingDeadline, rerankingFailurePolicy: supplied.RerankingFailurePolicy,
 			embedders:         make(map[string]document.EmbeddingProvider, len(supplied.EmbeddingProviders)),
 			embeddingRuntimes: make(map[string]*ProviderEmbeddingRuntime, len(profile.Embeddings)),
 			tokenizers:        make(map[string]document.Tokenizer, len(supplied.Tokenizers)),
@@ -432,6 +446,13 @@ func NewService(config ServiceConfig) (*Service, error) {
 				AttachmentPolicyFingerprint:    profile.RetentionDisclosure.AttachmentPolicyFingerprint,
 				ConsentFingerprint:             profile.RetentionDisclosure.ConsentFingerprint,
 				TrustBoundary:                  profile.RetentionDisclosure.TrustBoundary}}
+		if supplied.RerankingProvider != nil {
+			configured.rerankingDisclosure, err = canonicalRuntimeDisclosure(
+				supplied.RerankingDisclosure, string(document.RenditionTrustHostedProvider))
+			if err != nil {
+				return nil, fmt.Errorf("processing profile %q reranking disclosure: %w", name, err)
+			}
+		}
 		if profile.Rendition != nil {
 			configured.record.RenditionDisclosureFingerprint = profile.Rendition.DisclosureFingerprint
 			if renditionInterfaceNil(supplied.RenditionProvider) {
@@ -681,6 +702,14 @@ func (service *Service) planForSource(selector Selector, node store.Node,
 				RuntimeDisclosure: queryDisclosure})
 			plan.DisclosedClasses = append(plan.DisclosedClasses, "query_text")
 		}
+	}
+	if profile.rerankingProvider != nil {
+		plan.Flow = append(plan.Flow, FlowHop{Capability: "reranking",
+			ProviderID:        profile.rerankingDisclosure.UltimateProcessor,
+			TrustBoundary:     string(document.RenditionTrustHostedProvider),
+			InputClasses:      []string{string(retrieval.ProviderInputQueryAndExcerpt)},
+			RuntimeDisclosure: profile.rerankingDisclosure})
+		plan.DisclosedClasses = append(plan.DisclosedClasses, string(retrieval.ProviderInputQueryAndExcerpt))
 	}
 	plan.DisclosedClasses = sortedUnique(plan.DisclosedClasses)
 	plan.RetainedClasses = sortedUnique(plan.RetainedClasses)
@@ -992,6 +1021,14 @@ func (service *Service) profileConsentRequests(profile configuredProfile) []stor
 			request.RetainedArtifactClasses = nil
 			requests = append(requests, request)
 		}
+	}
+	if profile.rerankingProvider != nil {
+		requests = append(requests, store.ProviderOperationAuthorizationRequest{
+			Principal: service.principal, Scope: service.scope,
+			ProfileFingerprint:    profile.record.Fingerprint,
+			DisclosureFingerprint: profile.rerankingDisclosure.Deployment,
+			InputClasses:          []string{string(retrieval.ProviderInputQueryAndExcerpt)},
+		})
 	}
 	return requests
 }
@@ -1383,6 +1420,9 @@ func (service *Service) Search(ctx context.Context, request SearchRequest) (retr
 			return retrieval.Report{}, err
 		}
 		defer fence.Close()
+		if prepared.rerankingAuthorizer != nil {
+			prepared.rerankingAuthorizer.queryFenceHeld = true
+		}
 	}
 	return prepared.searcher.Search(ctx, retrieval.Query{Text: request.Query, Mode: prepared.mode,
 		LexicalLimit: profile.portable.Retrieval.LexicalLimit, VectorLimit: profile.portable.Retrieval.VectorLimit,
@@ -1406,11 +1446,12 @@ func (service *Service) ValidateSearch(ctx context.Context, request SearchReques
 }
 
 type preparedSearch struct {
-	searcher      *retrieval.Searcher
-	mode          retrieval.Mode
-	limit         int
-	bindingID     string
-	authorization document.EmbeddingAuthorization
+	searcher            *retrieval.Searcher
+	mode                retrieval.Mode
+	limit               int
+	bindingID           string
+	authorization       document.EmbeddingAuthorization
+	rerankingAuthorizer *rerankingAuthorizer
 }
 
 func (service *Service) prepareSearch(
@@ -1430,6 +1471,9 @@ func (service *Service) prepareSearch(
 	if limit < 1 || limit > MaxSearchLimit {
 		return preparedSearch{}, errors.New("document search limit is invalid")
 	}
+	if request.Rerank && profile.rerankingProvider == nil {
+		return preparedSearch{}, ErrRerankingUnavailable
+	}
 	searcherConfig := retrieval.SearcherConfig{Backend: service.catalog,
 		Owner: "embedded-document-search", LeaseDuration: 5 * time.Minute,
 		MediaEvidence: service.mediaEvidence}
@@ -1446,12 +1490,23 @@ func (service *Service) prepareSearch(
 			PolicyFingerprint:     profile.embedders[binding.Name].Descriptor().PolicyFingerprint,
 			MaxBatchItems:         1, MaxInputBytes: binding.MaxInputBytes, MaxResponseBytes: binding.MaxResponseBytes}
 	}
+	var rerankingAuth *rerankingAuthorizer
+	if request.Rerank {
+		rerankingAuth = &rerankingAuthorizer{catalog: service.catalog, principal: service.principal,
+			scope: service.scope, profileFingerprint: profile.record.Fingerprint,
+			disclosureFingerprint: profile.rerankingDisclosure.Deployment}
+		searcherConfig.Reranking = retrieval.RerankingConfig{Enabled: true,
+			Profile: profile.rerankingProfile, Provider: profile.rerankingProvider,
+			Authorizer: rerankingAuth, Deadline: profile.rerankingDeadline,
+			FailurePolicy: profile.rerankingFailurePolicy}
+	}
 	searcher, err := retrieval.NewSearcher(searcherConfig)
 	if err != nil {
 		return preparedSearch{}, err
 	}
 	return preparedSearch{searcher: searcher, mode: mode, limit: limit,
-		bindingID: request.BindingID, authorization: authorization}, nil
+		bindingID: request.BindingID, authorization: authorization,
+		rerankingAuthorizer: rerankingAuth}, nil
 }
 
 func (service *Service) runEmbeddings(ctx context.Context, version store.ContentVersion,

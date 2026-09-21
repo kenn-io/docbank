@@ -76,15 +76,16 @@ type Contribution struct {
 }
 
 type Result struct {
-	Document     DocumentIdentity
-	Rank         int
-	Score        float64
-	Path         string
-	Excerpt      string
-	LexicalRank  int
-	SemanticRank int
-	Evidence     []EvidenceReference
-	Explanation  []Contribution
+	Document      DocumentIdentity
+	Rank          int
+	Score         float64
+	Path          string
+	Excerpt       string
+	LexicalRank   int
+	SemanticRank  int
+	Evidence      []EvidenceReference
+	Explanation   []Contribution
+	rerankExcerpt string
 }
 
 type CoverageState string

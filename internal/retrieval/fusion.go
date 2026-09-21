@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"strings"
 
 	"go.kenn.io/docbank/document/embedding"
 )
@@ -111,8 +112,13 @@ func addLane(results map[DocumentIdentity]*Result, candidates []Candidate, lane 
 		if lane == LaneLexical {
 			result.LexicalRank = candidate.Rank
 			result.Excerpt = candidate.Excerpt
+			result.rerankExcerpt = candidate.Excerpt
 		} else {
 			result.SemanticRank = candidate.Rank
+			nameOnly := len(result.Evidence) == 1 && result.Evidence[0].Kind == "node_name"
+			if result.rerankExcerpt == "" || nameOnly && strings.TrimSpace(candidate.Excerpt) != "" {
+				result.rerankExcerpt = candidate.Excerpt
+			}
 		}
 		result.Evidence = append(result.Evidence, candidate.Evidence...)
 	}

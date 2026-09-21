@@ -424,7 +424,7 @@ func registerProcessingRoutes(api huma.API, d Deps) {
 		}
 		err := d.Processing.ValidateSearch(ctx, processing.SearchRequest{Query: input.Body.Query,
 			Mode: input.Body.Mode, Limit: input.Body.Limit, Profile: input.Body.Profile,
-			BindingID: input.Body.BindingID, Explain: input.Body.Explain})
+			BindingID: input.Body.BindingID, Explain: input.Body.Explain, Rerank: input.Body.Rerank})
 		if err != nil {
 			return nil, fromProcessingError(err)
 		}
@@ -440,6 +440,7 @@ func registerProcessingRoutes(api huma.API, d Deps) {
 		report, err := d.Processing.Search(ctx, processing.SearchRequest{Query: input.Body.Query,
 			Mode: input.Body.Mode, Limit: input.Body.Limit, Profile: input.Body.Profile,
 			BindingID: input.Body.BindingID, Explain: input.Body.Explain,
+			Rerank: input.Body.Rerank,
 			Fence: processing.SourceFence{VaultUID: input.Body.Fence.VaultUID,
 				ContentVersionIDs: input.Body.Fence.ContentVersionIDs}})
 		if err != nil {
@@ -617,6 +618,23 @@ func fromDocumentSearchReport(report processing.SearchReport, explain bool) Docu
 		}
 		result.Results[index] = converted
 	}
+	for _, receipt := range report.Receipts {
+		if receipt.Stage != retrieval.ProviderStageReranking {
+			continue
+		}
+		converted := &DocumentSearchRerankingReceipt{CandidateCount: receipt.CandidateCount}
+		switch receipt.Outcome {
+		case retrieval.ProviderOutcomeApplied:
+			converted.Outcome = "applied"
+		case retrieval.ProviderOutcomeSkipped:
+			converted.Outcome = "skipped"
+		default:
+			converted.Outcome = "degraded"
+			converted.Cause = string(receipt.Outcome)
+		}
+		result.Reranking = converted
+		break
+	}
 	if explain {
 		result.Trace = make([]DocumentSearchTrace, len(report.Trace))
 		for index, event := range report.Trace {
@@ -690,6 +708,8 @@ func fromProcessingError(err error) error {
 		{processing.ErrPurgePlanChanged, http.StatusConflict, "derivative_purge_plan_changed", "derivative purge plan changed after preview"},
 		{processing.ErrInvalidPurgeRequest, http.StatusUnprocessableEntity, "invalid_derivative_purge", "derivative purge request is invalid"},
 		{processing.ErrInvalidConsentExpiry, http.StatusUnprocessableEntity, "invalid_processing_consent_expiry", "processing consent expiry is invalid"},
+		{processing.ErrRerankingUnavailable, http.StatusUnprocessableEntity, "reranking_unavailable", "reranking is not configured"},
+		{retrieval.ErrRerankingFailed, http.StatusBadGateway, "reranking_failed", "document reranking failed"},
 		{store.ErrInvalidProcessingSourceFence, http.StatusUnprocessableEntity, "validation", "source fence request is invalid"},
 		{store.ErrProcessingSourceFenceStaleVersion, http.StatusConflict, "stale_version", "content version is not current and live"},
 		{store.ErrProcessingConsentRequired, http.StatusPreconditionRequired, "processing_consent_required", "processing consent is required"},

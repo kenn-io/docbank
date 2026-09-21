@@ -1368,6 +1368,16 @@ export interface DocumentSearchCoverage {
   state: string;
 }
 
+export interface DocumentSearchRerankingReceipt {
+  /**
+     * @minimum 0
+     * @maximum 1000
+     */
+  candidate_count: number;
+  cause?: string;
+  outcome: string;
+}
+
 export interface DocumentSearchResult {
   content_version_id: string;
   evidence: DocumentEvidenceReference[];
@@ -1402,6 +1412,7 @@ export interface DocumentSearchReport {
   coverage: DocumentSearchCoverage;
   degradations: string[];
   requested_mode: string;
+  reranking?: DocumentSearchRerankingReceipt;
   results: DocumentSearchResult[];
   trace: DocumentSearchTrace[];
   truncated: boolean;
@@ -1450,6 +1461,7 @@ export interface DocumentSearchRequest {
      * @maxLength 8192
      */
   query: string;
+  rerank?: boolean;
 }
 
 export interface DocumentSearchValidation {
@@ -1491,6 +1503,7 @@ export interface DocumentSearchValidationRequest {
      * @maxLength 8192
      */
   query: string;
+  rerank?: boolean;
 }
 
 export type DocumentSimilarReportState = typeof DocumentSimilarReportState[keyof typeof DocumentSimilarReportState];

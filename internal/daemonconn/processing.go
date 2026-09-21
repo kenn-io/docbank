@@ -548,6 +548,35 @@ func validateDocumentSearchReport(request api.DocumentSearchRequest, report api.
 	if limit < 1 || limit > 100 || len(report.Results) > limit {
 		return errors.New("result count exceeds the requested bound")
 	}
+	if request.Rerank {
+		if report.Reranking == nil {
+			return errors.New("reranking receipt is missing for an opted-in request")
+		}
+		if report.Reranking.CandidateCount < 0 || report.Reranking.CandidateCount > len(report.Results) {
+			return errors.New("reranking receipt candidate count is outside the result bound")
+		}
+		switch report.Reranking.Outcome {
+		case "applied":
+			if report.Reranking.Cause != "" || report.Reranking.CandidateCount < 1 ||
+				slices.Contains(report.Degradations, "reranking_degraded") {
+				return errors.New("applied reranking receipt is malformed")
+			}
+		case "skipped":
+			if report.Reranking.Cause != "" || report.Reranking.CandidateCount != 0 ||
+				len(report.Results) != 0 || slices.Contains(report.Degradations, "reranking_degraded") {
+				return errors.New("skipped reranking receipt is malformed")
+			}
+		case "degraded":
+			if !validRerankingCause(report.Reranking.Cause) ||
+				!slices.Contains(report.Degradations, "reranking_degraded") {
+				return errors.New("degraded reranking receipt is malformed")
+			}
+		default:
+			return errors.New("reranking receipt outcome is invalid")
+		}
+	} else if report.Reranking != nil {
+		return errors.New("unrequested reranking receipt was returned")
+	}
 	if report.Coverage.ScopedDocuments < 0 || report.Coverage.ScopedDocuments > len(versions) ||
 		report.Coverage.CompleteDocuments < 0 ||
 		report.Coverage.CompleteDocuments > report.Coverage.ScopedDocuments ||
@@ -617,6 +646,10 @@ func validateDocumentSearchReport(request api.DocumentSearchRequest, report api.
 		}
 	}
 	return nil
+}
+
+func validRerankingCause(value string) bool {
+	return slices.Contains([]string{"authorization_denied", "timed_out", "malformed_output", "unavailable"}, value)
 }
 
 func validDocumentSearchPath(value string) bool {

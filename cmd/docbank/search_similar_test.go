@@ -14,6 +14,13 @@ import (
 	"go.kenn.io/docbank/internal/daemonconn"
 )
 
+func TestSearchSimilarRejectsRerankingBeforeDaemon(t *testing.T) {
+	t.Setenv("DOCBANK_HOME", t.TempDir())
+	t.Cleanup(func() { resetFlags(rootCmd) })
+	_, err := runCLI(t, "search", "--similar-to", "id:42", "--rerank")
+	require.ErrorContains(t, err, "--similar-to cannot be combined with --rerank")
+}
+
 func TestSearchSimilarUsesDaemonSelectorAnd4096Fence(t *testing.T) {
 	vault := "22222222-2222-4222-8222-222222222222"
 	versions := []string{processingTestVersionID}

@@ -50,6 +50,7 @@ const (
 	ProviderOutcomeTimedOut            ProviderOutcome = "timed_out"
 	ProviderOutcomeMalformed           ProviderOutcome = "malformed_output"
 	ProviderOutcomeUnavailable         ProviderOutcome = "unavailable"
+	ProviderOutcomeSkipped             ProviderOutcome = "skipped"
 )
 
 // ProviderReceipt records a provider-stage outcome without retaining any query,
@@ -71,8 +72,9 @@ type ExpansionProfile struct {
 // RerankingProfile identifies the bounded reranking behavior independently of
 // the provider, authorization, deadline, and failure policy.
 type RerankingProfile struct {
-	ID            string
-	MaxCandidates int
+	ID              string
+	MaxCandidates   int
+	MaxExcerptBytes int
 }
 
 type ExpansionRequest struct {
@@ -190,7 +192,8 @@ func validateRerankingConfig(config RerankingConfig) error {
 		return nil
 	}
 	if config.Profile.ID == "" || config.Profile.MaxCandidates < 1 ||
-		config.Profile.MaxCandidates > MaxCandidateLimit || config.Provider == nil ||
+		config.Profile.MaxCandidates > MaxCandidateLimit || config.Profile.MaxExcerptBytes < 0 ||
+		config.Profile.MaxExcerptBytes > maxRerankingExcerptBytes || config.Provider == nil ||
 		config.Authorizer == nil || config.Deadline <= 0 || !validProviderFailurePolicy(config.FailurePolicy) {
 		return errors.New("reranking configuration is invalid")
 	}
@@ -260,10 +263,23 @@ func (searcher *Searcher) expandFailure(config ExpansionConfig, outcome Provider
 
 func (searcher *Searcher) rerank(ctx context.Context, query Query, report Report) (Report, *ProviderReceipt, Degradation, error) {
 	config := searcher.reranking
-	if !config.Enabled || len(report.Results) == 0 {
+	if !config.Enabled {
 		return report, nil, DegradationNone, nil
 	}
-	candidates := rerankingCandidates(report.Results, config.Profile.MaxCandidates)
+	if len(report.Results) == 0 {
+		return report, &ProviderReceipt{Stage: ProviderStageReranking,
+			Outcome: ProviderOutcomeSkipped, CandidateCount: 0}, DegradationNone, nil
+	}
+	maxExcerptBytes := config.Profile.MaxExcerptBytes
+	if maxExcerptBytes == 0 {
+		maxExcerptBytes = maxRerankingExcerptBytes
+	}
+	candidates := rerankingCandidates(report.Results, config.Profile.MaxCandidates, maxExcerptBytes)
+	for _, candidate := range candidates {
+		if strings.TrimSpace(candidate.Excerpt) == "" {
+			return searcher.rerankFailure(config, report, ProviderOutcomeMalformed, len(candidates))
+		}
+	}
 	allowed := make([]DocumentIdentity, len(candidates))
 	for index, candidate := range candidates {
 		allowed[index] = candidate.Document
@@ -277,8 +293,8 @@ func (searcher *Searcher) rerank(ctx context.Context, query Query, report Report
 	operation := ProviderOperation{Stage: ProviderStageReranking, ProfileID: config.Profile.ID,
 		Scope: query.Scope, InputClass: ProviderInputQueryAndExcerpt, CandidateCount: len(candidates),
 		QueryBytes: len(query.Text), QueryByteLimit: maxProviderQueryBytes,
-		ExcerptBytes: excerptBytes, ExcerptBytesPerCandidateLimit: maxRerankingExcerptBytes,
-		ExcerptBytesTotalLimit: boundedProviderTotal(maxRerankingExcerptBytes, len(candidates)),
+		ExcerptBytes: excerptBytes, ExcerptBytesPerCandidateLimit: maxExcerptBytes,
+		ExcerptBytesTotalLimit: boundedProviderTotal(maxExcerptBytes, len(candidates)),
 		EvidenceCount:          evidenceCount, EvidencePerCandidateLimit: maxRerankingEvidenceReferences,
 		EvidenceTotalLimit: boundedProviderTotal(maxRerankingEvidenceReferences, len(candidates)),
 		EvidenceBytes:      evidenceBytes, EvidenceBytesPerCandidateLimit: maxRerankingEvidenceBytes,
@@ -330,13 +346,17 @@ func (searcher *Searcher) rerank(ctx context.Context, query Query, report Report
 		Outcome: ProviderOutcomeApplied, CandidateCount: len(candidates)}, DegradationNone, nil
 }
 
-func rerankingCandidates(results []Result, limit int) []RerankingCandidate {
+func rerankingCandidates(results []Result, limit, maxExcerptBytes int) []RerankingCandidate {
 	count := min(len(results), limit)
 	candidates := make([]RerankingCandidate, count)
 	for index, result := range results[:count] {
 		evidence := boundedRerankingEvidence(result.Evidence)
+		excerpt := result.Excerpt
+		if result.rerankExcerpt != "" {
+			excerpt = result.rerankExcerpt
+		}
 		candidates[index] = RerankingCandidate{Document: result.Document,
-			Excerpt: boundedRerankingExcerpt(result.Excerpt), Evidence: evidence}
+			Excerpt: boundedRerankingExcerpt(excerpt, maxExcerptBytes), Evidence: evidence}
 	}
 	return candidates
 }
@@ -399,12 +419,12 @@ func boundedProviderTotal(perCandidate, candidateCount int) int {
 	return perCandidate * candidateCount
 }
 
-func boundedRerankingExcerpt(excerpt string) string {
+func boundedRerankingExcerpt(excerpt string, maxBytes int) string {
 	excerpt = strings.ToValidUTF8(excerpt, "")
-	if len(excerpt) <= maxRerankingExcerptBytes {
+	if maxBytes <= 0 || len(excerpt) <= maxBytes {
 		return excerpt
 	}
-	end := maxRerankingExcerptBytes
+	end := maxBytes
 	for end > 0 && !utf8.RuneStart(excerpt[end]) {
 		end--
 	}

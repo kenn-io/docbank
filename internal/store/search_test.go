@@ -165,6 +165,17 @@ func TestSimilarOrdinarySemanticSearchPreservesIdenticalDocuments(t *testing.T) 
 
 func TestResolveSemanticCandidatesReturnsOnlyCurrentScopedHeads(t *testing.T) {
 	s, versionID, profile, _ := newEmbeddingCatalogFixture(t)
+	version, err := s.ContentVersionByID(t.Context(), versionID)
+	require.NoError(t, err)
+	excerpt := strings.Repeat("界", 512)
+	require.NoError(t, s.RecordExtraction(t.Context(), ExtractionResult{
+		BlobHash: version.BlobHash, Extractor: "failed-extractor", ExtractorVersion: 1,
+		Status: ExtractionFailed, Error: "synthetic extraction failure",
+	}))
+	require.NoError(t, s.RecordExtraction(t.Context(), ExtractionResult{
+		BlobHash: version.BlobHash, Extractor: "plain-text", ExtractorVersion: 1,
+		Status: ExtractionOK, Text: excerpt + " beyond the excerpt limit",
+	}))
 	record := embeddingSetFixture(s, versionID, profile.Fingerprint,
 		document.EmbeddingInputOriginalFile, "optional", "")
 	require.NoError(t, s.StageEmbeddingSet(t.Context(), record))
@@ -194,6 +205,7 @@ func TestResolveSemanticCandidatesReturnsOnlyCurrentScopedHeads(t *testing.T) {
 	assert.Equal(t, versionID, resolution.Candidates[0].ContentVersionID)
 	assert.Equal(t, record.ID, resolution.Candidates[0].EmbeddingSetID)
 	assert.Equal(t, document.EmbeddingInputOriginalFile, resolution.Candidates[0].InputKind)
+	assert.Equal(t, excerpt, resolution.Candidates[0].Excerpt)
 
 	filtered, err := s.ResolveSemanticCandidates(t.Context(), profile.Fingerprint, record.BindingID,
 		record.InputKind, record.VectorSpace.ID, source.ManifestChecksum,
@@ -443,6 +455,8 @@ func TestChunkSemanticAuthorityKeepsResultsCoverageAndRevalidationConsistent(t *
 	require.NoError(t, err)
 	require.Len(t, resolution.Candidates, 1)
 	require.Equal(t, 1, resolution.CompleteDocuments)
+	assert.Empty(t, resolution.Candidates[0].Excerpt,
+		"retrieval resolves rendition-chunk text from the exact retained input")
 
 	var nodeID, nodeRevision int64
 	require.NoError(t, s.db.QueryRow(`SELECT n.id,n.revision FROM nodes n JOIN content_versions cv
