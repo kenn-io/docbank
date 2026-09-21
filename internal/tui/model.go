@@ -352,6 +352,7 @@ type Model struct {
 	naturalProfiles        []api.ProcessingProfileSummary
 	naturalProfilesRequest uint64
 	naturalMode            string
+	naturalResultMode      string
 	naturalRerank          bool
 	naturalSearchID        uint64
 	naturalSearchRequest   api.DocumentSearchRequest
@@ -891,9 +892,13 @@ func (m Model) updateKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		}
 	case keyCtrlR:
 		if m.mode == modeSearch {
+			if m.loading {
+				return m, nil
+			}
 			wasEnabled := m.naturalRerank
 			m.toggleNaturalRerank()
-			if !wasEnabled && m.naturalRerank && m.naturalSearchRequest.Query != "" && !m.naturalRerankPending {
+			if !wasEnabled && m.naturalRerank && m.naturalSearchRequest.Query != "" &&
+				len(m.naturalSearchRequest.Fence.ContentVersionIDs) > 0 && !m.naturalRerankPending {
 				m.requestID++
 				m.naturalSearchID++
 				m.naturalRerankPending = true
@@ -1041,6 +1046,9 @@ func (m Model) updateKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			m.loading = true
 			m.err = nil
 			m.requestID++
+			m.naturalSearchID++
+			m.naturalSearchRequest = api.DocumentSearchRequest{}
+			m.naturalRerankPending = false
 			return m, tea.Batch(m.startSpinner(), m.loadSearch(m.searchQuery, m.requestID))
 		}
 		if m.directory.Path != "" {
@@ -1877,6 +1885,9 @@ func (m Model) reloadCurrent() (tea.Model, tea.Cmd) {
 	m.loading = true
 	m.requestID++
 	if m.mode == modeSearch && m.searchQuery != "" {
+		m.naturalSearchID++
+		m.naturalSearchRequest = api.DocumentSearchRequest{}
+		m.naturalRerankPending = false
 		return m, tea.Batch(
 			m.startSpinner(),
 			m.loadSearch(m.searchQuery, m.requestID),
@@ -2187,6 +2198,7 @@ func (m Model) applyDirectory(msg directoryLoadedMsg) (tea.Model, tea.Cmd) {
 	case navigationInitial, navigationRefresh:
 	}
 	m.mode = modeBrowse
+	m.naturalResultMode = ""
 	if m.sortField == sortByRelevance {
 		m.sortField = sortByName
 		m.sortDesc = false
@@ -2213,6 +2225,7 @@ func (m Model) applySearch(msg searchLoadedMsg) (tea.Model, tea.Cmd) {
 	m.loading = false
 	m.naturalRerankPending = false
 	m.naturalSearchRequest = api.DocumentSearchRequest{}
+	m.naturalResultMode = ""
 	if msg.err != nil {
 		m.err = msg.err
 		return m, nil
@@ -2257,11 +2270,18 @@ func (m Model) applyNaturalSearchBase(msg naturalSearchBaseLoadedMsg) (tea.Model
 		m.naturalMode = naturalNames
 		m.naturalRerank = false
 		m.naturalSearchRequest = api.DocumentSearchRequest{}
+		m.naturalResultMode = ""
 		m.naturalSearchNote = "Natural-language search unavailable: " + msg.err.Error() + ". Showing Names and text."
 		m.loading = true
 		return m, m.loadSearch(msg.query, msg.requestID)
 	}
 	m.applyNaturalRows(msg.query, msg.rows, msg.report.Truncated)
+	m.naturalResultMode = msg.naturalMode
+	if len(msg.request.Fence.ContentVersionIDs) == 0 {
+		m.naturalSearchRequest = api.DocumentSearchRequest{}
+		m.naturalSearchNote = naturalSearchReportNote(msg.report)
+		return m, nil
+	}
 	m.naturalSearchRequest = msg.request
 	m.naturalSearchNote = naturalSearchReportNote(msg.report)
 	profile := m.selectedNaturalProfile()
@@ -2281,13 +2301,22 @@ func (m Model) applyNaturalSearchRerank(msg naturalSearchRerankLoadedMsg) (tea.M
 		return m, nil
 	}
 	if msg.err != nil {
-		m.naturalSearchNote = "Reranking unavailable. Showing base results."
+		cause := naturalSearchCause(msg.err.Error())
+		if cause == "" {
+			cause = "unknown cause"
+		}
+		m.naturalSearchNote = "Reranking unavailable (" + cause + "). Base results remain."
 		return m, nil
 	}
-	if msg.report.Reranking == nil || msg.report.Reranking.Outcome != "applied" {
-		m.naturalSearchNote = "Reranking degraded. Showing base results."
+	if msg.report.Reranking == nil {
+		m.naturalSearchNote = naturalRerankNote("failed", "missing receipt")
 		return m, nil
 	}
+	if msg.report.Reranking.Outcome != "applied" {
+		m.naturalSearchNote = naturalRerankNote(msg.report.Reranking.Outcome, msg.report.Reranking.Cause)
+		return m, nil
+	}
+	m.naturalResultMode = msg.naturalMode
 	m.applyNaturalRows(m.searchQuery, msg.rows, msg.report.Truncated)
 	m.naturalSearchNote = naturalSearchReportNote(msg.report)
 	return m, nil
@@ -2317,7 +2346,41 @@ func naturalSearchReportNote(report api.DocumentSearchReport) string {
 	if len(report.Degradations) == 0 {
 		return ""
 	}
-	return "Search note: " + strings.Join(report.Degradations, "; ")
+	causes := make([]string, 0, len(report.Degradations))
+	for _, degradation := range report.Degradations {
+		causes = append(causes, naturalSearchCause(degradation))
+	}
+	return "Search note: " + strings.Join(causes, "; ")
+}
+
+func naturalSearchCause(value string) string {
+	value = strings.Join(strings.Fields(value), " ")
+	runes := []rune(value)
+	if len(runes) > 128 {
+		return string(runes[:128])
+	}
+	return value
+}
+
+func naturalRerankNote(outcome, cause string) string {
+	cause = naturalSearchCause(cause)
+	switch outcome {
+	case "skipped":
+		if cause == "" {
+			return "Reranking skipped. Base results remain."
+		}
+		return "Reranking skipped (" + cause + "). Base results remain."
+	case "degraded":
+		if cause == "" {
+			cause = "provider unavailable"
+		}
+		return "Reranking degraded (" + cause + "). Base results remain."
+	default:
+		if cause == "" {
+			cause = "unknown cause"
+		}
+		return "Reranking failed (" + cause + "). Base results remain."
+	}
 }
 
 func (m Model) applyHistory(msg historyLoadedMsg) (tea.Model, tea.Cmd) {

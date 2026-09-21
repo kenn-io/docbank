@@ -89,6 +89,7 @@ func TestNaturalSearchGoldenFrame(t *testing.T) {
 	model.mode = modeSearch
 	model.searchQuery = "solar maintenance"
 	model.naturalMode = naturalHybrid
+	model.naturalResultMode = naturalHybrid
 	model.naturalProfiles = []api.ProcessingProfileSummary{{
 		Name: "private", RerankingAvailable: true, EmbeddingBindings: []string{"semantic"},
 	}}
@@ -212,8 +213,109 @@ func TestNaturalSearchModeProvenanceSurvivesModeChange(t *testing.T) {
 	model.naturalMode = naturalHybrid
 	model.rows = []row{{node: readme, path: readme.Path, naturalMode: naturalLexical, excerpt: "lexical result"}}
 	model.naturalMode = naturalSemantic
+	model.naturalResultMode = naturalHybrid
+	model.naturalProfiles = []api.ProcessingProfileSummary{{Name: "private", RerankingAvailable: true}}
+	model.loading = false
 
 	assert.Contains(t, ansi.Strip(model.renderList(100, 6)), "Why: lexical result")
+	location := ansi.Strip(model.renderLocation())
+	assert.Contains(t, location, "Hybrid")
+	assert.NotContains(t, location, "Semantic")
+	assert.Contains(t, location, "rerank disabled")
+	model.naturalRerank = true
+	assert.Contains(t, ansi.Strip(model.renderLocation()), "rerank enabled")
+}
+
+func TestNaturalSearchCtrlRDoesNotRerankDuringRefresh(t *testing.T) {
+	fake := newFakeBackend()
+	model, err := New(t.Context(), fake)
+	require.NoError(t, err)
+	model.mode = modeSearch
+	model.searchQuery = "solar maintenance"
+	model.naturalMode = naturalLexical
+	model.naturalProfiles = fake.profiles
+	model.naturalSearchRequest = api.DocumentSearchRequest{
+		Query: "old", Mode: naturalLexical,
+		Fence: api.DocumentSourceFence{ContentVersionIDs: []string{"old-version"}},
+	}
+
+	updated, refresh := model.updateKeys(tea.KeyPressMsg{Code: 'r'})
+	refreshed, ok := updated.(Model)
+	require.True(t, ok)
+	require.NotNil(t, refresh)
+	assert.True(t, refreshed.loading)
+	assert.Empty(t, refreshed.naturalSearchRequest.Query)
+
+	updated, rerank := refreshed.updateKeys(tea.KeyPressMsg{Code: 'r', Mod: tea.ModCtrl})
+	result, ok := updated.(Model)
+	require.True(t, ok)
+	assert.Nil(t, rerank)
+	assert.False(t, result.naturalRerank)
+	assert.True(t, result.loading)
+}
+
+func TestNaturalSearchEmptyFenceDoesNotScheduleRerank(t *testing.T) {
+	fake := newFakeBackend()
+	fake.sourceFence.Fence.ContentVersionIDs = nil
+	model, err := New(t.Context(), fake)
+	require.NoError(t, err)
+	model.requestID = 4
+	model.naturalSearchID = 2
+	model.naturalProfiles = fake.profiles
+	model.naturalMode = naturalLexical
+	model.naturalRerank = true
+
+	message := model.loadNaturalSearch("nothing", model.requestID)()
+	baseMessage, ok := message.(naturalSearchBaseLoadedMsg)
+	require.True(t, ok)
+	updated, rerank := model.applyNaturalSearchBase(baseMessage)
+	result, ok := updated.(Model)
+	require.True(t, ok)
+	assert.Nil(t, rerank)
+	assert.Empty(t, result.naturalSearchRequest.Query)
+	assert.False(t, result.naturalRerankPending)
+	assert.Empty(t, fake.naturalSearchRequests)
+	assert.Equal(t, naturalLexical, result.naturalResultMode)
+}
+
+func TestNaturalSearchRerankNotesPreserveReceiptOutcomeAndCause(t *testing.T) {
+	fake := newFakeBackend()
+	model, err := New(t.Context(), fake)
+	require.NoError(t, err)
+	model.requestID = 5
+	model.naturalSearchID = 3
+	model.naturalRerank = true
+	model.naturalRerankPending = true
+
+	updated, _ := model.applyNaturalSearchRerank(naturalSearchRerankLoadedMsg{
+		requestID: model.requestID, searchID: model.naturalSearchID,
+		err: errors.New("authorization_denied: provider consent was not granted"),
+	})
+	result, ok := updated.(Model)
+	require.True(t, ok)
+	assert.Contains(t, result.naturalSearchNote, "authorization_denied")
+	assert.False(t, result.naturalRerankPending)
+
+	for _, test := range []struct {
+		outcome string
+		cause   string
+		want    string
+	}{
+		{outcome: "skipped", cause: "no candidates", want: "Reranking skipped (no candidates)"},
+		{outcome: "degraded", cause: "timed_out", want: "Reranking degraded (timed_out)"},
+	} {
+		t.Run(test.outcome, func(t *testing.T) {
+			updated, _ := result.applyNaturalSearchRerank(naturalSearchRerankLoadedMsg{
+				requestID: result.requestID, searchID: result.naturalSearchID,
+				report: api.DocumentSearchReport{Reranking: &api.DocumentSearchRerankingReceipt{
+					Outcome: test.outcome, Cause: test.cause,
+				}},
+			})
+			next, ok := updated.(Model)
+			require.True(t, ok)
+			assert.Contains(t, next.naturalSearchNote, test.want)
+		})
+	}
 }
 
 func TestNaturalSearchSubmitClearsRerankRequestBeforeNewSequence(t *testing.T) {

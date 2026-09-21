@@ -941,7 +941,7 @@
         }
         const rerankedRows = await hydrateProcessingRows(reranked, session, request, controller.signal, mode);
         if (request !== generation || session !== webSession || controller.signal.aborted) return;
-        applyProcessingSearch(rerankedRows, query, requestedTagID, reranked.truncated, preferredSelectedID, true);
+        applyProcessingSearch(rerankedRows, query, requestedTagID, reranked.truncated, preferredSelectedID, true, true);
         naturalSearchNote = rerankingNote("applied");
       } catch (cause) {
         if (cause instanceof APIError && cause.status === 401) {
@@ -1011,7 +1011,9 @@
     isTruncated: boolean,
     preferredSelectedID: number | undefined,
     refreshing: boolean,
+    preserveCurrentSelection = false,
   ): void {
+    const selectedBefore = preserveCurrentSelection ? selectedID : preferredSelectedID;
     replaceRows(nextRows, refreshing);
     activeQuery = query;
     activeTagID = requestedTagID;
@@ -1021,8 +1023,8 @@
     truncated = isTruncated;
     sortField = "relevance";
     sortDirection = "asc";
-    selectNode(refreshing && nextRows.some((row) => row.node.id === preferredSelectedID)
-      ? preferredSelectedID : nextRows[0]?.node.id);
+    selectNode(refreshing && nextRows.some((row) => row.node.id === selectedBefore)
+      ? selectedBefore : nextRows[0]?.node.id);
   }
 
   async function hydrateProcessingRows(
@@ -3296,7 +3298,11 @@
 
   @media (max-width: 640px) {
     :global(.app-top-bar .kit-top-bar__right) {
-      display: none;
+      flex: 1 0 100%;
+      order: 4;
+      justify-content: flex-start;
+      margin-left: 0;
+      padding-top: var(--space-1);
     }
 
     .search-controls .search {

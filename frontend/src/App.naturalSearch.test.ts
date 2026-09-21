@@ -233,6 +233,38 @@ it("shows base rows while reranking and applies the validated order", async () =
   expect(harness.postBodies[1]?.rerank).toBe(true);
 });
 
+it("keeps the current selection when reranking replaces the rows", async () => {
+  const baseFile = node(2, "base.txt", baseVersion);
+  const rerankedFile = node(3, "reranked.txt", rerankedVersion);
+  const harness = installHarness({
+    profiles: [{ name: "private", fingerprint: "a".repeat(64), rendition: true, embedding_bindings: ["embed"], reranking_available: true }],
+    files: [baseFile, rerankedFile],
+    baseReport: report("hybrid", [result(baseFile, 1, "base excerpt"), result(rerankedFile, 2, "second excerpt")]),
+    rerankReport: report("hybrid", [result(rerankedFile, 1, "reranked excerpt"), result(baseFile, 2, "base excerpt")], { outcome: "applied", candidate_count: 2 }),
+    rerankPending: true,
+  });
+  render(App);
+  await screen.findAllByText("base.txt");
+  await screen.findByRole("button", { name: "Process and retrieve" });
+  await fireEvent.click(screen.getByRole("checkbox", { name: "Rerank results" }));
+  await submitSearch("annual report");
+  await screen.findByText("second excerpt");
+  await fireEvent.click(screen.getByText("/reranked.txt"));
+  expect(document.querySelector('tr[data-node-id="3"]')?.getAttribute("aria-selected")).toBe("true");
+  harness.resolveRerank(json({
+    requested_mode: "hybrid",
+    actual_mode: "hybrid",
+    coverage: { binding_required: true, scoped_documents: 2, complete_documents: 2, state: "complete" },
+    degradations: [],
+    results: [result(rerankedFile, 1, "reranked excerpt"), result(baseFile, 2, "base excerpt")],
+    truncated: false,
+    trace: [],
+    reranking: { outcome: "applied", candidate_count: 2 },
+  }));
+  await screen.findByText("reranked excerpt");
+  expect(document.querySelector('tr[data-node-id="3"]')?.getAttribute("aria-selected")).toBe("true");
+});
+
 it("keeps base rows with a named degradation note", async () => {
   const file = node(2, "timeout.txt", baseVersion);
   const harness = installHarness({

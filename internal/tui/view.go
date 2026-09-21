@@ -253,12 +253,12 @@ func (m Model) renderLocation() string {
 	var left, right string
 	if m.mode == modeSearch {
 		left = " Search " + quoted(m.searchQuery)
-		if m.naturalMode != naturalNames {
-			left += " · " + naturalModeLabel(m.naturalMode)
-		}
 		right = fmt.Sprintf("%d result(s)", len(m.rows))
 		if m.truncated {
 			right = "first 1,000 result(s)"
+		}
+		if m.naturalResultMode != "" && m.naturalResultMode != naturalNames {
+			right = naturalModeLabel(m.naturalResultMode) + " · " + m.naturalRerankStatus() + " · " + right
 		}
 		if m.naturalRerankPending {
 			right += " · reranking; base shown"
@@ -713,6 +713,14 @@ func (m Model) naturalWhyLines(item row, width int) []string {
 		why += " · " + strings.Join(item.evidence, ", ")
 	}
 	return appendWrapped(nil, why, width, m.styles.muted)
+}
+
+func (m Model) naturalRerankStatus() string {
+	profile := m.selectedNaturalProfile()
+	if profile == nil || !profile.RerankingAvailable || !m.naturalRerank {
+		return "rerank disabled"
+	}
+	return "rerank enabled"
 }
 
 func countLabel(value int64, singular, plural string) string {

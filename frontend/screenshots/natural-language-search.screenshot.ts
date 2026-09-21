@@ -188,6 +188,11 @@ trust_boundary = "local_process"
     };
     for (const width of [1440,1280,768,400]) {
       await renderLint(width);
+      if (width === 400) {
+        for (const name of ["Lock web session", "Recoverable trash", "Backup snapshots", "Saved queries and highlights"]) {
+          await expect(page.getByRole("button",{name})).toBeVisible();
+        }
+      }
       await resultPath.scrollIntoViewIfNeeded();
       await page.screenshot({path:path.join(output!,"web-natural-"+width+".png")});
     }
