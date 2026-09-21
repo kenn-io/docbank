@@ -416,6 +416,103 @@ func TestNaturalSearchQueryInputKeepsLongCursorViewportVisible(t *testing.T) {
 	assert.Contains(t, rendered, "tail-visiblxe")
 }
 
+func TestNaturalSearchProfileDefaultRestartsAcceptedQuery(t *testing.T) {
+	fake := newFakeBackend()
+	model, err := New(t.Context(), fake)
+	require.NoError(t, err)
+	model.mode = modeSearch
+	model.searchQuery = "accepted query"
+	model.naturalMode = naturalNames
+	model.loading = false
+
+	updated, cmd := model.Update(naturalProfilesLoadedMsg{
+		requestID: model.naturalProfilesRequest,
+		profiles:  []api.ProcessingProfileSummary{{Name: "private", EmbeddingBindings: []string{"embed"}}},
+	})
+	result, ok := updated.(Model)
+	require.True(t, ok)
+	assert.Equal(t, naturalAuto, result.naturalMode)
+	require.NotNil(t, cmd)
+
+	runModelCommand(t, result, cmd)
+	require.Len(t, fake.naturalSearchRequests, 1)
+	assert.Equal(t, "accepted query", fake.naturalSearchRequests[0].Query)
+	assert.Equal(t, naturalHybrid, fake.naturalSearchRequests[0].Mode)
+}
+
+func TestNaturalSearchProfileDefaultWaitsForAcceptedQuery(t *testing.T) {
+	fake := newFakeBackend()
+	model, err := New(t.Context(), fake)
+	require.NoError(t, err)
+	model.mode = modeSearch
+	model.searchQuery = "old query"
+	model.submittedSearchQuery = "new query"
+	model.submittedSearchID = model.requestID
+	model.naturalMode = naturalNames
+	model.loading = true
+
+	updated, cmd := model.Update(naturalProfilesLoadedMsg{
+		requestID: model.naturalProfilesRequest,
+		profiles:  []api.ProcessingProfileSummary{{Name: "private", EmbeddingBindings: []string{"embed"}}},
+	})
+	result, ok := updated.(Model)
+	require.True(t, ok)
+	assert.Nil(t, cmd)
+	assert.Equal(t, naturalNames, result.naturalMode)
+	assert.True(t, result.naturalProfileDefaultPending)
+
+	updated, cmd = result.applySearch(searchLoadedMsg{
+		requestID: result.requestID,
+		query:     "new query",
+		report:    api.SearchReport{},
+	})
+	result, ok = updated.(Model)
+	require.True(t, ok)
+	assert.Equal(t, naturalAuto, result.naturalMode)
+	assert.Equal(t, "new query", result.searchQuery)
+	require.NotNil(t, cmd)
+
+	runModelCommand(t, result, cmd)
+	require.Len(t, fake.naturalSearchRequests, 1)
+	assert.Equal(t, "new query", fake.naturalSearchRequests[0].Query)
+	assert.Equal(t, naturalHybrid, fake.naturalSearchRequests[0].Mode)
+}
+
+func TestNaturalSearchRowsPreserveViewOnlyForRefresh(t *testing.T) {
+	fake := newFakeBackend()
+	model, err := New(t.Context(), fake)
+	require.NoError(t, err)
+	selected := api.Node{ID: 2, Name: "selected.txt", Kind: nodeKindFile}
+	rows := []row{
+		{node: api.Node{ID: 1, Name: "zulu.txt", Kind: nodeKindFile}, path: "/zulu.txt"},
+		{node: selected, path: "/selected.txt"},
+		{node: api.Node{ID: 3, Name: "alpha.txt", Kind: nodeKindFile}, path: "/alpha.txt"},
+	}
+	model.mode = modeSearch
+	model.searchQuery = "same query"
+	model.sortField = sortByName
+	model.sortDesc = true
+	model.rows = rows
+	model.cursor = 1
+	model.offset = 1
+
+	model.applyNaturalRows("same query", rows, false)
+	current, ok := model.selected()
+	require.True(t, ok)
+	assert.Equal(t, selected.ID, current.node.ID)
+	assert.Equal(t, sortByName, model.sortField)
+	assert.True(t, model.sortDesc)
+	assert.Equal(t, 1, model.offset)
+
+	model.applyNaturalRows("new query", rows, false)
+	current, ok = model.selected()
+	require.True(t, ok)
+	assert.NotEqual(t, selected.ID, current.node.ID)
+	assert.Equal(t, sortByRelevance, model.sortField)
+	assert.False(t, model.sortDesc)
+	assert.Zero(t, model.offset)
+}
+
 func TestNaturalSearchSettingsUseLatestSubmittedQuery(t *testing.T) {
 	for _, acceptedQuery := range []string{"", "older query"} {
 		t.Run("previous="+acceptedQuery, func(t *testing.T) {

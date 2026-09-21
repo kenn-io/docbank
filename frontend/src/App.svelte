@@ -185,6 +185,7 @@
   let naturalSearchNote = $state("");
   let naturalProfilesError = $state("");
   let naturalRerankPending = $state(false);
+  let naturalProfileDefaultPending = $state<{ request: number; session: string } | null>(null);
   let profileGeneration = 0;
   let error = $state("");
   let truncated = $state(false);
@@ -481,10 +482,24 @@
       naturalProfiles = profiles;
       naturalProfilesError = "";
       const selected = selectNaturalSearchProfile(profiles);
-      naturalSearchMode = selected?.embedding_bindings.length ? "auto" : "names";
+      const defaultMode: NaturalSearchMode = selected?.embedding_bindings.length ? "auto" : "names";
+      if (naturalSearchMode !== defaultMode && (activeQuery || searchPending)) {
+        if (searchPending) {
+          naturalProfileDefaultPending = { request, session };
+          return;
+        }
+        naturalProfileDefaultPending = null;
+        naturalSearchMode = defaultMode;
+        naturalRerank = false;
+        if (activeQuery) void runSearch(selectedID, activeQuery);
+        return;
+      }
+      naturalProfileDefaultPending = null;
+      naturalSearchMode = defaultMode;
       naturalRerank = false;
     } catch (cause) {
       if (request !== profileGeneration || session !== webSession) return;
+      naturalProfileDefaultPending = null;
       naturalProfiles = [];
       if (cause instanceof APIError && cause.status === 401) handleFailure(cause);
       else naturalProfilesError = naturalSearchFallbackNote(cause instanceof Error ? cause.message : String(cause));
@@ -742,6 +757,7 @@
       naturalProfiles = [];
       naturalSearchMode = "names";
       naturalRerank = false;
+      naturalProfileDefaultPending = null;
       invalidateTagHotkeyMutation();
       selectedTags = [];
       selectedTagsTotal = 0;
@@ -781,6 +797,7 @@
   ): Promise<void> {
     invalidateTagHotkeyMutation();
     leaveSnapshotMode();
+    naturalProfileDefaultPending = null;
     const refreshing = !remember && directory?.id === nodeID && !activeQuery && !activeTagID;
     const request = ++generation;
     naturalSearchController?.abort();
@@ -873,10 +890,10 @@
     }
   }
 
-  async function runSearch(preferredSelectedID = selectedID): Promise<void> {
+  async function runSearch(preferredSelectedID = selectedID, queryOverride?: string): Promise<void> {
     invalidateTagHotkeyMutation();
     leaveSnapshotMode();
-    const query = searchQuery.trim();
+    const query = (queryOverride ?? searchQuery).trim();
     if (!query) {
       naturalSearchController?.abort();
       naturalSearchNote = "";
@@ -976,12 +993,24 @@
         }
       }
     } finally {
+      const deferredProfileDefault = request === generation &&
+        naturalProfileDefaultPending?.request === profileGeneration &&
+        naturalProfileDefaultPending.session === webSession;
+      const acceptedQuery = activeQuery;
       if (request === generation) {
         searchPending = false;
         loading = false;
         naturalRerankPending = false;
       }
       if (naturalSearchController === controller) naturalSearchController = undefined;
+      if (deferredProfileDefault) {
+        naturalProfileDefaultPending = null;
+        const defaultMode: NaturalSearchMode = naturalProfile?.embedding_bindings.length ? "auto" : "names";
+        const rerun = Boolean(acceptedQuery && naturalSearchMode !== defaultMode);
+        naturalSearchMode = defaultMode;
+        naturalRerank = false;
+        if (rerun) void runSearch(selectedID, acceptedQuery);
+      }
     }
   }
 
@@ -1070,6 +1099,7 @@
   ): Promise<void> {
     invalidateTagHotkeyMutation();
     leaveSnapshotMode();
+    naturalProfileDefaultPending = null;
     if (!directory) return;
     const request = ++generation;
     const refreshing = activeQuery === "" && activeTagID === tagID;
@@ -1152,12 +1182,14 @@
   }
 
   function changeNaturalSearchMode(value: string): void {
+    naturalProfileDefaultPending = null;
     naturalSearchMode = value as NaturalSearchMode;
     if (naturalSearchMode === "names") naturalRerank = false;
     if (activeQuery || searchPending) void runSearch();
   }
 
   function changeNaturalRerank(checked: boolean): void {
+    naturalProfileDefaultPending = null;
     naturalRerank = checked;
     if (activeQuery || searchPending) void runSearch();
   }

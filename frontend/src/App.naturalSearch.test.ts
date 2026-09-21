@@ -93,11 +93,13 @@ function report(
 interface HarnessOptions {
   profiles: unknown[];
   profilesStatus?: number;
+  profilesPending?: boolean;
   files: ReturnType<typeof node>[];
   baseReport: unknown;
   baseSearchStatus?: number;
   legacySearchStatus?: number;
   basePending?: boolean;
+  legacyPending?: boolean;
   rerankReport?: unknown;
   rerankPending?: boolean;
   emptyFence?: boolean;
@@ -114,7 +116,11 @@ function installHarness(options: HarnessOptions) {
   const fenceBodies: Record<string, unknown>[] = [];
   let rerankResolve: ((response: Response) => void) | undefined;
   let baseResolve: ((response: Response) => void) | undefined;
+  let profilesResolve: ((response: Response) => void) | undefined;
+  let legacyResolve: ((response: Response) => void) | undefined;
   const basePending = new Promise<Response>((resolve) => { baseResolve = resolve; });
+  const profilesPending = new Promise<Response>((resolve) => { profilesResolve = resolve; });
+  const legacyPending = new Promise<Response>((resolve) => { legacyResolve = resolve; });
   let baseCalls = 0;
   const rerankPending = new Promise<Response>((resolve) => { rerankResolve = resolve; });
   const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
@@ -131,6 +137,7 @@ function installHarness(options: HarnessOptions) {
       return json({ items: options.files.map((file) => ({ node: file, path: file.path })), total: options.files.length, limit: 1000, offset: 0, omitted_trashed: 0 });
     }
     if (url === "/api/v1/processing/profiles") {
+      if (options.profilesPending) return profilesPending;
       return options.profilesStatus ? new Response("profile failure", { status: options.profilesStatus }) : json(options.profiles);
     }
     const nodeMatch = url.match(/^\/api\/v1\/nodes\/(\d+)$/);
@@ -161,6 +168,7 @@ function installHarness(options: HarnessOptions) {
       return json(options.baseReport);
     }
     if (url.startsWith("/api/v1/search?") && method === "GET") {
+      if (options.legacyPending) return legacyPending;
       if (options.legacySearchStatus) return new Response("legacy search failure", { status: options.legacySearchStatus });
       return json(options.tagSearch ?? { hits: [], limit: 1000, truncated: false });
     }
@@ -168,7 +176,15 @@ function installHarness(options: HarnessOptions) {
     if (url.startsWith("/api/v1/nodes/") && url.includes("/tags?")) return json({ items: [], total: 0, limit: 1000, offset: 0 });
     throw new Error(`unexpected request: ${method} ${url}`);
   });
-  return { fetchMock, postBodies, fenceBodies, resolveRerank: (response: Response) => rerankResolve?.(response), resolveBase: (response: Response) => baseResolve?.(response) };
+  return {
+    fetchMock,
+    postBodies,
+    fenceBodies,
+    resolveRerank: (response: Response) => rerankResolve?.(response),
+    resolveBase: (response: Response) => baseResolve?.(response),
+    resolveProfiles: (response: Response) => profilesResolve?.(response),
+    resolveLegacy: (response: Response) => legacyResolve?.(response),
+  };
 }
 
 async function submitSearch(value: string): Promise<void> {
@@ -357,6 +373,57 @@ it("keeps a legacy profile-load fallback on GET when profiles are empty", async 
   await screen.findByText("/legacy.txt");
   expect(fetchMock.mock.calls.filter(([input]) => String(input).startsWith("/api/v1/search?")).length).toBe(1);
   expect(fetchMock.mock.calls.some(([input, init]) => String(input) === "/api/v1/search" && init?.method === "POST")).toBe(false);
+});
+
+it("reruns the accepted query when profiles arrive after legacy results", async () => {
+  const file = node(2, "legacy.txt", baseVersion);
+  const harness = installHarness({
+    profiles: [],
+    profilesPending: true,
+    files: [file],
+    baseReport: report("hybrid", [result(file, 1, "natural excerpt")]),
+    tagSearch: { hits: [{ node: file, path: file.path, match: "name" }], limit: 1000, truncated: false },
+  });
+  render(App);
+  await submitSearch("annual report");
+  await screen.findAllByText("/legacy.txt");
+
+  harness.resolveProfiles(json([{
+    name: "private",
+    fingerprint: "a".repeat(64),
+    rendition: true,
+    embedding_bindings: ["embed"],
+    reranking_available: false,
+  }]));
+  await screen.findByText("natural excerpt");
+  expect(screen.getByRole("combobox", { name: "Search mode: Auto" })).toBeTruthy();
+  expect(harness.postBodies[0]?.mode).toBe("hybrid");
+});
+
+it("defers the profile default until a pending legacy search is accepted", async () => {
+  const file = node(2, "pending.txt", baseVersion);
+  const harness = installHarness({
+    profiles: [],
+    profilesPending: true,
+    files: [file],
+    baseReport: report("hybrid", [result(file, 1, "natural excerpt")]),
+    legacyPending: true,
+    tagSearch: { hits: [{ node: file, path: file.path, match: "name" }], limit: 1000, truncated: false },
+  });
+  render(App);
+  await submitSearch("annual report");
+  await waitFor(() => expect(harness.fetchMock.mock.calls.some(([input]) => String(input).startsWith("/api/v1/search?"))).toBe(true));
+  harness.resolveProfiles(json([{
+    name: "private",
+    fingerprint: "a".repeat(64),
+    rendition: true,
+    embedding_bindings: ["embed"],
+    reranking_available: false,
+  }]));
+  harness.resolveLegacy(json({ hits: [{ node: file, path: file.path, match: "name" }], limit: 1000, truncated: false }));
+  await screen.findByText("natural excerpt");
+  expect(screen.getByRole("combobox", { name: "Search mode: Auto" })).toBeTruthy();
+  expect(harness.postBodies[0]?.mode).toBe("hybrid");
 });
 
 it("reports a Names and text GET failure without retrying it as a fallback", async () => {
