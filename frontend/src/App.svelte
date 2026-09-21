@@ -483,7 +483,7 @@
       naturalProfilesError = "";
       const selected = selectNaturalSearchProfile(profiles);
       const defaultMode: NaturalSearchMode = selected?.embedding_bindings.length ? "auto" : "names";
-      if (naturalSearchMode !== defaultMode && (activeQuery || searchPending)) {
+      if (naturalSearchMode !== defaultMode && (activeQuery || searchPending) && !snapshotActive) {
         if (searchPending) {
           naturalProfileDefaultPending = { request, session };
           return;
@@ -965,7 +965,14 @@
           naturalSearchNote = rerankingNote(reranked.reranking?.outcome ?? "failed", reranked.reranking?.cause);
           return;
         }
-        const rerankedRows = await hydrateProcessingRows(reranked, session, request, controller.signal, mode, nodes);
+        const rerankedRows = await hydrateProcessingRows(
+          reranked,
+          session,
+          request,
+          controller.signal,
+          mode,
+          new Map<number, Node | undefined>(),
+        );
         if (request !== generation || session !== webSession || controller.signal.aborted ||
           naturalSearchMode !== mode || !naturalRerank) return;
         applySearchRows(rerankedRows, query, requestedTagID, reranked.truncated, preferredSelectedID, true, true);

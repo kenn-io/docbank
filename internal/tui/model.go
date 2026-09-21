@@ -2036,17 +2036,13 @@ func (m Model) loadNaturalSearch(query string, requestID uint64) tea.Cmd {
 
 func (m Model) loadNaturalRerank(requestID, searchID uint64, request api.DocumentSearchRequest, naturalMode string) tea.Cmd {
 	ctx, backend := m.ctx, m.backend
-	nodes := make(map[int64]api.Node, len(m.rows))
-	for _, item := range m.rows {
-		nodes[item.node.ID] = item.node
-	}
 	request.Rerank = true
 	return func() tea.Msg {
 		report, err := backend.SearchDocuments(ctx, request)
 		if err != nil {
 			return naturalSearchRerankLoadedMsg{requestID: requestID, searchID: searchID, naturalMode: naturalMode, err: err}
 		}
-		rows, err := hydrateNaturalRows(ctx, backend, report, naturalMode, nodes)
+		rows, err := hydrateNaturalRows(ctx, backend, report, naturalMode, make(map[int64]api.Node))
 		return naturalSearchRerankLoadedMsg{requestID: requestID, searchID: searchID, naturalMode: naturalMode, report: report, rows: rows, err: err}
 	}
 }

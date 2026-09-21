@@ -66,6 +66,10 @@ func TestNaturalSearchReproductionStaleAndRerankState(t *testing.T) {
 	assert.Equal(t, "base excerpt", baseModel.rows[0].excerpt)
 	assert.True(t, baseModel.naturalRerankPending)
 
+	rename := readme
+	rename.Path = "/renamed.txt"
+	delete(fake.nodes, "/README.txt")
+	fake.nodes[rename.Path] = rename
 	reranked := rerank()
 	rerankedMessage, ok := reranked.(naturalSearchRerankLoadedMsg)
 	require.True(t, ok)
@@ -73,8 +77,9 @@ func TestNaturalSearchReproductionStaleAndRerankState(t *testing.T) {
 	settledModel, ok := settled.(Model)
 	require.True(t, ok)
 	assert.Equal(t, "reranked excerpt", settledModel.rows[0].excerpt)
+	assert.Equal(t, "/renamed.txt", settledModel.rows[0].path)
 	assert.False(t, settledModel.naturalRerankPending)
-	assert.Equal(t, []int64{readme.ID, report.ID}, fake.nodeIDs, "reranking reuses hydrated nodes and fetches new results")
+	assert.Equal(t, []int64{readme.ID, readme.ID, report.ID}, fake.nodeIDs, "reranking refreshes hydrated nodes")
 
 	before := settledModel.rows[0].excerpt
 	stale, _ := settledModel.applyNaturalSearchBase(naturalSearchBaseLoadedMsg{

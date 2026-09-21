@@ -104,6 +104,7 @@ interface HarnessOptions {
   legacyPending?: boolean;
   rerankReport?: unknown;
   rerankPending?: boolean;
+  rerankNode?: ReturnType<typeof node>;
   emptyFence?: boolean;
   nodeFailure?: { id: number; status: number };
   tagSearch?: unknown;
@@ -127,6 +128,7 @@ function installHarness(options: HarnessOptions) {
   const legacyFailurePending = new Promise<Response>((resolve) => { legacyFailureResolve = resolve; });
   let baseCalls = 0;
   let legacyCalls = 0;
+  const nodeCalls = new Map<number, number>();
   const rerankPending = new Promise<Response>((resolve) => { rerankResolve = resolve; });
   const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
     const url = String(input);
@@ -147,9 +149,13 @@ function installHarness(options: HarnessOptions) {
     }
     const nodeMatch = url.match(/^\/api\/v1\/nodes\/(\d+)$/);
     if (nodeMatch) {
-      if (Number(nodeMatch[1]) === options.nodeFailure?.id) return new Response("node failure", { status: options.nodeFailure.status });
-      const file = options.files.find((item) => item.id === Number(nodeMatch[1]));
-      return file ? json(file) : new Response("", { status: 404 });
+      const id = Number(nodeMatch[1]);
+      if (id === options.nodeFailure?.id) return new Response("node failure", { status: options.nodeFailure.status });
+      const calls = nodeCalls.get(id) ?? 0;
+      nodeCalls.set(id, calls + 1);
+      const file = options.files.find((item) => item.id === id);
+      const current = options.rerankNode?.id === id && calls > 0 ? options.rerankNode : file;
+      return current ? json(current) : new Response("", { status: 404 });
     }
     if (url === "/api/v1/processing/source-fences/resolve" && method === "POST") {
       fenceBodies.push(JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>);
@@ -263,6 +269,25 @@ it("shows base rows while reranking and applies the validated order", async () =
   expect(harness.postBodies[1]?.rerank).toBe(true);
 });
 
+it("refreshes live nodes before replacing rows with reranked results", async () => {
+  const file = node(2, "base.txt", baseVersion);
+  const renamed = { ...file, name: "renamed.txt", path: "/renamed.txt" };
+  const harness = installHarness({
+    profiles: [{ name: "private", fingerprint: "a".repeat(64), rendition: true, embedding_bindings: ["embed"], reranking_available: true }],
+    files: [file],
+    rerankNode: renamed,
+    baseReport: report("hybrid", [result(file, 1, "base excerpt")]),
+    rerankReport: report("hybrid", [result(file, 1, "reranked excerpt")], { outcome: "applied", candidate_count: 1 }),
+  });
+  render(App);
+  await screen.findAllByText("base.txt");
+  await fireEvent.click(await screen.findByRole("checkbox", { name: "Rerank results" }));
+  await submitSearch("annual report");
+  await screen.findByText("reranked excerpt");
+  expect(screen.getAllByText("/renamed.txt").length).toBeGreaterThan(0);
+  expect(harness.postBodies[1]?.rerank).toBe(true);
+});
+
 it("ignores a rerank response after switching to Names and text", async () => {
   const baseFile = node(2, "base.txt", baseVersion);
   const rerankedFile = node(3, "reranked.txt", rerankedVersion);
@@ -327,7 +352,7 @@ it("keeps the current selection when reranking replaces the rows", async () => {
     reranking: { outcome: "applied", candidate_count: 2 },
   }));
   await screen.findByText("reranked excerpt");
-  expect(harness.fetchMock.mock.calls.filter(([input, init]) => init?.signal && /^\/api\/v1\/nodes\/\d+$/.test(String(input)))).toHaveLength(2);
+  expect(harness.fetchMock.mock.calls.filter(([input, init]) => init?.signal && /^\/api\/v1\/nodes\/\d+$/.test(String(input)))).toHaveLength(4);
   expect(document.querySelector('tr[data-node-id="3"]')?.getAttribute("aria-selected")).toBe("true");
 });
 
