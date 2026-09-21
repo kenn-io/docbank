@@ -261,4 +261,6 @@ jobs:
         env:
           CGO_ENABLED: "1"
           GOARCH: ${{ matrix.goarch }}
-        run: go test -timeout 20m -tags fts5 ./...
+        # Start the long storage suite early so it overlaps the other packages.
+        # Go runs each package once, even when both arguments match it.
+        run: go test -timeout 20m -tags fts5 ./internal/store ./...
