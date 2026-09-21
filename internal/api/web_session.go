@@ -304,7 +304,7 @@ func webSessionRequestAllowed(r *http.Request) bool {
 		switch path {
 		case "/api/v1/processing/plans", "/api/v1/processing/jobs",
 			"/api/v1/processing/consent/grants", "/api/v1/processing/consent/revocations",
-			"/api/v1/search", "/api/v1/search/similar":
+			"/api/v1/processing/source-fences/resolve", "/api/v1/search", "/api/v1/search/similar":
 			return true
 		}
 	}

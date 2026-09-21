@@ -65,7 +65,9 @@ func registerProcessingRoutes(api huma.API, d Deps) {
 		result := make([]ProcessingProfileSummary, len(profiles))
 		for index, profile := range profiles {
 			result[index] = ProcessingProfileSummary{Name: profile.Name, Fingerprint: profile.Fingerprint,
-				Rendition: profile.Rendition, EmbeddingBindings: profile.EmbeddingBindings}
+				Rendition: profile.Rendition, EmbeddingBindings: profile.EmbeddingBindings,
+				QueryEmbeddingBindings: profile.QueryEmbeddingBindings,
+				RerankingAvailable:     profile.RerankingAvailable}
 		}
 		return &profilesOutput{Body: result}, nil
 	})

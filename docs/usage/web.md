@@ -626,6 +626,15 @@ workflows are bound to the tag's stable UUID so a later rename does not
 silently change which definition was selected. Changing the selector reruns
 the current browse or search.
 
+The search mode selector offers **Names and text**, **Auto**, **Lexical**,
+**Semantic**, and **Hybrid** when processing profiles are available. **Auto**
+uses Hybrid with an available embedding binding; without one, the API keeps
+the request lexical. Semantic and Hybrid require a binding. A profile that
+can rerank still permits Lexical search without a binding, and **Rerank
+results** is an explicit opt-in. Base rows appear before reranking settles;
+degraded reranking keeps those rows and shows its cause. Other processing
+failures return to Names and text with a visible explanation.
+
 ![The Docbank web application showing extracted-text search results in a synthetic vault.](https://docbank.ai/assets/generated/web-search-results.png)
 
 *Search results display complete virtual paths and keep the same authority

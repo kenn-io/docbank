@@ -8731,13 +8731,20 @@ components:
           type: string
         name:
           type: string
+        query_embedding_bindings:
+          items:
+            type: string
+          type: array
         rendition:
+          type: boolean
+        reranking_available:
           type: boolean
       required:
         - name
         - fingerprint
         - rendition
         - embedding_bindings
+        - query_embedding_bindings
       type: object
       x-go-type: api.ProcessingProfileSummary
       x-go-type-import:

@@ -122,6 +122,15 @@ media-type, directory, and modification-time filters. Saved query and
 highlight definitions are managed through the
 [HTTP API](searching.md#save-complete-query-intent-over-http).
 
+Press <kbd>Tab</kbd> while searching to cycle through **Names and text**,
+**Auto**, **Lexical**, **Semantic**, and **Hybrid**. Auto uses Hybrid when an
+embedding binding is available and otherwise uses the lexical API mode;
+Semantic and Hybrid require a binding. Press <kbd>Ctrl-R</kbd> to toggle
+reranking when the profile permits it. Changing the mode or reranking setting
+reruns the latest submitted query, including while results are still loading.
+Base rows remain visible while reranking runs, and a failure keeps them with its
+cause. Processing failures fall back to Names and text with the failure shown.
+
 Other mutations, permanent deletion, permanent-audit enrollment, independent
 verification, backup creation/verification/restore, and storage maintenance
 remain outside this interface. Use their ordinary CLI commands or authenticated

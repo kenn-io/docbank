@@ -30,6 +30,7 @@
     EmptyState,
     IconButton,
     SearchInput,
+    SelectDropdown,
     Spinner,
     Table,
     TableHeaderCell,
@@ -79,9 +80,9 @@
   import MailboxImportDrawer from "./MailboxImportDrawer.svelte";
   import VersionHistoryDrawer from "./VersionHistoryDrawer.svelte";
   import { APIError } from "./api-transport.js";
-  import { changeNodeTag, liveNodeTags } from "./receipts.js";
+  import { changeNodeTag, documentSearch, liveNodeTags, resolveDocumentSourceFence } from "./receipts.js";
   import { takeFragmentSession } from "./browser-session.js";
-  import { type AuditStatus, type Node, type SearchHit, type Tag, type TagAssignmentReceipt } from "./generated/docbank.js";
+  import { type AuditStatus, type DocumentSearchReport, type Node, type ProcessingProfileSummary, type SearchHit, type Tag, type TagAssignmentReceipt } from "./generated/docbank.js";
   import { downloadVisiblePageCSV, selectedVisibleCSVRows } from "./csv.js";
   import { basename, formatBytes, formatDate } from "./format.js";
   import { orderRows, reconcileSearchView, type SortField } from "./rows.js";
@@ -113,8 +114,20 @@
     type TagHotkeyBindings,
   } from "./tag-hotkeys.js";
   import { VerifiedUploadChannel } from "./upload.js";
+  import {
+    directFileEvidenceNote,
+    evidenceKindLabels,
+    naturalSearchFallbackNote,
+    naturalSearchModes,
+    naturalQueryBindings,
+    naturalSearchRequest,
+    naturalSearchRerank,
+    rerankingNote,
+    selectNaturalSearchProfile,
+    type NaturalSearchMode,
+  } from "./naturalSearch.js";
 
-  type Row = { node: Node; path: string; match?: generated.SearchHitMatch };
+  type Row = { node: Node; path: string; match?: generated.SearchHitMatch; excerpt?: string; evidence?: string[]; naturalMode?: NaturalSearchMode };
   type Snapshot = {
     directory: Node;
     rows: Row[];
@@ -141,6 +154,7 @@
   let bulkSelection = $state<SelectionState>(clearSelection());
   let searchQuery = $state("");
   let activeQuery = $state("");
+  let submittedSearchQuery = $state("");
   let tagFilterID = $state("");
   let activeTagID = $state("");
   let taggedInspected = $state(0);
@@ -167,6 +181,14 @@
   let inspectorGeneration = $state(0);
   let loading = $state(false);
   let searchPending = $state(false);
+  let naturalProfiles = $state<ProcessingProfileSummary[]>([]);
+  let naturalSearchMode = $state<NaturalSearchMode>("names");
+  let naturalRerank = $state(false);
+  let naturalSearchNote = $state("");
+  let naturalProfilesError = $state("");
+  let naturalRerankPending = $state(false);
+  let naturalProfileDefaultPending = $state<{ request: number; session: string } | null>(null);
+  let profileGeneration = 0;
   let error = $state("");
   let truncated = $state(false);
   let sortField = $state<SortField>("name");
@@ -228,6 +250,7 @@
   let tagGeneration = 0;
   let tagCatalogGeneration = 0;
   let tagHotkeyGeneration = 0;
+  let naturalSearchController: AbortController | undefined;
   let pendingSelectionRange = false;
   let inspectorHighlightSets = $state<{ id: string; name: string; terms: import("./query.js").HighlightTerm[] }[]>([]);
   let snapshotQueryTerms = $state<string[]>([]);
@@ -295,6 +318,8 @@
   );
   const activeTag = $derived(tagCatalog.find((tag) => tag.id === activeTagID));
   const tagBrowse = $derived(activeTagID !== "" && activeQuery === "");
+  const naturalProfile = $derived(selectNaturalSearchProfile(naturalProfiles));
+  const naturalModeOptions = $derived(naturalSearchModes(naturalProfile));
   const sortedRows = $derived(
     orderRows(rows, sortField, sortDirection, activeQuery !== "" || tagBrowse),
   );
@@ -420,6 +445,7 @@
       if (savedQueryDraft) queryBarOpen = true;
       void loadRoot();
       void loadTagCatalog();
+      void loadNaturalProfiles(session.token);
       const channel = new VerifiedUploadChannel(session, undefined, () => {
         if (uploadChannel === channel) {
           uploadChannelError =
@@ -448,6 +474,43 @@
   function clearBulkSelection(): void {
     bulkSelection = clearSelection();
     pendingSelectionRange = false;
+  }
+
+  async function loadNaturalProfiles(session: string): Promise<void> {
+    const request = ++profileGeneration;
+    try {
+      const profiles = await generated.listDocumentProcessingProfiles({ session });
+      if (request !== profileGeneration || session !== webSession) return;
+      naturalProfiles = profiles;
+      naturalProfilesError = "";
+      const selected = selectNaturalSearchProfile(profiles);
+      const defaultMode: NaturalSearchMode = selected && naturalQueryBindings(selected).length ? "auto" : "names";
+      if (snapshotActive) {
+        naturalProfileDefaultPending = { request, session };
+        return;
+      }
+      if (naturalSearchMode !== defaultMode && (activeQuery || searchPending) && !snapshotActive) {
+        if (searchPending) {
+          naturalProfileDefaultPending = { request, session };
+          return;
+        }
+        if (loading && activeQuery) return;
+        naturalProfileDefaultPending = null;
+        naturalSearchMode = defaultMode;
+        naturalRerank = false;
+        if (activeQuery) void runSearch(selectedID, activeQuery);
+        return;
+      }
+      naturalProfileDefaultPending = null;
+      naturalSearchMode = defaultMode;
+      naturalRerank = false;
+    } catch (cause) {
+      if (request !== profileGeneration || session !== webSession) return;
+      naturalProfileDefaultPending = null;
+      naturalProfiles = [];
+      if (cause instanceof APIError && cause.status === 401) handleFailure(cause);
+      else naturalProfilesError = naturalSearchFallbackNote(cause instanceof Error ? cause.message : String(cause));
+    }
   }
 
   function invalidateTagHotkeyMutation(): void {
@@ -698,6 +761,11 @@
       tagCatalogLoading = false;
       vaultID = "";
       tagHotkeys = {};
+      naturalProfiles = [];
+      naturalSearchMode = "names";
+      naturalRerank = false;
+      submittedSearchQuery = "";
+      naturalProfileDefaultPending = null;
       invalidateTagHotkeyMutation();
       selectedTags = [];
       selectedTagsTotal = 0;
@@ -737,9 +805,14 @@
   ): Promise<void> {
     invalidateTagHotkeyMutation();
     leaveSnapshotMode();
+    naturalProfileDefaultPending = null;
+    submittedSearchQuery = "";
     const refreshing = !remember && directory?.id === nodeID && !activeQuery && !activeTagID;
     const request = ++generation;
+    naturalSearchController?.abort();
     searchPending = false;
+    naturalSearchNote = "";
+    naturalRerankPending = false;
     loading = true;
     error = "";
     try {
@@ -826,58 +899,222 @@
     }
   }
 
-  async function runSearch(preferredSelectedID = selectedID): Promise<void> {
+  async function runSearch(preferredSelectedID = selectedID, queryOverride?: string): Promise<void> {
     invalidateTagHotkeyMutation();
     leaveSnapshotMode();
-    const query = searchQuery.trim();
+    const query = (queryOverride ?? searchQuery).trim();
     if (!query) {
+      submittedSearchQuery = "";
+      naturalSearchController?.abort();
+      naturalSearchNote = "";
+      naturalRerankPending = false;
       if (tagFilterID) await loadTaggedNodes(tagFilterID);
       else if (directory) await loadDirectory(directory.id, false);
       return;
     }
     const request = ++generation;
+    submittedSearchQuery = query;
     const requestedTagID = tagFilterID;
     const refreshing = activeQuery === query && activeTagID === requestedTagID;
+    naturalSearchController?.abort();
+    const controller = new AbortController();
+    naturalSearchController = controller;
+    const session = webSession;
+    const mode = naturalSearchMode;
+    const profile = naturalProfile;
+    let accepted = false;
     searchPending = true;
     loading = true;
     error = "";
+    naturalSearchNote = "";
+    naturalRerankPending = false;
     try {
-      const report = await generated.search({ q: query, limit: 1000, ...((requestedTagID) ? { tag_id: requestedTagID } : {}) }, { session: webSession });
-      if (request !== generation) return;
-      if ((report.tag_id ?? "") !== requestedTagID) {
-        throw new Error("Search results did not honor the selected tag filter.");
+      if (mode === "names" || !profile) {
+        accepted = await runLegacySearch(query, requestedTagID, request, preferredSelectedID, refreshing, session, controller.signal);
+        return;
       }
-      const nextRows = report.hits.map((hit: SearchHit) => ({
-        node: hit.node,
-        path: hit.path,
-        match: hit.match,
-      }));
-      replaceRows(nextRows, refreshing);
-      const view = reconcileSearchView(
-        nextRows,
+      const mapped = naturalSearchRequest(mode, profile);
+      if (!mapped) throw new Error(`${mode} search requires an embedding binding.`);
+      const resolution = await resolveDocumentSourceFence(session,
+        requestedTagID ? { tag_id: requestedTagID } : {}, controller.signal);
+      if (request !== generation || session !== webSession || controller.signal.aborted) return;
+      if (resolution.fence.content_version_ids.length === 0) {
+        applySearchRows([], query, requestedTagID, false, preferredSelectedID, refreshing);
+        accepted = true;
+        naturalSearchNote = "No live documents match the current filter.";
+        loading = false;
+        return;
+      }
+      const baseRequest: generated.DocumentSearchRequest = {
         query,
-        requestedTagID === activeTagID ? activeQuery : "",
-        sortField,
-        sortDirection,
-        preferredSelectedID,
-      );
-      activeQuery = query;
-      activeTagID = requestedTagID;
-      taggedInspected = 0;
-      taggedTotal = 0;
-      taggedTrashed = 0;
-      truncated = report.truncated;
-      sortField = view.sortField;
-      sortDirection = view.sortDirection;
-      selectNode(view.selectedID);
+        mode: mapped.mode,
+        limit: 100,
+        profile: profile.name,
+        ...(mapped.binding_id ? { binding_id: mapped.binding_id } : {}),
+        fence: resolution.fence,
+        explain: true,
+      };
+      const baseReport = await documentSearch(session, baseRequest, controller.signal);
+      if (request !== generation || session !== webSession || controller.signal.aborted) return;
+      const nodes = new Map<number, Node | undefined>();
+      const baseRows = await hydrateProcessingRows(baseReport, session, request, controller.signal, mode, nodes);
+      if (request !== generation || session !== webSession || controller.signal.aborted) return;
+      applySearchRows(baseRows, query, requestedTagID, baseReport.truncated, preferredSelectedID, refreshing);
+      accepted = true;
+      naturalSearchNote = baseReport.degradations.length > 0
+        ? `Search note: ${baseReport.degradations.join(", ")}`
+        : "";
+      loading = false;
+      searchPending = false;
+      if (!naturalSearchRerank(profile, mode, naturalRerank)) return;
+      naturalRerankPending = true;
+      try {
+        const reranked = await documentSearch(session, { ...baseRequest, rerank: true }, controller.signal);
+        if (request !== generation || session !== webSession || controller.signal.aborted ||
+          naturalSearchMode !== mode || !naturalRerank) return;
+        if (reranked.reranking?.outcome !== "applied") {
+          naturalSearchNote = rerankingNote(reranked.reranking?.outcome ?? "failed", reranked.reranking?.cause);
+          return;
+        }
+        const rerankedRows = await hydrateProcessingRows(
+          reranked,
+          session,
+          request,
+          controller.signal,
+          mode,
+          new Map<number, Node | undefined>(),
+        );
+        if (request !== generation || session !== webSession || controller.signal.aborted ||
+          naturalSearchMode !== mode || !naturalRerank) return;
+        applySearchRows(rerankedRows, query, requestedTagID, reranked.truncated, preferredSelectedID, true, true);
+        naturalSearchNote = rerankingNote("applied");
+      } catch (cause) {
+        if (cause instanceof APIError && cause.status === 401) {
+          handleFailure(cause);
+          return;
+        }
+        if (request === generation && session === webSession && !controller.signal.aborted &&
+          naturalSearchMode === mode && naturalRerank) {
+          naturalSearchNote = `Reranking failed: ${cause instanceof Error ? cause.message : String(cause)}. Base results remain.`;
+        }
+      }
     } catch (cause) {
-      if (request === generation) handleFailure(cause);
+      if (request !== generation || session !== webSession || controller.signal.aborted) return;
+      if (cause instanceof APIError && cause.status === 401) handleFailure(cause);
+      else if (mode === "names" || !profile) handleFailure(cause);
+      else {
+        const note = naturalSearchFallbackNote(cause instanceof Error ? cause.message : String(cause));
+        naturalSearchMode = "names";
+        naturalRerank = false;
+        naturalRerankPending = false;
+        try {
+          accepted = await runLegacySearch(query, requestedTagID, request, preferredSelectedID, refreshing, session, controller.signal, note);
+        } catch (fallbackCause) {
+          if (request === generation && session === webSession && !controller.signal.aborted) handleFailure(fallbackCause);
+        }
+      }
     } finally {
+      const deferredProfileDefault = request === generation &&
+        naturalProfileDefaultPending?.request === profileGeneration &&
+        naturalProfileDefaultPending.session === webSession;
+      const acceptedQuery = accepted ? query : "";
       if (request === generation) {
         searchPending = false;
         loading = false;
+        naturalRerankPending = false;
+      }
+      if (naturalSearchController === controller) naturalSearchController = undefined;
+      if (deferredProfileDefault) {
+        naturalProfileDefaultPending = null;
+        if (acceptedQuery) {
+          const defaultMode: NaturalSearchMode = naturalProfile && naturalQueryBindings(naturalProfile).length ? "auto" : "names";
+          const rerun = naturalSearchMode !== defaultMode;
+          naturalSearchMode = defaultMode;
+          naturalRerank = false;
+          if (rerun) void runSearch(selectedID, acceptedQuery);
+        }
       }
     }
+  }
+
+  async function runLegacySearch(
+    query: string,
+    requestedTagID: string,
+    request: number,
+    preferredSelectedID: number | undefined,
+    refreshing: boolean,
+    session: string,
+    signal: AbortSignal,
+    note = "",
+  ): Promise<boolean> {
+    const report = await generated.search({ q: query, limit: 1000, ...((requestedTagID) ? { tag_id: requestedTagID } : {}) }, { session, signal });
+    if (request !== generation || session !== webSession || signal.aborted) return false;
+    if ((report.tag_id ?? "") !== requestedTagID) throw new Error("Search results did not honor the selected tag filter.");
+    const nextRows = report.hits.map((hit: SearchHit) => ({ node: hit.node, path: hit.path, match: hit.match }));
+    applySearchRows(nextRows, query, requestedTagID, report.truncated, preferredSelectedID, refreshing);
+    naturalSearchNote = note;
+    loading = false;
+    return true;
+  }
+
+  function applySearchRows(
+    nextRows: Row[],
+    query: string,
+    requestedTagID: string,
+    isTruncated: boolean,
+    preferredSelectedID: number | undefined,
+    refreshing: boolean,
+    preserveCurrentSelection = false,
+  ): void {
+    const selectedBefore = preserveCurrentSelection ? selectedID : preferredSelectedID;
+    replaceRows(nextRows, refreshing);
+    const view = reconcileSearchView(nextRows, query,
+      refreshing ? query : "", sortField, sortDirection, selectedBefore);
+    activeQuery = query;
+    activeTagID = requestedTagID;
+    taggedInspected = 0;
+    taggedTotal = 0;
+    taggedTrashed = 0;
+    truncated = isTruncated;
+    sortField = view.sortField;
+    sortDirection = view.sortDirection;
+    selectNode(view.selectedID);
+  }
+
+  async function hydrateProcessingRows(
+    report: DocumentSearchReport,
+    session: string,
+    request: number,
+    signal: AbortSignal,
+    naturalMode: NaturalSearchMode,
+    nodes: Map<number, Node | undefined>,
+  ): Promise<Row[]> {
+    const hydrated: Row[] = [];
+    for (const result of report.results) {
+      if (request !== generation || session !== webSession || signal.aborted) return [];
+      let node = nodes.get(result.node_id);
+      try {
+        if (!nodes.has(result.node_id)) {
+          node = await generated.getNode(result.node_id, { session, signal });
+          nodes.set(result.node_id, node);
+        }
+      } catch (cause) {
+        if (cause instanceof APIError && cause.status === 401) throw cause;
+        nodes.set(result.node_id, undefined);
+        continue;
+      }
+      if (!node || node.kind !== "file" || node.trashed_at || node.current_version_id !== result.content_version_id) continue;
+      const row: Row = {
+        node,
+        path: node.path || result.path,
+        excerpt: result.excerpt || "",
+        evidence: evidenceKindLabels(result.evidence.map((item) => item.kind)),
+        naturalMode,
+      };
+      hydrated.push(row);
+    }
+    if (request !== generation || session !== webSession || signal.aborted) return [];
+    return hydrated;
   }
 
   async function loadTaggedNodes(
@@ -886,11 +1123,16 @@
   ): Promise<void> {
     invalidateTagHotkeyMutation();
     leaveSnapshotMode();
+    naturalProfileDefaultPending = null;
+    submittedSearchQuery = "";
     if (!directory) return;
     const request = ++generation;
     const refreshing = activeQuery === "" && activeTagID === tagID;
     const selectedToPreserve = preferredSelectedID ?? (refreshing ? selectedID : undefined);
+    naturalSearchController?.abort();
     searchPending = false;
+    naturalSearchNote = "";
+    naturalRerankPending = false;
     loading = true;
     error = "";
     try {
@@ -962,6 +1204,21 @@
     if (!activeQuery && !searchPending) return;
     if (tagFilterID) void loadTaggedNodes(tagFilterID);
     else if (directory) void loadDirectory(directory.id, false);
+  }
+
+  function changeNaturalSearchMode(value: string): void {
+    naturalProfileDefaultPending = null;
+    naturalSearchMode = value as NaturalSearchMode;
+    if (naturalSearchMode === "names") naturalRerank = false;
+    const query = searchPending ? submittedSearchQuery : activeQuery;
+    if (query) void runSearch(selectedID, query);
+  }
+
+  function changeNaturalRerank(checked: boolean): void {
+    naturalProfileDefaultPending = null;
+    naturalRerank = checked;
+    const query = searchPending ? submittedSearchQuery : activeQuery;
+    if (query) void runSearch(selectedID, query);
   }
 
   function changeTagFilter(tagID: string): void {
@@ -1184,12 +1441,26 @@
     if (selectedID !== undefined) void loadSelectedTags(selectedID, selectedSource?.key);
   }
 
-  function leaveSnapshotMode(): void {
+  function leaveSnapshotMode(resumeLive = false): void {
+    const deferredProfileDefault = resumeLive &&
+      naturalProfileDefaultPending?.request === profileGeneration &&
+      naturalProfileDefaultPending.session === webSession;
+    const acceptedQuery = activeQuery;
     invalidateSnapshotActions();
+    if (!resumeLive) naturalProfileDefaultPending = null;
     if (snapshotState.status === "idle" && snapshotController === undefined) return;
     snapshotController?.dispose();
     snapshotController = undefined;
     snapshotState = { status: "idle", offset: 0 };
+    if (deferredProfileDefault) {
+      naturalProfileDefaultPending = null;
+      const defaultMode: NaturalSearchMode = naturalProfile && naturalQueryBindings(naturalProfile).length ? "auto" : "names";
+      if (acceptedQuery && naturalSearchMode !== defaultMode) {
+        naturalSearchMode = defaultMode;
+        naturalRerank = false;
+        void runSearch(selectedID, acceptedQuery);
+      }
+    }
     selectedSnapshotID = undefined;
     snapshotSelection = new Set();
     snapshotOverlays = {};
@@ -1218,6 +1489,8 @@
     generation += 1;
     searchPending = false;
     loading = false;
+    naturalRerankPending = false;
+    naturalProfileDefaultPending = null;
     keepQueryDraft(query);
     void snapshotSession().run(query, options);
   }
@@ -1831,7 +2104,7 @@
   </main>
 {:else}
   <div class="app-shell">
-    <TopBar>
+    <TopBar class="app-top-bar">
       {#snippet left()}
         <div class="brand">
           <span class="brand-mark">D</span>
@@ -1842,23 +2115,36 @@
         </div>
       {/snippet}
       {#snippet search()}
-        <form
-          class="search"
-          onsubmit={(event) => {
-            event.preventDefault();
-            void runSearch();
-          }}
-        >
-          <SearchInput
-            bind:value={searchQuery}
-            bind:inputEl={searchInputEl}
-            placeholder="Search names and extracted text"
-            ariaLabel="Search documents"
-            keys={formatShortcutKeys("/")}
-            block
-            onclear={clearSearch}
-          />
-        </form>
+        <div class="search-controls">
+          <form
+            class="search"
+            onsubmit={(event) => {
+              event.preventDefault();
+              void runSearch();
+            }}
+          >
+            <SearchInput
+              bind:value={searchQuery}
+              bind:inputEl={searchInputEl}
+              placeholder="Search names and extracted text"
+              ariaLabel="Search documents"
+              keys={formatShortcutKeys("/")}
+              block
+              onclear={clearSearch}
+            />
+          </form>
+          {#if naturalProfiles.length > 0}
+            <SelectDropdown title="Search mode" value={naturalSearchMode} options={naturalModeOptions}
+              onchange={changeNaturalSearchMode} />
+            {#if naturalProfile?.reranking_available && naturalSearchMode !== "names"}
+              <label class="rerank-control">
+                <Checkbox checked={naturalRerank} ariaLabel="Rerank results"
+                  onchange={changeNaturalRerank} />
+                <span>Rerank results</span>
+              </label>
+            {/if}
+          {/if}
+        </div>
       {/snippet}
       {#snippet right()}
         <Button size="sm" disabled={!exportHasJob && (snapshotActive ? (snapshotPage?.total ?? 0) === 0 : visibleDocumentCount === 0)} onclick={() => openExport()}>Export</Button>
@@ -2023,7 +2309,7 @@
               {#if snapshotState.options?.profile}<span>Profile: {snapshotState.options.profile}</span>{/if}
               <Button size="sm" tone="info" disabled={snapshotState.status !== "ready"}
                 onclick={() => { snapshotActionError = ""; snapshotActionsOpen = true; }}>Tag or recover</Button>
-              <Button size="sm" onclick={leaveSnapshotMode}>Back to live folder</Button>
+              <Button size="sm" onclick={() => leaveSnapshotMode(true)}>Back to live folder</Button>
             </div>
           </div>
           {#if snapshotState.error}
@@ -2220,6 +2506,15 @@
         {#if error}
           <div class="banner error" role="alert">{error}</div>
         {/if}
+        {#if naturalSearchNote}
+          <div class="banner search-note" role="status" aria-live="polite">{naturalSearchNote}</div>
+        {/if}
+        {#if naturalProfilesError}
+          <div class="banner search-note" role="status">{naturalProfilesError}</div>
+        {/if}
+        {#if naturalRerankPending}
+          <div class="banner search-note" role="status" aria-live="polite">Reranking results… Base results are shown.</div>
+        {/if}
         {#if shortcutError}
           <div class="banner error" role="alert" aria-label="Keyboard shortcut error">
             {shortcutError}
@@ -2341,12 +2636,20 @@
                       {/if}
                       <span>{activeQuery || tagBrowse ? row.path : row.node.name}</span>
                     </span>
+                    {#if row.naturalMode && row.node.kind === "file"}
+                      <span class="search-excerpt">{row.excerpt || directFileEvidenceNote()}</span>
+                    {/if}
                   </td>
                   <td>{row.node.kind === "dir" ? "Folder" : row.node.mime_type || "File"}</td>
                   <td class="numeric">{row.node.kind === "dir" ? "—" : formatBytes(row.node.size)}</td>
                   <td>{formatDate(row.node.modified_at)}</td>
                   {#if activeQuery}
-                    <td><Chip size="xs" tone={row.match === "content" ? "info" : "neutral"}>{row.match}</Chip></td>
+                    <td>
+                      <div class="search-evidence">
+                        {#if row.match}<Chip size="xs" tone={row.match === "content" ? "info" : "neutral"}>{row.match}</Chip>{/if}
+                        {#each row.evidence ?? [] as kind (kind)}<Chip size="xs" tone="info">{kind}</Chip>{/each}
+                      </div>
+                    </td>
                   {/if}
                   <td onkeydown={(event) => event.stopPropagation()}>
                     {#if row.node.kind === "file" && row.node.current_version_id}
@@ -3037,5 +3340,94 @@
   .shortcut-notice {
     border-bottom: 1px solid var(--border-muted);
     background: var(--bg-inset);
+  }
+
+  .search-controls {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+    width: min(760px, 100%);
+  }
+
+  .search-controls .search {
+    min-width: 0;
+    flex: 1;
+  }
+
+  @media (max-width: 900px) {
+    :global(.app-shell .app-top-bar) {
+      height: auto;
+      min-height: var(--header-height, 44px);
+      flex-wrap: wrap;
+      align-items: center;
+      padding-block: var(--space-2);
+    }
+
+    :global(.app-top-bar .kit-top-bar__right) {
+      flex-wrap: wrap;
+      justify-content: flex-end;
+      min-width: 0;
+      max-width: 100%;
+    }
+
+    :global(.app-top-bar .kit-top-bar__search) {
+      order: 3;
+      flex: 1 0 100%;
+      justify-content: stretch;
+      width: 100%;
+      margin: 0;
+      padding-bottom: var(--space-1);
+    }
+  }
+
+  @media (max-width: 900px) {
+    .search-controls {
+      width: 100%;
+    }
+  }
+
+  @media (max-width: 640px) {
+    :global(.app-top-bar .kit-top-bar__right) {
+      flex: 1 0 100%;
+      order: 4;
+      justify-content: flex-start;
+      margin-left: 0;
+      padding-top: var(--space-1);
+    }
+
+    .search-controls .search {
+      flex-basis: 100%;
+    }
+  }
+
+  .rerank-control {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    white-space: nowrap;
+    font-size: 12px;
+  }
+
+  .search-note {
+    border-bottom: 1px solid var(--border-muted);
+    background: var(--bg-inset);
+  }
+
+  .search-excerpt {
+    display: block;
+    max-width: 52ch;
+    overflow: hidden;
+    color: var(--text-muted);
+    font-size: 12px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .search-evidence {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
   }
 </style>

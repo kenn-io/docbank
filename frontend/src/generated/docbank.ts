@@ -3601,7 +3601,9 @@ export interface ProcessingProfileSummary {
   /** @pattern ^[0-9a-f]{64}$ */
   fingerprint: string;
   name: string;
+  query_embedding_bindings: string[];
   rendition: boolean;
+  reranking_available?: boolean;
 }
 
 export interface ProvenanceFact {

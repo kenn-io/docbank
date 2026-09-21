@@ -1,4 +1,4 @@
-import type { Node, ProcessingSelector, ProcessingJob, ProcessingStatus, ProcessingJobEvent, DocumentSearchRequest, DocumentSearchReport, Tag, TagAssignmentReceipt, TagDeletionReceipt } from "./generated/docbank.js";
+import type { Node, ProcessingSelector, ProcessingJob, ProcessingStatus, ProcessingJobEvent, DocumentSearchRequest, DocumentSearchReport, DocumentSourceFenceFilters, DocumentSourceFenceResolution, Tag, TagAssignmentReceipt, TagDeletionReceipt } from "./generated/docbank.js";
 import * as generated from "./generated/docbank.js";
 import type { DocumentSimilarRequest, DocumentSimilarReport } from "./generated/docbank.js";
 import { APIError } from "./api-transport.js";
@@ -222,9 +222,37 @@ function canonicalHashArray(value: unknown): value is string[] {
 export async function documentSearch(
   session: string,
   request: DocumentSearchRequest,
+  signal?: AbortSignal,
 ): Promise<DocumentSearchReport> {
-  const response = await generated.searchDocuments(request, { session });
+  const response = await generated.searchDocuments(request, { session, signal });
   return validateDocumentSearchReport(response, request);
+}
+
+export async function resolveDocumentSourceFence(
+  session: string,
+  filters: DocumentSourceFenceFilters = {},
+  signal?: AbortSignal,
+): Promise<DocumentSourceFenceResolution> {
+  const response = await generated.resolveDocumentSourceFence({ filters }, { session, signal });
+  return validateDocumentSourceFenceResolution(response);
+}
+
+export function validateDocumentSourceFenceResolution(value: unknown): DocumentSourceFenceResolution {
+  const invalid = (): never => { throw new Error("The daemon returned an invalid source fence."); };
+  if (!isRecord(value)) invalid();
+  const record = value as Record<string, unknown>;
+  if (!isRecord(record.fence)) invalid();
+  const fence = record.fence as Record<string, unknown>;
+  if (!Array.isArray(fence.content_version_ids) || !canonicalUUID(fence.vault_uid) || fence.content_version_ids.length > 4096 ||
+      !nonnegativeInteger(record.observed_scope_count) || record.observed_scope_count !== fence.content_version_ids.length ||
+      typeof record.fence_fingerprint !== "string" || !/^sha256:[0-9a-f]{64}$/.test(record.fence_fingerprint)) invalid();
+  const ids = fence.content_version_ids as unknown[];
+  for (let index = 0; index < ids.length; index += 1) {
+    if (!canonicalUUID(ids[index]) || (index > 0 && String(ids[index - 1]) >= String(ids[index]))) invalid();
+  }
+  const expected = sourceFenceFingerprint(String(fence.vault_uid), ids as string[]);
+  if (expected !== record.fence_fingerprint) invalid();
+  return record as unknown as DocumentSourceFenceResolution;
 }
 
 export async function documentSimilar(session: string, request: DocumentSimilarRequest): Promise<DocumentSimilarReport> {
@@ -270,7 +298,7 @@ export function validateDocumentSimilarReport(value: unknown, request: DocumentS
   return value as unknown as DocumentSimilarReport;
 }
 
-function validateDocumentSearchReport(value: unknown, request: DocumentSearchRequest): DocumentSearchReport {
+export function validateDocumentSearchReport(value: unknown, request: DocumentSearchRequest): DocumentSearchReport {
   const invalid = (): never => { throw new Error("The daemon returned an invalid search response."); };
   if (!canonicalUUID(request.fence.vault_uid) || request.fence.content_version_ids.length < 1 ||
       request.fence.content_version_ids.length > 4096) invalid();
@@ -289,6 +317,26 @@ function validateDocumentSearchReport(value: unknown, request: DocumentSearchReq
   const limit = request.limit || 20;
   if (!Number.isSafeInteger(limit) || limit < 1 || limit > 100 || !Array.isArray(report.results) ||
       report.results.length > limit) invalid();
+  if (!Array.isArray(report.degradations)) invalid();
+
+  const reranking = report.reranking;
+  const resultValues = report.results as unknown[];
+  const degradations = report.degradations as string[];
+  if (request.rerank) {
+    if (!isRecord(reranking)) invalid();
+    const receipt = reranking as Record<string, unknown>;
+    if (!nonnegativeInteger(receipt.candidate_count) || Number(receipt.candidate_count) > resultValues.length ||
+        typeof receipt.outcome !== "string" || (receipt.cause !== undefined && typeof receipt.cause !== "string")) invalid();
+    const cause = String(receipt.cause ?? "");
+    if (receipt.outcome === "applied") {
+      if (cause !== "" || Number(receipt.candidate_count) < 1 || degradations.includes("reranking_degraded")) invalid();
+    } else if (receipt.outcome === "skipped") {
+      if (cause !== "" || Number(receipt.candidate_count) !== 0 || resultValues.length !== 0 || degradations.includes("reranking_degraded")) invalid();
+    } else if (receipt.outcome === "degraded") {
+      if (!("authorization_denied" === cause || "timed_out" === cause || "malformed_output" === cause || "unavailable" === cause) ||
+          !degradations.includes("reranking_degraded")) invalid();
+    } else invalid();
+  } else if (reranking !== undefined) invalid();
 
   const coverage = report.coverage;
   if (!isRecord(coverage) || typeof coverage.binding_required !== "boolean" ||
@@ -309,9 +357,8 @@ function validateDocumentSearchReport(value: unknown, request: DocumentSearchReq
   const documents = new Set<string>();
   const lexicalRanks = new Set<number>();
   const semanticRanks = new Set<number>();
-  const results = report.results as unknown[];
-  for (let index = 0; index < results.length; index += 1) {
-    const result = results[index];
+  for (let index = 0; index < resultValues.length; index += 1) {
+    const result = resultValues[index];
     if (!isRecord(result) || result.vault_uid !== request.fence.vault_uid ||
         !canonicalUUID(result.vault_uid) || typeof result.content_version_id !== "string" ||
         !versions.has(result.content_version_id) || !canonicalUUID(result.content_version_id) ||
@@ -387,6 +434,20 @@ function validateDocumentEvidenceIdentity(evidence: UnknownRecord): boolean {
 
 function canonicalUUID(value: unknown): value is string {
   return typeof value === "string" && /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(value);
+}
+
+function sourceFenceFingerprint(vaultID: string, versionIDs: string[]): string {
+  const bytes = [...utf8ToBytes("docbank-document-source-fence/v1"), ...uint32Bytes(utf8ToBytes(vaultID).length),
+    ...utf8ToBytes(vaultID), ...uint32Bytes(versionIDs.length)];
+  for (const versionID of [...versionIDs].sort()) {
+    const encoded = utf8ToBytes(versionID);
+    bytes.push(...uint32Bytes(encoded.length), ...encoded);
+  }
+  return `sha256:${bytesToHex(sha256(new Uint8Array(bytes)))}`;
+}
+
+function uint32Bytes(value: number): number[] {
+  return [(value >>> 24) & 0xff, (value >>> 16) & 0xff, (value >>> 8) & 0xff, value & 0xff];
 }
 
 function boundedSearchIdentity(value: unknown, maximum: number): value is string {

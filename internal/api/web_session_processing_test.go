@@ -13,6 +13,7 @@ func TestWebSessionProcessingSurfaceIsNarrowlyAllowed(t *testing.T) {
 	t.Parallel()
 	allowed := []struct{ method, path string }{
 		{http.MethodGet, "/api/v1/processing/profiles"},
+		{http.MethodPost, "/api/v1/processing/source-fences/resolve"},
 		{http.MethodPost, "/api/v1/processing/plans"},
 		{http.MethodPost, "/api/v1/processing/jobs"},
 		{http.MethodPost, "/api/v1/processing/consent/grants"},
@@ -29,6 +30,10 @@ func TestWebSessionProcessingSurfaceIsNarrowlyAllowed(t *testing.T) {
 		assert.True(t, webSessionRequestAllowed(request), test.method+" "+test.path)
 	}
 	for _, test := range []struct{ method, path string }{
+		{http.MethodGet, "/api/v1/processing/source-fences/resolve"},
+		{http.MethodPost, "/api/v1/processing/source-fences/resolve?tag_id=1"},
+		{http.MethodPost, "/api/v1/processing/source-fences/resolve/extra"},
+		{http.MethodDelete, "/api/v1/processing/source-fences/resolve"},
 		{http.MethodPost, "/api/v1/derivatives/purge-plans"},
 		{http.MethodPost, "/api/v1/derivatives/purge-jobs"},
 		{http.MethodGet, "/api/v1/search/similar"},
