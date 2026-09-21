@@ -958,6 +958,9 @@
       else if (mode === "names" || !profile) handleFailure(cause);
       else {
         const note = naturalSearchFallbackNote(cause instanceof Error ? cause.message : String(cause));
+        naturalSearchMode = "names";
+        naturalRerank = false;
+        naturalRerankPending = false;
         try {
           await runLegacySearch(query, requestedTagID, request, preferredSelectedID, refreshing, session, controller.signal, note);
         } catch (fallbackCause) {

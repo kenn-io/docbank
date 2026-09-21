@@ -386,7 +386,7 @@ it("keeps processing evidence visible after changing the next search mode", asyn
 it("keeps a non-401 processing failure on the legacy GET path", async () => {
   const file = node(2, "fallback.txt", baseVersion);
   const harness = installHarness({
-    profiles: [{ name: "private", fingerprint: "a".repeat(64), rendition: true, embedding_bindings: ["embed"], reranking_available: false }],
+    profiles: [{ name: "private", fingerprint: "a".repeat(64), rendition: true, embedding_bindings: ["embed"], reranking_available: true }],
     files: [file],
     baseReport: report("hybrid", []),
     baseSearchStatus: 500,
@@ -394,9 +394,12 @@ it("keeps a non-401 processing failure on the legacy GET path", async () => {
   });
   render(App);
   await screen.findAllByText("fallback.txt");
+  await fireEvent.click(screen.getByRole("checkbox", { name: "Rerank results" }));
   await submitSearch("fallback");
   await screen.findByText("/fallback.txt");
   await screen.findByText(/Natural-language search unavailable/);
+  expect(screen.getByRole("combobox", { name: "Search mode: Names and text" })).toBeTruthy();
+  expect(screen.queryByRole("checkbox", { name: "Rerank results" })).toBeNull();
   expect(harness.postBodies).toHaveLength(1);
   expect(harness.fetchMock.mock.calls.filter(([input]) => String(input).startsWith("/api/v1/search?")).length).toBe(1);
 });
