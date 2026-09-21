@@ -196,7 +196,6 @@ func TestNaturalSearchFallbackKeepsCause(t *testing.T) {
 	model.naturalSearchID = 2
 	model.naturalMode = naturalHybrid
 	model.naturalProfiles = fake.profiles
-	model.naturalSearchRequest = api.DocumentSearchRequest{Query: "old", Mode: naturalHybrid}
 
 	updated, fallback := model.applyNaturalSearchBase(naturalSearchBaseLoadedMsg{
 		requestID: model.requestID, searchID: model.naturalSearchID, query: "old",
@@ -206,7 +205,6 @@ func TestNaturalSearchFallbackKeepsCause(t *testing.T) {
 	require.True(t, ok)
 	assert.Contains(t, result.naturalSearchNote, "provider timed out")
 	assert.Equal(t, naturalNames, result.naturalMode)
-	assert.Empty(t, result.naturalSearchRequest.Query)
 	require.NotNil(t, fallback)
 
 	loaded, _ := result.applySearch(searchLoadedMsg{
@@ -241,35 +239,68 @@ func TestNaturalSearchModeProvenanceSurvivesModeChange(t *testing.T) {
 	assert.Contains(t, ansi.Strip(model.renderLocation()), "rerank enabled")
 }
 
-func TestNaturalSearchCtrlRUsesAcceptedResultMode(t *testing.T) {
-	fake := newFakeBackend()
-	readme := fake.nodes["/README.txt"]
-	fake.profiles = []api.ProcessingProfileSummary{{Name: "private", RerankingAvailable: true}}
-	fake.naturalRerankSearch = naturalSearchReport(readme.ID, readme.CurrentVersionID, "reranked excerpt")
-	fake.naturalRerankSearch.Reranking = &api.DocumentSearchRerankingReceipt{Outcome: "applied", CandidateCount: 1}
-	model, err := New(t.Context(), fake)
-	require.NoError(t, err)
-	model.mode = modeSearch
-	model.searchQuery = "solar maintenance"
-	model.naturalMode = naturalSemantic
-	model.naturalResultMode = naturalLexical
-	model.naturalProfiles = fake.profiles
-	model.loading = false
-	model.spinnerActive = false
-	model.naturalSearchRequest = api.DocumentSearchRequest{
-		Query: "solar maintenance", Mode: naturalLexical,
-		Fence: api.DocumentSourceFence{ContentVersionIDs: []string{"version"}},
+func TestNaturalSearchSettingsRestartActiveQuery(t *testing.T) {
+	for _, test := range []struct {
+		name       string
+		key        tea.KeyPressMsg
+		focused    bool
+		mode       string
+		rerank     bool
+		wantMode   string
+		wantRerank bool
+	}{
+		{name: "mode from results", key: key(tea.KeyTab), mode: naturalAuto, rerank: true, wantMode: naturalLexical, wantRerank: true},
+		{name: "mode from input", key: key(tea.KeyTab), focused: true, mode: naturalHybrid, rerank: true, wantMode: naturalNames},
+		{name: "enable rerank", key: tea.KeyPressMsg{Code: 'r', Mod: tea.ModCtrl}, mode: naturalLexical, wantMode: naturalLexical, wantRerank: true},
+		{name: "disable rerank", key: tea.KeyPressMsg{Code: 'r', Mod: tea.ModCtrl}, focused: true, mode: naturalLexical, rerank: true, wantMode: naturalLexical},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			fake := newFakeBackend()
+			readme := fake.nodes["/README.txt"]
+			fake.profiles[0].RerankingAvailable = true
+			fake.naturalSearch = naturalSearchReport(readme.ID, readme.CurrentVersionID, "fresh base")
+			model, err := New(t.Context(), fake)
+			require.NoError(t, err)
+			model.mode, model.searchQuery = modeSearch, "maintenance"
+			model.searching = test.focused
+			model.naturalProfiles = fake.profiles
+			model.naturalMode, model.naturalRerank = test.mode, test.rerank
+			model.loading = false
+			model.spinnerActive = false
+			model.rows = []row{{node: fake.nodes["/docs/report.txt"], excerpt: "old ranking"}}
+			oldRequestID, oldSearchID := model.requestID, model.naturalSearchID
+
+			model, cmd := updateModel(t, model, test.key)
+			require.NotNil(t, cmd)
+			assert.Equal(t, test.wantMode, model.naturalMode)
+			assert.Equal(t, test.wantRerank, model.naturalRerank)
+			assert.Greater(t, model.requestID, oldRequestID)
+			assert.Greater(t, model.naturalSearchID, oldSearchID)
+			assert.True(t, model.loading)
+			assert.True(t, model.spinnerActive)
+			for _, stale := range []tea.Msg{
+				searchLoadedMsg{requestID: oldRequestID, query: "stale"},
+				naturalSearchBaseLoadedMsg{requestID: oldRequestID, searchID: oldSearchID, query: "stale"},
+				naturalSearchRerankLoadedMsg{requestID: oldRequestID, searchID: oldSearchID,
+					report: api.DocumentSearchReport{Reranking: &api.DocumentSearchRerankingReceipt{Outcome: "applied"}}},
+			} {
+				model, _ = updateModel(t, model, stale)
+				require.Len(t, model.rows, 1)
+				assert.Equal(t, "old ranking", model.rows[0].excerpt)
+				assert.True(t, model.loading)
+			}
+			model = runModelCommand(t, model, cmd)
+			assert.False(t, model.loading)
+			assert.Equal(t, "maintenance", model.searchQuery)
+			assert.Equal(t, test.wantRerank, model.naturalRerankPending)
+			if test.wantMode != naturalNames {
+				require.Len(t, fake.naturalSearchRequests, 1)
+				assert.Equal(t, test.wantMode, fake.naturalSearchRequests[0].Mode)
+				assert.False(t, fake.naturalSearchRequests[0].Rerank)
+				assert.Equal(t, "fresh base", model.rows[0].excerpt)
+			}
+		})
 	}
-
-	updated, rerank := model.updateKeys(tea.KeyPressMsg{Code: 'r', Mod: tea.ModCtrl})
-	result, ok := updated.(Model)
-	require.True(t, ok)
-	require.NotNil(t, rerank)
-	assert.True(t, result.spinnerActive)
-
-	settledModel := runModelCommand(t, result, rerank)
-	assert.Equal(t, naturalLexical, fake.naturalSearchRequests[0].Mode)
-	assert.Equal(t, naturalLexical, settledModel.naturalResultMode)
 }
 
 func TestNaturalSearchSkipsUnavailableRows(t *testing.T) {
@@ -385,32 +416,61 @@ func TestNaturalSearchQueryInputKeepsLongCursorViewportVisible(t *testing.T) {
 	assert.Contains(t, rendered, "tail-visiblxe")
 }
 
-func TestNaturalSearchCtrlRDoesNotRerankDuringRefresh(t *testing.T) {
-	fake := newFakeBackend()
-	model, err := New(t.Context(), fake)
-	require.NoError(t, err)
-	model.mode = modeSearch
-	model.searchQuery = "solar maintenance"
-	model.naturalMode = naturalLexical
-	model.naturalProfiles = fake.profiles
-	model.naturalSearchRequest = api.DocumentSearchRequest{
-		Query: "old", Mode: naturalLexical,
-		Fence: api.DocumentSourceFence{ContentVersionIDs: []string{"old-version"}},
+func TestNaturalSearchSettingsUseLatestSubmittedQuery(t *testing.T) {
+	for _, acceptedQuery := range []string{"", "older query"} {
+		t.Run("previous="+acceptedQuery, func(t *testing.T) {
+			fake := newFakeBackend()
+			fake.profiles[0].RerankingAvailable = true
+			model, err := New(t.Context(), fake)
+			require.NoError(t, err)
+			model.naturalProfiles = fake.profiles
+			if acceptedQuery != "" {
+				model.mode, model.searchQuery = modeSearch, acceptedQuery
+			}
+			model.searching = true
+			model.searchInput.SetValue("latest submitted")
+			model, first := updateModel(t, model, key(tea.KeyEnter))
+			require.NotNil(t, first)
+			oldReply := first()
+			model, changed := updateModel(t, model, key(tea.KeyTab))
+			require.NotNil(t, changed)
+			model = firstModel(t, model, oldReply)
+			assert.Equal(t, acceptedQuery, model.searchQuery)
+			pendingReply := changed()
+			model, _ = updateModel(t, model, runeKey('/'))
+			model.searchInput.SetValue("unsubmitted draft")
+			model, rerank := updateModel(t, model, tea.KeyPressMsg{Code: 'r', Mod: tea.ModCtrl})
+			require.NotNil(t, rerank)
+			model = firstModel(t, model, pendingReply)
+			assert.Equal(t, acceptedQuery, model.searchQuery)
+			model = runModelCommand(t, model, rerank)
+			assert.Equal(t, "latest submitted", model.searchQuery)
+			assert.Equal(t, "unsubmitted draft", model.searchInput.Value())
+			assert.True(t, model.naturalRerankPending)
+		})
 	}
+}
 
-	updated, refresh := model.updateKeys(tea.KeyPressMsg{Code: 'r'})
-	refreshed, ok := updated.(Model)
-	require.True(t, ok)
-	require.NotNil(t, refresh)
-	assert.True(t, refreshed.loading)
-	assert.Empty(t, refreshed.naturalSearchRequest.Query)
-
-	updated, rerank := refreshed.updateKeys(tea.KeyPressMsg{Code: 'r', Mod: tea.ModCtrl})
-	result, ok := updated.(Model)
-	require.True(t, ok)
-	assert.Nil(t, rerank)
-	assert.False(t, result.naturalRerank)
-	assert.True(t, result.loading)
+func TestNaturalSearchInactiveSettingsDoNotSubmit(t *testing.T) {
+	model, err := New(t.Context(), newFakeBackend())
+	require.NoError(t, err)
+	model.searching = true
+	model.searchInput.SetValue("unsubmitted")
+	model.mode, model.searchQuery = modeSearch, "accepted"
+	for _, key := range []tea.KeyPressMsg{key(tea.KeyTab), {Code: 'r', Mod: tea.ModCtrl}} {
+		before := model.requestID
+		var cmd tea.Cmd
+		model, cmd = updateModel(t, model, key)
+		assert.Nil(t, cmd)
+		assert.Equal(t, before, model.requestID)
+	}
+	model.mode = modeBrowse
+	model.naturalProfiles = []api.ProcessingProfileSummary{{Name: "local", RerankingAvailable: true}}
+	model, cmd := updateModel(t, model, key(tea.KeyTab))
+	assert.Nil(t, cmd)
+	model, cmd = updateModel(t, model, tea.KeyPressMsg{Code: 'r', Mod: tea.ModCtrl})
+	assert.Nil(t, cmd)
+	assert.True(t, model.naturalRerank)
 }
 
 func TestNaturalSearchEmptyFenceDoesNotScheduleRerank(t *testing.T) {
@@ -431,7 +491,6 @@ func TestNaturalSearchEmptyFenceDoesNotScheduleRerank(t *testing.T) {
 	result, ok := updated.(Model)
 	require.True(t, ok)
 	assert.Nil(t, rerank)
-	assert.Empty(t, result.naturalSearchRequest.Query)
 	assert.False(t, result.naturalRerankPending)
 	assert.Empty(t, fake.naturalSearchRequests)
 	assert.Equal(t, naturalLexical, result.naturalResultMode)
@@ -477,24 +536,18 @@ func TestNaturalSearchRerankNotesPreserveReceiptOutcomeAndCause(t *testing.T) {
 	}
 }
 
-func TestNaturalSearchSubmitClearsRerankRequestBeforeNewSequence(t *testing.T) {
-	fake := newFakeBackend()
-	model, err := New(t.Context(), fake)
+func TestNaturalSearchRefreshRestartsPendingQuery(t *testing.T) {
+	model, err := New(t.Context(), newFakeBackend())
 	require.NoError(t, err)
-	model.mode = modeSearch
-	model.naturalMode = naturalNames
-	model.naturalSearchRequest = api.DocumentSearchRequest{Query: "old", Mode: naturalHybrid}
+	model.mode, model.searchQuery = modeSearch, "old"
 	model.searchInput.SetValue("new")
-
-	updated, cmd := model.updateSearchInput(tea.KeyPressMsg{Code: tea.KeyEnter})
-	result, ok := updated.(Model)
+	updated, _ := model.updateSearchInput(key(tea.KeyEnter))
+	model, ok := updated.(Model)
 	require.True(t, ok)
+	previous := model.requestID
+	model, cmd := updateModel(t, model, runeKey('r'))
 	require.NotNil(t, cmd)
-	assert.Empty(t, result.naturalSearchRequest.Query)
-
-	result.naturalMode = naturalLexical
-	result.mode = modeSearch
-	result.naturalRerank = false
-	_, rerank := result.updateKeys(tea.KeyPressMsg{Code: 'r', Mod: tea.ModCtrl})
-	assert.Nil(t, rerank)
+	assert.Greater(t, model.requestID, previous)
+	model = runModelCommand(t, model, cmd)
+	assert.Equal(t, "new", model.searchQuery)
 }

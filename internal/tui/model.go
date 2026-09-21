@@ -351,6 +351,8 @@ type Model struct {
 	searchInput            textinput.Model
 	searching              bool
 	searchQuery            string
+	submittedSearchQuery   string
+	submittedSearchID      uint64
 	searchReturn           *location
 	naturalProfiles        []api.ProcessingProfileSummary
 	naturalProfilesRequest uint64
@@ -358,7 +360,6 @@ type Model struct {
 	naturalResultMode      string
 	naturalRerank          bool
 	naturalSearchID        uint64
-	naturalSearchRequest   api.DocumentSearchRequest
 	naturalSearchNote      string
 	naturalRerankPending   bool
 
@@ -855,12 +856,8 @@ func (m Model) updateSearchInput(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	case keyCtrlC:
 		m.quitting = true
 		return m, tea.Quit
-	case keyTab:
-		m.cycleNaturalMode()
-		return m, nil
-	case keyCtrlR:
-		m.toggleNaturalRerank()
-		return m, nil
+	case keyTab, keyCtrlR:
+		return m.updateNaturalSearchSetting(msg.String())
 	case keyEscape:
 		m.searching = false
 		m.searchInput.Blur()
@@ -874,14 +871,7 @@ func (m Model) updateSearchInput(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		}
 		m.searching = false
 		m.searchInput.Blur()
-		m.loading = true
-		m.err = nil
-		m.requestID++
-		m.naturalSearchID++
-		m.naturalSearchRequest = api.DocumentSearchRequest{}
-		m.naturalRerankPending = false
-		m.naturalSearchNote = ""
-		return m, tea.Batch(m.startSpinner(), m.loadSearch(query, m.requestID))
+		return m.startSearch(query)
 	default:
 		var cmd tea.Cmd
 		m.searchInput, cmd = m.searchInput.Update(msg)
@@ -892,28 +882,9 @@ func (m Model) updateSearchInput(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 func (m Model) updateKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	key := msg.String()
 	switch key {
-	case keyTab:
-		if m.mode == modeSearch {
-			m.cycleNaturalMode()
-		}
-	case keyCtrlR:
-		if m.mode == modeSearch {
-			if m.loading {
-				return m, nil
-			}
-			wasEnabled := m.naturalRerank
-			m.toggleNaturalRerank()
-			if !wasEnabled && m.naturalRerank && m.naturalSearchRequest.Query != "" &&
-				len(m.naturalSearchRequest.Fence.ContentVersionIDs) > 0 && !m.naturalRerankPending {
-				m.requestID++
-				m.naturalSearchID++
-				m.naturalRerankPending = true
-				naturalMode := m.naturalResultMode
-				if naturalMode == "" {
-					naturalMode = m.naturalMode
-				}
-				return m, tea.Batch(m.startSpinner(), m.loadNaturalRerank(m.requestID, m.naturalSearchID, m.naturalSearchRequest, naturalMode))
-			}
+	case keyTab, keyCtrlR:
+		if m.activeSearchQuery() != "" {
+			return m.updateNaturalSearchSetting(key)
 		}
 	case "q", keyCtrlC:
 		m.quitting = true
@@ -1052,14 +1023,8 @@ func (m Model) updateKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			m.startSpinner(), m.loadHistory(selected.node.ID, "", 0, m.requestID),
 		)
 	case "r":
-		if m.mode == modeSearch && m.searchQuery != "" {
-			m.loading = true
-			m.err = nil
-			m.requestID++
-			m.naturalSearchID++
-			m.naturalSearchRequest = api.DocumentSearchRequest{}
-			m.naturalRerankPending = false
-			return m, tea.Batch(m.startSpinner(), m.loadSearch(m.searchQuery, m.requestID))
+		if query := m.activeSearchQuery(); query != "" {
+			return m.startSearch(query)
 		}
 		if m.directory.Path != "" {
 			m.loading = true
@@ -1892,17 +1857,11 @@ func (m Model) runMutation(
 }
 
 func (m Model) reloadCurrent() (tea.Model, tea.Cmd) {
+	if query := m.activeSearchQuery(); query != "" {
+		return m.startSearch(query)
+	}
 	m.loading = true
 	m.requestID++
-	if m.mode == modeSearch && m.searchQuery != "" {
-		m.naturalSearchID++
-		m.naturalSearchRequest = api.DocumentSearchRequest{}
-		m.naturalRerankPending = false
-		return m, tea.Batch(
-			m.startSpinner(),
-			m.loadSearch(m.searchQuery, m.requestID),
-		)
-	}
 	return m, tea.Batch(
 		m.startSpinner(),
 		m.loadDirectory(m.directory.ID, navigationRefresh, m.requestID),
@@ -1910,9 +1869,9 @@ func (m Model) reloadCurrent() (tea.Model, tea.Cmd) {
 }
 
 func (m Model) revisit(state location) (tea.Model, tea.Cmd) {
-	m.requestID++
 	m.restore(state)
 	if !state.stale {
+		m.requestID++
 		return m, nil
 	}
 	m.loading = true
@@ -1921,11 +1880,9 @@ func (m Model) revisit(state location) (tea.Model, tea.Cmd) {
 	m.truncated = false
 	m.cursor, m.offset = 0, 0
 	if state.mode == modeSearch && state.searchQuery != "" {
-		return m, tea.Batch(
-			m.startSpinner(),
-			m.loadSearch(state.searchQuery, m.requestID),
-		)
+		return m.startSearch(state.searchQuery)
 	}
+	m.requestID++
 	return m, tea.Batch(
 		m.startSpinner(),
 		m.loadDirectory(state.directory.ID, navigationRefresh, m.requestID),
@@ -1960,6 +1917,42 @@ func (m Model) loadDirectory(
 			requestID: requestID, kind: kind, directory: directory, page: page, err: err,
 		}
 	}
+}
+
+func (m Model) startSearch(query string) (tea.Model, tea.Cmd) {
+	m.loading = true
+	m.err = nil
+	m.requestID++
+	m.naturalSearchID++
+	m.submittedSearchQuery, m.submittedSearchID = query, m.requestID
+	m.naturalRerankPending = false
+	m.naturalSearchNote = ""
+	return m, tea.Batch(m.startSpinner(), m.loadSearch(query, m.requestID))
+}
+
+func (m Model) activeSearchQuery() string {
+	if m.submittedSearchID == m.requestID {
+		return m.submittedSearchQuery
+	}
+	if m.mode == modeSearch {
+		return m.searchQuery
+	}
+	return ""
+}
+
+func (m Model) updateNaturalSearchSetting(key string) (tea.Model, tea.Cmd) {
+	mode, rerank := m.naturalMode, m.naturalRerank
+	if key == keyTab {
+		m.cycleNaturalMode()
+	} else {
+		m.toggleNaturalRerank()
+	}
+	if m.naturalMode != mode || m.naturalRerank != rerank {
+		if query := m.activeSearchQuery(); query != "" {
+			return m.startSearch(query)
+		}
+	}
+	return m, nil
 }
 
 func (m Model) loadSearch(query string, requestID uint64) tea.Cmd {
@@ -2169,7 +2162,6 @@ func (m *Model) cycleNaturalMode() {
 		if mode == m.naturalMode {
 			m.naturalMode = modes[(index+1)%len(modes)]
 			if m.naturalMode == naturalNames {
-				m.naturalSearchRequest = api.DocumentSearchRequest{}
 				m.naturalRerank = false
 			}
 			return
@@ -2246,7 +2238,6 @@ func (m Model) applySearch(msg searchLoadedMsg) (tea.Model, tea.Cmd) {
 	}
 	m.loading = false
 	m.naturalRerankPending = false
-	m.naturalSearchRequest = api.DocumentSearchRequest{}
 	m.naturalResultMode = ""
 	if msg.err != nil {
 		m.err = msg.err
@@ -2291,7 +2282,6 @@ func (m Model) applyNaturalSearchBase(msg naturalSearchBaseLoadedMsg) (tea.Model
 	if msg.err != nil {
 		m.naturalMode = naturalNames
 		m.naturalRerank = false
-		m.naturalSearchRequest = api.DocumentSearchRequest{}
 		m.naturalResultMode = ""
 		m.naturalSearchNote = "Natural-language search unavailable: " + msg.err.Error() + ". Showing Names and text."
 		m.loading = true
@@ -2300,11 +2290,9 @@ func (m Model) applyNaturalSearchBase(msg naturalSearchBaseLoadedMsg) (tea.Model
 	m.applyNaturalRows(msg.query, msg.rows, msg.report.Truncated)
 	m.naturalResultMode = msg.naturalMode
 	if len(msg.request.Fence.ContentVersionIDs) == 0 {
-		m.naturalSearchRequest = api.DocumentSearchRequest{}
 		m.naturalSearchNote = naturalSearchReportNote(msg.report)
 		return m, nil
 	}
-	m.naturalSearchRequest = msg.request
 	m.naturalSearchNote = naturalSearchReportNote(msg.report)
 	profile := m.selectedNaturalProfile()
 	if m.naturalRerank && profile != nil && profile.RerankingAvailable {
