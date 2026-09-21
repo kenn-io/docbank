@@ -76,7 +76,7 @@ func verifyReportFile(ctx context.Context, path string) (report.Verification, er
 	if err != nil {
 		return report.Verification{}, err
 	}
-	budget := report.NewBudget(1 << 30)
+	budget := report.NewBudget(report.DefaultBudgetBytes)
 	defer func() { _ = budget.Close() }()
 	return report.VerifyBundle(ctx, budget, file, info.Size())
 }
@@ -118,7 +118,7 @@ func downloadReportPacket(ctx context.Context, connection *daemonconn.Connection
 		if _, err := file.Seek(0, io.SeekStart); err != nil {
 			return err
 		}
-		budget := report.NewBudget(1 << 30)
+		budget := report.NewBudget(report.DefaultBudgetBytes)
 		defer func() { _ = budget.Close() }()
 		_, err = report.VerifyBundle(ctx, budget, file, stream.Size)
 		return err
@@ -189,7 +189,7 @@ func init() {
 	csv := &cobra.Command{Use: "csv <report.zip>", Short: "Extract verified report counts without opening a vault", Args: cobra.ExactArgs(1)}
 	var csvOutput string
 	var csvOverwrite bool
-	csv.Flags().StringVar(&csvOutput, "output", "", "Destination for hits.csv")
+	csv.Flags().StringVar(&csvOutput, "output", "", "Destination for search-export.csv")
 	csv.Flags().BoolVar(&csvOverwrite, "overwrite", false, "Replace an existing destination")
 	csv.RunE = func(cmd *cobra.Command, args []string) error {
 		if csvOutput == "" {
@@ -208,7 +208,7 @@ func init() {
 			if info.Size() > reportFileLimit {
 				return report.ErrInvalidPacket
 			}
-			budget := report.NewBudget(1 << 30)
+			budget := report.NewBudget(report.DefaultBudgetBytes)
 			defer func() { _ = budget.Close() }()
 			content, err := report.ExtractVerifiedCSV(cmd.Context(), budget, packet, info.Size())
 			if err != nil {

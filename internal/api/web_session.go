@@ -232,7 +232,7 @@ func webSessionRequestAllowed(r *http.Request) bool {
 		return true
 	}
 	method, path := r.Method, r.URL.Path
-	if path == "/api/v1/term-reports" && method == http.MethodGet {
+	if path == "/api/v1/search-exports" && method == http.MethodGet {
 		query := r.URL.Query()
 		if len(query) > 2 {
 			return false
@@ -249,10 +249,10 @@ func webSessionRequestAllowed(r *http.Request) bool {
 		return true
 	}
 	if r.URL.RawQuery == "" {
-		if path == "/api/v1/term-reports" {
+		if path == "/api/v1/search-exports" {
 			return method == http.MethodPost
 		}
-		if after, ok := strings.CutPrefix(path, "/api/v1/term-reports/"); ok {
+		if after, ok := strings.CutPrefix(path, "/api/v1/search-exports/"); ok {
 			parts := strings.Split(after, "/")
 			if len(parts[0]) != 48 {
 				return false

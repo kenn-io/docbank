@@ -52,8 +52,9 @@ func (g *termRelationGroups) join(a, b string) {
 }
 
 func readTermReportFamilies(ctx context.Context, q metadataQuerier, budget report.Budget, frame *report.Frame) error {
-	rows, err := q.QueryContext(ctx, `SELECT operation_id,occurrence_order,child_version_id
-		FROM email_document_relations ORDER BY operation_id,occurrence_order`)
+	rows, err := q.QueryContext(ctx, `SELECT p.operation_id,COALESCE(r.occurrence_order,0),r.child_version_id
+		FROM email_document_publications p LEFT JOIN email_document_relations r ON r.operation_id=p.operation_id
+		ORDER BY p.operation_id,r.occurrence_order`)
 	if err != nil {
 		return err
 	}
@@ -65,7 +66,7 @@ func readTermReportFamilies(ctx context.Context, q metadataQuerier, budget repor
 		}
 		if len(keys) == 100000 {
 			_ = rows.Close()
-			return errors.New("report family relation limit exceeded")
+			return fmt.Errorf("%w: report family relation limit exceeded", report.ErrReportLimit)
 		}
 		var key termRelationKey
 		if err := rows.Scan(&key.operation, &key.order, &key.child); err != nil {
@@ -89,6 +90,8 @@ func readTermReportFamilies(ctx context.Context, q metadataQuerier, budget repor
 	childParents := make(map[string]int)
 	var publication emailDocumentPublicationRecord
 	var lastOperation string
+	var parent report.Identity
+	var parentCurrent bool
 	for _, key := range keys {
 		if err := ctx.Err(); err != nil {
 			return err
@@ -99,29 +102,33 @@ func readTermReportFamilies(ctx context.Context, q metadataQuerier, budget repor
 				return fmt.Errorf("report family publication %s: %w", key.operation, err)
 			}
 			lastOperation = key.operation
+			identity := publication.Request.Parent
+			parent, parentCurrent, err = currentTermRelationIdentity(ctx, q,
+				identity.NodeID, identity.VersionID, identity.SHA256)
+			if err != nil {
+				return err
+			}
+			if parentCurrent && publication.Receipt.InventoryState != report.StateComplete {
+				incomplete[parent.VersionID] = true
+			}
+		}
+		if key.order == 0 && len(publication.Receipt.Relations) == 0 {
+			continue
 		}
 		if key.order < 1 || key.order > len(publication.Receipt.Relations) {
 			return ErrEmailCorrupt
 		}
 		relation := publication.Receipt.Relations[key.order-1]
 		if relation.Order != key.order || relation.OperationID != key.operation ||
-			relation.Parent.VersionID != publication.Request.Parent.VersionID {
+			relation.Parent != publication.Request.Parent {
 			return ErrEmailCorrupt
 		}
 		if relation.Child == nil && key.child.Valid ||
 			relation.Child != nil && (!key.child.Valid || relation.Child.VersionID != key.child.String) {
 			return ErrEmailCorrupt
 		}
-		parent, parentCurrent, err := currentTermRelationIdentity(ctx, q,
-			relation.Parent.NodeID, relation.Parent.VersionID, relation.Parent.SHA256)
-		if err != nil {
-			return err
-		}
 		if !parentCurrent {
 			continue
-		}
-		if publication.Receipt.InventoryState != report.StateComplete {
-			incomplete[parent.VersionID] = true
 		}
 		if relation.Child == nil {
 			incomplete[parent.VersionID] = true
@@ -153,7 +160,9 @@ func readTermReportFamilies(ctx context.Context, q metadataQuerier, budget repor
 		childParents[child.VersionID]++
 	}
 	for versionID := range incomplete {
-		incomplete[groups.root(versionID)] = true
+		if _, connected := groups.parent[versionID]; connected {
+			incomplete[groups.root(versionID)] = true
+		}
 	}
 	for i := range frame.Members {
 		id := frame.Members[i].Identity.VersionID

@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"strings"
@@ -25,19 +26,21 @@ type termReportVersion struct {
 	recordedAt         string
 	earliestRecordedAt string
 	name               string
+	hasSourceMetadata  bool
 }
 
 // MaterializeTermReportFrame binds every term to one lexical generation and
 // one SQLite read snapshot. All current-version identities are captured before
 // the read fence is released; later edits cannot alter its match bits.
+// textBudget owns native bytes only and can close after date extraction.
 func (s *Store) MaterializeTermReportFrame(
-	ctx context.Context, request report.Request, selection report.CoverageSelection, budget report.Budget,
+	ctx context.Context, request report.Request, selection report.CoverageSelection, budget, textBudget report.Budget,
 ) (report.Frame, error) {
 	request, err := report.NormalizeRequest(request)
 	if err != nil {
 		return report.Frame{}, err
 	}
-	if budget == nil {
+	if budget == nil || textBudget == nil {
 		return report.Frame{}, errors.New("missing report budget")
 	}
 	coverage, err := normalizeCoverageSelection(CoverageSelection{
@@ -82,7 +85,7 @@ func (s *Store) MaterializeTermReportFrame(
 					Kind: string(dependency.Kind), ID: dependency.ID, Revision: dependency.Revision,
 				})
 			}
-			population, err := matchedPopulation(compiled, generation.ID)
+			population, err := matchedPopulation(compiled, generation.ID, &coverage.ProfileFingerprint)
 			if err != nil {
 				return err
 			}
@@ -113,11 +116,15 @@ func (s *Store) MaterializeTermReportFrame(
 			if err := ctx.Err(); err != nil {
 				return err
 			}
-			if err := s.readTermReportDateAuthority(ctx, q, info, budget, &frame); err != nil {
-				return fmt.Errorf("document %d date evidence: %w", info.identity.NodeID, err)
+			if info.hasSourceMetadata {
+				// ponytail: load one metadata authority at a time; batch if measured
+				// metadata-heavy reports outgrow the preparation deadline.
+				if err := s.readTermReportDateAuthority(ctx, q, info, budget, &frame); err != nil {
+					return fmt.Errorf("document %d date evidence: %w", info.identity.NodeID, err)
+				}
 			}
 			if generation.ID == "" {
-				if err := readTermReportNativeText(ctx, q, info, i, budget, &frame); err != nil {
+				if err := readTermReportNativeText(ctx, q, info, i, budget, textBudget, &frame); err != nil {
 					return fmt.Errorf("document %d native text: %w", info.identity.NodeID, err)
 				}
 			} else {
@@ -142,38 +149,26 @@ func reportCollectionWitnesses(ctx context.Context, q metadataQuerier, request r
 	if request.AllDocuments {
 		return result, nil
 	}
-	selected := make(map[string]bool, len(request.CollectionIDs))
-	for _, id := range request.CollectionIDs {
-		selected[id] = true
-	}
-	ids, err := q.QueryContext(ctx, `SELECT id FROM ingests WHERE source_kind NOT LIKE 'embedded:%'`)
+	collectionIDs, err := json.Marshal(request.CollectionIDs)
 	if err != nil {
 		return nil, err
 	}
-	for ids.Next() {
-		var id string
-		if err := ids.Scan(&id); err != nil {
-			_ = ids.Close() //nolint:sqlclosecheck // Close the cursor immediately on scan failure.
-			return nil, err
-		}
-		delete(selected, id)
-	}
-	if err := errors.Join(ids.Err(), ids.Close()); err != nil {
+	var found int
+	if err := q.QueryRowContext(ctx, `SELECT COUNT(*) FROM ingests
+		WHERE source_kind NOT LIKE 'embedded:%' AND id IN (SELECT value FROM json_each(?))`,
+		string(collectionIDs)).Scan(&found); err != nil {
 		return nil, err
 	}
-	if len(selected) != 0 {
+	if found != len(request.CollectionIDs) {
 		return nil, ErrUnknownReportCollection
-	}
-	selected = make(map[string]bool, len(request.CollectionIDs))
-	for _, id := range request.CollectionIDs {
-		selected[id] = true
 	}
 	rows, err := q.QueryContext(ctx, `SELECT p.ingest_id,p.node_id,p.identity,p.original_path,
 		COALESCE(p.original_mtime,''),COALESCE(p.supersedes,'')
 		FROM provenance p JOIN ingests i ON i.id=p.ingest_id JOIN nodes n ON n.id=p.node_id
 		WHERE i.source_kind NOT LIKE 'embedded:%' AND n.kind='file' AND n.trashed_at IS NULL
+		AND p.ingest_id IN (SELECT value FROM json_each(?))
 		AND NOT EXISTS (SELECT 1 FROM provenance later WHERE later.supersedes=p.identity)
-		ORDER BY p.node_id,p.ingest_id,p.identity`)
+		ORDER BY p.node_id,p.ingest_id,p.identity`, string(collectionIDs))
 	if err != nil {
 		return nil, err
 	}
@@ -188,12 +183,9 @@ func reportCollectionWitnesses(ctx context.Context, q metadataQuerier, request r
 			_ = rows.Close()
 			return nil, err
 		}
-		if !selected[id] {
-			continue
-		}
 		if len(result) > 50000 {
 			_ = rows.Close()
-			return nil, errors.New("report scope exceeds member limit")
+			return nil, fmt.Errorf("%w: report scope exceeds member limit", report.ErrReportLimit)
 		}
 		if _, err := budget.Reserve(ctx, int64(512+len(path)+len(mtime))); err != nil {
 			_ = rows.Close()
@@ -214,11 +206,26 @@ func readTermReportMembers(ctx context.Context, q metadataQuerier, request repor
 ) (map[int64]int, []termReportVersion, error) {
 	index := make(map[int64]int)
 	versions := make([]termReportVersion, 0)
+	var scope string
+	var args []any
+	if !request.AllDocuments {
+		nodeIDs := make([]int64, 0, len(witnesses))
+		for nodeID := range witnesses {
+			nodeIDs = append(nodeIDs, nodeID)
+		}
+		encoded, err := json.Marshal(nodeIDs)
+		if err != nil {
+			return nil, nil, err
+		}
+		scope = ` AND n.id IN (SELECT value FROM json_each(?))`
+		args = append(args, string(encoded))
+	}
 	rows, err := q.QueryContext(ctx, `SELECT n.id,cv.version_id,cv.blob_hash,cv.size,COALESCE(cv.mime_type,''),
 		n.revision,n.created_at,cv.recorded_at,
-		(SELECT MIN(old.recorded_at) FROM content_versions old WHERE old.node_id=n.id),n.name
+		(SELECT MIN(old.recorded_at) FROM content_versions old WHERE old.node_id=n.id),n.name,
+		EXISTS(SELECT 1 FROM source_metadata_heads h WHERE h.source_sha256=cv.blob_hash)
 		FROM nodes n JOIN content_versions cv ON cv.node_id=n.id AND cv.version_id=n.current_version_id
-		WHERE n.kind='file' AND n.trashed_at IS NULL ORDER BY n.id`)
+		WHERE n.kind='file' AND n.trashed_at IS NULL`+scope+` ORDER BY n.id`, args...)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -230,16 +237,13 @@ func readTermReportMembers(ctx context.Context, q metadataQuerier, request repor
 		var version termReportVersion
 		if err := rows.Scan(&version.identity.NodeID, &version.identity.VersionID, &version.identity.SHA256,
 			&version.size, &version.mimeType, &version.revision, &version.createdAt,
-			&version.recordedAt, &version.earliestRecordedAt, &version.name); err != nil {
+			&version.recordedAt, &version.earliestRecordedAt, &version.name, &version.hasSourceMetadata); err != nil {
 			_ = rows.Close()
 			return nil, nil, err
 		}
-		if !request.AllDocuments && len(witnesses[version.identity.NodeID]) == 0 {
-			continue
-		}
 		if len(frame.Members) == 50000 {
 			_ = rows.Close()
-			return nil, nil, errors.New("report scope exceeds member limit")
+			return nil, nil, fmt.Errorf("%w: report scope exceeds member limit", report.ErrReportLimit)
 		}
 		if _, err := budget.Reserve(ctx, int64(2048+len(version.name)+len(request.Terms))); err != nil {
 			_ = rows.Close()
@@ -312,7 +316,7 @@ func (s *Store) readTermReportDateAuthority(ctx context.Context, q metadataQueri
 }
 
 func readTermReportNativeText(ctx context.Context, q metadataQuerier, info termReportVersion,
-	index int, budget report.Budget, frame *report.Frame,
+	index int, budget, textBudget report.Budget, frame *report.Frame,
 ) error {
 	var extractor, status, text string
 	err := q.QueryRowContext(ctx, `SELECT e.extractor,e.status,COALESCE(e.text,'')
@@ -332,9 +336,12 @@ func readTermReportNativeText(ctx context.Context, q metadataQuerier, info termR
 		return nil
 	}
 	if len(text) > 16<<20 {
-		return errors.New("native text exceeds per-document report limit")
+		return fmt.Errorf("%w: native text exceeds per-document report limit", report.ErrReportLimit)
 	}
-	if _, err := budget.Reserve(ctx, int64(len(text)+1024)); err != nil {
+	if _, err := budget.Reserve(ctx, 1024); err != nil {
+		return err
+	}
+	if _, err := textBudget.Reserve(ctx, int64(len(text))); err != nil {
 		return err
 	}
 	bytes := []byte(text)
@@ -385,8 +392,11 @@ func readTermReportRendition(ctx context.Context, q metadataQuerier, info termRe
 		return err
 	}
 	if sourceHash != info.identity.SHA256 || binding.ArtifactSHA256 != markdownHash ||
-		binding.ArtifactSHA256 != artifactChecksum || binding.Size < 0 || binding.Size > 16<<20 {
+		binding.ArtifactSHA256 != artifactChecksum || binding.Size < 0 {
 		return ErrRenditionTextUnavailable
+	}
+	if binding.Size > 16<<20 {
+		return fmt.Errorf("%w: rendition text exceeds per-document report limit", report.ErrReportLimit)
 	}
 	if _, err := budget.Reserve(ctx, 1024); err != nil {
 		return err

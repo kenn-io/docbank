@@ -5668,6 +5668,19 @@ modified_since?: string;
 modified_before?: string;
 };
 
+export type ListTermReportHistoryParams = {
+/**
+ * @minimum 0
+ * @maximum 100
+ */
+offset?: number;
+/**
+ * @minimum 0
+ * @maximum 50
+ */
+limit?: number;
+};
+
 export type StorageStatusParams = {
 refresh?: boolean;
 };
@@ -5711,19 +5724,6 @@ limit?: number;
  */
 offset?: number;
 live_only?: boolean;
-};
-
-export type ListTermReportHistoryParams = {
-/**
- * @minimum 0
- * @maximum 100
- */
-offset?: number;
-/**
- * @minimum 0
- * @maximum 50
- */
-limit?: number;
 };
 
 export type ListTrashParams = {
@@ -11233,6 +11233,264 @@ return sessionJSON<DocumentSearchReport>(getSearchDocumentsUrl(),
 
 
 
+export const getListTermReportHistoryUrl = (params?: ListTermReportHistoryParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/v1/search-exports?${stringifiedParams}` : `/api/v1/search-exports`
+}
+
+/**
+ * @summary List recent exports
+ */
+export const listTermReportHistory = async (params?: ListTermReportHistoryParams, options?: Parameters<typeof sessionJSON>[1]): Promise<TermReportHistoryPage> => {
+
+  return sessionJSON<TermReportHistoryPage>(getListTermReportHistoryUrl(params),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+export const getCreateTermReportUrl = () => {
+
+
+
+
+  return `/api/v1/search-exports`
+}
+
+/**
+ * @summary Prepare a frozen search export
+ */
+export const createTermReport = async (request: NonReadonly<Request>, options?: Parameters<typeof sessionJSON>[1]): Promise<Summary> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return sessionJSON<Summary>(getCreateTermReportUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(request)
+  }
+);}
+
+
+
+export const getGetTermReportUrl = (id: string,) => {
+
+
+
+
+  return `/api/v1/search-exports/${encodeURIComponent(String(id))}`
+}
+
+/**
+ * @summary Read a frozen export summary
+ */
+export const getTermReport = async (id: string, options?: Parameters<typeof sessionJSON>[1]): Promise<Summary> => {
+
+  return sessionJSON<Summary>(getGetTermReportUrl(id),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+export const getDownloadTermReportbundleUrl = (id: string,) => {
+
+
+
+
+  return `/api/v1/search-exports/${encodeURIComponent(String(id))}/bundle`
+}
+
+/**
+ * @summary Download frozen export bundle
+ */
+export const downloadTermReportbundle = async (id: string, options?: Parameters<typeof sessionJSON>[1]): Promise<Blob> => {
+
+  return sessionJSON<Blob>(getDownloadTermReportbundleUrl(id),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+export const getDownloadTermReportcsvUrl = (id: string,) => {
+
+
+
+
+  return `/api/v1/search-exports/${encodeURIComponent(String(id))}/csv`
+}
+
+/**
+ * @summary Download frozen export csv
+ */
+export const downloadTermReportcsv = async (id: string, options?: Parameters<typeof sessionJSON>[1]): Promise<Blob> => {
+
+  return sessionJSON<Blob>(getDownloadTermReportcsvUrl(id),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+export const getGetTermReportDatesUrl = (id: string,) => {
+
+
+
+
+  return `/api/v1/search-exports/${encodeURIComponent(String(id))}/dates`
+}
+
+/**
+ * @summary Inspect frozen export date evidence
+ */
+export const getTermReportDates = async (id: string,
+    datePageRequest: NonReadonly<DatePageRequest>, options?: Parameters<typeof sessionJSON>[1]): Promise<DatePage> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return sessionJSON<DatePage>(getGetTermReportDatesUrl(id),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(datePageRequest)
+  }
+);}
+
+
+
+export const getIssueTermReportDownloadUrl = (id: string,) => {
+
+
+
+
+  return `/api/v1/search-exports/${encodeURIComponent(String(id))}/download`
+}
+
+/**
+ * @summary Issue a one-use browser export download
+ */
+export const issueTermReportDownload = async (id: string,
+    issueTermReportDownloadRequest: NonReadonly<IssueTermReportDownloadRequest>, options?: Parameters<typeof sessionJSON>[1]): Promise<IssueTermReportDownloadResponse> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return sessionJSON<IssueTermReportDownloadResponse>(getIssueTermReportDownloadUrl(id),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(issueTermReportDownloadRequest)
+  }
+);}
+
+
+
+export const getReviseTermReportUrl = (id: string,) => {
+
+
+
+
+  return `/api/v1/search-exports/${encodeURIComponent(String(id))}/revisions`
+}
+
+/**
+ * @summary Create an export with reviewed dates
+ */
+export const reviseTermReport = async (id: string,
+    reviseTermReportRequest: NonReadonly<ReviseTermReportRequest>, options?: Parameters<typeof sessionJSON>[1]): Promise<Summary> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return sessionJSON<Summary>(getReviseTermReportUrl(id),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(reviseTermReportRequest)
+  }
+);}
+
+
+
 export const getFindSimilarDocumentsUrl = () => {
 
 
@@ -12106,264 +12364,6 @@ export const listTagNodes = async (tagId: string,
     method: 'GET'
 
 
-  }
-);}
-
-
-
-export const getListTermReportHistoryUrl = (params?: ListTermReportHistoryParams,) => {
-  const normalizedParams = new URLSearchParams();
-
-  Object.entries(params || {}).forEach(([key, value]) => {
-
-    if (value !== undefined) {
-      normalizedParams.append(key, value === null ? 'null' : String(value))
-    }
-  });
-
-  const stringifiedParams = normalizedParams.toString();
-
-  return stringifiedParams.length > 0 ? `/api/v1/term-reports?${stringifiedParams}` : `/api/v1/term-reports`
-}
-
-/**
- * @summary List reusable report runs
- */
-export const listTermReportHistory = async (params?: ListTermReportHistoryParams, options?: Parameters<typeof sessionJSON>[1]): Promise<TermReportHistoryPage> => {
-
-  return sessionJSON<TermReportHistoryPage>(getListTermReportHistoryUrl(params),
-  {
-    ...options,
-    method: 'GET'
-
-
-  }
-);}
-
-
-
-export const getCreateTermReportUrl = () => {
-
-
-
-
-  return `/api/v1/term-reports`
-}
-
-/**
- * @summary Prepare a frozen search-term report
- */
-export const createTermReport = async (request: NonReadonly<Request>, options?: Parameters<typeof sessionJSON>[1]): Promise<Summary> => {
-
-    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
-    if (!h) return {};
-    if (h instanceof Headers) return Object.fromEntries(h.entries());
-    if (Symbol.iterator in h) {
-      return Object.fromEntries(
-        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
-      );
-    }
-    const headers: Record<string, string | readonly string[]> = {};
-    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
-      if (value !== undefined) headers[name] = value;
-    }
-    return headers;
-  };
-return sessionJSON<Summary>(getCreateTermReportUrl(),
-  {
-    ...options,
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
-    body: JSON.stringify(request)
-  }
-);}
-
-
-
-export const getGetTermReportUrl = (id: string,) => {
-
-
-
-
-  return `/api/v1/term-reports/${encodeURIComponent(String(id))}`
-}
-
-/**
- * @summary Read a frozen report summary
- */
-export const getTermReport = async (id: string, options?: Parameters<typeof sessionJSON>[1]): Promise<Summary> => {
-
-  return sessionJSON<Summary>(getGetTermReportUrl(id),
-  {
-    ...options,
-    method: 'GET'
-
-
-  }
-);}
-
-
-
-export const getDownloadTermReportbundleUrl = (id: string,) => {
-
-
-
-
-  return `/api/v1/term-reports/${encodeURIComponent(String(id))}/bundle`
-}
-
-/**
- * @summary Download frozen report bundle
- */
-export const downloadTermReportbundle = async (id: string, options?: Parameters<typeof sessionJSON>[1]): Promise<Blob> => {
-
-  return sessionJSON<Blob>(getDownloadTermReportbundleUrl(id),
-  {
-    ...options,
-    method: 'GET'
-
-
-  }
-);}
-
-
-
-export const getDownloadTermReportcsvUrl = (id: string,) => {
-
-
-
-
-  return `/api/v1/term-reports/${encodeURIComponent(String(id))}/csv`
-}
-
-/**
- * @summary Download frozen report csv
- */
-export const downloadTermReportcsv = async (id: string, options?: Parameters<typeof sessionJSON>[1]): Promise<Blob> => {
-
-  return sessionJSON<Blob>(getDownloadTermReportcsvUrl(id),
-  {
-    ...options,
-    method: 'GET'
-
-
-  }
-);}
-
-
-
-export const getGetTermReportDatesUrl = (id: string,) => {
-
-
-
-
-  return `/api/v1/term-reports/${encodeURIComponent(String(id))}/dates`
-}
-
-/**
- * @summary Inspect frozen report date evidence
- */
-export const getTermReportDates = async (id: string,
-    datePageRequest: NonReadonly<DatePageRequest>, options?: Parameters<typeof sessionJSON>[1]): Promise<DatePage> => {
-
-    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
-    if (!h) return {};
-    if (h instanceof Headers) return Object.fromEntries(h.entries());
-    if (Symbol.iterator in h) {
-      return Object.fromEntries(
-        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
-      );
-    }
-    const headers: Record<string, string | readonly string[]> = {};
-    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
-      if (value !== undefined) headers[name] = value;
-    }
-    return headers;
-  };
-return sessionJSON<DatePage>(getGetTermReportDatesUrl(id),
-  {
-    ...options,
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
-    body: JSON.stringify(datePageRequest)
-  }
-);}
-
-
-
-export const getIssueTermReportDownloadUrl = (id: string,) => {
-
-
-
-
-  return `/api/v1/term-reports/${encodeURIComponent(String(id))}/download`
-}
-
-/**
- * @summary Issue a one-use browser report download
- */
-export const issueTermReportDownload = async (id: string,
-    issueTermReportDownloadRequest: NonReadonly<IssueTermReportDownloadRequest>, options?: Parameters<typeof sessionJSON>[1]): Promise<IssueTermReportDownloadResponse> => {
-
-    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
-    if (!h) return {};
-    if (h instanceof Headers) return Object.fromEntries(h.entries());
-    if (Symbol.iterator in h) {
-      return Object.fromEntries(
-        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
-      );
-    }
-    const headers: Record<string, string | readonly string[]> = {};
-    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
-      if (value !== undefined) headers[name] = value;
-    }
-    return headers;
-  };
-return sessionJSON<IssueTermReportDownloadResponse>(getIssueTermReportDownloadUrl(id),
-  {
-    ...options,
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
-    body: JSON.stringify(issueTermReportDownloadRequest)
-  }
-);}
-
-
-
-export const getReviseTermReportUrl = (id: string,) => {
-
-
-
-
-  return `/api/v1/term-reports/${encodeURIComponent(String(id))}/revisions`
-}
-
-/**
- * @summary Create a frozen reviewed date revision
- */
-export const reviseTermReport = async (id: string,
-    reviseTermReportRequest: NonReadonly<ReviseTermReportRequest>, options?: Parameters<typeof sessionJSON>[1]): Promise<Summary> => {
-
-    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
-    if (!h) return {};
-    if (h instanceof Headers) return Object.fromEntries(h.entries());
-    if (Symbol.iterator in h) {
-      return Object.fromEntries(
-        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
-      );
-    }
-    const headers: Record<string, string | readonly string[]> = {};
-    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
-      if (value !== undefined) headers[name] = value;
-    }
-    return headers;
-  };
-return sessionJSON<Summary>(getReviseTermReportUrl(id),
-  {
-    ...options,
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
-    body: JSON.stringify(reviseTermReportRequest)
   }
 );}
 

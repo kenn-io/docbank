@@ -25,7 +25,7 @@ func AdaptDateFields(ctx context.Context, budget Budget, fields []RawDateField) 
 		return nil, errors.New("missing report budget")
 	}
 	if len(fields) > maxAdaptedFields {
-		return nil, errors.New("too many date fields")
+		return nil, fmt.Errorf("%w: too many date fields", ErrReportLimit)
 	}
 	result := make([]DateCandidate, 0, len(fields))
 	releases := make([]func(), 0, len(fields))
@@ -44,13 +44,13 @@ func AdaptDateFields(ctx context.Context, budget Budget, fields []RawDateField) 
 			return nil, errors.New("sensitive date field has not passed disclosure filtering")
 		}
 		if len(field.Raw) > maxRawDateBytes || len(field.Normalized) > maxRawDateBytes {
-			return nil, errors.New("date field exceeds raw value limit")
+			return nil, fmt.Errorf("%w: date field exceeds raw value limit", ErrReportLimit)
 		}
 		fieldBytes := len(field.Namespace) + len(field.SourceField) + len(field.Key) +
 			len(field.Raw) + len(field.Normalized) + len(field.Timezone) + len(field.Precision) +
 			len(field.ClaimBasis) + len(field.GenerationID) + len(field.GenerationSHA256)
 		if fieldBytes > maxDateFieldBytes {
-			return nil, errors.New("date field exceeds evidence limit")
+			return nil, fmt.Errorf("%w: date field exceeds evidence limit", ErrReportLimit)
 		}
 		if !validSHA256(field.GenerationSHA256) {
 			return nil, errors.New("date field lacks a valid generation checksum")

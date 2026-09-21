@@ -14,17 +14,12 @@ import (
 	"go.kenn.io/docbank/report"
 )
 
-func termReportOwner(ctx context.Context) (string, error) {
-	owner, ok := workspaceSnapshotOwner(ctx)
-	if !ok {
-		return "", NewError(http.StatusUnauthorized, "unauthorized", "authenticated report owner is missing")
-	}
-	return owner, nil
-}
-
 func termReportError(err error) *Error {
 	if problem, ok := errors.AsType[*Error](err); ok {
 		return problem
+	}
+	if limit, ok := errors.AsType[*report.ContentDateLimitError](err); ok {
+		return NewError(http.StatusRequestEntityTooLarge, "report_limit", limit.Error())
 	}
 	if positioned, ok := errors.AsType[*query.ExpressionError](err); ok {
 		problem := NewError(http.StatusUnprocessableEntity, "invalid_query", positioned.Message)
@@ -38,15 +33,15 @@ func termReportError(err error) *Error {
 		return NewError(http.StatusGone, "report_unavailable", "This report handle is no longer available.")
 	case errors.Is(err, reporting.ErrCapacity):
 		return NewError(http.StatusServiceUnavailable, "report_capacity", "Report capacity is exhausted; retry later.")
-	case errors.Is(err, report.ErrBudgetExhausted), errors.Is(err, reporting.ErrReportLimit):
+	case errors.Is(err, report.ErrBudgetExhausted), errors.Is(err, report.ErrReportLimit):
 		return NewError(http.StatusRequestEntityTooLarge, "report_limit", "The report exceeds a resource limit.")
 	case errors.Is(err, reporting.ErrIncompleteCoverage):
 		return NewError(http.StatusUnprocessableEntity, "incomplete_coverage", "This date-scoped report has incomplete search or family coverage.")
 	case errors.Is(err, reporting.ErrIncompleteDateCoverage):
 		return NewError(http.StatusUnprocessableEntity, "incomplete_date_coverage", "Some report dates need review before strict counts can be produced.")
-	case errors.Is(err, reporting.ErrInvalidRevision):
-		return NewError(http.StatusUnprocessableEntity, "invalid_report_choice", err.Error())
-	case errors.Is(err, report.ErrInvalidChoice), errors.Is(err, reporting.ErrStaleRenditionEvidence):
+	case errors.Is(err, reporting.ErrInvalidRevision), errors.Is(err, report.ErrInvalidChoice):
+		return NewError(http.StatusBadRequest, "invalid_report_choice", err.Error())
+	case errors.Is(err, report.ErrStaleChoice), errors.Is(err, reporting.ErrStaleRenditionEvidence):
 		return NewError(http.StatusConflict, "stale_evidence", "The reviewed or captured evidence does not match this report.")
 	case errors.Is(err, reporting.ErrReviewRequired):
 		return NewError(http.StatusConflict, "date_review_required", "Review the report dates before downloading counts.")
@@ -67,6 +62,16 @@ func termReportError(err error) *Error {
 func registerTermReportRoutes(api huma.API, d Deps, gate *OperationGate, cache *reporting.Cache,
 	downloads *webDownloadRegistry, sessions *webSessionRegistry,
 ) {
+	termReportOwner := func(ctx context.Context) (string, error) {
+		owner, ok := workspaceSnapshotOwner(ctx)
+		if !ok {
+			return "", NewError(http.StatusUnauthorized, "unauthorized", "authenticated report owner is missing")
+		}
+		if cache == nil || d.Store == nil || d.Blobs == nil {
+			return "", NewError(http.StatusServiceUnavailable, "report_unavailable", "Search exports are unavailable.")
+		}
+		return owner, nil
+	}
 	serviceFor := func(profile string) *reporting.Service {
 		return &reporting.Service{Source: d.Store,
 			Text: reporting.CapturedTextReader{Open: d.Blobs.OpenStreamContext},
@@ -81,17 +86,17 @@ func registerTermReportRoutes(api huma.API, d Deps, gate *OperationGate, cache *
 			Capture: gate.CaptureContext}
 	}
 	huma.Register(api, huma.Operation{OperationID: "createTermReport", Method: http.MethodPost,
-		Path: "/api/v1/term-reports", Summary: "Prepare a frozen search-term report",
+		Path: "/api/v1/search-exports", Summary: "Prepare a frozen search export",
 		MaxBodyBytes: 8 << 20}, func(ctx context.Context, in *struct{ Body report.Request }) (*struct{ Body report.Summary }, error) {
 		owner, err := termReportOwner(ctx)
 		if err != nil {
 			return nil, err
 		}
-		if cache == nil || d.Blobs == nil {
-			return nil, NewError(http.StatusServiceUnavailable, "report_unavailable", "Reports are unavailable.")
-		}
 		request, err := report.NormalizeRequest(in.Body)
 		if err != nil {
+			if errors.Is(err, report.ErrInvalidChoice) {
+				return nil, termReportError(err)
+			}
 			return nil, NewError(http.StatusUnprocessableEntity, "invalid_report_request", err.Error())
 		}
 		summary, err := cache.Create(ctx, owner, serviceFor(request.Profile), request)
@@ -105,16 +110,13 @@ func registerTermReportRoutes(api huma.API, d Deps, gate *OperationGate, cache *
 		return &struct{ Body report.Summary }{Body: summary}, nil
 	})
 	huma.Register(api, huma.Operation{OperationID: "listTermReportHistory", Method: http.MethodGet,
-		Path: "/api/v1/term-reports", Summary: "List reusable report runs"},
+		Path: "/api/v1/search-exports", Summary: "List recent exports"},
 		func(ctx context.Context, in *struct {
 			Offset int `query:"offset" minimum:"0" maximum:"100"`
 			Limit  int `query:"limit" minimum:"0" maximum:"50"`
 		}) (*struct{ Body store.TermReportHistoryPage }, error) {
 			if _, err := termReportOwner(ctx); err != nil {
 				return nil, err
-			}
-			if d.Store == nil {
-				return nil, NewError(http.StatusServiceUnavailable, "report_unavailable", "Reports are unavailable.")
 			}
 			limit := in.Limit
 			if limit == 0 {
@@ -127,7 +129,7 @@ func registerTermReportRoutes(api huma.API, d Deps, gate *OperationGate, cache *
 			return &struct{ Body store.TermReportHistoryPage }{Body: page}, nil
 		})
 	huma.Register(api, huma.Operation{OperationID: "getTermReport", Method: http.MethodGet,
-		Path: "/api/v1/term-reports/{id}", Summary: "Read a frozen report summary"},
+		Path: "/api/v1/search-exports/{id}", Summary: "Read a frozen export summary"},
 		func(ctx context.Context, in *struct {
 			ID string `path:"id"`
 		}) (*struct{ Body report.Summary }, error) {
@@ -142,7 +144,7 @@ func registerTermReportRoutes(api huma.API, d Deps, gate *OperationGate, cache *
 			return &struct{ Body report.Summary }{Body: summary}, nil
 		})
 	huma.Register(api, huma.Operation{OperationID: "getTermReportDates", Method: http.MethodPost,
-		Path: "/api/v1/term-reports/{id}/dates", Summary: "Inspect frozen report date evidence",
+		Path: "/api/v1/search-exports/{id}/dates", Summary: "Inspect frozen export date evidence",
 		MaxBodyBytes: 4 << 10}, func(ctx context.Context, in *struct {
 		ID   string `path:"id"`
 		Body report.DatePageRequest
@@ -158,7 +160,7 @@ func registerTermReportRoutes(api huma.API, d Deps, gate *OperationGate, cache *
 		return &struct{ Body report.DatePage }{Body: page}, nil
 	})
 	huma.Register(api, huma.Operation{OperationID: "reviseTermReport", Method: http.MethodPost,
-		Path: "/api/v1/term-reports/{id}/revisions", Summary: "Create a frozen reviewed date revision",
+		Path: "/api/v1/search-exports/{id}/revisions", Summary: "Create an export with reviewed dates",
 		MaxBodyBytes: 8 << 20}, func(ctx context.Context, in *struct {
 		ID   string `path:"id"`
 		Body struct {
@@ -175,7 +177,7 @@ func registerTermReportRoutes(api huma.API, d Deps, gate *OperationGate, cache *
 		}
 		request.DateChoices = in.Body.Choices
 		if _, err := report.NormalizeRequest(request); err != nil {
-			return nil, NewError(http.StatusUnprocessableEntity, "invalid_report_choice", err.Error())
+			return nil, NewError(http.StatusBadRequest, "invalid_report_choice", err.Error())
 		}
 		// The cache reuses the parent frame; configuration is already frozen.
 		summary, err := cache.Revise(ctx, owner, in.ID, serviceFor(""), in.Body.Choices)
@@ -190,7 +192,7 @@ func registerTermReportRoutes(api huma.API, d Deps, gate *OperationGate, cache *
 		return &struct{ Body report.Summary }{Body: summary}, nil
 	})
 	huma.Register(api, huma.Operation{OperationID: "issueTermReportDownload", Method: http.MethodPost,
-		Path: "/api/v1/term-reports/{id}/download", Summary: "Issue a one-use browser report download",
+		Path: "/api/v1/search-exports/{id}/download", Summary: "Issue a one-use browser export download",
 		MaxBodyBytes: 1024}, func(ctx context.Context, in *struct {
 		ID   string `path:"id"`
 		Body struct {
@@ -217,9 +219,9 @@ func registerTermReportRoutes(api huma.API, d Deps, gate *OperationGate, cache *
 		}
 		_ = reader.Close()
 		ticket := webDownloadTicket{owner: owner, reportID: in.ID, reportFormat: in.Body.Format,
-			name: "hits.csv", mediaType: "text/csv; charset=utf-8"}
+			name: "search-export.csv", mediaType: "text/csv; charset=utf-8"}
 		if in.Body.Format == "bundle" {
-			ticket.name, ticket.mediaType = "term-report.zip", "application/zip"
+			ticket.name, ticket.mediaType = "search-export.zip", "application/zip"
 		}
 		var token string
 		active, err := sessions.withActiveOwner(owner, func() error {
@@ -239,15 +241,15 @@ func registerTermReportRoutes(api huma.API, d Deps, gate *OperationGate, cache *
 		return out, nil
 	})
 	for _, format := range []string{"csv", "bundle"} {
-		mediaType, filename := "text/csv; charset=utf-8", "hits.csv"
+		mediaType, filename := "text/csv; charset=utf-8", "search-export.csv"
 		openAPIType := "text/csv"
 		if format == "bundle" {
-			mediaType, filename = "application/zip", "term-report.zip"
+			mediaType, filename = "application/zip", "search-export.zip"
 			openAPIType = "application/zip"
 		}
 		huma.Register(api, huma.Operation{OperationID: "downloadTermReport" + format, Method: http.MethodGet,
-			Path: "/api/v1/term-reports/{id}/" + format, Summary: "Download frozen report " + format,
-			Responses: map[string]*huma.Response{"200": {Description: "Frozen report artifact",
+			Path: "/api/v1/search-exports/{id}/" + format, Summary: "Download frozen export " + format,
+			Responses: map[string]*huma.Response{"200": {Description: "Frozen export artifact",
 				Content: map[string]*huma.MediaType{openAPIType: {
 					Schema: &huma.Schema{Type: openAPIStringType, Format: "binary"},
 				}},

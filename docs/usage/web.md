@@ -364,6 +364,15 @@ The catalog shows the first 1,000 name-sorted definitions and discloses the
 complete count. Use `docbank tag`, the paginated HTTP API, or an embedded client
 for exhaustive definition management and assignments outside the displayed selection.
 
+## Export dated search counts
+
+Open **Search exports** in the top bar to create a CSV of search counts for
+selected sources and date ranges. Review unresolved dates before downloading
+the CSV or evidence ZIP. **Recent exports** keeps the latest 100 requests and
+outcomes; **Use as draft** runs a request against current data without its old
+date choices. See [Search exports](search-exports.md) for the full workflow,
+count definitions, and expiry limits.
+
 ## Saved queries and highlights
 
 Open the bookmark button in the top bar to manage saved queries and highlight

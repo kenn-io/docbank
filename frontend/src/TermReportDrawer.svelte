@@ -148,7 +148,7 @@
       if (JSON.stringify(draft) !== submittedFingerprint) {
         active = null;
         submittedDraft = null;
-        notice = "An export finished from an earlier draft. Find it in saved searches to inspect or rerun it.";
+        notice = "An export finished from an earlier draft. Find it in recent exports to inspect or rerun it.";
       } else {
         active = summary;
         submittedDraft = submittedFingerprint;
@@ -181,9 +181,13 @@
     return `${member.document.node_id}:${member.document.version_id}:${member.document.sha256}`;
   }
 
+  function canInterpret(candidate: DateCandidate): boolean {
+    return candidate.rejection === "ambiguous_numeric_date" || candidate.rejection === "timezone_omitted";
+  }
+
   function choose(member: DateReviewMember, candidate: DateCandidate): void {
     const key = documentKey(member);
-    choices = { ...choices, [key]: { action: candidate.rejection ? "interpret" : "select",
+    choices = { ...choices, [key]: { action: canInterpret(candidate) ? "interpret" : "select",
       candidate_id: candidate.id, document: member.document,
       evidence_sha256: candidate.locator.evidence_sha256 ?? "", reason: "" } };
   }
@@ -191,7 +195,9 @@
   function updateChoice(member: DateReviewMember, field: keyof DateChoice, value: string): void {
     const key = documentKey(member);
     const current = choices[key];
-    if (current) choices = { ...choices, [key]: { ...current, [field]: value } };
+    if (current) choices = { ...choices, [key]: field === "action"
+      ? { ...current, action: value, reviewed_date: undefined, reviewed_timezone: undefined, reviewed_role: undefined }
+      : { ...current, [field]: value } };
   }
 
   async function revise(): Promise<void> {
@@ -201,6 +207,11 @@
     const selected = Object.values(choices);
     if (!selected.length || selected.some(choice => !choice.reason.trim())) {
       error = "Choose evidence and give a reason for each reviewed date.";
+      return;
+    }
+    if (selected.some(choice => choice.action === "interpret" &&
+      (!choice.reviewed_date?.trim() || !choice.reviewed_timezone?.trim()))) {
+      error = "Enter a reviewed date and source timezone for each interpreted date.";
       return;
     }
     busy = true;
@@ -238,7 +249,7 @@
 
 <DetailDrawer width="min(900px, 100vw)" ariaLabel="Search exports" onclose={onclose}>
   {#snippet header()}
-    <div class="heading"><div><span>SEARCH EXPORTS</span><strong>Export counts and save searches</strong></div>
+    <div class="heading"><div><span>SEARCH EXPORTS</span><strong>Export search counts</strong></div>
       <IconButton size="sm" ariaLabel="Close search exports" onclick={onclose}><XIcon size="16" aria-hidden="true" /></IconButton></div>
   {/snippet}
   <div class="body">
@@ -306,11 +317,15 @@
                   <div class="review-item"><strong>Document {member.document.node_id}</strong>
                     {#if member.selection.date}<span>Selected {member.selection.date} ({member.selection.reason})</span>{:else}<span>Date unresolved</span>{/if}
                     {#each member.candidates as candidate (candidate.id)}
-                      <label class="candidate"><input type="radio" name={`review-${documentKey(member)}`} checked={choices[documentKey(member)]?.candidate_id === candidate.id} onchange={() => choose(member, candidate)} />
+                      <label class="candidate"><input type="radio" name={`review-${documentKey(member)}`} disabled={!!candidate.rejection && !canInterpret(candidate)} checked={choices[documentKey(member)]?.candidate_id === candidate.id} onchange={() => choose(member, candidate)} />
                         <span>{candidate.role} · {candidate.raw} · {candidate.source_class}{candidate.rejection ? ` · ${candidate.rejection}` : ""}</span></label>
                     {/each}
                     {#if choices[documentKey(member)]}
-                      <div class="review-form"><label>Action <select value={choices[documentKey(member)].action} onchange={event => updateChoice(member, "action", event.currentTarget.value)}><option value="select">Select source date</option><option value="interpret">Interpret source date</option><option value="reclassify">Reclassify role</option></select></label>
+                      {@const candidate = member.candidates.find(item => item.id === choices[documentKey(member)].candidate_id)}
+                      <div class="review-form"><label>Action <select value={choices[documentKey(member)].action} onchange={event => updateChoice(member, "action", event.currentTarget.value)}>
+                        {#if candidate && canInterpret(candidate)}<option value="interpret">Interpret source date</option>
+                        {:else}<option value="select">Select source date</option><option value="reclassify">Reclassify role</option>{/if}
+                      </select></label>
                         <label>Reason <input value={choices[documentKey(member)].reason} oninput={event => updateChoice(member, "reason", event.currentTarget.value)} /></label>
                         {#if choices[documentKey(member)].action === "interpret"}<label>Reviewed date (YYYY-MM-DD) <TextInput value={choices[documentKey(member)].reviewed_date ?? ""} oninput={value => updateChoice(member, "reviewed_date", value)} block /></label>
                           <label>Source timezone <input value={choices[documentKey(member)].reviewed_timezone ?? ""} oninput={event => updateChoice(member, "reviewed_timezone", event.currentTarget.value)} placeholder="UTC" /></label>{/if}
@@ -326,8 +341,8 @@
       </Card>
     {/if}
 
-    <Card level="default" padding="sm" title="Saved searches">
-      <div class="history"><p>Saved searches keep the query, scope, and export outcome in this vault. Download links and reviewed evidence expire; reusing a search always starts a fresh run.</p>
+    <Card level="default" padding="sm" title="Recent exports">
+      <div class="history"><p>The latest 100 export requests and outcomes stay in this vault. Download links and reviewed evidence expire; using a request as a draft starts a fresh run.</p>
         {#if !history.length && historyLoading}<p><Spinner size={14} /> Loading history…</p>{/if}
         {#if !history.length && !historyLoading}<p>No searches have been exported yet.</p>{/if}
         {#each history as item (item.summary.id)}

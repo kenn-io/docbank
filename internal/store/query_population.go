@@ -8,10 +8,12 @@ import (
 // matchedPopulation renders the exact current node/version membership selected
 // by a compiled query. Required shared relations remain explicit on the
 // returned fragment and must be bound in the caller's read snapshot.
+// A nil profile searches all headed profiles; a nonnil profile binds content
+// predicates to that exact profile, including inside negation and saved queries.
 func matchedPopulation(
-	compiled CompiledQuery, generationID string,
+	compiled CompiledQuery, generationID string, profileFingerprint *string,
 ) (compiledQueryFragment, error) {
-	predicate, err := compiled.bind(generationID)
+	predicate, err := compiled.bind(generationID, profileFingerprint)
 	if err != nil {
 		return compiledQueryFragment{}, err
 	}

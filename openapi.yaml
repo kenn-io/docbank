@@ -17803,6 +17803,222 @@ paths:
                 $ref: "#/components/schemas/Error"
           description: Error
       summary: Search exact source-fenced document versions
+  /api/v1/search-exports:
+    get:
+      operationId: listTermReportHistory
+      parameters:
+        - explode: false
+          in: query
+          name: offset
+          schema:
+            format: int64
+            maximum: 100
+            minimum: 0
+            type: integer
+        - explode: false
+          in: query
+          name: limit
+          schema:
+            format: int64
+            maximum: 50
+            minimum: 0
+            type: integer
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TermReportHistoryPage"
+          description: OK
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: List recent exports
+    post:
+      operationId: createTermReport
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/Request"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Summary"
+          description: OK
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: Prepare a frozen search export
+  /api/v1/search-exports/{id}:
+    get:
+      operationId: getTermReport
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Summary"
+          description: OK
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: Read a frozen export summary
+  /api/v1/search-exports/{id}/bundle:
+    get:
+      operationId: downloadTermReportbundle
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          content:
+            application/zip:
+              schema:
+                contentMediaType: application/octet-stream
+                format: binary
+                type: string
+          description: Frozen export artifact
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: Download frozen export bundle
+  /api/v1/search-exports/{id}/csv:
+    get:
+      operationId: downloadTermReportcsv
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          content:
+            text/csv:
+              schema:
+                contentMediaType: application/octet-stream
+                format: binary
+                type: string
+          description: Frozen export artifact
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: Download frozen export csv
+  /api/v1/search-exports/{id}/dates:
+    post:
+      operationId: getTermReportDates
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DatePageRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DatePage"
+          description: OK
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: Inspect frozen export date evidence
+  /api/v1/search-exports/{id}/download:
+    post:
+      operationId: issueTermReportDownload
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/IssueTermReportDownloadRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IssueTermReportDownloadResponse"
+          description: OK
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: Issue a one-use browser export download
+  /api/v1/search-exports/{id}/revisions:
+    post:
+      operationId: reviseTermReport
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ReviseTermReportRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Summary"
+          description: OK
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: Create an export with reviewed dates
   /api/v1/search/similar:
     post:
       operationId: findSimilarDocuments
@@ -18444,222 +18660,6 @@ paths:
                 $ref: "#/components/schemas/Error"
           description: Error
       summary: List live and trashed nodes carrying a tag
-  /api/v1/term-reports:
-    get:
-      operationId: listTermReportHistory
-      parameters:
-        - explode: false
-          in: query
-          name: offset
-          schema:
-            format: int64
-            maximum: 100
-            minimum: 0
-            type: integer
-        - explode: false
-          in: query
-          name: limit
-          schema:
-            format: int64
-            maximum: 50
-            minimum: 0
-            type: integer
-      responses:
-        "200":
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/TermReportHistoryPage"
-          description: OK
-        default:
-          content:
-            application/problem+json:
-              schema:
-                $ref: "#/components/schemas/Error"
-          description: Error
-      summary: List reusable report runs
-    post:
-      operationId: createTermReport
-      requestBody:
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/Request"
-        required: true
-      responses:
-        "200":
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Summary"
-          description: OK
-        default:
-          content:
-            application/problem+json:
-              schema:
-                $ref: "#/components/schemas/Error"
-          description: Error
-      summary: Prepare a frozen search-term report
-  /api/v1/term-reports/{id}:
-    get:
-      operationId: getTermReport
-      parameters:
-        - in: path
-          name: id
-          required: true
-          schema:
-            type: string
-      responses:
-        "200":
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Summary"
-          description: OK
-        default:
-          content:
-            application/problem+json:
-              schema:
-                $ref: "#/components/schemas/Error"
-          description: Error
-      summary: Read a frozen report summary
-  /api/v1/term-reports/{id}/bundle:
-    get:
-      operationId: downloadTermReportbundle
-      parameters:
-        - in: path
-          name: id
-          required: true
-          schema:
-            type: string
-      responses:
-        "200":
-          content:
-            application/zip:
-              schema:
-                contentMediaType: application/octet-stream
-                format: binary
-                type: string
-          description: Frozen report artifact
-        default:
-          content:
-            application/problem+json:
-              schema:
-                $ref: "#/components/schemas/Error"
-          description: Error
-      summary: Download frozen report bundle
-  /api/v1/term-reports/{id}/csv:
-    get:
-      operationId: downloadTermReportcsv
-      parameters:
-        - in: path
-          name: id
-          required: true
-          schema:
-            type: string
-      responses:
-        "200":
-          content:
-            text/csv:
-              schema:
-                contentMediaType: application/octet-stream
-                format: binary
-                type: string
-          description: Frozen report artifact
-        default:
-          content:
-            application/problem+json:
-              schema:
-                $ref: "#/components/schemas/Error"
-          description: Error
-      summary: Download frozen report csv
-  /api/v1/term-reports/{id}/dates:
-    post:
-      operationId: getTermReportDates
-      parameters:
-        - in: path
-          name: id
-          required: true
-          schema:
-            type: string
-      requestBody:
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/DatePageRequest"
-        required: true
-      responses:
-        "200":
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/DatePage"
-          description: OK
-        default:
-          content:
-            application/problem+json:
-              schema:
-                $ref: "#/components/schemas/Error"
-          description: Error
-      summary: Inspect frozen report date evidence
-  /api/v1/term-reports/{id}/download:
-    post:
-      operationId: issueTermReportDownload
-      parameters:
-        - in: path
-          name: id
-          required: true
-          schema:
-            type: string
-      requestBody:
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/IssueTermReportDownloadRequest"
-        required: true
-      responses:
-        "200":
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/IssueTermReportDownloadResponse"
-          description: OK
-        default:
-          content:
-            application/problem+json:
-              schema:
-                $ref: "#/components/schemas/Error"
-          description: Error
-      summary: Issue a one-use browser report download
-  /api/v1/term-reports/{id}/revisions:
-    post:
-      operationId: reviseTermReport
-      parameters:
-        - in: path
-          name: id
-          required: true
-          schema:
-            type: string
-      requestBody:
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/ReviseTermReportRequest"
-        required: true
-      responses:
-        "200":
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Summary"
-          description: OK
-        default:
-          content:
-            application/problem+json:
-              schema:
-                $ref: "#/components/schemas/Error"
-          description: Error
-      summary: Create a frozen reviewed date revision
   /api/v1/timeline/coverage:
     get:
       operationId: readTimelineCoverage

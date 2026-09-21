@@ -10,7 +10,6 @@ import (
 	"errors"
 	"fmt"
 	"slices"
-	"time"
 
 	"go.kenn.io/docbank/report"
 )
@@ -26,7 +25,7 @@ type TextReader interface {
 }
 
 type FrameSource interface {
-	MaterializeTermReportFrame(ctx context.Context, request report.Request, coverage report.CoverageSelection, budget report.Budget) (report.Frame, error)
+	MaterializeTermReportFrame(ctx context.Context, request report.Request, coverage report.CoverageSelection, budget, textBudget report.Budget) (report.Frame, error)
 }
 
 type Service struct {
@@ -62,10 +61,10 @@ func (s *Service) prepareCaptured(ctx context.Context, request report.Request) (
 	}
 	requestJSON, err := json.Marshal(request)
 	if err != nil {
-		return report.Frame{}, errors.Join(ErrReportLimit, err)
+		return report.Frame{}, errors.Join(report.ErrReportLimit, err)
 	}
 	if len(requestJSON) > report.MaxRequestSummaryJSONBytes {
-		return report.Frame{}, ErrReportLimit
+		return report.Frame{}, report.ErrReportLimit
 	}
 	selection := report.CoverageSelection{Configuration: "unconfigured"}
 	if s.Coverage != nil {
@@ -81,7 +80,9 @@ func (s *Service) prepareCaptured(ctx context.Context, request report.Request) (
 			selection.Configuration + "\x00" + selection.ProfileFingerprint))
 		selection.ConfigurationSHA256 = hex.EncodeToString(digest[:])
 	}
-	frame, err := s.Source.MaterializeTermReportFrame(ctx, request, selection, s.Budget)
+	nativeTextScope := s.Budget.Child()
+	defer func() { _ = nativeTextScope.Close() }()
+	frame, err := s.Source.MaterializeTermReportFrame(ctx, request, selection, s.Budget, nativeTextScope)
 	if err != nil {
 		return report.Frame{}, err
 	}
@@ -89,7 +90,7 @@ func (s *Service) prepareCaptured(ctx context.Context, request report.Request) (
 	frame.Request = request
 	frame.CoverageSelection = selection
 	if len(frame.Members) > 50000 || len(frame.Texts) > 50000 || len(frame.RawDateFields) > 200000 {
-		return report.Frame{}, errors.New("report frame exceeds evidence limits")
+		return report.Frame{}, fmt.Errorf("%w: frame exceeds evidence limits", report.ErrReportLimit)
 	}
 	byIdentity := make(map[report.Identity]int, len(frame.Members))
 	for i, member := range frame.Members {
@@ -120,8 +121,11 @@ func (s *Service) prepareCaptured(ctx context.Context, request report.Request) (
 			return report.Frame{}, errors.New("text binding names a document outside the frozen population")
 		}
 		aggregateTextBytes += binding.Size
-		if binding.Size < 0 || aggregateTextBytes > 512<<20 {
-			return report.Frame{}, errors.New("report inspected text exceeds limit")
+		if binding.Size < 0 {
+			return report.Frame{}, errors.New("report text has a negative size")
+		}
+		if binding.Size > 16<<20 || aggregateTextBytes > 512<<20 {
+			return report.Frame{}, fmt.Errorf("%w: inspected text exceeds limit", report.ErrReportLimit)
 		}
 		var bytes []byte
 		var textScope report.Budget
@@ -159,8 +163,11 @@ func (s *Service) prepareCaptured(ctx context.Context, request report.Request) (
 	var candidateCount int
 	for _, member := range frame.Members {
 		candidateCount += len(member.Candidates)
-		if len(member.Candidates) > 256 || candidateCount > 200000 {
-			return report.Frame{}, errors.New("report date candidates exceed limit")
+		if len(member.Candidates) > 256 {
+			return report.Frame{}, &report.ContentDateLimitError{Document: member.Identity, Limit: 256}
+		}
+		if candidateCount > 200000 {
+			return report.Frame{}, report.ErrReportLimit
 		}
 	}
 	return frame, nil
@@ -207,7 +214,7 @@ func (s *Service) Finalize(ctx context.Context, prepared report.Frame, choices [
 		}
 	}
 	if len(choiceByDocument) != 0 {
-		return report.Result{}, fmt.Errorf("%w: choice targets an absent document", report.ErrInvalidChoice)
+		return report.Result{}, fmt.Errorf("%w: choice targets an absent document", report.ErrStaleChoice)
 	}
 	if reviewRequired {
 		return report.Result{}, ErrReviewRequired
@@ -215,60 +222,18 @@ func (s *Service) Finalize(ctx context.Context, prepared report.Frame, choices [
 	if dateUnknown && request.CoverageMode == "strict" {
 		return report.Result{}, ErrIncompleteDateCoverage
 	}
-	warnings := slices.Clone(frame.Coverage.Warnings)
-	frame.Coverage, frame.RowCoverage = calculateCoverage(frame)
-	frame.Coverage.Warnings = warnings
+	result, err := report.Calculate(ctx, s.Budget, frame)
+	if err != nil {
+		return report.Result{}, err
+	}
 	if request.CoverageMode == "strict" {
-		for _, row := range frame.RowCoverage {
+		for _, row := range result.Frame.RowCoverage {
 			if row.MissingText != 0 || row.IncompleteFamilies != 0 {
 				return report.Result{}, ErrIncompleteCoverage
 			}
 		}
 	}
-	return report.Calculate(ctx, s.Budget, frame)
-}
-
-func calculateCoverage(frame report.Frame) (report.Coverage, []report.Coverage) {
-	rows := make([]report.Coverage, len(frame.Request.Terms))
-	var whole report.Coverage
-	for _, member := range frame.Members {
-		if member.Selection.Date == "" {
-			continue
-		}
-		date, err := time.Parse(time.DateOnly, member.Selection.Date)
-		if err != nil {
-			continue // Calculate reports the invalid frozen selection.
-		}
-		included := false
-		for i, term := range frame.Request.Terms {
-			start, _ := time.Parse(time.DateOnly, term.Dates.Start)
-			end, _ := time.Parse(time.DateOnly, term.Dates.End)
-			if date.Before(start) || date.After(end) {
-				continue
-			}
-			included = true
-			chargeCoverageMember(&rows[i], member)
-		}
-		if included {
-			chargeCoverageMember(&whole, member)
-		}
-	}
-	return whole, rows
-}
-
-func chargeCoverageMember(coverage *report.Coverage, member report.Member) {
-	coverage.Scoped++
-	if member.Coverage.SearchState == "complete" {
-		coverage.Searchable++
-	} else {
-		coverage.MissingText++
-	}
-	if member.Coverage.FamilyState != "complete" {
-		coverage.IncompleteFamilies++
-	}
-	if member.Selection.Reason == "vault_addition" || member.Selection.Reason == "recorded_fallback" {
-		coverage.FallbackDates++
-	}
+	return result, nil
 }
 
 func cloneFrame(frame report.Frame) report.Frame {

@@ -17,6 +17,7 @@ const (
 )
 
 type compiledGenerationArgument struct{}
+type compiledProfileArgument struct{}
 
 type compiledQueryRelations uint8
 
@@ -59,7 +60,7 @@ func compileQuery(
 		predicate:         predicate,
 		positiveTextTerms: query.PositiveTextTerms(resolved),
 	}
-	if _, err := compiled.bind(""); err != nil {
+	if _, err := compiled.bind("", nil); err != nil {
 		return CompiledQuery{}, err
 	}
 	return compiled, nil
@@ -100,7 +101,7 @@ func compileResolvedQuery(resolved query.ResolvedQuery) (compiledQueryFragment, 
 
 // Bind renders the predicate for one caller-selected lexical generation.
 func (compiled CompiledQuery) Bind(generationID string) (string, []any, error) {
-	predicate, err := compiled.bind(generationID)
+	predicate, err := compiled.bind(generationID, nil)
 	if err != nil {
 		return "", nil, err
 	}
@@ -112,15 +113,18 @@ func (compiled CompiledQuery) Bind(generationID string) (string, []any, error) {
 	return predicate.sql, predicate.args, nil
 }
 
-func (compiled CompiledQuery) bind(generationID string) (compiledQueryFragment, error) {
+func (compiled CompiledQuery) bind(generationID string, profileFingerprint *string) (compiledQueryFragment, error) {
 	predicate := joinCompiledFragments([]compiledQueryFragment{{
 		sql: `n.kind='file' AND n.trashed_at IS NULL AND cv.node_id=n.id AND cv.version_id=n.current_version_id`,
 	}, compiled.predicate}, ` AND `)
 	args := make([]any, len(predicate.args))
 	for index, arg := range predicate.args {
-		if _, marker := arg.(compiledGenerationArgument); marker {
+		switch arg.(type) {
+		case compiledGenerationArgument:
 			args[index] = generationID
-		} else {
+		case compiledProfileArgument:
+			args[index] = profileFingerprint
+		default:
 			args[index] = arg
 		}
 	}
@@ -506,6 +510,7 @@ func compileLexicalPredicate(fts string, includeContent bool) compiledQueryFragm
 				 AND rh.profile_fingerprint=a.profile_fingerprint
 				 AND rh.attachment_id=a.attachment_id
 				WHERE a.content_version_id=cv.version_id
+				  AND (? IS NULL OR a.profile_fingerprint=?)
 				  AND rendition_lexical_fts MATCH ?
 				  AND EXISTS (
 					SELECT 1 FROM rendition_lexical_generation_builds gb
@@ -513,7 +518,7 @@ func compileLexicalPredicate(fts string, includeContent bool) compiledQueryFragm
 				  )
 			))
 		)`,
-		args: []any{marker, fts, marker, fts, marker},
+		args: []any{marker, fts, marker, compiledProfileArgument{}, compiledProfileArgument{}, fts, marker},
 	}
 	return joinCompiledFragments([]compiledQueryFragment{name, content}, ` OR `)
 }

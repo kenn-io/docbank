@@ -29,7 +29,6 @@ import (
 	internalmaintenance "go.kenn.io/docbank/internal/maintenance"
 	internalprocessing "go.kenn.io/docbank/internal/processing"
 	"go.kenn.io/docbank/internal/store"
-	"go.kenn.io/docbank/report"
 	docsqlite "go.kenn.io/docbank/sqlite"
 )
 
@@ -139,16 +138,10 @@ type Vault struct {
 	processingErr    error
 	emailSpoolParent string
 
-	lifecycle          sync.RWMutex
-	mutation           sync.Mutex
-	preservation       sync.RWMutex
-	closed             bool
-	reportMu           sync.Mutex
-	reportBudget       report.Budget
-	reportProfiles     map[string]string
-	reportPreparations map[*preparedTermReport]struct{}
-	reportArtifacts    map[*termReportArtifact]struct{}
-	reportReaders      map[*termReportReader]struct{}
+	lifecycle    sync.RWMutex
+	mutation     sync.Mutex
+	preservation sync.RWMutex
+	closed       bool
 
 	// testAfterRepairPublication exercises the non-cancelable authority handoff
 	// after durable physical publication. Production constructors leave it nil.
@@ -319,15 +312,9 @@ func openVaultWithRootOpener(
 	vault := &Vault{
 		root: root, lock: lock, spoolLock: spoolLock, metadata: metadata, blobs: blobs,
 		emailSpoolParent: layout.BlobTmpDir(),
-		reportProfiles:   make(map[string]string, len(config.Processing.Profiles)),
 	}
 	profiles := make(map[string]internalprocessing.ProfileConfig, len(config.Processing.Profiles))
 	for name, profile := range config.Processing.Profiles {
-		_, fingerprints, err := document.CanonicalProfile(profile.Profile)
-		if err != nil {
-			return nil, fmt.Errorf("report processing profile %q: %w", name, err)
-		}
-		vault.reportProfiles[name] = fingerprints.Profile
 		classifiers := make(map[string]func(error) (internalprocessing.EmbeddingProviderFailure, time.Duration),
 			len(profile.EmbeddingClassifiers))
 		for binding, classifier := range profile.EmbeddingClassifiers {
@@ -449,7 +436,6 @@ func (v *Vault) Close() error {
 		return nil
 	}
 	v.closed = true
-	v.closeTermReports()
 	if v.processingCancel != nil {
 		v.processingCancel()
 	}

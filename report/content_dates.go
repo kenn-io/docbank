@@ -47,6 +47,8 @@ func (e *ContentDateLimitError) Error() string {
 	return fmt.Sprintf("document %d (version %s) has more than %d date candidates", e.Document.NodeID, e.Document.VersionID, e.Limit)
 }
 
+func (e *ContentDateLimitError) Unwrap() error { return ErrReportLimit }
+
 // ExtractContentDates scans exact, already verified native or rendition text.
 // pageMap is an optional bounded JSON array of byte spans with one-based pages.
 // The function does no I/O and never requests OCR or another provider.
@@ -58,7 +60,7 @@ func ExtractContentDates(ctx context.Context, budget Budget, identity Identity, 
 		return nil, errors.New("missing report budget")
 	}
 	if len(text) > maxDocumentTextBytes {
-		return nil, fmt.Errorf("text exceeds %d-byte report limit", maxDocumentTextBytes)
+		return nil, fmt.Errorf("%w: text exceeds %d-byte limit", ErrReportLimit, maxDocumentTextBytes)
 	}
 	if binding.Document != identity || binding.Size != int64(len(text)) {
 		return nil, errors.New("text binding does not match captured document")
@@ -99,8 +101,11 @@ func ExtractContentDates(ctx context.Context, budget Budget, identity Identity, 
 		if len(result) == maxDocumentDates {
 			return &ContentDateLimitError{Document: identity, Limit: maxDocumentDates}
 		}
-		if end-start > maxQuoteBytes || start < 0 || end > len(text) || start >= end {
-			return fmt.Errorf("date evidence quote exceeds %d bytes", maxQuoteBytes)
+		if start < 0 || end > len(text) || start >= end {
+			return errors.New("invalid date evidence span")
+		}
+		if end-start > maxQuoteBytes {
+			return fmt.Errorf("%w: date evidence quote exceeds %d bytes", ErrReportLimit, maxQuoteBytes)
 		}
 		quote := string(text[start:end])
 		release, reserveErr := budget.Reserve(ctx, int64(2048+len(raw)+len(quote)))
@@ -223,14 +228,14 @@ func parsePageMap(encoded string, textBytes int64) ([]pageSpan, error) {
 		return nil, nil
 	}
 	if len(encoded) > maxPageMapBytes {
-		return nil, errors.New("text page map exceeds limit")
+		return nil, fmt.Errorf("%w: text page map exceeds limit", ErrReportLimit)
 	}
 	var pages []pageSpan
 	if err := json.Unmarshal([]byte(encoded), &pages, json.RejectUnknownMembers(true)); err != nil {
 		return nil, fmt.Errorf("invalid text page map: %w", err)
 	}
 	if len(pages) > 4096 {
-		return nil, errors.New("text page map has too many spans")
+		return nil, fmt.Errorf("%w: text page map has too many spans", ErrReportLimit)
 	}
 	previousEnd := int64(0)
 	for _, page := range pages {

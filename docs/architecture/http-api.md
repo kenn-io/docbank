@@ -90,6 +90,7 @@ Endpoints are filesystem-shaped, under `/api/v1`:
 | `POST /queries/parse` | validate complete QueryV1 intent and resolve dependency revisions without executing a search | Implemented |
 | `POST /workspace/queries` | execute complete QueryV1 intent and return the first page of one exact bounded result snapshot | Implemented |
 | `POST /workspace/queries/{id}/pages` | read another page from an existing query snapshot with its opaque cursor | Implemented |
+| `GET\|POST /search-exports` · `GET /search-exports/{id}` · `POST /search-exports/{id}/dates` · `POST /search-exports/{id}/revisions` · `POST /search-exports/{id}/download` · `GET /search-exports/{id}/csv` · `GET /search-exports/{id}/bundle` | create dated search counts, review frozen evidence, download artifacts, and list recent exports | Implemented |
 | `POST /audit/preview` · `POST /audit/enable` · `GET /audit/status` | review permanent first-scope retention, enable the exact reviewed plan, and inspect authority or membership | Implemented |
 | `GET /audit/history?path=&node_id=&limit=&cursor=` | read one audited node's canonical newest-first event timeline with a stable continuation cursor | Implemented |
 | `GET /audit/scopes/{scope_id}/history?limit=&cursor=` | read canonical newest-first events across every member of one permanent scope | Implemented |
@@ -594,6 +595,40 @@ Snapshot execution supports duplicate and text-coverage constraints.
 Text-coverage predicates require a configured processing profile. Semantic and
 hybrid modes and relevance ordering remain unsupported and return positioned
 `422 invalid_query` errors.
+
+### Search exports
+
+Search exports freeze one observation and produce dated counts with an evidence
+packet. The [Search exports guide](../usage/search-exports.md) owns the version 1
+request and choice formats, count definitions, evidence layout, and limits.
+All paths below start with `/api/v1/search-exports` and require authentication.
+
+| Method and suffix | Request and response |
+| --- | --- |
+| `POST /` | Version 1 request, up to 8 MiB; returns a summary with state `complete` or `needs_review`. Counts and downloads are withheld in `needs_review`. |
+| `GET /` | `offset` (0–100) and `limit` (1–50, default 20); returns `items` containing reusable `request` and `summary`, and `total`. Lists vault history, including expired receipts. |
+| `GET /{id}` | Returns the caller's live frozen summary. |
+| `POST /{id}/dates` | JSON `{"cursor":"","limit":50}`; limit is 1–100. Returns `members` and an optional `next_cursor`. A page may stop within a member's candidates; check `candidates_complete` and continue with the opaque cursor. |
+| `POST /{id}/revisions` | JSON `{"choices":[...]}`, up to 8 MiB; returns a new summary bound to the original observation and expiry. |
+| `GET /{id}/csv` | API-key download of `search-export.csv`. |
+| `GET /{id}/bundle` | API-key download of `search-export.zip`. |
+| `POST /{id}/download` | Browser-session JSON `{"format":"csv"}` or `{"format":"bundle"}`; returns a one-use download `url`. |
+
+The create and history paths have no trailing slash. Date pages are limited to
+1,000 candidates and 1 MiB even when the requested member limit is larger.
+Direct downloads include `Content-Length` and `X-Docbank-Report-SHA256` for the
+complete artifact. Browser sessions use the one-use ticket route instead.
+An export handle or cursor from another owner is unavailable to the caller.
+
+Malformed date choices return `400 invalid_report_choice`; a choice whose
+document or evidence no longer matches the frozen observation returns
+`409 stale_evidence`. Request or query validation and incomplete strict
+coverage return `422`. Downloading before date review returns
+`409 date_review_required`. Expired or invalidated handles return
+`410 report_unavailable`. Resource limits return `413 report_limit`; too many
+date candidates names the affected document. `503 report_capacity` means the
+cache is full, `503 report_timeout` means the build deadline expired, and
+`503 report_unavailable` means the server has no export service.
 
 ### Saved query and highlight definitions
 

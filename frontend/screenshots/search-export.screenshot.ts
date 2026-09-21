@@ -12,7 +12,7 @@ const repository = path.resolve(path.dirname(fileURLToPath(import.meta.url)), ".
 const screenshots = process.env.DOCBANK_TERM_REPORT_SCREENSHOT_DIR;
 test.skip(!screenshots, "DOCBANK_TERM_REPORT_SCREENSHOT_DIR enables PR-only report captures");
 
-test("saved search reruns against a changed source scope", async ({ page }) => {
+test("recent export reruns against a changed source scope", async ({ page }) => {
   test.setTimeout(240_000);
   const scratch = await mkdtemp(path.join(tmpdir(), "docbank-search-"));
   const vault = path.join(scratch, "vault");
@@ -24,6 +24,7 @@ test("saved search reruns against a changed source scope", async ({ page }) => {
     await mkdir(screenshots!, { recursive: true, mode: 0o700 });
     const source = path.join(scratch, "synthetic-review.txt");
     await writeFile(source, "Synthetic alpha review for a new source.\n", { mode: 0o600 });
+    running = true;
     await run("add", source, "--dest", "/");
     let searchable = false;
     for (let attempt = 0; attempt < 80; attempt += 1) {
@@ -33,7 +34,6 @@ test("saved search reruns against a changed source scope", async ({ page }) => {
     }
     expect(searchable).toBe(true);
     const url = await run("web", "--no-browser");
-    running = true;
     await page.goto(url);
     await page.getByRole("button", { name: "Search exports", exact: true }).click();
     const drawer = page.getByRole("dialog", { name: "Search exports" });
@@ -56,8 +56,8 @@ test("saved search reruns against a changed source scope", async ({ page }) => {
     await expect(drawer.getByRole("button", { name: "Use as draft" })).toHaveCount(2);
     await expect(drawer.getByText(/1 scoped · 1 searchable · 0 missing text/)).toBeVisible();
     await expect(drawer.getByText("1 collection").first()).toBeVisible();
-    await drawer.getByText("Saved searches", { exact: true }).scrollIntoViewIfNeeded();
-    await page.screenshot({ path: path.join(screenshots!, "web-saved-searches.png"), animations: "disabled" });
+    await drawer.getByText("Recent exports", { exact: true }).scrollIntoViewIfNeeded();
+    await page.screenshot({ path: path.join(screenshots!, "web-recent-exports.png"), animations: "disabled" });
   } finally {
     if (running) {
       await run("daemon", "stop");

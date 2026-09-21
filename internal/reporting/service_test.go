@@ -12,10 +12,10 @@ import (
 	"go.kenn.io/docbank/report"
 )
 
-type frameSourceFunc func(context.Context, report.Request, report.CoverageSelection, report.Budget) (report.Frame, error)
+type frameSourceFunc func(context.Context, report.Request, report.CoverageSelection, report.Budget, report.Budget) (report.Frame, error)
 
-func (f frameSourceFunc) MaterializeTermReportFrame(ctx context.Context, r report.Request, s report.CoverageSelection, b report.Budget) (report.Frame, error) {
-	return f(ctx, r, s, b)
+func (f frameSourceFunc) MaterializeTermReportFrame(ctx context.Context, r report.Request, s report.CoverageSelection, b, textBudget report.Budget) (report.Frame, error) {
+	return f(ctx, r, s, b, textBudget)
 }
 
 func testRequest() report.Request {
@@ -41,7 +41,7 @@ func TestFinalizeUsesOnlyFrozenFrameAndKeepsReviewOutcome(t *testing.T) {
 			Precision: "date", Locator: report.Locator{EvidenceSHA256: strings.Repeat("b", 64)}},
 	}
 	reads := 0
-	svc := &Service{Source: frameSourceFunc(func(_ context.Context, request report.Request, _ report.CoverageSelection, _ report.Budget) (report.Frame, error) {
+	svc := &Service{Source: frameSourceFunc(func(_ context.Context, request report.Request, _ report.CoverageSelection, _, _ report.Budget) (report.Frame, error) {
 		reads++
 		return report.Frame{Request: request, Members: []report.Member{member}, ObservedAt: time.Now()}, nil
 	}), Budget: report.NewBudget(1 << 20)}
@@ -76,7 +76,7 @@ func TestPrepareExtractsNativeTextThenDropsFullBytes(t *testing.T) {
 	sha := hex.EncodeToString(digest[:])
 	binding := report.TextBinding{Kind: "native", Document: member.Identity, Size: int64(len(text)),
 		Native: &report.NativeText{Text: text, TextSHA256: sha, SearchableVersionID: "v1", Status: "ok"}}
-	svc := &Service{Source: frameSourceFunc(func(_ context.Context, request report.Request, _ report.CoverageSelection, _ report.Budget) (report.Frame, error) {
+	svc := &Service{Source: frameSourceFunc(func(_ context.Context, request report.Request, _ report.CoverageSelection, _, _ report.Budget) (report.Frame, error) {
 		return report.Frame{Request: request, Members: []report.Member{member}, Texts: []report.TextBinding{binding}}, nil
 	}), Budget: report.NewBudget(1 << 20)}
 	defer func() { _ = svc.Budget.Close() }()

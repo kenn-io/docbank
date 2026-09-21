@@ -19,6 +19,56 @@ const json = (value: unknown) => new Response(JSON.stringify(value), { headers: 
 
 afterEach(() => { cleanup(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
+it("requires interpretation fields and submits only fields for the selected date action", async () => {
+  vi.stubGlobal("ResizeObserver", class { observe() {} unobserve() {} disconnect() {} });
+  const document = { node_id: 1, version_id: "v1", sha256: "a".repeat(64) };
+  const candidate = { id: "date-1", document, role: "document_date", raw: "01/02/2026",
+    source_class: "content", rejection: "ambiguous_numeric_date",
+    locator: { evidence_sha256: "b".repeat(64), start_byte: 0, end_byte: 10 } };
+  const revisions: { choices: unknown[] }[] = [];
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (url, init) => {
+    const path = String(url);
+    if (path.startsWith("/api/v1/collections?")) return json({ items: [], total: 0 });
+    if (init?.method === "GET") return json({ items: [], total: 0 });
+    if (path.endsWith("/dates")) return json({ members: [{ document, selection: {}, candidates_complete: true,
+      candidates: [candidate, { ...candidate, id: "date-2", raw: "2026-02-31", rejection: "invalid_date" },
+        { ...candidate, id: "date-3", raw: "2026-01-15", rejection: "" }] }] });
+    if (path.endsWith("/revisions")) {
+      revisions.push(JSON.parse(String(init?.body)));
+      return json(oldSummary);
+    }
+    return json({ ...oldSummary, state: "needs_review", unresolved_dates: 1 });
+  });
+  render(TermReportDrawer, { session: "session", initialExpression: "alpha", onclose: vi.fn(), onauthfailure: vi.fn() });
+  await fireEvent.click(screen.getByRole("button", { name: "Create export" }));
+  const review = await screen.findByRole("button", { name: "Review dates" });
+  await waitFor(() => expect(review.hasAttribute("disabled")).toBe(false));
+  await fireEvent.click(review);
+  await fireEvent.click(await screen.findByRole("radio", { name: /01\/02\/2026/ }));
+  await fireEvent.input(screen.getByRole("textbox", { name: "Reason" }), { target: { value: "Checked the source date" } });
+  await fireEvent.click(screen.getByRole("button", { name: "Create reviewed revision" }));
+  expect(await screen.findByRole("alert")).toHaveProperty("textContent", "Enter a reviewed date and source timezone for each interpreted date.");
+  expect(revisions).toHaveLength(0);
+  expect(screen.getByRole("radio", { name: /2026-02-31/ }).hasAttribute("disabled")).toBe(true);
+  await fireEvent.input(screen.getByRole("textbox", { name: "Reviewed date (YYYY-MM-DD)" }), { target: { value: "2026-01-02" } });
+  await fireEvent.input(screen.getByRole("textbox", { name: "Source timezone" }), { target: { value: "UTC" } });
+  await fireEvent.click(screen.getByRole("button", { name: "Create reviewed revision" }));
+  await waitFor(() => expect(revisions).toHaveLength(1));
+  expect(revisions[0].choices[0]).toMatchObject({ action: "interpret", reviewed_date: "2026-01-02", reviewed_timezone: "UTC" });
+  await waitFor(() => expect(screen.getByRole("button", { name: "Review dates" }).hasAttribute("disabled")).toBe(false));
+  await fireEvent.click(screen.getByRole("button", { name: "Review dates" }));
+  await fireEvent.click(await screen.findByRole("radio", { name: /2026-01-15/ }));
+  expect(screen.queryByRole("option", { name: "Interpret source date" })).toBeNull();
+  await fireEvent.input(screen.getByRole("textbox", { name: "Reason" }), { target: { value: "Retain source date" } });
+  await fireEvent.change(screen.getByRole("combobox", { name: "Action" }), { target: { value: "reclassify" } });
+  await fireEvent.change(screen.getByRole("combobox", { name: "Reviewed role" }), { target: { value: "created" } });
+  await fireEvent.change(screen.getByRole("combobox", { name: "Action" }), { target: { value: "select" } });
+  await fireEvent.click(screen.getByRole("button", { name: "Create reviewed revision" }));
+  await waitFor(() => expect(revisions).toHaveLength(2));
+  expect(revisions[1].choices[0]).toMatchObject({ action: "select" });
+  expect(revisions[1].choices[0]).not.toHaveProperty("reviewed_role");
+});
+
 it("loads a prior request, changes its source, and sends a fresh run without old review choices", async () => {
   vi.stubGlobal("ResizeObserver", class { observe() {} unobserve() {} disconnect() {} });
   Object.defineProperty(Element.prototype, "scrollIntoView", { configurable: true, value: vi.fn() });
@@ -27,10 +77,10 @@ it("loads a prior request, changes its source, and sends a fresh run without old
   vi.spyOn(globalThis, "fetch").mockImplementation(async (url, init) => {
     const path = String(url);
     if (path.startsWith("/api/v1/collections?")) return json({ items: [collection], total: 1, limit: 100, offset: 0 });
-    if (path.startsWith("/api/v1/term-reports?") && init?.method === "GET") {
+    if (path.startsWith("/api/v1/search-exports?") && init?.method === "GET") {
       return json({ items: [{ request: { ...original, date_choices: [{ action: "select" }] }, summary: oldSummary }], total: 1 });
     }
-    if (path === "/api/v1/term-reports" && init?.method === "POST") {
+    if (path === "/api/v1/search-exports" && init?.method === "POST") {
       submitted.push(JSON.parse(String(init.body)));
       return json({ ...oldSummary, id: "b".repeat(48), observed_at: "2026-09-20T13:00:00Z" });
     }

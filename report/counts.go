@@ -35,7 +35,7 @@ func Calculate(ctx context.Context, budget Budget, frame Frame) (_ Result, err e
 		return Result{}, err
 	}
 	if len(frame.Members) > 50000 || len(frame.Relations) > 100000 {
-		return Result{}, errors.New("report population exceeds limit")
+		return Result{}, fmt.Errorf("%w: report population exceeds limit", ErrReportLimit)
 	}
 	terms := len(request.Terms)
 	memberCount := len(frame.Members)

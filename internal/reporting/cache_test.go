@@ -19,7 +19,7 @@ func cacheFixture(now time.Time, reads *int) *Service {
 		Locator: report.Locator{EvidenceSHA256: strings.Repeat("b", 64)},
 	}}
 	return &Service{Source: frameSourceFunc(func(_ context.Context, request report.Request,
-		selection report.CoverageSelection, _ report.Budget) (report.Frame, error) {
+		selection report.CoverageSelection, _, _ report.Budget) (report.Frame, error) {
 		*reads++
 		return report.Frame{VaultID: "synthetic-vault", GenerationKind: "native", ObservedAt: now,
 			Request: request, CoverageSelection: selection, Members: []report.Member{member}}, nil
@@ -97,7 +97,7 @@ func TestCacheNeedsReviewKeepsDatesWithoutDownloads(t *testing.T) {
 			Precision: "date", Locator: report.Locator{EvidenceSHA256: strings.Repeat("b", 64)}})
 	}
 	svc := &Service{Source: frameSourceFunc(func(_ context.Context, request report.Request,
-		selection report.CoverageSelection, _ report.Budget) (report.Frame, error) {
+		selection report.CoverageSelection, _, _ report.Budget) (report.Frame, error) {
 		return report.Frame{VaultID: "synthetic-vault", GenerationKind: "native", ObservedAt: now,
 			Request: request, CoverageSelection: selection, Members: []report.Member{member}}, nil
 	})}
@@ -133,7 +133,7 @@ func TestCacheRevisionKeepsEarlierDateChoices(t *testing.T) {
 		}
 	}
 	svc := &Service{Source: frameSourceFunc(func(_ context.Context, request report.Request,
-		selection report.CoverageSelection, _ report.Budget) (report.Frame, error) {
+		selection report.CoverageSelection, _, _ report.Budget) (report.Frame, error) {
 		return report.Frame{VaultID: "synthetic-vault", GenerationKind: "native", ObservedAt: now,
 			Request: request, CoverageSelection: selection, Members: members}, nil
 	})}

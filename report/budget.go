@@ -15,6 +15,7 @@ const (
 )
 
 var (
+	ErrReportLimit     = errors.New("report limit exceeded")
 	ErrBudgetExhausted = errors.New("report resource budget exhausted")
 	ErrBudgetClosed    = errors.New("report resource budget closed")
 )

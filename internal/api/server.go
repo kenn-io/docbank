@@ -161,7 +161,7 @@ func NewServer(d Deps) *Server {
 		webDownloads: newWebDownloadRegistry(d.VaultRoot),
 	}
 	if d.Store != nil {
-		s.reportBudget = report.NewBudget(1 << 30)
+		s.reportBudget = report.NewBudget(report.DefaultBudgetBytes)
 		s.termReports = reporting.NewCache(time.Now, s.reportBudget)
 	}
 	g := d.Gate
@@ -275,6 +275,9 @@ func (s *Server) Close() {
 			// even when the HTTP shutdown deadline has expired.
 			_ = s.deps.Processing.Shutdown(context.Background())
 		}
+		if s.termReports != nil {
+			_ = s.termReports.Shutdown(context.Background())
+		}
 	}
 }
 
@@ -303,11 +306,11 @@ func (s *Server) Shutdown(ctx context.Context) error {
 	if s.deps.Processing != nil {
 		sessionErr = errors.Join(sessionErr, s.deps.Processing.Shutdown(ctx))
 	}
+	if s.termReports != nil {
+		sessionErr = errors.Join(sessionErr, s.termReports.Shutdown(ctx), s.reportBudget.Close())
+	}
 	select {
 	case snapshotErr := <-snapshotDone:
-		if s.termReports != nil {
-			sessionErr = errors.Join(sessionErr, s.termReports.Shutdown(ctx), s.reportBudget.Close())
-		}
 		return errors.Join(sessionErr, snapshotErr)
 	case <-ctx.Done():
 		return errors.Join(sessionErr, ctx.Err())

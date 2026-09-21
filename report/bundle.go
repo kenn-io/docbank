@@ -17,7 +17,8 @@ import (
 )
 
 const (
-	BundleFormatV1 = "term-report-v1"
+	// BundleFormatV1 identifies the v1 search-export evidence packet format.
+	BundleFormatV1 = "search-export-v1"
 	maxBundleBytes = 512 << 20
 	maxPacketLine  = 8 << 20
 )
@@ -143,7 +144,7 @@ func BuildBundle(ctx context.Context, budget Budget, result Result) ([]byte, err
 		payload := payloads[name]
 		decodedBytes += int64(len(payload))
 		if decodedBytes > maxBundleBytes {
-			return nil, fmt.Errorf("%w: decoded payload exceeds limit", ErrInvalidPacket)
+			return nil, fmt.Errorf("%w: decoded payload exceeds limit", ErrReportLimit)
 		}
 		inventory[name] = packetInventory{Bytes: int64(len(payload)), SHA256: packetDigest(payload)}
 	}
@@ -166,7 +167,7 @@ func BuildBundle(ctx context.Context, budget Budget, result Result) ([]byte, err
 	payloads["manifest.json"] = manifestBytes
 	decodedBytes += int64(len(manifestBytes))
 	if decodedBytes > maxBundleBytes {
-		return nil, fmt.Errorf("%w: decoded payload exceeds limit", ErrInvalidPacket)
+		return nil, fmt.Errorf("%w: decoded payload exceeds limit", ErrReportLimit)
 	}
 	var output bytes.Buffer
 	writer := zip.NewWriter(&output)
@@ -190,7 +191,7 @@ func BuildBundle(ctx context.Context, budget Budget, result Result) ([]byte, err
 		return nil, fmt.Errorf("closing report packet: %w", err)
 	}
 	if output.Len() > maxBundleBytes {
-		return nil, fmt.Errorf("%w: encoded payload exceeds limit", ErrInvalidPacket)
+		return nil, fmt.Errorf("%w: encoded payload exceeds limit", ErrReportLimit)
 	}
 	if _, err := budget.Reserve(ctx, int64(output.Len())); err != nil {
 		return nil, err
@@ -300,7 +301,7 @@ func writePacketLine(ctx context.Context, budget Budget, output io.Writer, value
 		return err
 	}
 	if len(encoded) > maxPacketLine {
-		return fmt.Errorf("%w: evidence line exceeds limit", ErrInvalidPacket)
+		return fmt.Errorf("%w: evidence line exceeds limit", ErrReportLimit)
 	}
 	if _, err := budget.Reserve(ctx, int64(len(encoded)+1)); err != nil {
 		return err

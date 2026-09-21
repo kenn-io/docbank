@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -20,6 +21,33 @@ func termFrameRequest() report.Request {
 		}}
 }
 
+func TestTermReportRenditionTextLimit(t *testing.T) {
+	s, versions := newRenditionCatalogFixture(t)
+	profile := catalogProcessingProfile(t, false)
+	build := catalogRenditionBuild(s, profile)
+	content := strings.Repeat("x", (16<<20)+1)
+	digest := testSHA256([]byte(content))
+	require.NoError(t, s.RecordRenditionBlob(t.Context(), digest, int64(len(content)), BlobPhysical{
+		Encoding: "raw", StoredBytes: int64(len(content)), Created: true, PackEligible: true,
+	}))
+	build.MarkdownChecksum = digest
+	build.Artifacts[1].BlobHash = digest
+	build.Artifacts[1].Checksum = digest
+	build.Artifacts[1].Size = int64(len(content))
+	require.NoError(t, s.StageRenditionBuild(t.Context(), build))
+	attachment := RenditionAttachmentRecord{
+		ID: catalogAttachmentFirst, VaultID: s.VaultID(), ContentVersionID: versions[0],
+		BuildID: build.ID, Profile: profile, AttachedAt: "2026-08-22T10:00:00.000000000Z",
+	}
+	require.NoError(t, publishRenditionForTest(t, s, attachment,
+		"2026-08-22T10:01:00.000000000Z", testSHA256([]byte("large-rendition-generation"))))
+	budget := report.NewBudget(64 << 20)
+	defer func() { _ = budget.Close() }()
+	_, err := s.MaterializeTermReportFrame(t.Context(), termFrameRequest(),
+		report.CoverageSelection{Configuration: "configured", ProfileFingerprint: profile.Fingerprint}, budget, budget)
+	require.ErrorIs(t, err, report.ErrReportLimit)
+}
+
 func TestTermReportFrozenGenerationAndCurrentVersions(t *testing.T) {
 	s := newTestStore(t)
 	ctx := t.Context()
@@ -29,7 +57,7 @@ func TestTermReportFrozenGenerationAndCurrentVersions(t *testing.T) {
 	require.NoError(t, err)
 	budget := report.NewBudget(8 << 20)
 	defer func() { _ = budget.Close() }()
-	frame, err := s.MaterializeTermReportFrame(ctx, termFrameRequest(), report.CoverageSelection{Configuration: "unconfigured"}, budget)
+	frame, err := s.MaterializeTermReportFrame(ctx, termFrameRequest(), report.CoverageSelection{Configuration: "unconfigured"}, budget, budget)
 	require.NoError(t, err)
 	require.Equal(t, s.VaultID(), frame.VaultID)
 	require.Equal(t, "native", frame.GenerationKind)
@@ -44,7 +72,7 @@ func TestTermReportFrozenGenerationAndCurrentVersions(t *testing.T) {
 	_, _, err = s.ReplaceContent(ctx, alpha.ID, alpha.Revision, fakeHash("report-alpha-replaced"), 11, "text/plain")
 	require.NoError(t, err)
 	require.Equal(t, []bool{true, false}, frame.Members[0].RawMatches, "frozen bits changed after a live replacement")
-	fresh, err := s.MaterializeTermReportFrame(ctx, termFrameRequest(), report.CoverageSelection{Configuration: "unconfigured"}, budget)
+	fresh, err := s.MaterializeTermReportFrame(ctx, termFrameRequest(), report.CoverageSelection{Configuration: "unconfigured"}, budget, budget)
 	require.NoError(t, err)
 	require.NotEqual(t, frame.Members[0].Identity.VersionID, fresh.Members[0].Identity.VersionID)
 }
@@ -59,7 +87,7 @@ func TestTermReportScopeAndEarliestAddition(t *testing.T) {
 	request.CollectionIDs = []string{first.ID()}
 	budget := report.NewBudget(8 << 20)
 	defer func() { _ = budget.Close() }()
-	frame, err := s.MaterializeTermReportFrame(ctx, request, report.CoverageSelection{Configuration: "unconfigured"}, budget)
+	frame, err := s.MaterializeTermReportFrame(ctx, request, report.CoverageSelection{Configuration: "unconfigured"}, budget, budget)
 	require.NoError(t, err)
 	require.Len(t, frame.Members, 1)
 	require.Equal(t, []bool{true, false}, frame.Members[0].RawMatches)
@@ -67,7 +95,7 @@ func TestTermReportScopeAndEarliestAddition(t *testing.T) {
 	require.Equal(t, first.ID(), frame.Members[0].CollectionWitnesses[0].CollectionID)
 	require.Len(t, frame.Members[0].CollectionWitnesses[0].MembershipSHA256, 64)
 	request.CollectionIDs = []string{"unknown"}
-	_, err = s.MaterializeTermReportFrame(ctx, request, report.CoverageSelection{Configuration: "unconfigured"}, budget)
+	_, err = s.MaterializeTermReportFrame(ctx, request, report.CoverageSelection{Configuration: "unconfigured"}, budget, budget)
 	require.Error(t, err)
 }
 
@@ -97,6 +125,54 @@ func TestTermReportNativeTextProducesFrozenContentDate(t *testing.T) {
 	require.Equal(t, int64(1), result.Counts[0].Hits)
 }
 
+func TestTermReportPrepareReleasesNativeTextBudget(t *testing.T) {
+	s := newTestStore(t)
+	text := strings.Repeat("ordinary text ", 10000)
+	hash := testSHA256([]byte(text))
+	_, err := s.CreateFile(t.Context(), s.RootID(), "alpha.txt", hash, int64(len(text)), "text/plain")
+	require.NoError(t, err)
+	require.NoError(t, s.RecordExtraction(t.Context(), ExtractionResult{
+		BlobHash: hash, Extractor: "synthetic-native", ExtractorVersion: 1,
+		Status: ExtractionOK, Text: text,
+	}))
+	budget := report.NewBudget(8 << 20)
+	defer func() { _ = budget.Close() }()
+	svc := reporting.Service{Source: s, Budget: budget}
+	frame, err := svc.Prepare(t.Context(), termFrameRequest())
+	require.NoError(t, err)
+	require.Len(t, frame.Texts, 1)
+	require.Nil(t, frame.Texts[0].Native.Text)
+	require.Less(t, budget.Used(), int64(len(text)), "discarded text must not consume the retained frame budget")
+}
+
+func TestTermReportMatchesSelectedProcessingProfile(t *testing.T) {
+	s, versions := newRenditionCatalogFixture(t)
+	selected := catalogProcessingProfile(t, false)
+	other := catalogProcessingProfileWith(t, false, func(profile *document.ProcessingProfileV1) {
+		profile.Rendition.Name = "other"
+	})
+	for i, profile := range []ProcessingProfileRecord{selected, other} {
+		text := []string{"alpha", "beta"}[i]
+		build := lexicalSearchBuild(s, profile, testSHA256([]byte(text)), text)
+		require.NoError(t, s.StageRenditionBuild(t.Context(), build))
+		require.NoError(t, publishAttachmentForTest(t, s, RenditionAttachmentRecord{
+			ID: testSHA256([]byte("attachment-" + text)), VaultID: s.VaultID(),
+			ContentVersionID: versions[0], BuildID: build.ID, Profile: profile,
+			AttachedAt: "2026-08-22T10:00:00.000000000Z",
+		}))
+	}
+	request := termFrameRequest()
+	request.Terms = append(request.Terms, report.Term{Number: 3, Expression: "alpha AND NOT beta",
+		Syntax: "advanced", Dates: request.Terms[0].Dates})
+	budget := report.NewBudget(8 << 20)
+	defer func() { _ = budget.Close() }()
+	frame, err := s.MaterializeTermReportFrame(t.Context(), request,
+		report.CoverageSelection{Configuration: "configured", ProfileFingerprint: selected.Fingerprint}, budget, budget)
+	require.NoError(t, err)
+	require.Equal(t, []bool{true, false, true}, frame.Members[0].RawMatches)
+	require.Equal(t, selected.Fingerprint, frame.Texts[0].ProfileFingerprint)
+}
+
 func TestTermReportSharedChildJoinsExactVersionFamily(t *testing.T) {
 	s := newTestStore(t)
 	f := newEmailFixture(t, s, "report-parent.eml")
@@ -123,7 +199,7 @@ func TestTermReportSharedChildJoinsExactVersionFamily(t *testing.T) {
 	budget := report.NewBudget(16 << 20)
 	defer func() { _ = budget.Close() }()
 	frame, err := s.MaterializeTermReportFrame(t.Context(), termFrameRequest(),
-		report.CoverageSelection{Configuration: "unconfigured"}, budget)
+		report.CoverageSelection{Configuration: "unconfigured"}, budget, budget)
 	require.NoError(t, err)
 	require.Len(t, frame.Relations, 2)
 	families := make(map[int64]string)
@@ -133,6 +209,69 @@ func TestTermReportSharedChildJoinsExactVersionFamily(t *testing.T) {
 	require.NotEmpty(t, families[child.NodeID])
 	require.Equal(t, families[view.Version.NodeID], families[child.NodeID])
 	require.Equal(t, families[other.ID], families[child.NodeID])
+}
+
+func TestTermReportFamilyStaysWithinCollectionAndCurrentVersions(t *testing.T) {
+	s := newTestStore(t)
+	f := newEmailFixture(t, s, "source.eml")
+	source, err := s.ContentVersionByID(t.Context(), f.publication.ContentVersionID)
+	require.NoError(t, err)
+	run, err := s.BeginIngest(t.Context(), "cli", "Synthetic email collection")
+	require.NoError(t, err)
+	parent, err := s.IngestFileExact(t.Context(), run, s.RootID(), "alpha.eml", source.BlobHash,
+		source.Size, "message/rfc822", "alpha.eml", "")
+	require.NoError(t, err)
+	f.publication.ContentVersionID = parent.CurrentVersionID
+	view, err := s.PublishEmailGeneration(t.Context(), f.publication)
+	require.NoError(t, err)
+	receipt, err := s.PublishEmailDocuments(t.Context(), attachmentRequest(t, s, view, "scoped-family"))
+	require.NoError(t, err)
+	budget := report.NewBudget(8 << 20)
+	defer func() { _ = budget.Close() }()
+	request := termFrameRequest()
+	request.AllDocuments, request.CollectionIDs = false, []string{run.ID()}
+	svc := reporting.Service{Source: s, Budget: budget}
+	frame, err := svc.Prepare(t.Context(), request)
+	require.NoError(t, err)
+	require.Len(t, frame.Members, 1)
+	require.Len(t, frame.Relations, 1)
+	result, err := svc.Finalize(t.Context(), frame, nil)
+	require.NoError(t, err)
+	require.Equal(t, int64(1), result.Counts[0].HitsPlusFamily)
+	child, err := s.NodeByID(t.Context(), receipt.Relations[0].Child.NodeID)
+	require.NoError(t, err)
+	_, _, err = s.ReplaceContent(t.Context(), child.ID, child.Revision, fakeHash("replaced-child"), 3, "text/plain")
+	require.NoError(t, err)
+	fresh, err := svc.Prepare(t.Context(), request)
+	require.NoError(t, err)
+	require.Empty(t, fresh.Relations)
+	require.Equal(t, "incomplete", fresh.Members[0].Coverage.FamilyState)
+	result, err = svc.Finalize(t.Context(), fresh, nil)
+	require.NoError(t, err)
+	_, err = report.BuildBundle(t.Context(), budget, result)
+	require.NoError(t, err)
+}
+
+func TestTermReportPartialFamilyWithoutPublishedAttachments(t *testing.T) {
+	s := newTestStore(t)
+	f := newEmailSourceFixture(t, s, "partial.eml",
+		"Content-Type: multipart/mixed; boundary=b\n\n--b\nContent-Type: text/plain; charset=utf-8\n\nbody")
+	view, err := s.PublishEmailGeneration(t.Context(), f.publication)
+	require.NoError(t, err)
+	receipt, err := s.PublishEmailDocuments(t.Context(), attachmentRequest(t, s, view, "partial-family"))
+	require.NoError(t, err)
+	require.Equal(t, "partial", receipt.InventoryState)
+	require.Empty(t, receipt.Relations)
+	budget := report.NewBudget(8 << 20)
+	defer func() { _ = budget.Close() }()
+	svc := reporting.Service{Source: s, Budget: budget}
+	frame, err := svc.Prepare(t.Context(), termFrameRequest())
+	require.NoError(t, err)
+	require.Equal(t, "incomplete", frame.Members[0].Coverage.FamilyState)
+	result, err := svc.Finalize(t.Context(), frame, nil)
+	require.NoError(t, err)
+	_, err = report.BuildBundle(t.Context(), budget, result)
+	require.NoError(t, err)
 }
 
 func TestTermReportRetainsRejectedRawMetadataWithoutEventHead(t *testing.T) {
@@ -156,7 +295,7 @@ func TestTermReportRetainsRejectedRawMetadataWithoutEventHead(t *testing.T) {
 	budget := report.NewBudget(8 << 20)
 	defer func() { _ = budget.Close() }()
 	frame, err := s.MaterializeTermReportFrame(ctx, termFrameRequest(),
-		report.CoverageSelection{Configuration: "unconfigured"}, budget)
+		report.CoverageSelection{Configuration: "unconfigured"}, budget, budget)
 	require.NoError(t, err)
 	require.Len(t, frame.RawDateFields, 1)
 	require.Equal(t, raw, frame.RawDateFields[0].Raw)
@@ -178,7 +317,7 @@ func TestTermReportLabelsLegacyMissingAdditionAsRecordedFallback(t *testing.T) {
 	budget := report.NewBudget(8 << 20)
 	defer func() { _ = budget.Close() }()
 	frame, err := s.MaterializeTermReportFrame(ctx, termFrameRequest(),
-		report.CoverageSelection{Configuration: "unconfigured"}, budget)
+		report.CoverageSelection{Configuration: "unconfigured"}, budget, budget)
 	require.NoError(t, err)
 	require.Len(t, frame.Members, 1)
 	require.Equal(t, "vault_observation", frame.Members[0].Candidates[0].SourceClass)
@@ -200,7 +339,7 @@ func TestTermReportCapturesExactRenditionBinding(t *testing.T) {
 	budget := report.NewBudget(8 << 20)
 	defer func() { _ = budget.Close() }()
 	frame, err := s.MaterializeTermReportFrame(t.Context(), termFrameRequest(),
-		report.CoverageSelection{Configuration: "configured", ProfileFingerprint: profile.Fingerprint}, budget)
+		report.CoverageSelection{Configuration: "configured", ProfileFingerprint: profile.Fingerprint}, budget, budget)
 	require.NoError(t, err)
 	require.Equal(t, generationID, frame.GenerationID)
 	require.Len(t, frame.Texts, 1)

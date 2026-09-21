@@ -20,6 +20,7 @@ New to Docbank? Start with [setup](setup.md), then follow the
 | Import a folder of documents | [Importing documents](usage/importing.md) |
 | Move, rename, or tag documents | [Organizing and tagging](usage/organizing.md) |
 | Find documents by name, text, or filters | [Searching](usage/searching.md) |
+| Export dated search counts with evidence | [Search exports](usage/search-exports.md) |
 | Work in a browser or terminal | [Web application](usage/web.md) · [Terminal browser](usage/tui.md) |
 | Restore a deleted document or reclaim space | [Trash, garbage collection, and repack](usage/trash-and-gc.md) |
 | Create and test a backup | [Backup and restore](usage/backup.md) |

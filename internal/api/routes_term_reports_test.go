@@ -5,12 +5,38 @@ import (
 	"encoding/json/v2"
 	"io"
 	"net/http"
+	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/docbank/internal/api"
+	"go.kenn.io/docbank/internal/store"
 	"go.kenn.io/docbank/report"
 )
+
+func TestTermReportRoutesWithoutStoreReturnUnavailable(t *testing.T) {
+	_, catalog := newTestServer(t, func(d *api.Deps) { d.Store = nil })
+	for _, request := range []struct{ method, path, body string }{
+		{http.MethodGet, "/api/v1/search-exports", ""},
+		{http.MethodGet, "/api/v1/search-exports/example", ""},
+		{http.MethodPost, "/api/v1/search-exports/example/dates", `{}`},
+		{http.MethodPost, "/api/v1/search-exports/example/revisions", `{"choices":[]}`},
+		{http.MethodPost, "/api/v1/search-exports/example/download", `{"format":"csv"}`},
+		{http.MethodGet, "/api/v1/search-exports/example/csv", ""},
+		{http.MethodGet, "/api/v1/search-exports/example/bundle", ""},
+	} {
+		t.Run(request.method+request.path, func(t *testing.T) {
+			req := httptest.NewRequest(request.method, request.path, strings.NewReader(request.body))
+			req.Header.Set("X-Api-Key", testAPIKey)
+			req.Header.Set("Content-Type", "application/json")
+			response := httptest.NewRecorder()
+			require.NotPanics(t, func() { catalog.Server.Handler().ServeHTTP(response, req) })
+			require.Equal(t, http.StatusServiceUnavailable, response.Code, response.Body.String())
+		})
+	}
+}
 
 func TestTermReportRoutesFreezeSummaryDatesAndDownload(t *testing.T) {
 	ts, s := newTestServer(t, nil)
@@ -20,7 +46,7 @@ func TestTermReportRoutesFreezeSummaryDatesAndDownload(t *testing.T) {
 			Expression: "alpha", Syntax: "simple", Dates: report.DateRange{Start: "2026-01-01", End: "2026-12-31"}}}}
 	encoded, err := json.Marshal(request)
 	require.NoError(t, err)
-	endpoint := "/api/v1/term-reports"
+	endpoint := "/api/v1/search-exports"
 	resp, body := rawJSONRequest(t, ts.URL, http.MethodPost, endpoint,
 		map[string]string{"X-Api-Key": ""}, string(encoded))
 	require.Equal(t, http.StatusUnauthorized, resp.StatusCode, body)
@@ -78,7 +104,7 @@ func TestTermReportRejectsInvalidRequestAsClientError(t *testing.T) {
 	request := `{"version":1,"all_documents":true,"timezone":"Invalid/Zone","coverage_mode":"strict",` +
 		`"terms":[{"number":1,"expression":"alpha","syntax":"simple",` +
 		`"dates":{"start":"2026-01-01","end":"2026-12-31"}}]}`
-	response, body := rawJSONRequest(t, ts.URL, http.MethodPost, "/api/v1/term-reports",
+	response, body := rawJSONRequest(t, ts.URL, http.MethodPost, "/api/v1/search-exports",
 		map[string]string{"X-Api-Key": testAPIKey}, request)
 	require.Equal(t, http.StatusUnprocessableEntity, response.StatusCode, body)
 	require.Contains(t, body, "invalid_report_request")
@@ -86,7 +112,7 @@ func TestTermReportRejectsInvalidRequestAsClientError(t *testing.T) {
 	request = `{"version":1,"all_documents":false,"collection_ids":["11111111-1111-4111-8111-111111111111"],` +
 		`"timezone":"UTC","coverage_mode":"strict","terms":[{"number":1,"expression":"alpha",` +
 		`"syntax":"simple","dates":{"start":"2026-01-01","end":"2026-12-31"}}]}`
-	response, body = rawJSONRequest(t, ts.URL, http.MethodPost, "/api/v1/term-reports",
+	response, body = rawJSONRequest(t, ts.URL, http.MethodPost, "/api/v1/search-exports",
 		map[string]string{"X-Api-Key": testAPIKey}, request)
 	require.Equal(t, http.StatusUnprocessableEntity, response.StatusCode, body)
 	require.Contains(t, body, "invalid_report_scope")
@@ -98,7 +124,7 @@ func TestTermReportRejectsMalformedRevisionAsClientError(t *testing.T) {
 	request := `{"version":1,"all_documents":true,"timezone":"UTC","coverage_mode":"available_only",` +
 		`"terms":[{"number":1,"expression":"alpha","syntax":"simple",` +
 		`"dates":{"start":"2026-01-01","end":"2026-12-31"}}]}`
-	response, body := rawJSONRequest(t, ts.URL, http.MethodPost, "/api/v1/term-reports",
+	response, body := rawJSONRequest(t, ts.URL, http.MethodPost, "/api/v1/search-exports",
 		map[string]string{"X-Api-Key": testAPIKey}, request)
 	require.Equal(t, http.StatusOK, response.StatusCode, body)
 	var summary report.Summary
@@ -110,10 +136,50 @@ func TestTermReportRejectsMalformedRevisionAsClientError(t *testing.T) {
 		EvidenceSHA256: strings.Repeat("b", 64), Reason: " ", Action: "select"}}})
 	require.NoError(t, err)
 	response, body = rawJSONRequest(t, ts.URL, http.MethodPost,
-		"/api/v1/term-reports/"+summary.ID+"/revisions", map[string]string{"X-Api-Key": testAPIKey},
+		"/api/v1/search-exports/"+summary.ID+"/revisions", map[string]string{"X-Api-Key": testAPIKey},
 		string(malformed))
-	require.Equal(t, http.StatusUnprocessableEntity, response.StatusCode, body)
+	require.Equal(t, http.StatusBadRequest, response.StatusCode, body)
 	require.Contains(t, body, "invalid_report_choice")
+	stale := strings.Replace(string(malformed), `"reason":" "`, `"reason":"Reviewed source"`, 1)
+	response, body = rawJSONRequest(t, ts.URL, http.MethodPost,
+		"/api/v1/search-exports/"+summary.ID+"/revisions", map[string]string{"X-Api-Key": testAPIKey}, stale)
+	require.Equal(t, http.StatusConflict, response.StatusCode, body)
+	require.Contains(t, body, "stale_evidence")
+}
+
+func TestTermReportDateLimitIdentifiesDocument(t *testing.T) {
+	ts, catalog := newTestServer(t, nil)
+	content := strings.Repeat("Document dated 2024-05-06. ", 257)
+	node := createFileWithContent(t, ts, catalog, "/many-dates.txt", content)
+	require.NoError(t, catalog.RecordExtraction(t.Context(), store.ExtractionResult{
+		BlobHash: node.BlobHash, Extractor: "synthetic-native", ExtractorVersion: 1,
+		Status: store.ExtractionOK, Text: content,
+	}))
+	request := `{"version":1,"all_documents":true,"timezone":"UTC","coverage_mode":"available_only",` +
+		`"terms":[{"number":1,"expression":"alpha","syntax":"simple",` +
+		`"dates":{"start":"2026-01-01","end":"2026-12-31"}}]}`
+	response, body := rawJSONRequest(t, ts.URL, http.MethodPost, "/api/v1/search-exports",
+		map[string]string{"X-Api-Key": testAPIKey}, request)
+	require.Equal(t, http.StatusRequestEntityTooLarge, response.StatusCode, body)
+	require.Contains(t, body, "report_limit")
+	require.Contains(t, body, "document "+strconv.FormatInt(node.ID, 10))
+}
+
+func TestTermReportNativeTextLimitReturnsClientError(t *testing.T) {
+	ts, catalog := newTestServer(t, nil)
+	content := strings.Repeat("x", (16<<20)+1)
+	node := createFileWithContent(t, ts, catalog, "/large-text.txt", content)
+	require.NoError(t, catalog.RecordExtraction(t.Context(), store.ExtractionResult{
+		BlobHash: node.BlobHash, Extractor: "synthetic-native", ExtractorVersion: 1,
+		Status: store.ExtractionOK, Text: content,
+	}))
+	request := `{"version":1,"all_documents":true,"timezone":"UTC","coverage_mode":"available_only",` +
+		`"terms":[{"number":1,"expression":"alpha","syntax":"simple",` +
+		`"dates":{"start":"2026-01-01","end":"2026-12-31"}}]}`
+	response, body := rawJSONRequest(t, ts.URL, http.MethodPost, "/api/v1/search-exports",
+		map[string]string{"X-Api-Key": testAPIKey}, request)
+	require.Equal(t, http.StatusRequestEntityTooLarge, response.StatusCode, body)
+	require.Contains(t, body, "report_limit")
 }
 
 func TestTermReportOldDownloadStaysFrozenAfterSourceChange(t *testing.T) {
@@ -125,7 +191,7 @@ func TestTermReportOldDownloadStaysFrozenAfterSourceChange(t *testing.T) {
 	encoded, err := json.Marshal(request)
 	require.NoError(t, err)
 	create := func() report.Summary {
-		response, body := rawJSONRequest(t, ts.URL, http.MethodPost, "/api/v1/term-reports",
+		response, body := rawJSONRequest(t, ts.URL, http.MethodPost, "/api/v1/search-exports",
 			map[string]string{"X-Api-Key": testAPIKey}, string(encoded))
 		require.Equal(t, http.StatusOK, response.StatusCode, body)
 		var summary report.Summary
@@ -134,7 +200,7 @@ func TestTermReportOldDownloadStaysFrozenAfterSourceChange(t *testing.T) {
 	}
 	first := create()
 	require.Equal(t, int64(1), first.Counts[0].Hits)
-	response, frozenBundle := get(t, ts, "/api/v1/term-reports/"+first.ID+"/bundle", nil)
+	response, frozenBundle := get(t, ts, "/api/v1/search-exports/"+first.ID+"/bundle", nil)
 	require.Equal(t, http.StatusOK, response.StatusCode)
 	_, _, err = s.Trash(t.Context(), node.ID, node.Revision)
 	require.NoError(t, err)
@@ -142,7 +208,7 @@ func TestTermReportOldDownloadStaysFrozenAfterSourceChange(t *testing.T) {
 	second := create()
 	require.NotEqual(t, first.ID, second.ID)
 	require.Zero(t, second.Counts[0].Hits)
-	response, stillFrozen := get(t, ts, "/api/v1/term-reports/"+first.ID+"/bundle", nil)
+	response, stillFrozen := get(t, ts, "/api/v1/search-exports/"+first.ID+"/bundle", nil)
 	require.Equal(t, http.StatusOK, response.StatusCode)
 	require.Equal(t, frozenBundle, stillFrozen)
 }
@@ -181,13 +247,13 @@ func TestTermReportBrowserTicketIsOneUseAndOwnerBound(t *testing.T) {
 			Expression: "alpha", Syntax: "simple", Dates: report.DateRange{Start: "2026-01-01", End: "2026-12-31"}}}}
 	encoded, err := json.Marshal(request)
 	require.NoError(t, err)
-	resp, body := webRequest(http.MethodPost, "/api/v1/term-reports", string(encoded))
+	resp, body := webRequest(http.MethodPost, "/api/v1/search-exports", string(encoded))
 	require.Equal(t, http.StatusOK, resp.StatusCode, body)
 	var summary report.Summary
 	require.NoError(t, json.Unmarshal([]byte(body), &summary))
-	resp, body = webRequest(http.MethodGet, "/api/v1/term-reports/"+summary.ID+"/csv", "")
+	resp, body = webRequest(http.MethodGet, "/api/v1/search-exports/"+summary.ID+"/csv", "")
 	require.Equal(t, http.StatusForbidden, resp.StatusCode, body)
-	resp, body = webRequest(http.MethodPost, "/api/v1/term-reports/"+summary.ID+"/download", `{"format":"csv"}`)
+	resp, body = webRequest(http.MethodPost, "/api/v1/search-exports/"+summary.ID+"/download", `{"format":"csv"}`)
 	require.Equal(t, http.StatusOK, resp.StatusCode, body)
 	var ticket struct {
 		URL string `json:"url"`

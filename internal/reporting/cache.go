@@ -22,7 +22,6 @@ import (
 var (
 	ErrUnavailable     = errors.New("report handle unavailable")
 	ErrCapacity        = errors.New("report capacity exhausted")
-	ErrReportLimit     = errors.New("report limit exceeded")
 	ErrInvalidRevision = errors.New("invalid report revision")
 )
 
@@ -81,7 +80,7 @@ func (c *Cache) startBuild(parent context.Context, owner string) (context.Contex
 	if c == nil || c.budget == nil || owner == "" {
 		return nil, nil, ErrUnavailable
 	}
-	ctx, cancel := context.WithTimeout(parent, 60*time.Second)
+	ctx, cancel := context.WithTimeout(parent, report.DefaultTimeout)
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.sweepExpiredLocked()
@@ -233,19 +232,22 @@ func (c *Cache) makeEntryWithFrame(ctx context.Context, owner, parent string, sh
 		}}
 	entry.choices = slices.Clone(frame.Request.DateChoices)
 	entry.selected = make([]report.DateSelection, len(frame.Members))
-	choiceByDocument := make(map[report.Identity]*report.DateChoice, len(entry.choices))
-	for i := range entry.choices {
-		choiceByDocument[entry.choices[i].Document] = &entry.choices[i]
-	}
-	for i, member := range frame.Members {
-		entry.selected[i], _ = report.SelectDate(member.Kind, member.Candidates,
-			choiceByDocument[member.Identity], frame.Request)
-	}
 	if errors.Is(err, ErrReviewRequired) {
 		_ = artifactScope.Close()
 		entry.scope = nil
 		entry.summary.State = "needs_review"
-		entry.summary.UnresolvedDates = unresolvedDateCount(frame)
+		choiceByDocument := make(map[report.Identity]*report.DateChoice, len(entry.choices))
+		for i := range entry.choices {
+			choiceByDocument[entry.choices[i].Document] = &entry.choices[i]
+		}
+		for i, member := range frame.Members {
+			selection, err := report.SelectDate(member.Kind, member.Candidates,
+				choiceByDocument[member.Identity], frame.Request)
+			entry.selected[i] = selection
+			if err != nil {
+				entry.summary.UnresolvedDates++
+			}
+		}
 		if err := checkSummaryLimit(entry.summary); err != nil {
 			return nil, err
 		}
@@ -291,27 +293,12 @@ func (c *Cache) makeEntryWithFrame(ctx context.Context, owner, parent string, sh
 func checkSummaryLimit(summary report.Summary) error {
 	encoded, err := json.Marshal(summary)
 	if err != nil {
-		return errors.Join(ErrReportLimit, err)
+		return errors.Join(report.ErrReportLimit, err)
 	}
 	if len(encoded) > report.MaxRequestSummaryJSONBytes {
-		return ErrReportLimit
+		return report.ErrReportLimit
 	}
 	return nil
-}
-
-func unresolvedDateCount(frame report.Frame) int64 {
-	var count int64
-	choices := make(map[report.Identity]*report.DateChoice, len(frame.Request.DateChoices))
-	for index := range frame.Request.DateChoices {
-		choice := &frame.Request.DateChoices[index]
-		choices[choice.Document] = choice
-	}
-	for _, member := range frame.Members {
-		if _, err := report.SelectDate(member.Kind, member.Candidates, choices[member.Identity], frame.Request); err != nil {
-			count++
-		}
-	}
-	return count
 }
 
 func digestBytes(raw []byte) string {
@@ -446,7 +433,7 @@ func (c *Cache) Dates(ctx context.Context, owner, id string, page report.DatePag
 		page.Limit = 50
 	}
 	if page.Limit < 1 || page.Limit > 100 {
-		return report.DatePage{}, ErrReportLimit
+		return report.DatePage{}, report.ErrReportLimit
 	}
 	c.mu.Lock()
 	c.sweepExpiredLocked()
@@ -501,7 +488,7 @@ func (c *Cache) Dates(ctx context.Context, owner, id string, page report.DatePag
 				break
 			}
 			if len(item.Candidates) == 0 {
-				return report.DatePage{}, ErrReportLimit
+				return report.DatePage{}, report.ErrReportLimit
 			}
 			item.Candidates = item.Candidates[:len(item.Candidates)-1]
 			item.CandidatesComplete = false
@@ -514,7 +501,7 @@ func (c *Cache) Dates(ctx context.Context, owner, id string, page report.DatePag
 			cursor.Member++
 			cursor.Candidate = 0
 		} else if consumed == 0 {
-			return report.DatePage{}, ErrReportLimit
+			return report.DatePage{}, report.ErrReportLimit
 		}
 	}
 	if cursor.Member < len(shared.value.Members) {
@@ -579,7 +566,7 @@ func (c *Cache) Acquire(ctx context.Context, owner, id, format string) (io.ReadC
 	case "bundle":
 		raw, digest = entry.artifact.Bundle, entry.summary.BundleSHA256
 	default:
-		return nil, 0, "", ErrReportLimit
+		return nil, 0, "", report.ErrReportLimit
 	}
 	readerCtx, cancel := context.WithCancel(ctx)
 	reader := &pinnedReader{cache: c, entry: entry, reader: bytes.NewReader(raw),
