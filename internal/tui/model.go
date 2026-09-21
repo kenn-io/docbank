@@ -523,6 +523,9 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		m.naturalProfiles = append([]api.ProcessingProfileSummary(nil), msg.profiles...)
 		if m.naturalMode == naturalNames && naturalProfileBinding(m.naturalProfiles) != "" {
 			m.naturalMode = naturalAuto
+			if query := m.activeSearchQuery(); query != "" && (!m.loading || m.submittedSearchID == m.requestID) {
+				return m.startSearch(query)
+			}
 		}
 		return m, nil
 	case naturalSearchBaseLoadedMsg:
@@ -2333,21 +2336,26 @@ func (m Model) applyNaturalSearchRerank(msg naturalSearchRerankLoadedMsg) (tea.M
 }
 
 func (m *Model) applyNaturalRows(query string, rows []row, truncated bool) {
+	refreshing := m.mode == modeSearch && m.searchQuery == query
 	previousSelectedID, previousOffset := int64(0), m.offset
 	if selected, ok := m.selected(); ok {
 		previousSelectedID = selected.node.ID
 	}
 	m.mode = modeSearch
 	m.searchQuery = query
-	m.sortField = sortByRelevance
-	m.sortDesc = false
+	if !refreshing {
+		m.sortField = sortByRelevance
+		m.sortDesc = false
+	}
 	m.rows = append([]row(nil), rows...)
 	m.total = len(rows)
 	m.truncated = truncated
 	m.cursor, m.offset = 0, 0
 	m.sortRows()
-	m.selectNode(previousSelectedID)
-	m.offset = previousOffset
+	if refreshing {
+		m.selectNode(previousSelectedID)
+		m.offset = previousOffset
+	}
 	m.err = nil
 	m.clampSelection()
 }

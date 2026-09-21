@@ -360,6 +360,128 @@ func TestNaturalSearchProfilesFailureIsVisible(t *testing.T) {
 	assert.Contains(t, ansi.Strip(model.render()), "Natural-language search unavailable: profiles unavailable")
 }
 
+func TestNaturalSearchProfilesRestartLatestSubmittedQuery(t *testing.T) {
+	for _, test := range []struct {
+		name     string
+		accepted string
+		submit   bool
+		want     string
+	}{
+		{name: "accepted", accepted: "accepted", want: "accepted"},
+		{name: "pending first query", submit: true, want: "latest"},
+		{name: "pending newer query", accepted: "accepted", submit: true, want: "latest"},
+		{name: "unsubmitted draft"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			fake := newFakeBackend()
+			model, err := New(t.Context(), fake)
+			require.NoError(t, err)
+			if test.accepted != "" {
+				model, _ = updateModel(t, model, searchLoadedMsg{
+					requestID: model.requestID, query: test.accepted, report: fake.search,
+				})
+			}
+			model.searching = true
+			model.searchInput.SetValue("latest")
+			var oldReply tea.Msg
+			if test.submit {
+				var cmd tea.Cmd
+				model, cmd = updateModel(t, model, key(tea.KeyEnter))
+				oldReply = cmd()
+			}
+			model.searchInput.SetValue("unsubmitted draft")
+			before := model.requestID
+			model, cmd := updateModel(t, model, naturalProfilesLoadedMsg{
+				requestID: model.naturalProfilesRequest, profiles: fake.profiles,
+			})
+			assert.Equal(t, naturalAuto, model.naturalMode)
+			if test.want == "" {
+				assert.Nil(t, cmd)
+				assert.Equal(t, before, model.requestID)
+				return
+			}
+			require.NotNil(t, cmd)
+			assert.Greater(t, model.requestID, before)
+			if oldReply != nil {
+				model = firstModel(t, model, oldReply)
+				assert.Equal(t, test.accepted, model.searchQuery)
+			}
+			model = runModelCommand(t, model, cmd)
+			assert.Equal(t, test.want, model.searchQuery)
+			assert.Equal(t, naturalAuto, model.naturalResultMode)
+			require.Len(t, fake.naturalSearchRequests, 1)
+			assert.Equal(t, test.want, fake.naturalSearchRequests[0].Query)
+			assert.Equal(t, naturalHybrid, fake.naturalSearchRequests[0].Mode)
+		})
+	}
+}
+
+func TestNaturalSearchRowsPreservePositionOnlyForSameQuery(t *testing.T) {
+	rows := []row{
+		{node: api.Node{ID: 1, Size: 10}, rank: 0},
+		{node: api.Node{ID: 2, Size: 20}, rank: 1},
+		{node: api.Node{ID: 3, Size: 30}, rank: 2},
+	}
+	for _, query := range []string{"same query", "new query"} {
+		t.Run(query, func(t *testing.T) {
+			model := Model{
+				mode: modeSearch, searchQuery: "same query", width: 100, height: 6,
+				rows: []row{rows[2], rows[1], rows[0]}, cursor: 1, offset: 1,
+				sortField: sortBySize, sortDesc: true,
+			}
+			model.applyNaturalRows(query, rows, false)
+			if query == "same query" {
+				assert.Equal(t, sortBySize, model.sortField)
+				assert.True(t, model.sortDesc)
+				assert.Equal(t, []int64{3, 2, 1}, rowIDs(model.rows))
+				assert.Equal(t, 1, model.cursor)
+				assert.Equal(t, 1, model.offset)
+			} else {
+				assert.Equal(t, sortByRelevance, model.sortField)
+				assert.False(t, model.sortDesc)
+				assert.Equal(t, []int64{1, 2, 3}, rowIDs(model.rows))
+				assert.Zero(t, model.cursor)
+				assert.Zero(t, model.offset)
+			}
+		})
+	}
+}
+
+func TestNaturalSearchProfilesPreservePendingNavigation(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		path string
+		key  tea.KeyPressMsg
+	}{
+		{name: "history", path: "/README.txt", key: runeKey('a')},
+		{name: "directory", path: "/docs", key: key(tea.KeyEnter)},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			fake := newFakeBackend()
+			fake.search.Hits = []api.SearchHit{{Node: fake.nodes[test.path], Path: test.path}}
+			model, err := New(t.Context(), fake)
+			require.NoError(t, err)
+			model.searching = true
+			model.searchInput.SetValue("accepted")
+			model, cmd := updateModel(t, model, key(tea.KeyEnter))
+			model = runModelCommand(t, model, cmd)
+			model, navigation := updateModel(t, model, test.key)
+			require.NotNil(t, navigation)
+			model, cmd = updateModel(t, model, naturalProfilesLoadedMsg{
+				requestID: model.naturalProfilesRequest, profiles: fake.profiles,
+			})
+			assert.Nil(t, cmd)
+			model = runModelCommand(t, model, navigation)
+			assert.False(t, model.loading)
+			if test.name == "history" {
+				require.Len(t, model.historyPages, 1)
+			} else {
+				assert.Equal(t, test.path, model.directory.Path)
+			}
+		})
+	}
+}
+
 func TestNaturalSearchFooterMatchesCapabilities(t *testing.T) {
 	model, err := New(t.Context(), newFakeBackend())
 	require.NoError(t, err)
