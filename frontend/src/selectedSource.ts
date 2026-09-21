@@ -27,7 +27,11 @@ export interface SnapshotSelectedSource extends SelectedSourceBase {
   readonly displayCollectionLabel?: string | null;
 }
 
-export type SelectedSource = LiveSelectedSource | SnapshotSelectedSource;
+export interface RelatedSelectedSource extends SelectedSourceBase {
+  readonly kind: "related";
+}
+
+export type SelectedSource = LiveSelectedSource | SnapshotSelectedSource | RelatedSelectedSource;
 
 // DB-17 can open a duplicate as a separate inspector context while retaining
 // the source selected from the frozen snapshot for an exact return path.

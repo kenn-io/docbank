@@ -171,6 +171,33 @@ minutes total. Locking the browser session or stopping the daemon revokes them.
 If paging reports that the snapshot is gone, run the complete query again and
 use only the new snapshot and its cursors.
 
+## Follow email attachments
+
+Choose **Attachments** in the content inspector to see published attachment
+occurrences and incoming parent messages for the exact selected version.
+Repeated filenames or identical bytes remain separate occurrences, identified
+by their MIME part and publication order. **Load more** requests another page;
+the view stops at 1,000 occurrences per direction rather than expanding an
+entire message family automatically.
+
+Each occurrence separates its MIME decoding outcome from current processing
+status. **Check inventory** reads that publication's receipt and reports
+complete or partial inventory independently of indexing. An empty relation
+list, an unavailable read, or an unchecked receipt does not prove that a
+message has no attachments. Occurrences without a published child stay visible.
+The tab does not publish documents, start processing, or grant provider consent.
+
+**Open attachment** and **Open parent** enter a separate exact-version context.
+Later content replacement does not substitute the live head or its media type
+for that related version. Preview, text, and download retain the usual byte
+verification and current-access checks. Missing or denied targets report an
+error without removing the occurrence.
+
+Follow nested messages with **Back to previous document**, or choose **Return
+to frozen document** to restore focus to the original result. These steps do
+not rerun the query, change its snapshot membership, or check attachment rows.
+Ordinary live selections offer the same return path to the selected document.
+
 ## Export a verified ZIP
 
 Choose **Export selection** in the selection dock for the checked documents.

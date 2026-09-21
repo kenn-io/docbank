@@ -232,7 +232,7 @@
   let inspectorHighlightSets = $state<{ id: string; name: string; terms: import("./query.js").HighlightTerm[] }[]>([]);
   let snapshotQueryTerms = $state<string[]>([]);
   let snapshotQueryHighlightError = $state("");
-  let inspectorContentTab = $state<"preview" | "text" | "duplicates">("preview");
+  let inspectorContentTab = $state<"preview" | "text" | "duplicates" | "attachments">("preview");
 
   const selected = $derived(rows.find((row) => row.node.id === selectedID));
   const snapshotActive = $derived(snapshotState.status !== "idle");
@@ -2033,7 +2033,8 @@
             <div class="snapshot-browser">
               <FacetSidebar facets={snapshotPage.facets} query={snapshotQuery}
                 disabled={snapshotState.status !== "ready"} onchange={changeSnapshotQuery} />
-              <section class="snapshot-results" aria-label="Frozen query results">
+              <section class="snapshot-results" aria-label="Frozen query results"
+                data-snapshot-id={snapshotPage.snapshot_id} data-member-hash={snapshotPage.member_hash}>
                 {#if snapshotPage.rows.length === 0}
                   <EmptyState title="No matching documents" description="Change the query or a supported facet, then run another frozen snapshot.">
                     {#snippet icon()}<SearchIcon size="22" />{/snippet}
@@ -2061,7 +2062,7 @@
                     {/snippet}
                     {#snippet children()}
                       {#each snapshotPage.rows as row (`${row.node_id}:${row.content_version_id}`)}
-                        <tr class:selected={row.node_id === selectedSnapshotID} tabindex="0"
+                        <tr class:selected={row.node_id === selectedSnapshotID} tabindex="0" data-snapshot-node={row.node_id}
                           aria-selected={row.node_id === selectedSnapshotID} onclick={() => (selectedSnapshotID = row.node_id)}
                           onkeydown={(event) => { if (event.key === "Enter") selectedSnapshotID = row.node_id; }}>
                           <td class="selection-column" onclick={(event) => event.stopPropagation()}>
@@ -2300,6 +2301,7 @@
               {#each sortedRows as row (row.node.id)}
                 <tr
                   class:selected={row.node.id === selectedID}
+                  data-live-node={row.node.id}
                   data-node-id={row.node.id}
                   tabindex="0"
                   aria-selected={row.node.id === selectedID}
@@ -2461,6 +2463,7 @@
                     selectedSnapshotPosition + 1 < (snapshotPage?.total ?? 0)}
                   snapshotExpired={snapshotState.status === "expired"}
                   onnavigate={navigateSnapshotDocument}
+                  onreturnfocus={() => document.querySelector<HTMLElement>(`tr[data-snapshot-node="${selectedSnapshotID}"]`)?.focus()}
                   onauthfailure={handleFailure}
                 />
               {/if}
@@ -2658,6 +2661,7 @@
                       session={webSession}
                       source={selectedSource}
                       authorizationRevision={currentInspectorNode.revision}
+                      onreturnfocus={() => document.querySelector<HTMLElement>(`tr[data-live-node="${selectedID}"]`)?.focus()}
                       onauthfailure={handleFailure}
                     />
                   {/if}

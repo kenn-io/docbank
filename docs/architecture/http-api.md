@@ -701,6 +701,16 @@ challenge proof over the upload secret before sending bytes, binds the socket
 to one session, and never reconnects it. An ordinary browser token is
 explicitly forbidden from `POST /api/v1/uploads`.
 
+Attachment navigation additionally permits exact `GET /api/v1/versions/{id}`,
+`GET /api/v1/email-document-publications/{operation_id}`, and bounded
+`GET /api/v1/email-document-relations` reads. Relation queries require exactly
+one parent or child version, with an optional paired operation/order cursor
+and a page limit of at most 250. Unknown or repeated parameters are denied.
+These browser capabilities do not permit publication, removal, email
+processing, or consent mutations. The inspector validates relation and receipt
+agreement before presenting inventory authority and separately checks the
+related version's current node access before opening verified content.
+
 `GET /nodes/{id}/children` binds the live directory projection—including its
 current canonical path—and the requested child page to one read transaction.
 Refresh clients therefore do not combine an earlier directory name with a
