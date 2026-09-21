@@ -66,6 +66,30 @@ func TestEvaluateRerankPrefix(t *testing.T) {
 	assert.Equal(t, 0, report.Systems[0].Trials[0].RerankUsage.ProviderCalls)
 }
 
+func TestEvaluateRerankExcerptRollsBackPartialRune(t *testing.T) {
+	const asciiBytes = 4095
+	candidateText := strings.Repeat("a", asciiBytes) + "界"
+	runner := &testRerankingRunner{ranking: []string{"candidate"}, scores: []float64{1}}
+	report, err := embeddingeval.Evaluate(context.Background(), embeddingeval.Corpus{
+		ID: "excerpt-boundary", Version: "1",
+		Documents: []embeddingeval.Document{{ID: "candidate", Text: candidateText}},
+		Queries: []embeddingeval.Query{{
+			ID: "query", Text: "synthetic query",
+			Judgments: []embeddingeval.Judgment{{DocumentID: "candidate", Grade: 1}},
+		}},
+	}, []embeddingeval.System{{
+		ID: "boundary", RecipeFingerprint: "recipe", Reranker: "test",
+		RerankerFingerprint: "policy", RerankTopN: 1,
+	}}, 1, runner)
+	require.NoError(t, err)
+	require.Len(t, runner.candidates, 1)
+	excerpt := runner.candidates[0].Text
+	assert.Len(t, []byte(excerpt), asciiBytes)
+	assert.Equal(t, strings.Repeat("a", asciiBytes), excerpt)
+	assert.True(t, utf8.ValidString(excerpt))
+	assert.Equal(t, []string{"candidate"}, report.Systems[0].Trials[0].Queries[0].Ranking)
+}
+
 func TestEvaluateQueryObservations(t *testing.T) {
 	corpus := embeddingeval.Corpus{
 		ID: "metrics", Version: "1",
