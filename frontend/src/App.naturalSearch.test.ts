@@ -93,10 +93,12 @@ function report(
 interface HarnessOptions {
   profiles: unknown[];
   profilesStatus?: number;
+  profilesPending?: boolean;
   files: ReturnType<typeof node>[];
   baseReport: unknown;
   baseSearchStatus?: number;
   legacySearchStatus?: number;
+  legacyPending?: boolean;
   basePending?: boolean;
   rerankReport?: unknown;
   rerankPending?: boolean;
@@ -114,7 +116,11 @@ function installHarness(options: HarnessOptions) {
   const fenceBodies: Record<string, unknown>[] = [];
   let rerankResolve: ((response: Response) => void) | undefined;
   let baseResolve: ((response: Response) => void) | undefined;
+  let profilesResolve: ((response: Response) => void) | undefined;
+  let legacyResolve: ((response: Response) => void) | undefined;
   const basePending = new Promise<Response>((resolve) => { baseResolve = resolve; });
+  const profilesPending = new Promise<Response>((resolve) => { profilesResolve = resolve; });
+  const legacyPending = new Promise<Response>((resolve) => { legacyResolve = resolve; });
   let baseCalls = 0;
   const rerankPending = new Promise<Response>((resolve) => { rerankResolve = resolve; });
   const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
@@ -131,6 +137,7 @@ function installHarness(options: HarnessOptions) {
       return json({ items: options.files.map((file) => ({ node: file, path: file.path })), total: options.files.length, limit: 1000, offset: 0, omitted_trashed: 0 });
     }
     if (url === "/api/v1/processing/profiles") {
+      if (options.profilesPending) return profilesPending;
       return options.profilesStatus ? new Response("profile failure", { status: options.profilesStatus }) : json(options.profiles);
     }
     const nodeMatch = url.match(/^\/api\/v1\/nodes\/(\d+)$/);
@@ -161,6 +168,7 @@ function installHarness(options: HarnessOptions) {
       return json(options.baseReport);
     }
     if (url.startsWith("/api/v1/search?") && method === "GET") {
+      if (options.legacyPending) return legacyPending;
       if (options.legacySearchStatus) return new Response("legacy search failure", { status: options.legacySearchStatus });
       return json(options.tagSearch ?? { hits: [], limit: 1000, truncated: false });
     }
@@ -168,7 +176,9 @@ function installHarness(options: HarnessOptions) {
     if (url.startsWith("/api/v1/nodes/") && url.includes("/tags?")) return json({ items: [], total: 0, limit: 1000, offset: 0 });
     throw new Error(`unexpected request: ${method} ${url}`);
   });
-  return { fetchMock, postBodies, fenceBodies, resolveRerank: (response: Response) => rerankResolve?.(response), resolveBase: (response: Response) => baseResolve?.(response) };
+  return { fetchMock, postBodies, fenceBodies,
+    resolveProfiles: (response: Response) => profilesResolve?.(response), resolveLegacy: (response: Response) => legacyResolve?.(response),
+    resolveRerank: (response: Response) => rerankResolve?.(response), resolveBase: (response: Response) => baseResolve?.(response) };
 }
 
 async function submitSearch(value: string): Promise<void> {
@@ -466,6 +476,77 @@ it("shows why natural search controls could not load", async () => {
   expect(await screen.findByText(/Natural-language search unavailable.*503/)).toBeTruthy();
 });
 
+it.each(["accepted", "pending"])("reruns the latest %s query when profiles arrive without submitting a draft", async (state) => {
+  const file = node(2, "report.txt", baseVersion);
+  const stale = node(3, "stale.txt", rerankedVersion);
+  const options: HarnessOptions = {
+    profiles: [{ name: "private", fingerprint: "a".repeat(64), rendition: true, embedding_bindings: ["embed"], reranking_available: false }],
+    profilesPending: true,
+    files: [file, stale],
+    baseReport: report("hybrid", [result(file, 1, "natural excerpt")]),
+    tagSearch: { hits: [{ node: file, path: file.path, match: "name" }], limit: 1000, truncated: false },
+  };
+  const harness = installHarness(options);
+  render(App);
+  await screen.findAllByText("report.txt");
+  await submitSearch("accepted query");
+  await screen.findByText("Search results");
+  await screen.findAllByText("/report.txt");
+  if (state === "pending") {
+    options.legacyPending = true;
+    await submitSearch("pending query");
+    await waitFor(() => expect(harness.fetchMock.mock.calls.some(([input]) => String(input).includes("q=pending+query"))).toBe(true));
+  }
+  const input = screen.getByRole("searchbox", { name: "Search documents" });
+  await fireEvent.input(input, { target: { value: "unsubmitted draft" } });
+  harness.resolveProfiles(json(options.profiles));
+  await screen.findByText("natural excerpt");
+  expect(harness.postBodies[0]?.query).toBe(`${state} query`);
+  expect((input as HTMLInputElement).value).toBe("unsubmitted draft");
+  if (state === "pending") {
+    harness.resolveLegacy(json({ hits: [{ node: stale, path: stale.path, match: "name" }], limit: 1000, truncated: false }));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(screen.queryByText("/stale.txt")).toBeNull();
+    expect(screen.getByText("natural excerpt")).toBeTruthy();
+  }
+});
+
+it("does not submit an unsubmitted draft when profiles arrive", async () => {
+  const profiles = [{ name: "private", fingerprint: "a".repeat(64), rendition: true, embedding_bindings: ["embed"], reranking_available: false }];
+  const harness = installHarness({ profiles, profilesPending: true, files: [], baseReport: report("hybrid", []) });
+  render(App);
+  const input = await screen.findByRole("searchbox", { name: "Search documents" });
+  await fireEvent.input(input, { target: { value: "unsubmitted draft" } });
+  harness.resolveProfiles(json(profiles));
+  await screen.findByRole("combobox", { name: "Search mode: Auto" });
+  expect(harness.fetchMock.mock.calls.some(([input]) => String(input).startsWith("/api/v1/search"))).toBe(false);
+});
+
+it("does not restart a search when profiles arrive during folder navigation", async () => {
+  const folder = { ...node(3, "docs", rerankedVersion), kind: "dir" };
+  const profiles = [{ name: "private", fingerprint: "a".repeat(64), rendition: true, embedding_bindings: ["embed"], reranking_available: false }];
+  const harness = installHarness({
+    profiles, profilesPending: true, files: [folder], baseReport: report("hybrid", []),
+    tagSearch: { hits: [{ node: folder, path: folder.path, match: "name" }], limit: 1000, truncated: false },
+  });
+  let resolveFolder: ((response: Response) => void) | undefined;
+  const folderPending = new Promise<Response>((resolve) => { resolveFolder = resolve; });
+  const fetch = harness.fetchMock.getMockImplementation()!;
+  harness.fetchMock.mockImplementation((input, init) => String(input).startsWith("/api/v1/nodes/3/children?") ? folderPending : fetch(input, init));
+  render(App);
+  await screen.findAllByText("docs");
+  await submitSearch("docs");
+  await screen.findByText("Search results");
+  await fireEvent.dblClick(document.querySelector('tr[data-node-id="3"]')!);
+  await waitFor(() => expect(harness.fetchMock.mock.calls.some(([input]) => String(input).startsWith("/api/v1/nodes/3/children?"))).toBe(true));
+  harness.resolveProfiles(json(profiles));
+  await screen.findByRole("combobox", { name: "Search mode: Auto" });
+  expect(harness.postBodies).toHaveLength(0);
+  resolveFolder?.(json({ directory: folder, items: [], total: 0, limit: 1000, offset: 0 }));
+  await screen.findByText("This folder is empty");
+  expect(screen.getByText("Current folder")).toBeTruthy();
+});
+
 it.each([500, 401])("handles node lookup failures without a Names and text fallback (%i)", async (status) => {
   const good = node(2, "available.txt", baseVersion);
   const bad = node(3, "unavailable.txt", rerankedVersion);
@@ -499,6 +580,7 @@ it("reruns the active query when the search mode or rerank toggle changes", asyn
   await screen.findByRole("combobox", { name: "Search mode: Auto" });
   await submitSearch("annual report");
   await screen.findByText("auto excerpt");
+  await fireEvent.input(screen.getByRole("searchbox", { name: "Search documents" }), { target: { value: "unsubmitted draft" } });
   options.baseReport = report("lexical", [result(file, 1, "lexical excerpt")]);
   await fireEvent.click(screen.getByRole("combobox", { name: "Search mode: Auto" }));
   await fireEvent.click(screen.getByRole("option", { name: "Lexical" }));
@@ -511,6 +593,7 @@ it("reruns the active query when the search mode or rerank toggle changes", asyn
   await fireEvent.click(screen.getByRole("checkbox", { name: "Rerank results" }));
   await screen.findByText("lexical excerpt");
   expect(harness.postBodies.at(-1)?.rerank).toBeUndefined();
+  expect(harness.postBodies.every((body) => body.query === "annual report")).toBe(true);
 });
 
 it("preserves the chosen sort on a natural search refresh", async () => {

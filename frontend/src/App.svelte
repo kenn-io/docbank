@@ -152,6 +152,7 @@
   let selectedID = $state<number | undefined>();
   let bulkSelection = $state<SelectionState>(clearSelection());
   let searchQuery = $state("");
+  let submittedSearchQuery = "";
   let activeQuery = $state("");
   let tagFilterID = $state("");
   let activeTagID = $state("");
@@ -481,8 +482,8 @@
       naturalProfiles = profiles;
       naturalProfilesError = "";
       const selected = selectNaturalSearchProfile(profiles);
-      naturalSearchMode = selected?.embedding_bindings.length ? "auto" : "names";
       naturalRerank = false;
+      changeNaturalSearchMode(selected?.embedding_bindings.length ? "auto" : "names");
     } catch (cause) {
       if (request !== profileGeneration || session !== webSession) return;
       naturalProfiles = [];
@@ -873,10 +874,9 @@
     }
   }
 
-  async function runSearch(preferredSelectedID = selectedID): Promise<void> {
+  async function runSearch(preferredSelectedID = selectedID, query = searchQuery.trim()): Promise<void> {
     invalidateTagHotkeyMutation();
     leaveSnapshotMode();
-    const query = searchQuery.trim();
     if (!query) {
       naturalSearchController?.abort();
       naturalSearchNote = "";
@@ -886,6 +886,7 @@
       return;
     }
     const request = ++generation;
+    submittedSearchQuery = query;
     const requestedTagID = tagFilterID;
     const refreshing = activeQuery === query && activeTagID === requestedTagID;
     naturalSearchController?.abort();
@@ -1152,14 +1153,17 @@
   }
 
   function changeNaturalSearchMode(value: string): void {
+    if (value === naturalSearchMode) return;
     naturalSearchMode = value as NaturalSearchMode;
     if (naturalSearchMode === "names") naturalRerank = false;
-    if (activeQuery || searchPending) void runSearch();
+    const query = searchPending ? submittedSearchQuery : activeQuery;
+    if (query && (searchPending || !loading)) void runSearch(selectedID, query);
   }
 
   function changeNaturalRerank(checked: boolean): void {
     naturalRerank = checked;
-    if (activeQuery || searchPending) void runSearch();
+    const query = searchPending ? submittedSearchQuery : activeQuery;
+    if (query && (searchPending || !loading)) void runSearch(selectedID, query);
   }
 
   function changeTagFilter(tagID: string): void {
