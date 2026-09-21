@@ -20,7 +20,7 @@ import (
 	"go.kenn.io/kit/packstore"
 )
 
-func TestMetadataExportRefusesUnexportedPersonAuthority(t *testing.T) {
+func TestMetadataRoundTripsPersonAuthority(t *testing.T) {
 	for _, kind := range []string{"person", "external_alias", "unresolved_custodian", "candidate", "rejected_candidate"} {
 		t.Run(kind, func(t *testing.T) {
 			s := newTestStore(t)
@@ -49,13 +49,19 @@ func TestMetadataExportRefusesUnexportedPersonAuthority(t *testing.T) {
 			}
 			require.NoError(t, err)
 			var exported bytes.Buffer
-			require.ErrorContains(t, s.ExportMetadata(ctx, &exported), "person authority")
-			require.Empty(t, exported.Bytes())
+			require.NoError(t, s.ExportMetadata(ctx, &exported))
 			snapshot, err := s.BeginMetadataSnapshot(ctx)
 			require.NoError(t, err)
 			t.Cleanup(func() { require.NoError(t, snapshot.Close()) })
-			require.ErrorContains(t, snapshot.ExportBackup(ctx, &exported), "person authority")
-			require.Empty(t, exported.Bytes())
+			var backup bytes.Buffer
+			require.NoError(t, snapshot.ExportBackup(ctx, &backup))
+			for _, data := range [][]byte{exported.Bytes(), backup.Bytes()} {
+				target := newTestStore(t)
+				require.NoError(t, target.ImportMetadata(ctx, bytes.NewReader(data)))
+				var restored bytes.Buffer
+				require.NoError(t, target.ExportMetadata(ctx, &restored))
+				require.Equal(t, exported.Bytes(), restored.Bytes())
+			}
 		})
 	}
 }

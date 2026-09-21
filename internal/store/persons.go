@@ -33,15 +33,21 @@ func validPersonName(name string) bool {
 	return utf8.ValidString(name) && strings.TrimSpace(name) != "" && len(name) <= document.MaxPersonDisplayNameBytes
 }
 
+func validPersonOrigin(origin string) bool {
+	return slices.Contains([]string{"operator", "derived", "transfer"}, origin)
+}
+
+func validPersonConfidence(confidence string) bool {
+	return slices.Contains([]string{"exact_identifier", "operator_asserted", "supplied_identity", "name_candidate"}, confidence)
+}
+
 func (s *Store) CreatePerson(ctx context.Context, displayName, origin string) (Person, error) {
-	if !validPersonName(displayName) {
+	if !validPersonName(displayName) || !validPersonOrigin(origin) {
 		return Person{}, ErrInvalidPerson
 	}
 	state := "provisional"
 	if origin == "operator" {
 		state = "curated"
-	} else if origin != "derived" && origin != "transfer" {
-		return Person{}, ErrInvalidPerson
 	}
 	id, err := newUUIDv4()
 	if err != nil {
@@ -177,8 +183,7 @@ func (s *Store) PersonByID(ctx context.Context, id string) (Person, string, erro
 func (s *Store) AddPersonIdentity(ctx context.Context, personID string, revision int64, identity PersonIdentity) (PersonIdentity, error) {
 	if len(identity.EvidenceKind) > document.MaxPersonEvidenceKindBytes || len(identity.EvidenceID) > document.MaxPersonEvidenceIDBytes ||
 		!slices.Contains(document.PersonEvidenceKinds(), document.PersonEvidenceKind(identity.EvidenceKind)) || identity.EvidenceID == "" ||
-		!slices.Contains([]string{"operator", "derived", "transfer"}, identity.Origin) ||
-		!slices.Contains([]string{"exact_identifier", "operator_asserted", "supplied_identity", "name_candidate"}, identity.Confidence) {
+		!validPersonOrigin(identity.Origin) || !validPersonConfidence(identity.Confidence) {
 		return PersonIdentity{}, ErrInvalidPerson
 	}
 	normalized, err := document.NormalizeScopedPersonIdentity(document.PersonIdentityKind(identity.Kind), identity.ValueDisplay, identity.ScopeKind, identity.ScopeValue)

@@ -229,6 +229,47 @@ func assertRestoreTargetUnchanged(t *testing.T, target, wantDigest string) {
 	assert.NoError(t, err)
 }
 
+func TestJSONLBackupRestoresPeopleAndRebuildsAttribution(t *testing.T) {
+	fixture := newArchiveFixture(t)
+	ctx := t.Context()
+	person, err := fixture.metadata.CreatePerson(ctx, "Example Person", "operator")
+	require.NoError(t, err)
+	file, err := fixture.metadata.NodeByPath(ctx, "/alpha.txt")
+	require.NoError(t, err)
+	_, err = fixture.metadata.SetCustodian(ctx, store.CustodianRequest{
+		Scope:    store.CustodianScope{Kind: "document", NodeID: file.ID, ContentVersionID: file.CurrentVersionID},
+		PersonID: person.PersonID, RawLabel: person.DisplayName, Rank: "primary", Basis: "operator_assigned", IfMatchRevision: 1,
+	})
+	require.NoError(t, err)
+	_, err = fixture.metadata.AssertDocumentPerson(ctx, store.PersonDocumentAssertion{
+		ContentVersionID: file.CurrentVersionID, PersonID: person.PersonID, Role: "author", Action: "assert", Revision: 1,
+	})
+	require.NoError(t, err)
+	repo, err := backup.Init(filepath.Join(t.TempDir(), "repo"))
+	require.NoError(t, err)
+	_, err = backupapp.Create(ctx, repo, "test-version", fixture.metadata, fixture.blobs, backup.CreateOptions{})
+	require.NoError(t, err)
+	target := filepath.Join(t.TempDir(), "restored")
+	_, err = backupapp.Restore(ctx, repo, "test-version", backup.RestoreOptions{TargetDir: target})
+	require.NoError(t, err)
+	restored, err := store.Open(filepath.Join(target, "docbank.db"))
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, restored.Close()) })
+	restoredPerson, _, err := restored.PersonByID(ctx, person.PersonID)
+	require.NoError(t, err)
+	require.Equal(t, person, restoredPerson)
+	edges, head, err := restored.DocumentPeopleForVersion(ctx, file.CurrentVersionID)
+	require.NoError(t, err)
+	require.Equal(t, "published", head.State)
+	require.Len(t, edges, 2)
+	roles := make([]string, 0, len(edges))
+	for _, edge := range edges {
+		require.Equal(t, person.PersonID, edge.PersonID)
+		roles = append(roles, edge.Role)
+	}
+	require.ElementsMatch(t, []string{"author", "custodian"}, roles)
+}
+
 func TestJSONLLooseSnapshotVerifyAndRestore(t *testing.T) {
 	fixture := newArchiveFixture(t)
 	wantMetadata := exportMetadata(t, fixture.metadata)
