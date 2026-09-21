@@ -53,6 +53,7 @@ func TestSyntheticComparison(t *testing.T) {
 
 func TestCorpusIsSyntheticAndJudgedDocumentsAvoidQueryTerms(t *testing.T) {
 	corpus := loadCorpus(t)
+	fixture := newComparisonFixture(t, corpus)
 	byID := make(map[string]embeddingeval.Document, len(corpus.Documents))
 	for _, doc := range corpus.Documents {
 		byID[doc.ID] = doc
@@ -63,8 +64,16 @@ func TestCorpusIsSyntheticAndJudgedDocumentsAvoidQueryTerms(t *testing.T) {
 	for _, query := range corpus.Queries {
 		for _, judgment := range query.Judgments {
 			doc := byID[judgment.DocumentID]
+			nodeID, ok := fixture.documentToNode[judgment.DocumentID]
+			require.True(t, ok)
+			view, err := fixture.store.NodeViewByID(t.Context(), nodeID)
+			require.NoError(t, err)
+			filename := filepath.Base(view.Path)
+			assert.Equal(t, view.Node.Name, filename)
 			for term := range strings.FieldsSeq(strings.ToLower(query.Text)) {
 				assert.NotContains(t, strings.ToLower(doc.Text), term)
+				assert.NotContains(t, strings.ToLower(filename), term)
+				assert.NotContains(t, strings.ToLower(view.Path), term)
 			}
 		}
 	}
@@ -193,6 +202,7 @@ func loadCorpus(t *testing.T) embeddingeval.Corpus {
 type comparisonFixture struct {
 	store          *store.Store
 	nodeToDocument map[int64]string
+	documentToNode map[string]int64
 	generation     *vectorindex.Generation
 	vectorSpace    string
 	// The target scope has no query embedding owner, so output labels this fixture as wiring-only.
@@ -212,11 +222,13 @@ func newComparisonFixture(t *testing.T, corpus embeddingeval.Corpus) *comparison
 		"lumen archive lantern": {1, 0}, "lumen archive meadow": {0, 1},
 	}}
 	fixture.nodeToDocument = make(map[int64]string, len(corpus.Documents))
-	for _, doc := range corpus.Documents {
+	fixture.documentToNode = make(map[string]int64, len(corpus.Documents))
+	for index, doc := range corpus.Documents {
 		bytes := []byte(doc.Text)
 		hash := sha256.Sum256(append([]byte("blob:"), []byte(doc.ID)...))
 		blobHash := hex.EncodeToString(hash[:])
-		node, err := vault.CreateFile(t.Context(), vault.RootID(), "synthetic-"+doc.ID+".txt", blobHash,
+		name := fmt.Sprintf("synthetic-document-%03d.txt", index)
+		node, err := vault.CreateFile(t.Context(), vault.RootID(), name, blobHash,
 			int64(len(bytes)), "text/plain", store.BlobPhysical{Encoding: "raw", StoredBytes: int64(len(bytes)), Created: true})
 		require.NoError(t, err)
 		require.NoError(t, vault.RecordExtraction(t.Context(), store.ExtractionResult{
@@ -224,6 +236,7 @@ func newComparisonFixture(t *testing.T, corpus embeddingeval.Corpus) *comparison
 			Status: store.ExtractionOK, Text: doc.Text,
 		}))
 		fixture.nodeToDocument[node.ID] = doc.ID
+		fixture.documentToNode[doc.ID] = node.ID
 	}
 	set := makeVectorSet(t, corpus, fixture.vectorSpace)
 	encoded, setID, err := document.EncodeVectorSetV1(set)

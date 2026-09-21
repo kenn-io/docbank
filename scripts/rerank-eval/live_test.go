@@ -64,6 +64,39 @@ func TestLiveRerankComparison(t *testing.T) {
 	t.Log(renderComparisonJSONForStatus(report, "measured", reason))
 }
 
+func TestPricingFromEnvironmentRejectsInvalidValues(t *testing.T) {
+	const validDate = "2026-09-21"
+	tests := []struct {
+		name     string
+		date     string
+		typesafe string
+		cohere   string
+	}{
+		{name: "missing date", typesafe: "2", cohere: "3"},
+		{name: "missing TypeSafe rate", date: validDate, cohere: "3"},
+		{name: "missing Cohere rate", date: validDate, typesafe: "2"},
+		{name: "invalid date", date: "2026-02-30", typesafe: "2", cohere: "3"},
+		{name: "malformed TypeSafe rate", date: validDate, typesafe: "two", cohere: "3"},
+		{name: "malformed Cohere rate", date: validDate, typesafe: "2", cohere: "three"},
+		{name: "negative TypeSafe rate", date: validDate, typesafe: "-1", cohere: "3"},
+		{name: "negative Cohere rate", date: validDate, typesafe: "2", cohere: "-1"},
+		{name: "NaN TypeSafe rate", date: validDate, typesafe: "NaN", cohere: "3"},
+		{name: "NaN Cohere rate", date: validDate, typesafe: "2", cohere: "NaN"},
+		{name: "+Inf TypeSafe rate", date: validDate, typesafe: "+Inf", cohere: "3"},
+		{name: "+Inf Cohere rate", date: validDate, typesafe: "2", cohere: "+Inf"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Setenv("RERANK_PRICING_DATE", test.date)
+			t.Setenv("TYPESAFE_MICROS_PER_TOKEN", test.typesafe)
+			t.Setenv("COHERE_MICROS_PER_SEARCH_UNIT", test.cohere)
+			pricing, err := pricingFromEnvironment()
+			require.Error(t, err)
+			require.Nil(t, pricing)
+		})
+	}
+}
+
 type envSecrets struct{}
 
 func (envSecrets) ResolveSecret(ctx context.Context, binding string) (string, error) {

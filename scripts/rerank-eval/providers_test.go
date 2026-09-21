@@ -82,6 +82,12 @@ func TestProviderMapping(t *testing.T) {
 	assert.Nil(t, zeroResult.Usage.Cost, "Cohere zero search units have no presence bit")
 }
 
+func TestDatedRateCostRejectsOverflow(t *testing.T) {
+	rate := &datedRate{Basis: "2026-09-21:overflow", MicrosPerUnit: float64(^uint64(0) >> 1)}
+	_, err := rate.cost(2)
+	require.EqualError(t, err, "pricing result is too large")
+}
+
 type typeSafeAPI interface {
 	Rerank(ctx context.Context, request typesafe.RerankRequest) (typesafe.Result, error)
 	RequestShape() typesafe.RequestShape
