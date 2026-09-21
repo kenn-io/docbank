@@ -8,7 +8,6 @@ import (
 	"errors"
 	"fmt"
 	"slices"
-	"unicode/utf8"
 
 	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/internal/canonical"
@@ -453,8 +452,7 @@ func validateMetadataPersonIdentity(r metadataPersonIdentity) error {
 func validateMetadataPersonExternalIdentity(r metadataPersonExternalIdentity) error {
 	if r.Type != metadataPersonExternalType || validateUUIDv4(r.PersonID) != nil ||
 		!validExternalTuple(r.System, r.ArchiveID, r.UID) || !validExternalIdentityClassification(r.UIDKind, r.UIDState) ||
-		len(r.DisplayNameSnapshot) > document.MaxPersonDisplayNameSnapshotBytes || !utf8.ValidString(r.DisplayNameSnapshot) ||
-		(r.LastSeenRevision != nil && *r.LastSeenRevision < 0) {
+		!validExternalIdentityDetails(r.DisplayNameSnapshot, r.LastSeenRevision) {
 		return errors.New("invalid person external identity metadata")
 	}
 	if err := validateMetadataTime("person external identity linked_at", r.LinkedAt); err != nil {
@@ -566,7 +564,7 @@ func validateMetadataCustodianAssignment(r metadataCustodianAssignment) error {
 	if r.Type != metadataCustodianAssignmentType || validateUUIDv4(r.AssignmentID) != nil || r.Revision < 1 ||
 		!validPersonName(r.RawLabel) || r.RawLabelFolded != document.FoldPersonName(r.RawLabel) ||
 		!validCustodianClassification(r.Rank, r.Basis) ||
-		len(r.SourceRef) > document.MaxCustodianSourceRefBytes || !utf8.ValidString(r.SourceRef) {
+		!validCustodianSourceRef(r.SourceRef) {
 		return errors.New("invalid custodian assignment metadata")
 	}
 	if r.PersonID != nil && validateUUIDv4(*r.PersonID) != nil {

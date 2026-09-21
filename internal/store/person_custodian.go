@@ -56,11 +56,15 @@ func validCustodianClassification(rank, basis string) bool {
 		slices.Contains([]string{"operator_assigned", "package_column", "transfer_record"}, basis)
 }
 
+func validCustodianSourceRef(sourceRef string) bool {
+	return len(sourceRef) <= document.MaxCustodianSourceRefBytes && utf8.ValidString(sourceRef)
+}
+
 func (s *Store) SetCustodian(ctx context.Context, request CustodianRequest) (CustodianAssignment, error) {
 	if err := validateCustodianScope(request.Scope); err != nil || request.IfMatchRevision < 1 ||
 		!utf8.ValidString(request.RawLabel) || strings.TrimSpace(request.RawLabel) == "" || len(request.RawLabel) > document.MaxPersonDisplayNameBytes ||
 		!validCustodianClassification(request.Rank, request.Basis) ||
-		len(request.SourceRef) > document.MaxCustodianSourceRefBytes {
+		!validCustodianSourceRef(request.SourceRef) {
 		return CustodianAssignment{}, ErrInvalidPerson
 	}
 	var assignmentID string

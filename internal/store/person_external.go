@@ -7,6 +7,7 @@ import (
 	"errors"
 	"slices"
 	"strings"
+	"unicode/utf8"
 
 	"go.kenn.io/docbank/document"
 )
@@ -47,10 +48,15 @@ func validExternalIdentityClassification(kind, state string) bool {
 	return kind == "vcard_uid" && slices.Contains([]string{"current", "retired", "unlinked"}, state)
 }
 
+func validExternalIdentityDetails(snapshot string, revision *int64) bool {
+	return len(snapshot) <= document.MaxPersonDisplayNameSnapshotBytes && utf8.ValidString(snapshot) &&
+		(revision == nil || *revision >= 0)
+}
+
 func (s *Store) LinkExternalIdentity(ctx context.Context, identity PersonExternalIdentity, revision int64) (PersonExternalIdentity, error) {
 	if !validExternalTuple(identity.System, identity.ArchiveID, identity.UID) ||
 		!validExternalIdentityClassification(identity.UIDKind, identity.UIDState) ||
-		len(identity.DisplayNameSnapshot) > document.MaxPersonDisplayNameSnapshotBytes {
+		!validExternalIdentityDetails(identity.DisplayNameSnapshot, identity.LastSeenRevision) {
 		return PersonExternalIdentity{}, ErrInvalidPerson
 	}
 	now := nowRFC3339()

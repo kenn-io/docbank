@@ -3,12 +3,57 @@ package store
 import (
 	"bytes"
 	"database/sql"
+	"io"
 	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/internal/canonical"
 )
+
+func TestExternalIdentityWritesRemainExportable(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		revision *int64
+		snapshot string
+	}{
+		{name: "negative revision", revision: new(int64(-1)), snapshot: "Example Person"},
+		{name: "invalid UTF-8 snapshot", snapshot: "Example\xff"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s := newTestStore(t)
+			person, err := s.CreatePerson(t.Context(), "Example Person", "operator")
+			require.NoError(t, err)
+			identity := PersonExternalIdentity{PersonID: person.PersonID,
+				System: "msgvault", ArchiveID: "synthetic", UID: "uid-one", UIDKind: "vcard_uid", UIDState: "current",
+				LastSeenRevision: tc.revision, DisplayNameSnapshot: tc.snapshot}
+			_, err = s.LinkExternalIdentity(t.Context(), identity, person.Revision)
+			require.ErrorIs(t, err, ErrInvalidPerson)
+			require.NoError(t, s.ExportMetadata(t.Context(), io.Discard))
+
+			identity.LastSeenRevision = new(int64(0))
+			identity.DisplayNameSnapshot = "Renée Example"
+			_, err = s.LinkExternalIdentity(t.Context(), identity, person.Revision)
+			require.NoError(t, err)
+			require.NoError(t, s.ExportMetadata(t.Context(), io.Discard))
+		})
+	}
+}
+
+func TestCustodianWritesRemainExportable(t *testing.T) {
+	s := newTestStore(t)
+	version := seedDocumentPeopleEvent(t, s, "custodian.txt", "a1", nil)
+	request := CustodianRequest{Scope: CustodianScope{Kind: "document", NodeID: version.NodeID, ContentVersionID: version.ID},
+		RawLabel: "Records Team", Rank: "primary", Basis: "operator_assigned", SourceRef: "receipt\xff", IfMatchRevision: 1}
+	_, err := s.SetCustodian(t.Context(), request)
+	require.ErrorIs(t, err, ErrInvalidPerson)
+	require.NoError(t, s.ExportMetadata(t.Context(), io.Discard))
+
+	request.SourceRef = "receipt-é"
+	_, err = s.SetCustodian(t.Context(), request)
+	require.NoError(t, err)
+	require.NoError(t, s.ExportMetadata(t.Context(), io.Discard))
+}
 
 func TestPersonMetadataRoundTrip(t *testing.T) {
 	source := newTestStore(t)
