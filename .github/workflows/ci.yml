@@ -144,7 +144,9 @@ jobs:
           echo "DOCBANK_S3_TEST_SECRET_KEY=$MINIO_ROOT_PASSWORD" >> "$GITHUB_ENV"
 
       - name: Test
-        run: make test
+        run: |
+          make release-scripts-test check-timing-budgets
+          bash scripts/test-go-ci.sh
 
       - name: Stop S3-compatible test service
         if: always()
@@ -174,7 +176,7 @@ jobs:
         run: go vet -tags fts5 ./...
 
       - name: Test
-        run: go test -timeout 20m -tags fts5 ./...
+        run: bash scripts/test-go-ci.sh
 
   lint:
     name: golangci-lint
