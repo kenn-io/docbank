@@ -85,7 +85,11 @@ func (m Model) render() string {
 		lines = append(lines, m.renderLocation())
 	}
 	if m.searching || m.processingSearching {
-		lines = append(lines, fit(m.searchInput.View(), m.width))
+		search := m.searchInput.View()
+		if m.searching && m.naturalMode != naturalNames {
+			search = naturalModeLabel(m.naturalMode) + " · " + search
+		}
+		lines = append(lines, fit(search, m.width))
 	}
 	if m.notice != "" {
 		lines = append(lines, m.styles.stats.Render(fit(" "+m.notice, m.width)))
@@ -249,9 +253,18 @@ func (m Model) renderLocation() string {
 	var left, right string
 	if m.mode == modeSearch {
 		left = " Search " + quoted(m.searchQuery)
+		if m.naturalMode != naturalNames {
+			left += " · " + naturalModeLabel(m.naturalMode)
+		}
 		right = fmt.Sprintf("%d result(s)", len(m.rows))
 		if m.truncated {
 			right = "first 1,000 result(s)"
+		}
+		if m.naturalRerankPending {
+			right += " · reranking; base shown"
+		}
+		if m.naturalSearchNote != "" {
+			right += " · " + m.naturalSearchNote
 		}
 	} else {
 		left = " " + quoted(m.directory.Path)
@@ -827,6 +840,20 @@ func (m Model) renderList(width, height int) string {
 		} else {
 			lines = append(lines, line)
 		}
+		if m.mode == modeSearch && m.naturalMode != naturalNames && len(lines) < height {
+			excerpt := item.excerpt
+			if excerpt == "" {
+				excerpt = "Direct-file result; no text excerpt."
+			}
+			why := "  Why: " + excerpt
+			if len(item.evidence) > 0 {
+				why += " · " + strings.Join(item.evidence, ", ")
+			}
+			lines = append(lines, m.styles.muted.Render(pad(fit(why, width), width)))
+		}
+	}
+	if len(lines) > height {
+		lines = lines[:height]
 	}
 	for len(lines) < height {
 		lines = append(lines, strings.Repeat(" ", width))
@@ -1323,6 +1350,12 @@ func (m Model) renderFooter() string {
 	if len(m.stack) > 0 || m.mode == modeSearch {
 		hints = append(hints, hint{text: "← back", priority: 75})
 	}
+	if m.mode == modeSearch && m.naturalMode != naturalNames {
+		hints = append(hints, hint{text: "tab mode", priority: 88})
+		if profile := m.selectedNaturalProfile(); profile != nil && profile.RerankingAvailable {
+			hints = append(hints, hint{text: "ctrl+r rerank", priority: 86})
+		}
+	}
 	hints = append(hints,
 		hint{text: "/ search", priority: 90},
 		hint{text: "T recover", priority: 74},
@@ -1339,6 +1372,8 @@ func (m Model) renderFooter() string {
 	if m.searching {
 		hints = []hint{
 			{text: "enter search", priority: 100},
+			{text: "tab mode", priority: 95},
+			{text: "ctrl+r rerank", priority: 90},
 			{text: "esc cancel", priority: 90},
 			{text: "ctrl+c quit", priority: 50},
 		}
@@ -1819,6 +1854,8 @@ func (m Model) helpLines() []string {
 		"S              Find documents similar to the selected file in this view",
 		"Esc/←/h        Return to the previous view",
 		"/              Search names and extracted text",
+		"Tab             Cycle Names and text, Auto, Lexical, Semantic, and Hybrid",
+		"Ctrl+R          Request optional reranking when available",
 		"s              Cycle the sort column",
 		"v              Reverse the sort direction",
 		"r              Refresh the current view",

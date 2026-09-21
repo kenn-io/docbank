@@ -44,6 +44,7 @@ type fakeBackend struct {
 	backupCalls               int
 	profiles                  []api.ProcessingProfileSummary
 	profileCalls              int
+	sourceFence               api.DocumentSourceFenceResolution
 	plan                      api.ProcessingPlan
 	plans                     map[string]api.ProcessingPlan
 	planCalls                 int
@@ -51,6 +52,9 @@ type fakeBackend struct {
 	coverageCalls             int
 	processingSearch          api.DocumentSearchReport
 	processingSearchCalls     int
+	naturalSearch             api.DocumentSearchReport
+	naturalRerankSearch       api.DocumentSearchReport
+	naturalSearchRequests     []api.DocumentSearchRequest
 	processingJob             api.ProcessingJob
 	processingStatus          api.ProcessingStatus
 	processingTerminalRelease <-chan struct{}
@@ -180,6 +184,16 @@ func newFakeBackend() *fakeBackend {
 			Name: "private", Fingerprint: strings.Repeat("a", 64), Rendition: true,
 			EmbeddingBindings: []string{"semantic"},
 		}},
+		sourceFence: api.DocumentSourceFenceResolution{
+			Fence: api.ResolvedDocumentSourceFence{
+				VaultUID: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+				ContentVersionIDs: []string{
+					"11111111-1111-4111-8111-111111111111",
+					"22222222-2222-4222-8222-222222222222",
+				},
+			},
+			ObservedScopeCount: 2,
+		},
 		plan: api.ProcessingPlan{
 			Fingerprint: strings.Repeat("b", 64), VaultUID: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
 			Selector:           api.ProcessingSelector{NodeID: readme.ID, ContentVersionID: readme.CurrentVersionID, Profile: "private"},
@@ -301,6 +315,15 @@ func (f *fakeBackend) ProcessingProfiles(_ context.Context) ([]api.ProcessingPro
 	return append([]api.ProcessingProfileSummary(nil), f.profiles...), nil
 }
 
+func (f *fakeBackend) ResolveDocumentSourceFence(
+	_ context.Context, _ api.DocumentSourceFenceResolveRequest,
+) (api.DocumentSourceFenceResolution, error) {
+	if f.err != nil {
+		return api.DocumentSourceFenceResolution{}, f.err
+	}
+	return f.sourceFence, nil
+}
+
 func (f *fakeBackend) PlanProcessing(_ context.Context, request api.ProcessingPlanRequest) (api.ProcessingPlan, error) {
 	f.planCalls++
 	if f.err != nil {
@@ -336,6 +359,13 @@ func (f *fakeBackend) SearchDocuments(_ context.Context, request api.DocumentSea
 	f.processingSearchCalls++
 	if f.err != nil {
 		return api.DocumentSearchReport{}, f.err
+	}
+	if len(request.Fence.ContentVersionIDs) != 1 || request.Mode != "auto" {
+		f.naturalSearchRequests = append(f.naturalSearchRequests, request)
+		if request.Rerank {
+			return f.naturalRerankSearch, nil
+		}
+		return f.naturalSearch, nil
 	}
 	if request.Limit != maxProcessingSearchItems || request.Mode != "auto" || !request.Explain ||
 		request.Profile != f.plan.Selector.Profile || request.Fence.VaultUID != f.plan.VaultUID ||

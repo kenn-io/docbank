@@ -8733,6 +8733,8 @@ components:
           type: string
         rendition:
           type: boolean
+        reranking_available:
+          type: boolean
       required:
         - name
         - fingerprint

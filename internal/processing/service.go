@@ -194,10 +194,11 @@ type Estimate struct {
 // ProfileSummary describes one locally executable processing profile without
 // exposing provider credentials or deployment configuration.
 type ProfileSummary struct {
-	Name              string
-	Fingerprint       string
-	Rendition         bool
-	EmbeddingBindings []string
+	Name               string
+	Fingerprint        string
+	Rendition          bool
+	EmbeddingBindings  []string
+	RerankingAvailable bool
 }
 
 type Plan struct {
@@ -610,7 +611,8 @@ func (service *Service) Profiles() []ProfileSummary {
 		}
 		sort.Strings(bindings)
 		result = append(result, ProfileSummary{Name: name, Fingerprint: profile.record.Fingerprint,
-			Rendition: profile.portable.Rendition != nil, EmbeddingBindings: bindings})
+			Rendition: profile.portable.Rendition != nil, EmbeddingBindings: bindings,
+			RerankingAvailable: profile.rerankingProvider != nil})
 	}
 	sort.Slice(result, func(i, j int) bool { return result[i].Name < result[j].Name })
 	return result

@@ -91,6 +91,31 @@ func TestProcessingProfilesRouteListsExecutableProfilesDeterministically(t *test
 	assert.Empty(t, profiles[0].EmbeddingBindings)
 }
 
+func TestProcessingProfilesReportReranking(t *testing.T) {
+	t.Run("absent without provider", func(t *testing.T) {
+		ts, _ := newTestServer(t, configureProcessingTestService(t))
+		response, body := get(t, ts, "/api/v1/processing/profiles", nil)
+		require.Equal(t, http.StatusOK, response.StatusCode, body)
+		var profiles []api.ProcessingProfileSummary
+		require.NoError(t, json.Unmarshal([]byte(body), &profiles))
+		require.Len(t, profiles, 1)
+		assert.False(t, profiles[0].RerankingAvailable)
+		assert.NotContains(t, body, "reranking_available")
+	})
+
+	t.Run("true with provider", func(t *testing.T) {
+		ts, _ := newTestServer(t, configureProcessingTestServiceWithReranker(t,
+			&routeRerankingProvider{}, retrieval.ProviderFailureDegrade))
+		response, body := get(t, ts, "/api/v1/processing/profiles", nil)
+		require.Equal(t, http.StatusOK, response.StatusCode, body)
+		var profiles []api.ProcessingProfileSummary
+		require.NoError(t, json.Unmarshal([]byte(body), &profiles))
+		require.Len(t, profiles, 1)
+		assert.True(t, profiles[0].RerankingAvailable)
+		assert.Contains(t, body, `"reranking_available":true`)
+	})
+}
+
 func TestProcessingServicePopulatesSuppliedRenditionRuntimeRegistry(t *testing.T) {
 	registry := processing.NewRenditionRuntimeRegistry()
 	assert.False(t, registry.Ready())

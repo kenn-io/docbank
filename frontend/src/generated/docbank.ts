@@ -3602,6 +3602,7 @@ export interface ProcessingProfileSummary {
   fingerprint: string;
   name: string;
   rendition: boolean;
+  reranking_available?: boolean;
 }
 
 export interface ProvenanceFact {
