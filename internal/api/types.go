@@ -37,11 +37,12 @@ type ProcessingSelector struct {
 
 // ProcessingProfileSummary is one locally executable deployment profile.
 type ProcessingProfileSummary struct {
-	Name               string   `json:"name"`
-	Fingerprint        string   `json:"fingerprint" pattern:"^[0-9a-f]{64}$"`
-	Rendition          bool     `json:"rendition"`
-	EmbeddingBindings  []string `json:"embedding_bindings"`
-	RerankingAvailable bool     `json:"reranking_available,omitzero"`
+	Name                   string   `json:"name"`
+	Fingerprint            string   `json:"fingerprint" pattern:"^[0-9a-f]{64}$"`
+	Rendition              bool     `json:"rendition"`
+	EmbeddingBindings      []string `json:"embedding_bindings"`
+	QueryEmbeddingBindings []string `json:"query_embedding_bindings"`
+	RerankingAvailable     bool     `json:"reranking_available,omitzero"`
 }
 
 type ProcessingPlanRequest struct {

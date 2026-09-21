@@ -183,7 +183,7 @@ func newFakeBackend() *fakeBackend {
 		},
 		profiles: []api.ProcessingProfileSummary{{
 			Name: "private", Fingerprint: strings.Repeat("a", 64), Rendition: true,
-			EmbeddingBindings: []string{"semantic"},
+			EmbeddingBindings: []string{"semantic"}, QueryEmbeddingBindings: []string{"semantic"},
 		}},
 		sourceFence: api.DocumentSourceFenceResolution{
 			Fence: api.ResolvedDocumentSourceFence{

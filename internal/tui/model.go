@@ -2109,7 +2109,7 @@ func naturalModeLabel(mode string) string {
 func (m Model) selectedNaturalProfile() *api.ProcessingProfileSummary {
 	profiles := m.naturalProfiles
 	for index := range profiles {
-		if len(profiles[index].EmbeddingBindings) > 0 {
+		if len(profiles[index].QueryEmbeddingBindings) > 0 {
 			return &profiles[index]
 		}
 	}
@@ -2122,16 +2122,16 @@ func (m Model) selectedNaturalProfile() *api.ProcessingProfileSummary {
 func naturalProfileBinding(profiles []api.ProcessingProfileSummary) string {
 	model := Model{naturalProfiles: profiles}
 	profile := model.selectedNaturalProfile()
-	if profile == nil || len(profile.EmbeddingBindings) == 0 {
+	if profile == nil || len(profile.QueryEmbeddingBindings) == 0 {
 		return ""
 	}
-	return profile.EmbeddingBindings[0]
+	return profile.QueryEmbeddingBindings[0]
 }
 
 func naturalRequestMode(mode string, profile *api.ProcessingProfileSummary) (string, string, bool) {
 	binding := ""
-	if profile != nil && len(profile.EmbeddingBindings) > 0 {
-		binding = profile.EmbeddingBindings[0]
+	if profile != nil && len(profile.QueryEmbeddingBindings) > 0 {
+		binding = profile.QueryEmbeddingBindings[0]
 	}
 	switch mode {
 	case naturalAuto:

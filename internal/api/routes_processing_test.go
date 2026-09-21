@@ -89,6 +89,33 @@ func TestProcessingProfilesRouteListsExecutableProfilesDeterministically(t *test
 	assert.Len(t, profiles[0].Fingerprint, 64)
 	assert.True(t, profiles[0].Rendition)
 	assert.Empty(t, profiles[0].EmbeddingBindings)
+	assert.Empty(t, profiles[0].QueryEmbeddingBindings)
+}
+
+func TestProcessingProfilesReportQueryEmbeddingBindings(t *testing.T) {
+	t.Run("query capable", func(t *testing.T) {
+		ts, _ := newTestServer(t, configureProcessingTestServiceWithEmbeddingProvider(t,
+			newProcessingTestEmbeddingProvider(t), true))
+		response, body := get(t, ts, "/api/v1/processing/profiles", nil)
+		require.Equal(t, http.StatusOK, response.StatusCode, body)
+		var profiles []api.ProcessingProfileSummary
+		require.NoError(t, json.Unmarshal([]byte(body), &profiles))
+		require.Len(t, profiles, 1)
+		assert.Equal(t, []string{"semantic"}, profiles[0].EmbeddingBindings)
+		assert.Equal(t, []string{"semantic"}, profiles[0].QueryEmbeddingBindings)
+	})
+
+	t.Run("processing only", func(t *testing.T) {
+		ts, _ := newTestServer(t, configureProcessingTestServiceWithEmbeddingProvider(t,
+			newProcessingTestEmbeddingProviderWithoutQuery(t), true))
+		response, body := get(t, ts, "/api/v1/processing/profiles", nil)
+		require.Equal(t, http.StatusOK, response.StatusCode, body)
+		var profiles []api.ProcessingProfileSummary
+		require.NoError(t, json.Unmarshal([]byte(body), &profiles))
+		require.Len(t, profiles, 1)
+		assert.Equal(t, []string{"semantic"}, profiles[0].EmbeddingBindings)
+		assert.Empty(t, profiles[0].QueryEmbeddingBindings)
+	})
 }
 
 func TestProcessingProfilesReportReranking(t *testing.T) {
@@ -1232,6 +1259,16 @@ type processingTestEmbeddingProvider struct{ descriptor document.EmbeddingDescri
 
 func newProcessingTestEmbeddingProvider(t *testing.T) processingTestEmbeddingProvider {
 	t.Helper()
+	return newProcessingTestEmbeddingProviderWithQuerySupport(t, true)
+}
+
+func newProcessingTestEmbeddingProviderWithoutQuery(t *testing.T) processingTestEmbeddingProvider {
+	t.Helper()
+	return newProcessingTestEmbeddingProviderWithQuerySupport(t, false)
+}
+
+func newProcessingTestEmbeddingProviderWithQuerySupport(t *testing.T, supportsQuery bool) processingTestEmbeddingProvider {
+	t.Helper()
 	contract, err := document.NewModelInputContract(document.ModelInputContractConfig{
 		Profile: document.ModelInputProfileNomic,
 	})
@@ -1243,7 +1280,7 @@ func newProcessingTestEmbeddingProvider(t *testing.T) processingTestEmbeddingPro
 		Metric: document.VectorMetricCosine, Normalization: document.VectorNormalizationNone,
 		ScalarEncoding: "float32", DocumentFormatter: "synthetic/document-v1",
 		QueryFormatter: "synthetic/query-v1", InputKinds: []document.EmbeddingInputKind{document.EmbeddingInputOriginalFile},
-		CompatibilityID: contract.CompatibilityID, SupportsTextQuery: true, ModelInput: contract,
+		CompatibilityID: contract.CompatibilityID, SupportsTextQuery: supportsQuery, ModelInput: contract,
 		SupportedRequestModes: []document.ModelInputMode{contract.Document.Mode},
 	})
 	require.NoError(t, err)

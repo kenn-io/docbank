@@ -12,6 +12,10 @@ export interface NaturalSearchRequestMode {
   binding_id?: string;
 }
 
+export function naturalQueryBindings(profile: ProcessingProfileSummary): string[] {
+  return profile.query_embedding_bindings ?? profile.embedding_bindings;
+}
+
 const modeLabels: Record<NaturalSearchMode, string> = {
   names: "Names and text",
   auto: "Auto",
@@ -24,7 +28,7 @@ export function selectNaturalSearchProfile(
   profiles: ProcessingProfileSummary[],
 ): ProcessingProfileSummary | undefined {
   return [...profiles].sort((left, right) => left.name.localeCompare(right.name))
-    .find((profile) => profile.embedding_bindings.length > 0)
+    .find((profile) => naturalQueryBindings(profile).length > 0)
     ?? [...profiles].sort((left, right) => left.name.localeCompare(right.name))[0];
 }
 
@@ -34,7 +38,7 @@ export function naturalSearchModes(
   const modes: NaturalSearchMode[] = ["names"];
   if (!profile) return modes.map((value) => ({ value, label: modeLabels[value] }));
   modes.push("auto", "lexical");
-  if (profile.embedding_bindings.length > 0) modes.push("semantic", "hybrid");
+  if (naturalQueryBindings(profile).length > 0) modes.push("semantic", "hybrid");
   return modes.map((value) => ({ value, label: modeLabels[value] }));
 }
 
@@ -43,7 +47,7 @@ export function naturalSearchRequest(
   profile: ProcessingProfileSummary,
 ): NaturalSearchRequestMode | undefined {
   if (mode === "names") return undefined;
-  const bindingID = profile.embedding_bindings[0];
+  const bindingID = naturalQueryBindings(profile)[0];
   if ((mode === "semantic" || mode === "hybrid") && !bindingID) return undefined;
   if (mode === "auto" && bindingID) return { mode: "hybrid", binding_id: bindingID };
   if ((mode === "semantic" || mode === "hybrid") && bindingID) return { mode, binding_id: bindingID };

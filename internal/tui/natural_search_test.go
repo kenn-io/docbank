@@ -34,7 +34,7 @@ func TestNaturalSearchReproductionStaleAndRerankState(t *testing.T) {
 	readme := fake.nodes["/README.txt"]
 	fake.profiles = []api.ProcessingProfileSummary{{
 		Name: "private", Fingerprint: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-		RerankingAvailable: true,
+		RerankingAvailable: true, QueryEmbeddingBindings: []string{"semantic"},
 	}}
 	fake.naturalSearch = naturalSearchReport(readme.ID, readme.CurrentVersionID, "base excerpt")
 	fake.naturalRerankSearch = naturalSearchReport(readme.ID, readme.CurrentVersionID, "reranked excerpt")
@@ -147,6 +147,27 @@ func TestNaturalSearchLexicalProfileKeepsRerankCapability(t *testing.T) {
 	model := Model{naturalProfiles: []api.ProcessingProfileSummary{*profile}, naturalMode: naturalLexical}
 	model.toggleNaturalRerank()
 	assert.True(t, model.naturalRerank)
+}
+
+func TestNaturalSearchUsesQueryCapableBindings(t *testing.T) {
+	directOnly := api.ProcessingProfileSummary{
+		Name: "direct", EmbeddingBindings: []string{"direct-file"},
+	}
+	mixed := api.ProcessingProfileSummary{
+		Name: "mixed", EmbeddingBindings: []string{"direct-file", "semantic"},
+		QueryEmbeddingBindings: []string{"semantic"},
+	}
+	model := Model{naturalProfiles: []api.ProcessingProfileSummary{directOnly, mixed}}
+	assert.Equal(t, "mixed", model.selectedNaturalProfile().Name)
+	assert.Equal(t, []string{naturalNames, naturalAuto, naturalLexical, naturalSemantic, naturalHybrid}, model.naturalModes())
+	assert.Equal(t, "semantic", naturalProfileBinding(model.naturalProfiles))
+
+	directModel := Model{naturalProfiles: []api.ProcessingProfileSummary{directOnly}}
+	assert.Equal(t, []string{naturalNames, naturalAuto, naturalLexical}, directModel.naturalModes())
+	mode, binding, ok := naturalRequestMode(naturalAuto, &directOnly)
+	assert.True(t, ok)
+	assert.Equal(t, naturalAuto, mode)
+	assert.Empty(t, binding)
 }
 
 func TestNaturalSearchWhyStripsTerminalControls(t *testing.T) {
@@ -553,7 +574,7 @@ func TestNaturalSearchProfileDefaultRestartsAcceptedQuery(t *testing.T) {
 
 	updated, cmd := model.Update(naturalProfilesLoadedMsg{
 		requestID: model.naturalProfilesRequest,
-		profiles:  []api.ProcessingProfileSummary{{Name: "private", EmbeddingBindings: []string{"embed"}}},
+		profiles:  []api.ProcessingProfileSummary{{Name: "private", EmbeddingBindings: []string{"embed"}, QueryEmbeddingBindings: []string{"embed"}}},
 	})
 	result, ok := updated.(Model)
 	require.True(t, ok)
@@ -579,7 +600,7 @@ func TestNaturalSearchProfileDefaultRestartsPendingSubmittedQuery(t *testing.T) 
 
 	updated, cmd := model.Update(naturalProfilesLoadedMsg{
 		requestID: model.naturalProfilesRequest,
-		profiles:  []api.ProcessingProfileSummary{{Name: "private", EmbeddingBindings: []string{"embed"}}},
+		profiles:  []api.ProcessingProfileSummary{{Name: "private", EmbeddingBindings: []string{"embed"}, QueryEmbeddingBindings: []string{"embed"}}},
 	})
 	result, ok := updated.(Model)
 	require.True(t, ok)
@@ -649,7 +670,7 @@ func TestNaturalSearchProfileDefaultDoesNotReopenBrowseAfterNavigation(t *testin
 
 	updated, cmd = result.Update(naturalProfilesLoadedMsg{
 		requestID: result.naturalProfilesRequest,
-		profiles:  []api.ProcessingProfileSummary{{Name: "private", EmbeddingBindings: []string{"embed"}}},
+		profiles:  []api.ProcessingProfileSummary{{Name: "private", EmbeddingBindings: []string{"embed"}, QueryEmbeddingBindings: []string{"embed"}}},
 	})
 	result, ok = updated.(Model)
 	require.True(t, ok)

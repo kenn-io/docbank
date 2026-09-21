@@ -119,6 +119,7 @@
     evidenceKindLabels,
     naturalSearchFallbackNote,
     naturalSearchModes,
+    naturalQueryBindings,
     naturalSearchRequest,
     naturalSearchRerank,
     rerankingNote,
@@ -483,7 +484,7 @@
       naturalProfiles = profiles;
       naturalProfilesError = "";
       const selected = selectNaturalSearchProfile(profiles);
-      const defaultMode: NaturalSearchMode = selected?.embedding_bindings.length ? "auto" : "names";
+      const defaultMode: NaturalSearchMode = selected && naturalQueryBindings(selected).length ? "auto" : "names";
       if (snapshotActive) {
         naturalProfileDefaultPending = { request, session };
         return;
@@ -1025,7 +1026,7 @@
       if (deferredProfileDefault) {
         naturalProfileDefaultPending = null;
         if (acceptedQuery) {
-          const defaultMode: NaturalSearchMode = naturalProfile?.embedding_bindings.length ? "auto" : "names";
+          const defaultMode: NaturalSearchMode = naturalProfile && naturalQueryBindings(naturalProfile).length ? "auto" : "names";
           const rerun = naturalSearchMode !== defaultMode;
           naturalSearchMode = defaultMode;
           naturalRerank = false;
@@ -1452,7 +1453,7 @@
     snapshotState = { status: "idle", offset: 0 };
     if (deferredProfileDefault) {
       naturalProfileDefaultPending = null;
-      const defaultMode: NaturalSearchMode = naturalProfile?.embedding_bindings.length ? "auto" : "names";
+      const defaultMode: NaturalSearchMode = naturalProfile && naturalQueryBindings(naturalProfile).length ? "auto" : "names";
       if (acceptedQuery && naturalSearchMode !== defaultMode) {
         naturalSearchMode = defaultMode;
         naturalRerank = false;
