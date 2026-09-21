@@ -116,7 +116,8 @@ func TestNaturalSearchGoldenFrame(t *testing.T) {
 	}
 	want, err := os.ReadFile(goldenPath)
 	require.NoError(t, err)
-	assert.Equal(t, string(want), actual)
+	wantText := strings.ReplaceAll(string(want), "\r\n", "\n")
+	assert.Equal(t, wantText, actual)
 }
 
 func TestNaturalSearchLexicalProfileKeepsRerankCapability(t *testing.T) {
