@@ -746,6 +746,11 @@ func validateProductionOperationResponse(ctx context.Context, q metadataQuerier,
 		if err != nil || value.OperationID != operationID {
 			return errors.New("production validation operation receipt is detached")
 		}
+	case productionOperationPreparedInputs:
+		value, err := canonical.Decode[documentproduction.PreparedInputAuthority](raw)
+		if err != nil || documentproduction.ValidatePreparedInputAuthority(value) != nil || value.Audit.OperationID != operationID {
+			return errors.New("production prepared-input operation receipt is detached")
+		}
 	case productionOperationFreeze:
 		value, err := canonical.Decode[documentproduction.PrivilegeLogReceipt](raw)
 		if err != nil {
@@ -779,7 +784,7 @@ func knownProductionOperation(kind string) bool {
 	case productionOperationPolicy, productionOperationApproval, productionOperationApprovalEvent,
 		productionOperationPlayers, productionOperationWithheld, productionOperationDraft,
 		productionOperationRows, productionOperationValidation, productionOperationApprovalBind,
-		productionOperationFreeze, productionOperationAttachment:
+		productionOperationPreparedInputs, productionOperationFreeze, productionOperationAttachment:
 		return true
 	default:
 		return false
