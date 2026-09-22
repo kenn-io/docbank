@@ -516,6 +516,11 @@ func exportMetadataSnapshotWithVaultIdentity(
 			return err
 		}
 	}
+	if layout.schemaVersion >= 27 {
+		if err := exportProductionMetadata(ctx, tx, write); err != nil {
+			return err
+		}
+	}
 	return exportDerivativePurgeSuppressions(ctx, tx, write)
 }
 
@@ -1067,6 +1072,18 @@ func requirePristineMetadataTarget(ctx context.Context, tx *sql.Tx) error {
 		    + (SELECT COUNT(*) FROM mailbox_transfer_heads)
 		    + (SELECT COUNT(*) FROM mailbox_jobs)
 		    + (SELECT COUNT(*) FROM mailbox_occurrences)
+		    + (SELECT COUNT(*) FROM production_policy_versions)
+		    + (SELECT COUNT(*) FROM production_approval_grants)
+		    + (SELECT COUNT(*) FROM production_approval_events)
+		    + (SELECT COUNT(*) FROM production_players_snapshots)
+		    + (SELECT COUNT(*) FROM production_withheld_selections)
+		    + (SELECT COUNT(*) FROM production_privilege_log_drafts)
+		    + (SELECT COUNT(*) FROM production_privilege_log_rows)
+		    + (SELECT COUNT(*) FROM production_privilege_log_validations)
+		    + (SELECT COUNT(*) FROM production_privilege_log_approvals)
+		    + (SELECT COUNT(*) FROM production_privilege_log_receipts)
+		    + (SELECT COUNT(*) FROM production_privilege_log_attachments)
+		    + (SELECT COUNT(*) FROM production_operation_receipts)
 		    + (SELECT COUNT(*) FROM source_metadata_generations)
 		    + (SELECT COUNT(*) FROM source_metadata_heads)
 		    + (SELECT COUNT(*) FROM visual_preview_generations)
@@ -1280,6 +1297,9 @@ func (s *Store) importMetadataRecord(
 	}
 	if strings.HasPrefix(kind, "mailbox_") {
 		return importMailboxMetadataRecord(ctx, tx, kind, raw)
+	}
+	if kind == metadataProductionAuthorityType {
+		return importProductionMetadata(ctx, tx, raw)
 	}
 	if isProcessingMetadataType(kind) {
 		return s.importProcessingMetadataRecord(ctx, tx, kind, raw)
@@ -1660,6 +1680,7 @@ var metadataRequiredFields = map[string][]string{
 	metadataPackageImportReceiptType:             {metadataTypeField, metadataCanonicalJSONField, metadataPageChecksumField},
 	metadataPackageImportHeadType:                {metadataTypeField, metadataCanonicalJSONField, metadataPageChecksumField},
 	metadataPackageImportJobType:                 {metadataTypeField, metadataCanonicalJSONField, metadataPageChecksumField},
+	metadataProductionAuthorityType:              {metadataTypeField, "kind", "key", "canonical_json", metadataPageChecksumField},
 	metadataPersonType:                           personMetadataRequiredFields[metadataPersonType],
 	metadataPersonIdentityType:                   personMetadataRequiredFields[metadataPersonIdentityType],
 	metadataPersonExternalType:                   personMetadataRequiredFields[metadataPersonExternalType],
@@ -2147,6 +2168,11 @@ func validateMetadataStateWithVaultIdentity(
 		}
 		if layout.schemaVersion >= 25 {
 			if err := validatePhotoMetadataState(ctx, tx); err != nil {
+				return err
+			}
+		}
+		if layout.schemaVersion >= 27 {
+			if err := validateProductionMetadataState(ctx, tx); err != nil {
 				return err
 			}
 		}

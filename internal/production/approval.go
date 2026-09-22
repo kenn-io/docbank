@@ -101,7 +101,7 @@ func PrepareApprovalRecord(request RecordApprovalRequest, policy documentproduct
 		return ApprovalRecord{}, err
 	}
 	grant.SHA256 = grantDigest
-	requestDigest, err := approvalRequestDigest(request.ApprovalID, subjectDigest, request.Evidence)
+	requestDigest, err := ApprovalRequestDigest(request.ApprovalID, subjectDigest, request.Evidence)
 	if err != nil {
 		return ApprovalRecord{}, err
 	}
@@ -215,7 +215,8 @@ func approvalLifetimeMatches(grant documentproduction.ApprovalGrant, maxAgeSecon
 		expiresAt.Equal(grantedAt.Add(time.Duration(maxAgeSeconds)*time.Second))
 }
 
-func approvalRequestDigest(approvalID, subjectSHA256, evidence string) (string, error) {
+// ApprovalRequestDigest binds the requested approval independently of grant time.
+func ApprovalRequestDigest(approvalID, subjectSHA256, evidence string) (string, error) {
 	return semanticDigest(struct {
 		ApprovalID    string `json:"approval_id"`
 		SubjectSHA256 string `json:"subject_sha256"`
