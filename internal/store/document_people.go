@@ -584,6 +584,32 @@ func documentPeopleHeadChangedTx(ctx context.Context, tx *sql.Tx, p DocumentPeop
 	return h.GenerationID != generationID || h.InputsSHA256 != p.InputsSHA256 || h.ResolverFingerprint != p.ResolverFingerprint || h.BindingEpoch != p.BindingEpoch || h.NodeRevision != p.NodeRevision || h.State != state || h.FailureReason != "" || h.EdgeCount != int64(len(p.People.Edges)), nil
 }
 
+func invalidateDocumentPeopleForVersionsTx(ctx context.Context, tx *sql.Tx, versionIDs []string) error {
+	var removed int64
+	for _, versionID := range slices.Compact(slices.Sorted(slices.Values(versionIDs))) {
+		for _, query := range []string{
+			`DELETE FROM document_people_heads WHERE content_version_id=?`,
+			`DELETE FROM document_people WHERE content_version_id=?`,
+		} {
+			result, err := tx.ExecContext(ctx, query, versionID)
+			if err != nil {
+				return err
+			}
+			count, err := result.RowsAffected()
+			if err != nil {
+				return err
+			}
+			removed += count
+		}
+	}
+	if removed == 0 {
+		return nil
+	}
+	_, err := tx.ExecContext(ctx, `UPDATE document_people_state
+		SET publication_epoch=publication_epoch+1,updated_at=? WHERE singleton=1`, nowRFC3339())
+	return err
+}
+
 func documentPeopleHeadTx(ctx context.Context, tx *sql.Tx, versionID string) (DocumentPeopleHead, error) {
 	var h DocumentPeopleHead
 	err := tx.QueryRowContext(ctx, `SELECT content_version_id,event_generation_id,generation_id,inputs_sha256,resolver_fingerprint,binding_epoch,node_revision,edge_count,state,failure_reason,published_at FROM document_people_heads WHERE content_version_id=?`, versionID).
