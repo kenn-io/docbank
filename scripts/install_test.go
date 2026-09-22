@@ -70,18 +70,31 @@ func TestInstallerVerifiesBeforeReplacingBinary(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(fixture.serveHTTP))
 	t.Cleanup(server.Close)
 
-	goodArchive := installerArchive(t, binaryName, []byte("new docbank\n"), false)
+	for _, layout := range []struct {
+		name           string
+		includeNotices bool
+	}{
+		{name: "legacy binary only"},
+		{name: "current license and notice", includeNotices: true},
+	} {
+		t.Run(layout.name, func(t *testing.T) {
+			archive := installerArchive(t, binaryName, []byte("new docbank\n"), layout.includeNotices, false)
+			hash := fmt.Sprintf("%x", sha256.Sum256(archive))
+			fixture.set(archive, fmt.Sprintf("%s  %s\n", hash, archiveName))
+			writeExisting(t, destination)
+			output, err := runInstaller(t, server.URL, installDir)
+			if err != nil {
+				t.Fatalf("installing verified fixture: %v\n%s", err, output)
+			}
+			if !strings.Contains(output, "Checksum verified") {
+				t.Fatalf("installer did not report checksum verification:\n%s", output)
+			}
+			assertContent(t, destination, "new docbank\n")
+		})
+	}
+
+	goodArchive := installerArchive(t, binaryName, []byte("new docbank\n"), true, false)
 	goodHash := fmt.Sprintf("%x", sha256.Sum256(goodArchive))
-	fixture.set(goodArchive, fmt.Sprintf("%s  %s\n", goodHash, archiveName))
-	writeExisting(t, destination)
-	output, err := runInstaller(t, server.URL, installDir)
-	if err != nil {
-		t.Fatalf("installing verified fixture: %v\n%s", err, output)
-	}
-	if !strings.Contains(output, "Checksum verified") {
-		t.Fatalf("installer did not report checksum verification:\n%s", output)
-	}
-	assertContent(t, destination, "new docbank\n")
 
 	tests := []struct {
 		name      string
@@ -103,7 +116,7 @@ func TestInstallerVerifiesBeforeReplacingBinary(t *testing.T) {
 		},
 		{
 			name:      "unexpected archive entry",
-			archive:   installerArchive(t, binaryName, []byte("new docbank\n"), true),
+			archive:   installerArchive(t, binaryName, []byte("new docbank\n"), true, true),
 			wantError: "only",
 		},
 	}
@@ -125,6 +138,35 @@ func TestInstallerVerifiesBeforeReplacingBinary(t *testing.T) {
 			}
 			assertContent(t, destination, "old docbank\n")
 		})
+	}
+}
+
+func TestReleaseArchiveMetadataIsUnambiguousAndLocaleStable(t *testing.T) {
+	notice, err := os.ReadFile("../NOTICE")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ordered := [][]byte{
+		[]byte("go-pdfium v1.20.0\n\nMIT License\n\nCopyright (c) 2022 Klippa App BV"),
+		[]byte("wazero v1.12.0\n\nwazero\nCopyright 2020-2023 wazero authors"),
+		[]byte("The complete Apache License 2.0 terms for wazero are provided in the bundled root LICENSE."),
+		[]byte("PDFium Chromium 8044 and third-party notices"),
+	}
+	position := 0
+	for _, fragment := range ordered {
+		index := bytes.Index(notice[position:], fragment)
+		if index < 0 {
+			t.Fatalf("NOTICE does not identify distributed dependency with %q", fragment)
+		}
+		position += index + len(fragment)
+	}
+
+	workflow, err := os.ReadFile("../.github/workflows/release-publish.yml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(workflow, []byte(`LC_ALL=C sort)`)) {
+		t.Fatal("Windows release archive entry validation must use byte-wise collation")
 	}
 }
 
@@ -164,12 +206,16 @@ func assertContent(t *testing.T, destination, want string) {
 	}
 }
 
-func installerArchive(t *testing.T, binaryName string, content []byte, extra bool) []byte {
+func installerArchive(t *testing.T, binaryName string, content []byte, includeNotices, extra bool) []byte {
 	t.Helper()
 	var buf bytes.Buffer
 	if runtime.GOOS == "windows" {
 		zw := zip.NewWriter(&buf)
 		writeZipEntry(t, zw, binaryName, content)
+		if includeNotices {
+			writeZipEntry(t, zw, "LICENSE", []byte("synthetic license\n"))
+			writeZipEntry(t, zw, "NOTICE", []byte("synthetic dependency notice\n"))
+		}
 		if extra {
 			writeZipEntry(t, zw, "unexpected.txt", []byte("unexpected\n"))
 		}
@@ -182,6 +228,10 @@ func installerArchive(t *testing.T, binaryName string, content []byte, extra boo
 	gw := gzip.NewWriter(&buf)
 	tw := tar.NewWriter(gw)
 	writeTarEntry(t, tw, binaryName, content)
+	if includeNotices {
+		writeTarEntry(t, tw, "LICENSE", []byte("synthetic license\n"))
+		writeTarEntry(t, tw, "NOTICE", []byte("synthetic dependency notice\n"))
+	}
 	if extra {
 		writeTarEntry(t, tw, "unexpected.txt", []byte("unexpected\n"))
 	}
