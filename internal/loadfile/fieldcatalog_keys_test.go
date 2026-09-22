@@ -45,6 +45,9 @@ func TestFieldCatalogKeysAreTheClosedSpecCatalog(t *testing.T) {
 		"loadfile.file.native",
 		"loadfile.file.produced_pdf",
 		"loadfile.file.supplied_text",
+		"loadfile.label.assigned.begin",
+		"loadfile.label.assigned.end",
+		"loadfile.label.assigned.set",
 		"loadfile.label.begin",
 		"loadfile.label.begin_attach",
 		"loadfile.label.end",
@@ -58,7 +61,7 @@ func TestFieldCatalogKeysAreTheClosedSpecCatalog(t *testing.T) {
 	}
 
 	keys := fieldCatalogKeys
-	require.Len(t, keys, 43)
+	require.Len(t, keys, 46)
 	assert.Equal(t, want, keys)
 	assert.True(t, sort.StringsAreSorted(keys))
 	seen := map[string]bool{}

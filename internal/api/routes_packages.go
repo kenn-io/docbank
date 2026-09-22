@@ -34,15 +34,31 @@ const maxPackageRecords = 100_000
 const maxPackagePages = 1_000_000
 const maxPackageNormalizedMemory = int64(256 << 20)
 
-func registerPackageRoutes(mux *http.ServeMux, api huma.API, d Deps, g *gate) {
+func registerPackageRoutes(mux *http.ServeMux, api huma.API, d Deps, g *gate, downloads *webDownloadRegistry, sessions *webSessionRegistry) {
 	registerPackageOpenAPI(api)
+	registerPackageExportRoute(api, d, downloads, sessions)
+	registerPackageBrowseRoutes(api, d)
+	registerPackageCustodianRoutes(mux, d, g)
+	registerPackageContainerRoutes(mux, d, g)
+	mux.HandleFunc("POST /api/v1/packages/containers/{id}/preflight", func(w http.ResponseWriter, r *http.Request) {
+		handlePackageContainerPreflight(w, r, d, g)
+	})
 	mux.HandleFunc("POST /api/v1/packages/preflights", func(w http.ResponseWriter, r *http.Request) {
 		handlePackagePreflight(w, r, d, g)
 	})
+	mux.HandleFunc("POST /api/v1/packages/imports", func(w http.ResponseWriter, r *http.Request) {
+		handlePackageImport(w, r, d, g)
+	})
+	mux.HandleFunc("GET /api/v1/packages/imports/{operation_id}", func(w http.ResponseWriter, r *http.Request) {
+		handlePackageImportStatus(w, r, d)
+	})
+	mux.HandleFunc("POST /api/v1/packages/imports/{operation_id}/cancel", func(w http.ResponseWriter, r *http.Request) {
+		handlePackageImportCancel(w, r, d, g)
+	})
 	mux.HandleFunc("GET /api/v1/packages/preflights/{preflight_id}", func(w http.ResponseWriter, r *http.Request) {
-		owner, ok := workspaceSnapshotOwner(r.Context())
-		if !ok {
-			writeError(w, NewError(http.StatusInternalServerError, "internal", "authenticated request owner is unavailable"))
+		owner, problem := packageContainerOwner(r, d)
+		if problem != nil {
+			writeError(w, problem)
 			return
 		}
 		record, err := d.Store.PackagePreflight(r.Context(), owner, r.PathValue("preflight_id"))
@@ -63,6 +79,8 @@ func registerPackageRoutes(mux *http.ServeMux, api huma.API, d Deps, g *gate) {
 }
 
 func registerPackageOpenAPI(api huma.API) {
+	registerPackageContainerOpenAPI(api)
+	registerPackageCustodianOpenAPI(api)
 	registry := api.OpenAPI().Components.Schemas
 	request := registry.Schema(reflect.TypeFor[PackagePreflightRequest](), true, "")
 	preflight := &huma.Response{Description: "Expiring package preview", Content: map[string]*huma.MediaType{
@@ -74,9 +92,25 @@ func registerPackageOpenAPI(api huma.API) {
 	errorResponse := &huma.Response{Description: "Error", Content: map[string]*huma.MediaType{
 		"application/problem+json": {Schema: registry.Schema(reflect.TypeFor[Error](), true, "")},
 	}}
-	preflightID := &huma.Param{Name: "preflight_id", In: "path", Required: true,
+	preflightID := &huma.Param{Name: "preflight_id", In: openAPIPathLocation, Required: true,
 		Schema: &huma.Schema{Type: openAPIStringType, Format: "uuid"}}
+	operationID := &huma.Param{Name: "operation_id", In: openAPIPathLocation, Required: true,
+		Schema: &huma.Schema{Type: openAPIStringType, Format: "uuid"}}
+	importJob := &huma.Response{Description: "Durable package import job", Content: map[string]*huma.MediaType{
+		jsonMediaType: {Schema: registry.Schema(reflect.TypeFor[PackageImportJob](), true, "")},
+	}}
 	for _, operation := range []*huma.Operation{
+		{OperationID: "createPackageImport", Method: http.MethodPost, Path: "/api/v1/packages/imports",
+			Summary: "Import a previewed load-file package", MaxBodyBytes: maxPackageRequestBytes,
+			RequestBody: &huma.RequestBody{Required: true, Content: map[string]*huma.MediaType{
+				jsonMediaType: {Schema: registry.Schema(reflect.TypeFor[PackageImportRequest](), true, "")},
+			}}, Responses: map[string]*huma.Response{"202": importJob, "404": errorResponse, "409": errorResponse, "422": errorResponse}},
+		{OperationID: "readPackageImport", Method: http.MethodGet, Path: "/api/v1/packages/imports/{operation_id}",
+			Summary: "Read package import progress", Parameters: []*huma.Param{operationID},
+			Responses: map[string]*huma.Response{"200": importJob, "404": errorResponse}},
+		{OperationID: "cancelPackageImport", Method: http.MethodPost, Path: "/api/v1/packages/imports/{operation_id}/cancel",
+			Summary: "Cancel a package import", Parameters: []*huma.Param{operationID},
+			Responses: map[string]*huma.Response{"200": importJob, "404": errorResponse, "409": errorResponse}},
 		{OperationID: "createPackagePreflight", Method: http.MethodPost, Path: "/api/v1/packages/preflights",
 			Summary: "Preview a load-file package", MaxBodyBytes: maxPackageRequestBytes,
 			RequestBody: &huma.RequestBody{Required: true, Description: "Package source and profiles, limited to 1 MiB of JSON", Content: map[string]*huma.MediaType{
@@ -105,9 +139,9 @@ func registerPackageOpenAPI(api huma.API) {
 }
 
 func handlePackageDiagnostics(w http.ResponseWriter, r *http.Request, d Deps) {
-	owner, ok := workspaceSnapshotOwner(r.Context())
-	if !ok {
-		writeError(w, NewError(http.StatusInternalServerError, "internal", "authenticated request owner is unavailable"))
+	owner, problem := packageContainerOwner(r, d)
+	if problem != nil {
+		writeError(w, problem)
 		return
 	}
 	record, err := d.Store.PackagePreflight(r.Context(), owner, r.PathValue("preflight_id"))
@@ -194,9 +228,9 @@ func handlePackagePreflight(w http.ResponseWriter, r *http.Request, d Deps, g *g
 		writeError(w, err)
 		return
 	}
-	owner, ok := workspaceSnapshotOwner(r.Context())
-	if !ok {
-		writeError(w, NewError(http.StatusInternalServerError, "internal", "authenticated request owner is unavailable"))
+	owner, problem := packageContainerOwner(r, d)
+	if problem != nil {
+		writeError(w, problem)
 		return
 	}
 	if request.SourceKind != "root" {
@@ -227,6 +261,29 @@ func readPackageJSON(w http.ResponseWriter, r *http.Request, target any) *Error 
 }
 
 func buildPackagePreflight(ctx context.Context, d Deps, g *gate, owner string, request PackagePreflightRequest) (PackagePreflight, error) {
+	return buildPackagePreflightFromRoot(ctx, d, g, owner, request, request.SourceRef, request.SourceRef)
+}
+
+// PreflightPackage runs the shared package preflight without an HTTP transport.
+// Embedded vaults pass their own mutation gate so physical and metadata writes
+// remain coordinated with every other in-process operation.
+func PreflightPackage(ctx context.Context, d Deps, g PackageMutationGate, owner string, request PackagePreflightRequest) (PackagePreflight, error) {
+	if request.SourceKind != "root" || request.SourceRef == "" {
+		return PackagePreflight{}, store.ErrPackageConflict
+	}
+	return buildPackagePreflightFromRoot(ctx, d, g, owner, request, request.SourceRef, request.SourceRef)
+}
+
+// ReadPackagePreflight returns one owner-scoped retained preflight.
+func ReadPackagePreflight(ctx context.Context, catalog *store.Store, owner, preflightID string) (PackagePreflight, error) {
+	record, err := catalog.PackagePreflight(ctx, owner, preflightID)
+	if err != nil {
+		return PackagePreflight{}, err
+	}
+	return packagePreflightFromRecord(record)
+}
+
+func buildPackagePreflightFromRoot(ctx context.Context, d Deps, g PackageMutationGate, owner string, request PackagePreflightRequest, sourceRoot, sourceLocator string) (PackagePreflight, error) {
 	profile, err := loadfile.ReadProfile(request.Profile)
 	if err != nil {
 		return PackagePreflight{}, err
@@ -235,12 +292,18 @@ func buildPackagePreflight(ctx context.Context, d Deps, g *gate, owner string, r
 	if _, err := loadfile.Decoder(profile.Encoding); err != nil {
 		return PackagePreflight{}, err
 	}
-	resolver, err := loadfile.NewResolver(ctx, request.SourceRef, nil)
+	resolver, err := loadfile.NewResolver(ctx, sourceRoot, nil)
 	if err != nil {
 		return PackagePreflight{}, err
 	}
 	defer func() { _ = resolver.Close() }()
-	datName, pageMapName, discoveredVolumes, err := resolver.DiscoverPackageFiles()
+	if err := resolver.EnforceMaxFileBytes(blob.MaxIngestBytes); err != nil {
+		return PackagePreflight{}, err
+	}
+	if request.SourceKind == "root" {
+		sourceLocator = resolver.Root
+	}
+	datName, pageMapName, discoveredVolumes, err := resolver.DiscoverPackageFiles(profile.ID)
 	if err != nil {
 		return PackagePreflight{}, err
 	}
@@ -317,6 +380,15 @@ func buildPackagePreflight(ctx context.Context, d Deps, g *gate, owner string, r
 		return PackagePreflight{}, err
 	}
 	loadfile.NormalizeFileReferences(records, volumes)
+	for _, record := range records {
+		encoded, err := canonical.Marshal(record)
+		if err != nil {
+			return PackagePreflight{}, err
+		}
+		if len(encoded) > 1<<20 {
+			return PackagePreflight{}, loadfile.ErrLoadfileLimit
+		}
+	}
 	if err := memoryBudget.reset(packageRecordsMemory(records)); err != nil {
 		return PackagePreflight{}, err
 	}
@@ -423,7 +495,7 @@ func buildPackagePreflight(ctx context.Context, d Deps, g *gate, owner string, r
 	var stored PackagePreflight
 	err = g.MutateContext(ctx, func() error {
 		var persistErr error
-		stored, persistErr = persistPackagePreflight(ctx, d, owner, manifest, diagnostics, out)
+		stored, persistErr = persistPackagePreflight(ctx, d, owner, sourceLocator, profile, manifest, diagnostics, out)
 		return persistErr
 	})
 	return stored, err
@@ -496,7 +568,15 @@ func packageManifestFilesMemory(records []loadfile.Record, images []loadfile.Ima
 	return size
 }
 
-func persistPackagePreflight(ctx context.Context, d Deps, owner string, manifest loadfile.Manifest, diagnostics []loadfile.Diagnostic, out PackagePreflight) (PackagePreflight, error) {
+func persistPackagePreflight(ctx context.Context, d Deps, owner, sourceLocator string, profile loadfile.Profile, manifest loadfile.Manifest, diagnostics []loadfile.Diagnostic, out PackagePreflight) (PackagePreflight, error) {
+	profileJSON, err := canonical.Marshal(profile)
+	if err != nil {
+		return PackagePreflight{}, err
+	}
+	mappingJSON, err := canonical.Marshal(manifest.Mapping)
+	if err != nil {
+		return PackagePreflight{}, err
+	}
 	manifestFile, err := os.CreateTemp(d.VaultRoot, ".package-manifest-*")
 	if err != nil {
 		return PackagePreflight{}, fmt.Errorf("create package manifest staging file: %w", err)
@@ -534,7 +614,14 @@ func persistPackagePreflight(ctx context.Context, d Deps, owner string, manifest
 	if err != nil {
 		return PackagePreflight{}, err
 	}
-	record := store.PackagePreflightRecord{PreflightID: out.PreflightID, Owner: owner, SourceKind: out.SourceKind, SourceRef: out.SourceRef, ProfileSHA256: out.ProfileSHA256, MappingSHA256: out.MappingSHA256, ManifestSHA256: out.ManifestSHA256, CanonicalJSON: summaryBytes, DiagnosticsJSON: diagnosticSummary, Blocking: out.Blocking}
+	record := store.PackagePreflightRecord{
+		PreflightID: out.PreflightID, Owner: owner, SourceKind: out.SourceKind,
+		SourceRef: out.SourceRef, SourceLocator: sourceLocator,
+		ProfileSHA256: out.ProfileSHA256, ProfileJSON: string(profileJSON),
+		MappingSHA256: out.MappingSHA256, MappingJSON: string(mappingJSON),
+		ManifestSHA256: out.ManifestSHA256, CanonicalJSON: summaryBytes,
+		DiagnosticsJSON: diagnosticSummary, Blocking: out.Blocking,
+	}
 	err = d.Blobs.WithMutation(ctx, func() error {
 		manifestReceipt, writeErr := d.Blobs.WriteDetailedContext(ctx, manifestFile)
 		if writeErr != nil {

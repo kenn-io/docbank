@@ -90,6 +90,7 @@ func Validate(ctx context.Context, in ValidateInput) ([]FileRef, []Diagnostic, e
 					if declared := declaredPages[record.DocID]; declared > 0 && actual != declared {
 						return addDiagnostic(packageDiagnostic("page_count_mismatch", record, fmt.Sprintf("declared %d pages; source has %d", declared, actual)))
 					}
+					fileRef.VerifiedPageCount = actual
 					return nil
 				}
 			}

@@ -132,6 +132,6 @@ func init() {
 	mcpCmd.Flags().StringVar(&mcpTransport, "transport", "stdio", "transport: stdio or http")
 	mcpCmd.Flags().StringVar(&mcpListen, "listen", "", "explicit loopback IP and port for HTTP")
 	mcpCmd.Flags().BoolVar(&mcpAllowProcessing, "allow-processing", false,
-		"expose guarded start_processing (still requires prior operator consent)")
+		"expose guarded processing, package import, and Bates authority tools")
 	rootCmd.AddCommand(mcpCmd)
 }

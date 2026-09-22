@@ -2,10 +2,14 @@ package store
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"time"
+
+	"go.kenn.io/docbank/internal/canonical"
 )
 
 const packagePreflightRetention = 24 * time.Hour
@@ -15,8 +19,11 @@ type PackagePreflightRecord struct {
 	Owner                 string
 	SourceKind            string
 	SourceRef             string
+	SourceLocator         string
 	ProfileSHA256         string
+	ProfileJSON           string
 	MappingSHA256         string
+	MappingJSON           string
 	ManifestSHA256        string
 	ManifestBlobSHA256    string
 	DiagnosticsBlobSHA256 string
@@ -33,12 +40,13 @@ func (s *Store) PutPackagePreflight(ctx context.Context, record PackagePreflight
 	}
 	err := s.withStorageTx(ctx, func(tx *sql.Tx) error {
 		_, err := tx.ExecContext(ctx, `INSERT INTO package_preflights(
-			preflight_id,owner,source_kind,source_ref,profile_sha256,mapping_sha256,
+			preflight_id,owner,source_kind,source_ref,source_locator,profile_sha256,profile_json,mapping_sha256,mapping_json,
 			manifest_sha256,manifest_blob_sha256,diagnostics_blob_sha256,canonical_json,
 			diagnostics_json,blocking,created_at,expires_at)
-			VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+			VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 			record.PreflightID, record.Owner, record.SourceKind, record.SourceRef,
-			record.ProfileSHA256, record.MappingSHA256, record.ManifestSHA256,
+			record.SourceLocator, record.ProfileSHA256, record.ProfileJSON, record.MappingSHA256,
+			record.MappingJSON, record.ManifestSHA256,
 			record.ManifestBlobSHA256, sql.NullString{String: record.DiagnosticsBlobSHA256, Valid: record.DiagnosticsBlobSHA256 != ""},
 			record.CanonicalJSON, record.DiagnosticsJSON, record.Blocking,
 			record.CreatedAt, record.ExpiresAt)
@@ -65,8 +73,26 @@ func validatePackagePreflight(record *PackagePreflightRecord) error {
 	if err := validateUUIDv4(record.PreflightID); err != nil {
 		return fmt.Errorf("invalid package preflight id: %w", err)
 	}
-	if record.Owner == "" || record.SourceKind != "root" || record.SourceRef == "" {
+	if record.Owner == "" || record.SourceKind != "root" && record.SourceKind != "container" || record.SourceRef == "" {
 		return errors.New("invalid package preflight source")
+	}
+	if record.SourceLocator != "" || record.ProfileJSON != "" || record.MappingJSON != "" {
+		if record.SourceLocator == "" || len(record.SourceLocator) > 4096 ||
+			record.ProfileJSON == "" || len(record.ProfileJSON) > 64<<10 ||
+			record.MappingJSON == "" || len(record.MappingJSON) > 256<<10 {
+			return errors.New("incomplete package preflight source binding")
+		}
+		for _, bound := range []struct{ body, digest string }{
+			{record.ProfileJSON, record.ProfileSHA256}, {record.MappingJSON, record.MappingSHA256},
+		} {
+			if _, err := canonical.Decode[map[string]any]([]byte(bound.body)); err != nil {
+				return errors.New("package preflight profile or mapping is not canonical JSON")
+			}
+			actual := sha256.Sum256([]byte(bound.body))
+			if hex.EncodeToString(actual[:]) != bound.digest {
+				return errors.New("package preflight profile or mapping digest mismatch")
+			}
+		}
 	}
 	for label, value := range map[string]string{
 		"profile": record.ProfileSHA256, "mapping": record.MappingSHA256,
@@ -110,12 +136,12 @@ func validatePackagePreflight(record *PackagePreflightRecord) error {
 func (s *Store) PackagePreflight(ctx context.Context, owner, preflightID string) (PackagePreflightRecord, error) {
 	var record PackagePreflightRecord
 	var diagnostics sql.NullString
-	err := s.db.QueryRowContext(ctx, `SELECT preflight_id,owner,source_kind,source_ref,
-		profile_sha256,mapping_sha256,manifest_sha256,manifest_blob_sha256,
+	err := s.db.QueryRowContext(ctx, `SELECT preflight_id,owner,source_kind,source_ref,source_locator,
+		profile_sha256,profile_json,mapping_sha256,mapping_json,manifest_sha256,manifest_blob_sha256,
 		diagnostics_blob_sha256,canonical_json,diagnostics_json,blocking,created_at,expires_at
 		FROM package_preflights WHERE owner=? AND preflight_id=? AND expires_at>?`, owner, preflightID, nowRFC3339()).Scan(
-		&record.PreflightID, &record.Owner, &record.SourceKind, &record.SourceRef,
-		&record.ProfileSHA256, &record.MappingSHA256, &record.ManifestSHA256,
+		&record.PreflightID, &record.Owner, &record.SourceKind, &record.SourceRef, &record.SourceLocator,
+		&record.ProfileSHA256, &record.ProfileJSON, &record.MappingSHA256, &record.MappingJSON, &record.ManifestSHA256,
 		&record.ManifestBlobSHA256, &diagnostics, &record.CanonicalJSON,
 		&record.DiagnosticsJSON, &record.Blocking, &record.CreatedAt, &record.ExpiresAt)
 	if errors.Is(err, sql.ErrNoRows) {

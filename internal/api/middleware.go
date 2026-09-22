@@ -34,10 +34,13 @@ func browserSessionRequest(ctx context.Context) bool {
 // timeout-exempt: long-running maintenance, integrity reads, bulk ingest, and
 // export preparation.
 func timeoutExempt(method, path string) bool {
+	if packageContainerTimeoutExempt(method, path) {
+		return true
+	}
 	switch path {
-	case "/api/v1/ingest", "/api/v1/ingest/stream", "/api/v1/ingest/preflight", "/api/v1/packages/preflights", "/api/v1/gc", "/api/v1/verify", "/api/v1/audit/verify", "/api/v1/trash/empty",
+	case "/api/v1/ingest", "/api/v1/ingest/stream", "/api/v1/ingest/preflight", "/api/v1/packages/preflights", "/api/v1/packages/exports", "/api/v1/gc", "/api/v1/verify", "/api/v1/audit/verify", "/api/v1/trash/empty",
 		"/api/v1/processing/jobs", "/api/v1/derivatives/purge-jobs",
-		"/api/v1/exports/sources", "/api/v1/exports/plans",
+		"/api/v1/exports/sources", "/api/v1/exports/plans", "/api/v1/bates/exports",
 		"/api/v1/storage/pack", "/api/v1/storage/repack", "/api/v1/uploads",
 		"/api/v1/backup/snapshots", "/api/v1/backup/snapshots/stream",
 		"/api/v1/backup/verify", "/api/v1/backup/verify/stream",
@@ -65,6 +68,16 @@ func timeoutExempt(method, path string) bool {
 	return strings.HasPrefix(path, "/api/v1/renditions/") ||
 		(strings.HasPrefix(path, "/api/v1/versions/") && strings.HasSuffix(path, "/content")) ||
 		isEmailPartPath(path)
+}
+
+func packageContainerTimeoutExempt(method, path string) bool {
+	path, ok := strings.CutPrefix(path, "/api/v1/packages/containers/")
+	if !ok {
+		return false
+	}
+	parts := strings.Split(path, "/")
+	return len(parts) == 2 && parts[0] != "" && method == http.MethodPost && (parts[1] == "seal" || parts[1] == "preflight") ||
+		len(parts) == 3 && parts[0] != "" && method == http.MethodPut && parts[1] == "chunks" && parts[2] != ""
 }
 
 // Split before unescaping so IDs containing an encoded slash remain one segment,
@@ -98,6 +111,9 @@ func mailboxTimeoutExempt(method, path string) bool {
 func timeoutExemptRequest(r *http.Request) bool {
 	if strings.HasPrefix(r.URL.Path, "/api/v1/mailbox/") {
 		return mailboxTimeoutExempt(r.Method, r.URL.EscapedPath())
+	}
+	if strings.HasPrefix(r.URL.Path, "/api/v1/packages/containers/") {
+		return packageContainerTimeoutExempt(r.Method, r.URL.EscapedPath())
 	}
 	if timeoutExempt(r.Method, r.URL.Path) {
 		return true

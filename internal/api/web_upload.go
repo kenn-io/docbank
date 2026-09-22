@@ -1,10 +1,12 @@
 package api
 
 import (
+	"bytes"
 	"context"
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json/v2"
 	"errors"
 	"fmt"
@@ -58,6 +60,7 @@ type webUploadMessage struct {
 
 type webUploadRequest struct {
 	requestID    string
+	containerID  string
 	parentID     int64
 	name         string
 	mimeType     string
@@ -128,6 +131,11 @@ func handleWebUploadConnection(
 		_ = conn.Close(websocket.StatusPolicyViolation, "upload session unavailable")
 		return
 	}
+	owner, _, ok := sessions.authenticate(auth.Token)
+	if !ok {
+		_ = conn.Close(websocket.StatusPolicyViolation, "upload session unavailable")
+		return
+	}
 	defer sessions.releaseUpload(auth.Token, conn)
 	if err := wsjson.Write(ctx, conn, webUploadMessage{
 		Type: "authenticated", Proof: webUploadProof(secret, auth.Token, auth.Nonce),
@@ -149,6 +157,12 @@ func handleWebUploadConnection(
 		request, problem := validateWebUploadBegin(begin)
 		if problem != nil {
 			if writeWebUploadProblem(ctx, conn, begin.RequestID, problem) != nil {
+				return
+			}
+			continue
+		}
+		if request.containerID != "" {
+			if !handleWebPackageContainer(ctx, conn, d, g, owner, request) {
 				return
 			}
 			continue
@@ -211,14 +225,21 @@ func validateWebUploadBegin(begin webUploadMessage) (webUploadRequest, *Error) {
 		return webUploadRequest{}, NewError(http.StatusUnprocessableEntity, "validation",
 			"upload begin requires a bounded request identity")
 	}
-	name, err := store.NormalizeName(begin.Name)
-	if err != nil {
-		return webUploadRequest{}, NewError(http.StatusUnprocessableEntity, "invalid_name", err.Error())
-	}
 	parsedHash, err := packstore.ParseHash(begin.ExpectedHash)
 	if err != nil || parsedHash.String() != begin.ExpectedHash {
 		return webUploadRequest{}, NewError(http.StatusUnprocessableEntity, "validation",
 			"expected_hash must be canonical lowercase SHA-256")
+	}
+	if begin.ContainerID != "" {
+		if len(begin.ContainerID) > 128 || begin.ExpectedSize < 1 || begin.ExpectedSize > store.MailboxContainerBytes || begin.ParentID != 0 || begin.Name != "" || begin.MIMEType != "" {
+			return webUploadRequest{}, NewError(http.StatusUnprocessableEntity, "validation", "invalid package container upload declaration")
+		}
+		return webUploadRequest{requestID: begin.RequestID, containerID: begin.ContainerID,
+			expectedHash: begin.ExpectedHash, expectedSize: begin.ExpectedSize}, nil
+	}
+	name, err := store.NormalizeName(begin.Name)
+	if err != nil {
+		return webUploadRequest{}, NewError(http.StatusUnprocessableEntity, "invalid_name", err.Error())
 	}
 	if begin.ExpectedSize < 0 || begin.ExpectedSize > blob.MaxIngestBytes {
 		return webUploadRequest{}, NewError(http.StatusUnprocessableEntity, "validation",
@@ -232,6 +253,68 @@ func validateWebUploadBegin(begin webUploadMessage) (webUploadRequest, *Error) {
 		requestID: begin.RequestID, parentID: begin.ParentID, name: name,
 		mimeType: mimeType, expectedHash: begin.ExpectedHash, expectedSize: begin.ExpectedSize,
 	}, nil
+}
+
+func handleWebPackageContainer(ctx context.Context, conn *websocket.Conn, d Deps, g *gate, owner string, request webUploadRequest) bool {
+	reader := &webUploadReader{ctx: ctx, conn: conn, requestID: request.requestID, inactivity: webUploadInactivity}
+	defer reader.close()
+	ready := false
+	err := g.mutate(func() error {
+		c, err := d.Store.MailboxContainer(ctx, owner, request.containerID)
+		if err != nil {
+			return err
+		}
+		if c.Format != "zip" || c.State != "uploading" || c.SHA256 != request.expectedHash || c.Size != request.expectedSize {
+			return store.ErrMailboxConflict
+		}
+		if err := wsjson.Write(ctx, conn, webUploadMessage{Type: "ready", RequestID: request.requestID}); err != nil {
+			return fmt.Errorf("ready package upload: %w", err)
+		}
+		ready = true
+		return executeWebPackageContainer(ctx, d, owner, request, reader)
+	})
+	if err != nil {
+		problem := mailboxError(err)
+		if errors.Is(err, errWebUploadProtocol) {
+			problem = NewError(http.StatusUnprocessableEntity, "validation", "invalid browser upload frame")
+		}
+		if errors.Is(err, errWebUploadCanceled) {
+			problem = NewError(499, "canceled", "package upload canceled")
+		}
+		if writeWebUploadProblem(ctx, conn, request.requestID, problem) != nil {
+			return false
+		}
+		return !ready || reader.ended
+	}
+	return wsjson.Write(ctx, conn, webUploadMessage{Type: "package_container_receipt", RequestID: request.requestID, ContainerID: request.containerID}) == nil
+}
+
+func executeWebPackageContainer(ctx context.Context, d Deps, owner string, request webUploadRequest, reader *webUploadReader) error {
+	service := mailboxService(d)
+	fullHash := sha256.New()
+	remaining := request.expectedSize
+	for index := 0; remaining > 0; index++ {
+		size := min(remaining, store.MailboxChunkBytes)
+		chunk := make([]byte, int(size))
+		if _, err := io.ReadFull(reader, chunk); err != nil {
+			return errors.Join(store.ErrMailboxConflict, err)
+		}
+		_, _ = fullHash.Write(chunk)
+		chunkHash := sha256.Sum256(chunk)
+		if err := service.UploadChunk(ctx, owner, request.containerID, index, hex.EncodeToString(chunkHash[:]), size, bytes.NewReader(chunk)); err != nil {
+			return err
+		}
+		remaining -= size
+	}
+	var extra [1]byte
+	n, err := reader.Read(extra[:])
+	if n != 0 || !errors.Is(err, io.EOF) || hex.EncodeToString(fullHash.Sum(nil)) != request.expectedHash {
+		if err != nil && !errors.Is(err, io.EOF) {
+			return err
+		}
+		return store.ErrMailboxConflict
+	}
+	return nil
 }
 
 func validateWebUploadDestination(ctx context.Context, d Deps, parentID int64) *Error {
@@ -280,6 +363,7 @@ type webUploadReader struct {
 	conn       *websocket.Conn
 	requestID  string
 	current    io.Reader
+	frameBytes int
 	cancel     context.CancelFunc
 	inactivity time.Duration
 	ended      bool
@@ -289,6 +373,10 @@ func (r *webUploadReader) Read(p []byte) (int, error) {
 	for {
 		if r.current != nil {
 			n, err := r.current.Read(p)
+			r.frameBytes += n
+			if r.frameBytes > webUploadChunkBytes {
+				return n, errWebUploadProtocol
+			}
 			if err != nil {
 				r.current = nil
 				r.cancel()
@@ -310,6 +398,7 @@ func (r *webUploadReader) Read(p []byte) (int, error) {
 		case websocket.MessageBinary:
 			r.current = next
 			r.cancel = cancel
+			r.frameBytes = 0
 		case websocket.MessageText:
 			var terminal webUploadMessage
 			err := json.UnmarshalRead(io.LimitReader(next, 4096), &terminal)

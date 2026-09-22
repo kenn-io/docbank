@@ -36,6 +36,9 @@ var fieldCatalogKeys = []string{
 	"loadfile.file.native",
 	"loadfile.file.produced_pdf",
 	"loadfile.file.supplied_text",
+	"loadfile.label.assigned.begin",
+	"loadfile.label.assigned.end",
+	"loadfile.label.assigned.set",
 	"loadfile.label.begin",
 	"loadfile.label.begin_attach",
 	"loadfile.label.end",
@@ -47,6 +50,9 @@ var fieldCatalogKeys = []string{
 	"loadfile.time.received",
 	"loadfile.time.sent",
 }
+
+// FieldCatalogKeys returns the closed canonical mapping target set.
+func FieldCatalogKeys() []string { return slices.Clone(fieldCatalogKeys) }
 
 // FieldCatalogKeyAllowed reports whether key is a canonical mapping target.
 func FieldCatalogKeyAllowed(key string) bool {

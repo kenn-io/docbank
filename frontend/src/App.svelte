@@ -44,6 +44,7 @@
   import AuditHistoryDrawer from "./AuditHistoryDrawer.svelte";
   import ActionRecoveryModal from "./ActionRecoveryModal.svelte";
   import BackupDrawer from "./BackupDrawer.svelte";
+  import BatesExportDrawer from "./BatesExportDrawer.svelte";
   import ExportDrawer from "./ExportDrawer.svelte";
   import { copyExportMembers } from "./exports.js";
   import type { ExportInput } from "./exportState.js";
@@ -78,6 +79,7 @@
   import UploadDrawer from "./UploadDrawer.svelte";
   import VerifiedPreview from "./VerifiedPreview.svelte";
   import MailboxImportDrawer from "./MailboxImportDrawer.svelte";
+  import LoadFileImportDrawer from "./LoadFileImportDrawer.svelte";
   import VersionHistoryDrawer from "./VersionHistoryDrawer.svelte";
   import { APIError } from "./api-transport.js";
   import { changeNodeTag, documentSearch, liveNodeTags, resolveDocumentSourceFence } from "./receipts.js";
@@ -207,10 +209,11 @@
   let auditEvidenceOpen = $state(false);
   let storageOpen = $state(false);
   let backupsOpen = $state(false);
+  let batesOpen = $state(false);
   let exportOpen = $state(false);
   let exportHasJob = $state(false);
   let exportInput = $state<ExportInput | null>(null);
-  $effect(() => { if (!webSession) { exportOpen = false; exportInput = null; exportHasJob = false; } });
+  $effect(() => { if (!webSession) { batesOpen = false; exportOpen = false; exportInput = null; exportHasJob = false; } });
   let savedQueriesOpen = $state(false);
   let queryBarOpen = $state(false);
   let savedQueryDraft = $state<Query | null>(null);
@@ -244,6 +247,7 @@
   let tagCatalogOpen = $state(false);
   let uploadTarget = $state<Node | null>(null);
   let mailboxTarget = $state<Node | null>(null);
+  let loadFileTarget = $state<Node | null>(null);
   let trashTarget = $state<Row | null>(null);
   let generation = 0;
   let auditGeneration = 0;
@@ -2148,6 +2152,7 @@
       {/snippet}
       {#snippet right()}
         <Button size="sm" disabled={!exportHasJob && (snapshotActive ? (snapshotPage?.total ?? 0) === 0 : visibleDocumentCount === 0)} onclick={() => openExport()}>Export</Button>
+        <Button size="sm" onclick={() => batesOpen = true}>Bates export</Button>
         <Button size="sm" onclick={() => openQueryEditor()}>Edit query</Button>
         <Button size="sm" disabled={snapshotActive && snapshotState.status !== "ready"}
           onclick={() => { snapshotActionError = ""; snapshotActionsOpen = true; }}>Snapshot actions</Button>
@@ -2497,9 +2502,20 @@
                 trashOpen = false;
                 tagCatalogOpen = false;
                 uploadTarget = null;
+                loadFileTarget = null;
                 mailboxTarget = directory;
               }}
             >Import mailbox</Button>
+            <Button
+              size="sm"
+              disabled={!directory || loading || !uploadChannel || Boolean(uploadChannelError) || Boolean(activeQuery) || tagBrowse}
+              onclick={() => {
+                if (!directory) return;
+                uploadTarget = null;
+                mailboxTarget = null;
+                loadFileTarget = directory;
+              }}
+            >Import load files</Button>
           </div>
         </div>
 
@@ -3200,6 +3216,9 @@
         onauthfailure={handleFailure}
       />
     {/if}
+    {#if batesOpen}
+      <BatesExportDrawer session={webSession} onclose={() => batesOpen = false} onauthfailure={handleFailure} />
+    {/if}
     {#key webSession}
       <ExportDrawer session={webSession} open={exportOpen} input={exportInput} onclose={() => exportOpen = false} onauthfailure={handleFailure} onactivechange={active => exportHasJob = active} />
     {/key}
@@ -3305,6 +3324,18 @@
         onclose={() => (mailboxTarget = null)}
         oncomplete={async () => {
           if (mailboxTarget) await loadDirectory(mailboxTarget.id, false);
+        }}
+        onauthfailure={handleFailure}
+      />
+    {/if}
+    {#if loadFileTarget && uploadChannel}
+      <LoadFileImportDrawer
+        session={webSession}
+        channel={uploadChannel}
+        destination={loadFileTarget.path ?? "/"}
+        onclose={() => (loadFileTarget = null)}
+        oncomplete={async () => {
+          if (loadFileTarget) await loadDirectory(loadFileTarget.id, false);
         }}
         onauthfailure={handleFailure}
       />
