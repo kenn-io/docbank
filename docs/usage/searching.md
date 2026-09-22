@@ -127,6 +127,12 @@ all retained references for one hash, use `GET /api/v1/content-references` with
 live history, and trash. Duplicate discovery is a separate HTTP read; it does
 not change text-search results or automatically collapse them.
 
+## Export search counts
+
+Use [Search exports](search-exports.md) to compare date-scoped search terms in
+an eight-column CSV and retain a frozen evidence ZIP. Recent export history
+keeps reusable requests; named saved queries remain a separate workflow.
+
 ## Save complete query intent over HTTP
 
 Save a named search definition when several clients need to reuse it. The

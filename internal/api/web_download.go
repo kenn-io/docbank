@@ -25,6 +25,7 @@ import (
 	"sync"
 	"time"
 
+	"go.kenn.io/docbank/internal/reporting"
 	"go.kenn.io/kit/safefileio"
 )
 
@@ -48,6 +49,8 @@ type webDownloadRegistry struct {
 }
 
 type webDownloadTicket struct {
+	reportID        string
+	reportFormat    string
 	path            string
 	name            string
 	mediaType       string
@@ -63,6 +66,9 @@ type webDownloadTicket struct {
 }
 
 func (t webDownloadTicket) release() {
+	if t.reportID != "" {
+		return
+	}
 	if t.releaseArchive != nil {
 		t.releaseArchive()
 		return
@@ -215,6 +221,7 @@ func registerWebDownload(
 	d Deps,
 	downloads *webDownloadRegistry,
 	sessions *webSessionRegistry,
+	reports *reporting.Cache,
 ) {
 	mux.HandleFunc("POST "+webDownloadPreparePath, func(w http.ResponseWriter, r *http.Request) {
 		if !enabled || d.WebURL == "" {
@@ -411,6 +418,29 @@ func registerWebDownload(
 			return
 		}
 		defer ticket.release()
+		if ticket.reportID != "" {
+			if reports == nil {
+				writeError(w, NewError(http.StatusGone, "report_unavailable", "This report handle is no longer available."))
+				return
+			}
+			reader, size, digest, err := reports.Acquire(r.Context(), ticket.owner, ticket.reportID, ticket.reportFormat)
+			if err != nil {
+				writeError(w, termReportError(err))
+				return
+			}
+			defer func() { _ = reader.Close() }()
+			w.Header().Set("Cache-Control", "no-store")
+			w.Header().Set("Content-Disposition", mime.FormatMediaType("attachment", map[string]string{"filename": ticket.name}))
+			w.Header().Set("Content-Type", ticket.mediaType)
+			w.Header().Set("Content-Length", strconv.FormatInt(size, 10))
+			w.Header().Set("X-Docbank-Report-Sha256", digest)
+			w.Header().Set("Cross-Origin-Resource-Policy", "same-origin")
+			w.Header().Set("Referrer-Policy", "no-referrer")
+			w.Header().Set("X-Content-Type-Options", "nosniff")
+			w.WriteHeader(http.StatusOK)
+			_, _ = io.Copy(w, reader)
+			return
+		}
 
 		file := ticket.archiveFile
 		var err error

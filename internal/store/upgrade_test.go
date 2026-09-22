@@ -332,6 +332,26 @@ func TestOpenRejectsInvalidPackagePreflightLayout(t *testing.T) {
 	}
 }
 
+func TestOpenRejectsInvalidTermReportHistoryLayout(t *testing.T) {
+	for _, driver := range v090UpgradeDrivers() {
+		for _, change := range []string{"DROP TABLE term_report_history", "ALTER TABLE term_report_history DROP COLUMN parent_id"} {
+			t.Run(driver.name+"/"+change, func(t *testing.T) {
+				dbPath := filepath.Join(t.TempDir(), "docbank.db")
+				s, err := Open(dbPath, driver.driver)
+				require.NoError(t, err)
+				_, err = s.db.Exec(change)
+				require.NoError(t, err)
+				require.NoError(t, s.Close())
+				reopened, err := Open(dbPath, driver.driver)
+				if reopened != nil {
+					require.NoError(t, reopened.Close())
+				}
+				require.ErrorContains(t, err, "unexpected term_report_history layout")
+			})
+		}
+	}
+}
+
 func TestOpenRejectsCurrentDatabaseWithoutAttributionTables(t *testing.T) {
 	tables := []string{
 		"document_event_state", "document_event_generations", "document_event_heads",

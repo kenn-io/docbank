@@ -24,6 +24,7 @@ nav = [
     {"Email PDFs" = "usage/email-pdf.md"},
     {"Organizing & Tagging" = "usage/organizing.md"},
     {"Searching" = "usage/searching.md"},
+    {"Search Exports" = "usage/search-exports.md"},
     {"Document Processing" = "usage/document-processing.md"},
     {"Document Processing Search" = "usage/search.md"},
     {"Web Application" = "usage/web.md"},

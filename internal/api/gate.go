@@ -108,7 +108,13 @@ func (g *OperationGate) maintainContext(ctx context.Context, fn func() error) er
 }
 
 func (g *OperationGate) capture(fn func() error) error {
-	if err := g.preservation.Acquire(context.Background(), 1); err != nil {
+	return g.CaptureContext(context.Background(), fn)
+}
+
+// CaptureContext pins physical authority while a report resolves its metadata
+// snapshot and reads the exact retained text bytes named by that snapshot.
+func (g *OperationGate) CaptureContext(ctx context.Context, fn func() error) error {
+	if err := g.preservation.Acquire(ctx, 1); err != nil {
 		return fmt.Errorf("acquiring backup preservation gate: %w", err)
 	}
 	defer g.preservation.Release(1)

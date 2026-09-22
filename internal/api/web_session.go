@@ -20,6 +20,7 @@ import (
 const (
 	webSessionPath   = "/api/daemon/web-session"
 	WebSessionHeader = "X-Docbank-Web-Session"
+	webLimitQuery    = "limit"
 )
 
 // webSessionRegistry owns browser credentials for exactly one daemon
@@ -232,6 +233,39 @@ func webSessionRequestAllowed(r *http.Request) bool {
 		return true
 	}
 	method, path := r.Method, r.URL.Path
+	if path == "/api/v1/search-exports" && method == http.MethodGet {
+		query := r.URL.Query()
+		if len(query) > 2 {
+			return false
+		}
+		for key, values := range query {
+			if (key != "offset" && key != webLimitQuery) || len(values) != 1 {
+				return false
+			}
+			value, err := strconv.Atoi(values[0])
+			if err != nil || value < 0 || value > 100 || key == webLimitQuery && value > 50 {
+				return false
+			}
+		}
+		return true
+	}
+	if r.URL.RawQuery == "" {
+		if path == "/api/v1/search-exports" {
+			return method == http.MethodPost
+		}
+		if after, ok := strings.CutPrefix(path, "/api/v1/search-exports/"); ok {
+			parts := strings.Split(after, "/")
+			if len(parts[0]) != 48 {
+				return false
+			}
+			if _, err := hex.DecodeString(parts[0]); err != nil {
+				return false
+			}
+			return len(parts) == 1 && method == http.MethodGet ||
+				len(parts) == 2 && method == http.MethodPost &&
+					(parts[1] == "dates" || parts[1] == "revisions" || parts[1] == "download")
+		}
+	}
 	if strings.HasPrefix(path, "/api/v1/exports/") {
 		return exportBrowserRouteAllowed(r)
 	}
@@ -351,7 +385,7 @@ func webSessionRequestAllowed(r *http.Request) bool {
 			return false
 		}
 		for key, entries := range values {
-			if (key != "limit" && key != "offset") || len(entries) != 1 {
+			if (key != webLimitQuery && key != "offset") || len(entries) != 1 {
 				return false
 			}
 		}

@@ -207,7 +207,7 @@ func TestCompiledQuerySQLiteRequiresPopulationRelations(t *testing.T) {
 	_, _, err = compiled.Bind("")
 	require.ErrorContains(t, err, "matched population bindings")
 
-	population, err := matchedPopulation(compiled, "")
+	population, err := matchedPopulation(compiled, "", nil)
 	require.NoError(t, err)
 	statement, args, err := bindQueryPopulation(population, CoverageSelection{}, "")
 	require.NoError(t, err)

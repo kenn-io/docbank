@@ -48,6 +48,12 @@ func timeoutExempt(method, path string) bool {
 	if strings.HasPrefix(path, "/api/v1/mailbox/") {
 		return mailboxTimeoutExempt(method, path)
 	}
+	if method == http.MethodGet {
+		if rest, ok := strings.CutPrefix(path, "/api/v1/search-exports/"); ok {
+			id, format, found := strings.Cut(rest, "/")
+			return found && id != "" && (format == "csv" || format == "bundle")
+		}
+	}
 	if method == http.MethodPost {
 		if id, ok := strings.CutPrefix(path, "/api/v1/exports/jobs/"); ok {
 			if id, ok := strings.CutSuffix(id, "/download"); ok && (id == "{id}" || validPageJobPathID(id)) {

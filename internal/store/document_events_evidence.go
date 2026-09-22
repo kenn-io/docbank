@@ -113,7 +113,7 @@ func (s *Store) LoadDocumentEventEvidence(
 
 func (s *Store) loadDocumentEventEvidenceTx(
 	ctx context.Context,
-	tx *sql.Tx,
+	tx metadataQuerier,
 	target DocumentEventTarget,
 	decodeMetadata bool,
 ) (DocumentEventEvidenceSnapshot, error) {
@@ -171,7 +171,7 @@ func (s *Store) loadDocumentEventEvidenceTx(
 
 func loadDocumentEventMetadataEvidence(
 	ctx context.Context,
-	tx *sql.Tx,
+	tx metadataQuerier,
 	blobHash string,
 	snapshot *DocumentEventEvidenceSnapshot,
 	decodeMetadata bool,
@@ -227,7 +227,7 @@ func loadDocumentEventMetadataEvidence(
 
 func loadBoundDocumentEventEvidence(
 	ctx context.Context,
-	tx *sql.Tx,
+	tx metadataQuerier,
 	versionID string,
 	snapshot *DocumentEventEvidenceSnapshot,
 	manifestHash hash.Hash,

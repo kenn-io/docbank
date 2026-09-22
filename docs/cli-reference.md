@@ -859,6 +859,22 @@ identical content, and reports how many other eligible copies each group has.
 Missing source embeddings return `unavailable`. Query text, `--mode`,
 `--explain`, `--rerank`, and lexical filters cannot accompany `--similar-to`.
 
+## docbank search-export
+
+Export dated search counts and retain the evidence needed to check them.
+
+| Command | Purpose and options |
+| --- | --- |
+| `create --input request.json --output search-export.zip` | Create an export through the daemon. Print the export ID if dates need review. |
+| `dates <export-id> [--cursor CURSOR] [--limit 50]` | Read frozen date candidates, up to 100 members per page. |
+| `revise <export-id> --choices choices.json --output reviewed.zip` | Apply a JSON array of reviewed date choices to the frozen observation. |
+| `verify <report.zip>` | Verify internal packet consistency offline. |
+| `csv <report.zip> --output search-export.csv` | Verify the packet and extract its CSV offline. |
+
+Commands with `--output` also accept `--overwrite`. Existing destinations are
+otherwise preserved. See [Search exports](usage/search-exports.md) for the
+version 1 request format, date choices, counts, and retention limits.
+
 ## docbank processing
 
 

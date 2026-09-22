@@ -449,6 +449,11 @@ func exportMetadataSnapshotWithVaultIdentity(
 			return err
 		}
 	}
+	if layout.schemaVersion >= 21 {
+		if err := exportTermReportHistory(ctx, tx, write); err != nil {
+			return err
+		}
+	}
 	if err := exportNodeTags(ctx, tx, write); err != nil {
 		return err
 	}
@@ -1019,6 +1024,7 @@ func requirePristineMetadataTarget(ctx context.Context, tx *sql.Tx) error {
 		  (SELECT COUNT(*) FROM blobs) + (SELECT COUNT(*) FROM content_versions)
 		    + (SELECT COUNT(*) FROM saved_queries)
 		    + (SELECT COUNT(*) FROM saved_query_runs)
+		    + (SELECT COUNT(*) FROM term_report_history)
 		    + (SELECT COUNT(*) FROM blob_checksums)
 		    + (SELECT COUNT(*) FROM email_generations)
 		    + (SELECT COUNT(*) FROM email_part_artifacts)
@@ -1447,6 +1453,12 @@ func (s *Store) importMetadataRecord(
 			return err
 		}
 		return importSavedQueryRunMetadata(ctx, tx, v)
+	case metadataTermReportHistoryType:
+		var v metadataTermReportHistory
+		if err := decodeMetadataRecord(raw, &v); err != nil {
+			return err
+		}
+		return importTermReportHistory(ctx, tx, v)
 	case "node_tag":
 		var v metadataNodeTag
 		if err := decodeMetadataRecord(raw, &v); err != nil {
@@ -1589,6 +1601,7 @@ var metadataRequiredFields = map[string][]string{
 	"tag":                                  {metadataTypeField, "tag_id", "name", metadataRevisionField},
 	metadataSavedQueryType:                 {metadataTypeField, "saved_query_id", "name", "description", "kind", "payload", "fingerprint", metadataRevisionField, metadataCreatedAtField, "updated_at"},
 	metadataSavedQueryRunType:              {metadataTypeField, "run_id", "saved_query_id", "saved_query_revision", "query_fingerprint", "snapshot_id", "member_hash", "total", "total_bytes", "ran_at", "expires_at", "previous_run_id", "previous_member_hash", "previous_total", "previous_query_fingerprint"},
+	metadataTermReportHistoryType:          {metadataTypeField, "id", "parent_id", "observed_at", "request_json", "summary_json"},
 	"node_tag":                             {metadataTypeField, metadataNodeIDField, "tag_id"},
 	metadataBatchTagReceiptType:            {metadataTypeField, auditOperationIDField, "request_digest", "receipt_json"},
 	"extracted_text":                       {metadataTypeField, columnBlobHash, "extractor", "extractor_version", "status", "error", "attempts", "text", "extracted_at"},
@@ -2009,6 +2022,11 @@ func validateMetadataStateWithVaultIdentity(
 		}
 		if err := validateSavedQueryRunMetadataState(ctx, tx); err != nil {
 			return err
+		}
+		if layout.schemaVersion >= 21 {
+			if err := exportTermReportHistory(ctx, tx, func(any) error { return nil }); err != nil {
+				return err
+			}
 		}
 		if err := validateBatchTagReceiptMetadataState(ctx, tx); err != nil {
 			return err

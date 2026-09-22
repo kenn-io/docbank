@@ -298,7 +298,7 @@ func materializeSnapshotRows(
 	if err := chargeSnapshotMaterialization(options, &projection.SerializedBytes, 0, 2); err != nil {
 		return err
 	}
-	population, err := matchedPopulation(compiled, generationID)
+	population, err := matchedPopulation(compiled, generationID, nil)
 	if err != nil {
 		return err
 	}
