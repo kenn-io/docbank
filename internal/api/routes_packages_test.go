@@ -24,10 +24,41 @@ import (
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/canonical"
 	"go.kenn.io/docbank/internal/loadfile"
+	"go.kenn.io/docbank/internal/processing"
 	storepkg "go.kenn.io/docbank/internal/store"
 	"go.kenn.io/docbank/sqlite"
 	"golang.org/x/text/encoding/unicode"
 )
+
+func TestPackageExportIssuesOneUseVerifiedArchive(t *testing.T) {
+	srv, catalog := newPackageTestServer(t)
+	node := createFileWithChecksum(t, catalog, "synthetic.txt", "synthetic package export")
+	occurrence := strings.Repeat("d", 32)
+	snapshot, err := catalog.SealCollectionSnapshot(t.Context(), storepkg.SnapshotSealRequest{
+		SnapshotID: uuid.NewString(), Members: []storepkg.CollectionSnapshotMember{{
+			Ordinal: 1, OccurrenceID: occurrence, NodeID: node.ID, ContentVersionID: node.CurrentVersionID,
+			BlobSHA256: node.BlobHash, Size: node.Size, FamilyID: occurrence, FamilyOrder: 1,
+			DisplayName: node.Name, FrozenFieldsJSON: "{}", DocumentKind: "other",
+		}},
+	})
+	require.NoError(t, err)
+	created := srv.call(t, http.MethodPost, "/api/v1/packages/exports", mustPackageJSON(t, api.PackageExportRequest{
+		SnapshotID: snapshot.SnapshotID, ProfileID: "export-csv-natives-v1",
+	}), nil)
+	require.Equal(t, http.StatusCreated, created.Code, created.Body.String())
+	var ticket api.PackageExportTicket
+	require.NoError(t, json.Unmarshal(created.Body.Bytes(), &ticket))
+	require.Equal(t, 1, ticket.Records)
+	require.Equal(t, snapshot.SnapshotID, ticket.SnapshotID)
+
+	response, body := do(t, srv.ts, http.MethodGet, ticket.URL, nil, nil)
+	require.Equal(t, http.StatusOK, response.StatusCode)
+	verified, err := processing.VerifyLoadFileExport(t.Context(), bytes.NewReader([]byte(body)), int64(len(body)))
+	require.NoError(t, err)
+	require.Equal(t, ticket.ArchiveSHA256, verified.Receipt.ArchiveSHA256)
+	second, _ := do(t, srv.ts, http.MethodGet, ticket.URL, nil, nil)
+	require.Equal(t, http.StatusNotFound, second.StatusCode)
+}
 
 func TestPackageImportAdmitsFrozenPreflightAndReplaysOperation(t *testing.T) {
 	srv, catalog := newPackageTestServer(t)

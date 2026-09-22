@@ -34,8 +34,9 @@ const maxPackageRecords = 100_000
 const maxPackagePages = 1_000_000
 const maxPackageNormalizedMemory = int64(256 << 20)
 
-func registerPackageRoutes(mux *http.ServeMux, api huma.API, d Deps, g *gate) {
+func registerPackageRoutes(mux *http.ServeMux, api huma.API, d Deps, g *gate, downloads *webDownloadRegistry, sessions *webSessionRegistry) {
 	registerPackageOpenAPI(api)
+	registerPackageExportRoute(api, d, downloads, sessions)
 	registerPackageBrowseRoutes(api, d)
 	registerPackageCustodianRoutes(mux, d, g)
 	registerPackageContainerRoutes(mux, d, g)
@@ -302,7 +303,7 @@ func buildPackagePreflightFromRoot(ctx context.Context, d Deps, g PackageMutatio
 	if request.SourceKind == "root" {
 		sourceLocator = resolver.Root
 	}
-	datName, pageMapName, discoveredVolumes, err := resolver.DiscoverPackageFiles()
+	datName, pageMapName, discoveredVolumes, err := resolver.DiscoverPackageFiles(profile.ID)
 	if err != nil {
 		return PackagePreflight{}, err
 	}

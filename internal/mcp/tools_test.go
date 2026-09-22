@@ -54,13 +54,14 @@ func TestProcessingToolIsConstructionTimeOptIn(t *testing.T) {
 	enabled := catalogNames(enabledTools)
 	require.Equal(t, append(append([]string{}, readOnly...), "start_processing", "preflight_load_file_package", "start_package_import",
 		"resolve_package_custodian", "assign_package_custodian", "ensure_bates_namespace", "reserve_bates_range", "publish_bates_export",
-		"export_bates_file"), enabled)
+		"export_bates_file", "export_load_file_package"), enabled)
 
 	for _, write := range enabledTools[len(readOnly):] {
 		require.NotNil(t, write.Annotations)
 		assert.False(t, write.Annotations.ReadOnlyHint)
 		assert.Equal(t, slices.Contains([]string{"start_package_import", "ensure_bates_namespace", "reserve_bates_range", "publish_bates_export"}, write.Name), write.Annotations.IdempotentHint)
-		assert.Equal(t, new(write.Name == "assign_package_custodian" || write.Name == "export_bates_file"), write.Annotations.DestructiveHint)
+		assert.Equal(t, new(write.Name == "assign_package_custodian" || write.Name == "export_bates_file" ||
+			write.Name == "export_load_file_package"), write.Annotations.DestructiveHint)
 		assert.Equal(t, new(true), write.Annotations.OpenWorldHint)
 	}
 

@@ -8280,6 +8280,89 @@ components:
       x-go-type-import:
         path: go.kenn.io/docbank/internal/api
         name: api
+    PackageExportRequest:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/PackageExportRequest.json
+          format: uri
+          readOnly: true
+          type: string
+        bates_allocation_id:
+          format: uuid
+          type: string
+        profile_id:
+          minLength: 1
+          type: string
+        snapshot_id:
+          format: uuid
+          type: string
+        source_package_id:
+          format: uuid
+          type: string
+      required:
+        - snapshot_id
+        - profile_id
+      type: object
+      x-go-type: api.PackageExportRequest
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
+    PackageExportTicket:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/PackageExportTicket.json
+          format: uri
+          readOnly: true
+          type: string
+        archive_sha256:
+          type: string
+        bates_allocation_id:
+          type: string
+        crosswalk_sha256:
+          type: string
+        manifest_sha256:
+          type: string
+        name:
+          type: string
+        pages:
+          format: int64
+          type: integer
+        profile_id:
+          type: string
+        records:
+          format: int64
+          type: integer
+        size:
+          format: int64
+          type: integer
+        snapshot_id:
+          type: string
+        source_package_id:
+          type: string
+        url:
+          type: string
+      required:
+        - url
+        - name
+        - snapshot_id
+        - profile_id
+        - archive_sha256
+        - manifest_sha256
+        - crosswalk_sha256
+        - size
+        - records
+        - pages
+      type: object
+      x-go-type: api.PackageExportTicket
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     PackageFieldCatalog:
       additionalProperties: false
       properties:
@@ -18230,6 +18313,29 @@ paths:
                 $ref: "#/components/schemas/Error"
           description: Error
       summary: Resolve one exact custodian claim to a person
+  /api/v1/packages/exports:
+    post:
+      operationId: createPackageExport
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PackageExportRequest"
+        required: true
+      responses:
+        "201":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PackageExportTicket"
+          description: Created
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: Build and verify a load-file export package
   /api/v1/packages/field-catalog:
     get:
       operationId: listPackageFieldCatalog

@@ -117,13 +117,19 @@ var exportBatesFileToolDefinition = toolDefinition{
 	schemas:     exportBatesFileSchemas, write: true, destructive: true,
 }
 
+var exportLoadFilePackageToolDefinition = toolDefinition{
+	name: "export_load_file_package", title: "Export load-file package",
+	description: "Write one exact verified load-file package to a local path.",
+	schemas:     exportLoadFilePackageSchemas, write: true, destructive: true,
+}
+
 func toolCatalog(allowProcessing bool) []*sdkmcp.Tool {
 	definitions := readToolDefinitions
 	if allowProcessing {
 		definitions = append(slices.Clone(definitions), processingToolDefinition, preflightLoadFilePackageToolDefinition,
 			packageImportToolDefinition, resolvePackageCustodianToolDefinition, assignPackageCustodianToolDefinition,
 			ensureBatesNamespaceToolDefinition, reserveBatesRangeToolDefinition, publishBatesExportToolDefinition,
-			exportBatesFileToolDefinition)
+			exportBatesFileToolDefinition, exportLoadFilePackageToolDefinition)
 	}
 	tools := make([]*sdkmcp.Tool, 0, len(definitions))
 	for _, definition := range definitions {
@@ -162,6 +168,8 @@ func registerToolCatalog(
 		case ensureBatesNamespaceToolDefinition.name, reserveBatesRangeToolDefinition.name,
 			publishBatesExportToolDefinition.name, exportBatesFileToolDefinition.name:
 			handler = batesWriteToolHandler(lease, tool.Name, output, logger)
+		case exportLoadFilePackageToolDefinition.name:
+			handler = packageExportToolHandler(lease, output, logger)
 		default:
 			handler = readToolHandler(lease, plans, tool.Name, output, logger)
 		}

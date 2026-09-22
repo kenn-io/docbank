@@ -6432,6 +6432,53 @@ func (c *Client) ResolvePackageCustodian(ctx context.Context, options *ResolvePa
 	return responseParser(ctx, resp)
 }
 
+// CreatePackageExport Build and verify a load-file export package
+func (c *Client) CreatePackageExport(ctx context.Context, options *CreatePackageExportRequestOptions, reqEditors ...runtime.RequestEditorFn) (*CreatePackageExportResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/packages/exports",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*CreatePackageExportResponse, error) {
+		switch resp.StatusCode {
+
+		case 201:
+
+			target := new(CreatePackageExportResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "CreatePackageExportResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[CreatePackageExportErrorResponse](resp, "CreatePackageExportErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/packages/exports")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 201)
+	}
+	return responseParser(ctx, resp)
+}
+
 // ListPackageFieldCatalog List canonical package fields and sender aliases
 func (c *Client) ListPackageFieldCatalog(ctx context.Context, reqEditors ...runtime.RequestEditorFn) (*ListPackageFieldCatalogResponse, error) {
 	var err error
@@ -14888,6 +14935,34 @@ func (o *ResolvePackageCustodianRequestOptions) GetHeader() (map[string]string, 
 	return nil, nil
 }
 
+// CreatePackageExportRequestOptions is the options needed to make a request to CreatePackageExport.
+type CreatePackageExportRequestOptions struct {
+	Body *CreatePackageExportBody
+}
+
+// GetPathParams returns the path params as a map.
+func (o *CreatePackageExportRequestOptions) GetPathParams() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetQuery returns the query params as a map.
+func (o *CreatePackageExportRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *CreatePackageExportRequestOptions) GetBody() any {
+	if o.Body == nil {
+		return nil
+	}
+	return o.Body
+}
+
+// GetHeader returns the headers as a map.
+func (o *CreatePackageExportRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
 // CreatePackageImportRequestOptions is the options needed to make a request to CreatePackageImport.
 type CreatePackageImportRequestOptions struct {
 	Body *CreatePackageImportBody
@@ -18201,6 +18276,8 @@ type PreflightPackageContainerBody = PackagePreflightRequest
 
 type ResolvePackageCustodianBody = CustodianResolveRequest
 
+type CreatePackageExportBody = PackageExportRequest
+
 type CreatePackageImportBody = PackageImportRequest
 
 type CreatePackagePreflightBody = PackagePreflightRequest
@@ -19123,6 +19200,10 @@ type ResolvePackageCustodianErrorResponseApplicationProblemPlusJSON409 api.Error
 type ResolvePackageCustodianErrorResponseApplicationProblemPlusJSON422 api.Error
 
 type ResolvePackageCustodianErrorResponseApplicationProblemPlusJSON500 api.Error
+
+type CreatePackageExportResponse = api.PackageExportTicket
+
+type CreatePackageExportErrorResponse = Error
 
 type ListPackageFieldCatalogResponse = api.PackageFieldCatalog
 
@@ -20138,6 +20219,10 @@ type PackageDetail = api.PackageDetail
 type PackageDiagnostic = api.PackageDiagnostic
 
 type PackageDiagnosticPage = api.PackageDiagnosticPage
+
+type PackageExportRequest = api.PackageExportRequest
+
+type PackageExportTicket = api.PackageExportTicket
 
 type PackageFieldCatalog = api.PackageFieldCatalog
 
