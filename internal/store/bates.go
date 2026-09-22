@@ -207,6 +207,26 @@ func (s *Store) BatesAllocation(ctx context.Context, id string) (BatesAllocation
 	return loadBatesAllocation(ctx, s.db, id)
 }
 
+// BatesAllocationForOperation resolves the durable idempotency identity that
+// created an allocation. Callers can recover the exact reservation after a
+// lost response without allocating another range.
+func (s *Store) BatesAllocationForOperation(ctx context.Context, operationID string) (BatesAllocation, error) {
+	if validateUUIDv4(operationID) != nil {
+		return BatesAllocation{}, ErrNotFound
+	}
+	var allocationID string
+	err := s.db.QueryRowContext(ctx,
+		`SELECT allocation_id FROM bates_allocations WHERE operation_id=?`, operationID,
+	).Scan(&allocationID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return BatesAllocation{}, ErrNotFound
+	}
+	if err != nil {
+		return BatesAllocation{}, err
+	}
+	return loadBatesAllocation(ctx, s.db, allocationID)
+}
+
 func (s *Store) BatesNamespace(ctx context.Context, id, prefix, suffix string, padding int) (BatesNamespace, error) {
 	if id != "" && validateUUIDv4(id) != nil {
 		return BatesNamespace{}, ErrNotFound
