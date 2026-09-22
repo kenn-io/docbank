@@ -175,6 +175,9 @@ func NewServer(d Deps) *Server {
 			if err := g.MutateContext(ctx, func() error { return d.Store.RevokeExportOwner(ctx, owner) }); err != nil {
 				d.Logger.Error("cancel revoked browser exports", "error", err)
 			}
+			if err := g.MutateContext(ctx, func() error { return d.Store.RevokePackageImportOwner(ctx, owner) }); err != nil {
+				d.Logger.Error("cancel revoked browser package imports", "error", err)
+			}
 		}
 	})
 

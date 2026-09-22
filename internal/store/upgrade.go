@@ -81,6 +81,8 @@ var currentSchemaTables = [...]string{
 	"blob_stores", "blob_locations", "blob_pack_entries",
 	"saved_queries", "saved_query_runs", "collection_labels", "provenance_version_bindings", "batch_tag_receipts", "package_preflights",
 	"export_sources", "export_chunks", "export_members", "export_plans", "export_documents", "export_role_roots", "export_jobs",
+	"collection_snapshots", "collection_snapshot_members", "collection_snapshot_representations", "packages", "package_volumes",
+	"package_records", "package_labels", "package_import_jobs", "package_import_receipts", "package_import_heads",
 	"page_documents", "page_frames", "page_recipes", "page_images", "page_render_jobs",
 	"document_event_state", "document_event_generations", "document_event_heads",
 	"document_event_builds", "document_event_dirty", "document_event_attempts",

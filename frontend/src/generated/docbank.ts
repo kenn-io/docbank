@@ -820,6 +820,13 @@ export interface CapabilityStateV1 {
   state: string;
 }
 
+export interface CatalogEntry {
+  aliases: string[];
+  canonical: string;
+  date_kind: string;
+  primary: boolean;
+}
+
 export interface Collection {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
@@ -971,6 +978,23 @@ export interface CollectionQuality {
   spikes: QualitySpike[];
   /** @minimum 0 */
   zero_bytes: number;
+}
+
+export interface CollectionSnapshotRepresentation {
+  blob_sha256: string;
+  content_version_id: string;
+  lexical_generation_id: string;
+  media_type: string;
+  occurrence_id: string;
+  ordinal: number;
+  page_number: number;
+  recipe_sha256: string;
+  rendition_build_id: string;
+  role: string;
+  size: number;
+  status: string;
+  text_authority: string;
+  verified_page_count: number;
 }
 
 export type ContentVersionTransitionKind = typeof ContentVersionTransitionKind[keyof typeof ContentVersionTransitionKind];
@@ -1131,6 +1155,37 @@ export interface CreateTagRequest {
   readonly $schema?: string;
   /** @minLength 1 */
   name: string;
+}
+
+export interface CustodianAssignment {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  assignment_id: string;
+  basis: string;
+  package_id?: string;
+  package_record_id?: string;
+  person_id?: string;
+  rank: string;
+  raw_label: string;
+  recorded_at: string;
+  revision: number;
+  scope_kind: string;
+  source_ref: string;
+}
+
+export interface CustodianPage {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  items: CustodianAssignment[];
+  next_cursor?: string;
+  total: number;
+}
+
+export interface CustodianResolveRequest {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  if_match_revision: number;
+  person_id: string;
 }
 
 export type DerivativePurgeEventType = typeof DerivativePurgeEventType[keyof typeof DerivativePurgeEventType];
@@ -3001,6 +3056,82 @@ export interface NodePage {
   total: number;
 }
 
+export interface PackageBrowseVolume {
+  declared_root: string;
+  mapped_root: string;
+  /** @minimum 1 */
+  ordinal: number;
+  resolved_root_sha256: string;
+  volume_name: string;
+}
+
+export interface PackageContainer {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  container_id: string;
+  created_at: string;
+  format: string;
+  sha256: string;
+  size: number;
+  state: string;
+}
+
+export interface PackageContainerInput {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  container_id: string;
+  sha256: string;
+  size: number;
+}
+
+export interface PackageCustodianRequest {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  if_match_revision: number;
+  person_id?: string;
+  raw_label: string;
+  /** @nullable */
+  row_id?: string | null;
+}
+
+export type PackageDetailDirection = typeof PackageDetailDirection[keyof typeof PackageDetailDirection];
+
+
+export const PackageDetailDirection = {
+  received: 'received',
+  produced: 'produced',
+} as const;
+
+export interface PackageDetail {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  completed_at?: string;
+  created_at: string;
+  direction: PackageDetailDirection;
+  export_plan_id?: string;
+  ingest_id?: string;
+  manifest_blob_sha256: string;
+  manifest_sha256: string;
+  mapping_json: string;
+  mapping_sha256: string;
+  /** @minimum 0 */
+  member_count: number;
+  package_id: string;
+  package_name: string;
+  /** @minimum 0 */
+  page_count: number;
+  party_label: string;
+  predecessor_package_id?: string;
+  produced_on?: string;
+  profile_json: string;
+  profile_sha256: string;
+  relation?: string;
+  snapshot_id?: string;
+  state: string;
+  /** @maxItems 64 */
+  volumes: PackageBrowseVolume[];
+}
+
 export interface PackageDiagnostic {
   code: string;
   column?: string;
@@ -3017,6 +3148,160 @@ export interface PackageDiagnosticPage {
   diagnostics: PackageDiagnostic[];
   next_cursor?: string;
   total: number;
+}
+
+export interface PackageFieldCatalog {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  /** @maxItems 64 */
+  fields: CatalogEntry[];
+}
+
+export interface PackageImportJob {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  committed: number;
+  created_at: string;
+  gap_count: number;
+  gaps?: string[];
+  job_id: string;
+  operation_id: string;
+  package_id: string;
+  preflight_id: string;
+  state: string;
+  total: number;
+  updated_at: string;
+}
+
+export interface PackageImportRequest {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  accept_partial?: boolean;
+  index_supplied_text?: boolean;
+  into: string;
+  name: string;
+  operation_id: string;
+  party: string;
+  preflight_id: string;
+}
+
+export interface PackageLabelRow {
+  artifact_id: string;
+  content_version_id: string;
+  endpoint: string;
+  label: string;
+  label_set: string;
+  label_sort_key: string;
+  occurrence_id: string;
+  package_id: string;
+  page_number: number;
+  page_state: string;
+  provenance: string;
+}
+
+export interface PackageLabelCandidatePage {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  /** @maxItems 250 */
+  items: PackageLabelRow[];
+  /**
+     * @minimum 1
+     * @maximum 250
+     */
+  limit: number;
+  next_cursor?: string;
+}
+
+export interface PackageMember {
+  blob_sha256: string;
+  content_version_id: string;
+  display_name: string;
+  document_kind: string;
+  family_id: string;
+  family_order: number;
+  frozen_fields_json: string;
+  node_id: number;
+  occurrence_id: string;
+  ordinal: number;
+  parent_occurrence_id: string;
+  representations: CollectionSnapshotRepresentation[];
+  /** @pattern ^[0-9a-f]{64}$ */
+  row_id?: string;
+  selected_pdf_sha256: string;
+  selected_source_pages: number[];
+  size: number;
+  source_page_count: number;
+}
+
+export interface PackageMemberPage {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  /** @minimum 0 */
+  after_ordinal: number;
+  /** @maxItems 250 */
+  items: PackageMember[];
+  /**
+     * @minimum 1
+     * @maximum 250
+     */
+  limit: number;
+  /** @minimum 0 */
+  next_after_ordinal?: number;
+}
+
+export type PackagePageDirection = typeof PackagePageDirection[keyof typeof PackagePageDirection];
+
+
+export const PackagePageDirection = {
+  received: 'received',
+  produced: 'produced',
+} as const;
+
+export type PackageSummaryDirection = typeof PackageSummaryDirection[keyof typeof PackageSummaryDirection];
+
+
+export const PackageSummaryDirection = {
+  received: 'received',
+  produced: 'produced',
+} as const;
+
+export interface PackageSummary {
+  completed_at?: string;
+  created_at: string;
+  direction: PackageSummaryDirection;
+  export_plan_id?: string;
+  ingest_id?: string;
+  manifest_blob_sha256: string;
+  manifest_sha256: string;
+  mapping_sha256: string;
+  /** @minimum 0 */
+  member_count: number;
+  package_id: string;
+  package_name: string;
+  /** @minimum 0 */
+  page_count: number;
+  party_label: string;
+  predecessor_package_id?: string;
+  produced_on?: string;
+  profile_sha256: string;
+  relation?: string;
+  snapshot_id?: string;
+  state: string;
+}
+
+export interface PackagePage {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  after?: string;
+  direction?: PackagePageDirection;
+  /** @maxItems 250 */
+  items: PackageSummary[];
+  /**
+     * @minimum 1
+     * @maximum 250
+     */
+  limit: number;
+  next_after?: string;
 }
 
 export interface PackageVolume {
@@ -3049,6 +3334,7 @@ export type PackagePreflightRequestSourceKind = typeof PackagePreflightRequestSo
 
 export const PackagePreflightRequestSourceKind = {
   root: 'root',
+  container: 'container',
 } as const;
 
 export interface PackagePreflightRequest {
@@ -3063,6 +3349,46 @@ export interface PackagePreflightRequest {
   source_kind: PackagePreflightRequestSourceKind;
   /** @minLength 1 */
   source_ref: string;
+}
+
+export interface PackageRecord {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  load_file: string;
+  /** @pattern ^[0-9a-f]{32}$ */
+  occurrence_id: string;
+  package_id: string;
+  raw_json?: string;
+  /** @pattern ^[0-9a-f]{64}$ */
+  raw_sha256: string;
+  /** @pattern ^[0-9a-f]{64}$ */
+  row_id: string;
+  /** @minimum 1 */
+  row_ordinal: number;
+  sensitive: boolean;
+}
+
+export interface PackageTimelineInput {
+  declared_timezone: string;
+  occurrence_id: string;
+  package_id: string;
+  produced_on: string;
+  raw_json: string;
+  row_id: string;
+}
+
+export interface PackageTimelineInputPage {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  after_row_id?: string;
+  /** @maxItems 250 */
+  items: PackageTimelineInput[];
+  /**
+     * @minimum 1
+     * @maximum 250
+     */
+  limit: number;
+  next_after_row_id?: string;
 }
 
 export interface PageSource {
@@ -3281,6 +3607,20 @@ export interface PeopleRebuildRequest {
   readonly $schema?: string;
   /** @pattern ^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$ */
   operation_id: string;
+}
+
+export interface PersonSummary {
+  display_name: string;
+  person_id: string;
+  revision: number;
+  state: string;
+}
+
+export interface PersonPage {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  items: PersonSummary[];
+  next_cursor?: string;
 }
 
 export interface RolePolicy {
@@ -5323,6 +5663,104 @@ export type PruneNodeContentVersionsHeaders = {
 'If-Match': string;
 };
 
+export type ListPackagesParams = {
+direction?: ListPackagesDirection;
+/**
+ * @maxLength 36
+ */
+after?: string;
+/**
+ * @minimum 1
+ * @maximum 250
+ */
+limit?: number;
+};
+
+export type ListPackagesDirection = typeof ListPackagesDirection[keyof typeof ListPackagesDirection];
+
+
+export const ListPackagesDirection = {
+  received: 'received',
+  produced: 'produced',
+} as const;
+
+export type ListPackageCustodiansParams = {
+row_id?: string;
+unresolved_only?: boolean;
+/**
+ * @minimum 1
+ * @maximum 250
+ */
+limit?: number;
+cursor?: string;
+};
+
+export type ListPackageMembersParams = {
+/**
+ * @minimum 0
+ */
+after_ordinal?: number;
+/**
+ * @minimum 1
+ * @maximum 250
+ */
+limit?: number;
+};
+
+export type ListPackageTimelineInputsParams = {
+/**
+ * @maxLength 64
+ */
+after_row_id?: string;
+/**
+ * @minimum 1
+ * @maximum 250
+ */
+limit?: number;
+};
+
+export type UploadPackageChunkHeaders = {
+/**
+ * @pattern ^[0-9a-f]{64}$
+ */
+'X-Docbank-Blob-Hash': string;
+'X-Docbank-Blob-Size': string;
+};
+
+export type ListPackageLabelCandidatesParams = {
+/**
+ * @minLength 1
+ * @maxLength 256
+ */
+label: string;
+/**
+ * @maxLength 36
+ */
+package_id?: string;
+/**
+ * @maxLength 256
+ */
+label_set?: string;
+provenance?: ListPackageLabelCandidatesProvenance;
+/**
+ * @maxLength 2048
+ */
+cursor?: string;
+/**
+ * @minimum 1
+ * @maximum 250
+ */
+limit?: number;
+};
+
+export type ListPackageLabelCandidatesProvenance = typeof ListPackageLabelCandidatesProvenance[keyof typeof ListPackageLabelCandidatesProvenance];
+
+
+export const ListPackageLabelCandidatesProvenance = {
+  received: 'received',
+  assigned: 'assigned',
+} as const;
+
 export type ReadPackagePreflightDiagnosticsParams = {
 /**
  * Maximum diagnostics to return
@@ -5376,6 +5814,16 @@ image_sha256?: string;
 
 export type ResolvePathParams = {
 path: string;
+};
+
+export type ListPeopleParams = {
+query?: string;
+/**
+ * @minimum 1
+ * @maximum 250
+ */
+limit?: number;
+cursor?: string;
 };
 
 export type ReadRenditionTextParams = {
@@ -9582,6 +10030,596 @@ return sessionJSON<VersionPruneReport>(getPruneNodeContentVersionsUrl(id),
 
 
 
+export const getListPackagesUrl = (params?: ListPackagesParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/v1/packages?${stringifiedParams}` : `/api/v1/packages`
+}
+
+/**
+ * @summary List received and produced packages
+ */
+export const listPackages = async (params?: ListPackagesParams, options?: Parameters<typeof sessionJSON>[1]): Promise<PackagePage> => {
+
+  return sessionJSON<PackagePage>(getListPackagesUrl(params),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+export const getGetPackageUrl = (packageId: string,) => {
+
+
+
+
+  return `/api/v1/packages/by-id/${encodeURIComponent(String(packageId))}`
+}
+
+/**
+ * @summary Read one package identity and state
+ */
+export const getPackage = async (packageId: string, options?: Parameters<typeof sessionJSON>[1]): Promise<PackageDetail> => {
+
+  return sessionJSON<PackageDetail>(getGetPackageUrl(packageId),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+export const getAssignPackageCustodianUrl = (packageId: string,) => {
+
+
+
+
+  return `/api/v1/packages/by-id/${encodeURIComponent(String(packageId))}/custodian`
+}
+
+/**
+ * @summary Create or replace an operator-owned package custodian
+ */
+export const assignPackageCustodian = async (packageId: string,
+    packageCustodianRequest: NonReadonly<PackageCustodianRequest>, options?: Parameters<typeof sessionJSON>[1]): Promise<CustodianAssignment> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return sessionJSON<CustodianAssignment>(getAssignPackageCustodianUrl(packageId),
+  {
+    ...options,
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(packageCustodianRequest)
+  }
+);}
+
+
+
+export const getListPackageCustodiansUrl = (packageId: string,
+    params?: ListPackageCustodiansParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/v1/packages/by-id/${encodeURIComponent(String(packageId))}/custodians?${stringifiedParams}` : `/api/v1/packages/by-id/${encodeURIComponent(String(packageId))}/custodians`
+}
+
+/**
+ * @summary List active package custodian claims
+ */
+export const listPackageCustodians = async (packageId: string,
+    params?: ListPackageCustodiansParams, options?: Parameters<typeof sessionJSON>[1]): Promise<CustodianPage> => {
+
+  return sessionJSON<CustodianPage>(getListPackageCustodiansUrl(packageId,params),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+export const getListPackageMembersUrl = (packageId: string,
+    params?: ListPackageMembersParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/v1/packages/by-id/${encodeURIComponent(String(packageId))}/members?${stringifiedParams}` : `/api/v1/packages/by-id/${encodeURIComponent(String(packageId))}/members`
+}
+
+/**
+ * @summary List immutable package members
+ */
+export const listPackageMembers = async (packageId: string,
+    params?: ListPackageMembersParams, options?: Parameters<typeof sessionJSON>[1]): Promise<PackageMemberPage> => {
+
+  return sessionJSON<PackageMemberPage>(getListPackageMembersUrl(packageId,params),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+export const getGetPackageRecordUrl = (packageId: string,
+    rowId: string,) => {
+
+
+
+
+  return `/api/v1/packages/by-id/${encodeURIComponent(String(packageId))}/records/${encodeURIComponent(String(rowId))}`
+}
+
+/**
+ * @summary Read one immutable package row
+ */
+export const getPackageRecord = async (packageId: string,
+    rowId: string, options?: Parameters<typeof sessionJSON>[1]): Promise<PackageRecord> => {
+
+  return sessionJSON<PackageRecord>(getGetPackageRecordUrl(packageId,rowId),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+export const getListPackageTimelineInputsUrl = (packageId: string,
+    params?: ListPackageTimelineInputsParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/v1/packages/by-id/${encodeURIComponent(String(packageId))}/timeline-inputs?${stringifiedParams}` : `/api/v1/packages/by-id/${encodeURIComponent(String(packageId))}/timeline-inputs`
+}
+
+/**
+ * @summary List retained sender rows for explicit timeline parsing
+ */
+export const listPackageTimelineInputs = async (packageId: string,
+    params?: ListPackageTimelineInputsParams, options?: Parameters<typeof sessionJSON>[1]): Promise<PackageTimelineInputPage> => {
+
+  return sessionJSON<PackageTimelineInputPage>(getListPackageTimelineInputsUrl(packageId,params),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+export const getBeginPackageContainerUrl = () => {
+
+
+
+
+  return `/api/v1/packages/containers`
+}
+
+/**
+ * @summary Declare an immutable ZIP package
+ */
+export const beginPackageContainer = async (packageContainerInput: NonReadonly<PackageContainerInput>, options?: Parameters<typeof sessionJSON>[1]): Promise<PackageContainer> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return sessionJSON<PackageContainer>(getBeginPackageContainerUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(packageContainerInput)
+  }
+);}
+
+
+
+export const getAbortPackageContainerUrl = (id: string,) => {
+
+
+
+
+  return `/api/v1/packages/containers/${encodeURIComponent(String(id))}`
+}
+
+/**
+ * @summary Abort an incomplete ZIP upload
+ */
+export const abortPackageContainer = async (id: string, options?: Parameters<typeof sessionJSON>[1]): Promise<void> => {
+
+  return sessionJSON<void>(getAbortPackageContainerUrl(id),
+  {
+    ...options,
+    method: 'DELETE'
+
+
+  }
+);}
+
+
+
+export const getGetPackageContainerUrl = (id: string,) => {
+
+
+
+
+  return `/api/v1/packages/containers/${encodeURIComponent(String(id))}`
+}
+
+/**
+ * @summary Read an owned ZIP package
+ */
+export const getPackageContainer = async (id: string, options?: Parameters<typeof sessionJSON>[1]): Promise<PackageContainer> => {
+
+  return sessionJSON<PackageContainer>(getGetPackageContainerUrl(id),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+export const getUploadPackageChunkUrl = (id: string,
+    index: number,) => {
+
+
+
+
+  return `/api/v1/packages/containers/${encodeURIComponent(String(id))}/chunks/${encodeURIComponent(String(index))}`
+}
+
+/**
+ * @summary Verify and retain one declared ZIP chunk
+ */
+export const uploadPackageChunk = async (id: string,
+    index: number,
+    uploadPackageChunkBody: Blob,
+    headers: UploadPackageChunkHeaders, options?: Parameters<typeof sessionJSON>[1]): Promise<MailboxChunk> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return sessionJSON<MailboxChunk>(getUploadPackageChunkUrl(id,index),
+  {
+    ...options,
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/octet-stream',...headers, ...getHeaders(options?.headers) },
+    body: uploadPackageChunkBody
+  }
+);}
+
+
+
+export const getPreflightPackageContainerUrl = (id: string,) => {
+
+
+
+
+  return `/api/v1/packages/containers/${encodeURIComponent(String(id))}/preflight`
+}
+
+/**
+ * @summary Preview a sealed ZIP package
+ */
+export const preflightPackageContainer = async (id: string,
+    packagePreflightRequest: NonReadonly<PackagePreflightRequest>, options?: Parameters<typeof sessionJSON>[1]): Promise<PackagePreflight> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return sessionJSON<PackagePreflight>(getPreflightPackageContainerUrl(id),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(packagePreflightRequest)
+  }
+);}
+
+
+
+export const getSealPackageContainerUrl = (id: string,) => {
+
+
+
+
+  return `/api/v1/packages/containers/${encodeURIComponent(String(id))}/seal`
+}
+
+/**
+ * @summary Verify the full ZIP digest and seal
+ */
+export const sealPackageContainer = async (id: string, options?: Parameters<typeof sessionJSON>[1]): Promise<PackageContainer> => {
+
+  return sessionJSON<PackageContainer>(getSealPackageContainerUrl(id),
+  {
+    ...options,
+    method: 'POST'
+
+
+  }
+);}
+
+
+
+export const getResolvePackageCustodianUrl = (assignmentId: string,) => {
+
+
+
+
+  return `/api/v1/packages/custodians/${encodeURIComponent(String(assignmentId))}/resolve`
+}
+
+/**
+ * @summary Resolve one exact custodian claim to a person
+ */
+export const resolvePackageCustodian = async (assignmentId: string,
+    custodianResolveRequest: NonReadonly<CustodianResolveRequest>, options?: Parameters<typeof sessionJSON>[1]): Promise<CustodianAssignment> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return sessionJSON<CustodianAssignment>(getResolvePackageCustodianUrl(assignmentId),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(custodianResolveRequest)
+  }
+);}
+
+
+
+export const getListPackageFieldCatalogUrl = () => {
+
+
+
+
+  return `/api/v1/packages/field-catalog`
+}
+
+/**
+ * @summary List canonical package fields and sender aliases
+ */
+export const listPackageFieldCatalog = async ( options?: Parameters<typeof sessionJSON>[1]): Promise<PackageFieldCatalog> => {
+
+  return sessionJSON<PackageFieldCatalog>(getListPackageFieldCatalogUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+export const getCreatePackageImportUrl = () => {
+
+
+
+
+  return `/api/v1/packages/imports`
+}
+
+/**
+ * @summary Import a previewed load-file package
+ */
+export const createPackageImport = async (packageImportRequest: NonReadonly<PackageImportRequest>, options?: Parameters<typeof sessionJSON>[1]): Promise<PackageImportJob> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return sessionJSON<PackageImportJob>(getCreatePackageImportUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(packageImportRequest)
+  }
+);}
+
+
+
+export const getReadPackageImportUrl = (operationId: string,) => {
+
+
+
+
+  return `/api/v1/packages/imports/${encodeURIComponent(String(operationId))}`
+}
+
+/**
+ * @summary Read package import progress
+ */
+export const readPackageImport = async (operationId: string, options?: Parameters<typeof sessionJSON>[1]): Promise<PackageImportJob> => {
+
+  return sessionJSON<PackageImportJob>(getReadPackageImportUrl(operationId),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+export const getCancelPackageImportUrl = (operationId: string,) => {
+
+
+
+
+  return `/api/v1/packages/imports/${encodeURIComponent(String(operationId))}/cancel`
+}
+
+/**
+ * @summary Cancel a package import
+ */
+export const cancelPackageImport = async (operationId: string, options?: Parameters<typeof sessionJSON>[1]): Promise<PackageImportJob> => {
+
+  return sessionJSON<PackageImportJob>(getCancelPackageImportUrl(operationId),
+  {
+    ...options,
+    method: 'POST'
+
+
+  }
+);}
+
+
+
+export const getListPackageLabelCandidatesUrl = (params: ListPackageLabelCandidatesParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/v1/packages/label-candidates?${stringifiedParams}` : `/api/v1/packages/label-candidates`
+}
+
+/**
+ * @summary Find every package-scoped candidate for an exact label
+ */
+export const listPackageLabelCandidates = async (params: ListPackageLabelCandidatesParams, options?: Parameters<typeof sessionJSON>[1]): Promise<PackageLabelCandidatePage> => {
+
+  return sessionJSON<PackageLabelCandidatePage>(getListPackageLabelCandidatesUrl(params),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
 export const getCreatePackagePreflightUrl = () => {
 
 
@@ -10098,6 +11136,37 @@ return sessionJSON<Node>(getTrashPathUrl(),
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
     body: JSON.stringify(trashPathRequest)
+  }
+);}
+
+
+
+export const getListPeopleUrl = (params?: ListPeopleParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/v1/people?${stringifiedParams}` : `/api/v1/people`
+}
+
+/**
+ * @summary Find active canonical people
+ */
+export const listPeople = async (params?: ListPeopleParams, options?: Parameters<typeof sessionJSON>[1]): Promise<PersonPage> => {
+
+  return sessionJSON<PersonPage>(getListPeopleUrl(params),
+  {
+    ...options,
+    method: 'GET'
+
+
   }
 );}
 

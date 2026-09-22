@@ -41,13 +41,14 @@ type Field struct {
 }
 
 type FileRef struct {
-	Role     string `json:"role"`
-	Volume   string `json:"volume"`
-	RelPath  string `json:"rel_path"`
-	Declared string `json:"declared"`
-	SHA256   string `json:"sha256"`
-	Status   string `json:"status"`
-	Size     int64  `json:"size"`
+	Role              string `json:"role"`
+	Volume            string `json:"volume"`
+	RelPath           string `json:"rel_path"`
+	Declared          string `json:"declared"`
+	SHA256            string `json:"sha256"`
+	Status            string `json:"status"`
+	Size              int64  `json:"size"`
+	VerifiedPageCount int    `json:"verified_page_count,omitzero"`
 }
 
 type ImageRef struct {

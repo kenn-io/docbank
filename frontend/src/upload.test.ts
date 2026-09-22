@@ -39,6 +39,8 @@ class DaemonSocket extends EventTarget {
   onbegin: (() => void) | undefined;
   onend: (() => void) | undefined;
   oncancel: (() => void) | undefined;
+  packageContainerID = "";
+  requestID = "";
 
   constructor() {
     super();
@@ -51,16 +53,26 @@ class DaemonSocket extends EventTarget {
       type: string;
       nonce?: string;
       request_id?: string;
+      container_id?: string;
     };
     if (message.type === "authenticate" && this.authenticate) {
       this.emit({ type: "authenticated", proof: daemonProof(message.nonce ?? "") });
     } else if (message.type === "begin") {
+      this.packageContainerID = message.container_id ?? "";
+      this.requestID = message.request_id ?? "";
       this.onbegin?.();
       if (this.ready) {
         this.emit({ type: "ready", request_id: message.request_id });
       }
     } else if (message.type === "end") {
       this.onend?.();
+      if (this.packageContainerID) {
+        this.emit({
+          type: "package_container_receipt",
+          request_id: this.requestID,
+          container_id: this.packageContainerID,
+        });
+      }
     } else if (message.type === "cancel") {
       this.oncancel?.();
       if (this.cancelAcknowledgment) {
@@ -95,6 +107,25 @@ afterEach(() => {
 });
 
 describe("verified browser upload", () => {
+  it("streams package bytes through the daemon-owned socket", async () => {
+    const socket = new DaemonSocket();
+    const channel = new VerifiedUploadChannel(
+      { token: testToken, uploadSecret: testUploadSecret },
+      () => socket as unknown as WebSocket,
+    );
+    await channel.connect();
+
+    await channel.uploadPackageContainer(
+      "package-1",
+      new File(["zip"], "production.zip"),
+      "4a70fe9aa6436e9b764a7da70d4040be1580bf6796f6e02196f3a1ca1e732c59",
+      new AbortController().signal,
+      () => {},
+    );
+
+    expect(socket.packageContainerID).toBe("package-1");
+  });
+
   it("hashes file bytes incrementally and reports terminal progress", async () => {
     const file = new File(["abc"], "report.txt", { type: "text/plain" });
     const progress: number[] = [];

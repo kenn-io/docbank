@@ -57,6 +57,212 @@ CREATE TABLE IF NOT EXISTS export_jobs (
 );
 CREATE INDEX IF NOT EXISTS export_jobs_pending ON export_jobs(state,id);
 
+-- Package snapshots retain exact source versions independently of the
+-- short-lived query snapshots and export jobs.
+CREATE TABLE IF NOT EXISTS collection_snapshots (
+    snapshot_id TEXT PRIMARY KEY,
+    vault_uid TEXT NOT NULL REFERENCES vault_metadata(vault_uid),
+    predecessor_id TEXT REFERENCES collection_snapshots(snapshot_id),
+    source_collection_ids_json BLOB NOT NULL DEFAULT '[]',
+    member_count INTEGER NOT NULL CHECK (member_count >= 0),
+    page_count INTEGER NOT NULL CHECK (page_count >= 0),
+    member_hash TEXT NOT NULL,
+    manifest_sha256 TEXT NOT NULL,
+    canonical_json BLOB NOT NULL,
+    checksum TEXT NOT NULL,
+    sealed_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS collection_snapshot_members (
+    snapshot_id TEXT NOT NULL REFERENCES collection_snapshots(snapshot_id) ON DELETE CASCADE,
+    ordinal INTEGER NOT NULL CHECK (ordinal >= 1),
+    occurrence_id TEXT NOT NULL,
+    node_id INTEGER NOT NULL,
+    content_version_id TEXT NOT NULL REFERENCES content_versions(version_id),
+    blob_sha256 TEXT NOT NULL,
+    size INTEGER NOT NULL CHECK (size >= 0),
+    family_id TEXT NOT NULL,
+    parent_occurrence_id TEXT,
+    family_order INTEGER NOT NULL,
+    display_name TEXT NOT NULL,
+    frozen_fields_json BLOB NOT NULL,
+    document_kind TEXT NOT NULL,
+    selected_source_pages_json BLOB,
+    selected_pdf_sha256 TEXT,
+    source_page_count INTEGER NOT NULL DEFAULT 0,
+    canonical_json BLOB NOT NULL,
+    checksum TEXT NOT NULL,
+    PRIMARY KEY (snapshot_id, ordinal),
+    UNIQUE (snapshot_id, occurrence_id)
+);
+CREATE INDEX IF NOT EXISTS collection_snapshot_members_version
+    ON collection_snapshot_members(content_version_id);
+CREATE TABLE IF NOT EXISTS collection_snapshot_representations (
+    snapshot_id TEXT NOT NULL,
+    occurrence_id TEXT NOT NULL,
+    role TEXT NOT NULL,
+    ordinal INTEGER NOT NULL CHECK (ordinal >= 0),
+    status TEXT NOT NULL,
+    text_authority TEXT NOT NULL DEFAULT 'none',
+    content_version_id TEXT,
+    blob_sha256 TEXT,
+    size INTEGER,
+    media_type TEXT NOT NULL,
+    page_number INTEGER,
+    verified_page_count INTEGER,
+    rendition_build_id TEXT,
+    lexical_generation_id TEXT,
+    recipe_sha256 TEXT,
+    canonical_json BLOB NOT NULL,
+    checksum TEXT NOT NULL,
+    PRIMARY KEY (snapshot_id, occurrence_id, role, ordinal),
+    FOREIGN KEY (snapshot_id, occurrence_id)
+        REFERENCES collection_snapshot_members(snapshot_id, occurrence_id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS collection_snapshot_representations_version
+    ON collection_snapshot_representations(content_version_id);
+CREATE TABLE IF NOT EXISTS packages (
+    package_id TEXT PRIMARY KEY,
+    snapshot_id TEXT REFERENCES collection_snapshots(snapshot_id),
+    direction TEXT NOT NULL,
+    package_name TEXT NOT NULL,
+    party_label TEXT NOT NULL,
+    profile_sha256 TEXT NOT NULL,
+    profile_json BLOB NOT NULL,
+    mapping_sha256 TEXT NOT NULL,
+    mapping_json BLOB NOT NULL,
+    manifest_sha256 TEXT NOT NULL,
+    manifest_blob_sha256 TEXT NOT NULL,
+    predecessor_package_id TEXT REFERENCES packages(package_id),
+    relation TEXT NOT NULL,
+    ingest_id TEXT REFERENCES ingests(id),
+    export_plan_id TEXT,
+    state TEXT NOT NULL,
+    produced_on TEXT,
+    created_at TEXT NOT NULL,
+    completed_at TEXT
+);
+CREATE INDEX IF NOT EXISTS packages_history
+    ON packages(predecessor_package_id, created_at, package_id);
+CREATE TABLE IF NOT EXISTS package_volumes (
+    package_id TEXT NOT NULL REFERENCES packages(package_id) ON DELETE CASCADE,
+    ordinal INTEGER NOT NULL,
+    volume_name TEXT NOT NULL,
+    declared_root TEXT NOT NULL,
+    mapped_root TEXT NOT NULL,
+    resolved_root_sha256 TEXT NOT NULL,
+    PRIMARY KEY (package_id, volume_name)
+);
+CREATE TRIGGER IF NOT EXISTS collection_snapshots_immutable_update
+BEFORE UPDATE ON collection_snapshots BEGIN
+    SELECT RAISE(ABORT, 'collection snapshots are immutable');
+END;
+CREATE TRIGGER IF NOT EXISTS collection_snapshot_members_immutable_update
+BEFORE UPDATE ON collection_snapshot_members BEGIN
+    SELECT RAISE(ABORT, 'collection snapshot members are immutable');
+END;
+CREATE TRIGGER IF NOT EXISTS collection_snapshot_representations_immutable_update
+BEFORE UPDATE ON collection_snapshot_representations BEGIN
+    SELECT RAISE(ABORT, 'collection snapshot representations are immutable');
+END;
+CREATE TRIGGER IF NOT EXISTS package_volumes_immutable_update
+BEFORE UPDATE ON package_volumes BEGIN
+    SELECT RAISE(ABORT, 'package volumes are immutable');
+END;
+CREATE TRIGGER IF NOT EXISTS packages_transition_guard
+BEFORE UPDATE ON packages
+WHEN NEW.package_id<>OLD.package_id OR NEW.direction<>OLD.direction
+    OR NEW.package_name<>OLD.package_name OR NEW.party_label<>OLD.party_label
+    OR NEW.profile_sha256<>OLD.profile_sha256 OR NEW.profile_json<>OLD.profile_json
+    OR NEW.mapping_sha256<>OLD.mapping_sha256 OR NEW.mapping_json<>OLD.mapping_json
+    OR NEW.manifest_sha256<>OLD.manifest_sha256
+    OR NEW.manifest_blob_sha256<>OLD.manifest_blob_sha256
+    OR NEW.relation<>OLD.relation OR NEW.created_at<>OLD.created_at
+    OR NEW.snapshot_id IS NOT OLD.snapshot_id AND OLD.snapshot_id IS NOT NULL
+    OR NEW.completed_at IS NOT OLD.completed_at AND OLD.completed_at IS NOT NULL
+    OR NEW.export_plan_id IS NOT OLD.export_plan_id AND OLD.export_plan_id IS NOT NULL
+    OR NEW.predecessor_package_id IS NOT OLD.predecessor_package_id
+    OR NEW.ingest_id IS NOT OLD.ingest_id OR NEW.produced_on IS NOT OLD.produced_on
+BEGIN
+    SELECT RAISE(ABORT, 'package identity is immutable');
+END;
+
+-- Received load-file rows and their scoped sender labels are immutable. The
+-- head records which publication won an idempotent record key.
+CREATE TABLE IF NOT EXISTS package_records (
+    package_id TEXT NOT NULL REFERENCES packages(package_id) ON DELETE CASCADE,
+    row_id TEXT NOT NULL,
+    load_file TEXT NOT NULL,
+    row_ordinal INTEGER NOT NULL CHECK (row_ordinal >= 1),
+    occurrence_id TEXT NOT NULL,
+    raw_json BLOB NOT NULL,
+    raw_sha256 TEXT NOT NULL,
+    sensitive INTEGER NOT NULL CHECK (sensitive IN (0,1)),
+    PRIMARY KEY (package_id, row_id),
+    UNIQUE (package_id, occurrence_id)
+);
+CREATE TRIGGER IF NOT EXISTS package_records_immutable_update
+BEFORE UPDATE ON package_records BEGIN
+    SELECT RAISE(ABORT, 'package records are immutable');
+END;
+CREATE TABLE IF NOT EXISTS package_labels (
+    package_id TEXT NOT NULL REFERENCES packages(package_id) ON DELETE CASCADE,
+    provenance TEXT NOT NULL,
+    label_set TEXT NOT NULL,
+    label TEXT NOT NULL,
+    label_sort_key TEXT NOT NULL,
+    occurrence_id TEXT NOT NULL,
+    content_version_id TEXT NOT NULL REFERENCES content_versions(version_id),
+    artifact_id TEXT,
+    page_number INTEGER,
+    page_state TEXT NOT NULL,
+    endpoint TEXT NOT NULL,
+    PRIMARY KEY (package_id, provenance, label_set, label, endpoint, occurrence_id)
+);
+CREATE INDEX IF NOT EXISTS package_labels_lookup ON package_labels(label, provenance, package_id);
+CREATE TRIGGER IF NOT EXISTS package_labels_immutable_update
+BEFORE UPDATE ON package_labels BEGIN
+    SELECT RAISE(ABORT, 'package labels are immutable');
+END;
+CREATE TABLE IF NOT EXISTS package_import_jobs (
+    id TEXT PRIMARY KEY,
+    owner TEXT NOT NULL,
+    operation_id TEXT NOT NULL,
+    request_sha256 TEXT NOT NULL,
+    preflight_id TEXT NOT NULL,
+    package_id TEXT NOT NULL REFERENCES packages(package_id),
+    claim_owner TEXT,
+    lease_expires_at TEXT,
+    state TEXT NOT NULL,
+    epoch INTEGER NOT NULL,
+    token TEXT NOT NULL,
+    job_json BLOB NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    UNIQUE(owner, operation_id),
+    UNIQUE(package_id)
+);
+CREATE INDEX IF NOT EXISTS package_import_jobs_pending ON package_import_jobs(state,id);
+CREATE TABLE IF NOT EXISTS package_import_receipts (
+    receipt_id TEXT PRIMARY KEY,
+    package_id TEXT NOT NULL REFERENCES packages(package_id),
+    record_key TEXT NOT NULL,
+    occurrence_id TEXT NOT NULL,
+    content_version_id TEXT REFERENCES content_versions(version_id),
+    state TEXT NOT NULL,
+    receipt_json BLOB NOT NULL,
+    recorded_at TEXT NOT NULL
+);
+CREATE TRIGGER IF NOT EXISTS package_import_receipts_immutable_update
+BEFORE UPDATE ON package_import_receipts BEGIN
+    SELECT RAISE(ABORT, 'package import receipts are immutable');
+END;
+CREATE TABLE IF NOT EXISTS package_import_heads (
+    package_id TEXT NOT NULL REFERENCES packages(package_id),
+    record_key TEXT NOT NULL,
+    receipt_id TEXT NOT NULL REFERENCES package_import_receipts(receipt_id),
+    PRIMARY KEY (package_id, record_key)
+);
+
 -- Physical page frames are independent of optional renderer recipes.
 CREATE TABLE IF NOT EXISTS page_documents (
     version_id TEXT PRIMARY KEY REFERENCES content_versions(version_id) ON DELETE CASCADE,
@@ -158,8 +364,11 @@ CREATE TABLE IF NOT EXISTS package_preflights (
     owner TEXT NOT NULL,
     source_kind TEXT NOT NULL,
     source_ref TEXT NOT NULL,
+    source_locator TEXT NOT NULL DEFAULT '',
     profile_sha256 TEXT NOT NULL,
+    profile_json TEXT NOT NULL DEFAULT '',
     mapping_sha256 TEXT NOT NULL,
+    mapping_json TEXT NOT NULL DEFAULT '',
     manifest_sha256 TEXT NOT NULL,
     manifest_blob_sha256 TEXT NOT NULL,
     diagnostics_blob_sha256 TEXT,
@@ -1909,6 +2118,8 @@ CREATE TABLE IF NOT EXISTS custodian_assignments (
     assignment_id TEXT PRIMARY KEY NOT NULL,
     scope_kind TEXT NOT NULL,
     ingest_id TEXT REFERENCES ingests(id) ON DELETE CASCADE,
+    package_id TEXT,
+    package_record_id TEXT,
     node_id INTEGER REFERENCES nodes(id) ON DELETE CASCADE,
     content_version_id TEXT REFERENCES content_versions(version_id) ON DELETE CASCADE,
     person_id TEXT REFERENCES persons(person_id) ON DELETE SET NULL,
@@ -1923,6 +2134,8 @@ CREATE TABLE IF NOT EXISTS custodian_assignments (
 );
 CREATE UNIQUE INDEX IF NOT EXISTS custodian_primary_collection
     ON custodian_assignments(ingest_id) WHERE scope_kind='collection' AND rank='primary' AND retired_at IS NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS custodian_primary_package
+    ON custodian_assignments(package_id, package_record_id) WHERE scope_kind='package' AND rank='primary' AND retired_at IS NULL;
 CREATE UNIQUE INDEX IF NOT EXISTS custodian_primary_document
     ON custodian_assignments(content_version_id) WHERE scope_kind='document' AND rank='primary' AND retired_at IS NULL;
 

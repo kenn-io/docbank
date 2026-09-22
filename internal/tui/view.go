@@ -71,7 +71,9 @@ func (m Model) render() string {
 		return "Loading Docbank..."
 	}
 	lines := []string{m.renderTitleBar()}
-	if m.jobsOpen {
+	if m.packagesOpen {
+		lines = append(lines, m.renderPackagesLocation())
+	} else if m.jobsOpen {
 		lines = append(lines, m.renderJobsLocation())
 	} else if m.operationsOpen {
 		lines = append(lines, m.renderOperationsLocation())
@@ -84,7 +86,7 @@ func (m Model) render() string {
 	} else {
 		lines = append(lines, m.renderLocation())
 	}
-	if m.searching || m.processingSearching {
+	if m.searching || m.processingSearching || m.packageLabelSearching {
 		search := m.searchInput.View()
 		if m.searching && m.naturalMode != naturalNames {
 			prefix := naturalModeLabel(m.naturalMode) + " · " + m.naturalRerankStatus() + " · "
@@ -103,7 +105,9 @@ func (m Model) render() string {
 
 	bodyHeight := m.bodyViewportHeight()
 	body := m.renderBody(bodyHeight)
-	if m.jobsOpen {
+	if m.packagesOpen {
+		body = m.renderPackages(bodyHeight)
+	} else if m.jobsOpen {
 		body = m.renderJobsList(bodyHeight)
 	} else if m.operationsOpen {
 		body = m.renderOperations(bodyHeight)
@@ -1342,6 +1346,9 @@ func (m *Model) clampDetailOffset() {
 }
 
 func (m Model) renderFooter() string {
+	if m.packagesOpen {
+		return m.renderPackagesFooter()
+	}
 	if m.jobsOpen {
 		return m.renderJobsFooter()
 	}
@@ -1385,6 +1392,7 @@ func (m Model) renderFooter() string {
 	hints = append(hints,
 		hint{text: "/ search", priority: 90},
 		hint{text: "T recover", priority: 74},
+		hint{text: "K packages", priority: 69},
 		hint{text: "J jobs", priority: 68},
 		hint{text: "O operations", priority: 66},
 		hint{text: "P processing", priority: 67},
@@ -1392,8 +1400,8 @@ func (m Model) renderFooter() string {
 		hint{text: "s sort", priority: 85},
 		hint{text: "v reverse", priority: 25},
 		hint{text: "r refresh", priority: 20},
-		hint{text: "? help", priority: 70},
-		hint{text: "q quit", priority: 60},
+		hint{text: hintHelp, priority: 70},
+		hint{text: hintQuit, priority: 60},
 	)
 	if m.searching {
 		hints = []hint{
@@ -1430,8 +1438,8 @@ func (m Model) renderOperationsFooter() string {
 		{text: "↑/↓ scroll", priority: 100},
 		{text: "r refresh", priority: 80},
 		{text: "esc back", priority: 90},
-		{text: "? help", priority: 70},
-		{text: "q quit", priority: 60},
+		{text: hintHelp, priority: 70},
+		{text: hintQuit, priority: 60},
 	}
 	available := max(m.width-lipgloss.Width(position)-1, 0)
 	return m.styles.footer.Render(joinSides(fitHints(hints, available), position, m.width))
@@ -1447,8 +1455,8 @@ func (m Model) renderProcessingFooter() string {
 		{text: "/ search exact version", priority: 100},
 		{text: "r refresh", priority: 80},
 		{text: "esc back", priority: 90},
-		{text: "? help", priority: 70},
-		{text: "q quit", priority: 60},
+		{text: hintHelp, priority: 70},
+		{text: hintQuit, priority: 60},
 	}
 	if m.processingSearching {
 		hints = []hint{
@@ -1473,8 +1481,8 @@ func (m Model) renderTrashFooter() string {
 		{text: "enter restore", priority: 95},
 		{text: "r refresh", priority: 70},
 		{text: "esc back", priority: 90},
-		{text: "? help", priority: 75},
-		{text: "q quit", priority: 60},
+		{text: hintHelp, priority: 75},
+		{text: hintQuit, priority: 60},
 	}
 	position := ""
 	if len(m.trashItems) > 0 {
@@ -1496,8 +1504,8 @@ func (m Model) renderJobsFooter() string {
 		hints := []hint{
 			{text: "↑/↓ scroll", priority: 100},
 			{text: "esc close", priority: 90},
-			{text: "? help", priority: 70},
-			{text: "q quit", priority: 60},
+			{text: hintHelp, priority: 70},
+			{text: hintQuit, priority: 60},
 		}
 		available := max(m.width-lipgloss.Width(position)-1, 0)
 		return m.styles.footer.Render(joinSides(fitHints(hints, available), position, m.width))
@@ -1507,8 +1515,8 @@ func (m Model) renderJobsFooter() string {
 		{text: "enter inspect", priority: 90},
 		{text: "r refresh", priority: 80},
 		{text: "esc back", priority: 85},
-		{text: "? help", priority: 70},
-		{text: "q quit", priority: 60},
+		{text: hintHelp, priority: 70},
+		{text: hintQuit, priority: 60},
 	}
 	position := ""
 	if len(m.jobs) > 0 {
@@ -1530,8 +1538,8 @@ func (m Model) renderHistoryFooter() string {
 		hints := []hint{
 			{text: "↑/↓ scroll", priority: 100},
 			{text: "esc close", priority: 90},
-			{text: "? help", priority: 70},
-			{text: "q quit", priority: 60},
+			{text: hintHelp, priority: 70},
+			{text: hintQuit, priority: 60},
 		}
 		available := max(m.width-lipgloss.Width(position)-1, 0)
 		return m.styles.footer.Render(joinSides(fitHints(hints, available), position, m.width))
@@ -1542,8 +1550,8 @@ func (m Model) renderHistoryFooter() string {
 		{text: "p newer", priority: 55},
 		{text: "n older", priority: 60},
 		{text: "esc back", priority: 85},
-		{text: "? help", priority: 70},
-		{text: "q quit", priority: 50},
+		{text: hintHelp, priority: 70},
+		{text: hintQuit, priority: 50},
 	}
 	position := ""
 	if page, ok := m.currentHistoryPage(); ok && len(page.Items) > 0 {
@@ -1564,8 +1572,8 @@ func (m Model) renderDetailFooter() string {
 	hints := []hint{
 		{text: "↑/↓ scroll", priority: 100},
 		{text: "esc close", priority: 90},
-		{text: "? help", priority: 70},
-		{text: "q quit", priority: 60},
+		{text: hintHelp, priority: 70},
+		{text: hintQuit, priority: 60},
 	}
 	available := max(m.width-lipgloss.Width(position)-1, 0)
 	return m.styles.footer.Render(joinSides(fitHints(hints, available), position, m.width))
@@ -1760,6 +1768,22 @@ func orDash(value string) string {
 }
 
 func (m Model) helpLines() []string {
+	if m.packagesOpen {
+		return []string{
+			"Load-file package shortcuts",
+			"",
+			"↑/k, ↓/j       Move through packages or members",
+			"Enter          Open the selected package members",
+			"l              Look up an exact label in this package",
+			"r              Refresh package state",
+			"Esc            Close lookup, members, or packages",
+			"q              Quit",
+			"",
+			"Lists are bounded; a + count means more rows are available",
+			"through the CLI, API, or MCP read tools.",
+			"Press any key to close",
+		}
+	}
 	if m.operationsOpen {
 		return []string{
 			"Vault operations shortcuts",

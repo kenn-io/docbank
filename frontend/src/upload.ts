@@ -275,6 +275,58 @@ export class VerifiedUploadChannel implements UploadTransport {
     this.socket.send(JSON.stringify(message));
   }
 
+  async uploadPackageContainer(
+    containerID: string,
+    data: Blob,
+    expectedHash: string,
+    signal: AbortSignal,
+    onprogress: (progress: TransferProgress) => void,
+  ): Promise<void> {
+    if (!this.socket || this.socket.readyState !== WebSocket.OPEN || this.unusable) {
+      throw this.channelError();
+    }
+    if (this.busy) throw new Error("Another browser upload is already active.");
+    throwIfAborted(signal);
+    this.busy = true;
+    const requestID = crypto.randomUUID();
+    let readyForBytes = false;
+    try {
+      this.send({
+        type: "begin",
+        request_id: requestID,
+        container_id: containerID,
+        expected_hash: expectedHash,
+        expected_size: data.size,
+      });
+      const ready = await this.nextMessage(signal);
+      this.requireMessage(ready, requestID);
+      this.throwProblem(ready);
+      if (ready.type !== "ready") throw this.protocolError();
+      readyForBytes = true;
+      onprogress({ processed: 0, total: data.size });
+      for (let offset = 0; offset < data.size; offset += hashChunkBytes) {
+        if (signal.aborted) await this.cancelUpload(requestID);
+        await this.waitForWritable(signal);
+        const end = Math.min(data.size, offset + hashChunkBytes);
+        this.sendBinary(await data.slice(offset, end).arrayBuffer());
+        onprogress({ processed: end, total: data.size });
+      }
+      if (signal.aborted) await this.cancelUpload(requestID);
+      this.send({ type: "end", request_id: requestID });
+      const terminal = await this.nextMessage(signal);
+      this.requireMessage(terminal, requestID);
+      this.throwProblem(terminal);
+      if (terminal.type !== "package_container_receipt" || terminal.container_id !== containerID) {
+        throw this.protocolError();
+      }
+    } catch (cause) {
+      if (readyForBytes && !(cause instanceof APIError) && !this.unusable) this.fail();
+      throw cause;
+    } finally {
+      this.busy = false;
+    }
+  }
+
   async uploadMailboxChunk(
     containerID: string, index: number, data: Blob, expectedHash: string,
     signal: AbortSignal, onprogress: (progress: TransferProgress) => void,
