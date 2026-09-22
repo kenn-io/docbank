@@ -41,7 +41,7 @@ func TestGracefulStopDoesNotKillWindowsProcess(t *testing.T) {
 	}, 5*time.Second, 10*time.Millisecond)
 
 	require.NoError(t, requestProcessStop(cmd.Process.Pid))
-	time.Sleep(100 * time.Millisecond) //nolint:kennlint // gives the helper subprocess time to act on the stop request
+	time.Sleep(100 * time.Millisecond) //nolint:kennlint // checks that the helper subprocess outlives the no-op Windows stop request
 	assert.True(t, kitdaemon.ProcessAlive(cmd.Process.Pid),
 		"graceful Windows fallback must wait rather than terminate")
 }
