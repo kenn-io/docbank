@@ -1419,7 +1419,7 @@ func TestEmbeddedMediaExpiredEmbeddingConsentAllowsFreshSameFenceOperation(t *te
 	case <-time.After(10 * time.Second):
 		t.Fatal("embedding did not reach provider before consent expiry")
 	}
-	time.Sleep(max(time.Until(expiresAt), 0) + 50*time.Millisecond)
+	time.Sleep(max(time.Until(expiresAt), 0) + 50*time.Millisecond) //nolint:kennlint // consent expiry is checked against the store's real clock, which has no seam
 	close(embedder.release)
 	released = true
 	require.EventuallyWithT(t, func(collect *assert.CollectT) {

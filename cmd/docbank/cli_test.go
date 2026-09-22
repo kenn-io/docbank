@@ -791,7 +791,7 @@ func TestConfiguredAutomaticPackingPacksAndKeepsDaemonAlive(t *testing.T) {
 	assert.Equal(t, "running", requireJob(t, got, "process:vector-indexes").Status)
 	assert.Equal(t, "running", requireJob(t, got, "storage:pack").Status)
 
-	time.Sleep(100 * time.Millisecond)
+	time.Sleep(100 * time.Millisecond) //nolint:kennlint // the daemon's idle ticker runs on the wall clock behind a real loopback listener, so synctest can't host it
 	_, _, found, err := daemonconn.Find(t.Context(), home)
 	require.NoError(t, err)
 	assert.True(t, found)
@@ -850,7 +850,7 @@ func TestConfiguredWatchIngestsStableFilesAndRemainsObservable(t *testing.T) {
 
 	// A configured watcher keeps a background daemon alive even when the
 	// ordinary request-idle timeout is deliberately tiny.
-	time.Sleep(100 * time.Millisecond)
+	time.Sleep(100 * time.Millisecond) //nolint:kennlint // the daemon's idle ticker runs on the wall clock behind a real loopback listener, so synctest can't host it
 	_, _, found, err := daemonconn.Find(t.Context(), home)
 	require.NoError(t, err)
 	assert.True(t, found)
@@ -1572,7 +1572,7 @@ func waitForStorageOperation(t *testing.T, id string) error {
 		case "failed", "cancelled":
 			return fmt.Errorf("storage operation ended %s: %s", operation.State, operation.Error)
 		}
-		time.Sleep(10 * time.Millisecond)
+		time.Sleep(10 * time.Millisecond) //nolint:kennlint // polls the in-process daemon through the CLI over real loopback HTTP, which synctest can't host
 	}
 	return fmt.Errorf("storage operation %s did not finish", id)
 }

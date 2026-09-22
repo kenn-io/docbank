@@ -338,7 +338,7 @@ func TestMediaRetryClassifiesProcessingErrors(t *testing.T) {
 
 				require.NoError(t, err)
 				if test.name == "expired" {
-					time.Sleep(time.Until(expires) + time.Millisecond)
+					time.Sleep(time.Until(expires) + time.Millisecond) //nolint:kennlint // consent expiry is checked against the store's real clock, which has no seam
 				} else {
 					_, err := c.API().RevokeDocumentProcessingConsent(t.Context())
 

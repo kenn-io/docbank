@@ -1785,7 +1785,7 @@ func TestPublicationDoesNotDeadlockAgainstDerivativePurge(t *testing.T) {
 		_, err := s.PurgeDerivatives(ctx, PurgeRequest{})
 		purged <- err
 	}()
-	time.Sleep(50 * time.Millisecond)
+	time.Sleep(50 * time.Millisecond) //nolint:kennlint // lets the purge reach SQLite's busy wait on the write lock, which no Go signal reports
 	close(release)
 
 	for name, done := range map[string]chan error{"publication": published, "purge": purged} {

@@ -33,7 +33,7 @@ func TestForceTerminateKillsProcessIgnoringTerm(t *testing.T) {
 	}, 5*time.Second, 10*time.Millisecond)
 
 	require.NoError(t, requestProcessStop(cmd.Process.Pid))
-	time.Sleep(100 * time.Millisecond)
+	time.Sleep(100 * time.Millisecond) //nolint:kennlint // gives the helper subprocess time to act on SIGTERM
 	assert.True(t, kitdaemon.ProcessAlive(cmd.Process.Pid), "helper must ignore SIGTERM")
 	require.NoError(t, forceTerminateProcess(cmd.Process.Pid))
 	done := make(chan error, 1)
