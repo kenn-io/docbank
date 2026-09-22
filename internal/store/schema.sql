@@ -164,6 +164,101 @@ CREATE TRIGGER IF NOT EXISTS collection_snapshot_representations_immutable_updat
 BEFORE UPDATE ON collection_snapshot_representations BEGIN
     SELECT RAISE(ABORT, 'collection snapshot representations are immutable');
 END;
+-- Bates labels are globally unique even when namespace profiles differ.
+CREATE TABLE IF NOT EXISTS bates_namespaces (
+    namespace_id TEXT PRIMARY KEY,
+    prefix TEXT NOT NULL,
+    suffix TEXT NOT NULL,
+    padding INTEGER NOT NULL CHECK (padding BETWEEN 1 AND 10),
+    created_at TEXT NOT NULL,
+    UNIQUE(prefix,suffix)
+);
+CREATE TABLE IF NOT EXISTS bates_namespace_cursors (
+    namespace_id TEXT PRIMARY KEY REFERENCES bates_namespaces(namespace_id),
+    next_sequence INTEGER NOT NULL CHECK (next_sequence >= 1)
+);
+CREATE TABLE IF NOT EXISTS bates_allocations (
+    allocation_id TEXT PRIMARY KEY,
+    operation_id TEXT NOT NULL UNIQUE,
+    namespace_id TEXT NOT NULL REFERENCES bates_namespaces(namespace_id),
+    snapshot_id TEXT NOT NULL REFERENCES collection_snapshots(snapshot_id),
+    request_sha256 TEXT NOT NULL,
+    recipe_sha256 TEXT NOT NULL,
+    start_sequence INTEGER NOT NULL CHECK (start_sequence >= 1),
+    end_sequence INTEGER NOT NULL CHECK (end_sequence >= start_sequence),
+    state TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    committed_at TEXT
+);
+CREATE INDEX IF NOT EXISTS bates_allocations_namespace ON bates_allocations(namespace_id,start_sequence);
+CREATE TABLE IF NOT EXISTS bates_page_labels (
+    allocation_id TEXT NOT NULL REFERENCES bates_allocations(allocation_id),
+    ordinal INTEGER NOT NULL CHECK (ordinal >= 1),
+    namespace_id TEXT NOT NULL REFERENCES bates_namespaces(namespace_id),
+    sequence INTEGER NOT NULL CHECK (sequence >= 1),
+    occurrence_id TEXT NOT NULL,
+    source_page INTEGER NOT NULL CHECK (source_page >= 1),
+    output_page INTEGER NOT NULL CHECK (output_page >= 1),
+    label TEXT NOT NULL UNIQUE,
+    PRIMARY KEY(allocation_id,ordinal),
+    UNIQUE(namespace_id,sequence)
+);
+-- A verified Bates export is permanent evidence. It is intentionally rooted
+-- independently of short-lived export jobs and browser download tickets.
+CREATE TABLE IF NOT EXISTS bates_artifacts (
+    artifact_id TEXT PRIMARY KEY,
+    allocation_id TEXT NOT NULL UNIQUE REFERENCES bates_allocations(allocation_id),
+    blob_hash TEXT NOT NULL REFERENCES blobs(hash),
+    size INTEGER NOT NULL CHECK (size > 0),
+    media_type TEXT NOT NULL,
+    page_count INTEGER NOT NULL CHECK (page_count > 0),
+    recipe_json BLOB NOT NULL,
+    manifest_sha256 TEXT NOT NULL,
+    state TEXT NOT NULL,
+    created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS bates_artifacts_history ON bates_artifacts(created_at,artifact_id);
+CREATE TABLE IF NOT EXISTS bates_artifact_pages (
+    artifact_id TEXT NOT NULL REFERENCES bates_artifacts(artifact_id) ON DELETE CASCADE,
+    ordinal INTEGER NOT NULL CHECK (ordinal >= 1),
+    occurrence_id TEXT NOT NULL,
+    source_blob_sha256 TEXT NOT NULL,
+    source_page INTEGER NOT NULL CHECK (source_page >= 1),
+    output_page INTEGER NOT NULL CHECK (output_page >= 1),
+    label TEXT NOT NULL,
+    PRIMARY KEY(artifact_id,ordinal)
+);
+CREATE TRIGGER IF NOT EXISTS bates_artifacts_immutable_update
+BEFORE UPDATE ON bates_artifacts BEGIN
+    SELECT RAISE(ABORT, 'Bates artifacts are immutable');
+END;
+CREATE TRIGGER IF NOT EXISTS bates_artifact_pages_immutable_update
+BEFORE UPDATE ON bates_artifact_pages BEGIN
+    SELECT RAISE(ABORT, 'Bates artifact pages are immutable');
+END;
+CREATE TRIGGER IF NOT EXISTS bates_namespaces_immutable_update
+BEFORE UPDATE ON bates_namespaces BEGIN
+    SELECT RAISE(ABORT, 'Bates namespace identity is immutable');
+END;
+CREATE TRIGGER IF NOT EXISTS bates_namespace_cursors_monotone
+BEFORE UPDATE ON bates_namespace_cursors
+WHEN NEW.namespace_id<>OLD.namespace_id OR NEW.next_sequence<OLD.next_sequence
+BEGIN SELECT RAISE(ABORT, 'Bates cursor cannot rewind'); END;
+CREATE TRIGGER IF NOT EXISTS bates_allocations_transition_guard
+BEFORE UPDATE ON bates_allocations
+WHEN NEW.allocation_id<>OLD.allocation_id OR NEW.operation_id<>OLD.operation_id
+ OR NEW.namespace_id<>OLD.namespace_id OR NEW.snapshot_id<>OLD.snapshot_id
+ OR NEW.request_sha256<>OLD.request_sha256 OR NEW.recipe_sha256<>OLD.recipe_sha256
+ OR NEW.start_sequence<>OLD.start_sequence OR NEW.end_sequence<>OLD.end_sequence
+ OR NEW.created_at<>OLD.created_at OR OLD.state<>'reserved'
+ OR NEW.state NOT IN ('committed','abandoned')
+ OR (NEW.state='committed' AND (OLD.committed_at IS NOT NULL OR NEW.committed_at IS NULL))
+ OR (NEW.state='abandoned' AND NEW.committed_at IS NOT NULL)
+BEGIN SELECT RAISE(ABORT, 'Bates allocation identity or terminal state is immutable'); END;
+CREATE TRIGGER IF NOT EXISTS bates_page_labels_immutable_update
+BEFORE UPDATE ON bates_page_labels BEGIN
+    SELECT RAISE(ABORT, 'Bates page labels are immutable');
+END;
 CREATE TRIGGER IF NOT EXISTS package_volumes_immutable_update
 BEFORE UPDATE ON package_volumes BEGIN
     SELECT RAISE(ABORT, 'package volumes are immutable');

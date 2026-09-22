@@ -271,6 +271,9 @@ func webSessionRequestAllowed(r *http.Request) bool {
 	if packagesBrowserRequestAllowed(r) {
 		return true
 	}
+	if batesBrowserRequestAllowed(r) {
+		return true
+	}
 	if path == "/api/v1/saved-queries" {
 		return method == http.MethodGet ||
 			(method == http.MethodPost && r.URL.RawQuery == "")

@@ -30,6 +30,8 @@ func TestDefaultToolCatalogIsFixedBoundedAndReadOnly(t *testing.T) {
 		"list_package_custodians", "find_people",
 		"list_packages", "get_package", "list_package_members", "get_package_record",
 		"lookup_bates_label",
+		"list_bates_namespaces", "preview_bates_stamp", "get_bates_allocation",
+		"list_bates_exports", "get_bates_export", "find_bates_exports",
 	}
 	require.Len(t, tools, len(wantNames))
 	for index, tool := range tools {
@@ -51,13 +53,14 @@ func TestProcessingToolIsConstructionTimeOptIn(t *testing.T) {
 	enabledTools := toolCatalog(true)
 	enabled := catalogNames(enabledTools)
 	require.Equal(t, append(append([]string{}, readOnly...), "start_processing", "preflight_load_file_package", "start_package_import",
-		"resolve_package_custodian", "assign_package_custodian"), enabled)
+		"resolve_package_custodian", "assign_package_custodian", "ensure_bates_namespace", "reserve_bates_range", "publish_bates_export",
+		"export_bates_file"), enabled)
 
-	for index, write := range enabledTools[len(enabledTools)-5:] {
+	for _, write := range enabledTools[len(readOnly):] {
 		require.NotNil(t, write.Annotations)
 		assert.False(t, write.Annotations.ReadOnlyHint)
-		assert.Equal(t, index == 2, write.Annotations.IdempotentHint)
-		assert.Equal(t, new(index == 4), write.Annotations.DestructiveHint)
+		assert.Equal(t, slices.Contains([]string{"start_package_import", "ensure_bates_namespace", "reserve_bates_range", "publish_bates_export"}, write.Name), write.Annotations.IdempotentHint)
+		assert.Equal(t, new(write.Name == "assign_package_custodian" || write.Name == "export_bates_file"), write.Annotations.DestructiveHint)
 		assert.Equal(t, new(true), write.Annotations.OpenWorldHint)
 	}
 
@@ -299,6 +302,9 @@ func TestExpectedDomainErrorsAreBoundedToolResults(t *testing.T) {
 		{name: "invalid cursor", err: fmt.Errorf("private cursor detail: %w", store.ErrInvalidDocumentCursor),
 			code: "invalid_document_cursor", redaction: "private cursor detail"},
 		{name: "scope", err: &daemonconn.SourceFenceScopeTooLargeError{ObservedScopeCount: 4097}, code: "scope_too_large"},
+		{name: "Bates reservation conflict", err: store.ErrBatesReservationConflict, code: "bates_reservation_conflict"},
+		{name: "Bates page mismatch", err: store.ErrBatesPageCountMismatch, code: "bates_page_count_mismatch"},
+		{name: "Bates overflow", err: store.ErrBatesOverflow, code: "bates_overflow"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {

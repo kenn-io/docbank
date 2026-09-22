@@ -15,6 +15,7 @@ import (
 	api "go.kenn.io/docbank/internal/api"
 	loadfile "go.kenn.io/docbank/internal/loadfile"
 	mailbox "go.kenn.io/docbank/internal/mailbox"
+	pdfstamp "go.kenn.io/docbank/internal/pdfstamp"
 	query "go.kenn.io/docbank/internal/query"
 	store "go.kenn.io/docbank/internal/store"
 )
@@ -1103,6 +1104,532 @@ func (c *Client) PreviewBatchTags(ctx context.Context, options *PreviewBatchTags
 	}
 
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/batch/tags/preview")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
+// ReserveBatesRange Reserve one idempotent Bates range
+func (c *Client) ReserveBatesRange(ctx context.Context, options *ReserveBatesRangeRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ReserveBatesRangeResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/bates/allocations",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*ReserveBatesRangeResponse, error) {
+		switch resp.StatusCode {
+
+		case 201:
+
+			target := new(ReserveBatesRangeResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "ReserveBatesRangeResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[ReserveBatesRangeErrorResponse](resp, "ReserveBatesRangeErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/bates/allocations")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 201)
+	}
+	return responseParser(ctx, resp)
+}
+
+// ReadBatesAllocation Read a Bates allocation
+func (c *Client) ReadBatesAllocation(ctx context.Context, options *ReadBatesAllocationRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ReadBatesAllocationResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/bates/allocations/{id}",
+		Method:     "GET",
+		Options:    options,
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*ReadBatesAllocationResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(ReadBatesAllocationResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "ReadBatesAllocationResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[ReadBatesAllocationErrorResponse](resp, "ReadBatesAllocationErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/bates/allocations/{id}")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
+// ListBatesExports List verified Bates export history
+func (c *Client) ListBatesExports(ctx context.Context, options *ListBatesExportsRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ListBatesExportsResponse, error) {
+	var err error
+
+	queryEncoding := map[string]runtime.QueryEncoding{
+		"after": {Style: "form", Explode: &[]bool{false}[0]},
+		"limit": {Style: "form", Explode: &[]bool{false}[0]},
+	}
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:    c.apiClient.GetBaseURL() + "/api/v1/bates/exports",
+		Method:        "GET",
+		Options:       options,
+		QueryEncoding: queryEncoding,
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*ListBatesExportsResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(ListBatesExportsResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "ListBatesExportsResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[ListBatesExportsErrorResponse](resp, "ListBatesExportsErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/bates/exports")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
+// PublishBatesExport Publish a verified Bates export
+func (c *Client) PublishBatesExport(ctx context.Context, options *PublishBatesExportRequestOptions, reqEditors ...runtime.RequestEditorFn) (*PublishBatesExportResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/bates/exports",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*PublishBatesExportResponse, error) {
+		switch resp.StatusCode {
+
+		case 201:
+
+			target := new(PublishBatesExportResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "PublishBatesExportResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[PublishBatesExportErrorResponse](resp, "PublishBatesExportErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/bates/exports")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 201)
+	}
+	return responseParser(ctx, resp)
+}
+
+// FindBatesExports Find verified Bates export candidates
+func (c *Client) FindBatesExports(ctx context.Context, options *FindBatesExportsRequestOptions, reqEditors ...runtime.RequestEditorFn) (*FindBatesExportsResponse, error) {
+	var err error
+
+	queryEncoding := map[string]runtime.QueryEncoding{
+		"bates_label":     {Style: "form", Explode: &[]bool{false}[0]},
+		"cursor":          {Style: "form", Explode: &[]bool{false}[0]},
+		"custodian_label": {Style: "form", Explode: &[]bool{false}[0]},
+		"limit":           {Style: "form", Explode: &[]bool{false}[0]},
+		"person_id":       {Style: "form", Explode: &[]bool{false}[0]},
+	}
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:    c.apiClient.GetBaseURL() + "/api/v1/bates/exports/candidates",
+		Method:        "GET",
+		Options:       options,
+		QueryEncoding: queryEncoding,
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*FindBatesExportsResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(FindBatesExportsResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "FindBatesExportsResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[FindBatesExportsErrorResponse](resp, "FindBatesExportsErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/bates/exports/candidates")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
+// ReadBatesExport Read a verified Bates export
+func (c *Client) ReadBatesExport(ctx context.Context, options *ReadBatesExportRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ReadBatesExportResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/bates/exports/{id}",
+		Method:     "GET",
+		Options:    options,
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*ReadBatesExportResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(ReadBatesExportResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "ReadBatesExportResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[ReadBatesExportErrorResponse](resp, "ReadBatesExportErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/bates/exports/{id}")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
+// DownloadBatesExportContent Download independently reverified Bates export bytes
+func (c *Client) DownloadBatesExportContent(ctx context.Context, options *DownloadBatesExportContentRequestOptions, reqEditors ...runtime.RequestEditorFn) (*struct{}, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/bates/exports/{id}/content",
+		Method:     "GET",
+		Options:    options,
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*struct{}, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(struct{})
+
+			return target, nil
+
+		default:
+
+			return nil, runtime.NewClientAPIError(fmt.Errorf("unexpected status code: %d", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/bates/exports/{id}/content")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
+// DownloadBatesExport Issue a one-use ticket for a reverified Bates export
+func (c *Client) DownloadBatesExport(ctx context.Context, options *DownloadBatesExportRequestOptions, reqEditors ...runtime.RequestEditorFn) (*DownloadBatesExportResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/bates/exports/{id}/download",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*DownloadBatesExportResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(DownloadBatesExportResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "DownloadBatesExportResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[DownloadBatesExportErrorResponse](resp, "DownloadBatesExportErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/bates/exports/{id}/download")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
+// ListBatesNamespaces List Bates namespaces
+func (c *Client) ListBatesNamespaces(ctx context.Context, options *ListBatesNamespacesRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ListBatesNamespacesResponse, error) {
+	var err error
+
+	queryEncoding := map[string]runtime.QueryEncoding{
+		"cursor": {Style: "form", Explode: &[]bool{false}[0]},
+		"limit":  {Style: "form", Explode: &[]bool{false}[0]},
+	}
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:    c.apiClient.GetBaseURL() + "/api/v1/bates/namespaces",
+		Method:        "GET",
+		Options:       options,
+		QueryEncoding: queryEncoding,
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*ListBatesNamespacesResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(ListBatesNamespacesResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "ListBatesNamespacesResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[ListBatesNamespacesErrorResponse](resp, "ListBatesNamespacesErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/bates/namespaces")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
+// CreateBatesNamespace Create or find a Bates namespace
+func (c *Client) CreateBatesNamespace(ctx context.Context, options *CreateBatesNamespaceRequestOptions, reqEditors ...runtime.RequestEditorFn) (*CreateBatesNamespaceResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/bates/namespaces",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*CreateBatesNamespaceResponse, error) {
+		switch resp.StatusCode {
+
+		case 201:
+
+			target := new(CreateBatesNamespaceResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "CreateBatesNamespaceResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[CreateBatesNamespaceErrorResponse](resp, "CreateBatesNamespaceErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/bates/namespaces")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 201)
+	}
+	return responseParser(ctx, resp)
+}
+
+// PlanBatesStamp Preview tentative Bates labels without stamping or reserving
+func (c *Client) PlanBatesStamp(ctx context.Context, options *PlanBatesStampRequestOptions, reqEditors ...runtime.RequestEditorFn) (*PlanBatesStampResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/bates/preview",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*PlanBatesStampResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(PlanBatesStampResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "PlanBatesStampResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[PlanBatesStampErrorResponse](resp, "PlanBatesStampErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/bates/preview")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
@@ -10772,6 +11299,339 @@ func (o *PreviewBatchTagsRequestOptions) GetHeader() (map[string]string, error) 
 	return nil, nil
 }
 
+// ReserveBatesRangeRequestOptions is the options needed to make a request to ReserveBatesRange.
+type ReserveBatesRangeRequestOptions struct {
+	Body *ReserveBatesRangeBody
+}
+
+// GetPathParams returns the path params as a map.
+func (o *ReserveBatesRangeRequestOptions) GetPathParams() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetQuery returns the query params as a map.
+func (o *ReserveBatesRangeRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *ReserveBatesRangeRequestOptions) GetBody() any {
+	if o.Body == nil {
+		return nil
+	}
+	return o.Body
+}
+
+// GetHeader returns the headers as a map.
+func (o *ReserveBatesRangeRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
+// ReadBatesAllocationRequestOptions is the options needed to make a request to ReadBatesAllocation.
+type ReadBatesAllocationRequestOptions struct {
+	PathParams *ReadBatesAllocationPath
+}
+
+// GetPathParams returns the path params as a map.
+func (o *ReadBatesAllocationRequestOptions) GetPathParams() (map[string]any, error) {
+	encoded, err := json.Marshal(o.PathParams, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetQuery returns the query params as a map.
+func (o *ReadBatesAllocationRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *ReadBatesAllocationRequestOptions) GetBody() any {
+	return nil
+}
+
+// GetHeader returns the headers as a map.
+func (o *ReadBatesAllocationRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
+// ListBatesExportsRequestOptions is the options needed to make a request to ListBatesExports.
+type ListBatesExportsRequestOptions struct {
+	Query *ListBatesExportsQuery
+}
+
+// GetPathParams returns the path params as a map.
+func (o *ListBatesExportsRequestOptions) GetPathParams() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetQuery returns the query params as a map.
+func (o *ListBatesExportsRequestOptions) GetQuery() (map[string]any, error) {
+	encoded, err := json.Marshal(o.Query, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *ListBatesExportsRequestOptions) GetBody() any {
+	return nil
+}
+
+// GetHeader returns the headers as a map.
+func (o *ListBatesExportsRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
+// PublishBatesExportRequestOptions is the options needed to make a request to PublishBatesExport.
+type PublishBatesExportRequestOptions struct {
+	Body *PublishBatesExportBody
+}
+
+// GetPathParams returns the path params as a map.
+func (o *PublishBatesExportRequestOptions) GetPathParams() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetQuery returns the query params as a map.
+func (o *PublishBatesExportRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *PublishBatesExportRequestOptions) GetBody() any {
+	if o.Body == nil {
+		return nil
+	}
+	return o.Body
+}
+
+// GetHeader returns the headers as a map.
+func (o *PublishBatesExportRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
+// FindBatesExportsRequestOptions is the options needed to make a request to FindBatesExports.
+type FindBatesExportsRequestOptions struct {
+	Query *FindBatesExportsQuery
+}
+
+// GetPathParams returns the path params as a map.
+func (o *FindBatesExportsRequestOptions) GetPathParams() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetQuery returns the query params as a map.
+func (o *FindBatesExportsRequestOptions) GetQuery() (map[string]any, error) {
+	encoded, err := json.Marshal(o.Query, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *FindBatesExportsRequestOptions) GetBody() any {
+	return nil
+}
+
+// GetHeader returns the headers as a map.
+func (o *FindBatesExportsRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
+// ReadBatesExportRequestOptions is the options needed to make a request to ReadBatesExport.
+type ReadBatesExportRequestOptions struct {
+	PathParams *ReadBatesExportPath
+}
+
+// GetPathParams returns the path params as a map.
+func (o *ReadBatesExportRequestOptions) GetPathParams() (map[string]any, error) {
+	encoded, err := json.Marshal(o.PathParams, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetQuery returns the query params as a map.
+func (o *ReadBatesExportRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *ReadBatesExportRequestOptions) GetBody() any {
+	return nil
+}
+
+// GetHeader returns the headers as a map.
+func (o *ReadBatesExportRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
+// DownloadBatesExportContentRequestOptions is the options needed to make a request to DownloadBatesExportContent.
+type DownloadBatesExportContentRequestOptions struct {
+	PathParams *DownloadBatesExportContentPath
+}
+
+// GetPathParams returns the path params as a map.
+func (o *DownloadBatesExportContentRequestOptions) GetPathParams() (map[string]any, error) {
+	encoded, err := json.Marshal(o.PathParams, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetQuery returns the query params as a map.
+func (o *DownloadBatesExportContentRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *DownloadBatesExportContentRequestOptions) GetBody() any {
+	return nil
+}
+
+// GetHeader returns the headers as a map.
+func (o *DownloadBatesExportContentRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
+// DownloadBatesExportRequestOptions is the options needed to make a request to DownloadBatesExport.
+type DownloadBatesExportRequestOptions struct {
+	PathParams *DownloadBatesExportPath
+	Body       *DownloadBatesExportBody
+}
+
+// GetPathParams returns the path params as a map.
+func (o *DownloadBatesExportRequestOptions) GetPathParams() (map[string]any, error) {
+	encoded, err := json.Marshal(o.PathParams, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetQuery returns the query params as a map.
+func (o *DownloadBatesExportRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *DownloadBatesExportRequestOptions) GetBody() any {
+	if o.Body == nil {
+		return nil
+	}
+	return o.Body
+}
+
+// GetHeader returns the headers as a map.
+func (o *DownloadBatesExportRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
+// ListBatesNamespacesRequestOptions is the options needed to make a request to ListBatesNamespaces.
+type ListBatesNamespacesRequestOptions struct {
+	Query *ListBatesNamespacesQuery
+}
+
+// GetPathParams returns the path params as a map.
+func (o *ListBatesNamespacesRequestOptions) GetPathParams() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetQuery returns the query params as a map.
+func (o *ListBatesNamespacesRequestOptions) GetQuery() (map[string]any, error) {
+	encoded, err := json.Marshal(o.Query, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *ListBatesNamespacesRequestOptions) GetBody() any {
+	return nil
+}
+
+// GetHeader returns the headers as a map.
+func (o *ListBatesNamespacesRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
+// CreateBatesNamespaceRequestOptions is the options needed to make a request to CreateBatesNamespace.
+type CreateBatesNamespaceRequestOptions struct {
+	Body *CreateBatesNamespaceBody
+}
+
+// GetPathParams returns the path params as a map.
+func (o *CreateBatesNamespaceRequestOptions) GetPathParams() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetQuery returns the query params as a map.
+func (o *CreateBatesNamespaceRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *CreateBatesNamespaceRequestOptions) GetBody() any {
+	if o.Body == nil {
+		return nil
+	}
+	return o.Body
+}
+
+// GetHeader returns the headers as a map.
+func (o *CreateBatesNamespaceRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
+// PlanBatesStampRequestOptions is the options needed to make a request to PlanBatesStamp.
+type PlanBatesStampRequestOptions struct {
+	Body *PlanBatesStampBody
+}
+
+// GetPathParams returns the path params as a map.
+func (o *PlanBatesStampRequestOptions) GetPathParams() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetQuery returns the query params as a map.
+func (o *PlanBatesStampRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *PlanBatesStampRequestOptions) GetBody() any {
+	if o.Body == nil {
+		return nil
+	}
+	return o.Body
+}
+
+// GetHeader returns the headers as a map.
+func (o *PlanBatesStampRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
 // ListCollectionsRequestOptions is the options needed to make a request to ListCollections.
 type ListCollectionsRequestOptions struct {
 	Query *ListCollectionsQuery
@@ -16804,6 +17664,22 @@ type AuditScopeHistoryPath struct {
 	ScopeID string `json:"scope_id"`
 }
 
+type ReadBatesAllocationPath struct {
+	ID uuid.UUID `json:"id"`
+}
+
+type ReadBatesExportPath struct {
+	ID uuid.UUID `json:"id"`
+}
+
+type DownloadBatesExportContentPath struct {
+	ID uuid.UUID `json:"id"`
+}
+
+type DownloadBatesExportPath struct {
+	ID uuid.UUID `json:"id"`
+}
+
 type GetCollectionPath struct {
 	ID string `json:"id"`
 }
@@ -17222,6 +18098,16 @@ type ChangeBatchTagsBody = BatchTagRequest
 
 type PreviewBatchTagsBody = PreviewBatchTagsRequest
 
+type ReserveBatesRangeBody = BatesPlanRequest
+
+type PublishBatesExportBody = BatesExportRequest
+
+type DownloadBatesExportBody = DownloadBatesExportRequest
+
+type CreateBatesNamespaceBody = BatesNamespaceRequest
+
+type PlanBatesStampBody = BatesPlanRequest
+
 type SetCollectionLabelBody = SetCollectionLabelRequest
 
 type RunDerivativePurgeBody = DerivativePurgeJobRequest
@@ -17442,6 +18328,24 @@ type AuditStatusQuery struct {
 
 type ListBackupSnapshotsQuery struct {
 	Repo *string `json:"repo,omitempty"`
+}
+
+type ListBatesExportsQuery struct {
+	After *string `json:"after,omitempty"`
+	Limit *int64  `json:"limit,omitempty"`
+}
+
+type FindBatesExportsQuery struct {
+	BatesLabel     *string `json:"bates_label,omitempty"`
+	CustodianLabel *string `json:"custodian_label,omitempty"`
+	PersonID       *string `json:"person_id,omitempty"`
+	Cursor         *string `json:"cursor,omitempty"`
+	Limit          *int64  `json:"limit,omitempty"`
+}
+
+type ListBatesNamespacesQuery struct {
+	Cursor *string `json:"cursor,omitempty"`
+	Limit  *int64  `json:"limit,omitempty"`
 }
 
 type ListCollectionsQuery struct {
@@ -17763,6 +18667,46 @@ type ChangeBatchTagsErrorResponse = Error
 type PreviewBatchTagsResponse = api.BatchTagPreview
 
 type PreviewBatchTagsErrorResponse = Error
+
+type ReserveBatesRangeResponse = api.BatesAllocation
+
+type ReserveBatesRangeErrorResponse = Error
+
+type ReadBatesAllocationResponse = api.BatesAllocation
+
+type ReadBatesAllocationErrorResponse = Error
+
+type ListBatesExportsResponse = api.BatesExportPage
+
+type ListBatesExportsErrorResponse = Error
+
+type PublishBatesExportResponse = api.BatesExport
+
+type PublishBatesExportErrorResponse = Error
+
+type FindBatesExportsResponse = api.BatesCandidatePage
+
+type FindBatesExportsErrorResponse = Error
+
+type ReadBatesExportResponse = api.BatesExport
+
+type ReadBatesExportErrorResponse = Error
+
+type DownloadBatesExportResponse = api.BatesDownloadTicket
+
+type DownloadBatesExportErrorResponse = Error
+
+type ListBatesNamespacesResponse = api.BatesNamespacePage
+
+type ListBatesNamespacesErrorResponse = Error
+
+type CreateBatesNamespaceResponse = api.BatesNamespace
+
+type CreateBatesNamespaceErrorResponse = Error
+
+type PlanBatesStampResponse = api.BatesPlan
+
+type PlanBatesStampErrorResponse = Error
 
 type ListCollectionsResponse = api.CollectionPage
 
@@ -18712,6 +19656,38 @@ type BatchTagRequest = api.BatchTagRequest
 
 type BatchTagTarget = api.BatchTagTarget
 
+type BatesAllocation = api.BatesAllocation
+
+type BatesArtifactPage = api.BatesArtifactPage
+
+type BatesCandidate = api.BatesCandidate
+
+type BatesCandidateEvidence = api.BatesCandidateEvidence
+
+type BatesCandidatePage = api.BatesCandidatePage
+
+type BatesDownloadTicket = api.BatesDownloadTicket
+
+type BatesExport = api.BatesExport
+
+type BatesExportPage = api.BatesExportPage
+
+type BatesExportRequest = api.BatesExportRequest
+
+type BatesNamespace = api.BatesNamespace
+
+type BatesNamespacePage = api.BatesNamespacePage
+
+type BatesNamespaceRequest = api.BatesNamespaceRequest
+
+type BatesPageInput = api.BatesPageInput
+
+type BatesPageLabel = api.BatesPageLabel
+
+type BatesPlan = api.BatesPlan
+
+type BatesPlanRequest = api.BatesPlanRequest
+
 type BlobStore = api.BlobStore
 
 type BlobStorePreview = api.BlobStorePreview
@@ -18841,6 +19817,11 @@ type DocumentSummaryResolveRequest = api.DocumentSummaryResolveRequest
 
 type DocumentSummaryResolveResponse = api.DocumentSummaryResolveResponse
 
+type DownloadBatesExportRequest struct {
+	// Schema A URL to the JSON Schema for this object.
+	Schema *string `json:"$schema,omitempty"`
+}
+
 type DownloadRequest = bundle.DownloadRequest
 
 type DuplicateCollection = api.DuplicateCollection
@@ -18958,6 +19939,8 @@ type EnableAuditRequest struct {
 	AcknowledgePermanentRetention bool    `json:"acknowledge_permanent_retention"`
 	PreviewToken                  string  `json:"preview_token"`
 }
+
+type EngineIdentity = pdfstamp.EngineIdentity
 
 type Entry = mailbox.Entry
 
@@ -19364,6 +20347,8 @@ type QueryHighlightPreview = api.QueryHighlightPreview
 type QueryPreview = api.QueryPreview
 
 type Receipt = bundle.Receipt
+
+type Recipe = pdfstamp.Recipe
 
 type RegisterBlobStoreRequest struct {
 	// Schema A URL to the JSON Schema for this object.

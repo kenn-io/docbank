@@ -342,7 +342,11 @@ func stampedForm(ctx *model.Context, pageNumber int) ([]byte, int, *types.Stream
 }
 
 func verifyStampedLabels(pdf []byte, labels []PageLabel) error {
-	pdfContext, err := api.ReadContext(bytes.NewReader(pdf), stampConfiguration())
+	return verifyStampedLabelsReader(bytes.NewReader(pdf), labels)
+}
+
+func verifyStampedLabelsReader(source io.ReadSeeker, labels []PageLabel) error {
+	pdfContext, err := api.ReadContext(source, stampConfiguration())
 	if err != nil {
 		return stampFailure("verify output labels", err)
 	}

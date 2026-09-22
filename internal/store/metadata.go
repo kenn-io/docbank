@@ -444,6 +444,16 @@ func exportMetadataSnapshotWithVaultIdentity(
 			return err
 		}
 	}
+	if layout.schemaVersion >= 24 {
+		if err := exportBatesMetadata(ctx, tx, write); err != nil {
+			return err
+		}
+	}
+	if layout.schemaVersion >= 25 {
+		if err := exportBatesArtifactMetadata(ctx, tx, write); err != nil {
+			return err
+		}
+	}
 	if err := exportWatchSources(ctx, tx, write); err != nil {
 		return err
 	}
@@ -1055,6 +1065,22 @@ func requirePristineMetadataTarget(ctx context.Context, tx *sql.Tx) error {
 		    + (SELECT COUNT(*) FROM export_sources)
 		    + (SELECT COUNT(*) FROM export_plans)
 		    + (SELECT COUNT(*) FROM export_jobs)
+		    + (SELECT COUNT(*) FROM collection_snapshots)
+		    + (SELECT COUNT(*) FROM collection_snapshot_members)
+		    + (SELECT COUNT(*) FROM collection_snapshot_representations)
+		    + (SELECT COUNT(*) FROM packages)
+		    + (SELECT COUNT(*) FROM package_volumes)
+		    + (SELECT COUNT(*) FROM package_records)
+		    + (SELECT COUNT(*) FROM package_labels)
+		    + (SELECT COUNT(*) FROM package_import_jobs)
+		    + (SELECT COUNT(*) FROM package_import_receipts)
+		    + (SELECT COUNT(*) FROM package_import_heads)
+		    + (SELECT COUNT(*) FROM bates_namespaces)
+		    + (SELECT COUNT(*) FROM bates_namespace_cursors)
+		    + (SELECT COUNT(*) FROM bates_allocations)
+		    + (SELECT COUNT(*) FROM bates_page_labels)
+		    + (SELECT COUNT(*) FROM bates_artifacts)
+		    + (SELECT COUNT(*) FROM bates_artifact_pages)
 		    + (SELECT COUNT(*) FROM ingests) + (SELECT COUNT(*) FROM provenance)
 		    + (SELECT COUNT(*) FROM provenance_version_bindings)
 		    + (SELECT COUNT(*) FROM document_event_state)
@@ -1345,6 +1371,9 @@ func (s *Store) importMetadataRecord(
 	case metadataPackageRecordType, metadataPackageLabelType, metadataPackageImportReceiptType,
 		metadataPackageImportHeadType, metadataPackageImportJobType:
 		return importPackageImportMetadata(ctx, tx, kind, raw)
+	case metadataBatesNamespace, metadataBatesNamespaceCursor, metadataBatesAllocation, metadataBatesPageLabel,
+		metadataBatesArtifact, metadataBatesArtifactPage:
+		return importBatesMetadata(ctx, tx, kind, raw)
 	case metadataVisualPreviewHeadType:
 		var v metadataVisualPreviewHead
 		if err := decodeMetadataRecord(raw, &v); err != nil {
@@ -1574,6 +1603,12 @@ var metadataRequiredFields = map[string][]string{
 	"email_generation":                           {"type", "generation_id", "source_sha256", "source_size", "recipe_fingerprint", "canonical_json", "checksum", "created_at"},
 	"email_document_publication":                 {"type", "request", "receipt"},
 	metadataExportType:                           {metadataTypeField, "kind", "id", "ordinal", "retain_until", "canonical_json", "checksum"},
+	metadataBatesNamespace:                       {metadataTypeField, "namespace_id", "prefix", "suffix", "padding", metadataCreatedAtField},
+	metadataBatesNamespaceCursor:                 {metadataTypeField, "namespace_id", "next_sequence"},
+	metadataBatesAllocation:                      {metadataTypeField, "allocation_id", auditOperationIDField, "namespace_id", "snapshot_id", "request_sha256", "recipe_sha256", "start_sequence", "end_sequence", auditStateField, metadataCreatedAtField, "committed_at"},
+	metadataBatesPageLabel:                       {metadataTypeField, "allocation_id", "ordinal", "namespace_id", "sequence", "occurrence_id", "source_page", "output_page", "label"},
+	metadataBatesArtifact:                        {metadataTypeField, "artifact_id", "allocation_id", "blob_sha256", metadataSizeField, "media_type", "page_count", "recipe_json", "manifest_sha256", auditStateField, metadataCreatedAtField},
+	metadataBatesArtifactPage:                    {metadataTypeField, "artifact_id", "ordinal", "occurrence_id", "source_blob_sha256", "source_page", "output_page", "label"},
 	metadataPageDocumentType:                     {metadataTypeField, "canonical_json", metadataPageChecksumField},
 	metadataPageRecipeType:                       {metadataTypeField, "canonical_json", metadataPageChecksumField},
 	metadataPageImageType:                        {metadataTypeField, "canonical_json", metadataPageChecksumField},
@@ -1660,6 +1695,7 @@ var metadataNullableFields = map[string]map[string]bool{
 		"previous_total": true, "previous_query_fingerprint": true,
 	},
 	"extracted_text":                   {"error": true, "text": true},
+	metadataBatesAllocation:            {"committed_at": true},
 	metadataCurrentRenditionRootType:   {"released_at": true},
 	metadataEmbeddingGenerationType:    {"attachment_id": true},
 	metadataProcessingConsentGrantType: {"expires_at": true},
@@ -2084,6 +2120,16 @@ func validateMetadataStateWithVaultIdentity(
 			return err
 		}
 		if err := validatePackageImportMetadataState(ctx, tx); err != nil {
+			return err
+		}
+	}
+	if layout.schemaVersion >= 24 {
+		if err := validateBatesMetadataState(ctx, tx); err != nil {
+			return err
+		}
+	}
+	if layout.schemaVersion >= 25 {
+		if err := validateBatesArtifactState(ctx, tx); err != nil {
 			return err
 		}
 	}

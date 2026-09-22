@@ -39,6 +39,7 @@ import (
 	"go.kenn.io/docbank/internal/jobs"
 	"go.kenn.io/docbank/internal/mailbox"
 	internalmaintenance "go.kenn.io/docbank/internal/maintenance"
+	"go.kenn.io/docbank/internal/pdfstamp"
 	"go.kenn.io/docbank/internal/processing"
 	"go.kenn.io/docbank/internal/store"
 	"go.kenn.io/docbank/internal/vectorworker"
@@ -226,6 +227,12 @@ func runServe(ctx context.Context) (retErr error) {
 		}
 	}()
 	operationGate := api.NewOperationGate()
+	executable, err := os.Executable()
+	if err != nil {
+		return fmt.Errorf("resolving supervised PDF worker: %w", err)
+	}
+	pdfstamp.ConfigureWorker(executable)
+	defer pdfstamp.ConfigureWorker("")
 	exportWorker, err := startExportWorker(jobSupervisor, s, blobs, layout.Root, operationGate)
 	if err != nil {
 		return err

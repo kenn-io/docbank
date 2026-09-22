@@ -44,6 +44,7 @@
   import AuditHistoryDrawer from "./AuditHistoryDrawer.svelte";
   import ActionRecoveryModal from "./ActionRecoveryModal.svelte";
   import BackupDrawer from "./BackupDrawer.svelte";
+  import BatesExportDrawer from "./BatesExportDrawer.svelte";
   import ExportDrawer from "./ExportDrawer.svelte";
   import { copyExportMembers } from "./exports.js";
   import type { ExportInput } from "./exportState.js";
@@ -208,10 +209,11 @@
   let auditEvidenceOpen = $state(false);
   let storageOpen = $state(false);
   let backupsOpen = $state(false);
+  let batesOpen = $state(false);
   let exportOpen = $state(false);
   let exportHasJob = $state(false);
   let exportInput = $state<ExportInput | null>(null);
-  $effect(() => { if (!webSession) { exportOpen = false; exportInput = null; exportHasJob = false; } });
+  $effect(() => { if (!webSession) { batesOpen = false; exportOpen = false; exportInput = null; exportHasJob = false; } });
   let savedQueriesOpen = $state(false);
   let queryBarOpen = $state(false);
   let savedQueryDraft = $state<Query | null>(null);
@@ -2150,6 +2152,7 @@
       {/snippet}
       {#snippet right()}
         <Button size="sm" disabled={!exportHasJob && (snapshotActive ? (snapshotPage?.total ?? 0) === 0 : visibleDocumentCount === 0)} onclick={() => openExport()}>Export</Button>
+        <Button size="sm" onclick={() => batesOpen = true}>Bates export</Button>
         <Button size="sm" onclick={() => openQueryEditor()}>Edit query</Button>
         <Button size="sm" disabled={snapshotActive && snapshotState.status !== "ready"}
           onclick={() => { snapshotActionError = ""; snapshotActionsOpen = true; }}>Snapshot actions</Button>
@@ -3212,6 +3215,9 @@
         onclose={() => (backupsOpen = false)}
         onauthfailure={handleFailure}
       />
+    {/if}
+    {#if batesOpen}
+      <BatesExportDrawer session={webSession} onclose={() => batesOpen = false} onauthfailure={handleFailure} />
     {/if}
     {#key webSession}
       <ExportDrawer session={webSession} open={exportOpen} input={exportInput} onclose={() => exportOpen = false} onauthfailure={handleFailure} onactivechange={active => exportHasJob = active} />
