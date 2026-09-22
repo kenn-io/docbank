@@ -1,0 +1,202 @@
+package api_test
+
+import (
+	"encoding/json/v2"
+	"net/http"
+	"strings"
+	"testing"
+
+	"github.com/google/uuid"
+	"github.com/stretchr/testify/require"
+	"go.kenn.io/docbank/document"
+	"go.kenn.io/docbank/internal/api"
+	"go.kenn.io/docbank/internal/store"
+	"go.kenn.io/docbank/sqlite"
+)
+
+func seedBatesSnapshot(t *testing.T, s *testStore) (store.CollectionSnapshot, []api.BatesPageInput) {
+	t.Helper()
+	db, err := store.DefaultSQLiteDriver().Open(s.DBPath, sqlite.OpenOptions{Access: sqlite.ReadWriteExisting, TransactionMode: sqlite.Deferred})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, db.Close()) })
+	var members []store.CollectionSnapshotMember
+	var pages []api.BatesPageInput
+	for i, count := range []int{2, 1} {
+		name := []string{"A.pdf", "B.pdf"}[i]
+		hash := strings.Repeat([]string{"a", "b"}[i], 64)
+		node, err := s.CreateFile(t.Context(), s.RootID(), name, hash, 123, "application/pdf")
+		require.NoError(t, err)
+		source := document.PageSource{VersionID: node.CurrentVersionID, SHA256: node.BlobHash, Size: 123}
+		frames := make([]document.PageFrameV1, count)
+		for p := range frames {
+			frames[p], err = document.NewPDFPageFrame(source, p+1, [4]float64{0, 0, 72, 72}, [4]float64{0, 0, 72, 72}, 0)
+			require.NoError(t, err)
+		}
+		doc := document.PageDocumentV1{Contract: document.PageFrameContractV1, Source: source, PageCount: count, Frames: frames}
+		encoded, checksum, err := document.MarshalPageDocumentV1(doc)
+		require.NoError(t, err)
+		_, err = db.ExecContext(t.Context(), `INSERT INTO page_documents(version_id,canonical_json,checksum) VALUES(?,?,?)`, source.VersionID, encoded, checksum)
+		require.NoError(t, err)
+		for _, frame := range frames {
+			frameJSON, frameChecksum, err := document.MarshalPageFrameV1(frame)
+			require.NoError(t, err)
+			_, err = db.ExecContext(t.Context(), `INSERT INTO page_frames(version_id,page,canonical_json,checksum) VALUES(?,?,?,?)`,
+				source.VersionID, frame.Page, frameJSON, frameChecksum)
+			require.NoError(t, err)
+		}
+		member := store.CollectionSnapshotMember{Ordinal: i + 1, OccurrenceID: strings.Repeat([]string{"c", "d"}[i], 32),
+			NodeID: node.ID, ContentVersionID: node.CurrentVersionID, BlobSHA256: node.BlobHash, Size: 123,
+			FamilyID: strings.Repeat("c", 32), FamilyOrder: i + 1, DisplayName: name,
+			FrozenFieldsJSON: "{}", DocumentKind: "other", SourcePageCount: count, SelectedPDFSHA256: node.BlobHash}
+		if i == 1 {
+			member.ParentOccurrenceID = members[0].OccurrenceID
+		}
+		members = append(members, member)
+		for p := 1; p <= count; p++ {
+			pages = append(pages, api.BatesPageInput{OccurrenceID: member.OccurrenceID, UnstampedSHA256: node.BlobHash, SourcePage: p, VerifiedPageCount: count})
+		}
+	}
+	snapshot, err := s.SealCollectionSnapshot(t.Context(), store.SnapshotSealRequest{SnapshotID: uuid.NewString(), Members: members})
+	require.NoError(t, err)
+	return snapshot, pages
+}
+
+func TestBatesPlanPreviewsWithoutStampingAnything(t *testing.T) {
+	srv, s := newPackageTestServer(t)
+	snapshot, pages := seedBatesSnapshot(t, s)
+	nsBody, err := json.Marshal(api.BatesNamespaceRequest{Prefix: "OUR", Padding: 6})
+	require.NoError(t, err)
+	created := srv.call(t, http.MethodPost, "/api/v1/bates/namespaces", string(nsBody), nil)
+	require.Equal(t, http.StatusCreated, created.Code, created.Body.String())
+	var ns api.BatesNamespace
+	require.NoError(t, json.Unmarshal(created.Body.Bytes(), &ns))
+	request := api.BatesPlanRequest{OperationID: uuid.NewString(), NamespaceID: ns.NamespaceID,
+		SnapshotID: snapshot.SnapshotID, RecipeSHA256: strings.Repeat("e", 64), Prefix: "OUR", Padding: 6, StartAt: 41, Pages: pages}
+	body, err := json.Marshal(request)
+	require.NoError(t, err)
+	before := tableCounts(t, s)
+	first := srv.call(t, http.MethodPost, "/api/v1/bates/preview", string(body), nil)
+	require.Equal(t, http.StatusOK, first.Code, first.Body.String())
+	var plan api.BatesPlan
+	require.NoError(t, json.Unmarshal(first.Body.Bytes(), &plan))
+	require.True(t, plan.StampedNothing)
+	require.Empty(t, plan.AllocationID)
+	require.NotContains(t, first.Body.String(), "allocation_id")
+	require.Equal(t, "OUR000041", plan.Labels[0].Label)
+	second := srv.call(t, http.MethodPost, "/api/v1/bates/preview", string(body), nil)
+	require.Equal(t, first.Body.String(), second.Body.String())
+	implicit := request
+	implicit.Pages = nil
+	implicit.Prefix = ""
+	implicit.Padding = 0
+	implicitBody, err := json.Marshal(implicit)
+	require.NoError(t, err)
+	derived := srv.call(t, http.MethodPost, "/api/v1/bates/preview", string(implicitBody), nil)
+	require.Equal(t, first.Body.String(), derived.Body.String())
+	require.Equal(t, before.blobs, tableCounts(t, s).blobs)
+	reserved := srv.call(t, http.MethodPost, "/api/v1/bates/allocations", string(body), nil)
+	require.Equal(t, http.StatusCreated, reserved.Code, reserved.Body.String())
+	missingRecipe := request
+	missingRecipe.OperationID = uuid.NewString()
+	missingRecipe.RecipeSHA256 = ""
+	missingRecipeBody, err := json.Marshal(missingRecipe)
+	require.NoError(t, err)
+	rejected := srv.call(t, http.MethodPost, "/api/v1/bates/allocations", string(missingRecipeBody), nil)
+	require.Equal(t, http.StatusUnprocessableEntity, rejected.Code, rejected.Body.String())
+	require.Contains(t, rejected.Body.String(), `"validation"`)
+	var allocation api.BatesAllocation
+	require.NoError(t, json.Unmarshal(reserved.Body.Bytes(), &allocation))
+	require.Equal(t, "OUR000041", allocation.Labels[0].Label)
+	replay := srv.call(t, http.MethodPost, "/api/v1/bates/allocations", string(body), nil)
+	require.Equal(t, allocation.AllocationID, decodeBatesAllocation(t, replay.Body.Bytes()).AllocationID)
+	read := srv.get(t, "/api/v1/bates/allocations/"+allocation.AllocationID)
+	require.Equal(t, http.StatusOK, read.Code, read.Body.String())
+	require.Equal(t, allocation.AllocationID, decodeBatesAllocation(t, read.Body.Bytes()).AllocationID)
+	request.StartAt = 42
+	changed, err := json.Marshal(request)
+	require.NoError(t, err)
+	conflict := srv.call(t, http.MethodPost, "/api/v1/bates/allocations", string(changed), nil)
+	require.Equal(t, http.StatusConflict, conflict.Code, conflict.Body.String())
+	require.Contains(t, conflict.Body.String(), "bates_reservation_conflict")
+	request.OperationID = uuid.NewString()
+	request.StartAt = 0
+	request.Pages = append([]api.BatesPageInput(nil), pages...)
+	request.Pages[0].SourcePage = 2
+	wrongPages, err := json.Marshal(request)
+	require.NoError(t, err)
+	mismatch := srv.call(t, http.MethodPost, "/api/v1/bates/preview", string(wrongPages), nil)
+	require.Equal(t, http.StatusConflict, mismatch.Code, mismatch.Body.String())
+	require.Contains(t, mismatch.Body.String(), "bates_page_count_mismatch")
+	shortNamespace, err := json.Marshal(api.BatesNamespaceRequest{Prefix: "OVR", Padding: 1})
+	require.NoError(t, err)
+	shortCreated := srv.call(t, http.MethodPost, "/api/v1/bates/namespaces", string(shortNamespace), nil)
+	require.Equal(t, http.StatusCreated, shortCreated.Code, shortCreated.Body.String())
+	var short api.BatesNamespace
+	require.NoError(t, json.Unmarshal(shortCreated.Body.Bytes(), &short))
+	request.NamespaceID = short.NamespaceID
+	request.Prefix = "OVR"
+	request.Padding = 1
+	request.Pages = pages
+	request.StartAt = 9
+	overflowBody, err := json.Marshal(request)
+	require.NoError(t, err)
+	overflow := srv.call(t, http.MethodPost, "/api/v1/bates/allocations", string(overflowBody), nil)
+	require.Equal(t, http.StatusUnprocessableEntity, overflow.Code, overflow.Body.String())
+	require.Contains(t, overflow.Body.String(), "bates_overflow")
+	list := srv.get(t, "/api/v1/bates/namespaces?limit=1")
+	require.Equal(t, http.StatusOK, list.Code, list.Body.String())
+	var page api.BatesNamespacePage
+	require.NoError(t, json.Unmarshal(list.Body.Bytes(), &page))
+	require.Equal(t, 2, page.Total)
+	require.Len(t, page.Items, 1)
+	require.NotEmpty(t, page.NextCursor)
+	next := srv.get(t, "/api/v1/bates/namespaces?limit=1&cursor="+page.NextCursor)
+	require.Equal(t, http.StatusOK, next.Code, next.Body.String())
+	page = api.BatesNamespacePage{}
+	require.NoError(t, json.Unmarshal(next.Body.Bytes(), &page))
+	require.Len(t, page.Items, 1)
+	require.Empty(t, page.NextCursor)
+}
+
+func decodeBatesAllocation(t *testing.T, body []byte) api.BatesAllocation {
+	t.Helper()
+	var allocation api.BatesAllocation
+	require.NoError(t, json.Unmarshal(body, &allocation))
+	return allocation
+}
+
+func TestBatesExportRouteRejectsAnUnboundRun(t *testing.T) {
+	srv, _ := newPackageTestServer(t)
+	response := srv.call(t, http.MethodPost, "/api/v1/bates/exports", `{}`, nil)
+	require.Equal(t, http.StatusUnprocessableEntity, response.Code, response.Body.String())
+	require.Contains(t, response.Body.String(), "validation")
+}
+
+func TestBatesDownloadAcceptsBrowserEmptyObjectBody(t *testing.T) {
+	srv, _ := newPackageTestServer(t)
+	response := srv.call(t, http.MethodPost,
+		"/api/v1/bates/exports/11111111-1111-4111-8111-111111111111/download", `{}`, nil)
+	require.Equal(t, http.StatusNotFound, response.Code, response.Body.String())
+}
+
+func TestBatesExportHistoryRejectsInvalidAndUnknownCursors(t *testing.T) {
+	srv, _ := newPackageTestServer(t)
+	invalid := srv.get(t, "/api/v1/bates/exports?after=not-a-cursor&limit=1")
+	require.Equal(t, http.StatusUnprocessableEntity, invalid.Code, invalid.Body.String())
+	require.Contains(t, invalid.Body.String(), `"invalid_bates_cursor"`)
+	unknown := srv.get(t, "/api/v1/bates/exports?after=11111111-1111-4111-8111-111111111111&limit=1")
+	require.Equal(t, http.StatusNotFound, unknown.Code, unknown.Body.String())
+}
+
+func TestBatesCandidateRouteRequiresOneSelectorAndReturnsBoundedCandidates(t *testing.T) {
+	srv, _ := newPackageTestServer(t)
+	missing := srv.get(t, "/api/v1/bates/exports/candidates?limit=10")
+	require.Equal(t, http.StatusUnprocessableEntity, missing.Code, missing.Body.String())
+	multiple := srv.get(t, "/api/v1/bates/exports/candidates?bates_label=A&custodian_label=B&limit=10")
+	require.Equal(t, http.StatusUnprocessableEntity, multiple.Code, multiple.Body.String())
+	found := srv.get(t, "/api/v1/bates/exports/candidates?bates_label=NONE000001&limit=10")
+	require.Equal(t, http.StatusOK, found.Code, found.Body.String())
+	var page api.BatesCandidatePage
+	require.NoError(t, json.Unmarshal(found.Body.Bytes(), &page))
+	require.Empty(t, page.Items)
+}

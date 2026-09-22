@@ -30,6 +30,7 @@ func (reference blobReference) conditionSQL() string {
 // Visual preview sources are omitted because the Go writer binds them to the
 // same hash as their content version, which is already listed.
 var blobRootReferences = []blobReference{
+	{table: "bates_artifacts", column: columnBlobHash, condition: "r.state = 'verified'"},
 	{table: "packages", column: "manifest_blob_sha256", condition: "r.state <> 'purged'"},
 	{table: "collection_snapshot_representations", column: "blob_sha256", condition: "r.status = 'available'"},
 	{table: "export_members", column: columnBlobHash},

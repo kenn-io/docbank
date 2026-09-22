@@ -794,6 +794,201 @@ export interface BatchTagRequest {
   tag_id: string;
 }
 
+export interface BatesPageLabel {
+  label: string;
+  occurrence_id: string;
+  ordinal: number;
+  output_page: number;
+  source_page: number;
+}
+
+export interface BatesAllocation {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  allocation_id: string;
+  committed_at?: string;
+  created_at: string;
+  end_sequence: number;
+  labels: BatesPageLabel[];
+  namespace_id: string;
+  recipe_sha256: string;
+  snapshot_id: string;
+  start_sequence: number;
+  state: string;
+}
+
+export interface BatesArtifactPage {
+  label: string;
+  occurrence_id: string;
+  ordinal: number;
+  output_page: number;
+  source_blob_sha256: string;
+  source_page: number;
+}
+
+export interface BatesCandidateEvidence {
+  assignment_id?: string;
+  basis?: string;
+  kind: string;
+  label?: string;
+  occurrence_id: string;
+  output_page?: number;
+  package_id?: string;
+  package_record_id?: string;
+  person_id?: string;
+  rank?: string;
+  raw_label?: string;
+  scope_kind?: string;
+}
+
+export interface BatesCandidate {
+  allocation_id: string;
+  artifact_id: string;
+  blob_sha256: string;
+  created_at: string;
+  evidence: BatesCandidateEvidence[];
+  evidence_cursor?: string;
+  evidence_truncated: boolean;
+  manifest_sha256: string;
+  media_type: string;
+  page_count: number;
+  size: number;
+  snapshot_id: string;
+  state: string;
+}
+
+export interface BatesCandidatePage {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  items: BatesCandidate[];
+  next_cursor?: string;
+}
+
+export interface BatesDownloadTicket {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  allocation_id: string;
+  blob_sha256: string;
+  name: string;
+  size: number;
+  url: string;
+}
+
+export interface BatesExport {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  allocation_id: string;
+  artifact_id: string;
+  blob_sha256: string;
+  created_at: string;
+  manifest_sha256: string;
+  media_type: string;
+  page_count: number;
+  pages: BatesArtifactPage[];
+  recipe_sha256: string;
+  size: number;
+  state: string;
+}
+
+export interface BatesExportPage {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  items: BatesExport[];
+  next_after?: string;
+  total: number;
+}
+
+export interface EngineIdentity {
+  api: string;
+  name: string;
+  options: string[];
+  version: string;
+}
+
+export interface Recipe {
+  color: string;
+  contract: string;
+  engine_identity: EngineIdentity;
+  font_name: string;
+  font_size_points: number;
+  margin_points: number;
+  namespace_id: string;
+  opacity: number;
+  padding: number;
+  position: string;
+  prefix: string;
+  restamp: boolean;
+  rotation_policy: string;
+  start_at: number;
+  suffix: string;
+  units: string;
+}
+
+export interface BatesExportRequest {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  allocation_id: string;
+  recipe: Recipe;
+}
+
+export interface BatesNamespace {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  created_at: string;
+  namespace_id: string;
+  padding: number;
+  prefix: string;
+  suffix: string;
+}
+
+export interface BatesNamespacePage {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  items: BatesNamespace[];
+  next_cursor?: string;
+  total: number;
+}
+
+export interface BatesNamespaceRequest {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  padding: number;
+  prefix: string;
+  suffix?: string;
+}
+
+export interface BatesPageInput {
+  occurrence_id: string;
+  source_page: number;
+  unstamped_sha256: string;
+  verified_page_count: number;
+}
+
+export interface BatesPlan {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  allocation_id?: string;
+  end_sequence: number;
+  labels: BatesPageLabel[];
+  namespace: BatesNamespace;
+  stamped_nothing: boolean;
+  start_sequence: number;
+}
+
+export interface BatesPlanRequest {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  namespace_id?: string;
+  operation_id: string;
+  padding?: number;
+  pages?: BatesPageInput[];
+  prefix?: string;
+  recipe_sha256?: string;
+  snapshot_id: string;
+  start_at: number;
+  suffix?: string;
+}
+
 export interface BlobStore {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
@@ -1805,6 +2000,11 @@ export interface DocumentSummaryResolveResponse {
   readonly $schema?: string;
   /** @maxItems 100 */
   items: DocumentSummary[];
+}
+
+export interface DownloadBatesExportRequest {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
 }
 
 export interface DownloadRequest {
@@ -5589,6 +5789,45 @@ export type ListBackupSnapshotsParams = {
 repo?: string;
 };
 
+export type ListBatesExportsParams = {
+after?: string;
+/**
+ * @minimum 0
+ * @maximum 250
+ */
+limit?: number;
+};
+
+export type FindBatesExportsParams = {
+/**
+ * @maxLength 256
+ */
+bates_label?: string;
+/**
+ * @maxLength 200
+ */
+custodian_label?: string;
+person_id?: string;
+/**
+ * @maxLength 4096
+ */
+cursor?: string;
+/**
+ * @minimum 0
+ * @maximum 250
+ */
+limit?: number;
+};
+
+export type ListBatesNamespacesParams = {
+cursor?: string;
+/**
+ * @minimum 0
+ * @maximum 250
+ */
+limit?: number;
+};
+
 export type ListCollectionsParams = {
 /**
  * @minimum 1
@@ -7136,6 +7375,362 @@ return sessionJSON<BatchTagPreview>(getPreviewBatchTagsUrl(),
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
     body: JSON.stringify(previewBatchTagsRequest)
+  }
+);}
+
+
+
+export const getReserveBatesRangeUrl = () => {
+
+
+
+
+  return `/api/v1/bates/allocations`
+}
+
+/**
+ * @summary Reserve one idempotent Bates range
+ */
+export const reserveBatesRange = async (batesPlanRequest: NonReadonly<BatesPlanRequest>, options?: Parameters<typeof sessionJSON>[1]): Promise<BatesAllocation> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return sessionJSON<BatesAllocation>(getReserveBatesRangeUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(batesPlanRequest)
+  }
+);}
+
+
+
+export const getReadBatesAllocationUrl = (id: string,) => {
+
+
+
+
+  return `/api/v1/bates/allocations/${encodeURIComponent(String(id))}`
+}
+
+/**
+ * @summary Read a Bates allocation
+ */
+export const readBatesAllocation = async (id: string, options?: Parameters<typeof sessionJSON>[1]): Promise<BatesAllocation> => {
+
+  return sessionJSON<BatesAllocation>(getReadBatesAllocationUrl(id),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+export const getListBatesExportsUrl = (params?: ListBatesExportsParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/v1/bates/exports?${stringifiedParams}` : `/api/v1/bates/exports`
+}
+
+/**
+ * @summary List verified Bates export history
+ */
+export const listBatesExports = async (params?: ListBatesExportsParams, options?: Parameters<typeof sessionJSON>[1]): Promise<BatesExportPage> => {
+
+  return sessionJSON<BatesExportPage>(getListBatesExportsUrl(params),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+export const getPublishBatesExportUrl = () => {
+
+
+
+
+  return `/api/v1/bates/exports`
+}
+
+/**
+ * @summary Publish a verified Bates export
+ */
+export const publishBatesExport = async (batesExportRequest: NonReadonly<BatesExportRequest>, options?: Parameters<typeof sessionJSON>[1]): Promise<BatesExport> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return sessionJSON<BatesExport>(getPublishBatesExportUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(batesExportRequest)
+  }
+);}
+
+
+
+export const getFindBatesExportsUrl = (params?: FindBatesExportsParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/v1/bates/exports/candidates?${stringifiedParams}` : `/api/v1/bates/exports/candidates`
+}
+
+/**
+ * @summary Find verified Bates export candidates
+ */
+export const findBatesExports = async (params?: FindBatesExportsParams, options?: Parameters<typeof sessionJSON>[1]): Promise<BatesCandidatePage> => {
+
+  return sessionJSON<BatesCandidatePage>(getFindBatesExportsUrl(params),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+export const getReadBatesExportUrl = (id: string,) => {
+
+
+
+
+  return `/api/v1/bates/exports/${encodeURIComponent(String(id))}`
+}
+
+/**
+ * @summary Read a verified Bates export
+ */
+export const readBatesExport = async (id: string, options?: Parameters<typeof sessionJSON>[1]): Promise<BatesExport> => {
+
+  return sessionJSON<BatesExport>(getReadBatesExportUrl(id),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+export const getDownloadBatesExportContentUrl = (id: string,) => {
+
+
+
+
+  return `/api/v1/bates/exports/${encodeURIComponent(String(id))}/content`
+}
+
+/**
+ * @summary Download independently reverified Bates export bytes
+ */
+export const downloadBatesExportContent = async (id: string, options?: Parameters<typeof sessionJSON>[1]): Promise<Blob> => {
+
+  return sessionJSON<Blob>(getDownloadBatesExportContentUrl(id),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+export const getDownloadBatesExportUrl = (id: string,) => {
+
+
+
+
+  return `/api/v1/bates/exports/${encodeURIComponent(String(id))}/download`
+}
+
+/**
+ * @summary Issue a one-use ticket for a reverified Bates export
+ */
+export const downloadBatesExport = async (id: string,
+    downloadBatesExportRequest: NonReadonly<DownloadBatesExportRequest>, options?: Parameters<typeof sessionJSON>[1]): Promise<BatesDownloadTicket> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return sessionJSON<BatesDownloadTicket>(getDownloadBatesExportUrl(id),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(downloadBatesExportRequest)
+  }
+);}
+
+
+
+export const getListBatesNamespacesUrl = (params?: ListBatesNamespacesParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/v1/bates/namespaces?${stringifiedParams}` : `/api/v1/bates/namespaces`
+}
+
+/**
+ * @summary List Bates namespaces
+ */
+export const listBatesNamespaces = async (params?: ListBatesNamespacesParams, options?: Parameters<typeof sessionJSON>[1]): Promise<BatesNamespacePage> => {
+
+  return sessionJSON<BatesNamespacePage>(getListBatesNamespacesUrl(params),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+export const getCreateBatesNamespaceUrl = () => {
+
+
+
+
+  return `/api/v1/bates/namespaces`
+}
+
+/**
+ * @summary Create or find a Bates namespace
+ */
+export const createBatesNamespace = async (batesNamespaceRequest: NonReadonly<BatesNamespaceRequest>, options?: Parameters<typeof sessionJSON>[1]): Promise<BatesNamespace> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return sessionJSON<BatesNamespace>(getCreateBatesNamespaceUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(batesNamespaceRequest)
+  }
+);}
+
+
+
+export const getPlanBatesStampUrl = () => {
+
+
+
+
+  return `/api/v1/bates/preview`
+}
+
+/**
+ * @summary Preview tentative Bates labels without stamping or reserving
+ */
+export const planBatesStamp = async (batesPlanRequest: NonReadonly<BatesPlanRequest>, options?: Parameters<typeof sessionJSON>[1]): Promise<BatesPlan> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return sessionJSON<BatesPlan>(getPlanBatesStampUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(batesPlanRequest)
   }
 );}
 
