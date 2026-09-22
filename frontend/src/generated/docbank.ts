@@ -2526,6 +2526,148 @@ export interface HighlightSetV1Schema {
   v?: HighlightSetV1SchemaV;
 }
 
+export interface IndexCoverage {
+  /** @minimum 0 */
+  expected: number;
+  /** @minimum 0 */
+  indexed: number;
+  /** @minimum 0 */
+  unavailable: number;
+}
+
+export type IndexProjectionStatusState = typeof IndexProjectionStatusState[keyof typeof IndexProjectionStatusState];
+
+
+export const IndexProjectionStatusState = {
+  queryable: 'queryable',
+  building: 'building',
+  stale: 'stale',
+  failed: 'failed',
+  disabled: 'disabled',
+} as const;
+
+export type IndexTargetKind = typeof IndexTargetKind[keyof typeof IndexTargetKind];
+
+
+export const IndexTargetKind = {
+  lexical: 'lexical',
+  metadata: 'metadata',
+  tag: 'tag',
+  map: 'map',
+  vector: 'vector',
+} as const;
+
+export interface IndexTarget {
+  /** @maxLength 256 */
+  key?: string;
+  kind: IndexTargetKind;
+}
+
+export interface IndexProjectionStatus {
+  coverage: IndexCoverage;
+  failure_reason?: string;
+  generation?: string;
+  /** @minimum 0 */
+  index_watermark: number;
+  serving: boolean;
+  /** @minimum 0 */
+  source_watermark: number;
+  state: IndexProjectionStatusState;
+  target: IndexTarget;
+}
+
+export interface IndexProviderDisclosure {
+  /** @maxItems 64 */
+  data_classes?: string[];
+  /** @maxLength 2048 */
+  endpoint?: string;
+  /** @maxLength 256 */
+  model?: string;
+  /** @maxLength 256 */
+  processor: string;
+}
+
+export interface IndexRepairWork {
+  /** @minimum 0 */
+  bytes: number;
+  /** @pattern ^[A-Z]{3}$ */
+  cost_currency?: string;
+  /** @minimum 0 */
+  documents: number;
+  /** @minimum 0 */
+  estimated_cost_micros: number;
+  /** @minimum 0 */
+  provider_calls: number;
+  /** @maxItems 16 */
+  providers?: IndexProviderDisclosure[];
+}
+
+export interface IndexRepairProjectionPlan {
+  /** @minimum 0 */
+  authorization_watermark: number;
+  current_generation?: string;
+  /** @minimum 0 */
+  index_watermark: number;
+  /** @minimum 0 */
+  source_watermark: number;
+  target: IndexTarget;
+  work: IndexRepairWork;
+}
+
+export interface IndexRepairPlan {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  /** @pattern ^[0-9a-f]{64}$ */
+  fingerprint: string;
+  projections: IndexRepairProjectionPlan[];
+}
+
+export interface IndexRepairPlanRequest {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  /** @maxItems 64 */
+  targets?: IndexTarget[];
+}
+
+export interface IndexRepairResult {
+  generation: string;
+  previous_generation?: string;
+  /** @minimum 0 */
+  source_watermark: number;
+  target: IndexTarget;
+}
+
+export interface IndexRepairReport {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  plan_fingerprint: string;
+  projections: IndexRepairResult[];
+}
+
+export interface IndexRepairRequest {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  allow_provider_work: boolean;
+  /** @pattern ^[0-9a-f]{64}$ */
+  plan_fingerprint: string;
+  /**
+     * @minItems 1
+     * @maxItems 1
+     */
+  targets: IndexTarget[];
+}
+
+export interface IndexStatusReport {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  fresh: boolean;
+  /** @minimum 0 */
+  index_watermark: number;
+  projections: IndexProjectionStatus[];
+  /** @minimum 0 */
+  source_watermark: number;
+}
+
 export type IngestEventType = typeof IngestEventType[keyof typeof IngestEventType];
 
 
@@ -5329,6 +5471,15 @@ format?: string;
 extension?: string;
 };
 
+export type GetIndexStatusParams = {
+require_fresh?: boolean;
+/**
+ * @minimum 0
+ * @maximum 10000
+ */
+wait_ms?: number;
+};
+
 export type UploadMailboxChunkHeaders = {
 /**
  * @pattern ^[0-9a-f]{64}$
@@ -8007,6 +8158,113 @@ return sessionJSON<GCReport>(getGcUrl(),
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
     body: JSON.stringify(gcRequest)
+  }
+);}
+
+
+
+export const getPlanIndexRepairUrl = () => {
+
+
+
+
+  return `/api/v1/index/repair-plans`
+}
+
+/**
+ * @summary Preview bounded work, providers and cost for targeted index repair
+ */
+export const planIndexRepair = async (indexRepairPlanRequest: NonReadonly<IndexRepairPlanRequest>, options?: Parameters<typeof sessionJSON>[1]): Promise<IndexRepairPlan> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return sessionJSON<IndexRepairPlan>(getPlanIndexRepairUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(indexRepairPlanRequest)
+  }
+);}
+
+
+
+export const getRepairIndexesUrl = () => {
+
+
+
+
+  return `/api/v1/index/repairs`
+}
+
+/**
+ * @summary Build, validate and atomically publish targeted index generations
+ */
+export const repairIndexes = async (indexRepairRequest: NonReadonly<IndexRepairRequest>, options?: Parameters<typeof sessionJSON>[1]): Promise<IndexRepairReport> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return sessionJSON<IndexRepairReport>(getRepairIndexesUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(indexRepairRequest)
+  }
+);}
+
+
+
+export const getGetIndexStatusUrl = (params?: GetIndexStatusParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/v1/index/status?${stringifiedParams}` : `/api/v1/index/status`
+}
+
+/**
+ * @summary Read projection generations, coverage and freshness
+ */
+export const getIndexStatus = async (params?: GetIndexStatusParams, options?: Parameters<typeof sessionJSON>[1]): Promise<IndexStatusReport> => {
+
+  return sessionJSON<IndexStatusReport>(getGetIndexStatusUrl(params),
+  {
+    ...options,
+    method: 'GET'
+
+
   }
 );}
 

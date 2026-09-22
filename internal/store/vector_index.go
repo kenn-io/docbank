@@ -348,6 +348,28 @@ func (s *Store) StageVectorIndexGeneration(ctx context.Context, claim VectorInde
 func (s *Store) PublishVectorIndexGeneration(ctx context.Context, claim VectorIndexBuildClaim,
 	generationID string, at time.Time,
 ) error {
+	return s.publishVectorIndexGeneration(ctx, claim, generationID, at, 0, false)
+}
+
+// PublishVectorIndexGenerationWithRollback performs the targeted-repair
+// cutover. It retains the replaced generation under a bounded lease and
+// advances the generic projection watermark in the same transaction.
+func (s *Store) PublishVectorIndexGenerationWithRollback(
+	ctx context.Context, claim VectorIndexBuildClaim, generationID string,
+	at time.Time, rollbackRetention time.Duration,
+) error {
+	if rollbackRetention <= 0 {
+		return errors.New("vector index rollback retention must be positive")
+	}
+	return s.publishVectorIndexGeneration(
+		ctx, claim, generationID, at, rollbackRetention, true,
+	)
+}
+
+func (s *Store) publishVectorIndexGeneration(
+	ctx context.Context, claim VectorIndexBuildClaim, generationID string,
+	at time.Time, rollbackRetention time.Duration, updateProjection bool,
+) error {
 	return s.withStorageTx(ctx, func(tx *sql.Tx) error {
 		if err := requireVectorIndexBuildClaimTx(ctx, tx, claim, at); err != nil {
 			return err
@@ -373,6 +395,40 @@ func (s *Store) PublishVectorIndexGeneration(ctx context.Context, claim VectorIn
 		if err != nil {
 			return err
 		}
+		var state IndexProjectionStateRecord
+		if updateProjection {
+			state, err = observeIndexProjectionTx(
+				ctx, tx, IndexProjectionVector, claim.VectorSpaceID,
+				current.ManifestChecksum, LocalIndexAuthorizationChecksum(),
+			)
+			if err != nil {
+				return err
+			}
+		}
+		var previous string
+		err = tx.QueryRowContext(ctx, `SELECT generation_id FROM vector_index_heads
+			WHERE vector_space_id=?`, claim.VectorSpaceID).Scan(&previous)
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return err
+		}
+		if updateProjection && previous != "" && previous != generationID {
+			leaseID := "index_rollback_vector_" + claim.VectorSpaceID
+			var fencingToken int64
+			if err := tx.QueryRowContext(ctx, `SELECT COALESCE(MAX(fencing_token),0)+1
+				FROM vector_index_reader_leases WHERE lease_id=?`, leaseID).Scan(&fencingToken); err != nil {
+				return fmt.Errorf("allocating vector rollback fence: %w", err)
+			}
+			if _, err := tx.ExecContext(ctx, `INSERT INTO vector_index_reader_leases(
+				lease_id,generation_id,owner,fencing_token,lease_expires_at
+			) VALUES(?,?,?,?,?) ON CONFLICT(lease_id) DO UPDATE SET
+				generation_id=excluded.generation_id,owner=excluded.owner,
+				fencing_token=excluded.fencing_token,lease_expires_at=excluded.lease_expires_at`,
+				leaseID, previous, "index-rollback", fencingToken,
+				at.UTC().Add(rollbackRetention).Format(timestampLayout),
+			); err != nil {
+				return fmt.Errorf("retaining vector rollback generation: %w", err)
+			}
+		}
 		if _, err := tx.ExecContext(ctx, `INSERT INTO vector_index_heads(
 			vector_space_id,generation_id,source_manifest_checksum) VALUES(?,?,?)
 			ON CONFLICT(vector_space_id) DO UPDATE SET generation_id=excluded.generation_id,
@@ -380,8 +436,41 @@ func (s *Store) PublishVectorIndexGeneration(ctx context.Context, claim VectorIn
 			generationID, claim.SourceManifestChecksum); err != nil {
 			return err
 		}
+		if updateProjection {
+			if _, err := tx.ExecContext(ctx, `UPDATE index_projection_state SET
+				index_watermark=?,generation_id=?,expected_count=?,indexed_count=?,
+				unavailable_count=0,failure_reason='',updated_at=?
+				WHERE projection_kind=? AND projection_key=?`,
+				state.SourceWatermark, generationID, len(current.Members), len(current.Members),
+				at.UTC().Format(time.RFC3339Nano), IndexProjectionVector, claim.VectorSpaceID,
+			); err != nil {
+				return fmt.Errorf("publishing vector projection state: %w", err)
+			}
+		}
 		_, err = tx.ExecContext(ctx, `UPDATE vector_index_build_jobs SET lease_expires_at=?
 			WHERE vector_space_id=? AND fencing_token=?`, at.UTC().Format(timestampLayout), claim.VectorSpaceID, claim.FencingToken)
+		return err
+	})
+}
+
+// DiscardVectorIndexGeneration removes an unreachable candidate and expires
+// only the caller's fenced build claim.
+func (s *Store) DiscardVectorIndexGeneration(
+	ctx context.Context, claim VectorIndexBuildClaim, generationID string, at time.Time,
+) error {
+	return s.withStorageTx(ctx, func(tx *sql.Tx) error {
+		if _, err := tx.ExecContext(ctx, `DELETE FROM vector_index_generations
+			WHERE generation_id=?
+			  AND NOT EXISTS (SELECT 1 FROM vector_index_heads WHERE generation_id=?)
+			  AND NOT EXISTS (SELECT 1 FROM vector_index_reader_leases WHERE generation_id=?)`,
+			generationID, generationID, generationID,
+		); err != nil {
+			return fmt.Errorf("discarding vector index generation: %w", err)
+		}
+		_, err := tx.ExecContext(ctx, `UPDATE vector_index_build_jobs SET lease_expires_at=?
+			WHERE vector_space_id=? AND source_manifest_checksum=? AND owner=? AND fencing_token=?`,
+			at.UTC().Format(timestampLayout), claim.VectorSpaceID, claim.SourceManifestChecksum,
+			claim.Owner, claim.FencingToken)
 		return err
 	})
 }

@@ -26,6 +26,15 @@ type IndexRestoreReport struct {
 	Unavailable []UnavailableVectorCoverage
 }
 
+// RepairCandidate is a complete staged generation plus the exact fenced
+// authority required to publish it. It remains unreachable until PublishRepairCandidate.
+type RepairCandidate struct {
+	Source store.VectorIndexSource
+	Claim  store.VectorIndexBuildClaim
+	Record store.VectorIndexGenerationRecord
+	query  []float32
+}
+
 type Catalog interface {
 	RetireEmptyVectorIndexHead(ctx context.Context, vectorSpaceID string, at time.Time) error
 	AbandonVectorIndexBuild(ctx context.Context, claim store.VectorIndexBuildClaim, at time.Time) error
@@ -130,6 +139,161 @@ func (worker *IndexWorker) Rebuild(ctx context.Context, vectorSpaceID string) (s
 func cloneVectorIndexRecord(record store.VectorIndexGenerationRecord) store.VectorIndexGenerationRecord {
 	record.Bytes = bytes.Clone(record.Bytes)
 	return record
+}
+
+// PrepareRepair builds and validates a complete unreachable vector generation.
+// It never moves the serving head.
+func (worker *IndexWorker) PrepareRepair(
+	ctx context.Context, vectorSpaceID string,
+) (_ RepairCandidate, retErr error) {
+	source, err := worker.catalog.CaptureVectorIndexSource(ctx, vectorSpaceID)
+	if err != nil {
+		return RepairCandidate{}, err
+	}
+	var claim store.VectorIndexBuildClaim
+	var claimed bool
+	err = worker.mutate(ctx, func() error {
+		var err error
+		claim, claimed, err = worker.catalog.ClaimVectorIndexBuild(
+			ctx, vectorSpaceID, source.ManifestChecksum, worker.owner,
+			worker.clock().UTC(), worker.buildLease,
+		)
+		return err
+	})
+	if err != nil {
+		return RepairCandidate{}, err
+	}
+	if !claimed {
+		return RepairCandidate{}, store.ErrVectorIndexBuildInProgress
+	}
+	finished := false
+	defer func() {
+		if finished {
+			return
+		}
+		cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+		defer cancel()
+		cleanupErr := worker.mutate(cleanupCtx, func() error {
+			return worker.catalog.AbandonVectorIndexBuild(
+				cleanupCtx, claim, worker.clock().UTC(),
+			)
+		})
+		if cleanupErr != nil {
+			retErr = errors.Join(retErr, fmt.Errorf("abandoning vector repair candidate: %w", cleanupErr))
+		}
+	}()
+
+	sets, query, coverage, err := worker.loadVectorSets(ctx, source)
+	if err != nil {
+		return RepairCandidate{}, err
+	}
+	if len(coverage.Missing) != 0 {
+		return RepairCandidate{}, &unavailableVectorSourceError{coverage: coverage}
+	}
+	setIDs := make([]string, len(sets))
+	for index, set := range sets {
+		_, setIDs[index], err = document.EncodeVectorSetV1(set)
+		if err != nil {
+			return RepairCandidate{}, err
+		}
+	}
+	manifest, err := vectorindex.NewManifest(setIDs)
+	if err != nil {
+		return RepairCandidate{}, err
+	}
+	built, err := vectorindex.BuildGeneration(manifest, sets, vectorindex.Options{})
+	if err != nil {
+		return RepairCandidate{}, err
+	}
+	metadata, encoded := built.Metadata(), built.Bytes()
+	builtAt := indexWorkerTimestamp(worker.clock().UTC())
+	record := store.VectorIndexGenerationRecord{
+		ID:            repairIndexGenerationID(source.ManifestChecksum, encoded, builtAt),
+		VectorSpaceID: vectorSpaceID, SourceManifestChecksum: source.ManifestChecksum,
+		IndexManifestChecksum: metadata.Manifest.Checksum, Bytes: encoded,
+		RowCount: metadata.RowCount, BuiltAt: builtAt,
+	}
+	if err := worker.mutate(ctx, func() error {
+		return worker.catalog.StageVectorIndexGeneration(
+			ctx, claim, record, worker.clock().UTC(),
+		)
+	}); err != nil {
+		return RepairCandidate{}, err
+	}
+	stored, err := worker.catalog.LoadVectorIndexGeneration(ctx, record.ID)
+	if err != nil {
+		return RepairCandidate{}, err
+	}
+	if err := validateStoredVectorIndex(stored, source, query); err != nil {
+		return RepairCandidate{}, errors.Join(ErrVectorIndexCandidateInvalid, err)
+	}
+	finished = true
+	return RepairCandidate{Source: source, Claim: claim, Record: stored, query: query}, nil
+}
+
+// ValidateRepairCandidate reopens and smoke-tests the staged immutable bytes.
+func (worker *IndexWorker) ValidateRepairCandidate(
+	ctx context.Context, candidate RepairCandidate,
+) error {
+	stored, err := worker.catalog.LoadVectorIndexGeneration(ctx, candidate.Record.ID)
+	if err != nil {
+		return err
+	}
+	return validateStoredVectorIndex(stored, candidate.Source, candidate.query)
+}
+
+// ValidateStoredGeneration verifies a serving generation against exact source
+// authority without starting rebuild work.
+func (worker *IndexWorker) ValidateStoredGeneration(
+	record store.VectorIndexGenerationRecord, source store.VectorIndexSource,
+) error {
+	return validateStoredVectorIndex(record, source, nil)
+}
+
+type targetedRepairCatalog interface {
+	PublishVectorIndexGenerationWithRollback(
+		ctx context.Context, claim store.VectorIndexBuildClaim, generationID string,
+		at time.Time, rollbackRetention time.Duration,
+	) error
+	DiscardVectorIndexGeneration(
+		ctx context.Context, claim store.VectorIndexBuildClaim, generationID string, at time.Time,
+	) error
+}
+
+// PublishRepairCandidate atomically fences source authority, retains the old
+// generation, and moves the serving head.
+func (worker *IndexWorker) PublishRepairCandidate(
+	ctx context.Context, candidate RepairCandidate, rollbackRetention time.Duration,
+) error {
+	catalog, ok := worker.catalog.(targetedRepairCatalog)
+	if !ok {
+		return errors.New("vector index catalog does not support targeted repair")
+	}
+	return worker.mutate(ctx, func() error {
+		if err := catalog.PublishVectorIndexGenerationWithRollback(
+			ctx, candidate.Claim, candidate.Record.ID, worker.clock().UTC(), rollbackRetention,
+		); err != nil {
+			return err
+		}
+		_, err := worker.catalog.ReclaimVectorIndexGenerations(ctx, worker.clock().UTC())
+		return err
+	})
+}
+
+// DiscardRepairCandidate removes only an unreachable staged generation and
+// expires the exact fenced claim that produced it.
+func (worker *IndexWorker) DiscardRepairCandidate(
+	ctx context.Context, candidate RepairCandidate,
+) error {
+	catalog, ok := worker.catalog.(targetedRepairCatalog)
+	if !ok {
+		return errors.New("vector index catalog does not support targeted repair")
+	}
+	return worker.mutate(ctx, func() error {
+		return catalog.DiscardVectorIndexGeneration(
+			ctx, candidate.Claim, candidate.Record.ID, worker.clock().UTC(),
+		)
+	})
 }
 
 type unavailableVectorSourceError struct{ coverage UnavailableVectorCoverage }
@@ -307,7 +471,9 @@ func (worker *IndexWorker) loadVectorSets(ctx context.Context, source store.Vect
 func validateStoredVectorIndex(record store.VectorIndexGenerationRecord, source store.VectorIndexSource,
 	smokeQuery []float32,
 ) error {
-	if indexGenerationID(source.ManifestChecksum, record.Bytes) != record.ID || record.VectorSpaceID != source.VectorSpaceID ||
+	standardID := indexGenerationID(source.ManifestChecksum, record.Bytes)
+	repairID := repairIndexGenerationID(source.ManifestChecksum, record.Bytes, record.BuiltAt)
+	if record.ID != standardID && record.ID != repairID || record.VectorSpaceID != source.VectorSpaceID ||
 		record.SourceManifestChecksum != source.ManifestChecksum {
 		return errors.New("vector index candidate identity does not match source authority")
 	}
@@ -493,6 +659,13 @@ func (worker *IndexWorker) refresh(ctx context.Context, space string) error {
 func indexGenerationID(sourceChecksum string, data []byte) string {
 	digest := sha256.New()
 	_, _ = digest.Write([]byte("docbank-vector-index-generation/v1\x00" + sourceChecksum))
+	_, _ = digest.Write(data)
+	return hex.EncodeToString(digest.Sum(nil))
+}
+
+func repairIndexGenerationID(sourceChecksum string, data []byte, builtAt string) string {
+	digest := sha256.New()
+	_, _ = digest.Write([]byte("docbank-vector-index-repair-generation/v1\x00" + sourceChecksum + "\x00" + builtAt))
 	_, _ = digest.Write(data)
 	return hex.EncodeToString(digest.Sum(nil))
 }
