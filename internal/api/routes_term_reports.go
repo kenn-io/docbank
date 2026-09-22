@@ -80,6 +80,9 @@ func registerTermReportRoutes(api huma.API, d Deps, gate *OperationGate, cache *
 				if err != nil {
 					return report.CoverageSelection{}, err
 				}
+				if selection.Coverage.Configuration == "profile_required" {
+					return report.CoverageSelection{}, store.ErrInvalidCoverageSelection
+				}
 				return report.CoverageSelection{Configuration: selection.Coverage.Configuration,
 					ProfileFingerprint: selection.Coverage.ProfileFingerprint}, nil
 			},
@@ -103,7 +106,9 @@ func registerTermReportRoutes(api huma.API, d Deps, gate *OperationGate, cache *
 		if err != nil {
 			return nil, termReportError(err)
 		}
-		if err := d.Store.SaveTermReportHistory(ctx, store.TermReportHistory{Request: request, Summary: summary}); err != nil {
+		if err := gate.MutateContext(ctx, func() error {
+			return d.Store.SaveTermReportHistory(ctx, store.TermReportHistory{Request: request, Summary: summary})
+		}); err != nil {
 			cache.Drop(owner, summary.ID)
 			return nil, FromStoreError(err)
 		}
@@ -185,7 +190,9 @@ func registerTermReportRoutes(api huma.API, d Deps, gate *OperationGate, cache *
 			return nil, termReportError(err)
 		}
 		request.DateChoices = nil
-		if err := d.Store.SaveTermReportHistory(ctx, store.TermReportHistory{Request: request, Summary: summary}); err != nil {
+		if err := gate.MutateContext(ctx, func() error {
+			return d.Store.SaveTermReportHistory(ctx, store.TermReportHistory{Request: request, Summary: summary})
+		}); err != nil {
 			cache.Drop(owner, summary.ID)
 			return nil, FromStoreError(err)
 		}

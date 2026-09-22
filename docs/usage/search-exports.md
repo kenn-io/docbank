@@ -85,7 +85,7 @@ and optional controls are:
 | --- | --- |
 | `version` | Must be `1`. |
 | `all_documents`, `collection_ids` | Set `all_documents: true` without collection IDs, or `false` with at least one existing collection ID. |
-| `profile` | Optional configured processing profile name. A sole configured profile is selected automatically. |
+| `profile` | Configured processing profile name. Required when several profiles exist; omission returns `invalid_profile`. A sole configured profile is selected automatically. |
 | `timezone` | Required IANA timezone, such as `UTC` or `America/New_York`. `Local` is rejected. Cutoffs are literal calendar dates in this zone. |
 | `source_timezone` | Optional source timezone for timestamps that omit one. |
 | `numeric_date_order` | Optional `MDY` or `DMY` interpretation of ambiguous numeric dates. Omit to leave ambiguity unresolved. |
@@ -173,6 +173,9 @@ date-candidate limit returns a resource-limit error naming the document; it
 does not silently truncate the evidence. Narrow the source scope when a vault
 exceeds a build limit. At most two builds run concurrently, with 64 cached or
 pending exports overall and eight per owner.
+
+Downloads of completed CSV and ZIP files are exempt from the server's
+60-second request timeout. Client cancellation still stops the transfer.
 
 See the [HTTP contract](../architecture/http-api.md#search-exports) for endpoints,
 authentication, paging, and errors.
