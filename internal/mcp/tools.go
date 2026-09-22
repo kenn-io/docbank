@@ -129,6 +129,12 @@ var exportBatesFileToolDefinition = toolDefinition{
 	schemas:     exportBatesFileSchemas, write: true, destructive: true,
 }
 
+var exportLoadFilePackageToolDefinition = toolDefinition{
+	name: "export_load_file_package", title: "Export load-file package",
+	description: "Write one exact verified load-file package to a local path.",
+	schemas:     exportLoadFilePackageSchemas, write: true, destructive: true,
+}
+
 var photoWriteToolDefinitions = []toolDefinition{
 	{name: "create_photo_asset", title: "Create photo asset", description: "Create an asset for one file node.", schemas: createPhotoAssetSchemas, write: true},
 	{name: "attach_photo_file", title: "Attach photo file", description: "Attach one file node to a photo asset at an expected revision.", schemas: attachPhotoFileSchemas, write: true},
@@ -146,7 +152,7 @@ func toolCatalog(allowProcessing, allowPackageWrites, allowPhotoEdits bool) []*s
 		definitions = append(definitions, preflightLoadFilePackageToolDefinition, packageImportToolDefinition,
 			resolvePackageCustodianToolDefinition, assignPackageCustodianToolDefinition,
 			ensureBatesNamespaceToolDefinition, reserveBatesRangeToolDefinition, publishBatesExportToolDefinition,
-			exportBatesFileToolDefinition)
+			exportBatesFileToolDefinition, exportLoadFilePackageToolDefinition)
 	}
 	if allowPhotoEdits {
 		definitions = append(definitions, photoWriteToolDefinitions...)
@@ -189,6 +195,8 @@ func registerToolCatalog(
 		case ensureBatesNamespaceToolDefinition.name, reserveBatesRangeToolDefinition.name,
 			publishBatesExportToolDefinition.name, exportBatesFileToolDefinition.name:
 			handler = batesWriteToolHandler(lease, tool.Name, output, logger)
+		case exportLoadFilePackageToolDefinition.name:
+			handler = packageExportToolHandler(lease, output, logger)
 		default:
 			if photoWriteTool(tool.Name) {
 				handler = photoWriteToolHandler(lease, tool.Name, output, logger)

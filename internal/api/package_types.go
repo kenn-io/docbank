@@ -124,3 +124,25 @@ type PackageCustodianRequest struct {
 	PersonID        string  `json:"person_id,omitzero"`
 	IfMatchRevision int64   `json:"if_match_revision"`
 }
+
+type PackageExportRequest struct {
+	SnapshotID        string `json:"snapshot_id" format:"uuid"`
+	ProfileID         string `json:"profile_id" minLength:"1"`
+	SourcePackageID   string `json:"source_package_id,omitzero" format:"uuid"`
+	BatesAllocationID string `json:"bates_allocation_id,omitzero" format:"uuid"`
+}
+
+type PackageExportTicket struct {
+	URL               string `json:"url"`
+	Name              string `json:"name"`
+	SnapshotID        string `json:"snapshot_id"`
+	SourcePackageID   string `json:"source_package_id,omitzero"`
+	ProfileID         string `json:"profile_id"`
+	BatesAllocationID string `json:"bates_allocation_id,omitzero"`
+	ArchiveSHA256     string `json:"archive_sha256"`
+	ManifestSHA256    string `json:"manifest_sha256"`
+	CrosswalkSHA256   string `json:"crosswalk_sha256"`
+	Size              int64  `json:"size"`
+	Records           int    `json:"records"`
+	Pages             int    `json:"pages"`
+}
