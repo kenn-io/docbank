@@ -3,7 +3,7 @@ set -euo pipefail
 
 packages=$(go list -tags fts5 ./... | grep -vxF go.kenn.io/docbank/internal/store)
 
-# Storage dominates Linux CI. Split it without adding runners or changing tests.
+# Storage dominates CI. Split it without adding runners or changing tests.
 # ponytail: two name ranges balance the current suite; remeasure if it grows unevenly.
 go test -timeout 20m -tags fts5 "$@" -run '^(Test|Example|Fuzz)[A-L]' ./internal/store &
 first=$!
