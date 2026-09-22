@@ -85,9 +85,14 @@ func TestBackfillQuarantinesFailingTargetsWithoutBlockingOthers(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		catalog := newFakeBackfillCatalog("a", "b", "c")
 		catalog.failing["b"] = 1
+		var nowMu sync.Mutex
 		now := time.Date(2026, time.September, 2, 12, 0, 0, 0, time.UTC)
 		backfill := newTestBackfill(catalog, 10, true)
-		backfill.Now = func() time.Time { return now }
+		backfill.Now = func() time.Time {
+			nowMu.Lock()
+			defer nowMu.Unlock()
+			return now
+		}
 
 		ctx, cancel := context.WithTimeout(t.Context(), 2*time.Second)
 		defer cancel()
@@ -100,7 +105,9 @@ func TestBackfillQuarantinesFailingTargetsWithoutBlockingOthers(t *testing.T) {
 			defer catalog.mu.Unlock()
 			return catalog.done["a"] && catalog.done["c"] && catalog.attempts["b"] == 1
 		}(), "siblings progress while b is quarantined")
+		nowMu.Lock()
 		now = now.Add(backfillFirstRetryDelay)
+		nowMu.Unlock()
 		require.NoError(t, <-done, "the retry of b succeeds and the drain completes")
 		assert.True(t, catalog.done["b"])
 		assert.Equal(t, 2, catalog.attempts["b"])
