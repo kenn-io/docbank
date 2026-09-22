@@ -418,7 +418,7 @@ func retryMoveRequest(
 		if resp.StatusCode == http.StatusOK || !retryable[resp.StatusCode] {
 			return mutationRequestResult{status: resp.StatusCode, body: body}
 		}
-		time.Sleep(time.Millisecond) //nolint:kennlint // paces retries so they don't starve the competing request on SQLite's write lock
+		time.Sleep(time.Millisecond) //nolint:kennlint // retries must race the main request while it runs; pacing keeps them from starving it on SQLite's write lock
 	}
 	return mutationRequestResult{err: fmt.Errorf("timed out waiting to move node %d", nodeID)}
 }
