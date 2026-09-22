@@ -622,7 +622,7 @@ func assertProcessingSurvivesDisconnect(t *testing.T, ts *httptest.Server, selec
 			t.Fatal("provider did not start after durable job publication")
 		}
 		require.NoError(t, result.response.Body.Close())
-		time.Sleep(50 * time.Millisecond)
+		time.Sleep(50 * time.Millisecond) //nolint:kennlint // gives the server's real TCP connection time to observe the client disconnect
 		closeProcessingSignal(release)
 		require.Eventually(t, func() bool {
 			statusResponse, statusBody := get(t, ts, "/api/v1/processing/jobs/"+jobID, nil)
@@ -1337,7 +1337,7 @@ func processingTestHash(value string) string {
 type slowRenditionWriter struct {
 	*httptest.ResponseRecorder
 
-	slept bool
+	afterFirstWrite func()
 }
 
 func (w *slowRenditionWriter) Write(p []byte) (int, error) {
@@ -1345,9 +1345,9 @@ func (w *slowRenditionWriter) Write(p []byte) (int, error) {
 	if err != nil {
 		return n, fmt.Errorf("recording slow rendition: %w", err)
 	}
-	if !w.slept {
-		w.slept = true
-		time.Sleep(61 * time.Second)
+	if w.afterFirstWrite != nil {
+		w.afterFirstWrite()
+		w.afterFirstWrite = nil
 	}
 	return n, nil
 }
@@ -1366,7 +1366,8 @@ func TestRenditionDownloadOutlivesRequestTimeout(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/renditions/"+job.AttachmentID, nil)
 		req.Header.Set("X-Api-Key", testAPIKey)
-		writer := &slowRenditionWriter{ResponseRecorder: httptest.NewRecorder()}
+		writer := &slowRenditionWriter{ResponseRecorder: httptest.NewRecorder(),
+			afterFirstWrite: func() { time.Sleep(61 * time.Second) }}
 		catalog.Server.Handler().ServeHTTP(writer, req)
 		require.Equal(t, full, writer.Body.String())
 		require.NotEmpty(t, writer.Result().Trailer.Get("Content-Digest"))
@@ -1412,7 +1413,7 @@ func TestProcessingReportsConsentExpiredDuringRendition(t *testing.T) {
 	grant := api.ProcessingConsentGrantRequest{Selector: selector, PlanFingerprint: plan.Fingerprint}
 	expires := time.Now().UTC().Add(2 * time.Second)
 	grant.ExpiresAt = expires.Format(time.RFC3339Nano)
-	provider.afterRender = func() { time.Sleep(time.Until(expires) + time.Millisecond) }
+	provider.afterRender = func() { time.Sleep(time.Until(expires) + time.Millisecond) } //nolint:kennlint // consent expiry is checked against the store's real clock, which has no seam
 
 	_, err = c.API().GrantDocumentProcessingConsent(t.Context(), &apiclient.GrantDocumentProcessingConsentRequestOptions{Body: new(grant)})
 

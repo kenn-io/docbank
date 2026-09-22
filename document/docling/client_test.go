@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"mime"
 	"mime/multipart"
@@ -294,18 +295,20 @@ func TestClientRejectsChangedTaskIDWhilePolling(t *testing.T) {
 
 func TestClientStopsAtAuthorizationExpiryBeforeEgress(t *testing.T) {
 	fixture := newFixture(t, "pdf", "application/pdf", "expiry.pdf", []byte("synthetic PDF bytes"))
-	var requests atomic.Int64
-	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
-		requests.Add(1)
-		http.NotFound(response, request)
-	}))
-	t.Cleanup(server.Close)
-	client := newClient(t, server.URL, fixture.descriptor, nil, http.DefaultClient)
-	fixture.authorization.ExpiresAt = time.Now().UTC().Add(15 * time.Millisecond).Format(providerutil.TimestampForm)
-	upload := &testUpload{Reader: delayedReader{Reader: bytes.NewReader(fixture.source), delay: 30 * time.Millisecond}, metadata: fixture.metadata}
-	_, err := document.RenderRendition(t.Context(), client, upload, fixture.authorization)
-	require.ErrorContains(t, err, "authorization is not current")
-	assert.Zero(t, requests.Load())
+	now := time.Now()
+	synctest.Test(t, func(t *testing.T) {
+		time.Sleep(time.Until(now))
+		var requests atomic.Int64
+		client := newClient(t, "http://127.0.0.1", fixture.descriptor, nil, handlerClient(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+			requests.Add(1)
+			http.NotFound(response, request)
+		})))
+		fixture.authorization.ExpiresAt = time.Now().UTC().Add(15 * time.Millisecond).Format(providerutil.TimestampForm)
+		upload := slowUpload(fixture, 30*time.Millisecond)
+		_, err := document.RenderRendition(t.Context(), client, upload, fixture.authorization)
+		require.ErrorContains(t, err, "authorization is not current")
+		assert.Zero(t, requests.Load())
+	})
 }
 
 func TestClientTotalTimeoutInterruptsBlockedUpload(t *testing.T) {
@@ -391,27 +394,29 @@ func TestReadExactStopsOnCancellationAndNoProgress(t *testing.T) {
 
 func TestClientStopsAtAuthorizationExpiryBeforeFollowupEgress(t *testing.T) {
 	fixture := newFixture(t, "pdf", "application/pdf", "expiry.pdf", []byte("synthetic PDF bytes"))
-	var submits, polls atomic.Int64
-	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
-		switch request.URL.Path {
-		case convertPath:
-			submits.Add(1)
-			time.Sleep(30 * time.Millisecond)
-			writeJSON(t, response, doclingTask("expiry", "pending"))
-		case pollPath + "expiry":
-			polls.Add(1)
-			writeJSON(t, response, doclingTask("expiry", "success"))
-		default:
-			http.NotFound(response, request)
-		}
-	}))
-	t.Cleanup(server.Close)
-	client := newClient(t, server.URL, fixture.descriptor, nil, http.DefaultClient)
-	fixture.authorization.ExpiresAt = time.Now().UTC().Add(15 * time.Millisecond).Format(providerutil.TimestampForm)
-	_, err := document.RenderRendition(t.Context(), client, fixture.upload(), fixture.authorization)
-	require.ErrorContains(t, err, "authorization is not current")
-	assert.Equal(t, int64(1), submits.Load())
-	assert.Zero(t, polls.Load())
+	now := time.Now()
+	synctest.Test(t, func(t *testing.T) {
+		time.Sleep(time.Until(now))
+		var submits, polls atomic.Int64
+		client := newClient(t, "http://127.0.0.1", fixture.descriptor, nil, handlerClient(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+			switch request.URL.Path {
+			case convertPath:
+				submits.Add(1)
+				time.Sleep(30 * time.Millisecond)
+				writeJSON(t, response, doclingTask("expiry", "pending"))
+			case pollPath + "expiry":
+				polls.Add(1)
+				writeJSON(t, response, doclingTask("expiry", "success"))
+			default:
+				http.NotFound(response, request)
+			}
+		})))
+		fixture.authorization.ExpiresAt = time.Now().UTC().Add(15 * time.Millisecond).Format(providerutil.TimestampForm)
+		_, err := document.RenderRendition(t.Context(), client, fixture.upload(), fixture.authorization)
+		require.ErrorContains(t, err, "authorization is not current")
+		assert.Equal(t, int64(1), submits.Load())
+		assert.Zero(t, polls.Load())
+	})
 }
 
 func TestClientClassifiesHTTPStatusByOperationBeforeContentType(t *testing.T) {
@@ -532,21 +537,23 @@ func TestClientTreatsInFlightSubmissionDeadlinesAsAmbiguous(t *testing.T) {
 func TestClientClassifiesTotalTimeoutBySubmissionState(t *testing.T) {
 	t.Run("before submission", func(t *testing.T) {
 		fixture := newFixture(t, "pdf", "application/pdf", "timeout.pdf", []byte("synthetic PDF bytes"))
-		var requests atomic.Int64
-		server := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
-			requests.Add(1)
-		}))
-		t.Cleanup(server.Close)
-		client := newClient(t, server.URL, fixture.descriptor, nil, http.DefaultClient)
-		client.totalTimeout = 25 * time.Millisecond
-		upload := &testUpload{Reader: delayedReader{Reader: bytes.NewReader(fixture.source), delay: 50 * time.Millisecond}, metadata: fixture.metadata}
+		now := time.Now()
+		synctest.Test(t, func(t *testing.T) {
+			time.Sleep(time.Until(now))
+			var requests atomic.Int64
+			client := newClient(t, "http://127.0.0.1", fixture.descriptor, nil, handlerClient(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+				requests.Add(1)
+			})))
+			client.totalTimeout = 25 * time.Millisecond
+			upload := slowUpload(fixture, 50*time.Millisecond)
 
-		_, err := client.Render(t.Context(), upload, fixture.authorization)
-		require.Error(t, err)
-		providerErr, ok := errors.AsType[*document.RenditionProviderError](err)
-		require.True(t, ok)
-		assert.Equal(t, document.RenditionErrorCapacity, providerErr.Code())
-		assert.Zero(t, requests.Load())
+			_, err := client.Render(t.Context(), upload, fixture.authorization)
+			require.Error(t, err)
+			providerErr, ok := errors.AsType[*document.RenditionProviderError](err)
+			require.True(t, ok)
+			assert.Equal(t, document.RenditionErrorCapacity, providerErr.Code())
+			assert.Zero(t, requests.Load())
+		})
 	})
 
 	t.Run("after submission", func(t *testing.T) {
@@ -752,15 +759,46 @@ func (function readerFunc) Read(buffer []byte) (int, error) {
 	return function(buffer)
 }
 
-type delayedReader struct {
-	io.Reader
-
-	delay time.Duration
+// slowUpload delays each read until delay passes or the client interrupts the
+// upload by closing it. The upload holds its lock across a read, so a read
+// that ignored the interrupt would keep a synctest bubble from ever idling.
+func slowUpload(fixture fixture, delay time.Duration) *testUpload {
+	source := bytes.NewReader(fixture.source)
+	interrupted := make(chan struct{})
+	var interruptOnce sync.Once
+	return &testUpload{
+		Reader: readerFunc(func(buffer []byte) (int, error) {
+			select {
+			case <-time.After(delay):
+				return source.Read(buffer)
+			case <-interrupted:
+				return 0, errors.New("synthetic interrupted read")
+			}
+		}),
+		metadata: fixture.metadata,
+		close: func() error {
+			interruptOnce.Do(func() { close(interrupted) })
+			return nil
+		},
+	}
 }
 
-func (reader delayedReader) Read(buffer []byte) (int, error) {
-	time.Sleep(reader.delay)
-	return reader.Reader.Read(buffer)
+// handlerClient serves requests in memory, so a test can run in a synctest
+// bubble that a real listener would never let go idle.
+func handlerClient(handler http.Handler) *http.Client {
+	return &http.Client{Transport: roundTripperFunc(func(request *http.Request) (*http.Response, error) {
+		if request.Body != nil {
+			if _, err := io.Copy(io.Discard, request.Body); err != nil {
+				return nil, fmt.Errorf("draining synthetic request: %w", err)
+			}
+			if err := request.Body.Close(); err != nil {
+				return nil, fmt.Errorf("closing synthetic request: %w", err)
+			}
+		}
+		recorder := httptest.NewRecorder()
+		handler.ServeHTTP(recorder, request)
+		return recorder.Result(), nil
+	})}
 }
 
 func TestClientHandlesPartialSuccessAndSanitizesTerminalFailures(t *testing.T) {

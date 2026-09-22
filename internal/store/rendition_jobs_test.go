@@ -7,6 +7,7 @@ import (
 	"encoding/json/v2"
 	"strconv"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/stretchr/testify/assert"
@@ -1148,34 +1149,36 @@ func TestReopenableStagedFailureRetainsBuildAcrossDerivativeSweep(t *testing.T) 
 }
 
 func TestRenditionJobStagedBuildRootSurvivesLeaseExpiryUntilTerminalState(t *testing.T) {
-	s, versions := newRenditionCatalogFixture(t)
-	profile := catalogProcessingProfile(t, false)
-	request := renditionJobTestRequest(versions[0], profile)
-	grantRenditionJobConsent(t, s, request)
-	job, waiter, err := s.EnqueueRenditionJob(t.Context(), request)
-	require.NoError(t, err)
-	started := time.Now().UTC()
-	claim, err := s.ClaimRenditionJob(
-		t.Context(), job.ID, "worker:crash-before-reclaim", started, time.Second)
-	require.NoError(t, err)
-	_, err = s.BeginRenditionProvider(t.Context(), claim, waiter.ID,
-		started.Add(100*time.Millisecond), renditionJobTestSnapshot(request))
-	require.NoError(t, err)
-	build := catalogRenditionBuild(s, profile)
-	build.ID = job.ID
-	require.NoError(t, s.StageRenditionJobBuild(
-		t.Context(), claim, build, started.Add(200*time.Millisecond)))
-	time.Sleep(1100 * time.Millisecond)
+	synctest.Test(t, func(t *testing.T) {
+		s, versions := newRenditionCatalogFixture(t)
+		profile := catalogProcessingProfile(t, false)
+		request := renditionJobTestRequest(versions[0], profile)
+		grantRenditionJobConsent(t, s, request)
+		job, waiter, err := s.EnqueueRenditionJob(t.Context(), request)
+		require.NoError(t, err)
+		started := time.Now().UTC()
+		claim, err := s.ClaimRenditionJob(
+			t.Context(), job.ID, "worker:crash-before-reclaim", started, time.Second)
+		require.NoError(t, err)
+		_, err = s.BeginRenditionProvider(t.Context(), claim, waiter.ID,
+			started.Add(100*time.Millisecond), renditionJobTestSnapshot(request))
+		require.NoError(t, err)
+		build := catalogRenditionBuild(s, profile)
+		build.ID = job.ID
+		require.NoError(t, s.StageRenditionJobBuild(
+			t.Context(), claim, build, started.Add(200*time.Millisecond)))
+		time.Sleep(1100 * time.Millisecond)
 
-	plan, err := s.DerivativeGCPlan(t.Context())
-	require.NoError(t, err)
-	assert.Empty(t, plan.Builds, "durable staged work must survive an expired worker lease")
-	require.NoError(t, s.MarkRenditionJobFailed(
-		t.Context(), claim, RenditionFailureTerminal, started.Add(300*time.Millisecond)))
-	plan, err = s.DerivativeGCPlan(t.Context())
-	require.NoError(t, err)
-	require.Len(t, plan.Builds, 1)
-	assert.Equal(t, job.ID, plan.Builds[0].BuildID)
+		plan, err := s.DerivativeGCPlan(t.Context())
+		require.NoError(t, err)
+		assert.Empty(t, plan.Builds, "durable staged work must survive an expired worker lease")
+		require.NoError(t, s.MarkRenditionJobFailed(
+			t.Context(), claim, RenditionFailureTerminal, started.Add(300*time.Millisecond)))
+		plan, err = s.DerivativeGCPlan(t.Context())
+		require.NoError(t, err)
+		require.Len(t, plan.Builds, 1)
+		assert.Equal(t, job.ID, plan.Builds[0].BuildID)
+	})
 }
 
 func TestRenditionJobStagingIsIdempotentWithinOneClaim(t *testing.T) {

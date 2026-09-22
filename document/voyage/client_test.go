@@ -606,7 +606,11 @@ func TestRetryAfterHeaderDrivesDelayAndIsExposed(t *testing.T) {
 func TestTimeoutAndCancellation(t *testing.T) {
 	policy := testPolicy(t)
 	release := make(chan struct{})
+	var arrived atomic.Pointer[chan struct{}]
 	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if signal := arrived.Swap(nil); signal != nil {
+			close(*signal)
+		}
 		select {
 		case <-release:
 		case <-r.Context().Done():
@@ -626,9 +630,15 @@ func TestTimeoutAndCancellation(t *testing.T) {
 	t.Run("caller cancellation is reported unchanged", func(t *testing.T) {
 		client := newServerClient(t, server, policy, voyage.ClientConfig{Timeout: time.Minute, MaxRetries: 3})
 		ctx, cancel := context.WithCancel(t.Context())
+		inFlight := make(chan struct{})
+		arrived.Store(&inFlight)
+		defer cancel()
 		go func() {
-			time.Sleep(30 * time.Millisecond)
-			cancel()
+			select {
+			case <-inFlight:
+				cancel()
+			case <-ctx.Done():
+			}
 		}()
 		_, err := client.EmbedDocuments(ctx, []voyage.Input{{Parts: []voyage.Part{{Media: png}}}}, fullAuthorizations(t, policy))
 		require.ErrorIs(t, err, context.Canceled)
