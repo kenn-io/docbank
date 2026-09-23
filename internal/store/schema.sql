@@ -145,6 +145,23 @@ CREATE INDEX IF NOT EXISTS nodes_live_modified ON nodes(modified_at DESC, name, 
     WHERE trashed_at IS NULL;
 CREATE INDEX IF NOT EXISTS nodes_trashed ON nodes(trashed_at) WHERE trashed_at IS NOT NULL;
 
+-- Stable public document identity is separate from a mutable path and node
+-- revision. Federation aliases are explicit adopted authority, never inferred.
+CREATE TABLE IF NOT EXISTS document_identities (
+    document_uid TEXT PRIMARY KEY,
+    node_id      INTEGER NOT NULL UNIQUE REFERENCES nodes(id) ON DELETE CASCADE,
+    created_at   TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS document_identity_aliases (
+    domain_uid          TEXT NOT NULL,
+    source_vault_uid    TEXT NOT NULL,
+    source_document_uid TEXT NOT NULL,
+    local_document_uid  TEXT NOT NULL REFERENCES document_identities(document_uid),
+    mapped_at           TEXT NOT NULL,
+    PRIMARY KEY (domain_uid, source_vault_uid, source_document_uid)
+);
+
 CREATE TABLE IF NOT EXISTS blobs (
     hash       TEXT PRIMARY KEY,
     size       INTEGER NOT NULL CHECK (size >= 0),
@@ -1056,6 +1073,31 @@ CREATE TABLE IF NOT EXISTS rendition_attachments (
     UNIQUE (content_version_id, profile_fingerprint, attachment_id),
     UNIQUE (content_version_id, profile_fingerprint, build_id)
 );
+
+-- Adoption binds one origin rendition tuple to retained authority in this
+-- vault. A document alias alone never licenses a different rendition tuple.
+CREATE TABLE IF NOT EXISTS adopted_passage_authorities (
+    domain_uid                TEXT NOT NULL,
+    source_vault_uid          TEXT NOT NULL,
+    source_document_uid       TEXT NOT NULL,
+    source_content_version_id TEXT NOT NULL,
+    source_build_id           TEXT NOT NULL,
+    source_attachment_id      TEXT NOT NULL,
+    local_document_uid        TEXT NOT NULL REFERENCES document_identities(document_uid) ON DELETE CASCADE,
+    local_content_version_id TEXT NOT NULL REFERENCES content_versions(version_id) ON DELETE CASCADE,
+    local_build_id            TEXT NOT NULL REFERENCES rendition_builds(build_id) ON DELETE CASCADE,
+    local_attachment_id       TEXT NOT NULL REFERENCES rendition_attachments(attachment_id) ON DELETE CASCADE,
+    mapped_at                 TEXT NOT NULL,
+    PRIMARY KEY (domain_uid, source_vault_uid, source_document_uid,
+                 source_content_version_id, source_build_id, source_attachment_id),
+    FOREIGN KEY (domain_uid, source_vault_uid, source_document_uid)
+        REFERENCES document_identity_aliases(domain_uid, source_vault_uid, source_document_uid)
+        ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS adopted_passage_authorities_origin
+    ON adopted_passage_authorities(source_vault_uid, source_document_uid,
+                                   source_content_version_id, source_build_id, source_attachment_id);
 
 -- A head can resolve only through the exact attachment at its version/profile
 -- key. Updating this small pointer is the sole rendition activation mutation.

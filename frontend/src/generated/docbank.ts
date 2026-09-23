@@ -2391,6 +2391,14 @@ export interface Entry {
   size: number;
 }
 
+export interface EvidenceLocatorV1 {
+  end: number;
+  index_origin: string;
+  kind: string;
+  name?: string;
+  start: number;
+}
+
 export interface Receipt {
   entries: number;
   format: string;
@@ -3345,6 +3353,61 @@ export interface PageSelectionRequest {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
   selection: PageBinding;
+}
+
+export interface PassageRefV1 {
+  attachment_id: string;
+  body_sha256: string;
+  byte_end: number;
+  byte_start: number;
+  content_version_id: string;
+  document_uid: string;
+  federation_domain_uid?: string;
+  quote_sha256: string;
+  rendition_build_id: string;
+  source_sha256: string;
+  vault_uid: string;
+  version: number;
+}
+
+export type PassageResolutionAvailability = typeof PassageResolutionAvailability[keyof typeof PassageResolutionAvailability];
+
+
+export const PassageResolutionAvailability = {
+  available: 'available',
+} as const;
+
+export type PassageResolutionFreshness = typeof PassageResolutionFreshness[keyof typeof PassageResolutionFreshness];
+
+
+export const PassageResolutionFreshness = {
+  current: 'current',
+  historical: 'historical',
+} as const;
+
+export interface PassageResolution {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  availability: PassageResolutionAvailability;
+  freshness: PassageResolutionFreshness;
+  /** @pattern ^[0-9a-f]{64}$ */
+  passage_id: string;
+  ref: PassageRefV1;
+  section_path: string[];
+  source_locator?: EvidenceLocatorV1;
+  source_path: string;
+  text: string;
+}
+
+export interface PassageResolveRequest {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  /**
+     * @minimum 1
+     * @maximum 262144
+     */
+  max_bytes?: number;
+  ref: PassageRefV1;
 }
 
 export type PeopleBuildState = typeof PeopleBuildState[keyof typeof PeopleBuildState];
@@ -10060,6 +10123,44 @@ return sessionJSON<PageRenderJob>(getCancelPageRenderJobUrl(id),
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
     body: JSON.stringify(pageSelectionRequest)
+  }
+);}
+
+
+
+export const getResolvePassageUrl = () => {
+
+
+
+
+  return `/api/v1/passages/resolve`
+}
+
+/**
+ * @summary Resolve one exact retained Markdown passage
+ */
+export const resolvePassage = async (passageResolveRequest: NonReadonly<PassageResolveRequest>, options?: Parameters<typeof sessionJSON>[1]): Promise<PassageResolution> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return sessionJSON<PassageResolution>(getResolvePassageUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(passageResolveRequest)
   }
 );}
 
