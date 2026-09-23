@@ -165,7 +165,16 @@ Key assumptions reviewers MUST account for:
 17. BACKUPS ARE OWNER INPUT: JSONL backups and restore sources are
    authored by the vault owner. Restore validates structure and
    referential integrity so a corrupted file fails loudly. It does not
-   defend against the owner editing their own backup.
+   defend against the owner editing their own backup. Receipts record
+   past decisions; restore checks that they reference existing records,
+   not that they replay into current state.
+
+18. THE DAEMON IS THE POLICY AUTHORITY: the CLI, MCP, and daemonconn talk
+   to the owner's own daemon over its keyed loopback API. The store makes
+   graph, role, and revision decisions inside its transaction. Clients
+   check that a response is addressable and matches its ETag, and treat a
+   malformed success as an unknown outcome; they do not re-derive the
+   store's decisions from the response.
 
 Do NOT flag issues that only apply to public-facing, multi-tenant, or
 internet-exposed services. Focus on bugs, logic errors, data corruption
