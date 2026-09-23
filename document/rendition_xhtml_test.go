@@ -3,6 +3,7 @@ package document
 import (
 	"context"
 	"io"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -119,6 +120,31 @@ func TestRenditionXHTMLContextCancellationAfterRead(t *testing.T) {
 	_, err := io.ReadAll(reader)
 	require.ErrorIs(t, err, context.Canceled)
 	require.True(t, started)
+	require.GreaterOrEqual(t, ctx.calls, ctx.cancelAt)
+}
+
+func TestRenditionXHTMLContextCancellationAfterDecodeRead(t *testing.T) {
+	ctx := &cancelOnXHTMLReadContext{cancelAt: 3}
+	text, err := RenditionMarkdownFromXHTMLContext(ctx, []byte(`<html xmlns="http://www.w3.org/1999/xhtml"><body>text</body></html>`), 100)
+	require.ErrorIs(t, err, context.Canceled)
+	require.Empty(t, text)
+	require.Equal(t, ctx.cancelAt, ctx.calls)
+}
+
+func TestRenditionXHTMLContextCancellationWhileConvertingAttributes(t *testing.T) {
+	var source strings.Builder
+	source.WriteString(`<html xmlns="http://www.w3.org/1999/xhtml"><body`)
+	for index := 0; index < 4096; index++ {
+		source.WriteString(` a`)
+		source.WriteString(strconv.Itoa(index))
+		source.WriteString(`="x"`)
+	}
+	source.WriteString(`>text</body></html>`)
+
+	ctx := &cancelAfterXHTMLReadContext{cancelAt: 6}
+	text, err := RenditionMarkdownFromXHTMLContext(ctx, []byte(source.String()), 100)
+	require.ErrorIs(t, err, context.Canceled)
+	require.Empty(t, text)
 	require.GreaterOrEqual(t, ctx.calls, ctx.cancelAt)
 }
 

@@ -62,6 +62,9 @@ func RenditionMarkdownFromXHTMLContext(ctx context.Context, source []byte, maxRu
 			break
 		}
 		if err != nil {
+			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+				return "", err
+			}
 			if ctxErr := ctx.Err(); ctxErr != nil {
 				return "", ctxErr
 			}
@@ -88,6 +91,9 @@ func RenditionMarkdownFromXHTMLContext(ctx context.Context, source []byte, maxRu
 			}
 			converted := html.Token{Data: token.Name.Local}
 			for _, attr := range token.Attr {
+				if err := ctx.Err(); err != nil {
+					return "", err
+				}
 				if !writer.charge(int64(len(attr.Value)) + 1) {
 					return "", ErrRenditionXHTMLBudget
 				}

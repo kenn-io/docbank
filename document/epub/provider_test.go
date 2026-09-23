@@ -39,6 +39,23 @@ func (ctx *cancelAfterSpineContext) Err() error {
 	return nil
 }
 
+type cancelOnSpineContext struct {
+	calls    int
+	cancelAt int
+}
+
+func (ctx *cancelOnSpineContext) Deadline() (time.Time, bool) { return time.Time{}, false }
+func (ctx *cancelOnSpineContext) Done() <-chan struct{}       { return nil }
+func (ctx *cancelOnSpineContext) Value(any) any               { return nil }
+
+func (ctx *cancelOnSpineContext) Err() error {
+	ctx.calls++
+	if ctx.calls == ctx.cancelAt {
+		return context.Canceled
+	}
+	return nil
+}
+
 type testUpload struct {
 	reader   *bytes.Reader
 	metadata document.AuthorizedUploadMetadata
@@ -355,6 +372,13 @@ func TestAdmitSpineContextCancellation(t *testing.T) {
 	_, err = admitSpine(ctx, archive.File, records)
 	require.ErrorIs(t, err, context.Canceled)
 	require.GreaterOrEqual(t, ctx.calls, ctx.cancelAt)
+
+	ctx2 := &cancelOnSpineContext{
+		cancelAt: 2 + len(archive.File) + len(records[0].Metadata.Meta) + len(records[0].Manifest.Items),
+	}
+	_, err = admitSpine(ctx2, archive.File, records)
+	require.ErrorIs(t, err, context.Canceled)
+	require.Equal(t, ctx2.cancelAt, ctx2.calls)
 }
 
 func TestProviderSourceAuthorizationFailures(t *testing.T) {
