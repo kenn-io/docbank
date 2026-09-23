@@ -11,6 +11,7 @@ import (
 
 	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/document/docling"
+	"go.kenn.io/docbank/document/epub"
 	"go.kenn.io/docbank/document/plaintext"
 	"go.kenn.io/docbank/document/providerhttp"
 	"go.kenn.io/docbank/internal/config"
@@ -73,6 +74,8 @@ func configureRenditionProviders(cfg config.Config) (
 		switch configured.AdapterContract {
 		case plaintextRenditionAdapter:
 			provider, err = plaintext.New(plaintext.Profile{MaxDocumentBytes: configured.MaxDocumentBytes})
+		case "epub.in-process/v1":
+			provider, err = epub.New(epub.Profile{MaxDocumentBytes: configured.MaxDocumentBytes, MaxUnits: int64(configured.MaxUnits)})
 		case config.DoclingASRAdapterContract:
 			provider, disclosures[name], err = configureDoclingASR(cfg, name, secrets, registered)
 		default:

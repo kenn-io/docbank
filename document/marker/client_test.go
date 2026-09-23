@@ -145,7 +145,6 @@ func TestDescriptorCoversMarkerConverterFamilies(t *testing.T) {
 		{MediaFamily: "word", MediaType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document", InputKind: document.RenditionInputOriginalFile},
 		{MediaFamily: "spreadsheet", MediaType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", InputKind: document.RenditionInputOriginalFile},
 		{MediaFamily: "presentation", MediaType: "application/vnd.openxmlformats-officedocument.presentationml.presentation", InputKind: document.RenditionInputOriginalFile},
-		{MediaFamily: "ebook", MediaType: "application/epub+zip", InputKind: document.RenditionInputOriginalFile},
 		{MediaFamily: "text", MediaType: "text/html", InputKind: document.RenditionInputOriginalFile},
 	}
 	assert.ElementsMatch(t, want, fixture.descriptor.SupportedFormats)
@@ -178,25 +177,101 @@ func TestClientRequiresPinnedProfileAndOptionalCredentialPair(t *testing.T) {
 	require.ErrorContains(t, err, "named binding")
 }
 
+func TestClientRejectsEPUBBeforeEgress(t *testing.T) {
+	for _, wrapped := range []bool{false, true} {
+		t.Run(fmt.Sprintf("wrapped=%t", wrapped), func(t *testing.T) {
+			fixture := newFixture(t, "ebook", "application/epub+zip", "book.epub", []byte("synthetic EPUB"))
+			var calls atomic.Int64
+			client := newClient(t, fixture.profile, testSecrets{"marker-front": "secret"}, roundTripFunc(func(*http.Request) (*http.Response, error) {
+				calls.Add(1)
+				return nil, errors.New("unexpected egress")
+			}))
+			render := client.Render
+			if wrapped {
+				render = func(ctx context.Context, upload document.AuthorizedUpload, authorization document.RenditionAuthorization) (document.RenditionResult, error) {
+					return document.RenderRendition(ctx, client, upload, authorization)
+				}
+			}
+			_, err := render(t.Context(), fixture.upload(), fixture.authorization)
+			require.Error(t, err)
+			if wrapped {
+				require.ErrorContains(t, err, "authorization requests an unsupported format")
+			} else {
+				assertProviderCode(t, err, document.RenditionErrorUnsupportedInput)
+			}
+			require.Zero(t, calls.Load())
+			for _, filename := range []string{"", "book.epub", "book.html"} {
+				metadata := fixture.metadata
+				metadata.Filename = filename
+				_, ok := uploadFilename(metadata)
+				require.False(t, ok)
+			}
+		})
+	}
+}
+
+func TestClientRejectsOldEPUBDescriptorAndPolicy(t *testing.T) {
+	fixture := newFixture(t, "text", "text/html", "page.html", []byte("synthetic"))
+	p := fixture.profile
+	formats := append(SupportedFormats(), document.RenditionFormatCapability{MediaFamily: "ebook", MediaType: "application/epub+zip", InputKind: document.RenditionInputOriginalFile})
+	// The old policy placed EPUB immediately before HTML.
+	formats[len(formats)-2], formats[len(formats)-1] = formats[len(formats)-1], formats[len(formats)-2]
+	identity := policyIdentity{AdapterContract: adapterContract, Origin: p.Origin, Route: uploadPath,
+		DeploymentFingerprint: p.DeploymentFingerprint, RuntimeFingerprint: p.RuntimeFingerprint,
+		CredentialBinding: p.SecretBinding, Mode: p.Mode, OutputFormat: "markdown", PaginateOutput: true,
+		RequestTimeoutNanos: int64(p.RequestTimeout), MaxDocumentBytes: p.MaxDocumentBytes,
+		MaxRequestBytes: p.MaxRequestBytes, MaxResponseBytes: p.MaxResponseBytes, MaxMetadataBytes: p.MaxMetadataBytes,
+		MaxImages: p.MaxImages, MaxImageBytes: p.MaxImageBytes, MaxUnits: p.MaxUnits, SupportedFormats: formats}
+	encoded, err := json.Marshal(identity, json.Deterministic(true))
+	require.NoError(t, err)
+	digest := sha256.Sum256(encoded)
+	oldPolicy := hex.EncodeToString(digest[:])
+	require.NotEqual(t, fixture.descriptor.PolicyFingerprint, oldPolicy)
+	for _, oldFormats := range []bool{true, false} {
+		descriptor := fixture.descriptor
+		descriptor.Fingerprint = ""
+		descriptor.PolicyFingerprint = oldPolicy
+		if oldFormats {
+			descriptor.SupportedFormats = formats
+		}
+		p.Descriptor, err = document.NewRenditionDescriptor(descriptor)
+		require.NoError(t, err)
+		_, err = New(p, testSecrets{"marker-front": "secret"}, staticTransport(http.StatusOK, `{}`))
+		if oldFormats {
+			require.ErrorContains(t, err, "exact supported format set")
+		} else {
+			require.ErrorContains(t, err, "policy fingerprint")
+		}
+	}
+}
+
 func TestClientDegradesTransformedFamiliesWithoutInventingUnits(t *testing.T) {
 	for _, input := range []struct{ family, mediaType, filename string }{
 		{"word", "application/vnd.openxmlformats-officedocument.wordprocessingml.document", "notes.docx"},
 		{"spreadsheet", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "book.xlsx"},
 		{"presentation", "application/vnd.openxmlformats-officedocument.presentationml.presentation", "deck.pptx"},
-		{"ebook", "application/epub+zip", "book.epub"},
 		{"text", "text/html", "page.html"},
 		{"text", "text/html", "page.htm"},
 	} {
 		t.Run(input.family, func(t *testing.T) {
 			fixture := newFixture(t, input.family, input.mediaType, input.filename, []byte("synthetic source"))
-			client := newClient(t, fixture.profile, testSecrets{"marker-front": "secret"}, staticTransport(http.StatusOK,
-				`{"format":"markdown","output":"{0}------------------------------------------------\n\nReadable","images":{},"metadata":{"table_of_contents":[],"page_stats":[{"page_id":0,"text_extraction_method":"pdftext","block_counts":[],"block_metadata":{}}]},"success":true}`))
+			var calls atomic.Int64
+			client := newClient(t, fixture.profile, testSecrets{"marker-front": "secret"}, roundTripFunc(func(request *http.Request) (*http.Response, error) {
+				calls.Add(1)
+				assertMultipart(t, request, fixture.metadata, fixture.source)
+				return jsonResponse(request, http.StatusOK,
+					`{"format":"markdown","output":"{0}------------------------------------------------\n\nReadable","images":{},"metadata":{"table_of_contents":[],"page_stats":[{"page_id":0,"text_extraction_method":"pdftext","block_counts":[],"block_metadata":{}}]},"success":true}`), nil
+			}))
 			result, err := document.RenderRendition(t.Context(), client, fixture.upload(), fixture.authorization)
 			require.NoError(t, err)
 			assert.Equal(t, document.EvidenceDegradedProvenance, result.Evidence.Completeness)
 			assert.Equal(t, document.EvidenceUnitGeneric, result.Evidence.UnitKind)
 			require.Len(t, result.Evidence.Units, 1)
 			assert.Equal(t, "Readable", result.Evidence.Units[0].Text)
+			direct, err := client.Render(t.Context(), fixture.upload(), fixture.authorization)
+			require.NoError(t, err)
+			require.Equal(t, result.Evidence, direct.Evidence)
+			require.Equal(t, int64(2), calls.Load())
 		})
 	}
 }
