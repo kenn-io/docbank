@@ -14,7 +14,6 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"go.kenn.io/docbank/sqlite/modernc"
-	"golang.org/x/sys/windows"
 )
 
 func TestResetVaultRejectsWindowsDirectoryReparsePoint(t *testing.T) {
@@ -110,7 +109,7 @@ func TestRenameVaultNoReplaceSupportsWindowsExtendedLengthPaths(t *testing.T) {
 	assert.Equal(t, []byte("kept"), mustReadResetFile(t, filepath.Join(destination, "sentinel")))
 }
 
-func TestRenameVaultNoReplacePassesExtendedPathsToMoveFileW(t *testing.T) {
+func TestRenameVaultNoReplacePassesExtendedPaths(t *testing.T) {
 	for name, paths := range map[string][4]string{
 		"dos": {
 			`C:\vault`,
@@ -130,9 +129,9 @@ func TestRenameVaultNoReplacePassesExtendedPathsToMoveFileW(t *testing.T) {
 			err := renameVaultNoReplaceWithMove(
 				paths[0],
 				paths[1],
-				func(source, destination *uint16) error {
-					movedSource = windows.UTF16PtrToString(source)
-					movedDestination = windows.UTF16PtrToString(destination)
+				func(source, destination string) error {
+					movedSource = source
+					movedDestination = destination
 					return nil
 				},
 			)

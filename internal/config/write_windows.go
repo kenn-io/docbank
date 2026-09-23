@@ -3,14 +3,18 @@
 package config
 
 import (
-	"fmt"
+	"os"
 
 	"go.kenn.io/docbank/internal/winsecurity"
+	"go.kenn.io/kit/safefileio"
 )
 
-func restrictWrittenConfig(path string) error {
-	if err := winsecurity.RestrictCurrentUserFile(path); err != nil {
-		return fmt.Errorf("securing restored config.toml: %w", err)
+// createPrivateConfig passes an extended-length path so a restore target
+// deeper than MAX_PATH still works.
+func createPrivateConfig(path string) (*os.File, error) {
+	extended, err := winsecurity.ExtendedLengthPath(path)
+	if err != nil {
+		return nil, err
 	}
-	return nil
+	return safefileio.CreatePrivateFile(extended) //nolint:wrapcheck // the caller adds context.
 }

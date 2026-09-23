@@ -46,6 +46,16 @@ func secureCreatedFile(file *os.File) error {
 	return nil
 }
 
+// createPrivateFile passes an extended-length path so a directory deeper
+// than MAX_PATH still works.
+func createPrivateFile(path string) (*os.File, error) {
+	extended, err := winsecurity.ExtendedLengthPath(path)
+	if err != nil {
+		return nil, err
+	}
+	return safefileio.CreatePrivateFile(extended) //nolint:wrapcheck // the caller adds context.
+}
+
 func openPrivateFile(name string) (*os.File, error) {
 	info, err := os.Lstat(name)
 	if err != nil {

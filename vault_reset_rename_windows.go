@@ -3,19 +3,19 @@
 package docbank
 
 import (
-	"os"
-
 	"go.kenn.io/docbank/internal/winsecurity"
-	"golang.org/x/sys/windows"
+	"go.kenn.io/kit/atomicfile"
 )
 
 func renameVaultNoReplace(source, destination string) error {
-	return renameVaultNoReplaceWithMove(source, destination, windows.MoveFile)
+	return renameVaultNoReplaceWithMove(source, destination, atomicfile.RenameNoReplace)
 }
 
+// renameVaultNoReplaceWithMove passes extended-length paths to move so a
+// vault nested deeper than MAX_PATH can still be moved aside.
 func renameVaultNoReplaceWithMove(
 	source, destination string,
-	move func(*uint16, *uint16) error,
+	move func(string, string) error,
 ) error {
 	extendedSource, err := winsecurity.ExtendedLengthPath(source)
 	if err != nil {
@@ -25,16 +25,5 @@ func renameVaultNoReplaceWithMove(
 	if err != nil {
 		return err
 	}
-	sourceName, err := windows.UTF16PtrFromString(extendedSource)
-	if err != nil {
-		return err
-	}
-	destinationName, err := windows.UTF16PtrFromString(extendedDestination)
-	if err != nil {
-		return err
-	}
-	if err := move(sourceName, destinationName); err != nil {
-		return &os.LinkError{Op: "MoveFileW", Old: source, New: destination, Err: err}
-	}
-	return nil
+	return move(extendedSource, extendedDestination)
 }

@@ -3,13 +3,11 @@
 package web
 
 import (
-	"fmt"
 	"os"
+
+	"go.kenn.io/kit/safefileio"
 )
 
-func restrictBootstrapFile(path string) error {
-	if err := os.Chmod(path, 0o600); err != nil {
-		return fmt.Errorf("securing web bootstrap: %w", err)
-	}
-	return nil
+func createBootstrapFile(path string) (*os.File, error) {
+	return safefileio.CreatePrivateFile(path) //nolint:wrapcheck // the caller adds context.
 }

@@ -46,7 +46,7 @@ func WriteBootstrap(root, authenticatedURL string) (string, error) {
 	if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return "", fmt.Errorf("removing previous web bootstrap: %w", err)
 	}
-	file, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+	file, err := createBootstrapFile(path)
 	if err != nil {
 		return "", fmt.Errorf("creating web bootstrap: %w", err)
 	}
@@ -57,9 +57,6 @@ func WriteBootstrap(root, authenticatedURL string) (string, error) {
 			_ = os.Remove(path)
 		}
 	}()
-	if err := restrictBootstrapFile(path); err != nil {
-		return "", err
-	}
 	encodedURL, err := json.Marshal(authenticatedURL, jsontext.EscapeForHTML(true))
 	if err != nil {
 		return "", fmt.Errorf("encoding web bootstrap destination: %w", err)

@@ -7,11 +7,13 @@ import (
 	"fmt"
 	"image/color"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 
 	"go.kenn.io/docbank/document/media"
 	"go.kenn.io/docbank/document/media/mediatest"
+	"go.kenn.io/kit/atomicfile"
 	"go.kenn.io/kit/safefileio"
 )
 
@@ -178,12 +180,10 @@ func WriteProbeFixtures(ctx context.Context, destination string, options Fixture
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	if _, err := os.Lstat(destination); err == nil {
-		return errors.New("voyage probe fixture destination already exists")
-	} else if !errors.Is(err, os.ErrNotExist) {
-		return fmt.Errorf("inspect Voyage probe fixture destination: %w", err)
-	}
-	if err := os.Rename(staging, destination); err != nil {
+	if err := atomicfile.RenameNoReplace(staging, destination); err != nil {
+		if errors.Is(err, fs.ErrExist) {
+			return errors.New("voyage probe fixture destination already exists")
+		}
 		return fmt.Errorf("publish Voyage probe fixtures: %w", err)
 	}
 	published = true
