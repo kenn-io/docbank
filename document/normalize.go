@@ -1836,12 +1836,12 @@ func collapseRenditionWhitespaceContext(ctx context.Context, value string, charg
 	pendingSpace, wrote := false, false
 	runes := 0
 	for _, character := range value {
+		runes++
 		if runes&1023 == 0 {
 			if err := ctx.Err(); err != nil {
 				return "", err
 			}
 		}
-		runes++
 		if unicode.IsSpace(character) {
 			if wrote {
 				pendingSpace = true
@@ -1855,9 +1855,6 @@ func collapseRenditionWhitespaceContext(ctx context.Context, value string, charg
 		pendingSpace = false
 		wrote = true
 	}
-	if err := ctx.Err(); err != nil {
-		return "", err
-	}
 	if !charge(size) {
 		return "", ErrRenditionXHTMLBudget
 	}
@@ -1866,12 +1863,12 @@ func collapseRenditionWhitespaceContext(ctx context.Context, value string, charg
 	pendingSpace, wrote = false, false
 	runes = 0
 	for _, character := range value {
+		runes++
 		if runes&1023 == 0 {
 			if err := ctx.Err(); err != nil {
 				return "", err
 			}
 		}
-		runes++
 		if unicode.IsSpace(character) {
 			if wrote {
 				pendingSpace = true

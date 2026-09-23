@@ -34,6 +34,26 @@ type cancelOnXHTMLReadContext struct {
 	cancelAt int
 }
 
+type delayedCancellationContext struct {
+	base   context.Context
+	checks int
+}
+
+func (ctx *delayedCancellationContext) Deadline() (time.Time, bool) { return ctx.base.Deadline() }
+func (ctx *delayedCancellationContext) Done() <-chan struct{}       { return ctx.base.Done() }
+func (ctx *delayedCancellationContext) Value(key any) any           { return ctx.base.Value(key) }
+
+func (ctx *delayedCancellationContext) Err() error {
+	if ctx.base.Err() == nil {
+		return nil
+	}
+	ctx.checks++
+	if ctx.checks >= 2 {
+		return context.Canceled
+	}
+	return nil
+}
+
 func (ctx *cancelOnXHTMLReadContext) Deadline() (time.Time, bool) { return time.Time{}, false }
 func (ctx *cancelOnXHTMLReadContext) Done() <-chan struct{}       { return nil }
 func (ctx *cancelOnXHTMLReadContext) Value(any) any               { return nil }
@@ -162,12 +182,13 @@ func TestRenditionXHTMLTablePreformattedAllocationBudget(t *testing.T) {
 
 func TestCollapseRenditionWhitespaceContextCancellation(t *testing.T) {
 	value := "x" + strings.Repeat("é", 1<<16)
-	ctx := &cancelAfterXHTMLReadContext{cancelAt: 2}
+	ctx := &cancelOnXHTMLReadContext{cancelAt: 3}
 	_, err := collapseRenditionWhitespaceContext(ctx, value, func(int64) bool { return true })
 	require.ErrorIs(t, err, context.Canceled)
 
-	ctx2, cancel := context.WithCancel(t.Context())
+	base, cancel := context.WithCancel(t.Context())
 	defer cancel()
+	ctx2 := &delayedCancellationContext{base: base}
 	_, err = collapseRenditionWhitespaceContext(ctx2, value, func(int64) bool {
 		cancel()
 		return true
