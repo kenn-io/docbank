@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"io"
 	"path"
+	"slices"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -98,11 +99,12 @@ func (s *Store) BeginMetadataSnapshot(ctx context.Context) (*MetadataSnapshot, e
 }
 
 type metadataHeader struct {
-	Type         string `json:"type"`
-	Format       string `json:"format"`
-	Version      int    `json:"version"`
-	VaultID      string `json:"vault_id"`
-	NodeSequence int64  `json:"node_sequence"`
+	Type                string `json:"type"`
+	Format              string `json:"format"`
+	Version             int    `json:"version"`
+	VaultID             string `json:"vault_id"`
+	NodeSequence        int64  `json:"node_sequence"`
+	ProductionLifecycle bool   `json:"production_lifecycle,omitzero"`
 }
 
 type metadataBlob struct {
@@ -377,6 +379,7 @@ func exportMetadataSnapshotWithVaultIdentity(
 	if err := write(metadataHeader{
 		Type: "meta", Format: "docbank-metadata", Version: metadataFormatVersion,
 		VaultID: vaultID, NodeSequence: nodeSequence,
+		ProductionLifecycle: layout.schemaVersion >= productionLifecycleStorageSchemaVersion,
 	}); err != nil {
 		return err
 	}
@@ -512,7 +515,17 @@ func exportMetadataSnapshotWithVaultIdentity(
 			return err
 		}
 	}
-	return exportDerivativePurgeSuppressions(ctx, tx, write)
+	if err := exportDerivativePurgeSuppressions(ctx, tx, write); err != nil {
+		return err
+	}
+	if layout.schemaVersion >= productionLifecycleStorageSchemaVersion {
+		manifest, err := exportProductionLifecycleMetadata(ctx, tx, write)
+		if err != nil {
+			return err
+		}
+		return write(manifest)
+	}
+	return nil
 }
 
 type metadataWrite func(any) error
@@ -1247,7 +1260,16 @@ func (s *Store) importMetadataLines(
 	if err != nil {
 		return metadataHeader{}, fmt.Errorf("decoding metadata header: %w", err)
 	}
-	if err := requireMetadataFields(rawHeader, metadataHeaderFields, nil); err != nil {
+	headerFields, err := decodeMetadataFields(rawHeader)
+	if err != nil {
+		return metadataHeader{}, fmt.Errorf("decoding metadata header: %w", err)
+	}
+	requiredHeaderFields := metadataHeaderFields
+	_, hasLifecycleField := headerFields["production_lifecycle"]
+	if hasLifecycleField {
+		requiredHeaderFields = append(slices.Clone(metadataHeaderFields), "production_lifecycle")
+	}
+	if err := requireMetadataFields(rawHeader, requiredHeaderFields, nil); err != nil {
 		return metadataHeader{}, fmt.Errorf("decoding metadata header: %w", err)
 	}
 	var header metadataHeader
@@ -1262,9 +1284,24 @@ func (s *Store) importMetadataLines(
 	if err := validateUUIDv4(header.VaultID); err != nil {
 		return metadataHeader{}, fmt.Errorf("invalid metadata vault_id: %w", err)
 	}
+	if hasLifecycleField && !header.ProductionLifecycle {
+		return metadataHeader{}, errors.New("invalid production lifecycle header marker")
+	}
+	var lifecycleManifest *metadataProductionLifecycleManifest
+	var lifecycleRows bool
+	lastLifecycleTable := -1
 	for record := 2; ; record++ {
 		raw, err := dec.ReadValue()
 		if errors.Is(err, io.EOF) {
+			if (header.ProductionLifecycle || lifecycleRows) && lifecycleManifest == nil {
+				return metadataHeader{}, errors.New("production lifecycle manifest is missing")
+			}
+			if lifecycleManifest != nil {
+				actual, err := exportProductionLifecycleMetadata(ctx, tx, func(any) error { return nil })
+				if err != nil || !slices.Equal(actual.Counts, lifecycleManifest.Counts) || actual.Checksum != lifecycleManifest.Checksum {
+					return metadataHeader{}, errors.New("production lifecycle manifest does not match imported authority")
+				}
+			}
 			return header, nil
 		}
 		if err != nil {
@@ -1275,6 +1312,30 @@ func (s *Store) importMetadataLines(
 		}
 		if err := json.Unmarshal(raw, &kind); err != nil {
 			return metadataHeader{}, fmt.Errorf("decoding metadata record %d type: %w", record, err)
+		}
+		if lifecycleManifest != nil &&
+			(kind.Type == metadataProductionLifecycleType || kind.Type == metadataProductionLifecycleManifestType) {
+			return metadataHeader{}, errors.New("metadata follows production lifecycle manifest")
+		}
+		if kind.Type == metadataProductionLifecycleManifestType {
+			manifest, err := decodeProductionLifecycleManifest(raw)
+			if err != nil {
+				return metadataHeader{}, err
+			}
+			lifecycleManifest = &manifest
+			continue
+		}
+		if kind.Type == metadataProductionLifecycleType {
+			lifecycleRows = true
+			var lifecycleRecord metadataProductionLifecycle
+			if err := decodeMetadataRecord(raw, &lifecycleRecord); err != nil {
+				return metadataHeader{}, err
+			}
+			index := slices.Index(productionLifecycleTables[:], lifecycleRecord.Kind)
+			if index < lastLifecycleTable {
+				return metadataHeader{}, errors.New("production lifecycle records are out of dependency order")
+			}
+			lastLifecycleTable = index
 		}
 		if err := s.importMetadataRecord(ctx, tx, kind.Type, raw); err != nil {
 			return metadataHeader{}, fmt.Errorf("importing metadata record %d (%s): %w", record, kind.Type, err)
@@ -1300,6 +1361,9 @@ func (s *Store) importMetadataRecord(
 	}
 	if kind == metadataProductionAuthorityType {
 		return importProductionMetadata(ctx, tx, raw)
+	}
+	if kind == metadataProductionLifecycleType {
+		return importProductionLifecycleMetadata(ctx, tx, raw)
 	}
 	if isProcessingMetadataType(kind) {
 		return s.importProcessingMetadataRecord(ctx, tx, kind, raw)
@@ -1667,6 +1731,7 @@ var metadataRequiredFields = map[string][]string{
 	metadataPackageImportHeadType:                {metadataTypeField, metadataCanonicalJSONField, metadataPageChecksumField},
 	metadataPackageImportJobType:                 {metadataTypeField, metadataCanonicalJSONField, metadataPageChecksumField},
 	metadataProductionAuthorityType:              {metadataTypeField, "kind", "key", "canonical_json", metadataPageChecksumField},
+	metadataProductionLifecycleType:              {metadataTypeField, "kind", "values", metadataPageChecksumField},
 	metadataPersonType:                           personMetadataRequiredFields[metadataPersonType],
 	metadataPersonIdentityType:                   personMetadataRequiredFields[metadataPersonIdentityType],
 	metadataPersonExternalType:                   personMetadataRequiredFields[metadataPersonExternalType],
@@ -2145,6 +2210,11 @@ func validateMetadataStateWithVaultIdentity(
 		if layout.schemaVersion >= 23 {
 			if err := validateProductionMetadataState(ctx, tx); err != nil {
 				return err
+			}
+			if layout.schemaVersion >= productionLifecycleStorageSchemaVersion {
+				if err := validateProductionLifecycleState(ctx, tx); err != nil {
+					return err
+				}
 			}
 		}
 	}

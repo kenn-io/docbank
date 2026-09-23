@@ -184,6 +184,8 @@ func productionDuplicateGateFixture(t *testing.T) (*Store, redaction.Member, red
 	require.NoError(t, err)
 	require.NoError(t, s.PinProductionRevisionEvidence(t.Context(), set.ID, draft.Revision,
 		map[string]string{source.SourceVersionID: emailOperationID}))
+	require.NoError(t, s.SelectProductionRevisionGateAuthority(t.Context(), set.ID, draft.Revision,
+		ProductionRevisionGateSelection{}))
 	stored := loadProductionInputsForTest(t, s, set.ID, draft.Revision)
 	revisionSHA, err := production.ProductionRevisionSHA256(stored)
 	require.NoError(t, err)

@@ -342,17 +342,23 @@ func validateSnapshotMembersTx(ctx context.Context, tx metadataQuerier, request 
 			return err
 		}
 		if member.SourcePageCount > 0 {
-			pageDocument, pageErr := loadPageDocument(ctx, tx, member.ContentVersionID)
-			if errors.Is(pageErr, ErrNotFound) && snapshotPDFRepresentationValid(member) {
-				pageErr = nil
-			}
-			if pageErr != nil {
-				return pageErr
-			}
-			if pageDocument.PageCount != 0 && (pageDocument.PageCount != member.SourcePageCount ||
-				pageDocument.Source.SHA256 != member.SelectedPDFSHA256 ||
-				pageDocument.Source.Size != member.Size) {
-				return ErrPackageConflict
+			if member.DocumentKind == "production" {
+				if !productionSnapshotPDFValid(ctx, tx, member) {
+					return ErrPackageConflict
+				}
+			} else {
+				pageDocument, pageErr := loadPageDocument(ctx, tx, member.ContentVersionID)
+				if errors.Is(pageErr, ErrNotFound) && snapshotPDFRepresentationValid(member) {
+					pageErr = nil
+				}
+				if pageErr != nil {
+					return pageErr
+				}
+				if pageDocument.PageCount != 0 && (pageDocument.PageCount != member.SourcePageCount ||
+					pageDocument.Source.SHA256 != member.SelectedPDFSHA256 ||
+					pageDocument.Source.Size != member.Size) {
+					return ErrPackageConflict
+				}
 			}
 		}
 		for _, rep := range member.Representations {

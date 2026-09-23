@@ -275,7 +275,7 @@ func TestMetadataJSONLRoundTripPreservesLogicalState(t *testing.T) {
 	require.NoError(t, source.ExportMetadata(ctx, &second))
 	assert.Equal(t, first.Bytes(), second.Bytes(), "unchanged metadata must export byte-identically")
 	assert.Contains(t, first.String(), `{"type":"meta","format":"docbank-metadata","version":1,"vault_id":"`+
-		sourceVaultID+`","node_sequence":100}`)
+		sourceVaultID+`","node_sequence":100,"production_lifecycle":true}`)
 	assert.Contains(t, first.String(), `"original_mtime":"2026-02-03T04:05:06.12Z"`)
 	assert.Contains(t, first.String(), `"type":"provenance","identity":"`)
 	assert.Contains(t, first.String(), `{"type":"watch_source","watch_name":"sessions","source_ref":"daily/session.jsonl"`)

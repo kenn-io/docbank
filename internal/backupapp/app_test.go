@@ -1440,11 +1440,15 @@ func TestTruncatedAuditJSONLRestoreLeavesNoPublishedDatabase(t *testing.T) {
 	_, err = fixture.metadata.EnableInitialAudit(t.Context(), plan)
 	require.NoError(t, err)
 
-	metadata := bytes.TrimSuffix(exportMetadata(t, fixture.metadata), []byte("\n"))
-	lastBreak := bytes.LastIndexByte(metadata, '\n')
-	require.Positive(t, lastBreak)
-	require.Contains(t, string(metadata[lastBreak+1:]), `"type":"audit_record"`)
-	truncated := bytes.Clone(metadata[:lastBreak+1])
+	lines := bytes.Split(bytes.TrimSuffix(exportMetadata(t, fixture.metadata), []byte("\n")), []byte("\n"))
+	auditIndex := -1
+	for index, line := range lines {
+		if bytes.Contains(line, []byte(`"type":"audit_record"`)) {
+			auditIndex = index
+		}
+	}
+	require.NotEqual(t, -1, auditIndex)
+	truncated := append(bytes.Join(append(lines[:auditIndex:auditIndex], lines[auditIndex+1:]...), []byte("\n")), '\n')
 
 	repo, err := backup.Init(filepath.Join(t.TempDir(), "repo"))
 	require.NoError(t, err)

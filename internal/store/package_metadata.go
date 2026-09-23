@@ -362,6 +362,7 @@ func validateSnapshotMetadataRows(ctx context.Context, q metadataQuerier, snapsh
 	parents := make(map[string]string)
 	families := make(map[string]string)
 	nodeVersions := make(map[int64]string)
+	productionNodes := make(map[int64]bool)
 	count, pages := 0, 0
 	for {
 		if err := ctx.Err(); err != nil {
@@ -384,7 +385,10 @@ func validateSnapshotMetadataRows(ctx context.Context, q metadataQuerier, snapsh
 				member.NodeID <= 0 || validateUUIDv4(member.ContentVersionID) != nil {
 				return ErrPackageConflict
 			}
-			if _, exists := parents[member.OccurrenceID]; exists || nodeVersions[member.NodeID] != "" {
+			if _, exists := parents[member.OccurrenceID]; exists ||
+				(nodeVersions[member.NodeID] != "" &&
+					(!productionNodes[member.NodeID] || member.DocumentKind != "production" ||
+						nodeVersions[member.NodeID] != member.ContentVersionID)) {
 				return ErrPackageConflict
 			}
 			normalized, err := normalizeSnapshotMember(*member, count+1)
@@ -409,6 +413,7 @@ func validateSnapshotMetadataRows(ctx context.Context, q metadataQuerier, snapsh
 			parents[member.OccurrenceID] = member.ParentOccurrenceID
 			families[member.OccurrenceID] = member.FamilyID
 			nodeVersions[member.NodeID] = member.ContentVersionID
+			productionNodes[member.NodeID] = member.DocumentKind == "production"
 			count++
 			if member.SelectedSourcePages != nil {
 				pages += len(member.SelectedSourcePages)
