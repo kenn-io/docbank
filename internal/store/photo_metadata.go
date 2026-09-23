@@ -200,8 +200,23 @@ func validatePhotoSettingsMetadataRecord(v metadataPhotoSettings) error {
 }
 
 func validatePhotoReceiptMetadataRecord(v metadataPhotoReceipt) error {
-	if v.Type != metadataPhotoReceiptType || validateUUIDv4(v.ReceiptID) != nil || v.Operation == "" || v.BeforeRevision < 0 || v.AfterRevision < 0 || len(v.BeforeJSON) > maxPhotoReceiptBytes || len(v.AfterJSON) > maxPhotoReceiptBytes {
+	if v.Type != metadataPhotoReceiptType || validateUUIDv4(v.ReceiptID) != nil || v.BeforeRevision < 0 || v.AfterRevision < 0 || len(v.BeforeJSON) > maxPhotoReceiptBytes || len(v.AfterJSON) > maxPhotoReceiptBytes {
 		return errors.New("invalid photo receipt metadata")
+	}
+	switch v.Operation {
+	case "create", "promote", "attach", "detach", "exclude", "display", "purge", "settings_recompute":
+		if v.AssetID == nil || v.SettingsKey != nil {
+			return errors.New("invalid photo receipt asset/settings identity")
+		}
+	case "settings":
+		if v.AssetID != nil || v.SettingsKey == nil || *v.SettingsKey != "library" {
+			return errors.New("invalid photo settings receipt identity")
+		}
+	default:
+		return fmt.Errorf("invalid photo receipt operation %q", v.Operation)
+	}
+	if v.AfterRevision < v.BeforeRevision || v.Operation == "create" && v.BeforeRevision != 0 {
+		return errors.New("invalid photo receipt revision transition")
 	}
 	if v.AssetID != nil && validateUUIDv4(*v.AssetID) != nil {
 		return errors.New("invalid photo receipt asset")

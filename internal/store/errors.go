@@ -91,8 +91,6 @@ var (
 	ErrPhotoNodeOwned = errors.New("node already belongs to a photo asset")
 	// ErrPhotoAssetRevision means a photo asset or settings revision is stale.
 	ErrPhotoAssetRevision = errors.New("photo revision mismatch")
-	// ErrPhotoAuditUnsupported means photo writes have no audit transition yet.
-	ErrPhotoAuditUnsupported = errors.New("photo mutation is not supported for an audited vault")
 )
 
 // UnconditionalRev is the only ifRev value that skips the revision

@@ -5,6 +5,7 @@ import (
 	"net/http"
 
 	"github.com/danielgtaylor/huma/v2"
+	"go.kenn.io/docbank/internal/store"
 )
 
 func registerPhotoRoutes(api huma.API, d Deps, g *gate) {
@@ -13,16 +14,9 @@ func registerPhotoRoutes(api huma.API, d Deps, g *gate) {
 		Path: "/api/v1/photos/assets", Summary: "Create a photo asset for one file",
 		DefaultStatus: http.StatusCreated,
 	}, func(ctx context.Context, in *struct{ Body CreatePhotoAssetRequest }) (*photoAssetOutput, error) {
-		args := make([]any, 0, 2)
-		if in.Body.Role != "" {
-			args = append(args, in.Body.Role)
-		}
-		if in.Body.Kind != "" {
-			args = append(args, in.Body.Kind)
-		}
 		var out *photoAssetOutput
 		err := g.mutate(func() error {
-			asset, err := d.Store.CreatePhotoAsset(ctx, in.Body.NodeID, args...)
+			asset, err := d.Store.CreatePhotoAsset(ctx, in.Body.NodeID, in.Body.Role, in.Body.Kind)
 			if err != nil {
 				return FromStoreError(err)
 			}
@@ -70,16 +64,9 @@ func registerPhotoRoutes(api huma.API, d Deps, g *gate) {
 		if err != nil {
 			return nil, err
 		}
-		args := []any{revision, in.Body.NodeID}
-		if in.Body.Role != "" {
-			args = append(args, in.Body.Role)
-		}
-		if in.Body.SidecarOfID != nil {
-			args = append(args, in.Body.SidecarOfID)
-		}
 		var out *photoAssetOutput
 		err = g.mutate(func() error {
-			asset, callErr := d.Store.AttachPhotoFile(ctx, in.AssetID, args...)
+			asset, callErr := d.Store.AttachPhotoFile(ctx, in.AssetID, revision, in.Body.NodeID, in.Body.Role, in.Body.SidecarOfID)
 			if callErr != nil {
 				return FromStoreError(callErr)
 			}
@@ -93,9 +80,10 @@ func registerPhotoRoutes(api huma.API, d Deps, g *gate) {
 		OperationID: "detachPhotoFile", Method: http.MethodDelete,
 		Path: "/api/v1/photos/assets/{asset_id}/files/{file_id}", Summary: "Detach one file from a photo asset",
 	}, func(ctx context.Context, in *struct {
-		AssetID string `path:"asset_id"`
-		FileID  string `path:"file_id"`
-		IfMatch string `header:"If-Match"`
+		AssetID                string `path:"asset_id"`
+		FileID                 string `path:"file_id"`
+		IfMatch                string `header:"If-Match"`
+		ClearDependentSidecars bool   `query:"clear_dependent_sidecars"`
 	}) (*photoAssetOutput, error) {
 		revision, err := parseIfMatch(in.IfMatch)
 		if err != nil {
@@ -103,7 +91,7 @@ func registerPhotoRoutes(api huma.API, d Deps, g *gate) {
 		}
 		var out *photoAssetOutput
 		err = g.mutate(func() error {
-			asset, callErr := d.Store.DetachPhotoFile(ctx, in.AssetID, revision, in.FileID)
+			asset, callErr := d.Store.DetachPhotoFile(ctx, in.AssetID, revision, in.FileID, store.PhotoDetachOptions{ClearDependentSidecars: in.ClearDependentSidecars})
 			if callErr != nil {
 				return FromStoreError(callErr)
 			}
@@ -141,22 +129,24 @@ func registerPhotoRoutes(api huma.API, d Deps, g *gate) {
 		OperationID: "promotePhotoNode", Method: http.MethodPost,
 		Path: "/api/v1/photos/nodes/{node_id}/promote", Summary: "Promote one node into a photo asset",
 	}, func(ctx context.Context, in *struct {
-		NodeID int64 `path:"node_id"`
-		Body   struct {
+		NodeID  int64  `path:"node_id"`
+		IfMatch string `header:"If-Match"`
+		Body    struct {
 			Role string `json:"role,omitzero" enum:"raw,image,video,sidecar"`
 			Kind string `json:"kind,omitzero" enum:"photo,video"`
 		}
 	}) (*photoAssetOutput, error) {
-		args := make([]any, 0, 2)
-		if in.Body.Role != "" {
-			args = append(args, in.Body.Role)
-		}
-		if in.Body.Kind != "" {
-			args = append(args, in.Body.Kind)
+		var expectedRevision *int64
+		if in.IfMatch != "" {
+			revision, parseErr := parseIfMatch(in.IfMatch)
+			if parseErr != nil {
+				return nil, parseErr
+			}
+			expectedRevision = &revision
 		}
 		var out *photoAssetOutput
 		err := g.mutate(func() error {
-			asset, callErr := d.Store.PromotePhotoNode(ctx, in.NodeID, args...)
+			asset, callErr := d.Store.PromotePhotoNode(ctx, in.NodeID, expectedRevision, in.Body.Role, in.Body.Kind)
 			if callErr != nil {
 				return FromStoreError(callErr)
 			}

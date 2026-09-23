@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json/v2"
+	"strconv"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -13,12 +14,12 @@ import (
 
 func TestPhotosCLIEnrollsAddedImage(t *testing.T) {
 	_ = setupVaultHome(t)
-	source := writeSourceFile(t, "synthetic-image.jpg", "synthetic image bytes")
+	source := writeSourceFile(t, "synthetic-image.jpeg", "synthetic image bytes")
 	_, err := runCLI(t, "add", source, "--dest", "/inbox")
 	require.NoError(t, err)
 	c, err := daemonconn.Ensure(t.Context())
 	require.NoError(t, err)
-	node, err := c.API().ResolvePath(t.Context(), &apiclient.ResolvePathRequestOptions{Query: &apiclient.ResolvePathQuery{Path: "/inbox/synthetic-image.jpg"}})
+	node, err := c.API().ResolvePath(t.Context(), &apiclient.ResolvePathRequestOptions{Query: &apiclient.ResolvePathQuery{Path: "/inbox/synthetic-image.jpeg"}})
 	require.NoError(t, err)
 	assetFromNode, err := c.PhotoAssetForNode(t.Context(), node.ID)
 	require.NoError(t, err)
@@ -58,4 +59,49 @@ func TestPhotosCLIWorkflow(t *testing.T) {
 		require.NoError(t, err)
 		assert.NotNil(t, command.Flags().Lookup("revision"), path)
 	}
+
+	_ = setupVaultHome(t)
+	source := writeSourceFile(t, "workflow-image.jpeg", "synthetic image bytes")
+	_, err := runCLI(t, "add", source, "--dest", "/inbox")
+	require.NoError(t, err)
+	c, err := daemonconn.Ensure(t.Context())
+	require.NoError(t, err)
+	node, err := c.API().ResolvePath(t.Context(), &apiclient.ResolvePathRequestOptions{Query: &apiclient.ResolvePathQuery{Path: "/inbox/workflow-image.jpeg"}})
+	require.NoError(t, err)
+	asset, err := c.PhotoAssetForNode(t.Context(), node.ID)
+	require.NoError(t, err)
+
+	inspect, err := runCLI(t, "photos", "assets", "inspect", asset.ID)
+	require.NoError(t, err)
+	var inspected api.PhotoAsset
+	require.NoError(t, json.Unmarshal([]byte(inspect), &inspected))
+	assert.Equal(t, asset.ID, inspected.ID)
+
+	display, err := runCLI(t, "photos", "assets", "display", asset.ID, "--revision", strconv.FormatInt(asset.Revision, 10))
+	require.NoError(t, err)
+	var displayed api.PhotoAsset
+	require.NoError(t, json.Unmarshal([]byte(display), &displayed))
+	assert.Equal(t, asset.Revision, displayed.Revision)
+
+	settingsOutput, err := runCLI(t, "photos", "settings", "show")
+	require.NoError(t, err)
+	var settings api.PhotoSettings
+	require.NoError(t, json.Unmarshal([]byte(settingsOutput), &settings))
+	reset, err := runCLI(t, "photos", "settings", "reset", "--revision", strconv.FormatInt(settings.Revision, 10))
+	require.NoError(t, err)
+	var resetSettings api.PhotoSettings
+	require.NoError(t, json.Unmarshal([]byte(reset), &resetSettings))
+	assert.Equal(t, settings.Revision, resetSettings.Revision)
+
+	excludedOutput, err := runCLI(t, "photos", "assets", "exclude", asset.ID, "--revision", strconv.FormatInt(asset.Revision, 10))
+	require.NoError(t, err)
+	var excluded api.PhotoAsset
+	require.NoError(t, json.Unmarshal([]byte(excludedOutput), &excluded))
+	assert.NotNil(t, excluded.ExcludedAt)
+	promotedOutput, err := runCLI(t, "photos", "assets", "promote", "/inbox/workflow-image.jpeg", "--revision", strconv.FormatInt(excluded.Revision, 10))
+	require.NoError(t, err)
+	var promoted api.PhotoAsset
+	require.NoError(t, json.Unmarshal([]byte(promotedOutput), &promoted))
+	assert.Equal(t, asset.ID, promoted.ID)
+	assert.Nil(t, promoted.ExcludedAt)
 }

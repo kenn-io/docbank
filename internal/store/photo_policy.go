@@ -85,6 +85,13 @@ type PhotoChangeReceipt struct {
 	CreatedAt      string `json:"created_at"`
 }
 
+// PhotoDetachOptions controls the only destructive dependent-member action.
+// A RAW with sidecars is refused unless ClearDependentSidecars is explicit.
+type PhotoDetachOptions struct {
+	ClearDependentSidecars bool
+	ReplacementFileID      *string
+}
+
 type photoDisplayChoice struct {
 	FileID *string
 	Source string
@@ -129,6 +136,9 @@ func validatePhotoRoleForNode(role string, facts PhotoNodeFacts) error {
 		return nil
 	}
 	if role == PhotoRoleRAW {
+		if facts.Qualifies {
+			return fmt.Errorf("%w: raw role cannot label classified %s media", ErrInvalidPhotoAsset, facts.AssetKind)
+		}
 		return nil
 	}
 	if !facts.Qualifies {
@@ -311,52 +321,4 @@ func validatePhotoAssetPointers(asset PhotoAsset, files []PhotoFile) error {
 
 func photoPreferenceValid(preference *string) bool {
 	return preference == nil || *preference == "raw" || *preference == "image"
-}
-
-func photoPreferenceValue(value any) (*string, error) {
-	var empty *string
-	if value == nil {
-		return empty, nil
-	}
-	if pointer, ok := value.(*string); ok {
-		if pointer == nil {
-			return pointer, nil
-		}
-		if !photoPreferenceValid(pointer) {
-			return nil, fmt.Errorf("%w: invalid preference", ErrInvalidPhotoAsset)
-		}
-		return new(*pointer), nil
-	}
-	text, ok := value.(string)
-	if !ok {
-		return nil, fmt.Errorf("%w: preference must be raw, image, or null", ErrInvalidPhotoAsset)
-	}
-	if text == "" {
-		return empty, nil
-	}
-	if text != "raw" && text != "image" {
-		return nil, fmt.Errorf("%w: invalid preference %q", ErrInvalidPhotoAsset, text)
-	}
-	return &text, nil
-}
-
-func optionalPhotoString(value any) (*string, error) {
-	var empty *string
-	if value == nil {
-		return empty, nil
-	}
-	if pointer, ok := value.(*string); ok {
-		if pointer == nil {
-			return pointer, nil
-		}
-		return new(*pointer), nil
-	}
-	text, ok := value.(string)
-	if !ok {
-		return nil, errors.New("photo pointer must be a string or null")
-	}
-	if text == "" {
-		return empty, nil
-	}
-	return &text, nil
 }
