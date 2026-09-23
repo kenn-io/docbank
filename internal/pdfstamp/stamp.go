@@ -20,7 +20,8 @@ import (
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/types"
 )
 
-const maxStampOutputBytes int64 = 512 << 20
+// MaxOutputBytes bounds every PDF produced or accepted by a stamping operation.
+const MaxOutputBytes int64 = 512 << 20
 
 const watermarkArtifact = "/Artifact <</Subtype /Watermark /Type /Pagination >>BDC"
 
@@ -82,7 +83,7 @@ func Stamp(ctx context.Context, source io.ReadSeeker, labels []PageLabel, recipe
 	if source == nil || output == nil {
 		return zero, stampFailure("validate streams", errors.New("nil source or destination"))
 	}
-	recipe = recipe.normalized()
+	recipe = recipe.Normalized()
 	if err := recipe.Validate(); err != nil {
 		return zero, stampFailure("validate recipe", err)
 	}
@@ -104,7 +105,7 @@ func Stamp(ctx context.Context, source io.ReadSeeker, labels []PageLabel, recipe
 	}
 
 	var staged bytes.Buffer
-	bounded := &limitedStampWriter{Writer: &staged, Remaining: maxStampOutputBytes}
+	bounded := &limitedStampWriter{Writer: &staged, Remaining: MaxOutputBytes}
 	if err := api.WriteContext(pdfContext, bounded); err != nil {
 		return zero, stampFailure("stamp PDF", err)
 	}

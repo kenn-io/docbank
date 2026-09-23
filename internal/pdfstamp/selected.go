@@ -67,7 +67,7 @@ func SelectPages(ctx context.Context, source io.ReadSeeker, pages []int, output 
 		return zero, stampFailure("rewind source", err)
 	}
 	var staged bytes.Buffer
-	bounded := &limitedStampWriter{Writer: &staged, Remaining: maxStampOutputBytes}
+	bounded := &limitedStampWriter{Writer: &staged, Remaining: MaxOutputBytes}
 	if err := api.Collect(source, bounded, selection, stampConfiguration()); err != nil {
 		return zero, stampFailure("collect selected pages", err)
 	}
@@ -134,7 +134,7 @@ func CombineStamped(ctx context.Context, groups [][]byte, labels []PageLabel, ou
 		readers[index] = bytes.NewReader(group)
 	}
 	var staged bytes.Buffer
-	bounded := &limitedStampWriter{Writer: &staged, Remaining: maxStampOutputBytes}
+	bounded := &limitedStampWriter{Writer: &staged, Remaining: MaxOutputBytes}
 	if err := api.MergeRaw(readers, bounded, false, stampConfiguration()); err != nil {
 		return zero, stampFailure("merge stamped PDFs", err)
 	}

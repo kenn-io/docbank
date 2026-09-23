@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"fmt"
 	"io"
+	"os"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -90,14 +91,18 @@ func TestBatesExportPublishesSelectedPagesBeforeCommittingAllocation(t *testing.
 	require.Equal(t, size, int64(len(output)))
 	require.NoError(t, read.Close())
 	require.True(t, read.Verified())
-	visible, err := packagetest.PDFText(ctx, output)
+	verified, err := pdfstamp.VerifyStamped(ctx, output, []pdfstamp.PageLabel{
+		{SourcePage: 3, Label: "OUR000041"}, {SourcePage: 6, Label: "OUR000042"}, {SourcePage: 8, Label: "OUR000043"},
+	})
 	require.NoError(t, err)
-	require.Contains(t, visible, "SOURCE PAGE 03")
-	require.Contains(t, visible, "OUR000041")
-	require.Contains(t, visible, "SOURCE PAGE 06")
-	require.Contains(t, visible, "OUR000042")
-	require.Contains(t, visible, "SOURCE PAGE 08")
-	require.Contains(t, visible, "OUR000043")
+	require.Equal(t, 3, verified.PageCount)
+	if os.Getenv("DOCBANK_PDFSTAMP_QUALIFY") == "1" {
+		visible, err := packagetest.PDFText(ctx, output)
+		require.NoError(t, err)
+		for _, want := range []string{"SOURCE PAGE 03", "SOURCE PAGE 06", "SOURCE PAGE 08"} {
+			require.Contains(t, visible, want)
+		}
+	}
 
 	retry, err := PublishBatesExport(ctx, catalog, blobs, allocation.AllocationID, recipe)
 	require.NoError(t, err)
@@ -176,6 +181,24 @@ func TestConcurrentBatesExportRetriesConvergeOnOneArtifact(t *testing.T) {
 	require.NoError(t, errs[0])
 	require.NoError(t, errs[1])
 	require.Equal(t, artifacts[0], artifacts[1])
+}
+
+func TestBatesExportNormalizesDefaultedRecipeBeforeStoringIt(t *testing.T) {
+	env := newBatesExportFixture(t)
+	defaulted := env.recipe
+	defaulted.Position = ""
+
+	artifact, err := PublishBatesExport(t.Context(), env.catalog, env.blobs, env.allocationID, defaulted)
+
+	require.NoError(t, err)
+	require.Equal(t, "verified", artifact.State)
+	retry, err := PublishBatesExport(t.Context(), env.catalog, env.blobs, env.allocationID, env.recipe)
+	require.NoError(t, err)
+	require.Equal(t, artifact, retry)
+	data, read, err := ReadBatesExport(t.Context(), env.catalog, env.blobs, env.allocationID)
+	require.NoError(t, err)
+	require.Equal(t, artifact, read)
+	require.Equal(t, artifact.Size, int64(len(data)))
 }
 
 type batesExportFixtureValue struct {

@@ -48,7 +48,7 @@ type Recipe struct {
 }
 
 func (r Recipe) Validate() error {
-	r = r.normalized()
+	r = r.Normalized()
 	if r.Contract != RecipeContractV1 {
 		return fmt.Errorf("invalid Bates stamp recipe contract %q", r.Contract)
 	}
@@ -94,7 +94,7 @@ func (r Recipe) Validate() error {
 }
 
 func (r Recipe) SHA256() (string, error) {
-	r = r.normalized()
+	r = r.Normalized()
 	if err := r.Validate(); err != nil {
 		return "", err
 	}
@@ -106,7 +106,8 @@ func (r Recipe) SHA256() (string, error) {
 	return hex.EncodeToString(digest[:]), nil
 }
 
-func (r Recipe) normalized() Recipe {
+// Normalized applies recipe defaults. Hash, store, and stamp the same normalized value.
+func (r Recipe) Normalized() Recipe {
 	if r.Position == "" {
 		r.Position = "bottom-right"
 	}
