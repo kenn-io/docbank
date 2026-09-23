@@ -808,6 +808,22 @@ func TestRenderImageRenditionUsesExactRetainedPixelsAndPhysicalFrame(t *testing.
 		})
 	}
 
+	for _, density := range []int64{5906, 23622} { // 150 and 600 DPI.
+		changed := input
+		changed.Frame, err = document.NewPNGPageFrame(source, 30, 40, density, density)
+		require.NoError(t, err)
+		_, changed.Image.FrameSHA256, err = document.MarshalPageFrameV1(changed.Frame)
+		require.NoError(t, err)
+		changed.Recipe.DPI = float64(density*127) / 5000
+		_, changed.Image.RecipeSHA256, err = document.MarshalPageRecipeV1(changed.Recipe)
+		require.NoError(t, err)
+		changed.ImageReceipt, _, err = document.MarshalPageImageV1(changed.Image)
+		require.NoError(t, err)
+		_, err = RenderImageRendition(t.Context(), changed)
+		require.ErrorIs(t, err, errUnsupportedRendition)
+		require.ErrorIs(t, ValidateImageRenditionFrame(t.Context(), changed.Frame), errUnsupportedRendition)
+	}
+
 	input.ImageReceipt = append(bytes.Clone(receiptBytes), ' ')
 	_, err = RenderImageRendition(t.Context(), input)
 	require.ErrorAs(t, err, &problem)

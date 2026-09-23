@@ -28,11 +28,17 @@ func ImageRenditionWrapperRecipeSHA256() string {
 	return pdfproduction.QualifiedImageWrapperRecipeSHA256()
 }
 
-// ValidateImageRenditionFrame rejects absent or anisotropic density instead of
-// inventing DPI for scanned-page wrappers.
+// ValidateImageRenditionFrame accepts the native PNG density matching the
+// qualified wrapper, which preserves exact pixels without resampling.
 func ValidateImageRenditionFrame(_ context.Context, frame document.PageFrameV1) error {
 	if document.ValidatePageFrameV1(frame) != nil || frame.InputUnits != "pixel" || frame.PixelsPerMetreX == 0 || frame.PixelsPerMetreX != frame.PixelsPerMetreY {
 		return fmt.Errorf("scan density is unavailable or anisotropic: %w", errUnsupportedRendition)
+	}
+	// PNG density is an integer number of pixels per metre; round the recipe
+	// DPI to that representation (11811 pixels per metre for 300 DPI).
+	want := (int64(pdfproduction.QualifiedRecipe().DPI)*5000 + 63) / 127
+	if frame.PixelsPerMetreX != want {
+		return fmt.Errorf("scan density differs from qualified wrapper: %w", errUnsupportedRendition)
 	}
 	return nil
 }
@@ -98,6 +104,13 @@ func (s *imagePageSequence) Next(ctx context.Context) (pdfproduction.PageArtifac
 
 func imageRenditionArtifact(ctx context.Context, input ImageRenditionInput) (pdfproduction.PageArtifact, error) {
 	if document.ValidatePageFrameV1(input.Frame) != nil {
+		return pdfproduction.PageArtifact{}, errUnsupportedRendition
+	}
+	if input.Frame.InputUnits == "pixel" {
+		if err := ValidateImageRenditionFrame(ctx, input.Frame); err != nil {
+			return pdfproduction.PageArtifact{}, err
+		}
+	} else if input.Recipe.DPI != float64(pdfproduction.QualifiedRecipe().DPI) {
 		return pdfproduction.PageArtifact{}, errUnsupportedRendition
 	}
 	receiptBytes, _, err := document.MarshalPageImageV1(input.Image)

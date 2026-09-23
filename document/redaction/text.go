@@ -225,7 +225,11 @@ func expectedRunStructure(plan Resolved) ([]expectedRun, error) {
 		for boxIndex < len(plan.RedactBoxes) && plan.RedactBoxes[boxIndex].Page == page.Number {
 			boxIndex++
 		}
-		fullMask, err := resolvedPageFullyMasked(page, plan.RedactBoxes[boxStart:boxIndex], recipe, work)
+		masks, err := resolvedPageMasks(page, plan.RedactBoxes[boxStart:boxIndex], recipe, work)
+		if err != nil {
+			return nil, err
+		}
+		fullMask, err := pageFullyMasked(page, masks, recipe, work)
 		if err != nil {
 			return nil, err
 		}
@@ -238,6 +242,10 @@ func expectedRunStructure(plan Resolved) ([]expectedRun, error) {
 					return nil, errors.New("unordered resolved gap is not protected by a full-page mask")
 				}
 				continue
+			}
+			if err := requireGapsMasked(TextMap{Pages: plan.Pages, Gaps: []Gap{gap}},
+				map[int][]pixelRect{page.Number: masks}, recipe, work); err != nil {
+				return nil, err
 			}
 			anchors = append(anchors, gap.Anchor)
 		}
@@ -318,26 +326,21 @@ func resolvedBoxValid(box Box, pages []Page) bool {
 	return box.Page >= 1 && box.Page <= len(pages) && validateFramedBox(box, pages[box.Page-1]) == nil
 }
 
-func resolvedPageFullyMasked(page Page, boxes []Box, recipe Recipe, work *resolveWorkBudget) (bool, error) {
+func resolvedPageMasks(page Page, boxes []Box, recipe Recipe, work *resolveWorkBudget) ([]pixelRect, error) {
 	masks := make([]pixelRect, 0, len(boxes))
 	for _, box := range boxes {
 		if err := work.compare(); err != nil {
-			return false, err
+			return nil, err
 		}
 		if box.Page == page.Number && box.FrameSHA256 == page.FrameSHA256 {
 			mask, err := boxToPixel(page, box, recipe.DPI)
 			if err != nil {
-				return false, err
+				return nil, err
 			}
 			masks = append(masks, mask)
 		}
 	}
-	width, height, err := pagePixels(page, recipe)
-	if err != nil {
-		return false, err
-	}
-	remaining, err := complementRects(pixelRect{page: page.Number, frame: page.FrameSHA256, x1: width, y1: height}, masks, work)
-	return len(remaining) == 0, err
+	return masks, nil
 }
 
 // ReviewBinding hashes the complete explicit review authority and no mutable

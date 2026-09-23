@@ -269,6 +269,10 @@ func TestGapMustBeMaskedAndUsesRecordedAnchorNotGeometry(t *testing.T) {
 	text, err := redaction.Text(plan)
 	require.NoError(t, err)
 	require.Equal(t, "A[REDACTED]B\f", string(text), "the gap is geometrically first but its retained anchor is between A and B")
+	plan.RedactBoxes = []redaction.Box{}
+	rehash(t, &plan)
+	_, err = redaction.Text(plan)
+	require.Error(t, err, "an ordered gap marker cannot replace its pixel mask")
 }
 
 func TestFullyGraphicalRedactedPageEmitsOneMarker(t *testing.T) {
