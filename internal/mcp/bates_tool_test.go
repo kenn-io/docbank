@@ -45,10 +45,10 @@ func TestBatesReadToolsCallBoundedDaemonContracts(t *testing.T) {
 				http.Error(response, "invalid synthetic request", http.StatusBadRequest)
 				return
 			}
-			assert.Equal(t, testBatesOperationID, input.OperationID)
+			assert.Empty(t, input.OperationID)
 			assert.Equal(t, testBatesNamespaceID, input.NamespaceID)
 			assert.Equal(t, testBatesSnapshotID, input.SnapshotID)
-			assert.Equal(t, recipe, input.RecipeSHA256)
+			assert.Empty(t, input.RecipeSHA256)
 			assert.Equal(t, int64(41), input.StartAt)
 			assert.Empty(t, input.Pages)
 			writeDaemonJSON(t, response, api.BatesPlan{Namespace: namespace, StartSequence: 41,
@@ -74,7 +74,7 @@ func TestBatesReadToolsCallBoundedDaemonContracts(t *testing.T) {
 
 	listed := callToolResult(t, server, "list_bates_namespaces", map[string]any{"limit": 25})
 	assert.EqualValues(t, 1, objectField(t, listed, "structuredContent")["total"])
-	previewed := callToolResult(t, server, "preview_bates_stamp", batesPlanArguments(recipe))
+	previewed := callToolResult(t, server, "preview_bates_stamp", batesPreviewArguments())
 	assert.Equal(t, true, objectField(t, previewed, "structuredContent")["stamped_nothing"])
 	read := callToolResult(t, server, "get_bates_allocation", map[string]any{"allocation_id": testBatesAllocationID})
 	assert.Equal(t, testBatesAllocationID, objectField(t, read, "structuredContent")["allocation_id"])
@@ -89,13 +89,14 @@ func TestBatesReadToolsCallBoundedDaemonContracts(t *testing.T) {
 }
 
 func TestBatesWriteToolsAreOptInAndBindResponses(t *testing.T) {
-	recipe := testProfileID
+	recipe, err := syntheticBatesRecipe().SHA256()
+	require.NoError(t, err)
 	namespace := api.BatesNamespace{NamespaceID: testBatesNamespaceID, Prefix: "OUR", Suffix: "", Padding: 6,
 		CreatedAt: "2026-09-21T12:00:00Z"}
 	allocation := api.BatesAllocation{AllocationID: testBatesAllocationID, NamespaceID: testBatesNamespaceID,
-		SnapshotID: testBatesSnapshotID, RecipeSHA256: recipe, State: "reserved", StartSequence: 1,
-		EndSequence: 1, Labels: []api.BatesPageLabel{{Ordinal: 1, OccurrenceID: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-			SourcePage: 1, OutputPage: 1, Label: "OUR000001"}}, CreatedAt: "2026-09-21T12:00:00Z"}
+		SnapshotID: testBatesSnapshotID, RecipeSHA256: recipe, State: "reserved", StartSequence: 41,
+		EndSequence: 41, Labels: []api.BatesPageLabel{{Ordinal: 1, OccurrenceID: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+			SourcePage: 1, OutputPage: 1, Label: "OUR000041"}}, CreatedAt: "2026-09-21T12:00:00Z"}
 	readOnly := newBatesToolTestServer(t, "http://127.0.0.1:1", false)
 	missing := exchangeRaw(t, readOnly, requestFor("tools/call", map[string]any{
 		"name": "ensure_bates_namespace", "arguments": map[string]any{"prefix": "OUR", "padding": 6},
@@ -110,6 +111,14 @@ func TestBatesWriteToolsAreOptInAndBindResponses(t *testing.T) {
 			writeDaemonJSON(t, response, namespace)
 		case "/api/v1/bates/allocations":
 			assert.Equal(t, http.MethodPost, request.Method)
+			var input api.BatesPlanRequest
+			if !assert.NoError(t, decodeDaemonJSON(request.Body, &input)) {
+				http.Error(response, "invalid synthetic request", http.StatusBadRequest)
+				return
+			}
+			assert.Equal(t, api.BatesPlanRequest{OperationID: testBatesOperationID, NamespaceID: testBatesNamespaceID,
+				SnapshotID: testBatesSnapshotID, RecipeSHA256: recipe, StartAt: 41}, input,
+				"reserve must derive the digest and first number from the recipe")
 			response.WriteHeader(http.StatusCreated)
 			writeDaemonJSON(t, response, allocation)
 		default:
@@ -121,7 +130,7 @@ func TestBatesWriteToolsAreOptInAndBindResponses(t *testing.T) {
 
 	ensured := callToolResult(t, server, "ensure_bates_namespace", map[string]any{"prefix": "OUR", "padding": 6})
 	assert.Equal(t, testBatesNamespaceID, objectField(t, ensured, "structuredContent")["namespace_id"])
-	reserved := callToolResult(t, server, "reserve_bates_range", batesPlanArguments(recipe))
+	reserved := callToolResult(t, server, "reserve_bates_range", batesReserveArguments(t))
 	assert.Equal(t, testBatesAllocationID, objectField(t, reserved, "structuredContent")["allocation_id"])
 }
 
@@ -132,10 +141,14 @@ func TestBatesToolSchemasRejectUnboundedAndUnstableInputs(t *testing.T) {
 	assertSchemaRejects(t, tools["ensure_bates_namespace"].InputSchema, map[string]any{
 		"prefix": "OUR", "padding": 11,
 	})
-	args := batesPlanArguments(testProfileID)
+	args := batesPreviewArguments()
 	assertSchemaAccepts(t, tools["preview_bates_stamp"].InputSchema, args)
-	args["recipe_sha256"] = "not-a-digest"
+	args["start_at"] = -1
 	assertSchemaRejects(t, tools["preview_bates_stamp"].InputSchema, args)
+	reserve := batesReserveArguments(t)
+	assertSchemaAccepts(t, tools["reserve_bates_range"].InputSchema, reserve)
+	objectField(t, reserve, "recipe")["start_at"] = 0
+	assertSchemaRejects(t, tools["reserve_bates_range"].InputSchema, reserve)
 	publish := map[string]any{"allocation_id": testBatesAllocationID, "recipe": syntheticBatesRecipeArguments(t, syntheticBatesRecipe())}
 	assertSchemaAccepts(t, tools["publish_bates_export"].InputSchema, publish)
 	invalidRecipe := syntheticBatesRecipe()
@@ -257,9 +270,14 @@ func newBatesToolTestServer(t *testing.T, daemonURL string, allowWrites bool) *S
 	return newServerWithOptionsAndDaemon(testImplementation(), ServerOptions{AllowPackageWrites: allowWrites}, lease)
 }
 
-func batesPlanArguments(recipe string) map[string]any {
-	return map[string]any{"operation_id": testBatesOperationID, "namespace_id": testBatesNamespaceID,
-		"snapshot_id": testBatesSnapshotID, "recipe_sha256": recipe, "start_at": 41}
+func batesPreviewArguments() map[string]any {
+	return map[string]any{"namespace_id": testBatesNamespaceID, "snapshot_id": testBatesSnapshotID, "start_at": 41}
+}
+
+func batesReserveArguments(t *testing.T) map[string]any {
+	t.Helper()
+	return map[string]any{"operation_id": testBatesOperationID, "snapshot_id": testBatesSnapshotID,
+		"recipe": syntheticBatesRecipeArguments(t, syntheticBatesRecipe())}
 }
 
 func callToolResult(t *testing.T, server *Server, name string, arguments map[string]any) map[string]any {

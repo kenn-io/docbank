@@ -43,17 +43,27 @@ type batesNamespaceOutput struct {
 	api.BatesNamespace
 }
 
-type batesPlanInput struct {
-	OperationID  string `json:"operation_id"`
-	NamespaceID  string `json:"namespace_id"`
-	SnapshotID   string `json:"snapshot_id"`
-	RecipeSHA256 string `json:"recipe_sha256"`
-	StartAt      int64  `json:"start_at"`
+type batesPreviewInput struct {
+	NamespaceID string `json:"namespace_id"`
+	SnapshotID  string `json:"snapshot_id"`
+	StartAt     int64  `json:"start_at"`
 }
 
-func (in batesPlanInput) request() api.BatesPlanRequest {
-	return api.BatesPlanRequest{OperationID: in.OperationID, NamespaceID: in.NamespaceID,
-		SnapshotID: in.SnapshotID, RecipeSHA256: in.RecipeSHA256, StartAt: in.StartAt}
+// batesReserveInput carries the reviewed recipe itself, so the reservation's
+// digest and first number always match what publish_bates_export will stamp.
+type batesReserveInput struct {
+	OperationID string          `json:"operation_id"`
+	SnapshotID  string          `json:"snapshot_id"`
+	Recipe      pdfstamp.Recipe `json:"recipe"`
+}
+
+func (in batesReserveInput) request() (api.BatesPlanRequest, error) {
+	digest, err := in.Recipe.SHA256()
+	if err != nil {
+		return api.BatesPlanRequest{}, err
+	}
+	return api.BatesPlanRequest{OperationID: in.OperationID, NamespaceID: in.Recipe.NamespaceID,
+		SnapshotID: in.SnapshotID, RecipeSHA256: digest, StartAt: int64(in.Recipe.StartAt)}, nil
 }
 
 type batesPlanOutput struct {
@@ -148,12 +158,12 @@ func listBatesNamespaces(ctx context.Context, lease *daemonLease, raw []byte) (b
 }
 
 func previewBatesStamp(ctx context.Context, lease *daemonLease, raw []byte) (batesPlanOutput, error) {
-	var input batesPlanInput
+	var input batesPreviewInput
 	if err := decodeReadArguments(raw, &input); err != nil {
 		return batesPlanOutput{}, err
 	}
 	plan, err := daemonRead(ctx, lease, func(ctx context.Context, c *daemonconn.Connection) (*api.BatesPlan, error) {
-		request := input.request()
+		request := api.BatesPlanRequest{NamespaceID: input.NamespaceID, SnapshotID: input.SnapshotID, StartAt: input.StartAt}
 		return c.API().PlanBatesStamp(ctx, &apiclient.PlanBatesStampRequestOptions{Body: &request})
 	})
 	if err != nil {
@@ -484,12 +494,15 @@ func ensureBatesNamespace(ctx context.Context, lease *daemonLease, raw []byte) (
 }
 
 func reserveBatesRange(ctx context.Context, lease *daemonLease, raw []byte) (batesAllocationOutput, error) {
-	var input batesPlanInput
+	var input batesReserveInput
 	if err := decodeReadArguments(raw, &input); err != nil {
 		return batesAllocationOutput{}, err
 	}
+	request, err := input.request()
+	if err != nil {
+		return batesAllocationOutput{}, err
+	}
 	allocation, err := daemonProcessingStart(ctx, lease, func(c *daemonconn.Connection) (*api.BatesAllocation, error) {
-		request := input.request()
 		return c.API().ReserveBatesRange(ctx, &apiclient.ReserveBatesRangeRequestOptions{Body: &request})
 	})
 	if err != nil {
@@ -498,8 +511,8 @@ func reserveBatesRange(ctx context.Context, lease *daemonLease, raw []byte) (bat
 		}
 		return batesAllocationOutput{}, err
 	}
-	if allocation.NamespaceID != input.NamespaceID || allocation.SnapshotID != input.SnapshotID ||
-		allocation.RecipeSHA256 != input.RecipeSHA256 || len(allocation.Labels) == 0 || len(allocation.Labels) > maxBatesLabels {
+	if allocation.NamespaceID != request.NamespaceID || allocation.SnapshotID != request.SnapshotID ||
+		allocation.RecipeSHA256 != request.RecipeSHA256 || allocation.StartSequence != request.StartAt || len(allocation.Labels) == 0 || len(allocation.Labels) > maxBatesLabels {
 		return batesAllocationOutput{}, errors.New("bates reservation response does not bind its reviewed request")
 	}
 	return batesAllocationOutput{BatesAllocation: *allocation, privateCache: newPrivateCache()}, nil

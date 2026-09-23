@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 
@@ -42,23 +43,64 @@ type BatesPlan struct {
 	Labels        []BatesPageLabel
 }
 
+// MaxBatesExportPages bounds one Bates allocation and its stamped PDF.
+const MaxBatesExportPages = 250
+
 var (
 	ErrBatesReservationConflict = errors.New("bates_reservation_conflict: concurrent or divergent reservation")
 	ErrBatesOverflow            = errors.New("bates_overflow: the range exceeds the namespace padding")
 	ErrBatesPageCountMismatch   = errors.New("bates_page_count_mismatch: verified page counts differ from the sealed plan")
+	ErrBatesPageLimit           = fmt.Errorf("bates_page_limit: a Bates export holds at most %d pages", MaxBatesExportPages)
+	ErrBatesLabelCollision      = errors.New("bates_label_collision: a label in this range is already allocated by another namespace")
+	ErrInvalidBatesRequest      = errors.New("invalid_bates_request")
 	ErrInvalidBatesCursor       = errors.New("invalid Bates export history cursor")
+	// ErrInvalidBatesLedger reports restored or audited Bates rows that break
+	// the reservation ledger's invariants.
+	ErrInvalidBatesLedger = errors.New("invalid Bates ledger")
 )
 
 const (
 	batesAllocationStateReserved  = "reserved"
 	batesAllocationStateCommitted = "committed"
-	batesAllocationStateAbandoned = "abandoned"
 	batesArtifactStateVerified    = "verified"
 	batesArtifactMediaTypePDF     = "application/pdf"
+	maxBatesPadding               = 10
 )
 
+func invalidBatesRequest(reason string) error {
+	return fmt.Errorf("%w: %s", ErrInvalidBatesRequest, reason)
+}
+
+func batesLabel(namespace BatesNamespace, sequence int64) string {
+	return fmt.Sprintf("%s%0*d%s", namespace.Prefix, namespace.Padding, sequence, namespace.Suffix)
+}
+
+// batesLabelCollision reports whether any label in [start,end] is already
+// allocated. Labels are globally unique, so distinct namespaces such as
+// prefix "A" padding 7 and prefix "A1" padding 6 can produce the same text.
+func batesLabelCollision(ctx context.Context, q metadataQuerier, namespace BatesNamespace, start, end int64) error {
+	labels := make([]string, 0, end-start+1)
+	for sequence := start; sequence <= end; sequence++ {
+		labels = append(labels, batesLabel(namespace, sequence))
+	}
+	encoded, err := json.Marshal(labels)
+	if err != nil {
+		return fmt.Errorf("encoding Bates labels: %w", err)
+	}
+	var existing string
+	err = q.QueryRowContext(ctx, `SELECT label FROM bates_page_labels
+		WHERE label IN (SELECT value FROM json_each(?)) LIMIT 1`, string(encoded)).Scan(&existing)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("checking Bates label collisions: %w", err)
+	}
+	return fmt.Errorf("%w: %s", ErrBatesLabelCollision, existing)
+}
+
 func batesRange(cursor, startAt, pages int64, padding int) (int64, int64, error) {
-	if padding < 1 || padding > 10 || pages < 1 || cursor < 1 || startAt < 0 {
+	if padding < 1 || padding > maxBatesPadding || pages < 1 || cursor < 1 || startAt < 0 {
 		return 0, 0, ErrBatesOverflow
 	}
 	start := cursor
@@ -79,22 +121,13 @@ func batesRange(cursor, startAt, pages int64, padding int) (int64, int64, error)
 	return start, start + pages - 1, nil
 }
 
-func previewBatesLabels(prefix, suffix string, cursor, startAt int64, pages, padding int) ([]string, error) {
-	start, end, err := batesRange(cursor, startAt, int64(pages), padding)
-	if err != nil {
-		return nil, err
-	}
-	labels := make([]string, 0, pages)
-	for value := start; value <= end; value++ {
-		labels = append(labels, fmt.Sprintf("%s%0*d%s", prefix, padding, value, suffix))
-	}
-	return labels, nil
-}
-
 // PreviewBatesRange reads pinned page and cursor authority without allocating labels.
 func (s *Store) PreviewBatesRange(ctx context.Context, r BatesPlanRequest) (BatesPlan, error) {
-	if validateUUIDv4(r.NamespaceID) != nil || validateUUIDv4(r.SnapshotID) != nil || r.StartAt < 0 {
-		return BatesPlan{}, ErrBatesReservationConflict
+	if validateUUIDv4(r.NamespaceID) != nil || validateUUIDv4(r.SnapshotID) != nil {
+		return BatesPlan{}, invalidBatesRequest("namespace_id and snapshot_id must be UUIDs")
+	}
+	if r.StartAt < 0 {
+		return BatesPlan{}, invalidBatesRequest("start_at must be nonnegative")
 	}
 	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
 	if err != nil {
@@ -115,23 +148,26 @@ func (s *Store) PreviewBatesRange(ctx context.Context, r BatesPlanRequest) (Bate
 	if err := validateBatesPages(ctx, tx, r); err != nil {
 		return BatesPlan{}, err
 	}
-	labels, err := previewBatesLabels(plan.Namespace.Prefix, plan.Namespace.Suffix, cursor, r.StartAt, len(r.Pages), plan.Namespace.Padding)
-	if err != nil {
-		return BatesPlan{}, err
-	}
 	plan.StartSequence, plan.EndSequence, err = batesRange(cursor, r.StartAt, int64(len(r.Pages)), plan.Namespace.Padding)
 	if err != nil {
 		return BatesPlan{}, err
 	}
+	if err := batesLabelCollision(ctx, tx, plan.Namespace, plan.StartSequence, plan.EndSequence); err != nil {
+		return BatesPlan{}, err
+	}
 	for i, page := range r.Pages {
-		plan.Labels = append(plan.Labels, BatesPageLabel{i + 1, page.OccurrenceID, page.SourcePage, i + 1, labels[i]})
+		label := batesLabel(plan.Namespace, plan.StartSequence+int64(i))
+		plan.Labels = append(plan.Labels, BatesPageLabel{i + 1, page.OccurrenceID, page.SourcePage, i + 1, label})
 	}
 	return plan, tx.Commit()
 }
 
 func (s *Store) EnsureBatesNamespace(ctx context.Context, prefix, suffix string, padding int) (BatesNamespace, error) {
-	if padding < 1 || padding > 10 || !validBatesLabelPart(prefix) || !validBatesLabelPart(suffix) {
-		return BatesNamespace{}, ErrBatesReservationConflict
+	if padding < 1 || padding > maxBatesPadding {
+		return BatesNamespace{}, invalidBatesRequest(fmt.Sprintf("padding must be between 1 and %d", maxBatesPadding))
+	}
+	if !validBatesLabelPart(prefix) || !validBatesLabelPart(suffix) {
+		return BatesNamespace{}, invalidBatesRequest("prefix and suffix must be printable ASCII without % or \\")
 	}
 	var result BatesNamespace
 	err := s.withLogicalTx(ctx, func(tx *sql.Tx) error {
@@ -168,8 +204,11 @@ func (s *Store) EnsureBatesNamespace(ctx context.Context, prefix, suffix string,
 
 // BatesNamespaces returns a stable, bounded page ordered by namespace ID.
 func (s *Store) BatesNamespaces(ctx context.Context, after string, limit int) ([]BatesNamespace, int, string, error) {
-	if limit < 1 || limit > 250 || after != "" && validateUUIDv4(after) != nil {
-		return nil, 0, "", ErrBatesReservationConflict
+	if limit < 1 || limit > 250 {
+		return nil, 0, "", invalidBatesRequest("limit must be between 1 and 250")
+	}
+	if after != "" && validateUUIDv4(after) != nil {
+		return nil, 0, "", ErrInvalidBatesCursor
 	}
 	var total int
 	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM bates_namespaces`).Scan(&total); err != nil {
@@ -248,10 +287,13 @@ func batesRequestDigest(r BatesPlanRequest) (string, error) {
 }
 
 func validateBatesPages(ctx context.Context, tx *sql.Tx, r BatesPlanRequest) error {
-	if len(r.Pages) == 0 || len(r.Pages) > MaxSnapshotPages {
+	if len(r.Pages) > MaxBatesExportPages {
+		return ErrBatesPageLimit
+	}
+	if len(r.Pages) == 0 {
 		return ErrBatesPageCountMismatch
 	}
-	expected, err := expectedBatesPages(ctx, tx, r.SnapshotID)
+	expected, err := expectedBatesPagesLimited(ctx, tx, r.SnapshotID, MaxBatesExportPages)
 	if err != nil {
 		return err
 	}
@@ -266,16 +308,13 @@ func validateBatesPages(ctx context.Context, tx *sql.Tx, r BatesPlanRequest) err
 	return nil
 }
 
-func expectedBatesPages(ctx context.Context, tx metadataQuerier, snapshotID string) ([]BatesPageInput, error) {
-	return expectedBatesPagesLimited(ctx, tx, snapshotID, MaxSnapshotPages)
-}
-
-// SnapshotBatesPages reads the exact sealed source-page order for a bounded route.
-func (s *Store) SnapshotBatesPages(ctx context.Context, snapshotID string, limit int) ([]BatesPageInput, error) {
-	if validateUUIDv4(snapshotID) != nil || limit < 1 || limit > MaxSnapshotPages {
-		return nil, ErrBatesPageCountMismatch
+// SnapshotBatesPages reads the exact sealed source-page order of a snapshot
+// small enough for one Bates export.
+func (s *Store) SnapshotBatesPages(ctx context.Context, snapshotID string) ([]BatesPageInput, error) {
+	if validateUUIDv4(snapshotID) != nil {
+		return nil, invalidBatesRequest("snapshot_id must be a UUID")
 	}
-	return expectedBatesPagesLimited(ctx, s.db, snapshotID, limit)
+	return expectedBatesPagesLimited(ctx, s.db, snapshotID, MaxBatesExportPages)
 }
 
 func expectedBatesPagesLimited(ctx context.Context, tx metadataQuerier, snapshotID string, limit int) ([]BatesPageInput, error) {
@@ -306,7 +345,7 @@ func expectedBatesPagesLimited(ctx context.Context, tx metadataQuerier, snapshot
 			for _, page := range member.SelectedSourcePages {
 				expected = append(expected, BatesPageInput{member.OccurrenceID, member.SelectedPDFSHA256, page, pageDoc.PageCount})
 				if len(expected) > limit {
-					return nil, ErrBatesPageCountMismatch
+					return nil, ErrBatesPageLimit
 				}
 			}
 			after = member.Ordinal
@@ -316,9 +355,16 @@ func expectedBatesPagesLimited(ctx context.Context, tx metadataQuerier, snapshot
 }
 
 func (s *Store) ReserveBatesRange(ctx context.Context, r BatesPlanRequest) (BatesAllocation, error) {
-	if validateUUIDv4(r.OperationID) != nil || validateUUIDv4(r.NamespaceID) != nil || validateUUIDv4(r.SnapshotID) != nil ||
-		!canonical.IsSHA256Hex(r.RecipeSHA256) || r.StartAt < 0 {
-		return BatesAllocation{}, ErrBatesReservationConflict
+	if validateUUIDv4(r.OperationID) != nil || validateUUIDv4(r.NamespaceID) != nil || validateUUIDv4(r.SnapshotID) != nil {
+		return BatesAllocation{}, invalidBatesRequest("operation_id, namespace_id, and snapshot_id must be UUIDs")
+	}
+	if !canonical.IsSHA256Hex(r.RecipeSHA256) {
+		return BatesAllocation{}, invalidBatesRequest("recipe_sha256 must be a lowercase SHA-256 digest")
+	}
+	// The recipe digest already fixes its start_at, so the reservation must
+	// name the same explicit start instead of following a moving cursor.
+	if r.StartAt < 1 {
+		return BatesAllocation{}, invalidBatesRequest("start_at must be the recipe's first Bates number")
 	}
 	digest, err := batesRequestDigest(r)
 	if err != nil {
@@ -356,6 +402,9 @@ func (s *Store) ReserveBatesRange(ctx context.Context, r BatesPlanRequest) (Bate
 		if err != nil {
 			return err
 		}
+		if err := batesLabelCollision(ctx, tx, namespace, start, end); err != nil {
+			return err
+		}
 		id, err := newUUIDv4()
 		if err != nil {
 			return err
@@ -370,7 +419,7 @@ func (s *Store) ReserveBatesRange(ctx context.Context, r BatesPlanRequest) (Bate
 			return err
 		}
 		for i, page := range r.Pages {
-			label := fmt.Sprintf("%s%0*d%s", namespace.Prefix, namespace.Padding, start+int64(i), namespace.Suffix)
+			label := batesLabel(namespace, start+int64(i))
 			_, err = tx.ExecContext(ctx, `INSERT INTO bates_page_labels(allocation_id,ordinal,namespace_id,sequence,occurrence_id,
 				source_page,output_page,label) VALUES(?,?,?,?,?,?,?,?)`, id, i+1, r.NamespaceID, start+int64(i), page.OccurrenceID,
 				page.SourcePage, i+1, label)
@@ -425,45 +474,4 @@ func loadBatesAllocation(ctx context.Context, q metadataQuerier, id string) (Bat
 		a.Labels = append(a.Labels, label)
 	}
 	return a, rows.Err()
-}
-
-func (s *Store) transitionBatesAllocation(ctx context.Context, id, state string) (BatesAllocation, error) {
-	if validateUUIDv4(id) != nil {
-		return BatesAllocation{}, ErrNotFound
-	}
-	var result BatesAllocation
-	err := s.withLogicalTx(ctx, func(tx *sql.Tx) error {
-		current, err := loadBatesAllocation(ctx, tx, id)
-		if err != nil {
-			return err
-		}
-		if current.State == state {
-			result = current
-			return nil
-		}
-		if current.State != batesAllocationStateReserved {
-			return ErrBatesReservationConflict
-		}
-		var committed any
-		if state == batesAllocationStateCommitted {
-			committed = nowRFC3339()
-		}
-		_, err = tx.ExecContext(ctx, `UPDATE bates_allocations SET state=?,committed_at=? WHERE allocation_id=?`, state, committed, id)
-		if err != nil {
-			return err
-		}
-		result, err = loadBatesAllocation(ctx, tx, id)
-		return err
-	})
-	return result, err
-}
-
-func (s *Store) CommitBatesAllocation(ctx context.Context, id string) (BatesAllocation, error) {
-	if _, err := s.BatesArtifact(ctx, id); err != nil {
-		return BatesAllocation{}, ErrBatesReservationConflict
-	}
-	return s.transitionBatesAllocation(ctx, id, batesAllocationStateCommitted)
-}
-func (s *Store) AbandonBatesAllocation(ctx context.Context, id string) (BatesAllocation, error) {
-	return s.transitionBatesAllocation(ctx, id, batesAllocationStateAbandoned)
 }

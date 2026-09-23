@@ -1,15 +1,18 @@
 package main
 
 import (
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
+	"os"
 	"uuid"
 
 	"github.com/spf13/cobra"
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/apiclient"
-	"go.kenn.io/docbank/internal/canonical"
 	"go.kenn.io/docbank/internal/daemonconn"
+	"go.kenn.io/docbank/internal/pdfstamp"
 )
 
 var batesCmd = &cobra.Command{Use: "bates", Short: "Plan and reserve Bates labels for exported PDFs"}
@@ -83,28 +86,16 @@ func newBatesNamespacesCommand() *cobra.Command {
 	return cmd
 }
 
-func newBatesPlanCommand(reserve bool) *cobra.Command {
-	var namespace, recipe, operation string
+func newBatesPlanCommand() *cobra.Command {
+	var namespace, position, recipeOut string
 	var startAt int64
+	var margin int
 	var asJSON bool
-	name := "plan"
-	short := "Preview Bates labels without reserving them"
-	if reserve {
-		name, short = "reserve", "Reserve Bates labels for exported PDFs"
-	}
-	cmd := &cobra.Command{Use: name + " <snapshot-id>", Short: short, Args: cobra.ExactArgs(1),
+	cmd := &cobra.Command{Use: "plan <snapshot-id>", Short: "Preview Bates labels without reserving them",
+		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if namespace == "" {
 				return usageError(errors.New("--namespace is required"))
-			}
-			if recipe == "" {
-				return usageError(errors.New("--recipe-sha256 is required"))
-			}
-			if !canonical.IsSHA256Hex(recipe) {
-				return usageError(errors.New("--recipe-sha256 must be a lowercase SHA-256 digest"))
-			}
-			if startAt < 0 {
-				return usageError(errors.New("--start-at must be nonnegative"))
 			}
 			if _, err := uuid.Parse(namespace); err != nil {
 				return usageError(fmt.Errorf("--namespace must be a UUID: %w", err))
@@ -112,37 +103,23 @@ func newBatesPlanCommand(reserve bool) *cobra.Command {
 			if _, err := uuid.Parse(args[0]); err != nil {
 				return usageError(fmt.Errorf("snapshot ID must be a UUID: %w", err))
 			}
-			operationID := operation
-			if operationID == "" {
-				operationID = uuid.NewV4().String()
+			if startAt < 0 {
+				return usageError(errors.New("--start-at must be nonnegative"))
 			}
-			if _, err := uuid.Parse(operationID); err != nil {
-				return usageError(fmt.Errorf("--operation-id must be a UUID: %w", err))
-			}
-			request := api.BatesPlanRequest{OperationID: operationID, NamespaceID: namespace,
-				SnapshotID: args[0], RecipeSHA256: recipe, StartAt: startAt}
 			c, err := daemonconn.Ensure(cmd.Context())
 			if err != nil {
 				return err
 			}
-			if reserve {
-				allocation, err := c.API().ReserveBatesRange(cmd.Context(), &apiclient.ReserveBatesRangeRequestOptions{Body: &request})
-				if err != nil {
-					return err
-				}
-				if asJSON {
-					return writeCLIJSON(cmd.OutOrStdout(), allocation)
-				}
-				_, err = fmt.Fprintf(cmd.OutOrStdout(), "reserved %s: %d-%d (%d pages)\n", allocation.AllocationID,
-					allocation.StartSequence, allocation.EndSequence, len(allocation.Labels))
-				if err != nil {
-					return fmt.Errorf("writing Bates reservation: %w", err)
-				}
-				return nil
-			}
+			request := api.BatesPlanRequest{NamespaceID: namespace, SnapshotID: args[0], StartAt: startAt}
 			plan, err := c.API().PlanBatesStamp(cmd.Context(), &apiclient.PlanBatesStampRequestOptions{Body: &request})
 			if err != nil {
 				return err
+			}
+			if recipeOut != "" {
+				recipe := batesRecipeForPlan(*plan, position, margin)
+				if err := writeBatesRecipe(recipeOut, recipe); err != nil {
+					return err
+				}
 			}
 			if asJSON {
 				return writeCLIJSON(cmd.OutOrStdout(), plan)
@@ -155,8 +132,114 @@ func newBatesPlanCommand(reserve bool) *cobra.Command {
 			return nil
 		}}
 	cmd.Flags().StringVar(&namespace, "namespace", "", "Bates namespace ID for the exported PDFs")
-	cmd.Flags().StringVar(&recipe, "recipe-sha256", "", "stamp recipe SHA-256; add a Bates stamp to the exported PDFs")
 	cmd.Flags().Int64Var(&startAt, "start-at", 0, "first Bates number; zero continues the namespace cursor")
+	cmd.Flags().StringVar(&recipeOut, "recipe-out", "", "write the stamp recipe for this preview to a new file")
+	cmd.Flags().StringVar(&position, "position", "bottom-right", "stamp position written to --recipe-out")
+	cmd.Flags().IntVar(&margin, "margin", 24, "stamp margin in points written to --recipe-out")
+	cmd.Flags().BoolVar(&asJSON, "json", false, "emit machine-readable JSON")
+	return cmd
+}
+
+// batesRecipeForPlan fixes the previewed first number in the recipe, so a
+// reservation made from it either gets exactly that range or fails.
+func batesRecipeForPlan(plan api.BatesPlan, position string, margin int) pdfstamp.Recipe {
+	return pdfstamp.Recipe{Contract: pdfstamp.RecipeContractV1, NamespaceID: plan.Namespace.NamespaceID,
+		Prefix: plan.Namespace.Prefix, Suffix: plan.Namespace.Suffix, Padding: plan.Namespace.Padding,
+		StartAt: int(plan.StartSequence), Position: position, MarginPoints: margin, FontName: "Helvetica",
+		FontSizePoints: 9, Color: "#000000", Opacity: 1, Units: "point", RotationPolicy: "follow_page",
+		EngineIdentity: pdfstamp.EngineIdentity{Name: "pdfcpu", Version: "v0.15.0", API: "AddWatermarksMap",
+			Options: []string{"onTop=true", "update=restamp"}}}
+}
+
+func writeBatesRecipe(path string, recipe pdfstamp.Recipe) error {
+	if err := recipe.Validate(); err != nil {
+		return usageError(err)
+	}
+	encoded, err := json.Marshal(recipe, jsontext.WithIndent("  "))
+	if err != nil {
+		return fmt.Errorf("encoding Bates stamp recipe: %w", err)
+	}
+	file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	if err != nil {
+		return fmt.Errorf("creating Bates stamp recipe %s: %w", path, err)
+	}
+	_, writeErr := file.Write(append(encoded, '\n'))
+	if err := errors.Join(writeErr, file.Close()); err != nil {
+		return fmt.Errorf("writing Bates stamp recipe %s: %w", path, err)
+	}
+	return nil
+}
+
+func readBatesRecipe(path string) (pdfstamp.Recipe, error) {
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return pdfstamp.Recipe{}, fmt.Errorf("reading Bates stamp recipe: %w", err)
+	}
+	var recipe pdfstamp.Recipe
+	if err := json.Unmarshal(raw, &recipe, json.RejectUnknownMembers(true)); err != nil {
+		return pdfstamp.Recipe{}, usageError(fmt.Errorf("decoding Bates stamp recipe: %w", err))
+	}
+	if err := recipe.Validate(); err != nil {
+		return pdfstamp.Recipe{}, usageError(err)
+	}
+	return recipe, nil
+}
+
+func newBatesReserveCommand() *cobra.Command {
+	var recipePath, operation string
+	var asJSON bool
+	cmd := &cobra.Command{Use: "reserve <snapshot-id>", Short: "Reserve the Bates labels named by a stamp recipe",
+		Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if recipePath == "" {
+				return usageError(errors.New("--recipe is required; create one with bates plan --recipe-out"))
+			}
+			if _, err := uuid.Parse(args[0]); err != nil {
+				return usageError(fmt.Errorf("snapshot ID must be a UUID: %w", err))
+			}
+			recipe, err := readBatesRecipe(recipePath)
+			if err != nil {
+				return err
+			}
+			digest, err := recipe.SHA256()
+			if err != nil {
+				return usageError(err)
+			}
+			operationID := operation
+			if operationID == "" {
+				operationID = uuid.NewV4().String()
+				// Printed before the request so a retry after a lost response
+				// can reuse the same idempotency key instead of burning a range.
+				_, err = fmt.Fprintf(cmd.ErrOrStderr(), "operation ID %s (pass --operation-id %s to retry)\n",
+					operationID, operationID)
+				if err != nil {
+					return fmt.Errorf("writing Bates operation ID: %w", err)
+				}
+			}
+			if _, err := uuid.Parse(operationID); err != nil {
+				return usageError(fmt.Errorf("--operation-id must be a UUID: %w", err))
+			}
+			c, err := daemonconn.Ensure(cmd.Context())
+			if err != nil {
+				return err
+			}
+			request := api.BatesPlanRequest{OperationID: operationID, NamespaceID: recipe.NamespaceID,
+				SnapshotID: args[0], RecipeSHA256: digest, StartAt: int64(recipe.StartAt)}
+			allocation, err := c.API().ReserveBatesRange(cmd.Context(), &apiclient.ReserveBatesRangeRequestOptions{Body: &request})
+			if err != nil {
+				return err
+			}
+			if asJSON {
+				return writeCLIJSON(cmd.OutOrStdout(), allocation)
+			}
+			_, err = fmt.Fprintf(cmd.OutOrStdout(), "reserved %s: %d-%d (%d pages)\n", allocation.AllocationID,
+				allocation.StartSequence, allocation.EndSequence, len(allocation.Labels))
+			if err != nil {
+				return fmt.Errorf("writing Bates reservation: %w", err)
+			}
+			return nil
+		}}
+	cmd.Flags().StringVar(&recipePath, "recipe", "", "stamp recipe JSON from bates plan --recipe-out")
 	cmd.Flags().StringVar(&operation, "operation-id", "", "idempotency UUID for a reservation; generated when omitted")
 	cmd.Flags().BoolVar(&asJSON, "json", false, "emit machine-readable JSON")
 	return cmd
@@ -194,6 +277,6 @@ func newBatesShowCommand() *cobra.Command {
 }
 
 func init() {
-	batesCmd.AddCommand(newBatesNamespacesCommand(), newBatesPlanCommand(false), newBatesPlanCommand(true), newBatesShowCommand(), newBatesExportCommand())
+	batesCmd.AddCommand(newBatesNamespacesCommand(), newBatesPlanCommand(), newBatesReserveCommand(), newBatesShowCommand(), newBatesExportCommand())
 	rootCmd.AddCommand(batesCmd)
 }

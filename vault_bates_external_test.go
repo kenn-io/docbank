@@ -6,7 +6,6 @@ import (
 	"encoding/hex"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 	"time"
 
@@ -119,8 +118,15 @@ func TestEmbeddedBatesPlanningAndReservationAPI(t *testing.T) {
 	require.Len(t, namespaces.Items, 1)
 	assert.Equal(t, namespace, namespaces.Items[0])
 
+	recipe := docbank.BatesRecipe{Contract: docbank.BatesRecipeContractV1, NamespaceID: namespace.NamespaceID,
+		Prefix: "API", Padding: 6, StartAt: 41, Position: "bottom-right", MarginPoints: 24, FontName: "Helvetica",
+		FontSizePoints: 9, Color: "#000000", Opacity: 1, Units: "point", RotationPolicy: "follow_page",
+		EngineIdentity: docbank.BatesStampEngine{Name: "pdfcpu", Version: "v0.15.0", API: "AddWatermarksMap",
+			Options: []string{"onTop=true", "update=restamp"}}}
+	recipeSHA, err := recipe.SHA256()
+	require.NoError(t, err)
 	request := docbank.BatesPlanRequest{OperationID: uuid.NewString(), NamespaceID: namespace.NamespaceID,
-		SnapshotID: packages.Items[0].SnapshotID, RecipeSHA256: strings.Repeat("a", 64), StartAt: 41,
+		SnapshotID: packages.Items[0].SnapshotID, RecipeSHA256: recipeSHA, StartAt: 41,
 		Pages: []docbank.BatesPageInput{{OccurrenceID: members.Items[0].OccurrenceID,
 			UnstampedSHA256: source.SHA256, SourcePage: 1, VerifiedPageCount: 1}}}
 	plan, err := vault.PlanBatesStamp(t.Context(), request)
@@ -135,4 +141,20 @@ func TestEmbeddedBatesPlanningAndReservationAPI(t *testing.T) {
 	retained, err := vault.BatesAllocation(t.Context(), allocation.AllocationID)
 	require.NoError(t, err)
 	assert.Equal(t, allocation, retained)
+
+	published, err := vault.PublishBatesExport(t.Context(), allocation.AllocationID, recipe)
+	require.NoError(t, err)
+	assert.Equal(t, allocation.AllocationID, published.AllocationID)
+	require.Len(t, published.Pages, 1)
+	assert.Equal(t, "API000041", published.Pages[0].Label)
+	history, err := vault.BatesExports(t.Context(), "", 10)
+	require.NoError(t, err)
+	require.Equal(t, 1, history.Total)
+	assert.Equal(t, published, history.Items[0])
+	data, read, err := vault.ReadBatesExport(t.Context(), allocation.AllocationID)
+	require.NoError(t, err)
+	assert.Equal(t, published, read)
+	assert.Equal(t, published.Size, int64(len(data)))
+	_, err = vault.BatesExports(t.Context(), "not-a-cursor", 10)
+	require.ErrorIs(t, err, docbank.ErrInvalidBatesCursor)
 }

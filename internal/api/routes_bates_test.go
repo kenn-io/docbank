@@ -185,7 +185,18 @@ func TestBatesExportHistoryRejectsInvalidAndUnknownCursors(t *testing.T) {
 	require.Equal(t, http.StatusUnprocessableEntity, invalid.Code, invalid.Body.String())
 	require.Contains(t, invalid.Body.String(), `"invalid_bates_cursor"`)
 	unknown := srv.get(t, "/api/v1/bates/exports?after=11111111-1111-4111-8111-111111111111&limit=1")
-	require.Equal(t, http.StatusNotFound, unknown.Code, unknown.Body.String())
+	require.Equal(t, http.StatusUnprocessableEntity, unknown.Code, unknown.Body.String())
+	require.Contains(t, unknown.Body.String(), `"invalid_bates_cursor"`)
+}
+
+func TestBatesInputErrorsAreValidationFailures(t *testing.T) {
+	srv, _ := newPackageTestServer(t)
+	cursor := srv.get(t, "/api/v1/bates/namespaces?cursor=not-a-uuid")
+	require.Equal(t, http.StatusUnprocessableEntity, cursor.Code, cursor.Body.String())
+	require.Contains(t, cursor.Body.String(), `"invalid_bates_cursor"`)
+	prefix := srv.call(t, http.MethodPost, "/api/v1/bates/namespaces", `{"prefix":"BAD%","padding":6}`, nil)
+	require.Equal(t, http.StatusUnprocessableEntity, prefix.Code, prefix.Body.String())
+	require.Contains(t, prefix.Body.String(), `"invalid_bates_request"`)
 }
 
 func TestBatesCandidateRouteRequiresOneSelectorAndReturnsBoundedCandidates(t *testing.T) {

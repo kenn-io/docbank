@@ -2,6 +2,8 @@ package main
 
 import (
 	"encoding/json/v2"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -24,14 +26,30 @@ func TestBatesNamespacesCLIListsAndCreatesViaDaemon(t *testing.T) {
 	require.Equal(t, namespace.NamespaceID, page.Items[0].NamespaceID)
 }
 
-func TestBatesPlanCLIRequiresNamespaceAndRecipe(t *testing.T) {
+func TestBatesPlanCLIRequiresNamespace(t *testing.T) {
 	_, err := runCLI(t, "bates", "plan", "snapshot")
 	require.ErrorContains(t, err, "--namespace is required")
-	_, err = runCLI(t, "bates", "plan", "snapshot", "--namespace", "namespace")
-	require.ErrorContains(t, err, "--recipe-sha256 is required")
+}
+
+func TestBatesReserveCLIRequiresRecipe(t *testing.T) {
+	_, err := runCLI(t, "bates", "reserve", "22222222-2222-4222-8222-222222222222")
+	require.ErrorContains(t, err, "--recipe is required")
 }
 
 func TestBatesExportRunRequiresRecipe(t *testing.T) {
 	_, err := runCLI(t, "bates", "export", "run", "11111111-1111-4111-8111-111111111111")
 	require.ErrorContains(t, err, "--recipe is required")
+}
+
+func TestBatesPlanRecipeRoundTripsAndNeverOverwrites(t *testing.T) {
+	plan := api.BatesPlan{StartSequence: 41, Namespace: api.BatesNamespace{
+		NamespaceID: "11111111-1111-4111-8111-111111111111", Prefix: "OUR", Padding: 6}}
+	path := filepath.Join(t.TempDir(), "recipe.json")
+	recipe := batesRecipeForPlan(plan, "bottom-right", 24)
+	require.NoError(t, writeBatesRecipe(path, recipe))
+	read, err := readBatesRecipe(path)
+	require.NoError(t, err)
+	require.Equal(t, recipe, read)
+	require.Equal(t, 41, read.StartAt, "the recipe must pin the previewed first number")
+	require.ErrorIs(t, writeBatesRecipe(path, recipe), os.ErrExist)
 }

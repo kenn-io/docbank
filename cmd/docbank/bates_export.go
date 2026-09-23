@@ -1,17 +1,14 @@
 package main
 
 import (
-	"encoding/json/v2"
 	"errors"
 	"fmt"
-	"os"
 	"path/filepath"
 
 	"github.com/spf13/cobra"
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/apiclient"
 	"go.kenn.io/docbank/internal/daemonconn"
-	"go.kenn.io/docbank/internal/pdfstamp"
 	"uuid"
 )
 
@@ -34,16 +31,9 @@ func newBatesExportRunCommand() *cobra.Command {
 			if err != nil {
 				return usageError(fmt.Errorf("allocation ID must be a UUID: %w", err))
 			}
-			raw, err := os.ReadFile(recipePath)
+			recipe, err := readBatesRecipe(recipePath)
 			if err != nil {
-				return fmt.Errorf("reading Bates stamp recipe: %w", err)
-			}
-			var recipe pdfstamp.Recipe
-			if err := json.Unmarshal(raw, &recipe, json.RejectUnknownMembers(true)); err != nil {
-				return usageError(fmt.Errorf("decoding Bates stamp recipe: %w", err))
-			}
-			if err := recipe.Validate(); err != nil {
-				return usageError(err)
+				return err
 			}
 			connection, err := daemonconn.Ensure(cmd.Context())
 			if err != nil {

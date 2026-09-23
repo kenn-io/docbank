@@ -5,6 +5,7 @@ import (
 	"encoding/json/jsontext"
 	"encoding/json/v2"
 	"errors"
+	"fmt"
 	"log/slog"
 	"slices"
 	"time"
@@ -108,7 +109,7 @@ var ensureBatesNamespaceToolDefinition = toolDefinition{
 
 var reserveBatesRangeToolDefinition = toolDefinition{
 	name: "reserve_bates_range", title: "Reserve Bates range",
-	description: "Reserve one idempotent Bates range for a sealed snapshot without stamping files.",
+	description: "Reserve one idempotent Bates range for a sealed snapshot without stamping files. Pass the reviewed recipe; its namespace_id and start_at choose the range, and publish_bates_export must use the same recipe.",
 	schemas:     reserveBatesRangeSchemas, write: true, idempotent: true,
 }
 
@@ -347,6 +348,16 @@ func stableDomainError(err error) (string, int) {
 		return "bates_page_count_mismatch", 0
 	case errors.Is(err, store.ErrBatesOverflow):
 		return "bates_overflow", 0
+	case errors.Is(err, store.ErrBatesPageLimit):
+		return "bates_page_limit", 0
+	case errors.Is(err, store.ErrBatesLabelCollision):
+		return "bates_label_collision", 0
+	case errors.Is(err, store.ErrInvalidBatesRequest):
+		return "invalid_bates_request", 0
+	case errors.Is(err, store.ErrInvalidBatesCursor):
+		return "invalid_bates_cursor", 0
+	case errors.Is(err, store.ErrInvalidBatesSelector):
+		return "invalid_bates_selector", 0
 	}
 	facts, ok := daemonProblemFacts(err)
 	if !ok {
@@ -374,7 +385,9 @@ func stableDomainError(err error) (string, int) {
 		return "invalid_rendition_window", 0
 	case "invalid_rendition_encoding":
 		return "invalid_rendition_encoding", 0
-	case "bates_reservation_conflict", "bates_page_count_mismatch", "bates_overflow":
+	case "bates_reservation_conflict", "bates_page_count_mismatch", "bates_overflow", "bates_page_limit",
+		"bates_label_collision", "invalid_bates_request", "invalid_bates_cursor", "invalid_bates_selector",
+		"stale_bates_cursor":
 		return facts.Code, 0
 	default:
 		return "", 0
@@ -406,11 +419,23 @@ func domainErrorMessage(code string) string {
 	case "invalid_rendition_encoding":
 		return "The active rendition is not valid UTF-8 text."
 	case "bates_reservation_conflict":
-		return "The Bates reservation conflicts with existing namespace or idempotency authority."
+		return "The Bates reservation conflicts with an existing namespace, reservation, or later cursor; preview again."
 	case "bates_page_count_mismatch":
 		return "The sealed snapshot pages no longer match the Bates request."
 	case "bates_overflow":
 		return "The Bates range exceeds the namespace padding."
+	case "bates_page_limit":
+		return fmt.Sprintf("A Bates export holds at most %d pages; seal a smaller snapshot.", store.MaxBatesExportPages)
+	case "bates_label_collision":
+		return "A label in this range is already allocated by another namespace; preview a later start_at."
+	case "invalid_bates_request":
+		return "The Bates request is invalid; check IDs, padding, prefix and suffix, and the recipe start_at."
+	case "invalid_bates_cursor":
+		return "The Bates cursor is invalid for this listing; restart from the first page."
+	case "invalid_bates_selector":
+		return "Give exactly one of bates_label, custodian_label, or person_id."
+	case "stale_bates_cursor":
+		return "Person bindings changed; restart Bates export discovery from the first page."
 	case "bates_outcome_unknown":
 		return "The Bates authority write outcome is unknown; reconcile the namespace or allocation before retrying."
 	default:

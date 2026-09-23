@@ -303,11 +303,16 @@ func batesPageLabelSchema() schema {
 	}, "ordinal", "occurrence_id", "source_page", "output_page", "label")
 }
 
-func batesPlanInputSchema() schema {
+func batesPreviewInputSchema() schema {
 	return rootObjectSchema(schema{
-		"operation_id": uuidSchema(), "namespace_id": uuidSchema(), "snapshot_id": uuidSchema(),
-		"recipe_sha256": sha256Schema(), "start_at": integerSchema(0, 0),
-	}, "operation_id", "namespace_id", "snapshot_id", "recipe_sha256", "start_at")
+		"namespace_id": uuidSchema(), "snapshot_id": uuidSchema(), "start_at": integerSchema(0, 9_999_999_999),
+	}, "namespace_id", "snapshot_id", "start_at")
+}
+
+func batesReserveInputSchema() schema {
+	return rootObjectSchema(schema{
+		"operation_id": uuidSchema(), "snapshot_id": uuidSchema(), "recipe": batesRecipeSchema(),
+	}, "operation_id", "snapshot_id", "recipe")
 }
 
 func batesPlanOutputSchema() schema {
@@ -321,7 +326,7 @@ func batesPlanOutputSchema() schema {
 func batesAllocationOutputSchema() schema {
 	return rootObjectSchema(withPrivateCache(schema{
 		"allocation_id": uuidSchema(), "namespace_id": uuidSchema(), "snapshot_id": uuidSchema(),
-		"recipe_sha256": sha256Schema(), schemaStateField: enumSchema("reserved", "committed", "abandoned"),
+		"recipe_sha256": sha256Schema(), schemaStateField: enumSchema("reserved", "committed"),
 		"start_sequence": integerSchema(1, 0), "end_sequence": integerSchema(1, 0),
 		"labels": arraySchema(batesPageLabelSchema(), maxBatesLabels), "created_at": dateTimeSchema(),
 		"committed_at": dateTimeSchema(),
@@ -350,11 +355,11 @@ func ensureBatesNamespaceSchemas() (schema, schema) {
 }
 
 func previewBatesStampSchemas() (schema, schema) {
-	return batesPlanInputSchema(), batesPlanOutputSchema()
+	return batesPreviewInputSchema(), batesPlanOutputSchema()
 }
 
 func reserveBatesRangeSchemas() (schema, schema) {
-	return batesPlanInputSchema(), batesAllocationOutputSchema()
+	return batesReserveInputSchema(), batesAllocationOutputSchema()
 }
 
 func getBatesAllocationSchemas() (schema, schema) {

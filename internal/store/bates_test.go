@@ -55,7 +55,7 @@ func batesRequest(t *testing.T, ns BatesNamespace, snapshot CollectionSnapshot, 
 	id, err := newUUIDv4()
 	require.NoError(t, err)
 	return BatesPlanRequest{OperationID: id, NamespaceID: ns.NamespaceID, SnapshotID: snapshot.SnapshotID,
-		RecipeSHA256: strings.Repeat("d", 64), Pages: inputs}
+		RecipeSHA256: strings.Repeat("d", 64), StartAt: 1, Pages: inputs}
 }
 
 func TestBatesRangeContinuesAndRejectsExplicitOverlap(t *testing.T) {
@@ -110,17 +110,42 @@ func TestABFixtureAllocatesFortyOneToFortyThree(t *testing.T) {
 	changed.Pages[0].UnstampedSHA256 = strings.Repeat("e", 64)
 	_, err = s.ReserveBatesRange(t.Context(), changed)
 	require.ErrorIs(t, err, ErrBatesReservationConflict)
-	abandoned, err := s.AbandonBatesAllocation(t.Context(), allocation.AllocationID)
+	stale := batesRequest(t, ns, snapshot, inputs)
+	stale.StartAt = 43
+	_, err = s.ReserveBatesRange(t.Context(), stale)
+	require.ErrorIs(t, err, ErrBatesReservationConflict, "a start behind the cursor must not reserve")
+	next := batesRequest(t, ns, snapshot, inputs)
+	next.StartAt = 44
+	reserved, err := s.ReserveBatesRange(t.Context(), next)
 	require.NoError(t, err)
-	require.Equal(t, "abandoned", abandoned.State)
-	next, err := s.ReserveBatesRange(t.Context(), batesRequest(t, ns, snapshot, inputs))
+	require.Equal(t, int64(44), reserved.StartSequence)
+}
+
+func TestBatesReserveRequiresTheRecipeStart(t *testing.T) {
+	s := newTestStore(t)
+	snapshot, inputs := batesFixture(t, s)
+	ns, err := s.EnsureBatesNamespace(t.Context(), "OUR", "", 6)
 	require.NoError(t, err)
-	require.Equal(t, int64(44), next.StartSequence)
-	_, err = s.CommitBatesAllocation(t.Context(), next.AllocationID)
-	require.ErrorIs(t, err, ErrBatesReservationConflict)
-	abandoned, err = s.AbandonBatesAllocation(t.Context(), next.AllocationID)
+	request := batesRequest(t, ns, snapshot, inputs)
+	request.StartAt = 0
+	_, err = s.ReserveBatesRange(t.Context(), request)
+	require.ErrorIs(t, err, ErrInvalidBatesRequest)
+	var allocations int
+	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM bates_allocations`).Scan(&allocations))
+	require.Zero(t, allocations, "a cursor-following reservation could never match its recipe")
+}
+
+func TestBatesExportPageLimit(t *testing.T) {
+	s := newTestStore(t)
+	snapshot, inputs := batesFixture(t, s)
+	ns, err := s.EnsureBatesNamespace(t.Context(), "OUR", "", 6)
 	require.NoError(t, err)
-	require.Equal(t, "abandoned", abandoned.State)
+	request := batesRequest(t, ns, snapshot, inputs)
+	request.Pages = make([]BatesPageInput, MaxBatesExportPages+1)
+	_, err = s.PreviewBatesRange(t.Context(), request)
+	require.ErrorIs(t, err, ErrBatesPageLimit)
+	_, err = s.ReserveBatesRange(t.Context(), request)
+	require.ErrorIs(t, err, ErrBatesPageLimit)
 }
 
 func TestNamespaceUniquenessOverflowAndUnverifiedPages(t *testing.T) {
@@ -128,7 +153,11 @@ func TestNamespaceUniquenessOverflowAndUnverifiedPages(t *testing.T) {
 	snapshot, inputs := batesFixture(t, s)
 	for _, prefix := range []string{"BAD%", `BAD\`, "BÄD"} {
 		_, err := s.EnsureBatesNamespace(t.Context(), prefix, "", 6)
-		require.ErrorIs(t, err, ErrBatesReservationConflict)
+		require.ErrorIs(t, err, ErrInvalidBatesRequest)
+	}
+	for _, padding := range []int{0, 11} {
+		_, err := s.EnsureBatesNamespace(t.Context(), "OUR", "", padding)
+		require.ErrorIs(t, err, ErrInvalidBatesRequest)
 	}
 	ns, err := s.EnsureBatesNamespace(t.Context(), "OUR", "", 6)
 	require.NoError(t, err)
@@ -139,7 +168,7 @@ func TestNamespaceUniquenessOverflowAndUnverifiedPages(t *testing.T) {
 	request.StartAt = 999999
 	_, err = s.ReserveBatesRange(t.Context(), request)
 	require.ErrorIs(t, err, ErrBatesOverflow)
-	request.StartAt = 0
+	request.StartAt = 1
 	request.Pages[0].VerifiedPageCount = 0
 	_, err = s.ReserveBatesRange(t.Context(), request)
 	require.ErrorIs(t, err, ErrBatesPageCountMismatch)
@@ -156,8 +185,10 @@ func TestBatesGlobalLabelCollisionRollsBackCursor(t *testing.T) {
 	_, err = s.ReserveBatesRange(t.Context(), firstRequest)
 	require.NoError(t, err)
 	secondRequest := batesRequest(t, second, snapshot, inputs)
+	_, err = s.PreviewBatesRange(t.Context(), secondRequest)
+	require.ErrorIs(t, err, ErrBatesLabelCollision, "preview must show the collision before reserving")
 	_, err = s.ReserveBatesRange(t.Context(), secondRequest)
-	require.ErrorIs(t, err, ErrBatesReservationConflict)
+	require.ErrorIs(t, err, ErrBatesLabelCollision)
 	var cursor int64
 	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT next_sequence FROM bates_namespace_cursors WHERE namespace_id=?`, second.NamespaceID).Scan(&cursor))
 	require.Equal(t, int64(1), cursor)
@@ -180,10 +211,10 @@ func TestBatesLedgerRejectsMutationAndCursorRewind(t *testing.T) {
 	require.Error(t, err)
 	_, err = s.db.ExecContext(t.Context(), `UPDATE bates_allocations SET start_sequence=2 WHERE allocation_id=?`, allocation.AllocationID)
 	require.Error(t, err)
-	_, err = s.CommitBatesAllocation(t.Context(), allocation.AllocationID)
-	require.ErrorIs(t, err, ErrBatesReservationConflict)
-	_, err = s.AbandonBatesAllocation(t.Context(), allocation.AllocationID)
+	_, err = s.db.ExecContext(t.Context(), `UPDATE bates_allocations SET state='committed',committed_at='2026-09-21T12:00:00Z' WHERE allocation_id=?`, allocation.AllocationID)
 	require.NoError(t, err)
+	_, err = s.db.ExecContext(t.Context(), `UPDATE bates_allocations SET committed_at='2026-09-22T12:00:00Z' WHERE allocation_id=?`, allocation.AllocationID)
+	require.Error(t, err, "a commit is final")
 }
 
 func TestConcurrentBatesReservationsNeverOverlap(t *testing.T) {
@@ -204,6 +235,7 @@ func TestConcurrentBatesReservationsNeverOverlap(t *testing.T) {
 	var wg sync.WaitGroup
 	for i := range count {
 		request := batesRequest(t, ns, snapshot, inputs)
+		request.StartAt = int64(i*3 + 1)
 		wg.Go(func() {
 			<-start
 			if i%2 == 0 {
@@ -217,14 +249,18 @@ func TestConcurrentBatesReservationsNeverOverlap(t *testing.T) {
 	wg.Wait()
 	seen := map[int64]bool{}
 	for i, result := range results {
-		require.NoError(t, errs[i])
+		if errs[i] != nil {
+			require.ErrorIs(t, errs[i], ErrBatesReservationConflict, "only a start behind the cursor may lose")
+			continue
+		}
+		require.Equal(t, int64(i*3+1), result.StartSequence)
 		require.Equal(t, int64(3), result.EndSequence-result.StartSequence+1)
 		for n := result.StartSequence; n <= result.EndSequence; n++ {
 			require.False(t, seen[n])
 			seen[n] = true
 		}
 	}
-	require.Len(t, seen, count*3)
+	require.NotEmpty(t, seen)
 }
 
 func TestBatesLedgerSurvivesMetadataRestore(t *testing.T) {
@@ -232,23 +268,27 @@ func TestBatesLedgerSurvivesMetadataRestore(t *testing.T) {
 	snapshot, inputs := batesFixture(t, s)
 	ns, err := s.EnsureBatesNamespace(t.Context(), "OUR", "", 6)
 	require.NoError(t, err)
-	allocation, err := s.ReserveBatesRange(t.Context(), batesRequest(t, ns, snapshot, inputs))
-	require.NoError(t, err)
-	_, err = s.AbandonBatesAllocation(t.Context(), allocation.AllocationID)
+	_, err = s.ReserveBatesRange(t.Context(), batesRequest(t, ns, snapshot, inputs))
 	require.NoError(t, err)
 	var encoded bytes.Buffer
 	require.NoError(t, s.ExportMetadata(t.Context(), &encoded))
 	bad := bytes.Replace(encoded.Bytes(), []byte(`"next_sequence":4`), []byte(`"next_sequence":3`), 1)
 	require.NotEqual(t, encoded.Bytes(), bad)
 	invalid := newTestStore(t)
-	require.ErrorIs(t, invalid.ImportMetadata(t.Context(), bytes.NewReader(bad)), ErrBatesReservationConflict)
-	badState := bytes.Replace(encoded.Bytes(), []byte(`"state":"abandoned"`), []byte(`"state":"future"`), 1)
+	err = invalid.ImportMetadata(t.Context(), bytes.NewReader(bad))
+	require.ErrorIs(t, err, ErrInvalidBatesLedger)
+	require.ErrorContains(t, err, ns.NamespaceID, "a failed restore must name the bad namespace")
+	badState := bytes.Replace(encoded.Bytes(), []byte(`"state":"reserved"`), []byte(`"state":"future"`), 1)
 	require.NotEqual(t, encoded.Bytes(), badState)
 	invalidState := newTestStore(t)
-	require.ErrorIs(t, invalidState.ImportMetadata(t.Context(), bytes.NewReader(badState)), ErrBatesReservationConflict)
+	require.ErrorIs(t, invalidState.ImportMetadata(t.Context(), bytes.NewReader(badState)), ErrInvalidBatesLedger)
 	restored := newTestStore(t)
 	require.NoError(t, restored.ImportMetadata(t.Context(), bytes.NewReader(encoded.Bytes())))
-	next, err := restored.ReserveBatesRange(t.Context(), batesRequest(t, ns, snapshot, inputs))
+	next := batesRequest(t, ns, snapshot, inputs)
+	_, err = restored.ReserveBatesRange(t.Context(), next)
+	require.ErrorIs(t, err, ErrBatesReservationConflict, "restored cursor must still cover 1-3")
+	next.StartAt = 4
+	reserved, err := restored.ReserveBatesRange(t.Context(), next)
 	require.NoError(t, err)
-	require.Equal(t, int64(4), next.StartSequence)
+	require.Equal(t, int64(4), reserved.StartSequence)
 }

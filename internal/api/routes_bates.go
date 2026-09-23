@@ -21,8 +21,6 @@ import (
 	"go.kenn.io/docbank/internal/store"
 )
 
-const maxBatesRouteLabels = 250
-
 func registerBatesRoutes(mux *http.ServeMux, api huma.API, d Deps, g *gate, downloads *webDownloadRegistry,
 	sessions *webSessionRegistry, cursors *documentQueryService,
 ) {
@@ -148,7 +146,7 @@ func registerBatesRoutes(mux *http.ServeMux, api huma.API, d Deps, g *gate, down
 		}
 		position, evidenceArtifactID, evidenceOffset, cursorEpoch, err := decodeBatesCandidateCursor(cursors, in.Cursor, key, value)
 		if err != nil {
-			return nil, FromStoreError(store.ErrInvalidBatesSelector)
+			return nil, FromStoreError(err)
 		}
 		limit := in.Limit
 		if limit == 0 {
@@ -296,8 +294,8 @@ func registerBatesRoutes(mux *http.ServeMux, api huma.API, d Deps, g *gate, down
 }
 
 func bindBatesPlanRequest(ctx context.Context, s *store.Store, value BatesPlanRequest) (store.BatesPlanRequest, error) {
-	if len(value.Pages) > maxBatesRouteLabels {
-		return store.BatesPlanRequest{}, store.ErrBatesPageCountMismatch
+	if len(value.Pages) > store.MaxBatesExportPages {
+		return store.BatesPlanRequest{}, store.ErrBatesPageLimit
 	}
 	namespace, err := s.BatesNamespace(ctx, value.NamespaceID, value.Prefix, value.Suffix, value.Padding)
 	if err != nil {
@@ -306,7 +304,7 @@ func bindBatesPlanRequest(ctx context.Context, s *store.Store, value BatesPlanRe
 	request := batesPlanRequestStore(value)
 	request.NamespaceID = namespace.NamespaceID
 	if len(request.Pages) == 0 {
-		request.Pages, err = s.SnapshotBatesPages(ctx, value.SnapshotID, maxBatesRouteLabels)
+		request.Pages, err = s.SnapshotBatesPages(ctx, value.SnapshotID)
 		if err != nil {
 			return store.BatesPlanRequest{}, err
 		}
@@ -378,7 +376,7 @@ func decodeBatesCandidateCursor(service *documentQueryService, raw, kind, value 
 	}
 	parts := strings.Split(raw, ".")
 	if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
-		return store.BatesArtifactPosition{}, "", 0, 0, store.ErrInvalidBatesSelector
+		return store.BatesArtifactPosition{}, "", 0, 0, store.ErrInvalidBatesCursor
 	}
 	strict := base64.RawURLEncoding.Strict()
 	encoded, err := strict.DecodeString(parts[0])
@@ -386,15 +384,17 @@ func decodeBatesCandidateCursor(service *documentQueryService, raw, kind, value 
 	mac := hmac.New(sha256.New, service.key[:])
 	_, _ = mac.Write(encoded)
 	if err != nil || signatureErr != nil || len(signature) != sha256.Size || !hmac.Equal(signature, mac.Sum(nil)) {
-		return store.BatesArtifactPosition{}, "", 0, 0, store.ErrInvalidBatesSelector
+		return store.BatesArtifactPosition{}, "", 0, 0, store.ErrInvalidBatesCursor
 	}
 	var cursor batesCandidateCursor
 	if err := json.Unmarshal(encoded, &cursor, json.RejectUnknownMembers(true)); err != nil ||
 		cursor.Version != batesCandidateCursorVersion || cursor.SelectorKind != kind || cursor.SelectorValue != value ||
 		cursor.ArtifactID == "" || service.now().Before(time.Unix(cursor.IssuedAt, 0)) ||
-		!service.now().Before(time.Unix(cursor.IssuedAt, 0).Add(documentCursorTTL)) ||
 		(cursor.EvidenceOffset == 0) == (cursor.CreatedAt == "") {
-		return store.BatesArtifactPosition{}, "", 0, 0, store.ErrInvalidBatesSelector
+		return store.BatesArtifactPosition{}, "", 0, 0, store.ErrInvalidBatesCursor
+	}
+	if !service.now().Before(time.Unix(cursor.IssuedAt, 0).Add(documentCursorTTL)) {
+		return store.BatesArtifactPosition{}, "", 0, 0, store.ErrDocumentCursorExpired
 	}
 	if cursor.EvidenceOffset > 0 {
 		return store.BatesArtifactPosition{}, cursor.ArtifactID, cursor.EvidenceOffset, cursor.BindingEpoch, nil

@@ -41,14 +41,14 @@ type BatesPageLabel struct {
 }
 
 type BatesPlanRequest struct {
-	OperationID  string           `json:"operation_id"`
+	OperationID  string           `json:"operation_id,omitzero"`
 	NamespaceID  string           `json:"namespace_id,omitzero"`
 	SnapshotID   string           `json:"snapshot_id"`
 	RecipeSHA256 string           `json:"recipe_sha256,omitzero"`
 	Prefix       string           `json:"prefix,omitzero"`
 	Suffix       string           `json:"suffix,omitzero"`
 	Padding      int              `json:"padding,omitzero"`
-	StartAt      int64            `json:"start_at"`
+	StartAt      int64            `json:"start_at" minimum:"0" doc:"First Bates number. Preview accepts 0 to continue the namespace cursor; reserve requires the recipe start_at."`
 	Pages        []BatesPageInput `json:"pages,omitempty"`
 }
 

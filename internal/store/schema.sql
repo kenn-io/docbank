@@ -169,7 +169,7 @@ CREATE TABLE IF NOT EXISTS bates_namespaces (
     namespace_id TEXT PRIMARY KEY,
     prefix TEXT NOT NULL,
     suffix TEXT NOT NULL,
-    padding INTEGER NOT NULL CHECK (padding BETWEEN 1 AND 10),
+    padding INTEGER NOT NULL,
     created_at TEXT NOT NULL,
     UNIQUE(prefix,suffix)
 );
@@ -228,6 +228,7 @@ CREATE TABLE IF NOT EXISTS bates_artifact_pages (
     label TEXT NOT NULL,
     PRIMARY KEY(artifact_id,ordinal)
 );
+CREATE INDEX IF NOT EXISTS bates_artifact_pages_label ON bates_artifact_pages(label);
 CREATE TRIGGER IF NOT EXISTS bates_artifacts_immutable_update
 BEFORE UPDATE ON bates_artifacts BEGIN
     SELECT RAISE(ABORT, 'Bates artifacts are immutable');
@@ -250,11 +251,8 @@ WHEN NEW.allocation_id<>OLD.allocation_id OR NEW.operation_id<>OLD.operation_id
  OR NEW.namespace_id<>OLD.namespace_id OR NEW.snapshot_id<>OLD.snapshot_id
  OR NEW.request_sha256<>OLD.request_sha256 OR NEW.recipe_sha256<>OLD.recipe_sha256
  OR NEW.start_sequence<>OLD.start_sequence OR NEW.end_sequence<>OLD.end_sequence
- OR NEW.created_at<>OLD.created_at OR OLD.state<>'reserved'
- OR NEW.state NOT IN ('committed','abandoned')
- OR (NEW.state='committed' AND (OLD.committed_at IS NOT NULL OR NEW.committed_at IS NULL))
- OR (NEW.state='abandoned' AND NEW.committed_at IS NOT NULL)
-BEGIN SELECT RAISE(ABORT, 'Bates allocation identity or terminal state is immutable'); END;
+ OR NEW.created_at<>OLD.created_at OR OLD.committed_at IS NOT NULL
+BEGIN SELECT RAISE(ABORT, 'Bates allocation identity or commit is immutable'); END;
 CREATE TRIGGER IF NOT EXISTS bates_page_labels_immutable_update
 BEFORE UPDATE ON bates_page_labels BEGIN
     SELECT RAISE(ABORT, 'Bates page labels are immutable');

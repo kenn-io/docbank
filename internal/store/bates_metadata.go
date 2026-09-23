@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json/jsontext"
-	"errors"
 	"fmt"
 
 	"go.kenn.io/docbank/internal/canonical"
@@ -190,8 +189,9 @@ func importBatesMetadata(ctx context.Context, tx *sql.Tx, kind string, raw jsont
 		if err := decodeMetadataRecord(raw, &r); err != nil {
 			return err
 		}
-		if r.Type != kind || validateUUIDv4(r.NamespaceID) != nil || r.Padding < 1 || r.Padding > 10 || validateMetadataTime("Bates namespace", r.CreatedAt) != nil {
-			return ErrBatesReservationConflict
+		if r.Type != kind || validateUUIDv4(r.NamespaceID) != nil || r.Padding < 1 || r.Padding > maxBatesPadding ||
+			!validBatesLabelPart(r.Prefix) || !validBatesLabelPart(r.Suffix) || validateMetadataTime("Bates namespace", r.CreatedAt) != nil {
+			return invalidBatesRecord(kind, r.NamespaceID)
 		}
 		_, err := tx.ExecContext(ctx, `INSERT INTO bates_namespaces(namespace_id,prefix,suffix,padding,created_at) VALUES(?,?,?,?,?)`, r.NamespaceID, r.Prefix, r.Suffix, r.Padding, r.CreatedAt)
 		return err
@@ -201,7 +201,7 @@ func importBatesMetadata(ctx context.Context, tx *sql.Tx, kind string, raw jsont
 			return err
 		}
 		if r.Type != kind || validateUUIDv4(r.NamespaceID) != nil || r.NextSequence < 1 {
-			return ErrBatesReservationConflict
+			return invalidBatesRecord(kind, r.NamespaceID)
 		}
 		_, err := tx.ExecContext(ctx, `INSERT INTO bates_namespace_cursors(namespace_id,next_sequence) VALUES(?,?)`, r.NamespaceID, r.NextSequence)
 		return err
@@ -214,12 +214,12 @@ func importBatesMetadata(ctx context.Context, tx *sql.Tx, kind string, raw jsont
 			validateUUIDv4(r.NamespaceID) != nil || validateUUIDv4(r.SnapshotID) != nil ||
 			!canonical.IsSHA256Hex(r.RequestSHA256) || !canonical.IsSHA256Hex(r.RecipeSHA256) ||
 			r.StartSequence < 1 || r.EndSequence < r.StartSequence || validateMetadataTime("Bates allocation", r.CreatedAt) != nil ||
-			(r.State != batesAllocationStateReserved && r.State != batesAllocationStateCommitted && r.State != batesAllocationStateAbandoned) ||
+			(r.State != batesAllocationStateReserved && r.State != batesAllocationStateCommitted) ||
 			(r.State == batesAllocationStateCommitted) != (r.CommittedAt != nil) {
-			return ErrBatesReservationConflict
+			return invalidBatesRecord(kind, r.AllocationID)
 		}
 		if r.CommittedAt != nil && validateMetadataTime("Bates committed at", *r.CommittedAt) != nil {
-			return ErrBatesReservationConflict
+			return invalidBatesRecord(kind, r.AllocationID)
 		}
 		_, err := tx.ExecContext(ctx, `INSERT INTO bates_allocations(allocation_id,operation_id,namespace_id,snapshot_id,request_sha256,
 			recipe_sha256,start_sequence,end_sequence,state,created_at,committed_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)`, r.AllocationID,
@@ -233,7 +233,7 @@ func importBatesMetadata(ctx context.Context, tx *sql.Tx, kind string, raw jsont
 		}
 		if r.Type != kind || validateUUIDv4(r.AllocationID) != nil || validateUUIDv4(r.NamespaceID) != nil ||
 			r.Ordinal < 1 || r.Sequence < 1 || r.OccurrenceID == "" || r.SourcePage < 1 || r.OutputPage < 1 || r.Label == "" {
-			return ErrBatesReservationConflict
+			return invalidBatesRecord(kind, fmt.Sprintf("%s/%d", r.AllocationID, r.Ordinal))
 		}
 		_, err := tx.ExecContext(ctx, `INSERT INTO bates_page_labels(allocation_id,ordinal,namespace_id,sequence,occurrence_id,
 			source_page,output_page,label) VALUES(?,?,?,?,?,?,?,?)`, r.AllocationID, r.Ordinal, r.NamespaceID, r.Sequence,
@@ -248,7 +248,7 @@ func importBatesMetadata(ctx context.Context, tx *sql.Tx, kind string, raw jsont
 			!canonical.IsSHA256Hex(r.BlobSHA256) || !canonical.IsSHA256Hex(r.ManifestSHA256) || r.Size < 1 ||
 			r.MediaType != batesArtifactMediaTypePDF || r.PageCount < 1 || r.State != batesArtifactStateVerified ||
 			len(r.RecipeJSON) == 0 || validateMetadataTime("Bates artifact", r.CreatedAt) != nil {
-			return ErrBatesReservationConflict
+			return invalidBatesRecord(kind, r.ArtifactID)
 		}
 		_, err := tx.ExecContext(ctx, `INSERT INTO bates_artifacts(artifact_id,allocation_id,blob_hash,size,media_type,page_count,recipe_json,manifest_sha256,state,created_at)
 			VALUES(?,?,?,?,?,?,?,?,?,?)`, r.ArtifactID, r.AllocationID, r.BlobSHA256, r.Size, r.MediaType,
@@ -261,13 +261,17 @@ func importBatesMetadata(ctx context.Context, tx *sql.Tx, kind string, raw jsont
 		}
 		if r.Type != kind || validateUUIDv4(r.ArtifactID) != nil || r.Ordinal < 1 || r.OccurrenceID == "" ||
 			!canonical.IsSHA256Hex(r.SourceBlobSHA256) || r.SourcePage < 1 || r.OutputPage < 1 || r.Label == "" {
-			return ErrBatesReservationConflict
+			return invalidBatesRecord(kind, fmt.Sprintf("%s/%d", r.ArtifactID, r.Ordinal))
 		}
 		_, err := tx.ExecContext(ctx, `INSERT INTO bates_artifact_pages(artifact_id,ordinal,occurrence_id,source_blob_sha256,source_page,output_page,label)
 			VALUES(?,?,?,?,?,?,?)`, r.ArtifactID, r.Ordinal, r.OccurrenceID, r.SourceBlobSHA256, r.SourcePage, r.OutputPage, r.Label)
 		return err
 	}
-	return errors.New("unknown Bates metadata")
+	return fmt.Errorf("%w: unknown record type %q", ErrInvalidBatesLedger, kind)
+}
+
+func invalidBatesRecord(kind, id string) error {
+	return fmt.Errorf("%w: %s record %s has invalid fields", ErrInvalidBatesLedger, kind, id)
 }
 
 func validateBatesMetadataState(ctx context.Context, q metadataQuerier) error {
@@ -290,7 +294,8 @@ func validateBatesMetadataState(ctx context.Context, q metadataQuerier) error {
 			return err
 		}
 		if cursor <= maxEnd {
-			return ErrBatesReservationConflict
+			return fmt.Errorf("%w: namespace %s cursor %d does not follow allocated sequence %d",
+				ErrInvalidBatesLedger, id, cursor, maxEnd)
 		}
 		if err := validateBatesNamespaceLabels(ctx, q, id, prefix, suffix, padding); err != nil {
 			return err
@@ -300,26 +305,54 @@ func validateBatesMetadataState(ctx context.Context, q metadataQuerier) error {
 	if err != nil {
 		return err
 	}
+	snapshotPages := map[string][]BatesPageInput{}
 	for _, id := range allocationIDs {
 		allocation, err := loadBatesAllocation(ctx, q, id)
 		if err != nil {
 			return err
 		}
-		expected, err := expectedBatesPages(ctx, q, allocation.SnapshotID)
-		if err != nil {
-			return err
+		expected, ok := snapshotPages[allocation.SnapshotID]
+		if !ok {
+			expected, err = snapshotSelectedPages(ctx, q, allocation.SnapshotID)
+			if err != nil {
+				return fmt.Errorf("validating Bates allocation %s snapshot: %w", id, err)
+			}
+			snapshotPages[allocation.SnapshotID] = expected
 		}
 		if len(expected) != len(allocation.Labels) {
-			return ErrBatesPageCountMismatch
+			return fmt.Errorf("%w: allocation %s has %d labels for %d sealed pages",
+				ErrInvalidBatesLedger, id, len(allocation.Labels), len(expected))
 		}
 		for i, page := range expected {
 			label := allocation.Labels[i]
 			if label.OccurrenceID != page.OccurrenceID || label.SourcePage != page.SourcePage {
-				return ErrBatesPageCountMismatch
+				return fmt.Errorf("%w: allocation %s label %d differs from the sealed page order",
+					ErrInvalidBatesLedger, id, i+1)
 			}
 		}
 	}
 	return nil
+}
+
+// snapshotSelectedPages reads only the sealed page order. Restore validation
+// must not depend on page documents, which can be derived after reservation.
+func snapshotSelectedPages(ctx context.Context, q metadataQuerier, snapshotID string) ([]BatesPageInput, error) {
+	var pages []BatesPageInput
+	for after := 0; ; {
+		members, err := loadSnapshotMemberRows(ctx, q, snapshotID, after, 250)
+		if err != nil {
+			return nil, err
+		}
+		if len(members) == 0 {
+			return pages, nil
+		}
+		for _, member := range members {
+			for _, page := range member.SelectedSourcePages {
+				pages = append(pages, BatesPageInput{OccurrenceID: member.OccurrenceID, SourcePage: page})
+			}
+			after = member.Ordinal
+		}
+	}
 }
 
 func validateBatesNamespaceLabels(ctx context.Context, q metadataQuerier, namespaceID, prefix, suffix string, padding int) error {
@@ -345,10 +378,10 @@ func validateBatesNamespaceLabels(ctx context.Context, q metadataQuerier, namesp
 		}
 		if aid != allocationID {
 			if allocationID != "" && int64(ordinal) != expectedEnd {
-				return ErrBatesReservationConflict
+				return batesLabelCountError(allocationID, ordinal, expectedEnd)
 			}
 			if start <= lastEnd {
-				return ErrBatesReservationConflict
+				return fmt.Errorf("%w: allocation %s overlaps an earlier range in namespace %s", ErrInvalidBatesLedger, aid, namespaceID)
 			}
 			allocationID = aid
 			lastEnd = end
@@ -359,14 +392,18 @@ func validateBatesNamespaceLabels(ctx context.Context, q metadataQuerier, namesp
 		if !labelOrdinal.Valid || labelOrdinal.Int64 != int64(ordinal) || sequence.Int64 != start+int64(ordinal)-1 ||
 			labelNamespace.String != namespaceID || outputPage.Int64 != int64(ordinal) || sourcePage.Int64 < 1 ||
 			label.String != fmt.Sprintf("%s%0*d%s", prefix, padding, sequence.Int64, suffix) {
-			return ErrBatesReservationConflict
+			return fmt.Errorf("%w: allocation %s label %d does not match its namespace sequence", ErrInvalidBatesLedger, aid, ordinal)
 		}
 	}
 	if err := rows.Err(); err != nil {
 		return err
 	}
 	if allocationID != "" && int64(ordinal) != expectedEnd {
-		return ErrBatesReservationConflict
+		return batesLabelCountError(allocationID, ordinal, expectedEnd)
 	}
 	return nil
+}
+
+func batesLabelCountError(allocationID string, labels int, rangeSize int64) error {
+	return fmt.Errorf("%w: allocation %s has %d labels for a %d-number range", ErrInvalidBatesLedger, allocationID, labels, rangeSize)
 }

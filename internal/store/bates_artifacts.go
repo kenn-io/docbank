@@ -42,8 +42,11 @@ func (s *Store) BatesPublicationPlan(ctx context.Context, allocationID string) (
 	if err != nil {
 		return BatesAllocation{}, nil, err
 	}
-	inputs, err := expectedBatesPagesLimited(ctx, s.db, allocation.SnapshotID, MaxSnapshotPages)
-	if err != nil || len(inputs) != len(allocation.Labels) {
+	inputs, err := expectedBatesPagesLimited(ctx, s.db, allocation.SnapshotID, MaxBatesExportPages)
+	if err != nil {
+		return BatesAllocation{}, nil, err
+	}
+	if len(inputs) != len(allocation.Labels) {
 		return BatesAllocation{}, nil, ErrBatesPageCountMismatch
 	}
 	pages := make([]BatesArtifactPage, len(inputs))
@@ -65,13 +68,13 @@ func (s *Store) PublishBatesArtifact(ctx context.Context, publication BatesArtif
 	var artifact BatesArtifact
 	if validateUUIDv4(publication.ArtifactID) != nil || validateUUIDv4(publication.AllocationID) != nil ||
 		!canonical.IsSHA256Hex(publication.BlobSHA256) || publication.Size < 1 || publication.PageCount < 1 ||
-		len(publication.Pages) != publication.PageCount || len(publication.Pages) > MaxSnapshotPages || len(publication.RecipeJSON) == 0 {
-		return artifact, ErrBatesReservationConflict
+		len(publication.Pages) != publication.PageCount || len(publication.Pages) > MaxBatesExportPages || len(publication.RecipeJSON) == 0 {
+		return artifact, invalidBatesRequest("Bates artifact publication is incomplete")
 	}
 	recipeSHA := digestCatalogJSON(publication.RecipeJSON)
 	manifestSHA, err := batesArtifactManifestSHA(BatesArtifact{
 		ArtifactID: publication.ArtifactID, AllocationID: publication.AllocationID,
-		BlobSHA256: publication.BlobSHA256, Size: publication.Size, MediaType: "application/pdf",
+		BlobSHA256: publication.BlobSHA256, Size: publication.Size, MediaType: batesArtifactMediaTypePDF,
 		PageCount: publication.PageCount, RecipeSHA256: recipeSHA, Pages: publication.Pages,
 	})
 	if err != nil {
@@ -94,7 +97,10 @@ func (s *Store) PublishBatesArtifact(ctx context.Context, publication BatesArtif
 			return loadErr
 		}
 		allocation, loadErr := loadBatesAllocation(ctx, tx, publication.AllocationID)
-		if loadErr != nil || allocation.State != batesAllocationStateReserved || allocation.RecipeSHA256 != recipeSHA || len(allocation.Labels) != len(publication.Pages) {
+		if loadErr != nil {
+			return loadErr
+		}
+		if allocation.State != batesAllocationStateReserved || allocation.RecipeSHA256 != recipeSHA || len(allocation.Labels) != len(publication.Pages) {
 			return ErrBatesReservationConflict
 		}
 		for index, page := range publication.Pages {
@@ -120,12 +126,16 @@ func (s *Store) PublishBatesArtifact(ctx context.Context, publication BatesArtif
 				return err
 			}
 		}
-		result, err := tx.ExecContext(ctx, `UPDATE bates_allocations SET state='committed',committed_at=? WHERE allocation_id=? AND state='reserved'`, createdAt, publication.AllocationID)
+		result, err := tx.ExecContext(ctx, `UPDATE bates_allocations SET state=?,committed_at=? WHERE allocation_id=? AND state=?`,
+			batesAllocationStateCommitted, createdAt, publication.AllocationID, batesAllocationStateReserved)
 		if err != nil {
 			return err
 		}
 		changed, err := result.RowsAffected()
-		if err != nil || changed != 1 {
+		if err != nil {
+			return fmt.Errorf("committing Bates allocation: %w", err)
+		}
+		if changed != 1 {
 			return ErrBatesReservationConflict
 		}
 		artifact, err = loadBatesArtifact(ctx, tx, publication.ArtifactID)
@@ -162,7 +172,10 @@ func (s *Store) BatesArtifact(ctx context.Context, allocationID string) (BatesAr
 }
 
 func (s *Store) BatesArtifacts(ctx context.Context, after string, limit int) ([]BatesArtifact, error) {
-	if limit < 1 || limit > 250 || after != "" && validateUUIDv4(after) != nil {
+	if limit < 1 || limit > 250 {
+		return nil, invalidBatesRequest("limit must be between 1 and 250")
+	}
+	if after != "" && validateUUIDv4(after) != nil {
 		return nil, ErrInvalidBatesCursor
 	}
 	query := `SELECT artifact_id FROM bates_artifacts ORDER BY created_at,artifact_id LIMIT ?`
@@ -171,7 +184,7 @@ func (s *Store) BatesArtifacts(ctx context.Context, after string, limit int) ([]
 		var createdAt string
 		if err := s.db.QueryRowContext(ctx, `SELECT created_at FROM bates_artifacts WHERE artifact_id=?`, after).Scan(&createdAt); err != nil {
 			if errors.Is(err, sql.ErrNoRows) {
-				return nil, ErrNotFound
+				return nil, ErrInvalidBatesCursor
 			}
 			return nil, err
 		}
@@ -271,19 +284,25 @@ func validateBatesArtifactState(ctx context.Context, q metadataQuerier) error {
 			return err
 		}
 		allocation, err := loadBatesAllocation(ctx, q, artifact.AllocationID)
-		if err != nil || allocation.State != batesAllocationStateCommitted || artifact.State != batesArtifactStateVerified ||
+		if err != nil {
+			return fmt.Errorf("validating Bates artifact %s allocation: %w", id, err)
+		}
+		if allocation.State != batesAllocationStateCommitted || artifact.State != batesArtifactStateVerified ||
 			artifact.PageCount != len(artifact.Pages) || artifact.RecipeSHA256 != digestCatalogJSON(artifact.RecipeJSON) {
-			return fmt.Errorf("validating Bates artifact %s: %w", id, ErrBatesReservationConflict)
+			return fmt.Errorf("validating Bates artifact %s: state, page count, or recipe differs: %w", id, ErrInvalidBatesLedger)
 		}
 		manifestSHA, err := batesArtifactManifestSHA(artifact)
-		if err != nil || manifestSHA != artifact.ManifestSHA256 || len(allocation.Labels) != len(artifact.Pages) {
-			return fmt.Errorf("validating Bates artifact %s manifest: %w", id, ErrBatesReservationConflict)
+		if err != nil {
+			return fmt.Errorf("validating Bates artifact %s manifest: %w", id, err)
+		}
+		if manifestSHA != artifact.ManifestSHA256 || len(allocation.Labels) != len(artifact.Pages) {
+			return fmt.Errorf("validating Bates artifact %s: manifest differs: %w", id, ErrInvalidBatesLedger)
 		}
 		for index, page := range artifact.Pages {
 			label := allocation.Labels[index]
 			if page.Ordinal != index+1 || page.OccurrenceID != label.OccurrenceID || page.SourcePage != label.SourcePage ||
 				page.OutputPage != label.OutputPage || page.Label != label.Label || !canonical.IsSHA256Hex(page.SourceBlobSHA256) {
-				return fmt.Errorf("validating Bates artifact %s page %d: %w", id, index+1, ErrBatesPageCountMismatch)
+				return fmt.Errorf("validating Bates artifact %s page %d: receipt differs from allocation: %w", id, index+1, ErrInvalidBatesLedger)
 			}
 		}
 	}
