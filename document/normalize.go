@@ -226,7 +226,7 @@ func checkRenditionXHTMLAttributeBound(ctx context.Context, source []byte) error
 			index += min(2, len(source)-index)
 			continue
 		}
-		if source[index+1] == '/' || source[index+1] == '!' {
+		if source[index+1] == '!' {
 			index++
 			quote := byte(0)
 			for index < len(source) {
@@ -234,6 +234,19 @@ func checkRenditionXHTMLAttributeBound(ctx context.Context, source []byte) error
 					if err := ctx.Err(); err != nil {
 						return err
 					}
+				}
+				if bytes.HasPrefix(source[index:], []byte("<!--")) {
+					index += len("<!--")
+					for index+2 < len(source) && !bytes.Equal(source[index:index+3], []byte("-->")) {
+						if index&1023 == 0 {
+							if err := ctx.Err(); err != nil {
+								return err
+							}
+						}
+						index++
+					}
+					index += min(3, len(source)-index)
+					continue
 				}
 				character := source[index]
 				if quote != 0 {
@@ -248,6 +261,19 @@ func checkRenditionXHTMLAttributeBound(ctx context.Context, source []byte) error
 				}
 				index++
 			}
+			continue
+		}
+		if source[index+1] == '/' {
+			index++
+			for index < len(source) && source[index] != '>' {
+				if index&1023 == 0 {
+					if err := ctx.Err(); err != nil {
+						return err
+					}
+				}
+				index++
+			}
+			index += min(1, len(source)-index)
 			continue
 		}
 

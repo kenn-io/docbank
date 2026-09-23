@@ -142,6 +142,16 @@ func TestRenditionXHTMLAttributePreflightHandlesProcessingInstructions(t *testin
 	source.WriteString(`>text</body></html>`)
 
 	require.ErrorIs(t, checkRenditionXHTMLAttributeBound(t.Context(), []byte(source.String())), ErrRenditionXHTMLBudget)
+
+	source.Reset()
+	source.WriteString(`<!DOCTYPE html [<!-- ' -->]><html xmlns="http://www.w3.org/1999/xhtml"><body`)
+	for index := range maxRenditionXHTMLAttributes + 1 {
+		source.WriteString(` a`)
+		source.WriteString(strconv.Itoa(index))
+		source.WriteString(`="x"`)
+	}
+	source.WriteString(`>text</body></html>`)
+	require.ErrorIs(t, checkRenditionXHTMLAttributeBound(t.Context(), []byte(source.String())), ErrRenditionXHTMLBudget)
 }
 
 func TestRenditionXHTMLContextCancellation(t *testing.T) {
