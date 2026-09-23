@@ -384,6 +384,9 @@ func (s *Store) AdmitProductionJob(ctx context.Context, r productionservice.JobR
 	if err != nil {
 		return productionservice.Job{}, err
 	}
+	if len(requestRaw) > maxProductionJobRequestBytes {
+		return productionservice.Job{}, productionservice.ErrJobConflict
+	}
 	err = s.withStorageTx(ctx, func(tx *sql.Tx) error {
 		var existingSHA, existingOperation, existingSet string
 		var existingRevision, existingETag int64

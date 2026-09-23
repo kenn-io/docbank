@@ -10,6 +10,7 @@ import (
 	"math"
 	"os"
 	"slices"
+	"time"
 
 	documentproduction "go.kenn.io/docbank/document/production"
 	"go.kenn.io/docbank/document/redaction"
@@ -60,7 +61,15 @@ func (w *boundedPageWriter) Write(p []byte) (int, error) {
 func RenderProductionPages(ctx context.Context, opener ProductionPDFSourceOpener, stager ProductionPageStager,
 	engine pdfproduction.Engine, claim JobClaim, job Job, finalized FinalizedProduction, plan RenderPlan,
 	recipe redaction.Recipe) error {
+	return renderProductionPagesWithTimeout(ctx, opener, stager, engine, claim, job, finalized, plan,
+		recipe, productionPageTimeout)
+}
+
+func renderProductionPagesWithTimeout(ctx context.Context, opener ProductionPDFSourceOpener, stager ProductionPageStager,
+	engine pdfproduction.Engine, claim JobClaim, job Job, finalized FinalizedProduction, plan RenderPlan,
+	recipe redaction.Recipe, pageTimeout time.Duration) error {
 	if ctx == nil || opener == nil || stager == nil || engine == nil || claim.JobID != job.ID ||
+		pageTimeout <= 0 || pageTimeout > productionPageTimeout ||
 		job.ID != plan.JobID || job.RevisionSHA256 != plan.RevisionSHA256 ||
 		finalized.Draft.SetID != job.SetID || finalized.Draft.Revision != job.Revision ||
 		finalized.Authority.Prepared.SHA256 != job.RevisionSHA256 || finalized.Authority.Receipt == nil ||
@@ -126,8 +135,12 @@ func RenderProductionPages(ctx context.Context, opener ProductionPDFSourceOpener
 		}
 		for index := range member.Resolved.Pages {
 			page := plan.Pages[pageIndex+index]
-			if err := renderOneProductionPage(ctx, stager, engine, claim, job, plan, member, page,
-				spool.File, pinned, recipe); err != nil {
+			pageCtx, stopPage := context.WithTimeout(ctx, pageTimeout)
+			err := renderOneProductionPage(pageCtx, stager, engine, claim, job, plan, member, page,
+				spool.File, pinned, recipe)
+			err = errors.Join(err, pageCtx.Err())
+			stopPage()
+			if err != nil {
 				return errors.Join(err, spool.Close())
 			}
 		}

@@ -8,6 +8,7 @@ import (
 	"errors"
 	"io"
 	"testing"
+	"time"
 
 	"github.com/go-pdf/fpdf"
 	"github.com/stretchr/testify/require"
@@ -328,6 +329,9 @@ func TestRenderProductionPagesVerifiedSourceAndFencedStage(t *testing.T) {
 	err = RenderProductionPages(ctx, source, handles, engine, claim, job, finalized, plan, recipe)
 	require.ErrorIs(t, err, context.Canceled)
 	require.Equal(t, priorOpens, source.opens)
+	err = renderProductionPagesWithTimeout(t.Context(), source, handles, waitingProductionEngine{},
+		claim, job, finalized, plan, recipe, 5*time.Millisecond)
+	require.ErrorIs(t, err, context.DeadlineExceeded)
 }
 
 func TestRenderProductionPagesTwoPageMasksAndFreshVerification(t *testing.T) {

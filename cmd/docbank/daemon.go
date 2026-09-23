@@ -241,6 +241,9 @@ func runServe(ctx context.Context) (retErr error) {
 	if err != nil {
 		return err
 	}
+	if err := startProductionWorker(jobSupervisor, s, blobs); err != nil {
+		return err
+	}
 	if err := startMailboxJobs(sigCtx, jobSupervisor, s, blobs, layout.BlobTmpDir(), operationGate, logger); err != nil {
 		return err
 	}
