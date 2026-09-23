@@ -5,14 +5,22 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
+	"time"
 
 	"go.kenn.io/kit/pack"
 )
 
 var syncDirectory = pack.SyncDir
 
+// staleStageAge is how old an abandoned stage must be before CreateStage
+// removes it; live exports finish well within it.
+const staleStageAge = 24 * time.Hour
+
 // Publish atomically installs a staged file in the same directory. The boolean
 // reports whether the destination became visible, including durability errors.
+// A hard-link publication leaves the staged name in place; Stage.Cleanup
+// removes it.
 func Publish(stagedPath, destinationPath string, overwrite bool) (bool, error) {
 	stageDir, destinationDir := filepath.Dir(stagedPath), filepath.Dir(destinationPath)
 	if stageDir != destinationDir && filepath.Dir(stageDir) != destinationDir {
@@ -23,14 +31,11 @@ func Publish(stagedPath, destinationPath string, overwrite bool) (bool, error) {
 			return false, err
 		}
 	} else {
-		linkErr := os.Link(stagedPath, destinationPath)
-		if linkErr != nil {
+		if linkErr := os.Link(stagedPath, destinationPath); linkErr != nil {
 			if renameErr := renameNoReplace(stagedPath, destinationPath); renameErr != nil {
 				return false, errors.Join(fmt.Errorf("hard-link publication: %w", linkErr),
 					fmt.Errorf("no-replace rename publication: %w", renameErr))
 			}
-		} else if err := os.Remove(stagedPath); err != nil {
-			return true, fmt.Errorf("remove staged link after publication: %w", err)
 		}
 	}
 	if err := syncDirectory(filepath.Dir(destinationPath)); err != nil {
@@ -48,7 +53,10 @@ type Stage struct {
 	pin  *os.File
 }
 
+// CreateStage makes a private stage in parent. It first removes stages with
+// the same prefix that a crashed process left behind more than a day ago.
 func CreateStage(parent, prefix string) (*Stage, error) {
+	removeStaleStages(parent, prefix)
 	dir, pin, err := makePrivateStageDir(parent, prefix)
 	if err != nil {
 		return nil, err
@@ -91,4 +99,26 @@ func (s *Stage) Cleanup() error {
 		s.pin = nil
 	}
 	return errors.Join(pinErr, os.RemoveAll(s.dir))
+}
+
+// removeStaleStages is best effort: a leftover stage must not block a new
+// export. It removes only the payload file and the then-empty directory, so a
+// user directory that happens to share the prefix is never emptied.
+func removeStaleStages(parent, prefix string) {
+	entries, err := os.ReadDir(parent)
+	if err != nil {
+		return
+	}
+	for _, entry := range entries {
+		if !entry.IsDir() || !strings.HasPrefix(entry.Name(), prefix) {
+			continue
+		}
+		info, err := entry.Info()
+		if err != nil || time.Since(info.ModTime()) < staleStageAge {
+			continue
+		}
+		dir := filepath.Join(parent, entry.Name())
+		_ = os.Remove(filepath.Join(dir, "payload.tmp"))
+		_ = os.Remove(dir)
+	}
 }
