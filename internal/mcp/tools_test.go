@@ -39,8 +39,8 @@ func TestDefaultToolCatalogIsFixedBoundedAndReadOnly(t *testing.T) {
 		assert.True(t, tool.Annotations.IdempotentHint)
 		assert.Equal(t, new(false), tool.Annotations.DestructiveHint)
 		assert.Equal(t, new(false), tool.Annotations.OpenWorldHint)
-		assertSchemaContract(t, tool.InputSchema, true)
-		assertSchemaContract(t, tool.OutputSchema, true)
+		assertSchemaContract(t, tool.InputSchema)
+		assertSchemaContract(t, tool.OutputSchema)
 		assert.Equal(t, map[string]any{"maxResponseBytes": maxToolResponseBytes}, tool.Meta["io.docbank/bounds"])
 	}
 	assert.NotContains(t, catalogNames(tools), "start_processing")
@@ -382,7 +382,7 @@ func authoritativeProcessingPlanFixture() map[string]any {
 	return result
 }
 
-func assertSchemaContract(t *testing.T, raw any, object bool) {
+func assertSchemaContract(t *testing.T, raw any) {
 	t.Helper()
 	schema := schemaMap(t, raw)
 	draft, ok := schema["$schema"].(string)
@@ -390,10 +390,8 @@ func assertSchemaContract(t *testing.T, raw any, object bool) {
 	if draft != jsonSchemaDraft {
 		t.Errorf("schema draft = %q, want %q", draft, jsonSchemaDraft)
 	}
-	if object {
-		assert.Equal(t, "object", schema["type"])
-		assert.Equal(t, false, schema["additionalProperties"])
-	}
+	assert.Equal(t, "object", schema["type"])
+	assert.Equal(t, false, schema["additionalProperties"])
 }
 
 func assertSchemaAccepts(t *testing.T, raw any, value any) {
