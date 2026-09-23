@@ -168,6 +168,17 @@ func TestProviderOrderedOccurrencesAndReceipt(t *testing.T) {
 	requireClass(t, result, err, document.RenditionErrorPolicyRejected)
 }
 
+func TestProviderNormalizesSpineMediaTypeAndReference(t *testing.T) {
+	data := epubBytes(t, map[string]string{
+		"OPS/book.opf": `<package xmlns="http://www.idpf.org/2007/opf"><manifest><item id="a" href="a.xhtml?view=reader#chapter-1" media-type="Application/XHTML+XML; charset=utf-8"/></manifest><spine><itemref idref="a"/></spine></package>`,
+	})
+	result, err := renderTest(t, data, 1)
+	require.NoError(t, err)
+	require.Len(t, result.Evidence.Units, 1)
+	require.Equal(t, "alpha needle", result.Evidence.Units[0].Text)
+	require.Equal(t, "OPS/a.xhtml", result.Evidence.Units[0].Locator.Name)
+}
+
 func TestVirtualUnitsLiteralBoundaries(t *testing.T) {
 	for _, test := range []struct {
 		name, text string

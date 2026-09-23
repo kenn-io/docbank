@@ -1,6 +1,7 @@
 package document
 
 import (
+	"context"
 	"strings"
 	"testing"
 
@@ -64,4 +65,12 @@ func TestRenditionXHTMLRejectsMalformedAndBudgetOverflow(t *testing.T) {
 	text, err = RenditionMarkdownFromXHTML([]byte(`<html xmlns="http://www.w3.org/1999/xhtml"><body><p>`+strings.Repeat("e<!--split-->&#x301;", 3840)+`</p></body></html>`), 3840)
 	require.NoError(t, err)
 	require.Equal(t, strings.Repeat("é", 3840), text)
+}
+
+func TestRenditionXHTMLContextCancellation(t *testing.T) {
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	text, err := RenditionMarkdownFromXHTMLContext(ctx, []byte(`<html xmlns="http://www.w3.org/1999/xhtml"><body>text</body></html>`), 100)
+	require.ErrorIs(t, err, context.Canceled)
+	require.Empty(t, text)
 }

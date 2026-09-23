@@ -3,6 +3,7 @@ package epubutil
 
 import (
 	"archive/zip"
+	"context"
 	"encoding/xml"
 	"errors"
 	"fmt"
@@ -56,6 +57,14 @@ type Itemref struct {
 
 // ReadPackages reads every declared rootfile in order under the caller's entry limit.
 func ReadPackages(files []*zip.File, limit int64) ([]Package, error) {
+	return ReadPackagesContext(context.Background(), files, limit)
+}
+
+// ReadPackagesContext reads package metadata while observing cancellation.
+func ReadPackagesContext(ctx context.Context, files []*zip.File, limit int64) ([]Package, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	entries := make(map[string]*zip.File, len(files))
 	for _, file := range files {
 		if entries[file.Name] == nil {
@@ -66,7 +75,7 @@ func ReadPackages(files []*zip.File, limit int64) ([]Package, error) {
 	if container == nil {
 		return nil, errors.New("EPUB container document is missing")
 	}
-	body, err := ReadZIPEntry(container, limit)
+	body, err := ReadZIPEntryContext(ctx, container, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -96,7 +105,7 @@ func ReadPackages(files []*zip.File, limit int64) ([]Package, error) {
 		if file == nil {
 			return nil, errors.New("EPUB package document is missing")
 		}
-		body, err := ReadZIPEntry(file, limit)
+		body, err := ReadZIPEntryContext(ctx, file, limit)
 		if err != nil {
 			return nil, err
 		}
@@ -193,6 +202,14 @@ func LeavesArchiveRoot(resolved string) bool {
 
 // ReadZIPEntry verifies a complete entry within the caller's byte limit.
 func ReadZIPEntry(file *zip.File, limit int64) ([]byte, error) {
+	return ReadZIPEntryContext(context.Background(), file, limit)
+}
+
+// ReadZIPEntryContext verifies a complete entry while observing cancellation.
+func ReadZIPEntryContext(ctx context.Context, file *zip.File, limit int64) ([]byte, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	if limit < 0 || file.UncompressedSize64 > uint64(limit) {
 		return nil, errors.New("ZIP entry exceeds bound")
 	}
@@ -201,11 +218,27 @@ func ReadZIPEntry(file *zip.File, limit int64) ([]byte, error) {
 		return nil, fmt.Errorf("open ZIP entry: %w", err)
 	}
 	defer func() { _ = reader.Close() }()
-	data, err := io.ReadAll(io.LimitReader(reader, limit+1))
+	data, err := io.ReadAll(io.LimitReader(contextReader{ctx: ctx, reader: reader}, limit+1))
 	if err != nil || int64(len(data)) > limit || uint64(len(data)) != file.UncompressedSize64 {
 		return nil, errors.New("ZIP entry exceeds bound")
 	}
 	return data, nil
+}
+
+type contextReader struct {
+	ctx    context.Context
+	reader io.Reader
+}
+
+func (reader contextReader) Read(p []byte) (int, error) {
+	if err := reader.ctx.Err(); err != nil {
+		return 0, err
+	}
+	n, err := reader.reader.Read(p)
+	if contextErr := reader.ctx.Err(); contextErr != nil {
+		return n, contextErr
+	}
+	return n, err
 }
 
 // ManifestBases preserves every intermediate XML-base interpretation.

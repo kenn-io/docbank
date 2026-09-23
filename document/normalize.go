@@ -2,6 +2,7 @@ package document
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/xml"
@@ -29,6 +30,17 @@ var ErrRenditionXHTMLBudget = errors.New("XHTML rendition exceeds its work or ou
 
 // RenditionMarkdownFromXHTML converts a complete UTF-8 XML document to bounded Markdown.
 func RenditionMarkdownFromXHTML(source []byte, maxRunes int) (string, error) {
+	return RenditionMarkdownFromXHTMLContext(context.Background(), source, maxRunes)
+}
+
+// RenditionMarkdownFromXHTMLContext converts XHTML while observing cancellation.
+func RenditionMarkdownFromXHTMLContext(ctx context.Context, source []byte, maxRunes int) (string, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
 	if maxRunes < 0 || len(source) > 100<<20 {
 		return "", ErrRenditionXHTMLBudget
 	}
@@ -42,6 +54,9 @@ func RenditionMarkdownFromXHTML(source []byte, maxRunes int) (string, error) {
 	decoder.Entity = xml.HTMLEntity
 	depth, roots, head := 0, 0, 0
 	for {
+		if err := ctx.Err(); err != nil {
+			return "", err
+		}
 		token, err := decoder.Token()
 		if errors.Is(err, io.EOF) {
 			break
@@ -98,15 +113,24 @@ func RenditionMarkdownFromXHTML(source []byte, maxRunes int) (string, error) {
 			return "", ErrRenditionXHTMLBudget
 		}
 	}
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
 	if roots != 1 || depth != 0 {
 		return "", errors.New("XHTML document is incomplete")
 	}
 	writer.finalize()
 	canonicalizeRenditionBlocks(writer.blocks)
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
 	if writer.work.exceeded || !renditionXHTMLSerializationFits(writer.blocks, budget, 0) {
 		return "", ErrRenditionXHTMLBudget
 	}
 	text, truncated := serializeRenditionBlocks(writer.blocks, maxRunes)
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
 	text = canonicalEvidenceString(text)
 	if truncated || len(text) > maxEvidenceTextBytes || utf8.RuneCountInString(text) > maxRunes {
 		return "", ErrRenditionXHTMLBudget
