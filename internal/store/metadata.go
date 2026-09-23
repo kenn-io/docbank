@@ -1086,6 +1086,7 @@ func requirePristineMetadataTarget(ctx context.Context, tx *sql.Tx) error {
 		    + (SELECT COUNT(*) FROM production_jobs)
 		    + (SELECT COUNT(*) FROM production_job_artifacts)
 		    + (SELECT COUNT(*) FROM production_job_render_plans)
+		    + (SELECT COUNT(*) FROM production_job_page_stages)
 		    + (SELECT COUNT(*) FROM source_metadata_generations)
 		    + (SELECT COUNT(*) FROM source_metadata_heads)
 		    + (SELECT COUNT(*) FROM visual_preview_generations)

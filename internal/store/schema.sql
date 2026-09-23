@@ -3079,3 +3079,28 @@ CREATE TRIGGER IF NOT EXISTS production_job_render_plans_immutable_delete
 BEFORE DELETE ON production_job_render_plans BEGIN
     SELECT RAISE(ABORT, 'production render plan is immutable');
 END;
+
+-- Each final page stage binds one sealed occurrence/page to a persisted
+-- artifact. A receipt and its artifact are inserted in the same transaction.
+CREATE TABLE IF NOT EXISTS production_job_page_stages (
+    job_id TEXT NOT NULL REFERENCES production_jobs(job_id) ON DELETE RESTRICT,
+    member_id TEXT NOT NULL,
+    page INTEGER NOT NULL,
+    artifact_id TEXT NOT NULL,
+    artifact_sha256 TEXT NOT NULL REFERENCES blobs(hash) ON DELETE RESTRICT,
+    stage_sha256 TEXT NOT NULL,
+    canonical_json BLOB NOT NULL,
+    created_at TEXT NOT NULL,
+    PRIMARY KEY(job_id, member_id, page),
+    FOREIGN KEY(job_id, artifact_id) REFERENCES production_job_artifacts(job_id, artifact_id) ON DELETE RESTRICT
+);
+CREATE INDEX IF NOT EXISTS production_job_page_stages_artifact_hash
+ON production_job_page_stages(artifact_sha256);
+CREATE TRIGGER IF NOT EXISTS production_job_page_stages_immutable_update
+BEFORE UPDATE ON production_job_page_stages BEGIN
+    SELECT RAISE(ABORT, 'production page stage is immutable');
+END;
+CREATE TRIGGER IF NOT EXISTS production_job_page_stages_immutable_delete
+BEFORE DELETE ON production_job_page_stages BEGIN
+    SELECT RAISE(ABORT, 'production page stage is immutable');
+END;

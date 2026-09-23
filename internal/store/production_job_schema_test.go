@@ -12,7 +12,7 @@ import (
 
 func TestOpenRejectsCurrentDatabaseMissingProductionJobAuthority(t *testing.T) {
 	for _, driver := range v090UpgradeDrivers() {
-		for _, table := range []string{"production_finalized_revisions", "production_jobs", "production_job_artifacts"} {
+		for _, table := range []string{"production_finalized_revisions", "production_jobs", "production_job_artifacts", "production_job_page_stages"} {
 			t.Run(driver.name+"/"+table, func(t *testing.T) {
 				path := filepath.Join(t.TempDir(), "docbank.db")
 				store, err := Open(path, driver.driver)

@@ -25,13 +25,15 @@ type Store struct {
 	primaryStoreID   string
 	driver           docsqlite.Driver
 	providerEgressMu sync.RWMutex
+	pageStageProofMu sync.RWMutex
+	pageStageProof   *productionPageProofCache
 }
 
 // currentStorageSchemaVersion identifies the canonical SQLite layout created
 // by this binary. It is intentionally independent of metadata JSONL's logical
 // format version: physical schema changes can rebuild through the same logical
 // format without changing that portable contract.
-const currentStorageSchemaVersion = 29
+const currentStorageSchemaVersion = 30
 
 const peopleStorageSchemaVersion = 15
 
