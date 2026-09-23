@@ -383,6 +383,21 @@ func TestPhotoMetadataRejectsOrphanReceipts(t *testing.T) {
 	target := newTestStore(t)
 	err = target.ImportMetadata(ctx, strings.NewReader(strings.Join(lines, "\n")))
 	require.ErrorContains(t, err, "reference missing assets")
+
+	preference := "image"
+	_, err = s.SetPhotoSettings(ctx, 1, &preference)
+	require.NoError(t, err)
+	exported.Reset()
+	require.NoError(t, s.ExportMetadata(ctx, &exported))
+	lines = strings.Split(exported.String(), "\n")
+	for index, line := range lines {
+		if strings.Contains(line, `"type":"photo_library_settings"`) {
+			lines[index] = ""
+		}
+	}
+	settingsTarget := newTestStore(t)
+	err = settingsTarget.ImportMetadata(ctx, strings.NewReader(strings.Join(lines, "\n")))
+	require.ErrorContains(t, err, "reference missing assets or settings")
 }
 
 func TestPhotoMutationsRequireRevision(t *testing.T) {
