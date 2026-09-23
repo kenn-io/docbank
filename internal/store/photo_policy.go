@@ -3,7 +3,6 @@ package store
 import (
 	"context"
 	"database/sql"
-	"errors"
 	"fmt"
 	"strings"
 
@@ -163,6 +162,31 @@ func validatePhotoRoleForNode(role string, facts PhotoNodeFacts) error {
 	return nil
 }
 
+func validatePhotoFileForAsset(kind, role string, facts PhotoNodeFacts) error {
+	if err := validatePhotoRoleForAsset(kind, role); err != nil {
+		return err
+	}
+	if err := validatePhotoRoleForNode(role, facts); err != nil {
+		return err
+	}
+	if facts.Qualifies && role != PhotoRoleSidecar && kind != facts.AssetKind {
+		return fmt.Errorf("%w: node media does not match asset kind", ErrInvalidPhotoAsset)
+	}
+	return nil
+}
+
+func validatePhotoRoleForAsset(kind, role string) error {
+	if !photoRoleValid(role) {
+		return fmt.Errorf("%w: unknown role %q", ErrInvalidPhotoAsset, role)
+	}
+	if role == PhotoRoleImage && kind != PhotoKindPhoto ||
+		role == PhotoRoleVideo && kind != PhotoKindVideo ||
+		(role == PhotoRoleRAW || role == PhotoRoleSidecar) && kind != PhotoKindPhoto {
+		return fmt.Errorf("%w: role %s does not match asset kind %s", ErrInvalidPhotoAsset, role, kind)
+	}
+	return nil
+}
+
 func selectPhotoDisplay(files []PhotoFile, preference *string, override *string) photoDisplayChoice {
 	if override != nil {
 		for _, file := range files {
@@ -206,8 +230,12 @@ func validatePhotoGraph(ctx context.Context, q interface {
 	rows, err := q.QueryContext(ctx, `
 		SELECT a.asset_id, a.kind, a.revision, a.display_file_id,
 		       a.display_override_file_id, f.file_id, f.asset_id, f.node_id,
-		       f.role, f.sidecar_of_file_id, f.created_at
-		FROM photo_assets a LEFT JOIN photo_files f ON f.asset_id=a.asset_id
+		       f.role, f.sidecar_of_file_id, f.created_at, n.kind, n.name,
+		       v.version_id, COALESCE(v.mime_type, '')
+		FROM photo_assets a
+		LEFT JOIN photo_files f ON f.asset_id=a.asset_id
+		LEFT JOIN nodes n ON n.id=f.node_id
+		LEFT JOIN content_versions v ON v.version_id=n.current_version_id
 		ORDER BY a.asset_id, f.file_id`)
 	if err != nil {
 		return fmt.Errorf("reading photo graph: %w", err)
@@ -224,12 +252,13 @@ func validatePhotoGraph(ctx context.Context, q interface {
 			revision                                         int64
 			display, override                                sql.NullString
 			fileID, fileAsset, role, created                 string
+			nodeKind, nodeName, versionID, mediaType         sql.NullString
 			nodeID                                           int64
 			nodeIDNull                                       sql.NullInt64
 			sidecar                                          sql.NullString
 			fileIDNull, fileAssetNull, roleNull, createdNull sql.NullString
 		)
-		if err := rows.Scan(&assetID, &kind, &revision, &display, &override, &fileIDNull, &fileAssetNull, &nodeIDNull, &roleNull, &sidecar, &createdNull); err != nil {
+		if err := rows.Scan(&assetID, &kind, &revision, &display, &override, &fileIDNull, &fileAssetNull, &nodeIDNull, &roleNull, &sidecar, &createdNull, &nodeKind, &nodeName, &versionID, &mediaType); err != nil {
 			return fmt.Errorf("scanning photo graph: %w", err)
 		}
 		entry := assets[assetID]
@@ -251,14 +280,24 @@ func validatePhotoGraph(ctx context.Context, q interface {
 			nodeID <= 0 || !photoRoleValid(role) {
 			return fmt.Errorf("%w: malformed member %s", ErrInvalidPhotoAsset, fileID)
 		}
-		var nodeKind string
-		if err := q.QueryRowContext(ctx, `SELECT kind FROM nodes WHERE id=?`, nodeID).Scan(&nodeKind); errors.Is(err, sql.ErrNoRows) {
+		if !nodeKind.Valid {
 			return fmt.Errorf("%w: member %s references a missing node", ErrInvalidPhotoAsset, fileID)
-		} else if err != nil {
-			return fmt.Errorf("reading photo member node %d: %w", nodeID, err)
 		}
-		if nodeKind != nodeKindFile {
+		if nodeKind.String != nodeKindFile || !nodeName.Valid || !versionID.Valid || !mediaType.Valid {
 			return fmt.Errorf("%w: member %s does not reference a file node", ErrInvalidPhotoAsset, fileID)
+		}
+		facts := photoNodeFacts(Node{ID: nodeID, Kind: nodeKind.String, Name: nodeName.String, MimeType: mediaType.String})
+		if err := validatePhotoRoleForAsset(kind, role); err != nil {
+			return fmt.Errorf("member %s: %w", fileID, err)
+		}
+		if err := validatePhotoFileForAsset(kind, role, facts); err != nil {
+			compatible, initialVersionPruned, historyErr := photoNodeHistoryMatches(ctx, q, nodeID, nodeName.String, kind, role)
+			if historyErr != nil {
+				return historyErr
+			}
+			if !compatible && !initialVersionPruned {
+				return fmt.Errorf("member %s: %w", fileID, err)
+			}
 		}
 		file := PhotoFile{ID: fileID, AssetID: fileAsset, NodeID: nodeID, Role: role, CreatedAt: created}
 		if sidecar.Valid {
@@ -289,6 +328,34 @@ func validatePhotoGraph(ctx context.Context, q interface {
 		}
 	}
 	return nil
+}
+
+func photoNodeHistoryMatches(ctx context.Context, q interface {
+	QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error)
+}, nodeID int64, name, kind, role string) (bool, bool, error) {
+	rows, err := q.QueryContext(ctx, `SELECT COALESCE(mime_type, ''), node_revision FROM content_versions WHERE node_id=?`, nodeID)
+	if err != nil {
+		return false, false, fmt.Errorf("reading photo member history %d: %w", nodeID, err)
+	}
+	defer func() { _ = rows.Close() }()
+	minimumRevision := int64(0)
+	for rows.Next() {
+		var mediaType string
+		var revision int64
+		if err := rows.Scan(&mediaType, &revision); err != nil {
+			return false, false, fmt.Errorf("scanning photo member history %d: %w", nodeID, err)
+		}
+		if minimumRevision == 0 || revision < minimumRevision {
+			minimumRevision = revision
+		}
+		if validatePhotoFileForAsset(kind, role, photoNodeFacts(Node{ID: nodeID, Kind: nodeKindFile, Name: name, MimeType: mediaType})) == nil {
+			return true, false, nil
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return false, false, fmt.Errorf("reading photo member history %d: %w", nodeID, err)
+	}
+	return false, minimumRevision > 1, nil
 }
 
 func validatePhotoGraphTx(ctx context.Context, tx *sql.Tx) error {
