@@ -2,7 +2,6 @@ package processing
 
 import (
 	"context"
-	"errors"
 	"os"
 	"testing"
 
@@ -13,6 +12,7 @@ import (
 
 type finalArtifactTestCatalog struct {
 	stageTestCatalog
+
 	artifact documentproduction.Artifact
 	stale    bool
 }
@@ -62,5 +62,5 @@ func TestProductionFinalPDFStageAndReopen(t *testing.T) {
 	require.ErrorIs(t, err, production.ErrJobStaleClaim)
 	verified.SHA256 = stageTestHash("changed")
 	_, err = adapter.StageVerifiedProductionPDF(t.Context(), claim, job, member, verified)
-	require.True(t, errors.Is(err, production.ErrJobConflict))
+	require.ErrorIs(t, err, production.ErrJobConflict)
 }
