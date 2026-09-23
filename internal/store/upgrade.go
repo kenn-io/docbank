@@ -97,6 +97,12 @@ var currentSchemaTables = [...]string{
 	"document_people_state", "person_match_candidates", "person_document_assertions",
 	"document_people_generations", "document_people_heads", "document_people_builds",
 	"document_people",
+	"production_policy_versions", "production_approval_grants", "production_approval_events",
+	"production_players_snapshots", "production_withheld_selections",
+	"production_privilege_log_drafts", "production_privilege_log_rows",
+	"production_privilege_log_validations", "production_privilege_log_approvals",
+	"production_privilege_log_receipts", "production_privilege_log_attachments",
+	"production_operation_receipts",
 }
 
 // prepareReleasedSchemaUpgrade recognizes only storage layouts that shipped in

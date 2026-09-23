@@ -135,9 +135,12 @@ install_docbank() {
         fail "could not download SHA256SUMS; refusing an unverified install"
     verify_checksum "$archive" "$checksums" "$filename"
 
-    entries=$(tar -tzf "$archive") || fail "could not read ${filename}"
-    [ "$entries" = "$binary_name" ] || \
-        fail "release archive must contain only ${binary_name} at its root"
+	entries=$(tar -tzf "$archive") || fail "could not read ${filename}"
+	expected_entries="${binary_name}
+LICENSE
+NOTICE"
+	[ "$entries" = "$binary_name" ] || [ "$entries" = "$expected_entries" ] || \
+		fail "release archive must contain only ${binary_name}, LICENSE, and NOTICE at its root"
     tar -xzf "$archive" -C "$tmpdir"
     [ -f "$tmpdir/$binary_name" ] || fail "release archive does not contain ${binary_name}"
 

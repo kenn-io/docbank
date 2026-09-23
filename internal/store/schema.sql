@@ -2101,3 +2101,247 @@ CREATE TABLE IF NOT EXISTS mailbox_occurrences (
     occurrence_json TEXT NOT NULL,
     PRIMARY KEY(job_id,ordinal)
 );
+
+-- Production policy and privilege authority is private vault metadata. Closed
+-- contract values stay in Go validators; SQLite carries only structural and
+-- relational invariants so future contract additions do not rewrite storage.
+CREATE TABLE IF NOT EXISTS production_policy_versions (
+    policy_id TEXT NOT NULL,
+    version INTEGER NOT NULL,
+    sha256 TEXT NOT NULL UNIQUE,
+    canonical_json BLOB NOT NULL,
+    PRIMARY KEY(policy_id, version)
+);
+CREATE TABLE IF NOT EXISTS production_approval_grants (
+    approval_id TEXT PRIMARY KEY,
+    subject_sha256 TEXT NOT NULL,
+    subject_json BLOB NOT NULL,
+    authority_sha256 TEXT NOT NULL,
+    authority_json BLOB NOT NULL,
+    grant_sha256 TEXT NOT NULL UNIQUE,
+    grant_json BLOB NOT NULL
+);
+CREATE TABLE IF NOT EXISTS production_approval_events (
+    event_id TEXT PRIMARY KEY,
+    approval_id TEXT NOT NULL REFERENCES production_approval_grants(approval_id),
+    event_sha256 TEXT NOT NULL UNIQUE,
+    canonical_json BLOB NOT NULL
+);
+CREATE INDEX IF NOT EXISTS production_approval_events_grant
+    ON production_approval_events(approval_id, event_id);
+CREATE TABLE IF NOT EXISTS production_players_snapshots (
+    snapshot_id TEXT NOT NULL,
+    revision INTEGER NOT NULL,
+    sha256 TEXT NOT NULL UNIQUE,
+    canonical_json BLOB NOT NULL,
+    PRIMARY KEY(snapshot_id, revision)
+);
+CREATE TABLE IF NOT EXISTS production_withheld_selections (
+    selection_id TEXT PRIMARY KEY,
+    set_id TEXT NOT NULL,
+    revision INTEGER NOT NULL,
+    policy_sha256 TEXT NOT NULL REFERENCES production_policy_versions(sha256),
+    sha256 TEXT NOT NULL UNIQUE,
+    canonical_json BLOB NOT NULL,
+    UNIQUE(set_id, revision)
+);
+CREATE TABLE IF NOT EXISTS production_privilege_log_drafts (
+    log_id TEXT NOT NULL,
+    revision INTEGER NOT NULL,
+    generation INTEGER NOT NULL CHECK(generation > 0),
+    predecessor_log_id TEXT,
+    predecessor_receipt_sha256 TEXT,
+    withheld_selection_sha256 TEXT NOT NULL REFERENCES production_withheld_selections(sha256),
+    policy_sha256 TEXT NOT NULL REFERENCES production_policy_versions(sha256),
+    players_sha256 TEXT NOT NULL REFERENCES production_players_snapshots(sha256),
+    produced_sha256 TEXT NOT NULL,
+    produced_json BLOB NOT NULL,
+    rows_sha256 TEXT NOT NULL,
+    PRIMARY KEY(log_id, revision)
+);
+CREATE TABLE IF NOT EXISTS production_privilege_log_rows (
+    log_id TEXT NOT NULL,
+    revision INTEGER NOT NULL,
+    row_ordinal INTEGER NOT NULL CHECK(row_ordinal > 0),
+    row_id TEXT NOT NULL,
+    canonical_json BLOB NOT NULL,
+    PRIMARY KEY(log_id, revision, row_id),
+    UNIQUE(log_id, revision, row_ordinal),
+    FOREIGN KEY(log_id, revision)
+        REFERENCES production_privilege_log_drafts(log_id, revision) ON DELETE CASCADE
+);
+CREATE TABLE IF NOT EXISTS production_privilege_log_validations (
+    log_id TEXT NOT NULL,
+    revision INTEGER NOT NULL,
+    operation_id TEXT NOT NULL UNIQUE,
+    request_sha256 TEXT NOT NULL,
+    draft_generation INTEGER NOT NULL,
+    inputs_sha256 TEXT NOT NULL,
+    rows_sha256 TEXT NOT NULL,
+    canonical_json BLOB NOT NULL,
+    PRIMARY KEY(log_id, revision),
+    FOREIGN KEY(log_id, revision)
+        REFERENCES production_privilege_log_drafts(log_id, revision) ON DELETE CASCADE
+);
+CREATE TABLE IF NOT EXISTS production_privilege_log_approvals (
+    log_id TEXT NOT NULL,
+    revision INTEGER NOT NULL,
+    approval_id TEXT NOT NULL REFERENCES production_approval_grants(approval_id),
+    evaluation_sha256 TEXT NOT NULL,
+    canonical_json BLOB NOT NULL,
+    PRIMARY KEY(log_id, revision),
+    FOREIGN KEY(log_id, revision)
+        REFERENCES production_privilege_log_drafts(log_id, revision) ON DELETE CASCADE
+);
+CREATE TABLE IF NOT EXISTS production_privilege_log_receipts (
+    log_id TEXT NOT NULL,
+    revision INTEGER NOT NULL,
+    sha256 TEXT NOT NULL UNIQUE,
+    canonical_json BLOB NOT NULL,
+    PRIMARY KEY(log_id, revision),
+    FOREIGN KEY(log_id, revision)
+        REFERENCES production_privilege_log_drafts(log_id, revision)
+);
+CREATE TABLE IF NOT EXISTS production_privilege_log_attachments (
+    attachment_id TEXT PRIMARY KEY,
+    privilege_log_receipt_sha256 TEXT NOT NULL
+        REFERENCES production_privilege_log_receipts(sha256),
+    sha256 TEXT NOT NULL UNIQUE,
+    canonical_json BLOB NOT NULL
+);
+CREATE TABLE IF NOT EXISTS production_operation_receipts (
+    operation_id TEXT PRIMARY KEY,
+    kind TEXT NOT NULL,
+    request_sha256 TEXT NOT NULL,
+    response_sha256 TEXT NOT NULL,
+    response_json BLOB NOT NULL
+);
+
+CREATE TRIGGER IF NOT EXISTS production_policy_versions_immutable_update
+BEFORE UPDATE ON production_policy_versions BEGIN
+    SELECT RAISE(ABORT, 'production policy versions are immutable');
+END;
+CREATE TRIGGER IF NOT EXISTS production_policy_versions_immutable_delete
+BEFORE DELETE ON production_policy_versions BEGIN
+    SELECT RAISE(ABORT, 'production policy versions are immutable');
+END;
+CREATE TRIGGER IF NOT EXISTS production_approval_grants_immutable_update
+BEFORE UPDATE ON production_approval_grants BEGIN
+    SELECT RAISE(ABORT, 'production approval grants are immutable');
+END;
+CREATE TRIGGER IF NOT EXISTS production_approval_grants_immutable_delete
+BEFORE DELETE ON production_approval_grants BEGIN
+    SELECT RAISE(ABORT, 'production approval grants are immutable');
+END;
+CREATE TRIGGER IF NOT EXISTS production_approval_events_immutable_update
+BEFORE UPDATE ON production_approval_events BEGIN
+    SELECT RAISE(ABORT, 'production approval events are immutable');
+END;
+CREATE TRIGGER IF NOT EXISTS production_approval_events_immutable_delete
+BEFORE DELETE ON production_approval_events BEGIN
+    SELECT RAISE(ABORT, 'production approval events are immutable');
+END;
+CREATE TRIGGER IF NOT EXISTS production_players_snapshots_immutable_update
+BEFORE UPDATE ON production_players_snapshots BEGIN
+    SELECT RAISE(ABORT, 'production players snapshots are immutable');
+END;
+CREATE TRIGGER IF NOT EXISTS production_players_snapshots_immutable_delete
+BEFORE DELETE ON production_players_snapshots BEGIN
+    SELECT RAISE(ABORT, 'production players snapshots are immutable');
+END;
+CREATE TRIGGER IF NOT EXISTS production_withheld_selections_immutable_update
+BEFORE UPDATE ON production_withheld_selections BEGIN
+    SELECT RAISE(ABORT, 'production withheld selections are immutable');
+END;
+CREATE TRIGGER IF NOT EXISTS production_withheld_selections_immutable_delete
+BEFORE DELETE ON production_withheld_selections BEGIN
+    SELECT RAISE(ABORT, 'production withheld selections are immutable');
+END;
+CREATE TRIGGER IF NOT EXISTS production_privilege_log_validations_immutable_update
+BEFORE UPDATE ON production_privilege_log_validations BEGIN
+    SELECT RAISE(ABORT, 'production privilege validations are immutable');
+END;
+CREATE TRIGGER IF NOT EXISTS production_privilege_log_receipts_immutable_update
+BEFORE UPDATE ON production_privilege_log_receipts BEGIN
+    SELECT RAISE(ABORT, 'production privilege receipts are immutable');
+END;
+CREATE TRIGGER IF NOT EXISTS production_privilege_log_receipts_immutable_delete
+BEFORE DELETE ON production_privilege_log_receipts BEGIN
+    SELECT RAISE(ABORT, 'production privilege receipts are immutable');
+END;
+CREATE TRIGGER IF NOT EXISTS production_privilege_log_attachments_immutable_update
+BEFORE UPDATE ON production_privilege_log_attachments BEGIN
+    SELECT RAISE(ABORT, 'production privilege attachments are immutable');
+END;
+CREATE TRIGGER IF NOT EXISTS production_privilege_log_attachments_immutable_delete
+BEFORE DELETE ON production_privilege_log_attachments BEGIN
+    SELECT RAISE(ABORT, 'production privilege attachments are immutable');
+END;
+CREATE TRIGGER IF NOT EXISTS production_operation_receipts_immutable_update
+BEFORE UPDATE ON production_operation_receipts BEGIN
+    SELECT RAISE(ABORT, 'production operation receipts are immutable');
+END;
+CREATE TRIGGER IF NOT EXISTS production_operation_receipts_immutable_delete
+BEFORE DELETE ON production_operation_receipts BEGIN
+    SELECT RAISE(ABORT, 'production operation receipts are immutable');
+END;
+CREATE TRIGGER IF NOT EXISTS production_privilege_draft_frozen_update
+BEFORE UPDATE ON production_privilege_log_drafts
+WHEN EXISTS(SELECT 1 FROM production_privilege_log_receipts r
+            WHERE r.log_id=OLD.log_id AND r.revision=OLD.revision) BEGIN
+    SELECT RAISE(ABORT, 'frozen production privilege draft is immutable');
+END;
+CREATE TRIGGER IF NOT EXISTS production_privilege_draft_frozen_delete
+BEFORE DELETE ON production_privilege_log_drafts
+WHEN EXISTS(SELECT 1 FROM production_privilege_log_receipts r
+            WHERE r.log_id=OLD.log_id AND r.revision=OLD.revision) BEGIN
+    SELECT RAISE(ABORT, 'frozen production privilege draft is immutable');
+END;
+CREATE TRIGGER IF NOT EXISTS production_privilege_rows_frozen_update
+BEFORE UPDATE ON production_privilege_log_rows
+WHEN EXISTS(SELECT 1 FROM production_privilege_log_receipts r
+            WHERE r.log_id=OLD.log_id AND r.revision=OLD.revision) BEGIN
+    SELECT RAISE(ABORT, 'frozen production privilege rows are immutable');
+END;
+CREATE TRIGGER IF NOT EXISTS production_privilege_rows_frozen_insert
+BEFORE INSERT ON production_privilege_log_rows
+WHEN EXISTS(SELECT 1 FROM production_privilege_log_receipts r
+            WHERE r.log_id=NEW.log_id AND r.revision=NEW.revision) BEGIN
+    SELECT RAISE(ABORT, 'frozen production privilege rows are immutable');
+END;
+CREATE TRIGGER IF NOT EXISTS production_privilege_rows_frozen_delete
+BEFORE DELETE ON production_privilege_log_rows
+WHEN EXISTS(SELECT 1 FROM production_privilege_log_receipts r
+            WHERE r.log_id=OLD.log_id AND r.revision=OLD.revision) BEGIN
+    SELECT RAISE(ABORT, 'frozen production privilege rows are immutable');
+END;
+CREATE TRIGGER IF NOT EXISTS production_privilege_validation_frozen_insert
+BEFORE INSERT ON production_privilege_log_validations
+WHEN EXISTS(SELECT 1 FROM production_privilege_log_receipts r
+            WHERE r.log_id=NEW.log_id AND r.revision=NEW.revision) BEGIN
+    SELECT RAISE(ABORT, 'frozen production privilege validation is immutable');
+END;
+CREATE TRIGGER IF NOT EXISTS production_privilege_validation_frozen_delete
+BEFORE DELETE ON production_privilege_log_validations
+WHEN EXISTS(SELECT 1 FROM production_privilege_log_receipts r
+            WHERE r.log_id=OLD.log_id AND r.revision=OLD.revision) BEGIN
+    SELECT RAISE(ABORT, 'frozen production privilege validation is immutable');
+END;
+CREATE TRIGGER IF NOT EXISTS production_privilege_approval_frozen_insert
+BEFORE INSERT ON production_privilege_log_approvals
+WHEN EXISTS(SELECT 1 FROM production_privilege_log_receipts r
+            WHERE r.log_id=NEW.log_id AND r.revision=NEW.revision) BEGIN
+    SELECT RAISE(ABORT, 'frozen production privilege approval is immutable');
+END;
+CREATE TRIGGER IF NOT EXISTS production_privilege_approval_frozen_update
+BEFORE UPDATE ON production_privilege_log_approvals
+WHEN EXISTS(SELECT 1 FROM production_privilege_log_receipts r
+            WHERE r.log_id=OLD.log_id AND r.revision=OLD.revision) BEGIN
+    SELECT RAISE(ABORT, 'frozen production privilege approval is immutable');
+END;
+CREATE TRIGGER IF NOT EXISTS production_privilege_approval_frozen_delete
+BEFORE DELETE ON production_privilege_log_approvals
+WHEN EXISTS(SELECT 1 FROM production_privilege_log_receipts r
+            WHERE r.log_id=OLD.log_id AND r.revision=OLD.revision) BEGIN
+    SELECT RAISE(ABORT, 'frozen production privilege approval is immutable');
+END;

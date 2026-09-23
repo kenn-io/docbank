@@ -58,8 +58,8 @@ jobs:
           for archive in assets/*.tar.gz; do
             tmpdir="$(mktemp -d)"
             entries="$(tar -tzf "${archive}")"
-            if [[ "${entries}" != "docbank" ]]; then
-              echo "FATAL: ${archive} must contain only docbank at its root" >&2
+            if [[ "${entries}" != $'docbank\nLICENSE\nNOTICE' ]]; then
+              echo "FATAL: ${archive} must contain docbank, LICENSE, and NOTICE at its root" >&2
               exit 1
             fi
             tar -xzf "${archive}" -C "${tmpdir}"
@@ -78,8 +78,8 @@ jobs:
           for archive in assets/*.zip; do
             tmpdir="$(mktemp -d)"
             mapfile -t entries < <(zipinfo -1 "${archive}")
-            if [[ "${#entries[@]}" -ne 1 || "${entries[0]}" != "docbank.exe" ]]; then
-              echo "FATAL: ${archive} must contain only docbank.exe at its root" >&2
+            if [[ "${#entries[@]}" -ne 3 || "$(printf '%s\n' "${entries[@]}" | LC_ALL=C sort)" != $'LICENSE\nNOTICE\ndocbank.exe' ]]; then
+              echo "FATAL: ${archive} must contain docbank.exe, LICENSE, and NOTICE at its root" >&2
               exit 1
             fi
             unzip -q "${archive}" -d "${tmpdir}"
