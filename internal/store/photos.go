@@ -182,7 +182,6 @@ type photoReceiptAssetState struct {
 	DisplayFileID         *string                    `json:"display_file_id"`
 	DisplayOverrideFileID *string                    `json:"display_override_file_id"`
 	FileCount             int                        `json:"file_count"`
-	InitialRole           string                     `json:"initial_role,omitzero"`
 	ChangedMemberCount    int                        `json:"changed_member_count,omitzero"`
 	MemberChanges         []photoReceiptMemberChange `json:"member_changes,omitzero"`
 	ChangesTruncated      bool                       `json:"changes_truncated,omitzero"`
@@ -233,7 +232,6 @@ func photoAssetState(asset PhotoAsset, changes []photoReceiptMemberChange) any {
 		ID: asset.ID, Kind: asset.Kind, Revision: asset.Revision,
 		ExcludedAt: asset.ExcludedAt, DisplayFileID: asset.DisplayFileID,
 		DisplayOverrideFileID: asset.DisplayOverrideFileID, FileCount: len(asset.Files),
-		InitialRole:        photoInitialRole(asset.Files),
 		ChangedMemberCount: len(changes),
 	}
 	if len(changes) > maxPhotoReceiptMemberChanges {
@@ -242,19 +240,6 @@ func photoAssetState(asset PhotoAsset, changes []photoReceiptMemberChange) any {
 	}
 	state.MemberChanges = changes
 	return state
-}
-
-func photoInitialRole(files []PhotoFile) string {
-	if len(files) == 0 {
-		return ""
-	}
-	initial := files[0]
-	for _, file := range files[1:] {
-		if file.CreatedAt < initial.CreatedAt || file.CreatedAt == initial.CreatedAt && file.ID < initial.ID {
-			initial = file
-		}
-	}
-	return initial.Role
 }
 
 func photoSettingsState(settings PhotoSettings) any {
@@ -547,30 +532,33 @@ func (s *Store) PromotePhotoNode(ctx context.Context, nodeID int64, expectedRevi
 			if loadErr != nil {
 				return loadErr
 			}
-			_, facts, factsErr := photoNodeForMutationTx(tx, nodeID)
-			if factsErr != nil {
-				return factsErr
-			}
-			if role != "" || kind != "" {
-				if role != "" {
-					if err := validatePhotoRoleForNode(role, facts); err != nil {
-						return err
-					}
-				}
-				if kind != "" && facts.Qualifies && facts.AssetKind != kind {
-					return fmt.Errorf("%w: node media does not match asset kind", ErrInvalidPhotoAsset)
-				}
-			}
-			if asset.ExcludedAt == nil {
-				result = asset
-				return nil
-			}
 			if expectedRevision == nil || asset.Revision != *expectedRevision {
 				want := int64(0)
 				if expectedRevision != nil {
 					want = *expectedRevision
 				}
 				return fmt.Errorf("asset %s at revision %d, expected %d: %w", asset.ID, asset.Revision, want, ErrPhotoAssetRevision)
+			}
+			var member PhotoFile
+			for _, file := range asset.Files {
+				if file.NodeID == nodeID {
+					member = file
+					break
+				}
+			}
+			if role != "" && member.Role != role {
+				return fmt.Errorf("%w: existing member role is %s, requested %s", ErrInvalidPhotoAsset, member.Role, role)
+			}
+			if kind != "" && asset.Kind != kind {
+				return fmt.Errorf("%w: existing asset kind is %s, requested %s", ErrInvalidPhotoAsset, asset.Kind, kind)
+			}
+			_, _, factsErr := photoNodeForMutationTx(tx, nodeID)
+			if factsErr != nil {
+				return factsErr
+			}
+			if asset.ExcludedAt == nil {
+				result = asset
+				return nil
 			}
 			before := asset
 			asset.Revision++

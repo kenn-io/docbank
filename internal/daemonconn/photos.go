@@ -96,6 +96,29 @@ func photoMutationRequestError(response *http.Response, err error) error {
 	return err
 }
 
+func photoResponseMember(asset api.PhotoAsset, nodeID int64) (api.PhotoFile, bool) {
+	for _, file := range asset.Files {
+		if file.NodeID == nodeID {
+			return file, true
+		}
+	}
+	return api.PhotoFile{}, false
+}
+
+func validatePhotoMemberResponse(asset api.PhotoAsset, nodeID int64, role string, sidecarOfID *string, checkSidecar bool) error {
+	file, ok := photoResponseMember(asset, nodeID)
+	if !ok {
+		return errors.New("photo response does not contain requested node")
+	}
+	if role != "" && file.Role != role {
+		return errors.New("photo response member has unexpected role")
+	}
+	if checkSidecar && !equalPhotoPointer(file.SidecarOfID, sidecarOfID) {
+		return errors.New("photo response member has unexpected sidecar target")
+	}
+	return nil
+}
+
 func (c *Connection) PhotoAsset(ctx context.Context, id string) (api.PhotoAsset, error) {
 	var asset api.PhotoAsset
 	if !validUUIDv4(id) {
@@ -156,6 +179,12 @@ func (c *Connection) CreatePhotoAsset(ctx context.Context, nodeID int64, role, k
 	if asset.Revision != 1 {
 		return api.PhotoAsset{}, photoMutationResponseError(errors.New("created photo asset must start at revision one"))
 	}
+	if kind != "" && asset.Kind != kind {
+		return api.PhotoAsset{}, photoMutationResponseError(errors.New("created photo asset has unexpected kind"))
+	}
+	if err := validatePhotoMemberResponse(asset, nodeID, role, nil, true); err != nil {
+		return api.PhotoAsset{}, photoMutationResponseError(err)
+	}
 	return asset, nil
 }
 
@@ -179,6 +208,9 @@ func (c *Connection) AttachPhotoFile(ctx context.Context, assetID string, revisi
 	if asset.Revision != revision+1 {
 		return api.PhotoAsset{}, photoMutationResponseError(errors.New("attached photo response did not advance one revision"))
 	}
+	if err := validatePhotoMemberResponse(asset, nodeID, role, sidecarOfID, true); err != nil {
+		return api.PhotoAsset{}, photoMutationResponseError(err)
+	}
 	return asset, nil
 }
 
@@ -197,6 +229,11 @@ func (c *Connection) DetachPhotoFile(ctx context.Context, assetID string, revisi
 	}
 	if asset.Revision != revision+1 {
 		return api.PhotoAsset{}, photoMutationResponseError(errors.New("detached photo response did not advance one revision"))
+	}
+	for _, file := range asset.Files {
+		if file.ID == fileID || file.SidecarOfID != nil && *file.SidecarOfID == fileID {
+			return api.PhotoAsset{}, photoMutationResponseError(errors.New("detached photo response retains removed membership"))
+		}
 	}
 	return asset, nil
 }
@@ -255,6 +292,15 @@ func (c *Connection) PromotePhotoNode(ctx context.Context, nodeID int64, expecte
 	}
 	if expectedRevision != nil && asset.ExcludedAt != nil {
 		return api.PhotoAsset{}, photoMutationResponseError(errors.New("promoted photo response remains excluded"))
+	}
+	if expectedRevision == nil && asset.Revision != 1 {
+		return api.PhotoAsset{}, photoMutationResponseError(errors.New("newly promoted photo response must start at revision one"))
+	}
+	if kind != "" && asset.Kind != kind {
+		return api.PhotoAsset{}, photoMutationResponseError(errors.New("promoted photo response has unexpected kind"))
+	}
+	if err := validatePhotoMemberResponse(asset, nodeID, role, nil, false); err != nil {
+		return api.PhotoAsset{}, photoMutationResponseError(err)
 	}
 	return asset, nil
 }
