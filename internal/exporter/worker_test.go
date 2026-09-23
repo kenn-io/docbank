@@ -22,14 +22,14 @@ import (
 type contentionDriver struct {
 	docsqlite.Driver
 
-	db *sql.DB
+	dbs []*sql.DB
 }
 
 func (d *contentionDriver) Open(path string, options docsqlite.OpenOptions) (*sql.DB, error) {
 	options.BusyTimeout = time.Millisecond
 	db, err := d.Driver.Open(path, options)
 	if err == nil {
-		d.db = db
+		d.dbs = append(d.dbs, db)
 	}
 	return db, err
 }
@@ -168,9 +168,11 @@ func TestWorkerDoesNotFenceClaimOnTemporaryReadContention(t *testing.T) {
 		return gate.MutateContext(ctx, fn)
 	}))
 	// Only the external locker should cause contention in this fixture.
-	driver.db.SetMaxOpenConns(1)
 	// Let the other SQLite connection take an exclusive lock while no query runs.
-	driver.db.SetMaxIdleConns(0)
+	for _, db := range driver.dbs {
+		db.SetMaxOpenConns(1)
+		db.SetMaxIdleConns(0)
+	}
 	locker, err := driver.Driver.Open(path, docsqlite.OpenOptions{Access: docsqlite.ReadWriteExisting, TransactionMode: docsqlite.Immediate})
 	require.NoError(t, err)
 	defer func() { require.NoError(t, locker.Close()) }()
@@ -194,7 +196,9 @@ func TestWorkerDoesNotFenceClaimOnTemporaryReadContention(t *testing.T) {
 	// Allow at least one claim poll to observe the real read lock.
 	time.Sleep(350 * time.Millisecond)
 	// Keep resumed reads from racing the last connection's WAL teardown.
-	driver.db.SetMaxIdleConns(2)
+	for _, db := range driver.dbs {
+		db.SetMaxIdleConns(2)
+	}
 	require.NoError(t, tx.Rollback())
 	require.NoError(t, locker.Close())
 	close(resume)

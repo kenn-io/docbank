@@ -28,6 +28,7 @@ import (
 	csslexer "github.com/tdewolff/parse/v2/css"
 
 	"go.kenn.io/docbank/document"
+	"go.kenn.io/docbank/document/internal/epubutil"
 	"go.kenn.io/docbank/document/internal/formatdetect"
 )
 
@@ -928,45 +929,7 @@ type xmlScope struct {
 // base names a directory from the container root; only a base carrying a scheme
 // names nothing inside the archive, and clears the directory.
 func resolveArchiveDir(home, base string) string {
-	if home == "" {
-		return ""
-	}
-	candidate := normalizeReferencePath(base)
-	if candidate == "" {
-		return home
-	}
-	if strings.Contains(candidate, "://") {
-		return ""
-	}
-	// A rooted base names its directory from the container root, so it replaces
-	// the current origin rather than moving it. Reporting no origin instead
-	// meant later references were measured against no container at all, which
-	// reads every one of them as contained.
-	origin := home
-	if rooted, found := strings.CutPrefix(candidate, "/"); found {
-		origin, candidate = ".", rooted
-	}
-	// A base names a document, not a directory: references resolve from the
-	// directory holding it, so the last segment is dropped. That segment is a
-	// name only when there is one. A trailing separator leaves it empty, and a
-	// trailing "." or ".." is a step through the tree that must be walked
-	// rather than discarded: dropping it from "../.." spent one level instead
-	// of two and left the origin a directory deeper than a reader uses.
-	resolved := path.Join(origin, candidate)
-	if namesDirectory(candidate) {
-		return resolved
-	}
-	return path.Dir(resolved)
-}
-
-// namesDirectory reports whether a reference already names a directory rather
-// than a document inside one.
-func namesDirectory(reference string) bool {
-	if strings.HasSuffix(reference, "/") {
-		return true
-	}
-	last := path.Base(reference)
-	return last == "." || last == ".."
+	return epubutil.ResolveArchiveDir(home, base)
 }
 
 // nonLocatorXMLAttribute reports attributes whose values name a vocabulary
@@ -1186,22 +1149,7 @@ func hasDriveLetter(value string) bool {
 // decoding in one of them and not the other is what let an encoded spelling
 // land somewhere the check never looked.
 func normalizeReferencePath(value string) string {
-	candidate := stripReferenceWhitespace(value)
-	if index := strings.IndexAny(candidate, "?#"); index >= 0 {
-		candidate = candidate[:index]
-	}
-	// Decoding fails on a value that is not a reference at all, such as the
-	// ODF length "0%", which leaves the original text to measure.
-	if decoded, err := url.PathUnescape(candidate); err == nil {
-		candidate = decoded
-	}
-	return separatorsAsSlashes(candidate)
-}
-
-// separatorsAsSlashes spells a reference the way a consumer that reads a
-// backslash as a path separator sees it.
-func separatorsAsSlashes(value string) string {
-	return strings.ReplaceAll(value, `\`, "/")
+	return epubutil.NormalizeReferencePath(value)
 }
 
 // stripReferenceWhitespace removes the whitespace a consumer discards before it
@@ -1211,13 +1159,7 @@ func separatorsAsSlashes(value string) string {
 // untrimmed text read a leading space as a directory that absorbed a level of
 // climb.
 func stripReferenceWhitespace(value string) string {
-	candidate := strings.Map(func(r rune) rune {
-		if r == '\t' || r == '\n' || r == '\r' {
-			return -1
-		}
-		return r
-	}, value)
-	return strings.TrimFunc(candidate, func(r rune) bool { return r <= ' ' })
+	return epubutil.StripReferenceWhitespace(value)
 }
 
 // escapesArchive reports whether a reference names a place outside the document
@@ -1249,7 +1191,7 @@ func escapesArchive(value, home string) bool {
 // path.Clean spells the root's own parent as ".." with no trailing separator,
 // so a prefix test alone reads that one landing place as contained.
 func leavesArchiveRoot(resolved string) bool {
-	return resolved == ".." || strings.HasPrefix(resolved, "../")
+	return epubutil.LeavesArchiveRoot(resolved)
 }
 
 func externalURL(parsed *url.URL) bool {
@@ -1950,16 +1892,7 @@ func isCSSNewline(value byte) bool {
 }
 
 func readZIPEntry(file *zip.File, limit int64) ([]byte, error) {
-	reader, err := file.Open()
-	if err != nil {
-		return nil, fmt.Errorf("open ZIP entry: %w", err)
-	}
-	defer func() { _ = reader.Close() }()
-	data, err := io.ReadAll(io.LimitReader(reader, limit+1))
-	if err != nil || int64(len(data)) > limit || uint64(len(data)) != file.UncompressedSize64 {
-		return nil, errors.New("ZIP entry exceeds bound")
-	}
-	return data, nil
+	return epubutil.ReadZIPEntry(file, limit)
 }
 
 func hasZIPSignature(data []byte) bool {
@@ -1971,171 +1904,32 @@ func hasZIPSignature(data []byte) bool {
 // manifest declares for each resource it names. A reader interprets a resource
 // by its declared type, so inspection must follow that declaration rather than
 // the entry's filename.
-func epubPackageManifest(
-	files []*zip.File, limit int64,
-) (map[string]bool, contentDeclarations, error) {
-	var container *zip.File
-	for _, file := range files {
-		if file.Name == "META-INF/container.xml" {
-			container = file
-			break
-		}
-	}
-	if container == nil {
-		return nil, nil, errors.New("EPUB container document is missing")
-	}
-	body, err := readZIPEntry(container, limit)
+func epubPackageManifest(files []*zip.File, limit int64) (map[string]bool, contentDeclarations, error) {
+	records, err := epubutil.ReadPackages(files, limit)
 	if err != nil {
 		return nil, nil, err
 	}
-	var document struct {
-		XMLName   xml.Name `xml:"container"`
-		Rootfiles struct {
-			Items []struct {
-				FullPath string `xml:"full-path,attr"`
-			} `xml:"rootfile"`
-		} `xml:"rootfiles"`
-	}
-	if err := xml.Unmarshal(body, &document); err != nil ||
-		document.XMLName.Space != "urn:oasis:names:tc:opendocument:xmlns:container" ||
-		len(document.Rootfiles.Items) == 0 {
-		return nil, nil, errors.New("EPUB container document is invalid")
-	}
-	// A container may declare several renditions. Each one's package document
-	// and manifest is reachable content, so inspect all of them.
-	packages := make(map[string]bool, len(document.Rootfiles.Items))
+	packages := make(map[string]bool)
 	declared := make(contentDeclarations)
-	for _, rootfile := range document.Rootfiles.Items {
-		packagePath, err := epubArchivePath(rootfile.FullPath, "")
-		if err != nil {
-			return nil, nil, err
-		}
-		var packageFile *zip.File
-		for _, file := range files {
-			if file.Name == packagePath {
-				packageFile = file
-				break
+	for _, record := range records {
+		packages[record.Path] = true
+		for _, item := range record.Manifest.Items {
+			href := item.HRef
+			if index := strings.IndexAny(href, "?#"); index >= 0 {
+				href = href[:index]
 			}
-		}
-		if packageFile == nil {
-			return nil, nil, errors.New("EPUB package document is missing")
-		}
-		packages[packagePath] = true
-		if err := epubManifestTypes(packageFile, packagePath, limit, declared); err != nil {
-			return nil, nil, err
+			if href == "" {
+				continue
+			}
+			for _, directory := range epubutil.ManifestBases(path.Dir(record.Path), record.Base, record.Manifest.Base, item.Base) {
+				resource, err := epubutil.ArchivePath(href, directory)
+				if err == nil {
+					declared.add(resource, normalizeDeclaredType(item.MediaType))
+				}
+			}
 		}
 	}
 	return packages, declared, nil
-}
-
-func epubManifestTypes(
-	packageFile *zip.File, packagePath string, limit int64, declared contentDeclarations,
-) error {
-	body, err := readZIPEntry(packageFile, limit)
-	if err != nil {
-		return err
-	}
-	var document struct {
-		Base     string `xml:"http://www.w3.org/XML/1998/namespace base,attr"`
-		Manifest struct {
-			Base  string `xml:"http://www.w3.org/XML/1998/namespace base,attr"`
-			Items []struct {
-				HRef      string `xml:"href,attr"`
-				MediaType string `xml:"media-type,attr"`
-				Base      string `xml:"http://www.w3.org/XML/1998/namespace base,attr"`
-			} `xml:"item"`
-		} `xml:"manifest"`
-	}
-	if err := xml.Unmarshal(body, &document); err != nil {
-		return errors.New("EPUB package document is invalid")
-	}
-	base := path.Dir(packagePath)
-	for _, item := range document.Manifest.Items {
-		// A query or fragment still names the same archive entry, so strip it
-		// rather than dropping the declaration and leaving the entry unscanned.
-		href := item.HRef
-		if index := strings.IndexAny(href, "?#"); index >= 0 {
-			href = href[:index]
-		}
-		if href == "" {
-			continue
-		}
-		declaredType := normalizeDeclaredType(item.MediaType)
-		// Readers disagree about whether xml:base applies here, so declare the
-		// item at every path one of them may resolve it to. A declaration for a
-		// path that holds no entry is inert, while a missing one leaves a
-		// reachable resource unscanned.
-		for _, directory := range manifestBases(base, document.Base, document.Manifest.Base, item.Base) {
-			resource, err := epubArchivePath(href, directory)
-			if err != nil {
-				// A manifest may name a remote or absolute resource. inspectXML
-				// classifies that when it scans the package document itself.
-				continue
-			}
-			declared.add(resource, declaredType)
-		}
-	}
-	return nil
-}
-
-// manifestBases returns each directory a manifest item may resolve against.
-// The xml:base values arrive outermost first, and a reader may honour any
-// prefix of them: the package document's own directory when it honours none,
-// the fully shifted directory when it honours all, and a step in between when
-// it reads the attribute on some elements and not others. Recording only the
-// two ends left an item under a neutral name at an intermediate step declared
-// nowhere, and so inspected by its file name rather than as the markup a
-// reader loads.
-func manifestBases(packageDir string, bases ...string) []string {
-	directories := []string{packageDir}
-	shifted := packageDir
-	for _, base := range bases {
-		if strings.TrimSpace(base) == "" {
-			continue
-		}
-		shifted = resolveArchiveDir(shifted, strings.TrimSpace(base))
-		if shifted == "" {
-			return directories
-		}
-		if !slices.Contains(directories, shifted) {
-			directories = append(directories, shifted)
-		}
-	}
-	return directories
-}
-
-// epubArchivePath resolves one EPUB-relative reference to an archive entry
-// name, rejecting absolute, remote, and traversing forms.
-//
-// The reference is reduced the way a consumer reduces it before resolving:
-// whitespace it discards, and a backslash it reads as a separator. Matching the
-// unreduced text meant a manifest item spelled with either named no entry, so a
-// resource a reader loads was left undeclared and inspected by its file name.
-func epubArchivePath(reference, base string) (string, error) {
-	reference = separatorsAsSlashes(stripReferenceWhitespace(reference))
-	parsed, err := url.Parse(reference)
-	if err != nil || parsed.IsAbs() || parsed.Host != "" ||
-		parsed.RawQuery != "" || parsed.Fragment != "" {
-		return "", errors.New("EPUB resource path is invalid")
-	}
-	resource, err := url.PathUnescape(parsed.EscapedPath())
-	if err != nil {
-		return "", errors.New("EPUB resource path is invalid")
-	}
-	resource = separatorsAsSlashes(resource)
-	// An absolute reference inside a container names the container root, so it
-	// must not be joined with the package directory: that silently renamed it
-	// to a different entry and left the real one undeclared.
-	if rooted, found := strings.CutPrefix(resource, "/"); found {
-		resource = rooted
-	} else if base != "" && base != "." {
-		resource = path.Join(base, resource)
-	}
-	resource = path.Clean(resource)
-	if resource == "." || path.IsAbs(resource) || leavesArchiveRoot(resource) {
-		return "", errors.New("EPUB resource path is invalid")
-	}
-	return resource, nil
 }
 
 // contentDeclarations maps an archive entry to the content types its container

@@ -1,5 +1,5 @@
 ---
-last_edited: 2026-09-13
+last_edited: 2026-09-23
 title: Document Understanding in Go
 description: Choose Go packages for document extraction, canonical evidence, renditions, and embeddings without opening a Docbank vault.
 ---
@@ -47,6 +47,7 @@ provider descriptor and profile, not to a filename extension.
 
 | Provider package | Where it runs | Contract and scope |
 |------------------|---------------|--------------------|
+| `document/epub` | In process | EPUB XHTML spine text and virtual usage |
 | [`document/plaintext`](https://github.com/kenn-io/docbank/tree/main/document/plaintext) | In process | UTF-8 text, including declared source, structured-text, CSV, and mail formats; one generic unit with degraded provenance |
 | [`document/suppliedtranscript`](https://github.com/kenn-io/docbank/tree/main/document/suppliedtranscript) | In process | Caller-held transcript text for bounded WAV and MP3, plus supplied SubRip captions for WAV, MP3, and MP4 originals; captions produce timed segment units with supplied provenance |
 | [`document/pymupdf`](https://github.com/kenn-io/docbank/tree/main/document/pymupdf) | Local process | PDF text through a pinned, digest-verified executable |
@@ -72,6 +73,40 @@ receipts record the exact source, policy, provider identity, and bounded usage.
 See the [provider contract](https://github.com/kenn-io/docbank/blob/main/document/provider.go)
 and [rendition bridge schema](https://github.com/kenn-io/docbank/blob/main/document/bridge/openapi.yaml)
 for the normative types and wire format.
+
+## Extract EPUB locally
+
+`document/epub` provides `epub.in-process-v1` for one reflowable EPUB package
+with XHTML spine content and no `META-INF/encryption.xml` entry. Encrypted content
+and IDPF/Adobe font obfuscation are rejected as unsupported. Construct it with
+`epub.New(epub.Profile{MaxDocumentBytes: 16 << 20, MaxUnits: 1000})`.
+Both limits are required. Bytes range from 1 through 500 MiB; virtual units
+range from 1 through 1,000,000. The descriptor reports `local_process` and
+binds both limits to its policy identity.
+
+Pass the provider to an embedded vault through
+`ProcessingProfileConfig.RenditionProvider`, together with its processing
+profile. Use the public planning and consent flow before processing. The
+standalone daemon's configured EPUB route continues to use Marker.
+
+Each declared spine occurrence produces one ordered evidence unit with its
+archive path. Repeated references and `linear=no` entries count separately.
+Empty entries keep their location and consume zero virtual units. Head
+metadata and active XHTML content contribute no text. Images and visual
+layout have limited fidelity.
+
+Usage counts the complete normalized Markdown with LF line endings. Each
+line wraps virtually at 80 Unicode code points; 48 virtual lines make one
+unit. Every spine entry starts a new page. A 100-line chapter can therefore
+remain one evidence unit while consuming three virtual units. Wrapping leaves
+retained Markdown unchanged. Configure the processing profile's retained
+unit and text limits separately from the provider's virtual-unit ceiling.
+
+The provider verifies the authorized source length and hash, applies the
+format detector's ZIP limits, and rejects unsupported packages with
+`unsupported_input`. Output, work, or virtual-unit overflow returns
+`policy_rejected`. Exact cumulative `MaxUnits` is accepted. Truncated output
+and partially processed books produce no successful provider result.
 
 ## Build canonical evidence and a rendition
 

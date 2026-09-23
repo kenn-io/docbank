@@ -19,6 +19,7 @@ var schemaSQL string
 // Store is the single access path to the docbank database.
 type Store struct {
 	db               *sql.DB
+	writeDB          *sql.DB
 	path             string
 	rootID           int64
 	vaultID          string
@@ -80,14 +81,23 @@ func OpenForRestore(path string, driver docsqlite.Driver) (*Store, error) {
 
 func openCurrentStore(path string, driver docsqlite.Driver) (*Store, error) {
 	db, err := driver.Open(path, docsqlite.OpenOptions{
-		Access: docsqlite.Create, TransactionMode: docsqlite.Immediate,
+		Access: docsqlite.Create, TransactionMode: docsqlite.Deferred,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("opening database %s with %s: %w", path, driver.Name(), err)
 	}
-	s := &Store{db: db, path: path, driver: driver}
+	writeDB, err := driver.Open(path, docsqlite.OpenOptions{
+		Access: docsqlite.Create, TransactionMode: docsqlite.Immediate,
+	})
+	if err != nil {
+		return nil, errors.Join(fmt.Errorf("opening database writer: %w", err), db.Close())
+	}
+	// Queue writers in database/sql instead of racing SQLite's busy timeout.
+	// Read snapshots use the separate deferred pool and do not reserve the writer.
+	writeDB.SetMaxOpenConns(1)
+	s := &Store{db: db, writeDB: writeDB, path: path, driver: driver}
 	if err := s.bootstrap(); err != nil {
-		_ = db.Close()
+		_ = s.Close()
 		return nil, err
 	}
 	return s, nil
@@ -199,8 +209,8 @@ func (s *Store) PrimaryBlobStoreID() string { return s.primaryStoreID }
 // and embedded lifecycle helpers reuse it for every auxiliary connection.
 func (s *Store) SQLiteDriver() docsqlite.Driver { return s.driver }
 
-// Close closes the underlying database.
-func (s *Store) Close() error { return s.db.Close() }
+// Close closes both database pools.
+func (s *Store) Close() error { return errors.Join(s.db.Close(), s.writeDB.Close()) }
 
 // Checkpoint truncates the WAL after all application writes have completed.
 // Portable restore uses it before closing a freshly imported database so the
@@ -231,7 +241,7 @@ func (s *Store) withStorageTx(ctx context.Context, fn func(tx *sql.Tx) error) (r
 			retErr = errors.Join(ctx.Err(), retErr)
 		}
 	}()
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := s.writeDB.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("beginning transaction: %w", err)
 	}

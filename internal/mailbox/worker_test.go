@@ -17,7 +17,7 @@ import (
 type contentionDriver struct {
 	docsqlite.Driver
 
-	db *sql.DB
+	dbs []*sql.DB
 }
 
 func TestMailboxWorkerLogsJobFailureAndProcessesNextJob(t *testing.T) {
@@ -47,7 +47,7 @@ func (d *contentionDriver) Open(path string, options docsqlite.OpenOptions) (*sq
 	options.BusyTimeout = time.Millisecond
 	db, err := d.Driver.Open(path, options)
 	if err == nil {
-		d.db = db
+		d.dbs = append(d.dbs, db)
 	}
 	return db, err
 }
@@ -62,8 +62,10 @@ func TestMailboxWorkerSurvivesCatalogContention(t *testing.T) {
 			ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
 			defer cancel()
 			// Only the external locker should cause contention in this fixture.
-			driver.db.SetMaxOpenConns(1)
-			driver.db.SetMaxIdleConns(0)
+			for _, db := range driver.dbs {
+				db.SetMaxOpenConns(1)
+				db.SetMaxIdleConns(0)
+			}
 			locker, err := driver.Driver.Open(filepath.Join(f.Spool, "docbank.db"), docsqlite.OpenOptions{Access: docsqlite.ReadWriteExisting, TransactionMode: docsqlite.Immediate})
 			require.NoError(t, err)
 			defer func() { require.NoError(t, locker.Close()) }()
@@ -122,7 +124,9 @@ func TestMailboxWorkerSurvivesCatalogContention(t *testing.T) {
 			require.NoError(t, locker.Close())
 			// Reuse connections once the exclusive lock is gone, so cancellation
 			// cannot leave a replacement connection opening during cleanup.
-			driver.db.SetMaxIdleConns(1)
+			for _, db := range driver.dbs {
+				db.SetMaxIdleConns(1)
+			}
 			if phase == "watch" {
 				close(resume)
 			}

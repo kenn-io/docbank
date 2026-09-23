@@ -21,17 +21,34 @@ func newTestStore(t *testing.T) *Store {
 	return s
 }
 
+func TestStorageMutationDuringReadSnapshot(t *testing.T) {
+	s := newTestStore(t)
+	tx, err := s.db.BeginTx(t.Context(), &sql.TxOptions{ReadOnly: true})
+	require.NoError(t, err)
+	defer func() { _ = tx.Rollback() }()
+	var count int
+	require.NoError(t, tx.QueryRowContext(t.Context(), `SELECT count(*) FROM nodes`).Scan(&count))
+	require.Equal(t, 1, count)
+
+	_, err = s.Mkdir(t.Context(), s.RootID(), "inbox")
+	require.NoError(t, err)
+	require.NoError(t, tx.QueryRowContext(t.Context(), `SELECT count(*) FROM nodes`).Scan(&count))
+	require.Equal(t, 1, count, "the reader retains its original snapshot")
+	require.NoError(t, tx.Commit())
+	_, err = s.NodeByPath(t.Context(), "/inbox")
+	require.NoError(t, err)
+}
+
 func TestStorageTransactionPreservesCancellationAfterAutomaticRollback(t *testing.T) {
 	for _, phase := range []string{"callback", "commit"} {
 		t.Run(phase, func(t *testing.T) {
 			s := newTestStore(t)
-			s.db.SetMaxOpenConns(1)
 			ctx, cancel := context.WithCancel(t.Context())
 			defer cancel()
 			err := s.withStorageTx(ctx, func(tx *sql.Tx) error {
 				cancel()
 				// The only connection becomes available after automatic rollback.
-				require.NoError(t, s.db.PingContext(t.Context()))
+				require.NoError(t, s.writeDB.PingContext(t.Context()))
 				var value int
 				readErr := tx.QueryRow("SELECT 1").Scan(&value)
 				if phase == "callback" {

@@ -33,6 +33,21 @@ OCR safely](../document-understanding.md#run-mistral-ocr-safely) for the
 supported formats, byte limits, response checks, render policy, and manifest
 upgrade.
 
+`document/internal/epubutil` owns bounded EPUB package reads, ordered manifest
+and spine records, XML-base interpretation, and archive paths. Media inspection
+uses these records to inspect every rootfile and conflicting declaration.
+OOXML and ODF inspection also use its bounded ZIP reader.
+
+`document/epub` owns single-package admission, ordered XHTML spine extraction,
+and virtual usage. It consumes the shared utility and the bounded
+`document.RenditionMarkdownFromXHTML` entry point. The latter uses the existing
+Markdown writer with explicit XML token handling. Existing Markdown input
+keeps its own token semantics. Provider libraries own no vault, consent, or
+publication state. See [local EPUB extraction][epub-local] for limits and the
+embedded injection route.
+
+[epub-local]: ../document-understanding.md#extract-epub-locally
+
 ## Common change paths
 
 ### Add a data operation

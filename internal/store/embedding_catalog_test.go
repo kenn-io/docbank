@@ -1720,7 +1720,7 @@ func TestEmbeddingPublicationAndJobCompletionAreAtomic(t *testing.T) {
 	head := EmbeddingHeadRecord{Key: EmbeddingHeadKey{versionID, request.BindingID, document.EmbeddingInputOriginalFile}, SetID: record.ID,
 		VectorSpaceID: work.VectorSpaceID, ProcessingProfileFingerprint: profile.Fingerprint, PublishedAt: at.Format(timestampLayout), FencingToken: claim.Epoch}
 	receipt := EmbeddingAttemptReceipt{AttemptID: job.ID}
-	_, err = s.db.Exec(`CREATE TEMP TRIGGER reject_embedding_completion BEFORE UPDATE OF state ON embedding_jobs
+	_, err = s.writeDB.Exec(`CREATE TEMP TRIGGER reject_embedding_completion BEFORE UPDATE OF state ON embedding_jobs
   WHEN NEW.state='completed' BEGIN SELECT RAISE(ABORT,'synthetic completion failure'); END`)
 	require.NoError(t, err)
 	require.Error(t, s.PublishEmbeddingWork(t.Context(), claim, work, head, prior, receipt, at))
@@ -1730,7 +1730,7 @@ func TestEmbeddingPublicationAndJobCompletionAreAtomic(t *testing.T) {
 	var state string
 	require.NoError(t, s.db.QueryRow(`SELECT state FROM embedding_jobs WHERE job_id=?`, job.ID).Scan(&state))
 	require.Equal(t, "running", state)
-	_, err = s.db.Exec(`DROP TRIGGER reject_embedding_completion`)
+	_, err = s.writeDB.Exec(`DROP TRIGGER reject_embedding_completion`)
 	require.NoError(t, err)
 	require.NoError(t, s.PublishEmbeddingWork(t.Context(), claim, work, head, prior, receipt, at))
 	require.NoError(t, s.db.QueryRow(`SELECT state FROM embedding_jobs WHERE job_id=?`, job.ID).Scan(&state))
