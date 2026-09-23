@@ -64,6 +64,13 @@ func timeoutExempt(method, path string) bool {
 			}
 		}
 	}
+	if rest, ok := strings.CutPrefix(path, "/api/v1/bates/exports/"); ok {
+		id, action, found := strings.Cut(rest, "/")
+		if found && (id == "{id}" || validPageJobPathID(id)) &&
+			(method == http.MethodGet && action == "content" || method == http.MethodPost && action == "download") {
+			return true
+		}
+	}
 	if strings.HasPrefix(path, "/api/v1/nodes/") &&
 		(strings.HasSuffix(path, "/verify") || strings.HasSuffix(path, "/content")) {
 		return true
