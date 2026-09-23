@@ -2025,26 +2025,10 @@ func canonicalEvidenceString(value string) string {
 }
 
 func canonicalEvidenceStringContext(ctx context.Context, value string) (string, error) {
-	var normalized strings.Builder
-	normalized.Grow(len(value))
-	for index := 0; index < len(value); {
-		if index&1023 == 0 {
-			if err := ctx.Err(); err != nil {
-				return "", err
-			}
-		}
-		if value[index] == '\r' {
-			normalized.WriteByte('\n')
-			index++
-			if index < len(value) && value[index] == '\n' {
-				index++
-			}
-			continue
-		}
-		normalized.WriteByte(value[index])
-		index++
+	value, err := canonicalEvidenceLineEndingsContext(ctx, value)
+	if err != nil {
+		return "", err
 	}
-	value = normalized.String()
 	var iterator norm.Iter
 	iterator.InitString(norm.NFC, value)
 	var canonical strings.Builder
@@ -2058,6 +2042,34 @@ func canonicalEvidenceStringContext(ctx context.Context, value string) (string, 
 		return "", err
 	}
 	return canonical.String(), nil
+}
+
+func canonicalEvidenceLineEndingsContext(ctx context.Context, value string) (string, error) {
+	var normalized strings.Builder
+	normalized.Grow(len(value))
+	iterations := 0
+	for index := 0; index < len(value); {
+		if iterations&1023 == 0 {
+			if err := ctx.Err(); err != nil {
+				return "", err
+			}
+		}
+		iterations++
+		if value[index] == '\r' {
+			normalized.WriteByte('\n')
+			index++
+			if index < len(value) && value[index] == '\n' {
+				index++
+			}
+			continue
+		}
+		normalized.WriteByte(value[index])
+		index++
+	}
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
+	return normalized.String(), nil
 }
 
 func locatorKindForUnit(kind EvidenceUnitKind) EvidenceLocatorKind {

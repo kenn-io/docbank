@@ -27,6 +27,23 @@ func (ctx *cancelAfterXHTMLReadContext) Err() error {
 	return nil
 }
 
+type cancelOnXHTMLReadContext struct {
+	calls    int
+	cancelAt int
+}
+
+func (ctx *cancelOnXHTMLReadContext) Deadline() (time.Time, bool) { return time.Time{}, false }
+func (ctx *cancelOnXHTMLReadContext) Done() <-chan struct{}       { return nil }
+func (ctx *cancelOnXHTMLReadContext) Value(any) any               { return nil }
+
+func (ctx *cancelOnXHTMLReadContext) Err() error {
+	ctx.calls++
+	if ctx.calls == ctx.cancelAt {
+		return context.Canceled
+	}
+	return nil
+}
+
 func TestRenditionXHTMLSemantics(t *testing.T) {
 	for _, test := range []struct{ name, body, want string }{
 		{"named entities", `<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.1//EN" "http://www.w3.org/TR/xhtml11/DTD/xhtml11.dtd"><body><p>a&nbsp;b&mdash;c&hellip;</p></body>`, "a b—c…"},
@@ -111,8 +128,13 @@ func TestRenditionFinalizationContextCancellation(t *testing.T) {
 		listItems[index].present = true
 	}
 	listBlocks := []renditionBlock{{kind: renditionListBlock, list: &renditionList{ordered: true, start: "1", items: listItems}}}
-	ctx := &cancelAfterXHTMLReadContext{cancelAt: 3}
+	var ctx context.Context = &cancelAfterXHTMLReadContext{cancelAt: 3}
 	err := canonicalizeRenditionBlocks(ctx, tableBlocks)
+	require.ErrorIs(t, err, context.Canceled)
+
+	tableCellBlocks := []renditionBlock{{kind: renditionTable, rows: [][][]renditionInline{{{}}}}}
+	ctx = &cancelAfterXHTMLReadContext{cancelAt: 4}
+	err = canonicalizeRenditionBlocks(ctx, tableCellBlocks)
 	require.ErrorIs(t, err, context.Canceled)
 
 	ctx = &cancelAfterXHTMLReadContext{cancelAt: 3}
@@ -150,9 +172,19 @@ func TestRenditionFinalizationContextCancellation(t *testing.T) {
 	_, _, err = serializeRenditionBlocksContext(ctx, largeCode, 2<<20)
 	require.ErrorIs(t, err, context.Canceled)
 
-	ctx = &cancelAfterXHTMLReadContext{cancelAt: 3}
-	_, err = canonicalEvidenceStringContext(ctx, strings.Repeat("e\u0301", 1<<19))
+	ctx = &cancelOnXHTMLReadContext{cancelAt: 3}
+	_, err = canonicalEvidenceLineEndingsContext(ctx, strings.Repeat("\r\n", 1<<19))
 	require.ErrorIs(t, err, context.Canceled)
+
+	ctx = &cancelOnXHTMLReadContext{cancelAt: 4}
+	_, err = canonicalEvidenceStringContext(ctx, strings.Repeat("e\u0301", 256))
+	require.ErrorIs(t, err, context.Canceled)
+
+	ctx = &cancelOnXHTMLReadContext{cancelAt: 7}
+	writer := renditionHTMLWriter{work: &renditionXHTMLWork{remaining: 1 << 20}}
+	err = writer.writeTextContext(ctx, strings.Repeat("x", 1024)+" "+strings.Repeat("y", 1024))
+	require.ErrorIs(t, err, context.Canceled)
+	require.NotEmpty(t, writer.current)
 
 	ctx = &cancelAfterXHTMLReadContext{cancelAt: 3}
 	_, _, err = serializeRenditionBlocksContext(ctx, tableBlocks, 1<<20)

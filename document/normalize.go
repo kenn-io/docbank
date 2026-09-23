@@ -113,7 +113,9 @@ func RenditionMarkdownFromXHTMLContext(ctx context.Context, source []byte, maxRu
 				if err != nil {
 					return "", err
 				}
-				writer.writeText(value)
+				if err := writer.writeTextContext(ctx, value); err != nil {
+					return "", err
+				}
 			}
 		}
 		if writer.work.exceeded || writer.linkDepthTruncated {
@@ -1553,14 +1555,22 @@ func (w *renditionHTMLWriter) startLink(destination string) {
 }
 
 func (w *renditionHTMLWriter) writeText(value string) {
-	value = stripUnsafeControls(value)
+	_ = w.writeTextContext(context.Background(), value)
+}
+
+func (w *renditionHTMLWriter) writeTextContext(ctx context.Context, value string) error {
+	var err error
+	value, err = stripUnsafeControlsContext(ctx, value)
+	if err != nil {
+		return err
+	}
 	if w.inPre {
 		w.preText.WriteString(value)
-		return
+		return nil
 	}
 	if w.inlineCode {
 		w.inlineText.WriteString(value)
-		return
+		return nil
 	}
 	var chunk strings.Builder
 	flushChunk := func() {
@@ -1570,7 +1580,14 @@ func (w *renditionHTMLWriter) writeText(value string) {
 		w.appendText(chunk.String())
 		chunk.Reset()
 	}
+	runes := 0
 	for _, character := range value {
+		if runes&1023 == 0 {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+		}
+		runes++
 		if unicode.IsSpace(character) {
 			flushChunk()
 			w.pendingSpace = true
@@ -1583,6 +1600,7 @@ func (w *renditionHTMLWriter) writeText(value string) {
 		chunk.WriteRune(character)
 	}
 	flushChunk()
+	return ctx.Err()
 }
 
 func (w *renditionHTMLWriter) startBlock(kind renditionBlockKind, level int) {
@@ -3031,21 +3049,48 @@ func (w *canonicalHTMLWriter) block() {
 }
 
 func stripUnsafeControls(value string) string {
-	return strings.Map(func(character rune) rune {
+	cleaned, _ := stripUnsafeControlsContext(context.Background(), value)
+	return cleaned
+}
+
+func stripUnsafeControlsContext(ctx context.Context, value string) (string, error) {
+	var cleaned strings.Builder
+	cleaned.Grow(len(value))
+	iterations := 0
+	for index := 0; index < len(value); {
+		if iterations&1023 == 0 {
+			if err := ctx.Err(); err != nil {
+				return "", err
+			}
+		}
+		iterations++
+		if value[index] == '\r' {
+			cleaned.WriteByte('\n')
+			index++
+			if index < len(value) && value[index] == '\n' {
+				index++
+			}
+			continue
+		}
+		character, size := utf8.DecodeRuneInString(value[index:])
+		index += size
 		switch character {
 		case '\n', '\t':
-			return character
+			cleaned.WriteRune(character)
 		case '\f', '\v', '\u0085', '\u2028', '\u2029':
-			return '\n'
+			cleaned.WriteByte('\n')
+		default:
+			if unicode.IsSpace(character) {
+				cleaned.WriteByte(' ')
+			} else if !unicode.IsControl(character) && character != headingSentinelStart && character != headingSentinelEnd {
+				cleaned.WriteRune(character)
+			}
 		}
-		if unicode.IsSpace(character) {
-			return ' '
-		}
-		if unicode.IsControl(character) || character == headingSentinelStart || character == headingSentinelEnd {
-			return -1
-		}
-		return character
-	}, strings.ReplaceAll(strings.ReplaceAll(value, "\r\n", "\n"), "\r", "\n"))
+	}
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
+	return cleaned.String(), nil
 }
 
 func safeStoredLink(value string, maxChars int) string {
