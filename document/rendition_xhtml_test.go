@@ -104,6 +104,21 @@ func TestRenditionXHTMLContextCancellationAfterRead(t *testing.T) {
 	require.GreaterOrEqual(t, ctx.calls, ctx.cancelAt)
 }
 
+func TestRenditionFinalizationContextCancellation(t *testing.T) {
+	blocks := make([]renditionBlock, 1024)
+	ctx := &cancelAfterXHTMLReadContext{cancelAt: 2}
+	err := canonicalizeRenditionBlocks(ctx, blocks)
+	require.ErrorIs(t, err, context.Canceled)
+
+	ctx = &cancelAfterXHTMLReadContext{cancelAt: 2}
+	_, err = renditionXHTMLSerializationFits(ctx, blocks, 1<<20, 0)
+	require.ErrorIs(t, err, context.Canceled)
+
+	ctx = &cancelAfterXHTMLReadContext{cancelAt: 2}
+	_, _, err = serializeRenditionBlocksContext(ctx, blocks, 1<<20)
+	require.ErrorIs(t, err, context.Canceled)
+}
+
 type trackingReader struct {
 	reader  io.Reader
 	started *bool

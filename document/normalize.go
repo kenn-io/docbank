@@ -123,14 +123,20 @@ func RenditionMarkdownFromXHTMLContext(ctx context.Context, source []byte, maxRu
 		return "", errors.New("XHTML document is incomplete")
 	}
 	writer.finalize()
-	canonicalizeRenditionBlocks(writer.blocks)
-	if err := ctx.Err(); err != nil {
+	if err := canonicalizeRenditionBlocks(ctx, writer.blocks); err != nil {
 		return "", err
 	}
-	if writer.work.exceeded || !renditionXHTMLSerializationFits(writer.blocks, budget, 0) {
+	fits, err := renditionXHTMLSerializationFits(ctx, writer.blocks, budget, 0)
+	if err != nil {
+		return "", err
+	}
+	if writer.work.exceeded || !fits {
 		return "", ErrRenditionXHTMLBudget
 	}
-	text, truncated := serializeRenditionBlocks(writer.blocks, maxRunes)
+	text, truncated, err := serializeRenditionBlocksContext(ctx, writer.blocks, maxRunes)
+	if err != nil {
+		return "", err
+	}
 	if err := ctx.Err(); err != nil {
 		return "", err
 	}
@@ -157,25 +163,42 @@ func (reader contextReader) Read(p []byte) (int, error) {
 	return n, err
 }
 
-func canonicalizeRenditionBlocks(blocks []renditionBlock) {
+func canonicalizeRenditionBlocks(ctx context.Context, blocks []renditionBlock) error {
 	for index := range blocks {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		blocks[index].code = canonicalEvidenceString(blocks[index].code)
-		blocks[index].inlines = canonicalizeRenditionInlines(blocks[index].inlines)
+		inlines, err := canonicalizeRenditionInlines(ctx, blocks[index].inlines)
+		if err != nil {
+			return err
+		}
+		blocks[index].inlines = inlines
 		for rowIndex := range blocks[index].rows {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
 			for cellIndex := range blocks[index].rows[rowIndex] {
-				blocks[index].rows[rowIndex][cellIndex] = canonicalizeRenditionInlines(blocks[index].rows[rowIndex][cellIndex])
+				inlines, err := canonicalizeRenditionInlines(ctx, blocks[index].rows[rowIndex][cellIndex])
+				if err != nil {
+					return err
+				}
+				blocks[index].rows[rowIndex][cellIndex] = inlines
 			}
 		}
 		if blocks[index].list == nil {
 			continue
 		}
 		for itemIndex := range blocks[index].list.items {
-			canonicalizeRenditionBlocks(blocks[index].list.items[itemIndex].blocks)
+			if err := canonicalizeRenditionBlocks(ctx, blocks[index].list.items[itemIndex].blocks); err != nil {
+				return err
+			}
 		}
 	}
+	return nil
 }
 
-func canonicalizeRenditionInlines(values []renditionInline) []renditionInline {
+func canonicalizeRenditionInlines(ctx context.Context, values []renditionInline) ([]renditionInline, error) {
 	result := make([]renditionInline, 0, len(values))
 	var text strings.Builder
 	flushText := func() {
@@ -186,6 +209,9 @@ func canonicalizeRenditionInlines(values []renditionInline) []renditionInline {
 		text.Reset()
 	}
 	for _, value := range values {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		if value.kind == renditionText {
 			text.WriteString(value.text)
 			continue
@@ -194,12 +220,16 @@ func canonicalizeRenditionInlines(values []renditionInline) []renditionInline {
 		if value.kind == renditionInlineCode {
 			value.text = canonicalEvidenceString(value.text)
 		} else {
-			value.children = canonicalizeRenditionInlines(value.children)
+			children, err := canonicalizeRenditionInlines(ctx, value.children)
+			if err != nil {
+				return nil, err
+			}
+			value.children = children
 		}
 		result = append(result, value)
 	}
 	flushText()
-	return result
+	return result, nil
 }
 
 type renditionXHTMLWork struct {
@@ -220,11 +250,14 @@ func (w *renditionHTMLWriter) charge(amount int64) bool {
 }
 
 // Bound rectangular table padding and temporary serialization before allocation.
-func renditionXHTMLSerializationFits(blocks []renditionBlock, budget int64, indent int) bool {
-	var inlines func([]renditionInline) int64
-	inlines = func(values []renditionInline) int64 {
+func renditionXHTMLSerializationFits(ctx context.Context, blocks []renditionBlock, budget int64, indent int) (bool, error) {
+	var inlines func([]renditionInline) (int64, error)
+	inlines = func(values []renditionInline) (int64, error) {
 		var size int64
 		for _, value := range values {
+			if err := ctx.Err(); err != nil {
+				return 0, err
+			}
 			size += int64(len(value.text))
 			switch value.kind {
 			case renditionText:
@@ -236,39 +269,65 @@ func renditionXHTMLSerializationFits(blocks []renditionBlock, budget int64, inde
 			case renditionInlineCode:
 				size += 2*int64(maxBacktickRun(value.text)+1) + 4 + int64(strings.Count(value.text, "|"))
 			case renditionLinkInline:
-				size += int64(len(value.destination)) + 8 + inlines(value.children)
+				children, err := inlines(value.children)
+				if err != nil {
+					return 0, err
+				}
+				size += int64(len(value.destination)) + 8 + children
 			}
 		}
-		return size
+		return size, nil
 	}
-	var cost func([]renditionBlock, int) int64
-	cost = func(blocks []renditionBlock, indent int) int64 {
+	var cost func([]renditionBlock, int) (int64, error)
+	cost = func(blocks []renditionBlock, indent int) (int64, error) {
 		var total int64
 		for _, block := range blocks {
-			total += 16 + int64(indent)*int64(3+strings.Count(block.code, "\n")+len(block.rows)) + inlines(block.inlines)
+			if err := ctx.Err(); err != nil {
+				return 0, err
+			}
+			inlineSize, err := inlines(block.inlines)
+			if err != nil {
+				return 0, err
+			}
+			total += 16 + int64(indent)*int64(3+strings.Count(block.code, "\n")+len(block.rows)) + inlineSize
 			if block.kind == renditionCodeBlock {
 				total += int64(len(block.code) + len(block.language) + 3 + 2*max(3, maxBacktickRun(block.code)+1))
 			}
 			columns := 0
 			for _, row := range block.rows {
+				if err := ctx.Err(); err != nil {
+					return 0, err
+				}
 				columns = max(columns, len(row))
 				for _, cell := range row {
-					total += inlines(cell)
+					cellSize, err := inlines(cell)
+					if err != nil {
+						return 0, err
+					}
+					total += cellSize
 				}
 			}
 			total += int64(len(block.rows)+1) * (int64(columns)*6 + 3)
 			if block.list != nil {
 				for _, item := range block.list.items {
-					total += cost(item.blocks, indent+maxOrderedListMarkerDigits+4) + int64(len(block.list.start)) + 16
+					itemCost, err := cost(item.blocks, indent+maxOrderedListMarkerDigits+4)
+					if err != nil {
+						return 0, err
+					}
+					total += itemCost + int64(len(block.list.start)) + 16
 				}
 			}
 			if total > budget {
-				return total
+				return total, nil
 			}
 		}
-		return total
+		return total, nil
 	}
-	return cost(blocks, indent) <= budget
+	total, err := cost(blocks, indent)
+	if err != nil {
+		return false, err
+	}
+	return total <= budget, nil
 }
 
 const (
@@ -572,7 +631,10 @@ func sanitizeRenditionMarkdown(markdown string, maxLinkChars, maxSourceBytes, ma
 	if err := writer.consumeFragments(rendered.Bytes(), rawSpans); err != nil {
 		return "", false, false, err
 	}
-	text, renditionTruncated := serializeRenditionBlocks(writer.blocks, maxRunes)
+	text, renditionTruncated, err := serializeRenditionBlocksContext(context.Background(), writer.blocks, maxRunes)
+	if err != nil {
+		return "", false, false, err
+	}
 	renditionTruncated = renditionTruncated || writer.linkDepthTruncated
 	return text, sourceTruncated, renditionTruncated, nil
 }
@@ -1596,6 +1658,8 @@ func appendRenditionInline(target []renditionInline, inline renditionInline) []r
 type renditionBuilder struct {
 	strings.Builder
 
+	ctx   context.Context
+	err   error
 	runes int
 }
 
@@ -1605,13 +1669,21 @@ func (b *renditionBuilder) WriteString(value string) {
 }
 
 func serializeRenditionBlocks(blocks []renditionBlock, limit int) (string, bool) {
-	var output renditionBuilder
+	text, truncated, _ := serializeRenditionBlocksContext(context.Background(), blocks, limit)
+	return text, truncated
+}
+
+func serializeRenditionBlocksContext(ctx context.Context, blocks []renditionBlock, limit int) (string, bool, error) {
+	output := renditionBuilder{ctx: ctx}
 	truncated := false
 	previousList := false
 	previousListOrdered := false
 	previousListAlternate := false
 	previousKind := renditionParagraph
 	for _, block := range blocks {
+		if err := output.contextError(); err != nil {
+			return "", false, err
+		}
 		separator := ""
 		listAlternate := false
 		if output.Len() > 0 {
@@ -1630,11 +1702,14 @@ func serializeRenditionBlocks(blocks []renditionBlock, limit int) (string, bool)
 		}
 		available := limit - output.runes - utf8.RuneCountInString(separator)
 		if available < 0 {
-			return finishRenditionMarkdown(output.String()), true
+			return finishRenditionMarkdown(output.String()), true, nil
 		}
-		value, blockTruncated := serializeRenditionBlock(block, available, listAlternate)
+		value, blockTruncated, err := serializeRenditionBlock(ctx, block, available, listAlternate)
+		if err != nil {
+			return "", false, err
+		}
 		if value == "" && blockTruncated {
-			return finishRenditionMarkdown(output.String()), true
+			return finishRenditionMarkdown(output.String()), true, nil
 		}
 		if value != "" {
 			output.WriteString(separator)
@@ -1651,7 +1726,17 @@ func serializeRenditionBlocks(blocks []renditionBlock, limit int) (string, bool)
 			break
 		}
 	}
-	return finishRenditionMarkdown(output.String()), truncated
+	return finishRenditionMarkdown(output.String()), truncated, nil
+}
+
+func (b *renditionBuilder) contextError() error {
+	if b.err != nil {
+		return b.err
+	}
+	if b.ctx != nil {
+		b.err = b.ctx.Err()
+	}
+	return b.err
 }
 
 func finishRenditionMarkdown(value string) string {
@@ -1687,25 +1772,29 @@ func incrementNonnegativeDecimal(value string) string {
 	return "1" + string(digits)
 }
 
-func serializeRenditionBlock(block renditionBlock, available int, listAlternate bool) (string, bool) {
+func serializeRenditionBlock(ctx context.Context, block renditionBlock, available int, listAlternate bool) (string, bool, error) {
 	switch block.kind {
 	case renditionCodeBlock:
 		value := serializeRenditionCodeBlock(block.language, block.code)
 		if utf8.RuneCountInString(value) > available {
-			return "", true
+			return "", true, nil
 		}
-		return value, false
+		return value, false, nil
 	case renditionTable:
-		value := serializeRenditionTable(block.rows)
-		if utf8.RuneCountInString(value) > available {
-			return "", true
+		value, err := serializeRenditionTable(ctx, block.rows)
+		if err != nil {
+			return "", false, err
 		}
-		return value, false
+		if utf8.RuneCountInString(value) > available {
+			return "", true, nil
+		}
+		return value, false, nil
 	case renditionListBlock:
 		if block.list == nil {
-			return "", false
+			return "", false, nil
 		}
-		return serializeRenditionList(*block.list, available, listAlternate)
+		value, truncated, err := serializeRenditionListContext(ctx, *block.list, available, listAlternate)
+		return value, truncated, err
 	case renditionParagraph, renditionHeading:
 		prefix := ""
 		switch block.kind {
@@ -1714,25 +1803,36 @@ func serializeRenditionBlock(block renditionBlock, available int, listAlternate 
 		case renditionHeading:
 			prefix = strings.Repeat("#", block.level) + " "
 		case renditionCodeBlock, renditionTable, renditionListBlock:
-			return "", false
+			return "", false, nil
 		}
 		if utf8.RuneCountInString(prefix) > available {
-			return "", true
+			return "", true, nil
 		}
-		value, truncated := serializeRenditionInlines(block.inlines, available-utf8.RuneCountInString(prefix), false)
+		value, truncated, err := serializeRenditionInlinesContext(ctx, block.inlines, available-utf8.RuneCountInString(prefix), false)
+		if err != nil {
+			return "", false, err
+		}
 		if value == "" && truncated {
-			return "", true
+			return "", true, nil
 		}
-		return prefix + value, truncated
+		return prefix + value, truncated, nil
 	default:
-		return "", false
+		return "", false, nil
 	}
 }
 
 func serializeRenditionList(list renditionList, available int, alternate bool) (string, bool) {
-	var output renditionBuffer
+	value, truncated, _ := serializeRenditionListContext(context.Background(), list, available, alternate)
+	return value, truncated
+}
+
+func serializeRenditionListContext(ctx context.Context, list renditionList, available int, alternate bool) (string, bool, error) {
+	output := renditionBuffer{ctx: ctx}
 	result := appendRenditionList(&output, list, available, 0, alternate)
-	return output.String(), result.truncated
+	if output.err != nil {
+		return "", false, output.err
+	}
+	return output.String(), result.truncated, nil
 }
 
 type renditionListResult struct {
@@ -1758,6 +1858,9 @@ func appendRenditionList(
 ) renditionListResult {
 	start := output.checkpoint()
 	var result renditionListResult
+	if output.contextError() != nil {
+		return renditionListResult{truncated: true}
+	}
 	if list.ordered && len(list.start) <= maxOrderedListMarkerDigits {
 		result = appendRepresentableOrderedListItems(output, list, limit, indent, alternate)
 	} else {
@@ -1798,6 +1901,9 @@ func appendRepresentableOrderedListItems(
 	var fallback []byte
 	fallbackRunes := 0
 	for _, item := range list.items {
+		if output.contextError() != nil {
+			return renditionListResult{truncated: true}
+		}
 		if !item.present {
 			continue
 		}
@@ -1882,6 +1988,9 @@ func appendRenditionListItems(
 	result := renditionListResult{}
 	ordinal := list.start
 	for _, item := range list.items {
+		if output.contextError() != nil {
+			return renditionListResult{truncated: true}
+		}
 		if !item.present {
 			continue
 		}
@@ -1972,6 +2081,9 @@ func appendRenditionListItem(
 	previousListAlternate := false
 	previousListIndent := contentIndent
 	for _, block := range item.blocks {
+		if output.contextError() != nil {
+			return output.runes > start.runes, true
+		}
 		separator := ""
 		listAlternate := false
 		listIndent := contentIndent
@@ -2128,7 +2240,12 @@ func appendRenditionItemBlock(
 	case renditionCodeBlock:
 		value = serializeRenditionCodeBlock(block.language, block.code)
 	case renditionTable:
-		value = serializeRenditionTable(block.rows)
+		var err error
+		value, err = serializeRenditionTable(output.ctx, block.rows)
+		if err != nil {
+			output.err = err
+			return false, true
+		}
 	default:
 		return false, false
 	}
@@ -2146,14 +2263,34 @@ func prefixRenditionLines(value, firstPrefix, continuationPrefix string) string 
 }
 
 func serializeRenditionInlines(inlines []renditionInline, available int, inTable bool) (string, bool) {
-	var output renditionBuffer
+	value, truncated, _ := serializeRenditionInlinesContext(context.Background(), inlines, available, inTable)
+	return value, truncated
+}
+
+func serializeRenditionInlinesContext(ctx context.Context, inlines []renditionInline, available int, inTable bool) (string, bool, error) {
+	output := renditionBuffer{ctx: ctx}
 	truncated := appendRenditionInlines(&output, inlines, available, inTable)
-	return output.String(), truncated
+	if output.err != nil {
+		return "", false, output.err
+	}
+	return output.String(), truncated, nil
 }
 
 type renditionBuffer struct {
 	bytes []byte
 	runes int
+	ctx   context.Context
+	err   error
+}
+
+func (b *renditionBuffer) contextError() error {
+	if b.err != nil {
+		return b.err
+	}
+	if b.ctx != nil {
+		b.err = b.ctx.Err()
+	}
+	return b.err
 }
 
 type renditionBufferCheckpoint struct {
@@ -2242,6 +2379,9 @@ func appendRenditionInlinesWithFallback(
 ) bool {
 	startRunes := output.runes
 	for _, inline := range inlines {
+		if output.contextError() != nil {
+			return true
+		}
 		if inline.kind == renditionLinkInline && inline.destination == "" {
 			remaining := available
 			if available >= 0 {
@@ -2313,6 +2453,9 @@ func appendRenditionPlainLabel(
 ) bool {
 	startRunes := output.runes
 	for _, inline := range inlines {
+		if output.contextError() != nil {
+			return true
+		}
 		remaining := available
 		if available >= 0 {
 			remaining -= output.runes - startRunes
@@ -2393,33 +2536,54 @@ func serializeRenditionCodeBlock(language, content string) string {
 	return fence + language + "\n" + content + fence
 }
 
-func serializeRenditionTable(rows [][][]renditionInline) string {
+func serializeRenditionTable(ctx context.Context, rows [][][]renditionInline) (string, error) {
 	if len(rows) == 0 {
-		return ""
+		return "", nil
 	}
 	columns := 0
 	for _, row := range rows {
+		if err := ctx.Err(); err != nil {
+			return "", err
+		}
 		columns = max(columns, len(row))
 	}
 	if columns == 0 {
-		return ""
+		return "", nil
 	}
-	format := func(row [][]renditionInline) string {
+	format := func(row [][]renditionInline) (string, error) {
 		cells := make([]string, columns)
 		for index, cell := range row {
-			cells[index], _ = serializeRenditionInlines(cell, -1, true)
+			if err := ctx.Err(); err != nil {
+				return "", err
+			}
+			value, _, err := serializeRenditionInlinesContext(ctx, cell, -1, true)
+			if err != nil {
+				return "", err
+			}
+			cells[index] = value
 		}
-		return "| " + strings.Join(cells, " | ") + " |"
+		return "| " + strings.Join(cells, " | ") + " |", nil
 	}
 	delimiter := make([]string, columns)
 	for index := range delimiter {
 		delimiter[index] = "---"
 	}
-	lines := []string{format(rows[0]), "| " + strings.Join(delimiter, " | ") + " |"}
-	for _, row := range rows[1:] {
-		lines = append(lines, format(row))
+	first, err := format(rows[0])
+	if err != nil {
+		return "", err
 	}
-	return strings.Join(lines, "\n")
+	lines := []string{first, "| " + strings.Join(delimiter, " | ") + " |"}
+	for _, row := range rows[1:] {
+		if err := ctx.Err(); err != nil {
+			return "", err
+		}
+		line, err := format(row)
+		if err != nil {
+			return "", err
+		}
+		lines = append(lines, line)
+	}
+	return strings.Join(lines, "\n"), nil
 }
 
 type canonicalHTMLWriter struct {
