@@ -33,6 +33,8 @@ type lifecycleStoreFixture struct {
 	claims         int
 	publications   int
 	listed         bool
+	failures       int
+	lastPermanent  bool
 }
 
 func (f *lifecycleStoreFixture) AdmitProductionJob(_ context.Context, request JobRequest) (Job, error) {
@@ -114,6 +116,41 @@ func (f *lifecycleStoreFixture) NextRunnableProductionJob(_ context.Context) (Jo
 	}
 	f.listed = true
 	return f.request, true, nil
+}
+func (f *lifecycleStoreFixture) RecordProductionJobFailure(_ context.Context, _ JobRequest, _ JobClaim, permanent bool) error {
+	f.failures++
+	f.lastPermanent = permanent
+	if permanent {
+		f.job.State = ProductionJobFailed
+	}
+	return nil
+}
+
+func TestProductionWorkerJobDeadlineDefersButCallerCancellationDoesNotRecordFailure(t *testing.T) {
+	for _, canceled := range []bool{false, true} {
+		t.Run(map[bool]string{false: "job deadline", true: "caller cancellation"}[canceled], func(t *testing.T) {
+			fixture := &lifecycleStoreFixture{storedFixture: newStoredFixtureWithText(t, strings.Repeat("A", 85)), reserveBlock: true}
+			fixture.request = lifecycleRequest(fixture.finalized)
+			worker := &Worker{Store: fixture, Source: &syntheticProductionSource{},
+				Pages: &syntheticPageArchive{}, Artifacts: &syntheticFinalArtifacts{},
+				WorkerID: "synthetic-worker", jobTimeout: 5 * time.Millisecond}
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			if canceled {
+				cancel()
+			}
+			processed, err := worker.RunOne(ctx)
+			require.True(t, processed)
+			if canceled {
+				require.ErrorIs(t, err, context.Canceled)
+				require.Zero(t, fixture.failures)
+			} else {
+				require.NoError(t, err)
+				require.Equal(t, 1, fixture.failures)
+				require.False(t, fixture.lastPermanent)
+			}
+		})
+	}
 }
 func (f *lifecycleStoreFixture) PublishProductionJob(_ context.Context, _ JobClaim, job Job,
 	receipt documentproduction.ProductionReceipt, manifest documentproduction.ArtifactManifest,

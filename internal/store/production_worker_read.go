@@ -23,8 +23,8 @@ func (s *Store) NextRunnableProductionJob(ctx context.Context) (production.JobRe
 	var jobID string
 	var size int64
 	err := s.db.QueryRowContext(ctx, `SELECT job_id,length(request_json) FROM production_jobs
-		WHERE cancel_requested=0 AND (state=? OR (state=? AND
-			(lease_expires_at IS NULL OR julianday(lease_expires_at)<=julianday(?))))
+		WHERE cancel_requested=0 AND state IN (?,?) AND
+			(lease_expires_at IS NULL OR julianday(lease_expires_at)<=julianday(?))
 		ORDER BY created_at,job_id LIMIT 1`, production.ProductionJobQueued,
 		production.ProductionJobRunning, time.Now().UTC().Format(time.RFC3339Nano)).Scan(&jobID, &size)
 	if errors.Is(err, sql.ErrNoRows) {

@@ -12,7 +12,7 @@ func TestProductionGateAuthoritySchema(t *testing.T) {
 
 	var version int
 	require.NoError(t, s.db.QueryRow(`SELECT schema_version FROM vault_metadata WHERE singleton=1`).Scan(&version))
-	require.Equal(t, 29, version)
+	require.Equal(t, currentStorageSchemaVersion, version)
 
 	wantColumns := map[string][]string{
 		"production_member_policy_facts": {

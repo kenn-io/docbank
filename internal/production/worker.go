@@ -33,6 +33,7 @@ type LifecycleStore interface {
 	RenewProductionJobClaim(ctx context.Context, claim JobClaim, lease time.Duration) (JobClaim, error)
 	LoadProductionRecipeForJob(ctx context.Context, jobID string) (redaction.Recipe, error)
 	NextRunnableProductionJob(ctx context.Context) (JobRequest, bool, error)
+	RecordProductionJobFailure(ctx context.Context, request JobRequest, claim JobClaim, permanent bool) error
 }
 
 type ProductionPageArchive interface {
@@ -107,8 +108,22 @@ func (w *Worker) RunOne(ctx context.Context) (bool, error) {
 	if err != nil || !found {
 		return false, err
 	}
-	_, err = w.runJob(ctx, request)
-	return true, err
+	var claim JobClaim
+	_, err = w.runJob(ctx, request, &claim)
+	if err == nil {
+		return true, nil
+	}
+	if ctx.Err() != nil {
+		return true, ctx.Err()
+	}
+	if errors.Is(err, ErrJobStaleClaim) || errors.Is(err, context.Canceled) {
+		return true, err
+	}
+	permanent := errors.Is(err, ErrJobConflict) || errors.Is(err, ErrJobIncomplete) || errors.Is(err, ErrJobStageMissing)
+	if recordErr := w.Store.RecordProductionJobFailure(ctx, request, claim, permanent); recordErr != nil {
+		return true, recordErr
+	}
+	return true, nil
 }
 
 // RunJob is the same path used by restart and internal fault tests. A
@@ -120,10 +135,10 @@ func (w *Worker) RunJob(ctx context.Context, request JobRequest) (Job, error) {
 	}
 	w.mu.Lock()
 	defer w.mu.Unlock()
-	return w.runJob(ctx, request)
+	return w.runJob(ctx, request, nil)
 }
 
-func (w *Worker) runJob(ctx context.Context, request JobRequest) (Job, error) {
+func (w *Worker) runJob(ctx context.Context, request JobRequest, activeClaim *JobClaim) (Job, error) {
 	limit := w.jobTimeout
 	if limit <= 0 || limit > productionJobTimeout {
 		limit = productionJobTimeout
@@ -187,6 +202,9 @@ func (w *Worker) runJob(ctx context.Context, request JobRequest) (Job, error) {
 	claim, err := w.Store.ClaimProductionRenderStage(jobCtx, job.ID, w.WorkerID, lease)
 	if err != nil {
 		return Job{}, fmt.Errorf("claim production render stage: %w", err)
+	}
+	if activeClaim != nil {
+		*activeClaim = claim
 	}
 	workCtx, stopWork := context.WithCancel(jobCtx)
 	renewed := make(chan error, 1)

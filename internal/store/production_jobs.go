@@ -417,6 +417,67 @@ func (s *Store) AdmitProductionJob(ctx context.Context, r productionservice.JobR
 	return job, err
 }
 
+// RecordProductionJobFailure fences the attempt that failed. Known invalid
+// work becomes terminal immediately. Other errors get at most three attempts
+// with durable delays of 15 and 30 seconds, including across restarts.
+func (s *Store) RecordProductionJobFailure(ctx context.Context, request productionservice.JobRequest, claim productionservice.JobClaim, permanent bool) error {
+	requestRaw, err := canonical.Marshal(request)
+	if err != nil || len(requestRaw) > maxProductionJobRequestBytes || validateUUIDv4(request.JobID) != nil {
+		return productionservice.ErrJobConflict
+	}
+	return s.withStorageTx(ctx, func(tx *sql.Tx) error {
+		var storedRequest []byte
+		var state, token, owner string
+		var epoch int64
+		var canceled int
+		var expires sql.NullString
+		err := tx.QueryRowContext(ctx, `SELECT request_json,state,claim_epoch,claim_token,claim_owner,cancel_requested,lease_expires_at
+			FROM production_jobs WHERE job_id=?`, request.JobID).Scan(&storedRequest, &state, &epoch, &token, &owner, &canceled, &expires)
+		if err != nil {
+			return err
+		}
+		if !bytes.Equal(storedRequest, requestRaw) {
+			return productionservice.ErrJobConflict
+		}
+		if state == productionservice.ProductionJobSucceeded {
+			return nil // a publication response can be lost after commit
+		}
+		if canceled != 0 || state == productionservice.ProductionJobCanceled || state == productionservice.ProductionJobFailed {
+			return productionservice.ErrJobStaleClaim
+		}
+		if claim.Token != "" {
+			if claim.JobID != request.JobID || claim.Epoch != epoch || claim.Token != token || claim.Worker != owner ||
+				state != productionservice.ProductionJobRunning || !expires.Valid {
+				return productionservice.ErrJobStaleClaim
+			}
+			until, err := time.Parse(time.RFC3339Nano, expires.String)
+			if err != nil || !until.After(time.Now().UTC()) {
+				return productionservice.ErrJobStaleClaim
+			}
+		} else {
+			if state != productionservice.ProductionJobQueued && state != productionservice.ProductionJobRunning {
+				return productionservice.ErrJobStaleClaim
+			}
+			if expires.Valid {
+				until, err := time.Parse(time.RFC3339Nano, expires.String)
+				if err != nil || until.After(time.Now().UTC()) {
+					return productionservice.ErrJobStaleClaim
+				}
+			}
+			epoch++
+		}
+		nextState := productionservice.ProductionJobFailed
+		var retryAt any
+		if !permanent && epoch < 3 {
+			nextState = productionservice.ProductionJobQueued
+			retryAt = time.Now().UTC().Add(15 * time.Second * time.Duration(epoch)).Format(time.RFC3339Nano)
+		}
+		_, err = tx.ExecContext(ctx, `UPDATE production_jobs SET state=?,claim_epoch=?,claim_token='',claim_owner='',lease_expires_at=?,updated_at=? WHERE job_id=?`,
+			nextState, epoch, retryAt, nowRFC3339(), request.JobID)
+		return err
+	})
+}
+
 func (s *Store) RenewProductionJobClaim(ctx context.Context, claim productionservice.JobClaim, lease time.Duration) (productionservice.JobClaim, error) {
 	if lease <= 0 {
 		return productionservice.JobClaim{}, productionservice.ErrJobStaleClaim
@@ -429,7 +490,7 @@ func (s *Store) RenewProductionJobClaim(ctx context.Context, claim productionser
 		if err := tx.QueryRowContext(ctx, `SELECT claim_epoch,claim_token,claim_owner,state FROM production_jobs WHERE job_id=?`, claim.JobID).Scan(&epoch, &token, &owner, &state); err != nil {
 			return err
 		}
-		if epoch != claim.Epoch || token != claim.Token || owner != claim.Worker || state == productionservice.ProductionJobCanceled {
+		if epoch != claim.Epoch || token != claim.Token || owner != claim.Worker || state != productionservice.ProductionJobRunning {
 			return productionservice.ErrJobStaleClaim
 		}
 		if _, err := tx.ExecContext(ctx, `UPDATE production_jobs SET lease_expires_at=?,updated_at=? WHERE job_id=?`, until, nowRFC3339(), claim.JobID); err != nil {
@@ -458,11 +519,11 @@ func (s *Store) ClaimProductionJob(ctx context.Context, jobID, worker string, le
 			}
 			return err
 		}
-		if state == productionservice.ProductionJobCanceled || state == productionservice.ProductionJobSucceeded {
+		if state != productionservice.ProductionJobQueued && state != productionservice.ProductionJobRunning {
 			return productionservice.ErrJobConflict
 		}
 		if expires.Valid {
-			if t, err := time.Parse(time.RFC3339Nano, expires.String); err == nil && t.After(time.Now().UTC()) && owner != worker {
+			if t, err := time.Parse(time.RFC3339Nano, expires.String); err == nil && t.After(time.Now().UTC()) {
 				return productionservice.ErrJobStaleClaim
 			}
 		}
@@ -507,7 +568,7 @@ func (s *Store) ReserveProductionJobNumbers(ctx context.Context, job productions
 		&admittedETag, &admittedPreparedSHA, &admittedRevisionSHA, &state)
 	if err != nil || admittedSetID != job.SetID || admittedRevision != job.Revision ||
 		admittedETag != job.ETag || admittedPreparedSHA != job.PreparedInputSHA256 ||
-		admittedRevisionSHA != job.RevisionSHA256 || state == productionservice.ProductionJobCanceled {
+		admittedRevisionSHA != job.RevisionSHA256 || (state != productionservice.ProductionJobQueued && state != productionservice.ProductionJobRunning) {
 		return documentproduction.NumberReservation{}, errors.Join(productionservice.ErrJobConflict, err)
 	}
 	var namespaceID, snapshotID, recipeSHA string
@@ -613,7 +674,7 @@ func (s *Store) PublishProductionJob(ctx context.Context, claim productionservic
 		if err := tx.QueryRowContext(ctx, `SELECT state,claim_epoch,claim_token,claim_owner,cancel_requested FROM production_jobs WHERE job_id=?`, job.ID).Scan(&state, &epoch, &token, &owner, &canceled); err != nil {
 			return err
 		}
-		if state == productionservice.ProductionJobCanceled || canceled != 0 || epoch != claim.Epoch || token != claim.Token || owner != claim.Worker {
+		if state != productionservice.ProductionJobRunning || canceled != 0 || epoch != claim.Epoch || token != claim.Token || owner != claim.Worker {
 			return productionservice.ErrJobStaleClaim
 		}
 		var lease sql.NullString
