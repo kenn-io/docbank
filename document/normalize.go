@@ -63,7 +63,7 @@ func RenditionMarkdownFromXHTMLContext(ctx context.Context, source []byte, maxRu
 		}
 		if err != nil {
 			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-				return "", err
+				return "", fmt.Errorf("decode XHTML: %w", err)
 			}
 			if ctxErr := ctx.Err(); ctxErr != nil {
 				return "", ctxErr

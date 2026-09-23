@@ -134,7 +134,7 @@ func TestRenditionXHTMLContextCancellationAfterDecodeRead(t *testing.T) {
 func TestRenditionXHTMLContextCancellationWhileConvertingAttributes(t *testing.T) {
 	var source strings.Builder
 	source.WriteString(`<html xmlns="http://www.w3.org/1999/xhtml"><body`)
-	for index := 0; index < 4096; index++ {
+	for index := range 4096 {
 		source.WriteString(` a`)
 		source.WriteString(strconv.Itoa(index))
 		source.WriteString(`="x"`)
