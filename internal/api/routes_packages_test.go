@@ -16,6 +16,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/google/uuid"
@@ -73,6 +74,92 @@ func TestPackageImportAdmitsFrozenPreflightAndReplaysOperation(t *testing.T) {
 	require.NoError(t, json.Unmarshal(cancelled.Body.Bytes(), &stopped))
 	require.Equal(t, "cancelled", stopped.State)
 	require.Equal(t, job.JobID, stopped.JobID)
+}
+
+func TestPackageImportCancellationAroundSnapshotPublication(t *testing.T) {
+	for _, afterPublication := range []bool{false, true} {
+		t.Run(fmt.Sprintf("after_publication_%t", afterPublication), func(t *testing.T) {
+			gate := api.NewOperationGate()
+			server, catalog := newTestServer(t, func(d *api.Deps) { d.Gate = gate })
+			srv := &testServer{ts: server}
+			response := srv.post(t, mustPackageJSON(t, api.PackagePreflightRequest{
+				Profile: "dat-concordance-v1", Encoding: "utf-8", SourceKind: "root", SourceRef: syntheticPackageRoot(t),
+			}))
+			require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+			var preview api.PackagePreflight
+			require.NoError(t, json.Unmarshal(response.Body.Bytes(), &preview))
+			require.False(t, preview.Blocking)
+			request := api.PackageImportRequest{PreflightID: preview.PreflightID, Into: "/",
+				Name: "cancellation-snapshot", OperationID: uuid.NewString()}
+			response = srv.call(t, http.MethodPost, "/api/v1/packages/imports", mustPackageJSON(t, request), nil)
+			require.Equal(t, http.StatusAccepted, response.Code, response.Body.String())
+			var admitted api.PackageImportJob
+			require.NoError(t, json.Unmarshal(response.Body.Bytes(), &admitted))
+			db, err := storepkg.DefaultSQLiteDriver().Open(catalog.DBPath,
+				sqlite.OpenOptions{Access: sqlite.ReadWriteExisting, TransactionMode: sqlite.Deferred})
+			require.NoError(t, err)
+			t.Cleanup(func() { require.NoError(t, db.Close()) })
+			var attempted atomic.Bool
+			worker, err := processing.NewPackageImportWorker(processing.PackageImportConfig{
+				Catalog: catalog.Store, Blobs: catalog.Blobs, Owner: "synthetic-worker",
+				Mutate: func(ctx context.Context, fn func() error) error {
+					if err := gate.MutateContext(ctx, fn); err != nil {
+						return err
+					}
+					if attempted.Load() {
+						return nil
+					}
+					progress, err := catalog.PackageImportProgress(ctx, admitted.PackageID)
+					if err != nil {
+						return err
+					}
+					var snapshots int
+					if err := db.QueryRowContext(ctx, `SELECT COUNT(*) FROM collection_snapshots`).Scan(&snapshots); err != nil {
+						return err
+					}
+					ready := progress.Committed == 2 && (!afterPublication || snapshots == 1)
+					if ready && attempted.CompareAndSwap(false, true) {
+						// Run the real cancellation request between committed worker mutations.
+						response := srv.call(t, http.MethodPost, "/api/v1/packages/imports/"+request.OperationID+"/cancel", "", nil)
+						wantStatus := http.StatusOK
+						if afterPublication {
+							wantStatus = http.StatusConflict
+						}
+						require.Equal(t, wantStatus, response.Code, response.Body.String())
+					}
+					return nil
+				},
+			})
+			require.NoError(t, err)
+			_, workerErr := worker.ProcessOnce(t.Context())
+			require.True(t, attempted.Load())
+			pkg, err := catalog.Package(t.Context(), admitted.PackageID)
+			require.NoError(t, err)
+			progress, err := catalog.PackageImportProgress(t.Context(), admitted.PackageID)
+			require.NoError(t, err)
+			require.Equal(t, 2, progress.Committed, "committed receipts survive either outcome")
+			var snapshots, members, representations int
+			require.NoError(t, db.QueryRow(`SELECT (SELECT COUNT(*) FROM collection_snapshots),
+				(SELECT COUNT(*) FROM collection_snapshot_members),
+				(SELECT COUNT(*) FROM collection_snapshot_representations)`).Scan(&snapshots, &members, &representations))
+			if afterPublication {
+				require.NoError(t, workerErr)
+				require.Equal(t, "complete", pkg.State)
+				require.NotEmpty(t, pkg.SnapshotID)
+				require.Equal(t, 1, snapshots)
+				retained, err := catalog.PackageMembers(t.Context(), pkg.PackageID, 0, 10)
+				require.NoError(t, err)
+				require.Len(t, retained, 2)
+			} else {
+				require.ErrorIs(t, workerErr, storepkg.ErrPackageConflict)
+				require.Equal(t, "cancelled", pkg.State)
+				require.Empty(t, pkg.SnapshotID)
+				require.Zero(t, snapshots)
+				require.Zero(t, members)
+				require.Zero(t, representations)
+			}
+		})
+	}
 }
 
 func TestPackageImportPreservesRepeatedImageKeysAcrossPages(t *testing.T) {

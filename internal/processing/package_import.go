@@ -151,7 +151,7 @@ func (w *PackageImportWorker) ProcessOnce(ctx context.Context) (more bool, err e
 	if err != nil && ctx.Err() == nil && terminalPackageImportError(err) {
 		finishCtx, finishCancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 		finishErr := w.cfg.Mutate(finishCtx, func() error {
-			_, failErr := w.cfg.Catalog.FinishPackageImportJob(finishCtx, job.ID, job.Epoch, job.Token, "failed", "")
+			_, failErr := w.cfg.Catalog.FinishPackageImportJob(finishCtx, job.ID, job.Epoch, job.Token, "failed", "", nil)
 			return failErr
 		})
 		finishCancel()
@@ -397,19 +397,12 @@ func (w *PackageImportWorker) processClaim(ctx context.Context, job store.Packag
 		return err
 	}
 	snapshotID := packageImportSnapshotID(pkg.PackageID)
-	if err := w.cfg.Mutate(ctx, func() error {
-		_, sealErr := w.cfg.Catalog.SealCollectionSnapshotStream(ctx,
-			store.SnapshotSealHeader{SnapshotID: snapshotID, SourceCollectionIDs: []string{pkg.IngestID}}, spool)
-		return sealErr
-	}); err != nil {
-		return err
-	}
 	state := "complete"
 	if gaps > 0 {
 		state = "partial"
 	}
 	return w.cfg.Mutate(ctx, func() error {
-		_, finishErr := w.cfg.Catalog.FinishPackageImportJob(ctx, job.ID, job.Epoch, job.Token, state, snapshotID)
+		_, finishErr := w.cfg.Catalog.FinishPackageImportJob(ctx, job.ID, job.Epoch, job.Token, state, snapshotID, spool)
 		return finishErr
 	})
 }

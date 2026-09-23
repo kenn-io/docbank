@@ -157,7 +157,7 @@ func TestPackageImportJobCancelFencesStaleFinalization(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "cancelled", cancelled.State)
 	_, err = s.FinishPackageImportJob(t.Context(), claimed.ID, claimed.Epoch, claimed.Token,
-		"complete", "")
+		"failed", "", nil)
 	require.ErrorIs(t, err, ErrPackageConflict)
 	pkg, err := s.Package(t.Context(), request.PackageID)
 	require.NoError(t, err)
@@ -180,10 +180,10 @@ func TestPackageImportLeaseReclaimInvalidatesEarlierToken(t *testing.T) {
 	require.Greater(t, second.Epoch, first.Epoch)
 	require.NotEqual(t, first.Token, second.Token)
 	_, err = s.FinishPackageImportJob(t.Context(), first.ID, first.Epoch, first.Token,
-		"failed", "")
+		"failed", "", nil)
 	require.ErrorIs(t, err, ErrPackageConflict)
 	finished, err := s.FinishPackageImportJob(t.Context(), second.ID, second.Epoch, second.Token,
-		"failed", "")
+		"failed", "", nil)
 	require.NoError(t, err)
 	require.Equal(t, "failed", finished.State)
 }
@@ -347,8 +347,10 @@ func TestPackageImportFinishRejectsUnrelatedSnapshot(t *testing.T) {
 	var unrelated string
 	require.NoError(t, s.db.QueryRowContext(t.Context(),
 		`SELECT snapshot_id FROM collection_snapshots ORDER BY snapshot_id LIMIT 1`).Scan(&unrelated))
+	members, err := s.SnapshotMembers(t.Context(), unrelated, 0, 10)
+	require.NoError(t, err)
 	_, err = s.FinishPackageImportJob(t.Context(), claimed.ID, claimed.Epoch, claimed.Token,
-		"complete", unrelated)
+		"complete", unrelated, streamSnapshotMembers(t, members...))
 	require.ErrorIs(t, err, ErrPackageConflict)
 	pkg, err := s.Package(t.Context(), request.PackageID)
 	require.NoError(t, err)
@@ -386,15 +388,24 @@ func TestPackageImportFinishPublishesOnlyMatchingReceiptSnapshot(t *testing.T) {
 	require.NoError(t, err)
 	snapshotID, err := newUUIDv4()
 	require.NoError(t, err)
-	_, err = s.SealCollectionSnapshot(t.Context(), SnapshotSealRequest{SnapshotID: snapshotID,
-		SourceCollectionIDs: []string{pkg.IngestID}, Members: []CollectionSnapshotMember{{
-			Ordinal: 1, OccurrenceID: occurrence, NodeID: nodeID, ContentVersionID: versionID,
-			BlobSHA256: blobSHA, Size: size, FamilyID: occurrence, FamilyOrder: 1,
-			DisplayName: name, FrozenFieldsJSON: "{}", DocumentKind: "other",
-		}}})
+	member := CollectionSnapshotMember{
+		Ordinal: 1, OccurrenceID: occurrence, NodeID: nodeID, ContentVersionID: versionID,
+		BlobSHA256: blobSHA, Size: size, FamilyID: occurrence, FamilyOrder: 1,
+		DisplayName: name, FrozenFieldsJSON: "{}", DocumentKind: "other",
+	}
+	wrongOccurrence := member
+	wrongOccurrence.OccurrenceID = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	wrongOccurrence.FamilyID = wrongOccurrence.OccurrenceID
+	_, err = s.FinishPackageImportJob(t.Context(), claimed.ID, claimed.Epoch, claimed.Token,
+		"complete", snapshotID, streamSnapshotMembers(t, wrongOccurrence))
+	require.ErrorIs(t, err, ErrPackageConflict)
+	_, err = s.CollectionSnapshot(t.Context(), snapshotID)
+	require.ErrorIs(t, err, ErrNotFound, "receipt mismatch must roll back the sealed snapshot")
+	members, err := s.SnapshotMembers(t.Context(), snapshotID, 0, 10)
 	require.NoError(t, err)
+	require.Empty(t, members)
 	finished, err := s.FinishPackageImportJob(t.Context(), claimed.ID, claimed.Epoch, claimed.Token,
-		"complete", snapshotID)
+		"complete", snapshotID, streamSnapshotMembers(t, member))
 	require.NoError(t, err)
 	require.Equal(t, "complete", finished.State)
 	pkg, err = s.Package(t.Context(), pkg.PackageID)

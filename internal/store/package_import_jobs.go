@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"io"
 	"slices"
 	"time"
 
@@ -384,12 +385,13 @@ func (s *Store) ReleasePackageImportJob(ctx context.Context, id string, epoch in
 	return result, err
 }
 
-// FinishPackageImportJob publishes the package state only under the live lease.
+// FinishPackageImportJob seals the member stream and publishes the package state
+// in one transaction under the live lease.
 // Terminal failure discards staged files that no committed receipt retains.
-func (s *Store) FinishPackageImportJob(ctx context.Context, id string, epoch int64, token, state, snapshotID string) (PackageImportJob, error) {
+func (s *Store) FinishPackageImportJob(ctx context.Context, id string, epoch int64, token, state, snapshotID string, memberStream io.Reader) (PackageImportJob, error) {
 	if validateUUIDv4(id) != nil || state != packageStateComplete && state != packageStatePartial && state != packageStateFailed ||
-		(state == packageStateComplete || state == packageStatePartial) && validateUUIDv4(snapshotID) != nil ||
-		state == packageStateFailed && snapshotID != "" {
+		(state == packageStateComplete || state == packageStatePartial) && (validateUUIDv4(snapshotID) != nil || memberStream == nil) ||
+		state == packageStateFailed && (snapshotID != "" || memberStream != nil) {
 		return PackageImportJob{}, ErrPackageConflict
 	}
 	var result PackageImportJob
@@ -406,7 +408,8 @@ func (s *Store) FinishPackageImportJob(ctx context.Context, id string, epoch int
 			return ErrPackageConflict
 		}
 		if snapshotID != "" {
-			snapshot, err := loadCollectionSnapshotTx(ctx, tx, snapshotID)
+			snapshot, err := s.sealCollectionSnapshotStreamTx(ctx, tx,
+				SnapshotSealHeader{SnapshotID: snapshotID, SourceCollectionIDs: []string{pkg.IngestID}}, memberStream)
 			if err != nil {
 				return err
 			}

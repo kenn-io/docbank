@@ -203,14 +203,10 @@ func commitReceivedLabel(t *testing.T, s *Store, pkg Package, versionID, label s
 	require.NoError(t, err)
 	version, err := s.ContentVersionByID(t.Context(), versionID)
 	require.NoError(t, err)
-	snapshot, err := s.SealCollectionSnapshot(t.Context(), SnapshotSealRequest{
-		SnapshotID: uuid.New().String(), SourceCollectionIDs: []string{pkg.IngestID},
-		Members: []CollectionSnapshotMember{{Ordinal: 1, OccurrenceID: occurrence, NodeID: version.NodeID,
-			ContentVersionID: versionID, BlobSHA256: version.BlobHash, Size: version.Size,
-			FamilyID: occurrence, FamilyOrder: 1, DocumentKind: "other", FrozenFieldsJSON: "{}"}},
-	})
-	require.NoError(t, err)
-	_, err = s.FinishPackageImportJob(t.Context(), job.ID, job.Epoch, job.Token, "complete", snapshot.SnapshotID)
+	members := streamSnapshotMembers(t, CollectionSnapshotMember{Ordinal: 1, OccurrenceID: occurrence, NodeID: version.NodeID,
+		ContentVersionID: versionID, BlobSHA256: version.BlobHash, Size: version.Size,
+		FamilyID: occurrence, FamilyOrder: 1, DocumentKind: "other", FrozenFieldsJSON: "{}"})
+	_, err = s.FinishPackageImportJob(t.Context(), job.ID, job.Epoch, job.Token, "complete", uuid.New().String(), members)
 	require.NoError(t, err)
 }
 
