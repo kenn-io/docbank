@@ -80,6 +80,9 @@ func ReadPackagesContext(ctx context.Context, files []*zip.File, limit int64) ([
 	if err != nil {
 		return nil, err
 	}
+	if err := validateMetadataXMLContext(ctx, body); err != nil {
+		return nil, err
+	}
 	var containerDocument struct {
 		XMLName   xml.Name `xml:"container"`
 		Rootfiles struct {
@@ -119,6 +122,9 @@ func ReadPackagesContext(ctx context.Context, files []*zip.File, limit int64) ([
 		if err != nil {
 			return nil, err
 		}
+		if err := validateMetadataXMLContext(ctx, body); err != nil {
+			return nil, err
+		}
 		var record Package
 		if err := decodeXMLContext(ctx, body, &record); err != nil {
 			if ctxErr := ctx.Err(); ctxErr != nil {
@@ -131,6 +137,93 @@ func ReadPackagesContext(ctx context.Context, files []*zip.File, limit int64) ([
 		records = append(records, record)
 	}
 	return records, nil
+}
+
+const (
+	maxMetadataXMLAttributes = 1 << 16
+	maxMetadataXMLElements   = 100_000
+)
+
+func validateMetadataXMLContext(ctx context.Context, body []byte) error {
+	elements := 0
+	for index := 0; index < len(body); {
+		if index&1023 == 0 {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+		}
+		if body[index] != '<' || index+1 >= len(body) {
+			index++
+			continue
+		}
+		if bytes.HasPrefix(body[index:], []byte("<!--")) {
+			index += len("<!--")
+			for index+2 < len(body) && !bytes.Equal(body[index:index+3], []byte("-->")) {
+				index++
+			}
+			index += min(3, len(body)-index)
+			continue
+		}
+		if bytes.HasPrefix(body[index:], []byte("<![CDATA[")) {
+			index += len("<![CDATA[")
+			for index+2 < len(body) && !bytes.Equal(body[index:index+3], []byte("]]>")) {
+				index++
+			}
+			index += min(3, len(body)-index)
+			continue
+		}
+		if body[index+1] == '?' {
+			index += 2
+			for index+1 < len(body) && (body[index] != '?' || body[index+1] != '>') {
+				index++
+			}
+			index += min(2, len(body)-index)
+			continue
+		}
+		if body[index+1] == '!' {
+			return errors.New("EPUB XML directive is unsupported")
+		}
+		closing := body[index+1] == '/'
+		index++
+		if closing {
+			for index < len(body) && body[index] != '>' {
+				index++
+			}
+			index += min(1, len(body)-index)
+			continue
+		}
+		elements++
+		if elements > maxMetadataXMLElements {
+			return errors.New("EPUB XML contains too many elements")
+		}
+		attributes := 0
+		quote := byte(0)
+		for index < len(body) {
+			if index&1023 == 0 {
+				if err := ctx.Err(); err != nil {
+					return err
+				}
+			}
+			character := body[index]
+			if quote != 0 {
+				if character == quote {
+					quote = 0
+				}
+			} else if character == '\'' || character == '"' {
+				quote = character
+			} else if character == '=' {
+				attributes++
+				if attributes > maxMetadataXMLAttributes {
+					return errors.New("EPUB XML element has too many attributes")
+				}
+			} else if character == '>' {
+				index++
+				break
+			}
+			index++
+		}
+	}
+	return nil
 }
 
 func decodeXMLContext(ctx context.Context, body []byte, target any) error {

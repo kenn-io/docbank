@@ -394,6 +394,21 @@ func TestProviderRejectsSpineEvidenceUnitOverflow(t *testing.T) {
 	require.Equal(t, document.RenditionErrorPolicyRejected, classified.Code())
 }
 
+func TestProviderRejectsMetadataAttributeOverflow(t *testing.T) {
+	var packageDocument strings.Builder
+	packageDocument.WriteString(`<package xmlns="http://www.idpf.org/2007/opf"`)
+	for index := range (1 << 16) + 1 {
+		packageDocument.WriteString(` a`)
+		packageDocument.WriteString(strconv.Itoa(index))
+		packageDocument.WriteString(`=""`)
+	}
+	packageDocument.WriteString(`><manifest><item id="a" href="a.xhtml" media-type="application/xhtml+xml"/></manifest><spine><itemref idref="a"/></spine></package>`)
+	override := oneChapter("")
+	override["OPS/book.opf"] = packageDocument.String()
+	result, err := renderTest(t, epubBytes(t, override), 1)
+	requireClass(t, result, err, document.RenditionErrorUnsupportedInput)
+}
+
 func TestProviderSourceAuthorizationFailures(t *testing.T) {
 	data := epubBytes(t, nil)
 	p, err := New(Profile{int64(len(data)) + 1, 10})
