@@ -595,6 +595,9 @@ func (s *Store) ingestFileTx(
 			return ContentWriteReceipt{}, false, IngestDirectoryResolution{}, err
 		}
 	}
+	if err := s.enrollPhotoCandidatesTx(ctx, tx, receipt.Node.ID); err != nil {
+		return ContentWriteReceipt{}, false, IngestDirectoryResolution{}, err
+	}
 	if options.completeReceipt {
 		receipt.Physical, err = authorizedPhysicalContentTx(tx, blobHash)
 		if err != nil {

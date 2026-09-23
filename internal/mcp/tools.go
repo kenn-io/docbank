@@ -18,8 +18,8 @@ import (
 
 const toolCatalogTTLMs = 60_000
 
-func catalogInstructions(allowProcessing, allowPackageWrites bool) string {
-	if !allowProcessing && !allowPackageWrites {
+func catalogInstructions(allowProcessing, allowPackageWrites, allowPhotoEdits bool) string {
+	if !allowProcessing && !allowPackageWrites && !allowPhotoEdits {
 		return "Docbank exposes a bounded read-only document and package surface."
 	}
 	instructions := "Docbank exposes bounded document and package reads."
@@ -28,6 +28,9 @@ func catalogInstructions(allowProcessing, allowPackageWrites bool) string {
 	}
 	if allowPackageWrites {
 		instructions += " Package writes can preflight local sources, import packages, and assign or resolve custodians."
+	}
+	if allowPhotoEdits {
+		instructions += " Photo edits change one asset at an expected revision."
 	}
 	return instructions
 }
@@ -62,6 +65,7 @@ var readToolDefinitions = []toolDefinition{
 	{name: "list_package_members", title: "List package members", description: "Page through one package's immutable document occurrences.", schemas: listPackageMembersSchemas},
 	{name: "get_package_record", title: "Get package record", description: "Read one immutable sender row by its package-scoped record key.", schemas: getPackageRecordSchemas},
 	{name: "lookup_bates_label", title: "Look up Bates label", description: "Find every bounded package-scoped match for an exact received or assigned label.", schemas: lookupBatesLabelSchemas},
+	{name: "get_photo_asset", title: "Get photo asset", description: "Read one bounded photo asset by asset or node identity.", schemas: getPhotoAssetSchemas},
 }
 
 var processingToolDefinition = toolDefinition{
@@ -94,7 +98,15 @@ var assignPackageCustodianToolDefinition = toolDefinition{
 	schemas:     assignPackageCustodianSchemas, write: true, destructive: true,
 }
 
-func toolCatalog(allowProcessing, allowPackageWrites bool) []*sdkmcp.Tool {
+var photoWriteToolDefinitions = []toolDefinition{
+	{name: "create_photo_asset", title: "Create photo asset", description: "Create an asset for one file node.", schemas: createPhotoAssetSchemas, write: true},
+	{name: "attach_photo_file", title: "Attach photo file", description: "Attach one file node to a photo asset at an expected revision.", schemas: attachPhotoFileSchemas, write: true},
+	{name: "detach_photo_file", title: "Detach photo file", description: "Detach one file from a photo asset at an expected revision.", schemas: detachPhotoFileSchemas, write: true},
+	{name: "exclude_photo_asset", title: "Exclude photo asset", description: "Set a photo asset's exclusion state at an expected revision.", schemas: excludePhotoAssetSchemas, write: true},
+	{name: "promote_photo_asset", title: "Promote photo asset", description: "Promote one file node into a photo asset.", schemas: promotePhotoNodeSchemas, write: true},
+}
+
+func toolCatalog(allowProcessing, allowPackageWrites, allowPhotoEdits bool) []*sdkmcp.Tool {
 	definitions := slices.Clone(readToolDefinitions)
 	if allowProcessing {
 		definitions = append(definitions, processingToolDefinition)
@@ -102,6 +114,9 @@ func toolCatalog(allowProcessing, allowPackageWrites bool) []*sdkmcp.Tool {
 	if allowPackageWrites {
 		definitions = append(definitions, preflightLoadFilePackageToolDefinition, packageImportToolDefinition,
 			resolvePackageCustodianToolDefinition, assignPackageCustodianToolDefinition)
+	}
+	if allowPhotoEdits {
+		definitions = append(definitions, photoWriteToolDefinitions...)
 	}
 	tools := make([]*sdkmcp.Tool, 0, len(definitions))
 	for _, definition := range definitions {
@@ -121,9 +136,10 @@ func toolCatalog(allowProcessing, allowPackageWrites bool) []*sdkmcp.Tool {
 }
 
 func registerToolCatalog(
-	server *sdkmcp.Server, allowProcessing, allowPackageWrites bool, lease *daemonLease, plans *processingPlanRegistry, logger *slog.Logger,
+	server *sdkmcp.Server, allowProcessing, allowPackageWrites, allowPhotoEdits bool,
+	lease *daemonLease, plans *processingPlanRegistry, logger *slog.Logger,
 ) {
-	tools := toolCatalog(allowProcessing, allowPackageWrites)
+	tools := toolCatalog(allowProcessing, allowPackageWrites, allowPhotoEdits)
 	server.AddReceivingMiddleware(validateToolInputs(tools))
 	for _, tool := range tools {
 		output := mustResolveSchema(tool.OutputSchema)
@@ -138,7 +154,11 @@ func registerToolCatalog(
 		case resolvePackageCustodianToolDefinition.name, assignPackageCustodianToolDefinition.name:
 			handler = packageCustodianWriteToolHandler(lease, tool.Name, output, logger)
 		default:
-			handler = readToolHandler(lease, plans, tool.Name, output, logger)
+			if photoWriteTool(tool.Name) {
+				handler = photoWriteToolHandler(lease, tool.Name, output, logger)
+			} else {
+				handler = readToolHandler(lease, plans, tool.Name, output, logger)
+			}
 		}
 		server.AddTool(tool, handler)
 	}
@@ -184,6 +204,18 @@ func decodeToolArguments(raw jsontext.Value) (map[string]any, error) {
 
 func validToolSemantics(name string, arguments map[string]any) bool {
 	switch name {
+	case "get_photo_asset":
+		assetID, assetPresent := arguments["asset_id"]
+		nodeID, nodePresent := arguments["node_id"]
+		if assetPresent == nodePresent {
+			return false
+		}
+		if assetPresent {
+			value, ok := assetID.(string)
+			return ok && value != ""
+		}
+		value, ok := nodeID.(float64)
+		return ok && value >= 1
 	case "list_documents":
 		return stringBytesWithin(arguments, "path_prefix", maxPathBytes) &&
 			stringBytesWithin(arguments, "cursor", maxCursorBytes)
@@ -331,6 +363,8 @@ func stableDomainError(err error) (string, int) {
 		return "invalid_rendition_window", 0
 	case "invalid_rendition_encoding":
 		return "invalid_rendition_encoding", 0
+	case "invalid_photo_asset", "photo_node_not_eligible", "photo_node_owned", "photo_stale_revision", "audit_mutation_unsupported":
+		return facts.Code, 0
 	default:
 		return "", 0
 	}
@@ -360,6 +394,16 @@ func domainErrorMessage(code string) string {
 		return "The requested rendition text window is outside the supported range."
 	case "invalid_rendition_encoding":
 		return "The active rendition is not valid UTF-8 text."
+	case "invalid_photo_asset":
+		return "The photo asset request or graph is invalid."
+	case "photo_node_not_eligible":
+		return "The selected node cannot be enrolled in a photo asset."
+	case "photo_node_owned":
+		return "The selected node already belongs to a photo asset."
+	case "photo_stale_revision":
+		return "The photo asset revision is stale; inspect it and retry with the current revision."
+	case "audit_mutation_unsupported":
+		return "Photo mutations are unavailable while audit mode is active."
 	default:
 		return "The Docbank operation could not be completed."
 	}

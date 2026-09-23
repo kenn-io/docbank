@@ -77,6 +77,10 @@ Endpoints are filesystem-shaped, under `/api/v1`:
 | `GET /nodes/{id}/versions` | list immutable content versions newest-first, paginated (`limit`/`offset`) | Implemented |
 | `GET /nodes/{id}/provenance` | inspect immutable ingest-origin facts newest-first, paginated (`limit`/`offset`) | Implemented |
 | `POST /nodes/{id}/provenance` | append an immutable origin fact under the node revision | Implemented |
+| `GET /photos/assets/{asset_id}` · `GET /photos/nodes/{node_id}/asset` | inspect one bounded photo graph by asset or member node | Implemented |
+| `POST /photos/assets` · `POST /photos/assets/{asset_id}/files` · `DELETE /photos/assets/{asset_id}/files/{file_id}` | create, attach, or detach photo membership | Implemented |
+| `POST /photos/assets/{asset_id}/exclude` · `POST /photos/nodes/{node_id}/promote` | change exclusion or explicitly promote a live file | Implemented |
+| `PUT /photos/assets/{asset_id}/display` · `GET\|PUT /photos/settings` | set an asset display override or vault preference | Implemented |
 | `GET /versions/{version_id}` · `GET /versions/{version_id}/content` | inspect or stream one immutable version by stable UUID | Implemented |
 | `GET\|POST /versions/{version_id}/email` | read or synchronously ensure canonical email metadata for one immutable version | Implemented |
 | `GET /versions/{version_id}/email/generations/{generation_id}` | read one immutable email generation attached to the exact version | Implemented |
@@ -899,6 +903,34 @@ sessions permit only these exact POST paths without query arguments.
 
 ## Concurrency: resource revisions and `If-Match`
 
+Photo assets are a revisioned graph over ordinary file nodes. Image files and
+concrete `video/*` files enroll when created; generic RAW files require an
+explicit promote or create call. Enrollment is forward-only and uses
+`email_document_relations.child_version_id` to exclude published email
+children. Processing metadata does not make its source an email child.
+
+`GET /api/v1/photos/assets/{asset_id}` and
+`GET /api/v1/photos/nodes/{node_id}/asset` return at most 256 members, the
+resolved display pointer, its source (`asset`, `vault`, `default`, or `none`),
+and the asset ETag. The default order is RAW, image, then video; the vault
+`image` preference moves image before RAW, and an asset override wins. A
+sidecar must point at a same-asset RAW member and is never displayable.
+
+Create and promote operate on live file nodes. Attach, detach, exclude,
+display, and settings mutations require `If-Match`; the store checks the
+revision in the transaction and returns the new ETag. A changed human
+decision writes one bounded immutable photo receipt. No-op decisions preserve
+the revision and write no receipt. Permanent node deletion repairs affected
+graphs and preserves an empty asset identity.
+
+Photo assets, file memberships, settings, and receipts are included in the
+deterministic metadata JSONL stream and are validated as one graph on restore.
+Older supported metadata streams restore an empty photo authority. Audit-active
+vaults skip automatic enrollment and refuse explicit photo mutations while
+preserving any graph that existed before audit was enabled. Display and
+settings writes are available through HTTP and the CLI; MCP exposes them only
+as reads in this slice.
+
 Every node carries a `revision` that bumps on each mutation (directories
 bump when their contents change). The granularity is deliberate: a
 global tree ETag would invalidate every agent's in-flight work whenever
@@ -928,6 +960,8 @@ and maintenance are explicit exceptions:
 | `PATCH /saved-queries/{saved_query_id}`, `DELETE /saved-queries/{saved_query_id}` | required — saved-definition revision |
 | `POST /saved-queries/{saved_query_id}/runs` | required — executes exactly the saved definition revision the caller inspected |
 | `PUT\|DELETE /nodes/{id}/tags/{tag_id}` | required — target node revision; the tag revision also advances on a real assignment change |
+| `POST /photos/assets/{asset_id}/files`, `DELETE /photos/assets/{asset_id}/files/{file_id}`, `POST /photos/assets/{asset_id}/exclude`, `PUT /photos/assets/{asset_id}/display` | required — photo asset revision |
+| `PUT /photos/settings` | required — photo library settings revision |
 | `POST /path/move`, `POST /path/trash` | none — the path is resolved and mutated inside one store transaction, so there is no separate read for a revision to guard |
 | `POST /batch/move` | each path source resolves in the transaction; each stable-ID source carries its own required revision |
 | `POST /nodes` (create dir) | none — creation has no prior revision; a name collision is `409` |
@@ -1487,7 +1521,8 @@ bearer is resolved from a named credential binding and cannot equal the
 daemon's configured, ephemeral, or runtime-discovered API key. The daemon API
 key is never accepted as an inbound MCP credential.
 
-MCP exposes nine bounded read tools plus one optional processing enqueue. The
+MCP exposes ten bounded read tools, including photo inspection, plus optional
+processing enqueue and opt-in photo mutation tools. The
 enqueue preserves the daemon's existing consent and plan-fingerprint checks;
 it cannot grant consent or replay an ambiguous start. Rendition resources bind
 the stable vault, node, content-version, and attachment tuple and expose only
@@ -1550,6 +1585,10 @@ include a `position` span:
 | `provenance_mismatch` | 409 | the requested predecessor is missing, belongs to another node, is already superseded, or is an operational ingest fact |
 | `invalid_provenance_time` | 422 | optional `original_mtime` parses as RFC3339 but is not canonical UTC RFC3339Nano (a value that is not a date-time at all fails schema validation as `validation` instead) |
 | `invalid_saved_query` | 422 | saved name, description, kind, payload, or patch violates the saved-definition contract |
+| `invalid_photo_asset` | 422 | asset kind, role, display pointer, sidecar target, or graph state is invalid |
+| `photo_node_not_eligible` | 422 | the selected node is not a live eligible file |
+| `photo_node_owned` | 409 | the selected node already belongs to another photo asset |
+| `photo_stale_revision` | 412 | the photo asset or settings revision in `If-Match` is stale |
 | `invalid_query` | 422 | invalid or unsupported expression, missing reference, or query compilation bound exceeded |
 | `invalid_cursor` | 400 | malformed, tampered, wrong-direction, or otherwise invalid snapshot cursor |
 | `snapshot_gone` | 410 | snapshot is missing, expired, revoked, owned by another session, or lost with its daemon |
