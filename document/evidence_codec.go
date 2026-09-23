@@ -107,7 +107,7 @@ func validateSourceEvidenceV1Context(
 				return nil, err
 			}
 		}
-		if err := validateEvidenceText(unit.Text, "unit text"); err != nil {
+		if err := validateEvidenceTextContext(ctx, unit.Text, "unit text"); err != nil {
 			return nil, fmt.Errorf("source evidence unit %d: %w", index, err)
 		}
 		rangeOffsets, err := collectSourceRangeOffsetsContext(ctx, unit, documentRangeOffsets[index])
@@ -214,7 +214,7 @@ func validateSourceUnit(
 		}
 	}
 	if unit.Speaker != "" {
-		if err := validateBoundedUTF8(unit.Speaker, maxEvidenceSpeakerBytes, "unit speaker"); err != nil {
+		if err := validateBoundedUTF8Context(ctx, unit.Speaker, maxEvidenceSpeakerBytes, "unit speaker"); err != nil {
 			return fmt.Errorf("source evidence unit %d: %w", index, err)
 		}
 		if strings.ContainsRune(unit.Speaker, '\x00') {
@@ -225,7 +225,7 @@ func validateSourceUnit(
 		return fmt.Errorf("source evidence unit %d: %w", index, err)
 	}
 	for headingIndex, heading := range unit.HeadingPath {
-		if err := validateEvidenceText(heading, "heading"); err != nil || heading == "" {
+		if err := validateEvidenceTextContext(ctx, heading, "heading"); err != nil || heading == "" {
 			if err == nil {
 				err = errors.New("heading is empty")
 			}
@@ -2268,13 +2268,29 @@ func validateSourceRegionID(
 }
 
 func validateEvidenceText(value, subject string) error {
-	if !utf8.ValidString(value) || len(value) > maxEvidenceTextBytes {
+	return validateEvidenceTextContext(context.Background(), value, subject)
+}
+
+func validateEvidenceTextContext(ctx context.Context, value, subject string) error {
+	if len(value) > maxEvidenceTextBytes {
 		return fmt.Errorf("%s must be bounded UTF-8", subject)
 	}
-	if strings.ContainsRune(value, '\x00') {
-		return fmt.Errorf("%s contains NUL", subject)
+	for index := 0; index < len(value); {
+		if index&1023 == 0 {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+		}
+		character, size := utf8.DecodeRuneInString(value[index:])
+		if character == utf8.RuneError && size == 1 {
+			return fmt.Errorf("%s must be bounded UTF-8", subject)
+		}
+		if character == '\x00' {
+			return fmt.Errorf("%s contains NUL", subject)
+		}
+		index += size
 	}
-	return nil
+	return ctx.Err()
 }
 
 func validateEvidenceIdentifier(value, subject string) error {
@@ -2291,10 +2307,26 @@ func validateEvidenceIdentifier(value, subject string) error {
 }
 
 func validateBoundedUTF8(value string, maxBytes int, subject string) error {
-	if value == "" || !utf8.ValidString(value) || len(value) > maxBytes {
+	return validateBoundedUTF8Context(context.Background(), value, maxBytes, subject)
+}
+
+func validateBoundedUTF8Context(ctx context.Context, value string, maxBytes int, subject string) error {
+	if value == "" || len(value) > maxBytes {
 		return fmt.Errorf("%s must be non-empty bounded UTF-8", subject)
 	}
-	return nil
+	for index := 0; index < len(value); {
+		if index&1023 == 0 {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+		}
+		_, size := utf8.DecodeRuneInString(value[index:])
+		if size == 1 && value[index] >= utf8.RuneSelf {
+			return fmt.Errorf("%s must be non-empty bounded UTF-8", subject)
+		}
+		index += size
+	}
+	return ctx.Err()
 }
 
 func canonicalEvidenceString(value string) string {
