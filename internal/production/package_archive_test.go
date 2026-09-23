@@ -11,8 +11,10 @@ import (
 	"image/color"
 	"image/png"
 	"io"
+	"math"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -75,6 +77,24 @@ func packageArchiveFixture(t *testing.T, profile string) (PackageProjection, syn
 	return projection, opener
 }
 
+func requirePackagePrivateReadOnlyMode(t *testing.T, path string) {
+	t.Helper()
+	info, err := os.Stat(path)
+	require.NoError(t, err)
+	require.Zero(t, info.Mode().Perm()&0o222)
+	if runtime.GOOS != "windows" {
+		require.Zero(t, info.Mode().Perm()&0o077)
+	}
+}
+
+func TestPackageArchiveEntrySizeRejectsOverflow(t *testing.T) {
+	size, ok := packageArchiveEntrySize(uint64(math.MaxInt64))
+	require.True(t, ok)
+	require.Equal(t, int64(math.MaxInt64), size)
+	_, ok = packageArchiveEntrySize(uint64(math.MaxInt64) + 1)
+	require.False(t, ok)
+}
+
 func TestBuildRecipientArchiveReopensAndVerifiesAllProfiles(t *testing.T) {
 	for _, profile := range []string{"export-dat-pdf-v1", "export-dat-opt-images-v1", "export-dat-lfp-images-v1"} {
 		t.Run(profile, func(t *testing.T) {
@@ -82,9 +102,7 @@ func TestBuildRecipientArchiveReopensAndVerifiesAllProfiles(t *testing.T) {
 			first := filepath.Join(t.TempDir(), "first.zip")
 			qc, err := BuildRecipientArchive(t.Context(), projection, packageJobID, opener, first)
 			require.NoError(t, err)
-			info, err := os.Stat(first)
-			require.NoError(t, err)
-			require.Equal(t, os.FileMode(0o444), info.Mode().Perm())
+			requirePackagePrivateReadOnlyMode(t, first)
 			require.Equal(t, projection.PageNumbers(), qc.PageNumbers)
 			verified, err := VerifyRecipientArchive(first)
 			require.NoError(t, err)
@@ -102,7 +120,7 @@ func TestBuildRecipientArchiveReopensAndVerifiesAllProfiles(t *testing.T) {
 			}
 			reader, err := zip.OpenReader(first)
 			require.NoError(t, err)
-			defer reader.Close()
+			t.Cleanup(func() { require.NoError(t, reader.Close()) })
 			for _, entry := range reader.File {
 				require.NotContains(t, entry.Name, "private")
 				stream, openErr := entry.Open()
@@ -258,7 +276,7 @@ func TestBuildRecipientArchiveKeepsVolumeAndLoadfileOrder(t *testing.T) {
 			require.NoError(t, VerifyRecipientArchiveWithQC(path, qc))
 			archive, err := zip.OpenReader(path)
 			require.NoError(t, err)
-			defer archive.Close()
+			t.Cleanup(func() { require.NoError(t, archive.Close()) })
 			for _, volume := range projection.Manifest.Volumes {
 				var datBytes, pageBytes []byte
 				for _, entry := range archive.File {

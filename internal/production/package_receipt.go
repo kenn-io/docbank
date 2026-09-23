@@ -34,8 +34,10 @@ func PublishPackageQCReceipt(archivePath, receiptPath string, receipt PackageQC)
 	if err != nil {
 		return err
 	}
-	defer os.Remove(staged.Name())
-	defer staged.Close()
+	defer func() {
+		_ = staged.Close()
+		_ = os.Remove(staged.Name())
+	}()
 	if _, err := staged.Write(data); err != nil {
 		return err
 	}
@@ -43,6 +45,9 @@ func PublishPackageQCReceipt(archivePath, receiptPath string, receipt PackageQC)
 		return err
 	}
 	if err := staged.Close(); err != nil {
+		return err
+	}
+	if err := os.Chmod(staged.Name(), 0o400); err != nil {
 		return err
 	}
 	if err := os.Link(staged.Name(), receiptPath); err != nil {
@@ -69,7 +74,7 @@ func ReadPackageQCReceipt(path string) (PackageQC, error) {
 	if err != nil {
 		return PackageQC{}, err
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 	data, err := io.ReadAll(io.LimitReader(file, maxPackageMetadataBytes+1))
 	if err != nil || len(data) > maxPackageMetadataBytes {
 		return PackageQC{}, ErrRecipientArchive

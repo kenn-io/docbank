@@ -36,6 +36,9 @@ func TestPackageHandoffPublishesExternalTransmittalAndDeliveryReceipt(t *testing
 		DeliveredAt: "2026-09-23T21:00:00Z", ProofPath: proofPath}
 	receipt, err := RecordPackageDelivery(archivePath, qcPath, transmittalPath, deliveryPath, policy, evidence)
 	require.NoError(t, err)
+	for _, path := range []string{qcPath, transmittalPath, deliveryPath} {
+		requirePackagePrivateReadOnlyMode(t, path)
+	}
 	require.Equal(t, archiveQC.ArchiveSHA256, receipt.ArchiveSHA256)
 	require.NotEmpty(t, receipt.ProofSHA256)
 	require.NoError(t, VerifyPackageDeliveryReceipt(archivePath, qcPath, transmittalPath, deliveryPath, proofPath, policy))

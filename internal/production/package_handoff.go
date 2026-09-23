@@ -181,39 +181,39 @@ func deliveryPolicyDigest(value PackageDeliveryPolicy) (string, error) {
 	return hex.EncodeToString(digest[:]), nil
 }
 
-func packageHandoffInputs(archivePath, qcPath, transmittalPath string) (PackageQC, RecipientFinalTransmittal, string, string, error) {
+func packageHandoffInputs(archivePath, qcPath, transmittalPath string) (PackageQC, string, string, error) {
 	qc, err := ReadPackageQCReceipt(qcPath)
 	if err != nil || VerifyRecipientArchiveWithQC(archivePath, qc) != nil {
-		return PackageQC{}, RecipientFinalTransmittal{}, "", "", ErrRecipientArchive
+		return PackageQC{}, "", "", ErrRecipientArchive
 	}
 	transmittal, err := ReadRecipientTransmittal(transmittalPath)
 	if err != nil || transmittal.ArchiveSHA256 != qc.ArchiveSHA256 || transmittal.ManifestSHA256 != qc.ManifestSHA256 ||
 		transmittal.Pages != len(qc.PageNumbers) || transmittal.FirstPage != qc.PageNumbers[0] ||
 		transmittal.LastPage != qc.PageNumbers[len(qc.PageNumbers)-1] {
-		return PackageQC{}, RecipientFinalTransmittal{}, "", "", ErrRecipientArchive
+		return PackageQC{}, "", "", ErrRecipientArchive
 	}
 	manifest, err := recipientManifestFromVerifiedArchive(archivePath, qc.ManifestSHA256)
 	if err != nil {
-		return PackageQC{}, RecipientFinalTransmittal{}, "", "", err
+		return PackageQC{}, "", "", err
 	}
 	expectedTransmittal, err := packageJSON(finalRecipientTransmittal(manifest, qc))
 	if err != nil {
-		return PackageQC{}, RecipientFinalTransmittal{}, "", "", err
+		return PackageQC{}, "", "", err
 	}
 	actualTransmittal, err := packageJSON(transmittal)
 	if err != nil || !bytes.Equal(expectedTransmittal, actualTransmittal) {
-		return PackageQC{}, RecipientFinalTransmittal{}, "", "", ErrRecipientArchive
+		return PackageQC{}, "", "", ErrRecipientArchive
 	}
 	qcData, err := packageJSON(qc)
 	if err != nil {
-		return PackageQC{}, RecipientFinalTransmittal{}, "", "", err
+		return PackageQC{}, "", "", err
 	}
 	transmittalData, err := packageJSON(transmittal)
 	if err != nil {
-		return PackageQC{}, RecipientFinalTransmittal{}, "", "", err
+		return PackageQC{}, "", "", err
 	}
 	qcDigest, transmittalDigest := sha256.Sum256(qcData), sha256.Sum256(transmittalData)
-	return qc, transmittal, hex.EncodeToString(qcDigest[:]), hex.EncodeToString(transmittalDigest[:]), nil
+	return qc, hex.EncodeToString(qcDigest[:]), hex.EncodeToString(transmittalDigest[:]), nil
 }
 
 func recipientManifestFromVerifiedArchive(path, expectedSHA string) (RecipientManifest, error) {
@@ -221,12 +221,12 @@ func recipientManifestFromVerifiedArchive(path, expectedSHA string) (RecipientMa
 	if err != nil {
 		return RecipientManifest{}, ErrRecipientArchive
 	}
-	defer archive.Close()
+	defer func() { _ = archive.Close() }()
 	for _, entry := range archive.File {
 		if entry.Name != "MANIFEST.json" {
 			continue
 		}
-		data, err := readPackageEntry(entry, maxPackageMetadataBytes)
+		data, err := readPackageEntry(entry)
 		if err != nil {
 			return RecipientManifest{}, ErrRecipientArchive
 		}
@@ -266,7 +266,7 @@ func digestDeliveryProof(path string, excludedPaths ...string) (string, int64, e
 	if err != nil {
 		return "", 0, ErrRecipientArchive
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 	info, err := file.Stat()
 	if err != nil || !info.Mode().IsRegular() || info.Size() < 1 || info.Size() > maxDeliveryProofBytes {
 		return "", 0, ErrRecipientArchive
@@ -290,7 +290,7 @@ func digestDeliveryProof(path string, excludedPaths ...string) (string, int64, e
 // at handoff and writes an immutable receipt outside the archive.
 func RecordPackageDelivery(archivePath, qcPath, transmittalPath, receiptPath string,
 	policy PackageDeliveryPolicy, evidence PackageDeliveryEvidence) (PackageDeliveryReceipt, error) {
-	qc, _, qcSHA, transmittalSHA, err := packageHandoffInputs(archivePath, qcPath, transmittalPath)
+	qc, qcSHA, transmittalSHA, err := packageHandoffInputs(archivePath, qcPath, transmittalPath)
 	if err != nil {
 		return PackageDeliveryReceipt{}, err
 	}
@@ -321,7 +321,7 @@ func RecordPackageDelivery(archivePath, qcPath, transmittalPath, receiptPath str
 
 func VerifyPackageDeliveryReceipt(archivePath, qcPath, transmittalPath, receiptPath, proofPath string,
 	policy PackageDeliveryPolicy) error {
-	qc, _, qcSHA, transmittalSHA, err := packageHandoffInputs(archivePath, qcPath, transmittalPath)
+	qc, qcSHA, transmittalSHA, err := packageHandoffInputs(archivePath, qcPath, transmittalPath)
 	if err != nil {
 		return err
 	}
@@ -363,7 +363,7 @@ func readPackageSidecar(path string) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 	data, err := io.ReadAll(io.LimitReader(file, maxPackageMetadataBytes+1))
 	if err != nil || len(data) > maxPackageMetadataBytes {
 		return nil, ErrRecipientArchive
@@ -389,8 +389,10 @@ func publishImmutablePackageSidecar(path string, data []byte) error {
 	if err != nil {
 		return err
 	}
-	defer os.Remove(staged.Name())
-	defer staged.Close()
+	defer func() {
+		_ = staged.Close()
+		_ = os.Remove(staged.Name())
+	}()
 	if _, err := staged.Write(data); err != nil {
 		return err
 	}
@@ -400,7 +402,7 @@ func publishImmutablePackageSidecar(path string, data []byte) error {
 	if err := staged.Close(); err != nil {
 		return err
 	}
-	if err := os.Chmod(staged.Name(), 0o444); err != nil {
+	if err := os.Chmod(staged.Name(), 0o400); err != nil {
 		return err
 	}
 	if err := os.Link(staged.Name(), path); err != nil {
