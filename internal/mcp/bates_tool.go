@@ -10,11 +10,13 @@ import (
 	"uuid"
 
 	"github.com/google/jsonschema-go/jsonschema"
+	"github.com/modelcontextprotocol/go-sdk/jsonrpc"
 	sdkmcp "github.com/modelcontextprotocol/go-sdk/mcp"
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/apiclient"
 	"go.kenn.io/docbank/internal/daemonconn"
 	"go.kenn.io/docbank/internal/filepublish"
+	"go.kenn.io/docbank/internal/home"
 	"go.kenn.io/docbank/internal/pdfstamp"
 )
 
@@ -304,39 +306,26 @@ func findBatesExports(ctx context.Context, lease *daemonLease, raw []byte) (bate
 	return batesCandidatePageOutput{BatesCandidatePage: *page, privateCache: newPrivateCache()}, nil
 }
 
-func exportBatesFile(ctx context.Context, lease *daemonLease, raw []byte) (exportBatesFileOutput, error) {
+func exportBatesFile(ctx context.Context, lease *daemonLease, raw []byte, logger *slog.Logger) (exportBatesFileOutput, error) {
 	var input exportBatesFileInput
 	if err := decodeReadArguments(raw, &input); err != nil {
 		return exportBatesFileOutput{}, err
 	}
-	if _, err := uuid.Parse(input.AllocationID); err != nil || !filepath.IsAbs(input.DestinationPath) ||
-		filepath.Clean(input.DestinationPath) != input.DestinationPath {
+	if _, err := uuid.Parse(input.AllocationID); err != nil {
 		return exportBatesFileOutput{}, invalidToolArgumentsError()
 	}
-	parent := filepath.Dir(input.DestinationPath)
-	info, err := os.Stat(parent)
-	if err != nil || !info.IsDir() {
-		return exportBatesFileOutput{}, invalidToolArgumentsError()
-	}
-	if destination, err := os.Lstat(input.DestinationPath); err == nil {
-		if destination.Mode()&os.ModeSymlink != 0 || !destination.Mode().IsRegular() {
-			return exportBatesFileOutput{}, invalidToolArgumentsError()
-		}
-		if !input.Overwrite {
-			return exportBatesFileOutput{}, os.ErrExist
-		}
-	} else if !errors.Is(err, os.ErrNotExist) {
+	if err := validateBatesDestination(input.DestinationPath, input.Overwrite); err != nil {
 		return exportBatesFileOutput{}, err
 	}
+	parent := filepath.Dir(input.DestinationPath)
 	stage, err := filepublish.CreateStage(parent, ".docbank-bates-")
 	if err != nil {
 		return exportBatesFileOutput{}, err
 	}
 	staged, stagedPath := stage.File, stage.Path()
-	keep := false
 	defer func() {
-		if !keep {
-			_ = stage.Cleanup()
+		if cleanupErr := stage.Cleanup(); cleanupErr != nil {
+			logger.Warn("removing Bates export staging directory", "parent", parent, "error", cleanupErr)
 		}
 	}()
 	var verifiedSize int64
@@ -368,9 +357,6 @@ func exportBatesFile(ctx context.Context, lease *daemonLease, raw []byte) (expor
 	if !published {
 		return exportBatesFileOutput{}, publishErr
 	}
-	_ = os.Remove(stagedPath)
-	keep = true
-	_ = stage.Cleanup()
 	state := "published"
 	if publishErr != nil {
 		state = "published_durability_unknown"
@@ -378,6 +364,79 @@ func exportBatesFile(ctx context.Context, lease *daemonLease, raw []byte) (expor
 	return exportBatesFileOutput{privateCache: newPrivateCache(), AllocationID: receipt.AllocationID,
 		ArtifactID: receipt.ArtifactID, DestinationPath: input.DestinationPath, BlobSHA256: receipt.BlobSHA256,
 		ManifestSHA256: receipt.ManifestSHA256, Size: receipt.Size, State: state}, nil
+}
+
+func invalidBatesDestination(reason string) *jsonrpc.Error {
+	return &jsonrpc.Error{Code: jsonrpc.CodeInvalidParams, Message: "invalid destination_path: " + reason}
+}
+
+// validateBatesDestination confines exports to new or replaceable regular .pdf
+// files outside the Docbank data directory.
+func validateBatesDestination(destination string, overwrite bool) error {
+	if !filepath.IsAbs(destination) || filepath.Clean(destination) != destination {
+		return invalidBatesDestination("must be an absolute, clean path")
+	}
+	if !strings.EqualFold(filepath.Ext(destination), ".pdf") {
+		return invalidBatesDestination("must end in .pdf")
+	}
+	parent, err := filepath.EvalSymlinks(filepath.Dir(destination))
+	if err != nil {
+		return invalidBatesDestination("parent directory must exist")
+	}
+	if info, err := os.Stat(parent); err != nil || !info.IsDir() {
+		return invalidBatesDestination("parent must be a directory")
+	}
+	layout, err := home.Resolve()
+	if err != nil {
+		return err
+	}
+	inside, err := withinDirectory(parent, layout.Root)
+	if err != nil {
+		return err
+	}
+	if inside {
+		return invalidBatesDestination("must be outside the Docbank data directory")
+	}
+	existing, err := os.Lstat(destination)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if !existing.Mode().IsRegular() {
+		return invalidBatesDestination("existing destination must be a regular file, not a symlink or directory")
+	}
+	if !overwrite {
+		return invalidBatesDestination("destination exists; set overwrite to replace it")
+	}
+	return nil
+}
+
+// withinDirectory reports whether dir is root or one of its descendants. It
+// compares file identities so case-insensitive spellings cannot evade it.
+func withinDirectory(dir, root string) (bool, error) {
+	rootInfo, err := os.Stat(root)
+	if errors.Is(err, os.ErrNotExist) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	for {
+		info, err := os.Stat(dir)
+		if err != nil {
+			return false, err
+		}
+		if os.SameFile(info, rootInfo) {
+			return true, nil
+		}
+		up := filepath.Dir(dir)
+		if up == dir {
+			return false, nil
+		}
+		dir = up
+	}
 }
 
 func batesWriteToolHandler(
@@ -397,7 +456,7 @@ func batesWriteToolHandler(
 		case publishBatesExportToolDefinition.name:
 			output, err = publishBatesExport(ctx, lease, request.Params.Arguments)
 		case exportBatesFileToolDefinition.name:
-			output, err = exportBatesFile(ctx, lease, request.Params.Arguments)
+			output, err = exportBatesFile(ctx, lease, request.Params.Arguments, logger)
 		default:
 			err = errors.New("unknown Bates write tool")
 		}
@@ -405,6 +464,9 @@ func batesWriteToolHandler(
 			logOperationError(logger, name, err)
 			if domain, ok := domainToolError(err); ok {
 				return domain, nil
+			}
+			if invalid, ok := errors.AsType[*jsonrpc.Error](err); ok && invalid.Code == jsonrpc.CodeInvalidParams {
+				return nil, invalid
 			}
 			return nil, sanitizedRPCError(err)
 		}

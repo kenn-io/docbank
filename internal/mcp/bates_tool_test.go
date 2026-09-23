@@ -1,13 +1,19 @@
 package mcp
 
 import (
+	"bytes"
 	"context"
 	"encoding/json/v2"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"testing"
 
+	"github.com/go-pdf/fpdf"
+	"github.com/modelcontextprotocol/go-sdk/jsonrpc"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/internal/api"
@@ -166,7 +172,7 @@ func TestExportBatesFileRejectsRelativeDestinationBeforeDaemonAccess(t *testing.
 	raw, err := json.Marshal(map[string]any{"allocation_id": testBatesAllocationID,
 		"destination_path": "relative.pdf", "overwrite": false})
 	require.NoError(t, err)
-	_, err = exportBatesFile(t.Context(), nil, raw)
+	_, err = exportBatesFile(t.Context(), nil, raw, nil)
 	assert.Error(t, err)
 }
 
@@ -289,4 +295,105 @@ func callToolResult(t *testing.T, server *Server, name string, arguments map[str
 
 func decodeDaemonJSON(body io.Reader, target any) error {
 	return json.UnmarshalRead(body, target)
+}
+
+func TestExportBatesFilePublishesVerifiedPDF(t *testing.T) {
+	t.Setenv("DOCBANK_HOME", filepath.Join(t.TempDir(), "docbank-home"))
+	pdf, receipt := syntheticStampedBatesExport(t)
+	daemon := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		switch request.URL.Path {
+		case "/api/v1/bates/exports/" + testBatesAllocationID:
+			writeDaemonJSON(t, response, receipt)
+		case "/api/v1/bates/exports/" + testBatesAllocationID + "/content":
+			response.Header().Set("Content-Type", "application/pdf")
+			_, _ = response.Write(pdf)
+		default:
+			http.NotFound(response, request)
+		}
+	}))
+	t.Cleanup(daemon.Close)
+	server := newBatesToolTestServer(t, daemon.URL, true)
+	destination := filepath.Join(t.TempDir(), "production.PDF")
+
+	result := callToolResult(t, server, "export_bates_file", map[string]any{
+		"allocation_id": testBatesAllocationID, "destination_path": destination, "overwrite": false,
+	})
+
+	assert.Equal(t, "published", objectField(t, result, "structuredContent")["state"])
+	written, err := os.ReadFile(destination)
+	require.NoError(t, err)
+	assert.Equal(t, pdf, written)
+	entries, err := os.ReadDir(filepath.Dir(destination))
+	require.NoError(t, err)
+	assert.Len(t, entries, 1, "staging directory must be removed after publication")
+}
+
+func TestExportBatesFileRejectsUnsafeDestinations(t *testing.T) {
+	dataDir := filepath.Join(t.TempDir(), "docbank-home")
+	require.NoError(t, os.MkdirAll(filepath.Join(dataDir, "exports"), 0o700))
+	t.Setenv("DOCBANK_HOME", dataDir)
+	outside := t.TempDir()
+	existing := filepath.Join(outside, "existing.pdf")
+	require.NoError(t, os.WriteFile(existing, []byte("keep me"), 0o600))
+	server := newBatesToolTestServer(t, "http://127.0.0.1:1", true)
+	type destinationCase struct {
+		path      string
+		overwrite bool
+		reason    string
+	}
+	cases := map[string]destinationCase{
+		"existing without overwrite": {existing, false, "destination exists"},
+		"non-PDF extension":          {filepath.Join(outside, "authorized_keys"), true, "must end in .pdf"},
+		"data directory":             {filepath.Join(dataDir, "docbank.pdf"), true, "outside the Docbank data directory"},
+		"data subdirectory":          {filepath.Join(dataDir, "exports", "out.pdf"), true, "outside the Docbank data directory"},
+		"relative destination":       {"relative.pdf", true, "absolute"},
+	}
+	linkToData := filepath.Join(outside, "into-data")
+	symlinkDestination := filepath.Join(outside, "linked.pdf")
+	if err := errors.Join(os.Symlink(dataDir, linkToData), os.Symlink(existing, symlinkDestination)); err != nil {
+		t.Logf("symlink cases skipped: %v", err)
+	} else {
+		cases["symlinked parent in data dir"] = destinationCase{filepath.Join(linkToData, "out.pdf"), true, "outside the Docbank data directory"}
+		cases["symlink destination"] = destinationCase{symlinkDestination, true, "regular file"}
+	}
+	for name, test := range cases {
+		t.Run(name, func(t *testing.T) {
+			response := exchangeRaw(t, server, requestFor("tools/call", map[string]any{
+				"name": "export_bates_file", "arguments": map[string]any{
+					"allocation_id": testBatesAllocationID, "destination_path": test.path, "overwrite": test.overwrite,
+				},
+			}))
+			wireErr := decodeWireError(t, response)
+			assert.EqualValues(t, jsonrpc.CodeInvalidParams, wireErr.Code)
+			assert.Contains(t, wireErr.Message, test.reason)
+		})
+	}
+	kept, err := os.ReadFile(existing)
+	require.NoError(t, err)
+	assert.Equal(t, "keep me", string(kept))
+	entries, err := os.ReadDir(filepath.Join(dataDir, "exports"))
+	require.NoError(t, err)
+	assert.Empty(t, entries)
+}
+
+func syntheticStampedBatesExport(t *testing.T) ([]byte, api.BatesExport) {
+	t.Helper()
+	source := fpdf.NewCustom(&fpdf.InitType{UnitStr: "pt", Size: fpdf.SizeType{Wd: 612, Ht: 792}})
+	source.SetFont("Helvetica", "", 16)
+	source.AddPage()
+	source.Cell(250, 25, "SYNTHETIC PAGE")
+	var unstamped, stamped bytes.Buffer
+	require.NoError(t, source.Output(&unstamped))
+	labels := []pdfstamp.PageLabel{{SourcePage: 1, Label: "OUR000041"}}
+	result, err := pdfstamp.Stamp(t.Context(), bytes.NewReader(unstamped.Bytes()), labels, syntheticBatesRecipe(), &stamped)
+	require.NoError(t, err)
+	return stamped.Bytes(), api.BatesExport{
+		ArtifactID: testBatesAllocationID, AllocationID: testBatesAllocationID,
+		BlobSHA256: result.SHA256, Size: result.Size, MediaType: "application/pdf", PageCount: 1,
+		RecipeSHA256: testProfileID, ManifestSHA256: testProfileID, State: "verified",
+		CreatedAt: "2026-09-21T12:00:00Z", Pages: []api.BatesArtifactPage{{
+			Ordinal: 1, OccurrenceID: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+			SourceBlobSHA256: testProfileID, SourcePage: 1, OutputPage: 1, Label: "OUR000041",
+		}},
+	}
 }
