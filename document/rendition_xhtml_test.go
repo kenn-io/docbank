@@ -105,6 +105,12 @@ func TestRenditionXHTMLRejectsMalformedAndBudgetOverflow(t *testing.T) {
 	require.Equal(t, strings.Repeat("é", 3840), text)
 }
 
+func TestRenditionXHTMLWhitespaceAllocationBudget(t *testing.T) {
+	source := []byte(`<html xmlns="http://www.w3.org/1999/xhtml"><body><p>` + strings.Repeat("a ", 2<<20) + `</p></body></html>`)
+	_, err := RenditionMarkdownFromXHTML(source, 16<<20)
+	require.ErrorIs(t, err, ErrRenditionXHTMLBudget)
+}
+
 func TestRenditionXHTMLContextCancellation(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()

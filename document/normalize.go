@@ -15,6 +15,7 @@ import (
 	"strings"
 	"unicode"
 	"unicode/utf8"
+	"unsafe"
 
 	"github.com/yuin/goldmark"
 	goldmarkast "github.com/yuin/goldmark/ast"
@@ -232,7 +233,7 @@ func canonicalizeRenditionBlocks(ctx context.Context, blocks []renditionBlock) e
 }
 
 func canonicalizeRenditionInlines(ctx context.Context, values []renditionInline) ([]renditionInline, error) {
-	result := make([]renditionInline, 0, len(values))
+	result := values[:0]
 	var text strings.Builder
 	flushText := func() error {
 		if text.Len() == 0 {
@@ -1799,7 +1800,7 @@ func (w *renditionHTMLWriter) appendText(value string) {
 }
 
 func (w *renditionHTMLWriter) appendInline(inline renditionInline) {
-	if !w.charge(int64(len(inline.text)) + int64(len(inline.destination)) + 1) {
+	if !w.charge(int64(len(inline.text)) + int64(len(inline.destination)) + 2*int64(unsafe.Sizeof(renditionInline{}))) {
 		return
 	}
 	if len(w.links) > 0 {
