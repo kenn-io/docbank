@@ -442,12 +442,14 @@ func (sequence *evidenceLocatorSequence) requireGapOmissionsContext(
 		return nil
 	}
 	ordered := slices.Clone(omitted)
-	slices.SortFunc(ordered, func(left, right EvidenceLocatorV1) int {
+	if err := sortWithContext(ctx, ordered, func(left, right EvidenceLocatorV1) int {
 		if result := cmp.Compare(left.Start, right.Start); result != 0 {
 			return result
 		}
 		return cmp.Compare(left.End, right.End)
-	})
+	}); err != nil {
+		return err
+	}
 	omissionIndex := 0
 	for gapIndex, gap := range sequence.gaps {
 		if gapIndex&1023 == 0 {
@@ -820,14 +822,18 @@ func evidenceTableCellsOverlapContext[T any](
 	if err := ctx.Err(); err != nil {
 		return false, err
 	}
-	slices.Sort(columns)
+	if err := sortWithContext(ctx, columns, cmp.Compare[int]); err != nil {
+		return false, err
+	}
 	columns = slices.Compact(columns)
-	slices.SortFunc(events, func(left, right evidenceTableCellEvent) int {
+	if err := sortWithContext(ctx, events, func(left, right evidenceTableCellEvent) int {
 		if result := cmp.Compare(left.row, right.row); result != 0 {
 			return result
 		}
 		return cmp.Compare(left.delta, right.delta)
-	})
+	}); err != nil {
+		return false, err
+	}
 	segmentCount := len(columns) - 1
 	maximum := make([]int32, 4*segmentCount)
 	lazy := make([]int32, 4*segmentCount)
@@ -845,6 +851,61 @@ func evidenceTableCellsOverlapContext[T any](
 		}
 	}
 	return false, ctx.Err()
+}
+
+func sortWithContext[T any](ctx context.Context, values []T, compare func(T, T) int) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if len(values) < 2 {
+		return nil
+	}
+	scratch := make([]T, len(values))
+	source, destination := values, scratch
+	sourceIsValues := true
+	for width := 1; width < len(values); width *= 2 {
+		for left := 0; left < len(values); left += 2 * width {
+			if left&1023 == 0 {
+				if err := ctx.Err(); err != nil {
+					return err
+				}
+			}
+			middle := min(left+width, len(values))
+			right := min(left+2*width, len(values))
+			sourceIndex, otherIndex := left, middle
+			for index := left; index < right; index++ {
+				if index&1023 == 0 {
+					if err := ctx.Err(); err != nil {
+						return err
+					}
+				}
+				switch {
+				case sourceIndex >= middle:
+					destination[index] = source[otherIndex]
+					otherIndex++
+				case otherIndex >= right || compare(source[sourceIndex], source[otherIndex]) <= 0:
+					destination[index] = source[sourceIndex]
+					sourceIndex++
+				default:
+					destination[index] = source[otherIndex]
+					otherIndex++
+				}
+			}
+		}
+		source, destination = destination, source
+		sourceIsValues = !sourceIsValues
+	}
+	if !sourceIsValues {
+		for index, value := range source {
+			if index&1023 == 0 {
+				if err := ctx.Err(); err != nil {
+					return err
+				}
+			}
+			values[index] = value
+		}
+	}
+	return ctx.Err()
 }
 
 func addEvidenceCellCoverage(
