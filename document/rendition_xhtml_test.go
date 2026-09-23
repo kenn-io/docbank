@@ -154,6 +154,12 @@ func TestRenditionXHTMLAttributePreflightHandlesProcessingInstructions(t *testin
 	require.ErrorIs(t, checkRenditionXHTMLAttributeBound(t.Context(), []byte(source.String())), ErrRenditionXHTMLBudget)
 }
 
+func TestRenditionXHTMLTablePreformattedAllocationBudget(t *testing.T) {
+	source := []byte(`<html xmlns="http://www.w3.org/1999/xhtml"><body><table><tr><td><pre>` + strings.Repeat("a ", 16<<20) + `</pre></td></tr></table></body></html>`)
+	_, err := RenditionMarkdownFromXHTML(source, 16<<20)
+	require.ErrorIs(t, err, ErrRenditionXHTMLBudget)
+}
+
 func TestRenditionXHTMLContextCancellation(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()

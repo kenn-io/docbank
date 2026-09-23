@@ -235,7 +235,7 @@ func checkRenditionXHTMLAttributeBound(ctx context.Context, source []byte) error
 						return err
 					}
 				}
-				if bytes.HasPrefix(source[index:], []byte("<!--")) {
+				if quote == 0 && bytes.HasPrefix(source[index:], []byte("<!--")) {
 					index += len("<!--")
 					for index+2 < len(source) && !bytes.Equal(source[index:index+3], []byte("-->")) {
 						if index&1023 == 0 {
@@ -1722,7 +1722,12 @@ func (w *renditionHTMLWriter) endTag(tag string) {
 				return
 			}
 			if w.preInCell {
-				w.appendInline(renditionInline{kind: renditionInlineCode, text: strings.Join(strings.Fields(content), " ")})
+				collapsed, err := collapseRenditionWhitespaceContext(w.context(), content, w.charge)
+				if err != nil {
+					w.err = err
+					return
+				}
+				w.appendInline(renditionInline{kind: renditionInlineCode, text: collapsed})
 			} else {
 				w.appendBlock(renditionBlock{kind: renditionCodeBlock, language: w.preLang, code: content})
 			}
@@ -1782,10 +1787,16 @@ func (w *renditionHTMLWriter) writeTextContext(ctx context.Context, value string
 		return err
 	}
 	if w.inPre {
+		if !w.charge(2 * int64(len(value))) {
+			return ErrRenditionXHTMLBudget
+		}
 		w.preText.WriteString(value)
 		return nil
 	}
 	if w.inlineCode {
+		if !w.charge(2 * int64(len(value))) {
+			return ErrRenditionXHTMLBudget
+		}
 		w.inlineText.WriteString(value)
 		return nil
 	}
@@ -1818,6 +1829,59 @@ func (w *renditionHTMLWriter) writeTextContext(ctx context.Context, value string
 	}
 	flushChunk()
 	return ctx.Err()
+}
+
+func collapseRenditionWhitespaceContext(ctx context.Context, value string, charge func(int64) bool) (string, error) {
+	var size int64
+	pendingSpace, wrote := false, false
+	for index, character := range value {
+		if index&1023 == 0 {
+			if err := ctx.Err(); err != nil {
+				return "", err
+			}
+		}
+		if unicode.IsSpace(character) {
+			if wrote {
+				pendingSpace = true
+			}
+			continue
+		}
+		if pendingSpace {
+			size++
+		}
+		size += int64(utf8.RuneLen(character))
+		pendingSpace = false
+		wrote = true
+	}
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
+	if !charge(size) {
+		return "", ErrRenditionXHTMLBudget
+	}
+	var output strings.Builder
+	output.Grow(int(size))
+	pendingSpace, wrote = false, false
+	for index, character := range value {
+		if index&1023 == 0 {
+			if err := ctx.Err(); err != nil {
+				return "", err
+			}
+		}
+		if unicode.IsSpace(character) {
+			if wrote {
+				pendingSpace = true
+			}
+			continue
+		}
+		if pendingSpace {
+			output.WriteByte(' ')
+		}
+		output.WriteRune(character)
+		pendingSpace = false
+		wrote = true
+	}
+	return output.String(), nil
 }
 
 func (w *renditionHTMLWriter) context() context.Context {
