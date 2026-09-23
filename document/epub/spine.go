@@ -2,6 +2,7 @@ package epub
 
 import (
 	"archive/zip"
+	"context"
 	"errors"
 	"mime"
 	"net/url"
@@ -12,7 +13,10 @@ import (
 	"go.kenn.io/docbank/document/internal/epubutil"
 )
 
-func admitSpine(files []*zip.File, records []epubutil.Package) ([]*zip.File, error) {
+func admitSpine(ctx context.Context, files []*zip.File, records []epubutil.Package) ([]*zip.File, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	if len(records) != 1 {
 		return nil, unsupported()
 	}
@@ -22,18 +26,27 @@ func admitSpine(files []*zip.File, records []epubutil.Package) ([]*zip.File, err
 	}
 	entries := make(map[string]*zip.File, len(files))
 	for _, file := range files {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		if file.Name == "META-INF/encryption.xml" {
 			return nil, unsupported()
 		}
 		entries[file.Name] = file
 	}
 	for _, meta := range record.Metadata.Meta {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		if meta.Property == "rendition:layout" && strings.TrimSpace(meta.Value) != "reflowable" || meta.Name == "fixed-layout" && meta.Content != "false" {
 			return nil, unsupported()
 		}
 	}
 	manifest := make(map[string]epubutil.Item, len(record.Manifest.Items))
 	for _, item := range record.Manifest.Items {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		if item.ID == "" {
 			return nil, unsupported()
 		}
@@ -44,6 +57,9 @@ func admitSpine(files []*zip.File, records []epubutil.Package) ([]*zip.File, err
 	}
 	var spine []*zip.File
 	for _, ref := range record.Spine.Items {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		item, ok := manifest[ref.IDRef]
 		mediaType, _, mediaErr := mime.ParseMediaType(item.MediaType)
 		if !ok || mediaErr != nil || !strings.EqualFold(mediaType, "application/xhtml+xml") || strings.Contains(item.Properties, "rendition:layout-pre-paginated") || strings.Contains(ref.Properties, "rendition:layout-pre-paginated") {

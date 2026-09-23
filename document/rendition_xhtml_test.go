@@ -2,6 +2,7 @@ package document
 
 import (
 	"context"
+	"io"
 	"strings"
 	"testing"
 	"time"
@@ -94,10 +95,21 @@ func TestRenditionXHTMLContextCancellation(t *testing.T) {
 }
 
 func TestRenditionXHTMLContextCancellationAfterRead(t *testing.T) {
-	ctx := &cancelAfterXHTMLReadContext{cancelAt: 3}
-	source := []byte(`<html xmlns="http://www.w3.org/1999/xhtml"><body>` + strings.Repeat(`<p>text</p>`, 1000) + `</body></html>`)
-	text, err := RenditionMarkdownFromXHTMLContext(ctx, source, 100000)
+	ctx := &cancelAfterXHTMLReadContext{cancelAt: 2}
+	started := false
+	reader := contextReader{ctx: ctx, reader: trackingReader{reader: strings.NewReader(strings.Repeat("text", 10000)), started: &started}}
+	_, err := io.ReadAll(reader)
 	require.ErrorIs(t, err, context.Canceled)
-	require.Empty(t, text)
+	require.True(t, started)
 	require.GreaterOrEqual(t, ctx.calls, ctx.cancelAt)
+}
+
+type trackingReader struct {
+	reader  io.Reader
+	started *bool
+}
+
+func (reader trackingReader) Read(buffer []byte) (int, error) {
+	*reader.started = true
+	return reader.reader.Read(buffer)
 }

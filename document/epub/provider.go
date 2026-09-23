@@ -105,8 +105,11 @@ func (p *Provider) Render(ctx context.Context, upload document.AuthorizedUpload,
 		}
 		return document.RenditionResult{}, unsupported()
 	}
-	entries, err := admitSpine(archive.File, records)
+	entries, err := admitSpine(ctx, archive.File, records)
 	if err != nil {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return document.RenditionResult{}, provider.Canceled(ctxErr)
+		}
 		return document.RenditionResult{}, err
 	}
 	if err := ctx.Err(); err != nil {

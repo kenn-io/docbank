@@ -33,13 +33,17 @@ func TestVerifyZIPEntryContextCancelsDuringDecompression(t *testing.T) {
 	writer := zip.NewWriter(&buffer)
 	entry, err := writer.Create("payload")
 	require.NoError(t, err)
-	_, err = entry.Write(bytes.Repeat([]byte("payload"), 10000))
+	payload := make([]byte, 128<<10)
+	for index := range payload {
+		payload[index] = byte((index*31 + index/251) % 251)
+	}
+	_, err = entry.Write(payload)
 	require.NoError(t, err)
 	require.NoError(t, writer.Close())
 	archive, err := zip.NewReader(bytes.NewReader(buffer.Bytes()), int64(buffer.Len()))
 	require.NoError(t, err)
 
-	ctx := &cancelAfterErrContext{cancelAt: 4}
+	ctx := &cancelAfterErrContext{cancelAt: 6}
 	err = verifyZIPEntryContext(ctx, archive.File[0])
 	require.ErrorIs(t, err, context.Canceled)
 	require.GreaterOrEqual(t, ctx.calls, ctx.cancelAt)

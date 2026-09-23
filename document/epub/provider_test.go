@@ -17,8 +17,26 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"go.kenn.io/docbank/document"
+	"go.kenn.io/docbank/document/internal/epubutil"
 	"go.kenn.io/docbank/document/internal/formatdetect"
 )
+
+type cancelAfterSpineContext struct {
+	calls    int
+	cancelAt int
+}
+
+func (ctx *cancelAfterSpineContext) Deadline() (time.Time, bool) { return time.Time{}, false }
+func (ctx *cancelAfterSpineContext) Done() <-chan struct{}       { return nil }
+func (ctx *cancelAfterSpineContext) Value(any) any               { return nil }
+
+func (ctx *cancelAfterSpineContext) Err() error {
+	ctx.calls++
+	if ctx.calls >= ctx.cancelAt {
+		return context.Canceled
+	}
+	return nil
+}
 
 type testUpload struct {
 	reader   *bytes.Reader
@@ -310,6 +328,19 @@ func TestProviderProfileIdentityAndPreReadLimits(t *testing.T) {
 	requireClass(t, result, err, document.RenditionErrorPolicyRejected)
 	require.Zero(t, upload.reads)
 	require.Equal(t, 1, upload.closes)
+}
+
+func TestAdmitSpineContextCancellation(t *testing.T) {
+	data := epubBytes(t, nil)
+	archive, err := zip.NewReader(bytes.NewReader(data), int64(len(data)))
+	require.NoError(t, err)
+	records, err := epubutil.ReadPackages(archive.File, 1<<20)
+	require.NoError(t, err)
+
+	ctx := &cancelAfterSpineContext{cancelAt: 8}
+	_, err = admitSpine(ctx, archive.File, records)
+	require.ErrorIs(t, err, context.Canceled)
+	require.GreaterOrEqual(t, ctx.calls, ctx.cancelAt)
 }
 
 func TestProviderSourceAuthorizationFailures(t *testing.T) {

@@ -4,10 +4,13 @@ package epubutil
 import (
 	"archive/zip"
 	"bytes"
+	"compress/flate"
 	"context"
 	"encoding/xml"
 	"errors"
 	"fmt"
+	"hash"
+	"hash/crc32"
 	"io"
 	"net/url"
 	"path"
@@ -233,7 +236,7 @@ func ReadZIPEntryContext(ctx context.Context, file *zip.File, limit int64) ([]by
 	if limit < 0 || file.UncompressedSize64 > uint64(limit) {
 		return nil, errors.New("ZIP entry exceeds bound")
 	}
-	reader, err := file.Open()
+	reader, err := openZIPEntryContext(ctx, file)
 	if err != nil {
 		return nil, fmt.Errorf("open ZIP entry: %w", err)
 	}
@@ -247,6 +250,72 @@ func ReadZIPEntryContext(ctx context.Context, file *zip.File, limit int64) ([]by
 	}
 	return data, nil
 }
+
+func openZIPEntryContext(ctx context.Context, file *zip.File) (io.ReadCloser, error) {
+	raw, err := file.OpenRaw()
+	if err != nil {
+		return nil, fmt.Errorf("open raw ZIP entry: %w", err)
+	}
+	source := contextReader{ctx: ctx, reader: raw}
+	var reader io.ReadCloser
+	switch file.Method {
+	case zip.Store:
+		reader = io.NopCloser(source)
+	case zip.Deflate:
+		reader = flate.NewReader(source)
+	default:
+		return nil, errors.New("ZIP entry uses unsupported compression")
+	}
+	return &zipEntryReader{ctx: ctx, reader: reader, file: file, hash: crc32.NewIEEE()}, nil
+}
+
+type zipEntryReader struct {
+	ctx    context.Context
+	reader io.ReadCloser
+	file   *zip.File
+	hash   hash.Hash32
+	read   uint64
+	err    error
+}
+
+func (reader *zipEntryReader) Read(buffer []byte) (int, error) {
+	if reader.err != nil {
+		return 0, reader.err
+	}
+	if err := reader.ctx.Err(); err != nil {
+		reader.err = err
+		return 0, err
+	}
+	read, err := reader.reader.Read(buffer)
+	if read > 0 {
+		_, _ = reader.hash.Write(buffer[:read])
+		reader.read += uint64(read)
+	}
+	if reader.read > reader.file.UncompressedSize64 {
+		reader.err = zip.ErrFormat
+		return 0, reader.err
+	}
+	if contextErr := reader.ctx.Err(); contextErr != nil {
+		reader.err = contextErr
+		return read, contextErr
+	}
+	if err == io.EOF {
+		if reader.read != reader.file.UncompressedSize64 {
+			reader.err = io.ErrUnexpectedEOF
+		} else if reader.hash.Sum32() != reader.file.CRC32 {
+			reader.err = zip.ErrChecksum
+		}
+		if reader.err != nil {
+			return read, reader.err
+		}
+	}
+	if err != nil {
+		reader.err = err
+	}
+	return read, err
+}
+
+func (reader *zipEntryReader) Close() error { return reader.reader.Close() }
 
 type contextReader struct {
 	ctx    context.Context

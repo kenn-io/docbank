@@ -119,3 +119,24 @@ func TestContextReaderStopsAfterCancellation(t *testing.T) {
 	_, err = reader.Read(buffer)
 	require.ErrorIs(t, err, context.Canceled)
 }
+
+func TestReadZIPEntryContextCancelsDuringDecompression(t *testing.T) {
+	var buffer bytes.Buffer
+	writer := zip.NewWriter(&buffer)
+	entry, err := writer.Create("payload")
+	require.NoError(t, err)
+	payload := make([]byte, 128<<10)
+	for index := range payload {
+		payload[index] = byte((index*31 + index/251) % 251)
+	}
+	_, err = entry.Write(payload)
+	require.NoError(t, err)
+	require.NoError(t, writer.Close())
+	archive, err := zip.NewReader(bytes.NewReader(buffer.Bytes()), int64(buffer.Len()))
+	require.NoError(t, err)
+
+	ctx := &cancelAfterParseContext{cancelAt: 6}
+	_, err = ReadZIPEntryContext(ctx, archive.File[0], int64(len(payload)))
+	require.ErrorIs(t, err, context.Canceled)
+	require.GreaterOrEqual(t, ctx.calls, ctx.cancelAt)
+}
