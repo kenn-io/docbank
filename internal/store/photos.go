@@ -577,6 +577,9 @@ func (s *Store) PromotePhotoNode(ctx context.Context, nodeID int64, expectedRevi
 		} else if !errors.Is(err, sql.ErrNoRows) {
 			return fmt.Errorf("checking photo node ownership: %w", err)
 		}
+		if expectedRevision != nil {
+			return fmt.Errorf("node %d does not own an asset at expected revision %d: %w", nodeID, *expectedRevision, ErrPhotoAssetRevision)
+		}
 		var err error
 		result, err = s.photoAssetCreateTx(ctx, tx, nodeID, role, kind, nowRFC3339())
 		if err != nil {

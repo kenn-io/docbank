@@ -286,18 +286,8 @@ func validatePhotoGraph(ctx context.Context, q interface {
 		if nodeKind.String != nodeKindFile || !nodeName.Valid || !versionID.Valid || !mediaType.Valid {
 			return fmt.Errorf("%w: member %s does not reference a file node", ErrInvalidPhotoAsset, fileID)
 		}
-		facts := photoNodeFacts(Node{ID: nodeID, Kind: nodeKind.String, Name: nodeName.String, MimeType: mediaType.String})
 		if err := validatePhotoRoleForAsset(kind, role); err != nil {
 			return fmt.Errorf("member %s: %w", fileID, err)
-		}
-		if err := validatePhotoFileForAsset(kind, role, facts); err != nil {
-			compatible, initialVersionPruned, historyErr := photoNodeHistoryMatches(ctx, q, nodeID, nodeName.String, kind, role)
-			if historyErr != nil {
-				return historyErr
-			}
-			if !compatible && !initialVersionPruned {
-				return fmt.Errorf("member %s: %w", fileID, err)
-			}
 		}
 		file := PhotoFile{ID: fileID, AssetID: fileAsset, NodeID: nodeID, Role: role, CreatedAt: created}
 		if sidecar.Valid {
@@ -328,34 +318,6 @@ func validatePhotoGraph(ctx context.Context, q interface {
 		}
 	}
 	return nil
-}
-
-func photoNodeHistoryMatches(ctx context.Context, q interface {
-	QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error)
-}, nodeID int64, name, kind, role string) (bool, bool, error) {
-	rows, err := q.QueryContext(ctx, `SELECT COALESCE(mime_type, ''), node_revision FROM content_versions WHERE node_id=?`, nodeID)
-	if err != nil {
-		return false, false, fmt.Errorf("reading photo member history %d: %w", nodeID, err)
-	}
-	defer func() { _ = rows.Close() }()
-	minimumRevision := int64(0)
-	for rows.Next() {
-		var mediaType string
-		var revision int64
-		if err := rows.Scan(&mediaType, &revision); err != nil {
-			return false, false, fmt.Errorf("scanning photo member history %d: %w", nodeID, err)
-		}
-		if minimumRevision == 0 || revision < minimumRevision {
-			minimumRevision = revision
-		}
-		if validatePhotoFileForAsset(kind, role, photoNodeFacts(Node{ID: nodeID, Kind: nodeKindFile, Name: name, MimeType: mediaType})) == nil {
-			return true, false, nil
-		}
-	}
-	if err := rows.Err(); err != nil {
-		return false, false, fmt.Errorf("reading photo member history %d: %w", nodeID, err)
-	}
-	return false, minimumRevision > 1, nil
 }
 
 func validatePhotoGraphTx(ctx context.Context, tx *sql.Tx) error {
