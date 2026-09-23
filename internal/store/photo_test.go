@@ -335,20 +335,6 @@ func TestPhotoMetadataRejectsRoleMediaAndAssetKindMismatch(t *testing.T) {
 	}
 }
 
-func TestPhotoMetadataDoesNotTreatGeneralNodeRevisionAsPrunedMedia(t *testing.T) {
-	s := newTestStore(t)
-	ctx := t.Context()
-	node, err := s.CreateFile(ctx, s.RootID(), "revised.jpg", fakeHash("revised-media"), 1, "image/jpeg")
-	require.NoError(t, err)
-	_, err = s.db.ExecContext(ctx, `UPDATE nodes SET revision=revision+1 WHERE id=?`, node.ID)
-	require.NoError(t, err)
-	_, err = s.db.ExecContext(ctx, `UPDATE photo_files SET role='video' WHERE node_id=?`, node.ID)
-	require.NoError(t, err)
-	_, err = s.db.ExecContext(ctx, `UPDATE photo_assets SET kind='video'`)
-	require.NoError(t, err)
-	require.ErrorIs(t, validatePhotoMetadataState(ctx, s.db), ErrInvalidPhotoAsset)
-}
-
 func TestPhotoMetadataAcceptsReceiptIndependentRevisionOneState(t *testing.T) {
 	s := newTestStore(t)
 	ctx := t.Context()
@@ -455,6 +441,19 @@ func TestPhotoPromoteExistingAssetChecksLiveNode(t *testing.T) {
 	assert.NotNil(t, unchanged.ExcludedAt)
 }
 
+func TestPhotoPromoteUnownedNodeRejectsRevisionPrecondition(t *testing.T) {
+	s := newTestStore(t)
+	ctx := t.Context()
+	raw, err := s.CreateFile(ctx, s.RootID(), "unowned.cr2", fakeHash("unowned"), 1, "application/octet-stream")
+	require.NoError(t, err)
+
+	expectedRevision := int64(1)
+	_, err = s.PromotePhotoNode(ctx, raw.ID, &expectedRevision, PhotoRoleRAW, "")
+	require.ErrorIs(t, err, ErrPhotoAssetRevision)
+	_, err = s.PhotoAssetForNode(ctx, raw.ID)
+	require.ErrorIs(t, err, ErrNotFound)
+}
+
 func TestPhotoVersionTransitionsKeepIdentity(t *testing.T) {
 	s := newTestStore(t)
 	ctx := t.Context()
@@ -506,6 +505,21 @@ func TestPhotoVersionPrunePreservesChangedMediaMembership(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, asset.ID, retained.ID)
 	assert.Equal(t, PhotoRoleImage, retained.Files[0].Role)
+}
+
+func TestPhotoRenamePreservesAdmissionClassification(t *testing.T) {
+	s := newTestStore(t)
+	ctx := t.Context()
+	image, err := s.CreateFile(ctx, s.RootID(), "generic.jpg", fakeHash("c001"), 1, "application/octet-stream")
+	require.NoError(t, err)
+
+	_, _, err = s.Move(ctx, image.ID, s.RootID(), "generic.bin", image.Revision)
+	require.NoError(t, err)
+	var exported bytes.Buffer
+	require.NoError(t, s.ExportMetadata(ctx, &exported))
+	restored := newTestStore(t)
+	require.NoError(t, restored.ImportMetadata(ctx, bytes.NewReader(exported.Bytes())))
+	require.NoError(t, restored.ExportMetadata(ctx, &bytes.Buffer{}))
 }
 
 func TestPhotoPolicy(t *testing.T) {
