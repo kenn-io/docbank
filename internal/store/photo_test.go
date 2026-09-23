@@ -360,6 +360,31 @@ func TestPhotoMetadataAcceptsReceiptIndependentRevisionOneState(t *testing.T) {
 	require.NoError(t, validatePhotoMetadataState(ctx, s.db))
 }
 
+func TestPhotoMetadataRejectsOrphanReceipts(t *testing.T) {
+	s := newTestStore(t)
+	ctx := t.Context()
+	image, err := s.CreateFile(ctx, s.RootID(), "orphan.jpg", fakeHash("0a0a"), 1, "image/jpeg")
+	require.NoError(t, err)
+	asset, err := s.PhotoAssetForNode(ctx, image.ID)
+	require.NoError(t, err)
+	_, err = s.SetPhotoAssetExcluded(ctx, asset.ID, asset.Revision, true)
+	require.NoError(t, err)
+	var exported bytes.Buffer
+	require.NoError(t, s.ExportMetadata(ctx, &exported))
+	lines := strings.Split(exported.String(), "\n")
+	for index, line := range lines {
+		if strings.Contains(line, `"type":"photo_asset"`) {
+			lines[index] = ""
+		}
+		if strings.Contains(line, `"type":"photo_file"`) {
+			lines[index] = ""
+		}
+	}
+	target := newTestStore(t)
+	err = target.ImportMetadata(ctx, strings.NewReader(strings.Join(lines, "\n")))
+	require.ErrorContains(t, err, "reference missing assets")
+}
+
 func TestPhotoMutationsRequireRevision(t *testing.T) {
 	s := newTestStore(t)
 	ctx := t.Context()
