@@ -11520,6 +11520,10 @@ components:
           type: string
         profile:
           type: string
+        selected_documents:
+          items:
+            $ref: "#/components/schemas/Identity"
+          type: array
         source_timezone:
           type: string
         terms:
