@@ -606,32 +606,37 @@ func TestRetryAfterHeaderDrivesDelayAndIsExposed(t *testing.T) {
 func TestTimeoutAndCancellation(t *testing.T) {
 	policy := testPolicy(t)
 	release := make(chan struct{})
-	var arrived atomic.Pointer[chan struct{}]
-	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if signal := arrived.Swap(nil); signal != nil {
-			close(*signal)
-		}
-		select {
-		case <-release:
-		case <-r.Context().Done():
-		}
-		w.WriteHeader(http.StatusInternalServerError)
-	}))
-	defer server.Close()
 	defer close(release)
+	// Each subtest gets its own server so a late request from one can't signal the other.
+	newServer := func(arrived chan<- struct{}) *httptest.Server {
+		server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if arrived != nil {
+				select {
+				case arrived <- struct{}{}:
+				default:
+				}
+			}
+			select {
+			case <-release:
+			case <-r.Context().Done():
+			}
+			w.WriteHeader(http.StatusInternalServerError)
+		}))
+		t.Cleanup(server.Close)
+		return server
+	}
 	png := mediaInput(t, mediatest.PNG(2, 2, nil))
 
 	t.Run("per attempt timeout is transient", func(t *testing.T) {
-		client := newServerClient(t, server, policy, voyage.ClientConfig{Timeout: 50 * time.Millisecond, MaxRetries: 1})
+		client := newServerClient(t, newServer(nil), policy, voyage.ClientConfig{Timeout: 50 * time.Millisecond, MaxRetries: 1})
 		_, err := client.EmbedDocuments(t.Context(), []voyage.Input{{Parts: []voyage.Part{{Media: png}}}}, fullAuthorizations(t, policy))
 		require.ErrorIs(t, err, voyage.ErrTransientResponse)
 		assert.True(t, voyage.IsRetryable(err))
 	})
 	t.Run("caller cancellation is reported unchanged", func(t *testing.T) {
-		client := newServerClient(t, server, policy, voyage.ClientConfig{Timeout: time.Minute, MaxRetries: 3})
+		inFlight := make(chan struct{}, 1)
+		client := newServerClient(t, newServer(inFlight), policy, voyage.ClientConfig{Timeout: time.Minute, MaxRetries: 3})
 		ctx, cancel := context.WithCancel(t.Context())
-		inFlight := make(chan struct{})
-		arrived.Store(&inFlight)
 		defer cancel()
 		go func() {
 			select {
