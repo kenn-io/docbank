@@ -77,6 +77,7 @@ func (s *Store) RenditionJobErrorRetryable(err error) bool {
 // immutable shared build identity.
 type RenditionJobRequest struct {
 	ContentVersionID       string
+	SourceGrant            *SourceGrantBinding
 	Profile                ProcessingProfileRecord
 	CapturedArtifactPolicy jsontext.Value
 	ExecutionIdentity      document.RenditionExecutionIdentityV1
@@ -113,6 +114,7 @@ type RenditionJobWaiter struct {
 	AuthorizationGrantID         string
 	AuthorizationIncarnationID   string
 	AuthorizationRevocationFence int64
+	SourceGrant                  *SourceGrantBinding
 }
 
 // RenditionJobClaim is the worker-only fenced lease. ResumeHandle is opaque
@@ -193,6 +195,10 @@ func (s *Store) EnqueueRenditionJob(
 	if err := validateUUIDv4(request.ContentVersionID); err != nil {
 		return RenditionJob{}, RenditionJobWaiter{}, fmt.Errorf(
 			"enqueueing rendition job: content version: %w", ErrNotFound)
+	}
+	sourceGrantJSON, sourceGrantDigest, err := encodeSourceGrantBinding(request.SourceGrant, request.ContentVersionID)
+	if err != nil {
+		return RenditionJob{}, RenditionJobWaiter{}, fmt.Errorf("enqueueing rendition job: %w", err)
 	}
 
 	var job RenditionJob
@@ -325,23 +331,26 @@ func (s *Store) EnqueueRenditionJob(
 			authority.inputsJSON, authority.retainedJSON, admissionAuthorization.GrantID,
 			admissionAuthorization.ProcessingIncarnationID,
 			strconv.FormatInt(admissionAuthorization.RevocationFence, 10))
+		if sourceGrantDigest != "" {
+			waiterID = renditionScopedID("waiter-source-grant", waiterID, sourceGrantDigest)
+		}
 		attachmentID := RenditionAttachmentID(jobID, request.ContentVersionID,
 			profile.Fingerprint)
 		waiterResult, err := tx.ExecContext(ctx, `
 			INSERT INTO rendition_job_waiters(
 				waiter_id,job_id,content_version_id,profile_fingerprint,principal,scope,
 				disclosure_fingerprint,input_classes_json,retained_classes_json,
-				authorization_grant_id,authorization_incarnation_id,authorization_revocation_fence,
+				authorization_grant_id,authorization_incarnation_id,authorization_revocation_fence,source_grant_json,
 				state,failure_code,
 				attachment_id,created_at,updated_at
-			) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,'waiting',NULL,?,?,?)
+			) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,'waiting',NULL,?,?,?)
 			ON CONFLICT(waiter_id) DO UPDATE SET
 				state='waiting',failure_code=NULL,updated_at=excluded.updated_at`,
 			waiterID, jobID, request.ContentVersionID, profile.Fingerprint,
 			authority.principal, authority.scope, authority.disclosure,
 			authority.inputsJSON, authority.retainedJSON, admissionAuthorization.GrantID,
 			admissionAuthorization.ProcessingIncarnationID,
-			admissionAuthorization.RevocationFence, attachmentID, now, now)
+			admissionAuthorization.RevocationFence, sourceGrantJSON, attachmentID, now, now)
 		if err != nil {
 			return fmt.Errorf("joining rendition job: %w", err)
 		}
@@ -1326,6 +1335,14 @@ type renditionJobWaiterAuthority struct {
 func (s *Store) PublishRenditionJob(
 	ctx context.Context, claim RenditionJobClaim, at time.Time,
 ) (RenditionJobPublication, error) {
+	return s.PublishRenditionJobWithSourceGrant(ctx, claim, at, nil)
+}
+
+// PublishRenditionJobWithSourceGrant reauthorizes every scoped waiter at the
+// durable publication boundary. A missing authority fails closed.
+func (s *Store) PublishRenditionJobWithSourceGrant(
+	ctx context.Context, claim RenditionJobClaim, at time.Time, authorizer SourceGrantAuthorizer,
+) (RenditionJobPublication, error) {
 	publication := RenditionJobPublication{JobID: claim.JobID}
 	var publicationErr error
 	err := s.withStorageTx(ctx, func(tx *sql.Tx) error {
@@ -1387,8 +1404,16 @@ func (s *Store) PublishRenditionJob(
 			code RenditionFailureCode
 		}
 		rejected := make([]rejectedWaiter, 0)
+		sourceGrantDenied := false
 		for _, waiterID := range waiterIDs {
 			request, err := renditionWaiterAuthorizationTx(ctx, tx, job, waiterID)
+			waiter, waiterErr := loadRenditionJobWaiterTx(ctx, tx, waiterID)
+			if waiterErr != nil {
+				return waiterErr
+			}
+			if err == nil {
+				err = authorizeSourceGrant(ctx, waiter.SourceGrant, waiter.ContentVersionID, at, authorizer)
+			}
 			if err == nil && executionIdentity.Upload.InputBinding != "" {
 				var visible bool
 				visible, err = mediaInputBindingVisibleForSourceTx(ctx, tx, request.Principal,
@@ -1407,8 +1432,11 @@ func (s *Store) PublishRenditionJob(
 			}
 			if err != nil {
 				code := RenditionFailureConsent
-				if errors.Is(err, ErrRenditionJobStaleAuthority) {
+				if errors.Is(err, ErrRenditionJobStaleAuthority) || errors.Is(err, ErrSourceGrantUnavailable) {
 					code = RenditionFailureStaleAuthority
+					if errors.Is(err, ErrSourceGrantUnavailable) {
+						sourceGrantDenied = true
+					}
 				} else if !errors.Is(err, ErrProcessingConsentRequired) &&
 					!errors.Is(err, ErrProcessingConsentExpired) &&
 					!errors.Is(err, ErrProcessingConsentRevoked) {
@@ -1416,10 +1444,6 @@ func (s *Store) PublishRenditionJob(
 				}
 				rejected = append(rejected, rejectedWaiter{waiterID, code})
 				continue
-			}
-			waiter, err := loadRenditionJobWaiterTx(ctx, tx, waiterID)
-			if err != nil {
-				return err
 			}
 			profile, err := loadProcessingProfile(ctx, tx, waiter.ProfileFingerprint)
 			if err != nil {
@@ -1443,6 +1467,9 @@ func (s *Store) PublishRenditionJob(
 		}
 		if len(authorized) == 0 {
 			publicationErr = ErrProcessingConsentRequired
+			if sourceGrantDenied {
+				publicationErr = ErrSourceGrantUnavailable
+			}
 			return nil
 		}
 		pairs := make([]renditionPublicationPair, 0, len(authorized))
@@ -1629,14 +1656,15 @@ func loadRenditionJobWaiterTx(
 ) (RenditionJobWaiter, error) {
 	var waiter RenditionJobWaiter
 	var failure sql.NullString
+	var sourceGrantJSON sql.NullString
 	err := query.QueryRowContext(ctx, `
 		SELECT waiter_id,job_id,content_version_id,profile_fingerprint,attachment_id,state,failure_code,
-		       authorization_grant_id,authorization_incarnation_id,authorization_revocation_fence
+		       authorization_grant_id,authorization_incarnation_id,authorization_revocation_fence,source_grant_json
 		FROM rendition_job_waiters WHERE waiter_id=?`, id).Scan(
 		&waiter.ID, &waiter.JobID, &waiter.ContentVersionID,
 		&waiter.ProfileFingerprint, &waiter.AttachmentID, &waiter.State, &failure,
 		&waiter.AuthorizationGrantID,
-		&waiter.AuthorizationIncarnationID, &waiter.AuthorizationRevocationFence)
+		&waiter.AuthorizationIncarnationID, &waiter.AuthorizationRevocationFence, &sourceGrantJSON)
 	if errors.Is(err, sql.ErrNoRows) {
 		return RenditionJobWaiter{}, ErrNotFound
 	}
@@ -1645,6 +1673,12 @@ func loadRenditionJobWaiterTx(
 	}
 	if !validRenditionWaiterState(waiter.State) {
 		return RenditionJobWaiter{}, errors.New("rendition job waiter has invalid durable state")
+	}
+	if sourceGrantJSON.Valid {
+		waiter.SourceGrant, err = decodeSourceGrantBinding(sourceGrantJSON.String, waiter.ContentVersionID)
+		if err != nil {
+			return RenditionJobWaiter{}, err
+		}
 	}
 	waiter.FailureCode = RenditionFailureCode(failure.String)
 	return waiter, nil

@@ -33,8 +33,9 @@ func (e *ProcessingSourceFenceScopeError) Unwrap() error {
 
 // ProcessingSourceFenceRequest selects exactly one explicit or metadata-filter mode.
 type ProcessingSourceFenceRequest struct {
-	ContentVersionIDs []string
-	Filters           *SearchOptions
+	ContentVersionIDs   []string
+	Filters             *SearchOptions
+	AuthorizedSourceIDs []string
 }
 
 // ProcessingSourceFenceResolution is exact current/live authority from one read snapshot.
@@ -76,7 +77,7 @@ func (s *Store) ResolveProcessingSourceFence(
 		return ProcessingSourceFenceResolution{}, fmt.Errorf(
 			"%w: metadata filters cannot contain a source fence", ErrInvalidProcessingSourceFence)
 	}
-	return s.resolveFilteredProcessingSourceFence(ctx, *request.Filters)
+	return s.resolveFilteredProcessingSourceFence(ctx, *request.Filters, request.AuthorizedSourceIDs)
 }
 
 func (s *Store) resolveExplicitProcessingSourceFence(
@@ -132,14 +133,14 @@ func (s *Store) resolveExplicitProcessingSourceFence(
 }
 
 func (s *Store) resolveFilteredProcessingSourceFence(
-	ctx context.Context, filters SearchOptions,
+	ctx context.Context, filters SearchOptions, authorizedSourceIDs []string,
 ) (ProcessingSourceFenceResolution, error) {
 	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
 	if err != nil {
 		return ProcessingSourceFenceResolution{}, fmt.Errorf("starting source-fence snapshot: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }()
-	resolved, err := s.resolveFilteredProcessingSourceFenceSnapshot(ctx, tx, filters)
+	resolved, err := s.resolveFilteredProcessingSourceFenceSnapshot(ctx, tx, filters, authorizedSourceIDs)
 	if err != nil {
 		return ProcessingSourceFenceResolution{}, err
 	}
@@ -150,9 +151,12 @@ func (s *Store) resolveFilteredProcessingSourceFence(
 }
 
 func (s *Store) resolveFilteredProcessingSourceFenceSnapshot(
-	ctx context.Context, snapshot *sql.Tx, filters SearchOptions,
+	ctx context.Context, snapshot *sql.Tx, filters SearchOptions, authorizedSourceIDs []string,
 ) (ProcessingSourceFenceResolution, error) {
-	normalized, err := s.normalizeSearchOptionsWithQuerier(ctx, snapshot, filters)
+	// Scoped callers must not learn whether a tag or directory exists outside
+	// their source fence. The filtered query treats inaccessible selectors and
+	// missing selectors identically, while intrinsic filter validation remains.
+	normalized, err := s.normalizeSearchOptionsWithQuerier(ctx, snapshot, filters, authorizedSourceIDs == nil)
 	if err != nil {
 		if errors.Is(err, ErrNotFound) || errors.Is(err, ErrNotDir) {
 			return ProcessingSourceFenceResolution{}, err
@@ -161,6 +165,14 @@ func (s *Store) resolveFilteredProcessingSourceFenceSnapshot(
 			ErrInvalidProcessingSourceFence, err)
 	}
 	filterSQL, args := searchFilterSQL(normalized)
+	if authorizedSourceIDs != nil {
+		encoded, err := json.Marshal(authorizedSourceIDs)
+		if err != nil {
+			return ProcessingSourceFenceResolution{}, fmt.Errorf("encoding authorized source fence: %w", err)
+		}
+		filterSQL += ` AND cv.version_id IN (SELECT value FROM json_each(?))`
+		args = append(args, string(encoded))
+	}
 	var observed int
 	if err := snapshot.QueryRowContext(ctx, `SELECT COUNT(*) FROM `+nodeFrom+`
 		WHERE n.kind='file' AND n.trashed_at IS NULL `+filterSQL, args...).Scan(&observed); err != nil {

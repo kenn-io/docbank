@@ -6,7 +6,9 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
+	sdkmcp "github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/internal/api"
@@ -58,6 +60,35 @@ func TestRenditionResourceTemplatePinsRFC6570Window(t *testing.T) {
 		"docbank://vaults/{vault_id}/documents/{node_id}/versions/{content_version_id}/renditions/{attachment_id}{?offset,max_chars}",
 		renditionResourceTemplate,
 	)
+}
+
+func TestRenditionResourceDoesNotPublishTextAfterGrantRevocationDuringRead(t *testing.T) {
+	now := time.Date(2026, 9, 22, 12, 0, 0, 0, time.UTC)
+	principal := api.Principal{SubjectID: "subject:resource-read", CredentialKind: "machine",
+		Audience: "docbank:test", Operations: []api.Operation{api.OperationRead},
+		SourceIDs: []string{testVersionID}, GrantRevision: 1, ExpiresAt: now.Add(time.Hour)}
+	authority := &mcpGrantAuthority{grant: principal}
+	policy := newOperationPolicy(api.NewOperationPolicy(api.OperationPolicyOptions{
+		Authority: authority, Now: func() time.Time { return now },
+	}), principal)
+	daemon := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		authority.mutate(func(grant *api.Principal) { grant.GrantRevision++ })
+		writeDaemonJSON(t, response, api.RenditionTextWindow{VaultID: testVaultID, NodeID: 7,
+			ContentVersionID: testVersionID, AttachmentID: testAttachmentID,
+			BuildID: testBuildID, ProfileFingerprint: testProfileID, Text: "synthetic-secret",
+			MediaType: "text/markdown", Checksum: strings.Repeat("d", 64),
+			RequestedOffset: 0, ActualStart: 0, ActualEnd: len("synthetic-secret"),
+			NextOffset: len("synthetic-secret"), EOF: true, ResponseBytes: len("synthetic-secret")})
+	}))
+	t.Cleanup(daemon.Close)
+	lease := newDaemonLeaseWith(func(context.Context) (*daemonconn.Connection, error) {
+		return daemonconn.New(daemon.URL, "synthetic-key"), nil
+	}, func(*daemonconn.Connection) error { return nil })
+	request := &sdkmcp.ReadResourceRequest{Params: &sdkmcp.ReadResourceParams{URI: canonicalTestRenditionURI()}}
+	result, err := renditionResourceHandler(lease, policy, nil)(t.Context(), request)
+	require.Error(t, err)
+	assert.Nil(t, result, "a revoked grant must not publish rendition text")
+	assert.NotContains(t, err.Error(), "synthetic-secret")
 }
 
 func TestServerRegistersReadHandlersAndEmptyResourceCatalog(t *testing.T) {

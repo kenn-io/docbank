@@ -31,9 +31,12 @@ func browserSessionRequest(ctx context.Context) bool {
 	return authentication == "browser"
 }
 
-// timeout-exempt: long-running maintenance, integrity reads, bulk ingest, and
-// export preparation.
+// timeout-exempt: long-running maintenance, integrity reads, bulk ingest,
+// export preparation, and model provisioning.
 func timeoutExempt(method, path string) bool {
+	if method == http.MethodPost && path == "/api/v1/models/provisions" {
+		return true
+	}
 	switch path {
 	case "/api/v1/ingest", "/api/v1/ingest/stream", "/api/v1/ingest/preflight", "/api/v1/packages/preflights", "/api/v1/gc", "/api/v1/verify", "/api/v1/audit/verify", "/api/v1/trash/empty",
 		"/api/v1/processing/jobs", "/api/v1/derivatives/purge-jobs",
@@ -181,7 +184,7 @@ func writeError(w http.ResponseWriter, e *Error) {
 // keyless bypass: NewServer refuses to build a server with an empty key
 // (the offline OpenAPI-document path is the only caller that doesn't serve
 // requests, and it supplies a placeholder key), so key is always set here.
-func authMiddleware(next http.Handler, key string, sessions *webSessionRegistry, masterOwner string) http.Handler {
+func authMiddleware(next http.Handler, key string, sessions *webSessionRegistry, masterOwner string, authenticators ...PrincipalAuthenticator) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if authExempt(r.URL.Path) {
 			next.ServeHTTP(w, r)
@@ -194,8 +197,26 @@ func authMiddleware(next http.Handler, key string, sessions *webSessionRegistry,
 		if subtle.ConstantTimeCompare([]byte(got), []byte(key)) == 1 {
 			ctx := context.WithValue(r.Context(), authenticationContextKey{}, "master")
 			ctx = context.WithValue(ctx, workspaceSnapshotOwnerContextKey{}, masterOwner)
+			ctx = ContextWithPrincipal(ctx, LocalAdminPrincipal())
 			next.ServeHTTP(w, r.WithContext(ctx))
 			return
+		}
+		if len(authenticators) > 0 && authenticators[0] != nil {
+			if principal, ok := authenticators[0](r); ok {
+				if principal.Local {
+					writeError(w, NewError(http.StatusUnauthorized, "unauthorized", "invalid scoped credential"))
+					return
+				}
+				if !scopedRequestAllowed(r.Method, r.URL.Path) {
+					writeError(w, NewError(http.StatusNotFound, "not_found", "not found"))
+					return
+				}
+				ctx := context.WithValue(r.Context(), authenticationContextKey{}, principal.CredentialKind)
+				ctx = context.WithValue(ctx, workspaceSnapshotOwnerContextKey{}, operationCacheKey(principal.SubjectID, principal.GrantRevision, OperationRead, nil))
+				ctx = ContextWithPrincipal(ctx, principal)
+				next.ServeHTTP(w, r.WithContext(ctx))
+				return
+			}
 		}
 		webToken := r.Header.Get(WebSessionHeader)
 		if owner, sessionCtx, ok := sessions.authenticate(webToken); sessions != nil && ok {
@@ -210,6 +231,9 @@ func authMiddleware(next http.Handler, key string, sessions *webSessionRegistry,
 			defer cancel()
 			ctx = context.WithValue(ctx, authenticationContextKey{}, "browser")
 			ctx = context.WithValue(ctx, workspaceSnapshotOwnerContextKey{}, owner)
+			principal := LocalAdminPrincipal()
+			principal.SubjectID, principal.CredentialKind = "browser:"+owner, "local_browser"
+			ctx = ContextWithPrincipal(ctx, principal)
 			next.ServeHTTP(w, r.WithContext(ctx))
 			return
 		}

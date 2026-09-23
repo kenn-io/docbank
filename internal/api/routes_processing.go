@@ -40,9 +40,38 @@ func registerProcessingRoutes(api huma.API, d Deps) {
 				MIMEType: input.Body.Filters.MIMEType, UnderNodeID: input.Body.Filters.UnderNodeID,
 				ModifiedSince: input.Body.Filters.ModifiedSince, ModifiedBefore: input.Body.Filters.ModifiedBefore}
 		}
+		ids := input.Body.ContentVersionIDs
+		var authorizedIDs []string
+		if principal, ok := PrincipalFromContext(ctx); ok && !principal.Local {
+			var decision OperationAuthorization
+			var err error
+			if filters == nil {
+				decision, err = authorizeRequest(ctx, d, OperationRead, ids, false, false)
+				ids = decision.SourceIDs
+			} else {
+				decision, err = authorizeRequest(ctx, d, OperationRead, nil, false, false)
+			}
+			if err != nil {
+				return nil, err
+			}
+			authorizedIDs = append([]string{}, decision.SourceIDs...)
+		}
 		resolved, err := d.Processing.ResolveSourceFence(ctx, processing.SourceFenceResolveRequest{
-			ContentVersionIDs: input.Body.ContentVersionIDs, Filters: filters,
+			ContentVersionIDs: ids, Filters: filters, AuthorizedSourceIDs: authorizedIDs,
+			ExplicitSelection: len(input.Body.ContentVersionIDs) != 0,
 		})
+		if err != nil {
+			return nil, fromProcessingError(err)
+		}
+		// Explicit IDs bound the requested population. The resolved fence is
+		// the exact current/live subset this principal may read.
+		decision, err := authorizeRequest(ctx, d, OperationRead, resolved.Fence.ContentVersionIDs, true, true)
+		if err != nil {
+			return nil, err
+		}
+		resolved.Fence.ContentVersionIDs = decision.SourceIDs
+		resolved.ObservedScopeCount = len(decision.SourceIDs)
+		resolved.FenceFingerprint, err = processing.SourceFenceFingerprint(resolved.Fence)
 		if err != nil {
 			return nil, fromProcessingError(err)
 		}
@@ -81,6 +110,9 @@ func registerProcessingRoutes(api huma.API, d Deps) {
 		if d.Processing == nil {
 			return nil, processingUnavailable()
 		}
+		if _, err := authorizeRequest(ctx, d, OperationProcessing, []string{input.Body.Selector.ContentVersionID}, true, true); err != nil {
+			return nil, err
+		}
 		plan, err := d.Processing.Plan(ctx, processing.Selector{
 			NodeID: input.Body.Selector.NodeID, ContentVersionID: input.Body.Selector.ContentVersionID,
 			Profile: input.Body.Selector.Profile,
@@ -108,10 +140,22 @@ func registerProcessingRoutes(api huma.API, d Deps) {
 		if d.Processing == nil {
 			return nil, processingUnavailable()
 		}
+		decision, err := authorizeRequest(ctx, d, OperationProcessing, []string{input.Body.Selector.ContentVersionID}, true, true)
+		if err != nil {
+			return nil, err
+		}
+		binding, scoped, err := processingStartSourceGrant(ctx, decision, input.Body.Selector.ContentVersionID)
+		if err != nil {
+			return nil, operationHTTPError(err, true)
+		}
+		var sourceGrant *store.SourceGrantBinding
+		if scoped {
+			sourceGrant = &binding
+		}
 		request := processing.StartRequest{
 			Selector: processing.Selector{NodeID: input.Body.Selector.NodeID,
 				ContentVersionID: input.Body.Selector.ContentVersionID, Profile: input.Body.Selector.Profile},
-			PlanFingerprint: input.Body.PlanFingerprint, Consent: input.Body.Consent,
+			PlanFingerprint: input.Body.PlanFingerprint, Consent: input.Body.Consent, SourceGrant: sourceGrant,
 		}
 		started, done := make(chan processing.Job, 1), make(chan startResult, 1)
 		go func() {
@@ -141,6 +185,9 @@ func registerProcessingRoutes(api huma.API, d Deps) {
 			return nil, ctx.Err()
 		}
 		return &huma.StreamResponse{Body: func(hctx huma.Context) {
+			if _, err := authorizeRequest(hctx.Context(), d, OperationProcessing, []string{input.Body.Selector.ContentVersionID}, true, true); err != nil {
+				return
+			}
 			hctx.SetHeader("Content-Type", "application/x-ndjson")
 			hctx.SetHeader("Cache-Control", "no-store")
 			stream := newEventStreamWriter[ProcessingJobEvent](hctx.BodyWriter(), func() {})
@@ -155,6 +202,15 @@ func registerProcessingRoutes(api huma.API, d Deps) {
 				case <-hctx.Context().Done():
 					return
 				}
+			}
+			if _, err := authorizeRequest(hctx.Context(), d, OperationProcessing,
+				[]string{input.Body.Selector.ContentVersionID}, true, true); err != nil {
+				problem, ok := errors.AsType[*Error](err)
+				if !ok {
+					problem = NewError(http.StatusInternalServerError, "internal", "processing status is unavailable")
+				}
+				stream.send(ProcessingJobEvent{Sequence: 2, Type: "error", Error: problem, Terminal: true})
+				return
 			}
 			status, statusErr := d.Processing.Status(hctx.Context(), first.ID)
 			if result.job.ID == "" {
@@ -290,6 +346,9 @@ func registerProcessingRoutes(api huma.API, d Deps) {
 		if err != nil {
 			return nil, fromProcessingError(err)
 		}
+		if _, err := authorizeRequest(ctx, d, OperationProcessing, []string{status.ContentVersionID}, true, true); err != nil {
+			return nil, err
+		}
 		return &statusOutput{Body: fromProcessingStatus(status)}, nil
 	})
 
@@ -301,6 +360,9 @@ func registerProcessingRoutes(api huma.API, d Deps) {
 	}, func(ctx context.Context, input *renditionWindowInput) (*renditionWindowOutput, error) {
 		if d.Processing == nil {
 			return nil, processingUnavailable()
+		}
+		if _, err := authorizeRequest(ctx, d, OperationRead, []string{input.Body.ContentVersionID}, true, true); err != nil {
+			return nil, err
 		}
 		window, err := d.Processing.RenditionTextWindow(ctx, processing.RenditionWindowRequest{
 			VaultUID: input.Body.VaultID, NodeID: input.Body.NodeID,
@@ -345,10 +407,14 @@ func registerProcessingRoutes(api huma.API, d Deps) {
 		if err != nil {
 			return nil, fromProcessingError(err)
 		}
-		if input.Range != "" {
-			return renditionRangeStream(rendition, input.Range)
+		if _, err := authorizeRequest(ctx, d, OperationRead, []string{rendition.ContentVersionID}, true, true); err != nil {
+			_ = rendition.Reader.Close()
+			return nil, err
 		}
-		return renditionStream(rendition), nil
+		if input.Range != "" {
+			return renditionRangeStream(d, rendition, input.Range)
+		}
+		return renditionStream(d, rendition), nil
 	})
 
 	type renditionSelectInput struct{ Body RenditionSelectorRequest }
@@ -360,6 +426,9 @@ func registerProcessingRoutes(api huma.API, d Deps) {
 		if d.Processing == nil {
 			return nil, processingUnavailable()
 		}
+		if _, err := authorizeRequest(ctx, d, OperationRead, []string{input.Body.Selector.ContentVersionID}, true, true); err != nil {
+			return nil, err
+		}
 		rendition, err := d.Processing.Rendition(ctx, processing.Selector{
 			NodeID: input.Body.Selector.NodeID, ContentVersionID: input.Body.Selector.ContentVersionID,
 			Profile: input.Body.Selector.Profile,
@@ -367,7 +436,11 @@ func registerProcessingRoutes(api huma.API, d Deps) {
 		if err != nil {
 			return nil, fromProcessingError(err)
 		}
-		return renditionStream(rendition), nil
+		if _, err := authorizeRequest(ctx, d, OperationRead, []string{rendition.ContentVersionID}, true, true); err != nil {
+			_ = rendition.Reader.Close()
+			return nil, err
+		}
+		return renditionStream(d, rendition), nil
 	})
 
 	type coverageOutput struct{ Body CoverageReport }
@@ -382,8 +455,12 @@ func registerProcessingRoutes(api huma.API, d Deps) {
 		if d.Processing == nil {
 			return nil, processingUnavailable()
 		}
+		decision, err := authorizeRequest(ctx, d, OperationAnalyze, input.ContentVersionIDs, false, false)
+		if err != nil {
+			return nil, err
+		}
 		report, err := d.Processing.Coverage(ctx, input.Profile, processing.SourceFence{
-			VaultUID: input.VaultUID, ContentVersionIDs: input.ContentVersionIDs})
+			VaultUID: input.VaultUID, ContentVersionIDs: decision.SourceIDs})
 		if err != nil {
 			return nil, fromProcessingError(err)
 		}
@@ -400,10 +477,17 @@ func registerProcessingRoutes(api huma.API, d Deps) {
 		if d.Processing == nil {
 			return nil, processingUnavailable()
 		}
+		if _, err := authorizeRequest(ctx, d, OperationAnalyze, []string{input.Body.Selector.ContentVersionID}, true, true); err != nil {
+			return nil, err
+		}
+		decision, err := authorizeRequest(ctx, d, OperationAnalyze, input.Body.Fence.ContentVersionIDs, false, false)
+		if err != nil {
+			return nil, err
+		}
 		report, err := d.Processing.FindSimilar(ctx, processing.SimilarRequest{
 			Selector:  processing.Selector{NodeID: input.Body.Selector.NodeID, ContentVersionID: input.Body.Selector.ContentVersionID, Profile: input.Body.Selector.Profile},
 			BindingID: input.Body.BindingID, Limit: input.Body.Limit,
-			Fence: processing.SourceFence{VaultUID: input.Body.Fence.VaultUID, ContentVersionIDs: input.Body.Fence.ContentVersionIDs}})
+			Fence: processing.SourceFence{VaultUID: input.Body.Fence.VaultUID, ContentVersionIDs: decision.SourceIDs}})
 		if errors.Is(err, store.ErrVectorIndexSourceStale) {
 			return nil, NewError(http.StatusConflict, "stale_index", "vector index source changed")
 		}
@@ -439,12 +523,16 @@ func registerProcessingRoutes(api huma.API, d Deps) {
 		if d.Processing == nil {
 			return nil, processingUnavailable()
 		}
+		decision, err := authorizeRequest(ctx, d, OperationAnalyze, input.Body.Fence.ContentVersionIDs, false, false)
+		if err != nil {
+			return nil, err
+		}
 		report, err := d.Processing.Search(ctx, processing.SearchRequest{Query: input.Body.Query,
 			Mode: input.Body.Mode, Limit: input.Body.Limit, Profile: input.Body.Profile,
 			BindingID: input.Body.BindingID, Explain: input.Body.Explain,
 			Rerank: input.Body.Rerank,
 			Fence: processing.SourceFence{VaultUID: input.Body.Fence.VaultUID,
-				ContentVersionIDs: input.Body.Fence.ContentVersionIDs}})
+				ContentVersionIDs: decision.SourceIDs}})
 		if err != nil {
 			return nil, fromProcessingError(err)
 		}
@@ -475,22 +563,26 @@ func processingUnavailable() error {
 	return NewError(http.StatusServiceUnavailable, "processing_unavailable", "document processing is not configured")
 }
 
-func renditionStream(rendition processing.Rendition) *huma.StreamResponse {
+func renditionStream(d Deps, rendition processing.Rendition) *huma.StreamResponse {
 	return &huma.StreamResponse{Body: func(ctx huma.Context) {
 		defer func() { _ = rendition.Reader.Close() }()
+		if !streamBodyAuthorized(ctx, d, rendition.ContentVersionID) {
+			return
+		}
 		ctx.SetHeader("Content-Type", "text/markdown; charset=utf-8")
 		ctx.SetHeader("Cache-Control", "no-store")
 		ctx.SetHeader("Accept-Ranges", "bytes")
 		setRenditionHeaders(ctx, rendition)
 		ctx.SetHeader("Trailer", "Content-Digest")
 		hash := sha256.New()
-		if _, err := io.Copy(ctx.BodyWriter(), io.TeeReader(rendition.Reader, hash)); err == nil {
+		if err := copyAuthorizedStream(ctx.Context(), d, rendition.ContentVersionID,
+			ctx.BodyWriter(), rendition.Reader, hash); err == nil {
 			ctx.SetHeader("Content-Digest", "sha-256=:"+base64.StdEncoding.EncodeToString(hash.Sum(nil))+":")
 		}
 	}}
 }
 
-func renditionRangeStream(rendition processing.Rendition, requested string) (*huma.StreamResponse, error) {
+func renditionRangeStream(d Deps, rendition processing.Rendition, requested string) (*huma.StreamResponse, error) {
 	data, readErr := io.ReadAll(io.LimitReader(rendition.Reader, rendition.Size+1))
 	verifyErr := rendition.Reader.Verify()
 	closeErr := rendition.Reader.Close()
@@ -504,6 +596,9 @@ func renditionRangeStream(rendition processing.Rendition, requested string) (*hu
 	}
 	selected := data[start:end]
 	return &huma.StreamResponse{Body: func(ctx huma.Context) {
+		if !streamBodyAuthorized(ctx, d, rendition.ContentVersionID) {
+			return
+		}
 		ctx.SetHeader("Content-Type", "text/markdown; charset=utf-8")
 		ctx.SetHeader("Cache-Control", "no-store")
 		ctx.SetHeader("Accept-Ranges", "bytes")
@@ -512,8 +607,10 @@ func renditionRangeStream(rendition processing.Rendition, requested string) (*hu
 		ctx.SetHeader("Trailer", "Content-Digest")
 		ctx.SetStatus(http.StatusPartialContent)
 		hash := sha256.Sum256(selected)
-		_, _ = ctx.BodyWriter().Write(selected)
-		ctx.SetHeader("Content-Digest", "sha-256=:"+base64.StdEncoding.EncodeToString(hash[:])+":")
+		if _, err := (sourceGrantWriter{ctx: ctx.Context(), deps: d,
+			sourceID: rendition.ContentVersionID, dest: ctx.BodyWriter()}).Write(selected); err == nil {
+			ctx.SetHeader("Content-Digest", "sha-256=:"+base64.StdEncoding.EncodeToString(hash[:])+":")
+		}
 	}}, nil
 }
 
@@ -693,6 +790,31 @@ func fromProcessingPlan(plan processing.Plan) ProcessingPlan {
 				RetainedArtifactRoles: hop.RuntimeDisclosure.RetainedArtifactRoles}}
 	}
 	return result
+}
+
+func processingStartSourceGrant(ctx context.Context, decision OperationAuthorization,
+	sourceID string,
+) (store.SourceGrantBinding, bool, error) {
+	principal, ok := PrincipalFromContext(ctx)
+	if !ok || len(decision.SourceIDs) != 1 || decision.SourceIDs[0] != sourceID {
+		return store.SourceGrantBinding{}, false, ErrOperationDenied
+	}
+	if principal.Local {
+		if !decision.Unrestricted {
+			return store.SourceGrantBinding{}, false, ErrOperationDenied
+		}
+		return store.SourceGrantBinding{}, false, nil
+	}
+	if decision.Unrestricted || decision.GrantRevision == 0 ||
+		decision.GrantRevision != principal.GrantRevision || principal.SubjectID == "" ||
+		principal.CredentialKind == "" || principal.Audience == "" || principal.ExpiresAt.IsZero() {
+		return store.SourceGrantBinding{}, false, ErrOperationDenied
+	}
+	return store.SourceGrantBinding{
+		SubjectID: principal.SubjectID, CredentialKind: principal.CredentialKind,
+		Audience: principal.Audience, GrantRevision: decision.GrantRevision,
+		ExpiresAt: principal.ExpiresAt, SourceID: sourceID,
+	}, true, nil
 }
 
 func fromProcessingError(err error) error {

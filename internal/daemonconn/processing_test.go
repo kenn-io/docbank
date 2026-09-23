@@ -684,7 +684,7 @@ func TestProcessingClientValidatesSourceFenceResponseAuthority(t *testing.T) {
 	assert.Equal(t, valid, result)
 }
 
-func TestProcessingClientBindsExplicitFenceResponseToRequestedIDs(t *testing.T) {
+func TestProcessingClientAcceptsOnlyRequestedExplicitFenceSubset(t *testing.T) {
 	const (
 		vaultID  = "11111111-1111-4111-8111-111111111111"
 		firstID  = "22222222-2222-4222-8222-222222222222"
@@ -699,9 +699,32 @@ func TestProcessingClientBindsExplicitFenceResponseToRequestedIDs(t *testing.T) 
 		}))
 	}))
 	t.Cleanup(server.Close)
-	_, err := daemonconn.New(server.URL, serverKey).ResolveDocumentSourceFence(t.Context(),
+	resolved, err := daemonconn.New(server.URL, serverKey).ResolveDocumentSourceFence(t.Context(),
 		api.DocumentSourceFenceResolveRequest{ContentVersionIDs: []string{secondID, firstID}})
-	require.ErrorContains(t, err, "explicit source authority changed")
+	require.NoError(t, err)
+	require.Equal(t, []string{firstID}, resolved.Fence.ContentVersionIDs)
+	require.Equal(t, 1, resolved.ObservedScopeCount)
+}
+
+func TestProcessingClientRejectsUnrequestedExplicitFenceID(t *testing.T) {
+	const (
+		vaultID  = "11111111-1111-4111-8111-111111111111"
+		firstID  = "22222222-2222-4222-8222-222222222222"
+		secondID = "33333333-3333-4333-8333-333333333333"
+	)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		assert.NoError(t, json.MarshalWrite(w, api.DocumentSourceFenceResolution{
+			Fence: api.ResolvedDocumentSourceFence{VaultUID: vaultID,
+				ContentVersionIDs: []string{firstID, secondID}},
+			FenceFingerprint:   "sha256:3c2a6756783fd03230bb89fe15de79ba10b3a6c1511d56be4042994e66d707cc",
+			ObservedScopeCount: 2,
+		}))
+	}))
+	t.Cleanup(server.Close)
+	_, err := daemonconn.New(server.URL, serverKey).ResolveDocumentSourceFence(t.Context(),
+		api.DocumentSourceFenceResolveRequest{ContentVersionIDs: []string{firstID}})
+	require.ErrorContains(t, err, "explicit source authority widened")
 }
 
 func TestProcessingClientSortsClonedExplicitFenceIDsBeforeTransmission(t *testing.T) {

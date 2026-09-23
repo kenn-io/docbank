@@ -305,6 +305,53 @@ func TestEmbeddingJobsRebuildFromPortableAuthorityAfterMetadataRestore(t *testin
 		"restore rebuilds both the operational job and its vault-local lease sequence")
 }
 
+func TestScopedEmbeddingGenerationDoesNotReconcileAsLocalAfterRestore(t *testing.T) {
+	source, versionID, profile, _ := newEmbeddingCatalogFixture(t)
+	record := embeddingSetFixture(source, versionID, profile.Fingerprint,
+		document.EmbeddingInputOriginalFile, "optional", "")
+	binding := workerOptionalEmbeddingBinding(t, profile)
+	consent := ProviderOperationAuthorizationRequest{Principal: "operator:synthetic", Scope: "embedding:synthetic",
+		ProfileFingerprint: profile.Fingerprint, DisclosureFingerprint: binding.DisclosureFingerprint,
+		InputClasses: []string{string(binding.InputKind)}, RetainedArtifactClasses: []string{"embedding_vector_set"}}
+	_, err := source.GrantConsent(t.Context(), ProcessingConsentGrantRequest{Principal: consent.Principal,
+		Scope: consent.Scope, ProfileFingerprint: consent.ProfileFingerprint,
+		DisclosureFingerprint: consent.DisclosureFingerprint, InputClasses: consent.InputClasses,
+		RetainedArtifactClasses: consent.RetainedArtifactClasses})
+	require.NoError(t, err)
+	_, err = source.EnqueueEmbeddingJob(t.Context(), EmbeddingJobRequest{ContentVersionID: versionID,
+		Profile: profile, BindingID: binding.Name, Descriptor: record.VectorSpace.Descriptor,
+		InputGeneration: record.InputGeneration, Authorization: consent,
+		SourceGrant: &SourceGrantBinding{SubjectID: "synthetic:reader", CredentialKind: "test",
+			Audience: "docbank:test", GrantRevision: 4, ExpiresAt: time.Now().UTC().Add(time.Hour),
+			SourceID: versionID}})
+	require.NoError(t, err)
+	var metadata bytes.Buffer
+	require.NoError(t, source.ExportMetadata(t.Context(), &metadata))
+	restored := newTestStore(t)
+	require.NoError(t, restored.ImportMetadata(t.Context(), bytes.NewReader(metadata.Bytes())))
+	_, err = restored.GrantConsent(t.Context(), ProcessingConsentGrantRequest{Principal: consent.Principal,
+		Scope: consent.Scope, ProfileFingerprint: consent.ProfileFingerprint,
+		DisclosureFingerprint: consent.DisclosureFingerprint, InputClasses: consent.InputClasses,
+		RetainedArtifactClasses: consent.RetainedArtifactClasses})
+	require.NoError(t, err)
+	_, err = restored.ReconcileEmbeddingJobs(t.Context(), EmbeddingReconcileRequest{
+		Mutate: embeddingTestMutation, At: time.Now().UTC(), Limit: 100,
+		DescriptorFingerprints: []string{record.VectorSpace.Descriptor.Fingerprint}})
+	require.NoError(t, err)
+	var jobs int
+	require.NoError(t, restored.db.QueryRow(`SELECT COUNT(*) FROM embedding_jobs WHERE generation_id=?`,
+		record.InputGeneration.ID).Scan(&jobs))
+	require.Zero(t, jobs)
+	newJob, err := restored.EnqueueEmbeddingJob(t.Context(), EmbeddingJobRequest{ContentVersionID: versionID,
+		Profile: profile, BindingID: binding.Name, Descriptor: record.VectorSpace.Descriptor,
+		InputGeneration: record.InputGeneration, Authorization: consent,
+		SourceGrant: &SourceGrantBinding{SubjectID: "synthetic:reader", CredentialKind: "test",
+			Audience: "docbank:test", GrantRevision: 5, ExpiresAt: time.Now().UTC().Add(time.Hour),
+			SourceID: versionID}})
+	require.NoError(t, err)
+	require.NotEmpty(t, newJob.ID, "a fresh exact scoped enqueue remains possible")
+}
+
 func TestEmbeddingJobReconciliationRequiresCurrentAuthorityAndFreshConsent(t *testing.T) {
 	s, versionID, profile, _ := newEmbeddingCatalogFixture(t)
 	request := embeddingJobTestRequest(t, s, versionID, profile, "reconcile")

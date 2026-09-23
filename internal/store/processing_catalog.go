@@ -1144,7 +1144,7 @@ func normalizeCapturedArtifactPolicyV1(raw jsontext.Value) (normalizedCapturedAr
 			"captured artifact policy JSON exceeds %d bytes", maxCapturedArtifactPolicyBytes,
 		)
 	}
-	if err := requireMetadataFields(canonical, []string{"roles", "version"}, nil); err != nil {
+	if err := requireMetadataFields(canonical, []string{"roles", "version"}, nil, nil); err != nil {
 		return normalizedCapturedArtifactPolicyV1{}, fmt.Errorf("captured artifact policy: %w", err)
 	}
 	var wire capturedArtifactPolicyWireV1
@@ -1168,7 +1168,7 @@ func normalizeCapturedArtifactPolicyV1(raw jsontext.Value) (normalizedCapturedAr
 	totalMaximum := 0
 	for index, rawCardinality := range wire.Roles {
 		if err := requireMetadataFields(
-			rawCardinality, []string{"max_count", "min_count", "role"}, nil,
+			rawCardinality, []string{"max_count", "min_count", "role"}, nil, nil,
 		); err != nil {
 			return normalizedCapturedArtifactPolicyV1{}, fmt.Errorf(
 				"captured artifact policy role %d: %w", index, err,

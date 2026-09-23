@@ -104,13 +104,16 @@ func streamContentVersion(
 	}
 	return &huma.StreamResponse{Body: func(hctx huma.Context) {
 		defer func() { _ = f.Close() }()
+		if !streamBodyAuthorized(hctx, d, version.ID) {
+			return
+		}
 		hctx.SetHeader("Content-Type", contentType)
 		hctx.SetHeader(ContentVersionHeader, version.ID)
 		hctx.SetHeader(BlobHashHeader, version.BlobHash)
 		hctx.SetHeader(BlobSizeHeader, strconv.FormatInt(version.Size, 10))
 		hctx.SetHeader("Trailer", "Content-Digest")
 		hash := sha256.New()
-		if _, err := io.Copy(hctx.BodyWriter(), io.TeeReader(f, hash)); err == nil {
+		if err := copyAuthorizedStream(hctx.Context(), d, version.ID, hctx.BodyWriter(), f, hash); err == nil {
 			hctx.SetHeader("Content-Digest", contentDigest(hash.Sum(nil)))
 		}
 	}}, nil
@@ -157,6 +160,9 @@ func registerReadRoutes(api huma.API, d Deps) {
 	}, func(ctx context.Context, in *struct {
 		VersionID string `path:"version_id"`
 	}) (*contentVersionOutput, error) {
+		if _, err := authorizeRequest(ctx, d, OperationRead, []string{in.VersionID}, true, true); err != nil {
+			return nil, err
+		}
 		version, err := d.Store.ContentVersionByID(ctx, in.VersionID)
 		if err != nil {
 			return nil, FromStoreError(err)
@@ -183,6 +189,9 @@ func registerReadRoutes(api huma.API, d Deps) {
 	}, func(ctx context.Context, in *struct {
 		VersionID string `path:"version_id"`
 	}) (*huma.StreamResponse, error) {
+		if _, err := authorizeRequest(ctx, d, OperationRead, []string{in.VersionID}, true, true); err != nil {
+			return nil, err
+		}
 		version, err := d.Store.ContentVersionByID(ctx, in.VersionID)
 		if err != nil {
 			return nil, FromStoreError(err)

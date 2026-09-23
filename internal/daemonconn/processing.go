@@ -143,8 +143,10 @@ func validateDocumentSourceFenceResolution(
 	if len(request.ContentVersionIDs) != 0 {
 		expected := slices.Clone(request.ContentVersionIDs)
 		slices.Sort(expected)
-		if !slices.Equal(expected, ids) {
-			return errors.New("explicit source authority changed")
+		for _, id := range ids {
+			if _, found := slices.BinarySearch(expected, id); !found {
+				return errors.New("explicit source authority widened")
+			}
 		}
 	}
 	fingerprint, err := processing.SourceFenceFingerprint(processing.SourceFence{

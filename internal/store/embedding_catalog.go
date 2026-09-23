@@ -1440,6 +1440,7 @@ type embeddingCatalogTableSchema struct {
 var embeddingCatalogSchema = []embeddingCatalogTableSchema{
 	{"embedding_vector_spaces", []string{metadataEmbeddingVectorSpaceIDField, "contract_version", "descriptor_json", "provider_descriptor", "provider_revision", "descriptor_fingerprint", "compatibility_id", "dimensions", "metric", "normalization", "scalar_encoding", "document_formatter", "query_formatter", "model_input_fingerprint"}},
 	{"embedding_input_generations", []string{metadataGenerationIDField, "generation_blob_hash", "generation_encoded_size", "generation_checksum", auditSourceVersionIDField, metadataEmbeddingProfileField, "evidence_fingerprint", "tokenizer_fingerprint", "chunk_policy_fingerprint", "formatter_fingerprint", "attachment_context_fingerprint", "attachment_id", "input_count", metadataCreatedAtField}},
+	{"embedding_generation_source_fences", []string{metadataGenerationIDField}},
 	{"embedding_generation_inputs", []string{metadataGenerationIDField, "input_id", "input_order", "rendered_checksum"}},
 	{"embedding_vector_sets", []string{"vector_set_id", "contract_version", metadataEmbeddingVectorSpaceIDField, "payload_blob_hash", "payload_size", "payload_checksum", "manifest_checksum", "row_count", "dimensions"}},
 	{"embedding_vector_rows", []string{"vector_set_id", "row_id", "row_order", "input_id", "dimensions", "checksum"}},

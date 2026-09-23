@@ -74,6 +74,8 @@ type Deps struct {
 	WebURL                string           // fresh per-daemon loopback origin; empty disables browser sessions
 	BlobRegistry          *blob.Registry   // nil keeps storage-registry routes read-only to the primary
 	Processing            *processing.Service
+	OperationPolicy       *OperationPolicy
+	AuthenticatePrincipal PrincipalAuthenticator
 	RequestEmailPDF       func(context.Context, document.EmailPDFRequest) (document.EmailPDFJob, error)
 	PublishEmailDocuments PublishEmailDocumentsFunc
 
@@ -123,6 +125,15 @@ func NewServer(d Deps) *Server {
 	}
 	if d.StartedAt.IsZero() {
 		d.StartedAt = time.Now()
+	}
+	if d.OperationPolicy == nil {
+		d.OperationPolicy = NewOperationPolicy(OperationPolicyOptions{
+			Audit: NewLogOperationAudit(d.Logger),
+		})
+	} else if d.OperationPolicy.audit == nil {
+		policy := *d.OperationPolicy
+		policy.audit = NewLogOperationAudit(d.Logger)
+		d.OperationPolicy = &policy
 	}
 	mux := http.NewServeMux()
 	cfg := huma.DefaultConfig("docbank", version.Version)
@@ -194,8 +205,9 @@ func NewServer(d Deps) *Server {
 	registerPeopleRebuildRoutes(humaAPI, d, g)
 	registerCollectionQualityRoutes(humaAPI, d)
 	registerDuplicateRoutes(humaAPI, d)
-	registerDocumentQueryRoute(humaAPI, newDocumentQueryService(d))
+	registerDocumentQueryRoute(humaAPI, newDocumentQueryService(d), d)
 	registerInfoRoute(humaAPI, d)
+	RegisterCapabilitiesRoute(humaAPI, d)
 	registerFormatRoutes(humaAPI, d)
 	registerMutateRoutes(humaAPI, d, g) // Task 6
 	registerOpsRoutes(humaAPI, d, g)    // Task 7
@@ -240,7 +252,7 @@ func NewServer(d Deps) *Server {
 	registerWebDownload(mux, d.Cfg.Web.Enabled, d, s.webDownloads, s.webSessions, s.termReports)
 
 	h := http.Handler(mux)
-	h = authMiddleware(h, d.Cfg.Server.APIKey, s.webSessions, s.masterOwner)
+	h = authMiddleware(h, d.Cfg.Server.APIKey, s.webSessions, s.masterOwner, d.AuthenticatePrincipal)
 	h = loopbackMiddleware(h)
 	h = timeoutMiddleware(h)
 	h = recoverMiddleware(h, d.Logger)

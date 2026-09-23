@@ -318,6 +318,117 @@ func TestProcessingSourceFenceResolveRouteReturnsNonNullEmptyFence(t *testing.T)
 	assert.Regexp(t, `^sha256:[0-9a-f]{64}$`, resolved.FenceFingerprint)
 }
 
+func TestScopedProcessingSourceFenceHidesUnknownAndStaleOutsideGrant(t *testing.T) {
+	now := time.Date(2026, 9, 22, 12, 0, 0, 0, time.UTC)
+	authority := &routeGrantAuthority{}
+	var allowed, hidden store.Node
+	var staleID string
+	var principal api.Principal
+	ts, catalog := newTestServer(t, func(deps *api.Deps) {
+		configureProcessingTestService(t)(deps)
+		allowed = createPolicyFile(t, deps, "allowed-source.txt", "allowed")
+		hidden = createPolicyFile(t, deps, "hidden-source.txt", "hidden")
+		stale := createPolicyFile(t, deps, "stale-source.txt", "stale")
+		staleID = stale.CurrentVersionID
+		hash, size, err := deps.Blobs.Write(strings.NewReader("replacement"))
+		require.NoError(t, err)
+		_, _, err = deps.Store.ReplaceContent(t.Context(), stale.ID, stale.Revision, hash, size, "text/plain")
+		require.NoError(t, err)
+		principal = routePrincipal(now, allowed.CurrentVersionID)
+		authority.set(principal)
+		deps.OperationPolicy = api.NewOperationPolicy(api.OperationPolicyOptions{
+			Authority: authority, Now: func() time.Time { return now },
+		})
+		deps.AuthenticatePrincipal = policyRouteAuthenticator(&principal)
+	})
+	headers := policyRouteHeaders()
+	var hiddenResponse string
+	for _, id := range []string{hidden.CurrentVersionID, staleID, "33333333-3333-4333-8333-333333333333"} {
+		response, body := do(t, ts, http.MethodPost, "/api/v1/processing/source-fences/resolve", headers,
+			map[string]any{"content_version_ids": []string{id}})
+		require.Equal(t, http.StatusOK, response.StatusCode, body)
+		if hiddenResponse == "" {
+			hiddenResponse = body
+		} else {
+			assert.Equal(t, hiddenResponse, body)
+		}
+		var resolved api.DocumentSourceFenceResolution
+		require.NoError(t, json.Unmarshal([]byte(body), &resolved))
+		assert.Empty(t, resolved.Fence.ContentVersionIDs)
+		assert.Zero(t, resolved.ObservedScopeCount)
+	}
+	response, body := do(t, ts, http.MethodPost, "/api/v1/processing/source-fences/resolve", headers,
+		map[string]any{"filters": map[string]any{}})
+	require.Equal(t, http.StatusOK, response.StatusCode, body)
+	var scoped api.DocumentSourceFenceResolution
+	require.NoError(t, json.Unmarshal([]byte(body), &scoped))
+	assert.Equal(t, []string{allowed.CurrentVersionID}, scoped.Fence.ContentVersionIDs)
+	assert.Equal(t, 1, scoped.ObservedScopeCount)
+	assert.NotContains(t, body, hidden.CurrentVersionID)
+	assert.NotContains(t, body, catalog.DBPath)
+	response, body = do(t, ts, http.MethodPost, "/api/v1/processing/source-fences/resolve", headers,
+		map[string]any{"content_version_ids": []string{hidden.CurrentVersionID}, "filters": map[string]any{}})
+	assert.Equal(t, http.StatusUnprocessableEntity, response.StatusCode, body)
+}
+
+func TestScopedProcessingSourceFenceFiltersHideUnknownAndHiddenSelectorsEqually(t *testing.T) {
+	now := time.Date(2026, 9, 22, 12, 0, 0, 0, time.UTC)
+	authority := &routeGrantAuthority{}
+	var allowed, hidden store.Node
+	var hiddenDir store.Node
+	var hiddenTag store.Tag
+	var principal api.Principal
+	ts, catalog := newTestServer(t, func(deps *api.Deps) {
+		configureProcessingTestService(t)(deps)
+		allowed = createPolicyFile(t, deps, "allowed-filter.txt", "allowed")
+		var err error
+		hiddenDir, err = deps.Store.Mkdir(t.Context(), deps.Store.RootID(), "hidden-filter")
+		require.NoError(t, err)
+		hidden, err = deps.Store.CreateFile(t.Context(), hiddenDir.ID, "hidden.txt",
+			testHash("hidden-filter"), 6, "text/plain")
+		require.NoError(t, err)
+		hiddenTag, err = deps.Store.CreateTag(t.Context(), "hidden-filter-tag")
+		require.NoError(t, err)
+		_, err = deps.Store.AssignTag(t.Context(), hiddenTag.ID, hidden.ID, hidden.Revision)
+		require.NoError(t, err)
+		principal = routePrincipal(now, allowed.CurrentVersionID)
+		authority.set(principal)
+		deps.OperationPolicy = api.NewOperationPolicy(api.OperationPolicyOptions{
+			Authority: authority, Now: func() time.Time { return now },
+		})
+		deps.AuthenticatePrincipal = policyRouteAuthenticator(&principal)
+	})
+	unknownTag := "33333333-3333-4333-8333-333333333333"
+	unknownDirectory := hidden.ID + 1000
+	var emptyResponse string
+	for _, test := range []struct {
+		name    string
+		filters map[string]any
+	}{
+		{name: "hidden tag", filters: map[string]any{"tag_id": hiddenTag.ID}},
+		{name: "unknown tag", filters: map[string]any{"tag_id": unknownTag}},
+		{name: "hidden directory", filters: map[string]any{"under_node_id": hiddenDir.ID}},
+		{name: "hidden file as directory", filters: map[string]any{"under_node_id": hidden.ID}},
+		{name: "unknown directory", filters: map[string]any{"under_node_id": unknownDirectory}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			response, body := do(t, ts, http.MethodPost, "/api/v1/processing/source-fences/resolve",
+				policyRouteHeaders(), map[string]any{"filters": test.filters})
+			require.Equal(t, http.StatusOK, response.StatusCode, body)
+			if emptyResponse == "" {
+				emptyResponse = body
+			} else {
+				assert.Equal(t, emptyResponse, body)
+			}
+			var resolved api.DocumentSourceFenceResolution
+			require.NoError(t, json.Unmarshal([]byte(body), &resolved))
+			assert.Empty(t, resolved.Fence.ContentVersionIDs)
+			assert.Zero(t, resolved.ObservedScopeCount)
+			assert.NotContains(t, body, catalog.DBPath)
+		})
+	}
+}
+
 func TestProcessingSearchValidationMatchesSearchQueryAndProfileErrors(t *testing.T) {
 	ts, catalog := newTestServer(t, configureProcessingTestService(t))
 	node := createFileWithContent(t, ts, catalog, "/search-validation.txt", "synthetic search evidence\n")
@@ -419,6 +530,73 @@ func TestProcessingJobStreamPublishesDurableIdentityAndSurvivesDisconnect(t *tes
 	selector := map[string]any{"node_id": node.ID,
 		"content_version_id": node.CurrentVersionID, "profile": "private"}
 	assertProcessingSurvivesDisconnect(t, ts, selector, provider.started, provider.release)
+}
+
+func TestScopedProcessingStreamRechecksGrantBeforePublishingCompletion(t *testing.T) {
+	now := time.Now().UTC()
+	inner, err := plaintext.New(plaintext.Profile{MaxDocumentBytes: 1 << 20})
+	require.NoError(t, err)
+	provider := &blockingProcessingProvider{
+		inner: inner, started: make(chan struct{}), release: make(chan struct{}),
+	}
+	t.Cleanup(func() { closeProcessingSignal(provider.release) })
+	authority := &routeGrantAuthority{}
+	var node store.Node
+	var principal api.Principal
+	ts, _ := newTestServer(t, func(deps *api.Deps) {
+		configureProcessingTestServiceWithProvider(t, provider)(deps)
+		node = createPolicyFile(t, deps, "scoped-stream.txt", "synthetic scoped stream source")
+		principal = routePrincipal(now, node.CurrentVersionID)
+		principal.Operations = append(principal.Operations, api.OperationProcessing)
+		authority.set(principal)
+		deps.OperationPolicy = api.NewOperationPolicy(api.OperationPolicyOptions{
+			Authority: authority, Now: func() time.Time { return now },
+		})
+		deps.AuthenticatePrincipal = policyRouteAuthenticator(&principal)
+	})
+	headers := policyRouteHeaders()
+	selector := api.ProcessingSelector{
+		NodeID: node.ID, ContentVersionID: node.CurrentVersionID, Profile: "private",
+	}
+	planResponse, planBody := do(t, ts, http.MethodPost, "/api/v1/processing/plans", headers,
+		map[string]any{"selector": selector})
+	require.Equal(t, http.StatusOK, planResponse.StatusCode, planBody)
+	var plan api.ProcessingPlan
+	require.NoError(t, json.Unmarshal([]byte(planBody), &plan))
+	payload, err := json.Marshal(api.StartProcessingRequest{
+		Selector: selector, PlanFingerprint: plan.Fingerprint, Consent: true,
+	})
+	require.NoError(t, err)
+	request, err := http.NewRequest(http.MethodPost, ts.URL+"/api/v1/processing/jobs", bytes.NewReader(payload))
+	require.NoError(t, err)
+	request.Header.Set("Content-Type", "application/json")
+	for key, value := range headers {
+		request.Header.Set(key, value)
+	}
+	response, err := ts.Client().Do(request)
+	require.NoError(t, err)
+	defer func() { _ = response.Body.Close() }()
+	require.Equal(t, http.StatusOK, response.StatusCode)
+	scanner := bufio.NewScanner(response.Body)
+	require.True(t, scanner.Scan())
+	var first api.ProcessingJobEvent
+	require.NoError(t, json.Unmarshal(scanner.Bytes(), &first))
+	require.NotNil(t, first.Job)
+	select {
+	case <-provider.started:
+	case <-time.After(3 * time.Second):
+		t.Fatal("processing provider did not start")
+	}
+
+	authority.mutate(func(grant *api.Principal) { grant.GrantRevision++ })
+	closeProcessingSignal(provider.release)
+	require.True(t, scanner.Scan())
+	var terminal api.ProcessingJobEvent
+	require.NoError(t, json.Unmarshal(scanner.Bytes(), &terminal))
+	assert.True(t, terminal.Terminal)
+	assert.Equal(t, "error", terminal.Type)
+	assert.Nil(t, terminal.Status, "a revoked caller must not receive terminal job status")
+	require.NoError(t, scanner.Err())
 }
 
 func TestEmbeddingOnlyJobSurvivesDisconnectAfterDurableIdentity(t *testing.T) {
@@ -1122,6 +1300,14 @@ func configureProcessingTestServiceWithProviderAndRegistry(t *testing.T,
 			Catalog: deps.Store, Blobs: deps.Blobs, Gate: gate,
 			SpoolDirectory:    filepath.Join(deps.VaultRoot, "blobs", "tmp"),
 			RenditionRuntimes: registry,
+			SourceGrantAuthorizer: store.SourceGrantAuthorizeFunc(func(ctx context.Context,
+				binding store.SourceGrantBinding,
+			) error {
+				if deps.OperationPolicy == nil {
+					return store.ErrSourceGrantUnavailable
+				}
+				return deps.OperationPolicy.AuthorizeSourceGrant(ctx, binding)
+			}),
 			Profiles: map[string]processing.ProfileConfig{"private": {
 				Profile: processingTestProfile(provider.Descriptor()), RenditionProvider: provider,
 			}},

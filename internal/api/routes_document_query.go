@@ -65,7 +65,7 @@ func newDocumentQueryService(deps Deps) *documentQueryService {
 	return service
 }
 
-func registerDocumentQueryRoute(api huma.API, service *documentQueryService) {
+func registerDocumentQueryRoute(api huma.API, service *documentQueryService, d Deps) {
 	type response struct {
 		Body DocumentPage
 	}
@@ -105,6 +105,57 @@ func registerDocumentQueryRoute(api huma.API, service *documentQueryService) {
 		}
 		return &response{Body: wire}, nil
 	})
+	huma.Register(api, huma.Operation{
+		OperationID: "listScopedDocuments", Method: http.MethodPost, Path: "/api/v1/documents/scoped",
+		Summary: "List source-fenced live documents with authenticated keyset pagination",
+	}, func(ctx context.Context, input *struct {
+		Body ScopedDocumentQuery
+	}) (*response, error) {
+		decision, err := authorizeRequest(ctx, d, OperationRead,
+			input.Body.ContentVersionIDs, false, false)
+		if err != nil {
+			return nil, err
+		}
+		// Never turn an empty granted fence into an unrestricted catalog query.
+		if len(decision.SourceIDs) == 0 {
+			query, err := store.NormalizeDocumentCatalogQuery(store.DocumentCatalogQuery{
+				PathPrefix: input.Body.PathPrefix, Sort: store.DocumentCatalogSort(input.Body.Sort),
+				Direction: store.DocumentCatalogDirection(input.Body.Direction), PageSize: input.Body.PageSize,
+			})
+			if err != nil {
+				return nil, FromStoreError(err)
+			}
+			return &response{Body: DocumentPage{PathPrefix: query.PathPrefix,
+				Sort: string(query.Sort), Direction: string(query.Direction),
+				PageSize: query.PageSize, Items: []DocumentSummary{}}}, nil
+		}
+		query, err := store.NormalizeDocumentCatalogQuery(store.DocumentCatalogQuery{
+			PathPrefix: input.Body.PathPrefix, Sort: store.DocumentCatalogSort(input.Body.Sort),
+			Direction: store.DocumentCatalogDirection(input.Body.Direction), PageSize: input.Body.PageSize,
+			SourceIDs: decision.SourceIDs,
+		})
+		if err != nil {
+			return nil, FromStoreError(err)
+		}
+		var boundary *store.DocumentCatalogPosition
+		traversal := store.DocumentCatalogTraversalNext
+		if input.Body.Cursor != "" {
+			position, cursorTraversal, decodeErr := service.decodeCursor(input.Body.Cursor, query)
+			if decodeErr != nil {
+				return nil, FromStoreError(decodeErr)
+			}
+			boundary, traversal = &position, cursorTraversal
+		}
+		page, err := service.store.ListDocuments(ctx, query, boundary, traversal)
+		if err != nil {
+			return nil, FromStoreError(err)
+		}
+		wire, err := service.toDocumentPage(page)
+		if err != nil {
+			return nil, FromStoreError(err)
+		}
+		return &response{Body: wire}, nil
+	})
 	type resolveResponse struct {
 		Body DocumentSummaryResolveResponse
 	}
@@ -114,6 +165,13 @@ func registerDocumentQueryRoute(api huma.API, service *documentQueryService) {
 	}, func(ctx context.Context, input *struct {
 		Body DocumentSummaryResolveRequest
 	}) (*resolveResponse, error) {
+		requested := make([]string, len(input.Body.Identities))
+		for index, identity := range input.Body.Identities {
+			requested[index] = identity.ContentVersionID
+		}
+		if _, err := authorizeRequest(ctx, d, OperationRead, requested, true, true); err != nil {
+			return nil, err
+		}
 		identities := make([]store.DocumentCatalogIdentity, len(input.Body.Identities))
 		for index, identity := range input.Body.Identities {
 			identities[index] = store.DocumentCatalogIdentity{NodeID: identity.NodeID,
@@ -178,8 +236,8 @@ func documentSummariesFromStore(items []store.DocumentSummary) []DocumentSummary
 }
 
 func documentCursorQueryHash(query store.DocumentCatalogQuery) [sha256.Size]byte {
-	return sha256.Sum256([]byte(fmt.Sprintf("%q %s %s %d",
-		query.PathPrefix, query.Sort, query.Direction, query.PageSize)))
+	return sha256.Sum256([]byte(fmt.Sprintf("%q %s %s %d %q",
+		query.PathPrefix, query.Sort, query.Direction, query.PageSize, query.SourceIDs)))
 }
 
 func (service *documentQueryService) encodeCursors(

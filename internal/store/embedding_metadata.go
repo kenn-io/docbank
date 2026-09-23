@@ -14,6 +14,7 @@ import (
 const (
 	metadataEmbeddingVectorSpaceType    = "embedding_vector_space"
 	metadataEmbeddingGenerationType     = "embedding_input_generation"
+	metadataEmbeddingSourceFenceType    = "embedding_generation_source_fence"
 	metadataEmbeddingInputType          = "embedding_generation_input"
 	metadataEmbeddingVectorSetType      = "embedding_vector_set"
 	metadataEmbeddingVectorRowType      = "embedding_vector_row"
@@ -58,6 +59,11 @@ type metadataEmbeddingGeneration struct {
 	AttachmentID                 *string `json:"attachment_id"`
 	InputCount                   int     `json:"input_count"`
 	CreatedAt                    string  `json:"created_at"`
+}
+
+type metadataEmbeddingSourceFence struct {
+	Type         string `json:"type"`
+	GenerationID string `json:"generation_id"`
 }
 
 type metadataEmbeddingInput struct {
@@ -133,6 +139,7 @@ type metadataEmbeddingFailure struct {
 var embeddingMetadataRequiredFields = map[string][]string{
 	metadataEmbeddingVectorSpaceType: {metadataTypeField, metadataEmbeddingVectorSpaceIDField, "contract_version", "descriptor_json", "provider_descriptor", "provider_revision", "descriptor_fingerprint", "compatibility_id", "dimensions", "metric", "normalization", "scalar_encoding", "document_formatter", "query_formatter", "model_input_fingerprint"},
 	metadataEmbeddingGenerationType:  {metadataTypeField, metadataGenerationIDField, "generation_blob_hash", "generation_encoded_size", "generation_checksum", auditSourceVersionIDField, metadataEmbeddingProfileField, "evidence_fingerprint", "tokenizer_fingerprint", "chunk_policy_fingerprint", "formatter_fingerprint", "attachment_context_fingerprint", "attachment_id", "input_count", metadataCreatedAtField},
+	metadataEmbeddingSourceFenceType: {metadataTypeField, metadataGenerationIDField},
 	metadataEmbeddingInputType:       {metadataTypeField, metadataGenerationIDField, "input_id", "order", "rendered_checksum"},
 	metadataEmbeddingVectorSetType:   {metadataTypeField, "vector_set_id", "contract_version", metadataEmbeddingVectorSpaceIDField, "payload_blob_hash", "payload_size", "payload_checksum", "manifest_checksum", "row_count", "dimensions"},
 	metadataEmbeddingVectorRowType:   {metadataTypeField, "vector_set_id", "row_id", "order", "input_id", "dimensions", "checksum"},
@@ -143,7 +150,7 @@ var embeddingMetadataRequiredFields = map[string][]string{
 
 func exportEmbeddingMetadata(ctx context.Context, tx metadataQuerier, write metadataWrite) error {
 	exports := []func(context.Context, metadataQuerier, metadataWrite) error{
-		exportEmbeddingVectorSpaces, exportEmbeddingGenerations, exportEmbeddingInputs,
+		exportEmbeddingVectorSpaces, exportEmbeddingGenerations, exportEmbeddingSourceFences, exportEmbeddingInputs,
 		exportEmbeddingVectorSets, exportEmbeddingVectorRows, exportEmbeddingSets,
 		exportEmbeddingHeads, exportEmbeddingFailures,
 	}
@@ -204,6 +211,24 @@ func exportEmbeddingGenerations(ctx context.Context, tx metadataQuerier, write m
 		}
 		if generationBlob.Valid {
 			value.GenerationBlobHash = generationBlob.String
+		}
+		if err := write(value); err != nil {
+			return err
+		}
+	}
+	return rows.Err()
+}
+
+func exportEmbeddingSourceFences(ctx context.Context, tx metadataQuerier, write metadataWrite) error {
+	rows, err := tx.QueryContext(ctx, `SELECT generation_id FROM embedding_generation_source_fences ORDER BY generation_id`)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = rows.Close() }()
+	for rows.Next() {
+		value := metadataEmbeddingSourceFence{Type: metadataEmbeddingSourceFenceType}
+		if err := rows.Scan(&value.GenerationID); err != nil {
+			return err
 		}
 		if err := write(value); err != nil {
 			return err
@@ -369,6 +394,16 @@ func importEmbeddingMetadataRecord(ctx context.Context, tx *sql.Tx, kind string,
 			tokenizer_fingerprint,chunk_policy_fingerprint,formatter_fingerprint,
 			attachment_context_fingerprint,attachment_id,input_count,created_at)
 			VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, value.ID, nullableCatalogString(value.GenerationBlobHash), value.GenerationEncodedSize, value.GenerationChecksum, value.SourceVersionID, value.ProfileFingerprint, value.EvidenceFingerprint, value.TokenizerFingerprint, value.ChunkPolicyFingerprint, value.FormatterFingerprint, value.AttachmentContextFingerprint, value.AttachmentID, value.InputCount, value.CreatedAt)
+	case metadataEmbeddingSourceFenceType:
+		var value metadataEmbeddingSourceFence
+		if err := decodeMetadataRecord(raw, &value); err != nil {
+			return err
+		}
+		if err := validateCatalogSHA256(value.GenerationID, "embedding generation source fence"); err != nil {
+			return err
+		}
+		return execEmbeddingImport(ctx, tx, `INSERT INTO embedding_generation_source_fences(generation_id) VALUES(?)`,
+			value.GenerationID)
 	case metadataEmbeddingInputType:
 		var value metadataEmbeddingInput
 		if err := decodeMetadataRecord(raw, &value); err != nil {

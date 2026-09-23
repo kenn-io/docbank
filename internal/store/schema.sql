@@ -1111,6 +1111,13 @@ CREATE TABLE IF NOT EXISTS embedding_input_generations (
         OR (generation_blob_hash IS NOT NULL AND generation_encoded_size > 0))
 );
 
+-- Once a generation has been used by scoped work, portable reconciliation
+-- must not recreate an unbound local job after restore. The marker is
+-- monotonic; a newly authorized request can still enqueue an exact job.
+CREATE TABLE IF NOT EXISTS embedding_generation_source_fences (
+    generation_id TEXT PRIMARY KEY REFERENCES embedding_input_generations(generation_id) ON DELETE CASCADE
+);
+
 -- Embedding jobs are rebuildable operational state. Immutable input
 -- generations, vector spaces, consent grants, failures, and published heads
 -- remain the portable authority; this table only resumes bounded execution.
@@ -1128,6 +1135,8 @@ CREATE TABLE IF NOT EXISTS embedding_jobs (
     authorization_grant_id TEXT NOT NULL,
     authorization_incarnation_id TEXT NOT NULL,
     authorization_revocation_fence INTEGER NOT NULL,
+    source_grant_json   TEXT,
+    source_grant_digest TEXT NOT NULL DEFAULT '',
     state               TEXT NOT NULL,
     claim_owner         TEXT,
     claim_epoch         INTEGER NOT NULL DEFAULT 0 CHECK (claim_epoch >= 0),
@@ -1139,7 +1148,7 @@ CREATE TABLE IF NOT EXISTS embedding_jobs (
     created_at          TEXT NOT NULL,
     updated_at          TEXT NOT NULL,
     UNIQUE (content_version_id,profile_fingerprint,binding_id,input_kind,generation_id,
-            authorization_grant_id,authorization_incarnation_id,authorization_revocation_fence)
+            authorization_grant_id,authorization_incarnation_id,authorization_revocation_fence,source_grant_digest)
 );
 
 CREATE INDEX IF NOT EXISTS embedding_jobs_ready
@@ -1439,6 +1448,7 @@ CREATE TABLE IF NOT EXISTS rendition_job_waiters (
     authorization_grant_id   TEXT NOT NULL,
     authorization_incarnation_id TEXT NOT NULL,
     authorization_revocation_fence INTEGER NOT NULL,
+    source_grant_json       TEXT,
     state                    TEXT NOT NULL,
     failure_code             TEXT,
     attachment_id            TEXT NOT NULL,

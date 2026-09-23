@@ -230,27 +230,29 @@ type targetedRenditionWorkerCatalog interface {
 
 // RenditionWorkerConfig binds the provider-neutral state machine to one vault.
 type RenditionWorkerConfig struct {
-	Catalog       renditionWorkerCatalog
-	Blobs         renditionBlobWriter
-	Runtime       RenditionRuntime
-	Gate          RenditionMutationGate
-	Owner         string
-	LeaseDuration time.Duration
-	IdleDelay     time.Duration
-	Clock         func() time.Time
+	Catalog               renditionWorkerCatalog
+	SourceGrantAuthorizer store.SourceGrantAuthorizer
+	Blobs                 renditionBlobWriter
+	Runtime               RenditionRuntime
+	Gate                  RenditionMutationGate
+	Owner                 string
+	LeaseDuration         time.Duration
+	IdleDelay             time.Duration
+	Clock                 func() time.Time
 }
 
 // RenditionWorker claims, resumes, validates, stages, and publishes shared
 // rendition builds without exposing provider data through status or logs.
 type RenditionWorker struct {
-	catalog       renditionWorkerCatalog
-	blobs         renditionBlobWriter
-	runtime       RenditionRuntime
-	gate          RenditionMutationGate
-	owner         string
-	leaseDuration time.Duration
-	idleDelay     time.Duration
-	clock         func() time.Time
+	catalog               renditionWorkerCatalog
+	sourceGrantAuthorizer store.SourceGrantAuthorizer
+	blobs                 renditionBlobWriter
+	runtime               RenditionRuntime
+	gate                  RenditionMutationGate
+	owner                 string
+	leaseDuration         time.Duration
+	idleDelay             time.Duration
+	clock                 func() time.Time
 }
 
 type renditionWorkerFatalError struct{ cause error }
@@ -303,8 +305,9 @@ func NewRenditionWorker(config RenditionWorkerConfig) (*RenditionWorker, error) 
 	}
 	return &RenditionWorker{
 		catalog: config.Catalog, blobs: config.Blobs, runtime: config.Runtime,
-		gate:  config.Gate,
-		owner: config.Owner, leaseDuration: config.LeaseDuration,
+		sourceGrantAuthorizer: config.SourceGrantAuthorizer,
+		gate:                  config.Gate,
+		owner:                 config.Owner, leaseDuration: config.LeaseDuration,
 		idleDelay: config.IdleDelay, clock: config.Clock,
 	}, nil
 }
@@ -460,6 +463,10 @@ func (worker *RenditionWorker) runClaim(ctx context.Context,
 		return true, renditionWorkerFatal(fmt.Errorf(
 			"rendition worker claimed unsupported phase %q", work.Job.Phase))
 	}
+	if err := store.RecheckSourceGrant(ctx, work.Waiter.SourceGrant, work.Waiter.ContentVersionID,
+		worker.clock().UTC(), worker.sourceGrantAuthorizer); err != nil {
+		return true, worker.classifyAuthorityError(ctx, claim, err)
+	}
 
 	var execution RenditionExecution
 	var snapshot document.RenditionExecutionSnapshotV1
@@ -498,6 +505,10 @@ func (worker *RenditionWorker) runClaim(ctx context.Context,
 		durableResume.Store(true)
 		if err := worker.mutate(ctx, func() error {
 			return worker.retryCatalog(ctx, func() error {
+				if err := store.RecheckSourceGrant(ctx, work.Waiter.SourceGrant, work.Waiter.ContentVersionID,
+					worker.clock().UTC(), worker.sourceGrantAuthorizer); err != nil {
+					return err
+				}
 				_, fence, beginErr := worker.catalog.BeginRenditionProviderEgress(
 					ctx, claim, work.Waiter.ID, worker.clock().UTC())
 				egressFence = fence
@@ -557,6 +568,10 @@ func (worker *RenditionWorker) runClaim(ctx context.Context,
 		execution.Authorization = snapshot.Authorization
 		if err := worker.mutate(ctx, func() error {
 			return worker.retryCatalog(ctx, func() error {
+				if err := store.RecheckSourceGrant(ctx, work.Waiter.SourceGrant, work.Waiter.ContentVersionID,
+					worker.clock().UTC(), worker.sourceGrantAuthorizer); err != nil {
+					return err
+				}
 				_, fence, beginErr := worker.catalog.BeginRenditionProviderEgress(
 					ctx, claim, work.Waiter.ID, worker.clock().UTC(), snapshot)
 				egressFence = fence
@@ -785,7 +800,20 @@ func (worker *RenditionWorker) stageGenerationAndPublish(
 			return err
 		}
 		return worker.retryCatalog(ctx, func() error {
-			_, publishErr := worker.catalog.PublishRenditionJob(ctx, claim, worker.clock().UTC())
+			var publishErr error
+			if worker.sourceGrantAuthorizer != nil {
+				publisher, ok := worker.catalog.(interface {
+					PublishRenditionJobWithSourceGrant(ctx context.Context, claim store.RenditionJobClaim,
+						at time.Time, authorizer store.SourceGrantAuthorizer) (store.RenditionJobPublication, error)
+				})
+				if !ok {
+					return store.ErrSourceGrantUnavailable
+				}
+				_, publishErr = publisher.PublishRenditionJobWithSourceGrant(
+					ctx, claim, worker.clock().UTC(), worker.sourceGrantAuthorizer)
+			} else {
+				_, publishErr = worker.catalog.PublishRenditionJob(ctx, claim, worker.clock().UTC())
+			}
 			return publishErr
 		})
 	})
@@ -908,7 +936,7 @@ func (worker *RenditionWorker) classifyPublicationError(
 		return worker.markFailed(
 			ctx, claim, store.RenditionFailureConsent, worker.clock().UTC())
 	}
-	if errors.Is(err, store.ErrRenditionJobStaleAuthority) {
+	if errors.Is(err, store.ErrRenditionJobStaleAuthority) || errors.Is(err, store.ErrSourceGrantUnavailable) {
 		return worker.markFailed(
 			ctx, claim, store.RenditionFailureStaleAuthority, worker.clock().UTC())
 	}
@@ -921,7 +949,8 @@ func (worker *RenditionWorker) classifyAuthorityError(
 	if errors.Is(err, store.ErrRenditionJobWaiterReselected) {
 		return nil
 	}
-	if errors.Is(err, store.ErrRenditionJobStaleAuthority) || errors.Is(err, store.ErrNotFound) {
+	if errors.Is(err, store.ErrRenditionJobStaleAuthority) || errors.Is(err, store.ErrNotFound) ||
+		errors.Is(err, store.ErrSourceGrantUnavailable) {
 		return worker.markFailed(
 			ctx, claim, store.RenditionFailureStaleAuthority, worker.clock().UTC())
 	}

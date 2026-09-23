@@ -2,6 +2,7 @@ package store
 
 import (
 	"bytes"
+	"context"
 	"database/sql"
 	"encoding/json/jsontext"
 	"encoding/json/v2"
@@ -51,6 +52,111 @@ func TestRenditionJobsDeduplicateSharedBuildAndFenceLeaseTheft(t *testing.T) {
 			now.Add(3*time.Minute), now.Add(4*time.Minute)),
 		ErrRenditionJobFenced,
 	)
+}
+
+func TestScopedRenditionWaiterCannotPublishWithoutCurrentGrant(t *testing.T) {
+	s, versions := newRenditionCatalogFixture(t)
+	profile := catalogProcessingProfile(t, false)
+	request := renditionJobTestRequest(versions[0], profile)
+	request.SourceGrant = &SourceGrantBinding{SubjectID: "synthetic:reader", CredentialKind: "test",
+		Audience: "docbank:test", GrantRevision: 4, ExpiresAt: time.Now().UTC().Add(time.Hour),
+		SourceID: versions[0]}
+	grantRenditionJobConsent(t, s, request)
+	job, waiter, err := s.EnqueueRenditionJob(t.Context(), request)
+	require.NoError(t, err)
+	now := time.Now().UTC().Add(time.Second)
+	claim, err := s.ClaimRenditionJob(t.Context(), job.ID, "worker:scoped", now, time.Minute)
+	require.NoError(t, err)
+	_, err = s.BeginRenditionProvider(t.Context(), claim, waiter.ID,
+		now.Add(time.Second), renditionJobTestSnapshot(request))
+	require.NoError(t, err)
+	build := catalogRenditionBuild(s, profile)
+	build.ID = job.ID
+	require.NoError(t, s.StageRenditionJobBuild(t.Context(), claim, build, now.Add(2*time.Second)))
+	_, err = s.StageRenditionJobGeneration(t.Context(), claim,
+		testSHA256([]byte("scoped-generation")), now.Add(3*time.Second))
+	require.NoError(t, err)
+	restarted, err := Open(s.path)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, restarted.Close()) })
+	_, err = restarted.PublishRenditionJob(t.Context(), claim, now.Add(4*time.Second))
+	require.ErrorIs(t, err, ErrSourceGrantUnavailable)
+	_, err = restarted.ActiveRendition(t.Context(), versions[0], profile.Fingerprint)
+	require.ErrorIs(t, err, ErrNotFound)
+}
+
+func TestScopedRenditionWaiterRestoresExactGrantBinding(t *testing.T) {
+	s, versions := newRenditionCatalogFixture(t)
+	profile := catalogProcessingProfile(t, false)
+	request := renditionJobTestRequest(versions[0], profile)
+	request.SourceGrant = &SourceGrantBinding{SubjectID: "synthetic:reader", CredentialKind: "test",
+		Audience: "docbank:test", GrantRevision: 8, ExpiresAt: time.Now().UTC().Add(time.Hour),
+		SourceID: versions[0]}
+	grantRenditionJobConsent(t, s, request)
+	job, waiter, err := s.EnqueueRenditionJob(t.Context(), request)
+	require.NoError(t, err)
+	request.SourceGrant.GrantRevision++
+	shared, renewed, err := s.EnqueueRenditionJob(t.Context(), request)
+	require.NoError(t, err)
+	require.Equal(t, job.ID, shared.ID)
+	require.NotEqual(t, waiter.ID, renewed.ID)
+	request.SourceGrant.GrantRevision--
+	var exported bytes.Buffer
+	require.NoError(t, s.ExportMetadata(t.Context(), &exported))
+	restored := newTestStore(t)
+	require.NoError(t, restored.ImportMetadata(t.Context(), bytes.NewReader(exported.Bytes())))
+	got, err := restored.RenditionJobWaiterByID(t.Context(), waiter.ID)
+	require.NoError(t, err)
+	require.Equal(t, request.SourceGrant, got.SourceGrant)
+	require.NoError(t, restored.ValidateMetadata(t.Context()))
+	tampered := bytes.Replace(exported.Bytes(), []byte(`"grant_revision":8`), []byte(`"grant_revision":18`), 1)
+	require.NotEqual(t, exported.Bytes(), tampered)
+	invalid := newTestStore(t)
+	require.Error(t, invalid.ImportMetadata(t.Context(), bytes.NewReader(tampered)),
+		"a restored waiter cannot adopt a different grant revision")
+}
+
+func TestScopedRenditionPublicationRejectsRevokedWaiterAndPublishesCurrentWaiter(t *testing.T) {
+	s, versions := newRenditionCatalogFixture(t)
+	profile := catalogProcessingProfile(t, false)
+	request := renditionJobTestRequest(versions[0], profile)
+	request.SourceGrant = &SourceGrantBinding{SubjectID: "synthetic:reader", CredentialKind: "test",
+		Audience: "docbank:test", GrantRevision: 4, ExpiresAt: time.Now().UTC().Add(time.Hour),
+		SourceID: versions[0]}
+	grantRenditionJobConsent(t, s, request)
+	job, revoked, err := s.EnqueueRenditionJob(t.Context(), request)
+	require.NoError(t, err)
+	request.SourceGrant.GrantRevision++
+	_, current, err := s.EnqueueRenditionJob(t.Context(), request)
+	require.NoError(t, err)
+	now := time.Now().UTC().Add(time.Second)
+	claim, err := s.ClaimRenditionJob(t.Context(), job.ID, "worker:current-grant", now, time.Minute)
+	require.NoError(t, err)
+	_, err = s.BeginRenditionProvider(t.Context(), claim, current.ID,
+		now.Add(time.Second), renditionJobTestSnapshot(request))
+	require.NoError(t, err)
+	build := catalogRenditionBuild(s, profile)
+	build.ID = job.ID
+	require.NoError(t, s.StageRenditionJobBuild(t.Context(), claim, build, now.Add(2*time.Second)))
+	_, err = s.StageRenditionJobGeneration(t.Context(), claim,
+		testSHA256([]byte("current-grant-generation")), now.Add(3*time.Second))
+	require.NoError(t, err)
+	authorizer := SourceGrantAuthorizeFunc(func(_ context.Context, binding SourceGrantBinding) error {
+		if binding.GrantRevision != request.SourceGrant.GrantRevision || binding.SourceID != versions[0] {
+			return ErrSourceGrantUnavailable
+		}
+		return nil
+	})
+	_, err = s.PublishRenditionJobWithSourceGrant(t.Context(), claim, now.Add(4*time.Second), authorizer)
+	require.NoError(t, err)
+	oldWaiter, err := s.RenditionJobWaiterByID(t.Context(), revoked.ID)
+	require.NoError(t, err)
+	require.Equal(t, "rejected", oldWaiter.State)
+	newWaiter, err := s.RenditionJobWaiterByID(t.Context(), current.ID)
+	require.NoError(t, err)
+	require.Equal(t, "published", newWaiter.State)
+	_, err = s.ActiveRendition(t.Context(), versions[0], profile.Fingerprint)
+	require.NoError(t, err)
 }
 
 func TestRenditionJobWaiterCannotAdoptReplacementConsent(t *testing.T) {

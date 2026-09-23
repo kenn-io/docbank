@@ -63,6 +63,13 @@ func registerTermReportRoutes(api huma.API, d Deps, gate *OperationGate, cache *
 	downloads *webDownloadRegistry, sessions *webSessionRegistry,
 ) {
 	termReportOwner := func(ctx context.Context) (string, error) {
+		// Search exports aggregate and cache across the whole vault. Until the
+		// report service can fence sources before counting and retrieval, only
+		// the authenticated local administrator may enter any report route.
+		principal, ok := PrincipalFromContext(ctx)
+		if !ok || !principal.Local {
+			return "", operationHTTPError(ErrOperationDenied, false)
+		}
 		owner, ok := workspaceSnapshotOwner(ctx)
 		if !ok {
 			return "", NewError(http.StatusUnauthorized, "unauthorized", "authenticated report owner is missing")

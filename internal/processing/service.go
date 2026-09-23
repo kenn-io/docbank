@@ -74,10 +74,11 @@ type ProfileConfig struct {
 }
 
 type ServiceConfig struct {
-	Catalog  *store.Store
-	Blobs    *blob.Store
-	Gate     processingOperationGate
-	Profiles map[string]ProfileConfig
+	Catalog               *store.Store
+	Blobs                 *blob.Store
+	Gate                  processingOperationGate
+	SourceGrantAuthorizer store.SourceGrantAuthorizer
+	Profiles              map[string]ProfileConfig
 	// RenditionRuntimes lets a daemon supervise the same provider registry the
 	// service populates. Embedded callers may leave it nil for a private registry.
 	RenditionRuntimes *RenditionRuntimeRegistry
@@ -109,32 +110,33 @@ type configuredProfile struct {
 }
 
 type Service struct {
-	catalog             *store.Store
-	blobs               *blob.Store
-	gate                processingOperationGate
-	profiles            map[string]configuredProfile
-	principal           string
-	scope               string
-	spoolDirectory      string
-	clock               func() time.Time
-	lifecycle           context.Context
-	renditions          *RenditionRuntimeRegistry
-	embeddings          *EmbeddingRuntimeRegistry
-	mediaEvidence       *retrieval.MediaEvidenceResolver
-	runsMu              sync.Mutex
-	runs                int
-	stopping            bool
-	stop                context.CancelFunc
-	drained             chan struct{}
-	formatCoverage      document.FormatCoverageV1
-	mediaMaxBytes       int64
-	mediaMu             sync.Mutex
-	mediaStagedBytes    int64
-	mediaOrigins        map[string]MediaOriginPolicy
-	mediaOriginProbes   map[string]MediaOriginProbe
-	mediaOriginMu       sync.Mutex
-	mediaOriginEvidence map[string]mediaOriginObservation
-	mediaTokenKey       [32]byte
+	catalog               *store.Store
+	blobs                 *blob.Store
+	gate                  processingOperationGate
+	sourceGrantAuthorizer store.SourceGrantAuthorizer
+	profiles              map[string]configuredProfile
+	principal             string
+	scope                 string
+	spoolDirectory        string
+	clock                 func() time.Time
+	lifecycle             context.Context
+	renditions            *RenditionRuntimeRegistry
+	embeddings            *EmbeddingRuntimeRegistry
+	mediaEvidence         *retrieval.MediaEvidenceResolver
+	runsMu                sync.Mutex
+	runs                  int
+	stopping              bool
+	stop                  context.CancelFunc
+	drained               chan struct{}
+	formatCoverage        document.FormatCoverageV1
+	mediaMaxBytes         int64
+	mediaMu               sync.Mutex
+	mediaStagedBytes      int64
+	mediaOrigins          map[string]MediaOriginPolicy
+	mediaOriginProbes     map[string]MediaOriginProbe
+	mediaOriginMu         sync.Mutex
+	mediaOriginEvidence   map[string]mediaOriginObservation
+	mediaTokenKey         [32]byte
 }
 
 type mediaOriginObservation struct {
@@ -220,6 +222,7 @@ type StartRequest struct {
 	Selector        Selector
 	PlanFingerprint string
 	Consent         bool
+	SourceGrant     *store.SourceGrantBinding
 }
 
 type ConsentGrantRequest struct {
@@ -285,6 +288,7 @@ type Job struct {
 
 type Status struct {
 	JobID             string
+	ContentVersionID  string
 	State             string
 	Phase             string
 	FailureCode       string
@@ -315,6 +319,10 @@ type SourceFence struct {
 type SourceFenceResolveRequest struct {
 	ContentVersionIDs []string
 	Filters           *store.SearchOptions
+	// AuthorizedSourceIDs is nil for local authority and non-nil for a
+	// caller whose exact source grant must bound filtered catalog reads.
+	AuthorizedSourceIDs []string
+	ExplicitSelection   bool
 }
 
 type SourceFenceResolution struct {
@@ -375,10 +383,11 @@ func NewService(config ServiceConfig) (*Service, error) {
 	mediaOriginProbes := make(map[string]MediaOriginProbe, len(config.MediaOriginProbes))
 	maps.Copy(mediaOriginProbes, config.MediaOriginProbes)
 	service := &Service{catalog: config.Catalog, blobs: config.Blobs, gate: config.Gate,
-		profiles:       make(map[string]configuredProfile, len(config.Profiles)),
-		principal:      config.Principal,
-		scope:          config.Scope,
-		spoolDirectory: config.SpoolDirectory, clock: config.Clock, lifecycle: config.Lifecycle,
+		sourceGrantAuthorizer: config.SourceGrantAuthorizer,
+		profiles:              make(map[string]configuredProfile, len(config.Profiles)),
+		principal:             config.Principal,
+		scope:                 config.Scope,
+		spoolDirectory:        config.SpoolDirectory, clock: config.Clock, lifecycle: config.Lifecycle,
 		renditions: renditionRuntimes, embeddings: NewEmbeddingRuntimeRegistry(),
 		mediaEvidence: retrieval.NewMediaEvidenceResolver(config.Blobs),
 		mediaMaxBytes: config.MediaMaxBytes,
@@ -762,6 +771,14 @@ func (service *Service) StartWithProgress(ctx context.Context, request StartRequ
 	if err != nil {
 		return Job{}, err
 	}
+	if request.SourceGrant != nil && request.SourceGrant.SourceID != version.ID {
+		return Job{}, store.ErrSourceGrantUnavailable
+	}
+	if request.SourceGrant != nil {
+		// Freeze caller-owned memory before either durable queue is admitted.
+		binding := *request.SourceGrant
+		request.SourceGrant = &binding
+	}
 	// Preview validation and execution must use the same source snapshot.
 	plan, err := service.planForSource(request.Selector, node, version, profile)
 	if err != nil {
@@ -797,7 +814,8 @@ func (service *Service) StartWithProgress(ctx context.Context, request StartRequ
 	}
 	if profile.portable.Rendition != nil {
 		var renditionRun renditionRun
-		renditionRun, err = service.runRendition(ctx, node, version, request.Selector.Profile, profile, principal, scope, renditionProgress)
+		renditionRun, err = service.runRendition(ctx, node, version, request.Selector.Profile, profile, principal, scope,
+			request.SourceGrant, renditionProgress)
 		if announced.ID != "" {
 			ctx = service.lifecycle
 		}
@@ -826,7 +844,8 @@ func (service *Service) StartWithProgress(ctx context.Context, request StartRequ
 				ProfileFingerprint: profile.record.Fingerprint, ContentVersionID: version.ID})
 		}
 	}
-	embeddingJobIDs, err := service.runEmbeddings(ctx, version, profile, principal, scope, consentSetGrantID, embeddingProgress)
+	embeddingJobIDs, err := service.runEmbeddings(ctx, version, profile, principal, scope, consentSetGrantID,
+		request.SourceGrant, embeddingProgress)
 	if processingJobID == "" && len(embeddingJobIDs) != 0 {
 		processingJobID = embeddingJobIDs[0]
 	}
@@ -1060,7 +1079,8 @@ func (service *Service) grantProfileConsent(ctx context.Context, profile configu
 type renditionRun struct{ jobID, waiterID, attachmentID, authorizationGrantID string }
 
 func (service *Service) runRendition(ctx context.Context, node store.Node, version store.ContentVersion,
-	profileName string, profile configuredProfile, principal, scope string, onEnqueued func(renditionRun),
+	profileName string, profile configuredProfile, principal, scope string, sourceGrant *store.SourceGrantBinding,
+	onEnqueued func(renditionRun),
 ) (renditionRun, error) {
 	var source mediaSourceBinding
 	if _, supplied := suppliedInputKind(profileName); supplied {
@@ -1081,7 +1101,7 @@ func (service *Service) runRendition(ctx context.Context, node store.Node, versi
 			ProfileFingerprint:      profile.record.Fingerprint,
 			DisclosureFingerprint:   profile.record.RenditionDisclosureFingerprint,
 			InputClasses:            []string{string(document.RenditionInputOriginalFile)},
-			RetainedArtifactClasses: retainedRenditionClasses(profile.portable)}, inputBinding)
+			RetainedArtifactClasses: retainedRenditionClasses(profile.portable)}, inputBinding, sourceGrant)
 	if err != nil {
 		return renditionRun{}, err
 	}
@@ -1099,7 +1119,8 @@ func (service *Service) runRenditionJob(ctx context.Context, jobID, waiterID str
 	}
 	worker, err := NewRenditionWorker(RenditionWorkerConfig{Catalog: service.catalog, Blobs: service.blobs,
 		Runtime: service.renditions, Gate: service.gate, Owner: "embedded-rendition-worker",
-		LeaseDuration: 5 * time.Minute, IdleDelay: time.Millisecond, Clock: service.clock})
+		SourceGrantAuthorizer: service.sourceGrantAuthorizer,
+		LeaseDuration:         5 * time.Minute, IdleDelay: time.Millisecond, Clock: service.clock})
 	if err != nil {
 		return renditionRun{}, err
 	}
@@ -1158,7 +1179,7 @@ func (service *Service) Status(ctx context.Context, jobID string) (Status, error
 			if failureCode == "" {
 				failureCode = "authorization"
 			}
-			return Status{JobID: jobID, State: "failed", Phase: "authorization",
+			return Status{JobID: jobID, ContentVersionID: waiter.ContentVersionID, State: "failed", Phase: "authorization",
 				FailureCode: failureCode, EmbeddingJobIDs: []string{}}, nil
 		}
 		var rendition store.RenditionJob
@@ -1178,7 +1199,9 @@ func (service *Service) Status(ctx context.Context, jobID string) (Status, error
 		if err != nil {
 			return Status{}, err
 		}
-		return aggregateStatus(jobID, &rendition, embeddings), nil
+		status := aggregateStatus(jobID, &rendition, embeddings)
+		status.ContentVersionID = waiter.ContentVersionID
+		return status, nil
 	}
 	if !errors.Is(waiterErr, store.ErrNotFound) {
 		return Status{}, waiterErr
@@ -1191,7 +1214,9 @@ func (service *Service) Status(ctx context.Context, jobID string) (Status, error
 		if err != nil {
 			return Status{}, err
 		}
-		return aggregateStatus(jobID, nil, embeddings), nil
+		status := aggregateStatus(jobID, nil, embeddings)
+		status.ContentVersionID = embedding.ContentVersionID
+		return status, nil
 	}
 	if !errors.Is(embeddingErr, store.ErrNotFound) {
 		return Status{}, embeddingErr
@@ -1202,7 +1227,10 @@ func (service *Service) Status(ctx context.Context, jobID string) (Status, error
 	if err != nil {
 		return Status{}, err
 	}
-	return aggregateStatus(jobID, &rendition, nil), nil
+	status := aggregateStatus(jobID, &rendition, nil)
+	// A shared rendition build can serve several content versions. It has no
+	// single source identity that a scoped caller could authorize.
+	return status, nil
 }
 
 func aggregateStatus(jobID string, rendition *store.RenditionJob,
@@ -1390,9 +1418,19 @@ func (service *Service) Coverage(ctx context.Context, profileName string, fence 
 func (service *Service) ResolveSourceFence(
 	ctx context.Context, request SourceFenceResolveRequest,
 ) (SourceFenceResolution, error) {
+	if (request.ExplicitSelection || len(request.ContentVersionIDs) != 0) == (request.Filters != nil) {
+		return SourceFenceResolution{}, fmt.Errorf("%w: select exactly one request mode", store.ErrInvalidProcessingSourceFence)
+	}
+	if request.AuthorizedSourceIDs != nil && len(request.AuthorizedSourceIDs) == 0 &&
+		(request.ExplicitSelection || request.Filters != nil) {
+		fence := SourceFence{VaultUID: service.catalog.VaultID(), ContentVersionIDs: []string{}}
+		fingerprint, err := SourceFenceFingerprint(fence)
+		return SourceFenceResolution{Fence: fence, FenceFingerprint: fingerprint}, err
+	}
 	resolved, err := service.catalog.ResolveProcessingSourceFence(ctx, store.ProcessingSourceFenceRequest{
-		ContentVersionIDs: request.ContentVersionIDs,
-		Filters:           request.Filters,
+		ContentVersionIDs:   request.ContentVersionIDs,
+		Filters:             request.Filters,
+		AuthorizedSourceIDs: request.AuthorizedSourceIDs,
 	})
 	if err != nil {
 		return SourceFenceResolution{}, err
@@ -1519,7 +1557,8 @@ func (service *Service) prepareSearch(
 }
 
 func (service *Service) runEmbeddings(ctx context.Context, version store.ContentVersion,
-	profile configuredProfile, principal, scope, consentSetGrantID string, onEnqueued func([]string),
+	profile configuredProfile, principal, scope, consentSetGrantID string, sourceGrant *store.SourceGrantBinding,
+	onEnqueued func([]string),
 ) ([]string, error) {
 	if len(profile.portable.Embeddings) == 0 {
 		return []string{}, nil
@@ -1568,6 +1607,7 @@ func (service *Service) runEmbeddings(ctx context.Context, version store.Content
 				ContentVersionID: version.ID, Profile: profile.record, BindingID: binding.Name,
 				Descriptor: profile.embedders[binding.Name].Descriptor(), InputGeneration: generation,
 				Authorization: authorization,
+				SourceGrant:   sourceGrant,
 			})
 			return err
 		})
@@ -1587,7 +1627,8 @@ func (service *Service) runEmbeddings(ctx context.Context, version store.Content
 		binding := profile.portable.Embeddings[index]
 		worker, err := NewEmbeddingWorker(EmbeddingWorkerConfig{
 			Catalog: service.catalog, Authority: service.catalog, Blobs: service.blobs,
-			GenerationBlobs: service.blobs, Runtime: profile.embeddingRuntimes[binding.Name], Gate: service.gate,
+			SourceGrantAuthorizer: service.sourceGrantAuthorizer,
+			GenerationBlobs:       service.blobs, Runtime: profile.embeddingRuntimes[binding.Name], Gate: service.gate,
 			Owner: "embedded-embedding-worker", LeaseDuration: 5 * time.Minute, IdleDelay: time.Millisecond,
 			RetryLimit: 3, RetryBaseDelay: time.Millisecond, MaxRetryDelay: time.Second,
 			AttemptLifetime: 10 * time.Minute, MaxRows: 100_000, MaxDimensions: 1_048_576,
