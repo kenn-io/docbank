@@ -15738,7 +15738,7 @@ paths:
           content:
             application/pdf: {}
           description: Exact retained Bates PDF
-      summary: Download independently reverified Bates export bytes
+      summary: Download hash-checked Bates export bytes
   /api/v1/bates/exports/{id}/download:
     post:
       operationId: downloadBatesExport
@@ -15768,7 +15768,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/Error"
           description: Error
-      summary: Issue a one-use ticket for a reverified Bates export
+      summary: Issue a one-use ticket for a hash-checked Bates export
   /api/v1/bates/namespaces:
     get:
       operationId: listBatesNamespaces

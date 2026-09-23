@@ -7579,7 +7579,7 @@ export const getDownloadBatesExportContentUrl = (id: string,) => {
 }
 
 /**
- * @summary Download independently reverified Bates export bytes
+ * @summary Download hash-checked Bates export bytes
  */
 export const downloadBatesExportContent = async (id: string, options?: Parameters<typeof sessionJSON>[1]): Promise<Blob> => {
 
@@ -7603,7 +7603,7 @@ export const getDownloadBatesExportUrl = (id: string,) => {
 }
 
 /**
- * @summary Issue a one-use ticket for a reverified Bates export
+ * @summary Issue a one-use ticket for a hash-checked Bates export
  */
 export const downloadBatesExport = async (id: string,
     downloadBatesExportRequest: NonReadonly<DownloadBatesExportRequest>, options?: Parameters<typeof sessionJSON>[1]): Promise<BatesDownloadTicket> => {

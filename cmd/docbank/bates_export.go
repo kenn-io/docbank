@@ -129,7 +129,7 @@ func newBatesExportHistoryCommand() *cobra.Command {
 
 func newBatesExportDownloadCommand() *cobra.Command {
 	var overwrite bool
-	command := &cobra.Command{Use: "download <allocation-id> <local-file>", Short: "Download a reverified Bates export", Args: cobra.ExactArgs(2),
+	command := &cobra.Command{Use: "download <allocation-id> <local-file>", Short: "Download a hash-checked Bates export", Args: cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) (retErr error) {
 			destination, err := prepareGetDestination(args[1], overwrite)
 			if err != nil {

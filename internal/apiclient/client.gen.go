@@ -1407,7 +1407,7 @@ func (c *Client) ReadBatesExport(ctx context.Context, options *ReadBatesExportRe
 	return responseParser(ctx, resp)
 }
 
-// DownloadBatesExportContent Download independently reverified Bates export bytes
+// DownloadBatesExportContent Download hash-checked Bates export bytes
 func (c *Client) DownloadBatesExportContent(ctx context.Context, options *DownloadBatesExportContentRequestOptions, reqEditors ...runtime.RequestEditorFn) (*struct{}, error) {
 	var err error
 	reqParams := runtime.RequestOptionsParameters{
@@ -1447,7 +1447,7 @@ func (c *Client) DownloadBatesExportContent(ctx context.Context, options *Downlo
 	return responseParser(ctx, resp)
 }
 
-// DownloadBatesExport Issue a one-use ticket for a reverified Bates export
+// DownloadBatesExport Issue a one-use ticket for a hash-checked Bates export
 func (c *Client) DownloadBatesExport(ctx context.Context, options *DownloadBatesExportRequestOptions, reqEditors ...runtime.RequestEditorFn) (*DownloadBatesExportResponse, error) {
 	var err error
 	reqParams := runtime.RequestOptionsParameters{

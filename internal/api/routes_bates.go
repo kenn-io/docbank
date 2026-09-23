@@ -211,7 +211,7 @@ func registerBatesRoutes(mux *http.ServeMux, api huma.API, d Deps, g *gate, down
 	})
 	type downloadOutput struct{ Body BatesDownloadTicket }
 	huma.Register(api, huma.Operation{OperationID: "downloadBatesExport", Method: http.MethodPost,
-		Path: "/api/v1/bates/exports/{id}/download", Summary: "Issue a one-use ticket for a reverified Bates export",
+		Path: "/api/v1/bates/exports/{id}/download", Summary: "Issue a one-use ticket for a hash-checked Bates export",
 		MaxBodyBytes: 1024}, func(ctx context.Context, in *struct {
 		ID   string `path:"id" format:"uuid"`
 		Body struct{}
@@ -283,10 +283,10 @@ func registerBatesRoutes(mux *http.ServeMux, api huma.API, d Deps, g *gate, down
 		w.Header().Set("Cache-Control", "no-store")
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write(data) //nolint:gosec // Rehashed and independently parsed PDF bytes; attachment is PDF with nosniff.
+		_, _ = w.Write(data) //nolint:gosec // Hash-checked PDF bytes verified at publish; attachment is PDF with nosniff.
 	})
 	api.OpenAPI().AddOperation(&huma.Operation{OperationID: "downloadBatesExportContent", Method: http.MethodGet,
-		Path: "/api/v1/bates/exports/{id}/content", Summary: "Download independently reverified Bates export bytes",
+		Path: "/api/v1/bates/exports/{id}/content", Summary: "Download hash-checked Bates export bytes",
 		Parameters: []*huma.Param{{Name: "id", In: openAPIPathLocation, Required: true,
 			Schema: &huma.Schema{Type: openAPIStringType, Format: "uuid"}}},
 		Responses: map[string]*huma.Response{"200": {Description: "Exact retained Bates PDF",

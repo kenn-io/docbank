@@ -240,7 +240,7 @@ func newBatesExportFixture(t *testing.T) batesExportFixtureValue {
 	recipeSHA, err := recipe.SHA256()
 	require.NoError(t, err)
 	allocation, err := catalog.ReserveBatesRange(ctx, store.BatesPlanRequest{OperationID: uuid.NewString(),
-		NamespaceID: namespace.NamespaceID, SnapshotID: snapshot.SnapshotID, RecipeSHA256: recipeSHA,
+		NamespaceID: namespace.NamespaceID, SnapshotID: snapshot.SnapshotID, RecipeSHA256: recipeSHA, StartAt: 1,
 		Pages: []store.BatesPageInput{
 			{OccurrenceID: occurrence, UnstampedSHA256: written.Hash, SourcePage: 3, VerifiedPageCount: 8},
 			{OccurrenceID: occurrence, UnstampedSHA256: written.Hash, SourcePage: 6, VerifiedPageCount: 8},
