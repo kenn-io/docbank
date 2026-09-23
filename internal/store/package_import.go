@@ -2,6 +2,7 @@ package store
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"crypto/sha256"
 	"database/sql"
@@ -149,7 +150,7 @@ func loadPackageLabelsTx(ctx context.Context, tx metadataQuerier, packageID, occ
 	rows, err := tx.QueryContext(ctx, `SELECT package_id,provenance,label_set,label,label_sort_key,
 		occurrence_id,content_version_id,COALESCE(artifact_id,''),COALESCE(page_number,0),page_state,endpoint
 		FROM package_labels WHERE package_id=? AND occurrence_id=? AND provenance='received'
-		ORDER BY provenance,label_set,label,endpoint,occurrence_id`, packageID, occurrenceID)
+		ORDER BY provenance,label_set,label,endpoint,occurrence_id,page_number`, packageID, occurrenceID)
 	if err != nil {
 		return nil, err
 	}
@@ -298,7 +299,7 @@ func (s *Store) commitPackageRecord(ctx context.Context, record PackageRecordRow
 				label_sort_key,occurrence_id,content_version_id,artifact_id,page_number,page_state,endpoint)
 				VALUES(?,?,?,?,?,?,?,?,?,?,?)`, label.PackageID, label.Provenance, label.LabelSet, label.Label,
 				label.LabelSortKey, label.OccurrenceID, label.ContentVersionID, nullableString(label.ArtifactID),
-				packagePageNullable(label.PageNumber), label.PageState, label.Endpoint)
+				label.PageNumber, label.PageState, label.Endpoint)
 			if err != nil {
 				return err
 			}
@@ -331,7 +332,7 @@ func comparePackageLabel(left, right PackageLabelRow) int {
 			return order
 		}
 	}
-	return 0
+	return cmp.Compare(left.PageNumber, right.PageNumber)
 }
 
 // AssignPackageLabels publishes the complete assigned-label set for one
@@ -381,7 +382,7 @@ func (s *Store) AssignPackageLabels(ctx context.Context, packageID, occurrenceID
 				label_sort_key,occurrence_id,content_version_id,artifact_id,page_number,page_state,endpoint)
 				VALUES(?,?,?,?,?,?,?,?,?,?,?)`, label.PackageID, label.Provenance, label.LabelSet, label.Label,
 				label.LabelSortKey, label.OccurrenceID, label.ContentVersionID, nullableString(label.ArtifactID),
-				packagePageNullable(label.PageNumber), label.PageState, label.Endpoint); err != nil {
+				label.PageNumber, label.PageState, label.Endpoint); err != nil {
 				return err
 			}
 		}
@@ -393,7 +394,7 @@ func loadAssignedPackageLabels(ctx context.Context, q metadataQuerier, packageID
 	rows, err := q.QueryContext(ctx, `SELECT package_id,provenance,label_set,label,label_sort_key,
 		occurrence_id,content_version_id,COALESCE(artifact_id,''),COALESCE(page_number,0),page_state,endpoint
 		FROM package_labels WHERE package_id=? AND occurrence_id=? AND provenance='assigned'
-		ORDER BY provenance,label_set,label,endpoint,occurrence_id`, packageID, occurrenceID)
+		ORDER BY provenance,label_set,label,endpoint,occurrence_id,page_number`, packageID, occurrenceID)
 	if err != nil {
 		return nil, err
 	}
@@ -409,13 +410,6 @@ func loadAssignedPackageLabels(ctx context.Context, q metadataQuerier, packageID
 		labels = append(labels, label)
 	}
 	return labels, rows.Err()
-}
-
-func packagePageNullable(page int) any {
-	if page == 0 {
-		return nil
-	}
-	return page
 }
 
 func (s *Store) PackageImportHead(ctx context.Context, packageID, key string) (PackageImportReceipt, error) {

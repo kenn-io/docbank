@@ -86,6 +86,11 @@ func TestCommitPackageRecordWithLeaseReplaysExactPayload(t *testing.T) {
 	labels := []PackageLabelRow{{PackageID: pkg.PackageID, Provenance: packageDirectionReceived, LabelSet: "EXT",
 		Label: "EXT000001", LabelSortKey: LabelSortKey("EXT000001"), OccurrenceID: occurrence,
 		ContentVersionID: node.CurrentVersionID, PageState: "unknown", Endpoint: "begin"}}
+	for _, number := range []int{2, 1} {
+		page := labels[0]
+		page.Endpoint, page.PageNumber = "page", number
+		labels = append(labels, page)
+	}
 	receiptID, err := newUUIDv4()
 	require.NoError(t, err)
 	receipt := PackageImportReceipt{ReceiptID: receiptID, PackageID: pkg.PackageID,
@@ -96,6 +101,9 @@ func TestCommitPackageRecordWithLeaseReplaysExactPayload(t *testing.T) {
 	second, err := s.CommitPackageRecordWithLease(t.Context(), job.ID, job.Epoch, job.Token, record, labels, receipt)
 	require.NoError(t, err)
 	require.Equal(t, first, second)
+	_, err = s.db.ExecContext(t.Context(), `INSERT INTO package_labels SELECT * FROM package_labels
+		WHERE package_id=? AND endpoint='begin'`, pkg.PackageID)
+	require.Error(t, err, "document labels must retain a unique identity without a page number")
 	_, err = s.db.ExecContext(t.Context(), `INSERT INTO package_labels(
 		package_id,provenance,label_set,label,label_sort_key,occurrence_id,content_version_id,
 		page_state,endpoint) VALUES(?,?,?,?,?,?,?,?,?)`, pkg.PackageID, "assigned", "LOCAL",
@@ -139,13 +147,28 @@ func TestAssignPackageLabelsIsIdempotentAndSeparateFromReceivedAuthority(t *test
 	assigned := PackageLabelRow{PackageID: pkg.PackageID, Provenance: "assigned", LabelSet: "CASE",
 		Label: "CASE000001", LabelSortKey: "CASE000001", OccurrenceID: occurrence,
 		ContentVersionID: node.CurrentVersionID, PageState: "verified", Endpoint: "begin"}
+	pageOne, pageTwo := assigned, assigned
+	pageOne.Endpoint, pageOne.PageNumber = "page", 1
+	pageTwo.Endpoint, pageTwo.PageNumber = "page", 2
 	require.NoError(t, s.AssignPackageLabels(t.Context(), pkg.PackageID, occurrence,
-		node.CurrentVersionID, []PackageLabelRow{assigned}))
+		node.CurrentVersionID, []PackageLabelRow{pageTwo, assigned, pageOne}))
 	require.NoError(t, s.AssignPackageLabels(t.Context(), pkg.PackageID, occurrence,
-		node.CurrentVersionID, []PackageLabelRow{assigned}))
+		node.CurrentVersionID, []PackageLabelRow{pageOne, pageTwo, assigned}))
 	labels, err := s.PackageLabels(t.Context(), pkg.PackageID, occurrence)
 	require.NoError(t, err)
-	require.Equal(t, []PackageLabelRow{assigned, received}, labels)
+	require.Equal(t, []PackageLabelRow{assigned, pageOne, pageTwo, received}, labels)
+	var original bytes.Buffer
+	require.NoError(t, s.ExportMetadata(t.Context(), &original))
+	restored := newTestStore(t)
+	require.NoError(t, restored.ImportMetadata(t.Context(), bytes.NewReader(original.Bytes())))
+	require.NoError(t, restored.AssignPackageLabels(t.Context(), pkg.PackageID, occurrence,
+		node.CurrentVersionID, []PackageLabelRow{pageTwo, pageOne, assigned}))
+	restoredLabels, err := restored.PackageLabels(t.Context(), pkg.PackageID, occurrence)
+	require.NoError(t, err)
+	require.Equal(t, labels, restoredLabels)
+	var exported bytes.Buffer
+	require.NoError(t, restored.ExportMetadata(t.Context(), &exported))
+	require.Equal(t, original.Bytes(), exported.Bytes())
 	changed := assigned
 	changed.Label = "CASE000002"
 	changed.LabelSortKey = changed.Label

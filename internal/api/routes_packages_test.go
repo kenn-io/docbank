@@ -24,6 +24,7 @@ import (
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/canonical"
 	"go.kenn.io/docbank/internal/loadfile"
+	"go.kenn.io/docbank/internal/processing"
 	storepkg "go.kenn.io/docbank/internal/store"
 	"go.kenn.io/docbank/sqlite"
 	"golang.org/x/text/encoding/unicode"
@@ -72,6 +73,49 @@ func TestPackageImportAdmitsFrozenPreflightAndReplaysOperation(t *testing.T) {
 	require.NoError(t, json.Unmarshal(cancelled.Body.Bytes(), &stopped))
 	require.Equal(t, "cancelled", stopped.State)
 	require.Equal(t, job.JobID, stopped.JobID)
+}
+
+func TestPackageImportPreservesRepeatedImageKeysAcrossPages(t *testing.T) {
+	srv, catalog := newPackageTestServer(t)
+	response := srv.post(t, mustPackageJSON(t, api.PackagePreflightRequest{
+		Profile: "dat-concordance-v1", Encoding: "utf-8", SourceKind: "root", SourceRef: syntheticPackageRoot(t),
+	}))
+	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+	var preview api.PackagePreflight
+	require.NoError(t, json.Unmarshal(response.Body.Bytes(), &preview))
+	require.False(t, preview.Blocking, "%+v", preview.Diagnostics)
+	request := api.PackageImportRequest{PreflightID: preview.PreflightID, Into: "/",
+		Name: "repeated-image-keys", OperationID: uuid.NewString()}
+	admitted := srv.call(t, http.MethodPost, "/api/v1/packages/imports", mustPackageJSON(t, request), nil)
+	require.Equal(t, http.StatusAccepted, admitted.Code, admitted.Body.String())
+	worker, err := processing.NewPackageImportWorker(processing.PackageImportConfig{
+		Catalog: catalog.Store, Blobs: catalog.Blobs, Owner: "synthetic-worker",
+	})
+	require.NoError(t, err)
+	_, err = worker.ProcessOnce(t.Context())
+	require.NoError(t, err)
+	status := srv.get(t, "/api/v1/packages/imports/"+request.OperationID)
+	require.Equal(t, http.StatusOK, status.Code, status.Body.String())
+	var job api.PackageImportJob
+	require.NoError(t, json.Unmarshal(status.Body.Bytes(), &job))
+	require.Equal(t, "complete", job.State)
+	require.Equal(t, 2, job.Committed)
+	path := "/api/v1/packages/label-candidates?label=DOC-A&package_id=" + job.PackageID + "&limit=1"
+	cursor := ""
+	for _, pageNumber := range []int{1, 2} {
+		response := srv.get(t, path+"&cursor="+cursor)
+		require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+		var page api.PackageLabelCandidatePage
+		require.NoError(t, json.Unmarshal(response.Body.Bytes(), &page))
+		require.Len(t, page.Items, 1)
+		require.Equal(t, "DOC-A", page.Items[0].Label)
+		require.Equal(t, pageNumber, page.Items[0].PageNumber)
+		if pageNumber == 1 {
+			require.NotEmpty(t, page.NextCursor)
+		}
+		cursor = page.NextCursor
+	}
+	require.Empty(t, cursor)
 }
 
 func TestPackagePreflightRejectsObjectAboveIngestBound(t *testing.T) {

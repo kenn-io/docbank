@@ -213,10 +213,10 @@ CREATE TABLE IF NOT EXISTS package_labels (
     occurrence_id TEXT NOT NULL,
     content_version_id TEXT NOT NULL REFERENCES content_versions(version_id),
     artifact_id TEXT,
-    page_number INTEGER,
+    page_number INTEGER NOT NULL DEFAULT 0,
     page_state TEXT NOT NULL,
     endpoint TEXT NOT NULL,
-    PRIMARY KEY (package_id, provenance, label_set, label, endpoint, occurrence_id)
+    PRIMARY KEY (package_id, provenance, label_set, label, endpoint, occurrence_id, page_number)
 );
 CREATE INDEX IF NOT EXISTS package_labels_lookup ON package_labels(label, provenance, package_id);
 CREATE TRIGGER IF NOT EXISTS package_labels_immutable_update

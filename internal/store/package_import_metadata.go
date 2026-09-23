@@ -80,7 +80,7 @@ func exportPackageImportMetadata(ctx context.Context, q metadataQuerier, write m
 	}
 	labels, err := q.QueryContext(ctx, `SELECT package_id,provenance,label_set,label,label_sort_key,
 		occurrence_id,content_version_id,COALESCE(artifact_id,''),COALESCE(page_number,0),page_state,endpoint
-		FROM package_labels ORDER BY package_id,provenance,label_set,label,endpoint,occurrence_id`)
+		FROM package_labels ORDER BY package_id,provenance,label_set,label,endpoint,occurrence_id,page_number`)
 	if err != nil {
 		return err
 	}
@@ -209,7 +209,7 @@ func importPackageImportMetadata(ctx context.Context, tx *sql.Tx, kind string, r
 			label_sort_key,occurrence_id,content_version_id,artifact_id,page_number,page_state,endpoint)
 			VALUES(?,?,?,?,?,?,?,?,?,?,?)`, label.PackageID, label.Provenance, label.LabelSet, label.Label,
 			label.LabelSortKey, label.OccurrenceID, label.ContentVersionID, nullableString(label.ArtifactID),
-			packagePageNullable(label.PageNumber), label.PageState, label.Endpoint)
+			label.PageNumber, label.PageState, label.Endpoint)
 		return err
 	case metadataPackageImportReceiptType:
 		receipt, err := canonical.Decode[PackageImportReceipt](row.CanonicalJSON)
