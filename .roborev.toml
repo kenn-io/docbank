@@ -62,7 +62,10 @@ Key assumptions reviewers MUST account for:
 8. BACKUPS ARE OWNER INPUT: JSONL backups and restore sources are
    authored by the vault owner. Restore validates structure and
    referential integrity so a corrupted file fails loudly. It does not
-   defend against the owner editing their own backup.
+   defend against the owner editing their own backup. Photo change
+   receipts are a record of past decisions; restore checks that each
+   names an asset or setting that exists, not that the receipts replay
+   into the current state.
 
 9. LOCAL FILE TRUST: files under $DOCBANK_HOME are user-owned in an
    owner-private directory (0700 or a restricted DACL). An attacker with access to them already has the

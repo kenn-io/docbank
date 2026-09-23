@@ -286,11 +286,12 @@ func validatePhotoMetadataState(ctx context.Context, tx metadataQuerier) error {
 	if err := tx.QueryRowContext(ctx, `
 		SELECT COUNT(*) FROM photo_change_receipts r
 		LEFT JOIN photo_assets a ON a.asset_id=r.asset_id
-		WHERE r.asset_id IS NOT NULL AND a.asset_id IS NULL`).Scan(&orphans); err != nil {
+		WHERE (r.asset_id IS NOT NULL AND a.asset_id IS NULL)
+		   OR (r.settings_key IS NOT NULL AND NOT EXISTS (SELECT 1 FROM photo_library_settings))`).Scan(&orphans); err != nil {
 		return fmt.Errorf("checking photo receipt references: %w", err)
 	}
 	if orphans > 0 {
-		return fmt.Errorf("%w: %d photo receipts reference missing assets", ErrInvalidPhotoAsset, orphans)
+		return fmt.Errorf("%w: %d photo receipts reference missing assets or settings", ErrInvalidPhotoAsset, orphans)
 	}
 	if err := exportPhotoMetadata(ctx, tx, func(any) error { return nil }); err != nil {
 		return fmt.Errorf("validating photo metadata: %w", err)
