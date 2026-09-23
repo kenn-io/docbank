@@ -54,36 +54,59 @@ func admitSpine(ctx context.Context, files []*zip.File, records []epubutil.Packa
 		}
 		manifest[item.ID] = item
 	}
+	type cachedSpineResource struct {
+		entry *zip.File
+		err   error
+	}
+	resources := make(map[string]cachedSpineResource, len(manifest))
 	var spine []*zip.File
 	for _, ref := range record.Spine.Items {
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
-		item, ok := manifest[ref.IDRef]
-		mediaType, _, mediaErr := mime.ParseMediaType(item.MediaType)
-		if !ok || mediaErr != nil || !strings.EqualFold(mediaType, "application/xhtml+xml") || strings.Contains(item.Properties, "rendition:layout-pre-paginated") || strings.Contains(ref.Properties, "rendition:layout-pre-paginated") {
+		if strings.Contains(ref.Properties, "rendition:layout-pre-paginated") {
 			return nil, unsupported()
 		}
-		directory := path.Dir(record.Path)
-		for _, base := range []string{record.Base, record.Manifest.Base, item.Base} {
-			if strings.TrimSpace(base) == "" {
-				continue
+		resource, found := resources[ref.IDRef]
+		if !found {
+			resource = cachedSpineResource{}
+			item, ok := manifest[ref.IDRef]
+			mediaType, _, mediaErr := mime.ParseMediaType(item.MediaType)
+			if !ok || mediaErr != nil || !strings.EqualFold(mediaType, "application/xhtml+xml") || strings.Contains(item.Properties, "rendition:layout-pre-paginated") {
+				resource.err = unsupported()
+			} else {
+				directory := path.Dir(record.Path)
+				for _, base := range []string{record.Base, record.Manifest.Base, item.Base} {
+					if strings.TrimSpace(base) == "" {
+						continue
+					}
+					var err error
+					directory, err = epubutil.ResolveArchiveBase(directory, base)
+					if err != nil {
+						resource.err = unsupported()
+						break
+					}
+				}
+				if resource.err == nil {
+					href, err := localSpineReference(item.HRef)
+					if err != nil {
+						resource.err = unsupported()
+					} else {
+						archivePath, err := epubutil.ArchivePath(href, directory)
+						if err != nil || entries[archivePath] == nil {
+							resource.err = unsupported()
+						} else {
+							resource.entry = entries[archivePath]
+						}
+					}
+				}
 			}
-			var err error
-			directory, err = epubutil.ResolveArchiveBase(directory, base)
-			if err != nil {
-				return nil, unsupported()
-			}
+			resources[ref.IDRef] = resource
 		}
-		href, err := localSpineReference(item.HRef)
-		if err != nil {
-			return nil, unsupported()
+		if resource.err != nil {
+			return nil, resource.err
 		}
-		resource, err := epubutil.ArchivePath(href, directory)
-		if err != nil || entries[resource] == nil {
-			return nil, unsupported()
-		}
-		spine = append(spine, entries[resource])
+		spine = append(spine, resource.entry)
 	}
 	return spine, nil
 }

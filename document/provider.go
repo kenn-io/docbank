@@ -563,7 +563,7 @@ func ValidateRenditionResultContext(
 	if len(result.ProviderMarkdown) > authorization.MaxProviderMarkdownBytes {
 		return errors.New("provider Markdown exceeds authorized byte limit")
 	}
-	if err := validateRenditionArtifacts(descriptor, authorization, result.Artifacts); err != nil {
+	if err := validateRenditionArtifactsContext(ctx, descriptor, authorization, result.Artifacts); err != nil {
 		return err
 	}
 	if err := ctx.Err(); err != nil {
@@ -1272,15 +1272,24 @@ func validateAuthorizedRoles(descriptor RenditionDescriptor, roles []EvidenceArt
 	return nil
 }
 
-func validateRenditionArtifacts(
+func validateRenditionArtifactsContext(
+	ctx context.Context,
 	descriptor RenditionDescriptor, authorization RenditionAuthorization, artifacts []RenditionArtifact,
 ) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	type identity struct {
 		role   EvidenceArtifactRole
 		sha256 string
 	}
 	seen := make(map[identity]struct{}, len(artifacts))
-	for _, artifact := range artifacts {
+	for index, artifact := range artifacts {
+		if index&1023 == 0 {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+		}
 		if !validProfileArtifactRole(artifact.Role) || !slices.Contains(descriptor.ArtifactRoles, artifact.Role) ||
 			!slices.Contains(authorization.AllowedArtifactRoles, artifact.Role) {
 			return errors.New("provider artifact role is not authorized")
@@ -1291,8 +1300,21 @@ func validateRenditionArtifacts(
 		if len(artifact.Payload) > authorization.MaxArtifactBytes {
 			return errors.New("provider artifact exceeds authorized byte limit")
 		}
-		digest := sha256.Sum256(artifact.Payload)
-		if artifact.SHA256 != hex.EncodeToString(digest[:]) {
+		digest := sha256.New()
+		for offset := 0; offset < len(artifact.Payload); {
+			if offset&((1<<20)-1) == 0 {
+				if err := ctx.Err(); err != nil {
+					return err
+				}
+			}
+			end := min(offset+1<<20, len(artifact.Payload))
+			_, _ = digest.Write(artifact.Payload[offset:end])
+			offset = end
+		}
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if artifact.SHA256 != hex.EncodeToString(digest.Sum(nil)) {
 			return errors.New("provider artifact checksum does not match payload")
 		}
 		key := identity{role: artifact.Role, sha256: artifact.SHA256}
