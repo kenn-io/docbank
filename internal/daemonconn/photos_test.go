@@ -103,3 +103,115 @@ func TestPhotoClientValidatesSidecarTargetsAfterTraversal(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, got.Files, 2)
 }
+
+func TestPhotoMutationClientsRejectWrongMembership(t *testing.T) {
+	const (
+		assetID = "00000000-0000-4000-8000-000000000001"
+		fileID  = "00000000-0000-4000-8000-000000000010"
+		created = "2026-09-22T00:00:00Z"
+	)
+	asset := func(revision, nodeID int64, role string) api.PhotoAsset {
+		return api.PhotoAsset{
+			ID: assetID, Kind: "photo", Revision: revision,
+			DisplayFileID: new(fileID), DisplaySource: "default",
+			CreatedAt: created, UpdatedAt: created,
+			Files: []api.PhotoFile{{ID: fileID, AssetID: assetID, NodeID: nodeID, Role: role, CreatedAt: created}},
+		}
+	}
+	run := func(t *testing.T, status int, response api.PhotoAsset, wantError bool, call func(*Connection) error) {
+		t.Helper()
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			w.Header().Set("ETag", photoIfMatch(response.Revision))
+			body, err := json.Marshal(response)
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+			w.WriteHeader(status)
+			_, _ = w.Write(body)
+		}))
+		t.Cleanup(server.Close)
+		err := call(New(server.URL, "synthetic-key"))
+		if wantError {
+			require.Error(t, err)
+			require.True(t, IsResponseDecodeError(err))
+		} else {
+			require.NoError(t, err)
+		}
+	}
+
+	t.Run("create accepts requested member", func(t *testing.T) {
+		run(t, http.StatusCreated, asset(1, 1, "raw"), false, func(c *Connection) error {
+			_, err := c.CreatePhotoAsset(t.Context(), 1, "raw", "photo")
+			return err
+		})
+	})
+	t.Run("create returns another node", func(t *testing.T) {
+		run(t, http.StatusCreated, asset(1, 2, "raw"), true, func(c *Connection) error {
+			_, err := c.CreatePhotoAsset(t.Context(), 1, "raw", "photo")
+			return err
+		})
+	})
+	t.Run("create returns another kind", func(t *testing.T) {
+		response := asset(1, 1, "image")
+		response.Kind = "video"
+		run(t, http.StatusCreated, response, true, func(c *Connection) error {
+			_, err := c.CreatePhotoAsset(t.Context(), 1, "image", "photo")
+			return err
+		})
+	})
+	t.Run("attach returns another role", func(t *testing.T) {
+		run(t, http.StatusOK, asset(2, 2, "image"), true, func(c *Connection) error {
+			_, err := c.AttachPhotoFile(t.Context(), assetID, 1, 2, "raw", nil)
+			return err
+		})
+	})
+	t.Run("attach returns another sidecar target", func(t *testing.T) {
+		rawID := "00000000-0000-4000-8000-000000000011"
+		sidecarID := "00000000-0000-4000-8000-000000000012"
+		response := api.PhotoAsset{
+			ID: assetID, Kind: "photo", Revision: 2,
+			DisplayFileID: &rawID, DisplaySource: "default",
+			CreatedAt: created, UpdatedAt: created,
+			Files: []api.PhotoFile{
+				{ID: rawID, AssetID: assetID, NodeID: 1, Role: "raw", CreatedAt: created},
+				{ID: sidecarID, AssetID: assetID, NodeID: 2, Role: "sidecar", CreatedAt: created},
+			},
+		}
+		run(t, http.StatusOK, response, true, func(c *Connection) error {
+			_, err := c.AttachPhotoFile(t.Context(), assetID, 1, 2, "sidecar", &rawID)
+			return err
+		})
+	})
+	t.Run("detach retains the file", func(t *testing.T) {
+		run(t, http.StatusOK, asset(2, 1, "image"), true, func(c *Connection) error {
+			_, err := c.DetachPhotoFile(t.Context(), assetID, 1, fileID, false)
+			return err
+		})
+	})
+	t.Run("promote returns another role", func(t *testing.T) {
+		run(t, http.StatusOK, asset(1, 1, "image"), true, func(c *Connection) error {
+			_, err := c.PromotePhotoNode(t.Context(), 1, nil, "raw", "photo")
+			return err
+		})
+	})
+	t.Run("promote preserves sidecar target", func(t *testing.T) {
+		rawID := "00000000-0000-4000-8000-000000000011"
+		sidecarID := "00000000-0000-4000-8000-000000000012"
+		response := api.PhotoAsset{
+			ID: assetID, Kind: "photo", Revision: 1,
+			DisplayFileID: &rawID, DisplaySource: "default",
+			CreatedAt: created, UpdatedAt: created,
+			Files: []api.PhotoFile{
+				{ID: rawID, AssetID: assetID, NodeID: 1, Role: "raw", CreatedAt: created},
+				{ID: sidecarID, AssetID: assetID, NodeID: 2, Role: "sidecar", SidecarOfID: &rawID, CreatedAt: created},
+			},
+		}
+		revision := int64(1)
+		run(t, http.StatusOK, response, false, func(c *Connection) error {
+			_, err := c.PromotePhotoNode(t.Context(), 2, &revision, "sidecar", "photo")
+			return err
+		})
+	})
+}
