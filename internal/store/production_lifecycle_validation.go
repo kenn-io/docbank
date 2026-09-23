@@ -104,20 +104,21 @@ func validateProductionLifecycleOperations(ctx context.Context, q metadataQuerie
 }
 
 func validateProductionLifecycleArtifactsAndPlans(ctx context.Context, q metadataQuerier) error {
-	artifacts, err := q.QueryContext(ctx, `SELECT job_id,artifact_id,artifact_json FROM production_job_artifacts ORDER BY job_id,artifact_id`)
+	artifacts, err := q.QueryContext(ctx, `SELECT job_id,artifact_id,artifact_sha256,artifact_size,artifact_json FROM production_job_artifacts ORDER BY job_id,artifact_id`)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = artifacts.Close() }()
 	for artifacts.Next() {
-		var jobID, id string
+		var jobID, id, hash string
+		var storedSize int64
 		var raw []byte
-		if err := artifacts.Scan(&jobID, &id, &raw); err != nil {
+		if err := artifacts.Scan(&jobID, &id, &hash, &storedSize, &raw); err != nil {
 			_ = artifacts.Close()
 			return err
 		}
 		artifact, err := canonical.Decode[documentproduction.Artifact](raw)
-		if err != nil || artifact.ID != id {
+		if err != nil || artifact.ID != id || artifact.SHA256 != hash || artifact.Size != storedSize {
 			_ = artifacts.Close()
 			return fmt.Errorf("production artifact %s/%s contradicts its identity", jobID, id)
 		}

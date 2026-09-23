@@ -3056,10 +3056,14 @@ END;
 CREATE TABLE IF NOT EXISTS production_job_artifacts (
     job_id TEXT NOT NULL REFERENCES production_jobs(job_id),
     artifact_id TEXT NOT NULL,
+    artifact_sha256 TEXT NOT NULL,
+    artifact_size INTEGER NOT NULL,
     artifact_json BLOB NOT NULL,
     created_at TEXT NOT NULL,
     PRIMARY KEY(job_id, artifact_id)
 );
+CREATE INDEX IF NOT EXISTS production_job_artifacts_hash
+ON production_job_artifacts(artifact_sha256);
 
 -- A render claim may start only after this immutable, reservation-bound plan
 -- is retained. The page list is ordered by sealed occurrence and source page.

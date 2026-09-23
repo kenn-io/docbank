@@ -687,20 +687,21 @@ func (s *Store) PublishProductionJob(ctx context.Context, claim productionservic
 		if expires, err := time.Parse(time.RFC3339Nano, lease.String); err != nil || !expires.After(time.Now().UTC()) {
 			return productionservice.ErrJobStaleClaim
 		}
-		rows, err := tx.QueryContext(ctx, `SELECT artifact_id,artifact_json FROM production_job_artifacts WHERE job_id=? ORDER BY artifact_id`, job.ID)
+		rows, err := tx.QueryContext(ctx, `SELECT artifact_id,artifact_sha256,artifact_size,artifact_json FROM production_job_artifacts WHERE job_id=? ORDER BY artifact_id`, job.ID)
 		if err != nil {
 			return err
 		}
 		defer func() { _ = rows.Close() }()
 		var staged []documentproduction.Artifact
 		for rows.Next() {
-			var id string
+			var id, hash string
+			var size int64
 			var raw []byte
-			if err := rows.Scan(&id, &raw); err != nil {
+			if err := rows.Scan(&id, &hash, &size, &raw); err != nil {
 				return err
 			}
 			a, err := canonical.Decode[documentproduction.Artifact](raw)
-			if err != nil || a.ID != id {
+			if err != nil || a.ID != id || a.SHA256 != hash || a.Size != size {
 				return productionservice.ErrJobIncomplete
 			}
 			staged = append(staged, a)
@@ -761,9 +762,11 @@ func (s *Store) StageProductionArtifact(ctx context.Context, claim productionser
 			return productionservice.ErrJobStaleClaim
 		}
 		var prior []byte
-		err = tx.QueryRowContext(ctx, `SELECT artifact_json FROM production_job_artifacts WHERE job_id=? AND artifact_id=?`, claim.JobID, artifact.ID).Scan(&prior)
+		var hash string
+		var size int64
+		err = tx.QueryRowContext(ctx, `SELECT artifact_sha256,artifact_size,artifact_json FROM production_job_artifacts WHERE job_id=? AND artifact_id=?`, claim.JobID, artifact.ID).Scan(&hash, &size, &prior)
 		if err == nil {
-			if !bytes.Equal(prior, raw) {
+			if hash != artifact.SHA256 || size != artifact.Size || !bytes.Equal(prior, raw) {
 				return productionservice.ErrJobConflict
 			}
 			return nil
@@ -771,7 +774,7 @@ func (s *Store) StageProductionArtifact(ctx context.Context, claim productionser
 		if !errors.Is(err, sql.ErrNoRows) {
 			return err
 		}
-		_, err = tx.ExecContext(ctx, `INSERT INTO production_job_artifacts(job_id,artifact_id,artifact_json,created_at) VALUES(?,?,?,?)`, claim.JobID, artifact.ID, raw, nowRFC3339())
+		_, err = tx.ExecContext(ctx, `INSERT INTO production_job_artifacts(job_id,artifact_id,artifact_sha256,artifact_size,artifact_json,created_at) VALUES(?,?,?,?,?,?)`, claim.JobID, artifact.ID, artifact.SHA256, artifact.Size, raw, nowRFC3339())
 		return err
 	})
 }

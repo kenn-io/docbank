@@ -4,7 +4,9 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"encoding/json/jsontext"
 	"encoding/json/v2"
 	"errors"
@@ -1289,7 +1291,10 @@ func (s *Store) importMetadataLines(
 	}
 	var lifecycleManifest *metadataProductionLifecycleManifest
 	var lifecycleRows bool
+	legacyArtifactRows := false
 	lastLifecycleTable := -1
+	inputLifecycleDigest := sha256.New()
+	inputLifecycleCounts := make([]int64, len(productionLifecycleTables))
 	for record := 2; ; record++ {
 		raw, err := dec.ReadValue()
 		if errors.Is(err, io.EOF) {
@@ -1297,9 +1302,18 @@ func (s *Store) importMetadataLines(
 				return metadataHeader{}, errors.New("production lifecycle manifest is missing")
 			}
 			if lifecycleManifest != nil {
-				actual, err := exportProductionLifecycleMetadata(ctx, tx, func(any) error { return nil })
-				if err != nil || !slices.Equal(actual.Counts, lifecycleManifest.Counts) || actual.Checksum != lifecycleManifest.Checksum {
+				for table := lastLifecycleTable + 1; table < len(productionLifecycleTables); table++ {
+					writeProductionLifecycleDigest(inputLifecycleDigest, productionLifecycleTables[table], "")
+				}
+				if !slices.Equal(inputLifecycleCounts, lifecycleManifest.Counts) ||
+					hex.EncodeToString(inputLifecycleDigest.Sum(nil)) != lifecycleManifest.Checksum {
 					return metadataHeader{}, errors.New("production lifecycle manifest does not match imported authority")
+				}
+				if !legacyArtifactRows {
+					actual, err := exportProductionLifecycleMetadata(ctx, tx, func(any) error { return nil })
+					if err != nil || !slices.Equal(actual.Counts, lifecycleManifest.Counts) || actual.Checksum != lifecycleManifest.Checksum {
+						return metadataHeader{}, errors.New("production lifecycle manifest does not match imported authority")
+					}
 				}
 			}
 			return header, nil
@@ -1332,8 +1346,19 @@ func (s *Store) importMetadataLines(
 				return metadataHeader{}, err
 			}
 			index := slices.Index(productionLifecycleTables[:], lifecycleRecord.Kind)
+			if index < 0 {
+				return metadataHeader{}, errors.New("unknown production lifecycle table")
+			}
 			if index < lastLifecycleTable {
 				return metadataHeader{}, errors.New("production lifecycle records are out of dependency order")
+			}
+			for table := lastLifecycleTable + 1; table <= index; table++ {
+				writeProductionLifecycleDigest(inputLifecycleDigest, productionLifecycleTables[table], "")
+			}
+			writeProductionLifecycleDigest(inputLifecycleDigest, lifecycleRecord.Kind, lifecycleRecord.Checksum)
+			inputLifecycleCounts[index]++
+			if lifecycleRecord.Kind == "production_job_artifacts" && len(lifecycleRecord.Values) == 4 {
+				legacyArtifactRows = true
 			}
 			lastLifecycleTable = index
 		}

@@ -206,8 +206,10 @@ func (s *Store) loadProductionPageStageTx(ctx context.Context, tx *sql.Tx, jobID
 		stage.Artifact.ID != artifactID || stage.Artifact.SHA256 != artifactSHA {
 		return productionservice.ProductionPageStage{}, productionservice.ErrJobConflict
 	}
-	err = tx.QueryRowContext(ctx, `SELECT artifact_json FROM production_job_artifacts WHERE job_id=? AND artifact_id=?`, jobID, artifactID).Scan(&artifactRaw)
-	if err != nil {
+	var storedSHA string
+	var storedSize int64
+	err = tx.QueryRowContext(ctx, `SELECT artifact_sha256,artifact_size,artifact_json FROM production_job_artifacts WHERE job_id=? AND artifact_id=?`, jobID, artifactID).Scan(&storedSHA, &storedSize, &artifactRaw)
+	if err != nil || storedSHA != stage.Artifact.SHA256 || storedSize != stage.Artifact.Size {
 		return productionservice.ProductionPageStage{}, productionservice.ErrJobConflict
 	}
 	expectedArtifactRaw, err := canonical.Marshal(stage.Artifact)
@@ -267,14 +269,16 @@ func (s *Store) StageProductionPage(ctx context.Context, claim productionservice
 			return productionservice.ErrJobConflict
 		}
 		var existing []byte
-		err = tx.QueryRowContext(ctx, `SELECT artifact_json FROM production_job_artifacts WHERE job_id=? AND artifact_id=?`,
-			stage.JobID, stage.Artifact.ID).Scan(&existing)
-		if err == nil && !bytes.Equal(existing, artifactRaw) {
+		var existingSHA string
+		var existingSize int64
+		err = tx.QueryRowContext(ctx, `SELECT artifact_sha256,artifact_size,artifact_json FROM production_job_artifacts WHERE job_id=? AND artifact_id=?`,
+			stage.JobID, stage.Artifact.ID).Scan(&existingSHA, &existingSize, &existing)
+		if err == nil && (existingSHA != stage.Artifact.SHA256 || existingSize != stage.Artifact.Size || !bytes.Equal(existing, artifactRaw)) {
 			return productionservice.ErrJobConflict
 		}
 		if errors.Is(err, sql.ErrNoRows) {
-			_, err = tx.ExecContext(ctx, `INSERT INTO production_job_artifacts(job_id,artifact_id,artifact_json,created_at) VALUES(?,?,?,?)`,
-				stage.JobID, stage.Artifact.ID, artifactRaw, nowRFC3339())
+			_, err = tx.ExecContext(ctx, `INSERT INTO production_job_artifacts(job_id,artifact_id,artifact_sha256,artifact_size,artifact_json,created_at) VALUES(?,?,?,?,?,?)`,
+				stage.JobID, stage.Artifact.ID, stage.Artifact.SHA256, stage.Artifact.Size, artifactRaw, nowRFC3339())
 		}
 		if err != nil {
 			return err

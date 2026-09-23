@@ -1654,14 +1654,17 @@ type RenditionBlobReader interface {
 	OpenStreamContext(ctx context.Context, hash string) (packstore.VerifiedReadCloser, int64, error)
 }
 
-// VerifyRenditionBlobBytes verifies every retained rendition and embedding
-// artifact through the restored mixed-storage catalog, including builds that
-// are staged but not attached to an active head.
+// VerifyRenditionBlobBytes verifies every retained rendition, embedding,
+// page-image, and production artifact through the mixed-storage catalog,
+// including staged work that is not attached to an active head.
 func (s *Store) VerifyRenditionBlobBytes(ctx context.Context, reader RenditionBlobReader) error {
 	if err := s.verifyRenditionBlobBytes(ctx, reader, false); err != nil {
 		return err
 	}
-	return s.VerifyPageImageBytes(ctx, reader)
+	if err := s.VerifyPageImageBytes(ctx, reader); err != nil {
+		return err
+	}
+	return s.verifyProductionArtifactBytes(ctx, reader)
 }
 
 // VerifyRestoredRenditionBlobBytes allows omitted vector payloads during restore.
@@ -1670,7 +1673,40 @@ func (s *Store) VerifyRestoredRenditionBlobBytes(ctx context.Context, reader Ren
 	if err := s.verifyRenditionBlobBytes(ctx, reader, true); err != nil {
 		return err
 	}
-	return s.VerifyPageImageBytes(ctx, reader)
+	if err := s.VerifyPageImageBytes(ctx, reader); err != nil {
+		return err
+	}
+	return s.verifyProductionArtifactBytes(ctx, reader)
+}
+
+func (s *Store) verifyProductionArtifactBytes(ctx context.Context, reader RenditionBlobReader) error {
+	rows, err := s.db.QueryContext(ctx, `SELECT job_id,artifact_id FROM production_job_artifacts ORDER BY job_id,artifact_id`)
+	if err != nil {
+		return fmt.Errorf("listing production artifacts: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	type artifactKey struct{ jobID, artifactID string }
+	var keys []artifactKey
+	for rows.Next() {
+		var key artifactKey
+		if err := rows.Scan(&key.jobID, &key.artifactID); err != nil {
+			return fmt.Errorf("scanning production artifact identity: %w", err)
+		}
+		keys = append(keys, key)
+	}
+	if err := errors.Join(rows.Err(), rows.Close()); err != nil {
+		return fmt.Errorf("listing production artifact identities: %w", err)
+	}
+	for _, key := range keys {
+		artifact, err := s.LoadProductionJobArtifact(ctx, key.jobID, key.artifactID)
+		if err != nil {
+			return fmt.Errorf("production artifact %s/%s: %w", key.jobID, key.artifactID, err)
+		}
+		if err := verifyRenditionBlob(ctx, reader, importedProcessingBlob{hash: artifact.SHA256, size: artifact.Size}); err != nil {
+			return fmt.Errorf("production artifact %s/%s: %w", key.jobID, key.artifactID, err)
+		}
+	}
+	return nil
 }
 
 func (s *Store) verifyRenditionBlobBytes(ctx context.Context, reader RenditionBlobReader, allowMissingVectorPayloads bool) error {
@@ -1726,10 +1762,9 @@ func (s *Store) verifyRenditionBlobBytes(ctx context.Context, reader RenditionBl
 	return nil
 }
 
-// VerifyRenditionBlobAuthority verifies the relational and physical-catalog
-// location authority for every retained rendition source and artifact,
-// including staged builds that are not currently attached to a document
-// version. VerifyRenditionBlobBytes separately reads and verifies each location.
+// VerifyRenditionBlobAuthority verifies relational and physical-catalog
+// authority for retained rendition, embedding, and production artifacts.
+// VerifyRenditionBlobBytes separately reads and verifies each location.
 func (s *Store) VerifyRenditionBlobAuthority(ctx context.Context) error {
 	return s.verifyRenditionBlobAuthority(ctx, false)
 }
@@ -1751,6 +1786,9 @@ func (s *Store) verifyRenditionBlobAuthority(ctx context.Context, allowMissingVe
 	}
 	if err := validateEmbeddingMetadataState(ctx, tx); err != nil {
 		return fmt.Errorf("validating embedding blob authority: %w", err)
+	}
+	if err := validateProductionLifecycleArtifactsAndPlans(ctx, tx); err != nil {
+		return fmt.Errorf("validating production artifact authority: %w", err)
 	}
 	if err := verifyRenditionBlobCatalogAuthority(ctx, tx, allowMissingVectorPayloads); err != nil {
 		return fmt.Errorf("verifying processing blob authority: %w", err)
@@ -1775,7 +1813,9 @@ func verifyRenditionBlobCatalogAuthority(ctx context.Context, tx *sql.Tx, allowM
 		WHERE generation_blob_hash IS NOT NULL
 		UNION
 		SELECT evidence_fingerprint FROM embedding_input_generations
-		WHERE generation_blob_hash IS NOT NULL`
+		WHERE generation_blob_hash IS NOT NULL
+		UNION
+		SELECT artifact_sha256 FROM production_job_artifacts`
 	if !allowMissingVectorPayloads {
 		query += ` UNION SELECT payload_blob_hash FROM embedding_vector_sets`
 	}

@@ -114,15 +114,17 @@ func (s *Store) LoadProductionJobArtifact(ctx context.Context, jobID, artifactID
 		return documentproduction.Artifact{}, production.ErrJobConflict
 	}
 	var raw []byte
-	if err := tx.QueryRowContext(ctx, `SELECT artifact_json FROM production_job_artifacts WHERE job_id=? AND artifact_id=?`,
-		jobID, artifactID).Scan(&raw); err != nil {
+	var hash string
+	var storedSize int64
+	if err := tx.QueryRowContext(ctx, `SELECT artifact_sha256,artifact_size,artifact_json FROM production_job_artifacts WHERE job_id=? AND artifact_id=?`,
+		jobID, artifactID).Scan(&hash, &storedSize, &raw); err != nil {
 		return documentproduction.Artifact{}, errors.Join(production.ErrJobConflict, err)
 	}
 	if len(raw) > maxProductionArtifactBytes {
 		return documentproduction.Artifact{}, production.ErrJobConflict
 	}
 	artifact, err := canonical.Decode[documentproduction.Artifact](raw)
-	if err != nil || artifact.ID != artifactID {
+	if err != nil || artifact.ID != artifactID || artifact.SHA256 != hash || artifact.Size != storedSize {
 		return documentproduction.Artifact{}, production.ErrJobConflict
 	}
 	if _, _, err := documentproduction.CanonicalArtifactManifest(documentproduction.ArtifactManifest{

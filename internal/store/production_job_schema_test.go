@@ -97,7 +97,7 @@ func TestImportMetadataRejectsExistingProductionJobAuthority(t *testing.T) {
 		},
 		{
 			name:       "staged artifact",
-			insert:     `INSERT INTO production_job_artifacts(job_id,artifact_id,artifact_json,created_at) VALUES('` + id + `','33333333-3333-4333-8333-333333333333','{}','2026-01-01T00:00:00Z')`,
+			insert:     `INSERT INTO production_job_artifacts(job_id,artifact_id,artifact_sha256,artifact_size,artifact_json,created_at) VALUES('` + id + `','33333333-3333-4333-8333-333333333333','` + digest + `',1,'{}','2026-01-01T00:00:00Z')`,
 			countQuery: `SELECT COUNT(*) FROM production_job_artifacts`,
 		},
 		{

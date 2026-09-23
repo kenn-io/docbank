@@ -1,6 +1,7 @@
 package store
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"database/sql"
@@ -15,6 +16,7 @@ import (
 	"strconv"
 	"strings"
 
+	documentproduction "go.kenn.io/docbank/document/production"
 	"go.kenn.io/docbank/internal/canonical"
 )
 
@@ -226,6 +228,36 @@ func importProductionLifecycleMetadata(ctx context.Context, tx *sql.Tx, raw json
 	columns, err := productionLifecycleColumns(ctx, tx, record.Kind)
 	if err != nil {
 		return err
+	}
+	if record.Kind == "production_job_artifacts" && len(record.Values) == 4 {
+		// Early v1 lifecycle snapshots predate the typed root. Derive it only
+		// from a bounded, canonical, validated artifact; keep the input row's
+		// checksum for its original manifest before normalizing the columns.
+		if len(record.Values[2]) > 2*maxProductionArtifactBytes+2 {
+			return errors.New("production artifact exceeds input limit")
+		}
+		value, err := productionLifecycleSQLValue("BLOB", record.Values[2])
+		if err != nil {
+			return err
+		}
+		raw, ok := value.([]byte)
+		if !ok || len(raw) == 0 || len(raw) > maxProductionArtifactBytes {
+			return errors.New("invalid legacy production artifact")
+		}
+		artifact, err := canonical.Decode[documentproduction.Artifact](raw)
+		if err != nil || len(record.Values[1]) < 2 || record.Values[1] != "t:"+artifact.ID {
+			return errors.New("invalid legacy production artifact identity")
+		}
+		if _, _, err := documentproduction.CanonicalArtifactManifest(documentproduction.ArtifactManifest{
+			Contract: documentproduction.ArtifactManifestContractV1, Artifacts: []documentproduction.Artifact{artifact},
+		}); err != nil {
+			return fmt.Errorf("invalid legacy production artifact: %w", err)
+		}
+		if encoded, err := canonical.Marshal(artifact); err != nil || !bytes.Equal(encoded, raw) {
+			return errors.New("legacy production artifact is not canonical")
+		}
+		record.Values = []string{record.Values[0], record.Values[1], "t:" + artifact.SHA256,
+			"i:" + strconv.FormatInt(artifact.Size, 10), record.Values[2], record.Values[3]}
 	}
 	if len(record.Values) != len(columns) {
 		return errors.New("production lifecycle column count mismatch")

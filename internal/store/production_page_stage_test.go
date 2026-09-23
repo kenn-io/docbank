@@ -229,7 +229,7 @@ func TestProductionPageStageSchemaIsRequiredAndPristine(t *testing.T) {
 	require.NoError(t, s.ExportMetadata(t.Context(), &exported))
 	var version int
 	require.NoError(t, s.db.QueryRow(`SELECT schema_version FROM vault_metadata WHERE singleton=1`).Scan(&version))
-	require.Equal(t, 30, version)
+	require.Equal(t, currentStorageSchemaVersion, version)
 	_, err := s.db.Exec(`INSERT INTO production_job_page_stages(job_id,member_id,page,artifact_id,artifact_sha256,stage_sha256,canonical_json,created_at) VALUES('synthetic','synthetic',1,'synthetic','synthetic','synthetic','{}','2026-01-01T00:00:00Z')`)
 	require.Error(t, err, "foreign key prevents orphan receipt")
 	conn, err := s.db.Conn(t.Context())
@@ -248,7 +248,7 @@ func TestProductionPageStageSchemaIsRequiredAndPristine(t *testing.T) {
 	require.Equal(t, 1, rows)
 }
 
-func TestProductionPageStageReleasedUpgradeCreatesV30Table(t *testing.T) {
+func TestProductionPageStageReleasedUpgradeCreatesCurrentTable(t *testing.T) {
 	for _, driver := range v090UpgradeDrivers() {
 		t.Run(driver.name, func(t *testing.T) {
 			path := filepath.Join(t.TempDir(), "docbank.db")
@@ -258,7 +258,7 @@ func TestProductionPageStageReleasedUpgradeCreatesV30Table(t *testing.T) {
 			defer func() { require.NoError(t, s.Close()) }()
 			var version, stages int
 			require.NoError(t, s.db.QueryRow(`SELECT schema_version FROM vault_metadata WHERE singleton=1`).Scan(&version))
-			require.Equal(t, 30, version)
+			require.Equal(t, currentStorageSchemaVersion, version)
 			require.NoError(t, s.db.QueryRow(`SELECT COUNT(*) FROM production_job_page_stages`).Scan(&stages))
 			require.Zero(t, stages)
 		})
