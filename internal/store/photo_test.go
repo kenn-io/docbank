@@ -400,6 +400,20 @@ func TestPhotoMetadataRejectsOrphanReceipts(t *testing.T) {
 	require.ErrorContains(t, err, "reference missing assets or settings")
 }
 
+func TestPhotoExplicitVideoAdmitsGenericVideo(t *testing.T) {
+	s := newTestStore(t)
+	ctx := t.Context()
+	clip, err := s.CreateFile(ctx, s.RootID(), "clip.mp4", fakeHash("0c11"), 1, "application/octet-stream")
+	require.NoError(t, err)
+	_, err = s.PhotoAssetForNode(ctx, clip.ID)
+	require.ErrorIs(t, err, ErrNotFound)
+	_, err = s.PromotePhotoNode(ctx, clip.ID, nil, "", "")
+	require.ErrorIs(t, err, ErrPhotoNodeNotEligible)
+	asset, err := s.PromotePhotoNode(ctx, clip.ID, nil, PhotoRoleVideo, PhotoKindVideo)
+	require.NoError(t, err)
+	assert.Equal(t, PhotoKindVideo, asset.Kind)
+}
+
 func TestPhotoMutationsRequireRevision(t *testing.T) {
 	s := newTestStore(t)
 	ctx := t.Context()

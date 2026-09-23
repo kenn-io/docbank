@@ -75,6 +75,36 @@ func photoMutationResponse(response *http.Response, asset *api.PhotoAsset, err e
 	return *asset, nil
 }
 
+// photoResponseHasNode checks that a node-addressed response is the asset
+// that contains the requested node.
+func photoResponseHasNode(asset api.PhotoAsset, nodeID int64) error {
+	for _, file := range asset.Files {
+		if file.NodeID == nodeID {
+			return nil
+		}
+	}
+	return fmt.Errorf("photo response does not contain node %d", nodeID)
+}
+
+func photoResponseLacksFile(asset api.PhotoAsset, fileID string) error {
+	for _, file := range asset.Files {
+		if file.ID == fileID {
+			return fmt.Errorf("photo response still contains detached file %s", fileID)
+		}
+	}
+	return nil
+}
+
+func photoMutationAddressed(asset api.PhotoAsset, err error, check func(api.PhotoAsset) error) (api.PhotoAsset, error) {
+	if err != nil {
+		return api.PhotoAsset{}, err
+	}
+	if err := check(asset); err != nil {
+		return api.PhotoAsset{}, &responseDecodeError{err: err}
+	}
+	return asset, nil
+}
+
 func (c *Connection) PhotoAsset(ctx context.Context, id string) (api.PhotoAsset, error) {
 	if !validUUIDv4(id) {
 		return api.PhotoAsset{}, errors.New("photo asset ID must be a canonical UUIDv4")
@@ -102,6 +132,9 @@ func (c *Connection) PhotoAssetForNode(ctx context.Context, nodeID int64) (api.P
 	if err := validatePhotoAssetResponse(*asset, response.Header.Get("ETag"), ""); err != nil {
 		return api.PhotoAsset{}, err
 	}
+	if err := photoResponseHasNode(*asset, nodeID); err != nil {
+		return api.PhotoAsset{}, err
+	}
 	return *asset, nil
 }
 
@@ -111,7 +144,8 @@ func (c *Connection) CreatePhotoAsset(ctx context.Context, nodeID int64, role, k
 	}
 	var response *http.Response
 	asset, err := c.apiWithResponse(&response).CreatePhotoAsset(ctx, &apiclient.CreatePhotoAssetRequestOptions{Body: &apiclient.CreatePhotoAssetBody{NodeID: nodeID, Role: role, Kind: kind}})
-	return photoMutationResponse(response, asset, err, "")
+	result, err := photoMutationResponse(response, asset, err, "")
+	return photoMutationAddressed(result, err, func(a api.PhotoAsset) error { return photoResponseHasNode(a, nodeID) })
 }
 
 func (c *Connection) AttachPhotoFile(ctx context.Context, assetID string, revision int64, nodeID int64, role string, sidecarOfID *string) (api.PhotoAsset, error) {
@@ -124,7 +158,8 @@ func (c *Connection) AttachPhotoFile(ctx context.Context, assetID string, revisi
 		Header:     &apiclient.AttachPhotoFileHeaders{IfMatch: photoIfMatch(revision)},
 		Body:       &apiclient.AttachPhotoFileBody{NodeID: nodeID, Role: role, SidecarOfID: sidecarOfID},
 	})
-	return photoMutationResponse(response, asset, err, assetID)
+	result, err := photoMutationResponse(response, asset, err, assetID)
+	return photoMutationAddressed(result, err, func(a api.PhotoAsset) error { return photoResponseHasNode(a, nodeID) })
 }
 
 func (c *Connection) DetachPhotoFile(ctx context.Context, assetID string, revision int64, fileID string, clearDependentSidecars bool) (api.PhotoAsset, error) {
@@ -137,7 +172,8 @@ func (c *Connection) DetachPhotoFile(ctx context.Context, assetID string, revisi
 		Header:     &apiclient.DetachPhotoFileHeaders{IfMatch: photoIfMatch(revision)},
 		Query:      &apiclient.DetachPhotoFileQuery{ClearDependentSidecars: &clearDependentSidecars},
 	})
-	return photoMutationResponse(response, asset, err, assetID)
+	result, err := photoMutationResponse(response, asset, err, assetID)
+	return photoMutationAddressed(result, err, func(a api.PhotoAsset) error { return photoResponseLacksFile(a, fileID) })
 }
 
 func (c *Connection) ExcludePhotoAsset(ctx context.Context, assetID string, revision int64, excluded bool) (api.PhotoAsset, error) {
@@ -173,7 +209,8 @@ func (c *Connection) PromotePhotoNode(ctx context.Context, nodeID int64, expecte
 	}
 	var response *http.Response
 	asset, err := c.apiWithResponse(&response).PromotePhotoNode(ctx, options)
-	return photoMutationResponse(response, asset, err, "")
+	result, err := photoMutationResponse(response, asset, err, "")
+	return photoMutationAddressed(result, err, func(a api.PhotoAsset) error { return photoResponseHasNode(a, nodeID) })
 }
 
 func (c *Connection) SetPhotoDisplay(ctx context.Context, assetID string, revision int64, fileID *string) (api.PhotoAsset, error) {

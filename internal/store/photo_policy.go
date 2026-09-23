@@ -150,6 +150,9 @@ func validatePhotoRoleForNode(role string, facts PhotoNodeFacts) error {
 		}
 		return nil
 	}
+	if role == PhotoRoleVideo && facts.MediaFamily == "audio_video" {
+		return nil
+	}
 	if !facts.Qualifies {
 		return fmt.Errorf("%w: node %d does not have a photo media type", ErrPhotoNodeNotEligible, facts.Node.ID)
 	}
