@@ -4,8 +4,10 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"slices"
 	"strings"
 
+	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/internal/query"
 )
 
@@ -137,6 +139,18 @@ func isPhotoCameraRawMedia(mediaType string) bool {
 	}
 }
 
+// isVideoExtension reports whether the format catalog types a filename's
+// extension as video, for files stored with a generic MIME type.
+func isVideoExtension(name string) bool {
+	extension := query.FilenameExtension(name)
+	for _, format := range document.FormatMetadataCatalog() {
+		if strings.HasPrefix(format.MediaType, "video/") && slices.Contains(format.Extensions, extension) {
+			return true
+		}
+	}
+	return false
+}
+
 func validatePhotoRoleForNode(role string, facts PhotoNodeFacts) error {
 	if !photoRoleValid(role) {
 		return fmt.Errorf("%w: unknown role %q", ErrInvalidPhotoAsset, role)
@@ -150,7 +164,7 @@ func validatePhotoRoleForNode(role string, facts PhotoNodeFacts) error {
 		}
 		return nil
 	}
-	if role == PhotoRoleVideo && facts.MediaFamily == "audio_video" {
+	if role == PhotoRoleVideo && facts.MediaType == "" && isVideoExtension(facts.Node.Name) {
 		return nil
 	}
 	if !facts.Qualifies {
