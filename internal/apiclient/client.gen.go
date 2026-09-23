@@ -7144,6 +7144,476 @@ func (c *Client) GetPeopleRebuild(ctx context.Context, options *GetPeopleRebuild
 	return responseParser(ctx, resp)
 }
 
+// CreatePhotoAsset Create a photo asset for one file
+func (c *Client) CreatePhotoAsset(ctx context.Context, options *CreatePhotoAssetRequestOptions, reqEditors ...runtime.RequestEditorFn) (*CreatePhotoAssetResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/photos/assets",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*CreatePhotoAssetResponse, error) {
+		switch resp.StatusCode {
+
+		case 201:
+
+			target := new(CreatePhotoAssetResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "CreatePhotoAssetResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[CreatePhotoAssetErrorResponse](resp, "CreatePhotoAssetErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/photos/assets")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 201)
+	}
+	return responseParser(ctx, resp)
+}
+
+// GetPhotoAsset Inspect one photo asset
+func (c *Client) GetPhotoAsset(ctx context.Context, options *GetPhotoAssetRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetPhotoAssetResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/photos/assets/{asset_id}",
+		Method:     "GET",
+		Options:    options,
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*GetPhotoAssetResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(GetPhotoAssetResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "GetPhotoAssetResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[GetPhotoAssetErrorResponse](resp, "GetPhotoAssetErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/photos/assets/{asset_id}")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
+// SetPhotoDisplay Set or reset a photo display override
+func (c *Client) SetPhotoDisplay(ctx context.Context, options *SetPhotoDisplayRequestOptions, reqEditors ...runtime.RequestEditorFn) (*SetPhotoDisplayResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/photos/assets/{asset_id}/display",
+		Method:      "PUT",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*SetPhotoDisplayResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(SetPhotoDisplayResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "SetPhotoDisplayResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[SetPhotoDisplayErrorResponse](resp, "SetPhotoDisplayErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/photos/assets/{asset_id}/display")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
+// ExcludePhotoAsset Exclude or include a photo asset
+func (c *Client) ExcludePhotoAsset(ctx context.Context, options *ExcludePhotoAssetRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ExcludePhotoAssetResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/photos/assets/{asset_id}/exclude",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*ExcludePhotoAssetResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(ExcludePhotoAssetResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "ExcludePhotoAssetResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[ExcludePhotoAssetErrorResponse](resp, "ExcludePhotoAssetErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/photos/assets/{asset_id}/exclude")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
+// AttachPhotoFile Attach one node to a photo asset
+func (c *Client) AttachPhotoFile(ctx context.Context, options *AttachPhotoFileRequestOptions, reqEditors ...runtime.RequestEditorFn) (*AttachPhotoFileResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/photos/assets/{asset_id}/files",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*AttachPhotoFileResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(AttachPhotoFileResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "AttachPhotoFileResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[AttachPhotoFileErrorResponse](resp, "AttachPhotoFileErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/photos/assets/{asset_id}/files")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
+// DetachPhotoFile Detach one file from a photo asset
+func (c *Client) DetachPhotoFile(ctx context.Context, options *DetachPhotoFileRequestOptions, reqEditors ...runtime.RequestEditorFn) (*DetachPhotoFileResponse, error) {
+	var err error
+
+	queryEncoding := map[string]runtime.QueryEncoding{
+		"clear_dependent_sidecars": {Style: "form", Explode: &[]bool{false}[0]},
+	}
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:    c.apiClient.GetBaseURL() + "/api/v1/photos/assets/{asset_id}/files/{file_id}",
+		Method:        "DELETE",
+		Options:       options,
+		QueryEncoding: queryEncoding,
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*DetachPhotoFileResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(DetachPhotoFileResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "DetachPhotoFileResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[DetachPhotoFileErrorResponse](resp, "DetachPhotoFileErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/photos/assets/{asset_id}/files/{file_id}")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
+// GetPhotoAssetByNode Inspect the photo asset containing one node
+func (c *Client) GetPhotoAssetByNode(ctx context.Context, options *GetPhotoAssetByNodeRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetPhotoAssetByNodeResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/photos/nodes/{node_id}/asset",
+		Method:     "GET",
+		Options:    options,
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*GetPhotoAssetByNodeResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(GetPhotoAssetByNodeResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "GetPhotoAssetByNodeResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[GetPhotoAssetByNodeErrorResponse](resp, "GetPhotoAssetByNodeErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/photos/nodes/{node_id}/asset")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
+// PromotePhotoNode Promote one node into a photo asset
+func (c *Client) PromotePhotoNode(ctx context.Context, options *PromotePhotoNodeRequestOptions, reqEditors ...runtime.RequestEditorFn) (*PromotePhotoNodeResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/photos/nodes/{node_id}/promote",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*PromotePhotoNodeResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(PromotePhotoNodeResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "PromotePhotoNodeResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[PromotePhotoNodeErrorResponse](resp, "PromotePhotoNodeErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/photos/nodes/{node_id}/promote")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
+// GetPhotoSettings Inspect the photo display preference
+func (c *Client) GetPhotoSettings(ctx context.Context, reqEditors ...runtime.RequestEditorFn) (*GetPhotoSettingsResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/photos/settings",
+		Method:     "GET",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*GetPhotoSettingsResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(GetPhotoSettingsResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "GetPhotoSettingsResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[GetPhotoSettingsErrorResponse](resp, "GetPhotoSettingsErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/photos/settings")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
+// SetPhotoSettings Set or reset the photo display preference
+func (c *Client) SetPhotoSettings(ctx context.Context, options *SetPhotoSettingsRequestOptions, reqEditors ...runtime.RequestEditorFn) (*SetPhotoSettingsResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/photos/settings",
+		Method:      "PUT",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*SetPhotoSettingsResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(SetPhotoSettingsResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "SetPhotoSettingsResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[SetPhotoSettingsErrorResponse](resp, "SetPhotoSettingsErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/photos/settings")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
 // GrantDocumentProcessingConsent Grant consent for one exact reviewed processing plan
 func (c *Client) GrantDocumentProcessingConsent(ctx context.Context, options *GrantDocumentProcessingConsentRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GrantDocumentProcessingConsentResponse, error) {
 	var err error
@@ -15300,6 +15770,344 @@ func (o *GetPeopleRebuildRequestOptions) GetHeader() (map[string]string, error) 
 	return nil, nil
 }
 
+// CreatePhotoAssetRequestOptions is the options needed to make a request to CreatePhotoAsset.
+type CreatePhotoAssetRequestOptions struct {
+	Body *CreatePhotoAssetBody
+}
+
+// GetPathParams returns the path params as a map.
+func (o *CreatePhotoAssetRequestOptions) GetPathParams() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetQuery returns the query params as a map.
+func (o *CreatePhotoAssetRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *CreatePhotoAssetRequestOptions) GetBody() any {
+	if o.Body == nil {
+		return nil
+	}
+	return o.Body
+}
+
+// GetHeader returns the headers as a map.
+func (o *CreatePhotoAssetRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
+// GetPhotoAssetRequestOptions is the options needed to make a request to GetPhotoAsset.
+type GetPhotoAssetRequestOptions struct {
+	PathParams *GetPhotoAssetPath
+}
+
+// GetPathParams returns the path params as a map.
+func (o *GetPhotoAssetRequestOptions) GetPathParams() (map[string]any, error) {
+	encoded, err := json.Marshal(o.PathParams, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetQuery returns the query params as a map.
+func (o *GetPhotoAssetRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *GetPhotoAssetRequestOptions) GetBody() any {
+	return nil
+}
+
+// GetHeader returns the headers as a map.
+func (o *GetPhotoAssetRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
+// SetPhotoDisplayRequestOptions is the options needed to make a request to SetPhotoDisplay.
+type SetPhotoDisplayRequestOptions struct {
+	PathParams *SetPhotoDisplayPath
+	Body       *SetPhotoDisplayBody
+	Header     *SetPhotoDisplayHeaders
+}
+
+// GetPathParams returns the path params as a map.
+func (o *SetPhotoDisplayRequestOptions) GetPathParams() (map[string]any, error) {
+	encoded, err := json.Marshal(o.PathParams, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetQuery returns the query params as a map.
+func (o *SetPhotoDisplayRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *SetPhotoDisplayRequestOptions) GetBody() any {
+	if o.Body == nil {
+		return nil
+	}
+	return o.Body
+}
+
+// GetHeader returns the headers as a map.
+func (o *SetPhotoDisplayRequestOptions) GetHeader() (map[string]string, error) {
+	encoded, err := json.Marshal(o.Header, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var headers map[string]string
+	err = json.Unmarshal(encoded, &headers)
+	return headers, err
+}
+
+// ExcludePhotoAssetRequestOptions is the options needed to make a request to ExcludePhotoAsset.
+type ExcludePhotoAssetRequestOptions struct {
+	PathParams *ExcludePhotoAssetPath
+	Body       *ExcludePhotoAssetBody
+	Header     *ExcludePhotoAssetHeaders
+}
+
+// GetPathParams returns the path params as a map.
+func (o *ExcludePhotoAssetRequestOptions) GetPathParams() (map[string]any, error) {
+	encoded, err := json.Marshal(o.PathParams, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetQuery returns the query params as a map.
+func (o *ExcludePhotoAssetRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *ExcludePhotoAssetRequestOptions) GetBody() any {
+	if o.Body == nil {
+		return nil
+	}
+	return o.Body
+}
+
+// GetHeader returns the headers as a map.
+func (o *ExcludePhotoAssetRequestOptions) GetHeader() (map[string]string, error) {
+	encoded, err := json.Marshal(o.Header, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var headers map[string]string
+	err = json.Unmarshal(encoded, &headers)
+	return headers, err
+}
+
+// AttachPhotoFileRequestOptions is the options needed to make a request to AttachPhotoFile.
+type AttachPhotoFileRequestOptions struct {
+	PathParams *AttachPhotoFilePath
+	Body       *AttachPhotoFileBody
+	Header     *AttachPhotoFileHeaders
+}
+
+// GetPathParams returns the path params as a map.
+func (o *AttachPhotoFileRequestOptions) GetPathParams() (map[string]any, error) {
+	encoded, err := json.Marshal(o.PathParams, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetQuery returns the query params as a map.
+func (o *AttachPhotoFileRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *AttachPhotoFileRequestOptions) GetBody() any {
+	if o.Body == nil {
+		return nil
+	}
+	return o.Body
+}
+
+// GetHeader returns the headers as a map.
+func (o *AttachPhotoFileRequestOptions) GetHeader() (map[string]string, error) {
+	encoded, err := json.Marshal(o.Header, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var headers map[string]string
+	err = json.Unmarshal(encoded, &headers)
+	return headers, err
+}
+
+// DetachPhotoFileRequestOptions is the options needed to make a request to DetachPhotoFile.
+type DetachPhotoFileRequestOptions struct {
+	PathParams *DetachPhotoFilePath
+	Query      *DetachPhotoFileQuery
+	Header     *DetachPhotoFileHeaders
+}
+
+// GetPathParams returns the path params as a map.
+func (o *DetachPhotoFileRequestOptions) GetPathParams() (map[string]any, error) {
+	encoded, err := json.Marshal(o.PathParams, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetQuery returns the query params as a map.
+func (o *DetachPhotoFileRequestOptions) GetQuery() (map[string]any, error) {
+	encoded, err := json.Marshal(o.Query, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *DetachPhotoFileRequestOptions) GetBody() any {
+	return nil
+}
+
+// GetHeader returns the headers as a map.
+func (o *DetachPhotoFileRequestOptions) GetHeader() (map[string]string, error) {
+	encoded, err := json.Marshal(o.Header, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var headers map[string]string
+	err = json.Unmarshal(encoded, &headers)
+	return headers, err
+}
+
+// GetPhotoAssetByNodeRequestOptions is the options needed to make a request to GetPhotoAssetByNode.
+type GetPhotoAssetByNodeRequestOptions struct {
+	PathParams *GetPhotoAssetByNodePath
+}
+
+// GetPathParams returns the path params as a map.
+func (o *GetPhotoAssetByNodeRequestOptions) GetPathParams() (map[string]any, error) {
+	encoded, err := json.Marshal(o.PathParams, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetQuery returns the query params as a map.
+func (o *GetPhotoAssetByNodeRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *GetPhotoAssetByNodeRequestOptions) GetBody() any {
+	return nil
+}
+
+// GetHeader returns the headers as a map.
+func (o *GetPhotoAssetByNodeRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
+// PromotePhotoNodeRequestOptions is the options needed to make a request to PromotePhotoNode.
+type PromotePhotoNodeRequestOptions struct {
+	PathParams *PromotePhotoNodePath
+	Body       *PromotePhotoNodeBody
+	Header     *PromotePhotoNodeHeaders
+}
+
+// GetPathParams returns the path params as a map.
+func (o *PromotePhotoNodeRequestOptions) GetPathParams() (map[string]any, error) {
+	encoded, err := json.Marshal(o.PathParams, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetQuery returns the query params as a map.
+func (o *PromotePhotoNodeRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *PromotePhotoNodeRequestOptions) GetBody() any {
+	if o.Body == nil {
+		return nil
+	}
+	return o.Body
+}
+
+// GetHeader returns the headers as a map.
+func (o *PromotePhotoNodeRequestOptions) GetHeader() (map[string]string, error) {
+	encoded, err := json.Marshal(o.Header, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var headers map[string]string
+	err = json.Unmarshal(encoded, &headers)
+	return headers, err
+}
+
+// SetPhotoSettingsRequestOptions is the options needed to make a request to SetPhotoSettings.
+type SetPhotoSettingsRequestOptions struct {
+	Body   *SetPhotoSettingsBody
+	Header *SetPhotoSettingsHeaders
+}
+
+// GetPathParams returns the path params as a map.
+func (o *SetPhotoSettingsRequestOptions) GetPathParams() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetQuery returns the query params as a map.
+func (o *SetPhotoSettingsRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *SetPhotoSettingsRequestOptions) GetBody() any {
+	if o.Body == nil {
+		return nil
+	}
+	return o.Body
+}
+
+// GetHeader returns the headers as a map.
+func (o *SetPhotoSettingsRequestOptions) GetHeader() (map[string]string, error) {
+	encoded, err := json.Marshal(o.Header, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var headers map[string]string
+	err = json.Unmarshal(encoded, &headers)
+	return headers, err
+}
+
 // GrantDocumentProcessingConsentRequestOptions is the options needed to make a request to GrantDocumentProcessingConsent.
 type GrantDocumentProcessingConsentRequestOptions struct {
 	Body *GrantDocumentProcessingConsentBody
@@ -17431,6 +18239,22 @@ const (
 	Csv    IssueTermReportDownloadRequestFormat = "csv"
 )
 
+type PromotePhotoNodeRequestKind string
+
+const (
+	Photo PromotePhotoNodeRequestKind = "photo"
+	Video PromotePhotoNodeRequestKind = "video"
+)
+
+type PromotePhotoNodeRequestRole string
+
+const (
+	Image                            PromotePhotoNodeRequestRole = "image"
+	PromotePhotoNodeRequestRoleVideo PromotePhotoNodeRequestRole = "video"
+	Raw                              PromotePhotoNodeRequestRole = "raw"
+	Sidecar                          PromotePhotoNodeRequestRole = "sidecar"
+)
+
 type RenditionTextObservedConfiguration string
 
 const (
@@ -17473,19 +18297,19 @@ const (
 type SavedQueryFiltersSchemaMediaFamilies string
 
 const (
-	Archive      SavedQueryFiltersSchemaMediaFamilies = "archive"
-	AudioVideo   SavedQueryFiltersSchemaMediaFamilies = "audio_video"
-	Cad          SavedQueryFiltersSchemaMediaFamilies = "cad"
-	Calendar     SavedQueryFiltersSchemaMediaFamilies = "calendar"
-	Document     SavedQueryFiltersSchemaMediaFamilies = "document"
-	Email        SavedQueryFiltersSchemaMediaFamilies = "email"
-	Image        SavedQueryFiltersSchemaMediaFamilies = "image"
-	Presentation SavedQueryFiltersSchemaMediaFamilies = "presentation"
-	SourceCode   SavedQueryFiltersSchemaMediaFamilies = "source_code"
-	Spreadsheet  SavedQueryFiltersSchemaMediaFamilies = "spreadsheet"
-	Text         SavedQueryFiltersSchemaMediaFamilies = "text"
-	Unknown      SavedQueryFiltersSchemaMediaFamilies = "unknown"
-	Web          SavedQueryFiltersSchemaMediaFamilies = "web"
+	Archive                                   SavedQueryFiltersSchemaMediaFamilies = "archive"
+	AudioVideo                                SavedQueryFiltersSchemaMediaFamilies = "audio_video"
+	Cad                                       SavedQueryFiltersSchemaMediaFamilies = "cad"
+	Calendar                                  SavedQueryFiltersSchemaMediaFamilies = "calendar"
+	Document                                  SavedQueryFiltersSchemaMediaFamilies = "document"
+	Email                                     SavedQueryFiltersSchemaMediaFamilies = "email"
+	Presentation                              SavedQueryFiltersSchemaMediaFamilies = "presentation"
+	SavedQueryFiltersSchemaMediaFamiliesImage SavedQueryFiltersSchemaMediaFamilies = "image"
+	SourceCode                                SavedQueryFiltersSchemaMediaFamilies = "source_code"
+	Spreadsheet                               SavedQueryFiltersSchemaMediaFamilies = "spreadsheet"
+	Text                                      SavedQueryFiltersSchemaMediaFamilies = "text"
+	Unknown                                   SavedQueryFiltersSchemaMediaFamilies = "unknown"
+	Web                                       SavedQueryFiltersSchemaMediaFamilies = "web"
 )
 
 type SavedQueryFiltersSchemaTextCoverage string
@@ -17652,6 +18476,30 @@ type PruneNodeContentVersionsHeaders struct {
 type UploadPackageChunkHeaders struct {
 	XDocbankBlobHash string `json:"X-Docbank-Blob-Hash"`
 	XDocbankBlobSize int64  `json:"X-Docbank-Blob-Size"`
+}
+
+type SetPhotoDisplayHeaders struct {
+	IfMatch string `json:"If-Match"`
+}
+
+type ExcludePhotoAssetHeaders struct {
+	IfMatch string `json:"If-Match"`
+}
+
+type AttachPhotoFileHeaders struct {
+	IfMatch string `json:"If-Match"`
+}
+
+type DetachPhotoFileHeaders struct {
+	IfMatch string `json:"If-Match"`
+}
+
+type PromotePhotoNodeHeaders struct {
+	IfMatch *string `json:"If-Match,omitempty"`
+}
+
+type SetPhotoSettingsHeaders struct {
+	IfMatch string `json:"If-Match"`
 }
 
 type GetDocumentRenditionHeaders struct {
@@ -17999,6 +18847,35 @@ type GetPeopleRebuildPath struct {
 	OperationID uuid.UUID `json:"operation_id"`
 }
 
+type GetPhotoAssetPath struct {
+	AssetID string `json:"asset_id"`
+}
+
+type SetPhotoDisplayPath struct {
+	AssetID string `json:"asset_id"`
+}
+
+type ExcludePhotoAssetPath struct {
+	AssetID string `json:"asset_id"`
+}
+
+type AttachPhotoFilePath struct {
+	AssetID string `json:"asset_id"`
+}
+
+type DetachPhotoFilePath struct {
+	AssetID string `json:"asset_id"`
+	FileID  string `json:"file_id"`
+}
+
+type GetPhotoAssetByNodePath struct {
+	NodeID int64 `json:"node_id"`
+}
+
+type PromotePhotoNodePath struct {
+	NodeID int64 `json:"node_id"`
+}
+
 type GetDocumentProcessingJobPath struct {
 	ID string `json:"id"`
 }
@@ -18260,6 +19137,18 @@ type AssignTagPathBody = AssignTagPathRequest
 type TrashPathBody = TrashPathRequest
 
 type RebuildDocumentPeopleBody = PeopleRebuildRequest
+
+type CreatePhotoAssetBody = CreatePhotoAssetRequest
+
+type SetPhotoDisplayBody = SetPhotoDisplayRequest
+
+type ExcludePhotoAssetBody = SetPhotoExcludedRequest
+
+type AttachPhotoFileBody = AttachPhotoFileRequest
+
+type PromotePhotoNodeBody = PromotePhotoNodeRequest
+
+type SetPhotoSettingsBody = SetPhotoSettingsRequest
 
 type GrantDocumentProcessingConsentBody = ProcessingConsentGrantRequest
 
@@ -18552,6 +19441,10 @@ type ListPeopleQuery struct {
 	Query  *string `json:"query,omitempty"`
 	Limit  *int    `json:"limit,omitempty"`
 	Cursor *string `json:"cursor,omitempty"`
+}
+
+type DetachPhotoFileQuery struct {
+	ClearDependentSidecars *bool `json:"clear_dependent_sidecars,omitempty"`
 }
 
 type ReadRenditionTextQuery struct {
@@ -19284,6 +20177,46 @@ type GetPeopleRebuildResponse = api.PeopleBuild
 
 type GetPeopleRebuildErrorResponse = Error
 
+type CreatePhotoAssetResponse = api.PhotoAsset
+
+type CreatePhotoAssetErrorResponse = Error
+
+type GetPhotoAssetResponse = api.PhotoAsset
+
+type GetPhotoAssetErrorResponse = Error
+
+type SetPhotoDisplayResponse = api.PhotoAsset
+
+type SetPhotoDisplayErrorResponse = Error
+
+type ExcludePhotoAssetResponse = api.PhotoAsset
+
+type ExcludePhotoAssetErrorResponse = Error
+
+type AttachPhotoFileResponse = api.PhotoAsset
+
+type AttachPhotoFileErrorResponse = Error
+
+type DetachPhotoFileResponse = api.PhotoAsset
+
+type DetachPhotoFileErrorResponse = Error
+
+type GetPhotoAssetByNodeResponse = api.PhotoAsset
+
+type GetPhotoAssetByNodeErrorResponse = Error
+
+type PromotePhotoNodeResponse = api.PhotoAsset
+
+type PromotePhotoNodeErrorResponse = Error
+
+type GetPhotoSettingsResponse = api.PhotoSettings
+
+type GetPhotoSettingsErrorResponse = Error
+
+type SetPhotoSettingsResponse = api.PhotoSettings
+
+type SetPhotoSettingsErrorResponse = Error
+
 type GrantDocumentProcessingConsentResponse = api.ProcessingConsentGrant
 
 type GrantDocumentProcessingConsentErrorResponse = Error
@@ -19588,6 +20521,8 @@ type AssignTagPathRequest struct {
 	Path   string  `json:"path"`
 }
 
+type AttachPhotoFileRequest = api.AttachPhotoFileRequest
+
 type AttachmentPublicationChoice = bundle.AttachmentPublicationChoice
 
 type AttachmentPublications = bundle.AttachmentPublications
@@ -19764,6 +20699,8 @@ type CreateNodeRequest struct {
 	Name     string                `json:"name"`
 	ParentID int64                 `json:"parent_id"`
 }
+
+type CreatePhotoAssetRequest = api.CreatePhotoAssetRequest
 
 type CreateTagRequest struct {
 	// Schema A URL to the JSON Schema for this object.
@@ -20266,6 +21203,12 @@ type PersonPage = api.PersonPage
 
 type PersonSummary = api.PersonSummary
 
+type PhotoAsset = api.PhotoAsset
+
+type PhotoFile = api.PhotoFile
+
+type PhotoSettings = api.PhotoSettings
+
 type Plan = bundle.Plan
 
 type PlanPreview = bundle.PlanPreview
@@ -20368,6 +21311,13 @@ type ProcessingRuntimeDisclosure = api.ProcessingRuntimeDisclosure
 type ProcessingSelector = api.ProcessingSelector
 
 type ProcessingStatus = api.ProcessingStatus
+
+type PromotePhotoNodeRequest struct {
+	// Schema A URL to the JSON Schema for this object.
+	Schema *string                      `json:"$schema,omitempty"`
+	Kind   *PromotePhotoNodeRequestKind `json:"kind,omitempty"`
+	Role   *PromotePhotoNodeRequestRole `json:"role,omitempty"`
+}
 
 type ProvenanceAppendReceipt = api.ProvenanceAppendReceipt
 
@@ -20578,6 +21528,12 @@ type SetCollectionLabelRequest struct {
 	Schema *string `json:"$schema,omitempty"`
 	Label  *string `json:"label,omitempty"`
 }
+
+type SetPhotoDisplayRequest = api.SetPhotoDisplayRequest
+
+type SetPhotoExcludedRequest = api.SetPhotoExcludedRequest
+
+type SetPhotoSettingsRequest = api.SetPhotoSettingsRequest
 
 type Sort = query.Sort
 
