@@ -18,6 +18,80 @@ components:
       required:
         - path
       type: object
+    AttachmentPublicationChoice:
+      additionalProperties: false
+      properties:
+        attachments:
+          format: int64
+          type: integer
+        created_at:
+          type: string
+        generation_id:
+          type: string
+        name:
+          type: string
+        node_id:
+          format: int64
+          type: integer
+        operation_id:
+          type: string
+        state:
+          type: string
+        version_id:
+          type: string
+      required:
+        - node_id
+        - version_id
+        - name
+        - operation_id
+        - generation_id
+        - created_at
+        - state
+        - attachments
+      type: object
+      x-go-type: bundle.AttachmentPublicationChoice
+      x-go-type-import:
+        path: go.kenn.io/docbank/document/bundle
+        name: bundle
+    AttachmentPublications:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/AttachmentPublications.json
+          format: uri
+          readOnly: true
+          type: string
+        after:
+          format: int64
+          type: integer
+        items:
+          items:
+            $ref: "#/components/schemas/AttachmentPublicationChoice"
+          type: array
+        member_hash:
+          type: string
+        next:
+          format: int64
+          type: integer
+        source_id:
+          type: string
+        total:
+          format: int64
+          type: integer
+      required:
+        - source_id
+        - member_hash
+        - after
+        - next
+        - total
+        - items
+      type: object
+      x-go-type: bundle.AttachmentPublications
+      x-go-type-import:
+        path: go.kenn.io/docbank/document/bundle
+        name: bundle
     AuditAttachmentChange:
       additionalProperties: false
       properties:
@@ -4809,6 +4883,32 @@ components:
       x-go-type-import:
         path: go.kenn.io/docbank/document
         name: document
+    EmailPDFRecipeChoice:
+      additionalProperties: false
+      properties:
+        ambiguous:
+          format: int64
+          type: integer
+        messages:
+          format: int64
+          type: integer
+        paper:
+          type: string
+        recipe_sha256:
+          type: string
+        renderer_version:
+          type: string
+      required:
+        - recipe_sha256
+        - paper
+        - renderer_version
+        - messages
+        - ambiguous
+      type: object
+      x-go-type: bundle.EmailPDFRecipeChoice
+      x-go-type-import:
+        path: go.kenn.io/docbank/document/bundle
+        name: bundle
     EmailPDFRecipeV1:
       additionalProperties: false
       properties:
@@ -4839,6 +4939,37 @@ components:
       x-go-type-import:
         path: go.kenn.io/docbank/document
         name: document
+    EmailPDFRecipes:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/EmailPDFRecipes.json
+          format: uri
+          readOnly: true
+          type: string
+        member_hash:
+          type: string
+        recipes:
+          items:
+            $ref: "#/components/schemas/EmailPDFRecipeChoice"
+          type: array
+        source_id:
+          type: string
+        total:
+          format: int64
+          type: integer
+      required:
+        - source_id
+        - member_hash
+        - total
+        - recipes
+      type: object
+      x-go-type: bundle.EmailPDFRecipes
+      x-go-type-import:
+        path: go.kenn.io/docbank/document/bundle
+        name: bundle
     EmailPDFRequest:
       additionalProperties: false
       properties:
@@ -7607,6 +7738,110 @@ components:
       x-go-type-import:
         path: go.kenn.io/docbank/internal/api
         name: api
+    OutputCounts:
+      additionalProperties: false
+      properties:
+        attachment_pdfs:
+          format: int64
+          type: integer
+        attachments:
+          format: int64
+          type: integer
+        collapsed:
+          format: int64
+          type: integer
+        email_pdfs:
+          format: int64
+          type: integer
+        messages:
+          format: int64
+          type: integer
+        pages:
+          format: int64
+          type: integer
+        unavailable:
+          format: int64
+          type: integer
+        unavailable_inventories:
+          format: int64
+          type: integer
+      required:
+        - messages
+        - attachments
+        - email_pdfs
+        - attachment_pdfs
+        - pages
+        - collapsed
+        - unavailable
+        - unavailable_inventories
+      type: object
+      x-go-type: bundle.OutputCounts
+      x-go-type-import:
+        path: go.kenn.io/docbank/document/bundle
+        name: bundle
+    OutputProblem:
+      additionalProperties: false
+      properties:
+        node_id:
+          format: int64
+          type: integer
+        part_path:
+          type: string
+        reason:
+          type: string
+        role:
+          type: string
+        version_id:
+          type: string
+      required:
+        - node_id
+        - version_id
+        - role
+        - reason
+      type: object
+      x-go-type: bundle.OutputProblem
+      x-go-type-import:
+        path: go.kenn.io/docbank/document/bundle
+        name: bundle
+    OutputProblems:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/OutputProblems.json
+          format: uri
+          readOnly: true
+          type: string
+        after:
+          format: int64
+          type: integer
+        fingerprint:
+          type: string
+        items:
+          items:
+            $ref: "#/components/schemas/OutputProblem"
+          type: array
+        next:
+          format: int64
+          type: integer
+        plan_id:
+          type: string
+        total:
+          format: int64
+          type: integer
+      required:
+        - plan_id
+        - fingerprint
+        - after
+        - next
+        - total
+        - items
+      type: object
+      x-go-type: bundle.OutputProblems
+      x-go-type-import:
+        path: go.kenn.io/docbank/document/bundle
+        name: bundle
     PackageDiagnostic:
       additionalProperties: false
       properties:
@@ -8468,7 +8703,14 @@ components:
           format: uri
           readOnly: true
           type: string
+        counts:
+          $ref: "#/components/schemas/OutputCounts"
         created_at:
+          type: string
+        document_rows:
+          format: int64
+          type: integer
+        duplicate_policy:
           type: string
         expires_at:
           type: string
@@ -8500,6 +8742,11 @@ components:
           type: integer
         vault_id:
           type: string
+        volume_limits:
+          $ref: "#/components/schemas/VolumeLimits"
+        volumes:
+          format: int64
+          type: integer
       required:
         - format
         - id
@@ -8563,16 +8810,24 @@ components:
           format: uri
           readOnly: true
           type: string
+        duplicate_policy:
+          type: string
         member_hash:
           type: string
         operation_id:
           type: string
+        publications:
+          items:
+            $ref: "#/components/schemas/PublicationSelection"
+          type: array
         roles:
           items:
             $ref: "#/components/schemas/RolePolicy"
           type: array
         source_id:
           type: string
+        volume_limits:
+          $ref: "#/components/schemas/VolumeLimits"
       required:
         - operation_id
         - source_id
@@ -9525,6 +9780,21 @@ components:
       x-go-type-import:
         path: go.kenn.io/docbank/document
         name: document
+    PublicationSelection:
+      additionalProperties: false
+      properties:
+        operation_id:
+          type: string
+        version_id:
+          type: string
+      required:
+        - version_id
+        - operation_id
+      type: object
+      x-go-type: bundle.PublicationSelection
+      x-go-type-import:
+        path: go.kenn.io/docbank/document/bundle
+        name: bundle
     PutExportChunkRequest:
       additionalProperties: false
       properties:
@@ -10470,6 +10740,9 @@ components:
         bytes:
           format: int64
           type: integer
+        collapsed_files:
+          format: int64
+          type: integer
         files:
           format: int64
           type: integer
@@ -11059,6 +11332,8 @@ components:
           format: uri
           readOnly: true
           type: string
+        collection_id:
+          type: string
         created_at:
           type: string
         expires_at:
@@ -11275,6 +11550,8 @@ components:
             - https://example.com/schemas/SourceRequest.json
           format: uri
           readOnly: true
+          type: string
+        collection_id:
           type: string
         kind:
           type: string
@@ -12671,6 +12948,23 @@ components:
       x-go-type-import:
         path: go.kenn.io/docbank/internal/api
         name: api
+    VolumeLimits:
+      additionalProperties: false
+      properties:
+        role_bytes:
+          format: int64
+          type: integer
+        roles:
+          format: int64
+          type: integer
+      required:
+        - role_bytes
+        - roles
+      type: object
+      x-go-type: bundle.VolumeLimits
+      x-go-type-import:
+        path: go.kenn.io/docbank/document/bundle
+        name: bundle
     WatchedInbox:
       additionalProperties: false
       properties:
@@ -14656,6 +14950,37 @@ paths:
                 $ref: "#/components/schemas/Error"
           description: Error
       summary: Summarize frozen export role availability
+  /api/v1/exports/plans/{id}/problems:
+    get:
+      operationId: getExportOutputProblems
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+        - explode: false
+          in: query
+          name: after
+          schema:
+            format: int64
+            maximum: 2600000
+            minimum: 0
+            type: integer
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OutputProblems"
+          description: OK
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: Read one bounded page of frozen unavailable output details
   /api/v1/exports/sources:
     post:
       operationId: createExportSource
@@ -14684,6 +15009,37 @@ paths:
                 $ref: "#/components/schemas/Error"
           description: Error
       summary: Freeze exact export membership or begin a chunk upload
+  /api/v1/exports/sources/{id}/attachment-publications:
+    get:
+      operationId: getExportAttachmentPublications
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+        - explode: false
+          in: query
+          name: after
+          schema:
+            format: int64
+            maximum: 300000
+            minimum: 0
+            type: integer
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AttachmentPublications"
+          description: OK
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: List attachment sets that need an explicit choice
   /api/v1/exports/sources/{id}/chunks/{index}:
     put:
       operationId: putExportChunk
@@ -14720,6 +15076,29 @@ paths:
                 $ref: "#/components/schemas/Error"
           description: Error
       summary: Upload one idempotent exact-member chunk
+  /api/v1/exports/sources/{id}/email-pdf-recipes:
+    get:
+      operationId: getExportEmailPDFRecipes
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EmailPDFRecipes"
+          description: OK
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: Discover qualified retained body PDF recipes for a sealed source
   /api/v1/exports/sources/{id}/seal:
     post:
       operationId: sealExportSource

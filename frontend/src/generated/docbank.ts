@@ -42,6 +42,28 @@ export interface AssignTagPathRequest {
   path: string;
 }
 
+export interface AttachmentPublicationChoice {
+  attachments: number;
+  created_at: string;
+  generation_id: string;
+  name: string;
+  node_id: number;
+  operation_id: string;
+  state: string;
+  version_id: string;
+}
+
+export interface AttachmentPublications {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  after: number;
+  items: AttachmentPublicationChoice[];
+  member_hash: string;
+  next: number;
+  source_id: string;
+  total: number;
+}
+
 export type AuditAttachmentChangeKind = typeof AuditAttachmentChangeKind[keyof typeof AuditAttachmentChangeKind];
 
 
@@ -2351,6 +2373,23 @@ export interface EmailPDFJobState {
   state: string;
 }
 
+export interface EmailPDFRecipeChoice {
+  ambiguous: number;
+  messages: number;
+  paper: string;
+  recipe_sha256: string;
+  renderer_version: string;
+}
+
+export interface EmailPDFRecipes {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  member_hash: string;
+  recipes: EmailPDFRecipeChoice[];
+  source_id: string;
+  total: number;
+}
+
 export interface EmailPDFRequest {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
@@ -3118,6 +3157,36 @@ export interface NodePage {
   total: number;
 }
 
+export interface OutputCounts {
+  attachment_pdfs: number;
+  attachments: number;
+  collapsed: number;
+  email_pdfs: number;
+  messages: number;
+  pages: number;
+  unavailable: number;
+  unavailable_inventories: number;
+}
+
+export interface OutputProblem {
+  node_id: number;
+  part_path?: string;
+  reason: string;
+  role: string;
+  version_id: string;
+}
+
+export interface OutputProblems {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  after: number;
+  fingerprint: string;
+  items: OutputProblem[];
+  next: number;
+  plan_id: string;
+  total: number;
+}
+
 export interface PackageDiagnostic {
   code: string;
   column?: string;
@@ -3410,6 +3479,7 @@ export interface RolePolicy {
 export interface Source {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
+  collection_id?: string;
   created_at: string;
   expires_at: string;
   id: string;
@@ -3424,10 +3494,18 @@ export interface Source {
   total: number;
 }
 
+export interface VolumeLimits {
+  role_bytes: number;
+  roles: number;
+}
+
 export interface Plan {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
+  counts?: OutputCounts;
   created_at: string;
+  document_rows?: number;
+  duplicate_policy?: string;
   expires_at: string;
   fingerprint: string;
   format: string;
@@ -3440,11 +3518,14 @@ export interface Plan {
   toolchain: string;
   total: number;
   vault_id: string;
+  volume_limits?: VolumeLimits;
+  volumes?: number;
 }
 
 export interface RoleSummary {
   available_members: number;
   bytes: number;
+  collapsed_files?: number;
   files: number;
   role: string;
   unavailable_members: number;
@@ -3461,13 +3542,21 @@ export interface PlanPreview {
   total: number;
 }
 
+export interface PublicationSelection {
+  operation_id: string;
+  version_id: string;
+}
+
 export interface PlanRequest {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
+  duplicate_policy?: string;
   member_hash: string;
   operation_id: string;
+  publications?: PublicationSelection[];
   roles: RolePolicy[];
   source_id: string;
+  volume_limits?: VolumeLimits;
 }
 
 export interface Preview {
@@ -4587,6 +4676,7 @@ export interface SetCollectionLabelRequest {
 export interface SourceRequest {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
+  collection_id?: string;
   kind: string;
   member_hash?: string;
   members?: Member[];
@@ -5312,6 +5402,22 @@ export type GetExportJobEventsDefault = {
   position?: ErrorPosition;
   status: number;
   title: string;
+};
+
+export type GetExportOutputProblemsParams = {
+/**
+ * @minimum 0
+ * @maximum 2600000
+ */
+after?: number;
+};
+
+export type GetExportAttachmentPublicationsParams = {
+/**
+ * @minimum 0
+ * @maximum 300000
+ */
+after?: number;
 };
 
 export type ReadFormatCapabilitiesParams = {
@@ -7746,6 +7852,39 @@ export const getExportPlanPreview = (id: string, options?: Parameters<typeof ses
 
 
 
+export const getGetExportOutputProblemsUrl = (id: string,
+    params?: GetExportOutputProblemsParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/v1/exports/plans/${encodeURIComponent(String(id))}/problems?${stringifiedParams}` : `/api/v1/exports/plans/${encodeURIComponent(String(id))}/problems`
+}
+
+/**
+ * @summary Read one bounded page of frozen unavailable output details
+ */
+export const getExportOutputProblems = (id: string,
+    params?: GetExportOutputProblemsParams, options?: Parameters<typeof sessionResponse>[1]) => {
+
+  return sessionResponse<OutputProblems>(getGetExportOutputProblemsUrl(id,params),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
 export const getCreateExportSourceWithJsonUrl = () => {
 
 
@@ -7817,6 +7956,39 @@ return sessionResponse<Source>(getCreateExportSourceWithBlobUrl(),
     method: 'POST',
     headers: { 'Content-Type': 'application/octet-stream', ...getHeaders(options?.headers) },
     body: createExportSourceBody
+  }
+);}
+
+
+
+export const getGetExportAttachmentPublicationsUrl = (id: string,
+    params?: GetExportAttachmentPublicationsParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/v1/exports/sources/${encodeURIComponent(String(id))}/attachment-publications?${stringifiedParams}` : `/api/v1/exports/sources/${encodeURIComponent(String(id))}/attachment-publications`
+}
+
+/**
+ * @summary List attachment sets that need an explicit choice
+ */
+export const getExportAttachmentPublications = (id: string,
+    params?: GetExportAttachmentPublicationsParams, options?: Parameters<typeof sessionResponse>[1]) => {
+
+  return sessionResponse<AttachmentPublications>(getGetExportAttachmentPublicationsUrl(id,params),
+  {
+    ...options,
+    method: 'GET'
+
+
   }
 );}
 
@@ -7899,6 +8071,30 @@ return sessionJSON<void>(getPutExportChunkWithBlobUrl(id,index),
     method: 'PUT',
     headers: { 'Content-Type': 'application/octet-stream', ...getHeaders(options?.headers) },
     body: putExportChunkBody
+  }
+);}
+
+
+
+export const getGetExportEmailPDFRecipesUrl = (id: string,) => {
+
+
+
+
+  return `/api/v1/exports/sources/${encodeURIComponent(String(id))}/email-pdf-recipes`
+}
+
+/**
+ * @summary Discover qualified retained body PDF recipes for a sealed source
+ */
+export const getExportEmailPDFRecipes = (id: string, options?: Parameters<typeof sessionResponse>[1]) => {
+
+  return sessionResponse<EmailPDFRecipes>(getGetExportEmailPDFRecipesUrl(id),
+  {
+    ...options,
+    method: 'GET'
+
+
   }
 );}
 

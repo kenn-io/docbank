@@ -7,7 +7,7 @@ import type { SnapshotPage } from "./snapshots.js";
 const id = "11111111-1111-4111-8111-111111111111", hash = "a".repeat(64), future = "2099-01-01T00:00:00Z";
 const members = [{ node_id: 1, version_id: id, sha256: hash, size: 12 }];
 const response = (value: unknown) => new Response(JSON.stringify(value), { headers: { "Content-Type": "application/json" } });
-afterEach(() => vi.restoreAllMocks());
+afterEach(() => { vi.restoreAllMocks(); vi.useRealTimers(); });
 
 async function harness() {
   const memberHash = await exportMemberHash(members);
@@ -47,6 +47,36 @@ it.each(["source", "roles"])("invalidates a reviewed plan when %s changes and fe
   respond(response({}));
   await pending;
   expect(h.state().reviewed).toBeUndefined();
+  h.session.dispose();
+});
+
+it("keeps sealed membership when only policies change", async () => {
+  const h = await harness();
+  await h.session.preview();
+  const frozen = h.state().reviewed?.plan.source;
+  h.session.choose({ label: "Selected documents", members }, [{ role: "original" }]);
+  await h.session.preview();
+  expect(h.state().status).toBe("ready");
+  expect(h.state().reviewed?.plan.source).toEqual(frozen);
+  expect(h.fetcher.mock.calls.filter(([url]) => String(url).endsWith("/sources"))).toHaveLength(1);
+  h.session.dispose();
+});
+
+it("discovers recipes against the same sealed source later used by preview", async () => {
+  const h = await harness();
+  const underlying = h.fetcher.getMockImplementation()!;
+  const memberHash = await exportMemberHash(members);
+  h.fetcher.mockImplementation((url, init) => {
+    if (String(url).endsWith("/email-pdf-recipes")) return Promise.resolve(response({ source_id: String(url).split("/").at(-2), member_hash: memberHash, total: 1, recipes: [{ recipe_sha256: hash, paper: "A4", renderer_version: "151.0.7922.34", messages: 1, ambiguous: 0 }] }));
+    return underlying(url, init);
+  });
+  await h.session.discoverRecipes();
+  expect(h.state().recipes?.[0]?.paper).toBe("A4");
+  h.session.choose({ label: "Selected documents", members }, [{ role: "original" }]);
+  expect(h.state().recipes).toHaveLength(1);
+  await h.session.preview();
+  expect(h.state().status).toBe("ready");
+  expect(h.fetcher.mock.calls.filter(([url]) => String(url).endsWith("/sources"))).toHaveLength(1);
   h.session.dispose();
 });
 
@@ -205,5 +235,151 @@ it("copies reactive snapshot inputs before caller changes and never promotes obs
   await h.session.preview();
   expect(h.state().status).toBe("ready");
   expect(h.state().reviewed?.plan.source.member_hash).toBe(await exportMemberHash(members));
+  h.session.dispose();
+});
+
+it("starts over after a failed source without changing ordinary retry identity or an admitted job", async () => {
+  const h = await harness();
+  const original = h.fetcher.getMockImplementation()!;
+  const sourceIDs: string[] = [];
+  let failedID = "";
+  h.fetcher.mockImplementation(async (url, init) => {
+    if (String(url).endsWith("/sources")) {
+      const operationID = JSON.parse(String(init?.body)).operation_id;
+      sourceIDs.push(operationID);
+      failedID ||= operationID;
+      if (operationID === failedID) return new Response(JSON.stringify({ detail: "Source preparation failed", code: "export_conflict" }), { status: 409 });
+    }
+    return original(url, init);
+  });
+  await h.session.discoverRecipes();
+  h.session.choose({ label: "Selected documents", members }, [{ role: "original" }]);
+  await h.session.preview();
+  expect(h.state().status).toBe("error");
+  expect(sourceIDs).toEqual([failedID, failedID]);
+  h.session.resetPreparation();
+  await h.session.preview();
+  expect(h.state().status).toBe("ready");
+  expect(sourceIDs[2]).not.toBe(failedID);
+  await h.session.start();
+  const admitted = h.state();
+  h.session.resetPreparation();
+  expect(h.state()).toBe(admitted);
+  h.session.dispose();
+});
+
+it.each([false, true])("keeps plan expiry and readiness through problem paging (page fails: %s)", async (fails) => {
+  vi.useFakeTimers({ toFake: ["Date", "setTimeout", "clearTimeout"] });
+  vi.setSystemTime(Date.parse(future) - 1000);
+  const h = await harness();
+  const original = h.fetcher.getMockImplementation()!;
+  let pageFails = fails;
+  h.fetcher.mockImplementation(async (url, init) => {
+    if (String(url).includes("/problems")) {
+      if (pageFails) return new Response(null, { status: 503 });
+      return response({ plan_id: h.state().reviewed!.plan.id, fingerprint: hash, after: 0, next: 0, total: 0, items: [] });
+    }
+    return original(url, init);
+  });
+  await h.session.preview();
+  const reviewed = h.state().reviewed;
+  await h.session.problemPage(0);
+  expect(h.state().status).toBe("ready");
+  expect(h.state().reviewed).toBe(reviewed);
+  expect(h.state().problemsError?.message).toBe(fails ? "HTTP 503" : undefined);
+  expect(h.state().error).toBeUndefined();
+  pageFails = false;
+  await h.session.problemPage(0);
+  expect(h.state().status).toBe("ready");
+  expect(h.state().problemsError).toBeUndefined();
+  await vi.advanceTimersByTimeAsync(1001);
+  expect(h.state().status).toBe("expired");
+  expect(h.state().reviewed).toBeUndefined();
+  h.session.dispose();
+});
+
+it("cancels pending problem pages when the drawer closes without accepting their late result", async () => {
+  const h = await harness();
+  await h.session.preview();
+  let respond!: (response: Response) => void;
+  let pageSignal: AbortSignal | undefined;
+  h.fetcher.mockImplementationOnce((_url, init) => {
+    pageSignal = init?.signal as AbortSignal;
+    return new Promise<Response>(resolve => respond = resolve);
+  });
+  const paging = h.session.problemPage(0);
+  expect(h.state().problemsLoading).toBe(true);
+  h.session.close();
+  expect(pageSignal?.aborted).toBe(true);
+  expect(h.state().problemsLoading).toBe(false);
+  respond(new Response(null, { status: 503 }));
+  await paging;
+  expect(h.state().problemsError).toBeUndefined();
+  expect(h.state().status).toBe("ready");
+  h.session.dispose();
+});
+
+it("asks for an attachment set and keeps the explicit choice across option changes", async () => {
+  const h = await harness(), memberHash = await exportMemberHash(members);
+  const underlying = h.fetcher.getMockImplementation()!;
+  h.fetcher.mockImplementation((url, init) => {
+    if (String(url).includes("/attachment-publications")) return Promise.resolve(response({ source_id: String(url).split("/").at(-2), member_hash: memberHash, after: 0, next: 0, total: 2, items: ["first", "second"].map(operation_id => ({ node_id: 1, version_id: id, name: "empty.eml", operation_id, generation_id: hash, created_at: "2026-01-01T00:00:00Z", state: "complete", attachments: 0 })) }));
+    return underlying(url, init);
+  });
+  h.session.choose({ label: "Selected documents", members }, [{ role: "attachment_original" }]);
+  await h.session.preview();
+  expect(h.state().status).toBe("idle");
+  expect(h.state().publications?.items).toHaveLength(2);
+  expect(h.fetcher.mock.calls.filter(([url]) => String(url).endsWith("/plans"))).toHaveLength(0);
+  h.session.selectPublication(id, "second");
+  h.session.choose({ label: "Selected documents", members }, [{ role: "attachment_original", allow_unavailable: true }]);
+  await h.session.preview();
+  const request = h.fetcher.mock.calls.find(([url]) => String(url).endsWith("/plans"));
+  expect(JSON.parse(String(request?.[1]?.body)).publications).toEqual([{ version_id: id, operation_id: "second" }]);
+  vi.useFakeTimers();
+  vi.setSystemTime(new Date("2100-01-01T00:00:00Z"));
+  await h.session.publicationPage(0);
+  expect(h.state().publicationSelections).toBeUndefined();
+  h.session.resetPreparation();
+  expect(h.state().publications).toBeUndefined();
+  expect(h.state().publicationSelections).toBeUndefined();
+  h.session.dispose();
+});
+
+it.each([503, 410])("keeps a reviewed plan independent of its initial details request (HTTP %s)", async (status) => {
+  vi.useFakeTimers({ toFake: ["Date", "setTimeout", "clearTimeout"] });
+  vi.setSystemTime(Date.parse(future) - 1000);
+  const h = await harness(), original = h.fetcher.getMockImplementation()!;
+  h.session.choose({ label: "Selected documents", members }, [{ role: "original" }, { role: "text", allow_unavailable: true }]);
+  let respond!: (response: Response) => void, requested!: () => void;
+  const reached = new Promise<void>(resolve => requested = resolve);
+  const pending = new Promise<Response>(resolve => respond = resolve);
+  h.fetcher.mockImplementation(async (url, init) => {
+    const path = String(url);
+    if (path.includes("/problems")) { requested(); return pending; }
+    const result = await original(url, init);
+    if (path.endsWith("/plans")) return response({ ...await result.json(), counts: { messages: 0, attachments: 0, email_pdfs: 0, attachment_pdfs: 0, pages: 0, collapsed: 0, unavailable: 1, unavailable_inventories: 0 } });
+    if (path.endsWith("/preview")) {
+      const preview = await result.json();
+      preview.roles.push({ role: "text", available_members: 0, unavailable_members: 1, files: 0, bytes: 0, unavailable_reason: "No retained text" });
+      return response(preview);
+    }
+    return result;
+  });
+  const previewing = h.session.preview();
+  await reached;
+  const readyWhilePending = h.state().status;
+  respond(new Response(null, { status }));
+  await previewing;
+  expect(readyWhilePending).toBe("ready");
+  expect(h.state().status).toBe(status === 410 ? "expired" : "ready");
+  expect(h.state().reviewed).toBeDefined();
+  expect(h.state().problemsError?.message).toBe(`HTTP ${status}`);
+  if (status === 503) {
+    expect(h.state().error).toBeUndefined();
+    await vi.advanceTimersByTimeAsync(1001);
+    expect(h.state().status).toBe("expired");
+    expect(h.state().reviewed).toBeUndefined();
+  }
   h.session.dispose();
 });

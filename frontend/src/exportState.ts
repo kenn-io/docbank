@@ -3,14 +3,14 @@ import { cancelWebDownload } from "./generated/docbank.js";
 import { captureSnapshotTargets, type SnapshotPage } from "./snapshots.js";
 import {
   assertExportAdvance, cancelExportJob, copyExportMembers, createExportPlan,
-  exportExpired, exportTicket, getExportJob, maxExportMembers,
+  exportExpired, exportTicket, getExportJob, maxExportMembers, exportEmailPDFRecipes, exportOutputProblems, exportAttachmentPublications,
   offerExportDownload, readExportEvents, sealExportSource,
-  startExportJob, validateRolePolicies,
+  startExportJob, validateRolePolicies, validateExportOptions, sealMailboxExportSource,
   type ExportJob, type ExportMember, type ExportPlan, type ExportPreview,
-  type ExportSource, type RolePolicy,
+  type ExportSource, type RolePolicy, type ExportOptions, type EmailPDFRecipeChoice, type OutputProblems, type AttachmentPublications,
 } from "./exports.js";
 
-export type ExportInput = { label: string; members: readonly ExportMember[] } | { label: string; snapshot: SnapshotPage };
+export type ExportInput = { label: string; members: readonly ExportMember[] } | { label: string; snapshot: SnapshotPage } | { label: string; collectionID: string; total: number };
 export interface ReviewedExport { plan: ExportPlan; preview: ExportPreview; label: string }
 export interface ActiveExport { plan: ExportPlan; label: string; id: string; job?: ExportJob }
 export interface ExportState {
@@ -21,6 +21,12 @@ export interface ExportState {
   gap?: boolean;
   downloadOffered?: boolean;
   downloading?: boolean;
+  recipes?: EmailPDFRecipeChoice[];
+  publications?: AttachmentPublications;
+  publicationSelections?: Record<string, string>;
+  problems?: OutputProblems;
+  problemsLoading?: boolean;
+  problemsError?: Error;
 }
 
 // The handle lives for this browser session. Closing releases readers without
@@ -29,28 +35,88 @@ export class ExportSession {
   private state: Readonly<ExportState> = { status: "idle" };
   private input?: ExportInput;
   private policies: RolePolicy[] = [];
+  private options: ExportOptions = {};
   private sourceID = "";
   private planID = "";
   private members?: ExportMember[];
   private source?: ExportSource;
   private controller?: AbortController;
+  private problemsController?: AbortController;
   private generation = 0;
   private disposed = false;
   private expiryTimer?: ReturnType<typeof setTimeout>;
 
   constructor(private readonly session: string, private readonly publish: (state: Readonly<ExportState>) => void) { publish(this.state); }
 
-  choose(input: ExportInput, policies: RolePolicy[]): void {
+  choose(input: ExportInput, policies: RolePolicy[], options: ExportOptions = {}): void {
     this.stop();
     // Snapshot DTOs contain JSON data. Copy through JSON so reactive browser
     // proxies cannot fail structuredClone or remain mutable through the caller.
-    this.input = "members" in input ? { ...input, members: input.members.map(m => ({ ...m })) } : { ...input, snapshot: JSON.parse(JSON.stringify(input.snapshot)) as SnapshotPage };
+    const copied = "members" in input ? { ...input, members: input.members.map(m => ({ ...m })) } : "snapshot" in input ? { ...input, snapshot: JSON.parse(JSON.stringify(input.snapshot)) as SnapshotPage } : { ...input };
+    const changed = JSON.stringify(copied) !== JSON.stringify(this.input);
+    this.input = copied;
     this.policies = policies.map(p => ({ ...p }));
-    this.sourceID = crypto.randomUUID(); this.planID = crypto.randomUUID();
-    this.members = undefined; this.source = undefined;
+    this.options = JSON.parse(JSON.stringify(options)) as ExportOptions;
+    this.planID = crypto.randomUUID();
+    if (changed) { this.sourceID = crypto.randomUUID(); this.members = undefined; this.source = undefined; }
     const job = this.state.active?.job;
     const status = this.state.active ? (!job || ["queued", "running"].includes(job.state) ? "disconnected" : this.state.status) : "idle";
-    this.emit({ ...this.state, status, reviewed: undefined, error: undefined });
+    this.emit({ ...this.state, status, reviewed: undefined, error: undefined, problems: undefined, problemsLoading: false, problemsError: undefined, ...(changed ? { recipes: undefined, publications: undefined, publicationSelections: undefined } : {}) });
+  }
+
+  async discoverRecipes(): Promise<void> {
+    if (!this.input || this.disposed || this.state.active) return;
+    const started = this.begin();
+    this.emit({ ...this.state, status: "preparing", error: undefined, problemsError: undefined, reviewed: undefined, recipes: undefined });
+    try {
+      const source = await this.prepareSource(this.input, started);
+      if (!source) return;
+      const recipes = await exportEmailPDFRecipes(this.session, source, started.signal);
+      if (this.current(started.generation)) this.emit({ ...this.state, status: "idle", recipes });
+    } catch (error) { this.fail(started.generation, error); }
+  }
+
+  async publicationPage(after: number): Promise<void> {
+    if (!this.input || this.disposed || this.state.active) return;
+    const started = this.begin();
+    this.emit({ ...this.state, status: "preparing", reviewed: undefined, error: undefined });
+    try {
+      const source = await this.prepareSource(this.input, started);
+      if (!source) return;
+      const publications = await exportAttachmentPublications(this.session, source, after, started.signal);
+      if (this.current(started.generation)) this.emit({ ...this.state, status: "idle", publications, ...(this.state.publications?.source_id === source.id ? {} : { publicationSelections: undefined }) });
+    } catch (error) { this.fail(started.generation, error); }
+  }
+
+  selectPublication(version: string, operation: string): void {
+    if (this.disposed || this.state.active || !this.state.publications?.items.some(c => c.version_id === version && c.operation_id === operation)) return;
+    this.stop(); this.planID = crypto.randomUUID();
+    this.emit({ ...this.state, status: "idle", reviewed: undefined, error: undefined, publicationSelections: { ...this.state.publicationSelections, [version]: operation } });
+  }
+
+  private async prepareSource(input: ExportInput, started: { generation: number; signal: AbortSignal }): Promise<ExportSource | undefined> {
+    if (this.source && exportExpired(this.source.expires_at)) {
+      this.source = undefined; this.sourceID = crypto.randomUUID(); this.planID = crypto.randomUUID();
+    }
+    if (this.source) return this.source;
+    if ("collectionID" in input) {
+      const source = await sealMailboxExportSource(this.session, input.collectionID, input.total, this.sourceID, started.signal);
+      if (!this.current(started.generation)) return;
+      return this.source = source;
+    }
+    if (!this.members) {
+      if ("snapshot" in input) {
+        if (input.snapshot.total > maxExportMembers) throw new Error("Exports are limited to 100,000 documents. Refine this query and capture a new snapshot.");
+        const captured = await captureSnapshotTargets(this.session, input.snapshot, started.signal);
+        if (!this.current(started.generation)) return;
+        this.members = copyExportMembers(captured.members);
+      } else {
+        this.members = copyExportMembers(input.members.map(m => ({ node_id: m.node_id, content_version_id: m.version_id, blob_hash: m.sha256, size: m.size })));
+      }
+    }
+    const source = await sealExportSource(this.session, this.members, this.sourceID, started.signal);
+    if (!this.current(started.generation)) return;
+    return this.source = source;
   }
 
   async preview(): Promise<void> {
@@ -59,32 +125,49 @@ export class ExportSession {
       this.source = undefined; this.sourceID = crypto.randomUUID(); this.planID = crypto.randomUUID();
     }
     const input = this.input, started = this.begin();
-    this.emit({ ...this.state, status: "preparing", reviewed: undefined, error: undefined });
+    this.emit({ ...this.state, status: "preparing", reviewed: undefined, error: undefined, problemsError: undefined });
     try {
-      const policies = validateRolePolicies(this.policies);
-      if (!this.members) {
-        if ("snapshot" in input) {
-          if (input.snapshot.total > maxExportMembers) throw new Error("Exports are limited to 100,000 documents. Refine this query and capture a new snapshot.");
-          const captured = await captureSnapshotTargets(this.session, input.snapshot, started.signal);
+      const policies = validateRolePolicies(this.policies), options = validateExportOptions(this.options);
+      const source = await this.prepareSource(input, started);
+      if (!source) return;
+      if (policies.some(p => p.role === "attachment_original" || p.role === "attachment_pdf")) {
+        if (!this.state.publications || this.state.publications.source_id !== source.id) {
+          const publications = await exportAttachmentPublications(this.session, source, 0, started.signal);
           if (!this.current(started.generation)) return;
-          this.members = copyExportMembers(captured.members);
-        } else {
-          this.members = copyExportMembers(input.members.map(m => ({ node_id: m.node_id, content_version_id: m.version_id, blob_hash: m.sha256, size: m.size })));
+          this.emit({ ...this.state, publications, publicationSelections: undefined });
+          if (publications.total) { this.emit({ ...this.state, status: "idle" }); return; }
         }
+        const selections = Object.entries(this.state.publicationSelections ?? {});
+        if (selections.length) options.publications = selections.map(([version_id, operation_id]) => ({ version_id, operation_id }));
       }
-      if (!this.source) {
-        const source = await sealExportSource(this.session, this.members, this.sourceID, started.signal);
-        if (!this.current(started.generation)) return;
-        this.source = source;
-      }
-      const reviewed = await createExportPlan(this.session, this.source, policies, this.planID, started.signal);
+      const reviewed = await createExportPlan(this.session, source, policies, this.planID, started.signal, options);
       if (!this.current(started.generation)) return;
-      this.emit({ ...this.state, status: "ready", reviewed: { ...reviewed, label: input.label }, error: undefined });
+      this.emit({ ...this.state, status: "ready", reviewed: { ...reviewed, label: input.label }, problems: undefined, error: undefined });
       const delay = Date.parse(reviewed.plan.expires_at) - Date.now();
       if (delay >= 0 && delay < 2 ** 31) this.expiryTimer = setTimeout(() => {
         if (this.current(started.generation) && !this.state.active) this.emit({ ...this.state, status: "expired", reviewed: undefined });
       }, delay);
+      const counts = reviewed.plan.counts;
+      if (counts && (counts.unavailable || counts.unavailable_inventories)) await this.problemPage(0);
     } catch (error) { this.fail(started.generation, error); }
+  }
+
+  async problemPage(after: number): Promise<void> {
+    const plan = this.state.active?.plan ?? this.state.reviewed?.plan;
+    if (!plan || this.disposed || this.state.problemsLoading) return;
+    if (this.state.active && (!this.state.active.job || ["queued", "running"].includes(this.state.active.job.state))) return;
+    const generation = this.generation, controller = this.problemsController = new AbortController();
+    this.emit({ ...this.state, problemsLoading: true, problemsError: undefined });
+    try {
+      const problems = await exportOutputProblems(this.session, plan, after, controller.signal);
+      if (this.current(generation)) this.emit({ ...this.state, problems, problemsLoading: false });
+    } catch (error) {
+      if (!this.current(generation)) return;
+      this.emit({ ...this.state, problemsLoading: false, problemsError: error instanceof Error ? error : new Error("Unavailable output details could not be loaded.") });
+      if (error instanceof APIError && error.status === 410) this.fail(generation, error);
+    } finally {
+      if (this.problemsController === controller) this.problemsController = undefined;
+    }
   }
 
   async start(): Promise<void> {
@@ -162,6 +245,11 @@ export class ExportSession {
     const active = this.state.active;
     this.emit({ ...this.state, downloading: false, ...(active && (!active.job || ["queued", "running"].includes(active.job.state)) ? { status: "disconnected" } : {}) });
   }
+  resetPreparation(): void {
+    if (this.disposed || this.state.active) return;
+    this.stop(); this.members = undefined; this.source = undefined; this.sourceID = crypto.randomUUID(); this.planID = crypto.randomUUID();
+    this.emit({ status: "idle" });
+  }
   clearFinished(): void {
     if (!this.state.active?.job || !["completed", "canceled", "failed"].includes(this.state.active.job.state)) return;
     this.stop(); this.source = undefined; this.sourceID = crypto.randomUUID(); this.planID = crypto.randomUUID();
@@ -215,6 +303,8 @@ export class ExportSession {
   }
   private stop(): void {
     this.generation++; this.controller?.abort(); this.controller = undefined;
+    this.problemsController?.abort(); this.problemsController = undefined;
+    if (this.state.problemsLoading) this.emit({ ...this.state, problemsLoading: false });
     if (this.expiryTimer) clearTimeout(this.expiryTimer);
     this.expiryTimer = undefined;
   }

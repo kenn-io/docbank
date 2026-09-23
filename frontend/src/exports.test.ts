@@ -65,6 +65,22 @@ it("reconciles frozen availability against role files and total members", () => 
   expect(() => parseExportPreview({ ...preview, roles: [{ ...preview.roles[0], bytes: 11 }] }, plan)).toThrow();
 });
 
+it("accepts qualified PDF policies, mixed attachment availability and explicit collapsed volume counts", () => {
+  const policies = [{ role: "email_pdf", recipe_sha256: hash }, { role: "attachment_pdf", recipe_sha256: hash, allow_unavailable: true }];
+  const batch = { ...plan, roles: policies, document_rows: 3, duplicate_policy: "collapse_exact_content", volume_limits: { roles: 1, role_bytes: 1024 }, volumes: 1,
+    counts: { messages: 1, attachments: 2, email_pdfs: 1, attachment_pdfs: 0, pages: 2, collapsed: 1, unavailable: 1, unavailable_inventories: 0 } };
+  const parsed = parseExportPlan(batch, source, policies, planID, { duplicate_policy: "collapse_exact_content", volume_limits: batch.volume_limits });
+  expect(parsed.counts?.pages).toBe(2);
+  const preview = { plan_id: planID, fingerprint: hash, member_hash: hash, total: 1, roles: [
+    { role: "email_pdf", available_members: 1, unavailable_members: 0, files: 1, bytes: 12 },
+    { role: "attachment_pdf", available_members: 1, unavailable_members: 1, files: 0, collapsed_files: 1, bytes: 0, unavailable_reason: "Unsupported child." },
+  ] };
+  expect(parseExportPreview(preview, parsed).roles[1]?.collapsed_files).toBe(1);
+  expect(() => parseExportPlan({ ...batch, duplicate_policy: "preserve" }, source, policies, planID, { duplicate_policy: "collapse_exact_content", volume_limits: batch.volume_limits })).toThrow();
+  expect(() => parseExportPlan({ ...batch, counts: { ...batch.counts, email_pdfs: 2 } }, source, policies, planID, { duplicate_policy: "collapse_exact_content", volume_limits: batch.volume_limits })).toThrow();
+  expect(parseExportJob(complete, parsed, jobID).receipt?.entries).toBe(4);
+});
+
 it("accepts current-state gaps and byte-identical duplicates, never treats EOF as completion", async () => {
   const first = JSON.stringify({ delivery: "current_state", requested_after: 0, job: queued });
   const last = JSON.stringify({ delivery: "current_state", requested_after: 0, job: complete });
@@ -109,4 +125,18 @@ it("requires exact receipt and native same-origin ticket and rejects unsafe base
   }
   vi.mocked(fetch).mockResolvedValue(response({ url, receipt: { ...complete.receipt, size: 999 } }));
   await expect(exportTicket("s", plan, complete, "Review.zip", new AbortController().signal)).rejects.toThrow();
+});
+
+it("sends an explicit attachment set without requiring the plan header to echo it", async () => {
+  const { createExportPlan } = await import("./exports.js");
+  const publications = [{ version_id: id, operation_id: "empty-second" }];
+  const fetcher = vi.spyOn(globalThis, "fetch").mockImplementation(async (url, init) => {
+    if (String(url).endsWith("/plans")) {
+      expect(JSON.parse(String(init?.body)).publications).toEqual(publications);
+      return response(plan);
+    }
+    return response({ plan_id: planID, fingerprint: hash, member_hash: hash, total: 1, role_entries: 1, role_bytes: 12, expires_at: future, roles: [{ role: "original", available_members: 1, unavailable_members: 0, files: 1, bytes: 12 }] });
+  });
+  await expect(createExportPlan("s", source, plan.roles, planID, new AbortController().signal, { publications })).resolves.toHaveProperty("plan.id", planID);
+  expect(fetcher).toHaveBeenCalledTimes(2);
 });
