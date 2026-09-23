@@ -132,6 +132,15 @@ func TestRenditionFinalizationContextCancellation(t *testing.T) {
 	_, err = renditionXHTMLSerializationFits(ctx, largeText, 2<<20)
 	require.ErrorIs(t, err, context.Canceled)
 
+	largeUnicode := []renditionBlock{{inlines: []renditionInline{{kind: renditionText, text: "x" + strings.Repeat("é", 1<<19)}}}}
+	ctx = &cancelAfterXHTMLReadContext{cancelAt: 3}
+	_, err = renditionXHTMLSerializationFits(ctx, largeUnicode, 2<<20)
+	require.ErrorIs(t, err, context.Canceled)
+
+	ctx = &cancelAfterXHTMLReadContext{cancelAt: 3}
+	_, _, err = serializeRenditionBlocksContext(ctx, largeText, 2<<20)
+	require.ErrorIs(t, err, context.Canceled)
+
 	ctx = &cancelAfterXHTMLReadContext{cancelAt: 3}
 	_, _, err = serializeRenditionBlocksContext(ctx, tableBlocks, 1<<20)
 	require.ErrorIs(t, err, context.Canceled)
@@ -139,10 +148,14 @@ func TestRenditionFinalizationContextCancellation(t *testing.T) {
 	ordered := renditionList{ordered: true, start: "999999999", tight: true, items: []renditionListItem{
 		{present: true, blocks: []renditionBlock{{kind: renditionParagraph, inlines: []renditionInline{{kind: renditionText, text: "x"}}}}},
 		{present: true, blocks: []renditionBlock{{kind: renditionParagraph, inlines: []renditionInline{{kind: renditionText, text: "x"}}}}},
+		{present: true, blocks: []renditionBlock{{kind: renditionParagraph, inlines: []renditionInline{{kind: renditionText, text: "x"}}}}},
 	}}
-	ctx = &cancelAfterXHTMLReadContext{cancelAt: 6}
-	_, _, err = serializeRenditionListContext(ctx, ordered, 100, false)
-	require.ErrorIs(t, err, context.Canceled)
+	ctx = &cancelAfterXHTMLReadContext{cancelAt: 7}
+	output := renditionBuffer{ctx: ctx}
+	result := appendRenditionList(&output, ordered, 100, 0, false)
+	require.True(t, result.truncated)
+	require.ErrorIs(t, output.err, context.Canceled)
+	require.Contains(t, output.String(), "999999999.")
 }
 
 type trackingReader struct {

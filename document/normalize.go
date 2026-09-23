@@ -269,12 +269,14 @@ func renditionXHTMLSerializationFits(ctx context.Context, blocks []renditionBloc
 			size += int64(len(value.text))
 			switch value.kind {
 			case renditionText:
-				for index, r := range value.text {
-					if index&1023 == 0 {
+				runes := 0
+				for _, r := range value.text {
+					if runes&1023 == 0 {
 						if err := ctx.Err(); err != nil {
 							return 0, err
 						}
 					}
+					runes++
 					if isMarkdownASCIIPunctuation(r) {
 						size++
 					}
@@ -2339,18 +2341,30 @@ func (f *renditionBufferFallback) markEscapedText(
 	start renditionBufferCheckpoint,
 	value string,
 ) {
+	_ = f.markEscapedTextContext(context.Background(), start, value)
+}
+
+func (f *renditionBufferFallback) markEscapedTextContext(
+	ctx context.Context,
+	start renditionBufferCheckpoint,
+	value string,
+) error {
 	if f == nil || start.runes >= f.limit {
-		return
+		return nil
 	}
-	prefix := truncateEscapedRenditionText(value, f.limit-start.runes)
+	prefix, err := truncateEscapedRenditionTextContext(ctx, value, f.limit-start.runes)
+	if err != nil {
+		return err
+	}
 	if prefix == "" {
-		return
+		return nil
 	}
 	f.checkpoint = renditionBufferCheckpoint{
 		bytes: start.bytes + len(prefix),
 		runes: start.runes + utf8.RuneCountInString(prefix),
 	}
 	f.valid = true
+	return nil
 }
 
 func (f *renditionBufferFallback) result() (renditionBufferCheckpoint, bool) {
@@ -2421,14 +2435,29 @@ func appendRenditionInlinesWithFallback(
 		switch inline.kind {
 		case renditionText:
 			textStart := output.checkpoint()
-			value := escapeRenditionText(inline.text)
+			value, err := escapeRenditionTextContext(output.ctx, inline.text)
+			if err != nil {
+				output.err = err
+				return true
+			}
 			if available >= 0 && utf8.RuneCountInString(value) > remaining {
-				output.WriteString(truncateEscapedRenditionText(inline.text, max(0, remaining)))
-				fallback.markEscapedText(textStart, inline.text)
+				value, err = truncateEscapedRenditionTextContext(output.ctx, inline.text, max(0, remaining))
+				if err != nil {
+					output.err = err
+					return true
+				}
+				output.WriteString(value)
+				if err := fallback.markEscapedTextContext(output.ctx, textStart, inline.text); err != nil {
+					output.err = err
+					return true
+				}
 				return true
 			}
 			output.WriteString(value)
-			fallback.markEscapedText(textStart, inline.text)
+			if err := fallback.markEscapedTextContext(output.ctx, textStart, inline.text); err != nil {
+				output.err = err
+				return true
+			}
 		case renditionInlineCode:
 			value := serializeRenditionInlineCode(inline.text, inTable)
 			if available >= 0 && utf8.RuneCountInString(value) > remaining {
@@ -2485,14 +2514,29 @@ func appendRenditionPlainLabel(
 		switch inline.kind {
 		case renditionText, renditionInlineCode:
 			textStart := output.checkpoint()
-			value := escapeRenditionText(inline.text)
+			value, err := escapeRenditionTextContext(output.ctx, inline.text)
+			if err != nil {
+				output.err = err
+				return true
+			}
 			if available >= 0 && utf8.RuneCountInString(value) > remaining {
-				output.WriteString(truncateEscapedRenditionText(inline.text, max(0, remaining)))
-				fallback.markEscapedText(textStart, inline.text)
+				value, err = truncateEscapedRenditionTextContext(output.ctx, inline.text, max(0, remaining))
+				if err != nil {
+					output.err = err
+					return true
+				}
+				output.WriteString(value)
+				if err := fallback.markEscapedTextContext(output.ctx, textStart, inline.text); err != nil {
+					output.err = err
+					return true
+				}
 				return true
 			}
 			output.WriteString(value)
-			fallback.markEscapedText(textStart, inline.text)
+			if err := fallback.markEscapedTextContext(output.ctx, textStart, inline.text); err != nil {
+				output.err = err
+				return true
+			}
 		case renditionLinkInline:
 			if appendRenditionPlainLabel(output, inline.children, remaining, fallback) {
 				return true
@@ -2503,20 +2547,44 @@ func appendRenditionPlainLabel(
 }
 
 func escapeRenditionText(value string) string {
+	result, _ := escapeRenditionTextContext(context.Background(), value)
+	return result
+}
+
+func escapeRenditionTextContext(ctx context.Context, value string) (string, error) {
 	var output strings.Builder
+	runes := 0
 	for _, character := range value {
+		if runes&1023 == 0 {
+			if err := ctx.Err(); err != nil {
+				return "", err
+			}
+		}
+		runes++
 		if isMarkdownASCIIPunctuation(character) {
 			output.WriteByte('\\')
 		}
 		output.WriteRune(character)
 	}
-	return output.String()
+	return output.String(), nil
 }
 
 func truncateEscapedRenditionText(value string, limit int) string {
+	result, _ := truncateEscapedRenditionTextContext(context.Background(), value, limit)
+	return result
+}
+
+func truncateEscapedRenditionTextContext(ctx context.Context, value string, limit int) (string, error) {
 	var output strings.Builder
 	used := 0
+	runes := 0
 	for _, character := range value {
+		if runes&1023 == 0 {
+			if err := ctx.Err(); err != nil {
+				return "", err
+			}
+		}
+		runes++
 		cost := 1
 		if isMarkdownASCIIPunctuation(character) {
 			cost++
@@ -2530,7 +2598,7 @@ func truncateEscapedRenditionText(value string, limit int) string {
 		output.WriteRune(character)
 		used += cost
 	}
-	return output.String()
+	return output.String(), nil
 }
 
 func isMarkdownASCIIPunctuation(character rune) bool {
