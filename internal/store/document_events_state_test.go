@@ -121,8 +121,7 @@ func TestDocumentEventIdleMaintenanceNeedsNoWriteTransaction(t *testing.T) {
 					"94000000-0000-4000-8000-000000000009", fakeHash("db"))
 				require.NoError(t, err)
 			}
-			s.db.SetMaxOpenConns(1)
-			_, err := s.db.ExecContext(t.Context(), `PRAGMA query_only=ON`)
+			_, err := s.writeDB.ExecContext(t.Context(), `PRAGMA query_only=ON`)
 			require.NoError(t, err)
 			assert.NoError(t, s.EnsureDocumentEventRecipe(t.Context(), DocumentEventsDeriverFingerprint))
 			assert.NoError(t, s.RefreshDocumentEventBuilds(t.Context()))
