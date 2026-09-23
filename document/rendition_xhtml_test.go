@@ -201,6 +201,15 @@ func TestRenditionFinalizationContextCancellation(t *testing.T) {
 	writer.endTag("code")
 	require.ErrorIs(t, writer.err, context.Canceled)
 
+	writer = renditionHTMLWriter{ctx: &cancelAfterXHTMLReadContext{cancelAt: 2}, work: &renditionXHTMLWork{remaining: 1 << 20}}
+	writer.startLink("")
+	writer.links[0].children = make([]renditionInline, 1024)
+	for index := range writer.links[0].children {
+		writer.links[0].children[index] = renditionInline{kind: renditionText, text: "x"}
+	}
+	writer.endTag("a")
+	require.ErrorIs(t, writer.err, context.Canceled)
+
 	ctx = &cancelAfterXHTMLReadContext{cancelAt: 3}
 	_, _, err = serializeRenditionBlocksContext(ctx, tableBlocks, 1<<20)
 	require.ErrorIs(t, err, context.Canceled)

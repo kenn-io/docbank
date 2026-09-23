@@ -1726,6 +1726,10 @@ func (w *renditionHTMLWriter) appendBlock(block renditionBlock) {
 
 func (w *renditionHTMLWriter) appendFlattenedInlines(inlines []renditionInline) {
 	for _, inline := range inlines {
+		if err := w.contextError(); err != nil {
+			w.err = err
+			return
+		}
 		switch inline.kind {
 		case renditionText, renditionInlineCode:
 			w.appendText(inline.text)
