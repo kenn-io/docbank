@@ -7,7 +7,6 @@ import (
 	"errors"
 	"path/filepath"
 	"testing"
-	"testing/synctest"
 	"time"
 	"uuid"
 
@@ -153,58 +152,56 @@ func TestWorkerRetriesCatalogContention(t *testing.T) {
 }
 
 func TestWorkerDoesNotFenceClaimOnTemporaryReadContention(t *testing.T) {
-	synctest.Test(t, func(t *testing.T) {
-		opening, resume := make(chan struct{}), make(chan struct{})
-		gate := api.NewOperationGate()
-		calls := 0
-		worker, catalog, job, driver, path := workerFixture(t, mutationFunc(func(ctx context.Context, fn func() error) error {
-			calls++
-			if calls == 2 {
-				close(opening)
-				select {
-				case <-resume:
-				case <-ctx.Done():
-					return ctx.Err()
-				}
+	opening, resume := make(chan struct{}), make(chan struct{})
+	gate := api.NewOperationGate()
+	calls := 0
+	worker, catalog, job, driver, path := workerFixture(t, mutationFunc(func(ctx context.Context, fn func() error) error {
+		calls++
+		if calls == 2 {
+			close(opening)
+			select {
+			case <-resume:
+			case <-ctx.Done():
+				return ctx.Err()
 			}
-			return gate.MutateContext(ctx, fn)
-		}))
-		// Only the external locker should cause contention in this fixture.
-		driver.db.SetMaxOpenConns(1)
-		// Let the other SQLite connection take an exclusive lock while no query runs.
-		driver.db.SetMaxIdleConns(0)
-		locker, err := driver.Driver.Open(path, docsqlite.OpenOptions{Access: docsqlite.ReadWriteExisting, TransactionMode: docsqlite.Immediate})
-		require.NoError(t, err)
-		defer func() { require.NoError(t, locker.Close()) }()
-		locker.SetMaxOpenConns(1)
-		_, err = locker.ExecContext(t.Context(), "PRAGMA locking_mode=EXCLUSIVE")
-		require.NoError(t, err)
-		ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
-		defer cancel()
-		done := make(chan error, 1)
-		go func() { _, err := worker.RunOne(ctx); done <- err }()
-		select {
-		case <-opening:
-		case <-ctx.Done():
-			t.Fatal(ctx.Err())
 		}
-		tx, err := locker.BeginTx(ctx, nil)
-		require.NoError(t, err)
-		defer func() { _ = tx.Rollback() }()
-		err = catalog.CheckExportClaim(ctx, store.ExportClaim{})
-		require.True(t, catalog.RenditionJobErrorRetryable(err), "expected read contention, got %v", err)
-		// Allow at least one claim poll to observe the real read lock.
-		time.Sleep(350 * time.Millisecond)
-		// Keep resumed reads from racing the last connection's WAL teardown.
-		driver.db.SetMaxIdleConns(2)
-		require.NoError(t, tx.Rollback())
-		require.NoError(t, locker.Close())
-		close(resume)
-		require.NoError(t, <-done)
-		stored, err := catalog.ExportJob(ctx, "master", job.ID)
-		require.NoError(t, err)
-		require.Equal(t, "completed", stored.State)
-	})
+		return gate.MutateContext(ctx, fn)
+	}))
+	// Only the external locker should cause contention in this fixture.
+	driver.db.SetMaxOpenConns(1)
+	// Let the other SQLite connection take an exclusive lock while no query runs.
+	driver.db.SetMaxIdleConns(0)
+	locker, err := driver.Driver.Open(path, docsqlite.OpenOptions{Access: docsqlite.ReadWriteExisting, TransactionMode: docsqlite.Immediate})
+	require.NoError(t, err)
+	defer func() { require.NoError(t, locker.Close()) }()
+	locker.SetMaxOpenConns(1)
+	_, err = locker.ExecContext(t.Context(), "PRAGMA locking_mode=EXCLUSIVE")
+	require.NoError(t, err)
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { _, err := worker.RunOne(ctx); done <- err }()
+	select {
+	case <-opening:
+	case <-ctx.Done():
+		t.Fatal(ctx.Err())
+	}
+	tx, err := locker.BeginTx(ctx, nil)
+	require.NoError(t, err)
+	defer func() { _ = tx.Rollback() }()
+	err = catalog.CheckExportClaim(ctx, store.ExportClaim{})
+	require.True(t, catalog.RenditionJobErrorRetryable(err), "expected read contention, got %v", err)
+	// Allow at least one claim poll to observe the real read lock.
+	time.Sleep(350 * time.Millisecond) //nolint:kennlint // claim polls must see the real SQLite read lock, which runs on the wall clock
+	// Keep resumed reads from racing the last connection's WAL teardown.
+	driver.db.SetMaxIdleConns(2)
+	require.NoError(t, tx.Rollback())
+	require.NoError(t, locker.Close())
+	close(resume)
+	require.NoError(t, <-done)
+	stored, err := catalog.ExportJob(ctx, "master", job.ID)
+	require.NoError(t, err)
+	require.Equal(t, "completed", stored.State)
 }
 
 func TestWorkerStopsOnPermanentCatalogError(t *testing.T) {
