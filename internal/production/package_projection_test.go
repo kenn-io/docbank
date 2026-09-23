@@ -208,6 +208,26 @@ func TestPlanPackageProjectionRejectsChangedNumbersAndUnsafeLabels(t *testing.T)
 	}
 }
 
+func TestPlanPackageProjectionRejectsUnrepresentablePageLabels(t *testing.T) {
+	for _, sample := range []struct{ profile, label string }{
+		{"export-dat-pdf-v1", "EX,0001"},
+		{"export-dat-opt-images-v1", "EX®0001"},
+		{"export-dat-lfp-images-v1", "EX;0001"},
+		{"export-dat-lfp-images-v1", "EX@0001"},
+	} {
+		t.Run(sample.profile+"/"+sample.label, func(t *testing.T) {
+			job, numbers, members := packageProjectionFixture(t)
+			numbers.Numbers[0].Text = sample.label
+			_, numbers.SHA256, _ = documentproduction.CanonicalNumberReservation(numbers)
+			job.Receipt.NumberReservationSHA256 = numbers.SHA256
+			resealPackageJob(t, &job)
+			_, err := PlanPackageProjection(job, numbers, members, sample.profile,
+				PackageLimits{MaxVolumeBytes: 1000, MaxVolumeDocuments: 10})
+			require.Error(t, err)
+		})
+	}
+}
+
 func TestPlanPackageProjectionRejectsNoncontiguousFamily(t *testing.T) {
 	job, numbers, members := packageProjectionFixture(t)
 	members[0].FamilyID = "family-one"

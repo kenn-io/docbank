@@ -1,0 +1,292 @@
+package production
+
+import (
+	"archive/zip"
+	"bytes"
+	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"errors"
+	"image"
+	"image/color"
+	"image/png"
+	"io"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+
+	"github.com/stretchr/testify/require"
+	documentproduction "go.kenn.io/docbank/document/production"
+	"go.kenn.io/docbank/internal/loadfile"
+	"go.kenn.io/kit/packstore"
+)
+
+type syntheticPackageOpener struct{ data map[string][]byte }
+
+type leakingPackageOpener struct{}
+
+func (leakingPackageOpener) OpenVerifiedProductionArtifact(context.Context, string,
+	documentproduction.Artifact) (packstore.VerifiedReadCloser, int64, error) {
+	return nil, 0, errors.New("private/source-name and private reason")
+}
+
+func syntheticPackagePNG(t *testing.T, page int) []byte {
+	t.Helper()
+	var body bytes.Buffer
+	imageData := image.NewRGBA(image.Rect(0, 0, 1, 1))
+	imageData.Set(0, 0, color.RGBA{R: uint8(page), G: 42, B: 77, A: 255})
+	require.NoError(t, png.Encode(&body, imageData))
+	return body.Bytes()
+}
+
+func (s syntheticPackageOpener) OpenVerifiedProductionArtifact(_ context.Context, _ string,
+	artifact documentproduction.Artifact) (packstore.VerifiedReadCloser, int64, error) {
+	data, ok := s.data[artifact.ID]
+	if !ok {
+		return nil, 0, os.ErrNotExist
+	}
+	return &syntheticVerifiedPDF{Reader: bytes.NewReader(data), verified: true}, int64(len(data)), nil
+}
+
+func packageArchiveFixture(t *testing.T, profile string) (PackageProjection, syntheticPackageOpener) {
+	t.Helper()
+	job, numbers, members := packageProjectionFixture(t)
+	opener := syntheticPackageOpener{data: map[string][]byte{}}
+	for i := range job.Manifest.Artifacts {
+		artifact := &job.Manifest.Artifacts[i]
+		var data []byte
+		switch artifact.Role {
+		case documentproduction.ArtifactRoleRedactedText:
+			data = []byte("synthetic redacted text for " + string(rune('1'+artifact.MemberOrdinal)))
+		case documentproduction.ArtifactRoleRedactedPDF:
+			data = []byte("%PDF-1.4\nsynthetic redacted PDF\n%%EOF\n")
+		case documentproduction.ArtifactRoleRedactedPage:
+			data = syntheticPackagePNG(t, artifact.Page)
+		}
+		digest := sha256.Sum256(data)
+		artifact.SHA256, artifact.Size = hex.EncodeToString(digest[:]), int64(len(data))
+		opener.data[artifact.ID] = data
+	}
+	resealPackageJob(t, &job)
+	projection, err := PlanPackageProjection(job, numbers, members, profile,
+		PackageLimits{MaxVolumeBytes: 1000, MaxVolumeDocuments: 10})
+	require.NoError(t, err)
+	return projection, opener
+}
+
+func TestBuildRecipientArchiveReopensAndVerifiesAllProfiles(t *testing.T) {
+	for _, profile := range []string{"export-dat-pdf-v1", "export-dat-opt-images-v1", "export-dat-lfp-images-v1"} {
+		t.Run(profile, func(t *testing.T) {
+			projection, opener := packageArchiveFixture(t, profile)
+			first := filepath.Join(t.TempDir(), "first.zip")
+			qc, err := BuildRecipientArchive(t.Context(), projection, packageJobID, opener, first)
+			require.NoError(t, err)
+			require.Equal(t, projection.PageNumbers(), qc.PageNumbers)
+			verified, err := VerifyRecipientArchive(first)
+			require.NoError(t, err)
+			require.Equal(t, qc, verified)
+			second := filepath.Join(t.TempDir(), "second.zip")
+			_, err = BuildRecipientArchive(t.Context(), projection, packageJobID, opener, second)
+			require.NoError(t, err)
+			a, err := os.ReadFile(first)
+			require.NoError(t, err)
+			b, err := os.ReadFile(second)
+			require.NoError(t, err)
+			require.Equal(t, a, b)
+			for _, secret := range []string{packageOneID, packageTwoID, packageJobID, "private/", "source_sha256", "reason"} {
+				require.NotContains(t, string(a), secret)
+			}
+			reader, err := zip.OpenReader(first)
+			require.NoError(t, err)
+			defer reader.Close()
+			for _, entry := range reader.File {
+				require.NotContains(t, entry.Name, "private")
+				stream, openErr := entry.Open()
+				require.NoError(t, openErr)
+				body, readErr := io.ReadAll(stream)
+				require.NoError(t, readErr)
+				require.NoError(t, stream.Close())
+				for _, secret := range []string{packageOneID, packageTwoID, packageJobID, "private/", "source_sha256", "reason"} {
+					require.NotContains(t, string(body), secret)
+				}
+			}
+		})
+	}
+}
+
+func TestBuildRecipientArchiveRejectsMissingChangedAndPublishedDestination(t *testing.T) {
+	projection, opener := packageArchiveFixture(t, "export-dat-opt-images-v1")
+	destination := filepath.Join(t.TempDir(), "production.zip")
+	missing := opener.data[projection.bindings[0].artifact.ID]
+	delete(opener.data, projection.bindings[0].artifact.ID)
+	_, err := BuildRecipientArchive(t.Context(), projection, packageJobID, opener, destination)
+	require.Error(t, err)
+	_, err = os.Stat(destination)
+	require.ErrorIs(t, err, os.ErrNotExist)
+	opener.data[projection.bindings[0].artifact.ID] = []byte("changed")
+	_, err = BuildRecipientArchive(t.Context(), projection, packageJobID, opener, destination)
+	require.Error(t, err)
+	opener.data[projection.bindings[0].artifact.ID] = missing
+	_, err = BuildRecipientArchive(t.Context(), projection, packageJobID, opener, destination)
+	require.NoError(t, err)
+	_, err = BuildRecipientArchive(t.Context(), projection, packageJobID, opener, destination)
+	require.Error(t, err)
+}
+
+func TestBuildRecipientArchiveRejectsChangedProjectionAndRoleBinding(t *testing.T) {
+	for _, change := range []struct {
+		name string
+		edit func(*PackageProjection)
+	}{
+		{"public label", func(p *PackageProjection) { p.Manifest.Documents[0].Pages[0].Number = "changed" }},
+		{"private role", func(p *PackageProjection) { p.bindings[0].artifact.Role = "original" }},
+		{"private source", func(p *PackageProjection) { p.bindings[0].artifact.Path = "private/changed" }},
+	} {
+		t.Run(change.name, func(t *testing.T) {
+			projection, opener := packageArchiveFixture(t, "export-dat-opt-images-v1")
+			change.edit(&projection)
+			path := filepath.Join(t.TempDir(), "production.zip")
+			_, err := BuildRecipientArchive(t.Context(), projection, packageJobID, opener, path)
+			require.Error(t, err)
+			_, err = os.Stat(path)
+			require.ErrorIs(t, err, os.ErrNotExist)
+		})
+	}
+}
+
+func TestBuildRecipientArchiveDoesNotExposeSourceOpenErrors(t *testing.T) {
+	projection, _ := packageArchiveFixture(t, "export-dat-opt-images-v1")
+	_, err := BuildRecipientArchive(t.Context(), projection, packageJobID, leakingPackageOpener{},
+		filepath.Join(t.TempDir(), "production.zip"))
+	require.ErrorIs(t, err, ErrRecipientArchive)
+	require.NotContains(t, err.Error(), "private")
+}
+
+func TestBuildRecipientArchiveKeepsVolumeAndLoadfileOrder(t *testing.T) {
+	for _, profileID := range []string{"export-dat-pdf-v1", "export-dat-opt-images-v1", "export-dat-lfp-images-v1"} {
+		t.Run(profileID, func(t *testing.T) {
+			job, numbers, members := packageProjectionFixture(t)
+			members[1].FamilyID = "family-two"
+			opener := syntheticPackageOpener{data: map[string][]byte{}}
+			for index := range job.Manifest.Artifacts {
+				artifact := &job.Manifest.Artifacts[index]
+				body := []byte("synthetic output " + artifact.Role + " " + string(rune('0'+artifact.Page)))
+				if artifact.Role == documentproduction.ArtifactRoleRedactedPage {
+					body = syntheticPackagePNG(t, artifact.Page)
+				}
+				digest := sha256.Sum256(body)
+				artifact.SHA256, artifact.Size = hex.EncodeToString(digest[:]), int64(len(body))
+				opener.data[artifact.ID] = body
+			}
+			resealPackageJob(t, &job)
+			projection, err := PlanPackageProjection(job, numbers, members, profileID,
+				PackageLimits{MaxVolumeBytes: 1000, MaxVolumeDocuments: 1})
+			require.NoError(t, err)
+			require.Len(t, projection.Manifest.Volumes, 2)
+			path := filepath.Join(t.TempDir(), "volumes.zip")
+			qc, err := BuildRecipientArchive(t.Context(), projection, packageJobID, opener, path)
+			require.NoError(t, err)
+			require.NoError(t, VerifyRecipientArchiveWithQC(path, qc))
+			archive, err := zip.OpenReader(path)
+			require.NoError(t, err)
+			defer archive.Close()
+			for _, volume := range projection.Manifest.Volumes {
+				var datBytes, pageBytes []byte
+				for _, entry := range archive.File {
+					if entry.Name == volume.Name+"/LOADFILES/PRODUCTION.dat" ||
+						strings.HasPrefix(entry.Name, volume.Name+"/LOADFILES/PRODUCTION.") {
+						stream, openErr := entry.Open()
+						require.NoError(t, openErr)
+						body, readErr := io.ReadAll(stream)
+						require.NoError(t, readErr)
+						require.NoError(t, stream.Close())
+						if strings.HasSuffix(entry.Name, ".dat") {
+							datBytes = body
+						} else {
+							pageBytes = body
+						}
+					}
+				}
+				datProfile, err := loadfile.ReadProfile("dat-concordance-v1")
+				require.NoError(t, err)
+				datProfile.Columns = []string{"BEGDOC", "ENDDOC", "VOLUME", "PAGES", "TEXT", "PDF", "FIRST_IMAGE"}
+				var controls []string
+				datDiagnostics, err := loadfile.ScanDAT(bytes.NewReader(datBytes), datProfile, func(record loadfile.Record) error {
+					controls = append(controls, record.Fields[0].Raw)
+					return nil
+				})
+				require.NoError(t, err)
+				require.Empty(t, datDiagnostics)
+				var images []loadfile.ImageRef
+				if profileID == "export-dat-lfp-images-v1" {
+					pageProfile, profileErr := loadfile.ReadProfile("lfp-ipro-v1")
+					require.NoError(t, profileErr)
+					require.NoError(t, loadfile.ScanLFP(t.Context(), bytes.NewReader(pageBytes), pageProfile,
+						func(image loadfile.ImageRef) error { images = append(images, image); return nil }))
+				} else {
+					pageProfile, profileErr := loadfile.ReadProfile("opt-standard-v1")
+					require.NoError(t, profileErr)
+					optDiagnostics, scanErr := loadfile.ScanOPT(t.Context(), bytes.NewReader(pageBytes), pageProfile,
+						func(image loadfile.ImageRef) error { images = append(images, image); return nil })
+					require.NoError(t, scanErr)
+					require.Empty(t, optDiagnostics)
+				}
+				var expectedControls, expectedPages []string
+				for _, doc := range projection.Manifest.Documents {
+					if doc.Volume != volume.Name {
+						continue
+					}
+					expectedControls = append(expectedControls, doc.Control)
+					for _, page := range doc.Pages {
+						expectedPages = append(expectedPages, page.Number)
+					}
+				}
+				require.Equal(t, expectedControls, controls)
+				require.Len(t, images, len(expectedPages))
+				for index, image := range images {
+					require.Equal(t, expectedPages[index], image.ImageKey)
+					require.Equal(t, volume.Name, image.Volume)
+					require.Contains(t, image.RelPath, "IMAGES/")
+				}
+			}
+		})
+	}
+}
+
+func TestRecipientArchiveQCDetectsChangedFinalBytes(t *testing.T) {
+	projection, opener := packageArchiveFixture(t, "export-dat-opt-images-v1")
+	path := filepath.Join(t.TempDir(), "production.zip")
+	qc, err := BuildRecipientArchive(t.Context(), projection, packageJobID, opener, path)
+	require.NoError(t, err)
+	archive, err := os.ReadFile(path)
+	require.NoError(t, err)
+	archive[len(archive)-1] ^= 1
+	require.NoError(t, os.WriteFile(path, archive, 0o600))
+	require.Error(t, VerifyRecipientArchiveWithQC(path, qc))
+}
+
+func TestBuildRecipientArchiveRejectsNonPNGPageRoleBytes(t *testing.T) {
+	projection, opener := packageArchiveFixture(t, "export-dat-opt-images-v1")
+	for index := range projection.bindings {
+		binding := &projection.bindings[index]
+		if binding.artifact.Role != documentproduction.ArtifactRoleRedactedPage {
+			continue
+		}
+		body := []byte("not a PNG")
+		digest := sha256.Sum256(body)
+		projection.Manifest.Volumes[0].Bytes += int64(len(body)) - binding.artifact.Size
+		binding.artifact.SHA256, binding.artifact.Size = hex.EncodeToString(digest[:]), int64(len(body))
+		opener.data[binding.artifact.ID] = body
+		break
+	}
+	var err error
+	projection.bindingsSHA256, err = packageBindingsDigest(projection.bindings)
+	require.NoError(t, err)
+	manifest, err := packageJSON(projection.Manifest)
+	require.NoError(t, err)
+	manifestDigest := sha256.Sum256(bytes.TrimSuffix(manifest, []byte{'\n'}))
+	projection.manifestSHA256 = hex.EncodeToString(manifestDigest[:])
+	_, err = BuildRecipientArchive(t.Context(), projection, packageJobID, opener, filepath.Join(t.TempDir(), "bad.zip"))
+	require.Error(t, err)
+}

@@ -1,13 +1,17 @@
 package production
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"slices"
+	"strings"
 	"unicode"
 	"unicode/utf8"
 
 	documentproduction "go.kenn.io/docbank/document/production"
+	"go.kenn.io/docbank/internal/canonical"
 	"go.kenn.io/docbank/internal/loadfile"
 )
 
@@ -71,9 +75,11 @@ type packageBinding struct {
 // PackageProjection keeps private artifact bindings separate from the public
 // manifest. The archive writer consumes bindings; only Manifest is serialized.
 type PackageProjection struct {
-	Manifest RecipientManifest
-	export   loadfile.ProductionExportPlan
-	bindings []packageBinding
+	Manifest       RecipientManifest
+	export         loadfile.ProductionExportPlan
+	bindings       []packageBinding
+	manifestSHA256 string
+	bindingsSHA256 string
 }
 
 func (p PackageProjection) PageNumbers() []string {
@@ -194,7 +200,7 @@ func PlanPackageProjection(job Job, reservation documentproduction.NumberReserva
 	})
 	for _, number := range orderedNumbers {
 		member, ok := byID[number.MemberID]
-		if !ok || member.Ordinal != number.MemberOrdinal || !safeRecipientLabel(number.Text) ||
+		if !ok || member.Ordinal != number.MemberOrdinal || !safePackagePageLabel(number.Text, profileID) ||
 			number.Page != len(pageLabels[number.MemberID])+1 {
 			return bad()
 		}
@@ -286,7 +292,33 @@ func PlanPackageProjection(job Job, reservation documentproduction.NumberReserva
 		}
 		start = end
 	}
+	encoded, err := canonical.Marshal(result.Manifest)
+	if err != nil {
+		return bad()
+	}
+	digest := sha256.Sum256(encoded)
+	result.manifestSHA256 = hex.EncodeToString(digest[:])
+	result.bindingsSHA256, err = packageBindingsDigest(result.bindings)
+	if err != nil {
+		return bad()
+	}
 	return result, nil
+}
+
+func packageBindingsDigest(bindings []packageBinding) (string, error) {
+	sealed := make([]struct {
+		Path     string                      `json:"path"`
+		Artifact documentproduction.Artifact `json:"artifact"`
+	}, len(bindings))
+	for index, binding := range bindings {
+		sealed[index].Path, sealed[index].Artifact = binding.path, binding.artifact
+	}
+	data, err := canonical.Marshal(sealed)
+	if err != nil {
+		return "", err
+	}
+	digest := sha256.Sum256(data)
+	return hex.EncodeToString(digest[:]), nil
 }
 
 func safeRecipientLabel(value string) bool {
@@ -299,4 +331,11 @@ func safeRecipientLabel(value string) bool {
 		}
 	}
 	return true
+}
+
+func safePackagePageLabel(value, profileID string) bool {
+	if !safeRecipientLabel(value) || strings.ContainsAny(value, ",®") {
+		return false
+	}
+	return profileID != "export-dat-lfp-images-v1" || !strings.ContainsAny(value, ";@")
 }
