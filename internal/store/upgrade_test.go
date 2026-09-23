@@ -238,7 +238,8 @@ func TestDocumentIdentityLayoutHasDistinctStorageVersion(t *testing.T) {
 			var version int
 			require.NoError(t, s.db.QueryRow(`
 				SELECT schema_version FROM vault_metadata WHERE singleton = 1`).Scan(&version))
-			assert.Equal(t, 24, version)
+			assert.Equal(t, currentStorageSchemaVersion, version)
+			assert.NotEqual(t, 23, version, "document identity layout must differ from the prior term-report layout")
 			for _, table := range []string{"term_report_history", "document_identities", "document_identity_aliases", "adopted_passage_authorities"} {
 				columns, err := tableColumns(s.db, table)
 				require.NoError(t, err)

@@ -458,6 +458,11 @@ func exportMetadataSnapshotWithVaultIdentity(
 			return err
 		}
 	}
+	if layout.schemaVersion >= 25 {
+		if err := exportContentMapMetadata(ctx, tx, write); err != nil {
+			return err
+		}
+	}
 	if layout.schemaVersion >= 21 {
 		if err := exportTermReportHistory(ctx, tx, write); err != nil {
 			return err
@@ -1038,6 +1043,8 @@ func requirePristineMetadataTarget(ctx context.Context, tx *sql.Tx) error {
 		  (SELECT COUNT(*) FROM blobs) + (SELECT COUNT(*) FROM content_versions)
 		    + (SELECT COUNT(*) FROM saved_queries)
 		    + (SELECT COUNT(*) FROM saved_query_runs)
+		    + (SELECT COUNT(*) FROM content_maps)
+		    + (SELECT COUNT(*) FROM content_map_snapshots)
 		    + (SELECT COUNT(*) FROM term_report_history)
 		    + (SELECT COUNT(*) FROM blob_checksums)
 		    + (SELECT COUNT(*) FROM email_generations)
@@ -1474,6 +1481,24 @@ func (s *Store) importMetadataRecord(
 			return err
 		}
 		return importSavedQueryRunMetadata(ctx, tx, v)
+	case metadataContentMapType:
+		if len(raw) > 2<<20 {
+			return errors.New("content map metadata record exceeds its input limit")
+		}
+		var v metadataContentMap
+		if err := decodeMetadataRecord(raw, &v); err != nil {
+			return err
+		}
+		return importContentMapMetadata(ctx, tx, v)
+	case metadataContentMapSnapshotType:
+		if len(raw) > 2<<20 {
+			return errors.New("content map snapshot metadata record exceeds its input limit")
+		}
+		var v metadataContentMapSnapshot
+		if err := decodeMetadataRecord(raw, &v); err != nil {
+			return err
+		}
+		return importContentMapSnapshotMetadata(ctx, tx, v)
 	case metadataTermReportHistoryType:
 		var v metadataTermReportHistory
 		if err := decodeMetadataRecord(raw, &v); err != nil {
@@ -1625,6 +1650,8 @@ var metadataRequiredFields = map[string][]string{
 	"tag":                                  {metadataTypeField, "tag_id", "name", metadataRevisionField},
 	metadataSavedQueryType:                 {metadataTypeField, "saved_query_id", "name", "description", "kind", "payload", "fingerprint", metadataRevisionField, metadataCreatedAtField, "updated_at"},
 	metadataSavedQueryRunType:              {metadataTypeField, "run_id", "saved_query_id", "saved_query_revision", "query_fingerprint", "snapshot_id", "member_hash", "total", "total_bytes", "ran_at", "expires_at", "previous_run_id", "previous_member_hash", "previous_total", "previous_query_fingerprint"},
+	metadataContentMapType:                 {metadataTypeField, "id", "owner", metadataRevisionField, "definition_json", "definition_digest", metadataCreatedAtField, "updated_at", "archived_at"},
+	metadataContentMapSnapshotType:         {metadataTypeField, "id", "map_id", "map_revision", "owner", "scope_digest", "definition_digest", "snapshot_json", "member_hash", metadataCreatedAtField},
 	metadataTermReportHistoryType:          {metadataTypeField, "id", "parent_id", "observed_at", "request_json", "summary_json"},
 	"node_tag":                             {metadataTypeField, metadataNodeIDField, "tag_id"},
 	metadataBatchTagReceiptType:            {metadataTypeField, auditOperationIDField, "request_digest", "receipt_json"},
@@ -1671,6 +1698,7 @@ var metadataNullableFields = map[string]map[string]bool{
 		"previous_run_id": true, "previous_member_hash": true,
 		"previous_total": true, "previous_query_fingerprint": true,
 	},
+	metadataContentMapType:             {"archived_at": true},
 	"extracted_text":                   {"error": true, "text": true},
 	metadataCurrentRenditionRootType:   {"released_at": true},
 	metadataEmbeddingGenerationType:    {"attachment_id": true},
@@ -2051,6 +2079,11 @@ func validateMetadataStateWithVaultIdentity(
 		}
 		if err := validateSavedQueryRunMetadataState(ctx, tx); err != nil {
 			return err
+		}
+		if layout.schemaVersion >= 25 {
+			if err := validateContentMapMetadataState(ctx, tx); err != nil {
+				return err
+			}
 		}
 		if layout.schemaVersion >= 21 {
 			if err := exportTermReportHistory(ctx, tx, func(any) error { return nil }); err != nil {
