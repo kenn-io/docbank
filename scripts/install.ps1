@@ -124,8 +124,12 @@ function Assert-ZipLayout([string]$Path) {
     Add-Type -AssemblyName System.IO.Compression.FileSystem
     $zip = [System.IO.Compression.ZipFile]::OpenRead($Path)
     try {
-        if ($zip.Entries.Count -ne 1 -or $zip.Entries[0].FullName -ne $binaryName) {
-            throw "release archive must contain only $binaryName at its root"
+        $names = @($zip.Entries | ForEach-Object { $_.FullName } | Sort-Object)
+        $legacy = $names.Count -eq 1 -and $names[0] -ceq $binaryName
+        $expected = @($binaryName, 'LICENSE', 'NOTICE') | Sort-Object
+        $withNotices = $names.Count -eq 3 -and ($names -join "`n") -ceq ($expected -join "`n")
+        if (-not $legacy -and -not $withNotices) {
+            throw "release archive must contain only $binaryName, LICENSE, and NOTICE at its root"
         }
     } finally {
         $zip.Dispose()

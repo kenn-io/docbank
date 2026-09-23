@@ -110,8 +110,9 @@ jobs:
           SMOKE_OUT="$(dist/docbank version 2>&1)"
           echo "${SMOKE_OUT}"
           grep -Fq "docbank version ${VERSION} (${COMMIT})" <<<"${SMOKE_OUT}"
+          cp LICENSE NOTICE dist/
           cd dist
-          tar -czf "docbank_${VERSION}_linux_${GOARCH}.tar.gz" docbank
+          tar -czf "docbank_${VERSION}_linux_${GOARCH}.tar.gz" docbank LICENSE NOTICE
           rm docbank
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -171,8 +172,9 @@ jobs:
             echo "${SMOKE_OUT}"
             grep -Fq "docbank version ${VERSION} (${COMMIT})" <<<"${SMOKE_OUT}"
           fi
+          cp LICENSE NOTICE dist/
           cd dist
-          tar -czf "docbank_${VERSION}_darwin_${GOARCH}.tar.gz" docbank
+          tar -czf "docbank_${VERSION}_darwin_${GOARCH}.tar.gz" docbank LICENSE NOTICE
           rm docbank
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -259,7 +261,8 @@ jobs:
       - name: Package
         shell: pwsh
         run: |
-          Compress-Archive -Path dist/docbank.exe -DestinationPath "dist/docbank_$($env:RELEASE_VERSION)_windows_${{ matrix.goarch }}.zip"
+          Copy-Item LICENSE, NOTICE -Destination dist
+          Compress-Archive -Path dist/docbank.exe, dist/LICENSE, dist/NOTICE -DestinationPath "dist/docbank_$($env:RELEASE_VERSION)_windows_${{ matrix.goarch }}.zip"
           Remove-Item dist/docbank.exe
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
