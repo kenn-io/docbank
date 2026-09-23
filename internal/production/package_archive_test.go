@@ -136,6 +136,62 @@ func TestBuildRecipientArchiveReopensAndVerifiesAllProfiles(t *testing.T) {
 	}
 }
 
+func TestRecipientManifestDeclaresAndVerifiesOutputDigests(t *testing.T) {
+	for _, profile := range []string{"export-dat-pdf-v1", "export-dat-opt-images-v1"} {
+		t.Run(profile, func(t *testing.T) {
+			projection, opener := packageArchiveFixture(t, profile)
+			path := filepath.Join(t.TempDir(), "production.zip")
+			qc, err := BuildRecipientArchive(t.Context(), projection, packageJobID, opener, path)
+			require.NoError(t, err)
+			entries := make(map[string]PackageQCEntry, len(qc.Entries))
+			for _, entry := range qc.Entries {
+				entries[entry.Path] = entry
+			}
+			for _, doc := range projection.Manifest.Documents {
+				text := entries[doc.Volume+"/"+doc.TextPath]
+				require.Equal(t, text.SHA256, doc.TextSHA256)
+				require.Equal(t, text.Size, doc.TextSize)
+				if doc.PDFPath != "" {
+					pdf := entries[doc.Volume+"/"+doc.PDFPath]
+					require.Equal(t, pdf.SHA256, doc.PDFSHA256)
+					require.Equal(t, pdf.Size, doc.PDFSize)
+				}
+				for _, image := range doc.Images {
+					entry := entries[doc.Volume+"/"+image.Path]
+					require.Equal(t, entry.SHA256, image.SHA256)
+					require.Equal(t, entry.Size, image.Size)
+				}
+			}
+			original, err := zip.OpenReader(path)
+			require.NoError(t, err)
+			changedPath := filepath.Join(t.TempDir(), "changed.zip")
+			changed, err := os.Create(changedPath)
+			require.NoError(t, err)
+			writer := zip.NewWriter(changed)
+			for _, entry := range original.File {
+				header := entry.FileHeader
+				destination, createErr := writer.CreateHeader(&header)
+				require.NoError(t, createErr)
+				source, openErr := entry.Open()
+				require.NoError(t, openErr)
+				body, readErr := io.ReadAll(source)
+				require.NoError(t, readErr)
+				require.NoError(t, source.Close())
+				if entry.Name == projection.Manifest.Documents[0].Volume+"/"+projection.Manifest.Documents[0].TextPath {
+					body = bytes.Repeat([]byte{'X'}, len(body))
+				}
+				_, writeErr := destination.Write(body)
+				require.NoError(t, writeErr)
+			}
+			require.NoError(t, writer.Close())
+			require.NoError(t, changed.Close())
+			require.NoError(t, original.Close())
+			_, err = VerifyRecipientArchive(changedPath)
+			require.ErrorIs(t, err, ErrRecipientArchive)
+		})
+	}
+}
+
 func TestBuildRecipientArchiveRejectsMissingChangedAndReturnsPublishedDestination(t *testing.T) {
 	projection, opener := packageArchiveFixture(t, "export-dat-opt-images-v1")
 	destination := filepath.Join(t.TempDir(), "production.zip")

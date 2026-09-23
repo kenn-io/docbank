@@ -49,13 +49,17 @@ type RecipientVolume struct {
 }
 
 type RecipientDocument struct {
-	Control  string           `json:"control"`
-	End      string           `json:"end"`
-	Volume   string           `json:"volume"`
-	PDFPath  string           `json:"pdf_path,omitzero"`
-	TextPath string           `json:"text_path"`
-	Pages    []RecipientPage  `json:"pages"`
-	Images   []RecipientImage `json:"images,omitzero"`
+	Control    string           `json:"control"`
+	End        string           `json:"end"`
+	Volume     string           `json:"volume"`
+	PDFPath    string           `json:"pdf_path,omitzero"`
+	PDFSHA256  string           `json:"pdf_sha256,omitzero"`
+	PDFSize    int64            `json:"pdf_size,omitzero"`
+	TextPath   string           `json:"text_path"`
+	TextSHA256 string           `json:"text_sha256"`
+	TextSize   int64            `json:"text_size"`
+	Pages      []RecipientPage  `json:"pages"`
+	Images     []RecipientImage `json:"images,omitzero"`
 }
 
 type RecipientPage struct {
@@ -65,6 +69,8 @@ type RecipientPage struct {
 type RecipientImage struct {
 	Number string `json:"number"`
 	Path   string `json:"path"`
+	SHA256 string `json:"sha256"`
+	Size   int64  `json:"size"`
 }
 
 type packageBinding struct {
@@ -274,16 +280,20 @@ func PlanPackageProjection(job Job, reservation documentproduction.NumberReserva
 			set, labels := sets[member.ID], pageLabels[member.ID]
 			stem := fmt.Sprintf("DOC%06d", member.Ordinal)
 			doc := RecipientDocument{Control: labels[0], End: labels[len(labels)-1], Volume: volume.Name,
-				TextPath: "TEXT/" + stem + ".txt", Pages: make([]RecipientPage, len(labels))}
+				TextPath: "TEXT/" + stem + ".txt", TextSHA256: set.text.SHA256,
+				TextSize: set.text.Size, Pages: make([]RecipientPage, len(labels))}
 			result.bindings = append(result.bindings, packageBinding{path: volume.Name + "/" + doc.TextPath, artifact: *set.text})
 			if !imageProfile {
 				doc.PDFPath = "PDF/" + stem + ".pdf"
+				doc.PDFSHA256, doc.PDFSize = set.pdf.SHA256, set.pdf.Size
 				result.bindings = append(result.bindings, packageBinding{path: volume.Name + "/" + doc.PDFPath, artifact: *set.pdf})
 			}
 			doc.Images = make([]RecipientImage, len(labels))
 			for page, number := range labels {
 				imagePath := fmt.Sprintf("IMAGES/%s-%06d.png", stem, page+1)
-				doc.Images[page] = RecipientImage{Number: number, Path: imagePath}
+				artifact := set.pages[page+1]
+				doc.Images[page] = RecipientImage{Number: number, Path: imagePath,
+					SHA256: artifact.SHA256, Size: artifact.Size}
 				result.bindings = append(result.bindings, packageBinding{path: volume.Name + "/" + imagePath, artifact: set.pages[page+1]})
 			}
 			for page, number := range labels {

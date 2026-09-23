@@ -186,7 +186,8 @@ func packageExpectedPaths(manifest RecipientManifest) (map[string]struct{}, erro
 		index, ok := volumeIndex[doc.Volume]
 		if !ok || index < lastVolume || index > lastVolume+1 || len(doc.Pages) == 0 ||
 			len(doc.Pages) != len(doc.Images) || !safePackagePageLabel(doc.Control, manifest.ProfileID) ||
-			!safePackagePageLabel(doc.End, manifest.ProfileID) {
+			!safePackagePageLabel(doc.End, manifest.ProfileID) ||
+			!validRecipientOutput(doc.TextSHA256, doc.TextSize) {
 			return nil, ErrRecipientArchive
 		}
 		lastVolume = index
@@ -196,17 +197,18 @@ func packageExpectedPaths(manifest RecipientManifest) (map[string]struct{}, erro
 		}
 		paths[doc.Volume+"/"+doc.TextPath] = struct{}{}
 		if manifest.ProfileID == "export-dat-pdf-v1" {
-			if doc.PDFPath != "PDF/"+stem+".pdf" {
+			if doc.PDFPath != "PDF/"+stem+".pdf" || !validRecipientOutput(doc.PDFSHA256, doc.PDFSize) {
 				return nil, ErrRecipientArchive
 			}
 			paths[doc.Volume+"/"+doc.PDFPath] = struct{}{}
-		} else if doc.PDFPath != "" {
+		} else if doc.PDFPath != "" || doc.PDFSHA256 != "" || doc.PDFSize != 0 {
 			return nil, ErrRecipientArchive
 		}
 		for pageIndex, page := range doc.Pages {
 			image := doc.Images[pageIndex]
 			if !safePackagePageLabel(page.Number, manifest.ProfileID) || seenLabels[page.Number] || image.Number != page.Number ||
-				image.Path != fmt.Sprintf("IMAGES/%s-%06d.png", stem, pageIndex+1) {
+				image.Path != fmt.Sprintf("IMAGES/%s-%06d.png", stem, pageIndex+1) ||
+				!validRecipientOutput(image.SHA256, image.Size) {
 				return nil, ErrRecipientArchive
 			}
 			seenLabels[page.Number] = true
@@ -224,6 +226,14 @@ func packageExpectedPaths(manifest RecipientManifest) (map[string]struct{}, erro
 		}
 	}
 	return paths, nil
+}
+
+func validRecipientOutput(digest string, size int64) bool {
+	if size < 1 || size > 50<<30 || len(digest) != sha256.Size*2 {
+		return false
+	}
+	decoded, err := hex.DecodeString(digest)
+	return err == nil && hex.EncodeToString(decoded) == digest
 }
 
 func writePackageEntry(archive *zip.Writer, name string, source io.Reader, size int64, expectedSHA string) error {
@@ -569,6 +579,27 @@ func VerifyRecipientArchive(path string) (PackageQC, error) {
 			return PackageQC{}, err
 		}
 		qc.Entries = append(qc.Entries, value)
+	}
+	outputDigests := make(map[string]PackageQCEntry, len(qc.Entries))
+	for _, entry := range qc.Entries {
+		outputDigests[entry.Path] = entry
+	}
+	checkOutput := func(path, digest string, size int64) bool {
+		entry, ok := outputDigests[path]
+		return ok && entry.SHA256 == digest && entry.Size == size
+	}
+	for _, doc := range manifest.Documents {
+		if !checkOutput(doc.Volume+"/"+doc.TextPath, doc.TextSHA256, doc.TextSize) {
+			return PackageQC{}, ErrRecipientArchive
+		}
+		if doc.PDFPath != "" && !checkOutput(doc.Volume+"/"+doc.PDFPath, doc.PDFSHA256, doc.PDFSize) {
+			return PackageQC{}, ErrRecipientArchive
+		}
+		for _, image := range doc.Images {
+			if !checkOutput(doc.Volume+"/"+image.Path, image.SHA256, image.Size) {
+				return PackageQC{}, ErrRecipientArchive
+			}
+		}
 	}
 	if _, err := file.Seek(0, io.SeekStart); err != nil {
 		return PackageQC{}, err
