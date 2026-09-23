@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"encoding/json/v2"
 	"errors"
+	"slices"
 	"sort"
 	"strings"
 
@@ -52,8 +53,21 @@ type MailboxTransferReceipt struct {
 	DocumentPublicationID string                         `json:"document_publication_id"`
 	CreatedAt             string                         `json:"created_at"`
 	Outcome               string                         `json:"outcome"`
+	OriginKind            string                         `json:"origin_kind,omitempty"`
+	OccurrenceKeys        []MailboxReceiptOccurrenceKey  `json:"occurrence_keys,omitempty"`
+	OccurrenceOverflow    bool                           `json:"occurrence_overflow,omitempty"`
 	Location              *MailboxLocation               `json:"location,omitempty"`
 }
+
+// MailboxReceiptOccurrenceKey is the retained exact link to one job result.
+// The job writer appends it in the same transaction as the occurrence row.
+type MailboxReceiptOccurrenceKey struct {
+	JobID   string `json:"job_id"`
+	Ordinal int64  `json:"ordinal"`
+}
+
+const maxMailboxReceiptOccurrenceKeys = 1000
+
 type MailboxTransferPublication struct {
 	Owner     string
 	Run       IngestRun
@@ -61,6 +75,7 @@ type MailboxTransferPublication struct {
 	Email     EmailPublication
 	Location  *MailboxLocation
 	LabelTags map[string]string
+	jobOrigin bool
 }
 
 func (s *Store) RegisterMailboxArchive(ctx context.Context, a MailboxArchive) error {
@@ -125,6 +140,35 @@ func loadMailboxTransferReceipt(ctx context.Context, q metadataQuerier, id strin
 	if r.Location != nil && (r.Location.EMLSHA256 != r.Request.SHA256 || r.Location.EMLSize != r.Request.Size) {
 		return r, ErrMailboxInvalid
 	}
+	switch r.OriginKind {
+	case "", "direct":
+	case "job":
+		collectionID, ok := strings.CutPrefix(r.Request.ArchiveID, "mailbox:")
+		if !ok || validateUUIDv4(collectionID) != nil || r.Location == nil {
+			return r, ErrMailboxInvalid
+		}
+	default:
+		return r, ErrMailboxInvalid
+	}
+	if len(r.OccurrenceKeys) > maxMailboxReceiptOccurrenceKeys {
+		return r, ErrMailboxLimit
+	}
+	if r.OriginKind != "job" && (len(r.OccurrenceKeys) != 0 || r.OccurrenceOverflow) {
+		return r, ErrMailboxInvalid
+	}
+	if r.OriginKind == "job" && !r.OccurrenceOverflow && len(r.OccurrenceKeys) == 0 {
+		return r, ErrMailboxInvalid
+	}
+	if r.OccurrenceOverflow && len(r.OccurrenceKeys) != maxMailboxReceiptOccurrenceKeys {
+		return r, ErrMailboxInvalid
+	}
+	seenKeys := make(map[MailboxReceiptOccurrenceKey]bool, len(r.OccurrenceKeys))
+	for _, key := range r.OccurrenceKeys {
+		if !mailboxText(key.JobID, 128) || key.Ordinal < 1 || seenKeys[key] {
+			return r, ErrMailboxInvalid
+		}
+		seenKeys[key] = true
+	}
 	if err = document.ValidateEmailDocumentIdentity(r.Target); err != nil {
 		return r, err
 	}
@@ -161,6 +205,13 @@ func (s *Store) publishMailboxTransferTx(ctx context.Context, tx *sql.Tx, p Mail
 	if p.Location != nil && (p.Location.EMLSHA256 != p.Request.SHA256 || p.Location.EMLSize != p.Request.Size) {
 		return MailboxTransferReceipt{}, ErrMailboxInvalid
 	}
+	originKind := "direct"
+	if p.jobOrigin {
+		if p.Location == nil || p.Request.ArchiveID != "mailbox:"+p.Run.ID() {
+			return MailboxTransferReceipt{}, ErrMailboxInvalid
+		}
+		originKind = "job"
+	}
 	digest, err := mailboxTransferDigest(p.Request)
 	if err != nil {
 		return MailboxTransferReceipt{}, err
@@ -194,6 +245,9 @@ func (s *Store) publishMailboxTransferTx(ctx context.Context, tx *sql.Tx, p Mail
 			return MailboxTransferReceipt{}, ErrMailboxConflict
 		}
 		if digest == prior.RequestDigest {
+			if prior.OriginKind != "" && prior.OriginKind != originKind {
+				return MailboxTransferReceipt{}, ErrMailboxConflict
+			}
 			return prior, nil
 		}
 		if p.Request.Settings != prior.Request.Settings || p.Request.DestinationID != prior.Request.DestinationID || p.Request.Name != prior.Request.Name || p.Request.ExpectedRevision == nil || *p.Request.ExpectedRevision != target.Revision || p.Request.SHA256 == prior.Request.SHA256 {
@@ -263,7 +317,7 @@ func (s *Store) publishMailboxTransferTx(ctx context.Context, tx *sql.Tx, p Mail
 	if err != nil {
 		return MailboxTransferReceipt{}, err
 	}
-	receipt := MailboxTransferReceipt{ID: id, Request: p.Request, RequestDigest: digest, Target: documentIdentity(content.Version), TargetRevision: content.Node.Revision, EmailAttachmentID: view.Attachment.ID, DocumentPublicationID: children.OperationID, CreatedAt: nowRFC3339(), Outcome: "imported", Location: p.Location}
+	receipt := MailboxTransferReceipt{ID: id, Request: p.Request, RequestDigest: digest, Target: documentIdentity(content.Version), TargetRevision: content.Node.Revision, EmailAttachmentID: view.Attachment.ID, DocumentPublicationID: children.OperationID, CreatedAt: nowRFC3339(), Outcome: "imported", OriginKind: originKind, Location: p.Location}
 	if err = insertMailboxTransferReceipt(ctx, tx, receipt); err != nil {
 		return MailboxTransferReceipt{}, err
 	}
@@ -279,5 +333,43 @@ func insertMailboxTransferReceipt(ctx context.Context, tx *sql.Tx, r MailboxTran
 		return ErrMailboxLimit
 	}
 	_, err = tx.ExecContext(ctx, `INSERT INTO mailbox_transfer_receipts(id,archive_id,source_ref,target_version_id,document_publication_id,receipt_json) VALUES(?,?,?,?,?,?)`, r.ID, r.Request.ArchiveID, r.Request.Reference, r.Target.VersionID, r.DocumentPublicationID, b)
+	return err
+}
+
+func appendMailboxReceiptOccurrenceTx(ctx context.Context, tx *sql.Tx, receipt MailboxTransferReceipt, key MailboxReceiptOccurrenceKey) error {
+	if receipt.OriginKind == "" {
+		// Older receipts have no complete key list to extend safely.
+		return nil
+	}
+	if receipt.OriginKind != "job" || !mailboxText(key.JobID, 128) || key.Ordinal < 1 {
+		return ErrMailboxInvalid
+	}
+	var linked sql.NullString
+	err := tx.QueryRowContext(ctx, `SELECT receipt_id FROM mailbox_occurrences WHERE job_id=? AND ordinal=?`, key.JobID, key.Ordinal).Scan(&linked)
+	if errors.Is(err, sql.ErrNoRows) || (err == nil && (!linked.Valid || linked.String != receipt.ID)) {
+		return ErrMailboxInvalid
+	}
+	if err != nil {
+		return err
+	}
+	if slices.Contains(receipt.OccurrenceKeys, key) {
+		return nil
+	}
+	if receipt.OccurrenceOverflow {
+		return nil
+	}
+	if len(receipt.OccurrenceKeys) >= maxMailboxReceiptOccurrenceKeys {
+		receipt.OccurrenceOverflow = true
+	} else {
+		receipt.OccurrenceKeys = append(receipt.OccurrenceKeys, key)
+	}
+	raw, err := json.Marshal(receipt)
+	if err != nil {
+		return err
+	}
+	if len(raw) > 1<<20 {
+		return ErrMailboxLimit
+	}
+	_, err = tx.ExecContext(ctx, `UPDATE mailbox_transfer_receipts SET receipt_json=? WHERE id=?`, raw, receipt.ID)
 	return err
 }

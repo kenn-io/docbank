@@ -465,6 +465,7 @@ func (s *Store) CommitMailboxOccurrence(ctx context.Context, id, claim string, o
 		if o.JobID != id || o.Ordinal != j.Checkpoint+1 || j.Checkpoint-j.SegmentStart >= MailboxSegmentMessages || o.Location.ContainerID != j.ContainerID {
 			return ErrMailboxConflict
 		}
+		var published *MailboxTransferReceipt
 		if p != nil {
 			settings, err := j.Settings.Canonical()
 			if err != nil {
@@ -475,6 +476,7 @@ func (s *Store) CommitMailboxOccurrence(ctx context.Context, id, claim string, o
 			}
 			p.Run = j.IngestRun()
 			p.LabelTags = j.Settings.LabelTags
+			p.jobOrigin = true
 			r, err := s.publishMailboxTransferTx(ctx, tx, *p)
 			if err != nil {
 				return err
@@ -485,6 +487,7 @@ func (s *Store) CommitMailboxOccurrence(ctx context.Context, id, claim string, o
 			o.ReceiptID = r.ID
 			o.Target = &r.Target
 			o.Outcome = "imported"
+			published = &r
 		}
 		switch o.Outcome {
 		case "imported":
@@ -511,8 +514,28 @@ func (s *Store) CommitMailboxOccurrence(ctx context.Context, id, claim string, o
 		if o.ReceiptID != "" {
 			receipt = o.ReceiptID
 		}
+		var priorReceipt sql.NullString
+		lookupErr := tx.QueryRowContext(ctx, `SELECT receipt_id FROM mailbox_occurrences WHERE job_id=? AND ordinal=?`, id, o.Ordinal).Scan(&priorReceipt)
+		if lookupErr != nil && !errors.Is(lookupErr, sql.ErrNoRows) {
+			return lookupErr
+		}
+		if priorReceipt.Valid && priorReceipt.String != o.ReceiptID {
+			return ErrMailboxConflict
+		}
 		if _, err = tx.ExecContext(ctx, `INSERT INTO mailbox_occurrences(job_id,ordinal,receipt_id,occurrence_json) VALUES(?,?,?,?) ON CONFLICT(job_id,ordinal) DO UPDATE SET receipt_id=excluded.receipt_id,occurrence_json=excluded.occurrence_json`, id, o.Ordinal, receipt, b); err != nil {
 			return err
+		}
+		if o.ReceiptID != "" {
+			if published == nil {
+				r, loadErr := loadMailboxTransferReceipt(ctx, tx, o.ReceiptID)
+				if loadErr != nil {
+					return loadErr
+				}
+				published = &r
+			}
+			if err = appendMailboxReceiptOccurrenceTx(ctx, tx, *published, MailboxReceiptOccurrenceKey{JobID: id, Ordinal: o.Ordinal}); err != nil {
+				return err
+			}
 		}
 		j.Checkpoint = o.Ordinal
 		j.Pending = 0
