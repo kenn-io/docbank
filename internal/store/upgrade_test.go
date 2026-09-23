@@ -379,6 +379,9 @@ func TestOpenRejectsInvalidProductionAuthorityTableLayouts(t *testing.T) {
 		"production_privilege_log_receipts",
 		"production_privilege_log_attachments",
 		"production_operation_receipts",
+		"production_member_policy_facts",
+		"production_revision_email_publications",
+		"production_revision_gate_authority",
 	}
 	mutations := []struct {
 		name string

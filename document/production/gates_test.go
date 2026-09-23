@@ -2,6 +2,7 @@ package production
 
 import (
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -64,6 +65,135 @@ func TestPreparedProductionDigestPinsStoredOccurrenceAndEmptyDecisions(t *testin
 	require.NoError(t, err)
 	_, _, err = CanonicalPreparedProduction(changed)
 	require.Error(t, err, "empty-to-nonempty decisions must invalidate the sealed aggregate")
+}
+
+func TestPreparedProductionV2BindsGateEvidencePins(t *testing.T) {
+	prepared := syntheticPreparedProductionContract()
+	prepared.Contract = PreparedProductionContractV2
+	prepared.Members = slices.Clone(prepared.Members)
+	for index := range prepared.Members {
+		_, factsSHA256, err := CanonicalPolicyMemberFacts(prepared.Members[index].Facts)
+		require.NoError(t, err)
+		prepared.Members[index].EvidencePin = &ProductionMemberEvidencePin{
+			AllowlistVersion:             PolicyFactsAllowlistV1,
+			SourceMetadataGenerationID:   "70000000-0000-4000-8000-000000000001",
+			SourceMetadataEvidenceSHA256: sha("1"), PolicyFactsSHA256: factsSHA256,
+		}
+	}
+	_, evidenceSHA256, err := CanonicalProductionGateEvidence(prepared.Members)
+	require.NoError(t, err)
+	prepared.ApprovalSubject.Contract = ApprovalSubjectContractV2
+	prepared.ApprovalSubject.GateEvidenceSHA256 = evidenceSHA256
+	_, digest, err := CanonicalPreparedProduction(prepared)
+	require.NoError(t, err)
+	prepared.SHA256 = digest
+	require.NoError(t, ValidatePreparedProduction(prepared))
+
+	changed := prepared
+	changed.SHA256 = ""
+	changed.Members = slices.Clone(prepared.Members)
+	pinCopy := *prepared.Members[0].EvidencePin
+	pinCopy.SourceMetadataGenerationID = "70000000-0000-4000-8000-000000000002"
+	changed.Members[0].EvidencePin = &pinCopy
+	_, _, err = CanonicalPreparedProduction(changed)
+	require.Error(t, err, "the approval subject must bind exact evidence pins")
+}
+
+func TestPreparedProductionV2AllowsExplicitEmptyPinForGenericPolicy(t *testing.T) {
+	prepared := preparedProductionV2WithPin(t, genericPolicyForGateTest(t),
+		redaction.FamilyContext{Kind: "standalone", RootVersionID: versionOneID},
+		ProductionMemberEvidencePin{})
+	_, digest, err := CanonicalPreparedProduction(prepared)
+	require.NoError(t, err, "the non-nil empty pin explicitly records no metadata/email evidence requirement")
+	require.NotEmpty(t, digest)
+}
+
+func TestPreparedProductionV2RequiresPinnedMetadataFactsWhenConfigured(t *testing.T) {
+	policy := syntheticPolicy()
+	_, policy.SHA256, _ = CanonicalPolicyVersion(policy)
+	prepared := preparedProductionV2WithPin(t, policy,
+		redaction.FamilyContext{Kind: "standalone", RootVersionID: versionOneID},
+		ProductionMemberEvidencePin{})
+	_, _, err := CanonicalPreparedProduction(prepared)
+	requireInvalidContractDetail(t, err, "configured metadata policy lacks pinned facts")
+}
+
+func TestPreparedProductionV2RequiresExactEmailPublicationFamilyPin(t *testing.T) {
+	policy := genericPolicyForGateTest(t)
+	family := redaction.FamilyContext{Kind: "email_message", RootVersionID: versionOneID}
+	validPin := ProductionMemberEvidencePin{
+		EmailRootVersionID: versionOneID, EmailPublicationOperationID: "publication_42",
+		EmailPublicationRequestSHA256: sha("3"), EmailPublicationReceiptSHA256: sha("4"),
+	}
+	valid := preparedProductionV2WithPin(t, policy, family, validPin)
+	_, _, err := CanonicalPreparedProduction(valid)
+	require.NoError(t, err)
+	t.Run("maximum length operation", func(t *testing.T) {
+		pin := validPin
+		pin.EmailPublicationOperationID = strings.Repeat("a", 128)
+		prepared := preparedProductionV2WithPin(t, policy, family, pin)
+		_, _, err := CanonicalPreparedProduction(prepared)
+		require.NoError(t, err)
+	})
+	for _, operationID := range []string{"", "_leading", "with space", "with/slash", strings.Repeat("a", 129)} {
+		t.Run("invalid operation "+operationID, func(t *testing.T) {
+			pin := validPin
+			pin.EmailPublicationOperationID = operationID
+			member := valid.Members[0]
+			member.EvidencePin = &pin
+			_, _, err := CanonicalProductionGateEvidence([]PreparedMember{member})
+			requireInvalidContractDetail(t, err, "invalid production email publication evidence pin")
+		})
+	}
+
+	t.Run("missing publication", func(t *testing.T) {
+		prepared := preparedProductionV2WithPin(t, policy, family, ProductionMemberEvidencePin{})
+		_, _, err := CanonicalPreparedProduction(prepared)
+		requireInvalidContractDetail(t, err, "email family member lacks publication evidence")
+	})
+	t.Run("wrong root", func(t *testing.T) {
+		pin := validPin
+		pin.EmailRootVersionID = versionTwoID
+		prepared := preparedProductionV2WithPin(t, policy, family, pin)
+		_, _, err := CanonicalPreparedProduction(prepared)
+		requireInvalidContractDetail(t, err, "email family member lacks publication evidence")
+	})
+	t.Run("publication on non-email family", func(t *testing.T) {
+		prepared := preparedProductionV2WithPin(t, policy,
+			redaction.FamilyContext{Kind: "standalone", RootVersionID: versionOneID}, validPin)
+		_, _, err := CanonicalPreparedProduction(prepared)
+		requireInvalidContractDetail(t, err, "email publication evidence selects another family")
+	})
+}
+
+func genericPolicyForGateTest(t *testing.T) PolicyVersion {
+	t.Helper()
+	policy, err := GenericPolicyVersion()
+	require.NoError(t, err)
+	return policy
+}
+
+func preparedProductionV2WithPin(
+	t *testing.T, policy PolicyVersion, family redaction.FamilyContext, pin ProductionMemberEvidencePin,
+) PreparedProduction {
+	t.Helper()
+	_, policySHA256, err := CanonicalPolicyVersion(policy)
+	require.NoError(t, err)
+	policy.SHA256 = policySHA256
+	prepared := syntheticPreparedProductionContract()
+	prepared.Contract = PreparedProductionContractV2
+	prepared.Policy = policy
+	prepared.Members = slices.Clone(prepared.Members)
+	prepared.Members[0].Member.Family = family
+	prepared.Members[0].EvidencePin = &pin
+	_, prepared.MemberHash, err = PreparedMemberHash(prepared.Members)
+	require.NoError(t, err)
+	_, evidenceSHA256, err := CanonicalProductionGateEvidence(prepared.Members)
+	require.NoError(t, err)
+	prepared.ApprovalSubject.Contract = ApprovalSubjectContractV2
+	prepared.ApprovalSubject.GateEvidenceSHA256 = evidenceSHA256
+	prepared.ApprovalSubject.Policy = PolicySelection{PolicyID: policy.ID, Version: policy.Version, PolicySHA256: policy.SHA256}
+	return prepared
 }
 
 func TestPreparedInputAuthorityBindsReceiptAndAudit(t *testing.T) {
@@ -141,6 +271,95 @@ func TestPreparedInputAuthorityBindsConditionalAuthorities(t *testing.T) {
 		_, changed.Audit.SHA256, _ = CanonicalGateAudit(changed.Audit)
 		require.Error(t, ValidatePreparedInputAuthority(changed))
 	})
+}
+
+func TestPreparedInputAuthorityPreservesFreezeTimeApprovalAndAdmitsLaterEvaluation(t *testing.T) {
+	authority := syntheticConditionalPreparedInputAuthority(t)
+	freezeEvaluation := *authority.Prepared.ApprovalEvaluation
+	freezeEvaluation.EvaluatedAt = "2026-09-22T15:30:00Z"
+	freezeEvaluation.SHA256 = ""
+	var err error
+	_, freezeEvaluation.SHA256, err = CanonicalApprovalEvaluation(freezeEvaluation)
+	require.NoError(t, err)
+	require.NotEqual(t, freezeEvaluation.SHA256, authority.Prepared.ApprovalEvaluation.SHA256,
+		"an unchanged approval evaluated later has a distinct digest")
+
+	privilege := *authority.Prepared.PrivilegeLogReceipt
+	privilege.ApprovalEvaluationSHA256 = freezeEvaluation.SHA256
+	privilege.SHA256 = ""
+	_, privilege.SHA256, err = CanonicalPrivilegeLogReceipt(privilege)
+	require.NoError(t, err)
+	authority.Prepared.PrivilegeLogReceipt = &privilege
+	resealPreparedInputAuthority(t, &authority)
+	require.Equal(t, freezeEvaluation.SHA256, authority.Prepared.PrivilegeLogReceipt.ApprovalEvaluationSHA256)
+	require.Equal(t, authority.Prepared.ApprovalEvaluation.SHA256, authority.Receipt.ApprovalEvaluationSHA256)
+	require.NoError(t, ValidatePreparedInputAuthority(authority))
+	_, subjectSHA256, err := CanonicalApprovalSubject(authority.Prepared.ApprovalSubject)
+	require.NoError(t, err)
+	require.NoError(t, ApprovalGateProblem(true, authority.Prepared.ApprovalEvaluation, subjectSHA256))
+	require.NoError(t, PrivilegeLogGateProblem(true, authority.Prepared.PrivilegeLogReceipt,
+		authority.Prepared.Policy.SHA256, authority.Prepared.WithheldSelection.SHA256,
+		authority.Prepared.PrivilegeLogReceipt.PlayersSHA256, freezeEvaluation.SHA256,
+		authority.Prepared.ApprovalSubject.PrivilegeLogInputsSHA256))
+
+	for _, changed := range []struct {
+		name string
+		set  func(*PreparedInputAuthority)
+	}{
+		{"policy", func(value *PreparedInputAuthority) { value.Prepared.PrivilegeLogReceipt.PolicySHA256 = sha("d") }},
+		{"withheld selection", func(value *PreparedInputAuthority) {
+			value.Prepared.PrivilegeLogReceipt.WithheldSelectionSHA256 = sha("d")
+		}},
+	} {
+		t.Run(changed.name, func(t *testing.T) {
+			invalid := authority
+			receipt := *authority.Prepared.PrivilegeLogReceipt
+			invalid.Prepared.PrivilegeLogReceipt = &receipt
+			changed.set(&invalid)
+			receipt.SHA256 = ""
+			_, receipt.SHA256, err = CanonicalPrivilegeLogReceipt(receipt)
+			require.NoError(t, err)
+			resealPreparedInputAuthority(t, &invalid)
+			requireProblemCode(t, ValidatePreparedInputAuthority(invalid), ProblemChangedPayload)
+		})
+	}
+	t.Run("inputs", func(t *testing.T) {
+		invalid := authority
+		receipt := *authority.Prepared.PrivilegeLogReceipt
+		receipt.InputsSHA256 = sha("d")
+		receipt.SHA256 = ""
+		_, receipt.SHA256, err = CanonicalPrivilegeLogReceipt(receipt)
+		require.NoError(t, err)
+		invalid.Prepared.PrivilegeLogReceipt = &receipt
+		requireProblemCode(t, ValidatePreparedInputAuthority(invalid), ProblemChangedPayload)
+		requireProblemCode(t, PrivilegeLogGateProblem(true, &receipt,
+			authority.Prepared.Policy.SHA256, authority.Prepared.WithheldSelection.SHA256,
+			receipt.PlayersSHA256, freezeEvaluation.SHA256,
+			authority.Prepared.ApprovalSubject.PrivilegeLogInputsSHA256), ProblemPrivilegeLogStale)
+	})
+}
+
+func resealPreparedInputAuthority(t *testing.T, authority *PreparedInputAuthority) {
+	t.Helper()
+	var err error
+	authority.Prepared.SHA256 = ""
+	_, authority.Prepared.SHA256, err = CanonicalPreparedProduction(authority.Prepared)
+	require.NoError(t, err)
+	authority.GateResults.PreparedSHA256 = authority.Prepared.SHA256
+	authority.GateResults.SHA256 = ""
+	_, authority.GateResults.SHA256, err = CanonicalGateResults(authority.GateResults)
+	require.NoError(t, err)
+	authority.Receipt.PrivilegeLogReceiptSHA256 = authority.Prepared.PrivilegeLogReceipt.SHA256
+	authority.Receipt.GateResultsSHA256 = authority.GateResults.SHA256
+	authority.Receipt.SHA256 = ""
+	_, authority.Receipt.SHA256, err = CanonicalPreparedInputReceipt(*authority.Receipt)
+	require.NoError(t, err)
+	authority.Audit.PreparedSHA256 = authority.Prepared.SHA256
+	authority.Audit.GateResultsSHA256 = authority.GateResults.SHA256
+	authority.Audit.PreparedInputSHA256 = authority.Receipt.SHA256
+	authority.Audit.SHA256 = ""
+	_, authority.Audit.SHA256, err = CanonicalGateAudit(authority.Audit)
+	require.NoError(t, err)
 }
 
 func syntheticConditionalPreparedInputAuthority(t *testing.T) PreparedInputAuthority {

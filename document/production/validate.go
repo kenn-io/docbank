@@ -10,6 +10,7 @@ import (
 	"unicode"
 	"unicode/utf8"
 
+	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/document/redaction"
 	"go.kenn.io/docbank/internal/canonical"
 )
@@ -93,7 +94,10 @@ func validatePolicyRule(value PolicyRule) error {
 }
 
 func validateApprovalSubject(value ApprovalSubject) error {
-	if value.Contract != ApprovalSubjectContractV1 || !canonicalUUID(value.SetID) || value.Revision < 1 ||
+	if value.Contract != ApprovalSubjectContractV1 && value.Contract != ApprovalSubjectContractV2 ||
+		value.Contract == ApprovalSubjectContractV1 && value.GateEvidenceSHA256 != "" ||
+		value.Contract == ApprovalSubjectContractV2 && !canonical.IsSHA256Hex(value.GateEvidenceSHA256) ||
+		!canonicalUUID(value.SetID) || value.Revision < 1 ||
 		len(value.Members) == 0 || len(value.Members) > redaction.MaxProductionMembers ||
 		!allSHA256(value.InstructionsSHA256, value.RecipeSHA256, value.OutputProfileSHA256,
 			value.DisclosureProfileSHA256, value.NumberingPolicySHA256, value.Policy.PolicySHA256) ||
@@ -116,6 +120,42 @@ func validateApprovalSubject(value ApprovalSubject) error {
 			return invalidProblem("duplicate approval member ordinal")
 		}
 		seenIDs[member.MemberID], seenOrdinals[member.Ordinal] = struct{}{}, struct{}{}
+	}
+	return nil
+}
+
+func validateProductionMemberEvidencePin(value ProductionMemberEvidencePin, allowEmpty bool) error {
+	metadataValues := []string{value.AllowlistVersion, value.SourceMetadataGenerationID,
+		value.SourceMetadataEvidenceSHA256, value.PolicyFactsSHA256}
+	metadataPresent := 0
+	for _, item := range metadataValues {
+		if item != "" {
+			metadataPresent++
+		}
+	}
+	if metadataPresent != 0 && metadataPresent != len(metadataValues) ||
+		metadataPresent == len(metadataValues) && (value.AllowlistVersion != PolicyFactsAllowlistV1 ||
+			invalidText(value.SourceMetadataGenerationID, 256, false) ||
+			!canonical.IsSHA256Hex(value.SourceMetadataEvidenceSHA256) ||
+			!canonical.IsSHA256Hex(value.PolicyFactsSHA256)) {
+		return invalidProblem("invalid production policy fact evidence pin")
+	}
+	emailValues := []string{value.EmailRootVersionID, value.EmailPublicationOperationID,
+		value.EmailPublicationRequestSHA256, value.EmailPublicationReceiptSHA256}
+	emailPresent := 0
+	for _, item := range emailValues {
+		if item != "" {
+			emailPresent++
+		}
+	}
+	if emailPresent != 0 && emailPresent != len(emailValues) || emailPresent == len(emailValues) &&
+		(!canonicalUUID(value.EmailRootVersionID) || document.ValidateEmailDocumentOperationID(value.EmailPublicationOperationID) != nil ||
+			!canonical.IsSHA256Hex(value.EmailPublicationRequestSHA256) ||
+			!canonical.IsSHA256Hex(value.EmailPublicationReceiptSHA256)) {
+		return invalidProblem("invalid production email publication evidence pin")
+	}
+	if !allowEmpty && metadataPresent == 0 && emailPresent == 0 {
+		return invalidProblem("empty production member evidence pin")
 	}
 	return nil
 }

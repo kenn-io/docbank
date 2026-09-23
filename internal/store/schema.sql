@@ -2414,7 +2414,8 @@ CREATE TABLE IF NOT EXISTS production_approval_grants (
     authority_sha256 TEXT NOT NULL,
     authority_json BLOB NOT NULL,
     grant_sha256 TEXT NOT NULL UNIQUE,
-    grant_json BLOB NOT NULL
+    grant_json BLOB NOT NULL,
+    UNIQUE(approval_id, grant_sha256)
 );
 CREATE TABLE IF NOT EXISTS production_approval_events (
     event_id TEXT PRIMARY KEY,
@@ -2494,6 +2495,7 @@ CREATE TABLE IF NOT EXISTS production_privilege_log_receipts (
     sha256 TEXT NOT NULL UNIQUE,
     canonical_json BLOB NOT NULL,
     PRIMARY KEY(log_id, revision),
+    UNIQUE(log_id, revision, sha256),
     FOREIGN KEY(log_id, revision)
         REFERENCES production_privilege_log_drafts(log_id, revision)
 );
@@ -2828,6 +2830,57 @@ CREATE TABLE IF NOT EXISTS production_members (
 CREATE INDEX IF NOT EXISTS production_members_source
     ON production_members(version_id, source_sha256);
 
+-- Gate evidence is selected by an immutable production revision. Facts name
+-- one source-metadata generation; email families name one publication
+-- operation; approval and privilege selectors name exact digests rather than
+-- relying on whichever matching record a query happens to find.
+CREATE TABLE IF NOT EXISTS production_member_policy_facts (
+    set_id TEXT NOT NULL,
+    revision INTEGER NOT NULL,
+    member_id TEXT NOT NULL,
+    source_sha256 TEXT NOT NULL,
+    generation_id TEXT NOT NULL,
+    evidence_sha256 TEXT NOT NULL,
+    allowlist_version TEXT NOT NULL,
+    facts_sha256 TEXT NOT NULL,
+    canonical_json BLOB NOT NULL,
+    PRIMARY KEY(set_id, revision, member_id),
+    FOREIGN KEY(set_id, revision, member_id)
+        REFERENCES production_members(set_id, revision, member_id) ON DELETE RESTRICT,
+    FOREIGN KEY(source_sha256, generation_id)
+        REFERENCES source_metadata_generations(source_sha256, generation_id) ON DELETE RESTRICT
+);
+
+CREATE TABLE IF NOT EXISTS production_revision_email_publications (
+    set_id TEXT NOT NULL,
+    revision INTEGER NOT NULL,
+    root_version_id TEXT NOT NULL REFERENCES content_versions(version_id) ON DELETE RESTRICT,
+    operation_id TEXT NOT NULL REFERENCES email_document_publications(operation_id) ON DELETE RESTRICT,
+    request_digest TEXT NOT NULL,
+    receipt_sha256 TEXT NOT NULL,
+    PRIMARY KEY(set_id, revision, root_version_id),
+    FOREIGN KEY(set_id, revision)
+        REFERENCES production_revisions(set_id, revision) ON DELETE RESTRICT
+);
+
+CREATE TABLE IF NOT EXISTS production_revision_gate_authority (
+    set_id TEXT NOT NULL,
+    revision INTEGER NOT NULL,
+    approval_id TEXT,
+    approval_grant_sha256 TEXT,
+    approval_subject_sha256 TEXT,
+    privilege_log_id TEXT,
+    privilege_log_revision INTEGER,
+    privilege_log_receipt_sha256 TEXT,
+    PRIMARY KEY(set_id, revision),
+    FOREIGN KEY(set_id, revision)
+        REFERENCES production_revisions(set_id, revision) ON DELETE RESTRICT,
+    FOREIGN KEY(approval_id, approval_grant_sha256)
+        REFERENCES production_approval_grants(approval_id, grant_sha256) ON DELETE RESTRICT,
+    FOREIGN KEY(privilege_log_id, privilege_log_revision, privilege_log_receipt_sha256)
+        REFERENCES production_privilege_log_receipts(log_id, revision, sha256) ON DELETE RESTRICT
+);
+
 CREATE TABLE IF NOT EXISTS production_decisions (
     set_id         TEXT NOT NULL,
     revision       INTEGER NOT NULL,
@@ -2885,6 +2938,31 @@ END;
 CREATE TRIGGER IF NOT EXISTS production_audit_evidence_immutable_delete
 BEFORE DELETE ON production_audit_evidence BEGIN
     SELECT RAISE(ABORT, 'production audit evidence is immutable');
+END;
+
+CREATE TRIGGER IF NOT EXISTS production_member_policy_facts_immutable_update
+BEFORE UPDATE ON production_member_policy_facts BEGIN
+    SELECT RAISE(ABORT, 'production member policy facts are immutable');
+END;
+CREATE TRIGGER IF NOT EXISTS production_member_policy_facts_immutable_delete
+BEFORE DELETE ON production_member_policy_facts BEGIN
+    SELECT RAISE(ABORT, 'production member policy facts are immutable');
+END;
+CREATE TRIGGER IF NOT EXISTS production_revision_email_publications_immutable_update
+BEFORE UPDATE ON production_revision_email_publications BEGIN
+    SELECT RAISE(ABORT, 'production revision email publications are immutable');
+END;
+CREATE TRIGGER IF NOT EXISTS production_revision_email_publications_immutable_delete
+BEFORE DELETE ON production_revision_email_publications BEGIN
+    SELECT RAISE(ABORT, 'production revision email publications are immutable');
+END;
+CREATE TRIGGER IF NOT EXISTS production_revision_gate_authority_immutable_update
+BEFORE UPDATE ON production_revision_gate_authority BEGIN
+    SELECT RAISE(ABORT, 'production revision gate authority is immutable');
+END;
+CREATE TRIGGER IF NOT EXISTS production_revision_gate_authority_immutable_delete
+BEFORE DELETE ON production_revision_gate_authority BEGIN
+    SELECT RAISE(ABORT, 'production revision gate authority is immutable');
 END;
 -- A finalized revision is the authority that a prepared-input gate alone
 -- cannot provide. Job admission must reference this exact sealed revision.

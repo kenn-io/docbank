@@ -42,6 +42,7 @@ func TestOpenRejectsCurrentDatabaseMissingProductionSetAuthority(t *testing.T) {
 		for _, table := range []string{
 			"production_text_maps", "production_text_map_frames", "production_catalog_entries",
 			"production_sets", "production_revisions", "production_members",
+			"production_member_policy_facts", "production_revision_email_publications", "production_revision_gate_authority",
 			"production_decisions", "production_operations", "production_audit_evidence",
 		} {
 			t.Run(driver.name+"/"+table, func(t *testing.T) {

@@ -9,6 +9,7 @@ import (
 
 const (
 	PreparedProductionContractV1 = "production-prepared-production/v1"
+	PreparedProductionContractV2 = "production-prepared-production/v2"
 	GateResultsContractV1        = "production-gate-results/v1"
 	GateAuditContractV1          = "production-gate-audit/v1"
 )
@@ -62,15 +63,16 @@ type PreparedFrame struct {
 // PreparedMember is one occurrence in production order. The same source
 // version may appear more than once under distinct Member.ID and Ordinal.
 type PreparedMember struct {
-	Member          redaction.Member     `json:"member"`
-	Decisions       []redaction.Decision `json:"decisions"`
-	Resolved        redaction.Resolved   `json:"resolved"`
-	Frames          []PreparedFrame      `json:"frames"`
-	Facts           PolicyMemberFacts    `json:"facts"`
-	DecisionsSHA256 string               `json:"decisions_sha256"`
-	ResolvedSHA256  string               `json:"resolved_sha256"`
-	ReviewBinding   string               `json:"review_binding"`
-	Disposition     string               `json:"disposition"`
+	Member          redaction.Member             `json:"member"`
+	Decisions       []redaction.Decision         `json:"decisions"`
+	Resolved        redaction.Resolved           `json:"resolved"`
+	Frames          []PreparedFrame              `json:"frames"`
+	Facts           PolicyMemberFacts            `json:"facts"`
+	EvidencePin     *ProductionMemberEvidencePin `json:"evidence_pin,omitzero"`
+	DecisionsSHA256 string                       `json:"decisions_sha256"`
+	ResolvedSHA256  string                       `json:"resolved_sha256"`
+	ReviewBinding   string                       `json:"review_binding"`
+	Disposition     string                       `json:"disposition"`
 }
 
 // PreparedProduction is the immutable pre-numbering authority derived from
@@ -281,10 +283,11 @@ func ValidatePreparedInputAuthority(value PreparedInputAuthority) error {
 		value.Prepared.ApprovalEvaluation.SubjectSHA256 != value.Receipt.ApprovalSubjectSHA256 {
 		return changedPayloadProblem(value.Receipt.ID)
 	}
+	// The log receipt retains the evaluation made at FrozenAt. The prepared
+	// evaluation is made again at PreparedAt and may have a different digest.
 	if value.Prepared.PrivilegeLogReceipt != nil &&
 		(value.Prepared.PrivilegeLogReceipt.PolicySHA256 != value.Prepared.Policy.SHA256 ||
 			value.Prepared.PrivilegeLogReceipt.WithheldSelectionSHA256 != withheldSHA256 ||
-			value.Prepared.PrivilegeLogReceipt.ApprovalEvaluationSHA256 != approvalSHA256 ||
 			value.Prepared.PrivilegeLogReceipt.InputsSHA256 != value.Prepared.ApprovalSubject.PrivilegeLogInputsSHA256) {
 		return changedPayloadProblem(value.Receipt.ID)
 	}
@@ -292,7 +295,8 @@ func ValidatePreparedInputAuthority(value PreparedInputAuthority) error {
 }
 
 func validatePreparedProduction(value PreparedProduction, requireDigest bool) error {
-	if value.Contract != PreparedProductionContractV1 || !canonicalUUID(value.SetID) || value.Revision < 1 || value.ETag < 1 ||
+	if value.Contract != PreparedProductionContractV1 && value.Contract != PreparedProductionContractV2 ||
+		!canonicalUUID(value.SetID) || value.Revision < 1 || value.ETag < 1 ||
 		!value.MembershipSealed || !allSHA256(value.InstructionsSHA256, value.MemberHash, value.DecisionsSHA256,
 		value.RecipeSHA256, value.OutputProfileSHA256, value.DisclosureProfileSHA256, value.NumberingPolicySHA256) ||
 		len(value.Members) == 0 || len(value.Members) > MaxPrivilegeRows || validateTimestamp(value.PreparedAt) != nil ||
@@ -309,16 +313,52 @@ func validatePreparedProduction(value PreparedProduction, requireDigest bool) er
 		value.ApprovalSubject.Policy.PolicySHA256 != value.Policy.SHA256 {
 		return invalidProblem("prepared approval subject does not match production")
 	}
+	if value.Contract == PreparedProductionContractV1 && value.ApprovalSubject.Contract != ApprovalSubjectContractV1 ||
+		value.Contract == PreparedProductionContractV2 && value.ApprovalSubject.Contract != ApprovalSubjectContractV2 {
+		return invalidProblem("prepared contract versions do not match")
+	}
 	if err := validatePreparedConditionalAuthorities(value); err != nil {
 		return err
 	}
 	seen := make(map[string]struct{}, len(value.Members))
 	allDecisions := make([]redaction.Decision, 0)
+	requiresMetadataFacts := policyRequiresMetadataFacts(value.Policy)
 	for index, member := range value.Members {
 		if member.Member.Ordinal != int64(index+1) || member.Facts.MemberID != member.Member.ID ||
 			member.ReviewBinding != member.Member.ReviewBinding ||
 			(member.Disposition != "" && member.Disposition != PolicyDispositionProduce && member.Disposition != PolicyDispositionWithhold) {
 			return invalidProblem("invalid prepared member")
+		}
+		if value.Contract == PreparedProductionContractV1 && member.EvidencePin != nil ||
+			value.Contract == PreparedProductionContractV2 && member.EvidencePin == nil {
+			return invalidProblem("prepared member evidence pin does not match contract version")
+		}
+		if member.EvidencePin != nil {
+			if err := validateProductionMemberEvidencePin(*member.EvidencePin, true); err != nil {
+				return err
+			}
+			_, factsDigest, factsErr := CanonicalPolicyMemberFacts(member.Facts)
+			if factsErr != nil || member.EvidencePin.PolicyFactsSHA256 != "" && member.EvidencePin.PolicyFactsSHA256 != factsDigest {
+				return invalidProblem("prepared member facts do not match evidence pin")
+			}
+			if value.Contract == PreparedProductionContractV2 && requiresMetadataFacts &&
+				member.EvidencePin.PolicyFactsSHA256 == "" {
+				return invalidProblem("configured metadata policy lacks pinned facts")
+			}
+			if value.Contract == PreparedProductionContractV2 &&
+				(member.Member.Family.Kind == "email_message" || member.Member.Family.Kind == "email_attachment") &&
+				(member.EvidencePin.EmailPublicationOperationID == "" ||
+					member.EvidencePin.EmailRootVersionID != member.Member.Family.RootVersionID) {
+				return invalidProblem("email family member lacks publication evidence")
+			}
+			if member.EvidencePin.EmailPublicationOperationID != "" &&
+				(member.Member.Family.Kind != "email_message" && member.Member.Family.Kind != "email_attachment" ||
+					member.EvidencePin.EmailRootVersionID != member.Member.Family.RootVersionID) {
+				return invalidProblem("email publication evidence selects another family")
+			}
+		} else if value.Contract == PreparedProductionContractV2 &&
+			(member.Member.Family.Kind == "email_message" || member.Member.Family.Kind == "email_attachment") {
+			return invalidProblem("email family member lacks publication evidence")
 		}
 		expectedApprovalMember := ApprovalMember{
 			MemberID: member.Member.ID, Ordinal: member.Member.Ordinal,
@@ -374,7 +414,23 @@ func validatePreparedProduction(value PreparedProduction, requireDigest bool) er
 	if err != nil || decisionsDigest != value.DecisionsSHA256 {
 		return invalidProblem("prepared decision hash does not match decisions")
 	}
+	if value.Contract == PreparedProductionContractV2 {
+		_, gateEvidenceDigest, evidenceErr := CanonicalProductionGateEvidence(value.Members)
+		if evidenceErr != nil || value.ApprovalSubject.GateEvidenceSHA256 != gateEvidenceDigest {
+			return invalidProblem("prepared gate evidence does not match approval subject")
+		}
+	}
 	return nil
+}
+
+func policyRequiresMetadataFacts(policy PolicyVersion) bool {
+	for _, rule := range policy.Rules {
+		switch rule.Predicate.Field {
+		case "metadata.title", "metadata.subject", "document.date":
+			return true
+		}
+	}
+	return false
 }
 
 func validatePreparedConditionalAuthorities(value PreparedProduction) error {

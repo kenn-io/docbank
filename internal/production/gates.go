@@ -13,10 +13,11 @@ import (
 // StoredPreparedMember is loaded from storage inside the gate transaction.
 // Decisions is authoritative even when it is an explicitly empty slice.
 type StoredPreparedMember struct {
-	Member    redaction.Member
-	Decisions []redaction.Decision
-	Resolved  redaction.Resolved
-	Facts     documentproduction.PolicyMemberFacts
+	Member      redaction.Member
+	Decisions   []redaction.Decision
+	Resolved    redaction.Resolved
+	Facts       documentproduction.PolicyMemberFacts
+	EvidencePin *documentproduction.ProductionMemberEvidencePin
 }
 
 // StoredProductionInputs is the complete stored authority required by every
@@ -111,6 +112,16 @@ func ProductionRevisionSHA256(stored StoredProductionInputs) (string, error) {
 		return compareStrings(left.Member.ID, right.Member.ID)
 	})
 	return semanticDigest(normalized)
+}
+
+// StoredApprovalSubject derives the exact subject that a selected grant must
+// cover from Store-loaded authority. It does not evaluate or record a gate.
+func StoredApprovalSubject(stored StoredProductionInputs) (documentproduction.ApprovalSubject, error) {
+	prepared, _, err := prepareStoredProduction(stored, time.Unix(0, 0).UTC())
+	if err != nil {
+		return documentproduction.ApprovalSubject{}, err
+	}
+	return prepared.ApprovalSubject, nil
 }
 
 // ReserveAfterPreparedInput is the sole gate-to-numbering handoff. The
@@ -282,6 +293,7 @@ func prepareStoredProduction(stored StoredProductionInputs, preparedAt time.Time
 	facts := make([]documentproduction.PolicyMemberFacts, len(members))
 	approvalMembers := make([]documentproduction.ApprovalMember, len(members))
 	allDecisions := make([]redaction.Decision, 0)
+	hasEvidencePins := false
 	for index, storedMember := range members {
 		decisions := slices.Clone(storedMember.Decisions)
 		_, decisionsSHA256, err := redaction.CanonicalDecisions(decisions)
@@ -296,9 +308,15 @@ func prepareStoredProduction(stored StoredProductionInputs, preparedAt time.Time
 		for pageIndex, page := range storedMember.Resolved.Pages {
 			frames[pageIndex] = documentproduction.PreparedFrame{Page: page.Number, SHA256: page.FrameSHA256, Width: page.Width, Height: page.Height}
 		}
+		var evidencePin *documentproduction.ProductionMemberEvidencePin
+		if storedMember.EvidencePin != nil {
+			pinCopy := *storedMember.EvidencePin
+			evidencePin = &pinCopy
+			hasEvidencePins = true
+		}
 		preparedMembers[index] = documentproduction.PreparedMember{
 			Member: storedMember.Member, Decisions: decisions, Resolved: storedMember.Resolved,
-			Frames: frames, Facts: storedMember.Facts, DecisionsSHA256: decisionsSHA256,
+			Frames: frames, Facts: storedMember.Facts, EvidencePin: evidencePin, DecisionsSHA256: decisionsSHA256,
 			ResolvedSHA256: resolvedSHA256, ReviewBinding: storedMember.Member.ReviewBinding,
 		}
 		facts[index] = storedMember.Facts
@@ -319,18 +337,30 @@ func prepareStoredProduction(stored StoredProductionInputs, preparedAt time.Time
 	if err != nil {
 		return documentproduction.PreparedProduction{}, nil, err
 	}
+	subjectContract := documentproduction.ApprovalSubjectContractV1
+	preparedContract := documentproduction.PreparedProductionContractV1
+	var gateEvidenceSHA256 string
+	if hasEvidencePins {
+		_, gateEvidenceSHA256, err = documentproduction.CanonicalProductionGateEvidence(preparedMembers)
+		if err != nil {
+			return documentproduction.PreparedProduction{}, nil, err
+		}
+		subjectContract = documentproduction.ApprovalSubjectContractV2
+		preparedContract = documentproduction.PreparedProductionContractV2
+	}
 	subject := documentproduction.ApprovalSubject{
-		Contract: documentproduction.ApprovalSubjectContractV1, SetID: stored.Draft.SetID,
+		Contract: subjectContract, SetID: stored.Draft.SetID,
 		Revision: stored.Draft.Revision, Members: approvalMembers,
 		InstructionsSHA256: stored.Draft.InstructionsSHA256, RecipeSHA256: stored.Draft.RecipeSHA256,
 		OutputProfileSHA256:     stored.Draft.ProfileSHA256,
 		DisclosureProfileSHA256: stored.Draft.DisclosureProfileSHA256,
 		NumberingPolicySHA256:   stored.Draft.NumberingRecipeSHA256, Policy: stored.Draft.Policy,
+		GateEvidenceSHA256:       gateEvidenceSHA256,
 		WithheldSelectionSHA256:  optionalWithheldDigest(stored.Withheld),
 		PrivilegeLogInputsSHA256: optionalPrivilegeInputsDigest(stored.PrivilegeLog),
 	}
 	prepared := documentproduction.PreparedProduction{
-		Contract: documentproduction.PreparedProductionContractV1, SetID: stored.Draft.SetID,
+		Contract: preparedContract, SetID: stored.Draft.SetID,
 		Revision: stored.Draft.Revision, ETag: stored.Draft.ETag, MembershipSealed: stored.Draft.MembershipSealed,
 		InstructionsSHA256: stored.Draft.InstructionsSHA256, MemberHash: memberHash, DecisionsSHA256: decisionsSHA256,
 		RecipeSHA256: stored.Draft.RecipeSHA256, OutputProfileSHA256: stored.Draft.ProfileSHA256,
@@ -458,15 +488,15 @@ func validatePrivilegeGate(prepared documentproduction.PreparedProduction, requi
 		return nil
 	}
 	withheldSHA256 := optionalWithheldDigest(prepared.WithheldSelection)
-	playersSHA256, approvalSHA256, inputsSHA256 := "", "", prepared.ApprovalSubject.PrivilegeLogInputsSHA256
+	playersSHA256, frozenApprovalSHA256, inputsSHA256 := "", "", prepared.ApprovalSubject.PrivilegeLogInputsSHA256
 	if prepared.PrivilegeLogReceipt != nil {
 		playersSHA256 = prepared.PrivilegeLogReceipt.PlayersSHA256
-	}
-	if prepared.ApprovalEvaluation != nil {
-		approvalSHA256 = prepared.ApprovalEvaluation.SHA256
+		// The receipt binds the evaluation made at freeze. Admission evaluates
+		// the current grant and events separately at PreparedAt.
+		frozenApprovalSHA256 = prepared.PrivilegeLogReceipt.ApprovalEvaluationSHA256
 	}
 	return documentproduction.PrivilegeLogGateProblem(required, prepared.PrivilegeLogReceipt,
-		prepared.Policy.SHA256, withheldSHA256, playersSHA256, approvalSHA256, inputsSHA256)
+		prepared.Policy.SHA256, withheldSHA256, playersSHA256, frozenApprovalSHA256, inputsSHA256)
 }
 
 func validatePreparedApproval(stored StoredProductionInputs, subject documentproduction.ApprovalSubject, at time.Time) error {

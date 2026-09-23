@@ -398,6 +398,9 @@ func importProductionMetadata(ctx context.Context, tx *sql.Tx, raw jsontext.Valu
 }
 
 func validateProductionMetadataState(ctx context.Context, q metadataQuerier) error {
+	if err := validateProductionGateAuthorityState(ctx, q); err != nil {
+		return err
+	}
 	if err := validateProductionCanonicalTables(ctx, q); err != nil {
 		return err
 	}

@@ -124,6 +124,67 @@ func TestApprovalSubjectBindsEveryPersistedInputAndOccurrenceOrder(t *testing.T)
 	}
 }
 
+func TestProductionGateEvidencePinBindsFactsAndPublication(t *testing.T) {
+	pin := &ProductionMemberEvidencePin{
+		AllowlistVersion:              PolicyFactsAllowlistV1,
+		SourceMetadataGenerationID:    "70000000-0000-4000-8000-000000000001",
+		SourceMetadataEvidenceSHA256:  sha("1"),
+		PolicyFactsSHA256:             sha("2"),
+		EmailRootVersionID:            versionOneID,
+		EmailPublicationOperationID:   "70000000-0000-4000-8000-000000000002",
+		EmailPublicationRequestSHA256: sha("3"),
+		EmailPublicationReceiptSHA256: sha("4"),
+	}
+	members := []PreparedMember{
+		{Member: redaction.Member{ID: memberOneID, Ordinal: 1}, EvidencePin: pin},
+		{Member: redaction.Member{ID: memberTwoID, Ordinal: 2}, EvidencePin: pin},
+	}
+	_, digest, err := CanonicalProductionGateEvidence(members)
+	require.NoError(t, err)
+	require.Len(t, digest, 64)
+
+	changed := slices.Clone(members)
+	firstPin := *pin
+	changed[0].EvidencePin = &firstPin
+	changed[0].EvidencePin.SourceMetadataGenerationID = "70000000-0000-4000-8000-000000000003"
+	_, changedDigest, err := CanonicalProductionGateEvidence(changed)
+	require.NoError(t, err)
+	require.NotEqual(t, digest, changedDigest, "changing the exact fact generation must change the evidence digest")
+
+	changed = slices.Clone(members)
+	secondPin := *pin
+	changed[1].EvidencePin = &secondPin
+	changed[1].EvidencePin.EmailPublicationOperationID = "70000000-0000-4000-8000-000000000004"
+	_, changedDigest, err = CanonicalProductionGateEvidence(changed)
+	require.NoError(t, err)
+	require.NotEqual(t, digest, changedDigest, "changing the exact email publication must change the evidence digest")
+
+	_, reorderedDigest, err := CanonicalProductionGateEvidence([]PreparedMember{members[1], members[0]})
+	require.NoError(t, err, "production ordinal, not caller slice order, is authority")
+	require.Equal(t, digest, reorderedDigest)
+}
+
+func TestApprovalSubjectV2RequiresGateEvidenceDigest(t *testing.T) {
+	policy := syntheticPolicy()
+	_, policyDigest, err := CanonicalPolicyVersion(policy)
+	require.NoError(t, err)
+	subject := syntheticApprovalSubject(policyDigest)
+	subject.Contract = ApprovalSubjectContractV2
+	subject.GateEvidenceSHA256 = sha("9")
+	_, digest, err := CanonicalApprovalSubject(subject)
+	require.NoError(t, err)
+	require.NotEmpty(t, digest)
+
+	subject.GateEvidenceSHA256 = ""
+	_, _, err = CanonicalApprovalSubject(subject)
+	require.Error(t, err, "v2 approval subjects must bind the exact gate evidence")
+
+	subject.Contract = ApprovalSubjectContractV1
+	subject.GateEvidenceSHA256 = sha("9")
+	_, _, err = CanonicalApprovalSubject(subject)
+	require.Error(t, err, "v1 approval subjects cannot carry v2 gate evidence")
+}
+
 func TestApprovalExpiryRevocationSupersessionAndHistoricalReceipt(t *testing.T) {
 	policy := syntheticPolicy()
 	_, policyDigest, err := CanonicalPolicyVersion(policy)
@@ -163,6 +224,10 @@ func TestApprovalExpiryRevocationSupersessionAndHistoricalReceipt(t *testing.T) 
 	current, err := EvaluateApproval(grant, nil, subjectDigest, mustTime(t, "2026-09-22T02:00:00Z"))
 	require.NoError(t, err)
 	require.Equal(t, ApprovalStateCurrent, current.State)
+	frozen, err := EvaluateApproval(grant, nil, subjectDigest, mustTime(t, "2026-09-22T01:30:00Z"))
+	require.NoError(t, err)
+	require.NotEqual(t, frozen.SHA256, current.SHA256, "freeze and admission evaluations bind different times")
+	require.NoError(t, ApprovalGateProblem(true, &frozen, subjectDigest))
 	require.NoError(t, ApprovalGateProblem(true, &current, subjectDigest))
 	requireProblemCode(t, ApprovalGateProblem(true, &current, sha("f")), ProblemApprovalStale)
 	corruptEvaluation := current
@@ -184,6 +249,7 @@ func TestApprovalExpiryRevocationSupersessionAndHistoricalReceipt(t *testing.T) 
 	revoked, err := EvaluateApproval(grant, []ApprovalEvent{revocation}, subjectDigest, mustTime(t, "2026-09-22T02:45:00Z"))
 	require.NoError(t, err)
 	require.Equal(t, ApprovalStateRevoked, revoked.State)
+	requireProblemCode(t, ApprovalGateProblem(true, &revoked, subjectDigest), ProblemApprovalStale)
 
 	supersession := ApprovalEvent{Contract: ApprovalEventContractV1,
 		ID: "99999999-9999-4999-8999-999999999999", ApprovalID: approvalID,
@@ -664,6 +730,14 @@ func requireProblemCode(t *testing.T, err error, code ProblemCode) {
 	ok := errors.As(err, &problem)
 	require.True(t, ok)
 	require.Equal(t, code, problem.Code)
+}
+
+func requireInvalidContractDetail(t *testing.T, err error, detail string) {
+	t.Helper()
+	requireProblemCode(t, err, ProblemInvalidContract)
+	problem := &Problem{}
+	require.ErrorAs(t, err, &problem)
+	require.Equal(t, detail, problem.Detail)
 }
 
 func mustTime(t *testing.T, value string) time.Time {

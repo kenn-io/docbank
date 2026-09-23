@@ -382,7 +382,21 @@ func (s *Store) LoadProductionGateSnapshot(
 	if s == nil || tx == nil || validateUUIDv4(request.SetID) != nil || request.Revision < 1 {
 		return productionservice.StoredProductionInputs{}, ErrInvalidProduction
 	}
-	return s.loadProductionInputsTx(ctx, tx, request.SetID, request.Revision)
+	stored, err := s.loadProductionInputsTx(ctx, tx, request.SetID, request.Revision)
+	if err != nil {
+		return stored, err
+	}
+	if !productionPolicyFieldsSupported(stored.Policy) ||
+		!productionRequiredEvidencePinned(stored.Policy, stored.Members) {
+		return productionservice.StoredProductionInputs{}, ErrInvalidProduction
+	}
+	if err := checkProductionEvidenceHeadsTx(ctx, tx, stored.Members); err != nil {
+		return productionservice.StoredProductionInputs{}, err
+	}
+	if err := loadProductionGateAuthorityTx(ctx, tx, request.PreparedAt, &stored); err != nil {
+		return productionservice.StoredProductionInputs{}, err
+	}
+	return stored, nil
 }
 
 func (s *Store) loadProductionInputsTx(
@@ -426,6 +440,7 @@ func (s *Store) loadProductionInputsTx(
 	}
 	allDecisions := make([]redaction.Decision, 0)
 	stored.Members = make([]productionservice.StoredPreparedMember, len(members))
+	anyEvidencePin := false
 	for index, member := range members {
 		mapAuthority, found, loadErr := loadProductionTextMapTx(ctx, tx, member.MapSHA256)
 		if loadErr != nil || !found || mapAuthority.SourceNodeID != member.NodeID || mapAuthority.Source.VersionID != member.SourceVersionID ||
@@ -449,15 +464,26 @@ func (s *Store) loadProductionInputsTx(
 		}
 		slices.Sort(labels)
 		labels = slices.Compact(labels)
+		facts := productionPolicyMemberFacts(member, labels)
+		pin, facts, hasPin, pinErr := loadProductionEvidencePinTx(ctx, tx, setID, revision, member, facts)
+		if pinErr != nil {
+			return productionservice.StoredProductionInputs{}, pinErr
+		}
+		anyEvidencePin = anyEvidencePin || hasPin
 		stored.Members[index] = productionservice.StoredPreparedMember{
 			Member: member, Decisions: memberDecisions, Resolved: resolved,
-			Facts: productionPolicyMemberFacts(member, labels),
+			Facts: facts, EvidencePin: pin,
 		}
 		allDecisions = append(allDecisions, memberDecisions...)
 	}
 	_, decisionsSHA256, err := redaction.CanonicalDecisions(allDecisions)
 	if err != nil || decisionsSHA256 != stored.Draft.DecisionsSHA256 {
 		return productionservice.StoredProductionInputs{}, ErrInvalidProduction
+	}
+	if !anyEvidencePin {
+		for index := range stored.Members {
+			stored.Members[index].EvidencePin = nil
+		}
 	}
 	return stored, nil
 }

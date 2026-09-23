@@ -7,6 +7,7 @@ import (
 	"slices"
 	"time"
 
+	"go.kenn.io/docbank/document/redaction"
 	"go.kenn.io/docbank/internal/canonical"
 )
 
@@ -39,6 +40,63 @@ func CanonicalPlayersSnapshot(value PlayersSnapshot) ([]byte, string, error) {
 		return nil, "", err
 	}
 	return encodeDigest(value, "players snapshot")
+}
+
+// CanonicalPolicyMemberFacts validates and hashes one stored policy-fact
+// projection. The digest is pinned alongside the exact source generation.
+func CanonicalPolicyMemberFacts(value PolicyMemberFacts) ([]byte, string, error) {
+	if err := validatePolicyMemberFacts(value); err != nil {
+		return nil, "", err
+	}
+	return encodeDigest(value, "production policy member facts")
+}
+
+type productionGateEvidenceMember struct {
+	MemberID    string                      `json:"member_id"`
+	Ordinal     int64                       `json:"ordinal"`
+	EvidencePin ProductionMemberEvidencePin `json:"evidence_pin"`
+}
+
+type productionGateEvidence struct {
+	Contract string                         `json:"contract"`
+	Members  []productionGateEvidenceMember `json:"members"`
+}
+
+// CanonicalProductionGateEvidence hashes the exact source and publication
+// pins in occurrence order, independently of the caller's slice order.
+func CanonicalProductionGateEvidence(members []PreparedMember) ([]byte, string, error) {
+	if len(members) == 0 || len(members) > redaction.MaxProductionMembers {
+		return nil, "", invalidProblem("invalid production gate evidence members")
+	}
+	ordered := slices.Clone(members)
+	slices.SortFunc(ordered, func(left, right PreparedMember) int {
+		if left.Member.Ordinal < right.Member.Ordinal {
+			return -1
+		}
+		if left.Member.Ordinal > right.Member.Ordinal {
+			return 1
+		}
+		return compareString(left.Member.ID, right.Member.ID)
+	})
+	value := productionGateEvidence{Contract: ProductionGateEvidenceContractV1,
+		Members: make([]productionGateEvidenceMember, len(ordered))}
+	seen := make(map[string]struct{}, len(ordered))
+	for index, member := range ordered {
+		if !canonicalUUID(member.Member.ID) || member.Member.Ordinal != int64(index+1) || member.EvidencePin == nil {
+			return nil, "", invalidProblem("invalid production gate evidence member")
+		}
+		if _, duplicate := seen[member.Member.ID]; duplicate {
+			return nil, "", invalidProblem("duplicate production gate evidence member")
+		}
+		seen[member.Member.ID] = struct{}{}
+		if err := validateProductionMemberEvidencePin(*member.EvidencePin, true); err != nil {
+			return nil, "", err
+		}
+		value.Members[index] = productionGateEvidenceMember{
+			MemberID: member.Member.ID, Ordinal: member.Member.Ordinal, EvidencePin: *member.EvidencePin,
+		}
+	}
+	return encodeDigest(value, "production gate evidence")
 }
 
 func CanonicalApprovalSubject(value ApprovalSubject) ([]byte, string, error) {

@@ -10,6 +10,7 @@ type PolicySelection = redaction.PolicySelection
 const (
 	PolicyContractV1                 = "production-policy/v1"
 	ApprovalSubjectContractV1        = "production-approval-subject/v1"
+	ApprovalSubjectContractV2        = "production-approval-subject/v2"
 	ApprovalAuthorityContractV1      = "production-approval-authority/v1"
 	ApprovalGrantContractV1          = "production-approval-grant/v1"
 	ApprovalEventContractV1          = "production-approval-event/v1"
@@ -23,6 +24,8 @@ const (
 	ArtifactManifestContractV1       = "production-artifact-manifest/v1"
 	ArtifactProvenanceContractV1     = "production-artifact-provenance/v1"
 	PreparedInputContractV1          = "production-prepared-input/v1"
+	ProductionGateEvidenceContractV1 = "production-gate-evidence/v1"
+	PolicyFactsAllowlistV1           = "production-policy-facts-allowlist/v1"
 	ProductionReceiptContractV1      = "production-receipt/v1"
 	RetentionReceiptContractV1       = "production-retention-receipt/v1"
 	ReproductionRequestContractV1    = "production-reproduction-request/v1"
@@ -140,6 +143,21 @@ type ApprovalMember struct {
 	ResolvedSHA256      string `json:"resolved_sha256"`
 }
 
+// ProductionMemberEvidencePin binds one occurrence's policy projection and
+// optional email-family publication to immutable source evidence. A v2 member
+// with an empty pin explicitly records that a generic non-email policy needs
+// neither metadata facts nor an email publication selector.
+type ProductionMemberEvidencePin struct {
+	AllowlistVersion              string `json:"allowlist_version,omitzero"`
+	SourceMetadataGenerationID    string `json:"source_metadata_generation_id,omitzero"`
+	SourceMetadataEvidenceSHA256  string `json:"source_metadata_evidence_sha256,omitzero"`
+	PolicyFactsSHA256             string `json:"policy_facts_sha256,omitzero"`
+	EmailRootVersionID            string `json:"email_root_version_id,omitzero"`
+	EmailPublicationOperationID   string `json:"email_publication_operation_id,omitzero"`
+	EmailPublicationRequestSHA256 string `json:"email_publication_request_sha256,omitzero"`
+	EmailPublicationReceiptSHA256 string `json:"email_publication_receipt_sha256,omitzero"`
+}
+
 // ApprovalAuthority is derived from the trusted authentication context. It
 // contains no credential or reusable session secret.
 type ApprovalAuthority struct {
@@ -168,6 +186,7 @@ type ApprovalSubject struct {
 	DisclosureProfileSHA256  string           `json:"disclosure_profile_sha256"`
 	NumberingPolicySHA256    string           `json:"numbering_policy_sha256"`
 	Policy                   PolicySelection  `json:"policy"`
+	GateEvidenceSHA256       string           `json:"gate_evidence_sha256,omitzero"`
 	WithheldSelectionSHA256  string           `json:"withheld_selection_sha256,omitzero"`
 	PrivilegeLogInputsSHA256 string           `json:"privilege_log_inputs_sha256,omitzero"`
 }
