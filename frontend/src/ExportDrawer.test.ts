@@ -96,3 +96,39 @@ it("shows empty attachment sets and sends the set selected in the drawer", async
   await fireEvent.click(screen.getByRole("button", { name: "Preview export" }));
   await waitFor(() => expect(selected).toEqual([{ version_id: input.members[0]!.version_id, operation_id: "second" }]));
 });
+
+it("keeps export start available when the first details page fails and retries that page", async () => {
+  const { exportMemberHash } = await import("./exports.js");
+  const memberHash = await exportMemberHash(input.members), hash = "a".repeat(64), future = "2099-01-01T00:00:00Z";
+  let source: any, plan: any, detailRequests = 0, planRequests = 0;
+  const json = (value: unknown) => new Response(JSON.stringify(value), { headers: { "Content-Type": "application/json" } });
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (url, init) => {
+    const path = String(url), body = init?.body ? JSON.parse(String(init.body)) : undefined;
+    if (path.endsWith("/sources")) {
+      source = { id: body.operation_id, request_sha256: hash, kind: "explicit", state: "sealed", member_hash: memberHash, total: 1, source_bytes: 12, created_at: "2026-01-01T00:00:00Z", expires_at: future };
+      return json(source);
+    }
+    if (path.endsWith("/plans")) {
+      planRequests++;
+      plan = { format: "docbank-bundle-v1", id: body.operation_id, vault_id: input.members[0]!.version_id, toolchain: "go1.27", source, roles: body.roles, fingerprint: hash, total: 1, role_entries: 1, role_bytes: 12, metadata_bytes: 100, created_at: source.created_at, expires_at: future, counts: { messages: 0, attachments: 0, email_pdfs: 0, attachment_pdfs: 0, pages: 0, collapsed: 0, unavailable: 1, unavailable_inventories: 0 } };
+      return json(plan);
+    }
+    if (path.endsWith("/preview")) return json({ plan_id: plan.id, fingerprint: hash, member_hash: memberHash, total: 1, roles: [{ role: "original", available_members: 1, unavailable_members: 0, files: 1, bytes: 12 }, { role: "text", available_members: 0, unavailable_members: 1, files: 0, bytes: 0, unavailable_reason: "No retained text" }] });
+    expect(path).toBe(`/api/v1/exports/plans/${plan.id}/problems?after=0`);
+    if (++detailRequests === 1) return new Response(JSON.stringify({ detail: "Details temporarily unavailable" }), { status: 500 });
+    return json({ plan_id: plan.id, fingerprint: hash, after: 0, next: 0, total: 1, items: [{ node_id: 1, version_id: input.members[0]!.version_id, role: "text", reason: "Text was not retained for this version." }] });
+  });
+  render(ExportDrawer, { session: "s", input, open: true, onclose: vi.fn(), onauthfailure: vi.fn() });
+  await fireEvent.click(screen.getByRole("combobox", { name: /^Text export policy/ }));
+  await fireEvent.click(screen.getByRole("option", { name: "Optional — allow unavailable" }));
+  await fireEvent.click(screen.getByRole("button", { name: "Preview export" }));
+  await screen.findByText("Details temporarily unavailable");
+  const start = screen.getByRole("button", { name: "Start reviewed export" });
+  expect(start.hasAttribute("disabled")).toBe(false);
+  await fireEvent.click(screen.getByRole("button", { name: "Retry unavailable output details" }));
+  await screen.findByText("text: Text was not retained for this version.");
+  expect(screen.queryByRole("alert")).toBeNull();
+  expect(start.hasAttribute("disabled")).toBe(false);
+  expect(detailRequests).toBe(2);
+  expect(planRequests).toBe(1);
+});

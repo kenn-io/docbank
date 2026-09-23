@@ -171,18 +171,25 @@
             </div>
           {/if}
         </Card>
-        {#if view.problems && view.problems.total > 0}
+        {#if view.problems?.total || view.problemsLoading || view.problemsError}
           <section class="problems" aria-label="Unavailable export outputs">
             <strong>Partial export — unavailable outputs remain declared</strong>
-            <p>Showing {view.problems.after + 1}–{view.problems.after + view.problems.items.length} of {view.problems.total}. A message can have both available and unavailable attachments.</p>
-            {#each view.problems.items as problem, i (`${view.problems.after}:${i}`)}
-              <div><code>{problem.node_id}/{problem.version_id}{problem.part_path ? ` · part ${problem.part_path}` : ""}</code><p>{problem.role.replaceAll("_", " ")}: {problem.reason}</p></div>
-            {/each}
-            {#if view.problemsError}<p role="alert" class="error">{view.problemsError.message}</p>{/if}
-            {#if !admitted || terminal}<div class="actions">
-              {#if view.problems.after > 0}<Button size="sm" disabled={view.problemsLoading} onclick={() => void controller.problemPage(Math.max(0, view.problems!.after - 50))}>Previous unavailable outputs</Button>{/if}
-              {#if view.problems.next > 0}<Button size="sm" disabled={view.problemsLoading} onclick={() => void controller.problemPage(view.problems!.next)}>Next unavailable outputs</Button>{/if}
-            </div>{/if}
+            {#if view.problems}
+              <p>Showing {view.problems.after + 1}–{view.problems.after + view.problems.items.length} of {view.problems.total}. A message can have both available and unavailable attachments.</p>
+              {#each view.problems.items as problem, i (`${view.problems.after}:${i}`)}
+                <div><code>{problem.node_id}/{problem.version_id}{problem.part_path ? ` · part ${problem.part_path}` : ""}</code><p>{problem.role.replaceAll("_", " ")}: {problem.reason}</p></div>
+              {/each}
+              {#if !admitted || terminal}<div class="actions">
+                {#if view.problems.after > 0}<Button size="sm" disabled={view.problemsLoading} onclick={() => void controller.problemPage(Math.max(0, view.problems!.after - 50))}>Previous unavailable outputs</Button>{/if}
+                {#if view.problems.next > 0}<Button size="sm" disabled={view.problemsLoading} onclick={() => void controller.problemPage(view.problems!.next)}>Next unavailable outputs</Button>{/if}
+              </div>{/if}
+            {:else if view.problemsLoading}<p role="status">Loading unavailable output details…</p>{/if}
+            {#if view.problemsError}
+              <p role="alert" class="error">{view.problemsError.message}</p>
+              {#if !view.problems && (!admitted || terminal) && view.status !== "expired"}
+                <Button size="sm" disabled={view.problemsLoading} onclick={() => void controller.problemPage(0)}>Retry unavailable output details</Button>
+              {/if}
+            {/if}
           </section>
         {/if}
         {#if !admitted && view.reviewed}

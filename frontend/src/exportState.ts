@@ -141,14 +141,14 @@ export class ExportSession {
         if (selections.length) options.publications = selections.map(([version_id, operation_id]) => ({ version_id, operation_id }));
       }
       const reviewed = await createExportPlan(this.session, source, policies, this.planID, started.signal, options);
-      const counts = reviewed.plan.counts;
-      const problems = counts && (counts.unavailable || counts.unavailable_inventories) ? await exportOutputProblems(this.session, reviewed.plan, 0, started.signal) : undefined;
       if (!this.current(started.generation)) return;
-      this.emit({ ...this.state, status: "ready", reviewed: { ...reviewed, label: input.label }, problems, error: undefined });
+      this.emit({ ...this.state, status: "ready", reviewed: { ...reviewed, label: input.label }, problems: undefined, error: undefined });
       const delay = Date.parse(reviewed.plan.expires_at) - Date.now();
       if (delay >= 0 && delay < 2 ** 31) this.expiryTimer = setTimeout(() => {
         if (this.current(started.generation) && !this.state.active) this.emit({ ...this.state, status: "expired", reviewed: undefined });
       }, delay);
+      const counts = reviewed.plan.counts;
+      if (counts && (counts.unavailable || counts.unavailable_inventories)) await this.problemPage(0);
     } catch (error) { this.fail(started.generation, error); }
   }
 

@@ -345,3 +345,41 @@ it("asks for an attachment set and keeps the explicit choice across option chang
   expect(h.state().publicationSelections).toBeUndefined();
   h.session.dispose();
 });
+
+it.each([503, 410])("keeps a reviewed plan independent of its initial details request (HTTP %s)", async (status) => {
+  vi.useFakeTimers({ toFake: ["Date", "setTimeout", "clearTimeout"] });
+  vi.setSystemTime(Date.parse(future) - 1000);
+  const h = await harness(), original = h.fetcher.getMockImplementation()!;
+  h.session.choose({ label: "Selected documents", members }, [{ role: "original" }, { role: "text", allow_unavailable: true }]);
+  let respond!: (response: Response) => void, requested!: () => void;
+  const reached = new Promise<void>(resolve => requested = resolve);
+  const pending = new Promise<Response>(resolve => respond = resolve);
+  h.fetcher.mockImplementation(async (url, init) => {
+    const path = String(url);
+    if (path.includes("/problems")) { requested(); return pending; }
+    const result = await original(url, init);
+    if (path.endsWith("/plans")) return response({ ...await result.json(), counts: { messages: 0, attachments: 0, email_pdfs: 0, attachment_pdfs: 0, pages: 0, collapsed: 0, unavailable: 1, unavailable_inventories: 0 } });
+    if (path.endsWith("/preview")) {
+      const preview = await result.json();
+      preview.roles.push({ role: "text", available_members: 0, unavailable_members: 1, files: 0, bytes: 0, unavailable_reason: "No retained text" });
+      return response(preview);
+    }
+    return result;
+  });
+  const previewing = h.session.preview();
+  await reached;
+  const readyWhilePending = h.state().status;
+  respond(new Response(null, { status }));
+  await previewing;
+  expect(readyWhilePending).toBe("ready");
+  expect(h.state().status).toBe(status === 410 ? "expired" : "ready");
+  expect(h.state().reviewed).toBeDefined();
+  expect(h.state().problemsError?.message).toBe(`HTTP ${status}`);
+  if (status === 503) {
+    expect(h.state().error).toBeUndefined();
+    await vi.advanceTimersByTimeAsync(1001);
+    expect(h.state().status).toBe("expired");
+    expect(h.state().reviewed).toBeUndefined();
+  }
+  h.session.dispose();
+});
