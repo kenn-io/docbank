@@ -128,25 +128,26 @@ func validatePDFStructure(reader io.ReaderAt, size int64, prefix []byte) error {
 	if int64(read) != tailLength {
 		return errors.New("document bytes changed during PDF trailer read")
 	}
-	eofIndex := bytes.LastIndex(tail, []byte("%%EOF"))
-	if eofIndex < 0 || len(trimPDFWhitespace(tail[eofIndex+len("%%EOF"):])) != 0 {
-		return errors.New("PDF end marker is missing or not final")
-	}
-	beforeEOF := tail[:eofIndex]
-	startXRefIndex := bytes.LastIndex(beforeEOF, []byte("startxref"))
+	startXRefIndex := bytes.LastIndex(tail, []byte("startxref"))
 	if startXRefIndex < 0 {
 		return errors.New("PDF startxref is missing")
 	}
-	offsetText := trimPDFWhitespace(beforeEOF[startXRefIndex+len("startxref"):])
+	offsetText := trimPDFWhitespace(tail[startXRefIndex+len("startxref"):])
 	digitEnd := 0
 	for digitEnd < len(offsetText) && offsetText[digitEnd] >= '0' && offsetText[digitEnd] <= '9' {
 		digitEnd++
 	}
-	if digitEnd == 0 || len(trimPDFWhitespace(offsetText[digitEnd:])) != 0 {
+	if digitEnd == 0 {
 		return errors.New("PDF startxref offset is invalid")
 	}
+	// Readers recover a file whose final %%EOF line was lost, so the marker is
+	// optional; any other byte after the last startxref offset stays rejected.
+	epilogue := bytes.TrimPrefix(trimPDFWhitespace(offsetText[digitEnd:]), []byte("%%EOF"))
+	if len(trimPDFWhitespace(epilogue)) != 0 {
+		return errors.New("PDF trailer is not final")
+	}
 	xrefOffset, err := strconv.ParseInt(string(offsetText[:digitEnd]), 10, 64)
-	if err != nil || xrefOffset <= 0 || xrefOffset >= tailOffset+int64(eofIndex) {
+	if err != nil || xrefOffset <= 0 || xrefOffset >= tailOffset+int64(startXRefIndex) {
 		return errors.New("PDF startxref offset is outside the document")
 	}
 	xrefLength := min(size-xrefOffset, maxPDFXRefBytes)
@@ -158,7 +159,7 @@ func validatePDFStructure(reader io.ReaderAt, size int64, prefix []byte) error {
 	if int64(read) != xrefLength {
 		return errors.New("document bytes changed during PDF cross-reference read")
 	}
-	if validPDFTableXRef(xref, beforeEOF[:startXRefIndex]) || validPDFStreamXRef(xref) {
+	if validPDFTableXRef(xref, tail[:startXRefIndex]) || validPDFStreamXRef(xref) {
 		return nil
 	}
 	return errors.New("PDF cross-reference data is invalid")
