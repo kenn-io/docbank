@@ -182,6 +182,7 @@ type photoReceiptAssetState struct {
 	DisplayFileID         *string                    `json:"display_file_id"`
 	DisplayOverrideFileID *string                    `json:"display_override_file_id"`
 	FileCount             int                        `json:"file_count"`
+	InitialRole           string                     `json:"initial_role,omitzero"`
 	ChangedMemberCount    int                        `json:"changed_member_count,omitzero"`
 	MemberChanges         []photoReceiptMemberChange `json:"member_changes,omitzero"`
 	ChangesTruncated      bool                       `json:"changes_truncated,omitzero"`
@@ -232,6 +233,7 @@ func photoAssetState(asset PhotoAsset, changes []photoReceiptMemberChange) any {
 		ID: asset.ID, Kind: asset.Kind, Revision: asset.Revision,
 		ExcludedAt: asset.ExcludedAt, DisplayFileID: asset.DisplayFileID,
 		DisplayOverrideFileID: asset.DisplayOverrideFileID, FileCount: len(asset.Files),
+		InitialRole:        photoInitialRole(asset.Files),
 		ChangedMemberCount: len(changes),
 	}
 	if len(changes) > maxPhotoReceiptMemberChanges {
@@ -240,6 +242,19 @@ func photoAssetState(asset PhotoAsset, changes []photoReceiptMemberChange) any {
 	}
 	state.MemberChanges = changes
 	return state
+}
+
+func photoInitialRole(files []PhotoFile) string {
+	if len(files) == 0 {
+		return ""
+	}
+	initial := files[0]
+	for _, file := range files[1:] {
+		if file.CreatedAt < initial.CreatedAt || file.CreatedAt == initial.CreatedAt && file.ID < initial.ID {
+			initial = file
+		}
+	}
+	return initial.Role
 }
 
 func photoSettingsState(settings PhotoSettings) any {

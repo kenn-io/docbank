@@ -338,17 +338,25 @@ func validatePhotoReceiptHistory(ctx context.Context, tx metadataQuerier) error 
 			return err
 		}
 	}
-	assetRows, err := tx.QueryContext(ctx, `SELECT asset_id FROM photo_assets WHERE revision>1`)
+	assetRows, err := tx.QueryContext(ctx, `
+		SELECT asset_id, kind, revision, excluded_at, display_override_file_id,
+		       (SELECT COUNT(*) FROM photo_files WHERE asset_id=photo_assets.asset_id),
+		       COALESCE((SELECT role FROM photo_files WHERE asset_id=photo_assets.asset_id
+		                 ORDER BY created_at, file_id LIMIT 1), '')
+		FROM photo_assets`)
 	if err != nil {
 		return fmt.Errorf("reading revised photo assets: %w", err)
 	}
 	defer func() { _ = assetRows.Close() }()
 	for assetRows.Next() {
-		var assetID string
-		if err := assetRows.Scan(&assetID); err != nil {
+		var assetID, kind, initialRole string
+		var revision, fileCount int64
+		var excluded, override sql.NullString
+		if err := assetRows.Scan(&assetID, &kind, &revision, &excluded, &override, &fileCount, &initialRole); err != nil {
 			return fmt.Errorf("scanning revised photo assets: %w", err)
 		}
-		if len(assets[assetID]) == 0 {
+		if len(assets[assetID]) == 0 && (revision != 1 || excluded.Valid || override.Valid || fileCount != 1 ||
+			kind == PhotoKindPhoto && initialRole != PhotoRoleImage || kind == PhotoKindVideo && initialRole != PhotoRoleVideo) {
 			return fmt.Errorf("invalid photo receipt history: asset %s at a revised state has no history", assetID)
 		}
 	}
@@ -377,8 +385,9 @@ func validatePhotoReceiptHistory(ctx context.Context, tx metadataQuerier) error 
 		}
 	} else {
 		var revision int64
-		if err := tx.QueryRowContext(ctx, `SELECT revision FROM photo_library_settings WHERE singleton=1`).Scan(&revision); err == nil && revision > 1 {
-			return errors.New("invalid photo settings receipt history: revised settings have no history")
+		var preference sql.NullString
+		if err := tx.QueryRowContext(ctx, `SELECT preference, revision FROM photo_library_settings WHERE singleton=1`).Scan(&preference, &revision); err == nil && (revision != 1 || preference.Valid) {
+			return errors.New("invalid photo settings receipt history: non-default settings have no history")
 		} else if err != nil && !errors.Is(err, sql.ErrNoRows) {
 			return fmt.Errorf("reading photo receipt settings: %w", err)
 		}
@@ -392,9 +401,11 @@ func currentPhotoReceiptAssetState(ctx context.Context, tx metadataQuerier, asse
 	err := tx.QueryRowContext(ctx, `
 		SELECT asset_id, kind, revision, excluded_at, display_file_id,
 		       display_override_file_id,
-		       (SELECT COUNT(*) FROM photo_files WHERE asset_id=photo_assets.asset_id)
+		       (SELECT COUNT(*) FROM photo_files WHERE asset_id=photo_assets.asset_id),
+		       COALESCE((SELECT role FROM photo_files WHERE asset_id=photo_assets.asset_id
+		                 ORDER BY created_at, file_id LIMIT 1), '')
 		FROM photo_assets WHERE asset_id=?`, assetID).Scan(&state.ID, &state.Kind, &state.Revision,
-		&excluded, &display, &override, &state.FileCount)
+		&excluded, &display, &override, &state.FileCount, &state.InitialRole)
 	if excluded.Valid {
 		state.ExcludedAt = new(excluded.String)
 	}
@@ -422,6 +433,9 @@ func validatePhotoAssetReceiptChain(assetID string, current photoReceiptAssetSta
 			before.Revision > 0 && before.ID != assetID || before.Revision == 0 && before.ID != "" {
 			return fmt.Errorf("invalid photo receipt history: asset %s has a mismatched before state", assetID)
 		}
+		if index == 0 && before.Revision == 1 && !validAutomaticPhotoBaseline(before) {
+			return fmt.Errorf("invalid photo receipt history: asset %s has an invalid automatic baseline", assetID)
+		}
 		if err := decodePhotoReceiptState(receipt.AfterJSON, &after, "id", "revision"); err != nil || after.ID != assetID || after.Revision != receipt.AfterRevision {
 			return fmt.Errorf("invalid photo receipt history: asset %s has a mismatched after state", assetID)
 		}
@@ -440,10 +454,17 @@ func validatePhotoAssetReceiptChain(assetID string, current photoReceiptAssetSta
 	return nil
 }
 
+func validAutomaticPhotoBaseline(state photoReceiptAssetState) bool {
+	return state.FileCount == 1 && state.ExcludedAt == nil && state.DisplayOverrideFileID == nil &&
+		(state.Kind == PhotoKindPhoto && state.InitialRole == PhotoRoleImage ||
+			state.Kind == PhotoKindVideo && state.InitialRole == PhotoRoleVideo)
+}
+
 func equalPhotoReceiptAssetState(left, right photoReceiptAssetState) bool {
 	return left.ID == right.ID && left.Kind == right.Kind && left.Revision == right.Revision &&
 		equalPhotoString(left.ExcludedAt, right.ExcludedAt) && equalPhotoString(left.DisplayFileID, right.DisplayFileID) &&
-		equalPhotoString(left.DisplayOverrideFileID, right.DisplayOverrideFileID) && left.FileCount == right.FileCount
+		equalPhotoString(left.DisplayOverrideFileID, right.DisplayOverrideFileID) && left.FileCount == right.FileCount &&
+		left.InitialRole == right.InitialRole
 }
 
 func validPhotoReceiptOperationState(operation string, before, after photoReceiptAssetState) bool {
@@ -452,26 +473,40 @@ func validPhotoReceiptOperationState(operation string, before, after photoReceip
 	}
 	switch operation {
 	case "create":
-		return before.Revision == 0 && after.FileCount == 1
+		return before.Revision == 0 && after.FileCount == 1 && receiptStateAddsInitialRole(after)
 	case "promote":
 		if before.Revision == 0 {
-			return after.FileCount == 1
+			return after.FileCount == 1 && receiptStateAddsInitialRole(after)
 		}
-		return before.ExcludedAt != nil && after.ExcludedAt == nil && before.FileCount == after.FileCount
+		return before.ExcludedAt != nil && after.ExcludedAt == nil && before.FileCount == after.FileCount && before.InitialRole == after.InitialRole
 	case "attach":
-		return after.FileCount == before.FileCount+1
+		if before.FileCount == 0 {
+			return after.FileCount == 1 && receiptStateAddsInitialRole(after)
+		}
+		return after.FileCount == before.FileCount+1 && before.InitialRole == after.InitialRole
 	case "detach", "purge":
 		return after.FileCount < before.FileCount
 	case "exclude":
-		return before.FileCount == after.FileCount && (before.ExcludedAt == nil) != (after.ExcludedAt == nil)
+		return before.FileCount == after.FileCount && before.InitialRole == after.InitialRole &&
+			(before.ExcludedAt == nil) != (after.ExcludedAt == nil)
 	case "display":
-		return before.FileCount == after.FileCount &&
+		return before.FileCount == after.FileCount && before.InitialRole == after.InitialRole &&
 			(!equalPhotoString(before.DisplayOverrideFileID, after.DisplayOverrideFileID) || !equalPhotoString(before.DisplayFileID, after.DisplayFileID))
 	case "settings_recompute":
-		return before.FileCount == after.FileCount && !equalPhotoString(before.DisplayFileID, after.DisplayFileID)
+		return before.FileCount == after.FileCount && before.InitialRole == after.InitialRole &&
+			!equalPhotoString(before.DisplayFileID, after.DisplayFileID)
 	default:
 		return false
 	}
+}
+
+func receiptStateAddsInitialRole(state photoReceiptAssetState) bool {
+	for _, change := range state.MemberChanges {
+		if change.After != nil && change.After.Role == state.InitialRole {
+			return true
+		}
+	}
+	return false
 }
 
 func validatePhotoSettingsReceiptChain(preference *string, revision int64, receipts []metadataPhotoReceipt) error {
