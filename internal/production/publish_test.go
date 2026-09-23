@@ -100,9 +100,10 @@ func (a *syntheticFinalArtifacts) StageVerifiedProductionPDF(_ context.Context, 
 func (a *syntheticFinalArtifacts) OpenVerifiedProductionArtifact(_ context.Context, _ string,
 	artifact documentproduction.Artifact) (packstore.VerifiedReadCloser, int64, error) {
 	data := a.pdfData[artifact.SHA256]
-	if artifact.Role == documentproduction.ArtifactRoleRedactedPage {
+	switch artifact.Role {
+	case documentproduction.ArtifactRoleRedactedPage:
 		data = a.pageData[artifact.SHA256]
-	} else if artifact.Role == documentproduction.ArtifactRoleRedactedText {
+	case documentproduction.ArtifactRoleRedactedText:
 		data = a.textData[artifact.SHA256]
 	}
 	if data == nil {
