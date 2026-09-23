@@ -233,7 +233,16 @@ func (s *Store) Checkpoint(ctx context.Context) error {
 // recording, and physical storage maintenance. User-visible metadata mutations
 // use withLogicalTx so audited vaults fail closed unless that mutation has an
 // explicit audit implementation in Go.
-func (s *Store) withStorageTx(ctx context.Context, fn func(tx *sql.Tx) error) (retErr error) {
+func (s *Store) withStorageTx(ctx context.Context, fn func(tx *sql.Tx) error) error {
+	return s.withStorageTxUsingBegin(ctx, s.writeDB.BeginTx, fn)
+}
+
+// withStorageTxUsingBegin keeps transaction callbacks identical for the email
+// release path that waits for a busy BeginTx. Other writes return Busy directly.
+func (s *Store) withStorageTxUsingBegin(
+	ctx context.Context, begin func(context.Context, *sql.TxOptions) (*sql.Tx, error),
+	fn func(tx *sql.Tx) error,
+) (retErr error) {
 	defer func() {
 		// database/sql may finish its cancellation rollback before the callback
 		// or Commit observes it. Preserve cancellation alongside ErrTxDone.
@@ -241,7 +250,7 @@ func (s *Store) withStorageTx(ctx context.Context, fn func(tx *sql.Tx) error) (r
 			retErr = errors.Join(ctx.Err(), retErr)
 		}
 	}()
-	tx, err := s.writeDB.BeginTx(ctx, nil)
+	tx, err := begin(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("beginning transaction: %w", err)
 	}
@@ -255,6 +264,32 @@ func (s *Store) withStorageTx(ctx context.Context, fn func(tx *sql.Tx) error) (r
 		return fmt.Errorf("committing transaction: %w", err)
 	}
 	return nil
+}
+
+// beginWriteTxWithBusyRetry retries only the email release's write lock
+// acquisition. Once BeginTx succeeds, its callback and writes run once.
+func (s *Store) beginWriteTxWithBusyRetry(ctx context.Context, opts *sql.TxOptions) (*sql.Tx, error) {
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		tx, err := s.writeDB.BeginTx(ctx, opts)
+		if err == nil || !s.driver.IsBusy(err) {
+			return tx, err
+		}
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+		wait := min(25*time.Millisecond, time.Until(deadline))
+		if wait <= 0 {
+			return nil, err
+		}
+		timer := time.NewTimer(wait)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return nil, ctx.Err()
+		case <-timer.C:
+		}
+	}
 }
 
 // withLogicalTx runs an ordinary metadata mutation. Once audit authority

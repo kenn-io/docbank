@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -19,6 +20,93 @@ func newTestStore(t *testing.T) *Store {
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, s.Close()) })
 	return s
+}
+
+type shortBusyDriver struct{ docsqlite.Driver }
+
+func (d shortBusyDriver) Open(path string, opts docsqlite.OpenOptions) (*sql.DB, error) {
+	opts.BusyTimeout = 50 * time.Millisecond
+	return d.Driver.Open(path, opts)
+}
+
+func TestEmailReleaseBeginWaitsForExternalWriter(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "docbank.db")
+	s, err := Open(path, shortBusyDriver{DefaultSQLiteDriver()})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, s.Close()) })
+	locker, err := DefaultSQLiteDriver().Open(path, docsqlite.OpenOptions{
+		Access: docsqlite.ReadWriteExisting, TransactionMode: docsqlite.Immediate,
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, locker.Close()) })
+
+	t.Run("generic write reports busy", func(t *testing.T) {
+		writer, err := locker.BeginTx(t.Context(), nil)
+		require.NoError(t, err)
+		defer func() { _ = writer.Rollback() }()
+		ctx, cancel := context.WithTimeout(t.Context(), 250*time.Millisecond)
+		defer cancel()
+		calls := 0
+		err = s.withStorageTx(ctx, func(*sql.Tx) error {
+			calls++
+			return nil
+		})
+		require.True(t, s.driver.IsBusy(err), "expected retryable SQLite contention, got %v", err)
+		require.Zero(t, calls, "busy transaction must not invoke callback")
+	})
+
+	t.Run("release waits", func(t *testing.T) {
+		writer, err := locker.BeginTx(t.Context(), nil)
+		require.NoError(t, err)
+		defer func() { _ = writer.Rollback() }()
+		released := make(chan struct{})
+		timer := time.AfterFunc(500*time.Millisecond, func() {
+			_ = writer.Rollback()
+			close(released)
+		})
+		defer timer.Stop()
+		err = s.RemoveEmailDocumentPublication(t.Context(), "missing", "synthetic")
+		require.ErrorIs(t, err, ErrNotFound)
+		select {
+		case <-released:
+		default:
+			t.Fatal("release returned before the independent writer unlocked")
+		}
+	})
+
+	t.Run("scoped callback once", func(t *testing.T) {
+		writer, err := locker.BeginTx(t.Context(), nil)
+		require.NoError(t, err)
+		defer func() { _ = writer.Rollback() }()
+		released := make(chan struct{})
+		timer := time.AfterFunc(500*time.Millisecond, func() {
+			_ = writer.Rollback()
+			close(released)
+		})
+		defer timer.Stop()
+		calls := 0
+		err = s.withStorageTxUsingBegin(t.Context(), s.beginWriteTxWithBusyRetry, func(tx *sql.Tx) error {
+			calls++
+			return tx.QueryRow(`SELECT 1`).Scan(new(int))
+		})
+		require.NoError(t, err)
+		require.Equal(t, 1, calls, "transaction callback must not be replayed")
+		select {
+		case <-released:
+		default:
+			t.Fatal("transaction returned before the independent writer unlocked")
+		}
+	})
+
+	t.Run("canceled release", func(t *testing.T) {
+		writer, err := locker.BeginTx(t.Context(), nil)
+		require.NoError(t, err)
+		defer func() { _ = writer.Rollback() }()
+		ctx, cancel := context.WithTimeout(t.Context(), 175*time.Millisecond)
+		defer cancel()
+		err = s.RemoveEmailDocumentPublication(ctx, "missing", "synthetic")
+		require.ErrorIs(t, err, context.DeadlineExceeded)
+	})
 }
 
 func TestStorageMutationDuringReadSnapshot(t *testing.T) {

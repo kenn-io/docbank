@@ -5,19 +5,23 @@ import (
 	"encoding/hex"
 	"encoding/json/v2"
 	"fmt"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 
 	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/internal/apiclient"
 	"go.kenn.io/docbank/internal/daemonconn"
+	"go.kenn.io/docbank/internal/store"
+	docsqlite "go.kenn.io/docbank/sqlite"
 )
 
 func TestEmailDocumentsCLIReleasesTrashBlocker(t *testing.T) {
-	setupVaultHome(t)
+	home := setupVaultHome(t)
 	c, err := daemonconn.Ensure(t.Context())
 	require.NoError(t, err)
 	root, err := c.API().ResolvePath(t.Context(), &apiclient.ResolvePathRequestOptions{Query: &apiclient.ResolvePathQuery{Path: "/"}})
@@ -67,9 +71,31 @@ func TestEmailDocumentsCLIReleasesTrashBlocker(t *testing.T) {
 	require.NoError(t, err)
 	require.Contains(t, out, "retained 1 trashed root(s) referenced by email publications")
 	require.Contains(t, out, "deleted 0 trashed root(s)")
+
+	// Hold an independent SQLite writer past the daemon's five-second busy
+	// timeout. Release still has to complete through the real CLI and daemon.
+	locker, err := store.DefaultSQLiteDriver().Open(filepath.Join(home, "docbank.db"), docsqlite.OpenOptions{
+		Access: docsqlite.ReadWriteExisting, TransactionMode: docsqlite.Immediate,
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, locker.Close()) })
+	writer, err := locker.BeginTx(t.Context(), nil)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = writer.Rollback() })
+	released := make(chan struct{})
+	timer := time.AfterFunc(6*time.Second, func() {
+		_ = writer.Rollback()
+		close(released)
+	})
+	defer timer.Stop()
 	_, err = runCLI(t, "email-documents", "release", receipt.OperationID,
 		"--request-digest", receipt.RequestDigest)
 	require.NoError(t, err)
+	select {
+	case <-released:
+	default:
+		t.Fatal("release completed before the independent writer unlocked")
+	}
 	out, err = runCLI(t, "trash", "empty", "--run")
 	require.NoError(t, err)
 	require.Contains(t, out, "deleted 1 trashed root(s)")
