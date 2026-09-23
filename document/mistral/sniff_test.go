@@ -4,8 +4,15 @@ import (
 	"archive/zip"
 	"bytes"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/binary"
+	"encoding/hex"
+	"encoding/json/v2"
+	"fmt"
 	"io"
+	"net/http"
+	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -80,7 +87,7 @@ func TestDetectFormatRejectsMismatchUnsafeZIPAndAmbiguousCompound(t *testing.T) 
 
 	malformedPDF := []byte("%PDF-1.7\nsynthetic")
 	_, err = DetectFormat(bytes.NewReader(malformedPDF), int64(len(malformedPDF)), "application/pdf")
-	require.ErrorContains(err, "PDF end marker")
+	require.ErrorContains(err, "PDF startxref is missing")
 
 	malformedXRef := bytes.Replace(testPDF("malformed-xref"), []byte("xref\n"), []byte("xref garbage\n"), 1)
 	_, err = DetectFormat(bytes.NewReader(malformedXRef), int64(len(malformedXRef)), "application/pdf")
@@ -155,6 +162,185 @@ func TestDetectFormatRejectsMismatchUnsafeZIPAndAmbiguousCompound(t *testing.T) 
 	for _, invalidXML := range []string{"", "<first/><second/>", "outside<root/>"} {
 		_, err = DetectFormat(bytes.NewReader([]byte(invalidXML)), int64(len(invalidXML)), "application/xml")
 		require.Error(err)
+	}
+}
+
+func TestDetectFormatAcceptsRecoverablePDFs(t *testing.T) {
+	tests := []struct {
+		name    string
+		content func(*testing.T) []byte
+	}{
+		{name: "missing final marker", content: func(t *testing.T) []byte {
+			t.Helper()
+			original := testPDF("recoverable")
+			content := bytes.TrimSuffix(original, []byte("%%EOF\n"))
+			require.Equal(t, 6, len(original)-len(content))
+			return content
+		}},
+		{name: "early marker followed by incremental update", content: testPDFIncrementalUpdateWithoutFinalMarker},
+		{name: "xref stream without final marker", content: func(t *testing.T) []byte {
+			t.Helper()
+			original := testPDFXRefStreamWithPageBox()
+			content := bytes.TrimSuffix(original, []byte("%%EOF\n"))
+			require.Equal(t, 6, len(original)-len(content))
+			return content
+		}},
+		{name: "large file without final marker", content: func(t *testing.T) []byte {
+			t.Helper()
+			original := testPDF(strings.Repeat("x", 40_000))
+			content := bytes.TrimSuffix(original, []byte("%%EOF\n"))
+			require.Greater(t, len(content), 65536)
+			t.Logf("fixture length=%d; tail boundary=65536", len(content))
+			return content
+		}},
+		{name: "final marker with CRLF", content: func(t *testing.T) []byte {
+			t.Helper()
+			return bytes.Replace(testPDF("crlf"), []byte("%%EOF\n"), []byte("%%EOF\r\n"), 1)
+		}},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			content := test.content(t)
+			format, err := DetectFormat(bytes.NewReader(content), int64(len(content)), "application/pdf")
+			require.NoError(t, err)
+			assert.Equal(t, "pdf", format.ID)
+			pages, err := formatdetect.CountPDFPages(content)
+			require.NoError(t, err)
+			assert.Equal(t, int64(1), pages)
+		})
+	}
+}
+
+func TestDetectFormatRejectsUnrecoverablePDFTrailers(t *testing.T) {
+	original := testPDF("negative")
+	recoverable := bytes.TrimSuffix(original, []byte("%%EOF\n"))
+
+	t.Run("trailing bytes", func(t *testing.T) {
+		for _, test := range []struct {
+			name   string
+			suffix string
+		}{
+			{name: "ZIP local header", suffix: "PK\x03\x04synthetic"},
+			{name: "HTML document", suffix: "<html><body>synthetic</body></html>\n"},
+			{name: "repeated marker", suffix: "%%EOF\n%%EOF\n"},
+			{name: "partial marker", suffix: "%%EO"},
+			{name: "object after trailer", suffix: "4 0 obj\n<< >>\nendobj\n"},
+		} {
+			t.Run(test.name, func(t *testing.T) {
+				content := append(bytes.Clone(recoverable), test.suffix...)
+				_, err := DetectFormat(bytes.NewReader(content), int64(len(content)), "application/pdf")
+				require.ErrorContains(t, err, "not final")
+			})
+		}
+	})
+
+	t.Run("forged startxref", func(t *testing.T) {
+		payload := len(recoverable)
+		content := append(bytes.Clone(recoverable), []byte("PK\x03\x04synthetic\n")...)
+		content = fmt.Appendf(content, "startxref\n%d\n", payload)
+		_, err := DetectFormat(bytes.NewReader(content), int64(len(content)), "application/pdf")
+		require.ErrorContains(t, err, "cross-reference data")
+	})
+
+	t.Run("offset at startxref keyword", func(t *testing.T) {
+		content := testPDF("offset-bound")
+		keyword := bytes.LastIndex(content, []byte("startxref"))
+		bounded := fmt.Appendf(bytes.Clone(content[:keyword]), "startxref\n%d\n", keyword)
+		_, err := DetectFormat(bytes.NewReader(bounded), int64(len(bounded)), "application/pdf")
+		t.Logf("startxref offset=%d equals keyword position=%d; error=%v", keyword, keyword, err)
+		require.ErrorContains(t, err, "outside the document")
+	})
+
+	t.Run("malformed xref", func(t *testing.T) {
+		content := bytes.Replace(recoverable, []byte("xref\n"), []byte("xref garbage\n"), 1)
+		_, err := DetectFormat(bytes.NewReader(content), int64(len(content)), "application/pdf")
+		require.ErrorContains(t, err, "cross-reference data")
+	})
+
+	t.Run("invalid header version", func(t *testing.T) {
+		content := bytes.Replace(recoverable, []byte("%PDF-1.4"), []byte("%PDF-3.0"), 1)
+		_, err := DetectFormat(bytes.NewReader(content), int64(len(content)), "application/pdf")
+		require.ErrorContains(t, err, "PDF header is invalid")
+	})
+
+	t.Run("declared text plain", func(t *testing.T) {
+		_, err := DetectFormat(bytes.NewReader(recoverable), int64(len(recoverable)), "text/plain")
+		require.ErrorContains(t, err, "not declared")
+	})
+}
+
+func TestPrepareStagesRecoverablePDF(t *testing.T) {
+	original := testPDF("recoverable-prepare")
+	content := bytes.TrimSuffix(original, []byte("%%EOF\n"))
+	digest := sha256.Sum256(content)
+	directory := filepath.Join(t.TempDir(), "spool")
+	makePrivateDirectory(t, directory)
+
+	prepared, err := Prepare(t.Context(), io.NopCloser(bytes.NewReader(content)), testPolicy(t, 1024, 10), PrepareOptions{
+		Directory: directory, DeclaredMediaType: mediaTypePDF, ExpectedSize: int64(len(content)),
+		ExpectedSHA256: hex.EncodeToString(digest[:]), MaxSpoolBytes: 2048, MinFreeBytes: 1,
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "pdf", prepared.Format().ID)
+	require.NoError(t, prepared.Release())
+}
+
+func TestRenditionClientVerifiesRecoverablePDFs(t *testing.T) {
+	policy := testPolicy(t, 1<<20, 10)
+	manifest := syntheticManifest(t, policy, true)
+	descriptor := renditionDescriptor(t, policy, manifest, "pdf")
+	tests := []struct {
+		name    string
+		content func(*testing.T) []byte
+	}{
+		{name: "missing final marker", content: func(t *testing.T) []byte {
+			t.Helper()
+			return bytes.TrimSuffix(testPDF("recoverable-rendition"), []byte("%%EOF\n"))
+		}},
+		{name: "early marker followed by incremental update", content: testPDFIncrementalUpdateWithoutFinalMarker},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			source := test.content(t)
+			var requests int
+			var uploaded []byte
+			client, err := NewRenditionProvider(Profile{
+				Policy: policy, CapabilityManifest: manifest, Descriptor: descriptor,
+				SecretBinding: "mistral-ocr", Timeout: DefaultTimeout,
+				MaxRetries: DefaultMaxRetries, MaxRetryDelay: DefaultMaxRetryDelay,
+			}, renditionSecrets{"mistral-ocr": "synthetic-key"}, &http.Client{
+				Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+					requests++
+					body, err := io.ReadAll(request.Body)
+					require.NoError(t, err)
+					var wire struct {
+						Document struct {
+							URL string `json:"document_url"`
+						} `json:"document"`
+					}
+					require.NoError(t, json.Unmarshal(body, &wire))
+					encoded := strings.TrimPrefix(wire.Document.URL, "data:application/pdf;base64,")
+					uploaded, err = base64.StdEncoding.DecodeString(encoded)
+					require.NoError(t, err)
+					return &http.Response{
+						StatusCode: http.StatusOK,
+						Header:     http.Header{"Content-Type": []string{"application/json"}},
+						Body:       io.NopCloser(strings.NewReader(mistralRenditionResponse("synthetic"))),
+						Request:    request,
+					}, nil
+				}),
+			})
+			require.NoError(t, err)
+
+			fixture := renditionFixture(t, descriptor, source)
+			result, err := client.Render(t.Context(), fixture.upload(), fixture.authorization)
+			require.NoError(t, err)
+			assert.Equal(t, 1, requests)
+			assert.Equal(t, source, uploaded)
+			assert.Equal(t, int64(1), result.Receipt.Usage.Units)
+		})
 	}
 }
 
@@ -299,4 +485,48 @@ func (r *observedReadCloser) Close() error {
 
 func zeroSHA256() string {
 	return string(bytes.Repeat([]byte{'0'}, sha256.Size*2))
+}
+
+func testPDFIncrementalUpdateWithoutFinalMarker(t *testing.T) []byte {
+	t.Helper()
+	original := testPDF("incremental")
+	previousXRef := bytes.Index(original, []byte("\nxref\n")) + 1
+	require.Positive(t, previousXRef)
+	var output bytes.Buffer
+	output.Write(original)
+	page := output.Len()
+	output.WriteString("3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 300 300] >>\nendobj\n")
+	xref := output.Len()
+	_, _ = fmt.Fprintf(&output, "xref\n3 1\n%010d 00000 n \ntrailer\n<< /Size 4 /Root 1 0 R /Prev %d >>\nstartxref\n%d\n",
+		page, previousXRef, xref)
+	content := output.Bytes()
+	require.Equal(t, 1, bytes.Count(content, []byte("%%EOF")))
+	require.Less(t, bytes.Index(content, []byte("%%EOF")), xref)
+	return content
+}
+
+func testPDFXRefStreamWithPageBox() []byte {
+	var output bytes.Buffer
+	output.WriteString("%PDF-1.5\n")
+	offsets := make([]int, 3)
+	for index, object := range []string{
+		"<< /Type /Catalog /Pages 2 0 R >>",
+		"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+		"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 300 300] >>",
+	} {
+		offsets[index] = output.Len()
+		_, _ = fmt.Fprintf(&output, "%d 0 obj\n%s\nendobj\n", index+1, object)
+	}
+	xref := output.Len()
+	entries := make([]byte, 5*7)
+	putTestXRefEntry(entries, 0, 0, 0, 65_535)
+	for index, offset := range offsets {
+		putTestXRefEntry(entries, index+1, 1, uint32(offset), 0) // #nosec G115 -- bounded fixture.
+	}
+	putTestXRefEntry(entries, 4, 1, uint32(xref), 0) // #nosec G115 -- bounded fixture.
+	_, _ = fmt.Fprintf(&output,
+		"4 0 obj\n<< /Type /XRef /Size 5 /Root 1 0 R /W [1 4 2] /Length %d >>\nstream\n", len(entries))
+	output.Write(entries)
+	_, _ = fmt.Fprintf(&output, "\nendstream\nendobj\nstartxref\n%d\n%%%%EOF\n", xref)
+	return output.Bytes()
 }
