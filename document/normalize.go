@@ -282,7 +282,11 @@ func renditionXHTMLSerializationFits(ctx context.Context, blocks []renditionBloc
 					}
 				}
 			case renditionInlineCode:
-				size += 2*int64(maxBacktickRun(value.text)+1) + 4 + int64(strings.Count(value.text, "|"))
+				backticks, err := maxBacktickRunContext(ctx, value.text)
+				if err != nil {
+					return 0, err
+				}
+				size += 2*int64(backticks+1) + 4 + int64(strings.Count(value.text, "|"))
 			case renditionLinkInline:
 				children, err := inlines(value.children)
 				if err != nil {
@@ -306,7 +310,11 @@ func renditionXHTMLSerializationFits(ctx context.Context, blocks []renditionBloc
 			}
 			total += 16 + int64(indent)*int64(3+strings.Count(block.code, "\n")+len(block.rows)) + inlineSize
 			if block.kind == renditionCodeBlock {
-				total += int64(len(block.code) + len(block.language) + 3 + 2*max(3, maxBacktickRun(block.code)+1))
+				backticks, err := maxBacktickRunContext(ctx, block.code)
+				if err != nil {
+					return 0, err
+				}
+				total += int64(len(block.code) + len(block.language) + 3 + 2*max(3, backticks+1))
 			}
 			columns := 0
 			for _, row := range block.rows {
@@ -1796,7 +1804,10 @@ func incrementNonnegativeDecimal(value string) string {
 func serializeRenditionBlock(ctx context.Context, block renditionBlock, available int, listAlternate bool) (string, bool, error) {
 	switch block.kind {
 	case renditionCodeBlock:
-		value := serializeRenditionCodeBlock(block.language, block.code)
+		value, err := serializeRenditionCodeBlockContext(ctx, block.language, block.code)
+		if err != nil {
+			return "", false, err
+		}
 		if utf8.RuneCountInString(value) > available {
 			return "", true, nil
 		}
@@ -2262,7 +2273,12 @@ func appendRenditionItemBlock(
 	var value string
 	switch block.kind {
 	case renditionCodeBlock:
-		value = serializeRenditionCodeBlock(block.language, block.code)
+		var err error
+		value, err = serializeRenditionCodeBlockContext(output.ctx, block.language, block.code)
+		if err != nil {
+			output.err = err
+			return false, true
+		}
 	case renditionTable:
 		var err error
 		value, err = serializeRenditionTable(output.ctx, block.rows)
@@ -2459,7 +2475,11 @@ func appendRenditionInlinesWithFallback(
 				return true
 			}
 		case renditionInlineCode:
-			value := serializeRenditionInlineCode(inline.text, inTable)
+			value, err := serializeRenditionInlineCodeContext(output.ctx, inline.text, inTable)
+			if err != nil {
+				output.err = err
+				return true
+			}
 			if available >= 0 && utf8.RuneCountInString(value) > remaining {
 				return true
 			}
@@ -2606,24 +2626,32 @@ func isMarkdownASCIIPunctuation(character rune) bool {
 		character >= '[' && character <= '`' || character >= '{' && character <= '~'
 }
 
-func serializeRenditionInlineCode(content string, inTable bool) string {
+func serializeRenditionInlineCodeContext(ctx context.Context, content string, inTable bool) (string, error) {
 	content = strings.ReplaceAll(strings.ReplaceAll(content, "\r\n", " "), "\n", " ")
 	if inTable {
 		content = strings.ReplaceAll(content, "|", "\\|")
 	}
-	fence := strings.Repeat("`", maxBacktickRun(content)+1)
+	backticks, err := maxBacktickRunContext(ctx, content)
+	if err != nil {
+		return "", err
+	}
+	fence := strings.Repeat("`", backticks+1)
 	if strings.HasPrefix(content, "`") || strings.HasSuffix(content, "`") {
 		content = " " + content + " "
 	}
-	return fence + content + fence
+	return fence + content + fence, nil
 }
 
-func serializeRenditionCodeBlock(language, content string) string {
-	fence := strings.Repeat("`", max(3, maxBacktickRun(content)+1))
+func serializeRenditionCodeBlockContext(ctx context.Context, language, content string) (string, error) {
+	backticks, err := maxBacktickRunContext(ctx, content)
+	if err != nil {
+		return "", err
+	}
+	fence := strings.Repeat("`", max(3, backticks+1))
 	if !strings.HasSuffix(content, "\n") {
 		content += "\n"
 	}
-	return fence + language + "\n" + content + fence
+	return fence + language + "\n" + content + fence, nil
 }
 
 func serializeRenditionTable(ctx context.Context, rows [][][]renditionInline) (string, error) {
@@ -2935,10 +2963,17 @@ func (w *canonicalHTMLWriter) writeText(value string) {
 	}
 }
 
-func maxBacktickRun(value string) int {
+func maxBacktickRunContext(ctx context.Context, value string) (int, error) {
 	maximum := 0
 	current := 0
+	runes := 0
 	for _, character := range value {
+		if runes&1023 == 0 {
+			if err := ctx.Err(); err != nil {
+				return 0, err
+			}
+		}
+		runes++
 		if character == '`' {
 			current++
 			maximum = max(maximum, current)
@@ -2946,7 +2981,7 @@ func maxBacktickRun(value string) int {
 			current = 0
 		}
 	}
-	return maximum
+	return maximum, nil
 }
 
 func (w *canonicalHTMLWriter) flushPendingSpace() {

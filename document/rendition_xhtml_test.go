@@ -128,34 +128,43 @@ func TestRenditionFinalizationContextCancellation(t *testing.T) {
 	require.ErrorIs(t, err, context.Canceled)
 
 	largeText := []renditionBlock{{inlines: []renditionInline{{kind: renditionText, text: strings.Repeat("x", 1<<20)}}}}
-	ctx = &cancelAfterXHTMLReadContext{cancelAt: 3}
+	ctx = &cancelAfterXHTMLReadContext{cancelAt: 4}
 	_, err = renditionXHTMLSerializationFits(ctx, largeText, 2<<20)
 	require.ErrorIs(t, err, context.Canceled)
 
 	largeUnicode := []renditionBlock{{inlines: []renditionInline{{kind: renditionText, text: "x" + strings.Repeat("é", 1<<19)}}}}
-	ctx = &cancelAfterXHTMLReadContext{cancelAt: 3}
+	ctx = &cancelAfterXHTMLReadContext{cancelAt: 4}
 	_, err = renditionXHTMLSerializationFits(ctx, largeUnicode, 2<<20)
 	require.ErrorIs(t, err, context.Canceled)
 
-	ctx = &cancelAfterXHTMLReadContext{cancelAt: 3}
+	ctx = &cancelAfterXHTMLReadContext{cancelAt: 4}
 	_, _, err = serializeRenditionBlocksContext(ctx, largeText, 2<<20)
+	require.ErrorIs(t, err, context.Canceled)
+
+	largeCode := []renditionBlock{{inlines: []renditionInline{{kind: renditionInlineCode, text: strings.Repeat("`", 1<<20)}}}}
+	ctx = &cancelAfterXHTMLReadContext{cancelAt: 4}
+	_, err = renditionXHTMLSerializationFits(ctx, largeCode, 2<<20)
+	require.ErrorIs(t, err, context.Canceled)
+
+	ctx = &cancelAfterXHTMLReadContext{cancelAt: 4}
+	_, _, err = serializeRenditionBlocksContext(ctx, largeCode, 2<<20)
 	require.ErrorIs(t, err, context.Canceled)
 
 	ctx = &cancelAfterXHTMLReadContext{cancelAt: 3}
 	_, _, err = serializeRenditionBlocksContext(ctx, tableBlocks, 1<<20)
 	require.ErrorIs(t, err, context.Canceled)
 
-	ordered := renditionList{ordered: true, start: "999999999", tight: true, items: []renditionListItem{
+	ordered := renditionList{ordered: true, start: "999999998", tight: true, items: []renditionListItem{
 		{present: true, blocks: []renditionBlock{{kind: renditionParagraph, inlines: []renditionInline{{kind: renditionText, text: "x"}}}}},
 		{present: true, blocks: []renditionBlock{{kind: renditionParagraph, inlines: []renditionInline{{kind: renditionText, text: "x"}}}}},
 		{present: true, blocks: []renditionBlock{{kind: renditionParagraph, inlines: []renditionInline{{kind: renditionText, text: "x"}}}}},
 	}}
-	ctx = &cancelAfterXHTMLReadContext{cancelAt: 7}
+	ctx = &cancelAfterXHTMLReadContext{cancelAt: 8}
 	output := renditionBuffer{ctx: ctx}
 	result := appendRenditionList(&output, ordered, 100, 0, false)
 	require.True(t, result.truncated)
 	require.ErrorIs(t, output.err, context.Canceled)
-	require.Contains(t, output.String(), "999999999.")
+	require.Contains(t, output.String(), "999999998.")
 }
 
 type trackingReader struct {
