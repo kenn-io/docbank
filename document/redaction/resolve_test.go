@@ -705,6 +705,23 @@ func TestExplicitPaddingIsAppliedOnceBeforeClosure(t *testing.T) {
 	}
 }
 
+func TestKeepSelectedRejectsClosurePaddingIntoRetainedAtom(t *testing.T) {
+	m := redactiontest.Map("ABC")
+	m.Pages[0].Width, m.Pages[0].Height = 1000, 1000
+	for index, bounds := range [][2]int64{{100, 200}, {233, 333}, {367, 467}} {
+		m.Atoms[index].Boxes[0] = redaction.Box{Page: 1, FrameSHA256: m.Pages[0].FrameSHA256,
+			X0: bounds[0], X1: bounds[1], Y0: 300, Y1: 400}
+	}
+	m = sealMap(t, m)
+	// A's padding selects B. B's padding reaches C, so keeping C must fail
+	// instead of silently shortening the padding around the removed B.
+	_, err := redaction.Resolve(m, "keep_selected", []redaction.Decision{
+		decision(1, "keep", redaction.Selector{Kind: "text", MapSHA256: m.SHA256, Span: &redaction.Span{Start: 2, End: 3}}),
+		decision(2, "redact", redaction.Selector{Kind: "text", MapSHA256: m.SHA256, Span: &redaction.Span{Start: 0, End: 1}}),
+	}, testRecipe())
+	requireProblem(t, err, "decision_conflict")
+}
+
 func decision(index int, action string, selector redaction.Selector) redaction.Decision {
 	return redaction.Decision{
 		ID:       fmt.Sprintf("%08x-0000-4000-8000-%012x", index, index),

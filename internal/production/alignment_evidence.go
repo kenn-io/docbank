@@ -9,6 +9,7 @@ import (
 	"io"
 	"math/big"
 	"sort"
+	"strings"
 	"unicode"
 	"unicode/utf8"
 
@@ -85,6 +86,7 @@ func alignEvidence(frames []document.PageFrameV1, evidence document.NormalizedEv
 		}
 	}
 	result := mapIdentity("aligned-text/v1", pdfSHA, evidenceSHA, "", pages)
+	var text strings.Builder
 	pageIndex := 0
 	result.Pages[0].Span.Start = 0
 	for unitIndex, unit := range evidence.Units {
@@ -93,13 +95,13 @@ func alignEvidence(frames []document.PageFrameV1, evidence document.NormalizedEv
 			return redaction.TextMap{}, mappingError("evidence page order moves backward")
 		}
 		for pageIndex < unitPage {
-			result.Pages[pageIndex].Span.End = int64(len(result.Text))
+			result.Pages[pageIndex].Span.End = int64(text.Len())
 			pageIndex++
-			result.Pages[pageIndex].Span.Start = int64(len(result.Text))
+			result.Pages[pageIndex].Span.Start = int64(text.Len())
 		}
-		start := int64(len(result.Text))
-		result.Text += unit.Text
-		end := int64(len(result.Text))
+		start := int64(text.Len())
+		text.WriteString(unit.Text)
+		end := int64(text.Len())
 		result.Pages[pageIndex].Span.End = end
 		boundaries := runeByteBoundaries(unit.Text)
 		coverage := make([]uint8, len(boundaries)-1)
@@ -132,10 +134,11 @@ func alignEvidence(frames []document.PageFrameV1, evidence document.NormalizedEv
 		}
 	}
 	for pageIndex < len(result.Pages)-1 {
-		result.Pages[pageIndex].Span.End = int64(len(result.Text))
+		result.Pages[pageIndex].Span.End = int64(text.Len())
 		pageIndex++
-		result.Pages[pageIndex].Span = redaction.Span{Start: int64(len(result.Text)), End: int64(len(result.Text))}
+		result.Pages[pageIndex].Span = redaction.Span{Start: int64(text.Len()), End: int64(text.Len())}
 	}
+	result.Text = text.String()
 	return result, nil
 }
 

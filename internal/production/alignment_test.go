@@ -41,6 +41,63 @@ func TestAlignRepeatedNativeTextKeepsDistinctPositions(t *testing.T) {
 	require.GreaterOrEqual(t, len(m.Atoms), 8)
 	require.NotEqual(t, m.Atoms[0].Boxes[0], m.Atoms[5].Boxes[0])
 	require.NoError(t, redaction.ValidateMap(m))
+	plan, err := redaction.Resolve(m, "redact_selected", nil, pdfproduction.QualifiedRecipe())
+	require.NoError(t, err)
+	text, err := redaction.Text(plan)
+	require.NoError(t, err)
+	require.Equal(t, "same same\f", string(text))
+}
+
+func TestAlignNativeParagraphGeometryAndWhitespace(t *testing.T) {
+	for _, example := range []struct {
+		name, text string
+		box        document.EvidenceBoxV1
+		wantError  bool
+	}{
+		{"multiword", "alpha beta", document.EvidenceBoxV1{Right: 1000000, Bottom: 1000000}, false},
+		{"empty region", "alpha", document.EvidenceBoxV1{Left: 800000, Top: 800000, Right: 900000, Bottom: 900000}, true},
+	} {
+		t.Run(example.name, func(t *testing.T) {
+			pdf := redactiontest.PDF(t, []string{example.text}, "paragraph alignment")
+			source := document.PageSource{VersionID: "00000000-0000-4000-8000-000000000001", SHA256: sum(pdf), Size: int64(len(pdf))}
+			frame, err := document.NewPDFPageFrame(source, 1, [4]float64{0, 0, 612, 792}, [4]float64{0, 0, 612, 792}, 0)
+			require.NoError(t, err)
+			policy, err := document.NewEvidencePolicy(1 << 20)
+			require.NoError(t, err)
+			evidence, err := document.NormalizeEvidenceV1(document.SourceEvidenceV1{
+				ContractVersion: document.SourceEvidenceContractV1, Completeness: document.EvidenceComplete,
+				Family: "pdf", UnitKind: document.EvidenceUnitPage,
+				Units: []document.SourceEvidenceUnitV1{{
+					Text: example.text,
+					Locator: document.SourceEvidenceLocatorV1{Kind: document.EvidenceLocatorPage,
+						IndexOrigin: document.EvidenceIndexOriginOne, Start: 1, End: 1},
+					Regions: []document.SourceEvidenceRegionV1{{
+						ProviderID: "paragraph", Kind: document.EvidenceRegionParagraph,
+						TextRange: document.EvidenceTextRangeV1{End: len(example.text)},
+						Geometry: &document.SourceEvidenceGeometryV1{
+							Boxes:            []document.EvidenceBoxV1{example.box},
+							CoordinateOrigin: document.EvidenceCoordinateTopLeft,
+							CoordinateSpace:  document.EvidenceCoordinatePage,
+							Width:            1000000, Height: 1000000, Scale: 1000000, Unit: document.EvidenceGeometryNormalized,
+						},
+					}},
+				}},
+			}, policy)
+			require.NoError(t, err)
+			m, err := Align(t.Context(), AlignmentInput{
+				PDF:   pdfproduction.Source{Reader: bytes.NewReader(pdf), Size: int64(len(pdf)), SHA256: sum(pdf)},
+				Pages: []document.PageFrameV1{frame}, Evidence: evidence, EvidenceSHA256: evidence.Checksum,
+			})
+			if example.wantError {
+				var problem *Problem
+				require.ErrorAs(t, err, &problem)
+				require.Equal(t, "mapping_incomplete", problem.Code)
+				return
+			}
+			require.NoError(t, err)
+			require.Equal(t, []redaction.Span{{Start: 0, End: 10}}, m.Units[0].Spans)
+		})
+	}
 }
 
 func TestSemanticUnitsUseRegionPositionForSecondRepeatedOccurrence(t *testing.T) {
@@ -554,6 +611,23 @@ func TestRenderTextRenditionDeterministicUnicodeAndSemanticUnits(t *testing.T) {
 	require.Len(t, firstMap.Units, 1)
 	require.Greater(t, len(firstMap.Units[0].Boxes), 1)
 	require.NoError(t, redaction.ValidateMap(firstMap))
+}
+
+func TestRenderTextRenditionPreservesWhitespaceOffsets(t *testing.T) {
+	for _, text := range []string{"a\tb", "a\r\nb", "a\rb"} {
+		t.Run(fmt.Sprintf("%q", text), func(t *testing.T) {
+			_, m, err := RenderTextRendition(t.Context(), text, nil)
+			require.NoError(t, err)
+			require.Equal(t, text, m.Text)
+			require.Len(t, m.Atoms, 2)
+			require.Equal(t, redaction.Span{Start: int64(len(text) - 1), End: int64(len(text))}, m.Atoms[1].Span)
+			if strings.ContainsRune(text, '\r') {
+				require.Greater(t, m.Atoms[1].Boxes[0].Y0, m.Atoms[0].Boxes[0].Y0)
+			} else {
+				require.Greater(t, m.Atoms[1].Boxes[0].X0, m.Atoms[0].Boxes[0].X1)
+			}
+		})
+	}
 }
 
 func TestRenderTranscriptKeepsSpeakerTimestampTurnsAcrossPagesAndUnicodeClusters(t *testing.T) {

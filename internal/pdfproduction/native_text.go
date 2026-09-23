@@ -68,34 +68,26 @@ func InspectNativeText(ctx context.Context, source Source, frames []document.Pag
 			return nil, errors.New("native text pages are not contiguous")
 		}
 	}
-	var totalCharacters int
-	err = e.withInstance(ctx, func(instance pdfium.Pdfium) (operationErr error) {
-		doc, err := instance.OpenDocument(&requests.OpenDocument{FileReader: io.NewSectionReader(staged, 0, source.Size), FileReaderSize: source.Size})
-		if err != nil {
-			return fmt.Errorf("open native PDF: %w", err)
-		}
-		defer func() {
-			_, closeErr := instance.FPDF_CloseDocument(&requests.FPDF_CloseDocument{Document: doc.Document})
-			operationErr = errors.Join(operationErr, closeErr)
-		}()
-		count, err := instance.FPDF_GetPageCount(&requests.FPDF_GetPageCount{Document: doc.Document})
-		if err != nil || count.PageCount != len(frames) {
-			return errors.New("native PDF page inventory mismatch")
-		}
-		for index, frame := range frames {
-			if err := ctx.Err(); err != nil {
-				return err
-			}
-			result[index], err = inspectLoadedNativePage(ctx, instance, doc.Document, index, frame, maxTextBytes-totalCharacters)
+	for index, frame := range frames {
+		err = e.withInstanceContext(ctx, func(pageCtx context.Context, instance pdfium.Pdfium) (operationErr error) {
+			doc, err := instance.OpenDocument(&requests.OpenDocument{FileReader: io.NewSectionReader(staged, 0, source.Size), FileReaderSize: source.Size})
 			if err != nil {
-				return fmt.Errorf("inspect native PDF page %d: %w", frame.Page, err)
+				return fmt.Errorf("open native PDF: %w", err)
 			}
-			totalCharacters += len(result[index].Glyphs)
+			defer func() {
+				_, closeErr := instance.FPDF_CloseDocument(&requests.FPDF_CloseDocument{Document: doc.Document})
+				operationErr = errors.Join(operationErr, closeErr)
+			}()
+			count, err := instance.FPDF_GetPageCount(&requests.FPDF_GetPageCount{Document: doc.Document})
+			if err != nil || count.PageCount != len(frames) {
+				return errors.New("native PDF page inventory mismatch")
+			}
+			result[index], err = inspectLoadedNativePage(pageCtx, instance, doc.Document, index, frame, maxTextBytes)
+			return err
+		})
+		if err != nil {
+			return nil, fmt.Errorf("inspect native PDF page %d: %w", frame.Page, err)
 		}
-		return nil
-	})
-	if err != nil {
-		return nil, err
 	}
 	return result, nil
 }

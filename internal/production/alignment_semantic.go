@@ -106,6 +106,9 @@ func semanticEvidenceSpans(m redaction.TextMap, frames []document.PageFrameV1, e
 		}
 	}
 	if len(selected) == 0 {
+		if len(regions) != 0 {
+			return nil, mappingError("explicit semantic region selects no mapped text")
+		}
 		unitsOnPage := 0
 		for _, candidate := range evidence.Units {
 			if candidate.Locator.Kind == document.EvidenceLocatorPage && candidate.Locator.Start == int64(pageNumber) {
@@ -125,7 +128,8 @@ func semanticEvidenceSpans(m redaction.TextMap, frames []document.PageFrameV1, e
 	})
 	merged := selected[:0]
 	for _, span := range selected {
-		if len(merged) != 0 && span.Start <= merged[len(merged)-1].End {
+		if len(merged) != 0 && (span.Start <= merged[len(merged)-1].End ||
+			allInvisibleWhitespace(m.Text[merged[len(merged)-1].End:span.Start])) {
 			merged[len(merged)-1].End = max(merged[len(merged)-1].End, span.End)
 			continue
 		}

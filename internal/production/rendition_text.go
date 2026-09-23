@@ -12,6 +12,7 @@ import (
 	"image/png"
 	"io"
 	"strings"
+	"unicode"
 	"unicode/utf8"
 
 	"go.kenn.io/docbank/document/redaction"
@@ -187,11 +188,20 @@ func layoutText(ctx context.Context, text string, face font.Face, limits textRen
 			return nil, nil, err
 		}
 		next := offset + utf8.RuneLen(r)
-		if r == '\n' {
+		if r == '\n' && offset > 0 && text[offset-1] == '\r' {
+			continue // CRLF was consumed as one line break below.
+		}
+		if r == '\n' || r == '\r' {
+			if r == '\r' && next < len(text) && text[next] == '\n' {
+				next++
+			}
 			if !breakLine(offset, next) {
 				return nil, nil, &Problem{Code: "rendition_limit_exceeded"}
 			}
 			continue
+		}
+		if unicode.IsSpace(r) {
+			r = ' '
 		}
 		advance, ok := face.GlyphAdvance(r)
 		if !ok {
@@ -230,7 +240,11 @@ func textPageArtifact(ctx context.Context, page redaction.Page, rendered rendere
 			return pdfproduction.PageArtifact{}, err
 		}
 		drawer := font.Drawer{Dst: img, Src: image.NewUniform(color.Black), Face: face, Dot: fixed.P(glyph.x0, glyph.y1-12)}
-		drawer.DrawString(text[glyph.span.Start:glyph.span.End])
+		value := text[glyph.span.Start:glyph.span.End]
+		if allInvisibleWhitespace(value) {
+			value = " "
+		}
+		drawer.DrawString(value)
 	}
 	var pngBytes bytes.Buffer
 	if err := png.Encode(&pngBytes, img); err != nil {

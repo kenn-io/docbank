@@ -374,7 +374,7 @@ func resolveOne(m TextMap, decision Decision, recipe Recipe, work *resolveWorkBu
 		pixels = append(pixels, pixel)
 	}
 	result.boxes = pixels
-	closedSpans, closedBoxes, err := atomClosure(m, result.spans, result.boxes, recipe, work)
+	closedSpans, closedBoxes, err := atomClosure(m, result.spans, result.boxes, recipe, decision.Action == "redact", work)
 	if err != nil {
 		return result, err
 	}
@@ -552,7 +552,7 @@ func expansionProblem(m TextMap, decision Decision, spans []Span, recipe Recipe,
 	return problem, nil
 }
 
-func atomClosure(m TextMap, spans []Span, boxes []pixelRect, recipe Recipe, work *resolveWorkBudget) ([]Span, []pixelRect, error) {
+func atomClosure(m TextMap, spans []Span, boxes []pixelRect, recipe Recipe, redact bool, work *resolveWorkBudget) ([]Span, []pixelRect, error) {
 	included := make([]bool, len(m.Atoms))
 	for changed := true; changed; {
 		changed = false
@@ -601,6 +601,9 @@ func atomClosure(m TextMap, spans []Span, boxes []pixelRect, recipe Recipe, work
 				pixel, err := boxToPixel(page, box, recipe.DPI)
 				if err != nil {
 					return nil, nil, err
+				}
+				if redact {
+					pixel = padPixel(pixel, page, recipe)
 				}
 				boxes = append(boxes, pixel)
 			}

@@ -1,6 +1,7 @@
 package production
 
 import (
+	"strings"
 	"unicode"
 
 	"go.kenn.io/docbank/document"
@@ -13,11 +14,12 @@ func alignNative(frames []document.PageFrameV1, inspected []pdfproduction.Native
 		return redaction.TextMap{}, mappingError("native page inspection is incomplete")
 	}
 	result := mapIdentity("aligned-text/v1", pdfSHA, evidenceSHA, "", pages)
+	var text strings.Builder
 	for index, observed := range inspected {
 		if observed.Number != index+1 {
 			return redaction.TextMap{}, mappingError("native page order differs")
 		}
-		start := int64(len(result.Text))
+		start := int64(text.Len())
 		for _, bounds := range observed.NonTextBounds {
 			box, ok, err := pdfproduction.PhysicalBox(frames[index], bounds, pages[index]) //nolint:gosec // all slices have equal length above.
 			if err != nil {
@@ -32,28 +34,27 @@ func alignNative(frames []document.PageFrameV1, inspected []pdfproduction.Native
 			if err != nil {
 				return redaction.TextMap{}, err
 			}
+			// Whitespace carries reading order but no ink requiring a mask.
+			if glyph.Text != "" && allInvisibleWhitespace(glyph.Text) {
+				text.WriteString(glyph.Text)
+				continue
+			}
 			if glyph.GapReason != "" {
 				if ok {
-					result.Gaps = append(result.Gaps, redaction.Gap{Box: box, Anchor: int64(len(result.Text))})
-				}
-				if glyph.Text != "" && allInvisibleWhitespace(glyph.Text) {
-					result.Text += glyph.Text
+					result.Gaps = append(result.Gaps, redaction.Gap{Box: box, Anchor: int64(text.Len())})
 				}
 				continue
 			}
 			if glyph.Text == "" || !ok {
 				continue
 			}
-			if allInvisibleWhitespace(glyph.Text) {
-				result.Text += glyph.Text
-				continue
-			}
-			span := redaction.Span{Start: int64(len(result.Text)), End: int64(len(result.Text) + len(glyph.Text))}
-			result.Text += glyph.Text
+			span := redaction.Span{Start: int64(text.Len()), End: int64(text.Len() + len(glyph.Text))}
+			text.WriteString(glyph.Text)
 			result.Atoms = append(result.Atoms, redaction.Atom{Span: span, Boxes: []redaction.Box{box}})
 		}
-		result.Pages[index].Span = redaction.Span{Start: start, End: int64(len(result.Text))}
+		result.Pages[index].Span = redaction.Span{Start: start, End: int64(text.Len())}
 	}
+	result.Text = text.String()
 	if len(result.Atoms) == 0 && len(result.Gaps) == 0 {
 		return redaction.TextMap{}, mappingError("PDF has no accepted visible native text")
 	}

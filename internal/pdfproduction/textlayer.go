@@ -1,6 +1,7 @@
 package pdfproduction
 
 import (
+	"bytes"
 	"context"
 	"encoding/json/v2"
 	"errors"
@@ -184,28 +185,48 @@ func validateBoundPixels(img image.Image, a PageArtifact, r redaction.Recipe) er
 	if err != nil {
 		return err
 	}
-	expected := image.NewNRGBA(image.Rect(0, 0, w, h))
-	draw.Draw(expected, expected.Bounds(), image.NewUniform(color.Black), image.Point{}, draw.Src)
 	_, sourceH, err := dimensions(a.Layout.Source, r)
 	if err != nil {
 		return err
 	}
 	strip := image.Rect(0, sourceH, w, h)
-	draw.Draw(expected, strip, image.NewUniform(color.White), image.Point{}, draw.Src)
-	if err := paintEndorsements(expected, a.Layout, a.Endorsements, r); err != nil {
+	masks, err := PlanPixels(a.Layout.Source, a.masks, r)
+	if err != nil {
 		return err
 	}
-	masks, err := PlanPixels(a.Layout.Source, a.masks, r)
+	pixels, stride, err := pixelBytes(img)
 	if err != nil {
 		return err
 	}
 	masks = append(masks, strip)
 	for _, rect := range masks {
+		if rect.Empty() {
+			continue
+		}
+		// Only mask and footer pixels need reconstruction. Keep their original
+		// coordinates so endorsement painting clips to this rectangle.
+		expected := image.NewNRGBA(rect)
+		background := color.Black
+		if rect == strip {
+			background = color.White
+		}
+		draw.Draw(expected, rect, image.NewUniform(background), image.Point{}, draw.Src)
+		var endorsements []redaction.Endorsement
+		for _, endorsement := range a.Endorsements {
+			if endorsementRectangle(endorsement.Box, r.DPI).Overlaps(rect) {
+				endorsements = append(endorsements, endorsement)
+			}
+		}
+		if len(endorsements) != 0 {
+			if err := paintEndorsements(expected, a.Layout, endorsements, r); err != nil {
+				return err
+			}
+		}
 		for y := rect.Min.Y; y < rect.Max.Y; y++ {
-			for x := rect.Min.X; x < rect.Max.X; x++ {
-				if color.NRGBAModel.Convert(img.At(x, y)) != expected.NRGBAAt(x, y) {
-					return errors.New("final page pixels differ from resolved masks or endorsements")
-				}
+			start := y*stride + rect.Min.X*4
+			want := (y - rect.Min.Y) * expected.Stride
+			if !bytes.Equal(pixels[start:start+rect.Dx()*4], expected.Pix[want:want+rect.Dx()*4]) {
+				return errors.New("final page pixels differ from resolved masks or endorsements")
 			}
 		}
 	}

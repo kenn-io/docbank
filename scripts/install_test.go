@@ -146,6 +146,8 @@ func TestReleaseArchiveMetadataIsUnambiguousAndLocaleStable(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// Git may check this text file out with CRLF on Windows.
+	notice = bytes.ReplaceAll(notice, []byte("\r\n"), []byte("\n"))
 	ordered := [][]byte{
 		[]byte("go-pdfium v1.20.0\n\nMIT License\n\nCopyright (c) 2022 Klippa App BV"),
 		[]byte("wazero v1.12.0\n\nwazero\nCopyright 2020-2023 wazero authors"),
