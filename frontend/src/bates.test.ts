@@ -1,11 +1,10 @@
-import { createHash } from "node:crypto";
 import { afterEach, expect, it, vi } from "vitest";
 import {
   batesRecipe,
   batesRecipeSHA256,
   listBatesSources,
+  downloadBatesExport,
   listBatesExports,
-  prepareBatesDownload,
   readBatesExport,
   startBatesExport,
 } from "./bates.js";
@@ -14,32 +13,17 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-it("hashes the complete qualified recipe as canonical JSON", async () => {
+it("hashes a recipe to the same digest as the Go stamp engine", async () => {
   const recipe = batesRecipe({
-    namespace_id: "11111111-1111-4111-8111-111111111111",
-    prefix: "ACME",
+    namespace_id: "ns-synthetic",
+    prefix: "OUR",
     suffix: "",
     padding: 6,
     created_at: "2026-09-21T00:00:00Z",
   }, 41, "bottom-right", 24);
-  const canonicalize = (value: unknown): string => {
-    if (Array.isArray(value)) return `[${value.map(canonicalize).join(",")}]`;
-    if (value !== null && typeof value === "object") {
-      return `{${Object.entries(value).sort(([a], [b]) => a.localeCompare(b)).map(([key, item]) => `${JSON.stringify(key)}:${canonicalize(item)}`).join(",")}}`;
-    }
-    return JSON.stringify(value);
-  };
-  const canonical = canonicalize(recipe);
 
-  expect(await batesRecipeSHA256(recipe)).toBe(
-    createHash("sha256").update(canonical).digest("hex"),
-  );
-  expect(recipe.engine_identity).toEqual({
-    name: "pdfcpu",
-    version: "v0.15.0",
-    api: "AddWatermarksMap",
-    options: ["onTop=true", "update=restamp"],
-  });
+  // Golden digest from internal/pdfstamp/stamp_test.go validRecipe.
+  expect(await batesRecipeSHA256(recipe)).toBe("f3c4cebd1ea16ad54b0784b96ee73f3f2bd8c644288a9ba1a1d67d8dbd720787");
 });
 
 it("keeps only sealed package snapshots with pages", async () => {
@@ -63,6 +47,28 @@ it("keeps only sealed package snapshots with pages", async () => {
     "/api/v1/packages?limit=250",
     expect.objectContaining({ method: "GET" }),
   );
+});
+
+it("pages through every package and keeps oversized sources for the drawer to explain", async () => {
+  const pageOne = Array.from({ length: 250 }, (_, index) => ({
+    package_id: `p${index}`, package_name: `Set ${index}`, direction: "received", state: "complete",
+    snapshot_id: "11111111-1111-4111-8111-111111111111", page_count: 1,
+  }));
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+    const url = String(input);
+    if (url === "/api/v1/packages?limit=250") return new Response(JSON.stringify({ items: pageOne, limit: 250, next_after: "p249" }), { headers: { "Content-Type": "application/json" } });
+    if (url === "/api/v1/packages?limit=250&after=p249") {
+      return new Response(JSON.stringify({ items: [
+        { package_id: "big", package_name: "Oversized", direction: "produced", state: "sealed", snapshot_id: "22222222-2222-4222-8222-222222222222", page_count: 251 },
+      ], limit: 250 }), { headers: { "Content-Type": "application/json" } });
+    }
+    throw new Error(`unexpected request ${url}`);
+  });
+
+  const sources = await listBatesSources("session");
+
+  expect(sources).toHaveLength(251);
+  expect(sources.at(-1)).toEqual({ package_id: "big", package_name: "Oversized", snapshot_id: "22222222-2222-4222-8222-222222222222", page_count: 251 });
 });
 
 it("starts, reads, lists, and prepares a verified publication", async () => {
@@ -105,5 +111,10 @@ it("starts, reads, lists, and prepares a verified publication", async () => {
   await expect(startBatesExport("session", allocation, recipe)).resolves.toMatchObject({ state: "verified" });
   await expect(readBatesExport("session", allocation.allocation_id)).resolves.toMatchObject({ allocation_id: allocation.allocation_id });
   await expect(listBatesExports("session")).resolves.toMatchObject({ total: 1, items: [{ artifact_id: published.artifact_id }] });
-  await expect(prepareBatesDownload("session", published as never)).resolves.toMatchObject({ name: "CASE000001.pdf" });
+  const clicked: { href: string; download: string }[] = [];
+  vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(function (this: HTMLAnchorElement) {
+    clicked.push({ href: this.getAttribute("href") ?? "", download: this.download });
+  });
+  await downloadBatesExport("session", published);
+  expect(clicked).toEqual([{ href: "/api/daemon/web-download/file?ticket=one-use", download: "CASE000001.pdf" }]);
 });

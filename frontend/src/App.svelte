@@ -3220,7 +3220,9 @@
       />
     {/if}
     {#if batesOpen}
-      <BatesExportDrawer session={webSession} onclose={() => batesOpen = false} onauthfailure={handleFailure} />
+      {#key webSession}
+        <BatesExportDrawer session={webSession} onclose={() => batesOpen = false} onauthfailure={handleFailure} />
+      {/key}
     {/if}
     {#key webSession}
       <ExportDrawer session={webSession} open={exportOpen} input={exportInput} onclose={() => exportOpen = false} onauthfailure={handleFailure} onactivechange={active => exportHasJob = active} />

@@ -1,5 +1,15 @@
-import { sessionJSON } from "./api-transport.js";
+import { offerPreparedDownload } from "./download.js";
 import * as generated from "./generated/docbank.js";
+import type {
+  BatesAllocation,
+  BatesDownloadTicket,
+  BatesExport,
+  BatesExportPage,
+  BatesNamespace,
+  BatesPageLabel,
+  BatesPlan,
+  Recipe as BatesRecipe,
+} from "./generated/docbank.js";
 
 export interface BatesSource {
   package_id: string;
@@ -8,122 +18,37 @@ export interface BatesSource {
   page_count: number;
 }
 
-export interface BatesNamespace {
-  namespace_id: string;
-  prefix: string;
-  suffix: string;
-  padding: number;
-  created_at: string;
-}
-
-export interface BatesPageLabel {
-  ordinal: number;
-  occurrence_id: string;
-  source_page: number;
-  output_page: number;
-  label: string;
-}
-
-export interface BatesPlan {
-  namespace: BatesNamespace;
-  start_sequence: number;
-  end_sequence: number;
-  labels: BatesPageLabel[];
-  stamped_nothing: boolean;
-}
-
-export interface BatesAllocation {
-  allocation_id: string;
-  namespace_id: string;
-  snapshot_id: string;
-  recipe_sha256: string;
-  state: "reserved" | "committed" | "abandoned";
-  start_sequence: number;
-  end_sequence: number;
-  labels: BatesPageLabel[];
-  created_at: string;
-  committed_at?: string;
-}
-
-export interface BatesEngineIdentity {
-  name: "pdfcpu";
-  version: "v0.15.0";
-  api: "AddWatermarksMap";
-  options: ["onTop=true", "update=restamp"];
-}
-
-export interface BatesRecipe {
-  contract: "bates-stamp/v1";
-  namespace_id: string;
-  prefix: string;
-  suffix: string;
-  padding: number;
-  start_at: number;
-  position: BatesPosition;
-  margin_points: number;
-  font_name: "Helvetica";
-  font_size_points: 9;
-  color: "#000000";
-  opacity: 1;
-  units: "point";
-  rotation_policy: "follow_page";
-  restamp: false;
-  engine_identity: BatesEngineIdentity;
-}
+export type {
+  BatesAllocation,
+  BatesDownloadTicket,
+  BatesExport,
+  BatesExportPage,
+  BatesNamespace,
+  BatesPageLabel,
+  BatesPlan,
+  BatesRecipe,
+};
 
 export type BatesPosition =
   | "top-left" | "top-center" | "top-right"
   | "middle-left" | "middle-center" | "middle-right"
   | "bottom-left" | "bottom-center" | "bottom-right";
 
-export interface BatesExportPageReceipt {
-  ordinal: number;
-  occurrence_id: string;
-  source_blob_sha256: string;
-  source_page: number;
-  output_page: number;
-  label: string;
-}
-
-export interface BatesExport {
-  artifact_id: string;
-  allocation_id: string;
-  state: "verified";
-  blob_sha256: string;
-  size: number;
-  media_type: "application/pdf";
-  page_count: number;
-  recipe_sha256: string;
-  manifest_sha256: string;
-  created_at: string;
-  pages: BatesExportPageReceipt[];
-}
-
-export interface BatesExportPage {
-  items: BatesExport[];
-  total: number;
-  next_after?: string;
-}
-
-export interface PreparedBatesDownload {
-  url: string;
-  name: string;
-  allocation_id: string;
-  blob_sha256: string;
-  size: number;
-}
-
-interface BatesPlanRequest {
+/** A reservation the operator reviewed but has not yet published. */
+export interface PendingBatesReservation {
   operation_id: string;
-  namespace_id: string;
   snapshot_id: string;
-  recipe_sha256: string;
-  start_at: number;
+  recipe: BatesRecipe;
+  plan: BatesPlan;
+  allocation_id?: string;
 }
+
+type BatesPlanRequest = Parameters<typeof generated.reserveBatesRange>[0];
 
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 const hash = /^[0-9a-f]{64}$/;
-const maxLabels = 250;
+export const maxBatesPages = 250;
+const pendingKey = "docbank.bates.pendingReservation";
 
 function valid(condition: unknown, message = "The Bates response did not match the requested export."): asserts condition {
   if (!condition) throw new Error(message);
@@ -151,7 +76,7 @@ function readNamespace(value: unknown): BatesNamespace {
 }
 
 function readLabels(value: unknown): BatesPageLabel[] {
-  valid(Array.isArray(value) && value.length > 0 && value.length <= maxLabels);
+  valid(Array.isArray(value) && value.length > 0 && value.length <= maxBatesPages);
   return value.map((raw, index) => {
     const item = record(raw);
     valid(item.ordinal === index + 1 && typeof item.occurrence_id === "string" && item.occurrence_id.length > 0);
@@ -187,28 +112,37 @@ function readExport(value: unknown): BatesExport {
   valid(typeof item.blob_sha256 === "string" && hash.test(item.blob_sha256));
   valid(typeof item.recipe_sha256 === "string" && hash.test(item.recipe_sha256));
   valid(typeof item.manifest_sha256 === "string" && hash.test(item.manifest_sha256));
-  valid(Array.isArray(item.pages) && item.pages.length === item.page_count && item.pages.length <= maxLabels);
+  valid(Array.isArray(item.pages) && item.pages.length === item.page_count && item.pages.length <= maxBatesPages);
   const pages = item.pages.map((raw, index) => {
     const page = record(raw);
     valid(page.ordinal === index + 1 && typeof page.occurrence_id === "string" && page.occurrence_id.length > 0);
     valid(typeof page.source_blob_sha256 === "string" && hash.test(page.source_blob_sha256));
     valid(safeInteger(page.source_page, 1) && safeInteger(page.output_page, 1) && typeof page.label === "string" && page.label.length > 0);
-    return page as unknown as BatesExportPageReceipt;
+    return page as unknown as BatesExport["pages"][number];
   });
   return { ...item, pages } as unknown as BatesExport;
 }
 
 export async function listBatesSources(session: string, signal?: AbortSignal): Promise<BatesSource[]> {
-  const page = await generated.listPackages({ limit: 250 }, { session, signal });
-  return page.items.flatMap((item) => ((item.direction === "received" && ["complete", "partial"].includes(item.state)) ||
-    (item.direction === "produced" && item.state === "sealed")) &&
-    typeof item.snapshot_id === "string" && uuid.test(item.snapshot_id) && safeInteger(item.page_count, 1)
-    ? [{ package_id: item.package_id, package_name: item.package_name, snapshot_id: item.snapshot_id, page_count: item.page_count }]
-    : []);
+  const sources: BatesSource[] = [];
+  let after: string | undefined;
+  do {
+    const page = await generated.listPackages(after ? { limit: 250, after } : { limit: 250 }, { session, signal });
+    valid(page.next_after === undefined || page.next_after !== after, "The package list did not advance.");
+    for (const item of page.items) {
+      const sealed = (item.direction === "received" && ["complete", "partial"].includes(item.state)) ||
+        (item.direction === "produced" && item.state === "sealed");
+      if (sealed && typeof item.snapshot_id === "string" && uuid.test(item.snapshot_id) && safeInteger(item.page_count, 1)) {
+        sources.push({ package_id: item.package_id, package_name: item.package_name, snapshot_id: item.snapshot_id, page_count: item.page_count });
+      }
+    }
+    after = page.next_after;
+  } while (after);
+  return sources;
 }
 
 export async function listBatesNamespaces(session: string, signal?: AbortSignal): Promise<BatesNamespace[]> {
-  const page = record(await sessionJSON<unknown>("/api/v1/bates/namespaces?limit=250", { session, signal }));
+  const page = record(await generated.listBatesNamespaces({ limit: 250 }, { session, signal }));
   valid(Array.isArray(page.items) && safeInteger(page.total) && page.items.length <= 250 && page.items.length <= page.total);
   return page.items.map(readNamespace);
 }
@@ -216,15 +150,16 @@ export async function listBatesNamespaces(session: string, signal?: AbortSignal)
 export async function createBatesNamespace(session: string, prefix: string, suffix: string, padding: number, signal?: AbortSignal): Promise<BatesNamespace> {
   valid(prefix.length + suffix.length <= 128 && !/[\0\r\n]/.test(prefix + suffix), "Use a short single-line Bates prefix and suffix.");
   valid(safeInteger(padding, 1) && padding <= 10, "Bates padding must be between 1 and 10 digits.");
-  return readNamespace(await sessionJSON("/api/v1/bates/namespaces", {
-    session, signal, method: "POST", headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ prefix, suffix, padding }),
-  }));
+  return readNamespace(await generated.createBatesNamespace({ prefix, suffix, padding }, { session, signal }));
 }
 
 export async function previewBatesRange(session: string, snapshotID: string, namespaceID: string, startAt: number, signal?: AbortSignal): Promise<BatesPlan> {
   const request: BatesPlanRequest = { operation_id: crypto.randomUUID(), namespace_id: namespaceID, snapshot_id: snapshotID, recipe_sha256: "", start_at: startAt };
-  const item = record(await sessionJSON("/api/v1/bates/preview", { session, signal, method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(request) }));
+  return readPlan(await generated.planBatesStamp(request, { session, signal }), namespaceID);
+}
+
+function readPlan(value: unknown, namespaceID: string): BatesPlan {
+  const item = record(value);
   const namespace = readNamespace(item.namespace);
   const labels = readLabels(item.labels);
   valid(namespace.namespace_id === namespaceID && item.stamped_nothing === true);
@@ -233,10 +168,14 @@ export async function previewBatesRange(session: string, snapshotID: string, nam
   return { ...item, namespace, labels } as unknown as BatesPlan;
 }
 
-export async function reserveBatesRange(session: string, snapshotID: string, plan: BatesPlan, recipeSHA256: string, operationID: string, signal?: AbortSignal): Promise<BatesAllocation> {
-  valid(uuid.test(operationID) && hash.test(recipeSHA256));
-  const request: BatesPlanRequest = { operation_id: operationID, namespace_id: plan.namespace.namespace_id, snapshot_id: snapshotID, recipe_sha256: recipeSHA256, start_at: plan.start_sequence };
-  return readAllocation(await sessionJSON("/api/v1/bates/allocations", { session, signal, method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(request) }), request);
+export async function reserveBatesRange(session: string, pending: PendingBatesReservation, signal?: AbortSignal): Promise<BatesAllocation> {
+  const recipeSHA256 = await batesRecipeSHA256(pending.recipe);
+  valid(uuid.test(pending.operation_id));
+  const request: BatesPlanRequest = {
+    operation_id: pending.operation_id, namespace_id: pending.plan.namespace.namespace_id, snapshot_id: pending.snapshot_id,
+    recipe_sha256: recipeSHA256, start_at: pending.plan.start_sequence,
+  };
+  return readAllocation(await generated.reserveBatesRange(request, { session, signal }), request);
 }
 
 export function batesRecipe(namespace: BatesNamespace, startAt: number, position: BatesPosition = "bottom-right", marginPoints = 24): BatesRecipe {
@@ -252,7 +191,10 @@ export function batesRecipe(namespace: BatesNamespace, startAt: number, position
 
 function canonical(value: unknown): string {
   if (Array.isArray(value)) return `[${value.map(canonical).join(",")}]`;
-  if (value !== null && typeof value === "object") return `{${Object.entries(value).sort(([a], [b]) => a.localeCompare(b)).map(([key, item]) => `${JSON.stringify(key)}:${canonical(item)}`).join(",")}}`;
+  if (value !== null && typeof value === "object") {
+    const entries = Object.entries(value).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
+    return `{${entries.map(([key, item]) => `${JSON.stringify(key)}:${canonical(item)}`).join(",")}}`;
+  }
   return JSON.stringify(value);
 }
 
@@ -264,42 +206,71 @@ export async function batesRecipeSHA256(recipe: BatesRecipe): Promise<string> {
 export async function startBatesExport(session: string, allocation: BatesAllocation, recipe: BatesRecipe, signal?: AbortSignal): Promise<BatesExport> {
   valid(recipe.namespace_id === allocation.namespace_id && recipe.start_at === allocation.start_sequence);
   valid(await batesRecipeSHA256(recipe) === allocation.recipe_sha256);
-  const result = readExport(await sessionJSON("/api/v1/bates/exports", { session, signal, method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ allocation_id: allocation.allocation_id, recipe }) }));
+  const result = readExport(await generated.publishBatesExport({ allocation_id: allocation.allocation_id, recipe }, { session, signal }));
   valid(result.allocation_id === allocation.allocation_id && result.recipe_sha256 === allocation.recipe_sha256);
   return result;
 }
 
 export async function readBatesExport(session: string, allocationID: string, signal?: AbortSignal): Promise<BatesExport> {
   valid(uuid.test(allocationID));
-  const result = readExport(await sessionJSON(`/api/v1/bates/exports/${encodeURIComponent(allocationID)}`, { session, signal }));
+  const result = readExport(await generated.readBatesExport(allocationID, { session, signal }));
   valid(result.allocation_id === allocationID);
   return result;
 }
 
 export async function listBatesExports(session: string, signal?: AbortSignal): Promise<BatesExportPage> {
-  const page = record(await sessionJSON("/api/v1/bates/exports?limit=50", { session, signal }));
+  const page = record(await generated.listBatesExports({ limit: 50 }, { session, signal }));
   valid(Array.isArray(page.items) && safeInteger(page.total) && page.items.length <= 50 && page.items.length <= page.total);
   return { ...page, items: page.items.map(readExport) } as unknown as BatesExportPage;
 }
 
-export async function prepareBatesDownload(session: string, value: BatesExport, signal?: AbortSignal): Promise<PreparedBatesDownload> {
+export async function downloadBatesExport(session: string, value: BatesExport, signal?: AbortSignal): Promise<void> {
   valid(value.state === "verified");
-  const item = record(await sessionJSON(`/api/v1/bates/exports/${encodeURIComponent(value.allocation_id)}/download`, {
-    session,
-    signal,
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({}),
-  }));
+  const item: BatesDownloadTicket = await generated.downloadBatesExport(value.allocation_id, {}, { session, signal });
   valid(item.allocation_id === value.allocation_id && item.blob_sha256 === value.blob_sha256 && item.size === value.size);
   valid(typeof item.url === "string" && item.url.startsWith("/api/daemon/web-download/file?ticket=") && typeof item.name === "string" && item.name.endsWith(".pdf"));
-  return item as unknown as PreparedBatesDownload;
+  offerPreparedDownload(item);
 }
 
-export function offerBatesDownload(value: PreparedBatesDownload): void {
-  const link = document.createElement("a");
-  link.href = value.url;
-  link.download = value.name;
-  link.rel = "noopener";
-  link.click();
+/** Returns the reservation this browser tab still owes an export, if any. */
+export function loadPendingBatesReservation(): PendingBatesReservation | null {
+  let raw: string | null;
+  try {
+    raw = sessionStorage.getItem(pendingKey);
+  } catch {
+    return null;
+  }
+  if (raw === null) return null;
+  try {
+    const item = record(JSON.parse(raw));
+    valid(typeof item.operation_id === "string" && uuid.test(item.operation_id));
+    valid(typeof item.snapshot_id === "string" && uuid.test(item.snapshot_id));
+    valid(item.allocation_id === undefined || (typeof item.allocation_id === "string" && uuid.test(item.allocation_id)));
+    const plan = readPlan(item.plan, readNamespace(record(item.plan).namespace).namespace_id);
+    const stored = record(item.recipe);
+    const recipe = batesRecipe(plan.namespace, plan.start_sequence, stored.position as BatesPosition, Number(stored.margin_points));
+    valid(canonical(recipe) === canonical(stored));
+    return { ...item, plan, recipe } as unknown as PendingBatesReservation;
+  } catch {
+    clearPendingBatesReservation();
+    return null;
+  }
+}
+
+/** Remembers a pending reservation for this tab; returns false when the browser refuses storage. */
+export function savePendingBatesReservation(pending: PendingBatesReservation): boolean {
+  try {
+    sessionStorage.setItem(pendingKey, JSON.stringify(pending));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export function clearPendingBatesReservation(): void {
+  try {
+    sessionStorage.removeItem(pendingKey);
+  } catch {
+    // Storage that cannot be read cannot resurrect the reservation either.
+  }
 }
