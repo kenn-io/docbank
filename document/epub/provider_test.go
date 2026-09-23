@@ -381,6 +381,19 @@ func TestAdmitSpineContextCancellation(t *testing.T) {
 	require.Equal(t, ctx2.cancelAt, ctx2.calls)
 }
 
+func TestProviderRejectsSpineEvidenceUnitOverflow(t *testing.T) {
+	emptyEntry := &zip.File{Name: "OPS/empty.xhtml"}
+	entries := make([]*zip.File, maxSpineEvidenceUnits+1)
+	for index := range entries {
+		entries[index] = emptyEntry
+	}
+	require.NoError(t, rejectSpineEvidenceUnitOverflow(len(entries[:maxSpineEvidenceUnits])))
+	err := rejectSpineEvidenceUnitOverflow(len(entries))
+	classified, ok := errors.AsType[*document.RenditionProviderError](err)
+	require.True(t, ok)
+	require.Equal(t, document.RenditionErrorPolicyRejected, classified.Code())
+}
+
 func TestProviderSourceAuthorizationFailures(t *testing.T) {
 	data := epubBytes(t, nil)
 	p, err := New(Profile{int64(len(data)) + 1, 10})

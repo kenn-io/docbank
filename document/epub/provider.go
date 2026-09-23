@@ -19,8 +19,9 @@ const (
 	providerID = "epub.in-process-v1"
 	provider   = providerutil.Provider("epub")
 	// Changes to admission, normalization, budgets, or counting require a new version.
-	policyVersion = "epub/v3:single-reflowable-unencrypted;paths-v1;xhtml-xml-v1;complete-or-reject;input=min(profile,100MiB);work=500MiB;intermediate=min(100MiB,input+inline-and-structural-storage);runes=min(result-bytes,3888*remaining-units);evidence-bounds;LF-NFC;80-codepoints;48-lines;per-occurrence;repeats;linear-no;empty-zero;internal-blanks;terminal-newline-free;exact-limit;virtual-only"
-	maxXHTMLBytes = int64(100 << 20)
+	policyVersion         = "epub/v3:single-reflowable-unencrypted;paths-v1;xhtml-xml-v1;complete-or-reject;input=min(profile,100MiB);work=500MiB;intermediate=min(100MiB,input+inline-and-structural-storage);runes=min(result-bytes,3888*remaining-units);evidence-bounds;LF-NFC;80-codepoints;48-lines;per-occurrence;repeats;linear-no;empty-zero;internal-blanks;terminal-newline-free;exact-limit;virtual-only"
+	maxXHTMLBytes         = int64(100 << 20)
+	maxSpineEvidenceUnits = 100_000
 )
 
 // Profile fixes both input bytes and cumulative virtual units; zero is invalid.
@@ -114,6 +115,9 @@ func (p *Provider) Render(ctx context.Context, upload document.AuthorizedUpload,
 		}
 		return document.RenditionResult{}, err
 	}
+	if err := rejectSpineEvidenceUnitOverflow(len(entries)); err != nil {
+		return document.RenditionResult{}, err
+	}
 	if err := ctx.Err(); err != nil {
 		return document.RenditionResult{}, provider.Canceled(err)
 	}
@@ -186,6 +190,13 @@ func rejected(message string) error {
 }
 func unsupported() error {
 	return provider.Classified(document.RenditionErrorUnsupportedInput, "EPUB package is malformed or unsupported", nil)
+}
+
+func rejectSpineEvidenceUnitOverflow(count int) error {
+	if count > maxSpineEvidenceUnits {
+		return rejected("EPUB evidence exceeds its limits")
+	}
+	return nil
 }
 
 var _ document.RenditionProvider = (*Provider)(nil)

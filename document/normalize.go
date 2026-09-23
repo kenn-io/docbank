@@ -227,6 +227,9 @@ func checkRenditionXHTMLAttributeBound(ctx context.Context, source []byte) error
 			continue
 		}
 		if source[index+1] == '!' {
+			if !bytes.HasPrefix(source[index:], []byte("<!DOCTYPE")) {
+				return errors.New("unsupported XHTML directive")
+			}
 			index++
 			quote := byte(0)
 			for index < len(source) {

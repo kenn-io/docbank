@@ -172,6 +172,17 @@ func TestRenditionXHTMLAttributePreflightHandlesProcessingInstructions(t *testin
 	}
 	source.WriteString(`>text</body></html>`)
 	require.Error(t, checkRenditionXHTMLAttributeBound(t.Context(), []byte(source.String())))
+
+	source.Reset()
+	source.WriteString(`<!"><html xmlns='http://www.w3.org/1999/xhtml'`)
+	for index := range 4096 {
+		source.WriteString(` a`)
+		source.WriteString(strconv.Itoa(index))
+		source.WriteString(`='x'`)
+	}
+	source.WriteString(`><body>text</body></html>`)
+	_, err := RenditionMarkdownFromXHTML([]byte(source.String()), 16<<20)
+	require.Error(t, err)
 }
 
 func TestRenditionXHTMLTablePreformattedAllocationBudget(t *testing.T) {
