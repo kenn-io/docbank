@@ -1607,6 +1607,65 @@ CREATE TABLE IF NOT EXISTS node_tags (
 
 CREATE INDEX IF NOT EXISTS node_tags_tag ON node_tags(tag_id);
 
+-- Concept details extend existing stable tag identities. Go validates names,
+-- edge kinds, graph cycles, and revision policy before writing these rows.
+CREATE TABLE IF NOT EXISTS tag_concepts (
+    tag_id      TEXT PRIMARY KEY NOT NULL REFERENCES tags(id) ON DELETE CASCADE,
+    description TEXT NOT NULL DEFAULT '',
+    revision    INTEGER NOT NULL DEFAULT 1
+);
+
+CREATE TABLE IF NOT EXISTS tag_aliases (
+    alias  TEXT PRIMARY KEY NOT NULL,
+    tag_id TEXT NOT NULL REFERENCES tags(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS tag_aliases_tag ON tag_aliases(tag_id);
+
+CREATE TABLE IF NOT EXISTS tag_concept_edges (
+    parent_tag_id TEXT NOT NULL REFERENCES tags(id) ON DELETE CASCADE,
+    child_tag_id  TEXT NOT NULL REFERENCES tags(id) ON DELETE CASCADE,
+    kind          TEXT NOT NULL,
+    PRIMARY KEY (parent_tag_id, child_tag_id, kind)
+);
+
+CREATE INDEX IF NOT EXISTS tag_concept_edges_child ON tag_concept_edges(child_tag_id);
+
+-- Redirects retain the removed source identity after an explicit merge.
+CREATE TABLE IF NOT EXISTS tag_redirects (
+    source_tag_id TEXT PRIMARY KEY NOT NULL,
+    target_tag_id TEXT NOT NULL REFERENCES tags(id),
+    source_name   TEXT NOT NULL,
+    merged_at     TEXT NOT NULL,
+    merge_id      TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS tag_redirects_target ON tag_redirects(target_tag_id);
+
+-- Audit survives reversal; reversed_at is set once by the shared Go service.
+CREATE TABLE IF NOT EXISTS tag_merge_audit (
+    merge_id        TEXT PRIMARY KEY NOT NULL,
+    source_tag_id   TEXT NOT NULL,
+    target_tag_id   TEXT NOT NULL,
+    source_revision INTEGER NOT NULL,
+    target_revision INTEGER NOT NULL,
+    preview_json    BLOB NOT NULL,
+    committed_at    TEXT NOT NULL,
+    reversed_at     TEXT
+);
+
+CREATE TABLE IF NOT EXISTS passage_tags (
+    passage_id        TEXT NOT NULL,
+    tag_id            TEXT NOT NULL REFERENCES tags(id) ON DELETE CASCADE,
+    ref_json          BLOB NOT NULL,
+    document_uid      TEXT NOT NULL,
+    content_version_id TEXT NOT NULL,
+    PRIMARY KEY (passage_id, tag_id)
+);
+
+CREATE INDEX IF NOT EXISTS passage_tags_document_version ON passage_tags(document_uid, content_version_id);
+CREATE INDEX IF NOT EXISTS passage_tags_tag ON passage_tags(tag_id);
+
 -- Immutable protocol replay authority deliberately has no tag or node foreign
 -- keys: a committed operation identity survives later deletion and purge.
 CREATE TABLE IF NOT EXISTS batch_tag_receipts (

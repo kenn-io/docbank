@@ -252,6 +252,7 @@ type auditedHistoryReplay struct {
 	versions         map[string]audit.Record
 	attachments      map[string]audit.Record
 	tagDefinitionIDs map[string]bool
+	lastTagMergeRows *tagMergeSnapshot
 	topology         []audit.Record
 	topologyIndex    map[uint64]int
 	scopeHead        string
@@ -380,6 +381,11 @@ func validateAuditedHistory(
 				kind, kindErr := attachedMutationKind(mutation.record, attachmentDeltas)
 				if kindErr != nil {
 					err = kindErr
+				} else if kind == auditTagMergeTransitionKind {
+					err = replay.applyScopedTagMergeTransition(
+						vaultID, mutation, allocation, mutationScopeIDs, scopeEntries,
+						attachmentDeltas, events, usedAttachmentDeltas, usedEvents,
+					)
 				} else if kind == "tag_rename" {
 					err = replay.applyTagDefinitionRename(
 						vaultID, mutation, allocation, mutationScopeIDs, scopeEntries,
@@ -1651,6 +1657,15 @@ func (replay *auditedHistoryReplay) reconcileCurrentState(
 	}
 	if !equalAuditRecordSets(expectedAttachments, currentAttachments) {
 		return errors.New("replayed audit attachments do not match current metadata")
+	}
+	if replay.lastTagMergeRows != nil {
+		current, _, err := captureTagMergeSnapshot(ctx, tx)
+		if err != nil {
+			return err
+		}
+		if !equalTagMergeQueryMapRows(*replay.lastTagMergeRows, current) {
+			return errors.New("replayed tag merge queries or maps do not match current metadata")
+		}
 	}
 	return nil
 }

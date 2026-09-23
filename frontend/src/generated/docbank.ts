@@ -35,6 +35,51 @@ type NonReadonly<T> = [T] extends [UnionToIntersection<T>] ? {
     : T[P];
 } : DistributeReadOnlyOverUnions<T>;
 
+export type AddConceptEdgeRequestKind = typeof AddConceptEdgeRequestKind[keyof typeof AddConceptEdgeRequestKind];
+
+
+export const AddConceptEdgeRequestKind = {
+  broader: 'broader',
+  related: 'related',
+} as const;
+
+export interface AddConceptEdgeRequest {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  child_tag_id: string;
+  kind: AddConceptEdgeRequestKind;
+  parent_tag_id: string;
+}
+
+export interface AddTagAliasRequest {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  /** @minLength 1 */
+  alias: string;
+}
+
+export interface PassageRefV1 {
+  attachment_id: string;
+  body_sha256: string;
+  byte_end: number;
+  byte_start: number;
+  content_version_id: string;
+  document_uid: string;
+  federation_domain_uid?: string;
+  quote_sha256: string;
+  rendition_build_id: string;
+  source_sha256: string;
+  vault_uid: string;
+  version: number;
+}
+
+export interface AssignPassageTagRequest {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  ref: PassageRefV1;
+  tag_id: string;
+}
+
 export interface AssignTagPathRequest {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
@@ -971,21 +1016,6 @@ export interface CollectionQuality {
   spikes: QualitySpike[];
   /** @minimum 0 */
   zero_bytes: number;
-}
-
-export interface PassageRefV1 {
-  attachment_id: string;
-  body_sha256: string;
-  byte_end: number;
-  byte_start: number;
-  content_version_id: string;
-  document_uid: string;
-  federation_domain_uid?: string;
-  quote_sha256: string;
-  rendition_build_id: string;
-  source_sha256: string;
-  vault_uid: string;
-  version: number;
 }
 
 export interface ContentMapPin {
@@ -2629,6 +2659,12 @@ export interface GcRequest {
   run: boolean;
 }
 
+export interface GetPassageTagsRequest {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  ref: PassageRefV1;
+}
+
 export interface HighlightSetTermV1Schema {
   /** @pattern ^#[0-9a-f]{6}$ */
   color: string;
@@ -3529,6 +3565,38 @@ export interface PassageResolveRequest {
   ref: PassageRefV1;
 }
 
+export interface PassageTagAvailabilityRequest {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  ref: PassageRefV1;
+}
+
+export interface PassageTagAvailabilityResponse {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  availability: string;
+}
+
+export interface Tag {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  /** @minimum 0 */
+  assignment_count: number;
+  id: string;
+  name: string;
+  /** @minimum 1 */
+  revision: number;
+}
+
+export interface PassageTagChangeResponse {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  changed: boolean;
+  passage_id: string;
+  ref: PassageRefV1;
+  tag: Tag;
+}
+
 export type PeopleBuildState = typeof PeopleBuildState[keyof typeof PeopleBuildState];
 
 
@@ -3746,6 +3814,13 @@ export interface PreviewStorageSalvageRequest {
   hash: string;
   /** @minLength 1 */
   store: string;
+}
+
+export interface PreviewTagMergeRequest {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  source_tag_id: string;
+  target_tag_id: string;
 }
 
 export interface ProcessingConsentGrant {
@@ -4196,10 +4271,40 @@ export interface RegisterBlobStoreRequest {
   preview_token: string;
 }
 
+export type RemoveConceptEdgeRequestKind = typeof RemoveConceptEdgeRequestKind[keyof typeof RemoveConceptEdgeRequestKind];
+
+
+export const RemoveConceptEdgeRequestKind = {
+  broader: 'broader',
+  related: 'related',
+} as const;
+
+export interface RemoveConceptEdgeRequest {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  child_tag_id: string;
+  kind: RemoveConceptEdgeRequestKind;
+  parent_tag_id: string;
+}
+
+export interface RemovePassageTagRequest {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  ref: PassageRefV1;
+  tag_id: string;
+}
+
 export interface RemoveRequest {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
   request_digest: string;
+}
+
+export interface RemoveTagAliasRequest {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  /** @minLength 1 */
+  alias: string;
 }
 
 export interface RenameTagRequest {
@@ -4752,6 +4857,13 @@ export interface SetCollectionLabelRequest {
   label: string | null;
 }
 
+export interface SetTagConceptRequest {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  /** @maxLength 4096 */
+  description: string;
+}
+
 export interface SourceRequest {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
@@ -4944,23 +5056,24 @@ export interface Summary {
   unresolved_dates: number;
 }
 
-export interface Tag {
-  /** A URL to the JSON Schema for this object. */
-  readonly $schema?: string;
-  /** @minimum 0 */
-  assignment_count: number;
-  id: string;
-  name: string;
-  /** @minimum 1 */
-  revision: number;
-}
-
 export interface TagAssignmentReceipt {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
   changed: boolean;
   node: Node;
   tag: Tag;
+}
+
+export interface TagConcept {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  aliases: string[];
+  broader_ids: string[];
+  description: string;
+  narrower_ids: string[];
+  related_ids: string[];
+  revision: number;
+  tag_id: string;
 }
 
 export interface TagDeletionReceipt {
@@ -5023,6 +5136,41 @@ export interface TagGraphSeed {
   /** @maxLength 128 */
   passage_id?: string;
   tag_id?: string;
+}
+
+export interface TagMergePreview {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  content_map_ids: string[];
+  content_map_revisions: number[];
+  document_assignments: number;
+  document_node_ids: number[];
+  passage_assignments: number;
+  passage_ids: string[];
+  saved_query_ids: string[];
+  saved_query_revisions: number[];
+  source_aliases: string[];
+  source_concept_revision: number;
+  source_description: string;
+  source_name: string;
+  source_revision: number;
+  source_tag_id: string;
+  target_concept_revision: number;
+  target_document_assignments: number;
+  target_name: string;
+  target_passage_assignments: number;
+  target_revision: number;
+  target_tag_id: string;
+  unmigratable_content_map_ids: string[];
+  unmigratable_saved_query_ids: string[];
+}
+
+export interface TagMergeReceipt {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  merge_id: string;
+  source_tag_id: string;
+  target_tag_id: string;
 }
 
 export interface TagNeighborhoodRequest {
@@ -5743,6 +5891,20 @@ limit?: number;
 offset?: number;
 };
 
+export type TagsByAssignmentModeParams = {
+content_version_id?: string;
+mode?: TagsByAssignmentModeMode;
+};
+
+export type TagsByAssignmentModeMode = typeof TagsByAssignmentModeMode[keyof typeof TagsByAssignmentModeMode];
+
+
+export const TagsByAssignmentModeMode = {
+  document: 'document',
+  passage: 'passage',
+  either: 'either',
+} as const;
+
 export type UnassignTagHeaders = {
 'If-Match': string;
 };
@@ -5981,11 +6143,27 @@ export type ResolveTagByNameParams = {
 name: string;
 };
 
+export type ResolveTagConceptParams = {
+name: string;
+};
+
 export type DeleteTagHeaders = {
 'If-Match': string;
 };
 
 export type RenameTagHeaders = {
+'If-Match': string;
+};
+
+export type AddTagAliasHeaders = {
+'If-Match': string;
+};
+
+export type RemoveTagAliasHeaders = {
+'If-Match': string;
+};
+
+export type SetTagConceptHeaders = {
 'If-Match': string;
 };
 
@@ -10053,6 +10231,39 @@ export const listNodeTags = async (id: number,
 
 
 
+export const getTagsByAssignmentModeUrl = (id: number,
+    params?: TagsByAssignmentModeParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/v1/nodes/${encodeURIComponent(String(id))}/tags-by-mode?${stringifiedParams}` : `/api/v1/nodes/${encodeURIComponent(String(id))}/tags-by-mode`
+}
+
+/**
+ * @summary Select document, passage or either tag assignments
+ */
+export const tagsByAssignmentMode = async (id: number,
+    params?: TagsByAssignmentModeParams, options?: Parameters<typeof sessionJSON>[1]): Promise<Tag[]> => {
+
+  return sessionJSON<Tag[]>(getTagsByAssignmentModeUrl(id,params),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
 export const getUnassignTagUrl = (id: number,
     tagId: string,) => {
 
@@ -10578,6 +10789,158 @@ return sessionJSON<PageRenderJob>(getCancelPageRenderJobUrl(id),
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
     body: JSON.stringify(pageSelectionRequest)
+  }
+);}
+
+
+
+export const getAssignPassageTagUrl = () => {
+
+
+
+
+  return `/api/v1/passage-tags`
+}
+
+/**
+ * @summary Tag one verified exact retained passage
+ */
+export const assignPassageTag = async (assignPassageTagRequest: NonReadonly<AssignPassageTagRequest>, options?: Parameters<typeof sessionJSON>[1]): Promise<PassageTagChangeResponse> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return sessionJSON<PassageTagChangeResponse>(getAssignPassageTagUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(assignPassageTagRequest)
+  }
+);}
+
+
+
+export const getPassageTagAvailabilityUrl = () => {
+
+
+
+
+  return `/api/v1/passage-tags/availability`
+}
+
+/**
+ * @summary Check whether exact tagged passage authority remains available
+ */
+export const passageTagAvailability = async (passageTagAvailabilityRequest: NonReadonly<PassageTagAvailabilityRequest>, options?: Parameters<typeof sessionJSON>[1]): Promise<PassageTagAvailabilityResponse> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return sessionJSON<PassageTagAvailabilityResponse>(getPassageTagAvailabilityUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(passageTagAvailabilityRequest)
+  }
+);}
+
+
+
+export const getGetPassageTagsUrl = () => {
+
+
+
+
+  return `/api/v1/passage-tags/lookup`
+}
+
+/**
+ * @summary List tags on an exact retained passage
+ */
+export const getPassageTags = async (getPassageTagsRequest: NonReadonly<GetPassageTagsRequest>, options?: Parameters<typeof sessionJSON>[1]): Promise<Tag[]> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return sessionJSON<Tag[]>(getGetPassageTagsUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(getPassageTagsRequest)
+  }
+);}
+
+
+
+export const getRemovePassageTagUrl = () => {
+
+
+
+
+  return `/api/v1/passage-tags/remove`
+}
+
+/**
+ * @summary Remove a sidecar by its exact immutable passage ID
+ */
+export const removePassageTag = async (removePassageTagRequest: NonReadonly<RemovePassageTagRequest>, options?: Parameters<typeof sessionJSON>[1]): Promise<PassageTagChangeResponse> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return sessionJSON<PassageTagChangeResponse>(getRemovePassageTagUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(removePassageTagRequest)
   }
 );}
 
@@ -12689,6 +13052,182 @@ export const detachBlobStore = async (storeId: string, options?: Parameters<type
 
 
 
+export const getAddConceptEdgeUrl = () => {
+
+
+
+
+  return `/api/v1/tag-concepts/edges`
+}
+
+/**
+ * @summary Connect two existing concept identities
+ */
+export const addConceptEdge = async (addConceptEdgeRequest: NonReadonly<AddConceptEdgeRequest>, options?: Parameters<typeof sessionJSON>[1]): Promise<TagConcept> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return sessionJSON<TagConcept>(getAddConceptEdgeUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(addConceptEdgeRequest)
+  }
+);}
+
+
+
+export const getRemoveConceptEdgeUrl = () => {
+
+
+
+
+  return `/api/v1/tag-concepts/edges/remove`
+}
+
+/**
+ * @summary Remove one concept edge
+ */
+export const removeConceptEdge = async (removeConceptEdgeRequest: NonReadonly<RemoveConceptEdgeRequest>, options?: Parameters<typeof sessionJSON>[1]): Promise<TagConcept> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return sessionJSON<TagConcept>(getRemoveConceptEdgeUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(removeConceptEdgeRequest)
+  }
+);}
+
+
+
+export const getCommitTagMergeUrl = () => {
+
+
+
+
+  return `/api/v1/tag-merges/commit`
+}
+
+/**
+ * @summary Apply an explicitly reviewed revision-fenced merge
+ */
+export const commitTagMerge = async (tagMergePreview: NonReadonly<TagMergePreview>, options?: Parameters<typeof sessionJSON>[1]): Promise<TagMergeReceipt> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return sessionJSON<TagMergeReceipt>(getCommitTagMergeUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(tagMergePreview)
+  }
+);}
+
+
+
+export const getPreviewTagMergeUrl = () => {
+
+
+
+
+  return `/api/v1/tag-merges/preview`
+}
+
+/**
+ * @summary Review all references affected by an identity merge
+ */
+export const previewTagMerge = async (previewTagMergeRequest: NonReadonly<PreviewTagMergeRequest>, options?: Parameters<typeof sessionJSON>[1]): Promise<TagMergePreview> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return sessionJSON<TagMergePreview>(getPreviewTagMergeUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(previewTagMergeRequest)
+  }
+);}
+
+
+
+export const getReverseTagMergeUrl = (mergeId: string,) => {
+
+
+
+
+  return `/api/v1/tag-merges/${encodeURIComponent(String(mergeId))}/reverse`
+}
+
+/**
+ * @summary Reverse a merge only when original assignments remain distinct
+ */
+export const reverseTagMerge = async (mergeId: string, options?: Parameters<typeof sessionJSON>[1]): Promise<TagMergeReceipt> => {
+
+  return sessionJSON<TagMergeReceipt>(getReverseTagMergeUrl(mergeId),
+  {
+    ...options,
+    method: 'POST'
+
+
+  }
+);}
+
+
+
 export const getListTagsUrl = (params?: ListTagsParams,) => {
   const normalizedParams = new URLSearchParams();
 
@@ -12827,6 +13366,37 @@ return sessionJSON<TagNeighborhoodResponse>(getTagNeighborhoodUrl(),
 
 
 
+export const getResolveTagConceptUrl = (params: ResolveTagConceptParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/v1/tags/resolve-concept?${stringifiedParams}` : `/api/v1/tags/resolve-concept`
+}
+
+/**
+ * @summary Resolve a canonical tag name or unique alias
+ */
+export const resolveTagConcept = async (params: ResolveTagConceptParams, options?: Parameters<typeof sessionJSON>[1]): Promise<Tag> => {
+
+  return sessionJSON<Tag>(getResolveTagConceptUrl(params),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
 export const getDeleteTagUrl = (tagId: string,) => {
 
 
@@ -12925,6 +13495,150 @@ return sessionJSON<Tag>(getRenameTagUrl(tagId),
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json',...headers, ...getHeaders(options?.headers) },
     body: JSON.stringify(renameTagRequest)
+  }
+);}
+
+
+
+export const getAddTagAliasUrl = (tagId: string,) => {
+
+
+
+
+  return `/api/v1/tags/${encodeURIComponent(String(tagId))}/aliases`
+}
+
+/**
+ * @summary Add a unique exact alias
+ */
+export const addTagAlias = async (tagId: string,
+    addTagAliasRequest: NonReadonly<AddTagAliasRequest>,
+    headers: AddTagAliasHeaders, options?: Parameters<typeof sessionJSON>[1]): Promise<TagConcept> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return sessionJSON<TagConcept>(getAddTagAliasUrl(tagId),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json',...headers, ...getHeaders(options?.headers) },
+    body: JSON.stringify(addTagAliasRequest)
+  }
+);}
+
+
+
+export const getRemoveTagAliasUrl = (tagId: string,) => {
+
+
+
+
+  return `/api/v1/tags/${encodeURIComponent(String(tagId))}/aliases/remove`
+}
+
+/**
+ * @summary Remove one exact alias
+ */
+export const removeTagAlias = async (tagId: string,
+    removeTagAliasRequest: NonReadonly<RemoveTagAliasRequest>,
+    headers: RemoveTagAliasHeaders, options?: Parameters<typeof sessionJSON>[1]): Promise<TagConcept> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return sessionJSON<TagConcept>(getRemoveTagAliasUrl(tagId),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json',...headers, ...getHeaders(options?.headers) },
+    body: JSON.stringify(removeTagAliasRequest)
+  }
+);}
+
+
+
+export const getGetTagConceptUrl = (tagId: string,) => {
+
+
+
+
+  return `/api/v1/tags/${encodeURIComponent(String(tagId))}/concept`
+}
+
+/**
+ * @summary Inspect optional concept vocabulary for a tag
+ */
+export const getTagConcept = async (tagId: string, options?: Parameters<typeof sessionJSON>[1]): Promise<TagConcept> => {
+
+  return sessionJSON<TagConcept>(getGetTagConceptUrl(tagId),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+export const getSetTagConceptUrl = (tagId: string,) => {
+
+
+
+
+  return `/api/v1/tags/${encodeURIComponent(String(tagId))}/concept`
+}
+
+/**
+ * @summary Set concept description with its revision
+ */
+export const setTagConcept = async (tagId: string,
+    setTagConceptRequest: NonReadonly<SetTagConceptRequest>,
+    headers: SetTagConceptHeaders, options?: Parameters<typeof sessionJSON>[1]): Promise<TagConcept> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return sessionJSON<TagConcept>(getSetTagConceptUrl(tagId),
+  {
+    ...options,
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json',...headers, ...getHeaders(options?.headers) },
+    body: JSON.stringify(setTagConceptRequest)
   }
 );}
 

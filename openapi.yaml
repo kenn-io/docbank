@@ -1,5 +1,66 @@
 components:
   schemas:
+    AddConceptEdgeRequest:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/AddConceptEdgeRequest.json
+          format: uri
+          readOnly: true
+          type: string
+        child_tag_id:
+          format: uuid
+          type: string
+        kind:
+          enum:
+            - broader
+            - related
+          type: string
+        parent_tag_id:
+          format: uuid
+          type: string
+      required:
+        - parent_tag_id
+        - child_tag_id
+        - kind
+      type: object
+    AddTagAliasRequest:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/AddTagAliasRequest.json
+          format: uri
+          readOnly: true
+          type: string
+        alias:
+          minLength: 1
+          type: string
+      required:
+        - alias
+      type: object
+    AssignPassageTagRequest:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/AssignPassageTagRequest.json
+          format: uri
+          readOnly: true
+          type: string
+        ref:
+          $ref: "#/components/schemas/PassageRefV1"
+        tag_id:
+          format: uuid
+          type: string
+      required:
+        - tag_id
+        - ref
+      type: object
     AssignTagPathRequest:
       additionalProperties: false
       properties:
@@ -5999,6 +6060,21 @@ components:
       required:
         - run
       type: object
+    GetPassageTagsRequest:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/GetPassageTagsRequest.json
+          format: uri
+          readOnly: true
+          type: string
+        ref:
+          $ref: "#/components/schemas/PassageRefV1"
+      required:
+        - ref
+      type: object
     HighlightSetTermV1Schema:
       additionalProperties: false
       properties:
@@ -8726,6 +8802,60 @@ components:
       x-go-type-import:
         path: go.kenn.io/docbank/internal/api
         name: api
+    PassageTagAvailabilityRequest:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/PassageTagAvailabilityRequest.json
+          format: uri
+          readOnly: true
+          type: string
+        ref:
+          $ref: "#/components/schemas/PassageRefV1"
+      required:
+        - ref
+      type: object
+    PassageTagAvailabilityResponse:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/PassageTagAvailabilityResponse.json
+          format: uri
+          readOnly: true
+          type: string
+        availability:
+          type: string
+      required:
+        - availability
+      type: object
+    PassageTagChangeResponse:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/PassageTagChangeResponse.json
+          format: uri
+          readOnly: true
+          type: string
+        changed:
+          type: boolean
+        passage_id:
+          type: string
+        ref:
+          $ref: "#/components/schemas/PassageRefV1"
+        tag:
+          $ref: "#/components/schemas/Tag"
+      required:
+        - tag
+        - passage_id
+        - ref
+        - changed
+      type: object
     PendingFormatV1:
       additionalProperties: false
       properties:
@@ -9223,6 +9353,26 @@ components:
       required:
         - hash
         - store
+      type: object
+    PreviewTagMergeRequest:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/PreviewTagMergeRequest.json
+          format: uri
+          readOnly: true
+          type: string
+        source_tag_id:
+          format: uuid
+          type: string
+        target_tag_id:
+          format: uuid
+          type: string
+      required:
+        - source_tag_id
+        - target_tag_id
       type: object
     ProcessingConsentGrant:
       additionalProperties: false
@@ -10196,6 +10346,51 @@ components:
       required:
         - preview_token
       type: object
+    RemoveConceptEdgeRequest:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/RemoveConceptEdgeRequest.json
+          format: uri
+          readOnly: true
+          type: string
+        child_tag_id:
+          format: uuid
+          type: string
+        kind:
+          enum:
+            - broader
+            - related
+          type: string
+        parent_tag_id:
+          format: uuid
+          type: string
+      required:
+        - parent_tag_id
+        - child_tag_id
+        - kind
+      type: object
+    RemovePassageTagRequest:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/RemovePassageTagRequest.json
+          format: uri
+          readOnly: true
+          type: string
+        ref:
+          $ref: "#/components/schemas/PassageRefV1"
+        tag_id:
+          format: uuid
+          type: string
+      required:
+        - tag_id
+        - ref
+      type: object
     RemoveRequest:
       additionalProperties: false
       properties:
@@ -10210,6 +10405,22 @@ components:
           type: string
       required:
         - request_digest
+      type: object
+    RemoveTagAliasRequest:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/RemoveTagAliasRequest.json
+          format: uri
+          readOnly: true
+          type: string
+        alias:
+          minLength: 1
+          type: string
+      required:
+        - alias
       type: object
     RenameTagRequest:
       additionalProperties: false
@@ -11474,6 +11685,22 @@ components:
       required:
         - label
       type: object
+    SetTagConceptRequest:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/SetTagConceptRequest.json
+          format: uri
+          readOnly: true
+          type: string
+        description:
+          maxLength: 4096
+          type: string
+      required:
+        - description
+      type: object
     SnapshotMember:
       additionalProperties: false
       properties:
@@ -12473,6 +12700,52 @@ components:
       x-go-type-import:
         path: go.kenn.io/docbank/internal/api
         name: api
+    TagConcept:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/TagConcept.json
+          format: uri
+          readOnly: true
+          type: string
+        aliases:
+          items:
+            type: string
+          type: array
+        broader_ids:
+          items:
+            type: string
+          type: array
+        description:
+          type: string
+        narrower_ids:
+          items:
+            type: string
+          type: array
+        related_ids:
+          items:
+            type: string
+          type: array
+        revision:
+          format: int64
+          type: integer
+        tag_id:
+          type: string
+      required:
+        - tag_id
+        - description
+        - revision
+        - aliases
+        - narrower_ids
+        - broader_ids
+        - related_ids
+      type: object
+      x-go-type: store.TagConcept
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/store
+        name: store
     TagDeletionReceipt:
       additionalProperties: false
       properties:
@@ -12616,6 +12889,142 @@ components:
       x-go-type-import:
         path: go.kenn.io/docbank/internal/api
         name: api
+    TagMergePreview:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/TagMergePreview.json
+          format: uri
+          readOnly: true
+          type: string
+        content_map_ids:
+          items:
+            type: string
+          type: array
+        content_map_revisions:
+          items:
+            format: int64
+            type: integer
+          type: array
+        document_assignments:
+          format: int64
+          type: integer
+        document_node_ids:
+          items:
+            format: int64
+            type: integer
+          type: array
+        passage_assignments:
+          format: int64
+          type: integer
+        passage_ids:
+          items:
+            type: string
+          type: array
+        saved_query_ids:
+          items:
+            type: string
+          type: array
+        saved_query_revisions:
+          items:
+            format: int64
+            type: integer
+          type: array
+        source_aliases:
+          items:
+            type: string
+          type: array
+        source_concept_revision:
+          format: int64
+          type: integer
+        source_description:
+          type: string
+        source_name:
+          type: string
+        source_revision:
+          format: int64
+          type: integer
+        source_tag_id:
+          type: string
+        target_concept_revision:
+          format: int64
+          type: integer
+        target_document_assignments:
+          format: int64
+          type: integer
+        target_name:
+          type: string
+        target_passage_assignments:
+          format: int64
+          type: integer
+        target_revision:
+          format: int64
+          type: integer
+        target_tag_id:
+          type: string
+        unmigratable_content_map_ids:
+          items:
+            type: string
+          type: array
+        unmigratable_saved_query_ids:
+          items:
+            type: string
+          type: array
+      required:
+        - source_tag_id
+        - target_tag_id
+        - source_name
+        - target_name
+        - source_description
+        - source_aliases
+        - source_revision
+        - target_revision
+        - source_concept_revision
+        - target_concept_revision
+        - document_assignments
+        - passage_assignments
+        - target_document_assignments
+        - target_passage_assignments
+        - document_node_ids
+        - passage_ids
+        - saved_query_ids
+        - saved_query_revisions
+        - unmigratable_saved_query_ids
+        - content_map_ids
+        - content_map_revisions
+        - unmigratable_content_map_ids
+      type: object
+      x-go-type: store.TagMergePreview
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/store
+        name: store
+    TagMergeReceipt:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/TagMergeReceipt.json
+          format: uri
+          readOnly: true
+          type: string
+        merge_id:
+          type: string
+        source_tag_id:
+          type: string
+        target_tag_id:
+          type: string
+      required:
+        - merge_id
+        - source_tag_id
+        - target_tag_id
+      type: object
+      x-go-type: store.TagMergeReceipt
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/store
+        name: store
     TagNeighborhoodRequest:
       additionalProperties: false
       properties:
@@ -17026,6 +17435,47 @@ paths:
                 $ref: "#/components/schemas/Error"
           description: Error
       summary: List tags assigned to a node
+  /api/v1/nodes/{id}/tags-by-mode:
+    get:
+      operationId: tagsByAssignmentMode
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            format: int64
+            type: integer
+        - explode: false
+          in: query
+          name: content_version_id
+          schema:
+            type: string
+        - explode: false
+          in: query
+          name: mode
+          schema:
+            default: document
+            enum:
+              - document
+              - passage
+              - either
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                items:
+                  $ref: "#/components/schemas/Tag"
+                type: array
+          description: OK
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: Select document, passage or either tag assignments
   /api/v1/nodes/{id}/tags/{tag_id}:
     delete:
       operationId: unassignTag
@@ -17595,6 +18045,100 @@ paths:
                 $ref: "#/components/schemas/Error"
           description: Error
       summary: Cancel a render job and fence late output
+  /api/v1/passage-tags:
+    post:
+      operationId: assignPassageTag
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AssignPassageTagRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PassageTagChangeResponse"
+          description: OK
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: Tag one verified exact retained passage
+  /api/v1/passage-tags/availability:
+    post:
+      operationId: passageTagAvailability
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PassageTagAvailabilityRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PassageTagAvailabilityResponse"
+          description: OK
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: Check whether exact tagged passage authority remains available
+  /api/v1/passage-tags/lookup:
+    post:
+      operationId: getPassageTags
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/GetPassageTagsRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                items:
+                  $ref: "#/components/schemas/Tag"
+                type: array
+          description: OK
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: List tags on an exact retained passage
+  /api/v1/passage-tags/remove:
+    post:
+      operationId: removePassageTag
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RemovePassageTagRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PassageTagChangeResponse"
+          description: OK
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: Remove a sidecar by its exact immutable passage ID
   /api/v1/passages/resolve:
     post:
       operationId: resolvePassage
@@ -19331,6 +19875,122 @@ paths:
                 $ref: "#/components/schemas/Error"
           description: Error
       summary: Detach one empty secondary store from runtime use
+  /api/v1/tag-concepts/edges:
+    post:
+      operationId: addConceptEdge
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AddConceptEdgeRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TagConcept"
+          description: OK
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: Connect two existing concept identities
+  /api/v1/tag-concepts/edges/remove:
+    post:
+      operationId: removeConceptEdge
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RemoveConceptEdgeRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TagConcept"
+          description: OK
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: Remove one concept edge
+  /api/v1/tag-merges/commit:
+    post:
+      operationId: commitTagMerge
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TagMergePreview"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TagMergeReceipt"
+          description: OK
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: Apply an explicitly reviewed revision-fenced merge
+  /api/v1/tag-merges/preview:
+    post:
+      operationId: previewTagMerge
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PreviewTagMergeRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TagMergePreview"
+          description: OK
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: Review all references affected by an identity merge
+  /api/v1/tag-merges/{merge_id}/reverse:
+    post:
+      operationId: reverseTagMerge
+      parameters:
+        - in: path
+          name: merge_id
+          required: true
+          schema:
+            format: uuid
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TagMergeReceipt"
+          description: OK
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: Reverse a merge only when original assignments remain distinct
   /api/v1/tags:
     get:
       operationId: listTags
@@ -19443,6 +20103,34 @@ paths:
                 $ref: "#/components/schemas/Error"
           description: Error
       summary: Find related documents and tags inside an exact source fence
+  /api/v1/tags/resolve-concept:
+    get:
+      operationId: resolveTagConcept
+      parameters:
+        - explode: false
+          in: query
+          name: name
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Tag"
+          description: OK
+          headers:
+            ETag:
+              schema:
+                type: string
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: Resolve a canonical tag name or unique alias
   /api/v1/tags/{tag_id}:
     delete:
       operationId: deleteTag
@@ -19538,6 +20226,146 @@ paths:
                 $ref: "#/components/schemas/Error"
           description: Error
       summary: Rename a tag without changing its stable ID
+  /api/v1/tags/{tag_id}/aliases:
+    post:
+      operationId: addTagAlias
+      parameters:
+        - in: path
+          name: tag_id
+          required: true
+          schema:
+            type: string
+        - in: header
+          name: If-Match
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AddTagAliasRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TagConcept"
+          description: OK
+          headers:
+            ETag:
+              schema:
+                type: string
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: Add a unique exact alias
+  /api/v1/tags/{tag_id}/aliases/remove:
+    post:
+      operationId: removeTagAlias
+      parameters:
+        - in: path
+          name: tag_id
+          required: true
+          schema:
+            type: string
+        - in: header
+          name: If-Match
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RemoveTagAliasRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TagConcept"
+          description: OK
+          headers:
+            ETag:
+              schema:
+                type: string
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: Remove one exact alias
+  /api/v1/tags/{tag_id}/concept:
+    get:
+      operationId: getTagConcept
+      parameters:
+        - in: path
+          name: tag_id
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TagConcept"
+          description: OK
+          headers:
+            ETag:
+              schema:
+                type: string
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: Inspect optional concept vocabulary for a tag
+    put:
+      operationId: setTagConcept
+      parameters:
+        - in: path
+          name: tag_id
+          required: true
+          schema:
+            type: string
+        - in: header
+          name: If-Match
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SetTagConceptRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TagConcept"
+          description: OK
+          headers:
+            ETag:
+              schema:
+                type: string
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: Set concept description with its revision
   /api/v1/tags/{tag_id}/nodes:
     get:
       operationId: listTagNodes

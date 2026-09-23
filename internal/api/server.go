@@ -212,6 +212,7 @@ func NewServer(d Deps) *Server {
 	registerContentPruneRoute(humaAPI, d, g)
 	registerProvenanceRoutes(humaAPI, d, g)
 	registerTagRoutes(humaAPI, d, g)
+	RegisterTagConceptRoutes(humaAPI, d, g)
 	registerBatchTagRoutes(humaAPI, d, g)
 	registerSavedQueryRoutes(humaAPI, d, g, s.snapshots)
 	registerMapRoutes(humaAPI, d, g)
@@ -337,6 +338,9 @@ func markRevisionPreconditionsRequired(api huma.API) {
 		{"/api/v1/nodes/{id}/tags/{tag_id}", http.MethodDelete},
 		{"/api/v1/tags/{tag_id}", http.MethodPatch},
 		{"/api/v1/tags/{tag_id}", http.MethodDelete},
+		{"/api/v1/tags/{tag_id}/concept", http.MethodPut},
+		{"/api/v1/tags/{tag_id}/aliases", http.MethodPost},
+		{"/api/v1/tags/{tag_id}/aliases/remove", http.MethodPost},
 		{"/api/v1/saved-queries/{saved_query_id}", http.MethodPatch},
 		{"/api/v1/saved-queries/{saved_query_id}", http.MethodDelete},
 		{"/api/v1/saved-queries/{saved_query_id}/runs", http.MethodPost},

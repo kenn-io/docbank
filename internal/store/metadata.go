@@ -26,6 +26,7 @@ const metadataFormatVersion = 1
 const (
 	metadataCreatedAtField        = "created_at"
 	metadataAttachmentIDField     = "attachment_id"
+	metadataTagIDField            = "tag_id"
 	metadataGenerationIDField     = "generation_id"
 	metadataContentVersionIDField = "content_version_id"
 	metadataIngestIDField         = "ingest_id"
@@ -450,6 +451,11 @@ func exportMetadataSnapshotWithVaultIdentity(
 	if err := exportTags(ctx, tx, write); err != nil {
 		return err
 	}
+	if layout.schemaVersion >= 26 {
+		if err := exportTagConceptMetadata(ctx, tx, write); err != nil {
+			return err
+		}
+	}
 	if layout.hasPostV3Metadata() {
 		if err := exportSavedQueries(ctx, tx, write); err != nil {
 			return err
@@ -470,6 +476,11 @@ func exportMetadataSnapshotWithVaultIdentity(
 	}
 	if err := exportNodeTags(ctx, tx, write); err != nil {
 		return err
+	}
+	if layout.schemaVersion >= 26 {
+		if err := exportPassageTagMetadata(ctx, tx, write); err != nil {
+			return err
+		}
 	}
 	if layout.hasPostV3Metadata() {
 		if err := exportBatchTagReceipts(ctx, tx, write); err != nil {
@@ -1087,6 +1098,9 @@ func requirePristineMetadataTarget(ctx context.Context, tx *sql.Tx) error {
 		    + (SELECT COUNT(*) FROM collection_labels)
 		    + (SELECT COUNT(*) FROM watch_sources)
 		    + (SELECT COUNT(*) FROM tags) + (SELECT COUNT(*) FROM node_tags)
+		    + (SELECT COUNT(*) FROM tag_concepts) + (SELECT COUNT(*) FROM tag_aliases)
+		    + (SELECT COUNT(*) FROM tag_concept_edges) + (SELECT COUNT(*) FROM tag_redirects)
+		    + (SELECT COUNT(*) FROM tag_merge_audit) + (SELECT COUNT(*) FROM passage_tags)
 		    + (SELECT COUNT(*) FROM batch_tag_receipts)
 		    + (SELECT COUNT(*) FROM extracted_text)
 		    + (SELECT COUNT(*) FROM text_extraction_queue)
@@ -1469,6 +1483,9 @@ func (s *Store) importMetadataRecord(
 		_, err := tx.ExecContext(ctx,
 			`INSERT INTO tags(id,name,revision) VALUES(?,?,?)`, v.ID, v.Name, v.Revision)
 		return err
+	case metadataTagConceptType, metadataTagAliasType, metadataTagConceptEdgeType,
+		metadataTagRedirectType, metadataTagMergeAuditType, metadataPassageTagType:
+		return importTagConceptMetadata(ctx, tx, kind, raw)
 	case metadataSavedQueryType:
 		var v metadataSavedQuery
 		if err := decodeMetadataRecord(raw, &v); err != nil {
@@ -1648,6 +1665,12 @@ var metadataRequiredFields = map[string][]string{
 	metadataProvenanceVersionBindingType:   {metadataTypeField, "provenance_identity", metadataContentVersionIDField, "observed_at", "basis_ref"},
 	metadataWatchSourceType:                {metadataTypeField, "watch_name", "source_ref", metadataNodeIDField, columnBlobHash, metadataSizeField},
 	"tag":                                  {metadataTypeField, "tag_id", "name", metadataRevisionField},
+	metadataTagConceptType:                 {metadataTypeField, metadataTagIDField, "description", metadataRevisionField},
+	metadataTagAliasType:                   {metadataTypeField, "alias", metadataTagIDField},
+	metadataTagConceptEdgeType:             {metadataTypeField, "parent_tag_id", "child_tag_id", "kind"},
+	metadataTagRedirectType:                {metadataTypeField, "source_tag_id", "target_tag_id", "source_name", "merged_at", "merge_id"},
+	metadataTagMergeAuditType:              {metadataTypeField, "merge_id", "source_tag_id", "target_tag_id", "source_revision", "target_revision", "preview_json", "committed_at", "reversed_at"},
+	metadataPassageTagType:                 {metadataTypeField, "passage_id", metadataTagIDField, "ref_json", "document_uid", metadataContentVersionIDField},
 	metadataSavedQueryType:                 {metadataTypeField, "saved_query_id", "name", "description", "kind", "payload", "fingerprint", metadataRevisionField, metadataCreatedAtField, "updated_at"},
 	metadataSavedQueryRunType:              {metadataTypeField, "run_id", "saved_query_id", "saved_query_revision", "query_fingerprint", "snapshot_id", "member_hash", "total", "total_bytes", "ran_at", "expires_at", "previous_run_id", "previous_member_hash", "previous_total", "previous_query_fingerprint"},
 	metadataContentMapType:                 {metadataTypeField, "id", "owner", metadataRevisionField, "definition_json", "definition_digest", metadataCreatedAtField, "updated_at", "archived_at"},
@@ -1699,6 +1722,7 @@ var metadataNullableFields = map[string]map[string]bool{
 		"previous_total": true, "previous_query_fingerprint": true,
 	},
 	metadataContentMapType:             {"archived_at": true},
+	metadataTagMergeAuditType:          {"reversed_at": true},
 	"extracted_text":                   {"error": true, "text": true},
 	metadataCurrentRenditionRootType:   {"released_at": true},
 	metadataEmbeddingGenerationType:    {"attachment_id": true},
@@ -2067,6 +2091,11 @@ func validateMetadataStateWithVaultIdentity(
 	}
 	if layout.hasPostV3Metadata() {
 		if err := validateProvenanceVersionBindingRelations(ctx, tx); err != nil {
+			return err
+		}
+	}
+	if layout.schemaVersion >= 26 {
+		if err := validateTagConceptMetadataState(ctx, tx); err != nil {
 			return err
 		}
 	}

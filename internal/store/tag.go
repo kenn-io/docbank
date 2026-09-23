@@ -79,6 +79,9 @@ func (s *Store) CreateTag(ctx context.Context, name string) (Tag, error) {
 	}
 	created := Tag{ID: id, Name: name, Revision: 1}
 	err = s.withStorageTx(ctx, func(tx *sql.Tx) error {
+		if err := requireTagNameOutsideAliasNamespaceTx(ctx, tx, name); err != nil {
+			return err
+		}
 		active, err := auditAuthorityActiveTx(ctx, tx)
 		if err != nil {
 			return err
@@ -196,6 +199,9 @@ func (s *Store) RenameTag(ctx context.Context, id string, ifRev int64, name stri
 			renamed = current
 			return nil
 		}
+		if err := requireTagNameOutsideAliasNamespaceTx(ctx, tx, name); err != nil {
+			return err
+		}
 		active, err := auditAuthorityActiveTx(ctx, tx)
 		if err != nil {
 			return err
@@ -211,6 +217,21 @@ func (s *Store) RenameTag(ctx context.Context, id string, ifRev int64, name stri
 		return Tag{}, err
 	}
 	return renamed, nil
+}
+
+// Canonical names and aliases share one namespace even though they live in
+// separate tables. Check inside the writing transaction so alias curation and
+// ordinary tag creation or rename cannot claim the same spelling.
+func requireTagNameOutsideAliasNamespaceTx(ctx context.Context, tx *sql.Tx, name string) error {
+	var reserved bool
+	if err := tx.QueryRowContext(ctx,
+		`SELECT EXISTS(SELECT 1 FROM tag_aliases WHERE alias=?)`, name).Scan(&reserved); err != nil {
+		return fmt.Errorf("checking tag alias namespace: %w", err)
+	}
+	if reserved {
+		return fmt.Errorf("tag %q: %w", name, ErrExists)
+	}
+	return nil
 }
 
 func (s *Store) renameTagTx(

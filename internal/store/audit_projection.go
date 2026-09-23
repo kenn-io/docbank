@@ -166,6 +166,9 @@ func currentAuditAttachmentsForLayout(
 		appendAuditTagAssignments, appendAuditTagDefinitions,
 		appendAuditDerivativePurgeSuppressions,
 	)
+	if layout.schemaVersion >= 26 {
+		appenders = append(appenders, appendAuditConceptState)
+	}
 	for _, appendRecords := range appenders {
 		if err := appendRecords(ctx, tx, &records); err != nil {
 			return nil, err
@@ -385,6 +388,17 @@ func attachedAuditIdentity(record audit.Record) (audit.Record, error) {
 	case auditTagDefinitionKind:
 		value, err := auditField(record, "tag_id")
 		return audit.Record{Kind: "tag_definition_identity", Fields: []audit.Field{{Name: "tag_id", Value: value}}}, err
+	case auditConceptStateKind:
+		return audit.Record{Kind: "concept_state_identity", Fields: nil}, nil
+	case auditTagMergeTransitionKind:
+		mergeID, err := auditField(record, "merge_id")
+		if err != nil {
+			return audit.Record{}, err
+		}
+		reverse, err := auditField(record, "reverse")
+		return audit.Record{Kind: "tag_merge_transition_identity", Fields: []audit.Field{
+			{Name: "merge_id", Value: mergeID}, {Name: "reverse", Value: reverse},
+		}}, err
 	case auditDerivativePurgeSuppressionKind:
 		fields := make([]audit.Field, 0, 3)
 		for _, name := range []string{columnSourceSHA256, "profile_fingerprint", "build_id"} {

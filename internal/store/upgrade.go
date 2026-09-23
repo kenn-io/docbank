@@ -80,6 +80,7 @@ var currentSchemaTables = [...]string{
 	"email_generations", "email_part_artifacts", "email_attachments", "email_heads", "email_body_results",
 	"blob_stores", "blob_locations", "blob_pack_entries",
 	"saved_queries", "saved_query_runs", "content_maps", "content_map_snapshots", "collection_labels", "provenance_version_bindings", "batch_tag_receipts", "package_preflights",
+	"tag_concepts", "tag_aliases", "tag_concept_edges", "tag_redirects", "tag_merge_audit", "passage_tags",
 	"term_report_history",
 	"export_sources", "export_chunks", "export_members", "export_plans", "export_documents", "export_role_roots", "export_jobs",
 	"page_documents", "page_frames", "page_recipes", "page_images", "page_render_jobs",
