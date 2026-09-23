@@ -48,6 +48,9 @@ var fieldCatalogKeys = []string{
 	"loadfile.time.sent",
 }
 
+// FieldCatalogKeys returns the closed canonical mapping target set.
+func FieldCatalogKeys() []string { return slices.Clone(fieldCatalogKeys) }
+
 // FieldCatalogKeyAllowed reports whether key is a canonical mapping target.
 func FieldCatalogKeyAllowed(key string) bool {
 	_, found := slices.BinarySearch(fieldCatalogKeys, key)

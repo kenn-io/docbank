@@ -106,6 +106,13 @@ func (s *Store) PruneContentVersions(
 		}
 		checkpointRequired = checkpointRequired && candidateSet[node.CurrentVersionID]
 		retainContentVersionDependencies(versions, candidateSet, retainedSet)
+		retainedVersion, err := snapshotRetainedVersionTx(ctx, tx, candidateSet)
+		if err != nil {
+			return err
+		}
+		if retainedVersion != "" {
+			return fmt.Errorf("%w: %s", ErrPackageRetained, retainedVersion)
+		}
 		result.Node = node
 		result.Cutoff = cutoff
 		result.CheckpointRequired = checkpointRequired
@@ -171,6 +178,43 @@ func (s *Store) PruneContentVersions(
 		result.DependencyRetained = []ContentVersion{}
 	}
 	return result, nil
+}
+
+func snapshotRetainedVersionTx(ctx context.Context, tx *sql.Tx, candidates map[string]bool) (string, error) {
+	ids := make([]string, 0, len(candidates))
+	for id := range candidates {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	const batchSize = 200
+	for start := 0; start < len(ids); start += batchSize {
+		batch := ids[start:min(start+batchSize, len(ids))]
+		args := make([]any, len(batch)*4)
+		for i, id := range batch {
+			for group := range 4 {
+				args[group*len(batch)+i] = id
+			}
+		}
+		query := `SELECT content_version_id FROM collection_snapshot_members
+			WHERE content_version_id IN (` + placeholders(len(batch)) + `)
+			UNION SELECT content_version_id FROM collection_snapshot_representations
+			WHERE content_version_id IN (` + placeholders(len(batch)) + `)
+			UNION SELECT content_version_id FROM package_labels
+			WHERE content_version_id IN (` + placeholders(len(batch)) + `)
+			UNION SELECT content_version_id FROM package_import_receipts
+			WHERE content_version_id IN (` + placeholders(len(batch)) + `)
+			ORDER BY content_version_id LIMIT 1`
+		var retained string
+		err := tx.QueryRowContext(ctx, query, args...).Scan(&retained)
+		if errors.Is(err, sql.ErrNoRows) {
+			continue
+		}
+		if err != nil {
+			return "", fmt.Errorf("checking sealed snapshot version retention: %w", err)
+		}
+		return retained, nil
+	}
+	return "", nil
 }
 
 func retainMediaAuthorityVersionsTx(tx *sql.Tx, candidates, retained map[string]bool) error {

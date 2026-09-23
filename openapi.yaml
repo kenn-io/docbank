@@ -1432,6 +1432,542 @@ components:
       x-go-type-import:
         path: go.kenn.io/docbank/internal/api
         name: api
+    BatesAllocation:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/BatesAllocation.json
+          format: uri
+          readOnly: true
+          type: string
+        allocation_id:
+          type: string
+        committed_at:
+          type: string
+        created_at:
+          type: string
+        end_sequence:
+          format: int64
+          type: integer
+        labels:
+          items:
+            $ref: "#/components/schemas/BatesPageLabel"
+          type: array
+        namespace_id:
+          type: string
+        recipe_sha256:
+          type: string
+        snapshot_id:
+          type: string
+        start_sequence:
+          format: int64
+          type: integer
+        state:
+          type: string
+      required:
+        - allocation_id
+        - namespace_id
+        - snapshot_id
+        - recipe_sha256
+        - state
+        - start_sequence
+        - end_sequence
+        - labels
+        - created_at
+      type: object
+      x-go-type: api.BatesAllocation
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
+    BatesArtifactPage:
+      additionalProperties: false
+      properties:
+        label:
+          type: string
+        occurrence_id:
+          type: string
+        ordinal:
+          format: int64
+          type: integer
+        output_page:
+          format: int64
+          type: integer
+        source_blob_sha256:
+          type: string
+        source_page:
+          format: int64
+          type: integer
+      required:
+        - ordinal
+        - occurrence_id
+        - source_blob_sha256
+        - source_page
+        - output_page
+        - label
+      type: object
+      x-go-type: api.BatesArtifactPage
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
+    BatesCandidate:
+      additionalProperties: false
+      properties:
+        allocation_id:
+          type: string
+        artifact_id:
+          type: string
+        blob_sha256:
+          type: string
+        created_at:
+          type: string
+        evidence:
+          items:
+            $ref: "#/components/schemas/BatesCandidateEvidence"
+          type: array
+        evidence_cursor:
+          type: string
+        evidence_truncated:
+          type: boolean
+        manifest_sha256:
+          type: string
+        media_type:
+          type: string
+        page_count:
+          format: int64
+          type: integer
+        size:
+          format: int64
+          type: integer
+        snapshot_id:
+          type: string
+        state:
+          type: string
+      required:
+        - artifact_id
+        - allocation_id
+        - snapshot_id
+        - blob_sha256
+        - size
+        - media_type
+        - page_count
+        - manifest_sha256
+        - state
+        - created_at
+        - evidence
+        - evidence_truncated
+      type: object
+      x-go-type: api.BatesCandidate
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
+    BatesCandidateEvidence:
+      additionalProperties: false
+      properties:
+        assignment_id:
+          type: string
+        basis:
+          type: string
+        kind:
+          type: string
+        label:
+          type: string
+        occurrence_id:
+          type: string
+        output_page:
+          format: int64
+          type: integer
+        package_id:
+          type: string
+        package_record_id:
+          type: string
+        person_id:
+          type: string
+        rank:
+          type: string
+        raw_label:
+          type: string
+        scope_kind:
+          type: string
+      required:
+        - kind
+        - occurrence_id
+      type: object
+      x-go-type: api.BatesCandidateEvidence
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
+    BatesCandidatePage:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/BatesCandidatePage.json
+          format: uri
+          readOnly: true
+          type: string
+        items:
+          items:
+            $ref: "#/components/schemas/BatesCandidate"
+          type: array
+        next_cursor:
+          type: string
+      required:
+        - items
+      type: object
+      x-go-type: api.BatesCandidatePage
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
+    BatesDownloadTicket:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/BatesDownloadTicket.json
+          format: uri
+          readOnly: true
+          type: string
+        allocation_id:
+          type: string
+        blob_sha256:
+          type: string
+        name:
+          type: string
+        size:
+          format: int64
+          type: integer
+        url:
+          type: string
+      required:
+        - url
+        - name
+        - allocation_id
+        - blob_sha256
+        - size
+      type: object
+      x-go-type: api.BatesDownloadTicket
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
+    BatesExport:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/BatesExport.json
+          format: uri
+          readOnly: true
+          type: string
+        allocation_id:
+          type: string
+        artifact_id:
+          type: string
+        blob_sha256:
+          type: string
+        created_at:
+          type: string
+        manifest_sha256:
+          type: string
+        media_type:
+          type: string
+        page_count:
+          format: int64
+          type: integer
+        pages:
+          items:
+            $ref: "#/components/schemas/BatesArtifactPage"
+          type: array
+        recipe_sha256:
+          type: string
+        size:
+          format: int64
+          type: integer
+        state:
+          type: string
+      required:
+        - artifact_id
+        - allocation_id
+        - blob_sha256
+        - size
+        - media_type
+        - page_count
+        - recipe_sha256
+        - manifest_sha256
+        - state
+        - created_at
+        - pages
+      type: object
+      x-go-type: api.BatesExport
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
+    BatesExportPage:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/BatesExportPage.json
+          format: uri
+          readOnly: true
+          type: string
+        items:
+          items:
+            $ref: "#/components/schemas/BatesExport"
+          type: array
+        next_after:
+          type: string
+        total:
+          format: int64
+          type: integer
+      required:
+        - items
+        - total
+      type: object
+      x-go-type: api.BatesExportPage
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
+    BatesExportRequest:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/BatesExportRequest.json
+          format: uri
+          readOnly: true
+          type: string
+        allocation_id:
+          format: uuid
+          type: string
+        recipe:
+          $ref: "#/components/schemas/Recipe"
+      required:
+        - allocation_id
+        - recipe
+      type: object
+      x-go-type: api.BatesExportRequest
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
+    BatesNamespace:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/BatesNamespace.json
+          format: uri
+          readOnly: true
+          type: string
+        created_at:
+          type: string
+        namespace_id:
+          type: string
+        padding:
+          format: int64
+          type: integer
+        prefix:
+          type: string
+        suffix:
+          type: string
+      required:
+        - namespace_id
+        - prefix
+        - suffix
+        - padding
+        - created_at
+      type: object
+      x-go-type: api.BatesNamespace
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
+    BatesNamespacePage:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/BatesNamespacePage.json
+          format: uri
+          readOnly: true
+          type: string
+        items:
+          items:
+            $ref: "#/components/schemas/BatesNamespace"
+          type: array
+        next_cursor:
+          type: string
+        total:
+          format: int64
+          type: integer
+      required:
+        - items
+        - total
+      type: object
+      x-go-type: api.BatesNamespacePage
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
+    BatesNamespaceRequest:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/BatesNamespaceRequest.json
+          format: uri
+          readOnly: true
+          type: string
+        padding:
+          format: int64
+          type: integer
+        prefix:
+          type: string
+        suffix:
+          type: string
+      required:
+        - prefix
+        - padding
+      type: object
+      x-go-type: api.BatesNamespaceRequest
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
+    BatesPageInput:
+      additionalProperties: false
+      properties:
+        occurrence_id:
+          type: string
+        source_page:
+          format: int64
+          type: integer
+        unstamped_sha256:
+          type: string
+        verified_page_count:
+          format: int64
+          type: integer
+      required:
+        - occurrence_id
+        - unstamped_sha256
+        - source_page
+        - verified_page_count
+      type: object
+      x-go-type: api.BatesPageInput
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
+    BatesPageLabel:
+      additionalProperties: false
+      properties:
+        label:
+          type: string
+        occurrence_id:
+          type: string
+        ordinal:
+          format: int64
+          type: integer
+        output_page:
+          format: int64
+          type: integer
+        source_page:
+          format: int64
+          type: integer
+      required:
+        - ordinal
+        - occurrence_id
+        - source_page
+        - output_page
+        - label
+      type: object
+      x-go-type: api.BatesPageLabel
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
+    BatesPlan:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/BatesPlan.json
+          format: uri
+          readOnly: true
+          type: string
+        allocation_id:
+          type: string
+        end_sequence:
+          format: int64
+          type: integer
+        labels:
+          items:
+            $ref: "#/components/schemas/BatesPageLabel"
+          type: array
+        namespace:
+          $ref: "#/components/schemas/BatesNamespace"
+        stamped_nothing:
+          type: boolean
+        start_sequence:
+          format: int64
+          type: integer
+      required:
+        - namespace
+        - start_sequence
+        - end_sequence
+        - labels
+        - stamped_nothing
+      type: object
+      x-go-type: api.BatesPlan
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
+    BatesPlanRequest:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/BatesPlanRequest.json
+          format: uri
+          readOnly: true
+          type: string
+        namespace_id:
+          type: string
+        operation_id:
+          type: string
+        padding:
+          format: int64
+          type: integer
+        pages:
+          items:
+            $ref: "#/components/schemas/BatesPageInput"
+          type: array
+        prefix:
+          type: string
+        recipe_sha256:
+          type: string
+        snapshot_id:
+          type: string
+        start_at:
+          format: int64
+          type: integer
+        suffix:
+          type: string
+      required:
+        - operation_id
+        - snapshot_id
+        - start_at
+      type: object
+      x-go-type: api.BatesPlanRequest
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     BlobStore:
       additionalProperties: false
       properties:
@@ -1583,6 +2119,29 @@ components:
       x-go-type-import:
         path: go.kenn.io/docbank/document
         name: document
+    CatalogEntry:
+      additionalProperties: false
+      properties:
+        aliases:
+          items:
+            type: string
+          type: array
+        canonical:
+          type: string
+        date_kind:
+          type: string
+        primary:
+          type: boolean
+      required:
+        - canonical
+        - date_kind
+        - aliases
+        - primary
+      type: object
+      x-go-type: loadfile.CatalogEntry
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/loadfile
+        name: loadfile
     Collection:
       additionalProperties: false
       properties:
@@ -1881,6 +2440,61 @@ components:
       x-go-type-import:
         path: go.kenn.io/docbank/internal/api
         name: api
+    CollectionSnapshotRepresentation:
+      additionalProperties: false
+      properties:
+        blob_sha256:
+          type: string
+        content_version_id:
+          type: string
+        lexical_generation_id:
+          type: string
+        media_type:
+          type: string
+        occurrence_id:
+          type: string
+        ordinal:
+          format: int64
+          type: integer
+        page_number:
+          format: int64
+          type: integer
+        recipe_sha256:
+          type: string
+        rendition_build_id:
+          type: string
+        role:
+          type: string
+        size:
+          format: int64
+          type: integer
+        status:
+          type: string
+        text_authority:
+          type: string
+        verified_page_count:
+          format: int64
+          type: integer
+      required:
+        - occurrence_id
+        - role
+        - ordinal
+        - status
+        - text_authority
+        - content_version_id
+        - blob_sha256
+        - media_type
+        - size
+        - page_number
+        - verified_page_count
+        - recipe_sha256
+        - rendition_build_id
+        - lexical_generation_id
+      type: object
+      x-go-type: store.CollectionSnapshotRepresentation
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/store
+        name: store
     ContentReference:
       additionalProperties: false
       properties:
@@ -2322,6 +2936,103 @@ components:
       required:
         - name
       type: object
+    CustodianAssignment:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/CustodianAssignment.json
+          format: uri
+          readOnly: true
+          type: string
+        assignment_id:
+          type: string
+        basis:
+          type: string
+        package_id:
+          type: string
+        package_record_id:
+          type: string
+        person_id:
+          type: string
+        rank:
+          type: string
+        raw_label:
+          type: string
+        recorded_at:
+          type: string
+        revision:
+          format: int64
+          type: integer
+        scope_kind:
+          type: string
+        source_ref:
+          type: string
+      required:
+        - assignment_id
+        - scope_kind
+        - raw_label
+        - rank
+        - basis
+        - source_ref
+        - revision
+        - recorded_at
+      type: object
+      x-go-type: api.CustodianAssignment
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
+    CustodianPage:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/CustodianPage.json
+          format: uri
+          readOnly: true
+          type: string
+        items:
+          items:
+            $ref: "#/components/schemas/CustodianAssignment"
+          type: array
+        next_cursor:
+          type: string
+        total:
+          format: int64
+          type: integer
+      required:
+        - items
+        - total
+      type: object
+      x-go-type: api.CustodianPage
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
+    CustodianResolveRequest:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/CustodianResolveRequest.json
+          format: uri
+          readOnly: true
+          type: string
+        if_match_revision:
+          format: int64
+          type: integer
+        person_id:
+          type: string
+      required:
+        - person_id
+        - if_match_revision
+      type: object
+      x-go-type: api.CustodianResolveRequest
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     DerivativePurgeEvent:
       additionalProperties: false
       properties:
@@ -3367,6 +4078,17 @@ components:
       x-go-type-import:
         path: go.kenn.io/docbank/internal/api
         name: api
+    DownloadBatesExportRequest:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/DownloadBatesExportRequest.json
+          format: uri
+          readOnly: true
+          type: string
+      type: object
     DownloadRequest:
       additionalProperties: false
       properties:
@@ -5022,6 +5744,29 @@ components:
         - preview_token
         - acknowledge_permanent_retention
       type: object
+    EngineIdentity:
+      additionalProperties: false
+      properties:
+        api:
+          type: string
+        name:
+          type: string
+        options:
+          items:
+            type: string
+          type: array
+        version:
+          type: string
+      required:
+        - name
+        - version
+        - api
+        - options
+      type: object
+      x-go-type: pdfstamp.EngineIdentity
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/pdfstamp
+        name: pdfstamp
     Entry:
       additionalProperties: false
       properties:
@@ -7283,6 +8028,205 @@ components:
       x-go-type-import:
         path: go.kenn.io/docbank/internal/api
         name: api
+    PackageBrowseVolume:
+      additionalProperties: false
+      properties:
+        declared_root:
+          type: string
+        mapped_root:
+          type: string
+        ordinal:
+          format: int64
+          minimum: 1
+          type: integer
+        resolved_root_sha256:
+          type: string
+        volume_name:
+          type: string
+      required:
+        - ordinal
+        - volume_name
+        - declared_root
+        - mapped_root
+        - resolved_root_sha256
+      type: object
+      x-go-type: api.PackageBrowseVolume
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
+    PackageContainer:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/PackageContainer.json
+          format: uri
+          readOnly: true
+          type: string
+        container_id:
+          type: string
+        created_at:
+          type: string
+        format:
+          type: string
+        sha256:
+          type: string
+        size:
+          format: int64
+          type: integer
+        state:
+          type: string
+      required:
+        - container_id
+        - format
+        - state
+        - sha256
+        - size
+        - created_at
+      type: object
+      x-go-type: api.PackageContainer
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
+    PackageContainerInput:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/PackageContainerInput.json
+          format: uri
+          readOnly: true
+          type: string
+        container_id:
+          type: string
+        sha256:
+          type: string
+        size:
+          format: int64
+          type: integer
+      required:
+        - container_id
+        - sha256
+        - size
+      type: object
+    PackageCustodianRequest:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/PackageCustodianRequest.json
+          format: uri
+          readOnly: true
+          type: string
+        if_match_revision:
+          format: int64
+          type: integer
+        person_id:
+          type: string
+        raw_label:
+          type: string
+        row_id:
+          type:
+            - string
+            - "null"
+      required:
+        - raw_label
+        - if_match_revision
+      type: object
+      x-go-type: api.PackageCustodianRequest
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
+    PackageDetail:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/PackageDetail.json
+          format: uri
+          readOnly: true
+          type: string
+        completed_at:
+          type: string
+        created_at:
+          format: date-time
+          type: string
+        direction:
+          enum:
+            - received
+            - produced
+          type: string
+        export_plan_id:
+          type: string
+        ingest_id:
+          type: string
+        manifest_blob_sha256:
+          type: string
+        manifest_sha256:
+          type: string
+        mapping_json:
+          type: string
+        mapping_sha256:
+          type: string
+        member_count:
+          format: int64
+          minimum: 0
+          type: integer
+        package_id:
+          format: uuid
+          type: string
+        package_name:
+          type: string
+        page_count:
+          format: int64
+          minimum: 0
+          type: integer
+        party_label:
+          type: string
+        predecessor_package_id:
+          type: string
+        produced_on:
+          type: string
+        profile_json:
+          type: string
+        profile_sha256:
+          type: string
+        relation:
+          type: string
+        snapshot_id:
+          type: string
+        state:
+          type: string
+        volumes:
+          items:
+            $ref: "#/components/schemas/PackageBrowseVolume"
+          maxItems: 64
+          type: array
+      required:
+        - profile_json
+        - mapping_json
+        - volumes
+        - package_id
+        - direction
+        - package_name
+        - party_label
+        - profile_sha256
+        - mapping_sha256
+        - manifest_sha256
+        - manifest_blob_sha256
+        - state
+        - created_at
+        - member_count
+        - page_count
+      type: object
+      x-go-type: api.PackageDetail
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     PackageDiagnostic:
       additionalProperties: false
       properties:
@@ -7333,6 +8277,333 @@ components:
         - total
       type: object
       x-go-type: api.PackageDiagnosticPage
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
+    PackageFieldCatalog:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/PackageFieldCatalog.json
+          format: uri
+          readOnly: true
+          type: string
+        fields:
+          items:
+            $ref: "#/components/schemas/CatalogEntry"
+          maxItems: 64
+          type: array
+      required:
+        - fields
+      type: object
+      x-go-type: api.PackageFieldCatalog
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
+    PackageImportJob:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/PackageImportJob.json
+          format: uri
+          readOnly: true
+          type: string
+        committed:
+          format: int64
+          type: integer
+        created_at:
+          type: string
+        gap_count:
+          format: int64
+          type: integer
+        gaps:
+          items:
+            type: string
+          type: array
+        job_id:
+          type: string
+        operation_id:
+          type: string
+        package_id:
+          type: string
+        preflight_id:
+          type: string
+        state:
+          type: string
+        total:
+          format: int64
+          type: integer
+        updated_at:
+          type: string
+      required:
+        - operation_id
+        - job_id
+        - package_id
+        - preflight_id
+        - state
+        - committed
+        - total
+        - gap_count
+        - created_at
+        - updated_at
+      type: object
+      x-go-type: api.PackageImportJob
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
+    PackageImportRequest:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/PackageImportRequest.json
+          format: uri
+          readOnly: true
+          type: string
+        accept_partial:
+          type: boolean
+        index_supplied_text:
+          type: boolean
+        into:
+          type: string
+        name:
+          type: string
+        operation_id:
+          type: string
+        party:
+          type: string
+        preflight_id:
+          type: string
+      required:
+        - preflight_id
+        - into
+        - name
+        - party
+        - operation_id
+      type: object
+      x-go-type: api.PackageImportRequest
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
+    PackageLabelCandidatePage:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/PackageLabelCandidatePage.json
+          format: uri
+          readOnly: true
+          type: string
+        items:
+          items:
+            $ref: "#/components/schemas/PackageLabelRow"
+          maxItems: 250
+          type: array
+        limit:
+          format: int64
+          maximum: 250
+          minimum: 1
+          type: integer
+        next_cursor:
+          type: string
+      required:
+        - items
+        - limit
+      type: object
+      x-go-type: api.PackageLabelCandidatePage
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
+    PackageLabelRow:
+      additionalProperties: false
+      properties:
+        artifact_id:
+          type: string
+        content_version_id:
+          type: string
+        endpoint:
+          type: string
+        label:
+          type: string
+        label_set:
+          type: string
+        label_sort_key:
+          type: string
+        occurrence_id:
+          type: string
+        package_id:
+          type: string
+        page_number:
+          format: int64
+          type: integer
+        page_state:
+          type: string
+        provenance:
+          type: string
+      required:
+        - package_id
+        - provenance
+        - label_set
+        - label
+        - label_sort_key
+        - occurrence_id
+        - content_version_id
+        - artifact_id
+        - page_number
+        - page_state
+        - endpoint
+      type: object
+      x-go-type: store.PackageLabelRow
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/store
+        name: store
+    PackageMember:
+      additionalProperties: false
+      properties:
+        blob_sha256:
+          type: string
+        content_version_id:
+          type: string
+        display_name:
+          type: string
+        document_kind:
+          type: string
+        family_id:
+          type: string
+        family_order:
+          format: int64
+          type: integer
+        frozen_fields_json:
+          type: string
+        node_id:
+          format: int64
+          type: integer
+        occurrence_id:
+          type: string
+        ordinal:
+          format: int64
+          type: integer
+        parent_occurrence_id:
+          type: string
+        representations:
+          items:
+            $ref: "#/components/schemas/CollectionSnapshotRepresentation"
+          type: array
+        row_id:
+          pattern: ^[0-9a-f]{64}$
+          type: string
+        selected_pdf_sha256:
+          type: string
+        selected_source_pages:
+          items:
+            format: int64
+            type: integer
+          type: array
+        size:
+          format: int64
+          type: integer
+        source_page_count:
+          format: int64
+          type: integer
+      required:
+        - ordinal
+        - occurrence_id
+        - node_id
+        - content_version_id
+        - blob_sha256
+        - size
+        - family_id
+        - parent_occurrence_id
+        - family_order
+        - display_name
+        - frozen_fields_json
+        - document_kind
+        - selected_source_pages
+        - selected_pdf_sha256
+        - source_page_count
+        - representations
+      type: object
+      x-go-type: api.PackageMember
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
+    PackageMemberPage:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/PackageMemberPage.json
+          format: uri
+          readOnly: true
+          type: string
+        after_ordinal:
+          format: int64
+          minimum: 0
+          type: integer
+        items:
+          items:
+            $ref: "#/components/schemas/PackageMember"
+          maxItems: 250
+          type: array
+        limit:
+          format: int64
+          maximum: 250
+          minimum: 1
+          type: integer
+        next_after_ordinal:
+          format: int64
+          minimum: 0
+          type: integer
+      required:
+        - items
+        - after_ordinal
+        - limit
+      type: object
+      x-go-type: api.PackageMemberPage
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
+    PackagePage:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/PackagePage.json
+          format: uri
+          readOnly: true
+          type: string
+        after:
+          type: string
+        direction:
+          enum:
+            - received
+            - produced
+          type: string
+        items:
+          items:
+            $ref: "#/components/schemas/PackageSummary"
+          maxItems: 250
+          type: array
+        limit:
+          format: int64
+          maximum: 250
+          minimum: 1
+          type: integer
+        next_after:
+          type: string
+      required:
+        - items
+        - limit
+      type: object
+      x-go-type: api.PackagePage
       x-go-type-import:
         path: go.kenn.io/docbank/internal/api
         name: api
@@ -7428,6 +8699,7 @@ components:
         source_kind:
           enum:
             - root
+            - container
           type: string
         source_ref:
           minLength: 1
@@ -7439,6 +8711,182 @@ components:
         - source_ref
       type: object
       x-go-type: api.PackagePreflightRequest
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
+    PackageRecord:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/PackageRecord.json
+          format: uri
+          readOnly: true
+          type: string
+        load_file:
+          type: string
+        occurrence_id:
+          pattern: ^[0-9a-f]{32}$
+          type: string
+        package_id:
+          format: uuid
+          type: string
+        raw_json:
+          contentEncoding: base64
+          format: byte
+          type: string
+        raw_sha256:
+          pattern: ^[0-9a-f]{64}$
+          type: string
+        row_id:
+          pattern: ^[0-9a-f]{64}$
+          type: string
+        row_ordinal:
+          format: int64
+          minimum: 1
+          type: integer
+        sensitive:
+          type: boolean
+      required:
+        - package_id
+        - row_id
+        - load_file
+        - row_ordinal
+        - occurrence_id
+        - raw_sha256
+        - sensitive
+      type: object
+      x-go-type: api.PackageRecord
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
+    PackageSummary:
+      additionalProperties: false
+      properties:
+        completed_at:
+          type: string
+        created_at:
+          format: date-time
+          type: string
+        direction:
+          enum:
+            - received
+            - produced
+          type: string
+        export_plan_id:
+          type: string
+        ingest_id:
+          type: string
+        manifest_blob_sha256:
+          type: string
+        manifest_sha256:
+          type: string
+        mapping_sha256:
+          type: string
+        member_count:
+          format: int64
+          minimum: 0
+          type: integer
+        package_id:
+          format: uuid
+          type: string
+        package_name:
+          type: string
+        page_count:
+          format: int64
+          minimum: 0
+          type: integer
+        party_label:
+          type: string
+        predecessor_package_id:
+          type: string
+        produced_on:
+          type: string
+        profile_sha256:
+          type: string
+        relation:
+          type: string
+        snapshot_id:
+          type: string
+        state:
+          type: string
+      required:
+        - package_id
+        - direction
+        - package_name
+        - party_label
+        - profile_sha256
+        - mapping_sha256
+        - manifest_sha256
+        - manifest_blob_sha256
+        - state
+        - created_at
+        - member_count
+        - page_count
+      type: object
+      x-go-type: api.PackageSummary
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
+    PackageTimelineInput:
+      additionalProperties: false
+      properties:
+        declared_timezone:
+          type: string
+        occurrence_id:
+          type: string
+        package_id:
+          type: string
+        produced_on:
+          type: string
+        raw_json:
+          contentEncoding: base64
+          format: byte
+          type: string
+        row_id:
+          type: string
+      required:
+        - package_id
+        - occurrence_id
+        - row_id
+        - raw_json
+        - declared_timezone
+        - produced_on
+      type: object
+      x-go-type: store.PackageTimelineInput
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/store
+        name: store
+    PackageTimelineInputPage:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/PackageTimelineInputPage.json
+          format: uri
+          readOnly: true
+          type: string
+        after_row_id:
+          type: string
+        items:
+          items:
+            $ref: "#/components/schemas/PackageTimelineInput"
+          maxItems: 250
+          type: array
+        limit:
+          format: int64
+          maximum: 250
+          minimum: 1
+          type: integer
+        next_after_row_id:
+          type: string
+      required:
+        - items
+        - limit
+      type: object
+      x-go-type: api.PackageTimelineInputPage
       x-go-type-import:
         path: go.kenn.io/docbank/internal/api
         name: api
@@ -8131,6 +9579,51 @@ components:
         - operation_id
       type: object
       x-go-type: api.PeopleRebuildRequest
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
+    PersonPage:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/PersonPage.json
+          format: uri
+          readOnly: true
+          type: string
+        items:
+          items:
+            $ref: "#/components/schemas/PersonSummary"
+          type: array
+        next_cursor:
+          type: string
+      required:
+        - items
+      type: object
+      x-go-type: api.PersonPage
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
+    PersonSummary:
+      additionalProperties: false
+      properties:
+        display_name:
+          type: string
+        person_id:
+          type: string
+        revision:
+          format: int64
+          type: integer
+        state:
+          type: string
+      required:
+        - person_id
+        - display_name
+        - state
+        - revision
+      type: object
+      x-go-type: api.PersonSummary
       x-go-type-import:
         path: go.kenn.io/docbank/internal/api
         name: api
@@ -9415,6 +10908,68 @@ components:
       x-go-type-import:
         path: go.kenn.io/docbank/document/bundle
         name: bundle
+    Recipe:
+      additionalProperties: false
+      properties:
+        color:
+          type: string
+        contract:
+          type: string
+        engine_identity:
+          $ref: "#/components/schemas/EngineIdentity"
+        font_name:
+          type: string
+        font_size_points:
+          format: int64
+          type: integer
+        margin_points:
+          format: int64
+          type: integer
+        namespace_id:
+          type: string
+        opacity:
+          format: double
+          type: number
+        padding:
+          format: int64
+          type: integer
+        position:
+          type: string
+        prefix:
+          type: string
+        restamp:
+          type: boolean
+        rotation_policy:
+          type: string
+        start_at:
+          format: int64
+          type: integer
+        suffix:
+          type: string
+        units:
+          type: string
+      required:
+        - contract
+        - namespace_id
+        - prefix
+        - suffix
+        - padding
+        - start_at
+        - position
+        - margin_points
+        - font_name
+        - font_size_points
+        - color
+        - opacity
+        - units
+        - rotation_policy
+        - restamp
+        - engine_identity
+      type: object
+      x-go-type: pdfstamp.Recipe
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/pdfstamp
+        name: pdfstamp
     RegisterBlobStoreRequest:
       additionalProperties: false
       properties:
@@ -13182,6 +14737,301 @@ paths:
                 $ref: "#/components/schemas/Error"
           description: Error
       summary: Observe exact tag membership for a revision-fenced selected set
+  /api/v1/bates/allocations:
+    post:
+      operationId: reserveBatesRange
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/BatesPlanRequest"
+        required: true
+      responses:
+        "201":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BatesAllocation"
+          description: Created
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: Reserve one idempotent Bates range
+  /api/v1/bates/allocations/{id}:
+    get:
+      operationId: readBatesAllocation
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            format: uuid
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BatesAllocation"
+          description: OK
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: Read a Bates allocation
+  /api/v1/bates/exports:
+    get:
+      operationId: listBatesExports
+      parameters:
+        - explode: false
+          in: query
+          name: after
+          schema:
+            type: string
+        - explode: false
+          in: query
+          name: limit
+          schema:
+            format: int64
+            maximum: 250
+            minimum: 0
+            type: integer
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BatesExportPage"
+          description: OK
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: List verified Bates export history
+    post:
+      operationId: publishBatesExport
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/BatesExportRequest"
+        required: true
+      responses:
+        "201":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BatesExport"
+          description: Created
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: Publish a verified Bates export
+  /api/v1/bates/exports/candidates:
+    get:
+      operationId: findBatesExports
+      parameters:
+        - explode: false
+          in: query
+          name: bates_label
+          schema:
+            maxLength: 256
+            type: string
+        - explode: false
+          in: query
+          name: custodian_label
+          schema:
+            maxLength: 200
+            type: string
+        - explode: false
+          in: query
+          name: person_id
+          schema:
+            type: string
+        - explode: false
+          in: query
+          name: cursor
+          schema:
+            maxLength: 4096
+            type: string
+        - explode: false
+          in: query
+          name: limit
+          schema:
+            format: int64
+            maximum: 250
+            minimum: 0
+            type: integer
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BatesCandidatePage"
+          description: OK
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: Find verified Bates export candidates
+  /api/v1/bates/exports/{id}:
+    get:
+      operationId: readBatesExport
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            format: uuid
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BatesExport"
+          description: OK
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: Read a verified Bates export
+  /api/v1/bates/exports/{id}/content:
+    get:
+      operationId: downloadBatesExportContent
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            format: uuid
+            type: string
+      responses:
+        "200":
+          content:
+            application/pdf: {}
+          description: Exact retained Bates PDF
+      summary: Download independently reverified Bates export bytes
+  /api/v1/bates/exports/{id}/download:
+    post:
+      operationId: downloadBatesExport
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            format: uuid
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DownloadBatesExportRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BatesDownloadTicket"
+          description: OK
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: Issue a one-use ticket for a reverified Bates export
+  /api/v1/bates/namespaces:
+    get:
+      operationId: listBatesNamespaces
+      parameters:
+        - explode: false
+          in: query
+          name: cursor
+          schema:
+            type: string
+        - explode: false
+          in: query
+          name: limit
+          schema:
+            format: int64
+            maximum: 250
+            minimum: 0
+            type: integer
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BatesNamespacePage"
+          description: OK
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: List Bates namespaces
+    post:
+      operationId: createBatesNamespace
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/BatesNamespaceRequest"
+        required: true
+      responses:
+        "201":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BatesNamespace"
+          description: Created
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: Create or find a Bates namespace
+  /api/v1/bates/preview:
+    post:
+      operationId: planBatesStamp
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/BatesPlanRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BatesPlan"
+          description: OK
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: Preview tentative Bates labels without stamping or reserving
   /api/v1/collections:
     get:
       description: Counts and bytes describe current live members. Empty runs remain directly accessible only when they retain label authority.
@@ -15855,6 +17705,752 @@ paths:
                 $ref: "#/components/schemas/Error"
           description: Error
       summary: Preview or prune selected non-current content versions
+  /api/v1/packages:
+    get:
+      operationId: listPackages
+      parameters:
+        - explode: false
+          in: query
+          name: direction
+          schema:
+            enum:
+              - received
+              - produced
+            type: string
+        - explode: false
+          in: query
+          name: after
+          schema:
+            maxLength: 36
+            type: string
+        - explode: false
+          in: query
+          name: limit
+          schema:
+            default: 100
+            format: int64
+            maximum: 250
+            minimum: 1
+            type: integer
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PackagePage"
+          description: OK
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: List received and produced packages
+  /api/v1/packages/by-id/{package_id}:
+    get:
+      operationId: getPackage
+      parameters:
+        - in: path
+          name: package_id
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PackageDetail"
+          description: OK
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: Read one package identity and state
+  /api/v1/packages/by-id/{package_id}/custodian:
+    put:
+      operationId: assignPackageCustodian
+      parameters:
+        - in: path
+          name: package_id
+          required: true
+          schema:
+            format: uuid
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PackageCustodianRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CustodianAssignment"
+          description: Operator package custodian
+        "401":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+        "403":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+        "404":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+        "409":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+        "422":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+        "500":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: Create or replace an operator-owned package custodian
+  /api/v1/packages/by-id/{package_id}/custodians:
+    get:
+      operationId: listPackageCustodians
+      parameters:
+        - in: path
+          name: package_id
+          required: true
+          schema:
+            format: uuid
+            type: string
+        - in: query
+          name: row_id
+          schema:
+            type: string
+        - in: query
+          name: unresolved_only
+          schema:
+            default: false
+            type: boolean
+        - in: query
+          name: limit
+          schema:
+            default: 100
+            maximum: 250
+            minimum: 1
+            type: integer
+        - in: query
+          name: cursor
+          schema:
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CustodianPage"
+          description: Bounded custodian claims
+        "401":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+        "403":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+        "404":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+        "422":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+        "500":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: List active package custodian claims
+  /api/v1/packages/by-id/{package_id}/members:
+    get:
+      operationId: listPackageMembers
+      parameters:
+        - in: path
+          name: package_id
+          required: true
+          schema:
+            type: string
+        - explode: false
+          in: query
+          name: after_ordinal
+          schema:
+            default: 0
+            format: int64
+            minimum: 0
+            type: integer
+        - explode: false
+          in: query
+          name: limit
+          schema:
+            default: 100
+            format: int64
+            maximum: 250
+            minimum: 1
+            type: integer
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PackageMemberPage"
+          description: OK
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: List immutable package members
+  /api/v1/packages/by-id/{package_id}/records/{row_id}:
+    get:
+      operationId: getPackageRecord
+      parameters:
+        - in: path
+          name: package_id
+          required: true
+          schema:
+            type: string
+        - in: path
+          name: row_id
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PackageRecord"
+          description: OK
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: Read one immutable package row
+  /api/v1/packages/by-id/{package_id}/timeline-inputs:
+    get:
+      operationId: listPackageTimelineInputs
+      parameters:
+        - in: path
+          name: package_id
+          required: true
+          schema:
+            type: string
+        - explode: false
+          in: query
+          name: after_row_id
+          schema:
+            maxLength: 64
+            type: string
+        - explode: false
+          in: query
+          name: limit
+          schema:
+            default: 100
+            format: int64
+            maximum: 250
+            minimum: 1
+            type: integer
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PackageTimelineInputPage"
+          description: OK
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: List retained sender rows for explicit timeline parsing
+  /api/v1/packages/containers:
+    post:
+      operationId: beginPackageContainer
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PackageContainerInput"
+        description: ZIP digest, exact size, and caller-supplied container ID; at most 1 MiB of JSON
+        required: true
+      responses:
+        "201":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PackageContainer"
+          description: Declare an immutable ZIP package
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Package container request failed
+      summary: Declare an immutable ZIP package
+  /api/v1/packages/containers/{id}:
+    delete:
+      operationId: abortPackageContainer
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      responses:
+        "204":
+          description: Abort an incomplete ZIP upload
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Package container request failed
+      summary: Abort an incomplete ZIP upload
+    get:
+      operationId: getPackageContainer
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PackageContainer"
+          description: Read an owned ZIP package
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Package container request failed
+      summary: Read an owned ZIP package
+  /api/v1/packages/containers/{id}/chunks/{index}:
+    put:
+      operationId: uploadPackageChunk
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+        - in: path
+          name: index
+          required: true
+          schema:
+            type: integer
+        - in: header
+          name: X-Docbank-Blob-Hash
+          required: true
+          schema:
+            pattern: ^[0-9a-f]{64}$
+            type: string
+        - in: header
+          name: X-Docbank-Blob-Size
+          required: true
+          schema:
+            format: int64
+            type: integer
+      requestBody:
+        content:
+          application/octet-stream:
+            schema:
+              contentMediaType: application/octet-stream
+              format: binary
+              type: string
+        description: One complete 64 MiB chunk, except the exact shorter final chunk; API-key clients only
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MailboxChunk"
+          description: Verify and retain one declared ZIP chunk
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Package container request failed
+      summary: Verify and retain one declared ZIP chunk
+  /api/v1/packages/containers/{id}/preflight:
+    post:
+      operationId: preflightPackageContainer
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PackagePreflightRequest"
+        description: Profiles and a source reference matching this sealed container
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PackagePreflight"
+          description: Expiring package preview
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Package preflight failed
+      summary: Preview a sealed ZIP package
+  /api/v1/packages/containers/{id}/seal:
+    post:
+      operationId: sealPackageContainer
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PackageContainer"
+          description: Verify the full ZIP digest and seal
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Package container request failed
+      summary: Verify the full ZIP digest and seal
+  /api/v1/packages/custodians/{assignment_id}/resolve:
+    post:
+      operationId: resolvePackageCustodian
+      parameters:
+        - in: path
+          name: assignment_id
+          required: true
+          schema:
+            format: uuid
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CustodianResolveRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CustodianAssignment"
+          description: Resolved custodian claim
+        "401":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+        "403":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+        "404":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+        "409":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+        "422":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+        "500":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: Resolve one exact custodian claim to a person
+  /api/v1/packages/field-catalog:
+    get:
+      operationId: listPackageFieldCatalog
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PackageFieldCatalog"
+          description: OK
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: List canonical package fields and sender aliases
+  /api/v1/packages/imports:
+    post:
+      operationId: createPackageImport
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PackageImportRequest"
+        required: true
+      responses:
+        "202":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PackageImportJob"
+          description: Durable package import job
+        "401":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+        "403":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+        "404":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+        "409":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+        "422":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+        "500":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: Import a previewed load-file package
+  /api/v1/packages/imports/{operation_id}:
+    get:
+      operationId: readPackageImport
+      parameters:
+        - in: path
+          name: operation_id
+          required: true
+          schema:
+            format: uuid
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PackageImportJob"
+          description: Durable package import job
+        "401":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+        "403":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+        "404":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+        "500":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: Read package import progress
+  /api/v1/packages/imports/{operation_id}/cancel:
+    post:
+      operationId: cancelPackageImport
+      parameters:
+        - in: path
+          name: operation_id
+          required: true
+          schema:
+            format: uuid
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PackageImportJob"
+          description: Durable package import job
+        "401":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+        "403":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+        "404":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+        "409":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+        "500":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: Cancel a package import
+  /api/v1/packages/label-candidates:
+    get:
+      operationId: listPackageLabelCandidates
+      parameters:
+        - explode: false
+          in: query
+          name: label
+          required: true
+          schema:
+            maxLength: 256
+            minLength: 1
+            type: string
+        - explode: false
+          in: query
+          name: package_id
+          schema:
+            maxLength: 36
+            type: string
+        - explode: false
+          in: query
+          name: label_set
+          schema:
+            maxLength: 256
+            type: string
+        - explode: false
+          in: query
+          name: provenance
+          schema:
+            enum:
+              - received
+              - assigned
+            type: string
+        - explode: false
+          in: query
+          name: cursor
+          schema:
+            maxLength: 2048
+            type: string
+        - explode: false
+          in: query
+          name: limit
+          schema:
+            default: 100
+            format: int64
+            maximum: 250
+            minimum: 1
+            type: integer
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PackageLabelCandidatePage"
+          description: OK
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: Find every package-scoped candidate for an exact label
   /api/v1/packages/preflights:
     post:
       operationId: createPackagePreflight
@@ -16384,6 +18980,57 @@ paths:
                 $ref: "#/components/schemas/Error"
           description: Error
       summary: Move a virtual path and its subtree to the trash in one transaction
+  /api/v1/people:
+    get:
+      operationId: listPeople
+      parameters:
+        - in: query
+          name: query
+          schema:
+            type: string
+        - in: query
+          name: limit
+          schema:
+            default: 100
+            maximum: 250
+            minimum: 1
+            type: integer
+        - in: query
+          name: cursor
+          schema:
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PersonPage"
+          description: Bounded person candidates
+        "401":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+        "403":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+        "422":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+        "500":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: Find active canonical people
   /api/v1/people/coverage:
     get:
       operationId: getPeopleCoverage

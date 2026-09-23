@@ -70,6 +70,38 @@ func executeReadTool(
 		output, err = getProcessingStatus(ctx, lease, raw)
 	case "get_processing_coverage":
 		output, err = getProcessingCoverage(ctx, lease, raw)
+	case "get_package_import":
+		output, err = getPackageImport(ctx, lease, raw)
+	case "get_package_preflight":
+		output, err = getPackagePreflight(ctx, lease, raw)
+	case "list_package_preflight_diagnostics":
+		output, err = listPackagePreflightDiagnostics(ctx, lease, raw)
+	case "list_package_custodians":
+		output, err = listPackageCustodians(ctx, lease, raw)
+	case "find_people":
+		output, err = findPeople(ctx, lease, raw)
+	case "list_packages":
+		output, err = listPackages(ctx, lease, raw)
+	case "get_package":
+		output, err = getPackage(ctx, lease, raw)
+	case "list_package_members":
+		output, err = listPackageMembers(ctx, lease, raw)
+	case "get_package_record":
+		output, err = getPackageRecord(ctx, lease, raw)
+	case "lookup_bates_label":
+		output, err = lookupBatesLabel(ctx, lease, raw)
+	case "list_bates_namespaces":
+		output, err = listBatesNamespaces(ctx, lease, raw)
+	case "preview_bates_stamp":
+		output, err = previewBatesStamp(ctx, lease, raw)
+	case "get_bates_allocation":
+		output, err = getBatesAllocation(ctx, lease, raw)
+	case "list_bates_exports":
+		output, err = listBatesExports(ctx, lease, raw)
+	case "get_bates_export":
+		output, err = getBatesExport(ctx, lease, raw)
+	case "find_bates_exports":
+		output, err = findBatesExports(ctx, lease, raw)
 	default:
 		return nil, errors.New("unknown Docbank read tool")
 	}
@@ -85,6 +117,162 @@ func executeReadTool(
 		plans.remember(plan.ProcessingPlan)
 	}
 	return result, err
+}
+
+type listPackagesInput struct {
+	Direction string `json:"direction"`
+	PageSize  int    `json:"page_size"`
+	Cursor    string `json:"cursor"`
+}
+
+type listPackagesOutput struct {
+	api.PackagePage
+	privateCache
+}
+
+func listPackages(ctx context.Context, lease *daemonLease, raw []byte) (listPackagesOutput, error) {
+	var input listPackagesInput
+	if err := decodeReadArguments(raw, &input); err != nil {
+		return listPackagesOutput{}, err
+	}
+	page, err := daemonRead(ctx, lease, func(ctx context.Context, c *daemonconn.Connection) (*api.PackagePage, error) {
+		query := &apiclient.ListPackagesQuery{After: optionalString(input.Cursor), Limit: optionalInt64(input.PageSize)}
+		if input.Direction != "" {
+			direction := apiclient.ListPackagesQueryDirection(input.Direction)
+			query.Direction = &direction
+		}
+		return c.API().ListPackages(ctx, &apiclient.ListPackagesRequestOptions{Query: query})
+	})
+	if err != nil {
+		return listPackagesOutput{}, err
+	}
+	return listPackagesOutput{PackagePage: *page, privateCache: newPrivateCache()}, nil
+}
+
+type packageIDInput struct {
+	PackageID string `json:"package_id"`
+}
+
+type getPackageOutput struct {
+	api.PackageDetail
+	privateCache
+}
+
+func getPackage(ctx context.Context, lease *daemonLease, raw []byte) (getPackageOutput, error) {
+	var input packageIDInput
+	if err := decodeReadArguments(raw, &input); err != nil {
+		return getPackageOutput{}, err
+	}
+	result, err := daemonRead(ctx, lease, func(ctx context.Context, c *daemonconn.Connection) (*api.PackageDetail, error) {
+		return c.API().GetPackage(ctx, &apiclient.GetPackageRequestOptions{PathParams: &apiclient.GetPackagePath{PackageID: input.PackageID}})
+	})
+	if err != nil {
+		return getPackageOutput{}, err
+	}
+	return getPackageOutput{PackageDetail: *result, privateCache: newPrivateCache()}, nil
+}
+
+type listPackageMembersInput struct {
+	PackageID string `json:"package_id"`
+	After     int    `json:"after_ordinal"`
+	PageSize  int    `json:"page_size"`
+}
+
+type listPackageMembersOutput struct {
+	api.PackageMemberPage
+	privateCache
+}
+
+func listPackageMembers(ctx context.Context, lease *daemonLease, raw []byte) (listPackageMembersOutput, error) {
+	var input listPackageMembersInput
+	if err := decodeReadArguments(raw, &input); err != nil {
+		return listPackageMembersOutput{}, err
+	}
+	page, err := daemonRead(ctx, lease, func(ctx context.Context, c *daemonconn.Connection) (*api.PackageMemberPage, error) {
+		return c.API().ListPackageMembers(ctx, &apiclient.ListPackageMembersRequestOptions{
+			PathParams: &apiclient.ListPackageMembersPath{PackageID: input.PackageID},
+			Query:      &apiclient.ListPackageMembersQuery{AfterOrdinal: optionalInt64(input.After), Limit: optionalInt64(input.PageSize)},
+		})
+	})
+	if err != nil {
+		return listPackageMembersOutput{}, err
+	}
+	return listPackageMembersOutput{PackageMemberPage: *page, privateCache: newPrivateCache()}, nil
+}
+
+type getPackageRecordInput struct {
+	PackageID string `json:"package_id"`
+	RowID     string `json:"row_id"`
+}
+
+type getPackageRecordOutput struct {
+	api.PackageRecord
+	privateCache
+}
+
+func getPackageRecord(ctx context.Context, lease *daemonLease, raw []byte) (getPackageRecordOutput, error) {
+	var input getPackageRecordInput
+	if err := decodeReadArguments(raw, &input); err != nil {
+		return getPackageRecordOutput{}, err
+	}
+	result, err := daemonRead(ctx, lease, func(ctx context.Context, c *daemonconn.Connection) (*api.PackageRecord, error) {
+		return c.API().GetPackageRecord(ctx, &apiclient.GetPackageRecordRequestOptions{PathParams: &apiclient.GetPackageRecordPath{
+			PackageID: input.PackageID, RowID: input.RowID,
+		}})
+	})
+	if err != nil {
+		return getPackageRecordOutput{}, err
+	}
+	return getPackageRecordOutput{PackageRecord: *result, privateCache: newPrivateCache()}, nil
+}
+
+type lookupBatesLabelInput struct {
+	Label      string `json:"label"`
+	PackageID  string `json:"package_id"`
+	LabelSet   string `json:"label_set"`
+	Provenance string `json:"provenance"`
+	Cursor     string `json:"cursor"`
+	PageSize   int    `json:"page_size"`
+}
+
+type lookupBatesLabelOutput struct {
+	api.PackageLabelCandidatePage
+	privateCache
+}
+
+func lookupBatesLabel(ctx context.Context, lease *daemonLease, raw []byte) (lookupBatesLabelOutput, error) {
+	var input lookupBatesLabelInput
+	if err := decodeReadArguments(raw, &input); err != nil {
+		return lookupBatesLabelOutput{}, err
+	}
+	page, err := daemonRead(ctx, lease, func(ctx context.Context, c *daemonconn.Connection) (*api.PackageLabelCandidatePage, error) {
+		query := &apiclient.ListPackageLabelCandidatesQuery{Label: input.Label, PackageID: optionalString(input.PackageID),
+			LabelSet: optionalString(input.LabelSet), Cursor: optionalString(input.Cursor), Limit: optionalInt64(input.PageSize)}
+		if input.Provenance != "" {
+			provenance := apiclient.ListPackageLabelCandidatesQueryProvenance(input.Provenance)
+			query.Provenance = &provenance
+		}
+		return c.API().ListPackageLabelCandidates(ctx, &apiclient.ListPackageLabelCandidatesRequestOptions{Query: query})
+	})
+	if err != nil {
+		return lookupBatesLabelOutput{}, err
+	}
+	return lookupBatesLabelOutput{PackageLabelCandidatePage: *page, privateCache: newPrivateCache()}, nil
+}
+
+func optionalString(value string) *string {
+	if value == "" {
+		return nil
+	}
+	return &value
+}
+
+func optionalInt64(value int) *int64 {
+	if value == 0 {
+		return nil
+	}
+	converted := int64(value)
+	return &converted
 }
 
 func decodeReadArguments(raw []byte, target any) error {

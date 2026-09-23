@@ -6,10 +6,11 @@ import (
 	"go.kenn.io/docbank/document/bundle"
 )
 
+const roleAvailable = "available"
+
 // ExportPlanPreview reads only immutable receipts in bounded pages; current
 // heads and rendition providers have no role in this projection.
 func (s *Store) ExportPlanPreview(ctx context.Context, owner, id string) (bundle.PlanPreview, error) {
-	const roleAvailable = "available"
 	var out bundle.PlanPreview
 	if owner == "" || validateUUIDv4(id) != nil {
 		return out, bundle.ErrConflict

@@ -20,7 +20,7 @@ const toolCatalogTTLMs = 60_000
 
 func catalogInstructions(allowProcessing bool) string {
 	if allowProcessing {
-		return "Docbank exposes bounded reads plus guarded start_processing; processing still requires prior operator consent for the exact plan."
+		return "Docbank exposes bounded reads plus guarded write tools; Bates reservation does not stamp or publish files, and processing still requires prior operator consent for the exact plan."
 	}
 	return "Docbank exposes a bounded read-only document surface."
 }
@@ -31,6 +31,8 @@ type toolDefinition struct {
 	description string
 	schemas     func() (schema, schema)
 	write       bool
+	idempotent  bool
+	destructive bool
 }
 
 var readToolDefinitions = []toolDefinition{
@@ -43,6 +45,22 @@ var readToolDefinitions = []toolDefinition{
 	{name: "get_processing_plan", title: "Get processing plan", description: "Preview the exact provider disclosure and consent state for one document version.", schemas: getProcessingPlanSchemas},
 	{name: "get_processing_status", title: "Get processing status", description: "Read the current state of one stable processing job.", schemas: getProcessingStatusSchemas},
 	{name: "get_processing_coverage", title: "Get processing coverage", description: "Read rendition and embedding coverage for an exact source fence.", schemas: getProcessingCoverageSchemas},
+	{name: "get_package_import", title: "Get package import", description: "Read durable progress for one load-file import operation.", schemas: getPackageImportSchemas},
+	{name: "get_package_preflight", title: "Get package preflight", description: "Read one exact retained load-file package preflight.", schemas: getPackagePreflightSchemas},
+	{name: "list_package_preflight_diagnostics", title: "List package preflight diagnostics", description: "Page through bounded diagnostics for one retained package preflight.", schemas: listPackagePreflightDiagnosticsSchemas},
+	{name: "list_package_custodians", title: "List package custodians", description: "Page through active custodian claims for an exact package scope.", schemas: listPackageCustodiansSchemas},
+	{name: "find_people", title: "Find people", description: "Find bounded canonical person candidates before resolving a custodian claim.", schemas: findPeopleSchemas},
+	{name: "list_packages", title: "List packages", description: "Page through received and produced load-file packages.", schemas: listPackagesSchemas},
+	{name: "get_package", title: "Get package", description: "Read one load-file package and its retained source authority.", schemas: getPackageSchemas},
+	{name: "list_package_members", title: "List package members", description: "Page through one package's immutable document occurrences.", schemas: listPackageMembersSchemas},
+	{name: "get_package_record", title: "Get package record", description: "Read one immutable sender row by its package-scoped record key.", schemas: getPackageRecordSchemas},
+	{name: "lookup_bates_label", title: "Look up Bates label", description: "Find every bounded package-scoped match for an exact received or assigned label.", schemas: lookupBatesLabelSchemas},
+	{name: "list_bates_namespaces", title: "List Bates namespaces", description: "Page through bounded Bates label namespaces.", schemas: listBatesNamespacesSchemas},
+	{name: "preview_bates_stamp", title: "Preview Bates stamp", description: "Preview tentative Bates labels for one sealed snapshot without reserving or stamping anything.", schemas: previewBatesStampSchemas},
+	{name: "get_bates_allocation", title: "Get Bates allocation", description: "Read one exact Bates allocation.", schemas: getBatesAllocationSchemas},
+	{name: "list_bates_exports", title: "List Bates exports", description: "Page through bounded verified Bates export history.", schemas: listBatesExportsSchemas},
+	{name: "get_bates_export", title: "Get Bates export", description: "Read one exact verified Bates export receipt.", schemas: getBatesExportSchemas},
+	{name: "find_bates_exports", title: "Find Bates exports", description: "Return bounded candidates for one exact Bates label, custodian label, or canonical person.", schemas: findBatesExportsSchemas},
 }
 
 var processingToolDefinition = toolDefinition{
@@ -51,19 +69,69 @@ var processingToolDefinition = toolDefinition{
 	schemas:     startProcessingSchemas, write: true,
 }
 
+var packageImportToolDefinition = toolDefinition{
+	name: "start_package_import", title: "Start package import",
+	description: "Start or replay a reviewed load-file import using its preflight identity and operation UUID.",
+	schemas:     startPackageImportSchemas, write: true, idempotent: true,
+}
+
+var preflightLoadFilePackageToolDefinition = toolDefinition{
+	name: "preflight_load_file_package", title: "Preflight load-file package",
+	description: "Retain a reviewed preflight for a local load-file directory or ZIP before import.",
+	schemas:     preflightLoadFilePackageSchemas, write: true,
+}
+
+var resolvePackageCustodianToolDefinition = toolDefinition{
+	name: "resolve_package_custodian", title: "Resolve package custodian",
+	description: "Link one exact existing package custodian claim to one exact canonical person.",
+	schemas:     resolvePackageCustodianSchemas, write: true,
+}
+
+var assignPackageCustodianToolDefinition = toolDefinition{
+	name: "assign_package_custodian", title: "Assign package custodian",
+	description: "Create or replace the operator-owned primary custodian for one exact package scope.",
+	schemas:     assignPackageCustodianSchemas, write: true, destructive: true,
+}
+
+var ensureBatesNamespaceToolDefinition = toolDefinition{
+	name: "ensure_bates_namespace", title: "Ensure Bates namespace",
+	description: "Create or find the exact Bates label namespace.",
+	schemas:     ensureBatesNamespaceSchemas, write: true, idempotent: true,
+}
+
+var reserveBatesRangeToolDefinition = toolDefinition{
+	name: "reserve_bates_range", title: "Reserve Bates range",
+	description: "Reserve one idempotent Bates range for a sealed snapshot without stamping files.",
+	schemas:     reserveBatesRangeSchemas, write: true, idempotent: true,
+}
+
+var publishBatesExportToolDefinition = toolDefinition{
+	name: "publish_bates_export", title: "Publish Bates export",
+	description: "Publish one bounded verified Bates PDF from an exact reserved allocation and reviewed recipe.",
+	schemas:     publishBatesExportSchemas, write: true, idempotent: true,
+}
+
+var exportBatesFileToolDefinition = toolDefinition{
+	name: "export_bates_file", title: "Export Bates file",
+	description: "Write one exact retained Bates PDF to a local path after independent verification.",
+	schemas:     exportBatesFileSchemas, write: true, destructive: true,
+}
+
 func toolCatalog(allowProcessing bool) []*sdkmcp.Tool {
 	definitions := readToolDefinitions
 	if allowProcessing {
-		definitions = append(slices.Clone(definitions), processingToolDefinition)
+		definitions = append(slices.Clone(definitions), processingToolDefinition, preflightLoadFilePackageToolDefinition,
+			packageImportToolDefinition, resolvePackageCustodianToolDefinition, assignPackageCustodianToolDefinition,
+			ensureBatesNamespaceToolDefinition, reserveBatesRangeToolDefinition, publishBatesExportToolDefinition,
+			exportBatesFileToolDefinition)
 	}
-	nonDestructive := false
 	tools := make([]*sdkmcp.Tool, 0, len(definitions))
 	for _, definition := range definitions {
 		input, output := definition.schemas()
 		openWorld := definition.write
 		annotation := &sdkmcp.ToolAnnotations{
 			Title: definition.title, ReadOnlyHint: !definition.write,
-			IdempotentHint: !definition.write, DestructiveHint: &nonDestructive, OpenWorldHint: &openWorld,
+			IdempotentHint: !definition.write || definition.idempotent, DestructiveHint: &definition.destructive, OpenWorldHint: &openWorld,
 		}
 		tools = append(tools, &sdkmcp.Tool{
 			Name: definition.name, Title: definition.title, Description: definition.description,
@@ -81,8 +149,20 @@ func registerToolCatalog(
 	server.AddReceivingMiddleware(validateToolInputs(tools))
 	for _, tool := range tools {
 		output := mustResolveSchema(tool.OutputSchema)
-		handler := processingToolHandler(lease, plans, output, logger)
-		if tool.Name != processingToolDefinition.name {
+		var handler sdkmcp.ToolHandler
+		switch tool.Name {
+		case processingToolDefinition.name:
+			handler = processingToolHandler(lease, plans, output, logger)
+		case packageImportToolDefinition.name:
+			handler = packageImportToolHandler(lease, output, logger)
+		case preflightLoadFilePackageToolDefinition.name:
+			handler = packagePreflightToolHandler(lease, output, logger)
+		case resolvePackageCustodianToolDefinition.name, assignPackageCustodianToolDefinition.name:
+			handler = packageCustodianWriteToolHandler(lease, tool.Name, output, logger)
+		case ensureBatesNamespaceToolDefinition.name, reserveBatesRangeToolDefinition.name,
+			publishBatesExportToolDefinition.name, exportBatesFileToolDefinition.name:
+			handler = batesWriteToolHandler(lease, tool.Name, output, logger)
+		default:
 			handler = readToolHandler(lease, plans, tool.Name, output, logger)
 		}
 		server.AddTool(tool, handler)
@@ -243,12 +323,20 @@ func stableDomainError(err error) (string, int) {
 		return "consent_required", 0
 	case errors.Is(err, errProcessingOutcomeUnknown):
 		return "processing_outcome_unknown", 0
+	case errors.Is(err, errBatesOutcomeUnknown):
+		return "bates_outcome_unknown", 0
 	case errors.Is(err, errDaemonUnavailable):
 		return "daemon_unavailable", 0
 	case errors.Is(err, store.ErrDocumentCursorExpired):
 		return "cursor_expired", 0
 	case errors.Is(err, store.ErrInvalidDocumentCursor):
 		return "invalid_document_cursor", 0
+	case errors.Is(err, store.ErrBatesReservationConflict):
+		return "bates_reservation_conflict", 0
+	case errors.Is(err, store.ErrBatesPageCountMismatch):
+		return "bates_page_count_mismatch", 0
+	case errors.Is(err, store.ErrBatesOverflow):
+		return "bates_overflow", 0
 	}
 	facts, ok := daemonProblemFacts(err)
 	if !ok {
@@ -276,6 +364,8 @@ func stableDomainError(err error) (string, int) {
 		return "invalid_rendition_window", 0
 	case "invalid_rendition_encoding":
 		return "invalid_rendition_encoding", 0
+	case "bates_reservation_conflict", "bates_page_count_mismatch", "bates_overflow":
+		return facts.Code, 0
 	default:
 		return "", 0
 	}
@@ -305,6 +395,14 @@ func domainErrorMessage(code string) string {
 		return "The requested rendition text window is outside the supported range."
 	case "invalid_rendition_encoding":
 		return "The active rendition is not valid UTF-8 text."
+	case "bates_reservation_conflict":
+		return "The Bates reservation conflicts with existing namespace or idempotency authority."
+	case "bates_page_count_mismatch":
+		return "The sealed snapshot pages no longer match the Bates request."
+	case "bates_overflow":
+		return "The Bates range exceeds the namespace padding."
+	case "bates_outcome_unknown":
+		return "The Bates authority write outcome is unknown; reconcile the namespace or allocation before retrying."
 	default:
 		return "The Docbank operation could not be completed."
 	}

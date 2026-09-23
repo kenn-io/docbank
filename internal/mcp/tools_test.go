@@ -25,7 +25,13 @@ func TestDefaultToolCatalogIsFixedBoundedAndReadOnly(t *testing.T) {
 	wantNames := []string{
 		"get_vault_info", "list_documents", "search_documents", "get_document",
 		"list_document_versions", "read_rendition_text", "get_processing_plan",
-		"get_processing_status", "get_processing_coverage",
+		"get_processing_status", "get_processing_coverage", "get_package_import",
+		"get_package_preflight", "list_package_preflight_diagnostics",
+		"list_package_custodians", "find_people",
+		"list_packages", "get_package", "list_package_members", "get_package_record",
+		"lookup_bates_label",
+		"list_bates_namespaces", "preview_bates_stamp", "get_bates_allocation",
+		"list_bates_exports", "get_bates_export", "find_bates_exports",
 	}
 	require.Len(t, tools, len(wantNames))
 	for index, tool := range tools {
@@ -46,14 +52,17 @@ func TestProcessingToolIsConstructionTimeOptIn(t *testing.T) {
 	readOnly := catalogNames(toolCatalog(false))
 	enabledTools := toolCatalog(true)
 	enabled := catalogNames(enabledTools)
-	require.Equal(t, append(append([]string{}, readOnly...), "start_processing"), enabled)
+	require.Equal(t, append(append([]string{}, readOnly...), "start_processing", "preflight_load_file_package", "start_package_import",
+		"resolve_package_custodian", "assign_package_custodian", "ensure_bates_namespace", "reserve_bates_range", "publish_bates_export",
+		"export_bates_file"), enabled)
 
-	write := enabledTools[len(enabledTools)-1]
-	require.NotNil(t, write.Annotations)
-	assert.False(t, write.Annotations.ReadOnlyHint)
-	assert.False(t, write.Annotations.IdempotentHint)
-	assert.Equal(t, new(false), write.Annotations.DestructiveHint)
-	assert.Equal(t, new(true), write.Annotations.OpenWorldHint)
+	for _, write := range enabledTools[len(readOnly):] {
+		require.NotNil(t, write.Annotations)
+		assert.False(t, write.Annotations.ReadOnlyHint)
+		assert.Equal(t, slices.Contains([]string{"start_package_import", "ensure_bates_namespace", "reserve_bates_range", "publish_bates_export"}, write.Name), write.Annotations.IdempotentHint)
+		assert.Equal(t, new(write.Name == "assign_package_custodian" || write.Name == "export_bates_file"), write.Annotations.DestructiveHint)
+		assert.Equal(t, new(true), write.Annotations.OpenWorldHint)
+	}
 
 	for _, allowProcessing := range []bool{false, true} {
 		server := newServerWithOptions(testImplementation(), ServerOptions{AllowProcessing: allowProcessing})
@@ -293,6 +302,9 @@ func TestExpectedDomainErrorsAreBoundedToolResults(t *testing.T) {
 		{name: "invalid cursor", err: fmt.Errorf("private cursor detail: %w", store.ErrInvalidDocumentCursor),
 			code: "invalid_document_cursor", redaction: "private cursor detail"},
 		{name: "scope", err: &daemonconn.SourceFenceScopeTooLargeError{ObservedScopeCount: 4097}, code: "scope_too_large"},
+		{name: "Bates reservation conflict", err: store.ErrBatesReservationConflict, code: "bates_reservation_conflict"},
+		{name: "Bates page mismatch", err: store.ErrBatesPageCountMismatch, code: "bates_page_count_mismatch"},
+		{name: "Bates overflow", err: store.ErrBatesOverflow, code: "bates_overflow"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {

@@ -330,6 +330,45 @@ func TestOpenAPIDeclaresPackagePreflightContract(t *testing.T) {
 	}
 }
 
+func TestOpenAPIDeclaresPackageContainerContract(t *testing.T) {
+	doc := api.NewOfflineServer().API().OpenAPI()
+	require.NotNil(t, doc.Paths["/api/v1/packages/containers"].Post)
+	require.NotNil(t, doc.Paths["/api/v1/packages/containers/{id}"].Get)
+	require.NotNil(t, doc.Paths["/api/v1/packages/containers/{id}"].Delete)
+	require.NotNil(t, doc.Paths["/api/v1/packages/containers/{id}/chunks/{index}"].Put)
+	require.Negative(t, doc.Paths["/api/v1/packages/containers/{id}/chunks/{index}"].Put.BodyReadTimeout)
+	require.NotNil(t, doc.Paths["/api/v1/packages/containers/{id}/seal"].Post)
+}
+
+func TestOpenAPIDeclaresPackageBrowseContract(t *testing.T) {
+	doc := api.NewOfflineServer().API().OpenAPI()
+	for path, operationID := range map[string]string{
+		"/api/v1/packages":                                    "listPackages",
+		"/api/v1/packages/by-id/{package_id}":                 "getPackage",
+		"/api/v1/packages/by-id/{package_id}/members":         "listPackageMembers",
+		"/api/v1/packages/label-candidates":                   "listPackageLabelCandidates",
+		"/api/v1/packages/field-catalog":                      "listPackageFieldCatalog",
+		"/api/v1/packages/by-id/{package_id}/timeline-inputs": "listPackageTimelineInputs",
+	} {
+		operation := doc.Paths[path].Get
+		require.NotNil(t, operation, path)
+		assert.Equal(t, operationID, operation.OperationID)
+		assert.Contains(t, operation.Responses, "default", path)
+	}
+	for _, path := range []string{
+		"/api/v1/packages", "/api/v1/packages/by-id/{package_id}/members",
+		"/api/v1/packages/label-candidates",
+		"/api/v1/packages/by-id/{package_id}/timeline-inputs",
+	} {
+		parameters := map[string]*huma.Param{}
+		for _, parameter := range doc.Paths[path].Get.Parameters {
+			parameters[parameter.Name] = parameter
+		}
+		require.Contains(t, parameters, "limit", path)
+		assert.Equal(t, new(float64(250)), parameters["limit"].Schema.Maximum, path)
+	}
+}
+
 func openAPISchemaBlock(t *testing.T, doc, schema string) string {
 	t.Helper()
 	marker := "\n    " + schema + ":\n"

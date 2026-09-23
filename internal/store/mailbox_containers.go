@@ -166,6 +166,16 @@ func (s *Store) BeginMailboxContainer(ctx context.Context, r MailboxContainerReq
 		if !errors.Is(err, ErrNotFound) {
 			return err
 		}
+		// IDs are globally unique even though reads are scoped by owner.
+		// Return a conflict for another owner's ID instead of exposing the
+		// SQLite primary-key error from the insert below.
+		var idTaken bool
+		if err = tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM mailbox_containers WHERE id=?)`, r.ID).Scan(&idTaken); err != nil {
+			return err
+		}
+		if idTaken {
+			return ErrMailboxConflict
+		}
 		var all, owned int
 		if err = tx.QueryRowContext(ctx, `SELECT count(*),COALESCE(sum(owner=?),0) FROM mailbox_containers WHERE state='uploading'`, r.Owner).Scan(&all, &owned); err != nil {
 			return err

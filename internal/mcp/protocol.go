@@ -34,6 +34,8 @@ type Server struct {
 // ServerOptions fixes process-wide capabilities before the MCP server starts.
 // The catalog never changes during the lifetime of a server.
 type ServerOptions struct {
+	// AllowProcessing opts into the fixed guarded-write catalog in addition to
+	// processing itself. The command flag retains its established name.
 	AllowProcessing bool
 	Logger          *slog.Logger
 }
@@ -44,7 +46,7 @@ func NewServer() *Server {
 }
 
 // NewServerWithOptions creates an exact-version server with a process-fixed
-// catalog. Processing remains absent unless explicitly enabled here.
+// catalog. Guarded writes remain absent unless explicitly enabled here.
 func NewServerWithOptions(options ServerOptions) *Server {
 	return newServerWithOptions(&sdkmcp.Implementation{
 		Name:        "docbank",

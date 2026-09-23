@@ -57,6 +57,307 @@ CREATE TABLE IF NOT EXISTS export_jobs (
 );
 CREATE INDEX IF NOT EXISTS export_jobs_pending ON export_jobs(state,id);
 
+-- Package snapshots retain exact source versions independently of the
+-- short-lived query snapshots and export jobs.
+CREATE TABLE IF NOT EXISTS collection_snapshots (
+    snapshot_id TEXT PRIMARY KEY,
+    vault_uid TEXT NOT NULL REFERENCES vault_metadata(vault_uid),
+    predecessor_id TEXT REFERENCES collection_snapshots(snapshot_id),
+    source_collection_ids_json BLOB NOT NULL DEFAULT '[]',
+    member_count INTEGER NOT NULL CHECK (member_count >= 0),
+    page_count INTEGER NOT NULL CHECK (page_count >= 0),
+    member_hash TEXT NOT NULL,
+    manifest_sha256 TEXT NOT NULL,
+    canonical_json BLOB NOT NULL,
+    checksum TEXT NOT NULL,
+    sealed_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS collection_snapshot_members (
+    snapshot_id TEXT NOT NULL REFERENCES collection_snapshots(snapshot_id) ON DELETE CASCADE,
+    ordinal INTEGER NOT NULL CHECK (ordinal >= 1),
+    occurrence_id TEXT NOT NULL,
+    node_id INTEGER NOT NULL,
+    content_version_id TEXT NOT NULL REFERENCES content_versions(version_id),
+    blob_sha256 TEXT NOT NULL,
+    size INTEGER NOT NULL CHECK (size >= 0),
+    family_id TEXT NOT NULL,
+    parent_occurrence_id TEXT,
+    family_order INTEGER NOT NULL,
+    display_name TEXT NOT NULL,
+    frozen_fields_json BLOB NOT NULL,
+    document_kind TEXT NOT NULL,
+    selected_source_pages_json BLOB,
+    selected_pdf_sha256 TEXT,
+    source_page_count INTEGER NOT NULL DEFAULT 0,
+    canonical_json BLOB NOT NULL,
+    checksum TEXT NOT NULL,
+    PRIMARY KEY (snapshot_id, ordinal),
+    UNIQUE (snapshot_id, occurrence_id)
+);
+CREATE INDEX IF NOT EXISTS collection_snapshot_members_version
+    ON collection_snapshot_members(content_version_id);
+CREATE TABLE IF NOT EXISTS collection_snapshot_representations (
+    snapshot_id TEXT NOT NULL,
+    occurrence_id TEXT NOT NULL,
+    role TEXT NOT NULL,
+    ordinal INTEGER NOT NULL CHECK (ordinal >= 0),
+    status TEXT NOT NULL,
+    text_authority TEXT NOT NULL DEFAULT 'none',
+    content_version_id TEXT,
+    blob_sha256 TEXT,
+    size INTEGER,
+    media_type TEXT NOT NULL,
+    page_number INTEGER,
+    verified_page_count INTEGER,
+    rendition_build_id TEXT,
+    lexical_generation_id TEXT,
+    recipe_sha256 TEXT,
+    canonical_json BLOB NOT NULL,
+    checksum TEXT NOT NULL,
+    PRIMARY KEY (snapshot_id, occurrence_id, role, ordinal),
+    FOREIGN KEY (snapshot_id, occurrence_id)
+        REFERENCES collection_snapshot_members(snapshot_id, occurrence_id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS collection_snapshot_representations_version
+    ON collection_snapshot_representations(content_version_id);
+CREATE TABLE IF NOT EXISTS packages (
+    package_id TEXT PRIMARY KEY,
+    snapshot_id TEXT REFERENCES collection_snapshots(snapshot_id),
+    direction TEXT NOT NULL,
+    package_name TEXT NOT NULL,
+    party_label TEXT NOT NULL,
+    profile_sha256 TEXT NOT NULL,
+    profile_json BLOB NOT NULL,
+    mapping_sha256 TEXT NOT NULL,
+    mapping_json BLOB NOT NULL,
+    manifest_sha256 TEXT NOT NULL,
+    manifest_blob_sha256 TEXT NOT NULL,
+    predecessor_package_id TEXT REFERENCES packages(package_id),
+    relation TEXT NOT NULL,
+    ingest_id TEXT REFERENCES ingests(id),
+    export_plan_id TEXT,
+    state TEXT NOT NULL,
+    produced_on TEXT,
+    created_at TEXT NOT NULL,
+    completed_at TEXT
+);
+CREATE INDEX IF NOT EXISTS packages_history
+    ON packages(predecessor_package_id, created_at, package_id);
+CREATE TABLE IF NOT EXISTS package_volumes (
+    package_id TEXT NOT NULL REFERENCES packages(package_id) ON DELETE CASCADE,
+    ordinal INTEGER NOT NULL,
+    volume_name TEXT NOT NULL,
+    declared_root TEXT NOT NULL,
+    mapped_root TEXT NOT NULL,
+    resolved_root_sha256 TEXT NOT NULL,
+    PRIMARY KEY (package_id, volume_name)
+);
+CREATE TRIGGER IF NOT EXISTS collection_snapshots_immutable_update
+BEFORE UPDATE ON collection_snapshots BEGIN
+    SELECT RAISE(ABORT, 'collection snapshots are immutable');
+END;
+CREATE TRIGGER IF NOT EXISTS collection_snapshot_members_immutable_update
+BEFORE UPDATE ON collection_snapshot_members BEGIN
+    SELECT RAISE(ABORT, 'collection snapshot members are immutable');
+END;
+CREATE TRIGGER IF NOT EXISTS collection_snapshot_representations_immutable_update
+BEFORE UPDATE ON collection_snapshot_representations BEGIN
+    SELECT RAISE(ABORT, 'collection snapshot representations are immutable');
+END;
+-- Bates labels are globally unique even when namespace profiles differ.
+CREATE TABLE IF NOT EXISTS bates_namespaces (
+    namespace_id TEXT PRIMARY KEY,
+    prefix TEXT NOT NULL,
+    suffix TEXT NOT NULL,
+    padding INTEGER NOT NULL CHECK (padding BETWEEN 1 AND 10),
+    created_at TEXT NOT NULL,
+    UNIQUE(prefix,suffix)
+);
+CREATE TABLE IF NOT EXISTS bates_namespace_cursors (
+    namespace_id TEXT PRIMARY KEY REFERENCES bates_namespaces(namespace_id),
+    next_sequence INTEGER NOT NULL CHECK (next_sequence >= 1)
+);
+CREATE TABLE IF NOT EXISTS bates_allocations (
+    allocation_id TEXT PRIMARY KEY,
+    operation_id TEXT NOT NULL UNIQUE,
+    namespace_id TEXT NOT NULL REFERENCES bates_namespaces(namespace_id),
+    snapshot_id TEXT NOT NULL REFERENCES collection_snapshots(snapshot_id),
+    request_sha256 TEXT NOT NULL,
+    recipe_sha256 TEXT NOT NULL,
+    start_sequence INTEGER NOT NULL CHECK (start_sequence >= 1),
+    end_sequence INTEGER NOT NULL CHECK (end_sequence >= start_sequence),
+    state TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    committed_at TEXT
+);
+CREATE INDEX IF NOT EXISTS bates_allocations_namespace ON bates_allocations(namespace_id,start_sequence);
+CREATE TABLE IF NOT EXISTS bates_page_labels (
+    allocation_id TEXT NOT NULL REFERENCES bates_allocations(allocation_id),
+    ordinal INTEGER NOT NULL CHECK (ordinal >= 1),
+    namespace_id TEXT NOT NULL REFERENCES bates_namespaces(namespace_id),
+    sequence INTEGER NOT NULL CHECK (sequence >= 1),
+    occurrence_id TEXT NOT NULL,
+    source_page INTEGER NOT NULL CHECK (source_page >= 1),
+    output_page INTEGER NOT NULL CHECK (output_page >= 1),
+    label TEXT NOT NULL UNIQUE,
+    PRIMARY KEY(allocation_id,ordinal),
+    UNIQUE(namespace_id,sequence)
+);
+-- A verified Bates export is permanent evidence. It is intentionally rooted
+-- independently of short-lived export jobs and browser download tickets.
+CREATE TABLE IF NOT EXISTS bates_artifacts (
+    artifact_id TEXT PRIMARY KEY,
+    allocation_id TEXT NOT NULL UNIQUE REFERENCES bates_allocations(allocation_id),
+    blob_hash TEXT NOT NULL REFERENCES blobs(hash),
+    size INTEGER NOT NULL CHECK (size > 0),
+    media_type TEXT NOT NULL,
+    page_count INTEGER NOT NULL CHECK (page_count > 0),
+    recipe_json BLOB NOT NULL,
+    manifest_sha256 TEXT NOT NULL,
+    state TEXT NOT NULL,
+    created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS bates_artifacts_history ON bates_artifacts(created_at,artifact_id);
+CREATE TABLE IF NOT EXISTS bates_artifact_pages (
+    artifact_id TEXT NOT NULL REFERENCES bates_artifacts(artifact_id) ON DELETE CASCADE,
+    ordinal INTEGER NOT NULL CHECK (ordinal >= 1),
+    occurrence_id TEXT NOT NULL,
+    source_blob_sha256 TEXT NOT NULL,
+    source_page INTEGER NOT NULL CHECK (source_page >= 1),
+    output_page INTEGER NOT NULL CHECK (output_page >= 1),
+    label TEXT NOT NULL,
+    PRIMARY KEY(artifact_id,ordinal)
+);
+CREATE TRIGGER IF NOT EXISTS bates_artifacts_immutable_update
+BEFORE UPDATE ON bates_artifacts BEGIN
+    SELECT RAISE(ABORT, 'Bates artifacts are immutable');
+END;
+CREATE TRIGGER IF NOT EXISTS bates_artifact_pages_immutable_update
+BEFORE UPDATE ON bates_artifact_pages BEGIN
+    SELECT RAISE(ABORT, 'Bates artifact pages are immutable');
+END;
+CREATE TRIGGER IF NOT EXISTS bates_namespaces_immutable_update
+BEFORE UPDATE ON bates_namespaces BEGIN
+    SELECT RAISE(ABORT, 'Bates namespace identity is immutable');
+END;
+CREATE TRIGGER IF NOT EXISTS bates_namespace_cursors_monotone
+BEFORE UPDATE ON bates_namespace_cursors
+WHEN NEW.namespace_id<>OLD.namespace_id OR NEW.next_sequence<OLD.next_sequence
+BEGIN SELECT RAISE(ABORT, 'Bates cursor cannot rewind'); END;
+CREATE TRIGGER IF NOT EXISTS bates_allocations_transition_guard
+BEFORE UPDATE ON bates_allocations
+WHEN NEW.allocation_id<>OLD.allocation_id OR NEW.operation_id<>OLD.operation_id
+ OR NEW.namespace_id<>OLD.namespace_id OR NEW.snapshot_id<>OLD.snapshot_id
+ OR NEW.request_sha256<>OLD.request_sha256 OR NEW.recipe_sha256<>OLD.recipe_sha256
+ OR NEW.start_sequence<>OLD.start_sequence OR NEW.end_sequence<>OLD.end_sequence
+ OR NEW.created_at<>OLD.created_at OR OLD.state<>'reserved'
+ OR NEW.state NOT IN ('committed','abandoned')
+ OR (NEW.state='committed' AND (OLD.committed_at IS NOT NULL OR NEW.committed_at IS NULL))
+ OR (NEW.state='abandoned' AND NEW.committed_at IS NOT NULL)
+BEGIN SELECT RAISE(ABORT, 'Bates allocation identity or terminal state is immutable'); END;
+CREATE TRIGGER IF NOT EXISTS bates_page_labels_immutable_update
+BEFORE UPDATE ON bates_page_labels BEGIN
+    SELECT RAISE(ABORT, 'Bates page labels are immutable');
+END;
+CREATE TRIGGER IF NOT EXISTS package_volumes_immutable_update
+BEFORE UPDATE ON package_volumes BEGIN
+    SELECT RAISE(ABORT, 'package volumes are immutable');
+END;
+CREATE TRIGGER IF NOT EXISTS packages_transition_guard
+BEFORE UPDATE ON packages
+WHEN NEW.package_id<>OLD.package_id OR NEW.direction<>OLD.direction
+    OR NEW.package_name<>OLD.package_name OR NEW.party_label<>OLD.party_label
+    OR NEW.profile_sha256<>OLD.profile_sha256 OR NEW.profile_json<>OLD.profile_json
+    OR NEW.mapping_sha256<>OLD.mapping_sha256 OR NEW.mapping_json<>OLD.mapping_json
+    OR NEW.manifest_sha256<>OLD.manifest_sha256
+    OR NEW.manifest_blob_sha256<>OLD.manifest_blob_sha256
+    OR NEW.relation<>OLD.relation OR NEW.created_at<>OLD.created_at
+    OR NEW.snapshot_id IS NOT OLD.snapshot_id AND OLD.snapshot_id IS NOT NULL
+    OR NEW.completed_at IS NOT OLD.completed_at AND OLD.completed_at IS NOT NULL
+    OR NEW.export_plan_id IS NOT OLD.export_plan_id AND OLD.export_plan_id IS NOT NULL
+    OR NEW.predecessor_package_id IS NOT OLD.predecessor_package_id
+    OR NEW.ingest_id IS NOT OLD.ingest_id OR NEW.produced_on IS NOT OLD.produced_on
+BEGIN
+    SELECT RAISE(ABORT, 'package identity is immutable');
+END;
+
+-- Received load-file rows and their scoped sender labels are immutable. The
+-- head records which publication won an idempotent record key.
+CREATE TABLE IF NOT EXISTS package_records (
+    package_id TEXT NOT NULL REFERENCES packages(package_id) ON DELETE CASCADE,
+    row_id TEXT NOT NULL,
+    load_file TEXT NOT NULL,
+    row_ordinal INTEGER NOT NULL CHECK (row_ordinal >= 1),
+    occurrence_id TEXT NOT NULL,
+    raw_json BLOB NOT NULL,
+    raw_sha256 TEXT NOT NULL,
+    sensitive INTEGER NOT NULL CHECK (sensitive IN (0,1)),
+    PRIMARY KEY (package_id, row_id),
+    UNIQUE (package_id, occurrence_id)
+);
+CREATE TRIGGER IF NOT EXISTS package_records_immutable_update
+BEFORE UPDATE ON package_records BEGIN
+    SELECT RAISE(ABORT, 'package records are immutable');
+END;
+CREATE TABLE IF NOT EXISTS package_labels (
+    package_id TEXT NOT NULL REFERENCES packages(package_id) ON DELETE CASCADE,
+    provenance TEXT NOT NULL,
+    label_set TEXT NOT NULL,
+    label TEXT NOT NULL,
+    label_sort_key TEXT NOT NULL,
+    occurrence_id TEXT NOT NULL,
+    content_version_id TEXT NOT NULL REFERENCES content_versions(version_id),
+    artifact_id TEXT,
+    page_number INTEGER,
+    page_state TEXT NOT NULL,
+    endpoint TEXT NOT NULL,
+    PRIMARY KEY (package_id, provenance, label_set, label, endpoint, occurrence_id)
+);
+CREATE INDEX IF NOT EXISTS package_labels_lookup ON package_labels(label, provenance, package_id);
+CREATE TRIGGER IF NOT EXISTS package_labels_immutable_update
+BEFORE UPDATE ON package_labels BEGIN
+    SELECT RAISE(ABORT, 'package labels are immutable');
+END;
+CREATE TABLE IF NOT EXISTS package_import_jobs (
+    id TEXT PRIMARY KEY,
+    owner TEXT NOT NULL,
+    operation_id TEXT NOT NULL,
+    request_sha256 TEXT NOT NULL,
+    preflight_id TEXT NOT NULL,
+    package_id TEXT NOT NULL REFERENCES packages(package_id),
+    claim_owner TEXT,
+    lease_expires_at TEXT,
+    state TEXT NOT NULL,
+    epoch INTEGER NOT NULL,
+    token TEXT NOT NULL,
+    job_json BLOB NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    UNIQUE(owner, operation_id),
+    UNIQUE(package_id)
+);
+CREATE INDEX IF NOT EXISTS package_import_jobs_pending ON package_import_jobs(state,id);
+CREATE TABLE IF NOT EXISTS package_import_receipts (
+    receipt_id TEXT PRIMARY KEY,
+    package_id TEXT NOT NULL REFERENCES packages(package_id),
+    record_key TEXT NOT NULL,
+    occurrence_id TEXT NOT NULL,
+    content_version_id TEXT REFERENCES content_versions(version_id),
+    state TEXT NOT NULL,
+    receipt_json BLOB NOT NULL,
+    recorded_at TEXT NOT NULL
+);
+CREATE TRIGGER IF NOT EXISTS package_import_receipts_immutable_update
+BEFORE UPDATE ON package_import_receipts BEGIN
+    SELECT RAISE(ABORT, 'package import receipts are immutable');
+END;
+CREATE TABLE IF NOT EXISTS package_import_heads (
+    package_id TEXT NOT NULL REFERENCES packages(package_id),
+    record_key TEXT NOT NULL,
+    receipt_id TEXT NOT NULL REFERENCES package_import_receipts(receipt_id),
+    PRIMARY KEY (package_id, record_key)
+);
+
 -- Physical page frames are independent of optional renderer recipes.
 CREATE TABLE IF NOT EXISTS page_documents (
     version_id TEXT PRIMARY KEY REFERENCES content_versions(version_id) ON DELETE CASCADE,
@@ -158,8 +459,11 @@ CREATE TABLE IF NOT EXISTS package_preflights (
     owner TEXT NOT NULL,
     source_kind TEXT NOT NULL,
     source_ref TEXT NOT NULL,
+    source_locator TEXT NOT NULL DEFAULT '',
     profile_sha256 TEXT NOT NULL,
+    profile_json TEXT NOT NULL DEFAULT '',
     mapping_sha256 TEXT NOT NULL,
+    mapping_json TEXT NOT NULL DEFAULT '',
     manifest_sha256 TEXT NOT NULL,
     manifest_blob_sha256 TEXT NOT NULL,
     diagnostics_blob_sha256 TEXT,
@@ -1909,6 +2213,8 @@ CREATE TABLE IF NOT EXISTS custodian_assignments (
     assignment_id TEXT PRIMARY KEY NOT NULL,
     scope_kind TEXT NOT NULL,
     ingest_id TEXT REFERENCES ingests(id) ON DELETE CASCADE,
+    package_id TEXT,
+    package_record_id TEXT,
     node_id INTEGER REFERENCES nodes(id) ON DELETE CASCADE,
     content_version_id TEXT REFERENCES content_versions(version_id) ON DELETE CASCADE,
     person_id TEXT REFERENCES persons(person_id) ON DELETE SET NULL,
@@ -1923,6 +2229,8 @@ CREATE TABLE IF NOT EXISTS custodian_assignments (
 );
 CREATE UNIQUE INDEX IF NOT EXISTS custodian_primary_collection
     ON custodian_assignments(ingest_id) WHERE scope_kind='collection' AND rank='primary' AND retired_at IS NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS custodian_primary_package
+    ON custodian_assignments(package_id, package_record_id) WHERE scope_kind='package' AND rank='primary' AND retired_at IS NULL;
 CREATE UNIQUE INDEX IF NOT EXISTS custodian_primary_document
     ON custodian_assignments(content_version_id) WHERE scope_kind='document' AND rank='primary' AND retired_at IS NULL;
 
@@ -2332,3 +2640,345 @@ WHEN EXISTS(SELECT 1 FROM production_privilege_log_receipts r
             WHERE r.log_id=OLD.log_id AND r.revision=OLD.revision) BEGIN
     SELECT RAISE(ABORT, 'frozen production privilege approval is immutable');
 END;
+
+CREATE UNIQUE INDEX IF NOT EXISTS content_versions_production_identity
+    ON content_versions(node_id, version_id, blob_hash, size);
+
+-- Exact current page-document and page-frame identities. The production map
+-- rows below cannot select a different frame checksum for the same version.
+CREATE UNIQUE INDEX IF NOT EXISTS page_documents_production_identity
+    ON page_documents(version_id, checksum);
+CREATE UNIQUE INDEX IF NOT EXISTS page_frames_production_identity
+    ON page_frames(version_id, page, checksum);
+
+-- Exact derived-PDF authority. A production text map either uses source bytes
+-- directly or names one attached rendition build and one retained artifact.
+CREATE UNIQUE INDEX IF NOT EXISTS rendition_attachments_production_identity
+    ON rendition_attachments(content_version_id, build_id, attachment_id);
+CREATE UNIQUE INDEX IF NOT EXISTS rendition_artifacts_production_identity
+    ON rendition_artifacts(build_id, artifact_id, blob_hash, size);
+
+-- Bind policy ID, version, and digest to the same immutable policy row.
+CREATE UNIQUE INDEX IF NOT EXISTS production_policy_versions_identity
+    ON production_policy_versions(policy_id, version, sha256);
+
+CREATE TABLE IF NOT EXISTS production_text_maps (
+    map_sha256              TEXT PRIMARY KEY,
+    source_node_id          INTEGER NOT NULL,
+    version_id              TEXT NOT NULL,
+    source_sha256           TEXT NOT NULL,
+    source_size             INTEGER NOT NULL,
+    pdf_sha256              TEXT NOT NULL REFERENCES blobs(hash) ON DELETE RESTRICT,
+    pdf_size                INTEGER NOT NULL,
+    page_document_sha256    TEXT NOT NULL,
+    evidence_sha256         TEXT NOT NULL,
+    page_inventory_sha256   TEXT NOT NULL,
+    rendition_attachment_id TEXT,
+    rendition_build_id      TEXT,
+    rendition_artifact_id   TEXT,
+    canonical_json          BLOB NOT NULL,
+    created_at              TEXT NOT NULL,
+    UNIQUE(map_sha256, page_inventory_sha256),
+    UNIQUE(map_sha256, version_id),
+    FOREIGN KEY(source_node_id, version_id, source_sha256, source_size)
+        REFERENCES content_versions(node_id, version_id, blob_hash, size)
+        ON DELETE RESTRICT,
+    FOREIGN KEY(version_id, page_document_sha256)
+        REFERENCES page_documents(version_id, checksum)
+        ON DELETE RESTRICT,
+    FOREIGN KEY(version_id, rendition_build_id, rendition_attachment_id)
+        REFERENCES rendition_attachments(content_version_id, build_id, attachment_id)
+        ON DELETE RESTRICT,
+    FOREIGN KEY(rendition_build_id, rendition_artifact_id, pdf_sha256, pdf_size)
+        REFERENCES rendition_artifacts(build_id, artifact_id, blob_hash, size)
+        ON DELETE RESTRICT,
+    CHECK (
+        (rendition_attachment_id IS NULL AND rendition_build_id IS NULL
+            AND rendition_artifact_id IS NULL
+            AND pdf_sha256 = source_sha256 AND pdf_size = source_size)
+        OR
+        (rendition_attachment_id IS NOT NULL AND rendition_build_id IS NOT NULL
+            AND rendition_artifact_id IS NOT NULL)
+    )
+);
+
+CREATE TABLE IF NOT EXISTS production_text_map_frames (
+    map_sha256    TEXT NOT NULL,
+    version_id    TEXT NOT NULL,
+    page          INTEGER NOT NULL,
+    frame_sha256  TEXT NOT NULL,
+    width         INTEGER NOT NULL,
+    height        INTEGER NOT NULL,
+    PRIMARY KEY(map_sha256, page),
+    FOREIGN KEY(map_sha256, version_id)
+        REFERENCES production_text_maps(map_sha256, version_id)
+        ON DELETE RESTRICT,
+    FOREIGN KEY(version_id, page, frame_sha256)
+        REFERENCES page_frames(version_id, page, checksum)
+        ON DELETE RESTRICT
+);
+
+CREATE TRIGGER IF NOT EXISTS production_text_maps_immutable_update
+BEFORE UPDATE ON production_text_maps BEGIN
+    SELECT RAISE(ABORT, 'production text maps are immutable');
+END;
+CREATE TRIGGER IF NOT EXISTS production_text_map_frames_immutable_update
+BEFORE UPDATE ON production_text_map_frames BEGIN
+    SELECT RAISE(ABORT, 'production text map frames are immutable');
+END;
+
+CREATE TABLE IF NOT EXISTS production_catalog_entries (
+    kind           TEXT NOT NULL,
+    id             TEXT NOT NULL,
+    sha256         TEXT NOT NULL,
+    canonical_json BLOB NOT NULL,
+    created_at     TEXT NOT NULL,
+    PRIMARY KEY(kind, id, sha256),
+    UNIQUE(kind, id)
+);
+
+CREATE TRIGGER IF NOT EXISTS production_catalog_entries_immutable_update
+BEFORE UPDATE ON production_catalog_entries BEGIN
+    SELECT RAISE(ABORT, 'production catalog entries are immutable');
+END;
+CREATE TRIGGER IF NOT EXISTS production_catalog_entries_immutable_delete
+BEFORE DELETE ON production_catalog_entries BEGIN
+    SELECT RAISE(ABORT, 'production catalog entries are immutable');
+END;
+
+CREATE TABLE IF NOT EXISTS production_sets (
+    id            TEXT PRIMARY KEY,
+    name          TEXT NOT NULL,
+    creator       TEXT NOT NULL,
+    head_revision INTEGER NOT NULL,
+    created_at    TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS production_revisions (
+    set_id                    TEXT NOT NULL REFERENCES production_sets(id) ON DELETE CASCADE,
+    revision                  INTEGER NOT NULL,
+    predecessor_revision      INTEGER,
+    state                     TEXT NOT NULL,
+    etag                      INTEGER NOT NULL,
+    instructions              BLOB NOT NULL,
+    instructions_sha256       TEXT NOT NULL,
+    member_hash               TEXT NOT NULL,
+    decisions_sha256          TEXT NOT NULL,
+    membership_sealed         INTEGER NOT NULL,
+    recipe_kind               TEXT NOT NULL,
+    recipe_id                 TEXT NOT NULL,
+    recipe_sha256             TEXT NOT NULL,
+    profile_kind              TEXT NOT NULL,
+    profile_id                TEXT NOT NULL,
+    profile_sha256            TEXT NOT NULL,
+    disclosure_profile_kind   TEXT NOT NULL,
+    disclosure_profile_id     TEXT NOT NULL,
+    disclosure_profile_sha256 TEXT NOT NULL,
+    numbering_recipe_kind     TEXT NOT NULL,
+    numbering_recipe_id       TEXT NOT NULL,
+    numbering_recipe_sha256   TEXT NOT NULL,
+    policy_id                 TEXT NOT NULL,
+    policy_version            INTEGER NOT NULL,
+    policy_sha256             TEXT NOT NULL,
+    created_at                TEXT NOT NULL,
+    PRIMARY KEY(set_id, revision),
+    FOREIGN KEY(recipe_kind, recipe_id, recipe_sha256)
+        REFERENCES production_catalog_entries(kind, id, sha256),
+    FOREIGN KEY(profile_kind, profile_id, profile_sha256)
+        REFERENCES production_catalog_entries(kind, id, sha256),
+    FOREIGN KEY(disclosure_profile_kind, disclosure_profile_id, disclosure_profile_sha256)
+        REFERENCES production_catalog_entries(kind, id, sha256),
+    FOREIGN KEY(numbering_recipe_kind, numbering_recipe_id, numbering_recipe_sha256)
+        REFERENCES production_catalog_entries(kind, id, sha256),
+    FOREIGN KEY(policy_id, policy_version, policy_sha256)
+        REFERENCES production_policy_versions(policy_id, version, sha256),
+    FOREIGN KEY(set_id, predecessor_revision)
+        REFERENCES production_revisions(set_id, revision)
+        DEFERRABLE INITIALLY DEFERRED
+);
+
+CREATE TABLE IF NOT EXISTS production_members (
+    set_id               TEXT NOT NULL,
+    revision             INTEGER NOT NULL,
+    member_id            TEXT NOT NULL,
+    ordinal              INTEGER NOT NULL,
+    vault_id             TEXT NOT NULL,
+    node_id              INTEGER NOT NULL,
+    version_id           TEXT NOT NULL,
+    source_sha256        TEXT NOT NULL,
+    source_size          INTEGER NOT NULL,
+    pdf_sha256           TEXT NOT NULL REFERENCES blobs(hash) ON DELETE RESTRICT,
+    pdf_size             INTEGER NOT NULL,
+    map_sha256           TEXT NOT NULL,
+    page_inventory_sha256 TEXT NOT NULL,
+    family_context_json  BLOB NOT NULL,
+    canonical_json       BLOB NOT NULL,
+    PRIMARY KEY(set_id, revision, member_id),
+    UNIQUE(set_id, revision, ordinal),
+    FOREIGN KEY(set_id, revision)
+        REFERENCES production_revisions(set_id, revision) ON DELETE CASCADE,
+    FOREIGN KEY(node_id, version_id, source_sha256, source_size)
+        REFERENCES content_versions(node_id, version_id, blob_hash, size)
+        ON DELETE RESTRICT,
+    FOREIGN KEY(map_sha256, page_inventory_sha256)
+        REFERENCES production_text_maps(map_sha256, page_inventory_sha256)
+        ON DELETE RESTRICT
+);
+
+CREATE INDEX IF NOT EXISTS production_members_source
+    ON production_members(version_id, source_sha256);
+
+CREATE TABLE IF NOT EXISTS production_decisions (
+    set_id         TEXT NOT NULL,
+    revision       INTEGER NOT NULL,
+    decision_id    TEXT NOT NULL,
+    member_id      TEXT NOT NULL,
+    actor          TEXT NOT NULL,
+    created_at     TEXT NOT NULL,
+    canonical_json BLOB NOT NULL,
+    PRIMARY KEY(set_id, revision, decision_id),
+    FOREIGN KEY(set_id, revision, member_id)
+        REFERENCES production_members(set_id, revision, member_id)
+        ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS production_decisions_member
+    ON production_decisions(set_id, revision, member_id, decision_id);
+
+CREATE TABLE IF NOT EXISTS production_operations (
+    operation_id   TEXT PRIMARY KEY,
+    set_id         TEXT NOT NULL REFERENCES production_sets(id),
+    actor          TEXT NOT NULL,
+    kind           TEXT NOT NULL,
+    request_sha256 TEXT NOT NULL,
+    receipt_json   BLOB NOT NULL,
+    created_at     TEXT NOT NULL
+);
+
+CREATE TRIGGER IF NOT EXISTS production_operations_immutable_update
+BEFORE UPDATE ON production_operations BEGIN
+    SELECT RAISE(ABORT, 'production operations are immutable');
+END;
+CREATE TRIGGER IF NOT EXISTS production_operations_immutable_delete
+BEFORE DELETE ON production_operations BEGIN
+    SELECT RAISE(ABORT, 'production operations are immutable');
+END;
+
+CREATE TABLE IF NOT EXISTS production_audit_evidence (
+    sequence       INTEGER PRIMARY KEY AUTOINCREMENT,
+    operation_id   TEXT NOT NULL UNIQUE REFERENCES production_operations(operation_id),
+    set_id         TEXT NOT NULL REFERENCES production_sets(id),
+    revision       INTEGER NOT NULL,
+    actor          TEXT NOT NULL,
+    kind           TEXT NOT NULL,
+    request_sha256 TEXT NOT NULL,
+    receipt_sha256 TEXT NOT NULL,
+    created_at     TEXT NOT NULL,
+    FOREIGN KEY(set_id, revision)
+        REFERENCES production_revisions(set_id, revision)
+);
+
+CREATE TRIGGER IF NOT EXISTS production_audit_evidence_immutable_update
+BEFORE UPDATE ON production_audit_evidence BEGIN
+    SELECT RAISE(ABORT, 'production audit evidence is immutable');
+END;
+CREATE TRIGGER IF NOT EXISTS production_audit_evidence_immutable_delete
+BEFORE DELETE ON production_audit_evidence BEGIN
+    SELECT RAISE(ABORT, 'production audit evidence is immutable');
+END;
+-- A finalized revision is the authority that a prepared-input gate alone
+-- cannot provide. Job admission must reference this exact sealed revision.
+CREATE TABLE IF NOT EXISTS production_finalized_revisions (
+    set_id TEXT NOT NULL,
+    revision INTEGER NOT NULL,
+    etag INTEGER NOT NULL,
+    draft_sha256 TEXT NOT NULL,          -- canonical draft_json digest
+    prepared_sha256 TEXT NOT NULL,       -- sealed PreparedProduction digest
+    prepared_input_sha256 TEXT NOT NULL, -- passing gate receipt digest
+    draft_json BLOB NOT NULL,
+    prepared_input_json BLOB NOT NULL,
+    numbering_namespace_id TEXT NOT NULL,
+    numbering_snapshot_id TEXT NOT NULL,
+    numbering_recipe_sha256 TEXT NOT NULL,
+    numbering_start_at INTEGER NOT NULL,
+    finalized_at TEXT NOT NULL,
+    PRIMARY KEY(set_id, revision),
+    FOREIGN KEY(set_id, revision)
+        REFERENCES production_revisions(set_id, revision) ON DELETE RESTRICT
+);
+CREATE TRIGGER IF NOT EXISTS production_finalized_revisions_immutable_update
+BEFORE UPDATE ON production_finalized_revisions BEGIN
+    SELECT RAISE(ABORT, 'finalized production revision is immutable');
+END;
+CREATE TRIGGER IF NOT EXISTS production_finalized_revisions_immutable_delete
+BEFORE DELETE ON production_finalized_revisions BEGIN
+    SELECT RAISE(ABORT, 'finalized production revision is immutable');
+END;
+
+CREATE TABLE IF NOT EXISTS production_jobs (
+    job_id TEXT PRIMARY KEY,
+    operation_id TEXT NOT NULL UNIQUE,
+    owner TEXT NOT NULL,
+    state TEXT NOT NULL,
+    set_id TEXT NOT NULL,
+    revision INTEGER NOT NULL,
+    etag INTEGER NOT NULL,
+    revision_sha256 TEXT NOT NULL,       -- finalized PreparedProduction digest
+    prepared_input_sha256 TEXT NOT NULL, -- passing gate receipt digest
+    receipt_sha256 TEXT NOT NULL DEFAULT '', -- set once, atomically with success
+    request_json BLOB NOT NULL,
+    allocation_id TEXT REFERENCES bates_allocations(allocation_id),
+    receipt_json BLOB,
+    artifact_manifest_json BLOB,
+    endorsements_json BLOB,
+    claim_epoch INTEGER NOT NULL DEFAULT 0,
+    claim_token TEXT NOT NULL DEFAULT '',
+    claim_owner TEXT NOT NULL DEFAULT '',
+    lease_expires_at TEXT,
+    cancel_requested INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    FOREIGN KEY(set_id, revision) REFERENCES production_finalized_revisions(set_id, revision)
+);
+CREATE INDEX IF NOT EXISTS production_jobs_state ON production_jobs(state, job_id);
+CREATE TRIGGER IF NOT EXISTS production_jobs_immutable_identity
+BEFORE UPDATE ON production_jobs
+WHEN NEW.job_id<>OLD.job_id OR NEW.operation_id<>OLD.operation_id OR NEW.owner<>OLD.owner
+ OR NEW.set_id<>OLD.set_id OR NEW.revision<>OLD.revision OR NEW.etag<>OLD.etag
+ OR NEW.revision_sha256<>OLD.revision_sha256
+ OR NEW.prepared_input_sha256<>OLD.prepared_input_sha256
+ OR NEW.request_json<>OLD.request_json OR NEW.created_at<>OLD.created_at
+BEGIN
+    SELECT RAISE(ABORT, 'production job identity is immutable');
+END;
+CREATE TRIGGER IF NOT EXISTS production_jobs_receipt_once
+BEFORE UPDATE ON production_jobs
+WHEN NEW.receipt_sha256<>OLD.receipt_sha256 AND
+ (OLD.receipt_sha256<>'' OR NEW.receipt_sha256='' OR NEW.state<>'succeeded')
+BEGIN
+    SELECT RAISE(ABORT, 'production job receipt digest is immutable');
+END;
+CREATE TRIGGER IF NOT EXISTS production_jobs_published_payload_immutable
+BEFORE UPDATE ON production_jobs
+WHEN OLD.receipt_sha256<>'' AND
+ (NEW.receipt_json IS NOT OLD.receipt_json OR
+  NEW.artifact_manifest_json IS NOT OLD.artifact_manifest_json OR
+  NEW.endorsements_json IS NOT OLD.endorsements_json OR
+  NEW.allocation_id IS NOT OLD.allocation_id OR NEW.state<>OLD.state)
+BEGIN
+    SELECT RAISE(ABORT, 'published production payload is immutable');
+END;
+CREATE TRIGGER IF NOT EXISTS production_jobs_published_delete
+BEFORE DELETE ON production_jobs
+WHEN OLD.receipt_sha256<>''
+BEGIN
+    SELECT RAISE(ABORT, 'published production job is immutable');
+END;
+
+CREATE TABLE IF NOT EXISTS production_job_artifacts (
+    job_id TEXT NOT NULL REFERENCES production_jobs(job_id),
+    artifact_id TEXT NOT NULL,
+    artifact_json BLOB NOT NULL,
+    created_at TEXT NOT NULL,
+    PRIMARY KEY(job_id, artifact_id)
+);
