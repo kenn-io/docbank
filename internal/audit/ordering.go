@@ -357,6 +357,20 @@ func attachedRecordIdentity(record *Record) ([]byte, error) {
 			return nil, err
 		}
 		identity = Record{Kind: "tag_definition_identity", Fields: []Field{{Name: "tag_id", Value: tagID}}}
+	case "concept_state_v1":
+		identity = Record{Kind: "concept_state_identity"}
+	case "tag_merge_transition_v1":
+		mergeID, err := recordField(record, "merge_id")
+		if err != nil {
+			return nil, err
+		}
+		reverse, err := recordField(record, "reverse")
+		if err != nil {
+			return nil, err
+		}
+		identity = Record{Kind: "tag_merge_transition_identity", Fields: []Field{
+			{Name: "merge_id", Value: mergeID}, {Name: "reverse", Value: reverse},
+		}}
 	case "derivative_purge_suppression":
 		source, err := recordField(record, "source_sha256")
 		if err != nil {

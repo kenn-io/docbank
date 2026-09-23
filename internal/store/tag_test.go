@@ -109,6 +109,30 @@ func TestTagRenameAndDeleteRejectStaleRevision(t *testing.T) {
 	assert.Equal(t, 1, current.AssignmentCount)
 }
 
+func TestTagAliasNamespaceReservesCanonicalNames(t *testing.T) {
+	s := newTestStore(t)
+	ctx := t.Context()
+	owner, err := s.CreateTag(ctx, "owner")
+	require.NoError(t, err)
+	other, err := s.CreateTag(ctx, "other")
+	require.NoError(t, err)
+	require.NoError(t, s.db.QueryRowContext(ctx,
+		`INSERT INTO tag_aliases(alias,tag_id) VALUES(?,?) RETURNING alias`,
+		"café", owner.ID).Scan(new(string)))
+
+	_, err = s.CreateTag(ctx, "cafe\u0301")
+	require.ErrorIs(t, err, ErrExists)
+	_, err = s.RenameTag(ctx, other.ID, other.Revision, "cafe\u0301")
+	require.ErrorIs(t, err, ErrExists)
+	unchanged, err := s.TagByID(ctx, other.ID)
+	require.NoError(t, err)
+	assert.Equal(t, other, unchanged)
+
+	// Names remain case-sensitive; an alias reserves only its exact NFC name.
+	_, err = s.CreateTag(ctx, "Café")
+	require.NoError(t, err)
+}
+
 func TestTagQueriesAreBoundedAndIncludeTrashedNodes(t *testing.T) {
 	s := newTestStore(t)
 	ctx := t.Context()

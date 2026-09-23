@@ -15,12 +15,13 @@ func TestAuditRegistryCoversFrozenMetadataV1Kinds(t *testing.T) {
 	expected := []string{
 		"allocation_entry", "allocation_genesis", "attached_metadata_change", "attached_metadata_delta",
 		"attached_metadata_genesis", "audit_event", "baseline_binding", "canonical_mutation",
-		"content_version", "derivative_purge_suppression", "derivative_purge_suppression_identity",
+		"concept_state_identity", "concept_state_v1", "content_version", "derivative_purge_suppression", "derivative_purge_suppression_identity",
 		"enrollment_baseline", "event", "event_identity", "ingest", "ingest_identity",
 		"known_origin", "member_state", "member_state_change", "path_effect", "path_effect_list", "path_state",
 		"preview_token", "provenance", "provenance_identity", "provenance_identity_ref",
 		"provenance_version_binding", "provenance_version_binding_identity", "scope_chain_entry",
 		"tag_assignment", "tag_assignment_identity", "tag_definition", "tag_definition_identity",
+		"tag_merge_transition_identity", "tag_merge_transition_v1",
 		"topology_change", "topology_delta", "topology_genesis", "topology_node", "unknown_origin",
 		"witness", "witness_change", "witness_change_list", "witnessed_state",
 	}
@@ -154,6 +155,8 @@ func TestAuditRegistryValidatesOptionalAndNestedFields(t *testing.T) {
 
 func TestAuditRegistryRegisteredGoldenHashes(t *testing.T) {
 	expected := map[string]string{
+		"concept_state_identity":                "0298b5579f0e66a38b52208c01426cdd99cd394202aa45dea47f51cfa6d257ca",
+		"concept_state_v1":                      "8884e9d2fa33f3847e5e8e9e37292d04340a1946adcc9cd4a866976d79358d3a",
 		"allocation_entry":                      "ad35cdd67f7cbdca45ec9c7557c32d4493f0e4df8357b7bc0a50a4513eef3c55",
 		"allocation_genesis":                    "5e9d1f128e743cd3ee0df3448b57356e9d4a35c2292eaedf2850846229aebe80",
 		"attached_metadata_change":              "5b889936862fcf242e37260eb53ac40f26618d5fc8019a1ecebfc22a0afcd13e",
@@ -187,6 +190,8 @@ func TestAuditRegistryRegisteredGoldenHashes(t *testing.T) {
 		"tag_assignment_identity":               "afa085f52694144504b355e4927407171843228873f46700552fc4667c5016e4",
 		"tag_definition":                        "24fa83c5e4344d70b43c5478af58f292e17340e7d0ebe5852320ebd809641db2",
 		"tag_definition_identity":               "e32925ac70e10a1154c275477c587d5f9994aa44386ecd09ca7a23aef9b6cce1",
+		"tag_merge_transition_identity":         "bc2755d99c949bd516f6023c6be1abb3ad3918d9718ec3fcce03fe9f04ef7dc8",
+		"tag_merge_transition_v1":               "f2b8599b2f166b3e857cb373e07daffe4189745b718bd4cb57f07c7b519466ff",
 		"topology_change":                       "c268193d2565130a5d2808f868561c97c8b2b5a20592bde7ee33815dc4d13b58",
 		"topology_delta":                        "098688d0a0306900d33e1487a97349444347bf438ff82d2929c6d8ebdc07d899",
 		"topology_genesis":                      "da96cc19d880e1f29ce729842389036193816cbf9f86e3341d41b2cc520792a1",

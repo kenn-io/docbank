@@ -99,6 +99,18 @@ var recordSchemas = map[string]recordSchema{
 		field("tag_id", uuidRule),
 		field("node_id", unsignedRule),
 	),
+	"concept_state_v1":       schema(field("digest", digestRule)),
+	"concept_state_identity": schema(),
+	"tag_merge_transition_v1": schema(
+		field("merge_id", uuidRule),
+		field("reverse", boolRule),
+		field("before", bytesRule),
+		field("after", bytesRule),
+	),
+	"tag_merge_transition_identity": schema(
+		field("merge_id", uuidRule),
+		field("reverse", boolRule),
+	),
 	"derivative_purge_suppression": schema(
 		field("source_sha256", digestRule),
 		field("profile_fingerprint", digestRule),
@@ -493,13 +505,13 @@ func orderedListOf(element valueRule, policy collectionPolicy) valueRule {
 
 func attachedRecordRule() valueRule {
 	return recordOf("ingest", "provenance", "tag_assignment", "tag_definition",
-		"derivative_purge_suppression", "provenance_version_binding")
+		"derivative_purge_suppression", "provenance_version_binding", "concept_state_v1", "tag_merge_transition_v1")
 }
 
 func attachedIdentityRule() valueRule {
 	return recordOf("ingest_identity", "provenance_identity_ref", "tag_assignment_identity",
 		"tag_definition_identity", "derivative_purge_suppression_identity",
-		"provenance_version_binding_identity")
+		"provenance_version_binding_identity", "concept_state_identity", "tag_merge_transition_identity")
 }
 
 func eventAttachmentIdentityRule() valueRule {
@@ -508,7 +520,7 @@ func eventAttachmentIdentityRule() valueRule {
 
 func attachedRecordKindRule() valueRule {
 	return textEnum("ingest", "provenance", "tag_assignment", "tag_definition",
-		"derivative_purge_suppression", "provenance_version_binding")
+		"derivative_purge_suppression", "provenance_version_binding", "concept_state_v1", "tag_merge_transition_v1")
 }
 
 func eventPayloadRule() valueRule {
@@ -519,7 +531,7 @@ func eventKindRule() valueRule {
 	return textEnum(
 		"audit_enroll", "audit_inherit", "content_create", "content_replace", "content_revert",
 		"ingest_observe", "node_create", "node_path", "provenance_add", "provenance_supersede", "tag_assign",
-		"tag_define", "tag_delete", "tag_rename", "tag_unassign",
+		"tag_define", "tag_delete", "tag_rename", "tag_unassign", "tag_merge", "tag_merge_reverse",
 	)
 }
 

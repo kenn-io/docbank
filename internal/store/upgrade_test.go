@@ -226,6 +226,29 @@ func TestFreshStoresRecordCurrentStorageSchemaVersion(t *testing.T) {
 	}
 }
 
+// Adding document identity authority after the unreleased term-report layout
+// must not reuse that layout's version number. Otherwise an existing version-23
+// database can be mistaken for the new current schema.
+func TestDocumentIdentityLayoutHasDistinctStorageVersion(t *testing.T) {
+	for _, test := range v090UpgradeDrivers() {
+		t.Run(test.name, func(t *testing.T) {
+			s, err := Open(filepath.Join(t.TempDir(), "docbank.db"), test.driver)
+			require.NoError(t, err)
+			defer func() { require.NoError(t, s.Close()) }()
+			var version int
+			require.NoError(t, s.db.QueryRow(`
+				SELECT schema_version FROM vault_metadata WHERE singleton = 1`).Scan(&version))
+			assert.Equal(t, currentStorageSchemaVersion, version)
+			assert.NotEqual(t, 23, version, "document identity layout must differ from the prior term-report layout")
+			for _, table := range []string{"term_report_history", "document_identities", "document_identity_aliases", "adopted_passage_authorities"} {
+				columns, err := tableColumns(s.db, table)
+				require.NoError(t, err)
+				assert.NotEmpty(t, columns, table)
+			}
+		})
+	}
+}
+
 func TestUpgradeReleasedSchemaCreatesEmptySavedQueryRunAuthority(t *testing.T) {
 	for _, test := range v090UpgradeDrivers() {
 		t.Run(test.name, func(t *testing.T) {
@@ -349,6 +372,27 @@ func TestOpenRejectsInvalidTermReportHistoryLayout(t *testing.T) {
 				require.ErrorContains(t, err, "unexpected term_report_history layout")
 			})
 		}
+	}
+}
+
+// Mutation caught: forgetting to validate adopted citation authority in the
+// current schema permits a damaged vault to reopen as if it were complete.
+func TestOpenRejectsMissingAdoptedPassageAuthorityTable(t *testing.T) {
+	for _, test := range v090UpgradeDrivers() {
+		t.Run(test.name, func(t *testing.T) {
+			dbPath := filepath.Join(t.TempDir(), "docbank.db")
+			s, err := Open(dbPath, test.driver)
+			require.NoError(t, err)
+			_, err = s.db.Exec(`DROP TABLE adopted_passage_authorities`)
+			require.NoError(t, err)
+			require.NoError(t, s.Close())
+
+			reopened, err := Open(dbPath, test.driver)
+			if reopened != nil {
+				require.NoError(t, reopened.Close())
+			}
+			require.ErrorContains(t, err, "unexpected adopted_passage_authorities layout")
+		})
 	}
 }
 

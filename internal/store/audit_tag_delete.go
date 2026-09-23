@@ -12,6 +12,10 @@ import (
 func (s *Store) deleteAuditedTagTx(
 	ctx context.Context, tx *sql.Tx, current Tag,
 ) (Tag, error) {
+	priorConceptState, err := conceptStateAuditRecord(ctx, tx)
+	if err != nil {
+		return Tag{}, err
+	}
 	assignmentNodeIDs, err := tagAssignmentNodeIDsTx(ctx, tx, current.ID)
 	if err != nil {
 		return Tag{}, err
@@ -36,6 +40,13 @@ func (s *Store) deleteAuditedTagTx(
 	}
 	if err := deleteTagDefinitionTx(tx, current.ID); err != nil {
 		return Tag{}, err
+	}
+	resultingConceptState, err := conceptStateAuditRecord(ctx, tx)
+	if err != nil {
+		return Tag{}, err
+	}
+	if !auditRecordEqual(priorConceptState, resultingConceptState) {
+		return Tag{}, ErrAuditMutationUnsupported
 	}
 	resultingNodes := make([]Node, len(priorNodes))
 	for index, prior := range priorNodes {

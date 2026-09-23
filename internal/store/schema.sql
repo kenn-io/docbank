@@ -145,6 +145,23 @@ CREATE INDEX IF NOT EXISTS nodes_live_modified ON nodes(modified_at DESC, name, 
     WHERE trashed_at IS NULL;
 CREATE INDEX IF NOT EXISTS nodes_trashed ON nodes(trashed_at) WHERE trashed_at IS NOT NULL;
 
+-- Stable public document identity is separate from a mutable path and node
+-- revision. Federation aliases are explicit adopted authority, never inferred.
+CREATE TABLE IF NOT EXISTS document_identities (
+    document_uid TEXT PRIMARY KEY,
+    node_id      INTEGER NOT NULL UNIQUE REFERENCES nodes(id) ON DELETE CASCADE,
+    created_at   TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS document_identity_aliases (
+    domain_uid          TEXT NOT NULL,
+    source_vault_uid    TEXT NOT NULL,
+    source_document_uid TEXT NOT NULL,
+    local_document_uid  TEXT NOT NULL REFERENCES document_identities(document_uid),
+    mapped_at           TEXT NOT NULL,
+    PRIMARY KEY (domain_uid, source_vault_uid, source_document_uid)
+);
+
 CREATE TABLE IF NOT EXISTS blobs (
     hash       TEXT PRIMARY KEY,
     size       INTEGER NOT NULL CHECK (size >= 0),
@@ -1057,6 +1074,31 @@ CREATE TABLE IF NOT EXISTS rendition_attachments (
     UNIQUE (content_version_id, profile_fingerprint, build_id)
 );
 
+-- Adoption binds one origin rendition tuple to retained authority in this
+-- vault. A document alias alone never licenses a different rendition tuple.
+CREATE TABLE IF NOT EXISTS adopted_passage_authorities (
+    domain_uid                TEXT NOT NULL,
+    source_vault_uid          TEXT NOT NULL,
+    source_document_uid       TEXT NOT NULL,
+    source_content_version_id TEXT NOT NULL,
+    source_build_id           TEXT NOT NULL,
+    source_attachment_id      TEXT NOT NULL,
+    local_document_uid        TEXT NOT NULL REFERENCES document_identities(document_uid) ON DELETE CASCADE,
+    local_content_version_id TEXT NOT NULL REFERENCES content_versions(version_id) ON DELETE CASCADE,
+    local_build_id            TEXT NOT NULL REFERENCES rendition_builds(build_id) ON DELETE CASCADE,
+    local_attachment_id       TEXT NOT NULL REFERENCES rendition_attachments(attachment_id) ON DELETE CASCADE,
+    mapped_at                 TEXT NOT NULL,
+    PRIMARY KEY (domain_uid, source_vault_uid, source_document_uid,
+                 source_content_version_id, source_build_id, source_attachment_id),
+    FOREIGN KEY (domain_uid, source_vault_uid, source_document_uid)
+        REFERENCES document_identity_aliases(domain_uid, source_vault_uid, source_document_uid)
+        ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS adopted_passage_authorities_origin
+    ON adopted_passage_authorities(source_vault_uid, source_document_uid,
+                                   source_content_version_id, source_build_id, source_attachment_id);
+
 -- A head can resolve only through the exact attachment at its version/profile
 -- key. Updating this small pointer is the sole rendition activation mutation.
 CREATE TABLE IF NOT EXISTS rendition_heads (
@@ -1565,6 +1607,65 @@ CREATE TABLE IF NOT EXISTS node_tags (
 
 CREATE INDEX IF NOT EXISTS node_tags_tag ON node_tags(tag_id);
 
+-- Concept details extend existing stable tag identities. Go validates names,
+-- edge kinds, graph cycles, and revision policy before writing these rows.
+CREATE TABLE IF NOT EXISTS tag_concepts (
+    tag_id      TEXT PRIMARY KEY NOT NULL REFERENCES tags(id) ON DELETE CASCADE,
+    description TEXT NOT NULL DEFAULT '',
+    revision    INTEGER NOT NULL DEFAULT 1
+);
+
+CREATE TABLE IF NOT EXISTS tag_aliases (
+    alias  TEXT PRIMARY KEY NOT NULL,
+    tag_id TEXT NOT NULL REFERENCES tags(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS tag_aliases_tag ON tag_aliases(tag_id);
+
+CREATE TABLE IF NOT EXISTS tag_concept_edges (
+    parent_tag_id TEXT NOT NULL REFERENCES tags(id) ON DELETE CASCADE,
+    child_tag_id  TEXT NOT NULL REFERENCES tags(id) ON DELETE CASCADE,
+    kind          TEXT NOT NULL,
+    PRIMARY KEY (parent_tag_id, child_tag_id, kind)
+);
+
+CREATE INDEX IF NOT EXISTS tag_concept_edges_child ON tag_concept_edges(child_tag_id);
+
+-- Redirects retain the removed source identity after an explicit merge.
+CREATE TABLE IF NOT EXISTS tag_redirects (
+    source_tag_id TEXT PRIMARY KEY NOT NULL,
+    target_tag_id TEXT NOT NULL REFERENCES tags(id),
+    source_name   TEXT NOT NULL,
+    merged_at     TEXT NOT NULL,
+    merge_id      TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS tag_redirects_target ON tag_redirects(target_tag_id);
+
+-- Audit survives reversal; reversed_at is set once by the shared Go service.
+CREATE TABLE IF NOT EXISTS tag_merge_audit (
+    merge_id        TEXT PRIMARY KEY NOT NULL,
+    source_tag_id   TEXT NOT NULL,
+    target_tag_id   TEXT NOT NULL,
+    source_revision INTEGER NOT NULL,
+    target_revision INTEGER NOT NULL,
+    preview_json    BLOB NOT NULL,
+    committed_at    TEXT NOT NULL,
+    reversed_at     TEXT
+);
+
+CREATE TABLE IF NOT EXISTS passage_tags (
+    passage_id        TEXT NOT NULL,
+    tag_id            TEXT NOT NULL REFERENCES tags(id) ON DELETE CASCADE,
+    ref_json          BLOB NOT NULL,
+    document_uid      TEXT NOT NULL,
+    content_version_id TEXT NOT NULL,
+    PRIMARY KEY (passage_id, tag_id)
+);
+
+CREATE INDEX IF NOT EXISTS passage_tags_document_version ON passage_tags(document_uid, content_version_id);
+CREATE INDEX IF NOT EXISTS passage_tags_tag ON passage_tags(tag_id);
+
 -- Immutable protocol replay authority deliberately has no tag or node foreign
 -- keys: a committed operation identity survives later deletion and purge.
 CREATE TABLE IF NOT EXISTS batch_tag_receipts (
@@ -1618,6 +1719,46 @@ CREATE TABLE IF NOT EXISTS saved_query_runs (
 
 CREATE INDEX IF NOT EXISTS saved_query_runs_definition
     ON saved_query_runs(saved_query_id, ran_at DESC);
+
+-- Structured maps are mutable curation authority. Go validates the evolving
+-- definition contract and uses revision checks to reject concurrent edits.
+CREATE TABLE IF NOT EXISTS content_maps (
+    id                TEXT PRIMARY KEY NOT NULL,
+    owner             TEXT NOT NULL,
+    revision          INTEGER NOT NULL,
+    definition_json   BLOB NOT NULL,
+    definition_digest TEXT NOT NULL,
+    created_at        TEXT NOT NULL,
+    updated_at        TEXT NOT NULL,
+    archived_at       TEXT
+);
+
+-- A materialized map retains exact permitted membership and display evidence.
+-- Archiving a definition keeps its snapshots resolvable by identity.
+CREATE TABLE IF NOT EXISTS content_map_snapshots (
+    id                TEXT PRIMARY KEY NOT NULL,
+    map_id            TEXT NOT NULL REFERENCES content_maps(id),
+    map_revision      INTEGER NOT NULL,
+    owner             TEXT NOT NULL,
+    scope_digest      TEXT NOT NULL,
+    definition_digest TEXT NOT NULL,
+    snapshot_json     BLOB NOT NULL,
+    member_hash       TEXT NOT NULL,
+    created_at        TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS content_map_snapshots_map
+    ON content_map_snapshots(map_id, created_at DESC, id DESC);
+
+CREATE TRIGGER IF NOT EXISTS content_map_snapshots_immutable_update
+BEFORE UPDATE ON content_map_snapshots BEGIN
+    SELECT RAISE(ABORT, 'content map snapshots are immutable');
+END;
+
+CREATE TRIGGER IF NOT EXISTS content_map_snapshots_immutable_delete
+BEFORE DELETE ON content_map_snapshots BEGIN
+    SELECT RAISE(ABORT, 'content map snapshots are immutable');
+END;
 
 -- Report history stores the reusable request and a small receipt. The frozen
 -- observation and downloadable evidence remain daemon-local and expire.

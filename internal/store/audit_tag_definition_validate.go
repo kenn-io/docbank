@@ -47,6 +47,12 @@ func attachedMutationKind(
 	if len(changes) == 0 {
 		return "", errors.New("attached-metadata mutation has no changes")
 	}
+	if kind, err := auditTextField(changes[0], "record_kind"); err == nil && kind == auditTagMergeTransitionKind {
+		if len(changes) != 1 {
+			return "", errors.New("audited tag merge must contain one transition")
+		}
+		return auditTagMergeTransitionKind, nil
+	}
 	for _, change := range changes {
 		kind, err := auditTextField(change, "record_kind")
 		if err != nil {
@@ -136,6 +142,16 @@ func (replay *auditedHistoryReplay) applyUnscopedTagDefinitionChange(
 		return err
 	}
 	if handled, err := replay.applyUnscopedDerivativeSuppressionChanges(
+		operationID, digest, allocation, nextCount, deltaRecords, usedDeltas,
+	); handled || err != nil {
+		return err
+	}
+	if handled, err := replay.applyUnscopedConceptStateChange(
+		operationID, digest, allocation, nextCount, deltaRecords, usedDeltas,
+	); handled || err != nil {
+		return err
+	}
+	if handled, err := replay.applyUnscopedTagMergeTransition(
 		operationID, digest, allocation, nextCount, deltaRecords, usedDeltas,
 	); handled || err != nil {
 		return err

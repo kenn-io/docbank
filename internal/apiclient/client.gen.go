@@ -3997,6 +3997,331 @@ func (c *Client) TransferMailboxEML(ctx context.Context, options *TransferMailbo
 	return responseParser(ctx, resp)
 }
 
+// GetContentMapSnapshot Read one immutable authorized map snapshot
+func (c *Client) GetContentMapSnapshot(ctx context.Context, options *GetContentMapSnapshotRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetContentMapSnapshotResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/map-snapshots/{snapshot_id}",
+		Method:     "GET",
+		Options:    options,
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*GetContentMapSnapshotResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(GetContentMapSnapshotResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "GetContentMapSnapshotResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[GetContentMapSnapshotErrorResponse](resp, "GetContentMapSnapshotErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/map-snapshots/{snapshot_id}")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
+// CreateContentMap Save an accepted structured map plan
+func (c *Client) CreateContentMap(ctx context.Context, options *CreateContentMapRequestOptions, reqEditors ...runtime.RequestEditorFn) (*CreateContentMapResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/maps",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*CreateContentMapResponse, error) {
+		switch resp.StatusCode {
+
+		case 201:
+
+			target := new(CreateContentMapResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "CreateContentMapResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[CreateContentMapErrorResponse](resp, "CreateContentMapErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/maps")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 201)
+	}
+	return responseParser(ctx, resp)
+}
+
+// PreviewContentMap Preview a structured map definition
+func (c *Client) PreviewContentMap(ctx context.Context, options *PreviewContentMapRequestOptions, reqEditors ...runtime.RequestEditorFn) (*PreviewContentMapResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/maps/plans",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*PreviewContentMapResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(PreviewContentMapResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "PreviewContentMapResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[PreviewContentMapErrorResponse](resp, "PreviewContentMapErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/maps/plans")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
+// ArchiveContentMap Archive a map while retaining snapshots
+func (c *Client) ArchiveContentMap(ctx context.Context, options *ArchiveContentMapRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ArchiveContentMapResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/maps/{map_id}",
+		Method:     "DELETE",
+		Options:    options,
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*ArchiveContentMapResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(ArchiveContentMapResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "ArchiveContentMapResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[ArchiveContentMapErrorResponse](resp, "ArchiveContentMapErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/maps/{map_id}")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
+// GetContentMap Read a structured map definition
+func (c *Client) GetContentMap(ctx context.Context, options *GetContentMapRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetContentMapResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/maps/{map_id}",
+		Method:     "GET",
+		Options:    options,
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*GetContentMapResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(GetContentMapResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "GetContentMapResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[GetContentMapErrorResponse](resp, "GetContentMapErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/maps/{map_id}")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
+// UpdateContentMap Replace a map definition at an expected revision
+func (c *Client) UpdateContentMap(ctx context.Context, options *UpdateContentMapRequestOptions, reqEditors ...runtime.RequestEditorFn) (*UpdateContentMapResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/maps/{map_id}",
+		Method:      "PATCH",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*UpdateContentMapResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(UpdateContentMapResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "UpdateContentMapResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[UpdateContentMapErrorResponse](resp, "UpdateContentMapErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/maps/{map_id}")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
+// CreateContentMapSnapshot Freeze permitted exact map membership
+func (c *Client) CreateContentMapSnapshot(ctx context.Context, options *CreateContentMapSnapshotRequestOptions, reqEditors ...runtime.RequestEditorFn) (*CreateContentMapSnapshotResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/maps/{map_id}/snapshots",
+		Method:     "POST",
+		Options:    options,
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*CreateContentMapSnapshotResponse, error) {
+		switch resp.StatusCode {
+
+		case 201:
+
+			target := new(CreateContentMapSnapshotResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "CreateContentMapSnapshotResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[CreateContentMapSnapshotErrorResponse](resp, "CreateContentMapSnapshotErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/maps/{map_id}/snapshots")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 201)
+	}
+	return responseParser(ctx, resp)
+}
+
 // PlanMediaAcquisition Recognize a private reference without network access
 func (c *Client) PlanMediaAcquisition(ctx context.Context, options *PlanMediaAcquisitionRequestOptions, reqEditors ...runtime.RequestEditorFn) (*PlanMediaAcquisitionResponse, error) {
 	var err error
@@ -5108,6 +5433,58 @@ func (c *Client) ListNodeTags(ctx context.Context, options *ListNodeTagsRequestO
 	return responseParser(ctx, resp)
 }
 
+// TagsByAssignmentMode Select document, passage or either tag assignments
+func (c *Client) TagsByAssignmentMode(ctx context.Context, options *TagsByAssignmentModeRequestOptions, reqEditors ...runtime.RequestEditorFn) (*TagsByAssignmentModeResponse, error) {
+	var err error
+
+	queryEncoding := map[string]runtime.QueryEncoding{
+		"content_version_id": {Style: "form", Explode: &[]bool{false}[0]},
+		"mode":               {Style: "form", Explode: &[]bool{false}[0]},
+	}
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:    c.apiClient.GetBaseURL() + "/api/v1/nodes/{id}/tags-by-mode",
+		Method:        "GET",
+		Options:       options,
+		QueryEncoding: queryEncoding,
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*TagsByAssignmentModeResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(TagsByAssignmentModeResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "TagsByAssignmentModeResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[TagsByAssignmentModeErrorResponse](resp, "TagsByAssignmentModeErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/nodes/{id}/tags-by-mode")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
 // UnassignTag Remove a tag assignment from a node
 func (c *Client) UnassignTag(ctx context.Context, options *UnassignTagRequestOptions, reqEditors ...runtime.RequestEditorFn) (*UnassignTagResponse, error) {
 	var err error
@@ -5762,6 +6139,241 @@ func (c *Client) CancelPageRenderJob(ctx context.Context, options *CancelPageRen
 	}
 
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/pages/jobs/{id}/cancel")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
+// AssignPassageTag Tag one verified exact retained passage
+func (c *Client) AssignPassageTag(ctx context.Context, options *AssignPassageTagRequestOptions, reqEditors ...runtime.RequestEditorFn) (*AssignPassageTagResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/passage-tags",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*AssignPassageTagResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(AssignPassageTagResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "AssignPassageTagResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[AssignPassageTagErrorResponse](resp, "AssignPassageTagErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/passage-tags")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
+// PassageTagAvailability Check whether exact tagged passage authority remains available
+func (c *Client) PassageTagAvailability(ctx context.Context, options *PassageTagAvailabilityRequestOptions, reqEditors ...runtime.RequestEditorFn) (*PassageTagAvailabilityResponseJSON, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/passage-tags/availability",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*PassageTagAvailabilityResponseJSON, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(PassageTagAvailabilityResponseJSON)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "PassageTagAvailabilityResponseJSON", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[PassageTagAvailabilityErrorResponse](resp, "PassageTagAvailabilityErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/passage-tags/availability")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
+// GetPassageTags List tags on an exact retained passage
+func (c *Client) GetPassageTags(ctx context.Context, options *GetPassageTagsRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetPassageTagsResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/passage-tags/lookup",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*GetPassageTagsResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(GetPassageTagsResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "GetPassageTagsResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[GetPassageTagsErrorResponse](resp, "GetPassageTagsErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/passage-tags/lookup")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
+// RemovePassageTag Remove a sidecar by its exact immutable passage ID
+func (c *Client) RemovePassageTag(ctx context.Context, options *RemovePassageTagRequestOptions, reqEditors ...runtime.RequestEditorFn) (*RemovePassageTagResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/passage-tags/remove",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*RemovePassageTagResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(RemovePassageTagResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "RemovePassageTagResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[RemovePassageTagErrorResponse](resp, "RemovePassageTagErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/passage-tags/remove")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
+// ResolvePassage Resolve one exact retained Markdown passage
+func (c *Client) ResolvePassage(ctx context.Context, options *ResolvePassageRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ResolvePassageResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/passages/resolve",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*ResolvePassageResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(ResolvePassageResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "ResolvePassageResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[ResolvePassageErrorResponse](resp, "ResolvePassageErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/passages/resolve")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
@@ -8543,6 +9155,240 @@ func (c *Client) DetachBlobStore(ctx context.Context, options *DetachBlobStoreRe
 	return responseParser(ctx, resp)
 }
 
+// AddConceptEdge Connect two existing concept identities
+func (c *Client) AddConceptEdge(ctx context.Context, options *AddConceptEdgeRequestOptions, reqEditors ...runtime.RequestEditorFn) (*AddConceptEdgeResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/tag-concepts/edges",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*AddConceptEdgeResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(AddConceptEdgeResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "AddConceptEdgeResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[AddConceptEdgeErrorResponse](resp, "AddConceptEdgeErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/tag-concepts/edges")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
+// RemoveConceptEdge Remove one concept edge
+func (c *Client) RemoveConceptEdge(ctx context.Context, options *RemoveConceptEdgeRequestOptions, reqEditors ...runtime.RequestEditorFn) (*RemoveConceptEdgeResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/tag-concepts/edges/remove",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*RemoveConceptEdgeResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(RemoveConceptEdgeResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "RemoveConceptEdgeResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[RemoveConceptEdgeErrorResponse](resp, "RemoveConceptEdgeErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/tag-concepts/edges/remove")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
+// CommitTagMerge Apply an explicitly reviewed revision-fenced merge
+func (c *Client) CommitTagMerge(ctx context.Context, options *CommitTagMergeRequestOptions, reqEditors ...runtime.RequestEditorFn) (*CommitTagMergeResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/tag-merges/commit",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*CommitTagMergeResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(CommitTagMergeResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "CommitTagMergeResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[CommitTagMergeErrorResponse](resp, "CommitTagMergeErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/tag-merges/commit")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
+// PreviewTagMerge Review all references affected by an identity merge
+func (c *Client) PreviewTagMerge(ctx context.Context, options *PreviewTagMergeRequestOptions, reqEditors ...runtime.RequestEditorFn) (*PreviewTagMergeResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/tag-merges/preview",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*PreviewTagMergeResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(PreviewTagMergeResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "PreviewTagMergeResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[PreviewTagMergeErrorResponse](resp, "PreviewTagMergeErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/tag-merges/preview")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
+// ReverseTagMerge Reverse a merge only when original assignments remain distinct
+func (c *Client) ReverseTagMerge(ctx context.Context, options *ReverseTagMergeRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ReverseTagMergeResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/tag-merges/{merge_id}/reverse",
+		Method:     "POST",
+		Options:    options,
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*ReverseTagMergeResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(ReverseTagMergeResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "ReverseTagMergeResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[ReverseTagMergeErrorResponse](resp, "ReverseTagMergeErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/tag-merges/{merge_id}/reverse")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
 // ListTags List tag definitions by name
 func (c *Client) ListTags(ctx context.Context, options *ListTagsRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ListTagsResponse, error) {
 	var err error
@@ -8693,6 +9539,104 @@ func (c *Client) ResolveTagByName(ctx context.Context, options *ResolveTagByName
 	return responseParser(ctx, resp)
 }
 
+// TagNeighborhood Find related documents and tags inside an exact source fence
+func (c *Client) TagNeighborhood(ctx context.Context, options *TagNeighborhoodRequestOptions, reqEditors ...runtime.RequestEditorFn) (*TagNeighborhoodResponseJSON, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/tags/neighborhood",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*TagNeighborhoodResponseJSON, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(TagNeighborhoodResponseJSON)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "TagNeighborhoodResponseJSON", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[TagNeighborhoodErrorResponse](resp, "TagNeighborhoodErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/tags/neighborhood")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
+// ResolveTagConcept Resolve a canonical tag name or unique alias
+func (c *Client) ResolveTagConcept(ctx context.Context, options *ResolveTagConceptRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ResolveTagConceptResponse, error) {
+	var err error
+
+	queryEncoding := map[string]runtime.QueryEncoding{
+		"name": {Style: "form", Explode: &[]bool{false}[0]},
+	}
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:    c.apiClient.GetBaseURL() + "/api/v1/tags/resolve-concept",
+		Method:        "GET",
+		Options:       options,
+		QueryEncoding: queryEncoding,
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*ResolveTagConceptResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(ResolveTagConceptResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "ResolveTagConceptResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[ResolveTagConceptErrorResponse](resp, "ResolveTagConceptErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/tags/resolve-concept")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
 // DeleteTag Delete a tag definition and all assignments
 func (c *Client) DeleteTag(ctx context.Context, options *DeleteTagRequestOptions, reqEditors ...runtime.RequestEditorFn) (*DeleteTagResponse, error) {
 	var err error
@@ -8823,6 +9767,193 @@ func (c *Client) RenameTag(ctx context.Context, options *RenameTagRequestOptions
 	}
 
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/tags/{tag_id}")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
+// AddTagAlias Add a unique exact alias
+func (c *Client) AddTagAlias(ctx context.Context, options *AddTagAliasRequestOptions, reqEditors ...runtime.RequestEditorFn) (*AddTagAliasResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/tags/{tag_id}/aliases",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*AddTagAliasResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(AddTagAliasResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "AddTagAliasResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[AddTagAliasErrorResponse](resp, "AddTagAliasErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/tags/{tag_id}/aliases")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
+// RemoveTagAlias Remove one exact alias
+func (c *Client) RemoveTagAlias(ctx context.Context, options *RemoveTagAliasRequestOptions, reqEditors ...runtime.RequestEditorFn) (*RemoveTagAliasResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/tags/{tag_id}/aliases/remove",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*RemoveTagAliasResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(RemoveTagAliasResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "RemoveTagAliasResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[RemoveTagAliasErrorResponse](resp, "RemoveTagAliasErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/tags/{tag_id}/aliases/remove")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
+// GetTagConcept Inspect optional concept vocabulary for a tag
+func (c *Client) GetTagConcept(ctx context.Context, options *GetTagConceptRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetTagConceptResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/tags/{tag_id}/concept",
+		Method:     "GET",
+		Options:    options,
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*GetTagConceptResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(GetTagConceptResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "GetTagConceptResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[GetTagConceptErrorResponse](resp, "GetTagConceptErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/tags/{tag_id}/concept")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
+// SetTagConcept Set concept description with its revision
+func (c *Client) SetTagConcept(ctx context.Context, options *SetTagConceptRequestOptions, reqEditors ...runtime.RequestEditorFn) (*SetTagConceptResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/tags/{tag_id}/concept",
+		Method:      "PUT",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*SetTagConceptResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(SetTagConceptResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "SetTagConceptResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[SetTagConceptErrorResponse](resp, "SetTagConceptErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/tags/{tag_id}/concept")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
@@ -12246,6 +13377,242 @@ func (o *TransferMailboxEMLRequestOptions) GetHeader() (map[string]string, error
 	return headers, err
 }
 
+// GetContentMapSnapshotRequestOptions is the options needed to make a request to GetContentMapSnapshot.
+type GetContentMapSnapshotRequestOptions struct {
+	PathParams *GetContentMapSnapshotPath
+}
+
+// GetPathParams returns the path params as a map.
+func (o *GetContentMapSnapshotRequestOptions) GetPathParams() (map[string]any, error) {
+	encoded, err := json.Marshal(o.PathParams, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetQuery returns the query params as a map.
+func (o *GetContentMapSnapshotRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *GetContentMapSnapshotRequestOptions) GetBody() any {
+	return nil
+}
+
+// GetHeader returns the headers as a map.
+func (o *GetContentMapSnapshotRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
+// CreateContentMapRequestOptions is the options needed to make a request to CreateContentMap.
+type CreateContentMapRequestOptions struct {
+	Body *CreateContentMapBody
+}
+
+// GetPathParams returns the path params as a map.
+func (o *CreateContentMapRequestOptions) GetPathParams() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetQuery returns the query params as a map.
+func (o *CreateContentMapRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *CreateContentMapRequestOptions) GetBody() any {
+	if o.Body == nil {
+		return nil
+	}
+	return o.Body
+}
+
+// GetHeader returns the headers as a map.
+func (o *CreateContentMapRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
+// PreviewContentMapRequestOptions is the options needed to make a request to PreviewContentMap.
+type PreviewContentMapRequestOptions struct {
+	Body *PreviewContentMapBody
+}
+
+// GetPathParams returns the path params as a map.
+func (o *PreviewContentMapRequestOptions) GetPathParams() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetQuery returns the query params as a map.
+func (o *PreviewContentMapRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *PreviewContentMapRequestOptions) GetBody() any {
+	if o.Body == nil {
+		return nil
+	}
+	return o.Body
+}
+
+// GetHeader returns the headers as a map.
+func (o *PreviewContentMapRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
+// ArchiveContentMapRequestOptions is the options needed to make a request to ArchiveContentMap.
+type ArchiveContentMapRequestOptions struct {
+	PathParams *ArchiveContentMapPath
+	Header     *ArchiveContentMapHeaders
+}
+
+// GetPathParams returns the path params as a map.
+func (o *ArchiveContentMapRequestOptions) GetPathParams() (map[string]any, error) {
+	encoded, err := json.Marshal(o.PathParams, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetQuery returns the query params as a map.
+func (o *ArchiveContentMapRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *ArchiveContentMapRequestOptions) GetBody() any {
+	return nil
+}
+
+// GetHeader returns the headers as a map.
+func (o *ArchiveContentMapRequestOptions) GetHeader() (map[string]string, error) {
+	encoded, err := json.Marshal(o.Header, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var headers map[string]string
+	err = json.Unmarshal(encoded, &headers)
+	return headers, err
+}
+
+// GetContentMapRequestOptions is the options needed to make a request to GetContentMap.
+type GetContentMapRequestOptions struct {
+	PathParams *GetContentMapPath
+}
+
+// GetPathParams returns the path params as a map.
+func (o *GetContentMapRequestOptions) GetPathParams() (map[string]any, error) {
+	encoded, err := json.Marshal(o.PathParams, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetQuery returns the query params as a map.
+func (o *GetContentMapRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *GetContentMapRequestOptions) GetBody() any {
+	return nil
+}
+
+// GetHeader returns the headers as a map.
+func (o *GetContentMapRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
+// UpdateContentMapRequestOptions is the options needed to make a request to UpdateContentMap.
+type UpdateContentMapRequestOptions struct {
+	PathParams *UpdateContentMapPath
+	Body       *UpdateContentMapBody
+	Header     *UpdateContentMapHeaders
+}
+
+// GetPathParams returns the path params as a map.
+func (o *UpdateContentMapRequestOptions) GetPathParams() (map[string]any, error) {
+	encoded, err := json.Marshal(o.PathParams, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetQuery returns the query params as a map.
+func (o *UpdateContentMapRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *UpdateContentMapRequestOptions) GetBody() any {
+	if o.Body == nil {
+		return nil
+	}
+	return o.Body
+}
+
+// GetHeader returns the headers as a map.
+func (o *UpdateContentMapRequestOptions) GetHeader() (map[string]string, error) {
+	encoded, err := json.Marshal(o.Header, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var headers map[string]string
+	err = json.Unmarshal(encoded, &headers)
+	return headers, err
+}
+
+// CreateContentMapSnapshotRequestOptions is the options needed to make a request to CreateContentMapSnapshot.
+type CreateContentMapSnapshotRequestOptions struct {
+	PathParams *CreateContentMapSnapshotPath
+	Header     *CreateContentMapSnapshotHeaders
+}
+
+// GetPathParams returns the path params as a map.
+func (o *CreateContentMapSnapshotRequestOptions) GetPathParams() (map[string]any, error) {
+	encoded, err := json.Marshal(o.PathParams, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetQuery returns the query params as a map.
+func (o *CreateContentMapSnapshotRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *CreateContentMapSnapshotRequestOptions) GetBody() any {
+	return nil
+}
+
+// GetHeader returns the headers as a map.
+func (o *CreateContentMapSnapshotRequestOptions) GetHeader() (map[string]string, error) {
+	encoded, err := json.Marshal(o.Header, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var headers map[string]string
+	err = json.Unmarshal(encoded, &headers)
+	return headers, err
+}
+
 // PlanMediaAcquisitionRequestOptions is the options needed to make a request to PlanMediaAcquisition.
 type PlanMediaAcquisitionRequestOptions struct {
 	Body *PlanMediaAcquisitionBody
@@ -12994,6 +14361,44 @@ func (o *ListNodeTagsRequestOptions) GetHeader() (map[string]string, error) {
 	return nil, nil
 }
 
+// TagsByAssignmentModeRequestOptions is the options needed to make a request to TagsByAssignmentMode.
+type TagsByAssignmentModeRequestOptions struct {
+	PathParams *TagsByAssignmentModePath
+	Query      *TagsByAssignmentModeQuery
+}
+
+// GetPathParams returns the path params as a map.
+func (o *TagsByAssignmentModeRequestOptions) GetPathParams() (map[string]any, error) {
+	encoded, err := json.Marshal(o.PathParams, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetQuery returns the query params as a map.
+func (o *TagsByAssignmentModeRequestOptions) GetQuery() (map[string]any, error) {
+	encoded, err := json.Marshal(o.Query, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *TagsByAssignmentModeRequestOptions) GetBody() any {
+	return nil
+}
+
+// GetHeader returns the headers as a map.
+func (o *TagsByAssignmentModeRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
 // UnassignTagRequestOptions is the options needed to make a request to UnassignTag.
 type UnassignTagRequestOptions struct {
 	PathParams *UnassignTagPath
@@ -13477,6 +14882,146 @@ func (o *CancelPageRenderJobRequestOptions) GetBody() any {
 
 // GetHeader returns the headers as a map.
 func (o *CancelPageRenderJobRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
+// AssignPassageTagRequestOptions is the options needed to make a request to AssignPassageTag.
+type AssignPassageTagRequestOptions struct {
+	Body *AssignPassageTagBody
+}
+
+// GetPathParams returns the path params as a map.
+func (o *AssignPassageTagRequestOptions) GetPathParams() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetQuery returns the query params as a map.
+func (o *AssignPassageTagRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *AssignPassageTagRequestOptions) GetBody() any {
+	if o.Body == nil {
+		return nil
+	}
+	return o.Body
+}
+
+// GetHeader returns the headers as a map.
+func (o *AssignPassageTagRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
+// PassageTagAvailabilityRequestOptions is the options needed to make a request to PassageTagAvailability.
+type PassageTagAvailabilityRequestOptions struct {
+	Body *PassageTagAvailabilityBody
+}
+
+// GetPathParams returns the path params as a map.
+func (o *PassageTagAvailabilityRequestOptions) GetPathParams() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetQuery returns the query params as a map.
+func (o *PassageTagAvailabilityRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *PassageTagAvailabilityRequestOptions) GetBody() any {
+	if o.Body == nil {
+		return nil
+	}
+	return o.Body
+}
+
+// GetHeader returns the headers as a map.
+func (o *PassageTagAvailabilityRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
+// GetPassageTagsRequestOptions is the options needed to make a request to GetPassageTags.
+type GetPassageTagsRequestOptions struct {
+	Body *GetPassageTagsBody
+}
+
+// GetPathParams returns the path params as a map.
+func (o *GetPassageTagsRequestOptions) GetPathParams() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetQuery returns the query params as a map.
+func (o *GetPassageTagsRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *GetPassageTagsRequestOptions) GetBody() any {
+	if o.Body == nil {
+		return nil
+	}
+	return o.Body
+}
+
+// GetHeader returns the headers as a map.
+func (o *GetPassageTagsRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
+// RemovePassageTagRequestOptions is the options needed to make a request to RemovePassageTag.
+type RemovePassageTagRequestOptions struct {
+	Body *RemovePassageTagBody
+}
+
+// GetPathParams returns the path params as a map.
+func (o *RemovePassageTagRequestOptions) GetPathParams() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetQuery returns the query params as a map.
+func (o *RemovePassageTagRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *RemovePassageTagRequestOptions) GetBody() any {
+	if o.Body == nil {
+		return nil
+	}
+	return o.Body
+}
+
+// GetHeader returns the headers as a map.
+func (o *RemovePassageTagRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
+// ResolvePassageRequestOptions is the options needed to make a request to ResolvePassage.
+type ResolvePassageRequestOptions struct {
+	Body *ResolvePassageBody
+}
+
+// GetPathParams returns the path params as a map.
+func (o *ResolvePassageRequestOptions) GetPathParams() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetQuery returns the query params as a map.
+func (o *ResolvePassageRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *ResolvePassageRequestOptions) GetBody() any {
+	if o.Body == nil {
+		return nil
+	}
+	return o.Body
+}
+
+// GetHeader returns the headers as a map.
+func (o *ResolvePassageRequestOptions) GetHeader() (map[string]string, error) {
 	return nil, nil
 }
 
@@ -15183,6 +16728,149 @@ func (o *DetachBlobStoreRequestOptions) GetHeader() (map[string]string, error) {
 	return nil, nil
 }
 
+// AddConceptEdgeRequestOptions is the options needed to make a request to AddConceptEdge.
+type AddConceptEdgeRequestOptions struct {
+	Body *AddConceptEdgeBody
+}
+
+// GetPathParams returns the path params as a map.
+func (o *AddConceptEdgeRequestOptions) GetPathParams() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetQuery returns the query params as a map.
+func (o *AddConceptEdgeRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *AddConceptEdgeRequestOptions) GetBody() any {
+	if o.Body == nil {
+		return nil
+	}
+	return o.Body
+}
+
+// GetHeader returns the headers as a map.
+func (o *AddConceptEdgeRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
+// RemoveConceptEdgeRequestOptions is the options needed to make a request to RemoveConceptEdge.
+type RemoveConceptEdgeRequestOptions struct {
+	Body *RemoveConceptEdgeBody
+}
+
+// GetPathParams returns the path params as a map.
+func (o *RemoveConceptEdgeRequestOptions) GetPathParams() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetQuery returns the query params as a map.
+func (o *RemoveConceptEdgeRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *RemoveConceptEdgeRequestOptions) GetBody() any {
+	if o.Body == nil {
+		return nil
+	}
+	return o.Body
+}
+
+// GetHeader returns the headers as a map.
+func (o *RemoveConceptEdgeRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
+// CommitTagMergeRequestOptions is the options needed to make a request to CommitTagMerge.
+type CommitTagMergeRequestOptions struct {
+	Body *CommitTagMergeBody
+}
+
+// GetPathParams returns the path params as a map.
+func (o *CommitTagMergeRequestOptions) GetPathParams() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetQuery returns the query params as a map.
+func (o *CommitTagMergeRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *CommitTagMergeRequestOptions) GetBody() any {
+	if o.Body == nil {
+		return nil
+	}
+	return o.Body
+}
+
+// GetHeader returns the headers as a map.
+func (o *CommitTagMergeRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
+// PreviewTagMergeRequestOptions is the options needed to make a request to PreviewTagMerge.
+type PreviewTagMergeRequestOptions struct {
+	Body *PreviewTagMergeBody
+}
+
+// GetPathParams returns the path params as a map.
+func (o *PreviewTagMergeRequestOptions) GetPathParams() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetQuery returns the query params as a map.
+func (o *PreviewTagMergeRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *PreviewTagMergeRequestOptions) GetBody() any {
+	if o.Body == nil {
+		return nil
+	}
+	return o.Body
+}
+
+// GetHeader returns the headers as a map.
+func (o *PreviewTagMergeRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
+// ReverseTagMergeRequestOptions is the options needed to make a request to ReverseTagMerge.
+type ReverseTagMergeRequestOptions struct {
+	PathParams *ReverseTagMergePath
+}
+
+// GetPathParams returns the path params as a map.
+func (o *ReverseTagMergeRequestOptions) GetPathParams() (map[string]any, error) {
+	encoded, err := json.Marshal(o.PathParams, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetQuery returns the query params as a map.
+func (o *ReverseTagMergeRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *ReverseTagMergeRequestOptions) GetBody() any {
+	return nil
+}
+
+// GetHeader returns the headers as a map.
+func (o *ReverseTagMergeRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
 // ListTagsRequestOptions is the options needed to make a request to ListTags.
 type ListTagsRequestOptions struct {
 	Query *ListTagsQuery
@@ -15270,6 +16958,65 @@ func (o *ResolveTagByNameRequestOptions) GetBody() any {
 
 // GetHeader returns the headers as a map.
 func (o *ResolveTagByNameRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
+// TagNeighborhoodRequestOptions is the options needed to make a request to TagNeighborhood.
+type TagNeighborhoodRequestOptions struct {
+	Body *TagNeighborhoodBody
+}
+
+// GetPathParams returns the path params as a map.
+func (o *TagNeighborhoodRequestOptions) GetPathParams() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetQuery returns the query params as a map.
+func (o *TagNeighborhoodRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *TagNeighborhoodRequestOptions) GetBody() any {
+	if o.Body == nil {
+		return nil
+	}
+	return o.Body
+}
+
+// GetHeader returns the headers as a map.
+func (o *TagNeighborhoodRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
+// ResolveTagConceptRequestOptions is the options needed to make a request to ResolveTagConcept.
+type ResolveTagConceptRequestOptions struct {
+	Query *ResolveTagConceptQuery
+}
+
+// GetPathParams returns the path params as a map.
+func (o *ResolveTagConceptRequestOptions) GetPathParams() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetQuery returns the query params as a map.
+func (o *ResolveTagConceptRequestOptions) GetQuery() (map[string]any, error) {
+	encoded, err := json.Marshal(o.Query, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *ResolveTagConceptRequestOptions) GetBody() any {
+	return nil
+}
+
+// GetHeader returns the headers as a map.
+func (o *ResolveTagConceptRequestOptions) GetHeader() (map[string]string, error) {
 	return nil, nil
 }
 
@@ -15375,6 +17122,163 @@ func (o *RenameTagRequestOptions) GetBody() any {
 
 // GetHeader returns the headers as a map.
 func (o *RenameTagRequestOptions) GetHeader() (map[string]string, error) {
+	encoded, err := json.Marshal(o.Header, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var headers map[string]string
+	err = json.Unmarshal(encoded, &headers)
+	return headers, err
+}
+
+// AddTagAliasRequestOptions is the options needed to make a request to AddTagAlias.
+type AddTagAliasRequestOptions struct {
+	PathParams *AddTagAliasPath
+	Body       *AddTagAliasBody
+	Header     *AddTagAliasHeaders
+}
+
+// GetPathParams returns the path params as a map.
+func (o *AddTagAliasRequestOptions) GetPathParams() (map[string]any, error) {
+	encoded, err := json.Marshal(o.PathParams, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetQuery returns the query params as a map.
+func (o *AddTagAliasRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *AddTagAliasRequestOptions) GetBody() any {
+	if o.Body == nil {
+		return nil
+	}
+	return o.Body
+}
+
+// GetHeader returns the headers as a map.
+func (o *AddTagAliasRequestOptions) GetHeader() (map[string]string, error) {
+	encoded, err := json.Marshal(o.Header, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var headers map[string]string
+	err = json.Unmarshal(encoded, &headers)
+	return headers, err
+}
+
+// RemoveTagAliasRequestOptions is the options needed to make a request to RemoveTagAlias.
+type RemoveTagAliasRequestOptions struct {
+	PathParams *RemoveTagAliasPath
+	Body       *RemoveTagAliasBody
+	Header     *RemoveTagAliasHeaders
+}
+
+// GetPathParams returns the path params as a map.
+func (o *RemoveTagAliasRequestOptions) GetPathParams() (map[string]any, error) {
+	encoded, err := json.Marshal(o.PathParams, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetQuery returns the query params as a map.
+func (o *RemoveTagAliasRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *RemoveTagAliasRequestOptions) GetBody() any {
+	if o.Body == nil {
+		return nil
+	}
+	return o.Body
+}
+
+// GetHeader returns the headers as a map.
+func (o *RemoveTagAliasRequestOptions) GetHeader() (map[string]string, error) {
+	encoded, err := json.Marshal(o.Header, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var headers map[string]string
+	err = json.Unmarshal(encoded, &headers)
+	return headers, err
+}
+
+// GetTagConceptRequestOptions is the options needed to make a request to GetTagConcept.
+type GetTagConceptRequestOptions struct {
+	PathParams *GetTagConceptPath
+}
+
+// GetPathParams returns the path params as a map.
+func (o *GetTagConceptRequestOptions) GetPathParams() (map[string]any, error) {
+	encoded, err := json.Marshal(o.PathParams, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetQuery returns the query params as a map.
+func (o *GetTagConceptRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *GetTagConceptRequestOptions) GetBody() any {
+	return nil
+}
+
+// GetHeader returns the headers as a map.
+func (o *GetTagConceptRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
+// SetTagConceptRequestOptions is the options needed to make a request to SetTagConcept.
+type SetTagConceptRequestOptions struct {
+	PathParams *SetTagConceptPath
+	Body       *SetTagConceptBody
+	Header     *SetTagConceptHeaders
+}
+
+// GetPathParams returns the path params as a map.
+func (o *SetTagConceptRequestOptions) GetPathParams() (map[string]any, error) {
+	encoded, err := json.Marshal(o.PathParams, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetQuery returns the query params as a map.
+func (o *SetTagConceptRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *SetTagConceptRequestOptions) GetBody() any {
+	if o.Body == nil {
+		return nil
+	}
+	return o.Body
+}
+
+// GetHeader returns the headers as a map.
+func (o *SetTagConceptRequestOptions) GetHeader() (map[string]string, error) {
 	encoded, err := json.Marshal(o.Header, json.StringifyNumbers(true))
 	if err != nil {
 		return nil, err
@@ -15835,6 +17739,13 @@ func (o *ReadWorkspaceQueryPageRequestOptions) GetHeader() (map[string]string, e
 	return nil, nil
 }
 
+type AddConceptEdgeRequestKind string
+
+const (
+	Broader AddConceptEdgeRequestKind = "broader"
+	Related AddConceptEdgeRequestKind = "related"
+)
+
 type CreateNodeRequestKind string
 
 const (
@@ -15853,6 +17764,13 @@ type IssueTermReportDownloadRequestFormat string
 const (
 	Bundle IssueTermReportDownloadRequestFormat = "bundle"
 	Csv    IssueTermReportDownloadRequestFormat = "csv"
+)
+
+type RemoveConceptEdgeRequestKind string
+
+const (
+	RemoveConceptEdgeRequestKindBroader RemoveConceptEdgeRequestKind = "broader"
+	RemoveConceptEdgeRequestKindRelated RemoveConceptEdgeRequestKind = "related"
 )
 
 type RenditionTextObservedConfiguration string
@@ -15979,6 +17897,14 @@ const (
 	ListDocumentsQueryDirectionDesc ListDocumentsQueryDirection = "desc"
 )
 
+type TagsByAssignmentModeQueryMode string
+
+const (
+	Either                                TagsByAssignmentModeQueryMode = "either"
+	Passage                               TagsByAssignmentModeQueryMode = "passage"
+	TagsByAssignmentModeQueryModeDocument TagsByAssignmentModeQueryMode = "document"
+)
+
 type ListSavedQueriesQueryKind string
 
 const (
@@ -16010,6 +17936,18 @@ type UploadMailboxChunkHeaders struct {
 type TransferMailboxEMLHeaders struct {
 	// XDocbankTransfer Base64url JSON MailboxTransferRequest (at most 32768 encoded bytes)
 	XDocbankTransfer string `json:"X-Docbank-Transfer"`
+}
+
+type ArchiveContentMapHeaders struct {
+	IfMatch string `json:"If-Match"`
+}
+
+type UpdateContentMapHeaders struct {
+	IfMatch string `json:"If-Match"`
+}
+
+type CreateContentMapSnapshotHeaders struct {
+	IfMatch string `json:"If-Match"`
 }
 
 type MoveNodeHeaders struct {
@@ -16080,6 +18018,18 @@ type DeleteTagHeaders struct {
 }
 
 type RenameTagHeaders struct {
+	IfMatch string `json:"If-Match"`
+}
+
+type AddTagAliasHeaders struct {
+	IfMatch string `json:"If-Match"`
+}
+
+type RemoveTagAliasHeaders struct {
+	IfMatch string `json:"If-Match"`
+}
+
+type SetTagConceptHeaders struct {
 	IfMatch string `json:"If-Match"`
 }
 
@@ -16235,6 +18185,26 @@ type ResumeMailboxJobPath struct {
 	ID string `json:"id"`
 }
 
+type GetContentMapSnapshotPath struct {
+	SnapshotID string `json:"snapshot_id"`
+}
+
+type ArchiveContentMapPath struct {
+	MapID string `json:"map_id"`
+}
+
+type GetContentMapPath struct {
+	MapID string `json:"map_id"`
+}
+
+type UpdateContentMapPath struct {
+	MapID string `json:"map_id"`
+}
+
+type CreateContentMapSnapshotPath struct {
+	MapID string `json:"map_id"`
+}
+
 type RevokeMediaOccurrencePath struct {
 	OccurrenceID string `json:"occurrence_id"`
 }
@@ -16289,6 +18259,10 @@ type RevertNodeContentPath struct {
 }
 
 type ListNodeTagsPath struct {
+	ID int64 `json:"id"`
+}
+
+type TagsByAssignmentModePath struct {
 	ID int64 `json:"id"`
 }
 
@@ -16402,6 +18376,10 @@ type DetachBlobStorePath struct {
 	StoreID string `json:"store_id"`
 }
 
+type ReverseTagMergePath struct {
+	MergeID uuid.UUID `json:"merge_id"`
+}
+
 type DeleteTagPath struct {
 	TagID string `json:"tag_id"`
 }
@@ -16411,6 +18389,22 @@ type GetTagPath struct {
 }
 
 type RenameTagPath struct {
+	TagID string `json:"tag_id"`
+}
+
+type AddTagAliasPath struct {
+	TagID string `json:"tag_id"`
+}
+
+type RemoveTagAliasPath struct {
+	TagID string `json:"tag_id"`
+}
+
+type GetTagConceptPath struct {
+	TagID string `json:"tag_id"`
+}
+
+type SetTagConceptPath struct {
 	TagID string `json:"tag_id"`
 }
 
@@ -16543,6 +18537,12 @@ type ResumeMailboxJobBody = MailboxResumeInput
 
 type TransferMailboxEMLBody = runtime.File
 
+type CreateContentMapBody = MapWriteRequest
+
+type PreviewContentMapBody = MapPlanRequest
+
+type UpdateContentMapBody = MapWriteRequest
+
 type PlanMediaAcquisitionBody = MediaReferenceBody
 
 type GrantMediaAcquisitionConsentBody = MediaAcquisitionGrantBody
@@ -16583,6 +18583,16 @@ type CreatePageRenderJobBody = PageRenderRequest
 type GetPageRenderJobBody = PageSelectionRequest
 
 type CancelPageRenderJobBody = PageSelectionRequest
+
+type AssignPassageTagBody = AssignPassageTagRequest
+
+type PassageTagAvailabilityBody = PassageTagAvailabilityRequest
+
+type GetPassageTagsBody = GetPassageTagsRequest
+
+type RemovePassageTagBody = RemovePassageTagRequest
+
+type ResolvePassageBody = PassageResolveRequest
 
 type MkdirPathBody = MkdirPathRequest
 
@@ -16662,9 +18672,25 @@ type RegisterBlobStoreBody = RegisterBlobStoreRequest
 
 type PreviewBlobStoreRegistrationBody = PreviewBlobStoreRegistrationRequest
 
+type AddConceptEdgeBody = AddConceptEdgeRequest
+
+type RemoveConceptEdgeBody = RemoveConceptEdgeRequest
+
+type CommitTagMergeBody = TagMergePreview
+
+type PreviewTagMergeBody = PreviewTagMergeRequest
+
 type CreateTagBody = CreateTagRequest
 
+type TagNeighborhoodBody = TagNeighborhoodRequest
+
 type RenameTagBody = RenameTagRequest
+
+type AddTagAliasBody = AddTagAliasRequest
+
+type RemoveTagAliasBody = RemoveTagAliasRequest
+
+type SetTagConceptBody = SetTagConceptRequest
 
 type CreateTimelineRebuildBody = TimelineRebuildRequest
 
@@ -16821,6 +18847,11 @@ type ListNodeTagsQuery struct {
 	Offset *int64 `json:"offset,omitempty"`
 }
 
+type TagsByAssignmentModeQuery struct {
+	ContentVersionID *string                        `json:"content_version_id,omitempty"`
+	Mode             *TagsByAssignmentModeQueryMode `json:"mode,omitempty"`
+}
+
 type ListContentVersionsQuery struct {
 	Limit  *int64 `json:"limit,omitempty"`
 	Offset *int64 `json:"offset,omitempty"`
@@ -16902,6 +18933,10 @@ type ListTagsQuery struct {
 }
 
 type ResolveTagByNameQuery struct {
+	Name string `json:"name"`
+}
+
+type ResolveTagConceptQuery struct {
 	Name string `json:"name"`
 }
 
@@ -17238,6 +19273,34 @@ type TransferMailboxEMLResponse = store.MailboxTransferReceipt
 
 type TransferMailboxEMLErrorResponse = Error
 
+type GetContentMapSnapshotResponse = store.ContentMapSnapshot
+
+type GetContentMapSnapshotErrorResponse = Error
+
+type CreateContentMapResponse = store.ContentMap
+
+type CreateContentMapErrorResponse = Error
+
+type PreviewContentMapResponse = store.ContentMapPlan
+
+type PreviewContentMapErrorResponse = Error
+
+type ArchiveContentMapResponse = store.ContentMap
+
+type ArchiveContentMapErrorResponse = Error
+
+type GetContentMapResponse = store.ContentMap
+
+type GetContentMapErrorResponse = Error
+
+type UpdateContentMapResponse = store.ContentMap
+
+type UpdateContentMapErrorResponse = Error
+
+type CreateContentMapSnapshotResponse = store.ContentMapSnapshot
+
+type CreateContentMapSnapshotErrorResponse = Error
+
 type PlanMediaAcquisitionResponse = api.MediaAcquisitionPlan
 
 type PlanMediaAcquisitionErrorResponse = Error
@@ -17326,6 +19389,10 @@ type ListNodeTagsResponse = api.TagPage
 
 type ListNodeTagsErrorResponse = Error
 
+type TagsByAssignmentModeResponse []Tag
+
+type TagsByAssignmentModeErrorResponse = Error
+
 type UnassignTagResponse = api.TagAssignmentReceipt
 
 type UnassignTagErrorResponse = Error
@@ -17407,6 +19474,26 @@ type GetPageRenderJobErrorResponse = Error
 type CancelPageRenderJobResponse = store.PageRenderJob
 
 type CancelPageRenderJobErrorResponse = Error
+
+type AssignPassageTagResponse = PassageTagChangeResponse
+
+type AssignPassageTagErrorResponse = Error
+
+type PassageTagAvailabilityResponseJSON = PassageTagAvailabilityResponse
+
+type PassageTagAvailabilityErrorResponse = Error
+
+type GetPassageTagsResponse []Tag
+
+type GetPassageTagsErrorResponse = Error
+
+type RemovePassageTagResponse = PassageTagChangeResponse
+
+type RemovePassageTagErrorResponse = Error
+
+type ResolvePassageResponse = api.PassageResolution
+
+type ResolvePassageErrorResponse = Error
 
 type ResolvePathResponse = api.Node
 
@@ -17640,6 +19727,26 @@ type DetachBlobStoreResponse = api.BlobStore
 
 type DetachBlobStoreErrorResponse = Error
 
+type AddConceptEdgeResponse = store.TagConcept
+
+type AddConceptEdgeErrorResponse = Error
+
+type RemoveConceptEdgeResponse = store.TagConcept
+
+type RemoveConceptEdgeErrorResponse = Error
+
+type CommitTagMergeResponse = store.TagMergeReceipt
+
+type CommitTagMergeErrorResponse = Error
+
+type PreviewTagMergeResponse = store.TagMergePreview
+
+type PreviewTagMergeErrorResponse = Error
+
+type ReverseTagMergeResponse = store.TagMergeReceipt
+
+type ReverseTagMergeErrorResponse = Error
+
 type ListTagsResponse = api.TagPage
 
 type ListTagsErrorResponse = Error
@@ -17652,6 +19759,14 @@ type ResolveTagByNameResponse = api.Tag
 
 type ResolveTagByNameErrorResponse = Error
 
+type TagNeighborhoodResponseJSON = api.TagNeighborhoodResponse
+
+type TagNeighborhoodErrorResponse = Error
+
+type ResolveTagConceptResponse = api.Tag
+
+type ResolveTagConceptErrorResponse = Error
+
 type DeleteTagResponse = api.TagDeletionReceipt
 
 type DeleteTagErrorResponse = Error
@@ -17663,6 +19778,22 @@ type GetTagErrorResponse = Error
 type RenameTagResponse = api.Tag
 
 type RenameTagErrorResponse = Error
+
+type AddTagAliasResponse = store.TagConcept
+
+type AddTagAliasErrorResponse = Error
+
+type RemoveTagAliasResponse = store.TagConcept
+
+type RemoveTagAliasErrorResponse = Error
+
+type GetTagConceptResponse = store.TagConcept
+
+type GetTagConceptErrorResponse = Error
+
+type SetTagConceptResponse = store.TagConcept
+
+type SetTagConceptErrorResponse = Error
 
 type ListTagNodesResponse = api.TaggedNodePage
 
@@ -17740,6 +19871,27 @@ type HealthResponse struct {
 	Status        string `json:"status"`
 	UptimeSeconds int64  `json:"uptime_seconds"`
 	Version       string `json:"version"`
+}
+
+type AddConceptEdgeRequest struct {
+	// Schema A URL to the JSON Schema for this object.
+	Schema      *string                   `json:"$schema,omitempty"`
+	ChildTagID  uuid.UUID                 `json:"child_tag_id"`
+	Kind        AddConceptEdgeRequestKind `json:"kind"`
+	ParentTagID uuid.UUID                 `json:"parent_tag_id"`
+}
+
+type AddTagAliasRequest struct {
+	// Schema A URL to the JSON Schema for this object.
+	Schema *string `json:"$schema,omitempty"`
+	Alias  string  `json:"alias"`
+}
+
+type AssignPassageTagRequest struct {
+	// Schema A URL to the JSON Schema for this object.
+	Schema *string      `json:"$schema,omitempty"`
+	Ref    PassageRefV1 `json:"ref"`
+	TagID  uuid.UUID    `json:"tag_id"`
 }
 
 type AssignTagPathRequest struct {
@@ -17886,6 +20038,22 @@ type CollectionPage = api.CollectionPage
 type CollectionQuality = api.CollectionQuality
 
 type CollectionQualitySummary = api.CollectionQualitySummary
+
+type ContentMap = store.ContentMap
+
+type ContentMapDefinition = store.ContentMapDefinition
+
+type ContentMapPin = document.ContentMapPin
+
+type ContentMapPlan = store.ContentMapPlan
+
+type ContentMapSection = store.ContentMapSection
+
+type ContentMapSnapshot = store.ContentMapSnapshot
+
+type ContentMapSnapshotEntry = store.ContentMapSnapshotEntry
+
+type ContentMapSnapshotSection = store.ContentMapSnapshotSection
 
 type ContentReference = api.ContentReference
 
@@ -18131,6 +20299,8 @@ type ErrorPosition = api.ErrorPosition
 
 type EvidenceLexicalPolicyV1 = document.EvidenceLexicalPolicyV1
 
+type EvidenceLocatorV1 = document.EvidenceLocatorV1
+
 type EvidencePolicyIdentity = document.EvidencePolicyIdentity
 
 type ExportJob = bundle.ExportJob
@@ -18151,6 +20321,12 @@ type GcRequest struct {
 	// Schema A URL to the JSON Schema for this object.
 	Schema *string `json:"$schema,omitempty"`
 	Run    bool    `json:"run"`
+}
+
+type GetPassageTagsRequest struct {
+	// Schema A URL to the JSON Schema for this object.
+	Schema *string      `json:"$schema,omitempty"`
+	Ref    PassageRefV1 `json:"ref"`
 }
 
 type HighlightSetTermV1Schema struct {
@@ -18240,6 +20416,19 @@ type MailboxSettingsInput = api.MailboxSettingsInput
 type MailboxTransferReceipt = store.MailboxTransferReceipt
 
 type MailboxTransferRequest = store.MailboxTransferRequest
+
+type MapPlanRequest struct {
+	// Schema A URL to the JSON Schema for this object.
+	Schema     *string              `json:"$schema,omitempty"`
+	Definition ContentMapDefinition `json:"definition"`
+}
+
+type MapWriteRequest struct {
+	// Schema A URL to the JSON Schema for this object.
+	Schema           *string              `json:"$schema,omitempty"`
+	Definition       ContentMapDefinition `json:"definition"`
+	DefinitionDigest string               `json:"definition_digest"`
+}
 
 type MediaAcquisitionGrantBody = api.MediaAcquisitionGrantBody
 
@@ -18364,6 +20553,33 @@ type PageSelectionRequest = api.PageSelectionRequest
 
 type PageSource = document.PageSource
 
+type PassageRefV1 = document.PassageRefV1
+
+type PassageResolution = api.PassageResolution
+
+type PassageResolveRequest = api.PassageResolveRequest
+
+type PassageTagAvailabilityRequest struct {
+	// Schema A URL to the JSON Schema for this object.
+	Schema *string      `json:"$schema,omitempty"`
+	Ref    PassageRefV1 `json:"ref"`
+}
+
+type PassageTagAvailabilityResponse struct {
+	// Schema A URL to the JSON Schema for this object.
+	Schema       *string `json:"$schema,omitempty"`
+	Availability string  `json:"availability"`
+}
+
+type PassageTagChangeResponse struct {
+	// Schema A URL to the JSON Schema for this object.
+	Schema    *string      `json:"$schema,omitempty"`
+	Changed   bool         `json:"changed"`
+	PassageID string       `json:"passage_id"`
+	Ref       PassageRefV1 `json:"ref"`
+	Tag       Tag          `json:"tag"`
+}
+
 type PendingFormatV1 = document.PendingFormatV1
 
 type PeopleBuild = api.PeopleBuild
@@ -18437,6 +20653,13 @@ type PreviewStorageSalvageRequest struct {
 	Schema *string `json:"$schema,omitempty"`
 	Hash   string  `json:"hash"`
 	Store  string  `json:"store"`
+}
+
+type PreviewTagMergeRequest struct {
+	// Schema A URL to the JSON Schema for this object.
+	Schema      *string   `json:"$schema,omitempty"`
+	SourceTagID uuid.UUID `json:"source_tag_id"`
+	TargetTagID uuid.UUID `json:"target_tag_id"`
 }
 
 type ProcessingConsentGrant = api.ProcessingConsentGrant
@@ -18515,10 +20738,31 @@ type RegisterBlobStoreRequest struct {
 	PreviewToken string  `json:"preview_token"`
 }
 
+type RemoveConceptEdgeRequest struct {
+	// Schema A URL to the JSON Schema for this object.
+	Schema      *string                      `json:"$schema,omitempty"`
+	ChildTagID  uuid.UUID                    `json:"child_tag_id"`
+	Kind        RemoveConceptEdgeRequestKind `json:"kind"`
+	ParentTagID uuid.UUID                    `json:"parent_tag_id"`
+}
+
+type RemovePassageTagRequest struct {
+	// Schema A URL to the JSON Schema for this object.
+	Schema *string      `json:"$schema,omitempty"`
+	Ref    PassageRefV1 `json:"ref"`
+	TagID  uuid.UUID    `json:"tag_id"`
+}
+
 type RemoveRequest struct {
 	// Schema A URL to the JSON Schema for this object.
 	Schema        *string `json:"$schema,omitempty"`
 	RequestDigest string  `json:"request_digest"`
+}
+
+type RemoveTagAliasRequest struct {
+	// Schema A URL to the JSON Schema for this object.
+	Schema *string `json:"$schema,omitempty"`
+	Alias  string  `json:"alias"`
 }
 
 type RenameTagRequest struct {
@@ -18685,6 +20929,14 @@ type SetCollectionLabelRequest struct {
 	Label  *string `json:"label,omitempty"`
 }
 
+type SetTagConceptRequest struct {
+	// Schema A URL to the JSON Schema for this object.
+	Schema      *string `json:"$schema,omitempty"`
+	Description string  `json:"description"`
+}
+
+type SnapshotMember = store.SnapshotMember
+
 type Sort = query.Sort
 
 type Source = bundle.Source
@@ -18763,7 +21015,25 @@ type Tag = api.Tag
 
 type TagAssignmentReceipt = api.TagAssignmentReceipt
 
+type TagConcept = store.TagConcept
+
 type TagDeletionReceipt = api.TagDeletionReceipt
+
+type TagGraphDocument = api.TagGraphDocument
+
+type TagGraphPathStep = api.TagGraphPathStep
+
+type TagGraphSeed = api.TagGraphSeed
+
+type TagGraphTag = api.TagGraphTag
+
+type TagMergePreview = store.TagMergePreview
+
+type TagMergeReceipt = store.TagMergeReceipt
+
+type TagNeighborhoodRequest = api.TagNeighborhoodRequest
+
+type TagNeighborhoodResponse = api.TagNeighborhoodResponse
 
 type TagPage = api.TagPage
 
