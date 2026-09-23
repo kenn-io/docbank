@@ -236,6 +236,18 @@ func TestRenditionFinalizationContextCancellation(t *testing.T) {
 	writer.endTag("a")
 	require.ErrorIs(t, writer.err, context.Canceled)
 
+	attributes := make([]html.Attribute, 4096)
+	for index := range attributes {
+		attributes[index] = html.Attribute{Key: "data-" + strconv.Itoa(index), Val: "x"}
+	}
+	writer = renditionHTMLWriter{ctx: &cancelAfterXHTMLReadContext{cancelAt: 2}, work: &renditionXHTMLWork{remaining: 1 << 20}}
+	writer.startTag(html.Token{Data: "ol", Attr: attributes}, 0, false)
+	require.ErrorIs(t, writer.err, context.Canceled)
+
+	writer = renditionHTMLWriter{ctx: &cancelAfterXHTMLReadContext{cancelAt: 2}, work: &renditionXHTMLWork{remaining: 1 << 20}}
+	writer.startTag(html.Token{Data: "ol", Attr: []html.Attribute{{Key: "start", Val: strings.Repeat("9", 1<<20)}}}, 0, false)
+	require.ErrorIs(t, writer.err, context.Canceled)
+
 	ctx = &cancelOnXHTMLReadContext{cancelAt: 2}
 	_, err = degradeOrderedListItem(ctx, serializedOrderedListItem{ordinal: "999999999", value: strings.Repeat("line\n", 1<<12)}, 0, false)
 	require.ErrorIs(t, err, context.Canceled)

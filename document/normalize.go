@@ -1282,7 +1282,12 @@ func (w *renditionHTMLWriter) startTag(token html.Token, tokenOffset int, suppre
 		return
 	}
 	if tag == "input" && !w.rawFragment && !suppressText {
-		if marker, ok := parserGeneratedCheckboxMarker(token); ok {
+		marker, ok, err := parserGeneratedCheckboxMarkerContext(w.context(), token)
+		if err != nil {
+			w.err = err
+			return
+		}
+		if ok {
 			w.writeText(marker)
 			return
 		}
@@ -1320,8 +1325,17 @@ func (w *renditionHTMLWriter) startTag(token html.Token, tokenOffset int, suppre
 		}
 		if tag == "ol" {
 			for _, attribute := range token.Attr {
+				if err := w.contextError(); err != nil {
+					w.err = err
+					return
+				}
 				if attribute.Key == "start" {
-					if parsed, ok := canonicalNonnegativeDecimal(attribute.Val); ok {
+					parsed, ok, err := canonicalNonnegativeDecimalContext(w.context(), attribute.Val)
+					if err != nil {
+						w.err = err
+						return
+					}
+					if ok {
 						start = parsed
 					}
 				}
@@ -1389,6 +1403,10 @@ func (w *renditionHTMLWriter) startTag(token html.Token, tokenOffset int, suppre
 	case "code":
 		if w.inPre {
 			for _, attribute := range token.Attr {
+				if err := w.contextError(); err != nil {
+					w.err = err
+					return
+				}
 				if attribute.Key == "class" && strings.HasPrefix(attribute.Val, "language-") {
 					w.preLang = safeCodeLanguage(strings.TrimPrefix(attribute.Val, "language-"))
 				}
@@ -1403,6 +1421,10 @@ func (w *renditionHTMLWriter) startTag(token html.Token, tokenOffset int, suppre
 			return
 		}
 		for _, attribute := range token.Attr {
+			if err := w.contextError(); err != nil {
+				w.err = err
+				return
+			}
 			if attribute.Key == "alt" {
 				w.writeText(attribute.Val)
 				break
@@ -1412,6 +1434,10 @@ func (w *renditionHTMLWriter) startTag(token html.Token, tokenOffset int, suppre
 		w.flushPendingSpace()
 		destination := ""
 		for _, attribute := range token.Attr {
+			if err := w.contextError(); err != nil {
+				w.err = err
+				return
+			}
 			if attribute.Key == "href" {
 				destination = safeRenditionLink(attribute.Val, w.maxLinkChars)
 				break
@@ -1442,9 +1468,12 @@ func (w *renditionHTMLWriter) endSuppressedTag(tag string) bool {
 	return true
 }
 
-func parserGeneratedCheckboxMarker(token html.Token) (string, bool) {
+func parserGeneratedCheckboxMarkerContext(ctx context.Context, token html.Token) (string, bool, error) {
 	checkbox, checked := false, false
 	for _, attribute := range token.Attr {
+		if err := ctx.Err(); err != nil {
+			return "", false, err
+		}
 		switch attribute.Key {
 		case "type":
 			checkbox = attribute.Val == "checkbox"
@@ -1453,12 +1482,12 @@ func parserGeneratedCheckboxMarker(token html.Token) (string, bool) {
 		}
 	}
 	if !checkbox {
-		return "", false
+		return "", false, nil
 	}
 	if checked {
-		return "[x] ", true
+		return "[x] ", true, nil
 	}
-	return "[ ] ", true
+	return "[ ] ", true, nil
 }
 
 func (w *renditionHTMLWriter) endTag(tag string) {
@@ -1878,20 +1907,38 @@ func finishRenditionMarkdown(value string) string {
 }
 
 func canonicalNonnegativeDecimal(value string) (string, bool) {
+	parsed, ok, _ := canonicalNonnegativeDecimalContext(context.Background(), value)
+	return parsed, ok
+}
+
+func canonicalNonnegativeDecimalContext(ctx context.Context, value string) (string, bool, error) {
 	value = strings.TrimPrefix(value, "+")
 	if value == "" {
-		return "", false
+		return "", false, nil
 	}
-	for _, character := range value {
+	for index, character := range value {
+		if index&1023 == 0 {
+			if err := ctx.Err(); err != nil {
+				return "", false, err
+			}
+		}
 		if character < '0' || character > '9' {
-			return "", false
+			return "", false, nil
 		}
 	}
-	value = strings.TrimLeft(value, "0")
-	if value == "" {
-		return "0", true
+	first := 0
+	for first < len(value) && value[first] == '0' {
+		if first&1023 == 0 {
+			if err := ctx.Err(); err != nil {
+				return "", false, err
+			}
+		}
+		first++
 	}
-	return value, true
+	if first == len(value) {
+		return "0", true, nil
+	}
+	return value[first:], true, nil
 }
 
 func incrementNonnegativeDecimal(value string) string {
