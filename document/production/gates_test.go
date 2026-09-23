@@ -99,6 +99,55 @@ func TestPreparedProductionV2BindsGateEvidencePins(t *testing.T) {
 	require.Error(t, err, "the approval subject must bind exact evidence pins")
 }
 
+func TestPreparedProductionRejectsMismatchedFactsPinAndContractVersions(t *testing.T) {
+	base := syntheticPreparedProductionContract()
+	_, factsSHA256, err := CanonicalPolicyMemberFacts(base.Members[0].Facts)
+	require.NoError(t, err)
+	validV2 := preparedProductionV2WithPin(t, syntheticPolicy(),
+		redaction.FamilyContext{Kind: "standalone", RootVersionID: versionOneID},
+		ProductionMemberEvidencePin{
+			AllowlistVersion: PolicyFactsAllowlistV1, SourceMetadataGenerationID: "70000000-0000-4000-8000-000000000001",
+			SourceMetadataEvidenceSHA256: sha("1"), PolicyFactsSHA256: factsSHA256,
+		})
+	_, _, err = CanonicalPreparedProduction(validV2)
+	require.NoError(t, err, "the prepared v2 authority must be valid before changing its pin")
+
+	t.Run("pin disagrees with member facts", func(t *testing.T) {
+		changed := validV2
+		changed.Members = slices.Clone(validV2.Members)
+		pin := *validV2.Members[0].EvidencePin
+		pin.PolicyFactsSHA256 = sha("f")
+		require.NotEqual(t, factsSHA256, pin.PolicyFactsSHA256)
+		changed.Members[0].EvidencePin = &pin
+		_, changed.MemberHash, err = PreparedMemberHash(changed.Members)
+		require.NoError(t, err)
+		_, changed.ApprovalSubject.GateEvidenceSHA256, err = CanonicalProductionGateEvidence(changed.Members)
+		require.NoError(t, err)
+		require.NotEqual(t, validV2.ApprovalSubject.GateEvidenceSHA256, changed.ApprovalSubject.GateEvidenceSHA256)
+
+		_, _, err = CanonicalPreparedProduction(changed)
+		requireInvalidContractDetail(t, err, "prepared member facts do not match evidence pin")
+	})
+
+	t.Run("v1 cannot carry an evidence pin", func(t *testing.T) {
+		_, _, err := CanonicalPreparedProduction(base)
+		require.NoError(t, err)
+		changed := base
+		changed.Members = slices.Clone(base.Members)
+		changed.Members[0].EvidencePin = &ProductionMemberEvidencePin{}
+		_, _, err = CanonicalPreparedProduction(changed)
+		requireInvalidContractDetail(t, err, "prepared member evidence pin does not match contract version")
+	})
+
+	t.Run("v2 requires an evidence pin", func(t *testing.T) {
+		changed := validV2
+		changed.Members = slices.Clone(validV2.Members)
+		changed.Members[0].EvidencePin = nil
+		_, _, err := CanonicalPreparedProduction(changed)
+		requireInvalidContractDetail(t, err, "prepared member evidence pin does not match contract version")
+	})
+}
+
 func TestPreparedProductionV2AllowsExplicitEmptyPinForGenericPolicy(t *testing.T) {
 	prepared := preparedProductionV2WithPin(t, genericPolicyForGateTest(t),
 		redaction.FamilyContext{Kind: "standalone", RootVersionID: versionOneID},

@@ -17,6 +17,10 @@ const (
 	MaxSnapshotMembers = 100_000
 	MaxSnapshotPages   = 1_000_000
 	maxInlineSnapshot  = 64 << 10
+	// Production snapshots are server-derived, so the 1 MiB command limit does
+	// not apply. Bound their canonical manifest for at most 100,000 compact
+	// occurrences, below the plan's 512 MiB renderer memory limit.
+	maxProductionSnapshotManifest = 128 << 20
 )
 
 var ErrPackageConflict = errors.New("package_conflict: package request conflicts with recorded authority")
@@ -198,7 +202,7 @@ func normalizeSnapshotMember(value CollectionSnapshotMember, ordinal int) (Colle
 	return value, nil
 }
 
-func normalizeSnapshotRequest(request SnapshotSealRequest) (SnapshotSealRequest, error) {
+func normalizeSnapshotRequest(request SnapshotSealRequest, allowRepeatedNodes bool) (SnapshotSealRequest, error) {
 	if validateUUIDv4(request.SnapshotID) != nil || len(request.Members) == 0 || len(request.Members) > MaxSnapshotMembers || len(request.SourceCollectionIDs) > 64 {
 		return request, ErrPackageConflict
 	}
@@ -221,7 +225,7 @@ func normalizeSnapshotRequest(request SnapshotSealRequest) (SnapshotSealRequest,
 		if err == nil && len(normalized.SourceCollectionIDs) == 0 && len(request.SourceCollectionIDs) == 1 {
 			normalized.SourceCollectionIDs = slices.Clone(request.SourceCollectionIDs)
 		}
-		if err != nil || seen[normalized.OccurrenceID] || seenNodes[normalized.NodeID] ||
+		if err != nil || seen[normalized.OccurrenceID] || !allowRepeatedNodes && seenNodes[normalized.NodeID] ||
 			len(request.SourceCollectionIDs) == 0 && len(normalized.SourceCollectionIDs) != 0 ||
 			len(request.SourceCollectionIDs) != 0 && (len(normalized.SourceCollectionIDs) == 0 ||
 				!sourceIDsContained(request.SourceCollectionIDs, normalized.SourceCollectionIDs)) {
@@ -255,7 +259,14 @@ func sourceIDsContained(snapshotIDs, memberIDs []string) bool {
 // SealCollectionSnapshot freezes exact content and origin before an import or
 // export worker starts. Replaying the same ID with different contents fails.
 func (s *Store) SealCollectionSnapshot(ctx context.Context, request SnapshotSealRequest) (CollectionSnapshot, error) {
-	request, err := normalizeSnapshotRequest(request)
+	return s.sealCollectionSnapshot(ctx, request, false, maxInlineSnapshot, func(ctx context.Context, tx *sql.Tx, request SnapshotSealRequest) error {
+		return validateSnapshotMembersTx(ctx, tx, request)
+	})
+}
+
+func (s *Store) sealCollectionSnapshot(ctx context.Context, request SnapshotSealRequest, allowRepeatedNodes bool, maxManifestBytes int,
+	validate func(context.Context, *sql.Tx, SnapshotSealRequest) error) (CollectionSnapshot, error) {
+	request, err := normalizeSnapshotRequest(request, allowRepeatedNodes)
 	if err != nil {
 		return CollectionSnapshot{}, err
 	}
@@ -266,7 +277,7 @@ func (s *Store) SealCollectionSnapshot(ctx context.Context, request SnapshotSeal
 	if err != nil {
 		return CollectionSnapshot{}, err
 	}
-	if len(manifest) > maxInlineSnapshot {
+	if len(manifest) > maxManifestBytes {
 		return CollectionSnapshot{}, ErrPackageConflict
 	}
 	manifestHash := sha256.Sum256(manifest)
@@ -311,7 +322,7 @@ func (s *Store) SealCollectionSnapshot(ctx context.Context, request SnapshotSeal
 		if !errors.Is(loadErr, ErrNotFound) {
 			return loadErr
 		}
-		if err := validateSnapshotMembersTx(ctx, tx, request); err != nil {
+		if err := validate(ctx, tx, request); err != nil {
 			return err
 		}
 		return insertCollectionSnapshotTx(ctx, tx, s.vaultID, result, request.Members)

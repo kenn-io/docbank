@@ -134,6 +134,7 @@ func TestSanitizedNativeAndScanThreeTargetsEndorsementsAndIndependentOCR(t *test
 			for _, private := range []string{canary, "private-source.txt", "/ActualText", "/EmbeddedFile", "/Metadata", p.SHA256, a.LayoutSHA256, a.EndorsementsSHA256} {
 				require.NotContains(t, pdf.String(), private)
 			}
+			writeTaskBEvidence(t, map[bool]string{false: "native-sanitized.pdf", true: "scan-sanitized.pdf"}[scan], pdf.Bytes())
 			t.Run("optional_poppler_and_ocr", func(t *testing.T) {
 				for _, tool := range []string{"pdftotext", "pdftoppm", "tesseract"} {
 					if _, err := exec.LookPath(tool); err != nil {
@@ -270,6 +271,7 @@ func TestSanitizedWriterWhitespaceUnicodeAnd600DPI(t *testing.T) {
 		{"  leading middle  trailing  ", " leading middle trailing "},
 		{"paragraph one\n\nparagraph two\n", "paragraph one\n\nparagraph two\n"},
 		{" \t\n ", " \t\n "}, {"café 給与", "café 給与"},
+		{"𠮷 retained", "𠮷 retained"},
 	} {
 		text := example.text
 		t.Run(text, func(t *testing.T) {
@@ -314,7 +316,16 @@ func extractIndependent(t *testing.T, data []byte) string {
 	err = concrete.withInstanceContext(t.Context(), func(_ context.Context, instance pdfium.Pdfium) error {
 		doc, err := instance.OpenDocument(&requests.OpenDocument{File: &data})
 		require.NoError(t, err)
-		text, err := instance.GetPageText(&requests.GetPageText{Page: requests.Page{ByIndex: &requests.PageByIndex{Document: doc.Document, Index: 0}}})
+		page := requests.Page{ByIndex: &requests.PageByIndex{Document: doc.Document, Index: 0}}
+		loaded, err := instance.FPDFText_LoadPage(&requests.FPDFText_LoadPage{Page: page})
+		require.NoError(t, err)
+		defer func() {
+			_, closeErr := instance.FPDFText_ClosePage(&requests.FPDFText_ClosePage{TextPage: loaded.TextPage})
+			require.NoError(t, closeErr)
+		}()
+		count, err := instance.FPDFText_CountChars(&requests.FPDFText_CountChars{TextPage: loaded.TextPage})
+		require.NoError(t, err)
+		text, err := instance.FPDFText_GetText(&requests.FPDFText_GetText{TextPage: loaded.TextPage, Count: count.Count})
 		require.NoError(t, err)
 		result = text.Text
 		return nil

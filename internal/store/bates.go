@@ -320,7 +320,9 @@ func expectedBatesPagesLimited(ctx context.Context, tx metadataQuerier, snapshot
 			if errors.Is(err, ErrNotFound) && snapshotPDFRepresentationValid(member) {
 				err = nil
 			}
-			if err != nil || pageDoc.PageCount != 0 && (pageDoc.PageCount != member.SourcePageCount || pageDoc.Source.SHA256 != member.SelectedPDFSHA256) {
+			if err != nil || pageDoc.PageCount != 0 &&
+				(pageDoc.PageCount != member.SourcePageCount ||
+					pageDoc.Source.SHA256 != member.SelectedPDFSHA256 && !productionSnapshotPDFValid(ctx, tx, member)) {
 				return nil, ErrBatesPageCountMismatch
 			}
 			for _, page := range member.SelectedSourcePages {

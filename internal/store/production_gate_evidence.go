@@ -27,7 +27,7 @@ func (s *Store) PinProductionRevisionEvidence(ctx context.Context, setID string,
 	}
 	return s.withStorageTx(ctx, func(tx *sql.Tx) error {
 		stored, err := s.loadProductionInputsTx(ctx, tx, setID, revision)
-		if err != nil || !stored.Draft.MembershipSealed {
+		if err != nil || !stored.Draft.MembershipSealed || stored.Draft.State != "draft" {
 			return errors.Join(ErrInvalidProduction, err)
 		}
 		if !productionPolicyFieldsSupported(stored.Policy) {
@@ -389,7 +389,7 @@ func (s *Store) SelectProductionRevisionGateAuthority(ctx context.Context, setID
 	}
 	return s.withStorageTx(ctx, func(tx *sql.Tx) error {
 		stored, err := s.loadProductionInputsTx(ctx, tx, setID, revision)
-		if err != nil || !stored.Draft.MembershipSealed || !productionPolicyFieldsSupported(stored.Policy) ||
+		if err != nil || !stored.Draft.MembershipSealed || stored.Draft.State != "draft" || !productionPolicyFieldsSupported(stored.Policy) ||
 			!productionRequiredEvidencePinned(stored.Policy, stored.Members) {
 			return errors.Join(ErrInvalidProduction, err)
 		}
