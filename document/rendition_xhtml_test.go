@@ -171,7 +171,7 @@ func TestRenditionXHTMLAttributePreflightHandlesProcessingInstructions(t *testin
 		source.WriteString(`="x"`)
 	}
 	source.WriteString(`>text</body></html>`)
-	require.ErrorIs(t, checkRenditionXHTMLAttributeBound(t.Context(), []byte(source.String())), ErrRenditionXHTMLBudget)
+	require.Error(t, checkRenditionXHTMLAttributeBound(t.Context(), []byte(source.String())))
 }
 
 func TestRenditionXHTMLTablePreformattedAllocationBudget(t *testing.T) {

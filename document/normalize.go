@@ -255,6 +255,8 @@ func checkRenditionXHTMLAttributeBound(ctx context.Context, source []byte) error
 					}
 				} else if character == '\'' || character == '"' {
 					quote = character
+				} else if character == '[' {
+					return errors.New("XHTML internal DTD subsets are unsupported")
 				} else if character == '>' {
 					index++
 					break
