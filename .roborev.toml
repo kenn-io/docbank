@@ -162,6 +162,15 @@ Key assumptions reviewers MUST account for:
    risk; do not request full-package or full-suite reruns merely because review
    executes separately.
 
+17. BACKUP CONTENT IS OUTSIDE THE SECURITY BOUNDARY: backup and restore are
+   portability mechanisms for vault-owner-controlled data, not hostile archive
+   ingestion. Restored graph state must still satisfy schema, shape, bounds, and
+   reference integrity, but receipts are historical records rather than a ledger
+   that reconstructs current asset state. Do not require contiguous receipt
+   history, automatic revision-1 baselines, or terminal-state agreement with
+   receipts. DO flag malformed records that bypass structural validation or
+   invalid graph references that could corrupt current state.
+
 Do NOT flag issues that only apply to public-facing, multi-tenant, or
 internet-exposed services. Focus on bugs, logic errors, data corruption
 risks, and code quality issues.
