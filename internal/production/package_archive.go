@@ -92,6 +92,16 @@ func packageJSON(value any) ([]byte, error) {
 	return append(data, '\n'), nil
 }
 
+func recipientImportMapping() loadfile.Mapping {
+	return loadfile.Mapping{Contract: loadfile.MappingContractV1, Columns: []loadfile.MappingColumn{
+		{Source: "DOCID", Canonical: new("loadfile.document.id")},
+		{Source: "BEGDOC", Canonical: new("loadfile.label.begin")},
+		{Source: "ENDDOC", Canonical: new("loadfile.label.end")},
+		{Source: "TEXT", Canonical: new("loadfile.file.supplied_text")},
+		{Source: "PDF", Canonical: new("loadfile.file.produced_pdf")},
+	}}
+}
+
 type packageLoadfiles struct {
 	dat  []byte
 	page []byte
@@ -103,15 +113,16 @@ func makePackageLoadfiles(manifest RecipientManifest, volume RecipientVolume) (p
 	if err != nil {
 		return packageLoadfiles{}, err
 	}
-	profile.Columns = []string{"BEGDOC", "ENDDOC", "VOLUME", "PAGES", "TEXT", "PDF", "FIRST_IMAGE"}
+	// The importer binds supplied text to the first available source file.
+	profile.Columns = []string{"DOCID", "BEGDOC", "ENDDOC", "VOLUME", "PAGES", "PDF", "TEXT", "FIRST_IMAGE"}
 	records := []loadfile.Record{}
 	images := []loadfile.ImageRef{}
 	for _, doc := range manifest.Documents {
 		if doc.Volume != volume.Name {
 			continue
 		}
-		values := []string{doc.Control, doc.End, volume.Name, strconv.Itoa(len(doc.Pages)),
-			doc.TextPath, doc.PDFPath, doc.Images[0].Path}
+		values := []string{doc.Control, doc.Control, doc.End, volume.Name, strconv.Itoa(len(doc.Pages)),
+			doc.PDFPath, doc.TextPath, doc.Images[0].Path}
 		fields := make([]loadfile.Field, len(values))
 		for index, value := range values {
 			fields[index] = loadfile.Field{Column: profile.Columns[index], Ordinal: index, Raw: value}
@@ -164,7 +175,7 @@ func packageExpectedPaths(manifest RecipientManifest) (map[string]struct{}, erro
 	if _, err := loadfile.PlanProductionExport(manifest.ProfileID, roles, false); err != nil {
 		return nil, ErrRecipientArchive
 	}
-	paths := map[string]struct{}{"MANIFEST.json": {}, "TRANSMITTAL.json": {}}
+	paths := map[string]struct{}{"MANIFEST.json": {}, "TRANSMITTAL.json": {}, "MAPPING.json": {}}
 	volumeIndex := map[string]int{}
 	for index, volume := range manifest.Volumes {
 		if volume.Name != fmt.Sprintf("VOL%03d", index+1) || volume.Documents < 1 ||
@@ -302,7 +313,7 @@ func BuildRecipientArchive(ctx context.Context, projection PackageProjection, jo
 		return PackageQC{}, ErrRecipientArchive
 	}
 	expected, err := packageExpectedPaths(projection.Manifest)
-	if err != nil || len(projection.bindings) != len(expected)-2-2*len(projection.Manifest.Volumes) {
+	if err != nil || len(projection.bindings) != len(expected)-3-2*len(projection.Manifest.Volumes) {
 		return PackageQC{}, ErrRecipientArchive
 	}
 	bound := map[string]bool{}
@@ -338,6 +349,10 @@ func BuildRecipientArchive(ctx context.Context, projection PackageProjection, jo
 	}
 	if err := write("MANIFEST.json", manifest); err != nil {
 		return PackageQC{}, err
+	}
+	mapping, err := packageJSON(recipientImportMapping())
+	if err != nil || write("MAPPING.json", mapping) != nil {
+		return PackageQC{}, ErrRecipientArchive
 	}
 	transmittal, err := packageJSON(recipientTransmittal(projection.Manifest))
 	if err != nil || write("TRANSMITTAL.json", transmittal) != nil {
@@ -508,6 +523,14 @@ func VerifyRecipientArchive(path string) (PackageQC, error) {
 	}
 	actualTransmittal, err := readPackageEntry(entries["TRANSMITTAL.json"])
 	if err != nil || !bytes.Equal(actualTransmittal, transmittal) {
+		return PackageQC{}, ErrRecipientArchive
+	}
+	mapping, err := packageJSON(recipientImportMapping())
+	if err != nil {
+		return PackageQC{}, ErrRecipientArchive
+	}
+	actualMapping, err := readPackageEntry(entries["MAPPING.json"])
+	if err != nil || !bytes.Equal(actualMapping, mapping) {
 		return PackageQC{}, ErrRecipientArchive
 	}
 	for _, volume := range manifest.Volumes {

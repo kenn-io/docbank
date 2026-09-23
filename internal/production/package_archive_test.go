@@ -136,6 +136,69 @@ func TestBuildRecipientArchiveReopensAndVerifiesAllProfiles(t *testing.T) {
 	}
 }
 
+func TestRecipientLoadfilePreflightKeepsDocumentIdentityAndLabel(t *testing.T) {
+	projection, _ := packageArchiveFixture(t, "export-dat-pdf-v1")
+	loadfiles, err := makePackageLoadfiles(projection.Manifest, projection.Manifest.Volumes[0])
+	require.NoError(t, err)
+	profile, err := loadfile.ReadProfile("dat-concordance-v1")
+	require.NoError(t, err)
+	records, diagnostics, err := loadfile.ParseDAT(bytes.NewReader(loadfiles.dat), profile)
+	require.NoError(t, err)
+	require.Empty(t, diagnostics)
+	mapping, _, err := loadfile.DecodeMapping([]byte(`{"contract":"loadfile-mapping/v1","columns":[{"source":"DOCID","canonical":"loadfile.document.id"},{"source":"BEGDOC","canonical":"loadfile.label.begin"},{"source":"ENDDOC","canonical":"loadfile.label.end"},{"source":"TEXT","canonical":"loadfile.file.supplied_text"},{"source":"PDF","canonical":"loadfile.file.produced_pdf"}]}`), records[0].ColumnOrder)
+	require.NoError(t, err)
+	_, err = loadfile.ApplyMapping(records, mapping,
+		profile, func(int64) error { return nil })
+	require.NoError(t, err)
+	require.Len(t, records, 2)
+	for index, record := range records {
+		require.Equal(t, projection.Manifest.Documents[index].Control, record.DocID)
+		require.Equal(t, projection.Manifest.Documents[index].Control, record.Fields[1].Raw)
+		require.Equal(t, "loadfile.label.begin", record.Fields[1].Canonical)
+	}
+}
+
+func TestRecipientArchivePublishesImportMapping(t *testing.T) {
+	projection, opener := packageArchiveFixture(t, "export-dat-pdf-v1")
+	path := filepath.Join(t.TempDir(), "production.zip")
+	_, err := BuildRecipientArchive(t.Context(), projection, packageJobID, opener, path)
+	require.NoError(t, err)
+	archive, err := zip.OpenReader(path)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, archive.Close()) })
+	var mappingJSON, dat []byte
+	for _, entry := range archive.File {
+		if entry.Name != "MAPPING.json" && entry.Name != "VOL001/LOADFILES/PRODUCTION.dat" {
+			continue
+		}
+		stream, openErr := entry.Open()
+		require.NoError(t, openErr)
+		body, readErr := io.ReadAll(stream)
+		require.NoError(t, readErr)
+		require.NoError(t, stream.Close())
+		if entry.Name == "MAPPING.json" {
+			mappingJSON = body
+		} else {
+			dat = body
+		}
+	}
+	require.NotEmpty(t, mappingJSON)
+	profile, err := loadfile.ReadProfile("dat-concordance-v1")
+	require.NoError(t, err)
+	records, diagnostics, err := loadfile.ParseDAT(bytes.NewReader(dat), profile)
+	require.NoError(t, err)
+	require.Empty(t, diagnostics)
+	mapping, _, err := loadfile.DecodeMapping(mappingJSON, records[0].ColumnOrder)
+	require.NoError(t, err)
+	_, err = loadfile.ApplyMapping(records, mapping, profile, func(int64) error { return nil })
+	require.NoError(t, err)
+	require.Equal(t, projection.Manifest.Documents[0].Control, records[0].DocID)
+	require.Equal(t, "loadfile.label.begin", records[0].Fields[1].Canonical)
+	require.Equal(t, "loadfile.label.end", records[0].Fields[2].Canonical)
+	require.Equal(t, []string{"produced_pdf", "supplied_text"},
+		[]string{records[0].Files[0].Role, records[0].Files[1].Role})
+}
+
 func TestRecipientManifestDeclaresAndVerifiesOutputDigests(t *testing.T) {
 	for _, profile := range []string{"export-dat-pdf-v1", "export-dat-opt-images-v1"} {
 		t.Run(profile, func(t *testing.T) {
@@ -352,7 +415,7 @@ func TestBuildRecipientArchiveKeepsVolumeAndLoadfileOrder(t *testing.T) {
 				}
 				datProfile, err := loadfile.ReadProfile("dat-concordance-v1")
 				require.NoError(t, err)
-				datProfile.Columns = []string{"BEGDOC", "ENDDOC", "VOLUME", "PAGES", "TEXT", "PDF", "FIRST_IMAGE"}
+				datProfile.Columns = []string{"DOCID", "BEGDOC", "ENDDOC", "VOLUME", "PAGES", "PDF", "TEXT", "FIRST_IMAGE"}
 				var controls []string
 				datDiagnostics, err := loadfile.ScanDAT(bytes.NewReader(datBytes), datProfile, func(record loadfile.Record) error {
 					controls = append(controls, record.Fields[0].Raw)
