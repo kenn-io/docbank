@@ -114,8 +114,8 @@ func hashProductionStageBytes(raw []byte) string {
 }
 
 type ProductionPageHandleStore interface {
-	LoadProductionPageStage(context.Context, string, string, int) (ProductionPageStage, error)
-	OpenStagedProductionPage(context.Context, ProductionPageStage) (packstore.VerifiedReadCloser, int64, error)
+	LoadProductionPageStage(ctx context.Context, jobID, memberID string, page int) (ProductionPageStage, error)
+	OpenStagedProductionPage(ctx context.Context, stage ProductionPageStage) (packstore.VerifiedReadCloser, int64, error)
 }
 
 // VerifiedProductionPageSequence reopens one retained final PNG at a time.
@@ -189,7 +189,7 @@ func (s *VerifiedProductionPageSequence) Next(ctx context.Context) (pdfproductio
 		if stream != nil {
 			_ = stream.Close()
 		}
-		return pdfproduction.PageArtifact{}, ErrJobConflict
+		return pdfproduction.PageArtifact{}, errors.Join(ErrJobConflict, err)
 	}
 	spool, err := SpoolProductionPDF(ctx, PinnedProductionPDF{PDFSHA256: stage.Artifact.SHA256, Size: size, Stream: stream}, s.maxPNGBytes)
 	if err != nil || size != stage.Artifact.Size {

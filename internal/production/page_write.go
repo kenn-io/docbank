@@ -20,6 +20,7 @@ import (
 // and text verification against newly reopened staged page handles.
 type VerifiedProductionPDF struct {
 	*VerifiedProductionFile
+
 	SHA256 string
 	Size   int64
 }

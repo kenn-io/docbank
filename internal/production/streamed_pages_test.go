@@ -9,6 +9,7 @@ import (
 	"io"
 	"testing"
 
+	"github.com/go-pdf/fpdf"
 	"github.com/stretchr/testify/require"
 	documentproduction "go.kenn.io/docbank/document/production"
 	"go.kenn.io/docbank/document/redaction"
@@ -19,6 +20,7 @@ import (
 
 type syntheticVerifiedPDF struct {
 	*bytes.Reader
+
 	verified bool
 	closed   bool
 }
@@ -29,6 +31,47 @@ type syntheticPageHandles struct {
 	openCount int
 	verified  bool
 	stageErr  error
+	openErr   error
+}
+
+type syntheticPageArchive struct{ pages map[int]*syntheticPageHandles }
+
+func (a *syntheticPageArchive) StageProductionPage(ctx context.Context, claim JobClaim, job Job, plan RenderPlan,
+	prepared documentproduction.PreparedMember, page RenderPagePlan, candidate ProductionPageCandidate) (ProductionPageStage, error) {
+	handle := &syntheticPageHandles{}
+	stage, err := handle.StageProductionPage(ctx, claim, job, plan, prepared, page, candidate)
+	if err != nil {
+		return ProductionPageStage{}, err
+	}
+	if page.Page == 2 {
+		artifact := stage.Artifact
+		artifact.ID = "cccccccc-cccc-4ccc-8ccc-cccccccccccc"
+		artifact.Path = "VOL001/SYN000002.png"
+		stage, err = BuildProductionPageStage(job, plan, prepared, page, artifact)
+		if err != nil {
+			return ProductionPageStage{}, err
+		}
+		handle.stage = stage
+	}
+	if a.pages == nil {
+		a.pages = make(map[int]*syntheticPageHandles)
+	}
+	a.pages[page.Page] = handle
+	return stage, nil
+}
+
+func (a *syntheticPageArchive) LoadProductionPageStage(_ context.Context, _, _ string, page int) (ProductionPageStage, error) {
+	if handle := a.pages[page]; handle != nil {
+		return handle.stage, nil
+	}
+	return ProductionPageStage{}, ErrJobConflict
+}
+
+func (a *syntheticPageArchive) OpenStagedProductionPage(ctx context.Context, stage ProductionPageStage) (packstore.VerifiedReadCloser, int64, error) {
+	if handle := a.pages[stage.Page]; handle != nil {
+		return handle.OpenStagedProductionPage(ctx, stage)
+	}
+	return nil, 0, ErrJobConflict
 }
 
 func (h *syntheticPageHandles) StageProductionPage(_ context.Context, _ JobClaim, job Job, plan RenderPlan,
@@ -67,6 +110,9 @@ func (h *syntheticPageHandles) LoadProductionPageStage(_ context.Context, _, _ s
 }
 
 func (h *syntheticPageHandles) OpenStagedProductionPage(_ context.Context, _ ProductionPageStage) (packstore.VerifiedReadCloser, int64, error) {
+	if h.openErr != nil {
+		return nil, 0, h.openErr
+	}
 	h.openCount++
 	return &syntheticVerifiedPDF{Reader: bytes.NewReader(h.data), verified: h.verified}, int64(len(h.data)), nil
 }
@@ -144,6 +190,14 @@ func TestVerifiedProductionPageSequenceRejectsChangedPlanOrUnverifiedStage(t *te
 	require.NoError(t, err)
 	_, err = sequence.Next(t.Context())
 	require.ErrorIs(t, err, context.Canceled)
+	missing := errors.New("synthetic missing staged blob")
+	handles.verified = true
+	handles.openErr = missing
+	sequence, err = NewVerifiedProductionPageSequence(t.Context(), handles, job, plan, prepared, 1<<20)
+	require.NoError(t, err)
+	_, err = sequence.Next(t.Context())
+	require.ErrorIs(t, err, ErrJobConflict)
+	require.ErrorIs(t, err, missing)
 }
 
 func TestProductionPageStagesKeepRepeatedSourceOccurrencesDistinct(t *testing.T) {
@@ -274,6 +328,74 @@ func TestRenderProductionPagesVerifiedSourceAndFencedStage(t *testing.T) {
 	err = RenderProductionPages(ctx, source, handles, engine, claim, job, finalized, plan, recipe)
 	require.ErrorIs(t, err, context.Canceled)
 	require.Equal(t, priorOpens, source.opens)
+}
+
+func TestRenderProductionPagesTwoPageMasksAndFreshVerification(t *testing.T) {
+	fixture := newStoredFixture(t)
+	finalized := fixture.finalized
+	member := &finalized.Authority.Prepared.Members[0]
+	recipe := pdfproduction.QualifiedRecipe()
+	pageOne := redaction.Page{Number: 1, FrameSHA256: testHash("first frame"), Width: 85_000,
+		Height: 110_000, Span: redaction.Span{Start: 0, End: 1}}
+	pageTwo := redaction.Page{Number: 2, FrameSHA256: testHash("second frame"), Width: 85_000,
+		Height: 110_000, Span: redaction.Span{Start: 1, End: 2}}
+	member.Resolved = endorsementResolved(t, recipe, []redaction.Page{pageOne, pageTwo}, []endorsementDecision{{
+		id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", label: "PUBLIC", page: 2,
+		x0: 1_000, y0: 1_000, x1: 10_000, y1: 5_000,
+	}})
+	member.ResolvedSHA256 = member.Resolved.SHA256
+	require.Len(t, member.Resolved.RedactBoxes, 1)
+	require.Equal(t, 2, member.Resolved.RedactBoxes[0].Page)
+
+	pdf := fpdf.New("P", "pt", "Letter", "")
+	pdf.SetFont("Helvetica", "", 12)
+	for _, value := range []string{"synthetic first page", "synthetic second page"} {
+		pdf.AddPage()
+		pdf.Text(72, 72, value)
+	}
+	var sourcePDF bytes.Buffer
+	require.NoError(t, pdf.Output(&sourcePDF))
+	member.Member.PDFSHA256 = testHash(sourcePDF.String())
+	member.Member.PDFSize = int64(sourcePDF.Len())
+	const jobID = "77000000-0000-4000-8000-000000000001"
+	job := Job{ID: jobID, SetID: finalized.Draft.SetID, Revision: finalized.Draft.Revision,
+		RevisionSHA256: finalized.Authority.Prepared.SHA256, PreparedInputSHA256: finalized.Authority.Receipt.SHA256}
+	reservation := documentproduction.NumberReservation{Contract: documentproduction.NumberReservationContractV1,
+		Authority: "bates-ledger/v1", ID: "77000000-0000-4000-8000-000000000002", OperationID: jobID,
+		RevisionSHA256: job.RevisionSHA256, State: "reserved", Numbers: []documentproduction.AssignedNumber{
+			{MemberID: member.Member.ID, MemberOrdinal: 1, Page: 1, Text: "SYN000001"},
+			{MemberID: member.Member.ID, MemberOrdinal: 1, Page: 2, Text: "SYN000002"},
+		}}
+	_, digest, err := documentproduction.CanonicalNumberReservation(reservation)
+	require.NoError(t, err)
+	reservation.SHA256 = digest
+	endorsements, err := PlanEndorsementPages(member.Member.ID, member.Resolved.Pages, member.Resolved,
+		reservation.Numbers, recipe)
+	require.NoError(t, err)
+	pages := make([]RenderPagePlan, 2)
+	for index, endorsed := range endorsements {
+		pages[index] = RenderPagePlan{MemberID: member.Member.ID, MemberOrdinal: 1, Page: index + 1,
+			ResolvedSHA256: member.ResolvedSHA256, Layout: endorsed.Layout, Endorsements: endorsed.Endorsements}
+	}
+	plan, _, err := CanonicalRenderPlan(RenderPlan{Contract: RenderPlanContractV1, JobID: jobID,
+		RevisionSHA256: job.RevisionSHA256, Reservation: reservation, Pages: pages})
+	require.NoError(t, err)
+	engine, err := pdfproduction.NewPDFium(recipe)
+	require.NoError(t, err)
+	source := &syntheticProductionSource{data: sourcePDF.Bytes()}
+	archive := &syntheticPageArchive{}
+	claim := JobClaim{JobID: jobID, Token: "synthetic two-page claim"}
+	renderErr := RenderProductionPages(t.Context(), source, archive, engine, claim, job, finalized, plan, recipe)
+	require.NoError(t, engine.Close())
+	require.NoError(t, renderErr)
+	require.Len(t, archive.pages, 2)
+	require.NotEqual(t, archive.pages[1].stage.SHA256, archive.pages[2].stage.SHA256)
+	require.NotEqual(t, archive.pages[1].stage.Artifact.SHA256, archive.pages[2].stage.Artifact.SHA256)
+	fresh, err := WriteAndVerifyProductionMember(t.Context(), archive, job, plan, *member, recipe)
+	require.NoError(t, err)
+	require.NoError(t, fresh.Close())
+	require.Equal(t, 2, archive.pages[1].openCount)
+	require.Equal(t, 2, archive.pages[2].openCount)
 }
 
 func (r *syntheticVerifiedPDF) Close() error { r.closed = true; return nil }

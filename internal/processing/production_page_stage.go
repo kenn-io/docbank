@@ -11,22 +11,15 @@ import (
 
 	"github.com/google/uuid"
 	documentproduction "go.kenn.io/docbank/document/production"
-	"go.kenn.io/docbank/internal/blob"
 	"go.kenn.io/docbank/internal/production"
 	"go.kenn.io/docbank/internal/store"
 	"go.kenn.io/kit/packstore"
 )
 
 type productionPageCatalog interface {
-	RecordBlob(context.Context, string, int64, store.BlobPhysical) error
-	StageProductionPage(context.Context, production.JobClaim, production.ProductionPageStage) (production.ProductionPageStage, error)
-	LoadProductionPageStage(context.Context, string, string, int) (production.ProductionPageStage, error)
-}
-
-type productionPageBlobs interface {
-	WithMutation(context.Context, func() error) error
-	WriteDetailedContext(context.Context, io.Reader) (blob.WriteReceipt, error)
-	OpenStreamContext(context.Context, string) (packstore.VerifiedReadCloser, int64, error)
+	RecordBlob(ctx context.Context, hash string, size int64, physical store.BlobPhysical) error
+	StageProductionPage(ctx context.Context, claim production.JobClaim, stage production.ProductionPageStage) (production.ProductionPageStage, error)
+	LoadProductionPageStage(ctx context.Context, jobID, memberID string, page int) (production.ProductionPageStage, error)
 }
 
 // ProductionPageStageAdapter writes verified private page bytes first, then
@@ -34,7 +27,7 @@ type productionPageBlobs interface {
 // failed metadata transaction may leave an unreachable blob for later GC.
 type ProductionPageStageAdapter struct {
 	Catalog productionPageCatalog
-	Blobs   productionPageBlobs
+	Blobs   emailBlobs
 }
 
 func (a ProductionPageStageAdapter) StageProductionPage(ctx context.Context, claim production.JobClaim,

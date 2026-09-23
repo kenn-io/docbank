@@ -21,7 +21,7 @@ import (
 // relation to authorize its verified source stream. A hash alone is not access
 // authority. The caller cannot supply PDF bytes through FinalizedProduction.
 type ProductionPDFSourceOpener interface {
-	OpenPinnedProductionPDF(context.Context, Job, documentproduction.PreparedMember) (PinnedProductionPDF, error)
+	OpenPinnedProductionPDF(ctx context.Context, job Job, prepared documentproduction.PreparedMember) (PinnedProductionPDF, error)
 }
 
 // ProductionPageCandidate is one final endorsed PNG in a private file. The
@@ -34,8 +34,8 @@ type ProductionPageCandidate struct {
 }
 
 type ProductionPageStager interface {
-	StageProductionPage(context.Context, JobClaim, Job, RenderPlan,
-		documentproduction.PreparedMember, RenderPagePlan, ProductionPageCandidate) (ProductionPageStage, error)
+	StageProductionPage(ctx context.Context, claim JobClaim, job Job, plan RenderPlan,
+		prepared documentproduction.PreparedMember, page RenderPagePlan, candidate ProductionPageCandidate) (ProductionPageStage, error)
 }
 
 type boundedPageWriter struct {
