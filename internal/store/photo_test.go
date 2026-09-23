@@ -412,6 +412,15 @@ func TestPhotoExplicitVideoAdmitsGenericVideo(t *testing.T) {
 	asset, err := s.PromotePhotoNode(ctx, clip.ID, nil, PhotoRoleVideo, PhotoKindVideo)
 	require.NoError(t, err)
 	assert.Equal(t, PhotoKindVideo, asset.Kind)
+
+	genericAudio, err := s.CreateFile(ctx, s.RootID(), "song.mp3", fakeHash("0c12"), 1, "application/octet-stream")
+	require.NoError(t, err)
+	_, err = s.PromotePhotoNode(ctx, genericAudio.ID, nil, PhotoRoleVideo, PhotoKindVideo)
+	require.ErrorIs(t, err, ErrPhotoNodeNotEligible)
+	typedAudio, err := s.CreateFile(ctx, s.RootID(), "track.mp4", fakeHash("0c13"), 1, "audio/mp4")
+	require.NoError(t, err)
+	_, err = s.PromotePhotoNode(ctx, typedAudio.ID, nil, PhotoRoleVideo, PhotoKindVideo)
+	require.ErrorIs(t, err, ErrPhotoNodeNotEligible)
 }
 
 func TestPhotoMutationsRequireRevision(t *testing.T) {
