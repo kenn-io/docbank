@@ -2275,12 +2275,14 @@ func validateEvidenceTextContext(ctx context.Context, value, subject string) err
 	if len(value) > maxEvidenceTextBytes {
 		return fmt.Errorf("%s must be bounded UTF-8", subject)
 	}
+	checks := 0
 	for index := 0; index < len(value); {
-		if index&1023 == 0 {
+		if checks&1023 == 0 {
 			if err := ctx.Err(); err != nil {
 				return err
 			}
 		}
+		checks++
 		character, size := utf8.DecodeRuneInString(value[index:])
 		if character == utf8.RuneError && size == 1 {
 			return fmt.Errorf("%s must be bounded UTF-8", subject)
@@ -2314,12 +2316,14 @@ func validateBoundedUTF8Context(ctx context.Context, value string, maxBytes int,
 	if value == "" || len(value) > maxBytes {
 		return fmt.Errorf("%s must be non-empty bounded UTF-8", subject)
 	}
+	checks := 0
 	for index := 0; index < len(value); {
-		if index&1023 == 0 {
+		if checks&1023 == 0 {
 			if err := ctx.Err(); err != nil {
 				return err
 			}
 		}
+		checks++
 		_, size := utf8.DecodeRuneInString(value[index:])
 		if size == 1 && value[index] >= utf8.RuneSelf {
 			return fmt.Errorf("%s must be non-empty bounded UTF-8", subject)
