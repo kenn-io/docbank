@@ -126,7 +126,7 @@ func RenditionMarkdownFromXHTMLContext(ctx context.Context, source []byte, maxRu
 	if err := canonicalizeRenditionBlocks(ctx, writer.blocks); err != nil {
 		return "", err
 	}
-	fits, err := renditionXHTMLSerializationFits(ctx, writer.blocks, budget, 0)
+	fits, err := renditionXHTMLSerializationFits(ctx, writer.blocks, budget)
 	if err != nil {
 		return "", err
 	}
@@ -258,7 +258,7 @@ func (w *renditionHTMLWriter) charge(amount int64) bool {
 }
 
 // Bound rectangular table padding and temporary serialization before allocation.
-func renditionXHTMLSerializationFits(ctx context.Context, blocks []renditionBlock, budget int64, indent int) (bool, error) {
+func renditionXHTMLSerializationFits(ctx context.Context, blocks []renditionBlock, budget int64) (bool, error) {
 	var inlines func([]renditionInline) (int64, error)
 	inlines = func(values []renditionInline) (int64, error) {
 		var size int64
@@ -269,7 +269,12 @@ func renditionXHTMLSerializationFits(ctx context.Context, blocks []renditionBloc
 			size += int64(len(value.text))
 			switch value.kind {
 			case renditionText:
-				for _, r := range value.text {
+				for index, r := range value.text {
+					if index&1023 == 0 {
+						if err := ctx.Err(); err != nil {
+							return 0, err
+						}
+					}
 					if isMarkdownASCIIPunctuation(r) {
 						size++
 					}
@@ -337,7 +342,7 @@ func renditionXHTMLSerializationFits(ctx context.Context, blocks []renditionBloc
 		}
 		return total, nil
 	}
-	total, err := cost(blocks, indent)
+	total, err := cost(blocks, 0)
 	if err != nil {
 		return false, err
 	}

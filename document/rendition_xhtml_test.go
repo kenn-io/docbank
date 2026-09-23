@@ -120,7 +120,16 @@ func TestRenditionFinalizationContextCancellation(t *testing.T) {
 	require.ErrorIs(t, err, context.Canceled)
 
 	ctx = &cancelAfterXHTMLReadContext{cancelAt: 3}
-	_, err = renditionXHTMLSerializationFits(ctx, tableBlocks, 1<<20, 0)
+	_, err = renditionXHTMLSerializationFits(ctx, tableBlocks, 1<<20)
+	require.ErrorIs(t, err, context.Canceled)
+
+	ctx = &cancelAfterXHTMLReadContext{cancelAt: 3}
+	_, err = renditionXHTMLSerializationFits(ctx, listBlocks, 1<<20)
+	require.ErrorIs(t, err, context.Canceled)
+
+	largeText := []renditionBlock{{inlines: []renditionInline{{kind: renditionText, text: strings.Repeat("x", 1<<20)}}}}
+	ctx = &cancelAfterXHTMLReadContext{cancelAt: 3}
+	_, err = renditionXHTMLSerializationFits(ctx, largeText, 2<<20)
 	require.ErrorIs(t, err, context.Canceled)
 
 	ctx = &cancelAfterXHTMLReadContext{cancelAt: 3}
@@ -131,7 +140,7 @@ func TestRenditionFinalizationContextCancellation(t *testing.T) {
 		{present: true, blocks: []renditionBlock{{kind: renditionParagraph, inlines: []renditionInline{{kind: renditionText, text: "x"}}}}},
 		{present: true, blocks: []renditionBlock{{kind: renditionParagraph, inlines: []renditionInline{{kind: renditionText, text: "x"}}}}},
 	}}
-	ctx = &cancelAfterXHTMLReadContext{cancelAt: 5}
+	ctx = &cancelAfterXHTMLReadContext{cancelAt: 6}
 	_, _, err = serializeRenditionListContext(ctx, ordered, 100, false)
 	require.ErrorIs(t, err, context.Canceled)
 }
