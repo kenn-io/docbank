@@ -2,7 +2,6 @@
 package epub
 
 import (
-	"archive/zip"
 	"bytes"
 	"context"
 	"errors"
@@ -91,8 +90,11 @@ func (p *Provider) Render(ctx context.Context, upload document.AuthorizedUpload,
 	if err := ctx.Err(); err != nil {
 		return document.RenditionResult{}, provider.Canceled(err)
 	}
-	archive, err := zip.NewReader(bytes.NewReader(data), int64(len(data)))
+	archive, err := epubutil.NewReaderContext(ctx, bytes.NewReader(data), int64(len(data)))
 	if err != nil {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return document.RenditionResult{}, provider.Canceled(ctxErr)
+		}
 		return document.RenditionResult{}, unsupported()
 	}
 	if err := ctx.Err(); err != nil {

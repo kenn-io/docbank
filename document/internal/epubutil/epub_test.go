@@ -4,6 +4,8 @@ import (
 	"archive/zip"
 	"bytes"
 	"context"
+	"encoding/binary"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -139,4 +141,66 @@ func TestReadZIPEntryContextCancelsDuringDecompression(t *testing.T) {
 	_, err = ReadZIPEntryContext(ctx, archive.File[0], int64(len(payload)))
 	require.ErrorIs(t, err, context.Canceled)
 	require.GreaterOrEqual(t, ctx.calls, ctx.cancelAt)
+}
+
+func TestNewReaderContextCancelsDuringDecompression(t *testing.T) {
+	var buffer bytes.Buffer
+	writer := zip.NewWriter(&buffer)
+	entry, err := writer.Create("payload")
+	require.NoError(t, err)
+	payload := make([]byte, 128<<10)
+	for index := range payload {
+		payload[index] = byte((index*31 + index/251) % 251)
+	}
+	_, err = entry.Write(payload)
+	require.NoError(t, err)
+	require.NoError(t, writer.Close())
+	data := buffer.Bytes()
+	dataOffset := int64(30 + binary.LittleEndian.Uint16(data[26:28]) + binary.LittleEndian.Uint16(data[28:30]))
+	ctx, cancel := context.WithCancel(t.Context())
+	reader := cancelOnOffsetReaderAt{reader: bytes.NewReader(data), offset: dataOffset, cancel: cancel}
+	archive, err := NewReaderContext(ctx, reader, int64(len(data)))
+	require.NoError(t, err)
+	_, err = ReadZIPEntryContext(ctx, archive.File[0], int64(len(payload)))
+	require.ErrorIs(t, err, context.Canceled)
+}
+
+func TestReadPackagesContextCancelsOnCachedRootfile(t *testing.T) {
+	var buffer bytes.Buffer
+	writer := zip.NewWriter(&buffer)
+	container := `<container xmlns="urn:oasis:names:tc:opendocument:xmlns:container"><rootfiles>` + strings.Repeat(`<rootfile full-path="book.opf"/>`, 1000) + `</rootfiles></container>`
+	for _, entry := range []struct{ name, body string }{
+		{"META-INF/container.xml", container},
+		{"book.opf", `<package xmlns="http://www.idpf.org/2007/opf"><manifest/><spine><itemref idref="book"/></spine></package>`},
+	} {
+		file, err := writer.Create(entry.name)
+		require.NoError(t, err)
+		_, err = file.Write([]byte(entry.body))
+		require.NoError(t, err)
+	}
+	require.NoError(t, writer.Close())
+	archive, err := zip.NewReader(bytes.NewReader(buffer.Bytes()), int64(buffer.Len()))
+	require.NoError(t, err)
+
+	ctx := &cancelAfterParseContext{cancelAt: 100}
+	_, err = ReadPackagesContext(ctx, archive.File, 1<<20)
+	require.ErrorIs(t, err, context.Canceled)
+	require.GreaterOrEqual(t, ctx.calls, ctx.cancelAt)
+}
+
+type cancelOnOffsetReaderAt struct {
+	reader *bytes.Reader
+	offset int64
+	cancel context.CancelFunc
+}
+
+func (reader cancelOnOffsetReaderAt) ReadAt(buffer []byte, offset int64) (int, error) {
+	read, err := reader.reader.ReadAt(buffer, offset)
+	if offset == reader.offset {
+		reader.cancel()
+	}
+	if err != nil {
+		return read, fmt.Errorf("read test data: %w", err)
+	}
+	return read, nil
 }

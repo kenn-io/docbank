@@ -3,7 +3,6 @@ package formatdetect
 import (
 	"archive/zip"
 	"bytes"
-	"compress/flate"
 	"context"
 	"encoding/binary"
 	"encoding/csv"
@@ -11,8 +10,6 @@ import (
 	"encoding/xml"
 	"errors"
 	"fmt"
-	"hash"
-	"hash/crc32"
 	"io"
 	"math"
 	"mime"
@@ -1291,11 +1288,15 @@ func detectZIPFormatContext(ctx context.Context, reader io.ReaderAt, size int64)
 	if err := ctx.Err(); err != nil {
 		return CandidateFormat{}, err
 	}
+	reader = contextReaderAt{ctx: ctx, reader: reader}
 	if err := validateZIPEndRecord(reader, size); err != nil {
 		return CandidateFormat{}, err
 	}
 	archive, err := zip.NewReader(reader, size)
 	if err != nil {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return CandidateFormat{}, ctxErr
+		}
 		return CandidateFormat{}, fmt.Errorf("open document ZIP container: %w", err)
 	}
 	if len(archive.File) > maxZIPEntries {
@@ -1456,7 +1457,7 @@ func readZIPEntryContext(ctx context.Context, entry *zip.File, limit int64) ([]b
 	if limit < 0 || entry.UncompressedSize64 > maxZIPSingleExpandedByte || int64(entry.UncompressedSize64) > limit {
 		return nil, errors.New("document ZIP marker entry exceeds limit")
 	}
-	reader, err := openZIPEntryContext(ctx, entry)
+	reader, err := entry.Open()
 	if err != nil {
 		return nil, fmt.Errorf("open document ZIP marker: %w", err)
 	}
@@ -1482,7 +1483,7 @@ func verifyZIPEntryContext(ctx context.Context, entry *zip.File) error {
 	if entry.UncompressedSize64 > maxZIPSingleExpandedByte {
 		return errors.New("document ZIP entry exceeds verification limit")
 	}
-	reader, err := openZIPEntryContext(ctx, entry)
+	reader, err := entry.Open()
 	if err != nil {
 		return fmt.Errorf("open document ZIP entry: %w", err)
 	}
@@ -1498,71 +1499,21 @@ func verifyZIPEntryContext(ctx context.Context, entry *zip.File) error {
 	return nil
 }
 
-func openZIPEntryContext(ctx context.Context, entry *zip.File) (io.ReadCloser, error) {
-	raw, err := entry.OpenRaw()
-	if err != nil {
-		return nil, fmt.Errorf("open raw document ZIP entry: %w", err)
-	}
-	source := contextReader{ctx: ctx, reader: raw}
-	var reader io.ReadCloser
-	switch entry.Method {
-	case zip.Store:
-		reader = io.NopCloser(source)
-	case zip.Deflate:
-		reader = flate.NewReader(source)
-	default:
-		return nil, errors.New("document ZIP entry uses unsupported compression")
-	}
-	return &zipEntryReader{ctx: ctx, reader: reader, entry: entry, hash: crc32.NewIEEE()}, nil
-}
-
-type zipEntryReader struct {
+type contextReaderAt struct {
 	ctx    context.Context
-	reader io.ReadCloser
-	entry  *zip.File
-	hash   hash.Hash32
-	read   uint64
-	err    error
+	reader io.ReaderAt
 }
 
-func (reader *zipEntryReader) Read(buffer []byte) (int, error) {
-	if reader.err != nil {
-		return 0, reader.err
-	}
+func (reader contextReaderAt) ReadAt(buffer []byte, offset int64) (int, error) {
 	if err := reader.ctx.Err(); err != nil {
-		reader.err = err
 		return 0, err
 	}
-	read, err := reader.reader.Read(buffer)
-	if read > 0 {
-		_, _ = reader.hash.Write(buffer[:read])
-		reader.read += uint64(read)
-	}
-	if reader.read > reader.entry.UncompressedSize64 {
-		reader.err = zip.ErrFormat
-		return 0, reader.err
-	}
+	read, err := reader.reader.ReadAt(buffer, offset)
 	if contextErr := reader.ctx.Err(); contextErr != nil {
-		reader.err = contextErr
 		return read, contextErr
-	}
-	if err == io.EOF {
-		if reader.read != reader.entry.UncompressedSize64 {
-			reader.err = io.ErrUnexpectedEOF
-		} else if reader.hash.Sum32() != reader.entry.CRC32 {
-			reader.err = zip.ErrChecksum
-		}
-		if reader.err != nil {
-			return read, reader.err
-		}
-	}
-	if err != nil {
-		reader.err = err
 	}
 	return read, err
 }
-
-func (reader *zipEntryReader) Close() error { return reader.reader.Close() }
 
 type contextReader struct {
 	ctx    context.Context
