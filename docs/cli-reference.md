@@ -1,5 +1,5 @@
 ---
-last_edited: 2026-09-16
+last_edited: 2026-09-23
 title: CLI Reference
 description: Every docbank command, flag, output format, and error behavior.
 ---
@@ -921,6 +921,7 @@ Export dated search counts and retain the evidence needed to check them.
 | `create --input request.json --output search-export.zip` | Create an export through the daemon. Print the export ID if dates need review. |
 | `dates <export-id> [--cursor CURSOR] [--limit 50]` | Read frozen date candidates, up to 100 members per page. |
 | `revise <export-id> --choices choices.json --output reviewed.zip` | Apply a JSON array of reviewed date choices to the frozen observation. |
+| `download <export-id> --format csv\|bundle --output <file>` | Download a retained artifact through the daemon. CSV bytes are checked against the daemon's SHA-256 response; bundles also pass independent packet verification before publication. Success writes no stdout. |
 | `verify <report.zip>` | Verify internal packet consistency offline. |
 | `csv <report.zip> --output search-export.csv` | Verify the packet and extract its CSV offline. |
 
