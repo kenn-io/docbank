@@ -76,6 +76,7 @@ type packageBinding struct {
 // manifest. The archive writer consumes bindings; only Manifest is serialized.
 type PackageProjection struct {
 	Manifest       RecipientManifest
+	jobID          string
 	export         loadfile.ProductionExportPlan
 	bindings       []packageBinding
 	manifestSHA256 string
@@ -209,7 +210,7 @@ func PlanPackageProjection(job Job, reservation documentproduction.NumberReserva
 	result := PackageProjection{Manifest: RecipientManifest{
 		Contract: RecipientPackageContractV1, ProfileID: profileID,
 		Volumes: []RecipientVolume{}, Documents: []RecipientDocument{},
-	}, export: exportPlan}
+	}, jobID: job.ID, export: exportPlan}
 	seenFamilies := map[string]bool{}
 	for start := 0; start < len(ordered); {
 		familyID := ordered[start].FamilyID

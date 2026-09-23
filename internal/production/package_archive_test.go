@@ -118,7 +118,7 @@ func TestBuildRecipientArchiveReopensAndVerifiesAllProfiles(t *testing.T) {
 	}
 }
 
-func TestBuildRecipientArchiveRejectsMissingChangedAndPublishedDestination(t *testing.T) {
+func TestBuildRecipientArchiveRejectsMissingChangedAndReturnsPublishedDestination(t *testing.T) {
 	projection, opener := packageArchiveFixture(t, "export-dat-opt-images-v1")
 	destination := filepath.Join(t.TempDir(), "production.zip")
 	missing := opener.data[projection.bindings[0].artifact.ID]
@@ -131,10 +131,75 @@ func TestBuildRecipientArchiveRejectsMissingChangedAndPublishedDestination(t *te
 	_, err = BuildRecipientArchive(t.Context(), projection, packageJobID, opener, destination)
 	require.Error(t, err)
 	opener.data[projection.bindings[0].artifact.ID] = missing
-	_, err = BuildRecipientArchive(t.Context(), projection, packageJobID, opener, destination)
+	firstQC, err := BuildRecipientArchive(t.Context(), projection, packageJobID, opener, destination)
 	require.NoError(t, err)
-	_, err = BuildRecipientArchive(t.Context(), projection, packageJobID, opener, destination)
-	require.Error(t, err)
+	firstInfo, err := os.Stat(destination)
+	require.NoError(t, err)
+	// Simulate a lost response followed by a retry after staged source bytes
+	// are unavailable. The already published archive remains the authority.
+	retriedQC, err := BuildRecipientArchive(t.Context(), projection, packageJobID,
+		syntheticPackageOpener{}, destination)
+	require.NoError(t, err)
+	require.Equal(t, firstQC, retriedQC)
+	secondInfo, err := os.Stat(destination)
+	require.NoError(t, err)
+	require.True(t, os.SameFile(firstInfo, secondInfo))
+}
+
+func TestRecipientArchiveRejectsUnapprovedZIPMetadata(t *testing.T) {
+	for _, change := range []string{"archive comment", "entry comment", "entry extra"} {
+		t.Run(change, func(t *testing.T) {
+			projection, opener := packageArchiveFixture(t, "export-dat-opt-images-v1")
+			path := filepath.Join(t.TempDir(), "production.zip")
+			_, err := BuildRecipientArchive(t.Context(), projection, packageJobID, opener, path)
+			require.NoError(t, err)
+			original, err := zip.OpenReader(path)
+			require.NoError(t, err)
+			changedPath := filepath.Join(t.TempDir(), "changed.zip")
+			changed, err := os.Create(changedPath)
+			require.NoError(t, err)
+			writer := zip.NewWriter(changed)
+			if change == "archive comment" {
+				require.NoError(t, writer.SetComment("private source name"))
+			}
+			for index, entry := range original.File {
+				header := entry.FileHeader
+				if index == 0 && change == "entry comment" {
+					header.Comment = "private source name"
+				}
+				if index == 0 && change == "entry extra" {
+					header.Extra = []byte{0xfe, 0xca, 4, 0, 'p', 'r', 'i', 'v'}
+				}
+				destination, createErr := writer.CreateHeader(&header)
+				require.NoError(t, createErr)
+				source, openErr := entry.Open()
+				require.NoError(t, openErr)
+				_, copyErr := io.CopyN(destination, source, int64(entry.UncompressedSize64))
+				require.NoError(t, copyErr)
+				require.NoError(t, source.Close())
+			}
+			require.NoError(t, writer.Close())
+			require.NoError(t, changed.Close())
+			require.NoError(t, original.Close())
+			_, err = VerifyRecipientArchive(changedPath)
+			require.ErrorIs(t, err, ErrRecipientArchive)
+			_, err = BuildRecipientArchive(t.Context(), projection, packageJobID, syntheticPackageOpener{}, changedPath)
+			require.ErrorIs(t, err, ErrRecipientArchive)
+		})
+	}
+}
+
+func TestBuildRecipientArchiveRejectsDifferentJobIdentity(t *testing.T) {
+	projection, opener := packageArchiveFixture(t, "export-dat-opt-images-v1")
+	path := filepath.Join(t.TempDir(), "production.zip")
+	_, err := BuildRecipientArchive(t.Context(), projection, "different-job", opener, path)
+	require.ErrorIs(t, err, ErrRecipientArchive)
+	_, err = os.Stat(path)
+	require.ErrorIs(t, err, os.ErrNotExist)
+	_, err = BuildRecipientArchive(t.Context(), projection, packageJobID, opener, path)
+	require.NoError(t, err)
+	_, err = BuildRecipientArchive(t.Context(), projection, "different-job", syntheticPackageOpener{}, path)
+	require.ErrorIs(t, err, ErrRecipientArchive)
 }
 
 func TestBuildRecipientArchiveRejectsChangedProjectionAndRoleBinding(t *testing.T) {

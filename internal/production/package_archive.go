@@ -29,6 +29,10 @@ const (
 	maxPackageMetadataBytes        = 128 << 20
 )
 
+// archive/zip writes this fixed extended timestamp for the 1980 date set by
+// writePackageEntry. Other extra fields are outside the public projection.
+var packageZIPTimestampExtra = []byte{0x55, 0x54, 5, 0, 1, 0, 0xa6, 0xce, 0x12}
+
 var ErrRecipientArchive = errors.New("recipient archive failed verification")
 
 // PackageArtifactOpener resolves only a job-scoped, manifest-listed artifact.
@@ -240,11 +244,30 @@ func writePackageEntry(archive *zip.Writer, name string, source io.Reader, size 
 	return PackageQCEntry{Path: name, SHA256: actual, Size: n}, nil
 }
 
+func verifiedExistingPackage(path string, projection PackageProjection) (PackageQC, error) {
+	qc, err := VerifyRecipientArchive(path)
+	if err != nil || qc.ManifestSHA256 != projection.manifestSHA256 {
+		return PackageQC{}, ErrRecipientArchive
+	}
+	entries := make(map[string]PackageQCEntry, len(qc.Entries))
+	for _, entry := range qc.Entries {
+		entries[entry.Path] = entry
+	}
+	for _, binding := range projection.bindings {
+		entry, ok := entries[binding.path]
+		if !ok || entry.SHA256 != binding.artifact.SHA256 || entry.Size != binding.artifact.Size {
+			return PackageQC{}, ErrRecipientArchive
+		}
+	}
+	return qc, nil
+}
+
 // BuildRecipientArchive stages one archive, verifies it from disk, then links
 // it into place without replacing an existing final archive. QC stays outside.
 func BuildRecipientArchive(ctx context.Context, projection PackageProjection, jobID string,
 	opener PackageArtifactOpener, destination string) (PackageQC, error) {
-	if ctx == nil || opener == nil || jobID == "" || destination == "" || projection.manifestSHA256 == "" {
+	if ctx == nil || opener == nil || jobID == "" || jobID != projection.jobID ||
+		destination == "" || projection.manifestSHA256 == "" {
 		return PackageQC{}, ErrRecipientArchive
 	}
 	manifest, err := packageJSON(projection.Manifest)
@@ -270,6 +293,14 @@ func BuildRecipientArchive(ctx context.Context, projection PackageProjection, jo
 			return PackageQC{}, ErrRecipientArchive
 		}
 		bound[binding.path] = true
+	}
+	if info, err := os.Lstat(destination); err == nil {
+		if !info.Mode().IsRegular() {
+			return PackageQC{}, ErrRecipientArchive
+		}
+		return verifiedExistingPackage(destination, projection)
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return PackageQC{}, err
 	}
 	if err := ctx.Err(); err != nil {
 		return PackageQC{}, err
@@ -354,6 +385,9 @@ func BuildRecipientArchive(ctx context.Context, projection PackageProjection, jo
 		}
 	}
 	if err := os.Link(staged.Name(), destination); err != nil {
+		if errors.Is(err, os.ErrExist) {
+			return verifiedExistingPackage(destination, projection)
+		}
 		return PackageQC{}, err
 	}
 	return qc, nil
@@ -409,12 +443,14 @@ func VerifyRecipientArchive(path string) (PackageQC, error) {
 	if err != nil {
 		return PackageQC{}, err
 	}
-	if len(archive.File) == 0 || len(archive.File) > 1_000_000 {
+	if archive.Comment != "" || len(archive.File) == 0 || len(archive.File) > 1_000_000 {
 		return PackageQC{}, ErrRecipientArchive
 	}
 	entries := make(map[string]*zip.File, len(archive.File))
 	for _, entry := range archive.File {
-		if _, duplicate := entries[entry.Name]; duplicate || entry.FileInfo().Mode().IsRegular() == false {
+		if _, duplicate := entries[entry.Name]; duplicate || entry.FileInfo().Mode().IsRegular() == false ||
+			entry.Comment != "" || !bytes.Equal(entry.Extra, packageZIPTimestampExtra) || entry.NonUTF8 ||
+			entry.Method != zip.Store || !entry.Modified.Equal(time.Date(1980, 1, 1, 0, 0, 0, 0, time.UTC)) {
 			return PackageQC{}, ErrRecipientArchive
 		}
 		entries[entry.Name] = entry
