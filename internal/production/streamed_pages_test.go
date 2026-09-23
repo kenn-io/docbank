@@ -369,6 +369,7 @@ func TestRenderProductionPagesTwoPageMasksAndFreshVerification(t *testing.T) {
 	_, digest, err := documentproduction.CanonicalNumberReservation(reservation)
 	require.NoError(t, err)
 	reservation.SHA256 = digest
+	job.Reservation = reservation
 	endorsements, err := PlanEndorsementPages(member.Member.ID, member.Resolved.Pages, member.Resolved,
 		reservation.Numbers, recipe)
 	require.NoError(t, err)
@@ -396,6 +397,7 @@ func TestRenderProductionPagesTwoPageMasksAndFreshVerification(t *testing.T) {
 	require.NoError(t, fresh.Close())
 	require.Equal(t, 2, archive.pages[1].openCount)
 	require.Equal(t, 2, archive.pages[2].openCount)
+	testPublishVerifiedProductionFromPages(t, finalized, job, plan, archive, recipe)
 }
 
 func (r *syntheticVerifiedPDF) Close() error { r.closed = true; return nil }

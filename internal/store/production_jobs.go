@@ -595,7 +595,14 @@ func (s *Store) PublishProductionJob(ctx context.Context, claim productionservic
 	if receipt.EndorsementsSHA256 != hex.EncodeToString(endorsementDigest[:]) {
 		return productionservice.Job{}, productionservice.ErrJobConflict
 	}
-	_ = endorsementRaw
+	rawReceipt, err := canonical.Marshal(receipt)
+	if err != nil || len(rawReceipt) > maxProductionReceiptBytes || len(endorsementRaw) > maxProductionEndorsementsBytes {
+		return productionservice.Job{}, productionservice.ErrJobConflict
+	}
+	rawManifest, err := canonical.Marshal(manifest)
+	if err != nil || len(rawManifest) > maxProductionManifestBytes {
+		return productionservice.Job{}, productionservice.ErrJobConflict
+	}
 	err = s.withStorageTx(ctx, func(tx *sql.Tx) error {
 		var state, token, owner string
 		var epoch int64
@@ -645,10 +652,10 @@ func (s *Store) PublishProductionJob(ctx context.Context, claim productionservic
 		if err != nil || stagedManifest.SHA256 != manifest.SHA256 {
 			return productionservice.ErrJobIncomplete
 		}
-		rawReceipt, _ := canonical.Marshal(receipt)
-		rawManifest, _ := canonical.Marshal(manifest)
-		rawEndorsements, _ := canonical.Marshal(endorsements)
-		if _, err := tx.ExecContext(ctx, `UPDATE production_jobs SET state=?,receipt_sha256=?,receipt_json=?,artifact_manifest_json=?,endorsements_json=?,updated_at=? WHERE job_id=?`, productionservice.ProductionJobSucceeded, receipt.SHA256, rawReceipt, rawManifest, rawEndorsements, nowRFC3339(), job.ID); err != nil {
+		if err := s.validateProductionPublicationTx(ctx, tx, job, receipt, manifest, endorsements); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `UPDATE production_jobs SET state=?,receipt_sha256=?,receipt_json=?,artifact_manifest_json=?,endorsements_json=?,updated_at=? WHERE job_id=?`, productionservice.ProductionJobSucceeded, receipt.SHA256, rawReceipt, rawManifest, endorsementRaw, nowRFC3339(), job.ID); err != nil {
 			return err
 		}
 		return nil
@@ -673,17 +680,20 @@ func (s *Store) StageProductionArtifact(ctx context.Context, claim productionser
 		return err
 	}
 	raw, err := canonical.Marshal(artifact)
-	if err != nil {
-		return err
+	if err != nil || len(raw) > maxProductionArtifactBytes {
+		return productionservice.ErrJobConflict
 	}
 	return s.withStorageTx(ctx, func(tx *sql.Tx) error {
 		var epoch int64
 		var token, owner, state string
+		var expires sql.NullString
 		var canceled int
-		if err := tx.QueryRowContext(ctx, `SELECT claim_epoch,claim_token,claim_owner,state,cancel_requested FROM production_jobs WHERE job_id=?`, claim.JobID).Scan(&epoch, &token, &owner, &state, &canceled); err != nil {
+		if err := tx.QueryRowContext(ctx, `SELECT claim_epoch,claim_token,claim_owner,state,cancel_requested,lease_expires_at FROM production_jobs WHERE job_id=?`, claim.JobID).Scan(&epoch, &token, &owner, &state, &canceled, &expires); err != nil {
 			return err
 		}
-		if epoch != claim.Epoch || token != claim.Token || owner != claim.Worker || canceled != 0 || state == productionservice.ProductionJobCanceled {
+		leaseTime, leaseErr := time.Parse(time.RFC3339Nano, expires.String)
+		if epoch != claim.Epoch || token != claim.Token || owner != claim.Worker || canceled != 0 ||
+			state != productionservice.ProductionJobRunning || !expires.Valid || leaseErr != nil || !leaseTime.After(time.Now().UTC()) {
 			return productionservice.ErrJobStaleClaim
 		}
 		var prior []byte
