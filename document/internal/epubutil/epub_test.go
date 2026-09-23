@@ -197,6 +197,12 @@ func TestMetadataXMLContextCancelsDuringComment(t *testing.T) {
 	err := validateMetadataXMLContext(ctx, body)
 	require.ErrorIs(t, err, context.Canceled)
 	require.GreaterOrEqual(t, ctx.calls, ctx.cancelAt)
+
+	comment := `<!--` + strings.Repeat("x", 1017) + `-->`
+	body = []byte(strings.Repeat("x", 1022) + strings.Repeat(comment, 1024))
+	ctx = &cancelAfterParseContext{cancelAt: 2}
+	err = validateMetadataXMLContext(ctx, body)
+	require.ErrorIs(t, err, context.Canceled)
 }
 
 type cancelOnOffsetReaderAt struct {

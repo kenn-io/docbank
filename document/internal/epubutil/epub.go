@@ -145,15 +145,17 @@ const (
 )
 
 func validateMetadataXMLContext(ctx context.Context, body []byte) error {
-	checkContext := func(index int) error {
-		if index&1023 == 0 {
+	checks := 0
+	checkContext := func() error {
+		checks++
+		if checks&1023 == 0 {
 			return ctx.Err()
 		}
 		return nil
 	}
 	elements := 0
 	for index := 0; index < len(body); {
-		if err := checkContext(index); err != nil {
+		if err := checkContext(); err != nil {
 			return err
 		}
 		if body[index] != '<' || index+1 >= len(body) {
@@ -163,7 +165,7 @@ func validateMetadataXMLContext(ctx context.Context, body []byte) error {
 		if bytes.HasPrefix(body[index:], []byte("<!--")) {
 			index += len("<!--")
 			for index+2 < len(body) && !bytes.Equal(body[index:index+3], []byte("-->")) {
-				if err := checkContext(index); err != nil {
+				if err := checkContext(); err != nil {
 					return err
 				}
 				index++
@@ -174,7 +176,7 @@ func validateMetadataXMLContext(ctx context.Context, body []byte) error {
 		if bytes.HasPrefix(body[index:], []byte("<![CDATA[")) {
 			index += len("<![CDATA[")
 			for index+2 < len(body) && !bytes.Equal(body[index:index+3], []byte("]]>")) {
-				if err := checkContext(index); err != nil {
+				if err := checkContext(); err != nil {
 					return err
 				}
 				index++
@@ -185,7 +187,7 @@ func validateMetadataXMLContext(ctx context.Context, body []byte) error {
 		if body[index+1] == '?' {
 			index += 2
 			for index+1 < len(body) && (body[index] != '?' || body[index+1] != '>') {
-				if err := checkContext(index); err != nil {
+				if err := checkContext(); err != nil {
 					return err
 				}
 				index++
@@ -200,7 +202,7 @@ func validateMetadataXMLContext(ctx context.Context, body []byte) error {
 		index++
 		if closing {
 			for index < len(body) && body[index] != '>' {
-				if err := checkContext(index); err != nil {
+				if err := checkContext(); err != nil {
 					return err
 				}
 				index++
@@ -215,7 +217,7 @@ func validateMetadataXMLContext(ctx context.Context, body []byte) error {
 		attributes := 0
 		quote := byte(0)
 		for index < len(body) {
-			if err := checkContext(index); err != nil {
+			if err := checkContext(); err != nil {
 				return err
 			}
 			character := body[index]
