@@ -9,6 +9,7 @@ import (
 	"github.com/stretchr/testify/require"
 	documentproduction "go.kenn.io/docbank/document/production"
 	"go.kenn.io/docbank/document/redaction"
+	"go.kenn.io/docbank/internal/canonical"
 	"go.kenn.io/docbank/internal/production"
 )
 
@@ -56,6 +57,17 @@ func stagedProductionPublicationFixture(t *testing.T) (*Store, production.JobCla
 			BlobPhysical{Encoding: "raw", StoredBytes: artifact.Size, Created: true}))
 		require.NoError(t, s.StageProductionArtifact(t.Context(), claim, artifact))
 		artifacts = append(artifacts, artifact)
+		text, textErr := redaction.Text(member.Resolved)
+		require.NoError(t, textErr)
+		textID := uuid.NewString()
+		textArtifact := documentproduction.Artifact{ID: textID, MemberID: member.Member.ID,
+			MemberOrdinal: member.Member.Ordinal, Role: documentproduction.ArtifactRoleRedactedText,
+			Path: "VOL001/" + textID + ".txt", SHA256: productionHash(string(text)),
+			Size: int64(len(text)), MediaType: "text/plain; charset=utf-8", Volume: "VOL001"}
+		require.NoError(t, s.RecordBlob(t.Context(), textArtifact.SHA256, textArtifact.Size,
+			BlobPhysical{Encoding: "raw", StoredBytes: textArtifact.Size, Created: true}))
+		require.NoError(t, s.StageProductionArtifact(t.Context(), claim, textArtifact))
+		artifacts = append(artifacts, textArtifact)
 	}
 	manifest := documentproduction.ArtifactManifest{Contract: documentproduction.ArtifactManifestContractV1, Artifacts: artifacts}
 	_, manifest.SHA256, err = documentproduction.CanonicalArtifactManifest(manifest)
@@ -76,15 +88,56 @@ func stagedProductionPublicationFixture(t *testing.T) (*Store, production.JobCla
 	return s, claim, job, receipt, manifest, endorsements
 }
 
+func TestProductionJobRejectsChangedSealedTextArtifact(t *testing.T) {
+	s, claim, job, receipt, manifest, endorsements := stagedProductionPublicationFixture(t)
+	changed := manifest
+	changed.Artifacts = append([]documentproduction.Artifact(nil), manifest.Artifacts...)
+	var textArtifact documentproduction.Artifact
+	for index, artifact := range changed.Artifacts {
+		if artifact.Role == documentproduction.ArtifactRoleRedactedText {
+			artifact.SHA256 = productionHash("synthetic source text fallback")
+			changed.Artifacts[index] = artifact
+			textArtifact = artifact
+			break
+		}
+	}
+	require.NotEmpty(t, textArtifact.ID)
+	require.NoError(t, s.RecordBlob(t.Context(), textArtifact.SHA256, textArtifact.Size,
+		BlobPhysical{Encoding: "raw", StoredBytes: textArtifact.Size, Created: true}))
+	raw, err := canonical.Marshal(textArtifact)
+	require.NoError(t, err)
+	_, err = s.db.Exec(`UPDATE production_job_artifacts SET artifact_json=? WHERE job_id=? AND artifact_id=?`,
+		raw, job.ID, textArtifact.ID)
+	require.NoError(t, err)
+	_, changed.SHA256, err = documentproduction.CanonicalArtifactManifest(changed)
+	require.NoError(t, err)
+	wrong := receipt
+	wrong.ArtifactManifestSHA256 = changed.SHA256
+	_, wrong.SHA256, err = documentproduction.CanonicalProductionReceipt(wrong)
+	require.NoError(t, err)
+	_, err = s.PublishProductionJob(t.Context(), claim, job, wrong, changed, endorsements)
+	require.ErrorIs(t, err, production.ErrJobIncomplete)
+	loaded, err := s.LoadProductionJob(t.Context(), job.ID)
+	require.NoError(t, err)
+	require.NotEqual(t, production.ProductionJobSucceeded, loaded.State)
+}
+
 func TestProductionJobPublishesOnlyCompleteStageBoundArtifacts(t *testing.T) {
 	s, claim, job, receipt, manifest, endorsements := stagedProductionPublicationFixture(t)
+	finalized, err := s.LoadFinalizedProduction(t.Context(), job.SetID, job.Revision)
+	require.NoError(t, err)
+	require.Len(t, finalized.Authority.Prepared.Members, 2)
+	require.Equal(t, finalized.Authority.Prepared.Members[0].Member.SourceVersionID,
+		finalized.Authority.Prepared.Members[1].Member.SourceVersionID)
+	require.NotEqual(t, finalized.Authority.Prepared.Members[0].Member.ID,
+		finalized.Authority.Prepared.Members[1].Member.ID)
 	missing := manifest
 	missing.Artifacts = append([]documentproduction.Artifact(nil), manifest.Artifacts[:len(manifest.Artifacts)-1]...)
 	_, missing.SHA256, _ = documentproduction.CanonicalArtifactManifest(missing)
 	wrong := receipt
 	wrong.ArtifactManifestSHA256 = missing.SHA256
 	_, wrong.SHA256, _ = documentproduction.CanonicalProductionReceipt(wrong)
-	_, err := s.PublishProductionJob(t.Context(), claim, job, wrong, missing, endorsements)
+	_, err = s.PublishProductionJob(t.Context(), claim, job, wrong, missing, endorsements)
 	require.ErrorIs(t, err, production.ErrJobIncomplete)
 	changedPlan := receipt
 	changedPlan.LayoutSHA256 = productionHash("changed layout")
@@ -103,6 +156,17 @@ func TestProductionJobPublishesOnlyCompleteStageBoundArtifacts(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, receipt, loaded.Receipt)
 	require.Equal(t, manifest, loaded.Manifest)
+	textByMember := make(map[string]documentproduction.Artifact)
+	for _, artifact := range loaded.Manifest.Artifacts {
+		if artifact.Role == documentproduction.ArtifactRoleRedactedText {
+			textByMember[artifact.MemberID] = artifact
+		}
+	}
+	require.Len(t, textByMember, 2)
+	firstText := textByMember[finalized.Authority.Prepared.Members[0].Member.ID]
+	secondText := textByMember[finalized.Authority.Prepared.Members[1].Member.ID]
+	require.NotEqual(t, firstText.ID, secondText.ID)
+	require.NotEqual(t, firstText.Path, secondText.Path)
 	for _, artifact := range manifest.Artifacts {
 		got, err := reopened.LoadProductionJobArtifact(t.Context(), job.ID, artifact.ID)
 		require.NoError(t, err)
@@ -135,7 +199,7 @@ func TestProductionFinalArtifactStageRejectsExpiredClaim(t *testing.T) {
 	require.NoError(t, err)
 	artifact := manifest.Artifacts[len(manifest.Artifacts)-1]
 	artifact.ID = uuid.NewString()
-	artifact.Path = "VOL001/expired.pdf"
+	artifact.Path = "VOL001/expired.txt"
 	err = s.StageProductionArtifact(t.Context(), claim, artifact)
 	require.ErrorIs(t, err, production.ErrJobStaleClaim)
 	_, err = s.LoadProductionJobArtifact(t.Context(), job.ID, artifact.ID)

@@ -2,6 +2,8 @@ package production
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"slices"
@@ -18,6 +20,8 @@ import (
 type ProductionFinalArtifactStore interface {
 	StageVerifiedProductionPDF(ctx context.Context, claim JobClaim, job Job,
 		member documentproduction.PreparedMember, candidate *VerifiedProductionPDF) (documentproduction.Artifact, error)
+	StageVerifiedProductionText(ctx context.Context, claim JobClaim, job Job,
+		member documentproduction.PreparedMember, maxBytes int64) (documentproduction.Artifact, error)
 	OpenVerifiedProductionArtifact(ctx context.Context, jobID string,
 		artifact documentproduction.Artifact) (packstore.VerifiedReadCloser, int64, error)
 }
@@ -89,6 +93,22 @@ func PublishVerifiedProductionJob(ctx context.Context, publisher ProductionFinal
 			return Job{}, ErrJobConflict
 		}
 		listed = append(listed, artifact)
+		text, err := redaction.Text(member.Resolved)
+		if err != nil || int64(len(text)) > recipe.MaxStagingBytes {
+			return Job{}, errors.Join(ErrJobConflict, err)
+		}
+		textSum := sha256.Sum256(text)
+		textArtifact, err := artifacts.StageVerifiedProductionText(ctx, claim, job, member, recipe.MaxStagingBytes)
+		if err != nil {
+			return Job{}, err
+		}
+		if textArtifact.Role != documentproduction.ArtifactRoleRedactedText ||
+			textArtifact.MemberID != member.Member.ID || textArtifact.MemberOrdinal != member.Member.Ordinal ||
+			textArtifact.Page != 0 || textArtifact.MediaType != "text/plain; charset=utf-8" ||
+			textArtifact.SHA256 != hex.EncodeToString(textSum[:]) || textArtifact.Size != int64(len(text)) {
+			return Job{}, ErrJobConflict
+		}
+		listed = append(listed, textArtifact)
 		for _, page := range plan.Pages {
 			if page.MemberID != member.Member.ID {
 				continue
@@ -157,7 +177,7 @@ func verifyProductionPublication(ctx context.Context, pages ProductionPageHandle
 		job.Receipt.ArtifactManifestSHA256 != job.Manifest.SHA256 {
 		return ErrJobConflict
 	}
-	if len(job.Manifest.Artifacts) != len(plan.Pages)+len(finalized.Authority.Prepared.Members) {
+	if len(job.Manifest.Artifacts) != len(plan.Pages)+2*len(finalized.Authority.Prepared.Members) {
 		return ErrJobConflict
 	}
 	listed := make(map[string]documentproduction.Artifact, len(job.Manifest.Artifacts))
@@ -166,7 +186,12 @@ func verifyProductionPublication(ctx context.Context, pages ProductionPageHandle
 	}
 	used := make(map[string]bool, len(listed))
 	for _, member := range finalized.Authority.Prepared.Members {
-		foundPDF := false
+		foundPDF, foundText := false, false
+		text, err := redaction.Text(member.Resolved)
+		if err != nil || int64(len(text)) > maxBytes {
+			return errors.Join(ErrJobConflict, err)
+		}
+		textSum := sha256.Sum256(text)
 		for _, artifact := range job.Manifest.Artifacts {
 			if artifact.Role == documentproduction.ArtifactRoleRedactedPDF && artifact.MemberID == member.Member.ID &&
 				artifact.MemberOrdinal == member.Member.Ordinal {
@@ -174,9 +199,16 @@ func verifyProductionPublication(ctx context.Context, pages ProductionPageHandle
 					return ErrJobConflict
 				}
 				foundPDF, used[artifact.ID] = true, true
+			} else if artifact.Role == documentproduction.ArtifactRoleRedactedText && artifact.MemberID == member.Member.ID &&
+				artifact.MemberOrdinal == member.Member.Ordinal {
+				if foundText || used[artifact.ID] || artifact.Page != 0 || artifact.MediaType != "text/plain; charset=utf-8" ||
+					artifact.SHA256 != hex.EncodeToString(textSum[:]) || artifact.Size != int64(len(text)) {
+					return ErrJobConflict
+				}
+				foundText, used[artifact.ID] = true, true
 			}
 		}
-		if !foundPDF {
+		if !foundPDF || !foundText {
 			return ErrJobConflict
 		}
 		for _, page := range plan.Pages {

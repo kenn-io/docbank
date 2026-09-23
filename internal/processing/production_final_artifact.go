@@ -1,14 +1,17 @@
 package processing
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
 
 	"github.com/google/uuid"
 	documentproduction "go.kenn.io/docbank/document/production"
+	"go.kenn.io/docbank/document/redaction"
 	"go.kenn.io/docbank/internal/production"
 	"go.kenn.io/docbank/internal/store"
 	"go.kenn.io/kit/packstore"
@@ -36,16 +39,58 @@ func (a ProductionFinalArtifactAdapter) StageVerifiedProductionPDF(ctx context.C
 	if err := verifyProductionCandidate(ctx, candidate.File, candidate.Size, candidate.SHA256); err != nil {
 		return documentproduction.Artifact{}, err
 	}
-	var artifact documentproduction.Artifact
+	if _, err := candidate.File.Seek(0, io.SeekStart); err != nil {
+		return documentproduction.Artifact{}, err
+	}
+	artifact := productionFinalMemberArtifact(job, member, "production-final-pdf/v1",
+		documentproduction.ArtifactRoleRedactedPDF, ".pdf", "application/pdf", candidate.SHA256, candidate.Size)
+	return a.stageFinalArtifact(ctx, claim, artifact, candidate.File)
+}
+
+// StageVerifiedProductionText serializes only the sealed resolved runs. The
+// caller cannot supply source text, private reasons, or alternate bytes.
+func (a ProductionFinalArtifactAdapter) StageVerifiedProductionText(ctx context.Context, claim production.JobClaim,
+	job production.Job, member documentproduction.PreparedMember, maxBytes int64) (documentproduction.Artifact, error) {
+	if a.Catalog == nil || a.Blobs == nil || claim.JobID != job.ID || member.Member.ID == "" ||
+		member.Member.Ordinal < 1 || member.ResolvedSHA256 != member.Resolved.SHA256 || maxBytes < 1 {
+		return documentproduction.Artifact{}, production.ErrJobConflict
+	}
+	if err := ctx.Err(); err != nil {
+		return documentproduction.Artifact{}, err
+	}
+	text, err := redaction.Text(member.Resolved)
+	if err != nil || len(text) == 0 || int64(len(text)) > maxBytes {
+		return documentproduction.Artifact{}, errors.Join(production.ErrJobConflict, err)
+	}
+	sum := sha256.Sum256(text)
+	artifact := productionFinalMemberArtifact(job, member, "production-final-text/v1",
+		documentproduction.ArtifactRoleRedactedText, ".txt", "text/plain; charset=utf-8",
+		hex.EncodeToString(sum[:]), int64(len(text)))
+	return a.stageFinalArtifact(ctx, claim, artifact, bytes.NewReader(text))
+}
+
+func productionFinalMemberArtifact(job production.Job, member documentproduction.PreparedMember,
+	key, role, extension, mediaType, digest string, size int64) documentproduction.Artifact {
+	identityHash := sha256.Sum256([]byte(fmt.Sprintf("%s\x00%s\x00%s", key, job.ID, member.Member.ID)))
+	var id uuid.UUID
+	copy(id[:], identityHash[:16])
+	id[6] = id[6]&0x0f | 0x40
+	id[8] = id[8]&0x3f | 0x80
+	identity := id.String()
+	return documentproduction.Artifact{ID: identity, MemberID: member.Member.ID,
+		MemberOrdinal: member.Member.Ordinal, Role: role,
+		Path: "VOL001/" + identity + extension, SHA256: digest, Size: size,
+		MediaType: mediaType, Volume: "VOL001"}
+}
+
+func (a ProductionFinalArtifactAdapter) stageFinalArtifact(ctx context.Context, claim production.JobClaim,
+	artifact documentproduction.Artifact, reader io.Reader) (documentproduction.Artifact, error) {
 	err := a.Blobs.WithMutation(ctx, func() error {
-		if _, err := candidate.File.Seek(0, io.SeekStart); err != nil {
-			return err
-		}
-		written, err := a.Blobs.WriteDetailedContext(ctx, candidate.File)
+		written, err := a.Blobs.WriteDetailedContext(ctx, reader)
 		if err != nil {
 			return err
 		}
-		if written.Hash != candidate.SHA256 || written.Size != candidate.Size {
+		if written.Hash != artifact.SHA256 || written.Size != artifact.Size {
 			return production.ErrJobConflict
 		}
 		encoding, err := written.EncodingName()
@@ -58,16 +103,6 @@ func (a ProductionFinalArtifactAdapter) StageVerifiedProductionPDF(ctx context.C
 		}); err != nil {
 			return err
 		}
-		key := sha256.Sum256([]byte(fmt.Sprintf("production-final-pdf/v1\x00%s\x00%s", job.ID, member.Member.ID)))
-		var id uuid.UUID
-		copy(id[:], key[:16])
-		id[6] = id[6]&0x0f | 0x40
-		id[8] = id[8]&0x3f | 0x80
-		identity := id.String()
-		artifact = documentproduction.Artifact{ID: identity, MemberID: member.Member.ID,
-			MemberOrdinal: member.Member.Ordinal, Role: documentproduction.ArtifactRoleRedactedPDF,
-			Path: "VOL001/" + identity + ".pdf", SHA256: written.Hash, Size: written.Size,
-			MediaType: "application/pdf", Volume: "VOL001"}
 		return a.Catalog.StageProductionArtifact(ctx, claim, artifact)
 	})
 	if err != nil {

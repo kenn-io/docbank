@@ -2,7 +2,9 @@ package store
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"slices"
 
 	documentproduction "go.kenn.io/docbank/document/production"
@@ -32,12 +34,26 @@ func (s *Store) validateProductionPublicationTx(ctx context.Context, tx *sql.Tx,
 	if !slices.Equal(plannedEndorsements, endorsements) {
 		return production.ErrJobConflict
 	}
-	if len(manifest.Artifacts) != len(plan.Pages)+len(authority.Prepared.Members) {
+	if len(manifest.Artifacts) != len(plan.Pages)+2*len(authority.Prepared.Members) {
 		return production.ErrJobIncomplete
 	}
 	byID := make(map[string]documentproduction.Artifact, len(manifest.Artifacts))
+	byPDF := make(map[string]documentproduction.Artifact, len(authority.Prepared.Members))
+	byText := make(map[string]documentproduction.Artifact, len(authority.Prepared.Members))
 	for _, artifact := range manifest.Artifacts {
 		byID[artifact.ID] = artifact
+		switch artifact.Role {
+		case documentproduction.ArtifactRoleRedactedPDF:
+			if _, duplicate := byPDF[artifact.MemberID]; duplicate {
+				return production.ErrJobIncomplete
+			}
+			byPDF[artifact.MemberID] = artifact
+		case documentproduction.ArtifactRoleRedactedText:
+			if _, duplicate := byText[artifact.MemberID]; duplicate {
+				return production.ErrJobIncomplete
+			}
+			byText[artifact.MemberID] = artifact
+		}
 		size, err := requirePhysicalAuthorityTx(tx, artifact.SHA256)
 		if err != nil || size != artifact.Size {
 			return production.ErrJobIncomplete
@@ -52,20 +68,26 @@ func (s *Store) validateProductionPublicationTx(ctx context.Context, tx *sql.Tx,
 		used[stage.Artifact.ID] = true
 	}
 	for _, member := range authority.Prepared.Members {
-		found := false
-		for _, artifact := range manifest.Artifacts {
-			if artifact.Role == documentproduction.ArtifactRoleRedactedPDF &&
-				artifact.MemberID == member.Member.ID && artifact.MemberOrdinal == member.Member.Ordinal {
-				if found || used[artifact.ID] || artifact.Size < 1 || artifact.MediaType != "application/pdf" {
-					return production.ErrJobIncomplete
-				}
-				used[artifact.ID] = true
-				found = true
-			}
-		}
-		if !found {
+		pdf, hasPDF := byPDF[member.Member.ID]
+		if !hasPDF || pdf.MemberOrdinal != member.Member.Ordinal || used[pdf.ID] || pdf.Size < 1 ||
+			pdf.MediaType != "application/pdf" {
 			return production.ErrJobIncomplete
 		}
+		used[pdf.ID] = true
+		textArtifact, hasText := byText[member.Member.ID]
+		if !hasText || textArtifact.MemberOrdinal != member.Member.Ordinal || used[textArtifact.ID] ||
+			textArtifact.MediaType != "text/plain; charset=utf-8" {
+			return production.ErrJobIncomplete
+		}
+		text, err := redaction.Text(member.Resolved)
+		if err != nil {
+			return production.ErrJobConflict
+		}
+		textSum := sha256.Sum256(text)
+		if textArtifact.SHA256 != hex.EncodeToString(textSum[:]) || textArtifact.Size != int64(len(text)) {
+			return production.ErrJobIncomplete
+		}
+		used[textArtifact.ID] = true
 	}
 	if len(used) != len(manifest.Artifacts) {
 		return production.ErrJobIncomplete

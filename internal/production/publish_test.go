@@ -35,10 +35,40 @@ func (p *syntheticFinalPublisher) PublishProductionJob(_ context.Context, _ JobC
 }
 
 type syntheticFinalArtifacts struct {
-	pageData map[string][]byte
-	pdfData  map[string][]byte
-	stale    bool
-	writes   int
+	pageData       map[string][]byte
+	pdfData        map[string][]byte
+	textData       map[string][]byte
+	stale          bool
+	writes         int
+	textWrites     int
+	cancelAfterPDF func()
+}
+
+func (a *syntheticFinalArtifacts) StageVerifiedProductionText(ctx context.Context, _ JobClaim, _ Job,
+	member documentproduction.PreparedMember, maxBytes int64) (documentproduction.Artifact, error) {
+	if err := ctx.Err(); err != nil {
+		return documentproduction.Artifact{}, err
+	}
+	if a.stale {
+		return documentproduction.Artifact{}, ErrJobStaleClaim
+	}
+	data, err := redaction.Text(member.Resolved)
+	if err != nil {
+		return documentproduction.Artifact{}, err
+	}
+	if int64(len(data)) > maxBytes {
+		return documentproduction.Artifact{}, ErrJobConflict
+	}
+	a.textWrites++
+	if a.textData == nil {
+		a.textData = make(map[string][]byte)
+	}
+	digest := testHash(string(data))
+	a.textData[digest] = data
+	return documentproduction.Artifact{ID: "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee", MemberID: member.Member.ID,
+		MemberOrdinal: member.Member.Ordinal, Role: documentproduction.ArtifactRoleRedactedText,
+		Path: "VOL001/synthetic-final.txt", SHA256: digest, Size: int64(len(data)),
+		MediaType: "text/plain; charset=utf-8", Volume: "VOL001"}, nil
 }
 
 func (a *syntheticFinalArtifacts) StageVerifiedProductionPDF(_ context.Context, _ JobClaim, _ Job,
@@ -58,6 +88,9 @@ func (a *syntheticFinalArtifacts) StageVerifiedProductionPDF(_ context.Context, 
 		a.pdfData = make(map[string][]byte)
 	}
 	a.pdfData[candidate.SHA256] = data
+	if a.cancelAfterPDF != nil {
+		a.cancelAfterPDF()
+	}
 	return documentproduction.Artifact{ID: "dddddddd-dddd-4ddd-8ddd-dddddddddddd", MemberID: member.Member.ID,
 		MemberOrdinal: member.Member.Ordinal, Role: documentproduction.ArtifactRoleRedactedPDF,
 		Path: "VOL001/synthetic-final.pdf", SHA256: candidate.SHA256, Size: candidate.Size,
@@ -69,6 +102,8 @@ func (a *syntheticFinalArtifacts) OpenVerifiedProductionArtifact(_ context.Conte
 	data := a.pdfData[artifact.SHA256]
 	if artifact.Role == documentproduction.ArtifactRoleRedactedPage {
 		data = a.pageData[artifact.SHA256]
+	} else if artifact.Role == documentproduction.ArtifactRoleRedactedText {
+		data = a.textData[artifact.SHA256]
 	}
 	if data == nil {
 		return nil, 0, ErrJobConflict
@@ -92,12 +127,44 @@ func testPublishVerifiedProductionFromPages(t *testing.T, finalized FinalizedPro
 	require.NoError(t, documentproduction.ValidateProductionReceipt(result.Receipt))
 	require.Equal(t, 1, publisher.responses)
 	require.Equal(t, 1, artifacts.writes)
+	require.Equal(t, 1, artifacts.textWrites)
+	for _, artifact := range result.Manifest.Artifacts {
+		if artifact.Role == documentproduction.ArtifactRoleRedactedText {
+			expected, textErr := redaction.Text(finalized.Authority.Prepared.Members[0].Resolved)
+			require.NoError(t, textErr)
+			require.Equal(t, expected, artifacts.textData[artifact.SHA256])
+			require.NotContains(t, string(expected), "synthetic private reason")
+		}
+	}
+	for _, artifact := range result.Manifest.Artifacts {
+		if artifact.Role == documentproduction.ArtifactRoleRedactedPage {
+			original := artifacts.pageData[artifact.SHA256]
+			artifacts.pageData[artifact.SHA256] = []byte("synthetic changed page bytes")
+			_, err = PublishVerifiedProductionJob(t.Context(), publisher, archive, artifacts, claim,
+				job, finalized, plan, recipe)
+			require.ErrorIs(t, err, ErrJobConflict)
+			artifacts.pageData[artifact.SHA256] = original
+			artifacts.pageData[artifact.SHA256] = nil
+			_, err = PublishVerifiedProductionJob(t.Context(), publisher, archive, artifacts, claim,
+				job, finalized, plan, recipe)
+			require.ErrorIs(t, err, ErrJobConflict)
+			artifacts.pageData[artifact.SHA256] = original
+			break
+		}
+	}
+	missingPage := archive.pages[1]
+	delete(archive.pages, 1)
+	_, err = PublishVerifiedProductionJob(t.Context(), publisher, archive, artifacts, claim,
+		job, finalized, plan, recipe)
+	require.ErrorIs(t, err, ErrJobConflict)
+	archive.pages[1] = missingPage
 	replayed, err := PublishVerifiedProductionJob(t.Context(), publisher, archive, artifacts, claim,
 		job, finalized, plan, recipe)
 	require.NoError(t, err)
 	require.Equal(t, result.Receipt, replayed.Receipt)
 	require.Equal(t, 1, publisher.responses, "historical replay cannot republish")
 	require.Equal(t, 1, artifacts.writes, "historical replay cannot rewrite PDF")
+	require.Equal(t, 1, artifacts.textWrites, "historical replay cannot rewrite text")
 	for _, artifact := range result.Manifest.Artifacts {
 		if artifact.Role == documentproduction.ArtifactRoleRedactedPDF {
 			original := artifacts.pdfData[artifact.SHA256]
@@ -106,6 +173,22 @@ func testPublishVerifiedProductionFromPages(t *testing.T, finalized FinalizedPro
 				job, finalized, plan, recipe)
 			require.ErrorIs(t, err, ErrJobConflict)
 			artifacts.pdfData[artifact.SHA256] = original
+			break
+		}
+	}
+	for _, artifact := range result.Manifest.Artifacts {
+		if artifact.Role == documentproduction.ArtifactRoleRedactedText {
+			original := artifacts.textData[artifact.SHA256]
+			artifacts.textData[artifact.SHA256] = []byte("synthetic source text fallback")
+			_, err = PublishVerifiedProductionJob(t.Context(), publisher, archive, artifacts, claim,
+				job, finalized, plan, recipe)
+			require.ErrorIs(t, err, ErrJobConflict)
+			artifacts.textData[artifact.SHA256] = original
+			artifacts.textData[artifact.SHA256] = nil
+			_, err = PublishVerifiedProductionJob(t.Context(), publisher, archive, artifacts, claim,
+				job, finalized, plan, recipe)
+			require.ErrorIs(t, err, ErrJobConflict)
+			artifacts.textData[artifact.SHA256] = original
 			break
 		}
 	}
@@ -121,5 +204,12 @@ func testPublishVerifiedProductionFromPages(t *testing.T, finalized FinalizedPro
 	_, err = PublishVerifiedProductionJob(canceled, newPublisher, archive, artifacts, claim,
 		job, finalized, plan, recipe)
 	require.ErrorIs(t, err, context.Canceled)
+	require.Zero(t, newPublisher.responses)
+	between, stop := context.WithCancel(t.Context())
+	betweenArtifacts := &syntheticFinalArtifacts{pageData: data, cancelAfterPDF: stop}
+	_, err = PublishVerifiedProductionJob(between, newPublisher, archive, betweenArtifacts, claim,
+		job, finalized, plan, recipe)
+	require.ErrorIs(t, err, context.Canceled)
+	require.Zero(t, betweenArtifacts.textWrites)
 	require.Zero(t, newPublisher.responses)
 }
