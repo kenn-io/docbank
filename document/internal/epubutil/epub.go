@@ -3,6 +3,7 @@ package epubutil
 
 import (
 	"archive/zip"
+	"bytes"
 	"context"
 	"encoding/xml"
 	"errors"
@@ -87,7 +88,13 @@ func ReadPackagesContext(ctx context.Context, files []*zip.File, limit int64) ([
 			} `xml:"rootfile"`
 		} `xml:"rootfiles"`
 	}
-	if err := xml.Unmarshal(body, &containerDocument); err != nil || containerDocument.XMLName.Space != "urn:oasis:names:tc:opendocument:xmlns:container" || len(containerDocument.Rootfiles.Items) == 0 {
+	if err := decodeXMLContext(ctx, body, &containerDocument); err != nil {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return nil, ctxErr
+		}
+		return nil, errors.New("EPUB container document is invalid")
+	}
+	if containerDocument.XMLName.Space != "urn:oasis:names:tc:opendocument:xmlns:container" || len(containerDocument.Rootfiles.Items) == 0 {
 		return nil, errors.New("EPUB container document is invalid")
 	}
 	var records []Package
@@ -110,7 +117,10 @@ func ReadPackagesContext(ctx context.Context, files []*zip.File, limit int64) ([
 			return nil, err
 		}
 		var record Package
-		if err := xml.Unmarshal(body, &record); err != nil {
+		if err := decodeXMLContext(ctx, body, &record); err != nil {
+			if ctxErr := ctx.Err(); ctxErr != nil {
+				return nil, ctxErr
+			}
 			return nil, errors.New("EPUB package document is invalid")
 		}
 		record.Path = packagePath
@@ -118,6 +128,16 @@ func ReadPackagesContext(ctx context.Context, files []*zip.File, limit int64) ([
 		records = append(records, record)
 	}
 	return records, nil
+}
+
+func decodeXMLContext(ctx context.Context, body []byte, target any) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if err := xml.NewDecoder(contextReader{ctx: ctx, reader: bytes.NewReader(body)}).Decode(target); err != nil {
+		return fmt.Errorf("decode EPUB XML: %w", err)
+	}
+	return nil
 }
 
 // ResolveArchiveDir applies directory-versus-document base semantics.
@@ -219,7 +239,10 @@ func ReadZIPEntryContext(ctx context.Context, file *zip.File, limit int64) ([]by
 	}
 	defer func() { _ = reader.Close() }()
 	data, err := io.ReadAll(io.LimitReader(contextReader{ctx: ctx, reader: reader}, limit+1))
-	if err != nil || int64(len(data)) > limit || uint64(len(data)) != file.UncompressedSize64 {
+	if err != nil {
+		return nil, fmt.Errorf("read ZIP entry: %w", err)
+	}
+	if int64(len(data)) > limit || uint64(len(data)) != file.UncompressedSize64 {
 		return nil, errors.New("ZIP entry exceeds bound")
 	}
 	return data, nil

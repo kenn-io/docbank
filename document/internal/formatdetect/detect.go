@@ -3,6 +3,7 @@ package formatdetect
 import (
 	"archive/zip"
 	"bytes"
+	"context"
 	"encoding/binary"
 	"encoding/csv"
 	"encoding/json/jsontext"
@@ -68,6 +69,14 @@ type compoundDirectoryEntry struct {
 // type is a hint only: container families must prove internal markers, while
 // inherently ambiguous text formats also require syntactically safe UTF-8.
 func DetectFormat(reader io.ReaderAt, size int64, declaredMediaType string) (CandidateFormat, error) {
+	return DetectFormatContext(context.Background(), reader, size, declaredMediaType)
+}
+
+// DetectFormatContext validates a provider candidate while observing cancellation.
+func DetectFormatContext(ctx context.Context, reader io.ReaderAt, size int64, declaredMediaType string) (CandidateFormat, error) {
+	if err := ctx.Err(); err != nil {
+		return CandidateFormat{}, err
+	}
 	if reader == nil || size <= 0 {
 		return CandidateFormat{}, errors.New("document format detection requires nonempty bytes")
 	}
@@ -94,7 +103,7 @@ func DetectFormat(reader io.ReaderAt, size int64, declaredMediaType string) (Can
 	case bytes.HasPrefix(prefix, compoundFileMagic):
 		detected, err = detectCompoundFormat(reader, size)
 	case bytes.HasPrefix(prefix, []byte("PK\x03\x04")) || bytes.HasPrefix(prefix, []byte("PK\x05\x06")):
-		detected, err = detectZIPFormat(reader, size)
+		detected, err = detectZIPFormatContext(ctx, reader, size)
 	default:
 		if size > maxTextSniffBytes {
 			return CandidateFormat{}, errors.New("document text exceeds type-detection limit")
@@ -106,6 +115,9 @@ func DetectFormat(reader io.ReaderAt, size int64, declaredMediaType string) (Can
 		detected, err = detectTextFormat(content, mediaType)
 	}
 	if err != nil {
+		return CandidateFormat{}, err
+	}
+	if err := ctx.Err(); err != nil {
 		return CandidateFormat{}, err
 	}
 	if detected.MediaType != mediaType {
@@ -1269,6 +1281,13 @@ func decodeUTF16LE(data []byte) (string, error) {
 }
 
 func detectZIPFormat(reader io.ReaderAt, size int64) (CandidateFormat, error) {
+	return detectZIPFormatContext(context.Background(), reader, size)
+}
+
+func detectZIPFormatContext(ctx context.Context, reader io.ReaderAt, size int64) (CandidateFormat, error) {
+	if err := ctx.Err(); err != nil {
+		return CandidateFormat{}, err
+	}
 	if err := validateZIPEndRecord(reader, size); err != nil {
 		return CandidateFormat{}, err
 	}
@@ -1284,6 +1303,9 @@ func detectZIPFormat(reader io.ReaderAt, size int64) (CandidateFormat, error) {
 	var mimeValue string
 	var contentTypes []byte
 	for _, entry := range archive.File {
+		if err := ctx.Err(); err != nil {
+			return CandidateFormat{}, err
+		}
 		if err := validateZIPName(entry.Name); err != nil {
 			return CandidateFormat{}, err
 		}
@@ -1301,18 +1323,18 @@ func detectZIPFormat(reader io.ReaderAt, size int64) (CandidateFormat, error) {
 			return CandidateFormat{}, errors.New("document ZIP container has duplicate entry names")
 		}
 		names[entry.Name] = true
-		if err := verifyZIPEntry(entry); err != nil {
+		if err := verifyZIPEntryContext(ctx, entry); err != nil {
 			return CandidateFormat{}, err
 		}
 		if entry.Name == "mimetype" {
-			value, readErr := readZIPEntry(entry, 256)
+			value, readErr := readZIPEntryContext(ctx, entry, 256)
 			if readErr != nil {
 				return CandidateFormat{}, readErr
 			}
 			mimeValue = string(value)
 		}
 		if entry.Name == ooxmlContentTypesName {
-			value, readErr := readZIPEntry(entry, 2<<20)
+			value, readErr := readZIPEntryContext(ctx, entry, 2<<20)
 			if readErr != nil {
 				return CandidateFormat{}, readErr
 			}
@@ -1421,6 +1443,13 @@ func validateZIPName(name string) error {
 }
 
 func readZIPEntry(entry *zip.File, limit int64) ([]byte, error) {
+	return readZIPEntryContext(context.Background(), entry, limit)
+}
+
+func readZIPEntryContext(ctx context.Context, entry *zip.File, limit int64) ([]byte, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	if limit < 0 || entry.UncompressedSize64 > maxZIPSingleExpandedByte || int64(entry.UncompressedSize64) > limit {
 		return nil, errors.New("document ZIP marker entry exceeds limit")
 	}
@@ -1429,7 +1458,7 @@ func readZIPEntry(entry *zip.File, limit int64) ([]byte, error) {
 		return nil, fmt.Errorf("open document ZIP marker: %w", err)
 	}
 	defer func() { _ = reader.Close() }()
-	value, err := io.ReadAll(io.LimitReader(reader, limit+1))
+	value, err := io.ReadAll(io.LimitReader(contextReader{ctx: ctx, reader: reader}, limit+1))
 	if err != nil {
 		return nil, fmt.Errorf("read document ZIP marker: %w", err)
 	}
@@ -1440,6 +1469,13 @@ func readZIPEntry(entry *zip.File, limit int64) ([]byte, error) {
 }
 
 func verifyZIPEntry(entry *zip.File) error {
+	return verifyZIPEntryContext(context.Background(), entry)
+}
+
+func verifyZIPEntryContext(ctx context.Context, entry *zip.File) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	if entry.UncompressedSize64 > maxZIPSingleExpandedByte {
 		return errors.New("document ZIP entry exceeds verification limit")
 	}
@@ -1448,12 +1484,31 @@ func verifyZIPEntry(entry *zip.File) error {
 		return fmt.Errorf("open document ZIP entry: %w", err)
 	}
 	expectedSize := int64(entry.UncompressedSize64)
-	written, readErr := io.Copy(io.Discard, io.LimitReader(reader, expectedSize+1))
+	written, readErr := io.Copy(io.Discard, io.LimitReader(contextReader{ctx: ctx, reader: reader}, expectedSize+1))
 	closeErr := reader.Close()
-	if readErr != nil || closeErr != nil || written != expectedSize {
+	if readErr != nil {
+		return readErr
+	}
+	if closeErr != nil || written != expectedSize {
 		return errors.New("document ZIP entry failed bounded verification")
 	}
 	return nil
+}
+
+type contextReader struct {
+	ctx    context.Context
+	reader io.Reader
+}
+
+func (reader contextReader) Read(p []byte) (int, error) {
+	if err := reader.ctx.Err(); err != nil {
+		return 0, err
+	}
+	n, err := reader.reader.Read(p)
+	if contextErr := reader.ctx.Err(); contextErr != nil {
+		return n, contextErr
+	}
+	return n, err
 }
 
 func hasNumbersMarker(names map[string]bool) bool {

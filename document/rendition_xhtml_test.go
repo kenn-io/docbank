@@ -4,9 +4,27 @@ import (
 	"context"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 )
+
+type cancelAfterXHTMLReadContext struct {
+	calls    int
+	cancelAt int
+}
+
+func (ctx *cancelAfterXHTMLReadContext) Deadline() (time.Time, bool) { return time.Time{}, false }
+func (ctx *cancelAfterXHTMLReadContext) Done() <-chan struct{}       { return nil }
+func (ctx *cancelAfterXHTMLReadContext) Value(any) any               { return nil }
+
+func (ctx *cancelAfterXHTMLReadContext) Err() error {
+	ctx.calls++
+	if ctx.calls >= ctx.cancelAt {
+		return context.Canceled
+	}
+	return nil
+}
 
 func TestRenditionXHTMLSemantics(t *testing.T) {
 	for _, test := range []struct{ name, body, want string }{
@@ -73,4 +91,13 @@ func TestRenditionXHTMLContextCancellation(t *testing.T) {
 	text, err := RenditionMarkdownFromXHTMLContext(ctx, []byte(`<html xmlns="http://www.w3.org/1999/xhtml"><body>text</body></html>`), 100)
 	require.ErrorIs(t, err, context.Canceled)
 	require.Empty(t, text)
+}
+
+func TestRenditionXHTMLContextCancellationAfterRead(t *testing.T) {
+	ctx := &cancelAfterXHTMLReadContext{cancelAt: 3}
+	source := []byte(`<html xmlns="http://www.w3.org/1999/xhtml"><body>` + strings.Repeat(`<p>text</p>`, 1000) + `</body></html>`)
+	text, err := RenditionMarkdownFromXHTMLContext(ctx, source, 100000)
+	require.ErrorIs(t, err, context.Canceled)
+	require.Empty(t, text)
+	require.GreaterOrEqual(t, ctx.calls, ctx.cancelAt)
 }

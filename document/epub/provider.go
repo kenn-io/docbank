@@ -82,7 +82,10 @@ func (p *Provider) Render(ctx context.Context, upload document.AuthorizedUpload,
 	if err != nil {
 		return document.RenditionResult{}, err
 	}
-	if _, err := formatdetect.DetectFormat(bytes.NewReader(data), int64(len(data)), "application/epub+zip"); err != nil {
+	if _, err := formatdetect.DetectFormatContext(ctx, bytes.NewReader(data), int64(len(data)), "application/epub+zip"); err != nil {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return document.RenditionResult{}, provider.Canceled(ctxErr)
+		}
 		return document.RenditionResult{}, unsupported()
 	}
 	if err := ctx.Err(); err != nil {

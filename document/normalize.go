@@ -50,7 +50,7 @@ func RenditionMarkdownFromXHTMLContext(ctx context.Context, source []byte, maxRu
 	maxRunes = min(maxRunes, maxEvidenceTextBytes)
 	budget := min(int64(100<<20), int64(len(source))+4*int64(maxRunes))
 	writer := renditionHTMLWriter{maxLinkChars: renditionMaxLinkChars, work: &renditionXHTMLWork{remaining: budget}}
-	decoder := xml.NewDecoder(bytes.NewReader(bytes.TrimPrefix(source, []byte{0xef, 0xbb, 0xbf})))
+	decoder := xml.NewDecoder(contextReader{ctx: ctx, reader: bytes.NewReader(bytes.TrimPrefix(source, []byte{0xef, 0xbb, 0xbf}))})
 	decoder.Entity = xml.HTMLEntity
 	depth, roots, head := 0, 0, 0
 	for {
@@ -62,6 +62,9 @@ func RenditionMarkdownFromXHTMLContext(ctx context.Context, source []byte, maxRu
 			break
 		}
 		if err != nil {
+			if ctxErr := ctx.Err(); ctxErr != nil {
+				return "", ctxErr
+			}
 			return "", errors.New("XHTML XML is invalid or uses an unsupported encoding")
 		}
 		if !writer.charge(1) {
@@ -136,6 +139,22 @@ func RenditionMarkdownFromXHTMLContext(ctx context.Context, source []byte, maxRu
 		return "", ErrRenditionXHTMLBudget
 	}
 	return text, nil
+}
+
+type contextReader struct {
+	ctx    context.Context
+	reader io.Reader
+}
+
+func (reader contextReader) Read(p []byte) (int, error) {
+	if err := reader.ctx.Err(); err != nil {
+		return 0, err
+	}
+	n, err := reader.reader.Read(p)
+	if contextErr := reader.ctx.Err(); contextErr != nil {
+		return n, contextErr
+	}
+	return n, err
 }
 
 func canonicalizeRenditionBlocks(blocks []renditionBlock) {

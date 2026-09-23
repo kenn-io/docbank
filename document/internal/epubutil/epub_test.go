@@ -3,10 +3,30 @@ package epubutil
 import (
 	"archive/zip"
 	"bytes"
+	"context"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 )
+
+type cancelAfterParseContext struct {
+	calls    int
+	cancelAt int
+}
+
+func (ctx *cancelAfterParseContext) Deadline() (time.Time, bool) { return time.Time{}, false }
+func (ctx *cancelAfterParseContext) Done() <-chan struct{}       { return nil }
+func (ctx *cancelAfterParseContext) Value(any) any               { return nil }
+
+func (ctx *cancelAfterParseContext) Err() error {
+	ctx.calls++
+	if ctx.calls >= ctx.cancelAt {
+		return context.Canceled
+	}
+	return nil
+}
 
 func TestArchivePathAndBases(t *testing.T) {
 	for _, test := range []struct{ ref, base, want string }{
@@ -77,4 +97,25 @@ func TestReadPackagesPreservesDeclarationsAndOccurrences(t *testing.T) {
 	require.NoError(t, err)
 	_, err = ReadZIPEntry(file, int64(file.UncompressedSize64)-1)
 	require.Error(t, err)
+}
+
+func TestDecodeXMLContextCancelsDuringPackageParse(t *testing.T) {
+	body := []byte(`<package>` + strings.Repeat(`<meta property="x" content="value"/>`, 1000) + `</package>`)
+	ctx := &cancelAfterParseContext{cancelAt: 3}
+	var record Package
+	err := decodeXMLContext(ctx, body, &record)
+	require.ErrorIs(t, err, context.Canceled)
+	require.GreaterOrEqual(t, ctx.calls, ctx.cancelAt)
+}
+
+func TestContextReaderStopsAfterCancellation(t *testing.T) {
+	ctx, cancel := context.WithCancel(t.Context())
+	reader := contextReader{ctx: ctx, reader: strings.NewReader("payload")}
+	buffer := make([]byte, 3)
+	read, err := reader.Read(buffer)
+	require.NoError(t, err)
+	require.Equal(t, 3, read)
+	cancel()
+	_, err = reader.Read(buffer)
+	require.ErrorIs(t, err, context.Canceled)
 }
