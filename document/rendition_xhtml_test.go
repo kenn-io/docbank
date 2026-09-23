@@ -105,17 +105,34 @@ func TestRenditionXHTMLContextCancellationAfterRead(t *testing.T) {
 }
 
 func TestRenditionFinalizationContextCancellation(t *testing.T) {
-	blocks := make([]renditionBlock, 1024)
-	ctx := &cancelAfterXHTMLReadContext{cancelAt: 2}
-	err := canonicalizeRenditionBlocks(ctx, blocks)
+	tableBlocks := []renditionBlock{{kind: renditionTable, rows: [][][]renditionInline{make([][]renditionInline, 1024)}}}
+	listItems := make([]renditionListItem, 1024)
+	for index := range listItems {
+		listItems[index].present = true
+	}
+	listBlocks := []renditionBlock{{kind: renditionListBlock, list: &renditionList{ordered: true, start: "1", items: listItems}}}
+	ctx := &cancelAfterXHTMLReadContext{cancelAt: 3}
+	err := canonicalizeRenditionBlocks(ctx, tableBlocks)
 	require.ErrorIs(t, err, context.Canceled)
 
-	ctx = &cancelAfterXHTMLReadContext{cancelAt: 2}
-	_, err = renditionXHTMLSerializationFits(ctx, blocks, 1<<20, 0)
+	ctx = &cancelAfterXHTMLReadContext{cancelAt: 3}
+	err = canonicalizeRenditionBlocks(ctx, listBlocks)
 	require.ErrorIs(t, err, context.Canceled)
 
-	ctx = &cancelAfterXHTMLReadContext{cancelAt: 2}
-	_, _, err = serializeRenditionBlocksContext(ctx, blocks, 1<<20)
+	ctx = &cancelAfterXHTMLReadContext{cancelAt: 3}
+	_, err = renditionXHTMLSerializationFits(ctx, tableBlocks, 1<<20, 0)
+	require.ErrorIs(t, err, context.Canceled)
+
+	ctx = &cancelAfterXHTMLReadContext{cancelAt: 3}
+	_, _, err = serializeRenditionBlocksContext(ctx, tableBlocks, 1<<20)
+	require.ErrorIs(t, err, context.Canceled)
+
+	ordered := renditionList{ordered: true, start: "999999999", tight: true, items: []renditionListItem{
+		{present: true, blocks: []renditionBlock{{kind: renditionParagraph, inlines: []renditionInline{{kind: renditionText, text: "x"}}}}},
+		{present: true, blocks: []renditionBlock{{kind: renditionParagraph, inlines: []renditionInline{{kind: renditionText, text: "x"}}}}},
+	}}
+	ctx = &cancelAfterXHTMLReadContext{cancelAt: 5}
+	_, _, err = serializeRenditionListContext(ctx, ordered, 100, false)
 	require.ErrorIs(t, err, context.Canceled)
 }
 

@@ -168,29 +168,37 @@ func canonicalizeRenditionBlocks(ctx context.Context, blocks []renditionBlock) e
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		blocks[index].code = canonicalEvidenceString(blocks[index].code)
-		inlines, err := canonicalizeRenditionInlines(ctx, blocks[index].inlines)
+		block := &blocks[index]
+		block.code = canonicalEvidenceString(block.code)
+		inlines, err := canonicalizeRenditionInlines(ctx, block.inlines)
 		if err != nil {
 			return err
 		}
-		blocks[index].inlines = inlines
-		for rowIndex := range blocks[index].rows {
+		block.inlines = inlines
+		for rowIndex, row := range block.rows {
 			if err := ctx.Err(); err != nil {
 				return err
 			}
-			for cellIndex := range blocks[index].rows[rowIndex] {
-				inlines, err := canonicalizeRenditionInlines(ctx, blocks[index].rows[rowIndex][cellIndex])
+			for cellIndex, cell := range row {
+				if err := ctx.Err(); err != nil {
+					return err
+				}
+				inlines, err := canonicalizeRenditionInlines(ctx, cell)
 				if err != nil {
 					return err
 				}
-				blocks[index].rows[rowIndex][cellIndex] = inlines
+				row[cellIndex] = inlines
 			}
+			block.rows[rowIndex] = row
 		}
-		if blocks[index].list == nil {
+		if block.list == nil {
 			continue
 		}
-		for itemIndex := range blocks[index].list.items {
-			if err := canonicalizeRenditionBlocks(ctx, blocks[index].list.items[itemIndex].blocks); err != nil {
+		for _, item := range block.list.items {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+			if err := canonicalizeRenditionBlocks(ctx, item.blocks); err != nil {
 				return err
 			}
 		}
@@ -300,6 +308,9 @@ func renditionXHTMLSerializationFits(ctx context.Context, blocks []renditionBloc
 				}
 				columns = max(columns, len(row))
 				for _, cell := range row {
+					if err := ctx.Err(); err != nil {
+						return 0, err
+					}
 					cellSize, err := inlines(cell)
 					if err != nil {
 						return 0, err
@@ -310,6 +321,9 @@ func renditionXHTMLSerializationFits(ctx context.Context, blocks []renditionBloc
 			total += int64(len(block.rows)+1) * (int64(columns)*6 + 3)
 			if block.list != nil {
 				for _, item := range block.list.items {
+					if err := ctx.Err(); err != nil {
+						return 0, err
+					}
 					itemCost, err := cost(item.blocks, indent+maxOrderedListMarkerDigits+4)
 					if err != nil {
 						return 0, err
@@ -1912,6 +1926,9 @@ func appendRepresentableOrderedListItems(
 			fallbackRunes = output.runes - listStart.runes
 			var converted renditionBuffer
 			for index, entry := range entries {
+				if output.contextError() != nil {
+					return renditionListResult{truncated: true}
+				}
 				if index > 0 {
 					converted.WriteString(renditionListItemSeparator(list.tight))
 				}
