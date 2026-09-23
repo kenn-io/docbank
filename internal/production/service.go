@@ -13,9 +13,10 @@ import (
 )
 
 var (
-	ErrJobConflict   = errors.New("production job request conflicts with existing job")
-	ErrJobStaleClaim = errors.New("production job claim is stale")
-	ErrJobIncomplete = errors.New("production job publication is incomplete")
+	ErrJobConflict     = errors.New("production job request conflicts with existing job")
+	ErrJobStaleClaim   = errors.New("production job claim is stale")
+	ErrJobIncomplete   = errors.New("production job publication is incomplete")
+	ErrJobStageMissing = errors.New("production job page stage is missing")
 )
 
 const (

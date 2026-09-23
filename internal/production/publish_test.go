@@ -157,7 +157,7 @@ func testPublishVerifiedProductionFromPages(t *testing.T, finalized FinalizedPro
 	delete(archive.pages, 1)
 	_, err = PublishVerifiedProductionJob(t.Context(), publisher, archive, artifacts, claim,
 		job, finalized, plan, recipe)
-	require.ErrorIs(t, err, ErrJobConflict)
+	require.ErrorIs(t, err, ErrJobStageMissing)
 	archive.pages[1] = missingPage
 	replayed, err := PublishVerifiedProductionJob(t.Context(), publisher, archive, artifacts, claim,
 		job, finalized, plan, recipe)

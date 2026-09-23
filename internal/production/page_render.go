@@ -136,8 +136,11 @@ func renderProductionPagesWithTimeout(ctx context.Context, opener ProductionPDFS
 		for index := range member.Resolved.Pages {
 			page := plan.Pages[pageIndex+index]
 			pageCtx, stopPage := context.WithTimeout(ctx, pageTimeout)
-			err := renderOneProductionPage(pageCtx, stager, engine, claim, job, plan, member, page,
-				spool.File, pinned, recipe)
+			reused, err := reuseVerifiedProductionPage(pageCtx, stager, job, plan, member, page, recipe.MaxStagingBytes)
+			if err == nil && !reused {
+				err = renderOneProductionPage(pageCtx, stager, engine, claim, job, plan, member, page,
+					spool.File, pinned, recipe)
+			}
 			err = errors.Join(err, pageCtx.Err())
 			stopPage()
 			if err != nil {
@@ -150,6 +153,45 @@ func renderProductionPagesWithTimeout(ctx context.Context, opener ProductionPDFS
 		pageIndex += len(member.Resolved.Pages)
 	}
 	return ctx.Err()
+}
+
+// A durable page stage is reusable only after both its sealed plan binding
+// and its physical bytes verify. Missing stages render normally; damaged ones
+// fail the job instead of being silently replaced under the old identity.
+func reuseVerifiedProductionPage(ctx context.Context, stager ProductionPageStager, job Job,
+	plan RenderPlan, member documentproduction.PreparedMember, page RenderPagePlan, maxBytes int64) (bool, error) {
+	handles, ok := stager.(ProductionPageHandleStore)
+	if !ok {
+		return false, nil
+	}
+	stage, err := handles.LoadProductionPageStage(ctx, job.ID, page.MemberID, page.Page)
+	if errors.Is(err, ErrJobStageMissing) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	want, err := BuildProductionPageStage(job, plan, member, page, stage.Artifact)
+	if err != nil || stage != want {
+		return false, ErrJobConflict
+	}
+	stream, size, err := handles.OpenStagedProductionPage(ctx, stage)
+	if err != nil || stream == nil {
+		if stream != nil {
+			_ = stream.Close()
+		}
+		return false, errors.Join(ErrJobConflict, err)
+	}
+	verified, err := SpoolProductionPDF(ctx, PinnedProductionPDF{
+		PDFSHA256: stage.Artifact.SHA256, Size: size, Stream: stream,
+	}, maxBytes)
+	if err != nil || size != stage.Artifact.Size {
+		if verified != nil {
+			_ = verified.Close()
+		}
+		return false, errors.Join(ErrJobConflict, err)
+	}
+	return true, verified.Close()
 }
 
 func renderOneProductionPage(ctx context.Context, stager ProductionPageStager, engine pdfproduction.Engine,

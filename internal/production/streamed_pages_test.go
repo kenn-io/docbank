@@ -65,7 +65,7 @@ func (a *syntheticPageArchive) LoadProductionPageStage(_ context.Context, _, _ s
 	if handle := a.pages[page]; handle != nil {
 		return handle.stage, nil
 	}
-	return ProductionPageStage{}, ErrJobConflict
+	return ProductionPageStage{}, ErrJobStageMissing
 }
 
 func (a *syntheticPageArchive) OpenStagedProductionPage(ctx context.Context, stage ProductionPageStage) (packstore.VerifiedReadCloser, int64, error) {
@@ -107,6 +107,9 @@ func (s *syntheticProductionSource) OpenPinnedProductionPDF(_ context.Context, _
 }
 
 func (h *syntheticPageHandles) LoadProductionPageStage(_ context.Context, _, _ string, _ int) (ProductionPageStage, error) {
+	if h.stage.SHA256 == "" {
+		return ProductionPageStage{}, ErrJobStageMissing
+	}
 	return h.stage, nil
 }
 
@@ -309,6 +312,7 @@ func TestRenderProductionPagesVerifiedSourceAndFencedStage(t *testing.T) {
 	require.NotEmpty(t, fresh.SHA256)
 
 	handles.stageErr = ErrJobStaleClaim
+	handles.stage = ProductionPageStage{}
 	engine, err = pdfproduction.NewPDFium(recipe)
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, engine.Close()) })

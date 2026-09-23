@@ -158,6 +158,7 @@ func PublishVerifiedProductionJob(ctx context.Context, publisher ProductionFinal
 	replayed, loadErr := publisher.LoadProductionJob(ctx, job.ID)
 	if loadErr == nil && replayed.State == ProductionJobSucceeded && replayed.Receipt == receipt &&
 		replayed.Manifest.SHA256 == manifest.SHA256 && slices.Equal(replayed.Endorsements, endorsements) {
+		replayed.Reservation = plan.Reservation
 		return replayed, nil
 	}
 	return Job{}, err

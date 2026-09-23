@@ -46,6 +46,14 @@ func (o *productionPDFOpener) OpenStreamContext(_ context.Context, hash string) 
 
 func finalizedProductionCheckpointFixture(t *testing.T) (*Store, production.FinalizedProduction, production.Job, documentproduction.NumberReservation) {
 	t.Helper()
+	s, finalized, job := unreservedProductionCheckpointFixture(t)
+	reservation, err := s.ReserveProductionJobNumbers(t.Context(), job, finalized)
+	require.NoError(t, err)
+	return s, finalized, job, reservation
+}
+
+func unreservedProductionCheckpointFixture(t *testing.T) (*Store, production.FinalizedProduction, production.Job) {
+	t.Helper()
 	s, _, _, setID, revision, authority := productionDuplicateGateFixture(t)
 	const snapshotID = "76000000-0000-4000-8000-000000000001"
 	_, err := s.SealProductionNumberingSnapshot(t.Context(), snapshotID, authority.Audit.OperationID)
@@ -67,9 +75,7 @@ func finalizedProductionCheckpointFixture(t *testing.T) (*Store, production.Fina
 		NumberingProfileSHA256: draft.NumberingRecipeSHA256,
 	})
 	require.NoError(t, err)
-	reservation, err := s.ReserveProductionJobNumbers(t.Context(), job, finalized)
-	require.NoError(t, err)
-	return s, finalized, job, reservation
+	return s, finalized, job
 }
 
 func TestProductionFinalizedPDFHandleChecksCatalogAndVerifiedBytes(t *testing.T) {

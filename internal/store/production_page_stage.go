@@ -304,6 +304,9 @@ func (s *Store) LoadProductionPageStage(ctx context.Context, jobID, memberID str
 	defer func() { _ = tx.Rollback() }()
 	stage, err := s.loadProductionPageStageTx(ctx, tx, jobID, memberID, page)
 	if err != nil {
+		if errors.Is(err, ErrNotFound) {
+			return productionservice.ProductionPageStage{}, errors.Join(ErrNotFound, productionservice.ErrJobStageMissing)
+		}
 		return productionservice.ProductionPageStage{}, err
 	}
 	if err := tx.Commit(); err != nil {
