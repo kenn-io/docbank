@@ -13,6 +13,8 @@ import (
 	"path"
 	"slices"
 	"strings"
+	"unicode"
+	"unicode/utf8"
 )
 
 // Package preserves manifest declarations and spine occurrences before admission.
@@ -154,6 +156,7 @@ func validateMetadataXMLContext(ctx context.Context, body []byte) error {
 		return nil
 	}
 	elements := 0
+	doctypeSeen := false
 	for index := 0; index < len(body); {
 		if err := checkContext(); err != nil {
 			return err
@@ -182,6 +185,18 @@ func validateMetadataXMLContext(ctx context.Context, body []byte) error {
 				index++
 			}
 			index += min(3, len(body)-index)
+			continue
+		}
+		if bytes.HasPrefix(body[index:], []byte("<!DOCTYPE")) {
+			if doctypeSeen || elements > 0 {
+				return errors.New("EPUB XML DOCTYPE must appear once before the root element")
+			}
+			doctypeSeen = true
+			var err error
+			index, err = validateMetadataXMLDoctypeContext(body, index+len("<!DOCTYPE"), checkContext)
+			if err != nil {
+				return err
+			}
 			continue
 		}
 		if body[index+1] == '?' {
@@ -240,6 +255,199 @@ func validateMetadataXMLContext(ctx context.Context, body []byte) error {
 		}
 	}
 	return nil
+}
+
+func isXMLWhitespace(character byte) bool {
+	switch character {
+	case ' ', '\t', '\r', '\n':
+		return true
+	default:
+		return false
+	}
+}
+
+func validateMetadataXMLDoctypeContext(
+	body []byte,
+	index int,
+	checkContext func() error,
+) (int, error) {
+	if index >= len(body) || !isXMLWhitespace(body[index]) {
+		return index, errors.New("EPUB XML DOCTYPE is invalid")
+	}
+	var err error
+	index, err = skipXMLWhitespace(body, index, checkContext)
+	if err != nil {
+		return index, err
+	}
+	index, err = readXMLDoctypeName(body, index, checkContext)
+	if err != nil {
+		return index, err
+	}
+	if index >= len(body) {
+		return index, errors.New("EPUB XML DOCTYPE is invalid")
+	}
+	if body[index] == '[' {
+		return index, errors.New("EPUB XML DOCTYPE internal subset is unsupported")
+	}
+	if body[index] == '>' {
+		return index + 1, nil
+	}
+	if !isXMLWhitespace(body[index]) {
+		return index, errors.New("EPUB XML DOCTYPE is invalid")
+	}
+	index, err = skipXMLWhitespace(body, index, checkContext)
+	if err != nil {
+		return index, err
+	}
+	if index < len(body) && body[index] == '[' {
+		return index, errors.New("EPUB XML DOCTYPE internal subset is unsupported")
+	}
+	if index < len(body) && body[index] == '>' {
+		return index + 1, nil
+	}
+	keywordStart := index
+	index, err = readXMLDoctypeWord(body, index, checkContext)
+	if err != nil {
+		return index, err
+	}
+	keyword := string(body[keywordStart:index])
+	if keyword != "SYSTEM" && keyword != "PUBLIC" {
+		return index, errors.New("EPUB XML DOCTYPE is invalid")
+	}
+	if index >= len(body) || !isXMLWhitespace(body[index]) {
+		return index, errors.New("EPUB XML DOCTYPE is invalid")
+	}
+	index, err = skipXMLWhitespace(body, index, checkContext)
+	if err != nil {
+		return index, err
+	}
+	index, err = readXMLDoctypeLiteral(body, index, checkContext, keyword == "PUBLIC")
+	if err != nil {
+		return index, err
+	}
+	if keyword == "PUBLIC" {
+		if index >= len(body) || !isXMLWhitespace(body[index]) {
+			return index, errors.New("EPUB XML PUBLIC identifier is invalid")
+		}
+		index, err = skipXMLWhitespace(body, index, checkContext)
+		if err != nil {
+			return index, err
+		}
+		index, err = readXMLDoctypeLiteral(body, index, checkContext, false)
+		if err != nil {
+			return index, err
+		}
+	}
+	index, err = skipXMLWhitespace(body, index, checkContext)
+	if err != nil {
+		return index, err
+	}
+	if index < len(body) && body[index] == '[' {
+		return index, errors.New("EPUB XML DOCTYPE internal subset is unsupported")
+	}
+	if index >= len(body) || body[index] != '>' {
+		return index, errors.New("EPUB XML DOCTYPE is invalid")
+	}
+	return index + 1, nil
+}
+
+func readXMLDoctypeLiteral(
+	body []byte,
+	index int,
+	checkContext func() error,
+	publicID bool,
+) (int, error) {
+	if index >= len(body) || (body[index] != '\'' && body[index] != '"') {
+		return index, errors.New("EPUB XML DOCTYPE literal is invalid")
+	}
+	quote := body[index]
+	index++
+	for ; index < len(body); index++ {
+		if err := checkContext(); err != nil {
+			return index, err
+		}
+		if body[index] == quote {
+			return index + 1, nil
+		}
+		if publicID && !isXMLPubidCharacter(body[index]) {
+			return index, errors.New("EPUB XML PUBLIC identifier is invalid")
+		}
+		if !publicID {
+			character, size := utf8.DecodeRune(body[index:])
+			if character == utf8.RuneError && size == 1 || !isXMLCharacter(character) {
+				return index, errors.New("EPUB XML DOCTYPE literal contains an invalid character")
+			}
+			index += size - 1
+		}
+	}
+	return index, errors.New("EPUB XML DOCTYPE literal is invalid")
+}
+
+func skipXMLWhitespace(body []byte, index int, checkContext func() error) (int, error) {
+	for index < len(body) && isXMLWhitespace(body[index]) {
+		if err := checkContext(); err != nil {
+			return index, err
+		}
+		index++
+	}
+	return index, nil
+}
+
+func readXMLDoctypeName(body []byte, index int, checkContext func() error) (int, error) {
+	start := index
+	for index < len(body) {
+		character, size := utf8.DecodeRune(body[index:])
+		valid := isXMLNameStart(character)
+		if index != start {
+			valid = isXMLNameCharacter(character)
+		}
+		if !valid {
+			break
+		}
+		if err := checkContext(); err != nil {
+			return index, err
+		}
+		index += size
+	}
+	if index == start {
+		return index, errors.New("EPUB XML DOCTYPE name is invalid")
+	}
+	return index, nil
+}
+
+func readXMLDoctypeWord(body []byte, index int, checkContext func() error) (int, error) {
+	start := index
+	for index < len(body) && !isXMLWhitespace(body[index]) && body[index] != '>' && body[index] != '[' && body[index] != ']' && body[index] != '\'' && body[index] != '"' {
+		if err := checkContext(); err != nil {
+			return index, err
+		}
+		index++
+	}
+	if index == start {
+		return index, errors.New("EPUB XML DOCTYPE keyword is invalid")
+	}
+	return index, nil
+}
+
+func isXMLNameStart(character rune) bool {
+	return character == ':' || character == '_' || unicode.IsLetter(character)
+}
+
+func isXMLNameCharacter(character rune) bool {
+	return isXMLNameStart(character) || unicode.IsDigit(character) || character == '-' || character == '.' || character == 0xb7 || character >= 0x300 && character <= 0x36f
+}
+
+func isXMLCharacter(character rune) bool {
+	return character == 0x9 || character == 0xa || character == 0xd ||
+		character >= 0x20 && character <= 0xd7ff ||
+		character >= 0xe000 && character <= 0xfffd ||
+		character >= 0x10000 && character <= 0x10ffff
+}
+
+func isXMLPubidCharacter(character byte) bool {
+	return character == 0x20 || character == 0xd || character == 0xa ||
+		character >= 'a' && character <= 'z' || character >= 'A' && character <= 'Z' ||
+		character >= '0' && character <= '9' || strings.ContainsRune("-'()+,./:=?;!*#@$_%", rune(character))
 }
 
 func decodeXMLContext(ctx context.Context, body []byte, target any) error {

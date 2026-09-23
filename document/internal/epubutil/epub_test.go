@@ -67,8 +67,8 @@ func TestReadPackagesPreservesDeclarationsAndOccurrences(t *testing.T) {
 	var buffer bytes.Buffer
 	writer := zip.NewWriter(&buffer)
 	for _, entry := range []struct{ name, body string }{
-		{"META-INF/container.xml", `<container xmlns="urn:oasis:names:tc:opendocument:xmlns:container"><rootfiles><rootfile full-path="a.opf"/><rootfile full-path="b.opf"/></rootfiles></container>`},
-		{"a.opf", `<package xml:base="A/"><manifest xml:base="B/"><item id="a" href="chapter" media-type="application/xhtml+xml"/><item id="a" href="chapter" media-type="image/svg+xml"/></manifest><spine><itemref idref="a"/><itemref idref="a" linear="no"/></spine></package>`},
+		{"META-INF/container.xml", `<!DOCTYPE container SYSTEM "container.dtd"><container xmlns="urn:oasis:names:tc:opendocument:xmlns:container"><rootfiles><rootfile full-path="a.opf"/><rootfile full-path="b.opf"/></rootfiles></container>`},
+		{"a.opf", `<!DOCTYPE package PUBLIC "-//IDPF//DTD OEBPS Package Document 1.0//EN" "https://example.org/package.dtd"><package xml:base="A/"><manifest xml:base="B/"><item id="a" href="chapter" media-type="application/xhtml+xml"/><item id="a" href="chapter" media-type="image/svg+xml"/></manifest><spine><itemref idref="a"/><itemref idref="a" linear="no"/></spine></package>`},
 		{"b.opf", `<package><manifest><item id="b" href="chapter" media-type="application/xml"/></manifest></package>`},
 	} {
 		file, err := writer.Create(entry.name)
@@ -203,6 +203,38 @@ func TestMetadataXMLContextCancelsDuringComment(t *testing.T) {
 	ctx = &cancelAfterParseContext{cancelAt: 2}
 	err = validateMetadataXMLContext(ctx, body)
 	require.ErrorIs(t, err, context.Canceled)
+}
+
+func TestMetadataXMLAllowsExternalDOCTYPE(t *testing.T) {
+	for _, body := range []string{
+		`<!DOCTYPE container ><container/>`,
+		`<!DOCTYPE container><container/>`,
+		`<!DOCTYPE container SYSTEM "container.dtd"><container/>`,
+		`<!DOCTYPE container PUBLIC "-//OASIS//DTD Container 1.0//EN" "https://example.org/container.dtd"><container/>`,
+	} {
+		require.NoError(t, validateMetadataXMLContext(t.Context(), []byte(body)))
+	}
+	for _, test := range []struct {
+		body string
+		want string
+	}{
+		{`<!DOCTYPE container [<!ENTITY secret "value">]><container/>`, "internal subset"},
+		{`<!DOCTYPE container PUBLIC "id"><container/>`, "PUBLIC identifier"},
+		{`<!DOCTYPE container PUBLIC "id&bad" "system"><container/>`, "PUBLIC identifier"},
+		{`<!DOCTYPE container "bogus"><container/>`, "DOCTYPE keyword"},
+		{`<!DOCTYPE 1><container/>`, "DOCTYPE name"},
+		{`<!DOCTYPE )><container/>`, "DOCTYPE name"},
+		{`<!DOCTYPE container SYSTEM "bad` + "\x00" + `"><container/>`, "invalid character"},
+	} {
+		require.ErrorContains(t, validateMetadataXMLContext(t.Context(), []byte(test.body)), test.want)
+	}
+	require.ErrorContains(t, validateMetadataXMLContext(t.Context(), []byte(`<container><!DOCTYPE container></container>`)), "before the root")
+	require.ErrorContains(t, validateMetadataXMLContext(t.Context(), []byte(`<!DOCTYPE container><!DOCTYPE container><container/>`)), "once")
+	require.ErrorContains(t, validateMetadataXMLContext(t.Context(), []byte("<!DOCTYPE container SYSTEM \"bad\xff\"><container/>")), "invalid character")
+
+	body := []byte(`<!DOCTYPE ` + strings.Repeat("container", 1<<17) + `><container/>`)
+	ctx := &cancelAfterParseContext{cancelAt: 2}
+	require.ErrorIs(t, validateMetadataXMLContext(ctx, body), context.Canceled)
 }
 
 type cancelOnOffsetReaderAt struct {
