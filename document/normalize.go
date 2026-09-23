@@ -1343,6 +1343,9 @@ func (w *renditionHTMLWriter) startTag(token html.Token, tokenOffset int, suppre
 				}
 			}
 		}
+		if !w.charge(2*int64(unsafe.Sizeof(renditionList{})) + 2*int64(unsafe.Sizeof(renditionListFrame{}))) {
+			return
+		}
 		list := &renditionList{ordered: tag == "ol", start: start, tight: tight}
 		w.appendBlock(renditionBlock{kind: renditionListBlock, list: list})
 		w.lists = append(w.lists, renditionListFrame{list: list, itemIndex: -1})
@@ -1539,20 +1542,20 @@ func (w *renditionHTMLWriter) endTag(tag string) {
 			if w.inCell {
 				w.endTag("td")
 			}
-			if !w.charge(int64(len(w.tableRow)) + 1) {
+			if !w.charge(2 * int64(unsafe.Sizeof([][]renditionInline{}))) {
 				return
 			}
-			w.table = append(w.table, append([][]renditionInline(nil), w.tableRow...))
+			w.table = append(w.table, w.tableRow)
 			w.tableRow = nil
 			w.inRow = false
 		}
 	case "td", "th":
 		if w.inTable && w.inCell {
 			w.flushPendingSpace()
-			if !w.charge(int64(len(w.tableCell)) + 1) {
+			if !w.charge(2 * int64(unsafe.Sizeof([]renditionInline{}))) {
 				return
 			}
-			w.tableRow = append(w.tableRow, append([]renditionInline(nil), w.tableCell...))
+			w.tableRow = append(w.tableRow, w.tableCell)
 			w.tableCell = nil
 			w.inCell = false
 		}
@@ -1705,7 +1708,7 @@ func (w *renditionHTMLWriter) startBlock(kind renditionBlockKind, level int) {
 }
 
 func (w *renditionHTMLWriter) startListItem() {
-	if !w.charge(1) {
+	if !w.charge(2 * int64(unsafe.Sizeof(renditionListItem{}))) {
 		return
 	}
 	w.closeLinks()
@@ -1747,7 +1750,7 @@ func (w *renditionHTMLWriter) closeLinks() {
 }
 
 func (w *renditionHTMLWriter) appendBlock(block renditionBlock) {
-	if !w.charge(1) {
+	if !w.charge(2 * int64(unsafe.Sizeof(renditionBlock{}))) {
 		return
 	}
 	if len(w.lists) > 0 {

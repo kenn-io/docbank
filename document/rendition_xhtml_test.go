@@ -111,6 +111,12 @@ func TestRenditionXHTMLWhitespaceAllocationBudget(t *testing.T) {
 	require.ErrorIs(t, err, ErrRenditionXHTMLBudget)
 }
 
+func TestRenditionXHTMLStructuralAllocationBudget(t *testing.T) {
+	source := []byte(`<html xmlns="http://www.w3.org/1999/xhtml"><body>` + strings.Repeat(`<ul></ul>`, 1<<20) + `</body></html>`)
+	_, err := RenditionMarkdownFromXHTML(source, 16<<20)
+	require.ErrorIs(t, err, ErrRenditionXHTMLBudget)
+}
+
 func TestRenditionXHTMLContextCancellation(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
