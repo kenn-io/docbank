@@ -56,7 +56,8 @@ func commandExitCode(err error, started bool) int {
 	if errors.Is(err, store.ErrNotFound) {
 		return exitNotFound
 	}
-	if errors.Is(err, store.ErrStaleRevision) || errors.Is(err, store.ErrAuditPreviewStale) {
+	if errors.Is(err, store.ErrStaleRevision) || errors.Is(err, store.ErrPhotoAssetRevision) ||
+		errors.Is(err, store.ErrAuditPreviewStale) {
 		return exitStale
 	}
 	if errors.Is(err, home.ErrVaultLocked) || errors.Is(err, backup.ErrRepoLocked) ||
@@ -68,7 +69,8 @@ func commandExitCode(err error, started bool) int {
 		errors.Is(err, store.ErrSearchQueryRequired) ||
 		errors.Is(err, store.ErrInvalidBatchMove) ||
 		errors.Is(err, store.ErrInvalidVersionPrune) ||
-		errors.Is(err, store.ErrInvalidAuditCursor) {
+		errors.Is(err, store.ErrInvalidAuditCursor) || errors.Is(err, store.ErrInvalidPhotoAsset) ||
+		errors.Is(err, store.ErrPhotoNodeNotEligible) {
 		return exitUsage
 	}
 	if code, ok := daemonconn.ProblemCode(err); ok &&

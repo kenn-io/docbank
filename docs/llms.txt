@@ -25,6 +25,7 @@ Every public page is also published as raw Markdown at the route listed below.
 - [Email PDFs](https://docbank.ai/docs/usage/email-pdf.md): Render one exact email version and keep a verified PDF alongside its original EML.
 - [Organizing & Tagging](https://docbank.ai/docs/usage/organizing.md): Browsing, moving, renaming, and tagging in the virtual tree.
 - [Searching](https://docbank.ai/docs/usage/searching.md): Ranked, prefix-matching search over document names and verified text content.
+- [Photo Assets](https://docbank.ai/docs/usage/photos.md): Group ordinary file nodes into revisioned photo assets with display choices and portable receipts.
 - [Search exports](https://docbank.ai/docs/usage/search-exports.md): Export dated search counts as CSV, review date evidence, and verify a frozen evidence ZIP.
 - [Document processing](https://docbank.ai/docs/usage/document-processing.md): Preview, consent to, and run configured document derivatives without losing source authority.
 - [Document processing search](https://docbank.ai/docs/usage/search.md): Search only the exact document versions a consumer currently authorizes.

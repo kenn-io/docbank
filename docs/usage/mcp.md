@@ -80,10 +80,11 @@ client registration, scopes, or token refresh. A client may connect locally or
 through a trusted tunnel, but it must be able to set the Authorization header;
 clients that require the MCP HTTP OAuth flow are unsupported.
 
-Both transports have the fixed 19-tool read catalog described below.
+Both transports have the fixed 20-tool read catalog described below.
 `--allow-processing` adds only guarded processing start.
 `--allow-package-writes` separately permits load-file preflight, import, and
-custodian changes. Enable either flag or both when starting the process.
+custodian changes. `--allow-photo-edits` separately permits photo asset
+mutations. Enable any combination of flags when starting the process.
 
 ## Exact protocol contract
 
@@ -152,6 +153,21 @@ links, is capped at 1 MiB.
 | `list_package_members` | Pages through a package's immutable document occurrences. |
 | `get_package_record` | Reads one immutable sender row by its package-scoped record key. |
 | `lookup_bates_label` | Finds bounded package-scoped matches for an exact received or assigned label. |
+| `get_photo_asset` | Reads one photo asset by asset UUID or positive node ID. The response has at most 256 files and includes the selected display source. |
+
+Starting the server with `--allow-photo-edits` adds these write tools:
+
+| Tool | Contract and important bounds |
+| --- | --- |
+| `create_photo_asset` | Creates an asset for one positive file node. |
+| `attach_photo_file` | Attaches one node at an expected asset revision. |
+| `detach_photo_file` | Detaches one member at an expected asset revision. |
+| `exclude_photo_asset` | Changes inclusion at an expected asset revision. |
+| `promote_photo_asset` | Explicitly creates an asset for one live file node. |
+
+Photo writes make one daemon request. An ambiguous transport failure returns
+`processing_outcome_unknown`; inspect the asset before retrying. Display and
+vault settings writes remain HTTP and CLI operations.
 
 `list_documents` uses live keyset pagination, not a snapshot. A mutation between
 pages can change later membership or order. Each opaque cursor is at most 32 KiB of ASCII, expires after 15 minutes, and
@@ -201,6 +217,11 @@ capped at 1 KiB and a stable code:
 - `invalid_document_cursor`
 - `invalid_rendition_window`
 - `invalid_rendition_encoding`
+- `invalid_photo_asset`
+- `photo_node_not_eligible`
+- `photo_node_owned`
+- `photo_stale_revision`
+- `audit_mutation_unsupported`
 
 Invalid tool arguments use JSON-RPC `-32602`. Unexpected failures use a
 sanitized JSON-RPC internal error. Stderr records the operation and a fixed

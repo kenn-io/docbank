@@ -573,3 +573,83 @@ func startProcessingSchemas() (schema, schema) {
 	}), cacheRequired("job_id", "embedding_job_ids", "profile_fingerprint", "content_version_id", "state")...)
 	return input, output
 }
+
+func photoFileSchema() schema {
+	return objectSchema(schema{
+		"id":                 uuidSchema(),
+		"asset_id":           uuidSchema(),
+		"node_id":            integerSchema(1, 0),
+		"role":               enumSchema("raw", "image", "video", "sidecar"),
+		"sidecar_of_file_id": uuidSchema(),
+		"created_at":         dateTimeSchema(),
+	}, "id", "asset_id", "node_id", "role", "created_at")
+}
+
+func photoAssetOutputSchema() schema {
+	return rootObjectSchema(withPrivateCache(schema{
+		"id":                       uuidSchema(),
+		"kind":                     enumSchema("photo", "video"),
+		"revision":                 integerSchema(1, 0),
+		"excluded_at":              dateTimeSchema(),
+		"display_file_id":          uuidSchema(),
+		"display_override_file_id": uuidSchema(),
+		"display_source":           enumSchema("asset", "vault", "default", "none"),
+		"created_at":               dateTimeSchema(),
+		"updated_at":               dateTimeSchema(),
+		"files":                    arraySchema(photoFileSchema(), 256),
+	}), "id", "kind", "revision", "display_source", "created_at", "updated_at", "files", "ttlMs", "cacheScope")
+}
+
+func photoAssetMutationSchemas(properties schema, required ...string) (schema, schema) {
+	input := rootObjectSchema(properties, required...)
+	return input, photoAssetOutputSchema()
+}
+
+func getPhotoAssetSchemas() (schema, schema) {
+	return photoAssetMutationSchemas(schema{
+		"asset_id": uuidSchema(),
+		"node_id":  integerSchema(1, 0),
+	})
+}
+
+func createPhotoAssetSchemas() (schema, schema) {
+	return photoAssetMutationSchemas(schema{
+		"node_id": integerSchema(1, 0),
+		"kind":    enumSchema("photo", "video"),
+		"role":    enumSchema("raw", "image", "video", "sidecar"),
+	}, "node_id")
+}
+
+func attachPhotoFileSchemas() (schema, schema) {
+	return photoAssetMutationSchemas(schema{
+		"asset_id":           uuidSchema(),
+		"revision":           integerSchema(1, 0),
+		"node_id":            integerSchema(1, 0),
+		"role":               enumSchema("raw", "image", "video", "sidecar"),
+		"sidecar_of_file_id": uuidSchema(),
+	}, "asset_id", "revision", "node_id")
+}
+
+func detachPhotoFileSchemas() (schema, schema) {
+	return photoAssetMutationSchemas(schema{
+		"asset_id": uuidSchema(),
+		"revision": integerSchema(1, 0),
+		"file_id":  uuidSchema(),
+	}, "asset_id", "revision", "file_id")
+}
+
+func excludePhotoAssetSchemas() (schema, schema) {
+	return photoAssetMutationSchemas(schema{
+		"asset_id": uuidSchema(),
+		"revision": integerSchema(1, 0),
+		"excluded": schema{"type": "boolean"},
+	}, "asset_id", "revision", "excluded")
+}
+
+func promotePhotoNodeSchemas() (schema, schema) {
+	return photoAssetMutationSchemas(schema{
+		"node_id": integerSchema(1, 0),
+		"kind":    enumSchema("photo", "video"),
+		"role":    enumSchema("raw", "image", "video", "sidecar"),
+	}, "node_id")
+}

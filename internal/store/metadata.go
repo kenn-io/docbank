@@ -31,6 +31,7 @@ const (
 	metadataIngestIDField         = "ingest_id"
 	metadataRevisionField         = "revision"
 	metadataCanonicalJSONField    = "canonical_json"
+	metadataUpdatedAtField        = "updated_at"
 )
 
 // MetadataSnapshot owns a dedicated deferred read transaction. Store's normal
@@ -499,6 +500,11 @@ func exportMetadataSnapshotWithVaultIdentity(
 	}
 	if layout.schemaVersion >= 19 {
 		if err := exportMailboxMetadata(ctx, tx, write); err != nil {
+			return err
+		}
+	}
+	if layout.schemaVersion >= 25 {
+		if err := exportPhotoMetadata(ctx, tx, write); err != nil {
 			return err
 		}
 	}
@@ -1042,6 +1048,10 @@ func requirePristineMetadataTarget(ctx context.Context, tx *sql.Tx) error {
 		    + (SELECT COUNT(*) FROM email_body_results)
 		    + (SELECT COUNT(*) FROM email_document_publications)
 		    + (SELECT COUNT(*) FROM email_document_relations)
+		    + (SELECT COUNT(*) FROM photo_assets)
+		    + (SELECT COUNT(*) FROM photo_files)
+		    + (SELECT COUNT(*) FROM photo_library_settings)
+		    + (SELECT COUNT(*) FROM photo_change_receipts)
 		    + (SELECT COUNT(*) FROM mailbox_containers)
 		    + (SELECT COUNT(*) FROM mailbox_chunks)
 		    + (SELECT COUNT(*) FROM mailbox_archives)
@@ -1237,6 +1247,9 @@ func (s *Store) importMetadataRecord(
 	}
 	if err := requireMetadataFields(raw, required, metadataNullableFields[kind]); err != nil {
 		return err
+	}
+	if strings.HasPrefix(kind, "photo_") {
+		return importPhotoMetadataRecord(ctx, tx, kind, raw)
 	}
 	if strings.HasPrefix(kind, "email_") {
 		return importEmailMetadataRecord(ctx, tx, kind, raw)
@@ -1568,6 +1581,10 @@ const (
 	metadataSourceMetadataHeadType        = "source_metadata_head"
 	metadataVisualPreviewGenerationType   = "visual_preview_generation"
 	metadataVisualPreviewHeadType         = "visual_preview_head"
+	metadataPhotoAssetType                = "photo_asset"
+	metadataPhotoFileType                 = "photo_file"
+	metadataPhotoSettingsType             = "photo_library_settings"
+	metadataPhotoReceiptType              = "photo_change_receipt"
 )
 
 var metadataHeaderFields = []string{metadataTypeField, "format", "version", auditVaultIDField, "node_sequence"}
@@ -1596,6 +1613,10 @@ var metadataRequiredFields = map[string][]string{
 	metadataSourceMetadataHeadType:               {metadataTypeField, columnSourceSHA256, metadataGenerationIDField, "published_at"},
 	metadataVisualPreviewGenerationType:          {metadataTypeField, metadataGenerationIDField, auditVaultIDField, metadataContentVersionIDField, columnSourceSHA256, "contract_version", "recipe_fingerprint", "canonical_result", "checksum", metadataCreatedAtField},
 	metadataVisualPreviewHeadType:                {metadataTypeField, metadataContentVersionIDField, metadataGenerationIDField, "published_at"},
+	metadataPhotoAssetType:                       {metadataTypeField, "asset_id", "kind", metadataRevisionField, "excluded_at", "display_file_id", "display_override_file_id", metadataCreatedAtField, metadataUpdatedAtField},
+	metadataPhotoFileType:                        {metadataTypeField, "file_id", "asset_id", metadataNodeIDField, "role", "sidecar_of_file_id", metadataCreatedAtField},
+	metadataPhotoSettingsType:                    {metadataTypeField, "preference", metadataRevisionField, metadataUpdatedAtField},
+	metadataPhotoReceiptType:                     {metadataTypeField, "receipt_id", "operation", "asset_id", "settings_key", "before_revision", "after_revision", "before_json", "after_json", metadataCreatedAtField},
 	metadataCollectionSnapshotType:               {metadataTypeField, "snapshot_id", "vault_id", metadataCanonicalJSONField, metadataPageChecksumField},
 	metadataCollectionSnapshotMemberType:         {metadataTypeField, "snapshot_id", "ordinal", metadataCanonicalJSONField, metadataPageChecksumField},
 	metadataCollectionSnapshotRepresentationType: {metadataTypeField, "snapshot_id", "occurrence_id", "role", "ordinal", metadataCanonicalJSONField, metadataPageChecksumField},
@@ -1619,12 +1640,12 @@ var metadataRequiredFields = map[string][]string{
 	"node":                                       {metadataTypeField, "id", "parent_id", "name", "kind", "current_version_id", metadataRevisionField, metadataCreatedAtField, "modified_at", "trashed_at", "trash_parent", "trash_name"},
 	"content_version":                            {metadataTypeField, "version_id", metadataNodeIDField, columnBlobHash, metadataSizeField, "mime_type", auditRecordedAtField, "node_revision", "introduced_operation_id", "transition_kind", auditSourceVersionIDField},
 	metadataIngestType:                           {metadataTypeField, metadataIngestIDField, "started_at", "source_kind", "source_desc"},
-	metadataCollectionLabelType:                  {metadataTypeField, metadataIngestIDField, "label", metadataRevisionField, "updated_at"},
+	metadataCollectionLabelType:                  {metadataTypeField, metadataIngestIDField, "label", metadataRevisionField, metadataUpdatedAtField},
 	metadataProvenanceType:                       {metadataTypeField, "identity", metadataNodeIDField, metadataIngestIDField, "original_path", "original_mtime", "supersedes"},
 	metadataProvenanceVersionBindingType:         {metadataTypeField, "provenance_identity", metadataContentVersionIDField, "observed_at", "basis_ref"},
 	metadataWatchSourceType:                      {metadataTypeField, "watch_name", "source_ref", metadataNodeIDField, columnBlobHash, metadataSizeField},
 	"tag":                                        {metadataTypeField, "tag_id", "name", metadataRevisionField},
-	metadataSavedQueryType:                       {metadataTypeField, "saved_query_id", "name", "description", "kind", "payload", "fingerprint", metadataRevisionField, metadataCreatedAtField, "updated_at"},
+	metadataSavedQueryType:                       {metadataTypeField, "saved_query_id", "name", "description", "kind", "payload", "fingerprint", metadataRevisionField, metadataCreatedAtField, metadataUpdatedAtField},
 	metadataSavedQueryRunType:                    {metadataTypeField, "run_id", "saved_query_id", "saved_query_revision", "query_fingerprint", "snapshot_id", "member_hash", "total", "total_bytes", "ran_at", "expires_at", "previous_run_id", "previous_member_hash", "previous_total", "previous_query_fingerprint"},
 	"node_tag":                                   {metadataTypeField, metadataNodeIDField, "tag_id"},
 	metadataBatchTagReceiptType:                  {metadataTypeField, auditOperationIDField, "request_digest", "receipt_json"},
@@ -1668,6 +1689,10 @@ var metadataNullableFields = map[string]map[string]bool{
 	"content_version":           {"mime_type": true, auditSourceVersionIDField: true},
 	metadataProvenanceType:      {"original_mtime": true, "supersedes": true},
 	metadataCollectionLabelType: {"label": true},
+	metadataPhotoAssetType:      {"excluded_at": true, "display_file_id": true, "display_override_file_id": true},
+	metadataPhotoFileType:       {"sidecar_of_file_id": true},
+	metadataPhotoSettingsType:   {"preference": true},
+	metadataPhotoReceiptType:    {"asset_id": true, "settings_key": true},
 	metadataSavedQueryRunType: {
 		"previous_run_id": true, "previous_member_hash": true,
 		"previous_total": true, "previous_query_fingerprint": true,
@@ -2083,6 +2108,11 @@ func validateMetadataStateWithVaultIdentity(
 		}
 		if layout.schemaVersion >= 19 {
 			if err := exportMailboxMetadata(ctx, tx, func(any) error { return nil }); err != nil {
+				return err
+			}
+		}
+		if layout.schemaVersion >= 25 {
+			if err := validatePhotoMetadataState(ctx, tx); err != nil {
 				return err
 			}
 		}

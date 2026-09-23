@@ -306,6 +306,35 @@ revise this envelope.
 
 ## Logical metadata portability
 
+### Photo asset authority
+
+Photo tables index ordinary file nodes; they do not copy blob hashes, sizes,
+MIME data, or content versions. `photo_assets` owns asset kind, exclusion,
+revision, and selected or overridden display pointers. `photo_files` owns the
+role and same-asset sidecar relationship for each node. A sidecar never
+becomes a display member, and its source must be a RAW member in the same
+asset.
+
+Image and concrete video files enroll at the end of each file creation owner.
+Email children are excluded through `email_document_relations`, while
+processing sources remain eligible. Automatic enrollment writes no human
+receipt. Existing graphs survive ordinary trash and restore; permanent node
+deletion removes memberships, repairs display pointers, advances each
+affected asset once, and retains an empty asset row.
+
+The settings singleton represents an absent or NULL preference as the built-in
+RAW order, with its own revision fence. Setting it recomputes every inherited
+display in one transaction, including excluded and empty assets, while asset
+overrides remain unchanged. Human graph, display, exclusion, and preference
+changes append bounded immutable `photo_change_receipts` rows. No-op mutations
+keep their revision and append no receipt.
+
+Schema version 24 exports assets, files, settings, and receipts in stable
+JSONL order. Restore requires a pristine target and validates node ownership,
+local pointers, sidecar targets, selected display state, enum-like text,
+revisions, receipt JSON, and the complete graph before commit. Released
+metadata streams remain readable and restore an empty photo authority.
+
 SQLite is Docbank's runtime query and transaction engine, but its historical
 page layout is not the intended long-lived backup contract. The logical
 boundary is deterministic JSONL headed by `docbank-metadata` and an integer

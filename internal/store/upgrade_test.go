@@ -245,6 +245,25 @@ func TestUpgradeReleasedSchemaCreatesEmptySavedQueryRunAuthority(t *testing.T) {
 	}
 }
 
+func TestUpgradeReleasedSchemasCreateEmptyPhotoAuthority(t *testing.T) {
+	for _, test := range v090UpgradeDrivers() {
+		t.Run(test.name, func(t *testing.T) {
+			dbPath := filepath.Join(t.TempDir(), "docbank.db")
+			createV090Fixture(t, dbPath, test.driver)
+			s, err := Open(dbPath, test.driver)
+			require.NoError(t, err)
+			defer func() { require.NoError(t, s.Close()) }()
+			for _, table := range []string{
+				"photo_assets", "photo_files", "photo_library_settings", "photo_change_receipts",
+			} {
+				var count int
+				require.NoError(t, s.db.QueryRow("SELECT COUNT(*) FROM "+table).Scan(&count), table)
+				assert.Zero(t, count, table)
+			}
+		})
+	}
+}
+
 func TestOpenRejectsUnreleasedSchemaWithoutCutover(t *testing.T) {
 	t.Parallel()
 	for _, test := range v090UpgradeDrivers() {
