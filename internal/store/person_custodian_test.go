@@ -13,6 +13,70 @@ func TestCustodianScopeRejectsMixedCoordinates(t *testing.T) {
 	require.Error(t, validateCustodianScope(CustodianScope{Kind: "collection", IngestID: "ingest-a", ContentVersionID: "version-a"}))
 	require.Error(t, validateCustodianScope(CustodianScope{Kind: "document", ContentVersionID: "version-a"}))
 	require.NoError(t, validateCustodianScope(CustodianScope{Kind: "document", ContentVersionID: "version-a", NodeID: 2}))
+	require.NoError(t, validateCustodianScope(CustodianScope{Kind: "package", PackageID: "package-a"}))
+	require.Error(t, validateCustodianScope(CustodianScope{Kind: "package", PackageID: "package-a", PackageRecordID: "record-a"}))
+	require.NoError(t, validateCustodianScope(CustodianScope{Kind: "package", PackageID: "package-a", PackageRecordID: "record-a", HasPackageRecordID: true}))
+	require.Error(t, validateCustodianScope(CustodianScope{Kind: "package", PackageRecordID: "record-a"}))
+	require.Error(t, validateCustodianScope(CustodianScope{Kind: "package", PackageID: "package-a", IngestID: "ingest-a"}))
+	require.Error(t, validateCustodianScope(CustodianScope{Kind: "document", ContentVersionID: "version-a", NodeID: 2, PackageID: "package-a"}))
+}
+
+func TestCustodianPackageScopeKeepsDefaultAndRecordsSeparate(t *testing.T) {
+	s := newTestStore(t)
+	ctx := t.Context()
+	pkg, node := seedReceivedPackage(t, s, "custodian-package")
+	commitReceivedLabel(t, s, pkg, node.CurrentVersionID, "CUS000001")
+	otherRequest := pkg.PackageRequest
+	otherID, err := newUUIDv4()
+	require.NoError(t, err)
+	otherRequest.PackageID = otherID
+	otherRequest.PackageName = "other-custodian-package"
+	run, err := s.PackageIngestRun(ctx, pkg.PackageID)
+	require.NoError(t, err)
+	_, err = s.AdmitPackageImport(ctx, run, otherRequest, packageImportJobRequest(t, s, otherRequest))
+	require.NoError(t, err)
+	otherPackage, err := s.Package(ctx, otherID)
+	require.NoError(t, err)
+	commitReceivedLabel(t, s, otherPackage, node.CurrentVersionID, "OTH000001")
+	packageID := pkg.PackageID
+	recordID, err := PackageRecordKey("VOL001.dat", 1, "DOC-A")
+	require.NoError(t, err)
+	defaultScope := CustodianScope{Kind: "package", PackageID: packageID}
+	recordScope := CustodianScope{Kind: "package", PackageID: packageID, PackageRecordID: recordID, HasPackageRecordID: true}
+	otherScope := CustodianScope{Kind: "package", PackageID: otherPackage.PackageID, PackageRecordID: recordID, HasPackageRecordID: true}
+	set := func(scope CustodianScope, label string) CustodianAssignment {
+		t.Helper()
+		assignment, err := s.SetCustodian(ctx, CustodianRequest{Scope: scope, RawLabel: label,
+			Rank: "primary", Basis: "package_column", SourceRef: "Custodian", IfMatchRevision: 1})
+		require.NoError(t, err)
+		return assignment
+	}
+	def := set(defaultScope, "Default owner")
+	record := set(recordScope, "Record owner")
+	other := set(otherScope, "Other sender")
+	require.Nil(t, record.IngestID)
+	require.Nil(t, record.NodeID)
+	require.Nil(t, record.ContentVersionID)
+	require.Equal(t, packageID, *record.PackageID)
+	require.Equal(t, recordID, *record.PackageRecordID)
+	require.Empty(t, *def.PackageRecordID)
+
+	all, total, err := s.Custodians(ctx, CustodianScope{Kind: "package", PackageID: packageID}, false, 10, 0)
+	require.NoError(t, err)
+	require.EqualValues(t, 2, total)
+	require.Len(t, all, 2)
+	defaults, total, err := s.Custodians(ctx, CustodianScope{Kind: "package", PackageID: packageID, HasPackageRecordID: true}, false, 10, 0)
+	require.NoError(t, err)
+	require.EqualValues(t, 1, total)
+	require.Equal(t, def.AssignmentID, defaults[0].AssignmentID)
+	records, total, err := s.Custodians(ctx, recordScope, false, 10, 0)
+	require.NoError(t, err)
+	require.EqualValues(t, 1, total)
+	require.Equal(t, record.AssignmentID, records[0].AssignmentID)
+	others, total, err := s.Custodians(ctx, otherScope, false, 10, 0)
+	require.NoError(t, err)
+	require.EqualValues(t, 1, total)
+	require.Equal(t, other.AssignmentID, others[0].AssignmentID)
 }
 
 func TestCustodianAssignmentUsesRealVersion(t *testing.T) {
@@ -228,4 +292,69 @@ func TestCustodianAuthorityRejectsInvalidValuesAndReferences(t *testing.T) {
 	require.ErrorIs(t, err, ErrPersonRetired)
 	_, _, err = s.Custodians(ctx, CustodianScope{}, false, 251, 0)
 	require.ErrorIs(t, err, ErrInvalidPerson)
+}
+
+func TestPeopleByDisplayNameUsesFoldedStableCursor(t *testing.T) {
+	s := newTestStore(t)
+	ctx := t.Context()
+	grace, err := s.CreatePerson(ctx, "Grace Hopper", "operator")
+	require.NoError(t, err)
+	_, err = s.CreatePerson(ctx, "Ada Lovelace", "operator")
+	require.NoError(t, err)
+	secondGrace, err := s.CreatePerson(ctx, "GRACE Murray Hopper", "operator")
+	require.NoError(t, err)
+
+	page, err := s.PeopleByDisplayName(ctx, "grace", "", "", 1)
+	require.NoError(t, err)
+	require.Len(t, page, 1)
+	require.Equal(t, grace.PersonID, page[0].PersonID)
+	next, err := s.PeopleByDisplayName(ctx, "grace", page[0].DisplayNameFolded, page[0].PersonID, 10)
+	require.NoError(t, err)
+	require.Len(t, next, 1)
+	require.Equal(t, secondGrace.PersonID, next[0].PersonID)
+}
+
+func TestResolveCustodianPreservesSenderClaimAndResolvesAlias(t *testing.T) {
+	s := newTestStore(t)
+	ctx := t.Context()
+	pkg, node := seedReceivedPackage(t, s, "resolve-custodian")
+	commitReceivedLabel(t, s, pkg, node.CurrentVersionID, "CUS000010")
+	recordID, err := PackageRecordKey("VOL001.dat", 1, "DOC-A")
+	require.NoError(t, err)
+	assignment, err := s.SetCustodian(ctx, CustodianRequest{Scope: CustodianScope{Kind: "package", PackageID: pkg.PackageID,
+		PackageRecordID: recordID, HasPackageRecordID: true}, RawLabel: "Sender Label", Rank: "primary",
+		Basis: "package_column", SourceRef: "CUSTODIAN", IfMatchRevision: 1})
+	require.NoError(t, err)
+	survivor, err := s.CreatePerson(ctx, "Canonical Person", "operator")
+	require.NoError(t, err)
+	alias, err := s.CreatePerson(ctx, "Old Person", "operator")
+	require.NoError(t, err)
+	_, err = s.MergePersons(ctx, survivor.PersonID, alias.PersonID, "11111111-1111-4111-8111-111111111111", survivor.Revision, alias.Revision)
+	require.NoError(t, err)
+
+	resolved, err := s.ResolveCustodian(ctx, assignment.AssignmentID, alias.PersonID, assignment.Revision)
+	require.NoError(t, err)
+	require.Equal(t, assignment.AssignmentID, resolved.AssignmentID)
+	require.Equal(t, assignment.RawLabel, resolved.RawLabel)
+	require.Equal(t, assignment.Rank, resolved.Rank)
+	require.Equal(t, assignment.Basis, resolved.Basis)
+	require.Equal(t, assignment.SourceRef, resolved.SourceRef)
+	require.Equal(t, survivor.PersonID, *resolved.PersonID)
+	require.EqualValues(t, 2, resolved.Revision)
+	_, err = s.ResolveCustodian(ctx, assignment.AssignmentID, survivor.PersonID, 1)
+	require.ErrorIs(t, err, ErrStaleRevision)
+}
+
+func TestOperatorPackageCustodianDoesNotReplaceSenderPrimary(t *testing.T) {
+	s := newTestStore(t)
+	ctx := t.Context()
+	pkg, node := seedReceivedPackage(t, s, "operator-custodian")
+	commitReceivedLabel(t, s, pkg, node.CurrentVersionID, "CUS000020")
+	scope := CustodianScope{Kind: "package", PackageID: pkg.PackageID}
+	_, err := s.SetCustodian(ctx, CustodianRequest{Scope: scope, RawLabel: "Sender Owner", Rank: "primary",
+		Basis: "package_column", SourceRef: "CUSTODIAN", IfMatchRevision: 1})
+	require.NoError(t, err)
+	_, err = s.SetOperatorPackageCustodian(ctx, CustodianRequest{Scope: scope, RawLabel: "Operator Owner",
+		Rank: "primary", Basis: "operator_assigned", SourceRef: "operator", IfMatchRevision: 1})
+	require.ErrorIs(t, err, ErrCustodianConflict)
 }

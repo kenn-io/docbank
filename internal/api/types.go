@@ -5,7 +5,10 @@ import (
 	"go.kenn.io/docbank/internal/store"
 )
 
-const openAPIStringType = "string"
+const (
+	openAPIStringType   = "string"
+	openAPIBinaryFormat = "binary"
+)
 const openAPIQueryLocation = "query"
 const openAPIPathLocation = "path"
 

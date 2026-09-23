@@ -107,6 +107,21 @@ func TestResolverEnforcesConfiguredInventoryBounds(t *testing.T) {
 	require.ErrorIs(t, err, ErrLoadfileLimit)
 }
 
+func TestResolverRejectsIndividualObjectAboveIngestLimitBeforeOpeningIt(t *testing.T) {
+	root := t.TempDir()
+	require.NoError(t, os.Mkdir(filepath.Join(root, "VOL001"), 0o700))
+	path := filepath.Join(root, "VOL001", "oversized.pdf")
+	file, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY, 0o600)
+	require.NoError(t, err)
+	require.NoError(t, file.Truncate(1<<32+1))
+	require.NoError(t, file.Close())
+	resolver, err := NewResolver(t.Context(), root, nil)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, resolver.Close()) })
+	require.ErrorIs(t, resolver.EnforceMaxFileBytes(1<<32), ErrLoadfileLimit)
+	require.NoError(t, resolver.EnforceMaxFileBytes(1<<32+1))
+}
+
 func TestResolverDiscoversLoadFilesAndEnforcesVolumeBound(t *testing.T) {
 	root := t.TempDir()
 	for index := range maxPackageVolumes + 1 {

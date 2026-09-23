@@ -26,6 +26,7 @@ import (
 	internalconfig "go.kenn.io/docbank/internal/config"
 	"go.kenn.io/docbank/internal/emailmime"
 	"go.kenn.io/docbank/internal/home"
+	"go.kenn.io/docbank/internal/mailbox"
 	internalmaintenance "go.kenn.io/docbank/internal/maintenance"
 	internalprocessing "go.kenn.io/docbank/internal/processing"
 	"go.kenn.io/docbank/internal/store"
@@ -55,6 +56,9 @@ var (
 	// ErrVisualPreviewUnavailable means the exact version has a cataloged
 	// unsupported or failed preview result rather than readable preview bytes.
 	ErrVisualPreviewUnavailable = errors.New("docbank visual preview is unavailable")
+	// ErrInvalidArgument means a caller-supplied page limit or cursor is
+	// malformed. The daemon API reports the same condition as a validation error.
+	ErrInvalidArgument = errors.New("docbank invalid argument")
 
 	ErrNotFound                 = store.ErrNotFound
 	ErrExists                   = store.ErrExists
@@ -126,6 +130,7 @@ type StoreBinding struct {
 // may be open concurrently when their roots do not overlap and their processing
 // upload directories are distinct.
 type Vault struct {
+	vaultRoot        string
 	root             *os.Root
 	lock             *home.Lock
 	spoolLock        *home.Lock
@@ -310,7 +315,7 @@ func openVaultWithRootOpener(
 		return nil, err
 	}
 	vault := &Vault{
-		root: root, lock: lock, spoolLock: spoolLock, metadata: metadata, blobs: blobs,
+		vaultRoot: config.Root, root: root, lock: lock, spoolLock: spoolLock, metadata: metadata, blobs: blobs,
 		emailSpoolParent: layout.BlobTmpDir(),
 	}
 	profiles := make(map[string]internalprocessing.ProfileConfig, len(config.Processing.Profiles))
@@ -387,7 +392,28 @@ func openVaultWithRootOpener(
 	}
 	workerContext, cancelWorkers := context.WithCancel(context.Background())
 	vault.processingCancel = cancelWorkers
+	packageMailbox := mailbox.Service{Store: metadata, Blobs: blobs}
+	packageWorker, err := internalprocessing.NewPackageImportWorker(internalprocessing.PackageImportConfig{
+		Catalog: metadata, Blobs: blobs, Mutate: embeddedMutationGate{vault: vault}.MutateContext,
+		Owner: "embedded-package-import-worker-" + metadata.VaultID(), LeaseDuration: 5 * time.Minute,
+		IdleDelay: 25 * time.Millisecond,
+		OpenContainer: func(ctx context.Context, owner, id string) (io.ReaderAt, int64, error) {
+			container, err := metadata.MailboxContainer(ctx, owner, id)
+			if err != nil {
+				return nil, 0, err
+			}
+			if container.Format != "zip" || container.State != "sealed" {
+				return nil, 0, store.ErrMailboxConflict
+			}
+			reader, err := packageMailbox.ReaderAt(ctx, container)
+			return reader, container.Size, err
+		},
+	})
+	if err != nil {
+		return nil, err
+	}
 	continuation := &internalprocessing.MediaContinuationWorker{Service: processingService, IdleDelay: 25 * time.Millisecond}
+	vault.startProcessingWorker(workerContext, packageWorker.Run)
 	vault.startProcessingWorker(workerContext, worker.Run)
 	vault.startProcessingWorker(workerContext, continuation.Run)
 	if embeddingWorker != nil {
@@ -437,7 +463,10 @@ func (v *Vault) Close() error {
 	}
 	v.closed = true
 	if v.processingCancel != nil {
+		// Finish admitted mutations before canceling their transaction contexts.
+		v.mutation.Lock()
 		v.processingCancel()
+		v.mutation.Unlock()
 	}
 	v.processingWG.Wait()
 	v.processingErrMu.Lock()

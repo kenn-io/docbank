@@ -211,6 +211,54 @@ func (b *tuiDaemonBackend) Jobs(ctx context.Context) ([]api.Job, error) {
 	})
 }
 
+func (b *tuiDaemonBackend) Packages(ctx context.Context, direction, after string, limit int) (api.PackagePage, error) {
+	return withTUIClient(ctx, b, func(c *daemonconn.Connection) (api.PackagePage, error) {
+		query := &apiclient.ListPackagesQuery{Limit: new(int64(limit))}
+		if direction != "" {
+			value := apiclient.ListPackagesQueryDirection(direction)
+			query.Direction = &value
+		}
+		if after != "" {
+			query.After = &after
+		}
+		result, err := c.API().ListPackages(ctx, &apiclient.ListPackagesRequestOptions{Query: query})
+		if err != nil {
+			return api.PackagePage{}, err
+		}
+		return *result, nil
+	})
+}
+
+func (b *tuiDaemonBackend) PackageMembers(ctx context.Context, packageID string, afterOrdinal, limit int) (api.PackageMemberPage, error) {
+	return withTUIClient(ctx, b, func(c *daemonconn.Connection) (api.PackageMemberPage, error) {
+		result, err := c.API().ListPackageMembers(ctx, &apiclient.ListPackageMembersRequestOptions{
+			PathParams: &apiclient.ListPackageMembersPath{PackageID: packageID},
+			Query:      &apiclient.ListPackageMembersQuery{AfterOrdinal: new(int64(afterOrdinal)), Limit: new(int64(limit))},
+		})
+		if err != nil {
+			return api.PackageMemberPage{}, err
+		}
+		return *result, nil
+	})
+}
+
+func (b *tuiDaemonBackend) LookupLabel(ctx context.Context, label, packageID, cursor string, limit int) (api.PackageLabelCandidatePage, error) {
+	return withTUIClient(ctx, b, func(c *daemonconn.Connection) (api.PackageLabelCandidatePage, error) {
+		query := &apiclient.ListPackageLabelCandidatesQuery{Label: label, Limit: new(int64(limit))}
+		if cursor != "" {
+			query.Cursor = &cursor
+		}
+		if packageID != "" {
+			query.PackageID = &packageID
+		}
+		result, err := c.API().ListPackageLabelCandidates(ctx, &apiclient.ListPackageLabelCandidatesRequestOptions{Query: query})
+		if err != nil {
+			return api.PackageLabelCandidatePage{}, err
+		}
+		return *result, nil
+	})
+}
+
 func (b *tuiDaemonBackend) Info(ctx context.Context) (api.VaultInfo, error) {
 	return withTUIClient(ctx, b, func(c *daemonconn.Connection) (api.VaultInfo, error) {
 		result, err := c.API().VaultInfo(ctx)

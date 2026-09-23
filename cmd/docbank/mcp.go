@@ -16,9 +16,10 @@ import (
 )
 
 var (
-	mcpTransport       string
-	mcpListen          string
-	mcpAllowProcessing bool
+	mcpTransport          string
+	mcpListen             string
+	mcpAllowProcessing    bool
+	mcpAllowPackageWrites bool
 )
 
 var mcpCmd = &cobra.Command{
@@ -45,7 +46,7 @@ func runMCP(cmd *cobra.Command) (retErr error) {
 	defer cancel()
 
 	server := docmcp.NewServerWithOptions(docmcp.ServerOptions{
-		AllowProcessing: mcpAllowProcessing, Logger: logger,
+		AllowProcessing: mcpAllowProcessing, AllowPackageWrites: mcpAllowPackageWrites, Logger: logger,
 	})
 	switch mcpTransport {
 	case "stdio":
@@ -133,5 +134,7 @@ func init() {
 	mcpCmd.Flags().StringVar(&mcpListen, "listen", "", "explicit loopback IP and port for HTTP")
 	mcpCmd.Flags().BoolVar(&mcpAllowProcessing, "allow-processing", false,
 		"expose guarded start_processing (still requires prior operator consent)")
+	mcpCmd.Flags().BoolVar(&mcpAllowPackageWrites, "allow-package-writes", false,
+		"allow load-file preflight, import, and package custodian writes")
 	rootCmd.AddCommand(mcpCmd)
 }

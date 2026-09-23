@@ -243,7 +243,7 @@ func registerMediaUploadOpenAPI(api huma.API) {
 					"multipart/form-data": {
 						Schema: &huma.Schema{Type: "object", Properties: map[string]*huma.Schema{
 							"metadata": registry.Schema(route.metadata, true, ""),
-							"file":     {Type: openAPIStringType, Format: "binary"},
+							"file":     {Type: openAPIStringType, Format: openAPIBinaryFormat},
 						}, Required: []string{"metadata", "file"}, AdditionalProperties: false},
 						Encoding: map[string]*huma.Encoding{
 							"metadata": {ContentType: jsonMediaType},

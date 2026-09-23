@@ -42,7 +42,7 @@ func registerContentWriteOpenAPI(api huma.API) {
 				Schema:      &huma.Schema{Type: "integer", Format: "int64", Minimum: new(float64(0))}},
 		},
 		RequestBody: &huma.RequestBody{Required: true, Content: map[string]*huma.MediaType{
-			"*/*": {Schema: &huma.Schema{Type: openAPIStringType, Format: "binary"}},
+			"*/*": {Schema: &huma.Schema{Type: openAPIStringType, Format: openAPIBinaryFormat}},
 		}},
 		Responses: map[string]*huma.Response{
 			"200": {Description: "Replacement committed", Headers: map[string]*huma.Param{

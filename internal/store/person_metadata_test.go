@@ -285,3 +285,72 @@ func TestPersonMetadataRejectsInvalidCandidateAndAliasBounds(t *testing.T) {
 		require.ErrorContains(t, validatePersonMetadataState(t.Context(), s.db), "hop limit")
 	})
 }
+
+func TestPersonAndPackageCustodiansMetadataRoundTrip(t *testing.T) {
+	source := newTestStore(t)
+	ctx := t.Context()
+	pkg, node := seedReceivedPackage(t, source, "person-restore")
+	commitReceivedLabel(t, source, pkg, node.CurrentVersionID, "PER000001")
+	recordKey, err := PackageRecordKey("VOL001.dat", 1, "DOC-A")
+	require.NoError(t, err)
+	person, err := source.CreatePerson(ctx, "Synthetic Custodian", "operator")
+	require.NoError(t, err)
+	for _, scope := range []CustodianScope{
+		{Kind: "package", PackageID: pkg.PackageID},
+		{Kind: "package", PackageID: pkg.PackageID, PackageRecordID: recordKey, HasPackageRecordID: true},
+	} {
+		_, err := source.SetCustodian(ctx, CustodianRequest{Scope: scope, PersonID: person.PersonID,
+			RawLabel: person.DisplayName, Rank: "primary", Basis: "package_column", SourceRef: "Custodian", IfMatchRevision: 1})
+		require.NoError(t, err)
+	}
+	var exported bytes.Buffer
+	require.NoError(t, source.ExportMetadata(ctx, &exported))
+	require.Contains(t, exported.String(), `"type":"person"`)
+	require.Contains(t, exported.String(), `"type":"custodian_assignment"`)
+	backup, err := source.BeginMetadataSnapshot(ctx)
+	require.NoError(t, err)
+	var backupData bytes.Buffer
+	require.NoError(t, backup.ExportBackup(ctx, &backupData))
+	require.NoError(t, backup.Close())
+	require.Contains(t, backupData.String(), `"type":"custodian_assignment"`)
+	malformed := bytes.Replace(exported.Bytes(), []byte(`"package_record_id":""`), []byte(`"package_record_id":null`), 1)
+	require.NotEqual(t, exported.Bytes(), malformed)
+	corruptTarget := newTestStore(t)
+	require.ErrorContains(t, corruptTarget.ImportMetadata(ctx, bytes.NewReader(malformed)), "invalid custodian scope coordinates")
+
+	target := newTestStore(t)
+	require.NoError(t, target.ImportMetadata(ctx, bytes.NewReader(exported.Bytes())))
+	got, _, err := target.PersonByID(ctx, person.PersonID)
+	require.NoError(t, err)
+	require.Equal(t, person, got)
+	for _, scope := range []CustodianScope{
+		{Kind: "package", PackageID: pkg.PackageID, HasPackageRecordID: true},
+		{Kind: "package", PackageID: pkg.PackageID, PackageRecordID: recordKey, HasPackageRecordID: true},
+	} {
+		assignments, total, err := target.Custodians(ctx, scope, false, 10, 0)
+		require.NoError(t, err)
+		require.EqualValues(t, 1, total)
+		require.Equal(t, person.PersonID, *assignments[0].PersonID)
+	}
+	var repeated bytes.Buffer
+	require.NoError(t, target.ExportMetadata(ctx, &repeated))
+	require.Equal(t, exported.Bytes(), repeated.Bytes())
+	_, err = target.db.ExecContext(ctx, `UPDATE custodian_assignments SET package_record_id='missing' WHERE package_record_id=?`, recordKey)
+	require.NoError(t, err)
+	require.ErrorContains(t, target.ExportMetadata(ctx, &bytes.Buffer{}), "custodian scope authority")
+}
+
+func TestCustodianPackageScopeRequiresExplicitExistingRecord(t *testing.T) {
+	require.Error(t, validateCustodianScope(CustodianScope{Kind: "package", PackageID: "package-a", PackageRecordID: "record-a"}))
+	s := newTestStore(t)
+	request := CustodianRequest{Scope: CustodianScope{Kind: "package", PackageID: "missing"},
+		RawLabel: "Synthetic", Rank: "primary", Basis: "package_column", IfMatchRevision: 1}
+	_, err := s.SetCustodian(t.Context(), request)
+	require.ErrorIs(t, err, ErrNotFound)
+	pkg, _ := seedReceivedPackage(t, s, "scope-validation")
+	request.Scope.PackageID = pkg.PackageID
+	request.Scope.PackageRecordID = "missing"
+	request.Scope.HasPackageRecordID = true
+	_, err = s.SetCustodian(t.Context(), request)
+	require.ErrorIs(t, err, ErrNotFound)
+}

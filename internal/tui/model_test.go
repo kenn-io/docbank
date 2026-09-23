@@ -67,6 +67,15 @@ type fakeBackend struct {
 	restored                  []api.Node
 	mutationErr               error
 	mutationReceiptErr        error
+	packages                  api.PackagePage
+	packageMembers            map[string]api.PackageMemberPage
+	packageLabels             api.PackageLabelCandidatePage
+	packagesErr               error
+	packagesAfter             string
+	packageMembersAfter       int
+	packageLabelsCursor       string
+	packageLabelsPackageID    string
+	packageLabelsLabel        string
 }
 
 func newFakeBackend() *fakeBackend {
@@ -291,6 +300,24 @@ func (f *fakeBackend) Jobs(_ context.Context) ([]api.Job, error) {
 		return nil, f.jobsErr
 	}
 	return append([]api.Job(nil), f.jobs...), nil
+}
+
+func (f *fakeBackend) Packages(_ context.Context, _, after string, _ int) (api.PackagePage, error) {
+	f.packagesAfter = after
+	return f.packages, f.packagesErr
+}
+
+func (f *fakeBackend) PackageMembers(_ context.Context, packageID string, after, _ int) (api.PackageMemberPage, error) {
+	f.packageMembersAfter = after
+	if f.packagesErr != nil {
+		return api.PackageMemberPage{}, f.packagesErr
+	}
+	return f.packageMembers[packageID], nil
+}
+
+func (f *fakeBackend) LookupLabel(_ context.Context, label, packageID, cursor string, _ int) (api.PackageLabelCandidatePage, error) {
+	f.packageLabelsLabel, f.packageLabelsPackageID, f.packageLabelsCursor = label, packageID, cursor
+	return f.packageLabels, f.packagesErr
 }
 
 func (f *fakeBackend) Info(_ context.Context) (api.VaultInfo, error) {

@@ -96,7 +96,28 @@ func ApplyMapping(records []Record, mapping Mapping, profile Profile, reserve fu
 			diagnostics[index].RowOrdinal = record.RowOrdinal
 		}
 	}
+	deriveAttachmentParents(records)
 	return diagnostics, nil
+}
+
+// deriveAttachmentParents gives a child listed only in a parent's attachment
+// column the same parent edge a PARENTID column would have declared. An
+// explicit parent column always wins; cycle checks run later on the result.
+func deriveAttachmentParents(records []Record) {
+	byID := make(map[string]int, len(records))
+	for index, record := range records {
+		if record.DocID != "" {
+			byID[record.DocID] = index
+		}
+	}
+	for _, record := range records {
+		for _, child := range record.Family.AttachmentDocIDs {
+			index, ok := byID[child]
+			if ok && child != record.DocID && records[index].Family.ParentDocID == "" {
+				records[index].Family.ParentDocID = record.DocID
+			}
+		}
+	}
 }
 
 func mappedValue(raw string, column MappingColumn, profile Profile, diagnostics *[]Diagnostic, reserve func(int64) error) (Value, error) {

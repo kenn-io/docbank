@@ -30,6 +30,7 @@ const (
 	metadataContentVersionIDField = "content_version_id"
 	metadataIngestIDField         = "ingest_id"
 	metadataRevisionField         = "revision"
+	metadataCanonicalJSONField    = "canonical_json"
 )
 
 // MetadataSnapshot owns a dedicated deferred read transaction. Store's normal
@@ -432,6 +433,14 @@ func exportMetadataSnapshotWithVaultIdentity(
 	}
 	if layout.schemaVersion >= 18 {
 		if err := exportBundleMetadata(ctx, tx, write); err != nil {
+			return err
+		}
+	}
+	if layout.schemaVersion >= 22 {
+		if err := exportPackageMetadata(ctx, tx, write); err != nil {
+			return err
+		}
+		if err := exportPackageImportMetadata(ctx, tx, write); err != nil {
 			return err
 		}
 	}
@@ -1336,6 +1345,12 @@ func (s *Store) importMetadataRecord(
 		return importPageMetadata(ctx, tx, kind, raw)
 	case metadataExportType:
 		return importBundleMetadata(ctx, tx, raw)
+	case metadataCollectionSnapshotType, metadataCollectionSnapshotMemberType,
+		metadataCollectionSnapshotRepresentationType, metadataPackageType, metadataPackageVolumeType:
+		return importPackageMetadata(ctx, tx, kind, raw)
+	case metadataPackageRecordType, metadataPackageLabelType, metadataPackageImportReceiptType,
+		metadataPackageImportHeadType, metadataPackageImportJobType:
+		return importPackageImportMetadata(ctx, tx, kind, raw)
 	case metadataVisualPreviewHeadType:
 		var v metadataVisualPreviewHead
 		if err := decodeMetadataRecord(raw, &v); err != nil {
@@ -1558,80 +1573,90 @@ const (
 var metadataHeaderFields = []string{metadataTypeField, "format", "version", auditVaultIDField, "node_sequence"}
 
 var metadataRequiredFields = map[string][]string{
-	"mailbox_job":                          {metadataTypeField, "job"},
-	"mailbox_occurrence":                   {metadataTypeField, "occurrence"},
-	"mailbox_container":                    {metadataTypeField, "container"},
-	"mailbox_archive":                      {metadataTypeField, "archive"},
-	"mailbox_transfer_receipt":             {metadataTypeField, "receipt"},
-	"mailbox_transfer_head":                {metadataTypeField, "archive_id", "reference", "receipt_id"},
-	"email_body_result":                    {"type", "email_attachment_id", "body_recipe_fingerprint", "state", "part_path", "rendition_attachment_id", "reason"},
-	"email_head":                           {"type", "content_version_id", metadataAttachmentIDField, "published_at"},
-	"email_attachment":                     {"type", metadataAttachmentIDField, "content_version_id", "generation_id", "attached_at"},
-	"email_part_artifact":                  {"type", "generation_id", "part_path", "role", "blob_hash", "size"},
-	"email_generation":                     {"type", "generation_id", "source_sha256", "source_size", "recipe_fingerprint", "canonical_json", "checksum", "created_at"},
-	"email_document_publication":           {"type", "request", "receipt"},
-	metadataExportType:                     {metadataTypeField, "kind", "id", "ordinal", "retain_until", "canonical_json", "checksum"},
-	metadataPageDocumentType:               {metadataTypeField, "canonical_json", metadataPageChecksumField},
-	metadataPageRecipeType:                 {metadataTypeField, "canonical_json", metadataPageChecksumField},
-	metadataPageImageType:                  {metadataTypeField, "canonical_json", metadataPageChecksumField},
-	metadataPageJobType:                    {metadataTypeField, "canonical_json", metadataPageChecksumField},
-	"blob":                                 {metadataTypeField, "hash", metadataSizeField, metadataCreatedAtField},
-	metadataBlobChecksumType:               {metadataTypeField, "blob_sha256", "md5"},
-	metadataSourceMetadataGenerationType:   {metadataTypeField, metadataGenerationIDField, columnSourceSHA256, "contract_version", "extractor_fingerprint", "canonical_json", "checksum", metadataCreatedAtField},
-	metadataSourceMetadataHeadType:         {metadataTypeField, columnSourceSHA256, metadataGenerationIDField, "published_at"},
-	metadataVisualPreviewGenerationType:    {metadataTypeField, metadataGenerationIDField, auditVaultIDField, metadataContentVersionIDField, columnSourceSHA256, "contract_version", "recipe_fingerprint", "canonical_result", "checksum", metadataCreatedAtField},
-	metadataVisualPreviewHeadType:          {metadataTypeField, metadataContentVersionIDField, metadataGenerationIDField, "published_at"},
-	metadataPersonType:                     personMetadataRequiredFields[metadataPersonType],
-	metadataPersonIdentityType:             personMetadataRequiredFields[metadataPersonIdentityType],
-	metadataPersonExternalType:             personMetadataRequiredFields[metadataPersonExternalType],
-	metadataPersonExternalAliasType:        personMetadataRequiredFields[metadataPersonExternalAliasType],
-	metadataPersonAliasType:                personMetadataRequiredFields[metadataPersonAliasType],
-	metadataPersonMergeType:                personMetadataRequiredFields[metadataPersonMergeType],
-	metadataPersonSplitType:                personMetadataRequiredFields[metadataPersonSplitType],
-	metadataCustodianAssignmentType:        personMetadataRequiredFields[metadataCustodianAssignmentType],
-	metadataPersonAssertionType:            personMetadataRequiredFields[metadataPersonAssertionType],
-	metadataPersonCandidateType:            personMetadataRequiredFields[metadataPersonCandidateType],
-	"node":                                 {metadataTypeField, "id", "parent_id", "name", "kind", "current_version_id", metadataRevisionField, metadataCreatedAtField, "modified_at", "trashed_at", "trash_parent", "trash_name"},
-	"content_version":                      {metadataTypeField, "version_id", metadataNodeIDField, columnBlobHash, metadataSizeField, "mime_type", auditRecordedAtField, "node_revision", "introduced_operation_id", "transition_kind", auditSourceVersionIDField},
-	metadataIngestType:                     {metadataTypeField, metadataIngestIDField, "started_at", "source_kind", "source_desc"},
-	metadataCollectionLabelType:            {metadataTypeField, metadataIngestIDField, "label", metadataRevisionField, "updated_at"},
-	metadataProvenanceType:                 {metadataTypeField, "identity", metadataNodeIDField, metadataIngestIDField, "original_path", "original_mtime", "supersedes"},
-	metadataProvenanceVersionBindingType:   {metadataTypeField, "provenance_identity", metadataContentVersionIDField, "observed_at", "basis_ref"},
-	metadataWatchSourceType:                {metadataTypeField, "watch_name", "source_ref", metadataNodeIDField, columnBlobHash, metadataSizeField},
-	"tag":                                  {metadataTypeField, "tag_id", "name", metadataRevisionField},
-	metadataSavedQueryType:                 {metadataTypeField, "saved_query_id", "name", "description", "kind", "payload", "fingerprint", metadataRevisionField, metadataCreatedAtField, "updated_at"},
-	metadataSavedQueryRunType:              {metadataTypeField, "run_id", "saved_query_id", "saved_query_revision", "query_fingerprint", "snapshot_id", "member_hash", "total", "total_bytes", "ran_at", "expires_at", "previous_run_id", "previous_member_hash", "previous_total", "previous_query_fingerprint"},
-	metadataTermReportHistoryType:          {metadataTypeField, "id", "parent_id", "observed_at", "request_json", "summary_json"},
-	"node_tag":                             {metadataTypeField, metadataNodeIDField, "tag_id"},
-	metadataBatchTagReceiptType:            {metadataTypeField, auditOperationIDField, "request_digest", "receipt_json"},
-	"extracted_text":                       {metadataTypeField, columnBlobHash, "extractor", "extractor_version", "status", "error", "attempts", "text", "extracted_at"},
-	metadataAuditAuthorityType:             {metadataTypeField, "lineage_id", "operation_sequence_high_water", "allocation_genesis_digest", "allocation_entry_count", "allocation_head"},
-	metadataAuditScopeType:                 {metadataTypeField, auditScopeIDField, "target_node_id", "enable_operation_id", "entry_count", "chain_head"},
-	metadataAuditMembershipType:            {metadataTypeField, auditScopeIDField, metadataNodeIDField, "baseline_digest"},
-	metadataAuditRecordType:                {metadataTypeField, "digest", "record"},
-	metadataProcessingIncarnationType:      processingMetadataRequiredFields[metadataProcessingIncarnationType],
-	metadataProcessingConsentGrantType:     processingMetadataRequiredFields[metadataProcessingConsentGrantType],
-	metadataProcessingConsentRevokeType:    processingMetadataRequiredFields[metadataProcessingConsentRevokeType],
-	metadataProcessingProfileType:          processingMetadataRequiredFields[metadataProcessingProfileType],
-	metadataRenditionBuildType:             processingMetadataRequiredFields[metadataRenditionBuildType],
-	metadataRenditionArtifactType:          processingMetadataRequiredFields[metadataRenditionArtifactType],
-	metadataRenditionUnitType:              processingMetadataRequiredFields[metadataRenditionUnitType],
-	metadataRenditionSegmentType:           processingMetadataRequiredFields[metadataRenditionSegmentType],
-	metadataRenditionAttachType:            processingMetadataRequiredFields[metadataRenditionAttachType],
-	metadataRenditionHeadType:              processingMetadataRequiredFields[metadataRenditionHeadType],
-	metadataLexicalGenerationType:          processingMetadataRequiredFields[metadataLexicalGenerationType],
-	metadataCurrentRenditionRootType:       processingMetadataRequiredFields[metadataCurrentRenditionRootType],
-	metadataDerivativePurgeSuppressionType: processingMetadataRequiredFields[metadataDerivativePurgeSuppressionType],
-	metadataRenditionJobType:               processingMetadataRequiredFields[metadataRenditionJobType],
-	metadataRenditionJobWaiterType:         processingMetadataRequiredFields[metadataRenditionJobWaiterType],
-	metadataEmbeddingVectorSpaceType:       embeddingMetadataRequiredFields[metadataEmbeddingVectorSpaceType],
-	metadataEmbeddingGenerationType:        embeddingMetadataRequiredFields[metadataEmbeddingGenerationType],
-	metadataEmbeddingInputType:             embeddingMetadataRequiredFields[metadataEmbeddingInputType],
-	metadataEmbeddingVectorSetType:         embeddingMetadataRequiredFields[metadataEmbeddingVectorSetType],
-	metadataEmbeddingVectorRowType:         embeddingMetadataRequiredFields[metadataEmbeddingVectorRowType],
-	metadataEmbeddingSetType:               embeddingMetadataRequiredFields[metadataEmbeddingSetType],
-	metadataEmbeddingHeadType:              embeddingMetadataRequiredFields[metadataEmbeddingHeadType],
-	metadataEmbeddingFailureType:           embeddingMetadataRequiredFields[metadataEmbeddingFailureType],
+	"mailbox_job":                                {metadataTypeField, "job"},
+	"mailbox_occurrence":                         {metadataTypeField, "occurrence"},
+	"mailbox_container":                          {metadataTypeField, "container"},
+	"mailbox_archive":                            {metadataTypeField, "archive"},
+	"mailbox_transfer_receipt":                   {metadataTypeField, "receipt"},
+	"mailbox_transfer_head":                      {metadataTypeField, "archive_id", "reference", "receipt_id"},
+	"email_body_result":                          {"type", "email_attachment_id", "body_recipe_fingerprint", "state", "part_path", "rendition_attachment_id", "reason"},
+	"email_head":                                 {"type", "content_version_id", metadataAttachmentIDField, "published_at"},
+	"email_attachment":                           {"type", metadataAttachmentIDField, "content_version_id", "generation_id", "attached_at"},
+	"email_part_artifact":                        {"type", "generation_id", "part_path", "role", "blob_hash", "size"},
+	"email_generation":                           {"type", "generation_id", "source_sha256", "source_size", "recipe_fingerprint", "canonical_json", "checksum", "created_at"},
+	"email_document_publication":                 {"type", "request", "receipt"},
+	metadataExportType:                           {metadataTypeField, "kind", "id", "ordinal", "retain_until", "canonical_json", "checksum"},
+	metadataPageDocumentType:                     {metadataTypeField, "canonical_json", metadataPageChecksumField},
+	metadataPageRecipeType:                       {metadataTypeField, "canonical_json", metadataPageChecksumField},
+	metadataPageImageType:                        {metadataTypeField, "canonical_json", metadataPageChecksumField},
+	metadataPageJobType:                          {metadataTypeField, "canonical_json", metadataPageChecksumField},
+	"blob":                                       {metadataTypeField, "hash", metadataSizeField, metadataCreatedAtField},
+	metadataBlobChecksumType:                     {metadataTypeField, "blob_sha256", "md5"},
+	metadataSourceMetadataGenerationType:         {metadataTypeField, metadataGenerationIDField, columnSourceSHA256, "contract_version", "extractor_fingerprint", "canonical_json", "checksum", metadataCreatedAtField},
+	metadataSourceMetadataHeadType:               {metadataTypeField, columnSourceSHA256, metadataGenerationIDField, "published_at"},
+	metadataVisualPreviewGenerationType:          {metadataTypeField, metadataGenerationIDField, auditVaultIDField, metadataContentVersionIDField, columnSourceSHA256, "contract_version", "recipe_fingerprint", "canonical_result", "checksum", metadataCreatedAtField},
+	metadataVisualPreviewHeadType:                {metadataTypeField, metadataContentVersionIDField, metadataGenerationIDField, "published_at"},
+	metadataCollectionSnapshotType:               {metadataTypeField, "snapshot_id", "vault_id", metadataCanonicalJSONField, metadataPageChecksumField},
+	metadataCollectionSnapshotMemberType:         {metadataTypeField, "snapshot_id", "ordinal", metadataCanonicalJSONField, metadataPageChecksumField},
+	metadataCollectionSnapshotRepresentationType: {metadataTypeField, "snapshot_id", "occurrence_id", "role", "ordinal", metadataCanonicalJSONField, metadataPageChecksumField},
+	metadataPackageType:                          {metadataTypeField, "package_id", metadataCanonicalJSONField, metadataPageChecksumField},
+	metadataPackageVolumeType:                    {metadataTypeField, "package_id", "ordinal", metadataCanonicalJSONField, metadataPageChecksumField},
+	metadataPackageRecordType:                    {metadataTypeField, metadataCanonicalJSONField, metadataPageChecksumField},
+	metadataPackageLabelType:                     {metadataTypeField, metadataCanonicalJSONField, metadataPageChecksumField},
+	metadataPackageImportReceiptType:             {metadataTypeField, metadataCanonicalJSONField, metadataPageChecksumField},
+	metadataPackageImportHeadType:                {metadataTypeField, metadataCanonicalJSONField, metadataPageChecksumField},
+	metadataPackageImportJobType:                 {metadataTypeField, metadataCanonicalJSONField, metadataPageChecksumField},
+	metadataPersonType:                           personMetadataRequiredFields[metadataPersonType],
+	metadataPersonIdentityType:                   personMetadataRequiredFields[metadataPersonIdentityType],
+	metadataPersonExternalType:                   personMetadataRequiredFields[metadataPersonExternalType],
+	metadataPersonExternalAliasType:              personMetadataRequiredFields[metadataPersonExternalAliasType],
+	metadataPersonAliasType:                      personMetadataRequiredFields[metadataPersonAliasType],
+	metadataPersonMergeType:                      personMetadataRequiredFields[metadataPersonMergeType],
+	metadataPersonSplitType:                      personMetadataRequiredFields[metadataPersonSplitType],
+	metadataCustodianAssignmentType:              personMetadataRequiredFields[metadataCustodianAssignmentType],
+	metadataPersonAssertionType:                  personMetadataRequiredFields[metadataPersonAssertionType],
+	metadataPersonCandidateType:                  personMetadataRequiredFields[metadataPersonCandidateType],
+	"node":                                       {metadataTypeField, "id", "parent_id", "name", "kind", "current_version_id", metadataRevisionField, metadataCreatedAtField, "modified_at", "trashed_at", "trash_parent", "trash_name"},
+	"content_version":                            {metadataTypeField, "version_id", metadataNodeIDField, columnBlobHash, metadataSizeField, "mime_type", auditRecordedAtField, "node_revision", "introduced_operation_id", "transition_kind", auditSourceVersionIDField},
+	metadataIngestType:                           {metadataTypeField, metadataIngestIDField, "started_at", "source_kind", "source_desc"},
+	metadataCollectionLabelType:                  {metadataTypeField, metadataIngestIDField, "label", metadataRevisionField, "updated_at"},
+	metadataProvenanceType:                       {metadataTypeField, "identity", metadataNodeIDField, metadataIngestIDField, "original_path", "original_mtime", "supersedes"},
+	metadataProvenanceVersionBindingType:         {metadataTypeField, "provenance_identity", metadataContentVersionIDField, "observed_at", "basis_ref"},
+	metadataWatchSourceType:                      {metadataTypeField, "watch_name", "source_ref", metadataNodeIDField, columnBlobHash, metadataSizeField},
+	"tag":                                        {metadataTypeField, "tag_id", "name", metadataRevisionField},
+	metadataSavedQueryType:                       {metadataTypeField, "saved_query_id", "name", "description", "kind", "payload", "fingerprint", metadataRevisionField, metadataCreatedAtField, "updated_at"},
+	metadataSavedQueryRunType:                    {metadataTypeField, "run_id", "saved_query_id", "saved_query_revision", "query_fingerprint", "snapshot_id", "member_hash", "total", "total_bytes", "ran_at", "expires_at", "previous_run_id", "previous_member_hash", "previous_total", "previous_query_fingerprint"},
+	"node_tag":                                   {metadataTypeField, metadataNodeIDField, "tag_id"},
+	metadataBatchTagReceiptType:                  {metadataTypeField, auditOperationIDField, "request_digest", "receipt_json"},
+	"extracted_text":                             {metadataTypeField, columnBlobHash, "extractor", "extractor_version", "status", "error", "attempts", "text", "extracted_at"},
+	metadataAuditAuthorityType:                   {metadataTypeField, "lineage_id", "operation_sequence_high_water", "allocation_genesis_digest", "allocation_entry_count", "allocation_head"},
+	metadataAuditScopeType:                       {metadataTypeField, auditScopeIDField, "target_node_id", "enable_operation_id", "entry_count", "chain_head"},
+	metadataAuditMembershipType:                  {metadataTypeField, auditScopeIDField, metadataNodeIDField, "baseline_digest"},
+	metadataAuditRecordType:                      {metadataTypeField, "digest", "record"},
+	metadataProcessingIncarnationType:            processingMetadataRequiredFields[metadataProcessingIncarnationType],
+	metadataProcessingConsentGrantType:           processingMetadataRequiredFields[metadataProcessingConsentGrantType],
+	metadataProcessingConsentRevokeType:          processingMetadataRequiredFields[metadataProcessingConsentRevokeType],
+	metadataProcessingProfileType:                processingMetadataRequiredFields[metadataProcessingProfileType],
+	metadataRenditionBuildType:                   processingMetadataRequiredFields[metadataRenditionBuildType],
+	metadataRenditionArtifactType:                processingMetadataRequiredFields[metadataRenditionArtifactType],
+	metadataRenditionUnitType:                    processingMetadataRequiredFields[metadataRenditionUnitType],
+	metadataRenditionSegmentType:                 processingMetadataRequiredFields[metadataRenditionSegmentType],
+	metadataRenditionAttachType:                  processingMetadataRequiredFields[metadataRenditionAttachType],
+	metadataRenditionHeadType:                    processingMetadataRequiredFields[metadataRenditionHeadType],
+	metadataLexicalGenerationType:                processingMetadataRequiredFields[metadataLexicalGenerationType],
+	metadataCurrentRenditionRootType:             processingMetadataRequiredFields[metadataCurrentRenditionRootType],
+	metadataDerivativePurgeSuppressionType:       processingMetadataRequiredFields[metadataDerivativePurgeSuppressionType],
+	metadataRenditionJobType:                     processingMetadataRequiredFields[metadataRenditionJobType],
+	metadataRenditionJobWaiterType:               processingMetadataRequiredFields[metadataRenditionJobWaiterType],
+	metadataEmbeddingVectorSpaceType:             embeddingMetadataRequiredFields[metadataEmbeddingVectorSpaceType],
+	metadataEmbeddingGenerationType:              embeddingMetadataRequiredFields[metadataEmbeddingGenerationType],
+	metadataEmbeddingInputType:                   embeddingMetadataRequiredFields[metadataEmbeddingInputType],
+	metadataEmbeddingVectorSetType:               embeddingMetadataRequiredFields[metadataEmbeddingVectorSetType],
+	metadataEmbeddingVectorRowType:               embeddingMetadataRequiredFields[metadataEmbeddingVectorRowType],
+	metadataEmbeddingSetType:                     embeddingMetadataRequiredFields[metadataEmbeddingSetType],
+	metadataEmbeddingHeadType:                    embeddingMetadataRequiredFields[metadataEmbeddingHeadType],
+	metadataEmbeddingFailureType:                 embeddingMetadataRequiredFields[metadataEmbeddingFailureType],
+	metadataTermReportHistoryType:                {metadataTypeField, "id", "parent_id", "observed_at", "request_json", "summary_json"},
 }
 
 var metadataNullableFields = map[string]map[string]bool{
@@ -2069,6 +2094,14 @@ func validateMetadataStateWithVaultIdentity(
 	}
 	if layout.schemaVersion >= 18 {
 		if err := exportBundleMetadata(ctx, tx, func(any) error { return nil }); err != nil {
+			return err
+		}
+	}
+	if layout.schemaVersion >= 22 {
+		if err := validatePackageMetadataState(ctx, tx, vaultID); err != nil {
+			return err
+		}
+		if err := validatePackageImportMetadataState(ctx, tx); err != nil {
 			return err
 		}
 	}

@@ -118,7 +118,7 @@ func registerPageRoutes(humaAPI huma.API, d Deps, g *OperationGate) {
 	huma.Register(humaAPI, huma.Operation{
 		OperationID: "readPageImage", Method: http.MethodGet, Path: "/api/v1/pages/image", Summary: "Read verified PNG bytes for an exact retained page receipt",
 		Responses: map[string]*huma.Response{"200": {Description: "Verified page PNG", Content: map[string]*huma.MediaType{
-			"image/png": {Schema: &huma.Schema{Type: openAPIStringType, Format: "binary"}},
+			"image/png": {Schema: &huma.Schema{Type: openAPIStringType, Format: openAPIBinaryFormat}},
 		}}},
 	}, func(ctx context.Context, in *PageImageRequest) (*huma.StreamResponse, error) {
 		view, err := d.Store.PageImage(ctx, in.Binding(), in.RecipeSHA256, in.Page)

@@ -100,6 +100,20 @@ func (r *Resolver) SetVolumeRoots(volumeRoots map[string]string) error {
 	return nil
 }
 
+// EnforceMaxFileBytes rejects a package before parsing or hashing when any
+// inventoried object is too large for the destination's ingest path.
+func (r *Resolver) EnforceMaxFileBytes(maxBytes int64) error {
+	if maxBytes <= 0 {
+		return ErrLoadfileLimit
+	}
+	for _, info := range r.inventory {
+		if info.Mode().IsRegular() && info.Size() > maxBytes {
+			return ErrLoadfileLimit
+		}
+	}
+	return nil
+}
+
 func (r *Resolver) buildInventory(ctx context.Context) error {
 	entries := make([]rootDigestEntry, 0, 128)
 	files := 0

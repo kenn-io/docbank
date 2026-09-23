@@ -92,11 +92,11 @@ func registerMailboxOpenAPI(api huma.API) {
 		}
 		if r.id == "uploadMailboxChunk" {
 			op.Parameters = append(op.Parameters, &huma.Param{Name: "index", In: openAPIPathLocation, Required: true, Schema: &huma.Schema{Type: mailboxIntegerType}}, &huma.Param{Name: BlobHashHeader, In: mailboxHeaderLocation, Required: true, Schema: &huma.Schema{Type: openAPIStringType, Pattern: "^[0-9a-f]{64}$"}}, &huma.Param{Name: BlobSizeHeader, In: mailboxHeaderLocation, Required: true, Schema: &huma.Schema{Type: mailboxIntegerType, Format: "int64"}})
-			op.RequestBody = &huma.RequestBody{Required: true, Description: "One complete 64 MiB chunk, except the exact shorter final chunk.", Content: map[string]*huma.MediaType{"application/octet-stream": {Schema: &huma.Schema{Type: openAPIStringType, Format: "binary"}}}}
+			op.RequestBody = &huma.RequestBody{Required: true, Description: "One complete 64 MiB chunk, except the exact shorter final chunk.", Content: map[string]*huma.MediaType{"application/octet-stream": {Schema: &huma.Schema{Type: openAPIStringType, Format: openAPIBinaryFormat}}}}
 		}
 		if r.id == "transferMailboxEML" {
 			op.Parameters = append(op.Parameters, &huma.Param{Name: "X-Docbank-Transfer", In: mailboxHeaderLocation, Required: true, Description: "Base64url JSON MailboxTransferRequest (at most 32768 encoded bytes)", Schema: &huma.Schema{Type: openAPIStringType}})
-			op.RequestBody = &huma.RequestBody{Required: true, Description: "Exact declared EML bytes, at most 128 MiB.", Content: map[string]*huma.MediaType{"message/rfc822": {Schema: &huma.Schema{Type: openAPIStringType, Format: "binary"}}}}
+			op.RequestBody = &huma.RequestBody{Required: true, Description: "Exact declared EML bytes, at most 128 MiB.", Content: map[string]*huma.MediaType{"message/rfc822": {Schema: &huma.Schema{Type: openAPIStringType, Format: openAPIBinaryFormat}}}}
 			registry.Schema(reflect.TypeFor[store.MailboxTransferRequest](), true, "")
 		}
 		if r.id == "listMailboxJobs" || r.id == "mailboxOccurrences" {

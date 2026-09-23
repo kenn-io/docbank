@@ -58,7 +58,7 @@ func registerUploadOpenAPI(api huma.API) {
 		RequestBody: &huma.RequestBody{Required: true, Content: map[string]*huma.MediaType{
 			"multipart/form-data": {
 				Schema: &huma.Schema{Type: "object", Properties: map[string]*huma.Schema{
-					"file": {Type: openAPIStringType, Format: "binary"},
+					"file": {Type: openAPIStringType, Format: openAPIBinaryFormat},
 				}, Required: []string{"file"}},
 				Encoding: map[string]*huma.Encoding{"file": {ContentType: "*/*"}},
 			},

@@ -79,6 +79,7 @@
   import UploadDrawer from "./UploadDrawer.svelte";
   import VerifiedPreview from "./VerifiedPreview.svelte";
   import MailboxImportDrawer from "./MailboxImportDrawer.svelte";
+  import LoadFileImportDrawer from "./LoadFileImportDrawer.svelte";
   import VersionHistoryDrawer from "./VersionHistoryDrawer.svelte";
   import { APIError } from "./api-transport.js";
   import { changeNodeTag, documentSearch, liveNodeTags, resolveDocumentSourceFence } from "./receipts.js";
@@ -246,6 +247,7 @@
   let tagCatalogOpen = $state(false);
   let uploadTarget = $state<Node | null>(null);
   let mailboxTarget = $state<Node | null>(null);
+  let loadFileTarget = $state<Node | null>(null);
   let trashTarget = $state<Row | null>(null);
   let generation = 0;
   let auditGeneration = 0;
@@ -2500,9 +2502,20 @@
                 trashOpen = false;
                 tagCatalogOpen = false;
                 uploadTarget = null;
+                loadFileTarget = null;
                 mailboxTarget = directory;
               }}
             >Import mailbox</Button>
+            <Button
+              size="sm"
+              disabled={!directory || loading || !uploadChannel || Boolean(uploadChannelError) || Boolean(activeQuery) || tagBrowse}
+              onclick={() => {
+                if (!directory) return;
+                uploadTarget = null;
+                mailboxTarget = null;
+                loadFileTarget = directory;
+              }}
+            >Import load files</Button>
           </div>
         </div>
 
@@ -3319,6 +3332,18 @@
           mailboxTarget = null;
           exportOpen = true;
         }}
+      />
+    {/if}
+    {#if loadFileTarget && uploadChannel}
+      <LoadFileImportDrawer
+        session={webSession}
+        channel={uploadChannel}
+        destination={loadFileTarget.path ?? "/"}
+        onclose={() => (loadFileTarget = null)}
+        oncomplete={async () => {
+          if (loadFileTarget) await loadDirectory(loadFileTarget.id, false);
+        }}
+        onauthfailure={handleFailure}
       />
     {/if}
     {#if trashTarget}

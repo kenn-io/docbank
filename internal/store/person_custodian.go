@@ -14,21 +14,24 @@ import (
 var ErrCustodianConflict = errors.New("custodian conflict")
 
 type CustodianAssignment struct {
-	AssignmentID, ScopeKind          string
-	IngestID                         *string
-	NodeID                           *int64
-	ContentVersionID, PersonID       *string
-	RawLabel, Rank, Basis, SourceRef string
-	Revision                         int64
-	RecordedAt                       string
-	RetiredAt                        *string
+	AssignmentID, ScopeKind              string
+	IngestID, PackageID, PackageRecordID *string
+	NodeID                               *int64
+	ContentVersionID, PersonID           *string
+	RawLabel, Rank, Basis, SourceRef     string
+	Revision                             int64
+	RecordedAt                           string
+	RetiredAt                            *string
 }
 
 type CustodianScope struct {
-	Kind             string
-	IngestID         string
-	ContentVersionID string
-	NodeID           int64
+	Kind               string
+	IngestID           string
+	PackageID          string
+	PackageRecordID    string
+	HasPackageRecordID bool
+	ContentVersionID   string
+	NodeID             int64
 }
 
 type CustodianRequest struct {
@@ -40,11 +43,16 @@ type CustodianRequest struct {
 func validateCustodianScope(scope CustodianScope) error {
 	switch scope.Kind {
 	case "collection":
-		if scope.IngestID != "" && scope.ContentVersionID == "" && scope.NodeID == 0 {
+		if scope.IngestID != "" && scope.PackageID == "" && scope.PackageRecordID == "" && !scope.HasPackageRecordID && scope.ContentVersionID == "" && scope.NodeID == 0 {
+			return nil
+		}
+	case "package":
+		if scope.PackageID != "" && scope.IngestID == "" && scope.ContentVersionID == "" && scope.NodeID == 0 &&
+			(scope.PackageRecordID == "" || scope.HasPackageRecordID) {
 			return nil
 		}
 	case "document":
-		if scope.ContentVersionID != "" && scope.NodeID > 0 && scope.IngestID == "" {
+		if scope.ContentVersionID != "" && scope.NodeID > 0 && scope.IngestID == "" && scope.PackageID == "" && scope.PackageRecordID == "" && !scope.HasPackageRecordID {
 			return nil
 		}
 	}
@@ -115,8 +123,8 @@ func (s *Store) SetCustodian(ctx context.Context, request CustodianRequest) (Cus
 		if err != nil {
 			return err
 		}
-		ingestID, nodeID, versionID := custodianScopeValues(request.Scope)
-		_, err = tx.ExecContext(ctx, `INSERT INTO custodian_assignments(assignment_id,scope_kind,ingest_id,node_id,content_version_id,person_id,raw_label,raw_label_folded,rank,basis,source_ref,recorded_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`, assignmentID, request.Scope.Kind, ingestID, nodeID, versionID, nullableCustodianString(request.PersonID), request.RawLabel, document.FoldPersonName(request.RawLabel), request.Rank, request.Basis, request.SourceRef, nowRFC3339())
+		ingestID, packageID, packageRecordID, nodeID, versionID := custodianScopeValues(request.Scope)
+		_, err = tx.ExecContext(ctx, `INSERT INTO custodian_assignments(assignment_id,scope_kind,ingest_id,package_id,package_record_id,node_id,content_version_id,person_id,raw_label,raw_label_folded,rank,basis,source_ref,recorded_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, assignmentID, request.Scope.Kind, ingestID, packageID, packageRecordID, nodeID, versionID, nullableCustodianString(request.PersonID), request.RawLabel, document.FoldPersonName(request.RawLabel), request.Rank, request.Basis, request.SourceRef, nowRFC3339())
 		if s.driver.IsUniqueViolation(err) {
 			return ErrCustodianConflict
 		}
@@ -138,12 +146,14 @@ func nullableCustodianString(value string) any {
 	return value
 }
 
-func custodianScopeValues(scope CustodianScope) (ingestID, nodeID, versionID any) {
+func custodianScopeValues(scope CustodianScope) (ingestID, packageID, packageRecordID, nodeID, versionID any) {
 	switch scope.Kind {
 	case "collection":
-		return scope.IngestID, nil, nil
+		return scope.IngestID, nil, nil, nil, nil
+	case "package":
+		return nil, scope.PackageID, scope.PackageRecordID, nil, nil
 	default:
-		return nil, scope.NodeID, scope.ContentVersionID
+		return nil, nil, nil, scope.NodeID, scope.ContentVersionID
 	}
 }
 
@@ -175,6 +185,23 @@ func validateCustodianReferencesTx(ctx context.Context, tx *sql.Tx, request Cust
 		if !exists {
 			return ErrNotFound
 		}
+	case "package":
+		var exists bool
+		if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM packages WHERE package_id=?)`, request.Scope.PackageID).Scan(&exists); err != nil {
+			return err
+		}
+		if !exists {
+			return ErrNotFound
+		}
+		if request.Scope.PackageRecordID != "" {
+			if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM package_records WHERE package_id=? AND row_id=?)`,
+				request.Scope.PackageID, request.Scope.PackageRecordID).Scan(&exists); err != nil {
+				return err
+			}
+			if !exists {
+				return ErrNotFound
+			}
+		}
 	}
 	return nil
 }
@@ -183,6 +210,8 @@ func exactCustodianScopePredicate(scope CustodianScope) (string, []any) {
 	switch scope.Kind {
 	case "collection":
 		return `scope_kind='collection' AND ingest_id=?`, []any{scope.IngestID}
+	case "package":
+		return `scope_kind='package' AND package_id=? AND package_record_id=?`, []any{scope.PackageID, scope.PackageRecordID}
 	default:
 		return `scope_kind='document' AND content_version_id=?`, []any{scope.ContentVersionID}
 	}
@@ -216,13 +245,138 @@ func (s *Store) RetireCustodian(ctx context.Context, assignmentID string, revisi
 	})
 }
 
-const custodianColumns = `assignment_id,scope_kind,ingest_id,node_id,content_version_id,person_id,raw_label,rank,basis,source_ref,revision,recorded_at,retired_at`
+// ResolveCustodian binds an existing package claim to an active canonical
+// person while preserving the sender or operator's claim itself.
+func (s *Store) ResolveCustodian(ctx context.Context, assignmentID, personID string, revision int64) (CustodianAssignment, error) {
+	if assignmentID == "" || personID == "" || revision < 1 {
+		return CustodianAssignment{}, ErrInvalidPerson
+	}
+	err := s.withLogicalTx(ctx, func(tx *sql.Tx) error {
+		assignment, err := custodianByIDTx(ctx, tx, assignmentID)
+		if err != nil {
+			return err
+		}
+		if assignment.ScopeKind != "package" {
+			return ErrNotFound
+		}
+		if assignment.RetiredAt != nil {
+			return ErrCustodianConflict
+		}
+		if assignment.Revision != revision {
+			return ErrStaleRevision
+		}
+		canonicalID, err := resolvePersonIDTx(ctx, tx, personID)
+		if err != nil {
+			return err
+		}
+		var state string
+		if err := tx.QueryRowContext(ctx, `SELECT state FROM persons WHERE person_id=?`, canonicalID).Scan(&state); err != nil {
+			return err
+		}
+		if state == "retired" {
+			return ErrPersonRetired
+		}
+		result, err := tx.ExecContext(ctx, `UPDATE custodian_assignments SET person_id=?,revision=revision+1,recorded_at=?
+			WHERE assignment_id=? AND revision=? AND retired_at IS NULL`, canonicalID, nowRFC3339(), assignmentID, revision)
+		if err != nil {
+			return err
+		}
+		changed, err := result.RowsAffected()
+		if err != nil {
+			return err
+		}
+		if changed != 1 {
+			return ErrStaleRevision
+		}
+		return advancePersonBindingEpochTx(ctx, tx)
+	})
+	if err != nil {
+		return CustodianAssignment{}, err
+	}
+	return s.custodianByID(ctx, assignmentID)
+}
+
+// SetOperatorPackageCustodian creates or replaces only an operator-owned
+// package primary. Sender-owned primary claims must be resolved by ID instead.
+func (s *Store) SetOperatorPackageCustodian(ctx context.Context, request CustodianRequest) (CustodianAssignment, error) {
+	if request.Scope.Kind != "package" || request.Rank != "primary" || request.Basis != "operator_assigned" ||
+		request.IfMatchRevision < 1 || !utf8.ValidString(request.RawLabel) || strings.TrimSpace(request.RawLabel) == "" ||
+		len(request.RawLabel) > document.MaxPersonDisplayNameBytes || len(request.SourceRef) > document.MaxCustodianSourceRefBytes ||
+		validateCustodianScope(request.Scope) != nil {
+		return CustodianAssignment{}, ErrInvalidPerson
+	}
+	var assignmentID string
+	err := s.withLogicalTx(ctx, func(tx *sql.Tx) error {
+		if request.PersonID != "" {
+			canonicalID, err := resolvePersonIDTx(ctx, tx, request.PersonID)
+			if err != nil {
+				return err
+			}
+			request.PersonID = canonicalID
+		}
+		if err := validateCustodianReferencesTx(ctx, tx, request); err != nil {
+			return err
+		}
+		predicate, args := exactCustodianScopePredicate(request.Scope)
+		var basis string
+		var current int64
+		err := tx.QueryRowContext(ctx, `SELECT assignment_id,basis,revision FROM custodian_assignments
+			WHERE retired_at IS NULL AND rank='primary' AND `+predicate, args...).Scan(&assignmentID, &basis, &current)
+		switch {
+		case err == nil && basis != "operator_assigned":
+			return ErrCustodianConflict
+		case err == nil && current != request.IfMatchRevision:
+			return ErrStaleRevision
+		case err == nil:
+			result, err := tx.ExecContext(ctx, `UPDATE custodian_assignments SET person_id=?,raw_label=?,raw_label_folded=?,source_ref=?,revision=revision+1,recorded_at=?
+				WHERE assignment_id=? AND revision=?`, nullableCustodianString(request.PersonID), request.RawLabel,
+				document.FoldPersonName(request.RawLabel), request.SourceRef, nowRFC3339(), assignmentID, current)
+			if err != nil {
+				return err
+			}
+			changed, err := result.RowsAffected()
+			if err != nil {
+				return err
+			}
+			if changed != 1 {
+				return ErrStaleRevision
+			}
+		case !errors.Is(err, sql.ErrNoRows):
+			return err
+		case request.IfMatchRevision != 1:
+			return ErrStaleRevision
+		default:
+			assignmentID, err = newUUIDv4()
+			if err != nil {
+				return err
+			}
+			_, err = tx.ExecContext(ctx, `INSERT INTO custodian_assignments(
+				assignment_id,scope_kind,package_id,package_record_id,person_id,raw_label,raw_label_folded,rank,basis,source_ref,recorded_at)
+				VALUES(?,'package',?,?,?,?,?,'primary','operator_assigned',?,?)`, assignmentID, request.Scope.PackageID,
+				request.Scope.PackageRecordID, nullableCustodianString(request.PersonID), request.RawLabel,
+				document.FoldPersonName(request.RawLabel), request.SourceRef, nowRFC3339())
+			if s.driver.IsUniqueViolation(err) {
+				return ErrCustodianConflict
+			}
+			if err != nil {
+				return err
+			}
+		}
+		return advancePersonBindingEpochTx(ctx, tx)
+	})
+	if err != nil {
+		return CustodianAssignment{}, err
+	}
+	return s.custodianByID(ctx, assignmentID)
+}
+
+const custodianColumns = `assignment_id,scope_kind,ingest_id,package_id,package_record_id,node_id,content_version_id,person_id,raw_label,rank,basis,source_ref,revision,recorded_at,retired_at`
 
 func scanCustodian(row interface{ Scan(dest ...any) error }) (CustodianAssignment, error) {
 	var assignment CustodianAssignment
-	var ingestID, contentVersionID, personID, retiredAt sql.NullString
+	var ingestID, packageID, packageRecordID, contentVersionID, personID, retiredAt sql.NullString
 	var nodeID sql.NullInt64
-	err := row.Scan(&assignment.AssignmentID, &assignment.ScopeKind, &ingestID, &nodeID, &contentVersionID, &personID, &assignment.RawLabel, &assignment.Rank, &assignment.Basis, &assignment.SourceRef, &assignment.Revision, &assignment.RecordedAt, &retiredAt)
+	err := row.Scan(&assignment.AssignmentID, &assignment.ScopeKind, &ingestID, &packageID, &packageRecordID, &nodeID, &contentVersionID, &personID, &assignment.RawLabel, &assignment.Rank, &assignment.Basis, &assignment.SourceRef, &assignment.Revision, &assignment.RecordedAt, &retiredAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return CustodianAssignment{}, ErrNotFound
 	}
@@ -230,6 +384,7 @@ func scanCustodian(row interface{ Scan(dest ...any) error }) (CustodianAssignmen
 		return CustodianAssignment{}, err
 	}
 	assignment.IngestID = stringPtr(ingestID)
+	assignment.PackageID, assignment.PackageRecordID = stringPtr(packageID), stringPtr(packageRecordID)
 	assignment.ContentVersionID, assignment.PersonID, assignment.RetiredAt = stringPtr(contentVersionID), stringPtr(personID), stringPtr(retiredAt)
 	if nodeID.Valid {
 		assignment.NodeID = &nodeID.Int64
@@ -298,6 +453,13 @@ func (s *Store) Custodians(ctx context.Context, scope CustodianScope, unresolved
 		case "document":
 			where = append(where, "content_version_id=? AND node_id=?")
 			args = append(args, scope.ContentVersionID, scope.NodeID)
+		case "package":
+			where = append(where, "package_id=?")
+			args = append(args, scope.PackageID)
+			if scope.HasPackageRecordID {
+				where = append(where, "package_record_id=?")
+				args = append(args, scope.PackageRecordID)
+			}
 		}
 	}
 	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
