@@ -36,9 +36,18 @@ func ValidateImageRenditionFrame(_ context.Context, frame document.PageFrameV1) 
 	}
 	// PNG density is an integer number of pixels per metre; round the recipe
 	// DPI to that representation (11811 pixels per metre for 300 DPI).
-	want := (int64(pdfproduction.QualifiedRecipe().DPI)*5000 + 63) / 127
+	dpi := int64(pdfproduction.QualifiedRecipe().DPI)
+	want := (dpi*5000 + 63) / 127
 	if frame.PixelsPerMetreX != want {
 		return fmt.Errorf("scan density differs from qualified wrapper: %w", errUnsupportedRendition)
+	}
+	return validateImageRenditionDimensions(frame, frame.PixelWidth, frame.PixelHeight)
+}
+
+func validateImageRenditionDimensions(frame document.PageFrameV1, width, height int64) error {
+	dpi := int64(pdfproduction.QualifiedRecipe().DPI)
+	if (frame.Width*dpi+9999)/10000 != width || (frame.Height*dpi+9999)/10000 != height {
+		return fmt.Errorf("retained pixels do not fit qualified wrapper dimensions: %w", errUnsupportedRendition)
 	}
 	return nil
 }
@@ -120,6 +129,9 @@ func imageRenditionArtifact(ctx context.Context, input ImageRenditionInput) (pdf
 	_, frameSHA, err := document.MarshalPageFrameV1(input.Frame)
 	if err != nil || document.ValidatePageImageBinding(input.Image, input.Frame, input.Recipe) != nil {
 		return pdfproduction.PageArtifact{}, &Problem{Code: problemBoundEvidenceMismatch}
+	}
+	if err := validateImageRenditionDimensions(input.Frame, input.Image.Width, input.Image.Height); err != nil {
+		return pdfproduction.PageArtifact{}, err
 	}
 	reader, err := input.OpenImage(ctx, input.Image)
 	if err != nil || reader == nil {

@@ -835,6 +835,13 @@ func TestRenderImageRenditionRejectsUnsupportedDensity(t *testing.T) {
 	err := ValidateImageRenditionFrame(t.Context(), document.PageFrameV1{})
 	require.ErrorAs(t, err, &problem)
 	require.Equal(t, "unsupported_rendition", problem.Code)
+	source := document.PageSource{VersionID: "00000000-0000-4000-8000-000000000001",
+		SHA256: sum([]byte("synthetic pixels")), Size: 16}
+	frame, err := document.NewPNGPageFrame(source, 32, 40, 11811, 11811)
+	require.NoError(t, err)
+	// Rounding the physical width yields 1067 units. The fixed 300-DPI
+	// writer needs ceil(1067*300/10000) = 33 pixels, not the native 32.
+	require.ErrorIs(t, ValidateImageRenditionFrame(t.Context(), frame), errUnsupportedRendition)
 }
 
 func alignNativeFixture(t *testing.T, pdf []byte, visibleEvidence string) redaction.TextMap {
