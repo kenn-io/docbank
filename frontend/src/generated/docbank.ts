@@ -3350,6 +3350,33 @@ export interface PackageDiagnosticPage {
   total: number;
 }
 
+export interface PackageExportRequest {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  bates_allocation_id?: string;
+  /** @minLength 1 */
+  profile_id: string;
+  snapshot_id: string;
+  source_package_id?: string;
+}
+
+export interface PackageExportTicket {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  archive_sha256: string;
+  bates_allocation_id?: string;
+  crosswalk_sha256: string;
+  manifest_sha256: string;
+  name: string;
+  pages: number;
+  profile_id: string;
+  records: number;
+  size: number;
+  snapshot_id: string;
+  source_package_id?: string;
+  url: string;
+}
+
 export interface PackageFieldCatalog {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
@@ -11069,6 +11096,44 @@ return sessionJSON<CustodianAssignment>(getResolvePackageCustodianUrl(assignment
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
     body: JSON.stringify(custodianResolveRequest)
+  }
+);}
+
+
+
+export const getCreatePackageExportUrl = () => {
+
+
+
+
+  return `/api/v1/packages/exports`
+}
+
+/**
+ * @summary Build and verify a load-file export package
+ */
+export const createPackageExport = async (packageExportRequest: NonReadonly<PackageExportRequest>, options?: Parameters<typeof sessionJSON>[1]): Promise<PackageExportTicket> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return sessionJSON<PackageExportTicket>(getCreatePackageExportUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(packageExportRequest)
   }
 );}
 

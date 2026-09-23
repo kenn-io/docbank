@@ -32,6 +32,10 @@ var (
 	packageReadLimit               int
 	packageReadAfterOrdinal        int
 	packageReadJSON                bool
+	packageExportProfile           string
+	packageExportSourcePackage     string
+	packageExportBatesAllocation   string
+	packageExportOverwrite         bool
 )
 
 var packageCmd = &cobra.Command{
@@ -153,6 +157,54 @@ var packageImportCancelCmd = &cobra.Command{
 			return err
 		}
 		return writePackageImport(cmd, result)
+	},
+}
+
+var packageExportCmd = &cobra.Command{
+	Use:   "export <snapshot-id> <local-file>",
+	Short: "Build and download a verified load-file export",
+	Args:  cobra.ExactArgs(2),
+	RunE: func(cmd *cobra.Command, args []string) (retErr error) {
+		if packageExportProfile == "" {
+			return usageError(errors.New("--profile is required"))
+		}
+		snapshot, err := uuid.Parse(args[0])
+		if err != nil {
+			return usageError(errors.New("snapshot ID must be a UUID"))
+		}
+		destination, err := prepareGetDestination(args[1], packageExportOverwrite)
+		if err != nil {
+			return err
+		}
+		connection, err := daemonconn.Ensure(cmd.Context())
+		if err != nil {
+			return err
+		}
+		staging, err := makePrivateStagingDirAt(filepath.Dir(destination), "docbank-package-export-")
+		if err != nil {
+			return err
+		}
+		defer func() { retErr = errors.Join(retErr, staging.removeAll()) }()
+		file, stagedPath, err := staging.createFile(filepath.Base(destination))
+		if err != nil {
+			return err
+		}
+		receipt, exportErr := connection.CreatePackageExport(cmd.Context(), api.PackageExportRequest{
+			SnapshotID: snapshot.String(), ProfileID: packageExportProfile,
+			SourcePackageID: packageExportSourcePackage, BatesAllocationID: packageExportBatesAllocation,
+		}, file)
+		if err := errors.Join(exportErr, file.Sync(), file.Close()); err != nil {
+			return err
+		}
+		if err := publishGetFile(stagedPath, destination, packageExportOverwrite); err != nil {
+			return err
+		}
+		_, err = fmt.Fprintf(cmd.OutOrStdout(), "%s · %d records · %d pages · SHA-256 %s\n",
+			destination, receipt.Records, receipt.Pages, receipt.ArchiveSHA256)
+		if err != nil {
+			return fmt.Errorf("writing package export receipt: %w", err)
+		}
+		return nil
 	},
 }
 
@@ -332,8 +384,12 @@ func init() {
 	packageMembersCmd.Flags().IntVar(&packageReadLimit, "limit", 100, "page size: 50, 100, or 250")
 	packageMembersCmd.Flags().BoolVar(&packageReadJSON, "json", false, "emit machine-readable JSON")
 	packageRecordCmd.Flags().BoolVar(&packageReadJSON, "json", false, "emit machine-readable JSON")
+	packageExportCmd.Flags().StringVar(&packageExportProfile, "profile", "", "export profile ID")
+	packageExportCmd.Flags().StringVar(&packageExportSourcePackage, "source-package", "", "source package UUID for received labels")
+	packageExportCmd.Flags().StringVar(&packageExportBatesAllocation, "bates-allocation", "", "committed Bates allocation UUID to reuse")
+	packageExportCmd.Flags().BoolVar(&packageExportOverwrite, "overwrite", false, "replace an existing destination")
 	packageCmd.AddCommand(packagePreflightCmd, packageListCmd, packageShowCmd, packageMembersCmd, packageRecordCmd)
 	packageImportCmd.AddCommand(packageImportStatusCmd, packageImportCancelCmd)
-	packageCmd.AddCommand(packageImportCmd)
+	packageCmd.AddCommand(packageImportCmd, packageExportCmd)
 	rootCmd.AddCommand(packageCmd)
 }

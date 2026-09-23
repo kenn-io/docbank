@@ -467,6 +467,22 @@ func exportBatesFileSchemas() (schema, schema) {
 		}), cacheRequired("allocation_id", "artifact_id", "destination_path", "blob_sha256", "manifest_sha256", "size", schemaStateField)...)
 }
 
+func exportLoadFilePackageSchemas() (schema, schema) {
+	return rootObjectSchema(schema{
+			"snapshot_id": uuidSchema(), "source_package_id": uuidSchema(), "bates_allocation_id": uuidSchema(),
+			"profile_id":       enumSchema("export-dat-pdf-v1", "export-dat-opt-images-v1", "export-csv-natives-v1", "export-dat-lfp-images-v1"),
+			"destination_path": schema{"type": "string", "minLength": 1, "maxLength": maxPathCharacters},
+			"overwrite":        booleanSchema(),
+		}, "snapshot_id", "profile_id", "destination_path", "overwrite"), rootObjectSchema(withPrivateCache(schema{
+			"snapshot_id": uuidSchema(), "source_package_id": uuidSchema(), "bates_allocation_id": uuidSchema(),
+			"profile_id": stringSchema(128), "destination_path": stringSchema(maxPathCharacters),
+			"archive_sha256": sha256Schema(), "manifest_sha256": sha256Schema(), "crosswalk_sha256": sha256Schema(),
+			"size": integerSchema(1, 512<<20), "records": integerSchema(1, 100_000), "pages": integerSchema(0, 1_000_000),
+			schemaStateField: enumSchema("published", "published_durability_unknown"),
+		}), cacheRequired("snapshot_id", "profile_id", "destination_path", "archive_sha256", "manifest_sha256",
+			"crosswalk_sha256", "size", "records", "pages", schemaStateField)...)
+}
+
 func privateCacheProperties() schema {
 	return schema{
 		"ttlMs":      schema{"type": "integer", jsonSchemaConst: 0},

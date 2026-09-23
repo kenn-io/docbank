@@ -215,8 +215,16 @@ func (r *Resolver) walkInventory(ctx context.Context, visit func(string, fs.File
 
 // DiscoverPackageFiles derives the load-file layout from the cached confined
 // inventory without traversing or reopening the caller's tree.
-func (r *Resolver) DiscoverPackageFiles() (string, string, []Volume, error) {
-	var datFiles, optFiles []string
+func (r *Resolver) DiscoverPackageFiles(profileID string) (string, string, []Volume, error) {
+	csvProfile := false
+	switch profileID {
+	case "dat-concordance-v1":
+	case "csv-rfc4180-v1":
+		csvProfile = true
+	default:
+		return "", "", nil, ErrInvalidProfile
+	}
+	var datFiles, csvFiles, optFiles []string
 	volumeNames := make(map[string]bool)
 	for name, info := range r.inventory {
 		if !info.Mode().IsRegular() {
@@ -225,7 +233,7 @@ func (r *Resolver) DiscoverPackageFiles() (string, string, []Volume, error) {
 		volume, _, found := strings.Cut(name, "/")
 		if !found {
 			switch strings.ToLower(path.Ext(name)) {
-			case ".dat", ".opt", ".lfp":
+			case ".dat", ".csv", ".opt", ".lfp":
 				return "", "", nil, fmt.Errorf("%w: load files must be inside a volume directory, not directly in the package root", ErrMalformedInput)
 			}
 			continue
@@ -237,14 +245,21 @@ func (r *Resolver) DiscoverPackageFiles() (string, string, []Volume, error) {
 		switch strings.ToLower(path.Ext(name)) {
 		case ".dat":
 			datFiles = append(datFiles, name)
+		case ".csv":
+			csvFiles = append(csvFiles, name)
 		case ".opt", ".lfp":
 			optFiles = append(optFiles, name)
 		}
 	}
-	if len(datFiles) != 1 || len(optFiles) > 1 {
-		return "", "", nil, fmt.Errorf("%w: package root must contain exactly one DAT and at most one OPT or LFP page map", ErrMalformedInput)
+	loadFiles, loadDescription := datFiles, "DAT"
+	if csvProfile && len(csvFiles) > 0 {
+		loadFiles, loadDescription = csvFiles, "CSV"
 	}
-	slices.Sort(datFiles)
+	if len(loadFiles) != 1 || len(optFiles) > 1 {
+		return "", "", nil, fmt.Errorf("%w: package root must contain exactly one %s and at most one OPT or LFP page map",
+			ErrMalformedInput, loadDescription)
+	}
+	slices.Sort(loadFiles)
 	slices.Sort(optFiles)
 	names := make([]string, 0, len(volumeNames))
 	for name := range volumeNames {
@@ -259,7 +274,7 @@ func (r *Resolver) DiscoverPackageFiles() (string, string, []Volume, error) {
 	if len(optFiles) == 1 {
 		opt = optFiles[0]
 	}
-	return datFiles[0], opt, volumes, nil
+	return loadFiles[0], opt, volumes, nil
 }
 
 func (r *Resolver) nameFor(volume Volume, relPath string) (string, error) {
