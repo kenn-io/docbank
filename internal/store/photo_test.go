@@ -407,6 +407,86 @@ func TestPhotoMetadataRejectsInvalidReceiptHistory(t *testing.T) {
 		require.ErrorContains(t, validatePhotoMetadataState(t.Context(), s.db), "has no history")
 	})
 
+	t.Run("revision one decision without history", func(t *testing.T) {
+		s := newTestStore(t)
+		node, err := s.CreateFile(t.Context(), s.RootID(), "baseline.jpg", fakeHash("baseline-history"), 1, "image/jpeg")
+		require.NoError(t, err)
+		_, err = s.db.ExecContext(t.Context(), `UPDATE photo_assets SET excluded_at=? WHERE asset_id=(SELECT asset_id FROM photo_files WHERE node_id=?)`, nowRFC3339(), node.ID)
+		require.NoError(t, err)
+		require.ErrorContains(t, validatePhotoMetadataState(t.Context(), s.db), "has no history")
+	})
+
+	t.Run("explicit raw baseline without create receipt", func(t *testing.T) {
+		s := newTestStore(t)
+		node, err := s.CreateFile(t.Context(), s.RootID(), "explicit.raw", fakeHash("explicit-baseline"), 1, "application/octet-stream")
+		require.NoError(t, err)
+		asset, err := s.PromotePhotoNode(t.Context(), node.ID, nil, PhotoRoleRAW, "")
+		require.NoError(t, err)
+		_, err = s.db.ExecContext(t.Context(), `DELETE FROM photo_change_receipts WHERE asset_id=?`, asset.ID)
+		require.NoError(t, err)
+		require.ErrorContains(t, validatePhotoMetadataState(t.Context(), s.db), "has no history")
+	})
+
+	t.Run("excluded revision one chain baseline", func(t *testing.T) {
+		s := newTestStore(t)
+		node, err := s.CreateFile(t.Context(), s.RootID(), "chain-baseline.jpg", fakeHash("chain-baseline"), 1, "image/jpeg")
+		require.NoError(t, err)
+		asset, err := s.PhotoAssetForNode(t.Context(), node.ID)
+		require.NoError(t, err)
+		asset, err = s.SetPhotoAssetExcluded(t.Context(), asset.ID, asset.Revision, true)
+		require.NoError(t, err)
+		before := photoReceiptAssetState{ID: asset.ID, Kind: asset.Kind, Revision: 1,
+			ExcludedAt: new(nowRFC3339()), DisplayFileID: asset.DisplayFileID,
+			FileCount: 1, InitialRole: PhotoRoleImage}
+		after := before
+		after.Revision, after.ExcludedAt = 2, nil
+		beforeJSON, err := marshalPhotoState(before)
+		require.NoError(t, err)
+		afterJSON, err := marshalPhotoState(after)
+		require.NoError(t, err)
+		_, err = s.db.ExecContext(t.Context(), `UPDATE photo_change_receipts SET before_json=?,after_json=? WHERE asset_id=?`, beforeJSON, afterJSON, asset.ID)
+		require.NoError(t, err)
+		_, err = s.db.ExecContext(t.Context(), `UPDATE photo_assets SET excluded_at=NULL WHERE asset_id=?`, asset.ID)
+		require.NoError(t, err)
+		require.ErrorContains(t, validatePhotoMetadataState(t.Context(), s.db), "invalid automatic baseline")
+	})
+
+	t.Run("fabricated automatic role in surviving chain", func(t *testing.T) {
+		s := newTestStore(t)
+		node, err := s.CreateFile(t.Context(), s.RootID(), "role-chain.raw", fakeHash("role-chain"), 1, "application/octet-stream")
+		require.NoError(t, err)
+		asset, err := s.PromotePhotoNode(t.Context(), node.ID, nil, PhotoRoleRAW, "")
+		require.NoError(t, err)
+		_, err = s.SetPhotoAssetExcluded(t.Context(), asset.ID, asset.Revision, true)
+		require.NoError(t, err)
+		_, err = s.db.ExecContext(t.Context(), `DELETE FROM photo_change_receipts WHERE asset_id=? AND operation='promote'`, asset.ID)
+		require.NoError(t, err)
+		_, err = s.db.ExecContext(t.Context(), `UPDATE photo_change_receipts SET before_revision=1,after_revision=2,before_json=replace(before_json,'"initial_role":"raw"','"initial_role":"image"'),after_json=replace(after_json,'"initial_role":"raw"','"initial_role":"image"') WHERE asset_id=?`, asset.ID)
+		require.NoError(t, err)
+		require.ErrorContains(t, validatePhotoMetadataState(t.Context(), s.db), "terminal state")
+	})
+
+	t.Run("missing terminal role after detach", func(t *testing.T) {
+		s := newTestStore(t)
+		first, err := s.CreateFile(t.Context(), s.RootID(), "first.jpg", fakeHash("first-role"), 1, "image/jpeg")
+		require.NoError(t, err)
+		asset, err := s.PhotoAssetForNode(t.Context(), first.ID)
+		require.NoError(t, err)
+		second, err := s.CreateFile(t.Context(), s.RootID(), "second.jpg", fakeHash("second-role"), 1, "image/jpeg")
+		require.NoError(t, err)
+		secondAsset, err := s.PhotoAssetForNode(t.Context(), second.ID)
+		require.NoError(t, err)
+		_, err = s.DetachPhotoFile(t.Context(), secondAsset.ID, secondAsset.Revision, secondAsset.Files[0].ID, PhotoDetachOptions{})
+		require.NoError(t, err)
+		asset, err = s.AttachPhotoFile(t.Context(), asset.ID, asset.Revision, second.ID, PhotoRoleImage, nil)
+		require.NoError(t, err)
+		asset, err = s.DetachPhotoFile(t.Context(), asset.ID, asset.Revision, asset.Files[0].ID, PhotoDetachOptions{})
+		require.NoError(t, err)
+		_, err = s.db.ExecContext(t.Context(), `UPDATE photo_change_receipts SET after_json=replace(after_json,',"initial_role":"image"','') WHERE asset_id=? AND operation='detach'`, asset.ID)
+		require.NoError(t, err)
+		require.ErrorContains(t, validatePhotoMetadataState(t.Context(), s.db), "terminal state")
+	})
+
 	t.Run("contradictory adjacent asset state", func(t *testing.T) {
 		s := newTestStore(t)
 		node, err := s.CreateFile(t.Context(), s.RootID(), "chain.raw", fakeHash("chain-history"), 1, "application/octet-stream")
@@ -437,6 +517,13 @@ func TestPhotoMetadataRejectsInvalidReceiptHistory(t *testing.T) {
 		_, err = s.db.ExecContext(t.Context(), `UPDATE photo_change_receipts SET before_json=replace(before_json, '"preference":null', '"preference":"video"') WHERE operation='settings'`)
 		require.NoError(t, err)
 		require.ErrorContains(t, validatePhotoMetadataState(t.Context(), s.db), "invalid preference state")
+	})
+
+	t.Run("revision one settings decision without history", func(t *testing.T) {
+		s := newTestStore(t)
+		_, err := s.db.ExecContext(t.Context(), `INSERT INTO photo_library_settings(singleton,preference,revision,updated_at) VALUES(1,'image',1,?)`, nowRFC3339())
+		require.NoError(t, err)
+		require.ErrorContains(t, validatePhotoMetadataState(t.Context(), s.db), "non-default settings have no history")
 	})
 }
 

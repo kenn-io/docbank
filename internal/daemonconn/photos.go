@@ -70,13 +70,30 @@ func validatePhotoAssetResponse(asset api.PhotoAsset, etag, requestedID string) 
 			return errors.New("photo response has invalid display pointer")
 		}
 	}
-	if etag != "" && etag != photoIfMatch(asset.Revision) {
+	if etag == "" {
+		return errors.New("photo response is missing ETag")
+	}
+	if etag != photoIfMatch(asset.Revision) {
 		return fmt.Errorf("photo response ETag %q, expected %q", etag, photoIfMatch(asset.Revision))
 	}
 	if asset.DisplaySource == "none" && asset.DisplayFileID != nil {
 		return errors.New("photo response has a display file with source none")
 	}
 	return nil
+}
+
+func photoMutationResponseError(err error) error {
+	if err == nil {
+		return nil
+	}
+	return &responseDecodeError{err: err}
+}
+
+func photoMutationRequestError(response *http.Response, err error) error {
+	if err != nil && response != nil && response.StatusCode >= 200 && response.StatusCode < 300 {
+		return photoMutationResponseError(err)
+	}
+	return err
 }
 
 func (c *Connection) PhotoAsset(ctx context.Context, id string) (api.PhotoAsset, error) {
@@ -130,14 +147,14 @@ func (c *Connection) CreatePhotoAsset(ctx context.Context, nodeID int64, role, k
 	var response *http.Response
 	apiResponse, err := c.apiWithResponse(&response).CreatePhotoAsset(ctx, &apiclient.CreatePhotoAssetRequestOptions{Body: request})
 	if err != nil {
-		return api.PhotoAsset{}, err
+		return api.PhotoAsset{}, photoMutationRequestError(response, err)
 	}
 	asset := *apiResponse
 	if err := validatePhotoAssetResponse(asset, response.Header.Get("ETag"), ""); err != nil {
-		return api.PhotoAsset{}, err
+		return api.PhotoAsset{}, photoMutationResponseError(err)
 	}
 	if asset.Revision != 1 {
-		return api.PhotoAsset{}, errors.New("created photo asset must start at revision one")
+		return api.PhotoAsset{}, photoMutationResponseError(errors.New("created photo asset must start at revision one"))
 	}
 	return asset, nil
 }
@@ -153,14 +170,14 @@ func (c *Connection) AttachPhotoFile(ctx context.Context, assetID string, revisi
 		Body:       &apiclient.AttachPhotoFileBody{NodeID: nodeID, Role: role, SidecarOfID: sidecarOfID},
 	})
 	if err != nil {
-		return api.PhotoAsset{}, err
+		return api.PhotoAsset{}, photoMutationRequestError(response, err)
 	}
 	asset := *apiResponse
 	if err := validatePhotoAssetResponse(asset, response.Header.Get("ETag"), assetID); err != nil {
-		return api.PhotoAsset{}, err
+		return api.PhotoAsset{}, photoMutationResponseError(err)
 	}
 	if asset.Revision != revision+1 {
-		return api.PhotoAsset{}, errors.New("attached photo response did not advance one revision")
+		return api.PhotoAsset{}, photoMutationResponseError(errors.New("attached photo response did not advance one revision"))
 	}
 	return asset, nil
 }
@@ -172,14 +189,14 @@ func (c *Connection) DetachPhotoFile(ctx context.Context, assetID string, revisi
 	var response *http.Response
 	apiResponse, err := c.apiWithResponse(&response).DetachPhotoFile(ctx, &apiclient.DetachPhotoFileRequestOptions{PathParams: &apiclient.DetachPhotoFilePath{AssetID: assetID, FileID: fileID}, Header: &apiclient.DetachPhotoFileHeaders{IfMatch: photoIfMatch(revision)}, Query: &apiclient.DetachPhotoFileQuery{ClearDependentSidecars: &clearDependentSidecars}})
 	if err != nil {
-		return api.PhotoAsset{}, err
+		return api.PhotoAsset{}, photoMutationRequestError(response, err)
 	}
 	asset := *apiResponse
 	if err := validatePhotoAssetResponse(asset, response.Header.Get("ETag"), assetID); err != nil {
-		return api.PhotoAsset{}, err
+		return api.PhotoAsset{}, photoMutationResponseError(err)
 	}
 	if asset.Revision != revision+1 {
-		return api.PhotoAsset{}, errors.New("detached photo response did not advance one revision")
+		return api.PhotoAsset{}, photoMutationResponseError(errors.New("detached photo response did not advance one revision"))
 	}
 	return asset, nil
 }
@@ -191,17 +208,17 @@ func (c *Connection) ExcludePhotoAsset(ctx context.Context, assetID string, revi
 	var response *http.Response
 	apiResponse, err := c.apiWithResponse(&response).ExcludePhotoAsset(ctx, &apiclient.ExcludePhotoAssetRequestOptions{PathParams: &apiclient.ExcludePhotoAssetPath{AssetID: assetID}, Header: &apiclient.ExcludePhotoAssetHeaders{IfMatch: photoIfMatch(revision)}, Body: &apiclient.ExcludePhotoAssetBody{Excluded: excluded}})
 	if err != nil {
-		return api.PhotoAsset{}, err
+		return api.PhotoAsset{}, photoMutationRequestError(response, err)
 	}
 	asset := *apiResponse
 	if err := validatePhotoAssetResponse(asset, response.Header.Get("ETag"), assetID); err != nil {
-		return api.PhotoAsset{}, err
+		return api.PhotoAsset{}, photoMutationResponseError(err)
 	}
 	if asset.Revision != revision && asset.Revision != revision+1 {
-		return api.PhotoAsset{}, errors.New("excluded photo response has an invalid revision")
+		return api.PhotoAsset{}, photoMutationResponseError(errors.New("excluded photo response has an invalid revision"))
 	}
 	if (asset.ExcludedAt != nil) != excluded {
-		return api.PhotoAsset{}, errors.New("excluded photo response has invalid state")
+		return api.PhotoAsset{}, photoMutationResponseError(errors.New("excluded photo response has invalid state"))
 	}
 	return asset, nil
 }
@@ -227,17 +244,17 @@ func (c *Connection) PromotePhotoNode(ctx context.Context, nodeID int64, expecte
 	}
 	apiResponse, err := c.apiWithResponse(&response).PromotePhotoNode(ctx, options)
 	if err != nil {
-		return api.PhotoAsset{}, err
+		return api.PhotoAsset{}, photoMutationRequestError(response, err)
 	}
 	asset := *apiResponse
 	if err := validatePhotoAssetResponse(asset, response.Header.Get("ETag"), ""); err != nil {
-		return api.PhotoAsset{}, err
+		return api.PhotoAsset{}, photoMutationResponseError(err)
 	}
 	if expectedRevision != nil && asset.Revision != *expectedRevision && asset.Revision != *expectedRevision+1 {
-		return api.PhotoAsset{}, errors.New("promoted photo response has an invalid revision")
+		return api.PhotoAsset{}, photoMutationResponseError(errors.New("promoted photo response has an invalid revision"))
 	}
 	if expectedRevision != nil && asset.ExcludedAt != nil {
-		return api.PhotoAsset{}, errors.New("promoted photo response remains excluded")
+		return api.PhotoAsset{}, photoMutationResponseError(errors.New("promoted photo response remains excluded"))
 	}
 	return asset, nil
 }
@@ -249,17 +266,17 @@ func (c *Connection) SetPhotoDisplay(ctx context.Context, assetID string, revisi
 	var response *http.Response
 	apiResponse, err := c.apiWithResponse(&response).SetPhotoDisplay(ctx, &apiclient.SetPhotoDisplayRequestOptions{PathParams: &apiclient.SetPhotoDisplayPath{AssetID: assetID}, Header: &apiclient.SetPhotoDisplayHeaders{IfMatch: photoIfMatch(revision)}, Body: &apiclient.SetPhotoDisplayBody{FileID: fileID}})
 	if err != nil {
-		return api.PhotoAsset{}, err
+		return api.PhotoAsset{}, photoMutationRequestError(response, err)
 	}
 	asset := *apiResponse
 	if err := validatePhotoAssetResponse(asset, response.Header.Get("ETag"), assetID); err != nil {
-		return api.PhotoAsset{}, err
+		return api.PhotoAsset{}, photoMutationResponseError(err)
 	}
 	if asset.Revision != revision && asset.Revision != revision+1 {
-		return api.PhotoAsset{}, errors.New("display photo response has an invalid revision")
+		return api.PhotoAsset{}, photoMutationResponseError(errors.New("display photo response has an invalid revision"))
 	}
 	if !equalPhotoPointer(asset.DisplayOverrideFileID, fileID) {
-		return api.PhotoAsset{}, errors.New("display photo response has invalid override state")
+		return api.PhotoAsset{}, photoMutationResponseError(errors.New("display photo response has invalid override state"))
 	}
 	return asset, nil
 }
@@ -274,7 +291,9 @@ func (c *Connection) PhotoSettings(ctx context.Context) (api.PhotoSettings, erro
 	if settings.Revision < 1 || settings.Preference != nil && *settings.Preference != "raw" && *settings.Preference != "image" {
 		return api.PhotoSettings{}, errors.New("photo settings response is invalid")
 	}
-	if etag := response.Header.Get("ETag"); etag != "" && etag != photoIfMatch(settings.Revision) {
+	if etag := response.Header.Get("ETag"); etag == "" {
+		return api.PhotoSettings{}, errors.New("photo settings response is missing ETag")
+	} else if etag != photoIfMatch(settings.Revision) {
 		return api.PhotoSettings{}, fmt.Errorf("photo settings response ETag %q, expected %q", etag, photoIfMatch(settings.Revision))
 	}
 	return settings, nil
@@ -287,17 +306,17 @@ func (c *Connection) SetPhotoSettings(ctx context.Context, revision int64, prefe
 	var response *http.Response
 	apiResponse, err := c.apiWithResponse(&response).SetPhotoSettings(ctx, &apiclient.SetPhotoSettingsRequestOptions{Header: &apiclient.SetPhotoSettingsHeaders{IfMatch: photoIfMatch(revision)}, Body: &apiclient.SetPhotoSettingsBody{Preference: preference}})
 	if err != nil {
-		return api.PhotoSettings{}, err
+		return api.PhotoSettings{}, photoMutationRequestError(response, err)
 	}
 	settings := *apiResponse
 	if settings.Revision != revision && settings.Revision != revision+1 || settings.Preference != nil && *settings.Preference != "raw" && *settings.Preference != "image" {
-		return api.PhotoSettings{}, errors.New("photo settings response has invalid revision")
+		return api.PhotoSettings{}, photoMutationResponseError(errors.New("photo settings response has invalid revision"))
 	}
 	if !equalPhotoPointer(settings.Preference, preference) {
-		return api.PhotoSettings{}, errors.New("photo settings response has invalid preference")
+		return api.PhotoSettings{}, photoMutationResponseError(errors.New("photo settings response has invalid preference"))
 	}
 	if response.Header.Get("ETag") != photoIfMatch(settings.Revision) {
-		return api.PhotoSettings{}, errors.New("photo settings response ETag is inconsistent")
+		return api.PhotoSettings{}, photoMutationResponseError(errors.New("photo settings response ETag is inconsistent"))
 	}
 	return settings, nil
 }

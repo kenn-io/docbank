@@ -3,6 +3,7 @@ package mcp
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 
 	"github.com/google/jsonschema-go/jsonschema"
@@ -167,5 +168,10 @@ func executePhotoWriteTool(
 	if err != nil {
 		return nil, err
 	}
-	return boundedToolSuccess(validator, photoAssetOutput(output), nil)
+	result, err := boundedToolSuccess(validator, photoAssetOutput(output), nil)
+	if err != nil {
+		return nil, sanitizedDaemonError(errProcessingOutcomeUnknown,
+			fmt.Errorf("photo mutation response failed output validation: %w", err))
+	}
+	return result, nil
 }
