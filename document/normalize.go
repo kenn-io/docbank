@@ -49,7 +49,7 @@ func RenditionMarkdownFromXHTMLContext(ctx context.Context, source []byte, maxRu
 	}
 	maxRunes = min(maxRunes, maxEvidenceTextBytes)
 	budget := min(int64(100<<20), int64(len(source))+4*int64(maxRunes))
-	writer := renditionHTMLWriter{maxLinkChars: renditionMaxLinkChars, work: &renditionXHTMLWork{remaining: budget}}
+	writer := renditionHTMLWriter{ctx: ctx, maxLinkChars: renditionMaxLinkChars, work: &renditionXHTMLWork{remaining: budget}}
 	decoder := xml.NewDecoder(contextReader{ctx: ctx, reader: bytes.NewReader(bytes.TrimPrefix(source, []byte{0xef, 0xbb, 0xbf}))})
 	decoder.Entity = xml.HTMLEntity
 	depth, roots, head := 0, 0, 0
@@ -94,6 +94,9 @@ func RenditionMarkdownFromXHTMLContext(ctx context.Context, source []byte, maxRu
 				converted.Attr = append(converted.Attr, html.Attribute{Key: attr.Name.Local, Val: attr.Value})
 			}
 			writer.startTag(converted, 0, false)
+			if err := writer.contextError(); err != nil {
+				return "", err
+			}
 		case xml.EndElement:
 			depth--
 			if head > 0 {
@@ -101,6 +104,9 @@ func RenditionMarkdownFromXHTMLContext(ctx context.Context, source []byte, maxRu
 				continue
 			}
 			writer.endTag(token.Name.Local)
+			if err := writer.contextError(); err != nil {
+				return "", err
+			}
 		case xml.CharData:
 			if depth == 0 && len(bytes.TrimSpace(token)) > 0 {
 				return "", errors.New("XHTML has text outside its root")
@@ -896,6 +902,8 @@ type renditionListFrame struct {
 // Markdown is emitted. Its output is intentionally separate from the frozen
 // canonicalHTMLWriter used by NormalizeDocument.
 type renditionHTMLWriter struct {
+	ctx            context.Context
+	err            error
 	work           *renditionXHTMLWork
 	maxLinkChars   int
 	rawFragment    bool
@@ -968,6 +976,9 @@ func (w *renditionHTMLWriter) consumeFragments(rendered []byte, rawSpans []rendi
 				return err
 			}
 		}
+		if err := w.contextError(); err != nil {
+			return err
+		}
 		w.renderedOffset = span.end
 		offset = span.end
 	}
@@ -977,7 +988,7 @@ func (w *renditionHTMLWriter) consumeFragments(rendered []byte, rawSpans []rendi
 		}
 	}
 	w.finalize()
-	return nil
+	return w.contextError()
 }
 
 func pairRenditionRawActiveElements(rendered []byte, spans []renditionRawSpan) {
@@ -1102,11 +1113,14 @@ func isInlineGeneratedHTML(fragment []byte) bool {
 }
 
 func (w *renditionHTMLWriter) consumeRawFragment(fragment []byte, inline bool) error {
-	raw := renditionHTMLWriter{maxLinkChars: w.maxLinkChars, rawFragment: true}
+	raw := renditionHTMLWriter{ctx: w.context(), maxLinkChars: w.maxLinkChars, rawFragment: true}
 	if err := raw.consumeFragment(fragment, false); err != nil {
 		return err
 	}
 	raw.finalize()
+	if err := raw.contextError(); err != nil {
+		return err
+	}
 	w.linkDepthTruncated = w.linkDepthTruncated || raw.linkDepthTruncated
 	raw.blocks = readableRawBlocks(raw.blocks)
 	if inline {
@@ -1183,6 +1197,9 @@ func (w *renditionHTMLWriter) appendRawInlineBlocks(blocks []renditionBlock) {
 func (w *renditionHTMLWriter) consumeFragment(fragment []byte, suppressText bool) error {
 	tokenizer := html.NewTokenizer(bytes.NewReader(fragment))
 	for {
+		if err := w.contextError(); err != nil {
+			return err
+		}
 		tokenType := tokenizer.Next()
 		tokenOffset := w.renderedOffset
 		w.renderedOffset += len(tokenizer.Raw())
@@ -1194,16 +1211,27 @@ func (w *renditionHTMLWriter) consumeFragment(fragment []byte, suppressText bool
 			return fmt.Errorf("tokenize rendition HTML: %w", tokenizer.Err())
 		case html.TextToken:
 			if w.skipDepth == 0 && !suppressText {
-				w.writeText(string(tokenizer.Text()))
+				if err := w.writeTextContext(w.context(), string(tokenizer.Text())); err != nil {
+					return err
+				}
 			}
 		case html.StartTagToken:
 			w.startTag(tokenizer.Token(), tokenOffset, suppressText)
+			if err := w.contextError(); err != nil {
+				return err
+			}
 		case html.SelfClosingTagToken:
 			w.startTag(tokenizer.Token(), tokenOffset, suppressText)
+			if err := w.contextError(); err != nil {
+				return err
+			}
 		case html.EndTagToken:
 			tag := tokenizer.Token().Data
 			if !w.endSuppressedTag(tag) {
 				w.endTag(tag)
+			}
+			if err := w.contextError(); err != nil {
+				return err
 			}
 		case html.CommentToken, html.DoctypeToken:
 			// Not searchable evidence.
@@ -1510,7 +1538,11 @@ func (w *renditionHTMLWriter) endTag(tag string) {
 		}
 	case "pre":
 		if w.inPre {
-			content := stripUnsafeControls(w.preText.String())
+			content, err := stripUnsafeControlsContext(w.context(), w.preText.String())
+			if err != nil {
+				w.err = err
+				return
+			}
 			if w.preInCell {
 				w.appendInline(renditionInline{kind: renditionInlineCode, text: strings.Join(strings.Fields(content), " ")})
 			} else {
@@ -1523,7 +1555,12 @@ func (w *renditionHTMLWriter) endTag(tag string) {
 		}
 	case "code":
 		if !w.inPre && w.inlineCode {
-			w.appendInline(renditionInline{kind: renditionInlineCode, text: stripUnsafeControls(w.inlineText.String())})
+			content, err := stripUnsafeControlsContext(w.context(), w.inlineText.String())
+			if err != nil {
+				w.err = err
+				return
+			}
+			w.appendInline(renditionInline{kind: renditionInlineCode, text: content})
 			w.inlineCode = false
 			w.inlineText.Reset()
 		}
@@ -1555,7 +1592,9 @@ func (w *renditionHTMLWriter) startLink(destination string) {
 }
 
 func (w *renditionHTMLWriter) writeText(value string) {
-	_ = w.writeTextContext(context.Background(), value)
+	if err := w.writeTextContext(w.context(), value); err != nil {
+		w.err = err
+	}
 }
 
 func (w *renditionHTMLWriter) writeTextContext(ctx context.Context, value string) error {
@@ -1601,6 +1640,20 @@ func (w *renditionHTMLWriter) writeTextContext(ctx context.Context, value string
 	}
 	flushChunk()
 	return ctx.Err()
+}
+
+func (w *renditionHTMLWriter) context() context.Context {
+	if w.ctx == nil {
+		return context.Background()
+	}
+	return w.ctx
+}
+
+func (w *renditionHTMLWriter) contextError() error {
+	if w.err != nil {
+		return w.err
+	}
+	return w.context().Err()
 }
 
 func (w *renditionHTMLWriter) startBlock(kind renditionBlockKind, level int) {

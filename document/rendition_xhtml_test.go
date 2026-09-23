@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
+	"golang.org/x/net/html"
 )
 
 type cancelAfterXHTMLReadContext struct {
@@ -128,16 +129,16 @@ func TestRenditionFinalizationContextCancellation(t *testing.T) {
 		listItems[index].present = true
 	}
 	listBlocks := []renditionBlock{{kind: renditionListBlock, list: &renditionList{ordered: true, start: "1", items: listItems}}}
-	var ctx context.Context = &cancelAfterXHTMLReadContext{cancelAt: 3}
+	var ctx context.Context = &cancelOnXHTMLReadContext{cancelAt: 3}
 	err := canonicalizeRenditionBlocks(ctx, tableBlocks)
 	require.ErrorIs(t, err, context.Canceled)
 
 	tableCellBlocks := []renditionBlock{{kind: renditionTable, rows: [][][]renditionInline{{{}}}}}
-	ctx = &cancelAfterXHTMLReadContext{cancelAt: 4}
+	ctx = &cancelOnXHTMLReadContext{cancelAt: 5}
 	err = canonicalizeRenditionBlocks(ctx, tableCellBlocks)
 	require.ErrorIs(t, err, context.Canceled)
 
-	ctx = &cancelAfterXHTMLReadContext{cancelAt: 3}
+	ctx = &cancelOnXHTMLReadContext{cancelAt: 3}
 	err = canonicalizeRenditionBlocks(ctx, listBlocks)
 	require.ErrorIs(t, err, context.Canceled)
 
@@ -185,6 +186,20 @@ func TestRenditionFinalizationContextCancellation(t *testing.T) {
 	err = writer.writeTextContext(ctx, strings.Repeat("x", 1024)+" "+strings.Repeat("y", 1024))
 	require.ErrorIs(t, err, context.Canceled)
 	require.NotEmpty(t, writer.current)
+
+	writer = renditionHTMLWriter{ctx: &cancelAfterXHTMLReadContext{cancelAt: 2}, work: &renditionXHTMLWork{remaining: 1 << 20}}
+	writer.startTag(html.Token{Data: "img", Attr: []html.Attribute{{Key: "alt", Val: strings.Repeat("x", 1<<20)}}}, 0, false)
+	require.ErrorIs(t, writer.err, context.Canceled)
+
+	writer = renditionHTMLWriter{ctx: &cancelAfterXHTMLReadContext{cancelAt: 2}, work: &renditionXHTMLWork{remaining: 1 << 20}, inPre: true}
+	writer.preText.WriteString(strings.Repeat("x", 1<<20))
+	writer.endTag("pre")
+	require.ErrorIs(t, writer.err, context.Canceled)
+
+	writer = renditionHTMLWriter{ctx: &cancelAfterXHTMLReadContext{cancelAt: 2}, work: &renditionXHTMLWork{remaining: 1 << 20}, inlineCode: true}
+	writer.inlineText.WriteString(strings.Repeat("x", 1<<20))
+	writer.endTag("code")
+	require.ErrorIs(t, writer.err, context.Canceled)
 
 	ctx = &cancelAfterXHTMLReadContext{cancelAt: 3}
 	_, _, err = serializeRenditionBlocksContext(ctx, tableBlocks, 1<<20)
