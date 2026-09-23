@@ -2345,13 +2345,15 @@ func degradeOrderedListItem(ctx context.Context, item serializedOrderedListItem,
 		if offset != len(item.value) && item.value[offset] != '\n' {
 			continue
 		}
-		line := item.value[lineStart:offset]
 		if lineStart == 0 {
-			line = degradedPrefix + strings.TrimPrefix(line, normalPrefix)
-		} else if after, ok := strings.CutPrefix(line, normalIndent); ok {
-			line = degradedIndent + after
+			result.WriteString(degradedPrefix)
+			result.WriteString(strings.TrimPrefix(item.value[lineStart:offset], normalPrefix))
+		} else if after, ok := strings.CutPrefix(item.value[lineStart:offset], normalIndent); ok {
+			result.WriteString(degradedIndent)
+			result.WriteString(after)
+		} else {
+			result.WriteString(item.value[lineStart:offset])
 		}
-		result.WriteString(line)
 		if offset < len(item.value) {
 			result.WriteByte('\n')
 			lineStart = offset + 1
@@ -2412,7 +2414,11 @@ func appendRenditionItemBlock(
 	default:
 		return false, false
 	}
-	value = prefixRenditionLines(value, firstPrefix, continuationPrefix)
+	value, err := prefixRenditionLinesContext(output.ctx, value, firstPrefix, continuationPrefix)
+	if err != nil {
+		output.err = err
+		return false, true
+	}
 	if output.runes+utf8.RuneCountInString(value) > limit {
 		return false, true
 	}
@@ -2422,7 +2428,28 @@ func appendRenditionItemBlock(
 }
 
 func prefixRenditionLines(value, firstPrefix, continuationPrefix string) string {
-	return firstPrefix + strings.ReplaceAll(value, "\n", "\n"+continuationPrefix)
+	result, _ := prefixRenditionLinesContext(context.Background(), value, firstPrefix, continuationPrefix)
+	return result
+}
+
+func prefixRenditionLinesContext(ctx context.Context, value, firstPrefix, continuationPrefix string) (string, error) {
+	var result strings.Builder
+	result.WriteString(firstPrefix)
+	for index := range len(value) {
+		if index&1023 == 0 {
+			if err := ctx.Err(); err != nil {
+				return "", err
+			}
+		}
+		result.WriteByte(value[index])
+		if value[index] == '\n' {
+			result.WriteString(continuationPrefix)
+		}
+	}
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
+	return result.String(), nil
 }
 
 func serializeRenditionInlines(inlines []renditionInline, available int, inTable bool) (string, bool) {

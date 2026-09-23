@@ -214,6 +214,10 @@ func TestRenditionFinalizationContextCancellation(t *testing.T) {
 	_, err = degradeOrderedListItem(ctx, serializedOrderedListItem{ordinal: "999999999", value: strings.Repeat("line\n", 1<<12)}, 0, false)
 	require.ErrorIs(t, err, context.Canceled)
 
+	ctx = &cancelOnXHTMLReadContext{cancelAt: 2}
+	_, err = prefixRenditionLinesContext(ctx, strings.Repeat("line\n", 1<<12), "", "  ")
+	require.ErrorIs(t, err, context.Canceled)
+
 	ctx = &cancelAfterXHTMLReadContext{cancelAt: 3}
 	_, _, err = serializeRenditionBlocksContext(ctx, tableBlocks, 1<<20)
 	require.ErrorIs(t, err, context.Canceled)
