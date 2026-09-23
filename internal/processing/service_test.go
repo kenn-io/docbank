@@ -161,7 +161,7 @@ func TestProcessingServiceWaitsForEmbeddingRetryAndHonorsCancellation(t *testing
 	var runErr error
 	finished := make(chan struct{})
 	go func() {
-		jobs, runErr = service.runEmbeddings(ctx, version, profile, request.Authorization.Principal, request.Authorization.Scope, "", nil)
+		jobs, runErr = service.runEmbeddings(ctx, version, profile, request.Authorization.Principal, request.Authorization.Scope, "", nil, nil)
 		close(finished)
 	}()
 	t.Cleanup(func() { cancel(); <-finished })
@@ -185,7 +185,7 @@ func TestProcessingServiceWaitsForEmbeddingRetryAndHonorsCancellation(t *testing
 	require.Equal(t, []string{pendingID}, jobs)
 	require.Equal(t, 3, fake.runtime.callCount(request.BindingID), "waiting must not call the provider before backoff expires")
 	clockOffset.Store(int64(2 * time.Minute))
-	retried, err := service.runEmbeddings(t.Context(), version, profile, request.Authorization.Principal, request.Authorization.Scope, "", nil)
+	retried, err := service.runEmbeddings(t.Context(), version, profile, request.Authorization.Principal, request.Authorization.Scope, "", nil, nil)
 	require.NoError(t, err)
 	require.Equal(t, jobs, retried)
 	status, err := fixture.catalog.EmbeddingJobByID(t.Context(), jobs[0])
@@ -219,6 +219,7 @@ func TestProcessingServiceCompletesEmbeddingAfterWorkerStops(t *testing.T) {
 	require.NoError(t, err, "foreground processing must progress without a background worker")
 	status, err := service.Status(t.Context(), job.ID)
 	require.NoError(t, err)
+	require.Equal(t, original.ContentVersionID, status.ContentVersionID)
 	require.Equal(t, "completed", status.State)
 	require.Equal(t, 1, status.CompletedBindings)
 }

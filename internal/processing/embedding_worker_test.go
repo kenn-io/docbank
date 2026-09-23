@@ -1399,6 +1399,46 @@ func TestEmbeddingWorkerTargetReportsSourceFence(t *testing.T) {
 	require.Zero(t, fake.runtime.calls())
 }
 
+func TestScopedEmbeddingWorkCannotPublishWithoutCurrentGrant(t *testing.T) {
+	fixture, fake, worker, request := newRealEmbeddingWorker(t, document.EmbeddingInputOriginalFile)
+	request.SourceGrant = &store.SourceGrantBinding{SubjectID: "synthetic:reader", CredentialKind: "test",
+		Audience: "docbank:test", GrantRevision: 4, ExpiresAt: time.Now().UTC().Add(time.Hour),
+		SourceID: request.ContentVersionID}
+	job, err := fixture.catalog.EnqueueEmbeddingJob(t.Context(), request)
+	require.NoError(t, err)
+	processed, err := worker.RunJob(t.Context(), job.ID)
+	require.True(t, processed)
+	require.NoError(t, err)
+	status, err := fixture.catalog.EmbeddingJobByID(t.Context(), job.ID)
+	require.NoError(t, err)
+	require.Equal(t, "failed", status.State)
+	require.Zero(t, fake.runtime.calls(), "revoked source work must not reach the provider")
+	var metadata bytes.Buffer
+	require.NoError(t, fixture.catalog.ExportMetadata(t.Context(), &metadata))
+	require.NotContains(t, metadata.String(), `"type":"embedding_head"`)
+	request.SourceGrant.GrantRevision++
+	restarted := *worker
+	restarted.owner = "restarted-integration-worker"
+	restarted.sourceGrantAuthorizer = store.SourceGrantAuthorizeFunc(func(_ context.Context, binding store.SourceGrantBinding) error {
+		if binding.GrantRevision != request.SourceGrant.GrantRevision || binding.SourceID != request.ContentVersionID {
+			return errors.New("revoked")
+		}
+		return nil
+	})
+	renewed, err := fixture.catalog.EnqueueEmbeddingJob(t.Context(), request)
+	require.NoError(t, err)
+	require.NotEqual(t, job.ID, renewed.ID)
+	processed, err = restarted.RunJob(t.Context(), renewed.ID)
+	require.True(t, processed)
+	require.NoError(t, err)
+	status, err = fixture.catalog.EmbeddingJobByID(t.Context(), renewed.ID)
+	require.NoError(t, err)
+	require.Equal(t, "completed", status.State)
+	metadata.Reset()
+	require.NoError(t, fixture.catalog.ExportMetadata(t.Context(), &metadata))
+	require.Contains(t, metadata.String(), `"type":"embedding_head"`)
+}
+
 func TestEmbeddingWorkerAbandonsReplacedRendition(t *testing.T) {
 	for _, duringProvider := range []bool{false, true} {
 		t.Run(fmt.Sprintf("during-provider=%t", duringProvider), func(t *testing.T) {

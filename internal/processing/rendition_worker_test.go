@@ -100,6 +100,29 @@ func TestRenditionWorkerPublishesNormalizedBuildAndAllAuthorizedWaiters(t *testi
 	assert.Equal(t, 1, provider.calls)
 }
 
+func TestScopedRenditionWorkerDoesNotCallProviderWithoutCurrentGrant(t *testing.T) {
+	fixture := newPublicationFixture(t)
+	provider := newWorkerProvider(t)
+	profile := workerProcessingProfile(t, provider.Descriptor())
+	request := workerJobRequest(fixture.versionID, profile, provider.Descriptor())
+	request.SourceGrant = &store.SourceGrantBinding{SubjectID: "synthetic:reader", CredentialKind: "test",
+		Audience: "docbank:test", GrantRevision: 4, ExpiresAt: time.Now().UTC().Add(time.Hour),
+		SourceID: fixture.versionID}
+	grantWorkerConsent(t, fixture.catalog, request)
+	job, _, err := fixture.catalog.EnqueueRenditionJob(t.Context(), request)
+	require.NoError(t, err)
+	worker, err := NewRenditionWorker(RenditionWorkerConfig{Catalog: fixture.catalog, Blobs: fixture.blobs,
+		Runtime: workerRuntime{provider: provider}, Gate: newTestOperationGate(), Owner: "scoped-rendition-worker",
+		LeaseDuration: time.Minute, IdleDelay: time.Millisecond})
+	require.NoError(t, err)
+	processed, err := worker.RunJob(t.Context(), job.ID)
+	require.True(t, processed)
+	require.NoError(t, err)
+	require.Zero(t, provider.calls)
+	_, err = fixture.catalog.ActiveRendition(t.Context(), fixture.versionID, profile.Fingerprint)
+	require.ErrorIs(t, err, store.ErrNotFound)
+}
+
 func TestRenditionWorkerHonorsDaemonOperationGateAndCancellation(t *testing.T) {
 	for _, cancelWhileHeld := range []bool{false, true} {
 		name := "release"

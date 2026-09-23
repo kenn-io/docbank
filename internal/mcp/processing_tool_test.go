@@ -10,6 +10,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	sdkmcp "github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/stretchr/testify/assert"
@@ -24,6 +25,27 @@ var (
 	testProcessingPlanFingerprint = strings.Repeat("d", 64)
 	testProcessingJobID           = strings.Repeat("e", 64)
 )
+
+func TestScopedProcessingCannotEnqueueThroughLocalDaemonCredential(t *testing.T) {
+	now := time.Date(2026, 9, 22, 12, 0, 0, 0, time.UTC)
+	principal := api.Principal{SubjectID: "subject:scoped-processing", CredentialKind: "machine",
+		Audience: "docbank:test", Operations: []api.Operation{api.OperationProcessing},
+		SourceIDs: []string{testVersionID}, GrantRevision: 1, ExpiresAt: now.Add(time.Hour)}
+	policy := newOperationPolicy(api.NewOperationPolicy(api.OperationPolicyOptions{
+		Authority: &mcpGrantAuthority{grant: principal}, Now: func() time.Time { return now },
+	}), principal)
+	harness := newProcessingToolHarness(t, testProcessingPlanFingerprint, nil)
+	plans := newProcessingPlanRegistry()
+	plans.remember(syntheticProcessingPlan(testProcessingPlanFingerprint))
+	raw, err := json.Marshal(processingToolArguments(testProcessingPlanFingerprint))
+	require.NoError(t, err)
+	_, output := startProcessingSchemas()
+	result, err := executeProcessingToolWithPolicy(t.Context(), harness.lease(t), plans, policy,
+		mustResolveSchema(output), raw)
+	assert.Nil(t, result)
+	require.ErrorIs(t, err, api.ErrOperationDenied)
+	assert.Zero(t, harness.startCalls.Load())
+}
 
 func TestStartProcessingIsUnavailableWhenCatalogIsReadOnly(t *testing.T) {
 	server := newServerWithOptions(testImplementation(), ServerOptions{})

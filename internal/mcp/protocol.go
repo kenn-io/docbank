@@ -14,6 +14,7 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/jsonrpc"
 	sdkmcp "github.com/modelcontextprotocol/go-sdk/mcp"
+	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/version"
 )
 
@@ -36,6 +37,8 @@ type Server struct {
 type ServerOptions struct {
 	AllowProcessing bool
 	Logger          *slog.Logger
+	OperationPolicy *api.OperationPolicy
+	Principal       api.Principal
 }
 
 // NewServer creates an exact-version Docbank MCP server.
@@ -69,7 +72,7 @@ func newServerWithOptionsAndDaemon(
 	}
 	logger := options.Logger
 	if logger == nil {
-		logger = slog.New(slog.DiscardHandler)
+		logger = slog.Default()
 	}
 
 	sdk := sdkmcp.NewServer(implementation, &sdkmcp.ServerOptions{
@@ -80,8 +83,9 @@ func newServerWithOptionsAndDaemon(
 		Instructions: catalogInstructions(options.AllowProcessing),
 	})
 	plans := newProcessingPlanRegistry()
-	registerToolCatalog(sdk, options.AllowProcessing, daemon, plans, logger)
-	registerResourceSurface(sdk, daemon, logger)
+	policy := newOperationPolicy(options.OperationPolicy, options.Principal, logger)
+	registerToolCatalog(sdk, options.AllowProcessing, daemon, plans, policy, logger)
+	registerResourceSurface(sdk, daemon, policy, logger)
 	sdk.AddReceivingMiddleware(normalizeDiscovery)
 	sdk.AddReceivingMiddleware(normalizeToolCatalog)
 	sdk.AddReceivingMiddleware(normalizeResourceCatalogs)

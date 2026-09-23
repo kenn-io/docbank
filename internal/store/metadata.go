@@ -1085,6 +1085,7 @@ func requirePristineMetadataTarget(ctx context.Context, tx *sql.Tx) error {
 		    + (SELECT COUNT(*) FROM rendition_heads)
 		    + (SELECT COUNT(*) FROM embedding_vector_spaces)
 		    + (SELECT COUNT(*) FROM embedding_input_generations)
+		    + (SELECT COUNT(*) FROM embedding_generation_source_fences)
 		    + (SELECT COUNT(*) FROM embedding_generation_inputs)
 		    + (SELECT COUNT(*) FROM embedding_vector_sets)
 		    + (SELECT COUNT(*) FROM embedding_vector_rows)
@@ -1184,7 +1185,7 @@ func (s *Store) importMetadataLines(
 	if err != nil {
 		return metadataHeader{}, fmt.Errorf("decoding metadata header: %w", err)
 	}
-	if err := requireMetadataFields(rawHeader, metadataHeaderFields, nil); err != nil {
+	if err := requireMetadataFields(rawHeader, metadataHeaderFields, nil, nil); err != nil {
 		return metadataHeader{}, fmt.Errorf("decoding metadata header: %w", err)
 	}
 	var header metadataHeader
@@ -1226,7 +1227,7 @@ func (s *Store) importMetadataRecord(
 	if !ok {
 		return fmt.Errorf("unknown record type %q", kind)
 	}
-	if err := requireMetadataFields(raw, required, metadataNullableFields[kind]); err != nil {
+	if err := requireMetadataFields(raw, required, metadataNullableFields[kind], metadataOptionalFields[kind]); err != nil {
 		return err
 	}
 	if strings.HasPrefix(kind, "email_") {
@@ -1626,6 +1627,7 @@ var metadataRequiredFields = map[string][]string{
 	metadataRenditionJobWaiterType:         processingMetadataRequiredFields[metadataRenditionJobWaiterType],
 	metadataEmbeddingVectorSpaceType:       embeddingMetadataRequiredFields[metadataEmbeddingVectorSpaceType],
 	metadataEmbeddingGenerationType:        embeddingMetadataRequiredFields[metadataEmbeddingGenerationType],
+	metadataEmbeddingSourceFenceType:       embeddingMetadataRequiredFields[metadataEmbeddingSourceFenceType],
 	metadataEmbeddingInputType:             embeddingMetadataRequiredFields[metadataEmbeddingInputType],
 	metadataEmbeddingVectorSetType:         embeddingMetadataRequiredFields[metadataEmbeddingVectorSetType],
 	metadataEmbeddingVectorRowType:         embeddingMetadataRequiredFields[metadataEmbeddingVectorRowType],
@@ -1667,11 +1669,17 @@ var metadataNullableFields = map[string]map[string]bool{
 	},
 }
 
+// New optional fields retain metadata JSONL v1 compatibility with backups
+// emitted before the field existed while keeping unknown-field rejection.
+var metadataOptionalFields = map[string]map[string]bool{
+	metadataRenditionJobWaiterType: {"source_grant": true},
+}
+
 func decodeMetadataRecord(raw jsontext.Value, dst any) error {
 	return json.Unmarshal(raw, dst, json.RejectUnknownMembers(true))
 }
 
-func requireMetadataFields(raw jsontext.Value, required []string, nullable map[string]bool) error {
+func requireMetadataFields(raw jsontext.Value, required []string, nullable, optional map[string]bool) error {
 	fields, err := decodeMetadataFields(raw)
 	if err != nil {
 		return err
@@ -1687,9 +1695,12 @@ func requireMetadataFields(raw jsontext.Value, required []string, nullable map[s
 			return fmt.Errorf("metadata field %q cannot be null", field)
 		}
 	}
-	for field := range fields {
-		if !allowed[field] {
+	for field, value := range fields {
+		if !allowed[field] && !optional[field] {
 			return fmt.Errorf("metadata record contains unknown or non-canonical field %q", field)
+		}
+		if optional[field] && bytes.Equal(bytes.TrimSpace(value), []byte("null")) {
+			return fmt.Errorf("metadata optional field %q cannot be null", field)
 		}
 	}
 	return nil

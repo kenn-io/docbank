@@ -2119,11 +2119,11 @@ func (s *Store) SearchPageWithOptions(
 
 // NormalizeSearchOptions validates scope identities and returns canonical filters.
 func (s *Store) NormalizeSearchOptions(ctx context.Context, opts SearchOptions) (SearchOptions, error) {
-	return s.normalizeSearchOptionsWithQuerier(ctx, s.db, opts)
+	return s.normalizeSearchOptionsWithQuerier(ctx, s.db, opts, true)
 }
 
 func (s *Store) normalizeSearchOptionsWithQuerier(
-	ctx context.Context, queryer rowQuerier, opts SearchOptions,
+	ctx context.Context, queryer rowQuerier, opts SearchOptions, checkSelectorExistence bool,
 ) (SearchOptions, error) {
 	if len(opts.ContentVersionIDs) > MaxSearchSourceFenceIDs {
 		return SearchOptions{}, fmt.Errorf("search source fence exceeds %d content versions",
@@ -2142,7 +2142,7 @@ func (s *Store) normalizeSearchOptionsWithQuerier(
 		}
 		opts.ContentVersionIDs = ids
 	}
-	if opts.TagID != "" {
+	if checkSelectorExistence && opts.TagID != "" {
 		if _, err := tagByIDQuery(ctx, queryer, opts.TagID); err != nil {
 			return SearchOptions{}, fmt.Errorf("search tag %q: %w", opts.TagID, err)
 		}
@@ -2155,7 +2155,7 @@ func (s *Store) normalizeSearchOptionsWithQuerier(
 	if opts.UnderNodeID < 0 {
 		return SearchOptions{}, errors.New("search directory node ID must be positive")
 	}
-	if opts.UnderNodeID != 0 {
+	if checkSelectorExistence && opts.UnderNodeID != 0 {
 		directory, err := nodeByIDQuery(ctx, queryer, opts.UnderNodeID)
 		if err != nil {
 			return SearchOptions{}, fmt.Errorf("search directory node %d: %w", opts.UnderNodeID, err)

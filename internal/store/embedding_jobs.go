@@ -20,6 +20,8 @@ const embeddingJobMaxClaims = 3
 
 type EmbeddingJobRequest struct {
 	ContentVersionID string
+	SourceGrant      *SourceGrantBinding
+	reconcileOnly    bool
 	Profile          ProcessingProfileRecord
 	BindingID        string
 	Descriptor       document.EmbeddingDescriptor
@@ -56,6 +58,7 @@ type EmbeddingJobClaim struct {
 type EmbeddingJobWork struct {
 	VaultID                   string
 	ContentVersionID          string
+	SourceGrant               *SourceGrantBinding
 	ProcessingProfile         ProcessingProfileRecord
 	Binding                   document.EmbeddingBindingV1
 	Descriptor                document.EmbeddingDescriptor
@@ -85,6 +88,10 @@ type EmbeddingAttemptReceipt struct {
 }
 
 func (s *Store) EnqueueEmbeddingJob(ctx context.Context, request EmbeddingJobRequest) (EmbeddingJob, error) {
+	sourceGrantJSON, sourceGrantDigest, err := encodeSourceGrantBinding(request.SourceGrant, request.ContentVersionID)
+	if err != nil {
+		return EmbeddingJob{}, fmt.Errorf("enqueueing embedding job: %w", err)
+	}
 	profile, err := normalizeProcessingProfileRecord(request.Profile)
 	if err != nil {
 		return EmbeddingJob{}, fmt.Errorf("enqueueing embedding job: %w", err)
@@ -154,6 +161,22 @@ func (s *Store) EnqueueEmbeddingJob(ctx context.Context, request EmbeddingJobReq
 		if err := insertInputGenerationTx(ctx, tx, generationProjection); err != nil {
 			return err
 		}
+		if request.reconcileOnly {
+			var fenced bool
+			if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM embedding_generation_source_fences
+				WHERE generation_id=?)`, generationProjection.ID).Scan(&fenced); err != nil {
+				return err
+			}
+			if fenced {
+				return ErrEmbeddingJobFenced
+			}
+		}
+		if request.SourceGrant != nil {
+			if _, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO embedding_generation_source_fences(generation_id)
+				VALUES(?)`, generationProjection.ID); err != nil {
+				return fmt.Errorf("fencing scoped embedding generation: %w", err)
+			}
+		}
 		authorization, err := authorizeProviderOperationTx(ctx, tx, s.vaultID,
 			request.Authorization, time.Now().UTC())
 		if err != nil {
@@ -162,6 +185,9 @@ func (s *Store) EnqueueEmbeddingJob(ctx context.Context, request EmbeddingJobReq
 		jobID = embeddingJobID(s.vaultID, request.ContentVersionID, profile.Fingerprint,
 			binding.Name, binding.InputKind, request.InputGeneration.ID, authorization.GrantID,
 			authorization.ProcessingIncarnationID, authorization.RevocationFence)
+		if sourceGrantDigest != "" {
+			jobID = embeddingJobID(jobID, sourceGrantDigest)
+		}
 		satisfied, err := exactEmbeddingHeadExistsTx(ctx, tx, request.ContentVersionID,
 			profile.Fingerprint, binding, request.InputGeneration.ID, space.ID)
 		if err != nil {
@@ -174,13 +200,13 @@ func (s *Store) EnqueueEmbeddingJob(ctx context.Context, request EmbeddingJobReq
 		_, err = tx.ExecContext(ctx, `INSERT INTO embedding_jobs(
 			job_id,vault_uid,content_version_id,profile_fingerprint,binding_id,input_kind,
 			generation_id,vector_space_id,principal,scope,authorization_grant_id,
-			authorization_incarnation_id,authorization_revocation_fence,
+			authorization_incarnation_id,authorization_revocation_fence,source_grant_json,source_grant_digest,
 			state,available_at,created_at,updated_at
-		) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(job_id) DO NOTHING`,
+		) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(job_id) DO NOTHING`,
 			jobID, s.vaultID, request.ContentVersionID, profile.Fingerprint, binding.Name,
 			binding.InputKind, request.InputGeneration.ID, space.ID, authority.principal,
 			authority.scope, authorization.GrantID, authorization.ProcessingIncarnationID,
-			authorization.RevocationFence, initialState, now, now, now)
+			authorization.RevocationFence, sourceGrantJSON, sourceGrantDigest, initialState, now, now, now)
 		if err != nil {
 			return err
 		}
@@ -596,6 +622,15 @@ func (s *Store) FailEmbeddingWork(ctx context.Context, claim EmbeddingJobClaim, 
 func (s *Store) PublishEmbeddingWork(ctx context.Context, claim EmbeddingJobClaim, work EmbeddingJobWork,
 	head EmbeddingHeadRecord, prior ProviderOperationAuthorization, receipt EmbeddingAttemptReceipt, at time.Time,
 ) error {
+	return s.PublishEmbeddingWorkWithSourceGrant(ctx, claim, work, head, prior, receipt, at, nil)
+}
+
+// PublishEmbeddingWorkWithSourceGrant binds the source-grant decision to the
+// same transaction that flips the embedding head and completes the job.
+func (s *Store) PublishEmbeddingWorkWithSourceGrant(ctx context.Context, claim EmbeddingJobClaim, work EmbeddingJobWork,
+	head EmbeddingHeadRecord, prior ProviderOperationAuthorization, receipt EmbeddingAttemptReceipt, at time.Time,
+	authorizer SourceGrantAuthorizer,
+) error {
 	if err := validateEmbeddingHeadRecord(head); err != nil {
 		return err
 	}
@@ -606,6 +641,9 @@ func (s *Store) PublishEmbeddingWork(ctx context.Context, claim EmbeddingJobClai
 	}
 	return s.withStorageTx(ctx, func(tx *sql.Tx) error {
 		if err := validateEmbeddingWorkTx(ctx, tx, s.vaultID, claim, work, at); err != nil {
+			return err
+		}
+		if err := authorizeSourceGrant(ctx, work.SourceGrant, work.ContentVersionID, at, authorizer); err != nil {
 			return err
 		}
 		if _, err := publishEmbeddingHeadWithLeaseTx(ctx, tx, s.vaultID, head, work.Consent, prior, claim.AttemptID, claim.Epoch, at); err != nil {
@@ -674,13 +712,21 @@ func loadEmbeddingJobWorkTx(ctx context.Context, tx *sql.Tx, vaultID, jobID stri
 	var versionID, profileID, bindingID, generationID, spaceID, principal, scope string
 	var grantID, incarnationID string
 	var revocationFence int64
+	var sourceGrantJSON sql.NullString
 	err := tx.QueryRowContext(ctx, `SELECT content_version_id,profile_fingerprint,binding_id,generation_id,
 		vector_space_id,principal,scope,authorization_grant_id,authorization_incarnation_id,
-		authorization_revocation_fence FROM embedding_jobs WHERE job_id=?`, jobID).Scan(
+		authorization_revocation_fence,source_grant_json FROM embedding_jobs WHERE job_id=?`, jobID).Scan(
 		&versionID, &profileID, &bindingID, &generationID, &spaceID, &principal, &scope,
-		&grantID, &incarnationID, &revocationFence)
+		&grantID, &incarnationID, &revocationFence, &sourceGrantJSON)
 	if err != nil {
 		return EmbeddingJobWork{}, err
+	}
+	var sourceGrant *SourceGrantBinding
+	if sourceGrantJSON.Valid {
+		sourceGrant, err = decodeSourceGrantBinding(sourceGrantJSON.String, versionID)
+		if err != nil {
+			return EmbeddingJobWork{}, err
+		}
 	}
 	profile, err := loadProcessingProfile(ctx, tx, profileID)
 	if err != nil {
@@ -705,7 +751,7 @@ func loadEmbeddingJobWorkTx(ctx context.Context, tx *sql.Tx, vaultID, jobID stri
 		Scan(&sourceHash, &sourceBytes, &filename, &mediaType); err != nil {
 		return EmbeddingJobWork{}, err
 	}
-	return EmbeddingJobWork{VaultID: vaultID, ContentVersionID: versionID, ProcessingProfile: profile,
+	return EmbeddingJobWork{VaultID: vaultID, ContentVersionID: versionID, SourceGrant: sourceGrant, ProcessingProfile: profile,
 		Binding: binding, Descriptor: space.Descriptor, VectorSpaceID: spaceID,
 		EmbeddingInputFingerprint: fingerprints.EmbeddingInput[binding.Name], InputGeneration: generation,
 		SourceBlobHash: sourceHash, SourceBytes: sourceBytes, SourceFilename: filename, SourceMediaType: mediaType,

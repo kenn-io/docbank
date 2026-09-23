@@ -60,7 +60,9 @@ func (s *Store) ReconcileEmbeddingJobs(ctx context.Context, request EmbeddingRec
 			SELECT g.generation_id FROM embedding_input_generations g
 			JOIN content_versions v ON v.version_id=g.source_version_id
 			JOIN nodes n ON n.id=v.node_id AND n.current_version_id=v.version_id AND n.trashed_at IS NULL
-			WHERE g.generation_id>? ORDER BY g.generation_id LIMIT ?`, request.After, request.Limit+1)
+			WHERE g.generation_id>? AND NOT EXISTS(
+				SELECT 1 FROM embedding_generation_source_fences f WHERE f.generation_id=g.generation_id)
+			ORDER BY g.generation_id LIMIT ?`, request.After, request.Limit+1)
 		return err
 	})
 	if err != nil {
@@ -158,6 +160,7 @@ func (s *Store) ReconcileEmbeddingJobs(ctx context.Context, request EmbeddingRec
 				candidates = append(candidates, embeddingReconcileCandidate{request: EmbeddingJobRequest{
 					ContentVersionID: generation.SourceVersionID, Profile: profile, BindingID: binding.Name,
 					Descriptor: space.Descriptor, InputGeneration: generation, Authorization: consent,
+					reconcileOnly: true,
 				}, binding: binding, fingerprints: fingerprints, space: space})
 			}
 			result.Examined++

@@ -246,6 +246,7 @@ type metadataRenditionJobWaiter struct {
 	AuthorizationGrantID         string                `json:"authorization_grant_id"`
 	AuthorizationIncarnationID   string                `json:"authorization_incarnation_id"`
 	AuthorizationRevocationFence int64                 `json:"authorization_revocation_fence"`
+	SourceGrant                  *SourceGrantBinding   `json:"source_grant,omitempty"`
 	State                        string                `json:"state"`
 	FailureCode                  *RenditionFailureCode `json:"failure_code,omitempty"`
 	AttachmentID                 string                `json:"attachment_id"`
@@ -440,7 +441,7 @@ func exportRenditionJobWaiters(
 	rows, err := tx.QueryContext(ctx, `
 		SELECT waiter_id,job_id,content_version_id,profile_fingerprint,principal,scope,
 		       disclosure_fingerprint,input_classes_json,retained_classes_json,
-		       authorization_grant_id,authorization_incarnation_id,authorization_revocation_fence,
+		       authorization_grant_id,authorization_incarnation_id,authorization_revocation_fence,source_grant_json,
 		       state,failure_code,
 		       attachment_id,created_at,updated_at
 		FROM rendition_job_waiters ORDER BY job_id,waiter_id`)
@@ -452,10 +453,11 @@ func exportRenditionJobWaiters(
 		record := metadataRenditionJobWaiter{Type: metadataRenditionJobWaiterType}
 		var inputs, retained string
 		var failure sql.NullString
+		var sourceGrantJSON sql.NullString
 		if err := rows.Scan(&record.ID, &record.JobID, &record.ContentVersionID,
 			&record.ProfileFingerprint, &record.Principal, &record.Scope,
 			&record.DisclosureFingerprint, &inputs, &retained, &record.AuthorizationGrantID,
-			&record.AuthorizationIncarnationID, &record.AuthorizationRevocationFence,
+			&record.AuthorizationIncarnationID, &record.AuthorizationRevocationFence, &sourceGrantJSON,
 			&record.State, &failure,
 			&record.AttachmentID, &record.CreatedAt, &record.UpdatedAt); err != nil {
 			return fmt.Errorf("scanning rendition job waiter metadata: %w", err)
@@ -465,6 +467,12 @@ func exportRenditionJobWaiters(
 		}
 		if err := json.Unmarshal([]byte(retained), &record.RetainedClasses); err != nil {
 			return fmt.Errorf("decoding rendition job waiter retained classes: %w", err)
+		}
+		if sourceGrantJSON.Valid {
+			record.SourceGrant, err = decodeSourceGrantBinding(sourceGrantJSON.String, record.ContentVersionID)
+			if err != nil {
+				return fmt.Errorf("decoding rendition job waiter source grant: %w", err)
+			}
 		}
 		if failure.Valid {
 			code := RenditionFailureCode(failure.String)
@@ -1173,17 +1181,21 @@ func (s *Store) importProcessingMetadataRecord(
 			return errors.New(
 				"rendition waiter retained artifact classes do not match captured policy")
 		}
+		sourceGrantJSON, _, err := encodeSourceGrantBinding(value.SourceGrant, value.ContentVersionID)
+		if err != nil {
+			return err
+		}
 		_, err = tx.ExecContext(ctx, `INSERT INTO rendition_job_waiters(
 			waiter_id,job_id,content_version_id,profile_fingerprint,principal,scope,
 			disclosure_fingerprint,input_classes_json,retained_classes_json,
-			authorization_grant_id,authorization_incarnation_id,authorization_revocation_fence,
+			authorization_grant_id,authorization_incarnation_id,authorization_revocation_fence,source_grant_json,
 			state,failure_code,
 			attachment_id,created_at,updated_at
-		) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, value.ID, value.JobID, value.ContentVersionID,
+		) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, value.ID, value.JobID, value.ContentVersionID,
 			value.ProfileFingerprint, authority.principal, authority.scope,
 			authority.disclosure, authority.inputsJSON, authority.retainedJSON,
 			value.AuthorizationGrantID, value.AuthorizationIncarnationID,
-			value.AuthorizationRevocationFence, value.State,
+			value.AuthorizationRevocationFence, sourceGrantJSON, value.State,
 			value.FailureCode, value.AttachmentID, value.CreatedAt, value.UpdatedAt)
 		return err
 	case metadataCurrentRenditionRootType:
@@ -1494,10 +1506,18 @@ func validateMetadataRenditionJobWaiter(
 	if err := validateRenditionWaiterInputClasses(authority.inputs); err != nil {
 		return normalizedConsentAuthority{}, err
 	}
-	if renditionScopedID("waiter", value.JobID, value.ContentVersionID,
+	_, sourceGrantDigest, err := encodeSourceGrantBinding(value.SourceGrant, value.ContentVersionID)
+	if err != nil {
+		return normalizedConsentAuthority{}, err
+	}
+	wantID := renditionScopedID("waiter", value.JobID, value.ContentVersionID,
 		value.ProfileFingerprint, authority.principal, authority.scope, authority.disclosure,
 		authority.inputsJSON, authority.retainedJSON, value.AuthorizationGrantID,
-		value.AuthorizationIncarnationID, strconv.FormatInt(value.AuthorizationRevocationFence, 10)) != value.ID ||
+		value.AuthorizationIncarnationID, strconv.FormatInt(value.AuthorizationRevocationFence, 10))
+	if sourceGrantDigest != "" {
+		wantID = renditionScopedID("waiter-source-grant", wantID, sourceGrantDigest)
+	}
+	if wantID != value.ID ||
 		renditionScopedID("attachment", value.JobID, value.ContentVersionID,
 			value.ProfileFingerprint) != value.AttachmentID {
 		return normalizedConsentAuthority{}, errors.New("rendition waiter identity is invalid")

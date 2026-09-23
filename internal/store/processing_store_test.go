@@ -115,6 +115,108 @@ func TestResolveProcessingSourceFenceAccepts4096AndNeverTruncates4097(t *testing
 	assert.Equal(t, 4097, tooLarge.ObservedScopeCount, "the full observed population must be reported")
 }
 
+func TestResolveProcessingSourceFenceCountsOnlyAuthorizedFilteredSources(t *testing.T) {
+	s := newTestStore(t)
+	ids := insertProcessingFenceFiles(t, s, 4097)
+	filters := SearchOptions{}
+	resolved, err := s.ResolveProcessingSourceFence(t.Context(), ProcessingSourceFenceRequest{
+		Filters: &filters, AuthorizedSourceIDs: ids[:1],
+	})
+	require.NoError(t, err)
+	assert.Equal(t, ids[:1], resolved.ContentVersionIDs)
+	assert.Equal(t, 1, resolved.ObservedScopeCount)
+	version, err := s.ContentVersionByID(t.Context(), ids[0])
+	require.NoError(t, err)
+	tag, err := s.CreateTag(t.Context(), "selected")
+	require.NoError(t, err)
+	node, err := s.NodeByID(t.Context(), version.NodeID)
+	require.NoError(t, err)
+	_, err = s.AssignTag(t.Context(), tag.ID, node.ID, node.Revision)
+	require.NoError(t, err)
+	filtered := SearchOptions{TagID: tag.ID}
+	resolved, err = s.ResolveProcessingSourceFence(t.Context(), ProcessingSourceFenceRequest{
+		Filters: &filtered, AuthorizedSourceIDs: ids,
+	})
+	require.NoError(t, err)
+	assert.Equal(t, ids[:1], resolved.ContentVersionIDs)
+	assert.Equal(t, 1, resolved.ObservedScopeCount)
+
+	_, err = s.ResolveProcessingSourceFence(t.Context(), ProcessingSourceFenceRequest{
+		Filters: &filters, AuthorizedSourceIDs: ids,
+	})
+	var tooLarge *ProcessingSourceFenceScopeError
+	require.ErrorAs(t, err, &tooLarge)
+	assert.Equal(t, 4097, tooLarge.ObservedScopeCount)
+}
+
+func TestResolveProcessingSourceFenceScopedSelectorsCannotRevealHiddenMetadata(t *testing.T) {
+	s := newTestStore(t)
+	allowedDir, err := s.Mkdir(t.Context(), s.RootID(), "allowed")
+	require.NoError(t, err)
+	allowed, err := s.CreateFile(t.Context(), allowedDir.ID, "allowed.txt", fakeHash("allowed"), 7, "text/plain")
+	require.NoError(t, err)
+	allowedTag, err := s.CreateTag(t.Context(), "allowed-tag")
+	require.NoError(t, err)
+	_, err = s.AssignTag(t.Context(), allowedTag.ID, allowed.ID, allowed.Revision)
+	require.NoError(t, err)
+	hiddenDir, err := s.Mkdir(t.Context(), s.RootID(), "hidden")
+	require.NoError(t, err)
+	hidden, err := s.CreateFile(t.Context(), hiddenDir.ID, "hidden.txt", fakeHash("hidden"), 6, "text/plain")
+	require.NoError(t, err)
+	hiddenTag, err := s.CreateTag(t.Context(), "hidden-tag")
+	require.NoError(t, err)
+	_, err = s.AssignTag(t.Context(), hiddenTag.ID, hidden.ID, hidden.Revision)
+	require.NoError(t, err)
+	grant := []string{allowed.CurrentVersionID}
+	unknownTag := "33333333-3333-4333-8333-333333333333"
+	unknownDirectory := hidden.ID + 1000
+
+	for _, test := range []struct {
+		name    string
+		filters SearchOptions
+	}{
+		{name: "hidden tag", filters: SearchOptions{TagID: hiddenTag.ID}},
+		{name: "unknown tag", filters: SearchOptions{TagID: unknownTag}},
+		{name: "hidden directory", filters: SearchOptions{UnderNodeID: hiddenDir.ID}},
+		{name: "hidden file as directory", filters: SearchOptions{UnderNodeID: hidden.ID}},
+		{name: "unknown directory", filters: SearchOptions{UnderNodeID: unknownDirectory}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			resolved, err := s.ResolveProcessingSourceFence(t.Context(), ProcessingSourceFenceRequest{
+				Filters: &test.filters, AuthorizedSourceIDs: grant,
+			})
+			require.NoError(t, err)
+			assert.Empty(t, resolved.ContentVersionIDs)
+			assert.Zero(t, resolved.ObservedScopeCount)
+		})
+	}
+	for _, filters := range []SearchOptions{{TagID: allowedTag.ID}, {UnderNodeID: allowedDir.ID}} {
+		resolved, err := s.ResolveProcessingSourceFence(t.Context(), ProcessingSourceFenceRequest{
+			Filters: &filters, AuthorizedSourceIDs: grant,
+		})
+		require.NoError(t, err)
+		assert.Equal(t, []string{allowed.CurrentVersionID}, resolved.ContentVersionIDs)
+		assert.Equal(t, 1, resolved.ObservedScopeCount)
+	}
+
+	for _, filters := range []SearchOptions{{TagID: hiddenTag.ID}, {UnderNodeID: hiddenDir.ID}} {
+		resolved, err := s.ResolveProcessingSourceFence(t.Context(), ProcessingSourceFenceRequest{Filters: &filters})
+		require.NoError(t, err)
+		assert.Equal(t, []string{hidden.CurrentVersionID}, resolved.ContentVersionIDs)
+	}
+	for _, test := range []struct {
+		filters SearchOptions
+		want    error
+	}{
+		{filters: SearchOptions{TagID: unknownTag}, want: ErrNotFound},
+		{filters: SearchOptions{UnderNodeID: hidden.ID}, want: ErrNotDir},
+		{filters: SearchOptions{UnderNodeID: unknownDirectory}, want: ErrNotFound},
+	} {
+		_, err := s.ResolveProcessingSourceFence(t.Context(), ProcessingSourceFenceRequest{Filters: &test.filters})
+		require.ErrorIs(t, err, test.want)
+	}
+}
+
 func TestResolveProcessingSourceFenceRejectsInvalidModesAndIDs(t *testing.T) {
 	s := newTestStore(t)
 	empty := SearchOptions{}
@@ -145,7 +247,7 @@ func TestResolveProcessingSourceFenceUsesOneReadSnapshot(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, replacement.ID, replaced.CurrentVersionID)
 
-	resolved, err := s.resolveFilteredProcessingSourceFenceSnapshot(t.Context(), snapshot.tx, SearchOptions{})
+	resolved, err := s.resolveFilteredProcessingSourceFenceSnapshot(t.Context(), snapshot.tx, SearchOptions{}, nil)
 	require.NoError(t, err)
 	assert.Equal(t, []string{created.CurrentVersionID}, resolved.ContentVersionIDs,
 		"one resolution must not mix authority committed after its snapshot was pinned")
@@ -216,6 +318,6 @@ func TestProcessingSourceFencePreservesCanceledQuery(t *testing.T) {
 	defer func() { _ = tx.Rollback() }()
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
-	_, err = s.resolveFilteredProcessingSourceFenceSnapshot(ctx, tx, SearchOptions{})
+	_, err = s.resolveFilteredProcessingSourceFenceSnapshot(ctx, tx, SearchOptions{}, nil)
 	require.ErrorIs(t, err, context.Canceled)
 }

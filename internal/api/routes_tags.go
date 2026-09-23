@@ -27,6 +27,24 @@ type tagAssignmentOutput struct {
 	Body TagAssignmentReceipt
 }
 
+// Global tag revisions advance for every assignment, including those outside
+// a scoped principal's grant. Scoped views use a stable projection revision;
+// assignment concurrency instead uses the node revision and ETag.
+const scopedTagRevision int64 = 1
+
+func authorizeLocalTagOperation(ctx context.Context, d Deps, operation Operation) error {
+	principal, ok := PrincipalFromContext(ctx)
+	if !ok || !principal.Local {
+		return operationHTTPError(ErrOperationDenied, false)
+	}
+	_, err := authorizeRequest(ctx, d, operation, nil, false, false)
+	return err
+}
+
+func authorizeLocalTagMutation(ctx context.Context, d Deps) error {
+	return authorizeLocalTagOperation(ctx, d, OperationMetadataMutation)
+}
+
 func registerTagRoutes(api huma.API, d Deps, g *gate) {
 	huma.Register(api, huma.Operation{
 		OperationID: "listTags", Method: http.MethodGet, Path: "/api/v1/tags",
@@ -35,6 +53,21 @@ func registerTagRoutes(api huma.API, d Deps, g *gate) {
 		Limit  int `query:"limit" default:"100" minimum:"1" maximum:"1000"`
 		Offset int `query:"offset" default:"0" minimum:"0"`
 	}) (*tagPageOutput, error) {
+		principal, _ := PrincipalFromContext(ctx)
+		if !principal.Local {
+			decision, authErr := authorizeRequest(ctx, d, OperationRead, nil, false, false)
+			if authErr != nil {
+				return nil, authErr
+			}
+			tags, total, err := d.Store.TagsForCurrentVersions(ctx, decision.SourceIDs, in.Limit, in.Offset)
+			if err != nil {
+				return nil, FromStoreError(err)
+			}
+			for i := range tags {
+				tags[i].Revision = scopedTagRevision
+			}
+			return tagPage(tags, total, in.Limit, in.Offset), nil
+		}
 		tags, total, err := d.Store.Tags(ctx, in.Limit, in.Offset)
 		if err != nil {
 			return nil, FromStoreError(err)
@@ -48,6 +81,9 @@ func registerTagRoutes(api huma.API, d Deps, g *gate) {
 	}, func(ctx context.Context, in *struct {
 		Name string `query:"name" required:"true"`
 	}) (*tagOutput, error) {
+		if err := authorizeLocalTagOperation(ctx, d, OperationRead); err != nil {
+			return nil, err
+		}
 		tag, err := d.Store.TagByName(ctx, in.Name)
 		if err != nil {
 			return nil, FromStoreError(err)
@@ -61,6 +97,9 @@ func registerTagRoutes(api huma.API, d Deps, g *gate) {
 	}, func(ctx context.Context, in *struct {
 		TagID string `path:"tag_id"`
 	}) (*tagOutput, error) {
+		if err := authorizeLocalTagOperation(ctx, d, OperationRead); err != nil {
+			return nil, err
+		}
 		tag, err := d.Store.TagByID(ctx, in.TagID)
 		if err != nil {
 			return nil, FromStoreError(err)
@@ -78,6 +117,9 @@ func registerTagRoutes(api huma.API, d Deps, g *gate) {
 		Offset   int    `query:"offset" default:"0" minimum:"0"`
 		LiveOnly bool   `query:"live_only" default:"false"`
 	}) (*taggedNodePageOutput, error) {
+		if err := authorizeLocalTagOperation(ctx, d, OperationRead); err != nil {
+			return nil, err
+		}
 		var (
 			nodes          []store.TaggedNode
 			total          int
@@ -113,6 +155,9 @@ func registerTagRoutes(api huma.API, d Deps, g *gate) {
 		Limit  int   `query:"limit" default:"100" minimum:"1" maximum:"1000"`
 		Offset int   `query:"offset" default:"0" minimum:"0"`
 	}) (*tagPageOutput, error) {
+		if err := authorizeLocalTagOperation(ctx, d, OperationRead); err != nil {
+			return nil, err
+		}
 		tags, total, err := d.Store.NodeTags(ctx, in.ID, in.Limit, in.Offset)
 		if err != nil {
 			return nil, FromStoreError(err)
@@ -128,6 +173,9 @@ func registerTagRoutes(api huma.API, d Deps, g *gate) {
 			Name string `json:"name" minLength:"1"`
 		}
 	}) (*tagOutput, error) {
+		if err := authorizeLocalTagMutation(ctx, d); err != nil {
+			return nil, err
+		}
 		var out *tagOutput
 		err := g.mutate(func() error {
 			tag, err := d.Store.CreateTag(ctx, in.Body.Name)
@@ -150,6 +198,9 @@ func registerTagRoutes(api huma.API, d Deps, g *gate) {
 			Name string `json:"name" minLength:"1"`
 		}
 	}) (*tagOutput, error) {
+		if err := authorizeLocalTagMutation(ctx, d); err != nil {
+			return nil, err
+		}
 		revision, err := parseIfMatch(in.IfMatch)
 		if err != nil {
 			return nil, err
@@ -173,6 +224,9 @@ func registerTagRoutes(api huma.API, d Deps, g *gate) {
 		TagID   string `path:"tag_id"`
 		IfMatch string `header:"If-Match"`
 	}) (*tagDeletionOutput, error) {
+		if err := authorizeLocalTagMutation(ctx, d); err != nil {
+			return nil, err
+		}
 		revision, err := parseIfMatch(in.IfMatch)
 		if err != nil {
 			return nil, err
@@ -214,6 +268,34 @@ func registerTagAssignmentRoute(api huma.API, d Deps, g *gate, method string, as
 		TagID   string `path:"tag_id"`
 		IfMatch string `header:"If-Match"`
 	}) (*tagAssignmentOutput, error) {
+		decision, err := authorizeRequest(ctx, d, OperationMetadataMutation, nil, false, false)
+		if err != nil {
+			return nil, err
+		}
+		principal, _ := PrincipalFromContext(ctx)
+		if !principal.Local {
+			visibleCount, err := d.Store.CountTagAssignmentsForCurrentVersions(ctx, in.TagID, decision.SourceIDs)
+			if err != nil {
+				return nil, FromStoreError(err)
+			}
+			if visibleCount == 0 {
+				return nil, operationHTTPError(ErrOperationNotFound, true)
+			}
+		}
+		node, err := d.Store.NodeByID(ctx, in.ID)
+		if err != nil {
+			return nil, FromStoreError(err)
+		}
+		if node.CurrentVersionID == "" {
+			principal, ok := PrincipalFromContext(ctx)
+			if !ok || !principal.Local {
+				return nil, operationHTTPError(ErrOperationDenied, true)
+			}
+		} else {
+			if _, err := authorizeRequest(ctx, d, OperationMetadataMutation, []string{node.CurrentVersionID}, true, true); err != nil {
+				return nil, err
+			}
+		}
 		revision, err := parseIfMatch(in.IfMatch)
 		if err != nil {
 			return nil, err
@@ -232,7 +314,23 @@ func registerTagAssignmentRoute(api huma.API, d Deps, g *gate, method string, as
 			out = tagAssignmentResult(change)
 			return nil
 		})
-		return out, err
+		if err != nil {
+			return nil, err
+		}
+		if principal.Local {
+			return out, nil
+		}
+		decision, err = authorizeRequest(ctx, d, OperationMetadataMutation, nil, false, false)
+		if err != nil {
+			return nil, err
+		}
+		count, err := d.Store.CountTagAssignmentsForCurrentVersions(ctx, in.TagID, decision.SourceIDs)
+		if err != nil {
+			return nil, FromStoreError(err)
+		}
+		out.Body.Tag.AssignmentCount = count
+		out.Body.Tag.Revision = scopedTagRevision
+		return out, nil
 	})
 }
 
@@ -250,6 +348,9 @@ func registerTagPathAssignmentRoute(api huma.API, d Deps, g *gate, method string
 			Path string `json:"path" minLength:"1" example:"/records/report.pdf"`
 		}
 	}) (*tagAssignmentOutput, error) {
+		if err := authorizeLocalTagMutation(ctx, d); err != nil {
+			return nil, err
+		}
 		if !strings.HasPrefix(in.Body.Path, "/") {
 			return nil, NewError(http.StatusUnprocessableEntity, "validation",
 				fmt.Sprintf("path %q must be absolute (start with /)", in.Body.Path))

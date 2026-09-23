@@ -119,6 +119,7 @@ func (service *Service) enqueueRendition(
 	profile configuredProfile,
 	authorization store.ProviderOperationAuthorizationRequest,
 	inputBinding string,
+	sourceGrant ...*store.SourceGrantBinding,
 ) (store.RenditionJob, store.RenditionJobWaiter, error) {
 	prepared, err := service.prepareExecutableRendition(ctx, node, version, profile, inputBinding)
 	if err != nil {
@@ -128,8 +129,13 @@ func (service *Service) enqueueRendition(
 	var waiter store.RenditionJobWaiter
 	err = service.gate.MutateContext(ctx, func() error {
 		var enqueueErr error
+		var binding *store.SourceGrantBinding
+		if len(sourceGrant) != 0 {
+			binding = sourceGrant[0]
+		}
 		job, waiter, enqueueErr = service.catalog.EnqueueRenditionJob(ctx, store.RenditionJobRequest{
 			ContentVersionID: version.ID, Profile: profile.record,
+			SourceGrant:            binding,
 			CapturedArtifactPolicy: prepared.capturedPolicy, ExecutionIdentity: prepared.identity,
 			Authorization: authorization,
 		})
@@ -271,7 +277,7 @@ func (worker *MediaContinuationWorker) runContinuation(
 			}
 			if _, runErr := service.runEmbeddings(ctx, version, profile,
 				continuation.ProcessingPrincipal, continuation.ProcessingScope,
-				continuation.ProcessingAuthorization.PriorAuthorization.GrantID, nil); runErr != nil {
+				continuation.ProcessingAuthorization.PriorAuthorization.GrantID, nil, nil); runErr != nil {
 				// Consent denial is a job outcome. Let failContinuation handle
 				// concurrent shutdown without reporting it as a worker failure.
 				if ctx.Err() != nil && !isEmbeddingConsentFailure(runErr) {

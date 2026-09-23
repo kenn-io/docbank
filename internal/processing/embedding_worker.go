@@ -226,6 +226,7 @@ func (registry *EmbeddingRuntimeRegistry) Classify(err error) (EmbeddingProvider
 type EmbeddingWorkerConfig struct {
 	Catalog                embeddingWorkerCatalog
 	Authority              embeddingWorkerAuthority
+	SourceGrantAuthorizer  store.SourceGrantAuthorizer
 	Blobs                  renditionBlobWriter
 	GenerationBlobs        embeddingRuntimeBlobs
 	Runtime                EmbeddingRuntime
@@ -249,6 +250,7 @@ type EmbeddingWorkerConfig struct {
 type EmbeddingWorker struct {
 	catalog                                        embeddingWorkerCatalog
 	authority                                      embeddingWorkerAuthority
+	sourceGrantAuthorizer                          store.SourceGrantAuthorizer
 	blobs                                          renditionBlobWriter
 	generationBlobs                                embeddingRuntimeBlobs
 	runtime                                        EmbeddingRuntime
@@ -300,7 +302,8 @@ func NewEmbeddingWorker(config EmbeddingWorkerConfig) (*EmbeddingWorker, error) 
 	}
 	return &EmbeddingWorker{
 		catalog: config.Catalog, authority: config.Authority, blobs: config.Blobs,
-		generationBlobs: config.GenerationBlobs, runtime: config.Runtime, gate: config.Gate,
+		sourceGrantAuthorizer: config.SourceGrantAuthorizer,
+		generationBlobs:       config.GenerationBlobs, runtime: config.Runtime, gate: config.Gate,
 		owner: config.Owner, leaseDuration: config.LeaseDuration, idleDelay: config.IdleDelay,
 		retryLimit: config.RetryLimit, retryBaseDelay: config.RetryBaseDelay,
 		maxRetryDelay: config.MaxRetryDelay, attemptLifetime: config.AttemptLifetime,
@@ -492,6 +495,10 @@ func (worker *EmbeddingWorker) processClaim(ctx context.Context, claim Embedding
 	if err := validateEmbeddingWork(work, worker.maxRows, worker.maxDimensions); err != nil || int64(len(work.InputGeneration.Inputs))*int64(work.Descriptor.Dimension)*4 > worker.maxVectorBlobBytes {
 		return worker.failClaim(attemptCtx, claim, work, store.EmbeddingFailureStaleAuthority, &receipt, started)
 	}
+	if err := store.RecheckSourceGrant(attemptCtx, work.SourceGrant, work.ContentVersionID,
+		worker.clock().UTC(), worker.sourceGrantAuthorizer); err != nil {
+		return worker.failClaim(attemptCtx, claim, work, store.EmbeddingFailureAuthorization, &receipt, started)
+	}
 
 	materializedGeneration := work.InputGeneration
 	result, authorization, code, err := worker.executeBatches(attemptCtx, claim, work, &materializedGeneration, &receipt, started)
@@ -540,6 +547,18 @@ func (worker *EmbeddingWorker) processClaim(ctx context.Context, claim Embedding
 		PublishedAt: metadataEmbeddingTime(worker.clock().UTC()), FencingToken: claim.Epoch}
 	receipt.Elapsed = worker.clock().UTC().Sub(started)
 	if err := worker.gate.MutateContext(attemptCtx, func() error {
+		if worker.sourceGrantAuthorizer != nil {
+			publisher, ok := worker.authority.(interface {
+				PublishEmbeddingWorkWithSourceGrant(ctx context.Context, claim EmbeddingWorkClaim, work EmbeddingWork,
+					head store.EmbeddingHeadRecord, prior store.ProviderOperationAuthorization,
+					receipt EmbeddingAttemptReceipt, at time.Time, authorizer store.SourceGrantAuthorizer) error
+			})
+			if !ok {
+				return store.ErrSourceGrantUnavailable
+			}
+			return publisher.PublishEmbeddingWorkWithSourceGrant(attemptCtx, claim, work, head,
+				authorization, receipt, worker.clock().UTC(), worker.sourceGrantAuthorizer)
+		}
 		return worker.authority.PublishEmbeddingWork(attemptCtx, claim, work, head, authorization, receipt, worker.clock().UTC())
 	}); err != nil {
 		if isEmbeddingWorkFence(err) {
@@ -570,6 +589,10 @@ func (worker *EmbeddingWorker) executeBatches(ctx context.Context, claim Embeddi
 			}
 			if err := worker.catalog.ValidateEmbeddingWork(ctx, claim, work, worker.clock().UTC()); err != nil {
 				return document.EmbeddingResult{}, prior, "", err
+			}
+			if err := store.RecheckSourceGrant(ctx, work.SourceGrant, work.ContentVersionID,
+				worker.clock().UTC(), worker.sourceGrantAuthorizer); err != nil {
+				return document.EmbeddingResult{}, prior, store.EmbeddingFailureAuthorization, err
 			}
 			var err error
 			if execution.Provider == nil || work.Binding.InputKind == document.EmbeddingInputOriginalFile {
@@ -617,6 +640,11 @@ func (worker *EmbeddingWorker) executeBatches(ctx context.Context, claim Embeddi
 			if err := document.ValidateEmbeddingProviderRequest(execution.Provider, batch, authorization); err != nil {
 				closeEmbeddingInputs(execution.Inputs)
 				return document.EmbeddingResult{}, prior, store.EmbeddingFailureInputRejected, err
+			}
+			if err := store.RecheckSourceGrant(ctx, work.SourceGrant, work.ContentVersionID,
+				worker.clock().UTC(), worker.sourceGrantAuthorizer); err != nil {
+				closeEmbeddingInputs(execution.Inputs)
+				return document.EmbeddingResult{}, prior, store.EmbeddingFailureAuthorization, err
 			}
 			authorized, fence, err := worker.catalog.BeginEmbeddingProviderEgress(ctx, claim, work, priorPtr, worker.clock().UTC())
 			if err != nil {
@@ -774,7 +802,8 @@ func (worker *EmbeddingWorker) failClaim(ctx context.Context, claim EmbeddingWor
 
 func isEmbeddingConsentFailure(err error) bool {
 	return errors.Is(err, store.ErrProcessingConsentRequired) ||
-		errors.Is(err, store.ErrProcessingConsentRevoked) || errors.Is(err, store.ErrProcessingConsentExpired)
+		errors.Is(err, store.ErrProcessingConsentRevoked) || errors.Is(err, store.ErrProcessingConsentExpired) ||
+		errors.Is(err, store.ErrSourceGrantUnavailable)
 }
 
 func isEmbeddingWorkFence(err error) bool {
