@@ -48,3 +48,51 @@ it("routes an expired browser session to the app authentication handler", async 
   await waitFor(() => expect(onauthfailure).toHaveBeenCalledOnce());
   expect(onclose).toHaveBeenCalledOnce();
 });
+
+it("starts a fresh preparation after a failed source reservation", async () => {
+  const ids: string[] = [];
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (_url, init) => {
+    ids.push(JSON.parse(String(init?.body)).operation_id);
+    return new Response(JSON.stringify({ detail: "Source preparation failed" }), { status: 409 });
+  });
+  render(ExportDrawer, { session: "s", input, open: true, onclose: vi.fn(), onauthfailure: vi.fn() });
+  await fireEvent.click(await screen.findByRole("button", { name: "Preview export" }));
+  await fireEvent.click(await screen.findByRole("button", { name: "Start over" }));
+  expect(screen.queryByRole("alert")).toBeNull();
+  await fireEvent.click(screen.getByRole("button", { name: "Preview export" }));
+  await screen.findByRole("button", { name: "Start over" });
+  expect(ids).toHaveLength(2);
+  expect(new Set(ids).size).toBe(2);
+});
+
+it("shows empty attachment sets and sends the set selected in the drawer", async () => {
+  const { exportMemberHash } = await import("./exports.js");
+  const memberHash = await exportMemberHash(input.members), hash = "a".repeat(64);
+  let selected: unknown;
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (url, init) => {
+    const path = String(url), body = init?.body ? JSON.parse(String(init.body)) : undefined;
+    const json = (value: unknown) => new Response(JSON.stringify(value), { headers: { "Content-Type": "application/json" } });
+    if (path.endsWith("/sources")) return json({ id: body.operation_id, request_sha256: hash, kind: "explicit", state: "sealed", member_hash: memberHash, total: 1, source_bytes: 12, created_at: "2026-01-01T00:00:00Z", expires_at: "2099-01-01T00:00:00Z" });
+    const source_id = path.split("/").at(-2);
+    if (path.endsWith("/email-pdf-recipes")) return json({ source_id, member_hash: memberHash, total: 1, recipes: [{ recipe_sha256: hash, paper: "A4", renderer_version: "151", messages: 1, ambiguous: 0 }] });
+    if (path.includes("/attachment-publications")) return json({ source_id, member_hash: memberHash, after: 0, next: 0, total: 2, items: ["first", "second"].map(operation_id => ({ node_id: 1, version_id: input.members[0]!.version_id, name: "empty.eml", operation_id, generation_id: hash, created_at: "2026-01-01T00:00:00Z", state: "complete", attachments: 0 })) });
+    selected = body.publications;
+    return new Response(JSON.stringify({ detail: "No retained PDF" }), { status: 409 });
+  });
+  render(ExportDrawer, { session: "s", input, open: true, onclose: vi.fn(), onauthfailure: vi.fn() });
+  const choose = async (name: RegExp, option: string | RegExp) => {
+    await fireEvent.click(screen.getByRole("combobox", { name }));
+    await fireEvent.click(screen.getByRole("option", { name: option }));
+  };
+  await choose(/^Email body PDF/, "Include retained body PDFs");
+  await fireEvent.click(screen.getByRole("button", { name: "Find retained PDF recipes" }));
+  await screen.findByRole("combobox", { name: /^Retained PDF recipe/ });
+  await choose(/^Retained PDF recipe/, /A4/);
+  await choose(/^Email attachment outputs/, "Include original attachments");
+  await fireEvent.click(screen.getByRole("button", { name: "Preview export" }));
+  const second = await screen.findByRole("radio", { name: /second/ });
+  expect(screen.getAllByRole("radio").every(r => !(r as HTMLInputElement).checked)).toBe(true);
+  await fireEvent.click(second);
+  await fireEvent.click(screen.getByRole("button", { name: "Preview export" }));
+  await waitFor(() => expect(selected).toEqual([{ version_id: input.members[0]!.version_id, operation_id: "second" }]));
+});

@@ -3,11 +3,11 @@ import { cancelWebDownload } from "./generated/docbank.js";
 import { captureSnapshotTargets, type SnapshotPage } from "./snapshots.js";
 import {
   assertExportAdvance, cancelExportJob, copyExportMembers, createExportPlan,
-  exportExpired, exportTicket, getExportJob, maxExportMembers, exportEmailPDFRecipes, exportOutputProblems,
+  exportExpired, exportTicket, getExportJob, maxExportMembers, exportEmailPDFRecipes, exportOutputProblems, exportAttachmentPublications,
   offerExportDownload, readExportEvents, sealExportSource,
   startExportJob, validateRolePolicies, validateExportOptions, sealMailboxExportSource,
   type ExportJob, type ExportMember, type ExportPlan, type ExportPreview,
-  type ExportSource, type RolePolicy, type ExportOptions, type EmailPDFRecipeChoice, type OutputProblems,
+  type ExportSource, type RolePolicy, type ExportOptions, type EmailPDFRecipeChoice, type OutputProblems, type AttachmentPublications,
 } from "./exports.js";
 
 export type ExportInput = { label: string; members: readonly ExportMember[] } | { label: string; snapshot: SnapshotPage } | { label: string; collectionID: string; total: number };
@@ -22,6 +22,8 @@ export interface ExportState {
   downloadOffered?: boolean;
   downloading?: boolean;
   recipes?: EmailPDFRecipeChoice[];
+  publications?: AttachmentPublications;
+  publicationSelections?: Record<string, string>;
   problems?: OutputProblems;
   problemsLoading?: boolean;
   problemsError?: Error;
@@ -59,7 +61,7 @@ export class ExportSession {
     if (changed) { this.sourceID = crypto.randomUUID(); this.members = undefined; this.source = undefined; }
     const job = this.state.active?.job;
     const status = this.state.active ? (!job || ["queued", "running"].includes(job.state) ? "disconnected" : this.state.status) : "idle";
-    this.emit({ ...this.state, status, reviewed: undefined, error: undefined, problems: undefined, problemsLoading: false, problemsError: undefined, ...(changed ? { recipes: undefined } : {}) });
+    this.emit({ ...this.state, status, reviewed: undefined, error: undefined, problems: undefined, problemsLoading: false, problemsError: undefined, ...(changed ? { recipes: undefined, publications: undefined, publicationSelections: undefined } : {}) });
   }
 
   async discoverRecipes(): Promise<void> {
@@ -72,6 +74,24 @@ export class ExportSession {
       const recipes = await exportEmailPDFRecipes(this.session, source, started.signal);
       if (this.current(started.generation)) this.emit({ ...this.state, status: "idle", recipes });
     } catch (error) { this.fail(started.generation, error); }
+  }
+
+  async publicationPage(after: number): Promise<void> {
+    if (!this.input || this.disposed || this.state.active) return;
+    const started = this.begin();
+    this.emit({ ...this.state, status: "preparing", reviewed: undefined, error: undefined });
+    try {
+      const source = await this.prepareSource(this.input, started);
+      if (!source) return;
+      const publications = await exportAttachmentPublications(this.session, source, after, started.signal);
+      if (this.current(started.generation)) this.emit({ ...this.state, status: "idle", publications, ...(this.state.publications?.source_id === source.id ? {} : { publicationSelections: undefined }) });
+    } catch (error) { this.fail(started.generation, error); }
+  }
+
+  selectPublication(version: string, operation: string): void {
+    if (this.disposed || this.state.active || !this.state.publications?.items.some(c => c.version_id === version && c.operation_id === operation)) return;
+    this.stop(); this.planID = crypto.randomUUID();
+    this.emit({ ...this.state, status: "idle", reviewed: undefined, error: undefined, publicationSelections: { ...this.state.publicationSelections, [version]: operation } });
   }
 
   private async prepareSource(input: ExportInput, started: { generation: number; signal: AbortSignal }): Promise<ExportSource | undefined> {
@@ -110,6 +130,16 @@ export class ExportSession {
       const policies = validateRolePolicies(this.policies), options = validateExportOptions(this.options);
       const source = await this.prepareSource(input, started);
       if (!source) return;
+      if (policies.some(p => p.role === "attachment_original" || p.role === "attachment_pdf")) {
+        if (!this.state.publications || this.state.publications.source_id !== source.id) {
+          const publications = await exportAttachmentPublications(this.session, source, 0, started.signal);
+          if (!this.current(started.generation)) return;
+          this.emit({ ...this.state, publications, publicationSelections: undefined });
+          if (publications.total) { this.emit({ ...this.state, status: "idle" }); return; }
+        }
+        const selections = Object.entries(this.state.publicationSelections ?? {});
+        if (selections.length) options.publications = selections.map(([version_id, operation_id]) => ({ version_id, operation_id }));
+      }
       const reviewed = await createExportPlan(this.session, source, policies, this.planID, started.signal, options);
       const counts = reviewed.plan.counts;
       const problems = counts && (counts.unavailable || counts.unavailable_inventories) ? await exportOutputProblems(this.session, reviewed.plan, 0, started.signal) : undefined;

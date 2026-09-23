@@ -1,11 +1,11 @@
 import { APIError } from "./api-transport.js";
 import * as generated from "./generated/docbank.js";
-import type { Member, Source as ExportSource, Plan as ExportPlan, PlanPreview as ExportPreview, RolePolicy, RoleSummary, Receipt as ExportReceipt, ExportJob, TicketOutputBody as ExportTicket, EmailPDFRecipeChoice, OutputProblems } from "./generated/docbank.js";
+import type { Member, Source as ExportSource, Plan as ExportPlan, PlanPreview as ExportPreview, RolePolicy, RoleSummary, Receipt as ExportReceipt, ExportJob, TicketOutputBody as ExportTicket, EmailPDFRecipeChoice, OutputProblems, AttachmentPublications } from "./generated/docbank.js";
 import { streamExportJobEvents } from "./export-events.js";
 import { snapshotMemberHash, type SnapshotMember } from "./snapshots.js";
 
-export type { ExportSource, ExportPlan, ExportPreview, RolePolicy, RoleSummary, ExportReceipt, ExportJob, ExportTicket, EmailPDFRecipeChoice, OutputProblems };
-export type ExportOptions = Pick<generated.PlanRequest, "duplicate_policy" | "volume_limits">;
+export type { ExportSource, ExportPlan, ExportPreview, RolePolicy, RoleSummary, ExportReceipt, ExportJob, ExportTicket, EmailPDFRecipeChoice, OutputProblems, AttachmentPublications };
+export type ExportOptions = Pick<generated.PlanRequest, "duplicate_policy" | "volume_limits" | "publications">;
 export type ExportMember = Omit<Member, "revision">;
 
 export const maxExportMembers = 100_000;
@@ -66,7 +66,7 @@ export function validateRolePolicies(value: unknown): RolePolicy[] {
 
 export function validateExportOptions(value: ExportOptions): ExportOptions {
   const r = object(value), out: ExportOptions = {};
-  if (Object.keys(r).some(k => !["duplicate_policy", "volume_limits"].includes(k))) fail();
+  if (Object.keys(r).some(k => !["duplicate_policy", "volume_limits", "publications"].includes(k))) fail();
   if (r.duplicate_policy !== undefined) {
     if (r.duplicate_policy !== "preserve" && r.duplicate_policy !== "collapse_exact_content") fail();
     out.duplicate_policy = r.duplicate_policy;
@@ -76,7 +76,23 @@ export function validateExportOptions(value: ExportOptions): ExportOptions {
     if (Object.keys(v).some(k => !["roles", "role_bytes"].includes(k))) fail();
     out.volume_limits = { roles: integer(v.roles, 1000, 1), role_bytes: integer(v.role_bytes, 512 * 2 ** 20, 1) };
   }
+  if (r.publications !== undefined) {
+    if (!Array.isArray(r.publications) || r.publications.length > 1000) fail();
+    const seen = new Set<string>();
+    out.publications = r.publications.map(raw => {
+      const p = object(raw), version_id = identity(p.version_id), operation_id = publicationID(p.operation_id);
+      if (Object.keys(p).some(k => !["version_id", "operation_id"].includes(k)) || seen.has(version_id)) fail();
+      seen.add(version_id);
+      return { version_id, operation_id };
+    });
+  }
   return out;
+}
+
+function publicationID(value: unknown): string {
+  const id = string(value, 128);
+  if (!/^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$/.test(id)) fail();
+  return id;
 }
 
 export function parseExportPlan(value: unknown, expected: ExportSource, policies: RolePolicy[], id: string, options: ExportOptions = {}): ExportPlan {
@@ -84,7 +100,10 @@ export function parseExportPlan(value: unknown, expected: ExportSource, policies
   const p: ExportPlan = { format: string(r.format), id: identity(r.id), vault_id: string(r.vault_id), toolchain: string(r.toolchain), source: parseSource(r.source), roles: validateRolePolicies(r.roles), fingerprint: hash(r.fingerprint), total: integer(r.total, maxExportMembers, 1), role_entries: integer(r.role_entries, maxRoles), role_bytes: integer(r.role_bytes, maxRoleBytes), metadata_bytes: integer(r.metadata_bytes, 512 * 2 ** 20), created_at: date(r.created_at), expires_at: date(r.expires_at) };
   if (p.format !== "docbank-bundle-v1" || !p.vault_id || !p.toolchain || p.id !== id || JSON.stringify(p.source) !== JSON.stringify(parseSource(expected)) || p.source.state !== "sealed" || p.total !== expected.total || JSON.stringify(p.roles) !== JSON.stringify(validateRolePolicies(policies))) fail();
   const actualOptions = validateExportOptions({ ...(r.duplicate_policy === undefined ? {} : { duplicate_policy: r.duplicate_policy as ExportOptions["duplicate_policy"] }), ...(r.volume_limits === undefined ? {} : { volume_limits: r.volume_limits as ExportOptions["volume_limits"] }) });
-  if (JSON.stringify(actualOptions) !== JSON.stringify(validateExportOptions(options))) fail();
+  const expectedOptions = validateExportOptions(options);
+  // Publication choices are pinned in document rows, not echoed in the header.
+  delete expectedOptions.publications;
+  if (JSON.stringify(actualOptions) !== JSON.stringify(expectedOptions)) fail();
   Object.assign(p, actualOptions);
   if (r.document_rows !== undefined) p.document_rows = integer(r.document_rows, maxExportMembers + maxRoles, p.total);
   if (r.volumes !== undefined) p.volumes = integer(r.volumes, p.role_entries);
@@ -198,6 +217,19 @@ export async function exportEmailPDFRecipes(session: string, source: ExportSourc
     previous = choice.recipe_sha256;
     return choice;
   });
+}
+
+export async function exportAttachmentPublications(session: string, source: ExportSource, after: number, signal: AbortSignal): Promise<AttachmentPublications> {
+  integer(after, maxRoles);
+  const r = object(await boundedJSON(await generated.getExportAttachmentPublications(identity(source.id), { after }, { session, signal })));
+  if (r.source_id !== source.id || r.member_hash !== source.member_hash || r.after !== after || !Array.isArray(r.items) || r.items.length > 50) fail();
+  const total = integer(r.total, maxRoles, after), next = integer(r.next, total);
+  const items = r.items.map(raw => {
+    const p = object(raw);
+    return { node_id: integer(p.node_id, Number.MAX_SAFE_INTEGER, 1), version_id: identity(p.version_id), name: string(p.name), operation_id: publicationID(p.operation_id), generation_id: hash(p.generation_id), created_at: date(p.created_at), state: string(p.state, 128), attachments: integer(p.attachments, 1000) };
+  });
+  if (after + items.length > total || (after + items.length < total ? next !== after + items.length || !items.length : next !== 0)) fail();
+  return { source_id: source.id, member_hash: source.member_hash, after, next, total, items };
 }
 
 export async function exportOutputProblems(session: string, plan: ExportPlan, after: number, signal: AbortSignal): Promise<OutputProblems> {

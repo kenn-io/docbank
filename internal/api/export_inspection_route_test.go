@@ -49,7 +49,11 @@ func TestExportInspectionRoutesBoundDetailsAndOwner(t *testing.T) {
 	require.NoError(t, json.Unmarshal([]byte(body), &page))
 	require.Zero(t, page.Next)
 	require.Len(t, page.Items, 5)
-	for _, target := range []string{recipes, path} {
+	publications := "/api/v1/exports/sources/" + source.ID + "/attachment-publications"
+	resp, body = do(t, ts, http.MethodGet, publications+"?after=0", headers, nil)
+	require.Equal(t, http.StatusOK, resp.StatusCode, body)
+	require.Contains(t, body, `"items":[]`)
+	for _, target := range []string{recipes, path, publications} {
 		other := map[string]string{"X-Api-Key": "", api.WebSessionHeader: issueWebSession(t, ts)}
 		resp, body = do(t, ts, http.MethodGet, target, other, nil)
 		require.Equal(t, http.StatusNotFound, resp.StatusCode, body)

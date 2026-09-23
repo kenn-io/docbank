@@ -103,17 +103,26 @@ Email PDF roles require exactly one `profile_fingerprint` or `recipe_sha256`.
 A profile is source-specific; a recipe can cover multiple messages. Discover
 body recipes with `GET /api/v1/exports/sources/{id}/email-pdf-recipes` after
 sealing the source. This advisory response is bounded to 50 recipes and fails
-explicitly if exceeded. Multiple decoded generations for the selected recipe
-conflict instead of choosing one arbitrarily.
+explicitly if exceeded. When attachments are included, the body PDF must match
+that attachment set's decoded generation. A missing match is an unavailable
+output, so the selected partial-export policy applies. Without attachments,
+multiple decoded generations for the selected recipe conflict instead of
+choosing one arbitrarily.
 
 Attachment roles pin the publication and each exact child occurrence. If more
 than one publication exists for a parent, the plan must supply an explicit
 `publications` entry containing `version_id` and `operation_id`; the API accepts
 at most 1,000 such selections. It never chooses the latest publication.
+The drawer's **Find attachment sets** button lists these choices, including
+empty sets. API callers use
+`GET /api/v1/exports/sources/{id}/attachment-publications?after=0` after sealing
+the source. Each page contains up to 50 choices and a `next` cursor.
 `GET /api/v1/exports/plans/{id}/problems?after=0` returns up to 50 unavailable
 details, with a `next` cursor until every detail is accounted for.
 Set `duplicate_policy: "collapse_exact_content"` only for explicit sharing;
-omitting it preserves separate outputs.
+omitting it preserves separate outputs. In `metadata.csv`, a shared output's
+`role_path` points to the file it reuses. With volume packaging, that path is
+inside the corresponding numbered ZIP.
 
 ## Upload more than 1,000 members
 

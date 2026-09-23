@@ -318,3 +318,30 @@ it("cancels pending problem pages when the drawer closes without accepting their
   expect(h.state().status).toBe("ready");
   h.session.dispose();
 });
+
+it("asks for an attachment set and keeps the explicit choice across option changes", async () => {
+  const h = await harness(), memberHash = await exportMemberHash(members);
+  const underlying = h.fetcher.getMockImplementation()!;
+  h.fetcher.mockImplementation((url, init) => {
+    if (String(url).includes("/attachment-publications")) return Promise.resolve(response({ source_id: String(url).split("/").at(-2), member_hash: memberHash, after: 0, next: 0, total: 2, items: ["first", "second"].map(operation_id => ({ node_id: 1, version_id: id, name: "empty.eml", operation_id, generation_id: hash, created_at: "2026-01-01T00:00:00Z", state: "complete", attachments: 0 })) }));
+    return underlying(url, init);
+  });
+  h.session.choose({ label: "Selected documents", members }, [{ role: "attachment_original" }]);
+  await h.session.preview();
+  expect(h.state().status).toBe("idle");
+  expect(h.state().publications?.items).toHaveLength(2);
+  expect(h.fetcher.mock.calls.filter(([url]) => String(url).endsWith("/plans"))).toHaveLength(0);
+  h.session.selectPublication(id, "second");
+  h.session.choose({ label: "Selected documents", members }, [{ role: "attachment_original", allow_unavailable: true }]);
+  await h.session.preview();
+  const request = h.fetcher.mock.calls.find(([url]) => String(url).endsWith("/plans"));
+  expect(JSON.parse(String(request?.[1]?.body)).publications).toEqual([{ version_id: id, operation_id: "second" }]);
+  vi.useFakeTimers();
+  vi.setSystemTime(new Date("2100-01-01T00:00:00Z"));
+  await h.session.publicationPage(0);
+  expect(h.state().publicationSelections).toBeUndefined();
+  h.session.resetPreparation();
+  expect(h.state().publications).toBeUndefined();
+  expect(h.state().publicationSelections).toBeUndefined();
+  h.session.dispose();
+});

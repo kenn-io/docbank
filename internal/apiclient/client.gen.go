@@ -2716,6 +2716,57 @@ func (c *Client) CreateExportSource(ctx context.Context, options *CreateExportSo
 	return responseParser(ctx, resp)
 }
 
+// GetExportAttachmentPublications List attachment sets that need an explicit choice
+func (c *Client) GetExportAttachmentPublications(ctx context.Context, options *GetExportAttachmentPublicationsRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetExportAttachmentPublicationsResponse, error) {
+	var err error
+
+	queryEncoding := map[string]runtime.QueryEncoding{
+		"after": {Style: "form", Explode: &[]bool{false}[0]},
+	}
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:    c.apiClient.GetBaseURL() + "/api/v1/exports/sources/{id}/attachment-publications",
+		Method:        "GET",
+		Options:       options,
+		QueryEncoding: queryEncoding,
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*GetExportAttachmentPublicationsResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(GetExportAttachmentPublicationsResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "GetExportAttachmentPublicationsResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[GetExportAttachmentPublicationsErrorResponse](resp, "GetExportAttachmentPublicationsErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/exports/sources/{id}/attachment-publications")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
 // PutExportChunk Upload one idempotent exact-member chunk
 func (c *Client) PutExportChunk(ctx context.Context, options *PutExportChunkRequestOptions, reqEditors ...runtime.RequestEditorFn) (*struct{}, error) {
 	var err error
@@ -11365,6 +11416,44 @@ func (o *CreateExportSourceRequestOptions) GetHeader() (map[string]string, error
 	return nil, nil
 }
 
+// GetExportAttachmentPublicationsRequestOptions is the options needed to make a request to GetExportAttachmentPublications.
+type GetExportAttachmentPublicationsRequestOptions struct {
+	PathParams *GetExportAttachmentPublicationsPath
+	Query      *GetExportAttachmentPublicationsQuery
+}
+
+// GetPathParams returns the path params as a map.
+func (o *GetExportAttachmentPublicationsRequestOptions) GetPathParams() (map[string]any, error) {
+	encoded, err := json.Marshal(o.PathParams, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetQuery returns the query params as a map.
+func (o *GetExportAttachmentPublicationsRequestOptions) GetQuery() (map[string]any, error) {
+	encoded, err := json.Marshal(o.Query, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *GetExportAttachmentPublicationsRequestOptions) GetBody() any {
+	return nil
+}
+
+// GetHeader returns the headers as a map.
+func (o *GetExportAttachmentPublicationsRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
 // PutExportChunkRequestOptions is the options needed to make a request to PutExportChunk.
 type PutExportChunkRequestOptions struct {
 	PathParams *PutExportChunkPath
@@ -16080,6 +16169,10 @@ type GetExportOutputProblemsPath struct {
 	ID string `json:"id"`
 }
 
+type GetExportAttachmentPublicationsPath struct {
+	ID string `json:"id"`
+}
+
 type PutExportChunkPath struct {
 	ID    string `json:"id"`
 	Index int64  `json:"index"`
@@ -16678,6 +16771,10 @@ type GetExportOutputProblemsQuery struct {
 	After *int64 `json:"after,omitempty"`
 }
 
+type GetExportAttachmentPublicationsQuery struct {
+	After *int64 `json:"after,omitempty"`
+}
+
 type ReadFormatCapabilitiesQuery struct {
 	Family    *string `json:"family,omitempty"`
 	Format    *string `json:"format,omitempty"`
@@ -17034,6 +17131,10 @@ type GetExportOutputProblemsErrorResponse = Error
 type CreateExportSourceResponse = bundle.Source
 
 type CreateExportSourceErrorResponse = Error
+
+type GetExportAttachmentPublicationsResponse = bundle.AttachmentPublications
+
+type GetExportAttachmentPublicationsErrorResponse = Error
 
 type PutExportChunkErrorResponse = Error
 
@@ -17646,6 +17747,10 @@ type AssignTagPathRequest struct {
 	Schema *string `json:"$schema,omitempty"`
 	Path   string  `json:"path"`
 }
+
+type AttachmentPublicationChoice = bundle.AttachmentPublicationChoice
+
+type AttachmentPublications = bundle.AttachmentPublications
 
 type AuditAttachmentChange = api.AuditAttachmentChange
 

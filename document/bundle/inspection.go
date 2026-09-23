@@ -34,3 +34,25 @@ type OutputProblems struct {
 	Total       int             `json:"total"`
 	Items       []OutputProblem `json:"items"`
 }
+
+// AttachmentPublicationChoice describes one candidate when a source member has
+// multiple published attachment sets. Discovery never chooses a set implicitly.
+type AttachmentPublicationChoice struct {
+	NodeID       int64  `json:"node_id"`
+	VersionID    string `json:"version_id"`
+	Name         string `json:"name"`
+	OperationID  string `json:"operation_id"`
+	GenerationID string `json:"generation_id"`
+	CreatedAt    string `json:"created_at"`
+	State        string `json:"state"`
+	Attachments  int    `json:"attachments"`
+}
+
+type AttachmentPublications struct {
+	SourceID   string                        `json:"source_id"`
+	MemberHash string                        `json:"member_hash"`
+	After      int                           `json:"after"`
+	Next       int                           `json:"next"`
+	Total      int                           `json:"total"`
+	Items      []AttachmentPublicationChoice `json:"items"`
+}

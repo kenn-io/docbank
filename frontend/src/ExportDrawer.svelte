@@ -47,7 +47,7 @@
     else untrack(() => { if (view.active && view.status === "disconnected") void controller.reconnect(); });
   });
   $effect(() => {
-    const error = view.error;
+    const error = [view.error, view.problemsError].find(error => error instanceof APIError && error.status === 401);
     if (error instanceof APIError && error.status === 401) untrack(() => {
       if (authFailureHandled) return;
       authFailureHandled = true;
@@ -94,6 +94,27 @@
                 {:else}<p>No qualified retained body PDF recipe was found. Generate the message PDFs first, then find recipes again.</p>{/if}
               {/if}
               <div class="role-choice"><strong>Attachments</strong><SelectDropdown title="Email attachment outputs" value={attachments} options={[{ value: "omit", label: "Body PDF only" }, { value: "original", label: "Include original attachments" }, { value: "pdf", label: "Originals + separate qualified PDFs" }]} onchange={value => attachments = value} /></div>
+              {#if attachments !== "omit"}
+                <Button disabled={busy} onclick={() => void controller.publicationPage(0)}>Find attachment sets</Button>
+                {#if view.publications}
+                  {#if view.publications.total}
+                    <p>These messages have more than one published attachment set. Choose one per message before previewing. No set is chosen automatically.</p>
+                    {#each view.publications.items as choice (`${choice.version_id}:${choice.operation_id}`)}
+                      <label class="publication-choice">
+                        <input type="radio" name={`publication-${choice.version_id}`} checked={view.publicationSelections?.[choice.version_id] === choice.operation_id} onchange={() => controller.selectPublication(choice.version_id, choice.operation_id)} />
+                        <span><strong>{choice.name}</strong> · {choice.attachments} attachments · {choice.state}<br />
+                          {formatDate(choice.created_at)} · <code>{choice.operation_id}</code><br />
+                          <small>Message {choice.node_id} · version {choice.version_id.slice(0, 8)} · generation {choice.generation_id.slice(0, 12)}</small>
+                        </span>
+                      </label>
+                    {/each}
+                    <div class="actions">
+                      {#if view.publications.after > 0}<Button disabled={busy} onclick={() => void controller.publicationPage(Math.max(0, view.publications!.after - 50))}>Previous attachment sets</Button>{/if}
+                      {#if view.publications.next > 0}<Button disabled={busy} onclick={() => void controller.publicationPage(view.publications!.next)}>Next attachment sets</Button>{/if}
+                    </div>
+                  {:else}<p>Each message has at most one attachment set. No choice is needed.</p>{/if}
+                {/if}
+              {/if}
               <p>Only qualified nested-email PDFs are supported as separate attachment derivatives. Other child formats remain originals with unavailable PDF entries. Existing PDF attachments are originals, not rendered derivatives.</p>
               <div class="role-choice"><strong>Unavailable outputs</strong><SelectDropdown title="Partial email export" value={partial} options={[{ value: "strict", label: "Fail if any output is unavailable" }, { value: "partial", label: "Allow declared unavailable outputs" }]} onchange={value => partial = value} /></div>
             </div>
@@ -114,7 +135,9 @@
 
       <aside class="original-note">Originals are not redacted or sanitized by annotation overlays. Original file bytes remain unchanged.</aside>
 
-      {#if view.error}<p role="alert" class="error">{view.error.message}</p>{/if}
+      {#if view.error}<p role="alert" class="error">{view.error.message}</p>
+        {#if !admitted}<Button onclick={() => controller.resetPreparation()}>Start over</Button>{/if}
+      {/if}
       {#if view.status === "preparing"}<div role="status"><Spinner size={16} /> Checking exact membership and retained roles…</div>{/if}
       {#if view.status === "expired"}<p role="status">Export authority expired. A fresh preview is required before starting another export.</p>{/if}
 
@@ -155,6 +178,7 @@
             {#each view.problems.items as problem, i (`${view.problems.after}:${i}`)}
               <div><code>{problem.node_id}/{problem.version_id}{problem.part_path ? ` · part ${problem.part_path}` : ""}</code><p>{problem.role.replaceAll("_", " ")}: {problem.reason}</p></div>
             {/each}
+            {#if view.problemsError}<p role="alert" class="error">{view.problemsError.message}</p>{/if}
             {#if !admitted || terminal}<div class="actions">
               {#if view.problems.after > 0}<Button size="sm" disabled={view.problemsLoading} onclick={() => void controller.problemPage(Math.max(0, view.problems!.after - 50))}>Previous unavailable outputs</Button>{/if}
               {#if view.problems.next > 0}<Button size="sm" disabled={view.problemsLoading} onclick={() => void controller.problemPage(view.problems!.next)}>Next unavailable outputs</Button>{/if}
@@ -200,6 +224,7 @@
   p { margin: 0; font-size: var(--font-size-sm); color: var(--text-secondary); }
   .role-choice { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); }
   .choices strong, label { font-size: var(--font-size-sm); }
+  .publication-choice { display: flex; align-items: start; gap: var(--space-2); overflow-wrap: anywhere; }
   .original-note { color: var(--text-secondary); font-size: var(--font-size-sm); }
   .identity { display: flex; flex-wrap: wrap; gap: var(--space-2); align-items: center; margin-block: var(--space-3); }
   .identity > span { width: 100%; }

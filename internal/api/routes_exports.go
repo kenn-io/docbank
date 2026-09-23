@@ -211,6 +211,21 @@ func registerExportRoutes(mux *http.ServeMux, api huma.API, d Deps, g *Operation
 		}
 		return &recipesOutput{Body: choices}, nil
 	})
+	type publicationsOutput struct{ Body bundle.AttachmentPublications }
+	huma.Register(api, huma.Operation{OperationID: "getExportAttachmentPublications", Method: http.MethodGet, Path: "/api/v1/exports/sources/{id}/attachment-publications", Summary: "List attachment sets that need an explicit choice"}, func(ctx context.Context, in *struct {
+		ID    string `path:"id"`
+		After int    `query:"after" minimum:"0" maximum:"300000"`
+	}) (*publicationsOutput, error) {
+		owner, err := exportOwner(ctx)
+		if err != nil {
+			return nil, err
+		}
+		choices, err := d.Store.ExportAttachmentPublications(ctx, owner, in.ID, in.After)
+		if err != nil {
+			return nil, exportProblem(err)
+		}
+		return &publicationsOutput{Body: choices}, nil
+	})
 	type problemsOutput struct{ Body bundle.OutputProblems }
 	huma.Register(api, huma.Operation{OperationID: "getExportOutputProblems", Method: http.MethodGet, Path: "/api/v1/exports/plans/{id}/problems", Summary: "Read one bounded page of frozen unavailable output details"}, func(ctx context.Context, in *struct {
 		ID    string `path:"id"`
@@ -442,7 +457,7 @@ func exportBrowserRouteAllowed(r *http.Request) bool {
 		if parts[0] == "sources" && parts[2] == "email-pdf-recipes" {
 			return r.Method == http.MethodGet && r.URL.RawQuery == ""
 		}
-		if parts[0] == "plans" && parts[2] == "problems" {
+		if parts[0] == "plans" && parts[2] == "problems" || parts[0] == "sources" && parts[2] == "attachment-publications" {
 			q := r.URL.Query()
 			return r.Method == http.MethodGet && (r.URL.RawQuery == "" || len(q) == 1 && len(q["after"]) == 1)
 		}

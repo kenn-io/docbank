@@ -42,6 +42,28 @@ export interface AssignTagPathRequest {
   path: string;
 }
 
+export interface AttachmentPublicationChoice {
+  attachments: number;
+  created_at: string;
+  generation_id: string;
+  name: string;
+  node_id: number;
+  operation_id: string;
+  state: string;
+  version_id: string;
+}
+
+export interface AttachmentPublications {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  after: number;
+  items: AttachmentPublicationChoice[];
+  member_hash: string;
+  next: number;
+  source_id: string;
+  total: number;
+}
+
 export type AuditAttachmentChangeKind = typeof AuditAttachmentChangeKind[keyof typeof AuditAttachmentChangeKind];
 
 
@@ -5390,6 +5412,14 @@ export type GetExportOutputProblemsParams = {
 after?: number;
 };
 
+export type GetExportAttachmentPublicationsParams = {
+/**
+ * @minimum 0
+ * @maximum 300000
+ */
+after?: number;
+};
+
 export type ReadFormatCapabilitiesParams = {
 /**
  * @maxLength 64
@@ -7926,6 +7956,39 @@ return sessionResponse<Source>(getCreateExportSourceWithBlobUrl(),
     method: 'POST',
     headers: { 'Content-Type': 'application/octet-stream', ...getHeaders(options?.headers) },
     body: createExportSourceBody
+  }
+);}
+
+
+
+export const getGetExportAttachmentPublicationsUrl = (id: string,
+    params?: GetExportAttachmentPublicationsParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/v1/exports/sources/${encodeURIComponent(String(id))}/attachment-publications?${stringifiedParams}` : `/api/v1/exports/sources/${encodeURIComponent(String(id))}/attachment-publications`
+}
+
+/**
+ * @summary List attachment sets that need an explicit choice
+ */
+export const getExportAttachmentPublications = (id: string,
+    params?: GetExportAttachmentPublicationsParams, options?: Parameters<typeof sessionResponse>[1]) => {
+
+  return sessionResponse<AttachmentPublications>(getGetExportAttachmentPublicationsUrl(id,params),
+  {
+    ...options,
+    method: 'GET'
+
+
   }
 );}
 

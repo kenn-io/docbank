@@ -126,3 +126,17 @@ it("requires exact receipt and native same-origin ticket and rejects unsafe base
   vi.mocked(fetch).mockResolvedValue(response({ url, receipt: { ...complete.receipt, size: 999 } }));
   await expect(exportTicket("s", plan, complete, "Review.zip", new AbortController().signal)).rejects.toThrow();
 });
+
+it("sends an explicit attachment set without requiring the plan header to echo it", async () => {
+  const { createExportPlan } = await import("./exports.js");
+  const publications = [{ version_id: id, operation_id: "empty-second" }];
+  const fetcher = vi.spyOn(globalThis, "fetch").mockImplementation(async (url, init) => {
+    if (String(url).endsWith("/plans")) {
+      expect(JSON.parse(String(init?.body)).publications).toEqual(publications);
+      return response(plan);
+    }
+    return response({ plan_id: planID, fingerprint: hash, member_hash: hash, total: 1, role_entries: 1, role_bytes: 12, expires_at: future, roles: [{ role: "original", available_members: 1, unavailable_members: 0, files: 1, bytes: 12 }] });
+  });
+  await expect(createExportPlan("s", source, plan.roles, planID, new AbortController().signal, { publications })).resolves.toHaveProperty("plan.id", planID);
+  expect(fetcher).toHaveBeenCalledTimes(2);
+});
