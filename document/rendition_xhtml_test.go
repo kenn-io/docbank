@@ -119,7 +119,21 @@ func TestRenditionXHTMLStructuralAllocationBudget(t *testing.T) {
 
 func TestRenditionXHTMLAttributeAllocationBudget(t *testing.T) {
 	var source strings.Builder
-	source.WriteString(`<html xmlns="http://www.w3.org/1999/xhtml"><body`)
+	source.WriteString(`<html xmlns="http://www.w3.org/1999/xhtml"`)
+	for index := range maxRenditionXHTMLAttributes + 1 {
+		source.WriteString(` a`)
+		source.WriteString(strconv.Itoa(index))
+		source.WriteString(`="x"`)
+	}
+	source.WriteString(`><body>text</body></html>`)
+
+	_, err := RenditionMarkdownFromXHTML([]byte(source.String()), 16<<20)
+	require.ErrorIs(t, err, ErrRenditionXHTMLBudget)
+}
+
+func TestRenditionXHTMLAttributePreflightHandlesProcessingInstructions(t *testing.T) {
+	var source strings.Builder
+	source.WriteString(`<html xmlns="http://www.w3.org/1999/xhtml"><?p '?><body`)
 	for index := range maxRenditionXHTMLAttributes + 1 {
 		source.WriteString(` a`)
 		source.WriteString(strconv.Itoa(index))
@@ -127,8 +141,7 @@ func TestRenditionXHTMLAttributeAllocationBudget(t *testing.T) {
 	}
 	source.WriteString(`>text</body></html>`)
 
-	_, err := RenditionMarkdownFromXHTML([]byte(source.String()), 16<<20)
-	require.ErrorIs(t, err, ErrRenditionXHTMLBudget)
+	require.ErrorIs(t, checkRenditionXHTMLAttributeBound(t.Context(), []byte(source.String())), ErrRenditionXHTMLBudget)
 }
 
 func TestRenditionXHTMLContextCancellation(t *testing.T) {
@@ -150,24 +163,27 @@ func TestRenditionXHTMLContextCancellationAfterRead(t *testing.T) {
 }
 
 func TestRenditionXHTMLContextCancellationAfterDecodeRead(t *testing.T) {
-	ctx := &cancelOnXHTMLReadContext{cancelAt: 3}
-	text, err := RenditionMarkdownFromXHTMLContext(ctx, []byte(`<html xmlns="http://www.w3.org/1999/xhtml"><body>text</body></html>`), 100)
+	source := []byte(`<html xmlns="http://www.w3.org/1999/xhtml"><body>` + strings.Repeat("text", 2048) + `</body></html>`)
+	preflightChecks := (len(source)-1)/1024 + 1
+	ctx := &cancelAfterXHTMLReadContext{cancelAt: preflightChecks + 4}
+	text, err := RenditionMarkdownFromXHTMLContext(ctx, source, 10000)
 	require.ErrorIs(t, err, context.Canceled)
 	require.Empty(t, text)
-	require.Equal(t, ctx.cancelAt, ctx.calls)
+	require.GreaterOrEqual(t, ctx.calls, ctx.cancelAt)
 }
 
 func TestRenditionXHTMLContextCancellationWhileConvertingAttributes(t *testing.T) {
 	var source strings.Builder
-	source.WriteString(`<html xmlns="http://www.w3.org/1999/xhtml"><body`)
+	source.WriteString(`<html xmlns="http://www.w3.org/1999/xhtml"`)
 	for index := range 4096 {
 		source.WriteString(` a`)
 		source.WriteString(strconv.Itoa(index))
 		source.WriteString(`="x"`)
 	}
-	source.WriteString(`>text</body></html>`)
+	source.WriteString(`><body>text</body></html>`)
 
-	ctx := &cancelAfterXHTMLReadContext{cancelAt: 6}
+	preflightChecks := (source.Len()-1)/1024 + 1
+	ctx := &cancelAfterXHTMLReadContext{cancelAt: preflightChecks + 5}
 	text, err := RenditionMarkdownFromXHTMLContext(ctx, []byte(source.String()), 100)
 	require.ErrorIs(t, err, context.Canceled)
 	require.Empty(t, text)
