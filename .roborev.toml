@@ -167,6 +167,13 @@ Key assumptions reviewers MUST account for:
    risk; do not request full-package or full-suite reruns merely because review
    executes separately.
 
+18. THE DAEMON IS THE POLICY AUTHORITY: CLI, MCP, and daemonconn talk to
+   the owner's own daemon over its keyed loopback API. The store decides
+   graph, role, and revision policy inside its transaction. Clients check
+   that a response is addressable and matches its ETag, and treat a
+   malformed success as an unknown outcome; they do not re-derive the
+   store's decisions from the response.
+
 Do NOT flag issues that only apply to public-facing, multi-tenant, or
 internet-exposed services. Focus on bugs, logic errors, data corruption
 risks, and code quality issues.
