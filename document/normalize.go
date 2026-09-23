@@ -2049,10 +2049,15 @@ func appendRepresentableOrderedListItems(
 				if index > 0 {
 					converted.WriteString(renditionListItemSeparator(list.tight))
 				}
-				converted.WriteString(degradeOrderedListItem(serializedOrderedListItem{
+				degradedItem, err := degradeOrderedListItem(output.ctx, serializedOrderedListItem{
 					ordinal: entry.ordinal,
 					value:   string(output.bytes[entry.start:entry.end]),
-				}, indent, alternate))
+				}, indent, alternate)
+				if err != nil {
+					output.err = err
+					return renditionListResult{truncated: true}
+				}
+				converted.WriteString(degradedItem)
 			}
 			output.rollback(listStart.bytes, listStart.runes)
 			output.WriteString(converted.String())
@@ -2318,7 +2323,7 @@ func renditionListItemSeparator(tight bool) string {
 	return "\n\n"
 }
 
-func degradeOrderedListItem(item serializedOrderedListItem, indent int, alternate bool) string {
+func degradeOrderedListItem(ctx context.Context, item serializedOrderedListItem, indent int, alternate bool) (string, error) {
 	normalMarker := item.ordinal + "."
 	degradedMarker := "-"
 	if alternate {
@@ -2327,16 +2332,35 @@ func degradeOrderedListItem(item serializedOrderedListItem, indent int, alternat
 	}
 	normalPrefix := strings.Repeat(" ", indent) + normalMarker
 	degradedPrefix := strings.Repeat(" ", indent) + degradedMarker + " " + item.ordinal + "\\."
-	lines := strings.Split(item.value, "\n")
-	lines[0] = degradedPrefix + strings.TrimPrefix(lines[0], normalPrefix)
 	normalIndent := strings.Repeat(" ", indent+utf8.RuneCountInString(normalMarker)+1)
 	degradedIndent := strings.Repeat(" ", indent+2)
-	for index := 1; index < len(lines); index++ {
-		if after, ok := strings.CutPrefix(lines[index], normalIndent); ok {
-			lines[index] = degradedIndent + after
+	var result strings.Builder
+	lineStart := 0
+	for offset := 0; offset <= len(item.value); offset++ {
+		if offset&1023 == 0 {
+			if err := ctx.Err(); err != nil {
+				return "", err
+			}
+		}
+		if offset != len(item.value) && item.value[offset] != '\n' {
+			continue
+		}
+		line := item.value[lineStart:offset]
+		if lineStart == 0 {
+			line = degradedPrefix + strings.TrimPrefix(line, normalPrefix)
+		} else if after, ok := strings.CutPrefix(line, normalIndent); ok {
+			line = degradedIndent + after
+		}
+		result.WriteString(line)
+		if offset < len(item.value) {
+			result.WriteByte('\n')
+			lineStart = offset + 1
 		}
 	}
-	return strings.Join(lines, "\n")
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
+	return result.String(), nil
 }
 
 func appendRenditionItemBlock(

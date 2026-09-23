@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -328,6 +329,19 @@ func TestProviderProfileIdentityAndPreReadLimits(t *testing.T) {
 	requireClass(t, result, err, document.RenditionErrorPolicyRejected)
 	require.Zero(t, upload.reads)
 	require.Equal(t, 1, upload.closes)
+}
+
+func TestProviderRejectsPreviousPolicyAuthorization(t *testing.T) {
+	p, err := New(Profile{formatdetect.MaxDocumentBytes, 1_000_000})
+	require.NoError(t, err)
+	upload := newTestUpload(epubBytes(t, nil))
+	authorization := testAuthorization(p.Descriptor(), upload.Metadata())
+	previousVersion := strings.Replace(policyVersion, "epub/v2:", "epub/v1:", 1)
+	identity := previousVersion + "\x00" + formatdetect.DetectionImplementationID + "\x00" + strconv.FormatInt(p.profile.MaxDocumentBytes, 10) + "\x00" + strconv.FormatInt(p.profile.MaxUnits, 10)
+	previousPolicy := sha256.Sum256([]byte(identity))
+	authorization.PolicyFingerprint = hex.EncodeToString(previousPolicy[:])
+	_, err = document.RenderRendition(t.Context(), p, upload, authorization)
+	require.ErrorContains(t, err, "policy fingerprint")
 }
 
 func TestAdmitSpineContextCancellation(t *testing.T) {

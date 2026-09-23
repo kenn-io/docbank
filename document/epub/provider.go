@@ -19,7 +19,7 @@ const (
 	providerID = "epub.in-process-v1"
 	provider   = providerutil.Provider("epub")
 	// Changes to admission, normalization, budgets, or counting require a new version.
-	policyVersion = "epub/v1:single-reflowable-unencrypted;paths-v1;xhtml-xml-v1;complete-or-reject;input=min(profile,100MiB);work=500MiB;intermediate=min(100MiB,input+4*runes);runes=min(result-bytes,3888*remaining-units);evidence-bounds;LF-NFC;80-codepoints;48-lines;per-occurrence;repeats;linear-no;empty-zero;internal-blanks;terminal-newline-free;exact-limit;virtual-only"
+	policyVersion = "epub/v2:single-reflowable-unencrypted;paths-v1;xhtml-xml-v1;complete-or-reject;input=min(profile,100MiB);work=500MiB;intermediate=min(100MiB,input+4*runes);runes=min(result-bytes,3888*remaining-units);evidence-bounds;LF-NFC;80-codepoints;48-lines;per-occurrence;repeats;linear-no;empty-zero;internal-blanks;terminal-newline-free;exact-limit;virtual-only"
 	maxXHTMLBytes = int64(100 << 20)
 )
 
