@@ -1484,8 +1484,6 @@ func TestEmbeddingWorkerReleasesMaintenanceGateDuringRetryDelay(t *testing.T) {
 
 func TestEmbeddingWorkerRetriesTimedOutAttemptAndPublishesSibling(t *testing.T) {
 	fixture, fake, worker, request := newRealEmbeddingWorker(t, document.EmbeddingInputOriginalFile)
-	// A healthy sibling may take longer than the injected timeout.
-	fake.runtime.inspectInputs = func([]document.EmbeddingInput) { time.Sleep(4 * time.Second) }
 	worker.attemptLifetime = 3 * time.Second
 	// Only the first provider call waits for its attempt deadline.
 	fake.runtime.block = true
@@ -1514,6 +1512,8 @@ func TestEmbeddingWorkerRetriesTimedOutAttemptAndPublishesSibling(t *testing.T) 
 		// Queued work keeps the timestamps assigned by the real fixture.
 		time.Sleep(time.Until(now))
 		synctest.Wait()
+		// A healthy sibling may take longer than the injected timeout.
+		fake.runtime.inspectInputs = func([]document.EmbeddingInput) { time.Sleep(4 * time.Second) }
 		processed, err := worker.ScanOnce(t.Context())
 		require.NoError(t, err)
 		require.Equal(t, 2, processed)

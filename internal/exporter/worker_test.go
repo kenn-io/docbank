@@ -194,7 +194,7 @@ func TestWorkerDoesNotFenceClaimOnTemporaryReadContention(t *testing.T) {
 	err = catalog.CheckExportClaim(ctx, store.ExportClaim{})
 	require.True(t, catalog.RenditionJobErrorRetryable(err), "expected read contention, got %v", err)
 	// Allow at least one claim poll to observe the real read lock.
-	time.Sleep(350 * time.Millisecond)
+	time.Sleep(350 * time.Millisecond) //nolint:kennlint // claim polls must see the real SQLite read lock, which runs on the wall clock
 	// Keep resumed reads from racing the last connection's WAL teardown.
 	for _, db := range driver.dbs {
 		db.SetMaxIdleConns(2)

@@ -6,6 +6,7 @@ import (
 	"io"
 	"strings"
 	"testing"
+	"testing/synctest"
 	"time"
 	"uuid"
 
@@ -125,75 +126,78 @@ func TestMediaSuppliedTranscriptConsumer(t *testing.T) {
 		{"mp3", "call.mp3", "audio/mpeg", ".mp3", mediatest.MP3()},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			root := t.TempDir()
-			vault, err := New(t.Context(), Config{Root: root})
-			require.NoError(t, err)
-			t.Cleanup(func() { require.NoError(t, vault.Close()) })
-			identity := contentIdentity(test.raw)
-			receipt, err := vault.SubmitSuppliedMedia(t.Context(), SuppliedMediaRequest{
-				OperationID: "00000000-0000-4000-8000-000000000401", Content: bytes.NewReader(test.raw),
-				Filename: test.filename, MediaType: test.mediaType, SHA256: identity.SHA256,
-				ByteLength: identity.Size, Occurrence: MediaOccurrenceInput{Ref: "call", Revision: "1", Filename: test.filename},
-			})
-			require.NoError(t, err)
-			phrase := fmt.Sprintf("exact supplied %s transcript phrase", test.name)
-			transcript := []byte(phrase + "\n")
-			transcriptIdentity := contentIdentity(transcript)
-			artifact, err := vault.ImportRecordingArtifact(t.Context(), MediaArtifactRequest{
-				OperationID: "00000000-0000-4000-8000-000000000402", SourceID: receipt.SourceID,
-				OccurrenceID: receipt.OccurrenceID, Kind: "transcript", Origin: "supplied",
-				Filename: "transcript.txt", MediaType: "text/plain", SHA256: transcriptIdentity.SHA256,
-				ByteLength: transcriptIdentity.Size, Content: bytes.NewReader(transcript),
-			})
-			require.NoError(t, err)
-			require.NotEmpty(t, artifact.SuppliedInputID)
-			node, err := vault.Stat(t.Context(), "/media/"+identity.SHA256[:2]+"/"+identity.SHA256+test.extension)
-			require.NoError(t, err)
-			selector := ProcessingSelector{NodeID: node.ID, ContentVersionID: receipt.ContentVersionID,
-				Profile: "supplied-transcript"}
-			plan, err := vault.PlanProcessing(t.Context(), ProcessingPlanRequest{Selector: selector})
-			require.NoError(t, err)
-			_, err = vault.GrantProcessingPlanConsent(t.Context(), ProcessingConsentGrantRequest{
-				PlanRequest: ProcessingPlanRequest{Selector: selector}, PlanFingerprint: plan.Fingerprint})
-			require.NoError(t, err)
-			vault.processingCancel()
-			vault.processingWG.Wait()
-			queued, err := vault.RetryMedia(t.Context(),
-				"00000000-0000-4000-8000-000000000403", receipt.SourceID,
-				MediaProcessingRequest{Profile: "supplied-transcript", SuppliedInputID: artifact.SuppliedInputID})
-			require.NoError(t, err)
-			require.Equal(t, "queued", queued.OperationState)
-			require.NoError(t, vault.Close())
-			vault, err = New(t.Context(), Config{Root: root})
-			require.NoError(t, err)
-			var lastStatus MediaReceipt
-			var lastStatusErr error
-			deadline := time.Now().Add(30 * time.Second)
-			for time.Now().Before(deadline) {
-				lastStatus, lastStatusErr = vault.MediaStatus(t.Context(), receipt.SourceID)
-				if lastStatusErr == nil && lastStatus.OperationID == queued.OperationID &&
-					lastStatus.OperationState == "succeeded" && lastStatus.CoverageState == "transcribed" {
-					break
+			synctest.Test(t, func(t *testing.T) {
+				root := t.TempDir()
+				vault, err := New(t.Context(), Config{Root: root})
+				require.NoError(t, err)
+				t.Cleanup(func() { require.NoError(t, vault.Close()) })
+				identity := contentIdentity(test.raw)
+				receipt, err := vault.SubmitSuppliedMedia(t.Context(), SuppliedMediaRequest{
+					OperationID: "00000000-0000-4000-8000-000000000401", Content: bytes.NewReader(test.raw),
+					Filename: test.filename, MediaType: test.mediaType, SHA256: identity.SHA256,
+					ByteLength: identity.Size, Occurrence: MediaOccurrenceInput{Ref: "call", Revision: "1", Filename: test.filename},
+				})
+				require.NoError(t, err)
+				phrase := fmt.Sprintf("exact supplied %s transcript phrase", test.name)
+				transcript := []byte(phrase + "\n")
+				transcriptIdentity := contentIdentity(transcript)
+				artifact, err := vault.ImportRecordingArtifact(t.Context(), MediaArtifactRequest{
+					OperationID: "00000000-0000-4000-8000-000000000402", SourceID: receipt.SourceID,
+					OccurrenceID: receipt.OccurrenceID, Kind: "transcript", Origin: "supplied",
+					Filename: "transcript.txt", MediaType: "text/plain", SHA256: transcriptIdentity.SHA256,
+					ByteLength: transcriptIdentity.Size, Content: bytes.NewReader(transcript),
+				})
+				require.NoError(t, err)
+				require.NotEmpty(t, artifact.SuppliedInputID)
+				node, err := vault.Stat(t.Context(), "/media/"+identity.SHA256[:2]+"/"+identity.SHA256+test.extension)
+				require.NoError(t, err)
+				selector := ProcessingSelector{NodeID: node.ID, ContentVersionID: receipt.ContentVersionID,
+					Profile: "supplied-transcript"}
+				plan, err := vault.PlanProcessing(t.Context(), ProcessingPlanRequest{Selector: selector})
+				require.NoError(t, err)
+				_, err = vault.GrantProcessingPlanConsent(t.Context(), ProcessingConsentGrantRequest{
+					PlanRequest: ProcessingPlanRequest{Selector: selector}, PlanFingerprint: plan.Fingerprint})
+				require.NoError(t, err)
+				vault.processingCancel()
+				vault.processingWG.Wait()
+				queued, err := vault.RetryMedia(t.Context(),
+					"00000000-0000-4000-8000-000000000403", receipt.SourceID,
+					MediaProcessingRequest{Profile: "supplied-transcript", SuppliedInputID: artifact.SuppliedInputID})
+				require.NoError(t, err)
+				require.Equal(t, "queued", queued.OperationState)
+				require.NoError(t, vault.Close())
+				vault, err = New(t.Context(), Config{Root: root})
+				require.NoError(t, err)
+				var lastStatus MediaReceipt
+				var lastStatusErr error
+				deadline := time.Now().Add(30 * time.Second)
+				for time.Now().Before(deadline) {
+					lastStatus, lastStatusErr = vault.MediaStatus(t.Context(), receipt.SourceID)
+					if lastStatusErr == nil && lastStatus.OperationID == queued.OperationID &&
+						lastStatus.OperationState == "succeeded" && lastStatus.CoverageState == "transcribed" {
+						break
+					}
+					time.Sleep(20 * time.Millisecond)
 				}
-				time.Sleep(20 * time.Millisecond)
-			}
-			require.NoError(t, lastStatusErr)
-			require.Equal(t, queued.OperationID, lastStatus.OperationID)
-			require.Equal(t, "succeeded", lastStatus.OperationState)
-			require.Equal(t, "transcribed", lastStatus.CoverageState, "%+v", lastStatus)
-			rendition, err := vault.Rendition(t.Context(), RenditionRequest{Selector: selector})
-			require.NoError(t, err)
-			raw, err := io.ReadAll(rendition.Reader)
-			require.NoError(t, err)
-			require.NoError(t, rendition.Reader.Verify())
-			require.NoError(t, rendition.Reader.Close())
-			require.Contains(t, string(raw), phrase)
-			results, err := vault.SearchDocuments(t.Context(), DocumentSearchRequest{Query: phrase,
-				Mode: DocumentSearchLexical, Profile: "supplied-transcript", Limit: 10,
-				Fence: DocumentSourceFence{VaultUID: vault.ID(), ContentVersionIDs: []string{receipt.ContentVersionID}}})
-			require.NoError(t, err)
-			require.NotEmpty(t, results.Results)
-			require.Equal(t, receipt.ContentVersionID, results.Results[0].ContentVersionID)
+				require.NoError(t, lastStatusErr)
+				require.Equal(t, queued.OperationID, lastStatus.OperationID)
+				require.Equal(t, "succeeded", lastStatus.OperationState)
+				require.Equal(t, "transcribed", lastStatus.CoverageState, "%+v", lastStatus)
+				rendition, err := vault.Rendition(t.Context(), RenditionRequest{Selector: selector})
+				require.NoError(t, err)
+				raw, err := io.ReadAll(rendition.Reader)
+				require.NoError(t, err)
+				require.NoError(t, rendition.Reader.Verify())
+				require.NoError(t, rendition.Reader.Close())
+				require.Contains(t, string(raw), phrase)
+				results, err := vault.SearchDocuments(t.Context(), DocumentSearchRequest{Query: phrase,
+					Mode: DocumentSearchLexical, Profile: "supplied-transcript", Limit: 10,
+					Fence: DocumentSourceFence{VaultUID: vault.ID(), ContentVersionIDs: []string{receipt.ContentVersionID}}})
+				require.NoError(t, err)
+				require.NotEmpty(t, results.Results)
+				require.Equal(t, receipt.ContentVersionID, results.Results[0].ContentVersionID)
+				require.NoError(t, vault.Close())
+			})
 		})
 	}
 }

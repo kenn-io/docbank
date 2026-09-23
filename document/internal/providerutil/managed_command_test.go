@@ -48,7 +48,7 @@ func TestManagedCommandStopsOnCancellation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	time.Sleep(150 * time.Millisecond)
+	time.Sleep(150 * time.Millisecond) //nolint:kennlint // checks that the canceled helper subprocess stopped writing its heartbeat
 	after, err := os.Stat(marker)
 	if err != nil {
 		t.Fatal(err)
@@ -81,7 +81,7 @@ func runManagedCommandHelper(mode, marker string) {
 				_ = file.Close()
 				os.Exit(2)
 			}
-			time.Sleep(10 * time.Millisecond)
+			time.Sleep(10 * time.Millisecond) //nolint:kennlint // heartbeat interval in the helper subprocess
 		}
 		if err := file.Close(); err != nil {
 			os.Exit(2)
@@ -99,7 +99,7 @@ func waitForFile(t *testing.T, path string) {
 		if information, err := os.Stat(path); err == nil && information.Size() > 0 {
 			return
 		}
-		time.Sleep(10 * time.Millisecond)
+		time.Sleep(10 * time.Millisecond) //nolint:kennlint // polls a file written by the helper subprocess
 	}
 	t.Fatalf("timed out waiting for %s", filepath.Base(path))
 }

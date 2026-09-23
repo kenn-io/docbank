@@ -93,7 +93,7 @@ func TestManagedCommandStartsWindowsProcessSuspended(t *testing.T) {
 		_ = tree.close()
 	})
 
-	time.Sleep(100 * time.Millisecond)
+	time.Sleep(100 * time.Millisecond) //nolint:kennlint // gives a suspended helper subprocess time to run if suspension failed
 	if _, err := os.Stat(marker); !os.IsNotExist(err) {
 		t.Fatalf("suspended process ran before Job Object assignment: %v", err)
 	}

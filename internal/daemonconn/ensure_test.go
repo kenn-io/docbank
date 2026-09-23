@@ -31,7 +31,7 @@ func TestMain(m *testing.M) {
 			os.Exit(2)
 		}
 		// Stand in for a child that has not published its runtime record yet.
-		time.Sleep(time.Minute)
+		time.Sleep(time.Minute) //nolint:kennlint // runs in a child process that stands in for an unready daemon
 		os.Exit(0)
 	}
 	os.Exit(m.Run())
@@ -360,5 +360,5 @@ func TestUnresponsiveDaemonHelper(_ *testing.T) {
 	if os.Getenv("DOCBANK_UNRESPONSIVE_HELPER") != "1" {
 		return
 	}
-	time.Sleep(30 * time.Second)
+	time.Sleep(30 * time.Second) //nolint:kennlint // runs in a helper process that stands in for an unresponsive daemon
 }

@@ -214,7 +214,7 @@ func waitForLibreOfficeStart(t *testing.T, executable string) map[int]struct{} {
 		if len(pids) != 0 {
 			return pids
 		}
-		time.Sleep(20 * time.Millisecond)
+		time.Sleep(20 * time.Millisecond) //nolint:kennlint // polls /proc for a real LibreOffice process
 	}
 	t.Fatalf("LibreOffice did not start: executable=%s", executable)
 	return nil
@@ -227,7 +227,7 @@ func waitForLibreOfficeExit(t *testing.T, executable string) {
 		if len(matchingLibreOfficePIDs(executable)) == 0 {
 			return
 		}
-		time.Sleep(20 * time.Millisecond)
+		time.Sleep(20 * time.Millisecond) //nolint:kennlint // polls /proc for a real LibreOffice process to exit
 	}
 	t.Fatalf("LibreOffice descendant survived cancellation: executable=%s pids=%v", executable, matchingLibreOfficePIDs(executable))
 }

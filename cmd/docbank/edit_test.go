@@ -245,7 +245,7 @@ func runEditHelper() int {
 			if time.Now().After(deadline) {
 				return 22
 			}
-			time.Sleep(20 * time.Millisecond)
+			time.Sleep(20 * time.Millisecond) //nolint:kennlint // runs in the editor helper subprocess, polling for a file the test writes
 		}
 	}
 	if os.Getenv("DOCBANK_EDIT_TEST_FAIL") == "1" {
