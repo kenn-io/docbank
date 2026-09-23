@@ -9,7 +9,6 @@ import (
 	"encoding/json/v2"
 	"errors"
 	"fmt"
-	"hash"
 	"image/png"
 	"io"
 	"os"
@@ -337,6 +336,9 @@ func BuildRecipientArchive(ctx context.Context, projection PackageProjection, jo
 	if err := staged.Close(); err != nil {
 		return PackageQC{}, err
 	}
+	if err := os.Chmod(staged.Name(), 0o444); err != nil {
+		return PackageQC{}, err
+	}
 	qc, err := VerifyRecipientArchive(staged.Name())
 	if err != nil || qc.ManifestSHA256 != projection.manifestSHA256 {
 		return PackageQC{}, errors.Join(ErrRecipientArchive, err)
@@ -390,28 +392,23 @@ func digestPackageEntry(entry *zip.File, limit int64) (PackageQCEntry, error) {
 	return PackageQCEntry{Path: entry.Name, SHA256: hex.EncodeToString(digest.Sum(nil)), Size: n}, nil
 }
 
-func fileDigest(path string) (string, error) {
-	file, err := os.Open(path)
-	if err != nil {
-		return "", err
-	}
-	defer file.Close()
-	var digest hash.Hash = sha256.New()
-	if _, err := io.Copy(digest, file); err != nil {
-		return "", err
-	}
-	return hex.EncodeToString(digest.Sum(nil)), nil
-}
-
 // VerifyRecipientArchive reopens and checks every entry, the public manifest,
 // transmittal, and deterministic per-volume loadfiles independently of the
 // private projection and source catalog.
 func VerifyRecipientArchive(path string) (PackageQC, error) {
-	archive, err := zip.OpenReader(path)
+	file, err := os.Open(path)
 	if err != nil {
 		return PackageQC{}, err
 	}
-	defer archive.Close()
+	defer file.Close()
+	info, err := file.Stat()
+	if err != nil || !info.Mode().IsRegular() {
+		return PackageQC{}, ErrRecipientArchive
+	}
+	archive, err := zip.NewReader(file, info.Size())
+	if err != nil {
+		return PackageQC{}, err
+	}
 	if len(archive.File) == 0 || len(archive.File) > 1_000_000 {
 		return PackageQC{}, ErrRecipientArchive
 	}
@@ -521,10 +518,15 @@ func VerifyRecipientArchive(path string) (PackageQC, error) {
 		}
 		qc.Entries = append(qc.Entries, value)
 	}
-	qc.ArchiveSHA256, err = fileDigest(path)
-	if err != nil {
+	if _, err := file.Seek(0, io.SeekStart); err != nil {
 		return PackageQC{}, err
 	}
+	digest := sha256.New()
+	n, err := io.Copy(digest, file)
+	if err != nil || n != info.Size() {
+		return PackageQC{}, ErrRecipientArchive
+	}
+	qc.ArchiveSHA256 = hex.EncodeToString(digest.Sum(nil))
 	return qc, nil
 }
 

@@ -82,6 +82,9 @@ func TestBuildRecipientArchiveReopensAndVerifiesAllProfiles(t *testing.T) {
 			first := filepath.Join(t.TempDir(), "first.zip")
 			qc, err := BuildRecipientArchive(t.Context(), projection, packageJobID, opener, first)
 			require.NoError(t, err)
+			info, err := os.Stat(first)
+			require.NoError(t, err)
+			require.Equal(t, os.FileMode(0o444), info.Mode().Perm())
 			require.Equal(t, projection.PageNumbers(), qc.PageNumbers)
 			verified, err := VerifyRecipientArchive(first)
 			require.NoError(t, err)
@@ -262,6 +265,7 @@ func TestRecipientArchiveQCDetectsChangedFinalBytes(t *testing.T) {
 	archive, err := os.ReadFile(path)
 	require.NoError(t, err)
 	archive[len(archive)-1] ^= 1
+	require.NoError(t, os.Chmod(path, 0o600))
 	require.NoError(t, os.WriteFile(path, archive, 0o600))
 	require.Error(t, VerifyRecipientArchiveWithQC(path, qc))
 }
