@@ -117,6 +117,20 @@ func TestRenditionXHTMLStructuralAllocationBudget(t *testing.T) {
 	require.ErrorIs(t, err, ErrRenditionXHTMLBudget)
 }
 
+func TestRenditionXHTMLAttributeAllocationBudget(t *testing.T) {
+	var source strings.Builder
+	source.WriteString(`<html xmlns="http://www.w3.org/1999/xhtml"><body`)
+	for index := range maxRenditionXHTMLAttributes + 1 {
+		source.WriteString(` a`)
+		source.WriteString(strconv.Itoa(index))
+		source.WriteString(`="x"`)
+	}
+	source.WriteString(`>text</body></html>`)
+
+	_, err := RenditionMarkdownFromXHTML([]byte(source.String()), 16<<20)
+	require.ErrorIs(t, err, ErrRenditionXHTMLBudget)
+}
+
 func TestRenditionXHTMLContextCancellation(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()

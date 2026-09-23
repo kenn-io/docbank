@@ -353,7 +353,7 @@ func TestProviderRejectsPreviousPolicyAuthorization(t *testing.T) {
 	require.NoError(t, err)
 	upload := newTestUpload(epubBytes(t, nil))
 	authorization := testAuthorization(p.Descriptor(), upload.Metadata())
-	previousVersion := strings.Replace(policyVersion, "epub/v2:", "epub/v1:", 1)
+	previousVersion := strings.Replace(policyVersion, "epub/v3:", "epub/v2:", 1)
 	identity := previousVersion + "\x00" + formatdetect.DetectionImplementationID + "\x00" + strconv.FormatInt(p.profile.MaxDocumentBytes, 10) + "\x00" + strconv.FormatInt(p.profile.MaxUnits, 10)
 	previousPolicy := sha256.Sum256([]byte(identity))
 	authorization.PolicyFingerprint = hex.EncodeToString(previousPolicy[:])

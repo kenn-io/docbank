@@ -48,9 +48,13 @@ func RenditionMarkdownFromXHTMLContext(ctx context.Context, source []byte, maxRu
 	if !utf8.Valid(source) {
 		return "", errors.New("XHTML must be UTF-8")
 	}
+	if err := checkRenditionXHTMLAttributeBound(ctx, source); err != nil {
+		return "", err
+	}
 	maxRunes = min(maxRunes, maxEvidenceTextBytes)
 	inlineAllocation := int64(unsafe.Sizeof(renditionInline{}))
-	budget := min(int64(100<<20), int64(len(source))+int64(maxRunes)*(2*inlineAllocation+4))
+	inlineAllowance := 4*inlineAllocation + 4
+	budget := min(int64(100<<20), int64(len(source))+(int64(maxRunes)+1)*inlineAllowance)
 	writer := renditionHTMLWriter{ctx: ctx, maxLinkChars: renditionMaxLinkChars, work: &renditionXHTMLWork{remaining: budget}}
 	decoder := xml.NewDecoder(contextReader{ctx: ctx, reader: bytes.NewReader(bytes.TrimPrefix(source, []byte{0xef, 0xbb, 0xbf}))})
 	decoder.Entity = xml.HTMLEntity
@@ -96,7 +100,7 @@ func RenditionMarkdownFromXHTMLContext(ctx context.Context, source []byte, maxRu
 				if err := ctx.Err(); err != nil {
 					return "", err
 				}
-				if !writer.charge(int64(len(attr.Value)) + 1) {
+				if !writer.charge(int64(len(attr.Name.Local)) + int64(len(attr.Value)) + 2*int64(unsafe.Sizeof(html.Attribute{}))) {
 					return "", ErrRenditionXHTMLBudget
 				}
 				converted.Attr = append(converted.Attr, html.Attribute{Key: attr.Name.Local, Val: attr.Value})
@@ -168,6 +172,101 @@ func RenditionMarkdownFromXHTMLContext(ctx context.Context, source []byte, maxRu
 		return "", ErrRenditionXHTMLBudget
 	}
 	return text, nil
+}
+
+const maxRenditionXHTMLAttributes = 1 << 18
+
+func checkRenditionXHTMLAttributeBound(ctx context.Context, source []byte) error {
+	for index := 0; index < len(source); {
+		if index&1023 == 0 {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+		}
+		if source[index] != '<' || index+1 >= len(source) {
+			index++
+			continue
+		}
+		if bytes.HasPrefix(source[index:], []byte("<!--")) {
+			index += len("<!--")
+			for index+2 < len(source) && !bytes.Equal(source[index:index+3], []byte("-->")) {
+				if index&1023 == 0 {
+					if err := ctx.Err(); err != nil {
+						return err
+					}
+				}
+				index++
+			}
+			index += min(3, len(source)-index)
+			continue
+		}
+		if bytes.HasPrefix(source[index:], []byte("<![CDATA[")) {
+			index += len("<![CDATA[")
+			for index+2 < len(source) && !bytes.Equal(source[index:index+3], []byte("]]>")) {
+				if index&1023 == 0 {
+					if err := ctx.Err(); err != nil {
+						return err
+					}
+				}
+				index++
+			}
+			index += min(3, len(source)-index)
+			continue
+		}
+		if source[index+1] == '/' || source[index+1] == '!' || source[index+1] == '?' {
+			index++
+			quote := byte(0)
+			for index < len(source) {
+				if index&1023 == 0 {
+					if err := ctx.Err(); err != nil {
+						return err
+					}
+				}
+				character := source[index]
+				if quote != 0 {
+					if character == quote {
+						quote = 0
+					}
+				} else if character == '\'' || character == '"' {
+					quote = character
+				} else if character == '>' {
+					index++
+					break
+				}
+				index++
+			}
+			continue
+		}
+
+		index++
+		attributes := 0
+		quote := byte(0)
+		for index < len(source) {
+			if index&1023 == 0 {
+				if err := ctx.Err(); err != nil {
+					return err
+				}
+			}
+			character := source[index]
+			if quote != 0 {
+				if character == quote {
+					quote = 0
+				}
+			} else if character == '\'' || character == '"' {
+				quote = character
+			} else if character == '=' {
+				attributes++
+				if attributes > maxRenditionXHTMLAttributes {
+					return ErrRenditionXHTMLBudget
+				}
+			} else if character == '>' {
+				index++
+				break
+			}
+			index++
+		}
+	}
+	return nil
 }
 
 type contextReader struct {
