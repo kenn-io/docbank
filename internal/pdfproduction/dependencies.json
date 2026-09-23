@@ -1,0 +1,40 @@
+{
+  "contract": "pdf-production-dependencies/v1",
+  "writer": "docbank-fresh-objects/v2",
+  "go_pdfium": {
+    "module": "github.com/klippa-app/go-pdfium",
+    "version": "v1.20.0",
+    "commit": "6ff9abaa8b4119050917fc6e3bfba458e88a295d",
+    "module_sum": "h1:cK4fkjUznvJRysfXp+F2f11pBLvzY6ma2zWWwnlUwpw=",
+    "go_mod_sum": "h1:EMZOJ22zrm4HBO2u/7mpOzNfPCUaoCkleBaj02ZuS24=",
+    "license": "MIT"
+  },
+  "wasm": {
+    "path": "pdfium.wasm",
+    "sha256": "f651270c675cac90702b762f4b95d2b34e365cdb374065e40af016f4f0f304ea",
+    "source": "https://github.com/klippa-app/go-pdfium/blob/6ff9abaa8b4119050917fc6e3bfba458e88a295d/webassembly/pdfium.wasm",
+    "pdfium_version": "Chromium 8044",
+    "version_evidence_commit": "b71fbf4db14a31b86aa4cdd12e8de1615200a17a",
+    "license": "BSD-3-Clause AND third-party licenses preserved in root NOTICE",
+    "notices_source": "https://github.com/bblanchon/pdfium-binaries/releases/download/chromium/8044/pdfium-wasm.tgz",
+    "notices_archive_sha256": "2528dfb9762a5325f141fa29868257da51dd05952b13e2c02a08d4de00711fe1",
+    "notices_source_note": "Matching-version upstream license bundle; its WASM differs from the pinned go-pdfium WASM and is not used."
+  },
+  "wazero": {
+    "module": "github.com/tetratelabs/wazero",
+    "version": "v1.12.0",
+    "module_sum": "h1:DuWcpNu/FzgEXgGBDp8J1Spc+CWOvvtvVyjKlaZopYU=",
+    "go_mod_sum": "h1:LvKtzl2RqO4gyF27BiXU+nKAjcV8f38U+kP/q2vgxh0=",
+    "license": "Apache-2.0"
+  },
+  "font": {
+    "name": "Noto Sans JP",
+    "version": "2.004-H2",
+    "path": "fonts/NotoSansJP.ttf",
+    "sha256": "c2f3b4d463500a2ddcd3849cded1fceeb9fd6d1c32e6cbecd568453ba50fc68f",
+    "source": "https://github.com/google/fonts/blob/809e4d8b8d7e9364a914909bb777679606c178b8/ofl/notosansjp/NotoSansJP%5Bwght%5D.ttf",
+    "license": "OFL-1.1",
+    "license_path": "fonts/OFL.txt",
+    "unsupported_glyph_policy": "Fail closed when the local font lacks a glyph; no host font lookup."
+  }
+}

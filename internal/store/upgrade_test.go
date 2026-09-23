@@ -385,6 +385,58 @@ func TestOpenRejectsCurrentDatabaseWithoutAttributionTables(t *testing.T) {
 	}
 }
 
+func TestOpenRejectsInvalidProductionAuthorityTableLayouts(t *testing.T) {
+	tables := []string{
+		"production_policy_versions",
+		"production_approval_grants",
+		"production_approval_events",
+		"production_players_snapshots",
+		"production_withheld_selections",
+		"production_privilege_log_drafts",
+		"production_privilege_log_rows",
+		"production_privilege_log_validations",
+		"production_privilege_log_approvals",
+		"production_privilege_log_receipts",
+		"production_privilege_log_attachments",
+		"production_operation_receipts",
+	}
+	mutations := []struct {
+		name string
+		sql  func(string) string
+	}{
+		{name: "missing", sql: func(table string) string { return "DROP TABLE " + table }},
+		{name: "wrong-shaped", sql: func(table string) string {
+			return "ALTER TABLE " + table + " ADD COLUMN synthetic_unexpected_authority TEXT"
+		}},
+	}
+	for _, table := range tables {
+		for _, mutation := range mutations {
+			for _, test := range v090UpgradeDrivers() {
+				t.Run(table+"/"+mutation.name+"/"+test.name, func(t *testing.T) {
+					dbPath := filepath.Join(t.TempDir(), "docbank.db")
+					s, err := Open(dbPath, test.driver)
+					require.NoError(t, err)
+					require.NoError(t, s.Close())
+
+					db, err := test.driver.Open(dbPath, docsqlite.OpenOptions{
+						Access: docsqlite.ReadWriteExisting, TransactionMode: docsqlite.Immediate,
+					})
+					require.NoError(t, err)
+					_, err = db.Exec(mutation.sql(table))
+					require.NoError(t, err)
+					require.NoError(t, db.Close())
+
+					reopened, err := Open(dbPath, test.driver)
+					if reopened != nil {
+						require.NoError(t, reopened.Close())
+					}
+					require.ErrorContains(t, err, "unexpected "+table+" layout")
+				})
+			}
+		}
+	}
+}
+
 func TestOpenAcceptsCurrentSchemaColumnAddedToEmbeddedSchema(t *testing.T) {
 	originalSchema := schemaSQL
 	t.Cleanup(func() { schemaSQL = originalSchema })
