@@ -202,6 +202,13 @@ linters:
         path: _test\.go
         text: "G204|G704|G306|G301|G302|G101|G117|G703|G122|G403|G115"
 
+      # gosec's taint rules (G7xx) fire nondeterministically between runs, so
+      # an inline //nolint fails nolintlint whenever the taint pass stays
+      # quiet. The endpoint comes from the OCR policy, which pins it.
+      - linters: [gosec]
+        path: document/mistral/client\.go
+        text: "G704"
+
       # staticcheck nil-after-Fatal false positives in tests
       - linters: [staticcheck]
         path: _test\.go
