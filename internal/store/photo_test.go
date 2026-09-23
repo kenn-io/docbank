@@ -235,6 +235,7 @@ func TestPhotoNodeModesAndPurgeRepair(t *testing.T) {
 	require.NoError(t, err)
 	assert.Empty(t, group.Files)
 	assert.Nil(t, group.DisplayFileID)
+	require.NoError(t, validatePhotoMetadataState(ctx, s.db))
 }
 
 func TestPhotoMetadataRoundTripAndInvalidReferences(t *testing.T) {
@@ -312,6 +313,131 @@ func TestPhotoMetadataRejectsUnattachedSidecar(t *testing.T) {
 	require.True(t, found)
 	invalid := newTestStore(t)
 	require.Error(t, invalid.ImportMetadata(ctx, strings.NewReader(strings.Join(lines, "\n"))))
+}
+
+func TestPhotoMetadataRejectsRoleMediaAndAssetKindMismatch(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		update string
+	}{
+		{name: "role and media", update: `UPDATE photo_files SET role='video'`},
+		{name: "asset kind", update: `UPDATE photo_assets SET kind='video'`},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			s := newTestStore(t)
+			_, err := s.CreateFile(t.Context(), s.RootID(), "mismatch.jpg", fakeHash(test.name), 1, "image/jpeg")
+			require.NoError(t, err)
+			require.NoError(t, validatePhotoMetadataState(t.Context(), s.db))
+			_, err = s.db.ExecContext(t.Context(), test.update)
+			require.NoError(t, err)
+			require.ErrorIs(t, validatePhotoMetadataState(t.Context(), s.db), ErrInvalidPhotoAsset)
+		})
+	}
+}
+
+func TestPhotoMetadataDoesNotTreatGeneralNodeRevisionAsPrunedMedia(t *testing.T) {
+	s := newTestStore(t)
+	ctx := t.Context()
+	node, err := s.CreateFile(ctx, s.RootID(), "revised.jpg", fakeHash("revised-media"), 1, "image/jpeg")
+	require.NoError(t, err)
+	_, err = s.db.ExecContext(ctx, `UPDATE nodes SET revision=revision+1 WHERE id=?`, node.ID)
+	require.NoError(t, err)
+	_, err = s.db.ExecContext(ctx, `UPDATE photo_files SET role='video' WHERE node_id=?`, node.ID)
+	require.NoError(t, err)
+	_, err = s.db.ExecContext(ctx, `UPDATE photo_assets SET kind='video'`)
+	require.NoError(t, err)
+	require.ErrorIs(t, validatePhotoMetadataState(ctx, s.db), ErrInvalidPhotoAsset)
+}
+
+func TestPhotoMetadataRejectsInvalidReceiptHistory(t *testing.T) {
+	t.Run("orphan asset", func(t *testing.T) {
+		s := newTestStore(t)
+		const assetID = "11111111-1111-4111-8111-111111111111"
+		_, err := s.db.ExecContext(t.Context(), `
+			INSERT INTO photo_change_receipts(
+				receipt_id, operation, asset_id, before_revision, after_revision,
+				before_json, after_json, created_at
+			) VALUES(?, 'create', ?, 0, 1, ?, ?, ?)`,
+			"22222222-2222-4222-8222-222222222222", assetID,
+			`{"id":"","revision":0}`, `{"id":"`+assetID+`","revision":1}`,
+			nowRFC3339())
+		require.NoError(t, err)
+		require.Error(t, s.ValidateMetadata(t.Context()))
+	})
+
+	t.Run("state revision", func(t *testing.T) {
+		s := newTestStore(t)
+		node, err := s.CreateFile(t.Context(), s.RootID(), "receipt.raw", fakeHash("receipt-state"), 1, "application/octet-stream")
+		require.NoError(t, err)
+		_, err = s.PromotePhotoNode(t.Context(), node.ID, nil, PhotoRoleRAW, "")
+		require.NoError(t, err)
+		require.NoError(t, validatePhotoMetadataState(t.Context(), s.db))
+		result, err := s.db.ExecContext(t.Context(), `UPDATE photo_change_receipts SET after_json=replace(after_json, '"revision":1', '"revision":9')`)
+		require.NoError(t, err)
+		count, err := result.RowsAffected()
+		require.NoError(t, err)
+		require.EqualValues(t, 1, count)
+		require.ErrorContains(t, validatePhotoMetadataState(t.Context(), s.db), "mismatched after state")
+	})
+
+	t.Run("orphan settings", func(t *testing.T) {
+		s := newTestStore(t)
+		_, err := s.db.ExecContext(t.Context(), `
+			INSERT INTO photo_change_receipts(
+				receipt_id, operation, settings_key, before_revision, after_revision,
+				before_json, after_json, created_at
+			) VALUES(?, 'settings', 'library', 1, 2, ?, ?, ?)`,
+			"33333333-3333-4333-8333-333333333333",
+			`{"preference":null,"revision":1}`, `{"preference":"image","revision":2}`,
+			nowRFC3339())
+		require.NoError(t, err)
+		require.Error(t, s.ValidateMetadata(t.Context()))
+	})
+
+	t.Run("missing revised asset history", func(t *testing.T) {
+		s := newTestStore(t)
+		node, err := s.CreateFile(t.Context(), s.RootID(), "missing.jpg", fakeHash("missing-history"), 1, "image/jpeg")
+		require.NoError(t, err)
+		asset, err := s.PhotoAssetForNode(t.Context(), node.ID)
+		require.NoError(t, err)
+		_, err = s.SetPhotoAssetExcluded(t.Context(), asset.ID, asset.Revision, true)
+		require.NoError(t, err)
+		_, err = s.db.ExecContext(t.Context(), `DELETE FROM photo_change_receipts WHERE asset_id=?`, asset.ID)
+		require.NoError(t, err)
+		require.ErrorContains(t, validatePhotoMetadataState(t.Context(), s.db), "has no history")
+	})
+
+	t.Run("contradictory adjacent asset state", func(t *testing.T) {
+		s := newTestStore(t)
+		node, err := s.CreateFile(t.Context(), s.RootID(), "chain.raw", fakeHash("chain-history"), 1, "application/octet-stream")
+		require.NoError(t, err)
+		asset, err := s.PromotePhotoNode(t.Context(), node.ID, nil, PhotoRoleRAW, "")
+		require.NoError(t, err)
+		_, err = s.SetPhotoAssetExcluded(t.Context(), asset.ID, asset.Revision, true)
+		require.NoError(t, err)
+		_, err = s.db.ExecContext(t.Context(), `UPDATE photo_change_receipts SET before_json=replace(before_json, '"file_count":1', '"file_count":0') WHERE operation='exclude'`)
+		require.NoError(t, err)
+		require.ErrorContains(t, validatePhotoMetadataState(t.Context(), s.db), "contradictory state")
+	})
+
+	t.Run("terminal settings state", func(t *testing.T) {
+		s := newTestStore(t)
+		_, err := s.SetPhotoSettings(t.Context(), 1, new("image"))
+		require.NoError(t, err)
+		_, err = s.db.ExecContext(t.Context(), `UPDATE photo_library_settings SET preference='raw' WHERE singleton=1`)
+		require.NoError(t, err)
+		require.ErrorContains(t, validatePhotoMetadataState(t.Context(), s.db), "terminal state")
+	})
+
+	t.Run("invalid initial settings preference", func(t *testing.T) {
+		s := newTestStore(t)
+		_, err := s.SetPhotoSettings(t.Context(), 1, new("image"))
+		require.NoError(t, err)
+		require.NoError(t, validatePhotoMetadataState(t.Context(), s.db))
+		_, err = s.db.ExecContext(t.Context(), `UPDATE photo_change_receipts SET before_json=replace(before_json, '"preference":null', '"preference":"video"') WHERE operation='settings'`)
+		require.NoError(t, err)
+		require.ErrorContains(t, validatePhotoMetadataState(t.Context(), s.db), "invalid preference state")
+	})
 }
 
 func TestPhotoMutationsRequireRevision(t *testing.T) {
@@ -398,8 +524,9 @@ func TestPhotoVersionTransitionsKeepIdentity(t *testing.T) {
 	asset, err := s.PhotoAssetForNode(ctx, image.ID)
 	require.NoError(t, err)
 	originalVersionID := image.CurrentVersionID
-	updated, replacementVersion, err := s.ReplaceContent(ctx, image.ID, image.Revision, fakeHash("b2"), 1, "image/jpeg")
+	updated, replacementVersion, err := s.ReplaceContent(ctx, image.ID, image.Revision, fakeHash("b2"), 1, "application/pdf")
 	require.NoError(t, err)
+	require.NoError(t, validatePhotoMetadataState(ctx, s.db))
 	assetAfter, err := s.PhotoAssetForNode(ctx, image.ID)
 	require.NoError(t, err)
 	assert.Equal(t, asset.ID, assetAfter.ID)
@@ -418,6 +545,25 @@ func TestPhotoVersionTransitionsKeepIdentity(t *testing.T) {
 	assetAfterPrune, err := s.PhotoAssetForNode(ctx, image.ID)
 	require.NoError(t, err)
 	assert.Equal(t, asset.ID, assetAfterPrune.ID)
+}
+
+func TestPhotoVersionPrunePreservesChangedMediaMembership(t *testing.T) {
+	s := newTestStore(t)
+	ctx := t.Context()
+	image, err := s.CreateFile(ctx, s.RootID(), "pruned.jpg", fakeHash("prune-media-a"), 1, "image/jpeg")
+	require.NoError(t, err)
+	asset, err := s.PhotoAssetForNode(ctx, image.ID)
+	require.NoError(t, err)
+	updated, _, err := s.ReplaceContent(ctx, image.ID, image.Revision, fakeHash("prune-media-b"), 1, "application/pdf")
+	require.NoError(t, err)
+	_, err = s.PruneContentVersions(ctx, image.ID, updated.Revision,
+		VersionPruneSelector{VersionIDs: []string{image.CurrentVersionID}}, true)
+	require.NoError(t, err)
+	require.NoError(t, validatePhotoMetadataState(ctx, s.db))
+	retained, err := s.PhotoAssetForNode(ctx, image.ID)
+	require.NoError(t, err)
+	assert.Equal(t, asset.ID, retained.ID)
+	assert.Equal(t, PhotoRoleImage, retained.Files[0].Role)
 }
 
 func TestPhotoPolicy(t *testing.T) {

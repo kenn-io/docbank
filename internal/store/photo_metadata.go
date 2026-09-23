@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 )
@@ -218,7 +219,8 @@ func validatePhotoReceiptMetadataRecord(v metadataPhotoReceipt) error {
 	default:
 		return fmt.Errorf("invalid photo receipt operation %q", v.Operation)
 	}
-	if v.AfterRevision < v.BeforeRevision || v.Operation == "create" && v.BeforeRevision != 0 {
+	if v.AfterRevision != v.BeforeRevision+1 || v.Operation == "create" && v.BeforeRevision != 0 ||
+		v.Operation != "create" && v.Operation != "promote" && v.BeforeRevision < 1 {
 		return errors.New("invalid photo receipt revision transition")
 	}
 	if v.AssetID != nil && validateUUIDv4(*v.AssetID) != nil {
@@ -281,8 +283,244 @@ func validatePhotoMetadataState(ctx context.Context, tx metadataQuerier) error {
 	if err := validatePhotoGraph(ctx, tx); err != nil {
 		return err
 	}
+	if err := validatePhotoReceiptHistory(ctx, tx); err != nil {
+		return err
+	}
 	if err := exportPhotoMetadata(ctx, tx, func(any) error { return nil }); err != nil {
 		return fmt.Errorf("validating photo metadata: %w", err)
 	}
 	return nil
+}
+
+func validatePhotoReceiptHistory(ctx context.Context, tx metadataQuerier) error {
+	rows, err := tx.QueryContext(ctx, `
+		SELECT receipt_id, operation, asset_id, settings_key, before_revision,
+		       after_revision, before_json, after_json, created_at
+		FROM photo_change_receipts
+		ORDER BY COALESCE(asset_id, settings_key), before_revision, after_revision, receipt_id`)
+	if err != nil {
+		return fmt.Errorf("reading photo receipt history: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	assets := map[string][]metadataPhotoReceipt{}
+	var settings []metadataPhotoReceipt
+	for rows.Next() {
+		var receipt metadataPhotoReceipt
+		var assetID, settingsKey sql.NullString
+		if err := rows.Scan(&receipt.ReceiptID, &receipt.Operation, &assetID, &settingsKey,
+			&receipt.BeforeRevision, &receipt.AfterRevision, &receipt.BeforeJSON,
+			&receipt.AfterJSON, &receipt.CreatedAt); err != nil {
+			return fmt.Errorf("scanning photo receipt history: %w", err)
+		}
+		receipt.Type = metadataPhotoReceiptType
+		if assetID.Valid {
+			receipt.AssetID = new(assetID.String)
+			assets[assetID.String] = append(assets[assetID.String], receipt)
+		} else if settingsKey.Valid {
+			receipt.SettingsKey = new(settingsKey.String)
+			settings = append(settings, receipt)
+		}
+		if err := validatePhotoReceiptMetadataRecord(receipt); err != nil {
+			return err
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("reading photo receipt history: %w", err)
+	}
+	for assetID, receipts := range assets {
+		current, err := currentPhotoReceiptAssetState(ctx, tx, assetID)
+		if errors.Is(err, sql.ErrNoRows) {
+			return fmt.Errorf("invalid photo receipt history: asset %s does not exist", assetID)
+		} else if err != nil {
+			return fmt.Errorf("reading photo receipt asset %s: %w", assetID, err)
+		}
+		if err := validatePhotoAssetReceiptChain(assetID, current, receipts); err != nil {
+			return err
+		}
+	}
+	assetRows, err := tx.QueryContext(ctx, `SELECT asset_id FROM photo_assets WHERE revision>1`)
+	if err != nil {
+		return fmt.Errorf("reading revised photo assets: %w", err)
+	}
+	defer func() { _ = assetRows.Close() }()
+	for assetRows.Next() {
+		var assetID string
+		if err := assetRows.Scan(&assetID); err != nil {
+			return fmt.Errorf("scanning revised photo assets: %w", err)
+		}
+		if len(assets[assetID]) == 0 {
+			return fmt.Errorf("invalid photo receipt history: asset %s at a revised state has no history", assetID)
+		}
+	}
+	if err := assetRows.Err(); err != nil {
+		return fmt.Errorf("reading revised photo assets: %w", err)
+	}
+	if err := assetRows.Close(); err != nil {
+		return err
+	}
+	if len(settings) > 0 {
+		var current struct {
+			Preference *string
+			Revision   int64
+		}
+		var preference sql.NullString
+		if err := tx.QueryRowContext(ctx, `SELECT preference, revision FROM photo_library_settings WHERE singleton=1`).Scan(&preference, &current.Revision); errors.Is(err, sql.ErrNoRows) {
+			return errors.New("invalid photo receipt history: settings do not exist")
+		} else if err != nil {
+			return fmt.Errorf("reading photo receipt settings: %w", err)
+		}
+		if preference.Valid {
+			current.Preference = new(preference.String)
+		}
+		if err := validatePhotoSettingsReceiptChain(current.Preference, current.Revision, settings); err != nil {
+			return err
+		}
+	} else {
+		var revision int64
+		if err := tx.QueryRowContext(ctx, `SELECT revision FROM photo_library_settings WHERE singleton=1`).Scan(&revision); err == nil && revision > 1 {
+			return errors.New("invalid photo settings receipt history: revised settings have no history")
+		} else if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return fmt.Errorf("reading photo receipt settings: %w", err)
+		}
+	}
+	return nil
+}
+
+func currentPhotoReceiptAssetState(ctx context.Context, tx metadataQuerier, assetID string) (photoReceiptAssetState, error) {
+	var state photoReceiptAssetState
+	var excluded, display, override sql.NullString
+	err := tx.QueryRowContext(ctx, `
+		SELECT asset_id, kind, revision, excluded_at, display_file_id,
+		       display_override_file_id,
+		       (SELECT COUNT(*) FROM photo_files WHERE asset_id=photo_assets.asset_id)
+		FROM photo_assets WHERE asset_id=?`, assetID).Scan(&state.ID, &state.Kind, &state.Revision,
+		&excluded, &display, &override, &state.FileCount)
+	if excluded.Valid {
+		state.ExcludedAt = new(excluded.String)
+	}
+	if display.Valid {
+		state.DisplayFileID = new(display.String)
+	}
+	if override.Valid {
+		state.DisplayOverrideFileID = new(override.String)
+	}
+	return state, err
+}
+
+func validatePhotoAssetReceiptChain(assetID string, current photoReceiptAssetState, receipts []metadataPhotoReceipt) error {
+	if receipts[0].BeforeRevision > 1 {
+		return fmt.Errorf("invalid photo receipt history: asset %s starts at revision %d", assetID, receipts[0].BeforeRevision)
+	}
+	var previous int64
+	var previousState photoReceiptAssetState
+	for index, receipt := range receipts {
+		if index > 0 && receipt.BeforeRevision != previous {
+			return fmt.Errorf("invalid photo receipt history: asset %s has a revision gap", assetID)
+		}
+		var before, after photoReceiptAssetState
+		if err := decodePhotoReceiptState(receipt.BeforeJSON, &before, "id", "revision"); err != nil || before.Revision != receipt.BeforeRevision ||
+			before.Revision > 0 && before.ID != assetID || before.Revision == 0 && before.ID != "" {
+			return fmt.Errorf("invalid photo receipt history: asset %s has a mismatched before state", assetID)
+		}
+		if err := decodePhotoReceiptState(receipt.AfterJSON, &after, "id", "revision"); err != nil || after.ID != assetID || after.Revision != receipt.AfterRevision {
+			return fmt.Errorf("invalid photo receipt history: asset %s has a mismatched after state", assetID)
+		}
+		if index > 0 && !equalPhotoReceiptAssetState(previousState, before) {
+			return fmt.Errorf("invalid photo receipt history: asset %s has contradictory state at revision %d", assetID, before.Revision)
+		}
+		if !validPhotoReceiptOperationState(receipt.Operation, before, after) {
+			return fmt.Errorf("invalid photo receipt history: asset %s has a mismatched %s transition", assetID, receipt.Operation)
+		}
+		previous = receipt.AfterRevision
+		previousState = after
+	}
+	if !equalPhotoReceiptAssetState(previousState, current) {
+		return fmt.Errorf("invalid photo receipt history: asset %s terminal state does not match revision %d", assetID, current.Revision)
+	}
+	return nil
+}
+
+func equalPhotoReceiptAssetState(left, right photoReceiptAssetState) bool {
+	return left.ID == right.ID && left.Kind == right.Kind && left.Revision == right.Revision &&
+		equalPhotoString(left.ExcludedAt, right.ExcludedAt) && equalPhotoString(left.DisplayFileID, right.DisplayFileID) &&
+		equalPhotoString(left.DisplayOverrideFileID, right.DisplayOverrideFileID) && left.FileCount == right.FileCount
+}
+
+func validPhotoReceiptOperationState(operation string, before, after photoReceiptAssetState) bool {
+	if before.Revision > 0 && before.Kind != after.Kind {
+		return false
+	}
+	switch operation {
+	case "create":
+		return before.Revision == 0 && after.FileCount == 1
+	case "promote":
+		if before.Revision == 0 {
+			return after.FileCount == 1
+		}
+		return before.ExcludedAt != nil && after.ExcludedAt == nil && before.FileCount == after.FileCount
+	case "attach":
+		return after.FileCount == before.FileCount+1
+	case "detach", "purge":
+		return after.FileCount < before.FileCount
+	case "exclude":
+		return before.FileCount == after.FileCount && (before.ExcludedAt == nil) != (after.ExcludedAt == nil)
+	case "display":
+		return before.FileCount == after.FileCount &&
+			(!equalPhotoString(before.DisplayOverrideFileID, after.DisplayOverrideFileID) || !equalPhotoString(before.DisplayFileID, after.DisplayFileID))
+	case "settings_recompute":
+		return before.FileCount == after.FileCount && !equalPhotoString(before.DisplayFileID, after.DisplayFileID)
+	default:
+		return false
+	}
+}
+
+func validatePhotoSettingsReceiptChain(preference *string, revision int64, receipts []metadataPhotoReceipt) error {
+	if receipts[0].BeforeRevision != 1 {
+		return errors.New("invalid photo settings receipt history: history must start at revision 1")
+	}
+	var previous int64
+	var previousPreference *string
+	for index, receipt := range receipts {
+		if index > 0 && receipt.BeforeRevision != previous {
+			return errors.New("invalid photo settings receipt history: revision gap")
+		}
+		var before, after struct {
+			Preference *string `json:"preference"`
+			Revision   int64   `json:"revision"`
+		}
+		if err := decodePhotoReceiptState(receipt.BeforeJSON, &before, "revision"); err != nil || before.Revision != receipt.BeforeRevision {
+			return errors.New("invalid photo settings receipt history: mismatched before state")
+		}
+		if err := decodePhotoReceiptState(receipt.AfterJSON, &after, "revision"); err != nil || after.Revision != receipt.AfterRevision {
+			return errors.New("invalid photo settings receipt history: mismatched after state")
+		}
+		if index == 0 && before.Preference != nil || !photoPreferenceValid(before.Preference) || !photoPreferenceValid(after.Preference) {
+			return errors.New("invalid photo settings receipt history: invalid preference state")
+		}
+		if index > 0 && !equalPhotoString(previousPreference, before.Preference) {
+			return errors.New("invalid photo settings receipt history: contradictory state")
+		}
+		if equalPhotoString(before.Preference, after.Preference) {
+			return errors.New("invalid photo settings receipt history: preference did not change")
+		}
+		previous = receipt.AfterRevision
+		previousPreference = after.Preference
+	}
+	if previous != revision || !equalPhotoString(previousPreference, preference) {
+		return fmt.Errorf("invalid photo settings receipt history: terminal state does not match revision %d", revision)
+	}
+	return nil
+}
+
+func decodePhotoReceiptState(raw string, target any, required ...string) error {
+	var fields map[string]jsontext.Value
+	if err := json.Unmarshal([]byte(raw), &fields); err != nil {
+		return err
+	}
+	for _, field := range required {
+		if _, ok := fields[field]; !ok {
+			return fmt.Errorf("missing %s", field)
+		}
+	}
+	return json.Unmarshal([]byte(raw), target)
 }

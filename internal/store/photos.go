@@ -437,9 +437,6 @@ func (s *Store) photoAssetCreateTx(ctx context.Context, tx *sql.Tx, nodeID int64
 	if role == PhotoRoleSidecar {
 		return PhotoAsset{}, fmt.Errorf("%w: sidecars require a same-asset raw target", ErrInvalidPhotoAsset)
 	}
-	if err := validatePhotoRoleForNode(role, facts); err != nil {
-		return PhotoAsset{}, err
-	}
 	kind := explicitKind
 	if kind == "" {
 		kind = facts.AssetKind
@@ -450,15 +447,8 @@ func (s *Store) photoAssetCreateTx(ctx context.Context, tx *sql.Tx, nodeID int64
 	if !photoKindValid(kind) {
 		return PhotoAsset{}, fmt.Errorf("%w: unknown kind %q", ErrInvalidPhotoAsset, kind)
 	}
-	if role == PhotoRoleImage && kind != PhotoKindPhoto ||
-		role == PhotoRoleVideo && kind != PhotoKindVideo {
-		return PhotoAsset{}, fmt.Errorf("%w: role %s does not match asset kind %s", ErrInvalidPhotoAsset, role, kind)
-	}
-	if facts.Qualifies && kind != facts.AssetKind {
-		return PhotoAsset{}, fmt.Errorf("%w: node media does not match asset kind", ErrInvalidPhotoAsset)
-	}
-	if role == PhotoRoleRAW && kind != PhotoKindPhoto {
-		return PhotoAsset{}, fmt.Errorf("%w: RAW files are photo assets", ErrInvalidPhotoAsset)
+	if err := validatePhotoFileForAsset(kind, role, facts); err != nil {
+		return PhotoAsset{}, err
 	}
 	assetID, err := newUUIDv4()
 	if err != nil {
@@ -635,12 +625,8 @@ func (s *Store) AttachPhotoFile(ctx context.Context, assetID string, revision, n
 			}
 			role = inferPhotoRole(facts)
 		}
-		if err := validatePhotoRoleForNode(role, facts); err != nil {
+		if err := validatePhotoFileForAsset(asset.Kind, role, facts); err != nil {
 			return err
-		}
-		if role == PhotoRoleImage && asset.Kind != PhotoKindPhoto ||
-			role == PhotoRoleVideo && asset.Kind != PhotoKindVideo {
-			return fmt.Errorf("%w: role %s does not match asset kind %s", ErrInvalidPhotoAsset, role, asset.Kind)
 		}
 		if role == PhotoRoleSidecar {
 			if sidecar == nil {
