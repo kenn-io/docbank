@@ -263,5 +263,5 @@ jobs:
         env:
           CGO_ENABLED: "1"
           GOARCH: ${{ matrix.goarch }}
-        shell: bash
-        run: bash scripts/test-go-ci.sh
+        shell: pwsh
+        run: ./scripts/test-go-ci.ps1
