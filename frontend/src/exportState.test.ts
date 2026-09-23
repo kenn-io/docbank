@@ -7,7 +7,7 @@ import type { SnapshotPage } from "./snapshots.js";
 const id = "11111111-1111-4111-8111-111111111111", hash = "a".repeat(64), future = "2099-01-01T00:00:00Z";
 const members = [{ node_id: 1, version_id: id, sha256: hash, size: 12 }];
 const response = (value: unknown) => new Response(JSON.stringify(value), { headers: { "Content-Type": "application/json" } });
-afterEach(() => vi.restoreAllMocks());
+afterEach(() => { vi.restoreAllMocks(); vi.useRealTimers(); });
 
 async function harness() {
   const memberHash = await exportMemberHash(members);
@@ -235,5 +235,86 @@ it("copies reactive snapshot inputs before caller changes and never promotes obs
   await h.session.preview();
   expect(h.state().status).toBe("ready");
   expect(h.state().reviewed?.plan.source.member_hash).toBe(await exportMemberHash(members));
+  h.session.dispose();
+});
+
+it("starts over after a failed source without changing ordinary retry identity or an admitted job", async () => {
+  const h = await harness();
+  const original = h.fetcher.getMockImplementation()!;
+  const sourceIDs: string[] = [];
+  let failedID = "";
+  h.fetcher.mockImplementation(async (url, init) => {
+    if (String(url).endsWith("/sources")) {
+      const operationID = JSON.parse(String(init?.body)).operation_id;
+      sourceIDs.push(operationID);
+      failedID ||= operationID;
+      if (operationID === failedID) return new Response(JSON.stringify({ detail: "Source preparation failed", code: "export_conflict" }), { status: 409 });
+    }
+    return original(url, init);
+  });
+  await h.session.discoverRecipes();
+  h.session.choose({ label: "Selected documents", members }, [{ role: "original" }]);
+  await h.session.preview();
+  expect(h.state().status).toBe("error");
+  expect(sourceIDs).toEqual([failedID, failedID]);
+  h.session.resetPreparation();
+  await h.session.preview();
+  expect(h.state().status).toBe("ready");
+  expect(sourceIDs[2]).not.toBe(failedID);
+  await h.session.start();
+  const admitted = h.state();
+  h.session.resetPreparation();
+  expect(h.state()).toBe(admitted);
+  h.session.dispose();
+});
+
+it.each([false, true])("keeps plan expiry and readiness through problem paging (page fails: %s)", async (fails) => {
+  vi.useFakeTimers({ toFake: ["Date", "setTimeout", "clearTimeout"] });
+  vi.setSystemTime(Date.parse(future) - 1000);
+  const h = await harness();
+  const original = h.fetcher.getMockImplementation()!;
+  let pageFails = fails;
+  h.fetcher.mockImplementation(async (url, init) => {
+    if (String(url).includes("/problems")) {
+      if (pageFails) return new Response(null, { status: 503 });
+      return response({ plan_id: h.state().reviewed!.plan.id, fingerprint: hash, after: 0, next: 0, total: 0, items: [] });
+    }
+    return original(url, init);
+  });
+  await h.session.preview();
+  const reviewed = h.state().reviewed;
+  await h.session.problemPage(0);
+  expect(h.state().status).toBe("ready");
+  expect(h.state().reviewed).toBe(reviewed);
+  expect(h.state().problemsError?.message).toBe(fails ? "HTTP 503" : undefined);
+  expect(h.state().error).toBeUndefined();
+  pageFails = false;
+  await h.session.problemPage(0);
+  expect(h.state().status).toBe("ready");
+  expect(h.state().problemsError).toBeUndefined();
+  await vi.advanceTimersByTimeAsync(1001);
+  expect(h.state().status).toBe("expired");
+  expect(h.state().reviewed).toBeUndefined();
+  h.session.dispose();
+});
+
+it("cancels pending problem pages when the drawer closes without accepting their late result", async () => {
+  const h = await harness();
+  await h.session.preview();
+  let respond!: (response: Response) => void;
+  let pageSignal: AbortSignal | undefined;
+  h.fetcher.mockImplementationOnce((_url, init) => {
+    pageSignal = init?.signal as AbortSignal;
+    return new Promise<Response>(resolve => respond = resolve);
+  });
+  const paging = h.session.problemPage(0);
+  expect(h.state().problemsLoading).toBe(true);
+  h.session.close();
+  expect(pageSignal?.aborted).toBe(true);
+  expect(h.state().problemsLoading).toBe(false);
+  respond(new Response(null, { status: 503 }));
+  await paging;
+  expect(h.state().problemsError).toBeUndefined();
+  expect(h.state().status).toBe("ready");
   h.session.dispose();
 });

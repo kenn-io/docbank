@@ -24,6 +24,7 @@ export interface ExportState {
   recipes?: EmailPDFRecipeChoice[];
   problems?: OutputProblems;
   problemsLoading?: boolean;
+  problemsError?: Error;
 }
 
 // The handle lives for this browser session. Closing releases readers without
@@ -38,6 +39,7 @@ export class ExportSession {
   private members?: ExportMember[];
   private source?: ExportSource;
   private controller?: AbortController;
+  private problemsController?: AbortController;
   private generation = 0;
   private disposed = false;
   private expiryTimer?: ReturnType<typeof setTimeout>;
@@ -57,13 +59,13 @@ export class ExportSession {
     if (changed) { this.sourceID = crypto.randomUUID(); this.members = undefined; this.source = undefined; }
     const job = this.state.active?.job;
     const status = this.state.active ? (!job || ["queued", "running"].includes(job.state) ? "disconnected" : this.state.status) : "idle";
-    this.emit({ ...this.state, status, reviewed: undefined, error: undefined, problems: undefined, problemsLoading: false, ...(changed ? { recipes: undefined } : {}) });
+    this.emit({ ...this.state, status, reviewed: undefined, error: undefined, problems: undefined, problemsLoading: false, problemsError: undefined, ...(changed ? { recipes: undefined } : {}) });
   }
 
   async discoverRecipes(): Promise<void> {
     if (!this.input || this.disposed || this.state.active) return;
     const started = this.begin();
-    this.emit({ ...this.state, status: "preparing", error: undefined, reviewed: undefined, recipes: undefined });
+    this.emit({ ...this.state, status: "preparing", error: undefined, problemsError: undefined, reviewed: undefined, recipes: undefined });
     try {
       const source = await this.prepareSource(this.input, started);
       if (!source) return;
@@ -103,7 +105,7 @@ export class ExportSession {
       this.source = undefined; this.sourceID = crypto.randomUUID(); this.planID = crypto.randomUUID();
     }
     const input = this.input, started = this.begin();
-    this.emit({ ...this.state, status: "preparing", reviewed: undefined, error: undefined });
+    this.emit({ ...this.state, status: "preparing", reviewed: undefined, error: undefined, problemsError: undefined });
     try {
       const policies = validateRolePolicies(this.policies), options = validateExportOptions(this.options);
       const source = await this.prepareSource(input, started);
@@ -124,14 +126,17 @@ export class ExportSession {
     const plan = this.state.active?.plan ?? this.state.reviewed?.plan;
     if (!plan || this.disposed || this.state.problemsLoading) return;
     if (this.state.active && (!this.state.active.job || ["queued", "running"].includes(this.state.active.job.state))) return;
-    const started = this.begin();
-    this.emit({ ...this.state, problemsLoading: true, error: undefined });
+    const generation = this.generation, controller = this.problemsController = new AbortController();
+    this.emit({ ...this.state, problemsLoading: true, problemsError: undefined });
     try {
-      const problems = await exportOutputProblems(this.session, plan, after, started.signal);
-      if (this.current(started.generation)) this.emit({ ...this.state, problems, problemsLoading: false });
+      const problems = await exportOutputProblems(this.session, plan, after, controller.signal);
+      if (this.current(generation)) this.emit({ ...this.state, problems, problemsLoading: false });
     } catch (error) {
-      if (this.current(started.generation)) this.emit({ ...this.state, problemsLoading: false });
-      this.fail(started.generation, error);
+      if (!this.current(generation)) return;
+      this.emit({ ...this.state, problemsLoading: false, problemsError: error instanceof Error ? error : new Error("Unavailable output details could not be loaded.") });
+      if (error instanceof APIError && error.status === 410) this.fail(generation, error);
+    } finally {
+      if (this.problemsController === controller) this.problemsController = undefined;
     }
   }
 
@@ -210,6 +215,11 @@ export class ExportSession {
     const active = this.state.active;
     this.emit({ ...this.state, downloading: false, ...(active && (!active.job || ["queued", "running"].includes(active.job.state)) ? { status: "disconnected" } : {}) });
   }
+  resetPreparation(): void {
+    if (this.disposed || this.state.active) return;
+    this.stop(); this.members = undefined; this.source = undefined; this.sourceID = crypto.randomUUID(); this.planID = crypto.randomUUID();
+    this.emit({ status: "idle" });
+  }
   clearFinished(): void {
     if (!this.state.active?.job || !["completed", "canceled", "failed"].includes(this.state.active.job.state)) return;
     this.stop(); this.source = undefined; this.sourceID = crypto.randomUUID(); this.planID = crypto.randomUUID();
@@ -263,6 +273,8 @@ export class ExportSession {
   }
   private stop(): void {
     this.generation++; this.controller?.abort(); this.controller = undefined;
+    this.problemsController?.abort(); this.problemsController = undefined;
+    if (this.state.problemsLoading) this.emit({ ...this.state, problemsLoading: false });
     if (this.expiryTimer) clearTimeout(this.expiryTimer);
     this.expiryTimer = undefined;
   }
