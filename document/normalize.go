@@ -49,7 +49,8 @@ func RenditionMarkdownFromXHTMLContext(ctx context.Context, source []byte, maxRu
 		return "", errors.New("XHTML must be UTF-8")
 	}
 	maxRunes = min(maxRunes, maxEvidenceTextBytes)
-	budget := min(int64(100<<20), int64(len(source))+4*int64(maxRunes))
+	inlineAllocation := int64(unsafe.Sizeof(renditionInline{}))
+	budget := min(int64(100<<20), int64(len(source))+int64(maxRunes)*(2*inlineAllocation+4))
 	writer := renditionHTMLWriter{ctx: ctx, maxLinkChars: renditionMaxLinkChars, work: &renditionXHTMLWork{remaining: budget}}
 	decoder := xml.NewDecoder(contextReader{ctx: ctx, reader: bytes.NewReader(bytes.TrimPrefix(source, []byte{0xef, 0xbb, 0xbf}))})
 	decoder.Entity = xml.HTMLEntity
