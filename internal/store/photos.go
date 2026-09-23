@@ -343,20 +343,6 @@ func loadPhotoAssetTx(ctx context.Context, tx *sql.Tx, id string) (PhotoAsset, e
 	return photoAssetByIDQuery(ctx, tx, id)
 }
 
-func updatePhotoDisplayTx(ctx context.Context, tx *sql.Tx, asset PhotoAsset, settings PhotoSettings, now string) (PhotoAsset, error) {
-	choice := selectPhotoDisplay(asset.Files, settings.Preference, asset.DisplayOverrideFileID)
-	if equalPhotoString(asset.DisplayFileID, choice.FileID) {
-		asset.DisplaySource = choice.Source
-		return asset, nil
-	}
-	if _, err := tx.ExecContext(ctx, `UPDATE photo_assets SET display_file_id=?, updated_at=? WHERE asset_id=?`, nullablePhotoString(choice.FileID), now, asset.ID); err != nil {
-		return PhotoAsset{}, fmt.Errorf("updating photo display: %w", err)
-	}
-	asset.DisplayFileID = choice.FileID
-	asset.DisplaySource = choice.Source
-	return asset, nil
-}
-
 func nullablePhotoString(value *string) any {
 	if value == nil {
 		return nil
@@ -494,15 +480,8 @@ func (s *Store) CreatePhotoAsset(ctx context.Context, nodeID int64, role, kind s
 	var result PhotoAsset
 	err := s.withLogicalTx(ctx, func(tx *sql.Tx) error {
 		var err error
-		result, err = s.photoAssetCreateTx(ctx, tx, nodeID, role, kind, nowRFC3339())
-		if err != nil {
-			return err
-		}
-		changes := photoAssetMemberChanges(PhotoAsset{}, result)
-		if err := writePhotoReceiptTx(ctx, tx, "create", result.ID, "", 0, result.Revision, photoAssetState(PhotoAsset{}, changes), photoAssetState(result, changes)); err != nil {
-			return err
-		}
-		return validatePhotoGraphTx(ctx, tx)
+		result, err = s.createPhotoAssetWithReceiptTx(ctx, tx, nodeID, role, kind, "create")
+		return err
 	})
 	if err != nil {
 		return PhotoAsset{}, err
@@ -510,9 +489,113 @@ func (s *Store) CreatePhotoAsset(ctx context.Context, nodeID int64, role, kind s
 	return result, nil
 }
 
+func (s *Store) createPhotoAssetWithReceiptTx(ctx context.Context, tx *sql.Tx, nodeID int64, role, kind, operation string) (PhotoAsset, error) {
+	result, err := s.photoAssetCreateTx(ctx, tx, nodeID, role, kind, nowRFC3339())
+	if err != nil {
+		return PhotoAsset{}, err
+	}
+	changes := photoAssetMemberChanges(PhotoAsset{}, result)
+	if err := writePhotoReceiptTx(ctx, tx, operation, result.ID, "", 0, result.Revision, photoAssetState(PhotoAsset{}, changes), photoAssetState(result, changes)); err != nil {
+		return PhotoAsset{}, err
+	}
+	return result, validatePhotoGraphTx(ctx, tx)
+}
+
+// photoMutation edits a loaded asset in place. It returns false for a
+// canonical no-op, which keeps the revision and writes no receipt.
+type photoMutation func(tx *sql.Tx, asset *PhotoAsset) (bool, error)
+
+// mutatePhotoAssetTx applies one revisioned decision to an existing asset:
+// check the revision, run the edit, recompute display, advance the revision
+// once, write the receipt, and validate the graph.
+func (s *Store) mutatePhotoAssetTx(ctx context.Context, tx *sql.Tx, assetID string, revision int64, operation string, edit photoMutation) (PhotoAsset, error) {
+	if revision < 1 {
+		return PhotoAsset{}, fmt.Errorf("%w: revision must be positive", ErrPhotoAssetRevision)
+	}
+	asset, err := photoAssetForMutationTx(ctx, tx, assetID, revision)
+	if err != nil {
+		return PhotoAsset{}, err
+	}
+	before := asset
+	changed, err := edit(tx, &asset)
+	if err != nil {
+		return PhotoAsset{}, err
+	}
+	if !changed {
+		return asset, nil
+	}
+	result, err := commitPhotoAssetTx(ctx, tx, before, asset, operation)
+	if err != nil {
+		return PhotoAsset{}, err
+	}
+	return result, validatePhotoGraphTx(ctx, tx)
+}
+
+func (s *Store) mutatePhotoAsset(ctx context.Context, assetID string, revision int64, operation string, edit photoMutation) (PhotoAsset, error) {
+	var result PhotoAsset
+	err := s.withLogicalTx(ctx, func(tx *sql.Tx) error {
+		var err error
+		result, err = s.mutatePhotoAssetTx(ctx, tx, assetID, revision, operation, edit)
+		return err
+	})
+	if err != nil {
+		return PhotoAsset{}, err
+	}
+	return result, nil
+}
+
+// commitPhotoAssetTx persists an edited asset: it reloads members, drops an
+// override that no longer names a member, recomputes the display choice,
+// advances the revision once, and records the before and after states.
+func commitPhotoAssetTx(ctx context.Context, tx *sql.Tx, before, asset PhotoAsset, operation string) (PhotoAsset, error) {
+	files, err := loadPhotoFilesTx(ctx, tx, asset.ID)
+	if err != nil {
+		return PhotoAsset{}, err
+	}
+	asset.Files = files
+	if asset.DisplayOverrideFileID != nil && !photoFileIDPresent(files, *asset.DisplayOverrideFileID) {
+		asset.DisplayOverrideFileID = nil
+	}
+	settings, err := photoSettingsTx(ctx, tx)
+	if err != nil {
+		return PhotoAsset{}, err
+	}
+	choice := selectPhotoDisplay(files, settings.Preference, asset.DisplayOverrideFileID)
+	asset.DisplayFileID, asset.DisplaySource = choice.FileID, choice.Source
+	asset.Revision++
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE photo_assets SET excluded_at=?, display_file_id=?, display_override_file_id=?,
+			revision=?, updated_at=? WHERE asset_id=?`,
+		nullablePhotoString(asset.ExcludedAt), nullablePhotoString(asset.DisplayFileID),
+		nullablePhotoString(asset.DisplayOverrideFileID), asset.Revision, nowRFC3339(), asset.ID); err != nil {
+		return PhotoAsset{}, fmt.Errorf("updating photo asset %s: %w", asset.ID, err)
+	}
+	result, err := loadPhotoAssetTx(ctx, tx, asset.ID)
+	if err != nil {
+		return PhotoAsset{}, err
+	}
+	changes := photoAssetMemberChanges(before, result)
+	if err := writePhotoReceiptTx(ctx, tx, operation, asset.ID, "", before.Revision, result.Revision, photoAssetState(before, changes), photoAssetState(result, changes)); err != nil {
+		return PhotoAsset{}, err
+	}
+	return result, nil
+}
+
+func photoAssetOwningNodeTx(ctx context.Context, tx *sql.Tx, nodeID int64) (string, bool, error) {
+	var assetID string
+	err := tx.QueryRowContext(ctx, `SELECT asset_id FROM photo_files WHERE node_id=?`, nodeID).Scan(&assetID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, fmt.Errorf("checking photo node ownership: %w", err)
+	}
+	return assetID, true, nil
+}
+
 // PromotePhotoNode creates an explicitly requested asset for a live file. An
-// already-owned excluded asset requires its current revision; an unowned node
-// starts at revision one without a prior asset revision.
+// already-owned asset requires its current revision and clears exclusion; an
+// unowned node starts at revision one without a prior asset revision.
 func (s *Store) PromotePhotoNode(ctx context.Context, nodeID int64, expectedRevision *int64, role, kind string) (PhotoAsset, error) {
 	if expectedRevision != nil && *expectedRevision < 1 {
 		return PhotoAsset{}, fmt.Errorf("%w: revision must be positive", ErrPhotoAssetRevision)
@@ -525,71 +608,39 @@ func (s *Store) PromotePhotoNode(ctx context.Context, nodeID int64, expectedRevi
 	}
 	var result PhotoAsset
 	err := s.withLogicalTx(ctx, func(tx *sql.Tx) error {
-		var ownedID string
-		if err := tx.QueryRowContext(ctx,
-			`SELECT asset_id FROM photo_files WHERE node_id=?`, nodeID).Scan(&ownedID); err == nil {
-			asset, loadErr := loadPhotoAssetTx(ctx, tx, ownedID)
-			if loadErr != nil {
-				return loadErr
-			}
-			if expectedRevision == nil || asset.Revision != *expectedRevision {
-				want := int64(0)
-				if expectedRevision != nil {
-					want = *expectedRevision
-				}
-				return fmt.Errorf("asset %s at revision %d, expected %d: %w", asset.ID, asset.Revision, want, ErrPhotoAssetRevision)
-			}
-			var member PhotoFile
-			for _, file := range asset.Files {
-				if file.NodeID == nodeID {
-					member = file
-					break
-				}
-			}
-			if role != "" && member.Role != role {
-				return fmt.Errorf("%w: existing member role is %s, requested %s", ErrInvalidPhotoAsset, member.Role, role)
-			}
-			if kind != "" && asset.Kind != kind {
-				return fmt.Errorf("%w: existing asset kind is %s, requested %s", ErrInvalidPhotoAsset, asset.Kind, kind)
-			}
-			_, _, factsErr := photoNodeForMutationTx(tx, nodeID)
-			if factsErr != nil {
-				return factsErr
-			}
-			if asset.ExcludedAt == nil {
-				result = asset
-				return nil
-			}
-			before := asset
-			asset.Revision++
-			if _, err := tx.ExecContext(ctx,
-				`UPDATE photo_assets SET excluded_at=NULL, revision=?, updated_at=? WHERE asset_id=?`,
-				asset.Revision, nowRFC3339(), asset.ID); err != nil {
-				return err
-			}
-			result, err = loadPhotoAssetTx(ctx, tx, asset.ID)
-			if err != nil {
-				return err
-			}
-			changes := photoAssetMemberChanges(before, result)
-			return writePhotoReceiptTx(ctx, tx, "promote", asset.ID, "", before.Revision,
-				result.Revision, photoAssetState(before, changes), photoAssetState(result, changes))
-		} else if !errors.Is(err, sql.ErrNoRows) {
-			return fmt.Errorf("checking photo node ownership: %w", err)
-		}
-		if expectedRevision != nil {
-			return fmt.Errorf("node %d does not own an asset at expected revision %d: %w", nodeID, *expectedRevision, ErrPhotoAssetRevision)
-		}
-		var err error
-		result, err = s.photoAssetCreateTx(ctx, tx, nodeID, role, kind, nowRFC3339())
+		ownedID, owned, err := photoAssetOwningNodeTx(ctx, tx, nodeID)
 		if err != nil {
 			return err
 		}
-		changes := photoAssetMemberChanges(PhotoAsset{}, result)
-		if err := writePhotoReceiptTx(ctx, tx, "promote", result.ID, "", 0, result.Revision, photoAssetState(PhotoAsset{}, changes), photoAssetState(result, changes)); err != nil {
+		if !owned {
+			if expectedRevision != nil {
+				return fmt.Errorf("node %d does not own an asset at expected revision %d: %w", nodeID, *expectedRevision, ErrPhotoAssetRevision)
+			}
+			result, err = s.createPhotoAssetWithReceiptTx(ctx, tx, nodeID, role, kind, "promote")
 			return err
 		}
-		return validatePhotoGraphTx(ctx, tx)
+		if expectedRevision == nil {
+			return fmt.Errorf("node %d already belongs to asset %s and needs its revision: %w", nodeID, ownedID, ErrPhotoAssetRevision)
+		}
+		result, err = s.mutatePhotoAssetTx(ctx, tx, ownedID, *expectedRevision, "promote", func(tx *sql.Tx, asset *PhotoAsset) (bool, error) {
+			for _, file := range asset.Files {
+				if file.NodeID == nodeID && role != "" && file.Role != role {
+					return false, fmt.Errorf("%w: existing member role is %s, requested %s", ErrInvalidPhotoAsset, file.Role, role)
+				}
+			}
+			if kind != "" && asset.Kind != kind {
+				return false, fmt.Errorf("%w: existing asset kind is %s, requested %s", ErrInvalidPhotoAsset, asset.Kind, kind)
+			}
+			if _, _, err := photoNodeForMutationTx(tx, nodeID); err != nil {
+				return false, err
+			}
+			if asset.ExcludedAt == nil {
+				return false, nil
+			}
+			asset.ExcludedAt = nil
+			return true, nil
+		})
+		return err
 	})
 	if err != nil {
 		return PhotoAsset{}, err
@@ -599,272 +650,136 @@ func (s *Store) PromotePhotoNode(ctx context.Context, nodeID int64, expectedRevi
 
 // AttachPhotoFile adds an ordinary node to an existing asset.
 func (s *Store) AttachPhotoFile(ctx context.Context, assetID string, revision, nodeID int64, role string, sidecar *string) (PhotoAsset, error) {
-	if revision < 1 {
-		return PhotoAsset{}, fmt.Errorf("%w: revision must be positive", ErrPhotoAssetRevision)
-	}
 	if nodeID < 1 {
 		return PhotoAsset{}, fmt.Errorf("%w: node_id must be positive", ErrInvalidPhotoAsset)
 	}
 	if role != "" && !photoRoleValid(role) {
 		return PhotoAsset{}, fmt.Errorf("%w: unknown role %q", ErrInvalidPhotoAsset, role)
 	}
-	var result PhotoAsset
-	err := s.withLogicalTx(ctx, func(tx *sql.Tx) error {
-		asset, err := photoAssetForMutationTx(ctx, tx, assetID, revision)
-		if err != nil {
-			return err
-		}
+	return s.mutatePhotoAsset(ctx, assetID, revision, "attach", func(tx *sql.Tx, asset *PhotoAsset) (bool, error) {
 		node, facts, err := photoNodeForMutationTx(tx, nodeID)
 		if err != nil {
-			return err
+			return false, err
 		}
-		var ownedAssetID string
-		if err := tx.QueryRowContext(ctx,
-			`SELECT asset_id FROM photo_files WHERE node_id=?`, nodeID).Scan(&ownedAssetID); err == nil {
-			return fmt.Errorf("node %d belongs to asset %s: %w", nodeID, ownedAssetID, ErrPhotoNodeOwned)
-		} else if !errors.Is(err, sql.ErrNoRows) {
-			return fmt.Errorf("checking photo node ownership: %w", err)
+		if ownedID, owned, err := photoAssetOwningNodeTx(ctx, tx, nodeID); err != nil {
+			return false, err
+		} else if owned {
+			return false, fmt.Errorf("node %d belongs to asset %s: %w", nodeID, ownedID, ErrPhotoNodeOwned)
 		}
 		if role == "" {
 			if !facts.Qualifies {
-				return fmt.Errorf("node %d: %w", nodeID, ErrPhotoNodeNotEligible)
+				return false, fmt.Errorf("node %d: %w", nodeID, ErrPhotoNodeNotEligible)
 			}
 			role = inferPhotoRole(facts)
 		}
 		if err := validatePhotoFileForAsset(asset.Kind, role, facts); err != nil {
-			return err
+			return false, err
 		}
 		if role == PhotoRoleSidecar {
 			if sidecar == nil {
-				return fmt.Errorf("%w: sidecar requires a raw target", ErrInvalidPhotoAsset)
+				return false, fmt.Errorf("%w: sidecar requires a raw target", ErrInvalidPhotoAsset)
 			}
-			var target PhotoFile
-			if err := tx.QueryRowContext(ctx, `SELECT file_id, asset_id, node_id, role, sidecar_of_file_id, created_at FROM photo_files WHERE file_id=?`, *sidecar).Scan(&target.ID, &target.AssetID, &target.NodeID, &target.Role, new(sql.NullString), &target.CreatedAt); err != nil {
-				if errors.Is(err, sql.ErrNoRows) {
-					return fmt.Errorf("%w: sidecar target not found", ErrInvalidPhotoAsset)
-				}
-				return err
+			target, ok := photoFileByID(asset.Files, *sidecar)
+			if !ok {
+				return false, fmt.Errorf("%w: sidecar target not found", ErrInvalidPhotoAsset)
 			}
-			if target.AssetID != asset.ID || target.Role != PhotoRoleRAW {
-				return fmt.Errorf("%w: sidecar target must be same-asset raw", ErrInvalidPhotoAsset)
+			if target.Role != PhotoRoleRAW {
+				return false, fmt.Errorf("%w: sidecar target must be same-asset raw", ErrInvalidPhotoAsset)
 			}
 		} else if sidecar != nil {
-			return fmt.Errorf("%w: only sidecars may point to raw files", ErrInvalidPhotoAsset)
+			return false, fmt.Errorf("%w: only sidecars may point to raw files", ErrInvalidPhotoAsset)
 		}
-		if err := s.insertPhotoFileTx(ctx, tx, asset.ID, node.ID, role, sidecar, nowRFC3339()); err != nil {
-			return err
-		}
-		before := asset
-		asset.Files, err = loadPhotoFilesTx(ctx, tx, asset.ID)
-		if err != nil {
-			return err
-		}
-		settings, err := photoSettingsTx(ctx, tx)
-		if err != nil {
-			return err
-		}
-		asset, err = updatePhotoDisplayTx(ctx, tx, asset, settings, nowRFC3339())
-		if err != nil {
-			return err
-		}
-		asset.Revision++
-		if _, err := tx.ExecContext(ctx, `UPDATE photo_assets SET revision=?, updated_at=? WHERE asset_id=?`, asset.Revision, nowRFC3339(), asset.ID); err != nil {
-			return err
-		}
-		result, err = loadPhotoAssetTx(ctx, tx, asset.ID)
-		if err != nil {
-			return err
-		}
-		changes := photoAssetMemberChanges(before, result)
-		if err := writePhotoReceiptTx(ctx, tx, "attach", asset.ID, "", before.Revision, result.Revision, photoAssetState(before, changes), photoAssetState(result, changes)); err != nil {
-			return err
-		}
-		return validatePhotoGraphTx(ctx, tx)
+		return true, s.insertPhotoFileTx(ctx, tx, asset.ID, node.ID, role, sidecar, nowRFC3339())
 	})
-	if err != nil {
-		return PhotoAsset{}, err
-	}
-	return result, nil
 }
 
 // DetachPhotoFile removes one member. Dependent sidecars are removed only
 // when ClearDependentSidecars is explicit; otherwise a RAW target is refused.
 func (s *Store) DetachPhotoFile(ctx context.Context, assetID string, revision int64, fileID string, options PhotoDetachOptions) (PhotoAsset, error) {
-	if revision < 1 {
-		return PhotoAsset{}, fmt.Errorf("%w: revision must be positive", ErrPhotoAssetRevision)
-	}
 	if fileID == "" {
 		return PhotoAsset{}, fmt.Errorf("%w: file_id is required", ErrInvalidPhotoAsset)
 	}
-	var result PhotoAsset
-	err := s.withLogicalTx(ctx, func(tx *sql.Tx) error {
-		asset, err := photoAssetForMutationTx(ctx, tx, assetID, revision)
-		if err != nil {
-			return err
+	return s.mutatePhotoAsset(ctx, assetID, revision, "detach", func(tx *sql.Tx, asset *PhotoAsset) (bool, error) {
+		file, ok := photoFileByID(asset.Files, fileID)
+		if !ok {
+			return false, ErrNotFound
 		}
-		var file PhotoFile
-		var sidecar sql.NullString
-		if err := tx.QueryRowContext(ctx, `SELECT file_id, asset_id, node_id, role, sidecar_of_file_id, created_at FROM photo_files WHERE file_id=? AND asset_id=?`, fileID, assetID).Scan(&file.ID, &file.AssetID, &file.NodeID, &file.Role, &sidecar, &file.CreatedAt); errors.Is(err, sql.ErrNoRows) {
-			return ErrNotFound
-		} else if err != nil {
-			return err
-		}
-		before := asset
 		if options.ReplacementFileID != nil {
 			if *options.ReplacementFileID == fileID {
-				return fmt.Errorf("%w: replacement file is being detached", ErrInvalidPhotoAsset)
+				return false, fmt.Errorf("%w: replacement file is being detached", ErrInvalidPhotoAsset)
 			}
-			var role string
-			if err := tx.QueryRowContext(ctx, `SELECT role FROM photo_files WHERE file_id=? AND asset_id=?`, *options.ReplacementFileID, assetID).Scan(&role); err != nil {
-				return fmt.Errorf("%w: replacement file is not a member", ErrInvalidPhotoAsset)
+			replacement, ok := photoFileByID(asset.Files, *options.ReplacementFileID)
+			if !ok {
+				return false, fmt.Errorf("%w: replacement file is not a member", ErrInvalidPhotoAsset)
 			}
-			if role == PhotoRoleSidecar {
-				return fmt.Errorf("%w: replacement cannot be a sidecar", ErrInvalidPhotoAsset)
+			if replacement.Role == PhotoRoleSidecar {
+				return false, fmt.Errorf("%w: replacement cannot be a sidecar", ErrInvalidPhotoAsset)
 			}
 			asset.DisplayOverrideFileID = options.ReplacementFileID
 		}
 		if file.Role == PhotoRoleRAW {
-			var dependents int
-			if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM photo_files WHERE asset_id=? AND sidecar_of_file_id=?`, assetID, fileID).Scan(&dependents); err != nil {
-				return err
-			}
-			if dependents > 0 && !options.ClearDependentSidecars {
-				return fmt.Errorf("%w: RAW file has dependent sidecars", ErrInvalidPhotoAsset)
-			}
-			if options.ClearDependentSidecars {
-				if _, err := tx.ExecContext(ctx, `DELETE FROM photo_files WHERE asset_id=? AND sidecar_of_file_id=?`, assetID, fileID); err != nil {
-					return err
+			dependents := 0
+			for _, member := range asset.Files {
+				if member.SidecarOfID != nil && *member.SidecarOfID == fileID {
+					dependents++
 				}
 			}
+			if dependents > 0 && !options.ClearDependentSidecars {
+				return false, fmt.Errorf("%w: RAW file has dependent sidecars", ErrInvalidPhotoAsset)
+			}
+			if _, err := tx.ExecContext(ctx, `DELETE FROM photo_files WHERE asset_id=? AND sidecar_of_file_id=?`, asset.ID, fileID); err != nil {
+				return false, err
+			}
 		}
-		if _, err := tx.ExecContext(ctx, `DELETE FROM photo_files WHERE file_id=? AND asset_id=?`, fileID, assetID); err != nil {
-			return err
+		if _, err := tx.ExecContext(ctx, `DELETE FROM photo_files WHERE file_id=? AND asset_id=?`, fileID, asset.ID); err != nil {
+			return false, err
 		}
-		if asset.DisplayOverrideFileID != nil && *asset.DisplayOverrideFileID == fileID {
-			asset.DisplayOverrideFileID = nil
-		}
-		if asset.DisplayFileID != nil && *asset.DisplayFileID == fileID {
-			asset.DisplayFileID = nil
-		}
-		asset.Files, err = loadPhotoFilesTx(ctx, tx, asset.ID)
-		if err != nil {
-			return err
-		}
-		settings, err := photoSettingsTx(ctx, tx)
-		if err != nil {
-			return err
-		}
-		asset, err = updatePhotoDisplayTx(ctx, tx, asset, settings, nowRFC3339())
-		if err != nil {
-			return err
-		}
-		asset.Revision++
-		if _, err := tx.ExecContext(ctx, `UPDATE photo_assets SET display_override_file_id=?, revision=?, updated_at=? WHERE asset_id=?`, nullablePhotoString(asset.DisplayOverrideFileID), asset.Revision, nowRFC3339(), asset.ID); err != nil {
-			return err
-		}
-		result, err = loadPhotoAssetTx(ctx, tx, asset.ID)
-		if err != nil {
-			return err
-		}
-		changes := photoAssetMemberChanges(before, result)
-		if err := writePhotoReceiptTx(ctx, tx, "detach", asset.ID, "", before.Revision, result.Revision, photoAssetState(before, changes), photoAssetState(result, changes)); err != nil {
-			return err
-		}
-		return validatePhotoGraphTx(ctx, tx)
+		return true, nil
 	})
-	if err != nil {
-		return PhotoAsset{}, err
-	}
-	return result, nil
 }
 
 // SetPhotoAssetExcluded sets or clears an asset's exclusion marker.
 func (s *Store) SetPhotoAssetExcluded(ctx context.Context, assetID string, revision int64, excluded bool) (PhotoAsset, error) {
-	if revision < 1 {
-		return PhotoAsset{}, fmt.Errorf("%w: revision must be positive", ErrPhotoAssetRevision)
-	}
-	var result PhotoAsset
-	err := s.withLogicalTx(ctx, func(tx *sql.Tx) error {
-		asset, err := photoAssetForMutationTx(ctx, tx, assetID, revision)
-		if err != nil {
-			return err
-		}
+	return s.mutatePhotoAsset(ctx, assetID, revision, "exclude", func(_ *sql.Tx, asset *PhotoAsset) (bool, error) {
 		if (asset.ExcludedAt != nil) == excluded {
-			result = asset
-			return nil
+			return false, nil
 		}
-		before := asset
-		var stamp any
+		asset.ExcludedAt = nil
 		if excluded {
-			stamp = nowRFC3339()
+			asset.ExcludedAt = new(nowRFC3339())
 		}
-		asset.Revision++
-		if _, err := tx.ExecContext(ctx, `UPDATE photo_assets SET excluded_at=?, revision=?, updated_at=? WHERE asset_id=?`, stamp, asset.Revision, nowRFC3339(), asset.ID); err != nil {
-			return err
-		}
-		result, err = loadPhotoAssetTx(ctx, tx, asset.ID)
-		if err != nil {
-			return err
-		}
-		changes := photoAssetMemberChanges(before, result)
-		return writePhotoReceiptTx(ctx, tx, "exclude", asset.ID, "", before.Revision, result.Revision, photoAssetState(before, changes), photoAssetState(result, changes))
+		return true, nil
 	})
-	if err != nil {
-		return PhotoAsset{}, err
-	}
-	return result, nil
 }
 
 // SetPhotoDisplay sets an asset override. A nil file ID inherits the vault
 // setting.
 func (s *Store) SetPhotoDisplay(ctx context.Context, assetID string, revision int64, override *string) (PhotoAsset, error) {
-	if revision < 1 {
-		return PhotoAsset{}, fmt.Errorf("%w: revision must be positive", ErrPhotoAssetRevision)
-	}
-	var result PhotoAsset
-	err := s.withLogicalTx(ctx, func(tx *sql.Tx) error {
-		asset, err := photoAssetForMutationTx(ctx, tx, assetID, revision)
-		if err != nil {
-			return err
-		}
+	return s.mutatePhotoAsset(ctx, assetID, revision, "display", func(_ *sql.Tx, asset *PhotoAsset) (bool, error) {
 		if override != nil {
-			var role string
-			if err := tx.QueryRowContext(ctx, `SELECT role FROM photo_files WHERE file_id=? AND asset_id=?`, *override, assetID).Scan(&role); err != nil {
-				return fmt.Errorf("%w: display override is not an asset member", ErrInvalidPhotoAsset)
+			file, ok := photoFileByID(asset.Files, *override)
+			if !ok {
+				return false, fmt.Errorf("%w: display override is not an asset member", ErrInvalidPhotoAsset)
 			}
-			if role == PhotoRoleSidecar {
-				return fmt.Errorf("%w: sidecars cannot display", ErrInvalidPhotoAsset)
+			if file.Role == PhotoRoleSidecar {
+				return false, fmt.Errorf("%w: sidecars cannot display", ErrInvalidPhotoAsset)
 			}
 		}
 		if equalPhotoString(asset.DisplayOverrideFileID, override) {
-			result = asset
-			return nil
+			return false, nil
 		}
-		before := asset
 		asset.DisplayOverrideFileID = override
-		settings, err := photoSettingsTx(ctx, tx)
-		if err != nil {
-			return err
-		}
-		asset, err = updatePhotoDisplayTx(ctx, tx, asset, settings, nowRFC3339())
-		if err != nil {
-			return err
-		}
-		asset.Revision++
-		if _, err := tx.ExecContext(ctx, `UPDATE photo_assets SET display_override_file_id=?, revision=?, updated_at=? WHERE asset_id=?`, nullablePhotoString(override), asset.Revision, nowRFC3339(), asset.ID); err != nil {
-			return err
-		}
-		result, err = loadPhotoAssetTx(ctx, tx, asset.ID)
-		if err != nil {
-			return err
-		}
-		changes := photoAssetMemberChanges(before, result)
-		return writePhotoReceiptTx(ctx, tx, "display", asset.ID, "", before.Revision, result.Revision, photoAssetState(before, changes), photoAssetState(result, changes))
+		return true, nil
 	})
-	if err != nil {
-		return PhotoAsset{}, err
+}
+
+func photoFileByID(files []PhotoFile, id string) (PhotoFile, bool) {
+	for _, file := range files {
+		if file.ID == id {
+			return file, true
+		}
 	}
-	return result, nil
+	return PhotoFile{}, false
 }
 
 // SetPhotoSettings changes the vault display preference and atomically fans
@@ -889,65 +804,68 @@ func (s *Store) SetPhotoSettings(ctx context.Context, revision int64, preference
 			result = current
 			return nil
 		}
-		var beforeAssets []PhotoAsset
-		rows, err := tx.QueryContext(ctx, `SELECT asset_id FROM photo_assets ORDER BY asset_id`)
+		assets, err := allPhotoAssetsTx(ctx, tx)
 		if err != nil {
 			return err
 		}
-		for rows.Next() {
-			var id string
-			if err := rows.Scan(&id); err != nil {
-				_ = rows.Close() //nolint:sqlclosecheck // close before returning the scan error.
-				return err
-			}
-			asset, err := loadPhotoAssetTx(ctx, tx, id)
-			if err != nil {
-				_ = rows.Close()
-				return err
-			}
-			beforeAssets = append(beforeAssets, asset)
-		}
-		if err := rows.Err(); err != nil {
-			_ = rows.Close()
+		next := PhotoSettings{Preference: preference, Revision: current.Revision + 1, UpdatedAt: nowRFC3339()}
+		if _, err := tx.ExecContext(ctx, `INSERT INTO photo_library_settings(singleton,preference,revision,updated_at) VALUES(1,?,?,?) ON CONFLICT(singleton) DO UPDATE SET preference=excluded.preference, revision=excluded.revision, updated_at=excluded.updated_at`, nullablePhotoString(preference), next.Revision, next.UpdatedAt); err != nil {
 			return err
 		}
-		if err := rows.Close(); err != nil {
+		if err := writePhotoReceiptTx(ctx, tx, "settings", "", "library", current.Revision, next.Revision, photoSettingsState(current), photoSettingsState(next)); err != nil {
 			return err
 		}
-		newSettings := PhotoSettings{Preference: preference, Revision: current.Revision + 1, UpdatedAt: nowRFC3339()}
-		if _, err := tx.ExecContext(ctx, `INSERT INTO photo_library_settings(singleton,preference,revision,updated_at) VALUES(1,?,?,?) ON CONFLICT(singleton) DO UPDATE SET preference=excluded.preference, revision=excluded.revision, updated_at=excluded.updated_at`, nullablePhotoString(preference), newSettings.Revision, newSettings.UpdatedAt); err != nil {
-			return err
-		}
-		if err := writePhotoReceiptTx(ctx, tx, "settings", "", "library", current.Revision, newSettings.Revision, photoSettingsState(current), photoSettingsState(newSettings)); err != nil {
-			return err
-		}
-		for _, before := range beforeAssets {
-			asset := before
+		for _, asset := range assets {
 			choice := selectPhotoDisplay(asset.Files, preference, asset.DisplayOverrideFileID)
 			if equalPhotoString(asset.DisplayFileID, choice.FileID) {
 				continue
 			}
-			asset.DisplayFileID = choice.FileID
-			asset.DisplaySource = choice.Source
-			asset.Revision++
-			if _, err := tx.ExecContext(ctx, `UPDATE photo_assets SET display_file_id=?, revision=?, updated_at=? WHERE asset_id=?`, nullablePhotoString(asset.DisplayFileID), asset.Revision, newSettings.UpdatedAt, asset.ID); err != nil {
-				return err
-			}
-			changes := photoAssetMemberChanges(before, asset)
-			if err := writePhotoReceiptTx(ctx, tx, "settings_recompute", asset.ID, "", before.Revision, asset.Revision, photoAssetState(before, changes), photoAssetState(asset, changes)); err != nil {
+			if _, err := commitPhotoAssetTx(ctx, tx, asset, asset, "settings_recompute"); err != nil {
 				return err
 			}
 		}
 		if err := validatePhotoGraphTx(ctx, tx); err != nil {
 			return err
 		}
-		result = newSettings
+		result = next
 		return nil
 	})
 	if err != nil {
 		return PhotoSettings{}, err
 	}
 	return result, nil
+}
+
+func allPhotoAssetsTx(ctx context.Context, tx *sql.Tx) ([]PhotoAsset, error) {
+	rows, err := tx.QueryContext(ctx, `SELECT asset_id FROM photo_assets ORDER BY asset_id`)
+	if err != nil {
+		return nil, err
+	}
+	var ids []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			_ = rows.Close() //nolint:sqlclosecheck // close before returning the scan error.
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		return nil, err
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	assets := make([]PhotoAsset, 0, len(ids))
+	for _, id := range ids {
+		asset, err := loadPhotoAssetTx(ctx, tx, id)
+		if err != nil {
+			return nil, err
+		}
+		assets = append(assets, asset)
+	}
+	return assets, nil
 }
 
 // PhotoChangeReceipts returns a bounded newest-first receipt page.
