@@ -2036,11 +2036,6 @@ func (b *renditionBuilder) WriteString(value string) {
 	b.runes += utf8.RuneCountInString(value)
 }
 
-func serializeRenditionBlocks(blocks []renditionBlock, limit int) (string, bool) {
-	text, truncated, _ := serializeRenditionBlocksContext(context.Background(), blocks, limit)
-	return text, truncated
-}
-
 func serializeRenditionBlocksContext(ctx context.Context, blocks []renditionBlock, limit int) (string, bool, error) {
 	output := renditionBuilder{ctx: ctx}
 	truncated := false
@@ -2109,11 +2104,6 @@ func (b *renditionBuilder) contextError() error {
 
 func finishRenditionMarkdown(value string) string {
 	return strings.TrimRight(value, "\n")
-}
-
-func canonicalNonnegativeDecimal(value string) (string, bool) {
-	parsed, ok, _ := canonicalNonnegativeDecimalContext(context.Background(), value)
-	return parsed, ok
 }
 
 func canonicalNonnegativeDecimalContext(ctx context.Context, value string) (string, bool, error) {
@@ -2210,8 +2200,8 @@ func serializeRenditionBlock(ctx context.Context, block renditionBlock, availabl
 	}
 }
 
-func serializeRenditionList(list renditionList, available int, alternate bool) (string, bool) {
-	value, truncated, _ := serializeRenditionListContext(context.Background(), list, available, alternate)
+func serializeRenditionList(list renditionList, available int) (string, bool) {
+	value, truncated, _ := serializeRenditionListContext(context.Background(), list, available, false)
 	return value, truncated
 }
 
@@ -2685,11 +2675,6 @@ func appendRenditionItemBlock(
 	return true, false
 }
 
-func prefixRenditionLines(value, firstPrefix, continuationPrefix string) string {
-	result, _ := prefixRenditionLinesContext(context.Background(), value, firstPrefix, continuationPrefix)
-	return result
-}
-
 func prefixRenditionLinesContext(ctx context.Context, value, firstPrefix, continuationPrefix string) (string, error) {
 	var result strings.Builder
 	result.WriteString(firstPrefix)
@@ -2759,13 +2744,6 @@ func (f *renditionBufferFallback) mark(output *renditionBuffer) {
 	}
 	f.checkpoint = output.checkpoint()
 	f.valid = true
-}
-
-func (f *renditionBufferFallback) markEscapedText(
-	start renditionBufferCheckpoint,
-	value string,
-) {
-	_ = f.markEscapedTextContext(context.Background(), start, value)
 }
 
 func (f *renditionBufferFallback) markEscapedTextContext(
@@ -2974,11 +2952,6 @@ func appendRenditionPlainLabel(
 	return false
 }
 
-func escapeRenditionText(value string) string {
-	result, _ := escapeRenditionTextContext(context.Background(), value)
-	return result
-}
-
 func escapeRenditionTextContext(ctx context.Context, value string) (string, error) {
 	var output strings.Builder
 	runes := 0
@@ -2995,11 +2968,6 @@ func escapeRenditionTextContext(ctx context.Context, value string) (string, erro
 		output.WriteRune(character)
 	}
 	return output.String(), nil
-}
-
-func truncateEscapedRenditionText(value string, limit int) string {
-	result, _ := truncateEscapedRenditionTextContext(context.Background(), value, limit)
-	return result
 }
 
 func truncateEscapedRenditionTextContext(ctx context.Context, value string, limit int) (string, error) {

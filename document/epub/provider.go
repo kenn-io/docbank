@@ -157,7 +157,10 @@ func (p *Provider) Render(ctx context.Context, upload document.AuthorizedUpload,
 		if err != nil {
 			return document.RenditionResult{}, unsupported()
 		}
-		used := virtualUnits(markdown)
+		used, err := virtualUnitsContext(ctx, markdown)
+		if err != nil {
+			return document.RenditionResult{}, provider.Canceled(err)
+		}
 		if used > p.profile.MaxUnits-units || int64(len(markdown)) > remainingBytes {
 			return document.RenditionResult{}, rejected("EPUB output exceeds its limit")
 		}
@@ -167,7 +170,10 @@ func (p *Provider) Render(ctx context.Context, upload document.AuthorizedUpload,
 			Kind: document.EvidenceLocatorSpine, IndexOrigin: document.EvidenceIndexOriginZero, Start: int64(index), End: int64(index), Name: entry.Name,
 		}})
 	}
-	if err := document.ValidateSourceEvidenceV1(evidence); err != nil {
+	if err := document.ValidateSourceEvidenceV1Context(ctx, evidence); err != nil {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return document.RenditionResult{}, provider.Canceled(ctxErr)
+		}
 		return document.RenditionResult{}, rejected("EPUB evidence exceeds its limits")
 	}
 	receipt, err := providerutil.NewReceipt(provider, providerutil.Receipt{
@@ -179,7 +185,10 @@ func (p *Provider) Render(ctx context.Context, upload document.AuthorizedUpload,
 		return document.RenditionResult{}, err
 	}
 	result := document.RenditionResult{Evidence: evidence, Receipt: receipt}
-	if err := document.ValidateRenditionResult(p.descriptor, authorization, result); err != nil {
+	if err := document.ValidateRenditionResultContext(ctx, p.descriptor, authorization, result); err != nil {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return document.RenditionResult{}, provider.Canceled(ctxErr)
+		}
 		return document.RenditionResult{}, rejected("EPUB result exceeds its authorization")
 	}
 	return result, nil

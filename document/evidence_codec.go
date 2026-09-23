@@ -44,11 +44,28 @@ const (
 // ValidateSourceEvidenceV1 validates a bounded source-evidence/v1 manifest
 // without assigning durable IDs.
 func ValidateSourceEvidenceV1(source SourceEvidenceV1) error {
-	_, err := validateSourceEvidenceV1(source, -1)
+	return ValidateSourceEvidenceV1Context(context.Background(), source)
+}
+
+// ValidateSourceEvidenceV1Context validates source evidence while observing cancellation.
+func ValidateSourceEvidenceV1Context(ctx context.Context, source SourceEvidenceV1) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	_, err := validateSourceEvidenceV1Context(ctx, source, -1)
 	return err
 }
 
 func validateSourceEvidenceV1(source SourceEvidenceV1, maxDocumentChars int) ([]evidenceTextMap, error) {
+	return validateSourceEvidenceV1Context(context.Background(), source, maxDocumentChars)
+}
+
+func validateSourceEvidenceV1Context(
+	ctx context.Context, source SourceEvidenceV1, maxDocumentChars int,
+) ([]evidenceTextMap, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	if source.ContractVersion != SourceEvidenceContractV1 {
 		return nil, fmt.Errorf("source evidence contract version must be %q", SourceEvidenceContractV1)
 	}
@@ -67,10 +84,10 @@ func validateSourceEvidenceV1(source SourceEvidenceV1, maxDocumentChars int) ([]
 	if err := validateSourceOmissionLimit(source, maxEvidenceOmissions); err != nil {
 		return nil, err
 	}
-	if err := validateSourceHeadingLimits(source.Units); err != nil {
+	if err := validateSourceHeadingLimitsContext(ctx, source.Units); err != nil {
 		return nil, err
 	}
-	if err := validateCompletenessOmissions(source); err != nil {
+	if err := validateCompletenessOmissionsContext(ctx, source); err != nil {
 		return nil, err
 	}
 
@@ -79,13 +96,22 @@ func validateSourceEvidenceV1(source SourceEvidenceV1, maxDocumentChars int) ([]
 		return nil, err
 	}
 	textMaps := make([]evidenceTextMap, len(source.Units))
-	documentRangeOffsets := partitionSourceOmissionRangeOffsets(source.Omissions, len(source.Units))
+	documentRangeOffsets, err := partitionSourceOmissionRangeOffsetsContext(ctx, source.Omissions, len(source.Units))
+	if err != nil {
+		return nil, err
+	}
 	remainingChars := maxDocumentChars
 	for index, unit := range source.Units {
+		if index&1023 == 0 {
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
+		}
 		if err := validateEvidenceText(unit.Text, "unit text"); err != nil {
 			return nil, fmt.Errorf("source evidence unit %d: %w", index, err)
 		}
-		textMap, err := newEvidenceTextMap(
+		textMap, err := newEvidenceTextMapContext(
+			ctx,
 			unit.Text, collectSourceRangeOffsets(unit, documentRangeOffsets[index]), remainingChars,
 		)
 		if err != nil {
@@ -98,15 +124,23 @@ func validateSourceEvidenceV1(source SourceEvidenceV1, maxDocumentChars int) ([]
 	}
 	locatorSequence := evidenceLocatorSequence{completeness: source.Completeness}
 	for index := range source.Units {
-		if err := validateSourceUnit(source, index, artifactIDs, textMaps[index]); err != nil {
+		if index&1023 == 0 {
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
+		}
+		if err := validateSourceUnit(ctx, source, index, artifactIDs, textMaps[index]); err != nil {
 			return nil, err
 		}
 		if err := locatorSequence.add(evidenceLocatorFromSource(source.Units[index].Locator)); err != nil {
 			return nil, fmt.Errorf("source evidence unit %d: %w", index, err)
 		}
 	}
-	if err := validateSourceOmissions(source.Omissions, textMaps); err != nil {
+	if err := validateSourceOmissionsContext(ctx, source.Omissions, textMaps); err != nil {
 		return nil, fmt.Errorf("source evidence omissions: %w", err)
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
 	}
 	if err := locatorSequence.requireGapOmissions(normalizeUnitOmissionLocators(source.Omissions)); err != nil {
 		return nil, err
@@ -159,6 +193,7 @@ func validateSourceArtifacts(artifacts []SourceEvidenceArtifactV1) (map[string]s
 }
 
 func validateSourceUnit(
+	ctx context.Context,
 	source SourceEvidenceV1,
 	index int,
 	artifactIDs map[string]struct{},
@@ -195,14 +230,14 @@ func validateSourceUnit(
 	if err := validateSourceConfidence(unit.Confidence); err != nil {
 		return fmt.Errorf("source evidence unit %d: %w", index, err)
 	}
-	regionIDs, err := validateSourceRegions(index, textMap, unit.Regions, artifactIDs)
+	regionIDs, err := validateSourceRegions(ctx, index, textMap, unit.Regions, artifactIDs)
 	if err != nil {
 		return err
 	}
-	if err := validateSourceTables(index, textMap, unit.Tables, regionIDs); err != nil {
+	if err := validateSourceTables(ctx, index, textMap, unit.Tables, regionIDs); err != nil {
 		return err
 	}
-	if err := validateUnitOmissions(unit.Omissions, index, textMap); err != nil {
+	if err := validateUnitOmissionsContext(ctx, unit.Omissions, index, textMap); err != nil {
 		return fmt.Errorf("source evidence unit %d omissions: %w", index, err)
 	}
 	return nil
@@ -444,9 +479,14 @@ func evidenceLocatorFromSource(locator SourceEvidenceLocatorV1) EvidenceLocatorV
 	return EvidenceLocatorV1(locator)
 }
 
-func validateSourceHeadingLimits(units []SourceEvidenceUnitV1) error {
+func validateSourceHeadingLimitsContext(ctx context.Context, units []SourceEvidenceUnitV1) error {
 	remaining := maxEvidenceHeadingBytes
 	for index, unit := range units {
+		if index&1023 == 0 {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+		}
 		if err := validateHeadingPathLimits(unit.HeadingPath, &remaining); err != nil {
 			return fmt.Errorf("source evidence unit %d: %w", index, err)
 		}
@@ -526,6 +566,7 @@ func validEvidenceFamily(family string) bool {
 }
 
 func validateSourceRegions(
+	ctx context.Context,
 	unitIndex int,
 	textMap evidenceTextMap,
 	regions []SourceEvidenceRegionV1,
@@ -536,6 +577,11 @@ func validateSourceRegions(
 	}
 	providerIDs := make(map[string]sourceRegionRef, len(regions))
 	for index, region := range regions {
+		if index&1023 == 0 {
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
+		}
 		if region.Order != index {
 			return nil, fmt.Errorf("source evidence unit %d has noncontiguous region order", unitIndex)
 		}
@@ -574,6 +620,7 @@ func validateSourceRegions(
 }
 
 func validateSourceTables(
+	ctx context.Context,
 	unitIndex int,
 	textMap evidenceTextMap,
 	tables []SourceEvidenceTableV1,
@@ -586,6 +633,11 @@ func validateSourceTables(
 	tableRegions := make(map[string]struct{})
 	cellRegions := make(map[string]struct{})
 	for index, table := range tables {
+		if index&1023 == 0 {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+		}
 		if table.Order != index {
 			return fmt.Errorf("source evidence unit %d has noncontiguous table order", unitIndex)
 		}
@@ -613,6 +665,11 @@ func validateSourceTables(
 			return fmt.Errorf("source evidence unit %d table %d has too many cells", unitIndex, index)
 		}
 		for cellIndex, cell := range table.Cells {
+			if cellIndex&1023 == 0 {
+				if err := ctx.Err(); err != nil {
+					return err
+				}
+			}
 			if err := validateSourceTableCell(textMap, table, cell, cellIndex, regionIDs, cellRegions); err != nil {
 				return fmt.Errorf("source evidence unit %d table %d cell %d: %w", unitIndex, index, cellIndex, err)
 			}
@@ -1502,9 +1559,14 @@ func validateNormalizedOmissionLimit(evidence NormalizedEvidenceV1) error {
 	return nil
 }
 
-func validateCompletenessOmissions(source SourceEvidenceV1) error {
+func validateCompletenessOmissionsContext(ctx context.Context, source SourceEvidenceV1) error {
 	omissionCount := len(source.Omissions)
-	for _, unit := range source.Units {
+	for index, unit := range source.Units {
+		if index&1023 == 0 {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+		}
 		omissionCount += len(unit.Omissions)
 	}
 	if source.Completeness == EvidenceComplete && omissionCount != 0 {
@@ -1516,24 +1578,40 @@ func validateCompletenessOmissions(source SourceEvidenceV1) error {
 	return nil
 }
 
-func validateSourceOmissions(omissions []SourceEvidenceOmissionV1, textMaps []evidenceTextMap) error {
-	return validateOmissions(omissions, textMaps, false)
+func validateSourceOmissionsContext(
+	ctx context.Context, omissions []SourceEvidenceOmissionV1, textMaps []evidenceTextMap,
+) error {
+	return validateOmissionsContext(ctx, omissions, textMaps, false)
 }
 
-func validateUnitOmissions(omissions []SourceEvidenceOmissionV1, unitOrder int, textMap evidenceTextMap) error {
+func validateUnitOmissionsContext(
+	ctx context.Context, omissions []SourceEvidenceOmissionV1, unitOrder int, textMap evidenceTextMap,
+) error {
 	for index := range omissions {
+		if index&1023 == 0 {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+		}
 		if omissions[index].UnitOrder != 0 && omissions[index].UnitOrder != unitOrder {
 			return fmt.Errorf("omission %d references a different unit", index)
 		}
 	}
-	return validateOmissions(omissions, []evidenceTextMap{textMap}, true)
+	return validateOmissionsContext(ctx, omissions, []evidenceTextMap{textMap}, true)
 }
 
-func validateOmissions(omissions []SourceEvidenceOmissionV1, textMaps []evidenceTextMap, unitLocal bool) error {
+func validateOmissionsContext(
+	ctx context.Context, omissions []SourceEvidenceOmissionV1, textMaps []evidenceTextMap, unitLocal bool,
+) error {
 	if len(omissions) > maxEvidenceOmissions {
 		return errors.New("too many omissions")
 	}
 	for index, omission := range omissions {
+		if index&1023 == 0 {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+		}
 		if !validEvidenceOmissionKind(omission.Kind) {
 			return fmt.Errorf("omission %d has invalid kind", index)
 		}
@@ -1837,19 +1915,32 @@ func collectNormalizedRangeOffsets(unit NormalizedEvidenceUnitV1) []int {
 	return offsets
 }
 
-func partitionSourceOmissionRangeOffsets(omissions []SourceEvidenceOmissionV1, unitCount int) [][]int {
+func partitionSourceOmissionRangeOffsetsContext(
+	ctx context.Context, omissions []SourceEvidenceOmissionV1, unitCount int,
+) ([][]int, error) {
 	result := make([][]int, unitCount)
-	for _, omission := range omissions {
+	for index, omission := range omissions {
+		if index&1023 == 0 {
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
+		}
 		if omission.Range != nil && omission.UnitOrder >= 0 && omission.UnitOrder < unitCount {
 			result[omission.UnitOrder] = append(
 				result[omission.UnitOrder], omission.Range.Start, omission.Range.End,
 			)
 		}
 	}
-	return result
+	return result, nil
 }
 
 func newEvidenceTextMap(source string, offsets []int, maxRunes int) (evidenceTextMap, error) {
+	return newEvidenceTextMapContext(context.Background(), source, offsets, maxRunes)
+}
+
+func newEvidenceTextMapContext(
+	ctx context.Context, source string, offsets []int, maxRunes int,
+) (evidenceTextMap, error) {
 	requested := make(map[int]struct{}, len(offsets))
 	for _, offset := range offsets {
 		if offset >= 0 {
@@ -1871,7 +1962,14 @@ func newEvidenceTextMap(source string, offsets []int, maxRunes int) (evidenceTex
 	iterator.InitString(norm.NFC, source)
 	sourceOffset := 0
 	normalizedOffset := 0
+	segments := 0
 	for !iterator.Done() {
+		if segments&1023 == 0 {
+			if err := ctx.Err(); err != nil {
+				return evidenceTextMap{}, err
+			}
+		}
+		segments++
 		sourceStart := iterator.Pos()
 		segment := iterator.Next()
 		sourceEnd := iterator.Pos()

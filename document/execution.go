@@ -392,7 +392,7 @@ func ResumeRendition(
 		}
 		return RenditionResult{}, err
 	}
-	return validateAndOwnRenditionResult(descriptor, snapshot.Authorization, result)
+	return validateAndOwnRenditionResult(ctx, descriptor, snapshot.Authorization, result)
 }
 
 func validateRenditionExecutionIdentity(identity RenditionExecutionIdentityV1) error {

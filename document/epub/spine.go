@@ -8,7 +8,6 @@ import (
 	"net/url"
 	"path"
 	"strings"
-	"unicode/utf8"
 
 	"go.kenn.io/docbank/document/internal/epubutil"
 )
@@ -103,13 +102,37 @@ func localSpineReference(reference string) (string, error) {
 
 // virtualUnits counts complete Markdown without inserting wrapping into it.
 func virtualUnits(markdown string) int64 {
+	units, _ := virtualUnitsContext(context.Background(), markdown)
+	return units
+}
+
+func virtualUnitsContext(ctx context.Context, markdown string) (int64, error) {
+	if err := ctx.Err(); err != nil {
+		return 0, err
+	}
 	if markdown == "" {
-		return 0
+		return 0, nil
 	}
 	markdown = strings.TrimSuffix(markdown, "\n")
 	var lines int64
+	lineIndex := 0
 	for line := range strings.SplitSeq(markdown, "\n") {
-		lines += max(1, (int64(utf8.RuneCountInString(line))+79)/80)
+		if lineIndex&1023 == 0 {
+			if err := ctx.Err(); err != nil {
+				return 0, err
+			}
+		}
+		runes := 0
+		for range line {
+			if runes&1023 == 0 {
+				if err := ctx.Err(); err != nil {
+					return 0, err
+				}
+			}
+			runes++
+		}
+		lines += max(1, (int64(runes)+79)/80)
+		lineIndex++
 	}
-	return (lines + 47) / 48
+	return (lines + 47) / 48, nil
 }

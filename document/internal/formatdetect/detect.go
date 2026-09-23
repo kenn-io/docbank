@@ -1280,10 +1280,6 @@ func decodeUTF16LE(data []byte) (string, error) {
 	return string(runes), nil
 }
 
-func detectZIPFormat(reader io.ReaderAt, size int64) (CandidateFormat, error) {
-	return detectZIPFormatContext(context.Background(), reader, size)
-}
-
 func detectZIPFormatContext(ctx context.Context, reader io.ReaderAt, size int64) (CandidateFormat, error) {
 	if err := ctx.Err(); err != nil {
 		return CandidateFormat{}, err
@@ -1446,10 +1442,6 @@ func validateZIPName(name string) error {
 	return nil
 }
 
-func readZIPEntry(entry *zip.File, limit int64) ([]byte, error) {
-	return readZIPEntryContext(context.Background(), entry, limit)
-}
-
 func readZIPEntryContext(ctx context.Context, entry *zip.File, limit int64) ([]byte, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
@@ -1470,10 +1462,6 @@ func readZIPEntryContext(ctx context.Context, entry *zip.File, limit int64) ([]b
 		return nil, errors.New("document ZIP marker entry exceeds limit")
 	}
 	return value, nil
-}
-
-func verifyZIPEntry(entry *zip.File) error {
-	return verifyZIPEntryContext(context.Background(), entry)
 }
 
 func verifyZIPEntryContext(ctx context.Context, entry *zip.File) error {
