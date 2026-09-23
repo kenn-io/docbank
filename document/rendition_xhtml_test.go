@@ -312,6 +312,10 @@ func TestRenditionFinalizationContextCancellation(t *testing.T) {
 	_, _, err = serializeRenditionBlocksContext(ctx, largeCode, 2<<20)
 	require.ErrorIs(t, err, context.Canceled)
 
+	ctx = &cancelAfterXHTMLReadContext{cancelAt: 2}
+	_, err = serializeRenditionInlineCodeContext(ctx, strings.Repeat("\r\n", 1024), false)
+	require.ErrorIs(t, err, context.Canceled)
+
 	ctx = &cancelOnXHTMLReadContext{cancelAt: 3}
 	_, err = canonicalEvidenceLineEndingsContext(ctx, strings.Repeat("\r\n", 1<<19))
 	require.ErrorIs(t, err, context.Canceled)

@@ -3003,10 +3003,36 @@ func isMarkdownASCIIPunctuation(character rune) bool {
 }
 
 func serializeRenditionInlineCodeContext(ctx context.Context, content string, inTable bool) (string, error) {
-	content = strings.ReplaceAll(strings.ReplaceAll(content, "\r\n", " "), "\n", " ")
-	if inTable {
-		content = strings.ReplaceAll(content, "|", "\\|")
+	var normalized strings.Builder
+	for index := 0; index < len(content); {
+		if index&1023 == 0 {
+			if err := ctx.Err(); err != nil {
+				return "", err
+			}
+		}
+		switch content[index] {
+		case '\r':
+			if index+1 < len(content) && content[index+1] == '\n' {
+				normalized.WriteByte(' ')
+				index += 2
+				continue
+			}
+		case '\n':
+			normalized.WriteByte(' ')
+			index++
+			continue
+		case '|':
+			if inTable {
+				normalized.WriteString(`\|`)
+				index++
+				continue
+			}
+		}
+		_, size := utf8.DecodeRuneInString(content[index:])
+		normalized.WriteString(content[index : index+size])
+		index += size
 	}
+	content = normalized.String()
 	backticks, err := maxBacktickRunContext(ctx, content)
 	if err != nil {
 		return "", err
