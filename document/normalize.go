@@ -1834,12 +1834,14 @@ func (w *renditionHTMLWriter) writeTextContext(ctx context.Context, value string
 func collapseRenditionWhitespaceContext(ctx context.Context, value string, charge func(int64) bool) (string, error) {
 	var size int64
 	pendingSpace, wrote := false, false
-	for index, character := range value {
-		if index&1023 == 0 {
+	runes := 0
+	for _, character := range value {
+		if runes&1023 == 0 {
 			if err := ctx.Err(); err != nil {
 				return "", err
 			}
 		}
+		runes++
 		if unicode.IsSpace(character) {
 			if wrote {
 				pendingSpace = true
@@ -1862,12 +1864,14 @@ func collapseRenditionWhitespaceContext(ctx context.Context, value string, charg
 	var output strings.Builder
 	output.Grow(int(size))
 	pendingSpace, wrote = false, false
-	for index, character := range value {
-		if index&1023 == 0 {
+	runes = 0
+	for _, character := range value {
+		if runes&1023 == 0 {
 			if err := ctx.Err(); err != nil {
 				return "", err
 			}
 		}
+		runes++
 		if unicode.IsSpace(character) {
 			if wrote {
 				pendingSpace = true

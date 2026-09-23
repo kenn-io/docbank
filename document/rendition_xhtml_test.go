@@ -144,7 +144,7 @@ func TestRenditionXHTMLAttributePreflightHandlesProcessingInstructions(t *testin
 	require.ErrorIs(t, checkRenditionXHTMLAttributeBound(t.Context(), []byte(source.String())), ErrRenditionXHTMLBudget)
 
 	source.Reset()
-	source.WriteString(`<!DOCTYPE html [<!-- ' -->]><html xmlns="http://www.w3.org/1999/xhtml"><body`)
+	source.WriteString(`<!DOCTYPE html [<!ENTITY x "<!--">]><html xmlns="http://www.w3.org/1999/xhtml"><body`)
 	for index := range maxRenditionXHTMLAttributes + 1 {
 		source.WriteString(` a`)
 		source.WriteString(strconv.Itoa(index))
@@ -158,6 +158,21 @@ func TestRenditionXHTMLTablePreformattedAllocationBudget(t *testing.T) {
 	source := []byte(`<html xmlns="http://www.w3.org/1999/xhtml"><body><table><tr><td><pre>` + strings.Repeat("a ", 16<<20) + `</pre></td></tr></table></body></html>`)
 	_, err := RenditionMarkdownFromXHTML(source, 16<<20)
 	require.ErrorIs(t, err, ErrRenditionXHTMLBudget)
+}
+
+func TestCollapseRenditionWhitespaceContextCancellation(t *testing.T) {
+	value := "x" + strings.Repeat("é", 1<<16)
+	ctx := &cancelAfterXHTMLReadContext{cancelAt: 2}
+	_, err := collapseRenditionWhitespaceContext(ctx, value, func(int64) bool { return true })
+	require.ErrorIs(t, err, context.Canceled)
+
+	ctx2, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	_, err = collapseRenditionWhitespaceContext(ctx2, value, func(int64) bool {
+		cancel()
+		return true
+	})
+	require.ErrorIs(t, err, context.Canceled)
 }
 
 func TestRenditionXHTMLContextCancellation(t *testing.T) {
