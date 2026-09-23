@@ -128,6 +128,16 @@ func photoKindValid(kind string) bool {
 	return kind == PhotoKindPhoto || kind == PhotoKindVideo
 }
 
+func isPhotoCameraRawMedia(mediaType string) bool {
+	switch mediaType {
+	case "image/x-sony-arw", "image/x-fuji-raf", "image/x-adobe-dng",
+		"image/x-canon-cr2", "image/x-nikon-nef":
+		return true
+	default:
+		return false
+	}
+}
+
 func validatePhotoRoleForNode(role string, facts PhotoNodeFacts) error {
 	if !photoRoleValid(role) {
 		return fmt.Errorf("%w: unknown role %q", ErrInvalidPhotoAsset, role)
@@ -136,7 +146,7 @@ func validatePhotoRoleForNode(role string, facts PhotoNodeFacts) error {
 		return nil
 	}
 	if role == PhotoRoleRAW {
-		if facts.Qualifies {
+		if facts.Qualifies && !isPhotoCameraRawMedia(facts.MediaType) {
 			return fmt.Errorf("%w: raw role cannot label classified %s media", ErrInvalidPhotoAsset, facts.AssetKind)
 		}
 		return nil
@@ -292,6 +302,9 @@ func validatePhotoAssetPointers(asset PhotoAsset, files []PhotoFile) error {
 			return fmt.Errorf("%w: duplicate file %s", ErrInvalidPhotoAsset, file.ID)
 		}
 		byID[file.ID] = file
+		if file.Role == PhotoRoleSidecar && file.SidecarOfID == nil {
+			return fmt.Errorf("%w: sidecar %s must point to same-asset raw", ErrInvalidPhotoAsset, file.ID)
+		}
 		if file.SidecarOfID != nil {
 			target, ok := byID[*file.SidecarOfID]
 			if !ok {

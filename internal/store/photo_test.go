@@ -283,6 +283,37 @@ func TestPhotoMetadataRoundTripAndInvalidReferences(t *testing.T) {
 	require.Error(t, crossAsset.ImportMetadata(ctx, strings.NewReader(strings.Join(crossAssetLines, "\n"))))
 }
 
+func TestPhotoMetadataRejectsUnattachedSidecar(t *testing.T) {
+	s := newTestStore(t)
+	ctx := t.Context()
+	raw, err := s.CreateFile(ctx, s.RootID(), "restore.capture", fakeHash("bb01"), 1, "application/octet-stream")
+	require.NoError(t, err)
+	asset, err := s.PromotePhotoNode(ctx, raw.ID, nil, PhotoRoleRAW, "")
+	require.NoError(t, err)
+	sidecar, err := s.CreateFile(ctx, s.RootID(), "restore.xmp", fakeHash("bb02"), 1, "application/octet-stream")
+	require.NoError(t, err)
+	rawFileID := fileByRole(asset.Files, PhotoRoleRAW).ID
+	_, err = s.AttachPhotoFile(ctx, asset.ID, asset.Revision, sidecar.ID, PhotoRoleSidecar, &rawFileID)
+	require.NoError(t, err)
+
+	var exported bytes.Buffer
+	require.NoError(t, s.ExportMetadata(ctx, &exported))
+	lines := strings.Split(exported.String(), "\n")
+	found := false
+	for index, line := range lines {
+		if strings.Contains(line, `"type":"photo_file"`) && strings.Contains(line, `"role":"sidecar"`) {
+			lines[index] = strings.Replace(line,
+				`"sidecar_of_file_id":"`+rawFileID+`"`,
+				`"sidecar_of_file_id":null`, 1)
+			found = true
+			break
+		}
+	}
+	require.True(t, found)
+	invalid := newTestStore(t)
+	require.Error(t, invalid.ImportMetadata(ctx, strings.NewReader(strings.Join(lines, "\n"))))
+}
+
 func TestPhotoMutationsRequireRevision(t *testing.T) {
 	s := newTestStore(t)
 	ctx := t.Context()
@@ -338,6 +369,25 @@ func TestPhotoExcludePromotePreservesIdentityAndReceipt(t *testing.T) {
 	again, err := s.PromotePhotoNode(ctx, image.ID, &promoted.Revision, "", "")
 	require.NoError(t, err)
 	assert.Equal(t, promoted.Revision, again.Revision)
+}
+
+func TestPhotoPromoteExistingAssetChecksLiveNode(t *testing.T) {
+	s := newTestStore(t)
+	ctx := t.Context()
+	image, err := s.CreateFile(ctx, s.RootID(), "trashed-existing.jpg", fakeHash("cc01"), 1, "image/jpeg")
+	require.NoError(t, err)
+	asset, err := s.PhotoAssetForNode(ctx, image.ID)
+	require.NoError(t, err)
+	excluded, err := s.SetPhotoAssetExcluded(ctx, asset.ID, asset.Revision, true)
+	require.NoError(t, err)
+	_, _, err = s.Trash(ctx, image.ID, image.Revision)
+	require.NoError(t, err)
+	_, err = s.PromotePhotoNode(ctx, image.ID, &excluded.Revision, "", "")
+	require.ErrorIs(t, err, ErrPhotoNodeNotEligible)
+	unchanged, err := s.PhotoAssetByID(ctx, asset.ID)
+	require.NoError(t, err)
+	assert.Equal(t, excluded.Revision, unchanged.Revision)
+	assert.NotNil(t, unchanged.ExcludedAt)
 }
 
 func TestPhotoVersionTransitionsKeepIdentity(t *testing.T) {
@@ -405,6 +455,53 @@ func TestPhotoExplicitRawAdmissionAndTargetBoundaries(t *testing.T) {
 	require.NoError(t, err)
 	_, err = s.AttachPhotoFile(ctx, asset.ID, asset.Revision, sidecar.ID, PhotoRoleSidecar, &videoAsset.Files[0].ID)
 	require.ErrorIs(t, err, ErrInvalidPhotoAsset)
+}
+
+func TestPhotoCameraRawMIMEsAllowExplicitRaw(t *testing.T) {
+	s := newTestStore(t)
+	ctx := t.Context()
+	mediaTypes := []string{
+		"image/x-sony-arw",
+		"image/x-fuji-raf",
+		"image/x-adobe-dng",
+		"image/x-canon-cr2",
+		"image/x-nikon-nef",
+	}
+	for index, mediaType := range mediaTypes {
+		t.Run(mediaType, func(t *testing.T) {
+			node, err := s.CreateFile(ctx, s.RootID(), "camera-"+strconv.Itoa(index)+".raw", fakeHash("ca"+strconv.Itoa(index)), 1, mediaType)
+			require.NoError(t, err)
+			automatic, err := s.PhotoAssetForNode(ctx, node.ID)
+			require.NoError(t, err)
+			require.Equal(t, PhotoRoleImage, automatic.Files[0].Role)
+			_, err = s.DetachPhotoFile(ctx, automatic.ID, automatic.Revision, automatic.Files[0].ID, PhotoDetachOptions{})
+			require.NoError(t, err)
+			explicit, err := s.PromotePhotoNode(ctx, node.ID, nil, PhotoRoleRAW, "")
+			require.NoError(t, err)
+			assert.Equal(t, PhotoRoleRAW, explicit.Files[0].Role)
+		})
+	}
+}
+
+func TestPhotoAttachRequiresExplicitRawForNonqualifyingNodes(t *testing.T) {
+	s := newTestStore(t)
+	ctx := t.Context()
+	raw, err := s.CreateFile(ctx, s.RootID(), "attach.capture", fakeHash("aa01"), 1, "application/octet-stream")
+	require.NoError(t, err)
+	asset, err := s.CreatePhotoAsset(ctx, raw.ID, PhotoRoleRAW, "")
+	require.NoError(t, err)
+	textNode, err := s.CreateFile(ctx, s.RootID(), "attach.txt", fakeHash("aa02"), 1, "text/plain")
+	require.NoError(t, err)
+	audioNode, err := s.CreateFile(ctx, s.RootID(), "attach.mp3", fakeHash("aa03"), 1, "audio/mpeg")
+	require.NoError(t, err)
+	_, err = s.AttachPhotoFile(ctx, asset.ID, asset.Revision, textNode.ID, "", nil)
+	require.ErrorIs(t, err, ErrPhotoNodeNotEligible)
+	_, err = s.AttachPhotoFile(ctx, asset.ID, asset.Revision, audioNode.ID, "", nil)
+	require.ErrorIs(t, err, ErrPhotoNodeNotEligible)
+	asset, err = s.AttachPhotoFile(ctx, asset.ID, asset.Revision, textNode.ID, PhotoRoleRAW, nil)
+	require.NoError(t, err)
+	_, err = s.AttachPhotoFile(ctx, asset.ID, asset.Revision, audioNode.ID, PhotoRoleRAW, nil)
+	require.NoError(t, err)
 }
 
 func TestPhotoNodeModesRefuseDirectoryAndTrashedPromotion(t *testing.T) {
