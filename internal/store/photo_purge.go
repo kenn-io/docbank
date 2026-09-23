@@ -81,34 +81,9 @@ func (s *Store) adjustPhotosForPurgedNodesTx(ctx context.Context, tx *sql.Tx, no
 			return fmt.Errorf("removing photo membership for purged node %d: %w", nodeID, err)
 		}
 	}
-	settings, err := photoSettingsTx(ctx, tx)
-	if err != nil {
-		return err
-	}
-	for assetID, old := range before {
-		asset := old
-		files, err := loadPhotoFilesTx(ctx, tx, assetID)
-		if err != nil {
-			return err
-		}
-		asset.Files = files
-		if asset.DisplayOverrideFileID != nil && !photoFileIDPresent(files, *asset.DisplayOverrideFileID) {
-			asset.DisplayOverrideFileID = nil
-		}
-		choice := selectPhotoDisplay(files, settings.Preference, asset.DisplayOverrideFileID)
-		asset.DisplayFileID = choice.FileID
-		asset.DisplaySource = choice.Source
-		asset.Revision++
-		if _, err := tx.ExecContext(ctx, `
-			UPDATE photo_assets SET display_file_id=?, display_override_file_id=?,
-				revision=?, updated_at=? WHERE asset_id=?`,
-			nullablePhotoString(asset.DisplayFileID), nullablePhotoString(asset.DisplayOverrideFileID),
-			asset.Revision, nowRFC3339(), assetID); err != nil {
-			return fmt.Errorf("repairing photo asset %s after purge: %w", assetID, err)
-		}
-		changes := photoAssetMemberChanges(old, asset)
-		if err := writePhotoReceiptTx(ctx, tx, "purge", assetID, "", old.Revision, asset.Revision, photoAssetState(old, changes), photoAssetState(asset, changes)); err != nil {
-			return err
+	for _, old := range before {
+		if _, err := commitPhotoAssetTx(ctx, tx, old, old, "purge"); err != nil {
+			return fmt.Errorf("repairing photo asset %s after purge: %w", old.ID, err)
 		}
 	}
 	return validatePhotoGraphTx(ctx, tx)

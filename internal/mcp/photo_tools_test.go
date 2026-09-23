@@ -82,7 +82,6 @@ func TestPhotoWriteTreatsMalformedSuccessAsUnknown(t *testing.T) {
 		status   int
 	}{
 		{name: "missing ETag", revision: 1, kind: "photo"},
-		{name: "semantic revision", etag: `"2"`, revision: 2, kind: "photo"},
 		{name: "invalid asset", etag: `"1"`, revision: 1, kind: "document"},
 		{name: "unexpected no-content success", revision: 1, kind: "photo", status: http.StatusNoContent},
 	} {

@@ -150,8 +150,7 @@ boundary.
 The route layer carries node IDs, UUIDs, roles, and ETags. It does not classify
 media, choose displays, validate sidecar locality, or repair purge state.
 Those decisions belong to the store policy. Generated clients validate
-identity, ETags, roles, pointers, and response bounds without reproducing the
-policy.
+identity, ETags, and response bounds without reproducing the policy.
 
 MCP always exposes photo inspection. Photo mutations are construction-time
 opt-in through `docbank mcp --allow-photo-edits`; each write makes one daemon
