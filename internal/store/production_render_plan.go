@@ -76,12 +76,28 @@ func (s *Store) CheckpointProductionRenderPlan(ctx context.Context, job producti
 	}
 	err = s.withStorageTx(ctx, func(tx *sql.Tx) error {
 		var setID, revisionSHA, preparedSHA, state string
+		var boundAllocation sql.NullString
 		var revision, etag int64
-		if err := tx.QueryRowContext(ctx, `SELECT set_id,revision,etag,revision_sha256,prepared_input_sha256,state FROM production_jobs WHERE job_id=?`, job.ID).
-			Scan(&setID, &revision, &etag, &revisionSHA, &preparedSHA, &state); err != nil ||
+		if err := tx.QueryRowContext(ctx, `SELECT set_id,revision,etag,revision_sha256,prepared_input_sha256,state,allocation_id FROM production_jobs WHERE job_id=?`, job.ID).
+			Scan(&setID, &revision, &etag, &revisionSHA, &preparedSHA, &state, &boundAllocation); err != nil ||
 			setID != job.SetID || revision != job.Revision || etag != job.ETag ||
-			revisionSHA != job.RevisionSHA256 || preparedSHA != job.PreparedInputSHA256 {
+			revisionSHA != job.RevisionSHA256 || preparedSHA != job.PreparedInputSHA256 ||
+			boundAllocation.Valid && boundAllocation.String != plan.Reservation.ID {
 			return productionservice.ErrJobConflict
+		}
+		bindAllocation := func() error {
+			if boundAllocation.Valid {
+				return nil
+			}
+			updated, err := tx.ExecContext(ctx, `UPDATE production_jobs SET allocation_id=? WHERE job_id=? AND allocation_id IS NULL`,
+				plan.Reservation.ID, job.ID)
+			if err != nil {
+				return err
+			}
+			if count, err := updated.RowsAffected(); err != nil || count != 1 {
+				return productionservice.ErrJobConflict
+			}
+			return nil
 		}
 		var existingSHA string
 		var existingRaw []byte
@@ -90,7 +106,7 @@ func (s *Store) CheckpointProductionRenderPlan(ctx context.Context, job producti
 			if existingSHA != plan.SHA256 || !bytes.Equal(existingRaw, raw) {
 				return productionservice.ErrJobConflict
 			}
-			return nil
+			return bindAllocation()
 		}
 		if !errors.Is(err, sql.ErrNoRows) {
 			return err
@@ -100,7 +116,10 @@ func (s *Store) CheckpointProductionRenderPlan(ctx context.Context, job producti
 		}
 		_, err = tx.ExecContext(ctx, `INSERT INTO production_job_render_plans(job_id,allocation_id,reservation_sha256,plan_sha256,canonical_json,created_at) VALUES(?,?,?,?,?,?)`,
 			job.ID, plan.Reservation.ID, plan.Reservation.SHA256, plan.SHA256, raw, nowRFC3339())
-		return err
+		if err != nil {
+			return err
+		}
+		return bindAllocation()
 	})
 	if err != nil {
 		return productionservice.RenderPlan{}, err

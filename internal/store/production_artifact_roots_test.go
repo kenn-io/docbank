@@ -21,11 +21,7 @@ import (
 func publishedProductionArtifactRootsFixture(t *testing.T) (*Store, production.Job, documentproduction.ArtifactManifest) {
 	t.Helper()
 	s, claim, job, receipt, manifest, endorsements := stagedProductionPublicationFixture(t)
-	plan, err := s.LoadProductionRenderPlan(t.Context(), job.ID)
-	require.NoError(t, err)
-	_, err = s.db.ExecContext(t.Context(), `UPDATE production_jobs SET allocation_id=? WHERE job_id=?`, plan.Reservation.ID, job.ID)
-	require.NoError(t, err)
-	_, err = s.PublishProductionJob(t.Context(), claim, job, receipt, manifest, endorsements)
+	_, err := s.PublishProductionJob(t.Context(), claim, job, receipt, manifest, endorsements)
 	require.NoError(t, err)
 	return s, job, manifest
 }
