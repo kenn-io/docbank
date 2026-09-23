@@ -196,6 +196,7 @@ func TestMediaSuppliedTranscriptConsumer(t *testing.T) {
 				require.NoError(t, err)
 				require.NotEmpty(t, results.Results)
 				require.Equal(t, receipt.ContentVersionID, results.Results[0].ContentVersionID)
+				require.NoError(t, vault.Close())
 			})
 		})
 	}
