@@ -9,11 +9,12 @@ import (
 )
 
 var (
-	photoKind      string
-	photoRole      string
-	photoRevision  int64
-	photoExcluded  bool
-	photoSidecarOf string
+	photoKind                   string
+	photoRole                   string
+	photoRevision               int64
+	photoExcluded               bool
+	photoSidecarOf              string
+	photoClearDependentSidecars bool
 )
 
 var photosCmd = &cobra.Command{
@@ -100,7 +101,7 @@ var photoDetachCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		asset, err := c.DetachPhotoFile(cmd.Context(), args[0], photoRevision, args[1])
+		asset, err := c.DetachPhotoFile(cmd.Context(), args[0], photoRevision, args[1], photoClearDependentSidecars)
 		if err != nil {
 			return err
 		}
@@ -137,7 +138,11 @@ var photoPromoteCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		asset, err := c.PromotePhotoNode(cmd.Context(), node.ID, photoRole, photoKind)
+		var expectedRevision *int64
+		if photoRevision > 0 {
+			expectedRevision = &photoRevision
+		}
+		asset, err := c.PromotePhotoNode(cmd.Context(), node.ID, expectedRevision, photoRole, photoKind)
 		if err != nil {
 			return err
 		}
@@ -272,9 +277,11 @@ func init() {
 	}
 	photoAttachCmd.Flags().StringVar(&photoRole, "role", "", "file role: raw, image, video, or sidecar")
 	photoAttachCmd.Flags().StringVar(&photoSidecarOf, "sidecar-of-file-id", "", "same-asset RAW file ID for a sidecar")
+	photoDetachCmd.Flags().BoolVar(&photoClearDependentSidecars, "clear-dependent-sidecars", false, "detach dependent sidecars with a RAW file")
 	photoExcludeCmd.Flags().BoolVar(&photoExcluded, "excluded", true, "exclude the asset")
 	for _, command := range []*cobra.Command{photoAttachCmd, photoDetachCmd, photoExcludeCmd, photoDisplayCmd,
 		photoSettingsSetCmd, photoSettingsResetCmd} {
 		command.Flags().Int64Var(&photoRevision, "revision", 0, "expected asset or settings revision")
 	}
+	photoPromoteCmd.Flags().Int64Var(&photoRevision, "revision", 0, "expected existing asset revision")
 }

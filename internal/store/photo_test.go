@@ -3,6 +3,8 @@ package store
 import (
 	"bytes"
 	"database/sql"
+	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -66,18 +68,28 @@ func TestPhotoAssetGroupsRawJPEGSidecar(t *testing.T) {
 	require.NoError(t, err)
 	jpegAsset, err := s.PhotoAssetForNode(ctx, jpeg.ID)
 	require.NoError(t, err)
-	_, err = s.DetachPhotoFile(ctx, jpegAsset.ID, jpegAsset.Revision, jpegAsset.Files[0].ID)
+	_, err = s.DetachPhotoFile(ctx, jpegAsset.ID, jpegAsset.Revision, jpegAsset.Files[0].ID, PhotoDetachOptions{})
 	require.NoError(t, err)
-	asset, err := s.PromotePhotoNode(ctx, raw.ID, PhotoRoleRAW)
+	asset, err := s.PromotePhotoNode(ctx, raw.ID, nil, PhotoRoleRAW, "")
 	require.NoError(t, err)
-	asset, err = s.AttachPhotoFile(ctx, asset.ID, asset.Revision, jpeg.ID, PhotoRoleImage)
+	asset, err = s.AttachPhotoFile(ctx, asset.ID, asset.Revision, jpeg.ID, PhotoRoleImage, nil)
 	require.NoError(t, err)
 	rawFile := fileByRole(asset.Files, PhotoRoleRAW)
-	asset, err = s.AttachPhotoFile(ctx, asset.ID, asset.Revision, sidecar.ID, PhotoRoleSidecar, rawFile.ID)
+	asset, err = s.AttachPhotoFile(ctx, asset.ID, asset.Revision, sidecar.ID, PhotoRoleSidecar, &rawFile.ID)
 	require.NoError(t, err)
 	assert.Len(t, asset.Files, 3)
 	assert.NotNil(t, asset.DisplayFileID)
-	asset, err = s.SetPhotoDisplay(ctx, asset.ID, asset.Revision, rawFile.ID)
+	receipts, _, err := s.PhotoChangeReceipts(ctx, asset.ID, 20, 0)
+	require.NoError(t, err)
+	var sidecarReceipt PhotoChangeReceipt
+	for _, receipt := range receipts {
+		if receipt.Operation == "attach" && strings.Contains(receipt.AfterJSON, `"node_id":`+strconv.FormatInt(sidecar.ID, 10)) {
+			sidecarReceipt = receipt
+			break
+		}
+	}
+	assert.NotEmpty(t, sidecarReceipt.AfterJSON)
+	asset, err = s.SetPhotoDisplay(ctx, asset.ID, asset.Revision, &rawFile.ID)
 	require.NoError(t, err)
 	assert.Equal(t, rawFile.ID, *asset.DisplayFileID)
 }
@@ -91,26 +103,53 @@ func TestPhotoDisplayPrecedenceAndDetachFallback(t *testing.T) {
 	require.NoError(t, err)
 	jpegAsset, err := s.PhotoAssetForNode(ctx, jpeg.ID)
 	require.NoError(t, err)
-	_, err = s.DetachPhotoFile(ctx, jpegAsset.ID, jpegAsset.Revision, jpegAsset.Files[0].ID)
+	_, err = s.DetachPhotoFile(ctx, jpegAsset.ID, jpegAsset.Revision, jpegAsset.Files[0].ID, PhotoDetachOptions{})
 	require.NoError(t, err)
-	asset, err := s.PromotePhotoNode(ctx, raw.ID, PhotoRoleRAW)
+	asset, err := s.PromotePhotoNode(ctx, raw.ID, nil, PhotoRoleRAW, "")
 	require.NoError(t, err)
-	asset, err = s.AttachPhotoFile(ctx, asset.ID, asset.Revision, jpeg.ID, PhotoRoleImage)
+	asset, err = s.AttachPhotoFile(ctx, asset.ID, asset.Revision, jpeg.ID, PhotoRoleImage, nil)
 	require.NoError(t, err)
 	assert.Equal(t, PhotoDisplayDefault, asset.DisplaySource)
 	assert.Equal(t, PhotoRoleRAW, fileByID(asset.Files, *asset.DisplayFileID).Role)
-	settings, err := s.SetPhotoSettings(ctx, 1, "image")
+	preference := "image"
+	settings, err := s.SetPhotoSettings(ctx, 1, &preference)
 	require.NoError(t, err)
 	assert.Equal(t, int64(2), settings.Revision)
 	asset, err = s.PhotoAssetByID(ctx, asset.ID)
 	require.NoError(t, err)
 	assert.Equal(t, PhotoDisplayVault, asset.DisplaySource)
 	assert.Equal(t, PhotoRoleImage, fileByID(asset.Files, *asset.DisplayFileID).Role)
-	asset, err = s.SetPhotoDisplay(ctx, asset.ID, asset.Revision, asset.Files[0].ID)
+	asset, err = s.SetPhotoDisplay(ctx, asset.ID, asset.Revision, &asset.Files[0].ID)
 	require.NoError(t, err)
-	asset, err = s.DetachPhotoFile(ctx, asset.ID, asset.Revision, asset.DisplayFileID)
+	asset, err = s.DetachPhotoFile(ctx, asset.ID, asset.Revision, *asset.DisplayFileID, PhotoDetachOptions{})
 	require.NoError(t, err)
 	assert.NotNil(t, asset.DisplayFileID)
+}
+
+func TestPhotoDetachReplacementSelectsRemainingMember(t *testing.T) {
+	s := newTestStore(t)
+	ctx := t.Context()
+	raw, err := s.CreateFile(ctx, s.RootID(), "capture.bin", fakeHash("replacement-raw"), 1, "application/octet-stream")
+	require.NoError(t, err)
+	image, err := s.CreateFile(ctx, s.RootID(), "capture.jpeg", fakeHash("replacement-image"), 1, "image/jpeg")
+	require.NoError(t, err)
+	imageAsset, err := s.PhotoAssetForNode(ctx, image.ID)
+	require.NoError(t, err)
+	autoImageFileID := imageAsset.Files[0].ID
+	_, err = s.DetachPhotoFile(ctx, imageAsset.ID, imageAsset.Revision, autoImageFileID, PhotoDetachOptions{})
+	require.NoError(t, err)
+	asset, err := s.PromotePhotoNode(ctx, raw.ID, nil, PhotoRoleRAW, "")
+	require.NoError(t, err)
+	asset, err = s.AttachPhotoFile(ctx, asset.ID, asset.Revision, image.ID, PhotoRoleImage, nil)
+	require.NoError(t, err)
+	imageFileID := fileByRole(asset.Files, PhotoRoleImage).ID
+	rawFileID := fileByRole(asset.Files, PhotoRoleRAW).ID
+	asset, err = s.DetachPhotoFile(ctx, asset.ID, asset.Revision, rawFileID,
+		PhotoDetachOptions{ReplacementFileID: &imageFileID})
+	require.NoError(t, err)
+	assert.Equal(t, imageFileID, *asset.DisplayOverrideFileID)
+	assert.Equal(t, imageFileID, *asset.DisplayFileID)
+	assert.Len(t, asset.Files, 1)
 }
 
 func TestPhotoSettingsRecomputeInheritedAssets(t *testing.T) {
@@ -128,9 +167,38 @@ func TestPhotoSettingsRecomputeInheritedAssets(t *testing.T) {
 	require.NoError(t, err)
 	_, err = s.SetPhotoDisplay(ctx, secondAsset.ID, secondAsset.Revision, nil)
 	require.NoError(t, err)
-	settings, err := s.SetPhotoSettings(ctx, 1, "image")
+	raw, err := s.CreateFile(ctx, s.RootID(), "fanout.capture", fakeHash("f1"), 1, "application/octet-stream")
+	require.NoError(t, err)
+	group, err := s.PromotePhotoNode(ctx, raw.ID, nil, PhotoRoleRAW, "")
+	require.NoError(t, err)
+	secondAsset, err = s.PhotoAssetForNode(ctx, second.ID)
+	require.NoError(t, err)
+	secondFileID := secondAsset.Files[0].ID
+	_, err = s.DetachPhotoFile(ctx, secondAsset.ID, secondAsset.Revision, secondFileID, PhotoDetachOptions{})
+	require.NoError(t, err)
+	group, err = s.AttachPhotoFile(ctx, group.ID, group.Revision, second.ID, PhotoRoleImage, nil)
+	require.NoError(t, err)
+	preference := "image"
+	settings, err := s.SetPhotoSettings(ctx, 1, &preference)
 	require.NoError(t, err)
 	assert.Equal(t, int64(2), settings.Revision)
+	group, err = s.PhotoAssetByID(ctx, group.ID)
+	require.NoError(t, err)
+	assert.Equal(t, PhotoRoleImage, fileByID(group.Files, *group.DisplayFileID).Role)
+	rawFileID := fileByRole(group.Files, PhotoRoleRAW).ID
+	group, err = s.SetPhotoDisplay(ctx, group.ID, group.Revision, &rawFileID)
+	require.NoError(t, err)
+	settings, err = s.SetPhotoSettings(ctx, settings.Revision, nil)
+	require.NoError(t, err)
+	assert.Equal(t, int64(3), settings.Revision)
+	unchangedGroup, err := s.PhotoAssetByID(ctx, group.ID)
+	require.NoError(t, err)
+	assert.Equal(t, group.Revision, unchangedGroup.Revision)
+	_, err = s.SetPhotoSettings(ctx, settings.Revision-1, &preference)
+	require.ErrorIs(t, err, ErrPhotoAssetRevision)
+	receipts, _, err := s.PhotoChangeReceipts(ctx, group.ID, 20, 0)
+	require.NoError(t, err)
+	assert.Contains(t, receiptOperations(receipts), "settings_recompute")
 	assert.NoError(t, s.ValidateMetadata(ctx))
 }
 
@@ -150,12 +218,31 @@ func TestPhotoNodeModesAndPurgeRepair(t *testing.T) {
 	assert.Empty(t, asset.Files)
 	assert.Nil(t, asset.DisplayFileID)
 	assert.Equal(t, PhotoDisplayNone, asset.DisplaySource)
+	raw, err := s.CreateFile(ctx, s.RootID(), "purge.capture", fakeHash("purge-raw"), 1, "application/octet-stream")
+	require.NoError(t, err)
+	group, err := s.PromotePhotoNode(ctx, raw.ID, nil, PhotoRoleRAW, "")
+	require.NoError(t, err)
+	sidecar, err := s.CreateFile(ctx, s.RootID(), "purge.xmp", fakeHash("purge-sidecar"), 1, "application/octet-stream")
+	require.NoError(t, err)
+	rawID := fileByRole(group.Files, PhotoRoleRAW).ID
+	group, err = s.AttachPhotoFile(ctx, group.ID, group.Revision, sidecar.ID, PhotoRoleSidecar, &rawID)
+	require.NoError(t, err)
+	_, _, err = s.Trash(ctx, raw.ID, raw.Revision)
+	require.NoError(t, err)
+	_, err = s.TrashEmpty(ctx, 0, true)
+	require.NoError(t, err)
+	group, err = s.PhotoAssetByID(ctx, group.ID)
+	require.NoError(t, err)
+	assert.Empty(t, group.Files)
+	assert.Nil(t, group.DisplayFileID)
 }
 
 func TestPhotoMetadataRoundTripAndInvalidReferences(t *testing.T) {
 	s := newTestStore(t)
 	ctx := t.Context()
 	image, err := s.CreateFile(ctx, s.RootID(), "a.jpg", fakeHash("a1"), 1, "image/jpeg")
+	require.NoError(t, err)
+	secondNode, err := s.CreateFile(ctx, s.RootID(), "b.jpg", fakeHash("b1"), 1, "image/jpeg")
 	require.NoError(t, err)
 	var first bytes.Buffer
 	require.NoError(t, s.ExportMetadata(ctx, &first))
@@ -164,12 +251,36 @@ func TestPhotoMetadataRoundTripAndInvalidReferences(t *testing.T) {
 	assert.Contains(t, first.String(), image.CurrentVersionID)
 	target := newTestStore(t)
 	require.NoError(t, target.ImportMetadata(ctx, bytes.NewReader(first.Bytes())))
+	var second bytes.Buffer
+	require.NoError(t, target.ExportMetadata(ctx, &second))
+	assert.Equal(t, first.String(), second.String())
 	asset, err := s.PhotoAssetForNode(ctx, image.ID)
+	require.NoError(t, err)
+	secondAsset, err := s.PhotoAssetForNode(ctx, secondNode.ID)
 	require.NoError(t, err)
 	restored, err := target.PhotoAssetByID(ctx, asset.ID)
 	require.NoError(t, err)
 	assert.Equal(t, asset.ID, restored.ID)
 	assert.Equal(t, asset.DisplayFileID, restored.DisplayFileID)
+	invalidLines := strings.Split(first.String(), "\n")
+	for index, line := range invalidLines {
+		if strings.Contains(line, `"type":"photo_file"`) {
+			invalidLines[index] = strings.Replace(line, `"role":"image"`, `"role":"sidecar"`, 1)
+			break
+		}
+	}
+	invalid := newTestStore(t)
+	require.Error(t, invalid.ImportMetadata(ctx, strings.NewReader(strings.Join(invalidLines, "\n"))))
+
+	crossAssetLines := strings.Split(first.String(), "\n")
+	for index, line := range crossAssetLines {
+		if strings.Contains(line, `"type":"photo_file"`) && strings.Contains(line, secondAsset.Files[0].ID) {
+			crossAssetLines[index] = strings.Replace(line, `"`+secondAsset.ID+`"`, `"`+asset.ID+`"`, 1)
+			break
+		}
+	}
+	crossAsset := newTestStore(t)
+	require.Error(t, crossAsset.ImportMetadata(ctx, strings.NewReader(strings.Join(crossAssetLines, "\n"))))
 }
 
 func TestPhotoMutationsRequireRevision(t *testing.T) {
@@ -188,14 +299,17 @@ func TestPhotoSidecarTargetsAndNoDisplayableMember(t *testing.T) {
 	ctx := t.Context()
 	raw, err := s.CreateFile(ctx, s.RootID(), "a.cr2", fakeHash("a1"), 1, "application/octet-stream")
 	require.NoError(t, err)
-	asset, err := s.PromotePhotoNode(ctx, raw.ID, PhotoRoleRAW)
+	asset, err := s.PromotePhotoNode(ctx, raw.ID, nil, PhotoRoleRAW, "")
 	require.NoError(t, err)
 	sidecar, err := s.CreateFile(ctx, s.RootID(), "a.xmp", fakeHash("b2"), 1, "application/octet-stream")
 	require.NoError(t, err)
-	asset, err = s.AttachPhotoFile(ctx, asset.ID, asset.Revision, sidecar.ID, PhotoRoleSidecar, fileByRole(asset.Files, PhotoRoleRAW).ID)
+	rawFileID := fileByRole(asset.Files, PhotoRoleRAW).ID
+	asset, err = s.AttachPhotoFile(ctx, asset.ID, asset.Revision, sidecar.ID, PhotoRoleSidecar, &rawFileID)
 	require.NoError(t, err)
 	rawFile := fileByRole(asset.Files, PhotoRoleRAW)
-	asset, err = s.DetachPhotoFile(ctx, asset.ID, asset.Revision, rawFile.ID)
+	_, err = s.DetachPhotoFile(ctx, asset.ID, asset.Revision, rawFile.ID, PhotoDetachOptions{})
+	require.ErrorIs(t, err, ErrInvalidPhotoAsset)
+	asset, err = s.DetachPhotoFile(ctx, asset.ID, asset.Revision, rawFile.ID, PhotoDetachOptions{ClearDependentSidecars: true})
 	require.NoError(t, err)
 	assert.Equal(t, PhotoDisplayNone, asset.DisplaySource)
 	assert.Nil(t, asset.DisplayFileID)
@@ -212,14 +326,16 @@ func TestPhotoExcludePromotePreservesIdentityAndReceipt(t *testing.T) {
 	updated, err := s.SetPhotoAssetExcluded(ctx, asset.ID, asset.Revision, true)
 	require.NoError(t, err)
 	assert.Equal(t, beforeID, updated.ID)
+	_, err = s.PromotePhotoNode(ctx, image.ID, nil, "", "")
+	require.ErrorIs(t, err, ErrPhotoAssetRevision)
 	receipts, _, err := s.PhotoChangeReceipts(ctx, asset.ID, 20, 0)
 	require.NoError(t, err)
 	assert.NotEmpty(t, receipts)
-	promoted, err := s.PromotePhotoNode(ctx, image.ID)
+	promoted, err := s.PromotePhotoNode(ctx, image.ID, &updated.Revision, "", "")
 	require.NoError(t, err)
 	assert.Equal(t, beforeID, promoted.ID)
 	assert.Nil(t, promoted.ExcludedAt)
-	again, err := s.PromotePhotoNode(ctx, image.ID)
+	again, err := s.PromotePhotoNode(ctx, image.ID, &promoted.Revision, "", "")
 	require.NoError(t, err)
 	assert.Equal(t, promoted.Revision, again.Revision)
 }
@@ -231,13 +347,27 @@ func TestPhotoVersionTransitionsKeepIdentity(t *testing.T) {
 	require.NoError(t, err)
 	asset, err := s.PhotoAssetForNode(ctx, image.ID)
 	require.NoError(t, err)
-	updated, _, err := s.ReplaceContent(ctx, image.ID, image.Revision, fakeHash("b2"), 1, "image/jpeg")
+	originalVersionID := image.CurrentVersionID
+	updated, replacementVersion, err := s.ReplaceContent(ctx, image.ID, image.Revision, fakeHash("b2"), 1, "image/jpeg")
 	require.NoError(t, err)
 	assetAfter, err := s.PhotoAssetForNode(ctx, image.ID)
 	require.NoError(t, err)
 	assert.Equal(t, asset.ID, assetAfter.ID)
 	assert.Equal(t, asset.Revision, assetAfter.Revision)
 	assert.Equal(t, updated.ID, image.ID)
+	reverted, _, source, err := s.RevertContent(ctx, image.ID, updated.Revision, originalVersionID)
+	require.NoError(t, err)
+	assert.Equal(t, originalVersionID, source.ID)
+	assert.Equal(t, image.ID, reverted.ID)
+	assetAfterRevert, err := s.PhotoAssetForNode(ctx, image.ID)
+	require.NoError(t, err)
+	assert.Equal(t, asset.ID, assetAfterRevert.ID)
+	_, err = s.PruneContentVersions(ctx, image.ID, reverted.Revision,
+		VersionPruneSelector{VersionIDs: []string{replacementVersion.ID}}, true)
+	require.NoError(t, err)
+	assetAfterPrune, err := s.PhotoAssetForNode(ctx, image.ID)
+	require.NoError(t, err)
+	assert.Equal(t, asset.ID, assetAfterPrune.ID)
 }
 
 func TestPhotoPolicy(t *testing.T) {
@@ -245,6 +375,52 @@ func TestPhotoPolicy(t *testing.T) {
 	assert.False(t, photoRoleValid("primary"))
 	assert.True(t, photoPreferenceValid(new("image")))
 	assert.False(t, photoPreferenceValid(new("video")))
+}
+
+func TestPhotoExplicitRawAdmissionAndTargetBoundaries(t *testing.T) {
+	s := newTestStore(t)
+	ctx := t.Context()
+	raw, err := s.CreateFile(ctx, s.RootID(), "vendor.capture", fakeHash("raw"), 1, "application/octet-stream")
+	require.NoError(t, err)
+	asset, err := s.CreatePhotoAsset(ctx, raw.ID, PhotoRoleRAW, "")
+	require.NoError(t, err)
+	assert.Equal(t, PhotoRoleRAW, asset.Files[0].Role)
+
+	image, err := s.CreateFile(ctx, s.RootID(), "target.jpeg", fakeHash("jpeg"), 1, "image/jpeg")
+	require.NoError(t, err)
+	_, err = s.PromotePhotoNode(ctx, image.ID, nil, PhotoRoleRAW, "")
+	require.ErrorIs(t, err, ErrInvalidPhotoAsset)
+	video, err := s.CreateFile(ctx, s.RootID(), "target.mp4", fakeHash("video"), 1, "video/mp4")
+	require.NoError(t, err)
+	_, err = s.PromotePhotoNode(ctx, video.ID, nil, PhotoRoleRAW, "")
+	require.ErrorIs(t, err, ErrInvalidPhotoAsset)
+
+	sidecar, err := s.CreateFile(ctx, s.RootID(), "target.xmp", fakeHash("sidecar"), 1, "application/octet-stream")
+	require.NoError(t, err)
+	imageAsset, err := s.PhotoAssetForNode(ctx, image.ID)
+	require.NoError(t, err)
+	_, err = s.AttachPhotoFile(ctx, asset.ID, asset.Revision, sidecar.ID, PhotoRoleSidecar, &imageAsset.Files[0].ID)
+	require.ErrorIs(t, err, ErrInvalidPhotoAsset)
+	videoAsset, err := s.PhotoAssetForNode(ctx, video.ID)
+	require.NoError(t, err)
+	_, err = s.AttachPhotoFile(ctx, asset.ID, asset.Revision, sidecar.ID, PhotoRoleSidecar, &videoAsset.Files[0].ID)
+	require.ErrorIs(t, err, ErrInvalidPhotoAsset)
+}
+
+func TestPhotoNodeModesRefuseDirectoryAndTrashedPromotion(t *testing.T) {
+	s := newTestStore(t)
+	ctx := t.Context()
+	directory, _, err := s.MkdirPath(ctx, "/photos")
+	require.NoError(t, err)
+	_, err = s.PromotePhotoNode(ctx, directory.ID, nil, PhotoRoleRAW, "")
+	require.ErrorIs(t, err, ErrPhotoNodeNotEligible)
+
+	file, err := s.CreateFile(ctx, s.RootID(), "trashed.capture", fakeHash("trash"), 1, "application/octet-stream")
+	require.NoError(t, err)
+	_, _, err = s.Trash(ctx, file.ID, file.Revision)
+	require.NoError(t, err)
+	_, err = s.PromotePhotoNode(ctx, file.ID, nil, PhotoRoleRAW, "")
+	require.ErrorIs(t, err, ErrPhotoNodeNotEligible)
 }
 
 func TestPhotoEnrollmentSkipsEmailChildAndKeepsProcessedSource(t *testing.T) {
@@ -261,7 +437,7 @@ func TestPhotoEnrollmentSkipsEmailChildAndKeepsProcessedSource(t *testing.T) {
 	require.NotNil(t, child)
 	_, err = s.PhotoAssetForNode(ctx, child.NodeID)
 	require.ErrorIs(t, err, ErrNotFound)
-	promoted, err := s.PromotePhotoNode(ctx, child.NodeID)
+	promoted, err := s.PromotePhotoNode(ctx, child.NodeID, nil, "", "")
 	require.NoError(t, err)
 	assert.Equal(t, child.NodeID, promoted.Files[0].NodeID)
 
@@ -330,4 +506,12 @@ func fileByRole(files []PhotoFile, role string) PhotoFile {
 		}
 	}
 	return PhotoFile{}
+}
+
+func receiptOperations(receipts []PhotoChangeReceipt) []string {
+	operations := make([]string, 0, len(receipts))
+	for _, receipt := range receipts {
+		operations = append(operations, receipt.Operation)
+	}
+	return operations
 }

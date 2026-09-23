@@ -2,6 +2,7 @@ package mcp
 
 import (
 	"context"
+	"encoding/json/v2"
 	"net/http"
 	"net/http/httptest"
 	"sync/atomic"
@@ -9,6 +10,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/daemonconn"
 )
 
@@ -66,4 +68,41 @@ func TestPhotoWriteNoReplay(t *testing.T) {
 	require.Error(t, err)
 	require.ErrorIs(t, err, errProcessingOutcomeUnknown)
 	assert.Equal(t, int32(1), requests.Load())
+}
+
+func TestPhotoMCPCreateUsesDaemonRouteAndReturnsTimestamps(t *testing.T) {
+	assetID := "00000000-0000-4000-8000-000000000001"
+	fileID := "00000000-0000-4000-8000-000000000010"
+	createdAt := "2026-09-22T00:00:00Z"
+	asset := api.PhotoAsset{
+		ID: assetID, Kind: "photo", Revision: 1,
+		DisplayFileID: &fileID, DisplaySource: "default",
+		CreatedAt: createdAt, UpdatedAt: createdAt,
+		Files: []api.PhotoFile{{ID: fileID, AssetID: assetID, NodeID: 7, Role: "raw", CreatedAt: createdAt}},
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/api/v1/photos/assets" {
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("ETag", `"1"`)
+		w.WriteHeader(http.StatusCreated)
+		if err := json.MarshalWrite(w, asset); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+		}
+	}))
+	t.Cleanup(server.Close)
+	lease := newDaemonLeaseWith(func(context.Context) (*daemonconn.Connection, error) {
+		return daemonconn.New(server.URL, "synthetic-key"), nil
+	}, func(*daemonconn.Connection) error { return nil })
+	validator := mustResolveSchema(catalogMap(toolCatalog(false, true))["create_photo_asset"].OutputSchema)
+
+	result, err := executePhotoWriteTool(t.Context(), lease, "create_photo_asset", validator,
+		[]byte(`{"node_id":7,"role":"raw"}`))
+	require.NoError(t, err)
+	structured, ok := result.StructuredContent.(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, createdAt, structured["created_at"])
+	assert.Equal(t, createdAt, structured["updated_at"])
 }

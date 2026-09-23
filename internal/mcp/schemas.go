@@ -632,9 +632,10 @@ func attachPhotoFileSchemas() (schema, schema) {
 
 func detachPhotoFileSchemas() (schema, schema) {
 	return photoAssetMutationSchemas(schema{
-		"asset_id": uuidSchema(),
-		"revision": integerSchema(1, 0),
-		"file_id":  uuidSchema(),
+		"asset_id":                 uuidSchema(),
+		"revision":                 integerSchema(1, 0),
+		"file_id":                  uuidSchema(),
+		"clear_dependent_sidecars": schema{"type": "boolean"},
 	}, "asset_id", "revision", "file_id")
 }
 
@@ -648,8 +649,9 @@ func excludePhotoAssetSchemas() (schema, schema) {
 
 func promotePhotoNodeSchemas() (schema, schema) {
 	return photoAssetMutationSchemas(schema{
-		"node_id": integerSchema(1, 0),
-		"kind":    enumSchema("photo", "video"),
-		"role":    enumSchema("raw", "image", "video", "sidecar"),
+		"node_id":  integerSchema(1, 0),
+		"revision": integerSchema(1, 0),
+		"kind":     enumSchema("photo", "video"),
+		"role":     enumSchema("raw", "image", "video", "sidecar"),
 	}, "node_id")
 }

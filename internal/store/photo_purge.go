@@ -14,10 +14,35 @@ func (s *Store) adjustPhotosForPurgedNodesTx(ctx context.Context, tx *sql.Tx, no
 		return nil
 	}
 	assetIDs := make(map[string]struct{})
+	var rawFileIDs []string
 	for _, nodeID := range nodeIDs {
-		rows, err := tx.QueryContext(ctx, `SELECT asset_id FROM photo_files WHERE node_id=?`, nodeID)
+		rows, err := tx.QueryContext(ctx, `SELECT asset_id, file_id, role FROM photo_files WHERE node_id=?`, nodeID)
 		if err != nil {
 			return fmt.Errorf("finding photo memberships for purged node %d: %w", nodeID, err)
+		}
+		for rows.Next() {
+			var assetID, fileID, role string
+			if err := rows.Scan(&assetID, &fileID, &role); err != nil {
+				_ = rows.Close() //nolint:sqlclosecheck // close before returning the scan error.
+				return err
+			}
+			assetIDs[assetID] = struct{}{}
+			if role == PhotoRoleRAW {
+				rawFileIDs = append(rawFileIDs, fileID)
+			}
+		}
+		if err := rows.Err(); err != nil {
+			_ = rows.Close()
+			return err
+		}
+		if err := rows.Close(); err != nil {
+			return err
+		}
+	}
+	for _, rawFileID := range rawFileIDs {
+		rows, err := tx.QueryContext(ctx, `SELECT asset_id FROM photo_files WHERE sidecar_of_file_id=?`, rawFileID)
+		if err != nil {
+			return fmt.Errorf("finding sidecars for purged RAW %s: %w", rawFileID, err)
 		}
 		for rows.Next() {
 			var assetID string
@@ -45,6 +70,11 @@ func (s *Store) adjustPhotosForPurgedNodesTx(ctx context.Context, tx *sql.Tx, no
 			return err
 		}
 		before[assetID] = asset
+	}
+	for _, rawFileID := range rawFileIDs {
+		if _, err := tx.ExecContext(ctx, `DELETE FROM photo_files WHERE sidecar_of_file_id=?`, rawFileID); err != nil {
+			return fmt.Errorf("removing sidecars for purged RAW %s: %w", rawFileID, err)
+		}
 	}
 	for _, nodeID := range nodeIDs {
 		if _, err := tx.ExecContext(ctx, `DELETE FROM photo_files WHERE node_id=?`, nodeID); err != nil {
@@ -76,7 +106,8 @@ func (s *Store) adjustPhotosForPurgedNodesTx(ctx context.Context, tx *sql.Tx, no
 			asset.Revision, nowRFC3339(), assetID); err != nil {
 			return fmt.Errorf("repairing photo asset %s after purge: %w", assetID, err)
 		}
-		if err := writePhotoReceiptTx(ctx, tx, "purge", assetID, "", old.Revision, asset.Revision, photoAssetState(old), photoAssetState(asset)); err != nil {
+		changes := photoAssetMemberChanges(old, asset)
+		if err := writePhotoReceiptTx(ctx, tx, "purge", assetID, "", old.Revision, asset.Revision, photoAssetState(old, changes), photoAssetState(asset, changes)); err != nil {
 			return err
 		}
 	}

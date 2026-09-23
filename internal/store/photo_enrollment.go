@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"strings"
 )
 
 // enrollPhotoCandidatesTx is called only after the caller has written all
@@ -36,7 +35,7 @@ func (s *Store) enrollPhotoCandidatesTx(ctx context.Context, tx *sql.Tx, nodeIDs
 			continue
 		}
 		facts := photoNodeFacts(node)
-		if !facts.Qualifies || isGenericRawPhotoName(node.Name, node.MimeType) {
+		if !facts.Qualifies {
 			continue
 		}
 		var existing string
@@ -50,7 +49,7 @@ func (s *Store) enrollPhotoCandidatesTx(ctx context.Context, tx *sql.Tx, nodeIDs
 		} else if child {
 			continue
 		}
-		if _, err := photoAssetCreateTx(ctx, tx, nodeID, inferPhotoRole(facts), facts.AssetKind, nowRFC3339()); err != nil {
+		if _, err := s.photoAssetCreateTx(ctx, tx, nodeID, inferPhotoRole(facts), facts.AssetKind, nowRFC3339()); err != nil {
 			return fmt.Errorf("enrolling photo node %d: %w", nodeID, err)
 		}
 	}
@@ -66,20 +65,4 @@ func emailDocumentChildTx(ctx context.Context, tx *sql.Tx, versionID string) (bo
 		return false, fmt.Errorf("checking email child provenance: %w", err)
 	}
 	return child, nil
-}
-
-func isGenericRawPhotoName(name, mimeType string) bool {
-	if strings.TrimSpace(mimeType) != "" && strings.ToLower(strings.TrimSpace(mimeType)) != "application/octet-stream" {
-		return false
-	}
-	ext := strings.ToLower(name)
-	if dot := strings.LastIndexByte(ext, '.'); dot >= 0 {
-		ext = ext[dot:]
-	}
-	switch ext {
-	case ".3fr", ".arw", ".cr2", ".cr3", ".dng", ".iiq", ".kdc", ".mef", ".mos", ".mrw", ".nef", ".nrw", ".orf", ".pef", ".raf", ".raw", ".rw2", ".rwl", ".sr2", ".srw", ".x3f":
-		return true
-	default:
-		return false
-	}
 }

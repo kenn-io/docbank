@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"strconv"
+	"time"
 
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/apiclient"
@@ -28,6 +29,12 @@ func validatePhotoAssetResponse(asset api.PhotoAsset, etag, requestedID string) 
 	if len(asset.Files) > 256 {
 		return errors.New("photo response exceeds file bound")
 	}
+	if _, err := time.Parse(time.RFC3339Nano, asset.CreatedAt); err != nil {
+		return errors.New("photo response has invalid created_at")
+	}
+	if _, err := time.Parse(time.RFC3339Nano, asset.UpdatedAt); err != nil {
+		return errors.New("photo response has invalid updated_at")
+	}
 	files := make(map[string]api.PhotoFile, len(asset.Files))
 	nodes := make(map[int64]struct{}, len(asset.Files))
 	for _, file := range asset.Files {
@@ -42,6 +49,9 @@ func validatePhotoAssetResponse(asset api.PhotoAsset, etag, requestedID string) 
 		}
 		files[file.ID] = file
 		nodes[file.NodeID] = struct{}{}
+		if _, err := time.Parse(time.RFC3339Nano, file.CreatedAt); err != nil {
+			return errors.New("photo response has invalid file created_at")
+		}
 	}
 	for _, file := range files {
 		if file.SidecarOfID != nil {
@@ -155,12 +165,12 @@ func (c *Connection) AttachPhotoFile(ctx context.Context, assetID string, revisi
 	return asset, nil
 }
 
-func (c *Connection) DetachPhotoFile(ctx context.Context, assetID string, revision int64, fileID string) (api.PhotoAsset, error) {
+func (c *Connection) DetachPhotoFile(ctx context.Context, assetID string, revision int64, fileID string, clearDependentSidecars bool) (api.PhotoAsset, error) {
 	if !validUUIDv4(assetID) || !validUUIDv4(fileID) || revision < 1 {
 		return api.PhotoAsset{}, errors.New("invalid photo detach identity or revision")
 	}
 	var response *http.Response
-	apiResponse, err := c.apiWithResponse(&response).DetachPhotoFile(ctx, &apiclient.DetachPhotoFileRequestOptions{PathParams: &apiclient.DetachPhotoFilePath{AssetID: assetID, FileID: fileID}, Header: &apiclient.DetachPhotoFileHeaders{IfMatch: photoIfMatch(revision)}})
+	apiResponse, err := c.apiWithResponse(&response).DetachPhotoFile(ctx, &apiclient.DetachPhotoFileRequestOptions{PathParams: &apiclient.DetachPhotoFilePath{AssetID: assetID, FileID: fileID}, Header: &apiclient.DetachPhotoFileHeaders{IfMatch: photoIfMatch(revision)}, Query: &apiclient.DetachPhotoFileQuery{ClearDependentSidecars: &clearDependentSidecars}})
 	if err != nil {
 		return api.PhotoAsset{}, err
 	}
@@ -187,13 +197,16 @@ func (c *Connection) ExcludePhotoAsset(ctx context.Context, assetID string, revi
 	if err := validatePhotoAssetResponse(asset, response.Header.Get("ETag"), assetID); err != nil {
 		return api.PhotoAsset{}, err
 	}
-	if asset.Revision != revision+1 {
-		return api.PhotoAsset{}, errors.New("excluded photo response did not advance one revision")
+	if asset.Revision != revision && asset.Revision != revision+1 {
+		return api.PhotoAsset{}, errors.New("excluded photo response has an invalid revision")
+	}
+	if (asset.ExcludedAt != nil) != excluded {
+		return api.PhotoAsset{}, errors.New("excluded photo response has invalid state")
 	}
 	return asset, nil
 }
 
-func (c *Connection) PromotePhotoNode(ctx context.Context, nodeID int64, role, kind string) (api.PhotoAsset, error) {
+func (c *Connection) PromotePhotoNode(ctx context.Context, nodeID int64, expectedRevision *int64, role, kind string) (api.PhotoAsset, error) {
 	if nodeID < 1 {
 		return api.PhotoAsset{}, errors.New("photo node ID must be positive")
 	}
@@ -207,13 +220,24 @@ func (c *Connection) PromotePhotoNode(ctx context.Context, nodeID int64, role, k
 		request.Kind = &value
 	}
 	var response *http.Response
-	apiResponse, err := c.apiWithResponse(&response).PromotePhotoNode(ctx, &apiclient.PromotePhotoNodeRequestOptions{PathParams: &apiclient.PromotePhotoNodePath{NodeID: nodeID}, Body: &request})
+	options := &apiclient.PromotePhotoNodeRequestOptions{PathParams: &apiclient.PromotePhotoNodePath{NodeID: nodeID}, Body: &request}
+	if expectedRevision != nil {
+		ifMatch := photoIfMatch(*expectedRevision)
+		options.Header = &apiclient.PromotePhotoNodeHeaders{IfMatch: &ifMatch}
+	}
+	apiResponse, err := c.apiWithResponse(&response).PromotePhotoNode(ctx, options)
 	if err != nil {
 		return api.PhotoAsset{}, err
 	}
 	asset := *apiResponse
 	if err := validatePhotoAssetResponse(asset, response.Header.Get("ETag"), ""); err != nil {
 		return api.PhotoAsset{}, err
+	}
+	if expectedRevision != nil && asset.Revision != *expectedRevision && asset.Revision != *expectedRevision+1 {
+		return api.PhotoAsset{}, errors.New("promoted photo response has an invalid revision")
+	}
+	if expectedRevision != nil && asset.ExcludedAt != nil {
+		return api.PhotoAsset{}, errors.New("promoted photo response remains excluded")
 	}
 	return asset, nil
 }
@@ -231,8 +255,11 @@ func (c *Connection) SetPhotoDisplay(ctx context.Context, assetID string, revisi
 	if err := validatePhotoAssetResponse(asset, response.Header.Get("ETag"), assetID); err != nil {
 		return api.PhotoAsset{}, err
 	}
-	if asset.Revision != revision+1 {
-		return api.PhotoAsset{}, errors.New("display photo response did not advance one revision")
+	if asset.Revision != revision && asset.Revision != revision+1 {
+		return api.PhotoAsset{}, errors.New("display photo response has an invalid revision")
+	}
+	if !equalPhotoPointer(asset.DisplayOverrideFileID, fileID) {
+		return api.PhotoAsset{}, errors.New("display photo response has invalid override state")
 	}
 	return asset, nil
 }
@@ -263,11 +290,21 @@ func (c *Connection) SetPhotoSettings(ctx context.Context, revision int64, prefe
 		return api.PhotoSettings{}, err
 	}
 	settings := *apiResponse
-	if settings.Revision != revision+1 || settings.Preference != nil && *settings.Preference != "raw" && *settings.Preference != "image" {
+	if settings.Revision != revision && settings.Revision != revision+1 || settings.Preference != nil && *settings.Preference != "raw" && *settings.Preference != "image" {
 		return api.PhotoSettings{}, errors.New("photo settings response has invalid revision")
+	}
+	if !equalPhotoPointer(settings.Preference, preference) {
+		return api.PhotoSettings{}, errors.New("photo settings response has invalid preference")
 	}
 	if response.Header.Get("ETag") != photoIfMatch(settings.Revision) {
 		return api.PhotoSettings{}, errors.New("photo settings response ETag is inconsistent")
 	}
 	return settings, nil
+}
+
+func equalPhotoPointer(left, right *string) bool {
+	if left == nil || right == nil {
+		return left == nil && right == nil
+	}
+	return *left == *right
 }

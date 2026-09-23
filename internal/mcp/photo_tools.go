@@ -128,13 +128,14 @@ func executePhotoWriteTool(
 		}
 	case "detach_photo_file":
 		var input struct {
-			AssetID  string `json:"asset_id"`
-			Revision int64  `json:"revision"`
-			FileID   string `json:"file_id"`
+			AssetID                string `json:"asset_id"`
+			Revision               int64  `json:"revision"`
+			FileID                 string `json:"file_id"`
+			ClearDependentSidecars bool   `json:"clear_dependent_sidecars"`
 		}
 		if err = decodeReadArguments(raw, &input); err == nil {
 			output, err = daemonProcessingStart(ctx, lease, func(c *daemonconn.Connection) (api.PhotoAsset, error) {
-				return c.DetachPhotoFile(ctx, input.AssetID, input.Revision, input.FileID)
+				return c.DetachPhotoFile(ctx, input.AssetID, input.Revision, input.FileID, input.ClearDependentSidecars)
 			})
 		}
 	case "exclude_photo_asset":
@@ -150,13 +151,14 @@ func executePhotoWriteTool(
 		}
 	case "promote_photo_asset":
 		var input struct {
-			NodeID int64  `json:"node_id"`
-			Kind   string `json:"kind"`
-			Role   string `json:"role"`
+			NodeID   int64  `json:"node_id"`
+			Revision *int64 `json:"revision,omitzero"`
+			Kind     string `json:"kind"`
+			Role     string `json:"role"`
 		}
 		if err = decodeReadArguments(raw, &input); err == nil {
 			output, err = daemonProcessingStart(ctx, lease, func(c *daemonconn.Connection) (api.PhotoAsset, error) {
-				return c.PromotePhotoNode(ctx, input.NodeID, input.Role, input.Kind)
+				return c.PromotePhotoNode(ctx, input.NodeID, input.Revision, input.Role, input.Kind)
 			})
 		}
 	default:
