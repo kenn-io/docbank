@@ -151,6 +151,10 @@ func TestRenditionFinalizationContextCancellation(t *testing.T) {
 	require.ErrorIs(t, err, context.Canceled)
 
 	ctx = &cancelAfterXHTMLReadContext{cancelAt: 3}
+	_, err = canonicalEvidenceStringContext(ctx, strings.Repeat("e\u0301", 1<<19))
+	require.ErrorIs(t, err, context.Canceled)
+
+	ctx = &cancelAfterXHTMLReadContext{cancelAt: 3}
 	_, _, err = serializeRenditionBlocksContext(ctx, tableBlocks, 1<<20)
 	require.ErrorIs(t, err, context.Canceled)
 
@@ -159,12 +163,14 @@ func TestRenditionFinalizationContextCancellation(t *testing.T) {
 		{present: true, blocks: []renditionBlock{{kind: renditionParagraph, inlines: []renditionInline{{kind: renditionText, text: "x"}}}}},
 		{present: true, blocks: []renditionBlock{{kind: renditionParagraph, inlines: []renditionInline{{kind: renditionText, text: "x"}}}}},
 	}}
-	ctx = &cancelAfterXHTMLReadContext{cancelAt: 8}
+	ctx = &cancelAfterXHTMLReadContext{cancelAt: 12}
 	output := renditionBuffer{ctx: ctx}
 	result := appendRenditionList(&output, ordered, 100, 0, false)
 	require.True(t, result.truncated)
 	require.ErrorIs(t, output.err, context.Canceled)
-	require.Contains(t, output.String(), "999999998.")
+	require.Contains(t, output.String(), "999999998. x")
+	require.Contains(t, output.String(), "999999999. x")
+	require.NotContains(t, output.String(), "- 999999998\\.")
 }
 
 type trackingReader struct {

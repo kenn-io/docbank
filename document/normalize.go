@@ -109,7 +109,11 @@ func RenditionMarkdownFromXHTMLContext(ctx context.Context, source []byte, maxRu
 				if !writer.charge(int64(len(token))) {
 					return "", ErrRenditionXHTMLBudget
 				}
-				writer.writeText(canonicalEvidenceString(string(token)))
+				value, err := canonicalEvidenceStringContext(ctx, string(token))
+				if err != nil {
+					return "", err
+				}
+				writer.writeText(value)
 			}
 		}
 		if writer.work.exceeded || writer.linkDepthTruncated {
@@ -140,7 +144,10 @@ func RenditionMarkdownFromXHTMLContext(ctx context.Context, source []byte, maxRu
 	if err := ctx.Err(); err != nil {
 		return "", err
 	}
-	text = canonicalEvidenceString(text)
+	text, err = canonicalEvidenceStringContext(ctx, text)
+	if err != nil {
+		return "", err
+	}
 	if truncated || len(text) > maxEvidenceTextBytes || utf8.RuneCountInString(text) > maxRunes {
 		return "", ErrRenditionXHTMLBudget
 	}
@@ -169,7 +176,11 @@ func canonicalizeRenditionBlocks(ctx context.Context, blocks []renditionBlock) e
 			return err
 		}
 		block := &blocks[index]
-		block.code = canonicalEvidenceString(block.code)
+		canonical, err := canonicalEvidenceStringContext(ctx, block.code)
+		if err != nil {
+			return err
+		}
+		block.code = canonical
 		inlines, err := canonicalizeRenditionInlines(ctx, block.inlines)
 		if err != nil {
 			return err
@@ -209,12 +220,17 @@ func canonicalizeRenditionBlocks(ctx context.Context, blocks []renditionBlock) e
 func canonicalizeRenditionInlines(ctx context.Context, values []renditionInline) ([]renditionInline, error) {
 	result := make([]renditionInline, 0, len(values))
 	var text strings.Builder
-	flushText := func() {
+	flushText := func() error {
 		if text.Len() == 0 {
-			return
+			return nil
 		}
-		result = append(result, renditionInline{kind: renditionText, text: canonicalEvidenceString(text.String())})
+		canonical, err := canonicalEvidenceStringContext(ctx, text.String())
+		if err != nil {
+			return err
+		}
+		result = append(result, renditionInline{kind: renditionText, text: canonical})
 		text.Reset()
+		return nil
 	}
 	for _, value := range values {
 		if err := ctx.Err(); err != nil {
@@ -224,9 +240,15 @@ func canonicalizeRenditionInlines(ctx context.Context, values []renditionInline)
 			text.WriteString(value.text)
 			continue
 		}
-		flushText()
+		if err := flushText(); err != nil {
+			return nil, err
+		}
 		if value.kind == renditionInlineCode {
-			value.text = canonicalEvidenceString(value.text)
+			var err error
+			value.text, err = canonicalEvidenceStringContext(ctx, value.text)
+			if err != nil {
+				return nil, err
+			}
 		} else {
 			children, err := canonicalizeRenditionInlines(ctx, value.children)
 			if err != nil {
@@ -236,7 +258,9 @@ func canonicalizeRenditionInlines(ctx context.Context, values []renditionInline)
 		}
 		result = append(result, value)
 	}
-	flushText()
+	if err := flushText(); err != nil {
+		return nil, err
+	}
 	return result, nil
 }
 

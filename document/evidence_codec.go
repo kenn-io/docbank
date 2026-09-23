@@ -2,6 +2,7 @@ package document
 
 import (
 	"cmp"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json/jsontext"
@@ -2019,9 +2020,44 @@ func validateBoundedUTF8(value string, maxBytes int, subject string) error {
 }
 
 func canonicalEvidenceString(value string) string {
-	value = strings.ReplaceAll(value, "\r\n", "\n")
-	value = strings.ReplaceAll(value, "\r", "\n")
-	return norm.NFC.String(value)
+	canonical, _ := canonicalEvidenceStringContext(context.Background(), value)
+	return canonical
+}
+
+func canonicalEvidenceStringContext(ctx context.Context, value string) (string, error) {
+	var normalized strings.Builder
+	normalized.Grow(len(value))
+	for index := 0; index < len(value); {
+		if index&1023 == 0 {
+			if err := ctx.Err(); err != nil {
+				return "", err
+			}
+		}
+		if value[index] == '\r' {
+			normalized.WriteByte('\n')
+			index++
+			if index < len(value) && value[index] == '\n' {
+				index++
+			}
+			continue
+		}
+		normalized.WriteByte(value[index])
+		index++
+	}
+	value = normalized.String()
+	var iterator norm.Iter
+	iterator.InitString(norm.NFC, value)
+	var canonical strings.Builder
+	for !iterator.Done() {
+		if err := ctx.Err(); err != nil {
+			return "", err
+		}
+		canonical.Write(iterator.Next())
+	}
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
+	return canonical.String(), nil
 }
 
 func locatorKindForUnit(kind EvidenceUnitKind) EvidenceLocatorKind {
