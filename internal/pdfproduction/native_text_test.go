@@ -11,6 +11,8 @@ import (
 	"github.com/go-pdf/fpdf"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/document"
+	"go.kenn.io/docbank/document/redaction"
+	"go.kenn.io/docbank/internal/canonical"
 )
 
 func TestNativeVisibilityAmbiguityStopsOnCancellation(t *testing.T) {
@@ -52,5 +54,17 @@ func TestInspectNativeTextAcrossPages(t *testing.T) {
 			text.WriteString(glyph.Text)
 		}
 		require.Equal(t, "alpha", text.String())
+	}
+	if count == 2 {
+		// Each page fits on its own, but retaining both must honor the
+		// document observation budget before alignment builds the map.
+		first, _, err := canonical.BoundedSize(pages[0], 1<<20)
+		require.NoError(t, err)
+		second, _, err := canonical.BoundedSize(pages[1], 1<<20)
+		require.NoError(t, err)
+		_, err = inspectNativeText(t.Context(), Source{bytes.NewReader(encoded.Bytes()), source.Size, source.SHA256}, frames, first+second-1)
+		var problem *redaction.Problem
+		require.ErrorAs(t, err, &problem)
+		require.Equal(t, "render_limit", problem.Code)
 	}
 }

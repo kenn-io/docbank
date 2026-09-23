@@ -10,6 +10,7 @@ import (
 	"io"
 	"strings"
 	"testing"
+	"testing/synctest"
 	"time"
 	"unicode/utf8"
 
@@ -46,6 +47,39 @@ func TestAlignRepeatedNativeTextKeepsDistinctPositions(t *testing.T) {
 	text, err := redaction.Text(plan)
 	require.NoError(t, err)
 	require.Equal(t, "same same\f", string(text))
+}
+
+func TestAlignVisibleGlyphMappedToWhitespaceRequiresMask(t *testing.T) {
+	// Helvetica still paints A, but its extraction map claims that A is a space.
+	content := "BT /F1 24 Tf 72 720 Td (A) Tj ET BT /F2 12 Tf 72 680 Td (visible) Tj ET"
+	cmap := "1 begincodespacerange <00> <FF> endcodespacerange 1 beginbfchar <41> <0020> endbfchar"
+	objects := []string{
+		"<< /Type /Catalog /Pages 2 0 R >>",
+		"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+		"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 4 0 R /F2 7 0 R >> >> /Contents 5 0 R >>",
+		"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /ToUnicode 6 0 R >>",
+		fmt.Sprintf("<< /Length %d >>\nstream\n%s\nendstream", len(content), content),
+		fmt.Sprintf("<< /Length %d >>\nstream\n%s\nendstream", len(cmap), cmap),
+		"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+	}
+	var pdf strings.Builder
+	pdf.WriteString("%PDF-1.4\n")
+	offsets := make([]int, len(objects))
+	for index, object := range objects {
+		offsets[index] = pdf.Len()
+		fmt.Fprintf(&pdf, "%d 0 obj\n%s\nendobj\n", index+1, object)
+	}
+	xref := pdf.Len()
+	fmt.Fprintf(&pdf, "xref\n0 %d\n0000000000 65535 f \n", len(objects)+1)
+	for _, offset := range offsets {
+		fmt.Fprintf(&pdf, "%010d 00000 n \n", offset)
+	}
+	fmt.Fprintf(&pdf, "trailer << /Size %d /Root 1 0 R >>\nstartxref\n%d\n%%%%EOF\n", len(objects)+1, xref)
+	m := alignNativeFixture(t, []byte(pdf.String()), "visible")
+	_, err := redaction.Resolve(m, "redact_selected", nil, pdfproduction.QualifiedRecipe())
+	var problem *redaction.Problem
+	require.ErrorAs(t, err, &problem)
+	require.Equal(t, "mapping_incomplete", problem.Code)
 }
 
 func TestAlignNativeParagraphGeometryAndWhitespace(t *testing.T) {
@@ -750,6 +784,29 @@ func TestRenderImageRenditionUsesExactRetainedPixelsAndPhysicalFrame(t *testing.
 	require.NoError(t, err)
 	require.Equal(t, first, second)
 	require.True(t, bytes.Contains(first, []byte("/MediaBox [0 0 7.2 9.5976]")))
+	for blockedOpen := range 2 {
+		t.Run(fmt.Sprintf("deadline on open %d", blockedOpen), func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				ctx, cancel := context.WithTimeout(t.Context(), 2*time.Minute)
+				defer cancel()
+				bound := input
+				opens := 0
+				bound.OpenImage = func(ctx context.Context, _ document.PageImageV1) (io.ReadCloser, error) {
+					current := opens
+					opens++
+					if current == blockedOpen {
+						<-ctx.Done()
+						return nil, ctx.Err()
+					}
+					return io.NopCloser(bytes.NewReader(pixels)), nil
+				}
+				start := time.Now()
+				_, err := RenderImageRendition(ctx, bound)
+				require.Error(t, err)
+				require.Equal(t, time.Minute, time.Since(start))
+			})
+		})
+	}
 
 	input.ImageReceipt = append(bytes.Clone(receiptBytes), ' ')
 	_, err = RenderImageRendition(t.Context(), input)

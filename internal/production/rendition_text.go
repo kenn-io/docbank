@@ -301,11 +301,6 @@ func paragraphUnits(m redaction.TextMap, evidenceSHA string) []redaction.Unit {
 	return result
 }
 
-type pageSequence struct {
-	pages []pdfproduction.PageArtifact
-	index int
-}
-
 // textPageSequence materializes and encodes exactly one page per Next call.
 // WriteFresh consumes its OpenPNG callback before requesting the next page, so
 // no earlier 33 MiB page raster or encoded PNG remains owned by the sequence.
@@ -332,15 +327,6 @@ func (s *textPageSequence) Next(ctx context.Context) (pdfproduction.PageArtifact
 	}
 	s.index++
 	return artifact, nil
-}
-
-func (s *pageSequence) Next(context.Context) (pdfproduction.PageArtifact, error) {
-	if s.index == len(s.pages) {
-		return pdfproduction.PageArtifact{}, io.EOF
-	}
-	p := s.pages[s.index]
-	s.index++
-	return p, nil
 }
 
 func hashData(value []byte) string { h := sha256.Sum256(value); return hex.EncodeToString(h[:]) }

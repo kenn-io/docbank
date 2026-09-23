@@ -617,6 +617,7 @@ func TestResolverAcceptsMultiThousandAtomSelections(t *testing.T) {
 func TestResolverRejectsIncompleteOrNonCatalogRecipe(t *testing.T) {
 	qualified := testRecipe()
 	for name, mutate := range map[string]func(*redaction.Recipe){
+		"zero value":      func(r *redaction.Recipe) { *r = redaction.Recipe{} },
 		"contract":        func(r *redaction.Recipe) { r.Contract = "" },
 		"renderer":        func(r *redaction.Recipe) { r.RendererSHA256 = strings.Repeat("f", 64) },
 		"writer":          func(r *redaction.Recipe) { r.WriterVersion = "" },

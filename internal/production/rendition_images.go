@@ -63,24 +63,37 @@ func renderImageSetRendition(ctx context.Context, inputs []ImageRenditionInput, 
 	if maxOutputBytes < 1 || maxOutputBytes > qualifiedTextRenditionLimits.MaxOutputBytes {
 		return nil, &Problem{Code: "rendition_limit_exceeded"}
 	}
-	artifacts := make([]pdfproduction.PageArtifact, 0, len(inputs))
-	for _, input := range inputs {
-		artifact, err := imageRenditionArtifact(ctx, input)
-		if err != nil {
-			return nil, err
-		}
-		artifacts = append(artifacts, artifact)
-	}
 	var output bytes.Buffer
 	recipe := pdfproduction.QualifiedRecipe()
 	recipe.MaxStagingBytes = min(recipe.MaxStagingBytes, maxOutputBytes)
-	if err := pdfproduction.WriteRendition(ctx, &output, &pageSequence{pages: artifacts}, recipe); err != nil {
+	if err := pdfproduction.WriteRendition(ctx, &output, &imagePageSequence{inputs: inputs}, recipe); err != nil {
 		if errors.Is(err, pdfproduction.ErrOutputLimit) {
 			return nil, &Problem{Code: "rendition_limit_exceeded"}
 		}
 		return nil, err
 	}
 	return output.Bytes(), nil
+}
+
+type imagePageSequence struct {
+	inputs []ImageRenditionInput
+	index  int
+}
+
+func (s *imagePageSequence) Next(ctx context.Context) (pdfproduction.PageArtifact, error) {
+	if err := ctx.Err(); err != nil {
+		return pdfproduction.PageArtifact{}, err
+	}
+	if s.index == len(s.inputs) {
+		return pdfproduction.PageArtifact{}, io.EOF
+	}
+	// Both validation and the later PNG callback share the writer's page deadline.
+	artifact, err := imageRenditionArtifact(ctx, s.inputs[s.index])
+	if err != nil {
+		return pdfproduction.PageArtifact{}, err
+	}
+	s.index++
+	return artifact, nil
 }
 
 func imageRenditionArtifact(ctx context.Context, input ImageRenditionInput) (pdfproduction.PageArtifact, error) {

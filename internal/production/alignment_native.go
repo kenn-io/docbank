@@ -34,15 +34,18 @@ func alignNative(frames []document.PageFrameV1, inspected []pdfproduction.Native
 			if err != nil {
 				return redaction.TextMap{}, err
 			}
-			// Whitespace carries reading order but no ink requiring a mask.
-			if glyph.Text != "" && allInvisibleWhitespace(glyph.Text) {
-				text.WriteString(glyph.Text)
-				continue
-			}
 			if glyph.GapReason != "" {
 				if ok {
 					result.Gaps = append(result.Gaps, redaction.Gap{Box: box, Anchor: int64(text.Len())})
 				}
+				if allInvisibleWhitespace(glyph.Text) {
+					text.WriteString(glyph.Text)
+				}
+				continue
+			}
+			// Inspection must prove whitespace has no visible text pixels.
+			if glyph.Text != "" && allInvisibleWhitespace(glyph.Text) {
+				text.WriteString(glyph.Text)
 				continue
 			}
 			if glyph.Text == "" || !ok {

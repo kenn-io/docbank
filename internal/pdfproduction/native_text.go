@@ -21,6 +21,7 @@ import (
 	"github.com/klippa-app/go-pdfium/responses"
 	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/document/redaction"
+	"go.kenn.io/docbank/internal/canonical"
 )
 
 // NativeGlyph is one PDFium character observation. Bounds are PDF user-space
@@ -43,7 +44,13 @@ type NativeTextPage struct {
 // InspectNativeText freezes and hashes source once, then inspects individual
 // characters. It deliberately does not use GetPageText: that API includes
 // generated and out-of-crop characters and obscures object visibility.
-func InspectNativeText(ctx context.Context, source Source, frames []document.PageFrameV1) (_ []NativeTextPage, resultErr error) {
+func InspectNativeText(ctx context.Context, source Source, frames []document.PageFrameV1) ([]NativeTextPage, error) {
+	// Retained observations have a separate document budget. A working page
+	// remains bounded by its own character limit before it joins this result.
+	return inspectNativeText(ctx, source, frames, 128<<20)
+}
+
+func inspectNativeText(ctx context.Context, source Source, frames []document.PageFrameV1, maxObservationBytes int64) (_ []NativeTextPage, resultErr error) {
 	if len(frames) == 0 || len(frames) > maxPageCount {
 		return nil, errors.New("invalid native text page inventory")
 	}
@@ -69,6 +76,7 @@ func InspectNativeText(ctx context.Context, source Source, frames []document.Pag
 		}
 	}
 	for index, frame := range frames {
+		var observed NativeTextPage
 		err = e.withInstanceContext(ctx, func(pageCtx context.Context, instance pdfium.Pdfium) (operationErr error) {
 			doc, err := instance.OpenDocument(&requests.OpenDocument{FileReader: io.NewSectionReader(staged, 0, source.Size), FileReaderSize: source.Size})
 			if err != nil {
@@ -82,12 +90,23 @@ func InspectNativeText(ctx context.Context, source Source, frames []document.Pag
 			if err != nil || count.PageCount != len(frames) {
 				return errors.New("native PDF page inventory mismatch")
 			}
-			result[index], err = inspectLoadedNativePage(pageCtx, instance, doc.Document, index, frame, maxTextBytes)
+			observed, err = inspectLoadedNativePage(pageCtx, instance, doc.Document, index, frame, maxTextBytes)
 			return err
 		})
 		if err != nil {
 			return nil, fmt.Errorf("inspect native PDF page %d: %w", frame.Page, err)
 		}
+		// Count the complete observation record, including UTF-8 bytes and
+		// non-text bounds, before retaining another page for alignment.
+		size, exceeded, err := canonical.BoundedSize(observed, maxObservationBytes)
+		if err != nil {
+			return nil, err
+		}
+		if exceeded {
+			return nil, &redaction.Problem{Code: "render_limit"}
+		}
+		maxObservationBytes -= size
+		result[index] = observed
 	}
 	return result, nil
 }
@@ -473,15 +492,24 @@ func reconcileNativeVisibility(ctx context.Context, instance pdfium.Pdfium, docu
 				return err
 			}
 			rect := physicalPixelRect(baseline.Bounds(), frame, box)
-			visible, visibilityErr := nativeGlyphHasUniqueDelta(ctx, baseline, noText, rect, ambiguity, &visits)
+			whitespace := nativeWhitespaceText(glyphs[index].Text)
+			counts := ambiguity
+			if whitespace {
+				counts = nil // Any ink forbids treating this glyph as blank space.
+			}
+			visible, visibilityErr := nativeGlyphHasDelta(ctx, baseline, noText, rect, counts, &visits)
 			if visibilityErr != nil {
 				return visibilityErr
 			}
+			if whitespace {
+				if visible {
+					glyphs[index].GapReason = "visible_whitespace"
+				}
+				continue
+			}
 			if !ok || !visible {
 				glyphs[index].GapReason = "no_unambiguous_rendered_pixel_contribution"
-				if !nativeWhitespaceText(glyphs[index].Text) {
-					glyphs[index].Text = ""
-				}
+				glyphs[index].Text = ""
 			}
 		}
 	}
@@ -624,7 +652,7 @@ func nativeGlyphAmbiguity(ctx context.Context, bounds image.Rectangle, glyphs []
 	return counts, nil
 }
 
-func nativeGlyphHasUniqueDelta(ctx context.Context, baseline, noText image.Image, glyph image.Rectangle, ambiguity []uint8, visits *int64) (bool, error) {
+func nativeGlyphHasDelta(ctx context.Context, baseline, noText image.Image, glyph image.Rectangle, ambiguity []uint8, visits *int64) (bool, error) {
 	bounds := baseline.Bounds()
 	for y := glyph.Min.Y; y < glyph.Max.Y; y++ {
 		for x := glyph.Min.X; x < glyph.Max.X; x++ {
@@ -641,7 +669,7 @@ func nativeGlyphHasUniqueDelta(ctx context.Context, baseline, noText image.Image
 				continue
 			}
 			offset := (y-bounds.Min.Y)*bounds.Dx() + x - bounds.Min.X
-			if ambiguity[offset] == 1 {
+			if ambiguity == nil || ambiguity[offset] == 1 {
 				return true, nil
 			}
 		}

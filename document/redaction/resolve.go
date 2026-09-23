@@ -875,7 +875,7 @@ func requireGapsMasked(m TextMap, masks map[int][]pixelRect, recipe Recipe, work
 }
 
 func qualifiedRecipe(recipe Recipe) bool {
-	return recipe == qualifiedRecipeAtDPI(recipe.DPI)
+	return (recipe.DPI == 300 || recipe.DPI == 600) && recipe == qualifiedRecipeAtDPI(recipe.DPI)
 }
 
 func qualifiedRecipeAtDPI(dpi int) Recipe {
