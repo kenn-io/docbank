@@ -24,12 +24,13 @@ import (
 )
 
 const (
-	textDPI            = 300
-	letterWidthPixels  = 2550
-	letterHeightPixels = 3300
-	marginPixels       = 225
-	fontSizePoints     = 11
-	lineHeightPixels   = 58 // 14pt at 300 DPI, rounded deterministically.
+	problemRenditionLimitExceeded = "rendition_limit_exceeded"
+	textDPI                       = 300
+	letterWidthPixels             = 2550
+	letterHeightPixels            = 3300
+	marginPixels                  = 225
+	fontSizePoints                = 11
+	lineHeightPixels              = 58 // 14pt at 300 DPI, rounded deterministically.
 )
 
 type textRenditionLimits struct {
@@ -72,10 +73,22 @@ func renderTextRendition(ctx context.Context, text string, units []redaction.Uni
 		return nil, redaction.TextMap{}, err
 	}
 	if limits.MaxInputBytes < 1 || limits.MaxPages < 1 || limits.MaxAtoms < 1 || limits.MaxMapBytes < 1 || limits.MaxOutputBytes < 1 || len(text) > limits.MaxInputBytes {
-		return nil, redaction.TextMap{}, &Problem{Code: "rendition_limit_exceeded"}
+		return nil, redaction.TextMap{}, &Problem{Code: problemRenditionLimitExceeded}
 	}
 	if text == "" || !utf8.ValidString(text) {
 		return nil, redaction.TextMap{}, errUnsupportedRendition
+	}
+	if err := redaction.ValidateTextMapBounds(redaction.TextMap{Text: text, Units: units}); err != nil {
+		return nil, redaction.TextMap{}, &Problem{Code: problemRenditionLimitExceeded}
+	}
+	evidence := struct {
+		Contract, Text string
+		Units          []redaction.Unit
+	}{"text-rendition/v1", text, units}
+	if _, exceeded, err := canonical.BoundedSize(evidence, limits.MaxMapBytes); err != nil {
+		return nil, redaction.TextMap{}, err
+	} else if exceeded {
+		return nil, redaction.TextMap{}, &Problem{Code: problemRenditionLimitExceeded}
 	}
 	parsedFont, err := opentype.Parse(pdfproduction.BundledUnicodeFont())
 	if err != nil {
@@ -90,10 +103,7 @@ func renderTextRendition(ctx context.Context, text string, units []redaction.Uni
 	if err != nil {
 		return nil, redaction.TextMap{}, err
 	}
-	evidenceSHA, err := canonicalDigest(struct {
-		Contract, Text string
-		Units          []redaction.Unit
-	}{"text-rendition/v1", text, units})
+	evidenceSHA, err := canonicalDigest(evidence)
 	if err != nil {
 		return nil, redaction.TextMap{}, err
 	}
@@ -125,7 +135,7 @@ func renderTextRendition(ctx context.Context, text string, units []redaction.Uni
 	if observed, exceeded, err := canonical.BoundedSize(m, limits.MaxMapBytes); err != nil {
 		return nil, redaction.TextMap{}, err
 	} else if exceeded || observed > limits.MaxMapBytes {
-		return nil, redaction.TextMap{}, &Problem{Code: "rendition_limit_exceeded"}
+		return nil, redaction.TextMap{}, &Problem{Code: problemRenditionLimitExceeded}
 	}
 	var output bytes.Buffer
 	sequence := &textPageSequence{text: text, face: face, pages: pages, glyphs: glyphs, mapPages: m.Pages}
@@ -133,7 +143,7 @@ func renderTextRendition(ctx context.Context, text string, units []redaction.Uni
 	recipe.MaxStagingBytes = min(recipe.MaxStagingBytes, limits.MaxOutputBytes)
 	if err := pdfproduction.WriteRendition(ctx, &output, sequence, recipe); err != nil {
 		if errors.Is(err, pdfproduction.ErrOutputLimit) {
-			return nil, redaction.TextMap{}, &Problem{Code: "rendition_limit_exceeded"}
+			return nil, redaction.TextMap{}, &Problem{Code: problemRenditionLimitExceeded}
 		}
 		return nil, redaction.TextMap{}, err
 	}
@@ -145,7 +155,7 @@ func renderTextRendition(ctx context.Context, text string, units []redaction.Uni
 		return nil, redaction.TextMap{}, err
 	}
 	if int64(len(canonicalMap)) > limits.MaxMapBytes {
-		return nil, redaction.TextMap{}, &Problem{Code: "rendition_limit_exceeded"}
+		return nil, redaction.TextMap{}, &Problem{Code: problemRenditionLimitExceeded}
 	}
 	m.SHA256 = mapSHA256
 	if err := redaction.ValidateMap(m); err != nil {
@@ -196,7 +206,7 @@ func layoutText(ctx context.Context, text string, face font.Face, limits textRen
 				next++
 			}
 			if !breakLine(offset, next) {
-				return nil, nil, &Problem{Code: "rendition_limit_exceeded"}
+				return nil, nil, &Problem{Code: problemRenditionLimitExceeded}
 			}
 			continue
 		}
@@ -210,11 +220,11 @@ func layoutText(ctx context.Context, text string, face font.Face, limits textRen
 		pixels := max(1, advance.Ceil())
 		if x+pixels > letterWidthPixels-marginPixels && x > marginPixels {
 			if !breakLine(offset, offset) {
-				return nil, nil, &Problem{Code: "rendition_limit_exceeded"}
+				return nil, nil, &Problem{Code: problemRenditionLimitExceeded}
 			}
 		}
 		if len(glyphs) == limits.MaxAtoms {
-			return nil, nil, &Problem{Code: "rendition_limit_exceeded"}
+			return nil, nil, &Problem{Code: problemRenditionLimitExceeded}
 		}
 		glyphs = append(glyphs, textGlyph{span: redaction.Span{Start: int64(offset), End: int64(next)}, page: page, x0: x, y0: baseline - 46, x1: x + pixels, y1: baseline + 12})
 		pages[page].glyphEnd = len(glyphs)

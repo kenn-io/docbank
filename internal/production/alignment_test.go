@@ -754,6 +754,29 @@ func TestRenderTextRenditionEnforcesAggregateLimitsAndCancellation(t *testing.T)
 	require.ErrorIs(t, err, context.Canceled)
 }
 
+func TestRenderTextRenditionBoundsUnitsBeforeLayout(t *testing.T) {
+	for name, unit := range map[string]redaction.Unit{
+		"long ID":       {ID: strings.Repeat("x", 257), Kind: "paragraph", Spans: []redaction.Span{{End: 1}}},
+		"long kind":     {ID: "paragraph-1", Kind: strings.Repeat("x", 65), Spans: []redaction.Span{{End: 1}}},
+		"long frame ID": {ID: "paragraph-1", Kind: "paragraph", Boxes: []redaction.Box{{FrameSHA256: strings.Repeat("x", 65)}}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			// This unsupported glyph would fail layout if unit bounds ran later.
+			_, _, err := RenderTextRendition(t.Context(), "\U0010ffff", []redaction.Unit{unit})
+			var problem *Problem
+			require.ErrorAs(t, err, &problem)
+			require.Equal(t, "rendition_limit_exceeded", problem.Code)
+		})
+	}
+	limits := qualifiedTextRenditionLimits
+	limits.MaxMapBytes = 512
+	unit := redaction.Unit{ID: strings.Repeat("x", 256), Kind: "paragraph", Spans: []redaction.Span{{End: 1}}}
+	_, _, err := renderTextRendition(t.Context(), "\U0010ffff", []redaction.Unit{unit, unit}, limits)
+	var problem *Problem
+	require.ErrorAs(t, err, &problem)
+	require.Equal(t, "rendition_limit_exceeded", problem.Code)
+}
+
 func TestRenderImageRenditionUsesExactRetainedPixelsAndPhysicalFrame(t *testing.T) {
 	var problem *Problem
 	img := image.NewNRGBA(image.Rect(0, 0, 30, 40))
@@ -784,6 +807,16 @@ func TestRenderImageRenditionUsesExactRetainedPixelsAndPhysicalFrame(t *testing.
 	require.NoError(t, err)
 	require.Equal(t, first, second)
 	require.True(t, bytes.Contains(first, []byte("/MediaBox [0 0 7.2 9.5976]")))
+	combined, err := RenderImageSetRendition(t.Context(), []ImageRenditionInput{input, input})
+	require.NoError(t, err)
+	engine, err := pdfproduction.NewPDFium(pdfproduction.QualifiedRecipe())
+	require.NoError(t, err)
+	defer func() { require.NoError(t, engine.Close()) }()
+	raster, err := engine.Render(t.Context(), pdfproduction.Source{Reader: bytes.NewReader(combined),
+		Size: int64(len(combined)), SHA256: sum(combined)}, redaction.Page{Number: 2,
+		FrameSHA256: frameSHA, Width: frame.Width, Height: frame.Height}, pdfproduction.QualifiedRecipe())
+	require.NoError(t, err)
+	require.Equal(t, img.Pix, raster.Pixels.Pix)
 	for blockedOpen := range 2 {
 		t.Run(fmt.Sprintf("deadline on open %d", blockedOpen), func(t *testing.T) {
 			synctest.Test(t, func(t *testing.T) {

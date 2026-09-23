@@ -76,14 +76,14 @@ func renderImageSetRendition(ctx context.Context, inputs []ImageRenditionInput, 
 		return nil, &Problem{Code: problemBoundEvidenceMismatch}
 	}
 	if maxOutputBytes < 1 || maxOutputBytes > qualifiedTextRenditionLimits.MaxOutputBytes {
-		return nil, &Problem{Code: "rendition_limit_exceeded"}
+		return nil, &Problem{Code: problemRenditionLimitExceeded}
 	}
 	var output bytes.Buffer
 	recipe := pdfproduction.QualifiedRecipe()
 	recipe.MaxStagingBytes = min(recipe.MaxStagingBytes, maxOutputBytes)
 	if err := pdfproduction.WriteRendition(ctx, &output, &imagePageSequence{inputs: inputs}, recipe); err != nil {
 		if errors.Is(err, pdfproduction.ErrOutputLimit) {
-			return nil, &Problem{Code: "rendition_limit_exceeded"}
+			return nil, &Problem{Code: problemRenditionLimitExceeded}
 		}
 		return nil, err
 	}
@@ -103,7 +103,7 @@ func (s *imagePageSequence) Next(ctx context.Context) (pdfproduction.PageArtifac
 		return pdfproduction.PageArtifact{}, io.EOF
 	}
 	// Both validation and the later PNG callback share the writer's page deadline.
-	artifact, err := imageRenditionArtifact(ctx, s.inputs[s.index])
+	artifact, err := imageRenditionArtifact(ctx, s.inputs[s.index], s.index+1)
 	if err != nil {
 		return pdfproduction.PageArtifact{}, err
 	}
@@ -111,7 +111,7 @@ func (s *imagePageSequence) Next(ctx context.Context) (pdfproduction.PageArtifac
 	return artifact, nil
 }
 
-func imageRenditionArtifact(ctx context.Context, input ImageRenditionInput) (pdfproduction.PageArtifact, error) {
+func imageRenditionArtifact(ctx context.Context, input ImageRenditionInput, number int) (pdfproduction.PageArtifact, error) {
 	if document.ValidatePageFrameV1(input.Frame) != nil {
 		return pdfproduction.PageArtifact{}, errUnsupportedRendition
 	}
@@ -146,7 +146,8 @@ func imageRenditionArtifact(ctx context.Context, input ImageRenditionInput) (pdf
 	if err != nil || int64(config.Width) != input.Image.Width || int64(config.Height) != input.Image.Height {
 		return pdfproduction.PageArtifact{}, &Problem{Code: problemBoundEvidenceMismatch}
 	}
-	page := redaction.Page{Number: input.Frame.Page, FrameSHA256: frameSHA, Width: input.Frame.Width, Height: input.Frame.Height}
+	// The wrapper numbers output pages independently of each retained source.
+	page := redaction.Page{Number: number, FrameSHA256: frameSHA, Width: input.Frame.Width, Height: input.Frame.Height}
 	layout := redaction.PageLayout{Source: page, Output: page}
 	layoutBytes, err := canonical.Marshal(layout)
 	if err != nil {

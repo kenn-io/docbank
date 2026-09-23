@@ -14,7 +14,7 @@ func DecodeTextMap(raw []byte) (TextMap, string, error) {
 		return TextMap{}, "", mapProblem("aligned-text bytes exceed bounds")
 	}
 	value, err := canonical.DecodeWith(raw, func(value TextMap) ([]byte, error) {
-		if err := preflightTextMap(value); err != nil {
+		if err := ValidateTextMapBounds(value); err != nil {
 			return nil, err
 		}
 		encoded, _, err := CanonicalTextMap(value)
@@ -100,7 +100,7 @@ func CanonicalResolved(value Resolved) ([]byte, string, error) {
 // CanonicalTextMap returns the self-digest-free canonical payload and digest.
 // Producers use it once after canonical ordering; validators recompute it.
 func CanonicalTextMap(value TextMap) ([]byte, string, error) {
-	if err := preflightTextMap(value); err != nil {
+	if err := ValidateTextMapBounds(value); err != nil {
 		return nil, "", err
 	}
 	value = NormalizeTextMap(value)

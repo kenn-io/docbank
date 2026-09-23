@@ -50,7 +50,7 @@ func ValidateDecision(d Decision) error {
 }
 
 func ValidateMap(value TextMap) error {
-	if err := preflightTextMap(value); err != nil {
+	if err := ValidateTextMapBounds(value); err != nil {
 		return err
 	}
 	if value.Contract != "aligned-text/v1" {
@@ -156,10 +156,11 @@ func ValidateMap(value TextMap) error {
 	return nil
 }
 
-// preflightTextMap bounds every collection and variable-length string before
+// ValidateTextMapBounds bounds every collection and variable-length string before
 // NormalizeTextMap can clone, sort, or derive semantic-unit boxes. It applies
-// to decoded bytes and caller-built values alike.
-func preflightTextMap(value TextMap) error {
+// to decoded bytes and caller-built values alike. Producers may pass partial
+// maps before allocating; ValidateMap still checks the complete map contract.
+func ValidateTextMapBounds(value TextMap) error {
 	if len(value.Text) > int(maxResolveMapBytes) || len(value.Pages) > maxResolvePages ||
 		len(value.Atoms) > maxResolveAtoms || len(value.Units) > maxResolveAtoms || len(value.Gaps) > maxResolveAtoms ||
 		len(value.Contract) > 64 || len(value.SHA256) > 64 || len(value.PDFSHA256) > 64 || len(value.EvidenceSHA256) > 64 {

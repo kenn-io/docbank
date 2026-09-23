@@ -150,6 +150,10 @@ func boxesIntersectAny(left, right []redaction.Box) bool {
 }
 
 func bindProvidedUnits(m redaction.TextMap, input []redaction.Unit) ([]redaction.Unit, error) {
+	m.Units = input
+	if err := redaction.ValidateTextMapBounds(m); err != nil {
+		return nil, err
+	}
 	units := make([]redaction.Unit, len(input))
 	copy(units, input)
 	for i := range units {
