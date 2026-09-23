@@ -6,8 +6,8 @@ $packages = go list -tags fts5 ./... | Where-Object { $_ -ne 'go.kenn.io/docbank
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
 # Storage dominates CI. Split it without adding runners or changing tests.
-# ponytail: two name ranges balance the current suite; remeasure if it grows unevenly.
-$storage = @('^(Test|Example|Fuzz)[A-L]', '^(Test|Example|Fuzz)($|[^A-L])') | ForEach-Object {
+# ponytail: four name ranges keep Windows arm64 under the timeout; remeasure if it grows unevenly.
+$storage = @('[A-C]', '[D-L]', '[M-P]', '($|[^A-P])') | ForEach-Object { "^(Test|Example|Fuzz)$_" } | ForEach-Object {
     $process = Start-Process go -NoNewWindow -PassThru -ArgumentList (
         @('test', '-timeout', '30m', '-tags', 'fts5') + $extra + @('-run', $_, './internal/store')
     )
