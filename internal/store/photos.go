@@ -542,11 +542,11 @@ func (s *Store) PromotePhotoNode(ctx context.Context, nodeID int64, expectedRevi
 			if loadErr != nil {
 				return loadErr
 			}
+			_, facts, factsErr := photoNodeForMutationTx(tx, nodeID)
+			if factsErr != nil {
+				return factsErr
+			}
 			if role != "" || kind != "" {
-				_, facts, factsErr := photoNodeForMutationTx(tx, nodeID)
-				if factsErr != nil {
-					return factsErr
-				}
 				if role != "" {
 					if err := validatePhotoRoleForNode(role, facts); err != nil {
 						return err
@@ -630,10 +630,10 @@ func (s *Store) AttachPhotoFile(ctx context.Context, assetID string, revision, n
 			return fmt.Errorf("checking photo node ownership: %w", err)
 		}
 		if role == "" {
-			role = inferPhotoRole(facts)
 			if !facts.Qualifies {
-				role = PhotoRoleRAW
+				return fmt.Errorf("node %d: %w", nodeID, ErrPhotoNodeNotEligible)
 			}
+			role = inferPhotoRole(facts)
 		}
 		if err := validatePhotoRoleForNode(role, facts); err != nil {
 			return err

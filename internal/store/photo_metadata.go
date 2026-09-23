@@ -183,6 +183,9 @@ func validatePhotoFileMetadataRecord(v metadataPhotoFile) error {
 	if v.Type != metadataPhotoFileType || validateUUIDv4(v.FileID) != nil || validateUUIDv4(v.AssetID) != nil || v.NodeID < 1 || !photoRoleValid(v.Role) {
 		return errors.New("invalid photo file metadata")
 	}
+	if v.Role == PhotoRoleSidecar && v.SidecarOfID == nil {
+		return errors.New("invalid photo sidecar pointer")
+	}
 	if v.SidecarOfID != nil && validateUUIDv4(*v.SidecarOfID) != nil {
 		return errors.New("invalid photo sidecar pointer")
 	}
