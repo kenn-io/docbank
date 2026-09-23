@@ -110,7 +110,7 @@ var currentSchemaTables = [...]string{
 	"production_sets", "production_revisions", "production_members",
 	"production_member_policy_facts", "production_revision_email_publications", "production_revision_gate_authority",
 	"production_decisions", "production_operations", "production_audit_evidence",
-	"production_finalized_revisions", "production_jobs", "production_job_artifacts",
+	"production_finalized_revisions", "production_jobs", "production_job_artifacts", "production_job_render_plans",
 }
 
 // prepareReleasedSchemaUpgrade recognizes only storage layouts that shipped in

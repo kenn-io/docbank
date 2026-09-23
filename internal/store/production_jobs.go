@@ -8,12 +8,14 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"slices"
 	"time"
 
 	documentproduction "go.kenn.io/docbank/document/production"
 	"go.kenn.io/docbank/document/redaction"
 	"go.kenn.io/docbank/internal/canonical"
 	productionservice "go.kenn.io/docbank/internal/production"
+	"go.kenn.io/kit/packstore"
 )
 
 // LoadFinalizedProduction reads J's immutable finalized-revision authority.
@@ -49,7 +51,106 @@ func (s *Store) LoadFinalizedProduction(ctx context.Context, setID string, revis
 	if authority.Prepared.SetID != draft.SetID || authority.Prepared.Revision != draft.Revision || authority.Prepared.ETag != draft.ETag || authority.Prepared.MemberHash != draft.MemberHash || authority.Prepared.DecisionsSHA256 != draft.DecisionsSHA256 {
 		return productionservice.FinalizedProduction{}, ErrPackageConflict
 	}
+	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	if err != nil {
+		return productionservice.FinalizedProduction{}, err
+	}
+	defer func() { _ = tx.Rollback() }()
+	for _, prepared := range authority.Prepared.Members {
+		if err := s.validateFinalizedProductionMemberTx(ctx, tx, prepared); err != nil {
+			return productionservice.FinalizedProduction{}, ErrInvalidProduction
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return productionservice.FinalizedProduction{}, ErrInvalidProduction
+	}
 	return productionservice.FinalizedProduction{Draft: draft, Authority: authority}, nil
+}
+
+func (s *Store) validateFinalizedProductionMemberTx(ctx context.Context, tx *sql.Tx, prepared documentproduction.PreparedMember) error {
+	member := prepared.Member
+	if member.VaultID != s.vaultID {
+		return ErrInvalidProduction
+	}
+	mapAuthority, found, err := loadProductionTextMapTx(ctx, tx, member.MapSHA256)
+	if err != nil || !found || mapAuthority.SourceNodeID != member.NodeID ||
+		mapAuthority.Source.VersionID != member.SourceVersionID || mapAuthority.Source.SHA256 != member.SourceSHA256 ||
+		mapAuthority.Source.Size != member.SourceSize || mapAuthority.PDFSHA256 != member.PDFSHA256 ||
+		mapAuthority.PDFSize != member.PDFSize || !slices.Equal(mapAuthority.Map.Pages, prepared.Resolved.Pages) {
+		return ErrInvalidProduction
+	}
+	pageInventory, err := productionPageInventorySHA256(mapAuthority.Map.Pages)
+	if err != nil || pageInventory != member.PageInventorySHA256 {
+		return ErrInvalidProduction
+	}
+	if len(prepared.Frames) != len(mapAuthority.Map.Pages) {
+		return ErrInvalidProduction
+	}
+	for index, page := range mapAuthority.Map.Pages {
+		frame := prepared.Frames[index]
+		if frame.Page != page.Number || frame.SHA256 != page.FrameSHA256 || frame.Width != page.Width || frame.Height != page.Height {
+			return ErrInvalidProduction
+		}
+	}
+	var currentVersion string
+	if err := tx.QueryRowContext(ctx, `SELECT current_version_id FROM nodes WHERE id=?`, member.NodeID).Scan(&currentVersion); err != nil || currentVersion != member.SourceVersionID {
+		return ErrInvalidProduction
+	}
+	return nil
+}
+
+// FinalizedProductionPDF is a private, catalog-authorized stream handle.
+// The consumer must read through EOF or call Verify before using its bytes.
+type FinalizedProductionPDF struct {
+	SourceVersionID, PDFSHA256, RenditionAttachmentID, RenditionBuildID, RenditionArtifactID string
+	Size                                                                                     int64
+	Stream                                                                                   packstore.VerifiedReadCloser
+}
+
+// OpenFinalizedProductionPDF takes no caller-supplied hash. It reloads the
+// sealed occurrence and its exact source/map/rendition relation first.
+func (s *Store) OpenFinalizedProductionPDF(ctx context.Context, setID string, revision int64, memberID string, opener RenditionBlobReader) (FinalizedProductionPDF, error) {
+	if opener == nil || memberID == "" {
+		return FinalizedProductionPDF{}, ErrInvalidProduction
+	}
+	finalized, err := s.LoadFinalizedProduction(ctx, setID, revision)
+	if err != nil {
+		return FinalizedProductionPDF{}, err
+	}
+	for _, prepared := range finalized.Authority.Prepared.Members {
+		member := prepared.Member
+		if member.ID != memberID {
+			continue
+		}
+		var mapAuthority ProductionTextMapAuthority
+		tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+		if err != nil {
+			return FinalizedProductionPDF{}, err
+		}
+		mapAuthority, found, loadErr := loadProductionTextMapTx(ctx, tx, member.MapSHA256)
+		if loadErr != nil || !found || s.validateFinalizedProductionMemberTx(ctx, tx, prepared) != nil || tx.Commit() != nil {
+			_ = tx.Rollback()
+			return FinalizedProductionPDF{}, ErrInvalidProduction
+		}
+		stream, size, err := opener.OpenStreamContext(ctx, member.PDFSHA256)
+		if err != nil {
+			if stream != nil {
+				_ = stream.Close()
+			}
+			return FinalizedProductionPDF{}, ErrInvalidProduction
+		}
+		if stream == nil {
+			return FinalizedProductionPDF{}, ErrInvalidProduction
+		}
+		if size != member.PDFSize {
+			_ = stream.Close()
+			return FinalizedProductionPDF{}, ErrInvalidProduction
+		}
+		return FinalizedProductionPDF{SourceVersionID: member.SourceVersionID, PDFSHA256: member.PDFSHA256,
+			RenditionAttachmentID: mapAuthority.RenditionAttachmentID, RenditionBuildID: mapAuthority.RenditionBuildID,
+			RenditionArtifactID: mapAuthority.RenditionArtifactID, Size: size, Stream: stream}, nil
+	}
+	return FinalizedProductionPDF{}, ErrInvalidProduction
 }
 
 type productionSnapshotFields struct {

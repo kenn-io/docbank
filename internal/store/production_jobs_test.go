@@ -92,7 +92,7 @@ func TestProductionJobStorePublicationRequiresStagedManifestAndLiveLease(t *test
 	endorsementBytes, err := canonical.Marshal([]any{})
 	require.NoError(t, err)
 	endorsementHash := sha256.Sum256(endorsementBytes)
-	receipt := documentproduction.ProductionReceipt{Contract: documentproduction.ProductionReceiptContractV1, ID: job.ID, JobID: job.ID, SetID: req.SetID, Revision: req.Revision, RevisionSHA256: req.RevisionSHA256, PreparedInputSHA256: req.PreparedInputSHA256, PolicySHA256: productionHash("policy"), NumberReservationSHA256: reservation.SHA256, LayoutSHA256: req.NumberingProfileSHA256, EndorsementsSHA256: hex.EncodeToString(endorsementHash[:]), ArtifactManifestSHA256: manifest.SHA256, CreatedAt: nowRFC3339()}
+	receipt := documentproduction.ProductionReceipt{Contract: documentproduction.ProductionReceiptContractV1, ID: job.ID, JobID: job.ID, SetID: req.SetID, Revision: req.Revision, RevisionSHA256: req.RevisionSHA256, PreparedInputSHA256: req.PreparedInputSHA256, PolicySHA256: productionHash("policy"), NumberReservationSHA256: reservation.SHA256, LayoutSHA256: req.NumberingProfileSHA256, EndorsementsSHA256: hex.EncodeToString(endorsementHash[:]), ArtifactManifestSHA256: manifest.SHA256, CreatedAt: time.Now().UTC().Format(time.RFC3339Nano)}
 	_, receipt.SHA256, err = documentproduction.CanonicalProductionReceipt(receipt)
 	require.NoError(t, err)
 	wrongManifest := manifest
