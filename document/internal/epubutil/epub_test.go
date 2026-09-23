@@ -191,6 +191,14 @@ func TestReadPackagesContextCancelsOnCachedRootfile(t *testing.T) {
 	require.GreaterOrEqual(t, ctx.calls, ctx.cancelAt)
 }
 
+func TestMetadataXMLContextCancelsDuringComment(t *testing.T) {
+	body := []byte(`<container><!--` + strings.Repeat("x", 1<<20) + `--></container>`)
+	ctx := &cancelAfterParseContext{cancelAt: 2}
+	err := validateMetadataXMLContext(ctx, body)
+	require.ErrorIs(t, err, context.Canceled)
+	require.GreaterOrEqual(t, ctx.calls, ctx.cancelAt)
+}
+
 type cancelOnOffsetReaderAt struct {
 	reader           *bytes.Reader
 	offset           int64

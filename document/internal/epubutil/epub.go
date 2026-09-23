@@ -145,12 +145,16 @@ const (
 )
 
 func validateMetadataXMLContext(ctx context.Context, body []byte) error {
+	checkContext := func(index int) error {
+		if index&1023 == 0 {
+			return ctx.Err()
+		}
+		return nil
+	}
 	elements := 0
 	for index := 0; index < len(body); {
-		if index&1023 == 0 {
-			if err := ctx.Err(); err != nil {
-				return err
-			}
+		if err := checkContext(index); err != nil {
+			return err
 		}
 		if body[index] != '<' || index+1 >= len(body) {
 			index++
@@ -159,6 +163,9 @@ func validateMetadataXMLContext(ctx context.Context, body []byte) error {
 		if bytes.HasPrefix(body[index:], []byte("<!--")) {
 			index += len("<!--")
 			for index+2 < len(body) && !bytes.Equal(body[index:index+3], []byte("-->")) {
+				if err := checkContext(index); err != nil {
+					return err
+				}
 				index++
 			}
 			index += min(3, len(body)-index)
@@ -167,6 +174,9 @@ func validateMetadataXMLContext(ctx context.Context, body []byte) error {
 		if bytes.HasPrefix(body[index:], []byte("<![CDATA[")) {
 			index += len("<![CDATA[")
 			for index+2 < len(body) && !bytes.Equal(body[index:index+3], []byte("]]>")) {
+				if err := checkContext(index); err != nil {
+					return err
+				}
 				index++
 			}
 			index += min(3, len(body)-index)
@@ -175,6 +185,9 @@ func validateMetadataXMLContext(ctx context.Context, body []byte) error {
 		if body[index+1] == '?' {
 			index += 2
 			for index+1 < len(body) && (body[index] != '?' || body[index+1] != '>') {
+				if err := checkContext(index); err != nil {
+					return err
+				}
 				index++
 			}
 			index += min(2, len(body)-index)
@@ -187,6 +200,9 @@ func validateMetadataXMLContext(ctx context.Context, body []byte) error {
 		index++
 		if closing {
 			for index < len(body) && body[index] != '>' {
+				if err := checkContext(index); err != nil {
+					return err
+				}
 				index++
 			}
 			index += min(1, len(body)-index)
@@ -199,10 +215,8 @@ func validateMetadataXMLContext(ctx context.Context, body []byte) error {
 		attributes := 0
 		quote := byte(0)
 		for index < len(body) {
-			if index&1023 == 0 {
-				if err := ctx.Err(); err != nil {
-					return err
-				}
+			if err := checkContext(index); err != nil {
+				return err
 			}
 			character := body[index]
 			if quote != 0 {
