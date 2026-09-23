@@ -9,16 +9,19 @@ import (
 	"go.kenn.io/docbank/internal/canonical"
 )
 
-func resolveExportEmailPDF(ctx context.Context, q metadataQuerier, version string, policy bundle.RolePolicy, base string) (bundle.Role, error) {
+func resolveExportEmailPDF(ctx context.Context, q metadataQuerier, version, generation string, policy bundle.RolePolicy, base string) (bundle.Role, error) {
 	var receipt EmailPDFReceipt
 	var err error
 	if policy.ProfileFingerprint != "" {
 		receipt, err = emailPDFReceipt(ctx, q, version, policy.ProfileFingerprint)
 	} else {
-		receipt, err = exportEmailPDFForRecipe(ctx, q, version, policy.RecipeSHA256)
+		receipt, err = exportEmailPDFForRecipe(ctx, q, version, generation, policy.RecipeSHA256)
 	}
 	if err != nil {
 		return bundle.Role{}, err
+	}
+	if generation != "" && receipt.Binding.GenerationID != generation {
+		return bundle.Role{}, ErrNotFound
 	}
 	raw, err := canonical.Marshal(receipt)
 	if err != nil {
@@ -28,9 +31,9 @@ func resolveExportEmailPDF(ctx context.Context, q metadataQuerier, version strin
 }
 
 // Recipes are common across source-specific profiles. Select only a retained
-// receipt for the requested recipe; multiple decoded generations are ambiguous
-// and require an explicit profile instead of silently choosing one.
-func exportEmailPDFForRecipe(ctx context.Context, q metadataQuerier, version, recipeSHA string) (EmailPDFReceipt, error) {
+// receipt for the requested recipe and attachment generation, when selected.
+// Multiple remaining generations require an explicit profile.
+func exportEmailPDFForRecipe(ctx context.Context, q metadataQuerier, version, generation, recipeSHA string) (EmailPDFReceipt, error) {
 	var selected *EmailPDFReceipt
 	after := ""
 	for {
@@ -42,6 +45,9 @@ func exportEmailPDFForRecipe(ctx context.Context, q metadataQuerier, version, re
 			receipt, err := emailPDFReceipt(ctx, q, version, profile)
 			if err != nil {
 				return EmailPDFReceipt{}, err
+			}
+			if generation != "" && receipt.Binding.GenerationID != generation {
+				continue
 			}
 			raw, err := canonical.Marshal(receipt.Binding.Recipe)
 			if err != nil {

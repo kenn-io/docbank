@@ -240,13 +240,9 @@ func (s *Store) CreateExportPlan(ctx context.Context, owner string, r bundle.Pla
 			return err
 		}
 		err := walkExportMembers(ctx, tx, r.SourceID, func(m bundle.Member) error {
-			d, err := resolveExportDocument(ctx, tx, m, r.Roles)
-			if err != nil {
-				return err
-			}
 			publication := publications[m.VersionID]
 			delete(publications, m.VersionID)
-			return expandExportAttachments(ctx, tx, d, r.Roles, publication, write)
+			return resolveExportDocumentRows(ctx, tx, m, r.Roles, publication, write)
 		})
 		if err != nil {
 			return err
@@ -392,13 +388,13 @@ func exportPlanFingerprint(ctx context.Context, q metadataQuerier, p bundle.Plan
 	})
 }
 
-func resolveExportDocument(ctx context.Context, tx *sql.Tx, m bundle.Member, policies []bundle.RolePolicy) (bundle.Document, error) {
+func resolveExportDocument(ctx context.Context, q metadataQuerier, m bundle.Member, policies []bundle.RolePolicy, generation string) (bundle.Document, error) {
 	d := bundle.Document{Member: m, Roles: []bundle.Role{}}
 	var revision int64
 	var trash sql.NullString
 	var hash string
 	var size int64
-	err := tx.QueryRowContext(ctx, `SELECT n.name,n.revision,n.trashed_at,v.mime_type,v.blob_hash,v.size FROM nodes n JOIN content_versions v ON v.node_id=n.id WHERE n.id=? AND v.version_id=?`, m.NodeID, m.VersionID).Scan(&d.Name, &revision, &trash, &d.MediaType, &hash, &size)
+	err := q.QueryRowContext(ctx, `SELECT n.name,n.revision,n.trashed_at,v.mime_type,v.blob_hash,v.size FROM nodes n JOIN content_versions v ON v.node_id=n.id WHERE n.id=? AND v.version_id=?`, m.NodeID, m.VersionID).Scan(&d.Name, &revision, &trash, &d.MediaType, &hash, &size)
 	if err != nil {
 		return d, err
 	}
@@ -408,7 +404,7 @@ func resolveExportDocument(ctx context.Context, tx *sql.Tx, m bundle.Member, pol
 	if hash != m.SHA256 || size != m.Size || m.Revision != 0 && m.Revision != revision {
 		return d, bundle.ErrConflict
 	}
-	d.Path, err = pathOf(ctx, tx, m.NodeID)
+	d.Path, err = pathOf(ctx, q, m.NodeID)
 	if err != nil {
 		return d, err
 	}
@@ -426,15 +422,15 @@ func resolveExportDocument(ctx context.Context, tx *sql.Tx, m bundle.Member, pol
 			roles = append(roles, bundle.Role{Role: "original", Status: "available", Path: base + "original", SHA256: m.SHA256, Size: m.Size, MediaType: d.MediaType})
 		case "text":
 			var role bundle.Role
-			role, err = resolveExportText(ctx, tx, m, policy, base)
+			role, err = resolveExportText(ctx, q, m, policy, base)
 			if err == nil {
 				roles = append(roles, role)
 			}
 		case "pages":
-			roles, d.Frames, err = resolveExportPages(ctx, tx, m, policy, base)
+			roles, d.Frames, err = resolveExportPages(ctx, q, m, policy, base)
 		case "email_pdf":
 			var role bundle.Role
-			role, err = resolveExportEmailPDF(ctx, tx, m.VersionID, policy, base)
+			role, err = resolveExportEmailPDF(ctx, q, m.VersionID, generation, policy, base)
 			if err == nil {
 				roles = append(roles, role)
 			}

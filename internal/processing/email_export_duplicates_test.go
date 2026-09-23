@@ -1,12 +1,15 @@
 package processing
 
 import (
+	"archive/zip"
 	"bytes"
+	"encoding/csv"
 	"encoding/json/v2"
 	"io"
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/google/uuid"
@@ -75,16 +78,56 @@ func TestExportExplicitCollapsePreservesAllOccurrenceReceipts(t *testing.T) {
 	require.Equal(t, 2, parents)
 	require.Equal(t, 4, children)
 	require.Equal(t, 3, collapsed)
-	file, err := os.Create(filepath.Join(t.TempDir(), "collapsed.zip"))
-	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, file.Close()) })
-	receipt, err := bundle.Write(t.Context(), file, plan, walk, func(r bundle.Role) (io.ReadCloser, error) {
-		stream, _, e := f.blobs.OpenStreamContext(t.Context(), r.SHA256)
-		return stream, e
-	}, nil)
-	require.NoError(t, err)
-	_, err = bundle.Verify(t.Context(), file, receipt.Size, plan.Fingerprint)
-	require.NoError(t, err)
+	for _, packaging := range []string{"flat", "volumes"} {
+		t.Run(packaging, func(t *testing.T) {
+			p := plan
+			if packaging == "volumes" {
+				r.OperationID = uuid.NewString()
+				r.VolumeLimits = &bundle.VolumeLimits{Roles: 1, RoleBytes: 1 << 20}
+				p, err = f.catalog.CreateExportPlan(t.Context(), "owner", r)
+				require.NoError(t, err)
+			}
+			file, err := os.Create(filepath.Join(t.TempDir(), "collapsed.zip"))
+			require.NoError(t, err)
+			t.Cleanup(func() { require.NoError(t, file.Close()) })
+			receipt, err := bundle.Write(t.Context(), file, p, func(visit func(bundle.Document) error) error {
+				return f.catalog.WalkExportDocuments(t.Context(), p.ID, visit)
+			}, func(r bundle.Role) (io.ReadCloser, error) {
+				stream, _, e := f.blobs.OpenStreamContext(t.Context(), r.SHA256)
+				return stream, e
+			}, nil)
+			require.NoError(t, err)
+			_, err = bundle.Verify(t.Context(), file, receipt.Size, p.Fingerprint)
+			require.NoError(t, err)
+			archive, err := zip.NewReader(file, receipt.Size)
+			require.NoError(t, err)
+			paths := map[string]bool{}
+			for _, entry := range archive.File {
+				paths[entry.Name] = true
+				if strings.HasPrefix(entry.Name, "volumes/") {
+					stream, err := entry.Open()
+					require.NoError(t, err)
+					data, err := io.ReadAll(stream)
+					require.NoError(t, err)
+					require.NoError(t, stream.Close())
+					volume, err := zip.NewReader(bytes.NewReader(data), int64(len(data)))
+					require.NoError(t, err)
+					for _, output := range volume.File {
+						paths[output.Name] = true
+					}
+				}
+			}
+			metadata, err := archive.Open("metadata.csv")
+			require.NoError(t, err)
+			rows, err := csv.NewReader(metadata).ReadAll()
+			require.NoError(t, err)
+			require.NoError(t, metadata.Close())
+			require.Len(t, rows, 7)
+			for _, row := range rows[1:] {
+				require.True(t, paths[row[7]], "CSV role_path must name a physical output: %v", row)
+			}
+		})
+	}
 	for _, change := range []string{"foreign reference", "missing reference", "changed count"} {
 		t.Run(change, func(t *testing.T) {
 			p := plan

@@ -106,7 +106,11 @@ var csvHeader = []string{"node_id", "version_id", "source_sha256", "name", "path
 
 func writeCSVDocument(w *csv.Writer, d Document) error {
 	for _, r := range d.Roles {
-		row := []string{strconv.FormatInt(d.NodeID, 10), d.VersionID, d.SHA256, csvCell(d.Name), csvCell(d.Path), r.Role, r.Status, r.Path, r.SHA256, strconv.FormatInt(r.Size, 10)}
+		path := r.Path
+		if r.ReuseOf != "" {
+			path = r.ReuseOf
+		}
+		row := []string{strconv.FormatInt(d.NodeID, 10), d.VersionID, d.SHA256, csvCell(d.Name), csvCell(d.Path), r.Role, r.Status, path, r.SHA256, strconv.FormatInt(r.Size, 10)}
 		if err := w.Write(row); err != nil {
 			return err
 		}

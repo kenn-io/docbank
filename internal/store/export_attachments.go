@@ -13,45 +13,52 @@ import (
 
 const exportInventoryComplete = "complete"
 
-func expandExportAttachments(ctx context.Context, q metadataQuerier, parent bundle.Document, policies []bundle.RolePolicy, selected string, write func(bundle.Document) error) error {
+func resolveExportDocumentRows(ctx context.Context, q metadataQuerier, member bundle.Member, policies []bundle.RolePolicy, selected string, write func(bundle.Document) error) error {
 	var attachments []bundle.RolePolicy
 	for _, p := range policies {
 		if p.Role == "attachment_original" || p.Role == "attachment_pdf" {
 			attachments = append(attachments, p)
 		}
 	}
-	if len(attachments) == 0 {
-		if selected != "" {
+	var publication emailDocumentPublicationRecord
+	var inventory *bundle.AttachmentInventory
+	if len(attachments) > 0 {
+		var err error
+		publication, err = exportAttachmentPublication(ctx, q, member.VersionID, selected)
+		if selected != "" && errors.Is(err, ErrNotFound) {
 			return bundle.ErrConflict
 		}
-		return write(parent)
-	}
-	publication, err := exportAttachmentPublication(ctx, q, parent.VersionID, selected)
-	if selected != "" && errors.Is(err, ErrNotFound) {
-		return bundle.ErrConflict
-	}
-	if err != nil && !errors.Is(err, ErrNotFound) {
-		return err
-	}
-	if errors.Is(err, ErrNotFound) {
-		parent.Inventory = &bundle.AttachmentInventory{State: mediaCoverageUnavailable}
-	} else {
-		if err = validateEmailDocumentPublication(ctx, q, publication); err != nil {
+		if err != nil && !errors.Is(err, ErrNotFound) {
 			return err
 		}
-		p, r := publication.Request, publication.Receipt
-		if p.Parent != (document.EmailDocumentIdentity{NodeID: parent.NodeID, VersionID: parent.VersionID, SHA256: parent.SHA256, Size: parent.Size}) {
-			return bundle.ErrConflict
+		if errors.Is(err, ErrNotFound) {
+			inventory = &bundle.AttachmentInventory{State: mediaCoverageUnavailable}
+		} else {
+			if err = validateEmailDocumentPublication(ctx, q, publication); err != nil {
+				return err
+			}
+			p, r := publication.Request, publication.Receipt
+			if p.Parent != (document.EmailDocumentIdentity{NodeID: member.NodeID, VersionID: member.VersionID, SHA256: member.SHA256, Size: member.Size}) {
+				return bundle.ErrConflict
+			}
+			inventory = &bundle.AttachmentInventory{OperationID: p.OperationID, RequestDigest: r.RequestDigest, GenerationID: p.GenerationID, AttachmentID: p.AttachmentID, State: r.InventoryState, Total: len(r.Relations)}
 		}
-		parent.Inventory = &bundle.AttachmentInventory{OperationID: p.OperationID, RequestDigest: r.RequestDigest, GenerationID: p.GenerationID, AttachmentID: p.AttachmentID, State: r.InventoryState, Total: len(r.Relations)}
-	}
-	if parent.Inventory.State != exportInventoryComplete {
-		for _, policy := range attachments {
-			if !policy.AllowUnavailable {
-				return fmt.Errorf("%w: attachment inventory for %d/%s is %s", bundle.ErrUnavailable, parent.NodeID, parent.VersionID, parent.Inventory.State)
+		if inventory.State != exportInventoryComplete {
+			for _, policy := range attachments {
+				if !policy.AllowUnavailable {
+					return fmt.Errorf("%w: attachment inventory for %d/%s is %s", bundle.ErrUnavailable, member.NodeID, member.VersionID, inventory.State)
+				}
 			}
 		}
+	} else if selected != "" {
+		return bundle.ErrConflict
 	}
+	// The selected attachment inventory also binds the parent's body PDF.
+	parent, err := resolveExportDocument(ctx, q, member, policies, publication.Request.GenerationID)
+	if err != nil {
+		return err
+	}
+	parent.Inventory = inventory
 	if err = write(parent); err != nil {
 		return err
 	}
@@ -71,7 +78,7 @@ func expandExportAttachments(ctx context.Context, q metadataQuerier, parent bund
 				if policy.Role == "attachment_original" {
 					role = bundle.Role{Role: policy.Role, Status: roleAvailable, Path: base + "original", SHA256: child.BlobHash, Size: child.Size, MediaType: child.MimeType}
 				} else {
-					role, e = resolveExportEmailPDF(ctx, q, child.ID, policy, base)
+					role, e = resolveExportEmailPDF(ctx, q, child.ID, "", policy, base)
 					if e != nil && !errors.Is(e, ErrNotFound) && !errors.Is(e, sql.ErrNoRows) {
 						return e
 					}
