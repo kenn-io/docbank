@@ -129,7 +129,7 @@ func TestRenditionFinalizationContextCancellation(t *testing.T) {
 		listItems[index].present = true
 	}
 	listBlocks := []renditionBlock{{kind: renditionListBlock, list: &renditionList{ordered: true, start: "1", items: listItems}}}
-	var ctx context.Context = &cancelOnXHTMLReadContext{cancelAt: 3}
+	var ctx context.Context = &cancelOnXHTMLReadContext{cancelAt: 4}
 	err := canonicalizeRenditionBlocks(ctx, tableBlocks)
 	require.ErrorIs(t, err, context.Canceled)
 
@@ -138,7 +138,7 @@ func TestRenditionFinalizationContextCancellation(t *testing.T) {
 	err = canonicalizeRenditionBlocks(ctx, tableCellBlocks)
 	require.ErrorIs(t, err, context.Canceled)
 
-	ctx = &cancelOnXHTMLReadContext{cancelAt: 3}
+	ctx = &cancelOnXHTMLReadContext{cancelAt: 4}
 	err = canonicalizeRenditionBlocks(ctx, listBlocks)
 	require.ErrorIs(t, err, context.Canceled)
 
