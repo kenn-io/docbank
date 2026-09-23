@@ -31,6 +31,49 @@ import (
 	"go.kenn.io/docbank/sqlite/modernc"
 )
 
+func TestVaultCloseDrainsProcessingMutationBeforeCancel(t *testing.T) {
+	root := t.TempDir()
+	vault, err := New(t.Context(), Config{Root: root})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, vault.Close()) })
+	ctx, cancel := context.WithCancel(t.Context())
+	stopWorkers := vault.processingCancel
+	vault.processingCancel = func() { stopWorkers(); cancel() }
+	entered, proceed := make(chan struct{}), make(chan struct{})
+	mutationDone := make(chan error, 1)
+	vault.startProcessingWorker(ctx, func(ctx context.Context) error {
+		err := (embeddedMutationGate{vault: vault}).MutateContext(ctx, func() error {
+			close(entered)
+			<-proceed
+			_, err := vault.metadata.EnsureDir(ctx, vault.metadata.RootID(), "shutdown-committed")
+			return err
+		})
+		mutationDone <- err
+		<-ctx.Done()
+		return ctx.Err()
+	})
+	<-entered
+	closed := make(chan error, 1)
+	go func() { closed <- vault.Close() }()
+	// Observe Close excluding new public operations before completing the mutation.
+	assert.Eventually(t, func() bool {
+		if vault.lifecycle.TryRLock() {
+			vault.lifecycle.RUnlock()
+			return false
+		}
+		return true
+	}, time.Second, time.Millisecond)
+	close(proceed)
+	require.NoError(t, <-mutationDone)
+	require.NoError(t, <-closed)
+
+	reopened, err := New(t.Context(), Config{Root: root})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, reopened.Close()) })
+	_, err = reopened.Stat(t.Context(), "/shutdown-committed")
+	require.NoError(t, err)
+}
+
 func TestEmbeddedCoverageMappingPreservesRebuildCounters(t *testing.T) {
 	got := fromCoverageClass(internalprocessing.CoverageClass{
 		Name: "semantic", Required: true, State: "rebuilding", Rebuilding: 2, PreviousServing: 1, Total: 2,

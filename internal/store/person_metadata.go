@@ -113,6 +113,8 @@ type metadataCustodianAssignment struct {
 	AssignmentID     string  `json:"assignment_id"`
 	ScopeKind        string  `json:"scope_kind"`
 	IngestID         *string `json:"ingest_id"`
+	PackageID        *string `json:"package_id"`
+	PackageRecordID  *string `json:"package_record_id"`
 	NodeID           *int64  `json:"node_id"`
 	ContentVersionID *string `json:"content_version_id"`
 	PersonID         *string `json:"person_id"`
@@ -163,7 +165,7 @@ var personMetadataRequiredFields = map[string][]string{
 	metadataPersonAliasType:         {metadataTypeField, "retired_person_id", "surviving_person_id", "reason", "retired_at"},
 	metadataPersonMergeType:         {metadataTypeField, "merge_id", "operation_id", "request_sha256", "survivor_person_id", "absorbed_person_id", "absorbed_display_name", "moved_json", "survivor_revision_before", "survivor_revision_after", metadataCreatedAtField},
 	metadataPersonSplitType:         {metadataTypeField, "operation_id", "request_sha256", "receipt_json", metadataCreatedAtField},
-	metadataCustodianAssignmentType: {metadataTypeField, "assignment_id", "scope_kind", metadataIngestIDField, "node_id", metadataContentVersionIDField, "person_id", "raw_label", "raw_label_folded", "rank", "basis", "source_ref", metadataRevisionField, "recorded_at", "retired_at"},
+	metadataCustodianAssignmentType: {metadataTypeField, "assignment_id", "scope_kind", metadataIngestIDField, "package_id", "package_record_id", "node_id", metadataContentVersionIDField, "person_id", "raw_label", "raw_label_folded", "rank", "basis", "source_ref", metadataRevisionField, "recorded_at", "retired_at"},
 	metadataPersonAssertionType:     {metadataTypeField, "assertion_id", metadataContentVersionIDField, "person_id", "role", "action", "note", "recorded_at", metadataRevisionField},
 	metadataPersonCandidateType:     {metadataTypeField, "candidate_id", "actor_key", "display_name", "suggested_person_id", "reason", "evidence_json", "evidence_sha256", "occurrence_count", metadataRevisionField, "state", "decided_person_id", metadataCreatedAtField, "decided_at"},
 }
@@ -172,8 +174,8 @@ var personMetadataNullableFields = map[string]map[string]bool{
 	metadataPersonExternalType: {"last_seen_revision": true},
 	metadataPersonAliasType:    {"surviving_person_id": true},
 	metadataCustodianAssignmentType: {
-		metadataIngestIDField: true,
-		"node_id":             true, metadataContentVersionIDField: true, "person_id": true, "retired_at": true,
+		metadataIngestIDField: true, "package_id": true, "package_record_id": true,
+		"node_id": true, metadataContentVersionIDField: true, "person_id": true, "retired_at": true,
 	},
 	metadataPersonCandidateType: {
 		"suggested_person_id": true, "decided_person_id": true, "decided_at": true,
@@ -352,19 +354,19 @@ func exportPersonSplits(ctx context.Context, q metadataQuerier, write metadataWr
 }
 
 func exportCustodianAssignments(ctx context.Context, q metadataQuerier, write metadataWrite) error {
-	rows, err := q.QueryContext(ctx, `SELECT assignment_id,scope_kind,ingest_id,node_id,content_version_id,person_id,raw_label,raw_label_folded,rank,basis,source_ref,revision,recorded_at,retired_at FROM custodian_assignments ORDER BY assignment_id`)
+	rows, err := q.QueryContext(ctx, `SELECT assignment_id,scope_kind,ingest_id,package_id,package_record_id,node_id,content_version_id,person_id,raw_label,raw_label_folded,rank,basis,source_ref,revision,recorded_at,retired_at FROM custodian_assignments ORDER BY assignment_id`)
 	if err != nil {
 		return fmt.Errorf("exporting custodian assignments: %w", err)
 	}
 	defer func() { _ = rows.Close() }()
 	for rows.Next() {
 		r := metadataCustodianAssignment{Type: metadataCustodianAssignmentType}
-		var ingest, version, person, retired sql.NullString
+		var ingest, packageID, packageRecord, version, person, retired sql.NullString
 		var node sql.NullInt64
-		if err := rows.Scan(&r.AssignmentID, &r.ScopeKind, &ingest, &node, &version, &person, &r.RawLabel, &r.RawLabelFolded, &r.Rank, &r.Basis, &r.SourceRef, &r.Revision, &r.RecordedAt, &retired); err != nil {
+		if err := rows.Scan(&r.AssignmentID, &r.ScopeKind, &ingest, &packageID, &packageRecord, &node, &version, &person, &r.RawLabel, &r.RawLabelFolded, &r.Rank, &r.Basis, &r.SourceRef, &r.Revision, &r.RecordedAt, &retired); err != nil {
 			return err
 		}
-		r.IngestID = stringPtr(ingest)
+		r.IngestID, r.PackageID, r.PackageRecordID = stringPtr(ingest), stringPtr(packageID), stringPtr(packageRecord)
 		r.NodeID, r.ContentVersionID, r.PersonID = int64Ptr(node), stringPtr(version), stringPtr(person)
 		r.RetiredAt = stringPtr(retired)
 		if err := validateMetadataCustodianAssignment(r); err != nil {
@@ -570,13 +572,32 @@ func validateMetadataCustodianAssignment(r metadataCustodianAssignment) error {
 	if r.PersonID != nil && validateUUIDv4(*r.PersonID) != nil {
 		return errors.New("invalid custodian assignment person")
 	}
-	if r.ScopeKind == "collection" && (r.NodeID != nil || r.ContentVersionID != nil) ||
-		r.ScopeKind == "document" && r.IngestID != nil {
-		return errors.New("invalid custodian scope coordinates")
+	switch r.ScopeKind {
+	case "collection":
+		if r.IngestID == nil || r.PackageID != nil || r.PackageRecordID != nil || r.NodeID != nil || r.ContentVersionID != nil {
+			return errors.New("invalid custodian scope coordinates")
+		}
+	case "package":
+		if r.IngestID != nil || r.PackageID == nil || r.PackageRecordID == nil || r.NodeID != nil || r.ContentVersionID != nil {
+			return errors.New("invalid custodian scope coordinates")
+		}
+	case "document":
+		if r.IngestID != nil || r.PackageID != nil || r.PackageRecordID != nil || r.NodeID == nil || r.ContentVersionID == nil {
+			return errors.New("invalid custodian scope coordinates")
+		}
+	default:
+		return errors.New("invalid custodian assignment scope")
 	}
 	scope := CustodianScope{Kind: r.ScopeKind}
 	if r.IngestID != nil {
 		scope.IngestID = *r.IngestID
+	}
+	if r.PackageID != nil {
+		scope.PackageID = *r.PackageID
+	}
+	if r.PackageRecordID != nil {
+		scope.PackageRecordID = *r.PackageRecordID
+		scope.HasPackageRecordID = true
 	}
 	if r.NodeID != nil {
 		scope.NodeID = *r.NodeID
@@ -588,6 +609,7 @@ func validateMetadataCustodianAssignment(r metadataCustodianAssignment) error {
 		return err
 	}
 	if scope.Kind == "collection" && validateUUIDv4(scope.IngestID) != nil ||
+		scope.Kind == "package" && validateUUIDv4(scope.PackageID) != nil ||
 		scope.Kind == "document" && validateUUIDv4(scope.ContentVersionID) != nil {
 		return errors.New("invalid custodian assignment scope identity")
 	}
@@ -741,7 +763,7 @@ func importPersonDecisionMetadataRecord(ctx context.Context, tx *sql.Tx, kind st
 		if err := validateMetadataCustodianAssignment(r); err != nil {
 			return err
 		}
-		_, err := tx.ExecContext(ctx, `INSERT INTO custodian_assignments(assignment_id,scope_kind,ingest_id,node_id,content_version_id,person_id,raw_label,raw_label_folded,rank,basis,source_ref,revision,recorded_at,retired_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, r.AssignmentID, r.ScopeKind, r.IngestID, r.NodeID, r.ContentVersionID, r.PersonID, r.RawLabel, r.RawLabelFolded, r.Rank, r.Basis, r.SourceRef, r.Revision, r.RecordedAt, r.RetiredAt)
+		_, err := tx.ExecContext(ctx, `INSERT INTO custodian_assignments(assignment_id,scope_kind,ingest_id,package_id,package_record_id,node_id,content_version_id,person_id,raw_label,raw_label_folded,rank,basis,source_ref,revision,recorded_at,retired_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, r.AssignmentID, r.ScopeKind, r.IngestID, r.PackageID, r.PackageRecordID, r.NodeID, r.ContentVersionID, r.PersonID, r.RawLabel, r.RawLabelFolded, r.Rank, r.Basis, r.SourceRef, r.Revision, r.RecordedAt, r.RetiredAt)
 		return err
 	case metadataPersonAssertionType:
 		var r metadataPersonDocumentAssertion
@@ -797,8 +819,12 @@ func validatePersonMetadataState(ctx context.Context, q metadataQuerier) error {
 		{"custodian scope authority", `SELECT EXISTS(
 			SELECT 1 FROM custodian_assignments c
 			LEFT JOIN ingests i ON i.id=c.ingest_id
+			LEFT JOIN packages p ON p.package_id=c.package_id
 			LEFT JOIN content_versions v ON v.version_id=c.content_version_id
 			WHERE (c.scope_kind='collection' AND i.id IS NULL)
+			   OR (c.scope_kind='package' AND (p.package_id IS NULL OR
+			       (c.package_record_id<>'' AND NOT EXISTS(SELECT 1 FROM package_records r
+			         WHERE r.package_id=c.package_id AND r.row_id=c.package_record_id))))
 			   OR (c.scope_kind='document' AND (v.version_id IS NULL OR v.node_id<>c.node_id))
 		)`, nil},
 		{"person identity bounds", `SELECT EXISTS(

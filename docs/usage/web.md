@@ -484,6 +484,35 @@ Browser upload accepts individual files. Folder recursion, server-filesystem
 ingest, watched-inbox configuration, and replacing an existing document remain
 CLI or authenticated API workflows.
 
+## Import load files
+
+1. Browse to the destination folder.
+2. Choose **Import load files**.
+3. Choose a ZIP that holds the DAT or CSV load file, an optional OPT or LFP
+   page map, and the referenced original documents, images, and supplied text.
+4. Pick the metadata profile, page-map profile, and source encoding, then
+   choose **Upload and preview**.
+5. Resolve blocking diagnostics, name the package and sending party, then
+   choose **Import package**.
+
+The ZIP uses the authenticated upload channel and is retained as a sealed
+container before preflight reads it. The drawer shows imported, gap, and total
+counts, plus the operation ID, as the job runs.
+
+**Keep supported records and report gaps** allows an import to retain records
+when referenced files become unavailable after preflight. Blocking preflight
+diagnostics must still be resolved. Without this option, the worker verifies
+every declared file before creating document entries. **Index package-supplied
+text** makes the sender's text files searchable.
+
+Browser row responses omit fields marked sensitive by the retained mapping.
+Member lists and raw timeline inputs require the daemon API key.
+
+Closing the drawer stops its progress updates. **Lock web session** revokes
+the session and cancels unfinished imports it owns. Cancellation retains
+committed records and removes unfinished document entries as described in the
+[package command reference](../cli-reference.md#docbank-package).
+
 ## Download verified content
 
 The selected document card previews PDF and PNG pages, eligible UTF-8 text,

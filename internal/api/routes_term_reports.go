@@ -258,7 +258,7 @@ func registerTermReportRoutes(api huma.API, d Deps, gate *OperationGate, cache *
 			Path: "/api/v1/search-exports/{id}/" + format, Summary: "Download frozen export " + format,
 			Responses: map[string]*huma.Response{"200": {Description: "Frozen export artifact",
 				Content: map[string]*huma.MediaType{openAPIType: {
-					Schema: &huma.Schema{Type: openAPIStringType, Format: "binary"},
+					Schema: &huma.Schema{Type: openAPIStringType, Format: openAPIBinaryFormat},
 				}},
 			}}},
 			func(ctx context.Context, in *struct {

@@ -1,9 +1,12 @@
 package api_test
 
 import (
+	"archive/zip"
 	"bufio"
+	"bytes"
 	"context"
 	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json/jsontext"
 	"encoding/json/v2"
 	"fmt"
@@ -11,21 +14,165 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/canonical"
 	"go.kenn.io/docbank/internal/loadfile"
+	storepkg "go.kenn.io/docbank/internal/store"
+	"go.kenn.io/docbank/sqlite"
 	"golang.org/x/text/encoding/unicode"
 )
+
+func TestPackageImportAdmitsFrozenPreflightAndReplaysOperation(t *testing.T) {
+	srv, catalog := newPackageTestServer(t)
+	root := syntheticPackageRoot(t)
+	previewResponse := srv.post(t, mustPackageJSON(t, api.PackagePreflightRequest{
+		Profile: "dat-concordance-v1", Encoding: "utf-8", SourceKind: "root", SourceRef: root,
+	}))
+	require.Equal(t, http.StatusOK, previewResponse.Code, previewResponse.Body.String())
+	var preview api.PackagePreflight
+	require.NoError(t, json.Unmarshal(previewResponse.Body.Bytes(), &preview))
+	require.False(t, preview.Blocking)
+	request := api.PackageImportRequest{
+		PreflightID: preview.PreflightID, Into: "/", Name: "synthetic-package",
+		OperationID: uuid.NewString(), IndexSuppliedText: true,
+	}
+	first := srv.call(t, http.MethodPost, "/api/v1/packages/imports", mustPackageJSON(t, request), nil)
+	require.Equal(t, http.StatusAccepted, first.Code, first.Body.String())
+	var job api.PackageImportJob
+	require.NoError(t, json.Unmarshal(first.Body.Bytes(), &job))
+	require.Equal(t, request.OperationID, job.OperationID)
+	require.Equal(t, preview.PreflightID, job.PreflightID)
+	require.Equal(t, preview.Records, job.Total)
+	require.Equal(t, "queued", job.State)
+	require.NotEmpty(t, job.PackageID)
+	stored, err := catalog.PackageImportJob(t.Context(), "vault:"+catalog.VaultID(), request.OperationID)
+	require.NoError(t, err)
+	require.Equal(t, job.JobID, stored.ID)
+	read := srv.get(t, "/api/v1/packages/imports/"+request.OperationID)
+	require.Equal(t, http.StatusOK, read.Code, read.Body.String())
+	browserRead := srv.call(t, http.MethodGet, "/api/v1/packages/imports/"+request.OperationID, "",
+		map[string]string{"X-Api-Key": "", api.WebSessionHeader: packageBrowserToken(t, srv)})
+	require.Equal(t, http.StatusNotFound, browserRead.Code, "a browser session cannot read the master owner's import")
+	replay := srv.call(t, http.MethodPost, "/api/v1/packages/imports", mustPackageJSON(t, request), nil)
+	require.Equal(t, http.StatusAccepted, replay.Code, replay.Body.String())
+	require.JSONEq(t, first.Body.String(), replay.Body.String())
+	request.Name = "changed-package"
+	conflict := srv.call(t, http.MethodPost, "/api/v1/packages/imports", mustPackageJSON(t, request), nil)
+	require.Equal(t, http.StatusConflict, conflict.Code, conflict.Body.String())
+	cancelled := srv.call(t, http.MethodPost, "/api/v1/packages/imports/"+job.OperationID+"/cancel", "", nil)
+	require.Equal(t, http.StatusOK, cancelled.Code, cancelled.Body.String())
+	var stopped api.PackageImportJob
+	require.NoError(t, json.Unmarshal(cancelled.Body.Bytes(), &stopped))
+	require.Equal(t, "cancelled", stopped.State)
+	require.Equal(t, job.JobID, stopped.JobID)
+}
+
+func TestPackagePreflightRejectsObjectAboveIngestBound(t *testing.T) {
+	srv, catalog := newPackageTestServer(t)
+	root := syntheticPackageRoot(t)
+	path := filepath.Join(root, "VOL001", "oversized.pdf")
+	file, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY, 0o600)
+	require.NoError(t, err)
+	require.NoError(t, file.Truncate(1<<32+1))
+	require.NoError(t, file.Close())
+	response := srv.post(t, mustPackageJSON(t, api.PackagePreflightRequest{
+		Profile: "dat-concordance-v1", Encoding: "utf-8", SourceKind: "root", SourceRef: root,
+	}))
+	require.Equal(t, http.StatusRequestEntityTooLarge, response.Code, response.Body.String())
+	require.Zero(t, tableCounts(t, catalog).packagePreflights)
+}
+
+func TestPackagePreflightRejectsRecordAboveReceiptBound(t *testing.T) {
+	srv, catalog := newPackageTestServer(t)
+	root := syntheticPackageRoot(t)
+	var header, row []string
+	header = append(header, "DOCID", "NATIVE")
+	row = append(row, "DOC-A", "NATIVES/DOC-A.pdf")
+	for index := range 14 {
+		header = append(header, fmt.Sprintf("EXTRA%02d", index))
+		row = append(row, strings.Repeat("\"", 64<<10))
+	}
+	line := func(fields []string) string { return "þ" + strings.Join(fields, "þ\x14þ") + "þ\r\n" }
+	require.NoError(t, os.WriteFile(filepath.Join(root, "VOL001", "DATA", "ab-package.dat"),
+		[]byte(line(header)+line(row)), 0o600))
+	response := srv.post(t, mustPackageJSON(t, api.PackagePreflightRequest{
+		Profile: "dat-concordance-v1", Encoding: "utf-8", SourceKind: "root", SourceRef: root,
+	}))
+	require.Equal(t, http.StatusRequestEntityTooLarge, response.Code, response.Body.String())
+	require.Zero(t, tableCounts(t, catalog).packagePreflights)
+}
+
+func TestSealedZIPPackagePreflightRetainsContainerBinding(t *testing.T) {
+	srv, catalog := newPackageTestServer(t)
+	root := syntheticPackageRoot(t)
+	var archive bytes.Buffer
+	writer := zip.NewWriter(&archive)
+	require.NoError(t, filepath.Walk(root, func(name string, info os.FileInfo, walkErr error) error {
+		if walkErr != nil || info.IsDir() {
+			return walkErr
+		}
+		rel, err := filepath.Rel(root, name)
+		if err != nil {
+			return err
+		}
+		entry, err := writer.Create(filepath.ToSlash(rel))
+		if err != nil {
+			return fmt.Errorf("create ZIP fixture entry: %w", err)
+		}
+		content, err := os.ReadFile(name)
+		if err != nil {
+			return err
+		}
+		_, err = entry.Write(content)
+		return err
+	}))
+	require.NoError(t, writer.Close())
+	digest := sha256.Sum256(archive.Bytes())
+	containerID := "synthetic-load-file-zip"
+	created := srv.call(t, http.MethodPost, "/api/v1/packages/containers", mustPackageJSON(t, map[string]any{
+		"container_id": containerID, "sha256": hex.EncodeToString(digest[:]), "size": archive.Len(),
+	}), nil)
+	require.Equal(t, 201, created.Code, created.Body.String())
+	upload, err := http.NewRequest(http.MethodPut, srv.ts.URL+"/api/v1/packages/containers/"+containerID+"/chunks/0", bytes.NewReader(archive.Bytes()))
+	require.NoError(t, err)
+	upload.Header.Set(api.BlobHashHeader, hex.EncodeToString(digest[:]))
+	upload.Header.Set(api.BlobSizeHeader, strconv.Itoa(archive.Len()))
+	response, err := srv.ts.Client().Do(upload)
+	require.NoError(t, err)
+	require.NoError(t, response.Body.Close())
+	require.Equal(t, 200, response.StatusCode)
+	sealed := srv.call(t, http.MethodPost, "/api/v1/packages/containers/"+containerID+"/seal", "", nil)
+	require.Equal(t, 200, sealed.Code, sealed.Body.String())
+	request := api.PackagePreflightRequest{Profile: "dat-concordance-v1", Encoding: "utf-8", SourceKind: "container", SourceRef: containerID}
+	preview := srv.call(t, http.MethodPost, "/api/v1/packages/containers/"+containerID+"/preflight", mustPackageJSON(t, request), nil)
+	require.Equal(t, 200, preview.Code, preview.Body.String())
+	var out api.PackagePreflight
+	require.NoError(t, json.Unmarshal(preview.Body.Bytes(), &out))
+	require.Equal(t, "container", out.SourceKind)
+	require.Equal(t, 2, out.Records)
+	require.Equal(t, 3, out.Pages)
+	require.NotContains(t, out.SourceRef, root)
+	record, err := catalog.PackagePreflight(t.Context(), "vault:"+catalog.VaultID(), out.PreflightID)
+	require.NoError(t, err)
+	require.Equal(t, containerID, record.SourceLocator)
+	require.NotEmpty(t, record.ProfileJSON)
+	require.NotEmpty(t, record.MappingJSON)
+	read := srv.get(t, "/api/v1/packages/preflights/"+out.PreflightID)
+	require.Equal(t, 200, read.Code, read.Body.String())
+}
 
 func TestPreflightPersistsOneExpiringRowAndMutatesNothingElse(t *testing.T) {
 	srv, store := newPackageTestServer(t)
 	before := tableCounts(t, store)
-	rawBody, err := json.Marshal(api.PackagePreflightRequest{Profile: "dat-concordance-v1", Encoding: "utf-8", SourceKind: "root", SourceRef: syntheticPackageRoot(t)})
+	root := syntheticPackageRoot(t)
+	rawBody, err := json.Marshal(api.PackagePreflightRequest{Profile: "dat-concordance-v1", Encoding: "utf-8", SourceKind: "root", SourceRef: root})
 	require.NoError(t, err)
 	response := srv.post(t, string(rawBody))
 	require.Equal(t, 200, response.Code, response.Body.String())
@@ -44,6 +191,15 @@ func TestPreflightPersistsOneExpiringRowAndMutatesNothingElse(t *testing.T) {
 	assert.NotEmpty(t, out.ExpiresAt)
 	read := srv.get(t, "/api/v1/packages/preflights/"+out.PreflightID)
 	require.Equal(t, 200, read.Code, read.Body.String())
+	driver := storepkg.DefaultSQLiteDriver()
+	db, err := driver.Open(store.DBPath, sqlite.OpenOptions{Access: sqlite.ReadWriteExisting, TransactionMode: sqlite.Deferred})
+	require.NoError(t, err)
+	defer func() { require.NoError(t, db.Close()) }()
+	var locator, profileJSON, mappingJSON string
+	require.NoError(t, db.QueryRow(`SELECT source_locator,profile_json,mapping_json FROM package_preflights WHERE preflight_id=?`, out.PreflightID).Scan(&locator, &profileJSON, &mappingJSON))
+	assert.Equal(t, root, locator)
+	assert.NotEmpty(t, profileJSON)
+	assert.NotEmpty(t, mappingJSON)
 }
 
 func TestPreflightRejectsUnknownMembersAndOversizeBodies(t *testing.T) {

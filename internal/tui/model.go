@@ -36,6 +36,15 @@ const (
 	keyEnter                 = "enter"
 	keyTab                   = "tab"
 	keyCtrlR                 = "ctrl+r"
+	keyBackspace             = "backspace"
+	keyLeft                  = "left"
+	keyDown                  = "down"
+	keyPageUp                = "pgup"
+	keyPageDown              = "pgdown"
+	keyHome                  = "home"
+	keyEnd                   = "end"
+	hintHelp                 = "? help"
+	hintQuit                 = "q quit"
 	searchPlaceholder        = "search names and extracted text"
 	naturalNames             = "names"
 	naturalAuto              = "auto"
@@ -70,6 +79,9 @@ type Backend interface {
 	AuditHistory(
 		ctx context.Context, path string, nodeID int64, limit int, cursor string,
 	) (api.AuditEventPage, error)
+	Packages(ctx context.Context, direction, after string, limit int) (api.PackagePage, error)
+	PackageMembers(ctx context.Context, packageID string, afterOrdinal, limit int) (api.PackageMemberPage, error)
+	LookupLabel(ctx context.Context, label, packageID, cursor string, limit int) (api.PackageLabelCandidatePage, error)
 }
 
 // ProcessingEventStream is the bounded live processing sequence consumed by
@@ -454,6 +466,27 @@ type Model struct {
 	historyOffset            int
 	historyDetail            bool
 	historyDetailOffset      int
+	packagesOpen             bool
+	packages                 []api.PackageSummary
+	packagesCursor           int
+	packagesOffset           int
+	packagesLoading          bool
+	packagesErr              error
+	packagesRequestID        uint64
+	packagesNextAfter        string
+	packageMembersOpen       bool
+	packageMembersPackage    api.PackageSummary
+	packageMembers           []api.PackageMember
+	packageMembersCursor     int
+	packageMembersOffset     int
+	packageMembersNextAfter  int
+	packageLabelSearching    bool
+	packageLabel             string
+	packageLabelMatches      []store.PackageLabelRow
+	packageLabelErr          error
+	packageLabelNextCursor   string
+	packageLabelCursor       int
+	packageLabelOffset       int
 	spinnerFrame             int
 	spinnerActive            bool
 
@@ -563,6 +596,48 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			m.jobs = msg.items[:min(len(msg.items), maxJobItems)]
 			m.clampJobsSelection()
+		}
+		return m, nil
+	case packagesLoadedMsg:
+		if !m.packagesOpen || !packageResponseCurrent(m.packagesRequestID, msg.requestID) {
+			return m, nil
+		}
+		m.packagesLoading = false
+		m.packagesErr = msg.err
+		if msg.err == nil {
+			m.packages = msg.page.Items
+			m.packagesNextAfter = msg.page.NextAfter
+			m.packagesCursor, m.packagesOffset = 0, 0
+			m.clampPackageSelection()
+		}
+		return m, nil
+	case packageMembersLoadedMsg:
+		if !m.packagesOpen || !m.packageMembersOpen ||
+			!packageResponseCurrent(m.packagesRequestID, msg.requestID) ||
+			m.packageMembersPackage.PackageID != msg.packageID {
+			return m, nil
+		}
+		m.packagesLoading = false
+		m.packagesErr = msg.err
+		if msg.err == nil {
+			m.packageMembers = msg.page.Items
+			m.packageMembersNextAfter = msg.page.NextAfterOrdinal
+			m.packageMembersCursor, m.packageMembersOffset = 0, 0
+			m.clampPackageSelection()
+		}
+		return m, nil
+	case packageLabelLoadedMsg:
+		if !m.packagesOpen || !packageResponseCurrent(m.packagesRequestID, msg.requestID) {
+			return m, nil
+		}
+		m.packagesLoading = false
+		m.packageLabelErr = msg.err
+		if msg.err == nil {
+			m.packageLabel = msg.label
+			m.packageLabelMatches = msg.page.Items
+			m.packageLabelNextCursor = msg.page.NextCursor
+			m.packageLabelCursor, m.packageLabelOffset = 0, 0
+			m.clampPackageSelection()
 		}
 		return m, nil
 	case operationsInfoLoadedMsg:
@@ -806,7 +881,7 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		m.removeTrashedRows(target)
 		return m.reloadCurrent()
 	case spinnerTickMsg:
-		if !m.loading && !m.jobsLoading && !m.processingLoading && !m.processingStarting && !m.processingSearchBusy && !m.naturalRerankPending &&
+		if !m.loading && !m.jobsLoading && !m.packagesLoading && !m.processingLoading && !m.processingStarting && !m.processingSearchBusy && !m.naturalRerankPending &&
 			!m.operationsInfoBusy && !m.operationsBackupBusy &&
 			!m.trashLoading && !m.mutationRunning {
 			m.spinnerActive = false
@@ -827,6 +902,12 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if m.trashOpen {
 			return m.updateTrashKeys(msg)
+		}
+		if m.packagesOpen && m.packageLabelSearching {
+			return m.updatePackageLabelInput(msg)
+		}
+		if m.packagesOpen {
+			return m.updatePackagesKeys(msg)
 		}
 		if m.operationsOpen {
 			return m.updateOperationsKeys(msg)
@@ -942,6 +1023,19 @@ func (m Model) updateKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		m.jobDetailOffset = 0
 		m.jobsRequestID++
 		return m, tea.Batch(m.startSpinner(), m.loadJobs(m.jobsRequestID))
+	case "K":
+		m.packagesOpen = true
+		m.packages = nil
+		m.packagesCursor, m.packagesOffset = 0, 0
+		m.packagesLoading = true
+		m.packagesErr = nil
+		m.packageMembersOpen = false
+		m.packageMembers = nil
+		m.packagesNextAfter = ""
+		m.packageMembersNextAfter = 0
+		m.notice = ""
+		m.packagesRequestID++
+		return m, tea.Batch(m.startSpinner(), m.loadPackages("", m.packagesRequestID))
 	case "O":
 		m.operationsOpen = true
 		m.operationsInfo = api.VaultInfo{}
@@ -1049,16 +1143,16 @@ func (m Model) updateKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		)
 	case "up", "k":
 		m.moveCursor(-1)
-	case "down", "j":
+	case keyDown, "j":
 		m.moveCursor(1)
-	case "pgup":
+	case keyPageUp:
 		m.moveCursor(-m.visibleRows())
-	case "pgdown":
+	case keyPageDown:
 		m.moveCursor(m.visibleRows())
-	case "home", "g":
+	case keyHome, "g":
 		m.cursor = 0
 		m.offset = 0
-	case "end", "G":
+	case keyEnd, "G":
 		if len(m.rows) > 0 {
 			m.cursor = len(m.rows) - 1
 			m.clampSelection()
@@ -1077,7 +1171,7 @@ func (m Model) updateKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 				m.loadDirectory(selected.node.ID, navigationForward, m.requestID),
 			)
 		}
-	case keyEscape, "left", "h", "backspace":
+	case keyEscape, keyLeft, "h", keyBackspace:
 		if m.mode == modeSearch && m.searchReturn != nil {
 			return m.revisit(*m.searchReturn)
 		}
@@ -1131,7 +1225,7 @@ func (m Model) updateTrashKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m, tea.Quit
 	case "?":
 		m.helpOpen = true
-	case keyEscape, "left", "h", "backspace":
+	case keyEscape, keyLeft, "h", keyBackspace:
 		m.trashOpen = false
 		m.trashLoading = false
 		m.trashErr = nil
@@ -1156,15 +1250,15 @@ func (m Model) updateTrashKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m, tea.Batch(m.startSpinner(), m.loadTrash(m.trashRequestID))
 	case "up", "k":
 		m.moveTrashCursor(-1)
-	case "down", "j":
+	case keyDown, "j":
 		m.moveTrashCursor(1)
-	case "pgup":
+	case keyPageUp:
 		m.moveTrashCursor(-m.visibleTrashRows())
-	case "pgdown":
+	case keyPageDown:
 		m.moveTrashCursor(m.visibleTrashRows())
-	case "home", "g":
+	case keyHome, "g":
 		m.trashCursor, m.trashOffset = 0, 0
-	case "end", "G":
+	case keyEnd, "G":
 		if len(m.trashItems) > 0 {
 			m.trashCursor = len(m.trashItems) - 1
 			m.clampTrashSelection()
@@ -1206,7 +1300,7 @@ func (m Model) updateJobsKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m, tea.Quit
 	case "?":
 		m.helpOpen = true
-	case keyEscape, "backspace", "left", "h":
+	case keyEscape, keyBackspace, keyLeft, "h":
 		m.jobsOpen = false
 		m.jobsLoading = false
 		m.jobsRequestID++
@@ -1222,15 +1316,15 @@ func (m Model) updateJobsKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m, tea.Batch(m.startSpinner(), m.loadJobs(m.jobsRequestID))
 	case "up", "k":
 		m.moveJobsCursor(-1)
-	case "down", "j":
+	case keyDown, "j":
 		m.moveJobsCursor(1)
-	case "pgup":
+	case keyPageUp:
 		m.moveJobsCursor(-m.visibleJobRows())
-	case "pgdown":
+	case keyPageDown:
 		m.moveJobsCursor(m.visibleJobRows())
-	case "home", "g":
+	case keyHome, "g":
 		m.jobsCursor, m.jobsOffset = 0, 0
-	case "end", "G":
+	case keyEnd, "G":
 		if len(m.jobs) > 0 {
 			m.jobsCursor = len(m.jobs) - 1
 			m.clampJobsSelection()
@@ -1246,7 +1340,7 @@ func (m Model) updateOperationsKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m, tea.Quit
 	case "?":
 		m.helpOpen = true
-	case keyEscape, "backspace", "left", "h":
+	case keyEscape, keyBackspace, keyLeft, "h":
 		m.operationsOpen = false
 		m.operationsInfoBusy = false
 		m.operationsBackupBusy = false
@@ -1265,18 +1359,18 @@ func (m Model) updateOperationsKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	case "up", "k":
 		m.operationsOffset--
 		m.clampOperationsOffset()
-	case "down", "j":
+	case keyDown, "j":
 		m.operationsOffset++
 		m.clampOperationsOffset()
-	case "pgup":
+	case keyPageUp:
 		m.operationsOffset -= m.operationsViewportHeight()
 		m.clampOperationsOffset()
-	case "pgdown":
+	case keyPageDown:
 		m.operationsOffset += m.operationsViewportHeight()
 		m.clampOperationsOffset()
-	case "home", "g":
+	case keyHome, "g":
 		m.operationsOffset = 0
-	case "end", "G":
+	case keyEnd, "G":
 		m.operationsOffset = max(
 			len(m.operationsLines(m.width))-m.operationsViewportHeight(), 0,
 		)
@@ -1322,7 +1416,7 @@ func (m Model) updateProcessingKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	case "?":
 		m.helpOpen = true
 		return m, nil
-	case keyEscape, "backspace", "left", "h":
+	case keyEscape, keyBackspace, keyLeft, "h":
 		m.cancelProcessingStream()
 		m.processingOpen = false
 		m.processingStarting = false
@@ -1391,18 +1485,18 @@ func (m Model) updateProcessingKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	case "up", "k":
 		m.processingOffset--
 		m.clampProcessingOffset()
-	case "down", "j":
+	case keyDown, "j":
 		m.processingOffset++
 		m.clampProcessingOffset()
-	case "pgup":
+	case keyPageUp:
 		m.processingOffset -= m.processingViewportHeight()
 		m.clampProcessingOffset()
-	case "pgdown":
+	case keyPageDown:
 		m.processingOffset += m.processingViewportHeight()
 		m.clampProcessingOffset()
-	case "home", "g":
+	case keyHome, "g":
 		m.processingOffset = 0
-	case "end", "G":
+	case keyEnd, "G":
 		m.processingOffset = max(len(m.processingLines(m.width))-m.processingViewportHeight(), 0)
 	case "/":
 		if m.processingPlan == nil {
@@ -1444,24 +1538,24 @@ func (m Model) updateJobDetailKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m, tea.Quit
 	case "?":
 		m.helpOpen = true
-	case keyEnter, "i", keyEscape, "backspace", "left", "h":
+	case keyEnter, "i", keyEscape, keyBackspace, keyLeft, "h":
 		m.jobDetail = false
 		m.jobDetailOffset = 0
 	case "up", "k":
 		m.jobDetailOffset--
 		m.clampJobDetailOffset()
-	case "down", "j":
+	case keyDown, "j":
 		m.jobDetailOffset++
 		m.clampJobDetailOffset()
-	case "pgup":
+	case keyPageUp:
 		m.jobDetailOffset -= m.jobsViewportHeight()
 		m.clampJobDetailOffset()
-	case "pgdown":
+	case keyPageDown:
 		m.jobDetailOffset += m.jobsViewportHeight()
 		m.clampJobDetailOffset()
-	case "home", "g":
+	case keyHome, "g":
 		m.jobDetailOffset = 0
-	case "end", "G":
+	case keyEnd, "G":
 		m.jobDetailOffset = max(
 			len(m.jobDetailLines(m.width))-m.jobsViewportHeight(), 0,
 		)
@@ -1477,7 +1571,7 @@ func (m Model) updateHistoryKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	case "?":
 		m.helpOpen = true
 		return m, nil
-	case keyEscape, "backspace":
+	case keyEscape, keyBackspace:
 		m.naturalRerankPending = false
 		m.requestID++
 		m.closeHistory()
@@ -1491,19 +1585,19 @@ func (m Model) updateHistoryKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	case "up", "k":
 		m.cancelPendingHistoryLoad()
 		m.moveHistoryCursor(-1)
-	case "down", "j":
+	case keyDown, "j":
 		m.cancelPendingHistoryLoad()
 		m.moveHistoryCursor(1)
-	case "pgup":
+	case keyPageUp:
 		m.cancelPendingHistoryLoad()
 		m.moveHistoryCursor(-m.visibleHistoryRows())
-	case "pgdown":
+	case keyPageDown:
 		m.cancelPendingHistoryLoad()
 		m.moveHistoryCursor(m.visibleHistoryRows())
-	case "home", "g":
+	case keyHome, "g":
 		m.cancelPendingHistoryLoad()
 		m.historyCursor, m.historyOffset = 0, 0
-	case "end", "G":
+	case keyEnd, "G":
 		m.cancelPendingHistoryLoad()
 		if page, ok := m.currentHistoryPage(); ok && len(page.Items) > 0 {
 			m.historyCursor = len(page.Items) - 1
@@ -1511,7 +1605,7 @@ func (m Model) updateHistoryKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		}
 	case "n", "right", "l":
 		return m.openOlderHistoryPage()
-	case "p", "left", "h":
+	case "p", keyLeft, "h":
 		m.cancelPendingHistoryLoad()
 		if m.historyPage > 0 {
 			m.historyPage--
@@ -1553,24 +1647,24 @@ func (m Model) updateHistoryDetailKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd)
 	case "?":
 		m.helpOpen = true
 		return m, nil
-	case "i", keyEnter, keyEscape, "left", "h", "backspace":
+	case "i", keyEnter, keyEscape, keyLeft, "h", keyBackspace:
 		m.historyDetail = false
 		m.historyDetailOffset = 0
 	case "up", "k":
 		m.historyDetailOffset--
 		m.clampHistoryDetailOffset()
-	case "down", "j":
+	case keyDown, "j":
 		m.historyDetailOffset++
 		m.clampHistoryDetailOffset()
-	case "pgup":
+	case keyPageUp:
 		m.historyDetailOffset -= m.historyViewportHeight()
 		m.clampHistoryDetailOffset()
-	case "pgdown":
+	case keyPageDown:
 		m.historyDetailOffset += m.historyViewportHeight()
 		m.clampHistoryDetailOffset()
-	case "home", "g":
+	case keyHome, "g":
 		m.historyDetailOffset = 0
-	case "end", "G":
+	case keyEnd, "G":
 		m.historyDetailOffset = max(
 			len(m.historyDetailLines(m.width))-m.historyViewportHeight(), 0,
 		)
@@ -1586,25 +1680,25 @@ func (m Model) updateDetailKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	case "?":
 		m.helpOpen = true
 		return m, nil
-	case "i", keyEnter, keyEscape, "left", "h", "backspace":
+	case "i", keyEnter, keyEscape, keyLeft, "h", keyBackspace:
 		m.detailOpen = false
 		m.detailOffset = 0
 		m.detailRequestID++
 	case "up", "k":
 		m.detailOffset--
 		m.clampDetailOffset()
-	case "down", "j":
+	case keyDown, "j":
 		m.detailOffset++
 		m.clampDetailOffset()
-	case "pgup":
+	case keyPageUp:
 		m.detailOffset -= m.detailViewportHeight()
 		m.clampDetailOffset()
-	case "pgdown":
+	case keyPageDown:
 		m.detailOffset += m.detailViewportHeight()
 		m.clampDetailOffset()
-	case "home", "g":
+	case keyHome, "g":
 		m.detailOffset = 0
-	case "end", "G":
+	case keyEnd, "G":
 		m.detailOffset = max(len(m.expandedDetailLines(m.width))-m.detailViewportHeight(), 0)
 	}
 	return m, nil

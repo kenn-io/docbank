@@ -80,8 +80,10 @@ client registration, scopes, or token refresh. A client may connect locally or
 through a trusted tunnel, but it must be able to set the Authorization header;
 clients that require the MCP HTTP OAuth flow are unsupported.
 
-`--allow-processing` works with either transport. Without it, the process has
-the fixed nine-tool read catalog described below.
+Both transports have the fixed 19-tool read catalog described below.
+`--allow-processing` adds only guarded processing start.
+`--allow-package-writes` separately permits load-file preflight, import, and
+custodian changes. Enable either flag or both when starting the process.
 
 ## Exact protocol contract
 
@@ -140,6 +142,16 @@ links, is capped at 1 MiB.
 | `get_processing_plan` | Requires an exact node ID, content-version UUID, and 1–128-character processing profile name. Returns the complete provider, trust-boundary, retention, estimate, consent, and backup disclosure plus its fingerprint. |
 | `get_processing_status` | Reads one stable 64-hex-character job identity. A response contains at most 64 embedding job IDs. |
 | `get_processing_coverage` | Reports rendition and embedding coverage for 1–4,096 unique version IDs in one exact vault fence and one 1–128-character processing profile. The response has at most 65 coverage classes. |
+| `get_package_import` | Reads durable progress for one import operation UUID. |
+| `get_package_preflight` | Reads one retained preflight by its exact identity. |
+| `list_package_preflight_diagnostics` | Pages through bounded diagnostics for a retained preflight. |
+| `list_package_custodians` | Pages through active custodian claims for an exact package scope. |
+| `find_people` | Finds bounded canonical person candidates for custodian resolution. |
+| `list_packages` | Pages through received and produced load-file packages. |
+| `get_package` | Reads one package and its retained source authority. |
+| `list_package_members` | Pages through a package's immutable document occurrences. |
+| `get_package_record` | Reads one immutable sender row by its package-scoped record key. |
+| `lookup_bates_label` | Finds bounded package-scoped matches for an exact received or assigned label. |
 
 `list_documents` uses live keyset pagination, not a snapshot. A mutation between
 pages can change later membership or order. Each opaque cursor is at most 32 KiB of ASCII, expires after 15 minutes, and
@@ -269,9 +281,39 @@ initial `processing_outcome_unknown` result contains no job ID, so its outcome
 cannot be reconciled through MCP. Do not blindly retry it: MCP has no job lookup
 for that case.
 
-No MCP tool can import, upload, delete, move, rename, tag, restore, prune,
-pack, repack, change configuration, select credentials, grant consent, or
-return source bytes.
+## Optional package writes
+
+Allow the agent to preflight local load-file sources, import packages, and
+change package custodians with a separate opt-in:
+
+```bash
+docbank mcp --transport stdio --allow-package-writes
+```
+
+This flag adds four tools:
+
+| Tool | Contract |
+| --- | --- |
+| `preflight_load_file_package` | Reads a local source and retains a preflight with diagnostics before import. |
+| `start_package_import` | Starts an import from an exact preflight identity and operation UUID. An exact retry with the same operation UUID returns the existing operation. |
+| `resolve_package_custodian` | Links an existing package custodian claim to an exact canonical person, subject to the supplied revision. |
+| `assign_package_custodian` | Creates or replaces an operator-owned package custodian, subject to the supplied revision. |
+
+Review the preflight and its diagnostics before starting an import. Keep the
+operation UUID to read progress with `get_package_import` and to reconcile a
+retry. Custodian writes use exact identities and revision checks to reject
+stale changes.
+
+Package writes do not use the processing-plan consent flow. Enable this flag
+only when the agent may perform these local reads and vault changes.
+`--allow-package-writes` does not enable `start_processing`, and
+`--allow-processing` does not enable package writes. Use both flags when both
+capabilities are needed.
+
+No MCP tool can delete documents, move, rename, tag, restore, prune, pack,
+repack, change configuration, select credentials, grant processing consent,
+or return source bytes. Package preflight may upload a local source container;
+there is no general document upload tool.
 
 ## Cache behavior
 

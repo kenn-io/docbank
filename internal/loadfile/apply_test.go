@@ -83,6 +83,23 @@ func TestApplyMappingHydratesConventionalColumnsWithDefaultCustodian(t *testing.
 	assert.NotEmpty(t, records[0].RowID)
 }
 
+func TestApplyMappingDerivesParentsFromAttachmentLists(t *testing.T) {
+	records := []Record{
+		{LoadFile: "package.dat", RowOrdinal: 1, Fields: []Field{{Column: "DOCID", Ordinal: 0, Raw: "DOC-A"}, {Column: "ATTACH", Ordinal: 1, Raw: "DOC-B;DOC-C"}}},
+		{LoadFile: "package.dat", RowOrdinal: 2, Fields: []Field{{Column: "DOCID", Ordinal: 0, Raw: "DOC-B"}, {Column: "ATTACH", Ordinal: 1, Raw: ""}}},
+		{LoadFile: "package.dat", RowOrdinal: 3, Fields: []Field{{Column: "DOCID", Ordinal: 0, Raw: "DOC-C"}, {Column: "ATTACH", Ordinal: 1, Raw: ""}, {Column: "PARENTID", Ordinal: 2, Raw: "DOC-B"}}},
+	}
+	mapping := Mapping{Contract: MappingContractV1, Columns: []MappingColumn{
+		{Source: "DOCID", SourceOrdinal: new(0), Canonical: new("loadfile.document.id")},
+		{Source: "ATTACH", SourceOrdinal: new(1), Canonical: new("loadfile.family.children")},
+		{Source: "PARENTID", SourceOrdinal: new(2), Canonical: new("loadfile.family.parent")},
+	}}
+	_, err := ApplyMapping(records, mapping, Profile{}, func(int64) error { return nil })
+	require.NoError(t, err)
+	assert.Equal(t, "DOC-A", records[1].Family.ParentDocID)
+	assert.Equal(t, "DOC-B", records[2].Family.ParentDocID, "an explicit parent column wins")
+}
+
 func TestApplyMappingRejectsConflictingConventionalColumns(t *testing.T) {
 	for _, columns := range [][]string{{"DOCID", "BEGDOC"}, {"PARENT", "PARENTID"}} {
 		t.Run(columns[0], func(t *testing.T) {

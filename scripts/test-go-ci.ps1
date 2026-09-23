@@ -9,7 +9,7 @@ if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 # ponytail: two name ranges balance the current suite; remeasure if it grows unevenly.
 $storage = @('^(Test|Example|Fuzz)[A-L]', '^(Test|Example|Fuzz)($|[^A-L])') | ForEach-Object {
     $process = Start-Process go -NoNewWindow -PassThru -ArgumentList (
-        @('test', '-timeout', '20m', '-tags', 'fts5') + $extra + @('-run', $_, './internal/store')
+        @('test', '-timeout', '30m', '-tags', 'fts5') + $extra + @('-run', $_, './internal/store')
     )
     # Cache the handle so ExitCode stays readable after the process exits.
     $null = $process.Handle
@@ -17,7 +17,7 @@ $storage = @('^(Test|Example|Fuzz)[A-L]', '^(Test|Example|Fuzz)($|[^A-L])') | Fo
 }
 
 $status = 0
-go test -timeout 20m -tags fts5 @extra @packages
+go test -timeout 30m -tags fts5 @extra @packages
 if ($LASTEXITCODE -ne 0) { $status = $LASTEXITCODE }
 foreach ($process in $storage) {
     $process.WaitForExit()

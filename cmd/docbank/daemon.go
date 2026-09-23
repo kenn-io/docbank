@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net"
 	"net/http"
@@ -36,6 +37,7 @@ import (
 	"go.kenn.io/docbank/internal/home"
 	"go.kenn.io/docbank/internal/ingest"
 	"go.kenn.io/docbank/internal/jobs"
+	"go.kenn.io/docbank/internal/mailbox"
 	internalmaintenance "go.kenn.io/docbank/internal/maintenance"
 	"go.kenn.io/docbank/internal/processing"
 	"go.kenn.io/docbank/internal/store"
@@ -418,6 +420,28 @@ func runServe(ctx context.Context) (retErr error) {
 	}
 	if err := jobSupervisor.Start("extract:plain-text", textWorker.Run); err != nil {
 		return fmt.Errorf("starting text extraction: %w", err)
+	}
+	packageMailbox := mailbox.Service{Store: s, Blobs: blobs}
+	packageWorker, err := processing.NewPackageImportWorker(processing.PackageImportConfig{
+		Catalog: s, Blobs: blobs, Mutate: operationGate.MutateContext,
+		Owner: "daemon-package-import-worker", LeaseDuration: 5 * time.Minute,
+		IdleDelay: time.Second, OpenContainer: func(ctx context.Context, owner, id string) (io.ReaderAt, int64, error) {
+			container, err := s.MailboxContainer(ctx, owner, id)
+			if err != nil {
+				return nil, 0, err
+			}
+			if container.Format != "zip" || container.State != "sealed" {
+				return nil, 0, store.ErrMailboxConflict
+			}
+			reader, err := packageMailbox.ReaderAt(ctx, container)
+			return reader, container.Size, err
+		},
+	})
+	if err != nil {
+		return fmt.Errorf("configuring package import worker: %w", err)
+	}
+	if err := jobSupervisor.Start("import:packages", packageWorker.Run); err != nil {
+		return fmt.Errorf("starting package import worker: %w", err)
 	}
 	if cfg.Storage.PackInterval.Std() > 0 {
 		packRun := func(ctx context.Context) (internalmaintenance.PackReport, error) {

@@ -3,12 +3,14 @@ package main
 import (
 	"bufio"
 	"context"
+	"encoding/json/v2"
 	"errors"
 	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 	"time"
 
@@ -81,15 +83,74 @@ func TestMCPStdioCancellationWithInheritedPipes(t *testing.T) {
 	}
 }
 
-func TestMCPCommandExposesOnlyTransportListenAndProcessingFlags(t *testing.T) {
+func TestMCPCommandExposesTransportAndCapabilityFlags(t *testing.T) {
 	command, _, err := rootCmd.Find([]string{"mcp"})
 	require.NoError(t, err)
 	require.Equal(t, "mcp", command.Name())
 	var names []string
 	command.Flags().VisitAll(func(flag *pflag.Flag) { names = append(names, flag.Name) })
-	assert.ElementsMatch(t, []string{"allow-processing", "listen", "transport"}, names)
+	assert.ElementsMatch(t, []string{"allow-processing", "allow-package-writes", "listen", "transport"}, names)
 	for _, forbidden := range []string{"token", "api-key", "daemon", "url", "remote"} {
 		assert.Nil(t, command.Flags().Lookup(forbidden))
+	}
+}
+
+func TestMCPCommandWriteFlagsSelectTools(t *testing.T) {
+	const childVariable = "DOCBANK_TEST_MCP_TOOL_CATALOG"
+	if args := os.Getenv(childVariable); args != "" {
+		rootCmd.SetArgs(strings.Fields(args))
+		if err := rootCmd.Execute(); err != nil {
+			os.Exit(1)
+		}
+		os.Exit(0)
+	}
+	for _, test := range []struct {
+		args                 string
+		processing, packages bool
+	}{
+		{args: "mcp"},
+		{args: "mcp --allow-processing", processing: true},
+		{args: "mcp --allow-package-writes", packages: true},
+		{args: "mcp --allow-processing --allow-package-writes", processing: true, packages: true},
+	} {
+		t.Run(test.args, func(t *testing.T) {
+			ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+			defer cancel()
+			executable, err := os.Executable()
+			require.NoError(t, err)
+			command := exec.CommandContext(ctx, executable, "-test.run=^TestMCPCommandWriteFlagsSelectTools$")
+			command.Env = append(os.Environ(), childVariable+"="+test.args, "DOCBANK_HOME="+t.TempDir())
+			input, err := command.StdinPipe()
+			require.NoError(t, err)
+			defer func() { _ = input.Close() }()
+			output, err := command.StdoutPipe()
+			require.NoError(t, err)
+			require.NoError(t, command.Start())
+			t.Cleanup(func() { _ = command.Process.Kill() })
+			_, err = io.WriteString(input, `{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{"_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28","io.modelcontextprotocol/clientCapabilities":{}}}}`+"\n")
+			require.NoError(t, err)
+			response, err := bufio.NewReader(output).ReadBytes('\n')
+			require.NoError(t, err)
+			var catalog struct {
+				Result struct {
+					Tools []struct {
+						Name string `json:"name"`
+					} `json:"tools"`
+				} `json:"result"`
+			}
+			require.NoError(t, json.Unmarshal(response, &catalog))
+			names := make(map[string]bool, len(catalog.Result.Tools))
+			for _, tool := range catalog.Result.Tools {
+				names[tool.Name] = true
+			}
+			assert.True(t, names["get_package_record"], "reads remain available with every flag combination")
+			assert.Equal(t, test.processing, names["start_processing"])
+			for _, name := range []string{"preflight_load_file_package", "start_package_import", "resolve_package_custodian", "assign_package_custodian"} {
+				assert.Equal(t, test.packages, names[name], name)
+			}
+			require.NoError(t, input.Close())
+			require.NoError(t, command.Wait())
+		})
 	}
 }
 

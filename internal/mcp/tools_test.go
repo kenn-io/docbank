@@ -21,11 +21,15 @@ import (
 )
 
 func TestDefaultToolCatalogIsFixedBoundedAndReadOnly(t *testing.T) {
-	tools := toolCatalog(false)
+	tools := toolCatalog(false, false)
 	wantNames := []string{
 		"get_vault_info", "list_documents", "search_documents", "get_document",
 		"list_document_versions", "read_rendition_text", "get_processing_plan",
-		"get_processing_status", "get_processing_coverage",
+		"get_processing_status", "get_processing_coverage", "get_package_import",
+		"get_package_preflight", "list_package_preflight_diagnostics",
+		"list_package_custodians", "find_people",
+		"list_packages", "get_package", "list_package_members", "get_package_record",
+		"lookup_bates_label",
 	}
 	require.Len(t, tools, len(wantNames))
 	for index, tool := range tools {
@@ -42,29 +46,42 @@ func TestDefaultToolCatalogIsFixedBoundedAndReadOnly(t *testing.T) {
 	assert.NotContains(t, catalogNames(tools), "start_processing")
 }
 
-func TestProcessingToolIsConstructionTimeOptIn(t *testing.T) {
-	readOnly := catalogNames(toolCatalog(false))
-	enabledTools := toolCatalog(true)
+func TestWriteToolsAreIndependentConstructionTimeOptIns(t *testing.T) {
+	readOnly := catalogNames(toolCatalog(false, false))
+	enabledTools := toolCatalog(true, true)
 	enabled := catalogNames(enabledTools)
-	require.Equal(t, append(append([]string{}, readOnly...), "start_processing"), enabled)
+	require.Equal(t, append(append([]string{}, readOnly...), "start_processing", "preflight_load_file_package", "start_package_import",
+		"resolve_package_custodian", "assign_package_custodian"), enabled)
 
-	write := enabledTools[len(enabledTools)-1]
-	require.NotNil(t, write.Annotations)
-	assert.False(t, write.Annotations.ReadOnlyHint)
-	assert.False(t, write.Annotations.IdempotentHint)
-	assert.Equal(t, new(false), write.Annotations.DestructiveHint)
-	assert.Equal(t, new(true), write.Annotations.OpenWorldHint)
+	for index, write := range enabledTools[len(enabledTools)-5:] {
+		require.NotNil(t, write.Annotations)
+		assert.False(t, write.Annotations.ReadOnlyHint)
+		assert.Equal(t, index == 2, write.Annotations.IdempotentHint)
+		assert.Equal(t, new(index == 4), write.Annotations.DestructiveHint)
+		assert.Equal(t, new(true), write.Annotations.OpenWorldHint)
+	}
 
-	for _, allowProcessing := range []bool{false, true} {
-		server := newServerWithOptions(testImplementation(), ServerOptions{AllowProcessing: allowProcessing})
+	for _, test := range []struct {
+		options ServerOptions
+		writes  []string
+	}{
+		{},
+		{options: ServerOptions{AllowProcessing: true}, writes: []string{"start_processing"}},
+		{options: ServerOptions{AllowPackageWrites: true}, writes: []string{"preflight_load_file_package", "start_package_import", "resolve_package_custodian", "assign_package_custodian"}},
+		{options: ServerOptions{AllowProcessing: true, AllowPackageWrites: true}, writes: []string{"start_processing", "preflight_load_file_package", "start_package_import", "resolve_package_custodian", "assign_package_custodian"}},
+	} {
+		server := newServerWithOptions(testImplementation(), test.options)
 		discovery := decodeResult(t, exchangeRaw(t, server, requestFor("server/discover", nil)))
 		capabilities := objectField(t, discovery, "capabilities")
 		assert.Equal(t, map[string]any{}, objectField(t, capabilities, "tools"))
 		assert.NotContains(t, objectField(t, capabilities, "tools"), "listChanged")
-		assert.Equal(t, catalogInstructions(allowProcessing), discovery["instructions"])
+		instructions, ok := discovery["instructions"].(string)
+		require.True(t, ok)
+		assert.Equal(t, test.options.AllowProcessing, strings.Contains(instructions, "prior operator consent"))
+		assert.Equal(t, test.options.AllowPackageWrites, strings.Contains(instructions, "Package writes"))
 
 		listed := decodeResult(t, exchangeRaw(t, server, requestFor("tools/list", map[string]any{})))
-		wantListed := catalogNames(toolCatalog(allowProcessing))
+		wantListed := append(slices.Clone(readOnly), test.writes...)
 		slices.Sort(wantListed)
 		assert.Equal(t, wantListed, listedToolNames(t, listed))
 		assert.EqualValues(t, toolCatalogTTLMs, listed["ttlMs"])
@@ -75,14 +92,14 @@ func TestProcessingToolIsConstructionTimeOptIn(t *testing.T) {
 }
 
 func TestToolsListTransmitsRegisteredSchemasAnnotationsAndBounds(t *testing.T) {
-	server := newServerWithOptions(testImplementation(), ServerOptions{AllowProcessing: true})
+	server := newServerWithOptions(testImplementation(), ServerOptions{AllowProcessing: true, AllowPackageWrites: true})
 	listed := decodeResult(t, exchangeRaw(t, server, requestFor("tools/list", map[string]any{})))
 	assert.EqualValues(t, toolCatalogTTLMs, listed["ttlMs"])
 	assert.Equal(t, "public", listed["cacheScope"])
 	assert.Equal(t, "complete", listed["resultType"])
 	assert.Empty(t, listed["nextCursor"])
 	wireTools := listedToolsByName(t, listed)
-	registered := catalogMap(toolCatalog(true))
+	registered := catalogMap(toolCatalog(true, true))
 	require.Len(t, wireTools, len(registered))
 
 	for name, want := range registered {
@@ -175,7 +192,7 @@ func TestRegisteredToolsEnforceDaemonByteBounds(t *testing.T) {
 }
 
 func TestToolSchemasPinInputsBoundsAndStableIdentities(t *testing.T) {
-	tools := catalogMap(toolCatalog(true))
+	tools := catalogMap(toolCatalog(true, true))
 
 	assertSchemaAccepts(t, tools["get_vault_info"].InputSchema, map[string]any{})
 	assertSchemaRejects(t, tools["get_vault_info"].InputSchema, map[string]any{"extra": true})
@@ -527,6 +544,6 @@ func callToolWire(t *testing.T, name string, arguments map[string]any) []byte {
 		return nil, errors.New("synthetic daemon unavailable")
 	}, func(*daemonconn.Connection) error { return nil })
 	return exchangeRaw(t, newServerWithOptionsAndDaemon(testImplementation(),
-		ServerOptions{AllowProcessing: true}, lease),
+		ServerOptions{AllowProcessing: true, AllowPackageWrites: true}, lease),
 		requestFor("tools/call", map[string]any{"name": name, "arguments": arguments}))
 }

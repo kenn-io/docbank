@@ -43,6 +43,59 @@ the same sealed source with different settings or a different destination.
 See [Mailbox archives](usage/importing.md#mailbox-archives) for retention,
 limits, explicit continuation and the EML transfer retry contract.
 
+## docbank package
+
+```text
+docbank package preflight <directory> --profile dat-concordance-v1|csv-rfc4180-v1 --encoding utf-8|windows-1252 [--page-map-profile ID] [--map mapping.json] [--json]
+docbank package import <preflight-id> --name NAME [--into /] [--party LABEL] [--operation-id UUID] [--accept-partial] [--index-supplied-text] [--json]
+docbank package import status <operation-id> [--json]
+docbank package import cancel <operation-id> [--json]
+docbank package list [--direction received|produced] [--after PACKAGE-ID] [--limit 100] [--json]
+docbank package show <package-id> [--json]
+docbank package members <package-id> [--after-ordinal N] [--limit 100] [--json]
+docbank package record <package-id> <row-id> [--json]
+```
+
+Imports a review production as one auditable package. `preflight` validates a
+directory that holds the DAT or CSV load file, an optional OPT or LFP page
+map, and the referenced original documents, images, and supplied text. It
+reports diagnostics and retains a short-lived preflight ID. Resolve blocking
+diagnostics before starting an import.
+
+`import` starts a durable job from that preflight. The daemon verifies files
+against their preflight SHA-256 hashes and records a receipt for each committed
+record. Keep the source unchanged while the job runs. `status` reports
+committed, gap, and total counts.
+
+Without `--accept-partial`, the worker verifies every declared file before
+creating document entries. A missing file, changed source inventory, or content
+mismatch rejects the job during that check. With `--accept-partial`, the job
+retains supported records and reports files that become unavailable as gaps.
+It finishes as `partial` when it commits at least one record and reports gaps.
+`--index-supplied-text` indexes the sender's text files for search.
+
+`cancel` stops a queued or running job. It retains records already committed
+with receipts and removes staged document entries that have no receipt. Shared
+file bytes remain subject to ordinary garbage collection.
+
+`--operation-id` makes an exact retry return the original job; reuse the same
+preflight and import options. `list`, `show`, `members`, and `record` browse
+retained packages and their immutable rows. Page limits are 50, 100, or 250.
+
+The web application imports a ZIP of the same layout through
+**Import load files**; see the [web application guide](usage/web.md#import-load-files).
+
+## docbank labels
+
+```text
+docbank labels lookup <label> [--package UUID] [--label-set SET] [--provenance received|assigned] [--cursor CURSOR] [--limit 100] [--json]
+```
+
+Finds every scoped occurrence or page that carries one exact Bates label. A
+label is only unique inside its package and label set, so scope the lookup
+with `--package` when senders reuse numbering. Received labels come from the
+sender's load file; assigned labels come from Docbank's own productions.
+
 ## docbank email-pdf
 
 ```text
@@ -931,7 +984,9 @@ navigates the live virtual tree, searches names and extracted text, shows the
 selected node's stable authority, and can move one inspected revision to
 recoverable trash or restore one inspected trash root. It loads at most 1,000
 directory entries, search results, or trash roots and reports truncation rather
-than implying completeness.
+than implying completeness. <kbd>K</kbd> opens the load-file package browser,
+which lists at most 250 packages or members and looks up exact Bates labels
+inside the selected package.
 
 Trash and restore require explicit revision-bound confirmation. The TUI does
 not expose permanent deletion, enroll permanent audit scopes, or run backup and
@@ -965,7 +1020,7 @@ contains a live scoped browser session and must be handled as a secret. See the
 
 ```text
 docbank mcp [--transport stdio|http] [--listen <loopback-ip:port>]
-            [--allow-processing]
+            [--allow-processing] [--allow-package-writes]
 ```
 
 Runs the selected vault's exact MCP `2026-07-28` server as another client of
@@ -980,7 +1035,7 @@ named environment variable when the MCP process starts. It must differ from
 the daemon's effective API key. There is no token flag, remote-daemon option,
 or non-loopback listener.
 
-The catalog contains nine read tools by default. `--allow-processing` adds
+The catalog contains 19 read tools by default. `--allow-processing` adds
 only the guarded `start_processing` tool: the agent must first retrieve the
 exact plan from the same process, and the operator must already have consented
 to that unchanged disclosure. The flag does not let MCP grant consent. The
@@ -988,6 +1043,12 @@ supported CLI consent path is `docbank processing plan`, followed by `docbank
 processing build --plan-fingerprint <fingerprint> --consent`; the build command
 also starts the reviewed work. See [Document
 processing](usage/document-processing.md) for the exact flow.
+
+`--allow-package-writes` separately adds load-file preflight, package import,
+and package custodian assignment and resolution. These tools can read local
+sources and change the vault without using the processing consent flow.
+Neither flag enables the other's tools; use both flags to allow both kinds of
+work.
 
 See [Model Context Protocol](usage/mcp.md) for client setup, tool and resource
 catalogs, transport limits, caching, and unsupported capabilities.

@@ -180,6 +180,39 @@ func (s *Store) PersonByID(ctx context.Context, id string) (Person, string, erro
 	return person, reachedThrough, nil
 }
 
+// PeopleByDisplayName returns active people in stable folded-name order.
+func (s *Store) PeopleByDisplayName(ctx context.Context, query, afterName, afterID string, limit int) ([]Person, error) {
+	if !utf8.ValidString(query) || len(query) > document.MaxPersonDisplayNameBytes || limit < 1 || limit > 251 ||
+		(afterName == "") != (afterID == "") {
+		return nil, ErrInvalidPerson
+	}
+	prefix := document.FoldPersonName(query)
+	rows, err := s.db.QueryContext(ctx, `SELECT person_id,display_name,display_name_folded,origin,state,revision,created_at,updated_at
+		FROM persons WHERE state<>'retired' AND display_name_folded LIKE ? ESCAPE '\'
+		AND (?='' OR display_name_folded>? OR (display_name_folded=? AND person_id>?))
+		ORDER BY display_name_folded,person_id LIMIT ?`, escapePersonLike(prefix)+"%", afterName, afterName, afterName, afterID, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	people := []Person{}
+	for rows.Next() {
+		var person Person
+		if err := rows.Scan(&person.PersonID, &person.DisplayName, &person.DisplayNameFolded, &person.Origin,
+			&person.State, &person.Revision, &person.CreatedAt, &person.UpdatedAt); err != nil {
+			return nil, err
+		}
+		people = append(people, person)
+	}
+	return people, rows.Err()
+}
+
+func escapePersonLike(value string) string {
+	value = strings.ReplaceAll(value, `\`, `\\`)
+	value = strings.ReplaceAll(value, `%`, `\%`)
+	return strings.ReplaceAll(value, `_`, `\_`)
+}
+
 func (s *Store) AddPersonIdentity(ctx context.Context, personID string, revision int64, identity PersonIdentity) (PersonIdentity, error) {
 	if len(identity.EvidenceKind) > document.MaxPersonEvidenceKindBytes || len(identity.EvidenceID) > document.MaxPersonEvidenceIDBytes ||
 		!slices.Contains(document.PersonEvidenceKinds(), document.PersonEvidenceKind(identity.EvidenceKind)) || identity.EvidenceID == "" ||

@@ -13,6 +13,7 @@ import (
 	document "go.kenn.io/docbank/document"
 	bundle "go.kenn.io/docbank/document/bundle"
 	api "go.kenn.io/docbank/internal/api"
+	loadfile "go.kenn.io/docbank/internal/loadfile"
 	mailbox "go.kenn.io/docbank/internal/mailbox"
 	query "go.kenn.io/docbank/internal/query"
 	store "go.kenn.io/docbank/internal/store"
@@ -5391,6 +5392,908 @@ func (c *Client) PruneNodeContentVersions(ctx context.Context, options *PruneNod
 	return responseParser(ctx, resp)
 }
 
+// ListPackages List received and produced packages
+func (c *Client) ListPackages(ctx context.Context, options *ListPackagesRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ListPackagesResponse, error) {
+	var err error
+
+	queryEncoding := map[string]runtime.QueryEncoding{
+		"after":     {Style: "form", Explode: &[]bool{false}[0]},
+		"direction": {Style: "form", Explode: &[]bool{false}[0]},
+		"limit":     {Style: "form", Explode: &[]bool{false}[0]},
+	}
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:    c.apiClient.GetBaseURL() + "/api/v1/packages",
+		Method:        "GET",
+		Options:       options,
+		QueryEncoding: queryEncoding,
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*ListPackagesResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(ListPackagesResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "ListPackagesResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[ListPackagesErrorResponse](resp, "ListPackagesErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/packages")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
+// GetPackage Read one package identity and state
+func (c *Client) GetPackage(ctx context.Context, options *GetPackageRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetPackageResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/packages/by-id/{package_id}",
+		Method:     "GET",
+		Options:    options,
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*GetPackageResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(GetPackageResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "GetPackageResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[GetPackageErrorResponse](resp, "GetPackageErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/packages/by-id/{package_id}")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
+// AssignPackageCustodian Create or replace an operator-owned package custodian
+func (c *Client) AssignPackageCustodian(ctx context.Context, options *AssignPackageCustodianRequestOptions, reqEditors ...runtime.RequestEditorFn) (*AssignPackageCustodianResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/packages/by-id/{package_id}/custodian",
+		Method:      "PUT",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*AssignPackageCustodianResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(AssignPackageCustodianResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "AssignPackageCustodianResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[AssignPackageCustodianErrorResponse](resp, "AssignPackageCustodianErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/packages/by-id/{package_id}/custodian")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
+// ListPackageCustodians List active package custodian claims
+func (c *Client) ListPackageCustodians(ctx context.Context, options *ListPackageCustodiansRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ListPackageCustodiansResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/packages/by-id/{package_id}/custodians",
+		Method:     "GET",
+		Options:    options,
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*ListPackageCustodiansResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(ListPackageCustodiansResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "ListPackageCustodiansResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[ListPackageCustodiansErrorResponse](resp, "ListPackageCustodiansErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/packages/by-id/{package_id}/custodians")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
+// ListPackageMembers List immutable package members
+func (c *Client) ListPackageMembers(ctx context.Context, options *ListPackageMembersRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ListPackageMembersResponse, error) {
+	var err error
+
+	queryEncoding := map[string]runtime.QueryEncoding{
+		"after_ordinal": {Style: "form", Explode: &[]bool{false}[0]},
+		"limit":         {Style: "form", Explode: &[]bool{false}[0]},
+	}
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:    c.apiClient.GetBaseURL() + "/api/v1/packages/by-id/{package_id}/members",
+		Method:        "GET",
+		Options:       options,
+		QueryEncoding: queryEncoding,
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*ListPackageMembersResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(ListPackageMembersResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "ListPackageMembersResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[ListPackageMembersErrorResponse](resp, "ListPackageMembersErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/packages/by-id/{package_id}/members")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
+// GetPackageRecord Read one immutable package row
+func (c *Client) GetPackageRecord(ctx context.Context, options *GetPackageRecordRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetPackageRecordResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/packages/by-id/{package_id}/records/{row_id}",
+		Method:     "GET",
+		Options:    options,
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*GetPackageRecordResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(GetPackageRecordResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "GetPackageRecordResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[GetPackageRecordErrorResponse](resp, "GetPackageRecordErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/packages/by-id/{package_id}/records/{row_id}")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
+// ListPackageTimelineInputs List retained sender rows for explicit timeline parsing
+func (c *Client) ListPackageTimelineInputs(ctx context.Context, options *ListPackageTimelineInputsRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ListPackageTimelineInputsResponse, error) {
+	var err error
+
+	queryEncoding := map[string]runtime.QueryEncoding{
+		"after_row_id": {Style: "form", Explode: &[]bool{false}[0]},
+		"limit":        {Style: "form", Explode: &[]bool{false}[0]},
+	}
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:    c.apiClient.GetBaseURL() + "/api/v1/packages/by-id/{package_id}/timeline-inputs",
+		Method:        "GET",
+		Options:       options,
+		QueryEncoding: queryEncoding,
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*ListPackageTimelineInputsResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(ListPackageTimelineInputsResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "ListPackageTimelineInputsResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[ListPackageTimelineInputsErrorResponse](resp, "ListPackageTimelineInputsErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/packages/by-id/{package_id}/timeline-inputs")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
+// BeginPackageContainer Declare an immutable ZIP package
+func (c *Client) BeginPackageContainer(ctx context.Context, options *BeginPackageContainerRequestOptions, reqEditors ...runtime.RequestEditorFn) (*BeginPackageContainerResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/packages/containers",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*BeginPackageContainerResponse, error) {
+		switch resp.StatusCode {
+
+		case 201:
+
+			target := new(BeginPackageContainerResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "BeginPackageContainerResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[BeginPackageContainerErrorResponse](resp, "BeginPackageContainerErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/packages/containers")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 201)
+	}
+	return responseParser(ctx, resp)
+}
+
+// AbortPackageContainer Abort an incomplete ZIP upload
+func (c *Client) AbortPackageContainer(ctx context.Context, options *AbortPackageContainerRequestOptions, reqEditors ...runtime.RequestEditorFn) (*struct{}, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/packages/containers/{id}",
+		Method:     "DELETE",
+		Options:    options,
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*struct{}, error) {
+		switch resp.StatusCode {
+
+		case 204:
+
+			target := new(struct{})
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[AbortPackageContainerErrorResponse](resp, "AbortPackageContainerErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/packages/containers/{id}")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 204)
+	}
+	return responseParser(ctx, resp)
+}
+
+// GetPackageContainer Read an owned ZIP package
+func (c *Client) GetPackageContainer(ctx context.Context, options *GetPackageContainerRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetPackageContainerResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/packages/containers/{id}",
+		Method:     "GET",
+		Options:    options,
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*GetPackageContainerResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(GetPackageContainerResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "GetPackageContainerResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[GetPackageContainerErrorResponse](resp, "GetPackageContainerErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/packages/containers/{id}")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
+// UploadPackageChunk Verify and retain one declared ZIP chunk
+func (c *Client) UploadPackageChunk(ctx context.Context, options *UploadPackageChunkRequestOptions, reqEditors ...runtime.RequestEditorFn) (*UploadPackageChunkResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/packages/containers/{id}/chunks/{index}",
+		Method:      "PUT",
+		Options:     options,
+		ContentType: "application/octet-stream",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*UploadPackageChunkResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(UploadPackageChunkResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "UploadPackageChunkResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[UploadPackageChunkErrorResponse](resp, "UploadPackageChunkErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/packages/containers/{id}/chunks/{index}")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
+// PreflightPackageContainer Preview a sealed ZIP package
+func (c *Client) PreflightPackageContainer(ctx context.Context, options *PreflightPackageContainerRequestOptions, reqEditors ...runtime.RequestEditorFn) (*PreflightPackageContainerResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/packages/containers/{id}/preflight",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*PreflightPackageContainerResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(PreflightPackageContainerResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "PreflightPackageContainerResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[PreflightPackageContainerErrorResponse](resp, "PreflightPackageContainerErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/packages/containers/{id}/preflight")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
+// SealPackageContainer Verify the full ZIP digest and seal
+func (c *Client) SealPackageContainer(ctx context.Context, options *SealPackageContainerRequestOptions, reqEditors ...runtime.RequestEditorFn) (*SealPackageContainerResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/packages/containers/{id}/seal",
+		Method:     "POST",
+		Options:    options,
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*SealPackageContainerResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(SealPackageContainerResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "SealPackageContainerResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[SealPackageContainerErrorResponse](resp, "SealPackageContainerErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/packages/containers/{id}/seal")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
+// ResolvePackageCustodian Resolve one exact custodian claim to a person
+func (c *Client) ResolvePackageCustodian(ctx context.Context, options *ResolvePackageCustodianRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ResolvePackageCustodianResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/packages/custodians/{assignment_id}/resolve",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*ResolvePackageCustodianResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(ResolvePackageCustodianResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "ResolvePackageCustodianResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[ResolvePackageCustodianErrorResponse](resp, "ResolvePackageCustodianErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/packages/custodians/{assignment_id}/resolve")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
+// ListPackageFieldCatalog List canonical package fields and sender aliases
+func (c *Client) ListPackageFieldCatalog(ctx context.Context, reqEditors ...runtime.RequestEditorFn) (*ListPackageFieldCatalogResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/packages/field-catalog",
+		Method:     "GET",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*ListPackageFieldCatalogResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(ListPackageFieldCatalogResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "ListPackageFieldCatalogResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[ListPackageFieldCatalogErrorResponse](resp, "ListPackageFieldCatalogErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/packages/field-catalog")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
+// CreatePackageImport Import a previewed load-file package
+func (c *Client) CreatePackageImport(ctx context.Context, options *CreatePackageImportRequestOptions, reqEditors ...runtime.RequestEditorFn) (*CreatePackageImportResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/packages/imports",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*CreatePackageImportResponse, error) {
+		switch resp.StatusCode {
+
+		case 202:
+
+			target := new(CreatePackageImportResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "CreatePackageImportResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[CreatePackageImportErrorResponse](resp, "CreatePackageImportErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/packages/imports")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 202)
+	}
+	return responseParser(ctx, resp)
+}
+
+// ReadPackageImport Read package import progress
+func (c *Client) ReadPackageImport(ctx context.Context, options *ReadPackageImportRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ReadPackageImportResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/packages/imports/{operation_id}",
+		Method:     "GET",
+		Options:    options,
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*ReadPackageImportResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(ReadPackageImportResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "ReadPackageImportResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[ReadPackageImportErrorResponse](resp, "ReadPackageImportErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/packages/imports/{operation_id}")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
+// CancelPackageImport Cancel a package import
+func (c *Client) CancelPackageImport(ctx context.Context, options *CancelPackageImportRequestOptions, reqEditors ...runtime.RequestEditorFn) (*CancelPackageImportResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/packages/imports/{operation_id}/cancel",
+		Method:     "POST",
+		Options:    options,
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*CancelPackageImportResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(CancelPackageImportResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "CancelPackageImportResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[CancelPackageImportErrorResponse](resp, "CancelPackageImportErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/packages/imports/{operation_id}/cancel")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
+// ListPackageLabelCandidates Find every package-scoped candidate for an exact label
+func (c *Client) ListPackageLabelCandidates(ctx context.Context, options *ListPackageLabelCandidatesRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ListPackageLabelCandidatesResponse, error) {
+	var err error
+
+	queryEncoding := map[string]runtime.QueryEncoding{
+		"cursor":     {Style: "form", Explode: &[]bool{false}[0]},
+		"label":      {Style: "form", Explode: &[]bool{false}[0]},
+		"label_set":  {Style: "form", Explode: &[]bool{false}[0]},
+		"limit":      {Style: "form", Explode: &[]bool{false}[0]},
+		"package_id": {Style: "form", Explode: &[]bool{false}[0]},
+		"provenance": {Style: "form", Explode: &[]bool{false}[0]},
+	}
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:    c.apiClient.GetBaseURL() + "/api/v1/packages/label-candidates",
+		Method:        "GET",
+		Options:       options,
+		QueryEncoding: queryEncoding,
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*ListPackageLabelCandidatesResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(ListPackageLabelCandidatesResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "ListPackageLabelCandidatesResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[ListPackageLabelCandidatesErrorResponse](resp, "ListPackageLabelCandidatesErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/packages/label-candidates")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
 // CreatePackagePreflight Preview a load-file package
 func (c *Client) CreatePackagePreflight(ctx context.Context, options *CreatePackagePreflightRequestOptions, reqEditors ...runtime.RequestEditorFn) (*CreatePackagePreflightResponse, error) {
 	var err error
@@ -6048,6 +6951,52 @@ func (c *Client) TrashPath(ctx context.Context, options *TrashPathRequestOptions
 	}
 
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/path/trash")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
+// ListPeople Find active canonical people
+func (c *Client) ListPeople(ctx context.Context, options *ListPeopleRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ListPeopleResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/people",
+		Method:     "GET",
+		Options:    options,
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*ListPeopleResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(ListPeopleResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "ListPeopleResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[ListPeopleErrorResponse](resp, "ListPeopleErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/people")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
@@ -13226,6 +14175,602 @@ func (o *PruneNodeContentVersionsRequestOptions) GetHeader() (map[string]string,
 	return headers, err
 }
 
+// ListPackagesRequestOptions is the options needed to make a request to ListPackages.
+type ListPackagesRequestOptions struct {
+	Query *ListPackagesQuery
+}
+
+// GetPathParams returns the path params as a map.
+func (o *ListPackagesRequestOptions) GetPathParams() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetQuery returns the query params as a map.
+func (o *ListPackagesRequestOptions) GetQuery() (map[string]any, error) {
+	encoded, err := json.Marshal(o.Query, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *ListPackagesRequestOptions) GetBody() any {
+	return nil
+}
+
+// GetHeader returns the headers as a map.
+func (o *ListPackagesRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
+// GetPackageRequestOptions is the options needed to make a request to GetPackage.
+type GetPackageRequestOptions struct {
+	PathParams *GetPackagePath
+}
+
+// GetPathParams returns the path params as a map.
+func (o *GetPackageRequestOptions) GetPathParams() (map[string]any, error) {
+	encoded, err := json.Marshal(o.PathParams, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetQuery returns the query params as a map.
+func (o *GetPackageRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *GetPackageRequestOptions) GetBody() any {
+	return nil
+}
+
+// GetHeader returns the headers as a map.
+func (o *GetPackageRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
+// AssignPackageCustodianRequestOptions is the options needed to make a request to AssignPackageCustodian.
+type AssignPackageCustodianRequestOptions struct {
+	PathParams *AssignPackageCustodianPath
+	Body       *AssignPackageCustodianBody
+}
+
+// GetPathParams returns the path params as a map.
+func (o *AssignPackageCustodianRequestOptions) GetPathParams() (map[string]any, error) {
+	encoded, err := json.Marshal(o.PathParams, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetQuery returns the query params as a map.
+func (o *AssignPackageCustodianRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *AssignPackageCustodianRequestOptions) GetBody() any {
+	if o.Body == nil {
+		return nil
+	}
+	return o.Body
+}
+
+// GetHeader returns the headers as a map.
+func (o *AssignPackageCustodianRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
+// ListPackageCustodiansRequestOptions is the options needed to make a request to ListPackageCustodians.
+type ListPackageCustodiansRequestOptions struct {
+	PathParams *ListPackageCustodiansPath
+	Query      *ListPackageCustodiansQuery
+}
+
+// GetPathParams returns the path params as a map.
+func (o *ListPackageCustodiansRequestOptions) GetPathParams() (map[string]any, error) {
+	encoded, err := json.Marshal(o.PathParams, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetQuery returns the query params as a map.
+func (o *ListPackageCustodiansRequestOptions) GetQuery() (map[string]any, error) {
+	encoded, err := json.Marshal(o.Query, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *ListPackageCustodiansRequestOptions) GetBody() any {
+	return nil
+}
+
+// GetHeader returns the headers as a map.
+func (o *ListPackageCustodiansRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
+// ListPackageMembersRequestOptions is the options needed to make a request to ListPackageMembers.
+type ListPackageMembersRequestOptions struct {
+	PathParams *ListPackageMembersPath
+	Query      *ListPackageMembersQuery
+}
+
+// GetPathParams returns the path params as a map.
+func (o *ListPackageMembersRequestOptions) GetPathParams() (map[string]any, error) {
+	encoded, err := json.Marshal(o.PathParams, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetQuery returns the query params as a map.
+func (o *ListPackageMembersRequestOptions) GetQuery() (map[string]any, error) {
+	encoded, err := json.Marshal(o.Query, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *ListPackageMembersRequestOptions) GetBody() any {
+	return nil
+}
+
+// GetHeader returns the headers as a map.
+func (o *ListPackageMembersRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
+// GetPackageRecordRequestOptions is the options needed to make a request to GetPackageRecord.
+type GetPackageRecordRequestOptions struct {
+	PathParams *GetPackageRecordPath
+}
+
+// GetPathParams returns the path params as a map.
+func (o *GetPackageRecordRequestOptions) GetPathParams() (map[string]any, error) {
+	encoded, err := json.Marshal(o.PathParams, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetQuery returns the query params as a map.
+func (o *GetPackageRecordRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *GetPackageRecordRequestOptions) GetBody() any {
+	return nil
+}
+
+// GetHeader returns the headers as a map.
+func (o *GetPackageRecordRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
+// ListPackageTimelineInputsRequestOptions is the options needed to make a request to ListPackageTimelineInputs.
+type ListPackageTimelineInputsRequestOptions struct {
+	PathParams *ListPackageTimelineInputsPath
+	Query      *ListPackageTimelineInputsQuery
+}
+
+// GetPathParams returns the path params as a map.
+func (o *ListPackageTimelineInputsRequestOptions) GetPathParams() (map[string]any, error) {
+	encoded, err := json.Marshal(o.PathParams, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetQuery returns the query params as a map.
+func (o *ListPackageTimelineInputsRequestOptions) GetQuery() (map[string]any, error) {
+	encoded, err := json.Marshal(o.Query, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *ListPackageTimelineInputsRequestOptions) GetBody() any {
+	return nil
+}
+
+// GetHeader returns the headers as a map.
+func (o *ListPackageTimelineInputsRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
+// BeginPackageContainerRequestOptions is the options needed to make a request to BeginPackageContainer.
+type BeginPackageContainerRequestOptions struct {
+	Body *BeginPackageContainerBody
+}
+
+// GetPathParams returns the path params as a map.
+func (o *BeginPackageContainerRequestOptions) GetPathParams() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetQuery returns the query params as a map.
+func (o *BeginPackageContainerRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *BeginPackageContainerRequestOptions) GetBody() any {
+	if o.Body == nil {
+		return nil
+	}
+	return o.Body
+}
+
+// GetHeader returns the headers as a map.
+func (o *BeginPackageContainerRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
+// AbortPackageContainerRequestOptions is the options needed to make a request to AbortPackageContainer.
+type AbortPackageContainerRequestOptions struct {
+	PathParams *AbortPackageContainerPath
+}
+
+// GetPathParams returns the path params as a map.
+func (o *AbortPackageContainerRequestOptions) GetPathParams() (map[string]any, error) {
+	encoded, err := json.Marshal(o.PathParams, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetQuery returns the query params as a map.
+func (o *AbortPackageContainerRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *AbortPackageContainerRequestOptions) GetBody() any {
+	return nil
+}
+
+// GetHeader returns the headers as a map.
+func (o *AbortPackageContainerRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
+// GetPackageContainerRequestOptions is the options needed to make a request to GetPackageContainer.
+type GetPackageContainerRequestOptions struct {
+	PathParams *GetPackageContainerPath
+}
+
+// GetPathParams returns the path params as a map.
+func (o *GetPackageContainerRequestOptions) GetPathParams() (map[string]any, error) {
+	encoded, err := json.Marshal(o.PathParams, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetQuery returns the query params as a map.
+func (o *GetPackageContainerRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *GetPackageContainerRequestOptions) GetBody() any {
+	return nil
+}
+
+// GetHeader returns the headers as a map.
+func (o *GetPackageContainerRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
+// UploadPackageChunkRequestOptions is the options needed to make a request to UploadPackageChunk.
+type UploadPackageChunkRequestOptions struct {
+	PathParams *UploadPackageChunkPath
+	Body       *UploadPackageChunkBody
+	Header     *UploadPackageChunkHeaders
+}
+
+// GetPathParams returns the path params as a map.
+func (o *UploadPackageChunkRequestOptions) GetPathParams() (map[string]any, error) {
+	encoded, err := json.Marshal(o.PathParams, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetQuery returns the query params as a map.
+func (o *UploadPackageChunkRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *UploadPackageChunkRequestOptions) GetBody() any {
+	if o.Body == nil {
+		return nil
+	}
+	return o.Body
+}
+
+// GetHeader returns the headers as a map.
+func (o *UploadPackageChunkRequestOptions) GetHeader() (map[string]string, error) {
+	encoded, err := json.Marshal(o.Header, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var headers map[string]string
+	err = json.Unmarshal(encoded, &headers)
+	return headers, err
+}
+
+// PreflightPackageContainerRequestOptions is the options needed to make a request to PreflightPackageContainer.
+type PreflightPackageContainerRequestOptions struct {
+	PathParams *PreflightPackageContainerPath
+	Body       *PreflightPackageContainerBody
+}
+
+// GetPathParams returns the path params as a map.
+func (o *PreflightPackageContainerRequestOptions) GetPathParams() (map[string]any, error) {
+	encoded, err := json.Marshal(o.PathParams, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetQuery returns the query params as a map.
+func (o *PreflightPackageContainerRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *PreflightPackageContainerRequestOptions) GetBody() any {
+	if o.Body == nil {
+		return nil
+	}
+	return o.Body
+}
+
+// GetHeader returns the headers as a map.
+func (o *PreflightPackageContainerRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
+// SealPackageContainerRequestOptions is the options needed to make a request to SealPackageContainer.
+type SealPackageContainerRequestOptions struct {
+	PathParams *SealPackageContainerPath
+}
+
+// GetPathParams returns the path params as a map.
+func (o *SealPackageContainerRequestOptions) GetPathParams() (map[string]any, error) {
+	encoded, err := json.Marshal(o.PathParams, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetQuery returns the query params as a map.
+func (o *SealPackageContainerRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *SealPackageContainerRequestOptions) GetBody() any {
+	return nil
+}
+
+// GetHeader returns the headers as a map.
+func (o *SealPackageContainerRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
+// ResolvePackageCustodianRequestOptions is the options needed to make a request to ResolvePackageCustodian.
+type ResolvePackageCustodianRequestOptions struct {
+	PathParams *ResolvePackageCustodianPath
+	Body       *ResolvePackageCustodianBody
+}
+
+// GetPathParams returns the path params as a map.
+func (o *ResolvePackageCustodianRequestOptions) GetPathParams() (map[string]any, error) {
+	encoded, err := json.Marshal(o.PathParams, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetQuery returns the query params as a map.
+func (o *ResolvePackageCustodianRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *ResolvePackageCustodianRequestOptions) GetBody() any {
+	if o.Body == nil {
+		return nil
+	}
+	return o.Body
+}
+
+// GetHeader returns the headers as a map.
+func (o *ResolvePackageCustodianRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
+// CreatePackageImportRequestOptions is the options needed to make a request to CreatePackageImport.
+type CreatePackageImportRequestOptions struct {
+	Body *CreatePackageImportBody
+}
+
+// GetPathParams returns the path params as a map.
+func (o *CreatePackageImportRequestOptions) GetPathParams() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetQuery returns the query params as a map.
+func (o *CreatePackageImportRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *CreatePackageImportRequestOptions) GetBody() any {
+	if o.Body == nil {
+		return nil
+	}
+	return o.Body
+}
+
+// GetHeader returns the headers as a map.
+func (o *CreatePackageImportRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
+// ReadPackageImportRequestOptions is the options needed to make a request to ReadPackageImport.
+type ReadPackageImportRequestOptions struct {
+	PathParams *ReadPackageImportPath
+}
+
+// GetPathParams returns the path params as a map.
+func (o *ReadPackageImportRequestOptions) GetPathParams() (map[string]any, error) {
+	encoded, err := json.Marshal(o.PathParams, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetQuery returns the query params as a map.
+func (o *ReadPackageImportRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *ReadPackageImportRequestOptions) GetBody() any {
+	return nil
+}
+
+// GetHeader returns the headers as a map.
+func (o *ReadPackageImportRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
+// CancelPackageImportRequestOptions is the options needed to make a request to CancelPackageImport.
+type CancelPackageImportRequestOptions struct {
+	PathParams *CancelPackageImportPath
+}
+
+// GetPathParams returns the path params as a map.
+func (o *CancelPackageImportRequestOptions) GetPathParams() (map[string]any, error) {
+	encoded, err := json.Marshal(o.PathParams, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetQuery returns the query params as a map.
+func (o *CancelPackageImportRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *CancelPackageImportRequestOptions) GetBody() any {
+	return nil
+}
+
+// GetHeader returns the headers as a map.
+func (o *CancelPackageImportRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
+// ListPackageLabelCandidatesRequestOptions is the options needed to make a request to ListPackageLabelCandidates.
+type ListPackageLabelCandidatesRequestOptions struct {
+	Query *ListPackageLabelCandidatesQuery
+}
+
+// GetPathParams returns the path params as a map.
+func (o *ListPackageLabelCandidatesRequestOptions) GetPathParams() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetQuery returns the query params as a map.
+func (o *ListPackageLabelCandidatesRequestOptions) GetQuery() (map[string]any, error) {
+	encoded, err := json.Marshal(o.Query, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *ListPackageLabelCandidatesRequestOptions) GetBody() any {
+	return nil
+}
+
+// GetHeader returns the headers as a map.
+func (o *ListPackageLabelCandidatesRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
 // CreatePackagePreflightRequestOptions is the options needed to make a request to CreatePackagePreflight.
 type CreatePackagePreflightRequestOptions struct {
 	Body *CreatePackagePreflightBody
@@ -13662,6 +15207,37 @@ func (o *TrashPathRequestOptions) GetBody() any {
 
 // GetHeader returns the headers as a map.
 func (o *TrashPathRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
+// ListPeopleRequestOptions is the options needed to make a request to ListPeople.
+type ListPeopleRequestOptions struct {
+	Query *ListPeopleQuery
+}
+
+// GetPathParams returns the path params as a map.
+func (o *ListPeopleRequestOptions) GetPathParams() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetQuery returns the query params as a map.
+func (o *ListPeopleRequestOptions) GetQuery() (map[string]any, error) {
+	encoded, err := json.Marshal(o.Query, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *ListPeopleRequestOptions) GetBody() any {
+	return nil
+}
+
+// GetHeader returns the headers as a map.
+func (o *ListPeopleRequestOptions) GetHeader() (map[string]string, error) {
 	return nil, nil
 }
 
@@ -15979,6 +17555,20 @@ const (
 	ListDocumentsQueryDirectionDesc ListDocumentsQueryDirection = "desc"
 )
 
+type ListPackagesQueryDirection string
+
+const (
+	Produced ListPackagesQueryDirection = "produced"
+	Received ListPackagesQueryDirection = "received"
+)
+
+type ListPackageLabelCandidatesQueryProvenance string
+
+const (
+	Assigned                                          ListPackageLabelCandidatesQueryProvenance = "assigned"
+	ListPackageLabelCandidatesQueryProvenanceReceived ListPackageLabelCandidatesQueryProvenance = "received"
+)
+
 type ListSavedQueriesQueryKind string
 
 const (
@@ -16057,6 +17647,11 @@ type VerifyNodeContentHeaders struct {
 
 type PruneNodeContentVersionsHeaders struct {
 	IfMatch string `json:"If-Match"`
+}
+
+type UploadPackageChunkHeaders struct {
+	XDocbankBlobHash string `json:"X-Docbank-Blob-Hash"`
+	XDocbankBlobSize int64  `json:"X-Docbank-Blob-Size"`
 }
 
 type GetDocumentRenditionHeaders struct {
@@ -16318,6 +17913,64 @@ type PruneNodeContentVersionsPath struct {
 	ID int64 `json:"id"`
 }
 
+type GetPackagePath struct {
+	PackageID string `json:"package_id"`
+}
+
+type AssignPackageCustodianPath struct {
+	PackageID uuid.UUID `json:"package_id"`
+}
+
+type ListPackageCustodiansPath struct {
+	PackageID uuid.UUID `json:"package_id"`
+}
+
+type ListPackageMembersPath struct {
+	PackageID string `json:"package_id"`
+}
+
+type GetPackageRecordPath struct {
+	PackageID string `json:"package_id"`
+	RowID     string `json:"row_id"`
+}
+
+type ListPackageTimelineInputsPath struct {
+	PackageID string `json:"package_id"`
+}
+
+type AbortPackageContainerPath struct {
+	ID string `json:"id"`
+}
+
+type GetPackageContainerPath struct {
+	ID string `json:"id"`
+}
+
+type UploadPackageChunkPath struct {
+	ID    string `json:"id"`
+	Index int    `json:"index"`
+}
+
+type PreflightPackageContainerPath struct {
+	ID string `json:"id"`
+}
+
+type SealPackageContainerPath struct {
+	ID string `json:"id"`
+}
+
+type ResolvePackageCustodianPath struct {
+	AssignmentID uuid.UUID `json:"assignment_id"`
+}
+
+type ReadPackageImportPath struct {
+	OperationID uuid.UUID `json:"operation_id"`
+}
+
+type CancelPackageImportPath struct {
+	OperationID uuid.UUID `json:"operation_id"`
+}
+
 type ReadPackagePreflightPath struct {
 	PreflightID uuid.UUID `json:"preflight_id"`
 }
@@ -16574,6 +18227,18 @@ type RevertNodeContentBody = RevertNodeContentRequest
 
 type PruneNodeContentVersionsBody = VersionPruneRequest
 
+type AssignPackageCustodianBody = PackageCustodianRequest
+
+type BeginPackageContainerBody = PackageContainerInput
+
+type UploadPackageChunkBody = runtime.File
+
+type PreflightPackageContainerBody = PackagePreflightRequest
+
+type ResolvePackageCustodianBody = CustodianResolveRequest
+
+type CreatePackageImportBody = PackageImportRequest
+
 type CreatePackagePreflightBody = PackagePreflightRequest
 
 type PageInventoryBody = PageSelectionRequest
@@ -16826,6 +18491,39 @@ type ListContentVersionsQuery struct {
 	Offset *int64 `json:"offset,omitempty"`
 }
 
+type ListPackagesQuery struct {
+	Direction *ListPackagesQueryDirection `json:"direction,omitempty"`
+	After     *string                     `json:"after,omitempty"`
+	Limit     *int64                      `json:"limit,omitempty"`
+}
+
+type ListPackageCustodiansQuery struct {
+	// RowID Return claims for this record only. Omit to return package-level defaults only.
+	RowID          *string `json:"row_id,omitempty"`
+	UnresolvedOnly *bool   `json:"unresolved_only,omitempty"`
+	Limit          *int    `json:"limit,omitempty"`
+	Cursor         *string `json:"cursor,omitempty"`
+}
+
+type ListPackageMembersQuery struct {
+	AfterOrdinal *int64 `json:"after_ordinal,omitempty"`
+	Limit        *int64 `json:"limit,omitempty"`
+}
+
+type ListPackageTimelineInputsQuery struct {
+	AfterRowID *string `json:"after_row_id,omitempty"`
+	Limit      *int64  `json:"limit,omitempty"`
+}
+
+type ListPackageLabelCandidatesQuery struct {
+	Label      string                                     `json:"label"`
+	PackageID  *string                                    `json:"package_id,omitempty"`
+	LabelSet   *string                                    `json:"label_set,omitempty"`
+	Provenance *ListPackageLabelCandidatesQueryProvenance `json:"provenance,omitempty"`
+	Cursor     *string                                    `json:"cursor,omitempty"`
+	Limit      *int64                                     `json:"limit,omitempty"`
+}
+
 type ReadPackagePreflightDiagnosticsQuery struct {
 	// Limit Maximum diagnostics to return
 	Limit *int `json:"limit,omitempty"`
@@ -16848,6 +18546,12 @@ type ReadPageImageQuery struct {
 
 type ResolvePathQuery struct {
 	Path string `json:"path"`
+}
+
+type ListPeopleQuery struct {
+	Query  *string `json:"query,omitempty"`
+	Limit  *int    `json:"limit,omitempty"`
+	Cursor *string `json:"cursor,omitempty"`
 }
 
 type ReadRenditionTextQuery struct {
@@ -17350,6 +19054,132 @@ type PruneNodeContentVersionsResponse = api.VersionPruneReport
 
 type PruneNodeContentVersionsErrorResponse = Error
 
+type ListPackagesResponse = api.PackagePage
+
+type ListPackagesErrorResponse = Error
+
+type GetPackageResponse = api.PackageDetail
+
+type GetPackageErrorResponse = Error
+
+type AssignPackageCustodianResponse = api.CustodianAssignment
+
+type AssignPackageCustodianErrorResponse api.Error
+
+type AssignPackageCustodianErrorResponseApplicationProblemPlusJSON api.Error
+
+type AssignPackageCustodianErrorResponseApplicationProblemPlusJSON404 api.Error
+
+type AssignPackageCustodianErrorResponseApplicationProblemPlusJSON409 api.Error
+
+type AssignPackageCustodianErrorResponseApplicationProblemPlusJSON422 api.Error
+
+type AssignPackageCustodianErrorResponseApplicationProblemPlusJSON500 api.Error
+
+type ListPackageCustodiansResponse = api.CustodianPage
+
+type ListPackageCustodiansErrorResponse api.Error
+
+type ListPackageCustodiansErrorResponseApplicationProblemPlusJSON api.Error
+
+type ListPackageCustodiansErrorResponseApplicationProblemPlusJSON404 api.Error
+
+type ListPackageCustodiansErrorResponseApplicationProblemPlusJSON422 api.Error
+
+type ListPackageCustodiansErrorResponseApplicationProblemPlusJSON500 api.Error
+
+type ListPackageMembersResponse = api.PackageMemberPage
+
+type ListPackageMembersErrorResponse = Error
+
+type GetPackageRecordResponse = api.PackageRecord
+
+type GetPackageRecordErrorResponse = Error
+
+type ListPackageTimelineInputsResponse = api.PackageTimelineInputPage
+
+type ListPackageTimelineInputsErrorResponse = Error
+
+type BeginPackageContainerResponse = api.PackageContainer
+
+type BeginPackageContainerErrorResponse = Error
+
+type AbortPackageContainerErrorResponse = Error
+
+type GetPackageContainerResponse = api.PackageContainer
+
+type GetPackageContainerErrorResponse = Error
+
+type UploadPackageChunkResponse = store.MailboxChunk
+
+type UploadPackageChunkErrorResponse = Error
+
+type PreflightPackageContainerResponse = api.PackagePreflight
+
+type PreflightPackageContainerErrorResponse = Error
+
+type SealPackageContainerResponse = api.PackageContainer
+
+type SealPackageContainerErrorResponse = Error
+
+type ResolvePackageCustodianResponse = api.CustodianAssignment
+
+type ResolvePackageCustodianErrorResponse api.Error
+
+type ResolvePackageCustodianErrorResponseApplicationProblemPlusJSON api.Error
+
+type ResolvePackageCustodianErrorResponseApplicationProblemPlusJSON404 api.Error
+
+type ResolvePackageCustodianErrorResponseApplicationProblemPlusJSON409 api.Error
+
+type ResolvePackageCustodianErrorResponseApplicationProblemPlusJSON422 api.Error
+
+type ResolvePackageCustodianErrorResponseApplicationProblemPlusJSON500 api.Error
+
+type ListPackageFieldCatalogResponse = api.PackageFieldCatalog
+
+type ListPackageFieldCatalogErrorResponse = Error
+
+type CreatePackageImportResponse = api.PackageImportJob
+
+type CreatePackageImportErrorResponse api.Error
+
+type CreatePackageImportErrorResponseApplicationProblemPlusJSON api.Error
+
+type CreatePackageImportErrorResponseApplicationProblemPlusJSON404 api.Error
+
+type CreatePackageImportErrorResponseApplicationProblemPlusJSON409 api.Error
+
+type CreatePackageImportErrorResponseApplicationProblemPlusJSON422 api.Error
+
+type CreatePackageImportErrorResponseApplicationProblemPlusJSON500 api.Error
+
+type ReadPackageImportResponse = api.PackageImportJob
+
+type ReadPackageImportErrorResponse api.Error
+
+type ReadPackageImportErrorResponseApplicationProblemPlusJSON api.Error
+
+type ReadPackageImportErrorResponseApplicationProblemPlusJSON404 api.Error
+
+type ReadPackageImportErrorResponseApplicationProblemPlusJSON500 api.Error
+
+type CancelPackageImportResponse = api.PackageImportJob
+
+type CancelPackageImportErrorResponse api.Error
+
+type CancelPackageImportErrorResponseApplicationProblemPlusJSON api.Error
+
+type CancelPackageImportErrorResponseApplicationProblemPlusJSON404 api.Error
+
+type CancelPackageImportErrorResponseApplicationProblemPlusJSON409 api.Error
+
+type CancelPackageImportErrorResponseApplicationProblemPlusJSON500 api.Error
+
+type ListPackageLabelCandidatesResponse = api.PackageLabelCandidatePage
+
+type ListPackageLabelCandidatesErrorResponse = Error
+
 type CreatePackagePreflightResponse = api.PackagePreflight
 
 type CreatePackagePreflightErrorResponse api.Error
@@ -17431,6 +19261,16 @@ type AssignTagPathErrorResponse = Error
 type TrashPathResponse = api.Node
 
 type TrashPathErrorResponse = Error
+
+type ListPeopleResponse = api.PersonPage
+
+type ListPeopleErrorResponse api.Error
+
+type ListPeopleErrorResponseApplicationProblemPlusJSON api.Error
+
+type ListPeopleErrorResponseApplicationProblemPlusJSON422 api.Error
+
+type ListPeopleErrorResponseApplicationProblemPlusJSON500 api.Error
 
 type GetPeopleCoverageResponse = api.PeopleCoverage
 
@@ -17875,6 +19715,8 @@ type CancelExportJobRequest struct {
 
 type CapabilityStateV1 = document.CapabilityStateV1
 
+type CatalogEntry = loadfile.CatalogEntry
+
 type Collection = api.Collection
 
 type CollectionLabel = api.CollectionLabel
@@ -17886,6 +19728,8 @@ type CollectionPage = api.CollectionPage
 type CollectionQuality = api.CollectionQuality
 
 type CollectionQualitySummary = api.CollectionQualitySummary
+
+type CollectionSnapshotRepresentation = store.CollectionSnapshotRepresentation
 
 type ContentReference = api.ContentReference
 
@@ -17926,6 +19770,12 @@ type CreateTagRequest struct {
 	Schema *string `json:"$schema,omitempty"`
 	Name   string  `json:"name"`
 }
+
+type CustodianAssignment = api.CustodianAssignment
+
+type CustodianPage = api.CustodianPage
+
+type CustodianResolveRequest = api.CustodianResolveRequest
 
 type DateCandidate = report.DateCandidate
 
@@ -18322,13 +20172,53 @@ type OutputProblem = bundle.OutputProblem
 
 type OutputProblems = bundle.OutputProblems
 
+type PackageBrowseVolume = api.PackageBrowseVolume
+
+type PackageContainer = api.PackageContainer
+
+type PackageContainerInput struct {
+	// Schema A URL to the JSON Schema for this object.
+	Schema      *string `json:"$schema,omitempty"`
+	ContainerID string  `json:"container_id"`
+	Sha256      string  `json:"sha256"`
+	Size        int64   `json:"size"`
+}
+
+type PackageCustodianRequest = api.PackageCustodianRequest
+
+type PackageDetail = api.PackageDetail
+
 type PackageDiagnostic = api.PackageDiagnostic
 
 type PackageDiagnosticPage = api.PackageDiagnosticPage
 
+type PackageFieldCatalog = api.PackageFieldCatalog
+
+type PackageImportJob = api.PackageImportJob
+
+type PackageImportRequest = api.PackageImportRequest
+
+type PackageLabelCandidatePage = api.PackageLabelCandidatePage
+
+type PackageLabelRow = store.PackageLabelRow
+
+type PackageMember = api.PackageMember
+
+type PackageMemberPage = api.PackageMemberPage
+
+type PackagePage = api.PackagePage
+
 type PackagePreflight = api.PackagePreflight
 
 type PackagePreflightRequest = api.PackagePreflightRequest
+
+type PackageRecord = api.PackageRecord
+
+type PackageSummary = api.PackageSummary
+
+type PackageTimelineInput = store.PackageTimelineInput
+
+type PackageTimelineInputPage = api.PackageTimelineInputPage
 
 type PackageVolume = api.PackageVolume
 
@@ -18371,6 +20261,10 @@ type PeopleBuild = api.PeopleBuild
 type PeopleCoverage = api.PeopleCoverage
 
 type PeopleRebuildRequest = api.PeopleRebuildRequest
+
+type PersonPage = api.PersonPage
+
+type PersonSummary = api.PersonSummary
 
 type Plan = bundle.Plan
 

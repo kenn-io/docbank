@@ -184,11 +184,11 @@ func (r *webSessionRegistry) revoke(token string) {
 		return
 	}
 	state.cancel()
-	if r.onRevoke != nil {
-		r.onRevoke(hex.EncodeToString(digest[:]))
-	}
 	if state.upload != nil {
 		_ = state.upload.CloseNow()
+	}
+	if r.onRevoke != nil {
+		r.onRevoke(hex.EncodeToString(digest[:]))
 	}
 }
 
@@ -206,15 +206,14 @@ func (r *webSessionRegistry) closeAll(ctx context.Context) error {
 		conns = append(conns, conn)
 	}
 	r.mu.Unlock()
+	for _, conn := range conns {
+		_ = conn.CloseNow()
+	}
 	if r.onRevoke != nil {
 		for owner := range states {
 			r.onRevoke(owner)
 		}
 	}
-	for _, conn := range conns {
-		_ = conn.CloseNow()
-	}
-
 	drained := make(chan struct{})
 	go func() {
 		r.uploadGroup.Wait()
@@ -300,6 +299,9 @@ func webSessionRequestAllowed(r *http.Request) bool {
 		}
 	}
 	if mailboxBrowserRequestAllowed(r) {
+		return true
+	}
+	if packagesBrowserRequestAllowed(r) {
 		return true
 	}
 	if path == "/api/v1/saved-queries" {

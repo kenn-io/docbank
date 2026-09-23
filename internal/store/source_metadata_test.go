@@ -212,6 +212,39 @@ func TestNodeSourceMetadataViewKeepsAttachmentCoordinatesTogether(t *testing.T) 
 	assert.Equal(t, viewByPath.Path, viewByPath.SourceMetadata.Attachment.Path)
 }
 
+func TestNodeSourceMetadataViewReadsCommittedStateDuringWrite(t *testing.T) {
+	s := newTestStore(t)
+	node, err := s.CreateFile(t.Context(), s.RootID(), "committed.pdf", fakeHash("a1"), 12, "application/pdf")
+	require.NoError(t, err)
+	canonical, _, err := document.MarshalSourceMetadataV1(document.SourceMetadataV1{
+		ContractVersion: document.SourceMetadataContractV1})
+	require.NoError(t, err)
+	_, err = s.PublishSourceMetadata(t.Context(), node.BlobHash, fakeHash("f1"), canonical)
+	require.NoError(t, err)
+	writer, err := s.db.BeginTx(t.Context(), nil)
+	require.NoError(t, err)
+	defer func() { _ = writer.Rollback() }()
+	_, err = writer.ExecContext(t.Context(), `UPDATE nodes SET name='pending.pdf' WHERE id=?`, node.ID)
+	require.NoError(t, err)
+
+	byID, err := s.NodeSourceMetadataViewByID(t.Context(), node.ID)
+	require.NoError(t, err)
+	byPath, err := s.NodeSourceMetadataViewByPath(t.Context(), "/committed.pdf")
+	require.NoError(t, err)
+	for _, view := range []NodeSourceMetadataView{byID, byPath} {
+		require.Equal(t, "committed.pdf", view.Node.Name)
+		require.Equal(t, "/committed.pdf", view.Path)
+		require.NotNil(t, view.SourceMetadata)
+		require.Equal(t, node.CurrentVersionID, view.SourceMetadata.Version.ID)
+		require.Equal(t, "committed.pdf", view.SourceMetadata.Attachment.Filename)
+		require.Equal(t, "/committed.pdf", view.SourceMetadata.Attachment.Path)
+	}
+	require.NoError(t, writer.Commit())
+	committed, err := s.NodeSourceMetadataViewByID(t.Context(), node.ID)
+	require.NoError(t, err)
+	require.Equal(t, "pending.pdf", committed.Node.Name)
+}
+
 // Derived evidence must never take the primary node read down with it: a
 // corrupt generation is omitted from stat and reported by the dedicated
 // metadata read and by verification instead.

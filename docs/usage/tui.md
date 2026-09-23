@@ -78,6 +78,23 @@ Permanent deletion and physical reclamation are deliberately absent from the
 TUI; use the preview-first CLI or authenticated HTTP workflows when that is
 really intended.
 
+## Browse load-file packages
+
+Press <kbd>K</kbd> to browse received and produced packages. Press <kbd>Enter</kbd>
+on a completed package to view its members, or <kbd>l</kbd> to look up an exact
+Bates label within the selected package. Label results show the label set,
+provenance, and page number when verified.
+
+Each page holds at most 250 packages or members, or 100 label matches. Counts
+describe the current page; a `+` means another page is available. Press
+<kbd>n</kbd> to replace the current rows with the next page. Press <kbd>r</kbd>
+to refresh from the first page.
+
+Use <kbd>↑</kbd>/<kbd>↓</kbd> or <kbd>k</kbd>/<kbd>j</kbd> to move through any
+of these lists. <kbd>PgUp</kbd>/<kbd>PgDn</kbd> scroll by a screen, and
+<kbd>Home</kbd>/<kbd>End</kbd> select the first or last row on the current page.
+Press <kbd>Esc</kbd> to leave label results, members, or the package browser.
+
 ## Keyboard controls
 
 | Key | Action |
@@ -90,6 +107,7 @@ really intended.
 | <kbd>a</kbd> | Browse the selected node's permanent audited history |
 | <kbd>J</kbd> | Inspect daemon background jobs and failures |
 | <kbd>O</kbd> | Inspect storage inventory and backup recovery points |
+| <kbd>K</kbd> | Browse load-file packages, their members, and exact Bates labels |
 | <kbd>←</kbd>, <kbd>Backspace</kbd>, or <kbd>Esc</kbd> | Return to the parent directory or leave search results |
 | <kbd>/</kbd> | Search live names and extracted text |
 | <kbd>s</kbd> | Cycle the sort column: name, size, and modification time |

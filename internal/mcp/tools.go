@@ -18,11 +18,18 @@ import (
 
 const toolCatalogTTLMs = 60_000
 
-func catalogInstructions(allowProcessing bool) string {
-	if allowProcessing {
-		return "Docbank exposes bounded reads plus guarded start_processing; processing still requires prior operator consent for the exact plan."
+func catalogInstructions(allowProcessing, allowPackageWrites bool) string {
+	if !allowProcessing && !allowPackageWrites {
+		return "Docbank exposes a bounded read-only document and package surface."
 	}
-	return "Docbank exposes a bounded read-only document surface."
+	instructions := "Docbank exposes bounded document and package reads."
+	if allowProcessing {
+		instructions += " start_processing requires a reviewed plan and prior operator consent."
+	}
+	if allowPackageWrites {
+		instructions += " Package writes can preflight local sources, import packages, and assign or resolve custodians."
+	}
+	return instructions
 }
 
 type toolDefinition struct {
@@ -31,6 +38,8 @@ type toolDefinition struct {
 	description string
 	schemas     func() (schema, schema)
 	write       bool
+	idempotent  bool
+	destructive bool
 }
 
 var readToolDefinitions = []toolDefinition{
@@ -43,6 +52,16 @@ var readToolDefinitions = []toolDefinition{
 	{name: "get_processing_plan", title: "Get processing plan", description: "Preview the exact provider disclosure and consent state for one document version.", schemas: getProcessingPlanSchemas},
 	{name: "get_processing_status", title: "Get processing status", description: "Read the current state of one stable processing job.", schemas: getProcessingStatusSchemas},
 	{name: "get_processing_coverage", title: "Get processing coverage", description: "Read rendition and embedding coverage for an exact source fence.", schemas: getProcessingCoverageSchemas},
+	{name: "get_package_import", title: "Get package import", description: "Read durable progress for one load-file import operation.", schemas: getPackageImportSchemas},
+	{name: "get_package_preflight", title: "Get package preflight", description: "Read one exact retained load-file package preflight.", schemas: getPackagePreflightSchemas},
+	{name: "list_package_preflight_diagnostics", title: "List package preflight diagnostics", description: "Page through bounded diagnostics for one retained package preflight.", schemas: listPackagePreflightDiagnosticsSchemas},
+	{name: "list_package_custodians", title: "List package custodians", description: "Page through active custodian claims for an exact package scope.", schemas: listPackageCustodiansSchemas},
+	{name: "find_people", title: "Find people", description: "Find bounded canonical person candidates before resolving a custodian claim.", schemas: findPeopleSchemas},
+	{name: "list_packages", title: "List packages", description: "Page through received and produced load-file packages.", schemas: listPackagesSchemas},
+	{name: "get_package", title: "Get package", description: "Read one load-file package and its retained source authority.", schemas: getPackageSchemas},
+	{name: "list_package_members", title: "List package members", description: "Page through one package's immutable document occurrences.", schemas: listPackageMembersSchemas},
+	{name: "get_package_record", title: "Get package record", description: "Read one immutable sender row by its package-scoped record key.", schemas: getPackageRecordSchemas},
+	{name: "lookup_bates_label", title: "Look up Bates label", description: "Find every bounded package-scoped match for an exact received or assigned label.", schemas: lookupBatesLabelSchemas},
 }
 
 var processingToolDefinition = toolDefinition{
@@ -51,19 +70,46 @@ var processingToolDefinition = toolDefinition{
 	schemas:     startProcessingSchemas, write: true,
 }
 
-func toolCatalog(allowProcessing bool) []*sdkmcp.Tool {
-	definitions := readToolDefinitions
+var packageImportToolDefinition = toolDefinition{
+	name: "start_package_import", title: "Start package import",
+	description: "Start or replay a reviewed load-file import using its preflight identity and operation UUID.",
+	schemas:     startPackageImportSchemas, write: true, idempotent: true,
+}
+
+var preflightLoadFilePackageToolDefinition = toolDefinition{
+	name: "preflight_load_file_package", title: "Preflight load-file package",
+	description: "Retain a reviewed preflight for a local load-file directory or ZIP before import.",
+	schemas:     preflightLoadFilePackageSchemas, write: true,
+}
+
+var resolvePackageCustodianToolDefinition = toolDefinition{
+	name: "resolve_package_custodian", title: "Resolve package custodian",
+	description: "Link one exact existing package custodian claim to one exact canonical person.",
+	schemas:     resolvePackageCustodianSchemas, write: true,
+}
+
+var assignPackageCustodianToolDefinition = toolDefinition{
+	name: "assign_package_custodian", title: "Assign package custodian",
+	description: "Create or replace the operator-owned primary custodian for one exact package scope.",
+	schemas:     assignPackageCustodianSchemas, write: true, destructive: true,
+}
+
+func toolCatalog(allowProcessing, allowPackageWrites bool) []*sdkmcp.Tool {
+	definitions := slices.Clone(readToolDefinitions)
 	if allowProcessing {
-		definitions = append(slices.Clone(definitions), processingToolDefinition)
+		definitions = append(definitions, processingToolDefinition)
 	}
-	nonDestructive := false
+	if allowPackageWrites {
+		definitions = append(definitions, preflightLoadFilePackageToolDefinition, packageImportToolDefinition,
+			resolvePackageCustodianToolDefinition, assignPackageCustodianToolDefinition)
+	}
 	tools := make([]*sdkmcp.Tool, 0, len(definitions))
 	for _, definition := range definitions {
 		input, output := definition.schemas()
 		openWorld := definition.write
 		annotation := &sdkmcp.ToolAnnotations{
 			Title: definition.title, ReadOnlyHint: !definition.write,
-			IdempotentHint: !definition.write, DestructiveHint: &nonDestructive, OpenWorldHint: &openWorld,
+			IdempotentHint: !definition.write || definition.idempotent, DestructiveHint: &definition.destructive, OpenWorldHint: &openWorld,
 		}
 		tools = append(tools, &sdkmcp.Tool{
 			Name: definition.name, Title: definition.title, Description: definition.description,
@@ -75,14 +121,23 @@ func toolCatalog(allowProcessing bool) []*sdkmcp.Tool {
 }
 
 func registerToolCatalog(
-	server *sdkmcp.Server, allowProcessing bool, lease *daemonLease, plans *processingPlanRegistry, logger *slog.Logger,
+	server *sdkmcp.Server, allowProcessing, allowPackageWrites bool, lease *daemonLease, plans *processingPlanRegistry, logger *slog.Logger,
 ) {
-	tools := toolCatalog(allowProcessing)
+	tools := toolCatalog(allowProcessing, allowPackageWrites)
 	server.AddReceivingMiddleware(validateToolInputs(tools))
 	for _, tool := range tools {
 		output := mustResolveSchema(tool.OutputSchema)
-		handler := processingToolHandler(lease, plans, output, logger)
-		if tool.Name != processingToolDefinition.name {
+		var handler sdkmcp.ToolHandler
+		switch tool.Name {
+		case processingToolDefinition.name:
+			handler = processingToolHandler(lease, plans, output, logger)
+		case packageImportToolDefinition.name:
+			handler = packageImportToolHandler(lease, output, logger)
+		case preflightLoadFilePackageToolDefinition.name:
+			handler = packagePreflightToolHandler(lease, output, logger)
+		case resolvePackageCustodianToolDefinition.name, assignPackageCustodianToolDefinition.name:
+			handler = packageCustodianWriteToolHandler(lease, tool.Name, output, logger)
+		default:
 			handler = readToolHandler(lease, plans, tool.Name, output, logger)
 		}
 		server.AddTool(tool, handler)

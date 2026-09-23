@@ -20,6 +20,47 @@ import (
 	doctui "go.kenn.io/docbank/internal/tui"
 )
 
+func TestTUIBackendForwardsPackagePageCursors(t *testing.T) {
+	const packageID = "11111111-1111-4111-8111-111111111111"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		query := r.URL.Query()
+		switch r.URL.Path {
+		case "/api/v1/packages":
+			assert.Equal(t, "received", query.Get("direction"))
+			assert.Equal(t, "next-package", query.Get("after"))
+			assert.Equal(t, "250", query.Get("limit"))
+			assert.NoError(t, json.MarshalWrite(w, api.PackagePage{NextAfter: "later-package"}))
+		case "/api/v1/packages/by-id/" + packageID + "/members":
+			assert.Equal(t, "250", query.Get("after_ordinal"))
+			assert.Equal(t, "250", query.Get("limit"))
+			assert.NoError(t, json.MarshalWrite(w, api.PackageMemberPage{NextAfterOrdinal: 500}))
+		case "/api/v1/packages/label-candidates":
+			assert.Equal(t, "EXT000001", query.Get("label"))
+			assert.Equal(t, packageID, query.Get("package_id"))
+			assert.Equal(t, "next-label", query.Get("cursor"))
+			assert.Equal(t, "100", query.Get("limit"))
+			assert.NoError(t, json.MarshalWrite(w, api.PackageLabelCandidatePage{NextCursor: "later-label"}))
+		default:
+			t.Errorf("unexpected request path: %s", r.URL.Path)
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(server.Close)
+	backend := &tuiDaemonBackend{ensure: func(context.Context) (*daemonconn.Connection, error) {
+		return daemonconn.New(server.URL, ""), nil
+	}}
+	packages, err := backend.Packages(t.Context(), "received", "next-package", 250)
+	require.NoError(t, err)
+	assert.Equal(t, "later-package", packages.NextAfter)
+	members, err := backend.PackageMembers(t.Context(), packageID, 250, 250)
+	require.NoError(t, err)
+	assert.Equal(t, 500, members.NextAfterOrdinal)
+	labels, err := backend.LookupLabel(t.Context(), "EXT000001", packageID, "next-label", 100)
+	require.NoError(t, err)
+	assert.Equal(t, "later-label", labels.NextCursor)
+}
+
 func TestTUIProcessingRetainsJobAfterInterruptedResponse(t *testing.T) {
 	job := api.ProcessingJob{ID: strings.Repeat("a", 64), ContentVersionID: processingTestVersionID, ProfileFingerprint: strings.Repeat("b", 64)}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
