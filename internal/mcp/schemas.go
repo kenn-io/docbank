@@ -635,7 +635,7 @@ func detachPhotoFileSchemas() (schema, schema) {
 		"asset_id":                 uuidSchema(),
 		"revision":                 integerSchema(1, 0),
 		"file_id":                  uuidSchema(),
-		"clear_dependent_sidecars": schema{"type": "boolean"},
+		"clear_dependent_sidecars": booleanSchema(),
 	}, "asset_id", "revision", "file_id")
 }
 
@@ -643,7 +643,7 @@ func excludePhotoAssetSchemas() (schema, schema) {
 	return photoAssetMutationSchemas(schema{
 		"asset_id": uuidSchema(),
 		"revision": integerSchema(1, 0),
-		"excluded": schema{"type": "boolean"},
+		"excluded": booleanSchema(),
 	}, "asset_id", "revision", "excluded")
 }
 

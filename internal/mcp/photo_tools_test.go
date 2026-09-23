@@ -33,8 +33,8 @@ func TestPhotoMCPWorkflowAndWriteOptIn(t *testing.T) {
 		require.NotNil(t, tool)
 		require.NotNil(t, tool.Annotations)
 		assert.False(t, tool.Annotations.ReadOnlyHint)
-		assertSchemaContract(t, tool.InputSchema, true)
-		assertSchemaContract(t, tool.OutputSchema, true)
+		assertSchemaContract(t, tool.InputSchema)
+		assertSchemaContract(t, tool.OutputSchema)
 	}
 	assert.NotContains(t, withWrites, "set_photo_display")
 	assert.NotContains(t, withWrites, "set_photo_settings")
