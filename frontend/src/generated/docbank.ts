@@ -979,12 +979,16 @@ export interface BatesPlanRequest {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
   namespace_id?: string;
-  operation_id: string;
+  operation_id?: string;
   padding?: number;
   pages?: BatesPageInput[];
   prefix?: string;
   recipe_sha256?: string;
   snapshot_id: string;
+  /**
+     * First Bates number. Preview accepts 0 to continue the namespace cursor; reserve requires the recipe start_at.
+     * @minimum 0
+     */
   start_at: number;
   suffix?: string;
 }

@@ -91,7 +91,7 @@ function readAllocation(value: unknown, request?: BatesPlanRequest): BatesAlloca
   valid(typeof item.namespace_id === "string" && uuid.test(item.namespace_id));
   valid(typeof item.snapshot_id === "string" && uuid.test(item.snapshot_id));
   valid(typeof item.recipe_sha256 === "string" && hash.test(item.recipe_sha256));
-  valid(["reserved", "committed", "abandoned"].includes(String(item.state)));
+  valid(["reserved", "committed"].includes(String(item.state)));
   valid(safeInteger(item.start_sequence, 1) && safeInteger(item.end_sequence, item.start_sequence));
   valid(timestamp(item.created_at));
   const labels = readLabels(item.labels);

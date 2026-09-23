@@ -2029,12 +2029,13 @@ components:
         snapshot_id:
           type: string
         start_at:
+          description: First Bates number. Preview accepts 0 to continue the namespace cursor; reserve requires the recipe start_at.
           format: int64
+          minimum: 0
           type: integer
         suffix:
           type: string
       required:
-        - operation_id
         - snapshot_id
         - start_at
       type: object

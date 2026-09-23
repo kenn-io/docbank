@@ -340,6 +340,7 @@
           {:else if !allocation}<Button tone="info" disabled={busy} onclick={() => void reserve()}>Retry reserve</Button>{/if}
           {#if pending}<Button disabled={busy} onclick={discard}>Discard review</Button>{/if}
         </div>
+        {#if pending && allocation}<p class="muted">Discarding only forgets this review in this browser. The reserved numbers stay reserved and are never reused.</p>{/if}
       </section>
     {/if}
 
