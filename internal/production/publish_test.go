@@ -113,7 +113,7 @@ func (a *syntheticFinalArtifacts) OpenVerifiedProductionArtifact(_ context.Conte
 }
 
 func testPublishVerifiedProductionFromPages(t *testing.T, finalized FinalizedProduction, job Job,
-	plan RenderPlan, archive *syntheticPageArchive, recipe redaction.Recipe) {
+	plan RenderPlan, archive *syntheticPageArchive, recipe redaction.Recipe) (Job, *syntheticFinalArtifacts) {
 	t.Helper()
 	data := make(map[string][]byte)
 	for _, handle := range archive.pages {
@@ -213,4 +213,5 @@ func testPublishVerifiedProductionFromPages(t *testing.T, finalized FinalizedPro
 	require.ErrorIs(t, err, context.Canceled)
 	require.Zero(t, betweenArtifacts.textWrites)
 	require.Zero(t, newPublisher.responses)
+	return result, artifacts
 }

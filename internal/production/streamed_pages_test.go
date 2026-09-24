@@ -1,12 +1,15 @@
 package production
 
 import (
+	"archive/zip"
 	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"image/png"
 	"io"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -14,6 +17,7 @@ import (
 	"github.com/stretchr/testify/require"
 	documentproduction "go.kenn.io/docbank/document/production"
 	"go.kenn.io/docbank/document/redaction"
+	"go.kenn.io/docbank/internal/packagetest"
 	"go.kenn.io/docbank/internal/pdfproduction"
 	"go.kenn.io/docbank/internal/redactiontest"
 	"go.kenn.io/kit/packstore"
@@ -349,7 +353,7 @@ func TestRenderProductionPagesTwoPageMasksAndFreshVerification(t *testing.T) {
 		Height: 110_000, Span: redaction.Span{Start: 1, End: 2}}
 	member.Resolved = endorsementResolved(t, recipe, []redaction.Page{pageOne, pageTwo}, []endorsementDecision{{
 		id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", label: "PUBLIC", page: 2,
-		x0: 1_000, y0: 1_000, x1: 10_000, y1: 5_000,
+		x0: 0, y0: 0, x1: 85_000, y1: 110_000,
 	}})
 	member.ResolvedSHA256 = member.Resolved.SHA256
 	require.Len(t, member.Resolved.RedactBoxes, 1)
@@ -405,7 +409,54 @@ func TestRenderProductionPagesTwoPageMasksAndFreshVerification(t *testing.T) {
 	require.NoError(t, fresh.Close())
 	require.Equal(t, 2, archive.pages[1].openCount)
 	require.Equal(t, 2, archive.pages[2].openCount)
-	testPublishVerifiedProductionFromPages(t, finalized, job, plan, archive, recipe)
+	published, artifacts := testPublishVerifiedProductionFromPages(t, finalized, job, plan, archive, recipe)
+	projection, err := PlanPackageProjection(published, reservation,
+		[]PackageMember{{ID: member.Member.ID, Ordinal: 1, FamilyID: "synthetic-family"}},
+		"export-dat-pdf-v1", PackageLimits{MaxVolumeBytes: 50 << 20, MaxVolumeDocuments: 10})
+	require.NoError(t, err)
+	path := filepath.Join(t.TempDir(), "recipient.zip")
+	qc, err := BuildRecipientArchive(t.Context(), projection, job.ID, artifacts, path)
+	require.NoError(t, err)
+	verified, err := VerifyRecipientArchive(path)
+	require.NoError(t, err)
+	require.Equal(t, qc, verified)
+	require.Equal(t, []string{"SYN000001", "SYN000002"}, qc.PageNumbers)
+	zipFile, err := zip.OpenReader(path)
+	require.NoError(t, err)
+	defer func() { require.NoError(t, zipFile.Close()) }()
+	pageRed := map[int]uint32{}
+	for _, entry := range zipFile.File {
+		stream, openErr := entry.Open()
+		require.NoError(t, openErr)
+		body, readErr := io.ReadAll(stream)
+		require.NoError(t, readErr)
+		require.NoError(t, stream.Close())
+		require.NotContains(t, string(body), "synthetic private reason")
+		if entry.Name == "VOL001/"+projection.Manifest.Documents[0].PDFPath {
+			visible, textErr := packagetest.PDFText(t.Context(), body)
+			require.NoError(t, textErr)
+			require.Contains(t, visible, "SYN000001")
+			require.Contains(t, visible, "SYN000002")
+		}
+		if entry.Name == "VOL001/"+projection.Manifest.Documents[0].TextPath {
+			require.Contains(t, string(body), "A")
+			require.NotContains(t, string(body), "B")
+		}
+		for page, image := range projection.Manifest.Documents[0].Images {
+			if entry.Name != "VOL001/"+image.Path {
+				continue
+			}
+			decoded, decodeErr := png.Decode(bytes.NewReader(body))
+			require.NoError(t, decodeErr)
+			bounds := decoded.Bounds()
+			red, _, _, _ := decoded.At(bounds.Min.X+bounds.Dx()/2,
+				bounds.Min.Y+bounds.Dy()/3).RGBA()
+			pageRed[page+1] = red
+		}
+	}
+	require.Len(t, pageRed, 2)
+	require.Greater(t, pageRed[1], uint32(235*257), "unmasked source page stays white")
+	require.Less(t, pageRed[2], uint32(20*257), "redacted page is burned black")
 }
 
 func (r *syntheticVerifiedPDF) Close() error { r.closed = true; return nil }
