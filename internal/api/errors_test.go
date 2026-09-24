@@ -12,6 +12,7 @@ import (
 	"go.kenn.io/docbank/internal/processing"
 	"go.kenn.io/docbank/internal/store"
 	"go.kenn.io/docbank/internal/vectorindex"
+	"go.kenn.io/docbank/report"
 )
 
 func TestFromMaintenanceErrorPreservesCommittedRetirementBoundary(t *testing.T) {
@@ -38,6 +39,19 @@ func TestFromStoreErrorMapsCustodianConflict(t *testing.T) {
 	require.ErrorAs(t, FromStoreError(store.ErrCustodianConflict), &mapped)
 	assert.Equal(t, http.StatusConflict, mapped.Status)
 	assert.Equal(t, "custodian_conflict", mapped.Code)
+}
+
+func TestFromStoreErrorMapsReportHistoryReceiptLimit(t *testing.T) {
+	mapped := &Error{}
+	require.ErrorAs(t, FromStoreError(report.ErrReportLimit), &mapped)
+	assert.Equal(t, http.StatusRequestEntityTooLarge, mapped.Status)
+	assert.Equal(t, "report_limit", mapped.Code)
+}
+
+func TestTermReportErrorMapsVisibilityDependencyLimit(t *testing.T) {
+	mapped := termReportError(report.ErrReportLimit)
+	assert.Equal(t, http.StatusRequestEntityTooLarge, mapped.Status)
+	assert.Equal(t, "report_limit", mapped.Code)
 }
 
 func TestFromStoreErrorMapsPersonConflicts(t *testing.T) {
