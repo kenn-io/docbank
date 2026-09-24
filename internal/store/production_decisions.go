@@ -12,10 +12,24 @@ import (
 )
 
 func (s *Store) ProductionDecisions(ctx context.Context, setID string, revision int64, cursor string, limit int) ([]redaction.Decision, string, error) {
-	if validateUUIDv4(setID) != nil || revision < 1 || limit < 1 || limit > redaction.MaxProductionPage {
+	return s.ProductionDecisionsFiltered(ctx, setID, revision, cursor, limit, nil)
+}
+
+// ProductionDecisionsFiltered pages decisions in member/ID order. A filter has
+// its own cursor scope, and each page stays within the JSON response budget.
+func (s *Store) ProductionDecisionsFiltered(ctx context.Context, setID string, revision int64,
+	cursor string, limit int, uncertain *bool) ([]redaction.Decision, string, error) {
+	if validateUUIDv4(setID) != nil || revision < 1 || limit < 1 || limit > redaction.MaxProductionDecisionPage {
 		return nil, "", ErrInvalidProduction
 	}
-	position, err := decodeProductionListCursor(cursor, "decisions", setID, revision)
+	kind := "decisions"
+	if uncertain != nil {
+		kind = "decisions_uncertain_false"
+		if *uncertain {
+			kind = "decisions_uncertain_true"
+		}
+	}
+	position, err := decodeProductionListCursor(cursor, kind, setID, revision)
 	if err != nil {
 		return nil, "", err
 	}
@@ -27,39 +41,60 @@ func (s *Store) ProductionDecisions(ctx context.Context, setID string, revision 
 	if _, err := scanProductionDraft(tx.QueryRowContext(ctx, productionDraftSelect+` WHERE set_id=? AND revision=?`, setID, revision)); err != nil {
 		return nil, "", err
 	}
-	rows, err := tx.QueryContext(ctx, `SELECT revision,decision_id,member_id,actor,created_at,canonical_json FROM production_decisions
-		WHERE set_id=? AND revision=? AND (member_id>? OR (member_id=? AND decision_id>?))
-		ORDER BY member_id,decision_id LIMIT ?`, setID, revision, position.MemberID, position.MemberID, position.ID, limit+1)
-	if err != nil {
-		return nil, "", err
-	}
-	defer func() { _ = rows.Close() }()
-	items := make([]redaction.Decision, 0, limit+1)
-	for rows.Next() {
-		value, err := scanProductionDecision(rows)
+	const batchSize = 512
+	const maxPageBytes = 1<<20 - 8192 // leave room for the response envelope and cursor
+	items := make([]redaction.Decision, 0, limit)
+	bytesUsed := 2 // JSON array delimiters
+	hasMore := false
+	for {
+		count, err := func() (count int, batchErr error) {
+			rows, err := tx.QueryContext(ctx, `SELECT revision,decision_id,member_id,actor,created_at,canonical_json FROM production_decisions
+				WHERE set_id=? AND revision=? AND (member_id>? OR (member_id=? AND decision_id>?))
+				ORDER BY member_id,decision_id LIMIT ?`, setID, revision, position.MemberID, position.MemberID, position.ID, batchSize)
+			if err != nil {
+				return 0, err
+			}
+			defer func() { batchErr = errors.Join(batchErr, rows.Close()) }()
+			for rows.Next() {
+				count++
+				value, err := scanProductionDecision(rows)
+				if err != nil {
+					return count, err
+				}
+				position.MemberID, position.ID = value.MemberID, value.ID
+				if uncertain != nil && value.Uncertain != *uncertain {
+					continue
+				}
+				raw, err := canonical.Marshal(value)
+				if err != nil {
+					return count, err
+				}
+				if len(items) == limit || bytesUsed+len(raw)+1 > maxPageBytes {
+					if len(items) == 0 {
+						return count, ErrInvalidProduction
+					}
+					hasMore = true
+					break
+				}
+				items = append(items, value)
+				bytesUsed += len(raw) + 1
+			}
+			return count, rows.Err()
+		}()
 		if err != nil {
 			return nil, "", err
 		}
-		items = append(items, value)
-	}
-	if err := rows.Err(); err != nil {
-		_ = rows.Close()
-		return nil, "", err
-	}
-	if err := rows.Close(); err != nil {
-		return nil, "", err
+		if hasMore || count < batchSize {
+			break
+		}
 	}
 	next := ""
-	if len(items) > limit {
-		last := items[limit-1]
-		next, err = encodeProductionListCursor(productionListCursorV1{Kind: "decisions", SetID: setID, Revision: revision, MemberID: last.MemberID, ID: last.ID})
+	if hasMore {
+		last := items[len(items)-1]
+		next, err = encodeProductionListCursor(productionListCursorV1{Kind: kind, SetID: setID, Revision: revision, MemberID: last.MemberID, ID: last.ID})
 		if err != nil {
 			return nil, "", err
 		}
-		items = items[:limit]
-	}
-	if items == nil {
-		items = []redaction.Decision{}
 	}
 	if err := tx.Commit(); err != nil {
 		return nil, "", err

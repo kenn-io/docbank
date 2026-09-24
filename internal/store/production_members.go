@@ -463,7 +463,8 @@ func decodeProductionListCursor(raw, kind, setID string, revision int64) (produc
 		return productionListCursorV1{}, ErrInvalidProduction
 	}
 	if kind == "members" && (value.Ordinal < 1 || validateUUIDv4(value.MemberID) != nil || value.ID != "") ||
-		kind == "decisions" && (validateUUIDv4(value.MemberID) != nil || validateUUIDv4(value.ID) != nil || value.Ordinal != 0) ||
+		(kind == "decisions" || kind == "decisions_uncertain_true" || kind == "decisions_uncertain_false") &&
+			(validateUUIDv4(value.MemberID) != nil || validateUUIDv4(value.ID) != nil || value.Ordinal != 0) ||
 		kind == "sets" && (validateUUIDv4(value.ID) != nil || value.Ordinal != 0 || value.MemberID != "") {
 		return productionListCursorV1{}, ErrInvalidProduction
 	}

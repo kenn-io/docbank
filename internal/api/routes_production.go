@@ -297,16 +297,27 @@ func registerProductionRoutes(api huma.API, d Deps, g *OperationGate) {
 	huma.Register(api, huma.Operation{OperationID: "listProductionDecisions", Method: http.MethodGet,
 		Path: "/api/v1/productions/sets/{set_id}/revisions/{revision}/decisions", Summary: "Page exact production decisions"},
 		func(ctx context.Context, in *struct {
-			SetID    string `path:"set_id" format:"uuid"`
-			Revision int64  `path:"revision" minimum:"1"`
-			Cursor   string `query:"cursor"`
-			Limit    int    `query:"limit" minimum:"0" maximum:"200"`
+			SetID     string `path:"set_id" format:"uuid"`
+			Revision  int64  `path:"revision" minimum:"1"`
+			Cursor    string `query:"cursor"`
+			Limit     int    `query:"limit" minimum:"0" maximum:"500"`
+			Uncertain string `query:"uncertain" enum:"true,false"`
 		}) (*struct{ Body ProductionDecisionPage }, error) {
+			var uncertain *bool
+			switch in.Uncertain {
+			case "":
+			case "true":
+				uncertain = new(true)
+			case "false":
+				uncertain = new(false)
+			default:
+				return nil, NewError(http.StatusUnprocessableEntity, "invalid_production", "invalid uncertainty filter")
+			}
 			limit := in.Limit
 			if limit == 0 {
 				limit = 100
 			}
-			items, next, err := d.Store.ProductionDecisions(ctx, in.SetID, in.Revision, in.Cursor, limit)
+			items, next, err := d.Store.ProductionDecisionsFiltered(ctx, in.SetID, in.Revision, in.Cursor, limit, uncertain)
 			if err != nil {
 				return nil, productionSetError(err)
 			}

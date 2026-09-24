@@ -175,13 +175,24 @@ func (c *Connection) ProductionMembers(ctx context.Context, setID string, revisi
 }
 
 func (c *Connection) ProductionDecisions(ctx context.Context, setID string, revision int64, cursor string, limit int) (api.ProductionDecisionPage, error) {
+	return c.ProductionDecisionsFiltered(ctx, setID, revision, cursor, limit, nil)
+}
+
+// ProductionDecisionsFiltered pages a single uncertainty view. A cursor is
+// bound to the selected view by the server.
+func (c *Connection) ProductionDecisionsFiltered(ctx context.Context, setID string, revision int64,
+	cursor string, limit int, uncertain *bool) (api.ProductionDecisionPage, error) {
 	parsed, err := productionSetUUID(setID)
-	if err != nil || revision < 1 || limit < 0 || limit > redaction.MaxProductionPage {
+	if err != nil || revision < 1 || len(cursor) > 2048 || limit < 0 || limit > redaction.MaxProductionDecisionPage {
 		return api.ProductionDecisionPage{}, errors.New("invalid production decision page")
 	}
 	query := &apiclient.ListProductionDecisionsQuery{}
 	if cursor != "" {
 		query.Cursor = &cursor
+	}
+	if uncertain != nil {
+		filter := apiclient.ListProductionDecisionsQueryUncertain(strconv.FormatBool(*uncertain))
+		query.Uncertain = &filter
 	}
 	if limit != 0 {
 		bounded := int64(limit)
@@ -194,13 +205,18 @@ func (c *Connection) ProductionDecisions(ctx context.Context, setID string, revi
 	if err != nil {
 		return api.ProductionDecisionPage{}, err
 	}
-	if result == nil || len(result.Items) > limit {
+	if result == nil || len(result.Items) > limit || len(result.NextCursor) > 2048 ||
+		result.NextCursor != "" && (len(result.Items) == 0 || result.NextCursor == cursor) {
 		return api.ProductionDecisionPage{}, integrityErrorf("production decision page is inconsistent")
 	}
+	var priorMemberID, priorID string
 	for _, item := range result.Items {
-		if redaction.ValidateDecision(redaction.Decision(item)) != nil {
+		if redaction.ValidateDecision(redaction.Decision(item)) != nil || item.Revision != revision ||
+			uncertain != nil && item.Uncertain != *uncertain ||
+			item.MemberID < priorMemberID || item.MemberID == priorMemberID && item.ID <= priorID {
 			return api.ProductionDecisionPage{}, integrityErrorf("production decision page contains invalid authority")
 		}
+		priorMemberID, priorID = item.MemberID, item.ID
 	}
 	return *result, nil
 }

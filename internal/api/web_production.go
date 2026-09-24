@@ -72,11 +72,46 @@ func productionSetBrowserRequestAllowed(r *http.Request) bool {
 	if len(parts) == 5 && r.Method == http.MethodGet && parts[3] == "maps" && validPageJobPathID(parts[4]) {
 		return productionBoundedQueryAllowed(r.URL.RawQuery, 512, 65536)
 	}
-	if r.Method != http.MethodGet || len(parts) != 4 ||
-		parts[3] != "members" && parts[3] != "decisions" {
+	if r.Method != http.MethodGet || len(parts) != 4 {
 		return false
 	}
-	return productionPageQueryAllowed(r.URL.RawQuery, 4096)
+	if parts[3] == "decisions" {
+		return productionDecisionQueryAllowed(r.URL.RawQuery)
+	}
+	return parts[3] == "members" && productionPageQueryAllowed(r.URL.RawQuery, 4096)
+}
+
+func productionDecisionQueryAllowed(raw string) bool {
+	if raw == "" {
+		return true
+	}
+	values, err := url.ParseQuery(raw)
+	if err != nil || len(values) > 3 {
+		return false
+	}
+	for key, entries := range values {
+		if len(entries) != 1 {
+			return false
+		}
+		switch key {
+		case "cursor":
+			if len(entries[0]) > 2048 {
+				return false
+			}
+		case packageLimitParameter:
+			limit, err := strconv.Atoi(entries[0])
+			if err != nil || limit < 1 || limit > 500 {
+				return false
+			}
+		case "uncertain":
+			if entries[0] != "true" && entries[0] != "false" {
+				return false
+			}
+		default:
+			return false
+		}
+	}
+	return true
 }
 
 func productionPageQueryAllowed(raw string, maxCursor int) bool {

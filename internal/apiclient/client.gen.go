@@ -8518,8 +8518,9 @@ func (c *Client) ListProductionDecisions(ctx context.Context, options *ListProdu
 	var err error
 
 	queryEncoding := map[string]runtime.QueryEncoding{
-		"cursor": {Style: "form", Explode: &[]bool{false}[0]},
-		"limit":  {Style: "form", Explode: &[]bool{false}[0]},
+		"cursor":    {Style: "form", Explode: &[]bool{false}[0]},
+		"limit":     {Style: "form", Explode: &[]bool{false}[0]},
+		"uncertain": {Style: "form", Explode: &[]bool{false}[0]},
 	}
 	reqParams := runtime.RequestOptionsParameters{
 		RequestURL:    c.apiClient.GetBaseURL() + "/api/v1/productions/sets/{set_id}/revisions/{revision}/decisions",
@@ -19191,6 +19192,13 @@ const (
 	ListPackageLabelCandidatesQueryProvenanceReceived ListPackageLabelCandidatesQueryProvenance = "received"
 )
 
+type ListProductionDecisionsQueryUncertain string
+
+const (
+	False ListProductionDecisionsQueryUncertain = "false"
+	True  ListProductionDecisionsQueryUncertain = "true"
+)
+
 type ListSavedQueriesQueryKind string
 
 const (
@@ -20302,8 +20310,9 @@ type ListProductionSetsQuery struct {
 }
 
 type ListProductionDecisionsQuery struct {
-	Cursor *string `json:"cursor,omitempty"`
-	Limit  *int64  `json:"limit,omitempty"`
+	Cursor    *string                                `json:"cursor,omitempty"`
+	Limit     *int64                                 `json:"limit,omitempty"`
+	Uncertain *ListProductionDecisionsQueryUncertain `json:"uncertain,omitempty"`
 }
 
 type GetProductionMapChunkQuery struct {

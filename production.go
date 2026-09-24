@@ -115,6 +115,13 @@ func (v *Vault) ProductionMembers(ctx context.Context, setID string, revision in
 }
 
 func (v *Vault) ProductionDecisions(ctx context.Context, setID string, revision int64, cursor string, limit int) (ProductionDecisionPage, error) {
+	return v.ProductionDecisionsFiltered(ctx, setID, revision, cursor, limit, nil)
+}
+
+// ProductionDecisionsFiltered pages only decisions matching an optional
+// uncertainty state. Filtered cursors cannot be reused for another view.
+func (v *Vault) ProductionDecisionsFiltered(ctx context.Context, setID string, revision int64,
+	cursor string, limit int, uncertain *bool) (ProductionDecisionPage, error) {
 	v.lifecycle.RLock()
 	defer v.lifecycle.RUnlock()
 	if v.closed {
@@ -123,7 +130,7 @@ func (v *Vault) ProductionDecisions(ctx context.Context, setID string, revision 
 	if limit == 0 {
 		limit = 100
 	}
-	items, next, err := v.metadata.ProductionDecisions(ctx, setID, revision, cursor, limit)
+	items, next, err := v.metadata.ProductionDecisionsFiltered(ctx, setID, revision, cursor, limit, uncertain)
 	if err != nil {
 		return ProductionDecisionPage{}, err
 	}
