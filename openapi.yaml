@@ -11106,6 +11106,36 @@ components:
       x-go-type-import:
         path: go.kenn.io/docbank/internal/api
         name: api
+    ProductionNumberCandidates:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/ProductionNumberCandidates.json
+          format: uri
+          readOnly: true
+          type: string
+        ambiguous:
+          type: boolean
+        items:
+          items:
+            $ref: "#/components/schemas/ProductionNumberReference"
+          type: array
+        match_kind:
+          type: string
+        truncated:
+          type: boolean
+      required:
+        - match_kind
+        - items
+        - ambiguous
+        - truncated
+      type: object
+      x-go-type: api.ProductionNumberCandidates
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     ProductionNumberPage:
       additionalProperties: false
       properties:
@@ -20313,6 +20343,38 @@ paths:
                 $ref: "#/components/schemas/Error"
           description: Error
       summary: Find exact or ranged published production numbers
+  /api/v1/productions/numbers/candidates:
+    get:
+      operationId: findProductionNumberCandidates
+      parameters:
+        - explode: false
+          in: query
+          name: query
+          schema:
+            maxLength: 256
+            type: string
+        - explode: false
+          in: query
+          name: limit
+          schema:
+            format: int64
+            maximum: 25
+            minimum: 0
+            type: integer
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProductionNumberCandidates"
+          description: OK
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: Find bounded verified production number candidates by exact, prefix or substring text
   /api/v1/productions/recipes:
     get:
       operationId: listProductionRecipes

@@ -23,6 +23,13 @@ type ProductionNumberPage struct {
 	NextSequence int64                       `json:"next_sequence,omitzero"`
 }
 
+type ProductionNumberCandidates struct {
+	MatchKind string                      `json:"match_kind"`
+	Items     []ProductionNumberReference `json:"items"`
+	Ambiguous bool                        `json:"ambiguous"`
+	Truncated bool                        `json:"truncated"`
+}
+
 func productionNumberDTO(value store.PublishedProductionNumber) ProductionNumberReference {
 	return ProductionNumberReference{Label: value.Label, JobID: value.JobID, SetID: value.SetID,
 		Revision: value.Revision, ProductionReceiptSHA256: value.ProductionReceiptSHA256,

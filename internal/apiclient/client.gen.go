@@ -8085,6 +8085,58 @@ func (c *Client) FindProductionNumbers(ctx context.Context, options *FindProduct
 	return responseParser(ctx, resp)
 }
 
+// FindProductionNumberCandidates Find bounded verified production number candidates by exact, prefix or substring text
+func (c *Client) FindProductionNumberCandidates(ctx context.Context, options *FindProductionNumberCandidatesRequestOptions, reqEditors ...runtime.RequestEditorFn) (*FindProductionNumberCandidatesResponse, error) {
+	var err error
+
+	queryEncoding := map[string]runtime.QueryEncoding{
+		"limit": {Style: "form", Explode: &[]bool{false}[0]},
+		"query": {Style: "form", Explode: &[]bool{false}[0]},
+	}
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:    c.apiClient.GetBaseURL() + "/api/v1/productions/numbers/candidates",
+		Method:        "GET",
+		Options:       options,
+		QueryEncoding: queryEncoding,
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*FindProductionNumberCandidatesResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(FindProductionNumberCandidatesResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "FindProductionNumberCandidatesResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[FindProductionNumberCandidatesErrorResponse](resp, "FindProductionNumberCandidatesErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/productions/numbers/candidates")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
 // ListProductionRecipes List qualified production rendering recipes
 func (c *Client) ListProductionRecipes(ctx context.Context, reqEditors ...runtime.RequestEditorFn) (*ListProductionRecipesResponse, error) {
 	var err error
@@ -16505,6 +16557,37 @@ func (o *FindProductionNumbersRequestOptions) GetHeader() (map[string]string, er
 	return nil, nil
 }
 
+// FindProductionNumberCandidatesRequestOptions is the options needed to make a request to FindProductionNumberCandidates.
+type FindProductionNumberCandidatesRequestOptions struct {
+	Query *FindProductionNumberCandidatesQuery
+}
+
+// GetPathParams returns the path params as a map.
+func (o *FindProductionNumberCandidatesRequestOptions) GetPathParams() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetQuery returns the query params as a map.
+func (o *FindProductionNumberCandidatesRequestOptions) GetQuery() (map[string]any, error) {
+	encoded, err := json.Marshal(o.Query, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *FindProductionNumberCandidatesRequestOptions) GetBody() any {
+	return nil
+}
+
+// GetHeader returns the headers as a map.
+func (o *FindProductionNumberCandidatesRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
 // CreateProductionSetRequestOptions is the options needed to make a request to CreateProductionSet.
 type CreateProductionSetRequestOptions struct {
 	Body *CreateProductionSetBody
@@ -19747,6 +19830,11 @@ type FindProductionNumbersQuery struct {
 	Limit         *int64  `json:"limit,omitempty"`
 }
 
+type FindProductionNumberCandidatesQuery struct {
+	Query *string `json:"query,omitempty"`
+	Limit *int64  `json:"limit,omitempty"`
+}
+
 type ListProductionDecisionsQuery struct {
 	Cursor *string `json:"cursor,omitempty"`
 	Limit  *int64  `json:"limit,omitempty"`
@@ -20557,6 +20645,10 @@ type DownloadProductionPackageErrorResponse = Error
 type FindProductionNumbersResponse = api.ProductionNumberPage
 
 type FindProductionNumbersErrorResponse = Error
+
+type FindProductionNumberCandidatesResponse = api.ProductionNumberCandidates
+
+type FindProductionNumberCandidatesErrorResponse = Error
 
 type ListProductionRecipesResponse = api.ProductionRecipeCatalog
 
@@ -21648,6 +21740,8 @@ type ProductionMemberPage = api.ProductionMemberPage
 type ProductionMemberReviewRequest = api.ProductionMemberReviewRequest
 
 type ProductionMembershipSealRequest = api.ProductionMembershipSealRequest
+
+type ProductionNumberCandidates = api.ProductionNumberCandidates
 
 type ProductionNumberPage = api.ProductionNumberPage
 

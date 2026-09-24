@@ -23,6 +23,29 @@ func productionNumberLookupError(err error) error {
 }
 
 func registerProductionNumberRoutes(api huma.API, d Deps) {
+	huma.Register(api, huma.Operation{OperationID: "findProductionNumberCandidates", Method: http.MethodGet,
+		Path:    "/api/v1/productions/numbers/candidates",
+		Summary: "Find bounded verified production number candidates by exact, prefix or substring text"},
+		func(ctx context.Context, in *struct {
+			Query string `query:"query" maxLength:"256"`
+			Limit int    `query:"limit" minimum:"0" maximum:"25"`
+		}) (*struct{ Body ProductionNumberCandidates }, error) {
+			limit := in.Limit
+			if limit == 0 {
+				limit = 25
+			}
+			page, err := d.Store.FindPublishedProductionNumberCandidates(ctx, in.Query, limit)
+			if err != nil {
+				return nil, productionNumberLookupError(err)
+			}
+			out := ProductionNumberCandidates{MatchKind: page.MatchKind,
+				Items:     make([]ProductionNumberReference, len(page.Items)),
+				Ambiguous: page.Ambiguous, Truncated: page.Truncated}
+			for index, item := range page.Items {
+				out.Items[index] = productionNumberDTO(item)
+			}
+			return &struct{ Body ProductionNumberCandidates }{Body: out}, nil
+		})
 	huma.Register(api, huma.Operation{OperationID: "findProductionNumbers", Method: http.MethodGet,
 		Path: "/api/v1/productions/numbers", Summary: "Find exact or ranged published production numbers"},
 		func(ctx context.Context, in *struct {

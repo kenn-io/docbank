@@ -4,6 +4,8 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"strings"
+	"unicode/utf8"
 
 	documentproduction "go.kenn.io/docbank/document/production"
 	"go.kenn.io/docbank/internal/canonical"
@@ -169,6 +171,79 @@ func matchesPublishedProductionNumberLedger(label BatesPageLabel, number documen
 type PublishedProductionNumberPage struct {
 	Items        []PublishedProductionNumber
 	NextSequence int64
+}
+
+// PublishedProductionNumberCandidates reports the strongest available match
+// kind. Ambiguous includes candidates beyond the bounded returned page.
+type PublishedProductionNumberCandidates struct {
+	MatchKind string
+	Items     []PublishedProductionNumber
+	Ambiguous bool
+	Truncated bool
+}
+
+// FindPublishedProductionNumberCandidates tries an exact published label,
+// then a literal prefix, then a literal substring. It never infers identity
+// from an artifact filename; each candidate passes exact retained verification.
+func (s *Store) FindPublishedProductionNumberCandidates(ctx context.Context,
+	query string, limit int) (PublishedProductionNumberCandidates, error) {
+	if ctx == nil || query == "" || len(query) > 256 || !utf8.ValidString(query) ||
+		strings.TrimSpace(query) != query || limit < 1 || limit > 25 {
+		return PublishedProductionNumberCandidates{}, ErrInvalidBatesSelector
+	}
+	if exact, err := s.FindPublishedProductionNumber(ctx, query); err == nil {
+		return PublishedProductionNumberCandidates{MatchKind: "exact", Items: []PublishedProductionNumber{exact}}, nil
+	} else if !errors.Is(err, ErrNotFound) {
+		return PublishedProductionNumberCandidates{}, err
+	}
+	for _, mode := range []struct {
+		name      string
+		predicate string
+	}{
+		{"prefix", "instr(l.label, ?) = 1"},
+		{"substring", "instr(l.label, ?) > 0"},
+	} {
+		labels, err := func() (_ []string, retErr error) {
+			rows, err := s.db.QueryContext(ctx, `SELECT DISTINCT l.label FROM bates_page_labels l
+			JOIN bates_allocations a USING(allocation_id)
+			JOIN production_jobs j ON j.job_id=a.operation_id AND j.state='succeeded'
+			WHERE `+mode.predicate+` ORDER BY l.label COLLATE BINARY LIMIT ?`, query, limit+1)
+			if err != nil {
+				return nil, err
+			}
+			defer func() { retErr = errors.Join(retErr, rows.Close()) }()
+			labels := make([]string, 0, limit+1)
+			for rows.Next() {
+				var label string
+				if err := rows.Scan(&label); err != nil {
+					return nil, err
+				}
+				labels = append(labels, label)
+			}
+			return labels, rows.Err()
+		}()
+		if err != nil {
+			return PublishedProductionNumberCandidates{}, err
+		}
+		if len(labels) == 0 {
+			continue
+		}
+		page := PublishedProductionNumberCandidates{MatchKind: mode.name,
+			Items: make([]PublishedProductionNumber, 0, limit), Ambiguous: len(labels) > 1,
+			Truncated: len(labels) > limit}
+		if page.Truncated {
+			labels = labels[:limit]
+		}
+		for _, label := range labels {
+			match, err := s.FindPublishedProductionNumber(ctx, label)
+			if err != nil {
+				return PublishedProductionNumberCandidates{}, err
+			}
+			page.Items = append(page.Items, match)
+		}
+		return page, nil
+	}
+	return PublishedProductionNumberCandidates{MatchKind: "none", Items: []PublishedProductionNumber{}}, nil
 }
 
 // FindPublishedProductionNumberRange returns up to 25 ledger-ordered published

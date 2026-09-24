@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -35,8 +36,12 @@ func TestPublishedProductionNumberHTTPExactAndRange(t *testing.T) {
 	require.NoError(t, err)
 	get := func(query, key string) (int, []byte) {
 		t.Helper()
+		path := "/api/v1/productions/numbers"
+		if strings.HasPrefix(query, "query=") {
+			path += "/candidates"
+		}
 		request, requestErr := http.NewRequestWithContext(t.Context(), http.MethodGet,
-			httpServer.URL+"/api/v1/productions/numbers?"+query, nil)
+			httpServer.URL+path+"?"+query, nil)
 		require.NoError(t, requestErr)
 		if key != "" {
 			request.Header.Set("X-Api-Key", key)
@@ -100,6 +105,26 @@ func TestPublishedProductionNumberHTTPExactAndRange(t *testing.T) {
 	require.Len(t, viaRangeClient.Items, 1)
 	require.Equal(t, page.Items[0].Label, viaRangeClient.Items[0].Label)
 	require.Equal(t, page.NextSequence, viaRangeClient.NextSequence)
+	prefix := plan.Reservation.Numbers[0].Text[:len(plan.Reservation.Numbers[0].Text)-1]
+	require.True(t, strings.HasPrefix(plan.Reservation.Numbers[1].Text, prefix))
+	status, body = get("query="+url.QueryEscape(prefix)+"&limit=1", cfg.Server.APIKey)
+	require.Equal(t, http.StatusOK, status, string(body))
+	var candidates api.ProductionNumberCandidates
+	require.NoError(t, json.Unmarshal(body, &candidates))
+	require.Equal(t, "prefix", candidates.MatchKind)
+	require.Len(t, candidates.Items, 1)
+	require.True(t, candidates.Ambiguous)
+	require.True(t, candidates.Truncated)
+	require.Equal(t, plan.Reservation.Numbers[0].Text, candidates.Items[0].Label)
+	viaCandidateClient, err := daemonconn.New(httpServer.URL, cfg.Server.APIKey).ProductionNumberCandidates(
+		t.Context(), prefix, 1)
+	require.NoError(t, err)
+	require.Equal(t, candidates, viaCandidateClient)
+	status, body = get("query="+url.QueryEscape(prefix[1:]), cfg.Server.APIKey)
+	require.Equal(t, http.StatusOK, status, string(body))
+	require.NoError(t, json.Unmarshal(body, &candidates))
+	require.Equal(t, "substring", candidates.MatchKind)
+	require.Len(t, candidates.Items, 2)
 	status, body = get(rangeQuery+"&after_sequence="+strconv.FormatInt(page.NextSequence, 10), cfg.Server.APIKey)
 	require.Equal(t, http.StatusOK, status, string(body))
 	var continued numberPage

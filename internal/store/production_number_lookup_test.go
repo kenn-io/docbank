@@ -1,6 +1,7 @@
 package store
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -46,6 +47,53 @@ func TestFindPublishedProductionNumberBindsFrozenSourceAndFinalArtifact(t *testi
 
 	_, err = f.FindPublishedProductionNumber(t.Context(), "NOT-A-PUBLISHED-NUMBER")
 	require.ErrorIs(t, err, ErrNotFound)
+}
+
+func TestPublishedProductionNumberCandidatesRankAndBoundFallback(t *testing.T) {
+	f, job := publishedRealRetentionFixture(t)
+	allocation, err := f.ProductionNumberingForJob(t.Context(), job.ID)
+	require.NoError(t, err)
+	require.GreaterOrEqual(t, len(allocation.Labels), 2)
+	firstLabel := allocation.Labels[0].Label
+	prefix := firstLabel[:len(firstLabel)-1]
+	require.True(t, strings.HasPrefix(allocation.Labels[1].Label, prefix))
+
+	exact, err := f.FindPublishedProductionNumberCandidates(t.Context(), firstLabel, 25)
+	require.NoError(t, err)
+	require.Equal(t, "exact", exact.MatchKind)
+	require.Len(t, exact.Items, 1)
+	require.False(t, exact.Ambiguous)
+	require.False(t, exact.Truncated)
+	require.Equal(t, firstLabel, exact.Items[0].Label)
+	require.Equal(t, job.ID, exact.Items[0].JobID)
+
+	partial, err := f.FindPublishedProductionNumberCandidates(t.Context(), prefix, 1)
+	require.NoError(t, err)
+	require.Equal(t, "prefix", partial.MatchKind)
+	require.Len(t, partial.Items, 1)
+	require.True(t, partial.Ambiguous)
+	require.True(t, partial.Truncated)
+	require.Equal(t, firstLabel, partial.Items[0].Label)
+	require.NotEmpty(t, partial.Items[0].ArtifactID)
+
+	substring, err := f.FindPublishedProductionNumberCandidates(t.Context(), prefix[1:], 25)
+	require.NoError(t, err)
+	require.Equal(t, "substring", substring.MatchKind)
+	require.Len(t, substring.Items, 2)
+	require.True(t, substring.Ambiguous)
+	require.False(t, substring.Truncated)
+	require.NotEqual(t, substring.Items[0].OccurrenceID, substring.Items[1].OccurrenceID)
+
+	missing, err := f.FindPublishedProductionNumberCandidates(t.Context(), "UNPUBLISHED-NUMBER", 25)
+	require.NoError(t, err)
+	require.Equal(t, "none", missing.MatchKind)
+	require.Empty(t, missing.Items)
+	_, err = f.FindPublishedProductionNumberCandidates(t.Context(), "", 25)
+	require.ErrorIs(t, err, ErrInvalidBatesSelector)
+	_, err = f.FindPublishedProductionNumberCandidates(t.Context(), prefix, 26)
+	require.ErrorIs(t, err, ErrInvalidBatesSelector)
+	_, err = f.FindPublishedProductionNumberCandidates(t.Context(), "%", 25)
+	require.NoError(t, err, "wildcards are literal text, never a LIKE pattern")
 }
 
 func TestPublishedProductionNumberMatchesLedgerPageOrdinal(t *testing.T) {
