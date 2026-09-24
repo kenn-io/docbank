@@ -113,6 +113,17 @@ type ProductionDecisionPage struct {
 	NextCursor string               `json:"next_cursor"`
 }
 
+type ProductionResolveRequest struct {
+	MemberID string `json:"member_id"`
+	Page     int    `json:"page"`
+	Cursor   string `json:"cursor,omitzero"`
+	Limit    int    `json:"limit,omitzero"`
+}
+
+// ProductionResolvedMaskPage is a bounded projection of the current resolved
+// plan, including the server-derived review binding for its full member.
+type ProductionResolvedMaskPage store.ProductionResolvedMaskPage
+
 // ProductionMapChunk carries one digest-bound page of canonical aligned-map
 // JSON. Its base64 data is binary-safe because pages may split UTF-8 bytes.
 type ProductionMapChunk struct {
@@ -200,6 +211,16 @@ func (request ProductionChangesRequest) Domain(etag int64) redaction.ApplyReques
 }
 
 func productionSetError(err error) error {
+	if problem, ok := errors.AsType[*redaction.Problem](err); ok {
+		switch problem.Code {
+		case "source_stale", "decision_conflict", "selection_expansion_required":
+			return NewError(http.StatusConflict, problem.Code, "production selection cannot resolve against current authority")
+		case "mapping_incomplete", "invalid_mode":
+			return NewError(http.StatusUnprocessableEntity, problem.Code, "production selection is incomplete or invalid")
+		case "render_limit":
+			return NewError(http.StatusRequestEntityTooLarge, problem.Code, "production selection exceeds rendering limits")
+		}
+	}
 	switch {
 	case errors.Is(err, store.ErrNotFound):
 		return FromStoreError(err)
@@ -360,6 +381,30 @@ func registerProductionRoutes(api huma.API, d Deps, g *OperationGate) {
 				return nil, productionSetError(err)
 			}
 			return &struct{ Body ProductionMapChunk }{Body: ProductionMapChunk(chunk)}, nil
+		})
+	huma.Register(api, huma.Operation{OperationID: "resolveProductionSelection", Method: http.MethodPost,
+		Path:    "/api/v1/productions/sets/{set_id}/revisions/{revision}/resolve",
+		Summary: "Preview one member's exact resolved mask and review binding", MaxBodyBytes: 4096},
+		func(ctx context.Context, in *struct {
+			SetID    string `path:"set_id" format:"uuid"`
+			Revision int64  `path:"revision" minimum:"1"`
+			IfMatch  string `header:"If-Match"`
+			Body     ProductionResolveRequest
+		}) (*struct{ Body ProductionResolvedMaskPage }, error) {
+			etag, err := parseIfMatch(in.IfMatch)
+			if err != nil {
+				return nil, err
+			}
+			limit := in.Body.Limit
+			if limit == 0 {
+				limit = 100
+			}
+			page, err := d.Store.ProductionResolvedMaskPage(ctx, in.SetID, in.Revision,
+				in.Body.MemberID, etag, in.Body.Page, in.Body.Cursor, limit)
+			if err != nil {
+				return nil, productionSetError(err)
+			}
+			return &struct{ Body ProductionResolvedMaskPage }{Body: ProductionResolvedMaskPage(page)}, nil
 		})
 	huma.Register(api, huma.Operation{OperationID: "admitProductionJob", Method: http.MethodPost,
 		Path:    "/api/v1/productions/sets/{set_id}/revisions/{revision}/jobs",

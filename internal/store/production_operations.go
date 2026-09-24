@@ -368,23 +368,7 @@ func (s *Store) ReviewProductionMember(
 		if target == nil {
 			return ErrInvalidProduction
 		}
-		_, decisionsSHA256, err := redaction.CanonicalDecisions(target.Decisions)
-		if err != nil {
-			return ErrInvalidProduction
-		}
-		_, resolvedSHA256, err := redaction.CanonicalResolved(target.Resolved)
-		if err != nil || target.Resolved.SHA256 != resolvedSHA256 {
-			return ErrInvalidProduction
-		}
-		binding, err := redaction.ReviewBinding(redaction.ReviewInput{
-			SetID: draft.SetID, MemberID: target.Member.ID, VaultID: target.Member.VaultID,
-			SourceVersionID: target.Member.SourceVersionID, Revision: draft.Revision,
-			Ordinal: target.Member.Ordinal, NodeID: target.Member.NodeID, SourceSize: target.Member.SourceSize,
-			PDFSize: target.Member.PDFSize, SourceSHA256: target.Member.SourceSHA256, PDFSHA256: target.Member.PDFSHA256,
-			PageInventorySHA256: target.Member.PageInventorySHA256, MapSHA256: target.Member.MapSHA256,
-			Mode: target.Member.Mode, MemberHash: draft.MemberHash, InstructionsSHA256: draft.InstructionsSHA256,
-			RecipeSHA256: draft.RecipeSHA256, DecisionsSHA256: decisionsSHA256, ResolvedSHA256: resolvedSHA256,
-		})
+		binding, _, err := productionCurrentReviewBinding(draft, target)
 		if err != nil || binding != request.Binding {
 			return ErrProductionRevisionConflict
 		}

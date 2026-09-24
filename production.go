@@ -12,6 +12,7 @@ type ProductionMemberPage = api.ProductionMemberPage
 type ProductionDecisionPage = api.ProductionDecisionPage
 type ProductionSetPage = api.ProductionSetPage
 type ProductionMapChunk = store.ProductionMapChunk
+type ProductionResolvedMaskPage = store.ProductionResolvedMaskPage
 type ProductionJobStatus = store.ProductionJobStatus
 type ProductionRecipeCatalog = api.ProductionRecipeCatalog
 
@@ -153,6 +154,23 @@ func (v *Vault) ProductionMapChunk(ctx context.Context, setID string, revision i
 		limit = store.MaxProductionMapChunkBytes
 	}
 	return v.metadata.ProductionMapChunk(ctx, setID, revision, memberID, cursor, limit)
+}
+
+// ResolveProductionSelection reads one ETag-pinned page of a member's final
+// pixel mask and the binding needed to review its complete current plan.
+func (v *Vault) ResolveProductionSelection(ctx context.Context, setID string, revision, etag int64,
+	request api.ProductionResolveRequest) (ProductionResolvedMaskPage, error) {
+	v.lifecycle.RLock()
+	defer v.lifecycle.RUnlock()
+	if v.closed {
+		return ProductionResolvedMaskPage{}, ErrClosed
+	}
+	limit := request.Limit
+	if limit == 0 {
+		limit = 100
+	}
+	return v.metadata.ProductionResolvedMaskPage(ctx, setID, revision, request.MemberID,
+		etag, request.Page, request.Cursor, limit)
 }
 
 func (v *Vault) ProductionJobStatus(ctx context.Context, setID, jobID string) (ProductionJobStatus, error) {

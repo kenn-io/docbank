@@ -110,6 +110,12 @@ func TestEmbeddedProductionSetsKeepVaultRootsSeparate(t *testing.T) {
 	_, err = second.ProductionMapChunk(t.Context(), set.ID, 1,
 		"88888888-8888-4888-8888-888888888887", "", 17)
 	require.ErrorIs(t, err, store.ErrNotFound)
+	_, err = first.ResolveProductionSelection(t.Context(), set.ID, 1, 3,
+		api.ProductionResolveRequest{MemberID: "88888888-8888-4888-8888-888888888887", Page: 1})
+	require.ErrorIs(t, err, store.ErrNotFound)
+	_, err = second.ResolveProductionSelection(t.Context(), set.ID, 1, 3,
+		api.ProductionResolveRequest{MemberID: "88888888-8888-4888-8888-888888888887", Page: 1})
+	require.ErrorIs(t, err, store.ErrNotFound)
 	_, err = first.ProductionJobStatus(t.Context(), set.ID, "88888888-8888-4888-8888-888888888887")
 	require.ErrorIs(t, err, store.ErrNotFound)
 	_, err = second.ProductionJobStatus(t.Context(), set.ID, "88888888-8888-4888-8888-888888888887")

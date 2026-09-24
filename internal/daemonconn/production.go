@@ -266,6 +266,47 @@ func (c *Connection) ProductionMapChunk(ctx context.Context, setID string, revis
 	return *result, nil
 }
 
+// ResolveProductionSelection reads one bounded page of the current final mask.
+// Its binding covers the full member plan, including boxes outside this page.
+func (c *Connection) ResolveProductionSelection(ctx context.Context, setID string, revision, etag int64,
+	request api.ProductionResolveRequest) (api.ProductionResolvedMaskPage, error) {
+	parsed, err := productionSetUUID(setID)
+	if err != nil || revision < 1 || etag < 1 || !validUUIDv4(request.MemberID) ||
+		request.Page < 1 || len(request.Cursor) > 1024 || request.Limit < 0 ||
+		request.Limit > redaction.MaxProductionPage {
+		return api.ProductionResolvedMaskPage{}, errors.New("invalid production resolve request")
+	}
+	limit := request.Limit
+	if limit == 0 {
+		limit = 100
+	}
+	header := strconv.FormatInt(etag, 10)
+	result, err := c.API().ResolveProductionSelection(ctx, &apiclient.ResolveProductionSelectionRequestOptions{
+		PathParams: &apiclient.ResolveProductionSelectionPath{SetID: parsed, Revision: revision},
+		Header:     &apiclient.ResolveProductionSelectionHeaders{IfMatch: &header}, Body: &request})
+	if err != nil {
+		return api.ProductionResolvedMaskPage{}, err
+	}
+	if result == nil || result.SetID != setID || result.Revision != revision || result.ETag != etag ||
+		result.MemberID != request.MemberID || result.Page.Number != request.Page ||
+		!canonical.IsSHA256Hex(result.Page.FrameSHA256) || !canonical.IsSHA256Hex(result.MapSHA256) ||
+		!canonical.IsSHA256Hex(result.RecipeSHA256) || !canonical.IsSHA256Hex(result.ResolvedSHA256) ||
+		!canonical.IsSHA256Hex(result.ReviewBinding) || result.Page.Width < 1 || result.Page.Height < 1 ||
+		result.TotalBoxes < 0 || len(result.Items) > limit || len(result.Items) > result.TotalBoxes ||
+		len(result.NextCursor) > 1024 || result.TotalBoxes > 0 && len(result.Items) == 0 ||
+		result.NextCursor != "" && (result.NextCursor == request.Cursor || len(result.Items) != limit) {
+		return api.ProductionResolvedMaskPage{}, integrityErrorf("production resolved mask page is inconsistent")
+	}
+	for _, box := range result.Items {
+		if box.Page != result.Page.Number || box.FrameSHA256 != result.Page.FrameSHA256 ||
+			box.X0 < 0 || box.Y0 < 0 || box.X1 <= box.X0 || box.Y1 <= box.Y0 ||
+			box.X1 > result.Page.Width || box.Y1 > result.Page.Height {
+			return api.ProductionResolvedMaskPage{}, integrityErrorf("production resolved mask contains an invalid box")
+		}
+	}
+	return *result, nil
+}
+
 func (c *Connection) ProductionJobStatus(ctx context.Context, setID, jobID string) (api.ProductionJobStatus, error) {
 	parsedSet, err := productionSetUUID(setID)
 	if err != nil {

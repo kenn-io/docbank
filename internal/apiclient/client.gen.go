@@ -8905,6 +8905,53 @@ func (c *Client) ReviewProductionMember(ctx context.Context, options *ReviewProd
 	return responseParser(ctx, resp)
 }
 
+// ResolveProductionSelection Preview one member's exact resolved mask and review binding
+func (c *Client) ResolveProductionSelection(ctx context.Context, options *ResolveProductionSelectionRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ResolveProductionSelectionResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/productions/sets/{set_id}/revisions/{revision}/resolve",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*ResolveProductionSelectionResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(ResolveProductionSelectionResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "ResolveProductionSelectionResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[ResolveProductionSelectionErrorResponse](resp, "ResolveProductionSelectionErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/productions/sets/{set_id}/revisions/{revision}/resolve")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
 // SealProductionMembership Seal exact production membership before member review
 func (c *Client) SealProductionMembership(ctx context.Context, options *SealProductionMembershipRequestOptions, reqEditors ...runtime.RequestEditorFn) (*SealProductionMembershipResponse, error) {
 	var err error
@@ -17433,6 +17480,48 @@ func (o *ReviewProductionMemberRequestOptions) GetHeader() (map[string]string, e
 	return headers, err
 }
 
+// ResolveProductionSelectionRequestOptions is the options needed to make a request to ResolveProductionSelection.
+type ResolveProductionSelectionRequestOptions struct {
+	PathParams *ResolveProductionSelectionPath
+	Body       *ResolveProductionSelectionBody
+	Header     *ResolveProductionSelectionHeaders
+}
+
+// GetPathParams returns the path params as a map.
+func (o *ResolveProductionSelectionRequestOptions) GetPathParams() (map[string]any, error) {
+	encoded, err := json.Marshal(o.PathParams, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetQuery returns the query params as a map.
+func (o *ResolveProductionSelectionRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *ResolveProductionSelectionRequestOptions) GetBody() any {
+	if o.Body == nil {
+		return nil
+	}
+	return o.Body
+}
+
+// GetHeader returns the headers as a map.
+func (o *ResolveProductionSelectionRequestOptions) GetHeader() (map[string]string, error) {
+	encoded, err := json.Marshal(o.Header, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var headers map[string]string
+	err = json.Unmarshal(encoded, &headers)
+	return headers, err
+}
+
 // SealProductionMembershipRequestOptions is the options needed to make a request to SealProductionMembership.
 type SealProductionMembershipRequestOptions struct {
 	PathParams *SealProductionMembershipPath
@@ -19397,6 +19486,10 @@ type ReviewProductionMemberHeaders struct {
 	IfMatch *string `json:"If-Match,omitempty"`
 }
 
+type ResolveProductionSelectionHeaders struct {
+	IfMatch *string `json:"If-Match,omitempty"`
+}
+
 type SealProductionMembershipHeaders struct {
 	IfMatch *string `json:"If-Match,omitempty"`
 }
@@ -19825,6 +19918,11 @@ type ReviewProductionMemberPath struct {
 	MemberID uuid.UUID `json:"member_id"`
 }
 
+type ResolveProductionSelectionPath struct {
+	SetID    uuid.UUID `json:"set_id"`
+	Revision int64     `json:"revision"`
+}
+
 type SealProductionMembershipPath struct {
 	SetID    uuid.UUID `json:"set_id"`
 	Revision int64     `json:"revision"`
@@ -20105,6 +20203,8 @@ type AdmitProductionJobBody = ProductionJobAdmissionRequest
 type AppendProductionMembersBody = ProductionMemberAppendRequest
 
 type ReviewProductionMemberBody = ProductionMemberReviewRequest
+
+type ResolveProductionSelectionBody = ProductionResolveRequest
 
 type SealProductionMembershipBody = ProductionMembershipSealRequest
 
@@ -21294,6 +21394,10 @@ type ReviewProductionMemberResponse = api.ProductionReceipt
 
 type ReviewProductionMemberErrorResponse = Error
 
+type ResolveProductionSelectionResponse = api.ProductionResolvedMaskPage
+
+type ResolveProductionSelectionErrorResponse = Error
+
 type SealProductionMembershipResponse = api.ProductionReceipt
 
 type SealProductionMembershipErrorResponse = Error
@@ -22176,6 +22280,8 @@ type PackageTimelineInputPage = api.PackageTimelineInputPage
 
 type PackageVolume = api.PackageVolume
 
+type Page = redaction.Page
+
 type PageBinding = store.PageBinding
 
 type PageFrameV1 = document.PageFrameV1
@@ -22370,6 +22476,10 @@ type ProductionRecipe = api.ProductionRecipe
 type ProductionRecipeCatalog = api.ProductionRecipeCatalog
 
 type ProductionRecipeOption = api.ProductionRecipeOption
+
+type ProductionResolveRequest = api.ProductionResolveRequest
+
+type ProductionResolvedMaskPage = api.ProductionResolvedMaskPage
 
 type ProductionSetCreated = api.ProductionSetCreated
 
