@@ -87,6 +87,21 @@ func validateProductionLifecycleOperations(ctx context.Context, q metadataQuerie
 			if err != nil {
 				return err
 			}
+		case productionOperationPreviewAdmission:
+			value, err := canonical.Decode[ProductionPreviewAdmission](raw)
+			if err != nil || !validProductionPreviewAdmission(value) ||
+				value.Command.OperationID != operationID || value.Command.SetID != setID || value.Actor != actor {
+				return fmt.Errorf("production preview operation %s contradicts stored receipt", operationID)
+			}
+			requestRaw, err := canonical.Marshal(value.Command)
+			if err != nil || digestProductionBytes(requestRaw) != requestSHA {
+				return fmt.Errorf("production preview operation %s has contradictory request", operationID)
+			}
+			expectedRevision = value.Command.Revision
+			encoded, err = canonical.Marshal(value)
+			if err != nil {
+				return err
+			}
 		default:
 			value, err := canonical.Decode[productionMutationReceiptV1](raw)
 			if err != nil || value.Version != 1 || value.Kind != kind ||
@@ -100,7 +115,7 @@ func validateProductionLifecycleOperations(ctx context.Context, q metadataQuerie
 				return err
 			}
 		}
-		if kind != productionOperationFinalizeCommand &&
+		if kind != productionOperationFinalizeCommand && kind != productionOperationPreviewAdmission &&
 			(redaction.ValidateReceipt(receipt) != nil || receipt.OperationID != operationID ||
 				receipt.SetID != setID || receipt.RequestSHA256 != requestSHA) || !validProductionActor(actor) {
 			return fmt.Errorf("production operation %s contradicts stored receipt", operationID)

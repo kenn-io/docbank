@@ -33,6 +33,30 @@ func (s *Store) OpenProductionDraftPreviewSource(ctx context.Context, setID stri
 		return ProductionDraftPreviewSource{}, err
 	}
 	defer func() { _ = tx.Rollback() }()
+	input, err := s.selectProductionDraftPreviewInputTx(ctx, tx, setID, revision, etag, memberID)
+	if err != nil {
+		return ProductionDraftPreviewSource{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return ProductionDraftPreviewSource{}, err
+	}
+	stream, size, err := opener.OpenStreamContext(ctx, input.Member.Member.PDFSHA256)
+	if err != nil || stream == nil || size != input.Member.Member.PDFSize {
+		if stream != nil {
+			err = errors.Join(err, stream.Close())
+		}
+		return ProductionDraftPreviewSource{}, errors.Join(ErrInvalidProduction, err)
+	}
+	input.PDF = productionservice.PinnedProductionPDF{
+		PDFSHA256: input.Member.Member.PDFSHA256, Size: size, Stream: stream,
+	}
+	return input, nil
+}
+
+// selectProductionDraftPreviewInputTx binds one current draft selection and
+// the qualified recipe without opening physical PDF bytes.
+func (s *Store) selectProductionDraftPreviewInputTx(ctx context.Context, tx *sql.Tx,
+	setID string, revision, etag int64, memberID string) (ProductionDraftPreviewSource, error) {
 	stored, err := s.loadProductionInputsTx(ctx, tx, setID, revision)
 	if err != nil {
 		return ProductionDraftPreviewSource{}, err
@@ -63,19 +87,6 @@ func (s *Store) OpenProductionDraftPreviewSource(ctx context.Context, setID stri
 		return ProductionDraftPreviewSource{}, err
 	}
 	previewSHA := productionSHA256(previewRaw)
-	if err := tx.Commit(); err != nil {
-		return ProductionDraftPreviewSource{}, err
-	}
-	stream, size, err := opener.OpenStreamContext(ctx, member.Member.PDFSHA256)
-	if err != nil || stream == nil || size != member.Member.PDFSize {
-		if stream != nil {
-			err = errors.Join(err, stream.Close())
-		}
-		return ProductionDraftPreviewSource{}, errors.Join(ErrInvalidProduction, err)
-	}
 	return ProductionDraftPreviewSource{Member: member, Recipe: recipe,
-		PreviewInputSHA256: previewSHA,
-		PDF: productionservice.PinnedProductionPDF{
-			PDFSHA256: member.Member.PDFSHA256, Size: size, Stream: stream,
-		}}, nil
+		PreviewInputSHA256: previewSHA}, nil
 }
