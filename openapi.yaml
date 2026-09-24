@@ -10959,6 +10959,68 @@ components:
       x-go-type-import:
         path: go.kenn.io/docbank/internal/api
         name: api
+    ProductionFinalizationResult:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/ProductionFinalizationResult.json
+          format: uri
+          readOnly: true
+          type: string
+        draft:
+          $ref: "#/components/schemas/Draft"
+        namespace_id:
+          type: string
+        operation_id:
+          type: string
+        prepared_sha256:
+          type: string
+        receipt_sha256:
+          type: string
+        snapshot_id:
+          type: string
+      required:
+        - draft
+        - operation_id
+        - namespace_id
+        - snapshot_id
+        - prepared_sha256
+        - receipt_sha256
+      type: object
+      x-go-type: api.ProductionFinalizationResult
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
+    ProductionFinalizeRequest:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/ProductionFinalizeRequest.json
+          format: uri
+          readOnly: true
+          type: string
+        namespace_id:
+          type: string
+        operation_id:
+          type: string
+        snapshot_id:
+          type: string
+        start_at:
+          format: int64
+          type: integer
+      required:
+        - operation_id
+        - namespace_id
+        - snapshot_id
+      type: object
+      x-go-type: api.ProductionFinalizeRequest
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     ProductionForkRequest:
       additionalProperties: false
       properties:
@@ -20935,6 +20997,47 @@ paths:
                 $ref: "#/components/schemas/Error"
           description: Error
       summary: Page exact production decisions
+  /api/v1/productions/sets/{set_id}/revisions/{revision}/finalize:
+    post:
+      operationId: finalizeProductionDraft
+      parameters:
+        - in: path
+          name: set_id
+          required: true
+          schema:
+            format: uuid
+            type: string
+        - in: path
+          name: revision
+          required: true
+          schema:
+            format: int64
+            minimum: 1
+            type: integer
+        - in: header
+          name: If-Match
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ProductionFinalizeRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProductionFinalizationResult"
+          description: OK
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: Finalize one reviewed production revision after current input gates
   /api/v1/productions/sets/{set_id}/revisions/{revision}/fork:
     post:
       operationId: forkProductionDraft

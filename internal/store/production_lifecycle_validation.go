@@ -56,7 +56,9 @@ func validateProductionLifecycleOperations(ctx context.Context, q metadataQuerie
 		}
 		var receipt redaction.Receipt
 		var encoded []byte
-		if kind == "create" {
+		var expectedRevision int64
+		switch kind {
+		case "create":
 			value, err := canonical.Decode[productionCreateReceiptV1](raw)
 			if err != nil || value.Version != 1 || redaction.ValidateSet(value.Set) != nil ||
 				redaction.ValidateDraft(value.Draft) != nil || value.Set.ID != setID ||
@@ -64,25 +66,43 @@ func validateProductionLifecycleOperations(ctx context.Context, q metadataQuerie
 				return fmt.Errorf("production create operation %s contradicts stored receipt", operationID)
 			}
 			receipt = value.Receipt
+			expectedRevision = receipt.Revision
 			encoded, err = canonical.Marshal(value)
 			if err != nil {
 				return err
 			}
-		} else {
+		case productionOperationFinalizeCommand:
+			value, err := canonical.Decode[productionFinalizeAdmission](raw)
+			if err != nil || validateProductionFinalizeAdmission(value, value.Command) != nil ||
+				value.Command.OperationID != operationID || value.Command.SetID != setID ||
+				!validProductionFinalizeCommand(value.Command) {
+				return fmt.Errorf("production finalize operation %s contradicts stored receipt", operationID)
+			}
+			requestRaw, err := canonical.Marshal(value.Command)
+			if err != nil || digestProductionBytes(requestRaw) != requestSHA {
+				return fmt.Errorf("production finalize operation %s has contradictory request", operationID)
+			}
+			expectedRevision = value.Command.Revision
+			encoded, err = canonical.Marshal(value)
+			if err != nil {
+				return err
+			}
+		default:
 			value, err := canonical.Decode[productionMutationReceiptV1](raw)
 			if err != nil || value.Version != 1 || value.Kind != kind ||
 				value.Draft != nil && redaction.ValidateDraft(*value.Draft) != nil {
 				return fmt.Errorf("production operation %s contradicts stored receipt", operationID)
 			}
 			receipt = value.Receipt
+			expectedRevision = receipt.Revision
 			encoded, err = canonical.Marshal(value)
 			if err != nil {
 				return err
 			}
 		}
-		if redaction.ValidateReceipt(receipt) != nil ||
-			receipt.OperationID != operationID || receipt.SetID != setID ||
-			receipt.RequestSHA256 != requestSHA || !validProductionActor(actor) {
+		if kind != productionOperationFinalizeCommand &&
+			(redaction.ValidateReceipt(receipt) != nil || receipt.OperationID != operationID ||
+				receipt.SetID != setID || receipt.RequestSHA256 != requestSHA) || !validProductionActor(actor) {
 			return fmt.Errorf("production operation %s contradicts stored receipt", operationID)
 		}
 		if !bytes.Equal(encoded, raw) {
@@ -94,7 +114,7 @@ func validateProductionLifecycleOperations(ctx context.Context, q metadataQuerie
 			receipt_sha256,created_at FROM production_audit_evidence WHERE operation_id=?`, operationID).
 			Scan(&auditSetID, &auditRevision, &auditActor, &auditKind, &auditRequestSHA,
 				&auditReceiptSHA, &auditCreatedAt); err != nil ||
-			auditSetID != setID || auditRevision != receipt.Revision ||
+			auditSetID != setID || auditRevision != expectedRevision ||
 			auditActor != actor || auditKind != kind || auditRequestSHA != requestSHA ||
 			auditReceiptSHA != digestProductionBytes(raw) || auditCreatedAt != createdAt {
 			return fmt.Errorf("production operation %s has contradictory audit evidence", operationID)

@@ -8,6 +8,7 @@ import (
 	"net/http"
 
 	"github.com/danielgtaylor/huma/v2"
+	documentproduction "go.kenn.io/docbank/document/production"
 	"go.kenn.io/docbank/document/redaction"
 	"go.kenn.io/docbank/internal/canonical"
 	"go.kenn.io/docbank/internal/pdfproduction"
@@ -124,6 +125,15 @@ type ProductionResolveRequest struct {
 // plan, including the server-derived review binding for its full member.
 type ProductionResolvedMaskPage store.ProductionResolvedMaskPage
 
+type ProductionFinalizeRequest struct {
+	OperationID string `json:"operation_id"`
+	NamespaceID string `json:"namespace_id"`
+	SnapshotID  string `json:"snapshot_id"`
+	StartAt     int64  `json:"start_at,omitzero"`
+}
+
+type ProductionFinalizationResult store.ProductionFinalizationResult
+
 // ProductionMapChunk carries one digest-bound page of canonical aligned-map
 // JSON. Its base64 data is binary-safe because pages may split UTF-8 bytes.
 type ProductionMapChunk struct {
@@ -211,6 +221,20 @@ func (request ProductionChangesRequest) Domain(etag int64) redaction.ApplyReques
 }
 
 func productionSetError(err error) error {
+	if problem, ok := errors.AsType[*documentproduction.Problem](err); ok {
+		switch problem.Code {
+		case documentproduction.ProblemChangedPayload, documentproduction.ProblemSourceStale,
+			documentproduction.ProblemApprovalStale, documentproduction.ProblemPrivilegeLogStale,
+			documentproduction.ProblemPolicyUnsatisfied, documentproduction.ProblemApprovalRequired,
+			documentproduction.ProblemPrivilegeLogRequired, documentproduction.ProblemRetentionRequired,
+			documentproduction.ProblemArtifactMissing, documentproduction.ProblemArtifactMismatch:
+			return NewError(http.StatusConflict, string(problem.Code), "production authority needs review before finalization")
+		case documentproduction.ProblemInvalidContract:
+			return NewError(http.StatusUnprocessableEntity, string(problem.Code), "production input is invalid")
+		case documentproduction.ProblemLimit:
+			return NewError(http.StatusRequestEntityTooLarge, string(problem.Code), "production input exceeds a configured limit")
+		}
+	}
 	if problem, ok := errors.AsType[*redaction.Problem](err); ok {
 		switch problem.Code {
 		case "source_stale", "decision_conflict", "selection_expansion_required":
@@ -228,6 +252,8 @@ func productionSetError(err error) error {
 		return NewError(http.StatusConflict, "production_operation_conflict", "operation ID names different production input")
 	case errors.Is(err, store.ErrProductionRevisionConflict):
 		return NewError(http.StatusConflict, "production_revision_conflict", "production revision changed")
+	case errors.Is(err, store.ErrBatesReservationConflict):
+		return NewError(http.StatusConflict, "production_numbering_conflict", "production numbering namespace changed")
 	case errors.Is(err, productionservice.ErrJobConflict):
 		return NewError(http.StatusConflict, "production_job_conflict", "production job cannot be changed")
 	case errors.Is(err, store.ErrInvalidProduction):
@@ -405,6 +431,37 @@ func registerProductionRoutes(api huma.API, d Deps, g *OperationGate) {
 				return nil, productionSetError(err)
 			}
 			return &struct{ Body ProductionResolvedMaskPage }{Body: ProductionResolvedMaskPage(page)}, nil
+		})
+	huma.Register(api, huma.Operation{OperationID: "finalizeProductionDraft", Method: http.MethodPost,
+		Path:    "/api/v1/productions/sets/{set_id}/revisions/{revision}/finalize",
+		Summary: "Finalize one reviewed production revision after current input gates", MaxBodyBytes: 4096},
+		func(ctx context.Context, in *struct {
+			SetID    string `path:"set_id" format:"uuid"`
+			Revision int64  `path:"revision" minimum:"1"`
+			IfMatch  string `header:"If-Match"`
+			Body     ProductionFinalizeRequest
+		}) (*struct{ Body ProductionFinalizationResult }, error) {
+			etag, err := parseIfMatch(in.IfMatch)
+			if err != nil {
+				return nil, err
+			}
+			actor, ok := workspaceSnapshotOwner(ctx)
+			if !ok {
+				return nil, NewError(http.StatusUnauthorized, "unauthorized", "authenticated production actor is missing")
+			}
+			var result store.ProductionFinalizationResult
+			err = g.mutate(func() error {
+				var err error
+				result, err = d.Store.FinalizeProductionDraft(ctx, actor, store.ProductionFinalizeCommand{
+					SetID: in.SetID, Revision: in.Revision, ETag: etag,
+					OperationID: in.Body.OperationID, NamespaceID: in.Body.NamespaceID,
+					SnapshotID: in.Body.SnapshotID, StartAt: in.Body.StartAt})
+				return err
+			})
+			if err != nil {
+				return nil, productionSetError(err)
+			}
+			return &struct{ Body ProductionFinalizationResult }{Body: ProductionFinalizationResult(result)}, nil
 		})
 	huma.Register(api, huma.Operation{OperationID: "admitProductionJob", Method: http.MethodPost,
 		Path:    "/api/v1/productions/sets/{set_id}/revisions/{revision}/jobs",

@@ -8566,6 +8566,53 @@ func (c *Client) ListProductionDecisions(ctx context.Context, options *ListProdu
 	return responseParser(ctx, resp)
 }
 
+// FinalizeProductionDraft Finalize one reviewed production revision after current input gates
+func (c *Client) FinalizeProductionDraft(ctx context.Context, options *FinalizeProductionDraftRequestOptions, reqEditors ...runtime.RequestEditorFn) (*FinalizeProductionDraftResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/productions/sets/{set_id}/revisions/{revision}/finalize",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*FinalizeProductionDraftResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(FinalizeProductionDraftResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "FinalizeProductionDraftResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[FinalizeProductionDraftErrorResponse](resp, "FinalizeProductionDraftErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/productions/sets/{set_id}/revisions/{revision}/finalize")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
 // ForkProductionDraft Fork a production revision into a new draft
 func (c *Client) ForkProductionDraft(ctx context.Context, options *ForkProductionDraftRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ForkProductionDraftResponse, error) {
 	var err error
@@ -17201,6 +17248,48 @@ func (o *ListProductionDecisionsRequestOptions) GetHeader() (map[string]string, 
 	return nil, nil
 }
 
+// FinalizeProductionDraftRequestOptions is the options needed to make a request to FinalizeProductionDraft.
+type FinalizeProductionDraftRequestOptions struct {
+	PathParams *FinalizeProductionDraftPath
+	Body       *FinalizeProductionDraftBody
+	Header     *FinalizeProductionDraftHeaders
+}
+
+// GetPathParams returns the path params as a map.
+func (o *FinalizeProductionDraftRequestOptions) GetPathParams() (map[string]any, error) {
+	encoded, err := json.Marshal(o.PathParams, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetQuery returns the query params as a map.
+func (o *FinalizeProductionDraftRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *FinalizeProductionDraftRequestOptions) GetBody() any {
+	if o.Body == nil {
+		return nil
+	}
+	return o.Body
+}
+
+// GetHeader returns the headers as a map.
+func (o *FinalizeProductionDraftRequestOptions) GetHeader() (map[string]string, error) {
+	encoded, err := json.Marshal(o.Header, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var headers map[string]string
+	err = json.Unmarshal(encoded, &headers)
+	return headers, err
+}
+
 // ForkProductionDraftRequestOptions is the options needed to make a request to ForkProductionDraft.
 type ForkProductionDraftRequestOptions struct {
 	PathParams *ForkProductionDraftPath
@@ -19470,6 +19559,10 @@ type ApplyProductionChangesHeaders struct {
 	IfMatch *string `json:"If-Match,omitempty"`
 }
 
+type FinalizeProductionDraftHeaders struct {
+	IfMatch *string `json:"If-Match,omitempty"`
+}
+
 type EditProductionInstructionsHeaders struct {
 	IfMatch *string `json:"If-Match,omitempty"`
 }
@@ -19881,6 +19974,11 @@ type ListProductionDecisionsPath struct {
 	Revision int64     `json:"revision"`
 }
 
+type FinalizeProductionDraftPath struct {
+	SetID    uuid.UUID `json:"set_id"`
+	Revision int64     `json:"revision"`
+}
+
 type ForkProductionDraftPath struct {
 	SetID    uuid.UUID `json:"set_id"`
 	Revision int64     `json:"revision"`
@@ -20193,6 +20291,8 @@ type CreateProductionSetBody = CreateRequest
 type CancelProductionJobBody = ProductionJobCancelRequest
 
 type ApplyProductionChangesBody = ProductionChangesRequest
+
+type FinalizeProductionDraftBody = ProductionFinalizeRequest
 
 type ForkProductionDraftBody = ProductionForkRequest
 
@@ -21366,6 +21466,10 @@ type ListProductionDecisionsResponse = api.ProductionDecisionPage
 
 type ListProductionDecisionsErrorResponse = Error
 
+type FinalizeProductionDraftResponse = api.ProductionFinalizationResult
+
+type FinalizeProductionDraftErrorResponse = Error
+
 type ForkProductionDraftResponse = redaction.Draft
 
 type ForkProductionDraftErrorResponse = Error
@@ -22438,6 +22542,10 @@ type ProductionChangesRequest = api.ProductionChangesRequest
 type ProductionDecision = api.ProductionDecision
 
 type ProductionDecisionPage = api.ProductionDecisionPage
+
+type ProductionFinalizationResult = api.ProductionFinalizationResult
+
+type ProductionFinalizeRequest = api.ProductionFinalizeRequest
 
 type ProductionForkRequest = api.ProductionForkRequest
 

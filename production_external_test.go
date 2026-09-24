@@ -116,6 +116,13 @@ func TestEmbeddedProductionSetsKeepVaultRootsSeparate(t *testing.T) {
 	_, err = second.ResolveProductionSelection(t.Context(), set.ID, 1, 3,
 		api.ProductionResolveRequest{MemberID: "88888888-8888-4888-8888-888888888887", Page: 1})
 	require.ErrorIs(t, err, store.ErrNotFound)
+	finalize := api.ProductionFinalizeRequest{OperationID: "88888888-8888-4888-8888-888888888897",
+		NamespaceID: "88888888-8888-4888-8888-888888888898",
+		SnapshotID:  "88888888-8888-4888-8888-888888888899"}
+	_, err = first.FinalizeProductionDraft(t.Context(), "synthetic-operator", set.ID, 1, 3, finalize)
+	require.ErrorIs(t, err, store.ErrInvalidProduction)
+	_, err = second.FinalizeProductionDraft(t.Context(), "synthetic-operator", set.ID, 1, 3, finalize)
+	require.ErrorIs(t, err, store.ErrNotFound)
 	_, err = first.ProductionJobStatus(t.Context(), set.ID, "88888888-8888-4888-8888-888888888887")
 	require.ErrorIs(t, err, store.ErrNotFound)
 	_, err = second.ProductionJobStatus(t.Context(), set.ID, "88888888-8888-4888-8888-888888888887")

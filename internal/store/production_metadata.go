@@ -691,7 +691,7 @@ func validateProductionReceiptsAndOperations(ctx context.Context, q metadataQuer
 			_ = operations.Close()
 			return errors.New("invalid production operation receipt")
 		}
-		if err := validateProductionOperationResponse(ctx, q, id, kind, response); err != nil {
+		if err := validateProductionOperationResponse(ctx, q, id, kind, requestDigest, response); err != nil {
 			_ = operations.Close()
 			return err
 		}
@@ -699,8 +699,32 @@ func validateProductionReceiptsAndOperations(ctx context.Context, q metadataQuer
 	return errors.Join(operations.Err(), operations.Close())
 }
 
-func validateProductionOperationResponse(ctx context.Context, q metadataQuerier, operationID, kind string, raw []byte) error {
+func validateProductionOperationResponse(ctx context.Context, q metadataQuerier, operationID, kind,
+	requestDigest string, raw []byte) error {
 	switch kind {
+	case productionOperationFinalizeCommand:
+		value, err := canonical.Decode[productionFinalizeAdmission](raw)
+		if err != nil || value.Command.OperationID != operationID ||
+			!validProductionFinalizeCommand(value.Command) ||
+			validateProductionFinalizeAdmission(value, value.Command) != nil {
+			return errors.New("production finalize admission is invalid")
+		}
+		commandRaw, err := canonical.Marshal(value.Command)
+		if err != nil || digestProductionBytes(commandRaw) != requestDigest {
+			return errors.New("production finalize admission request disagrees")
+		}
+		var exists bool
+		if err := q.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM production_revisions WHERE set_id=? AND revision=?)`,
+			value.Command.SetID, value.Command.Revision).Scan(&exists); err != nil || !exists {
+			return errors.New("production finalize admission is detached")
+		}
+		var auditRequestSHA string
+		var auditRaw []byte
+		if err := q.QueryRowContext(ctx, `SELECT request_sha256,receipt_json FROM production_operations WHERE operation_id=? AND kind=?`,
+			operationID, productionOperationFinalizeCommand).Scan(&auditRequestSHA, &auditRaw); err != nil ||
+			auditRequestSHA != requestDigest || !bytes.Equal(auditRaw, raw) {
+			return errors.New("production finalize admission disagrees with audit")
+		}
 	case productionOperationPolicy:
 		value, err := canonical.Decode[documentproduction.PolicyVersion](raw)
 		if err != nil {
@@ -787,7 +811,8 @@ func knownProductionOperation(kind string) bool {
 	case productionOperationPolicy, productionOperationApproval, productionOperationApprovalEvent,
 		productionOperationPlayers, productionOperationWithheld, productionOperationDraft,
 		productionOperationRows, productionOperationValidation, productionOperationApprovalBind,
-		productionOperationPreparedInputs, productionOperationFreeze, productionOperationAttachment:
+		productionOperationPreparedInputs, productionOperationFinalizeCommand,
+		productionOperationFreeze, productionOperationAttachment:
 		return true
 	default:
 		return false

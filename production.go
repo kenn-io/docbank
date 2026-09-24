@@ -13,6 +13,7 @@ type ProductionDecisionPage = api.ProductionDecisionPage
 type ProductionSetPage = api.ProductionSetPage
 type ProductionMapChunk = store.ProductionMapChunk
 type ProductionResolvedMaskPage = store.ProductionResolvedMaskPage
+type ProductionFinalizationResult = store.ProductionFinalizationResult
 type ProductionJobStatus = store.ProductionJobStatus
 type ProductionRecipeCatalog = api.ProductionRecipeCatalog
 
@@ -171,6 +172,26 @@ func (v *Vault) ResolveProductionSelection(ctx context.Context, setID string, re
 	}
 	return v.metadata.ProductionResolvedMaskPage(ctx, setID, revision, request.MemberID,
 		etag, request.Page, request.Cursor, limit)
+}
+
+// FinalizeProductionDraft gates and locks one reviewed revision in this
+// embedded vault. It does not reserve or allocate production numbers.
+func (v *Vault) FinalizeProductionDraft(ctx context.Context, actor, setID string, revision, etag int64,
+	request api.ProductionFinalizeRequest) (ProductionFinalizationResult, error) {
+	v.lifecycle.RLock()
+	defer v.lifecycle.RUnlock()
+	if v.closed {
+		return ProductionFinalizationResult{}, ErrClosed
+	}
+	var result ProductionFinalizationResult
+	err := embeddedMutationGate{vault: v}.MutateContext(ctx, func() error {
+		var err error
+		result, err = v.metadata.FinalizeProductionDraft(ctx, actor, store.ProductionFinalizeCommand{
+			SetID: setID, Revision: revision, ETag: etag, OperationID: request.OperationID,
+			NamespaceID: request.NamespaceID, SnapshotID: request.SnapshotID, StartAt: request.StartAt})
+		return err
+	})
+	return result, err
 }
 
 func (v *Vault) ProductionJobStatus(ctx context.Context, setID, jobID string) (ProductionJobStatus, error) {

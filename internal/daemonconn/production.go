@@ -307,6 +307,33 @@ func (c *Connection) ResolveProductionSelection(ctx context.Context, setID strin
 	return *result, nil
 }
 
+// FinalizeProductionDraft gates and seals one exact reviewed revision without
+// allocating production numbers. Exact retries return the retained result.
+func (c *Connection) FinalizeProductionDraft(ctx context.Context, setID string, revision, etag int64,
+	request api.ProductionFinalizeRequest) (api.ProductionFinalizationResult, error) {
+	parsed, err := productionSetUUID(setID)
+	if err != nil || revision < 1 || etag < 1 || !validUUIDv4(request.OperationID) ||
+		!validUUIDv4(request.NamespaceID) || !validUUIDv4(request.SnapshotID) || request.StartAt < 0 {
+		return api.ProductionFinalizationResult{}, errors.New("invalid production finalization request")
+	}
+	header := strconv.FormatInt(etag, 10)
+	result, err := c.API().FinalizeProductionDraft(ctx, &apiclient.FinalizeProductionDraftRequestOptions{
+		PathParams: &apiclient.FinalizeProductionDraftPath{SetID: parsed, Revision: revision},
+		Header:     &apiclient.FinalizeProductionDraftHeaders{IfMatch: &header}, Body: &request})
+	if err != nil {
+		return api.ProductionFinalizationResult{}, err
+	}
+	if result == nil || redaction.ValidateDraft(result.Draft) != nil ||
+		result.Draft.SetID != setID || result.Draft.Revision != revision ||
+		result.Draft.ETag != etag || result.Draft.State != "finalized" ||
+		result.OperationID != request.OperationID || result.NamespaceID != request.NamespaceID ||
+		result.SnapshotID != request.SnapshotID ||
+		!canonical.IsSHA256Hex(result.PreparedSHA256) || !canonical.IsSHA256Hex(result.ReceiptSHA256) {
+		return api.ProductionFinalizationResult{}, integrityErrorf("production finalization response is inconsistent")
+	}
+	return *result, nil
+}
+
 func (c *Connection) ProductionJobStatus(ctx context.Context, setID, jobID string) (api.ProductionJobStatus, error) {
 	parsedSet, err := productionSetUUID(setID)
 	if err != nil {
