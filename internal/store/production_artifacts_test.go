@@ -2,7 +2,6 @@ package store
 
 import (
 	"bytes"
-	"errors"
 	"os"
 	"path/filepath"
 	"slices"
@@ -80,7 +79,7 @@ func TestRetainProductionArtifactRejectsTamperedOrMissingBytes(t *testing.T) {
 			_, err := f.RetainProductionArtifact(t.Context(), job.ID, artifact.ID, f)
 			require.Error(t, err)
 			_, err = f.NodeByPath(t.Context(), "/productions/"+job.ID+"/"+artifact.ID)
-			require.True(t, errors.Is(err, ErrNotFound))
+			require.ErrorIs(t, err, ErrNotFound)
 		})
 	}
 }

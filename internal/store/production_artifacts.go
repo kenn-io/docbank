@@ -26,6 +26,7 @@ type RetainedProductionArtifact struct {
 
 type productionArtifactSource struct {
 	production.RetainSource
+
 	NodeID       int64
 	SourceSHA256 string
 }
@@ -86,9 +87,9 @@ func (s *Store) retainProductionArtifact(ctx context.Context, jobID, artifactID 
 	for _, prepared := range authority.Prepared.Members {
 		member := prepared.Member
 		source := productionArtifactSource{
-			RetainSource: production.RetainSource{MemberID: member.ID,
-				MemberOrdinal: member.Ordinal, SourceVersionID: member.SourceVersionID},
-			NodeID: member.NodeID, SourceSHA256: member.SourceSHA256,
+			MemberID: member.ID, MemberOrdinal: member.Ordinal,
+			SourceVersionID: member.SourceVersionID,
+			NodeID:          member.NodeID, SourceSHA256: member.SourceSHA256,
 		}
 		version, readErr := s.ContentVersionByID(ctx, source.SourceVersionID)
 		if readErr != nil || version.NodeID != source.NodeID || version.BlobHash != source.SourceSHA256 {
@@ -224,8 +225,11 @@ func (s *Store) retainProductionArtifact(ctx context.Context, jobID, artifactID 
 		node.Size != artifact.Size || node.MimeType != artifact.MediaType {
 		return bad(nil)
 	}
-	current, err := s.NodeByID(ctx, source.NodeID)
-	changed := err != nil || current.CurrentVersionID != source.SourceVersionID
+	current, headErr := s.NodeByID(ctx, source.NodeID)
+	changed := true
+	if headErr == nil {
+		changed = current.CurrentVersionID != source.SourceVersionID
+	}
 	return RetainedProductionArtifact{Node: node, Version: version, Artifact: artifact,
 		Provenance: provenance, SourceHeadChanged: changed}, nil
 }

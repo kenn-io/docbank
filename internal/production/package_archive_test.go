@@ -55,6 +55,7 @@ func (s syntheticPackageOpener) OpenVerifiedProductionArtifact(_ context.Context
 }
 
 func packageArchiveFixture(t *testing.T, profile string) (PackageProjection, syntheticPackageOpener) {
+	t.Helper()
 	_, projection, opener := packageArchiveJobFixture(t, profile)
 	return projection, opener
 }

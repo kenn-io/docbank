@@ -2,7 +2,10 @@ package store
 
 import (
 	"bytes"
+	"context"
 	"database/sql"
+	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"testing"
@@ -10,7 +13,22 @@ import (
 	"github.com/stretchr/testify/require"
 	documentproduction "go.kenn.io/docbank/document/production"
 	"go.kenn.io/docbank/internal/production"
+	"go.kenn.io/kit/packstore"
 )
+
+func restartPackageBlobWriter(f *realRestartFixture) ProductionPackageBlobWriter {
+	return func(ctx context.Context, reader io.Reader) (string, int64, BlobPhysical, error) {
+		written, err := f.blobs.loose.Write(ctx, reader, packstore.WriteOptions{
+			Durability: packstore.DurablePublication, Dedup: packstore.VerifyTypeAndSize,
+			MaxBytes: 100 << 20,
+		})
+		if err != nil {
+			return "", 0, BlobPhysical{}, fmt.Errorf("writing package blob: %w", err)
+		}
+		return written.Hash.String(), written.Size,
+			BlobPhysical{Encoding: "raw", StoredBytes: written.StoredSize, Created: written.Created}, nil
+	}
+}
 
 func TestPublishedProductionPackageUsesStoredArtifactsAfterSourceHeadChange(t *testing.T) {
 	s, finalized, job := unreservedProductionCheckpointFixture(t)
@@ -71,6 +89,82 @@ func TestPublishedProductionPackageUsesStoredArtifactsAfterSourceHeadChange(t *t
 	replayed, err := production.PublishRecipientPackage(t.Context(), f.Store, f, packageRequest)
 	require.NoError(t, err)
 	require.Equal(t, first, replayed)
+	const packageOperationID = "77777777-7777-4777-8777-777777777777"
+	writePackageBlob := restartPackageBlobWriter(f)
+	retained, err := s.RetainProductionPackage(t.Context(), job.ID, packageOperationID,
+		packageRequest.ProfileID, packageRequest.Limits, archive, packageRequest.QCPath,
+		packageRequest.TransmittalPath, writePackageBlob)
+	require.NoError(t, err)
+	require.Equal(t, first.QC.ArchiveSHA256, retained.Archive.Version.BlobHash)
+	require.Equal(t, retained.Evidence.ArchiveSHA256, retained.Archive.Version.BlobHash)
+	var packageProvenance string
+	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT i.source_desc FROM ingests i
+		JOIN provenance p ON p.ingest_id=i.id WHERE p.node_id=? AND i.source_kind='embedded:production-package'`,
+		retained.Archive.Node.ID).Scan(&packageProvenance))
+	require.Contains(t, packageProvenance, retained.Evidence.SHA256)
+	require.NotContains(t, packageProvenance, "source_version_id")
+	for _, name := range []string{"recipient.zip", "qc.json", "transmittal.json"} {
+		_, err := s.NodeByPath(t.Context(), "/productions/"+job.ID+"/packages/"+packageOperationID+"/"+name)
+		require.NoError(t, err)
+	}
+	retainedAgain, err := s.RetainProductionPackage(t.Context(), job.ID, packageOperationID,
+		packageRequest.ProfileID, packageRequest.Limits, archive, packageRequest.QCPath,
+		packageRequest.TransmittalPath, writePackageBlob)
+	require.NoError(t, err)
+	require.Equal(t, retained.Archive.Version.ID, retainedAgain.Archive.Version.ID)
+	require.Equal(t, retained.QC.Version.ID, retainedAgain.QC.Version.ID)
+	require.Equal(t, retained.Transmittal.Version.ID, retainedAgain.Transmittal.Version.ID)
+	require.Equal(t, retained.Archive.Physical, retainedAgain.Archive.Physical)
+	require.Equal(t, retained.QC.Physical, retainedAgain.QC.Physical)
+	require.Equal(t, retained.Transmittal.Physical, retainedAgain.Transmittal.Physical)
+	unreachable, err := s.UnreachableBlobs(t.Context())
+	require.NoError(t, err)
+	for _, part := range []ContentWriteReceipt{retained.Archive, retained.QC, retained.Transmittal} {
+		require.NotContains(t, blobHashes(unreachable), part.Version.BlobHash)
+	}
+	materializeProductionEmailBlobs(t, f)
+	driver := productionBackupDriver(t)
+	backupRepo := filepath.Join(t.TempDir(), "package-backup")
+	require.NoError(t, runProductionBackupDriver(t, driver, "create", f.root, backupRepo))
+	restoredRoot := filepath.Join(t.TempDir(), "package-restore")
+	require.NoError(t, runProductionBackupDriver(t, driver, "restore", backupRepo, restoredRoot))
+	restoredStore, err := Open(filepath.Join(restoredRoot, "docbank.db"))
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, restoredStore.Close()) })
+	restoredBlobs, err := openRestartBlobs(restoredStore, restoredRoot)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, restoredBlobs.Close()) })
+	for name, path := range map[string]string{
+		"recipient.zip":    archive,
+		"qc.json":          packageRequest.QCPath,
+		"transmittal.json": packageRequest.TransmittalPath,
+	} {
+		node, readErr := restoredStore.NodeByPath(t.Context(),
+			"/productions/"+job.ID+"/packages/"+packageOperationID+"/"+name)
+		require.NoError(t, readErr)
+		want, readErr := os.ReadFile(path)
+		require.NoError(t, readErr)
+		stream, size, readErr := restoredBlobs.OpenStreamContext(t.Context(), node.BlobHash)
+		require.NoError(t, readErr)
+		got, readErr := io.ReadAll(stream)
+		require.NoError(t, readErr)
+		require.NoError(t, stream.Verify())
+		require.NoError(t, stream.Close())
+		require.Equal(t, int64(len(want)), size)
+		require.Equal(t, want, got)
+	}
+	for _, sidecar := range []string{packageRequest.QCPath, packageRequest.TransmittalPath} {
+		original, readErr := os.ReadFile(sidecar)
+		require.NoError(t, readErr)
+		require.NoError(t, os.Chmod(sidecar, 0o600))
+		require.NoError(t, os.WriteFile(sidecar, append(bytes.Clone(original), '\n'), 0o600))
+		_, readErr = s.RetainProductionPackage(t.Context(), job.ID, packageOperationID,
+			packageRequest.ProfileID, packageRequest.Limits, archive, packageRequest.QCPath,
+			packageRequest.TransmittalPath, writePackageBlob)
+		require.ErrorIs(t, readErr, production.ErrPackageEvidence)
+		require.NoError(t, os.WriteFile(sidecar, original, 0o600))
+		require.NoError(t, os.Chmod(sidecar, 0o400))
+	}
 	var page documentproduction.Artifact
 	for _, artifact := range published.Manifest.Artifacts {
 		if artifact.Role == documentproduction.ArtifactRoleRedactedPage {
