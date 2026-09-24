@@ -11,22 +11,16 @@ import (
 	"go.kenn.io/docbank/internal/production"
 )
 
-// ProductionPackageInputs binds a published job to its frozen occurrence order
-// and number reservation. It remains readable after a source gets a new head.
-type ProductionPackageInputs struct {
-	Job         production.Job
-	Reservation documentproduction.NumberReservation
-	Members     []production.PackageMember
-}
-
 // LoadProductionPackageInputs reads historical output authority. It deliberately
 // avoids LoadFinalizedProduction, which checks that source heads are current for
 // new rendering. Published output must remain packageable after source changes.
-func (s *Store) LoadProductionPackageInputs(ctx context.Context, jobID string) (ProductionPackageInputs, error) {
-	bad := func() (ProductionPackageInputs, error) { return ProductionPackageInputs{}, production.ErrJobConflict }
+func (s *Store) LoadProductionPackageInputs(ctx context.Context, jobID string) (production.PublishedPackageInputs, error) {
+	bad := func() (production.PublishedPackageInputs, error) {
+		return production.PublishedPackageInputs{}, production.ErrJobConflict
+	}
 	job, err := s.LoadProductionJob(ctx, jobID)
 	if err != nil {
-		return ProductionPackageInputs{}, err
+		return production.PublishedPackageInputs{}, err
 	}
 	if job.State != production.ProductionJobSucceeded {
 		return bad()
@@ -47,7 +41,7 @@ func (s *Store) LoadProductionPackageInputs(ctx context.Context, jobID string) (
 		return bad()
 	}
 	if err != nil {
-		return ProductionPackageInputs{}, err
+		return production.PublishedPackageInputs{}, err
 	}
 	if size < 1 || size > maxFrozenAuthorityBytes {
 		return bad()
@@ -78,5 +72,5 @@ func (s *Store) LoadProductionPackageInputs(ctx context.Context, jobID string) (
 		}
 		members[index] = production.PackageMember{ID: member.ID, Ordinal: member.Ordinal, FamilyID: member.Family.RootVersionID}
 	}
-	return ProductionPackageInputs{Job: job, Reservation: plan.Reservation, Members: members}, nil
+	return production.PublishedPackageInputs{Job: job, Reservation: plan.Reservation, Members: members}, nil
 }
