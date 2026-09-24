@@ -676,7 +676,7 @@ func validPDFTableXRef(xref []byte) bool {
 		if !ok {
 			return false
 		}
-		if bytes.Equal(header, []byte("trailer")) {
+		if _, isTrailer := pdfKeywordLength(trimPDFWhitespace(xref[subsectionStart:]), "trailer"); isTrailer {
 			return maxObjectNumber > 0 && validPDFTrailer(xref[subsectionStart:], maxObjectNumber)
 		}
 		headerFields := bytes.Fields(header)

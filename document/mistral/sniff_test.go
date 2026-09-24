@@ -200,6 +200,20 @@ func TestDetectFormatAcceptsRecoverablePDFs(t *testing.T) {
 			content = append(content, []byte("1 3\n")...)
 			return append(content, original[split:]...)
 		}},
+		{name: "trailer dictionary on same line", content: func(t *testing.T) []byte {
+			t.Helper()
+			original := testPDF("same-line-trailer")
+			content := bytes.Replace(original, []byte("trailer\n<<"), []byte("trailer <<"), 1)
+			require.NotEqual(t, original, content)
+			return content
+		}},
+		{name: "trailer adjacent to dictionary", content: func(t *testing.T) []byte {
+			t.Helper()
+			original := testPDF("adjacent-trailer-dictionary")
+			content := bytes.Replace(original, []byte("trailer\n<<"), []byte("trailer<<"), 1)
+			require.NotEqual(t, original, content)
+			return content
+		}},
 		{name: "large file without final marker", content: func(t *testing.T) []byte {
 			t.Helper()
 			original := testPDF(strings.Repeat("x", 40_000))
