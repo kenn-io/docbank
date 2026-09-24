@@ -55,6 +55,11 @@ func (s syntheticPackageOpener) OpenVerifiedProductionArtifact(_ context.Context
 }
 
 func packageArchiveFixture(t *testing.T, profile string) (PackageProjection, syntheticPackageOpener) {
+	_, projection, opener := packageArchiveJobFixture(t, profile)
+	return projection, opener
+}
+
+func packageArchiveJobFixture(t *testing.T, profile string) (Job, PackageProjection, syntheticPackageOpener) {
 	t.Helper()
 	job, numbers, members := packageProjectionFixture(t)
 	opener := syntheticPackageOpener{data: map[string][]byte{}}
@@ -77,7 +82,7 @@ func packageArchiveFixture(t *testing.T, profile string) (PackageProjection, syn
 	projection, err := PlanPackageProjection(job, numbers, members, profile,
 		PackageLimits{MaxVolumeBytes: 1000, MaxVolumeDocuments: 10})
 	require.NoError(t, err)
-	return projection, opener
+	return job, projection, opener
 }
 
 func requirePackagePrivateReadOnlyMode(t *testing.T, path string) {
