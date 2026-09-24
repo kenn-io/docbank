@@ -172,7 +172,7 @@ func volumePath(volume, relPath string) string {
 
 func packageExpectedPaths(manifest RecipientManifest) (map[string]struct{}, error) {
 	if manifest.Contract != RecipientPackageContractV1 || len(manifest.Volumes) == 0 ||
-		len(manifest.Volumes) > 999 || len(manifest.Documents) == 0 || len(manifest.Documents) > 100_000 {
+		len(manifest.Volumes) > maxRecipientVolumes || len(manifest.Documents) == 0 || len(manifest.Documents) > 100_000 {
 		return nil, ErrRecipientArchive
 	}
 	roles := []string{documentproduction.ArtifactRoleRedactedPDF, documentproduction.ArtifactRoleRedactedText}

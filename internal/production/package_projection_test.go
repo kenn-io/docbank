@@ -181,6 +181,66 @@ func TestPlanPackageProjectionRejectsProfileAndVolumeBoundary(t *testing.T) {
 	require.Equal(t, "VOL002", projection.Manifest.Documents[1].Volume)
 }
 
+func TestRecipientPackageVolumeLimitMatchesReceivedPackages(t *testing.T) {
+	job, numbers, members := packageProjectionFixture(t)
+	members[1].FamilyID = "family-two"
+	seedArtifacts := slices.Clone(job.Manifest.Artifacts[4:])
+	appendMember := func(ordinal int) {
+		memberID := fmt.Sprintf("33333333-3333-4333-8333-%012d", ordinal)
+		members = append(members, PackageMember{ID: memberID, Ordinal: int64(ordinal),
+			FamilyID: fmt.Sprintf("family-%03d", ordinal)})
+		numbers.Numbers = append(numbers.Numbers, documentproduction.AssignedNumber{
+			MemberID: memberID, MemberOrdinal: int64(ordinal), Page: 1,
+			Text: fmt.Sprintf("ÉX-%04d", ordinal+1)})
+		for _, seed := range seedArtifacts {
+			artifact := seed
+			artifact.ID = packageArtifactID(len(job.Manifest.Artifacts) + 1)
+			artifact.MemberID, artifact.MemberOrdinal = memberID, int64(ordinal)
+			artifact.Path = fmt.Sprintf("private/volume-%03d-%s-%d", ordinal, artifact.Role, artifact.Page)
+			artifact.SHA256 = testHash(artifact.Path)
+			job.Manifest.Artifacts = append(job.Manifest.Artifacts, artifact)
+		}
+	}
+	seal := func() {
+		var err error
+		_, numbers.SHA256, err = documentproduction.CanonicalNumberReservation(numbers)
+		require.NoError(t, err)
+		job.Receipt.NumberReservationSHA256 = numbers.SHA256
+		resealPackageJob(t, &job)
+	}
+	for ordinal := 3; ordinal <= maxRecipientVolumes; ordinal++ {
+		appendMember(ordinal)
+	}
+	seal()
+	limits := PackageLimits{MaxVolumeBytes: 1000, MaxVolumeDocuments: 1}
+	projection, err := PlanPackageProjection(job, numbers, members, "export-dat-pdf-v1", limits)
+	require.NoError(t, err)
+	require.Len(t, projection.Manifest.Volumes, maxRecipientVolumes)
+
+	appendMember(maxRecipientVolumes + 1)
+	seal()
+	_, err = PlanPackageProjection(job, numbers, members, "export-dat-pdf-v1", limits)
+	require.ErrorIs(t, err, ErrPackageProjection)
+
+	manifest := projection.Manifest
+	lastDoc := manifest.Documents[63]
+	lastDoc.Pages = slices.Clone(lastDoc.Pages)
+	lastDoc.Images = slices.Clone(lastDoc.Images)
+	lastDoc.Volume = "VOL065"
+	lastDoc.Control, lastDoc.End = "ÉX-0066", "ÉX-0066"
+	lastDoc.Pages[0].Number = lastDoc.Control
+	lastDoc.Images[0].Number = lastDoc.Control
+	lastDoc.Images[0].Path = "IMAGES/DOC000065-000001.png"
+	lastDoc.TextPath = "TEXT/DOC000065.txt"
+	lastDoc.PDFPath = "PDF/DOC000065.pdf"
+	manifest.Documents = append(manifest.Documents, lastDoc)
+	lastVolume := manifest.Volumes[63]
+	lastVolume.Name = "VOL065"
+	manifest.Volumes = append(manifest.Volumes, lastVolume)
+	_, err = packageExpectedPaths(manifest)
+	require.ErrorIs(t, err, ErrRecipientArchive)
+}
+
 func TestPlanPackageProjectionRejectsChangedNumbersAndUnsafeLabels(t *testing.T) {
 	for _, change := range []struct {
 		name   string

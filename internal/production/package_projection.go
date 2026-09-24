@@ -17,6 +17,9 @@ import (
 
 const RecipientPackageContractV1 = "production-recipient-package/v1"
 
+// Received package manifests admit at most 64 volumes.
+const maxRecipientVolumes = 64
+
 var ErrPackageProjection = errors.New("production package projection conflicts with published authority")
 
 // PackageMember supplies the family boundary for one published occurrence.
@@ -267,7 +270,7 @@ func PlanPackageProjection(job Job, reservation documentproduction.NumberReserva
 		volumes := &result.Manifest.Volumes
 		if len(*volumes) == 0 || (*volumes)[len(*volumes)-1].Bytes > limits.MaxVolumeBytes-familyBytes ||
 			(*volumes)[len(*volumes)-1].Documents > limits.MaxVolumeDocuments-(end-start) {
-			if len(*volumes) == 999 {
+			if len(*volumes) == maxRecipientVolumes {
 				return bad()
 			}
 			*volumes = append(*volumes, RecipientVolume{Name: fmt.Sprintf("VOL%03d", len(*volumes)+1)})
