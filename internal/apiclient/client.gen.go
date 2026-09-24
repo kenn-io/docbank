@@ -1408,6 +1408,53 @@ func (c *Client) GetCollectionQuality(ctx context.Context, options *GetCollectio
 	return responseParser(ctx, resp)
 }
 
+// SuggestConnections Suggest exact passage connections from stored evidence
+func (c *Client) SuggestConnections(ctx context.Context, options *SuggestConnectionsRequestOptions, reqEditors ...runtime.RequestEditorFn) (*SuggestConnectionsResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/connections/suggest",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*SuggestConnectionsResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(SuggestConnectionsResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "SuggestConnectionsResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[SuggestConnectionsErrorResponse](resp, "SuggestConnectionsErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/connections/suggest")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
 // LookupContentReferences Find stable document versions that retain a SHA-256 identity
 func (c *Client) LookupContentReferences(ctx context.Context, options *LookupContentReferencesRequestOptions, reqEditors ...runtime.RequestEditorFn) (*LookupContentReferencesResponse, error) {
 	var err error
@@ -11545,6 +11592,34 @@ func (o *GetCollectionQualityRequestOptions) GetHeader() (map[string]string, err
 	return nil, nil
 }
 
+// SuggestConnectionsRequestOptions is the options needed to make a request to SuggestConnections.
+type SuggestConnectionsRequestOptions struct {
+	Body *SuggestConnectionsBody
+}
+
+// GetPathParams returns the path params as a map.
+func (o *SuggestConnectionsRequestOptions) GetPathParams() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetQuery returns the query params as a map.
+func (o *SuggestConnectionsRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *SuggestConnectionsRequestOptions) GetBody() any {
+	if o.Body == nil {
+		return nil
+	}
+	return o.Body
+}
+
+// GetHeader returns the headers as a map.
+func (o *SuggestConnectionsRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
 // LookupContentReferencesRequestOptions is the options needed to make a request to LookupContentReferences.
 type LookupContentReferencesRequestOptions struct {
 	Query *LookupContentReferencesQuery
@@ -18221,6 +18296,8 @@ type PreviewBatchTagsBody = PreviewBatchTagsRequest
 
 type SetCollectionLabelBody = SetCollectionLabelRequest
 
+type SuggestConnectionsBody = ConnectionSuggestionRequest
+
 type RunDerivativePurgeBody = DerivativePurgeJobRequest
 
 type PlanDerivativePurgeBody = DerivativePurgePlanRequest
@@ -18808,6 +18885,10 @@ type ListCollectionMembersErrorResponse = Error
 type GetCollectionQualityResponse = api.CollectionQuality
 
 type GetCollectionQualityErrorResponse = Error
+
+type SuggestConnectionsResponse = api.ConnectionSuggestionReport
+
+type SuggestConnectionsErrorResponse = Error
 
 type LookupContentReferencesResponse = api.ContentReferencePage
 
@@ -19798,6 +19879,8 @@ type CapabilityStateV1 = document.CapabilityStateV1
 
 type CatalogEntry = loadfile.CatalogEntry
 
+type ChunkSpan = document.ChunkSpan
+
 type Collection = api.Collection
 
 type CollectionLabel = api.CollectionLabel
@@ -19811,6 +19894,16 @@ type CollectionQuality = api.CollectionQuality
 type CollectionQualitySummary = api.CollectionQualitySummary
 
 type CollectionSnapshotRepresentation = store.CollectionSnapshotRepresentation
+
+type ConnectionDuplicateMember = api.ConnectionDuplicateMember
+
+type ConnectionSeedSegment = api.ConnectionSeedSegment
+
+type ConnectionSuggestion = api.ConnectionSuggestion
+
+type ConnectionSuggestionReport = api.ConnectionSuggestionReport
+
+type ConnectionSuggestionRequest = api.ConnectionSuggestionRequest
 
 type ContentReference = api.ContentReference
 

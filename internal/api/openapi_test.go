@@ -1,6 +1,7 @@
 package api_test
 
 import (
+	"os"
 	"strings"
 	"testing"
 
@@ -53,6 +54,47 @@ func TestOpenAPIDocumentOffline(t *testing.T) {
 			assert.Contains(t, block, "        dest:")
 		} else {
 			assert.NotContains(t, block, "        dest:")
+		}
+	}
+}
+
+func TestOpenAPIConnectionSuggestionsHaveExactFenceAndEvidence(t *testing.T) {
+	doc := api.NewOfflineServer().API().OpenAPI()
+	operation := doc.Paths["/api/v1/connections/suggest"]
+	require.NotNil(t, operation)
+	require.NotNil(t, operation.Post)
+	assert.Equal(t, "suggestConnections", operation.Post.OperationID)
+	schemas := doc.Components.Schemas.Map()
+	request := schemas["ConnectionSuggestionRequest"]
+	require.NotNil(t, request)
+	for _, field := range []string{"source", "profile", "binding_id", "fence"} {
+		assert.Contains(t, request.Required, field)
+	}
+	fence := resolveOpenAPISchema(t, schemas, request.Properties["fence"])
+	ids := resolveOpenAPISchema(t, schemas, fence.Properties["content_version_ids"])
+	require.NotNil(t, ids.MaxItems)
+	assert.Equal(t, 4096, *ids.MaxItems)
+	require.NotNil(t, request.Properties["limit"].Maximum)
+	assert.InDelta(t, 100, *request.Properties["limit"].Maximum, 1e-9)
+	response := schemas["ConnectionSuggestionReport"]
+	require.NotNil(t, response)
+	assert.Contains(t, response.Properties, "candidates")
+	assert.Contains(t, response.Properties, "coverage_reason")
+}
+
+func TestCheckedInConnectionSchemaIncludesExactEvidence(t *testing.T) {
+	generated, err := os.ReadFile("../../openapi.yaml")
+	require.NoError(t, err)
+	doc := string(generated)
+	for schema, fields := range map[string][]string{
+		"ConnectionSuggestionReport": {"seed_segments", "aggregation", "score_metric", "vector_space_id", "index_generation_id", "source_manifest_checksum", "source_embedding_set_id"},
+		"ConnectionSuggestion":       {"duplicate_members"},
+		"ConnectionSeedSegment":      {"input_id", "passage", "quote", "span", "generation_id"},
+		"ConnectionDuplicateMember":  {"id", "target", "target_quote", "target_node_id", "target_path", "score", "score_metric"},
+	} {
+		block := openAPISchemaBlock(t, doc, schema)
+		for _, field := range fields {
+			assert.Contains(t, block, "        "+field+":", "%s is missing %s", schema, field)
 		}
 	}
 }
