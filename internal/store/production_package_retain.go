@@ -30,8 +30,22 @@ type RetainedProductionPackage struct {
 func (s *Store) RetainProductionPackage(ctx context.Context, jobID, operationID, profileID string,
 	limits production.PackageLimits, archivePath, qcPath, transmittalPath string,
 	write ProductionPackageBlobWriter) (RetainedProductionPackage, error) {
+	return s.retainProductionPackage(ctx, jobID, operationID, profileID, limits,
+		archivePath, qcPath, transmittalPath, write, nil)
+}
+
+// afterWrite injects a lost response after a durable package mutation in tests.
+func (s *Store) retainProductionPackage(ctx context.Context, jobID, operationID, profileID string,
+	limits production.PackageLimits, archivePath, qcPath, transmittalPath string,
+	write ProductionPackageBlobWriter, afterWrite func(string) error) (RetainedProductionPackage, error) {
 	bad := func(err error) (RetainedProductionPackage, error) {
 		return RetainedProductionPackage{}, errors.Join(production.ErrPackageEvidence, err)
+	}
+	written := func(stage string) error {
+		if afterWrite != nil {
+			return afterWrite(stage)
+		}
+		return nil
 	}
 	if ctx == nil || validateUUIDv4(jobID) != nil || validateUUIDv4(operationID) != nil ||
 		write == nil || archivePath == "" || qcPath == "" || transmittalPath == "" ||
@@ -81,6 +95,9 @@ func (s *Store) RetainProductionPackage(ctx context.Context, jobID, operationID,
 	if err != nil {
 		return bad(err)
 	}
+	if err := written("directory"); err != nil {
+		return bad(err)
+	}
 	parts := []struct {
 		name, path, mime, expectedSHA string
 	}{
@@ -91,7 +108,7 @@ func (s *Store) RetainProductionPackage(ctx context.Context, jobID, operationID,
 	var retained [3]ContentWriteReceipt
 	for index, part := range parts {
 		retained[index], err = s.retainProductionPackagePart(ctx, parent.ID, evidence,
-			part.name, part.path, part.mime, part.expectedSHA, write)
+			part.name, part.path, part.mime, part.expectedSHA, write, written)
 		if err != nil {
 			return bad(err)
 		}
@@ -102,7 +119,7 @@ func (s *Store) RetainProductionPackage(ctx context.Context, jobID, operationID,
 
 func (s *Store) retainProductionPackagePart(ctx context.Context, parentID int64,
 	evidence production.PackageEvidenceReceipt, name, sourcePath, mime, expectedSHA string,
-	write ProductionPackageBlobWriter) (ContentWriteReceipt, error) {
+	write ProductionPackageBlobWriter, afterWrite func(string) error) (ContentWriteReceipt, error) {
 	file, err := os.Open(sourcePath)
 	if err != nil {
 		return ContentWriteReceipt{}, err
@@ -119,7 +136,13 @@ func (s *Store) retainProductionPackagePart(ctx context.Context, parentID int64,
 	if hash != expectedSHA || size != info.Size() {
 		return ContentWriteReceipt{}, production.ErrPackageEvidence
 	}
+	if err := afterWrite(name + ":write"); err != nil {
+		return ContentWriteReceipt{}, err
+	}
 	if err := s.RecordBlob(ctx, hash, size, physical); err != nil {
+		return ContentWriteReceipt{}, err
+	}
+	if err := afterWrite(name + ":blob"); err != nil {
 		return ContentWriteReceipt{}, err
 	}
 	description, err := canonical.Marshal(struct {
@@ -140,6 +163,9 @@ func (s *Store) retainProductionPackagePart(ctx context.Context, parentID int64,
 		receipt, ingestErr := s.IngestFileExactWithReceipt(ctx, run, parentID, name,
 			hash, size, mime, name, "", physical)
 		if ingestErr == nil {
+			if err := afterWrite(name + ":ingest"); err != nil {
+				return ContentWriteReceipt{}, err
+			}
 			return receipt, nil
 		}
 		if !errors.Is(ingestErr, ErrExists) {
