@@ -153,6 +153,59 @@ func TestResolverDiscoversLoadFilesAndEnforcesVolumeBound(t *testing.T) {
 	assert.Equal(t, []Volume{{Name: "DISC001", DeclaredRoot: "DISC001", Ordinal: 1}}, volumes)
 }
 
+func TestResolverDiscoversPerVolumeLoadfileSets(t *testing.T) {
+	root := t.TempDir()
+	for _, volume := range []string{"VOL002", "VOL001"} {
+		dir := filepath.Join(root, volume, "LOADFILES")
+		require.NoError(t, os.MkdirAll(dir, 0o700))
+		require.NoError(t, os.WriteFile(filepath.Join(dir, "PRODUCTION.dat"), []byte("synthetic DAT"), 0o600))
+		require.NoError(t, os.WriteFile(filepath.Join(dir, "PRODUCTION.opt"), []byte("synthetic OPT"), 0o600))
+	}
+	resolver, err := NewResolver(t.Context(), root, nil)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, resolver.Close()) })
+	sets, volumes, err := resolver.DiscoverPackageFileSets("dat-concordance-v1")
+	require.NoError(t, err)
+	require.Equal(t, []PackageFileSet{
+		{Volume: "VOL001", Metadata: "VOL001/LOADFILES/PRODUCTION.dat", PageMap: "VOL001/LOADFILES/PRODUCTION.opt"},
+		{Volume: "VOL002", Metadata: "VOL002/LOADFILES/PRODUCTION.dat", PageMap: "VOL002/LOADFILES/PRODUCTION.opt"},
+	}, sets)
+	require.Equal(t, []Volume{
+		{Name: "VOL001", DeclaredRoot: "VOL001", Ordinal: 1},
+		{Name: "VOL002", DeclaredRoot: "VOL002", Ordinal: 2},
+	}, volumes)
+	metadata, pageMap, singularVolumes, err := resolver.DiscoverPackageFiles("dat-concordance-v1")
+	require.ErrorIs(t, err, ErrMalformedInput)
+	require.Empty(t, metadata)
+	require.Empty(t, pageMap)
+	require.Empty(t, singularVolumes)
+}
+
+func TestResolverRejectsAmbiguousPerVolumeLoadfileSets(t *testing.T) {
+	for _, fixture := range []struct {
+		name  string
+		files []string
+	}{
+		{"two metadata files in one volume", []string{"VOL001/a.dat", "VOL001/b.dat"}},
+		{"two page maps in one volume", []string{"VOL001/a.dat", "VOL001/a.opt", "VOL001/b.lfp"}},
+		{"orphan page map beside multiple metadata volumes", []string{"VOL001/a.dat", "VOL002/b.dat", "VOL003/orphan.opt"}},
+	} {
+		t.Run(fixture.name, func(t *testing.T) {
+			root := t.TempDir()
+			for _, name := range fixture.files {
+				path := filepath.Join(root, filepath.FromSlash(name))
+				require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o700))
+				require.NoError(t, os.WriteFile(path, []byte("synthetic"), 0o600))
+			}
+			resolver, err := NewResolver(t.Context(), root, nil)
+			require.NoError(t, err)
+			t.Cleanup(func() { require.NoError(t, resolver.Close()) })
+			_, _, err = resolver.DiscoverPackageFileSets("dat-concordance-v1")
+			require.ErrorIs(t, err, ErrMalformedInput)
+		})
+	}
+}
+
 func TestResolverCancelsInventory(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()

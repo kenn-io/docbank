@@ -31,6 +31,16 @@ func TestPackageMemoryBudgetRejectsAggregateGrowth(t *testing.T) {
 	assert.Equal(t, int64(8), budget.used)
 }
 
+func TestPackagePreflightBoundsAggregateDiagnostics(t *testing.T) {
+	prior := make([]loadfile.Diagnostic, maxPackagePreflightDiagnostics-1)
+	combined, err := appendPackagePreflightDiagnostics(prior, []loadfile.Diagnostic{{}, {}})
+	require.ErrorIs(t, err, loadfile.ErrLoadfileLimit)
+	require.Nil(t, combined)
+	combined, err = appendPackagePreflightDiagnostics(prior, []loadfile.Diagnostic{{}})
+	require.NoError(t, err)
+	require.Len(t, combined, maxPackagePreflightDiagnostics)
+}
+
 func TestPackageInventoryDoesNotWaitForVaultMaintenance(t *testing.T) {
 	gate := NewOperationGate()
 	require.NoError(t, gate.MaintainContext(t.Context(), func() error {

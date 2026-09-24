@@ -213,16 +213,35 @@ func (r *Resolver) walkInventory(ctx context.Context, visit func(string, fs.File
 	return walk(".")
 }
 
-// DiscoverPackageFiles derives the load-file layout from the cached confined
-// inventory without traversing or reopening the caller's tree.
+// PackageFileSet is one metadata load file and its optional page map.
+type PackageFileSet struct {
+	Volume   string
+	Metadata string
+	PageMap  string
+}
+
+// DiscoverPackageFiles keeps the single-load-file contract for existing callers.
 func (r *Resolver) DiscoverPackageFiles(profileID string) (string, string, []Volume, error) {
+	sets, volumes, err := r.DiscoverPackageFileSets(profileID)
+	if err != nil {
+		return "", "", nil, err
+	}
+	if len(sets) != 1 {
+		return "", "", nil, fmt.Errorf("%w: package root must contain exactly one metadata load file", ErrMalformedInput)
+	}
+	return sets[0].Metadata, sets[0].PageMap, volumes, nil
+}
+
+// DiscoverPackageFileSets derives ordered per-volume load files from the cached
+// confined inventory without traversing or reopening the caller's tree.
+func (r *Resolver) DiscoverPackageFileSets(profileID string) ([]PackageFileSet, []Volume, error) {
 	csvProfile := false
 	switch profileID {
 	case "dat-concordance-v1":
 	case "csv-rfc4180-v1":
 		csvProfile = true
 	default:
-		return "", "", nil, ErrInvalidProfile
+		return nil, nil, ErrInvalidProfile
 	}
 	var datFiles, csvFiles, optFiles []string
 	volumeNames := make(map[string]bool)
@@ -234,13 +253,13 @@ func (r *Resolver) DiscoverPackageFiles(profileID string) (string, string, []Vol
 		if !found {
 			switch strings.ToLower(path.Ext(name)) {
 			case ".dat", ".csv", ".opt", ".lfp":
-				return "", "", nil, fmt.Errorf("%w: load files must be inside a volume directory, not directly in the package root", ErrMalformedInput)
+				return nil, nil, fmt.Errorf("%w: load files must be inside a volume directory, not directly in the package root", ErrMalformedInput)
 			}
 			continue
 		}
 		volumeNames[volume] = true
 		if len(volumeNames) > maxPackageVolumes {
-			return "", "", nil, ErrLoadfileLimit
+			return nil, nil, ErrLoadfileLimit
 		}
 		switch strings.ToLower(path.Ext(name)) {
 		case ".dat":
@@ -255,12 +274,32 @@ func (r *Resolver) DiscoverPackageFiles(profileID string) (string, string, []Vol
 	if csvProfile && len(csvFiles) > 0 {
 		loadFiles, loadDescription = csvFiles, "CSV"
 	}
-	if len(loadFiles) != 1 || len(optFiles) > 1 {
-		return "", "", nil, fmt.Errorf("%w: package root must contain exactly one %s and at most one OPT or LFP page map",
-			ErrMalformedInput, loadDescription)
+	if len(loadFiles) == 0 {
+		return nil, nil, fmt.Errorf("%w: package root must contain a %s load file", ErrMalformedInput, loadDescription)
 	}
 	slices.Sort(loadFiles)
 	slices.Sort(optFiles)
+	sets := make([]PackageFileSet, 0, len(loadFiles))
+	setByVolume := make(map[string]int, len(loadFiles))
+	for _, name := range loadFiles {
+		volume, _, _ := strings.Cut(name, "/")
+		if _, found := setByVolume[volume]; found {
+			return nil, nil, fmt.Errorf("%w: volume %s has competing %s load files", ErrMalformedInput, volume, loadDescription)
+		}
+		setByVolume[volume] = len(sets)
+		sets = append(sets, PackageFileSet{Volume: volume, Metadata: name})
+	}
+	for _, name := range optFiles {
+		volume, _, _ := strings.Cut(name, "/")
+		index, found := setByVolume[volume]
+		if len(sets) == 1 {
+			index, found = 0, true
+		}
+		if !found || sets[index].PageMap != "" {
+			return nil, nil, fmt.Errorf("%w: page map %s has no unique metadata load file", ErrMalformedInput, name)
+		}
+		sets[index].PageMap = name
+	}
 	names := make([]string, 0, len(volumeNames))
 	for name := range volumeNames {
 		names = append(names, name)
@@ -270,11 +309,7 @@ func (r *Resolver) DiscoverPackageFiles(profileID string) (string, string, []Vol
 	for index, name := range names {
 		volumes[index] = Volume{Name: name, DeclaredRoot: name, Ordinal: index + 1}
 	}
-	opt := ""
-	if len(optFiles) == 1 {
-		opt = optFiles[0]
-	}
-	return loadFiles[0], opt, volumes, nil
+	return sets, volumes, nil
 }
 
 func (r *Resolver) nameFor(volume Volume, relPath string) (string, error) {

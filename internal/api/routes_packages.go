@@ -30,6 +30,7 @@ import (
 
 const maxPackageRequestBytes = 1 << 20
 const maxPackageDiagnosticSummary = 250
+const maxPackagePreflightDiagnostics = 100_000
 const maxPackageRecords = 100_000
 const maxPackagePages = 1_000_000
 const maxPackageNormalizedMemory = int64(256 << 20)
@@ -303,54 +304,77 @@ func buildPackagePreflightFromRoot(ctx context.Context, d Deps, g PackageMutatio
 	if request.SourceKind == "root" {
 		sourceLocator = resolver.Root
 	}
-	datName, pageMapName, discoveredVolumes, err := resolver.DiscoverPackageFiles(profile.ID)
+	fileSets, discoveredVolumes, err := resolver.DiscoverPackageFileSets(profile.ID)
 	if err != nil {
 		return PackagePreflight{}, err
 	}
-	if pageMapName == "" && request.PageMapProfile != "" {
+	pageMapCount := 0
+	for _, set := range fileSets {
+		if set.PageMap != "" {
+			pageMapCount++
+		}
+	}
+	if pageMapCount == 0 && request.PageMapProfile != "" {
 		return PackagePreflight{}, fmt.Errorf("%w: page_map_profile requires an OPT or LFP page map", loadfile.ErrInvalidProfile)
 	}
-	datPath := filepath.Join(resolver.Root, filepath.FromSlash(datName))
-	pageMapPath := ""
-	if pageMapName != "" {
-		pageMapPath = filepath.Join(resolver.Root, filepath.FromSlash(pageMapName))
+	type rawPackageInput struct {
+		name, sha string
+		size      int64
 	}
-	datVolume, datRel, err := packagePathReference(resolver.Root, datPath, discoveredVolumes, nil)
-	if err != nil {
-		return PackagePreflight{}, err
-	}
-	dat, err := resolver.Open(datVolume, datRel)
-	if err != nil {
-		return PackagePreflight{}, err
-	}
+	metadataInputs := make([]rawPackageInput, 0, len(fileSets))
 	records := make([]loadfile.Record, 0, 100)
 	memoryBudget := packageMemoryBudget{maximum: maxPackageNormalizedMemory}
 	scan := loadfile.ScanDAT
 	if profile.ID == "csv-rfc4180-v1" {
 		scan = loadfile.ScanCSV
 	}
-	datDigest := sha256.New()
-	diagnostics, parseErr := scan(io.TeeReader(dat, datDigest), profile, func(record loadfile.Record) error {
-		if err := ctx.Err(); err != nil {
-			return err
+	diagnostics := []loadfile.Diagnostic{}
+	for _, set := range fileSets {
+		metadataPath := filepath.Join(resolver.Root, filepath.FromSlash(set.Metadata))
+		metadataVolume, metadataRel, pathErr := packagePathReference(resolver.Root, metadataPath, discoveredVolumes, nil)
+		if pathErr != nil {
+			return PackagePreflight{}, pathErr
 		}
-		if len(records) == maxPackageRecords {
-			return loadfile.ErrLoadfileLimit
+		metadata, openErr := resolver.Open(metadataVolume, metadataRel)
+		if openErr != nil {
+			return PackagePreflight{}, openErr
 		}
-		record.LoadFile = filepath.Base(datPath)
-		if err := memoryBudget.add(packageRecordMemory(record)); err != nil {
-			return err
+		digest := sha256.New()
+		before := len(records)
+		parsed, parseErr := scan(io.TeeReader(metadata, digest), profile, func(record loadfile.Record) error {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+			if len(records) == maxPackageRecords {
+				return loadfile.ErrLoadfileLimit
+			}
+			record.LoadFile = filepath.Base(filepath.FromSlash(set.Metadata))
+			if len(fileSets) > 1 {
+				record.LoadFile = set.Metadata
+			}
+			if err := memoryBudget.add(packageRecordMemory(record)); err != nil {
+				return err
+			}
+			records = append(records, record)
+			return nil
+		})
+		size, positionErr := metadata.Seek(0, io.SeekCurrent)
+		closeErr := metadata.Close()
+		if err := errors.Join(parseErr, positionErr, closeErr); err != nil {
+			return PackagePreflight{}, err
 		}
-		records = append(records, record)
-		return nil
-	})
-	datSize, positionErr := dat.Seek(0, io.SeekCurrent)
-	closeErr := dat.Close()
-	if err := errors.Join(parseErr, positionErr, closeErr); err != nil {
-		return PackagePreflight{}, err
-	}
-	if datSize != dat.Size() {
-		return PackagePreflight{}, fmt.Errorf("%w: metadata load file size changed during preflight", loadfile.ErrMalformedInput)
+		if size != metadata.Size() {
+			return PackagePreflight{}, fmt.Errorf("%w: metadata load file size changed during preflight", loadfile.ErrMalformedInput)
+		}
+		if len(fileSets) > 1 && len(records) == before {
+			return PackagePreflight{}, fmt.Errorf("%w: metadata load file %s contains no records", loadfile.ErrMalformedInput, set.Metadata)
+		}
+		metadataInputs = append(metadataInputs, rawPackageInput{name: set.Metadata,
+			sha: hex.EncodeToString(digest.Sum(nil)), size: size})
+		diagnostics, err = appendPackagePreflightDiagnostics(diagnostics, parsed)
+		if err != nil {
+			return PackagePreflight{}, err
+		}
 	}
 	mapping := loadfile.Mapping{Contract: loadfile.MappingContractV1}
 	mappingSHA, err := packageMappingSHA256(mapping)
@@ -362,6 +386,11 @@ func buildPackagePreflightFromRoot(ctx context.Context, d Deps, g PackageMutatio
 		if len(records) > 0 {
 			columns = records[0].ColumnOrder
 		}
+		for _, record := range records[1:] {
+			if !slices.Equal(record.ColumnOrder, columns) {
+				return PackagePreflight{}, fmt.Errorf("%w: metadata load files have different column order", loadfile.ErrMalformedInput)
+			}
+		}
 		mapping, mappingSHA, err = loadfile.DecodeMapping(request.Mapping, columns)
 		if err != nil {
 			return PackagePreflight{}, err
@@ -371,7 +400,10 @@ func buildPackagePreflightFromRoot(ctx context.Context, d Deps, g PackageMutatio
 	if err != nil {
 		return PackagePreflight{}, err
 	}
-	diagnostics = append(diagnostics, mappedDiagnostics...)
+	diagnostics, err = appendPackagePreflightDiagnostics(diagnostics, mappedDiagnostics)
+	if err != nil {
+		return PackagePreflight{}, err
+	}
 	if err := resolver.SetVolumeRoots(mapping.VolumeRoots); err != nil {
 		return PackagePreflight{}, err
 	}
@@ -393,14 +425,18 @@ func buildPackagePreflightFromRoot(ctx context.Context, d Deps, g PackageMutatio
 		return PackagePreflight{}, err
 	}
 	images := []loadfile.ImageRef{}
-	var pageMapFile loadfile.FileRef
-	if pageMapPath != "" {
+	pageMapInputs := make([]rawPackageInput, 0, pageMapCount)
+	for _, set := range fileSets {
+		if set.PageMap == "" {
+			continue
+		}
+		pageMapPath := filepath.Join(resolver.Root, filepath.FromSlash(set.PageMap))
 		pageMapVolume, pageMapRel, pathErr := packagePathReference(resolver.Root, pageMapPath, volumes, mapping.VolumeRoots)
 		if pathErr != nil {
 			return PackagePreflight{}, pathErr
 		}
 		mapProfileID := request.PageMapProfile
-		isLFP := strings.EqualFold(filepath.Ext(pageMapPath), ".lfp")
+		isLFP := strings.EqualFold(filepath.Ext(set.PageMap), ".lfp")
 		if mapProfileID == "" {
 			mapProfileID = "opt-standard-v1"
 			if isLFP {
@@ -419,8 +455,8 @@ func buildPackagePreflightFromRoot(ctx context.Context, d Deps, g PackageMutatio
 		if openErr != nil {
 			return PackagePreflight{}, openErr
 		}
-		pageMapDigest := sha256.New()
-		pageMapSource := io.TeeReader(opt, pageMapDigest)
+		digest := sha256.New()
+		pageMapSource := io.TeeReader(opt, digest)
 		var optDiagnostics []loadfile.Diagnostic
 		visit := func(image loadfile.ImageRef) error {
 			if err := ctx.Err(); err != nil {
@@ -435,27 +471,28 @@ func buildPackagePreflightFromRoot(ctx context.Context, d Deps, g PackageMutatio
 			images = append(images, image)
 			return nil
 		}
+		var parseErr error
 		if mapProfileID == "lfp-ipro-v1" {
 			parseErr = loadfile.ScanLFP(ctx, pageMapSource, pageMapProfile, visit)
 		} else {
 			optDiagnostics, parseErr = loadfile.ScanOPT(ctx, pageMapSource, pageMapProfile, visit)
 		}
 		pageMapSize, positionErr := opt.Seek(0, io.SeekCurrent)
-		closeErr = opt.Close()
-		diagnostics = append(diagnostics, optDiagnostics...)
+		closeErr := opt.Close()
+		diagnostics, err = appendPackagePreflightDiagnostics(diagnostics, optDiagnostics)
+		if err != nil {
+			return PackagePreflight{}, err
+		}
 		if err := errors.Join(parseErr, positionErr, closeErr); err != nil {
 			return PackagePreflight{}, err
 		}
 		if pageMapSize != opt.Size() {
 			return PackagePreflight{}, fmt.Errorf("%w: page map size changed during preflight", loadfile.ErrMalformedInput)
 		}
-		pageMapFile = loadfile.FileRef{Role: "raw_load_file", Volume: pageMapVolume.Name, RelPath: pageMapRel, Declared: pageMapRel,
-			SHA256: hex.EncodeToString(pageMapDigest.Sum(nil)), Size: pageMapSize, Status: "available"}
+		pageMapInputs = append(pageMapInputs, rawPackageInput{name: set.PageMap,
+			sha: hex.EncodeToString(digest.Sum(nil)), size: pageMapSize})
 	}
-	loadFileCount := 1
-	if pageMapPath != "" {
-		loadFileCount++
-	}
+	loadFileCount := len(metadataInputs) + len(pageMapInputs)
 	if err := memoryBudget.add(packageManifestFilesMemory(records, images, loadFileCount)); err != nil {
 		return PackagePreflight{}, err
 	}
@@ -465,19 +502,22 @@ func buildPackagePreflightFromRoot(ctx context.Context, d Deps, g PackageMutatio
 	if err != nil {
 		return PackagePreflight{}, err
 	}
-	diagnostics = append(diagnostics, validated...)
+	diagnostics, err = appendPackagePreflightDiagnostics(diagnostics, validated)
+	if err != nil {
+		return PackagePreflight{}, err
+	}
 	profileSHA, err := profile.SHA256()
 	if err != nil {
 		return PackagePreflight{}, err
 	}
-	datVolume, datRel, err = packagePathReference(resolver.Root, datPath, volumes, mapping.VolumeRoots)
-	if err != nil {
-		return PackagePreflight{}, err
-	}
-	files = append(files, loadfile.FileRef{Role: "raw_load_file", Volume: datVolume.Name, RelPath: datRel, Declared: datRel,
-		SHA256: hex.EncodeToString(datDigest.Sum(nil)), Size: datSize, Status: "available"})
-	if pageMapPath != "" {
-		files = append(files, pageMapFile)
+	for _, input := range append(metadataInputs, pageMapInputs...) {
+		inputPath := filepath.Join(resolver.Root, filepath.FromSlash(input.name))
+		volume, rel, pathErr := packagePathReference(resolver.Root, inputPath, volumes, mapping.VolumeRoots)
+		if pathErr != nil {
+			return PackagePreflight{}, pathErr
+		}
+		files = append(files, loadfile.FileRef{Role: "raw_load_file", Volume: volume.Name, RelPath: rel,
+			Declared: rel, SHA256: input.sha, Size: input.size, Status: "available"})
 	}
 	manifest := loadfile.Manifest{ProfileSHA256: profileSHA, MappingSHA256: mappingSHA, Mapping: mapping, Volumes: volumes, Records: records, Images: images, Files: files}
 	manifestSHA, err := manifest.SHA256()
@@ -504,6 +544,13 @@ func buildPackagePreflightFromRoot(ctx context.Context, d Deps, g PackageMutatio
 type packageMemoryBudget struct {
 	used    int64
 	maximum int64
+}
+
+func appendPackagePreflightDiagnostics(current, additional []loadfile.Diagnostic) ([]loadfile.Diagnostic, error) {
+	if len(additional) > maxPackagePreflightDiagnostics-len(current) {
+		return nil, loadfile.ErrLoadfileLimit
+	}
+	return append(current, additional...), nil
 }
 
 func (b *packageMemoryBudget) add(size int64) error {

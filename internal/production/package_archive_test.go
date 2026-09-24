@@ -197,6 +197,10 @@ func TestRecipientArchivePublishesImportMapping(t *testing.T) {
 	require.Equal(t, "loadfile.label.end", records[0].Fields[2].Canonical)
 	require.Equal(t, []string{"produced_pdf", "supplied_text"},
 		[]string{records[0].Files[0].Role, records[0].Files[1].Role})
+	require.Equal(t, projection.Manifest.Documents[0].Volume+"/"+projection.Manifest.Documents[0].PDFPath,
+		records[0].Files[0].RelPath)
+	require.Equal(t, projection.Manifest.Documents[0].Volume+"/"+projection.Manifest.Documents[0].TextPath,
+		records[0].Files[1].RelPath)
 }
 
 func TestRecipientManifestDeclaresAndVerifiesOutputDigests(t *testing.T) {

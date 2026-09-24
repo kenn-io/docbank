@@ -122,7 +122,7 @@ func makePackageLoadfiles(manifest RecipientManifest, volume RecipientVolume) (p
 			continue
 		}
 		values := []string{doc.Control, doc.Control, doc.End, volume.Name, strconv.Itoa(len(doc.Pages)),
-			doc.PDFPath, doc.TextPath, doc.Images[0].Path}
+			volumePath(doc.Volume, doc.PDFPath), volumePath(doc.Volume, doc.TextPath), doc.Images[0].Path}
 		fields := make([]loadfile.Field, len(values))
 		for index, value := range values {
 			fields[index] = loadfile.Field{Column: profile.Columns[index], Ordinal: index, Raw: value}
@@ -161,6 +161,13 @@ func makePackageLoadfiles(manifest RecipientManifest, volume RecipientVolume) (p
 		return packageLoadfiles{}, err
 	}
 	return packageLoadfiles{dat: dat.Bytes(), page: page.Bytes(), ext: ext}, nil
+}
+
+func volumePath(volume, relPath string) string {
+	if relPath == "" {
+		return ""
+	}
+	return volume + "/" + relPath
 }
 
 func packageExpectedPaths(manifest RecipientManifest) (map[string]struct{}, error) {
