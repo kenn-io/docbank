@@ -248,6 +248,27 @@ func TestDocumentIdentityLayoutHasDistinctStorageVersion(t *testing.T) {
 	}
 }
 
+// The map layout adds durable tables after passage identity. Reusing that
+// earlier version would make an existing passage database look current.
+func TestContentMapLayoutHasDistinctStorageVersion(t *testing.T) {
+	for _, test := range v090UpgradeDrivers() {
+		t.Run(test.name, func(t *testing.T) {
+			s, err := Open(filepath.Join(t.TempDir(), "docbank.db"), test.driver)
+			require.NoError(t, err)
+			defer func() { require.NoError(t, s.Close()) }()
+			var version int
+			require.NoError(t, s.db.QueryRow(`
+				SELECT schema_version FROM vault_metadata WHERE singleton = 1`).Scan(&version))
+			assert.Greater(t, version, documentIdentityStorageSchemaVersion)
+			for _, table := range []string{"content_maps", "content_map_snapshots"} {
+				columns, err := tableColumns(s.db, table)
+				require.NoError(t, err)
+				assert.NotEmpty(t, columns, table)
+			}
+		})
+	}
+}
+
 func TestUpgradeReleasedSchemaCreatesEmptySavedQueryRunAuthority(t *testing.T) {
 	for _, test := range v090UpgradeDrivers() {
 		t.Run(test.name, func(t *testing.T) {

@@ -1870,6 +1870,46 @@ CREATE TABLE IF NOT EXISTS saved_query_runs (
 CREATE INDEX IF NOT EXISTS saved_query_runs_definition
     ON saved_query_runs(saved_query_id, ran_at DESC);
 
+-- Structured maps are mutable curation authority. Go validates the evolving
+-- definition contract and uses revision checks to reject concurrent edits.
+CREATE TABLE IF NOT EXISTS content_maps (
+    id                TEXT PRIMARY KEY NOT NULL,
+    owner             TEXT NOT NULL,
+    revision          INTEGER NOT NULL,
+    definition_json   BLOB NOT NULL,
+    definition_digest TEXT NOT NULL,
+    created_at        TEXT NOT NULL,
+    updated_at        TEXT NOT NULL,
+    archived_at       TEXT
+);
+
+-- A materialized map retains exact permitted membership and display evidence.
+-- Archiving a definition keeps its snapshots resolvable by identity.
+CREATE TABLE IF NOT EXISTS content_map_snapshots (
+    id                TEXT PRIMARY KEY NOT NULL,
+    map_id            TEXT NOT NULL REFERENCES content_maps(id),
+    map_revision      INTEGER NOT NULL,
+    owner             TEXT NOT NULL,
+    scope_digest      TEXT NOT NULL,
+    definition_digest TEXT NOT NULL,
+    snapshot_json     BLOB NOT NULL,
+    member_hash       TEXT NOT NULL,
+    created_at        TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS content_map_snapshots_map
+    ON content_map_snapshots(map_id, created_at DESC, id DESC);
+
+CREATE TRIGGER IF NOT EXISTS content_map_snapshots_immutable_update
+BEFORE UPDATE ON content_map_snapshots BEGIN
+    SELECT RAISE(ABORT, 'content map snapshots are immutable');
+END;
+
+CREATE TRIGGER IF NOT EXISTS content_map_snapshots_immutable_delete
+BEFORE DELETE ON content_map_snapshots BEGIN
+    SELECT RAISE(ABORT, 'content map snapshots are immutable');
+END;
+
 -- Report history stores the reusable request and a small receipt. The frozen
 -- observation and downloadable evidence remain daemon-local and expire.
 CREATE TABLE IF NOT EXISTS term_report_history (

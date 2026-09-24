@@ -199,6 +199,7 @@ func NewServer(d Deps) *Server {
 	registerDuplicateRoutes(humaAPI, d)
 	registerDocumentQueryRoute(humaAPI, newDocumentQueryService(d))
 	registerInfoRoute(humaAPI, d)
+	registerTagGraphRoutes(humaAPI, d)
 	registerFormatRoutes(humaAPI, d)
 	registerMutateRoutes(humaAPI, d, g) // Task 6
 	registerOpsRoutes(humaAPI, d, g)    // Task 7
@@ -216,6 +217,7 @@ func NewServer(d Deps) *Server {
 	registerTagRoutes(humaAPI, d, g)
 	registerBatchTagRoutes(humaAPI, d, g)
 	registerSavedQueryRoutes(humaAPI, d, g, s.snapshots)
+	registerMapRoutes(humaAPI, d, g)
 	registerQueryCompileRoutes(humaAPI, d)
 	registerRenditionTextRoutes(humaAPI, d)
 	registerPassageRoutes(humaAPI, d)
@@ -341,6 +343,9 @@ func markRevisionPreconditionsRequired(api huma.API) {
 		{"/api/v1/saved-queries/{saved_query_id}", http.MethodPatch},
 		{"/api/v1/saved-queries/{saved_query_id}", http.MethodDelete},
 		{"/api/v1/saved-queries/{saved_query_id}/runs", http.MethodPost},
+		{"/api/v1/maps/{map_id}", http.MethodPatch},
+		{"/api/v1/maps/{map_id}", http.MethodDelete},
+		{"/api/v1/maps/{map_id}/snapshots", http.MethodPost},
 	} {
 		markDocumentedHeaderRequired(api, route.path, route.method, "If-Match")
 	}
