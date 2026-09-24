@@ -24,7 +24,7 @@ func TestDefaultToolCatalogIsFixedBoundedAndReadOnly(t *testing.T) {
 	tools := toolCatalog(false, false)
 	wantNames := []string{
 		"get_vault_info", "list_documents", "search_documents", "get_document",
-		"list_document_versions", "read_rendition_text", "get_processing_plan",
+		"list_document_versions", "read_rendition_text", "get_document_outline", "read_passage_section", "get_processing_plan",
 		"get_processing_status", "get_processing_coverage", "get_package_import",
 		"get_package_preflight", "list_package_preflight_diagnostics",
 		"list_package_custodians", "find_people",
@@ -310,6 +310,14 @@ func TestExpectedDomainErrorsAreBoundedToolResults(t *testing.T) {
 		{name: "invalid cursor", err: fmt.Errorf("private cursor detail: %w", store.ErrInvalidDocumentCursor),
 			code: "invalid_document_cursor", redaction: "private cursor detail"},
 		{name: "scope", err: &daemonconn.SourceFenceScopeTooLargeError{ObservedScopeCount: 4097}, code: "scope_too_large"},
+		{name: "section unavailable", err: &daemonBoundaryError{message: errDaemonRequestFailed,
+			facts: daemonconn.ProblemFacts{Code: "section_unavailable"}}, code: "section_unavailable"},
+		{name: "section changed", err: &daemonBoundaryError{message: errDaemonRequestFailed,
+			facts: daemonconn.ProblemFacts{Code: "section_changed"}}, code: "section_changed"},
+		{name: "section budget", err: &daemonBoundaryError{message: errDaemonRequestFailed,
+			facts: daemonconn.ProblemFacts{Code: "section_budget_too_small"}}, code: "section_budget_too_small"},
+		{name: "outline too large", err: &daemonBoundaryError{message: errDaemonRequestFailed,
+			facts: daemonconn.ProblemFacts{Code: "outline_too_large"}}, code: "outline_too_large"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {

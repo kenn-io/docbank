@@ -9429,6 +9429,157 @@ components:
       x-go-type-import:
         path: go.kenn.io/docbank/document
         name: document
+    PassageOutline:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/PassageOutline.json
+          format: uri
+          readOnly: true
+          type: string
+        body_sha256:
+          pattern: ^[0-9a-f]{64}$
+          type: string
+        rendition_build_id:
+          pattern: ^[0-9a-f]{64}$
+          type: string
+        sections:
+          items:
+            $ref: "#/components/schemas/PassageOutlineSection"
+          type: array
+      required:
+        - body_sha256
+        - rendition_build_id
+        - sections
+      type: object
+      x-go-type: api.PassageOutline
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
+    PassageOutlineRequest:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/PassageOutlineRequest.json
+          format: uri
+          readOnly: true
+          type: string
+        ref:
+          $ref: "#/components/schemas/PassageRefV1"
+      required:
+        - ref
+      type: object
+      x-go-type: api.PassageOutlineRequest
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
+    PassageOutlineSection:
+      additionalProperties: false
+      properties:
+        byte_end:
+          format: int64
+          minimum: 0
+          type: integer
+        byte_start:
+          format: int64
+          minimum: 0
+          type: integer
+        child_count:
+          format: int64
+          minimum: 0
+          type: integer
+        children:
+          items:
+            $ref: "#/components/schemas/PassageOutlineSection"
+          type: array
+        estimated_runes:
+          format: int64
+          minimum: 0
+          type: integer
+        estimated_utf8_bytes:
+          format: int64
+          minimum: 0
+          type: integer
+        key:
+          pattern: ^[0-9a-f]{64}$
+          type: string
+        level:
+          format: int64
+          maximum: 6
+          minimum: 0
+          type: integer
+        occurrence:
+          format: int64
+          minimum: 1
+          type: integer
+        own_byte_end:
+          format: int64
+          minimum: 0
+          type: integer
+        preamble:
+          type: boolean
+        source_locator:
+          $ref: "#/components/schemas/EvidenceLocatorV1"
+        title:
+          maxLength: 8192
+          type: string
+      required:
+        - key
+        - title
+        - level
+        - occurrence
+        - byte_start
+        - byte_end
+        - own_byte_end
+        - estimated_utf8_bytes
+        - estimated_runes
+        - child_count
+        - preamble
+        - children
+      type: object
+      x-go-type: api.PassageOutlineSection
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
+    PassageReadSectionRequest:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/PassageReadSectionRequest.json
+          format: uri
+          readOnly: true
+          type: string
+        continuation:
+          maxLength: 4096
+          type: string
+        include_children:
+          type: boolean
+        max_bytes:
+          default: 32768
+          format: int64
+          maximum: 262144
+          minimum: 1
+          type: integer
+        navigation_key:
+          pattern: ^[0-9a-f]{64}$
+          type: string
+        ref:
+          $ref: "#/components/schemas/PassageRefV1"
+      required:
+        - ref
+        - navigation_key
+        - include_children
+      type: object
+      x-go-type: api.PassageReadSectionRequest
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     PassageRefV1:
       additionalProperties: false
       properties:
@@ -9545,6 +9696,91 @@ components:
         - ref
       type: object
       x-go-type: api.PassageResolveRequest
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
+    PassageSectionPage:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/PassageSectionPage.json
+          format: uri
+          readOnly: true
+          type: string
+        body_sha256:
+          pattern: ^[0-9a-f]{64}$
+          type: string
+        complete:
+          type: boolean
+        continuation:
+          type: string
+        page_end:
+          format: int64
+          minimum: 0
+          type: integer
+        page_start:
+          format: int64
+          minimum: 0
+          type: integer
+        ref:
+          $ref: "#/components/schemas/PassageRefV1"
+        rendition_build_id:
+          pattern: ^[0-9a-f]{64}$
+          type: string
+        section:
+          $ref: "#/components/schemas/PassageSectionSelection"
+        text:
+          type: string
+      required:
+        - body_sha256
+        - rendition_build_id
+        - section
+        - text
+        - page_start
+        - page_end
+        - complete
+      type: object
+      x-go-type: api.PassageSectionPage
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
+    PassageSectionSelection:
+      additionalProperties: false
+      properties:
+        byte_end:
+          format: int64
+          minimum: 0
+          type: integer
+        byte_start:
+          format: int64
+          minimum: 0
+          type: integer
+        include_children:
+          type: boolean
+        key:
+          pattern: ^[0-9a-f]{64}$
+          type: string
+        level:
+          format: int64
+          maximum: 6
+          minimum: 0
+          type: integer
+        source_locator:
+          $ref: "#/components/schemas/EvidenceLocatorV1"
+        title:
+          maxLength: 8192
+          type: string
+      required:
+        - key
+        - title
+        - level
+        - byte_start
+        - byte_end
+        - include_children
+      type: object
+      x-go-type: api.PassageSectionSelection
       x-go-type-import:
         path: go.kenn.io/docbank/internal/api
         name: api
@@ -15453,6 +15689,29 @@ paths:
                 $ref: "#/components/schemas/Error"
           description: Error
       summary: List current live documents with authenticated keyset pagination
+  /api/v1/documents/outline:
+    post:
+      operationId: outlineDocument
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PassageOutlineRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PassageOutline"
+          description: OK
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: Outline one exact retained Markdown rendition
   /api/v1/documents/resolve:
     post:
       operationId: resolveDocumentSummaries
@@ -18915,6 +19174,29 @@ paths:
                 $ref: "#/components/schemas/Error"
           description: Error
       summary: Cancel a render job and fence late output
+  /api/v1/passages/read-section:
+    post:
+      operationId: readPassageSection
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PassageReadSectionRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PassageSectionPage"
+          description: OK
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: Read a bounded page from one exact section
   /api/v1/passages/resolve:
     post:
       operationId: resolvePassage

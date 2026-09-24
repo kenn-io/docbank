@@ -4,6 +4,7 @@ import (
 	"encoding/json/v2"
 	"errors"
 	"net/http"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -35,6 +36,24 @@ func TestPassageResolveErrorDoesNotDiscloseAuthorization(t *testing.T) {
 	assert.Equal(t, "internal", internal.Code)
 }
 
+func TestPassageResolveErrorMapsSectionFailures(t *testing.T) {
+	for _, test := range []struct {
+		cause  error
+		status int
+		code   string
+	}{
+		{processing.ErrSectionNotFound, http.StatusNotFound, "section_unavailable"},
+		{processing.ErrSectionContinuation, http.StatusConflict, "section_changed"},
+		{processing.ErrSectionBudget, http.StatusUnprocessableEntity, "section_budget_too_small"},
+		{processing.ErrOutlineTooLarge, http.StatusUnprocessableEntity, "outline_too_large"},
+	} {
+		mapped := passageResolveError(test.cause)
+		var problem *Error
+		require.ErrorAs(t, mapped, &problem)
+		assert.Equal(t, test.status, problem.Status)
+		assert.Equal(t, test.code, problem.Code)
+	}
+}
 func TestPassageResolutionFromProcessingOwnsSectionPath(t *testing.T) {
 	section := []string{"Parent", "Child"}
 	locator := &document.EvidenceLocatorV1{Kind: document.EvidenceLocatorPage,
@@ -59,4 +78,22 @@ func TestPassageResolutionFromProcessingSerializesEmptySectionPathAsArray(t *tes
 	encoded, err := json.Marshal(wire)
 	require.NoError(t, err)
 	assert.Contains(t, string(encoded), `"section_path":[]`)
+}
+
+func TestPassageOutlineFromProcessingOwnsNestedSlicesAndLocators(t *testing.T) {
+	locator := &document.EvidenceLocatorV1{Kind: document.EvidenceLocatorPage,
+		IndexOrigin: document.EvidenceIndexOriginOne, Start: 3, End: 3}
+	sections := []processing.OutlineSection{{Key: "parent", Title: "Parent", Level: 1,
+		SourceLocator: locator, Children: []processing.OutlineSection{{Key: "child", Title: "Child", Level: 2}}}}
+	wire := passageOutlineFromProcessing(processing.PassageOutline{
+		BodySHA256: strings.Repeat("a", 64), RenditionBuildID: strings.Repeat("b", 64), Sections: sections,
+	})
+	sections[0].Title = "changed"
+	sections[0].Children[0].Title = "changed"
+	locator.Start = 99
+	require.Len(t, wire.Sections, 1)
+	assert.Equal(t, "Parent", wire.Sections[0].Title)
+	assert.Equal(t, "Child", wire.Sections[0].Children[0].Title)
+	require.NotNil(t, wire.Sections[0].SourceLocator)
+	assert.Equal(t, int64(3), wire.Sections[0].SourceLocator.Start)
 }

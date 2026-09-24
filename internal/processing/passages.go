@@ -92,23 +92,9 @@ func resolvePassage(
 		return PassageResolution{}, err
 	}
 	// Historical authority does not override a supplied-media occurrence's
-	// current visibility. Apply the same input fence as ordinary rendition
-	// reads before opening any retained bytes.
-	inputBinding, err := catalog.RenditionInputBinding(ctx, authority.Build.ID)
-	if err != nil {
-		return PassageResolution{}, ErrPassageUnavailable
-	}
-	if inputBinding != "" {
-		sourceID, sourceVersionID, bindingErr := catalog.MediaSourceBindingForContentVersion(
-			ctx, request.principal, authority.Version.ID)
-		if bindingErr != nil {
-			return PassageResolution{}, ErrPassageUnavailable
-		}
-		visible, bindingErr := catalog.MediaInputBindingVisible(
-			ctx, request.principal, sourceID, sourceVersionID, inputBinding)
-		if bindingErr != nil || !visible {
-			return PassageResolution{}, ErrPassageUnavailable
-		}
+	// current visibility. Check it before opening retained bytes.
+	if err := checkPassageInputVisibility(ctx, catalog, authority, request.principal); err != nil {
+		return PassageResolution{}, err
 	}
 	if authority.Artifact.Size < 1 || authority.Artifact.Size > maxPassageArtifactBytes {
 		return PassageResolution{}, ErrPassageUnavailable
@@ -148,6 +134,28 @@ func resolvePassage(
 	return PassageResolution{Availability: "available", Freshness: freshness,
 		PassageID: passageID, Ref: request.Ref, Text: string(quote),
 		SectionPath: section, SourceLocator: locator, SourcePath: authority.Path}, nil
+}
+
+func checkPassageInputVisibility(
+	ctx context.Context, catalog passageAuthorityCatalog, authority store.PassageAuthority, principal string,
+) error {
+	inputBinding, err := catalog.RenditionInputBinding(ctx, authority.Build.ID)
+	if err != nil {
+		return ErrPassageUnavailable
+	}
+	if inputBinding != "" {
+		sourceID, sourceVersionID, bindingErr := catalog.MediaSourceBindingForContentVersion(
+			ctx, principal, authority.Version.ID)
+		if bindingErr != nil {
+			return ErrPassageUnavailable
+		}
+		visible, bindingErr := catalog.MediaInputBindingVisible(
+			ctx, principal, sourceID, sourceVersionID, inputBinding)
+		if bindingErr != nil || !visible {
+			return ErrPassageUnavailable
+		}
+	}
+	return nil
 }
 
 func passageSourceContext(
