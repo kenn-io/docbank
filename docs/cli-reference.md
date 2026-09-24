@@ -160,8 +160,8 @@ The destination of `mv` remains an absolute path because it describes where
 the node should go. `restore` also accepts its older bare numeric form for
 compatibility, although new scripts should use the unambiguous `id:42` form.
 Commands that require a live tree entry reject trashed selectors. Read-only
-`stat`, `cat`, `versions list`, audit status, and audit history can still inspect a
-trashed node by stable ID; `restore` is the mutation that returns it to the
+`stat`, `cat`, `versions list`, `photos assets inspect`, audit status, and audit
+history can still inspect a trashed node by stable ID; `restore` is the mutation that returns it to the
 live tree.
 
 ## docbank photos
@@ -184,7 +184,7 @@ are enrolled when created; generic RAW files require explicit promotion.
 Existing-asset and settings mutations read the current revision and retry
 once if another write changes it first. Pass `--revision` to fail with exit
 code 4 instead. `inspect` also accepts an `id:N` or path selector for a
-member file. Sidecars must point at a same-asset RAW member and never become
+member file; `id:N` also finds a trashed member. Sidecars must point at a same-asset RAW member and never become
 the display member.
 Photo assets, settings, and bounded decision receipts are included in JSONL
 backup and restore.
