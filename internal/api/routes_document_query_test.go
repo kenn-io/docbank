@@ -63,6 +63,47 @@ func TestDocumentCatalogRouteReturnsNormalizedBoundedPages(t *testing.T) {
 	assert.Equal(t, []api.DocumentSummary{first.Items[0], first.Items[1]}, back.Items)
 }
 
+func TestScopedDocumentCatalogFiltersBeforePageAndBindsCursorToFence(t *testing.T) {
+	ts, s := newTestServer(t, nil)
+	ids := make(map[string]string)
+	for _, name := range []string{"a-hidden.txt", "b-visible.txt", "c-hidden.txt", "d-visible.txt"} {
+		node, err := s.CreateFile(t.Context(), s.RootID(), name, testHash(name), 1, "text/plain")
+		require.NoError(t, err)
+		ids[name] = node.CurrentVersionID
+	}
+	query := api.ScopedDocumentQuery{PageSize: 1,
+		ContentVersionIDs: []string{ids["b-visible.txt"], ids["d-visible.txt"]}}
+	resp, body := do(t, ts, http.MethodPost, "/api/v1/documents/scoped", nil, query)
+	require.Equal(t, http.StatusOK, resp.StatusCode, body)
+	var first api.DocumentPage
+	require.NoError(t, json.Unmarshal([]byte(body), &first))
+	require.Len(t, first.Items, 1)
+	assert.Equal(t, "/b-visible.txt", first.Items[0].Path)
+	require.NotEmpty(t, first.NextCursor)
+
+	query.Cursor = first.NextCursor
+	resp, body = do(t, ts, http.MethodPost, "/api/v1/documents/scoped", nil, query)
+	require.Equal(t, http.StatusOK, resp.StatusCode, body)
+	var second api.DocumentPage
+	require.NoError(t, json.Unmarshal([]byte(body), &second))
+	require.Len(t, second.Items, 1)
+	assert.Equal(t, "/d-visible.txt", second.Items[0].Path)
+	assert.Empty(t, second.NextCursor)
+	require.NotEmpty(t, second.PreviousCursor)
+
+	query.Cursor = second.PreviousCursor
+	resp, body = do(t, ts, http.MethodPost, "/api/v1/documents/scoped", nil, query)
+	require.Equal(t, http.StatusOK, resp.StatusCode, body)
+	var back api.DocumentPage
+	require.NoError(t, json.Unmarshal([]byte(body), &back))
+	require.Len(t, back.Items, 1)
+	assert.Equal(t, "/b-visible.txt", back.Items[0].Path)
+
+	query.ContentVersionIDs = []string{ids["b-visible.txt"]}
+	resp, body = do(t, ts, http.MethodPost, "/api/v1/documents/scoped", nil, query)
+	assert.Equal(t, http.StatusUnprocessableEntity, resp.StatusCode, body)
+}
+
 func TestDocumentCatalogRoutePaginatesMaximumLegalPath(t *testing.T) {
 	now := time.Date(2026, 8, 28, 10, 0, 0, 0, time.UTC)
 	ts, s := newTestServer(t, func(deps *api.Deps) {

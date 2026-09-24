@@ -5,23 +5,26 @@
   import { APIError } from "./api-transport.js";
   import { collections, type Collection } from "./collections.js";
   import * as api from "./generated/docbank.js";
-  import type { DateCandidate, DateChoice, DateReviewMember, Request, Summary, Term, TermReportHistory } from "./generated/docbank.js";
+  import type { DateCandidate, DateChoice, DateReviewMember, Identity, Request, Summary, Term, TermReportHistory } from "./generated/docbank.js";
   import { formatDate } from "./format.js";
 
   interface Props {
     session: string;
     initialExpression: string;
+    initialSelectedDocuments?: Identity[];
     onclose: () => void;
     onauthfailure: (cause: unknown) => void;
   }
-  let { session, initialExpression, onclose, onauthfailure }: Props = $props();
+  let { session, initialExpression, initialSelectedDocuments = [], onclose, onauthfailure }: Props = $props();
 
   const today = new Date().toISOString().slice(0, 10);
   const zone = "UTC";
   function newTerm(number: number, expression = ""): Term {
     return { number, expression, syntax: "simple", dates: { start: "2000-01-01", end: today } };
   }
-  let draft = $state<Request>({ version: 1, all_documents: true, timezone: zone,
+  const initialSelection = untrack(() => initialSelectedDocuments.map(document => ({ ...document })));
+  let draft = $state<Request>({ version: initialSelection.length ? 2 : 1,
+    all_documents: initialSelection.length === 0, selected_documents: initialSelection, timezone: zone,
     coverage_mode: "strict", terms: [newTerm(1, untrack(() => initialExpression))] });
   let history = $state<TermReportHistory[]>([]);
   let historyTotal = $state(0);
@@ -102,6 +105,24 @@
     draft.collection_ids = [...selected];
   }
 
+  function scopeLabel(request: Request): string {
+    const selected = request.selected_documents?.length ?? 0;
+    if (selected) return `${selected} selected document${selected === 1 ? "" : "s"}`;
+    if (request.all_documents) return "All documents";
+    const count = request.collection_ids?.length ?? 0;
+    return `${count} collection${count === 1 ? "" : "s"}`;
+  }
+
+  function historyStateLabel(state: string): string {
+    switch (state) {
+      case "complete": return "Counts ready";
+      case "needs_review": return "Date review needed";
+      case "visibility_changed": return "Source visibility changed";
+      case "history_unavailable": return "History unavailable";
+      default: return "Report unavailable";
+    }
+  }
+
   function addTerm(): void {
     const next = Math.max(0, ...draft.terms.map(term => term.number)) + 1;
     draft.terms = [...draft.terms, newTerm(next)];
@@ -110,6 +131,7 @@
   function useHistory(item: TermReportHistory): void {
     const source = item.request;
     draft = { ...source, collection_ids: [...(source.collection_ids ?? [])],
+      selected_documents: source.selected_documents?.map(document => ({ ...document })),
       terms: source.terms.map(term => ({ ...term, dates: { ...term.dates } })), date_choices: [] };
     active = null;
     submittedDraft = null;
@@ -124,8 +146,8 @@
     if (busy) return;
     error = "";
     notice = "";
-    if (!draft.all_documents && !(draft.collection_ids?.length)) {
-      error = "Select at least one collection, or use all documents.";
+    if (!draft.all_documents && !(draft.collection_ids?.length) && !(draft.selected_documents?.length)) {
+      error = "Select documents or a collection, or use all documents.";
       return;
     }
     if (!draft.terms.length || draft.terms.some(term => !term.expression.trim() || !term.dates.start || !term.dates.end)) {
@@ -138,6 +160,7 @@
     const epoch = generation;
     try {
       const request: Request = { ...draft, collection_ids: draft.all_documents ? [] : draft.collection_ids,
+        selected_documents: draft.selected_documents?.map(document => ({ ...document })),
         terms: draft.terms.map(term => ({ ...term, dates: { ...term.dates } })), date_choices: [] };
       const summary = await api.createTermReport(request, { session: currentSession });
       if (epoch !== generation || currentSession !== session) return;
@@ -273,9 +296,13 @@
       </div>
       <section class="scope" aria-label="Export source scope">
         <strong>Sources</strong>
-        <label><input type="radio" name="report-scope" checked={draft.all_documents} onchange={() => draft.all_documents = true} /> All documents</label>
-        <label><input type="radio" name="report-scope" checked={!draft.all_documents} onchange={() => draft.all_documents = false} /> Selected collections</label>
-        {#if !draft.all_documents}
+        <label><input type="radio" name="report-scope" checked={draft.all_documents} onchange={() => { draft.all_documents = true; draft.collection_ids = []; draft.selected_documents = []; }} /> All documents</label>
+        <label><input type="radio" name="report-scope" checked={!draft.all_documents && !draft.selected_documents?.length} onchange={() => { draft.all_documents = false; draft.selected_documents = []; }} /> Selected collections</label>
+        {#if draft.selected_documents?.length}
+          <label><input type="radio" name="report-scope" checked /> Selected documents ({draft.selected_documents.length})</label>
+          <p>These exact document versions were selected or loaded from history. A new run may reject versions that are no longer visible.</p>
+        {/if}
+        {#if !draft.all_documents && !draft.selected_documents?.length}
           <div class="collection-list">
             {#each collectionItems as collection (collection.id)}
               <Checkbox checked={(draft.collection_ids ?? []).includes(collection.id)} onchange={() => toggleCollection(collection.id)}
@@ -352,7 +379,7 @@
         {#if !history.length && historyLoading}<p><Spinner size={14} /> Loading history…</p>{/if}
         {#if !history.length && !historyLoading}<p>No searches have been exported yet.</p>{/if}
         {#each history as item (item.summary.id)}
-          <div class="history-item"><div><strong>{formatDate(item.summary.observed_at)}</strong><span>{item.summary.state === "complete" ? "Counts ready" : "Date review needed"} · {item.request.terms.length} term{item.request.terms.length === 1 ? "" : "s"} · {item.request.all_documents ? "All documents" : `${item.request.collection_ids?.length ?? 0} collection${item.request.collection_ids?.length === 1 ? "" : "s"}`}</span>
+          <div class="history-item"><div><strong>{formatDate(item.summary.observed_at)}</strong><span>{historyStateLabel(item.summary.state)} · {item.request.terms.length} term{item.request.terms.length === 1 ? "" : "s"} · {scopeLabel(item.request)}</span>
               <small>{item.request.terms.map(term => term.expression).join(" · ")}</small></div><Button size="sm" onclick={() => useHistory(item)}>Use as draft</Button></div>
         {/each}
         {#if history.length < historyTotal}<Button size="sm" disabled={historyLoading} onclick={() => void loadHistory()}>{historyLoading ? "Loading…" : "Older runs"}</Button>{/if}

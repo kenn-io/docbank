@@ -29,11 +29,12 @@ type FrameSource interface {
 }
 
 type Service struct {
-	Source   FrameSource
-	Text     TextReader
-	Coverage func(context.Context) (report.CoverageSelection, error)
-	Capture  func(context.Context, func() error) error
-	Budget   report.Budget
+	Source     FrameSource
+	Text       TextReader
+	Coverage   func(context.Context) (report.CoverageSelection, error)
+	Capture    func(context.Context, func() error) error
+	Visibility func(context.Context, report.Frame) error
+	Budget     report.Budget
 }
 
 // Prepare captures one store observation and derives candidates from only its

@@ -38,6 +38,57 @@ func TestTermReportHistoryRetainsReusableRequestAcrossMetadataRoundTrip(t *testi
 	require.Equal(t, page, restoredPage)
 }
 
+func TestReportFrozenHistoryRetainsVisibilityEvidenceAcrossRestore(t *testing.T) {
+	ctx := t.Context()
+	s := newTestStore(t)
+	node, err := s.CreateFile(ctx, s.RootID(), "synthetic.txt", testSHA256([]byte("history-source")), 14, "text/plain")
+	require.NoError(t, err)
+	identity := report.Identity{NodeID: node.ID, VersionID: node.CurrentVersionID, SHA256: node.BlobHash}
+	now := time.Date(2026, 9, 20, 15, 30, 0, 0, time.UTC)
+	request := report.Request{Version: 1, AllDocuments: true, Timezone: "UTC", CoverageMode: "available_only",
+		Terms: []report.Term{{Number: 1, Expression: "synthetic", Syntax: "simple",
+			Dates: report.DateRange{Start: "2024-01-01", End: "2026-12-31"}}}}
+	item := TermReportHistory{Request: request, VisibilityKnown: true, VisibilityMembers: []report.Identity{identity}, Summary: report.Summary{
+		ID: strings.Repeat("d", 48), State: report.StateComplete, ObservedAt: now,
+		ExpiresAt: now.Add(30 * time.Minute), Terms: request.Terms, Counts: []report.Counts{{Hits: 1}},
+	}}
+	require.NoError(t, s.SaveTermReportHistory(ctx, item))
+	var exported bytes.Buffer
+	require.NoError(t, s.ExportMetadata(ctx, &exported))
+	restored := newTestStore(t)
+	require.NoError(t, restored.ImportMetadata(ctx, bytes.NewReader(exported.Bytes())))
+	page, err := restored.ListTermReportHistory(ctx, 0, 1)
+	require.NoError(t, err)
+	require.Equal(t, item, page.Items[0])
+	require.NoError(t, restored.CheckTermReportVisibility(ctx, report.Frame{Members: []report.Member{{Identity: identity}}}))
+	restoredNode, err := restored.NodeByID(ctx, node.ID)
+	require.NoError(t, err)
+	_, _, err = restored.Trash(ctx, node.ID, restoredNode.Revision)
+	require.NoError(t, err)
+	require.ErrorIs(t, restored.CheckTermReportVisibility(ctx, report.Frame{Members: []report.Member{{Identity: identity}}}), report.ErrVisibilityChanged)
+}
+
+func TestReportFrozenOversizedHistoryReceiptReturnsReportLimit(t *testing.T) {
+	ctx := t.Context()
+	s := newTestStore(t)
+	now := time.Date(2026, 9, 20, 15, 30, 0, 0, time.UTC)
+	request := report.Request{Version: 1, AllDocuments: true, Timezone: "UTC", CoverageMode: "strict",
+		Terms: []report.Term{{Number: 1, Expression: "alpha", Syntax: "simple",
+			Dates: report.DateRange{Start: "2024-01-01", End: "2026-12-31"}}}}
+	members := make([]report.Identity, 50000)
+	for i := range members {
+		members[i] = report.Identity{NodeID: int64(i + 1), VersionID: strings.Repeat("v", 160),
+			SHA256: strings.Repeat("a", 64)}
+	}
+	item := TermReportHistory{Request: request, VisibilityKnown: true, VisibilityMembers: members,
+		Summary: report.Summary{ID: strings.Repeat("e", 48), State: report.StateComplete, ObservedAt: now,
+			ExpiresAt: now.Add(30 * time.Minute), Terms: request.Terms, Counts: []report.Counts{{Hits: 1}}}}
+	require.ErrorIs(t, s.SaveTermReportHistory(ctx, item), report.ErrReportLimit)
+	page, err := s.ListTermReportHistory(ctx, 0, 1)
+	require.NoError(t, err)
+	require.Zero(t, page.Total)
+}
+
 func TestTermReportHistoryBoundsRetentionAcrossRestore(t *testing.T) {
 	ctx := t.Context()
 	s := newTestStore(t)

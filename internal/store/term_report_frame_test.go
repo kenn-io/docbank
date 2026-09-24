@@ -78,6 +78,103 @@ func TestTermReportFrozenGenerationAndCurrentVersions(t *testing.T) {
 	require.NotEqual(t, frame.Members[0].Identity.VersionID, fresh.Members[0].Identity.VersionID)
 }
 
+func TestReportSealedSelectionExcludesNewImportsAndBindsVersions(t *testing.T) {
+	s := newTestStore(t)
+	ctx := t.Context()
+	alpha, err := s.CreateFile(ctx, s.RootID(), "alpha.txt", testSHA256([]byte("sealed-alpha")), 10, "text/plain")
+	require.NoError(t, err)
+	_, err = s.CreateFile(ctx, s.RootID(), "beta.txt", testSHA256([]byte("sealed-beta")), 10, "text/plain")
+	require.NoError(t, err)
+	request := termFrameRequest()
+	request.Version, request.AllDocuments = 2, false
+	request.SelectedDocuments = []report.Identity{{NodeID: alpha.ID, VersionID: alpha.CurrentVersionID, SHA256: alpha.BlobHash}}
+	budget := report.NewBudget(8 << 20)
+	defer func() { _ = budget.Close() }()
+	first, err := s.MaterializeTermReportFrame(ctx, request, report.CoverageSelection{Configuration: "unconfigured"}, budget, budget)
+	require.NoError(t, err)
+	require.Len(t, first.Members, 1)
+	require.Equal(t, request.SelectedDocuments[0], first.Members[0].Identity)
+	require.Equal(t, []bool{true, false}, first.Members[0].RawMatches)
+	_, err = s.CreateFile(ctx, s.RootID(), "new.txt", testSHA256([]byte("sealed-new")), 10, "text/plain")
+	require.NoError(t, err)
+	replaced, _, err := s.ReplaceContent(ctx, alpha.ID, alpha.Revision, testSHA256([]byte("sealed-replaced")), 10, "text/plain")
+	require.NoError(t, err)
+	require.Equal(t, request.SelectedDocuments[0], first.Members[0].Identity)
+	require.Equal(t, []bool{true, false}, first.Members[0].RawMatches)
+	_, err = s.MaterializeTermReportFrame(ctx, request, report.CoverageSelection{Configuration: "unconfigured"}, budget, budget)
+	require.Error(t, err, "an exact selection must not silently switch to the new version")
+	request.SelectedDocuments[0] = report.Identity{NodeID: replaced.ID, VersionID: replaced.CurrentVersionID, SHA256: replaced.BlobHash}
+	fresh, err := s.MaterializeTermReportFrame(ctx, request, report.CoverageSelection{Configuration: "unconfigured"}, budget, budget)
+	require.NoError(t, err)
+	require.Len(t, fresh.Members, 1)
+	require.Equal(t, request.SelectedDocuments[0], fresh.Members[0].Identity)
+}
+
+func TestReportFrozenVisibilitySurvivesHeadChangeButWithholdsTrash(t *testing.T) {
+	s := newTestStore(t)
+	ctx := t.Context()
+	node, err := s.CreateFile(ctx, s.RootID(), "original.txt", testSHA256([]byte("original")), 10, "text/plain")
+	require.NoError(t, err)
+	budget := report.NewBudget(8 << 20)
+	defer func() { _ = budget.Close() }()
+	frame, err := s.MaterializeTermReportFrame(ctx, termFrameRequest(), report.CoverageSelection{Configuration: "unconfigured"}, budget, budget)
+	require.NoError(t, err)
+	_, _, err = s.ReplaceContent(ctx, node.ID, node.Revision, testSHA256([]byte("changed")), 10, "text/plain")
+	require.NoError(t, err)
+	require.NoError(t, s.CheckTermReportVisibility(ctx, frame), "head change must not rewrite or withhold an old observation")
+	current, err := s.NodeByID(ctx, node.ID)
+	require.NoError(t, err)
+	_, _, err = s.Trash(ctx, node.ID, current.Revision)
+	require.NoError(t, err)
+	require.ErrorIs(t, s.CheckTermReportVisibility(ctx, frame), report.ErrVisibilityChanged)
+}
+
+func TestReportFrozenVisibilityIncludesUnselectedFamilyDocument(t *testing.T) {
+	s := newTestStore(t)
+	ctx := t.Context()
+	f := newEmailFixture(t, s, "relation-visibility.eml")
+	source, err := s.ContentVersionByID(ctx, f.publication.ContentVersionID)
+	require.NoError(t, err)
+	run, err := s.BeginIngest(ctx, "cli", "Synthetic selected family")
+	require.NoError(t, err)
+	parent, err := s.IngestFileExact(ctx, run, s.RootID(), "selected-parent.eml",
+		source.BlobHash, source.Size, "message/rfc822", "/synthetic/selected-parent.eml", "")
+	require.NoError(t, err)
+	f.publication.ContentVersionID = parent.CurrentVersionID
+	view, err := s.PublishEmailGeneration(ctx, f.publication)
+	require.NoError(t, err)
+	receipt, err := s.PublishEmailDocuments(ctx, attachmentRequest(t, s, view, "visibility-family"))
+	require.NoError(t, err)
+	require.Len(t, receipt.Relations, 1)
+	request := termFrameRequest()
+	request.Version, request.AllDocuments = 2, false
+	request.SelectedDocuments = []report.Identity{{
+		NodeID: parent.ID, VersionID: parent.CurrentVersionID, SHA256: parent.BlobHash,
+	}}
+	budget := report.NewBudget(8 << 20)
+	defer func() { _ = budget.Close() }()
+	frame, err := s.MaterializeTermReportFrame(ctx, request,
+		report.CoverageSelection{Configuration: "unconfigured"}, budget, budget)
+	require.NoError(t, err)
+	require.Len(t, frame.Members, 1)
+	require.Len(t, frame.Relations, 1)
+	child := frame.Relations[0].Child
+	require.NotEqual(t, frame.Members[0].Identity, child)
+	require.NoError(t, s.CheckTermReportVisibility(ctx, frame))
+	childNode, err := s.NodeByID(ctx, child.NodeID)
+	require.NoError(t, err)
+	_, _, err = s.ReplaceContent(ctx, child.NodeID, childNode.Revision,
+		fakeHash("relation-new-head"), 3, "text/plain")
+	require.NoError(t, err)
+	require.NoError(t, s.CheckTermReportVisibility(ctx, frame),
+		"a newer family head must not rewrite the frozen relation")
+	childNode, err = s.NodeByID(ctx, child.NodeID)
+	require.NoError(t, err)
+	_, _, err = s.Trash(ctx, child.NodeID, childNode.Revision)
+	require.NoError(t, err)
+	require.ErrorIs(t, s.CheckTermReportVisibility(ctx, frame), report.ErrVisibilityChanged)
+}
+
 func TestTermReportScopeAndEarliestAddition(t *testing.T) {
 	s := newTestStore(t)
 	first := createCollectionRun(t, s, "alpha.txt", "term-scope-alpha")
