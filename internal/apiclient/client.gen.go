@@ -9642,6 +9642,53 @@ func (c *Client) ResolveTagByName(ctx context.Context, options *ResolveTagByName
 	return responseParser(ctx, resp)
 }
 
+// TagNeighborhood Find related documents and tags inside an exact source fence
+func (c *Client) TagNeighborhood(ctx context.Context, options *TagNeighborhoodRequestOptions, reqEditors ...runtime.RequestEditorFn) (*TagNeighborhoodResponseJSON, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/tags/neighborhood",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*TagNeighborhoodResponseJSON, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(TagNeighborhoodResponseJSON)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "TagNeighborhoodResponseJSON", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[TagNeighborhoodErrorResponse](resp, "TagNeighborhoodErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/tags/neighborhood")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
 // DeleteTag Delete a tag definition and all assignments
 func (c *Client) DeleteTag(ctx context.Context, options *DeleteTagRequestOptions, reqEditors ...runtime.RequestEditorFn) (*DeleteTagResponse, error) {
 	var err error
@@ -16849,6 +16896,34 @@ func (o *ResolveTagByNameRequestOptions) GetHeader() (map[string]string, error) 
 	return nil, nil
 }
 
+// TagNeighborhoodRequestOptions is the options needed to make a request to TagNeighborhood.
+type TagNeighborhoodRequestOptions struct {
+	Body *TagNeighborhoodBody
+}
+
+// GetPathParams returns the path params as a map.
+func (o *TagNeighborhoodRequestOptions) GetPathParams() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetQuery returns the query params as a map.
+func (o *TagNeighborhoodRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *TagNeighborhoodRequestOptions) GetBody() any {
+	if o.Body == nil {
+		return nil
+	}
+	return o.Body
+}
+
+// GetHeader returns the headers as a map.
+func (o *TagNeighborhoodRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
 // DeleteTagRequestOptions is the options needed to make a request to DeleteTag.
 type DeleteTagRequestOptions struct {
 	PathParams *DeleteTagPath
@@ -18329,6 +18404,8 @@ type PreviewBlobStoreRegistrationBody = PreviewBlobStoreRegistrationRequest
 
 type CreateTagBody = CreateTagRequest
 
+type TagNeighborhoodBody = TagNeighborhoodRequest
+
 type RenameTagBody = RenameTagRequest
 
 type CreateTimelineRebuildBody = TimelineRebuildRequest
@@ -19491,6 +19568,10 @@ type CreateTagErrorResponse = Error
 type ResolveTagByNameResponse = api.Tag
 
 type ResolveTagByNameErrorResponse = Error
+
+type TagNeighborhoodResponseJSON = api.TagNeighborhoodResponse
+
+type TagNeighborhoodErrorResponse = Error
 
 type DeleteTagResponse = api.TagDeletionReceipt
 
@@ -20658,6 +20739,18 @@ type Tag = api.Tag
 type TagAssignmentReceipt = api.TagAssignmentReceipt
 
 type TagDeletionReceipt = api.TagDeletionReceipt
+
+type TagGraphDocument = api.TagGraphDocument
+
+type TagGraphPathStep = api.TagGraphPathStep
+
+type TagGraphSeed = api.TagGraphSeed
+
+type TagGraphTag = api.TagGraphTag
+
+type TagNeighborhoodRequest = api.TagNeighborhoodRequest
+
+type TagNeighborhoodResponse = api.TagNeighborhoodResponse
 
 type TagPage = api.TagPage
 
