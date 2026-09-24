@@ -448,6 +448,29 @@ func findBatesExportsSchemas() (schema, schema) {
 	}), cacheRequired("items")...)
 }
 
+func findProductionNumbersSchemas() (schema, schema) {
+	input := rootObjectSchema(schema{
+		"label":        schema{"type": "string", "minLength": 1, "maxLength": 256},
+		"namespace_id": uuidSchema(), "start_sequence": integerSchema(1, 0),
+		"end_sequence": integerSchema(1, 0), "after_sequence": integerSchema(0, 0),
+		schemaLimitField: integerSchema(1, 25),
+	})
+	item := objectSchema(schema{
+		"label": stringSchema(256), "job_id": uuidSchema(), "set_id": uuidSchema(),
+		"revision": integerSchema(1, 0), "production_receipt_sha256": sha256Schema(),
+		"artifact_manifest_sha256": sha256Schema(), "source_version_id": uuidSchema(),
+		"occurrence_id": uuidSchema(), "page": integerSchema(1, 0),
+		"artifact_id": uuidSchema(), "artifact_sha256": sha256Schema(),
+		"artifact_path": stringSchema(maxPathCharacters), "volume": stringSchema(256),
+	}, "label", "job_id", "set_id", "revision", "production_receipt_sha256",
+		"artifact_manifest_sha256", "source_version_id", "occurrence_id", "page",
+		"artifact_id", "artifact_sha256", "artifact_path", "volume")
+	output := rootObjectSchema(withPrivateCache(schema{
+		"items": arraySchema(item, 25), "next_sequence": integerSchema(1, 0),
+	}), cacheRequired("items")...)
+	return input, output
+}
+
 func selectorExcludes(fields ...string) schema {
 	constraints := make([]schema, len(fields))
 	for index, field := range fields {

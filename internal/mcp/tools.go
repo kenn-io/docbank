@@ -61,6 +61,7 @@ var readToolDefinitions = []toolDefinition{
 	{name: "list_bates_exports", title: "List Bates exports", description: "Page through bounded verified Bates export history.", schemas: listBatesExportsSchemas},
 	{name: "get_bates_export", title: "Get Bates export", description: "Read one exact verified Bates export receipt.", schemas: getBatesExportSchemas},
 	{name: "find_bates_exports", title: "Find Bates exports", description: "Return bounded candidates for one exact Bates label, custodian label, or canonical person.", schemas: findBatesExportsSchemas},
+	{name: "find_production_numbers", title: "Find production numbers", description: "Resolve an exact published production number or page through a bounded numeric range.", schemas: findProductionNumbersSchemas},
 }
 
 var processingToolDefinition = toolDefinition{
