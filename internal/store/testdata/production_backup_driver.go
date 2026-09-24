@@ -10,13 +10,14 @@ import (
 
 	"go.kenn.io/docbank/internal/backupapp"
 	"go.kenn.io/docbank/internal/blob"
+	"go.kenn.io/docbank/internal/maintenance"
 	"go.kenn.io/docbank/internal/store"
 	"go.kenn.io/kit/backup"
 )
 
 func main() {
 	if len(os.Args) != 4 {
-		panic("usage: production_backup_driver create|restore source-or-repo repo-or-target")
+		panic("usage: production_backup_driver create|restore|gc source-or-repo repo-or-target")
 	}
 	if err := run(os.Args[1], os.Args[2], os.Args[3]); err != nil {
 		fmt.Fprintln(os.Stderr, err)
@@ -50,6 +51,19 @@ func run(action, source, target string) error {
 			return err
 		}
 		_, err = backupapp.Restore(ctx, repo, "synthetic-test", backup.RestoreOptions{TargetDir: target, Jobs: 1})
+		return err
+	case "gc":
+		metadata, err := store.Open(filepath.Join(source, "docbank.db"))
+		if err != nil {
+			return err
+		}
+		defer metadata.Close()
+		physical, err := blob.New(store.NewPackCatalog(metadata), filepath.Join(source, "blobs"))
+		if err != nil {
+			return err
+		}
+		defer physical.Close()
+		_, err = maintenance.GarbageCollect(ctx, metadata, physical, maintenance.GCOptions{})
 		return err
 	default:
 		return fmt.Errorf("unknown action %q", action)

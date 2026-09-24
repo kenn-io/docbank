@@ -142,3 +142,25 @@ func TestRetainProductionArtifactReplayPinsOriginalVersionAfterSameBytesReplacem
 	require.NoError(t, err)
 	require.Equal(t, retained.Version.ID, replayed.Version.ID)
 }
+
+func TestRetainedProductionArtifactSurvivesBackupRestore(t *testing.T) {
+	f, job := publishedRealRetentionFixture(t)
+	materializeProductionEmailBlobs(t, f)
+	artifact := job.Manifest.Artifacts[0]
+	retained, err := f.RetainProductionArtifact(t.Context(), job.ID, artifact.ID, f)
+	require.NoError(t, err)
+	before := productionBackupMetadata(t, f.Store)
+	physical := productionBackupBlobBytes(t, f)
+	driver := productionBackupDriver(t)
+	repo := filepath.Join(t.TempDir(), "retained-repo")
+	require.NoError(t, runProductionBackupDriver(t, driver, "create", f.root, repo))
+	target := filepath.Join(t.TempDir(), "retained-restore")
+	require.NoError(t, runProductionBackupDriver(t, driver, "restore", repo, target))
+	require.NoError(t, runProductionBackupDriver(t, driver, "gc", target, target))
+	restored := requireProductionBackupRestored(t, target, before, physical)
+	replayed, err := restored.RetainProductionArtifact(t.Context(), job.ID, artifact.ID, restored)
+	require.NoError(t, err)
+	require.Equal(t, retained.Node.ID, replayed.Node.ID)
+	require.Equal(t, retained.Version.ID, replayed.Version.ID)
+	require.Equal(t, retained.Provenance, replayed.Provenance)
+}
