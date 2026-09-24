@@ -1,5 +1,5 @@
 ---
-last_edited: 2026-09-12
+last_edited: 2026-09-24
 title: Agent Integration Guide
 description: Connect an agent to docbank safely using its OpenAPI contract, authenticated HTTP API, revisions, and dry-run maintenance operations.
 ---
@@ -102,6 +102,17 @@ docbank daemon restart
 The daemon rejects non-loopback binds. Remote access is not a separate mode:
 use an SSH tunnel or VPN that terminates at the daemon host's loopback
 listener, and protect the API key as a vault credential.
+
+### Use a bounded read session
+
+An operator with the daemon's master key can `POST /api/v1/agent-sessions`
+with `operations: ["read"]`, exact `source_ids`, and `ttl_seconds` from 1 to
+3600. The response contains a session ID, expiry, and a token. Keep the token
+private and send it only as `X-Docbank-Agent-Session` to that daemon. Do not
+send the master key, bearer credential, or browser session with it. A read
+outside the listed sources is denied, and the token stops working at expiry
+or after `DELETE /api/v1/agent-sessions/{id}` with the master key. This
+credential does not grant writes.
 
 Examples below assume:
 
