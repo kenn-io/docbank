@@ -2352,6 +2352,46 @@ func (c *Client) GetExportJob(ctx context.Context, options *GetExportJobRequestO
 	return responseParser(ctx, resp)
 }
 
+// ReadExportArchive Read a completed, reverified export archive
+func (c *Client) ReadExportArchive(ctx context.Context, options *ReadExportArchiveRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ReadExportArchiveResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/exports/jobs/{id}/archive",
+		Method:     "GET",
+		Options:    options,
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*ReadExportArchiveResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(ReadExportArchiveResponse(resp.Content))
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[ReadExportArchiveErrorResponse](resp, "ReadExportArchiveErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/exports/jobs/{id}/archive")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
 // CancelExportJob Cancel and fence a running export
 func (c *Client) CancelExportJob(ctx context.Context, options *CancelExportJobRequestOptions, reqEditors ...runtime.RequestEditorFn) (*struct{}, error) {
 	var err error
@@ -12101,6 +12141,37 @@ func (o *GetExportJobRequestOptions) GetHeader() (map[string]string, error) {
 	return nil, nil
 }
 
+// ReadExportArchiveRequestOptions is the options needed to make a request to ReadExportArchive.
+type ReadExportArchiveRequestOptions struct {
+	PathParams *ReadExportArchivePath
+}
+
+// GetPathParams returns the path params as a map.
+func (o *ReadExportArchiveRequestOptions) GetPathParams() (map[string]any, error) {
+	encoded, err := json.Marshal(o.PathParams, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetQuery returns the query params as a map.
+func (o *ReadExportArchiveRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *ReadExportArchiveRequestOptions) GetBody() any {
+	return nil
+}
+
+// GetHeader returns the headers as a map.
+func (o *ReadExportArchiveRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
 // CancelExportJobRequestOptions is the options needed to make a request to CancelExportJob.
 type CancelExportJobRequestOptions struct {
 	PathParams *CancelExportJobPath
@@ -17740,6 +17811,10 @@ type GetExportJobPath struct {
 	ID string `json:"id"`
 }
 
+type ReadExportArchivePath struct {
+	ID uuid.UUID `json:"id"`
+}
+
 type CancelExportJobPath struct {
 	ID string `json:"id"`
 }
@@ -18797,6 +18872,18 @@ type CreateExportJobErrorResponse = Error
 type GetExportJobResponse = bundle.ExportJob
 
 type GetExportJobErrorResponse = Error
+
+type ReadExportArchiveResponse = []byte
+
+type ReadExportArchiveErrorResponse struct {
+	Code               *string        `json:"code,omitempty"`
+	Detail             *string        `json:"detail,omitempty"`
+	Errors             []string       `json:"errors,omitempty"`
+	ObservedScopeCount *int64         `json:"observed_scope_count,omitempty"`
+	Position           *ErrorPosition `json:"position,omitempty"`
+	Status             int64          `json:"status"`
+	Title              string         `json:"title"`
+}
 
 type CancelExportJobErrorResponse = Error
 
