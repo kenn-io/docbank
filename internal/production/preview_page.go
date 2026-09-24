@@ -55,6 +55,15 @@ func (w productionPreviewContextWriter) Write(p []byte) (int, error) {
 func RenderUnnumberedProductionPreviewPage(ctx context.Context, source PinnedProductionPDF,
 	member documentproduction.PreparedMember, pageNumber int, recipe redaction.Recipe,
 	engine pdfproduction.Engine) (result *ProductionPreviewPage, resultErr error) {
+	return RenderUnnumberedProductionPreviewPageInDir(ctx, source, member, pageNumber, recipe, engine, "")
+}
+
+// RenderUnnumberedProductionPreviewPageInDir keeps the verified PNG under a
+// caller-owned private staging directory so abandoned files can be swept on
+// daemon startup. The caller owns that directory and the returned file.
+func RenderUnnumberedProductionPreviewPageInDir(ctx context.Context, source PinnedProductionPDF,
+	member documentproduction.PreparedMember, pageNumber int, recipe redaction.Recipe,
+	engine pdfproduction.Engine, stageDir string) (result *ProductionPreviewPage, resultErr error) {
 	closeRejectedSource := func(err error) (*ProductionPreviewPage, error) {
 		if source.Stream != nil {
 			err = errors.Join(err, source.Stream.Close())
@@ -115,7 +124,7 @@ func RenderUnnumberedProductionPreviewPage(ctx context.Context, source PinnedPro
 	if err != nil {
 		return nil, err
 	}
-	file, err := os.CreateTemp("", "docbank-production-preview-*.png")
+	file, err := os.CreateTemp(stageDir, ".production-preview-*.png")
 	if err != nil {
 		return nil, err
 	}

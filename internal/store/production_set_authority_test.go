@@ -373,6 +373,12 @@ func TestProductionReviewInvalidatesOnInstructionChange(t *testing.T) {
 
 func seedProductionGateAuthority(t *testing.T) (*Store, redaction.Member) {
 	t.Helper()
+	return seedProductionGateAuthorityWithPDF(t, []byte("synthetic derived PDF"),
+		redaction.Box{X0: 1, Y0: 1, X1: 2, Y1: 2})
+}
+
+func seedProductionGateAuthorityWithPDF(t *testing.T, pdfBytes []byte, atomBox redaction.Box) (*Store, redaction.Member) {
+	t.Helper()
 	s := newTestStore(t)
 	email := newEmailFixture(t, s, "synthetic-production.eml")
 	retained, err := s.PublishEmailGeneration(t.Context(), email.publication)
@@ -385,7 +391,6 @@ func seedProductionGateAuthority(t *testing.T) (*Store, redaction.Member) {
 	require.NotNil(t, bodyPath)
 	require.NotNil(t, body)
 
-	pdfBytes := []byte("synthetic derived PDF")
 	pdfSHA256 := testSHA256(pdfBytes)
 	require.NoError(t, s.withStorageTx(t.Context(), func(tx *sql.Tx) error {
 		return s.EnsureBlobTx(tx, pdfSHA256, int64(len(pdfBytes)))
@@ -466,7 +471,8 @@ func seedProductionGateAuthority(t *testing.T) (*Store, redaction.Member) {
 	textMap := redaction.NormalizeTextMap(redaction.TextMap{
 		Contract: "aligned-text/v1", PDFSHA256: pdfSHA256, EvidenceSHA256: build.EvidenceChecksum, Text: "x",
 		Pages: []redaction.Page{{Number: 1, FrameSHA256: frameSHA256, Width: frame.Width, Height: frame.Height, Span: redaction.Span{Start: 0, End: 1}}},
-		Atoms: []redaction.Atom{{Span: redaction.Span{Start: 0, End: 1}, Boxes: []redaction.Box{{Page: 1, FrameSHA256: frameSHA256, X0: 1, Y0: 1, X1: 2, Y1: 2}}}},
+		Atoms: []redaction.Atom{{Span: redaction.Span{Start: 0, End: 1}, Boxes: []redaction.Box{{Page: 1, FrameSHA256: frameSHA256,
+			X0: atomBox.X0, Y0: atomBox.Y0, X1: atomBox.X1, Y1: atomBox.Y1}}}},
 	})
 	authority := ProductionTextMapAuthority{
 		SourceNodeID: nodeID, Source: source, PDFSHA256: pdfSHA256, PDFSize: int64(len(pdfBytes)),
