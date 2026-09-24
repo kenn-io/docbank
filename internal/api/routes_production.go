@@ -123,6 +123,9 @@ type ProductionMapChunk struct {
 	NextCursor  string `json:"next_cursor"`
 }
 
+// ProductionJobStatus is the public, bounded state projection of a retained job.
+type ProductionJobStatus store.ProductionJobStatus
+
 type ProductionInstructionsRequest struct {
 	OperationID  string `json:"operation_id"`
 	Instructions string `json:"instructions"`
@@ -320,6 +323,19 @@ func registerProductionRoutes(api huma.API, d Deps, g *OperationGate) {
 				return nil, productionSetError(err)
 			}
 			return &struct{ Body ProductionMapChunk }{Body: ProductionMapChunk(chunk)}, nil
+		})
+	huma.Register(api, huma.Operation{OperationID: "getProductionJobStatus", Method: http.MethodGet,
+		Path:    "/api/v1/productions/sets/{set_id}/jobs/{job_id}",
+		Summary: "Read one set-scoped production job status"},
+		func(ctx context.Context, in *struct {
+			SetID string `path:"set_id" format:"uuid"`
+			JobID string `path:"job_id" format:"uuid"`
+		}) (*struct{ Body ProductionJobStatus }, error) {
+			status, err := d.Store.ProductionJobStatus(ctx, in.SetID, in.JobID)
+			if err != nil {
+				return nil, productionSetError(err)
+			}
+			return &struct{ Body ProductionJobStatus }{Body: ProductionJobStatus(status)}, nil
 		})
 	huma.Register(api, huma.Operation{OperationID: "editProductionInstructions", Method: http.MethodPut,
 		Path:         "/api/v1/productions/sets/{set_id}/revisions/{revision}/instructions",

@@ -12,6 +12,7 @@ type ProductionMemberPage = api.ProductionMemberPage
 type ProductionDecisionPage = api.ProductionDecisionPage
 type ProductionSetPage = api.ProductionSetPage
 type ProductionMapChunk = store.ProductionMapChunk
+type ProductionJobStatus = store.ProductionJobStatus
 type ProductionRecipeCatalog = api.ProductionRecipeCatalog
 
 func (v *Vault) ProductionRecipes(ctx context.Context) (ProductionRecipeCatalog, error) {
@@ -145,6 +146,15 @@ func (v *Vault) ProductionMapChunk(ctx context.Context, setID string, revision i
 		limit = store.MaxProductionMapChunkBytes
 	}
 	return v.metadata.ProductionMapChunk(ctx, setID, revision, memberID, cursor, limit)
+}
+
+func (v *Vault) ProductionJobStatus(ctx context.Context, setID, jobID string) (ProductionJobStatus, error) {
+	v.lifecycle.RLock()
+	defer v.lifecycle.RUnlock()
+	if v.closed {
+		return ProductionJobStatus{}, ErrClosed
+	}
+	return v.metadata.ProductionJobStatus(ctx, setID, jobID)
 }
 
 func (v *Vault) EditProductionInstructions(ctx context.Context, actor, setID string, revision, etag int64,

@@ -13,6 +13,7 @@ import (
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/apiclient"
 	"go.kenn.io/docbank/internal/canonical"
+	productionservice "go.kenn.io/docbank/internal/production"
 	"go.kenn.io/docbank/internal/store"
 	"uuid"
 )
@@ -245,6 +246,40 @@ func (c *Connection) ProductionMapChunk(ctx context.Context, setID string, revis
 	digest := sha256.Sum256(data)
 	if hex.EncodeToString(digest[:]) != result.ChunkSHA256 {
 		return api.ProductionMapChunk{}, integrityErrorf("production map page digest is inconsistent")
+	}
+	return *result, nil
+}
+
+func (c *Connection) ProductionJobStatus(ctx context.Context, setID, jobID string) (api.ProductionJobStatus, error) {
+	parsedSet, err := productionSetUUID(setID)
+	if err != nil {
+		return api.ProductionJobStatus{}, err
+	}
+	parsedJob, err := productionSetUUID(jobID)
+	if err != nil {
+		return api.ProductionJobStatus{}, err
+	}
+	result, err := c.API().GetProductionJobStatus(ctx, &apiclient.GetProductionJobStatusRequestOptions{
+		PathParams: &apiclient.GetProductionJobStatusPath{SetID: parsedSet, JobID: parsedJob}})
+	if err != nil {
+		return api.ProductionJobStatus{}, err
+	}
+	if result == nil || result.JobID != jobID || result.SetID != setID || result.Revision < 1 ||
+		!canonical.IsSHA256Hex(result.RevisionSHA256) {
+		return api.ProductionJobStatus{}, integrityErrorf("production job status is inconsistent")
+	}
+	switch result.State {
+	case productionservice.ProductionJobQueued, productionservice.ProductionJobRunning,
+		productionservice.ProductionJobFailed, productionservice.ProductionJobCanceled:
+		if result.ReceiptSHA256 != "" {
+			return api.ProductionJobStatus{}, integrityErrorf("production job status has an unexpected receipt")
+		}
+	case productionservice.ProductionJobSucceeded:
+		if !canonical.IsSHA256Hex(result.ReceiptSHA256) {
+			return api.ProductionJobStatus{}, integrityErrorf("production job status is missing its receipt")
+		}
+	default:
+		return api.ProductionJobStatus{}, integrityErrorf("production job status is invalid")
 	}
 	return *result, nil
 }

@@ -10973,6 +10973,40 @@ components:
       x-go-type-import:
         path: go.kenn.io/docbank/internal/api
         name: api
+    ProductionJobStatus:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/ProductionJobStatus.json
+          format: uri
+          readOnly: true
+          type: string
+        job_id:
+          type: string
+        receipt_sha256:
+          type: string
+        revision:
+          format: int64
+          type: integer
+        revision_sha256:
+          type: string
+        set_id:
+          type: string
+        state:
+          type: string
+      required:
+        - job_id
+        - set_id
+        - revision
+        - state
+        - revision_sha256
+      type: object
+      x-go-type: api.ProductionJobStatus
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     ProductionMapChunk:
       additionalProperties: false
       properties:
@@ -20530,6 +20564,36 @@ paths:
                 $ref: "#/components/schemas/Error"
           description: Error
       summary: Read a production set
+  /api/v1/productions/sets/{set_id}/jobs/{job_id}:
+    get:
+      operationId: getProductionJobStatus
+      parameters:
+        - in: path
+          name: set_id
+          required: true
+          schema:
+            format: uuid
+            type: string
+        - in: path
+          name: job_id
+          required: true
+          schema:
+            format: uuid
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProductionJobStatus"
+          description: OK
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: Read one set-scoped production job status
   /api/v1/productions/sets/{set_id}/revisions/{revision}:
     get:
       operationId: getProductionDraft

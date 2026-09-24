@@ -8327,6 +8327,52 @@ func (c *Client) GetProductionSet(ctx context.Context, options *GetProductionSet
 	return responseParser(ctx, resp)
 }
 
+// GetProductionJobStatus Read one set-scoped production job status
+func (c *Client) GetProductionJobStatus(ctx context.Context, options *GetProductionJobStatusRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetProductionJobStatusResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/productions/sets/{set_id}/jobs/{job_id}",
+		Method:     "GET",
+		Options:    options,
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*GetProductionJobStatusResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(GetProductionJobStatusResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "GetProductionJobStatusResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[GetProductionJobStatusErrorResponse](resp, "GetProductionJobStatusErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/productions/sets/{set_id}/jobs/{job_id}")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
 // GetProductionDraft Read an exact production draft
 func (c *Client) GetProductionDraft(ctx context.Context, options *GetProductionDraftRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetProductionDraftResponse, error) {
 	var err error
@@ -16782,6 +16828,37 @@ func (o *GetProductionSetRequestOptions) GetHeader() (map[string]string, error) 
 	return nil, nil
 }
 
+// GetProductionJobStatusRequestOptions is the options needed to make a request to GetProductionJobStatus.
+type GetProductionJobStatusRequestOptions struct {
+	PathParams *GetProductionJobStatusPath
+}
+
+// GetPathParams returns the path params as a map.
+func (o *GetProductionJobStatusRequestOptions) GetPathParams() (map[string]any, error) {
+	encoded, err := json.Marshal(o.PathParams, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetQuery returns the query params as a map.
+func (o *GetProductionJobStatusRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *GetProductionJobStatusRequestOptions) GetBody() any {
+	return nil
+}
+
+// GetHeader returns the headers as a map.
+func (o *GetProductionJobStatusRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
 // GetProductionDraftRequestOptions is the options needed to make a request to GetProductionDraft.
 type GetProductionDraftRequestOptions struct {
 	PathParams *GetProductionDraftPath
@@ -19399,6 +19476,11 @@ type GetProductionSetPath struct {
 	SetID uuid.UUID `json:"set_id"`
 }
 
+type GetProductionJobStatusPath struct {
+	SetID uuid.UUID `json:"set_id"`
+	JobID uuid.UUID `json:"job_id"`
+}
+
 type GetProductionDraftPath struct {
 	SetID    uuid.UUID `json:"set_id"`
 	Revision int64     `json:"revision"`
@@ -20855,6 +20937,10 @@ type GetProductionSetResponse = redaction.Set
 
 type GetProductionSetErrorResponse = Error
 
+type GetProductionJobStatusResponse = api.ProductionJobStatus
+
+type GetProductionJobStatusErrorResponse = Error
+
 type GetProductionDraftResponse = redaction.Draft
 
 type GetProductionDraftErrorResponse = Error
@@ -21929,6 +22015,8 @@ type ProductionDecisionPage = api.ProductionDecisionPage
 type ProductionForkRequest = api.ProductionForkRequest
 
 type ProductionInstructionsRequest = api.ProductionInstructionsRequest
+
+type ProductionJobStatus = api.ProductionJobStatus
 
 type ProductionMapChunk = api.ProductionMapChunk
 
