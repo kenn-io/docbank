@@ -361,6 +361,9 @@ func runServe(ctx context.Context) (retErr error) {
 	if err := placementRunner.Resume(sigCtx, jobSupervisor); err != nil {
 		return fmt.Errorf("resuming durable storage operations: %w", err)
 	}
+	if err := startProductionWorker(jobSupervisor, s, blobs); err != nil {
+		return fmt.Errorf("starting production rendering: %w", err)
+	}
 
 	listener, err := kitdaemon.Listen(ctx, kitdaemon.Endpoint{
 		Network: kitdaemon.NetworkTCP,

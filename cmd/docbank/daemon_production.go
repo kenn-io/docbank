@@ -8,8 +8,8 @@ import (
 	"go.kenn.io/docbank/internal/store"
 )
 
-// startProductionWorker resumes stored jobs under the vault supervisor. No
-// route or embedded API can submit a production job before lifecycle support.
+// startProductionWorker resumes stored jobs under the vault supervisor.
+// No production-set admission route is registered yet.
 func startProductionWorker(supervisor *jobs.Supervisor, catalog *store.Store, blobs *blob.Store) error {
 	worker := &production.Worker{Store: catalog,
 		Source:    processing.ProductionSourceOpener{Catalog: catalog, Blobs: blobs},
