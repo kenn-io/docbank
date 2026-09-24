@@ -453,3 +453,37 @@ func TestRevokePackageImportOwnerCancelsQueuedWork(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "cancelled", revoked.State)
 }
+
+func TestPackageImportDiscardRepairsPhotoAssets(t *testing.T) {
+	for _, outcome := range []string{"cancelled", "failed"} {
+		t.Run(outcome, func(t *testing.T) {
+			s := newTestStore(t)
+			request, run, _ := prepareReceivedPackage(t, s, "photo-"+outcome)
+			image, err := s.IngestFileExact(t.Context(), run, s.RootID(), "synthetic.jpg",
+				fakeHash("pkg-photo"), 1, "image/jpeg", "synthetic.jpg", "")
+			require.NoError(t, err)
+			asset, err := s.PhotoAssetForNode(t.Context(), image.ID)
+			require.NoError(t, err)
+			job := packageImportJobRequest(t, s, request)
+			_, err = s.AdmitPackageImport(t.Context(), run, request, job)
+			require.NoError(t, err)
+			if outcome == "cancelled" {
+				_, err = s.CancelPackageImportJob(t.Context(), job.Owner, job.OperationID)
+			} else {
+				claimed, claimErr := s.ClaimPackageImportJob(t.Context(), "photo-worker", time.Minute)
+				require.NoError(t, claimErr)
+				_, err = s.FinishPackageImportJob(t.Context(), claimed.ID, claimed.Epoch, claimed.Token, "failed", "", nil)
+			}
+			require.NoError(t, err)
+			repaired, err := s.PhotoAssetByID(t.Context(), asset.ID)
+			require.NoError(t, err)
+			require.Empty(t, repaired.Files)
+			require.Equal(t, asset.Revision+1, repaired.Revision)
+			var purges int
+			require.NoError(t, s.db.QueryRowContext(t.Context(),
+				`SELECT COUNT(*) FROM photo_change_receipts WHERE asset_id=? AND operation='purge'`, asset.ID).Scan(&purges))
+			require.Equal(t, 1, purges)
+			require.NoError(t, validatePhotoMetadataState(t.Context(), s.db))
+		})
+	}
+}
