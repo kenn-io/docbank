@@ -309,6 +309,7 @@ func validateArtifactManifest(value ArtifactManifest, requireDigest bool) error 
 		return invalidProblem("invalid artifact manifest")
 	}
 	seenIDs, seenPaths := map[string]struct{}{}, map[string]struct{}{}
+	memberOrdinals, ordinalMembers := map[string]int64{}, map[int64]string{}
 	for _, artifact := range value.Artifacts {
 		if !canonicalUUID(artifact.ID) || !oneOf(artifact.Role, ArtifactRoleRedactedPDF, ArtifactRoleRedactedText,
 			ArtifactRoleRedactedPage, ArtifactRoleDAT, ArtifactRoleOPT, ArtifactRoleLFP, ArtifactRoleManifest, ArtifactRoleArchive, ArtifactRoleQC) ||
@@ -327,6 +328,15 @@ func validateArtifactManifest(value ArtifactManifest, requireDigest bool) error 
 		if _, duplicate := seenPaths[artifact.Path]; duplicate {
 			return invalidProblem("duplicate production artifact path")
 		}
+		if memberRole {
+			if ordinal, seen := memberOrdinals[artifact.MemberID]; seen && ordinal != artifact.MemberOrdinal {
+				return invalidProblem("inconsistent artifact member ordinal")
+			}
+			if member, seen := ordinalMembers[artifact.MemberOrdinal]; seen && member != artifact.MemberID {
+				return invalidProblem("conflicting artifact member ordinal")
+			}
+			memberOrdinals[artifact.MemberID], ordinalMembers[artifact.MemberOrdinal] = artifact.MemberOrdinal, artifact.MemberID
+		}
 		seenIDs[artifact.ID], seenPaths[artifact.Path] = struct{}{}, struct{}{}
 	}
 	return nil
@@ -340,6 +350,7 @@ func validateArtifactProvenanceReceipt(value ArtifactProvenanceReceipt, requireD
 		return invalidProblem("invalid artifact provenance receipt")
 	}
 	seen := make(map[string]struct{}, len(value.Entries))
+	memberOrdinals, ordinalMembers := map[string]int64{}, map[int64]string{}
 	for _, entry := range value.Entries {
 		if !canonicalUUID(entry.ArtifactID) || !canonical.IsSHA256Hex(entry.ArtifactSHA256) ||
 			!canonicalUUID(entry.SourceVersionID) || !canonicalUUID(entry.MemberID) || entry.MemberOrdinal < 1 ||
@@ -349,6 +360,13 @@ func validateArtifactProvenanceReceipt(value ArtifactProvenanceReceipt, requireD
 		if _, duplicate := seen[entry.ArtifactID]; duplicate {
 			return invalidProblem("duplicate artifact provenance entry")
 		}
+		if ordinal, seen := memberOrdinals[entry.MemberID]; seen && ordinal != entry.MemberOrdinal {
+			return invalidProblem("inconsistent artifact provenance member ordinal")
+		}
+		if member, seen := ordinalMembers[entry.MemberOrdinal]; seen && member != entry.MemberID {
+			return invalidProblem("conflicting artifact provenance member ordinal")
+		}
+		memberOrdinals[entry.MemberID], ordinalMembers[entry.MemberOrdinal] = entry.MemberOrdinal, entry.MemberID
 		seen[entry.ArtifactID] = struct{}{}
 	}
 	return nil
@@ -362,6 +380,7 @@ func validateNumberReservation(value NumberReservation, requireDigest bool) erro
 		return invalidProblem("invalid number reservation receipt")
 	}
 	seenTexts := make(map[string]struct{}, len(value.Numbers))
+	memberOrdinals, ordinalMembers := map[string]int64{}, map[int64]string{}
 	seenPages := make(map[struct {
 		member string
 		page   int
@@ -381,6 +400,13 @@ func validateNumberReservation(value NumberReservation, requireDigest bool) erro
 		if _, duplicate := seenPages[pageKey]; duplicate {
 			return invalidProblem("duplicate numbered page")
 		}
+		if ordinal, seen := memberOrdinals[number.MemberID]; seen && ordinal != number.MemberOrdinal {
+			return invalidProblem("inconsistent numbered member ordinal")
+		}
+		if member, seen := ordinalMembers[number.MemberOrdinal]; seen && member != number.MemberID {
+			return invalidProblem("conflicting numbered member ordinal")
+		}
+		memberOrdinals[number.MemberID], ordinalMembers[number.MemberOrdinal] = number.MemberOrdinal, number.MemberID
 		seenTexts[number.Text], seenPages[pageKey] = struct{}{}, struct{}{}
 	}
 	return nil

@@ -30,6 +30,7 @@ func TestSyntheticFixturesAreExactCanonicalPayloads(t *testing.T) {
 			raw, err := os.ReadFile(test.file)
 			require.NoError(t, err)
 			raw = bytes.TrimSuffix(raw, []byte{'\n'})
+			raw = bytes.TrimSuffix(raw, []byte{'\r'})
 			encoded, digest, err := test.encode(raw)
 			require.NoError(t, err)
 			require.Equal(t, raw, encoded)
