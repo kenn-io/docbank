@@ -61,8 +61,16 @@ var photoInspectCmd = &cobra.Command{
 			err   error
 		)
 		if strings.HasPrefix(args[0], nodeIDSelectorPrefix) || strings.HasPrefix(args[0], "/") {
+			var selector nodeSelector
+			if selector, err = parseNodeSelector(args[0]); err != nil {
+				return err
+			}
+			if c, err = daemonconn.Ensure(cmd.Context()); err != nil {
+				return err
+			}
+			// Read-only: a stable ID may still name a trashed member file.
 			var node api.Node
-			if c, node, err = photoNode(cmd, args[0]); err == nil {
+			if node, err = selector.resolveIncludingTrash(cmd.Context(), c); err == nil {
 				asset, err = c.PhotoAssetForNode(cmd.Context(), node.ID)
 			}
 		} else if c, err = daemonconn.Ensure(cmd.Context()); err == nil {

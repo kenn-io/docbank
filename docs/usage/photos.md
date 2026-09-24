@@ -38,7 +38,8 @@ docbank photos assets display <asset-id> [file-id] [--revision REV]
 ```
 
 `inspect`, `create`, and `promote` accept absolute virtual paths or `id:N`
-node selectors, so `inspect id:42` finds the asset that owns file 42.
+node selectors, so `inspect id:42` finds the asset that owns file 42, even
+after file 42 is trashed.
 Existing-asset operations read the asset's current revision, send it, and
 retry once if another write changes the asset first. Pass `--revision` with
 the revision from your last inspection when a script needs the write to fail

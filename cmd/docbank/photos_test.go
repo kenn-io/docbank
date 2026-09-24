@@ -36,6 +36,16 @@ func TestPhotosCLIEnrollsAddedImage(t *testing.T) {
 		require.Len(t, asset.Files, 1)
 		assert.Equal(t, node.ID, asset.Files[0].NodeID)
 	}
+
+	_, err = runCLI(t, "rm", "/inbox/synthetic-image.jpeg")
+	require.NoError(t, err)
+	out, err := runCLI(t, "photos", "assets", "inspect", "id:"+strconv.FormatInt(node.ID, 10))
+	require.NoError(t, err, out)
+	var trashed api.PhotoAsset
+	require.NoError(t, json.Unmarshal([]byte(out), &trashed))
+	assert.Equal(t, assetFromNode.ID, trashed.ID)
+	_, err = runCLI(t, "photos", "assets", "inspect", "/inbox/synthetic-image.jpeg")
+	require.Error(t, err)
 }
 
 func TestPhotosCLIWorkflow(t *testing.T) {
