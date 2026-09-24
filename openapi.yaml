@@ -10812,6 +10812,65 @@ components:
       x-go-type-import:
         path: go.kenn.io/docbank/internal/api
         name: api
+    ProductionChange:
+      additionalProperties: false
+      properties:
+        decision:
+          $ref: "#/components/schemas/ProductionDecision"
+        decision_id:
+          type: string
+        disclosure_profile_id:
+          type: string
+        kind:
+          type: string
+        member:
+          $ref: "#/components/schemas/ProductionMember"
+        member_id:
+          type: string
+        mode:
+          type: string
+        numbering_recipe_id:
+          type: string
+        policy_id:
+          type: string
+        policy_version:
+          format: int64
+          type: integer
+        profile_id:
+          type: string
+        recipe_id:
+          type: string
+      required:
+        - kind
+      type: object
+      x-go-type: api.ProductionChange
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
+    ProductionChangesRequest:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/ProductionChangesRequest.json
+          format: uri
+          readOnly: true
+          type: string
+        changes:
+          items:
+            $ref: "#/components/schemas/ProductionChange"
+          type: array
+        operation_id:
+          type: string
+      required:
+        - operation_id
+        - changes
+      type: object
+      x-go-type: api.ProductionChangesRequest
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     ProductionDecision:
       additionalProperties: false
       properties:
@@ -10870,6 +10929,28 @@ components:
         - next_cursor
       type: object
       x-go-type: api.ProductionDecisionPage
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
+    ProductionInstructionsRequest:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/ProductionInstructionsRequest.json
+          format: uri
+          readOnly: true
+          type: string
+        instructions:
+          type: string
+        operation_id:
+          type: string
+      required:
+        - operation_id
+        - instructions
+      type: object
+      x-go-type: api.ProductionInstructionsRequest
       x-go-type-import:
         path: go.kenn.io/docbank/internal/api
         name: api
@@ -11055,6 +11136,39 @@ components:
         - version_id
       type: object
       x-go-type: api.ProductionPackageDownloadTicket
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
+    ProductionReceipt:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/ProductionReceipt.json
+          format: uri
+          readOnly: true
+          type: string
+        etag:
+          format: int64
+          type: integer
+        operation_id:
+          type: string
+        request_sha256:
+          type: string
+        revision:
+          format: int64
+          type: integer
+        set_id:
+          type: string
+      required:
+        - operation_id
+        - set_id
+        - revision
+        - etag
+        - request_sha256
+      type: object
+      x-go-type: api.ProductionReceipt
       x-go-type-import:
         path: go.kenn.io/docbank/internal/api
         name: api
@@ -20112,6 +20226,47 @@ paths:
                 $ref: "#/components/schemas/Error"
           description: Error
       summary: Read an exact production draft
+  /api/v1/productions/sets/{set_id}/revisions/{revision}/changes:
+    post:
+      operationId: applyProductionChanges
+      parameters:
+        - in: path
+          name: set_id
+          required: true
+          schema:
+            format: uuid
+            type: string
+        - in: path
+          name: revision
+          required: true
+          schema:
+            format: int64
+            minimum: 1
+            type: integer
+        - in: header
+          name: If-Match
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ProductionChangesRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProductionReceipt"
+          description: OK
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: Apply a bounded production change batch with an exact draft ETag
   /api/v1/productions/sets/{set_id}/revisions/{revision}/decisions:
     get:
       operationId: listProductionDecisions
@@ -20156,6 +20311,47 @@ paths:
                 $ref: "#/components/schemas/Error"
           description: Error
       summary: Page exact production decisions
+  /api/v1/productions/sets/{set_id}/revisions/{revision}/instructions:
+    put:
+      operationId: editProductionInstructions
+      parameters:
+        - in: path
+          name: set_id
+          required: true
+          schema:
+            format: uuid
+            type: string
+        - in: path
+          name: revision
+          required: true
+          schema:
+            format: int64
+            minimum: 1
+            type: integer
+        - in: header
+          name: If-Match
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ProductionInstructionsRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProductionReceipt"
+          description: OK
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: Edit production instructions with an exact draft ETag and replay-safe operation ID
   /api/v1/productions/sets/{set_id}/revisions/{revision}/members:
     get:
       operationId: listProductionMembers

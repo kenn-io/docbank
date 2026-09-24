@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strconv"
 
 	"go.kenn.io/docbank/document/redaction"
 	"go.kenn.io/docbank/internal/api"
@@ -129,4 +130,49 @@ func productionSetUUID(value string) (uuid.UUID, error) {
 		return uuid.UUID{}, fmt.Errorf("parsing production set ID: %w", err)
 	}
 	return parsed, nil
+}
+
+func (c *Connection) EditProductionInstructions(ctx context.Context, setID string, revision, etag int64,
+	request api.ProductionInstructionsRequest) (redaction.Receipt, error) {
+	parsed, err := productionSetUUID(setID)
+	if err != nil || revision < 1 || redaction.ValidateInstructionsEditRequest(request.Domain(etag)) != nil {
+		return redaction.Receipt{}, errors.New("invalid production instructions edit")
+	}
+	header := strconv.FormatInt(etag, 10)
+	result, err := c.API().EditProductionInstructions(ctx, &apiclient.EditProductionInstructionsRequestOptions{
+		PathParams: &apiclient.EditProductionInstructionsPath{SetID: parsed, Revision: revision},
+		Header:     &apiclient.EditProductionInstructionsHeaders{IfMatch: &header}, Body: &request})
+	if err != nil {
+		return redaction.Receipt{}, err
+	}
+	return checkedProductionMutationReceipt(result, setID, revision, request.OperationID, etag)
+}
+
+func (c *Connection) ApplyProductionChanges(ctx context.Context, setID string, revision, etag int64,
+	request api.ProductionChangesRequest) (redaction.Receipt, error) {
+	parsed, err := productionSetUUID(setID)
+	if err != nil || revision < 1 || redaction.ValidateApplyRequest(request.Domain(etag)) != nil {
+		return redaction.Receipt{}, errors.New("invalid production change batch")
+	}
+	header := strconv.FormatInt(etag, 10)
+	result, err := c.API().ApplyProductionChanges(ctx, &apiclient.ApplyProductionChangesRequestOptions{
+		PathParams: &apiclient.ApplyProductionChangesPath{SetID: parsed, Revision: revision},
+		Header:     &apiclient.ApplyProductionChangesHeaders{IfMatch: &header}, Body: &request})
+	if err != nil {
+		return redaction.Receipt{}, err
+	}
+	return checkedProductionMutationReceipt(result, setID, revision, request.OperationID, etag)
+}
+
+func checkedProductionMutationReceipt(value *api.ProductionReceipt, setID string, revision int64,
+	operationID string, etag int64) (redaction.Receipt, error) {
+	if value == nil {
+		return redaction.Receipt{}, integrityErrorf("production mutation receipt is missing")
+	}
+	receipt := redaction.Receipt(*value)
+	if redaction.ValidateReceipt(receipt) != nil || receipt.SetID != setID ||
+		receipt.Revision != revision || receipt.OperationID != operationID || receipt.ETag <= etag {
+		return redaction.Receipt{}, integrityErrorf("production mutation receipt is inconsistent")
+	}
+	return receipt, nil
 }

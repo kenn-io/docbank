@@ -85,3 +85,35 @@ func (v *Vault) ProductionDecisions(ctx context.Context, setID string, revision 
 	}
 	return page, nil
 }
+
+func (v *Vault) EditProductionInstructions(ctx context.Context, actor, setID string, revision, etag int64,
+	request api.ProductionInstructionsRequest) (redaction.Receipt, error) {
+	v.lifecycle.RLock()
+	defer v.lifecycle.RUnlock()
+	if v.closed {
+		return redaction.Receipt{}, ErrClosed
+	}
+	var receipt redaction.Receipt
+	err := embeddedMutationGate{vault: v}.MutateContext(ctx, func() error {
+		var err error
+		receipt, err = v.metadata.EditProductionInstructions(ctx, actor, setID, revision, request.Domain(etag))
+		return err
+	})
+	return receipt, err
+}
+
+func (v *Vault) ApplyProductionChanges(ctx context.Context, actor, setID string, revision, etag int64,
+	request api.ProductionChangesRequest) (redaction.Receipt, error) {
+	v.lifecycle.RLock()
+	defer v.lifecycle.RUnlock()
+	if v.closed {
+		return redaction.Receipt{}, ErrClosed
+	}
+	var receipt redaction.Receipt
+	err := embeddedMutationGate{vault: v}.MutateContext(ctx, func() error {
+		var err error
+		receipt, err = v.metadata.ApplyProductionChanges(ctx, actor, setID, revision, request.Domain(etag))
+		return err
+	})
+	return receipt, err
+}

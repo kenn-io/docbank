@@ -27,7 +27,7 @@ func productionSetBrowserRequestAllowed(r *http.Request) bool {
 		return r.Method == http.MethodPost && r.URL.RawQuery == ""
 	}
 	after, ok := strings.CutPrefix(r.URL.Path, base+"/")
-	if !ok || r.Method != http.MethodGet {
+	if !ok {
 		return false
 	}
 	parts := strings.Split(after, "/")
@@ -35,7 +35,7 @@ func productionSetBrowserRequestAllowed(r *http.Request) bool {
 		return false
 	}
 	if len(parts) == 1 {
-		return r.URL.RawQuery == ""
+		return r.Method == http.MethodGet && r.URL.RawQuery == ""
 	}
 	if len(parts) < 3 || parts[1] != "revisions" {
 		return false
@@ -45,9 +45,16 @@ func productionSetBrowserRequestAllowed(r *http.Request) bool {
 		return false
 	}
 	if len(parts) == 3 {
-		return r.URL.RawQuery == ""
+		return r.Method == http.MethodGet && r.URL.RawQuery == ""
 	}
-	if len(parts) != 4 || parts[3] != "members" && parts[3] != "decisions" {
+	if len(parts) == 4 && r.URL.RawQuery == "" {
+		if parts[3] == "instructions" && r.Method == http.MethodPut ||
+			parts[3] == "changes" && r.Method == http.MethodPost {
+			return true
+		}
+	}
+	if r.Method != http.MethodGet || len(parts) != 4 ||
+		parts[3] != "members" && parts[3] != "decisions" {
 		return false
 	}
 	if r.URL.RawQuery == "" {

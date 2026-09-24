@@ -21,6 +21,41 @@ type ProductionMember redaction.Member
 // ProductionDecision gives this wire shape a distinct OpenAPI component name.
 type ProductionDecision redaction.Decision
 
+// ProductionReceipt gives production mutation receipts a distinct wire name.
+type ProductionReceipt redaction.Receipt
+
+type ProductionChange struct {
+	Kind                string              `json:"kind"`
+	MemberID            string              `json:"member_id,omitzero"`
+	Member              *ProductionMember   `json:"member,omitzero"`
+	Decision            *ProductionDecision `json:"decision,omitzero"`
+	DecisionID          string              `json:"decision_id,omitzero"`
+	Mode                string              `json:"mode,omitzero"`
+	RecipeID            string              `json:"recipe_id,omitzero"`
+	ProfileID           string              `json:"profile_id,omitzero"`
+	DisclosureProfileID string              `json:"disclosure_profile_id,omitzero"`
+	NumberingRecipeID   string              `json:"numbering_recipe_id,omitzero"`
+	PolicyID            string              `json:"policy_id,omitzero"`
+	PolicyVersion       int64               `json:"policy_version,omitzero"`
+}
+
+func (change ProductionChange) domain() redaction.Change {
+	value := redaction.Change{Kind: change.Kind, MemberID: change.MemberID,
+		DecisionID: change.DecisionID, Mode: change.Mode, RecipeID: change.RecipeID,
+		ProfileID: change.ProfileID, DisclosureProfileID: change.DisclosureProfileID,
+		NumberingRecipeID: change.NumberingRecipeID, PolicyID: change.PolicyID,
+		PolicyVersion: change.PolicyVersion}
+	if change.Member != nil {
+		member := redaction.Member(*change.Member)
+		value.Member = &member
+	}
+	if change.Decision != nil {
+		decision := redaction.Decision(*change.Decision)
+		value.Decision = &decision
+	}
+	return value
+}
+
 type ProductionMemberPage struct {
 	Items      []ProductionMember `json:"items"`
 	NextCursor string             `json:"next_cursor"`
@@ -29,6 +64,29 @@ type ProductionMemberPage struct {
 type ProductionDecisionPage struct {
 	Items      []ProductionDecision `json:"items"`
 	NextCursor string               `json:"next_cursor"`
+}
+
+type ProductionInstructionsRequest struct {
+	OperationID  string `json:"operation_id"`
+	Instructions string `json:"instructions"`
+}
+
+func (request ProductionInstructionsRequest) Domain(etag int64) redaction.InstructionsEditRequest {
+	return redaction.InstructionsEditRequest{OperationID: request.OperationID, ETag: etag,
+		Instructions: request.Instructions}
+}
+
+type ProductionChangesRequest struct {
+	OperationID string             `json:"operation_id"`
+	Changes     []ProductionChange `json:"changes"`
+}
+
+func (request ProductionChangesRequest) Domain(etag int64) redaction.ApplyRequest {
+	changes := make([]redaction.Change, len(request.Changes))
+	for i, change := range request.Changes {
+		changes[i] = change.domain()
+	}
+	return redaction.ApplyRequest{OperationID: request.OperationID, ETag: etag, Changes: changes}
 }
 
 func productionSetError(err error) error {
@@ -133,5 +191,65 @@ func registerProductionRoutes(api huma.API, d Deps, g *OperationGate) {
 				out[i] = ProductionDecision(item)
 			}
 			return &struct{ Body ProductionDecisionPage }{Body: ProductionDecisionPage{Items: out, NextCursor: next}}, nil
+		})
+	huma.Register(api, huma.Operation{OperationID: "editProductionInstructions", Method: http.MethodPut,
+		Path:         "/api/v1/productions/sets/{set_id}/revisions/{revision}/instructions",
+		Summary:      "Edit production instructions with an exact draft ETag and replay-safe operation ID",
+		MaxBodyBytes: redaction.MaxCommandBytes},
+		func(ctx context.Context, in *struct {
+			SetID    string `path:"set_id" format:"uuid"`
+			Revision int64  `path:"revision" minimum:"1"`
+			IfMatch  string `header:"If-Match"`
+			Body     ProductionInstructionsRequest
+		}) (*struct{ Body ProductionReceipt }, error) {
+			etag, err := parseIfMatch(in.IfMatch)
+			if err != nil {
+				return nil, err
+			}
+			actor, ok := workspaceSnapshotOwner(ctx)
+			if !ok {
+				return nil, NewError(http.StatusUnauthorized, "unauthorized", "authenticated production actor is missing")
+			}
+			request := in.Body.Domain(etag)
+			var receipt redaction.Receipt
+			err = g.mutate(func() error {
+				var err error
+				receipt, err = d.Store.EditProductionInstructions(ctx, actor, in.SetID, in.Revision, request)
+				return err
+			})
+			if err != nil {
+				return nil, productionSetError(err)
+			}
+			return &struct{ Body ProductionReceipt }{Body: ProductionReceipt(receipt)}, nil
+		})
+	huma.Register(api, huma.Operation{OperationID: "applyProductionChanges", Method: http.MethodPost,
+		Path:         "/api/v1/productions/sets/{set_id}/revisions/{revision}/changes",
+		Summary:      "Apply a bounded production change batch with an exact draft ETag",
+		MaxBodyBytes: redaction.MaxCommandBytes},
+		func(ctx context.Context, in *struct {
+			SetID    string `path:"set_id" format:"uuid"`
+			Revision int64  `path:"revision" minimum:"1"`
+			IfMatch  string `header:"If-Match"`
+			Body     ProductionChangesRequest
+		}) (*struct{ Body ProductionReceipt }, error) {
+			etag, err := parseIfMatch(in.IfMatch)
+			if err != nil {
+				return nil, err
+			}
+			actor, ok := workspaceSnapshotOwner(ctx)
+			if !ok {
+				return nil, NewError(http.StatusUnauthorized, "unauthorized", "authenticated production actor is missing")
+			}
+			request := in.Body.Domain(etag)
+			var receipt redaction.Receipt
+			err = g.mutate(func() error {
+				var err error
+				receipt, err = d.Store.ApplyProductionChanges(ctx, actor, in.SetID, in.Revision, request)
+				return err
+			})
+			if err != nil {
+				return nil, productionSetError(err)
+			}
+			return &struct{ Body ProductionReceipt }{Body: ProductionReceipt(receipt)}, nil
 		})
 }
