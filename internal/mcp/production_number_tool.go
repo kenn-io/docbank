@@ -3,6 +3,8 @@ package mcp
 import (
 	"context"
 	"errors"
+	"strings"
+	"unicode/utf8"
 
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/daemonconn"
@@ -21,6 +23,47 @@ type productionNumberPageOutput struct {
 	privateCache
 
 	api.ProductionNumberPage
+}
+
+type findProductionNumberCandidatesInput struct {
+	Query string `json:"query"`
+	Limit int    `json:"limit"`
+}
+
+type productionNumberCandidatesOutput struct {
+	privateCache
+	api.ProductionNumberCandidates
+}
+
+func findProductionNumberCandidates(ctx context.Context, lease *daemonLease,
+	raw []byte) (productionNumberCandidatesOutput, error) {
+	var input findProductionNumberCandidatesInput
+	if err := decodeReadArguments(raw, &input); err != nil {
+		return productionNumberCandidatesOutput{}, err
+	}
+	if input.Query == "" || len(input.Query) > 256 || !utf8.ValidString(input.Query) ||
+		strings.TrimSpace(input.Query) != input.Query || input.Limit < 0 || input.Limit > 25 {
+		return productionNumberCandidatesOutput{}, invalidToolArgumentsError()
+	}
+	limit := input.Limit
+	if limit == 0 {
+		limit = 25
+	}
+	page, err := daemonRead(ctx, lease, func(ctx context.Context, c *daemonconn.Connection) (*api.ProductionNumberCandidates, error) {
+		result, err := c.ProductionNumberCandidates(ctx, input.Query, input.Limit)
+		return &result, err
+	})
+	if err != nil {
+		return productionNumberCandidatesOutput{}, err
+	}
+	if len(page.Items) > limit {
+		return productionNumberCandidatesOutput{}, errors.New("production number candidates exceeded their requested bound")
+	}
+	if page.Items == nil {
+		page.Items = []api.ProductionNumberReference{}
+	}
+	return productionNumberCandidatesOutput{ProductionNumberCandidates: *page,
+		privateCache: newPrivateCache()}, nil
 }
 
 func findProductionNumbers(ctx context.Context, lease *daemonLease, raw []byte) (productionNumberPageOutput, error) {

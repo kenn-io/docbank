@@ -455,7 +455,15 @@ func findProductionNumbersSchemas() (schema, schema) {
 		"end_sequence": integerSchema(1, 0), "after_sequence": integerSchema(0, 0),
 		schemaLimitField: integerSchema(1, 25),
 	})
-	item := objectSchema(schema{
+	item := productionNumberReferenceSchema()
+	output := rootObjectSchema(withPrivateCache(schema{
+		"items": arraySchema(item, 25), "next_sequence": integerSchema(1, 0),
+	}), cacheRequired("items")...)
+	return input, output
+}
+
+func productionNumberReferenceSchema() schema {
+	return objectSchema(schema{
 		"label": stringSchema(256), "job_id": uuidSchema(), "set_id": uuidSchema(),
 		"revision": integerSchema(1, 0), "production_receipt_sha256": sha256Schema(),
 		"artifact_manifest_sha256": sha256Schema(), "source_version_id": uuidSchema(),
@@ -465,9 +473,18 @@ func findProductionNumbersSchemas() (schema, schema) {
 	}, "label", "job_id", "set_id", "revision", "production_receipt_sha256",
 		"artifact_manifest_sha256", "source_version_id", "occurrence_id", "page",
 		"artifact_id", "artifact_sha256", "artifact_path", "volume")
+}
+
+func findProductionNumberCandidatesSchemas() (schema, schema) {
+	input := rootObjectSchema(schema{
+		"query":          schema{"type": "string", "minLength": 1, "maxLength": 256},
+		schemaLimitField: integerSchema(1, 25),
+	}, "query")
 	output := rootObjectSchema(withPrivateCache(schema{
-		"items": arraySchema(item, 25), "next_sequence": integerSchema(1, 0),
-	}), cacheRequired("items")...)
+		"match_kind": enumSchema("none", "exact", "prefix", "substring"),
+		"items":      arraySchema(productionNumberReferenceSchema(), 25),
+		"ambiguous":  booleanSchema(), "truncated": booleanSchema(),
+	}), cacheRequired("match_kind", "items", "ambiguous", "truncated")...)
 	return input, output
 }
 

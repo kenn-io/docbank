@@ -104,6 +104,8 @@ func executeReadTool(
 		output, err = findBatesExports(ctx, lease, raw)
 	case "find_production_numbers":
 		output, err = findProductionNumbers(ctx, lease, raw)
+	case "find_production_number_candidates":
+		output, err = findProductionNumberCandidates(ctx, lease, raw)
 	default:
 		return nil, errors.New("unknown Docbank read tool")
 	}

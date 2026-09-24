@@ -63,3 +63,36 @@ func TestProductionNumberToolBoundsAndRequiresOneSelector(t *testing.T) {
 	_, err = findProductionNumbers(t.Context(), nil, []byte(`{"namespace_id":"11111111-1111-4111-8111-111111111111"}`))
 	require.Error(t, err)
 }
+
+func TestProductionNumberCandidateToolReportsFallbackAndAmbiguity(t *testing.T) {
+	match := api.ProductionNumberReference{Label: "OUR000041",
+		JobID: testBatesOperationID, SetID: testBatesSnapshotID, Revision: 1,
+		ProductionReceiptSHA256: testProfileID, ArtifactManifestSHA256: testProfileID,
+		SourceVersionID: testBatesAllocationID, OccurrenceID: testBatesSnapshotID,
+		Page: 1, ArtifactID: testBatesAllocationID, ArtifactSHA256: testProfileID,
+		ArtifactPath: "VOL001/custom-output.pdf", Volume: "VOL001"}
+	daemon := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		assert.Equal(t, http.MethodGet, request.Method)
+		assert.Equal(t, "/api/v1/productions/numbers/candidates", request.URL.Path)
+		assert.Equal(t, "OUR00004", request.URL.Query().Get("query"))
+		assert.Equal(t, "1", request.URL.Query().Get("limit"))
+		writeDaemonJSON(t, response, api.ProductionNumberCandidates{
+			MatchKind: "prefix", Items: []api.ProductionNumberReference{match},
+			Ambiguous: true, Truncated: true})
+	}))
+	t.Cleanup(daemon.Close)
+	server := newBatesToolTestServer(t, daemon.URL, false)
+	result := callToolResult(t, server, "find_production_number_candidates",
+		map[string]any{"query": "OUR00004", "limit": 1})
+	output := objectField(t, result, "structuredContent")
+	require.Equal(t, "prefix", output["match_kind"])
+	require.Equal(t, true, output["ambiguous"])
+	require.Equal(t, true, output["truncated"])
+	require.Len(t, output["items"], 1)
+	tool := catalogMap(toolCatalog(false))["find_production_number_candidates"]
+	require.NotNil(t, tool)
+	assertSchemaAccepts(t, tool.InputSchema, map[string]any{"query": "OUR00004", "limit": 25})
+	assertSchemaRejects(t, tool.InputSchema, map[string]any{"query": "OUR00004", "limit": 26})
+	_, err := findProductionNumberCandidates(t.Context(), nil, []byte(`{}`))
+	require.Error(t, err)
+}
