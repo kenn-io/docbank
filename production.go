@@ -25,6 +25,68 @@ type ProductionFinalizationResult = store.ProductionFinalizationResult
 type ProductionJobStatus = store.ProductionJobStatus
 type ProductionRecipeCatalog = api.ProductionRecipeCatalog
 
+// ProductionPackageReceipt identifies the exact retained archive streamed by
+// an embedded vault. The caller must discard destination bytes on error.
+type ProductionPackageReceipt struct {
+	JobID          string `json:"job_id"`
+	OperationID    string `json:"operation_id"`
+	VersionID      string `json:"version_id"`
+	ArchiveSHA256  string `json:"archive_sha256"`
+	EvidenceSHA256 string `json:"evidence_sha256"`
+	Size           int64  `json:"size"`
+}
+
+// DownloadProductionPackageTo verifies a retained production package in this
+// embedded vault before streaming its recipient archive to destination.
+func (v *Vault) DownloadProductionPackageTo(ctx context.Context, jobID, operationID string,
+	destination io.Writer) (_ ProductionPackageReceipt, retErr error) {
+	v.lifecycle.RLock()
+	defer v.lifecycle.RUnlock()
+	if v.closed {
+		return ProductionPackageReceipt{}, ErrClosed
+	}
+	if destination == nil {
+		return ProductionPackageReceipt{}, errors.New("production package destination is required")
+	}
+	staged, err := processing.PrepareRetainedProductionPackageDownload(ctx, v.metadata, v.blobs,
+		v.vaultRoot, jobID, operationID)
+	if err != nil {
+		return ProductionPackageReceipt{}, err
+	}
+	defer func() { retErr = errors.Join(retErr, staged.Close()) }()
+	file, err := os.Open(staged.ArchivePath)
+	if err != nil {
+		return ProductionPackageReceipt{}, err
+	}
+	defer func() { retErr = errors.Join(retErr, file.Close()) }()
+	archive := staged.Retained.Archive.Version
+	hasher := sha256.New()
+	written, err := io.CopyBuffer(io.MultiWriter(destination, hasher),
+		io.LimitReader(embeddedProductionPackageReader{ctx: ctx, reader: file}, archive.Size+1),
+		make([]byte, 256<<10))
+	if err != nil {
+		return ProductionPackageReceipt{}, err
+	}
+	if written != archive.Size || hex.EncodeToString(hasher.Sum(nil)) != archive.BlobHash {
+		return ProductionPackageReceipt{}, errors.New("production package staged bytes failed verification")
+	}
+	return ProductionPackageReceipt{JobID: jobID, OperationID: operationID,
+		VersionID: archive.ID, ArchiveSHA256: archive.BlobHash,
+		EvidenceSHA256: staged.Retained.Evidence.SHA256, Size: archive.Size}, nil
+}
+
+type embeddedProductionPackageReader struct {
+	ctx    context.Context
+	reader io.Reader
+}
+
+func (r embeddedProductionPackageReader) Read(data []byte) (int, error) {
+	if err := r.ctx.Err(); err != nil {
+		return 0, err
+	}
+	return r.reader.Read(data)
+}
+
 // ProductionPreviewRequest selects one member page and a replay identity.
 type ProductionPreviewRequest struct {
 	OperationID string
@@ -122,14 +184,15 @@ func readVerifiedProductionPreviewBytes(file *os.File, size int64, digest string
 }
 
 // The exclusive vault lock is held before this startup sweep runs. Interrupted
-// embedded previews leave only private, disposable stage directories.
-func sweepEmbeddedProductionPreviewStages(root string) error {
+// embedded previews and downloads leave only private, disposable stages.
+func sweepEmbeddedProductionStages(root string) error {
 	entries, err := os.ReadDir(root)
 	if err != nil {
 		return err
 	}
 	for _, entry := range entries {
-		if entry.IsDir() && strings.HasPrefix(entry.Name(), ".production-preview-") {
+		if entry.IsDir() && (strings.HasPrefix(entry.Name(), ".production-preview-") ||
+			strings.HasPrefix(entry.Name(), ".production-download-")) {
 			if err := os.RemoveAll(filepath.Join(root, entry.Name())); err != nil {
 				return err
 			}
