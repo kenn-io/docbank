@@ -17,6 +17,7 @@ import (
 )
 
 func TestBeginWalkRejectsOversizedPage(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 
 	walker, err := s.BeginWalk(t.Context(), "/", 5001, false)
@@ -28,6 +29,7 @@ func TestBeginWalkRejectsOversizedPage(t *testing.T) {
 }
 
 func TestBeginWalkAcceptsMaximumPageSize(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 
 	walker, err := s.BeginWalk(t.Context(), "/", MaxWalkPageSize, false)
@@ -40,6 +42,7 @@ func TestBeginWalkAcceptsMaximumPageSize(t *testing.T) {
 }
 
 func TestWalkOrdersDuplicatePathsByNodeIDAndOptionallyIncludesTrash(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	first, err := s.CreateFile(
 		t.Context(), s.RootID(), "same.txt", fakeHash("81"), 5, "text/plain",
@@ -73,6 +76,7 @@ func TestWalkOrdersDuplicatePathsByNodeIDAndOptionallyIncludesTrash(t *testing.T
 }
 
 func TestWalkNonRootScopeNeverSeedsRequestedRootsSibling(t *testing.T) {
+	t.Parallel()
 	for _, driver := range walkTestDrivers() {
 		t.Run(driver.name, func(t *testing.T) {
 			s := newTestStoreWithDriver(t, driver.driver)
@@ -97,6 +101,7 @@ func TestWalkNonRootScopeNeverSeedsRequestedRootsSibling(t *testing.T) {
 }
 
 func TestWalkSetupAndPageWorkStayBoundedAcrossSubtreeSizes(t *testing.T) {
+	t.Parallel()
 	for _, driver := range walkTestDrivers() {
 		t.Run(driver.name, func(t *testing.T) {
 			var setupReads int64
@@ -129,6 +134,7 @@ func TestWalkSetupAndPageWorkStayBoundedAcrossSubtreeSizes(t *testing.T) {
 }
 
 func TestWalkLiveOnlySeekUsesPartialIndexAcrossTrashedCardinality(t *testing.T) {
+	t.Parallel()
 	for _, driver := range walkTestDrivers() {
 		t.Run(driver.name, func(t *testing.T) {
 			for _, first := range []bool{true, false} {
@@ -176,6 +182,7 @@ func TestWalkLiveOnlySeekUsesPartialIndexAcrossTrashedCardinality(t *testing.T) 
 }
 
 func TestWalkIncludeTrashUsesBoundedDuplicateRangeSeeksAcrossCardinality(t *testing.T) {
+	t.Parallel()
 	for _, driver := range walkTestDrivers() {
 		t.Run(driver.name, func(t *testing.T) {
 			s := newTestStoreWithDriver(t, driver.driver)
@@ -298,6 +305,7 @@ func walkTestDrivers() []struct {
 }
 
 func TestWalkOrdersWideDuplicateDirectoryFrontierGlobally(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	wantIDs := []int64{s.RootID()}
 	for i := range 20 {
@@ -337,6 +345,7 @@ func TestWalkOrdersWideDuplicateDirectoryFrontierGlobally(t *testing.T) {
 }
 
 func TestWalkEnforcesDepthAndPathBoundsIncrementally(t *testing.T) {
+	t.Parallel()
 	t.Run("depth", func(t *testing.T) {
 		for _, test := range []struct {
 			name      string
@@ -384,6 +393,7 @@ func TestWalkEnforcesDepthAndPathBoundsIncrementally(t *testing.T) {
 }
 
 func TestWalkMidPageCancellationRollsBackFrontierAndStats(t *testing.T) {
+	t.Parallel()
 	for _, driver := range walkTestDrivers() {
 		t.Run(driver.name, func(t *testing.T) {
 			s := newTestStoreWithDriver(t, driver.driver)

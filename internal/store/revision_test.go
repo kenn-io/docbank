@@ -8,6 +8,7 @@ import (
 )
 
 func TestStaleRevisionRejected(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
 	d, err := s.Mkdir(ctx, s.RootID(), "d")
@@ -35,6 +36,7 @@ func TestStaleRevisionRejected(t *testing.T) {
 }
 
 func TestNegativeRevisionSkipsCheck(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
 	f, err := s.CreateFile(ctx, s.RootID(), "f.txt", fakeHash("a1"), 1, "text/plain")
@@ -47,6 +49,7 @@ func TestNegativeRevisionSkipsCheck(t *testing.T) {
 // never equal a real revision, so it must fail stale — an accidentally
 // propagated bad value must not silently mutate.
 func TestBelowSentinelRevisionFailsStale(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
 	f, err := s.CreateFile(ctx, s.RootID(), "f.txt", fakeHash("a1"), 1, "text/plain")

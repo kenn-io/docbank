@@ -40,6 +40,7 @@ func independentMemberHash(members []SnapshotMember) string {
 // Reversing the presentation input must not change the identity receipt, and
 // lexically sorting decimal node IDs would put 10 before 2.
 func TestQuerySnapshotMemberHashUsesNumericIdentityOrder(t *testing.T) {
+	t.Parallel()
 	members := []SnapshotMember{
 		{NodeID: 10, ContentVersionID: "v10"},
 		{NodeID: 2, ContentVersionID: "v2"},
@@ -52,6 +53,7 @@ func TestQuerySnapshotMemberHashUsesNumericIdentityOrder(t *testing.T) {
 // Omitting member identity, source size, or frozen metadata from the selected
 // read view makes this fail even if a live search still returns both files.
 func TestQuerySnapshotMaterializesFrozenRowsAndReceipts(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
 	run := createCollectionRun(t, s, "zeta.TXT", "snapshot-zeta")
@@ -114,6 +116,7 @@ func TestQuerySnapshotMaterializesFrozenRowsAndReceipts(t *testing.T) {
 }
 
 func TestQuerySnapshotRejectsBoundsDuringMaterialization(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
 	for _, name := range []string{"a.txt", "b.txt", "c.txt"} {
@@ -144,6 +147,7 @@ func TestQuerySnapshotRejectsBoundsDuringMaterialization(t *testing.T) {
 }
 
 func TestQuerySnapshotSortsTypedPrimaryAndAscendingIdentityTies(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
 	first, err := s.CreateFile(ctx, s.RootID(), "z.txt", fakeHash("sort-first"), 10, "TEXT/PLAIN; Charset=UTF-8")

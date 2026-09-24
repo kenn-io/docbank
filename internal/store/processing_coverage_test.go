@@ -12,6 +12,7 @@ import (
 )
 
 func TestProcessingCoverageLargeFenceKeepsStatesDisjoint(t *testing.T) {
+	t.Parallel()
 	s, versionID, profile, attachmentID := newEmbeddingCatalogFixture(t)
 	const total = 4096
 	ids := []string{versionID}
@@ -58,6 +59,7 @@ func TestProcessingCoverageLargeFenceKeepsStatesDisjoint(t *testing.T) {
 }
 
 func TestProcessingCoverageReportsRebuildWhilePreviousGenerationServes(t *testing.T) {
+	t.Parallel()
 	s, versions := newRenditionCatalogFixture(t)
 	profile := catalogProcessingProfile(t, false)
 	oldBuild := catalogRenditionBuild(s, profile)
@@ -116,6 +118,7 @@ func TestProcessingCoverageReportsRebuildWhilePreviousGenerationServes(t *testin
 }
 
 func TestProcessingCoverageEmbeddingReplacementKeepsServingHead(t *testing.T) {
+	t.Parallel()
 	s, versionID, profile, _ := newEmbeddingCatalogFixture(t)
 	old := embeddingSetFixture(s, versionID, profile.Fingerprint, document.EmbeddingInputOriginalFile, "optional", "")
 	require.NoError(t, s.StageEmbeddingSet(t.Context(), old))
@@ -167,6 +170,7 @@ func TestProcessingCoverageEmbeddingReplacementKeepsServingHead(t *testing.T) {
 }
 
 func TestProcessingCoverageChunkRequiresCurrentEvidence(t *testing.T) {
+	t.Parallel()
 	s, versionID, profile, attachmentID := newEmbeddingCatalogFixture(t)
 	chunk := embeddingSetFixture(s, versionID, profile.Fingerprint, document.EmbeddingInputRenditionChunk, "chunk", attachmentID)
 	require.NoError(t, s.StageEmbeddingSet(t.Context(), chunk))

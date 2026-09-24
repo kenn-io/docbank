@@ -8,6 +8,7 @@ import (
 )
 
 func TestTagLifecycleAndNodeRevisions(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
 	one, err := s.Mkdir(ctx, s.RootID(), "one")
@@ -88,6 +89,7 @@ func TestTagLifecycleAndNodeRevisions(t *testing.T) {
 }
 
 func TestTagRenameAndDeleteRejectStaleRevision(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
 	tag, err := s.CreateTag(ctx, "records")
@@ -110,6 +112,7 @@ func TestTagRenameAndDeleteRejectStaleRevision(t *testing.T) {
 }
 
 func TestTagQueriesAreBoundedAndIncludeTrashedNodes(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
 	first, err := s.CreateTag(ctx, "beta")
@@ -177,6 +180,7 @@ func TestTagQueriesAreBoundedAndIncludeTrashedNodes(t *testing.T) {
 }
 
 func TestTaggedNodesReturnsRootPath(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
 	tag, err := s.CreateTag(ctx, "root")
@@ -198,6 +202,7 @@ func TestTaggedNodesReturnsRootPath(t *testing.T) {
 }
 
 func TestTagAssignmentPathUsesCurrentTopology(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
 	left, err := s.Mkdir(ctx, s.RootID(), "left")
@@ -234,6 +239,7 @@ func TestTagAssignmentPathUsesCurrentTopology(t *testing.T) {
 }
 
 func TestTagNameValidation(t *testing.T) {
+	t.Parallel()
 	for name, input := range map[string]string{
 		"empty":        "",
 		"invalid utf8": string([]byte{0xff}),
@@ -248,6 +254,7 @@ func TestTagNameValidation(t *testing.T) {
 }
 
 func TestNodeTagsHasReverseLookupIndex(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	var definition string
 	require.NoError(t, s.db.QueryRow(`

@@ -11,6 +11,7 @@ import (
 )
 
 func TestExportCompletedMailboxCollectionPinsImportedVersions(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	f := newEmailFixture(t, s, "seed.eml")
 	source, err := emailVersion(t.Context(), s.db, f.publication.ContentVersionID)
@@ -65,6 +66,7 @@ func TestExportCompletedMailboxCollectionPinsImportedVersions(t *testing.T) {
 }
 
 func TestExportPublicationReleasedOnlyAfterRetentionCleanup(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	f := newEmailFixture(t, s, "source.eml")
 	view, err := s.PublishEmailGeneration(t.Context(), f.publication)

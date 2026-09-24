@@ -12,6 +12,7 @@ import (
 )
 
 func TestSavedQueryRunMetadataImportRequiresReachableComparisonChain(t *testing.T) {
+	t.Parallel()
 	source := newTestStore(t)
 	definition, err := source.CreateSavedQuery(t.Context(), "root", "", SavedQueryKindQuery, []byte(`{}`))
 	require.NoError(t, err)
@@ -56,6 +57,7 @@ func TestSavedQueryRunMetadataImportRequiresReachableComparisonChain(t *testing.
 }
 
 func TestSavedQueryRunBackupRestorePreservesReceiptWithoutEphemeralHandle(t *testing.T) {
+	t.Parallel()
 	source := newTestStore(t)
 	definition, err := source.CreateSavedQuery(t.Context(), "root", "", SavedQueryKindQuery, []byte(`{}`))
 	require.NoError(t, err)
@@ -92,6 +94,7 @@ func TestSavedQueryRunBackupRestorePreservesReceiptWithoutEphemeralHandle(t *tes
 }
 
 func TestSavedQueryRunMetadataImportRejectsMalformedReceiptTransactionally(t *testing.T) {
+	t.Parallel()
 	source := newTestStore(t)
 	definition, err := source.CreateSavedQuery(t.Context(), "root", "", SavedQueryKindQuery, []byte(`{}`))
 	require.NoError(t, err)
@@ -117,6 +120,7 @@ func TestSavedQueryRunMetadataImportRejectsMalformedReceiptTransactionally(t *te
 }
 
 func TestSavedQueryRunMetadataImportRejectsInventedPreviousReceipt(t *testing.T) {
+	t.Parallel()
 	source := newTestStore(t)
 	definition, err := source.CreateSavedQuery(t.Context(), "root", "", SavedQueryKindQuery, []byte(`{}`))
 	require.NoError(t, err)
@@ -141,6 +145,7 @@ func TestSavedQueryRunMetadataImportRejectsInventedPreviousReceipt(t *testing.T)
 }
 
 func TestSavedQueryRunMetadataImportRejectsDisconnectedComparisonChain(t *testing.T) {
+	t.Parallel()
 	source := newTestStore(t)
 	definition, err := source.CreateSavedQuery(t.Context(), "root", "", SavedQueryKindQuery, []byte(`{}`))
 	require.NoError(t, err)
@@ -167,6 +172,7 @@ func TestSavedQueryRunMetadataImportRejectsDisconnectedComparisonChain(t *testin
 }
 
 func TestSavedQueryRunMetadataValidationRejectsCorruptDatabaseAuthority(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	definition, err := s.CreateSavedQuery(t.Context(), "root", "", SavedQueryKindQuery, []byte(`{}`))
 	require.NoError(t, err)
@@ -182,6 +188,7 @@ func TestSavedQueryRunMetadataValidationRejectsCorruptDatabaseAuthority(t *testi
 }
 
 func TestSavedQueryRunMetadataValidationRejectsPartialPreviousAuthority(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	definition, err := s.CreateSavedQuery(t.Context(), "root", "", SavedQueryKindQuery, []byte(`{}`))
 	require.NoError(t, err)
@@ -196,6 +203,7 @@ func TestSavedQueryRunMetadataValidationRejectsPartialPreviousAuthority(t *testi
 }
 
 func TestSavedQueryRunMetadataValidationRejectsNoncanonicalTimestamp(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	definition, err := s.CreateSavedQuery(t.Context(), "root", "", SavedQueryKindQuery, []byte(`{}`))
 	require.NoError(t, err)

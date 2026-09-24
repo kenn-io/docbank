@@ -11,6 +11,7 @@ import (
 )
 
 func TestEmailPurgeSharedGenerationAndPendingSuppression(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	f := newEmailFixture(t, s, "first.eml")
 	a, err := s.PublishEmailGeneration(t.Context(), f.publication)
@@ -59,6 +60,7 @@ func TestEmailPurgeSharedGenerationAndPendingSuppression(t *testing.T) {
 }
 
 func TestEmailTargetsKeysetRetriesPendingBodiesAndSuppressionWins(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	f := newEmailFixture(t, s, "first.eml")
 	a, err := s.PublishEmailGeneration(t.Context(), f.publication)
@@ -116,6 +118,7 @@ func TestEmailTargetsKeysetRetriesPendingBodiesAndSuppressionWins(t *testing.T) 
 }
 
 func TestEmailTargetsSkipCompletedCorruptionAndContinueToPending(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	f := newEmailFixture(t, s, "complete.eml")
 	complete, err := s.PublishEmailGeneration(t.Context(), f.publication)
@@ -143,6 +146,7 @@ func TestEmailTargetsSkipCompletedCorruptionAndContinueToPending(t *testing.T) {
 }
 
 func TestEmailTargetQueryUsesMIMEPartialIndex(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	rows, err := s.db.QueryContext(t.Context(),
 		"EXPLAIN QUERY PLAN "+missingEmailVersionIDsQuery, "", fakeHash("recipe"))
@@ -160,6 +164,7 @@ func TestEmailTargetQueryUsesMIMEPartialIndex(t *testing.T) {
 }
 
 func TestEmailAuditPurgeRollbackReplayAndTamper(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	f := newEmailFixture(t, s, "audited.eml")
 	v, err := s.PublishEmailGeneration(t.Context(), f.publication)
@@ -202,6 +207,7 @@ func TestEmailAuditPurgeRollbackReplayAndTamper(t *testing.T) {
 }
 
 func TestEmailVersionPruneAndLastTrashLeaveOrphansForCollection(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	f := newEmailFixture(t, s, "first.eml")
 	a, err := s.PublishEmailGeneration(t.Context(), f.publication)

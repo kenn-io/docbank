@@ -8,6 +8,7 @@ import (
 )
 
 func TestBatchMoveAppliesFinalTopologyAtomically(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
 	left, err := s.Mkdir(ctx, s.RootID(), "left")
@@ -41,6 +42,7 @@ func TestBatchMoveAppliesFinalTopologyAtomically(t *testing.T) {
 }
 
 func TestBatchMoveSupportsNestedNetChanges(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
 	a, err := s.Mkdir(ctx, s.RootID(), "a")
@@ -66,6 +68,7 @@ func TestBatchMoveSupportsNestedNetChanges(t *testing.T) {
 }
 
 func TestBatchMoveResolvesDestinationParentsInFinalTree(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
 	a, err := s.Mkdir(ctx, s.RootID(), "a")
@@ -99,6 +102,7 @@ func TestBatchMoveResolvesDestinationParentsInFinalTree(t *testing.T) {
 }
 
 func TestBatchMoveSwapsDirectoryCoordinates(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
 	left, err := s.Mkdir(ctx, s.RootID(), "left")
@@ -128,6 +132,7 @@ func TestBatchMoveSwapsDirectoryCoordinates(t *testing.T) {
 }
 
 func TestBatchMoveCanOccupyVacatedDirectoryCoordinate(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
 	archive, err := s.Mkdir(ctx, s.RootID(), "archive")
@@ -152,6 +157,7 @@ func TestBatchMoveCanOccupyVacatedDirectoryCoordinate(t *testing.T) {
 }
 
 func TestBatchMoveFailureRollsBackWholePlan(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
 	src, err := s.Mkdir(ctx, s.RootID(), "src")
@@ -178,6 +184,7 @@ func TestBatchMoveFailureRollsBackWholePlan(t *testing.T) {
 }
 
 func TestBatchMoveRejectsDuplicateSourceAndMissingFinalParent(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
 	a, err := s.Mkdir(ctx, s.RootID(), "a")

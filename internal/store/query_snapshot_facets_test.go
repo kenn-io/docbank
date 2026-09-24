@@ -115,6 +115,7 @@ func facetCounts(facet SnapshotFacet) map[string]int64 {
 // Returning a live filter population, counting memberships as documents, or
 // dropping fixed zero buckets changes these literal facet counts.
 func TestQuerySnapshotFacetsCoverEveryDimension(t *testing.T) {
+	t.Parallel()
 	fixture := newSnapshotFacetFixture(t)
 	projection, err := fixture.store.MaterializeQuerySnapshot(t.Context(), SnapshotRequest{
 		Query: snapshotTestQuery(t, `{}`), Coverage: fixture.selection,
@@ -174,6 +175,7 @@ func TestQuerySnapshotFacetsCoverEveryDimension(t *testing.T) {
 }
 
 func TestQuerySnapshotFacetsRetainNestedFiltersAndGlobalDuplicates(t *testing.T) {
+	t.Parallel()
 	fixture := newSnapshotFacetFixture(t)
 	_, err := fixture.store.CreateSavedQuery(t.Context(), "PDFs", "", SavedQueryKindQuery,
 		[]byte(`{"filters":{"extensions":["pdf"]}}`))
@@ -201,6 +203,7 @@ func TestQuerySnapshotFacetsRetainNestedFiltersAndGlobalDuplicates(t *testing.T)
 // Omitting the selected outer dimension must keep the other constraint and
 // append a selected zero rather than presenting an empty facet.
 func TestQuerySnapshotFacetsSelfExcludeAndRetainSelectedZero(t *testing.T) {
+	t.Parallel()
 	fixture := newSnapshotFacetFixture(t)
 	value := snapshotTestQuery(t, `{"filters":{"extensions":["pdf"],"media_families":["text"]}}`)
 	projection, err := fixture.store.MaterializeQuerySnapshot(t.Context(), SnapshotRequest{
@@ -226,6 +229,7 @@ func TestQuerySnapshotFacetsSelfExcludeAndRetainSelectedZero(t *testing.T) {
 }
 
 func TestQuerySnapshotFacetUnavailableStatesAreExplicit(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	_, err := s.CreateFile(t.Context(), s.RootID(), "a.txt", fakeHash("facet-unavailable-a"), 1, "text/plain")
 	require.NoError(t, err)
@@ -256,6 +260,7 @@ func TestQuerySnapshotFacetUnavailableStatesAreExplicit(t *testing.T) {
 }
 
 func TestQuerySnapshotFacetMembershipBudgetBoundsOneMultivalueDocument(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	node, err := s.CreateFile(t.Context(), s.RootID(), "tagged.txt", fakeHash("facet-membership-budget"), 1, "text/plain")
 	require.NoError(t, err)
@@ -276,6 +281,7 @@ func TestQuerySnapshotFacetMembershipBudgetBoundsOneMultivalueDocument(t *testin
 }
 
 func TestQuerySnapshotFacetValidationAndParentCancellation(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	value := snapshotTestQuery(t, `{}`)
 	for _, facets := range [][]string{{"future"}, {"tags", "tags"}} {
@@ -289,6 +295,7 @@ func TestQuerySnapshotFacetValidationAndParentCancellation(t *testing.T) {
 }
 
 func TestQuerySnapshotFacetDeadlineKeepsCompletedRows(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	_, err := s.CreateFile(t.Context(), s.RootID(), "a.txt", fakeHash("facet-timeout"), 1, "text/plain")
 	require.NoError(t, err)
@@ -307,6 +314,7 @@ func TestQuerySnapshotFacetDeadlineKeepsCompletedRows(t *testing.T) {
 // A selected value beyond the top fifty must be appended, while Other still
 // accounts for the omitted membership instead of silently losing it.
 func TestQuerySnapshotFacetTopFiftyAppendsSelectedValues(t *testing.T) {
+	t.Parallel()
 	counts := make(map[string]int64)
 	labels := make(map[string]string)
 	for i := range 52 {
@@ -324,6 +332,7 @@ func TestQuerySnapshotFacetTopFiftyAppendsSelectedValues(t *testing.T) {
 }
 
 func TestQuerySnapshotRejectsProductionRowOver64KiB(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	node, err := s.CreateFile(t.Context(), s.RootID(), "bounded.txt", fakeHash("bounded-row"), 1, "text/plain")
 	require.NoError(t, err)

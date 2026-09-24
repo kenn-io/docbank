@@ -9,6 +9,7 @@ import (
 )
 
 func TestRecordExternalUIDAliasesPreservesExistingHopBound(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
 	person, err := s.CreatePerson(ctx, "Example Person", "operator")
@@ -31,6 +32,7 @@ func TestRecordExternalUIDAliasesPreservesExistingHopBound(t *testing.T) {
 }
 
 func TestPersonExternalAliasCycle(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	_, err := s.db.Exec(`INSERT INTO person_external_uid_aliases(system,archive_id,retired_uid,surviving_uid,observed_at)
 		VALUES('msgvault','synthetic','a','b','2026-09-12T00:00:00Z'),
@@ -41,6 +43,7 @@ func TestPersonExternalAliasCycle(t *testing.T) {
 }
 
 func TestPersonExternalIdentityLimitRejectsNewAndAllowsExistingUpdate(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	person, err := s.CreatePerson(t.Context(), "Ada", "operator")
 	require.NoError(t, err)
@@ -61,6 +64,7 @@ func TestPersonExternalIdentityLimitRejectsNewAndAllowsExistingUpdate(t *testing
 }
 
 func TestPersonExternalIdentityForwardsAndHonorsUnlinkedTombstone(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
 	person, err := s.CreatePerson(ctx, "Ada", "transfer")
@@ -93,6 +97,7 @@ func TestPersonExternalIdentityForwardsAndHonorsUnlinkedTombstone(t *testing.T) 
 }
 
 func TestRecordExternalUIDAliasesRetiresCurrentIdentity(t *testing.T) {
+	t.Parallel()
 	for _, targetExists := range []bool{false, true} {
 		t.Run(fmt.Sprintf("target exists=%t", targetExists), func(t *testing.T) {
 			s := newTestStore(t)
@@ -140,6 +145,7 @@ func TestRecordExternalUIDAliasesRetiresCurrentIdentity(t *testing.T) {
 }
 
 func TestLinkExternalIdentityRejectsCurrentAlias(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
 	person, err := s.CreatePerson(ctx, "Example Person", "operator")
@@ -154,6 +160,7 @@ func TestLinkExternalIdentityRejectsCurrentAlias(t *testing.T) {
 }
 
 func TestPersonExternalCurrentIdentityRequiresAliasTransition(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	person, err := s.CreatePerson(t.Context(), "Ada", "operator")
 	require.NoError(t, err)
@@ -174,6 +181,7 @@ func TestPersonExternalCurrentIdentityRequiresAliasTransition(t *testing.T) {
 }
 
 func TestPersonExternalIdentityCannotBeLinkedToAnotherPerson(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	owner, err := s.CreatePerson(t.Context(), "Owner", "operator")
 	require.NoError(t, err)
@@ -195,6 +203,7 @@ func TestPersonExternalIdentityCannotBeLinkedToAnotherPerson(t *testing.T) {
 }
 
 func TestRecordExternalUIDAliasesRetargetsAfterSplit(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	var people []Person
 	for _, uid := range []string{"survivor", "split"} {
@@ -220,6 +229,7 @@ func TestRecordExternalUIDAliasesRetargetsAfterSplit(t *testing.T) {
 }
 
 func TestPersonActorKeysPaginationValidatesCursor(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	person, err := s.CreatePerson(t.Context(), "Ada", "operator")
 	require.NoError(t, err)
@@ -250,6 +260,7 @@ func TestPersonActorKeysPaginationValidatesCursor(t *testing.T) {
 }
 
 func TestRecordExternalUIDAliasesRejectsCycleAtomically(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	person, err := s.CreatePerson(t.Context(), "Example Person", "operator")
 	require.NoError(t, err)
@@ -283,6 +294,7 @@ func TestRecordExternalUIDAliasesRejectsCycleAtomically(t *testing.T) {
 }
 
 func TestActorKeysForPersonForwardsMergedPersonID(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	survivor, err := s.CreatePerson(t.Context(), "Survivor", "operator")
 	require.NoError(t, err)

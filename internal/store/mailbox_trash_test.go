@@ -9,6 +9,7 @@ import (
 )
 
 func TestTrashEmptyRetainsMailboxReceiptsAndDeletesUnrelatedRoots(t *testing.T) {
+	t.Parallel()
 	for _, subtree := range []bool{false, true} {
 		name := "separate source and attachment"
 		if subtree {
@@ -96,6 +97,7 @@ func TestTrashEmptyRetainsMailboxReceiptsAndDeletesUnrelatedRoots(t *testing.T) 
 // Retained parent/child identities must survive, but must not starve an older-
 // first bounded deletion batch or roll back deletion of unrelated trash.
 func TestMailboxRetainedTrashAllowsBoundedProgress(t *testing.T) {
+	t.Parallel()
 	for _, target := range []string{"parent", "child", "directory"} {
 		t.Run(target, func(t *testing.T) {
 			s := newTestStore(t)

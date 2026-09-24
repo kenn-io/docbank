@@ -19,6 +19,7 @@ import (
 )
 
 func TestEmbeddingCatalogChunkAndDirectFileHeadsCoexist(t *testing.T) {
+	t.Parallel()
 	s, versionID, profile, attachmentID := newEmbeddingCatalogFixture(t)
 	direct := embeddingSetFixture(s, versionID, profile.Fingerprint, document.EmbeddingInputOriginalFile, "optional", "")
 	chunk := embeddingSetFixture(s, versionID, profile.Fingerprint, document.EmbeddingInputRenditionChunk, "chunk", attachmentID)
@@ -44,6 +45,7 @@ func TestEmbeddingCatalogChunkAndDirectFileHeadsCoexist(t *testing.T) {
 }
 
 func TestEmbeddingCatalogDeduplicatesExactSetsButFencesAttachmentContext(t *testing.T) {
+	t.Parallel()
 	s, versionID, profile, attachmentID := newEmbeddingCatalogFixture(t)
 	record := embeddingSetFixture(s, versionID, profile.Fingerprint, document.EmbeddingInputRenditionChunk, "chunk", attachmentID)
 	require.NoError(t, s.StageEmbeddingSet(t.Context(), record))
@@ -77,6 +79,7 @@ func TestEmbeddingCatalogDeduplicatesExactSetsButFencesAttachmentContext(t *test
 }
 
 func TestHydrateEmbeddingInputGenerationRequiresExactCanonicalArtifact(t *testing.T) {
+	t.Parallel()
 	s, versionID, profile, attachmentID := newEmbeddingCatalogFixture(t)
 	record := embeddingSetFixture(s, versionID, profile.Fingerprint,
 		document.EmbeddingInputRenditionChunk, "chunk", attachmentID)
@@ -102,6 +105,7 @@ func TestHydrateEmbeddingInputGenerationRequiresExactCanonicalArtifact(t *testin
 }
 
 func TestEmbeddingCatalogLeasedStageAndPublishAreAtomicallyFenced(t *testing.T) {
+	t.Parallel()
 	s, versionID, profile, _ := newEmbeddingCatalogFixture(t)
 	record := embeddingSetFixture(s, versionID, profile.Fingerprint,
 		document.EmbeddingInputOriginalFile, "optional", "")
@@ -167,6 +171,7 @@ func TestEmbeddingCatalogLeasedStageAndPublishAreAtomicallyFenced(t *testing.T) 
 }
 
 func TestEmbeddingJobCatalogClaimsRetriesAndResumesDurably(t *testing.T) {
+	t.Parallel()
 	s, versionID, profile, _ := newEmbeddingCatalogFixture(t)
 	record := embeddingSetFixture(s, versionID, profile.Fingerprint,
 		document.EmbeddingInputOriginalFile, "optional", "")
@@ -229,6 +234,7 @@ func TestEmbeddingJobCatalogClaimsRetriesAndResumesDurably(t *testing.T) {
 }
 
 func TestEmbeddingJobCatalogClaimsExactRequestedJob(t *testing.T) {
+	t.Parallel()
 	s, versionID, profile, _ := newEmbeddingCatalogFixture(t)
 	firstRequest := embeddingJobTestRequest(t, s, versionID, profile, "target-first")
 	secondRequest := embeddingJobTestRequest(t, s, versionID, profile, "target-second")
@@ -249,6 +255,7 @@ func TestEmbeddingJobCatalogClaimsExactRequestedJob(t *testing.T) {
 }
 
 func TestEmbeddingJobsRebuildFromPortableAuthorityAfterMetadataRestore(t *testing.T) {
+	t.Parallel()
 	source, versionID, profile, _ := newEmbeddingCatalogFixture(t)
 	record := embeddingSetFixture(source, versionID, profile.Fingerprint,
 		document.EmbeddingInputOriginalFile, "optional", "")
@@ -306,6 +313,7 @@ func TestEmbeddingJobsRebuildFromPortableAuthorityAfterMetadataRestore(t *testin
 }
 
 func TestEmbeddingJobReconciliationRequiresCurrentAuthorityAndFreshConsent(t *testing.T) {
+	t.Parallel()
 	s, versionID, profile, _ := newEmbeddingCatalogFixture(t)
 	request := embeddingJobTestRequest(t, s, versionID, profile, "reconcile")
 	job, err := s.EnqueueEmbeddingJob(t.Context(), request)
@@ -336,6 +344,7 @@ func TestEmbeddingJobReconciliationRequiresCurrentAuthorityAndFreshConsent(t *te
 }
 
 func TestEmbeddingJobReconciliationRequiresExactChunkBindingPolicy(t *testing.T) {
+	t.Parallel()
 	s, versionID, profile, attachmentID := newEmbeddingCatalogFixture(t)
 	record := embeddingSetFixture(s, versionID, profile.Fingerprint,
 		document.EmbeddingInputRenditionChunk, "chunk", attachmentID)
@@ -395,6 +404,7 @@ func TestEmbeddingJobReconciliationRequiresExactChunkBindingPolicy(t *testing.T)
 }
 
 func TestEmbeddingJobLeaseCannotRenewAfterExpiry(t *testing.T) {
+	t.Parallel()
 	s, versionID, profile, _ := newEmbeddingCatalogFixture(t)
 	request := embeddingJobTestRequest(t, s, versionID, profile, "lease-expiry")
 	_, err := s.EnqueueEmbeddingJob(t.Context(), request)
@@ -416,6 +426,7 @@ func TestEmbeddingJobLeaseCannotRenewAfterExpiry(t *testing.T) {
 }
 
 func TestEmbeddingJobProviderUnavailableRetryBudgetIsDurable(t *testing.T) {
+	t.Parallel()
 	s, versionID, profile, _ := newEmbeddingCatalogFixture(t)
 	request := embeddingJobTestRequest(t, s, versionID, profile, "durable-retry-budget")
 	_, err := s.EnqueueEmbeddingJob(t.Context(), request)
@@ -444,6 +455,7 @@ func TestEmbeddingJobProviderUnavailableRetryBudgetIsDurable(t *testing.T) {
 }
 
 func TestEmbeddingJobExistingStaleHeadDoesNotSuppressReplacement(t *testing.T) {
+	t.Parallel()
 	s, versionID, profile, _ := newEmbeddingCatalogFixture(t)
 	old := embeddingSetFixture(s, versionID, profile.Fingerprint,
 		document.EmbeddingInputOriginalFile, "optional", "")
@@ -470,6 +482,7 @@ func TestEmbeddingJobExistingStaleHeadDoesNotSuppressReplacement(t *testing.T) {
 }
 
 func TestVersionPruneRemovesQueuedEmbeddingJobGenerationAndRoot(t *testing.T) {
+	t.Parallel()
 	s, firstVersion, profile, _ := newEmbeddingCatalogFixture(t)
 	request := embeddingJobTestRequest(t, s, firstVersion, profile, "queued-prune")
 	job, err := s.EnqueueEmbeddingJob(t.Context(), request)
@@ -543,6 +556,7 @@ func workerProfileEmbeddingBinding(t *testing.T, profile ProcessingProfileRecord
 }
 
 func TestEmbeddingCatalogRejectsInvalidRowsAndPublicationFences(t *testing.T) {
+	t.Parallel()
 	s, versionID, profile, _ := newEmbeddingCatalogFixture(t)
 	base := embeddingSetFixture(s, versionID, profile.Fingerprint, document.EmbeddingInputOriginalFile, "optional", "")
 
@@ -589,6 +603,7 @@ func TestEmbeddingCatalogRejectsInvalidRowsAndPublicationFences(t *testing.T) {
 }
 
 func TestEmbeddingCatalogRejectsLegacyGenerationShapeAsPolicyAuthority(t *testing.T) {
+	t.Parallel()
 	s, versionID, profile, attachmentID := newEmbeddingCatalogFixture(t)
 	record := embeddingSetFixture(s, versionID, profile.Fingerprint, document.EmbeddingInputRenditionChunk, "chunk", attachmentID)
 	legacy := append([]byte(nil), record.InputGeneration.GenerationJSON[:len(record.InputGeneration.GenerationJSON)-1]...)
@@ -599,6 +614,7 @@ func TestEmbeddingCatalogRejectsLegacyGenerationShapeAsPolicyAuthority(t *testin
 }
 
 func TestEmbeddingCatalogMetadataRoundTripsDeterministically(t *testing.T) {
+	t.Parallel()
 	s, versionID, profile, attachmentID := newEmbeddingCatalogFixture(t)
 	record := embeddingSetFixture(s, versionID, profile.Fingerprint, document.EmbeddingInputOriginalFile, "optional", "")
 	require.NoError(t, s.StageEmbeddingSet(t.Context(), record))
@@ -656,6 +672,7 @@ func TestEmbeddingCatalogMetadataRoundTripsDeterministically(t *testing.T) {
 }
 
 func TestEmbeddingCatalogDerivativePurgeAndGCLeaveOriginalAuthority(t *testing.T) {
+	t.Parallel()
 	s, versionID, profile, _ := newEmbeddingCatalogFixture(t)
 	record := embeddingSetFixture(s, versionID, profile.Fingerprint, document.EmbeddingInputOriginalFile, "optional", "")
 	require.NoError(t, s.StageEmbeddingSet(t.Context(), record))
@@ -700,6 +717,7 @@ func TestEmbeddingCatalogDerivativePurgeAndGCLeaveOriginalAuthority(t *testing.T
 }
 
 func TestEmbeddingCatalogRootsRetainEveryAuthorityTransitively(t *testing.T) {
+	t.Parallel()
 	testCases := []struct {
 		name       string
 		kind       CurrentRenditionRootKind
@@ -766,6 +784,7 @@ func TestEmbeddingCatalogRootsRetainEveryAuthorityTransitively(t *testing.T) {
 }
 
 func TestEmbeddingCatalogVersionPruneDeletesDirectAndChunkAuthority(t *testing.T) {
+	t.Parallel()
 	s, firstVersion, profile, firstAttachment := newEmbeddingCatalogFixture(t)
 	var versionID, buildID string
 	require.NoError(t, s.db.QueryRow(`SELECT version_id FROM content_versions WHERE version_id<>? AND blob_hash=? ORDER BY version_id LIMIT 1`, firstVersion, catalogSourceHash).Scan(&versionID))
@@ -831,6 +850,7 @@ func TestEmbeddingCatalogVersionPruneDeletesDirectAndChunkAuthority(t *testing.T
 }
 
 func TestEmbeddingCatalogVersionPrunePreservesSharedAuthorityRoots(t *testing.T) {
+	t.Parallel()
 	s, sourceVersion, profile, _ := newEmbeddingCatalogFixture(t)
 	var deletedVersion string
 	require.NoError(t, s.db.QueryRow(`SELECT version_id FROM content_versions WHERE version_id<>? AND blob_hash=? ORDER BY version_id LIMIT 1`, sourceVersion, catalogSourceHash).Scan(&deletedVersion))
@@ -895,6 +915,7 @@ func TestEmbeddingCatalogVersionPrunePreservesSharedAuthorityRoots(t *testing.T)
 }
 
 func TestEmbeddingCatalogMetadataRejectsCorruptionAndOversizedCounts(t *testing.T) {
+	t.Parallel()
 	s, versionID, profile, _ := newEmbeddingCatalogFixture(t)
 	record := embeddingSetFixture(s, versionID, profile.Fingerprint, document.EmbeddingInputOriginalFile, "optional", "")
 	require.NoError(t, s.StageEmbeddingSet(t.Context(), record))
@@ -934,6 +955,7 @@ func TestEmbeddingCatalogMetadataRejectsCorruptionAndOversizedCounts(t *testing.
 }
 
 func TestEmbeddingCatalogSchemaCorruptionFailsClosedOnOpen(t *testing.T) {
+	t.Parallel()
 	path := filepath.Join(t.TempDir(), "catalog.db")
 	s, err := Open(path)
 	require.NoError(t, err)
@@ -1251,6 +1273,7 @@ func cloneEmbeddingSetRecord(value EmbeddingSetRecord) EmbeddingSetRecord {
 }
 
 func TestEmbeddingJobsRetainQueuedInputsUntilExplicitPurge(t *testing.T) {
+	t.Parallel()
 	s, versionID, profile, _ := newEmbeddingCatalogFixture(t)
 	request := embeddingJobTestRequest(t, s, versionID, profile, "queued-retention")
 	job, err := s.EnqueueEmbeddingJob(t.Context(), request)
@@ -1276,6 +1299,7 @@ func TestEmbeddingJobsRetainQueuedInputsUntilExplicitPurge(t *testing.T) {
 }
 
 func TestEmbeddingJobReleasePreservesSuccessorClaim(t *testing.T) {
+	t.Parallel()
 	s, versionID, profile, _ := newEmbeddingCatalogFixture(t)
 	request := embeddingJobTestRequest(t, s, versionID, profile, "release")
 	_, err := s.EnqueueEmbeddingJob(t.Context(), request)
@@ -1302,6 +1326,7 @@ func TestEmbeddingJobReleasePreservesSuccessorClaim(t *testing.T) {
 }
 
 func TestEmbeddingJobAbandonmentPreservesSuccessorClaim(t *testing.T) {
+	t.Parallel()
 	s, versionID, profile, _ := newEmbeddingCatalogFixture(t)
 	request := embeddingJobTestRequest(t, s, versionID, profile, "abandonment")
 	_, err := s.EnqueueEmbeddingJob(t.Context(), request)
@@ -1328,6 +1353,7 @@ func TestEmbeddingJobAbandonmentPreservesSuccessorClaim(t *testing.T) {
 }
 
 func TestEmbeddingEgressKeepsOriginalConsentAcrossBatches(t *testing.T) {
+	t.Parallel()
 	s, versionID, profile, _ := newEmbeddingCatalogFixture(t)
 	request := embeddingJobTestRequest(t, s, versionID, profile, "egress-consent")
 	_, err := s.EnqueueEmbeddingJob(t.Context(), request)
@@ -1362,6 +1388,7 @@ func TestEmbeddingEgressKeepsOriginalConsentAcrossBatches(t *testing.T) {
 }
 
 func TestEmbeddingJobReplacementConsentCannotRebindAdmittedWork(t *testing.T) {
+	t.Parallel()
 	for _, state := range []string{"queued", "running", "retry_wait", "authorization_failed", "exhausted"} {
 		t.Run(state, func(t *testing.T) {
 			s, version, profile, _ := newEmbeddingCatalogFixture(t)
@@ -1450,6 +1477,7 @@ func TestEmbeddingJobReplacementConsentCannotRebindAdmittedWork(t *testing.T) {
 }
 
 func TestEmbeddingJobReconciliationCreatesSuccessorForFreshGrant(t *testing.T) {
+	t.Parallel()
 	s, version, profile, _ := newEmbeddingCatalogFixture(t)
 	request := embeddingJobTestRequest(t, s, version, profile, "fresh-grant")
 	job, err := s.EnqueueEmbeddingJob(t.Context(), request)
@@ -1490,6 +1518,7 @@ func TestEmbeddingJobReconciliationCreatesSuccessorForFreshGrant(t *testing.T) {
 }
 
 func TestEmbeddingValidationPreservesReadErrors(t *testing.T) {
+	t.Parallel()
 	s, versionID, profile, _ := newEmbeddingCatalogFixture(t)
 	request := embeddingJobTestRequest(t, s, versionID, profile, "validation-read-error")
 	_, err := s.EnqueueEmbeddingJob(t.Context(), request)
@@ -1513,6 +1542,7 @@ func TestEmbeddingValidationPreservesReadErrors(t *testing.T) {
 }
 
 func TestEmbeddingGCReleasesTerminalJobArtifacts(t *testing.T) {
+	t.Parallel()
 	for _, state := range []string{"completed", "failed", "abandoned", "queued", "retry_wait", "running", "failed_without_set", "abandoned_without_set"} {
 		t.Run(state, func(t *testing.T) {
 			hasSet := !strings.HasSuffix(state, "_without_set")
@@ -1591,6 +1621,7 @@ func TestEmbeddingGCReleasesTerminalJobArtifacts(t *testing.T) {
 }
 
 func TestEmbeddingJobEnqueueRejectsStaleSource(t *testing.T) {
+	t.Parallel()
 	for _, mutation := range []string{"replace", "trash"} {
 		t.Run(mutation, func(t *testing.T) {
 			s, versionID, profile, _ := newEmbeddingCatalogFixture(t)
@@ -1614,6 +1645,7 @@ func TestEmbeddingJobEnqueueRejectsStaleSource(t *testing.T) {
 }
 
 func TestEmbeddingJobsResumeAfterSourceRestoration(t *testing.T) {
+	t.Parallel()
 	s, versionID, profile, _ := newEmbeddingCatalogFixture(t)
 	request := embeddingJobTestRequest(t, s, versionID, profile, "restore-abandoned")
 	original, err := s.EnqueueEmbeddingJob(t.Context(), request)
@@ -1675,6 +1707,7 @@ func TestEmbeddingJobsResumeAfterSourceRestoration(t *testing.T) {
 }
 
 func TestEmbeddingReconciliationSkipsSuppressedRetainedGeneration(t *testing.T) {
+	t.Parallel()
 	s, versionID, profile, _ := newEmbeddingCatalogFixture(t)
 	request := embeddingJobTestRequest(t, s, versionID, profile, "suppressed-retained")
 	_, err := s.EnqueueEmbeddingJob(t.Context(), request)
@@ -1704,6 +1737,7 @@ func TestEmbeddingReconciliationSkipsSuppressedRetainedGeneration(t *testing.T) 
 }
 
 func TestEmbeddingPublicationAndJobCompletionAreAtomic(t *testing.T) {
+	t.Parallel()
 	s, versionID, profile, _ := newEmbeddingCatalogFixture(t)
 	request := embeddingJobTestRequest(t, s, versionID, profile, "atomic-completion")
 	job, err := s.EnqueueEmbeddingJob(t.Context(), request)
@@ -1744,6 +1778,7 @@ func TestEmbeddingPublicationAndJobCompletionAreAtomic(t *testing.T) {
 func embeddingTestMutation(_ context.Context, fn func() error) error { return fn() }
 
 func TestEmbeddingReconciliationSkipsExistingTerminalJob(t *testing.T) {
+	t.Parallel()
 	s, versionID, profile, attachmentID := newEmbeddingCatalogFixture(t)
 	record := embeddingSetFixture(s, versionID, profile.Fingerprint,
 		document.EmbeddingInputRenditionChunk, "chunk", attachmentID)
@@ -1787,6 +1822,7 @@ func TestEmbeddingReconciliationSkipsExistingTerminalJob(t *testing.T) {
 }
 
 func TestEmbeddingReconciliationAdvancesPastUnreadableGeneration(t *testing.T) {
+	t.Parallel()
 	s, versionID, profile, attachmentID := newEmbeddingCatalogFixture(t)
 	record := embeddingSetFixture(s, versionID, profile.Fingerprint,
 		document.EmbeddingInputRenditionChunk, "chunk", attachmentID)
@@ -1849,6 +1885,7 @@ func TestEmbeddingReconciliationAdvancesPastUnreadableGeneration(t *testing.T) {
 }
 
 func TestEmbeddingJobExpiredClaimsExhaustBudget(t *testing.T) {
+	t.Parallel()
 	s, version, profile, _ := newEmbeddingCatalogFixture(t)
 	request := embeddingJobTestRequest(t, s, version, profile, "expired-budget")
 	job, err := s.EnqueueEmbeddingJob(t.Context(), request)

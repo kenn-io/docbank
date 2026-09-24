@@ -137,6 +137,7 @@ func queryPopulationNodeIDs(members []queryPopulationMember) []int64 {
 // Removing field scope, changing OR/NOT precedence, or treating NEAR as a
 // document-level intersection changes these hand-selected members.
 func TestQueryPopulationPreservesAdvancedASTScope(t *testing.T) {
+	t.Parallel()
 	fixture := newQueryPopulationFixture(t)
 	members := fixture.MatchedPopulation(t, queryPopulationQuery(t,
 		`name:(alpha OR mercury) AND NOT name:archive`, query.Filters{}), CoverageSelection{}, "")
@@ -174,6 +175,7 @@ func TestQueryPopulationPreservesAdvancedASTScope(t *testing.T) {
 // Choosing the global duplicate representative would drop every match here;
 // the oldest node inside the matched subset is alpha-beta, not global-copy.
 func TestQueryPopulationDuplicatesUseMatchedSubset(t *testing.T) {
+	t.Parallel()
 	fixture := newQueryPopulationFixture(t)
 	members := fixture.MatchedPopulation(t, queryPopulationQuery(t,
 		`name:alpha`, query.Filters{HasDuplicates: true, CollapseDuplicates: true}), CoverageSelection{}, "")
@@ -190,6 +192,7 @@ func TestQueryPopulationDuplicatesUseMatchedSubset(t *testing.T) {
 // A saved operand collapses only its own population. A sibling OR operand can
 // still contribute the saved population's non-representative member.
 func TestQueryPopulationSavedCollapseStaysInsideOperand(t *testing.T) {
+	t.Parallel()
 	fixture := newQueryPopulationFixture(t)
 	members := fixture.MatchedPopulation(t, queryPopulationQuery(t,
 		`saved:"Collapsed alpha"`, query.Filters{}), CoverageSelection{}, "")
@@ -203,6 +206,7 @@ func TestQueryPopulationSavedCollapseStaysInsideOperand(t *testing.T) {
 }
 
 func TestQueryPopulationSavedCollapseUsesOnlyLiveCurrentVersions(t *testing.T) {
+	t.Parallel()
 	t.Run("replacement", func(t *testing.T) {
 		fixture := newQueryPopulationFixture(t)
 		original, err := fixture.store.NodeByID(t.Context(), fixture.nodes["alpha-beta"].ID)
@@ -237,6 +241,7 @@ func TestQueryPopulationSavedCollapseUsesOnlyLiveCurrentVersions(t *testing.T) {
 }
 
 func TestQueryPopulationOmittedFacetPreservesASTAndSavedConstraints(t *testing.T) {
+	t.Parallel()
 	fixture := newQueryPopulationFixture(t)
 	value := queryPopulationQuery(t, `tag:keep OR saved:"Named alpha"`, query.Filters{
 		TagIDs: []string{fixture.tags["outer"].ID},
@@ -251,6 +256,7 @@ func TestQueryPopulationOmittedFacetPreservesASTAndSavedConstraints(t *testing.T
 }
 
 func TestQueryPopulationCoverageUsesConfiguredProfile(t *testing.T) {
+	t.Parallel()
 	s, _, nodes, profile := collectionCoverageFixture(t, 2)
 	collectionCoveragePublish(t, s, nodes[0], profile, "complete")
 	collectionCoveragePublish(t, s, nodes[1], profile, "partial")

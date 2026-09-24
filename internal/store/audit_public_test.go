@@ -11,6 +11,7 @@ import (
 )
 
 func TestAuditEnrollmentPreviewEnablesExactReviewedAuthority(t *testing.T) {
+	t.Parallel()
 	s, err := Open(filepath.Join(t.TempDir(), "vault.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, s.Close()) })
@@ -64,6 +65,7 @@ func TestAuditEnrollmentPreviewEnablesExactReviewedAuthority(t *testing.T) {
 }
 
 func TestAdditionalAuditScopeCapacityMatchesEvidenceBound(t *testing.T) {
+	t.Parallel()
 	require.NoError(t, requireAdditionalAuditScopeCapacity(MaxAuditEvidenceScopes-1))
 	for _, count := range []int64{MaxAuditEvidenceScopes, MaxAuditEvidenceScopes + 1} {
 		err := requireAdditionalAuditScopeCapacity(count)
@@ -72,6 +74,7 @@ func TestAdditionalAuditScopeCapacityMatchesEvidenceBound(t *testing.T) {
 }
 
 func TestAuditEnrollmentPreviewRejectsChangedVaultState(t *testing.T) {
+	t.Parallel()
 	s, err := Open(filepath.Join(t.TempDir(), "vault.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, s.Close()) })
@@ -91,6 +94,7 @@ func TestAuditEnrollmentPreviewRejectsChangedVaultState(t *testing.T) {
 }
 
 func TestAuditEnrollmentPreviewRejectsTrashedOrDeletedTargetAsStale(t *testing.T) {
+	t.Parallel()
 	for _, hardDelete := range []bool{false, true} {
 		name := "trashed"
 		if hardDelete {
@@ -122,6 +126,7 @@ func TestAuditEnrollmentPreviewRejectsTrashedOrDeletedTargetAsStale(t *testing.T
 }
 
 func TestAuditEnrollmentPreviewIsVaultBoundAndRejectsOverlap(t *testing.T) {
+	t.Parallel()
 	first, err := Open(filepath.Join(t.TempDir(), "first.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, first.Close()) })
@@ -146,6 +151,7 @@ func TestAuditEnrollmentPreviewIsVaultBoundAndRejectsOverlap(t *testing.T) {
 }
 
 func TestAuditEnrollmentAddsDisjointScopeAndRoundTrips(t *testing.T) {
+	t.Parallel()
 	s, err := Open(filepath.Join(t.TempDir(), "vault.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, s.Close()) })
@@ -213,6 +219,7 @@ func removeAuditScopeByID(t *testing.T, input []byte, scopeID string) []byte {
 }
 
 func TestAuditStatusExplainsDormantAndProtectedNodes(t *testing.T) {
+	t.Parallel()
 	s, err := Open(filepath.Join(t.TempDir(), "vault.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, s.Close()) })

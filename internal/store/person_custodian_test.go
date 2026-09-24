@@ -9,6 +9,7 @@ import (
 )
 
 func TestCustodianScopeRejectsMixedCoordinates(t *testing.T) {
+	t.Parallel()
 	require.NoError(t, validateCustodianScope(CustodianScope{Kind: "collection", IngestID: "ingest-a"}))
 	require.Error(t, validateCustodianScope(CustodianScope{Kind: "collection", IngestID: "ingest-a", ContentVersionID: "version-a"}))
 	require.Error(t, validateCustodianScope(CustodianScope{Kind: "document", ContentVersionID: "version-a"}))
@@ -22,6 +23,7 @@ func TestCustodianScopeRejectsMixedCoordinates(t *testing.T) {
 }
 
 func TestCustodianPackageScopeKeepsDefaultAndRecordsSeparate(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
 	pkg, node := seedReceivedPackage(t, s, "custodian-package")
@@ -80,6 +82,7 @@ func TestCustodianPackageScopeKeepsDefaultAndRecordsSeparate(t *testing.T) {
 }
 
 func TestCustodianAssignmentUsesRealVersion(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	node, version := seedPeopleVersion(t, s)
 	_, err := s.SetCustodian(t.Context(), CustodianRequest{Scope: CustodianScope{
@@ -94,6 +97,7 @@ func TestCustodianAssignmentUsesRealVersion(t *testing.T) {
 }
 
 func TestCustodianAdditionalRejectsDuplicateClaim(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
 	node, version := seedPeopleVersion(t, s)
@@ -117,6 +121,7 @@ func TestCustodianAdditionalRejectsDuplicateClaim(t *testing.T) {
 }
 
 func TestCustodianCollectionAppliesOnlyToMembers(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
 	_, unrelatedVersion := seedPeopleVersion(t, s)
@@ -146,6 +151,7 @@ func TestCustodianCollectionAppliesOnlyToMembers(t *testing.T) {
 }
 
 func TestCustodianCollectionRejectsCallerSuppliedProvenance(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
 	run, err := s.BeginCallerSuppliedIngest(ctx, "cli", "Synthetic source assertion")
@@ -159,6 +165,7 @@ func TestCustodianCollectionRejectsCallerSuppliedProvenance(t *testing.T) {
 }
 
 func TestCustodiansIncludesRetiredPersonAsUnresolved(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
 	node, version := seedPeopleVersion(t, s)
@@ -180,6 +187,7 @@ func TestCustodiansIncludesRetiredPersonAsUnresolved(t *testing.T) {
 }
 
 func TestCustodianMutationUsesRevisionFenceAndNullableCoordinates(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
 	node, version := seedPeopleVersion(t, s)
@@ -226,6 +234,7 @@ func TestCustodianMutationUsesRevisionFenceAndNullableCoordinates(t *testing.T) 
 }
 
 func TestCustodiansForVersionOrdersDocumentBeforeCollectionClaims(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
 	run, err := s.BeginIngest(ctx, "cli", "Synthetic custodian collection")
@@ -252,6 +261,7 @@ func TestCustodiansForVersionOrdersDocumentBeforeCollectionClaims(t *testing.T) 
 }
 
 func TestCustodianAuthorityRejectsInvalidValuesAndReferences(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
 	node, version := seedPeopleVersion(t, s)
@@ -295,6 +305,7 @@ func TestCustodianAuthorityRejectsInvalidValuesAndReferences(t *testing.T) {
 }
 
 func TestPeopleByDisplayNameUsesFoldedStableCursor(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
 	grace, err := s.CreatePerson(ctx, "Grace Hopper", "operator")
@@ -315,6 +326,7 @@ func TestPeopleByDisplayNameUsesFoldedStableCursor(t *testing.T) {
 }
 
 func TestResolveCustodianPreservesSenderClaimAndResolvesAlias(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
 	pkg, node := seedReceivedPackage(t, s, "resolve-custodian")
@@ -346,6 +358,7 @@ func TestResolveCustodianPreservesSenderClaimAndResolvesAlias(t *testing.T) {
 }
 
 func TestOperatorPackageCustodianDoesNotReplaceSenderPrimary(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
 	pkg, node := seedReceivedPackage(t, s, "operator-custodian")

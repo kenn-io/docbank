@@ -13,6 +13,7 @@ import (
 )
 
 func TestProcessingConsentAuthorizesOnlyExactCurrentGrant(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	request := testProviderAuthorizationRequest()
 
@@ -41,6 +42,7 @@ func TestProcessingConsentAuthorizesOnlyExactCurrentGrant(t *testing.T) {
 }
 
 func TestProcessingConsentSetAuthorizesItsExactSiblingGrant(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	rendition := testProviderAuthorizationRequest()
 	embedding := rendition
@@ -67,6 +69,7 @@ func TestProcessingConsentSetAuthorizesItsExactSiblingGrant(t *testing.T) {
 }
 
 func TestProcessingConsentRejectsExpiredAndDriftedOperations(t *testing.T) {
+	t.Parallel()
 	tests := map[string]func(ProviderOperationAuthorizationRequest) ProviderOperationAuthorizationRequest{
 		"profile drift including endpoint or deployment epoch": func(r ProviderOperationAuthorizationRequest) ProviderOperationAuthorizationRequest {
 			r.ProfileFingerprint = testConsentFingerprint("profile-b")
@@ -127,6 +130,7 @@ func TestProcessingConsentRejectsExpiredAndDriftedOperations(t *testing.T) {
 }
 
 func TestProcessingConsentRevocationFencesSubmissionAndPublication(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	request := testProviderAuthorizationRequest()
 	first, err := s.GrantConsent(t.Context(), grantRequestForAuthorization(request, nil))
@@ -158,6 +162,7 @@ func TestProcessingConsentRevocationFencesSubmissionAndPublication(t *testing.T)
 }
 
 func TestProcessingConsentRevocationIsCheckedInPublicationTransaction(t *testing.T) {
+	t.Parallel()
 	s, versions := newRenditionCatalogFixture(t)
 	profile := catalogProcessingProfile(t, false)
 	operation := document.RenditionAuthorization{
@@ -245,6 +250,7 @@ func TestProcessingConsentRevocationIsCheckedInPublicationTransaction(t *testing
 }
 
 func TestProcessingConsentHistoryIsAppendOnly(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	request := testProviderAuthorizationRequest()
 	grant, err := s.GrantConsent(t.Context(), grantRequestForAuthorization(request, nil))
@@ -267,6 +273,7 @@ func TestProcessingConsentHistoryIsAppendOnly(t *testing.T) {
 }
 
 func TestProcessingConsentValidationRejectsCorruptRows(t *testing.T) {
+	t.Parallel()
 	t.Run("noncanonical grant classes", func(t *testing.T) {
 		s := newTestStore(t)
 		grant, err := s.GrantConsent(
@@ -342,6 +349,7 @@ func TestProcessingConsentValidationRejectsCorruptRows(t *testing.T) {
 }
 
 func TestProcessingConsentRestorePreservesHistoryButRotatesIncarnation(t *testing.T) {
+	t.Parallel()
 	source := newTestStore(t)
 	request := testProviderAuthorizationRequest()
 	grant, err := source.GrantConsent(t.Context(), grantRequestForAuthorization(request, nil))

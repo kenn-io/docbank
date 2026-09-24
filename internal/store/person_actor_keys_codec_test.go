@@ -9,6 +9,7 @@ import (
 )
 
 func TestPersonActorKeysAreAcceptedByDocumentEvents(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	person, err := s.CreatePerson(t.Context(), "Ada", "operator")
 	require.NoError(t, err)

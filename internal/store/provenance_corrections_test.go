@@ -14,6 +14,7 @@ import (
 )
 
 func TestProvenanceCorrectionsUpdateOnlyTheirObservedVersion(t *testing.T) {
+	t.Parallel()
 	s, err := store.Open(filepath.Join(t.TempDir(), "source.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, s.Close()) })

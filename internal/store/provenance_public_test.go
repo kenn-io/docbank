@@ -9,6 +9,7 @@ import (
 )
 
 func TestNodeProvenanceReturnsStableBoundedHistory(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
 	ingest, err := s.BeginIngest(ctx, "cli", "/synthetic/import")
@@ -73,6 +74,7 @@ func TestNodeProvenanceReturnsStableBoundedHistory(t *testing.T) {
 }
 
 func TestNodeProvenanceRejectsDirectoriesAndInvalidPages(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	_, err := s.NodeProvenance(t.Context(), s.RootID(), 10, 0)
 	require.ErrorIs(t, err, ErrNotFile)

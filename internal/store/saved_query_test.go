@@ -32,6 +32,7 @@ func oversizedSavedQueryPayload() []byte {
 }
 
 func TestSavedQueryLifecycleCanonicalizesAndFencesRevisions(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
 
@@ -100,6 +101,7 @@ func TestSavedQueryLifecycleCanonicalizesAndFencesRevisions(t *testing.T) {
 }
 
 func TestSavedQueryNormalizesDescriptionLineEndings(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	created, err := s.CreateSavedQuery(t.Context(), "Multiline", "First\r\nSecond",
 		SavedQueryKindQuery, []byte(`{}`))
@@ -121,6 +123,7 @@ func TestSavedQueryNormalizesDescriptionLineEndings(t *testing.T) {
 }
 
 func TestSavedQueriesAreBoundedFilteredAndNameSorted(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
 	_, err := s.CreateSavedQuery(ctx, "beta", "", SavedQueryKindQuery, []byte(`{"text":"b"}`))
@@ -155,6 +158,7 @@ func TestSavedQueriesAreBoundedFilteredAndNameSorted(t *testing.T) {
 }
 
 func TestSavedQueryValidationAndNameCollisions(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
 	first, err := s.CreateSavedQuery(ctx, "café", "", SavedQueryKindQuery, []byte(`{"text":"one"}`))
@@ -206,6 +210,7 @@ func TestSavedQueryValidationAndNameCollisions(t *testing.T) {
 }
 
 func TestSavedQueryPolicyValidationDoesNotMutateAuthority(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	created, err := s.CreateSavedQuery(t.Context(), "stable", "before",
 		SavedQueryKindQuery, []byte(`{"text":"stable"}`))
@@ -231,6 +236,7 @@ func TestSavedQueryPolicyValidationDoesNotMutateAuthority(t *testing.T) {
 }
 
 func TestSavedQueryConcurrentSameNameCreateHasOneWinner(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
 	start := make(chan struct{})
@@ -263,6 +269,7 @@ func TestSavedQueryConcurrentSameNameCreateHasOneWinner(t *testing.T) {
 }
 
 func TestSavedQueryConcurrentSameRevisionEditHasOneWinner(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
 	created, err := s.CreateSavedQuery(ctx, "race", "", SavedQueryKindQuery, []byte(`{"text":"before"}`))
@@ -303,6 +310,7 @@ func TestSavedQueryConcurrentSameRevisionEditHasOneWinner(t *testing.T) {
 }
 
 func TestSavedQueryMutationsRejectActiveAuditAuthorityWithoutHidingReads(t *testing.T) {
+	t.Parallel()
 	for _, test := range v090UpgradeDrivers() {
 		t.Run(test.name, func(t *testing.T) {
 			s := newTestStoreWithDriver(t, test.driver)

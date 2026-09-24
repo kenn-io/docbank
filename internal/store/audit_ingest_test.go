@@ -15,6 +15,7 @@ import (
 )
 
 func TestLegacyAuditedIngestCreationRoundTripsWithoutBindings(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	seedMetadataRoundTrip(t, s)
 	s.vaultID = "99999999-9999-4999-8999-999999999999"
@@ -177,6 +178,7 @@ func makeLegacyAuditedIngestCreationMetadata(
 }
 
 func TestAuditedIngestRecordsProvenanceAndRoundTrips(t *testing.T) {
+	t.Parallel()
 	s, err := Open(filepath.Join(t.TempDir(), "source.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, s.Close()) })
@@ -271,6 +273,7 @@ func TestAuditedIngestRecordsProvenanceAndRoundTrips(t *testing.T) {
 }
 
 func TestAuditedIngestRollsBackFileAndAttachments(t *testing.T) {
+	t.Parallel()
 	s, err := Open(filepath.Join(t.TempDir(), "vault.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, s.Close()) })
@@ -314,6 +317,7 @@ func TestAuditedIngestRollsBackFileAndAttachments(t *testing.T) {
 }
 
 func TestAuditedIngestImportRejectsOmittedProvenance(t *testing.T) {
+	t.Parallel()
 	s, err := Open(filepath.Join(t.TempDir(), "source.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, s.Close()) })
@@ -344,6 +348,7 @@ func TestAuditedIngestImportRejectsOmittedProvenance(t *testing.T) {
 }
 
 func TestAuditReplayRejectsGenesisProvenanceFromLaterIngest(t *testing.T) {
+	t.Parallel()
 	s, err := Open(filepath.Join(t.TempDir(), "source.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, s.Close()) })

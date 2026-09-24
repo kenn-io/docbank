@@ -40,6 +40,7 @@ func pageStoreImage(t *testing.T, f document.PageFrameV1, r document.PageRecipeV
 }
 
 func TestPagePublicationFencesClaimsAndPreservesPartialAuthority(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	request := pageStoreRequest(t, s)
 	operation := uuid.NewString()
@@ -82,6 +83,7 @@ func TestPagePublicationFencesClaimsAndPreservesPartialAuthority(t *testing.T) {
 }
 
 func TestPageJobRestartCannotPublishAnOldClaim(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	request := pageStoreRequest(t, s)
 	_, err := s.QueuePageJob(t.Context(), uuid.NewString(), request)
@@ -100,6 +102,7 @@ func TestPageJobRestartCannotPublishAnOldClaim(t *testing.T) {
 }
 
 func TestPageJobNewOperationRetriesFailedAndCanceledRequests(t *testing.T) {
+	t.Parallel()
 	for _, state := range []string{PageJobFailed, "canceled"} {
 		t.Run(state, func(t *testing.T) {
 			s := newTestStore(t)
@@ -134,6 +137,7 @@ func TestPageJobNewOperationRetriesFailedAndCanceledRequests(t *testing.T) {
 }
 
 func TestPageJobStaleCompletionRetiresClaim(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	request := pageStoreRequest(t, s)
 	request.Pages = []int{1}
@@ -156,6 +160,7 @@ func TestPageJobStaleCompletionRetiresClaim(t *testing.T) {
 }
 
 func TestQueuePageJobRejectsUnsupportedPDFDPI(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	request := pageStoreRequest(t, s)
 	for _, dpi := range []float64{0.5, 1201} {
@@ -173,6 +178,7 @@ func TestQueuePageJobRejectsUnsupportedPDFDPI(t *testing.T) {
 }
 
 func TestPageJobStaleCompletionRetiresOnlyItsOwnedClaim(t *testing.T) {
+	t.Parallel()
 	for _, change := range []string{"revision", "head", "trash"} {
 		t.Run(change, func(t *testing.T) {
 			s := newTestStore(t)
@@ -218,6 +224,7 @@ func TestPageJobStaleCompletionRetiresOnlyItsOwnedClaim(t *testing.T) {
 }
 
 func TestPageJobCompletionDoesNotHideSourceDatabaseFailure(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	request := pageStoreRequest(t, s)
 	_, err := s.QueuePageJob(t.Context(), uuid.NewString(), request)
@@ -249,6 +256,7 @@ func TestPageJobCompletionDoesNotHideSourceDatabaseFailure(t *testing.T) {
 }
 
 func TestPageJobsConcurrentIdentityLimitsAndSourceFences(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	request := pageStoreRequest(t, s)
 	var wg sync.WaitGroup
@@ -296,6 +304,7 @@ func TestPageJobsConcurrentIdentityLimitsAndSourceFences(t *testing.T) {
 }
 
 func TestPageJobRejectsFailureCodeOnQueuedResult(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	request := pageStoreRequest(t, s)
 	job, err := s.QueuePageJob(t.Context(), uuid.NewString(), request)
@@ -305,6 +314,7 @@ func TestPageJobRejectsFailureCodeOnQueuedResult(t *testing.T) {
 }
 
 func TestPageAuthoritySurvivesCurrentSchemaReopen(t *testing.T) {
+	t.Parallel()
 	path := filepath.Join(t.TempDir(), "pages.db")
 	s, err := Open(path)
 	require.NoError(t, err)

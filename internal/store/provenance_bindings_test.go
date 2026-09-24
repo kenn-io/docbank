@@ -12,6 +12,7 @@ import (
 )
 
 func TestProvenanceBindingsPinAnExactVersion(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	run, err := s.BeginIngest(t.Context(), "filesystem", "synthetic")
 	require.NoError(t, err)
@@ -56,6 +57,7 @@ func TestProvenanceBindingsPinAnExactVersion(t *testing.T) {
 }
 
 func TestProvenanceBindingExistsWithoutMtime(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	run, err := s.BeginIngest(t.Context(), "filesystem", "synthetic")
 	require.NoError(t, err)
@@ -72,6 +74,7 @@ func TestProvenanceBindingExistsWithoutMtime(t *testing.T) {
 }
 
 func TestProvenanceBindingsFollowRevertAndPruneLifecycle(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	firstRun, err := s.BeginIngest(t.Context(), "filesystem", "Synthetic first import")
 	require.NoError(t, err)
@@ -128,6 +131,7 @@ func TestProvenanceBindingsFollowRevertAndPruneLifecycle(t *testing.T) {
 }
 
 func TestProvenanceBindingWriterIsImmutableAndIdempotent(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	run, err := s.BeginIngest(t.Context(), "filesystem", "synthetic")
 	require.NoError(t, err)
@@ -188,6 +192,7 @@ func TestProvenanceBindingWriterIsImmutableAndIdempotent(t *testing.T) {
 }
 
 func TestProvenanceBindingsInGenesisRespectEnrollmentScope(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	inScope, err := s.Mkdir(t.Context(), s.RootID(), "in-scope")
 	require.NoError(t, err)
@@ -239,6 +244,7 @@ func TestProvenanceBindingsInGenesisRespectEnrollmentScope(t *testing.T) {
 }
 
 func TestMetadataImportRejectsProvenanceBindingTamperingAndRollsBack(t *testing.T) {
+	t.Parallel()
 	s, err := Open(filepath.Join(t.TempDir(), "source.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, s.Close()) })
@@ -303,6 +309,7 @@ func TestMetadataImportRejectsProvenanceBindingTamperingAndRollsBack(t *testing.
 }
 
 func TestCurrentMetadataActiveAuditRequiresProvenanceBindingTable(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	seedInitialAuditAuthority(t, s, s.RootID())
 

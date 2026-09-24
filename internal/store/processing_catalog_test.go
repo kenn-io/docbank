@@ -33,6 +33,7 @@ var catalogBlobContents = map[string][]byte{
 }
 
 func TestRenditionCatalogSharesOneBuildAcrossVersionProfilesWithinVault(t *testing.T) {
+	t.Parallel()
 	s, versions := newRenditionCatalogFixture(t)
 	baseProfile := catalogProcessingProfile(t, false)
 	embeddingProfile := catalogProcessingProfile(t, true)
@@ -80,6 +81,7 @@ func TestRenditionCatalogSharesOneBuildAcrossVersionProfilesWithinVault(t *testi
 }
 
 func TestPersistedRenditionArtifactRoles(t *testing.T) {
+	t.Parallel()
 	want := []string{
 		catalogArtifactNormalizedEvidence, catalogArtifactSanitizedMarkdown,
 		string(document.EvidenceArtifactImage), string(document.EvidenceArtifactMarkdown),
@@ -99,6 +101,7 @@ func TestPersistedRenditionArtifactRoles(t *testing.T) {
 }
 
 func TestRenditionCatalogRejectsCrossVaultAttachment(t *testing.T) {
+	t.Parallel()
 	s, versions := newRenditionCatalogFixture(t)
 	other := newTestStore(t)
 	profile := catalogProcessingProfile(t, false)
@@ -118,6 +121,7 @@ func TestRenditionCatalogRejectsCrossVaultAttachment(t *testing.T) {
 }
 
 func TestRenditionCatalogRejectsArtifactsForbiddenByAttachmentProfile(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name   string
 		role   string
@@ -184,6 +188,7 @@ func TestRenditionCatalogRejectsArtifactsForbiddenByAttachmentProfile(t *testing
 }
 
 func TestProcessingMetadataRejectsRestoredAttachmentWithForbiddenArtifact(t *testing.T) {
+	t.Parallel()
 	s, versions := newRenditionCatalogFixture(t)
 	profile := catalogProcessingProfileWith(t, false, func(profile *document.ProcessingProfileV1) {
 		profile.RetentionDisclosure.RetainTypedArtifacts = false
@@ -218,6 +223,7 @@ func TestProcessingMetadataRejectsRestoredAttachmentWithForbiddenArtifact(t *tes
 }
 
 func TestRenditionCatalogRejectsIncompleteArtifactsWithoutPartialStage(t *testing.T) {
+	t.Parallel()
 	s, versions := newRenditionCatalogFixture(t)
 	profile := catalogProcessingProfile(t, false)
 	build := catalogRenditionBuild(s, profile)
@@ -243,6 +249,7 @@ func TestRenditionCatalogRejectsIncompleteArtifactsWithoutPartialStage(t *testin
 }
 
 func TestRenditionCatalogReservesLegacyProviderOperationForLegacyProfile(t *testing.T) {
+	t.Parallel()
 	s, _ := newRenditionCatalogFixture(t)
 	build := catalogRenditionBuild(s, catalogProcessingProfile(t, false))
 	build.ProviderOperationID = legacyPlainTextProvider
@@ -252,6 +259,7 @@ func TestRenditionCatalogReservesLegacyProviderOperationForLegacyProfile(t *test
 }
 
 func TestRenditionCatalogValidatesEveryArtifactMembership(t *testing.T) {
+	t.Parallel()
 	for name, mutate := range map[string]func(*RenditionArtifactRecord){
 		"checksum disagreement": func(record *RenditionArtifactRecord) { record.Checksum = fakeHash("2f") },
 		"size disagreement":     func(record *RenditionArtifactRecord) { record.Size++ },
@@ -274,6 +282,7 @@ func TestRenditionCatalogValidatesEveryArtifactMembership(t *testing.T) {
 }
 
 func TestRenditionCatalogRequiresCapturedPolicyMembership(t *testing.T) {
+	t.Parallel()
 	for name, mutate := range map[string]func(*RenditionBuildRecord){
 		"missing required role": func(build *RenditionBuildRecord) {
 			build.Artifacts = build.Artifacts[:1]
@@ -328,6 +337,7 @@ func TestRenditionCatalogRequiresCapturedPolicyMembership(t *testing.T) {
 }
 
 func TestRenditionCatalogSupportsCapturedArtifactCardinality(t *testing.T) {
+	t.Parallel()
 	for name, arrange := range map[string]func(*RenditionBuildRecord){
 		"zero retention": func(build *RenditionBuildRecord) {
 			build.CapturedArtifactPolicy = jsontext.Value(`{"roles":[],"version":1}`)
@@ -388,6 +398,7 @@ func TestRenditionCatalogSupportsCapturedArtifactCardinality(t *testing.T) {
 }
 
 func TestRenditionCatalogRejectsInvalidCapturedArtifactCardinality(t *testing.T) {
+	t.Parallel()
 	for name, policy := range map[string]jsontext.Value{
 		"missing roles field":   jsontext.Value(`{"version":1}`),
 		"null roles field":      jsontext.Value(`{"roles":null,"version":1}`),
@@ -439,6 +450,7 @@ func TestRenditionCatalogRejectsInvalidCapturedArtifactCardinality(t *testing.T)
 }
 
 func TestRenditionCatalogCanonicalizesCapturedArtifactRuleOrder(t *testing.T) {
+	t.Parallel()
 	s, _ := newRenditionCatalogFixture(t)
 	build := catalogRenditionBuild(s, catalogProcessingProfile(t, false))
 	build.CapturedArtifactPolicy = jsontext.Value(
@@ -460,6 +472,7 @@ func TestRenditionCatalogCanonicalizesCapturedArtifactRuleOrder(t *testing.T) {
 }
 
 func TestRenditionCatalogRejectsInvalidUnitLocators(t *testing.T) {
+	t.Parallel()
 	for name, locator := range map[string]document.EvidenceLocatorV1{
 		"unknown kind": {
 			Kind: "unknown", IndexOrigin: document.EvidenceIndexOriginNone,
@@ -493,6 +506,7 @@ func TestRenditionCatalogRejectsInvalidUnitLocators(t *testing.T) {
 }
 
 func TestRenditionCatalogPortableLimitsRejectMaxPlusOne(t *testing.T) {
+	t.Parallel()
 	s, _ := newRenditionCatalogFixture(t)
 	base := catalogRenditionBuild(s, catalogProcessingProfile(t, false))
 	value := metadataRenditionBuild{
@@ -576,6 +590,7 @@ func TestRenditionCatalogPortableLimitsRejectMaxPlusOne(t *testing.T) {
 }
 
 func TestRenditionCatalogAPIRejectsPortableLimitOverflows(t *testing.T) {
+	t.Parallel()
 	for name, mutate := range map[string]func(*RenditionBuildRecord){
 		"provider operation ID": func(build *RenditionBuildRecord) {
 			build.ProviderOperationID = strings.Repeat("o", 4097)
@@ -617,6 +632,7 @@ func TestRenditionCatalogAPIRejectsPortableLimitOverflows(t *testing.T) {
 }
 
 func TestProcessingMetadataRejectsInvalidLocatorBeforeInsert(t *testing.T) {
+	t.Parallel()
 	value := metadataRenditionUnit{
 		Type: metadataRenditionUnitType, BuildID: catalogBuildID,
 		UnitID: "rendition_unit_" + fakeHash("31"), EvidenceUnitID: "unit_" + fakeHash("32"),
@@ -630,6 +646,7 @@ func TestProcessingMetadataRejectsInvalidLocatorBeforeInsert(t *testing.T) {
 }
 
 func TestProcessingMetadataRejectsUnknownCapturedPolicyBeforeInsert(t *testing.T) {
+	t.Parallel()
 	s, _ := newRenditionCatalogFixture(t)
 	build := catalogRenditionBuild(s, catalogProcessingProfile(t, false))
 	policy := jsontext.Value(`{"roles":[{"max_count":1,"min_count":0,"role":"unknown"}],"version":1}`)
@@ -648,6 +665,7 @@ func TestProcessingMetadataRejectsUnknownCapturedPolicyBeforeInsert(t *testing.T
 }
 
 func TestProcessingMetadataOpenAcceptsExactCurrentSchema(t *testing.T) {
+	t.Parallel()
 	path := filepath.Join(t.TempDir(), "current.db")
 	driver := DefaultSQLiteDriver()
 	created, err := openCurrentStore(path, driver)
@@ -660,6 +678,7 @@ func TestProcessingMetadataOpenAcceptsExactCurrentSchema(t *testing.T) {
 }
 
 func TestRenditionCatalogInsertOrReuseRejectsImmutableConflicts(t *testing.T) {
+	t.Parallel()
 	s, versions := newRenditionCatalogFixture(t)
 	profile := catalogProcessingProfile(t, false)
 	build := catalogRenditionBuild(s, profile)
@@ -708,6 +727,7 @@ func TestRenditionCatalogInsertOrReuseRejectsImmutableConflicts(t *testing.T) {
 }
 
 func TestRenditionCatalogExactRetryCanonicalizesEmptyBuildCollections(t *testing.T) {
+	t.Parallel()
 	s, _ := newRenditionCatalogFixture(t)
 	build := catalogRenditionBuild(s, catalogProcessingProfile(t, false))
 	build.CapturedArtifactPolicy = jsontext.Value(`{"roles":[],"version":1}`)
@@ -723,6 +743,7 @@ func TestRenditionCatalogExactRetryCanonicalizesEmptyBuildCollections(t *testing
 }
 
 func TestRenditionCatalogFailedReplacementKeepsOldHead(t *testing.T) {
+	t.Parallel()
 	s, versions := newRenditionCatalogFixture(t)
 	profile := catalogProcessingProfile(t, false)
 	oldBuild := catalogRenditionBuild(s, profile)

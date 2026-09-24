@@ -14,6 +14,7 @@ import (
 )
 
 func TestCollectionQualityBucketsMatchSuggestedQueries(t *testing.T) {
+	t.Parallel()
 	s, run, _, _ := collectionCoverageFixture(t, 0)
 	nodes := make([]Node, 0, 9)
 	for _, file := range []struct{ name, mime string }{
@@ -62,6 +63,7 @@ func TestCollectionQualityBucketsMatchSuggestedQueries(t *testing.T) {
 // Ignoring current-version metadata, using per-fact membership, or scoping
 // duplicates to this collection would change these hand-counted buckets.
 func TestCollectionQualityCensusAndFreshFingerprint(t *testing.T) {
+	t.Parallel()
 	s, run, nodes, profile := collectionCoverageFixture(t, 1)
 	_, err := s.IngestFileExact(t.Context(), run, s.RootID(), "image.PDF", fakeHash("d7"), 0, "image/png", "image.PDF", "")
 	require.NoError(t, err)
@@ -92,6 +94,7 @@ func TestCollectionQualityCensusAndFreshFingerprint(t *testing.T) {
 }
 
 func TestCollectionQualityTopFiftyAndConcentrations(t *testing.T) {
+	t.Parallel()
 	s, run, _, _ := collectionCoverageFixture(t, 0)
 	mediaType := "application/" + strings.Repeat("a", 1024)
 	for i := range 52 {
@@ -111,6 +114,7 @@ func TestCollectionQualityTopFiftyAndConcentrations(t *testing.T) {
 }
 
 func TestCollectionQualityRejectsInvalidDimensionsAndCancellation(t *testing.T) {
+	t.Parallel()
 	s, run, _, _ := collectionCoverageFixture(t, 1)
 	for _, fields := range [][]string{{"unknown"}, {"extension", "extension"}} {
 		_, err := s.CollectionQuality(t.Context(), run.ID(), CoverageSelection{}, fields)
@@ -124,6 +128,7 @@ func TestCollectionQualityRejectsInvalidDimensionsAndCancellation(t *testing.T) 
 }
 
 func TestCollectionQualitySizeBoundariesAndUTCMonth(t *testing.T) {
+	t.Parallel()
 	s, run, _, _ := collectionCoverageFixture(t, 0)
 	sizes := []int64{0, 1, 1023, 1024, 1<<20 - 1, 1 << 20, 10<<20 - 1, 10 << 20, 100<<20 - 1, 100 << 20, 1<<30 - 1, 1 << 30}
 	for i, size := range sizes {
@@ -144,6 +149,7 @@ func TestCollectionQualitySizeBoundariesAndUTCMonth(t *testing.T) {
 }
 
 func TestCollectionQualityConcentrationNeedsTenAndEightyPercent(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name            string
 		matching, total int
@@ -174,6 +180,7 @@ func TestCollectionQualityConcentrationNeedsTenAndEightyPercent(t *testing.T) {
 }
 
 func TestCollectionQualityBoundsRejectWholeCensus(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		members, bytes int64
 		tooLarge       bool
@@ -200,6 +207,7 @@ func TestCollectionQualityBoundsRejectWholeCensus(t *testing.T) {
 }
 
 func TestCollectionQualityCensusKeepsMetadataCoverageAndGenerationInOneSnapshot(t *testing.T) {
+	t.Parallel()
 	s, run, nodes, profile := collectionCoverageFixture(t, 1)
 	selection := CoverageSelection{"configured", profile.Fingerprint}
 	collectionCoveragePublish(t, s, nodes[0], profile, "complete")

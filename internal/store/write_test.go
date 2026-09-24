@@ -17,6 +17,7 @@ func fakeHash(seed string) string {
 }
 
 func TestCreateFile(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
 
@@ -61,6 +62,7 @@ func TestCreateFile(t *testing.T) {
 }
 
 func TestCreateFileRejectsBlobSizeMismatch(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
 
@@ -72,6 +74,7 @@ func TestCreateFileRejectsBlobSizeMismatch(t *testing.T) {
 }
 
 func TestCreateFileRejectsFileParent(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
 
@@ -82,6 +85,7 @@ func TestCreateFileRejectsFileParent(t *testing.T) {
 }
 
 func TestCurrentVersionMustBelongToItsNode(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
 	first, err := s.CreateFile(ctx, s.RootID(), "first.txt", fakeHash("a1"), 1, "text/plain")
@@ -102,6 +106,7 @@ func TestCurrentVersionMustBelongToItsNode(t *testing.T) {
 }
 
 func TestReplaceContentCreatesImmutableHead(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
 	created, err := s.CreateFile(ctx, s.RootID(), "report.txt", fakeHash("a1"), 3, "text/plain")
@@ -147,6 +152,7 @@ func TestReplaceContentCreatesImmutableHead(t *testing.T) {
 }
 
 func TestReplaceContentRejectsInvalidTargetAndStaleRevision(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
 	file, err := s.CreateFile(ctx, s.RootID(), "report.txt", fakeHash("a1"), 3, "text/plain")
@@ -175,6 +181,7 @@ func TestReplaceContentRejectsInvalidTargetAndStaleRevision(t *testing.T) {
 }
 
 func TestRevertContentCreatesNewHeadFromPriorAuthority(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
 	created, err := s.CreateFile(ctx, s.RootID(), "report.txt", fakeHash("a1"), 3, "text/plain")
@@ -222,6 +229,7 @@ func TestRevertContentCreatesNewHeadFromPriorAuthority(t *testing.T) {
 }
 
 func TestRevertContentAcceptsSecondaryOnlyAuthority(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
 	oldHash := fakeHash("a2")
@@ -260,6 +268,7 @@ func TestRevertContentAcceptsSecondaryOnlyAuthority(t *testing.T) {
 }
 
 func TestEnsureBlobTxAdoptsVerifiedPrimaryForSecondaryOnlyBlob(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
 	hash := fakeHash("a3")
@@ -297,6 +306,7 @@ func TestEnsureBlobTxAdoptsVerifiedPrimaryForSecondaryOnlyBlob(t *testing.T) {
 }
 
 func TestEnsureBlobTxPreservesSecondaryAuthorityForDeduplicatedPrimary(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
 	hash := fakeHash("a4")
@@ -334,6 +344,7 @@ func TestEnsureBlobTxPreservesSecondaryAuthorityForDeduplicatedPrimary(t *testin
 }
 
 func TestReplaceContentReceiptAcceptsDeduplicatedSecondaryAuthority(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
 	target, err := s.CreateFile(ctx, s.RootID(), "target.txt", fakeHash("a5"), 3, "text/plain")
@@ -375,6 +386,7 @@ func TestReplaceContentReceiptAcceptsDeduplicatedSecondaryAuthority(t *testing.T
 }
 
 func TestEnsureBlobTxRetiresDeadPackMappingBeforeLooseReingest(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
 	hash := fakeHash("a5")
@@ -414,6 +426,7 @@ func TestEnsureBlobTxRetiresDeadPackMappingBeforeLooseReingest(t *testing.T) {
 }
 
 func TestRevertContentRejectsInvalidSourceAndTarget(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
 	first, err := s.CreateFile(ctx, s.RootID(), "first.txt", fakeHash("a1"), 3, "text/plain")
@@ -465,6 +478,7 @@ func TestRevertContentRejectsInvalidSourceAndTarget(t *testing.T) {
 }
 
 func TestContentVersionsRequiresBoundedPage(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	file, err := s.CreateFile(t.Context(), s.RootID(), "bounded.txt", fakeHash("a1"), 1, "text/plain")
 	require.NoError(t, err)

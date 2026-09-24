@@ -12,6 +12,7 @@ import (
 )
 
 func TestVersionPruneBlobStatsBatchesCandidateHashes(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	tx, err := s.db.BeginTx(t.Context(), nil)
 	require.NoError(t, err)
@@ -26,6 +27,7 @@ func TestVersionPruneBlobStatsBatchesCandidateHashes(t *testing.T) {
 }
 
 func TestPruneContentVersionsPreviewRunAndMetadataRoundTrip(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
 	created, err := s.CreateFile(ctx, s.RootID(), "history.txt", fakeHash("a1"), 10, "text/plain")
@@ -93,6 +95,7 @@ func TestPruneContentVersionsPreviewRunAndMetadataRoundTrip(t *testing.T) {
 }
 
 func TestPruneContentVersionsCancelsOrphanedRenditionJob(t *testing.T) {
+	t.Parallel()
 	s, versions := newRenditionCatalogFixture(t)
 	ctx := t.Context()
 	profile := catalogProcessingProfile(t, false)
@@ -136,6 +139,7 @@ func TestPruneContentVersionsCancelsOrphanedRenditionJob(t *testing.T) {
 }
 
 func TestPruneContentVersionKeepsCheckpointedProviderClaimWhileReselectingWaiter(t *testing.T) {
+	t.Parallel()
 	s, versions := newRenditionCatalogFixture(t)
 	ctx := t.Context()
 	profile := catalogProcessingProfile(t, false)
@@ -186,6 +190,7 @@ func TestPruneContentVersionKeepsCheckpointedProviderClaimWhileReselectingWaiter
 }
 
 func TestPruneContentVersionClearsDeletedAuthorityFromOperatorRequiredJob(t *testing.T) {
+	t.Parallel()
 	s, versions := newRenditionCatalogFixture(t)
 	ctx := t.Context()
 	profile := catalogProcessingProfile(t, false)
@@ -232,6 +237,7 @@ func TestPruneContentVersionClearsDeletedAuthorityFromOperatorRequiredJob(t *tes
 }
 
 func TestPruneContentVersionRequeuesSharedStagedJobAndRetainsRoot(t *testing.T) {
+	t.Parallel()
 	s, versions := newRenditionCatalogFixture(t)
 	ctx := t.Context()
 	profile := catalogProcessingProfile(t, false)
@@ -293,6 +299,7 @@ func TestPruneContentVersionRequeuesSharedStagedJobAndRetainsRoot(t *testing.T) 
 }
 
 func TestPruneContentVersionRequeuesFailedSharedStagedJob(t *testing.T) {
+	t.Parallel()
 	s, versions := newRenditionCatalogFixture(t)
 	ctx := t.Context()
 	profile := catalogProcessingProfile(t, false)
@@ -357,6 +364,7 @@ func TestPruneContentVersionRequeuesFailedSharedStagedJob(t *testing.T) {
 }
 
 func TestPruneContentVersionClearsDeletedAuthorityFromTerminalFailedJob(t *testing.T) {
+	t.Parallel()
 	s, versions := newRenditionCatalogFixture(t)
 	ctx := t.Context()
 	profile := catalogProcessingProfile(t, false)
@@ -414,6 +422,7 @@ func TestPruneContentVersionClearsDeletedAuthorityFromTerminalFailedJob(t *testi
 }
 
 func TestPruneSelectedWaiterReleasesRootsWhenOnlyRejectedWaitersRemain(t *testing.T) {
+	t.Parallel()
 	s, versions := newRenditionCatalogFixture(t)
 	ctx := t.Context()
 	profile := catalogProcessingProfile(t, false)
@@ -479,6 +488,7 @@ func TestPruneSelectedWaiterReleasesRootsWhenOnlyRejectedWaitersRemain(t *testin
 }
 
 func TestPruneSoleWaiterKeepsAmbiguousJobSourceOutOfGC(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
 	created, err := s.CreateFile(
@@ -553,6 +563,7 @@ func TestPruneSoleWaiterKeepsAmbiguousJobSourceOutOfGC(t *testing.T) {
 }
 
 func TestPruneSoleWaiterKeepsRetriedProviderResumeFence(t *testing.T) {
+	t.Parallel()
 	s, versions := newRenditionCatalogFixture(t)
 	ctx := t.Context()
 	profile := catalogProcessingProfile(t, false)
@@ -603,6 +614,7 @@ func TestPruneSoleWaiterKeepsRetriedProviderResumeFence(t *testing.T) {
 }
 
 func TestPruneContentVersionsRetainsDependenciesAndCheckpointsAllPrior(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
 	created, err := s.CreateFile(ctx, s.RootID(), "reverted.txt", fakeHash("d4"), 40, "text/plain")
@@ -668,6 +680,7 @@ func TestPruneContentVersionsRetainsDependenciesAndCheckpointsAllPrior(t *testin
 }
 
 func TestPruneContentVersionsRemovesRenditionAttachment(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	versions, profiles, _ := seedProcessingMetadataCatalog(t, s)
 	node, err := s.NodeByPath(t.Context(), "/synthetic-source-a.pdf")
@@ -688,6 +701,7 @@ func TestPruneContentVersionsRemovesRenditionAttachment(t *testing.T) {
 }
 
 func TestPruneContentVersionsAccountsForVisualPreviewOutputs(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
 	created, err := s.CreateFile(ctx, s.RootID(), "photo.jpg", fakeHash("91"), 10, "image/jpeg")
@@ -740,6 +754,7 @@ func TestPruneContentVersionsAccountsForVisualPreviewOutputs(t *testing.T) {
 }
 
 func TestPruneContentVersionsAccountsForPageImages(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
 	historical := pageStoreRequest(t, s)
@@ -795,6 +810,7 @@ func TestPruneContentVersionsAccountsForPageImages(t *testing.T) {
 }
 
 func TestPruneContentVersionsReportsPackedAndSharedConsequences(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
 	created, err := s.CreateFile(ctx, s.RootID(), "packed.txt", fakeHash("f6"), 60, "text/plain")
@@ -830,6 +846,7 @@ func TestPruneContentVersionsReportsPackedAndSharedConsequences(t *testing.T) {
 }
 
 func TestPruneContentVersionsReportsMixedLocationsAcrossStores(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
 	created, err := s.CreateFile(ctx, s.RootID(), "mixed.txt", fakeHash("d7"), 60, "text/plain")
@@ -876,6 +893,7 @@ func TestPruneContentVersionsReportsMixedLocationsAcrossStores(t *testing.T) {
 }
 
 func TestPruneContentVersionsValidatesSelectorsAndTargets(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
 	first, err := s.CreateFile(ctx, s.RootID(), "first.txt", fakeHash("c9"), 90, "text/plain")

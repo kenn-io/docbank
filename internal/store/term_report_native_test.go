@@ -54,6 +54,7 @@ func TestTermReportNativeTextRejectsBeforeLoading(t *testing.T) {
 }
 
 func TestTermReportNativeTextBindsSelectedRow(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	const text = "dated 2024-05-06 café"
 	hash := testSHA256([]byte(text))

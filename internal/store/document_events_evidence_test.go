@@ -11,6 +11,7 @@ import (
 )
 
 func TestDocumentEventEvidenceLoadsExactBindingAndChangesWithMTime(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	version, target := ingestDocumentEventTarget(t, s, "bound.pdf", "e81")
 	snapshot, err := s.LoadDocumentEventEvidence(t.Context(), target)
@@ -45,6 +46,7 @@ func TestDocumentEventEvidenceLoadsExactBindingAndChangesWithMTime(t *testing.T)
 }
 
 func TestDocumentEventEvidenceCorruptionCanBeFencedAsTerminalFailure(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	node, err := s.CreateFile(t.Context(), s.RootID(), "corrupt.pdf", fakeHash("e82"), 8, "application/pdf")
 	require.NoError(t, err)
@@ -92,6 +94,7 @@ func TestDocumentEventEvidenceCorruptionCanBeFencedAsTerminalFailure(t *testing.
 }
 
 func TestDocumentEventEvidenceRetainsCompleteDigestBeyondDerivationBound(t *testing.T) {
+	t.Parallel()
 	t.Run("boundary", func(t *testing.T) {
 		s, target := documentEventTargetWithBindings(t, document.MaxDocumentEvents-1)
 		snapshot, err := s.LoadDocumentEventEvidence(t.Context(), target)
@@ -126,6 +129,7 @@ func TestDocumentEventEvidenceRetainsCompleteDigestBeyondDerivationBound(t *test
 }
 
 func TestDocumentEventEvidenceHashesSourceMetadataAsBlobBytes(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name string
 		raw  func([]byte) []byte
@@ -174,6 +178,7 @@ func TestDocumentEventEvidenceHashesSourceMetadataAsBlobBytes(t *testing.T) {
 }
 
 func TestF10PublicationDirtiesOnlyWhenActiveHeadChanges(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	node, err := s.CreateFile(t.Context(), s.RootID(), "head.pdf", fakeHash("e83"), 8, "application/pdf")
 	require.NoError(t, err)
@@ -214,6 +219,7 @@ func TestF10PublicationDirtiesOnlyWhenActiveHeadChanges(t *testing.T) {
 }
 
 func TestDocumentEventPublicationRequiresCapturedManifestDigest(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	version, _ := ingestDocumentEventTarget(t, s, "publish.txt", "e84")
 	require.NoError(t, s.EnsureDocumentEventRecipe(t.Context(), DocumentEventsDeriverFingerprint))

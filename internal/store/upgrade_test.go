@@ -57,6 +57,7 @@ type v3Fixture struct {
 }
 
 func TestOpenCutsOverReleasedV090ThroughJSONL(t *testing.T) {
+	t.Parallel()
 	for _, test := range v090UpgradeDrivers() {
 		t.Run(test.name, func(t *testing.T) {
 			dbPath := filepath.Join(t.TempDir(), "docbank.db")
@@ -134,6 +135,7 @@ func TestOpenCutsOverReleasedV090ThroughJSONL(t *testing.T) {
 // JSONL rebuild, deleting the recovery cache, or serving both legacy and
 // rendition FTS after publication.
 func TestUpgradeLegacyPlainTextCutsOverServingAuthority(t *testing.T) {
+	t.Parallel()
 	for _, test := range v090UpgradeDrivers() {
 		t.Run(test.name, func(t *testing.T) {
 			dbPath := filepath.Join(t.TempDir(), "docbank.db")
@@ -213,6 +215,7 @@ func TestUpgradeLegacyPlainTextCutsOverServingAuthority(t *testing.T) {
 }
 
 func TestFreshStoresRecordCurrentStorageSchemaVersion(t *testing.T) {
+	t.Parallel()
 	for _, test := range v090UpgradeDrivers() {
 		t.Run(test.name, func(t *testing.T) {
 			s, err := Open(filepath.Join(t.TempDir(), "docbank.db"), test.driver)
@@ -227,6 +230,7 @@ func TestFreshStoresRecordCurrentStorageSchemaVersion(t *testing.T) {
 }
 
 func TestUpgradeReleasedSchemaCreatesEmptySavedQueryRunAuthority(t *testing.T) {
+	t.Parallel()
 	for _, test := range v090UpgradeDrivers() {
 		t.Run(test.name, func(t *testing.T) {
 			dbPath := filepath.Join(t.TempDir(), "docbank.db")
@@ -242,6 +246,7 @@ func TestUpgradeReleasedSchemaCreatesEmptySavedQueryRunAuthority(t *testing.T) {
 }
 
 func TestOpenRejectsUnreleasedSchemaWithoutCutover(t *testing.T) {
+	t.Parallel()
 	for _, test := range v090UpgradeDrivers() {
 		t.Run(test.name, func(t *testing.T) {
 			path := filepath.Join(t.TempDir(), "docbank.db")
@@ -263,6 +268,7 @@ func TestOpenRejectsUnreleasedSchemaWithoutCutover(t *testing.T) {
 }
 
 func TestOpenRejectsCurrentDatabaseWithoutProvenanceVersionBindings(t *testing.T) {
+	t.Parallel()
 	for _, test := range v090UpgradeDrivers() {
 		t.Run(test.name, func(t *testing.T) {
 			dbPath := filepath.Join(t.TempDir(), "docbank.db")
@@ -288,6 +294,7 @@ func TestOpenRejectsCurrentDatabaseWithoutProvenanceVersionBindings(t *testing.T
 }
 
 func TestOpenRejectsCurrentDatabaseWithoutPersonAuthority(t *testing.T) {
+	t.Parallel()
 	for _, test := range v090UpgradeDrivers() {
 		t.Run(test.name, func(t *testing.T) {
 			dbPath := filepath.Join(t.TempDir(), "docbank.db")
@@ -313,6 +320,7 @@ func TestOpenRejectsCurrentDatabaseWithoutPersonAuthority(t *testing.T) {
 }
 
 func TestOpenRejectsInvalidPackagePreflightLayout(t *testing.T) {
+	t.Parallel()
 	for _, driver := range v090UpgradeDrivers() {
 		for _, change := range []string{"DROP TABLE package_preflights", "ALTER TABLE package_preflights DROP COLUMN source_ref"} {
 			t.Run(driver.name+"/"+change, func(t *testing.T) {
@@ -333,6 +341,7 @@ func TestOpenRejectsInvalidPackagePreflightLayout(t *testing.T) {
 }
 
 func TestOpenRejectsInvalidTermReportHistoryLayout(t *testing.T) {
+	t.Parallel()
 	for _, driver := range v090UpgradeDrivers() {
 		for _, change := range []string{"DROP TABLE term_report_history", "ALTER TABLE term_report_history DROP COLUMN parent_id"} {
 			t.Run(driver.name+"/"+change, func(t *testing.T) {
@@ -353,6 +362,7 @@ func TestOpenRejectsInvalidTermReportHistoryLayout(t *testing.T) {
 }
 
 func TestOpenRejectsCurrentDatabaseWithoutAttributionTables(t *testing.T) {
+	t.Parallel()
 	tables := []string{
 		"document_event_state", "document_event_generations", "document_event_heads",
 		"document_event_builds", "document_event_dirty", "document_event_attempts",
@@ -422,6 +432,7 @@ func TestCanonicalCurrentSchemaDerivationDoesNotCacheErrors(t *testing.T) {
 }
 
 func TestCanonicalCurrentSchemaDerivationSeparatesSameNamedDrivers(t *testing.T) {
+	t.Parallel()
 	const extraColumn = "synthetic_driver_variant_269"
 	base := DefaultSQLiteDriver()
 	plain := &schemaVariantDriver{Driver: base}
@@ -486,6 +497,7 @@ func schemaSQLWithAddedColumn(t *testing.T, original, table, column string) stri
 }
 
 func TestOpenRejectsCurrentDatabaseWithForeignColumn(t *testing.T) {
+	t.Parallel()
 	for _, table := range []struct {
 		name, expected string
 	}{
@@ -516,6 +528,7 @@ func TestOpenRejectsCurrentDatabaseWithForeignColumn(t *testing.T) {
 }
 
 func TestOpenRejectsCurrentDatabaseWithMissingExtendedTableColumn(t *testing.T) {
+	t.Parallel()
 	for _, table := range []struct {
 		name, column string
 	}{
@@ -547,6 +560,7 @@ func TestOpenRejectsCurrentDatabaseWithMissingExtendedTableColumn(t *testing.T) 
 }
 
 func TestOpenCutsOverEveryReleasedSchemaV2LayoutThroughJSONL(t *testing.T) {
+	t.Parallel()
 	layouts := []struct {
 		name     string
 		addition string
@@ -612,6 +626,7 @@ func TestOpenCutsOverEveryReleasedSchemaV2LayoutThroughJSONL(t *testing.T) {
 }
 
 func TestOpenCutsOverReleasedSchemaV3ThroughJSONL(t *testing.T) {
+	t.Parallel()
 	for _, test := range v090UpgradeDrivers() {
 		t.Run(test.name, func(t *testing.T) {
 			dbPath := filepath.Join(t.TempDir(), "docbank.db")
@@ -652,6 +667,7 @@ func TestOpenCutsOverReleasedSchemaV3ThroughJSONL(t *testing.T) {
 // Coverage guard: the exact released v0.14 schema must carry its plain-text
 // search result through the one-authority cutover in both SQLite modes.
 func TestUpgradeReleasedV014MigratesPlainText(t *testing.T) {
+	t.Parallel()
 	for _, test := range v090UpgradeDrivers() {
 		t.Run(test.name, func(t *testing.T) {
 			dbPath := filepath.Join(t.TempDir(), "docbank.db")
@@ -725,6 +741,7 @@ func TestUpgradeReleasedV014MigratesPlainText(t *testing.T) {
 // Coverage guard: both released schema-v2 layouts must carry legacy text
 // through the same one-authority cutover in both supported SQLite modes.
 func TestUpgradeEveryReleasedSchemaV2LayoutMigratesLegacyPlainText(t *testing.T) {
+	t.Parallel()
 	layouts := []struct {
 		name     string
 		addition string
@@ -772,6 +789,7 @@ func TestUpgradeEveryReleasedSchemaV2LayoutMigratesLegacyPlainText(t *testing.T)
 }
 
 func TestOpenRejectsDatabaseFromNewerStorageSchema(t *testing.T) {
+	t.Parallel()
 	for _, test := range v090UpgradeDrivers() {
 		t.Run(test.name, func(t *testing.T) {
 			dbPath := filepath.Join(t.TempDir(), "docbank.db")
@@ -795,6 +813,7 @@ func TestOpenRejectsDatabaseFromNewerStorageSchema(t *testing.T) {
 }
 
 func TestCurrentSchemaFencesReleasedV090Binary(t *testing.T) {
+	t.Parallel()
 	for _, test := range v090UpgradeDrivers() {
 		t.Run(test.name, func(t *testing.T) {
 			dbPath := filepath.Join(t.TempDir(), "docbank.db")
@@ -817,6 +836,7 @@ func TestCurrentSchemaFencesReleasedV090Binary(t *testing.T) {
 }
 
 func TestReleasedRecoveryCopyDoesNotResurrectDeletedVault(t *testing.T) {
+	t.Parallel()
 	driver := DefaultSQLiteDriver()
 	dbPath := filepath.Join(t.TempDir(), "docbank.db")
 	createV090Fixture(t, dbPath, driver)
@@ -834,6 +854,7 @@ func TestReleasedRecoveryCopyDoesNotResurrectDeletedVault(t *testing.T) {
 }
 
 func TestOpenCompletesInterruptedReleasedCutover(t *testing.T) {
+	t.Parallel()
 	driver := DefaultSQLiteDriver()
 	dbPath := filepath.Join(t.TempDir(), "docbank.db")
 	fixture := createV090Fixture(t, dbPath, driver)
@@ -873,6 +894,7 @@ func TestOpenCompletesInterruptedReleasedCutover(t *testing.T) {
 // Mutation caught: validating an interrupted current-schema stage without
 // converging its legacy authority can publish a stage that was never cut over.
 func TestInterruptedUpgradeStageMigratesLegacyBeforePublication(t *testing.T) {
+	t.Parallel()
 	for _, test := range v090UpgradeDrivers() {
 		t.Run(test.name, func(t *testing.T) {
 			dbPath := filepath.Join(t.TempDir(), "docbank.db")
@@ -1321,6 +1343,7 @@ func v090UpgradeDrivers() []struct {
 }
 
 func TestOpenRejectsIncompleteVectorIndexSchema(t *testing.T) {
+	t.Parallel()
 	for _, driver := range v090UpgradeDrivers() {
 		t.Run(driver.name, func(t *testing.T) {
 			path := filepath.Join(t.TempDir(), "docbank.db")
@@ -1339,6 +1362,7 @@ func TestOpenRejectsIncompleteVectorIndexSchema(t *testing.T) {
 }
 
 func TestVectorIndexSchemaHasDistinctVersion(t *testing.T) {
+	t.Parallel()
 	for _, driver := range v090UpgradeDrivers() {
 		t.Run(driver.name, func(t *testing.T) {
 			path := filepath.Join(t.TempDir(), "docbank.db")

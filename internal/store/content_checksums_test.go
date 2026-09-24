@@ -10,6 +10,7 @@ import (
 )
 
 func TestAuxiliaryChecksumPersistsByAuthoritativeSHA256Identity(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	hash := fakeHash("a9")
 	const md5sum = "f6fdffe48c908deb0f4c3bd36c032e72"
@@ -34,6 +35,7 @@ func TestAuxiliaryChecksumPersistsByAuthoritativeSHA256Identity(t *testing.T) {
 }
 
 func TestAuxiliaryChecksumValidationAndMissingBackfillTargets(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	hash := fakeHash("b8")
 	_, err := s.CreateFile(t.Context(), s.RootID(), "legacy.bin", hash, 4, "")
@@ -60,6 +62,7 @@ func TestAuxiliaryChecksumValidationAndMissingBackfillTargets(t *testing.T) {
 }
 
 func TestMissingBlobChecksumTargetsCanAdvancePastAFailingHash(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	for index, hash := range []string{fakeHash("a1"), fakeHash("b2"), fakeHash("c3")} {
 		_, err := s.CreateFile(t.Context(), s.RootID(), "source-"+string(rune('a'+index))+".bin", hash, 4, "")

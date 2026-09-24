@@ -8,6 +8,7 @@ import (
 )
 
 func TestRenditionBuildReadDormantAndValidated(t *testing.T) {
+	t.Parallel()
 	s, versions := newRenditionCatalogFixture(t)
 	profile := catalogProcessingProfile(t, false)
 	build := catalogRenditionBuild(s, profile)

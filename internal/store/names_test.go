@@ -8,6 +8,7 @@ import (
 )
 
 func TestNormalizeName(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name    string
 		in      string
@@ -41,6 +42,7 @@ func TestNormalizeName(t *testing.T) {
 }
 
 func TestSuffixRoundTrip(t *testing.T) {
+	t.Parallel()
 	base, ext := splitSuffix("report.pdf")
 	assert.Equal(t, "report", base)
 	assert.Equal(t, ".pdf", ext)

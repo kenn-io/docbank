@@ -12,6 +12,7 @@ import (
 // An authenticated upload cannot replace accepted bytes, evade its absolute
 // lifetime or seal a source with missing ordered chunks.
 func TestMailboxContainerSessions(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
 	req := MailboxContainerRequest{ID: "container-one", Owner: "owner-one", SHA256: fakeHash("aa"), Size: 3, Format: "mbox"}
@@ -52,6 +53,7 @@ func TestMailboxContainerSessions(t *testing.T) {
 // Unknown persisted policy values must be rejected by reads and integrity
 // validation, not hidden by the query that exports only sealed containers.
 func TestMailboxContainerPolicyValidationWithoutSchemaEnums(t *testing.T) {
+	t.Parallel()
 	for _, update := range []string{
 		`UPDATE mailbox_containers SET state='unsupported-state'`,
 		`UPDATE mailbox_containers SET format='unsupported-format'`,
@@ -76,6 +78,7 @@ func TestMailboxContainerPolicyValidationWithoutSchemaEnums(t *testing.T) {
 }
 
 func TestMailboxContainerMaximumOrderedManifest(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
 	c := MailboxContainerRequest{ID: "maximum", Owner: "one", SHA256: fakeHash("aa"), Size: 256 << 30, Format: "zip"}
@@ -113,6 +116,7 @@ func TestMailboxContainerMaximumOrderedManifest(t *testing.T) {
 }
 
 func TestMailboxContainerQuotaExpiryAndCapacity(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
 	req := MailboxContainerRequest{ID: "a", Owner: "one", SHA256: fakeHash("aa"), Size: 256 << 30, Format: "zip"}

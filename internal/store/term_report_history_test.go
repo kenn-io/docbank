@@ -12,6 +12,7 @@ import (
 )
 
 func TestTermReportHistoryRetainsReusableRequestAcrossMetadataRoundTrip(t *testing.T) {
+	t.Parallel()
 	ctx := t.Context()
 	s := newTestStore(t)
 	now := time.Date(2026, 9, 20, 15, 30, 0, 0, time.UTC)
@@ -39,6 +40,7 @@ func TestTermReportHistoryRetainsReusableRequestAcrossMetadataRoundTrip(t *testi
 }
 
 func TestTermReportHistoryBoundsRetentionAcrossRestore(t *testing.T) {
+	t.Parallel()
 	ctx := t.Context()
 	s := newTestStore(t)
 	request := report.Request{Version: 1, AllDocuments: true, Timezone: "UTC", CoverageMode: "strict",
@@ -73,6 +75,7 @@ func TestTermReportHistoryBoundsRetentionAcrossRestore(t *testing.T) {
 }
 
 func TestTermReportHistoryAcceptsMaximumValidTermText(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	request := report.Request{Version: 1, AllDocuments: true, Timezone: "UTC", CoverageMode: "strict"}
 	for number := 1; number <= 128; number++ {

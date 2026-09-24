@@ -13,6 +13,7 @@ import (
 )
 
 func TestMediaRetryAdmissionOrderWithEqualClockTimes(t *testing.T) {
+	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {
 		s := newTestStore(t)
 		ctx := t.Context()
@@ -52,6 +53,7 @@ func TestMediaRetryAdmissionOrderWithEqualClockTimes(t *testing.T) {
 }
 
 func TestMediaOperationReplaysWithoutRepeatingMutation(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	calls := 0
 	op := MediaOperation{
@@ -78,6 +80,7 @@ func TestMediaOperationReplaysWithoutRepeatingMutation(t *testing.T) {
 }
 
 func TestMediaOperationRollsBackMutationBeforeInvalidReceipt(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	op := MediaOperation{
 		ID: "00000000-0000-4000-8000-000000000002", Principal: "operator",
@@ -106,6 +109,7 @@ func TestMediaOperationRollsBackMutationBeforeInvalidReceipt(t *testing.T) {
 }
 
 func TestMediaOperationConcurrentReplayRunsMutationOnce(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	op := MediaOperation{
 		ID: "00000000-0000-4000-8000-000000000003", Principal: "operator",
@@ -135,6 +139,7 @@ func TestMediaOperationConcurrentReplayRunsMutationOnce(t *testing.T) {
 }
 
 func TestMediaOperationRespectsAuditedVaultGuard(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	seedInitialAuditAuthority(t, s, s.RootID())
 	op := MediaOperation{
@@ -146,6 +151,7 @@ func TestMediaOperationRespectsAuditedVaultGuard(t *testing.T) {
 }
 
 func TestQueuedMediaOperationPersistsAdmissionBeforeWorkerExecution(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	op := MediaOperation{
 		ID: "00000000-0000-4000-8000-000000000005", Principal: "operator",
@@ -170,6 +176,7 @@ func TestQueuedMediaOperationPersistsAdmissionBeforeWorkerExecution(t *testing.T
 }
 
 func TestMediaContinuationsPrioritizeUnenqueuedWorkAndFilterPrincipal(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	_, err := s.db.Exec(`INSERT INTO media_sources VALUES(?, 'supplied_media','','',?,?)`,
 		strings.Repeat("a", 64), strings.Repeat("a", 64), nowRFC3339())

@@ -21,6 +21,7 @@ import (
 )
 
 func TestMetadataRoundTripsPersonAuthority(t *testing.T) {
+	t.Parallel()
 	for _, kind := range []string{"person", "external_alias", "unresolved_custodian", "candidate", "rejected_candidate"} {
 		t.Run(kind, func(t *testing.T) {
 			s := newTestStore(t)
@@ -78,6 +79,7 @@ const (
 )
 
 func TestExportMetadataPreservesV1JavaScriptSeparatorEscapes(t *testing.T) {
+	t.Parallel()
 	s, err := Open(filepath.Join(t.TempDir(), "source.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, s.Close()) })
@@ -92,6 +94,7 @@ func TestExportMetadataPreservesV1JavaScriptSeparatorEscapes(t *testing.T) {
 }
 
 func TestAuxiliaryChecksumMetadataRoundTripsAndRejectsMalformedMD5(t *testing.T) {
+	t.Parallel()
 	for _, testCase := range []struct {
 		name   string
 		driver docsqlite.Driver
@@ -146,6 +149,7 @@ func TestAuxiliaryChecksumMetadataRoundTripsAndRejectsMalformedMD5(t *testing.T)
 }
 
 func TestBackupExcludesUncommittedProviderStaging(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	staged := fakeHash("92")
 	require.NoError(t, s.RecordRenditionBlob(t.Context(), staged, 9,
@@ -169,6 +173,7 @@ func TestBackupExcludesUncommittedProviderStaging(t *testing.T) {
 }
 
 func TestBackupLiveReferenceOverridesProviderStagingHashCollision(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	shared := fakeHash("93")
 	node, err := s.CreateFile(t.Context(), s.RootID(), "durable.txt", shared, 9, "text/plain")
@@ -196,6 +201,7 @@ func TestBackupLiveReferenceOverridesProviderStagingHashCollision(t *testing.T) 
 }
 
 func TestBackupExcludesCrashPendingDerivativeErasureAcrossMetadataRoundTrip(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	pending := fakeHash("95")
 	require.NoError(t, s.RecordRenditionBlob(t.Context(), pending, 12,
@@ -227,6 +233,7 @@ func TestBackupExcludesCrashPendingDerivativeErasureAcrossMetadataRoundTrip(t *t
 }
 
 func TestMetadataJSONLRoundTripPreservesLogicalState(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	source, err := Open(filepath.Join(t.TempDir(), "source.db"))
 	require.NoError(t, err)
@@ -356,6 +363,7 @@ func TestMetadataJSONLRoundTripPreservesLogicalState(t *testing.T) {
 }
 
 func TestMetadataImportQueuesOnlyCurrentTextVersions(t *testing.T) {
+	t.Parallel()
 	ctx := t.Context()
 	source := newTestStore(t)
 	created, err := source.CreateFile(
@@ -394,6 +402,7 @@ func TestMetadataImportQueuesOnlyCurrentTextVersions(t *testing.T) {
 }
 
 func TestImportMetadataRejectsInvalidProvenanceAuthorityAndRollsBack(t *testing.T) {
+	t.Parallel()
 	source, err := Open(filepath.Join(t.TempDir(), "source.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, source.Close()) })
@@ -471,6 +480,7 @@ func TestImportMetadataRejectsInvalidProvenanceAuthorityAndRollsBack(t *testing.
 }
 
 func TestImportMetadataRejectsWatchSourceRetargetedToDirectoryAndRollsBack(t *testing.T) {
+	t.Parallel()
 	ctx := t.Context()
 	source := newTestStore(t)
 	run, err := source.BeginIngest(ctx, "watch", "sessions")
@@ -519,6 +529,7 @@ func TestImportMetadataRejectsWatchSourceRetargetedToDirectoryAndRollsBack(t *te
 }
 
 func TestImportMetadataRejectsWatchSourcesSharingNodeAndRollsBack(t *testing.T) {
+	t.Parallel()
 	ctx := t.Context()
 	source := newTestStore(t)
 	run, err := source.BeginIngest(ctx, "watch", "sessions")
@@ -565,6 +576,7 @@ func TestImportMetadataRejectsWatchSourcesSharingNodeAndRollsBack(t *testing.T) 
 }
 
 func TestMetadataRelationsRejectProvenanceCycle(t *testing.T) {
+	t.Parallel()
 	source, err := Open(filepath.Join(t.TempDir(), "source.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, source.Close()) })
@@ -586,6 +598,7 @@ func TestMetadataRelationsRejectProvenanceCycle(t *testing.T) {
 }
 
 func TestImportMetadataRejectsDanglingContentAndRollsBack(t *testing.T) {
+	t.Parallel()
 	target, err := Open(filepath.Join(t.TempDir(), "target.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, target.Close()) })
@@ -611,6 +624,7 @@ func TestImportMetadataRejectsDanglingContentAndRollsBack(t *testing.T) {
 }
 
 func TestImportMetadataRejectsInvalidUTF8AndRollsBack(t *testing.T) {
+	t.Parallel()
 	const (
 		header = `{"type":"meta","format":"docbank-metadata","version":1,"vault_id":"dddddddd-dddd-4ddd-8ddd-dddddddddddd","node_sequence":1}` + "\n"
 		root   = `{"type":"node","id":1,"parent_id":null,"name":"","kind":"dir","current_version_id":null,"revision":1,"created_at":"2026-01-01T00:00:00.000000000Z","modified_at":"2026-01-01T00:00:00.000000000Z","trashed_at":null,"trash_parent":null,"trash_name":null}` + "\n"
@@ -654,6 +668,7 @@ func TestImportMetadataRejectsInvalidUTF8AndRollsBack(t *testing.T) {
 }
 
 func TestImportMetadataAcceptsValidSurrogatePair(t *testing.T) {
+	t.Parallel()
 	input := strings.Join([]string{
 		`{"type":"meta","format":"docbank-metadata","version":1,"vault_id":"dddddddd-dddd-4ddd-8ddd-dddddddddddd","node_sequence":1}`,
 		`{"type":"node","id":1,"parent_id":null,"name":"","kind":"dir","current_version_id":null,"revision":1,"created_at":"2026-01-01T00:00:00.000000000Z","modified_at":"2026-01-01T00:00:00.000000000Z","trashed_at":null,"trash_parent":null,"trash_name":null}`,
@@ -669,6 +684,7 @@ func TestImportMetadataAcceptsValidSurrogatePair(t *testing.T) {
 }
 
 func TestImportMetadataRejectsLaterContentCreateAndRollsBack(t *testing.T) {
+	t.Parallel()
 	ctx := t.Context()
 	source, err := Open(filepath.Join(t.TempDir(), "source.db"))
 	require.NoError(t, err)
@@ -691,6 +707,7 @@ func TestImportMetadataRejectsLaterContentCreateAndRollsBack(t *testing.T) {
 }
 
 func TestImportMetadataRejectsEmptyNonNullContentMIME(t *testing.T) {
+	t.Parallel()
 	ctx := t.Context()
 	source, err := Open(filepath.Join(t.TempDir(), "source.db"))
 	require.NoError(t, err)
@@ -714,6 +731,7 @@ func TestImportMetadataRejectsEmptyNonNullContentMIME(t *testing.T) {
 }
 
 func TestImportMetadataRejectsInvalidContentRelationshipsAndRollsBack(t *testing.T) {
+	t.Parallel()
 	ctx := t.Context()
 	source, err := Open(filepath.Join(t.TempDir(), "source.db"))
 	require.NoError(t, err)
@@ -759,6 +777,7 @@ func TestImportMetadataRejectsInvalidContentRelationshipsAndRollsBack(t *testing
 }
 
 func TestImportMetadataRejectsEachRevertContentMismatch(t *testing.T) {
+	t.Parallel()
 	ctx := t.Context()
 	source, err := Open(filepath.Join(t.TempDir(), "source.db"))
 	require.NoError(t, err)
@@ -846,6 +865,7 @@ func TestImportMetadataRejectsEachRevertContentMismatch(t *testing.T) {
 }
 
 func TestExportMetadataRejectsMalformedContentVersion(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name      string
 		statement string
@@ -888,6 +908,7 @@ func TestExportMetadataRejectsMalformedContentVersion(t *testing.T) {
 }
 
 func TestExportMetadataRejectsForeignKeyCorruption(t *testing.T) {
+	t.Parallel()
 	missingHash := strings.Repeat("d", 64)
 	tests := []struct {
 		name      string
@@ -936,6 +957,7 @@ func TestExportMetadataRejectsForeignKeyCorruption(t *testing.T) {
 }
 
 func TestExportMetadataRejectsMissingRoot(t *testing.T) {
+	t.Parallel()
 	source, err := Open(filepath.Join(t.TempDir(), "source.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, source.Close()) })
@@ -953,6 +975,7 @@ func TestExportMetadataRejectsMissingRoot(t *testing.T) {
 }
 
 func TestExportMetadataRejectsRegressedNodeSequence(t *testing.T) {
+	t.Parallel()
 	source, err := Open(filepath.Join(t.TempDir(), "source.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, source.Close()) })
@@ -966,6 +989,7 @@ func TestExportMetadataRejectsRegressedNodeSequence(t *testing.T) {
 }
 
 func TestImportMetadataRejectsOrphanedExtractionAndRollsBack(t *testing.T) {
+	t.Parallel()
 	target, err := Open(filepath.Join(t.TempDir(), "target.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, target.Close()) })
@@ -985,6 +1009,7 @@ func TestImportMetadataRejectsOrphanedExtractionAndRollsBack(t *testing.T) {
 }
 
 func TestImportMetadataRejectsDisconnectedCycle(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	source, err := Open(filepath.Join(t.TempDir(), "source.db"))
 	require.NoError(t, err)
@@ -1008,6 +1033,7 @@ func TestImportMetadataRejectsDisconnectedCycle(t *testing.T) {
 }
 
 func TestImportMetadataRejectsUnsafeTrashTopology(t *testing.T) {
+	t.Parallel()
 	stamp := "2026-01-01T00:00:00.000000000Z"
 	otherStamp := "2026-01-02T00:00:00.000000000Z"
 	root := `{"type":"node","id":1,"parent_id":null,"name":"","kind":"dir","current_version_id":null,"revision":1,"created_at":"` + stamp + `","modified_at":"` + stamp + `","trashed_at":null,"trash_parent":null,"trash_name":null}`
@@ -1083,6 +1109,7 @@ func TestImportMetadataRejectsUnsafeTrashTopology(t *testing.T) {
 }
 
 func TestImportMetadataRejectsNodeSequenceBelowSurvivingIDs(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	source, err := Open(filepath.Join(t.TempDir(), "source.db"))
 	require.NoError(t, err)
@@ -1103,6 +1130,7 @@ func TestImportMetadataRejectsNodeSequenceBelowSurvivingIDs(t *testing.T) {
 }
 
 func TestImportMetadataRejectsNonPristineTarget(t *testing.T) {
+	t.Parallel()
 	target, err := Open(filepath.Join(t.TempDir(), "target.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, target.Close()) })
@@ -1117,6 +1145,7 @@ func TestImportMetadataRejectsNonPristineTarget(t *testing.T) {
 }
 
 func TestImportMetadataRejectsOperationalRestoreState(t *testing.T) {
+	t.Parallel()
 	const (
 		header = `{"type":"meta","format":"docbank-metadata","version":1,"vault_id":"dddddddd-dddd-4ddd-8ddd-dddddddddddd","node_sequence":1}` + "\n"
 		blob   = `{"type":"blob","hash":"` + metadataHashCurrent + `","size":12,"created_at":"2026-01-01T00:00:00.000000000Z"}` + "\n"
@@ -1206,6 +1235,7 @@ func TestImportMetadataRejectsOperationalRestoreState(t *testing.T) {
 }
 
 func TestImportMetadataRejectsLexicalProjectionState(t *testing.T) {
+	t.Parallel()
 	target := newTestStore(t)
 	generation, err := target.StageLexicalGeneration(t.Context(), fakeHash("cf"))
 	require.NoError(t, err)
@@ -1222,6 +1252,7 @@ func TestImportMetadataRejectsLexicalProjectionState(t *testing.T) {
 }
 
 func TestImportMetadataRejectsUnknownVersionAndFields(t *testing.T) {
+	t.Parallel()
 	for _, input := range []string{
 		`{"type":"meta","format":"docbank-metadata","version":2,"vault_id":"dddddddd-dddd-4ddd-8ddd-dddddddddddd","node_sequence":1}` + "\n",
 		`{"type":"meta","format":"docbank-metadata","version":1,"vault_id":"not-a-uuid","node_sequence":1}` + "\n",
@@ -1251,6 +1282,7 @@ func TestImportMetadataRejectsUnknownVersionAndFields(t *testing.T) {
 }
 
 func TestExportMetadataRejectsMalformedVaultIdentity(t *testing.T) {
+	t.Parallel()
 	source := newTestStore(t)
 	_, err := source.db.Exec(`UPDATE vault_metadata SET vault_uid = 'not-a-uuid' WHERE singleton = 1`)
 	require.NoError(t, err)
@@ -1262,6 +1294,7 @@ func TestExportMetadataRejectsMalformedVaultIdentity(t *testing.T) {
 }
 
 func TestMetadataRejectsMalformedStableRecordIDs(t *testing.T) {
+	t.Parallel()
 	t.Run("import", func(t *testing.T) {
 		header := `{"type":"meta","format":"docbank-metadata","version":1,"vault_id":"dddddddd-dddd-4ddd-8ddd-dddddddddddd","node_sequence":1}` + "\n"
 		root := `{"type":"node","id":1,"parent_id":null,"name":"","kind":"dir","current_version_id":null,"revision":1,"created_at":"2026-01-01T00:00:00.000000000Z","modified_at":"2026-01-01T00:00:00.000000000Z","trashed_at":null,"trash_parent":null,"trash_name":null}` + "\n"
@@ -1298,6 +1331,7 @@ func TestMetadataRejectsMalformedStableRecordIDs(t *testing.T) {
 }
 
 func TestMetadataRejectsNonCanonicalTagNames(t *testing.T) {
+	t.Parallel()
 	const (
 		header = `{"type":"meta","format":"docbank-metadata","version":1,"vault_id":"dddddddd-dddd-4ddd-8ddd-dddddddddddd","node_sequence":1}` + "\n"
 		root   = `{"type":"node","id":1,"parent_id":null,"name":"","kind":"dir","current_version_id":null,"revision":1,"created_at":"2026-01-01T00:00:00.000000000Z","modified_at":"2026-01-01T00:00:00.000000000Z","trashed_at":null,"trash_parent":null,"trash_name":null}` + "\n"
@@ -1316,6 +1350,7 @@ func TestMetadataRejectsNonCanonicalTagNames(t *testing.T) {
 }
 
 func TestImportMetadataRejectsInvalidTagRevision(t *testing.T) {
+	t.Parallel()
 	const (
 		header = `{"type":"meta","format":"docbank-metadata","version":1,"vault_id":"dddddddd-dddd-4ddd-8ddd-dddddddddddd","node_sequence":1}` + "\n"
 		root   = `{"type":"node","id":1,"parent_id":null,"name":"","kind":"dir","current_version_id":null,"revision":1,"created_at":"2026-01-01T00:00:00.000000000Z","modified_at":"2026-01-01T00:00:00.000000000Z","trashed_at":null,"trash_parent":null,"trash_name":null}` + "\n"
@@ -1334,6 +1369,7 @@ func TestImportMetadataRejectsInvalidTagRevision(t *testing.T) {
 }
 
 func TestImportMetadataTreatsTagRevisionAsOpaque(t *testing.T) {
+	t.Parallel()
 	input := strings.Join([]string{
 		`{"type":"meta","format":"docbank-metadata","version":1,"vault_id":"dddddddd-dddd-4ddd-8ddd-dddddddddddd","node_sequence":1}`,
 		`{"type":"node","id":1,"parent_id":null,"name":"","kind":"dir","current_version_id":null,"revision":1,"created_at":"2026-01-01T00:00:00.000000000Z","modified_at":"2026-01-01T00:00:00.000000000Z","trashed_at":null,"trash_parent":null,"trash_name":null}`,
@@ -1352,6 +1388,7 @@ func TestImportMetadataTreatsTagRevisionAsOpaque(t *testing.T) {
 }
 
 func TestImportMetadataRejectsDuplicateStableRecordIDsTransactionally(t *testing.T) {
+	t.Parallel()
 	header := `{"type":"meta","format":"docbank-metadata","version":1,"vault_id":"dddddddd-dddd-4ddd-8ddd-dddddddddddd","node_sequence":1}` + "\n"
 	root := `{"type":"node","id":1,"parent_id":null,"name":"","kind":"dir","current_version_id":null,"revision":1,"created_at":"2026-01-01T00:00:00.000000000Z","modified_at":"2026-01-01T00:00:00.000000000Z","trashed_at":null,"trash_parent":null,"trash_name":null}` + "\n"
 	for name, record := range map[string]string{
@@ -1521,6 +1558,7 @@ func appendMetadataRecords(t *testing.T, input []byte, records ...any) []byte {
 }
 
 func TestProcessingMetadataJSONLIsDependencyOrderedAndCrossDriverStable(t *testing.T) {
+	t.Parallel()
 	ctx := t.Context()
 	source := newTestStore(t)
 	versions, profiles, build := seedProcessingMetadataCatalog(t, source)
@@ -1559,6 +1597,7 @@ func TestProcessingMetadataJSONLIsDependencyOrderedAndCrossDriverStable(t *testi
 }
 
 func TestProcessingMetadataRoundTripsHeadedEmptyLexicalGeneration(t *testing.T) {
+	t.Parallel()
 	// Mutation caught: requiring a headed generation to contain builds omits the
 	// sole lexical serving pointer from metadata backup and restore.
 	source := newTestStore(t)
@@ -1582,6 +1621,7 @@ func TestProcessingMetadataRoundTripsHeadedEmptyLexicalGeneration(t *testing.T) 
 }
 
 func TestProcessingMetadataClearsPublishedJobGenerationAfterCollection(t *testing.T) {
+	t.Parallel()
 	s, versions := newRenditionCatalogFixture(t)
 	profile := catalogProcessingProfile(t, false)
 	request := renditionJobTestRequest(versions[0], profile)
@@ -1642,6 +1682,7 @@ func TestProcessingMetadataClearsPublishedJobGenerationAfterCollection(t *testin
 }
 
 func TestProcessingMetadataNilHeadingPathRoundTripsAsEmptyArray(t *testing.T) {
+	t.Parallel()
 	source := newTestStore(t)
 	versions := seedRenditionCatalogVersions(t, source)
 	profile := catalogProcessingProfile(t, false)
@@ -1675,6 +1716,7 @@ func TestProcessingMetadataNilHeadingPathRoundTripsAsEmptyArray(t *testing.T) {
 }
 
 func TestProcessingMetadataImportRejectsInvalidAuthorityTransactionally(t *testing.T) {
+	t.Parallel()
 	source := newTestStore(t)
 	seedProcessingMetadataCatalog(t, source)
 	var exported bytes.Buffer

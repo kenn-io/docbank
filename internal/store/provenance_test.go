@@ -7,6 +7,7 @@ import (
 )
 
 func TestProvenanceIdentityGolden(t *testing.T) {
+	t.Parallel()
 	originalMTime := "2026-01-02T03:04:05.12Z"
 	identity, err := provenanceIdentity(metadataProvenance{
 		Type:          metadataProvenanceType,

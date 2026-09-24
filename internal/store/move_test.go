@@ -8,6 +8,7 @@ import (
 )
 
 func TestMoveRename(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
 
@@ -30,6 +31,7 @@ func TestMoveRename(t *testing.T) {
 }
 
 func TestMoveBumpsBothParents(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
 
@@ -57,6 +59,7 @@ func TestMoveBumpsBothParents(t *testing.T) {
 }
 
 func TestMoveRejectsCycleCollisionRoot(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
 
@@ -89,6 +92,7 @@ func TestMoveRejectsCycleCollisionRoot(t *testing.T) {
 }
 
 func TestMoveRejectsMissingOrTrashedSource(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
 
@@ -106,6 +110,7 @@ func TestMoveRejectsMissingOrTrashedSource(t *testing.T) {
 }
 
 func TestMovePath(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
 
@@ -148,6 +153,7 @@ func TestMovePath(t *testing.T) {
 }
 
 func TestMoveToPathUsesStableIdentityAndRevision(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
 
@@ -173,6 +179,7 @@ func TestMoveToPathUsesStableIdentityAndRevision(t *testing.T) {
 }
 
 func TestMovePathRejectsDotSegments(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
 

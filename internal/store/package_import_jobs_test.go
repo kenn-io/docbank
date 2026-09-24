@@ -17,6 +17,7 @@ func seededPackageImportJob(t *testing.T, s *Store) (IngestRun, PackageRequest, 
 }
 
 func TestPackageImportJobAdmissionReplaysExactOperation(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	run, packageRequest, request := seededPackageImportJob(t, s)
 	first, err := s.AdmitPackageImport(t.Context(), run, packageRequest, request)
@@ -38,6 +39,7 @@ func TestPackageImportJobAdmissionReplaysExactOperation(t *testing.T) {
 }
 
 func TestPackageImportJobAdmissionRejectsSecondOperationForPackage(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	run, packageRequest, request := seededPackageImportJob(t, s)
 	first, err := s.AdmitPackageImport(t.Context(), run, packageRequest, request)
@@ -55,6 +57,7 @@ func TestPackageImportJobAdmissionRejectsSecondOperationForPackage(t *testing.T)
 }
 
 func TestAdmitPackageImportPublishesIngestPackageAndJobAtomically(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	request := validPackageRequest(t, s)
 	run, err := s.BeginIngest(t.Context(), "package:loadfile", "synthetic-package")
@@ -144,6 +147,7 @@ func TestAdmitPackageImportPublishesIngestPackageAndJobAtomically(t *testing.T) 
 }
 
 func TestPackageImportJobCancelFencesStaleFinalization(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	run, packageRequest, request := seededPackageImportJob(t, s)
 	_, err := s.AdmitPackageImport(t.Context(), run, packageRequest, request)
@@ -165,6 +169,7 @@ func TestPackageImportJobCancelFencesStaleFinalization(t *testing.T) {
 }
 
 func TestPackageImportLeaseReclaimInvalidatesEarlierToken(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	run, packageRequest, request := seededPackageImportJob(t, s)
 	_, err := s.AdmitPackageImport(t.Context(), run, packageRequest, request)
@@ -189,6 +194,7 @@ func TestPackageImportLeaseReclaimInvalidatesEarlierToken(t *testing.T) {
 }
 
 func TestPackageImportGapReceiptIsFencedAndIdempotent(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	run, packageRequest, request := seededPackageImportJob(t, s)
 	_, err := s.AdmitPackageImport(t.Context(), run, packageRequest, request)
@@ -224,6 +230,7 @@ func TestPackageImportGapReceiptIsFencedAndIdempotent(t *testing.T) {
 }
 
 func TestPackageImportProgressIncludesGapsOnCommittedRecords(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	run, packageRequest, request := seededPackageImportJob(t, s)
 	_, err := s.AdmitPackageImport(t.Context(), run, packageRequest, request)
@@ -258,6 +265,7 @@ func TestPackageImportProgressIncludesGapsOnCommittedRecords(t *testing.T) {
 }
 
 func TestPackageImportProgressNamesRejectedRecordWithEmptyGapArray(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	run, packageRequest, request := seededPackageImportJob(t, s)
 	_, err := s.AdmitPackageImport(t.Context(), run, packageRequest, request)
@@ -288,6 +296,7 @@ func TestPackageImportProgressNamesRejectedRecordWithEmptyGapArray(t *testing.T)
 }
 
 func TestPackageImportLeaseMayBeReleasedForImmediateRetry(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	run, packageRequest, request := seededPackageImportJob(t, s)
 	_, err := s.AdmitPackageImport(t.Context(), run, packageRequest, request)
@@ -307,6 +316,7 @@ func TestPackageImportLeaseMayBeReleasedForImmediateRetry(t *testing.T) {
 }
 
 func TestStalePackageWorkerCannotCommitARecordAfterCancel(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	run, packageRequest, request := seededPackageImportJob(t, s)
 	_, err := s.AdmitPackageImport(t.Context(), run, packageRequest, request)
@@ -338,6 +348,7 @@ func TestStalePackageWorkerCannotCommitARecordAfterCancel(t *testing.T) {
 }
 
 func TestPackageImportFinishRejectsUnrelatedSnapshot(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	run, packageRequest, request := seededPackageImportJob(t, s)
 	_, err := s.AdmitPackageImport(t.Context(), run, packageRequest, request)
@@ -358,6 +369,7 @@ func TestPackageImportFinishRejectsUnrelatedSnapshot(t *testing.T) {
 }
 
 func TestPackageImportFinishPublishesOnlyMatchingReceiptSnapshot(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	run, packageRequest, request := seededPackageImportJob(t, s)
 	_, err := s.AdmitPackageImport(t.Context(), run, packageRequest, request)
@@ -415,6 +427,7 @@ func TestPackageImportFinishPublishesOnlyMatchingReceiptSnapshot(t *testing.T) {
 }
 
 func TestPackageImportJobSurvivesMetadataRestoreWithoutLease(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	run, packageRequest, request := seededPackageImportJob(t, s)
 	_, err := s.AdmitPackageImport(t.Context(), run, packageRequest, request)
@@ -438,6 +451,7 @@ func TestPackageImportJobSurvivesMetadataRestoreWithoutLease(t *testing.T) {
 }
 
 func TestRevokePackageImportOwnerCancelsQueuedWork(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	run, packageRequest, request := seededPackageImportJob(t, s)
 	_, err := s.AdmitPackageImport(t.Context(), run, packageRequest, request)

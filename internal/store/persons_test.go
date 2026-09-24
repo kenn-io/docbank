@@ -7,6 +7,7 @@ import (
 )
 
 func TestPersonRevisionFence(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
 	person, err := s.CreatePerson(ctx, "Ada Lovelace", "operator")
@@ -22,6 +23,7 @@ func TestPersonRevisionFence(t *testing.T) {
 }
 
 func TestPersonIdentityAuthorityAndSharedContactPoints(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
 	ada, err := s.CreatePerson(ctx, "Ada Lovelace", "operator")
@@ -52,6 +54,7 @@ func TestPersonIdentityAuthorityAndSharedContactPoints(t *testing.T) {
 }
 
 func TestPersonMutationsAdvanceBindingEpoch(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
 	person, err := s.CreatePerson(ctx, "Ada", "operator")
@@ -71,6 +74,7 @@ func TestPersonMutationsAdvanceBindingEpoch(t *testing.T) {
 }
 
 func TestPersonAuthorityRejectsInvalidInputs(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	_, err := s.CreatePerson(t.Context(), "", "operator")
 	require.ErrorIs(t, err, ErrInvalidPerson)
@@ -86,6 +90,7 @@ func TestPersonAuthorityRejectsInvalidInputs(t *testing.T) {
 }
 
 func TestRetirePersonTombstonesResolution(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
 	person, err := s.CreatePerson(ctx, "Retiring person", "transfer")
@@ -112,6 +117,7 @@ func TestRetirePersonTombstonesResolution(t *testing.T) {
 }
 
 func TestRetirePersonCutsOffInboundMergeAliases(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	first, err := s.CreatePerson(t.Context(), "First", "operator")
 	require.NoError(t, err)

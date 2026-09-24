@@ -10,6 +10,7 @@ import (
 )
 
 func TestMediaRevokeIsPrincipalScopedAndIdempotent(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
 	_, err := s.db.Exec(`INSERT INTO media_sources VALUES('source','supplied_media','','',?,?)`,
@@ -36,6 +37,7 @@ func TestMediaRevokeIsPrincipalScopedAndIdempotent(t *testing.T) {
 }
 
 func TestMediaOccurrenceRejectsChangedClaimsAndKeepsOtherPrincipalVisible(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
 	_, err := s.db.Exec(`INSERT INTO media_sources VALUES('source','supplied_media','','',?,?)`,
@@ -55,6 +57,7 @@ func TestMediaOccurrenceRejectsChangedClaimsAndKeepsOtherPrincipalVisible(t *tes
 }
 
 func TestMediaOccurrenceConcurrentDeclarationCreatesOneRevision(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
 	_, err := s.db.Exec(`INSERT INTO media_sources VALUES('source','supplied_media','','',?,?)`,
@@ -85,6 +88,7 @@ func TestMediaOccurrenceConcurrentDeclarationCreatesOneRevision(t *testing.T) {
 }
 
 func TestPublishMediaSourceVersionBindsOnlyUnboundOccurrences(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
 	first, err := s.CreateFile(ctx, s.RootID(), "first.mp3", fakeHash("a1"), 10, "audio/mpeg")
@@ -120,6 +124,7 @@ func TestPublishMediaSourceVersionBindsOnlyUnboundOccurrences(t *testing.T) {
 }
 
 func TestPublishMediaSourceVersionRejectsNonObjectCaptureBeforeMutation(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
 	recording, err := s.CreateFile(ctx, s.RootID(), "recording.mp3", fakeHash("a1"), 10, "audio/mpeg")
@@ -144,6 +149,7 @@ func TestPublishMediaSourceVersionRejectsNonObjectCaptureBeforeMutation(t *testi
 }
 
 func TestMediaOccurrenceMutationsRespectAuditedVaultGuard(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	_, err := s.db.Exec(`INSERT INTO media_sources VALUES('source','supplied_media','','',?,?)`,
 		strings.Repeat("a", 64), nowRFC3339())

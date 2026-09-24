@@ -10,6 +10,7 @@ import (
 )
 
 func TestPackageSnapshotAndManifestSurviveMetadataRestore(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	request := validPackageRequest(t, s)
 	packageBefore, err := s.CreatePackage(t.Context(), request)
@@ -38,6 +39,7 @@ func TestPackageSnapshotAndManifestSurviveMetadataRestore(t *testing.T) {
 }
 
 func TestPackageMetadataRejectsVolumeOwnerSwap(t *testing.T) {
+	t.Parallel()
 	source := newTestStore(t)
 	request := validPackageRequest(t, source)
 	request.PackageID = "00000000-0000-4000-8000-000000000001"
@@ -93,6 +95,7 @@ func TestPackageMetadataRejectsVolumeOwnerSwap(t *testing.T) {
 }
 
 func TestPackageMetadataRejectsMemberTamperWithRecomputedRowChecksum(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	request := validPackageRequest(t, s)
 	_, err := s.CreatePackage(t.Context(), request)

@@ -12,6 +12,7 @@ import (
 )
 
 func TestAuditedNodeCreationInheritsMembershipAndRoundTrips(t *testing.T) {
+	t.Parallel()
 	s, err := Open(filepath.Join(t.TempDir(), "source.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, s.Close()) })
@@ -70,6 +71,7 @@ func TestAuditedNodeCreationInheritsMembershipAndRoundTrips(t *testing.T) {
 }
 
 func TestAuditedMkdirPathRecordsInheritedCreation(t *testing.T) {
+	t.Parallel()
 	s, err := Open(filepath.Join(t.TempDir(), "vault.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, s.Close()) })
@@ -91,6 +93,7 @@ func TestAuditedMkdirPathRecordsInheritedCreation(t *testing.T) {
 }
 
 func TestAuditedNodeCreationImportRejectsMembershipRetarget(t *testing.T) {
+	t.Parallel()
 	s, err := Open(filepath.Join(t.TempDir(), "source.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, s.Close()) })
@@ -121,6 +124,7 @@ func TestAuditedNodeCreationImportRejectsMembershipRetarget(t *testing.T) {
 }
 
 func TestAuditedNodeCreationImportRejectsCrossVaultBaseline(t *testing.T) {
+	t.Parallel()
 	s, err := Open(filepath.Join(t.TempDir(), "source.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, s.Close()) })
@@ -147,6 +151,7 @@ func TestAuditedNodeCreationImportRejectsCrossVaultBaseline(t *testing.T) {
 }
 
 func TestAuditedNodeCreationImportRejectsProtectedVersionReuse(t *testing.T) {
+	t.Parallel()
 	s, err := Open(filepath.Join(t.TempDir(), "source.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, s.Close()) })
@@ -176,6 +181,7 @@ func TestAuditedNodeCreationImportRejectsProtectedVersionReuse(t *testing.T) {
 }
 
 func TestAuditedNodeCreationRollsBackWholeOperation(t *testing.T) {
+	t.Parallel()
 	s, err := Open(filepath.Join(t.TempDir(), "vault.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, s.Close()) })

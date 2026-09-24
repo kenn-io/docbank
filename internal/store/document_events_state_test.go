@@ -14,6 +14,7 @@ import (
 )
 
 func TestDocumentEventDeriverFingerprint(t *testing.T) {
+	t.Parallel()
 	sum := sha256.Sum256([]byte(DocumentEventsDeriverDescriptor))
 	require.Equal(t, DocumentEventsDeriverFingerprint, hex.EncodeToString(sum[:]))
 	require.Equal(t,
@@ -23,6 +24,7 @@ func TestDocumentEventDeriverFingerprint(t *testing.T) {
 }
 
 func TestDirtyRevisionDoesNotInvalidateOtherVersions(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	a, err := s.CreateFile(t.Context(), s.RootID(), "a.txt", fakeHash("a1"), 1, "text/plain")
 	require.NoError(t, err)
@@ -49,6 +51,7 @@ func TestDirtyRevisionDoesNotInvalidateOtherVersions(t *testing.T) {
 }
 
 func TestDocumentEventStateAndRecipeAreLazyAndIdempotent(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
 	firstFingerprint := fakeHash("f1")
@@ -108,6 +111,7 @@ func TestDocumentEventStateAndRecipeAreLazyAndIdempotent(t *testing.T) {
 }
 
 func TestDocumentEventIdleMaintenanceNeedsNoWriteTransaction(t *testing.T) {
+	t.Parallel()
 	for _, state := range []string{"empty", "installed", "running"} {
 		t.Run(state, func(t *testing.T) {
 			s := newTestStore(t)
@@ -130,6 +134,7 @@ func TestDocumentEventIdleMaintenanceNeedsNoWriteTransaction(t *testing.T) {
 }
 
 func TestMissingDocumentEventTargetsUsesEpochRevisionAndUUIDCursor(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	first, err := s.CreateFile(t.Context(), s.RootID(), "first.txt", fakeHash("01"), 11, "text/plain")
 	require.NoError(t, err)
@@ -205,6 +210,7 @@ func byTargetID(targets []DocumentEventTarget, id string) DocumentEventTarget {
 }
 
 func TestDocumentEventRecipeSerializesConcurrentSameRecipe(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	_, err := s.CreateFile(t.Context(), s.RootID(), "concurrent.txt", fakeHash("same"), 1, "text/plain")
 	require.NoError(t, err)
@@ -235,6 +241,7 @@ func TestDocumentEventRecipeSerializesConcurrentSameRecipe(t *testing.T) {
 }
 
 func TestDocumentEventAttemptsFenceInputsAndStopTerminalRetry(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	version, _ := ingestDocumentEventTarget(t, s, "attempt.txt", "a4")
 	fingerprint := DocumentEventsDeriverFingerprint
@@ -324,6 +331,7 @@ func TestDocumentEventAttemptsFenceInputsAndStopTerminalRetry(t *testing.T) {
 }
 
 func TestDocumentEventRebuildReceiptIsAtomicAndIdempotent(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	_, err := s.CreateFile(t.Context(), s.RootID(), "rebuild.txt", fakeHash("b1"), 1, "text/plain")
 	require.NoError(t, err)
@@ -364,6 +372,7 @@ func TestDocumentEventRebuildReceiptIsAtomicAndIdempotent(t *testing.T) {
 }
 
 func TestDocumentEventRebuildConcurrentReplayBumpsOnce(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	_, err := s.CreateFile(t.Context(), s.RootID(), "concurrent-rebuild.txt", fakeHash("c1"), 1, "text/plain")
 	require.NoError(t, err)
@@ -403,6 +412,7 @@ func TestDocumentEventRebuildConcurrentReplayBumpsOnce(t *testing.T) {
 }
 
 func TestDocumentEventRebuildRollsBackEpochWhenReceiptInsertFails(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	_, err := s.CreateFile(t.Context(), s.RootID(), "rollback.txt", fakeHash("d1"), 1, "text/plain")
 	require.NoError(t, err)
@@ -417,6 +427,7 @@ func TestDocumentEventRebuildRollsBackEpochWhenReceiptInsertFails(t *testing.T) 
 }
 
 func TestDocumentEventBuildRefreshCountsCurrentTerminalAttempts(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	first, err := s.CreateFile(t.Context(), s.RootID(), "first-build.txt", fakeHash("e1"), 1, "text/plain")
 	require.NoError(t, err)
