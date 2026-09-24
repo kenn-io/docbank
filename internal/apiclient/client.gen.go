@@ -8659,6 +8659,53 @@ func (c *Client) EditProductionInstructions(ctx context.Context, options *EditPr
 	return responseParser(ctx, resp)
 }
 
+// AdmitProductionJob Admit one production job from finalized authority
+func (c *Client) AdmitProductionJob(ctx context.Context, options *AdmitProductionJobRequestOptions, reqEditors ...runtime.RequestEditorFn) (*AdmitProductionJobResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/productions/sets/{set_id}/revisions/{revision}/jobs",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*AdmitProductionJobResponse, error) {
+		switch resp.StatusCode {
+
+		case 201:
+
+			target := new(AdmitProductionJobResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "AdmitProductionJobResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[AdmitProductionJobErrorResponse](resp, "AdmitProductionJobErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/productions/sets/{set_id}/revisions/{revision}/jobs")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 201)
+	}
+	return responseParser(ctx, resp)
+}
+
 // GetProductionMapChunk Page the exact retained aligned-text map for one production member
 func (c *Client) GetProductionMapChunk(ctx context.Context, options *GetProductionMapChunkRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetProductionMapChunkResponse, error) {
 	var err error
@@ -17136,6 +17183,48 @@ func (o *EditProductionInstructionsRequestOptions) GetHeader() (map[string]strin
 	return headers, err
 }
 
+// AdmitProductionJobRequestOptions is the options needed to make a request to AdmitProductionJob.
+type AdmitProductionJobRequestOptions struct {
+	PathParams *AdmitProductionJobPath
+	Body       *AdmitProductionJobBody
+	Header     *AdmitProductionJobHeaders
+}
+
+// GetPathParams returns the path params as a map.
+func (o *AdmitProductionJobRequestOptions) GetPathParams() (map[string]any, error) {
+	encoded, err := json.Marshal(o.PathParams, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetQuery returns the query params as a map.
+func (o *AdmitProductionJobRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *AdmitProductionJobRequestOptions) GetBody() any {
+	if o.Body == nil {
+		return nil
+	}
+	return o.Body
+}
+
+// GetHeader returns the headers as a map.
+func (o *AdmitProductionJobRequestOptions) GetHeader() (map[string]string, error) {
+	encoded, err := json.Marshal(o.Header, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var headers map[string]string
+	err = json.Unmarshal(encoded, &headers)
+	return headers, err
+}
+
 // GetProductionMapChunkRequestOptions is the options needed to make a request to GetProductionMapChunk.
 type GetProductionMapChunkRequestOptions struct {
 	PathParams *GetProductionMapChunkPath
@@ -19199,6 +19288,10 @@ type EditProductionInstructionsHeaders struct {
 	IfMatch *string `json:"If-Match,omitempty"`
 }
 
+type AdmitProductionJobHeaders struct {
+	IfMatch *string `json:"If-Match,omitempty"`
+}
+
 type ReviewProductionMemberHeaders struct {
 	IfMatch *string `json:"If-Match,omitempty"`
 }
@@ -19604,6 +19697,11 @@ type EditProductionInstructionsPath struct {
 	Revision int64     `json:"revision"`
 }
 
+type AdmitProductionJobPath struct {
+	SetID    uuid.UUID `json:"set_id"`
+	Revision int64     `json:"revision"`
+}
+
 type GetProductionMapChunkPath struct {
 	SetID    uuid.UUID `json:"set_id"`
 	Revision int64     `json:"revision"`
@@ -19895,6 +19993,8 @@ type ApplyProductionChangesBody = ProductionChangesRequest
 type ForkProductionDraftBody = ProductionForkRequest
 
 type EditProductionInstructionsBody = ProductionInstructionsRequest
+
+type AdmitProductionJobBody = ProductionJobAdmissionRequest
 
 type ReviewProductionMemberBody = ProductionMemberReviewRequest
 
@@ -21065,6 +21165,10 @@ type EditProductionInstructionsResponse = api.ProductionReceipt
 
 type EditProductionInstructionsErrorResponse = Error
 
+type AdmitProductionJobResponse = api.ProductionJobStatus
+
+type AdmitProductionJobErrorResponse = Error
+
 type GetProductionMapChunkResponse = api.ProductionMapChunk
 
 type GetProductionMapChunkErrorResponse = Error
@@ -22119,6 +22223,8 @@ type ProductionDecisionPage = api.ProductionDecisionPage
 type ProductionForkRequest = api.ProductionForkRequest
 
 type ProductionInstructionsRequest = api.ProductionInstructionsRequest
+
+type ProductionJobAdmissionRequest = api.ProductionJobAdmissionRequest
 
 type ProductionJobCancelRequest = api.ProductionJobCancelRequest
 

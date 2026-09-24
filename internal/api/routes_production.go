@@ -127,6 +127,11 @@ type ProductionMapChunk struct {
 // ProductionJobStatus is the public, bounded state projection of a retained job.
 type ProductionJobStatus store.ProductionJobStatus
 
+type ProductionJobAdmissionRequest struct {
+	JobID       string `json:"job_id"`
+	OperationID string `json:"operation_id"`
+}
+
 type ProductionJobCancelRequest struct {
 	OperationID string `json:"operation_id"`
 }
@@ -330,6 +335,37 @@ func registerProductionRoutes(api huma.API, d Deps, g *OperationGate) {
 				return nil, productionSetError(err)
 			}
 			return &struct{ Body ProductionMapChunk }{Body: ProductionMapChunk(chunk)}, nil
+		})
+	huma.Register(api, huma.Operation{OperationID: "admitProductionJob", Method: http.MethodPost,
+		Path:    "/api/v1/productions/sets/{set_id}/revisions/{revision}/jobs",
+		Summary: "Admit one production job from finalized authority", DefaultStatus: http.StatusCreated,
+		MaxBodyBytes: 4096},
+		func(ctx context.Context, in *struct {
+			SetID    string `path:"set_id" format:"uuid"`
+			Revision int64  `path:"revision" minimum:"1"`
+			IfMatch  string `header:"If-Match"`
+			Body     ProductionJobAdmissionRequest
+		}) (*struct{ Body ProductionJobStatus }, error) {
+			etag, err := parseIfMatch(in.IfMatch)
+			if err != nil {
+				return nil, err
+			}
+			if _, ok := workspaceSnapshotOwner(ctx); !ok {
+				return nil, NewError(http.StatusUnauthorized, "unauthorized", "authenticated production actor is missing")
+			}
+			var status store.ProductionJobStatus
+			err = g.mutate(func() error {
+				if _, err := d.Store.AdmitFinalizedProductionJob(ctx, in.SetID, in.Revision, etag,
+					in.Body.JobID, in.Body.OperationID); err != nil {
+					return err
+				}
+				status, err = d.Store.ProductionJobStatus(ctx, in.SetID, in.Body.JobID)
+				return err
+			})
+			if err != nil {
+				return nil, productionSetError(err)
+			}
+			return &struct{ Body ProductionJobStatus }{Body: ProductionJobStatus(status)}, nil
 		})
 	huma.Register(api, huma.Operation{OperationID: "getProductionJobStatus", Method: http.MethodGet,
 		Path:    "/api/v1/productions/sets/{set_id}/jobs/{job_id}",

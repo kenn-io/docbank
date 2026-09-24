@@ -157,6 +157,27 @@ func (v *Vault) ProductionJobStatus(ctx context.Context, setID, jobID string) (P
 	return v.metadata.ProductionJobStatus(ctx, setID, jobID)
 }
 
+// AdmitProductionJob pins a finalized revision and enqueues one replay-safe job.
+func (v *Vault) AdmitProductionJob(ctx context.Context, setID string, revision, etag int64,
+	request api.ProductionJobAdmissionRequest) (ProductionJobStatus, error) {
+	v.lifecycle.RLock()
+	defer v.lifecycle.RUnlock()
+	if v.closed {
+		return ProductionJobStatus{}, ErrClosed
+	}
+	var status ProductionJobStatus
+	err := embeddedMutationGate{vault: v}.MutateContext(ctx, func() error {
+		if _, err := v.metadata.AdmitFinalizedProductionJob(ctx, setID, revision, etag,
+			request.JobID, request.OperationID); err != nil {
+			return err
+		}
+		var err error
+		status, err = v.metadata.ProductionJobStatus(ctx, setID, request.JobID)
+		return err
+	})
+	return status, err
+}
+
 // CancelProductionJob records a replay-safe cancellation in this embedded vault.
 func (v *Vault) CancelProductionJob(ctx context.Context, actor, setID, jobID string, etag int64,
 	request api.ProductionJobCancelRequest) (redaction.Receipt, error) {

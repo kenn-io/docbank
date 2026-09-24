@@ -284,6 +284,42 @@ func (c *Connection) ProductionJobStatus(ctx context.Context, setID, jobID strin
 	return *result, nil
 }
 
+// AdmitProductionJob submits a finalized revision and returns its bounded status.
+func (c *Connection) AdmitProductionJob(ctx context.Context, setID string, revision, etag int64,
+	request api.ProductionJobAdmissionRequest) (api.ProductionJobStatus, error) {
+	parsedSet, err := productionSetUUID(setID)
+	if err != nil || revision < 1 || etag < 1 || !validUUIDv4(request.JobID) ||
+		!validUUIDv4(request.OperationID) {
+		return api.ProductionJobStatus{}, errors.New("invalid production job admission")
+	}
+	header := strconv.FormatInt(etag, 10)
+	result, err := c.API().AdmitProductionJob(ctx, &apiclient.AdmitProductionJobRequestOptions{
+		PathParams: &apiclient.AdmitProductionJobPath{SetID: parsedSet, Revision: revision},
+		Header:     &apiclient.AdmitProductionJobHeaders{IfMatch: &header}, Body: &request})
+	if err != nil {
+		return api.ProductionJobStatus{}, err
+	}
+	if result == nil || result.JobID != request.JobID || result.SetID != setID ||
+		result.Revision != revision ||
+		!canonical.IsSHA256Hex(result.RevisionSHA256) {
+		return api.ProductionJobStatus{}, integrityErrorf("production admission status is inconsistent")
+	}
+	switch result.State {
+	case productionservice.ProductionJobQueued, productionservice.ProductionJobRunning,
+		productionservice.ProductionJobFailed, productionservice.ProductionJobCanceled:
+		if result.ReceiptSHA256 != "" {
+			return api.ProductionJobStatus{}, integrityErrorf("production admission status is inconsistent")
+		}
+	case productionservice.ProductionJobSucceeded:
+		if !canonical.IsSHA256Hex(result.ReceiptSHA256) {
+			return api.ProductionJobStatus{}, integrityErrorf("production admission status is inconsistent")
+		}
+	default:
+		return api.ProductionJobStatus{}, integrityErrorf("production admission status is inconsistent")
+	}
+	return *result, nil
+}
+
 func (c *Connection) CancelProductionJob(ctx context.Context, setID, jobID string, etag int64,
 	request api.ProductionJobCancelRequest) (redaction.Receipt, error) {
 	parsedSet, err := productionSetUUID(setID)

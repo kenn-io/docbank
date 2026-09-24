@@ -94,6 +94,12 @@ func TestEmbeddedProductionSetsKeepVaultRootsSeparate(t *testing.T) {
 	require.ErrorIs(t, err, store.ErrNotFound)
 	_, err = second.ProductionJobStatus(t.Context(), set.ID, "88888888-8888-4888-8888-888888888887")
 	require.ErrorIs(t, err, store.ErrNotFound)
+	admission := api.ProductionJobAdmissionRequest{JobID: "88888888-8888-4888-8888-888888888887",
+		OperationID: "88888888-8888-4888-8888-888888888885"}
+	_, err = first.AdmitProductionJob(t.Context(), set.ID, 1, 1, admission)
+	require.ErrorIs(t, err, store.ErrNotFound)
+	_, err = second.AdmitProductionJob(t.Context(), set.ID, 1, 1, admission)
+	require.ErrorIs(t, err, store.ErrNotFound)
 	_, err = first.CancelProductionJob(t.Context(), "synthetic-operator", set.ID,
 		"88888888-8888-4888-8888-888888888887", 1,
 		api.ProductionJobCancelRequest{OperationID: "88888888-8888-4888-8888-888888888886"})
