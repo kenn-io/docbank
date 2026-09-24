@@ -237,6 +237,14 @@ func VerifyBundle(ctx context.Context, budget Budget, input io.Reader, size int6
 	if _, err := io.ReadFull(input, raw); err != nil {
 		return Verification{}, err
 	}
+	// V1 packets are written as plain ZIPs with no prefix or archive comment.
+	// archive/zip accepts self-extracting prefixes and bytes after the end
+	// record, which would let a matching transport hash bless outside bytes.
+	if len(raw) < 22 || !bytes.HasPrefix(raw, []byte("PK\x03\x04")) ||
+		!bytes.Equal(raw[len(raw)-22:len(raw)-18], []byte("PK\x05\x06")) ||
+		raw[len(raw)-2] != 0 || raw[len(raw)-1] != 0 {
+		return Verification{}, ErrInvalidPacket
+	}
 	archive, err := zip.NewReader(bytes.NewReader(raw), size)
 	if err != nil {
 		return Verification{}, fmt.Errorf("%w: %w", ErrInvalidPacket, err)

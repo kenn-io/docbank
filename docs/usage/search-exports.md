@@ -1,5 +1,5 @@
 ---
-last_edited: 2026-09-21
+last_edited: 2026-09-24
 title: Search exports
 description: Export dated search counts as CSV, review date evidence, and verify a frozen evidence ZIP.
 ---
@@ -69,10 +69,14 @@ frozen evidence and submit a JSON array of choices:
 ```bash
 docbank search-export dates <export-id> --limit 50
 docbank search-export revise <export-id> --choices choices.json --output reviewed.zip
+docbank search-export download <export-id> --format csv --output reviewed.csv
 ```
 
 Use `--cursor` with the returned `next_cursor` to continue reading dates.
-`create`, `revise`, and `csv` refuse to replace an existing output unless
+The CSV download reads the retained summary and companion evidence ZIP from the
+daemon, verifies their exact counts and bytes together, and checks source
+visibility again before publishing the file. Use `--format bundle` to download
+and verify the evidence ZIP instead. `create`, `revise`, `download`, and `csv` refuse to replace an existing output unless
 `--overwrite` is supplied. `verify` and `csv` work offline without a vault;
 both verify the packet before accepting its counts.
 
