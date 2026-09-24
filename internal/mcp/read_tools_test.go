@@ -12,6 +12,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	sdkmcp "github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/stretchr/testify/assert"
@@ -172,6 +173,139 @@ func TestListDocumentsDoesNotReplayPageAfterDaemonStops(t *testing.T) {
 	require.ErrorIs(t, err, errDaemonRequestFailed)
 	assert.Equal(t, int32(1), ensures.Load(), "a completed page must prevent replay of the composite read")
 	assert.Equal(t, int32(1), pageCalls.Load())
+}
+
+func TestScopedListDocumentsQueriesFenceBeforePagination(t *testing.T) {
+	hiddenID := "33333333-3333-4333-8333-333333333333"
+	allowed := api.DocumentSummary{NodeID: 8, ContentVersionID: testVersionID,
+		Path: "/visible.md", Name: "visible.md", MediaType: "text/markdown",
+		ModifiedAt: "2026-09-22T00:00:00Z", ActiveRenditions: []api.DocumentRenditionIdentity{}}
+	hidden := allowed
+	hidden.NodeID, hidden.ContentVersionID, hidden.Path, hidden.Name = 7, hiddenID, "/hidden.md", "hidden.md"
+	daemon := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		switch request.URL.Path {
+		case "/api/v1/documents":
+			writeDaemonJSON(t, response, api.DocumentPage{PathPrefix: "/", Sort: "path", Direction: "asc",
+				PageSize: 1, Items: []api.DocumentSummary{hidden}, NextCursor: "next-page"})
+		case "/api/v1/documents/scoped":
+			var query api.ScopedDocumentQuery
+			if !assert.NoError(t, json.UnmarshalRead(request.Body, &query)) {
+				return
+			}
+			assert.Equal(t, []string{testVersionID}, query.ContentVersionIDs)
+			assert.Equal(t, 1, query.PageSize)
+			writeDaemonJSON(t, response, api.DocumentPage{PathPrefix: "/", Sort: "path", Direction: "asc",
+				PageSize: 1, Items: []api.DocumentSummary{allowed}})
+		case "/api/v1/info":
+			writeDaemonJSON(t, response, api.VaultInfo{VaultID: testVaultID})
+		default:
+			http.NotFound(response, request)
+		}
+	}))
+	t.Cleanup(daemon.Close)
+	lease := newDaemonLeaseWith(func(context.Context) (*daemonconn.Connection, error) {
+		return daemonconn.New(daemon.URL, "synthetic-key"), nil
+	}, func(*daemonconn.Connection) error { return nil })
+	policy := scopedReadPolicy(testVersionID)
+	result, _, err := listDocumentsScoped(t.Context(), lease, policy, api.OperationAuthorization{
+		SourceIDs: []string{testVersionID}}, []byte(`{"page_size":1}`))
+	require.NoError(t, err)
+	require.Len(t, result.Items, 1)
+	assert.Equal(t, testVersionID, result.Items[0].ContentVersionID)
+}
+
+func TestScopedListDocumentsRechecksGrantAfterCatalogRead(t *testing.T) {
+	now := time.Date(2026, 9, 22, 12, 0, 0, 0, time.UTC)
+	principal := api.Principal{SubjectID: "subject:scoped-list", CredentialKind: "machine",
+		Audience: "docbank:test", Operations: []api.Operation{api.OperationRead},
+		SourceIDs: []string{testVersionID}, GrantRevision: 1, ExpiresAt: now.Add(time.Hour)}
+	authority := &mcpGrantAuthority{grant: principal}
+	policy := newOperationPolicy(api.NewOperationPolicy(api.OperationPolicyOptions{
+		Authority: authority, Now: func() time.Time { return now },
+	}), principal)
+	daemon := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		switch request.URL.Path {
+		case "/api/v1/documents/scoped":
+			writeDaemonJSON(t, response, api.DocumentPage{PathPrefix: "/", Sort: "path", Direction: "asc",
+				PageSize: 1, Items: []api.DocumentSummary{{NodeID: 8, ContentVersionID: testVersionID,
+					Path: "/visible.md", Name: "visible.md", ModifiedAt: "2026-09-22T00:00:00Z",
+					ActiveRenditions: []api.DocumentRenditionIdentity{}}}})
+		case "/api/v1/info":
+			authority.mutate(func(grant *api.Principal) { grant.GrantRevision++ })
+			writeDaemonJSON(t, response, api.VaultInfo{VaultID: testVaultID})
+		default:
+			http.NotFound(response, request)
+		}
+	}))
+	t.Cleanup(daemon.Close)
+	lease := newDaemonLeaseWith(func(context.Context) (*daemonconn.Connection, error) {
+		return daemonconn.New(daemon.URL, "synthetic-key"), nil
+	}, func(*daemonconn.Connection) error { return nil })
+	result, links, err := listDocumentsScoped(t.Context(), lease, policy, api.OperationAuthorization{
+		SourceIDs: []string{testVersionID}}, []byte(`{"page_size":1}`))
+	require.ErrorIs(t, err, api.ErrOperationGrantRevoked)
+	assert.Empty(t, result.Items)
+	assert.Empty(t, links)
+}
+
+func TestScopedSearchNarrowsFenceBeforeDaemonSearch(t *testing.T) {
+	hiddenID := "33333333-3333-4333-8333-333333333333"
+	selectedID := hiddenID
+	fingerprint, err := processing.SourceFenceFingerprint(processing.SourceFence{
+		VaultUID: testVaultID, ContentVersionIDs: []string{testVersionID, hiddenID},
+	})
+	require.NoError(t, err)
+	daemon := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		switch request.URL.Path {
+		case "/api/v1/processing/source-fences/resolve":
+			writeDaemonJSON(t, response, api.DocumentSourceFenceResolution{Fence: api.ResolvedDocumentSourceFence{
+				VaultUID: testVaultID, ContentVersionIDs: []string{testVersionID, hiddenID}},
+				FenceFingerprint: fingerprint, ObservedScopeCount: 2})
+		case "/api/v1/search":
+			var input api.DocumentSearchRequest
+			if !assert.NoError(t, json.UnmarshalRead(request.Body, &input)) {
+				return
+			}
+			if len(input.Fence.ContentVersionIDs) == 1 && input.Fence.ContentVersionIDs[0] == testVersionID {
+				selectedID = testVersionID
+			}
+			writeDaemonJSON(t, response, api.DocumentSearchReport{RequestedMode: "lexical", ActualMode: "lexical",
+				Coverage: api.DocumentSearchCoverage{ScopedDocuments: len(input.Fence.ContentVersionIDs),
+					CompleteDocuments: len(input.Fence.ContentVersionIDs), State: "complete"},
+				Degradations: []string{}, Results: []api.DocumentSearchResult{{
+					VaultUID: testVaultID, NodeID: 8, ContentVersionID: selectedID,
+					Rank: 1, LexicalRank: 1, Score: 1, Path: "/visible.md",
+					Evidence: []api.DocumentEvidenceReference{{Kind: "node_name"}},
+				}}})
+		case "/api/v1/documents/resolve":
+			writeDaemonJSON(t, response, api.DocumentSummaryResolveResponse{Items: []api.DocumentSummary{{
+				NodeID: 8, ContentVersionID: selectedID, Path: "/visible.md", Name: "visible.md",
+				MediaType: "text/markdown", ModifiedAt: "2026-09-22T00:00:00Z",
+				ActiveRenditions: []api.DocumentRenditionIdentity{},
+			}}})
+		default:
+			http.NotFound(response, request)
+		}
+	}))
+	t.Cleanup(daemon.Close)
+	lease := newDaemonLeaseWith(func(context.Context) (*daemonconn.Connection, error) {
+		return daemonconn.New(daemon.URL, "synthetic-key"), nil
+	}, func(*daemonconn.Connection) error { return nil })
+	output, _, err := searchDocumentsScoped(t.Context(), lease, scopedReadPolicy(testVersionID),
+		[]byte(`{"query":"synthetic","mode":"lexical","limit":1,"profile":"local","content_version_ids":["33333333-3333-4333-8333-333333333333","22222222-2222-4222-8222-222222222222"]}`))
+	require.NoError(t, err)
+	require.Len(t, output.Results, 1)
+	assert.Equal(t, testVersionID, output.Results[0].ContentVersionID)
+}
+
+func scopedReadPolicy(sourceID string) operationPolicy {
+	now := time.Date(2026, 9, 22, 12, 0, 0, 0, time.UTC)
+	principal := api.Principal{SubjectID: "subject:scoped-read", CredentialKind: "machine",
+		Audience: "docbank:test", Operations: []api.Operation{api.OperationRead, api.OperationAnalyze},
+		SourceIDs: []string{sourceID}, GrantRevision: 1, ExpiresAt: now.Add(time.Hour)}
+	return newOperationPolicy(api.NewOperationPolicy(api.OperationPolicyOptions{
+		Authority: &mcpGrantAuthority{grant: principal}, Now: func() time.Time { return now },
+	}), principal)
 }
 
 func TestReadToolResultCapFailsClosed(t *testing.T) {
