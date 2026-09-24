@@ -185,6 +185,21 @@ func TestDetectFormatAcceptsRecoverablePDFs(t *testing.T) {
 			require.Equal(t, 6, len(original)-len(content))
 			return content
 		}},
+		{name: "multiple xref subsections", content: func(t *testing.T) []byte {
+			t.Helper()
+			original := testPDF("multiple-xref-subsections")
+			xrefStart := bytes.Index(original, []byte("xref\n0 4\n"))
+			require.GreaterOrEqual(t, xrefStart, 0)
+			recordsStart := xrefStart + len("xref\n0 4\n")
+			firstRecordEnd := bytes.IndexByte(original[recordsStart:], '\n')
+			require.GreaterOrEqual(t, firstRecordEnd, 0)
+			split := recordsStart + firstRecordEnd + 1
+			content := bytes.Clone(original[:xrefStart])
+			content = append(content, []byte("xref\n0 1\n")...)
+			content = append(content, original[recordsStart:split]...)
+			content = append(content, []byte("1 3\n")...)
+			return append(content, original[split:]...)
+		}},
 		{name: "large file without final marker", content: func(t *testing.T) []byte {
 			t.Helper()
 			original := testPDF(strings.Repeat("x", 40_000))
