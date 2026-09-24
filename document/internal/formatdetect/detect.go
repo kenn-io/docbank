@@ -669,38 +669,36 @@ func validPDFTableXRef(xref []byte) bool {
 	if !ok || !bytes.Equal(trimPDFWhitespace(line), []byte("xref")) {
 		return false
 	}
-	header, ok := nextNonemptyPDFLine(xref, &position)
-	if !ok {
-		return false
-	}
-	headerFields := bytes.Fields(header)
-	if len(headerFields) != 2 {
-		return false
-	}
-	first, firstErr := strconv.ParseUint(string(headerFields[0]), 10, 64)
-	count, countErr := strconv.ParseUint(string(headerFields[1]), 10, 64)
-	if firstErr != nil || countErr != nil || count == 0 || first > math.MaxUint64-count {
-		return false
-	}
-	validatedRecords := uint64(0)
-	for validatedRecords < count {
-		record, ok := nextPDFLine(xref, &position)
+	maxObjectNumber := uint64(0)
+	for {
+		subsectionStart := position
+		header, ok := nextNonemptyPDFLine(xref, &position)
 		if !ok {
-			break
-		}
-		if !validPDFXRefRecord(record) {
-			if position == len(xref) {
-				break
-			}
 			return false
 		}
-		validatedRecords++
+		if bytes.Equal(header, []byte("trailer")) {
+			return maxObjectNumber > 0 && validPDFTrailer(xref[subsectionStart:], maxObjectNumber)
+		}
+		headerFields := bytes.Fields(header)
+		if len(headerFields) != 2 {
+			return false
+		}
+		first, firstErr := strconv.ParseUint(string(headerFields[0]), 10, 64)
+		count, countErr := strconv.ParseUint(string(headerFields[1]), 10, 64)
+		if firstErr != nil || countErr != nil || count == 0 || first > math.MaxUint64-count {
+			return false
+		}
+		sectionEnd := first + count
+		if sectionEnd > maxObjectNumber {
+			maxObjectNumber = sectionEnd
+		}
+		for range count {
+			record, ok := nextPDFLine(xref, &position)
+			if !ok || !validPDFXRefRecord(record) {
+				return false
+			}
+		}
 	}
-	if validatedRecords == 0 {
-		return false
-	}
-
-	return validPDFTrailer(xref[position:], first, count)
 }
 
 func validPDFStreamXRef(xref []byte) bool {
@@ -726,8 +724,12 @@ func validPDFStreamXRef(xref []byte) bool {
 	}
 	_, sizeOK := pdfPositiveInteger(dictionary["Size"])
 	// An indirect length cannot prove the stream boundary in this bounded check.
-	length, lengthOK := pdfPositiveInteger(dictionary["Length"])
-	if !sizeOK || !lengthOK || len(dictionary["Type"]) != 1 || dictionary["Type"][0] != "/XRef" ||
+	lengthValue := dictionary["Length"]
+	if len(lengthValue) != 1 || !decimalString(lengthValue[0]) {
+		return false
+	}
+	length, err := strconv.Atoi(lengthValue[0])
+	if !sizeOK || err != nil || length <= 0 || len(dictionary["Type"]) != 1 || dictionary["Type"][0] != "/XRef" ||
 		!validPDFRootReference(dictionary["Root"]) || !validPDFWidths(dictionary["W"]) {
 		return false
 	}
@@ -736,20 +738,21 @@ func validPDFStreamXRef(xref []byte) bool {
 	if streamStart >= len(xref) {
 		return false
 	}
-	if xref[streamStart] == '\r' {
+	switch xref[streamStart] {
+	case '\r':
 		streamStart++
 		if streamStart < len(xref) && xref[streamStart] == '\n' {
 			streamStart++
 		}
-	} else if xref[streamStart] == '\n' {
+	case '\n':
 		streamStart++
-	} else {
+	default:
 		return false
 	}
-	if length > uint64(len(xref)-streamStart) {
+	if length > len(xref)-streamStart {
 		return false
 	}
-	streamEnd := streamStart + int(length)
+	streamEnd := streamStart + length
 	if streamEnd < len(xref) && xref[streamEnd] == '\r' {
 		streamEnd++
 		if streamEnd < len(xref) && xref[streamEnd] == '\n' {
@@ -774,7 +777,7 @@ func validPDFStreamXRef(xref []byte) bool {
 	return onlyPDFWhitespace(xref[objectEnd:])
 }
 
-func validPDFTrailer(data []byte, first, count uint64) bool {
+func validPDFTrailer(data []byte, maxObjectNumber uint64) bool {
 	data = trimPDFWhitespace(data)
 	trailerLength, ok := pdfKeywordLength(data, "trailer")
 	if !ok {
@@ -786,7 +789,7 @@ func validPDFTrailer(data []byte, first, count uint64) bool {
 		return false
 	}
 	size, sizeOK := pdfPositiveInteger(trailer["Size"])
-	return sizeOK && first+count <= size
+	return sizeOK && maxObjectNumber <= size
 }
 
 func nextPDFLine(data []byte, position *int) ([]byte, bool) {
@@ -838,23 +841,6 @@ func decimalBytes(value []byte) bool {
 		}
 	}
 	return true
-}
-
-func lastPDFKeyword(data []byte, keyword string) int {
-	for end := len(data); end > 0; {
-		index := bytes.LastIndex(data[:end], []byte(keyword))
-		if index < 0 {
-			return -1
-		}
-		beforeOK := index == 0 || isPDFTokenBoundary(data[index-1])
-		after := index + len(keyword)
-		afterOK := after == len(data) || isPDFTokenBoundary(data[after])
-		if beforeOK && afterOK {
-			return index
-		}
-		end = index
-	}
-	return -1
 }
 
 func firstPDFKeyword(data []byte, keyword string) int {
@@ -967,15 +953,6 @@ func tokenizePDF(data []byte) ([]string, []int, bool) {
 		appendToken(string(data[start:position]), position)
 	}
 	return tokens, ends, true
-}
-
-func parsePDFDictionary(data []byte) (map[string][]string, bool) {
-	tokens, _, ok := tokenizePDF(data)
-	if !ok {
-		return nil, false
-	}
-	dictionary, next, ok := parsePDFDictionaryTokens(tokens, 0, 0)
-	return dictionary, ok && next == len(tokens)
 }
 
 func parsePDFDictionaryPrefix(data []byte) (map[string][]string, int, bool) {
