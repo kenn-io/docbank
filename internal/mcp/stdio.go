@@ -34,6 +34,7 @@ func ServeStdio(
 	if server == nil || input == nil || output == nil {
 		return errStdioTransport
 	}
+	defer server.reports.closeAll()
 	if logger == nil {
 		logger = slog.New(slog.DiscardHandler)
 	}

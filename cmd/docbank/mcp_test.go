@@ -89,7 +89,7 @@ func TestMCPCommandExposesTransportAndCapabilityFlags(t *testing.T) {
 	require.Equal(t, "mcp", command.Name())
 	var names []string
 	command.Flags().VisitAll(func(flag *pflag.Flag) { names = append(names, flag.Name) })
-	assert.ElementsMatch(t, []string{"allow-processing", "allow-package-writes", "listen", "transport"}, names)
+	assert.ElementsMatch(t, []string{"allow-processing", "allow-package-writes", "allow-export-writes", "allow-report-writes", "listen", "transport"}, names)
 	for _, forbidden := range []string{"token", "api-key", "daemon", "url", "remote"} {
 		assert.Nil(t, command.Flags().Lookup(forbidden))
 	}
@@ -105,12 +105,15 @@ func TestMCPCommandWriteFlagsSelectTools(t *testing.T) {
 		os.Exit(0)
 	}
 	for _, test := range []struct {
-		args                 string
-		processing, packages bool
+		args                                   string
+		processing, packages, exports, reports bool
 	}{
 		{args: "mcp"},
 		{args: "mcp --allow-processing", processing: true},
 		{args: "mcp --allow-package-writes", packages: true},
+		{args: "mcp --allow-export-writes", exports: true},
+		{args: "mcp --allow-report-writes", reports: true},
+		{args: "mcp --allow-export-writes --allow-report-writes", exports: true, reports: true},
 		{args: "mcp --allow-processing --allow-package-writes", processing: true, packages: true},
 	} {
 		t.Run(test.args, func(t *testing.T) {
@@ -144,7 +147,16 @@ func TestMCPCommandWriteFlagsSelectTools(t *testing.T) {
 				names[tool.Name] = true
 			}
 			assert.True(t, names["get_package_record"], "reads remain available with every flag combination")
+			assert.True(t, names["preview_export_plan"])
+			assert.True(t, names["get_export_job"])
+			assert.True(t, names["get_report_summary"])
+			assert.True(t, names["get_report_dates"])
+			assert.Equal(t, test.reports, names["create_report"])
+			assert.Equal(t, test.reports, names["revise_report"])
 			assert.Equal(t, test.processing, names["start_processing"])
+			for _, name := range []string{"create_export_source", "create_export_plan", "start_export_job", "cancel_export_job"} {
+				assert.Equal(t, test.exports, names[name], name)
+			}
 			for _, name := range []string{"preflight_load_file_package", "start_package_import", "resolve_package_custodian", "assign_package_custodian"} {
 				assert.Equal(t, test.packages, names[name], name)
 			}

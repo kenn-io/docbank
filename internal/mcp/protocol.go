@@ -26,9 +26,11 @@ const (
 
 // Server owns the Docbank ingress gate and the SDK server behind it.
 type Server struct {
-	sdk    *sdkmcp.Server
-	daemon *daemonLease
-	plans  *processingPlanRegistry
+	sdk      *sdkmcp.Server
+	daemon   *daemonLease
+	plans    *processingPlanRegistry
+	archives *exportArchiveRegistry
+	reports  *reportHandleSigner
 }
 
 // ServerOptions fixes process-wide capabilities before the MCP server starts.
@@ -36,6 +38,8 @@ type Server struct {
 type ServerOptions struct {
 	AllowProcessing    bool
 	AllowPackageWrites bool
+	AllowExportWrites  bool
+	AllowReportWrites  bool
 	Logger             *slog.Logger
 }
 
@@ -45,7 +49,7 @@ func NewServer() *Server {
 }
 
 // NewServerWithOptions creates an exact-version server with a process-fixed
-// catalog. Processing and package writes each require an explicit opt-in.
+// catalog. Processing, package, and report writes each require an explicit opt-in.
 func NewServerWithOptions(options ServerOptions) *Server {
 	return newServerWithOptions(&sdkmcp.Implementation{
 		Name:        "docbank",
@@ -78,16 +82,17 @@ func newServerWithOptionsAndDaemon(
 			Resources: &sdkmcp.ResourceCapabilities{},
 			Tools:     &sdkmcp.ToolCapabilities{},
 		},
-		Instructions: catalogInstructions(options.AllowProcessing, options.AllowPackageWrites),
+		Instructions: catalogInstructions(options.AllowProcessing, options.AllowPackageWrites, options.AllowExportWrites, options.AllowReportWrites),
 	})
 	plans := newProcessingPlanRegistry()
-	registerToolCatalog(sdk, options.AllowProcessing, options.AllowPackageWrites, daemon, plans, logger)
+	archives := newExportArchiveRegistry()
+	reports := registerToolCatalog(sdk, options.AllowProcessing, options.AllowPackageWrites, options.AllowExportWrites, options.AllowReportWrites, daemon, plans, archives, logger)
 	registerResourceSurface(sdk, daemon, logger)
 	sdk.AddReceivingMiddleware(normalizeDiscovery)
 	sdk.AddReceivingMiddleware(normalizeToolCatalog)
 	sdk.AddReceivingMiddleware(normalizeResourceCatalogs)
 	sdk.AddReceivingMiddleware(enforcePrivateResultCap(implementation, logger))
-	return &Server{sdk: sdk, daemon: daemon, plans: plans}
+	return &Server{sdk: sdk, daemon: daemon, plans: plans, archives: archives, reports: reports}
 }
 
 func enforcePrivateResultCap(implementation *sdkmcp.Implementation, logger *slog.Logger) sdkmcp.Middleware {
@@ -121,6 +126,7 @@ func enforcePrivateResultCap(implementation *sdkmcp.Implementation, logger *slog
 
 // Run serves one MCP connection after wrapping it in the exact-version gate.
 func (s *Server) Run(ctx context.Context, transport sdkmcp.Transport) error {
+	defer s.archives.closeAll()
 	if err := s.sdk.Run(ctx, exactTransport{Transport: transport}); err != nil {
 		return fmt.Errorf("run MCP server: %w", err)
 	}

@@ -2486,6 +2486,8 @@ export interface Entry {
 }
 
 export interface Receipt {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
   entries: number;
   format: string;
   plan_fingerprint: string;
@@ -4679,6 +4681,7 @@ export interface Request {
   date_choices?: DateChoice[];
   numeric_date_order?: string;
   profile?: string;
+  selected_documents?: Identity[];
   source_timezone?: string;
   terms: Term[];
   timezone: string;
@@ -5719,6 +5722,16 @@ child_version_id?: string;
 after_operation_id?: string;
 after_order?: number;
 limit?: number;
+};
+
+export type ReadExportArchiveDefault = {
+  code?: string;
+  detail?: string;
+  errors?: string[];
+  observed_scope_count?: number;
+  position?: ErrorPosition;
+  status: number;
+  title: string;
 };
 
 export type GetExportJobEventsParams = {
@@ -8006,6 +8019,54 @@ export const getGetExportJobUrl = (id: string,) => {
 export const getExportJob = (id: string, options?: Parameters<typeof sessionResponse>[1]) => {
 
   return sessionResponse<ExportJob>(getGetExportJobUrl(id),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+export const getReadExportArchiveUrl = (id: string,) => {
+
+
+
+
+  return `/api/v1/exports/jobs/${encodeURIComponent(String(id))}/archive`
+}
+
+/**
+ * @summary Read a completed, reverified export archive
+ */
+export const readExportArchive = (id: string, options?: Parameters<typeof sessionResponse>[1]) => {
+
+  return sessionResponse<Blob>(getReadExportArchiveUrl(id),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+export const getGetExportArchiveAuthorityUrl = (id: string,) => {
+
+
+
+
+  return `/api/v1/exports/jobs/${encodeURIComponent(String(id))}/archive/authority`
+}
+
+/**
+ * @summary Check the current owner, source visibility, and completed archive receipt
+ */
+export const getExportArchiveAuthority = async (id: string, options?: Parameters<typeof sessionJSON>[1]): Promise<Receipt> => {
+
+  return sessionJSON<Receipt>(getGetExportArchiveAuthorityUrl(id),
   {
     ...options,
     method: 'GET'
