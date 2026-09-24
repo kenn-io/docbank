@@ -1,5 +1,5 @@
 ---
-last_edited: 2026-09-16
+last_edited: 2026-09-24
 title: CLI Reference
 description: Every docbank command, flag, output format, and error behavior.
 ---
@@ -342,6 +342,17 @@ path names a file.
 `--json` returns the resolved directory under `directory` and its complete,
 ordered child list under `items`. Empty directories produce `"items": []`.
 JSON preserves the authoritative full-precision timestamps.
+
+## docbank documents
+
+```text
+docbank documents list [--path-prefix /] [--sort path|name|modified_at|size|media_type] [--direction asc|desc] [--page-size 50] [--cursor TOKEN] [--json]
+```
+
+Lists one page of current live documents, including each exact content version.
+The page size is 1–250. `--json` includes the next opaque cursor; pass it to
+the next invocation to continue the same ordered catalog read. Plain output
+prints node ID, content version ID and path, with the next cursor on stderr.
 
 ## docbank tree
 
@@ -936,6 +947,7 @@ docbank processing profiles [--json]
 docbank processing plan <path-or-id> --profile <name> [--json]
 docbank processing build <path-or-id> --profile <name> --plan-fingerprint <sha256> --consent [--json | --ndjson]
 docbank processing status <job-id> [--json]
+docbank processing coverage --profile NAME --vault-id UUID --source-version UUID [--source-version UUID ...] [--json]
 ```
 
 `profiles` lists names the daemon can execute, their rendition and embedding
@@ -957,6 +969,8 @@ ID when available; preserve that ID after an interrupted response.
 
 `status` accepts a lowercase SHA-256 job ID and reports aggregate state, phase,
 completed embedding bindings, and any failure code. It does not start new work.
+`coverage` reads the rendition and embedding state for 1–4096 distinct exact
+content versions in one vault. It does not start processing.
 See [Document processing](usage/document-processing.md) for the full workflow
 and [HTTP consent](architecture/http-api.md#processing-consent) for grants with
 expiry or revocation.
@@ -965,6 +979,7 @@ expiry or revocation.
 
 ```
 docbank rendition get <attachment-id> [--max-bytes <n>]
+docbank rendition text --vault-id UUID --node-id N --source-version UUID --attachment-id SHA256 [--offset N] [--max-chars N] [--json]
 ```
 
 Writes an active retained sanitized-Markdown attachment to stdout only after
@@ -972,6 +987,10 @@ verifying the complete stream. The attachment ID must be lowercase SHA-256.
 `--max-bytes` accepts 1–67,108,864 and defaults to 67,108,864 (64 MiB). Missing,
 oversized, incomplete, or invalid renditions return a nonzero exit code.
 The output includes the [Markdown envelope and body-relative navigation](architecture/document-derivatives.md#sanitized-markdown-contract).
+`text` reads one Unicode window from an exact active rendition. Its offset is
+in characters, `--max-chars` is 1–16,000, and `--json` includes the verified
+version, build, checksum and next offset. Missing or changed authority fails
+before text is printed.
 
 ## docbank tui
 
