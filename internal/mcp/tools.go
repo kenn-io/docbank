@@ -51,6 +51,7 @@ var readToolDefinitions = []toolDefinition{
 	{name: "read_rendition_text", title: "Read rendition text", description: "Read a bounded Unicode window from an active sanitized Markdown rendition.", schemas: readRenditionTextSchemas},
 	{name: "get_document_outline", title: "Get document outline", description: "Read the bounded heading hierarchy for one exact retained Markdown rendition.", schemas: getDocumentOutlineSchemas},
 	{name: "read_passage_section", title: "Read passage section", description: "Read one complete exact section through bounded continuation pages.", schemas: readPassageSectionSchemas},
+	{name: "get_context_pack", title: "Get context pack", description: "Read verified exact passages within an explicit source fence and byte budget.", schemas: getContextPackSchemas},
 	{name: "get_processing_plan", title: "Get processing plan", description: "Preview the exact provider disclosure and consent state for one document version.", schemas: getProcessingPlanSchemas},
 	{name: "get_processing_status", title: "Get processing status", description: "Read the current state of one stable processing job.", schemas: getProcessingStatusSchemas},
 	{name: "get_processing_coverage", title: "Get processing coverage", description: "Read rendition and embedding coverage for an exact source fence.", schemas: getProcessingCoverageSchemas},
@@ -196,6 +197,17 @@ func validToolSemantics(name string, arguments map[string]any) bool {
 		}
 		return validOptionalRFC3339Nano(filters, "modified_since") &&
 			validOptionalRFC3339Nano(filters, "modified_before")
+	case "get_context_pack":
+		_, query := arguments["query"]
+		_, seed := arguments["seed"]
+		if query == seed {
+			return false
+		}
+		if query {
+			_, profile := arguments["profile"]
+			return profile
+		}
+		return true
 	default:
 		return true
 	}

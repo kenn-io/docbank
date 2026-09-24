@@ -69,6 +69,8 @@ func executeReadTool(
 		output, err = getDocumentOutline(ctx, lease, raw)
 	case "read_passage_section":
 		output, err = readPassageSection(ctx, lease, raw)
+	case "get_context_pack":
+		output, err = getContextPack(ctx, lease, raw)
 	case "get_processing_plan":
 		output, err = getProcessingPlan(ctx, lease, raw)
 	case "get_processing_status":
@@ -323,6 +325,43 @@ func readPassageSection(
 		return passageSectionOutput{}, err
 	}
 	return passageSectionOutput{PassageSectionPage: page, privateCache: newPrivateCache()}, nil
+}
+
+type contextPackInput struct {
+	VaultUID              string                 `json:"vault_uid"`
+	ContentVersionIDs     []string               `json:"content_version_ids"`
+	Query                 string                 `json:"query"`
+	Seed                  *document.PassageRefV1 `json:"seed"`
+	Profile               string                 `json:"profile"`
+	MaxBytes              int                    `json:"max_bytes"`
+	PerDocumentPassages   int                    `json:"per_document_passages"`
+	MaxDocuments          int                    `json:"max_documents"`
+	IncludeSectionContext bool                   `json:"include_section_context"`
+}
+
+type contextPackOutput struct {
+	api.ContextPackResponse
+	privateCache
+}
+
+func getContextPack(ctx context.Context, lease *daemonLease, raw []byte) (contextPackOutput, error) {
+	var input contextPackInput
+	if err := decodeReadArguments(raw, &input); err != nil {
+		return contextPackOutput{}, err
+	}
+	pack, err := daemonRead(ctx, lease, func(ctx context.Context, c *daemonconn.Connection) (api.ContextPackResponse, error) {
+		return c.ContextPack(ctx, api.ContextPackRequest{
+			Fence: api.DocumentSourceFence{VaultUID: input.VaultUID,
+				ContentVersionIDs: input.ContentVersionIDs},
+			Query: input.Query, Seed: input.Seed, Profile: input.Profile,
+			MaxBytes: input.MaxBytes, PerDocumentPassages: input.PerDocumentPassages,
+			MaxDocuments: input.MaxDocuments, IncludeSectionContext: input.IncludeSectionContext,
+		})
+	})
+	if err != nil {
+		return contextPackOutput{}, err
+	}
+	return contextPackOutput{ContextPackResponse: pack, privateCache: newPrivateCache()}, nil
 }
 
 func decodeReadArguments(raw []byte, target any) error {

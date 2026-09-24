@@ -1118,6 +1118,90 @@ export interface ContentVersionPage {
   total: number;
 }
 
+export interface ContextCoverage {
+  available_sources: number;
+  rendition_available_sources: number;
+  rendition_missing_sources: number;
+  requested_sources: number;
+  selected_sources: number;
+}
+
+export interface DocumentSourceFence {
+  /**
+     * @minItems 1
+     * @maxItems 4096
+     */
+  content_version_ids: string[];
+  vault_uid: string;
+}
+
+export interface PassageRefV1 {
+  attachment_id: string;
+  body_sha256: string;
+  byte_end: number;
+  byte_start: number;
+  content_version_id: string;
+  document_uid: string;
+  federation_domain_uid?: string;
+  quote_sha256: string;
+  rendition_build_id: string;
+  source_sha256: string;
+  vault_uid: string;
+  version: number;
+}
+
+export interface ContextPackRequest {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  fence: DocumentSourceFence;
+  include_section_context?: boolean;
+  /**
+     * @minimum 1
+     * @maximum 262144
+     */
+  max_bytes?: number;
+  /**
+     * @minimum 1
+     * @maximum 20
+     */
+  max_documents?: number;
+  /**
+     * @minimum 1
+     * @maximum 8
+     */
+  per_document_passages?: number;
+  /** @maxLength 128 */
+  profile?: string;
+  /** @maxLength 8192 */
+  query?: string;
+  seed?: PassageRefV1;
+}
+
+export type ContextPackResponseOmitted = {[key: string]: number};
+
+export interface ContextPassage {
+  path: string;
+  reasons: string[];
+  ref: PassageRefV1;
+  text: string;
+}
+
+export interface ContextPackResponse {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  complete: boolean;
+  coverage: ContextCoverage;
+  deduplicated: number;
+  fence_fingerprint: string;
+  index_generation_id?: string;
+  index_manifest_digest?: string;
+  omitted: ContextPackResponseOmitted;
+  passages: ContextPassage[];
+  profile_fingerprint?: string;
+  search_truncated: boolean;
+  truncated: boolean;
+}
+
 export interface Counts {
   hits: number;
   hits_plus_family: number;
@@ -1601,15 +1685,6 @@ export const DocumentSearchRequestMode = {
   semantic: 'semantic',
   hybrid: 'hybrid',
 } as const;
-
-export interface DocumentSourceFence {
-  /**
-     * @minItems 1
-     * @maxItems 4096
-     */
-  content_version_ids: string[];
-  vault_uid: string;
-}
 
 export interface DocumentSearchRequest {
   /** A URL to the JSON Schema for this object. */
@@ -3788,21 +3863,6 @@ export interface PassageOutline {
   /** @pattern ^[0-9a-f]{64}$ */
   rendition_build_id: string;
   sections: PassageOutlineSection[];
-}
-
-export interface PassageRefV1 {
-  attachment_id: string;
-  body_sha256: string;
-  byte_end: number;
-  byte_start: number;
-  content_version_id: string;
-  document_uid: string;
-  federation_domain_uid?: string;
-  quote_sha256: string;
-  rendition_build_id: string;
-  source_sha256: string;
-  vault_uid: string;
-  version: number;
 }
 
 export interface PassageOutlineRequest {
@@ -7515,6 +7575,44 @@ export const lookupContentReferences = async (params: LookupContentReferencesPar
     method: 'GET'
 
 
+  }
+);}
+
+
+
+export const getCreateContextPackUrl = () => {
+
+
+
+
+  return `/api/v1/context-packs`
+}
+
+/**
+ * @summary Read bounded exact context from a source fence
+ */
+export const createContextPack = async (contextPackRequest: NonReadonly<ContextPackRequest>, options?: Parameters<typeof sessionJSON>[1]): Promise<ContextPackResponse> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return sessionJSON<ContextPackResponse>(getCreateContextPackUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(contextPackRequest)
   }
 );}
 

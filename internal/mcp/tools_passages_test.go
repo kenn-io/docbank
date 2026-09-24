@@ -14,6 +14,7 @@ import (
 	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/daemonconn"
+	"go.kenn.io/docbank/internal/processing"
 )
 
 func TestPassageToolsReturnExactBoundedPrivateResults(t *testing.T) {
@@ -25,6 +26,9 @@ func TestPassageToolsReturnExactBoundedPrivateResults(t *testing.T) {
 	}, body, 0, len(body))
 	require.NoError(t, err)
 	sectionKey := strings.Repeat("d", 64)
+	fingerprint, err := processing.SourceFenceFingerprint(processing.SourceFence{
+		VaultUID: ref.VaultUID, ContentVersionIDs: []string{ref.ContentVersionID}})
+	require.NoError(t, err)
 	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 		response.Header().Set("Content-Type", "application/json")
 		switch request.URL.Path {
@@ -62,6 +66,19 @@ func TestPassageToolsReturnExactBoundedPrivateResults(t *testing.T) {
 					ByteStart: 0, ByteEnd: len(body), IncludeChildren: true},
 				Text: string(body), Ref: &pageRef, PageStart: 0, PageEnd: len(body), Complete: true,
 			}))
+		case "/api/v1/context-packs":
+			var input api.ContextPackRequest
+			if !assert.NoError(t, json.UnmarshalRead(request.Body, &input)) {
+				response.WriteHeader(http.StatusBadRequest)
+				return
+			}
+			assert.Equal(t, []string{ref.ContentVersionID}, input.Fence.ContentVersionIDs)
+			assert.NoError(t, json.MarshalWrite(response, api.ContextPackResponse(processing.ContextPack{
+				FenceFingerprint: fingerprint,
+				Coverage:         processing.ContextCoverage{RequestedSources: 1, AvailableSources: 1, SelectedSources: 1},
+				Passages: []processing.ContextPassage{{Ref: ref, Text: string(body), Path: "/synthetic.md",
+					Reasons: []string{"exact_seed"}}}, Omitted: map[string]int{}, Complete: true,
+			})))
 		default:
 			http.NotFound(response, request)
 		}
@@ -87,4 +104,14 @@ func TestPassageToolsReturnExactBoundedPrivateResults(t *testing.T) {
 	assert.Equal(t, string(body), section["text"])
 	assert.Equal(t, true, section["complete"])
 	assertSchemaAccepts(t, catalogMap(toolCatalog(false, false))["read_passage_section"].OutputSchema, section)
+
+	contextResult, err := invokeReadTool(t.Context(), lease, "get_context_pack", map[string]any{
+		"vault_uid": ref.VaultUID, "content_version_ids": []string{ref.ContentVersionID},
+		"seed": ref, "max_bytes": 4096,
+	})
+	require.NoError(t, err)
+	contextPack := structuredMap(t, contextResult.StructuredContent)
+	assert.Equal(t, "private", contextPack["cacheScope"])
+	assert.Equal(t, fingerprint, contextPack["fence_fingerprint"])
+	assertSchemaAccepts(t, catalogMap(toolCatalog(false, false))["get_context_pack"].OutputSchema, contextPack)
 }

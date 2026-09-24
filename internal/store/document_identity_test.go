@@ -38,6 +38,19 @@ func TestDocumentIdentityIsStableAcrossMoveReplaceAndPathReuse(t *testing.T) {
 	assert.NotEmpty(t, versions)
 }
 
+func TestDocumentIdentityByNodeDoesNotAllocateOnRead(t *testing.T) {
+	s, _ := newRenditionCatalogFixture(t)
+	node, err := s.NodeByPath(t.Context(), "/synthetic-source-a.pdf")
+	require.NoError(t, err)
+	_, err = s.DocumentIdentityByNode(t.Context(), node.ID)
+	require.ErrorIs(t, err, ErrDocumentIdentityUnavailable)
+	created, err := s.EnsureDocumentIdentity(t.Context(), node.ID)
+	require.NoError(t, err)
+	read, err := s.DocumentIdentityByNode(t.Context(), node.ID)
+	require.NoError(t, err)
+	require.Equal(t, created, read)
+}
+
 func TestResolvePassageAuthorityUsesHistoricalTupleAndAliases(t *testing.T) {
 	s, versions := newRenditionCatalogFixture(t)
 	profile := catalogProcessingProfile(t, false)

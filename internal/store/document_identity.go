@@ -44,6 +44,21 @@ type adoptedPassageTuple struct {
 	AttachmentID string
 }
 
+// DocumentIdentityByNode reads an existing stable identity without allocating
+// one as a side effect of a search or context read.
+func (s *Store) DocumentIdentityByNode(ctx context.Context, nodeID int64) (DocumentIdentity, error) {
+	var identity DocumentIdentity
+	err := s.db.QueryRowContext(ctx, `SELECT document_uid,node_id FROM document_identities
+		WHERE node_id=?`, nodeID).Scan(&identity.DocumentUID, &identity.NodeID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return DocumentIdentity{}, ErrDocumentIdentityUnavailable
+	}
+	if err != nil {
+		return DocumentIdentity{}, documentIdentitySchemaError(err)
+	}
+	return identity, nil
+}
+
 // EnsureDocumentIdentity returns a node's stable standalone identity,
 // allocating it exactly once. The central schema owns the backing tables.
 func (s *Store) EnsureDocumentIdentity(ctx context.Context, nodeID int64) (DocumentIdentity, error) {

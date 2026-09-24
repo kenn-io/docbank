@@ -30,3 +30,14 @@ func TestPassageOutlineAndSectionRoutesAreRegistered(t *testing.T) {
 	require.Equal(t, http.StatusServiceUnavailable, sectionResponse.StatusCode, sectionBody)
 	require.Contains(t, sectionBody, `"code":"processing_unavailable"`)
 }
+
+func TestContextPackRouteIsRegisteredWithoutProcessing(t *testing.T) {
+	ts, _ := newTestServer(t, nil)
+	response, body := do(t, ts, http.MethodPost, "/api/v1/context-packs", nil,
+		api.ContextPackRequest{Fence: api.DocumentSourceFence{
+			VaultUID:          "11111111-1111-4111-8111-111111111111",
+			ContentVersionIDs: []string{"33333333-3333-4333-8333-333333333333"}},
+			Query: "synthetic", Profile: "private"})
+	require.Equal(t, http.StatusServiceUnavailable, response.StatusCode, body)
+	require.Contains(t, body, `"code":"processing_unavailable"`)
+}

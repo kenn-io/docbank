@@ -15,6 +15,7 @@ import (
 	api "go.kenn.io/docbank/internal/api"
 	loadfile "go.kenn.io/docbank/internal/loadfile"
 	mailbox "go.kenn.io/docbank/internal/mailbox"
+	processing "go.kenn.io/docbank/internal/processing"
 	query "go.kenn.io/docbank/internal/query"
 	store "go.kenn.io/docbank/internal/store"
 	report "go.kenn.io/docbank/report"
@@ -1452,6 +1453,53 @@ func (c *Client) LookupContentReferences(ctx context.Context, options *LookupCon
 	}
 
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/content-references")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
+// CreateContextPack Read bounded exact context from a source fence
+func (c *Client) CreateContextPack(ctx context.Context, options *CreateContextPackRequestOptions, reqEditors ...runtime.RequestEditorFn) (*CreateContextPackResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/context-packs",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*CreateContextPackResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(CreateContextPackResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "CreateContextPackResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[CreateContextPackErrorResponse](resp, "CreateContextPackErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/context-packs")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
@@ -11670,6 +11718,34 @@ func (o *LookupContentReferencesRequestOptions) GetHeader() (map[string]string, 
 	return nil, nil
 }
 
+// CreateContextPackRequestOptions is the options needed to make a request to CreateContextPack.
+type CreateContextPackRequestOptions struct {
+	Body *CreateContextPackBody
+}
+
+// GetPathParams returns the path params as a map.
+func (o *CreateContextPackRequestOptions) GetPathParams() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetQuery returns the query params as a map.
+func (o *CreateContextPackRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *CreateContextPackRequestOptions) GetBody() any {
+	if o.Body == nil {
+		return nil
+	}
+	return o.Body
+}
+
+// GetHeader returns the headers as a map.
+func (o *CreateContextPackRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
 // GetDocumentProcessingCoverageRequestOptions is the options needed to make a request to GetDocumentProcessingCoverage.
 type GetDocumentProcessingCoverageRequestOptions struct {
 	Query *GetDocumentProcessingCoverageQuery
@@ -18371,6 +18447,8 @@ type PreviewBatchTagsBody = PreviewBatchTagsRequest
 
 type SetCollectionLabelBody = SetCollectionLabelRequest
 
+type CreateContextPackBody = ContextPackRequest
+
 type RunDerivativePurgeBody = DerivativePurgeJobRequest
 
 type PlanDerivativePurgeBody = DerivativePurgePlanRequest
@@ -18966,6 +19044,10 @@ type GetCollectionQualityErrorResponse = Error
 type LookupContentReferencesResponse = api.ContentReferencePage
 
 type LookupContentReferencesErrorResponse = Error
+
+type CreateContextPackResponse = api.ContextPackResponse
+
+type CreateContextPackErrorResponse = Error
 
 type GetDocumentProcessingCoverageResponse = api.CoverageReport
 
@@ -19987,6 +20069,14 @@ type ContentVerification = api.ContentVerification
 type ContentVersion = api.ContentVersion
 
 type ContentVersionPage = api.ContentVersionPage
+
+type ContextCoverage = processing.ContextCoverage
+
+type ContextPackRequest = api.ContextPackRequest
+
+type ContextPackResponse = api.ContextPackResponse
+
+type ContextPassage = processing.ContextPassage
 
 type Counts = report.Counts
 

@@ -219,6 +219,7 @@ func NewServer(d Deps) *Server {
 	registerQueryCompileRoutes(humaAPI, d)
 	registerRenditionTextRoutes(humaAPI, d)
 	registerPassageRoutes(humaAPI, d)
+	registerContextPackRoutes(humaAPI, d)
 	registerPageRoutes(humaAPI, d, g)
 	registerExportRoutes(mux, humaAPI, d, g, s.snapshots, s.webDownloads, s.webSessions)
 	registerWorkspaceQueryRoutes(humaAPI, d, s.snapshots)

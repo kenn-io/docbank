@@ -570,6 +570,51 @@ func readPassageSectionSchemas() (schema, schema) {
 	return input, output
 }
 
+func getContextPackSchemas() (schema, schema) {
+	input := rootObjectSchema(schema{
+		"vault_uid": uuidSchema(),
+		"content_version_ids": schema{"type": "array", "items": uuidSchema(),
+			"minItems": 1, jsonSchemaMaxItems: 4096, "uniqueItems": true},
+		"query": schema{"type": "string", "minLength": 1, "maxLength": 8192},
+		"seed":  passageRefSchema(),
+		"profile": schema{"type": "string", "minLength": 1, "maxLength": 128,
+			"pattern": "^[a-z][a-z0-9_-]*$"},
+		"max_bytes": schema{"type": "integer", "minimum": 1, "maximum": 256 << 10,
+			"default": 64 << 10},
+		"per_document_passages": schema{"type": "integer", "minimum": 1, "maximum": 8,
+			"default": 2},
+		"max_documents": schema{"type": "integer", "minimum": 1, "maximum": 20,
+			"default": 20},
+		"include_section_context": schema{"type": jsonSchemaBoolean, "default": false},
+	}, "vault_uid", "content_version_ids")
+	passage := objectSchema(schema{
+		"ref": passageRefSchema(), "text": stringSchema(256 << 10),
+		"path":    schema{"type": "string", "minLength": 1, "maxLength": maxPathCharacters, "pattern": "^/"},
+		"reasons": arraySchema(stringSchema(64), 16),
+	}, "ref", "text", "path", "reasons")
+	coverage := objectSchema(schema{
+		"requested_sources":           integerSchema(1, 4096),
+		"available_sources":           integerSchema(0, 4096),
+		"selected_sources":            integerSchema(0, 20),
+		"rendition_available_sources": integerSchema(0, 4096),
+		"rendition_missing_sources":   integerSchema(0, 4096),
+	}, "requested_sources", "available_sources", "selected_sources",
+		"rendition_available_sources", "rendition_missing_sources")
+	output := rootObjectSchema(withPrivateCache(schema{
+		"fence_fingerprint":   schema{"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+		"profile_fingerprint": sha256Schema(), "index_generation_id": sha256Schema(),
+		"index_manifest_digest": sha256Schema(), "coverage": coverage,
+		"passages":         arraySchema(passage, 160),
+		"omitted":          schema{"type": "object", "additionalProperties": integerSchema(1, 8192)},
+		"deduplicated":     integerSchema(0, 320),
+		"search_truncated": schema{"type": jsonSchemaBoolean},
+		"complete":         schema{"type": jsonSchemaBoolean},
+		"truncated":        schema{"type": jsonSchemaBoolean},
+	}), cacheRequired("fence_fingerprint", "coverage", "passages", "omitted", "deduplicated",
+		"search_truncated", "complete", "truncated")...)
+	return input, output
+}
+
 func processingSelectorProperties() schema {
 	return schema{
 		"node_id": integerSchema(1, 0), "content_version_id": uuidSchema(),
