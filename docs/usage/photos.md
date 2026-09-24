@@ -28,31 +28,34 @@ or stores a null display when none remains. Assets are limited to 256 files.
 Inspect the asset created for a node or use a stable asset UUID:
 
 ```text
-docbank photos assets inspect <asset-id>
+docbank photos assets inspect <asset-id|node-selector>
 docbank photos assets create <node-selector> [--kind photo|video] [--role raw|image|video]
-docbank photos assets attach <asset-id> <node-selector> --revision REV [--role ROLE] [--sidecar-of-file-id ID]
-docbank photos assets detach <asset-id> <file-id> --revision REV
-docbank photos assets exclude <asset-id> --revision REV [--excluded=true]
-docbank photos assets promote <node-selector> [--kind KIND] [--role ROLE]
-docbank photos assets display <asset-id> [file-id] --revision REV
+docbank photos assets attach <asset-id> <node-selector> [--revision REV] [--role ROLE] [--sidecar-of-file-id ID]
+docbank photos assets detach <asset-id> <file-id> [--revision REV]
+docbank photos assets exclude <asset-id> [--revision REV] [--excluded=true]
+docbank photos assets promote <node-selector> [--revision REV] [--kind KIND] [--role ROLE]
+docbank photos assets display <asset-id> [file-id] [--revision REV]
 ```
 
-`create` and `promote` accept absolute virtual paths or `id:N` node
-selectors. Existing-asset operations require the revision returned by the
-last inspection. Omitting the file ID from `display` clears the asset
-override.
+`inspect`, `create`, and `promote` accept absolute virtual paths or `id:N`
+node selectors, so `inspect id:42` finds the asset that owns file 42.
+Existing-asset operations read the asset's current revision, send it, and
+retry once if another write changes the asset first. Pass `--revision` with
+the revision from your last inspection when a script needs the write to fail
+instead. Omitting the file ID from `display` clears the asset override.
 
 The vault preference is revisioned separately:
 
 ```text
 docbank photos settings show
-docbank photos settings set raw --revision REV
-docbank photos settings set image --revision REV
-docbank photos settings reset --revision REV
+docbank photos settings set raw [--revision REV]
+docbank photos settings set image [--revision REV]
+docbank photos settings reset [--revision REV]
 ```
 
-All commands emit bounded JSON. Exit code 4 means the revision is stale; read
-the asset or settings again before retrying. The daemon performs role,
+All commands emit bounded JSON. Exit code 4 means the revision is stale: an
+explicit `--revision` no longer matched, or the one automatic retry lost to
+another write. Read the asset or settings again before retrying. The daemon performs role,
 ownership, sidecar, display, and audit checks.
 
 ## HTTP and JSONL

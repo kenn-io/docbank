@@ -168,21 +168,24 @@ live tree.
 
 ```text
 docbank photos assets create <node-selector> [--kind photo|video] [--role ROLE]
-docbank photos assets inspect <asset-id>
-docbank photos assets attach <asset-id> <node-selector> --revision REV [--role ROLE] [--sidecar-of-file-id ID]
-docbank photos assets detach <asset-id> <file-id> --revision REV
-docbank photos assets exclude <asset-id> --revision REV [--excluded=true]
-docbank photos assets promote <node-selector> [--kind KIND] [--role ROLE]
-docbank photos assets display <asset-id> [file-id] --revision REV
+docbank photos assets inspect <asset-id|node-selector>
+docbank photos assets attach <asset-id> <node-selector> [--revision REV] [--role ROLE] [--sidecar-of-file-id ID]
+docbank photos assets detach <asset-id> <file-id> [--revision REV]
+docbank photos assets exclude <asset-id> [--revision REV] [--excluded=true]
+docbank photos assets promote <node-selector> [--revision REV] [--kind KIND] [--role ROLE]
+docbank photos assets display <asset-id> [file-id] [--revision REV]
 docbank photos settings show
-docbank photos settings set raw|image --revision REV
-docbank photos settings reset --revision REV
+docbank photos settings set raw|image [--revision REV]
+docbank photos settings reset [--revision REV]
 ```
 
 Photo commands emit JSON through the daemon. Image and concrete video files
 are enrolled when created; generic RAW files require explicit promotion.
-Existing-asset and settings mutations require the current revision. Sidecars
-must point at a same-asset RAW member and never become the display member.
+Existing-asset and settings mutations read the current revision and retry
+once if another write changes it first. Pass `--revision` to fail with exit
+code 4 instead. `inspect` also accepts an `id:N` or path selector for a
+member file. Sidecars must point at a same-asset RAW member and never become
+the display member.
 Photo assets, settings, and bounded decision receipts are included in JSONL
 backup and restore.
 
