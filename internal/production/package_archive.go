@@ -478,10 +478,6 @@ func BuildRecipientArchive(ctx context.Context, projection PackageProjection, jo
 	return qc, nil
 }
 
-func readPackageEntry(entry *zip.File) ([]byte, error) {
-	return readPackageEntryContext(context.Background(), entry)
-}
-
 func readPackageEntryContext(ctx context.Context, entry *zip.File) ([]byte, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err

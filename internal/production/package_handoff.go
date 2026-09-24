@@ -198,17 +198,36 @@ func deliveryPolicyDigest(value PackageDeliveryPolicy) (string, error) {
 }
 
 func packageHandoffInputs(archivePath, qcPath, transmittalPath string) (PackageQC, string, string, error) {
+	return packageHandoffInputsContext(context.Background(), archivePath, qcPath, transmittalPath)
+}
+
+func packageHandoffInputsContext(ctx context.Context, archivePath, qcPath, transmittalPath string) (PackageQC, string, string, error) {
+	if ctx == nil {
+		return PackageQC{}, "", "", ErrRecipientArchive
+	}
+	if err := ctx.Err(); err != nil {
+		return PackageQC{}, "", "", err
+	}
 	qc, err := ReadPackageQCReceipt(qcPath)
-	if err != nil || VerifyRecipientArchiveWithQC(archivePath, qc) != nil {
+	if err != nil {
+		return PackageQC{}, "", "", ErrRecipientArchive
+	}
+	if err := VerifyRecipientArchiveWithQCContext(ctx, archivePath, qc); err != nil {
+		if canceled := ctx.Err(); canceled != nil {
+			return PackageQC{}, "", "", canceled
+		}
 		return PackageQC{}, "", "", ErrRecipientArchive
 	}
 	transmittal, err := ReadRecipientTransmittal(transmittalPath)
+	if canceled := ctx.Err(); canceled != nil {
+		return PackageQC{}, "", "", canceled
+	}
 	if err != nil || transmittal.ArchiveSHA256 != qc.ArchiveSHA256 || transmittal.ManifestSHA256 != qc.ManifestSHA256 ||
 		transmittal.Pages != len(qc.PageNumbers) || transmittal.FirstPage != qc.PageNumbers[0] ||
 		transmittal.LastPage != qc.PageNumbers[len(qc.PageNumbers)-1] {
 		return PackageQC{}, "", "", ErrRecipientArchive
 	}
-	manifest, err := recipientManifestFromVerifiedArchive(archivePath, qc.ManifestSHA256)
+	manifest, err := recipientManifestFromVerifiedArchiveContext(ctx, archivePath, qc.ManifestSHA256)
 	if err != nil {
 		return PackageQC{}, "", "", err
 	}
@@ -232,7 +251,13 @@ func packageHandoffInputs(archivePath, qcPath, transmittalPath string) (PackageQ
 	return qc, hex.EncodeToString(qcDigest[:]), hex.EncodeToString(transmittalDigest[:]), nil
 }
 
-func recipientManifestFromVerifiedArchive(path, expectedSHA string) (RecipientManifest, error) {
+func recipientManifestFromVerifiedArchiveContext(ctx context.Context, path, expectedSHA string) (RecipientManifest, error) {
+	if ctx == nil {
+		return RecipientManifest{}, ErrRecipientArchive
+	}
+	if err := ctx.Err(); err != nil {
+		return RecipientManifest{}, err
+	}
 	archive, err := zip.OpenReader(path)
 	if err != nil {
 		return RecipientManifest{}, ErrRecipientArchive
@@ -242,8 +267,11 @@ func recipientManifestFromVerifiedArchive(path, expectedSHA string) (RecipientMa
 		if entry.Name != "MANIFEST.json" {
 			continue
 		}
-		data, err := readPackageEntry(entry)
+		data, err := readPackageEntryContext(ctx, entry)
 		if err != nil {
+			if canceled := ctx.Err(); canceled != nil {
+				return RecipientManifest{}, canceled
+			}
 			return RecipientManifest{}, ErrRecipientArchive
 		}
 		var manifest RecipientManifest
