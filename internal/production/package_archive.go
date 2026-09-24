@@ -308,9 +308,12 @@ func writePackageEntry(archive *zip.Writer, name string, source io.Reader, size 
 	return nil
 }
 
-func verifiedExistingPackage(path string, projection PackageProjection) (PackageQC, error) {
-	qc, err := VerifyRecipientArchive(path)
-	if err != nil || qc.ManifestSHA256 != projection.manifestSHA256 {
+func verifiedExistingPackage(ctx context.Context, path string, projection PackageProjection) (PackageQC, error) {
+	qc, err := verifyRecipientArchive(ctx, path)
+	if err != nil {
+		return PackageQC{}, errors.Join(ErrRecipientArchive, err)
+	}
+	if qc.ManifestSHA256 != projection.manifestSHA256 {
 		return PackageQC{}, ErrRecipientArchive
 	}
 	entries := make(map[string]PackageQCEntry, len(qc.Entries))
@@ -322,6 +325,9 @@ func verifiedExistingPackage(path string, projection PackageProjection) (Package
 		if !ok || entry.SHA256 != binding.artifact.SHA256 || entry.Size != binding.artifact.Size {
 			return PackageQC{}, ErrRecipientArchive
 		}
+	}
+	if err := ctx.Err(); err != nil {
+		return PackageQC{}, err
 	}
 	return qc, nil
 }
@@ -369,7 +375,7 @@ func BuildRecipientArchive(ctx context.Context, projection PackageProjection, jo
 		if !info.Mode().IsRegular() {
 			return PackageQC{}, ErrRecipientArchive
 		}
-		return verifiedExistingPackage(destination, projection)
+		return verifiedExistingPackage(ctx, destination, projection)
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return PackageQC{}, err
 	}
@@ -446,7 +452,7 @@ func BuildRecipientArchive(ctx context.Context, projection PackageProjection, jo
 	if err := os.Chmod(staged.Name(), 0o400); err != nil {
 		return PackageQC{}, err
 	}
-	qc, err := VerifyRecipientArchive(staged.Name())
+	qc, err := verifyRecipientArchive(ctx, staged.Name())
 	if err != nil || qc.ManifestSHA256 != projection.manifestSHA256 {
 		return PackageQC{}, errors.Join(ErrRecipientArchive, err)
 	}
@@ -460,9 +466,12 @@ func BuildRecipientArchive(ctx context.Context, projection PackageProjection, jo
 			return PackageQC{}, ErrRecipientArchive
 		}
 	}
+	if err := ctx.Err(); err != nil {
+		return PackageQC{}, err
+	}
 	if err := os.Link(staged.Name(), destination); err != nil {
 		if errors.Is(err, os.ErrExist) {
-			return verifiedExistingPackage(destination, projection)
+			return verifiedExistingPackage(ctx, destination, projection)
 		}
 		return PackageQC{}, err
 	}
@@ -470,6 +479,13 @@ func BuildRecipientArchive(ctx context.Context, projection PackageProjection, jo
 }
 
 func readPackageEntry(entry *zip.File) ([]byte, error) {
+	return readPackageEntryContext(context.Background(), entry)
+}
+
+func readPackageEntryContext(ctx context.Context, entry *zip.File) ([]byte, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	entrySize, ok := packageArchiveEntrySize(entry.UncompressedSize64)
 	if !ok || entrySize > maxPackageMetadataBytes {
 		return nil, ErrRecipientArchive
@@ -478,15 +494,21 @@ func readPackageEntry(entry *zip.File) ([]byte, error) {
 	if err != nil {
 		return nil, ErrRecipientArchive
 	}
-	data, readErr := io.ReadAll(io.LimitReader(stream, maxPackageMetadataBytes+1))
+	data, readErr := io.ReadAll(io.LimitReader(productionContextReader{ctx: ctx, reader: stream}, maxPackageMetadataBytes+1))
 	closeErr := stream.Close()
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	if readErr != nil || closeErr != nil || len(data) > maxPackageMetadataBytes {
 		return nil, errors.Join(ErrRecipientArchive, readErr, closeErr)
 	}
 	return data, nil
 }
 
-func digestPackageEntry(entry *zip.File, limit int64) (PackageQCEntry, error) {
+func digestPackageEntryContext(ctx context.Context, entry *zip.File, limit int64) (PackageQCEntry, error) {
+	if err := ctx.Err(); err != nil {
+		return PackageQCEntry{}, err
+	}
 	entrySize, ok := packageArchiveEntrySize(entry.UncompressedSize64)
 	if !ok || limit < 0 || limit > 50<<30 || entrySize > limit {
 		return PackageQCEntry{}, ErrRecipientArchive
@@ -496,8 +518,11 @@ func digestPackageEntry(entry *zip.File, limit int64) (PackageQCEntry, error) {
 		return PackageQCEntry{}, ErrRecipientArchive
 	}
 	digest := sha256.New()
-	n, copyErr := io.Copy(digest, io.LimitReader(stream, limit+1))
+	n, copyErr := io.Copy(digest, io.LimitReader(productionContextReader{ctx: ctx, reader: stream}, limit+1))
 	closeErr := stream.Close()
+	if err := ctx.Err(); err != nil {
+		return PackageQCEntry{}, err
+	}
 	if copyErr != nil || closeErr != nil || n != entrySize {
 		return PackageQCEntry{}, errors.Join(ErrRecipientArchive, copyErr, closeErr)
 	}
@@ -508,6 +533,13 @@ func digestPackageEntry(entry *zip.File, limit int64) (PackageQCEntry, error) {
 // transmittal, and deterministic per-volume loadfiles independently of the
 // private projection and source catalog.
 func VerifyRecipientArchive(path string) (PackageQC, error) {
+	return verifyRecipientArchive(context.Background(), path)
+}
+
+func verifyRecipientArchive(ctx context.Context, path string) (PackageQC, error) {
+	if err := ctx.Err(); err != nil {
+		return PackageQC{}, err
+	}
 	file, err := os.Open(path)
 	if err != nil {
 		return PackageQC{}, err
@@ -526,6 +558,9 @@ func VerifyRecipientArchive(path string) (PackageQC, error) {
 	}
 	entries := make(map[string]*zip.File, len(archive.File))
 	for _, entry := range archive.File {
+		if err := ctx.Err(); err != nil {
+			return PackageQC{}, err
+		}
 		if _, duplicate := entries[entry.Name]; duplicate || !entry.FileInfo().Mode().IsRegular() ||
 			entry.Comment != "" || !bytes.Equal(entry.Extra, packageZIPTimestampExtra) || entry.NonUTF8 ||
 			entry.Method != zip.Store || entry.Flags != 8 || entry.CreatorVersion != 3<<8|20 ||
@@ -535,14 +570,14 @@ func VerifyRecipientArchive(path string) (PackageQC, error) {
 		}
 		entries[entry.Name] = entry
 	}
-	if err := verifyRecipientZIPEnvelope(file, info.Size(), archive); err != nil {
+	if err := verifyRecipientZIPEnvelopeContext(ctx, file, info.Size(), archive); err != nil {
 		return PackageQC{}, err
 	}
 	manifestEntry := entries["MANIFEST.json"]
 	if manifestEntry == nil {
 		return PackageQC{}, ErrRecipientArchive
 	}
-	manifestBytes, err := readPackageEntry(manifestEntry)
+	manifestBytes, err := readPackageEntryContext(ctx, manifestEntry)
 	if err != nil {
 		return PackageQC{}, err
 	}
@@ -567,19 +602,28 @@ func VerifyRecipientArchive(path string) (PackageQC, error) {
 	if err != nil {
 		return PackageQC{}, err
 	}
-	actualTransmittal, err := readPackageEntry(entries["TRANSMITTAL.json"])
-	if err != nil || !bytes.Equal(actualTransmittal, transmittal) {
+	actualTransmittal, err := readPackageEntryContext(ctx, entries["TRANSMITTAL.json"])
+	if err != nil {
+		return PackageQC{}, err
+	}
+	if !bytes.Equal(actualTransmittal, transmittal) {
 		return PackageQC{}, ErrRecipientArchive
 	}
 	mapping, err := packageJSON(recipientImportMapping())
 	if err != nil {
 		return PackageQC{}, ErrRecipientArchive
 	}
-	actualMapping, err := readPackageEntry(entries["MAPPING.json"])
-	if err != nil || !bytes.Equal(actualMapping, mapping) {
+	actualMapping, err := readPackageEntryContext(ctx, entries["MAPPING.json"])
+	if err != nil {
+		return PackageQC{}, err
+	}
+	if !bytes.Equal(actualMapping, mapping) {
 		return PackageQC{}, ErrRecipientArchive
 	}
 	for _, volume := range manifest.Volumes {
+		if err := ctx.Err(); err != nil {
+			return PackageQC{}, err
+		}
 		loadfiles, err := makePackageLoadfiles(manifest, volume)
 		if err != nil {
 			return PackageQC{}, err
@@ -588,8 +632,11 @@ func VerifyRecipientArchive(path string) (PackageQC, error) {
 			volume.Name + "/LOADFILES/PRODUCTION.dat":              loadfiles.dat,
 			volume.Name + "/LOADFILES/PRODUCTION." + loadfiles.ext: loadfiles.page,
 		} {
-			actual, err := readPackageEntry(entries[name])
-			if err != nil || !bytes.Equal(actual, expectedData) {
+			actual, err := readPackageEntryContext(ctx, entries[name])
+			if err != nil {
+				return PackageQC{}, err
+			}
+			if !bytes.Equal(actual, expectedData) {
 				return PackageQC{}, ErrRecipientArchive
 			}
 		}
@@ -617,8 +664,11 @@ func VerifyRecipientArchive(path string) (PackageQC, error) {
 		}
 	}
 	for _, doc := range manifest.Documents {
+		if err := ctx.Err(); err != nil {
+			return PackageQC{}, err
+		}
 		for _, image := range doc.Images {
-			if err := verifyPackagePNG(file, entries[doc.Volume+"/"+image.Path]); err != nil {
+			if err := verifyPackagePNGContext(ctx, file, entries[doc.Volume+"/"+image.Path]); err != nil {
 				return PackageQC{}, err
 			}
 		}
@@ -633,6 +683,9 @@ func VerifyRecipientArchive(path string) (PackageQC, error) {
 		}
 	}
 	for _, entry := range archive.File {
+		if err := ctx.Err(); err != nil {
+			return PackageQC{}, err
+		}
 		limit := int64(maxPackageMetadataBytes)
 		if strings.Contains(entry.Name, "/TEXT/") || strings.Contains(entry.Name, "/PDF/") || strings.Contains(entry.Name, "/IMAGES/") {
 			volume, _, _ := strings.Cut(entry.Name, "/")
@@ -643,7 +696,7 @@ func VerifyRecipientArchive(path string) (PackageQC, error) {
 				}
 			}
 		}
-		value, err := digestPackageEntry(entry, limit)
+		value, err := digestPackageEntryContext(ctx, entry, limit)
 		if err != nil {
 			return PackageQC{}, err
 		}
@@ -674,7 +727,10 @@ func VerifyRecipientArchive(path string) (PackageQC, error) {
 		return PackageQC{}, err
 	}
 	digest := sha256.New()
-	n, err := io.Copy(digest, file)
+	n, err := io.Copy(digest, productionContextReader{ctx: ctx, reader: file})
+	if canceled := ctx.Err(); canceled != nil {
+		return PackageQC{}, canceled
+	}
 	if err != nil || n != info.Size() {
 		return PackageQC{}, ErrRecipientArchive
 	}
@@ -691,19 +747,29 @@ func imagePaths(images []RecipientImage) []string {
 }
 
 func verifyPackagePNG(file *os.File, entry *zip.File) error {
+	return verifyPackagePNGContext(context.Background(), file, entry)
+}
+
+func verifyPackagePNGContext(ctx context.Context, file *os.File, entry *zip.File) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	entrySize, ok := packageArchiveEntrySize(entry.UncompressedSize64)
 	if !ok || entrySize > 50<<30 {
 		return ErrRecipientArchive
 	}
-	if err := verifyRecipientPNGChunks(file, entry, entrySize); err != nil {
+	if err := verifyRecipientPNGChunks(ctx, file, entry, entrySize); err != nil {
 		return err
 	}
 	stream, err := entry.Open()
 	if err != nil {
 		return ErrRecipientArchive
 	}
-	config, decodeErr := png.DecodeConfig(stream)
+	config, decodeErr := png.DecodeConfig(productionContextReader{ctx: ctx, reader: stream})
 	closeErr := stream.Close()
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	if decodeErr != nil || closeErr != nil || config.Width < 1 || config.Height < 1 ||
 		int64(config.Width)*int64(config.Height) > 100_000_000 {
 		return errors.Join(ErrRecipientArchive, decodeErr, closeErr)
@@ -712,9 +778,12 @@ func verifyPackagePNG(file *os.File, entry *zip.File) error {
 	if err != nil {
 		return ErrRecipientArchive
 	}
-	_, decodeErr = png.Decode(stream)
-	_, drainErr := io.Copy(io.Discard, io.LimitReader(stream, entrySize+1))
+	_, decodeErr = png.Decode(productionContextReader{ctx: ctx, reader: stream})
+	_, drainErr := io.Copy(io.Discard, io.LimitReader(productionContextReader{ctx: ctx, reader: stream}, entrySize+1))
 	closeErr = stream.Close()
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	if decodeErr != nil || drainErr != nil || closeErr != nil {
 		return errors.Join(ErrRecipientArchive, decodeErr, drainErr, closeErr)
 	}

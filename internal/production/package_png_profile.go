@@ -3,6 +3,7 @@ package production
 import (
 	"archive/zip"
 	"bytes"
+	"context"
 	"encoding/binary"
 	"math"
 	"os"
@@ -13,7 +14,10 @@ var productionPNGSignature = []byte{137, 80, 78, 71, 13, 10, 26, 10}
 // Production pages are encoded by Go's png.Encoder from rendered color pixels.
 // Its output has IHDR, contiguous IDAT chunks, then IEND. Optional PNG chunks
 // are outside the recipient projection and can carry undisclosed text.
-func verifyRecipientPNGChunks(file *os.File, entry *zip.File, size int64) error {
+func verifyRecipientPNGChunks(ctx context.Context, file *os.File, entry *zip.File, size int64) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	dataOffset, err := entry.DataOffset()
 	if err != nil || dataOffset < 0 || size < 8 || dataOffset > math.MaxInt64-size {
 		return ErrRecipientArchive
@@ -25,6 +29,9 @@ func verifyRecipientPNGChunks(file *os.File, entry *zip.File, size int64) error 
 	}
 	position, state := int64(8), 0
 	for chunks := 0; position < size && chunks < 100_000; chunks++ {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		if size-position < 12 {
 			return ErrRecipientArchive
 		}

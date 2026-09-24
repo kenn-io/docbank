@@ -606,3 +606,63 @@ func TestRecipientPagePNGRejectsUndeclaredMetadata(t *testing.T) {
 		})
 	}
 }
+
+type cancelAtPackageReadback struct {
+	syntheticPackageOpener
+
+	cancel    context.CancelFunc
+	remaining int
+}
+
+func (o *cancelAtPackageReadback) OpenVerifiedProductionArtifact(ctx context.Context, jobID string,
+	artifact documentproduction.Artifact) (packstore.VerifiedReadCloser, int64, error) {
+	stream, size, err := o.syntheticPackageOpener.OpenVerifiedProductionArtifact(ctx, jobID, artifact)
+	if err != nil {
+		return nil, 0, err
+	}
+	o.remaining--
+	if o.remaining == 0 {
+		return &cancelWhenVerified{VerifiedReadCloser: stream, cancel: o.cancel}, size, nil
+	}
+	return stream, size, nil
+}
+
+type cancelWhenVerified struct {
+	packstore.VerifiedReadCloser
+
+	cancel context.CancelFunc
+}
+
+func (s *cancelWhenVerified) Verify() error {
+	err := s.VerifiedReadCloser.Verify()
+	s.cancel()
+	if err != nil {
+		return fmt.Errorf("verify synthetic package stream: %w", err)
+	}
+	return nil
+}
+
+func TestRecipientArchiveCancellationBeforeReadbackDoesNotPublish(t *testing.T) {
+	projection, opener := packageArchiveFixture(t, "export-dat-opt-images-v1")
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	destination := filepath.Join(t.TempDir(), "recipient.zip")
+	late := &cancelAtPackageReadback{syntheticPackageOpener: opener, cancel: cancel,
+		remaining: len(projection.bindings)}
+	_, err := BuildRecipientArchive(ctx, projection, packageJobID, late, destination)
+	require.ErrorIs(t, err, context.Canceled)
+	require.Zero(t, late.remaining, "cancel only after all produced artifact bytes were streamed")
+	_, err = os.Stat(destination)
+	require.ErrorIs(t, err, os.ErrNotExist)
+}
+
+func TestRecipientArchiveRetryHonorsCancellation(t *testing.T) {
+	projection, opener := packageArchiveFixture(t, "export-dat-pdf-v1")
+	destination := filepath.Join(t.TempDir(), "recipient.zip")
+	_, err := BuildRecipientArchive(t.Context(), projection, packageJobID, opener, destination)
+	require.NoError(t, err)
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	_, err = BuildRecipientArchive(ctx, projection, packageJobID, syntheticPackageOpener{}, destination)
+	require.ErrorIs(t, err, context.Canceled)
+}

@@ -3,6 +3,7 @@ package production
 import (
 	"archive/zip"
 	"bytes"
+	"context"
 	"encoding/binary"
 	"os"
 )
@@ -24,11 +25,21 @@ func readRecipientZIPAt(file *os.File, size, offset int64, count int) ([]byte, e
 // Walk the ZIP's actual local records, central directory, and end records so
 // no bytes outside the public entries can accompany a recipient package.
 func verifyRecipientZIPEnvelope(file *os.File, size int64, archive *zip.Reader) error {
+	return verifyRecipientZIPEnvelopeContext(context.Background(), file, size, archive)
+}
+
+func verifyRecipientZIPEnvelopeContext(ctx context.Context, file *os.File, size int64, archive *zip.Reader) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	if size < 22 || archive == nil || len(archive.File) == 0 {
 		return ErrRecipientArchive
 	}
 	cursor := int64(0)
 	for _, entry := range archive.File {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		local, err := readRecipientZIPAt(file, size, cursor, 30)
 		if err != nil || zipLE.Uint32(local) != 0x04034b50 ||
 			zipLE.Uint16(local[4:]) != 20 ||
@@ -71,6 +82,9 @@ func verifyRecipientZIPEnvelope(file *os.File, size int64, archive *zip.Reader) 
 	}
 	directoryStart := cursor
 	for _, entry := range archive.File {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		header, err := readRecipientZIPAt(file, size, cursor, 46)
 		if err != nil || zipLE.Uint32(header) != 0x02014b50 ||
 			zipLE.Uint32(header[34:]) != 0 || zipLE.Uint32(header[38:]) != entry.ExternalAttrs {
