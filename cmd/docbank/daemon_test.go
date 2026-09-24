@@ -255,7 +255,7 @@ func TestServeRequiresKeyEvenWhenConfigIsKeyless(t *testing.T) {
 // Fresh SQLite initialization and shutdown can each exceed ten seconds on busy
 // Windows CI runners. These tests check daemon behavior, not performance.
 const (
-	daemonStartTimeout    = time.Minute
+	daemonStartTimeout    = 3 * time.Minute
 	daemonShutdownTimeout = 30 * time.Second
 )
 

@@ -85,7 +85,7 @@ func startTestDaemon(t *testing.T, dir string) {
 	require.Eventually(t, func() bool {
 		_, _, ok, err := daemonconn.Find(t.Context(), dir)
 		return err == nil && ok
-	}, 30*time.Second, 25*time.Millisecond, "test daemon never became ready")
+	}, daemonStartTimeout, 25*time.Millisecond, "test daemon never became ready")
 }
 
 func writeSourceFile(t *testing.T, name, content string) string {
