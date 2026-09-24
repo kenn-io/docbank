@@ -99,7 +99,9 @@ func newWebDownloadRegistry(vaultRoot string) *webDownloadRegistry {
 	}
 }
 
-func (r *webDownloadRegistry) createStagingFile() (*os.File, string, error) {
+// ensureStagingDir removes abandoned bytes exactly once. Package handoff must
+// call this before placing verified files under the shared download directory.
+func (r *webDownloadRegistry) ensureStagingDir() error {
 	r.initOnce.Do(func() {
 		if err := os.RemoveAll(r.dir); err != nil {
 			r.initErr = fmt.Errorf("removing abandoned web downloads: %w", err)
@@ -110,7 +112,14 @@ func (r *webDownloadRegistry) createStagingFile() (*os.File, string, error) {
 		}
 	})
 	if r.initErr != nil {
-		return nil, "", r.initErr
+		return r.initErr
+	}
+	return nil
+}
+
+func (r *webDownloadRegistry) createStagingFile() (*os.File, string, error) {
+	if err := r.ensureStagingDir(); err != nil {
+		return nil, "", err
 	}
 	file, err := os.CreateTemp(r.dir, ".download-*")
 	if err != nil {
