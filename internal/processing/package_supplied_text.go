@@ -61,6 +61,8 @@ func PublishPackageSuppliedText(ctx context.Context, catalog *store.Store, blobs
 		family, filename = "pdf", "source.pdf"
 	case "image/tiff":
 		family, filename = "image", "source.tiff"
+	case "image/png":
+		family, filename = "image", "source.png"
 	case "text/plain":
 		family, filename = "text", "source.txt"
 	case "application/json":

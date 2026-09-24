@@ -731,6 +731,7 @@ func (w *PackageImportWorker) importRecord(ctx context.Context, job store.Packag
 		member.ParentOccurrenceID = store.PackageOccurrenceID(pkg.PackageID, parentKey)
 	}
 	var gaps []string
+	sourceIsSuppliedText := false
 	for index, ref := range record.Files {
 		if ref.Role == "" {
 			return store.PackageImportReceipt{}, store.ErrPackageConflict
@@ -767,6 +768,7 @@ func (w *PackageImportWorker) importRecord(ctx context.Context, job store.Packag
 					member.BlobSHA256 = staged.Version.BlobHash
 					member.Size = staged.Version.Size
 					member.DocumentKind = packageImportDocumentKind(ref)
+					sourceIsSuppliedText = ref.Role == "supplied_text"
 					if ref.VerifiedPageCount > 0 && member.DocumentKind == "pdf" {
 						member.SourcePageCount = ref.VerifiedPageCount
 						member.SelectedPDFSHA256 = staged.Version.BlobHash
@@ -809,12 +811,15 @@ func (w *PackageImportWorker) importRecord(ctx context.Context, job store.Packag
 				representation.BlobSHA256 = staged.Version.BlobHash
 				representation.Size = staged.Version.Size
 				representation.MediaType = staged.Version.MimeType
-				if member.ContentVersionID == "" {
+				// A page image is the source when the only mapped file is
+				// supplied text. Keep that text as a separate authority.
+				if member.ContentVersionID == "" || sourceIsSuppliedText {
 					member.NodeID = staged.Node.ID
 					member.ContentVersionID = staged.Version.ID
 					member.BlobSHA256 = staged.Version.BlobHash
 					member.Size = staged.Version.Size
 					member.DocumentKind = "image"
+					sourceIsSuppliedText = false
 				}
 			}
 		} else if ref.Status != "" {

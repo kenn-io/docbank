@@ -115,8 +115,8 @@ func TestSuppliedTextProviderIdentityAndFormats(t *testing.T) {
 	require.NoError(t, err)
 	require.NotEqual(t, first.Descriptor().PolicyFingerprint, otherPolicy.Descriptor().PolicyFingerprint)
 	formats := first.Descriptor().SupportedFormats
-	require.Len(t, formats, 4)
-	for _, mediaType := range []string{"application/pdf", "image/tiff", "text/plain", "application/json"} {
+	require.Len(t, formats, 5)
+	for _, mediaType := range []string{"application/pdf", "image/tiff", "image/png", "text/plain", "application/json"} {
 		found := false
 		for _, format := range formats {
 			found = found || format.MediaType == mediaType && format.InputKind == document.RenditionInputOriginalFile
@@ -131,7 +131,7 @@ func TestSuppliedTextProviderIdentityAndFormats(t *testing.T) {
 
 func TestSuppliedTextRendersEveryDeclaredFormat(t *testing.T) {
 	for _, format := range []struct{ family, mediaType string }{
-		{"pdf", "application/pdf"}, {"image", "image/tiff"},
+		{"pdf", "application/pdf"}, {"image", "image/tiff"}, {"image", "image/png"},
 		{"text", "text/plain"}, {"structured", "application/json"},
 	} {
 		t.Run(format.mediaType, func(t *testing.T) {

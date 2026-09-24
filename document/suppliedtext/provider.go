@@ -88,6 +88,7 @@ func New(profile Profile) (*Provider, error) {
 		SupportedFormats: []document.RenditionFormatCapability{
 			{MediaFamily: "pdf", MediaType: "application/pdf", InputKind: document.RenditionInputOriginalFile},
 			{MediaFamily: "image", MediaType: "image/tiff", InputKind: document.RenditionInputOriginalFile},
+			{MediaFamily: "image", MediaType: "image/png", InputKind: document.RenditionInputOriginalFile},
 			{MediaFamily: "text", MediaType: "text/plain", InputKind: document.RenditionInputOriginalFile},
 			{MediaFamily: "structured", MediaType: "application/json", InputKind: document.RenditionInputOriginalFile},
 		},

@@ -33,6 +33,12 @@ import (
 
 type recipientImportOpener struct{ data map[string][]byte }
 
+type recipientArtifactPart struct {
+	role, media string
+	page        int
+	data        []byte
+}
+
 type recipientImportStream struct{ *bytes.Reader }
 
 func (s *recipientImportStream) Close() error { return nil }
@@ -58,18 +64,30 @@ func recipientImportHash(data []byte) string {
 	return hex.EncodeToString(digest[:])
 }
 
-func syntheticRecipientArchive(t *testing.T, memberCount, maxVolumeDocuments int) (string, production.RecipientManifest) {
+func syntheticRecipientArchive(t *testing.T, memberCount, maxVolumeDocuments int, profiles ...string) (string, production.RecipientManifest) {
 	t.Helper()
+	profile := "export-dat-pdf-v1"
+	if len(profiles) > 0 {
+		profile = profiles[0]
+	}
+	pageCount := 1
+	if profile != "export-dat-pdf-v1" {
+		pageCount = 2
+	}
 	pdf := fpdf.NewCustom(&fpdf.InitType{UnitStr: "pt", Size: fpdf.SizeType{Wd: 612, Ht: 792}})
 	pdf.SetFont("Helvetica", "", 12)
 	pdf.AddPage()
 	pdf.Text(72, 72, "Retained Synthetic Phrase")
 	var pdfBody bytes.Buffer
 	require.NoError(t, pdf.Output(&pdfBody))
-	var imageBody bytes.Buffer
-	page := image.NewRGBA(image.Rect(0, 0, 2, 2))
-	page.Set(0, 0, color.RGBA{R: 20, G: 40, B: 60, A: 255})
-	require.NoError(t, png.Encode(&imageBody, page))
+	imageBodies := make([][]byte, pageCount)
+	for pageNumber := range imageBodies {
+		var imageBody bytes.Buffer
+		page := image.NewRGBA(image.Rect(0, 0, 2, 2))
+		page.Set(0, 0, color.RGBA{R: uint8(20 + pageNumber), G: 40, B: 60, A: 255})
+		require.NoError(t, png.Encode(&imageBody, page))
+		imageBodies[pageNumber] = imageBody.Bytes()
+	}
 	textBody := []byte("Retained Synthetic Phrase\f")
 
 	jobID, setID := uuid.NewString(), uuid.NewString()
@@ -86,19 +104,22 @@ func syntheticRecipientArchive(t *testing.T, memberCount, maxVolumeDocuments int
 		ordinal := int64(index + 1)
 		members = append(members, production.PackageMember{ID: memberID, Ordinal: ordinal,
 			FamilyID: "synthetic-family-" + memberID})
-		reservation.Numbers = append(reservation.Numbers, documentproduction.AssignedNumber{
-			MemberID: memberID, MemberOrdinal: ordinal, Page: 1, Text: fmt.Sprintf("OUT%06d", 41+index)})
-		for _, part := range []struct {
-			role, media string
-			page        int
-			data        []byte
-		}{
+		for pageNumber := 1; pageNumber <= pageCount; pageNumber++ {
+			reservation.Numbers = append(reservation.Numbers, documentproduction.AssignedNumber{
+				MemberID: memberID, MemberOrdinal: ordinal, Page: pageNumber,
+				Text: fmt.Sprintf("OUT%06d", 41+index*pageCount+pageNumber-1)})
+		}
+		parts := []recipientArtifactPart{
 			{documentproduction.ArtifactRoleRedactedPDF, "application/pdf", 0, pdfBody.Bytes()},
 			{documentproduction.ArtifactRoleRedactedText, "text/plain; charset=utf-8", 0, textBody},
-			{documentproduction.ArtifactRoleRedactedPage, "image/png", 1, imageBody.Bytes()},
-		} {
+		}
+		for pageNumber, body := range imageBodies {
+			parts = append(parts, recipientArtifactPart{documentproduction.ArtifactRoleRedactedPage,
+				"image/png", pageNumber + 1, body})
+		}
+		for _, part := range parts {
 			artifact := documentproduction.Artifact{ID: uuid.NewString(), MemberID: memberID, MemberOrdinal: ordinal,
-				Role: part.role, Page: part.page, Path: "private/" + privateCanary + "-" + memberID + "-" + part.role,
+				Role: part.role, Page: part.page, Path: fmt.Sprintf("private/%s-%s-%s-%d", privateCanary, memberID, part.role, part.page),
 				SHA256: recipientImportHash(part.data), Size: int64(len(part.data)), MediaType: part.media}
 			artifacts = append(artifacts, artifact)
 			opener.data[artifact.ID] = part.data
@@ -124,7 +145,7 @@ func syntheticRecipientArchive(t *testing.T, memberCount, maxVolumeDocuments int
 		PreparedInputSHA256: preparedSHA, State: production.ProductionJobSucceeded,
 		Receipt: receipt, Manifest: manifest}
 	projection, err := production.PlanPackageProjection(job, reservation, members,
-		"export-dat-pdf-v1", production.PackageLimits{MaxVolumeBytes: 10 << 20, MaxVolumeDocuments: maxVolumeDocuments})
+		profile, production.PackageLimits{MaxVolumeBytes: 10 << 20, MaxVolumeDocuments: maxVolumeDocuments})
 	require.NoError(t, err)
 	path := filepath.Join(t.TempDir(), "recipient.zip")
 	_, err = production.BuildRecipientArchive(t.Context(), projection, jobID, opener, path)
@@ -134,15 +155,18 @@ func syntheticRecipientArchive(t *testing.T, memberCount, maxVolumeDocuments int
 
 func TestRecipientProductionPackageImportsIntoFreshVault(t *testing.T) {
 	for _, fixture := range []struct {
-		name                      string
+		name, profile             string
 		count, maxVolumeDocuments int
 	}{
-		{name: "one volume", count: 1, maxVolumeDocuments: 10},
-		{name: "two volumes", count: 2, maxVolumeDocuments: 1},
+		{name: "one PDF volume", profile: "export-dat-pdf-v1", count: 1, maxVolumeDocuments: 10},
+		{name: "two PDF volumes", profile: "export-dat-pdf-v1", count: 2, maxVolumeDocuments: 1},
+		{name: "OPT image volume", profile: "export-dat-opt-images-v1", count: 1, maxVolumeDocuments: 10},
+		{name: "LFP image volumes", profile: "export-dat-lfp-images-v1", count: 2, maxVolumeDocuments: 1},
 	} {
 		t.Run(fixture.name, func(t *testing.T) {
 			memberCount := fixture.count
-			path, manifest := syntheticRecipientArchive(t, memberCount, fixture.maxVolumeDocuments)
+			profile := fixture.profile
+			path, manifest := syntheticRecipientArchive(t, memberCount, fixture.maxVolumeDocuments, profile)
 			require.Len(t, manifest.Volumes, memberCount)
 			_, err := production.VerifyRecipientArchive(path)
 			require.NoError(t, err)
@@ -162,10 +186,14 @@ func TestRecipientProductionPackageImportsIntoFreshVault(t *testing.T) {
 				require.NoError(t, stream.Close())
 			}
 			require.NoError(t, archive.Close())
-			visible, err := packagetest.PDFText(t.Context(), pdfBody)
-			require.NoError(t, err)
-			require.Contains(t, visible, "Retained Synthetic Phrase")
-			require.NotContains(t, visible, "OMITTED-SYNTHETIC-CANARY")
+			if profile == "export-dat-pdf-v1" {
+				visible, err := packagetest.PDFText(t.Context(), pdfBody)
+				require.NoError(t, err)
+				require.Contains(t, visible, "Retained Synthetic Phrase")
+				require.NotContains(t, visible, "OMITTED-SYNTHETIC-CANARY")
+			} else {
+				require.Empty(t, pdfBody)
+			}
 
 			data, err := os.ReadFile(path)
 			require.NoError(t, err)
@@ -175,15 +203,23 @@ func TestRecipientProductionPackageImportsIntoFreshVault(t *testing.T) {
 			mapping, err := os.ReadFile(filepath.Join(root, "MAPPING.json"))
 			require.NoError(t, err)
 			srv, catalog := newPackageTestServer(t)
+			pageMap := "opt-standard-v1"
+			if profile == "export-dat-lfp-images-v1" {
+				pageMap = "lfp-ipro-v1"
+			}
 			preview := srv.post(t, mustPackageJSON(t, api.PackagePreflightRequest{Profile: "dat-concordance-v1",
-				PageMapProfile: "opt-standard-v1", Encoding: "utf-8", SourceKind: "root", SourceRef: root,
+				PageMapProfile: pageMap, Encoding: "utf-8", SourceKind: "root", SourceRef: root,
 				Mapping: mapping}))
 			require.Equal(t, http.StatusOK, preview.Code, preview.Body.String())
 			var preflight api.PackagePreflight
 			require.NoError(t, json.Unmarshal(preview.Body.Bytes(), &preflight))
 			require.False(t, preflight.Blocking, "%+v", preflight.Diagnostics)
 			require.Equal(t, memberCount, preflight.Records)
-			require.Equal(t, memberCount, preflight.Pages)
+			expectedPages := memberCount
+			if profile != "export-dat-pdf-v1" {
+				expectedPages *= 2
+			}
+			require.Equal(t, expectedPages, preflight.Pages)
 			operationID := uuid.NewString()
 			admitted := srv.call(t, http.MethodPost, "/api/v1/packages/imports", mustPackageJSON(t,
 				api.PackageImportRequest{PreflightID: preflight.PreflightID, Into: "/", Name: "synthetic-recipient",
@@ -218,20 +254,38 @@ func TestRecipientProductionPackageImportsIntoFreshVault(t *testing.T) {
 			require.NoError(t, err)
 			require.Len(t, members, memberCount)
 			for index, member := range members {
-				require.Equal(t, manifest.Documents[index].PDFSHA256, member.BlobSHA256)
-				var indexedText, producedPDF bool
+				expectedSource := manifest.Documents[index].PDFSHA256
+				if profile != "export-dat-pdf-v1" {
+					expectedSource = manifest.Documents[index].Images[0].SHA256
+				}
+				require.Equal(t, expectedSource, member.BlobSHA256)
+				var indexedText, producedSource bool
+				pageImages := 0
 				for _, representation := range member.Representations {
+					if profile != "export-dat-pdf-v1" {
+						require.False(t, representation.Role == "native" && representation.Status == "available")
+					}
 					if representation.Role == "supplied_text" && representation.Status == "available" &&
 						representation.LexicalGenerationID != "" {
 						indexedText = true
 					}
-					if representation.Role == "produced_pdf" && representation.Status == "available" &&
-						representation.BlobSHA256 == manifest.Documents[index].PDFSHA256 {
-						producedPDF = true
+					role := "produced_pdf"
+					if profile != "export-dat-pdf-v1" {
+						role = "page_image"
+					}
+					if representation.Role == role && representation.Status == "available" &&
+						representation.BlobSHA256 == expectedSource {
+						producedSource = true
+					}
+					if representation.Role == "page_image" && representation.Status == "available" {
+						pageImages++
 					}
 				}
 				require.True(t, indexedText)
-				require.True(t, producedPDF)
+				require.True(t, producedSource)
+				if profile != "export-dat-pdf-v1" {
+					require.Equal(t, 2, pageImages)
+				}
 			}
 			for _, query := range []struct {
 				term string
