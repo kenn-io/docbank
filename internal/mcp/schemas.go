@@ -11,6 +11,7 @@ import (
 const (
 	jsonSchemaDraft       = "https://json-schema.org/draft/2020-12/schema"
 	packageIDField        = "package_id"
+	stateField            = "state"
 	maxToolResponseBytes  = 1 << 20
 	maxToolErrorBytes     = 1024
 	maxPathBytes          = 16 << 10
@@ -97,12 +98,12 @@ func cursorSchema() schema {
 
 func packageImportOutputSchema() schema {
 	return rootObjectSchema(withPrivateCache(schema{
-		"operation_id": uuidSchema(), "job_id": uuidSchema(), packageIDField: uuidSchema(),
-		"preflight_id": uuidSchema(), "state": enumSchema("queued", "running", "complete", "partial", "failed", "cancelled"),
+		"operation_id": uuidSchema(), mcpJobIDField: uuidSchema(), packageIDField: uuidSchema(),
+		"preflight_id": uuidSchema(), stateField: enumSchema("queued", "running", "complete", "partial", "failed", "cancelled"),
 		"committed": integerSchema(0, 100_000), "total": integerSchema(1, 100_000),
 		"gap_count": integerSchema(0, 100_000), "gaps": arraySchema(stringSchema(4096), 100),
 		"created_at": dateTimeSchema(), "updated_at": dateTimeSchema(),
-	}), cacheRequired("operation_id", "job_id", packageIDField, "preflight_id", "state", "committed", "total", "gap_count", "created_at", "updated_at")...)
+	}), cacheRequired("operation_id", mcpJobIDField, packageIDField, "preflight_id", stateField, "committed", "total", "gap_count", "created_at", "updated_at")...)
 }
 
 func getPackageImportSchemas() (schema, schema) {
@@ -154,7 +155,7 @@ func getPackagePreflightSchemas() (schema, schema) {
 
 func listPackagePreflightDiagnosticsSchemas() (schema, schema) {
 	return rootObjectSchema(schema{
-			"preflight_id": uuidSchema(), "cursor": stringSchema(maxCursorCharacters), "limit": integerSchema(1, maxPackageDiagnostics),
+			"preflight_id": uuidSchema(), "cursor": stringSchema(maxCursorCharacters), "limit": integerSchema(1, maxPackageDiagnostics), //nolint:goconst // Published JSON field name.
 		}, "preflight_id"), rootObjectSchema(withPrivateCache(schema{
 			"diagnostics": arraySchema(packageDiagnosticSchema(), maxPackageDiagnostics), "total": integerSchema(0, 0),
 			"next_cursor": stringSchema(maxCursorCharacters),
@@ -192,9 +193,9 @@ func listPackageCustodiansSchemas() (schema, schema) {
 
 func findPeopleSchemas() (schema, schema) {
 	person := objectSchema(schema{
-		"person_id": uuidSchema(), "display_name": stringSchema(200), "state": enumSchema("provisional", "curated"),
+		"person_id": uuidSchema(), "display_name": stringSchema(200), stateField: enumSchema("provisional", "curated"),
 		"revision": integerSchema(1, 0),
-	}, "person_id", "display_name", "state", "revision")
+	}, "person_id", "display_name", stateField, "revision")
 	return rootObjectSchema(schema{
 			"query": stringSchema(200), "cursor": stringSchema(maxCursorCharacters), "limit": integerSchema(1, 250),
 		}), rootObjectSchema(withPrivateCache(schema{
@@ -238,13 +239,13 @@ func getPackageSchemas() (schema, schema) {
 		"party_label": stringSchema(64), "profile_sha256": sha256Schema(), "mapping_sha256": sha256Schema(),
 		"manifest_sha256": sha256Schema(), "manifest_blob_sha256": sha256Schema(),
 		"predecessor_package_id": uuidSchema(), "relation": stringSchema(64), "ingest_id": uuidSchema(),
-		"export_plan_id": uuidSchema(), "produced_on": dateTimeSchema(), "state": stringSchema(32),
+		"export_plan_id": uuidSchema(), "produced_on": dateTimeSchema(), stateField: stringSchema(32),
 		"created_at": dateTimeSchema(), "completed_at": dateTimeSchema(),
 		"member_count": integerSchema(0, 100_000), "page_count": integerSchema(0, 1_000_000),
 		"profile_json": stringSchema(1 << 20), "mapping_json": stringSchema(1 << 20),
 		"volumes": arraySchema(schema{"type": "object"}, 64),
 	}), cacheRequired(packageIDField, "direction", "package_name", "party_label", "profile_sha256",
-		"mapping_sha256", "manifest_sha256", "manifest_blob_sha256", "state", "created_at",
+		"mapping_sha256", "manifest_sha256", "manifest_blob_sha256", stateField, "created_at",
 		"member_count", "page_count", "profile_json", "mapping_json", "volumes")...)
 }
 
@@ -409,8 +410,8 @@ func searchDocumentsSchemas() (schema, schema) {
 			"binding_required":   booleanSchema(),
 			"scoped_documents":   integerSchema(0, 4096),
 			"complete_documents": integerSchema(0, 4096),
-			"state":              stringSchema(64),
-		}, "binding_required", "scoped_documents", "complete_documents", "state"),
+			stateField:           stringSchema(64),
+		}, "binding_required", "scoped_documents", "complete_documents", stateField),
 		"skipped_reasons": arraySchema(stringSchema(64), 64),
 		"results":         arraySchema(result, 100),
 		"truncated":       booleanSchema(),
@@ -533,12 +534,12 @@ func getProcessingPlanSchemas() (schema, schema) {
 }
 
 func getProcessingStatusSchemas() (schema, schema) {
-	input := rootObjectSchema(schema{"job_id": sha256Schema()}, "job_id")
+	input := rootObjectSchema(schema{mcpJobIDField: sha256Schema()}, mcpJobIDField)
 	output := rootObjectSchema(withPrivateCache(schema{
-		"job_id": sha256Schema(), "content_version_id": uuidSchema(), "state": stringSchema(64), "phase": stringSchema(64),
+		mcpJobIDField: sha256Schema(), "content_version_id": uuidSchema(), stateField: stringSchema(64), "phase": stringSchema(64),
 		"failure_code": stringSchema(64), "embedding_job_ids": arraySchema(sha256Schema(), 64),
 		"completed_bindings": integerSchema(0, 64),
-	}), cacheRequired("job_id", "state", "phase", "embedding_job_ids", "completed_bindings")...)
+	}), cacheRequired(mcpJobIDField, stateField, "phase", "embedding_job_ids", "completed_bindings")...)
 	return input, output
 }
 
@@ -549,16 +550,64 @@ func getProcessingCoverageSchemas() (schema, schema) {
 		"content_version_ids": schema{"type": "array", "items": uuidSchema(), "minItems": 1, "maxItems": 4096, "uniqueItems": true},
 	}, "profile", "vault_id", "content_version_ids")
 	class := objectSchema(schema{
-		"name": stringSchema(128), "required": booleanSchema(), "state": stringSchema(64),
+		"name": stringSchema(128), "required": booleanSchema(), stateField: stringSchema(64),
 		"complete": integerSchema(0, 4096), "unavailable": integerSchema(0, 4096), "stale": integerSchema(0, 4096),
 		"ineligible": integerSchema(0, 4096), "rebuilding": integerSchema(0, 4096), "total": integerSchema(0, 4096),
 		"previous_generation_serving": integerSchema(0, 4096),
-	}, "name", "required", "state", "complete", "unavailable", "stale", "ineligible", "rebuilding",
+	}, "name", "required", stateField, "complete", "unavailable", "stale", "ineligible", "rebuilding",
 		"previous_generation_serving", "total")
 	output := rootObjectSchema(withPrivateCache(schema{
 		"vault_id": uuidSchema(), "content_version_ids": arraySchema(uuidSchema(), 4096),
-		"profile_fingerprint": sha256Schema(), "state": stringSchema(64), "coverage": arraySchema(class, 65),
-	}), cacheRequired("vault_id", "content_version_ids", "profile_fingerprint", "state", "coverage")...)
+		"profile_fingerprint": sha256Schema(), stateField: stringSchema(64), "coverage": arraySchema(class, 65),
+	}), cacheRequired("vault_id", "content_version_ids", "profile_fingerprint", stateField, "coverage")...)
+	return input, output
+}
+
+func getFormatCoverageSchemas() (schema, schema) {
+	input := rootObjectSchema(schema{
+		"family": stringSchema(64), "format": stringSchema(64), "extension": stringSchema(16),
+	})
+	input["not"] = schema{"required": []string{"format", "extension"}}
+	state := objectSchema(schema{
+		"evidence": stringSchema(512), "note": stringSchema(512),
+		"provider": stringSchema(512), "provider_fingerprint": stringSchema(64),
+		"state": enumSchema("qualified", "unqualified", "unsupported", "not_applicable"),
+	}, "evidence", "note", "provider", "provider_fingerprint", "state")
+	capabilityKeys := []string{"detect", "retain", "metadata", "expand", "text", "pages", "transcript"}
+	capabilities := schema{}
+	for _, key := range capabilityKeys {
+		capabilities[key] = state
+	}
+	capabilityMap := objectSchema(capabilities, capabilityKeys...)
+	format := objectSchema(schema{
+		"capabilities": capabilityMap,
+		"extensions":   arraySchema(stringSchema(512), 512),
+		"id":           stringSchema(512),
+		"media_type":   stringSchema(512),
+		"query_family": stringSchema(512),
+		"unit_kind":    stringSchema(512),
+		"variants": arraySchema(objectSchema(schema{
+			"capabilities": capabilityMap,
+		}, "capabilities"), 256),
+	}, "capabilities", "extensions", "id", "media_type", "query_family", "unit_kind", "variants")
+	pending := objectSchema(schema{
+		"extensions": arraySchema(stringSchema(512), 512), "label": stringSchema(512),
+		"note": stringSchema(512), "owner_slice": stringSchema(512),
+	}, "extensions", "label", "note", "owner_slice")
+	lookup := objectSchema(schema{
+		"format": format, "match": enumSchema("format", "pending", "unknown_format"),
+		"pending": pending, "query": stringSchema(512),
+	}, "match", "query")
+	output := rootObjectSchema(withPrivateCache(schema{
+		"contract_version": schema{"type": "string", "const": "format-coverage/v1"},
+		"formats":          arraySchema(format, 512),
+		"generated_by": objectSchema(schema{
+			"bound_providers": arraySchema(stringSchema(512), 512),
+			"catalog_rows":    integerSchema(0, 512),
+			"extractor_id":    stringSchema(512),
+		}, "bound_providers", "catalog_rows", "extractor_id"),
+		"pending": arraySchema(pending, 512), "lookup": lookup,
+	}), cacheRequired("contract_version", "formats", "generated_by", "pending")...)
 	return input, output
 }
 
@@ -567,9 +616,9 @@ func startProcessingSchemas() (schema, schema) {
 		"content_version_id": uuidSchema(), "plan_fingerprint": sha256Schema(),
 	}, "content_version_id", "plan_fingerprint")
 	output := rootObjectSchema(withPrivateCache(schema{
-		"job_id": sha256Schema(), "rendition_job_id": sha256Schema(), "attachment_id": sha256Schema(),
+		mcpJobIDField: sha256Schema(), "rendition_job_id": sha256Schema(), "attachment_id": sha256Schema(),
 		"embedding_job_ids": arraySchema(sha256Schema(), 64), "profile_fingerprint": sha256Schema(),
-		"content_version_id": uuidSchema(), "state": schema{"type": "string", "const": "queued"},
-	}), cacheRequired("job_id", "embedding_job_ids", "profile_fingerprint", "content_version_id", "state")...)
+		"content_version_id": uuidSchema(), stateField: schema{"type": "string", "const": "queued"},
+	}), cacheRequired(mcpJobIDField, "embedding_job_ids", "profile_fingerprint", "content_version_id", stateField)...)
 	return input, output
 }
