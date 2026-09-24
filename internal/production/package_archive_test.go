@@ -537,6 +537,16 @@ func TestRecipientArchiveQCDetectsChangedFinalBytes(t *testing.T) {
 	require.Error(t, VerifyRecipientArchiveWithQC(path, qc))
 }
 
+func TestRecipientArchiveQCStopsOnCanceledContext(t *testing.T) {
+	projection, opener := packageArchiveFixture(t, "export-dat-pdf-v1")
+	path := filepath.Join(t.TempDir(), "production.zip")
+	qc, err := BuildRecipientArchive(t.Context(), projection, packageJobID, opener, path)
+	require.NoError(t, err)
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	require.ErrorIs(t, VerifyRecipientArchiveWithQCContext(ctx, path, qc), context.Canceled)
+}
+
 func TestBuildRecipientArchiveRejectsNonPNGPageRoleBytes(t *testing.T) {
 	projection, opener := packageArchiveFixture(t, "export-dat-opt-images-v1")
 	for index := range projection.bindings {

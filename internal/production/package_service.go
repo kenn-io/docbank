@@ -64,10 +64,10 @@ func PublishRecipientPackage(ctx context.Context, catalog PublishedPackageCatalo
 	if err != nil {
 		return PublishedRecipientPackage{}, err
 	}
-	if err := PublishPackageQCReceipt(archive, qcPath, qc); err != nil {
+	if err := PublishPackageQCReceiptContext(ctx, archive, qcPath, qc); err != nil {
 		return PublishedRecipientPackage{}, err
 	}
-	if err := PublishRecipientTransmittal(archive, transmittalPath, projection.Manifest, qc); err != nil {
+	if err := PublishRecipientTransmittalContext(ctx, archive, transmittalPath, projection.Manifest, qc); err != nil {
 		return PublishedRecipientPackage{}, err
 	}
 	return PublishedRecipientPackage{Manifest: projection.Manifest, QC: qc}, nil

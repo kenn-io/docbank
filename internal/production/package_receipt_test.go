@@ -2,12 +2,31 @@ package production
 
 import (
 	"bytes"
+	"context"
 	"os"
 	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/require"
 )
+
+func TestPackageSidecarPublicationStopsOnCanceledContext(t *testing.T) {
+	projection, opener := packageArchiveFixture(t, "export-dat-pdf-v1")
+	dir := t.TempDir()
+	archivePath := filepath.Join(dir, "production.zip")
+	qc, err := BuildRecipientArchive(t.Context(), projection, packageJobID, opener, archivePath)
+	require.NoError(t, err)
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	qcPath := filepath.Join(dir, "production.qc.json")
+	transmittalPath := filepath.Join(dir, "production.transmittal.json")
+	require.ErrorIs(t, PublishPackageQCReceiptContext(ctx, archivePath, qcPath, qc), context.Canceled)
+	require.ErrorIs(t, PublishRecipientTransmittalContext(ctx, archivePath, transmittalPath, projection.Manifest, qc), context.Canceled)
+	_, err = os.Stat(qcPath)
+	require.ErrorIs(t, err, os.ErrNotExist)
+	_, err = os.Stat(transmittalPath)
+	require.ErrorIs(t, err, os.ErrNotExist)
+}
 
 func TestPublishPackageQCReceiptIsExternalImmutableAndReverified(t *testing.T) {
 	projection, opener := packageArchiveFixture(t, "export-dat-pdf-v1")

@@ -2,6 +2,7 @@ package production
 
 import (
 	"bytes"
+	"context"
 	"encoding/json/v2"
 	"errors"
 	"io"
@@ -13,8 +14,19 @@ import (
 // never inside it. A byte-identical retry is accepted; a changed receipt is
 // refused. The archive is rehashed and reopened before publication.
 func PublishPackageQCReceipt(archivePath, receiptPath string, receipt PackageQC) error {
-	if archivePath == "" || receiptPath == "" ||
-		VerifyRecipientArchiveWithQC(archivePath, receipt) != nil {
+	return PublishPackageQCReceiptContext(context.Background(), archivePath, receiptPath, receipt)
+}
+
+// PublishPackageQCReceiptContext keeps final-archive verification cancellable
+// through the QC sidecar handoff.
+func PublishPackageQCReceiptContext(ctx context.Context, archivePath, receiptPath string, receipt PackageQC) error {
+	if ctx == nil || archivePath == "" || receiptPath == "" {
+		return ErrRecipientArchive
+	}
+	if err := VerifyRecipientArchiveWithQCContext(ctx, archivePath, receipt); err != nil {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
 		return ErrRecipientArchive
 	}
 	data, err := packageJSON(receipt)
@@ -48,6 +60,9 @@ func PublishPackageQCReceipt(archivePath, receiptPath string, receipt PackageQC)
 		return err
 	}
 	if err := os.Chmod(staged.Name(), 0o400); err != nil {
+		return err
+	}
+	if err := ctx.Err(); err != nil {
 		return err
 	}
 	if err := os.Link(staged.Name(), receiptPath); err != nil {

@@ -3,6 +3,7 @@ package production
 import (
 	"archive/zip"
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json/v2"
@@ -75,8 +76,20 @@ func finalRecipientTransmittal(manifest RecipientManifest, qc PackageQC) Recipie
 // final archive hash. It lives outside the sealed archive to avoid a self hash.
 func PublishRecipientTransmittal(archivePath, transmittalPath string,
 	manifest RecipientManifest, qc PackageQC) error {
-	if archivePath == "" || transmittalPath == "" ||
-		VerifyRecipientArchiveWithQC(archivePath, qc) != nil || len(qc.PageNumbers) == 0 {
+	return PublishRecipientTransmittalContext(context.Background(), archivePath, transmittalPath, manifest, qc)
+}
+
+// PublishRecipientTransmittalContext keeps final-archive verification
+// cancellable through the transmittal handoff.
+func PublishRecipientTransmittalContext(ctx context.Context, archivePath, transmittalPath string,
+	manifest RecipientManifest, qc PackageQC) error {
+	if ctx == nil || archivePath == "" || transmittalPath == "" || len(qc.PageNumbers) == 0 {
+		return ErrRecipientArchive
+	}
+	if err := VerifyRecipientArchiveWithQCContext(ctx, archivePath, qc); err != nil {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
 		return ErrRecipientArchive
 	}
 	manifestData, err := canonical.Marshal(manifest)
@@ -93,7 +106,10 @@ func PublishRecipientTransmittal(archivePath, transmittalPath string,
 	if err != nil {
 		return err
 	}
-	return publishImmutablePackageSidecar(transmittalPath, data)
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	return publishImmutablePackageSidecarContext(ctx, transmittalPath, data)
 }
 
 func ReadRecipientTransmittal(path string) (RecipientFinalTransmittal, error) {
@@ -372,8 +388,15 @@ func readPackageSidecar(path string) ([]byte, error) {
 }
 
 func publishImmutablePackageSidecar(path string, data []byte) error {
-	if path == "" || len(data) == 0 || len(data) > maxPackageMetadataBytes {
+	return publishImmutablePackageSidecarContext(context.Background(), path, data)
+}
+
+func publishImmutablePackageSidecarContext(ctx context.Context, path string, data []byte) error {
+	if ctx == nil || path == "" || len(data) == 0 || len(data) > maxPackageMetadataBytes {
 		return ErrRecipientArchive
+	}
+	if err := ctx.Err(); err != nil {
+		return err
 	}
 	current, err := readPackageSidecar(path)
 	if err == nil {
@@ -403,6 +426,9 @@ func publishImmutablePackageSidecar(path string, data []byte) error {
 		return err
 	}
 	if err := os.Chmod(staged.Name(), 0o400); err != nil {
+		return err
+	}
+	if err := ctx.Err(); err != nil {
 		return err
 	}
 	if err := os.Link(staged.Name(), path); err != nil {

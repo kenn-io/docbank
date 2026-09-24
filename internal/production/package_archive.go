@@ -793,7 +793,16 @@ func verifyPackagePNGContext(ctx context.Context, file *os.File, entry *zip.File
 // VerifyRecipientArchiveWithQC detects a changed final archive against the
 // separately retained receipt rather than trusting its current contents.
 func VerifyRecipientArchiveWithQC(path string, expected PackageQC) error {
-	actual, err := VerifyRecipientArchive(path)
+	return VerifyRecipientArchiveWithQCContext(context.Background(), path, expected)
+}
+
+// VerifyRecipientArchiveWithQCContext verifies the final archive against its
+// retained QC receipt while allowing a canceled handoff to stop the readback.
+func VerifyRecipientArchiveWithQCContext(ctx context.Context, path string, expected PackageQC) error {
+	if ctx == nil {
+		return ErrRecipientArchive
+	}
+	actual, err := verifyRecipientArchive(ctx, path)
 	if err != nil {
 		return err
 	}
