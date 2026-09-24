@@ -618,7 +618,7 @@ func VerifyRecipientArchive(path string) (PackageQC, error) {
 	}
 	for _, doc := range manifest.Documents {
 		for _, image := range doc.Images {
-			if err := verifyPackagePNG(entries[doc.Volume+"/"+image.Path]); err != nil {
+			if err := verifyPackagePNG(file, entries[doc.Volume+"/"+image.Path]); err != nil {
 				return PackageQC{}, err
 			}
 		}
@@ -690,10 +690,13 @@ func imagePaths(images []RecipientImage) []string {
 	return paths
 }
 
-func verifyPackagePNG(entry *zip.File) error {
+func verifyPackagePNG(file *os.File, entry *zip.File) error {
 	entrySize, ok := packageArchiveEntrySize(entry.UncompressedSize64)
 	if !ok || entrySize > 50<<30 {
 		return ErrRecipientArchive
+	}
+	if err := verifyRecipientPNGChunks(file, entry, entrySize); err != nil {
+		return err
 	}
 	stream, err := entry.Open()
 	if err != nil {

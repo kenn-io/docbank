@@ -5,9 +5,11 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"encoding/binary"
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"hash/crc32"
 	"image"
 	"image/color"
 	"image/png"
@@ -553,4 +555,54 @@ func TestBuildRecipientArchiveRejectsNonPNGPageRoleBytes(t *testing.T) {
 	projection.manifestSHA256 = hex.EncodeToString(manifestDigest[:])
 	_, err = BuildRecipientArchive(t.Context(), projection, packageJobID, opener, filepath.Join(t.TempDir(), "bad.zip"))
 	require.Error(t, err)
+}
+
+func TestRecipientPagePNGRejectsUndeclaredMetadata(t *testing.T) {
+	plain := syntheticPackagePNG(t, 1)
+	textData := []byte("Comment\x00private reason")
+	textChunk := make([]byte, 12+len(textData))
+	binary.BigEndian.PutUint32(textChunk[:4], uint32(len(textData)))
+	copy(textChunk[4:], "tEXt")
+	copy(textChunk[8:], textData)
+	binary.BigEndian.PutUint32(textChunk[8+len(textData):], crc32.ChecksumIEEE(textChunk[4:8+len(textData)]))
+	iend := len(plain) - 12
+	require.Equal(t, []byte("IEND"), plain[iend+4:iend+8])
+	withText := make([]byte, 0, len(plain)+len(textChunk))
+	withText = append(withText, plain[:iend]...)
+	withText = append(withText, textChunk...)
+	withText = append(withText, plain[iend:]...)
+	for _, test := range []struct {
+		name string
+		body []byte
+		bad  bool
+	}{
+		{name: "encoder output", body: plain},
+		{name: "text chunk", body: withText, bad: true},
+		{name: "trailing bytes", body: append(bytes.Clone(plain), []byte("private reason")...), bad: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			_, decodeErr := png.Decode(bytes.NewReader(test.body))
+			require.NoError(t, decodeErr, "the PNG decoder must accept this byte stream")
+			path := filepath.Join(t.TempDir(), "page.zip")
+			file, err := os.Create(path)
+			require.NoError(t, err)
+			archive := zip.NewWriter(file)
+			require.NoError(t, writePackageEntry(archive, "page.png", bytes.NewReader(test.body), int64(len(test.body)), ""))
+			require.NoError(t, archive.Close())
+			require.NoError(t, file.Close())
+			reader, err := zip.OpenReader(path)
+			require.NoError(t, err)
+			defer func() { require.NoError(t, reader.Close()) }()
+			archiveFile, err := os.Open(path)
+			require.NoError(t, err)
+			defer func() { require.NoError(t, archiveFile.Close()) }()
+			require.Len(t, reader.File, 1)
+			err = verifyPackagePNG(archiveFile, reader.File[0])
+			if test.bad {
+				require.ErrorIs(t, err, ErrRecipientArchive)
+			} else {
+				require.NoError(t, err)
+			}
+		})
+	}
 }
