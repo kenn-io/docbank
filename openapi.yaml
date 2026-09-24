@@ -9429,6 +9429,72 @@ components:
       x-go-type-import:
         path: go.kenn.io/docbank/document
         name: document
+    PassageCreateRequest:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/PassageCreateRequest.json
+          format: uri
+          readOnly: true
+          type: string
+        attachment_id:
+          type: string
+        byte_end:
+          format: int64
+          minimum: 1
+          type: integer
+        byte_start:
+          format: int64
+          minimum: 0
+          type: integer
+        content_version_id:
+          type: string
+        node_id:
+          format: int64
+          minimum: 1
+          type: integer
+        rendition_build_id:
+          type: string
+      required:
+        - node_id
+        - content_version_id
+        - rendition_build_id
+        - attachment_id
+        - byte_start
+        - byte_end
+      type: object
+      x-go-type: api.PassageCreateRequest
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
+    PassageCreation:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/PassageCreation.json
+          format: uri
+          readOnly: true
+          type: string
+        passage_id:
+          pattern: ^[0-9a-f]{64}$
+          type: string
+        ref:
+          $ref: "#/components/schemas/PassageRefV1"
+        text:
+          type: string
+      required:
+        - ref
+        - passage_id
+        - text
+      type: object
+      x-go-type: api.PassageCreation
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     PassageRefV1:
       additionalProperties: false
       properties:
@@ -18915,6 +18981,29 @@ paths:
                 $ref: "#/components/schemas/Error"
           description: Error
       summary: Cancel a render job and fence late output
+  /api/v1/passages/create:
+    post:
+      operationId: createPassage
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PassageCreateRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PassageCreation"
+          description: OK
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: Create an exact retained Markdown passage reference
   /api/v1/passages/resolve:
     post:
       operationId: resolvePassage

@@ -53,30 +53,36 @@ func (s *Store) EnsureDocumentIdentity(ctx context.Context, nodeID int64) (Docum
 		if err != nil || node.IsDir() || node.TrashedAt != nil {
 			return ErrDocumentIdentityUnavailable
 		}
-		if err := tx.QueryRowContext(ctx,
-			`SELECT document_uid,node_id FROM document_identities WHERE node_id=?`, nodeID,
-		).Scan(&identity.DocumentUID, &identity.NodeID); err == nil {
-			return nil
-		} else if !errors.Is(err, sql.ErrNoRows) {
-			return documentIdentitySchemaError(err)
-		}
-		uid, err := newUUIDv4()
-		if err != nil {
-			return fmt.Errorf("allocating document identity: %w", err)
-		}
-		if _, err = tx.ExecContext(ctx, `INSERT OR IGNORE INTO document_identities(
-			document_uid,node_id,created_at) VALUES(?,?,?)`, uid, nodeID, nowRFC3339()); err != nil {
-			return documentIdentitySchemaError(err)
-		}
-		if err = tx.QueryRowContext(ctx,
-			`SELECT document_uid,node_id FROM document_identities WHERE node_id=?`, nodeID,
-		).Scan(&identity.DocumentUID, &identity.NodeID); err != nil {
-			return documentIdentitySchemaError(err)
-		}
-		return nil
+		identity, err = ensureDocumentIdentityTx(ctx, tx, nodeID)
+		return err
 	})
 	if err != nil {
 		return DocumentIdentity{}, err
+	}
+	return identity, nil
+}
+
+func ensureDocumentIdentityTx(ctx context.Context, tx *sql.Tx, nodeID int64) (DocumentIdentity, error) {
+	var identity DocumentIdentity
+	if err := tx.QueryRowContext(ctx,
+		`SELECT document_uid,node_id FROM document_identities WHERE node_id=?`, nodeID,
+	).Scan(&identity.DocumentUID, &identity.NodeID); err == nil {
+		return identity, nil
+	} else if !errors.Is(err, sql.ErrNoRows) {
+		return DocumentIdentity{}, documentIdentitySchemaError(err)
+	}
+	uid, err := newUUIDv4()
+	if err != nil {
+		return DocumentIdentity{}, fmt.Errorf("allocating document identity: %w", err)
+	}
+	if _, err = tx.ExecContext(ctx, `INSERT OR IGNORE INTO document_identities(
+		document_uid,node_id,created_at) VALUES(?,?,?)`, uid, nodeID, nowRFC3339()); err != nil {
+		return DocumentIdentity{}, documentIdentitySchemaError(err)
+	}
+	if err = tx.QueryRowContext(ctx,
+		`SELECT document_uid,node_id FROM document_identities WHERE node_id=?`, nodeID,
+	).Scan(&identity.DocumentUID, &identity.NodeID); err != nil {
+		return DocumentIdentity{}, documentIdentitySchemaError(err)
 	}
 	return identity, nil
 }

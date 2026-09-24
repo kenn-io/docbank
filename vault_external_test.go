@@ -244,6 +244,21 @@ func TestEmbeddedProcessingPlanRunReadAndSearch(t *testing.T) {
 	require.True(t, bytes.HasPrefix(body, []byte("---\ndocbank:\n  contract: \"docbank-sanitized-markdown/v1\"\n")))
 	require.Contains(t, string(body), "    format: \"txt\"")
 	require.Contains(t, string(body), "needle")
+	_, markdownBody, err := document.ParseRenditionFrontMatterV1(body)
+	require.NoError(t, err)
+	passageText := []byte("needle")
+	passageStart := bytes.Index(markdownBody, passageText)
+	require.GreaterOrEqual(t, passageStart, 0)
+	created, err := vault.CreatePassage(t.Context(), docbank.PassageCreateRequest{
+		NodeID: receipt.Node.ID, ContentVersionID: receipt.Version.ID,
+		RenditionBuildID: rendition.BuildID, AttachmentID: rendition.AttachmentID,
+		ByteStart: passageStart, ByteEnd: passageStart + len(passageText),
+	})
+	require.NoError(t, err)
+	require.Equal(t, string(passageText), created.Text)
+	require.Equal(t, receipt.Version.ID, created.Ref.ContentVersionID)
+	require.Equal(t, rendition.BuildID, created.Ref.RenditionBuildID)
+	require.NotEmpty(t, created.Ref.DocumentUID)
 
 	fence := docbank.DocumentSourceFence{VaultUID: vault.ID(), ContentVersionIDs: []string{receipt.Version.ID}}
 	report, err := vault.SearchDocuments(t.Context(), docbank.DocumentSearchRequest{

@@ -301,6 +301,23 @@ type ProcessingJob struct {
 	ContentVersionID   string   `json:"content_version_id"`
 }
 
+// PassageCreateRequest selects an exact retained Markdown rendition and a
+// half-open UTF-8 byte range in its body, excluding the machine envelope.
+type PassageCreateRequest struct {
+	NodeID           int64
+	ContentVersionID string
+	RenditionBuildID string
+	AttachmentID     string
+	ByteStart        int
+	ByteEnd          int
+}
+
+type PassageCreation struct {
+	Ref       document.PassageRefV1
+	PassageID string
+	Text      string
+}
+
 type ProcessingStatusRequest struct {
 	JobID string `json:"job_id"`
 }

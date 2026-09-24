@@ -3751,6 +3751,20 @@ export interface PageSelectionRequest {
   selection: PageBinding;
 }
 
+export interface PassageCreateRequest {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  attachment_id: string;
+  /** @minimum 1 */
+  byte_end: number;
+  /** @minimum 0 */
+  byte_start: number;
+  content_version_id: string;
+  /** @minimum 1 */
+  node_id: number;
+  rendition_build_id: string;
+}
+
 export interface PassageRefV1 {
   attachment_id: string;
   body_sha256: string;
@@ -3764,6 +3778,15 @@ export interface PassageRefV1 {
   source_sha256: string;
   vault_uid: string;
   version: number;
+}
+
+export interface PassageCreation {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  /** @pattern ^[0-9a-f]{64}$ */
+  passage_id: string;
+  ref: PassageRefV1;
+  text: string;
 }
 
 export type PassageResolutionAvailability = typeof PassageResolutionAvailability[keyof typeof PassageResolutionAvailability];
@@ -11361,6 +11384,44 @@ return sessionJSON<PageRenderJob>(getCancelPageRenderJobUrl(id),
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
     body: JSON.stringify(pageSelectionRequest)
+  }
+);}
+
+
+
+export const getCreatePassageUrl = () => {
+
+
+
+
+  return `/api/v1/passages/create`
+}
+
+/**
+ * @summary Create an exact retained Markdown passage reference
+ */
+export const createPassage = async (passageCreateRequest: NonReadonly<PassageCreateRequest>, options?: Parameters<typeof sessionJSON>[1]): Promise<PassageCreation> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return sessionJSON<PassageCreation>(getCreatePassageUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(passageCreateRequest)
   }
 );}
 

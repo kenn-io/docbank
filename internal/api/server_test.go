@@ -19,6 +19,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"go.kenn.io/docbank/document"
+	"go.kenn.io/docbank/document/plaintext"
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/blob"
 	"go.kenn.io/docbank/internal/config"
@@ -96,6 +98,86 @@ func TestNewServerRegistersPassageResolveRoute(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, response.Body.Close()) })
 	assert.Equal(t, http.StatusUnauthorized, response.StatusCode)
+}
+
+func TestNewServerRegistersPassageCreateRoute(t *testing.T) {
+	ts, _ := newTestServer(t, nil)
+
+	resp, body := do(t, ts, http.MethodPost, "/api/v1/passages/create", nil, map[string]any{})
+	require.Equal(t, http.StatusUnprocessableEntity, resp.StatusCode, body)
+
+	request, err := http.NewRequest(http.MethodPost, ts.URL+"/api/v1/passages/create", nil)
+	require.NoError(t, err)
+	response, err := http.DefaultClient.Do(request)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, response.Body.Close()) })
+	assert.Equal(t, http.StatusUnauthorized, response.StatusCode)
+}
+
+func TestPassageCreateHTTPReturnsExactRetainedReference(t *testing.T) {
+	provider, err := plaintext.New(plaintext.Profile{MaxDocumentBytes: 1 << 20})
+	require.NoError(t, err)
+	var service *processing.Service
+	ts, s := newTestServer(t, func(d *api.Deps) {
+		renditionTextConfig(d)
+		binding := d.Cfg.RenditionProfiles["primary"]
+		binding.AdapterContract = "plaintext.in-process/v1"
+		binding.DescriptorID = provider.Descriptor().ID
+		binding.DescriptorFingerprint = provider.Descriptor().Fingerprint
+		binding.TrustBoundary = string(provider.Descriptor().TrustBoundary)
+		d.Cfg.RenditionProfiles["primary"] = binding
+		profile, profileErr := d.Cfg.ProcessingProfile("archive")
+		require.NoError(t, profileErr)
+		d.Gate = api.NewOperationGate()
+		service, profileErr = processing.NewService(processing.ServiceConfig{
+			Catalog: d.Store, Blobs: d.Blobs, Gate: d.Gate,
+			SpoolDirectory: filepath.Join(d.VaultRoot, "blobs", "tmp"),
+			Profiles: map[string]processing.ProfileConfig{"archive": {
+				Profile: profile.Document, RenditionProvider: provider,
+			}},
+		})
+		require.NoError(t, profileErr)
+		d.Processing = service
+	})
+	hash, size, err := s.Blobs.Write(strings.NewReader("Verified alpha in a synthetic note."))
+	require.NoError(t, err)
+	node, err := s.CreateFile(t.Context(), s.RootID(), "synthetic.txt", hash, size, "text/plain")
+	require.NoError(t, err)
+	selector := processing.Selector{NodeID: node.ID, ContentVersionID: node.CurrentVersionID, Profile: "archive"}
+	plan, err := service.Plan(t.Context(), selector)
+	require.NoError(t, err)
+	_, err = service.Start(t.Context(), processing.StartRequest{
+		Selector: selector, PlanFingerprint: plan.Fingerprint, Consent: true,
+	})
+	require.NoError(t, err)
+	rendition, err := service.Rendition(t.Context(), selector, 0)
+	require.NoError(t, err)
+	artifact, err := io.ReadAll(rendition.Reader)
+	require.NoError(t, err)
+	require.NoError(t, rendition.Reader.Close())
+	_, markdownBody, err := document.ParseRenditionFrontMatterV1(artifact)
+	require.NoError(t, err)
+	quote := []byte("Verified alpha")
+	start := bytes.Index(markdownBody, quote)
+	require.GreaterOrEqual(t, start, 0)
+	request := api.PassageCreateRequest{
+		NodeID: node.ID, ContentVersionID: node.CurrentVersionID,
+		RenditionBuildID: rendition.BuildID, AttachmentID: rendition.AttachmentID,
+		ByteStart: start, ByteEnd: start + len(quote),
+	}
+	response, body := do(t, ts, http.MethodPost, "/api/v1/passages/create", nil, request)
+	require.Equal(t, http.StatusOK, response.StatusCode, body)
+	var created api.PassageCreation
+	require.NoError(t, json.Unmarshal([]byte(body), &created))
+	require.Equal(t, string(quote), created.Text)
+	require.Equal(t, node.CurrentVersionID, created.Ref.ContentVersionID)
+	require.Equal(t, rendition.BuildID, created.Ref.RenditionBuildID)
+	require.Equal(t, rendition.AttachmentID, created.Ref.AttachmentID)
+	require.NotEmpty(t, created.Ref.DocumentUID)
+
+	request.RenditionBuildID = testHash("other-build")
+	response, body = do(t, ts, http.MethodPost, "/api/v1/passages/create", nil, request)
+	require.Equal(t, http.StatusNotFound, response.StatusCode, body)
 }
 
 // apiKeyTransport injects key as X-Api-Key on any request that doesn't
