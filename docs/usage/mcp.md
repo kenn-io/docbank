@@ -1,5 +1,5 @@
 ---
-last_edited: 2026-08-29
+last_edited: 2026-09-24
 title: Model Context Protocol
 description: Connect a local MCP client to Docbank's bounded, daemon-first document surface.
 ---
@@ -80,10 +80,11 @@ client registration, scopes, or token refresh. A client may connect locally or
 through a trusted tunnel, but it must be able to set the Authorization header;
 clients that require the MCP HTTP OAuth flow are unsupported.
 
-Both transports have the fixed 19-tool read catalog described below.
+Both transports have the fixed 23-tool read catalog described below.
 `--allow-processing` adds only guarded processing start.
 `--allow-package-writes` separately permits load-file preflight, import, and
-custodian changes. Enable either flag or both when starting the process.
+custodian changes. `--allow-export-writes` independently permits exact native
+document export operations. Enable only the capabilities the MCP process needs.
 
 ## Exact protocol contract
 
@@ -152,6 +153,10 @@ links, is capped at 1 MiB.
 | `list_package_members` | Pages through a package's immutable document occurrences. |
 | `get_package_record` | Reads one immutable sender row by its package-scoped record key. |
 | `lookup_bates_label` | Finds bounded package-scoped matches for an exact received or assigned label. |
+| `preview_export_plan` | Reads the frozen role availability, member hash, and fingerprint for one native document export plan. |
+| `get_export_job` | Reads one export job's current state and its retained archive receipt after completion. |
+| `open_export_archive` | Verifies a completed ZIP and opens a private, 15-minute download handle for an archive of at most 512 MiB. This read is available without the export write flag. |
+| `download_export_archive` | Reads at most 256 KiB per call. It checks the current owner and source visibility before every chunk, then returns base64 bytes and the archive SHA-256. `close=true` releases the handle. |
 
 `list_documents` uses live keyset pagination, not a snapshot. A mutation between
 pages can change later membership or order. Each opaque cursor is at most 32 KiB of ASCII, expires after 15 minutes, and
@@ -310,9 +315,35 @@ only when the agent may perform these local reads and vault changes.
 `--allow-processing` does not enable package writes. Use both flags when both
 capabilities are needed.
 
+## Optional native export writes
+
+To let an MCP client create a native document export, start a separate process
+with `--allow-export-writes`:
+
+```bash
+docbank mcp --transport stdio --allow-export-writes
+```
+
+This adds `create_export_source`, `create_export_plan`, `start_export_job`, and
+`cancel_export_job`. Source creation accepts 1–100 exact document identities
+(`node_id`, content `version_id`, SHA-256, and size) and a caller-generated
+operation UUID. A plan binds the returned source ID and member hash to at most
+eight output roles. Review it with `preview_export_plan` before starting a job
+using that plan's exact fingerprint. `get_export_job` works without the write
+flag and returns a completed archive receipt when available. The write flag
+does not enable processing or load-file package writes.
+
+Use `open_export_archive` and then `download_export_archive` for a completed
+archive of at most 512 MiB. The MCP process verifies the whole ZIP before
+issuing a handle, keeps at most 512 MiB of private spools across its servers,
+and drops a handle when its source is withdrawn. Reassemble the chunks in
+offset order and check the final SHA-256. Larger archives use the authenticated
+CLI `docbank export archive`, which supports the native archive size limit.
+
 No MCP tool can delete documents, move, rename, tag, restore, prune, pack,
 repack, change configuration, select credentials, grant processing consent,
-or return source bytes. Package preflight may upload a local source container;
+or return individual source bytes. Verified export archives are the bounded
+byte-download exception. Package preflight may upload a local source container;
 there is no general document upload tool.
 
 ## Cache behavior
