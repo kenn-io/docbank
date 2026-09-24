@@ -6,10 +6,10 @@ import (
 	"fmt"
 )
 
-// adjustPhotosForPurgedNodesTx removes memberships before trash-empty deletes
-// nodes. Assets remain as empty, revisioned graph rows so receipts and later
+// adjustPhotosForPurgedNodesTx removes memberships before a permanent node
+// deletion. Assets remain as empty, revisioned graph rows so receipts and later
 // restore/import validation retain their identity.
-func (s *Store) adjustPhotosForPurgedNodesTx(ctx context.Context, tx *sql.Tx, nodeIDs []int64) error {
+func adjustPhotosForPurgedNodesTx(ctx context.Context, tx *sql.Tx, nodeIDs []int64) error {
 	if len(nodeIDs) == 0 {
 		return nil
 	}
