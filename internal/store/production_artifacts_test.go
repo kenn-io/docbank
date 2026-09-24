@@ -164,3 +164,39 @@ func TestRetainedProductionArtifactSurvivesBackupRestore(t *testing.T) {
 	require.Equal(t, retained.Version.ID, replayed.Version.ID)
 	require.Equal(t, retained.Provenance, replayed.Provenance)
 }
+
+func TestRetainProductionArtifactReconcilesResponseLossAfterEachWrite(t *testing.T) {
+	for _, stage := range []string{"directory", "ingest", "tag", "assignment"} {
+		t.Run(stage, func(t *testing.T) {
+			f, job := publishedRealRetentionFixture(t)
+			artifact := job.Manifest.Artifacts[0]
+			injected := false
+			_, err := f.retainProductionArtifact(t.Context(), job.ID, artifact.ID, f,
+				func(written string) error {
+					if written == stage {
+						injected = true
+						return errLostProductionResponse
+					}
+					return nil
+				})
+			require.True(t, injected)
+			require.ErrorIs(t, err, errLostProductionResponse)
+			retained, err := f.RetainProductionArtifact(t.Context(), job.ID, artifact.ID, f)
+			require.NoError(t, err)
+			f.reopen(t)
+			replayed, err := f.RetainProductionArtifact(t.Context(), job.ID, artifact.ID, f)
+			require.NoError(t, err)
+			require.Equal(t, retained.Node.ID, replayed.Node.ID)
+			require.Equal(t, retained.Version.ID, replayed.Version.ID)
+			require.Equal(t, retained.Provenance, replayed.Provenance)
+			var facts, bindings, tags int
+			require.NoError(t, f.db.QueryRow(`SELECT COUNT(*) FROM provenance WHERE node_id=?`, retained.Node.ID).Scan(&facts))
+			require.NoError(t, f.db.QueryRow(`SELECT COUNT(*) FROM provenance_version_bindings b
+				JOIN provenance p ON p.identity=b.provenance_identity WHERE p.node_id=?`, retained.Node.ID).Scan(&bindings))
+			require.NoError(t, f.db.QueryRow(`SELECT COUNT(*) FROM node_tags WHERE node_id=?`, retained.Node.ID).Scan(&tags))
+			require.Equal(t, 1, facts)
+			require.Equal(t, 1, bindings)
+			require.Equal(t, 1, tags)
+		})
+	}
+}

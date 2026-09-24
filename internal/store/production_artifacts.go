@@ -36,8 +36,20 @@ type productionArtifactSource struct {
 // after a lost response, the same call reads them back before continuing.
 func (s *Store) RetainProductionArtifact(ctx context.Context, jobID, artifactID string,
 	opener production.PackageArtifactOpener) (RetainedProductionArtifact, error) {
+	return s.retainProductionArtifact(ctx, jobID, artifactID, opener, nil)
+}
+
+// afterWrite injects a lost response at a durable write boundary in tests.
+func (s *Store) retainProductionArtifact(ctx context.Context, jobID, artifactID string,
+	opener production.PackageArtifactOpener, afterWrite func(string) error) (RetainedProductionArtifact, error) {
 	bad := func(err error) (RetainedProductionArtifact, error) {
 		return RetainedProductionArtifact{}, errors.Join(production.ErrArtifactProvenance, err)
+	}
+	written := func(stage string) error {
+		if afterWrite != nil {
+			return afterWrite(stage)
+		}
+		return nil
 	}
 	if opener == nil || validateUUIDv4(jobID) != nil || validateUUIDv4(artifactID) != nil {
 		return bad(nil)
@@ -129,6 +141,9 @@ func (s *Store) RetainProductionArtifact(ctx context.Context, jobID, artifactID 
 	if err != nil {
 		return bad(err)
 	}
+	if err := written("directory"); err != nil {
+		return bad(err)
+	}
 	name := artifact.ID
 	path := "/productions/" + job.ID + "/" + name
 	node, err := s.NodeByPath(ctx, path)
@@ -141,6 +156,9 @@ func (s *Store) RetainProductionArtifact(ctx context.Context, jobID, artifactID 
 			artifact.SHA256, artifact.Size, artifact.MediaType, artifact.Path, "")
 		if ingestErr == nil {
 			node = receipt.Node
+			if err := written("ingest"); err != nil {
+				return bad(err)
+			}
 		} else if errors.Is(ingestErr, ErrExists) {
 			node, err = s.NodeByPath(ctx, path)
 			if err != nil {
@@ -174,6 +192,11 @@ func (s *Store) RetainProductionArtifact(ctx context.Context, jobID, artifactID 
 	tag, err := s.TagByName(ctx, "produced")
 	if errors.Is(err, ErrNotFound) {
 		tag, err = s.CreateTag(ctx, "produced")
+		if err == nil {
+			if writeErr := written("tag"); writeErr != nil {
+				return bad(writeErr)
+			}
+		}
 		if errors.Is(err, ErrExists) {
 			tag, err = s.TagByName(ctx, "produced")
 		}
@@ -190,6 +213,8 @@ func (s *Store) RetainProductionArtifact(ctx context.Context, jobID, artifactID 
 		if readErr != nil || !present {
 			return bad(errors.Join(err, readErr))
 		}
+	} else if err := written("assignment"); err != nil {
+		return bad(err)
 	}
 	node, err = s.NodeByID(ctx, node.ID)
 	if err != nil {
