@@ -132,20 +132,42 @@ func stampBatesGroup(ctx context.Context, blobs *blob.Store, sourceSHA256 string
 ) ([]byte, error) {
 	workerContext, cancel := context.WithTimeout(ctx, batesWorkerTimeout)
 	defer cancel()
-	reader, _, err := blobs.OpenSeekableContext(workerContext, sourceSHA256)
+	source, err := readVerifiedBatesSource(workerContext, blobs, sourceSHA256)
 	if err != nil {
 		return nil, err
 	}
 	var stamped bytes.Buffer
-	result, stampErr := pdfstamp.StampSelectedSupervised(workerContext, reader, labels, recipe, &stamped)
-	closeErr := reader.Close()
-	if stampErr != nil || closeErr != nil {
-		return nil, errors.Join(stampErr, closeErr)
+	result, err := pdfstamp.StampSelectedSupervised(workerContext, bytes.NewReader(source), labels, recipe, &stamped)
+	if err != nil {
+		return nil, err
 	}
 	if result.PageCount != len(labels) {
 		return nil, store.ErrBatesPageCountMismatch
 	}
 	return stamped.Bytes(), nil
+}
+
+// readVerifiedBatesSource reads a sealed source PDF through the hash-checking
+// stream, so damaged stored bytes can never be stamped under the sealed hash.
+// The worker buffers the whole source anyway, so this costs no extra copy.
+func readVerifiedBatesSource(ctx context.Context, blobs *blob.Store, sourceSHA256 string) ([]byte, error) {
+	reader, size, err := blobs.OpenStreamContext(ctx, sourceSHA256)
+	if err != nil {
+		return nil, err
+	}
+	if size < 1 || size > pdfstamp.MaxOutputBytes {
+		return nil, errors.Join(fmt.Errorf("Bates source %s is %d bytes; the limit is %d", //nolint:staticcheck // Bates is a proper name.
+			sourceSHA256, size, pdfstamp.MaxOutputBytes), reader.Close())
+	}
+	data, readErr := io.ReadAll(io.LimitReader(reader, size+1))
+	closeErr := reader.Close()
+	if err := errors.Join(readErr, closeErr); err != nil {
+		return nil, fmt.Errorf("reading Bates source %s: %w", sourceSHA256, err)
+	}
+	if int64(len(data)) != size || !reader.Verified() {
+		return nil, fmt.Errorf("Bates source %s does not match its sealed hash", sourceSHA256) //nolint:staticcheck // Bates is a proper name.
+	}
+	return data, nil
 }
 
 // ReadBatesExport returns retained artifact bytes after the blob store

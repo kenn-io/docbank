@@ -213,7 +213,8 @@ func importBatesMetadata(ctx context.Context, tx *sql.Tx, kind string, raw jsont
 		if r.Type != kind || validateUUIDv4(r.AllocationID) != nil || validateUUIDv4(r.OperationID) != nil ||
 			validateUUIDv4(r.NamespaceID) != nil || validateUUIDv4(r.SnapshotID) != nil ||
 			!canonical.IsSHA256Hex(r.RequestSHA256) || !canonical.IsSHA256Hex(r.RecipeSHA256) ||
-			r.StartSequence < 1 || r.EndSequence < r.StartSequence || validateMetadataTime("Bates allocation", r.CreatedAt) != nil ||
+			r.StartSequence < 1 || r.EndSequence < r.StartSequence || r.EndSequence-r.StartSequence >= MaxBatesExportPages ||
+			validateMetadataTime("Bates allocation", r.CreatedAt) != nil ||
 			(r.State != batesAllocationStateReserved && r.State != batesAllocationStateCommitted) ||
 			(r.State == batesAllocationStateCommitted) != (r.CommittedAt != nil) {
 			return invalidBatesRecord(kind, r.AllocationID)
@@ -232,7 +233,8 @@ func importBatesMetadata(ctx context.Context, tx *sql.Tx, kind string, raw jsont
 			return err
 		}
 		if r.Type != kind || validateUUIDv4(r.AllocationID) != nil || validateUUIDv4(r.NamespaceID) != nil ||
-			r.Ordinal < 1 || r.Sequence < 1 || r.OccurrenceID == "" || r.SourcePage < 1 || r.OutputPage < 1 || r.Label == "" {
+			r.Ordinal < 1 || r.Ordinal > MaxBatesExportPages || r.Sequence < 1 || r.OccurrenceID == "" || r.SourcePage < 1 ||
+			r.OutputPage < 1 || r.Label == "" {
 			return invalidBatesRecord(kind, fmt.Sprintf("%s/%d", r.AllocationID, r.Ordinal))
 		}
 		_, err := tx.ExecContext(ctx, `INSERT INTO bates_page_labels(allocation_id,ordinal,namespace_id,sequence,occurrence_id,
@@ -246,7 +248,7 @@ func importBatesMetadata(ctx context.Context, tx *sql.Tx, kind string, raw jsont
 		}
 		if r.Type != kind || validateUUIDv4(r.ArtifactID) != nil || validateUUIDv4(r.AllocationID) != nil ||
 			!canonical.IsSHA256Hex(r.BlobSHA256) || !canonical.IsSHA256Hex(r.ManifestSHA256) || r.Size < 1 ||
-			r.MediaType != batesArtifactMediaTypePDF || r.PageCount < 1 || r.State != batesArtifactStateVerified ||
+			r.MediaType != batesArtifactMediaTypePDF || r.PageCount < 1 || r.PageCount > MaxBatesExportPages || r.State != batesArtifactStateVerified ||
 			len(r.RecipeJSON) == 0 || validateMetadataTime("Bates artifact", r.CreatedAt) != nil {
 			return invalidBatesRecord(kind, r.ArtifactID)
 		}
@@ -259,7 +261,7 @@ func importBatesMetadata(ctx context.Context, tx *sql.Tx, kind string, raw jsont
 		if err := decodeMetadataRecord(raw, &r); err != nil {
 			return err
 		}
-		if r.Type != kind || validateUUIDv4(r.ArtifactID) != nil || r.Ordinal < 1 || r.OccurrenceID == "" ||
+		if r.Type != kind || validateUUIDv4(r.ArtifactID) != nil || r.Ordinal < 1 || r.Ordinal > MaxBatesExportPages || r.OccurrenceID == "" ||
 			!canonical.IsSHA256Hex(r.SourceBlobSHA256) || r.SourcePage < 1 || r.OutputPage < 1 || r.Label == "" {
 			return invalidBatesRecord(kind, fmt.Sprintf("%s/%d", r.ArtifactID, r.Ordinal))
 		}
@@ -321,6 +323,10 @@ func validateBatesMetadataState(ctx context.Context, q metadataQuerier) error {
 				return fmt.Errorf("validating Bates allocation %s snapshot: %w", id, err)
 			}
 			snapshotPages[allocation.SnapshotID] = expected
+		}
+		if len(allocation.Labels) > MaxBatesExportPages {
+			return fmt.Errorf("%w: allocation %s has %d labels; the limit is %d",
+				ErrInvalidBatesLedger, id, len(allocation.Labels), MaxBatesExportPages)
 		}
 		if len(expected) != len(allocation.Labels) {
 			return fmt.Errorf("%w: allocation %s has %d labels for %d sealed pages",

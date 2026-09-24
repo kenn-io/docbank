@@ -333,3 +333,56 @@ func TestBatesRestoreRejectsCursorPastPadding(t *testing.T) {
 	require.ErrorIs(t, err, ErrInvalidBatesLedger)
 	require.ErrorContains(t, err, "padding")
 }
+
+func TestBatesLedgerValidationRejectsAllocationsOverThePageLimit(t *testing.T) {
+	s := newTestStore(t)
+	pages := MaxBatesExportPages + 1
+	node, err := s.CreateFile(t.Context(), s.RootID(), "large.pdf", fakeHash("c1"), 123, "application/pdf")
+	require.NoError(t, err)
+	source := document.PageSource{VersionID: node.CurrentVersionID, SHA256: node.BlobHash, Size: 123}
+	frames := make([]document.PageFrameV1, pages)
+	for p := range frames {
+		frames[p], err = document.NewPDFPageFrame(source, p+1, [4]float64{0, 0, 72, 72}, [4]float64{0, 0, 72, 72}, 0)
+		require.NoError(t, err)
+	}
+	require.NoError(t, s.withStorageTx(t.Context(), func(tx *sql.Tx) error {
+		return putPageDocument(t.Context(), tx, document.PageDocumentV1{Contract: document.PageFrameContractV1,
+			Source: source, PageCount: pages, Frames: frames})
+	}))
+	occurrence := strings.Repeat("c", 32)
+	id, err := newUUIDv4()
+	require.NoError(t, err)
+	snapshot, err := s.SealCollectionSnapshot(t.Context(), SnapshotSealRequest{SnapshotID: id, Members: []CollectionSnapshotMember{{
+		Ordinal: 1, OccurrenceID: occurrence, NodeID: node.ID, ContentVersionID: node.CurrentVersionID,
+		BlobSHA256: node.BlobHash, Size: 123, FamilyID: occurrence, FamilyOrder: 1, DisplayName: node.Name,
+		FrozenFieldsJSON: "{}", DocumentKind: "other", SourcePageCount: pages, SelectedPDFSHA256: node.BlobHash,
+	}}})
+	require.NoError(t, err)
+	ns, err := s.EnsureBatesNamespace(t.Context(), "BIG", "", 6)
+	require.NoError(t, err)
+	// Normal writes refuse this range, so write the consistent oversized ledger directly.
+	allocationID, err := newUUIDv4()
+	require.NoError(t, err)
+	operationID, err := newUUIDv4()
+	require.NoError(t, err)
+	_, err = s.db.ExecContext(t.Context(), `INSERT INTO bates_allocations(allocation_id,operation_id,namespace_id,snapshot_id,
+		request_sha256,recipe_sha256,start_sequence,end_sequence,state,created_at) VALUES(?,?,?,?,?,?,?,?,?,?)`,
+		allocationID, operationID, ns.NamespaceID, snapshot.SnapshotID, strings.Repeat("a", 64), strings.Repeat("b", 64),
+		1, pages, batesAllocationStateReserved, nowRFC3339())
+	require.NoError(t, err)
+	for page := 1; page <= pages; page++ {
+		_, err = s.db.ExecContext(t.Context(), `INSERT INTO bates_page_labels(allocation_id,ordinal,namespace_id,sequence,
+			occurrence_id,source_page,output_page,label) VALUES(?,?,?,?,?,?,?,?)`, allocationID, page, ns.NamespaceID,
+			page, occurrence, page, page, batesLabel(ns, int64(page)))
+		require.NoError(t, err)
+	}
+	_, err = s.db.ExecContext(t.Context(), `UPDATE bates_namespace_cursors SET next_sequence=? WHERE namespace_id=?`, pages+1, ns.NamespaceID)
+	require.NoError(t, err)
+	var encoded bytes.Buffer
+
+	// Backup and restore share this ledger validation.
+	err = s.ExportMetadata(t.Context(), &encoded)
+
+	require.ErrorIs(t, err, ErrInvalidBatesLedger)
+	require.ErrorContains(t, err, allocationID)
+}

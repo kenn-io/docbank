@@ -51,10 +51,8 @@ func TestBatesReadToolsCallBoundedDaemonContracts(t *testing.T) {
 				http.Error(response, "invalid synthetic request", http.StatusBadRequest)
 				return
 			}
-			assert.Empty(t, input.OperationID)
 			assert.Equal(t, testBatesNamespaceID, input.NamespaceID)
 			assert.Equal(t, testBatesSnapshotID, input.SnapshotID)
-			assert.Empty(t, input.RecipeSHA256)
 			assert.Equal(t, int64(41), input.StartAt)
 			assert.Empty(t, input.Pages)
 			writeDaemonJSON(t, response, api.BatesPlan{Namespace: namespace, StartSequence: 41,
@@ -117,14 +115,13 @@ func TestBatesWriteToolsAreOptInAndBindResponses(t *testing.T) {
 			writeDaemonJSON(t, response, namespace)
 		case "/api/v1/bates/allocations":
 			assert.Equal(t, http.MethodPost, request.Method)
-			var input api.BatesPlanRequest
+			var input api.BatesReserveRequest
 			if !assert.NoError(t, decodeDaemonJSON(request.Body, &input)) {
 				http.Error(response, "invalid synthetic request", http.StatusBadRequest)
 				return
 			}
-			assert.Equal(t, api.BatesPlanRequest{OperationID: testBatesOperationID, NamespaceID: testBatesNamespaceID,
-				SnapshotID: testBatesSnapshotID, RecipeSHA256: recipe, StartAt: 41}, input,
-				"reserve must derive the digest and first number from the recipe")
+			assert.Equal(t, api.BatesReserveRequest{OperationID: testBatesOperationID, SnapshotID: testBatesSnapshotID,
+				Recipe: syntheticBatesRecipe()}, input, "reserve must send the reviewed recipe itself")
 			response.WriteHeader(http.StatusCreated)
 			writeDaemonJSON(t, response, allocation)
 		default:

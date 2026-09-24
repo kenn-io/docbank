@@ -43,7 +43,14 @@ export interface PendingBatesReservation {
   allocation_id?: string;
 }
 
-type BatesPlanRequest = Parameters<typeof generated.reserveBatesRange>[0];
+type BatesPlanRequest = Parameters<typeof generated.planBatesStamp>[0];
+
+interface ExpectedAllocation {
+  namespace_id: string;
+  snapshot_id: string;
+  recipe_sha256: string;
+  start_at: number;
+}
 
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 const hash = /^[0-9a-f]{64}$/;
@@ -85,7 +92,7 @@ function readLabels(value: unknown): BatesPageLabel[] {
   });
 }
 
-function readAllocation(value: unknown, request?: BatesPlanRequest): BatesAllocation {
+function readAllocation(value: unknown, request?: ExpectedAllocation): BatesAllocation {
   const item = record(value);
   valid(typeof item.allocation_id === "string" && uuid.test(item.allocation_id));
   valid(typeof item.namespace_id === "string" && uuid.test(item.namespace_id));
@@ -154,7 +161,7 @@ export async function createBatesNamespace(session: string, prefix: string, suff
 }
 
 export async function previewBatesRange(session: string, snapshotID: string, namespaceID: string, startAt: number, signal?: AbortSignal): Promise<BatesPlan> {
-  const request: BatesPlanRequest = { operation_id: crypto.randomUUID(), namespace_id: namespaceID, snapshot_id: snapshotID, recipe_sha256: "", start_at: startAt };
+  const request: BatesPlanRequest = { namespace_id: namespaceID, snapshot_id: snapshotID, start_at: startAt };
   return readPlan(await generated.planBatesStamp(request, { session, signal }), namespaceID);
 }
 
@@ -171,11 +178,13 @@ function readPlan(value: unknown, namespaceID: string): BatesPlan {
 export async function reserveBatesRange(session: string, pending: PendingBatesReservation, signal?: AbortSignal): Promise<BatesAllocation> {
   const recipeSHA256 = await batesRecipeSHA256(pending.recipe);
   valid(uuid.test(pending.operation_id));
-  const request: BatesPlanRequest = {
-    operation_id: pending.operation_id, namespace_id: pending.plan.namespace.namespace_id, snapshot_id: pending.snapshot_id,
-    recipe_sha256: recipeSHA256, start_at: pending.plan.start_sequence,
+  valid(pending.recipe.start_at === pending.plan.start_sequence && pending.recipe.namespace_id === pending.plan.namespace.namespace_id);
+  const expected: ExpectedAllocation = {
+    namespace_id: pending.recipe.namespace_id, snapshot_id: pending.snapshot_id,
+    recipe_sha256: recipeSHA256, start_at: pending.recipe.start_at,
   };
-  return readAllocation(await generated.reserveBatesRange(request, { session, signal }), request);
+  const request = { operation_id: pending.operation_id, snapshot_id: pending.snapshot_id, recipe: pending.recipe };
+  return readAllocation(await generated.reserveBatesRange(request, { session, signal }), expected);
 }
 
 export function batesRecipe(namespace: BatesNamespace, startAt: number, position: BatesPosition = "bottom-right", marginPoints = 24): BatesRecipe {

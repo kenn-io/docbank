@@ -2013,8 +2013,6 @@ components:
           type: string
         namespace_id:
           type: string
-        operation_id:
-          type: string
         padding:
           format: int64
           type: integer
@@ -2024,12 +2022,10 @@ components:
           type: array
         prefix:
           type: string
-        recipe_sha256:
-          type: string
         snapshot_id:
           type: string
         start_at:
-          description: First Bates number. Preview accepts 0 to continue the namespace cursor; reserve requires the recipe start_at.
+          description: First Bates number; 0 continues the namespace cursor.
           format: int64
           minimum: 0
           type: integer
@@ -2040,6 +2036,37 @@ components:
         - start_at
       type: object
       x-go-type: api.BatesPlanRequest
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
+    BatesReserveRequest:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/BatesReserveRequest.json
+          format: uri
+          readOnly: true
+          type: string
+        operation_id:
+          format: uuid
+          type: string
+        pages:
+          items:
+            $ref: "#/components/schemas/BatesPageInput"
+          type: array
+        recipe:
+          $ref: "#/components/schemas/Recipe"
+        snapshot_id:
+          format: uuid
+          type: string
+      required:
+        - operation_id
+        - snapshot_id
+        - recipe
+      type: object
+      x-go-type: api.BatesReserveRequest
       x-go-type-import:
         path: go.kenn.io/docbank/internal/api
         name: api
@@ -15557,7 +15584,7 @@ paths:
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/BatesPlanRequest"
+              $ref: "#/components/schemas/BatesReserveRequest"
         required: true
       responses:
         "201":

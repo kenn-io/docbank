@@ -201,10 +201,6 @@ func newBatesReserveCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			digest, err := recipe.SHA256()
-			if err != nil {
-				return usageError(err)
-			}
 			operationID := operation
 			if operationID == "" {
 				operationID = uuid.NewV4().String()
@@ -223,8 +219,7 @@ func newBatesReserveCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			request := api.BatesPlanRequest{OperationID: operationID, NamespaceID: recipe.NamespaceID,
-				SnapshotID: args[0], RecipeSHA256: digest, StartAt: int64(recipe.StartAt)}
+			request := api.BatesReserveRequest{OperationID: operationID, SnapshotID: args[0], Recipe: recipe}
 			allocation, err := c.API().ReserveBatesRange(cmd.Context(), &apiclient.ReserveBatesRangeRequestOptions{Body: &request})
 			if err != nil {
 				return err

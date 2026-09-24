@@ -51,21 +51,12 @@ type batesPreviewInput struct {
 	StartAt     int64  `json:"start_at"`
 }
 
-// batesReserveInput carries the reviewed recipe itself, so the reservation's
-// digest and first number always match what publish_bates_export will stamp.
+// batesReserveInput carries the reviewed recipe; the daemon derives the
+// reservation's digest and first number from it.
 type batesReserveInput struct {
 	OperationID string          `json:"operation_id"`
 	SnapshotID  string          `json:"snapshot_id"`
 	Recipe      pdfstamp.Recipe `json:"recipe"`
-}
-
-func (in batesReserveInput) request() (api.BatesPlanRequest, error) {
-	digest, err := in.Recipe.SHA256()
-	if err != nil {
-		return api.BatesPlanRequest{}, err
-	}
-	return api.BatesPlanRequest{OperationID: in.OperationID, NamespaceID: in.Recipe.NamespaceID,
-		SnapshotID: in.SnapshotID, RecipeSHA256: digest, StartAt: int64(in.Recipe.StartAt)}, nil
 }
 
 type batesPlanOutput struct {
@@ -560,10 +551,11 @@ func reserveBatesRange(ctx context.Context, lease *daemonLease, raw []byte) (bat
 	if err := decodeReadArguments(raw, &input); err != nil {
 		return batesAllocationOutput{}, err
 	}
-	request, err := input.request()
+	digest, err := input.Recipe.Normalized().SHA256()
 	if err != nil {
 		return batesAllocationOutput{}, err
 	}
+	request := api.BatesReserveRequest{OperationID: input.OperationID, SnapshotID: input.SnapshotID, Recipe: input.Recipe}
 	allocation, err := daemonProcessingStart(ctx, lease, func(c *daemonconn.Connection) (*api.BatesAllocation, error) {
 		return c.API().ReserveBatesRange(ctx, &apiclient.ReserveBatesRangeRequestOptions{Body: &request})
 	})
@@ -573,8 +565,8 @@ func reserveBatesRange(ctx context.Context, lease *daemonLease, raw []byte) (bat
 		}
 		return batesAllocationOutput{}, err
 	}
-	if allocation.NamespaceID != request.NamespaceID || allocation.SnapshotID != request.SnapshotID ||
-		allocation.RecipeSHA256 != request.RecipeSHA256 || allocation.StartSequence != request.StartAt || len(allocation.Labels) == 0 || len(allocation.Labels) > maxBatesLabels {
+	if allocation.NamespaceID != input.Recipe.NamespaceID || allocation.SnapshotID != input.SnapshotID ||
+		allocation.RecipeSHA256 != digest || allocation.StartSequence != int64(input.Recipe.StartAt) || len(allocation.Labels) == 0 || len(allocation.Labels) > maxBatesLabels {
 		return batesAllocationOutput{}, errors.New("bates reservation response does not bind its reviewed request")
 	}
 	return batesAllocationOutput{BatesAllocation: *allocation, privateCache: newPrivateCache()}, nil

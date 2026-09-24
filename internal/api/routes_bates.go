@@ -60,7 +60,7 @@ func registerBatesRoutes(mux *http.ServeMux, api huma.API, d Deps, g *gate, down
 	huma.Register(api, huma.Operation{OperationID: "planBatesStamp", Method: http.MethodPost,
 		Path: "/api/v1/bates/preview", Summary: "Preview tentative Bates labels without stamping or reserving",
 		MaxBodyBytes: 128 << 10}, func(ctx context.Context, in *struct{ Body BatesPlanRequest }) (*struct{ Body BatesPlan }, error) {
-		request, err := bindBatesPlanRequest(ctx, d.Store, in.Body)
+		request, err := BindBatesPlan(ctx, d.Store, in.Body)
 		if err != nil {
 			return nil, FromStoreError(err)
 		}
@@ -74,11 +74,8 @@ func registerBatesRoutes(mux *http.ServeMux, api huma.API, d Deps, g *gate, down
 	})
 	huma.Register(api, huma.Operation{OperationID: "reserveBatesRange", Method: http.MethodPost,
 		Path: "/api/v1/bates/allocations", Summary: "Reserve one idempotent Bates range", DefaultStatus: http.StatusCreated,
-		MaxBodyBytes: 128 << 10}, func(ctx context.Context, in *struct{ Body BatesPlanRequest }) (*struct{ Body BatesAllocation }, error) {
-		if in.Body.RecipeSHA256 == "" {
-			return nil, NewError(http.StatusUnprocessableEntity, "validation", "recipe_sha256 is required")
-		}
-		request, err := bindBatesPlanRequest(ctx, d.Store, in.Body)
+		MaxBodyBytes: 128 << 10}, func(ctx context.Context, in *struct{ Body BatesReserveRequest }) (*struct{ Body BatesAllocation }, error) {
+		request, err := BindBatesReservation(ctx, d.Store, in.Body)
 		if err != nil {
 			return nil, FromStoreError(err)
 		}
@@ -293,7 +290,8 @@ func registerBatesRoutes(mux *http.ServeMux, api huma.API, d Deps, g *gate, down
 			Content: map[string]*huma.MediaType{"application/pdf": {}}}}})
 }
 
-func bindBatesPlanRequest(ctx context.Context, s *store.Store, value BatesPlanRequest) (store.BatesPlanRequest, error) {
+// BindBatesPlan resolves a preview request to its namespace and sealed pages.
+func BindBatesPlan(ctx context.Context, s *store.Store, value BatesPlanRequest) (store.BatesPlanRequest, error) {
 	if len(value.Pages) > store.MaxBatesExportPages {
 		return store.BatesPlanRequest{}, store.ErrBatesPageLimit
 	}

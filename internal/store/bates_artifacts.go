@@ -296,7 +296,7 @@ func validateBatesArtifactState(ctx context.Context, q metadataQuerier) error {
 			return fmt.Errorf("validating Bates artifact %s allocation: %w", id, err)
 		}
 		if allocation.State != batesAllocationStateCommitted || artifact.State != batesArtifactStateVerified ||
-			artifact.PageCount != len(artifact.Pages) || artifact.RecipeSHA256 != digestCatalogJSON(artifact.RecipeJSON) {
+			artifact.PageCount > MaxBatesExportPages || artifact.PageCount != len(artifact.Pages) || artifact.RecipeSHA256 != digestCatalogJSON(artifact.RecipeJSON) {
 			return fmt.Errorf("validating Bates artifact %s: state, page count, or recipe differs: %w", id, ErrInvalidBatesLedger)
 		}
 		manifestSHA, err := batesArtifactManifestSHA(artifact)

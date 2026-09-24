@@ -19020,7 +19020,7 @@ type ChangeBatchTagsBody = BatchTagRequest
 
 type PreviewBatchTagsBody = PreviewBatchTagsRequest
 
-type ReserveBatesRangeBody = BatesPlanRequest
+type ReserveBatesRangeBody = BatesReserveRequest
 
 type PublishBatesExportBody = BatesExportRequest
 
@@ -20679,6 +20679,8 @@ type BatesPageLabel = api.BatesPageLabel
 type BatesPlan = api.BatesPlan
 
 type BatesPlanRequest = api.BatesPlanRequest
+
+type BatesReserveRequest = api.BatesReserveRequest
 
 type BlobStore = api.BlobStore
 

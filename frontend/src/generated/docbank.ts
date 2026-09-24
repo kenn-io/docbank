@@ -979,18 +979,25 @@ export interface BatesPlanRequest {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
   namespace_id?: string;
-  operation_id?: string;
   padding?: number;
   pages?: BatesPageInput[];
   prefix?: string;
-  recipe_sha256?: string;
   snapshot_id: string;
   /**
-     * First Bates number. Preview accepts 0 to continue the namespace cursor; reserve requires the recipe start_at.
+     * First Bates number; 0 continues the namespace cursor.
      * @minimum 0
      */
   start_at: number;
   suffix?: string;
+}
+
+export interface BatesReserveRequest {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  operation_id: string;
+  pages?: BatesPageInput[];
+  recipe: Recipe;
+  snapshot_id: string;
 }
 
 export interface BlobStore {
@@ -7395,7 +7402,7 @@ export const getReserveBatesRangeUrl = () => {
 /**
  * @summary Reserve one idempotent Bates range
  */
-export const reserveBatesRange = async (batesPlanRequest: NonReadonly<BatesPlanRequest>, options?: Parameters<typeof sessionJSON>[1]): Promise<BatesAllocation> => {
+export const reserveBatesRange = async (batesReserveRequest: NonReadonly<BatesReserveRequest>, options?: Parameters<typeof sessionJSON>[1]): Promise<BatesAllocation> => {
 
     const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
     if (!h) return {};
@@ -7416,7 +7423,7 @@ return sessionJSON<BatesAllocation>(getReserveBatesRangeUrl(),
     ...options,
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
-    body: JSON.stringify(batesPlanRequest)
+    body: JSON.stringify(batesReserveRequest)
   }
 );}
 

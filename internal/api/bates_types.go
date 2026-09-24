@@ -1,6 +1,9 @@
 package api
 
 import (
+	"context"
+	"fmt"
+
 	"go.kenn.io/docbank/internal/pdfstamp"
 	"go.kenn.io/docbank/internal/store"
 )
@@ -40,16 +43,62 @@ type BatesPageLabel struct {
 	Label        string `json:"label"`
 }
 
+// BatesPlanRequest previews labels. It never reserves, so it carries no
+// operation ID or recipe.
 type BatesPlanRequest struct {
-	OperationID  string           `json:"operation_id,omitzero"`
-	NamespaceID  string           `json:"namespace_id,omitzero"`
-	SnapshotID   string           `json:"snapshot_id"`
-	RecipeSHA256 string           `json:"recipe_sha256,omitzero"`
-	Prefix       string           `json:"prefix,omitzero"`
-	Suffix       string           `json:"suffix,omitzero"`
-	Padding      int              `json:"padding,omitzero"`
-	StartAt      int64            `json:"start_at" minimum:"0" doc:"First Bates number. Preview accepts 0 to continue the namespace cursor; reserve requires the recipe start_at."`
-	Pages        []BatesPageInput `json:"pages,omitempty"`
+	NamespaceID string           `json:"namespace_id,omitzero"`
+	SnapshotID  string           `json:"snapshot_id"`
+	Prefix      string           `json:"prefix,omitzero"`
+	Suffix      string           `json:"suffix,omitzero"`
+	Padding     int              `json:"padding,omitzero"`
+	StartAt     int64            `json:"start_at" minimum:"0" doc:"First Bates number; 0 continues the namespace cursor."`
+	Pages       []BatesPageInput `json:"pages,omitempty"`
+}
+
+// BatesReserveRequest reserves the range named by one reviewed stamp recipe.
+// The recipe fixes the namespace, the first number, and the digest that
+// publication must later match, so callers never send them separately.
+type BatesReserveRequest struct {
+	OperationID string           `json:"operation_id" format:"uuid"`
+	SnapshotID  string           `json:"snapshot_id" format:"uuid"`
+	Recipe      pdfstamp.Recipe  `json:"recipe"`
+	Pages       []BatesPageInput `json:"pages,omitempty"`
+}
+
+// BindBatesReservation derives a store reservation from the recipe and
+// requires the recipe's label format to match its namespace exactly.
+func BindBatesReservation(ctx context.Context, s *store.Store, r BatesReserveRequest) (store.BatesPlanRequest, error) {
+	if len(r.Pages) > store.MaxBatesExportPages {
+		return store.BatesPlanRequest{}, store.ErrBatesPageLimit
+	}
+	recipe := r.Recipe.Normalized()
+	if err := recipe.Validate(); err != nil {
+		return store.BatesPlanRequest{}, fmt.Errorf("%w: %w", store.ErrInvalidBatesRequest, err)
+	}
+	if recipe.Restamp {
+		return store.BatesPlanRequest{}, fmt.Errorf("%w: Bates exports cannot restamp source PDFs", store.ErrInvalidBatesRequest)
+	}
+	digest, err := recipe.SHA256()
+	if err != nil {
+		return store.BatesPlanRequest{}, fmt.Errorf("%w: %w", store.ErrInvalidBatesRequest, err)
+	}
+	namespace, err := s.BatesNamespace(ctx, recipe.NamespaceID, "", "", 0)
+	if err != nil {
+		return store.BatesPlanRequest{}, err
+	}
+	if namespace.Prefix != recipe.Prefix || namespace.Suffix != recipe.Suffix || namespace.Padding != recipe.Padding {
+		return store.BatesPlanRequest{}, fmt.Errorf("%w: recipe prefix, suffix, or padding differs from namespace %s",
+			store.ErrInvalidBatesRequest, namespace.NamespaceID)
+	}
+	request := store.BatesPlanRequest{OperationID: r.OperationID, NamespaceID: namespace.NamespaceID,
+		SnapshotID: r.SnapshotID, RecipeSHA256: digest, StartAt: int64(recipe.StartAt), Pages: BatesPagesStore(r.Pages)}
+	if len(request.Pages) == 0 {
+		request.Pages, err = s.SnapshotBatesPages(ctx, r.SnapshotID)
+		if err != nil {
+			return store.BatesPlanRequest{}, err
+		}
+	}
+	return request, nil
 }
 
 type BatesPlan struct {
@@ -86,14 +135,23 @@ func batesLabelsDTO(values []store.BatesPageLabel) []BatesPageLabel {
 	return result
 }
 
-func batesPlanRequestStore(value BatesPlanRequest) store.BatesPlanRequest {
-	pages := make([]store.BatesPageInput, len(value.Pages))
-	for i, page := range value.Pages {
+// BatesPagesStore converts caller-supplied page inputs; nil stays nil so the
+// store reads the sealed page order instead.
+func BatesPagesStore(values []BatesPageInput) []store.BatesPageInput {
+	if len(values) == 0 {
+		return nil
+	}
+	pages := make([]store.BatesPageInput, len(values))
+	for i, page := range values {
 		pages[i] = store.BatesPageInput{OccurrenceID: page.OccurrenceID, UnstampedSHA256: page.UnstampedSHA256,
 			SourcePage: page.SourcePage, VerifiedPageCount: page.VerifiedPageCount}
 	}
-	return store.BatesPlanRequest{OperationID: value.OperationID, NamespaceID: value.NamespaceID,
-		SnapshotID: value.SnapshotID, RecipeSHA256: value.RecipeSHA256, StartAt: value.StartAt, Pages: pages}
+	return pages
+}
+
+func batesPlanRequestStore(value BatesPlanRequest) store.BatesPlanRequest {
+	return store.BatesPlanRequest{NamespaceID: value.NamespaceID, SnapshotID: value.SnapshotID,
+		StartAt: value.StartAt, Pages: BatesPagesStore(value.Pages)}
 }
 
 func batesAllocationDTO(value store.BatesAllocation) BatesAllocation {

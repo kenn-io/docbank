@@ -1,6 +1,12 @@
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/svelte";
 import BatesExportDrawer from "./BatesExportDrawer.svelte";
+import { batesRecipeSHA256, type BatesRecipe } from "./bates";
+
+// The daemon derives the reservation digest from the posted recipe.
+async function recipeDigest(body: Record<string, unknown> | undefined): Promise<string> {
+  return batesRecipeSHA256(body?.recipe as BatesRecipe);
+}
 
 const namespace = {
   namespace_id: "11111111-1111-4111-8111-111111111111",
@@ -43,7 +49,7 @@ it("previews selected pages before explicitly reserving the reviewed range", asy
       { ordinal: 1, occurrence_id: "a".repeat(32), source_page: 2, output_page: 1, label: "ACME000041" },
       { ordinal: 2, occurrence_id: "b".repeat(32), source_page: 4, output_page: 1, label: "ACME000042" },
     ] });
-    if (url === "/api/v1/bates/allocations") return json({ allocation_id: "33333333-3333-4333-8333-333333333333", namespace_id: namespace.namespace_id, snapshot_id: snapshotID, recipe_sha256: body?.recipe_sha256, state: "reserved", start_sequence: 41, end_sequence: 42, labels: [
+    if (url === "/api/v1/bates/allocations") return json({ allocation_id: "33333333-3333-4333-8333-333333333333", namespace_id: namespace.namespace_id, snapshot_id: snapshotID, recipe_sha256: await recipeDigest(body), state: "reserved", start_sequence: 41, end_sequence: 42, labels: [
       { ordinal: 1, occurrence_id: "a".repeat(32), source_page: 2, output_page: 1, label: "ACME000041" },
       { ordinal: 2, occurrence_id: "b".repeat(32), source_page: 4, output_page: 1, label: "ACME000042" },
     ], created_at: "2026-09-21T00:01:00Z" }, 201);
@@ -60,7 +66,6 @@ it("previews selected pages before explicitly reserving the reviewed range", asy
   expect(requests.find((request) => request.url.endsWith("/preview"))?.body).toMatchObject({
     namespace_id: namespace.namespace_id,
     snapshot_id: snapshotID,
-    recipe_sha256: "",
     start_at: 0,
   });
 
@@ -68,11 +73,10 @@ it("previews selected pages before explicitly reserving the reviewed range", asy
   await screen.findByText("Range reserved");
   const reservation = requests.find((request) => request.url.endsWith("/allocations"))?.body;
   expect(reservation).toMatchObject({
-    namespace_id: namespace.namespace_id,
     snapshot_id: snapshotID,
-    start_at: 41,
+    recipe: { namespace_id: namespace.namespace_id, start_at: 41, restamp: false },
   });
-  expect(reservation?.recipe_sha256).toMatch(/^[0-9a-f]{64}$/);
+  expect(reservation?.operation_id).toMatch(/^[0-9a-f-]{36}$/);
   expect(screen.getByRole("button", { name: "Start Bates export" })).toBeTruthy();
 });
 
@@ -129,12 +133,12 @@ function fakeServer(routes: Record<string, Route> = {}): { url: string; method: 
     if (url === "/api/v1/bates/exports?limit=50") return json({ items: [earlier], total: 1 });
     if (url === "/api/v1/bates/preview") return json({ namespace, start_sequence: 41, end_sequence: 42, stamped_nothing: true, labels });
     if (url === "/api/v1/bates/allocations") {
-      return json({ allocation_id: allocationID, namespace_id: namespace.namespace_id, snapshot_id: snapshotID, recipe_sha256: body?.recipe_sha256, state: "reserved", start_sequence: 41, end_sequence: 42, labels, created_at: "2026-09-21T00:01:00Z" }, 201);
+      return json({ allocation_id: allocationID, namespace_id: namespace.namespace_id, snapshot_id: snapshotID, recipe_sha256: await recipeDigest(body), state: "reserved", start_sequence: 41, end_sequence: 42, labels, created_at: "2026-09-21T00:01:00Z" }, 201);
     }
     if (url === "/api/v1/bates/exports" && method === "POST") {
       return json({
         artifact_id: "44444444-4444-4444-8444-444444444444", allocation_id: allocationID, blob_sha256: "a".repeat(64), size: 1200,
-        media_type: "application/pdf", page_count: 2, recipe_sha256: requests.find((item) => item.url === "/api/v1/bates/allocations")?.body?.recipe_sha256,
+        media_type: "application/pdf", page_count: 2, recipe_sha256: await recipeDigest(body),
         manifest_sha256: "b".repeat(64), state: "verified", created_at: "2026-09-21T00:02:00Z",
         pages: labels.map((label) => ({ ...label, source_blob_sha256: "c".repeat(64) })),
       }, 201);

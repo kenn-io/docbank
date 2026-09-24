@@ -125,19 +125,25 @@ func TestEmbeddedBatesPlanningAndReservationAPI(t *testing.T) {
 			Options: []string{"onTop=true", "update=restamp"}}}
 	recipeSHA, err := recipe.SHA256()
 	require.NoError(t, err)
-	request := docbank.BatesPlanRequest{OperationID: uuid.NewString(), NamespaceID: namespace.NamespaceID,
-		SnapshotID: packages.Items[0].SnapshotID, RecipeSHA256: recipeSHA, StartAt: 41,
-		Pages: []docbank.BatesPageInput{{OccurrenceID: members.Items[0].OccurrenceID,
-			UnstampedSHA256: source.SHA256, SourcePage: 1, VerifiedPageCount: 1}}}
-	plan, err := vault.PlanBatesStamp(t.Context(), request)
+	pages := []docbank.BatesPageInput{{OccurrenceID: members.Items[0].OccurrenceID,
+		UnstampedSHA256: source.SHA256, SourcePage: 1, VerifiedPageCount: 1}}
+	plan, err := vault.PlanBatesStamp(t.Context(), docbank.BatesPlanRequest{NamespaceID: namespace.NamespaceID,
+		SnapshotID: packages.Items[0].SnapshotID, StartAt: 41, Pages: pages})
 	require.NoError(t, err)
 	assert.True(t, plan.StampedNothing)
 	require.Len(t, plan.Labels, 1)
 	assert.Equal(t, "API000041", plan.Labels[0].Label)
 
-	allocation, err := vault.ReserveBatesRange(t.Context(), request)
+	mismatched := recipe
+	mismatched.Padding = 7
+	_, err = vault.ReserveBatesRange(t.Context(), docbank.BatesReserveRequest{OperationID: uuid.NewString(),
+		SnapshotID: packages.Items[0].SnapshotID, Recipe: mismatched, Pages: pages})
+	require.ErrorIs(t, err, docbank.ErrInvalidBatesRequest, "a recipe must match its namespace's label format")
+	allocation, err := vault.ReserveBatesRange(t.Context(), docbank.BatesReserveRequest{OperationID: uuid.NewString(),
+		SnapshotID: packages.Items[0].SnapshotID, Recipe: recipe, Pages: pages})
 	require.NoError(t, err)
 	assert.Equal(t, int64(41), allocation.StartSequence)
+	assert.Equal(t, recipeSHA, allocation.RecipeSHA256, "the daemon derives the digest from the recipe")
 	retained, err := vault.BatesAllocation(t.Context(), allocation.AllocationID)
 	require.NoError(t, err)
 	assert.Equal(t, allocation, retained)

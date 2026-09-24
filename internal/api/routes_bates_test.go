@@ -10,6 +10,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/internal/api"
+	"go.kenn.io/docbank/internal/pdfstamp"
 	"go.kenn.io/docbank/internal/store"
 	"go.kenn.io/docbank/sqlite"
 )
@@ -70,8 +71,8 @@ func TestBatesPlanPreviewsWithoutStampingAnything(t *testing.T) {
 	require.Equal(t, http.StatusCreated, created.Code, created.Body.String())
 	var ns api.BatesNamespace
 	require.NoError(t, json.Unmarshal(created.Body.Bytes(), &ns))
-	request := api.BatesPlanRequest{OperationID: uuid.NewString(), NamespaceID: ns.NamespaceID,
-		SnapshotID: snapshot.SnapshotID, RecipeSHA256: strings.Repeat("e", 64), Prefix: "OUR", Padding: 6, StartAt: 41, Pages: pages}
+	request := api.BatesPlanRequest{NamespaceID: ns.NamespaceID, SnapshotID: snapshot.SnapshotID,
+		Prefix: "OUR", Padding: 6, StartAt: 41, Pages: pages}
 	body, err := json.Marshal(request)
 	require.NoError(t, err)
 	before := tableCounts(t, s)
@@ -94,31 +95,46 @@ func TestBatesPlanPreviewsWithoutStampingAnything(t *testing.T) {
 	derived := srv.call(t, http.MethodPost, "/api/v1/bates/preview", string(implicitBody), nil)
 	require.Equal(t, first.Body.String(), derived.Body.String())
 	require.Equal(t, before.blobs, tableCounts(t, s).blobs)
-	reserved := srv.call(t, http.MethodPost, "/api/v1/bates/allocations", string(body), nil)
-	require.Equal(t, http.StatusCreated, reserved.Code, reserved.Body.String())
-	missingRecipe := request
-	missingRecipe.OperationID = uuid.NewString()
-	missingRecipe.RecipeSHA256 = ""
-	missingRecipeBody, err := json.Marshal(missingRecipe)
+
+	recipe := batesTestRecipe(ns, 41)
+	reserve := api.BatesReserveRequest{OperationID: uuid.NewString(), SnapshotID: snapshot.SnapshotID, Recipe: recipe, Pages: pages}
+	reserveBody, err := json.Marshal(reserve)
 	require.NoError(t, err)
-	rejected := srv.call(t, http.MethodPost, "/api/v1/bates/allocations", string(missingRecipeBody), nil)
-	require.Equal(t, http.StatusUnprocessableEntity, rejected.Code, rejected.Body.String())
-	require.Contains(t, rejected.Body.String(), `"validation"`)
+	reserved := srv.call(t, http.MethodPost, "/api/v1/bates/allocations", string(reserveBody), nil)
+	require.Equal(t, http.StatusCreated, reserved.Code, reserved.Body.String())
 	var allocation api.BatesAllocation
 	require.NoError(t, json.Unmarshal(reserved.Body.Bytes(), &allocation))
 	require.Equal(t, "OUR000041", allocation.Labels[0].Label)
-	replay := srv.call(t, http.MethodPost, "/api/v1/bates/allocations", string(body), nil)
+	digest, err := recipe.SHA256()
+	require.NoError(t, err)
+	require.Equal(t, digest, allocation.RecipeSHA256, "the daemon derives the digest from the recipe")
+	replay := srv.call(t, http.MethodPost, "/api/v1/bates/allocations", string(reserveBody), nil)
 	require.Equal(t, allocation.AllocationID, decodeBatesAllocation(t, replay.Body.Bytes()).AllocationID)
 	read := srv.get(t, "/api/v1/bates/allocations/"+allocation.AllocationID)
 	require.Equal(t, http.StatusOK, read.Code, read.Body.String())
 	require.Equal(t, allocation.AllocationID, decodeBatesAllocation(t, read.Body.Bytes()).AllocationID)
-	request.StartAt = 42
-	changed, err := json.Marshal(request)
+	for name, change := range map[string]func(*api.BatesReserveRequest){
+		"incomplete recipe":   func(r *api.BatesReserveRequest) { r.Recipe.Contract = "" },
+		"mismatched padding":  func(r *api.BatesReserveRequest) { r.Recipe.Padding = 7 },
+		"mismatched prefix":   func(r *api.BatesReserveRequest) { r.Recipe.Prefix = "OTHER" },
+		"restamping a source": func(r *api.BatesReserveRequest) { r.Recipe.Restamp = true },
+	} {
+		invalid := reserve
+		invalid.OperationID = uuid.NewString()
+		change(&invalid)
+		invalidBody, err := json.Marshal(invalid)
+		require.NoError(t, err)
+		rejected := srv.call(t, http.MethodPost, "/api/v1/bates/allocations", string(invalidBody), nil)
+		require.Equal(t, http.StatusUnprocessableEntity, rejected.Code, "%s: %s", name, rejected.Body.String())
+		require.Contains(t, rejected.Body.String(), "invalid_bates_request", name)
+	}
+	reserve.Recipe = batesTestRecipe(ns, 42)
+	changed, err := json.Marshal(reserve)
 	require.NoError(t, err)
 	conflict := srv.call(t, http.MethodPost, "/api/v1/bates/allocations", string(changed), nil)
 	require.Equal(t, http.StatusConflict, conflict.Code, conflict.Body.String())
 	require.Contains(t, conflict.Body.String(), "bates_reservation_conflict")
-	request.OperationID = uuid.NewString()
+
 	request.StartAt = 0
 	request.Pages = append([]api.BatesPageInput(nil), pages...)
 	request.Pages[0].SourcePage = 2
@@ -133,12 +149,8 @@ func TestBatesPlanPreviewsWithoutStampingAnything(t *testing.T) {
 	require.Equal(t, http.StatusCreated, shortCreated.Code, shortCreated.Body.String())
 	var short api.BatesNamespace
 	require.NoError(t, json.Unmarshal(shortCreated.Body.Bytes(), &short))
-	request.NamespaceID = short.NamespaceID
-	request.Prefix = "OVR"
-	request.Padding = 1
-	request.Pages = pages
-	request.StartAt = 9
-	overflowBody, err := json.Marshal(request)
+	overflowBody, err := json.Marshal(api.BatesReserveRequest{OperationID: uuid.NewString(),
+		SnapshotID: snapshot.SnapshotID, Recipe: batesTestRecipe(short, 9), Pages: pages})
 	require.NoError(t, err)
 	overflow := srv.call(t, http.MethodPost, "/api/v1/bates/allocations", string(overflowBody), nil)
 	require.Equal(t, http.StatusUnprocessableEntity, overflow.Code, overflow.Body.String())
@@ -156,6 +168,14 @@ func TestBatesPlanPreviewsWithoutStampingAnything(t *testing.T) {
 	require.NoError(t, json.Unmarshal(next.Body.Bytes(), &page))
 	require.Len(t, page.Items, 1)
 	require.Empty(t, page.NextCursor)
+}
+
+func batesTestRecipe(namespace api.BatesNamespace, start int) pdfstamp.Recipe {
+	return pdfstamp.Recipe{Contract: pdfstamp.RecipeContractV1, NamespaceID: namespace.NamespaceID,
+		Prefix: namespace.Prefix, Suffix: namespace.Suffix, Padding: namespace.Padding, StartAt: start,
+		Position: "bottom-right", MarginPoints: 24, FontName: "Helvetica", FontSizePoints: 9, Color: "#000000",
+		Opacity: 1, Units: "point", RotationPolicy: "follow_page", EngineIdentity: pdfstamp.EngineIdentity{
+			Name: "pdfcpu", Version: "v0.15.0", API: "AddWatermarksMap", Options: []string{"onTop=true", "update=restamp"}}}
 }
 
 func decodeBatesAllocation(t *testing.T, body []byte) api.BatesAllocation {

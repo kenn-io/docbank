@@ -26,6 +26,7 @@ type BatesNamespacePage = api.BatesNamespacePage
 type BatesPageInput = api.BatesPageInput
 type BatesPageLabel = api.BatesPageLabel
 type BatesPlanRequest = api.BatesPlanRequest
+type BatesReserveRequest = api.BatesReserveRequest
 type BatesPlan = api.BatesPlan
 type BatesAllocation = api.BatesAllocation
 type BatesRecipe = pdfstamp.Recipe
@@ -90,7 +91,7 @@ func (v *Vault) PlanBatesStamp(ctx context.Context, request BatesPlanRequest) (B
 	if v.closed {
 		return BatesPlan{}, ErrClosed
 	}
-	bound, err := v.bindBatesPlan(ctx, request)
+	bound, err := api.BindBatesPlan(ctx, v.metadata, request)
 	if err != nil {
 		return BatesPlan{}, err
 	}
@@ -103,14 +104,16 @@ func (v *Vault) PlanBatesStamp(ctx context.Context, request BatesPlanRequest) (B
 }
 
 // ReserveBatesRange advances a namespace once for an idempotent operation and
-// binds the reserved labels to the exact sealed snapshot pages.
-func (v *Vault) ReserveBatesRange(ctx context.Context, request BatesPlanRequest) (BatesAllocation, error) {
+// binds the reserved labels to the exact sealed snapshot pages. The recipe
+// chooses the namespace and first number, so the reservation always matches
+// what PublishBatesExport will stamp.
+func (v *Vault) ReserveBatesRange(ctx context.Context, request BatesReserveRequest) (BatesAllocation, error) {
 	v.lifecycle.RLock()
 	defer v.lifecycle.RUnlock()
 	if v.closed {
 		return BatesAllocation{}, ErrClosed
 	}
-	bound, err := v.bindBatesPlan(ctx, request)
+	bound, err := api.BindBatesReservation(ctx, v.metadata, request)
 	if err != nil {
 		return BatesAllocation{}, err
 	}
@@ -211,29 +214,6 @@ func (v *Vault) ReadBatesExport(ctx context.Context, allocationID string) ([]byt
 		return nil, BatesExport{}, err
 	}
 	return data, batesExportFromStore(artifact), nil
-}
-
-func (v *Vault) bindBatesPlan(ctx context.Context, request BatesPlanRequest) (store.BatesPlanRequest, error) {
-	if len(request.Pages) > store.MaxBatesExportPages {
-		return store.BatesPlanRequest{}, store.ErrBatesPageLimit
-	}
-	namespace, err := v.metadata.BatesNamespace(ctx, request.NamespaceID, request.Prefix, request.Suffix, request.Padding)
-	if err != nil {
-		return store.BatesPlanRequest{}, err
-	}
-	pages := make([]store.BatesPageInput, len(request.Pages))
-	for index, page := range request.Pages {
-		pages[index] = store.BatesPageInput{OccurrenceID: page.OccurrenceID, UnstampedSHA256: page.UnstampedSHA256,
-			SourcePage: page.SourcePage, VerifiedPageCount: page.VerifiedPageCount}
-	}
-	if len(pages) == 0 {
-		pages, err = v.metadata.SnapshotBatesPages(ctx, request.SnapshotID)
-		if err != nil {
-			return store.BatesPlanRequest{}, err
-		}
-	}
-	return store.BatesPlanRequest{OperationID: request.OperationID, NamespaceID: namespace.NamespaceID,
-		SnapshotID: request.SnapshotID, RecipeSHA256: request.RecipeSHA256, StartAt: request.StartAt, Pages: pages}, nil
 }
 
 func batesNamespaceFromStore(value store.BatesNamespace) BatesNamespace {
