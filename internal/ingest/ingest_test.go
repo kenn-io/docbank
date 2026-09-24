@@ -8,9 +8,11 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"mime"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"testing"
@@ -134,6 +136,172 @@ func TestDetectMimeDeclaresEMLBeforeHostRegistry(t *testing.T) {
 			require.False(t, called)
 		})
 	}
+}
+
+func TestDetectMimeUsesRecognizedSignatureOverHostExtension(t *testing.T) {
+	tests := []struct {
+		name string
+		path string
+		head []byte
+		want string
+	}{
+		{name: "polluted-jpg", path: "photo.jpg", head: []byte{0xff, 0xd8, 0xff}, want: "image/jpeg"},
+		{name: "jpeg-dng", path: "photo.dng", head: []byte{0xff, 0xd8, 0xff}, want: "image/jpeg"},
+		{name: "png", path: "photo.jpg", head: []byte{0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a}, want: "image/png"},
+		{name: "gif", path: "photo.jpg", head: []byte("GIF89a"), want: "image/gif"},
+		{name: "webp", path: "photo.jpg", head: []byte("RIFF\x00\x00\x00\x00WEBPVP8 "), want: "image/webp"},
+		{name: "pdf", path: "photo.jpg", head: []byte("%PDF-"), want: "application/pdf"},
+		{name: "postscript", path: "photo.jpg", head: []byte("%!PS-Adobe-"), want: "application/postscript"},
+		{name: "wasm", path: "photo.jpg", head: []byte{0x00, 0x61, 0x73, 0x6d}, want: "application/wasm"},
+		{name: "heic", path: "photo.jpg", head: []byte("\x00\x00\x00\x18ftypheic"), want: "image/heic"},
+		{name: "heif", path: "photo.jpg", head: []byte("\x00\x00\x00\x18ftypmif1"), want: "image/heif"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			called := false
+			got := detectMimeWithExtension(tc.path, tc.head, func(string) string {
+				called = true
+				return "application/x-host-dependent"
+			})
+			require.Equal(t, tc.want, got)
+			require.False(t, called)
+		})
+	}
+}
+
+func TestDetectMimeKeepsExtensionForAmbiguousContent(t *testing.T) {
+	tests := []struct {
+		name string
+		path string
+		head []byte
+	}{
+		{name: "zip", path: "archive.docx", head: []byte("PK\x03\x04")},
+		{name: "mp4", path: "recording.m4a", head: []byte("\x00\x00\x00\x18ftyp0000")},
+		{name: "ogg", path: "audio.oga", head: []byte("OggS\x00")},
+		{name: "gzip", path: "archive.gz", head: []byte{0x1f, 0x8b}},
+		{name: "tiff", path: "camera.dng", head: []byte{0x49, 0x49, 0x2a, 0x00}},
+		{name: "xml", path: "document.svg", head: []byte(`<?xml version="1.0"?><root/>`)},
+		{name: "plain text", path: "document.md", head: []byte("plain text\n")},
+		{name: "unknown", path: "document.bin", head: []byte{0x01, 0x02, 0x03}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			called := false
+			got := detectMimeWithExtension(tc.path, tc.head, func(string) string {
+				called = true
+				return "application/x-known-extension"
+			})
+			require.Equal(t, "application/x-known-extension", got)
+			require.True(t, called)
+		})
+	}
+
+	t.Run("unknown without extension keeps detector result", func(t *testing.T) {
+		called := false
+		got := detectMimeWithExtension("document", []byte{0x01, 0x02, 0x03}, func(string) string {
+			called = true
+			return ""
+		})
+		require.Equal(t, "application/octet-stream", got)
+		require.True(t, called)
+	})
+}
+
+func TestDetectMimeKeepsExtensionForOLEContainer(t *testing.T) {
+	ole := make([]byte, 512)
+	copy(ole, []byte{0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1})
+	for _, tc := range []struct {
+		name string
+		path string
+		want string
+	}{
+		{name: "word", path: "document.doc", want: "application/msword"},
+		{name: "outlook", path: "message.msg", want: "application/vnd.ms-outlook"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			called := false
+			got := detectMimeWithExtension(tc.path, ole, func(extension string) string {
+				called = true
+				return map[string]string{
+					".doc": "application/msword", ".msg": "application/vnd.ms-outlook",
+				}[extension]
+			})
+			require.Equal(t, tc.want, got)
+			require.True(t, called)
+		})
+	}
+
+	t.Run("without extension", func(t *testing.T) {
+		called := false
+		got := detectMimeWithExtension("document", ole, func(string) string {
+			called = true
+			return ""
+		})
+		require.Equal(t, "application/x-ole-storage", got)
+		require.True(t, called)
+	})
+}
+
+func TestDetectMimeKeepsSpecificAPNGExtension(t *testing.T) {
+	const pngHeader = "\x89PNG\r\n\x1a\n"
+	makeAPNG := func(offset int) []byte {
+		data := make([]byte, offset+4)
+		copy(data, []byte(pngHeader))
+		copy(data[offset:], []byte("acTL"))
+		return data
+	}
+	for _, tc := range []struct {
+		name   string
+		path   string
+		head   []byte
+		want   string
+		called bool
+	}{
+		{name: "recognized apng extension", path: "animation.apng", head: makeAPNG(37), want: "image/apng", called: true},
+		{name: "recognized png extension", path: "animation.png", head: makeAPNG(37), want: "image/vnd.mozilla.apng"},
+		{name: "acTL beyond prefix", path: "animation.apng", head: makeAPNG(513)[:512], want: "image/apng", called: true},
+		{name: "generic png", path: "image.png", head: []byte(pngHeader), want: "image/png"},
+		{name: "generic png with apng extension", path: "image.apng", head: []byte(pngHeader), want: "image/apng", called: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			called := false
+			got := detectMimeWithExtension(tc.path, tc.head, func(extension string) string {
+				called = true
+				if extension == ".apng" {
+					return "image/apng"
+				}
+				return "image/png"
+			})
+			require.Equal(t, tc.want, got)
+			require.Equal(t, tc.called, called)
+		})
+	}
+}
+
+func TestDetectMimeSniffsWhenExtensionIsUnknown(t *testing.T) {
+	called := false
+	got := detectMimeWithExtension("photo.unknown", []byte{0xff, 0xd8, 0xff}, func(string) string {
+		called = true
+		return "application/x-host-dependent"
+	})
+	require.Equal(t, "image/jpeg", got)
+	require.False(t, called)
+}
+
+func TestDetectMimeUsesNativeWindowsJPEGRegistry(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("native registry proof runs on Windows")
+	}
+	extensionMIME := mime.TypeByExtension(".jpg")
+	registry, err := exec.Command("reg", "query", `HKCR\.jpg`, "/v", "Content Type").CombinedOutput()
+	require.NoError(t, err, string(registry))
+	t.Logf("registry: %s; Go lookup: %s", strings.TrimSpace(string(registry)), extensionMIME)
+	if extensionMIME != "application/jpg" {
+		t.Skipf("native .jpg mapping is %q; polluted association is not present", extensionMIME)
+	}
+	require.Contains(t, string(registry), "application/jpg")
+	got := detectMime("photo.jpg", []byte{0xff, 0xd8, 0xff})
+	require.Equal(t, "image/jpeg", got)
 }
 
 func TestPrepareUploadRetainsOriginalBytesForEveryCatalogFormat(t *testing.T) {
@@ -322,6 +490,87 @@ func TestAddReplaceSkipsUnchangedBytesAndStoredMIME(t *testing.T) {
 	collection, err := ing.Store.CollectionByID(ctx, rep.IngestID)
 	require.NoError(t, err)
 	assert.Equal(t, int64(1), collection.FileCount)
+}
+
+func TestAddPathsRecordsSignatureMediaType(t *testing.T) {
+	ing := newTestIngester(t)
+	ctx := t.Context()
+	source := filepath.Join(t.TempDir(), "photo.jpg")
+	jpeg := []byte{0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10}
+	png := []byte{0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00}
+	require.NoError(t, os.WriteFile(source, jpeg, 0o644))
+
+	report, err := ing.AddPaths(ctx, []string{source}, "/inbox")
+	require.NoError(t, err)
+	require.Equal(t, 1, report.Added)
+	created, err := ing.Store.NodeByPath(ctx, "/inbox/photo.jpg")
+	require.NoError(t, err)
+	require.Equal(t, "image/jpeg", created.MimeType)
+	createdVersions, total, err := ing.Store.ContentVersions(ctx, created.ID, 10, 0)
+	require.NoError(t, err)
+	require.Equal(t, 1, total)
+	require.Equal(t, created.CurrentVersionID, createdVersions[0].ID)
+	require.Equal(t, "image/jpeg", createdVersions[0].MimeType)
+	stored, err := ing.Blobs.Open(created.BlobHash)
+	require.NoError(t, err)
+	storedBytes, readErr := io.ReadAll(stored)
+	require.NoError(t, errors.Join(readErr, stored.Close()))
+	require.Equal(t, jpeg, storedBytes)
+
+	rewriteSource(t, source, png)
+	report, err = ing.AddPathsWithOptions(ctx, []string{source}, "/inbox", Options{Replace: true})
+	require.NoError(t, err)
+	require.Equal(t, 1, report.Added)
+	updated, err := ing.Store.NodeByPath(ctx, "/inbox/photo.jpg")
+	require.NoError(t, err)
+	require.Equal(t, created.ID, updated.ID)
+	require.Equal(t, "image/png", updated.MimeType)
+	versions, total, err := ing.Store.ContentVersions(ctx, updated.ID, 10, 0)
+	require.NoError(t, err)
+	require.Equal(t, 2, total)
+	require.Len(t, versions, 2)
+	require.Equal(t, "image/png", versions[0].MimeType)
+	require.Equal(t, "content_replace", versions[0].TransitionKind)
+	require.Equal(t, "image/jpeg", versions[1].MimeType)
+	require.Equal(t, created.CurrentVersionID, versions[1].ID)
+	require.Equal(t, created.BlobHash, versions[1].BlobHash)
+	stored, err = ing.Blobs.Open(updated.BlobHash)
+	require.NoError(t, err)
+	storedBytes, readErr = io.ReadAll(stored)
+	require.NoError(t, errors.Join(readErr, stored.Close()))
+	require.Equal(t, png, storedBytes)
+	stored, err = ing.Blobs.Open(versions[1].BlobHash)
+	require.NoError(t, err)
+	storedBytes, readErr = io.ReadAll(stored)
+	require.NoError(t, errors.Join(readErr, stored.Close()))
+	require.Equal(t, jpeg, storedBytes)
+}
+
+func TestAddReplaceKeepsStoredMIMEForUnchangedSignatureBytes(t *testing.T) {
+	ing := newTestIngester(t)
+	ctx := t.Context()
+	jpeg := []byte{0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10}
+	source := filepath.Join(t.TempDir(), "photo.jpg")
+	require.NoError(t, os.WriteFile(source, jpeg, 0o644))
+	written, err := ing.Blobs.WriteDetailedContext(ctx, bytes.NewReader(jpeg))
+	require.NoError(t, err)
+	created, err := ing.Store.CreateFile(ctx, ing.Store.RootID(), "photo.jpg",
+		written.Hash, written.Size, "application/jpg")
+	require.NoError(t, err)
+
+	report, err := ing.AddPathsWithOptions(ctx, []string{source}, "/", Options{Replace: true})
+	require.NoError(t, err)
+	require.Zero(t, report.Added)
+	require.Equal(t, 1, report.Skipped)
+	unchanged, err := ing.Store.NodeByID(ctx, created.ID)
+	require.NoError(t, err)
+	require.Equal(t, "application/jpg", unchanged.MimeType)
+	require.Equal(t, created.CurrentVersionID, unchanged.CurrentVersionID)
+	versions, total, err := ing.Store.ContentVersions(ctx, created.ID, 10, 0)
+	require.NoError(t, err)
+	require.Equal(t, 1, total)
+	require.Len(t, versions, 1)
+	require.Equal(t, "application/jpg", versions[0].MimeType)
 }
 
 func TestLabeledEmptyTreeCreatesDirectoriesWithoutReceipt(t *testing.T) {

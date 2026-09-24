@@ -102,6 +102,19 @@ For each regular file, Docbank performs two steps:
 See [Storage](../architecture/storage.md) for the content records and
 [Editing & Versions](../architecture/editing-and-versions.md) for version identity.
 
+### MIME type detection
+
+Local imports inspect the first 512 bytes with Docbank's pinned signature
+detector. Recognized signatures take priority over the host's extension table,
+including JPEG, HEIC, and HEIF. The `.eml` rule remains first and always uses
+`message/rfc822`.
+
+The detector returns an extension mapping for broad or container results such
+as ZIP, MP4, OLE, Ogg, gzip, TIFF, XML, plain text, and unknown bytes when the
+extension has a mapping. This keeps file subtypes that the bytes cannot name,
+including DNG, CR2, and NEF, which the pinned detector sees as TIFF. An unknown
+extension uses the detected type.
+
 Directory arguments walk recursively. The directory's basename becomes a
 folder under `--dest`, and everything below keeps its relative structure:
 

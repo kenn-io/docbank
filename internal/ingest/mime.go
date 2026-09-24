@@ -2,12 +2,13 @@ package ingest
 
 import (
 	"mime"
-	"net/http"
 	"path/filepath"
+	"strings"
+
+	"github.com/gabriel-vasile/mimetype"
 )
 
-// detectMime resolves a MIME type from the file extension, falling back to
-// content sniffing over the first 512 bytes.
+// detectMime resolves a MIME type from the file bytes and file extension.
 func detectMime(path string, head []byte) string {
 	return detectMimeWithExtension(path, head, mime.TypeByExtension)
 }
@@ -20,8 +21,26 @@ func detectMimeWithExtension(path string, head []byte, byExtension func(string) 
 		(extension[3] == 'l' || extension[3] == 'L') {
 		return "message/rfc822"
 	}
-	if byExt := byExtension(extension); byExt != "" {
-		return byExt
+
+	detected := mimetype.Detect(head).String()
+	mediaType, _, err := mime.ParseMediaType(detected)
+	if err != nil {
+		mediaType = detected
 	}
-	return http.DetectContentType(head)
+
+	switch mediaType {
+	case "application/octet-stream", "application/zip", "application/gzip",
+		"application/ogg", "application/x-ole-storage", "image/tiff",
+		"video/mp4", "text/plain", "text/xml":
+		if byExt := byExtension(extension); byExt != "" {
+			return byExt
+		}
+	case "image/png", "image/vnd.mozilla.apng":
+		if strings.EqualFold(extension, ".apng") {
+			if byExt := byExtension(extension); byExt == "image/apng" {
+				return byExt
+			}
+		}
+	}
+	return detected
 }
