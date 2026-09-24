@@ -243,7 +243,41 @@ func packageExpectedPaths(manifest RecipientManifest) (map[string]struct{}, erro
 			return nil, ErrRecipientArchive
 		}
 	}
+	if !recipientPackageFitsImportBudget(manifest) {
+		return nil, ErrRecipientArchive
+	}
 	return paths, nil
+}
+
+// The received-package importer limits all uncompressed ZIP entries together,
+// including generated metadata and loadfiles, rather than each volume alone.
+func recipientPackageFitsImportBudget(manifest RecipientManifest) bool {
+	remaining := loadfile.MaxPackageBytes
+	spend := func(size int64) bool {
+		if size < 0 || size > remaining {
+			return false
+		}
+		remaining -= size
+		return true
+	}
+	for _, volume := range manifest.Volumes {
+		if !spend(volume.Bytes) {
+			return false
+		}
+	}
+	for _, value := range []any{manifest, recipientImportMapping(), recipientTransmittal(manifest)} {
+		data, err := packageJSON(value)
+		if err != nil || !spend(int64(len(data))) {
+			return false
+		}
+	}
+	for _, volume := range manifest.Volumes {
+		files, err := makePackageLoadfiles(manifest, volume)
+		if err != nil || !spend(int64(len(files.dat))) || !spend(int64(len(files.page))) {
+			return false
+		}
+	}
+	return true
 }
 
 func validRecipientOutput(digest string, size int64) bool {

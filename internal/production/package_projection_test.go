@@ -8,6 +8,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 	documentproduction "go.kenn.io/docbank/document/production"
+	"go.kenn.io/docbank/internal/loadfile"
 )
 
 const (
@@ -179,6 +180,43 @@ func TestPlanPackageProjectionRejectsProfileAndVolumeBoundary(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, projection.Manifest.Volumes, 2)
 	require.Equal(t, "VOL002", projection.Manifest.Documents[1].Volume)
+}
+
+func TestRecipientPackageTotalBytesMatchImporter(t *testing.T) {
+	job, numbers, members := packageProjectionFixture(t)
+	members[1].FamilyID = "family-two"
+	for index := range job.Manifest.Artifacts {
+		artifact := &job.Manifest.Artifacts[index]
+		if artifact.Role == documentproduction.ArtifactRoleRedactedText {
+			artifact.Size = loadfile.MaxPackageBytes / 2
+		}
+	}
+	resealPackageJob(t, &job)
+	limits := PackageLimits{MaxVolumeBytes: loadfile.MaxPackageBytes, MaxVolumeDocuments: 1}
+	_, err := PlanPackageProjection(job, numbers, members, "export-dat-opt-images-v1", limits)
+	require.ErrorIs(t, err, ErrPackageProjection, "two individually valid volumes exceed the importer's total budget")
+
+	for index := range job.Manifest.Artifacts {
+		artifact := &job.Manifest.Artifacts[index]
+		if artifact.Role == documentproduction.ArtifactRoleRedactedText {
+			artifact.Size = loadfile.MaxPackageBytes/2 - 1<<20
+		}
+	}
+	resealPackageJob(t, &job)
+	projection, err := PlanPackageProjection(job, numbers, members, "export-dat-opt-images-v1", limits)
+	require.NoError(t, err)
+	require.Len(t, projection.Manifest.Volumes, 2)
+
+	manifest := projection.Manifest
+	for index := range manifest.Documents {
+		manifest.Documents[index].TextSize = loadfile.MaxPackageBytes / 2
+		manifest.Volumes[index].Bytes = manifest.Documents[index].TextSize
+		for _, image := range manifest.Documents[index].Images {
+			manifest.Volumes[index].Bytes += image.Size
+		}
+	}
+	_, err = packageExpectedPaths(manifest)
+	require.ErrorIs(t, err, ErrRecipientArchive, "independent verification rejects an over-budget manifest")
 }
 
 func TestRecipientPackageVolumeLimitMatchesReceivedPackages(t *testing.T) {

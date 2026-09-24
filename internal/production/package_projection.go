@@ -306,6 +306,9 @@ func PlanPackageProjection(job Job, reservation documentproduction.NumberReserva
 		}
 		start = end
 	}
+	if !recipientPackageFitsImportBudget(result.Manifest) {
+		return bad()
+	}
 	encoded, err := canonical.Marshal(result.Manifest)
 	if err != nil {
 		return bad()

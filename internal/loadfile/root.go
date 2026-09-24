@@ -18,8 +18,11 @@ import (
 )
 
 const (
+	// MaxPackageBytes is the total uncompressed size accepted by received
+	// package ZIPs and directory inventories, across every volume.
+	MaxPackageBytes          = int64(50 << 30)
 	defaultMaxPackageFiles   = 1_000_000
-	defaultMaxPackageBytes   = int64(50 << 30)
+	defaultMaxPackageBytes   = MaxPackageBytes
 	defaultMaxInventoryBytes = int64(256 << 20)
 	maxPackageVolumes        = 64
 	inventoryReadBatch       = 256
