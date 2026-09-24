@@ -73,6 +73,20 @@ func TestEmbeddedProductionSetsKeepVaultRootsSeparate(t *testing.T) {
 	require.Equal(t, forked, replayFork)
 	_, err = second.ProductionDraft(t.Context(), set.ID, 2)
 	require.ErrorIs(t, err, store.ErrNotFound)
+	member := api.ProductionMember(redaction.Member{
+		ID: "88888888-8888-4888-8888-888888888881", VaultID: "88888888-8888-4888-8888-888888888882",
+		SourceVersionID: "88888888-8888-4888-8888-888888888883", NodeID: 1,
+		SourceSHA256:        "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+		PDFSHA256:           "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+		MapSHA256:           "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+		PageInventorySHA256: "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+		PDFSize:             1, Ordinal: 1, Mode: "redact_selected",
+		Family: redaction.FamilyContext{Kind: "standalone", RootVersionID: "88888888-8888-4888-8888-888888888883"},
+	})
+	appendRequest := api.ProductionMemberAppendRequest{OperationID: "88888888-8888-4888-8888-888888888884",
+		Members: []api.ProductionMember{member}}
+	_, err = second.AppendProductionMembers(t.Context(), "synthetic-operator", set.ID, 1, 1, appendRequest)
+	require.ErrorIs(t, err, store.ErrProductionRevisionConflict)
 	uncertain := true
 	filtered, err := first.ProductionDecisionsFiltered(t.Context(), set.ID, 1, "", 500, &uncertain)
 	require.NoError(t, err)

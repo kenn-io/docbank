@@ -11142,6 +11142,30 @@ components:
       x-go-type-import:
         path: go.kenn.io/docbank/internal/api
         name: api
+    ProductionMemberAppendRequest:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/ProductionMemberAppendRequest.json
+          format: uri
+          readOnly: true
+          type: string
+        members:
+          items:
+            $ref: "#/components/schemas/ProductionMember"
+          type: array
+        operation_id:
+          type: string
+      required:
+        - operation_id
+        - members
+      type: object
+      x-go-type: api.ProductionMemberAppendRequest
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     ProductionMemberPage:
       additionalProperties: false
       properties:
@@ -21013,6 +21037,46 @@ paths:
                 $ref: "#/components/schemas/Error"
           description: Error
       summary: Page exact production members
+    post:
+      operationId: appendProductionMembers
+      parameters:
+        - in: path
+          name: set_id
+          required: true
+          schema:
+            format: uuid
+            type: string
+        - in: path
+          name: revision
+          required: true
+          schema:
+            format: int64
+            minimum: 1
+            type: integer
+        - in: header
+          name: If-Match
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ProductionMemberAppendRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProductionReceipt"
+          description: OK
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: Append new production members to an exact draft revision
   /api/v1/productions/sets/{set_id}/revisions/{revision}/members/{member_id}/review:
     post:
       operationId: reviewProductionMember

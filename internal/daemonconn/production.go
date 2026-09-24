@@ -407,6 +407,22 @@ func (c *Connection) ApplyProductionChanges(ctx context.Context, setID string, r
 	return checkedProductionMutationReceipt(result, setID, revision, request.OperationID, etag)
 }
 
+func (c *Connection) AppendProductionMembers(ctx context.Context, setID string, revision, etag int64,
+	request api.ProductionMemberAppendRequest) (redaction.Receipt, error) {
+	parsed, err := productionSetUUID(setID)
+	if err != nil || revision < 1 || redaction.ValidateApplyRequest(request.Domain(etag)) != nil {
+		return redaction.Receipt{}, errors.New("invalid production member append")
+	}
+	header := strconv.FormatInt(etag, 10)
+	result, err := c.API().AppendProductionMembers(ctx, &apiclient.AppendProductionMembersRequestOptions{
+		PathParams: &apiclient.AppendProductionMembersPath{SetID: parsed, Revision: revision},
+		Header:     &apiclient.AppendProductionMembersHeaders{IfMatch: &header}, Body: &request})
+	if err != nil {
+		return redaction.Receipt{}, err
+	}
+	return checkedProductionMutationReceipt(result, setID, revision, request.OperationID, etag)
+}
+
 func checkedProductionMutationReceipt(value *api.ProductionReceipt, setID string, revision int64,
 	operationID string, etag int64) (redaction.Receipt, error) {
 	if value == nil {

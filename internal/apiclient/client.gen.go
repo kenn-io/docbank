@@ -8811,6 +8811,53 @@ func (c *Client) ListProductionMembers(ctx context.Context, options *ListProduct
 	return responseParser(ctx, resp)
 }
 
+// AppendProductionMembers Append new production members to an exact draft revision
+func (c *Client) AppendProductionMembers(ctx context.Context, options *AppendProductionMembersRequestOptions, reqEditors ...runtime.RequestEditorFn) (*AppendProductionMembersResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/productions/sets/{set_id}/revisions/{revision}/members",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*AppendProductionMembersResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(AppendProductionMembersResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "AppendProductionMembersResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[AppendProductionMembersErrorResponse](resp, "AppendProductionMembersErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/productions/sets/{set_id}/revisions/{revision}/members")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
 // ReviewProductionMember Record one exact production member review binding
 func (c *Client) ReviewProductionMember(ctx context.Context, options *ReviewProductionMemberRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ReviewProductionMemberResponse, error) {
 	var err error
@@ -17302,6 +17349,48 @@ func (o *ListProductionMembersRequestOptions) GetHeader() (map[string]string, er
 	return nil, nil
 }
 
+// AppendProductionMembersRequestOptions is the options needed to make a request to AppendProductionMembers.
+type AppendProductionMembersRequestOptions struct {
+	PathParams *AppendProductionMembersPath
+	Body       *AppendProductionMembersBody
+	Header     *AppendProductionMembersHeaders
+}
+
+// GetPathParams returns the path params as a map.
+func (o *AppendProductionMembersRequestOptions) GetPathParams() (map[string]any, error) {
+	encoded, err := json.Marshal(o.PathParams, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetQuery returns the query params as a map.
+func (o *AppendProductionMembersRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *AppendProductionMembersRequestOptions) GetBody() any {
+	if o.Body == nil {
+		return nil
+	}
+	return o.Body
+}
+
+// GetHeader returns the headers as a map.
+func (o *AppendProductionMembersRequestOptions) GetHeader() (map[string]string, error) {
+	encoded, err := json.Marshal(o.Header, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var headers map[string]string
+	err = json.Unmarshal(encoded, &headers)
+	return headers, err
+}
+
 // ReviewProductionMemberRequestOptions is the options needed to make a request to ReviewProductionMember.
 type ReviewProductionMemberRequestOptions struct {
 	PathParams *ReviewProductionMemberPath
@@ -19300,6 +19389,10 @@ type AdmitProductionJobHeaders struct {
 	IfMatch *string `json:"If-Match,omitempty"`
 }
 
+type AppendProductionMembersHeaders struct {
+	IfMatch *string `json:"If-Match,omitempty"`
+}
+
 type ReviewProductionMemberHeaders struct {
 	IfMatch *string `json:"If-Match,omitempty"`
 }
@@ -19721,6 +19814,11 @@ type ListProductionMembersPath struct {
 	Revision int64     `json:"revision"`
 }
 
+type AppendProductionMembersPath struct {
+	SetID    uuid.UUID `json:"set_id"`
+	Revision int64     `json:"revision"`
+}
+
 type ReviewProductionMemberPath struct {
 	SetID    uuid.UUID `json:"set_id"`
 	Revision int64     `json:"revision"`
@@ -20003,6 +20101,8 @@ type ForkProductionDraftBody = ProductionForkRequest
 type EditProductionInstructionsBody = ProductionInstructionsRequest
 
 type AdmitProductionJobBody = ProductionJobAdmissionRequest
+
+type AppendProductionMembersBody = ProductionMemberAppendRequest
 
 type ReviewProductionMemberBody = ProductionMemberReviewRequest
 
@@ -21186,6 +21286,10 @@ type ListProductionMembersResponse = api.ProductionMemberPage
 
 type ListProductionMembersErrorResponse = Error
 
+type AppendProductionMembersResponse = api.ProductionReceipt
+
+type AppendProductionMembersErrorResponse = Error
+
 type ReviewProductionMemberResponse = api.ProductionReceipt
 
 type ReviewProductionMemberErrorResponse = Error
@@ -22242,6 +22346,8 @@ type ProductionJobStatus = api.ProductionJobStatus
 type ProductionMapChunk = api.ProductionMapChunk
 
 type ProductionMember = api.ProductionMember
+
+type ProductionMemberAppendRequest = api.ProductionMemberAppendRequest
 
 type ProductionMemberPage = api.ProductionMemberPage
 

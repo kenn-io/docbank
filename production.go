@@ -234,6 +234,22 @@ func (v *Vault) ApplyProductionChanges(ctx context.Context, actor, setID string,
 	return receipt, err
 }
 
+func (v *Vault) AppendProductionMembers(ctx context.Context, actor, setID string, revision, etag int64,
+	request api.ProductionMemberAppendRequest) (redaction.Receipt, error) {
+	v.lifecycle.RLock()
+	defer v.lifecycle.RUnlock()
+	if v.closed {
+		return redaction.Receipt{}, ErrClosed
+	}
+	var receipt redaction.Receipt
+	err := embeddedMutationGate{vault: v}.MutateContext(ctx, func() error {
+		var err error
+		receipt, err = v.metadata.AppendProductionMembers(ctx, actor, setID, revision, request.Domain(etag))
+		return err
+	})
+	return receipt, err
+}
+
 func (v *Vault) SealProductionMembership(ctx context.Context, actor, setID string, revision, etag int64,
 	request api.ProductionMembershipSealRequest) (redaction.Receipt, error) {
 	v.lifecycle.RLock()

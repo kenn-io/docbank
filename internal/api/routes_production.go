@@ -151,6 +151,20 @@ type ProductionChangesRequest struct {
 	Changes     []ProductionChange `json:"changes"`
 }
 
+type ProductionMemberAppendRequest struct {
+	OperationID string             `json:"operation_id"`
+	Members     []ProductionMember `json:"members"`
+}
+
+func (request ProductionMemberAppendRequest) Domain(etag int64) redaction.ApplyRequest {
+	changes := make([]redaction.Change, len(request.Members))
+	for i, value := range request.Members {
+		member := redaction.Member(value)
+		changes[i] = redaction.Change{Kind: "member", Member: &member}
+	}
+	return redaction.ApplyRequest{OperationID: request.OperationID, ETag: etag, Changes: changes}
+}
+
 type ProductionMembershipSealRequest struct {
 	OperationID string `json:"operation_id"`
 	Total       int    `json:"total"`
@@ -442,6 +456,35 @@ func registerProductionRoutes(api huma.API, d Deps, g *OperationGate) {
 			err = g.mutate(func() error {
 				var err error
 				receipt, err = d.Store.EditProductionInstructions(ctx, actor, in.SetID, in.Revision, request)
+				return err
+			})
+			if err != nil {
+				return nil, productionSetError(err)
+			}
+			return &struct{ Body ProductionReceipt }{Body: ProductionReceipt(receipt)}, nil
+		})
+	huma.Register(api, huma.Operation{OperationID: "appendProductionMembers", Method: http.MethodPost,
+		Path:         "/api/v1/productions/sets/{set_id}/revisions/{revision}/members",
+		Summary:      "Append new production members to an exact draft revision",
+		MaxBodyBytes: redaction.MaxCommandBytes},
+		func(ctx context.Context, in *struct {
+			SetID    string `path:"set_id" format:"uuid"`
+			Revision int64  `path:"revision" minimum:"1"`
+			IfMatch  string `header:"If-Match"`
+			Body     ProductionMemberAppendRequest
+		}) (*struct{ Body ProductionReceipt }, error) {
+			etag, err := parseIfMatch(in.IfMatch)
+			if err != nil {
+				return nil, err
+			}
+			actor, ok := workspaceSnapshotOwner(ctx)
+			if !ok {
+				return nil, NewError(http.StatusUnauthorized, "unauthorized", "authenticated production actor is missing")
+			}
+			var receipt redaction.Receipt
+			err = g.mutate(func() error {
+				var err error
+				receipt, err = d.Store.AppendProductionMembers(ctx, actor, in.SetID, in.Revision, in.Body.Domain(etag))
 				return err
 			})
 			if err != nil {
