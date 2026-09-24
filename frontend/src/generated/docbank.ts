@@ -5721,6 +5721,16 @@ after_order?: number;
 limit?: number;
 };
 
+export type ReadExportArchiveDefault = {
+  code?: string;
+  detail?: string;
+  errors?: string[];
+  observed_scope_count?: number;
+  position?: ErrorPosition;
+  status: number;
+  title: string;
+};
+
 export type GetExportJobEventsParams = {
 /**
  * Last observed sequence; deliveries report current state, not replayed events
@@ -8006,6 +8016,30 @@ export const getGetExportJobUrl = (id: string,) => {
 export const getExportJob = (id: string, options?: Parameters<typeof sessionResponse>[1]) => {
 
   return sessionResponse<ExportJob>(getGetExportJobUrl(id),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+export const getReadExportArchiveUrl = (id: string,) => {
+
+
+
+
+  return `/api/v1/exports/jobs/${encodeURIComponent(String(id))}/archive`
+}
+
+/**
+ * @summary Read a completed, reverified export archive
+ */
+export const readExportArchive = (id: string, options?: Parameters<typeof sessionResponse>[1]) => {
+
+  return sessionResponse<Blob>(getReadExportArchiveUrl(id),
   {
     ...options,
     method: 'GET'
