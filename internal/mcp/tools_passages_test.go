@@ -115,3 +115,49 @@ func TestPassageToolsReturnExactBoundedPrivateResults(t *testing.T) {
 	assert.Equal(t, fingerprint, contextPack["fence_fingerprint"])
 	assertSchemaAccepts(t, catalogMap(toolCatalog(false, false))["get_context_pack"].OutputSchema, contextPack)
 }
+
+func TestResolvePassageToolReadsSuppliedExactReference(t *testing.T) {
+	body := []byte("# Heading\nsynthetic evidence\n")
+	ref, err := document.NewPassageRefV1(document.PassageRefV1{
+		VaultUID: "11111111-1111-4111-8111-111111111111", DocumentUID: "22222222-2222-4222-8222-222222222222",
+		ContentVersionID: "33333333-3333-4333-8333-333333333333", SourceSHA256: strings.Repeat("a", 64),
+		RenditionBuildID: strings.Repeat("b", 64), AttachmentID: strings.Repeat("c", 64),
+	}, body, 10, len(body))
+	require.NoError(t, err)
+	id, err := document.PassageIdentityV1(ref)
+	require.NoError(t, err)
+	tool := catalogMap(toolCatalog(false, false))["resolve_passage"]
+	require.NotNil(t, tool, "agents need a read-only exact passage resolver")
+	require.True(t, tool.Annotations.ReadOnlyHint)
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		assert.Equal(t, "/api/v1/passages/resolve", request.URL.Path)
+		var input api.PassageResolveRequest
+		if !assert.NoError(t, json.UnmarshalRead(request.Body, &input)) {
+			response.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		assert.Equal(t, ref, input.Ref)
+		assert.Equal(t, 4096, input.MaxBytes)
+		response.Header().Set("Content-Type", "application/json")
+		assert.NoError(t, json.MarshalWrite(response, api.PassageResolution{
+			Availability: "available", Freshness: "historical", PassageID: id, Ref: ref,
+			Text: string(body[10:]), SectionPath: []string{"Heading"}, SourcePath: "/synthetic.md",
+			SourceLocator: &document.EvidenceLocatorV1{Kind: "line", IndexOrigin: "one", Start: 2, End: 2},
+		}))
+	}))
+	t.Cleanup(server.Close)
+	lease := newDaemonLeaseWith(func(context.Context) (*daemonconn.Connection, error) {
+		return daemonconn.New(server.URL, "synthetic-key"), nil
+	}, func(*daemonconn.Connection) error { return nil })
+
+	result, err := invokeReadTool(t.Context(), lease, "resolve_passage", map[string]any{"ref": ref, "max_bytes": 4096})
+	require.NoError(t, err)
+	output := structuredMap(t, result.StructuredContent)
+	assert.Equal(t, "private", output["cacheScope"])
+	assert.Equal(t, "historical", output["freshness"])
+	assert.Equal(t, id, output["passage_id"])
+	assert.Equal(t, string(body[10:]), output["text"])
+	assert.Equal(t, "/synthetic.md", output["source_path"])
+	assert.Equal(t, []any{"Heading"}, output["section_path"])
+	assertSchemaAccepts(t, tool.OutputSchema, output)
+}

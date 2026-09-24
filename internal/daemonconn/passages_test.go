@@ -41,6 +41,34 @@ func TestPassageOutlineUsesTypedRouteAndPreservesAbsentLocator(t *testing.T) {
 	require.Nil(t, got.Sections[0].SourceLocator)
 }
 
+func TestResolvePassageRejectsUnboundDaemonResults(t *testing.T) {
+	ref, body := daemonPassageRefs(t)
+	id, err := document.PassageIdentityV1(ref)
+	require.NoError(t, err)
+	valid := api.PassageResolution{Availability: "available", Freshness: "historical",
+		PassageID: id, Ref: ref, Text: string(body), SectionPath: []string{"Heading"},
+		SourcePath: "/synthetic.md"}
+	for name, mutate := range map[string]func(*api.PassageResolution){
+		"reference": func(result *api.PassageResolution) { result.Ref.QuoteSHA256 = strings.Repeat("0", 64) },
+		"identity":  func(result *api.PassageResolution) { result.PassageID = strings.Repeat("0", 64) },
+		"quote":     func(result *api.PassageResolution) { result.Text = "changed" },
+		"freshness": func(result *api.PassageResolution) { result.Freshness = "unknown" },
+	} {
+		t.Run(name, func(t *testing.T) {
+			result := valid
+			mutate(&result)
+			server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+				assert.Equal(t, "/api/v1/passages/resolve", request.URL.Path)
+				response.Header().Set("Content-Type", "application/json")
+				assert.NoError(t, json.MarshalWrite(response, result))
+			}))
+			t.Cleanup(server.Close)
+			_, err := New(server.URL, "").ResolvePassage(t.Context(), api.PassageResolveRequest{Ref: ref, MaxBytes: 4096})
+			require.Error(t, err)
+		})
+	}
+}
+
 func TestReadPassageSectionValidatesExactPageBinding(t *testing.T) {
 	ref, body := daemonPassageRefs(t)
 	pageRef, err := document.NewPassageRefV1(ref, body, 0, len(body))

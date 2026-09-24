@@ -49,6 +49,7 @@ var readToolDefinitions = []toolDefinition{
 	{name: "get_document", title: "Get document", description: "Read metadata for one exact current document identity.", schemas: getDocumentSchemas},
 	{name: "list_document_versions", title: "List document versions", description: "Page through immutable content versions for one stable document node.", schemas: listDocumentVersionsSchemas},
 	{name: "read_rendition_text", title: "Read rendition text", description: "Read a bounded Unicode window from an active sanitized Markdown rendition.", schemas: readRenditionTextSchemas},
+	{name: "resolve_passage", title: "Resolve passage", description: "Read one supplied exact retained passage with its freshness and source location.", schemas: resolvePassageSchemas},
 	{name: "get_document_outline", title: "Get document outline", description: "Read the bounded heading hierarchy for one exact retained Markdown rendition.", schemas: getDocumentOutlineSchemas},
 	{name: "read_passage_section", title: "Read passage section", description: "Read one complete exact section through bounded continuation pages.", schemas: readPassageSectionSchemas},
 	{name: "get_context_pack", title: "Get context pack", description: "Read verified exact passages within an explicit source fence and byte budget.", schemas: getContextPackSchemas},

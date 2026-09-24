@@ -19,11 +19,50 @@ import (
 
 const (
 	maxPassageOutlineResponseBytes = 384 << 10
+	maxPassageResolveEnvelopeBytes = 16 << 10
 	defaultPassageSectionBytes     = 32 << 10
 	maxPassageSectionBytes         = 256 << 10
 	maxPassageSectionEnvelopeBytes = 16 << 10
 	maxPassageOutlineSections      = 4096
 )
+
+// ResolvePassage reads one supplied exact retained passage. The response is
+// bounded and must bind the requested reference and its exact quote bytes.
+func (c *Connection) ResolvePassage(
+	ctx context.Context, request api.PassageResolveRequest,
+) (api.PassageResolution, error) {
+	limit := request.MaxBytes
+	if limit == 0 {
+		limit = defaultPassageSectionBytes
+	}
+	if err := document.ValidatePassageAddressV1(request.Ref); err != nil ||
+		limit < 1 || limit > maxPassageSectionBytes {
+		return api.PassageResolution{}, errors.New("passage resolve request is invalid")
+	}
+	var responseHTTP *http.Response
+	_, err := c.apiWithResponse(&responseHTTP).ResolvePassage(runtime.WithStreamingResponse(ctx),
+		&apiclient.ResolvePassageRequestOptions{Body: &request})
+	if err != nil {
+		return api.PassageResolution{}, err
+	}
+	result, err := decodeBoundedPassageResponse[api.PassageResolution](responseHTTP,
+		6*limit+maxPassageResolveEnvelopeBytes, "passage resolve")
+	if err != nil {
+		return api.PassageResolution{}, err
+	}
+	id, err := document.PassageIdentityV1(request.Ref)
+	if err != nil || result.Ref != request.Ref || result.Availability != "available" ||
+		(result.Freshness != "current" && result.Freshness != "historical") ||
+		result.PassageID != id || len(result.Text) != request.Ref.ByteEnd-request.Ref.ByteStart ||
+		len(result.Text) > limit || !utf8.ValidString(result.Text) {
+		return api.PassageResolution{}, errors.New("passage resolve response does not bind its requested authority")
+	}
+	quote := sha256.Sum256([]byte(result.Text))
+	if hex.EncodeToString(quote[:]) != request.Ref.QuoteSHA256 {
+		return api.PassageResolution{}, errors.New("passage resolve response quote is invalid")
+	}
+	return result, nil
+}
 
 // PassageOutline reads the bounded structural outline for one exact retained
 // rendition. The response is rejected unless every section remains inside its

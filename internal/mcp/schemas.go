@@ -510,6 +510,25 @@ func sourceLocatorSchema() schema {
 	}, "kind", "index_origin", "start", "end")
 }
 
+func resolvePassageSchemas() (schema, schema) {
+	input := rootObjectSchema(schema{
+		"ref":       passageRefSchema(),
+		"max_bytes": schema{"type": "integer", "minimum": 1, "maximum": 256 << 10, "default": 32 << 10},
+	}, "ref")
+	output := rootObjectSchema(withPrivateCache(schema{
+		"availability":   schema{"type": "string", "const": "available"},
+		"freshness":      enumSchema("current", "historical"),
+		"passage_id":     sha256Schema(),
+		"ref":            passageRefSchema(),
+		"text":           stringSchema(256 << 10),
+		"section_path":   arraySchema(stringSchema(8192), 4096),
+		"source_locator": sourceLocatorSchema(),
+		"source_path": schema{"type": "string", "minLength": 1,
+			"maxLength": maxPathCharacters, "pattern": "^/"},
+	}), cacheRequired("availability", "freshness", "passage_id", "ref", "text", "section_path", "source_path")...)
+	return input, output
+}
+
 func outlineSectionSchema() schema {
 	return objectSchema(schema{
 		"key":                  sha256Schema(),

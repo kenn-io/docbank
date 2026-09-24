@@ -65,6 +65,8 @@ func executeReadTool(
 		output, err = listDocumentVersions(ctx, lease, raw)
 	case "read_rendition_text":
 		output, err = readRenditionText(ctx, lease, raw)
+	case "resolve_passage":
+		output, err = resolvePassage(ctx, lease, raw)
 	case "get_document_outline":
 		output, err = getDocumentOutline(ctx, lease, raw)
 	case "read_passage_section":
@@ -272,6 +274,30 @@ func optionalInt64(value int) *int64 {
 
 type documentOutlineInput struct {
 	Ref document.PassageRefV1 `json:"ref"`
+}
+
+type resolvePassageInput struct {
+	Ref      document.PassageRefV1 `json:"ref"`
+	MaxBytes int                   `json:"max_bytes"`
+}
+
+type resolvePassageOutput struct {
+	api.PassageResolution
+	privateCache
+}
+
+func resolvePassage(ctx context.Context, lease *daemonLease, raw []byte) (resolvePassageOutput, error) {
+	var input resolvePassageInput
+	if err := decodeReadArguments(raw, &input); err != nil {
+		return resolvePassageOutput{}, err
+	}
+	passage, err := daemonRead(ctx, lease, func(ctx context.Context, c *daemonconn.Connection) (api.PassageResolution, error) {
+		return c.ResolvePassage(ctx, api.PassageResolveRequest{Ref: input.Ref, MaxBytes: input.MaxBytes})
+	})
+	if err != nil {
+		return resolvePassageOutput{}, err
+	}
+	return resolvePassageOutput{PassageResolution: passage, privateCache: newPrivateCache()}, nil
 }
 
 type documentOutlineOutput struct {
