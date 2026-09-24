@@ -4,6 +4,7 @@ package ingest
 
 import (
 	"errors"
+	"fmt"
 	"io/fs"
 	"os"
 
@@ -15,7 +16,7 @@ type watchMount uint32
 func watchMountForFile(file *os.File) (watchMount, error) {
 	var info windows.ByHandleFileInformation
 	if err := windows.GetFileInformationByHandle(windows.Handle(file.Fd()), &info); err != nil {
-		return 0, err
+		return 0, fmt.Errorf("reading %s file information: %w", file.Name(), err)
 	}
 	return watchMount(info.VolumeSerialNumber), nil
 }

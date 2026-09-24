@@ -35,7 +35,7 @@ func resetSourceAttributesNoFollow(path string) (resetSourceAttributes, error) {
 			Err:  err,
 		}
 	}
-	defer windows.CloseHandle(handle)
+	defer func() { _ = windows.CloseHandle(handle) }()
 
 	var info windows.ByHandleFileInformation
 	if err := windows.GetFileInformationByHandle(handle, &info); err != nil {

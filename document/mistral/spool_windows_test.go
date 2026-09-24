@@ -7,6 +7,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"os"
@@ -75,7 +76,7 @@ func TestPrepareRejectsBroadWindowsReservationLockDACL(t *testing.T) {
 func setEveryoneDACL(path string) error {
 	everyone, err := windows.CreateWellKnownSid(windows.WinWorldSid)
 	if err != nil {
-		return err
+		return fmt.Errorf("creating Everyone SID: %w", err)
 	}
 	dacl, err := windows.ACLFromEntries([]windows.EXPLICIT_ACCESS{{
 		AccessPermissions: windows.GENERIC_ALL,
@@ -88,9 +89,9 @@ func setEveryoneDACL(path string) error {
 		},
 	}}, nil)
 	if err != nil {
-		return err
+		return fmt.Errorf("building Everyone DACL: %w", err)
 	}
-	return windows.SetNamedSecurityInfo(
+	if err := windows.SetNamedSecurityInfo(
 		path,
 		windows.SE_FILE_OBJECT,
 		windows.DACL_SECURITY_INFORMATION|windows.PROTECTED_DACL_SECURITY_INFORMATION,
@@ -98,5 +99,8 @@ func setEveryoneDACL(path string) error {
 		nil,
 		dacl,
 		nil,
-	)
+	); err != nil {
+		return fmt.Errorf("applying Everyone DACL to %s: %w", path, err)
+	}
+	return nil
 }

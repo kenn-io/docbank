@@ -20,7 +20,7 @@ func TestProcessTerminationTreatsMissingProcessAsStopped(t *testing.T) {
 }
 
 func TestGracefulStopDoesNotKillWindowsProcess(t *testing.T) {
-	cmd := exec.Command(os.Args[0], "-test.run=^TestWindowsGracefulStopHelper$")
+	cmd := exec.Command(os.Args[0], "-test.run=^TestWindowsGracefulStopHelper$") // #nosec G702 -- os.Args[0] is the trusted current test executable.
 	cmd.Env = append(os.Environ(), "DOCBANK_WINDOWS_STOP_HELPER=1")
 	require.NoError(t, cmd.Start())
 	done := make(chan struct{})
