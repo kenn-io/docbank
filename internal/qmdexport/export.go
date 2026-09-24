@@ -607,17 +607,6 @@ func preparePrivateDir(path string) error {
 	return nil
 }
 
-func createPrivateFile(path string) (*os.File, error) {
-	file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
-	if err != nil {
-		return nil, err
-	}
-	if err := restrictNewFile(path); err != nil {
-		return nil, errors.Join(err, file.Close())
-	}
-	return file, nil
-}
-
 func validateExistingPrivateFile(path string) error {
 	file, err := openPrivateFile(path)
 	if errors.Is(err, os.ErrNotExist) {

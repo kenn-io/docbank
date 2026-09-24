@@ -8,11 +8,13 @@ import (
 	"fmt"
 	"hash/crc32"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"slices"
 	"strings"
 
+	"go.kenn.io/kit/atomicfile"
 	"go.kenn.io/kit/safefileio"
 )
 
@@ -113,12 +115,10 @@ func WriteProbeFixtures(ctx context.Context, destination string, options Fixture
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	if _, err := os.Lstat(destination); err == nil {
-		return errors.New("mistral probe fixture destination already exists")
-	} else if !errors.Is(err, os.ErrNotExist) {
-		return fmt.Errorf("inspect Mistral probe fixture destination: %w", err)
-	}
-	if err := os.Rename(temporary, destination); err != nil {
+	if err := atomicfile.RenameNoReplace(temporary, destination); err != nil {
+		if errors.Is(err, fs.ErrExist) {
+			return errors.New("mistral probe fixture destination already exists")
+		}
 		return fmt.Errorf("publish Mistral probe fixtures: %w", err)
 	}
 	published = true
@@ -187,14 +187,9 @@ func copyFixture(ctx context.Context, root *os.Root, name, target string) error 
 }
 
 func writeNewPrivateFile(target string, reader io.Reader, expectedSize int64) error {
-	file, err := os.OpenFile(target, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600) // #nosec G304 -- target is a fixed candidate ID under an operator-selected directory.
+	file, err := createPrivateFile(target)
 	if err != nil {
 		return err
-	}
-	if err := secureCreatedFile(file); err != nil {
-		_ = file.Close()
-		_ = os.Remove(target)
-		return fmt.Errorf("secure fixture file: %w", err)
 	}
 	written, copyErr := io.Copy(file, reader)
 	closeErr := file.Close()

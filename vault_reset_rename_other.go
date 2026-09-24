@@ -1,14 +1,16 @@
-//go:build !darwin && !linux && !windows
+//go:build !windows
 
 package docbank
 
 import (
-	"errors"
-	"os"
+	"fmt"
+
+	"go.kenn.io/kit/atomicfile"
 )
 
 func renameVaultNoReplace(source, destination string) error {
-	return &os.LinkError{
-		Op: "rename-noreplace", Old: source, New: destination, Err: errors.ErrUnsupported,
+	if err := atomicfile.RenameNoReplace(source, destination); err != nil {
+		return fmt.Errorf("rename without replacing: %w", err)
 	}
+	return nil
 }

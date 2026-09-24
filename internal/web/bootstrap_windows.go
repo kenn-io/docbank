@@ -3,14 +3,18 @@
 package web
 
 import (
-	"fmt"
+	"os"
 
 	"go.kenn.io/docbank/internal/winsecurity"
+	"go.kenn.io/kit/safefileio"
 )
 
-func restrictBootstrapFile(path string) error {
-	if err := winsecurity.RestrictCurrentUserFile(path); err != nil {
-		return fmt.Errorf("securing web bootstrap: %w", err)
+// createBootstrapFile passes an extended-length path so a vault deeper than
+// MAX_PATH still works.
+func createBootstrapFile(path string) (*os.File, error) {
+	extended, err := winsecurity.ExtendedLengthPath(path)
+	if err != nil {
+		return nil, err
 	}
-	return nil
+	return safefileio.CreatePrivateFile(extended) //nolint:wrapcheck // the caller adds context.
 }

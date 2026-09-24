@@ -8,6 +8,7 @@ import (
 	"slices"
 	"strings"
 
+	"go.kenn.io/kit/fslink"
 	"go.kenn.io/kit/safefileio"
 )
 
@@ -812,31 +813,16 @@ func (lk *Lock) lockAcquisitionIdentities(
 }
 
 func enterVaultDir(parent *os.Root, component string) (*os.Root, error) {
-	info, err := parent.Lstat(component)
-	if errors.Is(err, os.ErrNotExist) {
+	if _, err := parent.Lstat(component); errors.Is(err, os.ErrNotExist) {
 		if err := mkdirVaultDir(parent, component); err != nil && !errors.Is(err, os.ErrExist) {
 			return nil, err
 		}
-		info, err = parent.Lstat(component)
-	}
-	if err != nil {
+	} else if err != nil {
 		return nil, err
 	}
-	if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
-		return nil, fmt.Errorf("path component %q is not a real directory", component)
-	}
-	root, err := parent.OpenRoot(component)
+	root, err := fslink.OpenRootNoFollow(parent, component)
 	if err != nil {
-		return nil, err
-	}
-	held, err := root.Stat(".")
-	if err != nil {
-		_ = root.Close()
-		return nil, err
-	}
-	if !os.SameFile(info, held) {
-		_ = root.Close()
-		return nil, fmt.Errorf("path component %q changed while opening", component)
+		return nil, fmt.Errorf("opening path component %q as a real directory: %w", component, err)
 	}
 	return root, nil
 }

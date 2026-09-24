@@ -12,6 +12,10 @@ import (
 
 func restrictNewFile(string) error { return nil }
 
+func createPrivateFile(path string) (*os.File, error) {
+	return safefileio.CreatePrivateFile(path) //nolint:wrapcheck // the caller adds context.
+}
+
 func openPrivateFile(path string) (*os.File, error) {
 	file, err := safefileio.OpenCurrentUserFile(path)
 	if err != nil {

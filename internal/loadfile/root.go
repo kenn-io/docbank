@@ -15,6 +15,7 @@ import (
 	"strings"
 
 	"go.kenn.io/docbank/internal/canonical"
+	"go.kenn.io/kit/fslink"
 )
 
 const (
@@ -335,10 +336,7 @@ func (r *Resolver) openName(name string) (*os.File, error) {
 		if expected == nil || !expected.IsDir() {
 			return nil, ErrUnsafeReference
 		}
-		if info, err := current.Lstat(part); err != nil || info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
-			return nil, ErrUnsafeReference
-		}
-		next, err := current.OpenRoot(part)
+		next, err := fslink.OpenRootNoFollow(current, part)
 		if err != nil {
 			return nil, ErrUnsafeReference
 		}
