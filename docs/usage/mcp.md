@@ -80,7 +80,7 @@ client registration, scopes, or token refresh. A client may connect locally or
 through a trusted tunnel, but it must be able to set the Authorization header;
 clients that require the MCP HTTP OAuth flow are unsupported.
 
-Both transports have the fixed 19-tool read catalog described below.
+Both transports have the fixed 20-tool read catalog described below.
 `--allow-processing` adds only guarded processing start.
 `--allow-package-writes` separately permits load-file preflight, import, and
 custodian changes. Enable either flag or both when starting the process.
@@ -142,6 +142,7 @@ links, is capped at 1 MiB.
 | `get_processing_plan` | Requires an exact node ID, content-version UUID, and 1–128-character processing profile name. Returns the complete provider, trust-boundary, retention, estimate, consent, and backup disclosure plus its fingerprint. |
 | `get_processing_status` | Reads one stable 64-hex-character job identity. A response contains at most 64 embedding job IDs. |
 | `get_processing_coverage` | Reports rendition and embedding coverage for 1–4,096 unique version IDs in one exact vault fence and one 1–128-character processing profile. The response has at most 65 coverage classes. |
+| `get_format_coverage` | Reads the verified `format-coverage/v1` inventory. Optional `family`, `format`, and `extension` filters are bounded; choose `format` or `extension`, not both. The result includes an exact lookup when a selector is supplied and is capped by the shared 1 MiB tool limit. |
 | `get_package_import` | Reads durable progress for one import operation UUID. |
 | `get_package_preflight` | Reads one retained preflight by its exact identity. |
 | `list_package_preflight_diagnostics` | Pages through bounded diagnostics for a retained preflight. |

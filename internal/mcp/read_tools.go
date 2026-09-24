@@ -70,6 +70,8 @@ func executeReadTool(
 		output, err = getProcessingStatus(ctx, lease, raw)
 	case "get_processing_coverage":
 		output, err = getProcessingCoverage(ctx, lease, raw)
+	case "get_format_coverage":
+		output, err = getFormatCoverage(ctx, lease, raw)
 	case "get_package_import":
 		output, err = getPackageImport(ctx, lease, raw)
 	case "get_package_preflight":
