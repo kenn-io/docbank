@@ -14,7 +14,6 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/internal/blob"
 	"go.kenn.io/docbank/internal/canonical"
-	"go.kenn.io/docbank/internal/pdfproduction"
 	"go.kenn.io/docbank/internal/processing"
 	"go.kenn.io/docbank/internal/store"
 )
@@ -30,13 +29,9 @@ func TestPrepareProductionDraftPreviewStagesVerifiedImageAndSanitizedText(t *tes
 	require.NoError(t, vault.RecordBlob(t.Context(), written.Hash, written.Size, store.BlobPhysical{
 		Encoding: "raw", StoredBytes: written.StoredSize, Created: written.Created,
 	}))
-	recipe := pdfproduction.QualifiedRecipe()
-	engine, err := pdfproduction.NewPDFium(recipe)
-	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, engine.Close()) })
 	stageDir := filepath.Join(root, "web-downloads")
 	preview, err := processing.PrepareProductionDraftPreview(t.Context(), vault, blobs,
-		stageDir, set.ID, draft.Revision, draft.ETag, member.ID, 1, engine)
+		stageDir, set.ID, draft.Revision, draft.ETag, member.ID, 1)
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, preview.Close()) })
 	require.True(t, canonical.IsSHA256Hex(preview.PreviewInputSHA256))
@@ -82,13 +77,9 @@ func TestPrepareProductionDraftPreviewRejectsStaleDraftBeforeOpeningSource(t *te
 	blobs, err := blob.New(store.NewPackCatalog(vault), filepath.Join(root, "blobs"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, blobs.Close()) })
-	recipe := pdfproduction.QualifiedRecipe()
-	engine, err := pdfproduction.NewPDFium(recipe)
-	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, engine.Close()) })
 	stageDir := filepath.Join(root, "web-downloads")
 	preview, err := processing.PrepareProductionDraftPreview(t.Context(), vault, blobs,
-		stageDir, set.ID, draft.Revision, draft.ETag+1, member.ID, 1, engine)
+		stageDir, set.ID, draft.Revision, draft.ETag+1, member.ID, 1)
 	require.ErrorIs(t, err, store.ErrProductionRevisionConflict)
 	require.Nil(t, preview)
 	entries, err := os.ReadDir(stageDir)
@@ -101,13 +92,9 @@ func TestPrepareProductionDraftPreviewMissingPDFLeavesNoCandidateFiles(t *testin
 	blobs, err := blob.New(store.NewPackCatalog(vault), filepath.Join(root, "blobs"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, blobs.Close()) })
-	recipe := pdfproduction.QualifiedRecipe()
-	engine, err := pdfproduction.NewPDFium(recipe)
-	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, engine.Close()) })
 	stageDir := filepath.Join(root, "web-downloads")
 	preview, err := processing.PrepareProductionDraftPreview(t.Context(), vault, blobs,
-		stageDir, set.ID, draft.Revision, draft.ETag, member.ID, 1, engine)
+		stageDir, set.ID, draft.Revision, draft.ETag, member.ID, 1)
 	require.Error(t, err)
 	require.Nil(t, preview)
 	entries, err := os.ReadDir(stageDir)

@@ -47,8 +47,8 @@ func (s *ProductionDraftPreviewStage) Close() error {
 // The caller passes the daemon's private, startup-swept staging directory.
 func PrepareProductionDraftPreview(ctx context.Context, vault *store.Store,
 	opener store.RenditionBlobReader, stageDir, setID string, revision, etag int64,
-	memberID string, page int, engine pdfproduction.Engine) (result *ProductionDraftPreviewStage, resultErr error) {
-	if ctx == nil || vault == nil || opener == nil || engine == nil ||
+	memberID string, page int) (result *ProductionDraftPreviewStage, resultErr error) {
+	if ctx == nil || vault == nil || opener == nil ||
 		stageDir == "" || !filepath.IsAbs(stageDir) {
 		return nil, store.ErrInvalidProduction
 	}
@@ -59,10 +59,18 @@ func PrepareProductionDraftPreview(ctx context.Context, vault *store.Store,
 	if err != nil {
 		return nil, err
 	}
+	engine, err := pdfproduction.NewPDFium(input.Recipe)
+	if err != nil {
+		return nil, errors.Join(err, input.PDF.Stream.Close())
+	}
 	preview, err := production.RenderUnnumberedProductionPreviewPageInDir(ctx, input.PDF,
 		input.Member, page, input.Recipe, engine, stageDir)
-	if err != nil {
-		return nil, err
+	closeEngineErr := engine.Close()
+	if err != nil || closeEngineErr != nil {
+		if preview != nil {
+			closeEngineErr = errors.Join(closeEngineErr, preview.File.Close())
+		}
+		return nil, errors.Join(err, closeEngineErr)
 	}
 	result = &ProductionDraftPreviewStage{SetID: setID, Revision: revision, ETag: etag,
 		MemberID: memberID, Page: page, PreviewInputSHA256: input.PreviewInputSHA256,

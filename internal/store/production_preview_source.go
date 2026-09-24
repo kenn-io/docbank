@@ -20,6 +20,32 @@ type ProductionDraftPreviewSource struct {
 	PDF                productionservice.PinnedProductionPDF
 }
 
+// CurrentProductionDraftPreviewInput rechecks a retained admission against
+// the current draft and evidence heads just before ticket publication.
+func (s *Store) CurrentProductionDraftPreviewInput(ctx context.Context,
+	command ProductionPreviewCommand) (string, error) {
+	if ctx == nil || !validProductionPreviewCommand(command) {
+		return "", ErrInvalidProduction
+	}
+	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	if err != nil {
+		return "", err
+	}
+	defer func() { _ = tx.Rollback() }()
+	input, err := s.selectProductionDraftPreviewInputTx(ctx, tx, command.SetID,
+		command.Revision, command.ETag, command.MemberID)
+	if err != nil {
+		return "", err
+	}
+	if command.Page > len(input.Member.Resolved.Pages) {
+		return "", ErrInvalidProduction
+	}
+	if err := tx.Commit(); err != nil {
+		return "", err
+	}
+	return input.PreviewInputSHA256, nil
+}
+
 // OpenProductionDraftPreviewSource derives one occurrence from the current
 // draft and catalog. The caller supplies only identities, never a blob hash.
 func (s *Store) OpenProductionDraftPreviewSource(ctx context.Context, setID string,

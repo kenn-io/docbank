@@ -2,9 +2,17 @@ package docbank
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"errors"
+	"io"
+	"os"
+	"path/filepath"
+	"strings"
 
 	"go.kenn.io/docbank/document/redaction"
 	"go.kenn.io/docbank/internal/api"
+	"go.kenn.io/docbank/internal/processing"
 	"go.kenn.io/docbank/internal/store"
 )
 
@@ -16,6 +24,119 @@ type ProductionResolvedMaskPage = store.ProductionResolvedMaskPage
 type ProductionFinalizationResult = store.ProductionFinalizationResult
 type ProductionJobStatus = store.ProductionJobStatus
 type ProductionRecipeCatalog = api.ProductionRecipeCatalog
+
+// ProductionPreviewRequest selects one member page and a replay identity.
+type ProductionPreviewRequest struct {
+	OperationID string
+	MemberID    string
+	Page        int
+}
+
+// ProductionPreviewBytes contains one verified, unnumbered page preview.
+// Text contains only the sanitized output text from the resolved page.
+type ProductionPreviewBytes struct {
+	PreviewInputSHA256 string
+	ResolvedSHA256     string
+	Image              []byte
+	ImageSHA256        string
+	Text               []byte
+	TextSHA256         string
+}
+
+// ProductionPreview renders an exact current draft selection in this embedded
+// vault. Actor is the embedding application's authenticated principal.
+func (v *Vault) ProductionPreview(ctx context.Context, actor, setID string,
+	revision, etag int64, request ProductionPreviewRequest) (ProductionPreviewBytes, error) {
+	v.lifecycle.RLock()
+	defer v.lifecycle.RUnlock()
+	if v.closed {
+		return ProductionPreviewBytes{}, ErrClosed
+	}
+	command := store.ProductionPreviewCommand{SetID: setID, Revision: revision, ETag: etag,
+		OperationID: request.OperationID, MemberID: request.MemberID, Page: request.Page}
+	var admitted store.ProductionPreviewAdmission
+	err := embeddedMutationGate{vault: v}.MutateContext(ctx, func() error {
+		var err error
+		admitted, err = v.metadata.AdmitProductionDraftPreview(ctx, actor, command)
+		return err
+	})
+	if err != nil {
+		return ProductionPreviewBytes{}, err
+	}
+	stageDir, err := os.MkdirTemp(v.vaultRoot, ".production-preview-")
+	if err != nil {
+		return ProductionPreviewBytes{}, err
+	}
+	defer func() { _ = os.RemoveAll(stageDir) }()
+	staged, err := processing.PrepareProductionDraftPreview(ctx, v.metadata, v.blobs,
+		stageDir, command.SetID, command.Revision, command.ETag, command.MemberID, command.Page)
+	if err != nil {
+		return ProductionPreviewBytes{}, err
+	}
+	defer func() { _ = staged.Close() }()
+	if staged.PreviewInputSHA256 != admitted.PreviewInputSHA256 {
+		return ProductionPreviewBytes{}, store.ErrProductionRevisionConflict
+	}
+	image, err := readVerifiedProductionPreviewBytes(staged.Image.File, staged.ImageSize, staged.ImageSHA256, 32<<20)
+	if err != nil {
+		return ProductionPreviewBytes{}, err
+	}
+	text, err := readVerifiedProductionPreviewBytes(staged.Text.File, staged.TextSize, staged.TextSHA256, 16<<20)
+	if err != nil {
+		return ProductionPreviewBytes{}, err
+	}
+	err = embeddedMutationGate{vault: v}.MutateContext(ctx, func() error {
+		current, err := v.metadata.CurrentProductionDraftPreviewInput(ctx, command)
+		if err != nil {
+			return err
+		}
+		if current != admitted.PreviewInputSHA256 {
+			return store.ErrProductionRevisionConflict
+		}
+		return nil
+	})
+	if err != nil {
+		return ProductionPreviewBytes{}, err
+	}
+	return ProductionPreviewBytes{PreviewInputSHA256: admitted.PreviewInputSHA256,
+		ResolvedSHA256: staged.ResolvedSHA256, Image: image, ImageSHA256: staged.ImageSHA256,
+		Text: text, TextSHA256: staged.TextSHA256}, nil
+}
+
+func readVerifiedProductionPreviewBytes(file *os.File, size int64, digest string, maxSize int64) ([]byte, error) {
+	if size < 0 || size > maxSize {
+		return nil, errors.New("production preview exceeds embedded response limit")
+	}
+	if _, err := file.Seek(0, io.SeekStart); err != nil {
+		return nil, err
+	}
+	data, err := io.ReadAll(io.LimitReader(file, size+1))
+	if err != nil {
+		return nil, err
+	}
+	sum := sha256.Sum256(data)
+	if int64(len(data)) != size || hex.EncodeToString(sum[:]) != digest {
+		return nil, errors.New("production preview staged bytes failed verification")
+	}
+	return data, nil
+}
+
+// The exclusive vault lock is held before this startup sweep runs. Interrupted
+// embedded previews leave only private, disposable stage directories.
+func sweepEmbeddedProductionPreviewStages(root string) error {
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		return err
+	}
+	for _, entry := range entries {
+		if entry.IsDir() && strings.HasPrefix(entry.Name(), ".production-preview-") {
+			if err := os.RemoveAll(filepath.Join(root, entry.Name())); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
 
 func (v *Vault) ProductionRecipes(ctx context.Context) (ProductionRecipeCatalog, error) {
 	v.lifecycle.RLock()

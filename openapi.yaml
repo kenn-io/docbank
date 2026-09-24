@@ -11463,6 +11463,82 @@ components:
       x-go-type-import:
         path: go.kenn.io/docbank/internal/api
         name: api
+    ProductionPreviewArtifactTicket:
+      additionalProperties: false
+      properties:
+        sha256:
+          type: string
+        size:
+          format: int64
+          type: integer
+        url:
+          type: string
+      required:
+        - url
+        - sha256
+        - size
+      type: object
+      x-go-type: api.ProductionPreviewArtifactTicket
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
+    ProductionPreviewRequest:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/ProductionPreviewRequest.json
+          format: uri
+          readOnly: true
+          type: string
+        member_id:
+          type: string
+        operation_id:
+          type: string
+        page:
+          format: int64
+          type: integer
+      required:
+        - operation_id
+        - member_id
+        - page
+      type: object
+      x-go-type: api.ProductionPreviewRequest
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
+    ProductionPreviewTicket:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/ProductionPreviewTicket.json
+          format: uri
+          readOnly: true
+          type: string
+        image:
+          $ref: "#/components/schemas/ProductionPreviewArtifactTicket"
+        operation_id:
+          type: string
+        preview_input_sha256:
+          type: string
+        resolved_sha256:
+          type: string
+        text:
+          $ref: "#/components/schemas/ProductionPreviewArtifactTicket"
+      required:
+        - operation_id
+        - preview_input_sha256
+        - resolved_sha256
+        - image
+        - text
+      type: object
+      x-go-type: api.ProductionPreviewTicket
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     ProductionReceipt:
       additionalProperties: false
       properties:
@@ -21339,6 +21415,47 @@ paths:
                 $ref: "#/components/schemas/Error"
           description: Error
       summary: Record one exact production member review binding
+  /api/v1/productions/sets/{set_id}/revisions/{revision}/previews:
+    post:
+      operationId: createProductionPreview
+      parameters:
+        - in: path
+          name: set_id
+          required: true
+          schema:
+            format: uuid
+            type: string
+        - in: path
+          name: revision
+          required: true
+          schema:
+            format: int64
+            minimum: 1
+            type: integer
+        - in: header
+          name: If-Match
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ProductionPreviewRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProductionPreviewTicket"
+          description: OK
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: Issue one-use tickets for a verified unnumbered production preview
   /api/v1/productions/sets/{set_id}/revisions/{revision}/resolve:
     post:
       operationId: resolveProductionSelection

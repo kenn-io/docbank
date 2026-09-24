@@ -250,6 +250,9 @@ func openVaultWithRootOpener(
 	if err := layout.Ensure(); err != nil {
 		return nil, err
 	}
+	if err := sweepEmbeddedProductionPreviewStages(layout.Root); err != nil {
+		return nil, err
+	}
 	metadata, err := store.Open(layout.DBPath(), config.SQLite)
 	if err != nil {
 		return nil, err

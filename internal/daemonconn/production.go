@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"net/url"
 	"strconv"
 
 	"go.kenn.io/docbank/document/redaction"
@@ -305,6 +306,50 @@ func (c *Connection) ResolveProductionSelection(ctx context.Context, setID strin
 		}
 	}
 	return *result, nil
+}
+
+// ProductionPreview issues fresh one-use tickets for an exact unnumbered
+// preview. The response carries verified image and sanitized text digests.
+func (c *Connection) ProductionPreview(ctx context.Context, setID string, revision, etag int64,
+	request api.ProductionPreviewRequest) (api.ProductionPreviewTicket, error) {
+	parsed, err := productionSetUUID(setID)
+	if err != nil || revision < 1 || etag < 1 || !validUUIDv4(request.OperationID) ||
+		!validUUIDv4(request.MemberID) || request.Page < 1 {
+		return api.ProductionPreviewTicket{}, errors.New("invalid production preview request")
+	}
+	header := strconv.FormatInt(etag, 10)
+	result, err := c.API().CreateProductionPreview(ctx, &apiclient.CreateProductionPreviewRequestOptions{
+		PathParams: &apiclient.CreateProductionPreviewPath{SetID: parsed, Revision: revision},
+		Header:     &apiclient.CreateProductionPreviewHeaders{IfMatch: &header}, Body: &request})
+	if err != nil {
+		return api.ProductionPreviewTicket{}, err
+	}
+	if result == nil || result.OperationID != request.OperationID ||
+		!canonical.IsSHA256Hex(result.PreviewInputSHA256) ||
+		!canonical.IsSHA256Hex(result.ResolvedSHA256) ||
+		!validProductionPreviewArtifactTicket(result.Image, 32<<20, false) ||
+		!validProductionPreviewArtifactTicket(result.Text, 16<<20, true) ||
+		result.Image.URL == result.Text.URL {
+		return api.ProductionPreviewTicket{}, integrityErrorf("production preview ticket is inconsistent")
+	}
+	return *result, nil
+}
+
+func validProductionPreviewArtifactTicket(ticket api.ProductionPreviewArtifactTicket, maxBytes int64, allowEmpty bool) bool {
+	if !canonical.IsSHA256Hex(ticket.SHA256) || ticket.Size > maxBytes ||
+		(ticket.Size < 1 && !allowEmpty || ticket.Size < 0) {
+		return false
+	}
+	parsed, err := url.Parse(ticket.URL)
+	if err != nil || parsed.Scheme != "" || parsed.Host != "" || parsed.Path != "/api/daemon/web-download/file" ||
+		parsed.Fragment != "" || parsed.RawQuery == "" {
+		return false
+	}
+	query, err := url.ParseQuery(parsed.RawQuery)
+	if err != nil {
+		return false
+	}
+	return len(query) == 1 && len(query["ticket"]) == 1 && len(query["ticket"][0]) == 43
 }
 
 // FinalizeProductionDraft gates and seals one exact reviewed revision without
