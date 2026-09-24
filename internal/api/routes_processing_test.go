@@ -421,6 +421,73 @@ func TestProcessingJobStreamPublishesDurableIdentityAndSurvivesDisconnect(t *tes
 	assertProcessingSurvivesDisconnect(t, ts, selector, provider.started, provider.release)
 }
 
+func TestScopedProcessingStreamRechecksGrantBeforePublishingCompletion(t *testing.T) {
+	now := time.Date(2026, 9, 22, 12, 0, 0, 0, time.UTC)
+	inner, err := plaintext.New(plaintext.Profile{MaxDocumentBytes: 1 << 20})
+	require.NoError(t, err)
+	provider := &blockingProcessingProvider{
+		inner: inner, started: make(chan struct{}), release: make(chan struct{}),
+	}
+	t.Cleanup(func() { closeProcessingSignal(provider.release) })
+	authority := &routeGrantAuthority{}
+	var node store.Node
+	var principal api.Principal
+	ts, _ := newTestServer(t, func(deps *api.Deps) {
+		configureProcessingTestServiceWithProvider(t, provider)(deps)
+		node = createPolicyFile(t, deps, "scoped-stream.txt", "synthetic scoped stream source")
+		principal = routePrincipal(now, node.CurrentVersionID)
+		principal.Operations = append(principal.Operations, api.OperationProcessing)
+		authority.set(principal)
+		deps.OperationPolicy = api.NewOperationPolicy(api.OperationPolicyOptions{
+			Authority: authority, Now: func() time.Time { return now },
+		})
+		deps.AuthenticatePrincipal = policyRouteAuthenticator(&principal)
+	})
+	headers := policyRouteHeaders()
+	selector := api.ProcessingSelector{
+		NodeID: node.ID, ContentVersionID: node.CurrentVersionID, Profile: "private",
+	}
+	planResponse, planBody := do(t, ts, http.MethodPost, "/api/v1/processing/plans", headers,
+		map[string]any{"selector": selector})
+	require.Equal(t, http.StatusOK, planResponse.StatusCode, planBody)
+	var plan api.ProcessingPlan
+	require.NoError(t, json.Unmarshal([]byte(planBody), &plan))
+	payload, err := json.Marshal(api.StartProcessingRequest{
+		Selector: selector, PlanFingerprint: plan.Fingerprint, Consent: true,
+	})
+	require.NoError(t, err)
+	request, err := http.NewRequest(http.MethodPost, ts.URL+"/api/v1/processing/jobs", bytes.NewReader(payload))
+	require.NoError(t, err)
+	request.Header.Set("Content-Type", "application/json")
+	for key, value := range headers {
+		request.Header.Set(key, value)
+	}
+	response, err := ts.Client().Do(request)
+	require.NoError(t, err)
+	defer func() { _ = response.Body.Close() }()
+	require.Equal(t, http.StatusOK, response.StatusCode)
+	scanner := bufio.NewScanner(response.Body)
+	require.True(t, scanner.Scan())
+	var first api.ProcessingJobEvent
+	require.NoError(t, json.Unmarshal(scanner.Bytes(), &first))
+	require.NotNil(t, first.Job)
+	select {
+	case <-provider.started:
+	case <-time.After(3 * time.Second):
+		t.Fatal("processing provider did not start")
+	}
+
+	authority.mutate(func(grant *api.Principal) { grant.GrantRevision++ })
+	closeProcessingSignal(provider.release)
+	require.True(t, scanner.Scan())
+	var terminal api.ProcessingJobEvent
+	require.NoError(t, json.Unmarshal(scanner.Bytes(), &terminal))
+	assert.True(t, terminal.Terminal)
+	assert.Equal(t, "error", terminal.Type)
+	assert.Nil(t, terminal.Status, "a revoked caller must not receive terminal job status")
+	require.NoError(t, scanner.Err())
+}
+
 func TestEmbeddingOnlyJobSurvivesDisconnectAfterDurableIdentity(t *testing.T) {
 	inner := newProcessingTestEmbeddingProvider(t)
 	provider := &blockingProcessingEmbeddingProvider{

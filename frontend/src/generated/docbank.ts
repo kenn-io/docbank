@@ -834,6 +834,17 @@ export interface CancelExportJobRequest {
   readonly $schema?: string;
 }
 
+export type CapabilitiesLimits = {[key: string]: number};
+
+export interface Capabilities {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  api_version: string;
+  limits: CapabilitiesLimits;
+  operations: string[];
+  vault_uid: string;
+}
+
 export interface CapabilityStateV1 {
   evidence: string;
   note: string;
@@ -4974,6 +4985,44 @@ export interface SavedQueryRunResult {
   snapshot: WorkspaceQueryResponse;
 }
 
+export type ScopedDocumentQueryDirection = typeof ScopedDocumentQueryDirection[keyof typeof ScopedDocumentQueryDirection];
+
+
+export const ScopedDocumentQueryDirection = {
+  asc: 'asc',
+  desc: 'desc',
+} as const;
+
+export type ScopedDocumentQuerySort = typeof ScopedDocumentQuerySort[keyof typeof ScopedDocumentQuerySort];
+
+
+export const ScopedDocumentQuerySort = {
+  path: 'path',
+  name: 'name',
+  modified_at: 'modified_at',
+  size: 'size',
+  media_type: 'media_type',
+} as const;
+
+export interface ScopedDocumentQuery {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  /**
+     * @minItems 1
+     * @maxItems 4096
+     */
+  content_version_ids: string[];
+  cursor?: string;
+  direction?: ScopedDocumentQueryDirection;
+  /**
+     * @minimum 1
+     * @maximum 250
+     */
+  page_size?: number;
+  path_prefix?: string;
+  sort?: ScopedDocumentQuerySort;
+}
+
 export interface SealExportSourceRequest {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
@@ -7141,6 +7190,30 @@ return sessionJSON<BatchTagPreview>(getPreviewBatchTagsUrl(),
 
 
 
+export const getReadCapabilitiesUrl = () => {
+
+
+
+
+  return `/api/v1/capabilities`
+}
+
+/**
+ * @summary Negotiate remote daemon capabilities
+ */
+export const readCapabilities = async ( options?: Parameters<typeof sessionJSON>[1]): Promise<Capabilities> => {
+
+  return sessionJSON<Capabilities>(getReadCapabilitiesUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
 export const getListCollectionsUrl = (params?: ListCollectionsParams,) => {
   const normalizedParams = new URLSearchParams();
 
@@ -7540,6 +7613,44 @@ return sessionJSON<DocumentSummaryResolveResponse>(getResolveDocumentSummariesUr
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
     body: JSON.stringify(documentSummaryResolveRequest)
+  }
+);}
+
+
+
+export const getListScopedDocumentsUrl = () => {
+
+
+
+
+  return `/api/v1/documents/scoped`
+}
+
+/**
+ * @summary List source-fenced live documents with authenticated keyset pagination
+ */
+export const listScopedDocuments = async (scopedDocumentQuery: NonReadonly<ScopedDocumentQuery>, options?: Parameters<typeof sessionJSON>[1]): Promise<DocumentPage> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return sessionJSON<DocumentPage>(getListScopedDocumentsUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(scopedDocumentQuery)
   }
 );}
 

@@ -18,7 +18,9 @@ import (
 	kitdaemon "go.kenn.io/kit/daemon"
 
 	"go.kenn.io/docbank/document"
+	"go.kenn.io/docbank/document/agentops"
 	"go.kenn.io/docbank/document/pagerender"
+	"go.kenn.io/docbank/internal/agentapi"
 	"go.kenn.io/docbank/internal/blob"
 	"go.kenn.io/docbank/internal/config"
 	"go.kenn.io/docbank/internal/daemonauth"
@@ -74,6 +76,8 @@ type Deps struct {
 	WebURL                string           // fresh per-daemon loopback origin; empty disables browser sessions
 	BlobRegistry          *blob.Registry   // nil keeps storage-registry routes read-only to the primary
 	Processing            *processing.Service
+	OperationPolicy       *OperationPolicy
+	AuthenticatePrincipal PrincipalAuthenticator
 	RequestEmailPDF       func(context.Context, document.EmailPDFRequest) (document.EmailPDFJob, error)
 	PublishEmailDocuments PublishEmailDocumentsFunc
 
@@ -123,6 +127,9 @@ func NewServer(d Deps) *Server {
 	}
 	if d.StartedAt.IsZero() {
 		d.StartedAt = time.Now()
+	}
+	if d.OperationPolicy == nil {
+		d.OperationPolicy = NewOperationPolicy(OperationPolicyOptions{})
 	}
 	mux := http.NewServeMux()
 	cfg := huma.DefaultConfig("docbank", version.Version)
@@ -199,6 +206,7 @@ func NewServer(d Deps) *Server {
 	registerDuplicateRoutes(humaAPI, d)
 	registerDocumentQueryRoute(humaAPI, newDocumentQueryService(d))
 	registerInfoRoute(humaAPI, d)
+	RegisterCapabilitiesRoute(humaAPI, d)
 	registerFormatRoutes(humaAPI, d)
 	registerMutateRoutes(humaAPI, d, g) // Task 6
 	registerOpsRoutes(humaAPI, d, g)    // Task 7
@@ -243,7 +251,11 @@ func NewServer(d Deps) *Server {
 	registerWebDownload(mux, d.Cfg.Web.Enabled, d, s.webDownloads, s.webSessions, s.termReports)
 
 	h := http.Handler(mux)
-	h = authMiddleware(h, d.Cfg.Server.APIKey, s.webSessions, s.masterOwner)
+	registry, err := agentapi.New(agentops.CurrentRoutes(), agentops.CurrentOperations())
+	if err != nil {
+		panic("api: invalid agent route registry: " + err.Error())
+	}
+	h = authMiddlewareWithRegistry(h, d.Cfg.Server.APIKey, s.webSessions, s.masterOwner, d.AuthenticatePrincipal, registry)
 	h = loopbackMiddleware(h)
 	h = timeoutMiddleware(h)
 	h = recoverMiddleware(h, d.Logger)
