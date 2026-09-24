@@ -74,6 +74,38 @@ func (c *Connection) ProductionSet(ctx context.Context, setID string) (redaction
 	return *result, nil
 }
 
+func (c *Connection) ProductionSets(ctx context.Context, cursor string, limit int) (api.ProductionSetPage, error) {
+	if len(cursor) > 2048 || limit < 0 || limit > redaction.MaxProductionPage {
+		return api.ProductionSetPage{}, errors.New("invalid production set page")
+	}
+	query := &apiclient.ListProductionSetsQuery{}
+	if cursor != "" {
+		query.Cursor = &cursor
+	}
+	if limit != 0 {
+		bounded := int64(limit)
+		query.Limit = &bounded
+	} else {
+		limit = 100
+	}
+	result, err := c.API().ListProductionSets(ctx, &apiclient.ListProductionSetsRequestOptions{Query: query})
+	if err != nil {
+		return api.ProductionSetPage{}, err
+	}
+	if result == nil || len(result.Items) > limit || len(result.NextCursor) > 2048 ||
+		result.NextCursor != "" && (len(result.Items) != limit || result.NextCursor == cursor) {
+		return api.ProductionSetPage{}, integrityErrorf("production set page is inconsistent")
+	}
+	previous := ""
+	for _, set := range result.Items {
+		if redaction.ValidateSet(set) != nil || set.ID <= previous {
+			return api.ProductionSetPage{}, integrityErrorf("production set page contains invalid authority")
+		}
+		previous = set.ID
+	}
+	return *result, nil
+}
+
 func (c *Connection) ProductionDraft(ctx context.Context, setID string, revision int64) (redaction.Draft, error) {
 	parsed, err := productionSetUUID(setID)
 	if err != nil || revision < 1 {

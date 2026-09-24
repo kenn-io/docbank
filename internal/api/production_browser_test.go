@@ -14,6 +14,7 @@ func TestProductionSetBrowserAllowlist(t *testing.T) {
 	for _, route := range []struct{ method, path string }{
 		{http.MethodGet, "/api/v1/productions/recipes"},
 		{http.MethodPost, "/api/v1/productions/sets"},
+		{http.MethodGet, "/api/v1/productions/sets?limit=1"},
 		{http.MethodGet, base},
 		{http.MethodGet, base + "/revisions/1"},
 		{http.MethodGet, base + "/revisions/1/members?limit=1"},
@@ -29,6 +30,8 @@ func TestProductionSetBrowserAllowlist(t *testing.T) {
 	for _, route := range []struct{ method, path string }{
 		{http.MethodGet, "/api/v1/productions/recipes?unexpected=1"},
 		{http.MethodPost, "/api/v1/productions/sets?unexpected=1"},
+		{http.MethodGet, "/api/v1/productions/sets?limit=201"},
+		{http.MethodGet, "/api/v1/productions/sets?unexpected=1"},
 		{http.MethodPost, base},
 		{http.MethodGet, base + "/revisions/0"},
 		{http.MethodGet, base + "/revisions/1/jobs"},

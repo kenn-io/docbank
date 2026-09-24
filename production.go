@@ -9,6 +9,7 @@ import (
 
 type ProductionMemberPage = api.ProductionMemberPage
 type ProductionDecisionPage = api.ProductionDecisionPage
+type ProductionSetPage = api.ProductionSetPage
 type ProductionRecipeCatalog = api.ProductionRecipeCatalog
 
 func (v *Vault) ProductionRecipes(ctx context.Context) (ProductionRecipeCatalog, error) {
@@ -45,6 +46,22 @@ func (v *Vault) ProductionSet(ctx context.Context, setID string) (redaction.Set,
 		return redaction.Set{}, ErrClosed
 	}
 	return v.metadata.ProductionSet(ctx, setID)
+}
+
+func (v *Vault) ProductionSets(ctx context.Context, cursor string, limit int) (ProductionSetPage, error) {
+	v.lifecycle.RLock()
+	defer v.lifecycle.RUnlock()
+	if v.closed {
+		return ProductionSetPage{}, ErrClosed
+	}
+	if limit == 0 {
+		limit = 100
+	}
+	items, next, err := v.metadata.ListProductionSets(ctx, cursor, limit)
+	if err != nil {
+		return ProductionSetPage{}, err
+	}
+	return ProductionSetPage{Items: items, NextCursor: next}, nil
 }
 
 func (v *Vault) ProductionDraft(ctx context.Context, setID string, revision int64) (redaction.Draft, error) {

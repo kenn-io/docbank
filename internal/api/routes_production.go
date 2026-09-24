@@ -56,6 +56,11 @@ type ProductionSetCreated struct {
 	Draft redaction.Draft `json:"draft"`
 }
 
+type ProductionSetPage struct {
+	Items      []redaction.Set `json:"items"`
+	NextCursor string          `json:"next_cursor"`
+}
+
 // ProductionMember gives this wire shape a distinct OpenAPI component name.
 type ProductionMember redaction.Member
 
@@ -201,6 +206,22 @@ func registerProductionRoutes(api huma.API, d Deps, g *OperationGate) {
 				return nil, productionSetError(err)
 			}
 			return &struct{ Body ProductionSetCreated }{Body: ProductionSetCreated{Set: set, Draft: draft}}, nil
+		})
+	huma.Register(api, huma.Operation{OperationID: "listProductionSets", Method: http.MethodGet,
+		Path: "/api/v1/productions/sets", Summary: "Page retained production sets"},
+		func(ctx context.Context, in *struct {
+			Cursor string `query:"cursor" maxLength:"2048"`
+			Limit  int    `query:"limit" minimum:"0" maximum:"200"`
+		}) (*struct{ Body ProductionSetPage }, error) {
+			limit := in.Limit
+			if limit == 0 {
+				limit = 100
+			}
+			items, next, err := d.Store.ListProductionSets(ctx, in.Cursor, limit)
+			if err != nil {
+				return nil, productionSetError(err)
+			}
+			return &struct{ Body ProductionSetPage }{Body: ProductionSetPage{Items: items, NextCursor: next}}, nil
 		})
 	huma.Register(api, huma.Operation{OperationID: "getProductionSet", Method: http.MethodGet,
 		Path: "/api/v1/productions/sets/{set_id}", Summary: "Read a production set"},

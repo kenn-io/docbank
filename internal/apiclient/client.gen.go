@@ -8182,6 +8182,58 @@ func (c *Client) ListProductionRecipes(ctx context.Context, reqEditors ...runtim
 	return responseParser(ctx, resp)
 }
 
+// ListProductionSets Page retained production sets
+func (c *Client) ListProductionSets(ctx context.Context, options *ListProductionSetsRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ListProductionSetsResponse, error) {
+	var err error
+
+	queryEncoding := map[string]runtime.QueryEncoding{
+		"cursor": {Style: "form", Explode: &[]bool{false}[0]},
+		"limit":  {Style: "form", Explode: &[]bool{false}[0]},
+	}
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:    c.apiClient.GetBaseURL() + "/api/v1/productions/sets",
+		Method:        "GET",
+		Options:       options,
+		QueryEncoding: queryEncoding,
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*ListProductionSetsResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(ListProductionSetsResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "ListProductionSetsResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[ListProductionSetsErrorResponse](resp, "ListProductionSetsErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/productions/sets")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
 // CreateProductionSet Create an idempotent production set and first draft
 func (c *Client) CreateProductionSet(ctx context.Context, options *CreateProductionSetRequestOptions, reqEditors ...runtime.RequestEditorFn) (*CreateProductionSetResponse, error) {
 	var err error
@@ -16588,6 +16640,37 @@ func (o *FindProductionNumberCandidatesRequestOptions) GetHeader() (map[string]s
 	return nil, nil
 }
 
+// ListProductionSetsRequestOptions is the options needed to make a request to ListProductionSets.
+type ListProductionSetsRequestOptions struct {
+	Query *ListProductionSetsQuery
+}
+
+// GetPathParams returns the path params as a map.
+func (o *ListProductionSetsRequestOptions) GetPathParams() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetQuery returns the query params as a map.
+func (o *ListProductionSetsRequestOptions) GetQuery() (map[string]any, error) {
+	encoded, err := json.Marshal(o.Query, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *ListProductionSetsRequestOptions) GetBody() any {
+	return nil
+}
+
+// GetHeader returns the headers as a map.
+func (o *ListProductionSetsRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
 // CreateProductionSetRequestOptions is the options needed to make a request to CreateProductionSet.
 type CreateProductionSetRequestOptions struct {
 	Body *CreateProductionSetBody
@@ -19835,6 +19918,11 @@ type FindProductionNumberCandidatesQuery struct {
 	Limit *int64  `json:"limit,omitempty"`
 }
 
+type ListProductionSetsQuery struct {
+	Cursor *string `json:"cursor,omitempty"`
+	Limit  *int64  `json:"limit,omitempty"`
+}
+
 type ListProductionDecisionsQuery struct {
 	Cursor *string `json:"cursor,omitempty"`
 	Limit  *int64  `json:"limit,omitempty"`
@@ -20653,6 +20741,10 @@ type FindProductionNumberCandidatesErrorResponse = Error
 type ListProductionRecipesResponse = api.ProductionRecipeCatalog
 
 type ListProductionRecipesErrorResponse = Error
+
+type ListProductionSetsResponse = api.ProductionSetPage
+
+type ListProductionSetsErrorResponse = Error
 
 type CreateProductionSetResponse = api.ProductionSetCreated
 
@@ -21758,6 +21850,8 @@ type ProductionRecipeCatalog = api.ProductionRecipeCatalog
 type ProductionRecipeOption = api.ProductionRecipeOption
 
 type ProductionSetCreated = api.ProductionSetCreated
+
+type ProductionSetPage = api.ProductionSetPage
 
 type ProvenanceAppendReceipt = api.ProvenanceAppendReceipt
 

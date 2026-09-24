@@ -29,7 +29,8 @@ func productionPackageBrowserRequestAllowed(r *http.Request) bool {
 func productionSetBrowserRequestAllowed(r *http.Request) bool {
 	const base = "/api/v1/productions/sets"
 	if r.URL.Path == base {
-		return r.Method == http.MethodPost && r.URL.RawQuery == ""
+		return r.Method == http.MethodPost && r.URL.RawQuery == "" ||
+			r.Method == http.MethodGet && productionPageQueryAllowed(r.URL.RawQuery, 2048)
 	}
 	after, ok := strings.CutPrefix(r.URL.Path, base+"/")
 	if !ok {
@@ -66,10 +67,14 @@ func productionSetBrowserRequestAllowed(r *http.Request) bool {
 		parts[3] != "members" && parts[3] != "decisions" {
 		return false
 	}
-	if r.URL.RawQuery == "" {
+	return productionPageQueryAllowed(r.URL.RawQuery, 4096)
+}
+
+func productionPageQueryAllowed(raw string, maxCursor int) bool {
+	if raw == "" {
 		return true
 	}
-	values, err := url.ParseQuery(r.URL.RawQuery)
+	values, err := url.ParseQuery(raw)
 	if err != nil || len(values) > 2 {
 		return false
 	}
@@ -79,7 +84,7 @@ func productionSetBrowserRequestAllowed(r *http.Request) bool {
 		}
 		switch key {
 		case "cursor":
-			if len(entries[0]) > 4096 {
+			if len(entries[0]) > maxCursor {
 				return false
 			}
 		case packageLimitParameter:
