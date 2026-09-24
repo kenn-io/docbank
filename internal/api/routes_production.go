@@ -2,13 +2,54 @@ package api
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"net/http"
 
 	"github.com/danielgtaylor/huma/v2"
 	"go.kenn.io/docbank/document/redaction"
+	"go.kenn.io/docbank/internal/canonical"
+	"go.kenn.io/docbank/internal/pdfproduction"
 	"go.kenn.io/docbank/internal/store"
 )
+
+// ProductionRecipe has a distinct OpenAPI name for the qualified renderer contract.
+type ProductionRecipe redaction.Recipe
+
+type ProductionRecipeOption struct {
+	ID     string           `json:"id"`
+	SHA256 string           `json:"sha256"`
+	Recipe ProductionRecipe `json:"recipe"`
+}
+
+type ProductionRecipeCatalog struct {
+	DefaultID string                   `json:"default_id"`
+	Items     []ProductionRecipeOption `json:"items"`
+}
+
+// QualifiedProductionRecipes reads the two renderer recipes built into this release.
+func QualifiedProductionRecipes() (ProductionRecipeCatalog, error) {
+	result := ProductionRecipeCatalog{DefaultID: redaction.DefaultRecipeID,
+		Items: make([]ProductionRecipeOption, 0, 2)}
+	for _, choice := range []struct {
+		id  string
+		dpi int
+	}{{redaction.RecipeID300DPI, 300}, {redaction.RecipeID600DPI, 600}} {
+		recipe, err := pdfproduction.QualifiedRecipeForDPI(choice.dpi)
+		if err != nil {
+			return ProductionRecipeCatalog{}, err
+		}
+		encoded, err := canonical.Marshal(recipe)
+		if err != nil {
+			return ProductionRecipeCatalog{}, err
+		}
+		digest := sha256.Sum256(encoded)
+		result.Items = append(result.Items, ProductionRecipeOption{ID: choice.id,
+			SHA256: hex.EncodeToString(digest[:]), Recipe: ProductionRecipe(recipe)})
+	}
+	return result, nil
+}
 
 type ProductionSetCreated struct {
 	Set   redaction.Set   `json:"set"`
@@ -105,6 +146,16 @@ func productionSetError(err error) error {
 }
 
 func registerProductionRoutes(api huma.API, d Deps, g *OperationGate) {
+	huma.Register(api, huma.Operation{OperationID: "listProductionRecipes", Method: http.MethodGet,
+		Path: "/api/v1/productions/recipes", Summary: "List qualified production rendering recipes"},
+		func(ctx context.Context, in *struct{}) (*struct{ Body ProductionRecipeCatalog }, error) {
+			catalog, err := QualifiedProductionRecipes()
+			if err != nil {
+				return nil, NewError(http.StatusInternalServerError, "production_catalog_unavailable",
+					"qualified production recipes are unavailable")
+			}
+			return &struct{ Body ProductionRecipeCatalog }{Body: catalog}, nil
+		})
 	huma.Register(api, huma.Operation{OperationID: "createProductionSet", Method: http.MethodPost,
 		Path: "/api/v1/productions/sets", Summary: "Create an idempotent production set and first draft",
 		DefaultStatus: http.StatusCreated, MaxBodyBytes: redaction.MaxCommandBytes},

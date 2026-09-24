@@ -7,6 +7,11 @@ import (
 	"strings"
 )
 
+func productionRecipeBrowserRequestAllowed(r *http.Request) bool {
+	return r.Method == http.MethodGet && r.URL.Path == "/api/v1/productions/recipes" &&
+		r.URL.RawQuery == ""
+}
+
 // Browser sessions may request only the verified, one-use package handoff.
 func productionPackageBrowserRequestAllowed(r *http.Request) bool {
 	if r.Method != http.MethodPost || r.URL.RawQuery != "" {

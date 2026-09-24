@@ -11172,6 +11172,101 @@ components:
       x-go-type-import:
         path: go.kenn.io/docbank/internal/api
         name: api
+    ProductionRecipe:
+      additionalProperties: false
+      properties:
+        contract:
+          type: string
+        dpi:
+          format: int64
+          type: integer
+        font_sha256:
+          type: string
+        max_axis:
+          format: int64
+          type: integer
+        max_pixels:
+          format: int64
+          type: integer
+        max_staging_bytes:
+          format: int64
+          type: integer
+        padding_pixels:
+          format: int64
+          type: integer
+        page_timeout_seconds:
+          format: int64
+          type: integer
+        qualified_peak_rss_bytes:
+          format: int64
+          type: integer
+        renderer_sha256:
+          type: string
+        wasm_memory_bytes:
+          format: int64
+          type: integer
+        writer_version:
+          type: string
+      required:
+        - contract
+        - renderer_sha256
+        - writer_version
+        - font_sha256
+        - dpi
+        - padding_pixels
+        - max_pixels
+        - max_axis
+        - wasm_memory_bytes
+        - page_timeout_seconds
+        - qualified_peak_rss_bytes
+        - max_staging_bytes
+      type: object
+      x-go-type: api.ProductionRecipe
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
+    ProductionRecipeCatalog:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/ProductionRecipeCatalog.json
+          format: uri
+          readOnly: true
+          type: string
+        default_id:
+          type: string
+        items:
+          items:
+            $ref: "#/components/schemas/ProductionRecipeOption"
+          type: array
+      required:
+        - default_id
+        - items
+      type: object
+      x-go-type: api.ProductionRecipeCatalog
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
+    ProductionRecipeOption:
+      additionalProperties: false
+      properties:
+        id:
+          type: string
+        recipe:
+          $ref: "#/components/schemas/ProductionRecipe"
+        sha256:
+          type: string
+      required:
+        - id
+        - sha256
+        - recipe
+      type: object
+      x-go-type: api.ProductionRecipeOption
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     ProductionSetCreated:
       additionalProperties: false
       properties:
@@ -20148,6 +20243,23 @@ paths:
                 $ref: "#/components/schemas/Error"
           description: Error
       summary: Find exact or ranged published production numbers
+  /api/v1/productions/recipes:
+    get:
+      operationId: listProductionRecipes
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProductionRecipeCatalog"
+          description: OK
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: List qualified production rendering recipes
   /api/v1/productions/sets:
     post:
       operationId: createProductionSet

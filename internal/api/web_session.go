@@ -280,6 +280,9 @@ func webSessionRequestAllowed(r *http.Request) bool {
 	if productionSetBrowserRequestAllowed(r) {
 		return true
 	}
+	if productionRecipeBrowserRequestAllowed(r) {
+		return true
+	}
 	if path == "/api/v1/saved-queries" {
 		return method == http.MethodGet ||
 			(method == http.MethodPost && r.URL.RawQuery == "")

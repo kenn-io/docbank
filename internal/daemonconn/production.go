@@ -2,6 +2,8 @@ package daemonconn
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"strconv"
@@ -9,8 +11,37 @@ import (
 	"go.kenn.io/docbank/document/redaction"
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/apiclient"
+	"go.kenn.io/docbank/internal/canonical"
 	"uuid"
 )
+
+func (c *Connection) ProductionRecipes(ctx context.Context) (api.ProductionRecipeCatalog, error) {
+	catalog, err := c.API().ListProductionRecipes(ctx)
+	if err != nil {
+		return api.ProductionRecipeCatalog{}, err
+	}
+	if catalog == nil || catalog.DefaultID != redaction.DefaultRecipeID || len(catalog.Items) != 2 {
+		return api.ProductionRecipeCatalog{}, integrityErrorf("production recipe catalog is inconsistent")
+	}
+	for index, expected := range []struct {
+		id  string
+		dpi int
+	}{{redaction.RecipeID300DPI, 300}, {redaction.RecipeID600DPI, 600}} {
+		item := catalog.Items[index]
+		if item.ID != expected.id || item.Recipe.DPI != expected.dpi {
+			return api.ProductionRecipeCatalog{}, integrityErrorf("production recipe choice is inconsistent")
+		}
+		encoded, err := canonical.Marshal(redaction.Recipe(item.Recipe))
+		if err != nil {
+			return api.ProductionRecipeCatalog{}, integrityErrorf("production recipe cannot be verified")
+		}
+		digest := sha256.Sum256(encoded)
+		if item.SHA256 != hex.EncodeToString(digest[:]) {
+			return api.ProductionRecipeCatalog{}, integrityErrorf("production recipe digest is inconsistent")
+		}
+	}
+	return *catalog, nil
+}
 
 func (c *Connection) CreateProductionSet(ctx context.Context, request redaction.CreateRequest) (api.ProductionSetCreated, error) {
 	if err := redaction.ValidateCreateRequest(request); err != nil {

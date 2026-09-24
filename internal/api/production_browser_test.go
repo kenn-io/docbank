@@ -12,6 +12,7 @@ func TestProductionSetBrowserAllowlist(t *testing.T) {
 	const setID = "88888888-8888-4888-8888-888888888888"
 	base := "/api/v1/productions/sets/" + setID
 	for _, route := range []struct{ method, path string }{
+		{http.MethodGet, "/api/v1/productions/recipes"},
 		{http.MethodPost, "/api/v1/productions/sets"},
 		{http.MethodGet, base},
 		{http.MethodGet, base + "/revisions/1"},
@@ -23,6 +24,7 @@ func TestProductionSetBrowserAllowlist(t *testing.T) {
 		require.True(t, webSessionRequestAllowed(httptest.NewRequest(route.method, route.path, nil)), route.path)
 	}
 	for _, route := range []struct{ method, path string }{
+		{http.MethodGet, "/api/v1/productions/recipes?unexpected=1"},
 		{http.MethodPost, "/api/v1/productions/sets?unexpected=1"},
 		{http.MethodPost, base},
 		{http.MethodGet, base + "/revisions/0"},

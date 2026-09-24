@@ -9,6 +9,16 @@ import (
 
 type ProductionMemberPage = api.ProductionMemberPage
 type ProductionDecisionPage = api.ProductionDecisionPage
+type ProductionRecipeCatalog = api.ProductionRecipeCatalog
+
+func (v *Vault) ProductionRecipes(ctx context.Context) (ProductionRecipeCatalog, error) {
+	v.lifecycle.RLock()
+	defer v.lifecycle.RUnlock()
+	if v.closed {
+		return ProductionRecipeCatalog{}, ErrClosed
+	}
+	return api.QualifiedProductionRecipes()
+}
 
 // CreateProductionSet creates an idempotent first draft in this embedded vault.
 // Actor is the embedding application's authenticated principal.
