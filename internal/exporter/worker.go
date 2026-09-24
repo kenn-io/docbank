@@ -28,6 +28,7 @@ type Worker struct {
 	gate         Gate
 	dir          string
 	run          sync.Mutex
+	packageMu    sync.RWMutex
 	mu           sync.Mutex
 	leases       map[string]int
 	activeMu     sync.Mutex
@@ -65,11 +66,46 @@ func (w *Worker) Run(ctx context.Context) error {
 	if err := w.retryCatalogMutation(ctx, func() error { return w.catalog.RequeueExportJobs(ctx) }); err != nil {
 		return err
 	}
+	if err := w.cleanupAbandonedArchives(ctx); err != nil {
+		return err
+	}
+	for {
+		if err := w.Cleanup(ctx); err != nil {
+			return err
+		}
+		processed, err := w.RunOne(ctx)
+		if err != nil {
+			return err
+		}
+		if !processed {
+			timer := time.NewTimer(time.Second)
+			select {
+			case <-ctx.Done():
+				timer.Stop()
+				return ctx.Err()
+			case <-timer.C:
+			}
+		}
+	}
+}
+
+func (w *Worker) cleanupAbandonedArchives(ctx context.Context) error {
+	w.packageMu.Lock()
+	defer w.packageMu.Unlock()
 	files, err := os.ReadDir(w.dir)
 	if err != nil {
 		return err
 	}
 	for _, file := range files {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if strings.HasPrefix(file.Name(), ".production-package-") {
+			if err := os.RemoveAll(filepath.Join(w.dir, file.Name())); err != nil {
+				return err
+			}
+			continue
+		}
 		remove := strings.HasPrefix(file.Name(), ".export-")
 		if id, ok := strings.CutSuffix(file.Name(), ".zip"); ok {
 			if parsed, e := uuid.Parse(id); e == nil && parsed.String() == id {
@@ -91,24 +127,7 @@ func (w *Worker) Run(ctx context.Context) error {
 			}
 		}
 	}
-	for {
-		if err = w.Cleanup(ctx); err != nil {
-			return err
-		}
-		processed, err := w.RunOne(ctx)
-		if err != nil {
-			return err
-		}
-		if !processed {
-			timer := time.NewTimer(time.Second)
-			select {
-			case <-ctx.Done():
-				timer.Stop()
-				return ctx.Err()
-			case <-timer.C:
-			}
-		}
-	}
+	return nil
 }
 
 func (w *Worker) retryCatalog(ctx context.Context, operation func() error) error {
