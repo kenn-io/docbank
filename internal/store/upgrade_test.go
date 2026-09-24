@@ -399,21 +399,24 @@ func TestOpenAcceptsCurrentSchemaColumnAddedToEmbeddedSchema(t *testing.T) {
 	originalSchema := schemaSQL
 	t.Cleanup(func() { schemaSQL = originalSchema })
 
-	for _, table := range currentSchemaTables {
-		for _, test := range v090UpgradeDrivers() {
-			t.Run(table+"/"+test.name, func(t *testing.T) {
-				schemaSQL = schemaSQLWithAddedColumn(t, originalSchema, table, "synthetic_schema_269")
+	// One schema that widens every table covers each table's layout check in a single open.
+	for _, test := range v090UpgradeDrivers() {
+		t.Run(test.name, func(t *testing.T) {
+			schema := originalSchema
+			for _, table := range currentSchemaTables {
+				schema = schemaSQLWithAddedColumn(t, schema, table, "synthetic_schema_269")
+			}
+			schemaSQL = schema
 
-				dbPath := filepath.Join(t.TempDir(), "docbank.db")
-				s, err := Open(dbPath, test.driver)
-				require.NoError(t, err)
-				require.NoError(t, s.Close())
+			dbPath := filepath.Join(t.TempDir(), "docbank.db")
+			s, err := Open(dbPath, test.driver)
+			require.NoError(t, err)
+			require.NoError(t, s.Close())
 
-				reopened, err := Open(dbPath, test.driver)
-				require.NoError(t, err)
-				require.NoError(t, reopened.Close())
-			})
-		}
+			reopened, err := Open(dbPath, test.driver)
+			require.NoError(t, err)
+			require.NoError(t, reopened.Close())
+		})
 	}
 }
 
