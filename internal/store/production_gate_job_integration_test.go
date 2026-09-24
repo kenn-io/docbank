@@ -138,7 +138,15 @@ func TestProductionFinalizationRejectsChangedRevisionAndSnapshotBeforeNumbering(
 
 func productionDuplicateGateFixture(t *testing.T) (*Store, redaction.Member, redaction.Member, string, int64, documentproduction.PreparedInputAuthority) {
 	t.Helper()
-	s, source := seedProductionGateAuthority(t)
+	return productionDuplicateGateFixtureWithPDF(t, []byte("synthetic derived PDF"),
+		redaction.Box{X0: 1, Y0: 1, X1: 2, Y1: 2})
+}
+
+func productionDuplicateGateFixtureWithPDF(t *testing.T, pdfBytes []byte,
+	atomBox redaction.Box) (*Store, redaction.Member, redaction.Member, string, int64,
+	documentproduction.PreparedInputAuthority) {
+	t.Helper()
+	s, source := seedProductionGateAuthorityWithPDF(t, pdfBytes, atomBox)
 	first, second := source, source
 	first.ID, first.Ordinal = "75000000-0000-4000-8000-000000000010", 1
 	second.ID, second.Ordinal = "75000000-0000-4000-8000-000000000011", 2
