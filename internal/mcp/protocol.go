@@ -26,9 +26,10 @@ const (
 
 // Server owns the Docbank ingress gate and the SDK server behind it.
 type Server struct {
-	sdk    *sdkmcp.Server
-	daemon *daemonLease
-	plans  *processingPlanRegistry
+	sdk     *sdkmcp.Server
+	daemon  *daemonLease
+	plans   *processingPlanRegistry
+	reports *reportHandleSigner
 }
 
 // ServerOptions fixes process-wide capabilities before the MCP server starts.
@@ -81,13 +82,13 @@ func newServerWithOptionsAndDaemon(
 		Instructions: catalogInstructions(options.AllowProcessing, options.AllowPackageWrites),
 	})
 	plans := newProcessingPlanRegistry()
-	registerToolCatalog(sdk, options.AllowProcessing, options.AllowPackageWrites, daemon, plans, logger)
+	reports := registerToolCatalog(sdk, options.AllowProcessing, options.AllowPackageWrites, daemon, plans, logger)
 	registerResourceSurface(sdk, daemon, logger)
 	sdk.AddReceivingMiddleware(normalizeDiscovery)
 	sdk.AddReceivingMiddleware(normalizeToolCatalog)
 	sdk.AddReceivingMiddleware(normalizeResourceCatalogs)
 	sdk.AddReceivingMiddleware(enforcePrivateResultCap(implementation, logger))
-	return &Server{sdk: sdk, daemon: daemon, plans: plans}
+	return &Server{sdk: sdk, daemon: daemon, plans: plans, reports: reports}
 }
 
 func enforcePrivateResultCap(implementation *sdkmcp.Implementation, logger *slog.Logger) sdkmcp.Middleware {
