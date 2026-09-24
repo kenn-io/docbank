@@ -20,15 +20,8 @@ import (
 // successful production job. Exact retries return the same archive identity.
 func (c *Connection) PublishProductionPackage(ctx context.Context, jobID string,
 	request api.ProductionPackagePublishRequest) (api.ProductionPackagePublished, error) {
-	if !validUUIDv4(jobID) || !validUUIDv4(request.OperationID) ||
-		request.MaxVolumeBytes < 1 || request.MaxVolumeBytes > 50<<30 ||
-		request.MaxVolumeDocuments < 1 || request.MaxVolumeDocuments > 100_000 {
+	if !validUUIDv4(jobID) || !request.Valid() {
 		return api.ProductionPackagePublished{}, errors.New("invalid production package request")
-	}
-	switch request.ProfileID {
-	case "export-dat-pdf-v1", "export-dat-opt-images-v1", "export-dat-lfp-images-v1":
-	default:
-		return api.ProductionPackagePublished{}, errors.New("invalid production package profile")
 	}
 	result, err := c.API().PublishProductionPackage(ctx, &apiclient.PublishProductionPackageRequestOptions{
 		PathParams: &apiclient.PublishProductionPackagePath{JobID: uuid.MustParse(jobID)},

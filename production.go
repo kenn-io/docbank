@@ -12,7 +12,9 @@ import (
 
 	"go.kenn.io/docbank/document/redaction"
 	"go.kenn.io/docbank/internal/api"
+	"go.kenn.io/docbank/internal/exporter"
 	"go.kenn.io/docbank/internal/processing"
+	"go.kenn.io/docbank/internal/production"
 	"go.kenn.io/docbank/internal/store"
 )
 
@@ -24,6 +26,37 @@ type ProductionResolvedMaskPage = store.ProductionResolvedMaskPage
 type ProductionFinalizationResult = store.ProductionFinalizationResult
 type ProductionJobStatus = store.ProductionJobStatus
 type ProductionRecipeCatalog = api.ProductionRecipeCatalog
+type ProductionPackagePublishRequest = api.ProductionPackagePublishRequest
+type ProductionPackagePublished = api.ProductionPackagePublished
+
+// PublishProductionPackage retains one verified recipient package from a
+// successful job in this embedded vault. Exact retries reuse its authority.
+func (v *Vault) PublishProductionPackage(ctx context.Context, jobID string,
+	request ProductionPackagePublishRequest) (ProductionPackagePublished, error) {
+	v.lifecycle.RLock()
+	defer v.lifecycle.RUnlock()
+	if v.closed {
+		return ProductionPackagePublished{}, ErrClosed
+	}
+	if !request.Valid() {
+		return ProductionPackagePublished{}, errors.New("invalid production package request")
+	}
+	worker, err := exporter.New(v.metadata, v.blobs, v.vaultRoot, embeddedMutationGate{vault: v})
+	if err != nil {
+		return ProductionPackagePublished{}, err
+	}
+	retained, err := worker.PublishProductionPackage(ctx, request.OperationID, jobID,
+		request.ProfileID, production.PackageLimits{
+			MaxVolumeBytes: request.MaxVolumeBytes, MaxVolumeDocuments: request.MaxVolumeDocuments,
+		})
+	if err != nil {
+		return ProductionPackagePublished{}, err
+	}
+	return ProductionPackagePublished{JobID: jobID, OperationID: request.OperationID,
+		ProfileID: request.ProfileID, VersionID: retained.Archive.Version.ID,
+		ArchiveSHA256:  retained.Archive.Version.BlobHash,
+		EvidenceSHA256: retained.Evidence.SHA256, Size: retained.Archive.Version.Size}, nil
+}
 
 // ProductionPackageReceipt identifies the exact retained archive streamed by
 // an embedded vault. The caller must discard destination bytes on error.
@@ -194,6 +227,41 @@ func sweepEmbeddedProductionStages(root string) error {
 		if entry.IsDir() && (strings.HasPrefix(entry.Name(), ".production-preview-") ||
 			strings.HasPrefix(entry.Name(), ".production-download-")) {
 			if err := os.RemoveAll(filepath.Join(root, entry.Name())); err != nil {
+				return err
+			}
+		}
+	}
+	return sweepEmbeddedProductionPackageStages(root)
+}
+
+func sweepEmbeddedProductionPackageStages(root string) (retErr error) {
+	owned, err := os.OpenRoot(root)
+	if err != nil {
+		return err
+	}
+	defer func() { retErr = errors.Join(retErr, owned.Close()) }()
+	info, err := owned.Lstat("export-archives")
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+		return errors.New("embedded export archive directory is not a real directory")
+	}
+	archiveDir, err := owned.Open("export-archives")
+	if err != nil {
+		return err
+	}
+	defer func() { retErr = errors.Join(retErr, archiveDir.Close()) }()
+	entries, err := archiveDir.ReadDir(-1)
+	if err != nil {
+		return err
+	}
+	for _, entry := range entries {
+		if entry.IsDir() && strings.HasPrefix(entry.Name(), ".production-package-") {
+			if err := owned.RemoveAll(filepath.Join("export-archives", entry.Name())); err != nil {
 				return err
 			}
 		}

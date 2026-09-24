@@ -30,7 +30,9 @@ type ProductionPackagePublished struct {
 	Size           int64  `json:"size"`
 }
 
-func validProductionPackagePublishRequest(request ProductionPackagePublishRequest) bool {
+// Valid checks the canonical operation identity, qualified profile, and
+// bounded per-volume limits shared by HTTP, daemon, and embedded callers.
+func (request ProductionPackagePublishRequest) Valid() bool {
 	id, err := uuid.Parse(request.OperationID)
 	if err != nil || id.Version() != 4 || id.String() != request.OperationID ||
 		request.MaxVolumeBytes < 1 || request.MaxVolumeBytes > 50<<30 ||
@@ -100,7 +102,7 @@ func registerProductionPackageRoutes(api huma.API, d Deps, downloads *webDownloa
 		if _, err := exportOwner(ctx); err != nil {
 			return nil, err
 		}
-		if !validProductionPackagePublishRequest(in.Body) {
+		if !in.Body.Valid() {
 			return nil, NewError(http.StatusUnprocessableEntity, "invalid_production_package",
 				"production package request is invalid")
 		}
