@@ -8566,6 +8566,58 @@ func (c *Client) EditProductionInstructions(ctx context.Context, options *EditPr
 	return responseParser(ctx, resp)
 }
 
+// GetProductionMapChunk Page the exact retained aligned-text map for one production member
+func (c *Client) GetProductionMapChunk(ctx context.Context, options *GetProductionMapChunkRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetProductionMapChunkResponse, error) {
+	var err error
+
+	queryEncoding := map[string]runtime.QueryEncoding{
+		"cursor": {Style: "form", Explode: &[]bool{false}[0]},
+		"limit":  {Style: "form", Explode: &[]bool{false}[0]},
+	}
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:    c.apiClient.GetBaseURL() + "/api/v1/productions/sets/{set_id}/revisions/{revision}/maps/{member_id}",
+		Method:        "GET",
+		Options:       options,
+		QueryEncoding: queryEncoding,
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*GetProductionMapChunkResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(GetProductionMapChunkResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "GetProductionMapChunkResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[GetProductionMapChunkErrorResponse](resp, "GetProductionMapChunkErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/productions/sets/{set_id}/revisions/{revision}/maps/{member_id}")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
 // ListProductionMembers Page exact production members
 func (c *Client) ListProductionMembers(ctx context.Context, options *ListProductionMembersRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ListProductionMembersResponse, error) {
 	var err error
@@ -16918,6 +16970,44 @@ func (o *EditProductionInstructionsRequestOptions) GetHeader() (map[string]strin
 	return headers, err
 }
 
+// GetProductionMapChunkRequestOptions is the options needed to make a request to GetProductionMapChunk.
+type GetProductionMapChunkRequestOptions struct {
+	PathParams *GetProductionMapChunkPath
+	Query      *GetProductionMapChunkQuery
+}
+
+// GetPathParams returns the path params as a map.
+func (o *GetProductionMapChunkRequestOptions) GetPathParams() (map[string]any, error) {
+	encoded, err := json.Marshal(o.PathParams, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetQuery returns the query params as a map.
+func (o *GetProductionMapChunkRequestOptions) GetQuery() (map[string]any, error) {
+	encoded, err := json.Marshal(o.Query, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *GetProductionMapChunkRequestOptions) GetBody() any {
+	return nil
+}
+
+// GetHeader returns the headers as a map.
+func (o *GetProductionMapChunkRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
 // ListProductionMembersRequestOptions is the options needed to make a request to ListProductionMembers.
 type ListProductionMembersRequestOptions struct {
 	PathParams *ListProductionMembersPath
@@ -19334,6 +19424,12 @@ type EditProductionInstructionsPath struct {
 	Revision int64     `json:"revision"`
 }
 
+type GetProductionMapChunkPath struct {
+	SetID    uuid.UUID `json:"set_id"`
+	Revision int64     `json:"revision"`
+	MemberID uuid.UUID `json:"member_id"`
+}
+
 type ListProductionMembersPath struct {
 	SetID    uuid.UUID `json:"set_id"`
 	Revision int64     `json:"revision"`
@@ -19924,6 +20020,11 @@ type ListProductionSetsQuery struct {
 }
 
 type ListProductionDecisionsQuery struct {
+	Cursor *string `json:"cursor,omitempty"`
+	Limit  *int64  `json:"limit,omitempty"`
+}
+
+type GetProductionMapChunkQuery struct {
 	Cursor *string `json:"cursor,omitempty"`
 	Limit  *int64  `json:"limit,omitempty"`
 }
@@ -20773,6 +20874,10 @@ type ForkProductionDraftErrorResponse = Error
 type EditProductionInstructionsResponse = api.ProductionReceipt
 
 type EditProductionInstructionsErrorResponse = Error
+
+type GetProductionMapChunkResponse = api.ProductionMapChunk
+
+type GetProductionMapChunkErrorResponse = Error
 
 type ListProductionMembersResponse = api.ProductionMemberPage
 
@@ -21824,6 +21929,8 @@ type ProductionDecisionPage = api.ProductionDecisionPage
 type ProductionForkRequest = api.ProductionForkRequest
 
 type ProductionInstructionsRequest = api.ProductionInstructionsRequest
+
+type ProductionMapChunk = api.ProductionMapChunk
 
 type ProductionMember = api.ProductionMember
 

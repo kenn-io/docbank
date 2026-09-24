@@ -112,6 +112,17 @@ type ProductionDecisionPage struct {
 	NextCursor string               `json:"next_cursor"`
 }
 
+// ProductionMapChunk carries one digest-bound page of canonical aligned-map
+// JSON. Its base64 data is binary-safe because pages may split UTF-8 bytes.
+type ProductionMapChunk struct {
+	MapSHA256   string `json:"map_sha256"`
+	Offset      int64  `json:"offset"`
+	TotalBytes  int64  `json:"total_bytes"`
+	Data        string `json:"data"`
+	ChunkSHA256 string `json:"chunk_sha256"`
+	NextCursor  string `json:"next_cursor"`
+}
+
 type ProductionInstructionsRequest struct {
 	OperationID  string `json:"operation_id"`
 	Instructions string `json:"instructions"`
@@ -289,6 +300,26 @@ func registerProductionRoutes(api huma.API, d Deps, g *OperationGate) {
 				out[i] = ProductionDecision(item)
 			}
 			return &struct{ Body ProductionDecisionPage }{Body: ProductionDecisionPage{Items: out, NextCursor: next}}, nil
+		})
+	huma.Register(api, huma.Operation{OperationID: "getProductionMapChunk", Method: http.MethodGet,
+		Path:    "/api/v1/productions/sets/{set_id}/revisions/{revision}/maps/{member_id}",
+		Summary: "Page the exact retained aligned-text map for one production member"},
+		func(ctx context.Context, in *struct {
+			SetID    string `path:"set_id" format:"uuid"`
+			Revision int64  `path:"revision" minimum:"1"`
+			MemberID string `path:"member_id" format:"uuid"`
+			Cursor   string `query:"cursor" maxLength:"512"`
+			Limit    int    `query:"limit" minimum:"0" maximum:"65536"`
+		}) (*struct{ Body ProductionMapChunk }, error) {
+			limit := in.Limit
+			if limit == 0 {
+				limit = store.MaxProductionMapChunkBytes
+			}
+			chunk, err := d.Store.ProductionMapChunk(ctx, in.SetID, in.Revision, in.MemberID, in.Cursor, limit)
+			if err != nil {
+				return nil, productionSetError(err)
+			}
+			return &struct{ Body ProductionMapChunk }{Body: ProductionMapChunk(chunk)}, nil
 		})
 	huma.Register(api, huma.Operation{OperationID: "editProductionInstructions", Method: http.MethodPut,
 		Path:         "/api/v1/productions/sets/{set_id}/revisions/{revision}/instructions",

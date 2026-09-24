@@ -84,4 +84,10 @@ func TestEmbeddedProductionSetsKeepVaultRootsSeparate(t *testing.T) {
 	require.ErrorIs(t, err, store.ErrInvalidProduction)
 	_, err = second.ProductionSet(t.Context(), set.ID)
 	require.ErrorIs(t, err, store.ErrNotFound)
+	_, err = first.ProductionMapChunk(t.Context(), set.ID, 1,
+		"88888888-8888-4888-8888-888888888887", "", 17)
+	require.ErrorIs(t, err, store.ErrNotFound)
+	_, err = second.ProductionMapChunk(t.Context(), set.ID, 1,
+		"88888888-8888-4888-8888-888888888887", "", 17)
+	require.ErrorIs(t, err, store.ErrNotFound)
 }

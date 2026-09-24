@@ -10973,6 +10973,42 @@ components:
       x-go-type-import:
         path: go.kenn.io/docbank/internal/api
         name: api
+    ProductionMapChunk:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/ProductionMapChunk.json
+          format: uri
+          readOnly: true
+          type: string
+        chunk_sha256:
+          type: string
+        data:
+          type: string
+        map_sha256:
+          type: string
+        next_cursor:
+          type: string
+        offset:
+          format: int64
+          type: integer
+        total_bytes:
+          format: int64
+          type: integer
+      required:
+        - map_sha256
+        - offset
+        - total_bytes
+        - data
+        - chunk_sha256
+        - next_cursor
+      type: object
+      x-go-type: api.ProductionMapChunk
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     ProductionMember:
       additionalProperties: false
       properties:
@@ -20688,6 +20724,57 @@ paths:
                 $ref: "#/components/schemas/Error"
           description: Error
       summary: Edit production instructions with an exact draft ETag and replay-safe operation ID
+  /api/v1/productions/sets/{set_id}/revisions/{revision}/maps/{member_id}:
+    get:
+      operationId: getProductionMapChunk
+      parameters:
+        - in: path
+          name: set_id
+          required: true
+          schema:
+            format: uuid
+            type: string
+        - in: path
+          name: revision
+          required: true
+          schema:
+            format: int64
+            minimum: 1
+            type: integer
+        - in: path
+          name: member_id
+          required: true
+          schema:
+            format: uuid
+            type: string
+        - explode: false
+          in: query
+          name: cursor
+          schema:
+            maxLength: 512
+            type: string
+        - explode: false
+          in: query
+          name: limit
+          schema:
+            format: int64
+            maximum: 65536
+            minimum: 0
+            type: integer
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProductionMapChunk"
+          description: OK
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: Page the exact retained aligned-text map for one production member
   /api/v1/productions/sets/{set_id}/revisions/{revision}/members:
     get:
       operationId: listProductionMembers

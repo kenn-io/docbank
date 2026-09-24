@@ -63,6 +63,9 @@ func productionSetBrowserRequestAllowed(r *http.Request) bool {
 		parts[3] == "members" && validPageJobPathID(parts[4]) && parts[5] == "review" {
 		return true
 	}
+	if len(parts) == 5 && r.Method == http.MethodGet && parts[3] == "maps" && validPageJobPathID(parts[4]) {
+		return productionBoundedQueryAllowed(r.URL.RawQuery, 512, 65536)
+	}
 	if r.Method != http.MethodGet || len(parts) != 4 ||
 		parts[3] != "members" && parts[3] != "decisions" {
 		return false
@@ -71,6 +74,10 @@ func productionSetBrowserRequestAllowed(r *http.Request) bool {
 }
 
 func productionPageQueryAllowed(raw string, maxCursor int) bool {
+	return productionBoundedQueryAllowed(raw, maxCursor, 200)
+}
+
+func productionBoundedQueryAllowed(raw string, maxCursor, maxLimit int) bool {
 	if raw == "" {
 		return true
 	}
@@ -89,7 +96,7 @@ func productionPageQueryAllowed(raw string, maxCursor int) bool {
 			}
 		case packageLimitParameter:
 			limit, err := strconv.Atoi(entries[0])
-			if err != nil || limit < 1 || limit > 200 {
+			if err != nil || limit < 1 || limit > maxLimit {
 				return false
 			}
 		default:

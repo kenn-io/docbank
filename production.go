@@ -5,11 +5,13 @@ import (
 
 	"go.kenn.io/docbank/document/redaction"
 	"go.kenn.io/docbank/internal/api"
+	"go.kenn.io/docbank/internal/store"
 )
 
 type ProductionMemberPage = api.ProductionMemberPage
 type ProductionDecisionPage = api.ProductionDecisionPage
 type ProductionSetPage = api.ProductionSetPage
+type ProductionMapChunk = store.ProductionMapChunk
 type ProductionRecipeCatalog = api.ProductionRecipeCatalog
 
 func (v *Vault) ProductionRecipes(ctx context.Context) (ProductionRecipeCatalog, error) {
@@ -129,6 +131,20 @@ func (v *Vault) ProductionDecisions(ctx context.Context, setID string, revision 
 		page.Items[i] = api.ProductionDecision(item)
 	}
 	return page, nil
+}
+
+// ProductionMapChunk reads one bounded page of a retained member map from
+// this embedded vault. The caller verifies the assembled map digest.
+func (v *Vault) ProductionMapChunk(ctx context.Context, setID string, revision int64, memberID, cursor string, limit int) (ProductionMapChunk, error) {
+	v.lifecycle.RLock()
+	defer v.lifecycle.RUnlock()
+	if v.closed {
+		return ProductionMapChunk{}, ErrClosed
+	}
+	if limit == 0 {
+		limit = store.MaxProductionMapChunkBytes
+	}
+	return v.metadata.ProductionMapChunk(ctx, setID, revision, memberID, cursor, limit)
 }
 
 func (v *Vault) EditProductionInstructions(ctx context.Context, actor, setID string, revision, etag int64,

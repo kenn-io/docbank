@@ -3,6 +3,7 @@ package daemonconn
 import (
 	"context"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -12,6 +13,7 @@ import (
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/apiclient"
 	"go.kenn.io/docbank/internal/canonical"
+	"go.kenn.io/docbank/internal/store"
 	"uuid"
 )
 
@@ -198,6 +200,51 @@ func (c *Connection) ProductionDecisions(ctx context.Context, setID string, revi
 		if redaction.ValidateDecision(redaction.Decision(item)) != nil {
 			return api.ProductionDecisionPage{}, integrityErrorf("production decision page contains invalid authority")
 		}
+	}
+	return *result, nil
+}
+
+// ProductionMapChunk verifies the page digest; callers must also verify the
+// assembled canonical map against MapSHA256 before using selectors from it.
+func (c *Connection) ProductionMapChunk(ctx context.Context, setID string, revision int64, memberID, cursor string, limit int) (api.ProductionMapChunk, error) {
+	parsedSet, err := productionSetUUID(setID)
+	if err != nil || !validUUIDv4(memberID) || revision < 1 || len(cursor) > 512 ||
+		limit < 0 || limit > store.MaxProductionMapChunkBytes {
+		return api.ProductionMapChunk{}, errors.New("invalid production map page")
+	}
+	parsedMember, err := uuid.Parse(memberID)
+	if err != nil {
+		return api.ProductionMapChunk{}, errors.New("invalid production member ID")
+	}
+	query := &apiclient.GetProductionMapChunkQuery{}
+	if cursor != "" {
+		query.Cursor = &cursor
+	}
+	if limit == 0 {
+		limit = store.MaxProductionMapChunkBytes
+	} else {
+		bounded := int64(limit)
+		query.Limit = &bounded
+	}
+	result, err := c.API().GetProductionMapChunk(ctx, &apiclient.GetProductionMapChunkRequestOptions{
+		PathParams: &apiclient.GetProductionMapChunkPath{SetID: parsedSet, Revision: revision, MemberID: parsedMember},
+		Query:      query})
+	if err != nil {
+		return api.ProductionMapChunk{}, err
+	}
+	if result == nil || !canonical.IsSHA256Hex(result.MapSHA256) || !canonical.IsSHA256Hex(result.ChunkSHA256) ||
+		result.Offset < 0 || result.TotalBytes < 1 || result.Offset >= result.TotalBytes || len(result.NextCursor) > 512 {
+		return api.ProductionMapChunk{}, integrityErrorf("production map page is inconsistent")
+	}
+	data, err := base64.StdEncoding.Strict().DecodeString(result.Data)
+	if err != nil || len(data) < 1 || len(data) > limit || result.Offset+int64(len(data)) > result.TotalBytes ||
+		(result.NextCursor == "") != (result.Offset+int64(len(data)) == result.TotalBytes) ||
+		result.NextCursor == cursor {
+		return api.ProductionMapChunk{}, integrityErrorf("production map page data is inconsistent")
+	}
+	digest := sha256.Sum256(data)
+	if hex.EncodeToString(digest[:]) != result.ChunkSHA256 {
+		return api.ProductionMapChunk{}, integrityErrorf("production map page digest is inconsistent")
 	}
 	return *result, nil
 }
