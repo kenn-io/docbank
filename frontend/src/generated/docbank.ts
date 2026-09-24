@@ -1110,12 +1110,53 @@ export interface ContentMap {
   updated_at: string;
 }
 
+export interface ContentMapDeltaChange {
+  after_content_version_id?: string;
+  after_index: number;
+  before_content_version_id?: string;
+  before_index: number;
+  document_uid: string;
+  passage_id?: string;
+  section_id: string;
+}
+
+export interface ContentMapDeltaCounts {
+  added: number;
+  removed: number;
+  reordered: number;
+  unavailable: number;
+  version_changed: number;
+}
+
+export interface ContentMapDelta {
+  added: ContentMapDeltaChange[];
+  after_snapshot_id: string;
+  before_snapshot_id?: string;
+  changed: boolean;
+  counts: ContentMapDeltaCounts;
+  definition_changed: boolean;
+  map_id: string;
+  removed: ContentMapDeltaChange[];
+  reordered: ContentMapDeltaChange[];
+  truncated: boolean;
+  unavailable: ContentMapDeltaChange[];
+  version_changed: ContentMapDeltaChange[];
+}
+
 export interface ContentMapPlan {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
   definition: ContentMapDefinition;
   definition_digest: string;
   metadata_bytes: number;
+}
+
+export interface ContentMapProposalRequest {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  query?: Query;
+  tag_id?: string;
+  title?: string;
 }
 
 export interface SnapshotMember {
@@ -1159,6 +1200,13 @@ export interface ContentMapSnapshot {
   owner: string;
   scope_digest: string;
   sections: ContentMapSnapshotSection[];
+}
+
+export interface ContentMapRefresh {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  delta: ContentMapDelta;
+  snapshot: ContentMapSnapshot;
 }
 
 export type ContentVersionTransitionKind = typeof ContentVersionTransitionKind[keyof typeof ContentVersionTransitionKind];
@@ -3098,6 +3146,12 @@ export interface MapPlanRequest {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
   definition: ContentMapDefinition;
+}
+
+export interface MapRefreshRequest {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  previous_snapshot_id: string;
 }
 
 export interface MapWriteRequest {
@@ -6076,6 +6130,10 @@ export type ArchiveContentMapHeaders = {
 };
 
 export type UpdateContentMapHeaders = {
+'If-Match': string;
+};
+
+export type RefreshContentMapHeaders = {
 'If-Match': string;
 };
 
@@ -9742,6 +9800,44 @@ return sessionJSON<ContentMapPlan>(getPreviewContentMapUrl(),
 
 
 
+export const getProposeContentMapUrl = () => {
+
+
+
+
+  return `/api/v1/maps/proposals`
+}
+
+/**
+ * @summary Propose a map from an existing tag or scoped query
+ */
+export const proposeContentMap = async (contentMapProposalRequest: NonReadonly<ContentMapProposalRequest>, options?: Parameters<typeof sessionJSON>[1]): Promise<ContentMapPlan> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return sessionJSON<ContentMapPlan>(getProposeContentMapUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(contentMapProposalRequest)
+  }
+);}
+
+
+
 export const getArchiveContentMapUrl = (mapId: string,) => {
 
 
@@ -9840,6 +9936,46 @@ return sessionJSON<ContentMap>(getUpdateContentMapUrl(mapId),
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json',...headers, ...getHeaders(options?.headers) },
     body: JSON.stringify(mapWriteRequest)
+  }
+);}
+
+
+
+export const getRefreshContentMapUrl = (mapId: string,) => {
+
+
+
+
+  return `/api/v1/maps/${encodeURIComponent(String(mapId))}/refresh`
+}
+
+/**
+ * @summary Freeze a refreshed map and compare it with the previous snapshot
+ */
+export const refreshContentMap = async (mapId: string,
+    mapRefreshRequest: NonReadonly<MapRefreshRequest>,
+    headers: RefreshContentMapHeaders, options?: Parameters<typeof sessionJSON>[1]): Promise<ContentMapRefresh> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return sessionJSON<ContentMapRefresh>(getRefreshContentMapUrl(mapId),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json',...headers, ...getHeaders(options?.headers) },
+    body: JSON.stringify(mapRefreshRequest)
   }
 );}
 

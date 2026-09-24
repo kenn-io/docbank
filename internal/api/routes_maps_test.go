@@ -58,6 +58,16 @@ func TestContentMapRoutesPreviewRevisionAndFrozenRead(t *testing.T) {
 	require.NoError(t, json.Unmarshal(body, &frozen))
 	require.Len(t, frozen.Sections[0].Entries, 1)
 	assert.Equal(t, node.CurrentVersionID, frozen.Sections[0].Entries[0].Member.ContentVersionID)
+	response, body = mapRequest(t, server.URL, http.MethodPost, "/api/v1/maps/"+created.ID+"/refresh",
+		mapRefreshRequest{PreviousSnapshotID: frozen.ID}, `"1"`)
+	require.Equal(t, http.StatusCreated, response.StatusCode, string(body))
+	var refreshed store.ContentMapRefresh
+	require.NoError(t, json.Unmarshal(body, &refreshed))
+	assert.Equal(t, frozen.ID, refreshed.Delta.BeforeSnapshotID)
+	assert.NotEqual(t, frozen.ID, refreshed.Snapshot.ID)
+	response, body = mapRequest(t, server.URL, http.MethodPost, "/api/v1/maps/"+created.ID+"/refresh",
+		mapRefreshRequest{PreviousSnapshotID: frozen.ID}, `"1"`)
+	assert.Equal(t, http.StatusPreconditionFailed, response.StatusCode, string(body))
 
 	definition.Title = "Edited topic"
 	response, body = mapRequest(t, server.URL, http.MethodPost, "/api/v1/maps/plans", mapPlanRequest{Definition: definition}, "")
@@ -74,6 +84,26 @@ func TestContentMapRoutesPreviewRevisionAndFrozenRead(t *testing.T) {
 	var readBack store.ContentMapSnapshot
 	require.NoError(t, json.Unmarshal(body, &readBack))
 	assert.Equal(t, frozen, readBack)
+}
+
+func TestContentMapProposalRouteRequiresExplicitSave(t *testing.T) {
+	s, err := store.Open(filepath.Join(t.TempDir(), "synthetic.db"))
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, s.Close()) })
+	tag, err := s.CreateTag(t.Context(), "Research")
+	require.NoError(t, err)
+	mux := http.NewServeMux()
+	registerMapRoutes(humago.New(mux, huma.DefaultConfig("map-test", "0")), Deps{Store: s}, NewOperationGate())
+	server := httptest.NewServer(mux)
+	t.Cleanup(server.Close)
+	response, body := mapRequest(t, server.URL, http.MethodPost, "/api/v1/maps/proposals",
+		store.ContentMapProposalRequest{TagID: tag.ID}, "")
+	require.Equal(t, http.StatusOK, response.StatusCode, string(body))
+	var plan store.ContentMapPlan
+	require.NoError(t, json.Unmarshal(body, &plan))
+	assert.Equal(t, []string{tag.ID}, plan.Definition.Sections[0].Selector.Filters.TagIDs)
+	response, body = mapRequest(t, server.URL, http.MethodGet, "/api/v1/maps/"+tag.ID, nil, "")
+	assert.Equal(t, http.StatusNotFound, response.StatusCode, string(body))
 }
 
 func TestContentMapRouteErrorsDoNotLeakHiddenSources(t *testing.T) {

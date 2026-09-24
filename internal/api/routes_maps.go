@@ -22,6 +22,10 @@ type mapWriteRequest struct {
 	DefinitionDigest string                     `json:"definition_digest"`
 }
 
+type mapRefreshRequest struct {
+	PreviousSnapshotID string `json:"previous_snapshot_id"`
+}
+
 type mapOutput struct {
 	ETag string `header:"ETag"`
 	Body store.ContentMap
@@ -55,6 +59,22 @@ func mapRouteError(err error) error {
 
 // registerMapRoutes is called by server.go, owned by the integration parent.
 func registerMapRoutes(api huma.API, d Deps, g *gate) {
+	huma.Register(api, huma.Operation{OperationID: "proposeContentMap", Method: http.MethodPost,
+		Path: "/api/v1/maps/proposals", Summary: "Propose a map from an existing tag or scoped query",
+		MaxBodyBytes: maxMapRequestBytes}, func(ctx context.Context, in *struct {
+		Body store.ContentMapProposalRequest
+	}) (*struct{ Body store.ContentMapPlan }, error) {
+		access, err := mapAccess(ctx)
+		if err != nil {
+			return nil, err
+		}
+		plan, err := d.Store.ProposeContentMap(ctx, access, in.Body)
+		if err != nil {
+			return nil, mapRouteError(err)
+		}
+		return &struct{ Body store.ContentMapPlan }{Body: plan}, nil
+	})
+
 	huma.Register(api, huma.Operation{OperationID: "previewContentMap", Method: http.MethodPost,
 		Path: "/api/v1/maps/plans", Summary: "Preview a structured map definition",
 		MaxBodyBytes: maxMapRequestBytes}, func(ctx context.Context, in *struct{ Body mapPlanRequest }) (*struct{ Body store.ContentMapPlan }, error) {
@@ -180,6 +200,33 @@ func registerMapRoutes(api huma.API, d Deps, g *gate) {
 				return mapRouteError(createErr)
 			}
 			result = &struct{ Body store.ContentMapSnapshot }{Body: snapshot}
+			return nil
+		})
+		return result, err
+	})
+
+	huma.Register(api, huma.Operation{OperationID: "refreshContentMap", Method: http.MethodPost,
+		Path: "/api/v1/maps/{map_id}/refresh", Summary: "Freeze a refreshed map and compare it with the previous snapshot",
+		DefaultStatus: http.StatusCreated}, func(ctx context.Context, in *struct {
+		MapID   string `path:"map_id"`
+		IfMatch string `header:"If-Match" required:"true"`
+		Body    mapRefreshRequest
+	}) (*struct{ Body store.ContentMapRefresh }, error) {
+		access, err := mapAccess(ctx)
+		if err != nil {
+			return nil, err
+		}
+		revision, err := parseIfMatch(in.IfMatch)
+		if err != nil {
+			return nil, err
+		}
+		var result *struct{ Body store.ContentMapRefresh }
+		err = g.mutate(func() error {
+			refresh, refreshErr := d.Store.RefreshContentMap(ctx, access, in.MapID, revision, in.Body.PreviousSnapshotID)
+			if refreshErr != nil {
+				return mapRouteError(refreshErr)
+			}
+			result = &struct{ Body store.ContentMapRefresh }{Body: refresh}
 			return nil
 		})
 		return result, err

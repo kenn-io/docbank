@@ -737,6 +737,36 @@ func (s *Store) mapPassageIdentity(ctx context.Context, entry ContentMapSnapshot
 // A revision fence prevents an editor from freezing a definition they did not
 // inspect. Selectors reuse QuerySnapshot's bounded rows and member receipts.
 func (s *Store) CreateContentMapSnapshot(ctx context.Context, access MapAccess, id string, expectedRevision int64) (ContentMapSnapshot, error) {
+	return s.createContentMapSnapshot(ctx, access, id, expectedRevision, "")
+}
+
+// ContentMapRefresh returns a new immutable snapshot and a bounded comparison
+// against the caller's last observed snapshot.
+type ContentMapRefresh struct {
+	Snapshot ContentMapSnapshot `json:"snapshot"`
+	Delta    ContentMapDelta    `json:"delta"`
+}
+
+func (s *Store) RefreshContentMap(ctx context.Context, access MapAccess, id string,
+	expectedRevision int64, previousSnapshotID string,
+) (ContentMapRefresh, error) {
+	previous, err := s.ContentMapSnapshotByID(ctx, access, previousSnapshotID)
+	if err != nil {
+		return ContentMapRefresh{}, err
+	}
+	if previous.MapID != id {
+		return ContentMapRefresh{}, ErrNotFound
+	}
+	next, err := s.createContentMapSnapshot(ctx, access, id, expectedRevision, previousSnapshotID)
+	if err != nil {
+		return ContentMapRefresh{}, err
+	}
+	return ContentMapRefresh{Snapshot: next, Delta: diffContentMapSnapshots(previous, next)}, nil
+}
+
+func (s *Store) createContentMapSnapshot(ctx context.Context, access MapAccess, id string,
+	expectedRevision int64, previousSnapshotID string,
+) (ContentMapSnapshot, error) {
 	mapRecord, err := s.ContentMapByID(ctx, access, id)
 	if err != nil {
 		return ContentMapSnapshot{}, err
@@ -913,6 +943,16 @@ func (s *Store) CreateContentMapSnapshot(ctx context.Context, access MapAccess, 
 		if currentRevision != expectedRevision {
 			return ErrStaleRevision
 		}
+		if previousSnapshotID != "" {
+			var latestID string
+			if err := tx.QueryRowContext(ctx, `SELECT id FROM content_map_snapshots WHERE map_id=? AND owner=?
+				ORDER BY rowid DESC LIMIT 1`, id, access.Owner).Scan(&latestID); err != nil {
+				return ErrStaleRevision
+			}
+			if latestID != previousSnapshotID {
+				return ErrStaleRevision
+			}
+		}
 		if err := s.authorizeMapSnapshotTx(ctx, tx, access, mapRecord.Definition, snapshot); err != nil {
 			return err
 		}
@@ -988,8 +1028,17 @@ func (s *Store) authorizeMapSnapshotTx(ctx context.Context, tx *sql.Tx, access M
 			}
 			version, err := scanContentVersion(tx.QueryRowContext(ctx, `SELECT `+contentVersionCols+`
 				FROM content_versions WHERE version_id=? AND node_id=?`, entry.Member.ContentVersionID, entry.Member.NodeID))
-			if err != nil || (SnapshotMember{NodeID: entry.Member.NodeID, ContentVersionID: version.ID,
-				BlobHash: version.BlobHash, Size: version.Size, Revision: version.NodeRevision}) != entry.Member {
+			if err != nil {
+				return ErrNotFound
+			}
+			memberRevision := version.NodeRevision
+			if entry.PinMode == "" {
+				// Query snapshots fence the live node revision. Pins instead
+				// resolve their retained version's creation revision.
+				memberRevision = node.Revision
+			}
+			if (SnapshotMember{NodeID: entry.Member.NodeID, ContentVersionID: version.ID,
+				BlobHash: version.BlobHash, Size: version.Size, Revision: memberRevision}) != entry.Member {
 				return ErrNotFound
 			}
 		}

@@ -178,7 +178,9 @@ func TestOpenAPIContentMapRevisionPreconditionsRequired(t *testing.T) {
 	require.NotNil(t, item)
 	snapshots := doc.Paths["/api/v1/maps/{map_id}/snapshots"]
 	require.NotNil(t, snapshots)
-	for _, operation := range []*huma.Operation{item.Patch, item.Delete, snapshots.Post} {
+	refresh := doc.Paths["/api/v1/maps/{map_id}/refresh"]
+	require.NotNil(t, refresh)
+	for _, operation := range []*huma.Operation{item.Patch, item.Delete, snapshots.Post, refresh.Post} {
 		require.NotNil(t, operation)
 		var found bool
 		for _, parameter := range operation.Parameters {

@@ -2097,6 +2097,118 @@ components:
       x-go-type-import:
         path: go.kenn.io/docbank/internal/store
         name: store
+    ContentMapDelta:
+      additionalProperties: false
+      properties:
+        added:
+          items:
+            $ref: "#/components/schemas/ContentMapDeltaChange"
+          type: array
+        after_snapshot_id:
+          type: string
+        before_snapshot_id:
+          type: string
+        changed:
+          type: boolean
+        counts:
+          $ref: "#/components/schemas/ContentMapDeltaCounts"
+        definition_changed:
+          type: boolean
+        map_id:
+          type: string
+        removed:
+          items:
+            $ref: "#/components/schemas/ContentMapDeltaChange"
+          type: array
+        reordered:
+          items:
+            $ref: "#/components/schemas/ContentMapDeltaChange"
+          type: array
+        truncated:
+          type: boolean
+        unavailable:
+          items:
+            $ref: "#/components/schemas/ContentMapDeltaChange"
+          type: array
+        version_changed:
+          items:
+            $ref: "#/components/schemas/ContentMapDeltaChange"
+          type: array
+      required:
+        - map_id
+        - after_snapshot_id
+        - definition_changed
+        - changed
+        - truncated
+        - counts
+        - added
+        - removed
+        - version_changed
+        - reordered
+        - unavailable
+      type: object
+      x-go-type: store.ContentMapDelta
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/store
+        name: store
+    ContentMapDeltaChange:
+      additionalProperties: false
+      properties:
+        after_content_version_id:
+          type: string
+        after_index:
+          format: int64
+          type: integer
+        before_content_version_id:
+          type: string
+        before_index:
+          format: int64
+          type: integer
+        document_uid:
+          type: string
+        passage_id:
+          type: string
+        section_id:
+          type: string
+      required:
+        - section_id
+        - document_uid
+        - before_index
+        - after_index
+      type: object
+      x-go-type: store.ContentMapDeltaChange
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/store
+        name: store
+    ContentMapDeltaCounts:
+      additionalProperties: false
+      properties:
+        added:
+          format: int64
+          type: integer
+        removed:
+          format: int64
+          type: integer
+        reordered:
+          format: int64
+          type: integer
+        unavailable:
+          format: int64
+          type: integer
+        version_changed:
+          format: int64
+          type: integer
+      required:
+        - added
+        - removed
+        - version_changed
+        - reordered
+        - unavailable
+      type: object
+      x-go-type: store.ContentMapDeltaCounts
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/store
+        name: store
     ContentMapPin:
       additionalProperties: false
       properties:
@@ -2139,6 +2251,49 @@ components:
         - metadata_bytes
       type: object
       x-go-type: store.ContentMapPlan
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/store
+        name: store
+    ContentMapProposalRequest:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/ContentMapProposalRequest.json
+          format: uri
+          readOnly: true
+          type: string
+        query:
+          $ref: "#/components/schemas/Query"
+        tag_id:
+          type: string
+        title:
+          type: string
+      type: object
+      x-go-type: store.ContentMapProposalRequest
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/store
+        name: store
+    ContentMapRefresh:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/ContentMapRefresh.json
+          format: uri
+          readOnly: true
+          type: string
+        delta:
+          $ref: "#/components/schemas/ContentMapDelta"
+        snapshot:
+          $ref: "#/components/schemas/ContentMapSnapshot"
+      required:
+        - snapshot
+        - delta
+      type: object
+      x-go-type: store.ContentMapRefresh
       x-go-type-import:
         path: go.kenn.io/docbank/internal/store
         name: store
@@ -7360,6 +7515,21 @@ components:
           $ref: "#/components/schemas/ContentMapDefinition"
       required:
         - definition
+      type: object
+    MapRefreshRequest:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/MapRefreshRequest.json
+          format: uri
+          readOnly: true
+          type: string
+        previous_snapshot_id:
+          type: string
+      required:
+        - previous_snapshot_id
       type: object
     MapWriteRequest:
       additionalProperties: false
@@ -17426,6 +17596,29 @@ paths:
                 $ref: "#/components/schemas/Error"
           description: Error
       summary: Preview a structured map definition
+  /api/v1/maps/proposals:
+    post:
+      operationId: proposeContentMap
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ContentMapProposalRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ContentMapPlan"
+          description: OK
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: Propose a map from an existing tag or scoped query
   /api/v1/maps/{map_id}:
     delete:
       operationId: archiveContentMap
@@ -17521,6 +17714,40 @@ paths:
                 $ref: "#/components/schemas/Error"
           description: Error
       summary: Replace a map definition at an expected revision
+  /api/v1/maps/{map_id}/refresh:
+    post:
+      operationId: refreshContentMap
+      parameters:
+        - in: path
+          name: map_id
+          required: true
+          schema:
+            type: string
+        - in: header
+          name: If-Match
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MapRefreshRequest"
+        required: true
+      responses:
+        "201":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ContentMapRefresh"
+          description: Created
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: Freeze a refreshed map and compare it with the previous snapshot
   /api/v1/maps/{map_id}/snapshots:
     post:
       operationId: createContentMapSnapshot

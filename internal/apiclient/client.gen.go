@@ -4138,6 +4138,53 @@ func (c *Client) PreviewContentMap(ctx context.Context, options *PreviewContentM
 	return responseParser(ctx, resp)
 }
 
+// ProposeContentMap Propose a map from an existing tag or scoped query
+func (c *Client) ProposeContentMap(ctx context.Context, options *ProposeContentMapRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ProposeContentMapResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/maps/proposals",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*ProposeContentMapResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(ProposeContentMapResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "ProposeContentMapResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[ProposeContentMapErrorResponse](resp, "ProposeContentMapErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/maps/proposals")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
 // ArchiveContentMap Archive a map while retaining snapshots
 func (c *Client) ArchiveContentMap(ctx context.Context, options *ArchiveContentMapRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ArchiveContentMapResponse, error) {
 	var err error
@@ -4273,6 +4320,53 @@ func (c *Client) UpdateContentMap(ctx context.Context, options *UpdateContentMap
 	}
 	if resp.Streaming {
 		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
+// RefreshContentMap Freeze a refreshed map and compare it with the previous snapshot
+func (c *Client) RefreshContentMap(ctx context.Context, options *RefreshContentMapRequestOptions, reqEditors ...runtime.RequestEditorFn) (*RefreshContentMapResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/maps/{map_id}/refresh",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*RefreshContentMapResponse, error) {
+		switch resp.StatusCode {
+
+		case 201:
+
+			target := new(RefreshContentMapResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "RefreshContentMapResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[RefreshContentMapErrorResponse](resp, "RefreshContentMapErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/maps/{map_id}/refresh")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 201)
 	}
 	return responseParser(ctx, resp)
 }
@@ -13701,6 +13795,34 @@ func (o *PreviewContentMapRequestOptions) GetHeader() (map[string]string, error)
 	return nil, nil
 }
 
+// ProposeContentMapRequestOptions is the options needed to make a request to ProposeContentMap.
+type ProposeContentMapRequestOptions struct {
+	Body *ProposeContentMapBody
+}
+
+// GetPathParams returns the path params as a map.
+func (o *ProposeContentMapRequestOptions) GetPathParams() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetQuery returns the query params as a map.
+func (o *ProposeContentMapRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *ProposeContentMapRequestOptions) GetBody() any {
+	if o.Body == nil {
+		return nil
+	}
+	return o.Body
+}
+
+// GetHeader returns the headers as a map.
+func (o *ProposeContentMapRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
 // ArchiveContentMapRequestOptions is the options needed to make a request to ArchiveContentMap.
 type ArchiveContentMapRequestOptions struct {
 	PathParams *ArchiveContentMapPath
@@ -13803,6 +13925,48 @@ func (o *UpdateContentMapRequestOptions) GetBody() any {
 
 // GetHeader returns the headers as a map.
 func (o *UpdateContentMapRequestOptions) GetHeader() (map[string]string, error) {
+	encoded, err := json.Marshal(o.Header, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var headers map[string]string
+	err = json.Unmarshal(encoded, &headers)
+	return headers, err
+}
+
+// RefreshContentMapRequestOptions is the options needed to make a request to RefreshContentMap.
+type RefreshContentMapRequestOptions struct {
+	PathParams *RefreshContentMapPath
+	Body       *RefreshContentMapBody
+	Header     *RefreshContentMapHeaders
+}
+
+// GetPathParams returns the path params as a map.
+func (o *RefreshContentMapRequestOptions) GetPathParams() (map[string]any, error) {
+	encoded, err := json.Marshal(o.PathParams, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetQuery returns the query params as a map.
+func (o *RefreshContentMapRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *RefreshContentMapRequestOptions) GetBody() any {
+	if o.Body == nil {
+		return nil
+	}
+	return o.Body
+}
+
+// GetHeader returns the headers as a map.
+func (o *RefreshContentMapRequestOptions) GetHeader() (map[string]string, error) {
 	encoded, err := json.Marshal(o.Header, json.StringifyNumbers(true))
 	if err != nil {
 		return nil, err
@@ -18321,6 +18485,10 @@ type UpdateContentMapHeaders struct {
 	IfMatch string `json:"If-Match"`
 }
 
+type RefreshContentMapHeaders struct {
+	IfMatch string `json:"If-Match"`
+}
+
 type CreateContentMapSnapshotHeaders struct {
 	IfMatch string `json:"If-Match"`
 }
@@ -18566,6 +18734,10 @@ type GetContentMapPath struct {
 }
 
 type UpdateContentMapPath struct {
+	MapID string `json:"map_id"`
+}
+
+type RefreshContentMapPath struct {
 	MapID string `json:"map_id"`
 }
 
@@ -18943,7 +19115,11 @@ type CreateContentMapBody = MapWriteRequest
 
 type PreviewContentMapBody = MapPlanRequest
 
+type ProposeContentMapBody = ContentMapProposalRequest
+
 type UpdateContentMapBody = MapWriteRequest
+
+type RefreshContentMapBody = MapRefreshRequest
 
 type PlanMediaAcquisitionBody = MediaReferenceBody
 
@@ -19707,6 +19883,10 @@ type PreviewContentMapResponse = store.ContentMapPlan
 
 type PreviewContentMapErrorResponse = Error
 
+type ProposeContentMapResponse = store.ContentMapPlan
+
+type ProposeContentMapErrorResponse = Error
+
 type ArchiveContentMapResponse = store.ContentMap
 
 type ArchiveContentMapErrorResponse = Error
@@ -19718,6 +19898,10 @@ type GetContentMapErrorResponse = Error
 type UpdateContentMapResponse = store.ContentMap
 
 type UpdateContentMapErrorResponse = Error
+
+type RefreshContentMapResponse = store.ContentMapRefresh
+
+type RefreshContentMapErrorResponse = Error
 
 type CreateContentMapSnapshotResponse = store.ContentMapSnapshot
 
@@ -20524,9 +20708,19 @@ type ContentMap = store.ContentMap
 
 type ContentMapDefinition = store.ContentMapDefinition
 
+type ContentMapDelta = store.ContentMapDelta
+
+type ContentMapDeltaChange = store.ContentMapDeltaChange
+
+type ContentMapDeltaCounts = store.ContentMapDeltaCounts
+
 type ContentMapPin = document.ContentMapPin
 
 type ContentMapPlan = store.ContentMapPlan
+
+type ContentMapProposalRequest = store.ContentMapProposalRequest
+
+type ContentMapRefresh = store.ContentMapRefresh
 
 type ContentMapSection = store.ContentMapSection
 
@@ -20902,6 +21096,12 @@ type MapPlanRequest struct {
 	// Schema A URL to the JSON Schema for this object.
 	Schema     *string              `json:"$schema,omitempty"`
 	Definition ContentMapDefinition `json:"definition"`
+}
+
+type MapRefreshRequest struct {
+	// Schema A URL to the JSON Schema for this object.
+	Schema             *string `json:"$schema,omitempty"`
+	PreviousSnapshotID string  `json:"previous_snapshot_id"`
 }
 
 type MapWriteRequest struct {
