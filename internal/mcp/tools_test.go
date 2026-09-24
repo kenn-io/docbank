@@ -25,7 +25,7 @@ func TestDefaultToolCatalogIsFixedBoundedAndReadOnly(t *testing.T) {
 	wantNames := []string{
 		"get_vault_info", "list_documents", "search_documents", "get_document",
 		"list_document_versions", "read_rendition_text", "get_processing_plan",
-		"get_processing_status", "get_processing_coverage", "get_package_import",
+		"get_processing_status", "get_processing_coverage", "get_format_coverage", "get_package_import",
 		"get_package_preflight", "list_package_preflight_diagnostics",
 		"list_package_custodians", "find_people",
 		"list_packages", "get_package", "list_package_members", "get_package_record",
@@ -44,6 +44,22 @@ func TestDefaultToolCatalogIsFixedBoundedAndReadOnly(t *testing.T) {
 		assert.Equal(t, map[string]any{"maxResponseBytes": maxToolResponseBytes}, tool.Meta["io.docbank/bounds"])
 	}
 	assert.NotContains(t, catalogNames(tools), "start_processing")
+}
+
+func TestScopedCatalogOmitsUnfencedPackageTools(t *testing.T) {
+	principal := api.Principal{SubjectID: "synthetic-scoped", CredentialKind: "agent", Audience: "docbank:test"}
+	server := newServerWithOptions(testImplementation(), ServerOptions{
+		Principal: principal, AllowPackageWrites: true,
+	})
+	listed := decodeResult(t, exchangeRaw(t, server, requestFor("tools/list", map[string]any{})))
+	names := listedToolNames(t, listed)
+	assert.Contains(t, names, "search_documents")
+	for _, name := range []string{
+		"get_package", "get_package_record", "lookup_bates_label",
+		"start_package_import", "resolve_package_custodian",
+	} {
+		assert.NotContains(t, names, name)
+	}
 }
 
 func TestWriteToolsAreIndependentConstructionTimeOptIns(t *testing.T) {

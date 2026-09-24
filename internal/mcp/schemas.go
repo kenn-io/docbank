@@ -562,6 +562,54 @@ func getProcessingCoverageSchemas() (schema, schema) {
 	return input, output
 }
 
+func getFormatCoverageSchemas() (schema, schema) {
+	input := rootObjectSchema(schema{
+		"family": stringSchema(64), "format": stringSchema(64), "extension": stringSchema(16),
+	})
+	input["not"] = schema{"required": []string{"format", "extension"}}
+	state := objectSchema(schema{
+		"evidence": stringSchema(512), "note": stringSchema(512),
+		"provider": stringSchema(512), "provider_fingerprint": stringSchema(64),
+		"state": enumSchema("qualified", "unqualified", "unsupported", "not_applicable"),
+	}, "evidence", "note", "provider", "provider_fingerprint", "state")
+	capabilityKeys := []string{"detect", "retain", "metadata", "expand", "text", "pages", "transcript"}
+	capabilities := schema{}
+	for _, key := range capabilityKeys {
+		capabilities[key] = state
+	}
+	capabilityMap := objectSchema(capabilities, capabilityKeys...)
+	format := objectSchema(schema{
+		"capabilities": capabilityMap,
+		"extensions":   arraySchema(stringSchema(512), 512),
+		"id":           stringSchema(512),
+		"media_type":   stringSchema(512),
+		"query_family": stringSchema(512),
+		"unit_kind":    stringSchema(512),
+		"variants": arraySchema(objectSchema(schema{
+			"capabilities": capabilityMap,
+		}, "capabilities"), 256),
+	}, "capabilities", "extensions", "id", "media_type", "query_family", "unit_kind", "variants")
+	pending := objectSchema(schema{
+		"extensions": arraySchema(stringSchema(512), 512), "label": stringSchema(512),
+		"note": stringSchema(512), "owner_slice": stringSchema(512),
+	}, "extensions", "label", "note", "owner_slice")
+	lookup := objectSchema(schema{
+		"format": format, "match": enumSchema("format", "pending", "unknown_format"),
+		"pending": pending, "query": stringSchema(512),
+	}, "match", "query")
+	output := rootObjectSchema(withPrivateCache(schema{
+		"contract_version": schema{"type": "string", "const": "format-coverage/v1"},
+		"formats":          arraySchema(format, 512),
+		"generated_by": objectSchema(schema{
+			"bound_providers": arraySchema(stringSchema(512), 512),
+			"catalog_rows":    integerSchema(0, 512),
+			"extractor_id":    stringSchema(512),
+		}, "bound_providers", "catalog_rows", "extractor_id"),
+		"pending": arraySchema(pending, 512), "lookup": lookup,
+	}), cacheRequired("contract_version", "formats", "generated_by", "pending")...)
+	return input, output
+}
+
 func startProcessingSchemas() (schema, schema) {
 	input := rootObjectSchema(schema{
 		"content_version_id": uuidSchema(), "plan_fingerprint": sha256Schema(),
