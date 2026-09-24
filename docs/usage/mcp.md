@@ -1,5 +1,5 @@
 ---
-last_edited: 2026-08-29
+last_edited: 2026-09-24
 title: Model Context Protocol
 description: Connect a local MCP client to Docbank's bounded, daemon-first document surface.
 ---
@@ -80,10 +80,11 @@ client registration, scopes, or token refresh. A client may connect locally or
 through a trusted tunnel, but it must be able to set the Authorization header;
 clients that require the MCP HTTP OAuth flow are unsupported.
 
-Both transports have the fixed 19-tool read catalog described below.
+Both transports have the fixed 23-tool read catalog described below.
 `--allow-processing` adds only guarded processing start.
 `--allow-package-writes` separately permits load-file preflight, import, and
-custodian changes. Enable either flag or both when starting the process.
+custodian changes. `--allow-report-writes` separately permits frozen report
+creation and reviewed date revisions. Enable only the writes this process needs.
 
 ## Exact protocol contract
 
@@ -152,6 +153,26 @@ links, is capped at 1 MiB.
 | `list_package_members` | Pages through a package's immutable document occurrences. |
 | `get_package_record` | Reads one immutable sender row by its package-scoped record key. |
 | `lookup_bates_label` | Finds bounded package-scoped matches for an exact received or assigned label. |
+| `open_report_artifact` | Opens one retained CSV or bundle by its 48-character report ID. The daemon checks the current owner; the returned signed handle expires after 15 minutes. Each open makes a new private handle and is non-idempotent. |
+| `download_report_artifact` | Reads up to 256 KiB from a signed handle at an explicit offset, encoded as base64. Each call rechecks the owner, artifact size, and SHA-256 against the daemon before returning any bytes. `close=true` releases the handle, so the tool is non-idempotent. |
+| `get_report_summary` | Reads the owner-bound frozen counts, coverage, review state, and artifact hashes for one report ID. Current source visibility is checked before the summary is returned. |
+| `get_report_dates` | Pages through at most 20 review records at a time, retaining exact document, candidate, and evidence identities for a later reviewed choice. |
+
+`--allow-report-writes` adds `create_report` and `revise_report`. Creation accepts
+the same bounded request as the CLI, including exact v2 selected document
+identities. Revision creates a new report from choices tied to frozen candidate
+and evidence hashes. The server does not retry either write after a lost
+response; check report history before submitting it again.
+
+Report artifacts are limited to 512 MiB, with at most 16 open handles and
+512 MiB of retained private spool storage per MCP server. Companion bundle
+verification is serialized across the process, so another CSV or bundle open
+may wait. A handle is published only after the complete artifact matches the
+authenticated daemon's size and SHA-256 response. Bundles pass independent
+packet verification; CSV also has to match the verified companion packet's
+`hits.csv` before a handle is issued.
+A changed owner denies later chunks. Handle expiry, explicit close, and server
+shutdown release the temporary storage.
 
 `list_documents` uses live keyset pagination, not a snapshot. A mutation between
 pages can change later membership or order. Each opaque cursor is at most 32 KiB of ASCII, expires after 15 minutes, and
@@ -201,6 +222,10 @@ capped at 1 KiB and a stable code:
 - `invalid_document_cursor`
 - `invalid_rendition_window`
 - `invalid_rendition_encoding`
+- `report_unavailable`
+- `report_capacity`
+- `visibility_changed`
+- `access_denied`
 
 Invalid tool arguments use JSON-RPC `-32602`. Unexpected failures use a
 sanitized JSON-RPC internal error. Stderr records the operation and a fixed

@@ -84,7 +84,7 @@
   import { APIError } from "./api-transport.js";
   import { changeNodeTag, documentSearch, liveNodeTags, resolveDocumentSourceFence } from "./receipts.js";
   import { takeFragmentSession } from "./browser-session.js";
-  import { type AuditStatus, type DocumentSearchReport, type Node, type ProcessingProfileSummary, type SearchHit, type Tag, type TagAssignmentReceipt } from "./generated/docbank.js";
+  import { type AuditStatus, type DocumentSearchReport, type Identity, type Node, type ProcessingProfileSummary, type SearchHit, type Tag, type TagAssignmentReceipt } from "./generated/docbank.js";
   import { downloadVisiblePageCSV, selectedVisibleCSVRows } from "./csv.js";
   import { basename, formatBytes, formatDate } from "./format.js";
   import { orderRows, reconcileSearchView, type SortField } from "./rows.js";
@@ -211,6 +211,7 @@
   let backupsOpen = $state(false);
   let exportOpen = $state(false);
   let termReportsOpen = $state(false);
+  let reportSelectedDocuments = $state<Identity[]>([]);
   let exportHasJob = $state(false);
   let exportInput = $state<ExportInput | null>(null);
   $effect(() => { if (!webSession) { exportOpen = false; exportInput = null; exportHasJob = false; termReportsOpen = false; } });
@@ -1568,6 +1569,19 @@
     } catch (cause) { handleFailure(cause); }
   }
 
+  function openSelectedReport(): void {
+    const rows = snapshotActive
+      ? selectedSnapshotRows.map(row => ({ node_id: row.node_id, version_id: row.content_version_id, sha256: row.blob_hash }))
+      : sortedRows.filter(row => row.node.kind === "file" && bulkSelection.selectedIDs.has(row.node.id))
+        .map(row => ({ node_id: row.node.id, version_id: row.node.current_version_id ?? "", sha256: row.node.blob_hash ?? "" }));
+    if (!rows.length || rows.some(row => !row.version_id || !row.sha256)) {
+      handleFailure(new Error("Refresh the page before reporting selected documents; a selected row has no current version or verified hash."));
+      return;
+    }
+    reportSelectedDocuments = rows;
+    termReportsOpen = true;
+  }
+
   function snapshotOverlay(row: SnapshotRow) {
     return visibleSnapshotOverlay(row, snapshotOverlays);
   }
@@ -2152,7 +2166,7 @@
       {/snippet}
       {#snippet right()}
         <Button size="sm" disabled={!exportHasJob && (snapshotActive ? (snapshotPage?.total ?? 0) === 0 : visibleDocumentCount === 0)} onclick={() => openExport()}>Export</Button>
-        <Button size="sm" onclick={() => termReportsOpen = true}>Search exports</Button>
+        <Button size="sm" onclick={() => { reportSelectedDocuments = []; termReportsOpen = true; }}>Search exports</Button>
         <Button size="sm" onclick={() => openQueryEditor()}>Edit query</Button>
         <Button size="sm" disabled={snapshotActive && snapshotState.status !== "ready"}
           onclick={() => { snapshotActionError = ""; snapshotActionsOpen = true; }}>Snapshot actions</Button>
@@ -3090,6 +3104,7 @@
         ontags={() => openSnapshotBatchTags()}
         onwholequerytags={() => { snapshotActionError = ""; snapshotActionsOpen = true; }}
         onexport={() => openExport(true)}
+        onreport={openSelectedReport}
         onexportquery={() => openExport()}
       />
     {/if}
@@ -3104,6 +3119,7 @@
         tagsDisabled={loading || pendingTagHotkey !== ""}
         oncsv={exportPageCSV}
         onexport={() => openExport(true)}
+        onreport={openSelectedReport}
       />
     {/if}
     {#if shortcutHelpOpen}
@@ -3220,7 +3236,7 @@
       <ExportDrawer session={webSession} open={exportOpen} input={exportInput} onclose={() => exportOpen = false} onauthfailure={handleFailure} onactivechange={active => exportHasJob = active} />
     {/key}
     {#if termReportsOpen}
-      <TermReportDrawer session={webSession} initialExpression={searchQuery} onclose={() => termReportsOpen = false} onauthfailure={handleFailure} />
+      <TermReportDrawer session={webSession} initialExpression={searchQuery} initialSelectedDocuments={reportSelectedDocuments} onclose={() => termReportsOpen = false} onauthfailure={handleFailure} />
     {/if}
     {#if storageOpen}
       <StorageDrawer

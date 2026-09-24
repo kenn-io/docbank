@@ -1,5 +1,5 @@
 ---
-last_edited: 2026-09-16
+last_edited: 2026-09-24
 title: CLI Reference
 description: Every docbank command, flag, output format, and error behavior.
 ---
@@ -921,6 +921,7 @@ Export dated search counts and retain the evidence needed to check them.
 | `create --input request.json --output search-export.zip` | Create an export through the daemon. Print the export ID if dates need review. |
 | `dates <export-id> [--cursor CURSOR] [--limit 50]` | Read frozen date candidates, up to 100 members per page. |
 | `revise <export-id> --choices choices.json --output reviewed.zip` | Apply a JSON array of reviewed date choices to the frozen observation. |
+| `download <export-id> --format csv\|bundle --output <file>` | Download a retained artifact through the daemon. CSV is checked against the verified companion evidence ZIP; bundles pass independent packet verification. Source visibility is checked before publication. Success writes no stdout. |
 | `verify <report.zip>` | Verify internal packet consistency offline. |
 | `csv <report.zip> --output search-export.csv` | Verify the packet and extract its CSV offline. |
 
@@ -1021,6 +1022,7 @@ contains a live scoped browser session and must be handled as a secret. See the
 ```text
 docbank mcp [--transport stdio|http] [--listen <loopback-ip:port>]
             [--allow-processing] [--allow-package-writes]
+            [--allow-report-writes]
 ```
 
 Runs the selected vault's exact MCP `2026-07-28` server as another client of
@@ -1035,7 +1037,7 @@ named environment variable when the MCP process starts. It must differ from
 the daemon's effective API key. There is no token flag, remote-daemon option,
 or non-loopback listener.
 
-The catalog contains 19 read tools by default. `--allow-processing` adds
+The catalog contains 23 read tools by default. `--allow-processing` adds
 only the guarded `start_processing` tool: the agent must first retrieve the
 exact plan from the same process, and the operator must already have consented
 to that unchanged disclosure. The flag does not let MCP grant consent. The
@@ -1049,6 +1051,11 @@ and package custodian assignment and resolution. These tools can read local
 sources and change the vault without using the processing consent flow.
 Neither flag enables the other's tools; use both flags to allow both kinds of
 work.
+
+`--allow-report-writes` independently adds frozen report creation and reviewed
+date revision. Report summary and bounded date-review reads are available by
+default. Report writes use the same owner-bound daemon as report artifact
+downloads; the flag does not enable processing or package writes.
 
 See [Model Context Protocol](usage/mcp.md) for client setup, tool and resource
 catalogs, transport limits, caching, and unsupported capabilities.
