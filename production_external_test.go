@@ -55,6 +55,15 @@ func TestEmbeddedProductionSetsKeepVaultRootsSeparate(t *testing.T) {
 	updated, err := first.ProductionDraft(t.Context(), set.ID, 1)
 	require.NoError(t, err)
 	require.Equal(t, redaction.RecipeID600DPI, updated.RecipeID)
+	_, err = first.SealProductionMembership(t.Context(), "synthetic-operator", set.ID, 1, 3,
+		api.ProductionMembershipSealRequest{OperationID: "88888888-8888-4888-8888-888888888893",
+			Total: 1, MemberHash: updated.MemberHash})
+	require.ErrorIs(t, err, store.ErrProductionRevisionConflict)
+	_, err = first.ReviewProductionMember(t.Context(), "synthetic-operator", set.ID, 1, 3,
+		"88888888-8888-4888-8888-888888888894", api.ProductionMemberReviewRequest{
+			OperationID: "88888888-8888-4888-8888-888888888895",
+			Binding:     "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", Complete: true})
+	require.ErrorIs(t, err, store.ErrInvalidProduction)
 	_, err = second.ProductionSet(t.Context(), set.ID)
 	require.ErrorIs(t, err, store.ErrNotFound)
 }

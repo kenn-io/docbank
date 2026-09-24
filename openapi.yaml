@@ -11036,6 +11036,57 @@ components:
       x-go-type-import:
         path: go.kenn.io/docbank/internal/api
         name: api
+    ProductionMemberReviewRequest:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/ProductionMemberReviewRequest.json
+          format: uri
+          readOnly: true
+          type: string
+        binding:
+          type: string
+        complete:
+          type: boolean
+        operation_id:
+          type: string
+      required:
+        - operation_id
+        - binding
+        - complete
+      type: object
+      x-go-type: api.ProductionMemberReviewRequest
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
+    ProductionMembershipSealRequest:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/ProductionMembershipSealRequest.json
+          format: uri
+          readOnly: true
+          type: string
+        member_hash:
+          type: string
+        operation_id:
+          type: string
+        total:
+          format: int64
+          type: integer
+      required:
+        - operation_id
+        - total
+        - member_hash
+      type: object
+      x-go-type: api.ProductionMembershipSealRequest
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     ProductionNumberPage:
       additionalProperties: false
       properties:
@@ -20508,6 +20559,94 @@ paths:
                 $ref: "#/components/schemas/Error"
           description: Error
       summary: Page exact production members
+  /api/v1/productions/sets/{set_id}/revisions/{revision}/members/{member_id}/review:
+    post:
+      operationId: reviewProductionMember
+      parameters:
+        - in: path
+          name: set_id
+          required: true
+          schema:
+            format: uuid
+            type: string
+        - in: path
+          name: revision
+          required: true
+          schema:
+            format: int64
+            minimum: 1
+            type: integer
+        - in: path
+          name: member_id
+          required: true
+          schema:
+            format: uuid
+            type: string
+        - in: header
+          name: If-Match
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ProductionMemberReviewRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProductionReceipt"
+          description: OK
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: Record one exact production member review binding
+  /api/v1/productions/sets/{set_id}/revisions/{revision}/seal:
+    post:
+      operationId: sealProductionMembership
+      parameters:
+        - in: path
+          name: set_id
+          required: true
+          schema:
+            format: uuid
+            type: string
+        - in: path
+          name: revision
+          required: true
+          schema:
+            format: int64
+            minimum: 1
+            type: integer
+        - in: header
+          name: If-Match
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ProductionMembershipSealRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProductionReceipt"
+          description: OK
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: Seal exact production membership before member review
   /api/v1/queries/highlights:
     post:
       description: Returns only bounded positive text operands from the resolved compiler AST; structured, name-only, and negated operands are excluded.

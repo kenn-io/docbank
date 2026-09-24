@@ -207,3 +207,37 @@ func checkedProductionMutationReceipt(value *api.ProductionReceipt, setID string
 	}
 	return receipt, nil
 }
+
+func (c *Connection) SealProductionMembership(ctx context.Context, setID string, revision, etag int64,
+	request api.ProductionMembershipSealRequest) (redaction.Receipt, error) {
+	parsed, err := productionSetUUID(setID)
+	if err != nil || revision < 1 || redaction.ValidateMembershipSealRequest(request.Domain(etag)) != nil {
+		return redaction.Receipt{}, errors.New("invalid production membership seal")
+	}
+	header := strconv.FormatInt(etag, 10)
+	result, err := c.API().SealProductionMembership(ctx, &apiclient.SealProductionMembershipRequestOptions{
+		PathParams: &apiclient.SealProductionMembershipPath{SetID: parsed, Revision: revision},
+		Header:     &apiclient.SealProductionMembershipHeaders{IfMatch: &header}, Body: &request})
+	if err != nil {
+		return redaction.Receipt{}, err
+	}
+	return checkedProductionMutationReceipt(result, setID, revision, request.OperationID, etag)
+}
+
+func (c *Connection) ReviewProductionMember(ctx context.Context, setID string, revision, etag int64,
+	memberID string, request api.ProductionMemberReviewRequest) (redaction.Receipt, error) {
+	parsed, err := productionSetUUID(setID)
+	if err != nil || revision < 1 || etag < 1 || !validUUIDv4(memberID) ||
+		!validUUIDv4(request.OperationID) || !validSHA256Hex(request.Binding) || !request.Complete {
+		return redaction.Receipt{}, errors.New("invalid production member review")
+	}
+	header := strconv.FormatInt(etag, 10)
+	result, err := c.API().ReviewProductionMember(ctx, &apiclient.ReviewProductionMemberRequestOptions{
+		PathParams: &apiclient.ReviewProductionMemberPath{SetID: parsed, Revision: revision,
+			MemberID: uuid.MustParse(memberID)},
+		Header: &apiclient.ReviewProductionMemberHeaders{IfMatch: &header}, Body: &request})
+	if err != nil {
+		return redaction.Receipt{}, err
+	}
+	return checkedProductionMutationReceipt(result, setID, revision, request.OperationID, etag)
+}

@@ -122,6 +122,28 @@ type ProductionChangesRequest struct {
 	Changes     []ProductionChange `json:"changes"`
 }
 
+type ProductionMembershipSealRequest struct {
+	OperationID string `json:"operation_id"`
+	Total       int    `json:"total"`
+	MemberHash  string `json:"member_hash"`
+}
+
+func (request ProductionMembershipSealRequest) Domain(etag int64) redaction.MembershipSealRequest {
+	return redaction.MembershipSealRequest{OperationID: request.OperationID, ETag: etag,
+		Total: request.Total, MemberHash: request.MemberHash}
+}
+
+type ProductionMemberReviewRequest struct {
+	OperationID string `json:"operation_id"`
+	Binding     string `json:"binding"`
+	Complete    bool   `json:"complete"`
+}
+
+func (request ProductionMemberReviewRequest) Domain(etag int64, memberID string) store.ProductionReviewRequest {
+	return store.ProductionReviewRequest{OperationID: request.OperationID, ETag: etag,
+		MemberID: memberID, Binding: request.Binding, Complete: request.Complete}
+}
+
 func (request ProductionChangesRequest) Domain(etag int64) redaction.ApplyRequest {
 	changes := make([]redaction.Change, len(request.Changes))
 	for i, change := range request.Changes {
@@ -296,6 +318,64 @@ func registerProductionRoutes(api huma.API, d Deps, g *OperationGate) {
 			err = g.mutate(func() error {
 				var err error
 				receipt, err = d.Store.ApplyProductionChanges(ctx, actor, in.SetID, in.Revision, request)
+				return err
+			})
+			if err != nil {
+				return nil, productionSetError(err)
+			}
+			return &struct{ Body ProductionReceipt }{Body: ProductionReceipt(receipt)}, nil
+		})
+	huma.Register(api, huma.Operation{OperationID: "sealProductionMembership", Method: http.MethodPost,
+		Path:    "/api/v1/productions/sets/{set_id}/revisions/{revision}/seal",
+		Summary: "Seal exact production membership before member review", MaxBodyBytes: 4096},
+		func(ctx context.Context, in *struct {
+			SetID    string `path:"set_id" format:"uuid"`
+			Revision int64  `path:"revision" minimum:"1"`
+			IfMatch  string `header:"If-Match"`
+			Body     ProductionMembershipSealRequest
+		}) (*struct{ Body ProductionReceipt }, error) {
+			etag, err := parseIfMatch(in.IfMatch)
+			if err != nil {
+				return nil, err
+			}
+			actor, ok := workspaceSnapshotOwner(ctx)
+			if !ok {
+				return nil, NewError(http.StatusUnauthorized, "unauthorized", "authenticated production actor is missing")
+			}
+			var receipt redaction.Receipt
+			err = g.mutate(func() error {
+				var err error
+				receipt, err = d.Store.SealProductionMembership(ctx, actor, in.SetID, in.Revision, in.Body.Domain(etag))
+				return err
+			})
+			if err != nil {
+				return nil, productionSetError(err)
+			}
+			return &struct{ Body ProductionReceipt }{Body: ProductionReceipt(receipt)}, nil
+		})
+	huma.Register(api, huma.Operation{OperationID: "reviewProductionMember", Method: http.MethodPost,
+		Path:    "/api/v1/productions/sets/{set_id}/revisions/{revision}/members/{member_id}/review",
+		Summary: "Record one exact production member review binding", MaxBodyBytes: 4096},
+		func(ctx context.Context, in *struct {
+			SetID    string `path:"set_id" format:"uuid"`
+			Revision int64  `path:"revision" minimum:"1"`
+			MemberID string `path:"member_id" format:"uuid"`
+			IfMatch  string `header:"If-Match"`
+			Body     ProductionMemberReviewRequest
+		}) (*struct{ Body ProductionReceipt }, error) {
+			etag, err := parseIfMatch(in.IfMatch)
+			if err != nil {
+				return nil, err
+			}
+			actor, ok := workspaceSnapshotOwner(ctx)
+			if !ok {
+				return nil, NewError(http.StatusUnauthorized, "unauthorized", "authenticated production actor is missing")
+			}
+			var receipt redaction.Receipt
+			err = g.mutate(func() error {
+				var err error
+				receipt, err = d.Store.ReviewProductionMember(ctx, actor, in.SetID, in.Revision,
+					in.Body.Domain(etag, in.MemberID))
 				return err
 			})
 			if err != nil {

@@ -20,6 +20,8 @@ func TestProductionSetBrowserAllowlist(t *testing.T) {
 		{http.MethodGet, base + "/revisions/1/decisions?limit=1"},
 		{http.MethodPut, base + "/revisions/1/instructions"},
 		{http.MethodPost, base + "/revisions/1/changes"},
+		{http.MethodPost, base + "/revisions/1/seal"},
+		{http.MethodPost, base + "/revisions/1/members/88888888-8888-4888-8888-888888888887/review"},
 	} {
 		require.True(t, webSessionRequestAllowed(httptest.NewRequest(route.method, route.path, nil)), route.path)
 	}
@@ -33,6 +35,8 @@ func TestProductionSetBrowserAllowlist(t *testing.T) {
 		{http.MethodGet, base + "/revisions/1/members?unexpected=1"},
 		{http.MethodPut, base + "/revisions/1/instructions?unexpected=1"},
 		{http.MethodPost, base + "/revisions/1/changes/other"},
+		{http.MethodPost, base + "/revisions/1/seal?unexpected=1"},
+		{http.MethodPost, base + "/revisions/1/members/bad/review"},
 	} {
 		require.False(t, webSessionRequestAllowed(httptest.NewRequest(route.method, route.path, nil)), route.path)
 	}
