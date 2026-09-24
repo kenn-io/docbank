@@ -4089,6 +4089,17 @@ components:
           readOnly: true
           type: string
       type: object
+    DownloadProductionPackageRequest:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/DownloadProductionPackageRequest.json
+          format: uri
+          readOnly: true
+          type: string
+      type: object
     DownloadRequest:
       additionalProperties: false
       properties:
@@ -8591,6 +8602,10 @@ components:
         size:
           format: int64
           type: integer
+        source_collection_ids:
+          items:
+            type: string
+          type: array
         source_page_count:
           format: int64
           type: integer
@@ -8610,6 +8625,7 @@ components:
         - selected_source_pages
         - selected_pdf_sha256
         - source_page_count
+        - source_collection_ids
         - representations
       type: object
       x-go-type: api.PackageMember
@@ -10615,6 +10631,35 @@ components:
         - completed_bindings
       type: object
       x-go-type: api.ProcessingStatus
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
+    ProductionPackageDownloadTicket:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/ProductionPackageDownloadTicket.json
+          format: uri
+          readOnly: true
+          type: string
+        archive_sha256:
+          type: string
+        size:
+          format: int64
+          type: integer
+        url:
+          type: string
+        version_id:
+          type: string
+      required:
+        - url
+        - archive_sha256
+        - size
+        - version_id
+      type: object
+      x-go-type: api.ProductionPackageDownloadTicket
       x-go-type-import:
         path: go.kenn.io/docbank/internal/api
         name: api
@@ -19401,6 +19446,42 @@ paths:
                 $ref: "#/components/schemas/Error"
           description: Error
       summary: Resolve exact current live document search authority
+  /api/v1/productions/jobs/{job_id}/packages/{operation_id}/download:
+    post:
+      operationId: downloadProductionPackage
+      parameters:
+        - in: path
+          name: job_id
+          required: true
+          schema:
+            format: uuid
+            type: string
+        - in: path
+          name: operation_id
+          required: true
+          schema:
+            format: uuid
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DownloadProductionPackageRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProductionPackageDownloadTicket"
+          description: OK
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: Issue a one-use ticket for a verified retained production package
   /api/v1/queries/highlights:
     post:
       description: Returns only bounded positive text operands from the resolved compiler AST; structured, name-only, and negated operands are excluded.

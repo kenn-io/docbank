@@ -218,6 +218,7 @@ func NewServer(d Deps) *Server {
 	registerMediaRoutes(mux, humaAPI, d, g)
 	registerPackageRoutes(mux, humaAPI, d, g, s.webDownloads, s.webSessions)
 	registerBatesRoutes(mux, humaAPI, d, g, s.webDownloads, s.webSessions, cursorService)
+	registerProductionPackageRoutes(humaAPI, d, s.webDownloads, s.webSessions)
 	clearLongRunningBodyReadDeadlines(humaAPI)
 	markRevisionPreconditionsRequired(humaAPI)
 	registerDaemonOpenAPI(humaAPI)
