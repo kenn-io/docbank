@@ -15,6 +15,7 @@ import (
 	api "go.kenn.io/docbank/internal/api"
 	loadfile "go.kenn.io/docbank/internal/loadfile"
 	mailbox "go.kenn.io/docbank/internal/mailbox"
+	maps "go.kenn.io/docbank/internal/maps"
 	query "go.kenn.io/docbank/internal/query"
 	store "go.kenn.io/docbank/internal/store"
 	report "go.kenn.io/docbank/report"
@@ -4035,6 +4036,62 @@ func (c *Client) GetContentMapSnapshot(ctx context.Context, options *GetContentM
 	}
 
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/map-snapshots/{snapshot_id}")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
+// ReadContentMapView Read a bounded authorized map definition, snapshot, or delta
+func (c *Client) ReadContentMapView(ctx context.Context, options *ReadContentMapViewRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ReadContentMapViewResponse, error) {
+	var err error
+
+	queryEncoding := map[string]runtime.QueryEncoding{
+		"before_snapshot_id": {Style: "form", Explode: &[]bool{false}[0]},
+		"kind":               {Style: "form", Explode: &[]bool{false}[0]},
+		"limit":              {Style: "form", Explode: &[]bool{false}[0]},
+		"map_id":             {Style: "form", Explode: &[]bool{false}[0]},
+		"offset":             {Style: "form", Explode: &[]bool{false}[0]},
+		"snapshot_id":        {Style: "form", Explode: &[]bool{false}[0]},
+	}
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:    c.apiClient.GetBaseURL() + "/api/v1/map-views",
+		Method:        "GET",
+		Options:       options,
+		QueryEncoding: queryEncoding,
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*ReadContentMapViewResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(ReadContentMapViewResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "ReadContentMapViewResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[ReadContentMapViewErrorResponse](resp, "ReadContentMapViewErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/map-views")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
@@ -13739,6 +13796,37 @@ func (o *GetContentMapSnapshotRequestOptions) GetHeader() (map[string]string, er
 	return nil, nil
 }
 
+// ReadContentMapViewRequestOptions is the options needed to make a request to ReadContentMapView.
+type ReadContentMapViewRequestOptions struct {
+	Query *ReadContentMapViewQuery
+}
+
+// GetPathParams returns the path params as a map.
+func (o *ReadContentMapViewRequestOptions) GetPathParams() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetQuery returns the query params as a map.
+func (o *ReadContentMapViewRequestOptions) GetQuery() (map[string]any, error) {
+	encoded, err := json.Marshal(o.Query, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *ReadContentMapViewRequestOptions) GetBody() any {
+	return nil
+}
+
+// GetHeader returns the headers as a map.
+func (o *ReadContentMapViewRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
 // CreateContentMapRequestOptions is the options needed to make a request to CreateContentMap.
 type CreateContentMapRequestOptions struct {
 	Body *CreateContentMapBody
@@ -18430,6 +18518,14 @@ const (
 	ListDocumentsQueryDirectionDesc ListDocumentsQueryDirection = "desc"
 )
 
+type ReadContentMapViewQueryKind string
+
+const (
+	Definition ReadContentMapViewQueryKind = "definition"
+	Delta      ReadContentMapViewQueryKind = "delta"
+	Snapshot   ReadContentMapViewQueryKind = "snapshot"
+)
+
 type ListPackagesQueryDirection string
 
 const (
@@ -19389,6 +19485,15 @@ type MailboxOccurrencesQuery struct {
 	Limit *int `json:"limit,omitempty"`
 }
 
+type ReadContentMapViewQuery struct {
+	Kind             ReadContentMapViewQueryKind `json:"kind"`
+	MapID            *uuid.UUID                  `json:"map_id,omitempty"`
+	SnapshotID       *uuid.UUID                  `json:"snapshot_id,omitempty"`
+	BeforeSnapshotID *uuid.UUID                  `json:"before_snapshot_id,omitempty"`
+	Offset           *int64                      `json:"offset,omitempty"`
+	Limit            *int64                      `json:"limit,omitempty"`
+}
+
 type ListMediaOccurrencesQuery struct {
 	Cursor   *string `json:"cursor,omitempty"`
 	Limit    *int64  `json:"limit,omitempty"`
@@ -19874,6 +19979,10 @@ type TransferMailboxEMLErrorResponse = Error
 type GetContentMapSnapshotResponse = store.ContentMapSnapshot
 
 type GetContentMapSnapshotErrorResponse = Error
+
+type ReadContentMapViewResponse = maps.ReadView
+
+type ReadContentMapViewErrorResponse = Error
 
 type CreateContentMapResponse = store.ContentMap
 
@@ -21426,6 +21535,12 @@ type QueryDependency = api.QueryDependency
 type QueryHighlightPreview = api.QueryHighlightPreview
 
 type QueryPreview = api.QueryPreview
+
+type ReadEntry = maps.ReadEntry
+
+type ReadSection = maps.ReadSection
+
+type ReadView = maps.ReadView
 
 type Receipt = bundle.Receipt
 

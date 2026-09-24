@@ -8,6 +8,7 @@ import (
 
 	"github.com/danielgtaylor/huma/v2"
 
+	mapviews "go.kenn.io/docbank/internal/maps"
 	"go.kenn.io/docbank/internal/store"
 )
 
@@ -57,8 +58,74 @@ func mapRouteError(err error) error {
 	}
 }
 
+func mapViewRouteError(err error) error {
+	if errors.Is(err, mapviews.ErrInvalidMapRead) {
+		return NewError(http.StatusUnprocessableEntity, "invalid_map_window", "Narrow the map read window.")
+	}
+	return mapRouteError(err)
+}
+
 // registerMapRoutes is called by server.go, owned by the integration parent.
 func registerMapRoutes(api huma.API, d Deps, g *gate) {
+	huma.Register(api, huma.Operation{OperationID: "readContentMapView", Method: http.MethodGet,
+		Path: "/api/v1/map-views", Summary: "Read a bounded authorized map definition, snapshot, or delta",
+	}, func(ctx context.Context, in *struct {
+		Kind             string `query:"kind" enum:"definition,snapshot,delta" required:"true"`
+		MapID            string `query:"map_id" format:"uuid"`
+		SnapshotID       string `query:"snapshot_id" format:"uuid"`
+		BeforeSnapshotID string `query:"before_snapshot_id" format:"uuid"`
+		Offset           int    `query:"offset" minimum:"0" maximum:"1000000"`
+		Limit            int    `query:"limit" minimum:"1" maximum:"100" default:"20"`
+	}) (*struct{ Body mapviews.ReadView }, error) {
+		access, err := mapAccess(ctx)
+		if err != nil {
+			return nil, err
+		}
+		limit := in.Limit
+		if limit == 0 {
+			limit = 20
+		}
+		var view mapviews.ReadView
+		switch in.Kind {
+		case "definition":
+			if in.MapID == "" || in.SnapshotID != "" || in.BeforeSnapshotID != "" {
+				return nil, mapViewRouteError(mapviews.ErrInvalidMapRead)
+			}
+			record, readErr := d.Store.ContentMapByID(ctx, access, in.MapID)
+			if readErr != nil {
+				return nil, mapViewRouteError(readErr)
+			}
+			if record.ArchivedAt != "" {
+				return nil, mapRouteError(store.ErrNotFound)
+			}
+			view, err = mapviews.RenderDefinition(record, in.Offset, limit)
+		case "snapshot":
+			if in.MapID != "" || in.SnapshotID == "" || in.BeforeSnapshotID != "" {
+				return nil, mapViewRouteError(mapviews.ErrInvalidMapRead)
+			}
+			snapshot, readErr := d.Store.ContentMapSnapshotByID(ctx, access, in.SnapshotID)
+			if readErr != nil {
+				return nil, mapViewRouteError(readErr)
+			}
+			view, err = mapviews.RenderSnapshot(snapshot, in.Offset, limit)
+		case "delta":
+			if in.MapID != "" || in.SnapshotID == "" || in.BeforeSnapshotID == "" {
+				return nil, mapViewRouteError(mapviews.ErrInvalidMapRead)
+			}
+			delta, readErr := d.Store.ContentMapDeltaByIDs(ctx, access, in.BeforeSnapshotID, in.SnapshotID)
+			if readErr != nil {
+				return nil, mapViewRouteError(readErr)
+			}
+			view, err = mapviews.RenderDelta(delta, in.Offset, limit)
+		default:
+			return nil, mapViewRouteError(mapviews.ErrInvalidMapRead)
+		}
+		if err != nil {
+			return nil, mapViewRouteError(err)
+		}
+		return &struct{ Body mapviews.ReadView }{Body: view}, nil
+	})
+
 	huma.Register(api, huma.Operation{OperationID: "proposeContentMap", Method: http.MethodPost,
 		Path: "/api/v1/maps/proposals", Summary: "Propose a map from an existing tag or scoped query",
 		MaxBodyBytes: maxMapRequestBytes}, func(ctx context.Context, in *struct {

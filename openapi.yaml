@@ -2104,7 +2104,11 @@ components:
           items:
             $ref: "#/components/schemas/ContentMapDeltaChange"
           type: array
+        after_snapshot_created:
+          type: string
         after_snapshot_id:
+          type: string
+        before_snapshot_created:
           type: string
         before_snapshot_id:
           type: string
@@ -2124,6 +2128,8 @@ components:
           items:
             $ref: "#/components/schemas/ContentMapDeltaChange"
           type: array
+        scope_digest:
+          type: string
         truncated:
           type: boolean
         unavailable:
@@ -2136,7 +2142,9 @@ components:
           type: array
       required:
         - map_id
+        - scope_digest
         - after_snapshot_id
+        - after_snapshot_created
         - definition_changed
         - changed
         - truncated
@@ -11521,6 +11529,154 @@ components:
       x-go-type-import:
         path: go.kenn.io/docbank/internal/api
         name: api
+    ReadEntry:
+      additionalProperties: false
+      properties:
+        availability:
+          type: string
+        document_uid:
+          type: string
+        member:
+          $ref: "#/components/schemas/SnapshotMember"
+        name:
+          type: string
+        passage:
+          $ref: "#/components/schemas/PassageRefV1"
+        pin_mode:
+          type: string
+        requested_content_version_id:
+          type: string
+      required:
+        - document_uid
+        - availability
+        - member
+        - name
+      type: object
+      x-go-type: maps.ReadEntry
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/maps
+        name: maps
+    ReadSection:
+      additionalProperties: false
+      properties:
+        description:
+          type: string
+        entries:
+          items:
+            $ref: "#/components/schemas/ReadEntry"
+          type: array
+        exclude:
+          items:
+            $ref: "#/components/schemas/ContentMapPin"
+          type: array
+        heading:
+          type: string
+        id:
+          type: string
+        include:
+          items:
+            $ref: "#/components/schemas/ContentMapPin"
+          type: array
+        selector:
+          $ref: "#/components/schemas/Query"
+      required:
+        - id
+        - heading
+        - description
+        - entries
+      type: object
+      x-go-type: maps.ReadSection
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/maps
+        name: maps
+    ReadView:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/ReadView.json
+          format: uri
+          readOnly: true
+          type: string
+        available_entries:
+          format: int64
+          type: integer
+        before_snapshot_created:
+          type: string
+        before_snapshot_id:
+          type: string
+        coverage:
+          type: string
+        definition_updated:
+          type: string
+        delta:
+          $ref: "#/components/schemas/ContentMapDelta"
+        freshness:
+          type: string
+        kind:
+          type: string
+        map_id:
+          type: string
+        map_revision:
+          format: int64
+          type: integer
+        markdown:
+          type: string
+        next_offset:
+          format: int64
+          type: integer
+        offset:
+          format: int64
+          type: integer
+        offset_unit:
+          type: string
+        returned_entries:
+          format: int64
+          type: integer
+        scope:
+          type: string
+        scope_digest:
+          type: string
+        sections:
+          items:
+            $ref: "#/components/schemas/ReadSection"
+          type: array
+        snapshot_created:
+          type: string
+        snapshot_id:
+          type: string
+        title:
+          type: string
+        total_entries:
+          format: int64
+          type: integer
+        total_sections:
+          format: int64
+          type: integer
+        truncated:
+          type: boolean
+      required:
+        - kind
+        - map_id
+        - map_revision
+        - markdown
+        - freshness
+        - coverage
+        - sections
+        - total_sections
+        - total_entries
+        - available_entries
+        - offset
+        - offset_unit
+        - returned_entries
+        - next_offset
+        - truncated
+      type: object
+      x-go-type: maps.ReadView
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/maps
+        name: maps
     Receipt:
       additionalProperties: false
       properties:
@@ -17546,6 +17702,69 @@ paths:
                 $ref: "#/components/schemas/Error"
           description: Error
       summary: Read one immutable authorized map snapshot
+  /api/v1/map-views:
+    get:
+      operationId: readContentMapView
+      parameters:
+        - explode: false
+          in: query
+          name: kind
+          required: true
+          schema:
+            enum:
+              - definition
+              - snapshot
+              - delta
+            type: string
+        - explode: false
+          in: query
+          name: map_id
+          schema:
+            format: uuid
+            type: string
+        - explode: false
+          in: query
+          name: snapshot_id
+          schema:
+            format: uuid
+            type: string
+        - explode: false
+          in: query
+          name: before_snapshot_id
+          schema:
+            format: uuid
+            type: string
+        - explode: false
+          in: query
+          name: offset
+          schema:
+            format: int64
+            maximum: 1000000
+            minimum: 0
+            type: integer
+        - explode: false
+          in: query
+          name: limit
+          schema:
+            default: 20
+            format: int64
+            maximum: 100
+            minimum: 1
+            type: integer
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReadView"
+          description: OK
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: Read a bounded authorized map definition, snapshot, or delta
   /api/v1/maps:
     post:
       operationId: createContentMap

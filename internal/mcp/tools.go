@@ -62,6 +62,7 @@ var readToolDefinitions = []toolDefinition{
 	{name: "list_package_members", title: "List package members", description: "Page through one package's immutable document occurrences.", schemas: listPackageMembersSchemas},
 	{name: "get_package_record", title: "Get package record", description: "Read one immutable sender row by its package-scoped record key.", schemas: getPackageRecordSchemas},
 	{name: "lookup_bates_label", title: "Look up Bates label", description: "Find every bounded package-scoped match for an exact received or assigned label.", schemas: lookupBatesLabelSchemas},
+	{name: "read_content_map", title: "Read content map", description: "Read an authorized bounded map definition, immutable snapshot, or refresh delta as Markdown and JSON metadata.", schemas: readContentMapSchemas},
 }
 
 var processingToolDefinition = toolDefinition{
@@ -194,6 +195,21 @@ func validToolSemantics(name string, arguments map[string]any) bool {
 		}
 		return validOptionalRFC3339Nano(filters, "modified_since") &&
 			validOptionalRFC3339Nano(filters, "modified_before")
+	case "read_content_map":
+		kind, _ := arguments["kind"].(string)
+		_, mapID := arguments["map_id"]
+		_, snapshotID := arguments["snapshot_id"]
+		_, beforeID := arguments["before_snapshot_id"]
+		switch kind {
+		case "definition":
+			return mapID && !snapshotID && !beforeID
+		case "snapshot":
+			return !mapID && snapshotID && !beforeID
+		case "delta":
+			return !mapID && snapshotID && beforeID
+		default:
+			return false
+		}
 	default:
 		return true
 	}

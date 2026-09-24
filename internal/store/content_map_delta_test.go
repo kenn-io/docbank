@@ -10,21 +10,58 @@ import (
 	"go.kenn.io/docbank/document"
 )
 
+func TestContentMapDeltaByIDsRequiresSameAuthorizedMap(t *testing.T) {
+	s := newTestStore(t)
+	ctx := t.Context()
+	access := MapAccess{Owner: "local", AllSources: true}
+	node, err := s.CreateFile(ctx, s.RootID(), "source.txt", fakeHash("map-read"), 10, "text/plain")
+	require.NoError(t, err)
+	identity, err := s.EnsureDocumentIdentity(ctx, node.ID)
+	require.NoError(t, err)
+	definition := mapTestDefinition(document.ContentMapPin{DocumentUID: identity.DocumentUID, Mode: document.MapPinFollowCurrent})
+	plan, err := s.PreviewContentMap(ctx, access, definition)
+	require.NoError(t, err)
+	firstMap, err := s.CreateContentMap(ctx, access, definition, plan.DefinitionDigest)
+	require.NoError(t, err)
+	secondMap, err := s.CreateContentMap(ctx, access, definition, plan.DefinitionDigest)
+	require.NoError(t, err)
+	first, err := s.CreateContentMapSnapshot(ctx, access, firstMap.ID, firstMap.Revision)
+	require.NoError(t, err)
+	second, err := s.CreateContentMapSnapshot(ctx, access, firstMap.ID, firstMap.Revision)
+	require.NoError(t, err)
+	foreign, err := s.CreateContentMapSnapshot(ctx, access, secondMap.ID, secondMap.Revision)
+	require.NoError(t, err)
+	delta, err := s.ContentMapDeltaByIDs(ctx, access, first.ID, second.ID)
+	require.NoError(t, err)
+	require.Equal(t, first.ID, delta.BeforeSnapshotID)
+	require.Equal(t, second.ID, delta.AfterSnapshotID)
+	_, err = s.ContentMapDeltaByIDs(ctx, access, first.ID, foreign.ID)
+	require.ErrorIs(t, err, ErrNotFound)
+	_, err = s.ContentMapDeltaByIDs(ctx, MapAccess{Owner: "local", PermittedVersionIDs: []string{node.CurrentVersionID}},
+		first.ID, second.ID)
+	require.ErrorIs(t, err, ErrNotFound)
+}
+
 func TestContentMapDeltaExplainsVersionOrderAndUnavailable(t *testing.T) {
 	entry := func(uid, version string) ContentMapSnapshotEntry {
 		return ContentMapSnapshotEntry{DocumentUID: uid, Availability: mapAvailabilityAvailable,
 			Member: SnapshotMember{ContentVersionID: version}}
 	}
 	before := ContentMapSnapshot{ID: "before", MapID: "map", MapRevision: 1,
+		CreatedAt: "2026-09-23T12:00:00Z", ScopeDigest: "sha256:scope",
 		Sections: []ContentMapSnapshotSection{{ID: "core", Entries: []ContentMapSnapshotEntry{
 			entry("a", "v1"), entry("b", "v1"), entry("c", "v1"), entry("gone", "v1"),
 		}}}}
 	after := ContentMapSnapshot{ID: "after", MapID: "map", MapRevision: 2,
+		CreatedAt: "2026-09-24T12:00:00Z", ScopeDigest: "sha256:scope",
 		Sections: []ContentMapSnapshotSection{{ID: "core", Entries: []ContentMapSnapshotEntry{
 			entry("b", "v2"), entry("a", "v1"), entry("new", "v1"),
 			{DocumentUID: "c", Availability: mapAvailabilityUnavailable},
 		}}}}
 	delta := diffContentMapSnapshots(before, after)
+	require.Equal(t, "sha256:scope", delta.ScopeDigest)
+	require.Equal(t, before.CreatedAt, delta.BeforeSnapshotCreated)
+	require.Equal(t, after.CreatedAt, delta.AfterSnapshotCreated)
 	require.True(t, delta.Changed)
 	require.True(t, delta.DefinitionChanged)
 	require.Equal(t, []string{"new"}, deltaDocumentUIDs(delta.Added))

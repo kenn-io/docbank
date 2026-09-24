@@ -1,8 +1,31 @@
 package store
 
-import "go.kenn.io/docbank/document"
+import (
+	"context"
+
+	"go.kenn.io/docbank/document"
+)
 
 const MaxContentMapDeltaEntries = 100
+
+// ContentMapDeltaByIDs reads both immutable snapshots under the same caller
+// scope before comparing them. Cross-map comparisons have no visible result.
+func (s *Store) ContentMapDeltaByIDs(ctx context.Context, access MapAccess,
+	beforeID, afterID string,
+) (ContentMapDelta, error) {
+	before, err := s.ContentMapSnapshotByID(ctx, access, beforeID)
+	if err != nil {
+		return ContentMapDelta{}, err
+	}
+	after, err := s.ContentMapSnapshotByID(ctx, access, afterID)
+	if err != nil {
+		return ContentMapDelta{}, err
+	}
+	if before.MapID != after.MapID {
+		return ContentMapDelta{}, ErrNotFound
+	}
+	return diffContentMapSnapshots(before, after), nil
+}
 
 // ContentMapDeltaChange identifies one source in one stable section. Positions
 // are zero-based; -1 means the source was absent from that snapshot.
@@ -27,18 +50,21 @@ type ContentMapDeltaCounts struct {
 // ContentMapDelta compares two already-authorized immutable snapshots. Lists
 // are bounded independently while counts describe their complete populations.
 type ContentMapDelta struct {
-	MapID             string                  `json:"map_id"`
-	BeforeSnapshotID  string                  `json:"before_snapshot_id,omitzero"`
-	AfterSnapshotID   string                  `json:"after_snapshot_id"`
-	DefinitionChanged bool                    `json:"definition_changed"`
-	Changed           bool                    `json:"changed"`
-	Truncated         bool                    `json:"truncated"`
-	Counts            ContentMapDeltaCounts   `json:"counts"`
-	Added             []ContentMapDeltaChange `json:"added"`
-	Removed           []ContentMapDeltaChange `json:"removed"`
-	VersionChanged    []ContentMapDeltaChange `json:"version_changed"`
-	Reordered         []ContentMapDeltaChange `json:"reordered"`
-	Unavailable       []ContentMapDeltaChange `json:"unavailable"`
+	MapID                 string                  `json:"map_id"`
+	ScopeDigest           string                  `json:"scope_digest"`
+	BeforeSnapshotID      string                  `json:"before_snapshot_id,omitzero"`
+	BeforeSnapshotCreated string                  `json:"before_snapshot_created,omitzero"`
+	AfterSnapshotID       string                  `json:"after_snapshot_id"`
+	AfterSnapshotCreated  string                  `json:"after_snapshot_created"`
+	DefinitionChanged     bool                    `json:"definition_changed"`
+	Changed               bool                    `json:"changed"`
+	Truncated             bool                    `json:"truncated"`
+	Counts                ContentMapDeltaCounts   `json:"counts"`
+	Added                 []ContentMapDeltaChange `json:"added"`
+	Removed               []ContentMapDeltaChange `json:"removed"`
+	VersionChanged        []ContentMapDeltaChange `json:"version_changed"`
+	Reordered             []ContentMapDeltaChange `json:"reordered"`
+	Unavailable           []ContentMapDeltaChange `json:"unavailable"`
 }
 
 type locatedMapEntry struct {
@@ -69,8 +95,9 @@ func mapPassageID(ref *document.PassageRefV1) string {
 }
 
 func diffContentMapSnapshots(before, after ContentMapSnapshot) ContentMapDelta {
-	delta := ContentMapDelta{MapID: after.MapID, BeforeSnapshotID: before.ID,
-		AfterSnapshotID: after.ID,
+	delta := ContentMapDelta{MapID: after.MapID, ScopeDigest: after.ScopeDigest,
+		BeforeSnapshotID: before.ID, BeforeSnapshotCreated: before.CreatedAt,
+		AfterSnapshotID: after.ID, AfterSnapshotCreated: after.CreatedAt,
 		DefinitionChanged: before.ID != "" && (before.MapRevision != after.MapRevision ||
 			before.DefinitionDigest != after.DefinitionDigest),
 		Added: []ContentMapDeltaChange{}, Removed: []ContentMapDeltaChange{},

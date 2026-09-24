@@ -18,6 +18,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"go.kenn.io/docbank/document"
+	mapviews "go.kenn.io/docbank/internal/maps"
 	"go.kenn.io/docbank/internal/store"
 )
 
@@ -104,6 +105,63 @@ func TestContentMapProposalRouteRequiresExplicitSave(t *testing.T) {
 	assert.Equal(t, []string{tag.ID}, plan.Definition.Sections[0].Selector.Filters.TagIDs)
 	response, body = mapRequest(t, server.URL, http.MethodGet, "/api/v1/maps/"+tag.ID, nil, "")
 	assert.Equal(t, http.StatusNotFound, response.StatusCode, string(body))
+}
+
+func TestContentMapViewRoutesReadAuthorizedDefinitionSnapshotAndDelta(t *testing.T) {
+	s, err := store.Open(filepath.Join(t.TempDir(), "synthetic.db"))
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, s.Close()) })
+	sum := sha256.Sum256([]byte("source"))
+	node, err := s.CreateFile(t.Context(), s.RootID(), "source.txt", hex.EncodeToString(sum[:]), 6, "text/plain")
+	require.NoError(t, err)
+	identity, err := s.EnsureDocumentIdentity(t.Context(), node.ID)
+	require.NoError(t, err)
+	access := store.MapAccess{Owner: "local", AllSources: true}
+	definition := store.ContentMapDefinition{Title: "Synthetic <topic>", Scope: "local",
+		Sections: []store.ContentMapSection{{ID: "core", Heading: "Core", Ordering: "explicit", MaxEntries: 10,
+			Include: []document.ContentMapPin{{DocumentUID: identity.DocumentUID, Mode: document.MapPinFollowCurrent}}}}}
+	plan, err := s.PreviewContentMap(t.Context(), access, definition)
+	require.NoError(t, err)
+	created, err := s.CreateContentMap(t.Context(), access, definition, plan.DefinitionDigest)
+	require.NoError(t, err)
+	first, err := s.CreateContentMapSnapshot(t.Context(), access, created.ID, created.Revision)
+	require.NoError(t, err)
+	second, err := s.CreateContentMapSnapshot(t.Context(), access, created.ID, created.Revision)
+	require.NoError(t, err)
+	other, err := s.CreateContentMap(t.Context(), access, definition, plan.DefinitionDigest)
+	require.NoError(t, err)
+	foreign, err := s.CreateContentMapSnapshot(t.Context(), access, other.ID, other.Revision)
+	require.NoError(t, err)
+	mux := http.NewServeMux()
+	registerMapRoutes(humago.New(mux, huma.DefaultConfig("map-test", "0")), Deps{Store: s}, NewOperationGate())
+	server := httptest.NewServer(mux)
+	t.Cleanup(server.Close)
+	for _, tc := range []struct {
+		path string
+		kind string
+	}{
+		{"/api/v1/map-views?kind=definition&map_id=" + created.ID, "definition"},
+		{"/api/v1/map-views?kind=snapshot&snapshot_id=" + first.ID, "snapshot"},
+		{"/api/v1/map-views?kind=delta&before_snapshot_id=" + first.ID + "&snapshot_id=" + second.ID, "delta"},
+	} {
+		response, body := mapRequest(t, server.URL, http.MethodGet, tc.path, nil, "")
+		require.Equal(t, http.StatusOK, response.StatusCode, string(body))
+		var view mapviews.ReadView
+		require.NoError(t, json.Unmarshal(body, &view))
+		assert.Equal(t, tc.kind, view.Kind)
+		assert.Equal(t, created.ID, view.MapID)
+		assert.NotEmpty(t, view.Markdown)
+		assert.LessOrEqual(t, len(view.Markdown), mapviews.MaxMapReadBytes)
+	}
+	response, body := mapRequest(t, server.URL, http.MethodGet,
+		"/api/v1/map-views?kind=delta&before_snapshot_id="+first.ID+"&snapshot_id="+foreign.ID, nil, "")
+	assert.Equal(t, http.StatusNotFound, response.StatusCode, string(body))
+	response, body = mapRequest(t, server.URL, http.MethodGet,
+		"/api/v1/map-views?kind=snapshot&snapshot_id="+first.ID+"&limit=101", nil, "")
+	assert.Equal(t, http.StatusUnprocessableEntity, response.StatusCode, string(body))
+	response, body = mapRequest(t, server.URL, http.MethodGet,
+		"/api/v1/map-views?kind=snapshot&snapshot_id="+first.ID+"&limit=0", nil, "")
+	assert.Equal(t, http.StatusUnprocessableEntity, response.StatusCode, string(body))
 }
 
 func TestContentMapRouteErrorsDoNotLeakHiddenSources(t *testing.T) {

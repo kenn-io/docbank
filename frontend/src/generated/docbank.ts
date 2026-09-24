@@ -1130,7 +1130,9 @@ export interface ContentMapDeltaCounts {
 
 export interface ContentMapDelta {
   added: ContentMapDeltaChange[];
+  after_snapshot_created: string;
   after_snapshot_id: string;
+  before_snapshot_created?: string;
   before_snapshot_id?: string;
   changed: boolean;
   counts: ContentMapDeltaCounts;
@@ -1138,6 +1140,7 @@ export interface ContentMapDelta {
   map_id: string;
   removed: ContentMapDeltaChange[];
   reordered: ContentMapDeltaChange[];
+  scope_digest: string;
   truncated: boolean;
   unavailable: ContentMapDeltaChange[];
   version_changed: ContentMapDeltaChange[];
@@ -4670,6 +4673,55 @@ export interface QueryPreview {
   query_fingerprint: string;
 }
 
+export interface ReadEntry {
+  availability: string;
+  document_uid: string;
+  member: SnapshotMember;
+  name: string;
+  passage?: PassageRefV1;
+  pin_mode?: string;
+  requested_content_version_id?: string;
+}
+
+export interface ReadSection {
+  description: string;
+  entries: ReadEntry[];
+  exclude?: ContentMapPin[];
+  heading: string;
+  id: string;
+  include?: ContentMapPin[];
+  selector?: Query;
+}
+
+export interface ReadView {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  available_entries: number;
+  before_snapshot_created?: string;
+  before_snapshot_id?: string;
+  coverage: string;
+  definition_updated?: string;
+  delta?: ContentMapDelta;
+  freshness: string;
+  kind: string;
+  map_id: string;
+  map_revision: number;
+  markdown: string;
+  next_offset: number;
+  offset: number;
+  offset_unit: string;
+  returned_entries: number;
+  scope?: string;
+  scope_digest?: string;
+  sections: ReadSection[];
+  snapshot_created?: string;
+  snapshot_id?: string;
+  title?: string;
+  total_entries: number;
+  total_sections: number;
+  truncated: boolean;
+}
+
 export interface RegisterBlobStoreRequest {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
@@ -6124,6 +6176,32 @@ export type TransferMailboxEMLHeaders = {
  */
 'X-Docbank-Transfer': string;
 };
+
+export type ReadContentMapViewParams = {
+kind: ReadContentMapViewKind;
+map_id?: string;
+snapshot_id?: string;
+before_snapshot_id?: string;
+/**
+ * @minimum 0
+ * @maximum 1000000
+ */
+offset?: number;
+/**
+ * @minimum 1
+ * @maximum 100
+ */
+limit?: number;
+};
+
+export type ReadContentMapViewKind = typeof ReadContentMapViewKind[keyof typeof ReadContentMapViewKind];
+
+
+export const ReadContentMapViewKind = {
+  definition: 'definition',
+  snapshot: 'snapshot',
+  delta: 'delta',
+} as const;
 
 export type ArchiveContentMapHeaders = {
 'If-Match': string;
@@ -9714,6 +9792,37 @@ export const getGetContentMapSnapshotUrl = (snapshotId: string,) => {
 export const getContentMapSnapshot = async (snapshotId: string, options?: Parameters<typeof sessionJSON>[1]): Promise<ContentMapSnapshot> => {
 
   return sessionJSON<ContentMapSnapshot>(getGetContentMapSnapshotUrl(snapshotId),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+export const getReadContentMapViewUrl = (params: ReadContentMapViewParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/v1/map-views?${stringifiedParams}` : `/api/v1/map-views`
+}
+
+/**
+ * @summary Read a bounded authorized map definition, snapshot, or delta
+ */
+export const readContentMapView = async (params: ReadContentMapViewParams, options?: Parameters<typeof sessionJSON>[1]): Promise<ReadView> => {
+
+  return sessionJSON<ReadView>(getReadContentMapViewUrl(params),
   {
     ...options,
     method: 'GET'
