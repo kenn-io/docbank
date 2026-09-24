@@ -528,10 +528,15 @@ func VerifyRecipientArchive(path string) (PackageQC, error) {
 	for _, entry := range archive.File {
 		if _, duplicate := entries[entry.Name]; duplicate || !entry.FileInfo().Mode().IsRegular() ||
 			entry.Comment != "" || !bytes.Equal(entry.Extra, packageZIPTimestampExtra) || entry.NonUTF8 ||
-			entry.Method != zip.Store || !entry.Modified.Equal(time.Date(1980, 1, 1, 0, 0, 0, 0, time.UTC)) {
+			entry.Method != zip.Store || entry.Flags != 8 || entry.CreatorVersion != 3<<8|20 ||
+			entry.ExternalAttrs != 0100644<<16 || entry.ModifiedTime != 0 || entry.ModifiedDate != 33 ||
+			!entry.Modified.Equal(time.Date(1980, 1, 1, 0, 0, 0, 0, time.UTC)) {
 			return PackageQC{}, ErrRecipientArchive
 		}
 		entries[entry.Name] = entry
+	}
+	if err := verifyRecipientZIPEnvelope(file, info.Size(), archive); err != nil {
+		return PackageQC{}, err
 	}
 	manifestEntry := entries["MANIFEST.json"]
 	if manifestEntry == nil {

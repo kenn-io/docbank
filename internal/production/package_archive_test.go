@@ -7,6 +7,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"image"
 	"image/color"
 	"image/png"
@@ -328,6 +329,59 @@ func TestRecipientArchiveRejectsUnapprovedZIPMetadata(t *testing.T) {
 			require.ErrorIs(t, err, ErrRecipientArchive)
 		})
 	}
+}
+
+func TestRecipientArchiveRejectsUndeclaredEnvelopeBytes(t *testing.T) {
+	projection, opener := packageArchiveFixture(t, "export-dat-opt-images-v1")
+	path := filepath.Join(t.TempDir(), "production.zip")
+	_, err := BuildRecipientArchive(t.Context(), projection, packageJobID, opener, path)
+	require.NoError(t, err)
+	sealed, err := os.ReadFile(path)
+	require.NoError(t, err)
+	changedLocalName := bytes.Clone(sealed)
+	copy(changedLocalName[30:], "PRIVATE0.json")
+	changedLocalTime := bytes.Clone(sealed)
+	changedLocalTime[10] ^= 1
+	changedCentralAttrs := bytes.Clone(sealed)
+	central := bytes.Index(changedCentralAttrs, []byte{'P', 'K', 1, 2})
+	require.Positive(t, central)
+	changedCentralAttrs[central+36] ^= 1
+	for _, test := range []struct {
+		name string
+		data []byte
+	}{
+		{name: "prefix", data: append([]byte("private source name"), sealed...)},
+		{name: "trailer", data: append(bytes.Clone(sealed), []byte("private source name")...)},
+		{name: "local filename", data: changedLocalName},
+		{name: "local timestamp", data: changedLocalTime},
+		{name: "central internal attributes", data: changedCentralAttrs},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			changed := filepath.Join(t.TempDir(), "changed.zip")
+			require.NoError(t, os.WriteFile(changed, test.data, 0o600))
+			_, err := VerifyRecipientArchive(changed)
+			require.ErrorIs(t, err, ErrRecipientArchive)
+			_, err = BuildRecipientArchive(t.Context(), projection, packageJobID, opener, changed)
+			require.ErrorIs(t, err, ErrRecipientArchive)
+		})
+	}
+}
+
+func TestRecipientZIPEnvelopeAcceptsZIP64EntryCount(t *testing.T) {
+	file, err := os.Create(filepath.Join(t.TempDir(), "zip64.zip"))
+	require.NoError(t, err)
+	defer func() { require.NoError(t, file.Close()) }()
+	writer := zip.NewWriter(file)
+	for index := range 65_535 {
+		require.NoError(t, writePackageEntry(writer, fmt.Sprintf("entry%05d", index), bytes.NewReader(nil), 0, ""))
+	}
+	require.NoError(t, writer.Close())
+	info, err := file.Stat()
+	require.NoError(t, err)
+	archive, err := zip.NewReader(file, info.Size())
+	require.NoError(t, err)
+	require.Len(t, archive.File, 65_535)
+	require.NoError(t, verifyRecipientZIPEnvelope(file, info.Size(), archive))
 }
 
 func TestBuildRecipientArchiveRejectsDifferentJobIdentity(t *testing.T) {
