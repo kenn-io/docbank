@@ -11,6 +11,7 @@ import (
 )
 
 func TestStorageOperationPersistsProgressAndCancellation(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	created, err := s.CreateStorageOperation(t.Context(), StorageOperationCreate{
 		Kind: "place", RequestDigest: fakeHash("a5"),
@@ -47,6 +48,7 @@ func TestStorageOperationPersistsProgressAndCancellation(t *testing.T) {
 }
 
 func TestStorageOperationClaimResumesInterruptedWork(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	created, err := s.CreateStorageOperation(t.Context(), StorageOperationCreate{
 		Kind: "place", RequestDigest: fakeHash("b6"),
@@ -67,6 +69,7 @@ func TestStorageOperationClaimResumesInterruptedWork(t *testing.T) {
 }
 
 func TestStorageOperationRejectsConcurrentEvacuationsForOneStore(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	secondary, err := s.PrepareSecondaryBlobStore(
 		"archive", "filesystem", "archive_nas",
@@ -100,6 +103,7 @@ func TestStorageOperationRejectsConcurrentEvacuationsForOneStore(t *testing.T) {
 }
 
 func TestStorageOperationRejectsCancellationAfterTerminalState(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	created, err := s.CreateStorageOperation(t.Context(), StorageOperationCreate{
 		Kind: "place", RequestDigest: fakeHash("c7"),
@@ -116,6 +120,7 @@ func TestStorageOperationRejectsCancellationAfterTerminalState(t *testing.T) {
 }
 
 func TestStorageOperationCleanupPersistsUntilCompleted(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	created, err := s.CreateStorageOperation(t.Context(), StorageOperationCreate{
 		Kind: "place", RequestDigest: fakeHash("d8"),
@@ -147,6 +152,7 @@ func TestStorageOperationCleanupPersistsUntilCompleted(t *testing.T) {
 }
 
 func TestPruneExpiredStorageOperationsPreservesPendingCleanup(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
 	now := time.Now().UTC()

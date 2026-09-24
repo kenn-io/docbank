@@ -12,6 +12,7 @@ import (
 )
 
 func TestAuditedTagDeleteRoundTripsCompleteFanout(t *testing.T) {
+	t.Parallel()
 	s, tag, report := newAuditedTagStore(t)
 	projects, err := s.NodeByPath(t.Context(), "/Projects")
 	require.NoError(t, err)
@@ -48,6 +49,7 @@ func TestAuditedTagDeleteRoundTripsCompleteFanout(t *testing.T) {
 }
 
 func TestAuditedTagDeleteOutsideScopeAdvancesOnlyAllocation(t *testing.T) {
+	t.Parallel()
 	s, err := Open(filepath.Join(t.TempDir(), "vault.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, s.Close()) })
@@ -91,6 +93,7 @@ func TestAuditedTagDeleteOutsideScopeAdvancesOnlyAllocation(t *testing.T) {
 }
 
 func TestAuditedTagDeleteRollsBackDefinitionNodesAndHistory(t *testing.T) {
+	t.Parallel()
 	s, tag, report := newAuditedTagStore(t)
 	assigned, err := s.AssignTag(t.Context(), tag.ID, report.ID, report.Revision)
 	require.NoError(t, err)
@@ -116,6 +119,7 @@ func TestAuditedTagDeleteRollsBackDefinitionNodesAndHistory(t *testing.T) {
 }
 
 func TestAuditedTagDeleteImportRejectsReappearingDefinition(t *testing.T) {
+	t.Parallel()
 	s, tag, _ := newAuditedTagStore(t)
 	_, err := s.DeleteTag(t.Context(), tag.ID, tag.Revision)
 	require.NoError(t, err)
@@ -137,6 +141,7 @@ func TestAuditedTagDeleteImportRejectsReappearingDefinition(t *testing.T) {
 }
 
 func TestAuditedTagDeleteReplayRejectsOmittedAssignmentTombstone(t *testing.T) {
+	t.Parallel()
 	s, tag, report := newAuditedTagStore(t)
 	assigned, err := s.AssignTag(t.Context(), tag.ID, report.ID, report.Revision)
 	require.NoError(t, err)
@@ -186,6 +191,7 @@ func TestAuditedTagDeleteReplayRejectsOmittedAssignmentTombstone(t *testing.T) {
 }
 
 func TestAuditedTagDeleteReplayRetainsUsedDefinitionIdentity(t *testing.T) {
+	t.Parallel()
 	s, tag, _ := newAuditedTagStore(t)
 	_, err := s.DeleteTag(t.Context(), tag.ID, tag.Revision)
 	require.NoError(t, err)

@@ -9,6 +9,7 @@ import (
 )
 
 func TestTrashAndRestoreRoundTrip(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
 
@@ -45,6 +46,7 @@ func TestTrashAndRestoreRoundTrip(t *testing.T) {
 }
 
 func TestNestedTrashRestoreKeepsEarlierTrash(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
 
@@ -81,6 +83,7 @@ func deleteTrashRoot(t *testing.T, s *Store, id int64) {
 }
 
 func TestRestoreFallsBackToRootWhenParentGone(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
 
@@ -104,6 +107,7 @@ func TestRestoreFallsBackToRootWhenParentGone(t *testing.T) {
 }
 
 func TestTrashGuards(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
 
@@ -129,6 +133,7 @@ func TestTrashGuards(t *testing.T) {
 }
 
 func TestTrashPath(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
 
@@ -160,6 +165,7 @@ func TestTrashPath(t *testing.T) {
 }
 
 func TestTrashedRootsPageIsBounded(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
 
@@ -189,6 +195,7 @@ func TestTrashedRootsPageIsBounded(t *testing.T) {
 }
 
 func TestTrashEmpty(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
 
@@ -234,6 +241,7 @@ func TestTrashEmpty(t *testing.T) {
 }
 
 func TestTrashEmptyRetainsMediaAuthorityAndDeletesUnrelatedRoots(t *testing.T) {
+	t.Parallel()
 	for _, authority := range []string{"source version", "input artifact"} {
 		t.Run(authority, func(t *testing.T) {
 			s := newTestStore(t)
@@ -283,6 +291,7 @@ func TestTrashEmptyRetainsMediaAuthorityAndDeletesUnrelatedRoots(t *testing.T) {
 }
 
 func TestTrashEmptyRemovesProcessedDocumentRenditionAttachment(t *testing.T) {
+	t.Parallel()
 	s, versions := newRenditionCatalogFixture(t)
 	ctx := t.Context()
 	profile := catalogProcessingProfile(t, false)
@@ -312,6 +321,7 @@ func TestTrashEmptyRemovesProcessedDocumentRenditionAttachment(t *testing.T) {
 }
 
 func TestVaultEmptyTrashBoundedStore(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
 	for _, name := range []string{"first", "second", "third"} {
@@ -340,6 +350,7 @@ func TestVaultEmptyTrashBoundedStore(t *testing.T) {
 }
 
 func TestTrashEmptyRemovesRenditionAttachment(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	versions, profiles, _ := seedProcessingMetadataCatalog(t, s)
 	node, err := s.NodeByPath(t.Context(), "/synthetic-source-a.pdf")
@@ -355,6 +366,7 @@ func TestTrashEmptyRemovesRenditionAttachment(t *testing.T) {
 }
 
 func TestTrashEmptyAdvancesAffectedTagRevisionsOnce(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
 
@@ -401,6 +413,7 @@ func TestTrashEmptyAdvancesAffectedTagRevisionsOnce(t *testing.T) {
 }
 
 func TestTrashEmptyWholeSecondTimestamp(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
 
@@ -422,6 +435,7 @@ func TestTrashEmptyWholeSecondTimestamp(t *testing.T) {
 }
 
 func TestRestoreAfterParentHardDeleteNeverRetargets(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
 

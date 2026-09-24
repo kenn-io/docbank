@@ -8,6 +8,7 @@ import (
 )
 
 func TestMediaSourceKeyKeepsRemoteIdentitiesSeparate(t *testing.T) {
+	t.Parallel()
 	vault := "00000000-0000-4000-8000-000000000001"
 	a, err := MediaSourceKey("remote_recording", vault, "cap.cloud", "app-a", "recording-a")
 	require.NoError(t, err)

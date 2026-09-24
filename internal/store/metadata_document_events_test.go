@@ -12,6 +12,7 @@ import (
 )
 
 func TestBackupExcludesTheProjectionButShipsBindings(t *testing.T) {
+	t.Parallel()
 	source := newTestStore(t)
 	version, target := ingestDocumentEventTarget(t, source, "bound.txt", "a1")
 	_, err := source.db.Exec(`INSERT INTO document_event_state(
@@ -78,6 +79,7 @@ func TestBackupExcludesTheProjectionButShipsBindings(t *testing.T) {
 }
 
 func TestPristineCheckRefusesAnExistingProjection(t *testing.T) {
+	t.Parallel()
 	source := newTestStore(t)
 	var exported bytes.Buffer
 	require.NoError(t, source.ExportMetadata(t.Context(), &exported))
@@ -92,6 +94,7 @@ func TestPristineCheckRefusesAnExistingProjection(t *testing.T) {
 }
 
 func TestPristineTargetCountsEventControlRows(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	_, err := s.db.Exec(`INSERT INTO document_event_state(
 		singleton,contract_version,deriver_fingerprint,input_epoch,publication_epoch,updated_at

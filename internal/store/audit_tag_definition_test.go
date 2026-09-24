@@ -12,6 +12,7 @@ import (
 )
 
 func TestAuditedTagCreationRoundTripsBeforeAssignment(t *testing.T) {
+	t.Parallel()
 	s, _, report := newAuditedTagStore(t)
 	created, err := s.CreateTag(t.Context(), "post-enrollment")
 	require.NoError(t, err)
@@ -52,6 +53,7 @@ func TestAuditedTagCreationRoundTripsBeforeAssignment(t *testing.T) {
 }
 
 func TestAuditedTagCreationNameConflictDoesNotAdvanceLineage(t *testing.T) {
+	t.Parallel()
 	s, existing, _ := newAuditedTagStore(t)
 	_, err := s.CreateTag(t.Context(), existing.Name)
 	require.ErrorIs(t, err, ErrExists)
@@ -67,6 +69,7 @@ func TestAuditedTagCreationNameConflictDoesNotAdvanceLineage(t *testing.T) {
 }
 
 func TestAuditedTagCreationRollsBackWithLineage(t *testing.T) {
+	t.Parallel()
 	s, _, _ := newAuditedTagStore(t)
 	_, err := s.db.Exec(`CREATE TRIGGER reject_tag_creation_authority_advance
 		BEFORE UPDATE ON audit_authority BEGIN
@@ -88,6 +91,7 @@ func TestAuditedTagCreationRollsBackWithLineage(t *testing.T) {
 }
 
 func TestAuditedTagCreationImportRejectsMissingCurrentDefinition(t *testing.T) {
+	t.Parallel()
 	s, _, _ := newAuditedTagStore(t)
 	created, err := s.CreateTag(t.Context(), "missing")
 	require.NoError(t, err)
@@ -109,6 +113,7 @@ func TestAuditedTagCreationImportRejectsMissingCurrentDefinition(t *testing.T) {
 }
 
 func TestAuditedTagCreationReplayRejectsReusedIdentity(t *testing.T) {
+	t.Parallel()
 	s, existing, _ := newAuditedTagStore(t)
 	_, err := s.CreateTag(t.Context(), "new")
 	require.NoError(t, err)

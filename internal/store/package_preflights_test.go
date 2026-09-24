@@ -11,6 +11,7 @@ import (
 )
 
 func TestPackagePreflightReadExpiresBeforeCleanup(t *testing.T) {
+	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {
 		s := newTestStore(t)
 		record := putPreflight(t, s, hoursFromNow(t, 0), hoursFromNow(t, 24))
@@ -27,6 +28,7 @@ func TestPackagePreflightReadExpiresBeforeCleanup(t *testing.T) {
 }
 
 func TestPackagePreflightExpiryRemovesOnlyExpiredControlRows(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	expired := PackagePreflightRecord{
 		PreflightID: mustPackagePreflightID(t), Owner: "synthetic",
@@ -46,6 +48,7 @@ func TestPackagePreflightExpiryRemovesOnlyExpiredControlRows(t *testing.T) {
 }
 
 func TestExpiredPreflightsAreSweptAndUnexpiredOnesSurvive(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	fresh := putPreflight(t, s, hoursFromNow(t, 0), hoursFromNow(t, 24))
 	stale := putPreflight(t, s, hoursFromNow(t, -48), hoursFromNow(t, -24))
@@ -59,6 +62,7 @@ func TestExpiredPreflightsAreSweptAndUnexpiredOnesSurvive(t *testing.T) {
 }
 
 func TestPackagePreflightBlobStagingIsAGCHold(t *testing.T) {
+	t.Parallel()
 	want := map[string]bool{"manifest_blob_sha256": false, "diagnostics_blob_sha256": false}
 	for _, reference := range blobGCHolds {
 		if reference.table == "package_preflights" {
@@ -69,6 +73,7 @@ func TestPackagePreflightBlobStagingIsAGCHold(t *testing.T) {
 }
 
 func TestPackagePreflightRequiresExactManifestBlobIdentity(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	record := PackagePreflightRecord{
 		PreflightID: mustPackagePreflightID(t), Owner: "synthetic", SourceKind: "root", SourceRef: "synthetic-root",

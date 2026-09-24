@@ -13,6 +13,7 @@ import (
 )
 
 func TestSourceMetadataGenerationsAreImmutableAndAttachmentFactsStayJoined(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
 	ingest, err := s.BeginIngest(ctx, "cli", "/synthetic")
@@ -57,6 +58,7 @@ func TestSourceMetadataGenerationsAreImmutableAndAttachmentFactsStayJoined(t *te
 }
 
 func TestSourceMetadataRepublicationSelectsRecordedGeneration(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
 	sourceSHA256 := fakeHash("a1")
@@ -102,6 +104,7 @@ func TestSourceMetadataRepublicationSelectsRecordedGeneration(t *testing.T) {
 }
 
 func TestSourceMetadataHeadAppearsWhenMissingForRecordedEvidence(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
 	sourceSHA256 := fakeHash("a1")
@@ -126,6 +129,7 @@ func TestSourceMetadataHeadAppearsWhenMissingForRecordedEvidence(t *testing.T) {
 }
 
 func TestHistoricalSourceMetadataOmitsCurrentAttachmentFacts(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
 	ingest, err := s.BeginIngest(ctx, "cli", "/synthetic")
@@ -158,6 +162,7 @@ func TestHistoricalSourceMetadataOmitsCurrentAttachmentFacts(t *testing.T) {
 }
 
 func TestTrashedSourceMetadataOmitsLiveAttachmentFacts(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
 	ingest, err := s.BeginIngest(ctx, "cli", "/synthetic")
@@ -186,6 +191,7 @@ func TestTrashedSourceMetadataOmitsLiveAttachmentFacts(t *testing.T) {
 }
 
 func TestNodeSourceMetadataViewKeepsAttachmentCoordinatesTogether(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
 	node, err := s.CreateFile(ctx, s.RootID(), "before.pdf", fakeHash("a1"), 12, "application/pdf")
@@ -213,6 +219,7 @@ func TestNodeSourceMetadataViewKeepsAttachmentCoordinatesTogether(t *testing.T) 
 }
 
 func TestNodeSourceMetadataViewReadsCommittedStateDuringWrite(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	node, err := s.CreateFile(t.Context(), s.RootID(), "committed.pdf", fakeHash("a1"), 12, "application/pdf")
 	require.NoError(t, err)
@@ -249,6 +256,7 @@ func TestNodeSourceMetadataViewReadsCommittedStateDuringWrite(t *testing.T) {
 // corrupt generation is omitted from stat and reported by the dedicated
 // metadata read and by verification instead.
 func TestNodeSourceMetadataViewOmitsCorruptEvidence(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
 	node, err := s.CreateFile(ctx, s.RootID(), "evidence.pdf", fakeHash("a1"), 12, "application/pdf")
@@ -274,6 +282,7 @@ func TestNodeSourceMetadataViewOmitsCorruptEvidence(t *testing.T) {
 }
 
 func TestSourceMetadataJSONLRoundTripsAcrossSQLiteDrivers(t *testing.T) {
+	t.Parallel()
 	for _, testCase := range []struct {
 		name   string
 		driver docsqlite.Driver
@@ -305,6 +314,7 @@ func TestSourceMetadataJSONLRoundTripsAcrossSQLiteDrivers(t *testing.T) {
 }
 
 func TestMissingSourceMetadataTargetsAreFingerprintScopedAndResumable(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
 	ingest, err := s.BeginIngest(ctx, "cli", "/synthetic")
@@ -330,6 +340,7 @@ func TestMissingSourceMetadataTargetsAreFingerprintScopedAndResumable(t *testing
 }
 
 func TestMissingSourceMetadataTargetsCanAdvancePastAFailingHash(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
 	for index, hash := range []string{fakeHash("a1"), fakeHash("b2"), fakeHash("c3")} {

@@ -8,6 +8,7 @@ import (
 )
 
 func TestEmailMetadataRoundTripAndTamper(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	f := newEmailFixture(t, s, "source.eml")
 	v, err := s.PublishEmailGeneration(t.Context(), f.publication)

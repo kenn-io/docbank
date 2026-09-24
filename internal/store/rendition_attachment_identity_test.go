@@ -9,6 +9,7 @@ import (
 )
 
 func TestRenditionAttachmentIDCompatibility(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct{ publication, version, profile, want string }{
 		{"job-seed", "version-a", "profile-a", "b114d1f024daf5b4401c09ca935598e1eb43b045423e9ff285f1465306b336cb"},
 		{"body-build", "version-a", "profile-a", "aab2b841a93445b91f7855368194abf5e09985fa9cc162c2bc7974fdf13fd760"},
@@ -19,6 +20,7 @@ func TestRenditionAttachmentIDCompatibility(t *testing.T) {
 	}
 }
 func TestRenditionAttachmentIDQueuedJobSeed(t *testing.T) {
+	t.Parallel()
 	s, versions := newRenditionCatalogFixture(t)
 	profile := catalogProcessingProfile(t, false)
 	request := renditionJobTestRequest(versions[0], profile)

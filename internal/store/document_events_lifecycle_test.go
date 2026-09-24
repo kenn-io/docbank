@@ -9,6 +9,7 @@ import (
 )
 
 func TestTimelineDirtyStateCascadesWithVersion(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	node, err := s.CreateFile(
 		t.Context(), s.RootID(), "a.txt", fakeHash("a1"), 1, "text/plain",
@@ -25,6 +26,7 @@ func TestTimelineDirtyStateCascadesWithVersion(t *testing.T) {
 }
 
 func TestInvalidateDocumentEventsForVersionsRollsBackWithItsDirtyState(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	node, err := s.CreateFile(
 		t.Context(), s.RootID(), "atomic.txt", fakeHash("a41"), 1, "text/plain",
@@ -50,6 +52,7 @@ func TestInvalidateDocumentEventsForVersionsRollsBackWithItsDirtyState(t *testin
 }
 
 func TestChangedEvidenceRevokesPublishedDocumentEvents(t *testing.T) {
+	t.Parallel()
 	for _, source := range []string{"metadata", "binding"} {
 		t.Run(source, func(t *testing.T) {
 			s := newTestStore(t)
@@ -146,6 +149,7 @@ func TestChangedEvidenceRevokesPublishedDocumentEvents(t *testing.T) {
 }
 
 func TestLifecycleKeepsTimelineCoverageTruthful(t *testing.T) {
+	t.Parallel()
 	s, versions := newRenditionCatalogFixture(t)
 	first, err := s.NodeByPath(t.Context(), "/synthetic-source-a.pdf")
 	require.NoError(t, err)

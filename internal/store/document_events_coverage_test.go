@@ -10,6 +10,7 @@ import (
 )
 
 func TestDocumentEventCoverageReportUsesOnlyFreshCurrentFileHeads(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 
 	empty, err := s.DocumentEventCoverageReport(t.Context())
@@ -84,6 +85,7 @@ func TestDocumentEventCoverageReportUsesOnlyFreshCurrentFileHeads(t *testing.T) 
 }
 
 func TestDocumentEventCoverageReportsFreshTerminalStates(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	failed, err := s.CreateFile(t.Context(), s.RootID(), "failed.txt", fakeHash("e51"), 1, "text/plain")
 	require.NoError(t, err)
@@ -116,6 +118,7 @@ func TestDocumentEventCoverageReportsFreshTerminalStates(t *testing.T) {
 }
 
 func TestOlderCompleteReceiptCanCoexistWithNewerPendingCurrentCoverage(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	node, err := s.CreateFile(t.Context(), s.RootID(), "epoch-relative.txt", fakeHash("c31"), 1, "text/plain")
 	require.NoError(t, err)
@@ -152,6 +155,7 @@ func TestOlderCompleteReceiptCanCoexistWithNewerPendingCurrentCoverage(t *testin
 }
 
 func TestDocumentEventCoverageRequiresF10MetadataContract(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	node, err := s.CreateFile(t.Context(), s.RootID(), "metadata-contract.txt", fakeHash("d41"), 1, "text/plain")
 	require.NoError(t, err)

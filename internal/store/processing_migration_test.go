@@ -14,6 +14,7 @@ import (
 const legacyMigrationTimestamp = "2026-08-22T12:00:00.000000000Z"
 
 func TestLegacyLexicalGenerationIdentityIncludesZeroSegmentBuildMembership(t *testing.T) {
+	t.Parallel()
 	s, _ := newRenditionCatalogFixture(t)
 	ctx := t.Context()
 	profile := catalogProcessingProfile(t, false)
@@ -46,6 +47,7 @@ func TestLegacyLexicalGenerationIdentityIncludesZeroSegmentBuildMembership(t *te
 }
 
 func TestProviderFreeLexicalRebuildReplacesZeroSegmentMembership(t *testing.T) {
+	t.Parallel()
 	s, versions := newRenditionCatalogFixture(t)
 	ctx := t.Context()
 	profile := catalogProcessingProfile(t, false)
@@ -86,6 +88,7 @@ func TestProviderFreeLexicalRebuildReplacesZeroSegmentMembership(t *testing.T) {
 // Mutation caught: hashing normalized text, omitting one legacy identity
 // field, or changing the domain separator silently aliases a different build.
 func TestLegacyPlainTextBuildFingerprintUsesExactStoredBytes(t *testing.T) {
+	t.Parallel()
 	text := []byte("Cafe\u0301\r\nline\rtrail")
 	assert.Equal(t,
 		"10fb8bb322c770ba112a9a5bb5438369705cfccd95b43a301db1b0005d3833b2",
@@ -97,6 +100,7 @@ func TestLegacyPlainTextBuildFingerprintUsesExactStoredBytes(t *testing.T) {
 // version instead of per blob, normalizing stored bytes, leaving legacy FTS
 // serving, or failing to queue every repairable selected blob without an eligible row.
 func TestMigrateLegacyPlainTextCutsOverExactEligibleRows(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
 	exactText := "Cafe\u0301\r\nline\rtrail migration-compatible"
@@ -219,6 +223,7 @@ func TestMigrateLegacyPlainTextCutsOverExactEligibleRows(t *testing.T) {
 // Mutation caught: publishing heads, the lexical generation, cache fencing,
 // and queue repair in separate transactions exposes a partial authority epoch.
 func TestMigrateLegacyPlainTextRollsBackOneAtomicCutover(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	seedLegacyMigrationRow(t, s, "atomic.txt", "71", ExtractionResult{
 		Extractor: "plain-text", ExtractorVersion: 1, Status: ExtractionOK, Text: "atomic legacy text",
@@ -249,6 +254,7 @@ func TestMigrateLegacyPlainTextRollsBackOneAtomicCutover(t *testing.T) {
 // disappeared after manifest recording. The immutable-manifest fence rejects
 // the corrupt staged projection before any head can publish on top of it.
 func TestMigrateLegacyPlainTextRejectsCorruptStagedProjection(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	seedLegacyMigrationRow(t, s, "projection.txt", "77", ExtractionResult{
 		Extractor: "plain-text", ExtractorVersion: 1,
@@ -277,6 +283,7 @@ func TestMigrateLegacyPlainTextRejectsCorruptStagedProjection(t *testing.T) {
 // Mutation caught: recording a queued repair only in the fenced legacy cache
 // leaves successful fresh work non-serving until the store is reopened.
 func TestPostCutoverExtractionPublishesRenditionAuthority(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	hash := seedLegacyMigrationRow(t, s, "repair.txt", "72", ExtractionResult{
 		Extractor: "plain-text", ExtractorVersion: 1, Status: ExtractionFailed,
@@ -309,6 +316,7 @@ func TestPostCutoverExtractionPublishesRenditionAuthority(t *testing.T) {
 }
 
 func TestPostCutoverIdenticalReExtractionPreservesImmutableRecords(t *testing.T) {
+	t.Parallel()
 	dbPath := filepath.Join(t.TempDir(), "reextract.db")
 	s, err := Open(dbPath)
 	require.NoError(t, err)
@@ -404,6 +412,7 @@ func TestPostCutoverIdenticalReExtractionPreservesImmutableRecords(t *testing.T)
 // Mutation caught: deleting queued work in the cache transaction loses the
 // only automatic retry when the later rendition publication rolls back.
 func TestPostCutoverPublicationFailureKeepsExtractionQueued(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	const text = "retry-publication-authority"
 	hash := fakeHash("79")
@@ -463,6 +472,7 @@ func TestPostCutoverPublicationFailureKeepsExtractionQueued(t *testing.T) {
 }
 
 func TestPurgedLegacyDerivativeStaysSuppressedAcrossRestartUntilExplicitAuthorization(t *testing.T) {
+	t.Parallel()
 	// Mutations caught: startup migration/seeding recreates purged portable text;
 	// silently clearing suppression during startup makes purge non-durable.
 	dbPath := filepath.Join(t.TempDir(), "suppressed.db")
@@ -533,6 +543,7 @@ func TestPurgedLegacyDerivativeStaysSuppressedAcrossRestartUntilExplicitAuthoriz
 }
 
 func TestLegacyMigrationRestartKeepsUnsuppressedVersionSharingPurgedBlob(t *testing.T) {
+	t.Parallel()
 	dbPath := filepath.Join(t.TempDir(), "shared-suppression.db")
 	s, err := Open(dbPath)
 	require.NoError(t, err)
@@ -575,6 +586,7 @@ func TestLegacyMigrationRestartKeepsUnsuppressedVersionSharingPurgedBlob(t *test
 // Mutation caught: indexing one FTS row per bounded rendition segment loses
 // legacy whole-document AND matches when terms land in different segments.
 func TestLegacyMigrationPreservesSearchAcrossSegmentBoundary(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	text := "left-boundary " + strings.Repeat("x", legacyPlainTextSegmentRunes) +
 		" right-boundary"
@@ -601,6 +613,7 @@ func TestLegacyMigrationPreservesSearchAcrossSegmentBoundary(t *testing.T) {
 // Mutation caught: comparing raw legacy catalog segments with their coalesced
 // serving row prevents every later rendition head from publishing.
 func TestLegacyMigrationAllowsLaterPublicationAfterSegmentCoalescing(t *testing.T) {
+	t.Parallel()
 	s, _ := newRenditionCatalogFixture(t)
 	ctx := t.Context()
 	text := strings.Repeat("x", legacyPlainTextSegmentRunes) + " later-publication-boundary"
@@ -634,6 +647,7 @@ func TestLegacyMigrationAllowsLaterPublicationAfterSegmentCoalescing(t *testing.
 // Mutation caught: excluding trashed current versions from migrated heads
 // leaves their retained text unreachable after restore.
 func TestLegacyMigrationRestoresTrashedContentSearch(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
 	const text = "restored-heritage-authority"
@@ -661,6 +675,7 @@ func TestLegacyMigrationRestoresTrashedContentSearch(t *testing.T) {
 // Mutation caught: silently accepting an unsupported newer extractor result
 // fences its serving cache without publishing equivalent rendition authority.
 func TestLegacyMigrationRejectsUnsupportedNewerExtraction(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	seedLegacyMigrationRow(t, s, "newer.txt", "7f", ExtractionResult{
 		Extractor: "plain-text", ExtractorVersion: 2,
@@ -681,6 +696,7 @@ func TestLegacyMigrationRejectsUnsupportedNewerExtraction(t *testing.T) {
 // Mutation caught: restricting legacy convergence to released-schema staging
 // leaves an already-current database serving only its legacy cache forever.
 func TestOpenMigratesLegacyPlainTextInCurrentSchema(t *testing.T) {
+	t.Parallel()
 	dbPath := filepath.Join(t.TempDir(), "current.db")
 	s, err := Open(dbPath)
 	require.NoError(t, err)
@@ -707,6 +723,7 @@ func TestOpenMigratesLegacyPlainTextInCurrentSchema(t *testing.T) {
 // Mutation caught: reusing the ordinary enqueue upsert on migration retry
 // postpones already-scheduled repair work and makes convergence non-idempotent.
 func TestMigrateLegacyPlainTextRetryPreservesQueuedWork(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	seedLegacyMigrationRow(t, s, "stable.txt", "76", ExtractionResult{
 		Extractor: "plain-text", ExtractorVersion: 1,

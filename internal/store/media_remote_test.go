@@ -40,6 +40,7 @@ func remoteStoreArtifact(
 }
 
 func TestRetainRemoteRecordingMedia(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	sourceID := testSHA256([]byte("remote-source"))
 	retained, _ := remoteStoreReference(t, s, sourceID,
@@ -125,6 +126,7 @@ func TestRetainRemoteRecordingMedia(t *testing.T) {
 }
 
 func TestRemoteRecordingManualMetadata(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	sourceID := testSHA256([]byte("metadata-remote-source"))
 	reference, referenceOperation := remoteStoreReference(t, s, sourceID,

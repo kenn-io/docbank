@@ -12,6 +12,7 @@ import (
 )
 
 func TestMediaMetadataExportKeepsIdentityAndDropsPrivateRefs(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	_, err := s.db.Exec(`INSERT INTO media_sources VALUES('s','remote_recording','cap.cloud','app',?,?)`,
 		strings.Repeat("a", 64), nowRFC3339())
@@ -28,6 +29,7 @@ func TestMediaMetadataExportKeepsIdentityAndDropsPrivateRefs(t *testing.T) {
 }
 
 func TestMediaMetadataRoundTripSanitizesRuntimeAuthority(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
 	recording, err := s.CreateFile(ctx, s.RootID(), "recording.mp3", fakeHash("a1"), 10, "audio/mpeg")
@@ -106,6 +108,7 @@ func TestMediaMetadataRoundTripSanitizesRuntimeAuthority(t *testing.T) {
 }
 
 func TestMediaMetadataRestoreTerminatesProcessingReceipts(t *testing.T) {
+	t.Parallel()
 	for _, verb := range []string{"submit_supplied_media", "retry_media"} {
 		for _, completed := range []bool{false, true} {
 			name := verb + "/pending"
@@ -176,6 +179,7 @@ func TestMediaMetadataRestoreTerminatesProcessingReceipts(t *testing.T) {
 }
 
 func TestMediaMetadataMissingCurrentTableFailsValidation(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	_, err := s.db.Exec(`DROP TABLE media_input_artifacts`)
 	require.NoError(t, err)
@@ -184,6 +188,7 @@ func TestMediaMetadataMissingCurrentTableFailsValidation(t *testing.T) {
 }
 
 func TestPruneContentVersionsRetainsMediaOriginalAndInputAuthority(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
 	created, err := s.CreateFile(ctx, s.RootID(), "recording.mp3", fakeHash("a1"), 10, "audio/mpeg")
@@ -223,6 +228,7 @@ func TestPruneContentVersionsRetainsMediaOriginalAndInputAuthority(t *testing.T)
 }
 
 func TestPruneContentVersionsRetainsMediaRevertAncestryIncludingAllPrior(t *testing.T) {
+	t.Parallel()
 	for _, allPrior := range []bool{false, true} {
 		t.Run(map[bool]string{false: "explicit selection", true: "all prior"}[allPrior], func(t *testing.T) {
 			s := newTestStore(t)
@@ -341,6 +347,7 @@ func contentVersionIDs(versions []ContentVersion) []string {
 }
 
 func TestMediaMetadataRejectsNonObjectTimestampClaim(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
 	file, err := s.CreateFile(ctx, s.RootID(), "recording.mp3", fakeHash("a1"), 10, "audio/mpeg")
@@ -357,6 +364,7 @@ func TestMediaMetadataRejectsNonObjectTimestampClaim(t *testing.T) {
 }
 
 func TestMediaInputArtifactBytesBelongToBackupAuthority(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
 	caption, err := s.CreateFile(ctx, s.RootID(), "caption.vtt", fakeHash("b2"), 20, "text/vtt")
@@ -384,6 +392,7 @@ func TestMediaInputArtifactBytesBelongToBackupAuthority(t *testing.T) {
 }
 
 func TestMediaMetadataImportRequiresPristineMediaTables(t *testing.T) {
+	t.Parallel()
 	source := newTestStore(t)
 	var exported bytes.Buffer
 	require.NoError(t, source.ExportMetadata(t.Context(), &exported))

@@ -9,6 +9,7 @@ import (
 )
 
 func TestExportPreviewUsesFrozenReceiptsAndOwner(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	n, err := s.CreateFile(t.Context(), s.RootID(), "synthetic.txt", fakeHash("ab"), 12, "text/plain")
 	require.NoError(t, err)

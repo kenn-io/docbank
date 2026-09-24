@@ -11,6 +11,7 @@ import (
 )
 
 func TestEmailDocumentsMetadataRoundTripAndTamper(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	f := newEmailFixture(t, s, "source.eml")
 	view, err := s.PublishEmailGeneration(t.Context(), f.publication)
@@ -69,6 +70,7 @@ func TestEmailDocumentsMetadataRoundTripAndTamper(t *testing.T) {
 }
 
 func TestEmailDocumentsDuplicateNamesBytesPartialAndAuditedCreation(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	raw := "Content-Type: multipart/mixed; boundary=m\r\n\r\n--m\r\nContent-Type: text/plain\r\n\r\nbody\r\n"
 	part := "--m\r\nContent-Type: application/octet-stream\r\nContent-Disposition: attachment; filename=\"../same.bin\"\r\n\r\nduplicate\r\n"
@@ -105,6 +107,7 @@ func TestEmailDocumentsDuplicateNamesBytesPartialAndAuditedCreation(t *testing.T
 }
 
 func TestEmailDocumentsRetainReferencesAcrossTrashReprocessPruneAndPurge(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	f := newEmailFixture(t, s, "source.eml")
 	view, err := s.PublishEmailGeneration(t.Context(), f.publication)
@@ -157,6 +160,7 @@ func TestEmailDocumentsRetainReferencesAcrossTrashReprocessPruneAndPurge(t *test
 }
 
 func TestEmailDocumentsConcurrentReplayBoundedPagesAndRollback(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	f := newEmailFixture(t, s, "source.eml")
 	view, err := s.PublishEmailGeneration(t.Context(), f.publication)
@@ -207,6 +211,7 @@ func TestEmailDocumentsConcurrentReplayBoundedPagesAndRollback(t *testing.T) {
 }
 
 func TestEmailDocumentsUnavailableOutcomesNeverCreateEmptyChildren(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	raw := "Content-Type: multipart/mixed; boundary=m\r\n\r\n--m\r\nContent-Type: text/plain\r\n\r\nbody\r\n" +
 		"--m\r\nContent-Type: application/octet-stream\r\nContent-Disposition: attachment; filename=unsupported.bin\r\nContent-Transfer-Encoding: unknown\r\n\r\nabc\r\n" +

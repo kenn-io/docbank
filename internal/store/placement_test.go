@@ -10,6 +10,7 @@ import (
 )
 
 func TestPlacementPlanUsesRetainedSubtreeAndCompleteReferenceClosure(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
 	archive, err := s.Mkdir(ctx, s.RootID(), "archive")
@@ -58,6 +59,7 @@ func TestPlacementPlanUsesRetainedSubtreeAndCompleteReferenceClosure(t *testing.
 }
 
 func TestPlacementCommitCannotExpandRetirementBeyondPreview(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
 	archive, err := s.Mkdir(ctx, s.RootID(), "archive")
@@ -110,6 +112,7 @@ func TestPlacementCommitCannotExpandRetirementBeyondPreview(t *testing.T) {
 }
 
 func TestPlacementCommitRejectsPlannedDestinationDrift(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
 	hash := fakeHash("a3")
@@ -157,6 +160,7 @@ func TestPlacementCommitRejectsPlannedDestinationDrift(t *testing.T) {
 }
 
 func TestPlacementPlanPinsAuditedContentToPrimaryByDefault(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
 	archive, err := s.Mkdir(ctx, s.RootID(), "archive")
@@ -192,6 +196,7 @@ func TestPlacementPlanPinsAuditedContentToPrimaryByDefault(t *testing.T) {
 }
 
 func TestPlacementPlanRejectsContentMissingFromBothRequestedStores(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
 	file, err := s.CreateFile(
@@ -213,6 +218,7 @@ func TestPlacementPlanRejectsContentMissingFromBothRequestedStores(t *testing.T)
 }
 
 func TestEvacuationPlansOnlyAuthorityHeldBySource(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
 	firstHash := fakeHash("d4")
@@ -249,6 +255,7 @@ func TestEvacuationPlansOnlyAuthorityHeldBySource(t *testing.T) {
 }
 
 func TestEvacuationPlansRetainedBlobsWithoutVersionReferences(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
 	hash := fakeHash("ab")
@@ -285,6 +292,7 @@ func TestEvacuationPlansRetainedBlobsWithoutVersionReferences(t *testing.T) {
 }
 
 func TestS3PackedPlacementReportsContainerScratchAndEgress(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
 	hash := fakeHash("f6")
@@ -334,6 +342,7 @@ func TestS3PackedPlacementReportsContainerScratchAndEgress(t *testing.T) {
 }
 
 func TestPlacementExistingLocalDestinationReportsVerificationRead(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
 	hash := fakeHash("f7")
@@ -364,6 +373,7 @@ func TestPlacementExistingLocalDestinationReportsVerificationRead(t *testing.T) 
 }
 
 func TestPlacementExistingS3PackReportsVerificationEgressAndScratch(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
 	hash := fakeHash("f8")
@@ -407,6 +417,7 @@ func TestPlacementExistingS3PackReportsVerificationEgressAndScratch(t *testing.T
 }
 
 func TestPlacementExistingS3LooseReportsPhysicalVerificationEgress(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
 	hash := fakeHash("f9")

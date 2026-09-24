@@ -9,6 +9,7 @@ import (
 )
 
 func TestAuditHistoryPagesCanonicalNodeEvents(t *testing.T) {
+	t.Parallel()
 	s, err := Open(filepath.Join(t.TempDir(), "vault.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, s.Close()) })
@@ -81,6 +82,7 @@ func TestAuditHistoryPagesCanonicalNodeEvents(t *testing.T) {
 }
 
 func TestAuditHistoryCursorRemainsStableWhenNewEventsArrive(t *testing.T) {
+	t.Parallel()
 	s, err := Open(filepath.Join(t.TempDir(), "vault.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, s.Close()) })
@@ -113,6 +115,7 @@ func TestAuditHistoryCursorRemainsStableWhenNewEventsArrive(t *testing.T) {
 }
 
 func TestAuditScopeHistoryPagesEveryMemberEvent(t *testing.T) {
+	t.Parallel()
 	s, err := Open(filepath.Join(t.TempDir(), "vault.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, s.Close()) })
@@ -174,6 +177,7 @@ func TestAuditScopeHistoryPagesEveryMemberEvent(t *testing.T) {
 }
 
 func TestAuditHistoryPreservesTrashAndRestoreCoordinates(t *testing.T) {
+	t.Parallel()
 	s := newAuditedMoveStore(t)
 	work, err := s.NodeByPath(t.Context(), "/Projects/Work")
 	require.NoError(t, err)
@@ -203,6 +207,7 @@ func TestAuditHistoryPreservesTrashAndRestoreCoordinates(t *testing.T) {
 }
 
 func TestAuditHistoryProjectsTagAndProvenanceChanges(t *testing.T) {
+	t.Parallel()
 	t.Run("tag assignment and rename", func(t *testing.T) {
 		s, tag, report := newAuditedTagStore(t)
 		assigned, err := s.AssignTag(t.Context(), tag.ID, report.ID, report.Revision)

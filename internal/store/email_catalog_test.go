@@ -101,6 +101,7 @@ func emailTableCounts(t *testing.T, s *Store) []int {
 }
 
 func TestEmailPublicationSharesGenerationAndRetiresStaging(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	f := newEmailFixture(t, s, "first.eml")
 	first, err := s.PublishEmailGeneration(t.Context(), f.publication)
@@ -140,6 +141,7 @@ func TestEmailPublicationSharesGenerationAndRetiresStaging(t *testing.T) {
 }
 
 func TestEmailSupersededBeforeBodyPublication(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	f := newEmailFixture(t, s, "message.eml")
 	first, err := s.PublishEmailGeneration(t.Context(), f.publication)
@@ -162,6 +164,7 @@ func TestEmailSupersededBeforeBodyPublication(t *testing.T) {
 }
 
 func TestEmailPublicationRejectsInvalidAuthorityAtomically(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []string{"canonical", "omitted", "extra", "role", "size", "source", "missing_blob"} {
 		t.Run(tc, func(t *testing.T) {
 			s := newTestStore(t)
@@ -206,6 +209,7 @@ func TestEmailPublicationRejectsInvalidAuthorityAtomically(t *testing.T) {
 }
 
 func TestEmailPublicationRollbackPreservesNewStagingAndOldHead(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	f := newEmailFixture(t, s, "source.eml")
 	first, err := s.PublishEmailGeneration(t.Context(), f.publication)
@@ -235,6 +239,7 @@ func TestEmailPublicationRollbackPreservesNewStagingAndOldHead(t *testing.T) {
 }
 
 func TestEmailMissingStatesAndDeterministicRefusal(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	f := newEmailFixture(t, s, "pending.eml")
 	v, err := s.EmailMetadata(t.Context(), f.publication.ContentVersionID)

@@ -13,6 +13,7 @@ import (
 )
 
 func TestVisualPreviewPublicationIsExactVersionAndIdempotent(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	node, err := s.CreateFile(t.Context(), s.RootID(), "photo.raw", fakeHash("11"), 12, "image/x-raw")
 	require.NoError(t, err)
@@ -44,6 +45,7 @@ func TestVisualPreviewPublicationIsExactVersionAndIdempotent(t *testing.T) {
 }
 
 func TestVisualPreviewHeadAdvancesOnFirstRecordingAndHoldsOnRepublication(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	node, err := s.CreateFile(t.Context(), s.RootID(), "photo.raw", fakeHash("91"), 12, "image/x-raw")
 	require.NoError(t, err)
@@ -74,6 +76,7 @@ func TestVisualPreviewHeadAdvancesOnFirstRecordingAndHoldsOnRepublication(t *tes
 }
 
 func TestVisualPreviewHeadAppearsWhenMissingForRecordedGeneration(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	node, err := s.CreateFile(t.Context(), s.RootID(), "photo.raw", fakeHash("95"), 12, "image/x-raw")
 	require.NoError(t, err)
@@ -95,6 +98,7 @@ func TestVisualPreviewHeadAppearsWhenMissingForRecordedGeneration(t *testing.T) 
 }
 
 func TestVisualPreviewTerminalHeadsHoldOnRepublication(t *testing.T) {
+	t.Parallel()
 	for _, test := range []struct {
 		name  string
 		state document.VisualPreviewState
@@ -133,6 +137,7 @@ func TestVisualPreviewTerminalHeadsHoldOnRepublication(t *testing.T) {
 }
 
 func TestVisualPreviewMetadataRoundTrip(t *testing.T) {
+	t.Parallel()
 	source := newTestStore(t)
 	node, err := source.CreateFile(t.Context(), source.RootID(), "image.jpg", fakeHash("31"), 12, "image/jpeg")
 	require.NoError(t, err)
@@ -154,6 +159,7 @@ func TestVisualPreviewMetadataRoundTrip(t *testing.T) {
 }
 
 func TestVisualPreviewRecordsDeterministicFailureWithoutBlobAuthority(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	node, err := s.CreateFile(t.Context(), s.RootID(), "notes.txt", fakeHash("41"), 5, "text/plain")
 	require.NoError(t, err)
@@ -172,6 +178,7 @@ func TestVisualPreviewRecordsDeterministicFailureWithoutBlobAuthority(t *testing
 }
 
 func TestVisualPreviewLifecycleFollowsExactContentVersion(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	created, err := s.CreateFile(t.Context(), s.RootID(), "image.jpg", fakeHash("61"), 6, "image/jpeg")
 	require.NoError(t, err)
@@ -195,6 +202,7 @@ func TestVisualPreviewLifecycleFollowsExactContentVersion(t *testing.T) {
 }
 
 func TestRestoreByteVerificationIncludesReadyVisualPreview(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	created, err := s.CreateFile(t.Context(), s.RootID(), "image.jpg", fakeHash("71"), 6, "image/jpeg")
 	require.NoError(t, err)
@@ -211,6 +219,7 @@ func TestRestoreByteVerificationIncludesReadyVisualPreview(t *testing.T) {
 }
 
 func TestVisualPreviewMetadataRejectsOutputBlobSizeMismatch(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	created, err := s.CreateFile(t.Context(), s.RootID(), "image.jpg", fakeHash("81"), 6, "image/jpeg")
 	require.NoError(t, err)

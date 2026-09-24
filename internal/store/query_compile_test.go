@@ -36,6 +36,7 @@ func compilerQuery(t *testing.T, text string) query.Query {
 }
 
 func TestCompileQueryPreservesNormalizedQueryAndDependencies(t *testing.T) {
+	t.Parallel()
 	value := compilerQuery(t, `tag:urgent AND "alpha beta"*`)
 	compiled, err := compileQuery(t.Context(), value, compilerResolverFunc(func(
 		_ context.Context, kind query.ReferenceKind, key string, byID bool,
@@ -61,6 +62,7 @@ func TestCompileQueryPreservesNormalizedQueryAndDependencies(t *testing.T) {
 }
 
 func TestCompiledQueryBindsSimpleAndAdvancedLexicalPredicates(t *testing.T) {
+	t.Parallel()
 	t.Run("simple is one same-source FTS expression", func(t *testing.T) {
 		value, err := query.Parse([]byte(`{"text":"alpha  beta"}`))
 		require.NoError(t, err)
@@ -88,6 +90,7 @@ func TestCompiledQueryBindsSimpleAndAdvancedLexicalPredicates(t *testing.T) {
 }
 
 func TestCompiledQueryBindClonesGenerationArguments(t *testing.T) {
+	t.Parallel()
 	compiled, err := compileQuery(t.Context(), compilerQuery(t, "alpha"), nil)
 	require.NoError(t, err)
 	_, first, err := compiled.Bind("generation-a")
@@ -101,6 +104,7 @@ func TestCompiledQueryBindClonesGenerationArguments(t *testing.T) {
 }
 
 func TestCompileQuerySupportsEveryBoundExpressionField(t *testing.T) {
+	t.Parallel()
 	resolver := compilerResolver(nil)
 	tests := []struct {
 		name string
@@ -134,6 +138,7 @@ func TestCompileQuerySupportsEveryBoundExpressionField(t *testing.T) {
 }
 
 func TestCompileQuerySupportsCanonicalCoverageAndDuplicatePredicates(t *testing.T) {
+	t.Parallel()
 	for _, text := range []string{
 		`text_coverage:(complete OR partial OR failed OR unprocessed OR none OR unavailable)`,
 		`has_duplicates:(true OR false)`,
@@ -157,6 +162,7 @@ func TestCompileQuerySupportsCanonicalCoverageAndDuplicatePredicates(t *testing.
 }
 
 func TestCompiledQueryRelationRequirementsSurviveNegation(t *testing.T) {
+	t.Parallel()
 	for _, text := range []string{`NOT text_coverage:complete`, `NOT has_duplicates:true`} {
 		compiled, err := compileQuery(t.Context(), compilerQuery(t, text), nil)
 		require.NoError(t, err)
@@ -166,6 +172,7 @@ func TestCompiledQueryRelationRequirementsSurviveNegation(t *testing.T) {
 }
 
 func TestCompiledQueryBindRejectsTopLevelDuplicateCollapse(t *testing.T) {
+	t.Parallel()
 	value := compilerQuery(t, `name:alpha`)
 	value.Filters.CollapseDuplicates = true
 	compiled, err := compileQuery(t.Context(), value, nil)
@@ -175,6 +182,7 @@ func TestCompiledQueryBindRejectsTopLevelDuplicateCollapse(t *testing.T) {
 }
 
 func TestCompileQueryRetainsInheritedFieldScopeAcrossBooleanChildren(t *testing.T) {
+	t.Parallel()
 	compiled, err := compileQuery(t.Context(), compilerQuery(t,
 		`mime:(application/pdf OR image/png) AND NOT path:/archive`), nil)
 	require.NoError(t, err)
@@ -186,6 +194,7 @@ func TestCompileQueryRetainsInheritedFieldScopeAcrossBooleanChildren(t *testing.
 }
 
 func TestCompiledQueryBindsFacetUnionsAndExclusions(t *testing.T) {
+	t.Parallel()
 	maxSize := int64(23)
 	value := compilerQuery(t, "")
 	value.Filters = query.Filters{
@@ -221,6 +230,7 @@ func TestCompiledQueryBindsFacetUnionsAndExclusions(t *testing.T) {
 }
 
 func TestCompileQueryRejectsUnsupportedFeaturesAndMalformedFieldOperands(t *testing.T) {
+	t.Parallel()
 	rootUnsupported := []query.Query{
 		func() query.Query { q := compilerQuery(t, ""); q.Sort.Field = "relevance"; return q }(),
 		func() query.Query {
@@ -254,6 +264,7 @@ func TestCompileQueryRejectsUnsupportedFeaturesAndMalformedFieldOperands(t *test
 }
 
 func TestCompileQueryRemapsNestedSavedExpressionErrorsButPreservesBackendErrors(t *testing.T) {
+	t.Parallel()
 	nested := compilerQuery(t, `text_coverage:complete`)
 	text := `saved:inside`
 	compiled, err := compileQuery(t.Context(), compilerQuery(t, text), compilerResolver(&nested))
@@ -282,6 +293,7 @@ func TestCompileQueryRemapsNestedSavedExpressionErrorsButPreservesBackendErrors(
 }
 
 func TestCompiledQueryNeverInterpolatesBoundValuesAndEnforcesLimits(t *testing.T) {
+	t.Parallel()
 	attack := `Robert'); DROP TABLE nodes; --`
 	compiled, err := compileQuery(t.Context(), compilerQuery(t, `name:"`+attack+`"`), nil)
 	require.NoError(t, err)

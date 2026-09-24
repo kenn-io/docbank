@@ -34,6 +34,7 @@ func seedExportMembers(t *testing.T, s *Store, start, end int) []bundle.Member {
 }
 
 func TestExportUpload1001MembersRequiresEveryChunkAndExactDigest(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	members := seedExportMembers(t, s, 0, 1001)
 	source, err := s.CreateExportSource(t.Context(), "owner", bundle.SourceRequest{OperationID: uuid.New().String(), Kind: "upload", Total: len(members), MemberHash: ExportMemberHash(members)}, nil)

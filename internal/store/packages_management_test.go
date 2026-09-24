@@ -48,6 +48,7 @@ func validPackageRequest(t *testing.T, s *Store) PackageRequest {
 }
 
 func TestPackageIdentityIsIdempotentAndImmutable(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	request := validPackageRequest(t, s)
 	created, err := s.CreatePackage(t.Context(), request)
@@ -73,6 +74,7 @@ func TestPackageIdentityIsIdempotentAndImmutable(t *testing.T) {
 }
 
 func TestPackageCreationRequiresDirectionSpecificAdmission(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	base := validPackageRequest(t, s)
 	received := base
@@ -88,6 +90,7 @@ func TestPackageCreationRequiresDirectionSpecificAdmission(t *testing.T) {
 }
 
 func TestPackagesListsStablePagesAndFiltersDirection(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	base := validPackageRequest(t, s)
 	ids := []string{

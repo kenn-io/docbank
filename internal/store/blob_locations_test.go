@@ -11,6 +11,7 @@ import (
 )
 
 func TestFreshBlobCatalogHasOneFixedPrimary(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	primary, err := s.PrimaryBlobStore(t.Context())
 	require.NoError(t, err)
@@ -38,6 +39,7 @@ func TestFreshBlobCatalogHasOneFixedPrimary(t *testing.T) {
 }
 
 func TestResolveBlobLocationsUsesStoreScopedAuthority(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	hash, err := packstore.ParseHash(
 		"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",

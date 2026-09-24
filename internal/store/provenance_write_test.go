@@ -9,6 +9,7 @@ import (
 )
 
 func TestAppendNodeProvenanceAppendsAndFencesHistory(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
 	run, err := s.BeginIngest(ctx, "cli", "/source")
@@ -82,6 +83,7 @@ func TestAppendNodeProvenanceAppendsAndFencesHistory(t *testing.T) {
 // records the evidence string and nothing operational; no watch_sources row
 // appears, because the internal ingest run is namespaced under "embedded:".
 func TestAppendNodeProvenanceWatchKindStaysEvidenceOnly(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
 	run, err := s.BeginIngest(ctx, "cli", "/source")
@@ -103,6 +105,7 @@ func TestAppendNodeProvenanceWatchKindStaysEvidenceOnly(t *testing.T) {
 }
 
 func TestAppendNodeProvenanceRejectsMissingPredecessor(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
 	// CreateFile leaves the node with no provenance facts at all, so the
@@ -128,6 +131,7 @@ func TestAppendNodeProvenanceRejectsMissingPredecessor(t *testing.T) {
 }
 
 func TestAppendNodeProvenancePreservesOperationalIngest(t *testing.T) {
+	t.Parallel()
 	for _, kind := range []string{"cli", "watch"} {
 		t.Run(kind, func(t *testing.T) {
 			s := newTestStore(t)
@@ -183,6 +187,7 @@ func TestAppendNodeProvenancePreservesOperationalIngest(t *testing.T) {
 }
 
 func TestAppendNodeProvenanceReturnsEmptyPathForTrashedNodes(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
 	trashRoot, err := s.CreateFile(ctx, s.RootID(), "trash-root.txt", fakeHash("a1"), 1, "text/plain")
@@ -217,6 +222,7 @@ func TestAppendNodeProvenanceReturnsEmptyPathForTrashedNodes(t *testing.T) {
 }
 
 func TestAppendNodeProvenanceRejectsInvalidOriginalMTime(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	node, err := s.CreateFile(t.Context(), s.RootID(), "report.txt", fakeHash("a1"), 1, "text/plain")
 	require.NoError(t, err)
@@ -230,6 +236,7 @@ func TestAppendNodeProvenanceRejectsInvalidOriginalMTime(t *testing.T) {
 }
 
 func TestAppendNodeProvenanceAuditedRoundTrips(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	seedMetadataRoundTrip(t, s)
 	scope, err := s.NodeByPath(t.Context(), "/Projects")
@@ -255,6 +262,7 @@ func TestAppendNodeProvenanceAuditedRoundTrips(t *testing.T) {
 }
 
 func TestImportedMixedCaseEmbeddedProvenanceCanBeCorrected(t *testing.T) {
+	t.Parallel()
 	ctx := t.Context()
 	source := newTestStore(t)
 	run, err := source.BeginIngest(ctx, "Embedded:agent", "Synthetic application evidence")

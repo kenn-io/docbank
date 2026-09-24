@@ -17,6 +17,7 @@ func attachmentRequest(t *testing.T, s *Store, view EmailMetadataView, operation
 // Losing the response must not duplicate children, and changing retry input
 // must never reinterpret the original operation.
 func TestEmailDocumentsPublicationRetryAndExactOccurrence(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	f := newEmailFixture(t, s, "source.eml")
 	view, err := s.PublishEmailGeneration(t.Context(), f.publication)
@@ -43,6 +44,7 @@ func TestEmailDocumentsPublicationRetryAndExactOccurrence(t *testing.T) {
 }
 
 func TestEmailDocumentsAtomicStaleDestinationAndExplicitReuse(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	f := newEmailFixture(t, s, "source.eml")
 	view, err := s.PublishEmailGeneration(t.Context(), f.publication)
@@ -83,6 +85,7 @@ func TestEmailDocumentsAtomicStaleDestinationAndExplicitReuse(t *testing.T) {
 }
 
 func TestEmailDocumentsEncryptedAncestry(t *testing.T) {
+	t.Parallel()
 	const encrypted = "Content-Type: multipart/encrypted; boundary=encrypted; protocol=\"application/pgp-encrypted\"\n\n" +
 		"--encrypted\nContent-Type: application/pgp-encrypted\n\nVersion: 1\n" +
 		"--encrypted\nContent-Type: application/octet-stream\nContent-Disposition: attachment; filename=encrypted.asc\n\nSynthetic ciphertext\n" +
@@ -132,6 +135,7 @@ func TestEmailDocumentsEncryptedAncestry(t *testing.T) {
 }
 
 func TestEmailDocumentsExplicitRootAttachment(t *testing.T) {
+	t.Parallel()
 	const payload = "%PDF-1.4\r\nSynthetic attachment\r\n%%EOF\r\n"
 	for _, explicit := range []bool{false, true} {
 		name := "body"

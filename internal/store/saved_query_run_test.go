@@ -16,6 +16,7 @@ import (
 )
 
 func TestSavedQueryRunRechecksPreserveResolverErrors(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	definition, err := s.CreateSavedQuery(t.Context(), "root", "", SavedQueryKindQuery, []byte(`{}`))
 	require.NoError(t, err)
@@ -43,6 +44,7 @@ func TestSavedQueryRunRechecksPreserveResolverErrors(t *testing.T) {
 }
 
 func TestSavedQueryRunMaterializesBeforeEnteringMutationGate(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	_, err := s.CreateFile(t.Context(), s.RootID(), "member.txt", fakeHash("receipt-gate"), 1, "text/plain")
 	require.NoError(t, err)
@@ -72,6 +74,7 @@ func TestSavedQueryRunMaterializesBeforeEnteringMutationGate(t *testing.T) {
 }
 
 func TestSavedQueryRunUsesSavedDefinitionAndRetainsComparisonReceipts(t *testing.T) {
+	t.Parallel()
 	for _, driverCase := range walkTestDrivers() {
 		t.Run(driverCase.name, func(t *testing.T) {
 			s := newTestStoreWithDriver(t, driverCase.driver)
@@ -132,6 +135,7 @@ func TestSavedQueryRunUsesSavedDefinitionAndRetainsComparisonReceipts(t *testing
 }
 
 func TestSavedQueryRunRejectsStaleDefinitionAndChangedDependencyWithoutReceiptOrHandle(t *testing.T) {
+	t.Parallel()
 	for _, test := range []struct {
 		name   string
 		create func(*testing.T, *Store) (SavedQuery, func(*testing.T, *Store))
@@ -210,6 +214,7 @@ func TestSavedQueryRunRejectsStaleDefinitionAndChangedDependencyWithoutReceiptOr
 }
 
 func TestSavedQueryRunConcurrentReceiptsFormOnePreviousRunChain(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	_, err := s.CreateFile(t.Context(), s.RootID(), "member.txt", fakeHash("saved-run-concurrent"), 1, "text/plain")
 	require.NoError(t, err)
@@ -254,6 +259,7 @@ func TestSavedQueryRunConcurrentReceiptsFormOnePreviousRunChain(t *testing.T) {
 }
 
 func TestSavedQueryRunConcurrentCommitOrderChoosesPreviousChainHead(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	definition, err := s.CreateSavedQuery(t.Context(), "root", "", SavedQueryKindQuery, []byte(`{}`))
 	require.NoError(t, err)
@@ -302,6 +308,7 @@ func TestSavedQueryRunConcurrentCommitOrderChoosesPreviousChainHead(t *testing.T
 }
 
 func TestSavedQueryRunCanceledAdmissionAndDefinitionDeletionLeaveNoAuthority(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	definition, err := s.CreateSavedQuery(t.Context(), "root", "", SavedQueryKindQuery, []byte(`{}`))
 	require.NoError(t, err)
@@ -325,6 +332,7 @@ func TestSavedQueryRunCanceledAdmissionAndDefinitionDeletionLeaveNoAuthority(t *
 }
 
 func TestSavedQueryRunFinalizationCancellationBoundaries(t *testing.T) {
+	t.Parallel()
 	t.Run("revocation before commit rolls back receipt and reservation", func(t *testing.T) {
 		s := newTestStore(t)
 		definition, err := s.CreateSavedQuery(t.Context(), "root", "", SavedQueryKindQuery, []byte(`{}`))

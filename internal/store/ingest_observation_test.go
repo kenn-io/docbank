@@ -8,6 +8,7 @@ import (
 )
 
 func TestOperationalReimportKeepsVersionAndAddsMembership(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
 	firstRun, err := s.BeginIngest(ctx, "cli", "First synthetic import")
@@ -44,6 +45,7 @@ func TestOperationalReimportKeepsVersionAndAddsMembership(t *testing.T) {
 }
 
 func TestMembershipIngestSourceKinds(t *testing.T) {
+	t.Parallel()
 	for _, kind := range []string{"cli", "upload", "filesystem", "custom-source", "watch"} {
 		for _, operation := range []string{"create", "reimport", "replace", "planned", "planned exact"} {
 			t.Run(kind+"/"+operation, func(t *testing.T) {
@@ -96,6 +98,7 @@ func TestMembershipIngestSourceKinds(t *testing.T) {
 }
 
 func TestReplaceContentForIngestPublishesContentAndMembershipAtomically(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
 	firstRun, err := s.BeginIngest(ctx, "cli", "First synthetic import")
@@ -129,6 +132,7 @@ func TestReplaceContentForIngestPublishesContentAndMembershipAtomically(t *testi
 }
 
 func TestReplaceContentForIngestRollsBackOnLabelConflict(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
 	label := "Synthetic batch"
@@ -159,6 +163,7 @@ func TestReplaceContentForIngestRollsBackOnLabelConflict(t *testing.T) {
 }
 
 func TestReplaceContentForIngestRejectsStaleRevisionBeforePublishingRun(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
 	firstRun, err := s.BeginIngest(ctx, "cli", "First")

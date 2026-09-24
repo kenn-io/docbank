@@ -9,6 +9,7 @@ import (
 )
 
 func TestPlannedIngestRejectsConcurrentLabelWithoutDirectoryAuthority(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
 	label := "Synthetic review"
@@ -45,6 +46,7 @@ func TestPlannedIngestRejectsConcurrentLabelWithoutDirectoryAuthority(t *testing
 }
 
 func TestPlannedIngestRejectsAuditActivatedAfterPreparation(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
 	label := "Synthetic audited review"
@@ -77,6 +79,7 @@ func TestPlannedIngestRejectsAuditActivatedAfterPreparation(t *testing.T) {
 }
 
 func TestPlannedIngestKeepsResolvedDirectoryIdentity(t *testing.T) {
+	t.Parallel()
 	t.Run("rename", func(t *testing.T) {
 		s := newTestStore(t)
 		ctx := t.Context()
@@ -129,6 +132,7 @@ func TestPlannedIngestKeepsResolvedDirectoryIdentity(t *testing.T) {
 }
 
 func TestFinalizePlannedIngestDirectoriesLeavesNoZeroDocumentReceipt(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
 	label := "Empty synthetic tree"
@@ -154,6 +158,7 @@ func TestFinalizePlannedIngestDirectoriesLeavesNoZeroDocumentReceipt(t *testing.
 }
 
 func TestFinalizePlannedIngestDirectoriesRejectsEmptyOnlyAdmission(t *testing.T) {
+	t.Parallel()
 	for _, test := range []struct {
 		name  string
 		setup func(*testing.T, *Store, *string)
@@ -208,6 +213,7 @@ func TestFinalizePlannedIngestDirectoriesRejectsEmptyOnlyAdmission(t *testing.T)
 }
 
 func TestPlannedExactConflictIsNotLabelAdmissionRejection(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
 	plan, err := s.PrepareIngestDirectory(ctx, "/new/inbox")
@@ -233,6 +239,7 @@ func TestPlannedExactConflictIsNotLabelAdmissionRejection(t *testing.T) {
 }
 
 func TestIngestDirectoryResolutionKeepsSharedParentIdentity(t *testing.T) {
+	t.Parallel()
 	for _, mutation := range []string{"move", "trash"} {
 		t.Run(mutation, func(t *testing.T) {
 			s := newTestStore(t)

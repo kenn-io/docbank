@@ -9,6 +9,7 @@ import (
 )
 
 func TestEventControlStateIsLazy(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	var count int
 	require.NoError(t, s.db.QueryRow(`SELECT count(*) FROM document_event_state`).Scan(&count))
@@ -20,6 +21,7 @@ func TestEventControlStateIsLazy(t *testing.T) {
 }
 
 func TestPublishDocumentEventsIsIdempotentAndDetectsCorruption(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
 	version, target := ingestDocumentEventTarget(t, s, "report.txt", "a1")
@@ -112,6 +114,7 @@ func TestPublishDocumentEventsIsIdempotentAndDetectsCorruption(t *testing.T) {
 }
 
 func TestPublishDocumentEventsRejectsMismatchedTargetIdentity(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	version, target := ingestDocumentEventTarget(t, s, "identity.txt", "c3")
 	record := documentEventRecord(t, s.VaultID(), version.ID, "c")
@@ -149,6 +152,7 @@ func TestPublishDocumentEventsRejectsMismatchedTargetIdentity(t *testing.T) {
 }
 
 func TestPublishDocumentEventsAcceptsCanonicalEmptyProjection(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	version, target := ingestDocumentEventTarget(t, s, "undated.txt", "d4")
 	record := document.DocumentEventsV1{
@@ -170,6 +174,7 @@ func TestPublishDocumentEventsAcceptsCanonicalEmptyProjection(t *testing.T) {
 }
 
 func TestPublishDocumentEventsRetainsActorEvidenceInProjections(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	version, target := ingestDocumentEventTarget(t, s, "actors.txt", "a71")
 	record := documentEventRecord(t, s.VaultID(), version.ID, "a7")
@@ -199,6 +204,7 @@ func TestPublishDocumentEventsRetainsActorEvidenceInProjections(t *testing.T) {
 }
 
 func TestDocumentEventsForVersionRejectsHeadFromAnotherVersion(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	firstVersion, firstTarget := ingestDocumentEventTarget(t, s, "first.txt", "e5")
 	secondVersion, secondTarget := ingestDocumentEventTarget(t, s, "second.txt", "f6")

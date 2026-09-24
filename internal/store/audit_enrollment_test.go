@@ -11,6 +11,7 @@ import (
 )
 
 func TestInitializeAuditAuthorityCreatesValidatedClosedSet(t *testing.T) {
+	t.Parallel()
 	s, err := Open(filepath.Join(t.TempDir(), "vault.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, s.Close()) })
@@ -51,6 +52,7 @@ func TestInitializeAuditAuthorityCreatesValidatedClosedSet(t *testing.T) {
 }
 
 func TestInitializeAuditAuthorityRollsBackPartialWrite(t *testing.T) {
+	t.Parallel()
 	s, err := Open(filepath.Join(t.TempDir(), "vault.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, s.Close()) })
@@ -70,6 +72,7 @@ func TestInitializeAuditAuthorityRollsBackPartialWrite(t *testing.T) {
 }
 
 func TestInitializeAuditAuthorityRejectsInvalidTargetsWithoutAuthority(t *testing.T) {
+	t.Parallel()
 	s, err := Open(filepath.Join(t.TempDir(), "vault.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, s.Close()) })
@@ -85,6 +88,7 @@ func TestInitializeAuditAuthorityRejectsInvalidTargetsWithoutAuthority(t *testin
 }
 
 func TestInitializeAuditAuthorityRejectsInvalidMetadataAndRollsBack(t *testing.T) {
+	t.Parallel()
 	s, err := Open(filepath.Join(t.TempDir(), "vault.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, s.Close()) })

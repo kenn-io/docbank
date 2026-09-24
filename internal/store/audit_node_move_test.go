@@ -11,6 +11,7 @@ import (
 )
 
 func TestAuditedInScopeMoveRecordsDescendantPathsAndRoundTrips(t *testing.T) {
+	t.Parallel()
 	s := newAuditedMoveStore(t)
 	work, err := s.NodeByPath(t.Context(), "/Projects/Work")
 	require.NoError(t, err)
@@ -74,6 +75,7 @@ func TestAuditedInScopeMoveRecordsDescendantPathsAndRoundTrips(t *testing.T) {
 }
 
 func TestAuditedInScopeRenameRecordsOnePathEffect(t *testing.T) {
+	t.Parallel()
 	s := newAuditedMoveStore(t)
 	file, err := s.NodeByPath(t.Context(), "/Projects/report.txt")
 	require.NoError(t, err)
@@ -92,6 +94,7 @@ func TestAuditedInScopeRenameRecordsOnePathEffect(t *testing.T) {
 }
 
 func TestAuditedBatchMoveRecordsOneAtomicFinalTopology(t *testing.T) {
+	t.Parallel()
 	s := newAuditedMoveStore(t)
 	report, err := s.NodeByPath(t.Context(), "/Projects/report.txt")
 	require.NoError(t, err)
@@ -131,6 +134,7 @@ func TestAuditedBatchMoveRecordsOneAtomicFinalTopology(t *testing.T) {
 }
 
 func TestAuditedRootScopeRenameHandlesRootTimestampTouch(t *testing.T) {
+	t.Parallel()
 	s, err := Open(filepath.Join(t.TempDir(), "vault.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, s.Close()) })
@@ -150,6 +154,7 @@ func TestAuditedRootScopeRenameHandlesRootTimestampTouch(t *testing.T) {
 }
 
 func TestAuditedMoveRejectsRetainedTrashOriginPathChange(t *testing.T) {
+	t.Parallel()
 	s, err := Open(filepath.Join(t.TempDir(), "vault.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, s.Close()) })
@@ -180,6 +185,7 @@ func TestAuditedMoveRejectsRetainedTrashOriginPathChange(t *testing.T) {
 }
 
 func TestReplayedAuditTopologyRejectsImpossibleIntermediateState(t *testing.T) {
+	t.Parallel()
 	s := newAuditedMoveStore(t)
 	topology, err := currentAuditTopology(t.Context(), s.db)
 	require.NoError(t, err)
@@ -211,6 +217,7 @@ func TestReplayedAuditTopologyRejectsImpossibleIntermediateState(t *testing.T) {
 }
 
 func TestAuditedMoveRefusesMembershipAndWitnessBoundaryCrossings(t *testing.T) {
+	t.Parallel()
 	s := newAuditedMoveStore(t)
 	report, err := s.NodeByPath(t.Context(), "/Projects/report.txt")
 	require.NoError(t, err)
@@ -235,6 +242,7 @@ func TestAuditedMoveRefusesMembershipAndWitnessBoundaryCrossings(t *testing.T) {
 }
 
 func TestAuditedMoveRollsBackTreeAndHistory(t *testing.T) {
+	t.Parallel()
 	s := newAuditedMoveStore(t)
 	work, err := s.NodeByPath(t.Context(), "/Projects/Work")
 	require.NoError(t, err)

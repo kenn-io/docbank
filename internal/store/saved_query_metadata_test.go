@@ -15,6 +15,7 @@ import (
 )
 
 func TestSavedQueryBackupRoundTripPreservesEveryFieldAndKind(t *testing.T) {
+	t.Parallel()
 	source := newTestStore(t)
 	ctx := t.Context()
 	queryRecord, err := source.CreateSavedQuery(ctx, "Zulu query", "full expression", SavedQueryKindQuery, []byte(savedQueryFullExpression))
@@ -59,6 +60,7 @@ func TestSavedQueryBackupRoundTripPreservesEveryFieldAndKind(t *testing.T) {
 }
 
 func TestSavedQueryMetadataImportRejectsMalformedOrCollidingAuthorityTransactionally(t *testing.T) {
+	t.Parallel()
 	source := newTestStore(t)
 	first, err := source.CreateSavedQuery(t.Context(), "first", "", SavedQueryKindQuery, []byte(`{"text":"one"}`))
 	require.NoError(t, err)
@@ -152,6 +154,7 @@ func TestSavedQueryMetadataImportRejectsMalformedOrCollidingAuthorityTransaction
 }
 
 func TestSavedQueryMetadataExportRejectsDatabaseInjectedPolicyViolations(t *testing.T) {
+	t.Parallel()
 	for _, driver := range v090UpgradeDrivers() {
 		t.Run(driver.name, func(t *testing.T) {
 			for _, test := range []struct {
@@ -191,6 +194,7 @@ func TestSavedQueryMetadataExportRejectsDatabaseInjectedPolicyViolations(t *test
 }
 
 func TestSavedQueryFutureTimestampRemainsPortableAfterEdit(t *testing.T) {
+	t.Parallel()
 	const future = "2099-01-01T00:00:00.000000000Z"
 	for _, test := range v090UpgradeDrivers() {
 		t.Run(test.name, func(t *testing.T) {
@@ -257,6 +261,7 @@ func mutateSavedQueryMetadataRecord(
 }
 
 func TestSavedQueryMetadataImportAcceptsOldBackupWithNoDefinitions(t *testing.T) {
+	t.Parallel()
 	source := newTestStore(t)
 	var oldBackup bytes.Buffer
 	require.NoError(t, source.ExportMetadata(t.Context(), &oldBackup))
@@ -271,6 +276,7 @@ func TestSavedQueryMetadataImportAcceptsOldBackupWithNoDefinitions(t *testing.T)
 }
 
 func TestSavedQueryImportRequiresPristineSavedAuthority(t *testing.T) {
+	t.Parallel()
 	source := newTestStore(t)
 	var metadata bytes.Buffer
 	require.NoError(t, source.ExportMetadata(t.Context(), &metadata))
@@ -283,6 +289,7 @@ func TestSavedQueryImportRequiresPristineSavedAuthority(t *testing.T) {
 }
 
 func TestSavedQueryOldestReleasedSchemaUpgradeCreatesEmptyAuthority(t *testing.T) {
+	t.Parallel()
 	for _, test := range v090UpgradeDrivers() {
 		t.Run(test.name, func(t *testing.T) {
 			dbPath := filepath.Join(t.TempDir(), "docbank.db")
@@ -303,6 +310,7 @@ func TestSavedQueryOldestReleasedSchemaUpgradeCreatesEmptyAuthority(t *testing.T
 }
 
 func TestSavedQueryCurrentSchemaRejectsMissingAuthorityTable(t *testing.T) {
+	t.Parallel()
 	for _, test := range v090UpgradeDrivers() {
 		for _, table := range []string{"saved_queries", "saved_query_runs"} {
 			t.Run(test.name+"/"+table, func(t *testing.T) {
@@ -324,6 +332,7 @@ func TestSavedQueryCurrentSchemaRejectsMissingAuthorityTable(t *testing.T) {
 }
 
 func TestSavedQuerySchemaRejectsPriorUnreleasedLayout(t *testing.T) {
+	t.Parallel()
 	for _, test := range v090UpgradeDrivers() {
 		for _, version := range []int{6, 7, 8, 9, 10} {
 			t.Run(fmt.Sprintf("%s/v%d", test.name, version), func(t *testing.T) {

@@ -14,6 +14,7 @@ import (
 )
 
 func TestAuditedTagRenameRoundTripsAssignedDefinition(t *testing.T) {
+	t.Parallel()
 	s, tag, report := newAuditedTagStore(t)
 	assigned, err := s.AssignTag(t.Context(), tag.ID, report.ID, report.Revision)
 	require.NoError(t, err)
@@ -32,6 +33,7 @@ func TestAuditedTagRenameRoundTripsAssignedDefinition(t *testing.T) {
 }
 
 func TestAuditedTagRenameWithoutAuditedAssignmentsAdvancesOnlyAllocation(t *testing.T) {
+	t.Parallel()
 	s, tag, _ := newAuditedTagStore(t)
 	renamed, err := s.RenameTag(t.Context(), tag.ID, tag.Revision, "renamed")
 	require.NoError(t, err)
@@ -55,6 +57,7 @@ func TestAuditedTagRenameWithoutAuditedAssignmentsAdvancesOnlyAllocation(t *test
 }
 
 func TestAuditedTagRenamePreservesUnscopedTopology(t *testing.T) {
+	t.Parallel()
 	s, err := Open(filepath.Join(t.TempDir(), "vault.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, s.Close()) })
@@ -80,6 +83,7 @@ func TestAuditedTagRenamePreservesUnscopedTopology(t *testing.T) {
 }
 
 func TestAuditedTagRenameNoOpDoesNotAdvanceHistory(t *testing.T) {
+	t.Parallel()
 	s, tag, _ := newAuditedTagStore(t)
 	unchanged, err := s.RenameTag(t.Context(), tag.ID, tag.Revision, tag.Name)
 	require.NoError(t, err)
@@ -94,6 +98,7 @@ func TestAuditedTagRenameNoOpDoesNotAdvanceHistory(t *testing.T) {
 }
 
 func TestAuditedTagDefinitionChangesAdvanceEveryAffectedScope(t *testing.T) {
+	t.Parallel()
 	for _, name := range []string{"rename", "delete"} {
 		t.Run(name, func(t *testing.T) {
 			s, tag, first, second := newMultiScopeAuditedTagStore(t)
@@ -142,6 +147,7 @@ func TestAuditedTagDefinitionChangesAdvanceEveryAffectedScope(t *testing.T) {
 }
 
 func TestAuditedTagDefinitionChangesAcrossScopesRollBackAtomically(t *testing.T) {
+	t.Parallel()
 	for _, name := range []string{"rename", "delete"} {
 		t.Run(name, func(t *testing.T) {
 			s, tag, first, second := newMultiScopeAuditedTagStore(t)
@@ -183,6 +189,7 @@ func TestAuditedTagDefinitionChangesAcrossScopesRollBackAtomically(t *testing.T)
 }
 
 func TestAuditedTagDefinitionReplayRejectsOmittedScopeFanout(t *testing.T) {
+	t.Parallel()
 	candidates := []replayedAuditedTagCandidate{
 		{nodeID: 10, scopeID: "11111111-1111-4111-8111-111111111111"},
 		{nodeID: 20, scopeID: "22222222-2222-4222-8222-222222222222"},
@@ -265,6 +272,7 @@ func newMultiScopeAuditedTagStore(t *testing.T) (*Store, Tag, Node, Node) {
 }
 
 func TestAuditedTagRenameRollsBackDefinitionNodesAndHistory(t *testing.T) {
+	t.Parallel()
 	s, tag, report := newAuditedTagStore(t)
 	assigned, err := s.AssignTag(t.Context(), tag.ID, report.ID, report.Revision)
 	require.NoError(t, err)
@@ -290,6 +298,7 @@ func TestAuditedTagRenameRollsBackDefinitionNodesAndHistory(t *testing.T) {
 }
 
 func TestAuditedTagRenameImportRejectsMismatchedCurrentDefinition(t *testing.T) {
+	t.Parallel()
 	s, tag, _ := newAuditedTagStore(t)
 	_, err := s.RenameTag(t.Context(), tag.ID, tag.Revision, "renamed")
 	require.NoError(t, err)
@@ -311,6 +320,7 @@ func TestAuditedTagRenameImportRejectsMismatchedCurrentDefinition(t *testing.T) 
 }
 
 func TestAuditedTagRenameReplayRejectsOmittedMemberEffect(t *testing.T) {
+	t.Parallel()
 	s, tag, report := newAuditedTagStore(t)
 	assigned, err := s.AssignTag(t.Context(), tag.ID, report.ID, report.Revision)
 	require.NoError(t, err)

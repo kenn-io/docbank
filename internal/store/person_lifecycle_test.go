@@ -7,6 +7,7 @@ import (
 )
 
 func TestDocumentPeopleCoverageTracksRetainedLifecycle(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	version := seedDocumentPeopleEvent(t, s, "lifecycle.txt", "a5", nil)
 	person := publishLifecycleDocumentPeople(t, s, version.ID)
@@ -57,6 +58,7 @@ func TestDocumentPeopleCoverageTracksRetainedLifecycle(t *testing.T) {
 }
 
 func TestChangedSourceEvidenceRemovesDocumentPeople(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	version := seedDocumentPeopleEvent(t, s, "changed.txt", "a6", nil)
 	person := publishLifecycleDocumentPeople(t, s, version.ID)
@@ -80,6 +82,7 @@ func TestChangedSourceEvidenceRemovesDocumentPeople(t *testing.T) {
 }
 
 func TestEmailDerivativePurgeInvalidatesPeopleAndPreservesManualAuthority(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	email := newEmailFixture(t, s, "synthetic-message.eml")
 	published, err := s.PublishEmailGeneration(t.Context(), email.publication)

@@ -13,6 +13,7 @@ import (
 )
 
 func TestDocumentPeopleGenerationPinsInputs(t *testing.T) {
+	t.Parallel()
 	p := DocumentPeoplePublication{
 		People: document.DocumentPeopleV1{
 			ContractVersion:  document.PersonContractV1,
@@ -30,6 +31,7 @@ func TestDocumentPeopleGenerationPinsInputs(t *testing.T) {
 }
 
 func TestDocumentPeopleKeepsIndependentActorEvidenceAfterReopen(t *testing.T) {
+	t.Parallel()
 	path := filepath.Join(t.TempDir(), "people.db")
 	s, err := Open(path)
 	require.NoError(t, err)
@@ -66,6 +68,7 @@ func TestDocumentPeopleKeepsIndependentActorEvidenceAfterReopen(t *testing.T) {
 }
 
 func TestDocumentPeopleResolverInputsProvisionEligibleIdentityOnce(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	version := seedDocumentPeopleEvent(t, s, "auto.txt", "d1", nil)
 
@@ -89,6 +92,7 @@ func TestDocumentPeopleResolverInputsProvisionEligibleIdentityOnce(t *testing.T)
 }
 
 func TestDocumentPeopleBoundsDerivedLabelsWithoutChangingEvidence(t *testing.T) {
+	t.Parallel()
 	longName := strings.Repeat("界", 67)
 	longAddress := strings.Repeat("a", 192) + "@example.test"
 	for _, tc := range []struct {
@@ -130,6 +134,7 @@ func TestDocumentPeopleBoundsDerivedLabelsWithoutChangingEvidence(t *testing.T) 
 }
 
 func TestDocumentPeopleProvisioningKeepsPublishedVersionsCurrent(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	for index, address := range []string{"ada@example.test", "grace@example.test"} {
 		version := seedDocumentPeopleEvent(t, s, address+".txt", fakeSHA256([]byte(address)), []document.DocumentEventActorV1{{
@@ -149,6 +154,7 @@ func TestDocumentPeopleProvisioningKeepsPublishedVersionsCurrent(t *testing.T) {
 }
 
 func TestDocumentPeopleNameAliasIsOnlyASuggestion(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	person, err := s.CreatePerson(t.Context(), "Ada", "operator")
 	require.NoError(t, err)
@@ -169,6 +175,7 @@ func TestDocumentPeopleNameAliasIsOnlyASuggestion(t *testing.T) {
 }
 
 func TestDocumentPeopleReusedIdentitySuggestsOnlyActiveOwner(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
 	old, err := s.CreatePerson(ctx, "Previous Owner", "operator")
@@ -209,6 +216,7 @@ func TestDocumentPeopleReusedIdentitySuggestsOnlyActiveOwner(t *testing.T) {
 }
 
 func TestDocumentPeopleRetiredNameAliasKeepsUnassignedCandidate(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
 	person, err := s.CreatePerson(ctx, "Former Author", "operator")
@@ -236,6 +244,7 @@ func TestDocumentPeopleRetiredNameAliasKeepsUnassignedCandidate(t *testing.T) {
 }
 
 func TestDocumentPeopleDisplayOnlyActorRemainsUnresolved(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	version := seedDocumentPeopleEvent(t, s, "display-only.txt", "b2", []document.DocumentEventActorV1{{
 		Role: "author", DisplayName: "An unnamed contributor", Claim: `"contributor"`,
@@ -250,6 +259,7 @@ func TestDocumentPeopleDisplayOnlyActorRemainsUnresolved(t *testing.T) {
 }
 
 func TestDocumentPeopleLoadFailureHasNoPublishableInputs(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	input, err := s.PrepareDocumentPeopleInputs(t.Context(), "00000000-0000-4000-8000-000000000099")
 	require.ErrorIs(t, err, ErrNotFound)
@@ -257,6 +267,7 @@ func TestDocumentPeopleLoadFailureHasNoPublishableInputs(t *testing.T) {
 }
 
 func TestDocumentPeopleDerivationDoesNotMutateAuditedAuthority(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	version := seedDocumentPeopleEvent(t, s, "audited.txt", "d7", nil)
 	audited, err := s.Mkdir(t.Context(), s.RootID(), "Audited")
@@ -296,6 +307,7 @@ func TestDocumentPeopleDerivationDoesNotMutateAuditedAuthority(t *testing.T) {
 }
 
 func TestDocumentPeopleResolverInputsOpensNameOnlyCandidate(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	actor := document.DocumentEventActorV1{ActorKey: "name_alias:ada lovelace", Claim: `"Ada Lovelace"`,
 		DisplayName: "Ada Lovelace", Ordinal: 0, Role: "author"}
@@ -324,6 +336,7 @@ func TestDocumentPeopleResolverInputsOpensNameOnlyCandidate(t *testing.T) {
 }
 
 func TestDocumentPeopleResolverInputsRejectsAuthorityBeyondAllocationBound(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	version := seedDocumentPeopleEvent(t, s, "bounded.txt", "d6", nil)
 	_, err := s.db.Exec(`WITH RECURSIVE seq(value) AS (
@@ -345,6 +358,7 @@ func TestDocumentPeopleResolverInputsRejectsAuthorityBeyondAllocationBound(t *te
 }
 
 func TestDocumentPeopleResolverInputsCountsCandidateQueueOverflow(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	_, err := s.db.Exec(`WITH RECURSIVE seq(value) AS (
 		VALUES(1) UNION ALL SELECT value+1 FROM seq WHERE value<?
@@ -361,6 +375,7 @@ func TestDocumentPeopleResolverInputsCountsCandidateQueueOverflow(t *testing.T) 
 }
 
 func TestDocumentPeopleResolverInputsHonorsExternalUIDUnlink(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	person, err := s.CreatePerson(t.Context(), "Synthetic transfer person", "transfer")
 	require.NoError(t, err)
@@ -392,6 +407,7 @@ func TestDocumentPeopleResolverInputsHonorsExternalUIDUnlink(t *testing.T) {
 }
 
 func TestPublishDocumentPeopleRejectsChangedInputsBeforeWriting(t *testing.T) {
+	t.Parallel()
 	for _, test := range []struct {
 		name   string
 		mutate func(*testing.T, *Store, DocumentPeopleInputs)
@@ -430,6 +446,7 @@ func TestPublishDocumentPeopleRejectsChangedInputsBeforeWriting(t *testing.T) {
 }
 
 func TestPublishDocumentPeopleReplayInputIdentity(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	version := seedDocumentPeopleEvent(t, s, "publish.txt", "e1", nil)
 	input, err := s.PrepareDocumentPeopleInputs(t.Context(), version.ID)
@@ -465,6 +482,7 @@ func TestPublishDocumentPeopleReplayInputIdentity(t *testing.T) {
 }
 
 func TestPublishDocumentPeopleDetectsCollisionAndRollsBackForeignKeyFailure(t *testing.T) {
+	t.Parallel()
 	t.Run("immutable collision", func(t *testing.T) {
 		s := newTestStore(t)
 		version := seedDocumentPeopleEvent(t, s, "collision.txt", "e2", nil)
@@ -505,6 +523,7 @@ func TestPublishDocumentPeopleDetectsCollisionAndRollsBackForeignKeyFailure(t *t
 }
 
 func TestDocumentPeopleFailureRemainsRetryableAndCannotEraseSuccess(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	version := seedDocumentPeopleEvent(t, s, "retry.txt", "f1", nil)
 	input, err := s.PrepareDocumentPeopleInputs(t.Context(), version.ID)
@@ -526,6 +545,7 @@ func TestDocumentPeopleFailureRemainsRetryableAndCannotEraseSuccess(t *testing.T
 }
 
 func TestDocumentPeopleFailureReplacesOlderSuccessfulCoverage(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	version := seedDocumentPeopleEvent(t, s, "stale-failure.txt", "f2", nil)
 	input, err := s.PrepareDocumentPeopleInputs(t.Context(), version.ID)
@@ -553,6 +573,7 @@ func TestDocumentPeopleFailureReplacesOlderSuccessfulCoverage(t *testing.T) {
 }
 
 func TestDocumentPeopleReadsWithholdStaleAttributionAndRetainHistory(t *testing.T) {
+	t.Parallel()
 	for _, change := range []string{"person merge", "event evidence"} {
 		t.Run(change, func(t *testing.T) {
 			s := newTestStore(t)
@@ -610,6 +631,7 @@ func TestDocumentPeopleReadsWithholdStaleAttributionAndRetainHistory(t *testing.
 }
 
 func TestDocumentPeopleMembershipChangesInvalidateOnlyAffectedDocument(t *testing.T) {
+	t.Parallel()
 	for _, change := range []string{"trash", "restore", "replace"} {
 		t.Run(change, func(t *testing.T) {
 			s := newTestStore(t)

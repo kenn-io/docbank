@@ -11,6 +11,7 @@ import (
 )
 
 func TestAuditedOperationalObservationsReplayOneOrTwoAttachments(t *testing.T) {
+	t.Parallel()
 	s, err := Open(filepath.Join(t.TempDir(), "source.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, s.Close()) })
@@ -138,6 +139,7 @@ func auditAttachmentCountsAfterEnrollment(t *testing.T, s *Store, sequence int64
 }
 
 func TestOperationalObservationRejectsCallerSuppliedSource(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	run, err := s.BeginCallerSuppliedIngest(t.Context(), "agent", "Synthetic assertion")
 	require.NoError(t, err)
@@ -152,6 +154,7 @@ func TestOperationalObservationRejectsCallerSuppliedSource(t *testing.T) {
 }
 
 func TestAuditedReplacementForIngestRecordsBothTransitions(t *testing.T) {
+	t.Parallel()
 	s, err := Open(filepath.Join(t.TempDir(), "source.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, s.Close()) })
@@ -216,6 +219,7 @@ func auditEventKindsAfterEnrollment(t *testing.T, s *Store, sequence int64) []st
 }
 
 func TestAuditedObservationRejectsInitialLabelWithoutChangingAuthority(t *testing.T) {
+	t.Parallel()
 	s, err := Open(filepath.Join(t.TempDir(), "source.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, s.Close()) })
@@ -246,6 +250,7 @@ func TestAuditedObservationRejectsInitialLabelWithoutChangingAuthority(t *testin
 }
 
 func TestAuditedObservationRollsBackRunFactAndRevision(t *testing.T) {
+	t.Parallel()
 	s, err := Open(filepath.Join(t.TempDir(), "source.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, s.Close()) })
@@ -291,6 +296,7 @@ func TestAuditedObservationRollsBackRunFactAndRevision(t *testing.T) {
 }
 
 func TestIngestObservationReplayRejectsTampering(t *testing.T) {
+	t.Parallel()
 	s, err := Open(filepath.Join(t.TempDir(), "source.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, s.Close()) })

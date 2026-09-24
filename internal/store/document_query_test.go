@@ -15,6 +15,7 @@ import (
 )
 
 func TestDocumentCatalogSortsCurrentLiveFilesDeterministically(t *testing.T) {
+	t.Parallel()
 	drivers := []struct {
 		name   string
 		driver docsqlite.Driver
@@ -52,6 +53,7 @@ func TestDocumentCatalogSortsCurrentLiveFilesDeterministically(t *testing.T) {
 }
 
 func TestDocumentCatalogNormalizesPathPrefixAndUsesStableTies(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	alpha, err := s.Mkdir(t.Context(), s.RootID(), "alpha")
 	require.NoError(t, err)
@@ -83,6 +85,7 @@ func TestDocumentCatalogNormalizesPathPrefixAndUsesStableTies(t *testing.T) {
 }
 
 func TestDocumentCatalogDefaultsAndHardPageMaximum(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	for i := range 251 {
 		_, err := s.CreateFile(t.Context(), s.RootID(), fmt.Sprintf("doc-%03d.txt", i),
@@ -108,6 +111,7 @@ func TestDocumentCatalogDefaultsAndHardPageMaximum(t *testing.T) {
 }
 
 func TestResolveDocumentSummariesPreservesOrderAndRejectsStaleIdentity(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	first, err := s.CreateFile(t.Context(), s.RootID(), "first.md", fakeHash("resolve-first"), 1, "text/markdown")
 	require.NoError(t, err)
@@ -133,6 +137,7 @@ func TestResolveDocumentSummariesPreservesOrderAndRejectsStaleIdentity(t *testin
 }
 
 func TestDocumentCatalogTraversesNextAndPreviousExactly(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	for i := range 5 {
 		_, err := s.CreateFile(t.Context(), s.RootID(), fmt.Sprintf("doc-%d.txt", i),
@@ -165,6 +170,7 @@ func TestDocumentCatalogTraversesNextAndPreviousExactly(t *testing.T) {
 }
 
 func TestDocumentCatalogCursorPositionSurvivesConcurrentBoundaryDeletion(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	nodes := make([]Node, 4)
 	for i := range nodes {
@@ -188,6 +194,7 @@ func TestDocumentCatalogCursorPositionSurvivesConcurrentBoundaryDeletion(t *test
 }
 
 func TestDocumentCatalogPaginationMatrix(t *testing.T) {
+	t.Parallel()
 	drivers := []struct {
 		name   string
 		driver docsqlite.Driver
@@ -257,6 +264,7 @@ func TestDocumentCatalogPaginationMatrix(t *testing.T) {
 }
 
 func TestDocumentCatalogMaximumPathPositionTraversesBothDirections(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	_, err := s.CreateFile(t.Context(), s.RootID(), "a.txt", fakeHash("path-a"), 1, "text/plain")
 	require.NoError(t, err)
@@ -297,6 +305,7 @@ func TestDocumentCatalogMaximumPathPositionTraversesBothDirections(t *testing.T)
 }
 
 func TestDocumentCatalogReturnsOnlySummaryProcessingAndActiveRenditionIdentity(t *testing.T) {
+	t.Parallel()
 	s, versions := newRenditionCatalogFixture(t)
 	profile := catalogProcessingProfile(t, false)
 	request := renditionJobTestRequest(versions[0], profile)
@@ -329,6 +338,7 @@ func TestDocumentCatalogReturnsOnlySummaryProcessingAndActiveRenditionIdentity(t
 }
 
 func TestDocumentCatalogLatestProcessingStateUsesJobTransitionRecency(t *testing.T) {
+	t.Parallel()
 	s, versions := newRenditionCatalogFixture(t)
 	firstRequest := renditionJobTestRequest(versions[0], catalogProcessingProfile(t, false))
 	grantRenditionJobConsent(t, s, firstRequest)
@@ -356,6 +366,7 @@ func TestDocumentCatalogLatestProcessingStateUsesJobTransitionRecency(t *testing
 }
 
 func TestDocumentCatalogReturnsOnlyTheCurrentContentVersion(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	created, err := s.CreateFile(t.Context(), s.RootID(), "versioned.txt", fakeHash("old"), 3, "text/plain")
 	require.NoError(t, err)
@@ -435,6 +446,7 @@ func reverseStrings(items []string) {
 }
 
 func TestDocumentCatalogRejectsUnboundedTraversal(t *testing.T) {
+	t.Parallel()
 	for _, fixture := range []struct {
 		name    string
 		depth   int
@@ -472,6 +484,7 @@ func TestDocumentCatalogRejectsUnboundedTraversal(t *testing.T) {
 }
 
 func TestDocumentCatalogPreservesLongDirectoryNames(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	name := strings.Repeat("x", 256)
 	dir, err := s.Mkdir(t.Context(), s.RootID(), name)

@@ -36,6 +36,7 @@ func compiledFixtureIDs(t *testing.T, q metadataQuerier, compiled CompiledQuery,
 
 // Hoisting saved facets or flattening a mixed-field OR changes these members.
 func TestCompiledQuerySQLiteReferenceAndFacetScopes(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
 	alpha, err := s.CreateFile(ctx, s.RootID(), "alpha.txt", fakeHash("a1"), 10, "text/plain")
@@ -64,6 +65,7 @@ func TestCompiledQuerySQLiteReferenceAndFacetScopes(t *testing.T) {
 }
 
 func TestCompiledQuerySQLiteCollectionUnionDeduplicatesMembership(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	first := createCollectionRun(t, s, "first.txt", "a1")
 	second := createCollectionRun(t, s, "second.txt", "b2")
@@ -85,6 +87,7 @@ func TestCompiledQuerySQLiteCollectionUnionDeduplicatesMembership(t *testing.T) 
 
 // Match paths at a separator boundary and compare fractional times exactly.
 func TestCompiledQuerySQLitePathMediaAndTime(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
 	dir, err := s.Mkdir(ctx, s.RootID(), "case_1")
@@ -108,6 +111,7 @@ func TestCompiledQuerySQLitePathMediaAndTime(t *testing.T) {
 }
 
 func TestCompiledQuerySQLiteExtensionRequiresBasename(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	want := []int64{}
 	for _, name := range []string{".pdf", ".PDF", "README", "report.", "report.pdf", ".report.pdf", "REPORT.PDF"} {
@@ -134,6 +138,7 @@ func TestCompiledQuerySQLiteExtensionRequiresBasename(t *testing.T) {
 }
 
 func TestCompiledQuerySQLitePhrasesNearAndSimpleSourceSemantics(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
 	adjacent, err := s.CreateFile(ctx, s.RootID(), "alpha beta.txt", fakeHash("f6"), 10, "text/plain")
@@ -165,6 +170,7 @@ func seedCompiledLegacyText(t *testing.T, s *Store, node Node, text string) {
 // A selected rendition generation makes the legacy cache non-serving, and
 // historical attachment text must not match a replacement current version.
 func TestCompiledQuerySQLiteCurrentRenditionGeneration(t *testing.T) {
+	t.Parallel()
 	s, versions := newRenditionCatalogFixture(t)
 	ctx := t.Context()
 	profile := catalogProcessingProfile(t, false)
@@ -198,6 +204,7 @@ func TestCompiledQuerySQLiteCurrentRenditionGeneration(t *testing.T) {
 // Relation-backed predicates compile successfully but cannot be executed via
 // the legacy predicate-only Bind surface without the shared relation bindings.
 func TestCompiledQuerySQLiteRequiresPopulationRelations(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	first, err := s.CreateFile(t.Context(), s.RootID(), "first.txt", fakeHash("relation-shared"), 10, "text/plain")
 	require.NoError(t, err)

@@ -22,6 +22,7 @@ func newTestStore(t *testing.T) *Store {
 }
 
 func TestStorageMutationDuringReadSnapshot(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	tx, err := s.db.BeginTx(t.Context(), &sql.TxOptions{ReadOnly: true})
 	require.NoError(t, err)
@@ -40,6 +41,7 @@ func TestStorageMutationDuringReadSnapshot(t *testing.T) {
 }
 
 func TestStorageTransactionPreservesCancellationAfterAutomaticRollback(t *testing.T) {
+	t.Parallel()
 	for _, phase := range []string{"callback", "commit"} {
 		t.Run(phase, func(t *testing.T) {
 			s := newTestStore(t)
@@ -63,6 +65,7 @@ func TestStorageTransactionPreservesCancellationAfterAutomaticRollback(t *testin
 }
 
 func TestOpenRejectsObsoletePreReleaseSchema(t *testing.T) {
+	t.Parallel()
 	dbPath := filepath.Join(t.TempDir(), "obsolete.db")
 	driver := DefaultSQLiteDriver()
 	db, err := driver.Open(dbPath, docsqlite.OpenOptions{
@@ -81,6 +84,7 @@ func TestOpenRejectsObsoletePreReleaseSchema(t *testing.T) {
 }
 
 func TestOpenBootstrapsRoot(t *testing.T) {
+	t.Parallel()
 	dbPath := filepath.Join(t.TempDir(), "docbank.db")
 	s, err := Open(dbPath)
 	require.NoError(t, err)
@@ -104,6 +108,7 @@ func TestOpenBootstrapsRoot(t *testing.T) {
 }
 
 func TestOpenConcurrentBootstrap(t *testing.T) {
+	t.Parallel()
 	dbPath := filepath.Join(t.TempDir(), "docbank.db")
 
 	const n = 2
@@ -136,6 +141,7 @@ func TestOpenConcurrentBootstrap(t *testing.T) {
 }
 
 func TestSchemaForbidsSecondRoot(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	_, err := s.db.Exec(
 		`INSERT INTO nodes (parent_id, name, kind, created_at, modified_at)

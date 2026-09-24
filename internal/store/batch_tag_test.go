@@ -17,6 +17,7 @@ import (
 )
 
 func TestBatchTagsReplayAfterInterveningChange(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
 	node, err := s.Mkdir(ctx, s.RootID(), "selected")
@@ -57,6 +58,7 @@ func TestBatchTagsReplayAfterInterveningChange(t *testing.T) {
 }
 
 func TestBatchTagDigestGoldenVector(t *testing.T) {
+	t.Parallel()
 	targets := []BatchTagTarget{{NodeID: 9, Revision: 4}, {NodeID: 7, Revision: 3}}
 	sorted, digest, err := validateBatchTagTargets(
 		"22222222-2222-4222-8222-222222222222", true, targets,
@@ -69,6 +71,7 @@ func TestBatchTagDigestGoldenVector(t *testing.T) {
 }
 
 func TestBatchTagsRejectsInvalidStructureWithoutWrites(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
 	node, err := s.Mkdir(ctx, s.RootID(), "selected")
@@ -118,6 +121,7 @@ func TestBatchTagsRejectsInvalidStructureWithoutWrites(t *testing.T) {
 }
 
 func TestBatchTagsMixedChangesNoOpsAndCallerOrder(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
 	first, err := s.Mkdir(ctx, s.RootID(), "first")
@@ -165,6 +169,7 @@ func TestBatchTagsMixedChangesNoOpsAndCallerOrder(t *testing.T) {
 }
 
 func TestBatchTagsAcceptsOneAndOneThousandTargets(t *testing.T) {
+	t.Parallel()
 	for _, count := range []int{1, maxBatchTagTargets} {
 		t.Run(strconv.Itoa(count), func(t *testing.T) {
 			s := newTestStore(t)
@@ -202,6 +207,7 @@ func TestBatchTagsAcceptsOneAndOneThousandTargets(t *testing.T) {
 }
 
 func TestBatchTagsRejectsLateInvalidTargetAtomically(t *testing.T) {
+	t.Parallel()
 	for _, test := range []struct {
 		name    string
 		prepare func(*testing.T, *Store, Node) BatchTagTarget
@@ -258,6 +264,7 @@ func TestBatchTagsRejectsLateInvalidTargetAtomically(t *testing.T) {
 }
 
 func TestBatchTagsRejectsRevisionOverflowBeforeWrites(t *testing.T) {
+	t.Parallel()
 	for _, test := range []struct {
 		name   string
 		update string
@@ -297,6 +304,7 @@ func TestBatchTagsRejectsRevisionOverflowBeforeWrites(t *testing.T) {
 }
 
 func TestBatchTagsConcurrentSameOperationReturnsOneReceipt(t *testing.T) {
+	t.Parallel()
 	dbPath := filepath.Join(t.TempDir(), "vault.db")
 	firstStore, err := Open(dbPath)
 	require.NoError(t, err)
@@ -338,6 +346,7 @@ func TestBatchTagsConcurrentSameOperationReturnsOneReceipt(t *testing.T) {
 }
 
 func TestBatchTagsReplaysAfterRestartDeletionAndNodePurge(t *testing.T) {
+	t.Parallel()
 	dbPath := filepath.Join(t.TempDir(), "vault.db")
 	s, err := Open(dbPath)
 	require.NoError(t, err)
@@ -393,6 +402,7 @@ func TestBatchTagsReplaysAfterRestartDeletionAndNodePurge(t *testing.T) {
 }
 
 func TestBatchTagsPropagatesCanceledContextAndBackendErrors(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	node, err := s.Mkdir(t.Context(), s.RootID(), "cancel")
 	require.NoError(t, err)
@@ -429,6 +439,7 @@ func TestBatchTagsPropagatesCanceledContextAndBackendErrors(t *testing.T) {
 }
 
 func TestAuditedBatchTagsCommitAndReplayCanonicalHistory(t *testing.T) {
+	t.Parallel()
 	s, tag, report := newAuditedTagStore(t)
 	projects, err := s.NodeByPath(t.Context(), "/Projects")
 	require.NoError(t, err)
@@ -463,6 +474,7 @@ func TestAuditedBatchTagsCommitAndReplayCanonicalHistory(t *testing.T) {
 }
 
 func TestAuditedBatchTagsRollsBackEarlierTargetWhenLaterTargetIsUnsupported(t *testing.T) {
+	t.Parallel()
 	s, tag, report := newAuditedTagStore(t)
 	empty, err := s.NodeByPath(t.Context(), "/Empty")
 	require.NoError(t, err)
@@ -521,6 +533,7 @@ func createBatchTagDirectories(t *testing.T, s *Store, count int) []Node {
 }
 
 func TestPreviewBatchTagsExactMembershipAndStaleFences(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
 	first, err := s.Mkdir(ctx, s.RootID(), "first")
@@ -566,6 +579,7 @@ func TestPreviewBatchTagsExactMembershipAndStaleFences(t *testing.T) {
 }
 
 func TestPreviewBatchTagsAllNoneAndInvalidTargets(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
 	first, err := s.Mkdir(ctx, s.RootID(), "first")

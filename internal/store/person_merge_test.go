@@ -7,6 +7,7 @@ import (
 )
 
 func TestSplitRequiresExplicitMembership(t *testing.T) {
+	t.Parallel()
 	request := PersonSplitRequest{PersonID: "00000000-0000-4000-8000-000000000001",
 		OperationID: "00000000-0000-4000-8000-000000000002", Revision: 1}
 	require.Error(t, validatePersonSplitRequest(request))
@@ -29,6 +30,7 @@ func addTestPersonIdentity(t *testing.T, s *Store, person Person, kind, value, e
 }
 
 func TestMergePersonsDeduplicatesAliasesAndReplaysReceipt(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	survivor, err := s.CreatePerson(t.Context(), "Ada", "operator")
 	require.NoError(t, err)
@@ -59,6 +61,7 @@ func TestMergePersonsDeduplicatesAliasesAndReplaysReceipt(t *testing.T) {
 }
 
 func TestMergeReceiptKeepsExternalTupleComponentsDistinct(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	survivor, err := s.CreatePerson(t.Context(), "Survivor", "operator")
 	require.NoError(t, err)
@@ -85,6 +88,7 @@ func survivorAliasID(t *testing.T, s *Store, personID string) string {
 }
 
 func TestMergePersonsRejectsConflictingCurrentExternalUIDs(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	left, err := s.CreatePerson(t.Context(), "Left", "operator")
 	require.NoError(t, err)
@@ -106,6 +110,7 @@ func TestMergePersonsRejectsConflictingCurrentExternalUIDs(t *testing.T) {
 }
 
 func TestMergePersonsPreservesExternalUIDTransitions(t *testing.T) {
+	t.Parallel()
 	for _, test := range []struct {
 		name, survivorUID, absorbedUID string
 		multihop                       bool
@@ -153,6 +158,7 @@ func TestMergePersonsPreservesExternalUIDTransitions(t *testing.T) {
 }
 
 func TestMergePersonsRewritesAliasChainsToOneHop(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	first, err := s.CreatePerson(t.Context(), "First", "operator")
 	require.NoError(t, err)
@@ -177,6 +183,7 @@ func TestMergePersonsRewritesAliasChainsToOneHop(t *testing.T) {
 }
 
 func TestSplitPersonMovesOnlyExplicitIdentitiesAndReplays(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	source, err := s.CreatePerson(t.Context(), "Ada", "operator")
 	require.NoError(t, err)
@@ -202,6 +209,7 @@ func TestSplitPersonMovesOnlyExplicitIdentitiesAndReplays(t *testing.T) {
 }
 
 func TestSplitPersonMovesCustodianAndExternalUID(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
 	source, err := s.CreatePerson(ctx, "Source", "operator")

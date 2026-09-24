@@ -14,6 +14,7 @@ import (
 )
 
 func TestPackCatalogContract(t *testing.T) {
+	t.Parallel()
 	packstoretest.RunCatalogContract(t, newDocbankPackHarness, packstoretest.ContractOptions{
 		Now:       time.Date(2026, 7, 11, 12, 0, 0, 0, time.UTC),
 		NewPackID: pack.NewPackID,
@@ -21,6 +22,7 @@ func TestPackCatalogContract(t *testing.T) {
 }
 
 func TestPackAdoptionClearsLooseAuthority(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	hash, err := packstore.ParseHash("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
 	require.NoError(t, err)
@@ -65,6 +67,7 @@ func TestPackAdoptionClearsLooseAuthority(t *testing.T) {
 }
 
 func TestDeletingPackRevokesItsPackedLocations(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
 	hash, err := packstore.ParseHash(fakeHash("d1"))
@@ -90,6 +93,7 @@ func TestDeletingPackRevokesItsPackedLocations(t *testing.T) {
 }
 
 func TestLogicalWritesRejectMissingPhysicalAuthority(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
 	missingHash, err := packstore.ParseHash(fakeHash("deadbeef"))
@@ -143,6 +147,7 @@ func TestLogicalWritesRejectMissingPhysicalAuthority(t *testing.T) {
 }
 
 func TestRevertRejectsMissingPhysicalAuthority(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
 	oldHash, err := packstore.ParseHash(fakeHash("cab005e"))
@@ -179,6 +184,7 @@ func TestRevertRejectsMissingPhysicalAuthority(t *testing.T) {
 }
 
 func TestRepairBlobAuthorityPreservesReferences(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
 	hash := fakeHash("a11ce")
@@ -236,6 +242,7 @@ func TestRepairBlobAuthorityPreservesReferences(t *testing.T) {
 }
 
 func TestRepairBlobAuthorityRequiresExistingMembership(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	_, err := s.RepairBlobAuthority(t.Context(), fakeHash("missing"), 10,
 		BlobPhysical{Encoding: "raw", StoredBytes: 10, PackEligible: true})
