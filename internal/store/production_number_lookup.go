@@ -163,3 +163,61 @@ func matchesPublishedProductionNumberLedger(label BatesPageLabel, number documen
 	return label.Label == number.Text && label.OccurrenceID == number.MemberID &&
 		label.Ordinal == pageOrdinal && label.SourcePage == number.Page
 }
+
+// PublishedProductionNumberPage continues a numeric range within one Bates
+// namespace. NextSequence is zero after the last published production number.
+type PublishedProductionNumberPage struct {
+	Items        []PublishedProductionNumber
+	NextSequence int64
+}
+
+// FindPublishedProductionNumberRange returns up to 25 ledger-ordered published
+// production numbers. Every item passes the same checks as an exact lookup.
+func (s *Store) FindPublishedProductionNumberRange(ctx context.Context,
+	namespaceID string, startSequence, endSequence, afterSequence int64, limit int,
+) (PublishedProductionNumberPage, error) {
+	if ctx == nil || validateUUIDv4(namespaceID) != nil || startSequence < 1 ||
+		endSequence < startSequence || afterSequence < 0 || afterSequence > endSequence ||
+		limit < 1 || limit > 25 {
+		return PublishedProductionNumberPage{}, ErrInvalidBatesSelector
+	}
+	rows, err := s.db.QueryContext(ctx, `SELECT l.label,l.sequence FROM bates_page_labels l
+		JOIN bates_allocations a USING(allocation_id)
+		JOIN production_jobs j ON j.job_id=a.operation_id AND j.state='succeeded'
+		WHERE l.namespace_id=? AND l.sequence>=? AND l.sequence<=? AND l.sequence>?
+		ORDER BY l.sequence LIMIT ?`, namespaceID, startSequence, endSequence, afterSequence, limit+1)
+	if err != nil {
+		return PublishedProductionNumberPage{}, err
+	}
+	defer func() { _ = rows.Close() }()
+	type row struct {
+		label    string
+		sequence int64
+	}
+	labels := make([]row, 0, limit+1)
+	for rows.Next() {
+		var label row
+		if err := rows.Scan(&label.label, &label.sequence); err != nil {
+			return PublishedProductionNumberPage{}, err
+		}
+		labels = append(labels, label)
+	}
+	readErr := rows.Err()
+	closeErr := rows.Close()
+	if err := errors.Join(readErr, closeErr); err != nil {
+		return PublishedProductionNumberPage{}, err
+	}
+	page := PublishedProductionNumberPage{Items: make([]PublishedProductionNumber, 0, limit)}
+	if len(labels) > limit {
+		labels = labels[:limit]
+		page.NextSequence = labels[len(labels)-1].sequence
+	}
+	for _, label := range labels {
+		match, err := s.FindPublishedProductionNumber(ctx, label.label)
+		if err != nil {
+			return PublishedProductionNumberPage{}, err
+		}
+		page.Items = append(page.Items, match)
+	}
+	return page, nil
+}

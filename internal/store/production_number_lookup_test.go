@@ -57,3 +57,29 @@ func TestPublishedProductionNumberMatchesLedgerPageOrdinal(t *testing.T) {
 		"page ordinal advances within a document while member ordinal stays fixed")
 	require.False(t, matchesPublishedProductionNumberLedger(ledger, number, 1))
 }
+
+func TestFindPublishedProductionNumberRangePagesInLedgerOrder(t *testing.T) {
+	f, job := publishedRealRetentionFixture(t)
+	allocation, err := f.ProductionNumberingForJob(t.Context(), job.ID)
+	require.NoError(t, err)
+	require.GreaterOrEqual(t, len(allocation.Labels), 2)
+	first, err := f.FindPublishedProductionNumberRange(t.Context(), allocation.NamespaceID,
+		allocation.StartSequence, allocation.EndSequence, 0, 1)
+	require.NoError(t, err)
+	require.Len(t, first.Items, 1)
+	require.Equal(t, allocation.Labels[0].Label, first.Items[0].Label)
+	require.Equal(t, allocation.StartSequence, first.NextSequence)
+	second, err := f.FindPublishedProductionNumberRange(t.Context(), allocation.NamespaceID,
+		allocation.StartSequence, allocation.EndSequence, first.NextSequence, 1)
+	require.NoError(t, err)
+	require.Len(t, second.Items, 1)
+	require.Equal(t, allocation.Labels[1].Label, second.Items[0].Label)
+	require.Zero(t, second.NextSequence)
+	require.NotEqual(t, first.Items[0].OccurrenceID, second.Items[0].OccurrenceID)
+	_, err = f.FindPublishedProductionNumberRange(t.Context(), allocation.NamespaceID,
+		allocation.EndSequence, allocation.StartSequence, 0, 1)
+	require.ErrorIs(t, err, ErrInvalidBatesSelector)
+	_, err = f.FindPublishedProductionNumberRange(t.Context(), allocation.NamespaceID,
+		allocation.StartSequence, allocation.EndSequence, 0, 26)
+	require.ErrorIs(t, err, ErrInvalidBatesSelector)
+}
