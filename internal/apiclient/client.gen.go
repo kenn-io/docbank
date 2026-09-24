@@ -7982,6 +7982,53 @@ func (c *Client) ResolveDocumentSourceFence(ctx context.Context, options *Resolv
 	return responseParser(ctx, resp)
 }
 
+// PublishProductionPackage Publish one verified recipient package from a successful production job
+func (c *Client) PublishProductionPackage(ctx context.Context, options *PublishProductionPackageRequestOptions, reqEditors ...runtime.RequestEditorFn) (*PublishProductionPackageResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/productions/jobs/{job_id}/packages",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*PublishProductionPackageResponse, error) {
+		switch resp.StatusCode {
+
+		case 201:
+
+			target := new(PublishProductionPackageResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "PublishProductionPackageResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[PublishProductionPackageErrorResponse](resp, "PublishProductionPackageErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/productions/jobs/{job_id}/packages")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 201)
+	}
+	return responseParser(ctx, resp)
+}
+
 // DownloadProductionPackage Issue a one-use ticket for a verified retained production package
 func (c *Client) DownloadProductionPackage(ctx context.Context, options *DownloadProductionPackageRequestOptions, reqEditors ...runtime.RequestEditorFn) (*DownloadProductionPackageResponse, error) {
 	var err error
@@ -16924,6 +16971,41 @@ func (o *ResolveDocumentSourceFenceRequestOptions) GetHeader() (map[string]strin
 	return nil, nil
 }
 
+// PublishProductionPackageRequestOptions is the options needed to make a request to PublishProductionPackage.
+type PublishProductionPackageRequestOptions struct {
+	PathParams *PublishProductionPackagePath
+	Body       *PublishProductionPackageBody
+}
+
+// GetPathParams returns the path params as a map.
+func (o *PublishProductionPackageRequestOptions) GetPathParams() (map[string]any, error) {
+	encoded, err := json.Marshal(o.PathParams, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetQuery returns the query params as a map.
+func (o *PublishProductionPackageRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *PublishProductionPackageRequestOptions) GetBody() any {
+	if o.Body == nil {
+		return nil
+	}
+	return o.Body
+}
+
+// GetHeader returns the headers as a map.
+func (o *PublishProductionPackageRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
 // DownloadProductionPackageRequestOptions is the options needed to make a request to DownloadProductionPackage.
 type DownloadProductionPackageRequestOptions struct {
 	PathParams *DownloadProductionPackagePath
@@ -20033,6 +20115,10 @@ type GetDocumentProcessingJobPath struct {
 	ID string `json:"id"`
 }
 
+type PublishProductionPackagePath struct {
+	JobID uuid.UUID `json:"job_id"`
+}
+
 type DownloadProductionPackagePath struct {
 	JobID       uuid.UUID `json:"job_id"`
 	OperationID uuid.UUID `json:"operation_id"`
@@ -20381,6 +20467,8 @@ type StartDocumentProcessingBody = StartProcessingRequest
 type PlanDocumentProcessingBody = ProcessingPlanRequest
 
 type ResolveDocumentSourceFenceBody = DocumentSourceFenceResolveRequest
+
+type PublishProductionPackageBody = ProductionPackagePublishRequest
 
 type DownloadProductionPackageBody = DownloadProductionPackageRequest
 
@@ -21517,6 +21605,10 @@ type ListDocumentProcessingProfilesErrorResponse = Error
 type ResolveDocumentSourceFenceResponse = api.DocumentSourceFenceResolution
 
 type ResolveDocumentSourceFenceErrorResponse = Error
+
+type PublishProductionPackageResponse = api.ProductionPackagePublished
+
+type PublishProductionPackageErrorResponse = Error
 
 type DownloadProductionPackageResponse = api.ProductionPackageDownloadTicket
 
@@ -22680,6 +22772,10 @@ type ProductionNumberPage = api.ProductionNumberPage
 type ProductionNumberReference = api.ProductionNumberReference
 
 type ProductionPackageDownloadTicket = api.ProductionPackageDownloadTicket
+
+type ProductionPackagePublishRequest = api.ProductionPackagePublishRequest
+
+type ProductionPackagePublished = api.ProductionPackagePublished
 
 type ProductionPreviewArtifactTicket = api.ProductionPreviewArtifactTicket
 

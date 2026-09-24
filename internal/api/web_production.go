@@ -12,7 +12,7 @@ func productionRecipeBrowserRequestAllowed(r *http.Request) bool {
 		r.URL.RawQuery == ""
 }
 
-// Browser sessions may request only the verified, one-use package handoff.
+// Browser sessions may publish verified packages and request one-use handoffs.
 func productionPackageBrowserRequestAllowed(r *http.Request) bool {
 	if r.Method != http.MethodPost || r.URL.RawQuery != "" {
 		return false
@@ -22,6 +22,9 @@ func productionPackageBrowserRequestAllowed(r *http.Request) bool {
 		return false
 	}
 	parts := strings.Split(after, "/")
+	if len(parts) == 2 && parts[1] == "packages" {
+		return validBatesBrowserID(parts[0])
+	}
 	return len(parts) == 4 && validBatesBrowserID(parts[0]) &&
 		parts[1] == "packages" && validBatesBrowserID(parts[2]) && parts[3] == "download"
 }

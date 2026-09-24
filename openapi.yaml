@@ -11463,6 +11463,74 @@ components:
       x-go-type-import:
         path: go.kenn.io/docbank/internal/api
         name: api
+    ProductionPackagePublishRequest:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/ProductionPackagePublishRequest.json
+          format: uri
+          readOnly: true
+          type: string
+        max_volume_bytes:
+          format: int64
+          type: integer
+        max_volume_documents:
+          format: int64
+          type: integer
+        operation_id:
+          type: string
+        profile_id:
+          type: string
+      required:
+        - operation_id
+        - profile_id
+        - max_volume_bytes
+        - max_volume_documents
+      type: object
+      x-go-type: api.ProductionPackagePublishRequest
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
+    ProductionPackagePublished:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/ProductionPackagePublished.json
+          format: uri
+          readOnly: true
+          type: string
+        archive_sha256:
+          type: string
+        evidence_sha256:
+          type: string
+        job_id:
+          type: string
+        operation_id:
+          type: string
+        profile_id:
+          type: string
+        size:
+          format: int64
+          type: integer
+        version_id:
+          type: string
+      required:
+        - job_id
+        - operation_id
+        - profile_id
+        - version_id
+        - archive_sha256
+        - evidence_sha256
+        - size
+      type: object
+      x-go-type: api.ProductionPackagePublished
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     ProductionPreviewArtifactTicket:
       additionalProperties: false
       properties:
@@ -20658,6 +20726,36 @@ paths:
                 $ref: "#/components/schemas/Error"
           description: Error
       summary: Resolve exact current live document search authority
+  /api/v1/productions/jobs/{job_id}/packages:
+    post:
+      operationId: publishProductionPackage
+      parameters:
+        - in: path
+          name: job_id
+          required: true
+          schema:
+            format: uuid
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ProductionPackagePublishRequest"
+        required: true
+      responses:
+        "201":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProductionPackagePublished"
+          description: Created
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: Publish one verified recipient package from a successful production job
   /api/v1/productions/jobs/{job_id}/packages/{operation_id}/download:
     post:
       operationId: downloadProductionPackage

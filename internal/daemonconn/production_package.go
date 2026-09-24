@@ -16,6 +16,36 @@ import (
 	"uuid"
 )
 
+// PublishProductionPackage retains one verified recipient package from a
+// successful production job. Exact retries return the same archive identity.
+func (c *Connection) PublishProductionPackage(ctx context.Context, jobID string,
+	request api.ProductionPackagePublishRequest) (api.ProductionPackagePublished, error) {
+	if !validUUIDv4(jobID) || !validUUIDv4(request.OperationID) ||
+		request.MaxVolumeBytes < 1 || request.MaxVolumeBytes > 50<<30 ||
+		request.MaxVolumeDocuments < 1 || request.MaxVolumeDocuments > 100_000 {
+		return api.ProductionPackagePublished{}, errors.New("invalid production package request")
+	}
+	switch request.ProfileID {
+	case "export-dat-pdf-v1", "export-dat-opt-images-v1", "export-dat-lfp-images-v1":
+	default:
+		return api.ProductionPackagePublished{}, errors.New("invalid production package profile")
+	}
+	result, err := c.API().PublishProductionPackage(ctx, &apiclient.PublishProductionPackageRequestOptions{
+		PathParams: &apiclient.PublishProductionPackagePath{JobID: uuid.MustParse(jobID)},
+		Body:       &request,
+	})
+	if err != nil {
+		return api.ProductionPackagePublished{}, err
+	}
+	if result == nil || result.JobID != jobID || result.OperationID != request.OperationID ||
+		result.ProfileID != request.ProfileID || !validUUIDv4(result.VersionID) ||
+		!validSHA256Hex(result.ArchiveSHA256) || !validSHA256Hex(result.EvidenceSHA256) ||
+		result.Size < 1 || result.Size == math.MaxInt64 {
+		return api.ProductionPackagePublished{}, integrityErrorf("production package publication is inconsistent")
+	}
+	return *result, nil
+}
+
 // DownloadProductionPackageTo requests a one-use verified ticket and streams
 // its complete archive to destination while checking the retained hash/size.
 // Callers should discard destination if an error is returned.
