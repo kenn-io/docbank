@@ -8028,6 +8028,62 @@ func (c *Client) DownloadProductionPackage(ctx context.Context, options *Downloa
 	return responseParser(ctx, resp)
 }
 
+// FindProductionNumbers Find exact or ranged published production numbers
+func (c *Client) FindProductionNumbers(ctx context.Context, options *FindProductionNumbersRequestOptions, reqEditors ...runtime.RequestEditorFn) (*FindProductionNumbersResponse, error) {
+	var err error
+
+	queryEncoding := map[string]runtime.QueryEncoding{
+		"after_sequence": {Style: "form", Explode: &[]bool{false}[0]},
+		"end_sequence":   {Style: "form", Explode: &[]bool{false}[0]},
+		"label":          {Style: "form", Explode: &[]bool{false}[0]},
+		"limit":          {Style: "form", Explode: &[]bool{false}[0]},
+		"namespace_id":   {Style: "form", Explode: &[]bool{false}[0]},
+		"start_sequence": {Style: "form", Explode: &[]bool{false}[0]},
+	}
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:    c.apiClient.GetBaseURL() + "/api/v1/productions/numbers",
+		Method:        "GET",
+		Options:       options,
+		QueryEncoding: queryEncoding,
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*FindProductionNumbersResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(FindProductionNumbersResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "FindProductionNumbersResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[FindProductionNumbersErrorResponse](resp, "FindProductionNumbersErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/productions/numbers")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
 // PreviewQueryHighlights Preview positive document-text highlight terms
 func (c *Client) PreviewQueryHighlights(ctx context.Context, options *PreviewQueryHighlightsRequestOptions, reqEditors ...runtime.RequestEditorFn) (*PreviewQueryHighlightsResponse, error) {
 	var err error
@@ -15894,6 +15950,37 @@ func (o *DownloadProductionPackageRequestOptions) GetHeader() (map[string]string
 	return nil, nil
 }
 
+// FindProductionNumbersRequestOptions is the options needed to make a request to FindProductionNumbers.
+type FindProductionNumbersRequestOptions struct {
+	Query *FindProductionNumbersQuery
+}
+
+// GetPathParams returns the path params as a map.
+func (o *FindProductionNumbersRequestOptions) GetPathParams() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetQuery returns the query params as a map.
+func (o *FindProductionNumbersRequestOptions) GetQuery() (map[string]any, error) {
+	encoded, err := json.Marshal(o.Query, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *FindProductionNumbersRequestOptions) GetBody() any {
+	return nil
+}
+
+// GetHeader returns the headers as a map.
+func (o *FindProductionNumbersRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
 // PreviewQueryHighlightsRequestOptions is the options needed to make a request to PreviewQueryHighlights.
 type PreviewQueryHighlightsRequestOptions struct {
 	Body *PreviewQueryHighlightsBody
@@ -18685,6 +18772,15 @@ type ListPeopleQuery struct {
 	Cursor *string `json:"cursor,omitempty"`
 }
 
+type FindProductionNumbersQuery struct {
+	Label         *string `json:"label,omitempty"`
+	NamespaceID   *string `json:"namespace_id,omitempty"`
+	StartSequence *int64  `json:"start_sequence,omitempty"`
+	EndSequence   *int64  `json:"end_sequence,omitempty"`
+	AfterSequence *int64  `json:"after_sequence,omitempty"`
+	Limit         *int64  `json:"limit,omitempty"`
+}
+
 type ReadRenditionTextQuery struct {
 	NodeID             *int64     `json:"node_id,omitempty"`
 	Revision           *int64     `json:"revision,omitempty"`
@@ -19481,6 +19577,10 @@ type ResolveDocumentSourceFenceErrorResponse = Error
 type DownloadProductionPackageResponse = api.ProductionPackageDownloadTicket
 
 type DownloadProductionPackageErrorResponse = Error
+
+type FindProductionNumbersResponse = api.ProductionNumberPage
+
+type FindProductionNumbersErrorResponse = Error
 
 type PreviewQueryHighlightsResponse = api.QueryHighlightPreview
 
@@ -20498,6 +20598,10 @@ type ProcessingRuntimeDisclosure = api.ProcessingRuntimeDisclosure
 type ProcessingSelector = api.ProcessingSelector
 
 type ProcessingStatus = api.ProcessingStatus
+
+type ProductionNumberPage = api.ProductionNumberPage
+
+type ProductionNumberReference = api.ProductionNumberReference
 
 type ProductionPackageDownloadTicket = api.ProductionPackageDownloadTicket
 
