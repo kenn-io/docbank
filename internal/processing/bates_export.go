@@ -24,6 +24,11 @@ func PublishBatesExport(ctx context.Context, catalog *store.Store, blobs *blob.S
 	if catalog == nil || blobs == nil {
 		return store.BatesArtifact{}, errors.New("Bates export requires catalog and blob storage") //nolint:staticcheck // Bates is a proper name.
 	}
+	// Restamping would overwrite watermarks already in the sealed source, so
+	// the output would no longer show the source as it was produced.
+	if recipe.Restamp {
+		return store.BatesArtifact{}, fmt.Errorf("%w: Bates exports cannot restamp source PDFs", store.ErrInvalidBatesRequest)
+	}
 	if existing, err := catalog.BatesArtifact(ctx, allocationID); err == nil {
 		digest, digestErr := recipe.SHA256()
 		if digestErr != nil || digest != existing.RecipeSHA256 {

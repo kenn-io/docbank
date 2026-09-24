@@ -67,6 +67,15 @@ const (
 	maxBatesPadding               = 10
 )
 
+// batesMaxSequence is the largest number that fits the padding, 10^padding-1.
+func batesMaxSequence(padding int) int64 {
+	maxValue := int64(1)
+	for range padding {
+		maxValue *= 10
+	}
+	return maxValue - 1
+}
+
 func invalidBatesRequest(reason string) error {
 	return fmt.Errorf("%w: %s", ErrInvalidBatesRequest, reason)
 }
@@ -110,11 +119,7 @@ func batesRange(cursor, startAt, pages int64, padding int) (int64, int64, error)
 		}
 		start = startAt
 	}
-	maxValue := int64(1)
-	for range padding {
-		maxValue *= 10
-	}
-	maxValue--
+	maxValue := batesMaxSequence(padding)
 	if start > maxValue || pages-1 > maxValue-start {
 		return 0, 0, ErrBatesOverflow
 	}

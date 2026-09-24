@@ -293,6 +293,9 @@ func validateBatesMetadataState(ctx context.Context, q metadataQuerier) error {
 		if err := q.QueryRowContext(ctx, `SELECT COALESCE(MAX(end_sequence),0) FROM bates_allocations WHERE namespace_id=?`, id).Scan(&maxEnd); err != nil {
 			return err
 		}
+		if cursor > batesMaxSequence(padding)+1 {
+			return fmt.Errorf("%w: namespace %s cursor %d exceeds its %d-digit padding", ErrInvalidBatesLedger, id, cursor, padding)
+		}
 		if cursor <= maxEnd {
 			return fmt.Errorf("%w: namespace %s cursor %d does not follow allocated sequence %d",
 				ErrInvalidBatesLedger, id, cursor, maxEnd)
@@ -334,7 +337,7 @@ func validateBatesMetadataState(ctx context.Context, q metadataQuerier) error {
 	return nil
 }
 
-// snapshotSelectedPages reads only the sealed page order. Restore validation
+// snapshotSelectedPages reads only the sealed page order and source PDF hashes. Restore validation
 // must not depend on page documents, which can be derived after reservation.
 func snapshotSelectedPages(ctx context.Context, q metadataQuerier, snapshotID string) ([]BatesPageInput, error) {
 	var pages []BatesPageInput
@@ -348,7 +351,8 @@ func snapshotSelectedPages(ctx context.Context, q metadataQuerier, snapshotID st
 		}
 		for _, member := range members {
 			for _, page := range member.SelectedSourcePages {
-				pages = append(pages, BatesPageInput{OccurrenceID: member.OccurrenceID, SourcePage: page})
+				pages = append(pages, BatesPageInput{OccurrenceID: member.OccurrenceID,
+					UnstampedSHA256: member.SelectedPDFSHA256, SourcePage: page})
 			}
 			after = member.Ordinal
 		}
@@ -379,6 +383,9 @@ func validateBatesNamespaceLabels(ctx context.Context, q metadataQuerier, namesp
 		if aid != allocationID {
 			if allocationID != "" && int64(ordinal) != expectedEnd {
 				return batesLabelCountError(allocationID, ordinal, expectedEnd)
+			}
+			if end > batesMaxSequence(padding) {
+				return fmt.Errorf("%w: allocation %s ends past its namespace's %d-digit padding", ErrInvalidBatesLedger, aid, padding)
 			}
 			if start <= lastEnd {
 				return fmt.Errorf("%w: allocation %s overlaps an earlier range in namespace %s", ErrInvalidBatesLedger, aid, namespaceID)

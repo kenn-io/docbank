@@ -10,6 +10,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/document"
+	"go.kenn.io/docbank/internal/canonical"
 )
 
 func batesFixture(t *testing.T, s *Store) (CollectionSnapshot, []BatesPageInput) {
@@ -291,4 +292,44 @@ func TestBatesLedgerSurvivesMetadataRestore(t *testing.T) {
 	reserved, err := restored.ReserveBatesRange(t.Context(), next)
 	require.NoError(t, err)
 	require.Equal(t, int64(4), reserved.StartSequence)
+}
+
+func TestBatesArtifactReceiptsMustNameTheSealedSourcePDF(t *testing.T) {
+	s := newTestStore(t)
+	snapshot, inputs := batesFixture(t, s)
+	namespace, err := s.EnsureBatesNamespace(t.Context(), "SRC", "", 6)
+	require.NoError(t, err)
+	recipe, err := canonical.Marshal(map[string]any{"contract": "bates-stamp/v1"})
+	require.NoError(t, err)
+	request := batesRequest(t, namespace, snapshot, inputs)
+	request.RecipeSHA256 = digestCatalogJSON(recipe)
+	allocation, err := s.ReserveBatesRange(t.Context(), request)
+	require.NoError(t, err)
+	pages := make([]BatesArtifactPage, len(inputs))
+	for index, input := range inputs {
+		pages[index] = BatesArtifactPage{Ordinal: index + 1, OccurrenceID: input.OccurrenceID,
+			SourceBlobSHA256: input.UnstampedSHA256, SourcePage: input.SourcePage,
+			OutputPage: index + 1, Label: allocation.Labels[index].Label}
+	}
+	pages[1].SourceBlobSHA256 = strings.Repeat("e", 64)
+	_, err = s.PublishBatesArtifact(t.Context(), BatesArtifactPublication{ArtifactID: allocation.AllocationID,
+		AllocationID: allocation.AllocationID, BlobSHA256: strings.Repeat("f", 64), Size: 10,
+		PageCount: len(pages), RecipeJSON: recipe, Pages: pages}, BlobPhysical{Encoding: "raw", StoredBytes: 10, Created: true})
+	require.ErrorIs(t, err, ErrBatesPageCountMismatch)
+}
+
+func TestBatesRestoreRejectsCursorPastPadding(t *testing.T) {
+	s := newTestStore(t)
+	snapshot, inputs := batesFixture(t, s)
+	ns, err := s.EnsureBatesNamespace(t.Context(), "PAD", "", 2)
+	require.NoError(t, err)
+	_, err = s.ReserveBatesRange(t.Context(), batesRequest(t, ns, snapshot, inputs))
+	require.NoError(t, err)
+	var encoded bytes.Buffer
+	require.NoError(t, s.ExportMetadata(t.Context(), &encoded))
+	bad := bytes.Replace(encoded.Bytes(), []byte(`"next_sequence":4`), []byte(`"next_sequence":101`), 1)
+	require.NotEqual(t, encoded.Bytes(), bad)
+	err = newTestStore(t).ImportMetadata(t.Context(), bytes.NewReader(bad))
+	require.ErrorIs(t, err, ErrInvalidBatesLedger)
+	require.ErrorContains(t, err, "padding")
 }

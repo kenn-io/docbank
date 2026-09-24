@@ -103,10 +103,18 @@ func (s *Store) PublishBatesArtifact(ctx context.Context, publication BatesArtif
 		if allocation.State != batesAllocationStateReserved || allocation.RecipeSHA256 != recipeSHA || len(allocation.Labels) != len(publication.Pages) {
 			return ErrBatesReservationConflict
 		}
+		sealed, err := snapshotSelectedPages(ctx, tx, allocation.SnapshotID)
+		if err != nil {
+			return err
+		}
+		if len(sealed) != len(publication.Pages) {
+			return ErrBatesPageCountMismatch
+		}
 		for index, page := range publication.Pages {
 			label := allocation.Labels[index]
 			if page.Ordinal != index+1 || page.OutputPage != index+1 || page.OccurrenceID != label.OccurrenceID ||
-				page.SourcePage != label.SourcePage || page.Label != label.Label || !canonical.IsSHA256Hex(page.SourceBlobSHA256) {
+				page.SourcePage != label.SourcePage || page.Label != label.Label ||
+				page.SourceBlobSHA256 != sealed[index].UnstampedSHA256 {
 				return ErrBatesPageCountMismatch
 			}
 		}
@@ -298,11 +306,19 @@ func validateBatesArtifactState(ctx context.Context, q metadataQuerier) error {
 		if manifestSHA != artifact.ManifestSHA256 || len(allocation.Labels) != len(artifact.Pages) {
 			return fmt.Errorf("validating Bates artifact %s: manifest differs: %w", id, ErrInvalidBatesLedger)
 		}
+		sealed, err := snapshotSelectedPages(ctx, q, allocation.SnapshotID)
+		if err != nil {
+			return fmt.Errorf("validating Bates artifact %s snapshot: %w", id, err)
+		}
+		if len(sealed) != len(artifact.Pages) {
+			return fmt.Errorf("%w: artifact %s has %d pages for %d sealed pages", ErrInvalidBatesLedger, id, len(artifact.Pages), len(sealed))
+		}
 		for index, page := range artifact.Pages {
 			label := allocation.Labels[index]
 			if page.Ordinal != index+1 || page.OccurrenceID != label.OccurrenceID || page.SourcePage != label.SourcePage ||
-				page.OutputPage != label.OutputPage || page.Label != label.Label || !canonical.IsSHA256Hex(page.SourceBlobSHA256) {
-				return fmt.Errorf("validating Bates artifact %s page %d: receipt differs from allocation: %w", id, index+1, ErrInvalidBatesLedger)
+				page.OutputPage != label.OutputPage || page.Label != label.Label ||
+				page.SourceBlobSHA256 != sealed[index].UnstampedSHA256 {
+				return fmt.Errorf("validating Bates artifact %s page %d: receipt differs from its allocation or sealed source: %w", id, index+1, ErrInvalidBatesLedger)
 			}
 		}
 	}

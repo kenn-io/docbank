@@ -45,6 +45,10 @@ func TestCreateStageRemovesOnlyStaleAbandonedStages(t *testing.T) {
 	abandoned, err := CreateStage(parent, ".docbank-test-")
 	require.NoError(t, err)
 	require.NoError(t, abandoned.File.Close())
+	if abandoned.pin != nil {
+		// A crashed process no longer holds its Windows directory pin.
+		require.NoError(t, abandoned.pin.Close())
+	}
 	require.NoError(t, os.Chtimes(abandoned.dir, stale, stale))
 	live, err := CreateStage(parent, ".docbank-test-")
 	require.NoError(t, err)

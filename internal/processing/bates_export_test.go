@@ -294,3 +294,15 @@ func batesExportRecipe(namespace store.BatesNamespace, start int) pdfstamp.Recip
 		Color: "#000000", Opacity: 1, Units: "point", RotationPolicy: "follow_page",
 		EngineIdentity: pdfstamp.EngineIdentity{Name: "pdfcpu", Version: "v0.15.0", API: "AddWatermarksMap", Options: []string{"onTop=true", "update=restamp"}}}
 }
+
+func TestBatesExportRejectsRestamp(t *testing.T) {
+	env := newBatesExportFixture(t)
+	restamp := env.recipe
+	restamp.Restamp = true
+
+	_, err := PublishBatesExport(t.Context(), env.catalog, env.blobs, env.allocationID, restamp)
+
+	require.ErrorIs(t, err, store.ErrInvalidBatesRequest)
+	_, err = env.catalog.BatesArtifact(t.Context(), env.allocationID)
+	require.ErrorIs(t, err, store.ErrNotFound)
+}
