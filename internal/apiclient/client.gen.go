@@ -8373,6 +8373,53 @@ func (c *Client) GetProductionJobStatus(ctx context.Context, options *GetProduct
 	return responseParser(ctx, resp)
 }
 
+// CancelProductionJob Cancel one production job with a replay-safe operation ID
+func (c *Client) CancelProductionJob(ctx context.Context, options *CancelProductionJobRequestOptions, reqEditors ...runtime.RequestEditorFn) (*CancelProductionJobResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/productions/sets/{set_id}/jobs/{job_id}/cancel",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*CancelProductionJobResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(CancelProductionJobResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "CancelProductionJobResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[CancelProductionJobErrorResponse](resp, "CancelProductionJobErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/productions/sets/{set_id}/jobs/{job_id}/cancel")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
 // GetProductionDraft Read an exact production draft
 func (c *Client) GetProductionDraft(ctx context.Context, options *GetProductionDraftRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetProductionDraftResponse, error) {
 	var err error
@@ -16859,6 +16906,48 @@ func (o *GetProductionJobStatusRequestOptions) GetHeader() (map[string]string, e
 	return nil, nil
 }
 
+// CancelProductionJobRequestOptions is the options needed to make a request to CancelProductionJob.
+type CancelProductionJobRequestOptions struct {
+	PathParams *CancelProductionJobPath
+	Body       *CancelProductionJobBody
+	Header     *CancelProductionJobHeaders
+}
+
+// GetPathParams returns the path params as a map.
+func (o *CancelProductionJobRequestOptions) GetPathParams() (map[string]any, error) {
+	encoded, err := json.Marshal(o.PathParams, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetQuery returns the query params as a map.
+func (o *CancelProductionJobRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *CancelProductionJobRequestOptions) GetBody() any {
+	if o.Body == nil {
+		return nil
+	}
+	return o.Body
+}
+
+// GetHeader returns the headers as a map.
+func (o *CancelProductionJobRequestOptions) GetHeader() (map[string]string, error) {
+	encoded, err := json.Marshal(o.Header, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var headers map[string]string
+	err = json.Unmarshal(encoded, &headers)
+	return headers, err
+}
+
 // GetProductionDraftRequestOptions is the options needed to make a request to GetProductionDraft.
 type GetProductionDraftRequestOptions struct {
 	PathParams *GetProductionDraftPath
@@ -19098,6 +19187,10 @@ type UploadPackageChunkHeaders struct {
 	XDocbankBlobSize int64  `json:"X-Docbank-Blob-Size"`
 }
 
+type CancelProductionJobHeaders struct {
+	IfMatch *string `json:"If-Match,omitempty"`
+}
+
 type ApplyProductionChangesHeaders struct {
 	IfMatch *string `json:"If-Match,omitempty"`
 }
@@ -19481,6 +19574,11 @@ type GetProductionJobStatusPath struct {
 	JobID uuid.UUID `json:"job_id"`
 }
 
+type CancelProductionJobPath struct {
+	SetID uuid.UUID `json:"set_id"`
+	JobID uuid.UUID `json:"job_id"`
+}
+
 type GetProductionDraftPath struct {
 	SetID    uuid.UUID `json:"set_id"`
 	Revision int64     `json:"revision"`
@@ -19789,6 +19887,8 @@ type ResolveDocumentSourceFenceBody = DocumentSourceFenceResolveRequest
 type DownloadProductionPackageBody = DownloadProductionPackageRequest
 
 type CreateProductionSetBody = CreateRequest
+
+type CancelProductionJobBody = ProductionJobCancelRequest
 
 type ApplyProductionChangesBody = ProductionChangesRequest
 
@@ -20941,6 +21041,10 @@ type GetProductionJobStatusResponse = api.ProductionJobStatus
 
 type GetProductionJobStatusErrorResponse = Error
 
+type CancelProductionJobResponse = api.ProductionReceipt
+
+type CancelProductionJobErrorResponse = Error
+
 type GetProductionDraftResponse = redaction.Draft
 
 type GetProductionDraftErrorResponse = Error
@@ -22015,6 +22119,8 @@ type ProductionDecisionPage = api.ProductionDecisionPage
 type ProductionForkRequest = api.ProductionForkRequest
 
 type ProductionInstructionsRequest = api.ProductionInstructionsRequest
+
+type ProductionJobCancelRequest = api.ProductionJobCancelRequest
 
 type ProductionJobStatus = api.ProductionJobStatus
 

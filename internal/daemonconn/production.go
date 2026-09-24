@@ -284,6 +284,34 @@ func (c *Connection) ProductionJobStatus(ctx context.Context, setID, jobID strin
 	return *result, nil
 }
 
+func (c *Connection) CancelProductionJob(ctx context.Context, setID, jobID string, etag int64,
+	request api.ProductionJobCancelRequest) (redaction.Receipt, error) {
+	parsedSet, err := productionSetUUID(setID)
+	if err != nil || etag < 1 || !validUUIDv4(request.OperationID) {
+		return redaction.Receipt{}, errors.New("invalid production job cancellation")
+	}
+	parsedJob, err := productionSetUUID(jobID)
+	if err != nil {
+		return redaction.Receipt{}, err
+	}
+	header := strconv.FormatInt(etag, 10)
+	result, err := c.API().CancelProductionJob(ctx, &apiclient.CancelProductionJobRequestOptions{
+		PathParams: &apiclient.CancelProductionJobPath{SetID: parsedSet, JobID: parsedJob},
+		Header:     &apiclient.CancelProductionJobHeaders{IfMatch: &header}, Body: &request})
+	if err != nil {
+		return redaction.Receipt{}, err
+	}
+	if result == nil {
+		return redaction.Receipt{}, integrityErrorf("production cancellation receipt is missing")
+	}
+	receipt := redaction.Receipt(*result)
+	if redaction.ValidateReceipt(receipt) != nil || receipt.SetID != setID ||
+		receipt.OperationID != request.OperationID || receipt.ETag != etag {
+		return redaction.Receipt{}, integrityErrorf("production cancellation receipt is inconsistent")
+	}
+	return receipt, nil
+}
+
 func productionSetUUID(value string) (uuid.UUID, error) {
 	if !validUUIDv4(value) {
 		return uuid.UUID{}, errors.New("invalid production set ID")

@@ -157,6 +157,23 @@ func (v *Vault) ProductionJobStatus(ctx context.Context, setID, jobID string) (P
 	return v.metadata.ProductionJobStatus(ctx, setID, jobID)
 }
 
+// CancelProductionJob records a replay-safe cancellation in this embedded vault.
+func (v *Vault) CancelProductionJob(ctx context.Context, actor, setID, jobID string, etag int64,
+	request api.ProductionJobCancelRequest) (redaction.Receipt, error) {
+	v.lifecycle.RLock()
+	defer v.lifecycle.RUnlock()
+	if v.closed {
+		return redaction.Receipt{}, ErrClosed
+	}
+	var receipt redaction.Receipt
+	err := embeddedMutationGate{vault: v}.MutateContext(ctx, func() error {
+		var err error
+		receipt, err = v.metadata.CancelProductionJobOperation(ctx, actor, setID, jobID, etag, request.OperationID)
+		return err
+	})
+	return receipt, err
+}
+
 func (v *Vault) EditProductionInstructions(ctx context.Context, actor, setID string, revision, etag int64,
 	request api.ProductionInstructionsRequest) (redaction.Receipt, error) {
 	v.lifecycle.RLock()

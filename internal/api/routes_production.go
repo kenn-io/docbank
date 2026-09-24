@@ -11,6 +11,7 @@ import (
 	"go.kenn.io/docbank/document/redaction"
 	"go.kenn.io/docbank/internal/canonical"
 	"go.kenn.io/docbank/internal/pdfproduction"
+	productionservice "go.kenn.io/docbank/internal/production"
 	"go.kenn.io/docbank/internal/store"
 )
 
@@ -126,6 +127,10 @@ type ProductionMapChunk struct {
 // ProductionJobStatus is the public, bounded state projection of a retained job.
 type ProductionJobStatus store.ProductionJobStatus
 
+type ProductionJobCancelRequest struct {
+	OperationID string `json:"operation_id"`
+}
+
 type ProductionInstructionsRequest struct {
 	OperationID  string `json:"operation_id"`
 	Instructions string `json:"instructions"`
@@ -183,6 +188,8 @@ func productionSetError(err error) error {
 		return NewError(http.StatusConflict, "production_operation_conflict", "operation ID names different production input")
 	case errors.Is(err, store.ErrProductionRevisionConflict):
 		return NewError(http.StatusConflict, "production_revision_conflict", "production revision changed")
+	case errors.Is(err, productionservice.ErrJobConflict):
+		return NewError(http.StatusConflict, "production_job_conflict", "production job cannot be changed")
 	case errors.Is(err, store.ErrInvalidProduction):
 		return NewError(http.StatusUnprocessableEntity, "invalid_production", "production input is invalid")
 	default:
@@ -336,6 +343,34 @@ func registerProductionRoutes(api huma.API, d Deps, g *OperationGate) {
 				return nil, productionSetError(err)
 			}
 			return &struct{ Body ProductionJobStatus }{Body: ProductionJobStatus(status)}, nil
+		})
+	huma.Register(api, huma.Operation{OperationID: "cancelProductionJob", Method: http.MethodPost,
+		Path:    "/api/v1/productions/sets/{set_id}/jobs/{job_id}/cancel",
+		Summary: "Cancel one production job with a replay-safe operation ID", MaxBodyBytes: 4096},
+		func(ctx context.Context, in *struct {
+			SetID   string `path:"set_id" format:"uuid"`
+			JobID   string `path:"job_id" format:"uuid"`
+			IfMatch string `header:"If-Match"`
+			Body    ProductionJobCancelRequest
+		}) (*struct{ Body ProductionReceipt }, error) {
+			etag, err := parseIfMatch(in.IfMatch)
+			if err != nil {
+				return nil, err
+			}
+			actor, ok := workspaceSnapshotOwner(ctx)
+			if !ok {
+				return nil, NewError(http.StatusUnauthorized, "unauthorized", "authenticated production actor is missing")
+			}
+			var receipt redaction.Receipt
+			err = g.mutate(func() error {
+				var err error
+				receipt, err = d.Store.CancelProductionJobOperation(ctx, actor, in.SetID, in.JobID, etag, in.Body.OperationID)
+				return err
+			})
+			if err != nil {
+				return nil, productionSetError(err)
+			}
+			return &struct{ Body ProductionReceipt }{Body: ProductionReceipt(receipt)}, nil
 		})
 	huma.Register(api, huma.Operation{OperationID: "editProductionInstructions", Method: http.MethodPut,
 		Path:         "/api/v1/productions/sets/{set_id}/revisions/{revision}/instructions",

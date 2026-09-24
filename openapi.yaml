@@ -10973,6 +10973,25 @@ components:
       x-go-type-import:
         path: go.kenn.io/docbank/internal/api
         name: api
+    ProductionJobCancelRequest:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/ProductionJobCancelRequest.json
+          format: uri
+          readOnly: true
+          type: string
+        operation_id:
+          type: string
+      required:
+        - operation_id
+      type: object
+      x-go-type: api.ProductionJobCancelRequest
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     ProductionJobStatus:
       additionalProperties: false
       properties:
@@ -20594,6 +20613,46 @@ paths:
                 $ref: "#/components/schemas/Error"
           description: Error
       summary: Read one set-scoped production job status
+  /api/v1/productions/sets/{set_id}/jobs/{job_id}/cancel:
+    post:
+      operationId: cancelProductionJob
+      parameters:
+        - in: path
+          name: set_id
+          required: true
+          schema:
+            format: uuid
+            type: string
+        - in: path
+          name: job_id
+          required: true
+          schema:
+            format: uuid
+            type: string
+        - in: header
+          name: If-Match
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ProductionJobCancelRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProductionReceipt"
+          description: OK
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: Cancel one production job with a replay-safe operation ID
   /api/v1/productions/sets/{set_id}/revisions/{revision}:
     get:
       operationId: getProductionDraft
