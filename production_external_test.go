@@ -55,6 +55,17 @@ func TestEmbeddedProductionSetsKeepVaultRootsSeparate(t *testing.T) {
 	updated, err := first.ProductionDraft(t.Context(), set.ID, 1)
 	require.NoError(t, err)
 	require.Equal(t, redaction.RecipeID600DPI, updated.RecipeID)
+	forked, err := first.ForkProductionDraft(t.Context(), "synthetic-operator", set.ID, 1,
+		"88888888-8888-4888-8888-888888888896")
+	require.NoError(t, err)
+	require.EqualValues(t, 2, forked.Revision)
+	require.Equal(t, updated.RecipeSHA256, forked.RecipeSHA256)
+	replayFork, err := first.ForkProductionDraft(t.Context(), "synthetic-operator", set.ID, 1,
+		"88888888-8888-4888-8888-888888888896")
+	require.NoError(t, err)
+	require.Equal(t, forked, replayFork)
+	_, err = second.ProductionDraft(t.Context(), set.ID, 2)
+	require.ErrorIs(t, err, store.ErrNotFound)
 	_, err = first.SealProductionMembership(t.Context(), "synthetic-operator", set.ID, 1, 3,
 		api.ProductionMembershipSealRequest{OperationID: "88888888-8888-4888-8888-888888888893",
 			Total: 1, MemberHash: updated.MemberHash})

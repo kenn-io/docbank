@@ -90,6 +90,24 @@ func (c *Connection) ProductionDraft(ctx context.Context, setID string, revision
 	return *result, nil
 }
 
+func (c *Connection) ForkProductionDraft(ctx context.Context, setID string, revision int64,
+	request api.ProductionForkRequest) (redaction.Draft, error) {
+	parsed, err := productionSetUUID(setID)
+	if err != nil || revision < 1 || !validUUIDv4(request.OperationID) {
+		return redaction.Draft{}, errors.New("invalid production draft fork")
+	}
+	result, err := c.API().ForkProductionDraft(ctx, &apiclient.ForkProductionDraftRequestOptions{
+		PathParams: &apiclient.ForkProductionDraftPath{SetID: parsed, Revision: revision}, Body: &request})
+	if err != nil {
+		return redaction.Draft{}, err
+	}
+	if result == nil || redaction.ValidateDraft(*result) != nil || result.SetID != setID ||
+		result.Revision <= revision || result.ETag != 1 || result.State != "draft" || result.MembershipSealed {
+		return redaction.Draft{}, integrityErrorf("production fork response is inconsistent")
+	}
+	return *result, nil
+}
+
 func (c *Connection) ProductionMembers(ctx context.Context, setID string, revision int64, cursor string, limit int) (api.ProductionMemberPage, error) {
 	parsed, err := productionSetUUID(setID)
 	if err != nil || revision < 1 || limit < 0 || limit > redaction.MaxProductionPage {

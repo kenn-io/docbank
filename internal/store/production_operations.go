@@ -247,6 +247,9 @@ func (s *Store) ForkProductionDraft(ctx context.Context, actor, setID string, fr
 		if err := tx.QueryRowContext(ctx, `SELECT instructions FROM production_revisions WHERE set_id=? AND revision=?`, setID, fromRevision).Scan(&instructions); err != nil {
 			return err
 		}
+		if instructions == nil {
+			instructions = []byte{}
+		}
 		update, err := tx.ExecContext(ctx, `UPDATE production_sets SET head_revision=head_revision+1 WHERE id=?`, setID)
 		if err != nil {
 			return err

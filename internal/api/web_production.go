@@ -54,7 +54,7 @@ func productionSetBrowserRequestAllowed(r *http.Request) bool {
 	}
 	if len(parts) == 4 && r.URL.RawQuery == "" {
 		if parts[3] == "instructions" && r.Method == http.MethodPut ||
-			(parts[3] == "changes" || parts[3] == "seal") && r.Method == http.MethodPost {
+			(parts[3] == "changes" || parts[3] == "seal" || parts[3] == "fork") && r.Method == http.MethodPost {
 			return true
 		}
 	}

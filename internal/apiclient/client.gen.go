@@ -8368,6 +8368,53 @@ func (c *Client) ListProductionDecisions(ctx context.Context, options *ListProdu
 	return responseParser(ctx, resp)
 }
 
+// ForkProductionDraft Fork a production revision into a new draft
+func (c *Client) ForkProductionDraft(ctx context.Context, options *ForkProductionDraftRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ForkProductionDraftResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/productions/sets/{set_id}/revisions/{revision}/fork",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*ForkProductionDraftResponse, error) {
+		switch resp.StatusCode {
+
+		case 201:
+
+			target := new(ForkProductionDraftResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "ForkProductionDraftResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[ForkProductionDraftErrorResponse](resp, "ForkProductionDraftErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/productions/sets/{set_id}/revisions/{revision}/fork")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 201)
+	}
+	return responseParser(ctx, resp)
+}
+
 // EditProductionInstructions Edit production instructions with an exact draft ETag and replay-safe operation ID
 func (c *Client) EditProductionInstructions(ctx context.Context, options *EditProductionInstructionsRequestOptions, reqEditors ...runtime.RequestEditorFn) (*EditProductionInstructionsResponse, error) {
 	var err error
@@ -16628,6 +16675,41 @@ func (o *ListProductionDecisionsRequestOptions) GetHeader() (map[string]string, 
 	return nil, nil
 }
 
+// ForkProductionDraftRequestOptions is the options needed to make a request to ForkProductionDraft.
+type ForkProductionDraftRequestOptions struct {
+	PathParams *ForkProductionDraftPath
+	Body       *ForkProductionDraftBody
+}
+
+// GetPathParams returns the path params as a map.
+func (o *ForkProductionDraftRequestOptions) GetPathParams() (map[string]any, error) {
+	encoded, err := json.Marshal(o.PathParams, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetQuery returns the query params as a map.
+func (o *ForkProductionDraftRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *ForkProductionDraftRequestOptions) GetBody() any {
+	if o.Body == nil {
+		return nil
+	}
+	return o.Body
+}
+
+// GetHeader returns the headers as a map.
+func (o *ForkProductionDraftRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
 // EditProductionInstructionsRequestOptions is the options needed to make a request to EditProductionInstructions.
 type EditProductionInstructionsRequestOptions struct {
 	PathParams *EditProductionInstructionsPath
@@ -19076,6 +19158,11 @@ type ListProductionDecisionsPath struct {
 	Revision int64     `json:"revision"`
 }
 
+type ForkProductionDraftPath struct {
+	SetID    uuid.UUID `json:"set_id"`
+	Revision int64     `json:"revision"`
+}
+
 type EditProductionInstructionsPath struct {
 	SetID    uuid.UUID `json:"set_id"`
 	Revision int64     `json:"revision"`
@@ -19360,6 +19447,8 @@ type DownloadProductionPackageBody = DownloadProductionPackageRequest
 type CreateProductionSetBody = CreateRequest
 
 type ApplyProductionChangesBody = ProductionChangesRequest
+
+type ForkProductionDraftBody = ProductionForkRequest
 
 type EditProductionInstructionsBody = ProductionInstructionsRequest
 
@@ -20493,6 +20582,10 @@ type ListProductionDecisionsResponse = api.ProductionDecisionPage
 
 type ListProductionDecisionsErrorResponse = Error
 
+type ForkProductionDraftResponse = redaction.Draft
+
+type ForkProductionDraftErrorResponse = Error
+
 type EditProductionInstructionsResponse = api.ProductionReceipt
 
 type EditProductionInstructionsErrorResponse = Error
@@ -21543,6 +21636,8 @@ type ProductionChangesRequest = api.ProductionChangesRequest
 type ProductionDecision = api.ProductionDecision
 
 type ProductionDecisionPage = api.ProductionDecisionPage
+
+type ProductionForkRequest = api.ProductionForkRequest
 
 type ProductionInstructionsRequest = api.ProductionInstructionsRequest
 

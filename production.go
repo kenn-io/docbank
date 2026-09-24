@@ -56,6 +56,24 @@ func (v *Vault) ProductionDraft(ctx context.Context, setID string, revision int6
 	return v.metadata.ProductionDraft(ctx, setID, revision)
 }
 
+// ForkProductionDraft copies one retained revision into a new editable draft.
+// Review declarations and the membership seal are reset by the Store.
+func (v *Vault) ForkProductionDraft(ctx context.Context, actor, setID string, revision int64,
+	operationID string) (redaction.Draft, error) {
+	v.lifecycle.RLock()
+	defer v.lifecycle.RUnlock()
+	if v.closed {
+		return redaction.Draft{}, ErrClosed
+	}
+	var draft redaction.Draft
+	err := embeddedMutationGate{vault: v}.MutateContext(ctx, func() error {
+		var err error
+		draft, err = v.metadata.ForkProductionDraft(ctx, actor, setID, revision, operationID)
+		return err
+	})
+	return draft, err
+}
+
 func (v *Vault) ProductionMembers(ctx context.Context, setID string, revision int64, cursor string, limit int) (ProductionMemberPage, error) {
 	v.lifecycle.RLock()
 	defer v.lifecycle.RUnlock()

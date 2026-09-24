@@ -139,6 +139,10 @@ type ProductionMemberReviewRequest struct {
 	Complete    bool   `json:"complete"`
 }
 
+type ProductionForkRequest struct {
+	OperationID string `json:"operation_id"`
+}
+
 func (request ProductionMemberReviewRequest) Domain(etag int64, memberID string) store.ProductionReviewRequest {
 	return store.ProductionReviewRequest{OperationID: request.OperationID, ETag: etag,
 		MemberID: memberID, Binding: request.Binding, Complete: request.Complete}
@@ -382,5 +386,29 @@ func registerProductionRoutes(api huma.API, d Deps, g *OperationGate) {
 				return nil, productionSetError(err)
 			}
 			return &struct{ Body ProductionReceipt }{Body: ProductionReceipt(receipt)}, nil
+		})
+	huma.Register(api, huma.Operation{OperationID: "forkProductionDraft", Method: http.MethodPost,
+		Path:    "/api/v1/productions/sets/{set_id}/revisions/{revision}/fork",
+		Summary: "Fork a production revision into a new draft", DefaultStatus: http.StatusCreated,
+		MaxBodyBytes: 4096},
+		func(ctx context.Context, in *struct {
+			SetID    string `path:"set_id" format:"uuid"`
+			Revision int64  `path:"revision" minimum:"1"`
+			Body     ProductionForkRequest
+		}) (*struct{ Body redaction.Draft }, error) {
+			actor, ok := workspaceSnapshotOwner(ctx)
+			if !ok {
+				return nil, NewError(http.StatusUnauthorized, "unauthorized", "authenticated production actor is missing")
+			}
+			var draft redaction.Draft
+			err := g.mutate(func() error {
+				var err error
+				draft, err = d.Store.ForkProductionDraft(ctx, actor, in.SetID, in.Revision, in.Body.OperationID)
+				return err
+			})
+			if err != nil {
+				return nil, productionSetError(err)
+			}
+			return &struct{ Body redaction.Draft }{Body: draft}, nil
 		})
 }

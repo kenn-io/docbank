@@ -10932,6 +10932,25 @@ components:
       x-go-type-import:
         path: go.kenn.io/docbank/internal/api
         name: api
+    ProductionForkRequest:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/ProductionForkRequest.json
+          format: uri
+          readOnly: true
+          type: string
+        operation_id:
+          type: string
+      required:
+        - operation_id
+      type: object
+      x-go-type: api.ProductionForkRequest
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     ProductionInstructionsRequest:
       additionalProperties: false
       properties:
@@ -20474,6 +20493,43 @@ paths:
                 $ref: "#/components/schemas/Error"
           description: Error
       summary: Page exact production decisions
+  /api/v1/productions/sets/{set_id}/revisions/{revision}/fork:
+    post:
+      operationId: forkProductionDraft
+      parameters:
+        - in: path
+          name: set_id
+          required: true
+          schema:
+            format: uuid
+            type: string
+        - in: path
+          name: revision
+          required: true
+          schema:
+            format: int64
+            minimum: 1
+            type: integer
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ProductionForkRequest"
+        required: true
+      responses:
+        "201":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Draft"
+          description: Created
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: Fork a production revision into a new draft
   /api/v1/productions/sets/{set_id}/revisions/{revision}/instructions:
     put:
       operationId: editProductionInstructions
