@@ -19,8 +19,9 @@ import (
 
 const toolCatalogTTLMs = 60_000
 
-func catalogInstructions(allowProcessing, allowPackageWrites, allowPhotoEdits bool) string {
-	if !allowProcessing && !allowPackageWrites && !allowPhotoEdits {
+func catalogInstructions(allowProcessing, allowPackageWrites, allowPhotoEdits bool, migration ...bool) string {
+	allowMigrationWrites := len(migration) > 0 && migration[0]
+	if !allowProcessing && !allowPackageWrites && !allowPhotoEdits && !allowMigrationWrites {
 		return "Docbank exposes a bounded read-only document and package surface."
 	}
 	instructions := "Docbank exposes bounded document and package reads."
@@ -32,6 +33,9 @@ func catalogInstructions(allowProcessing, allowPackageWrites, allowPhotoEdits bo
 	}
 	if allowPhotoEdits {
 		instructions += " Photo edits change one asset at an expected revision."
+	}
+	if allowMigrationWrites {
+		instructions += " Fotobank inventory writes a report and owner-map template only for an explicitly selected source."
 	}
 	return instructions
 }
@@ -73,6 +77,8 @@ var readToolDefinitions = []toolDefinition{
 	{name: "get_bates_export", title: "Get Bates export", description: "Read one exact verified Bates export receipt.", schemas: getBatesExportSchemas},
 	{name: "find_bates_exports", title: "Find Bates exports", description: "Return bounded candidates for one exact Bates label, custodian label, or canonical person.", schemas: findBatesExportsSchemas},
 	{name: "get_photo_asset", title: "Get photo asset", description: "Read one bounded photo asset by asset or node identity.", schemas: getPhotoAssetSchemas},
+	{name: "list_migration_runs", title: "List migration runs", description: "List bounded completed Fotobank inventory runs.", schemas: listMigrationRunsSchemas},
+	{name: "show_migration_run", title: "Show migration run", description: "Read one completed Fotobank inventory report and owner map.", schemas: showMigrationRunSchemas},
 }
 
 var processingToolDefinition = toolDefinition{
@@ -143,7 +149,13 @@ var photoWriteToolDefinitions = []toolDefinition{
 	{name: "promote_photo_asset", title: "Promote photo asset", description: "Promote one file node into a photo asset.", schemas: promotePhotoNodeSchemas, write: true},
 }
 
-func toolCatalog(allowProcessing, allowPackageWrites, allowPhotoEdits bool) []*sdkmcp.Tool {
+var migrationInventoryToolDefinition = toolDefinition{
+	name: "inventory_fotobank", title: "Inventory Fotobank", description: "Read a stopped Fotobank install or recovery archive and persist its inventory report.",
+	schemas: inventoryFotobankSchemas, write: true,
+}
+
+func toolCatalog(allowProcessing, allowPackageWrites, allowPhotoEdits bool, migration ...bool) []*sdkmcp.Tool {
+	allowMigrationWrites := len(migration) > 0 && migration[0]
 	definitions := slices.Clone(readToolDefinitions)
 	if allowProcessing {
 		definitions = append(definitions, processingToolDefinition)
@@ -156,6 +168,9 @@ func toolCatalog(allowProcessing, allowPackageWrites, allowPhotoEdits bool) []*s
 	}
 	if allowPhotoEdits {
 		definitions = append(definitions, photoWriteToolDefinitions...)
+	}
+	if allowMigrationWrites {
+		definitions = append(definitions, migrationInventoryToolDefinition)
 	}
 	tools := make([]*sdkmcp.Tool, 0, len(definitions))
 	for _, definition := range definitions {
@@ -175,15 +190,17 @@ func toolCatalog(allowProcessing, allowPackageWrites, allowPhotoEdits bool) []*s
 }
 
 func registerToolCatalog(
-	server *sdkmcp.Server, allowProcessing, allowPackageWrites, allowPhotoEdits bool,
+	server *sdkmcp.Server, allowProcessing, allowPackageWrites, allowPhotoEdits, allowMigrationWrites bool,
 	lease *daemonLease, plans *processingPlanRegistry, logger *slog.Logger,
 ) {
-	tools := toolCatalog(allowProcessing, allowPackageWrites, allowPhotoEdits)
+	tools := toolCatalog(allowProcessing, allowPackageWrites, allowPhotoEdits, allowMigrationWrites)
 	server.AddReceivingMiddleware(validateToolInputs(tools))
 	for _, tool := range tools {
 		output := mustResolveSchema(tool.OutputSchema)
 		var handler sdkmcp.ToolHandler
 		switch tool.Name {
+		case migrationInventoryToolDefinition.name:
+			handler = migrationInventoryToolHandler(lease, output, logger)
 		case processingToolDefinition.name:
 			handler = processingToolHandler(lease, plans, output, logger)
 		case packageImportToolDefinition.name:
@@ -248,6 +265,21 @@ func decodeToolArguments(raw jsontext.Value) (map[string]any, error) {
 
 func validToolSemantics(name string, arguments map[string]any) bool {
 	switch name {
+	case "inventory_fotobank":
+		catalog, catalogOK := arguments["catalog_path"].(string)
+		vault, vaultOK := arguments["vault_root"].(string)
+		archive, archiveOK := arguments["archive_root"].(string)
+		if !catalogOK {
+			catalog = ""
+		}
+		if !vaultOK {
+			vault = ""
+		}
+		if !archiveOK {
+			archive = ""
+		}
+		return (catalog != "" && vault != "" && archive == "") ||
+			(catalog == "" && vault == "" && archive != "")
 	case "get_photo_asset":
 		assetID, assetPresent := arguments["asset_id"]
 		nodeID, nodePresent := arguments["node_id"]

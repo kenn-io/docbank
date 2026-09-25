@@ -22,6 +22,7 @@ nav = [
   {"Work with Documents" = [
     {"Importing Documents" = "usage/importing.md"},
     {"Photo Assets" = "usage/photos.md"},
+    {"Fotobank Migration" = "usage/fotobank-migration.md"},
     {"Email PDFs" = "usage/email-pdf.md"},
     {"Organizing & Tagging" = "usage/organizing.md"},
     {"Searching" = "usage/searching.md"},

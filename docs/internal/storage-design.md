@@ -329,8 +329,24 @@ overrides remain unchanged. Human graph, display, exclusion, and preference
 changes append bounded immutable `photo_change_receipts` rows. No-op mutations
 keep their revision and append no receipt.
 
-Schema version 25 exports assets, files, settings, and receipts in stable
-JSONL order. Restore requires a pristine target and validates node ownership,
+### Fotobank migration inventory
+
+`photo_migration_runs` stores an immutable source identity, creation time,
+canonical inventory report, and owner-map template. Install identities are
+catalog content digests; archive identities are Kit snapshot IDs. Absolute
+source and output paths stay in the operator response and owner-map file, not
+in the run record. `photo_migration_map` remains empty until a later migration
+step assigns destination owners.
+
+The Fotobank reader checks its pinned catalog layout and the embedded Docbank
+v16 layout before it counts rows. It opens both databases as immutable and
+requires the source lifetime locks. A header-only 32-byte WAL is admitted;
+WAL frames are refused. Archive inventory reads only the verified
+`application/catalog.sqlite` extra and records its metadata format.
+
+Schema version 26 exports assets, files, settings, receipts, and migration
+runs in stable JSONL order. Restore requires a pristine target and validates
+node ownership,
 local pointers, sidecar targets, selected display state, enum-like text,
 revisions, receipt JSON, and the complete graph before commit. Released
 metadata streams remain readable and restore an empty photo authority.

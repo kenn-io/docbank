@@ -89,10 +89,19 @@ func TestMCPCommandExposesTransportAndCapabilityFlags(t *testing.T) {
 	require.Equal(t, "mcp", command.Name())
 	var names []string
 	command.Flags().VisitAll(func(flag *pflag.Flag) { names = append(names, flag.Name) })
-	assert.ElementsMatch(t, []string{"allow-photo-edits", "allow-processing", "allow-package-writes", "listen", "transport"}, names)
+	assert.ElementsMatch(t, []string{"allow-photo-edits", "allow-processing", "allow-package-writes", "allow-migration-writes", "listen", "transport"}, names)
 	for _, forbidden := range []string{"token", "api-key", "daemon", "url", "remote"} {
 		assert.Nil(t, command.Flags().Lookup(forbidden))
 	}
+}
+
+func TestMCPMigrationFlagWiresProductionServer(t *testing.T) {
+	command, _, err := rootCmd.Find([]string{"mcp"})
+	require.NoError(t, err)
+	flag := command.Flags().Lookup("allow-migration-writes")
+	require.NotNil(t, flag)
+	assert.Equal(t, "false", flag.DefValue)
+	assert.Contains(t, flag.Usage, "Fotobank inventory")
 }
 
 func TestMCPCommandWriteFlagsSelectTools(t *testing.T) {
@@ -105,13 +114,15 @@ func TestMCPCommandWriteFlagsSelectTools(t *testing.T) {
 		os.Exit(0)
 	}
 	for _, test := range []struct {
-		args                 string
-		processing, packages bool
+		args                            string
+		processing, packages, migration bool
 	}{
 		{args: "mcp"},
 		{args: "mcp --allow-processing", processing: true},
 		{args: "mcp --allow-package-writes", packages: true},
 		{args: "mcp --allow-processing --allow-package-writes", processing: true, packages: true},
+		{args: "mcp --allow-migration-writes", migration: true},
+		{args: "mcp --allow-migration-writes --allow-processing --allow-package-writes", processing: true, packages: true, migration: true},
 	} {
 		t.Run(test.args, func(t *testing.T) {
 			ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
@@ -148,6 +159,7 @@ func TestMCPCommandWriteFlagsSelectTools(t *testing.T) {
 			for _, name := range []string{"preflight_load_file_package", "start_package_import", "resolve_package_custodian", "assign_package_custodian"} {
 				assert.Equal(t, test.packages, names[name], name)
 			}
+			assert.Equal(t, test.migration, names["inventory_fotobank"])
 			require.NoError(t, input.Close())
 			require.NoError(t, command.Wait())
 		})

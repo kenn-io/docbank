@@ -80,11 +80,12 @@ client registration, scopes, or token refresh. A client may connect locally or
 through a trusted tunnel, but it must be able to set the Authorization header;
 clients that require the MCP HTTP OAuth flow are unsupported.
 
-Both transports have the fixed 20-tool read catalog described below.
+Both transports have the fixed read catalog described below.
 `--allow-processing` adds only guarded processing start.
 `--allow-package-writes` separately permits load-file preflight, import, and
 custodian changes. `--allow-photo-edits` separately permits photo asset
-mutations. Enable any combination of flags when starting the process.
+mutations. `--allow-migration-writes` separately permits Fotobank inventory.
+Enable any combination of flags when starting the process.
 
 ## Exact protocol contract
 
@@ -154,6 +155,8 @@ links, is capped at 1 MiB.
 | `get_package_record` | Reads one immutable sender row by its package-scoped record key. |
 | `lookup_bates_label` | Finds bounded package-scoped matches for an exact received or assigned label. |
 | `get_photo_asset` | Reads one photo asset by asset UUID or positive node ID. The response has at most 256 files and includes the selected display source. |
+| `list_migration_runs` | Lists at most 50 completed inventory runs. |
+| `show_migration_run` | Reads one report and owner map. |
 
 Starting the server with `--allow-photo-edits` adds these write tools:
 
@@ -168,6 +171,23 @@ Starting the server with `--allow-photo-edits` adds these write tools:
 Photo writes make one daemon request. An ambiguous transport failure returns
 `processing_outcome_unknown`; inspect the asset before retrying. Display and
 vault settings writes remain HTTP and CLI operations.
+
+## Optional Fotobank inventory
+
+Enable the migration write surface separately when an operator has selected a
+stopped install or recovery archive:
+
+```bash
+docbank mcp --transport stdio --allow-migration-writes
+```
+
+The catalog then adds `inventory_fotobank`. Its input selects either
+`catalog_path` plus `vault_root`, or `archive_root` with an optional
+`snapshot_id`, and requires an absolute `owner_map_path`. The daemon reads the
+source, writes the exclusive owner-map template, and stores the immutable run.
+The tool returns the report and output path. A transport failure is not
+replayed because the write may already have completed. Use
+`list_migration_runs` or `show_migration_run` to inspect saved history.
 
 `list_documents` uses live keyset pagination, not a snapshot. A mutation between
 pages can change later membership or order. Each opaque cursor is at most 32 KiB of ASCII, expires after 15 minutes, and
