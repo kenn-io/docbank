@@ -4,9 +4,10 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"testing"
+
+	"go.kenn.io/kit/safefileio"
 )
 
 func testReport() Report {
@@ -83,12 +84,16 @@ func TestOwnerMapTemplate(t *testing.T) {
 	if err := WriteOwnerMapTemplate(path, template, t.TempDir()); err != nil {
 		t.Fatal(err)
 	}
-	info, err := os.Stat(path)
+	privateFile, err := safefileio.OpenCurrentUserFile(path)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if runtime.GOOS != "windows" && info.Mode().Perm()&0o077 != 0 {
-		t.Fatalf("owner map is not private: %o", info.Mode().Perm())
+	if err := safefileio.ValidatePrivateCurrentUserFile(privateFile); err != nil {
+		_ = privateFile.Close()
+		t.Fatalf("owner map is not private: %v", err)
+	}
+	if err := privateFile.Close(); err != nil {
+		t.Fatal(err)
 	}
 	raw, err := os.ReadFile(path)
 	if err != nil {
