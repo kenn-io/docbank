@@ -10,7 +10,6 @@ import (
 	"github.com/danielgtaylor/huma/v2"
 	"github.com/google/uuid"
 
-	"go.kenn.io/docbank/internal/photomigration"
 	"go.kenn.io/docbank/internal/photomigration/fotobank"
 	"go.kenn.io/docbank/internal/store"
 )
@@ -39,7 +38,7 @@ func registerMigrationRoutes(api huma.API, d Deps, g *gate) {
 		}
 		var out *migrationRunOutput
 		err := g.mutate(func() error {
-			report, err := fotobank.Inventory(ctx, d.Store.SQLiteDriver(), fotobank.Request{
+			report, template, err := fotobank.Inventory(ctx, d.Store.SQLiteDriver(), fotobank.Request{
 				CatalogPath: request.CatalogPath, VaultRoot: request.VaultRoot,
 				ArchiveRoot: request.ArchiveRoot, SnapshotID: request.SnapshotID,
 				OwnerMapPath: request.OwnerMapPath, DestinationRoot: d.VaultRoot,
@@ -47,17 +46,9 @@ func registerMigrationRoutes(api huma.API, d Deps, g *gate) {
 			if err != nil {
 				return inventoryError(err)
 			}
-			raw, err := os.ReadFile(request.OwnerMapPath)
-			if err != nil {
-				return NewError(http.StatusInternalServerError, "owner_map_unavailable", err.Error())
-			}
-			template, err := photomigration.DecodeOwnerMapTemplate(raw)
-			if err != nil {
-				return NewError(http.StatusInternalServerError, "owner_map_invalid", err.Error())
-			}
 			run := store.PhotoMigrationRun{ID: uuid.NewString(), Source: report.Source, CreatedAt: report.CreatedAt, Report: report, OwnerMap: template}
 			if err := d.Store.SavePhotoMigrationRun(ctx, run); err != nil {
-				return FromStoreError(err)
+				return errors.Join(FromStoreError(err), os.Remove(request.OwnerMapPath))
 			}
 			body := fromPhotoMigrationRun(run)
 			body.OwnerMapPath = request.OwnerMapPath

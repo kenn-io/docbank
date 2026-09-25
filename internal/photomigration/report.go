@@ -36,15 +36,17 @@ type Schema struct {
 }
 
 type Counts struct {
-	Owners      int64 `json:"owners"`
-	Assets      int64 `json:"assets"`
-	Files       int64 `json:"files"`
-	Bytes       int64 `json:"bytes"`
-	Albums      int64 `json:"albums"`
-	Shares      int64 `json:"shares"`
-	Checkouts   int64 `json:"checkouts"`
-	AIResults   int64 `json:"ai_results"`
-	HiddenSetup int64 `json:"hidden_setup"`
+	Owners           int64 `json:"owners"`
+	Assets           int64 `json:"assets"`
+	Files            int64 `json:"files"`
+	Bytes            int64 `json:"bytes"`
+	Albums           int64 `json:"albums"`
+	AlbumMemberships int64 `json:"album_memberships"`
+	Shares           int64 `json:"shares"`
+	Checkouts        int64 `json:"checkouts"`
+	CheckoutEntries  int64 `json:"checkout_entries"`
+	AIResults        int64 `json:"ai_results"`
+	HiddenSetup      int64 `json:"hidden_setup"`
 }
 
 type VectorGeneration struct {
@@ -245,6 +247,7 @@ func WriteOwnerMapTemplate(path string, template OwnerMapTemplate, sourceRoots .
 		return fmt.Errorf("write owner map template: %w", writeErr)
 	}
 	if closeErr := f.Close(); closeErr != nil {
+		_ = os.Remove(cleanPath)
 		return fmt.Errorf("close owner map template: %w", closeErr)
 	}
 	return nil
@@ -276,11 +279,6 @@ func DecodeOwnerMapTemplate(raw []byte) (OwnerMapTemplate, error) {
 	}
 	if decoded.Source.Kind != SourceInstall && decoded.Source.Kind != SourceArchive || decoded.Source.Identity == "" {
 		return template, errors.New("owner map template has invalid source")
-	}
-	for _, entry := range decoded.Entries {
-		if err := ValidateMapEntry(entry); err != nil {
-			return template, err
-		}
 	}
 	if err := ValidateOwnerMapTemplate(decoded); err != nil {
 		return template, err

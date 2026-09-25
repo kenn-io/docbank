@@ -21,7 +21,7 @@ import (
 )
 
 func TestDefaultToolCatalogIsFixedBoundedAndReadOnly(t *testing.T) {
-	tools := toolCatalog(false, false, false)
+	tools := toolCatalog(false, false, false, false)
 	wantNames := []string{
 		"get_vault_info", "list_documents", "search_documents", "get_document",
 		"list_document_versions", "read_rendition_text", "get_processing_plan",
@@ -47,8 +47,8 @@ func TestDefaultToolCatalogIsFixedBoundedAndReadOnly(t *testing.T) {
 }
 
 func TestWriteToolsAreIndependentConstructionTimeOptIns(t *testing.T) {
-	readOnly := catalogNames(toolCatalog(false, false, false))
-	enabledTools := toolCatalog(true, true, false)
+	readOnly := catalogNames(toolCatalog(false, false, false, false))
+	enabledTools := toolCatalog(true, true, false, false)
 	enabled := catalogNames(enabledTools)
 	require.Equal(t, append(append([]string{}, readOnly...), "start_processing", "preflight_load_file_package", "start_package_import",
 		"resolve_package_custodian", "assign_package_custodian"), enabled)
@@ -99,7 +99,7 @@ func TestToolsListTransmitsRegisteredSchemasAnnotationsAndBounds(t *testing.T) {
 	assert.Equal(t, "complete", listed["resultType"])
 	assert.Empty(t, listed["nextCursor"])
 	wireTools := listedToolsByName(t, listed)
-	registered := catalogMap(toolCatalog(true, true, false))
+	registered := catalogMap(toolCatalog(true, true, false, false))
 	require.Len(t, wireTools, len(registered))
 
 	for name, want := range registered {
@@ -192,7 +192,7 @@ func TestRegisteredToolsEnforceDaemonByteBounds(t *testing.T) {
 }
 
 func TestToolSchemasPinInputsBoundsAndStableIdentities(t *testing.T) {
-	tools := catalogMap(toolCatalog(true, true, false))
+	tools := catalogMap(toolCatalog(true, true, false, false))
 
 	assertSchemaAccepts(t, tools["get_vault_info"].InputSchema, map[string]any{})
 	assertSchemaRejects(t, tools["get_vault_info"].InputSchema, map[string]any{"extra": true})

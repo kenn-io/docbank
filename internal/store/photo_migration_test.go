@@ -74,10 +74,30 @@ func TestPhotoMigrationAuditedVault(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer func() { _ = s.Close() }()
-	if err := s.SavePhotoMigrationRun(context.Background(), migrationTestRun()); err != nil {
+	ctx := context.Background()
+	target, err := s.Mkdir(ctx, s.RootID(), "Photos")
+	if err != nil {
 		t.Fatal(err)
 	}
-	if err := s.ValidateMetadata(context.Background()); err != nil {
+	plan, err := s.PreviewInitialAudit(ctx, target.ID, "api", nil)
+	if err != nil {
 		t.Fatal(err)
 	}
+	if _, err := s.EnableInitialAudit(ctx, plan); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SavePhotoMigrationRun(ctx, migrationTestRun()); err != nil {
+		t.Fatal(err)
+	}
+	verified, err := s.VerifyAudit(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !verified.Evidence.Enabled {
+		t.Fatal("expected an enabled audit chain")
+	}
+	if err := s.ValidateMetadata(ctx); err != nil {
+		t.Fatal(err)
+	}
+	assertAuditMetadataRoundTrip(t, s)
 }

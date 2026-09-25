@@ -14,12 +14,12 @@ does not import files or assign Docbank owners.
 
 ## Choose a source
 
-For an install, supply the absolute path to Fotobank's `catalog.sqlite` and
+For an install, supply the absolute path to Fotobank's `fotobank.sqlite` catalog and
 the absolute embedded Docbank vault root:
 
 ```bash
 docbank photos migrate fotobank inventory \
-  --catalog-path /path/to/catalog.sqlite \
+  --catalog-path /path/to/fotobank.sqlite \
   --vault-root /path/to/fotobank-vault \
   --owner-map-path /path/to/fotobank-owner-map.json
 ```

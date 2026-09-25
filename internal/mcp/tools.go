@@ -18,8 +18,7 @@ import (
 
 const toolCatalogTTLMs = 60_000
 
-func catalogInstructions(allowProcessing, allowPackageWrites, allowPhotoEdits bool, migration ...bool) string {
-	allowMigrationWrites := len(migration) > 0 && migration[0]
+func catalogInstructions(allowProcessing, allowPackageWrites, allowPhotoEdits, allowMigrationWrites bool) string {
 	if !allowProcessing && !allowPackageWrites && !allowPhotoEdits && !allowMigrationWrites {
 		return "Docbank exposes a bounded read-only document and package surface."
 	}
@@ -117,8 +116,7 @@ var migrationInventoryToolDefinition = toolDefinition{
 	schemas: inventoryFotobankSchemas, write: true,
 }
 
-func toolCatalog(allowProcessing, allowPackageWrites, allowPhotoEdits bool, migration ...bool) []*sdkmcp.Tool {
-	allowMigrationWrites := len(migration) > 0 && migration[0]
+func toolCatalog(allowProcessing, allowPackageWrites, allowPhotoEdits, allowMigrationWrites bool) []*sdkmcp.Tool {
 	definitions := slices.Clone(readToolDefinitions)
 	if allowProcessing {
 		definitions = append(definitions, processingToolDefinition)
