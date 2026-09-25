@@ -211,7 +211,8 @@ func init() {
 	drafts := &cobra.Command{Use: "drafts", Short: "Inspect and edit exact production draft revisions"}
 	sets.AddCommand(newProductionSetCreateCommand(), newProductionSetListCommand(), newProductionSetShowCommand())
 	drafts.AddCommand(newProductionDraftShowCommand(), newProductionDraftMembersCommand(),
-		newProductionDraftDecisionsCommand(), newProductionDraftInstructionsCommand())
+		newProductionDraftDecisionsCommand(), newProductionDraftInstructionsCommand(),
+		newProductionDraftChangesCommand())
 	production.AddCommand(newProductionRecipesCommand(), sets, drafts)
 	rootCmd.AddCommand(production)
 }
