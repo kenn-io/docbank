@@ -163,6 +163,18 @@ var reviewProductionMemberToolDefinition = toolDefinition{
 	schemas:     reviewProductionMemberSchemas, write: true, idempotent: true,
 }
 
+var appendProductionMembersToolDefinition = toolDefinition{
+	name: "append_production_members", title: "Append production members",
+	description: "Append a bounded JSON member batch to an exact draft ETag with an operation UUID.",
+	schemas:     appendProductionMembersSchemas, write: true, idempotent: true,
+}
+
+var applyProductionChangesToolDefinition = toolDefinition{
+	name: "apply_production_changes", title: "Apply production changes",
+	description: "Apply a bounded JSON change batch to an exact draft ETag with an operation UUID.",
+	schemas:     applyProductionChangesSchemas, write: true, idempotent: true,
+}
+
 func toolCatalog(allowProcessing bool) []*sdkmcp.Tool {
 	definitions := readToolDefinitions
 	if allowProcessing {
@@ -172,7 +184,8 @@ func toolCatalog(allowProcessing bool) []*sdkmcp.Tool {
 			exportBatesFileToolDefinition, exportLoadFilePackageToolDefinition,
 			createProductionSetToolDefinition, forkProductionDraftToolDefinition,
 			editProductionInstructionsToolDefinition, sealProductionMembershipToolDefinition,
-			reviewProductionMemberToolDefinition)
+			reviewProductionMemberToolDefinition, appendProductionMembersToolDefinition,
+			applyProductionChangesToolDefinition)
 	}
 	tools := make([]*sdkmcp.Tool, 0, len(definitions))
 	for _, definition := range definitions {
@@ -218,6 +231,8 @@ func registerToolCatalog(
 		case editProductionInstructionsToolDefinition.name, sealProductionMembershipToolDefinition.name,
 			reviewProductionMemberToolDefinition.name:
 			handler = productionReviewWriteToolHandler(lease, tool.Name, output, logger)
+		case appendProductionMembersToolDefinition.name, applyProductionChangesToolDefinition.name:
+			handler = productionChangesWriteToolHandler(lease, tool.Name, output, logger)
 		default:
 			handler = readToolHandler(lease, plans, tool.Name, output, logger)
 		}
