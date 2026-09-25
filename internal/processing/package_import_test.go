@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"mime"
 	"os"
 	"path/filepath"
 	"sync/atomic"
@@ -42,6 +43,12 @@ func newPackageImportTestEnv(t *testing.T, count int, acceptPartial bool, withPa
 
 func newPackageImportTestEnvOptions(t *testing.T, count int, acceptPartial, withPages, indexText bool, families ...loadfile.Family) *packageImportTestEnv {
 	t.Helper()
+	return newPackageImportTestEnvWithNativeFile(t, count, acceptPartial, withPages, indexText, "", nil, families...)
+}
+
+func newPackageImportTestEnvWithNativeFile(t *testing.T, count int, acceptPartial, withPages, indexText bool,
+	nativeName string, nativeContent []byte, families ...loadfile.Family) *packageImportTestEnv {
+	t.Helper()
 	ctx := t.Context()
 	vault := t.TempDir()
 	catalog, err := store.Open(filepath.Join(vault, "docbank.db"))
@@ -59,9 +66,12 @@ func newPackageImportTestEnvOptions(t *testing.T, count int, acceptPartial, with
 	contents := make([][]byte, count)
 	for index := range count {
 		letter := string(rune('A' + index))
-		content := []byte("Synthetic native document " + letter + "\n")
-		contents[index] = content
 		name := letter + ".txt"
+		content := []byte("Synthetic native document " + letter + "\n")
+		if index == 0 && nativeName != "" {
+			name, content = nativeName, nativeContent
+		}
+		contents[index] = content
 		require.NoError(t, os.WriteFile(filepath.Join(root, "VOL001", name), content, 0o600))
 		ref := loadfile.FileRef{Role: "native", Volume: "VOL001", RelPath: name, Declared: name,
 			SHA256: packageImportTestHash(content), Size: int64(len(content)), Status: "available"}
@@ -202,6 +212,27 @@ func TestPackageImportWorkerCommitsOneVerifiedRootRecord(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, custodians, 1)
 	require.Equal(t, "Doe, Jane", custodians[0].RawLabel)
+}
+
+func TestPackageImportDetectsMIMEFromVerifiedBytes(t *testing.T) {
+	const extension = ".docbank561"
+	require.NoError(t, mime.AddExtensionType(extension, "application/jpg"))
+	require.Equal(t, "application/jpg", mime.TypeByExtension(extension))
+	jpeg := []byte{0xff, 0xd8, 0xff}
+	env := newPackageImportTestEnvWithNativeFile(t, 1, false, false, false, "A"+extension, jpeg)
+	worker, err := NewPackageImportWorker(env.config())
+	require.NoError(t, err)
+	_, err = worker.ProcessOnce(t.Context())
+	require.NoError(t, err)
+
+	key, err := store.PackageRecordKey("VOL001/DATA.DAT", 1, "DOC-A")
+	require.NoError(t, err)
+	path := "/" + env.PackageID + "/" + store.PackageOccurrenceID(env.PackageID, key) + "-00-native" + extension
+	node, err := env.Catalog.NodeByPath(t.Context(), path)
+	require.NoError(t, err)
+	require.Equal(t, "image/jpeg", node.MimeType)
+	require.Equal(t, packageImportTestHash(jpeg), node.BlobHash)
+	require.Equal(t, int64(len(jpeg)), node.Size)
 }
 
 func TestPackageRecordLabelsKeepReceivedAndAssignedProvenanceSeparate(t *testing.T) {

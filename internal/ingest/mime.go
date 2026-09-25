@@ -9,9 +9,13 @@ import (
 	"github.com/gabriel-vasile/mimetype"
 )
 
-// detectMime resolves a MIME type from the file bytes and file extension.
-func detectMime(path string, head []byte) string {
+// DetectMIME resolves a MIME type from the file bytes and file extension.
+func DetectMIME(path string, head []byte) string {
 	return detectMimeWithExtension(path, head, mime.TypeByExtension)
+}
+
+func detectMime(path string, head []byte) string {
+	return DetectMIME(path, head)
 }
 
 func detectMimeWithExtension(
@@ -25,7 +29,10 @@ func detectMimeWithExtension(
 	}
 
 	detected := mimetype.Detect(head)
-	if detected.Is("application/octet-stream") {
+	if len(head) == 0 || detected.Is("application/octet-stream") {
+		if strings.EqualFold(extension, ".raf") {
+			return "image/x-fuji-raf"
+		}
 		return extensionMIME(extension, byExtension, detected.String())
 	}
 
@@ -123,6 +130,10 @@ func closedMIMERefinement(
 	extension string,
 ) string {
 	switch strings.ToLower(extension) {
+	case ".arw":
+		if detected.Is("image/tiff") {
+			return "image/x-sony-arw"
+		}
 	case ".dng":
 		if detected.Is("image/tiff") {
 			return "image/x-adobe-dng"
@@ -144,8 +155,24 @@ func closedMIMERefinement(
 			return "audio/x-matroska"
 		}
 	case ".xmp":
-		if descendantOf(detected, mimetype.Lookup("text/xml")) {
+		if descendantOf(detected, mimetype.Lookup("text/xml")) || textFamilyMIME(detected) {
 			return "application/rdf+xml"
+		}
+	case ".go":
+		if textFamilyMIME(detected) {
+			return "text/x-go"
+		}
+	case ".rst":
+		if textFamilyMIME(detected) {
+			return "text/x-rst"
+		}
+	case ".yaml", ".yml":
+		if textFamilyMIME(detected) {
+			return "application/yaml"
+		}
+	case ".tex":
+		if textFamilyMIME(detected) {
+			return "application/x-tex"
 		}
 	case ".md", ".markdown":
 		if textFamilyMIME(detected) {

@@ -10,7 +10,6 @@ import (
 	"fmt"
 	"io"
 	"mime"
-	"net/http"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -22,6 +21,7 @@ import (
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/blob"
 	"go.kenn.io/docbank/internal/daemonconn"
+	"go.kenn.io/docbank/internal/ingest"
 	"go.kenn.io/docbank/internal/store"
 )
 
@@ -175,10 +175,7 @@ func putSourceMIME(source io.ReadSeeker, path, override string) (string, error) 
 	if _, err := source.Seek(0, io.SeekStart); err != nil {
 		return "", fmt.Errorf("rewinding %s after media-type detection: %w", path, err)
 	}
-	if byExtension := mime.TypeByExtension(filepath.Ext(path)); byExtension != "" {
-		return byExtension, nil
-	}
-	return http.DetectContentType(head[:n]), nil
+	return ingest.DetectMIME(path, head[:n]), nil
 }
 
 type putProgressReader struct {

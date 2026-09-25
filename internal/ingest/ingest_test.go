@@ -323,6 +323,7 @@ func TestDetectMimeUsesClosedSuffixRefinements(t *testing.T) {
 	}
 	matroska := []byte("\x1a\x45\xdf\xa3\x01\x00\x00\x00\x00\x00\x00\x23\x42\x86\x81\x01\x42\xf7\x81\x01\x42\xf2\x81\x04\x42\xf3\x81\x08\x42\x82\x88matroska")
 	xmp := []byte(`<?xml version="1.0"?><x:xmpmeta xmlns:x="adobe:ns:meta/"><rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"></rdf:RDF></x:xmpmeta>`)
+	xmpWithoutDeclaration := []byte(`<x:xmpmeta xmlns:x="adobe:ns:meta/"><rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"></rdf:RDF></x:xmpmeta>`)
 	for _, tc := range []struct {
 		name      string
 		path      string
@@ -331,6 +332,7 @@ func TestDetectMimeUsesClosedSuffixRefinements(t *testing.T) {
 		want      string
 		wantCalls bool
 	}{
+		{name: "sony raw", path: "camera.arw", head: []byte{0x49, 0x49, 0x2a, 0x00}, resolver: "application/pdf", want: "image/x-sony-arw"},
 		{name: "adobe raw", path: "camera.dng", head: []byte{0x49, 0x49, 0x2a, 0x00}, resolver: "application/pdf", want: "image/x-adobe-dng"},
 		{name: "canon raw", path: "camera.cr2", head: []byte{0x49, 0x49, 0x2a, 0x00}, resolver: "application/pdf", want: "image/x-canon-cr2"},
 		{name: "nikon raw", path: "camera.nef", head: []byte{0x49, 0x49, 0x2a, 0x00}, resolver: "application/pdf", want: "image/x-nikon-nef"},
@@ -340,6 +342,12 @@ func TestDetectMimeUsesClosedSuffixRefinements(t *testing.T) {
 		{name: "generic png suffix", path: "animation.apng", head: []byte(pngHeader), resolver: "application/pdf", want: "image/apng"},
 		{name: "matroska audio", path: "audio.mka", head: matroska, resolver: "application/pdf", want: "audio/x-matroska"},
 		{name: "xmp sidecar", path: "sidecar.xmp", head: xmp, resolver: "application/pdf", want: "application/rdf+xml"},
+		{name: "xmp packet without xml declaration", path: "sidecar.xmp", head: xmpWithoutDeclaration, resolver: "application/pdf", want: "application/rdf+xml"},
+		{name: "go source", path: "source.go", head: []byte("package sample\nfunc add(a, b int) int { return a + b }\n"), resolver: "application/pdf", want: "text/x-go"},
+		{name: "restructured text", path: "notes.rst", head: []byte("Title\n=====\n\nText.\n"), resolver: "application/pdf", want: "text/x-rst"},
+		{name: "yaml", path: "config.yaml", head: []byte("name: docbank\n"), resolver: "application/pdf", want: "application/yaml"},
+		{name: "yaml short suffix", path: "config.YML", head: []byte("name: docbank\n"), resolver: "application/pdf", want: "application/yaml"},
+		{name: "tex source", path: "paper.tex", head: []byte("\\documentclass{article}\n\\begin{document}Text\\end{document}\n"), resolver: "application/pdf", want: "application/x-tex"},
 		{name: "markdown", path: "notes.md", head: []byte("# Meeting notes\n\nA short paragraph.\n"), resolver: "application/pdf", want: "text/markdown"},
 		{name: "markdown long suffix", path: "notes.MARKDOWN", head: []byte("# Meeting notes\n\nA short paragraph.\n"), resolver: "application/pdf", want: "text/markdown"},
 	} {
@@ -364,6 +372,7 @@ func TestDetectMimeUsesExtensionForUnknownBytes(t *testing.T) {
 		wantCalls bool
 	}{
 		{name: "known extension", path: "document.custom", resolver: "application/x-host-dependent; version=1", want: "application/x-host-dependent; version=1", wantCalls: true},
+		{name: "fuji raw suffix", path: "camera.raf", resolver: "application/pdf", want: "image/x-fuji-raf", wantCalls: false},
 		{name: "empty extension", path: "document", resolver: "", want: "application/octet-stream", wantCalls: true},
 		{name: "invalid extension value", path: "document.custom", resolver: "not a media type", want: "application/octet-stream", wantCalls: true},
 	} {
@@ -377,6 +386,17 @@ func TestDetectMimeUsesExtensionForUnknownBytes(t *testing.T) {
 			require.Equal(t, tc.wantCalls, called)
 		})
 	}
+}
+
+func TestDetectMimeUsesExtensionForEmptyBytes(t *testing.T) {
+	called := false
+	got := detectMimeWithExtension("report.pdf", []byte{}, func(extension string) string {
+		called = true
+		require.Equal(t, ".pdf", extension)
+		return "application/pdf"
+	})
+	require.Equal(t, "application/pdf", got)
+	require.True(t, called)
 }
 
 func TestDetectMimeUsesNativeWindowsJPEGRegistry(t *testing.T) {
