@@ -14,6 +14,7 @@ import (
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/apiclient"
 	"go.kenn.io/docbank/internal/daemonconn"
+	"go.kenn.io/docbank/internal/processing"
 	"go.kenn.io/docbank/internal/store"
 )
 
@@ -27,13 +28,13 @@ type privateCache struct {
 func newPrivateCache() privateCache { return privateCache{CacheScope: "private"} }
 
 func readToolHandler(
-	lease *daemonLease, plans *processingPlanRegistry, name string, validator *jsonschema.Resolved, logger *slog.Logger,
+	lease *daemonLease, plans *processingPlanRegistry, policy operationPolicy, name string, validator *jsonschema.Resolved, logger *slog.Logger,
 ) sdkmcp.ToolHandler {
 	return func(ctx context.Context, request *sdkmcp.CallToolRequest) (*sdkmcp.CallToolResult, error) {
 		if request == nil || request.Params == nil {
 			return nil, invalidToolArgumentsError()
 		}
-		result, err := executeReadTool(ctx, lease, plans, name, validator, request.Params.Arguments)
+		result, err := executeReadToolWithPolicy(ctx, lease, plans, policy, name, validator, request.Params.Arguments)
 		if err != nil {
 			logOperationError(logger, name, err)
 			if domain, ok := domainToolError(err); ok {
@@ -48,28 +49,48 @@ func readToolHandler(
 func executeReadTool(
 	ctx context.Context, lease *daemonLease, plans *processingPlanRegistry, name string, validator *jsonschema.Resolved, raw []byte,
 ) (*sdkmcp.CallToolResult, error) {
+	return executeReadToolWithPolicy(ctx, lease, plans, newOperationPolicy(nil, api.Principal{}), name, validator, raw)
+}
+
+func executeReadToolWithPolicy(
+	ctx context.Context, lease *daemonLease, plans *processingPlanRegistry, policy operationPolicy, name string, validator *jsonschema.Resolved, raw []byte,
+) (*sdkmcp.CallToolResult, error) {
+	operation := api.OperationRead
+	switch name {
+	case "search_documents", "get_processing_coverage":
+		operation = api.OperationAnalyze
+	case "get_processing_plan", "get_processing_status":
+		operation = api.OperationProcessing
+	}
+	scope, err := policy.authorize(ctx, operation, nil, false, false)
+	if err != nil {
+		return nil, err
+	}
 	var output any
 	var links []*sdkmcp.ResourceLink
-	var err error
 	switch name {
 	case "get_vault_info":
-		output, err = getVaultInfo(ctx, lease, raw)
+		output, err = getVaultInfoScoped(ctx, lease, policy, scope, raw)
 	case "list_documents":
-		output, links, err = listDocuments(ctx, lease, raw)
+		output, links, err = listDocumentsScoped(ctx, lease, policy, scope, raw)
 	case "search_documents":
-		output, links, err = searchDocuments(ctx, lease, raw)
+		output, links, err = searchDocumentsScoped(ctx, lease, policy, raw)
 	case "get_document":
-		output, links, err = getDocument(ctx, lease, raw)
+		output, links, err = getDocumentScoped(ctx, lease, policy, raw)
 	case "list_document_versions":
-		output, err = listDocumentVersions(ctx, lease, raw)
+		output, err = listDocumentVersionsScoped(ctx, lease, policy, raw)
 	case "read_rendition_text":
-		output, err = readRenditionText(ctx, lease, raw)
+		output, err = readRenditionTextScoped(ctx, lease, policy, raw)
 	case "get_processing_plan":
-		output, err = getProcessingPlan(ctx, lease, raw)
+		output, err = getProcessingPlanScoped(ctx, lease, policy, raw)
 	case "get_processing_status":
-		output, err = getProcessingStatus(ctx, lease, raw)
+		output, err = getProcessingStatusScoped(ctx, lease, plans, policy, raw)
 	case "get_processing_coverage":
-		output, err = getProcessingCoverage(ctx, lease, raw)
+		output, err = getProcessingCoverageScoped(ctx, lease, policy, raw)
+	case "list_processing_profiles":
+		output, err = listProcessingProfiles(ctx, lease, raw)
+	case "get_format_coverage":
+		output, err = getFormatCoverage(ctx, lease, raw)
 	case "get_package_import":
 		output, err = getPackageImport(ctx, lease, raw)
 	case "get_package_preflight":
@@ -105,6 +126,35 @@ func executeReadTool(
 		plans.remember(plan.ProcessingPlan)
 	}
 	return result, err
+}
+
+type processingProfilesOutput struct {
+	privateCache
+
+	Profiles []api.ProcessingProfileSummary `json:"profiles"`
+}
+
+func listProcessingProfiles(ctx context.Context, lease *daemonLease, raw []byte) (processingProfilesOutput, error) {
+	var input struct{}
+	if err := decodeReadArguments(raw, &input); err != nil {
+		return processingProfilesOutput{}, err
+	}
+	profiles, err := daemonRead(ctx, lease, func(ctx context.Context, c *daemonconn.Connection) (*apiclient.ListDocumentProcessingProfilesResponse, error) {
+		return c.API().ListDocumentProcessingProfiles(ctx)
+	})
+	if err != nil {
+		return processingProfilesOutput{}, err
+	}
+	if len(*profiles) > 128 {
+		return processingProfilesOutput{}, errToolResultTooLarge
+	}
+	result := processingProfilesOutput{Profiles: make([]api.ProcessingProfileSummary, 0, len(*profiles)), privateCache: newPrivateCache()}
+	for _, profile := range *profiles {
+		profile.EmbeddingBindings = append([]string{}, profile.EmbeddingBindings...)
+		profile.QueryEmbeddingBindings = append([]string{}, profile.QueryEmbeddingBindings...)
+		result.Profiles = append(result.Profiles, profile)
+	}
+	return result, nil
 }
 
 type listPackagesInput struct {
@@ -304,6 +354,47 @@ func getVaultInfo(ctx context.Context, lease *daemonLease, raw []byte) (vaultInf
 		privateCache: newPrivateCache()}, nil
 }
 
+func getVaultInfoScoped(ctx context.Context, lease *daemonLease, policy operationPolicy, scope api.OperationAuthorization, raw []byte) (vaultInfoOutput, error) {
+	if policy.local() {
+		return getVaultInfo(ctx, lease, raw)
+	}
+	if err := decodeReadArguments(raw, &struct{}{}); err != nil {
+		return vaultInfoOutput{}, err
+	}
+	type scopedInfo struct {
+		vaultID string
+		bytes   int64
+		blobs   map[string]int64
+	}
+	result, err := daemonRead(ctx, lease, func(ctx context.Context, c *daemonconn.Connection) (scopedInfo, error) {
+		info, callErr := c.API().VaultInfo(ctx)
+		if callErr != nil {
+			return scopedInfo{}, callErr
+		}
+		out := scopedInfo{vaultID: info.VaultID, blobs: make(map[string]int64)}
+		for _, sourceID := range scope.SourceIDs {
+			version, versionErr := c.API().GetContentVersion(ctx, &apiclient.GetContentVersionRequestOptions{PathParams: &apiclient.GetContentVersionPath{VersionID: sourceID}})
+			if versionErr != nil {
+				continue
+			}
+			out.bytes += version.Size
+			out.blobs[version.BlobHash] = version.Size
+		}
+		return out, nil
+	})
+	if err != nil {
+		return vaultInfoOutput{}, err
+	}
+	var blobBytes int64
+	for _, size := range result.blobs {
+		blobBytes += size
+	}
+	count := int64(len(scope.SourceIDs))
+	return vaultInfoOutput{VaultID: result.vaultID, LiveFiles: count, ContentVersions: count,
+		LogicalVersionBytes: result.bytes, TrackedBlobs: int64(len(result.blobs)), TrackedBlobBytes: blobBytes,
+		privateCache: newPrivateCache()}, nil
+}
+
 type listDocumentsInput struct {
 	PathPrefix string `json:"path_prefix"`
 	Sort       string `json:"sort"`
@@ -346,6 +437,59 @@ func listDocuments(
 	}
 	return listDocumentsOutput{DocumentPage: result.page, privateCache: newPrivateCache()},
 		documentResourceLinks(result.info.VaultID, result.page.Items), nil
+}
+
+func listDocumentsScoped(ctx context.Context, lease *daemonLease, policy operationPolicy, scope api.OperationAuthorization, raw []byte) (listDocumentsOutput, []*sdkmcp.ResourceLink, error) {
+	if policy.local() {
+		return listDocuments(ctx, lease, raw)
+	}
+	var input listDocumentsInput
+	if err := decodeReadArguments(raw, &input); err != nil {
+		return listDocumentsOutput{}, nil, err
+	}
+	query := api.DocumentQuery{PathPrefix: input.PathPrefix, Sort: input.Sort,
+		Direction: input.Direction, PageSize: input.PageSize, Cursor: input.Cursor}
+	var page api.DocumentPage
+	if len(scope.SourceIDs) == 0 {
+		normalized, err := store.NormalizeDocumentCatalogQuery(store.DocumentCatalogQuery{
+			PathPrefix: query.PathPrefix, Sort: store.DocumentCatalogSort(query.Sort),
+			Direction: store.DocumentCatalogDirection(query.Direction), PageSize: query.PageSize,
+		})
+		if err != nil || query.Cursor != "" {
+			return listDocumentsOutput{}, nil, invalidToolArgumentsError()
+		}
+		page = api.DocumentPage{PathPrefix: normalized.PathPrefix, Sort: string(normalized.Sort),
+			Direction: string(normalized.Direction), PageSize: normalized.PageSize,
+			Items: []api.DocumentSummary{}}
+	} else {
+		var err error
+		page, err = daemonRead(ctx, lease, func(ctx context.Context, c *daemonconn.Connection) (api.DocumentPage, error) {
+			return c.ListScopedDocuments(ctx, api.ScopedDocumentQuery{
+				DocumentQuery: query, ContentVersionIDs: scope.SourceIDs})
+		})
+		if err != nil {
+			return listDocumentsOutput{}, nil, err
+		}
+	}
+	output := listDocumentsOutput{DocumentPage: page, privateCache: newPrivateCache()}
+	var links []*sdkmcp.ResourceLink
+	if len(page.Items) > 0 {
+		info, err := daemonRead(ctx, lease, func(ctx context.Context, c *daemonconn.Connection) (*api.VaultInfo, error) {
+			return c.API().VaultInfo(ctx)
+		})
+		if err != nil {
+			return listDocumentsOutput{}, nil, err
+		}
+		links = documentResourceLinks(info.VaultID, page.Items)
+	}
+	decision, err := policy.authorize(ctx, api.OperationRead, scope.SourceIDs, true, false)
+	if err != nil {
+		return listDocumentsOutput{}, nil, err
+	}
+	if !slices.Equal(decision.SourceIDs, scope.SourceIDs) {
+		return listDocumentsOutput{}, nil, api.ErrOperationGrantRevoked
+	}
+	return output, links, nil
 }
 
 type searchDocumentsInput struct {
@@ -397,22 +541,38 @@ type searchDocumentsOutput struct {
 }
 
 func searchDocuments(
-	ctx context.Context, lease *daemonLease, raw []byte,
+	ctx context.Context, lease *daemonLease, raw []byte, policy *operationPolicy,
 ) (searchDocumentsOutput, []*sdkmcp.ResourceLink, error) {
 	var input searchDocumentsInput
 	if err := decodeReadArguments(raw, &input); err != nil {
 		return searchDocumentsOutput{}, nil, err
 	}
 	type response struct {
-		resolution api.DocumentSourceFenceResolution
-		report     api.DocumentSearchReport
-		documents  []api.DocumentSummary
+		resolution       api.DocumentSourceFenceResolution
+		report           api.DocumentSearchReport
+		documents        []api.DocumentSummary
+		authorizationErr error
 	}
 	result, err := daemonRead(ctx, lease, func(ctx context.Context, c *daemonconn.Connection) (response, error) {
 		resolution, callErr := c.ResolveDocumentSourceFence(ctx, api.DocumentSourceFenceResolveRequest{
 			ContentVersionIDs: input.ContentVersionIDs, Filters: input.Filters})
 		if callErr != nil {
 			return response{}, callErr
+		}
+		if policy != nil && !policy.local() {
+			decision, authErr := policy.authorize(ctx, api.OperationAnalyze,
+				resolution.Fence.ContentVersionIDs, false, false)
+			if authErr != nil {
+				return response{authorizationErr: authErr}, nil //nolint:nilerr // Preserve the authorization error outside daemon error sanitization.
+			}
+			resolution.Fence.ContentVersionIDs = slices.Clone(decision.SourceIDs)
+			resolution.ObservedScopeCount = len(decision.SourceIDs)
+			resolution.FenceFingerprint, authErr = processing.SourceFenceFingerprint(processing.SourceFence{
+				VaultUID: resolution.Fence.VaultUID, ContentVersionIDs: decision.SourceIDs,
+			})
+			if authErr != nil {
+				return response{}, authErr
+			}
 		}
 		if len(resolution.Fence.ContentVersionIDs) == 0 {
 			callErr = c.ValidateDocumentSearch(ctx, api.DocumentSearchValidationRequest{
@@ -453,6 +613,9 @@ func searchDocuments(
 	if err != nil {
 		return searchDocumentsOutput{}, nil, err
 	}
+	if result.authorizationErr != nil {
+		return searchDocumentsOutput{}, nil, result.authorizationErr
+	}
 	output := searchDocumentsOutput{VaultID: result.resolution.Fence.VaultUID,
 		Fence: sourceFenceOutput{VaultID: result.resolution.Fence.VaultUID,
 			ContentVersionIDs: slices.Clone(result.resolution.Fence.ContentVersionIDs)},
@@ -479,6 +642,25 @@ func searchDocuments(
 			Path: item.Path, Excerpt: item.Excerpt, EvidenceIDs: evidence}
 	}
 	return output, documentResourceLinks(result.resolution.Fence.VaultUID, result.documents), nil
+}
+
+func searchDocumentsScoped(ctx context.Context, lease *daemonLease, policy operationPolicy, raw []byte) (searchDocumentsOutput, []*sdkmcp.ResourceLink, error) {
+	output, links, err := searchDocuments(ctx, lease, raw, &policy)
+	if err != nil || policy.local() {
+		return output, links, err
+	}
+	decision, err := policy.authorize(ctx, api.OperationAnalyze, output.Fence.ContentVersionIDs, true, false)
+	if err != nil {
+		return searchDocumentsOutput{}, nil, err
+	}
+	if !slices.Equal(decision.SourceIDs, output.Fence.ContentVersionIDs) {
+		return searchDocumentsOutput{}, nil, api.ErrOperationGrantRevoked
+	}
+	allowed := make(map[string]bool, len(decision.SourceIDs))
+	for _, id := range decision.SourceIDs {
+		allowed[id] = true
+	}
+	return output, filterResourceLinks(links, allowed), nil
 }
 
 func effectiveSearchMode(mode string) string {
@@ -559,6 +741,17 @@ func getDocument(
 	return output, documentResourceLinks(result.vaultID, []api.DocumentSummary{document}), nil
 }
 
+func getDocumentScoped(ctx context.Context, lease *daemonLease, policy operationPolicy, raw []byte) (documentOutput, []*sdkmcp.ResourceLink, error) {
+	var input getDocumentInput
+	if err := decodeReadArguments(raw, &input); err != nil {
+		return documentOutput{}, nil, err
+	}
+	if _, err := policy.authorize(ctx, api.OperationRead, []string{input.ContentVersionID}, true, true); err != nil {
+		return documentOutput{}, nil, err
+	}
+	return getDocument(ctx, lease, raw)
+}
+
 type listDocumentVersionsInput struct {
 	NodeID int64 `json:"node_id"`
 	Limit  int   `json:"limit"`
@@ -637,6 +830,17 @@ func listDocumentVersions(
 	return output, nil
 }
 
+func listDocumentVersionsScoped(ctx context.Context, lease *daemonLease, policy operationPolicy, raw []byte) (listDocumentVersionsOutput, error) {
+	if !policy.local() {
+		// Filtering one already paged node history can disclose a misleading
+		// total and skip later authorized versions. Keep this operation closed
+		// until the daemon can page within the source fence itself.
+		return listDocumentVersionsOutput{}, api.ErrOperationDenied
+	}
+	output, err := listDocumentVersions(ctx, lease, raw)
+	return output, err
+}
+
 func readRenditionText(ctx context.Context, lease *daemonLease, raw []byte) (any, error) {
 	var input api.RenditionWindowRequest
 	if err := decodeReadArguments(raw, &input); err != nil {
@@ -655,6 +859,17 @@ func readRenditionText(ctx context.Context, lease *daemonLease, raw []byte) (any
 		api.RenditionTextWindow
 		privateCache
 	}{window, newPrivateCache()}, nil
+}
+
+func readRenditionTextScoped(ctx context.Context, lease *daemonLease, policy operationPolicy, raw []byte) (any, error) {
+	var input api.RenditionWindowRequest
+	if err := decodeReadArguments(raw, &input); err != nil {
+		return nil, err
+	}
+	if _, err := policy.authorize(ctx, api.OperationRead, []string{input.ContentVersionID}, true, true); err != nil {
+		return nil, err
+	}
+	return readRenditionText(ctx, lease, raw)
 }
 
 type processingPlanOutput struct {
@@ -679,6 +894,17 @@ func getProcessingPlan(ctx context.Context, lease *daemonLease, raw []byte) (any
 	return processingPlanOutput{ProcessingPlan: *plan, privateCache: newPrivateCache()}, nil
 }
 
+func getProcessingPlanScoped(ctx context.Context, lease *daemonLease, policy operationPolicy, raw []byte) (any, error) {
+	var input api.ProcessingSelector
+	if err := decodeReadArguments(raw, &input); err != nil {
+		return nil, err
+	}
+	if _, err := policy.authorize(ctx, api.OperationProcessing, []string{input.ContentVersionID}, true, true); err != nil {
+		return nil, err
+	}
+	return getProcessingPlan(ctx, lease, raw)
+}
+
 func getProcessingStatus(ctx context.Context, lease *daemonLease, raw []byte) (any, error) {
 	var input struct {
 		JobID string `json:"job_id"`
@@ -699,6 +925,26 @@ func getProcessingStatus(ctx context.Context, lease *daemonLease, raw []byte) (a
 		api.ProcessingStatus
 		privateCache
 	}{status, newPrivateCache()}, nil
+}
+
+func getProcessingStatusScoped(ctx context.Context, lease *daemonLease, plans *processingPlanRegistry, policy operationPolicy, raw []byte) (any, error) {
+	if policy.local() {
+		return getProcessingStatus(ctx, lease, raw)
+	}
+	var input struct {
+		JobID string `json:"job_id"`
+	}
+	if err := decodeReadArguments(raw, &input); err != nil {
+		return nil, err
+	}
+	sourceID, ok := plans.jobSource(input.JobID)
+	if !ok {
+		return nil, api.ErrOperationNotFound
+	}
+	if _, err := policy.authorize(ctx, api.OperationProcessing, []string{sourceID}, true, true); err != nil {
+		return nil, err
+	}
+	return getProcessingStatus(ctx, lease, raw)
 }
 
 type coverageClassOutput struct {
@@ -761,6 +1007,38 @@ func getProcessingCoverage(
 			PreviousGenerationServing: item.PreviousGenerationServing, Total: item.Total}
 	}
 	return output, nil
+}
+
+func getProcessingCoverageScoped(ctx context.Context, lease *daemonLease, policy operationPolicy, raw []byte) (processingCoverageOutput, error) {
+	var input struct {
+		Profile           string   `json:"profile"`
+		VaultID           string   `json:"vault_id"`
+		ContentVersionIDs []string `json:"content_version_ids"`
+	}
+	if err := decodeReadArguments(raw, &input); err != nil {
+		return processingCoverageOutput{}, err
+	}
+	decision, err := policy.authorize(ctx, api.OperationAnalyze, input.ContentVersionIDs, false, false)
+	if err != nil {
+		return processingCoverageOutput{}, err
+	}
+	input.ContentVersionIDs = decision.SourceIDs
+	rewritten, err := json.Marshal(input)
+	if err != nil {
+		return processingCoverageOutput{}, err
+	}
+	return getProcessingCoverage(ctx, lease, rewritten)
+}
+
+func filterResourceLinks(links []*sdkmcp.ResourceLink, allowed map[string]bool) []*sdkmcp.ResourceLink {
+	filtered := links[:0]
+	for _, link := range links {
+		identity, _, err := parseRenditionResourceURI(link.URI)
+		if err == nil && allowed[identity.ContentVersionID] {
+			filtered = append(filtered, link)
+		}
+	}
+	return filtered
 }
 
 func documentResourceLinks(vaultID string, documents []api.DocumentSummary) []*sdkmcp.ResourceLink {

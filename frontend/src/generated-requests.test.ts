@@ -72,6 +72,19 @@ it.each([
   expect(Buffer.from(await response.arrayBuffer())).toEqual(body);
 });
 
+it("sends an exact selected-document scope through the generated report client", async () => {
+  const fetch = vi.spyOn(globalThis, "fetch").mockResolvedValue(Response.json({}));
+  const selected = { node_id: 3, version_id: "00000003-1111-4111-8111-111111111111", sha256: "3".repeat(64) };
+  const request: api.Request = {
+    version: 2, all_documents: false, selected_documents: [selected], timezone: "UTC", coverage_mode: "strict",
+    terms: [{ number: 1, syntax: "simple", expression: "alpha", dates: { start: "2026-09-01", end: "2026-09-30" } }],
+  };
+  await api.createTermReport(request, { session: "synthetic-session" });
+  expect(JSON.parse(String(fetch.mock.calls[0][1]?.body))).toMatchObject({
+    version: 2, all_documents: false, selected_documents: [selected],
+  });
+});
+
 it("accepts the empty shutdown acknowledgement", async () => {
   vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(null, { status: 202 }));
   await expect(api.shutdownDaemon({ "X-Docbank-Daemon-Token": "synthetic" })).resolves.toBeUndefined();
