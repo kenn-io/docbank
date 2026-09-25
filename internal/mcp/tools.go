@@ -12,39 +12,51 @@ import (
 	"github.com/google/jsonschema-go/jsonschema"
 	"github.com/modelcontextprotocol/go-sdk/jsonrpc"
 	sdkmcp "github.com/modelcontextprotocol/go-sdk/mcp"
+	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/daemonconn"
 	"go.kenn.io/docbank/internal/store"
 )
 
 const toolCatalogTTLMs = 60_000
 
-func catalogInstructions(allowProcessing, allowPackageWrites bool) string {
-	if !allowProcessing && !allowPackageWrites {
-		return "Docbank exposes a bounded read-only document and package surface."
+func catalogInstructions(allowProcessing, allowPackageWrites bool, writes ...bool) string {
+	exportWrites := len(writes) > 0 && writes[0]
+	reportWrites := len(writes) > 1 && writes[1]
+	if !allowProcessing && !allowPackageWrites && !exportWrites && !reportWrites {
+		return "Docbank exposes bounded read-only document, package, report, and export operations."
 	}
-	instructions := "Docbank exposes bounded document and package reads."
+	instructions := "Docbank exposes bounded document, package, report, and export reads."
 	if allowProcessing {
 		instructions += " start_processing requires a reviewed plan and prior operator consent."
 	}
 	if allowPackageWrites {
 		instructions += " Package writes can preflight local sources, import packages, and assign or resolve custodians."
 	}
+	if exportWrites {
+		instructions += " Export writes require exact selected document identities and explicit operation IDs."
+	}
+	if reportWrites {
+		instructions += " Report writes create frozen selections and reviewed date revisions."
+	}
 	return instructions
 }
 
 type toolDefinition struct {
-	name        string
-	title       string
-	description string
-	schemas     func() (schema, schema)
-	write       bool
-	idempotent  bool
-	destructive bool
+	name          string
+	title         string
+	description   string
+	schemas       func() (schema, schema)
+	write         bool
+	idempotent    bool
+	nonIdempotent bool
+	destructive   bool
 }
 
 var readToolDefinitions = []toolDefinition{
+	{name: "get_agent_capabilities", title: "Get agent capabilities", description: "Discover operations currently available to this credential.", schemas: getAgentCapabilitiesSchemas},
 	{name: "get_vault_info", title: "Get vault info", description: "Summarize the selected vault without exposing its host path.", schemas: getVaultInfoSchemas},
 	{name: "list_documents", title: "List documents", description: "Page through current, live documents with bounded stable ordering.", schemas: listDocumentsSchemas},
+	{name: "list_tags", title: "List tags", description: "Page through visible tag definitions and assignment counts.", schemas: listTagsSchemas},
 	{name: "search_documents", title: "Search documents", description: "Search an exact bounded current-version source fence and report coverage.", schemas: searchDocumentsSchemas},
 	{name: "get_document", title: "Get document", description: "Read metadata for one exact current document identity.", schemas: getDocumentSchemas},
 	{name: "list_document_versions", title: "List document versions", description: "Page through immutable content versions for one stable document node.", schemas: listDocumentVersionsSchemas},
@@ -52,6 +64,8 @@ var readToolDefinitions = []toolDefinition{
 	{name: "get_processing_plan", title: "Get processing plan", description: "Preview the exact provider disclosure and consent state for one document version.", schemas: getProcessingPlanSchemas},
 	{name: "get_processing_status", title: "Get processing status", description: "Read the current state of one stable processing job.", schemas: getProcessingStatusSchemas},
 	{name: "get_processing_coverage", title: "Get processing coverage", description: "Read rendition and embedding coverage for an exact source fence.", schemas: getProcessingCoverageSchemas},
+	{name: "list_processing_profiles", title: "List processing profiles", description: "List locally executable processing profiles without provider credentials.", schemas: listProcessingProfilesSchemas},
+	{name: "get_format_coverage", title: "Get format coverage", description: "Read the verified per-format capability inventory and optional exact lookup.", schemas: getFormatCoverageSchemas},
 	{name: "get_package_import", title: "Get package import", description: "Read durable progress for one load-file import operation.", schemas: getPackageImportSchemas},
 	{name: "get_package_preflight", title: "Get package preflight", description: "Read one exact retained load-file package preflight.", schemas: getPackagePreflightSchemas},
 	{name: "list_package_preflight_diagnostics", title: "List package preflight diagnostics", description: "Page through bounded diagnostics for one retained package preflight.", schemas: listPackagePreflightDiagnosticsSchemas},
@@ -62,6 +76,29 @@ var readToolDefinitions = []toolDefinition{
 	{name: "list_package_members", title: "List package members", description: "Page through one package's immutable document occurrences.", schemas: listPackageMembersSchemas},
 	{name: "get_package_record", title: "Get package record", description: "Read one immutable sender row by its package-scoped record key.", schemas: getPackageRecordSchemas},
 	{name: "lookup_bates_label", title: "Look up Bates label", description: "Find every bounded package-scoped match for an exact received or assigned label.", schemas: lookupBatesLabelSchemas},
+	{name: "preview_export_plan", title: "Preview export plan", description: "Inspect frozen role availability before starting a native document export.", schemas: previewExportPlanSchemas},
+	{name: "get_export_plan", title: "Get export plan", description: "Read the immutable header of one native document export plan.", schemas: getExportPlanSchemas},
+	{name: "list_export_output_problems", title: "List export output problems", description: "Page through unavailable output details for one frozen export plan.", schemas: listExportOutputProblemsSchemas},
+	{name: "get_export_job", title: "Get export job", description: "Read bounded progress and the retained receipt for one native export job.", schemas: getExportJobSchemas},
+	{name: "open_export_archive", title: "Open export archive", description: "Verify a completed native export and open a bounded private archive handle.", schemas: openExportArchiveSchemas, nonIdempotent: true},
+	{name: "download_export_archive", title: "Download export archive", description: "Read a bounded chunk after checking the source is still visible.", schemas: downloadExportArchiveSchemas, nonIdempotent: true},
+	{name: "open_report_artifact", title: "Open report artifact", description: "Open an owner-checked frozen CSV or bundle artifact and return a short-lived handle.", schemas: openReportArtifactSchemas, nonIdempotent: true},
+	{name: "download_report_artifact", title: "Download report artifact", description: "Read a verified bounded chunk of a frozen report artifact; authorization is checked on every call.", schemas: downloadReportArtifactSchemas, nonIdempotent: true},
+	{name: "get_report_summary", title: "Get report summary", description: "Read an owner-checked frozen report summary with current source visibility.", schemas: getReportSummarySchemas},
+	{name: "list_report_history", title: "List report history", description: "Page through owner-checked retained report requests and summaries with current source visibility.", schemas: listReportHistorySchemas},
+	{name: "get_report_dates", title: "Get report dates", description: "Page through bounded frozen date evidence for one report.", schemas: getReportDatesSchemas},
+}
+
+var exportWriteToolDefinitions = []toolDefinition{
+	{name: "create_export_source", title: "Create export source", description: "Freeze up to 100 exact selected document versions for export.", schemas: createExportSourceSchemas, write: true, idempotent: true},
+	{name: "create_export_plan", title: "Create export plan", description: "Bind a frozen source and selected output roles to an export plan.", schemas: createExportPlanSchemas, write: true, idempotent: true},
+	{name: "start_export_job", title: "Start export job", description: "Start one durable export from an exact previewed plan fingerprint.", schemas: startExportJobSchemas, write: true, idempotent: true},
+	{name: "cancel_export_job", title: "Cancel export job", description: "Cancel one queued or running native export job.", schemas: cancelExportJobSchemas, write: true, idempotent: true, destructive: true},
+}
+
+var reportWriteToolDefinitions = []toolDefinition{
+	{name: "create_report", title: "Create report", description: "Freeze an exact native document selection and its search-term evidence.", schemas: createReportSchemas, write: true},
+	{name: "revise_report", title: "Revise report", description: "Create a new frozen report using exact reviewed date choices.", schemas: reviseReportSchemas, write: true},
 }
 
 var processingToolDefinition = toolDefinition{
@@ -94,7 +131,7 @@ var assignPackageCustodianToolDefinition = toolDefinition{
 	schemas:     assignPackageCustodianSchemas, write: true, destructive: true,
 }
 
-func toolCatalog(allowProcessing, allowPackageWrites bool) []*sdkmcp.Tool {
+func toolCatalog(allowProcessing, allowPackageWrites bool, writes ...bool) []*sdkmcp.Tool {
 	definitions := slices.Clone(readToolDefinitions)
 	if allowProcessing {
 		definitions = append(definitions, processingToolDefinition)
@@ -103,13 +140,20 @@ func toolCatalog(allowProcessing, allowPackageWrites bool) []*sdkmcp.Tool {
 		definitions = append(definitions, preflightLoadFilePackageToolDefinition, packageImportToolDefinition,
 			resolvePackageCustodianToolDefinition, assignPackageCustodianToolDefinition)
 	}
+	if len(writes) > 0 && writes[0] {
+		definitions = append(definitions, exportWriteToolDefinitions...)
+	}
+	if len(writes) > 1 && writes[1] {
+		definitions = append(definitions, reportWriteToolDefinitions...)
+	}
 	tools := make([]*sdkmcp.Tool, 0, len(definitions))
 	for _, definition := range definitions {
 		input, output := definition.schemas()
 		openWorld := definition.write
 		annotation := &sdkmcp.ToolAnnotations{
 			Title: definition.title, ReadOnlyHint: !definition.write,
-			IdempotentHint: !definition.write || definition.idempotent, DestructiveHint: &definition.destructive, OpenWorldHint: &openWorld,
+			IdempotentHint:  !definition.nonIdempotent && (!definition.write || definition.idempotent),
+			DestructiveHint: &definition.destructive, OpenWorldHint: &openWorld,
 		}
 		tools = append(tools, &sdkmcp.Tool{
 			Name: definition.name, Title: definition.title, Description: definition.description,
@@ -121,27 +165,59 @@ func toolCatalog(allowProcessing, allowPackageWrites bool) []*sdkmcp.Tool {
 }
 
 func registerToolCatalog(
-	server *sdkmcp.Server, allowProcessing, allowPackageWrites bool, lease *daemonLease, plans *processingPlanRegistry, logger *slog.Logger,
-) {
-	tools := toolCatalog(allowProcessing, allowPackageWrites)
+	server *sdkmcp.Server, allowProcessing, allowPackageWrites, allowExportWrites, allowReportWrites, scopedAgentSession bool,
+	lease *daemonLease, plans *processingPlanRegistry, archives *exportArchiveRegistry,
+	policy operationPolicy, logger *slog.Logger,
+) *reportHandleSigner {
+	tools := toolCatalog(allowProcessing, allowPackageWrites, allowExportWrites, allowReportWrites)
+	reportHandles := newReportHandleSigner()
+	if scopedAgentSession {
+		tools = slices.DeleteFunc(tools, func(tool *sdkmcp.Tool) bool {
+			switch tool.Name {
+			case "get_agent_capabilities", "list_tags", "list_processing_profiles", "get_format_coverage":
+				return false
+			default:
+				return true
+			}
+		})
+	}
+	if !policy.local() {
+		tools = slices.DeleteFunc(tools, func(tool *sdkmcp.Tool) bool {
+			switch tool.Name {
+			case "get_agent_capabilities", "get_vault_info", "list_documents", "list_tags", "search_documents", "get_document",
+				"read_rendition_text", "get_processing_plan", "get_processing_status",
+				"get_processing_coverage", "list_processing_profiles", "get_format_coverage", "start_processing":
+				return false
+			default:
+				return true
+			}
+		})
+	}
 	server.AddReceivingMiddleware(validateToolInputs(tools))
 	for _, tool := range tools {
 		output := mustResolveSchema(tool.OutputSchema)
 		var handler sdkmcp.ToolHandler
 		switch tool.Name {
 		case processingToolDefinition.name:
-			handler = processingToolHandler(lease, plans, output, logger)
+			handler = processingToolHandler(lease, plans, policy, output, logger)
 		case packageImportToolDefinition.name:
 			handler = packageImportToolHandler(lease, output, logger)
 		case preflightLoadFilePackageToolDefinition.name:
 			handler = packagePreflightToolHandler(lease, output, logger)
 		case resolvePackageCustodianToolDefinition.name, assignPackageCustodianToolDefinition.name:
 			handler = packageCustodianWriteToolHandler(lease, tool.Name, output, logger)
+		case "preview_export_plan", "get_export_plan", "list_export_output_problems", "get_export_job", "create_export_source", "create_export_plan", "start_export_job", "cancel_export_job", "open_export_archive", "download_export_archive":
+			handler = exportToolHandler(lease, archives, tool.Name, output, logger)
+		case "open_report_artifact", "download_report_artifact":
+			handler = reportToolHandler(lease, reportHandles, tool.Name, output, logger)
+		case "get_report_summary", "list_report_history", "get_report_dates", "create_report", "revise_report":
+			handler = reportControlToolHandler(lease, tool.Name, output, logger)
 		default:
-			handler = readToolHandler(lease, plans, tool.Name, output, logger)
+			handler = readToolHandler(lease, plans, policy, tool.Name, output, logger)
 		}
 		server.AddTool(tool, handler)
 	}
+	return reportHandles
 }
 
 func validateToolInputs(tools []*sdkmcp.Tool) func(sdkmcp.MethodHandler) sdkmcp.MethodHandler {
@@ -286,6 +362,12 @@ func stableDomainError(err error) (string, int) {
 	}
 	var scope *daemonconn.SourceFenceScopeTooLargeError
 	switch {
+	case errors.Is(err, api.ErrOperationNotFound):
+		return "not_found", 0
+	case errors.Is(err, api.ErrOperationDenied), errors.Is(err, api.ErrOperationGrantExpired), errors.Is(err, api.ErrOperationGrantRevoked):
+		return "operation_denied", 0
+	case errors.Is(err, api.ErrOperationScopeTooLarge):
+		return "scope_too_large", 0
 	case errors.As(err, &scope):
 		return "scope_too_large", scope.ObservedScopeCount
 	case errors.Is(err, store.ErrNotFound):
@@ -304,6 +386,16 @@ func stableDomainError(err error) (string, int) {
 		return "cursor_expired", 0
 	case errors.Is(err, store.ErrInvalidDocumentCursor):
 		return "invalid_document_cursor", 0
+	case errors.Is(err, store.ErrExportVisibilityChanged):
+		return "visibility_changed", 0
+	case errors.Is(err, errExportArchiveHandle):
+		return "artifact_unavailable", 0
+	case errors.Is(err, errExportArchiveCapacity):
+		return "artifact_limit", 0
+	case errors.Is(err, errReportHandleUnavailable):
+		return "report_unavailable", 0
+	case errors.Is(err, errReportSpoolCapacity):
+		return "report_capacity", 0
 	}
 	facts, ok := daemonProblemFacts(err)
 	if !ok {
@@ -331,6 +423,10 @@ func stableDomainError(err error) (string, int) {
 		return "invalid_rendition_window", 0
 	case "invalid_rendition_encoding":
 		return "invalid_rendition_encoding", 0
+	case "report_unavailable", "visibility_changed":
+		return facts.Code, 0
+	case "access_denied", "unauthorized", "forbidden":
+		return "access_denied", 0
 	default:
 		return "", 0
 	}
@@ -340,6 +436,8 @@ func domainErrorMessage(code string) string {
 	switch code {
 	case "not_found":
 		return "The requested Docbank identity was not found."
+	case "operation_denied":
+		return "The authenticated principal is not permitted to perform this operation."
 	case "stale_version":
 		return "The requested content version is no longer current and live."
 	case "plan_changed":
@@ -360,6 +458,18 @@ func domainErrorMessage(code string) string {
 		return "The requested rendition text window is outside the supported range."
 	case "invalid_rendition_encoding":
 		return "The active rendition is not valid UTF-8 text."
+	case "visibility_changed":
+		return "The source is no longer visible."
+	case "access_denied":
+		return "The current credential cannot access this Docbank operation."
+	case "artifact_unavailable":
+		return "The archive handle is unavailable; open the archive again."
+	case "artifact_limit":
+		return "The archive exceeds the MCP byte limit; use the CLI download."
+	case "report_unavailable":
+		return "The report artifact is unavailable to this owner."
+	case "report_capacity":
+		return "Report download capacity is exhausted; close a handle or retry later."
 	default:
 		return "The Docbank operation could not be completed."
 	}

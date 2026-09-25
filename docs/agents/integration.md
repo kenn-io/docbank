@@ -1,5 +1,5 @@
 ---
-last_edited: 2026-09-12
+last_edited: 2026-09-25
 title: Agent Integration Guide
 description: Connect an agent to docbank safely using its OpenAPI contract, authenticated HTTP API, revisions, and dry-run maintenance operations.
 ---
@@ -102,6 +102,37 @@ docbank daemon restart
 The daemon rejects non-loopback binds. Remote access is not a separate mode:
 use an SSH tunnel or VPN that terminates at the daemon host's loopback
 listener, and protect the API key as a vault credential.
+
+### Use a bounded read session
+
+An operator with the daemon's master key can `POST /api/v1/agent-sessions`
+with `operations: ["read"]`, exact `source_ids`, and `ttl_seconds` from 1 to
+3600. The response contains a session ID, expiry, and a token. Keep the token
+private and send it only as `X-Docbank-Agent-Session` to that daemon. Do not
+send the master key, bearer credential, or browser session with it. A read
+outside the listed sources is denied, and the token stops working at expiry
+or after `DELETE /api/v1/agent-sessions/{id}` with the master key. This
+credential does not grant writes.
+
+The CLI can write the token to a private file without printing it:
+
+```bash
+docbank agent-session issue --source-id <content-version-id> --ttl 15m --output /private/agent-session.json
+DOCBANK_AGENT_SESSION_FILE=/private/agent-session.json docbank mcp --transport stdio
+```
+
+That MCP process advertises four metadata reads: agent capabilities, visible
+tags, processing profiles, and format coverage. Use CLI or the authenticated
+daemon API for other source-scoped reads until their MCP handlers are qualified.
+
+Use the same `DOCBANK_AGENT_SESSION_FILE` for separate CLI invocations. The
+file names one loopback daemon and expires with the grant. A missing, unsafe,
+expired, or revoked file fails the operation; Docbank does not discover or
+start a daemon with the master key while the file is configured. Run
+`docbank agent-session revoke <session-id>` without that environment variable
+when the grant is no longer needed. Scoped sessions currently support read
+operations on their exact source fence. They can also read format capability
+metadata, which contains no document content.
 
 Examples below assume:
 

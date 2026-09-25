@@ -47,13 +47,16 @@ func registerFormatRoutes(api huma.API, d Deps) {
 	huma.Register(api, huma.Operation{
 		OperationID: "readFormatCapabilities", Method: http.MethodGet,
 		Path: "/api/v1/formats/capabilities", Summary: "Read per-format capability coverage",
-	}, func(_ context.Context, in *struct {
+	}, func(ctx context.Context, in *struct {
 		Family    string `query:"family" maxLength:"64"`
 		Format    string `query:"format" maxLength:"64"`
 		Extension string `query:"extension" maxLength:"16"`
 	}) (*formatCoverageOutput, error) {
 		if err := validateFormatQuery(in.Family, in.Format, in.Extension); err != nil {
 			return nil, NewError(http.StatusUnprocessableEntity, "invalid_format_query", err.Error())
+		}
+		if _, err := authorizeRequest(ctx, d, OperationRead, nil, false, false); err != nil {
+			return nil, err
 		}
 		if snapshotErr != nil {
 			return nil, FromStoreError(snapshotErr)
