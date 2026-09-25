@@ -16,6 +16,7 @@ import (
 )
 
 func TestTimelineRebuildRejectsNonCanonicalUUIDv4BeforeStore(t *testing.T) {
+	t.Parallel()
 	ts, s := newTestServer(t, nil)
 	var before bytes.Buffer
 	require.NoError(t, s.ExportMetadata(t.Context(), &before))
@@ -47,6 +48,7 @@ func TestTimelineRebuildRejectsNonCanonicalUUIDv4BeforeStore(t *testing.T) {
 }
 
 func TestTimelineRebuildIsIdempotentByOperationID(t *testing.T) {
+	t.Parallel()
 	ts, _ := newTestServer(t, nil)
 	const operationID = "10000000-0000-4000-8000-000000000001"
 	requestBody := `{"operation_id":"` + operationID + `"}`
@@ -120,6 +122,7 @@ func TestTimelineRebuildIsIdempotentByOperationID(t *testing.T) {
 }
 
 func TestTimelineCoverageRouteDoesNotInitializeState(t *testing.T) {
+	t.Parallel()
 	ts, _ := newTestServer(t, nil)
 	response, body := rawJSONRequest(t, ts.URL, http.MethodGet,
 		"/api/v1/timeline/coverage", map[string]string{"X-Api-Key": testAPIKey}, "")
@@ -128,6 +131,7 @@ func TestTimelineCoverageRouteDoesNotInitializeState(t *testing.T) {
 }
 
 func TestTimelineClientRejectsMismatchedOperationID(t *testing.T) {
+	t.Parallel()
 	const requested = "30000000-0000-4000-8000-000000000003"
 	const returned = "40000000-0000-4000-8000-000000000004"
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

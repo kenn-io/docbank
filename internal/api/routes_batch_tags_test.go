@@ -10,6 +10,7 @@ import (
 )
 
 func TestBatchTagsHTTPReplayAndStaleAtomicity(t *testing.T) {
+	t.Parallel()
 	ts, s := newTestServer(t, nil)
 	ctx := t.Context()
 	one, err := s.Mkdir(ctx, s.RootID(), "one")
@@ -71,6 +72,7 @@ func TestBatchTagsHTTPReplayAndStaleAtomicity(t *testing.T) {
 }
 
 func TestBatchTagsHTTPValidationAndPreview(t *testing.T) {
+	t.Parallel()
 	ts, s := newTestServer(t, nil)
 	node, err := s.Mkdir(t.Context(), s.RootID(), "selected")
 	require.NoError(t, err)
@@ -108,6 +110,7 @@ func TestBatchTagsHTTPValidationAndPreview(t *testing.T) {
 }
 
 func TestBatchTagsHTTPBrowserCapabilityIsExact(t *testing.T) {
+	t.Parallel()
 	ts, _ := newTestServer(t, nil)
 	resp, body := do(t, ts, http.MethodPost, "/api/daemon/web-session", nil, nil)
 	require.Equal(t, http.StatusCreated, resp.StatusCode, body)
@@ -131,6 +134,7 @@ func TestBatchTagsHTTPBrowserCapabilityIsExact(t *testing.T) {
 }
 
 func TestBatchTagsHTTPBoundsAndUnavailableTargets(t *testing.T) {
+	t.Parallel()
 	ts, s := newTestServer(t, nil)
 	node, err := s.Mkdir(t.Context(), s.RootID(), "selected")
 	require.NoError(t, err)

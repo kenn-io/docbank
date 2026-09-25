@@ -10,6 +10,7 @@ import (
 )
 
 func TestAuditPreviewRegistryExpiresPlans(t *testing.T) {
+	t.Parallel()
 	registry := newAuditPreviewRegistry()
 	now := time.Date(2026, time.July, 18, 12, 0, 0, 0, time.UTC)
 	registry.now = func() time.Time { return now }

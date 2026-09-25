@@ -18,6 +18,7 @@ import (
 // A received Cap Cloud link has no documented download route, so acquisition
 // is reported as unsupported and the exact file reaches processing manually.
 func TestCapCloudRecordingManualHTTP(t *testing.T) {
+	t.Parallel()
 	ts, catalog := newTestServer(t, configureRemoteManualTestService(t))
 	c := daemonconn.New(ts.URL, testAPIKey)
 	reference := "https://cap.so/s/synthcap-http?t=private-synthetic"

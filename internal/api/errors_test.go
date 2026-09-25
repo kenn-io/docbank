@@ -15,6 +15,7 @@ import (
 )
 
 func TestFromMaintenanceErrorPreservesCommittedRetirementBoundary(t *testing.T) {
+	t.Parallel()
 	err := &packstore.PackRetirementError{PackID: "01kxbz5s5z6b3m8v8m8p0m6h4y", Err: errors.New("sharing violation")}
 	mapped := &Error{}
 	ok := errors.As(FromMaintenanceError(err), &mapped)
@@ -26,6 +27,7 @@ func TestFromMaintenanceErrorPreservesCommittedRetirementBoundary(t *testing.T) 
 }
 
 func TestFromStoreErrorMapsUnsupportedAuditMutation(t *testing.T) {
+	t.Parallel()
 	mapped := &Error{}
 	ok := errors.As(FromStoreError(store.ErrAuditMutationUnsupported), &mapped)
 	require.True(t, ok)
@@ -34,6 +36,7 @@ func TestFromStoreErrorMapsUnsupportedAuditMutation(t *testing.T) {
 }
 
 func TestFromStoreErrorMapsCustodianConflict(t *testing.T) {
+	t.Parallel()
 	mapped := &Error{}
 	require.ErrorAs(t, FromStoreError(store.ErrCustodianConflict), &mapped)
 	assert.Equal(t, http.StatusConflict, mapped.Status)
@@ -41,6 +44,7 @@ func TestFromStoreErrorMapsCustodianConflict(t *testing.T) {
 }
 
 func TestFromStoreErrorMapsPersonConflicts(t *testing.T) {
+	t.Parallel()
 	for _, test := range []struct {
 		err  error
 		code string
@@ -58,6 +62,7 @@ func TestFromStoreErrorMapsPersonConflicts(t *testing.T) {
 }
 
 func TestProcessingErrorsPreserveRenditionOutcomes(t *testing.T) {
+	t.Parallel()
 	for _, test := range []struct {
 		err  error
 		code string

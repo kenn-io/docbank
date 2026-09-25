@@ -18,6 +18,7 @@ import (
 )
 
 func TestStorageRegistrationPreviewApplyAndRemoval(t *testing.T) {
+	t.Parallel()
 	namespace := filepath.Join(t.TempDir(), "archive")
 	ts, live := newTestServer(t, func(d *api.Deps) {
 		d.Cfg.StoreBindings = map[string]config.StoreBindingConfig{
@@ -86,6 +87,7 @@ func TestStorageRegistrationPreviewApplyAndRemoval(t *testing.T) {
 }
 
 func TestStorageRegistrationRejectsVaultOverlap(t *testing.T) {
+	t.Parallel()
 	ts, _ := newTestServer(t, func(d *api.Deps) {
 		d.Cfg.StoreBindings = map[string]config.StoreBindingConfig{
 			"inside": {
@@ -104,6 +106,7 @@ func TestStorageRegistrationRejectsVaultOverlap(t *testing.T) {
 }
 
 func TestStorageRegistrationRejectsWatchOverlap(t *testing.T) {
+	t.Parallel()
 	watchRoot := t.TempDir()
 	ts, _ := newTestServer(t, func(d *api.Deps) {
 		d.Cfg.Watches = []config.WatchConfig{{
@@ -126,6 +129,7 @@ func TestStorageRegistrationRejectsWatchOverlap(t *testing.T) {
 }
 
 func TestStorageRegistrationRejectsUnmarkedNonemptyNamespace(t *testing.T) {
+	t.Parallel()
 	namespace := t.TempDir()
 	require.NoError(t, blob.EnsureFilesystemNamespace(namespace))
 	require.NoError(t, os.WriteFile(
@@ -149,6 +153,7 @@ func TestStorageRegistrationRejectsUnmarkedNonemptyNamespace(t *testing.T) {
 }
 
 func TestStorageRegistrationRejectsOverlappingSecondaries(t *testing.T) {
+	t.Parallel()
 	outer := filepath.Join(t.TempDir(), "archive")
 	inner := filepath.Join(outer, "nested")
 	ts, _ := newTestServer(t, func(d *api.Deps) {
@@ -178,6 +183,7 @@ func TestStorageRegistrationRejectsOverlappingSecondaries(t *testing.T) {
 }
 
 func TestStorageRegistrationRejectsOverlappingS3Prefixes(t *testing.T) {
+	t.Parallel()
 	ts, _ := newTestServer(t, func(d *api.Deps) {
 		d.Cfg.StoreBindings = map[string]config.StoreBindingConfig{
 			"outer": {
@@ -211,6 +217,7 @@ func TestStorageRegistrationRejectsOverlappingS3Prefixes(t *testing.T) {
 }
 
 func TestStorageRegistrationRejectsInvalidFirstS3Namespace(t *testing.T) {
+	t.Parallel()
 	ts, _ := newTestServer(t, func(d *api.Deps) {
 		d.Cfg.StoreBindings = map[string]config.StoreBindingConfig{
 			"invalid": {
@@ -232,6 +239,7 @@ func TestStorageRegistrationRejectsInvalidFirstS3Namespace(t *testing.T) {
 }
 
 func TestStorageRegistrationRejectsCatalogChangeBeforeMarkerHandoff(t *testing.T) {
+	t.Parallel()
 	namespace := filepath.Join(t.TempDir(), "archive")
 	ts, live := newTestServer(t, func(d *api.Deps) {
 		d.Cfg.StoreBindings = map[string]config.StoreBindingConfig{
@@ -260,6 +268,7 @@ func TestStorageRegistrationRejectsCatalogChangeBeforeMarkerHandoff(t *testing.T
 }
 
 func TestStorageEvacuationPreviewRunsAndDetachesEmptySecondary(t *testing.T) {
+	t.Parallel()
 	namespace := filepath.Join(t.TempDir(), "archive")
 	ts, _ := newTestServer(t, func(d *api.Deps) {
 		d.Jobs = jobs.New(t.Context(), nil)

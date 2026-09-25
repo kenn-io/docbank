@@ -222,6 +222,7 @@ func etagOf(t *testing.T, ts *httptest.Server, id int64) (api.Node, string) {
 }
 
 func TestHealthAndPing(t *testing.T) {
+	t.Parallel()
 	ts, _ := newTestServer(t, nil)
 	resp, body := get(t, ts, "/health", nil)
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
@@ -232,6 +233,7 @@ func TestHealthAndPing(t *testing.T) {
 }
 
 func TestDaemonOwnershipChallengeDoesNotRequireOrRevealCredentials(t *testing.T) {
+	t.Parallel()
 	const token = "per-run-shutdown-secret"
 	ts, _ := newTestServer(t, func(d *api.Deps) { d.ShutdownToken = token })
 	nonce := bytes.Repeat([]byte{0x42}, daemonauth.NonceBytes)
@@ -252,6 +254,7 @@ func TestDaemonOwnershipChallengeDoesNotRequireOrRevealCredentials(t *testing.T)
 }
 
 func TestAuthRequiredWhenKeySet(t *testing.T) {
+	t.Parallel()
 	mutate := func(d *api.Deps) { d.Cfg.Server.APIKey = "sekrit" }
 	ts, _ := newTestServer(t, mutate)
 
@@ -292,6 +295,7 @@ func TestAuthRequiredWhenKeySet(t *testing.T) {
 // one — see cmd/docbank/daemon.go); this test proves a request without
 // that key is refused rather than silently allowed through.
 func TestKeylessConfigStillRequiresAuth(t *testing.T) {
+	t.Parallel()
 	ts, _ := newTestServer(t, nil)
 	resp, _ := get(t, ts, "/api/v1/nodes/1", map[string]string{"X-Api-Key": ""})
 	assert.Equal(t, http.StatusUnauthorized, resp.StatusCode)
@@ -302,12 +306,14 @@ func TestKeylessConfigStillRequiresAuth(t *testing.T) {
 // the old bug and built Deps with an empty key, NewServer itself refuses to
 // construct rather than silently falling back to unauthenticated.
 func TestNewServerRefusesEmptyKey(t *testing.T) {
+	t.Parallel()
 	assert.Panics(t, func() {
 		api.NewServer(api.Deps{Cfg: config.Default()})
 	})
 }
 
 func TestWebApplication(t *testing.T) {
+	t.Parallel()
 	ts, _ := newTestServer(t, nil)
 	resp, body := get(t, ts, "/", nil)
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
@@ -326,6 +332,7 @@ func TestWebApplication(t *testing.T) {
 }
 
 func TestWebSessionIsScopedRevocableAndDaemonLocal(t *testing.T) {
+	t.Parallel()
 	ts, s := newTestServer(t, nil)
 	taxes, err := s.Mkdir(t.Context(), s.RootID(), "Taxes")
 	require.NoError(t, err)
@@ -661,6 +668,7 @@ func TestWebSessionIsScopedRevocableAndDaemonLocal(t *testing.T) {
 }
 
 func TestWebSessionRequiresEnabledCompiledApplication(t *testing.T) {
+	t.Parallel()
 	for _, mutate := range []func(*api.Deps){
 		func(d *api.Deps) { d.Cfg.Web.Enabled = false },
 		func(d *api.Deps) { d.WebURL = "" },
@@ -679,6 +687,7 @@ func TestWebSessionRequiresEnabledCompiledApplication(t *testing.T) {
 // key (it isn't in authExempt, so authMiddleware wraps it like every other
 // route) and its own token: neither alone is enough.
 func TestShutdownRoute(t *testing.T) {
+	t.Parallel()
 	called := make(chan struct{}, 1)
 	mutate := func(d *api.Deps) {
 		d.ShutdownToken = "tok"
@@ -725,6 +734,7 @@ func TestShutdownRoute(t *testing.T) {
 }
 
 func TestValidationErrorEnvelope(t *testing.T) {
+	t.Parallel()
 	ts, _ := newTestServer(t, nil)
 	// Bad path param type → huma validation error → our envelope.
 	resp, body := get(t, ts, "/api/v1/nodes/not-a-number", nil)

@@ -17,6 +17,7 @@ import (
 )
 
 func TestTrashEmptyReportsEmailRetentionWithoutBlockingOtherRoots(t *testing.T) {
+	t.Parallel()
 	ts, s := newTestServer(t, nil)
 	version := createEmailVersion(t, s, "synthetic-retained.eml", "Subject: Synthetic\r\n\r\nRetained body")
 	response, body := do(t, ts, http.MethodPost, "/api/v1/versions/"+version.ID+"/email", nil, struct{}{})
@@ -49,6 +50,7 @@ func TestTrashEmptyReportsEmailRetentionWithoutBlockingOtherRoots(t *testing.T) 
 }
 
 func TestEmailDocumentsAndConsentRequireMasterAPIKey(t *testing.T) {
+	t.Parallel()
 	ts, _ := newTestServer(t, nil)
 	response, body := do(t, ts, http.MethodPost, "/api/daemon/web-session", nil, nil)
 	require.Equal(t, http.StatusCreated, response.StatusCode, body)
@@ -65,6 +67,7 @@ func TestEmailDocumentsAndConsentRequireMasterAPIKey(t *testing.T) {
 }
 
 func TestEmailDocumentRequestBoundaries(t *testing.T) {
+	t.Parallel()
 	ts, _ := newTestServer(t, nil)
 	for _, path := range []string{"/api/v1/processing/consents", "/api/v1/processing/consents/revoke"} {
 		response, body := do(t, ts, http.MethodPost, path, nil, struct{}{})
@@ -94,6 +97,7 @@ func TestEmailDocumentRequestBoundaries(t *testing.T) {
 }
 
 func TestEmailDocumentConsentErrorStatuses(t *testing.T) {
+	t.Parallel()
 	for _, test := range []struct {
 		code   string
 		cause  error
@@ -119,6 +123,7 @@ func TestEmailDocumentConsentErrorStatuses(t *testing.T) {
 }
 
 func TestEmailDocumentProcessingRejectsInvalidJob(t *testing.T) {
+	t.Parallel()
 	provider, err := plaintext.New(plaintext.Profile{MaxDocumentBytes: 1 << 20})
 	require.NoError(t, err)
 	ts, s := newTestServer(t, configureProcessingTestServiceWithProvider(t, provider))
@@ -165,6 +170,7 @@ func TestEmailDocumentProcessingRejectsInvalidJob(t *testing.T) {
 }
 
 func TestEmailDocumentProcessingRequiresConfiguredService(t *testing.T) {
+	t.Parallel()
 	ts, _ := newTestServer(t, nil)
 	response, body := do(t, ts, http.MethodPost, "/api/v1/email-document-processing", nil, struct{}{})
 	require.Equal(t, http.StatusServiceUnavailable, response.StatusCode, body)

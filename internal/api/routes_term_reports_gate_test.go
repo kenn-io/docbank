@@ -16,6 +16,7 @@ import (
 )
 
 func TestTermReportRevisionHistoryWaitsForMaintenance(t *testing.T) {
+	t.Parallel()
 	for _, cancelWaiting := range []bool{false, true} {
 		name := "persist after maintenance"
 		if cancelWaiting {

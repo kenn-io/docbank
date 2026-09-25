@@ -17,6 +17,7 @@ import (
 )
 
 func TestMediaOriginsHTTPReportsProbeEvidence(t *testing.T) {
+	t.Parallel()
 	ts, _ := newTestServer(t, func(deps *api.Deps) {
 		gate := api.NewOperationGate()
 		service, err := processing.NewService(processing.ServiceConfig{

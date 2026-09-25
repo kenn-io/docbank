@@ -15,6 +15,7 @@ import (
 )
 
 func TestExportInspectionRoutesBoundDetailsAndOwner(t *testing.T) {
+	t.Parallel()
 	ts, s := newTestServer(t, nil)
 	token := issueWebSession(t, ts)
 	headers := map[string]string{"X-Api-Key": "", api.WebSessionHeader: token}
@@ -67,6 +68,7 @@ func TestExportInspectionRoutesBoundDetailsAndOwner(t *testing.T) {
 }
 
 func TestExportCollectionResolvesVaultMailboxWithoutChangingSessionOwnership(t *testing.T) {
+	t.Parallel()
 	ts, s := newTestServer(t, nil)
 	n := createFileWithContent(t, ts, s, "/source.mbox", "synthetic")
 	owner := "vault:" + s.VaultID()

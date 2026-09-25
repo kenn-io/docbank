@@ -13,6 +13,7 @@ import (
 )
 
 func TestTermReportRequiresUnambiguousProfile(t *testing.T) {
+	t.Parallel()
 	for _, multiple := range []bool{false, true} {
 		name := "sole profile"
 		if multiple {

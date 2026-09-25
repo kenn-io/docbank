@@ -142,6 +142,7 @@ func publishRenditionTextFixture(t *testing.T, s *testStore, cfg config.Config, 
 }
 
 func TestRenditionTextHTTPResolvesAndStreamsOneVerifiedExactArtifact(t *testing.T) {
+	t.Parallel()
 	var cfg config.Config
 	ts, s := newTestServer(t, func(d *api.Deps) { renditionTextConfig(d); cfg = d.Cfg })
 	sourceHash, sourceSize, err := s.Blobs.Write(strings.NewReader("%PDF-1.4 synthetic source"))
@@ -198,6 +199,7 @@ func TestRenditionTextHTTPResolvesAndStreamsOneVerifiedExactArtifact(t *testing.
 }
 
 func TestRenditionTextHTTPKeepsUnavailableStatesDistinct(t *testing.T) {
+	t.Parallel()
 	ts, s := newTestServer(t, nil)
 	node := createFileWithContent(t, ts, s, "/notes.txt", "eligible original text")
 	base := map[string]any{"node_id": node.ID, "revision": node.Revision,
@@ -237,6 +239,7 @@ func TestRenditionTextHTTPKeepsUnavailableStatesDistinct(t *testing.T) {
 }
 
 func TestRenditionTextHTTPKeepsSnapshotWithoutRenditionFrozenAfterPublication(t *testing.T) {
+	t.Parallel()
 	for _, sharedBuild := range []bool{false, true} {
 		t.Run("shared_build="+strconv.FormatBool(sharedBuild), func(t *testing.T) {
 			var cfg config.Config
@@ -323,6 +326,7 @@ func mustDecodeTestHash(t *testing.T, value string) []byte {
 }
 
 func TestRenditionTextHTTPRejectsChangedNamedAndImplicitProfiles(t *testing.T) {
+	t.Parallel()
 	ts, s := newTestServer(t, renditionTextConfig)
 	node := createFileWithContent(t, ts, s, "/notes.txt", "synthetic original text")
 	for _, profile := range []string{"archive", ""} {
@@ -339,6 +343,7 @@ func TestRenditionTextHTTPRejectsChangedNamedAndImplicitProfiles(t *testing.T) {
 }
 
 func TestRenditionTextHTTPReportsFailedLiveProcessing(t *testing.T) {
+	t.Parallel()
 	provider, err := plaintext.New(plaintext.Profile{MaxDocumentBytes: 1 << 20})
 	require.NoError(t, err)
 	ts, s := newTestServer(t, func(d *api.Deps) {

@@ -9,6 +9,7 @@ import (
 )
 
 func TestParseAge(t *testing.T) {
+	t.Parallel()
 	d, err := ParseAge("")
 	require.NoError(t, err)
 	assert.Equal(t, time.Duration(0), d)
@@ -32,6 +33,7 @@ func TestParseAge(t *testing.T) {
 // would accept — and a wrapped-small cutoff makes trash empty delete far
 // newer entries than the caller asked to keep.
 func TestParseAgeRejectsOverflowingDays(t *testing.T) {
+	t.Parallel()
 	for _, bad := range []string{"213504d", "106752d", "9223372036854775807d"} {
 		_, err := ParseAge(bad)
 		require.Error(t, err, "age %q must be rejected, not wrapped", bad)

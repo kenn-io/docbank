@@ -16,6 +16,7 @@ import (
 )
 
 func TestPackageContainerHTTPUploadAndSeal(t *testing.T) {
+	t.Parallel()
 	srv, db := newPackageTestServer(t)
 	raw := []byte("synthetic ZIP bytes")
 	hash := sha256.Sum256(raw)
@@ -51,6 +52,7 @@ func TestPackageContainerHTTPUploadAndSeal(t *testing.T) {
 }
 
 func TestPackageContainerIncompleteSealAndBrowserPUT(t *testing.T) {
+	t.Parallel()
 	srv, _ := newPackageTestServer(t)
 	raw := []byte("zip")
 	hash := sha256.Sum256(raw)
@@ -76,6 +78,7 @@ func TestPackageContainerIncompleteSealAndBrowserPUT(t *testing.T) {
 }
 
 func TestPackageContainerSealRejectsWrongFullHash(t *testing.T) {
+	t.Parallel()
 	srv, _ := newPackageTestServer(t)
 	raw := []byte("declared ZIP bytes")
 	actual := sha256.Sum256(raw)
@@ -103,6 +106,7 @@ func TestPackageContainerSealRejectsWrongFullHash(t *testing.T) {
 }
 
 func TestPackageContainerIDCollisionAcrossBrowserOwnersIsConflict(t *testing.T) {
+	t.Parallel()
 	srv, _ := newPackageTestServer(t)
 	firstToken := packageBrowserToken(t, srv)
 	secondToken := packageBrowserToken(t, srv)

@@ -16,6 +16,7 @@ import (
 )
 
 func TestMailboxMalformedTransferIsInputError(t *testing.T) {
+	t.Parallel()
 	ts, s := newTestServer(t, nil)
 	require.NoError(t, s.RegisterMailboxArchive(t.Context(), store.MailboxArchive{
 		ID: "synthetic-archive", Owner: "vault:" + s.VaultID(), Description: "Synthetic archive",
@@ -43,6 +44,7 @@ func TestMailboxMalformedTransferIsInputError(t *testing.T) {
 }
 
 func TestMailboxMutationPreservesMaintenanceResponse(t *testing.T) {
+	t.Parallel()
 	gate := api.NewOperationGate()
 	ts, _ := newTestServer(t, func(d *api.Deps) { d.Gate = gate })
 	entered := make(chan struct{})
@@ -69,6 +71,7 @@ func TestMailboxMutationPreservesMaintenanceResponse(t *testing.T) {
 }
 
 func TestMailboxUnknownArchiveIsNotFound(t *testing.T) {
+	t.Parallel()
 	ts, s := newTestServer(t, nil)
 	raw := "Subject: Synthetic\r\n\r\nBody\r\n"
 	digest := sha256.Sum256([]byte(raw))

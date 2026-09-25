@@ -13,6 +13,7 @@ import (
 )
 
 func TestPackagePathReferenceUsesConfirmedLogicalVolumeRoots(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	mapping := loadfile.Mapping{VolumeRoots: map[string]string{"VOL001": "DELIVERY/VOL001"}}
 	volumes, err := logicalPackageVolumes([]loadfile.Volume{{Name: "DELIVERY", DeclaredRoot: "DELIVERY", Ordinal: 1}}, mapping)
@@ -25,6 +26,7 @@ func TestPackagePathReferenceUsesConfirmedLogicalVolumeRoots(t *testing.T) {
 }
 
 func TestPackageMemoryBudgetRejectsAggregateGrowth(t *testing.T) {
+	t.Parallel()
 	budget := packageMemoryBudget{maximum: 10}
 	require.NoError(t, budget.add(8))
 	require.ErrorIs(t, budget.add(3), loadfile.ErrLoadfileLimit)
@@ -32,6 +34,7 @@ func TestPackageMemoryBudgetRejectsAggregateGrowth(t *testing.T) {
 }
 
 func TestPackageInventoryDoesNotWaitForVaultMaintenance(t *testing.T) {
+	t.Parallel()
 	gate := NewOperationGate()
 	require.NoError(t, gate.MaintainContext(t.Context(), func() error {
 		ctx, cancel := context.WithTimeout(t.Context(), time.Second)
@@ -45,6 +48,7 @@ func TestPackageInventoryDoesNotWaitForVaultMaintenance(t *testing.T) {
 }
 
 func TestPackageMappingReservesMemoryBeforeExpandingFields(t *testing.T) {
+	t.Parallel()
 	for _, multiValue := range []bool{false, true} {
 		records := []loadfile.Record{{Fields: []loadfile.Field{{Column: "Children", Raw: strings.Repeat(";", loadfile.MaxFieldValueBytes)}}}}
 		mapping := loadfile.Mapping{Columns: []loadfile.MappingColumn{{SourceOrdinal: new(0), Canonical: new("loadfile.family.children"), MultiValue: multiValue}}}
@@ -64,6 +68,7 @@ func TestPackageMappingReservesMemoryBeforeExpandingFields(t *testing.T) {
 }
 
 func TestPackageMappingSharesBudgetAcrossRecords(t *testing.T) {
+	t.Parallel()
 	records := []loadfile.Record{
 		{Fields: []loadfile.Field{{Raw: strings.Repeat(";", 64)}}},
 		{Fields: []loadfile.Field{{Raw: strings.Repeat(";", 64)}}},

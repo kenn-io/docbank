@@ -20,6 +20,7 @@ import (
 )
 
 func TestExportTicketPreparationTimeoutBoundary(t *testing.T) {
+	t.Parallel()
 	const download = "/api/v1/exports/jobs/a2b864dd-bcd9-4c63-a1bd-321293fbbd34/download"
 	for _, test := range []struct {
 		method, path string
@@ -58,6 +59,7 @@ func TestExportTicketPreparationTimeoutBoundary(t *testing.T) {
 }
 
 func TestMailboxWatchTimeoutBoundary(t *testing.T) {
+	t.Parallel()
 	const events = "/api/v1/mailbox/jobs/synthetic-import/events"
 	for _, test := range []struct {
 		method, path string
@@ -92,6 +94,7 @@ func TestMailboxWatchTimeoutBoundary(t *testing.T) {
 }
 
 func TestExportTicketOperationClearsBodyDeadlineWithoutRelaxingBounds(t *testing.T) {
+	t.Parallel()
 	doc := NewOfflineServer().API().OpenAPI()
 	operation := doc.Paths["/api/v1/exports/jobs/{id}/download"].Post
 	require.NotNil(t, operation.RequestBody)
@@ -101,6 +104,7 @@ func TestExportTicketOperationClearsBodyDeadlineWithoutRelaxingBounds(t *testing
 }
 
 func TestTimeoutExemptOperationsClearBodyReadDeadline(t *testing.T) {
+	t.Parallel()
 	doc := NewOfflineServer().API().OpenAPI()
 	marked := 0
 	for path, item := range doc.Paths {
@@ -119,6 +123,7 @@ func TestTimeoutExemptOperationsClearBodyReadDeadline(t *testing.T) {
 }
 
 func TestLongRunningHumaOperationOutlivesDefaultBodyDeadline(t *testing.T) {
+	t.Parallel()
 	mux := http.NewServeMux()
 	humaAPI := humago.New(mux, huma.DefaultConfig("test", "test"))
 	entered := make(chan struct{})
@@ -171,7 +176,7 @@ func TestLongRunningHumaOperationOutlivesDefaultBodyDeadline(t *testing.T) {
 
 	select {
 	case <-entered:
-	case <-time.After(time.Second):
+	case <-time.After(10 * time.Second):
 		t.Fatal("long-running handler did not start")
 	}
 	select {
@@ -188,12 +193,13 @@ func TestLongRunningHumaOperationOutlivesDefaultBodyDeadline(t *testing.T) {
 		var response map[string]any
 		require.NoError(t, json.Unmarshal(got.body, &response))
 		assert.Equal(t, true, response["completed"])
-	case <-time.After(2 * time.Second):
+	case <-time.After(10 * time.Second):
 		t.Fatal("long-running request did not finish after release")
 	}
 }
 
 func TestEmailPartStreamAndEnsureHaveNoRequestDeadline(t *testing.T) {
+	t.Parallel()
 	deadline := make(chan bool, 1)
 	handler := timeoutMiddleware(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
 		_, present := r.Context().Deadline()
@@ -218,6 +224,7 @@ func TestEmailPartStreamAndEnsureHaveNoRequestDeadline(t *testing.T) {
 }
 
 func TestMediaRetryOutlivesRequestTimeout(t *testing.T) {
+	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {
 		const route = "/api/v1/media/sources/{source_id}/retry"
 		operation := NewOfflineServer().API().OpenAPI().Paths[route].Post
@@ -256,6 +263,7 @@ func TestMediaRetryOutlivesRequestTimeout(t *testing.T) {
 }
 
 func TestPackagePreflightHasNoRequestDeadline(t *testing.T) {
+	t.Parallel()
 	handler := timeoutMiddleware(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
 		_, present := r.Context().Deadline()
 		assert.False(t, present)
@@ -264,6 +272,7 @@ func TestPackagePreflightHasNoRequestDeadline(t *testing.T) {
 }
 
 func TestExportPreparationOutlivesRequestTimeout(t *testing.T) {
+	t.Parallel()
 	for _, route := range []string{
 		"/api/v1/exports/sources", "/api/v1/exports/sources/{id}/seal",
 		"/api/v1/exports/plans", "/api/v1/exports/jobs/{id}/download",
@@ -306,11 +315,13 @@ func TestExportPreparationOutlivesRequestTimeout(t *testing.T) {
 }
 
 func TestExportContextErrorsRemainDistinct(t *testing.T) {
+	t.Parallel()
 	require.Equal(t, http.StatusGatewayTimeout, exportProblem(context.DeadlineExceeded).Status)
 	require.Equal(t, http.StatusRequestTimeout, exportProblem(context.Canceled).Status)
 }
 
 func TestMailboxTimeoutBoundary(t *testing.T) {
+	t.Parallel()
 	for _, test := range []struct {
 		method, path string
 		exempt       bool

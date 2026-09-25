@@ -12,6 +12,7 @@ import (
 )
 
 func TestMailboxAPIAuthenticatesAndFencesDeclaredChunkBytes(t *testing.T) {
+	t.Parallel()
 	ts, s := newTestServer(t, nil)
 	r := api.MailboxContainerInput{ID: "synthetic-mailbox", SHA256: strings.Repeat("a", 64), Size: 3, Format: "mbox"}
 	response, body := do(t, ts, http.MethodPost, "/api/v1/mailbox/containers", nil, r)
@@ -36,6 +37,7 @@ func TestMailboxAPIAuthenticatesAndFencesDeclaredChunkBytes(t *testing.T) {
 }
 
 func TestMailboxOpenAPIHasRequestsAndStreamingStatus(t *testing.T) {
+	t.Parallel()
 	doc := api.NewOfflineServer().API().OpenAPI()
 	create := doc.Paths["/api/v1/mailbox/containers"].Post
 	require.NotNil(t, create.RequestBody)
@@ -49,6 +51,7 @@ func TestMailboxOpenAPIHasRequestsAndStreamingStatus(t *testing.T) {
 }
 
 func TestMailboxInternalFailureIsServerError(t *testing.T) {
+	t.Parallel()
 	ts, s := newTestServer(t, nil)
 	require.NoError(t, s.Close())
 	response, body := get(t, ts, "/api/v1/mailbox/jobs", nil)
@@ -56,6 +59,7 @@ func TestMailboxInternalFailureIsServerError(t *testing.T) {
 }
 
 func TestMailboxRequestSchemasAcceptServerDefaults(t *testing.T) {
+	t.Parallel()
 	doc := api.NewOfflineServer().API().OpenAPI()
 	for path, payload := range map[string]string{
 		"/containers":       `{"id":"synthetic","sha256":"` + strings.Repeat("a", 64) + `","size":3,"format":"mbox"}`,

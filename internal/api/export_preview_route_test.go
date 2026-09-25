@@ -13,6 +13,7 @@ import (
 )
 
 func TestExportPreviewBrowserRouteOwnerAndExactAllowlist(t *testing.T) {
+	t.Parallel()
 	ts, s := newTestServer(t, nil)
 	token := issueWebSession(t, ts)
 	headers := map[string]string{"X-Api-Key": "", api.WebSessionHeader: token}

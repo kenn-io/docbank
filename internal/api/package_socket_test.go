@@ -20,6 +20,7 @@ import (
 )
 
 func TestBrowserPackageBytesUseOwnedSocketAndSeal(t *testing.T) {
+	t.Parallel()
 	srv, _ := newPackageTestServer(t)
 	token := packageBrowserToken(t, srv)
 	other := packageBrowserToken(t, srv)
@@ -70,6 +71,7 @@ func TestBrowserPackageBytesUseOwnedSocketAndSeal(t *testing.T) {
 }
 
 func TestBrowserPackageSocketRefusesDifferentOwner(t *testing.T) {
+	t.Parallel()
 	srv, _ := newPackageTestServer(t)
 	owner := packageBrowserToken(t, srv)
 	other := packageBrowserToken(t, srv)
@@ -98,6 +100,7 @@ func TestBrowserPackageSocketRefusesDifferentOwner(t *testing.T) {
 }
 
 func TestBrowserPackageSocketSplitsOneMiBFramesAt64MiBBoundary(t *testing.T) {
+	t.Parallel()
 	srv, db := newPackageTestServer(t)
 	token := packageBrowserToken(t, srv)
 	raw := bytes.Repeat([]byte("Z"), int(store.MailboxChunkBytes)+17)
@@ -136,6 +139,7 @@ func TestBrowserPackageSocketSplitsOneMiBFramesAt64MiBBoundary(t *testing.T) {
 }
 
 func TestBrowserPackageSocketRejectsOversizedFrame(t *testing.T) {
+	t.Parallel()
 	srv, _ := newPackageTestServer(t)
 	token := packageBrowserToken(t, srv)
 	raw := bytes.Repeat([]byte("F"), (1<<20)+1)
@@ -167,6 +171,7 @@ func TestBrowserPackageSocketRejectsOversizedFrame(t *testing.T) {
 }
 
 func TestBrowserPackageSocketRejectsChangedBytes(t *testing.T) {
+	t.Parallel()
 	srv, _ := newPackageTestServer(t)
 	token := packageBrowserToken(t, srv)
 	expected := []byte("expected zip")
@@ -199,6 +204,7 @@ func TestBrowserPackageSocketRejectsChangedBytes(t *testing.T) {
 }
 
 func TestBrowserPackageSocketAbandonsIncompleteUpload(t *testing.T) {
+	t.Parallel()
 	for _, outcome := range []string{"cancel", "disconnect"} {
 		t.Run(outcome, func(t *testing.T) {
 			srv, _ := newPackageTestServer(t)

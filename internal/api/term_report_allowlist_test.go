@@ -10,6 +10,7 @@ import (
 )
 
 func TestTermReportBrowserAllowlistRequiresExactRoutes(t *testing.T) {
+	t.Parallel()
 	id := strings.Repeat("a", 48)
 	for _, item := range []struct{ method, path string }{
 		{http.MethodPost, "/api/v1/search-exports"},

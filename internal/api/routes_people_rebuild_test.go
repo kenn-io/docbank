@@ -12,6 +12,7 @@ import (
 )
 
 func TestPeopleRebuildRoutesReplayAndCoverage(t *testing.T) {
+	t.Parallel()
 	ts, _ := newTestServer(t, nil)
 	response, raw := get(t, ts, "/api/v1/people/coverage", nil)
 	require.Equal(t, http.StatusOK, response.StatusCode, raw)

@@ -40,6 +40,7 @@ func importCollection(
 }
 
 func TestCollectionsHTTPListsDetailsAndMembers(t *testing.T) {
+	t.Parallel()
 	ts, s := newTestServer(t, nil)
 	firstLabel := "First import"
 	sourceDir := t.TempDir()
@@ -127,6 +128,7 @@ func TestCollectionsHTTPListsDetailsAndMembers(t *testing.T) {
 }
 
 func TestCollectionsHTTPValidatesAuthIdentityAndPageBounds(t *testing.T) {
+	t.Parallel()
 	ts, _ := newTestServer(t, nil)
 	for name, key := range map[string]string{"missing": "", "wrong": "wrong-key"} {
 		t.Run(name, func(t *testing.T) {
@@ -156,6 +158,7 @@ func TestCollectionsHTTPValidatesAuthIdentityAndPageBounds(t *testing.T) {
 }
 
 func TestCollectionHTTPRetainsDirectLabelAccessWhenMembershipEmpties(t *testing.T) {
+	t.Parallel()
 	ts, s := newTestServer(t, nil)
 	label := "Reserved name"
 	report := importCollection(t, ts.URL, ts.Client(), "retained.txt", "retained", &label)
@@ -204,6 +207,7 @@ func TestCollectionHTTPRetainsDirectLabelAccessWhenMembershipEmpties(t *testing.
 }
 
 func TestCollectionLabelHTTPRevisionLifecycleAndValidation(t *testing.T) {
+	t.Parallel()
 	ts, s := newTestServer(t, nil)
 	report := importCollection(t, ts.URL, ts.Client(), "note.txt", "synthetic", nil)
 	path := "/api/v1/collections/" + report.IngestID + "/label"
@@ -289,6 +293,7 @@ func TestCollectionLabelHTTPRevisionLifecycleAndValidation(t *testing.T) {
 }
 
 func TestCollectionLabelHTTPCollisionAndAuditRestriction(t *testing.T) {
+	t.Parallel()
 	ts, s := newTestServer(t, nil)
 	reserved := "Reserved"
 	first := importCollection(t, ts.URL, ts.Client(), "first.txt", "first", &reserved)
@@ -319,6 +324,7 @@ func TestCollectionLabelHTTPCollisionAndAuditRestriction(t *testing.T) {
 }
 
 func TestCollectionRoutesHaveExactBrowserSessionAllowList(t *testing.T) {
+	t.Parallel()
 	ts, _ := newTestServer(t, nil)
 	report := importCollection(t, ts.URL, ts.Client(), "browser.txt", "browser", nil)
 	resp, body := do(t, ts, http.MethodPost, "/api/daemon/web-session", nil, nil)

@@ -13,6 +13,7 @@ import (
 // Definition reads remain available during maintenance, but receipt writes must
 // wait until it ends. Gating the whole build incorrectly rejects the read.
 func TestSavedQueryRunGatesOnlyReceiptMutation(t *testing.T) {
+	t.Parallel()
 	gate := api.NewOperationGate()
 	ts, s := newTestServer(t, func(d *api.Deps) { d.Gate = gate })
 	saved, _ := createSavedQuery(t, ts.URL, "Synthetic maintenance query", `{}`)

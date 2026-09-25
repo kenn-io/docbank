@@ -29,6 +29,7 @@ import (
 )
 
 func TestMediaRoutesAreAuthenticatedAndCoverTheTwelveContracts(t *testing.T) {
+	t.Parallel()
 	ts, catalog := newTestServer(t, configureMediaTestService(t))
 	unauthorized, body := get(t, ts, "/api/v1/media/sources?limit=10",
 		map[string]string{"X-Api-Key": ""})
@@ -177,6 +178,7 @@ func TestMediaRoutesAreAuthenticatedAndCoverTheTwelveContracts(t *testing.T) {
 }
 
 func TestMediaUploadsOutliveRequestTimeout(t *testing.T) {
+	t.Parallel()
 	for _, artifact := range []bool{false, true} {
 		t.Run(fmt.Sprintf("artifact=%t", artifact), func(t *testing.T) {
 			ts, catalog := newTestServer(t, configureMediaTestService(t))
@@ -232,6 +234,7 @@ func TestMediaUploadsOutliveRequestTimeout(t *testing.T) {
 }
 
 func TestMediaMultipartRejectsIncompleteEnvelopeBeforeRetention(t *testing.T) {
+	t.Parallel()
 	for _, test := range []struct {
 		name      string
 		extraPart bool
@@ -293,7 +296,7 @@ func TestMediaMultipartRejectsIncompleteEnvelopeBeforeRetention(t *testing.T) {
 	}
 }
 
-func TestMediaRetryClassifiesProcessingErrors(t *testing.T) {
+func TestMediaRetryClassifiesProcessingErrors(t *testing.T) { //nolint:paralleltest // the two-second consent expiry is measured on the real clock
 	ts, catalog := newTestServer(t, configureMediaTestService(t))
 	c := daemonconn.New(ts.URL, testAPIKey)
 	wav := mediatest.WAV()
@@ -359,6 +362,7 @@ func TestMediaRetryClassifiesProcessingErrors(t *testing.T) {
 }
 
 func TestMediaReferenceRejectsUnsupportedProcessing(t *testing.T) {
+	t.Parallel()
 	ts, _ := newTestServer(t, configureMediaTestService(t))
 	response, body := do(t, ts, http.MethodPost, "/api/v1/media/sources", nil, api.MediaReferenceBody{
 		OperationID: "00000000-0000-4000-8000-000000000404", ReferenceURL: "https://recordings.invalid/call",
@@ -372,6 +376,7 @@ func TestMediaReferenceRejectsUnsupportedProcessing(t *testing.T) {
 }
 
 func TestMediaHTTPMP3OrdinaryProcessingFreezesRevokedInput(t *testing.T) {
+	t.Parallel()
 	ts, catalog := newTestServer(t, configureMediaTestService(t))
 	c := daemonconn.New(ts.URL, testAPIKey)
 	mp3 := mediatest.MP3()
@@ -420,6 +425,7 @@ func TestMediaHTTPMP3OrdinaryProcessingFreezesRevokedInput(t *testing.T) {
 }
 
 func TestMediaRouteRejectsCursorOwnedByAnotherPrincipal(t *testing.T) {
+	t.Parallel()
 	ts, catalog := newTestServer(t, configureMediaTestService(t))
 	c := daemonconn.New(ts.URL, testAPIKey)
 	for index, operationID := range []string{

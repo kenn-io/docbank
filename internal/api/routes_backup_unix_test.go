@@ -16,6 +16,7 @@ import (
 )
 
 func TestBackupRestoreRejectsSymlinkedVaultAndRepositoryAliases(t *testing.T) {
+	t.Parallel()
 	repoPath := filepath.Join(t.TempDir(), "repo")
 	ts, live := newTestServer(t, func(d *api.Deps) { d.Cfg.Backup.Repo = repoPath })
 	resp, body := do(t, ts, http.MethodPost, "/api/v1/backup/init", nil, map[string]any{})
@@ -40,6 +41,7 @@ func TestBackupRestoreRejectsSymlinkedVaultAndRepositoryAliases(t *testing.T) {
 }
 
 func TestBackupRestoreRejectsCaseEquivalentRepositoryAlias(t *testing.T) {
+	t.Parallel()
 	parent := t.TempDir()
 	repoPath := filepath.Join(parent, "CaseSensitiveRepo")
 	ts, _ := newTestServer(t, func(d *api.Deps) { d.Cfg.Backup.Repo = repoPath })

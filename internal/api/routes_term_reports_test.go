@@ -17,6 +17,7 @@ import (
 )
 
 func TestTermReportRoutesWithoutStoreReturnUnavailable(t *testing.T) {
+	t.Parallel()
 	_, catalog := newTestServer(t, func(d *api.Deps) { d.Store = nil })
 	for _, request := range []struct{ method, path, body string }{
 		{http.MethodGet, "/api/v1/search-exports", ""},
@@ -39,6 +40,7 @@ func TestTermReportRoutesWithoutStoreReturnUnavailable(t *testing.T) {
 }
 
 func TestTermReportRoutesFreezeSummaryDatesAndDownload(t *testing.T) {
+	t.Parallel()
 	ts, s := newTestServer(t, nil)
 	createFileWithContent(t, ts, s, "/synthetic-alpha.txt", "synthetic alpha")
 	request := report.Request{Version: 1, AllDocuments: true, Timezone: "UTC",
@@ -100,6 +102,7 @@ func TestTermReportRoutesFreezeSummaryDatesAndDownload(t *testing.T) {
 }
 
 func TestTermReportRejectsInvalidRequestAsClientError(t *testing.T) {
+	t.Parallel()
 	ts, _ := newTestServer(t, nil)
 	request := `{"version":1,"all_documents":true,"timezone":"Invalid/Zone","coverage_mode":"strict",` +
 		`"terms":[{"number":1,"expression":"alpha","syntax":"simple",` +
@@ -119,6 +122,7 @@ func TestTermReportRejectsInvalidRequestAsClientError(t *testing.T) {
 }
 
 func TestTermReportRejectsMalformedRevisionAsClientError(t *testing.T) {
+	t.Parallel()
 	ts, s := newTestServer(t, nil)
 	createFileWithContent(t, ts, s, "/synthetic-alpha.txt", "synthetic alpha")
 	request := `{"version":1,"all_documents":true,"timezone":"UTC","coverage_mode":"available_only",` +
@@ -148,6 +152,7 @@ func TestTermReportRejectsMalformedRevisionAsClientError(t *testing.T) {
 }
 
 func TestTermReportDateLimitIdentifiesDocument(t *testing.T) {
+	t.Parallel()
 	ts, catalog := newTestServer(t, nil)
 	content := strings.Repeat("Document dated 2024-05-06. ", 257)
 	node := createFileWithContent(t, ts, catalog, "/many-dates.txt", content)
@@ -166,6 +171,7 @@ func TestTermReportDateLimitIdentifiesDocument(t *testing.T) {
 }
 
 func TestTermReportNativeTextLimitReturnsClientError(t *testing.T) {
+	t.Parallel()
 	ts, catalog := newTestServer(t, nil)
 	content := strings.Repeat("x", (16<<20)+1)
 	node := createFileWithContent(t, ts, catalog, "/large-text.txt", content)
@@ -183,6 +189,7 @@ func TestTermReportNativeTextLimitReturnsClientError(t *testing.T) {
 }
 
 func TestTermReportOldDownloadStaysFrozenAfterSourceChange(t *testing.T) {
+	t.Parallel()
 	ts, s := newTestServer(t, nil)
 	node := createFileWithContent(t, ts, s, "/alpha.txt", "synthetic original")
 	request := report.Request{Version: 1, AllDocuments: true, Timezone: "UTC",
@@ -214,6 +221,7 @@ func TestTermReportOldDownloadStaysFrozenAfterSourceChange(t *testing.T) {
 }
 
 func TestTermReportBrowserTicketIsOneUseAndOwnerBound(t *testing.T) {
+	t.Parallel()
 	ts, s := newTestServer(t, nil)
 	createFileWithContent(t, ts, s, "/synthetic-alpha.txt", "synthetic alpha")
 	sessionRequest, err := http.NewRequest(http.MethodPost, ts.URL+"/api/daemon/web-session", nil)

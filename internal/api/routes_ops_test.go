@@ -28,6 +28,7 @@ import (
 )
 
 func TestIngestEndpoint(t *testing.T) {
+	t.Parallel()
 	ts, _ := newTestServer(t, nil)
 	src := t.TempDir()
 	require.NoError(t, os.WriteFile(filepath.Join(src, "a.txt"), []byte("hello"), 0o600))
@@ -71,6 +72,7 @@ func TestIngestEndpoint(t *testing.T) {
 }
 
 func TestIngestProgressStreamEndsWithResult(t *testing.T) {
+	t.Parallel()
 	ts, _ := newTestServer(t, nil)
 	src := filepath.Join(t.TempDir(), "progress.txt")
 	content := []byte("stream this import")
@@ -115,6 +117,7 @@ func TestIngestProgressStreamEndsWithResult(t *testing.T) {
 }
 
 func TestIngestPreflightIsReadOnlyAndSharesExclusions(t *testing.T) {
+	t.Parallel()
 	ts, _ := newTestServer(t, nil)
 	src := t.TempDir()
 	require.NoError(t, os.WriteFile(filepath.Join(src, "keep.jsonl"), []byte("{\"ok\":true}\n"), 0o600))
@@ -152,6 +155,7 @@ func TestIngestPreflightIsReadOnlyAndSharesExclusions(t *testing.T) {
 }
 
 func TestIngestRoutesCarryIncludeAndExcludeSelection(t *testing.T) {
+	t.Parallel()
 	source := t.TempDir()
 	require.NoError(t, os.WriteFile(filepath.Join(source, "keep.txt"), []byte("keep"), 0o600))
 	require.NoError(t, os.WriteFile(filepath.Join(source, "skip.txt"), []byte("skip"), 0o600))
@@ -199,6 +203,7 @@ func TestIngestRoutesCarryIncludeAndExcludeSelection(t *testing.T) {
 }
 
 func TestIngestRejectsNonLoopback(t *testing.T) {
+	t.Parallel()
 	// httptest.NewRequest-style direct handler invocation with a non-loopback
 	// RemoteAddr proves the middleware fence without real remote networking.
 	// Deps are built directly (not via newTestServer) to mirror its internals:
@@ -231,6 +236,7 @@ func TestIngestRejectsNonLoopback(t *testing.T) {
 }
 
 func TestIngestRoutesRejectInvalidJSONTextBeforeDecoding(t *testing.T) {
+	t.Parallel()
 	ts, s := newTestServer(t, nil)
 	replacementName := "bad\ufffd.txt"
 	replacementPath := filepath.Join(t.TempDir(), replacementName)
@@ -275,6 +281,7 @@ func TestIngestRoutesRejectInvalidJSONTextBeforeDecoding(t *testing.T) {
 }
 
 func TestIngestRoutesAcceptPairedSurrogatePath(t *testing.T) {
+	t.Parallel()
 	for _, route := range []string{
 		"/api/v1/ingest", "/api/v1/ingest/stream", "/api/v1/ingest/preflight",
 	} {
@@ -328,6 +335,7 @@ func TestIngestRoutesAcceptPairedSurrogatePath(t *testing.T) {
 }
 
 func TestTrashListAndEmpty(t *testing.T) {
+	t.Parallel()
 	ts, s := newTestServer(t, nil)
 	f := createFileWithContent(t, ts, s, "/old.txt", "x")
 	_, etag := etagOf(t, ts, f.ID)
@@ -378,6 +386,7 @@ func TestTrashListAndEmpty(t *testing.T) {
 }
 
 func TestStorageStatusReportsLooseAndPackedUsage(t *testing.T) {
+	t.Parallel()
 	ts, s := newTestServer(t, nil)
 	createFileWithContent(t, ts, s, "/packed.txt", "packed storage status")
 
@@ -411,6 +420,7 @@ func TestStorageStatusReportsLooseAndPackedUsage(t *testing.T) {
 }
 
 func TestInventoryReadsDuringPacking(t *testing.T) {
+	t.Parallel()
 	gate := api.NewOperationGate()
 	ts, s := newTestServer(t, func(d *api.Deps) { d.Gate = gate })
 	const documents = 1000
@@ -454,6 +464,7 @@ reading:
 }
 
 func TestVaultInfoIdentifiesRootAndSummarizesContents(t *testing.T) {
+	t.Parallel()
 	ts, s := newTestServer(t, nil)
 	docs, err := s.Mkdir(t.Context(), s.RootID(), "docs")
 	require.NoError(t, err)
@@ -487,6 +498,7 @@ func TestVaultInfoIdentifiesRootAndSummarizesContents(t *testing.T) {
 }
 
 func TestStoragePackHonorsBudgetAndConverges(t *testing.T) {
+	t.Parallel()
 	ts, s := newTestServer(t, nil)
 	createFileWithContent(t, ts, s, "/one.txt", "one")
 	createFileWithContent(t, ts, s, "/two.txt", "two")
@@ -528,6 +540,7 @@ func TestStoragePackHonorsBudgetAndConverges(t *testing.T) {
 }
 
 func TestStorageRepackReclaimsSparsePack(t *testing.T) {
+	t.Parallel()
 	ts, s := newTestServer(t, nil)
 	files := []store.Node{
 		createFileWithContent(t, ts, s, "/one.txt", "one"),
@@ -582,6 +595,7 @@ func TestStorageRepackReclaimsSparsePack(t *testing.T) {
 }
 
 func TestStorageRepackContinuesFromEmptyMappingHighWater(t *testing.T) {
+	t.Parallel()
 	ts, s := newTestServer(t, func(deps *api.Deps) {
 		deps.RepackPage = func(
 			ctx context.Context, metadata *store.Store, blobs *blob.Store,
@@ -625,6 +639,7 @@ func TestStorageRepackContinuesFromEmptyMappingHighWater(t *testing.T) {
 }
 
 func TestGCRevokesPackedBlobAuthority(t *testing.T) {
+	t.Parallel()
 	ts, s := newTestServer(t, nil)
 	file := createFileWithContent(t, ts, s, "/packed.txt", "packed gc content")
 	packed, err := s.Blobs.Maintainer().Pack(t.Context(), packstore.PackOptions{})
@@ -673,6 +688,7 @@ func TestGCRevokesPackedBlobAuthority(t *testing.T) {
 }
 
 func TestGCReconcilesCrashRetainedLooseCopiesAfterPackedAuthorityRemoval(t *testing.T) {
+	t.Parallel()
 	ts, s := newTestServer(t, nil)
 	content := strings.Repeat("packed content with two crash-retained loose representations\n", 128)
 	file := createFileWithContent(t, ts, s, "/packed-duplicates.txt", content)
@@ -732,6 +748,7 @@ func TestGCReconcilesCrashRetainedLooseCopiesAfterPackedAuthorityRemoval(t *test
 // must still hand back a resumable cursor, or the route reports a false
 // "no progress" failure while candidates remain.
 func TestGCRunResumesAfterLeftoverRetirementDrain(t *testing.T) {
+	t.Parallel()
 	ts, s := newTestServer(t, nil)
 	first := createFileWithContent(t, ts, s, "/leftover.txt", "leftover retirement bytes")
 	second := createFileWithContent(t, ts, s, "/candidate.txt", "still a gc candidate")
@@ -766,6 +783,7 @@ func TestGCRunResumesAfterLeftoverRetirementDrain(t *testing.T) {
 }
 
 func TestGCDryRunAndRun(t *testing.T) {
+	t.Parallel()
 	ts, s := newTestServer(t, nil)
 	f := createFileWithContent(t, ts, s, "/g.txt", "gc-me")
 	_, etag := etagOf(t, ts, f.ID)
@@ -792,6 +810,7 @@ func TestGCDryRunAndRun(t *testing.T) {
 }
 
 func TestGCEndpointAdvancesPastLiveOnlyRawPage(t *testing.T) {
+	t.Parallel()
 	ts, s := newTestServer(t, nil)
 	target := createFileWithContent(t, ts, s, "/bounded-gc.txt", "bounded gc target")
 	_, etag := etagOf(t, ts, target.ID)
@@ -818,6 +837,7 @@ func TestGCEndpointAdvancesPastLiveOnlyRawPage(t *testing.T) {
 }
 
 func TestGCEndpointRetainsFullPhysicalOrphanReconciliation(t *testing.T) {
+	t.Parallel()
 	ts, s := newTestServer(t, nil)
 	hash, size, err := s.Blobs.Write(strings.NewReader("untracked physical content"))
 	require.NoError(t, err)
@@ -843,6 +863,7 @@ func TestGCEndpointRetainsFullPhysicalOrphanReconciliation(t *testing.T) {
 }
 
 func TestGCEndpointReclaimsPublishedRemoteOnlyRestoreFiles(t *testing.T) {
+	t.Parallel()
 	ts, s := newTestServer(t, nil)
 	content := "remote-only restored content"
 	file := createFileWithContent(t, ts, s, "/remote-only.txt", content)
@@ -890,6 +911,7 @@ func TestGCEndpointReclaimsPublishedRemoteOnlyRestoreFiles(t *testing.T) {
 }
 
 func TestVerifyEndpoint(t *testing.T) {
+	t.Parallel()
 	ts, s := newTestServer(t, nil)
 	createFileWithContent(t, ts, s, "/ok.txt", "fine")
 	resp, body := do(t, ts, http.MethodPost, "/api/v1/verify", nil, nil)
@@ -902,6 +924,7 @@ func TestVerifyEndpoint(t *testing.T) {
 }
 
 func TestVerifyEndpointContinuesPastMalformedHashAtPageBoundary(t *testing.T) {
+	t.Parallel()
 	ts, s := newTestServer(t, nil)
 	db, err := s.SQLiteDriver().Open(s.DBPath, docsqlite.OpenOptions{
 		Access: docsqlite.ReadWriteExisting, TransactionMode: docsqlite.Immediate,
@@ -936,6 +959,7 @@ func TestVerifyEndpointContinuesPastMalformedHashAtPageBoundary(t *testing.T) {
 }
 
 func TestVerifyEndpointReportsMalformedBlobMetadata(t *testing.T) {
+	t.Parallel()
 	ts, s := newTestServer(t, nil)
 	created := createFileWithContent(t, ts, s, "/malformed.txt", "still verifiable")
 
@@ -960,6 +984,7 @@ func TestVerifyEndpointReportsMalformedBlobMetadata(t *testing.T) {
 }
 
 func TestVerifyEndpointReportsBlobInventoryFailureAlongsideMetadataFailure(t *testing.T) {
+	t.Parallel()
 	sentinel := errors.New("blob inventory unavailable")
 	var calls int
 	ts, s := newTestServer(t, func(deps *api.Deps) {
@@ -998,6 +1023,7 @@ func TestVerifyEndpointReportsBlobInventoryFailureAlongsideMetadataFailure(t *te
 }
 
 func TestMaintenanceGateReportsBusyToMutations(t *testing.T) {
+	t.Parallel()
 	gate := api.NewOperationGate()
 	maintenanceEntered := make(chan struct{})
 	releaseMaintenance := make(chan struct{})
