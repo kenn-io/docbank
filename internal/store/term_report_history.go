@@ -14,8 +14,17 @@ import (
 // TermReportHistory retains only a reusable request and run receipt. Report
 // artifacts and date-evidence pages are deliberately excluded.
 type TermReportHistory struct {
-	Request report.Request `json:"request"`
-	Summary report.Summary `json:"summary"`
+	Request           report.Request    `json:"request"`
+	Summary           report.Summary    `json:"summary"`
+	VisibilityKnown   bool              `json:"-"`
+	VisibilityMembers []report.Identity `json:"-"`
+}
+
+type termReportHistoryReceipt struct {
+	report.Summary
+
+	VisibilityKnown   bool              `json:"visibility_known,omitempty"`
+	VisibilityMembers []report.Identity `json:"visibility_members,omitempty"`
 }
 
 type TermReportHistoryPage struct {
@@ -61,6 +70,19 @@ func validateTermReportHistory(item TermReportHistory) error {
 	if !s.ExpiresAt.After(s.ObservedAt) {
 		return errors.New("invalid report history expiry")
 	}
+	if len(item.VisibilityMembers) > report.MaxVisibilityIdentities || !item.VisibilityKnown && len(item.VisibilityMembers) != 0 {
+		return errors.New("invalid report history visibility evidence")
+	}
+	seen := make(map[report.Identity]bool, len(item.VisibilityMembers))
+	for _, member := range item.VisibilityMembers {
+		if member.NodeID <= 0 || member.VersionID == "" || len(member.SHA256) != 64 || seen[member] {
+			return errors.New("invalid report history member identity")
+		}
+		if _, err := hex.DecodeString(member.SHA256); err != nil {
+			return errors.New("invalid report history member hash")
+		}
+		seen[member] = true
+	}
 	return nil
 }
 
@@ -83,12 +105,13 @@ func (s *Store) SaveTermReportHistory(ctx context.Context, item TermReportHistor
 	if err != nil {
 		return err
 	}
-	summaryJSON, err := json.Marshal(item.Summary)
+	summaryJSON, err := json.Marshal(termReportHistoryReceipt{Summary: item.Summary,
+		VisibilityKnown: item.VisibilityKnown, VisibilityMembers: item.VisibilityMembers})
 	if err != nil {
 		return err
 	}
 	if len(requestJSON) > report.MaxRequestSummaryJSONBytes || len(summaryJSON) > report.MaxRequestSummaryJSONBytes {
-		return errors.New("report history receipt exceeds limit")
+		return fmt.Errorf("%w: report history receipt exceeds limit", report.ErrReportLimit)
 	}
 	return s.withStorageTx(ctx, func(tx *sql.Tx) error {
 		if _, err := tx.ExecContext(ctx, `INSERT INTO term_report_history(
@@ -143,10 +166,14 @@ func (s *Store) ListTermReportHistory(ctx context.Context, offset, limit int) (T
 
 func decodeTermReportHistory(id, parentID, observedAt string, requestJSON, summaryJSON []byte) (TermReportHistory, error) {
 	var item TermReportHistory
+	var receipt termReportHistoryReceipt
 	if len(requestJSON) > report.MaxRequestSummaryJSONBytes || len(summaryJSON) > report.MaxRequestSummaryJSONBytes ||
-		json.Unmarshal(requestJSON, &item.Request) != nil || json.Unmarshal(summaryJSON, &item.Summary) != nil {
+		json.Unmarshal(requestJSON, &item.Request) != nil || json.Unmarshal(summaryJSON, &receipt) != nil {
 		return item, errors.New("invalid report history JSON")
 	}
+	item.Summary = receipt.Summary
+	item.VisibilityKnown = receipt.VisibilityKnown
+	item.VisibilityMembers = receipt.VisibilityMembers
 	if err := validateTermReportHistory(item); err != nil {
 		return item, err
 	}

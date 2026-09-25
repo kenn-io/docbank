@@ -10,6 +10,14 @@ type DocumentQuery struct {
 	Cursor     string `json:"cursor,omitzero"`
 }
 
+// ScopedDocumentQuery restricts catalog candidates to the supplied current
+// content versions before the daemon applies sorting or pagination.
+type ScopedDocumentQuery struct {
+	DocumentQuery
+
+	ContentVersionIDs []string `json:"content_version_ids" minItems:"1" maxItems:"4096"`
+}
+
 type DocumentRenditionIdentity struct {
 	ProfileFingerprint string `json:"profile_fingerprint" pattern:"^[0-9a-f]{64}$"`
 	AttachmentID       string `json:"attachment_id" pattern:"^[0-9a-f]{64}$"`

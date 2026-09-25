@@ -15,6 +15,7 @@ const (
 	DefaultDocumentCatalogPageSize   = 50
 	MaxDocumentCatalogPageSize       = 250
 	MaxDocumentSummaryResolutions    = 100
+	MaxDocumentCatalogSourceIDs      = 4096
 )
 
 type DocumentCatalogSort string
@@ -46,6 +47,9 @@ type DocumentCatalogQuery struct {
 	Sort       DocumentCatalogSort
 	Direction  DocumentCatalogDirection
 	PageSize   int
+	// SourceIDs restricts document candidates before sorting and pagination.
+	// Nil is unrestricted; a non-nil empty slice is invalid.
+	SourceIDs []string
 }
 
 // DocumentCatalogPosition is the typed live-keyset boundary authenticated by
@@ -131,7 +135,21 @@ func (s *Store) ListDocuments(
 		return DocumentCatalogPage{}, fmt.Errorf("resolving document catalog prefix: %w", err)
 	}
 	args := documentCatalogArgs(root.ID, normalized.PathPrefix)
-	items, err := s.queryDocumentCatalogPage(ctx, tx, normalized, boundary, traversal, args)
+	catalogCTE := documentCatalogCTE
+	if normalized.SourceIDs != nil {
+		placeholders := make([]string, len(normalized.SourceIDs))
+		for index, id := range normalized.SourceIDs {
+			placeholders[index] = "?"
+			args = append(args, id)
+		}
+		catalogCTE = strings.Replace(catalogCTE,
+			"WHERE n.kind='file' AND l.path IS NOT NULL\n)",
+			"WHERE n.kind='file' AND l.path IS NOT NULL AND cv.version_id IN ("+strings.Join(placeholders, ",")+")\n)", 1)
+		if catalogCTE == documentCatalogCTE {
+			return DocumentCatalogPage{}, errors.New("document catalog source filter is unavailable")
+		}
+	}
+	items, err := s.queryDocumentCatalogPage(ctx, tx, normalized, boundary, traversal, catalogCTE, args)
 	if err != nil {
 		return DocumentCatalogPage{}, err
 	}
@@ -140,12 +158,12 @@ func (s *Store) ListDocuments(
 		page.FirstPosition = documentCatalogPosition(normalized.Sort, items[0])
 		page.LastPosition = documentCatalogPosition(normalized.Sort, items[len(items)-1])
 		page.HasPrevious, err = s.documentCatalogHasRows(
-			ctx, tx, normalized, page.FirstPosition, DocumentCatalogTraversalPrevious, args)
+			ctx, tx, normalized, page.FirstPosition, DocumentCatalogTraversalPrevious, catalogCTE, args)
 		if err != nil {
 			return DocumentCatalogPage{}, err
 		}
 		page.HasNext, err = s.documentCatalogHasRows(
-			ctx, tx, normalized, page.LastPosition, DocumentCatalogTraversalNext, args)
+			ctx, tx, normalized, page.LastPosition, DocumentCatalogTraversalNext, catalogCTE, args)
 		if err != nil {
 			return DocumentCatalogPage{}, err
 		}
@@ -293,6 +311,17 @@ func normalizeDocumentCatalogQuery(query DocumentCatalogQuery) (DocumentCatalogQ
 		return DocumentCatalogQuery{}, fmt.Errorf("%w: page size must be between 1 and %d",
 			ErrInvalidDocumentQuery, MaxDocumentCatalogPageSize)
 	}
+	if query.SourceIDs != nil {
+		if len(query.SourceIDs) == 0 || len(query.SourceIDs) > MaxDocumentCatalogSourceIDs {
+			return DocumentCatalogQuery{}, fmt.Errorf("%w: invalid source fence size", ErrInvalidDocumentQuery)
+		}
+		query.SourceIDs = slices.Clone(query.SourceIDs)
+		if slices.Contains(query.SourceIDs, "") {
+			return DocumentCatalogQuery{}, fmt.Errorf("%w: empty source ID", ErrInvalidDocumentQuery)
+		}
+		slices.Sort(query.SourceIDs)
+		query.SourceIDs = slices.Compact(query.SourceIDs)
+	}
 	return query, nil
 }
 
@@ -336,13 +365,13 @@ func documentCatalogArgs(rootID int64, prefix string) []any {
 
 func (s *Store) queryDocumentCatalogPage(
 	ctx context.Context, tx *sql.Tx, query DocumentCatalogQuery,
-	boundary *DocumentCatalogPosition, traversal DocumentCatalogTraversal, args []any,
+	boundary *DocumentCatalogPosition, traversal DocumentCatalogTraversal, catalogCTE string, args []any,
 ) ([]DocumentSummary, error) {
 	where, boundaryArgs := documentCatalogBoundary(query, boundary, traversal)
 	order := documentCatalogOrder(query, traversal)
 	args = append(slices.Clone(args), boundaryArgs...)
 	args = append(args, query.PageSize)
-	rows, err := tx.QueryContext(ctx, documentCatalogCTE+`, page AS (
+	rows, err := tx.QueryContext(ctx, catalogCTE+`, page AS (
   SELECT * FROM documents `+where+` ORDER BY `+order+` LIMIT ?
  )
  SELECT COALESCE(d.node_id,0),COALESCE(d.content_version_id,''),COALESCE(d.path,''),
@@ -395,14 +424,14 @@ func (s *Store) queryDocumentCatalogPage(
 
 func (s *Store) documentCatalogHasRows(
 	ctx context.Context, tx *sql.Tx, query DocumentCatalogQuery,
-	position DocumentCatalogPosition, traversal DocumentCatalogTraversal, args []any,
+	position DocumentCatalogPosition, traversal DocumentCatalogTraversal, catalogCTE string, args []any,
 ) (bool, error) {
 	// ponytail: continuation checks rescan the bounded prefix subtree; share one
 	// materialized catalog per page if repeated scans become a measured bottleneck.
 	where, boundaryArgs := documentCatalogBoundary(query, &position, traversal)
 	args = append(slices.Clone(args), boundaryArgs...)
 	var one int
-	err := tx.QueryRowContext(ctx, documentCatalogCTE+`
+	err := tx.QueryRowContext(ctx, catalogCTE+`
   SELECT 1 FROM documents `+where+` LIMIT 1`, args...).Scan(&one)
 	if errors.Is(err, sql.ErrNoRows) {
 		return false, nil
