@@ -5,6 +5,7 @@ import (
 	"encoding/json/v2"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"testing"
 
@@ -13,6 +14,7 @@ import (
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/fotobanktest"
 	"go.kenn.io/docbank/internal/store"
+	"go.kenn.io/docbank/sqlite"
 )
 
 func migrationFixtureRequest(t *testing.T) api.FotobankInventoryRequest {
@@ -87,4 +89,25 @@ func TestMigrationRunRoutes(t *testing.T) {
 
 	missing, missingBody := get(t, ts, "/api/v1/migrations/runs/00000000-0000-4000-8000-000000000099", nil)
 	require.Equal(t, http.StatusNotFound, missing.StatusCode, missingBody)
+}
+
+func TestFotobankInventoryRemovesTemplateWhenRunSaveFails(t *testing.T) {
+	request := migrationFixtureRequest(t)
+	ts, server := newTestServer(t, nil)
+	db, err := store.DefaultSQLiteDriver().Open(server.DBPath, sqlite.OpenOptions{
+		Access: sqlite.ReadWriteExisting, TransactionMode: sqlite.Deferred,
+	})
+	require.NoError(t, err)
+	_, err = db.Exec(`CREATE TRIGGER reject_migration_run BEFORE INSERT ON photo_migration_runs
+		BEGIN SELECT RAISE(ABORT, 'injected run save failure'); END`)
+	require.NoError(t, err)
+	require.NoError(t, db.Close())
+
+	response, body := do(t, ts, http.MethodPost, "/api/v1/migrations/fotobank/inventories", nil, request)
+	require.NotEqual(t, http.StatusCreated, response.StatusCode, body)
+	_, err = os.Stat(request.OwnerMapPath)
+	require.ErrorIs(t, err, os.ErrNotExist)
+	page, err := server.ListPhotoMigrationRuns(t.Context(), 0, 50)
+	require.NoError(t, err)
+	require.Zero(t, page.Total)
 }

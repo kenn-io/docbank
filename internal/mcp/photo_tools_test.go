@@ -15,7 +15,7 @@ import (
 )
 
 func TestPhotoMCPWorkflowAndWriteOptIn(t *testing.T) {
-	readOnly := catalogMap(toolCatalog(false, false, false))
+	readOnly := catalogMap(toolCatalog(false, false, false, false))
 	assert.Contains(t, readOnly, "get_photo_asset")
 	for _, name := range []string{
 		"create_photo_asset", "attach_photo_file", "detach_photo_file",
@@ -24,7 +24,7 @@ func TestPhotoMCPWorkflowAndWriteOptIn(t *testing.T) {
 		assert.NotContains(t, readOnly, name)
 	}
 
-	withWrites := catalogMap(toolCatalog(false, false, true))
+	withWrites := catalogMap(toolCatalog(false, false, true, false))
 	for _, name := range []string{
 		"create_photo_asset", "attach_photo_file", "detach_photo_file",
 		"exclude_photo_asset", "promote_photo_asset",
@@ -41,7 +41,7 @@ func TestPhotoMCPWorkflowAndWriteOptIn(t *testing.T) {
 
 	server := newServerWithOptions(testImplementation(), ServerOptions{AllowPhotoEdits: true})
 	discovery := decodeResult(t, exchangeRaw(t, server, requestFor("server/discover", nil)))
-	assert.Equal(t, catalogInstructions(false, false, true), discovery["instructions"])
+	assert.Equal(t, catalogInstructions(false, false, true, false), discovery["instructions"])
 }
 
 func TestPhotoWriteNoReplay(t *testing.T) {
@@ -61,7 +61,7 @@ func TestPhotoWriteNoReplay(t *testing.T) {
 	lease := newDaemonLeaseWith(func(context.Context) (*daemonconn.Connection, error) {
 		return daemonconn.New(disconnected.URL, "synthetic-key"), nil
 	}, func(*daemonconn.Connection) error { return nil })
-	validator := mustResolveSchema(catalogMap(toolCatalog(false, false, true))["create_photo_asset"].OutputSchema)
+	validator := mustResolveSchema(catalogMap(toolCatalog(false, false, true, false))["create_photo_asset"].OutputSchema)
 
 	_, err := executePhotoWriteTool(t.Context(), lease, "create_photo_asset", validator,
 		[]byte(`{"node_id":7}`))
@@ -110,7 +110,7 @@ func TestPhotoWriteTreatsMalformedSuccessAsUnknown(t *testing.T) {
 			lease := newDaemonLeaseWith(func(context.Context) (*daemonconn.Connection, error) {
 				return daemonconn.New(server.URL, "synthetic-key"), nil
 			}, func(*daemonconn.Connection) error { return nil })
-			validator := mustResolveSchema(catalogMap(toolCatalog(false, false, true))["create_photo_asset"].OutputSchema)
+			validator := mustResolveSchema(catalogMap(toolCatalog(false, false, true, false))["create_photo_asset"].OutputSchema)
 
 			_, err := executePhotoWriteTool(t.Context(), lease, "create_photo_asset", validator, []byte(`{"node_id":7}`))
 			require.ErrorIs(t, err, errProcessingOutcomeUnknown)
@@ -139,7 +139,7 @@ func TestPhotoWriteTreatsOutputSchemaFailureAsUnknown(t *testing.T) {
 	lease := newDaemonLeaseWith(func(context.Context) (*daemonconn.Connection, error) {
 		return daemonconn.New(server.URL, "synthetic-key"), nil
 	}, func(*daemonconn.Connection) error { return nil })
-	validator := mustResolveSchema(catalogMap(toolCatalog(false, false, true))["exclude_photo_asset"].OutputSchema)
+	validator := mustResolveSchema(catalogMap(toolCatalog(false, false, true, false))["exclude_photo_asset"].OutputSchema)
 
 	_, err := executePhotoWriteTool(t.Context(), lease, "exclude_photo_asset", validator,
 		[]byte(`{"asset_id":"`+assetID+`","revision":1,"excluded":true}`))
@@ -172,7 +172,7 @@ func TestPhotoMCPCreateUsesDaemonRouteAndReturnsTimestamps(t *testing.T) {
 	lease := newDaemonLeaseWith(func(context.Context) (*daemonconn.Connection, error) {
 		return daemonconn.New(server.URL, "synthetic-key"), nil
 	}, func(*daemonconn.Connection) error { return nil })
-	validator := mustResolveSchema(catalogMap(toolCatalog(false, false, true))["create_photo_asset"].OutputSchema)
+	validator := mustResolveSchema(catalogMap(toolCatalog(false, false, true, false))["create_photo_asset"].OutputSchema)
 
 	result, err := executePhotoWriteTool(t.Context(), lease, "create_photo_asset", validator,
 		[]byte(`{"node_id":7,"role":"raw"}`))

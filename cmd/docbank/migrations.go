@@ -2,6 +2,7 @@ package main
 
 import (
 	"errors"
+	"path/filepath"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -113,6 +114,15 @@ func migrationInventoryRequest() (api.FotobankInventoryRequest, error) {
 	if strings.TrimSpace(migrationOwnerMap) == "" {
 		return api.FotobankInventoryRequest{}, errors.New("--owner-map-path is required")
 	}
+	if !filepath.IsAbs(migrationOwnerMap) {
+		return api.FotobankInventoryRequest{}, errors.New("--owner-map-path must be absolute")
+	}
+	if install && (!filepath.IsAbs(migrationCatalogPath) || !filepath.IsAbs(migrationVaultRoot)) {
+		return api.FotobankInventoryRequest{}, errors.New("--catalog-path and --vault-root must be absolute")
+	}
+	if archive && !filepath.IsAbs(migrationArchiveRoot) {
+		return api.FotobankInventoryRequest{}, errors.New("--archive-root must be absolute")
+	}
 	return api.FotobankInventoryRequest{
 		CatalogPath: migrationCatalogPath, VaultRoot: migrationVaultRoot,
 		ArchiveRoot: migrationArchiveRoot, SnapshotID: migrationSnapshotID,
@@ -131,7 +141,6 @@ func init() {
 	migrateFotobankInventoryCmd.Flags().StringVar(&migrationArchiveRoot, "archive-root", "", "absolute Fotobank recovery archive root")
 	migrateFotobankInventoryCmd.Flags().StringVar(&migrationSnapshotID, "snapshot-id", "", "archive snapshot ID (defaults to latest)")
 	migrateFotobankInventoryCmd.Flags().StringVar(&migrationOwnerMap, "owner-map-path", "", "absolute exclusive owner-map output path")
-	migrateFotobankInventoryCmd.Flags().StringVar(&migrationOwnerMap, "owner-map", "", "alias for --owner-map-path")
 	migrateRunsListCmd.Flags().IntVar(&migrationRunOffset, "offset", 0, "number of runs to skip")
 	migrateRunsListCmd.Flags().IntVar(&migrationRunLimit, "limit", 50, "number of runs to return (1-50)")
 }
