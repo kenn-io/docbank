@@ -167,6 +167,7 @@ func RunEmailPDFRetentionTest(t *testing.T, released bool,
 }
 
 func TestEmailPDFJobRetainsExactReceiptWithoutReplacingBodyHead(t *testing.T) {
+	t.Parallel()
 	f := newEmailPipelineFixture(t)
 	target := f.add(t, "synthetic.eml", emailPipelineSource, "message/rfc822")
 	view, err := EnsureEmailTarget(t.Context(), f.catalog, f.blobs, f.spool, target)

@@ -10,12 +10,14 @@ import (
 // Descriptor changes deliberately re-extract every original. Pin the local
 // parser bundle separately from the runtime-dependent shared email recipe.
 func TestSourceMetadataExtractorDescriptorIsPinned(t *testing.T) {
+	t.Parallel()
 	assert.Equal(t, "docbank-source-metadata:pdfcpu-info+xmp+pages,"+
 		"ooxml-core+custom,emailmime,ical,visual-container+jpeg-tiff-raf-cr3-exif+mp4-created,media-id3:v17",
 		sourceMetadataExtractorDescriptor)
 }
 
 func TestSourceMetadataExtractorFingerprintIncludesEmailRecipe(t *testing.T) {
+	t.Parallel()
 	recipe := emailmime.Recipe()
 	current := fingerprintSourceMetadataExtractor(sourceMetadataExtractorDescriptor, recipe)
 	assert.Equal(t, current, SourceMetadataExtractorFingerprint)

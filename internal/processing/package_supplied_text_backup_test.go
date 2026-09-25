@@ -15,6 +15,7 @@ import (
 )
 
 func TestPackageSuppliedTextSearchSurvivesBackupRestore(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	catalog, err := store.Open(filepath.Join(root, "docbank.db"))
 	require.NoError(t, err)

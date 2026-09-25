@@ -7,6 +7,7 @@ import (
 )
 
 func TestRerankingPlanFingerprintBindsProviderPolicy(t *testing.T) {
+	t.Parallel()
 	plan := Plan{VaultUID: "00000000-0000-4000-8000-000000000001",
 		Selector:           Selector{NodeID: 1, ContentVersionID: "00000000-0000-4000-8000-000000000002", Profile: "private"},
 		ProfileFingerprint: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",

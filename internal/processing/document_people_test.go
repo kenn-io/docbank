@@ -13,6 +13,7 @@ import (
 )
 
 func TestDocumentPeopleResolution(t *testing.T) {
+	t.Parallel()
 	const version = "00000000-0000-4000-8000-000000000001"
 	const ada = "00000000-0000-4000-8000-000000000002"
 	const grace = "00000000-0000-4000-8000-000000000003"
@@ -43,6 +44,7 @@ func TestDocumentPeopleResolution(t *testing.T) {
 }
 
 func TestDocumentPeopleResolutionBoundsKnownActorLabel(t *testing.T) {
+	t.Parallel()
 	name := strings.Repeat("界", 67)
 	input := store.DocumentPeopleInputs{
 		ContentVersionID: "00000000-0000-4000-8000-000000000001", EventGenerationID: strings.Repeat("a", 64),
@@ -65,6 +67,7 @@ func TestDocumentPeopleResolutionBoundsKnownActorLabel(t *testing.T) {
 }
 
 func TestRebuildDocumentPeopleDrainsMultipleBatches(t *testing.T) {
+	t.Parallel()
 	catalog := openDocumentEventTestStore(t)
 	var versions []string
 	for i := range 101 {
@@ -83,6 +86,7 @@ func TestRebuildDocumentPeopleDrainsMultipleBatches(t *testing.T) {
 }
 
 func TestRebuildDocumentPeopleAcceptsUnavailableInputs(t *testing.T) {
+	t.Parallel()
 	catalog := openDocumentEventTestStore(t)
 	file, err := catalog.CreateFile(t.Context(), catalog.RootID(), "bounded.txt", testDigest("bounded"), 8, "text/plain")
 	require.NoError(t, err)
@@ -132,6 +136,7 @@ func (stub *documentPeopleCatalogStub) MarkDocumentPeopleFailed(_ context.Contex
 }
 
 func TestBackfillDocumentPeopleTargetsContinuesAndPreservesStaleRetry(t *testing.T) {
+	t.Parallel()
 	const loadFailure = "00000000-0000-4000-8000-000000000031"
 	const stale = "00000000-0000-4000-8000-000000000032"
 	const success = "00000000-0000-4000-8000-000000000033"
@@ -152,6 +157,7 @@ func TestBackfillDocumentPeopleTargetsContinuesAndPreservesStaleRetry(t *testing
 }
 
 func TestDocumentPeopleResolutionAppliesEvidencePrivacyAndAssertions(t *testing.T) {
+	t.Parallel()
 	const version = "00000000-0000-4000-8000-000000000011"
 	const ada = "00000000-0000-4000-8000-000000000012"
 	const grace = "00000000-0000-4000-8000-000000000013"
@@ -190,6 +196,7 @@ func TestDocumentPeopleResolutionAppliesEvidencePrivacyAndAssertions(t *testing.
 }
 
 func TestDocumentPeopleResolutionBoundsCombinedEdges(t *testing.T) {
+	t.Parallel()
 	input := store.DocumentPeopleInputs{
 		ContentVersionID: "00000000-0000-4000-8000-000000000021",
 		Persons:          map[string]store.Person{},
@@ -208,6 +215,7 @@ func TestDocumentPeopleResolutionBoundsCombinedEdges(t *testing.T) {
 }
 
 func TestDocumentPeopleResolutionDoesNotAssertRetiredPerson(t *testing.T) {
+	t.Parallel()
 	const version = "00000000-0000-4000-8000-000000000041"
 	const retired = "00000000-0000-4000-8000-000000000042"
 	input := store.DocumentPeopleInputs{

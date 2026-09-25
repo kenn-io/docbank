@@ -11,6 +11,7 @@ import (
 )
 
 func TestPackageSuppliedTextPublishesExactVersionAndSearchableEvidence(t *testing.T) {
+	t.Parallel()
 	// Omitting rendition publication, binding the text as the source, or
 	// indexing another version must make this end-to-end assertion fail.
 	f := newPublicationFixture(t)
@@ -45,6 +46,7 @@ func TestPackageSuppliedTextPublishesExactVersionAndSearchableEvidence(t *testin
 }
 
 func TestPackageSuppliedTextRejectsUnsupportedNativeBeforePublication(t *testing.T) {
+	t.Parallel()
 	// Accepting a native format the provider does not declare would attach a
 	// searchable rendition without a valid provider capability.
 	f := newPublicationFixture(t)

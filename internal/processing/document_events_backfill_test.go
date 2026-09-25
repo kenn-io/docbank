@@ -15,6 +15,7 @@ import (
 )
 
 func TestDocumentEventRestoreDrainPublishesAnEmptyVault(t *testing.T) {
+	t.Parallel()
 	catalog, err := store.Open(filepath.Join(t.TempDir(), "test.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, catalog.Close()) })
@@ -28,6 +29,7 @@ func TestDocumentEventRestoreDrainPublishesAnEmptyVault(t *testing.T) {
 }
 
 func TestDocumentEventEmailActorsMatchPersonIdentity(t *testing.T) {
+	t.Parallel()
 	for _, address := range []string{"ÜSER@EXAMPLE.TEST", "USER@İ.example.test", `"Ada Lovelace"@example.test`, `"<Ada"@example.test`, `" Ada"@example.test`} {
 		t.Run(address, func(t *testing.T) {
 			catalog := openDocumentEventTestStore(t)
@@ -58,6 +60,7 @@ func TestDocumentEventEmailActorsMatchPersonIdentity(t *testing.T) {
 }
 
 func TestDocumentEventRestoreDrainIndexesEveryRetainedVersion(t *testing.T) {
+	t.Parallel()
 	catalog := openDocumentEventTestStore(t)
 	created, err := catalog.CreateFile(
 		t.Context(), catalog.RootID(), "history.pdf", testDigest("history-a"), 8, "application/pdf",
@@ -87,6 +90,7 @@ func TestDocumentEventRestoreDrainIndexesEveryRetainedVersion(t *testing.T) {
 }
 
 func TestDocumentEventRebuildDoesNotRecreatePurgedRendition(t *testing.T) {
+	t.Parallel()
 	fixture := newPublicationFixture(t)
 	publisher, err := NewArtifactPublisher(fixture.catalog, fixture.blobs)
 	require.NoError(t, err)
@@ -149,6 +153,7 @@ func TestDocumentEventRebuildDoesNotRecreatePurgedRendition(t *testing.T) {
 }
 
 func TestDocumentEventRestoreDrainRecordsUnavailableUntilANewEpoch(t *testing.T) {
+	t.Parallel()
 	catalog := openDocumentEventTestStore(t)
 	created, err := catalog.CreateFile(
 		t.Context(), catalog.RootID(), "over-limit.eml", testDigest("over-limit"), 10, "message/rfc822",
@@ -188,6 +193,7 @@ func TestDocumentEventRestoreDrainRecordsUnavailableUntilANewEpoch(t *testing.T)
 }
 
 func TestDocumentEventRestoreDrainPreservesOutOfRangeProvenanceTime(t *testing.T) {
+	t.Parallel()
 	catalog := openDocumentEventTestStore(t)
 	run, err := catalog.BeginIngest(t.Context(), "cli", "/synthetic")
 	require.NoError(t, err)
@@ -208,6 +214,7 @@ func TestDocumentEventRestoreDrainPreservesOutOfRangeProvenanceTime(t *testing.T
 }
 
 func TestDocumentEventRestoreDrainRecordsAggregateOutputAsUnavailable(t *testing.T) {
+	t.Parallel()
 	catalog := openDocumentEventTestStore(t)
 	created, err := catalog.CreateFile(
 		t.Context(), catalog.RootID(), "aggregate.eml", testDigest("aggregate"), 10, "message/rfc822",
@@ -235,6 +242,7 @@ func TestDocumentEventRestoreDrainRecordsAggregateOutputAsUnavailable(t *testing
 }
 
 func TestDocumentEventRestoreCompletionRejectsPendingAndFailed(t *testing.T) {
+	t.Parallel()
 	for _, testCase := range []struct {
 		name     string
 		coverage store.DocumentEventCoverage
@@ -251,6 +259,7 @@ func TestDocumentEventRestoreCompletionRejectsPendingAndFailed(t *testing.T) {
 }
 
 func TestDocumentEventBackfillRestartDoesNotCompleteAStaleBuild(t *testing.T) {
+	t.Parallel()
 	catalog := openDocumentEventTestStore(t)
 	created, err := catalog.CreateFile(
 		t.Context(), catalog.RootID(), "stale.pdf", testDigest("stale"), 8, "application/pdf",
@@ -305,6 +314,7 @@ func TestDocumentEventBackfillRestartDoesNotCompleteAStaleBuild(t *testing.T) {
 }
 
 func TestDocumentEventBackfillReportsProgressBeforeTheScanDrains(t *testing.T) {
+	t.Parallel()
 	catalog := openDocumentEventTestStore(t)
 	for _, name := range []string{"first.txt", "second.txt"} {
 		_, err := catalog.CreateFile(t.Context(), catalog.RootID(), name, testDigest(name), 1, "text/plain")
@@ -340,6 +350,7 @@ func TestDocumentEventBackfillReportsProgressBeforeTheScanDrains(t *testing.T) {
 }
 
 func TestDocumentEventBackfillGatesEachMutationOnce(t *testing.T) {
+	t.Parallel()
 	target := store.DocumentEventTarget{
 		ContentVersionID: "91000000-0000-4000-8000-000000000009",
 		NodeID:           1, BlobHash: testDigest("gated"), Size: 1, MIMEType: "text/plain",
@@ -374,6 +385,7 @@ func TestDocumentEventBackfillGatesEachMutationOnce(t *testing.T) {
 }
 
 func TestDocumentEventBackfillClassifiesOnlyCapturedTerminalEvidence(t *testing.T) {
+	t.Parallel()
 	target := store.DocumentEventTarget{ContentVersionID: "92000000-0000-4000-8000-000000000009"}
 	t.Run("corruption wins over exhaustion", func(t *testing.T) {
 		catalog := &documentEventFailureCatalog{

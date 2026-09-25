@@ -13,6 +13,7 @@ import (
 )
 
 func TestF10CaptureUsesSourceFieldNotAnInventedKey(t *testing.T) {
+	t.Parallel()
 	for _, value := range []struct{ namespace, source string }{
 		{"image.exif", "DateTimeOriginal"},
 		{"media.id3", "TDRC"},
@@ -34,6 +35,7 @@ func TestF10CaptureUsesSourceFieldNotAnInventedKey(t *testing.T) {
 }
 
 func TestDocumentEventDeriverDescriptor(t *testing.T) {
+	t.Parallel()
 	sum := sha256.Sum256([]byte(documentEventsDeriverDescriptor))
 	require.Equal(t, DocumentEventsDeriverFingerprint, hex.EncodeToString(sum[:]))
 	require.Equal(t,
@@ -43,6 +45,7 @@ func TestDocumentEventDeriverDescriptor(t *testing.T) {
 }
 
 func TestAdaptersPreserveDistinctF10CapturedClaimsAndCalendarComponents(t *testing.T) {
+	t.Parallel()
 	input := documentEventInput("image/png", []document.SourceMetadataFieldV1{
 		timestampField("calendar.event.e000001.start", "calendar", "DTSTART", false,
 			"2024-04-05T06:07", "20240405T0607", "minute", "omitted"),
@@ -71,6 +74,7 @@ func TestAdaptersPreserveDistinctF10CapturedClaimsAndCalendarComponents(t *testi
 }
 
 func TestAdaptersAnchorActorOnlyF10ClaimsToVaultRecorded(t *testing.T) {
+	t.Parallel()
 	ada := "Ada Lovelace"
 	grace := "Grace Hopper"
 	input := documentEventInput("application/pdf", []document.SourceMetadataFieldV1{{
@@ -91,6 +95,7 @@ func TestAdaptersAnchorActorOnlyF10ClaimsToVaultRecorded(t *testing.T) {
 }
 
 func TestAdaptersKeepActorOnlyBccWithoutASafePrimary(t *testing.T) {
+	t.Parallel()
 	input := canonicalDocumentEventInput(t, []document.SourceMetadataFieldV1{
 		stringField("email.bcc", "Bcc", true, "hidden@example.test"),
 	})
@@ -106,6 +111,7 @@ func TestAdaptersKeepActorOnlyBccWithoutASafePrimary(t *testing.T) {
 }
 
 func TestAdaptersRecoverRawEmailMinutePrecisionAndUnknownZone(t *testing.T) {
+	t.Parallel()
 	from := "Ada Example <ADA@example.test>"
 	bcc := "Hidden <hidden@example.test>"
 	input := documentEventInput("message/rfc822", []document.SourceMetadataFieldV1{
@@ -144,6 +150,7 @@ func TestAdaptersRecoverRawEmailMinutePrecisionAndUnknownZone(t *testing.T) {
 }
 
 func TestAdaptersDeriveRetainedRawDatesFromExtractor(t *testing.T) {
+	t.Parallel()
 	for _, test := range []struct {
 		name, mime, payload, key, raw, value, zoneText string
 		kind                                           document.DateKind
@@ -175,6 +182,7 @@ func TestAdaptersDeriveRetainedRawDatesFromExtractor(t *testing.T) {
 }
 
 func TestAdaptersUseRFCEmailYearPivot(t *testing.T) {
+	t.Parallel()
 	for _, test := range []struct{ rawYear, year string }{{"49", "2049"}, {"50", "1950"}, {"68", "1968"}, {"69", "1969"}} {
 		t.Run(test.rawYear, func(t *testing.T) {
 			input := canonicalDocumentEventInput(t, []document.SourceMetadataFieldV1{
@@ -189,6 +197,7 @@ func TestAdaptersUseRFCEmailYearPivot(t *testing.T) {
 }
 
 func TestAdaptersClassifyUnindexableProvenanceTimeAsUnavailable(t *testing.T) {
+	t.Parallel()
 	input := documentEventInput("text/plain", nil)
 	bound := boundDocumentEventInput(input.Target.ContentVersionID, 0)
 	bound.OriginalMTime = new("0000-01-02T03:04:05Z")
@@ -203,6 +212,7 @@ func TestAdaptersClassifyUnindexableProvenanceTimeAsUnavailable(t *testing.T) {
 }
 
 func TestAdaptersRawEmailSuccessOwnsInvalidNormalizedError(t *testing.T) {
+	t.Parallel()
 	from := "Ada Example <ada@example.test>"
 	input := documentEventInput("message/rfc822", []document.SourceMetadataFieldV1{
 		stringField("email.from", "From", false, from),
@@ -222,6 +232,7 @@ func TestAdaptersRawEmailSuccessOwnsInvalidNormalizedError(t *testing.T) {
 }
 
 func TestAdaptersRecoverCanonicalLegacyRawEmailClaims(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name       string
 		raw        string
@@ -268,6 +279,7 @@ func TestAdaptersRecoverCanonicalLegacyRawEmailClaims(t *testing.T) {
 }
 
 func TestAdaptersRejectUnsupportedRawEmailWithoutNormalizedFallback(t *testing.T) {
+	t.Parallel()
 	input := canonicalDocumentEventInput(t, []document.SourceMetadataFieldV1{
 		timestampField("email.sent", "email", "Date", false,
 			"2024-01-02T03:04:05Z", "unsupported raw date", "second", "utc"),
@@ -281,6 +293,7 @@ func TestAdaptersRejectUnsupportedRawEmailWithoutNormalizedFallback(t *testing.T
 }
 
 func TestAdaptersIgnoreLongNonActorEmailMetadataForActorBounds(t *testing.T) {
+	t.Parallel()
 	subject := strings.Repeat("s", document.MaxDocumentEventActorClaimBytes+1)
 	input := canonicalDocumentEventInput(t, []document.SourceMetadataFieldV1{
 		stringField("email.subject", "Subject", false, subject),
@@ -293,6 +306,7 @@ func TestAdaptersIgnoreLongNonActorEmailMetadataForActorBounds(t *testing.T) {
 }
 
 func TestAdaptersEnforceCombinedEventAndActorBoundsBeforeAppending(t *testing.T) {
+	t.Parallel()
 	t.Run("event boundary", func(t *testing.T) {
 		input := documentEventInput("application/pdf", []document.SourceMetadataFieldV1{
 			timestampField("created", "pdf.info", "CreationDate", false,
@@ -358,6 +372,7 @@ func TestAdaptersEnforceCombinedEventAndActorBoundsBeforeAppending(t *testing.T)
 }
 
 func TestAdaptersClassifyAggregateTextBoundAsUnavailable(t *testing.T) {
+	t.Parallel()
 	header := strings.TrimSuffix(strings.Repeat("a@b,", 900), ",")
 	input := canonicalDocumentEventInput(t, []document.SourceMetadataFieldV1{
 		stringField("email.to", "To", false, header),
@@ -371,6 +386,7 @@ func TestAdaptersClassifyAggregateTextBoundAsUnavailable(t *testing.T) {
 }
 
 func TestAdaptersClassifyFinalCanonicalByteBoundAsUnavailable(t *testing.T) {
+	t.Parallel()
 	display := strings.Repeat(`\\`, 1000)
 	header := `"` + display + `" <a@b>,` + strings.TrimSuffix(strings.Repeat("a@b,", 395), ",")
 	require.LessOrEqual(t, len(header), document.MaxDocumentEventActorClaimBytes)
@@ -387,6 +403,7 @@ func TestAdaptersClassifyFinalCanonicalByteBoundAsUnavailable(t *testing.T) {
 }
 
 func TestAdaptersDoNotDiscloseSensitiveTimestampFailuresInDiagnostics(t *testing.T) {
+	t.Parallel()
 	input := documentEventInput("application/pdf", []document.SourceMetadataFieldV1{
 		timestampField("created", "pdf.info", "CreationDate", false,
 			"2020-01-02", "D:20200102", "date", "omitted"),
@@ -406,6 +423,7 @@ func TestAdaptersDoNotDiscloseSensitiveTimestampFailuresInDiagnostics(t *testing
 }
 
 func TestAdaptersRejectMalformedOffsetWithoutInventingAnInstant(t *testing.T) {
+	t.Parallel()
 	_, err := metadataTimestampEvent(document.SourceMetadataTimestampV1{
 		Normalized: "2024-01-02T03:04:05+2:00", Offset: "+2:00",
 		Precision: document.SourceMetadataPrecisionSecond,
@@ -415,6 +433,7 @@ func TestAdaptersRejectMalformedOffsetWithoutInventingAnInstant(t *testing.T) {
 }
 
 func TestAdaptersPreferEmbeddedModifiedClaimOverObservedFilesystemMTime(t *testing.T) {
+	t.Parallel()
 	mtime := "2024-01-02T03:04:05.123456789Z"
 	input := documentEventInput("application/pdf", []document.SourceMetadataFieldV1{
 		timestampField("modified", "pdf.info", "ModDate", false,

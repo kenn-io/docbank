@@ -11,6 +11,7 @@ import (
 )
 
 func TestMediaMaxBytesAllowsSuppliedMedia(t *testing.T) {
+	t.Parallel()
 	for _, maximum := range []int64{1 << 30, (1 << 30) + 1} {
 		t.Run(strconv.FormatInt(maximum, 10), func(t *testing.T) {
 			fixture := newPublicationFixture(t)

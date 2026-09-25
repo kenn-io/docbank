@@ -16,6 +16,7 @@ import (
 )
 
 func TestRegisteredCapOriginSubmission(t *testing.T) {
+	t.Parallel()
 	fixture := newPublicationFixture(t)
 	generic := newRemoteRecordingTestService(t, fixture, "operator:generic", 0, nil)
 	legacyRequest := capRecordingRequest(uuid.New().String(), "https://cap.example.test/s/vid-1?token=synthetic", "before")
@@ -94,6 +95,7 @@ func TestRegisteredCapOriginSubmission(t *testing.T) {
 }
 
 func TestMediaOriginLegacyFingerprintRemainsPinned(t *testing.T) {
+	t.Parallel()
 	got, err := mediaOriginFingerprint(MediaOriginPolicy{
 		OriginID: "legacy", Provider: "url", ResolverFingerprint: "r", IdentityFingerprint: "i", DisclosureFingerprint: "d",
 		InputClasses: []string{"recording_reference"}, ReferencePrefixes: []string{"https://legacy.example/"},
@@ -103,6 +105,7 @@ func TestMediaOriginLegacyFingerprintRemainsPinned(t *testing.T) {
 }
 
 func TestRegisteredCapOriginRejectsLookalikes(t *testing.T) {
+	t.Parallel()
 	fixture := newPublicationFixture(t)
 	service := newRemoteRecordingTestService(t, fixture, "operator:boundary", 0,
 		map[string]MediaOriginPolicy{"team-cap": capOriginPolicy("team-cap", "credential:cap-a")})
@@ -130,6 +133,7 @@ func TestRegisteredCapOriginRejectsLookalikes(t *testing.T) {
 }
 
 func TestRegisteredCapOriginCredentialScope(t *testing.T) {
+	t.Parallel()
 	fixture := newPublicationFixture(t)
 	service := newRemoteRecordingTestService(t, fixture, "operator:credentials", 0,
 		map[string]MediaOriginPolicy{"cap-a": capOriginPolicy("cap-a", "credential:cap-a")})
@@ -165,6 +169,7 @@ func TestRegisteredCapOriginCredentialScope(t *testing.T) {
 }
 
 func TestRegisteredCapOriginPlanStaysUnavailable(t *testing.T) {
+	t.Parallel()
 	fixture := newPublicationFixture(t)
 	service := newRemoteRecordingTestService(t, fixture, "operator:plan", 0,
 		map[string]MediaOriginPolicy{"cap": capOriginPolicy("cap", "credential:cap-a")})
@@ -180,6 +185,7 @@ func TestRegisteredCapOriginPlanStaysUnavailable(t *testing.T) {
 }
 
 func TestProbeMediaOriginsRecordsEvidence(t *testing.T) {
+	t.Parallel()
 	fixture := newPublicationFixture(t)
 	now := time.Date(2026, 9, 18, 12, 0, 0, 0, time.UTC)
 	origins := map[string]MediaOriginPolicy{
@@ -234,6 +240,7 @@ func TestProbeMediaOriginsRecordsEvidence(t *testing.T) {
 }
 
 func TestNewServiceRejectsMediaOriginGuards(t *testing.T) {
+	t.Parallel()
 	fixture := newPublicationFixture(t)
 	base := func() ServiceConfig {
 		return ServiceConfig{Catalog: fixture.catalog, Blobs: fixture.blobs, Gate: newWorkerTestGate(),

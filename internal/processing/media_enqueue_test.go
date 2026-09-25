@@ -25,6 +25,7 @@ import (
 // TestMediaProcessingRequiresExplicitSelection catches an input artifact or
 // empty object silently selecting provider work.
 func TestMediaProcessingRequiresExplicitSelection(t *testing.T) {
+	t.Parallel()
 	require.False(t, mediaProcessingRequested(nil))
 	require.False(t, mediaProcessingRequested(&MediaProcessingRequest{}))
 	require.True(t, mediaProcessingRequested(&MediaProcessingRequest{Profile: "speech"}))
@@ -34,6 +35,7 @@ func TestMediaProcessingRequiresExplicitSelection(t *testing.T) {
 // TestSuppliedMediaProfileAdmitsWAVAndMP3 catches the daemon advertising a
 // built-in transcript profile without executable codec bindings.
 func TestSuppliedMediaProfileAdmitsWAVAndMP3(t *testing.T) {
+	t.Parallel()
 	fixture := newPublicationFixture(t)
 	name, profile, err := NewSuppliedMediaProfile(
 		fixture.catalog, fixture.blobs, "daemon:operator")
@@ -52,6 +54,7 @@ func TestSuppliedMediaProfileAdmitsWAVAndMP3(t *testing.T) {
 // TestMediaEnqueueAuthorizedReturnsBeforeProvider catches request-owned
 // provider execution and implicit consent creation during media submission.
 func TestMediaEnqueueAuthorizedReturnsBeforeProvider(t *testing.T) {
+	t.Parallel()
 	fixture := newPublicationFixture(t)
 	descriptor, err := document.NewRenditionDescriptor(document.RenditionDescriptor{
 		ID: "synthetic.media-worker-v1", ContractVersion: document.RenditionProviderContractVersion,
@@ -143,7 +146,7 @@ func TestMediaEnqueueAuthorizedReturnsBeforeProvider(t *testing.T) {
 	}()
 	select {
 	case <-provider.renderStarted:
-	case <-time.After(time.Second):
+	case <-time.After(10 * time.Second):
 		t.Fatal("supervised worker did not reach provider")
 	}
 	close(provider.renderRelease)
@@ -181,6 +184,7 @@ func TestMediaEnqueueAuthorizedReturnsBeforeProvider(t *testing.T) {
 }
 
 func TestMediaContinuationCancellationBeforeEmbeddingResumesAfterReopen(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	catalog, err := store.Open(filepath.Join(root, "docbank.db"))
 	require.NoError(t, err)
@@ -299,7 +303,7 @@ func TestMediaContinuationCancellationBeforeEmbeddingResumesAfterReopen(t *testi
 	}
 	var clockOffset atomic.Int64
 	service.clock = func() time.Time { return time.Now().Add(time.Duration(clockOffset.Load())) }
-	runContext, stopRun := context.WithTimeout(t.Context(), 5*time.Second)
+	runContext, stopRun := context.WithTimeout(t.Context(), 10*time.Second)
 	finished := make(chan struct{})
 	go func() {
 		processed, err = (&MediaContinuationWorker{Service: service}).RunOne(runContext)
@@ -309,7 +313,7 @@ func TestMediaContinuationCancellationBeforeEmbeddingResumesAfterReopen(t *testi
 	require.Eventually(t, func() bool {
 		status, statusErr := service.Status(t.Context(), receipt.JobID)
 		return statusErr == nil && status.State == "retry_wait"
-	}, 3*time.Second, time.Millisecond)
+	}, 10*time.Second, time.Millisecond)
 	pending, readErr := catalog.MediaProcessingContinuations(t.Context(), 10, service.principal)
 	require.NoError(t, readErr)
 	require.Len(t, pending, 1, "retrying embeddings must not finish the media intent")
@@ -318,7 +322,7 @@ func TestMediaContinuationCancellationBeforeEmbeddingResumesAfterReopen(t *testi
 	require.ErrorIs(t, err, context.Canceled)
 	require.False(t, processed)
 	clockOffset.Store(int64(2 * time.Minute))
-	resumeContext, stopResume := context.WithTimeout(t.Context(), 3*time.Second)
+	resumeContext, stopResume := context.WithTimeout(t.Context(), 10*time.Second)
 	defer stopResume()
 	processed, err = (&MediaContinuationWorker{Service: service}).RunOne(resumeContext)
 	require.NoError(t, err)
@@ -334,6 +338,7 @@ func TestMediaContinuationCancellationBeforeEmbeddingResumesAfterReopen(t *testi
 }
 
 func TestMediaContinuationTransientCatalogReadRetriesNextTick(t *testing.T) {
+	t.Parallel()
 	fixture := newPublicationFixture(t)
 	worker := &MediaContinuationWorker{Service: &Service{
 		catalog: fixture.catalog, gate: newWorkerTestGate(),
@@ -358,6 +363,7 @@ func (provider *mediaWorkerProvider) Render(
 }
 
 func TestMediaCancellationAndTransientEnqueueFailuresRemainResumable(t *testing.T) {
+	t.Parallel()
 	for _, retry := range []bool{false, true} {
 		t.Run(fmt.Sprintf("retry=%t", retry), func(t *testing.T) {
 			fixture := newPublicationFixture(t)
@@ -426,7 +432,7 @@ func TestMediaCancellationAndTransientEnqueueFailuresRemainResumable(t *testing.
 			require.Len(t, pending, 1, "a committed enqueue intent must survive caller cancellation")
 			require.Equal(t, operationID, pending[0].OperationID)
 			require.Empty(t, pending[0].JobID)
-			workerContext, stopWorker := context.WithTimeout(t.Context(), time.Second)
+			workerContext, stopWorker := context.WithTimeout(t.Context(), 10*time.Second)
 			defer stopWorker()
 			failAt := 1 // Retry enqueue failure after admission.
 			if retry {

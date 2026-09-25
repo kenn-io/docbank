@@ -14,6 +14,7 @@ import (
 )
 
 func TestMediaStatusSeparatesLatestAttemptFromSuccessfulCoverage(t *testing.T) {
+	t.Parallel()
 	fixture := newPublicationFixture(t)
 	raw := mediatest.WAV()
 	written, err := fixture.blobs.WriteDetailedContext(t.Context(), bytes.NewReader(raw))
@@ -106,6 +107,7 @@ func TestMediaStatusSeparatesLatestAttemptFromSuccessfulCoverage(t *testing.T) {
 }
 
 func TestMediaCursorRejectsAnotherPrincipal(t *testing.T) {
+	t.Parallel()
 	fixture := newPublicationFixture(t)
 	var key [32]byte
 	key[0] = 4
@@ -126,6 +128,7 @@ func TestMediaCursorRejectsAnotherPrincipal(t *testing.T) {
 }
 
 func TestMediaRevocationAcrossOperations(t *testing.T) {
+	t.Parallel()
 	fixture := newPublicationFixture(t)
 	config := ServiceConfig{Catalog: fixture.catalog, Blobs: fixture.blobs,
 		Gate: newWorkerTestGate(), SpoolDirectory: t.TempDir(), Principal: "operator:owner",

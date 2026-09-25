@@ -28,6 +28,7 @@ var capCloudRejectedURLs = []string{
 }
 
 func TestCapCloudRecording(t *testing.T) {
+	t.Parallel()
 	for _, test := range []struct{ raw, videoID string }{
 		{"https://cap.so/s/synthcap01", "synthcap01"},
 		{"https://www.cap.so/embed/synthcap01", "synthcap01"},
@@ -56,6 +57,7 @@ func TestCapCloudRecording(t *testing.T) {
 // Cap documents no download route for received links, so an acquisition
 // request retains the reference for the manual exact-file import path.
 func TestCapCloudAcquireRetainsUnsupportedReference(t *testing.T) {
+	t.Parallel()
 	fixture := newPublicationFixture(t)
 	service := newRemoteRecordingTestService(t, fixture, "operator:cap", 0, nil)
 	request := RemoteRecordingRequest{
@@ -105,6 +107,7 @@ func TestCapCloudAcquireRetainsUnsupportedReference(t *testing.T) {
 }
 
 func TestCapCloudRecordingIdentity(t *testing.T) {
+	t.Parallel()
 	fixture := newPublicationFixture(t)
 	service := newRemoteRecordingTestService(t, fixture, "operator:cap-identity", 0, nil)
 	submit := func(t *testing.T, canonicalURL, ref string, acquire bool) (MediaReceipt, error) {

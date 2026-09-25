@@ -17,6 +17,7 @@ import (
 // TestStageMediaRejectsTruncationAndDigestMismatch catches accepting bytes
 // whose declared length, digest, or configured staging budget is false.
 func TestStageMediaRejectsTruncationAndDigestMismatch(t *testing.T) {
+	t.Parallel()
 	raw := []byte("synthetic media")
 	sum := sha256.Sum256(raw)
 	digest := hex.EncodeToString(sum[:])
@@ -35,6 +36,7 @@ func TestStageMediaRejectsTruncationAndDigestMismatch(t *testing.T) {
 }
 
 func TestMediaArtifactStagingReleasesSharedReservation(t *testing.T) {
+	t.Parallel()
 	fixture := newPublicationFixture(t)
 	raw := mediatest.WAV()
 	written, err := fixture.blobs.WriteDetailedContext(t.Context(), bytes.NewReader(raw))
