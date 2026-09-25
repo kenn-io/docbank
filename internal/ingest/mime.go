@@ -130,6 +130,10 @@ func closedMIMERefinement(
 	extension string,
 ) string {
 	switch strings.ToLower(extension) {
+	case ".png":
+		if descendantOf(detected, mimetype.Lookup("image/png")) {
+			return "image/png"
+		}
 	case ".arw":
 		if detected.Is("image/tiff") {
 			return "image/x-sony-arw"

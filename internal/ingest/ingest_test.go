@@ -337,7 +337,7 @@ func TestDetectMimeUsesClosedSuffixRefinements(t *testing.T) {
 		{name: "canon raw", path: "camera.cr2", head: []byte{0x49, 0x49, 0x2a, 0x00}, resolver: "application/pdf", want: "image/x-canon-cr2"},
 		{name: "nikon raw", path: "camera.nef", head: []byte{0x49, 0x49, 0x2a, 0x00}, resolver: "application/pdf", want: "image/x-nikon-nef"},
 		{name: "actual apng", path: "animation.apng", head: makeAPNG(37), resolver: "application/pdf", want: "image/apng"},
-		{name: "actual apng with png suffix", path: "animation.png", head: makeAPNG(37), resolver: "application/pdf", want: "image/vnd.mozilla.apng"},
+		{name: "actual apng with png suffix", path: "animation.png", head: makeAPNG(37), resolver: "application/pdf", want: "image/png"},
 		{name: "apng beyond prefix", path: "animation.apng", head: makeAPNG(513)[:512], resolver: "application/pdf", want: "image/apng"},
 		{name: "generic png suffix", path: "animation.apng", head: []byte(pngHeader), resolver: "application/pdf", want: "image/apng"},
 		{name: "matroska audio", path: "audio.mka", head: matroska, resolver: "application/pdf", want: "audio/x-matroska"},
@@ -397,6 +397,54 @@ func TestDetectMimeUsesExtensionForEmptyBytes(t *testing.T) {
 	})
 	require.Equal(t, "application/pdf", got)
 	require.True(t, called)
+}
+
+func TestDetectMimeUsesFujiTypeForEmptyRAF(t *testing.T) {
+	called := false
+	got := detectMimeWithExtension("camera.raf", nil, func(string) string {
+		called = true
+		return "application/pdf"
+	})
+	require.Equal(t, "image/x-fuji-raf", got)
+	require.False(t, called)
+}
+
+func TestAddByteFirstMIMEKeepsYAMLAndTeXSearchable(t *testing.T) {
+	ing := newTestIngester(t)
+	root := writeTree(t, map[string]string{
+		"config.yaml": "name: yamlsearchmarker\n",
+		"paper.tex":   "\\documentclass{article}\n\\begin{document} texsearchmarker \\end{document}\n",
+	})
+
+	report, err := ing.AddPaths(t.Context(), []string{
+		filepath.Join(root, "config.yaml"), filepath.Join(root, "paper.tex"),
+	}, "/inbox")
+	require.NoError(t, err)
+	require.Equal(t, 2, report.Added)
+	require.Empty(t, report.Failed)
+
+	for _, tc := range []struct {
+		path, mimeType, marker string
+	}{
+		{path: "/inbox/config.yaml", mimeType: "application/yaml", marker: "yamlsearchmarker"},
+		{path: "/inbox/paper.tex", mimeType: "application/x-tex", marker: "texsearchmarker"},
+	} {
+		node, nodeErr := ing.Store.NodeByPath(t.Context(), tc.path)
+		require.NoError(t, nodeErr)
+		require.Equal(t, tc.mimeType, node.MimeType)
+		pending, pendingErr := ing.Store.PendingTextExtractions(t.Context(), 10)
+		require.NoError(t, pendingErr)
+		require.Contains(t, pending, store.ExtractionCandidate{BlobHash: node.BlobHash, Size: node.Size})
+		require.NoError(t, ing.Store.RecordExtraction(t.Context(), store.ExtractionResult{
+			BlobHash: node.BlobHash, Extractor: "mime-search-test", ExtractorVersion: 1,
+			Status: store.ExtractionOK, Text: tc.marker,
+		}))
+		hits, _, searchErr := ing.Store.SearchPage(t.Context(), tc.marker, 10)
+		require.NoError(t, searchErr)
+		require.Len(t, hits, 1)
+		require.Equal(t, store.SearchMatchContent, hits[0].Match)
+		require.Equal(t, node.ID, hits[0].Node.ID)
+	}
 }
 
 func TestDetectMimeUsesNativeWindowsJPEGRegistry(t *testing.T) {
