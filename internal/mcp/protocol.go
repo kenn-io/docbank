@@ -14,6 +14,7 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/jsonrpc"
 	sdkmcp "github.com/modelcontextprotocol/go-sdk/mcp"
+	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/version"
 )
 
@@ -26,9 +27,11 @@ const (
 
 // Server owns the Docbank ingress gate and the SDK server behind it.
 type Server struct {
-	sdk    *sdkmcp.Server
-	daemon *daemonLease
-	plans  *processingPlanRegistry
+	sdk      *sdkmcp.Server
+	daemon   *daemonLease
+	plans    *processingPlanRegistry
+	archives *exportArchiveRegistry
+	reports  *reportHandleSigner
 }
 
 // ServerOptions fixes process-wide capabilities before the MCP server starts.
@@ -36,7 +39,12 @@ type Server struct {
 type ServerOptions struct {
 	AllowProcessing    bool
 	AllowPackageWrites bool
+	AllowExportWrites  bool
+	AllowReportWrites  bool
+	ScopedAgentSession bool
 	Logger             *slog.Logger
+	OperationPolicy    *api.OperationPolicy
+	Principal          api.Principal
 }
 
 // NewServer creates an exact-version Docbank MCP server.
@@ -45,7 +53,7 @@ func NewServer() *Server {
 }
 
 // NewServerWithOptions creates an exact-version server with a process-fixed
-// catalog. Processing and package writes each require an explicit opt-in.
+// catalog. Processing, package, and report writes each require an explicit opt-in.
 func NewServerWithOptions(options ServerOptions) *Server {
 	return newServerWithOptions(&sdkmcp.Implementation{
 		Name:        "docbank",
@@ -73,21 +81,30 @@ func newServerWithOptionsAndDaemon(
 		logger = slog.New(slog.DiscardHandler)
 	}
 
+	instructions := catalogInstructions(options.AllowProcessing, options.AllowPackageWrites,
+		options.AllowExportWrites, options.AllowReportWrites)
+	if options.ScopedAgentSession {
+		instructions = "This private read session exposes bounded native document and capability reads for its exact source grant."
+	}
 	sdk := sdkmcp.NewServer(implementation, &sdkmcp.ServerOptions{
 		Capabilities: &sdkmcp.ServerCapabilities{
 			Resources: &sdkmcp.ResourceCapabilities{},
 			Tools:     &sdkmcp.ToolCapabilities{},
 		},
-		Instructions: catalogInstructions(options.AllowProcessing, options.AllowPackageWrites),
+		Instructions: instructions,
 	})
 	plans := newProcessingPlanRegistry()
-	registerToolCatalog(sdk, options.AllowProcessing, options.AllowPackageWrites, daemon, plans, logger)
-	registerResourceSurface(sdk, daemon, logger)
+	archives := newExportArchiveRegistry()
+	policy := newOperationPolicy(options.OperationPolicy, options.Principal)
+	reports := registerToolCatalog(sdk, options.AllowProcessing, options.AllowPackageWrites,
+		options.AllowExportWrites, options.AllowReportWrites, options.ScopedAgentSession,
+		daemon, plans, archives, policy, logger)
+	registerResourceSurface(sdk, daemon, policy, logger)
 	sdk.AddReceivingMiddleware(normalizeDiscovery)
 	sdk.AddReceivingMiddleware(normalizeToolCatalog)
 	sdk.AddReceivingMiddleware(normalizeResourceCatalogs)
 	sdk.AddReceivingMiddleware(enforcePrivateResultCap(implementation, logger))
-	return &Server{sdk: sdk, daemon: daemon, plans: plans}
+	return &Server{sdk: sdk, daemon: daemon, plans: plans, archives: archives, reports: reports}
 }
 
 func enforcePrivateResultCap(implementation *sdkmcp.Implementation, logger *slog.Logger) sdkmcp.Middleware {
@@ -121,6 +138,7 @@ func enforcePrivateResultCap(implementation *sdkmcp.Implementation, logger *slog
 
 // Run serves one MCP connection after wrapping it in the exact-version gate.
 func (s *Server) Run(ctx context.Context, transport sdkmcp.Transport) error {
+	defer s.archives.closeAll()
 	if err := s.sdk.Run(ctx, exactTransport{Transport: transport}); err != nil {
 		return fmt.Errorf("run MCP server: %w", err)
 	}

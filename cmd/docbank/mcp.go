@@ -2,6 +2,7 @@ package main
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"os/signal"
 	"strings"
@@ -11,6 +12,7 @@ import (
 	kitlogging "go.kenn.io/kit/logging"
 
 	"go.kenn.io/docbank/internal/config"
+	"go.kenn.io/docbank/internal/daemonconn"
 	"go.kenn.io/docbank/internal/home"
 	docmcp "go.kenn.io/docbank/internal/mcp"
 )
@@ -20,6 +22,8 @@ var (
 	mcpListen             string
 	mcpAllowProcessing    bool
 	mcpAllowPackageWrites bool
+	mcpAllowExportWrites  bool
+	mcpAllowReportWrites  bool
 )
 
 var mcpCmd = &cobra.Command{
@@ -45,9 +49,24 @@ func runMCP(cmd *cobra.Command) (retErr error) {
 	ctx, cancel := signal.NotifyContext(cmd.Context(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
 
-	server := docmcp.NewServerWithOptions(docmcp.ServerOptions{
-		AllowProcessing: mcpAllowProcessing, AllowPackageWrites: mcpAllowPackageWrites, Logger: logger,
-	})
+	_, scopedAgentSession := os.LookupEnv(daemonconn.AgentSessionFileEnv)
+	options := docmcp.ServerOptions{
+		AllowProcessing: mcpAllowProcessing, AllowPackageWrites: mcpAllowPackageWrites,
+		AllowExportWrites: mcpAllowExportWrites, AllowReportWrites: mcpAllowReportWrites,
+		ScopedAgentSession: scopedAgentSession, Logger: logger,
+	}
+	if scopedAgentSession {
+		connection, attachErr := daemonconn.Ensure(ctx)
+		if attachErr != nil {
+			return fmt.Errorf("attach private MCP read session: %w", attachErr)
+		}
+		defer func() { retErr = errors.Join(retErr, connection.Close()) }()
+		options, err = docmcp.ScopedAgentSessionOptions(ctx, connection, options)
+		if err != nil {
+			return fmt.Errorf("read private MCP session grant: %w", err)
+		}
+	}
+	server := docmcp.NewServerWithOptions(options)
 	switch mcpTransport {
 	case "stdio":
 		input, ok := cmd.InOrStdin().(*os.File)
@@ -136,5 +155,9 @@ func init() {
 		"expose guarded start_processing (still requires prior operator consent)")
 	mcpCmd.Flags().BoolVar(&mcpAllowPackageWrites, "allow-package-writes", false,
 		"allow load-file preflight, import, and package custodian writes")
+	mcpCmd.Flags().BoolVar(&mcpAllowExportWrites, "allow-export-writes", false,
+		"allow exact native export source, plan, job and cancel operations")
+	mcpCmd.Flags().BoolVar(&mcpAllowReportWrites, "allow-report-writes", false,
+		"allow creating frozen reports and revising reviewed dates")
 	rootCmd.AddCommand(mcpCmd)
 }

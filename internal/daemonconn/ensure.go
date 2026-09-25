@@ -192,6 +192,9 @@ func WithLaunchLock(ctx context.Context, root string, fn func() error) error {
 // starting (and if needed, replacing an incompatible) one. CLI commands call
 // this.
 func Ensure(ctx context.Context) (*Connection, error) {
+	if path, configured := os.LookupEnv(AgentSessionFileEnv); configured {
+		return ConnectAgentSessionFile(ctx, path)
+	}
 	layout, err := home.Resolve()
 	if err != nil {
 		return nil, err
@@ -212,6 +215,9 @@ func Ensure(ctx context.Context) (*Connection, error) {
 // fallback-only same-version daemon is replaced just like any other
 // incompatible owner.
 func EnsureWeb(ctx context.Context) (*Connection, error) {
+	if _, configured := os.LookupEnv(AgentSessionFileEnv); configured {
+		return nil, ErrAgentSessionFile
+	}
 	layout, err := home.Resolve()
 	if err != nil {
 		return nil, err
@@ -237,6 +243,9 @@ func EnsureWeb(ctx context.Context) (*Connection, error) {
 // auto-start all share this path, so there is a single replacement policy and
 // no command ever leaves a stale daemon behind.
 func EnsureDaemon(ctx context.Context, root string) (EnsureResult, error) {
+	if _, configured := os.LookupEnv(AgentSessionFileEnv); configured {
+		return EnsureResult{}, ErrAgentSessionFile
+	}
 	return ensureDaemon(ctx, root, Start)
 }
 
@@ -459,6 +468,7 @@ func discoverWithOptions(
 	if err != nil {
 		return kitdaemon.RuntimeRecord{}, kitdaemon.PingInfo{}, false, err
 	}
+	// #nosec G703 -- CanonicalRoot above resolves and validates this local runtime path.
 	info, err := os.Stat(root)
 	if errors.Is(err, os.ErrNotExist) {
 		return kitdaemon.RuntimeRecord{}, kitdaemon.PingInfo{}, false, nil
@@ -638,6 +648,7 @@ func verifyRecordProcess(rec kitdaemon.RuntimeRecord) error {
 // record carries a create time that still matches a live process. Ping-less
 // records without that proof are never trusted for waiting or signaling.
 func liveRuntimeRecord(root string) (kitdaemon.RuntimeRecord, bool, error) {
+	// #nosec G703 -- The caller passes a local daemon runtime root, never an HTTP path.
 	info, err := os.Stat(root)
 	if errors.Is(err, os.ErrNotExist) {
 		return kitdaemon.RuntimeRecord{}, false, nil
