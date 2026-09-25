@@ -28,14 +28,16 @@ func detectMimeWithExtension(path string, head []byte, byExtension func(string) 
 		mediaType = detected
 	}
 
-	switch mediaType {
-	case "application/octet-stream", "application/zip", "application/gzip",
-		"application/ogg", "application/x-ole-storage", "image/tiff",
-		"video/mp4", "text/plain", "text/xml":
+	switch {
+	case strings.HasPrefix(mediaType, "text/"), mediaType == "application/json",
+		mediaType == "application/x-ndjson", mediaType == "application/octet-stream",
+		mediaType == "application/zip", mediaType == "application/gzip",
+		mediaType == "application/ogg", mediaType == "application/x-ole-storage",
+		mediaType == "image/tiff", mediaType == "video/mp4":
 		if byExt := byExtension(extension); byExt != "" {
 			return byExt
 		}
-	case "image/png", "image/vnd.mozilla.apng":
+	case mediaType == "image/png" || mediaType == "image/vnd.mozilla.apng":
 		if strings.EqualFold(extension, ".apng") {
 			if byExt := byExtension(extension); byExt == "image/apng" {
 				return byExt

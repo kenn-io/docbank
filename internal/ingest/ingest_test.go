@@ -18,6 +18,7 @@ import (
 	"testing"
 	"unicode/utf8"
 
+	"github.com/gabriel-vasile/mimetype"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/document"
@@ -171,9 +172,10 @@ func TestDetectMimeUsesRecognizedSignatureOverHostExtension(t *testing.T) {
 
 func TestDetectMimeKeepsExtensionForAmbiguousContent(t *testing.T) {
 	tests := []struct {
-		name string
-		path string
-		head []byte
+		name     string
+		path     string
+		head     []byte
+		detected string
 	}{
 		{name: "zip", path: "archive.docx", head: []byte("PK\x03\x04")},
 		{name: "mp4", path: "recording.m4a", head: []byte("\x00\x00\x00\x18ftyp0000")},
@@ -182,10 +184,17 @@ func TestDetectMimeKeepsExtensionForAmbiguousContent(t *testing.T) {
 		{name: "tiff", path: "camera.dng", head: []byte{0x49, 0x49, 0x2a, 0x00}},
 		{name: "xml", path: "document.svg", head: []byte(`<?xml version="1.0"?><root/>`)},
 		{name: "plain text", path: "document.md", head: []byte("plain text\n")},
+		{name: "html text subtype", path: "README.md", head: []byte("<div align=\"center\">\n<!-- badges -->\n<p>"), detected: "text/html; charset=utf-8"},
+		{name: "csv text subtype", path: "data.txt", head: []byte("a,b,c\n1,2,3\n4,5,6\n"), detected: "text/csv"},
+		{name: "json subtype", path: "data.txt", head: []byte(`{"a": 1}`), detected: "application/json"},
+		{name: "ndjson subtype", path: "data.txt", head: []byte("{\"a\": 1}\n{\"b\": 2}\n"), detected: "application/x-ndjson"},
 		{name: "unknown", path: "document.bin", head: []byte{0x01, 0x02, 0x03}},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
+			if tc.detected != "" {
+				require.Equal(t, tc.detected, mimetype.Detect(tc.head).String())
+			}
 			called := false
 			got := detectMimeWithExtension(tc.path, tc.head, func(string) string {
 				called = true
@@ -246,8 +255,8 @@ func TestDetectMimeKeepsSpecificAPNGExtension(t *testing.T) {
 	const pngHeader = "\x89PNG\r\n\x1a\n"
 	makeAPNG := func(offset int) []byte {
 		data := make([]byte, offset+4)
-		copy(data, []byte(pngHeader))
-		copy(data[offset:], []byte("acTL"))
+		copy(data, pngHeader)
+		copy(data[offset:], "acTL")
 		return data
 	}
 	for _, tc := range []struct {
