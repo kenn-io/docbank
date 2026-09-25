@@ -12,10 +12,10 @@ import (
 )
 
 const (
-	photoMigrationStorageVersion   = 26
-	PhotoMigrationStateMigrated    = "migrated"
-	PhotoMigrationStateQuarantined = "quarantined"
-	PhotoMigrationStateRebuildable = "rebuildable"
+	photoMigrationStorageVersion         = 26
+	PhotoMigrationDispositionMigrated    = "migrated"
+	PhotoMigrationDispositionQuarantined = "quarantined"
+	PhotoMigrationDispositionRebuildable = "rebuildable"
 )
 
 type PhotoMigrationRun struct {
@@ -31,12 +31,12 @@ type PhotoMigrationRunPage struct {
 	Items []PhotoMigrationRun
 }
 
-func ValidatePhotoMigrationState(state string) error {
-	switch state {
-	case PhotoMigrationStateMigrated, PhotoMigrationStateQuarantined, PhotoMigrationStateRebuildable:
+func ValidatePhotoMigrationDisposition(disposition string) error {
+	switch disposition {
+	case PhotoMigrationDispositionMigrated, PhotoMigrationDispositionQuarantined, PhotoMigrationDispositionRebuildable:
 		return nil
 	default:
-		return fmt.Errorf("unsupported photo migration state %q", state)
+		return fmt.Errorf("unsupported photo migration disposition %q", disposition)
 	}
 }
 

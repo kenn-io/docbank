@@ -55,15 +55,38 @@ func TestReadSnapshotExtraFile(t *testing.T) {
 }
 
 func TestSnapshotUniqueBlobBytes(t *testing.T) {
-	root := t.TempDir()
-	repository, err := backup.Init(filepath.Join(root, "repository"))
+	metadata := []byte("{\"type\":\"meta\",\"format\":\"docbank-metadata\",\"version\":1,\"vault_id\":\"fixture\",\"node_sequence\":0}\n" +
+		"{\"type\":\"blob\",\"hash\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"size\":7,\"created_at\":\"2026-01-01T00:00:00Z\"}\n" +
+		"{\"type\":\"blob\",\"hash\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"size\":11,\"created_at\":\"2026-01-01T00:00:00Z\"}\n")
+	repository, manifest := snapshotWithMetadata(t, metadata)
+
+	got, err := SnapshotUniqueBlobBytes(t.Context(), repository, manifest)
+	require.NoError(t, err)
+	require.Equal(t, int64(18), got)
+}
+
+func TestSnapshotUniqueBlobBytesRejectsInvalidRecords(t *testing.T) {
+	header := "{\"type\":\"meta\",\"format\":\"docbank-metadata\",\"version\":1,\"vault_id\":\"fixture\",\"node_sequence\":0}\n"
+	for _, test := range []struct{ name, rows, wantError string }{
+		{"empty hash", "{\"type\":\"blob\",\"hash\":\"\",\"size\":7}\n", "invalid blob record"},
+		{"negative size", "{\"type\":\"blob\",\"hash\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"size\":-1}\n", "invalid blob record"},
+		{"duplicate hash", "{\"type\":\"blob\",\"hash\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"size\":7}\n{\"type\":\"blob\",\"hash\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"size\":7}\n", "repeats blob"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			repository, manifest := snapshotWithMetadata(t, []byte(header+test.rows))
+			_, err := SnapshotUniqueBlobBytes(t.Context(), repository, manifest)
+			require.ErrorContains(t, err, test.wantError)
+		})
+	}
+}
+
+func snapshotWithMetadata(t *testing.T, metadata []byte) (*backup.Repo, *backup.Manifest) {
+	t.Helper()
+	repository, err := backup.Init(filepath.Join(t.TempDir(), "repository"))
 	require.NoError(t, err)
 	known, err := repository.LoadBlobIndex()
 	require.NoError(t, err)
 	appender := backup.NewPackAppender(repository, known, pack.DefaultZstdLevel, nil, packstore.PackExt)
-	metadata := []byte("{\"type\":\"meta\",\"format\":\"docbank-metadata\",\"version\":1,\"vault_id\":\"fixture\",\"node_sequence\":0}\n" +
-		"{\"type\":\"blob\",\"hash\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"size\":7,\"created_at\":\"2026-01-01T00:00:00Z\"}\n" +
-		"{\"type\":\"blob\",\"hash\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"size\":11,\"created_at\":\"2026-01-01T00:00:00Z\"}\n")
 	metadataID, _, err := appender.Add(metadata)
 	require.NoError(t, err)
 	packs, entries, err := appender.Finish()
@@ -76,10 +99,7 @@ func TestSnapshotUniqueBlobBytes(t *testing.T) {
 		Metadata:  &backup.ManifestMetadata{Format: MetadataFormat, Blob: metadataID.String(), Bytes: int64(len(metadata))},
 		NewPacks:  packs, NewIndex: indexID,
 	}
-
-	got, err := SnapshotUniqueBlobBytes(t.Context(), repository, manifest)
-	require.NoError(t, err)
-	require.Equal(t, int64(18), got)
+	return repository, manifest
 }
 
 func TestPhotoMigrationBackupMetadataRoundTrip(t *testing.T) {
@@ -104,8 +124,10 @@ func TestPhotoMigrationBackupMetadataRoundTrip(t *testing.T) {
 		Access: sqlite.ReadWriteExisting, TransactionMode: sqlite.Deferred,
 	})
 	require.NoError(t, err)
-	_, err = db.Exec(`INSERT INTO photo_migration_map(run_id,source_hub,source_user_id,storage_key,state)
-		VALUES(?,?,?,?,?)`, run.ID, "hub", "user", "storage", store.PhotoMigrationStateRebuildable)
+	_, err = db.Exec(`INSERT INTO photo_migration_map(run_id,source_table,source_id,destination_kind,destination_id,disposition)
+		VALUES(?,?,?,?,?,?),(?,?,?,?,?,?)`,
+		run.ID, "assets", "fotobank-asset-1", "photo_asset", "docbank-asset-1", store.PhotoMigrationDispositionMigrated,
+		run.ID, "files", "fotobank-file-1", "content_version", "docbank-version-1", store.PhotoMigrationDispositionQuarantined)
 	require.NoError(t, err)
 	require.NoError(t, db.Close())
 
@@ -132,8 +154,19 @@ func TestPhotoMigrationBackupMetadataRoundTrip(t *testing.T) {
 	check, err := source.SQLiteDriver().Open(targetPath, sqlite.OpenOptions{Access: sqlite.ReadOnlyImmutable})
 	require.NoError(t, err)
 	defer func() { _ = check.Close() }()
+	for _, want := range []struct{ sourceTable, sourceID, destinationKind, destinationID, disposition string }{
+		{"assets", "fotobank-asset-1", "photo_asset", "docbank-asset-1", store.PhotoMigrationDispositionMigrated},
+		{"files", "fotobank-file-1", "content_version", "docbank-version-1", store.PhotoMigrationDispositionQuarantined},
+	} {
+		var got struct{ destinationKind, destinationID, disposition string }
+		require.NoError(t, check.QueryRow(`SELECT destination_kind,destination_id,disposition FROM photo_migration_map WHERE run_id=? AND source_table=? AND source_id=?`,
+			run.ID, want.sourceTable, want.sourceID).Scan(&got.destinationKind, &got.destinationID, &got.disposition))
+		require.Equal(t, want.destinationKind, got.destinationKind)
+		require.Equal(t, want.destinationID, got.destinationID)
+		require.Equal(t, want.disposition, got.disposition)
+	}
 	var mapCount int
 	require.NoError(t, check.QueryRow(`SELECT COUNT(*) FROM photo_migration_map WHERE run_id=?`, run.ID).Scan(&mapCount))
-	require.Equal(t, 1, mapCount)
+	require.Equal(t, 2, mapCount)
 	require.True(t, strings.HasSuffix(string(metadata), "\n"))
 }

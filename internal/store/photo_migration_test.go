@@ -35,8 +35,17 @@ func TestPhotoMigrationJSONLRoundTrip(t *testing.T) {
 	if err := source.SavePhotoMigrationRun(ctx, run); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := source.db.Exec(`INSERT INTO photo_migration_map(run_id,source_hub,source_user_id,storage_key,state) VALUES(?,?,?,?,?)`, run.ID, "hub", "user", "storage", PhotoMigrationStateRebuildable); err != nil {
-		t.Fatal(err)
+	wantMaps := []struct {
+		sourceTable, sourceID, destinationKind, destinationID, disposition string
+	}{
+		{"assets", "fotobank-asset-1", "photo_asset", "docbank-asset-1", PhotoMigrationDispositionMigrated},
+		{"files", "fotobank-file-1", "content_version", "docbank-version-1", PhotoMigrationDispositionQuarantined},
+	}
+	for _, want := range wantMaps {
+		if _, err := source.db.Exec(`INSERT INTO photo_migration_map(run_id,source_table,source_id,destination_kind,destination_id,disposition) VALUES(?,?,?,?,?,?)`,
+			run.ID, want.sourceTable, want.sourceID, want.destinationKind, want.destinationID, want.disposition); err != nil {
+			t.Fatal(err)
+		}
 	}
 	var exported bytes.Buffer
 	if err := source.ExportMetadata(ctx, &exported); err != nil {
@@ -60,11 +69,21 @@ func TestPhotoMigrationJSONLRoundTrip(t *testing.T) {
 		t.Fatalf("migration run did not round-trip: %#v", got)
 	}
 	var maps int
-	if err := target.db.QueryRow(`SELECT COUNT(*) FROM photo_migration_map`).Scan(&maps); err != nil {
+	if err := target.db.QueryRow(`SELECT COUNT(*) FROM photo_migration_map WHERE run_id=?`, run.ID).Scan(&maps); err != nil {
 		t.Fatal(err)
 	}
-	if maps != 1 {
-		t.Fatalf("got %d migration map rows, expected 1", maps)
+	if maps != len(wantMaps) {
+		t.Fatalf("got %d migration map rows, expected %d", maps, len(wantMaps))
+	}
+	for _, want := range wantMaps {
+		var got struct{ destinationKind, destinationID, disposition string }
+		if err := target.db.QueryRow(`SELECT destination_kind,destination_id,disposition FROM photo_migration_map WHERE run_id=? AND source_table=? AND source_id=?`,
+			run.ID, want.sourceTable, want.sourceID).Scan(&got.destinationKind, &got.destinationID, &got.disposition); err != nil {
+			t.Fatal(err)
+		}
+		if got.destinationKind != want.destinationKind || got.destinationID != want.destinationID || got.disposition != want.disposition {
+			t.Fatalf("map for %s/%s = %#v, want destination %s/%s with disposition %s", want.sourceTable, want.sourceID, got, want.destinationKind, want.destinationID, want.disposition)
+		}
 	}
 }
 
