@@ -41,9 +41,8 @@ type ProductionPageArchive interface {
 	ProductionPageHandleStore
 }
 
-// Worker owns one production job at a time for its vault. The daemon registers
-// Run under its supervisor, but no production route submits work until the
-// separate lifecycle and retention boundary is ready.
+// Worker owns one production job at a time for its vault. The daemon and
+// embedded vaults run it under their worker supervisors.
 type Worker struct {
 	Store         LifecycleStore
 	Source        ProductionPDFSourceOpener

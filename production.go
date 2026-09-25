@@ -29,6 +29,15 @@ type ProductionRecipeCatalog = api.ProductionRecipeCatalog
 type ProductionPackagePublishRequest = api.ProductionPackagePublishRequest
 type ProductionPackagePublished = api.ProductionPackagePublished
 
+func (v *Vault) startProductionWorker(ctx context.Context) {
+	worker := &production.Worker{Store: v.metadata,
+		Source:    processing.ProductionSourceOpener{Catalog: v.metadata, Blobs: v.blobs},
+		Pages:     processing.ProductionPageStageAdapter{Catalog: v.metadata, Blobs: v.blobs},
+		Artifacts: processing.ProductionFinalArtifactAdapter{Catalog: v.metadata, Blobs: v.blobs},
+		WorkerID:  "production-embedded-" + v.metadata.VaultID()}
+	v.startProcessingWorker(ctx, worker.Run)
+}
+
 // PublishProductionPackage retains one verified recipient package from a
 // successful job in this embedded vault. Exact retries reuse its authority.
 func (v *Vault) PublishProductionPackage(ctx context.Context, jobID string,

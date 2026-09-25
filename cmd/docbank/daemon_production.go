@@ -8,8 +8,7 @@ import (
 	"go.kenn.io/docbank/internal/store"
 )
 
-// startProductionWorker resumes stored jobs under the vault supervisor.
-// No production-set admission route is registered yet.
+// startProductionWorker renders queued jobs under the daemon's vault supervisor.
 func startProductionWorker(supervisor *jobs.Supervisor, catalog *store.Store, blobs *blob.Store) error {
 	worker := &production.Worker{Store: catalog,
 		Source:    processing.ProductionSourceOpener{Catalog: catalog, Blobs: blobs},

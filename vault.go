@@ -419,6 +419,7 @@ func openVaultWithRootOpener(
 	vault.startProcessingWorker(workerContext, packageWorker.Run)
 	vault.startProcessingWorker(workerContext, worker.Run)
 	vault.startProcessingWorker(workerContext, continuation.Run)
+	vault.startProductionWorker(workerContext)
 	if embeddingWorker != nil {
 		vault.startProcessingWorker(workerContext, embeddingWorker.Run)
 	}
