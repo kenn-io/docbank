@@ -1,8 +1,6 @@
 ---
 title: Fotobank migration inventory
-description: >
-  Inspect a stopped Fotobank source before moving photo ownership into
-  Docbank.
+description: Inspect a stopped Fotobank source before moving photo ownership into Docbank.
 ---
 
 # Fotobank migration inventory

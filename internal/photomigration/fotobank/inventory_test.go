@@ -526,8 +526,8 @@ func createInventoryArchive(t *testing.T, catalogPath string) (string, string) {
 	if !hasTree {
 		t.Fatal("archive extras tree was not captured")
 	}
-	metadata := []byte("{\"type\":\"meta\",\"format\":\"docbank-metadata\",\"version\":1,\"vault_id\":\"fixture\",\"node_sequence\":0}\n" +
-		"{\"type\":\"blob\",\"hash\":\"dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd\",\"size\":10,\"created_at\":\"2026-01-01T00:00:00Z\"}\n")
+	metadata := []byte("{\"type\":\"meta\",\"format\":\"docbank-metadata\",\"version\":1,\"vault_id\":\"dddddddd-dddd-4ddd-8ddd-dddddddddddd\",\"node_sequence\":1}\n" +
+		"{\"type\":\"blob\",\"hash\":\"dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd\",\"size\":10,\"created_at\":\"2026-01-01T00:00:00.000000000Z\"}\n")
 	metadataID, _, err := appender.Add(metadata)
 	if err != nil {
 		t.Fatal(err)

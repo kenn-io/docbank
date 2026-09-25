@@ -55,9 +55,9 @@ func TestReadSnapshotExtraFile(t *testing.T) {
 }
 
 func TestSnapshotUniqueBlobBytes(t *testing.T) {
-	metadata := []byte("{\"type\":\"meta\",\"format\":\"docbank-metadata\",\"version\":1,\"vault_id\":\"fixture\",\"node_sequence\":0}\n" +
-		"{\"type\":\"blob\",\"hash\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"size\":7,\"created_at\":\"2026-01-01T00:00:00Z\"}\n" +
-		"{\"type\":\"blob\",\"hash\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"size\":11,\"created_at\":\"2026-01-01T00:00:00Z\"}\n")
+	metadata := []byte("{\"type\":\"meta\",\"format\":\"docbank-metadata\",\"version\":1,\"vault_id\":\"dddddddd-dddd-4ddd-8ddd-dddddddddddd\",\"node_sequence\":1}\n" +
+		"{\"type\":\"blob\",\"hash\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"size\":7,\"created_at\":\"2026-01-01T00:00:00.000000000Z\"}\n" +
+		"{\"type\":\"blob\",\"hash\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"size\":11,\"created_at\":\"2026-01-01T00:00:00.000000000Z\"}\n")
 	repository, manifest := snapshotWithMetadata(t, metadata)
 
 	got, err := SnapshotUniqueBlobBytes(t.Context(), repository, manifest)
@@ -66,11 +66,11 @@ func TestSnapshotUniqueBlobBytes(t *testing.T) {
 }
 
 func TestSnapshotUniqueBlobBytesRejectsInvalidRecords(t *testing.T) {
-	header := "{\"type\":\"meta\",\"format\":\"docbank-metadata\",\"version\":1,\"vault_id\":\"fixture\",\"node_sequence\":0}\n"
+	header := "{\"type\":\"meta\",\"format\":\"docbank-metadata\",\"version\":1,\"vault_id\":\"dddddddd-dddd-4ddd-8ddd-dddddddddddd\",\"node_sequence\":1}\n"
 	for _, test := range []struct{ name, rows, wantError string }{
-		{"empty hash", "{\"type\":\"blob\",\"hash\":\"\",\"size\":7}\n", "invalid blob record"},
-		{"negative size", "{\"type\":\"blob\",\"hash\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"size\":-1}\n", "invalid blob record"},
-		{"duplicate hash", "{\"type\":\"blob\",\"hash\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"size\":7}\n{\"type\":\"blob\",\"hash\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"size\":7}\n", "repeats blob"},
+		{"empty hash", "{\"type\":\"blob\",\"hash\":\"\",\"size\":7,\"created_at\":\"2026-01-01T00:00:00.000000000Z\"}\n", "invalid blob hash"},
+		{"negative size", "{\"type\":\"blob\",\"hash\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"size\":-1,\"created_at\":\"2026-01-01T00:00:00.000000000Z\"}\n", "invalid blob record"},
+		{"duplicate hash", "{\"type\":\"blob\",\"hash\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"size\":7,\"created_at\":\"2026-01-01T00:00:00.000000000Z\"}\n{\"type\":\"blob\",\"hash\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"size\":7,\"created_at\":\"2026-01-01T00:00:00.000000000Z\"}\n", "repeats blob"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			repository, manifest := snapshotWithMetadata(t, []byte(header+test.rows))
