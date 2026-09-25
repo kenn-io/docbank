@@ -4580,6 +4580,57 @@ func (c *Client) RetryMediaSource(ctx context.Context, options *RetryMediaSource
 	return responseParser(ctx, resp)
 }
 
+// GetMediaTranscript Read one exact retained media transcript
+func (c *Client) GetMediaTranscript(ctx context.Context, options *GetMediaTranscriptRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetMediaTranscriptResponse, error) {
+	var err error
+
+	queryEncoding := map[string]runtime.QueryEncoding{
+		"content_version_id": {Style: "form", Explode: &[]bool{false}[0]},
+	}
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:    c.apiClient.GetBaseURL() + "/api/v1/media/sources/{source_id}/versions/{source_version_id}/transcript",
+		Method:        "GET",
+		Options:       options,
+		QueryEncoding: queryEncoding,
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*GetMediaTranscriptResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(GetMediaTranscriptResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "GetMediaTranscriptResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[GetMediaTranscriptErrorResponse](resp, "GetMediaTranscriptErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/media/sources/{source_id}/versions/{source_version_id}/transcript")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
 // CreateNode Create a directory
 func (c *Client) CreateNode(ctx context.Context, options *CreateNodeRequestOptions, reqEditors ...runtime.RequestEditorFn) (*CreateNodeResponse, error) {
 	var err error
@@ -14003,6 +14054,44 @@ func (o *RetryMediaSourceRequestOptions) GetHeader() (map[string]string, error) 
 	return nil, nil
 }
 
+// GetMediaTranscriptRequestOptions is the options needed to make a request to GetMediaTranscript.
+type GetMediaTranscriptRequestOptions struct {
+	PathParams *GetMediaTranscriptPath
+	Query      *GetMediaTranscriptQuery
+}
+
+// GetPathParams returns the path params as a map.
+func (o *GetMediaTranscriptRequestOptions) GetPathParams() (map[string]any, error) {
+	encoded, err := json.Marshal(o.PathParams, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetQuery returns the query params as a map.
+func (o *GetMediaTranscriptRequestOptions) GetQuery() (map[string]any, error) {
+	encoded, err := json.Marshal(o.Query, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *GetMediaTranscriptRequestOptions) GetBody() any {
+	return nil
+}
+
+// GetHeader returns the headers as a map.
+func (o *GetMediaTranscriptRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
 // CreateNodeRequestOptions is the options needed to make a request to CreateNode.
 type CreateNodeRequestOptions struct {
 	Body *CreateNodeBody
@@ -18694,6 +18783,11 @@ type RetryMediaSourcePath struct {
 	SourceID string `json:"source_id"`
 }
 
+type GetMediaTranscriptPath struct {
+	SourceID        string `json:"source_id"`
+	SourceVersionID string `json:"source_version_id"`
+}
+
 type GetNodePath struct {
 	ID int64 `json:"id"`
 }
@@ -19360,6 +19454,10 @@ type ListMediaSourcesQuery struct {
 	Limit  *int64  `json:"limit,omitempty"`
 }
 
+type GetMediaTranscriptQuery struct {
+	ContentVersionID string `json:"content_version_id"`
+}
+
 type ListChildrenQuery struct {
 	Limit  *int64 `json:"limit,omitempty"`
 	Offset *int64 `json:"offset,omitempty"`
@@ -19878,6 +19976,10 @@ type ImportMediaArtifactResponse = api.MediaReceipt
 type RetryMediaSourceResponse = api.MediaReceipt
 
 type RetryMediaSourceErrorResponse = Error
+
+type GetMediaTranscriptResponse = api.MediaTranscript
+
+type GetMediaTranscriptErrorResponse = Error
 
 type CreateNodeResponse = api.Node
 
@@ -21069,6 +21171,12 @@ type MediaSuppliedMetadata = api.MediaSuppliedMetadata
 type MediaTimeSpan = api.MediaTimeSpan
 
 type MediaTimestamp = api.MediaTimestamp
+
+type MediaTranscript = api.MediaTranscript
+
+type MediaTranscriptEvidence = api.MediaTranscriptEvidence
+
+type MediaTranscriptUnit = api.MediaTranscriptUnit
 
 type Member = bundle.Member
 

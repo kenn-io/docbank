@@ -24,6 +24,7 @@ var (
 	mediaFile, mediaReferenceFile, mediaOperationID              string
 	mediaOccurrenceRef, mediaOccurrenceRevision, mediaPersonRef  string
 	mediaSpeakerLabel, mediaSourceID, mediaOccurrenceID          string
+	mediaSourceVersionID, mediaContentVersionID                  string
 	mediaArtifactKind, mediaOrigin, mediaProvider, mediaLanguage string
 	mediaPlanFile                                                string
 )
@@ -94,6 +95,22 @@ var mediaStatusCmd = &cobra.Command{Use: "status <source-id>", Short: "Show curr
 			return err
 		}
 		return writeCLIJSON(cmd.OutOrStdout(), receipt)
+	}}
+
+var mediaTranscriptCmd = &cobra.Command{Use: "transcript <source-id>", Short: "Read one exact retained transcript",
+	Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
+		if mediaSourceVersionID == "" || mediaContentVersionID == "" {
+			return usageError(errors.New("--source-version-id and --content-version-id are required"))
+		}
+		c, err := daemonconn.Ensure(cmd.Context())
+		if err != nil {
+			return err
+		}
+		transcript, err := c.MediaTranscript(cmd.Context(), args[0], mediaSourceVersionID, mediaContentVersionID)
+		if err != nil {
+			return err
+		}
+		return writeCLIJSON(cmd.OutOrStdout(), transcript)
 	}}
 
 var mediaRetryCmd = &cobra.Command{Use: "retry <source-id>", Short: "Retry explicitly authorized transcript processing",
@@ -287,6 +304,8 @@ func init() {
 	}
 	mediaListCmd.Flags().StringVar(&mediaCursor, "cursor", "", "opaque page cursor")
 	mediaListCmd.Flags().IntVar(&mediaLimit, "limit", 100, "page size")
+	mediaTranscriptCmd.Flags().StringVar(&mediaSourceVersionID, "source-version-id", "", "exact source version identity")
+	mediaTranscriptCmd.Flags().StringVar(&mediaContentVersionID, "content-version-id", "", "expected content version identity")
 	mediaImportCmd.Flags().StringVar(&mediaFile, "file", "", "artifact file path")
 	mediaImportCmd.Flags().StringVar(&mediaOccurrenceID, "occurrence-id", "", "bound occurrence identity")
 	mediaImportCmd.Flags().StringVar(&mediaArtifactKind, "kind", "", "media, caption, or transcript")
@@ -302,7 +321,7 @@ func init() {
 	mediaConsentRevokeCmd.Flags().StringVar(&mediaOrigin, "origin", "", "registered origin ID")
 	mediaOccurrencesCmd.AddCommand(mediaOccurrencesListCmd, mediaOccurrencesDeclareCmd, mediaOccurrencesRevokeCmd)
 	mediaConsentCmd.AddCommand(mediaConsentGrantCmd, mediaConsentRevokeCmd)
-	mediaCmd.AddCommand(mediaSubmitCmd, mediaListCmd, mediaStatusCmd, mediaRetryCmd, mediaImportCmd,
+	mediaCmd.AddCommand(mediaSubmitCmd, mediaListCmd, mediaStatusCmd, mediaTranscriptCmd, mediaRetryCmd, mediaImportCmd,
 		mediaOccurrencesCmd, mediaOriginsCmd, mediaAcquisitionPlanCmd, mediaConsentCmd)
 	rootCmd.AddCommand(mediaCmd)
 }
