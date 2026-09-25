@@ -11,6 +11,7 @@ import (
 )
 
 func TestCollectionLabelMetadataRoundTripsNullAndNonNull(t *testing.T) {
+	t.Parallel()
 	source := newTestStore(t)
 	named := createCollectionRun(t, source, "named.txt", "a1")
 	cleared := createCollectionRun(t, source, "cleared.txt", "b2")
@@ -42,6 +43,7 @@ func TestCollectionLabelMetadataRoundTripsNullAndNonNull(t *testing.T) {
 }
 
 func TestCollectionLabelMetadataRoundTripsAfterFinalMemberPurge(t *testing.T) {
+	t.Parallel()
 	source := newTestStore(t)
 	named := createCollectionRun(t, source, "named-purge.txt", "c1")
 	cleared := createCollectionRun(t, source, "cleared-purge.txt", "d2")
@@ -103,6 +105,7 @@ func TestCollectionLabelMetadataRoundTripsAfterFinalMemberPurge(t *testing.T) {
 }
 
 func TestCollectionLabelMetadataRejectsMalformedAndCollidingRecordsAtomically(t *testing.T) {
+	t.Parallel()
 	source := newTestStore(t)
 	first := createCollectionRun(t, source, "first.txt", "a1")
 	second := createCollectionRun(t, source, "second.txt", "b2")
@@ -147,6 +150,7 @@ func TestCollectionLabelMetadataRejectsMalformedAndCollidingRecordsAtomically(t 
 }
 
 func TestCollectionLabelMetadataRejectsMaterializedVirtualState(t *testing.T) {
+	t.Parallel()
 	source := newTestStore(t)
 	run := createCollectionRun(t, source, "note.txt", "a1")
 	_, err := source.SetCollectionLabel(t.Context(), run.ID(), 1, new("Temporary"))
@@ -166,6 +170,7 @@ func TestCollectionLabelMetadataRejectsMaterializedVirtualState(t *testing.T) {
 }
 
 func TestReleasedMetadataWithoutCollectionLabelsImports(t *testing.T) {
+	t.Parallel()
 	source := newTestStore(t)
 	createCollectionRun(t, source, "note.txt", "a1")
 	var exported bytes.Buffer

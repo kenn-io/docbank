@@ -13,6 +13,7 @@ import (
 )
 
 func TestPackageRecordKeysSeparateStructuredInputs(t *testing.T) {
+	t.Parallel()
 	first, err := PackageRecordKey("a", 1, "x/2/y")
 	require.NoError(t, err)
 	second, err := PackageRecordKey("a/1/x", 2, "y")
@@ -71,6 +72,7 @@ func seedReceivedPackage(t *testing.T, s *Store, name string) (Package, Node) {
 }
 
 func TestCommitPackageRecordWithLeaseReplaysExactPayload(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	pkg, node := seedReceivedPackage(t, s, "alpha")
 	job, err := s.ClaimPackageImportJob(t.Context(), "record-worker", time.Minute)
@@ -135,6 +137,7 @@ func TestCommitPackageRecordWithLeaseReplaysExactPayload(t *testing.T) {
 }
 
 func TestAssignPackageLabelsIsIdempotentAndSeparateFromReceivedAuthority(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	pkg, node := seedReceivedPackage(t, s, "assigned-labels")
 	key, err := PackageRecordKey("VOL001.dat", 1, "DOC-A")
@@ -211,6 +214,7 @@ func commitReceivedLabel(t *testing.T, s *Store, pkg Package, versionID, label s
 }
 
 func TestReceivedLabelLookupRequiresScopeWhenSenderReusesIt(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	first, firstNode := seedReceivedPackage(t, s, "alpha")
 	commitReceivedLabel(t, s, first, firstNode.CurrentVersionID, "EXT000001")
@@ -242,6 +246,7 @@ func TestReceivedLabelLookupRequiresScopeWhenSenderReusesIt(t *testing.T) {
 }
 
 func TestReceivedLabelLookupTreatsDocumentAndPageEndpointsAsOneOccurrence(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	pkg, node := seedReceivedPackage(t, s, "same-occurrence")
 	job, err := s.ClaimPackageImportJob(t.Context(), "record-worker", time.Minute)
@@ -273,6 +278,7 @@ func TestReceivedLabelLookupTreatsDocumentAndPageEndpointsAsOneOccurrence(t *tes
 }
 
 func TestPackageImportReceiptsAndLabelsSurviveMetadataRestore(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	pkg, node := seedReceivedPackage(t, s, "portable")
 	commitReceivedLabel(t, s, pkg, node.CurrentVersionID, "EXT000001")
@@ -295,6 +301,7 @@ func TestPackageImportReceiptsAndLabelsSurviveMetadataRestore(t *testing.T) {
 }
 
 func TestPackageRecordRejectsVersionOutsideItsIngest(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	pkg, _ := seedReceivedPackage(t, s, "owned")
 	job, err := s.ClaimPackageImportJob(t.Context(), "record-worker", time.Minute)

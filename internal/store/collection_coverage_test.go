@@ -14,6 +14,7 @@ import (
 // Losing the exact head, profile, or serving-generation join changes these
 // independently constructed complete/partial/failed/unprocessed/empty counts.
 func TestCollectionCoverageFiveStatesAndExactAuthority(t *testing.T) {
+	t.Parallel()
 	s, run, nodes, profile := collectionCoverageFixture(t, 5)
 	selection := CoverageSelection{Configuration: "configured", ProfileFingerprint: profile.Fingerprint}
 	collectionCoveragePublish(t, s, nodes[0], profile, "complete")
@@ -40,6 +41,7 @@ func TestCollectionCoverageFiveStatesAndExactAuthority(t *testing.T) {
 }
 
 func TestCollectionCoverageRetainsActivatedOutputAfterFailure(t *testing.T) {
+	t.Parallel()
 	for _, state := range []string{"complete", "none", "empty_segments", "blank_segments", "degraded", "truncated", "partial_success"} {
 		t.Run(state, func(t *testing.T) {
 			s, run, nodes, profile := collectionCoverageFixture(t, 1)
@@ -60,6 +62,7 @@ func TestCollectionCoverageRetainsActivatedOutputAfterFailure(t *testing.T) {
 }
 
 func TestCollectionCoverageNativeTextFollowsServingSearchPath(t *testing.T) {
+	t.Parallel()
 	s, run, nodes, profile := collectionCoverageFixture(t, 1)
 	native, err := s.IngestFileExact(t.Context(), run, s.RootID(), "native.txt", fakeHash("c9"), 19, "text/plain", "native.txt", "")
 	require.NoError(t, err)
@@ -83,6 +86,7 @@ func TestCollectionCoverageNativeTextFollowsServingSearchPath(t *testing.T) {
 }
 
 func TestCollectionCoverageSelectionAndUnavailableStates(t *testing.T) {
+	t.Parallel()
 	s, run, _, profile := collectionCoverageFixture(t, 1)
 	for _, selection := range []CoverageSelection{{}, {Configuration: "unconfigured"}, {Configuration: "profile_required"}} {
 		got, err := s.CollectionQuality(t.Context(), run.ID(), selection, nil)
@@ -98,6 +102,7 @@ func TestCollectionCoverageSelectionAndUnavailableStates(t *testing.T) {
 }
 
 func TestCollectionCoverageStagedAndMismatchedGenerationAreUnprocessed(t *testing.T) {
+	t.Parallel()
 	s, run, nodes, profile := collectionCoverageFixture(t, 1)
 	selection := CoverageSelection{"configured", profile.Fingerprint}
 	build := catalogRenditionBuild(s, profile)
@@ -132,6 +137,7 @@ func TestCollectionCoverageStagedAndMismatchedGenerationAreUnprocessed(t *testin
 }
 
 func TestCollectionCoverageBrokenGenerationIsNotMissingCollection(t *testing.T) {
+	t.Parallel()
 	s, run, nodes, profile := collectionCoverageFixture(t, 1)
 	collectionCoveragePublish(t, s, nodes[0], profile, "complete")
 	_, err := s.db.Exec(`DELETE FROM rendition_lexical_generation_manifests`)
@@ -155,6 +161,7 @@ func TestCollectionCoverageBrokenGenerationIsNotMissingCollection(t *testing.T) 
 }
 
 func TestCollectionCoverageSupersessionMultiImportAndEmptyRetainedCollection(t *testing.T) {
+	t.Parallel()
 	s, first, nodes, profile := collectionCoverageFixture(t, 1)
 	selection := CoverageSelection{"configured", profile.Fingerprint}
 	collectionCoveragePublish(t, s, nodes[0], profile, "complete")
@@ -186,6 +193,7 @@ func TestCollectionCoverageSupersessionMultiImportAndEmptyRetainedCollection(t *
 }
 
 func TestCollectionCoverageOperatorRequired(t *testing.T) {
+	t.Parallel()
 	s, run, nodes, profile := collectionCoverageFixture(t, 1)
 	collectionCoverageFail(t, s, nodes[0], profile, true)
 	selection := CoverageSelection{"configured", profile.Fingerprint}
@@ -195,6 +203,7 @@ func TestCollectionCoverageOperatorRequired(t *testing.T) {
 }
 
 func TestCollectionCoverageLatestExactAttemptUsesWaiterAndJobTimes(t *testing.T) {
+	t.Parallel()
 	s, run, nodes, profile := collectionCoverageFixture(t, 1)
 	selection := CoverageSelection{"configured", profile.Fingerprint}
 	first := renditionJobTestRequest(nodes[0].CurrentVersionID, profile)

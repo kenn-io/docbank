@@ -10,6 +10,7 @@ import (
 )
 
 func TestQMDExportSourcesListsOnlyLiveCurrentSanitizedMarkdown(t *testing.T) {
+	t.Parallel()
 	s, versions := newRenditionCatalogFixture(t)
 	profile := catalogProcessingProfile(t, false)
 	build := catalogRenditionBuild(s, profile)
@@ -53,6 +54,7 @@ func TestQMDExportSourcesListsOnlyLiveCurrentSanitizedMarkdown(t *testing.T) {
 }
 
 func TestQMDExportSourcesOmitsTrashedCurrentHead(t *testing.T) {
+	t.Parallel()
 	s, versions := newRenditionCatalogFixture(t)
 	profile := catalogProcessingProfile(t, false)
 	build := catalogRenditionBuild(s, profile)
@@ -69,6 +71,7 @@ func TestQMDExportSourcesOmitsTrashedCurrentHead(t *testing.T) {
 }
 
 func TestQMDExportSourcesKeepsSeparateProfilesAndEnforcesMembershipLimit(t *testing.T) {
+	t.Parallel()
 	s, versions := newRenditionCatalogFixture(t)
 	first := catalogProcessingProfile(t, false)
 	second := catalogProcessingProfileWith(t, false, func(profile *document.ProcessingProfileV1) {
@@ -97,6 +100,7 @@ func TestQMDExportSourcesKeepsSeparateProfilesAndEnforcesMembershipLimit(t *test
 }
 
 func TestRevalidateQMDExportCandidatesRequiresExactLiveAttachment(t *testing.T) {
+	t.Parallel()
 	s, versions := newRenditionCatalogFixture(t)
 	profile := catalogProcessingProfile(t, false)
 	build := catalogRenditionBuild(s, profile)
@@ -135,6 +139,7 @@ func TestRevalidateQMDExportCandidatesRequiresExactLiveAttachment(t *testing.T) 
 }
 
 func TestRevalidateQMDExportCandidatesFiltersUnknownMIME(t *testing.T) {
+	t.Parallel()
 	s, _ := newRenditionCatalogFixture(t)
 	file, err := s.CreateFile(t.Context(), s.RootID(), "unknown-format", catalogSourceHash, 20, "")
 	require.NoError(t, err)

@@ -11,6 +11,7 @@ import (
 )
 
 func TestAuditedContentReplacementAdvancesPortableAuthority(t *testing.T) {
+	t.Parallel()
 	source, err := Open(filepath.Join(t.TempDir(), "source.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, source.Close()) })
@@ -63,6 +64,7 @@ func TestAuditedContentReplacementAdvancesPortableAuthority(t *testing.T) {
 }
 
 func TestAuditedContentRevertAdvancesPortableAuthority(t *testing.T) {
+	t.Parallel()
 	source, err := Open(filepath.Join(t.TempDir(), "source.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, source.Close()) })
@@ -131,6 +133,7 @@ func TestAuditedContentRevertAdvancesPortableAuthority(t *testing.T) {
 }
 
 func TestAuditedContentRevertRejectsMissingPhysicalAuthority(t *testing.T) {
+	t.Parallel()
 	s, err := Open(filepath.Join(t.TempDir(), "source.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, s.Close()) })
@@ -157,6 +160,7 @@ func TestAuditedContentRevertRejectsMissingPhysicalAuthority(t *testing.T) {
 }
 
 func TestAuditedVaultRejectsRevertOutsideScope(t *testing.T) {
+	t.Parallel()
 	s, err := Open(filepath.Join(t.TempDir(), "vault.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, s.Close()) })
@@ -189,6 +193,7 @@ func TestAuditedVaultRejectsRevertOutsideScope(t *testing.T) {
 }
 
 func TestAuditedContentRevertRollsBackWholeOperation(t *testing.T) {
+	t.Parallel()
 	s, err := Open(filepath.Join(t.TempDir(), "vault.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, s.Close()) })
@@ -222,6 +227,7 @@ func TestAuditedContentRevertRollsBackWholeOperation(t *testing.T) {
 }
 
 func TestAuditedContentTransitionsChainMultipleOperations(t *testing.T) {
+	t.Parallel()
 	s, err := Open(filepath.Join(t.TempDir(), "vault.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, s.Close()) })
@@ -270,6 +276,7 @@ func TestAuditedContentTransitionsChainMultipleOperations(t *testing.T) {
 }
 
 func TestAuditedVaultRejectsReplacementOutsideScope(t *testing.T) {
+	t.Parallel()
 	s, err := Open(filepath.Join(t.TempDir(), "vault.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, s.Close()) })
@@ -303,6 +310,7 @@ func TestAuditedVaultRejectsReplacementOutsideScope(t *testing.T) {
 }
 
 func TestAuditedContentReplacementImportRejectsFinalStateDivergence(t *testing.T) {
+	t.Parallel()
 	s, err := Open(filepath.Join(t.TempDir(), "source.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, s.Close()) })
@@ -333,6 +341,7 @@ func TestAuditedContentReplacementImportRejectsFinalStateDivergence(t *testing.T
 }
 
 func TestAuditedContentReplacementRollsBackWholeOperation(t *testing.T) {
+	t.Parallel()
 	s, err := Open(filepath.Join(t.TempDir(), "vault.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, s.Close()) })

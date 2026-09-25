@@ -10,6 +10,7 @@ import (
 )
 
 func TestCollectionLabelFence(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
 	run, err := s.BeginIngest(ctx, "cli", "Synthetic import")
@@ -37,6 +38,7 @@ func TestCollectionLabelFence(t *testing.T) {
 }
 
 func TestCollectionLabelValidationAndCaseSensitiveUniqueness(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	first := createCollectionRun(t, s, "first.txt", "a1")
 	second := createCollectionRun(t, s, "second.txt", "b2")
@@ -80,6 +82,7 @@ func TestCollectionLabelValidationAndCaseSensitiveUniqueness(t *testing.T) {
 }
 
 func TestCollectionLabelNoOpClearAndRetainedEmptyAuthority(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	run := createCollectionRun(t, s, "note.txt", "a1")
 
@@ -129,6 +132,7 @@ func TestCollectionLabelNoOpClearAndRetainedEmptyAuthority(t *testing.T) {
 }
 
 func TestCollectionLabelRejectsArbitraryEmptyIngest(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	run, err := s.BeginIngest(t.Context(), "cli", "No committed documents")
 	require.NoError(t, err)
@@ -144,6 +148,7 @@ func TestCollectionLabelRejectsArbitraryEmptyIngest(t *testing.T) {
 }
 
 func TestCollectionLabelTimestampNeverMovesBackward(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	run := createCollectionRun(t, s, "note.txt", "a1")
 	created, err := s.SetCollectionLabel(t.Context(), run.ID(), 1, new("First"))
@@ -158,6 +163,7 @@ func TestCollectionLabelTimestampNeverMovesBackward(t *testing.T) {
 }
 
 func TestCollectionLabelFirstWriteRaceHasOneWinner(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	run := createCollectionRun(t, s, "note.txt", "a1")
 	names := []string{"First", "Second"}
@@ -192,6 +198,7 @@ func TestCollectionLabelFirstWriteRaceHasOneWinner(t *testing.T) {
 }
 
 func TestBeginIngestWithLabelPublishesAtomically(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	first := createCollectionRun(t, s, "first.txt", "a1")
 	name := "Shared label"
@@ -239,6 +246,7 @@ func TestBeginIngestWithLabelPublishesAtomically(t *testing.T) {
 }
 
 func TestBeginIngestWithLabelRejectsCallerSuppliedSourceKind(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	for _, sourceKind := range []string{"embedded:cli", "EMBEDDED:cli", "EmBeDdEd:watch"} {
 		t.Run(sourceKind, func(t *testing.T) {
@@ -257,6 +265,7 @@ func TestBeginIngestWithLabelRejectsCallerSuppliedSourceKind(t *testing.T) {
 }
 
 func TestCollectionLabelsRejectAllMutationsUnderAudit(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	retained := createCollectionRun(t, s, "retained.txt", "a1")
 	name := "Retained"

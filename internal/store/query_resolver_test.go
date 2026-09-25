@@ -12,6 +12,7 @@ import (
 // These tests fail if lookups use display text as identity, discard revisions,
 // bypass collection eligibility, or convert database failures into no matches.
 func TestQueryResolverStableReferences(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
 	tag, err := s.CreateTag(ctx, "Café review")
@@ -51,6 +52,7 @@ func TestQueryResolverStableReferences(t *testing.T) {
 }
 
 func TestQueryResolverCollectionEligibilityAndSavedKind(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
 	r := queryResolver{q: s.db}
@@ -69,6 +71,7 @@ func TestQueryResolverCollectionEligibilityAndSavedKind(t *testing.T) {
 }
 
 func TestQueryResolverUsesSuppliedReadSnapshotAndPreservesBackendErrors(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
 	saved, err := s.CreateSavedQuery(ctx, "Original", "", SavedQueryKindQuery, []byte(`{"text":"alpha"}`))
@@ -102,6 +105,7 @@ func TestQueryResolverUsesSuppliedReadSnapshotAndPreservesBackendErrors(t *testi
 }
 
 func TestQueryResolverExpansionFailsClosedAgainstRealStore(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
 	r := queryResolver{q: s.db}

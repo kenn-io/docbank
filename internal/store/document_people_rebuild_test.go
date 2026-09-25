@@ -8,6 +8,7 @@ import (
 )
 
 func TestPeopleRebuildReplay(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	operationID, err := newUUIDv4()
 	require.NoError(t, err)
@@ -28,6 +29,7 @@ func TestPeopleRebuildReplay(t *testing.T) {
 }
 
 func TestDocumentPeopleCoverageCountsCurrentVersionWaitingForEvents(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ingestDocumentEventTarget(t, s, "pending.txt", "b1")
 	coverage, err := s.DocumentPeopleCoverage(t.Context())
@@ -37,6 +39,7 @@ func TestDocumentPeopleCoverageCountsCurrentVersionWaitingForEvents(t *testing.T
 }
 
 func TestPeopleRebuildWaitsForFailureRetryAndLateNodeRevision(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	version := seedDocumentPeopleEvent(t, s, "rebuild.txt", "a1", nil)
 	operationID, err := newUUIDv4()
@@ -89,6 +92,7 @@ func TestPeopleRebuildWaitsForFailureRetryAndLateNodeRevision(t *testing.T) {
 }
 
 func TestPeopleRebuildCountsFailureAfterNodeRevisionChanges(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	version := seedDocumentPeopleEvent(t, s, "changed-failure.txt", "a2", nil)
 	operationID, err := newUUIDv4()
@@ -114,6 +118,7 @@ func TestPeopleRebuildCountsFailureAfterNodeRevisionChanges(t *testing.T) {
 }
 
 func TestPeopleRebuildStopsRetryingTerminalFailure(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	version := seedDocumentPeopleEvent(t, s, "changed-unavailable.txt", "a3", nil)
 	operationID, err := newUUIDv4()

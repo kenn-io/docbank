@@ -10,6 +10,7 @@ import (
 )
 
 func TestBlobReferenceSetSQL(t *testing.T) {
+	t.Parallel()
 	query := blobReferenceSetSQL([]blobReference{
 		{table: "first_roots", column: "first_hash"},
 		{table: "second_roots", column: "second_hash"},
@@ -30,6 +31,7 @@ func TestBlobReferenceSetSQL(t *testing.T) {
 // kind, one blob per GC hold, and one orphan, and checks each consumer against
 // the same answer.
 func TestBlobReachabilityRuleAgreesAcrossConsumers(t *testing.T) {
+	t.Parallel()
 	s, versions := newRenditionCatalogFixture(t)
 	ctx := t.Context()
 	build := catalogRenditionBuild(s, catalogProcessingProfile(t, false))

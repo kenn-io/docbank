@@ -24,6 +24,7 @@ const (
 )
 
 func TestInitialAuditAuthorityMetadataRoundTrip(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	source, err := Open(filepath.Join(t.TempDir(), "source.db"))
 	require.NoError(t, err)
@@ -60,6 +61,7 @@ func TestInitialAuditAuthorityMetadataRoundTrip(t *testing.T) {
 }
 
 func TestInitialAuditGenesisRejectsLiveSiblingCollision(t *testing.T) {
+	t.Parallel()
 	s, err := Open(filepath.Join(t.TempDir(), "vault.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, s.Close()) })
@@ -103,6 +105,7 @@ func TestInitialAuditGenesisRejectsLiveSiblingCollision(t *testing.T) {
 }
 
 func TestInitialAuditAuthorityImportRejectsCorruptionAndRollsBack(t *testing.T) {
+	t.Parallel()
 	source, err := Open(filepath.Join(t.TempDir(), "source.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, source.Close()) })
@@ -136,6 +139,7 @@ func TestInitialAuditAuthorityImportRejectsCorruptionAndRollsBack(t *testing.T) 
 }
 
 func TestInitialAuditAuthorityImportRejectsIncompleteMembership(t *testing.T) {
+	t.Parallel()
 	source, err := Open(filepath.Join(t.TempDir(), "source.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, source.Close()) })
@@ -158,6 +162,7 @@ func TestInitialAuditAuthorityImportRejectsIncompleteMembership(t *testing.T) {
 }
 
 func TestAuditAuthorityImportRejectsUntrustedScopeCounts(t *testing.T) {
+	t.Parallel()
 	source, err := Open(filepath.Join(t.TempDir(), "source.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, source.Close()) })
@@ -194,6 +199,7 @@ func TestAuditAuthorityImportRejectsUntrustedScopeCounts(t *testing.T) {
 }
 
 func TestAuditScopeRecordsRejectsUntrustedEntryCountWithoutPreallocation(t *testing.T) {
+	t.Parallel()
 	_, err := auditScopeRecordsByScope(nil, []initialAuditScope{{
 		scopeID:    "11111111-1111-4111-8111-111111111111",
 		entryCount: math.MaxInt64,
@@ -202,6 +208,7 @@ func TestAuditScopeRecordsRejectsUntrustedEntryCountWithoutPreallocation(t *test
 }
 
 func TestInitialAuditAuthorityImportActivatesAfterWholeStream(t *testing.T) {
+	t.Parallel()
 	source, err := Open(filepath.Join(t.TempDir(), "source.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, source.Close()) })
@@ -221,6 +228,7 @@ func TestInitialAuditAuthorityImportActivatesAfterWholeStream(t *testing.T) {
 }
 
 func TestInitialAuditRootEnrollmentAdoptsUnknownOriginTrash(t *testing.T) {
+	t.Parallel()
 	source, err := Open(filepath.Join(t.TempDir(), "source.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, source.Close()) })
@@ -241,6 +249,7 @@ func TestInitialAuditRootEnrollmentAdoptsUnknownOriginTrash(t *testing.T) {
 }
 
 func TestImportMetadataRejectsOrphanAuditRecord(t *testing.T) {
+	t.Parallel()
 	source, err := Open(filepath.Join(t.TempDir(), "source.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, source.Close()) })
@@ -269,6 +278,7 @@ func TestImportMetadataRejectsOrphanAuditRecord(t *testing.T) {
 }
 
 func TestImportMetadataRejectsAuditRecordDigestMismatch(t *testing.T) {
+	t.Parallel()
 	source, err := Open(filepath.Join(t.TempDir(), "source.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, source.Close()) })
@@ -303,6 +313,7 @@ func TestImportMetadataRejectsAuditRecordDigestMismatch(t *testing.T) {
 }
 
 func TestAuditImportAppliesExactMetadataV1RecordSchemas(t *testing.T) {
+	t.Parallel()
 	source, err := Open(filepath.Join(t.TempDir(), "source.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, source.Close()) })
@@ -337,6 +348,7 @@ func TestAuditImportAppliesExactMetadataV1RecordSchemas(t *testing.T) {
 }
 
 func TestAuditValidationRejectsDirectDatabaseDivergence(t *testing.T) {
+	t.Parallel()
 	s, err := Open(filepath.Join(t.TempDir(), "vault.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, s.Close()) })
@@ -358,6 +370,7 @@ func TestAuditValidationRejectsDirectDatabaseDivergence(t *testing.T) {
 }
 
 func TestInitialAuditAuthorityRejectsUnsupportedLogicalMutations(t *testing.T) {
+	t.Parallel()
 	s, err := Open(filepath.Join(t.TempDir(), "vault.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, s.Close()) })
@@ -380,6 +393,7 @@ func TestInitialAuditAuthorityRejectsUnsupportedLogicalMutations(t *testing.T) {
 }
 
 func TestSavedQueryRunRejectsActiveAuditAuthorityWithoutPublishingHandle(t *testing.T) {
+	t.Parallel()
 	s, err := Open(filepath.Join(t.TempDir(), "vault.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, s.Close()) })
@@ -401,6 +415,7 @@ func TestSavedQueryRunRejectsActiveAuditAuthorityWithoutPublishingHandle(t *test
 }
 
 func TestInitialAuditAuthorityAllowsReadOnlyMaintenancePreviews(t *testing.T) {
+	t.Parallel()
 	s, err := Open(filepath.Join(t.TempDir(), "vault.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, s.Close()) })
@@ -430,6 +445,7 @@ func TestInitialAuditAuthorityAllowsReadOnlyMaintenancePreviews(t *testing.T) {
 }
 
 func TestInitialAuditAuthorityAllowsUnreferencedBlobGC(t *testing.T) {
+	t.Parallel()
 	const orphanHash = "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
 	s, err := Open(filepath.Join(t.TempDir(), "vault.db"))
 	require.NoError(t, err)
@@ -460,6 +476,7 @@ func TestInitialAuditAuthorityAllowsUnreferencedBlobGC(t *testing.T) {
 }
 
 func TestInitialAuditAuthorityReopens(t *testing.T) {
+	t.Parallel()
 	path := filepath.Join(t.TempDir(), "vault.db")
 	s, err := Open(path)
 	require.NoError(t, err)

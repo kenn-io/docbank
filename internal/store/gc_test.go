@@ -16,6 +16,7 @@ import (
 )
 
 func TestLifecycleMetadataRoundTripPreservesDurableRootsAndZeroSegmentMembership(t *testing.T) {
+	t.Parallel()
 	// Mutations caught: omitting durable retention/audit roots from JSONL loses
 	// live authority on restore; rebuilding membership from FTS alone loses a
 	// valid zero-segment build; exporting ephemeral roots resurrects unsafe pins.
@@ -92,6 +93,7 @@ func TestLifecycleMetadataRoundTripPreservesDurableRootsAndZeroSegmentMembership
 }
 
 func TestPageLimitWithSentinelRejectsOverflow(t *testing.T) {
+	t.Parallel()
 	_, err := pageLimitWithSentinel(math.MaxInt)
 	require.ErrorContains(t, err, "too large")
 	limit, err := pageLimitWithSentinel(10)
@@ -100,6 +102,7 @@ func TestPageLimitWithSentinelRejectsOverflow(t *testing.T) {
 }
 
 func TestUnreachableBlobsPageBoundsCandidatesAcrossCatalogSizes(t *testing.T) {
+	t.Parallel()
 	for _, liveCount := range []int{3, 300} {
 		t.Run(fmt.Sprintf("live=%d", liveCount), func(t *testing.T) {
 			s := newTestStore(t)
@@ -143,6 +146,7 @@ func TestUnreachableBlobsPageBoundsCandidatesAcrossCatalogSizes(t *testing.T) {
 }
 
 func TestUnreachableBlobsRetainsCatalogedRenditionArtifacts(t *testing.T) {
+	t.Parallel()
 	// Mutation caught: checking only content_versions would let generic blob GC
 	// revoke live normalized-evidence and sanitized-Markdown blob authority.
 	s, _ := newRenditionCatalogFixture(t)
@@ -159,6 +163,7 @@ func TestUnreachableBlobsRetainsCatalogedRenditionArtifacts(t *testing.T) {
 }
 
 func TestUnreachableBlobsRetainsStagedBuildSourcesWithoutVersionAttachment(t *testing.T) {
+	t.Parallel()
 	// Mutation caught: a staged provider build is backup authority even when its
 	// original version was pruned; generic blob GC must not collect that exact
 	// source out from under validation or backup closure.
@@ -182,6 +187,7 @@ func TestUnreachableBlobsRetainsStagedBuildSourcesWithoutVersionAttachment(t *te
 }
 
 func TestDerivativeGCPlanSelectsOnlyUnrootedStagedBuilds(t *testing.T) {
+	t.Parallel()
 	// Mutation caught: treating staged immutable builds as permanently live
 	// would leak their artifacts, units, segments, and provider receipts.
 	s, versions := newRenditionCatalogFixture(t)
@@ -208,6 +214,7 @@ func TestDerivativeGCPlanSelectsOnlyUnrootedStagedBuilds(t *testing.T) {
 }
 
 func TestDerivativeGCPlanHonorsEveryTypedBuildRootAndFencing(t *testing.T) {
+	t.Parallel()
 	// Mutation caught: omitting any current producer class, accepting a stale
 	// release, or treating an expired lease as live can collect an exact build
 	// that active work still requires or leak one after a crash.
@@ -264,6 +271,7 @@ func TestDerivativeGCPlanHonorsEveryTypedBuildRootAndFencing(t *testing.T) {
 }
 
 func TestPurgeDerivativesRetainsActiveWorkerThenCollectsExpiredFence(t *testing.T) {
+	t.Parallel()
 	// Mutation caught: ignoring an active worker lease can remove its exact
 	// staged build during maintenance; retaining an expired renewed fence leaks
 	// a crashed worker's complete manifest forever.
@@ -300,6 +308,7 @@ func TestPurgeDerivativesRetainsActiveWorkerThenCollectsExpiredFence(t *testing.
 }
 
 func TestCurrentRenditionRootFencingSurvivesReleaseAndExpiry(t *testing.T) {
+	t.Parallel()
 	// Mutation caught: deleting the sole root row on release or expiry forgets
 	// its token high-water and lets a stale producer reacquire exact authority.
 	s, _ := newRenditionCatalogFixture(t)
@@ -368,6 +377,7 @@ func TestCurrentRenditionRootFencingSurvivesReleaseAndExpiry(t *testing.T) {
 }
 
 func TestStageAndRootAPIsPublishNoCollectibleWindow(t *testing.T) {
+	t.Parallel()
 	// Mutation caught: staging and rooting in separate transactions exposes a
 	// complete build or generation to maintenance before its producer's exact
 	// fenced root becomes visible.
@@ -422,6 +432,7 @@ func TestStageAndRootAPIsPublishNoCollectibleWindow(t *testing.T) {
 }
 
 func TestDerivativeGCPlanPinsExactActiveAndLeasedLexicalGenerations(t *testing.T) {
+	t.Parallel()
 	// Mutation caught: following only the current lexical head would reclaim an
 	// old exact generation while a reader still has it pinned.
 	s, versions := newRenditionCatalogFixture(t)
@@ -469,6 +480,7 @@ func TestDerivativeGCPlanPinsExactActiveAndLeasedLexicalGenerations(t *testing.T
 }
 
 func TestDerivativeGCPlanRetainsBuildManifestThroughRootedGeneration(t *testing.T) {
+	t.Parallel()
 	// Mutation caught: collecting an un-attached build while a backup-pinned
 	// generation still contains its text would make the rooted projection's
 	// manifest impossible to explain or restore.
@@ -490,6 +502,7 @@ func TestDerivativeGCPlanRetainsBuildManifestThroughRootedGeneration(t *testing.
 }
 
 func TestDerivativeGCPlanRetainsZeroSegmentBuildThroughGenerationMembership(t *testing.T) {
+	t.Parallel()
 	// Mutation caught: inferring generation membership only from FTS rows drops
 	// a valid zero-segment build from exact rooted-generation closure.
 	s, _ := newRenditionCatalogFixture(t)
@@ -522,6 +535,7 @@ func TestDerivativeGCPlanRetainsZeroSegmentBuildThroughGenerationMembership(t *t
 }
 
 func TestPurgeDerivativesRemovesCompleteLiveManifestButNeverOriginal(t *testing.T) {
+	t.Parallel()
 	// Mutation caught: deleting only Markdown or attachments would leave
 	// normalized evidence, provider artifacts, units, segments, FTS rows,
 	// legacy cache text, or the immutable build receipt in the live vault.
@@ -599,6 +613,7 @@ func TestPurgeDerivativesRemovesCompleteLiveManifestButNeverOriginal(t *testing.
 }
 
 func TestPurgeDerivativesPreservesLiveContentBlobSharingArtifactHash(t *testing.T) {
+	t.Parallel()
 	s, versions := newRenditionCatalogFixture(t)
 	ctx := t.Context()
 	_, err := s.CreateFile(ctx, s.RootID(), "ordinary.txt", catalogEvidenceBlobHash,
@@ -625,6 +640,7 @@ func TestPurgeDerivativesPreservesLiveContentBlobSharingArtifactHash(t *testing.
 }
 
 func TestExactNonLegacyPurgePreservesLegacySearchAuthority(t *testing.T) {
+	t.Parallel()
 	tests := map[string]func(RenditionAttachmentRecord) PurgeRequest{
 		"attachment": func(attachment RenditionAttachmentRecord) PurgeRequest {
 			return PurgeRequest{AttachmentIDs: []string{attachment.ID}}
@@ -673,6 +689,7 @@ func TestExactNonLegacyPurgePreservesLegacySearchAuthority(t *testing.T) {
 }
 
 func TestLateLegacyExtractionCannotRecreatePurgedDerivativeAfterRestore(t *testing.T) {
+	t.Parallel()
 	// A worker may finish after purge revoked its authority. The late result and
 	// restore-time queue rebuild must both honor the durable suppression.
 	s := newTestStore(t)
@@ -713,6 +730,7 @@ func TestLateLegacyExtractionCannotRecreatePurgedDerivativeAfterRestore(t *testi
 }
 
 func TestPurgeBeforeLegacyExtractionSuppressesQueuedAndRestoredWorkByVersion(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
 	const text = "queued-sensitive-derivative"
@@ -766,6 +784,7 @@ func TestPurgeBeforeLegacyExtractionSuppressesQueuedAndRestoredWorkByVersion(t *
 }
 
 func TestPurgeUnmigratedLegacyExtractionScopesSharedBlobByVersion(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
 	const text = "shared unmigrated sensitive derivative"
@@ -806,6 +825,7 @@ func TestPurgeUnmigratedLegacyExtractionScopesSharedBlobByVersion(t *testing.T) 
 }
 
 func TestPurgeHistoricalLegacyExtractionRemovesCacheWithoutCurrentConsumers(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
 	const text = "historical orphan sensitive derivative"
@@ -828,6 +848,7 @@ func TestPurgeHistoricalLegacyExtractionRemovesCacheWithoutCurrentConsumers(t *t
 }
 
 func TestLegacyCacheRemainsUntilHistoricalAndCurrentSharedBlobScopesArePurged(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
 	const text = "retained history shared sensitive derivative"
@@ -877,6 +898,7 @@ func assertNoLegacyDerivativeState(t *testing.T, s *Store, hash, text string) {
 }
 
 func TestPurgeLegacyBuildRemovesCacheWhenNonLegacyBuildSharesSource(t *testing.T) {
+	t.Parallel()
 	s, _ := newRenditionCatalogFixture(t)
 	ctx := t.Context()
 	profile := catalogProcessingProfile(t, false)
@@ -908,6 +930,7 @@ func TestPurgeLegacyBuildRemovesCacheWhenNonLegacyBuildSharesSource(t *testing.T
 }
 
 func TestPurgeSharedBuildSuppressesOnlySelectedAttachmentProfile(t *testing.T) {
+	t.Parallel()
 	s, versions := newRenditionCatalogFixture(t)
 	ctx := t.Context()
 	firstProfile := catalogProcessingProfile(t, false)
@@ -939,6 +962,7 @@ func TestPurgeSharedBuildSuppressesOnlySelectedAttachmentProfile(t *testing.T) {
 }
 
 func TestPurgeSharedBuildRejectsReattachingSuppressedProfile(t *testing.T) {
+	t.Parallel()
 	s, versions := newRenditionCatalogFixture(t)
 	ctx := t.Context()
 	firstProfile := catalogProcessingProfile(t, false)
@@ -972,6 +996,7 @@ func TestPurgeSharedBuildRejectsReattachingSuppressedProfile(t *testing.T) {
 }
 
 func TestPurgeAttachmentSuppressionDoesNotBleedAcrossVersionsSharingBuildAndProfile(t *testing.T) {
+	t.Parallel()
 	s, versions := newRenditionCatalogFixture(t)
 	ctx := t.Context()
 	profile := catalogProcessingProfile(t, false)
@@ -1002,6 +1027,7 @@ func TestPurgeAttachmentSuppressionDoesNotBleedAcrossVersionsSharingBuildAndProf
 }
 
 func TestPurgeSharedBuildRejectsRepublishingSuppressedProfile(t *testing.T) {
+	t.Parallel()
 	s, versions := newRenditionCatalogFixture(t)
 	ctx := t.Context()
 	firstProfile := catalogProcessingProfile(t, false)
@@ -1039,6 +1065,7 @@ func TestPurgeSharedBuildRejectsRepublishingSuppressedProfile(t *testing.T) {
 }
 
 func TestPurgeNeverAttachedBuildSuppressesExactRestaging(t *testing.T) {
+	t.Parallel()
 	s, _ := newRenditionCatalogFixture(t)
 	ctx := t.Context()
 	profile := catalogProcessingProfile(t, false)
@@ -1057,6 +1084,7 @@ func TestPurgeNeverAttachedBuildSuppressesExactRestaging(t *testing.T) {
 }
 
 func TestAuthorizeDerivativeRebuildRejectsContentVersionWithoutProfile(t *testing.T) {
+	t.Parallel()
 	s, versions := newRenditionCatalogFixture(t)
 	ctx := t.Context()
 	profile := catalogProcessingProfile(t, false)
@@ -1076,6 +1104,7 @@ func TestAuthorizeDerivativeRebuildRejectsContentVersionWithoutProfile(t *testin
 }
 
 func TestPurgeReplacesLexicalHeadWithoutSelectedBuild(t *testing.T) {
+	t.Parallel()
 	s, versions := newRenditionCatalogFixture(t)
 	ctx := t.Context()
 	profile := catalogProcessingProfile(t, false)
@@ -1120,6 +1149,7 @@ func TestPurgeReplacesLexicalHeadWithoutSelectedBuild(t *testing.T) {
 }
 
 func TestPurgeRootedBuildLeavesItPhysicalButRemovesItFromActiveLexicalHead(t *testing.T) {
+	t.Parallel()
 	s, versions := newRenditionCatalogFixture(t)
 	ctx := t.Context()
 	profile := catalogProcessingProfile(t, false)
@@ -1172,6 +1202,7 @@ func TestPurgeRootedBuildLeavesItPhysicalButRemovesItFromActiveLexicalHead(t *te
 }
 
 func TestPurgeRootedBuildRejectsReattachmentUntilEverySuppressionIsAuthorized(t *testing.T) {
+	t.Parallel()
 	s, versions := newRenditionCatalogFixture(t)
 	ctx := t.Context()
 	profile := catalogProcessingProfile(t, false)
@@ -1213,6 +1244,7 @@ func TestPurgeRootedBuildRejectsReattachmentUntilEverySuppressionIsAuthorized(t 
 }
 
 func TestOrdinaryDerivativeGCReplacesHeadBeforeCollectingUnrootedMemberBuild(t *testing.T) {
+	t.Parallel()
 	s, versions := newRenditionCatalogFixture(t)
 	ctx := t.Context()
 	profile := catalogProcessingProfile(t, false)
@@ -1250,6 +1282,7 @@ func TestOrdinaryDerivativeGCReplacesHeadBeforeCollectingUnrootedMemberBuild(t *
 }
 
 func TestPurgeDerivativesRetainsSharedBuildWhileAnyAttachmentRemains(t *testing.T) {
+	t.Parallel()
 	// Mutation caught: treating attachment deletion as build ownership would
 	// erase shared derivatives still authorized for another content version.
 	s, versions := newRenditionCatalogFixture(t)
@@ -1287,6 +1320,7 @@ func TestPurgeDerivativesRetainsSharedBuildWhileAnyAttachmentRemains(t *testing.
 }
 
 func TestPurgeDerivativesKeepsServingGenerationForSharedBuildAttachment(t *testing.T) {
+	t.Parallel()
 	// Mutation caught: driving lexical revocation from every requested build
 	// removes the serving generation even when another version attachment still
 	// authorizes that exact shared build.
@@ -1330,6 +1364,7 @@ func TestPurgeDerivativesKeepsServingGenerationForSharedBuildAttachment(t *testi
 }
 
 func TestPurgeDerivativesDefersExactLiveBackupPinWithoutClaimingRepositoryErasure(t *testing.T) {
+	t.Parallel()
 	// Mutation caught: ignoring an active in-vault snapshot pin would collect
 	// exact live bytes mid-capture; treating immutable repository copies as a
 	// live root would make them mutable or claim erasure that never occurred.
@@ -1373,6 +1408,7 @@ func TestPurgeDerivativesDefersExactLiveBackupPinWithoutClaimingRepositoryErasur
 }
 
 func TestPurgeDerivativesKeepsExactBuildButRevokesItsServingGeneration(t *testing.T) {
+	t.Parallel()
 	// A build pin retains physical authority, not attachment or active-search
 	// authority after the selected version is purged.
 	s, versions := newRenditionCatalogFixture(t)
@@ -1408,6 +1444,7 @@ func TestPurgeDerivativesKeepsExactBuildButRevokesItsServingGeneration(t *testin
 }
 
 func TestPurgeDerivativesCannotCollectGenerationUnderActiveReader(t *testing.T) {
+	t.Parallel()
 	// Mutation caught: planning outside the reader-root mutex would allow
 	// maintenance to delete an exact generation between acquire and query.
 	s, versions := newRenditionCatalogFixture(t)
@@ -1446,6 +1483,7 @@ func TestPurgeDerivativesCannotCollectGenerationUnderActiveReader(t *testing.T) 
 }
 
 func TestPurgeDerivativesRollsBackEveryAuthorityOnManifestFailure(t *testing.T) {
+	t.Parallel()
 	// Mutation caught: deleting heads or lexical rows outside the catalog
 	// transaction would leave a failed purge partially authoritative.
 	s, versions := newRenditionCatalogFixture(t)
@@ -1491,6 +1529,7 @@ func TestPurgeDerivativesRollsBackEveryAuthorityOnManifestFailure(t *testing.T) 
 }
 
 func TestPurgeDerivativesRecordsAuditedSuppressionAndHonorsExactAuditRoot(t *testing.T) {
+	t.Parallel()
 	// Mutations caught: blanket-rejecting audited purge makes lifecycle policy
 	// unavailable; bypassing audit loses replay; ignoring the exact audit root
 	// collects protected authority while unrelated derivatives remain leaked.
@@ -1569,6 +1608,7 @@ func TestPurgeDerivativesRecordsAuditedSuppressionAndHonorsExactAuditRoot(t *tes
 }
 
 func TestPurgeDerivativesCollectsUnheadedGenerationOverRetainedBuild(t *testing.T) {
+	t.Parallel()
 	// Mutation caught: tying generation collection only to build deletion would
 	// leak interrupted or superseded FTS projections whose builds stay live.
 	s, _ := newRenditionCatalogFixture(t)
@@ -1599,6 +1639,7 @@ func TestPurgeDerivativesCollectsUnheadedGenerationOverRetainedBuild(t *testing.
 }
 
 func TestBlobInventoryResumeQueriesUseIndexedHashRange(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	after := fmt.Sprintf("%064x", 900)
 	tests := []struct {
@@ -1637,6 +1678,7 @@ func TestBlobInventoryResumeQueriesUseIndexedHashRange(t *testing.T) {
 }
 
 func TestBlobHashesPageNearEndUsesResumeKey(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	tx, err := s.db.BeginTx(t.Context(), nil)
 	require.NoError(t, err)
@@ -1660,6 +1702,7 @@ func TestBlobHashesPageNearEndUsesResumeKey(t *testing.T) {
 }
 
 func TestUnreachableBlobPageDistinguishesEmptyStoredKeyFromStart(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	later := "1000000000000000000000000000000000000000000000000000000000000000"
 	for _, hash := range []string{"", later} {
@@ -1685,6 +1728,7 @@ func TestUnreachableBlobPageDistinguishesEmptyStoredKeyFromStart(t *testing.T) {
 }
 
 func TestUnreachableBlobScanBoundsExaminedLiveRun(t *testing.T) {
+	t.Parallel()
 	for _, liveCount := range []int{8, 800} {
 		t.Run(fmt.Sprintf("live=%d", liveCount), func(t *testing.T) {
 			s := newTestStore(t)
@@ -1725,6 +1769,7 @@ func TestUnreachableBlobScanBoundsExaminedLiveRun(t *testing.T) {
 }
 
 func TestUnreferencedMappingScanBoundsExaminedLiveRun(t *testing.T) {
+	t.Parallel()
 	for _, liveCount := range []int{8, 800} {
 		t.Run(fmt.Sprintf("live=%d", liveCount), func(t *testing.T) {
 			s := newTestStore(t)
@@ -1779,6 +1824,7 @@ func TestUnreferencedMappingScanBoundsExaminedLiveRun(t *testing.T) {
 }
 
 func TestBlobPageUsesHashKeysetAcrossDeletionAndLowerInsertion(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
 	hash05 := fmt.Sprintf("%064x", 5)
@@ -1819,6 +1865,7 @@ func TestBlobPageUsesHashKeysetAcrossDeletionAndLowerInsertion(t *testing.T) {
 }
 
 func TestSparseRepackPageUsesCanonicalLiveHashKeyset(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
 	for i, hash := range []string{
@@ -1850,6 +1897,7 @@ func TestSparseRepackPageUsesCanonicalLiveHashKeyset(t *testing.T) {
 }
 
 func TestUnreferencedPackMappingsPageIsCanonicalAndBounded(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
 	packID := pack.NewPackID()
@@ -1883,6 +1931,7 @@ func TestUnreferencedPackMappingsPageIsCanonicalAndBounded(t *testing.T) {
 }
 
 func TestDeadPackUsagePageIsBounded(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	for range 4 {
 		addTestPack(t, s, pack.NewPackID(), 1, 20, "2026-01-01T00:00:00.000000000Z")
@@ -1895,6 +1944,7 @@ func TestDeadPackUsagePageIsBounded(t *testing.T) {
 }
 
 func TestSparseRepackScanBoundsExaminedIneligiblePacks(t *testing.T) {
+	t.Parallel()
 	for _, total := range []int{8, 800} {
 		t.Run(fmt.Sprintf("packs=%d", total), func(t *testing.T) {
 			s := newTestStore(t)
@@ -1929,6 +1979,7 @@ func TestSparseRepackScanBoundsExaminedIneligiblePacks(t *testing.T) {
 }
 
 func TestSparseRepackScanIncludesExactlyHalfLiveEvenPack(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	hash := fmt.Sprintf("%064x", 1)
 	packID := pack.NewPackID()
@@ -1948,6 +1999,7 @@ func TestSparseRepackScanIncludesExactlyHalfLiveEvenPack(t *testing.T) {
 }
 
 func TestSparseRepackScanKeyStaysStableWhenEarlierPackLosesLiveness(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	packIDs := []string{pack.NewPackID(), pack.NewPackID()}
 	slices.Sort(packIDs)
@@ -1988,6 +2040,7 @@ func TestSparseRepackScanKeyStaysStableWhenEarlierPackLosesLiveness(t *testing.T
 }
 
 func TestPackScanHashDoesNotChangeAfterPackCreation(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	packID := pack.NewPackID()
 	originalHash := "8000000000000000000000000000000000000000000000000000000000000000"
@@ -2010,6 +2063,7 @@ func TestPackScanHashDoesNotChangeAfterPackCreation(t *testing.T) {
 }
 
 func TestRepackSelectionQueriesUseSummaryIndexes(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	tests := []struct {
 		name      string
@@ -2044,6 +2098,7 @@ func TestRepackSelectionQueriesUseSummaryIndexes(t *testing.T) {
 }
 
 func TestUnreachableBlobs(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
 
@@ -2097,6 +2152,7 @@ func TestUnreachableBlobs(t *testing.T) {
 }
 
 func TestUnreachableBlobsKeepsRenditionBuildBytesReachable(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	seedRenditionCatalogVersions(t, s)
 	build := catalogRenditionBuild(s, catalogProcessingProfile(t, false))
@@ -2123,6 +2179,7 @@ func TestUnreachableBlobsKeepsRenditionBuildBytesReachable(t *testing.T) {
 }
 
 func TestDeleteBlobRows(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
 	packID := pack.NewPackID()
@@ -2182,6 +2239,7 @@ func TestDeleteBlobRows(t *testing.T) {
 }
 
 func TestAllBlobs(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
 
@@ -2198,6 +2256,7 @@ func TestAllBlobs(t *testing.T) {
 }
 
 func TestSelectedDerivativePurgeLeavesUnrelatedGarbageForGC(t *testing.T) {
+	t.Parallel()
 	s, _ := newRenditionCatalogFixture(t)
 	ctx := t.Context()
 	profile := catalogProcessingProfile(t, false)
@@ -2243,6 +2302,7 @@ func TestSelectedDerivativePurgeLeavesUnrelatedGarbageForGC(t *testing.T) {
 }
 
 func TestSelectedDerivativePurgeLeavesUnrelatedEmbeddingArtifactsForGC(t *testing.T) {
+	t.Parallel()
 	s, versionID, profile, _ := newEmbeddingCatalogFixture(t)
 	ctx := t.Context()
 	selected := embeddingSetFixture(s, versionID, profile.Fingerprint, "original_file", "optional", "")
@@ -2271,6 +2331,7 @@ func TestSelectedDerivativePurgeLeavesUnrelatedEmbeddingArtifactsForGC(t *testin
 }
 
 func TestAllDerivativePurgeCollectsVectorsAfterVersionPrune(t *testing.T) {
+	t.Parallel()
 	s, versionID, profile, _ := newEmbeddingCatalogFixture(t)
 	ctx := t.Context()
 	set := embeddingSetFixture(s, versionID, profile.Fingerprint, "original_file", "optional", "")

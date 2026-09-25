@@ -12,6 +12,7 @@ import (
 )
 
 func TestSecondaryBlobStoreLifecycle(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	secondary, err := s.PrepareSecondaryBlobStore("archive", "filesystem", "archive_nas")
 	require.NoError(t, err)
@@ -40,6 +41,7 @@ func TestSecondaryBlobStoreLifecycle(t *testing.T) {
 }
 
 func TestBlobStoreRemovalRejectsActiveDestinationOperation(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	secondary, err := s.PrepareSecondaryBlobStore("archive", "filesystem", "archive_nas")
 	require.NoError(t, err)
@@ -84,6 +86,7 @@ func TestBlobStoreRemovalRejectsActiveDestinationOperation(t *testing.T) {
 }
 
 func TestBlobStoreRemovalRequiresEmptyDetachedSecondary(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	primary, err := s.PrimaryBlobStore(t.Context())
 	require.NoError(t, err)
@@ -112,6 +115,7 @@ func TestBlobStoreRemovalRequiresEmptyDetachedSecondary(t *testing.T) {
 }
 
 func TestBlobStoreDetachRequiresCompletedPhysicalCleanup(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	secondary, err := s.PrepareSecondaryBlobStore(
 		"archive", "filesystem", "archive_nas",
@@ -139,6 +143,7 @@ func TestBlobStoreDetachRequiresCompletedPhysicalCleanup(t *testing.T) {
 }
 
 func TestEvacuationCleanupIncludesPackAfterMappingsAreRevoked(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	secondary, err := s.PrepareSecondaryBlobStore(
 		"archive", "filesystem", "archive_nas",
@@ -164,6 +169,7 @@ func TestEvacuationCleanupIncludesPackAfterMappingsAreRevoked(t *testing.T) {
 }
 
 func TestBlobStoreInventoryReportsSoleAuthorityAndAffectedDocuments(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
 	primary, err := s.PrimaryBlobStore(ctx)
@@ -197,6 +203,7 @@ func TestBlobStoreInventoryReportsSoleAuthorityAndAffectedDocuments(t *testing.T
 }
 
 func TestBlobStoreUnreadableObjectsAccountsForUnavailableReplicaSet(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
 	primary, err := s.PrimaryBlobStore(ctx)
@@ -235,6 +242,7 @@ func TestBlobStoreUnreadableObjectsAccountsForUnavailableReplicaSet(t *testing.T
 }
 
 func TestBlobStoreRegistrationRejectsConflicts(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	first, err := s.PrepareSecondaryBlobStore("archive", "filesystem", "archive_nas")
 	require.NoError(t, err)
@@ -259,6 +267,7 @@ func TestBlobStoreRegistrationRejectsConflicts(t *testing.T) {
 }
 
 func TestBlobStoreEvacuationRequiresVerifiedDestinationCoverage(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
 	primary, err := s.PrimaryBlobStore(ctx)
@@ -387,6 +396,7 @@ func TestBlobStoreEvacuationRequiresVerifiedDestinationCoverage(t *testing.T) {
 }
 
 func TestBlobStoreEvacuationBeginRejectsActiveDestinationOperation(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
 	primary, err := s.PrimaryBlobStore(ctx)
@@ -423,6 +433,7 @@ func TestBlobStoreEvacuationBeginRejectsActiveDestinationOperation(t *testing.T)
 }
 
 func TestBlobStoreEvacuationFinalizationRejectsActiveSourceOperation(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
 	primary, err := s.PrimaryBlobStore(ctx)
@@ -474,6 +485,7 @@ func TestBlobStoreEvacuationFinalizationRejectsActiveSourceOperation(t *testing.
 }
 
 func TestEmptyBlobStoreEvacuationFinalizationRejectsCancellation(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
 	primary, err := s.PrimaryBlobStore(ctx)
@@ -503,6 +515,7 @@ func TestEmptyBlobStoreEvacuationFinalizationRejectsCancellation(t *testing.T) {
 }
 
 func TestDetachedBlobStoreEvacuationFinalizationRejectsCancellation(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
 	primary, err := s.PrimaryBlobStore(ctx)

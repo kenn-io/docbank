@@ -12,6 +12,7 @@ import (
 )
 
 func TestDuplicatesFindsOnlyLiveCurrentContent(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
 	duplicateHash := fakeHash("11")
@@ -81,6 +82,7 @@ func TestDuplicatesFindsOnlyLiveCurrentContent(t *testing.T) {
 }
 
 func TestDuplicateGroupByHashUsesExactLiveCurrentRelation(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
 	hash := fakeHash("1234")
@@ -103,6 +105,7 @@ func TestDuplicateGroupByHashUsesExactLiveCurrentRelation(t *testing.T) {
 }
 
 func TestDuplicateReferencesExposeActiveOperationalCollections(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
 	hash := fakeHash("33")
@@ -162,6 +165,7 @@ func TestDuplicateReferencesExposeActiveOperationalCollections(t *testing.T) {
 }
 
 func TestDuplicateReferencesAndCollectionsAreBounded(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
 	hash := fakeHash("44")
@@ -218,6 +222,7 @@ func TestDuplicateReferencesAndCollectionsAreBounded(t *testing.T) {
 }
 
 func TestDuplicatesPagesGroupsByHashWithExactTotals(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
 	hashes := []string{fakeHash("c3"), fakeHash("a1"), fakeHash("b2")}
@@ -251,6 +256,7 @@ func TestDuplicatesPagesGroupsByHashWithExactTotals(t *testing.T) {
 }
 
 func TestDuplicatesRejectsMalformedBounds(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	for _, test := range []struct {
 		limit, offset int
@@ -262,6 +268,7 @@ func TestDuplicatesRejectsMalformedBounds(t *testing.T) {
 }
 
 func TestDuplicatesPropagatesCancellationAndBackendErrors(t *testing.T) {
+	t.Parallel()
 	t.Run("canceled context", func(t *testing.T) {
 		s := newTestStore(t)
 		ctx, cancel := context.WithCancel(t.Context())

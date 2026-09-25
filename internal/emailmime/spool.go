@@ -16,6 +16,7 @@ import (
 	"strings"
 
 	"go.kenn.io/docbank/document"
+	"go.kenn.io/kit/fslink"
 )
 
 const spoolPrefix = "docbank-email-"
@@ -112,17 +113,9 @@ func createSpool(spoolParent string) (*ownedSpool, error) {
 			_ = spool.cleanup()
 		}
 	}()
-	before, err := parent.Lstat(name)
-	if err != nil || !before.IsDir() || before.Mode()&os.ModeSymlink != 0 {
-		return nil, errors.New("created email spool is not a rooted directory")
-	}
-	spool.root, err = parent.OpenRoot(name)
+	spool.root, err = fslink.OpenRootNoFollow(parent, name)
 	if err != nil {
 		return nil, fmt.Errorf("open rooted email spool: %w", err)
-	}
-	after, err := spool.root.Stat(".")
-	if err != nil || !after.IsDir() || !os.SameFile(before, after) {
-		return nil, errors.New("email spool identity changed while opening")
 	}
 	if err = spool.root.WriteFile(spoolMarkerName, []byte(spoolMarker), 0o600); err != nil {
 		return nil, fmt.Errorf("mark email spool: %w", err)

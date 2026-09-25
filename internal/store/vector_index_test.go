@@ -19,6 +19,7 @@ import (
 )
 
 func TestVectorIndexSourceCapturesExactEligibleMembership(t *testing.T) {
+	t.Parallel()
 	s, versionID, profile, _ := newEmbeddingCatalogFixture(t)
 	record := embeddingSetFixture(s, versionID, profile.Fingerprint,
 		document.EmbeddingInputOriginalFile, "optional", "")
@@ -50,6 +51,7 @@ func TestVectorIndexSourceCapturesExactEligibleMembership(t *testing.T) {
 }
 
 func TestVectorIndexPublicationFencesMembershipDriftAndKeepsPriorHead(t *testing.T) {
+	t.Parallel()
 	s, versionID, profile, _ := newEmbeddingCatalogFixture(t)
 	first := embeddingSetFixture(s, versionID, profile.Fingerprint,
 		document.EmbeddingInputOriginalFile, "optional", "")
@@ -91,6 +93,7 @@ func TestVectorIndexPublicationFencesMembershipDriftAndKeepsPriorHead(t *testing
 }
 
 func TestVectorIndexReaderLeasePinsPriorGenerationAndExpiresWithFence(t *testing.T) {
+	t.Parallel()
 	s, _, source := newPublishedVectorIndexFixture(t)
 	now := time.Date(2026, 8, 26, 13, 0, 0, 0, time.UTC)
 	space := source.VectorSpaceID
@@ -119,6 +122,7 @@ func TestVectorIndexReaderLeasePinsPriorGenerationAndExpiresWithFence(t *testing
 }
 
 func TestVectorIndexProjectionStateIsExcludedFromPortableMetadata(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	record := VectorIndexGenerationRecord{ID: hashVectorIndexTest("local-generation"),
 		VectorSpaceID:          hashVectorIndexTest("local-space"),
@@ -149,6 +153,7 @@ func TestVectorIndexProjectionStateIsExcludedFromPortableMetadata(t *testing.T) 
 }
 
 func TestVectorIndexCandidateCanBeRestagedAfterCrashedClaimExpires(t *testing.T) {
+	t.Parallel()
 	s, versionID, profile, _ := newEmbeddingCatalogFixture(t)
 	record := embeddingSetFixture(s, versionID, profile.Fingerprint,
 		document.EmbeddingInputOriginalFile, "optional", "")
@@ -187,6 +192,7 @@ func TestVectorIndexCandidateCanBeRestagedAfterCrashedClaimExpires(t *testing.T)
 }
 
 func TestVectorIndexPayloadDistinguishesMissingFromCorruptAuthority(t *testing.T) {
+	t.Parallel()
 	s, versionID, profile, _ := newEmbeddingCatalogFixture(t)
 	record := embeddingSetFixture(s, versionID, profile.Fingerprint,
 		document.EmbeddingInputOriginalFile, "optional", "")
@@ -268,6 +274,7 @@ func vectorIndexGenerationExistsForTest(t *testing.T, s *Store, generationID str
 }
 
 func TestVectorIndexChangedMembershipSupersedesLiveBuildClaim(t *testing.T) {
+	t.Parallel()
 	s, versionID, profile, _ := newEmbeddingCatalogFixture(t)
 	first := embeddingSetFixture(s, versionID, profile.Fingerprint, document.EmbeddingInputOriginalFile, "optional", "")
 	require.NoError(t, s.StageEmbeddingSet(t.Context(), first))
@@ -328,6 +335,7 @@ func newPublishedVectorIndexFixture(t *testing.T) (*Store, EmbeddingSetRecord, V
 }
 
 func TestVectorIndexAcquisitionRejectsTrashedMembership(t *testing.T) {
+	t.Parallel()
 	s, record, source := newPublishedVectorIndexFixture(t)
 	now := time.Now().UTC()
 	generation := vectorIndexGenerationFixture("active", source, []byte("index"), now)
@@ -343,6 +351,7 @@ func TestVectorIndexAcquisitionRejectsTrashedMembership(t *testing.T) {
 }
 
 func TestVectorIndexSweepIncludesSpacesAfterLastEmbeddingHeadIsRemoved(t *testing.T) {
+	t.Parallel()
 	s, _, source := newPublishedVectorIndexFixture(t)
 	generation := vectorIndexGenerationFixture("active", source, []byte("index"), time.Now().UTC())
 	require.NoError(t, putVectorIndexGenerationForTest(t, s, generation))
@@ -356,6 +365,7 @@ func TestVectorIndexSweepIncludesSpacesAfterLastEmbeddingHeadIsRemoved(t *testin
 }
 
 func TestVectorIndexRetirementPreservesReadersUntilLeaseRelease(t *testing.T) {
+	t.Parallel()
 	s, _, source := newPublishedVectorIndexFixture(t)
 	now := time.Now().UTC()
 	generation := vectorIndexGenerationFixture("retiring", source, []byte("index"), now)
@@ -380,6 +390,7 @@ func TestVectorIndexRetirementPreservesReadersUntilLeaseRelease(t *testing.T) {
 }
 
 func TestVectorIndexPayloadClassifiesBackendFailures(t *testing.T) {
+	t.Parallel()
 	for _, testCase := range []struct {
 		name    string
 		cause   error

@@ -11,6 +11,7 @@ import (
 )
 
 func TestAuditedTrashRecordsSubtreeAndRoundTrips(t *testing.T) {
+	t.Parallel()
 	s := newAuditedMoveStore(t)
 	work, err := s.NodeByPath(t.Context(), "/Projects/Work")
 	require.NoError(t, err)
@@ -70,6 +71,7 @@ func TestAuditedTrashRecordsSubtreeAndRoundTrips(t *testing.T) {
 }
 
 func TestAuditedTrashPathUsesSameTransaction(t *testing.T) {
+	t.Parallel()
 	s := newAuditedMoveStore(t)
 	report, err := s.NodeByPath(t.Context(), "/Projects/report.txt")
 	require.NoError(t, err)
@@ -83,6 +85,7 @@ func TestAuditedTrashPathUsesSameTransaction(t *testing.T) {
 }
 
 func TestAuditedRootScopeTrashRecordsRootParentTouch(t *testing.T) {
+	t.Parallel()
 	s, err := Open(filepath.Join(t.TempDir(), "vault.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, s.Close()) })
@@ -104,6 +107,7 @@ func TestAuditedRootScopeTrashRecordsRootParentTouch(t *testing.T) {
 }
 
 func TestAuditedTrashRefusesScopeBoundaryWitnessChange(t *testing.T) {
+	t.Parallel()
 	s := newAuditedMoveStore(t)
 	projects, err := s.NodeByPath(t.Context(), "/Projects")
 	require.NoError(t, err)
@@ -117,6 +121,7 @@ func TestAuditedTrashRefusesScopeBoundaryWitnessChange(t *testing.T) {
 }
 
 func TestAuditedTrashRollsBackTreeAndHistory(t *testing.T) {
+	t.Parallel()
 	s := newAuditedMoveStore(t)
 	work, err := s.NodeByPath(t.Context(), "/Projects/Work")
 	require.NoError(t, err)
@@ -141,6 +146,7 @@ func TestAuditedTrashRollsBackTreeAndHistory(t *testing.T) {
 }
 
 func TestAuditedTrashReplayRejectsOmittedDescendant(t *testing.T) {
+	t.Parallel()
 	s := newAuditedMoveStore(t)
 	work, err := s.NodeByPath(t.Context(), "/Projects/Work")
 	require.NoError(t, err)

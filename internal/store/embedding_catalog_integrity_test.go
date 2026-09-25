@@ -18,6 +18,7 @@ import (
 )
 
 func TestEmbeddingCatalogPurgeUsesSingleRootExpiryBoundary(t *testing.T) {
+	t.Parallel()
 	s, versionID, profile, _ := newEmbeddingCatalogFixture(t)
 	record := embeddingSetFixture(s, versionID, profile.Fingerprint,
 		document.EmbeddingInputOriginalFile, "optional", "")
@@ -52,6 +53,7 @@ func TestEmbeddingCatalogPurgeUsesSingleRootExpiryBoundary(t *testing.T) {
 }
 
 func TestEmbeddingCatalogRejectsJobRootsBeforePersistence(t *testing.T) {
+	t.Parallel()
 	s, versionID, profile, _ := newEmbeddingCatalogFixture(t)
 	record := embeddingSetFixture(s, versionID, profile.Fingerprint,
 		document.EmbeddingInputOriginalFile, "optional", "")
@@ -79,6 +81,7 @@ func TestEmbeddingCatalogRejectsJobRootsBeforePersistence(t *testing.T) {
 }
 
 func TestEmbeddingCatalogExplicitPurgePreservesEveryActiveRoot(t *testing.T) {
+	t.Parallel()
 	testCases := []struct {
 		name       string
 		kind       CurrentRenditionRootKind
@@ -152,6 +155,7 @@ func TestEmbeddingCatalogExplicitPurgePreservesEveryActiveRoot(t *testing.T) {
 }
 
 func TestEmbeddingCatalogExplicitChunkPurgeRetainsRootAttachmentChain(t *testing.T) {
+	t.Parallel()
 	testCases := []struct {
 		name          string
 		kind          CurrentRenditionRootKind
@@ -316,6 +320,7 @@ func TestEmbeddingCatalogExplicitChunkPurgeRetainsRootAttachmentChain(t *testing
 }
 
 func TestEmbeddingCatalogCurrentSchemaMissingTableFailsClosedBeforeBootstrap(t *testing.T) {
+	t.Parallel()
 	tables := []string{
 		"embedding_vector_spaces", "embedding_input_generations", "embedding_generation_inputs",
 		"embedding_vector_sets", "embedding_vector_rows", "embedding_sets", "embedding_heads",
@@ -356,6 +361,7 @@ func TestEmbeddingCatalogCurrentSchemaMissingTableFailsClosedBeforeBootstrap(t *
 }
 
 func TestEmbeddingCatalogRestoreRejectsNoncanonicalDescriptorBytes(t *testing.T) {
+	t.Parallel()
 	source, versionID, profile, _ := newEmbeddingCatalogFixture(t)
 	record := embeddingSetFixture(source, versionID, profile.Fingerprint, document.EmbeddingInputOriginalFile, "optional", "")
 	require.NoError(t, source.StageEmbeddingSet(t.Context(), record))
@@ -401,6 +407,7 @@ func TestEmbeddingCatalogRestoreRejectsNoncanonicalDescriptorBytes(t *testing.T)
 }
 
 func TestEmbeddingCatalogLiveWritesRequireCanonicalTimestamps(t *testing.T) {
+	t.Parallel()
 	const secretLikeTimestamp = "token=synthetic-private-value"
 
 	t.Run("set", func(t *testing.T) {
@@ -451,6 +458,7 @@ func TestEmbeddingCatalogLiveWritesRequireCanonicalTimestamps(t *testing.T) {
 }
 
 func TestEmbeddingCatalogMetadataImportRequiresCanonicalTimestamps(t *testing.T) {
+	t.Parallel()
 	source, versionID, profile, _ := newEmbeddingCatalogFixture(t)
 	record := embeddingSetFixture(source, versionID, profile.Fingerprint, document.EmbeddingInputOriginalFile, "optional", "")
 	require.NoError(t, source.StageEmbeddingSet(t.Context(), record))

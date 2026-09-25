@@ -25,6 +25,7 @@ import (
 // Mutation caught: accepting a store-local input-kind vocabulary lets a caller
 // stage authority that does not name the exact E1 processing-profile binding.
 func TestEmbeddingCatalogUsesCanonicalInputKindsAndProfileAuthority(t *testing.T) {
+	t.Parallel()
 	s, versionID, profile, _ := newEmbeddingCatalogFixture(t)
 	record := embeddingSetFixture(s, versionID, profile.Fingerprint, document.EmbeddingInputOriginalFile, "optional", "")
 	record.BindingID = "not-in-profile"
@@ -32,6 +33,7 @@ func TestEmbeddingCatalogUsesCanonicalInputKindsAndProfileAuthority(t *testing.T
 }
 
 func TestEmbeddingCatalogDoesNotPersistGenerationTextInSQLiteOrMetadata(t *testing.T) {
+	t.Parallel()
 	s, versionID, profile, attachmentID := newEmbeddingCatalogFixture(t)
 	record := embeddingSetFixture(s, versionID, profile.Fingerprint, document.EmbeddingInputRenditionChunk, "chunk", attachmentID)
 	require.Contains(t, string(record.InputGeneration.GenerationJSON), "Synthetic evidence")
@@ -58,6 +60,7 @@ func TestEmbeddingCatalogDoesNotPersistGenerationTextInSQLiteOrMetadata(t *testi
 }
 
 func TestEmbeddingCatalogRejectsOriginalFileAttachmentBypassAndVectorHeaderMismatch(t *testing.T) {
+	t.Parallel()
 	s, versionID, profile, attachmentID := newEmbeddingCatalogFixture(t)
 	original := embeddingSetFixture(s, versionID, profile.Fingerprint, document.EmbeddingInputOriginalFile, "optional", "")
 	original.InputGeneration.AttachmentID = attachmentID
@@ -90,6 +93,7 @@ func TestEmbeddingCatalogRejectsOriginalFileAttachmentBypassAndVectorHeaderMisma
 }
 
 func TestEmbeddingCatalogRejectsGenerationBlobIdentityMismatch(t *testing.T) {
+	t.Parallel()
 	s, versionID, profile, attachmentID := newEmbeddingCatalogFixture(t)
 	record := embeddingSetFixture(s, versionID, profile.Fingerprint, document.EmbeddingInputRenditionChunk, "chunk", attachmentID)
 	record.InputGeneration.GenerationBlobHash = fakeHash("wrong generation blob")
@@ -97,6 +101,7 @@ func TestEmbeddingCatalogRejectsGenerationBlobIdentityMismatch(t *testing.T) {
 }
 
 func TestEmbeddingCatalogRejectsGenerationFromDifferentChunkPolicy(t *testing.T) {
+	t.Parallel()
 	s, versionID, profileRecord, attachmentID := newEmbeddingCatalogFixture(t)
 	record := embeddingSetFixture(s, versionID, profileRecord.Fingerprint, document.EmbeddingInputRenditionChunk, "chunk", attachmentID)
 	var profile document.ProcessingProfileV1
@@ -137,6 +142,7 @@ func TestEmbeddingCatalogRejectsGenerationFromDifferentChunkPolicy(t *testing.T)
 }
 
 func TestEmbeddingCatalogRejectsGenerationOutsideInputAuthority(t *testing.T) {
+	t.Parallel()
 	for _, mutation := range []string{"rendered", "content"} {
 		t.Run(mutation, func(t *testing.T) {
 			s, versionID, profile, attachmentID := newEmbeddingCatalogFixture(t)
@@ -248,6 +254,7 @@ func TestEmbeddingCatalogRejectsGenerationOutsideInputAuthority(t *testing.T) {
 }
 
 func TestEmbeddingCatalogRevalidatesExactArtifactsProviderFree(t *testing.T) {
+	t.Parallel()
 	s, versionID, profile, attachmentID := newEmbeddingCatalogFixture(t)
 	record := embeddingSetFixture(s, versionID, profile.Fingerprint, document.EmbeddingInputRenditionChunk, "chunk", attachmentID)
 	generationBytes := append([]byte(nil), record.InputGeneration.GenerationJSON...)
@@ -269,6 +276,7 @@ func TestEmbeddingCatalogRevalidatesExactArtifactsProviderFree(t *testing.T) {
 }
 
 func TestEmbeddingCatalogMetadataRejectsDivergentE1Projection(t *testing.T) {
+	t.Parallel()
 	s, versionID, profile, _ := newEmbeddingCatalogFixture(t)
 	record := embeddingSetFixture(s, versionID, profile.Fingerprint, document.EmbeddingInputOriginalFile, "optional", "")
 	require.NoError(t, s.StageEmbeddingSet(t.Context(), record))
@@ -282,6 +290,7 @@ func TestEmbeddingCatalogMetadataRejectsDivergentE1Projection(t *testing.T) {
 }
 
 func TestEmbeddingCatalogReadsPackedArtifactAuthority(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	data := []byte("synthetic packed embedding authority")
 	hash, err := packstore.ParseHash(testSHA256(data))
@@ -327,6 +336,7 @@ func TestEmbeddingCatalogReadsPackedArtifactAuthority(t *testing.T) {
 }
 
 func TestEmbeddingCatalogBackupRestoreVerifiesLooseAndPackedArtifacts(t *testing.T) {
+	t.Parallel()
 	for _, packed := range []bool{false, true} {
 		t.Run(map[bool]string{false: "loose", true: "packed"}[packed], func(t *testing.T) {
 			source, versionID, profile, attachmentID := newEmbeddingCatalogFixture(t)
@@ -388,6 +398,7 @@ func TestEmbeddingCatalogBackupRestoreVerifiesLooseAndPackedArtifacts(t *testing
 }
 
 func TestEmbeddingCatalogRestoreVerifiesArtifactsRetainedAfterVersionPrune(t *testing.T) {
+	t.Parallel()
 	source, versionID, profile, attachmentID := newEmbeddingCatalogFixture(t)
 	record := embeddingSetFixture(source, versionID, profile.Fingerprint,
 		document.EmbeddingInputOriginalFile, "optional", "")
@@ -530,6 +541,7 @@ func packEmbeddingRestoreArtifacts(t *testing.T, s *Store, layout *packstore.Lay
 // Mutation caught: trusting caller-authored input rows instead of decoding the
 // exact E2 artifact loses headings, spans, truncation and attachment context.
 func TestEmbeddingCatalogRequiresCanonicalGenerationAndVectorPayloads(t *testing.T) {
+	t.Parallel()
 	s, versionID, profile, attachmentID := newEmbeddingCatalogFixture(t)
 	record := embeddingSetFixture(s, versionID, profile.Fingerprint, document.EmbeddingInputRenditionChunk, "chunk", attachmentID)
 	record.InputGeneration.GenerationJSON = nil
@@ -549,6 +561,7 @@ func TestEmbeddingCatalogRequiresCanonicalGenerationAndVectorPayloads(t *testing
 }
 
 func TestEmbeddingCatalogRejectsRotatedE1AndReorderedVectorAuthority(t *testing.T) {
+	t.Parallel()
 	s, versionID, profile, attachmentID := newEmbeddingCatalogFixture(t)
 	record := embeddingSetFixture(s, versionID, profile.Fingerprint, document.EmbeddingInputRenditionChunk, "chunk", attachmentID)
 
@@ -580,6 +593,7 @@ func TestEmbeddingCatalogRejectsRotatedE1AndReorderedVectorAuthority(t *testing.
 }
 
 func TestEmbeddingCatalogFailureCodesAreClosedProviderNeutralTokens(t *testing.T) {
+	t.Parallel()
 	s, versionID, profile, _ := newEmbeddingCatalogFixture(t)
 	for _, code := range []EmbeddingFailureCode{"provider said secret=token", "provider\nmessage", "", "timeout: https://provider.invalid/request/1"} {
 		err := s.RecordEmbeddingFailure(t.Context(), EmbeddingFailureRecord{
@@ -593,6 +607,7 @@ func TestEmbeddingCatalogFailureCodesAreClosedProviderNeutralTokens(t *testing.T
 }
 
 func TestEmbeddingCatalogRestoreVerificationAllowsOnlyMissingVectorPayloads(t *testing.T) {
+	t.Parallel()
 	for _, testCase := range []struct {
 		name            string
 		omit            func(EmbeddingSetRecord) string

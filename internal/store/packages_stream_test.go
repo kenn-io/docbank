@@ -27,6 +27,7 @@ func (q *membershipCountingQuerier) QueryContext(ctx context.Context, query stri
 }
 
 func TestSnapshotSourceBatchChecksOverlappingMembershipInOneQuery(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	const body = "Synthetic overlapping collection source"
 	hash := sha256.Sum256([]byte(body))
@@ -85,6 +86,7 @@ func streamSnapshotMembers(t *testing.T, members ...CollectionSnapshotMember) *b
 }
 
 func TestSealCollectionSnapshotStreamAcceptsLargeManifestAndMatchesCanonicalDigest(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	content := "Synthetic stream source"
 	hash := sha256.Sum256([]byte(content))
@@ -128,6 +130,7 @@ func TestSealCollectionSnapshotStreamAcceptsLargeManifestAndMatchesCanonicalDige
 }
 
 func TestSealCollectionSnapshotStreamRollsBackAndReplaysExactly(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	content := "Synthetic stream source"
 	hash := sha256.Sum256([]byte(content))
@@ -167,6 +170,7 @@ func TestSealCollectionSnapshotStreamRollsBackAndReplaysExactly(t *testing.T) {
 }
 
 func TestSealCollectionSnapshotStreamRejectsOversizedRowWithoutSealing(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	id, err := newUUIDv4()
 	require.NoError(t, err)
@@ -177,6 +181,7 @@ func TestSealCollectionSnapshotStreamRejectsOversizedRowWithoutSealing(t *testin
 }
 
 func TestSealCollectionSnapshotStreamValidatesFamilyAcrossBatches(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	const count = 1001
 	members := make([]CollectionSnapshotMember, 0, count)
@@ -260,6 +265,7 @@ func TestSealCollectionSnapshotStreamValidatesFamilyAcrossBatches(t *testing.T) 
 }
 
 func TestSnapshotFamilyGraphAllowsGroupsWithValidRepresentatives(t *testing.T) {
+	t.Parallel()
 	for _, test := range []struct {
 		name     string
 		parents  map[string]string

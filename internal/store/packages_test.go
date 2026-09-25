@@ -13,6 +13,7 @@ import (
 )
 
 func TestSnapshotMemberHashUsesNumericNodeOrderAndDistinctMembership(t *testing.T) {
+	t.Parallel()
 	const first = "00000000-0000-4000-8000-000000000001"
 	const second = "00000000-0000-4000-8000-000000000002"
 	members := []CollectionSnapshotMember{
@@ -31,6 +32,7 @@ func TestSnapshotMemberHashUsesNumericNodeOrderAndDistinctMembership(t *testing.
 }
 
 func TestSealCollectionSnapshotFreezesExactVersion(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	body := []byte("Synthetic document A")
 	hash := sha256.Sum256(body)
@@ -91,6 +93,7 @@ func TestSealCollectionSnapshotFreezesExactVersion(t *testing.T) {
 }
 
 func TestSnapshotSourceCollectionsFreezeMembership(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	body := []byte("Synthetic collection document")
 	hash := sha256.Sum256(body)
@@ -161,6 +164,7 @@ func TestSnapshotSourceCollectionsFreezeMembership(t *testing.T) {
 }
 
 func TestSnapshotSelectedPagesUseVerifiedFullPDF(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	node, err := s.CreateFile(t.Context(), s.RootID(), "eight.pdf", fakeHash("a1"), 123, "application/pdf")
 	require.NoError(t, err)

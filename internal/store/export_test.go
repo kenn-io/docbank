@@ -16,6 +16,7 @@ import (
 
 // A lost response must not cause a source resolver to select a newer head.
 func TestExportSourceRetryFreezesHistoricalMembershipAndProtectsPrune(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	n, err := s.CreateFile(t.Context(), s.RootID(), "synthetic.txt", fakeHash("a1"), 12, "text/plain")
 	require.NoError(t, err)
@@ -41,6 +42,7 @@ func TestExportSourceRetryFreezesHistoricalMembershipAndProtectsPrune(t *testing
 }
 
 func TestExportJobsFenceRestartCancelAndPortableAuthority(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	n, err := s.CreateFile(t.Context(), s.RootID(), "synthetic.txt", fakeHash("d1"), 12, "text/plain")
 	require.NoError(t, err)
@@ -90,6 +92,7 @@ func TestExportJobsFenceRestartCancelAndPortableAuthority(t *testing.T) {
 }
 
 func TestExportAdmissionRejectsOversizedUploadBeforeResolution(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	called := false
 	_, err := s.CreateExportSource(t.Context(), "owner", bundle.SourceRequest{OperationID: uuid.New().String(), Kind: "upload", Total: bundle.MaxMembers + 1, MemberHash: fakeHash("aa")}, func(context.Context) ([]bundle.Member, error) {
@@ -104,6 +107,7 @@ func TestExportAdmissionRejectsOversizedUploadBeforeResolution(t *testing.T) {
 }
 
 func TestExportChunksSealExactVersionsAndRejectChangedRetries(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	n, err := s.CreateFile(t.Context(), s.RootID(), "synthetic.txt", fakeHash("b1"), 1, "text/plain")
 	require.NoError(t, err)
@@ -123,6 +127,7 @@ func TestExportChunksSealExactVersionsAndRejectChangedRetries(t *testing.T) {
 }
 
 func TestExportPlanPinsRolesAndCannotInventMissingText(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	n, err := s.CreateFile(t.Context(), s.RootID(), "synthetic.txt", fakeHash("c1"), 12, "text/plain")
 	require.NoError(t, err)
@@ -149,6 +154,7 @@ func TestExportPlanPinsRolesAndCannotInventMissingText(t *testing.T) {
 }
 
 func TestExportPlanFailureRollsBackAdmissionAndAllowsRetry(t *testing.T) {
+	t.Parallel()
 	s, versions := newRenditionCatalogFixture(t)
 	profile := catalogProcessingProfile(t, false)
 	build := catalogRenditionBuild(s, profile)
@@ -193,6 +199,7 @@ func TestExportPlanFailureRollsBackAdmissionAndAllowsRetry(t *testing.T) {
 }
 
 func TestExportPlanOptionalPagesRespectMetadataBounds(t *testing.T) {
+	t.Parallel()
 	for _, pages := range []int{2, 30, 100} {
 		t.Run(strconv.Itoa(pages), func(t *testing.T) {
 			s := newTestStore(t)
@@ -246,6 +253,7 @@ func TestExportPlanOptionalPagesRespectMetadataBounds(t *testing.T) {
 }
 
 func TestExportPlanReadUsesRetentionWithoutExtendingAdmission(t *testing.T) {
+	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {
 		s := newTestStore(t)
 		n, err := s.CreateFile(t.Context(), s.RootID(), "synthetic.txt", fakeHash("e1"), 12, "text/plain")
@@ -272,6 +280,7 @@ func TestExportPlanReadUsesRetentionWithoutExtendingAdmission(t *testing.T) {
 }
 
 func TestExportJobsClaimByCreationTimeThenID(t *testing.T) {
+	t.Parallel()
 	for _, delay := range []time.Duration{0, time.Nanosecond} {
 		t.Run(delay.String(), func(t *testing.T) {
 			synctest.Test(t, func(t *testing.T) {

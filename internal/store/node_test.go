@@ -12,6 +12,7 @@ import (
 )
 
 func TestNodeViewPinsNodeAndPathAcrossConcurrentTrash(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
 	parent, err := s.Mkdir(ctx, s.RootID(), "archive")
@@ -47,6 +48,7 @@ func TestNodeViewPinsNodeAndPathAcrossConcurrentTrash(t *testing.T) {
 }
 
 func TestMkdirAndLookup(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
 
@@ -77,6 +79,7 @@ func TestMkdirAndLookup(t *testing.T) {
 }
 
 func TestChildByNameNormalizesAndExcludesTrash(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
 	created, err := s.Mkdir(ctx, s.RootID(), "café")
@@ -95,6 +98,7 @@ func TestChildByNameNormalizesAndExcludesTrash(t *testing.T) {
 }
 
 func TestPathOnMissingNodeReturnsNotFound(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
 
@@ -103,6 +107,7 @@ func TestPathOnMissingNodeReturnsNotFound(t *testing.T) {
 }
 
 func TestMkdirRejectsCollisionAndBadNames(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
 
@@ -115,6 +120,7 @@ func TestMkdirRejectsCollisionAndBadNames(t *testing.T) {
 }
 
 func TestMkdirPathCreatesOneExactDirectory(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
 
@@ -143,6 +149,7 @@ func TestMkdirPathCreatesOneExactDirectory(t *testing.T) {
 }
 
 func TestMkdirPathRejectsFileParent(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	_, err := s.CreateFile(
 		t.Context(), s.RootID(), "document.txt", fakeHash("mkdir-parent"), 1, "text/plain",
@@ -154,6 +161,7 @@ func TestMkdirPathRejectsFileParent(t *testing.T) {
 }
 
 func TestMkdirBumpsParentRevision(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
 
@@ -167,6 +175,7 @@ func TestMkdirBumpsParentRevision(t *testing.T) {
 }
 
 func TestMkdirAllCreatesIntermediates(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
 
@@ -183,6 +192,7 @@ func TestMkdirAllCreatesIntermediates(t *testing.T) {
 }
 
 func TestMkdirAllConcurrent(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
 
@@ -213,6 +223,7 @@ func TestMkdirAllConcurrent(t *testing.T) {
 }
 
 func TestChildrenSortedDirsFirst(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
 
@@ -232,6 +243,7 @@ func TestChildrenSortedDirsFirst(t *testing.T) {
 }
 
 func TestChildrenPageBoundsResultsAndPreservesTotal(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
 

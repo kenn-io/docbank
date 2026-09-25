@@ -17,6 +17,7 @@ import (
 )
 
 func TestSimilarSharedRowsExpandMembershipBeforeSourceExclusion(t *testing.T) {
+	t.Parallel()
 	s, sourceVersion, profile, sourceAttachment := newEmbeddingCatalogFixture(t)
 	var buildID string
 	require.NoError(t, s.db.QueryRow(`SELECT build_id FROM rendition_attachments WHERE attachment_id=?`, sourceAttachment).Scan(&buildID))
@@ -90,6 +91,7 @@ func TestSimilarSharedRowsExpandMembershipBeforeSourceExclusion(t *testing.T) {
 }
 
 func TestSimilarDuplicateGroupUsesHighestScoringRepresentative(t *testing.T) {
+	t.Parallel()
 	s, sourceVersion, profile, _ := newEmbeddingCatalogFixture(t)
 	sourceNode, err := s.ContentVersionByID(t.Context(), sourceVersion)
 	require.NoError(t, err)
@@ -127,6 +129,7 @@ func TestSimilarDuplicateGroupUsesHighestScoringRepresentative(t *testing.T) {
 }
 
 func TestSimilarMissingHeadBeforeLeaseAndSourceFenceBeforeCoverage(t *testing.T) {
+	t.Parallel()
 	s, version, profile, _ := newEmbeddingCatalogFixture(t)
 	content, err := s.ContentVersionByID(t.Context(), version)
 	require.NoError(t, err)
@@ -139,6 +142,7 @@ func TestSimilarMissingHeadBeforeLeaseAndSourceFenceBeforeCoverage(t *testing.T)
 }
 
 func TestSimilarOrdinarySemanticSearchPreservesIdenticalDocuments(t *testing.T) {
+	t.Parallel()
 	s, first, profile, _ := newEmbeddingCatalogFixture(t)
 	var second string
 	require.NoError(t, s.db.QueryRow(`SELECT version_id FROM content_versions WHERE version_id<>? AND blob_hash=? LIMIT 1`, first, catalogSourceHash).Scan(&second))
@@ -164,6 +168,7 @@ func TestSimilarOrdinarySemanticSearchPreservesIdenticalDocuments(t *testing.T) 
 }
 
 func TestResolveSemanticCandidatesReturnsOnlyCurrentScopedHeads(t *testing.T) {
+	t.Parallel()
 	s, versionID, profile, _ := newEmbeddingCatalogFixture(t)
 	version, err := s.ContentVersionByID(t.Context(), versionID)
 	require.NoError(t, err)
@@ -227,6 +232,7 @@ func TestResolveSemanticCandidatesReturnsOnlyCurrentScopedHeads(t *testing.T) {
 }
 
 func TestResolveSemanticCandidatesIsolatesSharedVectorSpace(t *testing.T) {
+	t.Parallel()
 	s, versionID, profile, _ := newEmbeddingCatalogFixture(t)
 	otherProfile := embeddingCatalogProfileVariant(t)
 	require.NoError(t, s.withStorageTx(t.Context(), func(tx *sql.Tx) error {
@@ -287,6 +293,7 @@ func TestResolveSemanticCandidatesIsolatesSharedVectorSpace(t *testing.T) {
 }
 
 func TestResolveSemanticCandidatesRejectsStaleSourceManifest(t *testing.T) {
+	t.Parallel()
 	s, versionID, profile, _ := newEmbeddingCatalogFixture(t)
 	record := embeddingSetFixture(s, versionID, profile.Fingerprint,
 		document.EmbeddingInputOriginalFile, "optional", "")
@@ -305,6 +312,7 @@ func TestResolveSemanticCandidatesRejectsStaleSourceManifest(t *testing.T) {
 }
 
 func TestRevalidateSearchCandidatesPreservesOrderAtTheCandidateLimit(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	first, err := s.CreateFile(t.Context(), s.RootID(), "first.txt", fakeHash("first"), 5, "text/plain")
 	require.NoError(t, err)
@@ -332,6 +340,7 @@ func TestRevalidateSearchCandidatesPreservesOrderAtTheCandidateLimit(t *testing.
 }
 
 func TestRevalidateSearchCandidatesAppliesCurrentScopeAndBlobEvidence(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	text, err := s.CreateFile(t.Context(), s.RootID(), "text.txt", fakeHash("text"), 4, "text/plain")
 	require.NoError(t, err)
@@ -368,6 +377,7 @@ func TestRevalidateSearchCandidatesAppliesCurrentScopeAndBlobEvidence(t *testing
 }
 
 func TestRevalidateSearchCandidatesRequiresCurrentActiveRenditionEvidence(t *testing.T) {
+	t.Parallel()
 	s, versions := newRenditionCatalogFixture(t)
 	profile := catalogProcessingProfile(t, false)
 	build := lexicalSearchBuild(s, profile, catalogBuildID, "current evidence")
@@ -398,6 +408,7 @@ func TestRevalidateSearchCandidatesRequiresCurrentActiveRenditionEvidence(t *tes
 }
 
 func TestRevalidateSearchCandidatesRejectsStaleSemanticSourceAndHead(t *testing.T) {
+	t.Parallel()
 	s, versionID, profile, _ := newEmbeddingCatalogFixture(t)
 	record := embeddingSetFixture(s, versionID, profile.Fingerprint,
 		document.EmbeddingInputOriginalFile, "optional", "")
@@ -434,6 +445,7 @@ func TestRevalidateSearchCandidatesRejectsStaleSemanticSourceAndHead(t *testing.
 }
 
 func TestChunkSemanticAuthorityKeepsResultsCoverageAndRevalidationConsistent(t *testing.T) {
+	t.Parallel()
 	s, versionID, profile, attachmentID := newEmbeddingCatalogFixture(t)
 	record := embeddingSetFixture(s, versionID, profile.Fingerprint,
 		document.EmbeddingInputRenditionChunk, "chunk", attachmentID)
@@ -489,6 +501,7 @@ func TestChunkSemanticAuthorityKeepsResultsCoverageAndRevalidationConsistent(t *
 }
 
 func TestReduceSemanticCandidatesExhaustsNeighborsWithoutDatabaseWork(t *testing.T) {
+	t.Parallel()
 	const missed = 10_000
 	neighbors := make([]vectorindex.Neighbor, missed+1)
 	for index := range missed {
@@ -517,6 +530,7 @@ func TestReduceSemanticCandidatesExhaustsNeighborsWithoutDatabaseWork(t *testing
 }
 
 func TestReduceSemanticCandidatesKeepsBestChunkPerDocument(t *testing.T) {
+	t.Parallel()
 	spaceID := fakeHash("space")
 	firstKey := semanticEligibilityKey{VectorSetID: "set", InputID: "chunk-1", InputChecksum: fakeHash("chunk-1")}
 	secondKey := semanticEligibilityKey{VectorSetID: "set", InputID: "chunk-2", InputChecksum: fakeHash("chunk-2")}
@@ -557,6 +571,7 @@ func TestReduceSemanticCandidatesKeepsBestChunkPerDocument(t *testing.T) {
 }
 
 func TestAcquireSemanticSearchAuthorityUsesStoredDescriptorAndCoverage(t *testing.T) {
+	t.Parallel()
 	s, versionID, profile, _ := newEmbeddingCatalogFixture(t)
 	record := embeddingSetFixture(s, versionID, profile.Fingerprint,
 		document.EmbeddingInputOriginalFile, "optional", "")
@@ -611,6 +626,7 @@ func TestAcquireSemanticSearchAuthorityUsesStoredDescriptorAndCoverage(t *testin
 }
 
 func TestSearchExplainedLexicalCandidatesCitesActiveRenditionSegment(t *testing.T) {
+	t.Parallel()
 	s, versions := newRenditionCatalogFixture(t)
 	profile := catalogProcessingProfile(t, false)
 	build := lexicalSearchBuild(s, profile, catalogBuildID,
@@ -637,6 +653,7 @@ func TestSearchExplainedLexicalCandidatesCitesActiveRenditionSegment(t *testing.
 }
 
 func TestSearchExplainedLexicalCandidatesIncludesNamePath(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	docs, err := s.Mkdir(t.Context(), s.RootID(), "docs")
 	require.NoError(t, err)
@@ -654,6 +671,7 @@ func TestSearchExplainedLexicalCandidatesIncludesNamePath(t *testing.T) {
 }
 
 func TestSearchExplainedLexicalCandidatesBoundsLongNameExcerpt(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	name := "alpha-" + strings.Repeat("é", 9000) + ".pdf"
 	_, err := s.CreateFile(t.Context(), s.RootID(), name, fakeHash("long-name"), 1, "application/pdf")
@@ -668,6 +686,7 @@ func TestSearchExplainedLexicalCandidatesBoundsLongNameExcerpt(t *testing.T) {
 }
 
 func TestSearchFindsLiveNodesOnly(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
 
@@ -689,6 +708,7 @@ func TestSearchFindsLiveNodesOnly(t *testing.T) {
 }
 
 func TestSearchPrefixAndRename(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
 
@@ -711,6 +731,7 @@ func TestSearchPrefixAndRename(t *testing.T) {
 }
 
 func TestSearchSurvivesOperatorInput(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
 	_, err := s.CreateFile(ctx, s.RootID(), "a.txt", fakeHash("a1"), 1, "text/plain")
@@ -724,6 +745,7 @@ func TestSearchSurvivesOperatorInput(t *testing.T) {
 }
 
 func TestSearchRanksMoreRelevantFirst(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
 
@@ -744,6 +766,7 @@ func TestSearchRanksMoreRelevantFirst(t *testing.T) {
 }
 
 func TestSearchTieBreaksByName(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
 
@@ -766,6 +789,7 @@ func TestSearchTieBreaksByName(t *testing.T) {
 }
 
 func TestSearchPageReportsTruncation(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
 	for i, name := range []string{"report-a.pdf", "report-b.pdf", "report-c.pdf"} {
@@ -785,6 +809,7 @@ func TestSearchPageReportsTruncation(t *testing.T) {
 }
 
 func TestSearchPageFiltersNameAndContentMatchesByTag(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
 	tag, err := s.CreateTag(ctx, "taxes")
@@ -838,6 +863,7 @@ func TestSearchPageFiltersNameAndContentMatchesByTag(t *testing.T) {
 }
 
 func TestSearchPageFiltersCurrentMediaTypeWithParameters(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
 	tag, err := s.CreateTag(ctx, "reviewed")
@@ -903,6 +929,7 @@ func TestSearchPageFiltersCurrentMediaTypeWithParameters(t *testing.T) {
 }
 
 func TestSearchPageFiltersDescendantsByStableDirectory(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
 	scope, err := s.Mkdir(ctx, s.RootID(), "quarterly")
@@ -962,6 +989,7 @@ func TestSearchPageFiltersDescendantsByStableDirectory(t *testing.T) {
 }
 
 func TestSearchPageFiltersByModificationTime(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
 	old, err := s.CreateFile(
@@ -1021,6 +1049,7 @@ func TestSearchPageFiltersByModificationTime(t *testing.T) {
 }
 
 func TestSearchPageAllowsOnlyBoundedQuerylessFilters(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
 	tag, err := s.CreateTag(ctx, "briefing")
@@ -1069,6 +1098,7 @@ func TestSearchPageAllowsOnlyBoundedQuerylessFilters(t *testing.T) {
 }
 
 func TestSearchFilterPagePathsAndTies(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
 	tag, err := s.CreateTag(ctx, "briefing")
@@ -1122,6 +1152,7 @@ func TestSearchFilterPagePathsAndTies(t *testing.T) {
 }
 
 func TestSearchContentFollowsStableNameMatches(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
 
@@ -1180,6 +1211,7 @@ func TestSearchContentFollowsStableNameMatches(t *testing.T) {
 }
 
 func TestSearchAttachmentEligibilityKeepsSharedBuildVersionScoped(t *testing.T) {
+	t.Parallel()
 	// Mutation caught: joining lexical rows to content by source hash or build
 	// alone would let one attachment confer search visibility on another version.
 	s, versions := newRenditionCatalogFixture(t)
@@ -1243,6 +1275,7 @@ func TestSearchAttachmentEligibilityKeepsSharedBuildVersionScoped(t *testing.T) 
 }
 
 func TestLexicalGenerationBuildFailureLeavesNoReadablePartialGeneration(t *testing.T) {
+	t.Parallel()
 	// Mutation caught: committing FTS rows before marking the generation
 	// complete would leave a failed generation available to a later head flip.
 	s, versions := newRenditionCatalogFixture(t)
@@ -1292,6 +1325,7 @@ func TestLexicalGenerationBuildFailureLeavesNoReadablePartialGeneration(t *testi
 }
 
 func TestLexicalGenerationHeadFailureRollsBackAttachmentAndBothHeads(t *testing.T) {
+	t.Parallel()
 	// Mutation caught: publishing the attachment or rendition head outside the
 	// lexical-head transaction would replace the prior serving state on failure.
 	s, versions := newRenditionCatalogFixture(t)
@@ -1352,6 +1386,7 @@ func TestLexicalGenerationHeadFailureRollsBackAttachmentAndBothHeads(t *testing.
 }
 
 func TestLexicalGenerationPublicationRejectsForbiddenArtifacts(t *testing.T) {
+	t.Parallel()
 	s, versions := newRenditionCatalogFixture(t)
 	ctx := t.Context()
 	buildProfile := catalogProcessingProfile(t, false)
@@ -1381,6 +1416,7 @@ func TestLexicalGenerationPublicationRejectsForbiddenArtifacts(t *testing.T) {
 }
 
 func TestLexicalGenerationPublicationRejectsGenerationMissingPublishedBuild(t *testing.T) {
+	t.Parallel()
 	s, versions := newRenditionCatalogFixture(t)
 	ctx := t.Context()
 	profile := catalogProcessingProfile(t, false)
@@ -1422,6 +1458,7 @@ func TestLexicalGenerationPublicationRejectsGenerationMissingPublishedBuild(t *t
 }
 
 func TestLexicalGenerationRejectsOutOfOrderStagedSnapshot(t *testing.T) {
+	t.Parallel()
 	// Two workers may stage snapshots before either publishes. An older snapshot
 	// must not publish after a newer head because it would silently remove that
 	// headed build from the active lexical generation.
@@ -1468,6 +1505,7 @@ func TestLexicalGenerationRejectsOutOfOrderStagedSnapshot(t *testing.T) {
 }
 
 func TestLexicalGenerationReaderLeasePinsAndEnumeratesExactRoots(t *testing.T) {
+	t.Parallel()
 	// Mutation caught: returning only the active generation value leaves no
 	// acquire/release lifetime or enumerable root for generation garbage collection.
 	s, versions := newRenditionCatalogFixture(t)
@@ -1529,6 +1567,7 @@ func TestLexicalGenerationReaderLeasePinsAndEnumeratesExactRoots(t *testing.T) {
 }
 
 func TestLexicalGenerationReadSnapshotCannotMixPublicationEpochs(t *testing.T) {
+	t.Parallel()
 	// Mutation caught: selecting a generation before starting the query's read
 	// snapshot lets a concurrent head flip combine old FTS rows with new
 	// rendition heads, returning the empty hybrid instead of either epoch.
@@ -1613,6 +1652,7 @@ func TestLexicalGenerationReadSnapshotCannotMixPublicationEpochs(t *testing.T) {
 }
 
 func TestLexicalGenerationReuseRejectsSameCountContentSubstitution(t *testing.T) {
+	t.Parallel()
 	// Mutation caught: validating only row counts lets a substituted FTS row
 	// masquerade as an already-complete immutable generation.
 	s, _ := newRenditionCatalogFixture(t)
@@ -1633,6 +1673,7 @@ func TestLexicalGenerationReuseRejectsSameCountContentSubstitution(t *testing.T)
 }
 
 func TestLexicalGenerationPublicationRejectsSameCountContentSubstitution(t *testing.T) {
+	t.Parallel()
 	// Mutation caught: target-build count equality alone allows substituted FTS
 	// content to become serving authority during the atomic head flip.
 	s, versions := newRenditionCatalogFixture(t)
@@ -1663,6 +1704,7 @@ func TestLexicalGenerationPublicationRejectsSameCountContentSubstitution(t *test
 }
 
 func TestLexicalGenerationPublicationRejectsMissingZeroSegmentBuildMembership(t *testing.T) {
+	t.Parallel()
 	s, versions := newRenditionCatalogFixture(t)
 	ctx := t.Context()
 	profile := catalogProcessingProfile(t, false)
@@ -1691,6 +1733,7 @@ func TestLexicalGenerationPublicationRejectsMissingZeroSegmentBuildMembership(t 
 // it. Before this, every publication copied every segment of every build into
 // a new generation and nothing ever collected the old ones.
 func TestPublishCollectsSupersededLexicalGenerationsWithoutCopyingText(t *testing.T) {
+	t.Parallel()
 	s, versions := newRenditionCatalogFixture(t)
 	ctx := t.Context()
 	profile := catalogProcessingProfile(t, false)
@@ -1887,6 +1930,7 @@ func lexicalSearchReplacementBuild(
 }
 
 func TestPendingAndFailedTextExtractions(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
 	textNode, err := s.CreateFile(
@@ -1939,6 +1983,7 @@ func TestPendingAndFailedTextExtractions(t *testing.T) {
 // Mutation caught: accepting an older extractor result replaces newer cached
 // text and its serving projection with a version downgrade.
 func TestRecordExtractionRejectsVersionDowngrade(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
 	hash := fakeHash("a9")
@@ -1970,6 +2015,7 @@ func TestRecordExtractionRejectsVersionDowngrade(t *testing.T) {
 // Mutation caught: replacing a successful extraction with a same-version
 // failure leaves its published rendition ahead of the portable cache.
 func TestRecordExtractionRejectsSameVersionFailureAfterSuccess(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
 	hash := fakeHash("aa")
@@ -1998,6 +2044,7 @@ func TestRecordExtractionRejectsSameVersionFailureAfterSuccess(t *testing.T) {
 // publication can replace the portable version-1 source without a compatible
 // rendition transition.
 func TestRecordExtractionRejectsUnsupportedVersionAfterLegacyMigration(t *testing.T) {
+	t.Parallel()
 	for name, replacement := range map[string]ExtractionResult{
 		"failure": {
 			Extractor: "plain-text", ExtractorVersion: 2,
@@ -2040,6 +2087,7 @@ func TestRecordExtractionRejectsUnsupportedVersionAfterLegacyMigration(t *testin
 }
 
 func TestRecordExtractionRetiresFailureAfterLegacyMigration(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
 	seedLegacyMigrationRow(t, s, "published.txt", "ac", ExtractionResult{
@@ -2063,6 +2111,7 @@ func TestRecordExtractionRetiresFailureAfterLegacyMigration(t *testing.T) {
 }
 
 func TestPendingTextExtractionsSkipsSupersededQueuedContent(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
 	created, err := s.CreateFile(
@@ -2088,6 +2137,7 @@ func TestPendingTextExtractionsSkipsSupersededQueuedContent(t *testing.T) {
 }
 
 func TestTextExtractionQueueDefersFailuresBehindReadyWork(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
 	hashes := make([]string, 65)

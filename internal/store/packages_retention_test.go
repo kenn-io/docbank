@@ -11,6 +11,7 @@ import (
 )
 
 func TestSealedSnapshotRetainsSourceVersionDuringPrune(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	body := []byte("Original package source")
 	hash := sha256.Sum256(body)
@@ -45,6 +46,7 @@ func TestSealedSnapshotRetainsSourceVersionDuringPrune(t *testing.T) {
 }
 
 func TestTrashEmptySkipsSealedSnapshotSourceAndDeletesOtherTrash(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	protected, err := s.CreateFile(t.Context(), s.RootID(), "snapshot-source.txt", fakeHash("c1"), 10, "text/plain")
 	require.NoError(t, err)
@@ -77,6 +79,7 @@ func TestTrashEmptySkipsSealedSnapshotSourceAndDeletesOtherTrash(t *testing.T) {
 }
 
 func TestPackageLabelAndReceiptRetainHistoricalVersionsDuringPrune(t *testing.T) {
+	t.Parallel()
 	for _, authority := range []string{"label", "receipt"} {
 		t.Run(authority, func(t *testing.T) {
 			s := newTestStore(t)
@@ -115,6 +118,7 @@ func TestPackageLabelAndReceiptRetainHistoricalVersionsDuringPrune(t *testing.T)
 }
 
 func TestPackageManifestAndSelectedRepresentationRemainBlobRoots(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	request := validPackageRequest(t, s)
 	manifest := request.ManifestBlobSHA256

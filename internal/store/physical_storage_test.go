@@ -12,6 +12,7 @@ import (
 )
 
 func TestLooseBacklogUsesIndexedPhysicalState(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	created := time.Date(2026, 7, 20, 0, 0, 0, 0, time.UTC).Format(timestampLayout)
 	err := s.withStorageTx(t.Context(), func(tx *sql.Tx) error {

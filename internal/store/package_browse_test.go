@@ -13,6 +13,7 @@ import (
 )
 
 func TestPackageMembersReadSealedOccurrenceThroughPackageID(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	request := validPackageRequest(t, s)
 	run, err := s.BeginIngest(t.Context(), "package:loadfile", "synthetic")
@@ -34,6 +35,7 @@ func TestPackageMembersReadSealedOccurrenceThroughPackageID(t *testing.T) {
 }
 
 func TestPackageTimelineInputsPreserveRawDateAndDeclaredZone(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	request := validPackageRequest(t, s)
 	profile := loadfile.Profile{ID: "dat-concordance-v1", DeclaredTimezone: "Europe/Berlin"}
@@ -106,6 +108,7 @@ func commitTimelineInput(t *testing.T, s *Store, job PackageImportJob, versionID
 }
 
 func TestPackageLabelCandidatesPageAmbiguousSenderLabels(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	first, firstNode := seedReceivedPackage(t, s, "candidate-a")
 	commitReceivedLabel(t, s, first, firstNode.CurrentVersionID, "EXT000001")

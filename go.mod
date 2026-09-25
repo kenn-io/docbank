@@ -31,8 +31,8 @@ require (
 	github.com/stretchr/testify v1.12.1
 	github.com/tdewolff/parse/v2 v2.8.16
 	github.com/tetratelabs/wazero v1.12.0
-	github.com/yuin/goldmark v1.7.17
-	go.kenn.io/kit v0.24.1
+	github.com/yuin/goldmark v1.8.5
+	go.kenn.io/kit v0.26.0
 	golang.org/x/image v0.44.0
 	golang.org/x/net v0.59.0
 	golang.org/x/sync v0.23.0
@@ -90,6 +90,7 @@ require (
 	github.com/rivo/uniseg v0.4.7 // indirect
 	github.com/segmentio/asm v1.1.3 // indirect
 	github.com/segmentio/encoding v0.5.4 // indirect
+	github.com/spf13/pathologize v1.1.0 // indirect
 	github.com/tklauser/go-sysconf v0.3.16 // indirect
 	github.com/tklauser/numcpus v0.11.0 // indirect
 	github.com/xo/terminfo v0.0.0-20220910002029-abceb7e1c41e // indirect

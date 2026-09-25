@@ -15,6 +15,7 @@ import (
 )
 
 func TestAuditedProvenanceAppendAndSupersessionRoundTrip(t *testing.T) {
+	t.Parallel()
 	s, err := Open(filepath.Join(t.TempDir(), "source.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, s.Close()) })
@@ -75,6 +76,7 @@ func TestAuditedProvenanceAppendAndSupersessionRoundTrip(t *testing.T) {
 }
 
 func TestAuditedProvenanceAppendRollsBackAllMetadata(t *testing.T) {
+	t.Parallel()
 	s, err := Open(filepath.Join(t.TempDir(), "vault.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, s.Close()) })
@@ -106,6 +108,7 @@ func TestAuditedProvenanceAppendRollsBackAllMetadata(t *testing.T) {
 }
 
 func TestAuditedProvenanceReplayRejectsOperationalPredecessor(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
 	run, err := s.BeginCallerSuppliedIngest(ctx, "agent", "source")
@@ -165,6 +168,7 @@ func TestAuditedProvenanceReplayRejectsOperationalPredecessor(t *testing.T) {
 }
 
 func TestAuditedProvenanceReplayRejectsTamperedIngestIdentity(t *testing.T) {
+	t.Parallel()
 	s, err := Open(filepath.Join(t.TempDir(), "source.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, s.Close()) })
@@ -236,6 +240,7 @@ func TestAuditedProvenanceReplayRejectsTamperedIngestIdentity(t *testing.T) {
 }
 
 func TestAuditedProvenanceImportRejectsTamperedFact(t *testing.T) {
+	t.Parallel()
 	s, err := Open(filepath.Join(t.TempDir(), "source.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, s.Close()) })
@@ -265,6 +270,7 @@ func TestAuditedProvenanceImportRejectsTamperedFact(t *testing.T) {
 }
 
 func TestAuditedProvenanceImportRequiresCallerSuppliedIngest(t *testing.T) {
+	t.Parallel()
 	for _, test := range []struct {
 		kind  string
 		valid bool
@@ -398,6 +404,7 @@ func rewriteAppendedProvenancePath(t *testing.T, input []byte, nodeID int64) []b
 }
 
 func TestAuditedProvenanceReplayRejectsDirectoryTarget(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
 	seedMetadataRoundTrip(t, s)
@@ -452,6 +459,7 @@ func TestAuditedProvenanceReplayRejectsDirectoryTarget(t *testing.T) {
 // These digests bind the complete canonical record stream for caller-supplied
 // provenance and operational observations.
 func TestAuditedProvenanceCanonicalRecords(t *testing.T) {
+	t.Parallel()
 	for operation, want := range map[string]string{
 		"append":           "a9ad4987c066f3fca86e36ff69c9c55e74b342cece6f79944dc38a75ef880b34",
 		"supersede":        "a83dec2c0d2295f015e1e4154587fcaa8e15423c095ab1d0f151bbc55e2b90c7",

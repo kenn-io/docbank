@@ -35,6 +35,10 @@ func secureCreatedFile(file *os.File) error {
 	return nil
 }
 
+func createPrivateFile(path string) (*os.File, error) {
+	return safefileio.CreatePrivateFile(path) //nolint:wrapcheck // the caller adds context.
+}
+
 func openPrivateFile(name string) (*os.File, error) {
 	info, err := os.Lstat(name)
 	if err != nil {

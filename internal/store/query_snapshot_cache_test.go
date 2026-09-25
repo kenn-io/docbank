@@ -15,6 +15,7 @@ import (
 )
 
 func TestQuerySnapshotCachePagesAreOpaqueOwnedAndCallerIsolated(t *testing.T) {
+	t.Parallel()
 	for _, driverCase := range walkTestDrivers() {
 		t.Run(driverCase.name, func(t *testing.T) {
 			s := newTestStoreWithDriver(t, driverCase.driver)
@@ -80,6 +81,7 @@ func TestQuerySnapshotCachePagesAreOpaqueOwnedAndCallerIsolated(t *testing.T) {
 }
 
 func TestQuerySnapshotCacheReservationsEvictionAndExpiry(t *testing.T) {
+	t.Parallel()
 	t.Run("capacity pressure expires handles before evicting live rows", func(t *testing.T) {
 		s := newTestStore(t)
 		_, err := s.CreateFile(t.Context(), s.RootID(), "a.txt", fakeHash("pressure-expiry"), 1, "text/plain")
@@ -201,6 +203,7 @@ func TestQuerySnapshotCacheReservationsEvictionAndExpiry(t *testing.T) {
 }
 
 func TestQuerySnapshotCacheRevokeAndShutdownCancelBuilders(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	_, err := s.CreateFile(t.Context(), s.RootID(), "a.txt", fakeHash("cancel"), 1, "text/plain")
 	require.NoError(t, err)
@@ -251,6 +254,7 @@ func TestQuerySnapshotCacheRevokeAndShutdownCancelBuilders(t *testing.T) {
 }
 
 func TestQuerySnapshotCacheRejectsBusyAndCanceledAdmission(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	_, err := s.CreateFile(t.Context(), s.RootID(), "a.txt", fakeHash("busy"), 1, "text/plain")
 	require.NoError(t, err)
@@ -295,6 +299,7 @@ func TestQuerySnapshotCacheRejectsBusyAndCanceledAdmission(t *testing.T) {
 }
 
 func TestQuerySnapshotCachePreparationPanicReleasesReservation(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	_, err := s.CreateFile(t.Context(), s.RootID(), "a.txt", fakeHash("snapshot-panic"), 1, "text/plain")
 	require.NoError(t, err)
@@ -318,6 +323,7 @@ func TestQuerySnapshotCachePreparationPanicReleasesReservation(t *testing.T) {
 }
 
 func TestQuerySnapshotCursorRejectsValidlySignedWrongBounds(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	_, err := s.CreateFile(t.Context(), s.RootID(), "a.txt", fakeHash("cursor"), 1, "text/plain")
 	require.NoError(t, err)
@@ -347,6 +353,7 @@ func TestQuerySnapshotCursorRejectsValidlySignedWrongBounds(t *testing.T) {
 }
 
 func TestQuerySnapshotCacheEmptyPopulationHasOneCursorlessPage(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	service := NewQuerySnapshotService(s)
 	t.Cleanup(func() { require.NoError(t, service.Close()) })
@@ -360,6 +367,7 @@ func TestQuerySnapshotCacheEmptyPopulationHasOneCursorlessPage(t *testing.T) {
 }
 
 func TestQuerySnapshotCacheConcurrentPageAndRevoke(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	for i := range 51 {
 		name := string(rune('a'+i%26)) + string(rune('a'+i/26)) + ".txt"
@@ -385,6 +393,7 @@ func TestQuerySnapshotCacheConcurrentPageAndRevoke(t *testing.T) {
 }
 
 func TestQuerySnapshotCacheRejectsNilStoreAtOperationTime(t *testing.T) {
+	t.Parallel()
 	service := NewQuerySnapshotService(nil)
 	t.Cleanup(func() { require.NoError(t, service.Close()) })
 	_, err := service.Create(t.Context(), "owner", SnapshotRequest{Query: snapshotTestQuery(t, `{}`)})

@@ -13,6 +13,7 @@ import (
 )
 
 func TestEmbeddingCatalogRejectsRowsThatDivergeFromPayload(t *testing.T) {
+	t.Parallel()
 	s, versionID, profile, attachmentID := newEmbeddingCatalogFixture(t)
 	record := embeddingSetFixture(s, versionID, profile.Fingerprint,
 		document.EmbeddingInputRenditionChunk, "chunk", attachmentID)
@@ -59,6 +60,7 @@ func TestEmbeddingCatalogRejectsRowsThatDivergeFromPayload(t *testing.T) {
 }
 
 func TestEmbeddingCatalogHeadsAndFailuresAreProfileScoped(t *testing.T) {
+	t.Parallel()
 	s, versionID, firstProfile, _ := newEmbeddingCatalogFixture(t)
 	secondProfile := embeddingCatalogProfileVariant(t)
 	require.NoError(t, s.withStorageTx(t.Context(), func(tx *sql.Tx) error {
@@ -105,6 +107,7 @@ func TestEmbeddingCatalogHeadsAndFailuresAreProfileScoped(t *testing.T) {
 }
 
 func TestEmbeddingCatalogVocabularyIsValidatedOutsideSQLite(t *testing.T) {
+	t.Parallel()
 	testCases := []struct {
 		name, dropTrigger, before, mutation, want string
 	}{
@@ -175,6 +178,7 @@ func TestEmbeddingCatalogVocabularyIsValidatedOutsideSQLite(t *testing.T) {
 }
 
 func TestEmbeddingCatalogMetadataRejectsFailureOutsideProfile(t *testing.T) {
+	t.Parallel()
 	for _, testCase := range []struct {
 		name, bindingID string
 		inputKind       EmbeddingInputKind
@@ -202,6 +206,7 @@ func TestEmbeddingCatalogMetadataRejectsFailureOutsideProfile(t *testing.T) {
 }
 
 func TestEmbeddingCatalogPolicyLimitsAreValidatedOutsideSQLite(t *testing.T) {
+	t.Parallel()
 	for _, testCase := range []struct {
 		name, table, mutation, want string
 		args                        []any
@@ -247,6 +252,7 @@ func TestEmbeddingCatalogPolicyLimitsAreValidatedOutsideSQLite(t *testing.T) {
 }
 
 func TestEmbeddingCatalogVersionPruneRetainsPinnedArtifactsUntilGC(t *testing.T) {
+	t.Parallel()
 	s, versionID, profile, _ := newEmbeddingCatalogFixture(t)
 	record := embeddingSetFixture(s, versionID, profile.Fingerprint,
 		document.EmbeddingInputOriginalFile, "optional", "")
@@ -304,6 +310,7 @@ func TestEmbeddingCatalogVersionPruneRetainsPinnedArtifactsUntilGC(t *testing.T)
 }
 
 func TestEmbeddingCatalogSnapshotValidationChecksStoredRows(t *testing.T) {
+	t.Parallel()
 	s, versionID, profile, _ := newEmbeddingCatalogFixture(t)
 	record := embeddingSetFixture(s, versionID, profile.Fingerprint,
 		document.EmbeddingInputOriginalFile, "optional", "")

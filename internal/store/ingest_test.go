@@ -12,6 +12,7 @@ import (
 )
 
 func TestIngestFileIdempotency(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
 
@@ -76,6 +77,7 @@ func TestIngestFileIdempotency(t *testing.T) {
 }
 
 func TestFilesystemIngestDoesNotAdoptEmbeddedOpaqueReference(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
 	embedded, err := s.BeginCallerSuppliedIngest(ctx, "cli", "application archive")
@@ -99,6 +101,7 @@ func TestFilesystemIngestDoesNotAdoptEmbeddedOpaqueReference(t *testing.T) {
 }
 
 func TestEmbeddedWatchKindIsPortableProvenanceNotOperationalState(t *testing.T) {
+	t.Parallel()
 	ctx := t.Context()
 	source := newTestStore(t)
 	run, err := source.BeginCallerSuppliedIngest(ctx, "watch", "application archive")
@@ -130,6 +133,7 @@ func TestEmbeddedWatchKindIsPortableProvenanceNotOperationalState(t *testing.T) 
 }
 
 func TestIngestFileMatchesAcrossSuffixGap(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
 
@@ -160,6 +164,7 @@ func TestIngestFileMatchesAcrossSuffixGap(t *testing.T) {
 }
 
 func TestIngestFileRecordsProvenance(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
 
@@ -194,6 +199,7 @@ func TestIngestFileRecordsProvenance(t *testing.T) {
 }
 
 func TestSyncWatchedContentFollowsMovedNodeWithoutOverwritingIndependentEdit(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
 	run, err := s.BeginIngest(ctx, "watch", "sessions")
@@ -262,6 +268,7 @@ func TestSyncWatchedContentFollowsMovedNodeWithoutOverwritingIndependentEdit(t *
 }
 
 func TestWatchSourceLookupUsesPrimaryKeyAtArchiveScale(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
 	run, err := s.BeginIngest(ctx, "watch", "sessions")
@@ -333,6 +340,7 @@ func TestWatchSourceLookupUsesPrimaryKeyAtArchiveScale(t *testing.T) {
 }
 
 func TestIngestAndProvenanceFactsAreImmutable(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ingestID, err := s.BeginIngest(t.Context(), "cli", "source")
 	require.NoError(t, err)
@@ -354,6 +362,7 @@ func TestIngestAndProvenanceFactsAreImmutable(t *testing.T) {
 }
 
 func TestIngestIdempotencyUsesActiveProvenanceLeaf(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
 	ingestID, err := s.BeginIngest(ctx, "cli", "source")
@@ -398,6 +407,7 @@ func TestIngestIdempotencyUsesActiveProvenanceLeaf(t *testing.T) {
 }
 
 func TestBeginIngestAllocatesDistinctUUIDs(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	first, err := s.BeginIngest(t.Context(), "cli", "first")
 	require.NoError(t, err)
@@ -410,6 +420,7 @@ func TestBeginIngestAllocatesDistinctUUIDs(t *testing.T) {
 }
 
 func TestIngestRejectsNonUTF8MetadataBeforeCommit(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
 	ingestID, err := s.BeginIngest(ctx, "cli", "valid source")
@@ -428,6 +439,7 @@ func TestIngestRejectsNonUTF8MetadataBeforeCommit(t *testing.T) {
 }
 
 func TestIngestFileDistinctSourceNamedLikeSuffix(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
 
@@ -461,6 +473,7 @@ func TestIngestFileDistinctSourceNamedLikeSuffix(t *testing.T) {
 }
 
 func TestIngestFileDoesNotMatchUnknownOriginOutsideNameFamily(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
 

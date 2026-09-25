@@ -14,6 +14,7 @@ import (
 )
 
 func TestResolveProcessingSourceFenceExplicitIDsAreSortedAndCurrentLive(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	first, err := s.CreateFile(t.Context(), s.RootID(), "first.txt", fakeHash("first"), 5, "text/plain")
 	require.NoError(t, err)
@@ -51,6 +52,7 @@ func TestResolveProcessingSourceFenceExplicitIDsAreSortedAndCurrentLive(t *testi
 }
 
 func TestResolveProcessingSourceFenceMetadataFiltersReuseSearchNormalization(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	scope, err := s.Mkdir(t.Context(), s.RootID(), "scope")
 	require.NoError(t, err)
@@ -89,6 +91,7 @@ func TestResolveProcessingSourceFenceMetadataFiltersReuseSearchNormalization(t *
 }
 
 func TestResolveProcessingSourceFenceAccepts4096AndNeverTruncates4097(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ids := insertProcessingFenceFiles(t, s, 4097)
 
@@ -116,6 +119,7 @@ func TestResolveProcessingSourceFenceAccepts4096AndNeverTruncates4097(t *testing
 }
 
 func TestResolveProcessingSourceFenceRejectsInvalidModesAndIDs(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	empty := SearchOptions{}
 	for _, request := range []ProcessingSourceFenceRequest{
@@ -132,6 +136,7 @@ func TestResolveProcessingSourceFenceRejectsInvalidModesAndIDs(t *testing.T) {
 }
 
 func TestResolveProcessingSourceFenceUsesOneReadSnapshot(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	created, err := s.CreateFile(t.Context(), s.RootID(), "snapshot.txt", fakeHash("old"), 3, "text/plain")
 	require.NoError(t, err)
@@ -210,6 +215,7 @@ func setProcessingFenceModifiedAt(s *Store, nodeID int64, value string) error {
 }
 
 func TestProcessingSourceFencePreservesCanceledQuery(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	tx, err := s.db.BeginTx(t.Context(), &sql.TxOptions{ReadOnly: true})
 	require.NoError(t, err)

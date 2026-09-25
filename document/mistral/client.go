@@ -397,7 +397,7 @@ func (c *Client) processOnce(
 		_ = waitForStream()
 		clear(documentBytes)
 	}()
-	request, err := http.NewRequestWithContext(ctx, http.MethodPost, c.policy.values.Endpoint, reader) //nolint:gosec // policy pins the endpoint and rejects alternate regions.
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, c.policy.values.Endpoint, reader)
 	if err != nil {
 		return Result{}, "", false, 0, fmt.Errorf("build Mistral OCR request: %w", err)
 	}
@@ -424,7 +424,7 @@ func (c *Client) processOnce(
 	}
 
 	started := time.Now()
-	response, err := c.http.Do(request) //nolint:gosec // the HTTP client is isolated and the endpoint is policy-pinned.
+	response, err := c.http.Do(request)
 	latency := time.Since(started)
 	if err != nil {
 		if ctxErr := ctx.Err(); ctxErr != nil {

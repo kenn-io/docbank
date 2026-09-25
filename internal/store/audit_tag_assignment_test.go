@@ -12,6 +12,7 @@ import (
 )
 
 func TestAuditedTagAssignmentRoundTrips(t *testing.T) {
+	t.Parallel()
 	s, tag, report := newAuditedTagStore(t)
 	assigned, err := s.AssignTagPath(t.Context(), tag.ID, "/Projects/report.txt")
 	require.NoError(t, err)
@@ -45,6 +46,7 @@ func TestAuditedTagAssignmentRoundTrips(t *testing.T) {
 }
 
 func TestAuditedTagAssignmentNoOpDoesNotAdvanceHistory(t *testing.T) {
+	t.Parallel()
 	s, tag, report := newAuditedTagStore(t)
 	assigned, err := s.AssignTag(t.Context(), tag.ID, report.ID, report.Revision)
 	require.NoError(t, err)
@@ -68,6 +70,7 @@ func TestAuditedTagAssignmentNoOpDoesNotAdvanceHistory(t *testing.T) {
 }
 
 func TestAuditedTagAssignmentOutsideScopeRollsBack(t *testing.T) {
+	t.Parallel()
 	s, tag, _ := newAuditedTagStore(t)
 	empty, err := s.NodeByPath(t.Context(), "/Empty")
 	require.NoError(t, err)
@@ -86,6 +89,7 @@ func TestAuditedTagAssignmentOutsideScopeRollsBack(t *testing.T) {
 }
 
 func TestAuditedTagAssignmentRollsBackWithHistory(t *testing.T) {
+	t.Parallel()
 	s, tag, report := newAuditedTagStore(t)
 	_, err := s.db.Exec(`CREATE TRIGGER reject_audit_tag_scope_advance
 		BEFORE UPDATE ON audit_scopes BEGIN
@@ -111,6 +115,7 @@ func TestAuditedTagAssignmentRollsBackWithHistory(t *testing.T) {
 }
 
 func TestAuditedTagAssignmentReplayRejectsRetargetedNode(t *testing.T) {
+	t.Parallel()
 	s, tag, report := newAuditedTagStore(t)
 	_, err := s.AssignTag(t.Context(), tag.ID, report.ID, report.Revision)
 	require.NoError(t, err)
@@ -148,6 +153,7 @@ func TestAuditedTagAssignmentReplayRejectsRetargetedNode(t *testing.T) {
 }
 
 func TestAuditedTagAssignmentImportRejectsMissingCurrentAssignment(t *testing.T) {
+	t.Parallel()
 	s, tag, report := newAuditedTagStore(t)
 	_, err := s.AssignTag(t.Context(), tag.ID, report.ID, report.Revision)
 	require.NoError(t, err)

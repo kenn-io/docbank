@@ -7,6 +7,7 @@ import (
 )
 
 func TestMailboxJobClaimCheckpointCancellationAndContinuation(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
 	req := MailboxContainerRequest{ID: "source", Owner: "one", SHA256: fakeHash("aa"), Size: 3, Format: "mbox"}
@@ -60,6 +61,7 @@ func TestMailboxJobClaimCheckpointCancellationAndContinuation(t *testing.T) {
 }
 
 func TestMailboxCheckpointFailureRollsBackMessageAndReceipt(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
 	f := newEmailFixture(t, s, "seed.eml")
@@ -144,6 +146,7 @@ func TestMailboxCheckpointFailureRollsBackMessageAndReceipt(t *testing.T) {
 }
 
 func TestMailboxSettingsRefuseChangedDecoderOnResume(t *testing.T) {
+	t.Parallel()
 	settings, err := normalizeMailboxSettings(MailboxSettings{DestinationID: 1})
 	require.NoError(t, err)
 	require.NotEmpty(t, settings.Recipe)
@@ -153,11 +156,13 @@ func TestMailboxSettingsRefuseChangedDecoderOnResume(t *testing.T) {
 }
 
 func TestMailboxCompleteCannotHidePendingOccurrence(t *testing.T) {
+	t.Parallel()
 	j := MailboxJob{ID: "job", ContainerID: "source", ContainerSHA256: fakeHash("aa"), Settings: MailboxSettings{DestinationID: 1}, Owner: "one", State: "complete", CollectionID: "11111111-1111-4111-8111-111111111111", StartedAt: "2026-09-12T00:00:00.000000000Z", Checkpoint: 1, Imported: 1, Pending: 1, ScannedTail: true}
 	require.Error(t, validateMailboxJob(j))
 }
 
 func TestMailboxLabelTagsRemainAvailableWhileJobIsActive(t *testing.T) {
+	t.Parallel()
 	for _, mode := range []string{"ordinary", "audited"} {
 		t.Run(mode, func(t *testing.T) {
 			s := newTestStore(t)

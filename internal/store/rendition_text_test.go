@@ -9,6 +9,7 @@ import (
 )
 
 func TestResolveRenditionTextReportsExactFailedAttempts(t *testing.T) {
+	t.Parallel()
 	for _, operator := range []bool{false, true} {
 		t.Run(fmt.Sprintf("operator_required=%t", operator), func(t *testing.T) {
 			s, _, nodes, profile := collectionCoverageFixture(t, 1)
@@ -39,6 +40,7 @@ func TestResolveRenditionTextReportsExactFailedAttempts(t *testing.T) {
 }
 
 func TestResolveRenditionTextBindsLiveNodeSourceHeadAndGeneration(t *testing.T) {
+	t.Parallel()
 	s, versions := newRenditionCatalogFixture(t)
 	profile := catalogProcessingProfile(t, false)
 	build := catalogRenditionBuild(s, profile)
@@ -72,6 +74,7 @@ func TestResolveRenditionTextBindsLiveNodeSourceHeadAndGeneration(t *testing.T) 
 }
 
 func TestResolveRenditionTextRejectsEveryChangedAuthority(t *testing.T) {
+	t.Parallel()
 	s, versions := newRenditionCatalogFixture(t)
 	profile := catalogProcessingProfile(t, false)
 	build := catalogRenditionBuild(s, profile)
@@ -111,6 +114,7 @@ func TestResolveRenditionTextRejectsEveryChangedAuthority(t *testing.T) {
 }
 
 func TestResolveRenditionTextDoesNotTreatMissingSegmentsAsVerifiedEmptyMarkdown(t *testing.T) {
+	t.Parallel()
 	s, versions := newRenditionCatalogFixture(t)
 	profile := catalogProcessingProfile(t, false)
 	build := catalogRenditionBuild(s, profile)

@@ -10,6 +10,7 @@ import (
 )
 
 func TestCollectionsExposeActiveOperationalMembership(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
 
@@ -81,6 +82,7 @@ func TestCollectionsExposeActiveOperationalMembership(t *testing.T) {
 }
 
 func TestCollectionsOrderEqualStartTimesByID(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
 	ids := []string{
@@ -111,6 +113,7 @@ func TestCollectionsOrderEqualStartTimesByID(t *testing.T) {
 }
 
 func TestCollectionMembershipFollowsSupersessionAndTrash(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
 	dir, err := s.Mkdir(ctx, s.RootID(), "records")
@@ -151,6 +154,7 @@ func TestCollectionMembershipFollowsSupersessionAndTrash(t *testing.T) {
 }
 
 func TestCollectionReadBounds(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
 	run, err := s.BeginIngest(ctx, "cli", "Synthetic import")

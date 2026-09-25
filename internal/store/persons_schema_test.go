@@ -10,6 +10,7 @@ import (
 )
 
 func TestPersonsSchema(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	for _, table := range []string{
 		"persons", "person_identities", "person_external_identities",
@@ -31,6 +32,7 @@ func TestPersonsSchema(t *testing.T) {
 }
 
 func TestDocumentPeopleStateSurvivesReopen(t *testing.T) {
+	t.Parallel()
 	path := filepath.Join(t.TempDir(), "docbank.db")
 	s, err := Open(path)
 	require.NoError(t, err)
@@ -47,6 +49,7 @@ func TestDocumentPeopleStateSurvivesReopen(t *testing.T) {
 }
 
 func TestPristineMetadataTargetRequiresUntouchedPeopleState(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	require.NoError(t, s.withStorageTx(t.Context(), func(tx *sql.Tx) error {
 		return requirePristineMetadataTarget(t.Context(), tx)

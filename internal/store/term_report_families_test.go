@@ -12,6 +12,7 @@ import (
 )
 
 func TestTermReportFamilyLimitExcludesEmptyPublications(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	unrelated := createCollectionRun(t, s, "alpha.txt", "empty-publication-scope")
 	f := newEmailSourceFixture(t, s, "empty.eml", "Content-Type: text/plain\r\n\r\nSynthetic body\r\n")
@@ -49,6 +50,7 @@ func TestTermReportFamilyLimitExcludesEmptyPublications(t *testing.T) {
 }
 
 func TestTermReportFamilyLimitCountsOnlyConnectedRelations(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	selected := createCollectionRun(t, s, "alpha.txt", "relation-scope")
 	f := newEmailFixture(t, s, "external-parent.eml")
@@ -106,6 +108,7 @@ func repeatTermReportPublication(t *testing.T, s *Store, request document.EmailD
 }
 
 func TestTermReportFamilyFollowsSelectedChildToCurrentExternalParents(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	f := newEmailFixture(t, s, "external-parent.eml")
 	view, err := s.PublishEmailGeneration(t.Context(), f.publication)

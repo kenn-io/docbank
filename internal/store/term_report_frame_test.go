@@ -23,6 +23,7 @@ func termFrameRequest() report.Request {
 }
 
 func TestTermReportRenditionTextLimit(t *testing.T) {
+	t.Parallel()
 	s, versions := newRenditionCatalogFixture(t)
 	profile := catalogProcessingProfile(t, false)
 	build := catalogRenditionBuild(s, profile)
@@ -50,6 +51,7 @@ func TestTermReportRenditionTextLimit(t *testing.T) {
 }
 
 func TestTermReportFrozenGenerationAndCurrentVersions(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
 	alpha, err := s.CreateFile(ctx, s.RootID(), "alpha.txt", fakeHash("report-alpha"), 10, "text/plain")
@@ -79,6 +81,7 @@ func TestTermReportFrozenGenerationAndCurrentVersions(t *testing.T) {
 }
 
 func TestTermReportScopeAndEarliestAddition(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	first := createCollectionRun(t, s, "alpha.txt", "term-scope-alpha")
 	_ = createCollectionRun(t, s, "beta.txt", "term-scope-beta")
@@ -101,6 +104,7 @@ func TestTermReportScopeAndEarliestAddition(t *testing.T) {
 }
 
 func TestTermReportNativeTextProducesFrozenContentDate(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
 	digest := sha256.Sum256([]byte("term-native"))
@@ -127,6 +131,7 @@ func TestTermReportNativeTextProducesFrozenContentDate(t *testing.T) {
 }
 
 func TestTermReportPrepareReleasesNativeTextBudget(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	text := strings.Repeat("ordinary text ", 10000)
 	hash := testSHA256([]byte(text))
@@ -147,6 +152,7 @@ func TestTermReportPrepareReleasesNativeTextBudget(t *testing.T) {
 }
 
 func TestTermReportMatchesSelectedProcessingProfile(t *testing.T) {
+	t.Parallel()
 	s, versions := newRenditionCatalogFixture(t)
 	selected := catalogProcessingProfile(t, false)
 	other := catalogProcessingProfileWith(t, false, func(profile *document.ProcessingProfileV1) {
@@ -175,6 +181,7 @@ func TestTermReportMatchesSelectedProcessingProfile(t *testing.T) {
 }
 
 func TestTermReportSharedChildJoinsExactVersionFamily(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	f := newEmailFixture(t, s, "report-parent.eml")
 	source, err := s.ContentVersionByID(t.Context(), f.publication.ContentVersionID)
@@ -249,6 +256,7 @@ func TestTermReportSharedChildJoinsExactVersionFamily(t *testing.T) {
 }
 
 func TestTermReportFamilyStaysWithinCollectionAndCurrentVersions(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	f := newEmailFixture(t, s, "source.eml")
 	source, err := s.ContentVersionByID(t.Context(), f.publication.ContentVersionID)
@@ -290,6 +298,7 @@ func TestTermReportFamilyStaysWithinCollectionAndCurrentVersions(t *testing.T) {
 }
 
 func TestTermReportPartialFamilyWithoutPublishedAttachments(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	f := newEmailSourceFixture(t, s, "partial.eml",
 		"Content-Type: multipart/mixed; boundary=b\n\n--b\nContent-Type: text/plain; charset=utf-8\n\nbody")
@@ -312,6 +321,7 @@ func TestTermReportPartialFamilyWithoutPublishedAttachments(t *testing.T) {
 }
 
 func TestTermReportRetainsRejectedRawMetadataWithoutEventHead(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
 	source := sha256.Sum256([]byte("raw-date-source"))
@@ -340,6 +350,7 @@ func TestTermReportRetainsRejectedRawMetadataWithoutEventHead(t *testing.T) {
 }
 
 func TestTermReportLabelsLegacyMissingAdditionAsRecordedFallback(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
 	node, err := s.CreateFile(ctx, s.RootID(), "legacy.txt", fakeHash("legacy-date"), 1, "text/plain")
@@ -363,6 +374,7 @@ func TestTermReportLabelsLegacyMissingAdditionAsRecordedFallback(t *testing.T) {
 }
 
 func TestTermReportCapturesExactRenditionBinding(t *testing.T) {
+	t.Parallel()
 	s, versions := newRenditionCatalogFixture(t)
 	profile := catalogProcessingProfile(t, false)
 	build := catalogRenditionBuild(s, profile)

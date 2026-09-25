@@ -17,6 +17,7 @@ import (
 )
 
 func TestRenditionPublicationRevokesStaleChunkEmbeddingHead(t *testing.T) {
+	t.Parallel()
 	s, versionID, profile, attachmentID := newEmbeddingCatalogFixture(t)
 	chunk := embeddingSetFixture(s, versionID, profile.Fingerprint, document.EmbeddingInputRenditionChunk, "chunk", attachmentID)
 	direct := embeddingSetFixture(s, versionID, profile.Fingerprint, document.EmbeddingInputOriginalFile, "optional", "")
@@ -98,6 +99,7 @@ func TestRenditionPublicationRevokesStaleChunkEmbeddingHead(t *testing.T) {
 }
 
 func TestEmbeddingPublicationRejectsOlderWorker(t *testing.T) {
+	t.Parallel()
 	s, versionID, profile, _ := newEmbeddingCatalogFixture(t)
 	older := embeddingSetFixture(s, versionID, profile.Fingerprint, document.EmbeddingInputOriginalFile, "optional", "")
 	newer := cloneEmbeddingSetRecord(older)
@@ -133,6 +135,7 @@ func TestEmbeddingPublicationRejectsOlderWorker(t *testing.T) {
 }
 
 func TestEmbeddingFailureRejectsOlderWorkerAfterPublication(t *testing.T) {
+	t.Parallel()
 	s, versionID, profile, _ := newEmbeddingCatalogFixture(t)
 	set := embeddingSetFixture(s, versionID, profile.Fingerprint, document.EmbeddingInputOriginalFile, "optional", "")
 	require.NoError(t, s.StageEmbeddingSet(t.Context(), set))
@@ -188,6 +191,7 @@ func TestEmbeddingFailureRejectsOlderWorkerAfterPublication(t *testing.T) {
 }
 
 func TestEmbeddingRestoreRetainsHeadsForNonLiveVersions(t *testing.T) {
+	t.Parallel()
 	for _, mutation := range []string{"trash", "replace"} {
 		t.Run(mutation, func(t *testing.T) {
 			s, versionID, profile, attachmentID := newEmbeddingCatalogFixture(t)
@@ -222,6 +226,7 @@ func TestEmbeddingRestoreRetainsHeadsForNonLiveVersions(t *testing.T) {
 }
 
 func TestEmbeddingPurgeRejectsStalePublication(t *testing.T) {
+	t.Parallel()
 	for _, retained := range []bool{false, true} {
 		name := "deleted"
 		if retained {
@@ -284,6 +289,7 @@ func TestEmbeddingPurgeRejectsStalePublication(t *testing.T) {
 }
 
 func TestEmbeddingAttachmentPurgeLeavesDirectBindingPublishable(t *testing.T) {
+	t.Parallel()
 	s, versionID, profile, attachmentID := newEmbeddingCatalogFixture(t)
 	chunk := embeddingSetFixture(s, versionID, profile.Fingerprint, document.EmbeddingInputRenditionChunk, "chunk", attachmentID)
 	direct := embeddingSetFixture(s, versionID, profile.Fingerprint, document.EmbeddingInputOriginalFile, "optional", "")
@@ -303,6 +309,7 @@ func TestEmbeddingAttachmentPurgeLeavesDirectBindingPublishable(t *testing.T) {
 }
 
 func TestEmbeddingPurgeFencesWorkBeforeStaging(t *testing.T) {
+	t.Parallel()
 	for _, all := range []bool{false, true} {
 		name := "version"
 		if all {
@@ -323,6 +330,7 @@ func TestEmbeddingPurgeFencesWorkBeforeStaging(t *testing.T) {
 }
 
 func TestEmbeddingPurgeFencesUnstagedChunkBindings(t *testing.T) {
+	t.Parallel()
 	for _, selector := range []string{"attachment", "build"} {
 		t.Run(selector, func(t *testing.T) {
 			s, versionID, profile, attachmentID := newEmbeddingCatalogFixture(t)
@@ -346,6 +354,7 @@ func TestEmbeddingPurgeFencesUnstagedChunkBindings(t *testing.T) {
 }
 
 func TestEmbeddingHistoricalRenditionPurgePreservesCurrentBinding(t *testing.T) {
+	t.Parallel()
 	for _, selector := range []string{"attachment", "build"} {
 		t.Run(selector, func(t *testing.T) {
 			s, versionID, profile, oldAttachmentID := newEmbeddingCatalogFixture(t)
@@ -398,6 +407,7 @@ func TestEmbeddingHistoricalRenditionPurgePreservesCurrentBinding(t *testing.T) 
 }
 
 func TestEmbeddingHistoricalPurgeRemovesPendingChunkJobs(t *testing.T) {
+	t.Parallel()
 	for _, selector := range []string{"attachment", "build"} {
 		for _, state := range []string{"queued", "running"} {
 			t.Run(selector+"/"+state, func(t *testing.T) {
@@ -488,6 +498,7 @@ func TestEmbeddingHistoricalPurgeRemovesPendingChunkJobs(t *testing.T) {
 }
 
 func TestEmbeddingScopedPurgeClearsAndFencesFailures(t *testing.T) {
+	t.Parallel()
 	for _, selector := range []string{"attachment", "build", "version", "all"} {
 		t.Run(selector, func(t *testing.T) {
 			s, versionID, profile, attachmentID := newEmbeddingCatalogFixture(t)
@@ -550,6 +561,7 @@ func TestEmbeddingScopedPurgeClearsAndFencesFailures(t *testing.T) {
 }
 
 func TestEmbeddingWritesRequirePhysicalBlobAuthority(t *testing.T) {
+	t.Parallel()
 	for _, operation := range []string{"stage", "publish"} {
 		for _, missing := range []string{"source", "vectors", "generation", "evidence"} {
 			t.Run(operation+"/"+missing, func(t *testing.T) {

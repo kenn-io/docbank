@@ -12,6 +12,7 @@ import (
 )
 
 func TestExternalIdentityWritesRemainExportable(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name     string
 		revision *int64
@@ -41,6 +42,7 @@ func TestExternalIdentityWritesRemainExportable(t *testing.T) {
 }
 
 func TestCustodianWritesRemainExportable(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	version := seedDocumentPeopleEvent(t, s, "custodian.txt", "a1", nil)
 	request := CustodianRequest{Scope: CustodianScope{Kind: "document", NodeID: version.NodeID, ContentVersionID: version.ID},
@@ -56,6 +58,7 @@ func TestCustodianWritesRemainExportable(t *testing.T) {
 }
 
 func TestPersonMetadataRoundTrip(t *testing.T) {
+	t.Parallel()
 	source := newTestStore(t)
 	person, err := source.CreatePerson(t.Context(), "Ada Lovelace", "operator")
 	require.NoError(t, err)
@@ -183,6 +186,7 @@ func TestPersonMetadataRoundTrip(t *testing.T) {
 }
 
 func TestMetadataCustodianScopeRequiresNullUnusedCoordinates(t *testing.T) {
+	t.Parallel()
 	const id = "80000000-0000-4000-8000-000000000001"
 	for _, scope := range []metadataCustodianAssignment{
 		{ScopeKind: "document", NodeID: new(int64(2)), ContentVersionID: new(id), IngestID: new("")},
@@ -198,6 +202,7 @@ func TestMetadataCustodianScopeRequiresNullUnusedCoordinates(t *testing.T) {
 }
 
 func TestPersonMetadataRejectsDuplicateCorruptAndMismatchedAuthority(t *testing.T) {
+	t.Parallel()
 	source := newTestStore(t)
 	person, err := source.CreatePerson(t.Context(), "Synthetic Person", "operator")
 	require.NoError(t, err)
@@ -235,6 +240,7 @@ func TestPersonMetadataRejectsDuplicateCorruptAndMismatchedAuthority(t *testing.
 }
 
 func TestPersonMetadataRejectsInvalidCandidateAndAliasBounds(t *testing.T) {
+	t.Parallel()
 	t.Run("superseded candidate decision", func(t *testing.T) {
 		source := newTestStore(t)
 		person, err := source.CreatePerson(t.Context(), "Synthetic Person", "operator")
@@ -287,6 +293,7 @@ func TestPersonMetadataRejectsInvalidCandidateAndAliasBounds(t *testing.T) {
 }
 
 func TestPersonAndPackageCustodiansMetadataRoundTrip(t *testing.T) {
+	t.Parallel()
 	source := newTestStore(t)
 	ctx := t.Context()
 	pkg, node := seedReceivedPackage(t, source, "person-restore")
@@ -341,6 +348,7 @@ func TestPersonAndPackageCustodiansMetadataRoundTrip(t *testing.T) {
 }
 
 func TestCustodianPackageScopeRequiresExplicitExistingRecord(t *testing.T) {
+	t.Parallel()
 	require.Error(t, validateCustodianScope(CustodianScope{Kind: "package", PackageID: "package-a", PackageRecordID: "record-a"}))
 	s := newTestStore(t)
 	request := CustodianRequest{Scope: CustodianScope{Kind: "package", PackageID: "missing"},

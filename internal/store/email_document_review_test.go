@@ -11,6 +11,7 @@ import (
 )
 
 func TestEmailDocumentsBulkPurgeSkipsRetainedInventory(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	retained := newEmailFixture(t, s, "retained.eml")
 	view, err := s.PublishEmailGeneration(t.Context(), retained.publication)
@@ -38,6 +39,7 @@ func TestEmailDocumentsBulkPurgeSkipsRetainedInventory(t *testing.T) {
 }
 
 func TestEmailDocumentsProcessingClassifiesInvalidAndStaleRequests(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	f := newEmailFixture(t, s, "source.eml")
 	view, err := s.PublishEmailGeneration(t.Context(), f.publication)
@@ -97,6 +99,7 @@ func TestEmailDocumentsProcessingClassifiesInvalidAndStaleRequests(t *testing.T)
 }
 
 func TestEmailDocumentsProcessingReportsNativeExtractionOutcomes(t *testing.T) {
+	t.Parallel()
 	for _, state := range []string{"indexed", "none", "failed"} {
 		t.Run(state, func(t *testing.T) {
 			s := newTestStore(t)
@@ -133,6 +136,7 @@ func TestEmailDocumentsProcessingReportsNativeExtractionOutcomes(t *testing.T) {
 }
 
 func TestEmailDocumentsProcessingReportsServingRenditionOutcomes(t *testing.T) {
+	t.Parallel()
 	for _, state := range []string{"complete", "partial", "truncated", "partial_success", "none"} {
 		t.Run(state, func(t *testing.T) {
 			s := newTestStore(t)
@@ -200,6 +204,7 @@ func TestEmailDocumentsProcessingReportsServingRenditionOutcomes(t *testing.T) {
 }
 
 func TestEmailDocumentsRepublishReleasedReceiptReportsConflict(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	f := newEmailFixture(t, s, "source.eml")
 	view, err := s.PublishEmailGeneration(t.Context(), f.publication)

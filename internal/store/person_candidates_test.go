@@ -11,6 +11,7 @@ import (
 )
 
 func TestOpenPersonCandidateReplaysDecisionAndSeparatesNewEvidence(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	_, versionID := seedPeopleVersion(t, s)
 	firstInput := candidateForTest(t, "name_alias:ada", "Ada", "", []PersonCandidateOccurrence{
@@ -51,6 +52,7 @@ func TestOpenPersonCandidateReplaysDecisionAndSeparatesNewEvidence(t *testing.T)
 }
 
 func TestDecidePersonCandidateLinksOnlyCapturedOccurrences(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	_, capturedVersion := seedPeopleVersion(t, s)
 	_, unrelatedVersion := seedPeopleVersion(t, s)
@@ -85,6 +87,7 @@ func TestDecidePersonCandidateLinksOnlyCapturedOccurrences(t *testing.T) {
 }
 
 func TestDecidePersonCandidateCreatesCuratedPersonAtomically(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	_, versionID := seedPeopleVersion(t, s)
 	candidate := openCandidateForTest(t, s, candidateForTest(t, "name_alias:grace hopper", "Grace Hopper", "", []PersonCandidateOccurrence{{
@@ -113,6 +116,7 @@ func TestDecidePersonCandidateCreatesCuratedPersonAtomically(t *testing.T) {
 }
 
 func TestCandidateDecisionsAdvanceBindingEpochEvenWithoutNewAssertions(t *testing.T) {
+	t.Parallel()
 	t.Run("reject", func(t *testing.T) {
 		s := newTestStore(t)
 		_, versionID := seedPeopleVersion(t, s)
@@ -179,6 +183,7 @@ func assertCandidateDecisionEpoch(t *testing.T, s *Store, epochBefore int64) {
 }
 
 func TestAssertDocumentPersonUsesRevisionFenceAndBindingEpoch(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	_, versionID := seedPeopleVersion(t, s)
 	person, err := s.CreatePerson(t.Context(), "Records Team", "operator")
@@ -213,6 +218,7 @@ func TestAssertDocumentPersonUsesRevisionFenceAndBindingEpoch(t *testing.T) {
 }
 
 func TestOpenPersonCandidateReportsQueueCapacity(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	_, versionID := seedPeopleVersion(t, s)
 	_, err := s.db.Exec(`WITH RECURSIVE seq(n) AS (
@@ -244,6 +250,7 @@ func TestOpenPersonCandidateReportsQueueCapacity(t *testing.T) {
 }
 
 func TestPersonCandidateAndAssertionValidation(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	_, versionID := seedPeopleVersion(t, s)
 	person, err := s.CreatePerson(t.Context(), "Ada", "operator")
@@ -296,6 +303,7 @@ func openCandidateForTest(t *testing.T, s *Store, candidate PersonMatchCandidate
 }
 
 func TestCandidateAuthoritySurvivesPersonMerge(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	_, version := seedPeopleVersion(t, s)
 	survivor, err := s.CreatePerson(t.Context(), "Survivor", "operator")
@@ -335,6 +343,7 @@ func TestCandidateAuthoritySurvivesPersonMerge(t *testing.T) {
 }
 
 func TestCandidateRetirementPreservesAssertionsAndSupersedesSuggestions(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	_, version := seedPeopleVersion(t, s)
 	person, err := s.CreatePerson(t.Context(), "Example Person", "operator")
@@ -362,6 +371,7 @@ func TestCandidateRetirementPreservesAssertionsAndSupersedesSuggestions(t *testi
 }
 
 func TestCandidateAssertionsMergeMatchingActions(t *testing.T) {
+	t.Parallel()
 	for _, actions := range [][2]string{{"assert", "assert"}, {"suppress", "suppress"}, {"assert", "suppress"}, {"suppress", "assert"}} {
 		t.Run(actions[0]+"/"+actions[1], func(t *testing.T) {
 			s := newTestStore(t)
@@ -402,6 +412,7 @@ func TestCandidateAssertionsMergeMatchingActions(t *testing.T) {
 }
 
 func TestCandidateAuthorityPreventsMetadataImport(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	openCandidateForTest(t, s, candidateForTest(t, "name_alias:example", "Example Person", "", []PersonCandidateOccurrence{{
 		ContentVersionID: "00000000-0000-4000-8000-000000000001", Role: "author", EvidenceKind: "source_metadata", EvidenceID: "pruned-claim",
@@ -413,6 +424,7 @@ func TestCandidateAuthorityPreventsMetadataImport(t *testing.T) {
 }
 
 func TestCandidateLinksSkipPrunedVersions(t *testing.T) {
+	t.Parallel()
 	for _, action := range []string{"link", "new_person"} {
 		for _, allPruned := range []bool{false, true} {
 			t.Run(fmt.Sprintf("%s/all_pruned=%t", action, allPruned), func(t *testing.T) {
@@ -456,6 +468,7 @@ func TestCandidateLinksSkipPrunedVersions(t *testing.T) {
 }
 
 func TestCandidateRejectionDoesNotNeedEvidenceDecode(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	_, version := seedPeopleVersion(t, s)
 	candidate := openCandidateForTest(t, s, candidateForTest(t, "name_alias:example", "Example Person", "", []PersonCandidateOccurrence{{
@@ -469,6 +482,7 @@ func TestCandidateRejectionDoesNotNeedEvidenceDecode(t *testing.T) {
 }
 
 func TestCandidateRejectsInvalidActorKeys(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	_, version := seedPeopleVersion(t, s)
 	for _, key := range []string{"missing-kind", "unknown:person", "name_alias:Not Folded", "external_uid:not-a-digest"} {
@@ -486,6 +500,7 @@ func TestCandidateRejectsInvalidActorKeys(t *testing.T) {
 }
 
 func TestPersonAssertionDeletionAdvancesBindingEpoch(t *testing.T) {
+	t.Parallel()
 	for _, operation := range []string{"prune", "trash"} {
 		for _, asserted := range []bool{false, true} {
 			t.Run(fmt.Sprintf("%s/asserted=%t", operation, asserted), func(t *testing.T) {

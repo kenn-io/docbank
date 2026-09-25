@@ -46,7 +46,7 @@ func EnsureStoreBindings(root string, bindings map[string]StoreBindingConfig) (r
 	}{StoreBindings: bindings}); err != nil {
 		return fmt.Errorf("encoding restored store bindings: %w", err)
 	}
-	file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	file, err := createPrivateConfig(path)
 	if err != nil {
 		return fmt.Errorf("creating restored config.toml: %w", err)
 	}
@@ -60,9 +60,6 @@ func EnsureStoreBindings(root string, bindings map[string]StoreBindingConfig) (r
 			retErr = errors.Join(retErr, os.Remove(path))
 		}
 	}()
-	if err := restrictWrittenConfig(path); err != nil {
-		return err
-	}
 	if _, err := file.Write(encoded.Bytes()); err != nil {
 		return fmt.Errorf("writing restored config.toml: %w", err)
 	}

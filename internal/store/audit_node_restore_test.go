@@ -11,6 +11,7 @@ import (
 )
 
 func TestAuditedRestoreRecordsSubtreeAndRoundTrips(t *testing.T) {
+	t.Parallel()
 	s := newAuditedMoveStore(t)
 	work, err := s.NodeByPath(t.Context(), "/Projects/Work")
 	require.NoError(t, err)
@@ -59,6 +60,7 @@ func TestAuditedRestoreRecordsSubtreeAndRoundTrips(t *testing.T) {
 }
 
 func TestAuditedRestoreUsesCanonicalConflictSuffix(t *testing.T) {
+	t.Parallel()
 	s := newAuditedMoveStore(t)
 	report, err := s.NodeByPath(t.Context(), "/Projects/report.txt")
 	require.NoError(t, err)
@@ -84,6 +86,7 @@ func TestAuditedRestoreUsesCanonicalConflictSuffix(t *testing.T) {
 }
 
 func TestAuditedRestoreAllowsUnchangedRetainedTrashOriginPath(t *testing.T) {
+	t.Parallel()
 	s := newAuditedMoveStore(t)
 	child, err := s.NodeByPath(t.Context(), "/Projects/Work/child.txt")
 	require.NoError(t, err)
@@ -104,6 +107,7 @@ func TestAuditedRestoreAllowsUnchangedRetainedTrashOriginPath(t *testing.T) {
 }
 
 func TestAuditedRestoreRejectsConflictThatRetargetsTrashOrigin(t *testing.T) {
+	t.Parallel()
 	s := newAuditedMoveStore(t)
 	child, err := s.NodeByPath(t.Context(), "/Projects/Work/child.txt")
 	require.NoError(t, err)
@@ -129,6 +133,7 @@ func TestAuditedRestoreRejectsConflictThatRetargetsTrashOrigin(t *testing.T) {
 }
 
 func TestAuditedRootScopeRestoreRecordsRootParentTouch(t *testing.T) {
+	t.Parallel()
 	s, err := Open(filepath.Join(t.TempDir(), "vault.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, s.Close()) })
@@ -151,6 +156,7 @@ func TestAuditedRootScopeRestoreRecordsRootParentTouch(t *testing.T) {
 }
 
 func TestAuditedRestoreRefusesFallbackFromTrashedOrigin(t *testing.T) {
+	t.Parallel()
 	s, err := Open(filepath.Join(t.TempDir(), "vault.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, s.Close()) })
@@ -177,6 +183,7 @@ func TestAuditedRestoreRefusesFallbackFromTrashedOrigin(t *testing.T) {
 }
 
 func TestAuditedRestoreRollsBackTreeAndHistory(t *testing.T) {
+	t.Parallel()
 	s := newAuditedMoveStore(t)
 	work, err := s.NodeByPath(t.Context(), "/Projects/Work")
 	require.NoError(t, err)
@@ -204,6 +211,7 @@ func TestAuditedRestoreRollsBackTreeAndHistory(t *testing.T) {
 }
 
 func TestAuditedRestoreReplayRejectsOmittedDescendant(t *testing.T) {
+	t.Parallel()
 	s := newAuditedMoveStore(t)
 	work, err := s.NodeByPath(t.Context(), "/Projects/Work")
 	require.NoError(t, err)
@@ -265,6 +273,7 @@ func TestAuditedRestoreReplayRejectsOmittedDescendant(t *testing.T) {
 }
 
 func TestAuditedRestoreReplayRejectsTrashSubtreeCycle(t *testing.T) {
+	t.Parallel()
 	s := newAuditedMoveStore(t)
 	work, err := s.NodeByPath(t.Context(), "/Projects/Work")
 	require.NoError(t, err)

@@ -12,6 +12,7 @@ import (
 )
 
 func TestBatchTagReceiptV1WireFormat(t *testing.T) {
+	t.Parallel()
 	// Persisted receipt bytes are immutable and must outlive API response changes.
 	const stored = `{"version":1,"operation_id":"11111111-1111-4111-8111-111111111111","request_digest":"9d29429ce1a103db51351b4d136306a00fb8dc77ae392b506ba09e625073c725","tag_id":"22222222-2222-4222-8222-222222222222","assign":true,"tag_revision":3,"assignment_count":2,"completed_at":"2026-09-11T12:00:00.000000000Z","nodes":[{"node_id":7,"expected_revision":3,"revision":4,"changed":true},{"node_id":9,"expected_revision":4,"revision":5,"changed":true}]}`
 	receipt, err := decodeBatchTagReceiptV1([]byte(stored))
@@ -20,11 +21,13 @@ func TestBatchTagReceiptV1WireFormat(t *testing.T) {
 }
 
 func TestDecodeBatchTagReceiptRejectsOversizedInput(t *testing.T) {
+	t.Parallel()
 	_, err := decodeBatchTagReceiptV1(bytes.Repeat([]byte{' '}, maxBatchTagReceiptJSONBytes+1))
 	require.ErrorIs(t, err, ErrInvalidBatchTag)
 }
 
 func TestBatchTagReceiptRejectsImpossibleFinalTagState(t *testing.T) {
+	t.Parallel()
 	for _, test := range []struct {
 		name   string
 		mutate func(*BatchTagReceiptV1)
@@ -48,6 +51,7 @@ func TestBatchTagReceiptRejectsImpossibleFinalTagState(t *testing.T) {
 }
 
 func TestBatchTagReceiptMetadataRejectsTamperingTransactionally(t *testing.T) {
+	t.Parallel()
 	source := newTestStore(t)
 	node, err := source.Mkdir(t.Context(), source.RootID(), "portable")
 	require.NoError(t, err)
@@ -116,6 +120,7 @@ func TestBatchTagReceiptMetadataRejectsTamperingTransactionally(t *testing.T) {
 }
 
 func TestBatchTagReceiptStateValidationRejectsCorruptStoredBytes(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	node, err := s.Mkdir(t.Context(), s.RootID(), "corrupt")
 	require.NoError(t, err)
@@ -142,6 +147,7 @@ func TestBatchTagReceiptStateValidationRejectsCorruptStoredBytes(t *testing.T) {
 }
 
 func TestBatchTagReceiptRowsAreImmutable(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	node, err := s.Mkdir(t.Context(), s.RootID(), "immutable")
 	require.NoError(t, err)
@@ -165,6 +171,7 @@ func TestBatchTagReceiptRowsAreImmutable(t *testing.T) {
 }
 
 func TestBatchTagReceiptMakesMetadataTargetNonPristine(t *testing.T) {
+	t.Parallel()
 	source := newTestStore(t)
 	var emptyExport bytes.Buffer
 	require.NoError(t, source.ExportMetadata(t.Context(), &emptyExport))
@@ -187,6 +194,7 @@ func TestBatchTagReceiptMakesMetadataTargetNonPristine(t *testing.T) {
 }
 
 func TestAuditedBatchTagReceiptSurvivesBackupMetadataSnapshot(t *testing.T) {
+	t.Parallel()
 	source, tag, report := newAuditedTagStore(t)
 	receipt, err := source.BatchTags(t.Context(), BatchTagRequest{
 		OperationID: "12121212-1212-4212-8212-121212121212",

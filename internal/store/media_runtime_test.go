@@ -23,6 +23,7 @@ func suppliedMediaPublicationFixture(t *testing.T, s *Store) MediaPublicationReq
 }
 
 func TestRetainSuppliedMediaReusesCallerRevisionAcrossOperations(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	request := suppliedMediaPublicationFixture(t, s)
 	first, err := s.RetainSuppliedMedia(t.Context(), request)
@@ -42,6 +43,7 @@ func TestRetainSuppliedMediaReusesCallerRevisionAcrossOperations(t *testing.T) {
 }
 
 func TestImportMediaInputArtifactRejectsChangedImmutableAuthority(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	publication := suppliedMediaPublicationFixture(t, s)
 	retained, err := s.RetainSuppliedMedia(t.Context(), publication)
@@ -79,6 +81,7 @@ func TestImportMediaInputArtifactRejectsChangedImmutableAuthority(t *testing.T) 
 }
 
 func TestSuppliedInputSelectorsFilterKind(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	publication := suppliedMediaPublicationFixture(t, s)
 	retained, err := s.RetainSuppliedMedia(t.Context(), publication)

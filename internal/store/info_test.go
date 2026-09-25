@@ -8,6 +8,7 @@ import (
 )
 
 func TestInfoSummarizesLogicalVaultAuthority(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
 
@@ -37,6 +38,7 @@ func TestInfoSummarizesLogicalVaultAuthority(t *testing.T) {
 }
 
 func TestInfoEmptyVaultExcludesVirtualRoot(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 
 	info, err := s.Info(t.Context())

@@ -9,6 +9,7 @@ import (
 )
 
 func TestContentReferencesByHashIncludesCurrentHistoricalAndTrash(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
 	wanted := fakeHash("a1")
@@ -75,6 +76,7 @@ func TestContentReferencesByHashIncludesCurrentHistoricalAndTrash(t *testing.T) 
 }
 
 func TestContentReferencesByHashRequiresLogicalAuthorityAndBoundedInput(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
 	orphan := fakeHash("c3")

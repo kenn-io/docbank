@@ -8,6 +8,7 @@ import (
 )
 
 func TestMailboxTransferAtomicPublicationAndConcurrentRetry(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
 	f := newEmailFixture(t, s, "seed.eml")
