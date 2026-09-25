@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 
 	"github.com/spf13/cobra"
+	"go.kenn.io/docbank/internal/apiclient"
 	"go.kenn.io/docbank/internal/daemonconn"
 	"go.kenn.io/docbank/report"
 )
@@ -125,6 +126,69 @@ func downloadReportPacket(ctx context.Context, connection *daemonconn.Connection
 	})
 }
 
+func downloadReportArtifactFile(ctx context.Context, connection *daemonconn.Connection,
+	id, format, output string, overwrite bool,
+) error {
+	if format == "bundle" {
+		return downloadReportPacket(ctx, connection, id, output, overwrite)
+	}
+	return publishReportOutput(output, overwrite, func(file *os.File) error {
+		summary, err := connection.GetTermReport(ctx, id)
+		if err != nil {
+			return err
+		}
+		stream, err := connection.OpenTermReport(ctx, id, "csv")
+		if err != nil {
+			return err
+		}
+		defer func() { _ = stream.Close() }()
+		if stream.Size != summary.CSVBytes || stream.SHA256 != summary.CSVSHA256 {
+			return report.ErrInvalidPacket
+		}
+		if _, err := stream.CopyVerified(file); err != nil {
+			return err
+		}
+		companion, err := os.CreateTemp(filepath.Dir(file.Name()), ".report-companion-")
+		if err != nil {
+			return err
+		}
+		defer func() { _ = os.Remove(companion.Name()) }()
+		defer func() { _ = companion.Close() }()
+		bundleStream, err := connection.OpenTermReport(ctx, id, "bundle")
+		if err != nil {
+			return err
+		}
+		defer func() { _ = bundleStream.Close() }()
+		if bundleStream.Size != summary.BundleBytes || bundleStream.SHA256 != summary.BundleSHA256 {
+			return report.ErrInvalidPacket
+		}
+		if _, err := bundleStream.CopyVerified(companion); err != nil {
+			return err
+		}
+		if _, err := file.Seek(0, io.SeekStart); err != nil {
+			return err
+		}
+		if _, err := companion.Seek(0, io.SeekStart); err != nil {
+			return err
+		}
+		budget := report.NewBudget(report.DefaultBudgetBytes)
+		defer func() { _ = budget.Close() }()
+		if err := report.VerifyCSVArtifact(ctx, budget, summary, file, companion); err != nil {
+			return err
+		}
+		current, err := connection.GetTermReport(ctx, id)
+		if err != nil {
+			return err
+		}
+		if current.State != "complete" || current.CSVBytes != summary.CSVBytes ||
+			current.CSVSHA256 != summary.CSVSHA256 || current.BundleBytes != summary.BundleBytes ||
+			current.BundleSHA256 != summary.BundleSHA256 {
+			return report.ErrInvalidPacket
+		}
+		return nil
+	})
+}
+
 func init() {
 	root := &cobra.Command{Use: "search-export", Short: "Export search counts and review saved evidence"}
 	terms := &cobra.Command{Use: "create", Short: "Export search counts from the current vault", Args: cobra.NoArgs}
@@ -185,6 +249,61 @@ func init() {
 			}
 			return nil
 		}}
+
+	download := &cobra.Command{Use: "download <report-id>", Short: "Download a frozen report artifact", Args: cobra.ExactArgs(1)}
+	var downloadFormat, downloadOutput string
+	var downloadOverwrite bool
+	download.Flags().StringVar(&downloadFormat, "format", "", "Artifact format: csv or bundle")
+	download.Flags().StringVar(&downloadOutput, "output", "", "Destination for the artifact")
+	download.Flags().BoolVar(&downloadOverwrite, "overwrite", false, "Replace an existing destination")
+	download.RunE = func(cmd *cobra.Command, args []string) error {
+		if (downloadFormat != "csv" && downloadFormat != "bundle") || downloadOutput == "" {
+			return usageError(errors.New("search-export download requires --format csv|bundle and --output"))
+		}
+		if _, err := prepareGetDestination(downloadOutput, downloadOverwrite); err != nil {
+			return err
+		}
+		connection, err := daemonconn.Ensure(cmd.Context())
+		if err != nil {
+			return err
+		}
+		return downloadReportArtifactFile(cmd.Context(), connection, args[0], downloadFormat,
+			downloadOutput, downloadOverwrite)
+	}
+
+	history := &cobra.Command{Use: "history", Short: "List retained report requests and summaries", Args: cobra.NoArgs}
+	var historyOffset, historyLimit int
+	history.Flags().IntVar(&historyOffset, "offset", 0, "Number of recent reports to skip (0–100)")
+	history.Flags().IntVar(&historyLimit, "limit", 20, "Maximum reports on this page (1–50)")
+	history.RunE = func(cmd *cobra.Command, _ []string) error {
+		if historyOffset < 0 || historyOffset > 100 || historyLimit < 1 || historyLimit > 50 {
+			return usageError(errors.New("search-export history requires --offset 0..100 and --limit 1..50"))
+		}
+		connection, err := daemonconn.Ensure(cmd.Context())
+		if err != nil {
+			return err
+		}
+		offset, limit := int64(historyOffset), int64(historyLimit)
+		page, err := connection.API().ListTermReportHistory(cmd.Context(), &apiclient.ListTermReportHistoryRequestOptions{
+			Query: &apiclient.ListTermReportHistoryQuery{Offset: &offset, Limit: &limit},
+		})
+		if err != nil {
+			return err
+		}
+		return json.MarshalWrite(cmd.OutOrStdout(), page)
+	}
+	show := &cobra.Command{Use: "show <report-id>", Short: "Read one frozen report summary", Args: cobra.ExactArgs(1)}
+	show.RunE = func(cmd *cobra.Command, args []string) error {
+		connection, err := daemonconn.Ensure(cmd.Context())
+		if err != nil {
+			return err
+		}
+		summary, err := connection.GetTermReport(cmd.Context(), args[0])
+		if err != nil {
+			return err
+		}
+		return json.MarshalWrite(cmd.OutOrStdout(), summary)
+	}
 
 	csv := &cobra.Command{Use: "csv <report.zip>", Short: "Extract verified report counts without opening a vault", Args: cobra.ExactArgs(1)}
 	var csvOutput string
@@ -280,6 +399,6 @@ func init() {
 		}
 		return nil
 	}
-	root.AddCommand(terms, verify, csv, dates, revise)
+	root.AddCommand(terms, verify, csv, dates, revise, download, history, show)
 	rootCmd.AddCommand(root)
 }

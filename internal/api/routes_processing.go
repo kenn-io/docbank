@@ -21,6 +21,8 @@ import (
 	"go.kenn.io/docbank/internal/vectorindex"
 )
 
+const processingErrorEventType = "error"
+
 func registerProcessingRoutes(api huma.API, d Deps) {
 	type sourceFenceInput struct {
 		Body DocumentSourceFenceResolveRequest
@@ -46,6 +48,18 @@ func registerProcessingRoutes(api huma.API, d Deps) {
 		if err != nil {
 			return nil, fromProcessingError(err)
 		}
+		// Explicit IDs bound the requested population. The resolved fence is
+		// the exact current/live subset this principal may read.
+		decision, err := authorizeRequest(ctx, d, OperationRead, resolved.Fence.ContentVersionIDs, false, false)
+		if err != nil {
+			return nil, err
+		}
+		resolved.Fence.ContentVersionIDs = decision.SourceIDs
+		resolved.ObservedScopeCount = len(decision.SourceIDs)
+		resolved.FenceFingerprint, err = processing.SourceFenceFingerprint(resolved.Fence)
+		if err != nil {
+			return nil, fromProcessingError(err)
+		}
 		return &sourceFenceOutput{Body: DocumentSourceFenceResolution{
 			Fence: ResolvedDocumentSourceFence{VaultUID: resolved.Fence.VaultUID,
 				ContentVersionIDs: resolved.Fence.ContentVersionIDs},
@@ -57,9 +71,12 @@ func registerProcessingRoutes(api huma.API, d Deps) {
 	huma.Register(api, huma.Operation{
 		OperationID: "listDocumentProcessingProfiles", Method: http.MethodGet,
 		Path: "/api/v1/processing/profiles", Summary: "List locally executable document-processing profiles",
-	}, func(_ context.Context, _ *struct{}) (*profilesOutput, error) {
+	}, func(ctx context.Context, _ *struct{}) (*profilesOutput, error) {
 		if d.Processing == nil {
 			return nil, processingUnavailable()
+		}
+		if _, err := authorizeRequest(ctx, d, OperationRead, nil, false, false); err != nil {
+			return nil, err
 		}
 		profiles := d.Processing.Profiles()
 		result := make([]ProcessingProfileSummary, len(profiles))
@@ -81,6 +98,9 @@ func registerProcessingRoutes(api huma.API, d Deps) {
 		if d.Processing == nil {
 			return nil, processingUnavailable()
 		}
+		if _, err := authorizeRequest(ctx, d, OperationProcessing, []string{input.Body.Selector.ContentVersionID}, true, true); err != nil {
+			return nil, err
+		}
 		plan, err := d.Processing.Plan(ctx, processing.Selector{
 			NodeID: input.Body.Selector.NodeID, ContentVersionID: input.Body.Selector.ContentVersionID,
 			Profile: input.Body.Selector.Profile,
@@ -101,12 +121,15 @@ func registerProcessingRoutes(api huma.API, d Deps) {
 	huma.Register(api, huma.Operation{
 		OperationID: "startDocumentProcessing", Method: http.MethodPost,
 		Path: "/api/v1/processing/jobs", Summary: "Start the exact reviewed document-processing plan",
-		Description: "Returns exactly one job event followed by one terminal status or status-read error event as newline-delimited JSON.",
+		Description: "Returns a job event followed by terminal status or error, or one terminal error if access is revoked before the job event.",
 		Responses: map[string]*huma.Response{"200": {Description: "Durable job identity and terminal status",
 			Content: map[string]*huma.MediaType{"application/x-ndjson": {Schema: processingEventSchema}}}},
 	}, func(ctx context.Context, input *startInput) (*huma.StreamResponse, error) {
 		if d.Processing == nil {
 			return nil, processingUnavailable()
+		}
+		if _, err := authorizeRequest(ctx, d, OperationProcessing, []string{input.Body.Selector.ContentVersionID}, true, true); err != nil {
+			return nil, err
 		}
 		request := processing.StartRequest{
 			Selector: processing.Selector{NodeID: input.Body.Selector.NodeID,
@@ -141,6 +164,17 @@ func registerProcessingRoutes(api huma.API, d Deps) {
 			return nil, ctx.Err()
 		}
 		return &huma.StreamResponse{Body: func(hctx huma.Context) {
+			if _, err := authorizeRequest(hctx.Context(), d, OperationProcessing, []string{input.Body.Selector.ContentVersionID}, true, true); err != nil {
+				problem, ok := errors.AsType[*Error](err)
+				if !ok {
+					problem = NewError(http.StatusInternalServerError, "internal", "processing access is unavailable")
+				}
+				hctx.SetHeader("Content-Type", "application/x-ndjson")
+				hctx.SetHeader("Cache-Control", "no-store")
+				newEventStreamWriter[ProcessingJobEvent](hctx.BodyWriter(), func() {}).send(
+					ProcessingJobEvent{Sequence: 1, Type: processingErrorEventType, Error: problem, Terminal: true})
+				return
+			}
 			hctx.SetHeader("Content-Type", "application/x-ndjson")
 			hctx.SetHeader("Cache-Control", "no-store")
 			stream := newEventStreamWriter[ProcessingJobEvent](hctx.BodyWriter(), func() {})
@@ -155,6 +189,15 @@ func registerProcessingRoutes(api huma.API, d Deps) {
 				case <-hctx.Context().Done():
 					return
 				}
+			}
+			if _, err := authorizeRequest(hctx.Context(), d, OperationProcessing,
+				[]string{input.Body.Selector.ContentVersionID}, true, true); err != nil {
+				problem, ok := errors.AsType[*Error](err)
+				if !ok {
+					problem = NewError(http.StatusInternalServerError, "internal", "processing status is unavailable")
+				}
+				stream.send(ProcessingJobEvent{Sequence: 2, Type: processingErrorEventType, Job: &wireJob, Error: problem, Terminal: true})
+				return
 			}
 			status, statusErr := d.Processing.Status(hctx.Context(), first.ID)
 			if result.job.ID == "" {
@@ -290,6 +333,9 @@ func registerProcessingRoutes(api huma.API, d Deps) {
 		if err != nil {
 			return nil, fromProcessingError(err)
 		}
+		if _, err := authorizeRequest(ctx, d, OperationProcessing, []string{status.ContentVersionID}, true, true); err != nil {
+			return nil, err
+		}
 		return &statusOutput{Body: fromProcessingStatus(status)}, nil
 	})
 
@@ -301,6 +347,9 @@ func registerProcessingRoutes(api huma.API, d Deps) {
 	}, func(ctx context.Context, input *renditionWindowInput) (*renditionWindowOutput, error) {
 		if d.Processing == nil {
 			return nil, processingUnavailable()
+		}
+		if _, err := authorizeRequest(ctx, d, OperationRead, []string{input.Body.ContentVersionID}, true, true); err != nil {
+			return nil, err
 		}
 		window, err := d.Processing.RenditionTextWindow(ctx, processing.RenditionWindowRequest{
 			VaultUID: input.Body.VaultID, NodeID: input.Body.NodeID,
@@ -345,6 +394,10 @@ func registerProcessingRoutes(api huma.API, d Deps) {
 		if err != nil {
 			return nil, fromProcessingError(err)
 		}
+		if _, err := authorizeRequest(ctx, d, OperationRead, []string{rendition.ContentVersionID}, true, true); err != nil {
+			_ = rendition.Reader.Close()
+			return nil, err
+		}
 		if input.Range != "" {
 			return renditionRangeStream(rendition, input.Range)
 		}
@@ -359,6 +412,9 @@ func registerProcessingRoutes(api huma.API, d Deps) {
 	}, func(ctx context.Context, input *renditionSelectInput) (*huma.StreamResponse, error) {
 		if d.Processing == nil {
 			return nil, processingUnavailable()
+		}
+		if _, err := authorizeRequest(ctx, d, OperationRead, []string{input.Body.Selector.ContentVersionID}, true, true); err != nil {
+			return nil, err
 		}
 		rendition, err := d.Processing.Rendition(ctx, processing.Selector{
 			NodeID: input.Body.Selector.NodeID, ContentVersionID: input.Body.Selector.ContentVersionID,
@@ -382,8 +438,12 @@ func registerProcessingRoutes(api huma.API, d Deps) {
 		if d.Processing == nil {
 			return nil, processingUnavailable()
 		}
+		decision, err := authorizeRequest(ctx, d, OperationAnalyze, input.ContentVersionIDs, false, false)
+		if err != nil {
+			return nil, err
+		}
 		report, err := d.Processing.Coverage(ctx, input.Profile, processing.SourceFence{
-			VaultUID: input.VaultUID, ContentVersionIDs: input.ContentVersionIDs})
+			VaultUID: input.VaultUID, ContentVersionIDs: decision.SourceIDs})
 		if err != nil {
 			return nil, fromProcessingError(err)
 		}
@@ -400,10 +460,17 @@ func registerProcessingRoutes(api huma.API, d Deps) {
 		if d.Processing == nil {
 			return nil, processingUnavailable()
 		}
+		if _, err := authorizeRequest(ctx, d, OperationAnalyze, []string{input.Body.Selector.ContentVersionID}, true, true); err != nil {
+			return nil, err
+		}
+		decision, err := authorizeRequest(ctx, d, OperationAnalyze, input.Body.Fence.ContentVersionIDs, false, false)
+		if err != nil {
+			return nil, err
+		}
 		report, err := d.Processing.FindSimilar(ctx, processing.SimilarRequest{
 			Selector:  processing.Selector{NodeID: input.Body.Selector.NodeID, ContentVersionID: input.Body.Selector.ContentVersionID, Profile: input.Body.Selector.Profile},
 			BindingID: input.Body.BindingID, Limit: input.Body.Limit,
-			Fence: processing.SourceFence{VaultUID: input.Body.Fence.VaultUID, ContentVersionIDs: input.Body.Fence.ContentVersionIDs}})
+			Fence: processing.SourceFence{VaultUID: input.Body.Fence.VaultUID, ContentVersionIDs: decision.SourceIDs}})
 		if errors.Is(err, store.ErrVectorIndexSourceStale) {
 			return nil, NewError(http.StatusConflict, "stale_index", "vector index source changed")
 		}
@@ -439,12 +506,16 @@ func registerProcessingRoutes(api huma.API, d Deps) {
 		if d.Processing == nil {
 			return nil, processingUnavailable()
 		}
+		decision, err := authorizeRequest(ctx, d, OperationAnalyze, input.Body.Fence.ContentVersionIDs, false, false)
+		if err != nil {
+			return nil, err
+		}
 		report, err := d.Processing.Search(ctx, processing.SearchRequest{Query: input.Body.Query,
 			Mode: input.Body.Mode, Limit: input.Body.Limit, Profile: input.Body.Profile,
 			BindingID: input.Body.BindingID, Explain: input.Body.Explain,
 			Rerank: input.Body.Rerank,
 			Fence: processing.SourceFence{VaultUID: input.Body.Fence.VaultUID,
-				ContentVersionIDs: input.Body.Fence.ContentVersionIDs}})
+				ContentVersionIDs: decision.SourceIDs}})
 		if err != nil {
 			return nil, fromProcessingError(err)
 		}
@@ -455,7 +526,7 @@ func registerProcessingRoutes(api huma.API, d Deps) {
 func processingTerminalEvent(job processing.Job, runErr error, status processing.Status, statusErr error) ProcessingJobEvent {
 	if statusErr != nil {
 		wireJob := fromProcessingJob(job)
-		return ProcessingJobEvent{Sequence: 2, Type: "error", Job: &wireJob, Terminal: true,
+		return ProcessingJobEvent{Sequence: 2, Type: processingErrorEventType, Job: &wireJob, Terminal: true,
 			Error: NewError(http.StatusServiceUnavailable, "processing_status_unavailable",
 				"document processing status is unavailable; check the job status")}
 	}

@@ -1,15 +1,15 @@
 ---
-last_edited: 2026-09-21
+last_edited: 2026-09-24
 title: Search exports
 description: Export dated search counts as CSV, review date evidence, and verify a frozen evidence ZIP.
 ---
 
 # Search exports
 
-Export search counts for a date range from all live documents or selected
-import collections. Each export freezes the current document versions, search
-matches, family relationships, date evidence, and processing profile. Later
-vault changes do not change that export.
+Export search counts for a date range from all live documents, selected
+import collections, or exact documents selected in the web app. Each export
+freezes the document versions, search matches, family relationships, date
+evidence, and processing profile. Later vault changes do not change it.
 
 The CSV contains counts. The evidence ZIP contains the calculation inputs and
 date evidence needed to check those counts offline. To export original files
@@ -18,9 +18,10 @@ or complete retained text, use [document export bundles](export-bundles.md).
 ## Create an export in the browser
 
 1. Open **Search exports** in the top bar.
-2. Choose all documents or select import collections. Select a processing
-   profile when more than one is configured. Exporting uses existing text;
-   it does not start document processing.
+2. Choose all documents, select import collections, or select exact documents
+   in the document list and open **Search exports** from that selection. Select
+   a processing profile when more than one is configured. Exporting uses
+   existing text; it does not start document processing.
 3. Add search expressions and an inclusive start and end date for each row.
    Choose **Simple** or **Advanced** [query syntax](searching.md).
 4. Choose the export timezone and coverage policy, then **Create export**.
@@ -69,12 +70,36 @@ frozen evidence and submit a JSON array of choices:
 ```bash
 docbank search-export dates <export-id> --limit 50
 docbank search-export revise <export-id> --choices choices.json --output reviewed.zip
+docbank search-export download <export-id> --format csv --output reviewed.csv
 ```
 
 Use `--cursor` with the returned `next_cursor` to continue reading dates.
-`create`, `revise`, and `csv` refuse to replace an existing output unless
+The CSV download reads the retained summary and companion evidence ZIP from the
+daemon, verifies their exact counts and bytes together, and checks source
+visibility again before publishing the file. Use `--format bundle` to download
+and verify the evidence ZIP instead. `create`, `revise`, `download`, and `csv` refuse to replace an existing output unless
 `--overwrite` is supplied. `verify` and `csv` work offline without a vault;
 both verify the packet before accepting its counts.
+
+## Report on selected PDFs
+
+Select the PDFs in the document list before opening **Search exports**. The
+report uses those exact retained versions. Replacing a PDF later does not add
+its new version to the frozen report; removing a selected source withholds the
+report and its downloads.
+
+Reports use text that Docbank has already retained for the selected PDFs.
+Creating a report does not extract text or start processing. Check the
+**missing text** and **searchable** coverage before using the counts. A PDF
+without searchable text can still be exported as an original file through
+[document export bundles](export-bundles.md), but its missing text must not be
+interpreted as a search miss.
+
+For a CLI request, use version `2` with `selected_documents` instead of
+`all_documents` or `collection_ids`. Each selected item needs the exact
+`node_id`, `version_id`, and `sha256` from the retained document. The same
+`search-export create`, date review, download, and offline verification
+commands apply.
 
 ## Request and reviewed-date format
 
@@ -83,8 +108,8 @@ and optional controls are:
 
 | Field | Meaning |
 | --- | --- |
-| `version` | Must be `1`. |
-| `all_documents`, `collection_ids` | Set `all_documents: true` without collection IDs, or `false` with at least one existing collection ID. |
+| `version` | Use `1` for all documents or collections, or `2` for an exact document selection. |
+| `all_documents`, `collection_ids`, `selected_documents` | Choose exactly one scope. Version 2 `selected_documents` contains up to 50,000 distinct exact node/version/SHA-256 identities. |
 | `profile` | Configured processing profile name. Required when several profiles exist; omission returns `invalid_profile`. A sole configured profile is selected automatically. |
 | `timezone` | Required IANA timezone, such as `UTC` or `America/New_York`. `Local` is rejected. Cutoffs are literal calendar dates in this zone. |
 | `source_timezone` | Optional source timezone for timestamps that omit one. |
