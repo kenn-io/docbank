@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"path"
 	"strings"
 	"time"
@@ -1210,20 +1211,9 @@ func (s *Store) importMetadataLines(
 	if err != nil {
 		return metadataHeader{}, fmt.Errorf("decoding metadata header: %w", err)
 	}
-	if err := requireMetadataFields(rawHeader, metadataHeaderFields, nil); err != nil {
+	header, err := decodeMetadataHeader(rawHeader)
+	if err != nil {
 		return metadataHeader{}, fmt.Errorf("decoding metadata header: %w", err)
-	}
-	var header metadataHeader
-	if err := decodeMetadataRecord(rawHeader, &header); err != nil {
-		return metadataHeader{}, fmt.Errorf("decoding metadata header: %w", err)
-	}
-	if header.Type != "meta" || header.Format != "docbank-metadata" ||
-		header.Version != metadataFormatVersion || header.NodeSequence <= 0 {
-		return metadataHeader{}, fmt.Errorf("unsupported metadata header: type=%q format=%q version=%d node_sequence=%d",
-			header.Type, header.Format, header.Version, header.NodeSequence)
-	}
-	if err := validateUUIDv4(header.VaultID); err != nil {
-		return metadataHeader{}, fmt.Errorf("invalid metadata vault_id: %w", err)
 	}
 	for record := 2; ; record++ {
 		raw, err := dec.ReadValue()
@@ -1245,14 +1235,86 @@ func (s *Store) importMetadataLines(
 	}
 }
 
-func (s *Store) importMetadataRecord(
-	ctx context.Context, tx *sql.Tx, kind string, raw jsontext.Value,
-) error {
+func decodeMetadataHeader(raw jsontext.Value) (metadataHeader, error) {
+	if err := requireMetadataFields(raw, metadataHeaderFields, nil); err != nil {
+		return metadataHeader{}, err
+	}
+	var header metadataHeader
+	if err := decodeMetadataRecord(raw, &header); err != nil {
+		return metadataHeader{}, err
+	}
+	if header.Type != "meta" || header.Format != "docbank-metadata" ||
+		header.Version != metadataFormatVersion || header.NodeSequence <= 0 {
+		return metadataHeader{}, fmt.Errorf("unsupported metadata header: type=%q format=%q version=%d node_sequence=%d",
+			header.Type, header.Format, header.Version, header.NodeSequence)
+	}
+	if err := validateUUIDv4(header.VaultID); err != nil {
+		return metadataHeader{}, fmt.Errorf("invalid metadata vault_id: %w", err)
+	}
+	return header, nil
+}
+
+// MetadataUniqueBlobBytes validates metadata JSONL and sums its unique blobs.
+func MetadataUniqueBlobBytes(r io.Reader) (total int64, retErr error) {
+	dec := jsontext.NewDecoder(bufio.NewReader(r))
+	rawHeader, err := dec.ReadValue()
+	if err != nil {
+		return 0, fmt.Errorf("decoding metadata header: %w", err)
+	}
+	if _, err := decodeMetadataHeader(rawHeader); err != nil {
+		return 0, fmt.Errorf("decoding metadata header: %w", err)
+	}
+	seen := make(map[string]struct{})
+	for record := 2; ; record++ {
+		raw, err := dec.ReadValue()
+		if errors.Is(err, io.EOF) {
+			return total, nil
+		}
+		if err != nil {
+			return 0, fmt.Errorf("decoding metadata record %d: %w", record, err)
+		}
+		var kind struct {
+			Type string `json:"type"`
+		}
+		if err := json.Unmarshal(raw, &kind); err != nil {
+			return 0, fmt.Errorf("decoding metadata record %d type: %w", record, err)
+		}
+		if err := validateMetadataRecordShape(kind.Type, raw); err != nil {
+			return 0, fmt.Errorf("validating metadata record %d (%s): %w", record, kind.Type, err)
+		}
+		if kind.Type != "blob" {
+			continue
+		}
+		var blob metadataBlob
+		if err := decodeMetadataRecord(raw, &blob); err != nil {
+			return 0, fmt.Errorf("decoding metadata record %d (blob): %w", record, err)
+		}
+		if err := validateBlobRecord(blob); err != nil {
+			return 0, fmt.Errorf("validating metadata record %d (blob): %w", record, err)
+		}
+		if _, ok := seen[blob.Hash]; ok {
+			return 0, fmt.Errorf("metadata record %d repeats blob %q", record, blob.Hash)
+		}
+		seen[blob.Hash] = struct{}{}
+		if blob.Size > math.MaxInt64-total {
+			return 0, errors.New("metadata blob sizes exceed int64")
+		}
+		total += blob.Size
+	}
+}
+
+func validateMetadataRecordShape(kind string, raw jsontext.Value) error {
 	required, ok := metadataRequiredFields[kind]
 	if !ok {
 		return fmt.Errorf("unknown record type %q", kind)
 	}
-	if err := requireMetadataFields(raw, required, metadataNullableFields[kind]); err != nil {
+	return requireMetadataFields(raw, required, metadataNullableFields[kind])
+}
+
+func (s *Store) importMetadataRecord(
+	ctx context.Context, tx *sql.Tx, kind string, raw jsontext.Value,
+) error {
+	if err := validateMetadataRecordShape(kind, raw); err != nil {
 		return err
 	}
 	if strings.HasPrefix(kind, "photo_") {

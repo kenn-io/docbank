@@ -2,16 +2,15 @@ package backupapp
 
 import (
 	"context"
-	"encoding/json/jsontext"
 	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"io"
-	"math"
 	"os"
 	"path/filepath"
 	"strings"
 
+	"go.kenn.io/docbank/internal/store"
 	"go.kenn.io/kit/backup"
 	"go.kenn.io/kit/pack"
 	"go.kenn.io/kit/packstore"
@@ -116,50 +115,9 @@ func SnapshotUniqueBlobBytes(ctx context.Context, repository *backup.Repo, manif
 	if stream.Size() != manifest.Metadata.Bytes {
 		return 0, fmt.Errorf("metadata blob size is %d, expected %d", stream.Size(), manifest.Metadata.Bytes)
 	}
-	decoder := jsontext.NewDecoder(stream)
-	seen := make(map[string]struct{})
-	var headerSeen bool
-	for row := 0; ; row++ {
-		var record struct {
-			Type    string `json:"type"`
-			Format  string `json:"format"`
-			Version int    `json:"version"`
-			Hash    string `json:"hash"`
-			Size    int64  `json:"size"`
-		}
-		raw, err := decoder.ReadValue()
-		if errors.Is(err, io.EOF) {
-			break
-		} else if err != nil {
-			return 0, fmt.Errorf("decode metadata record %d: %w", row, err)
-		}
-		if err := json.Unmarshal(raw, &record); err != nil {
-			return 0, fmt.Errorf("decode metadata record %d: %w", row, err)
-		}
-		if row == 0 {
-			if record.Type != "meta" || record.Format != "docbank-metadata" || record.Version != 1 {
-				return 0, errors.New("metadata header is unsupported")
-			}
-			headerSeen = true
-			continue
-		}
-		if record.Type != "blob" {
-			continue
-		}
-		if record.Hash == "" || record.Size < 0 {
-			return 0, errors.New("metadata has an invalid blob record")
-		}
-		if _, ok := seen[record.Hash]; ok {
-			return 0, fmt.Errorf("metadata repeats blob %q", record.Hash)
-		}
-		seen[record.Hash] = struct{}{}
-		if record.Size > math.MaxInt64-total {
-			return 0, errors.New("metadata blob sizes exceed int64")
-		}
-		total += record.Size
-	}
-	if !headerSeen {
-		return 0, errors.New("metadata header is missing")
+	total, err = store.MetadataUniqueBlobBytes(stream)
+	if err != nil {
+		return 0, err
 	}
 	if err := stream.Verify(); err != nil {
 		return 0, fmt.Errorf("verify metadata blob: %w", err)
