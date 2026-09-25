@@ -15,7 +15,7 @@ import (
 
 // TestQuerySnapshotScale records the required large synthetic projection
 // evidence without making ordinary focused runs pay the fixture cost.
-func TestQuerySnapshotScale(t *testing.T) {
+func TestQuerySnapshotScale(t *testing.T) { //nolint:paralleltest // reports timings and memory that other tests would skew
 	if os.Getenv("DOCBANK_QUERY_SNAPSHOT_SCALE") != "1" {
 		t.Skip("set DOCBANK_QUERY_SNAPSHOT_SCALE=1 for the 25k/118k snapshot measurements")
 	}
