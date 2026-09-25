@@ -124,10 +124,10 @@ func registerCollectionRoutes(api huma.API, d Deps, g *gate) {
 
 func collectionLabelResponse(label store.CollectionLabel) *collectionLabelOutput {
 	return &collectionLabelOutput{
-		ETag: collectionLabelETag(label.Revision), Body: fromStoreCollectionLabel(label),
+		ETag: revisionETag(label.Revision), Body: fromStoreCollectionLabel(label),
 	}
 }
 
-func collectionLabelETag(revision int64) string {
+func revisionETag(revision int64) string {
 	return fmt.Sprintf("%q", strconv.FormatInt(revision, 10))
 }

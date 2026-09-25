@@ -208,6 +208,7 @@ capped at 1 KiB and a stable code:
 
 - `not_found`
 - `stale_version`
+- `stale_revision`
 - `plan_changed`
 - `consent_required`
 - `processing_outcome_unknown`
@@ -220,7 +221,6 @@ capped at 1 KiB and a stable code:
 - `invalid_photo_asset`
 - `photo_node_not_eligible`
 - `photo_node_owned`
-- `photo_stale_revision`
 - `audit_mutation_unsupported`
 
 Invalid tool arguments use JSON-RPC `-32602`. Unexpected failures use a

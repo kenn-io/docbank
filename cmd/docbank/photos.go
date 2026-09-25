@@ -330,7 +330,7 @@ func withPhotoRevision[T any](cmd *cobra.Command, current func() (*int64, error)
 			return zero, err
 		}
 		result, err := write(revision)
-		if attempt == 0 && errors.Is(err, store.ErrPhotoAssetRevision) {
+		if attempt == 0 && errors.Is(err, store.ErrStaleRevision) {
 			continue
 		}
 		return result, err

@@ -79,10 +79,8 @@ func TestPhotoAssetGroupsRawJPEGSidecar(t *testing.T) {
 	require.NoError(t, err)
 	assert.Len(t, asset.Files, 3)
 	assert.NotNil(t, asset.DisplayFileID)
-	receipts, _, err := s.PhotoChangeReceipts(ctx, asset.ID, 20, 0)
-	require.NoError(t, err)
-	var sidecarReceipt PhotoChangeReceipt
-	for _, receipt := range receipts {
+	var sidecarReceipt photoReceiptRow
+	for _, receipt := range photoReceiptRows(t, s, asset.ID) {
 		if receipt.Operation == "attach" && strings.Contains(receipt.AfterJSON, `"node_id":`+strconv.FormatInt(sidecar.ID, 10)) {
 			sidecarReceipt = receipt
 			break
@@ -124,32 +122,6 @@ func TestPhotoDisplayPrecedenceAndDetachFallback(t *testing.T) {
 	asset, err = s.DetachPhotoFile(ctx, asset.ID, asset.Revision, *asset.DisplayFileID, PhotoDetachOptions{})
 	require.NoError(t, err)
 	assert.NotNil(t, asset.DisplayFileID)
-}
-
-func TestPhotoDetachReplacementSelectsRemainingMember(t *testing.T) {
-	s := newTestStore(t)
-	ctx := t.Context()
-	raw, err := s.CreateFile(ctx, s.RootID(), "capture.bin", fakeHash("replacement-raw"), 1, "application/octet-stream")
-	require.NoError(t, err)
-	image, err := s.CreateFile(ctx, s.RootID(), "capture.jpeg", fakeHash("replacement-image"), 1, "image/jpeg")
-	require.NoError(t, err)
-	imageAsset, err := s.PhotoAssetForNode(ctx, image.ID)
-	require.NoError(t, err)
-	autoImageFileID := imageAsset.Files[0].ID
-	_, err = s.DetachPhotoFile(ctx, imageAsset.ID, imageAsset.Revision, autoImageFileID, PhotoDetachOptions{})
-	require.NoError(t, err)
-	asset, err := s.PromotePhotoNode(ctx, raw.ID, nil, PhotoRoleRAW, "")
-	require.NoError(t, err)
-	asset, err = s.AttachPhotoFile(ctx, asset.ID, asset.Revision, image.ID, PhotoRoleImage, nil)
-	require.NoError(t, err)
-	imageFileID := fileByRole(asset.Files, PhotoRoleImage).ID
-	rawFileID := fileByRole(asset.Files, PhotoRoleRAW).ID
-	asset, err = s.DetachPhotoFile(ctx, asset.ID, asset.Revision, rawFileID,
-		PhotoDetachOptions{ReplacementFileID: &imageFileID})
-	require.NoError(t, err)
-	assert.Equal(t, imageFileID, *asset.DisplayOverrideFileID)
-	assert.Equal(t, imageFileID, *asset.DisplayFileID)
-	assert.Len(t, asset.Files, 1)
 }
 
 func TestPhotoSettingsRecomputeInheritedAssets(t *testing.T) {
@@ -195,10 +167,8 @@ func TestPhotoSettingsRecomputeInheritedAssets(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, group.Revision, unchangedGroup.Revision)
 	_, err = s.SetPhotoSettings(ctx, settings.Revision-1, &preference)
-	require.ErrorIs(t, err, ErrPhotoAssetRevision)
-	receipts, _, err := s.PhotoChangeReceipts(ctx, group.ID, 20, 0)
-	require.NoError(t, err)
-	assert.Contains(t, receiptOperations(receipts), "settings_recompute")
+	require.ErrorIs(t, err, ErrStaleRevision)
+	assert.Contains(t, receiptOperations(photoReceiptRows(t, s, group.ID)), "settings_recompute")
 	assert.NoError(t, s.ValidateMetadata(ctx))
 }
 
@@ -409,7 +379,7 @@ func TestPhotoExplicitVideoAdmitsGenericVideo(t *testing.T) {
 	require.ErrorIs(t, err, ErrNotFound)
 	_, err = s.PromotePhotoNode(ctx, clip.ID, nil, "", "")
 	require.ErrorIs(t, err, ErrPhotoNodeNotEligible)
-	asset, err := s.PromotePhotoNode(ctx, clip.ID, nil, PhotoRoleVideo, PhotoKindVideo)
+	asset, err := s.PromotePhotoNode(ctx, clip.ID, nil, PhotoRoleVideo, "")
 	require.NoError(t, err)
 	assert.Equal(t, PhotoKindVideo, asset.Kind)
 
@@ -431,7 +401,7 @@ func TestPhotoMutationsRequireRevision(t *testing.T) {
 	asset, err := s.PhotoAssetForNode(ctx, image.ID)
 	require.NoError(t, err)
 	_, err = s.SetPhotoAssetExcluded(ctx, asset.ID, asset.Revision+1, true)
-	require.ErrorIs(t, err, ErrPhotoAssetRevision)
+	require.ErrorIs(t, err, ErrStaleRevision)
 }
 
 func TestPhotoSidecarTargetsAndNoDisplayableMember(t *testing.T) {
@@ -467,10 +437,8 @@ func TestPhotoExcludePromotePreservesIdentityAndReceipt(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, beforeID, updated.ID)
 	_, err = s.PromotePhotoNode(ctx, image.ID, nil, "", "")
-	require.ErrorIs(t, err, ErrPhotoAssetRevision)
-	receipts, _, err := s.PhotoChangeReceipts(ctx, asset.ID, 20, 0)
-	require.NoError(t, err)
-	assert.NotEmpty(t, receipts)
+	require.ErrorIs(t, err, ErrStaleRevision)
+	assert.NotEmpty(t, photoReceiptRows(t, s, asset.ID))
 	promoted, err := s.PromotePhotoNode(ctx, image.ID, &updated.Revision, "", "")
 	require.NoError(t, err)
 	assert.Equal(t, beforeID, promoted.ID)
@@ -479,10 +447,10 @@ func TestPhotoExcludePromotePreservesIdentityAndReceipt(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, promoted.Revision, again.Revision)
 	_, err = s.PromotePhotoNode(ctx, image.ID, nil, "", "")
-	require.ErrorIs(t, err, ErrPhotoAssetRevision)
+	require.ErrorIs(t, err, ErrStaleRevision)
 	stale := promoted.Revision - 1
 	_, err = s.PromotePhotoNode(ctx, image.ID, &stale, "", "")
-	require.ErrorIs(t, err, ErrPhotoAssetRevision)
+	require.ErrorIs(t, err, ErrStaleRevision)
 }
 
 func TestPhotoPromoteExistingAssetChecksLiveNode(t *testing.T) {
@@ -512,7 +480,7 @@ func TestPhotoPromoteUnownedNodeRejectsRevisionPrecondition(t *testing.T) {
 
 	expectedRevision := int64(1)
 	_, err = s.PromotePhotoNode(ctx, raw.ID, &expectedRevision, PhotoRoleRAW, "")
-	require.ErrorIs(t, err, ErrPhotoAssetRevision)
+	require.ErrorIs(t, err, ErrStaleRevision)
 	_, err = s.PhotoAssetForNode(ctx, raw.ID)
 	require.ErrorIs(t, err, ErrNotFound)
 }
@@ -776,7 +744,28 @@ func fileByRole(files []PhotoFile, role string) PhotoFile {
 	return PhotoFile{}
 }
 
-func receiptOperations(receipts []PhotoChangeReceipt) []string {
+type photoReceiptRow struct {
+	Operation string
+	AfterJSON string
+}
+
+func photoReceiptRows(t *testing.T, s *Store, assetID string) []photoReceiptRow {
+	t.Helper()
+	rows, err := s.db.QueryContext(t.Context(),
+		`SELECT operation, after_json FROM photo_change_receipts WHERE asset_id=? ORDER BY created_at`, assetID)
+	require.NoError(t, err)
+	defer func() { require.NoError(t, rows.Close()) }()
+	var receipts []photoReceiptRow
+	for rows.Next() {
+		var receipt photoReceiptRow
+		require.NoError(t, rows.Scan(&receipt.Operation, &receipt.AfterJSON))
+		receipts = append(receipts, receipt)
+	}
+	require.NoError(t, rows.Err())
+	return receipts
+}
+
+func receiptOperations(receipts []photoReceiptRow) []string {
 	operations := make([]string, 0, len(receipts))
 	for _, receipt := range receipts {
 		operations = append(operations, receipt.Operation)

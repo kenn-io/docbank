@@ -315,9 +315,7 @@ func TestPhotoBackupRoundTrip(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, settings.Preference)
 	assert.Equal(t, "image", *settings.Preference)
-	receipts, _, err := restored.PhotoChangeReceipts(ctx, asset.ID, 100, 0)
-	require.NoError(t, err)
-	assert.NotEmpty(t, receipts)
+	assert.Contains(t, string(exportMetadata(t, restored)), `"photo_change_receipt"`)
 }
 
 func TestJSONLLooseSnapshotVerifyAndRestore(t *testing.T) {

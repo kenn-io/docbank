@@ -310,6 +310,8 @@ func TestExpectedDomainErrorsAreBoundedToolResults(t *testing.T) {
 		{name: "invalid cursor", err: fmt.Errorf("private cursor detail: %w", store.ErrInvalidDocumentCursor),
 			code: "invalid_document_cursor", redaction: "private cursor detail"},
 		{name: "scope", err: &daemonconn.SourceFenceScopeTooLargeError{ObservedScopeCount: 4097}, code: "scope_too_large"},
+		{name: "stale revision", err: daemonProblem("stale_revision"), code: "stale_revision"},
+		{name: "audit mutation", err: daemonProblem("audit_mutation_unsupported"), code: "audit_mutation_unsupported"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -339,8 +341,14 @@ func TestExpectedDomainErrorsAreBoundedToolResults(t *testing.T) {
 		})
 	}
 
+	audit, ok := domainToolError(daemonProblem("audit_mutation_unsupported"))
+	require.True(t, ok)
+	auditOutput, auditOK := audit.StructuredContent.(toolErrorOutput)
+	require.True(t, auditOK)
+	assert.NotContains(t, auditOutput.Message, "Photo", "audit refusals are shared by every mutating tool")
+
 	secret := errors.New("unexpected /synthetic/private key=secret document text")
-	_, ok := domainToolError(secret)
+	_, ok = domainToolError(secret)
 	assert.False(t, ok)
 	rpcErr := sanitizedRPCError(secret)
 	assert.Equal(t, int64(jsonrpc.CodeInternalError), rpcErr.Code)
@@ -544,4 +552,8 @@ func callToolWire(t *testing.T, name string, arguments map[string]any) []byte {
 	return exchangeRaw(t, newServerWithOptionsAndDaemon(testImplementation(),
 		ServerOptions{AllowProcessing: true, AllowPackageWrites: true}, lease),
 		requestFor("tools/call", map[string]any{"name": name, "arguments": arguments}))
+}
+
+func daemonProblem(code string) error {
+	return &daemonBoundaryError{message: errors.New("daemon problem"), facts: daemonconn.ProblemFacts{Code: code}}
 }

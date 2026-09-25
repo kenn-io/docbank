@@ -71,7 +71,6 @@ func (s *Store) publishEmailDocumentsTx(
 			OperationID: request.OperationID, RequestDigest: digest, CreatedAt: nowRFC3339(),
 			InventoryState: string(view.Evidence.Inventory.State), Relations: []document.EmailDocumentRelation{},
 		}
-		var newlyCreated []int64
 		for i, p := range parts {
 			if err := ctx.Err(); err != nil {
 				return err
@@ -116,17 +115,13 @@ func (s *Store) publishEmailDocumentsTx(
 					return err
 				}
 				rel.Child = new(documentIdentity(created.Version))
-				newlyCreated = append(newlyCreated, created.Node.ID)
 			}
 			receipt.Relations = append(receipt.Relations, rel)
 		}
 		if len(reuse) != 0 {
 			return ErrEmailDocumentConflict
 		}
-		if err := insertEmailDocumentPublication(ctx, tx, request, receipt); err != nil {
-			return err
-		}
-		return s.enrollPhotoCandidatesTx(ctx, tx, newlyCreated...)
+		return insertEmailDocumentPublication(ctx, tx, request, receipt)
 	}()
 	if err != nil {
 		return document.EmailDocumentPublicationReceipt{}, err

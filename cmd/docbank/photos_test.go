@@ -115,7 +115,7 @@ func TestPhotosCLIWorkflow(t *testing.T) {
 	require.NoError(t, json.Unmarshal([]byte(excludedOutput), &excluded))
 	assert.NotNil(t, excluded.ExcludedAt)
 	_, err = runCLI(t, "photos", "assets", "exclude", asset.ID, "--excluded=false", "--revision", strconv.FormatInt(asset.Revision, 10))
-	require.ErrorIs(t, err, store.ErrPhotoAssetRevision)
+	require.ErrorIs(t, err, store.ErrStaleRevision)
 	assert.Equal(t, exitStale, commandExitCode(err, true))
 	promotedOutput, err := runCLI(t, "photos", "assets", "promote", "/inbox/workflow-image.jpeg")
 	require.NoError(t, err)
@@ -126,7 +126,7 @@ func TestPhotosCLIWorkflow(t *testing.T) {
 }
 
 func TestWithPhotoRevisionRetriesOnceOnlyWhenInferred(t *testing.T) {
-	stale := fmt.Errorf("asset moved on: %w", store.ErrPhotoAssetRevision)
+	stale := fmt.Errorf("asset moved on: %w", store.ErrStaleRevision)
 	run := func(args []string, failures int) (reads int, writes []int64, err error) {
 		cmd := &cobra.Command{RunE: func(cmd *cobra.Command, _ []string) error {
 			current := func() (*int64, error) {
@@ -155,12 +155,12 @@ func TestWithPhotoRevisionRetriesOnceOnlyWhenInferred(t *testing.T) {
 	assert.Equal(t, []int64{11, 12}, writes)
 
 	reads, writes, err = run(nil, 2)
-	require.ErrorIs(t, err, store.ErrPhotoAssetRevision)
+	require.ErrorIs(t, err, store.ErrStaleRevision)
 	assert.Equal(t, 2, reads)
 	assert.Equal(t, []int64{11, 12}, writes)
 
 	reads, writes, err = run([]string{"--revision", "7"}, 1)
-	require.ErrorIs(t, err, store.ErrPhotoAssetRevision)
+	require.ErrorIs(t, err, store.ErrStaleRevision)
 	assert.Zero(t, reads)
 	assert.Equal(t, []int64{7}, writes)
 }

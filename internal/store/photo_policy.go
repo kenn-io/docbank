@@ -35,8 +35,6 @@ type PhotoNodeFacts struct {
 	MediaType   string
 	Qualifies   bool
 	AssetKind   string
-	EmailChild  bool
-	AuditActive bool
 }
 
 // PhotoFile is one role-bearing reference to an ordinary Docbank file node.
@@ -72,25 +70,10 @@ type PhotoSettings struct {
 	UpdatedAt  string  `json:"updated_at"`
 }
 
-// PhotoChangeReceipt records a bounded before/after decision without storing
-// the bytes or duplicating content identity.
-type PhotoChangeReceipt struct {
-	ID             string `json:"id"`
-	Operation      string `json:"operation"`
-	AssetID        string `json:"asset_id,omitzero"`
-	SettingsKey    string `json:"settings_key,omitzero"`
-	BeforeRevision int64  `json:"before_revision"`
-	AfterRevision  int64  `json:"after_revision"`
-	BeforeJSON     string `json:"before"`
-	AfterJSON      string `json:"after"`
-	CreatedAt      string `json:"created_at"`
-}
-
 // PhotoDetachOptions controls the only destructive dependent-member action.
 // A RAW with sidecars is refused unless ClearDependentSidecars is explicit.
 type PhotoDetachOptions struct {
 	ClearDependentSidecars bool
-	ReplacementFileID      *string
 }
 
 type photoDisplayChoice struct {
@@ -240,10 +223,17 @@ func selectPhotoDisplay(files []PhotoFile, preference *string, override *string)
 	return photoDisplayChoice{Source: PhotoDisplayNone}
 }
 
-func validatePhotoGraph(ctx context.Context, q interface {
-	QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error)
-	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
-}) error {
+// validatePhotoGraph checks every asset. Import and settings fan-out use it;
+// single-asset mutations use validatePhotoAssetGraph.
+func validatePhotoGraph(ctx context.Context, q metadataQuerier) error {
+	return validatePhotoGraphWhere(ctx, q, "")
+}
+
+func validatePhotoAssetGraph(ctx context.Context, q metadataQuerier, assetID string) error {
+	return validatePhotoGraphWhere(ctx, q, "WHERE a.asset_id=?", assetID)
+}
+
+func validatePhotoGraphWhere(ctx context.Context, q metadataQuerier, where string, args ...any) error {
 	rows, err := q.QueryContext(ctx, `
 		SELECT a.asset_id, a.kind, a.revision, a.display_file_id,
 		       a.display_override_file_id, f.file_id, f.asset_id, f.node_id,
@@ -253,7 +243,8 @@ func validatePhotoGraph(ctx context.Context, q interface {
 		LEFT JOIN photo_files f ON f.asset_id=a.asset_id
 		LEFT JOIN nodes n ON n.id=f.node_id
 		LEFT JOIN content_versions v ON v.version_id=n.current_version_id
-		ORDER BY a.asset_id, f.file_id`)
+		`+where+`
+		ORDER BY a.asset_id, f.file_id`, args...)
 	if err != nil {
 		return fmt.Errorf("reading photo graph: %w", err)
 	}
@@ -335,10 +326,6 @@ func validatePhotoGraph(ctx context.Context, q interface {
 		}
 	}
 	return nil
-}
-
-func validatePhotoGraphTx(ctx context.Context, tx *sql.Tx) error {
-	return validatePhotoGraph(ctx, tx)
 }
 
 func validatePhotoAssetPointers(asset PhotoAsset, files []PhotoFile) error {

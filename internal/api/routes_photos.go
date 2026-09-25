@@ -20,7 +20,7 @@ func registerPhotoRoutes(api huma.API, d Deps, g *gate) {
 			if err != nil {
 				return FromStoreError(err)
 			}
-			out = &photoAssetOutput{ETag: photoETag(asset.Revision), Body: fromStorePhotoAsset(asset)}
+			out = &photoAssetOutput{ETag: revisionETag(asset.Revision), Body: fromStorePhotoAsset(asset)}
 			return nil
 		})
 		return out, err
@@ -36,7 +36,7 @@ func registerPhotoRoutes(api huma.API, d Deps, g *gate) {
 		if err != nil {
 			return nil, FromStoreError(err)
 		}
-		return &photoAssetOutput{ETag: photoETag(asset.Revision), Body: fromStorePhotoAsset(asset)}, nil
+		return &photoAssetOutput{ETag: revisionETag(asset.Revision), Body: fromStorePhotoAsset(asset)}, nil
 	})
 
 	huma.Register(api, huma.Operation{
@@ -49,7 +49,7 @@ func registerPhotoRoutes(api huma.API, d Deps, g *gate) {
 		if err != nil {
 			return nil, FromStoreError(err)
 		}
-		return &photoAssetOutput{ETag: photoETag(asset.Revision), Body: fromStorePhotoAsset(asset)}, nil
+		return &photoAssetOutput{ETag: revisionETag(asset.Revision), Body: fromStorePhotoAsset(asset)}, nil
 	})
 
 	huma.Register(api, huma.Operation{
@@ -70,7 +70,7 @@ func registerPhotoRoutes(api huma.API, d Deps, g *gate) {
 			if callErr != nil {
 				return FromStoreError(callErr)
 			}
-			out = &photoAssetOutput{ETag: photoETag(asset.Revision), Body: fromStorePhotoAsset(asset)}
+			out = &photoAssetOutput{ETag: revisionETag(asset.Revision), Body: fromStorePhotoAsset(asset)}
 			return nil
 		})
 		return out, err
@@ -95,7 +95,7 @@ func registerPhotoRoutes(api huma.API, d Deps, g *gate) {
 			if callErr != nil {
 				return FromStoreError(callErr)
 			}
-			out = &photoAssetOutput{ETag: photoETag(asset.Revision), Body: fromStorePhotoAsset(asset)}
+			out = &photoAssetOutput{ETag: revisionETag(asset.Revision), Body: fromStorePhotoAsset(asset)}
 			return nil
 		})
 		return out, err
@@ -119,7 +119,7 @@ func registerPhotoRoutes(api huma.API, d Deps, g *gate) {
 			if callErr != nil {
 				return FromStoreError(callErr)
 			}
-			out = &photoAssetOutput{ETag: photoETag(asset.Revision), Body: fromStorePhotoAsset(asset)}
+			out = &photoAssetOutput{ETag: revisionETag(asset.Revision), Body: fromStorePhotoAsset(asset)}
 			return nil
 		})
 		return out, err
@@ -150,7 +150,7 @@ func registerPhotoRoutes(api huma.API, d Deps, g *gate) {
 			if callErr != nil {
 				return FromStoreError(callErr)
 			}
-			out = &photoAssetOutput{ETag: photoETag(asset.Revision), Body: fromStorePhotoAsset(asset)}
+			out = &photoAssetOutput{ETag: revisionETag(asset.Revision), Body: fromStorePhotoAsset(asset)}
 			return nil
 		})
 		return out, err
@@ -174,7 +174,7 @@ func registerPhotoRoutes(api huma.API, d Deps, g *gate) {
 			if callErr != nil {
 				return FromStoreError(callErr)
 			}
-			out = &photoAssetOutput{ETag: photoETag(asset.Revision), Body: fromStorePhotoAsset(asset)}
+			out = &photoAssetOutput{ETag: revisionETag(asset.Revision), Body: fromStorePhotoAsset(asset)}
 			return nil
 		})
 		return out, err
@@ -188,7 +188,7 @@ func registerPhotoRoutes(api huma.API, d Deps, g *gate) {
 		if err != nil {
 			return nil, FromStoreError(err)
 		}
-		return &photoSettingsOutput{ETag: photoETag(settings.Revision), Body: fromStorePhotoSettings(settings)}, nil
+		return &photoSettingsOutput{ETag: revisionETag(settings.Revision), Body: fromStorePhotoSettings(settings)}, nil
 	})
 
 	huma.Register(api, huma.Operation{
@@ -208,7 +208,7 @@ func registerPhotoRoutes(api huma.API, d Deps, g *gate) {
 			if callErr != nil {
 				return FromStoreError(callErr)
 			}
-			out = &photoSettingsOutput{ETag: photoETag(settings.Revision), Body: fromStorePhotoSettings(settings)}
+			out = &photoSettingsOutput{ETag: revisionETag(settings.Revision), Body: fromStorePhotoSettings(settings)}
 			return nil
 		})
 		return out, err

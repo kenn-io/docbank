@@ -89,8 +89,6 @@ var (
 	ErrPhotoNodeNotEligible = errors.New("photo node is not eligible")
 	// ErrPhotoNodeOwned means a node already belongs to another photo asset.
 	ErrPhotoNodeOwned = errors.New("node already belongs to a photo asset")
-	// ErrPhotoAssetRevision means a photo asset or settings revision is stale.
-	ErrPhotoAssetRevision = errors.New("photo revision mismatch")
 )
 
 // UnconditionalRev is the only ifRev value that skips the revision

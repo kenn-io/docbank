@@ -388,7 +388,6 @@ var codeToTypedErr = map[string]error{
 	"invalid_photo_asset":           store.ErrInvalidPhotoAsset,
 	"photo_node_not_eligible":       store.ErrPhotoNodeNotEligible,
 	"photo_node_owned":              store.ErrPhotoNodeOwned,
-	"photo_stale_revision":          store.ErrPhotoAssetRevision,
 	"audit_already_enabled":         store.ErrAuditAlreadyEnabled,
 	"audit_scope_overlap":           store.ErrAuditScopeOverlap,
 	"audit_scope_limit":             store.ErrAuditScopeLimit,
