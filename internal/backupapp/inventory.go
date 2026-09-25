@@ -42,15 +42,24 @@ func ReadSnapshotExtraFile(ctx context.Context, repository *backup.Repo, snapsho
 	if err != nil {
 		return fmt.Errorf("open extras tree: %w", err)
 	}
-	treeBytes, readErr := io.ReadAll(treeStream)
-	verifyErr := treeStream.Verify()
-	closeErr := treeStream.Close()
-	if err := errors.Join(readErr, verifyErr, closeErr); err != nil {
-		return fmt.Errorf("read extras tree: %w", err)
+	maxExtrasTreeBytes := packstore.DefaultLimits().BlobBytes
+	treeSize := treeStream.Size()
+	if treeSize < 1 || treeSize > maxExtrasTreeBytes {
+		sizeErr := fmt.Errorf("extras tree size %d is outside 1..%d bytes", treeSize, maxExtrasTreeBytes)
+		if err := errors.Join(sizeErr, treeStream.Close()); err != nil {
+			return fmt.Errorf("read extras tree: %w", err)
+		}
 	}
 	var tree backup.ExtrasTree
-	if err := json.Unmarshal(treeBytes, &tree); err != nil {
-		return fmt.Errorf("decode extras tree: %w", err)
+	limited := &io.LimitedReader{R: treeStream, N: maxExtrasTreeBytes + 1}
+	decodeErr := json.UnmarshalRead(limited, &tree)
+	if limited.N == 0 {
+		decodeErr = errors.Join(decodeErr, fmt.Errorf("extras tree exceeds %d bytes", maxExtrasTreeBytes))
+	}
+	verifyErr := treeStream.Verify()
+	closeErr := treeStream.Close()
+	if err := errors.Join(decodeErr, verifyErr, closeErr); err != nil {
+		return fmt.Errorf("read extras tree: %w", err)
 	}
 	var entry *backup.ExtrasEntry
 	for i := range tree.Entries {

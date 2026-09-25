@@ -2,6 +2,7 @@ package backupapp
 
 import (
 	"bytes"
+	"encoding/json/v2"
 	"io"
 	"os"
 	"path/filepath"
@@ -52,6 +53,90 @@ func TestReadSnapshotExtraFile(t *testing.T) {
 	require.Equal(t, want, got)
 	_, err = os.Stat(filepath.Join(root, "out", "other.sqlite"))
 	require.ErrorIs(t, err, os.ErrNotExist)
+}
+
+func TestReadSnapshotExtraFileRejectsOversizedTree(t *testing.T) {
+	destination := filepath.Join(t.TempDir(), "out", "catalog.sqlite")
+	repository, snapshotID := snapshotWithExtrasTree(t, func(string) []byte {
+		return bytes.Repeat([]byte{' '}, int(packstore.DefaultLimits().BlobBytes+1))
+	}, []byte("catalog"))
+
+	err := ReadSnapshotExtraFile(t.Context(), repository, snapshotID, "application/catalog.sqlite", destination)
+	require.ErrorContains(t, err, "extras tree size")
+	_, statErr := os.Stat(destination)
+	require.ErrorIs(t, statErr, os.ErrNotExist)
+}
+
+func TestReadSnapshotExtraFileAcceptsExactLimitTree(t *testing.T) {
+	want := []byte("exact-limit archive extra")
+	destination := filepath.Join(t.TempDir(), "out", "catalog.sqlite")
+	repository, snapshotID := snapshotWithExtrasTree(t, func(blob string) []byte {
+		tree, err := json.Marshal(backup.ExtrasTree{Entries: []backup.ExtrasEntry{{
+			Path: "application/catalog.sqlite", Mode: 0o600, Size: int64(len(want)), Blob: blob,
+		}}})
+		require.NoError(t, err)
+		maxExtrasTreeBytes := packstore.DefaultLimits().BlobBytes
+		require.LessOrEqual(t, len(tree), int(maxExtrasTreeBytes))
+		return append(tree, bytes.Repeat([]byte{' '}, int(maxExtrasTreeBytes)-len(tree))...)
+	}, want)
+
+	require.NoError(t, ReadSnapshotExtraFile(t.Context(), repository, snapshotID, "application/catalog.sqlite", destination))
+	got, err := os.ReadFile(destination)
+	require.NoError(t, err)
+	require.Equal(t, want, got)
+}
+
+func TestReadSnapshotExtraFileRejectsMalformedTree(t *testing.T) {
+	destination := filepath.Join(t.TempDir(), "out", "catalog.sqlite")
+	repository, snapshotID := snapshotWithExtrasTree(t, func(string) []byte {
+		return []byte(`{"entries":[`)
+	}, []byte("catalog"))
+
+	err := ReadSnapshotExtraFile(t.Context(), repository, snapshotID, "application/catalog.sqlite", destination)
+	require.ErrorContains(t, err, "read extras tree")
+	_, statErr := os.Stat(destination)
+	require.ErrorIs(t, statErr, os.ErrNotExist)
+}
+
+func TestReadSnapshotExtraFileRejectsTrailingTreeValue(t *testing.T) {
+	destination := filepath.Join(t.TempDir(), "out", "catalog.sqlite")
+	want := []byte("trailing-value archive extra")
+	repository, snapshotID := snapshotWithExtrasTree(t, func(blob string) []byte {
+		tree, err := json.Marshal(backup.ExtrasTree{Entries: []backup.ExtrasEntry{{
+			Path: "application/catalog.sqlite", Mode: 0o600, Size: int64(len(want)), Blob: blob,
+		}}})
+		require.NoError(t, err)
+		return append(tree, []byte(` {}`)...)
+	}, want)
+
+	err := ReadSnapshotExtraFile(t.Context(), repository, snapshotID, "application/catalog.sqlite", destination)
+	require.ErrorContains(t, err, "read extras tree")
+	_, statErr := os.Stat(destination)
+	require.ErrorIs(t, statErr, os.ErrNotExist)
+}
+
+func snapshotWithExtrasTree(t *testing.T, tree func(blob string) []byte, extra []byte) (*backup.Repo, string) {
+	t.Helper()
+	repository, err := backup.Init(filepath.Join(t.TempDir(), "repository"))
+	require.NoError(t, err)
+	known, err := repository.LoadBlobIndex()
+	require.NoError(t, err)
+	appender := backup.NewPackAppender(repository, known, pack.DefaultZstdLevel, nil, packstore.PackExt)
+	extraID, _, err := appender.Add(extra)
+	require.NoError(t, err)
+	treeID, _, err := appender.Add(tree(extraID.String()))
+	require.NoError(t, err)
+	packs, entries, err := appender.Finish()
+	require.NoError(t, err)
+	indexID, err := repository.WriteIndex(entries)
+	require.NoError(t, err)
+	snapshotID, err := repository.WriteManifest(&backup.Manifest{
+		FormatVersion: 4, MinReaderVersion: 4, AppVersion: "backupapp-test",
+		CreatedAt: time.Now().UTC().Truncate(time.Second).Format(time.RFC3339),
+		Extras:    backup.ManifestExtras{Tree: treeID.String()}, NewPacks: packs, NewIndex: indexID,
+	})
+	require.NoError(t, err)
+	return repository, snapshotID
 }
 
 func TestSnapshotUniqueBlobBytes(t *testing.T) {

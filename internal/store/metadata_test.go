@@ -668,6 +668,18 @@ func TestImportMetadataAcceptsValidSurrogatePair(t *testing.T) {
 	assert.Equal(t, "archive 😀", name)
 }
 
+func TestImportMetadataRejectsNestedDuplicateNames(t *testing.T) {
+	input := strings.Join([]string{
+		`{"type":"meta","format":"docbank-metadata","version":1,"vault_id":"dddddddd-dddd-4ddd-8ddd-dddddddddddd","node_sequence":1}`,
+		`{"type":"node","id":1,"parent_id":null,"name":"","kind":"dir","current_version_id":null,"revision":1,"created_at":"2026-01-01T00:00:00.000000000Z","modified_at":"2026-01-01T00:00:00.000000000Z","trashed_at":null,"trash_parent":null,"trash_name":null}`,
+		`{"type":"audit_record","digest":"` + metadataHashCurrent + `","record":{"kind":"tag_definition","kind":"tag_definition","fields":{}}}`,
+	}, "\n") + "\n"
+	target, err := Open(filepath.Join(t.TempDir(), "target.db"))
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, target.Close()) })
+	require.Error(t, target.ImportMetadata(t.Context(), strings.NewReader(input)))
+}
+
 func TestImportMetadataRejectsLaterContentCreateAndRollsBack(t *testing.T) {
 	ctx := t.Context()
 	source, err := Open(filepath.Join(t.TempDir(), "source.db"))
@@ -1264,24 +1276,124 @@ func TestMetadataUniqueBlobBytes(t *testing.T) {
 		wantError string
 	}{
 		{name: "known non-blob record", input: header + node + blobA + blobB, want: 18},
+		{name: "oversized header control field", input: `{"type":"` + strings.Repeat("x", metadataWalkerControlBytes+1) + `"}` + "\n", wantError: `metadata field "type" exceeds`},
 		{name: "malformed header", input: "{\n", wantError: "decoding metadata header"},
 		{name: "incomplete header", input: `{"type":"meta","format":"docbank-metadata","version":1,"vault_id":"dddddddd-dddd-4ddd-8ddd-dddddddddddd"}` + "\n", wantError: `lacks required field "node_sequence"`},
 		{name: "extra blob field", input: header + `{"type":"blob","hash":"` + metadataHashCurrent + `","size":7,"created_at":"2026-01-01T00:00:00.000000000Z","extra":true}` + "\n", wantError: `unknown or non-canonical field "extra"`},
 		{name: "malformed nonempty hash", input: header + `{"type":"blob","hash":"not-a-hash","size":7,"created_at":"2026-01-01T00:00:00.000000000Z"}` + "\n", wantError: "invalid blob hash"},
 		{name: "missing timestamp", input: header + `{"type":"blob","hash":"` + metadataHashCurrent + `","size":7}` + "\n", wantError: `lacks required field "created_at"`},
 		{name: "noncanonical timestamp", input: header + `{"type":"blob","hash":"` + metadataHashCurrent + `","size":7,"created_at":"2026-01-01T00:00:00.000000000+00:00"}` + "\n", wantError: "timestamp is not canonical UTC"},
-		{name: "unknown record type", input: header + `{"type":"future_record","value":1}` + "\n", wantError: `unknown record type "future_record"`},
+		{name: "unknown record type", input: header + `{"type":"future_record"}` + "\n", wantError: `unknown record type "future_record"`},
 		{name: "duplicate hash", input: header + blobA + blobA, wantError: "repeats blob"},
 		{name: "sum overflow", input: header + `{"type":"blob","hash":"` + metadataHashCurrent + `","size":9223372036854775807,"created_at":"2026-01-01T00:00:00.000000000Z"}` + "\n" + `{"type":"blob","hash":"` + metadataHashTrashed + `","size":1,"created_at":"2026-01-01T00:00:00.000000000Z"}` + "\n", wantError: "exceed int64"},
+		{name: "nested duplicate names", input: header + `{"type":"audit_record","digest":"x","record":{"key":1,"key":2}}` + "\n" + blobA, wantError: `repeats member name "key"`},
+		{name: "nested duplicate escaped names", input: header + `{"type":"audit_record","digest":"x","record":{"key":1,"\u006Bey":2}}` + "\n" + blobA, wantError: `repeats member name "key"`},
+		{name: "same nested name in separate objects", input: header + `{"type":"audit_record","digest":"x","record":{"first":{"key":1},"second":{"key":2}}}` + "\n" + blobA, want: 7},
+		{name: "duplicate header type escaped", input: `{"type":"meta","\u0074ype":"meta","format":"docbank-metadata","version":1,"vault_id":"dddddddd-dddd-4ddd-8ddd-dddddddddddd","node_sequence":1}` + "\n", wantError: `repeats field "type"`},
+		{name: "duplicate blob hash escaped", input: header + `{"type":"blob","hash":"` + metadataHashCurrent + `","\u0068ash":"` + metadataHashCurrent + `","size":7,"created_at":"2026-01-01T00:00:00.000000000Z"}` + "\n", wantError: `repeats field "hash"`},
+		{name: "nested object trailing comma", input: header + `{"type":"audit_record","digest":"x","record":{"nested":[1,]}}` + "\n", wantError: "decoding metadata record 2"},
+		{name: "nested array trailing comma", input: header + `{"type":"audit_record","digest":"x","record":[{"nested":1,},2]}` + "\n", wantError: "decoding metadata record 2"},
+		{name: "truncated object record", input: header + "{", wantError: "truncated"},
+		{name: "truncated literal record", input: header + `{"type":tru`, wantError: "truncated"},
+		{name: "truncated blob record", input: header + `{"type":"blob","hash":"` + metadataHashCurrent, wantError: "truncated"},
+		{name: "truncated record after valid records", input: header + node + `{"type":"blob","hash":"` + metadataHashCurrent, wantError: "decoding metadata record 3"},
+		{name: "empty unknown header field", input: `{"type":"meta","format":"docbank-metadata","version":1,"vault_id":"dddddddd-dddd-4ddd-8ddd-dddddddddddd","node_sequence":1,"":true}` + "\n", wantError: `unknown or non-canonical field ""`},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			got, err := MetadataUniqueBlobBytes(strings.NewReader(test.input))
 			if test.wantError != "" {
 				require.ErrorContains(t, err, test.wantError)
+				assert.Zero(t, got)
 				return
 			}
 			require.NoError(t, err)
 			require.Equal(t, test.want, got)
+		})
+	}
+	t.Run("compatible nested value depth", func(t *testing.T) {
+		const depth = 257
+		nested := strings.Repeat("[", depth) + "0" + strings.Repeat("]", depth)
+		got, err := MetadataUniqueBlobBytes(strings.NewReader(header + `{"type":"audit_record","digest":"x","record":` + nested + "}\n"))
+		require.NoError(t, err)
+		require.Zero(t, got)
+	})
+	testMetadataUniqueBlobBytesCanonicalLargeExtraction(t)
+}
+
+func TestMetadataJSONWalkerSurrogateEscapes(t *testing.T) {
+	for _, test := range []struct {
+		name    string
+		input   string
+		capture bool
+		want    string
+		wantErr string
+	}{
+		{name: "captured valid pair", input: `"\uD83D\uDE00"`, capture: true, want: "\U0001F600"},
+		{name: "discarded valid pair", input: `"\uD83D\uDE00"`},
+		{name: "captured high surrogate", input: `"\uD83D"`, capture: true, wantErr: "unpaired high surrogate"},
+		{name: "discarded high surrogate", input: `"\uD83D"`, wantErr: "unpaired high surrogate"},
+		{name: "captured low surrogate", input: `"\uDE00"`, capture: true, wantErr: "unpaired low surrogate"},
+		{name: "discarded low surrogate", input: `"\uDE00"`, wantErr: "unpaired low surrogate"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			walker := newMetadataJSONWalker(strings.NewReader(test.input))
+			var captured metadataWalkerString
+			var target *metadataWalkerString
+			if test.capture {
+				target = &captured
+			}
+			err := walker.readString(target)
+			if test.wantErr != "" {
+				require.ErrorContains(t, err, test.wantErr)
+				return
+			}
+			require.NoError(t, err)
+			if test.capture {
+				got, valueErr := captured.value("surrogate")
+				require.NoError(t, valueErr)
+				require.Equal(t, test.want, got)
+			}
+		})
+	}
+	t.Run("discarded valid pair across buffer", func(t *testing.T) {
+		input := `"` + strings.Repeat("x", 32*1024-1-6) + `\uD83D\uDE00"`
+		walker := newMetadataJSONWalker(strings.NewReader(input))
+		require.NoError(t, walker.readString(nil))
+	})
+}
+
+func testMetadataUniqueBlobBytesCanonicalLargeExtraction(t *testing.T) {
+	t.Helper()
+	for _, test := range []struct {
+		name string
+		text func() string
+	}{
+		{name: "canonical 16 MiB extracted text", text: func() string {
+			return strings.Repeat("x", 16<<20)
+		}},
+		{name: "canonical escape-heavy extracted text", text: func() string {
+			const rawSize = 16 << 20
+			pattern := "\"\\\n"
+			return strings.Repeat(pattern, rawSize/len(pattern)) + pattern[:rawSize%len(pattern)]
+		}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			const blobSize = int64(37)
+			const blobHash = "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+			source := newTestStore(t)
+			_, err := source.db.ExecContext(t.Context(),
+				`INSERT INTO blobs(hash,size,created_at) VALUES(?,?,?)`,
+				blobHash, blobSize, "2026-01-01T00:00:00.000000000Z")
+			require.NoError(t, err)
+			require.NoError(t, source.RecordExtraction(t.Context(), ExtractionResult{
+				BlobHash: blobHash, Extractor: "synthetic-large-text", ExtractorVersion: 1,
+				Status: ExtractionOK, Text: test.text(),
+			}))
+			var exported bytes.Buffer
+			require.NoError(t, source.ExportMetadata(t.Context(), &exported))
+			got, err := MetadataUniqueBlobBytes(bytes.NewReader(exported.Bytes()))
+			require.NoError(t, err)
+			require.Equal(t, blobSize, got)
 		})
 	}
 }
