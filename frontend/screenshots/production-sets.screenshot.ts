@@ -12,7 +12,7 @@ const binary = path.join(repository, "docbank");
 const output = process.env.DOCBANK_PRODUCTION_SCREENSHOT_DIR;
 test.skip(!output, "DOCBANK_PRODUCTION_SCREENSHOT_DIR enables the synthetic production screenshot");
 
-test("creates and inspects a production draft through the real daemon", async ({ page }) => {
+test("creates and inspects an exact production review through the real daemon", async ({ page }) => {
   test.setTimeout(180_000);
   const workspace = await mkdtemp(path.join(tmpdir(), "docbank-production-screenshot-"));
   const vault = path.join(workspace, "vault");
@@ -34,7 +34,9 @@ test("creates and inspects a production draft through the real daemon", async ({
     await drawer.getByRole("button", { name: "Create draft" }).click();
     await expect(drawer.getByText("Draft revision 1")).toBeVisible();
     await expect(drawer.getByText("Membership open")).toBeVisible();
-    await page.screenshot({ path: path.join(output!, "web-production-sets.png"), fullPage: true, animations: "disabled" });
+    await expect(drawer.getByText("No members yet")).toBeVisible();
+    await expect(drawer.getByText("No flagged passages")).toBeVisible();
+    await page.screenshot({ path: path.join(output!, "web-production-review.png"), fullPage: true, animations: "disabled" });
   } finally {
     try { await docbank("daemon", "stop"); } catch { /* daemon may not have started */ }
     await rm(workspace, { recursive: true, force: true });

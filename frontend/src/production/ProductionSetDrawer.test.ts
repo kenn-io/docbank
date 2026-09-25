@@ -28,6 +28,8 @@ it("traverses bounded set pages and inspects the exact head draft", async () => 
     if (url === "/api/v1/productions/sets?limit=50") return json({ items: [first], next_cursor: "next-page" });
     if (url === "/api/v1/productions/sets?limit=50&cursor=next-page") return json({ items: [second], next_cursor: "" });
     if (url === `/api/v1/productions/sets/${second.id}/revisions/2`) return json({ set_id: second.id, revision: 2, etag: 4, state: "draft", membership_sealed: false });
+    if (url === `/api/v1/productions/sets/${second.id}/revisions/2/members?limit=50` ||
+      url === `/api/v1/productions/sets/${second.id}/revisions/2/decisions?limit=50&uncertain=true`) return json({ items: [], next_cursor: "" });
     throw new Error(`unexpected request ${url}`);
   });
 
@@ -46,6 +48,9 @@ it("reuses the exact operation after an uncertain create response", async () => 
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init = {}) => {
     const url = String(input);
     if (url === "/api/v1/productions/sets?limit=50") return json({ items: [], next_cursor: "" });
+    if (url === `/api/v1/productions/sets/${first.id}/revisions/1`) return json({ set_id: first.id, revision: 1, etag: 1, state: "draft", membership_sealed: false });
+    if (url === `/api/v1/productions/sets/${first.id}/revisions/1/members?limit=50` ||
+      url === `/api/v1/productions/sets/${first.id}/revisions/1/decisions?limit=50&uncertain=true`) return json({ items: [], next_cursor: "" });
     if (url === "/api/v1/productions/sets" && init.method === "POST") {
       const body = JSON.parse(String(init.body)) as { operation_id: string; name: string; instructions: string };
       creates.push({ id: body.operation_id, name: body.name, instructions: body.instructions });
@@ -66,6 +71,29 @@ it("reuses the exact operation after an uncertain create response", async () => 
   expect(creates).toHaveLength(2);
   expect(creates[1]).toEqual(creates[0]);
   expect(creates[0].id).toMatch(/^[0-9a-f-]{36}$/);
+});
+
+it("refreshes the exact head after a concurrent draft edit", async () => {
+  let draftReads = 0;
+  vi.spyOn(globalThis, "fetch").mockImplementation(async input => {
+    const url = String(input);
+    if (url === "/api/v1/productions/sets?limit=50") return json({ items: [first], next_cursor: "" });
+    if (url === `/api/v1/productions/sets/${first.id}`) return json(first);
+    if (url === `/api/v1/productions/sets/${first.id}/revisions/1`) {
+      draftReads++;
+      return json({ set_id: first.id, revision: 1, etag: draftReads === 1 ? 1 : 2, state: "draft", membership_sealed: false });
+    }
+    if (url === `/api/v1/productions/sets/${first.id}/revisions/1/members?limit=50` ||
+      url === `/api/v1/productions/sets/${first.id}/revisions/1/decisions?limit=50&uncertain=true`) return json({ items: [], next_cursor: "" });
+    throw new Error(`unexpected request ${url}`);
+  });
+
+  render(ProductionSetDrawer, { session: "synthetic-session", onclose: vi.fn(), onauthfailure: vi.fn() });
+  await fireEvent.click(await screen.findByRole("button", { name: "Synthetic review A" }));
+  expect(await screen.findByText("Draft changed during review. Refresh to load the current version.")).toBeTruthy();
+  await fireEvent.click(screen.getByRole("button", { name: "Refresh draft" }));
+  expect(await screen.findByText("No members yet")).toBeTruthy();
+  expect(draftReads).toBeGreaterThanOrEqual(4);
 });
 
 it("revokes the browser view on an unauthorized set read", async () => {

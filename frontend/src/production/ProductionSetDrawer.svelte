@@ -3,7 +3,8 @@
   import XIcon from "@lucide/svelte/icons/x";
   import { Button, Card, Chip, DetailDrawer, EmptyState, IconButton, Spinner, TextInput } from "@kenn-io/kit-ui";
   import { APIError } from "../api-transport.js";
-  import { createProductionSet, getProductionDraft, listProductionSets, type ProductionDraft, type ProductionSet } from "./api.js";
+  import { createProductionSet, getProductionDraft, getProductionSet, listProductionSets, type ProductionDraft, type ProductionSet } from "./api.js";
+  import ProductionReview from "./ProductionReview.svelte";
 
   interface Props {
     session: string;
@@ -87,6 +88,28 @@
     }
   }
 
+  async function refresh(): Promise<void> {
+    const current = selected;
+    if (!current) return;
+    draftController.abort();
+    draftController = new AbortController();
+    const signal = draftController.signal;
+    draftLoading = true;
+    draftError = "";
+    try {
+      const latestSet = await getProductionSet(session, current.id, signal);
+      const latestDraft = await getProductionDraft(session, latestSet, signal);
+      if (signal.aborted || selected?.id !== current.id) return;
+      selected = latestSet;
+      draft = latestDraft;
+      sets = sets.map(item => item.id === latestSet.id ? latestSet : item);
+    } catch (cause) {
+      if (!signal.aborted) draftError = fail(cause);
+    } finally {
+      if (!signal.aborted) draftLoading = false;
+    }
+  }
+
   async function create(): Promise<void> {
     if (creating || !name.trim()) return;
     const payload = JSON.stringify({ name: name.trim(), instructions });
@@ -157,6 +180,11 @@
           <p>Draft changes and review declarations are bound to this exact revision.</p>
         {/if}
       </Card>
+      {#if draft}
+        {#key `${selected.id}:${draft.revision}:${draft.etag}`}
+          <ProductionReview {session} set={selected} {draft} onrefresh={() => void refresh()} {onauthfailure} {onclose} />
+        {/key}
+      {/if}
     {/if}
   </div>
 </DetailDrawer>
