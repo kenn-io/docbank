@@ -212,7 +212,7 @@ func init() {
 	sets.AddCommand(newProductionSetCreateCommand(), newProductionSetListCommand(), newProductionSetShowCommand())
 	drafts.AddCommand(newProductionDraftShowCommand(), newProductionDraftMembersCommand(),
 		newProductionDraftDecisionsCommand(), newProductionDraftInstructionsCommand(),
-		newProductionDraftChangesCommand())
+		newProductionDraftChangesCommand(), newProductionDraftForkCommand())
 	production.AddCommand(newProductionRecipesCommand(), sets, drafts)
 	rootCmd.AddCommand(production)
 }
