@@ -8,26 +8,28 @@ import (
 )
 
 const (
-	jsonSchemaDraft       = "https://json-schema.org/draft/2020-12/schema"
-	packageIDField        = "package_id"
-	schemaStateField      = "state"
-	schemaLimitField      = "limit"
-	schemaCursorField     = "cursor"
-	schemaNextCursorField = "next_cursor"
-	schemaSetIDField      = "set_id"
-	schemaRevisionField   = "revision"
-	jsonSchemaConst       = "const"
-	maxToolResponseBytes  = 1 << 20
-	maxToolErrorBytes     = 1024
-	maxPathBytes          = 16 << 10
-	maxCursorBytes        = api.MaxDocumentCursorBytes
-	maxPathCharacters     = 16 << 10
-	maxCursorCharacters   = maxCursorBytes
-	maxRenditionChars     = 16_000
-	defaultRenditionChars = 8_000
-	maxBatesLabels        = 250
-	maxBatesAffixChars    = 128
-	maxBatesLabelChars    = maxBatesAffixChars*2 + 10
+	jsonSchemaDraft        = "https://json-schema.org/draft/2020-12/schema"
+	packageIDField         = "package_id"
+	schemaStateField       = "state"
+	schemaLimitField       = "limit"
+	schemaCursorField      = "cursor"
+	schemaNextCursorField  = "next_cursor"
+	schemaSetIDField       = "set_id"
+	schemaRevisionField    = "revision"
+	schemaETagField        = "etag"
+	schemaOperationIDField = "operation_id"
+	jsonSchemaConst        = "const"
+	maxToolResponseBytes   = 1 << 20
+	maxToolErrorBytes      = 1024
+	maxPathBytes           = 16 << 10
+	maxCursorBytes         = api.MaxDocumentCursorBytes
+	maxPathCharacters      = 16 << 10
+	maxCursorCharacters    = maxCursorBytes
+	maxRenditionChars      = 16_000
+	defaultRenditionChars  = 8_000
+	maxBatesLabels         = 250
+	maxBatesAffixChars     = 128
+	maxBatesLabelChars     = maxBatesAffixChars*2 + 10
 )
 
 type schema = map[string]any

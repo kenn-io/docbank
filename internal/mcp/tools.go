@@ -145,6 +145,24 @@ var forkProductionDraftToolDefinition = toolDefinition{
 	schemas:     forkProductionDraftSchemas, write: true, idempotent: true,
 }
 
+var editProductionInstructionsToolDefinition = toolDefinition{
+	name: "edit_production_instructions", title: "Edit production instructions",
+	description: "Replace revision instructions under an exact ETag and operation UUID.",
+	schemas:     editProductionInstructionsSchemas, write: true, idempotent: true,
+}
+
+var sealProductionMembershipToolDefinition = toolDefinition{
+	name: "seal_production_membership", title: "Seal production membership",
+	description: "Seal the exact member count and digest under an ETag and operation UUID.",
+	schemas:     sealProductionMembershipSchemas, write: true, idempotent: true,
+}
+
+var reviewProductionMemberToolDefinition = toolDefinition{
+	name: "review_production_member", title: "Review production member",
+	description: "Declare a member fully reviewed with the daemon-derived binding.",
+	schemas:     reviewProductionMemberSchemas, write: true, idempotent: true,
+}
+
 func toolCatalog(allowProcessing bool) []*sdkmcp.Tool {
 	definitions := readToolDefinitions
 	if allowProcessing {
@@ -152,7 +170,9 @@ func toolCatalog(allowProcessing bool) []*sdkmcp.Tool {
 			packageImportToolDefinition, resolvePackageCustodianToolDefinition, assignPackageCustodianToolDefinition,
 			ensureBatesNamespaceToolDefinition, reserveBatesRangeToolDefinition, publishBatesExportToolDefinition,
 			exportBatesFileToolDefinition, exportLoadFilePackageToolDefinition,
-			createProductionSetToolDefinition, forkProductionDraftToolDefinition)
+			createProductionSetToolDefinition, forkProductionDraftToolDefinition,
+			editProductionInstructionsToolDefinition, sealProductionMembershipToolDefinition,
+			reviewProductionMemberToolDefinition)
 	}
 	tools := make([]*sdkmcp.Tool, 0, len(definitions))
 	for _, definition := range definitions {
@@ -195,6 +215,9 @@ func registerToolCatalog(
 			handler = packageExportToolHandler(lease, output, logger)
 		case createProductionSetToolDefinition.name, forkProductionDraftToolDefinition.name:
 			handler = productionDraftWriteToolHandler(lease, tool.Name, output, logger)
+		case editProductionInstructionsToolDefinition.name, sealProductionMembershipToolDefinition.name,
+			reviewProductionMemberToolDefinition.name:
+			handler = productionReviewWriteToolHandler(lease, tool.Name, output, logger)
 		default:
 			handler = readToolHandler(lease, plans, tool.Name, output, logger)
 		}
