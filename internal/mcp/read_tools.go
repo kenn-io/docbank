@@ -118,6 +118,10 @@ func executeReadTool(
 		output, err = listProductionDecisions(ctx, lease, raw)
 	case "get_production_job":
 		output, err = getProductionJob(ctx, lease, raw)
+	case "list_production_recipes":
+		output, err = listProductionRecipes(ctx, lease, raw)
+	case "resolve_production_selection":
+		output, err = resolveProductionSelection(ctx, lease, raw)
 	default:
 		return nil, errors.New("unknown Docbank read tool")
 	}

@@ -69,6 +69,8 @@ var readToolDefinitions = []toolDefinition{
 	{name: "list_production_members", title: "List production members", description: "Page through bounded member summaries for an exact revision.", schemas: listProductionMembersSchemas},
 	{name: "list_production_decisions", title: "List production decisions", description: "Page through bounded decision summaries for an exact revision.", schemas: listProductionDecisionsSchemas},
 	{name: "get_production_job", title: "Get production job", description: "Read one exact production job status.", schemas: getProductionJobSchemas},
+	{name: "list_production_recipes", title: "List production recipes", description: "Read qualified rendering recipe identities and digests.", schemas: listProductionRecipesSchemas},
+	{name: "resolve_production_selection", title: "Resolve production selection", description: "Read one bounded resolved mask page and its review binding for an exact draft ETag.", schemas: resolveProductionSelectionSchemas},
 }
 
 var processingToolDefinition = toolDefinition{

@@ -21,7 +21,7 @@ func productionDecisionSummarySchema() schema {
 
 func listProductionMembersSchemas() (schema, schema) {
 	return rootObjectSchema(schema{
-			"set_id": uuidSchema(), "revision": integerSchema(1, 0),
+			schemaSetIDField: uuidSchema(), schemaRevisionField: integerSchema(1, 0),
 			schemaCursorField: stringSchema(4096), "limit": integerSchema(1, redaction.MaxProductionPage),
 		}, "set_id", "revision"), rootObjectSchema(withPrivateCache(schema{
 			"items":               arraySchema(productionMemberSummarySchema(), redaction.MaxProductionPage), //nolint:goconst // JSON Schema vocabulary is repeated across tools.
@@ -31,7 +31,7 @@ func listProductionMembersSchemas() (schema, schema) {
 
 func listProductionDecisionsSchemas() (schema, schema) {
 	return rootObjectSchema(schema{
-			"set_id": uuidSchema(), "revision": integerSchema(1, 0),
+			schemaSetIDField: uuidSchema(), schemaRevisionField: integerSchema(1, 0),
 			schemaCursorField: stringSchema(2048), "limit": integerSchema(1, 100),
 			"uncertain": enumSchema("all", "true", "false"),
 		}, "set_id", "revision"), rootObjectSchema(withPrivateCache(schema{
@@ -42,10 +42,10 @@ func listProductionDecisionsSchemas() (schema, schema) {
 
 func getProductionJobSchemas() (schema, schema) {
 	job := objectSchema(schema{
-		"job_id": uuidSchema(), "set_id": uuidSchema(), "revision": integerSchema(1, 0),
+		"job_id": uuidSchema(), schemaSetIDField: uuidSchema(), schemaRevisionField: integerSchema(1, 0),
 		"state":           enumSchema("queued", "running", "failed", "canceled", "succeeded"),
 		"revision_sha256": sha256Schema(), "receipt_sha256": sha256Schema(),
 	}, "job_id", "set_id", "revision", "state", "revision_sha256")
-	return rootObjectSchema(schema{"set_id": uuidSchema(), "job_id": uuidSchema()}, "set_id", "job_id"),
+	return rootObjectSchema(schema{schemaSetIDField: uuidSchema(), "job_id": uuidSchema()}, "set_id", "job_id"),
 		rootObjectSchema(withPrivateCache(schema{"job": job}), cacheRequired("job")...)
 }

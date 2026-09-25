@@ -14,6 +14,8 @@ const (
 	schemaLimitField      = "limit"
 	schemaCursorField     = "cursor"
 	schemaNextCursorField = "next_cursor"
+	schemaSetIDField      = "set_id"
+	schemaRevisionField   = "revision"
 	jsonSchemaConst       = "const"
 	maxToolResponseBytes  = 1 << 20
 	maxToolErrorBytes     = 1024

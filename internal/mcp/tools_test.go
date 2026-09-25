@@ -34,6 +34,7 @@ func TestDefaultToolCatalogIsFixedBoundedAndReadOnly(t *testing.T) {
 		"list_bates_exports", "get_bates_export", "find_bates_exports", "find_production_numbers",
 		"find_production_number_candidates", "list_production_sets", "get_production_set", "get_production_draft",
 		"list_production_members", "list_production_decisions", "get_production_job",
+		"list_production_recipes", "resolve_production_selection",
 	}
 	require.Len(t, tools, len(wantNames))
 	for index, tool := range tools {

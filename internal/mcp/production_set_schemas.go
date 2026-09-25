@@ -14,7 +14,7 @@ func productionDraftSchema() schema {
 		"policy_id": stringSchema(36), "version": integerSchema(0, 0), "policy_sha256": stringSchema(64),
 	}, "policy_id", "version", "policy_sha256")
 	return objectSchema(schema{
-		"set_id": uuidSchema(), "revision": integerSchema(1, 0), "etag": integerSchema(1, 0),
+		schemaSetIDField: uuidSchema(), schemaRevisionField: integerSchema(1, 0), "etag": integerSchema(1, 0),
 		"instructions_sha256": sha256Schema(), "member_hash": sha256Schema(),
 		"decisions_sha256": sha256Schema(), "recipe_id": stringSchema(128), "recipe_sha256": sha256Schema(),
 		"profile_id": stringSchema(128), "profile_sha256": sha256Schema(),
@@ -37,11 +37,11 @@ func listProductionSetsSchemas() (schema, schema) {
 }
 
 func getProductionSetSchemas() (schema, schema) {
-	return rootObjectSchema(schema{"set_id": uuidSchema()}, "set_id"),
+	return rootObjectSchema(schema{schemaSetIDField: uuidSchema()}, "set_id"),
 		rootObjectSchema(withPrivateCache(schema{"set": productionSetSchema()}), cacheRequired("set")...)
 }
 
 func getProductionDraftSchemas() (schema, schema) {
-	return rootObjectSchema(schema{"set_id": uuidSchema(), "revision": integerSchema(1, 0)}, "set_id", "revision"),
+	return rootObjectSchema(schema{schemaSetIDField: uuidSchema(), schemaRevisionField: integerSchema(1, 0)}, "set_id", "revision"),
 		rootObjectSchema(withPrivateCache(schema{"draft": productionDraftSchema()}), cacheRequired("draft")...)
 }
