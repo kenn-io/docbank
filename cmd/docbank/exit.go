@@ -56,7 +56,7 @@ func commandExitCode(err error, started bool) int {
 	if errors.Is(err, store.ErrNotFound) {
 		return exitNotFound
 	}
-	if errors.Is(err, store.ErrStaleRevision) || errors.Is(err, store.ErrPhotoAssetRevision) ||
+	if errors.Is(err, store.ErrStaleRevision) ||
 		errors.Is(err, store.ErrAuditPreviewStale) {
 		return exitStale
 	}

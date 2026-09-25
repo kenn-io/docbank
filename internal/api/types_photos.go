@@ -1,10 +1,6 @@
 package api
 
-import (
-	"strconv"
-
-	"go.kenn.io/docbank/internal/store"
-)
+import "go.kenn.io/docbank/internal/store"
 
 // PhotoFile is the daemon representation of one ordinary file node in an
 // asset. The node remains authoritative for bytes and content versions.
@@ -84,8 +80,4 @@ func fromStorePhotoAsset(asset store.PhotoAsset) PhotoAsset {
 
 func fromStorePhotoSettings(settings store.PhotoSettings) PhotoSettings {
 	return PhotoSettings{Preference: settings.Preference, Revision: settings.Revision, UpdatedAt: settings.UpdatedAt}
-}
-
-func photoETag(revision int64) string {
-	return `"` + strconv.FormatInt(revision, 10) + `"`
 }

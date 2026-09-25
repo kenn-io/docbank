@@ -1588,7 +1588,6 @@ include a `position` span:
 | `invalid_photo_asset` | 422 | asset kind, role, display pointer, sidecar target, or graph state is invalid |
 | `photo_node_not_eligible` | 422 | the selected node is not a live eligible file |
 | `photo_node_owned` | 409 | the selected node already belongs to another photo asset |
-| `photo_stale_revision` | 412 | the photo asset or settings revision in `If-Match` is stale |
 | `invalid_query` | 422 | invalid or unsupported expression, missing reference, or query compilation bound exceeded |
 | `invalid_cursor` | 400 | malformed, tampered, wrong-direction, or otherwise invalid snapshot cursor |
 | `snapshot_gone` | 410 | snapshot is missing, expired, revoked, owned by another session, or lost with its daemon |

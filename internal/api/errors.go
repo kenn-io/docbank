@@ -123,7 +123,6 @@ var storeErrCodes = []struct {
 	{store.ErrInvalidPhotoAsset, http.StatusUnprocessableEntity, "invalid_photo_asset"},
 	{store.ErrPhotoNodeNotEligible, http.StatusUnprocessableEntity, "photo_node_not_eligible"},
 	{store.ErrPhotoNodeOwned, http.StatusConflict, "photo_node_owned"},
-	{store.ErrPhotoAssetRevision, http.StatusPreconditionFailed, "photo_stale_revision"},
 	{store.ErrEmailNotSupported, http.StatusUnprocessableEntity, "email_not_supported"},
 	{store.ErrEmailDocumentConflict, http.StatusConflict, "email_document_conflict"},
 	{store.ErrProcessingConsentRequired, http.StatusPreconditionRequired, "processing_consent_required"},

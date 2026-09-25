@@ -42,7 +42,7 @@ func TestPhotoRoutesEnforceIfMatch(t *testing.T) {
 		map[string]string{"If-Match": strconv.Quote(strconv.FormatInt(asset.Revision, 10))},
 		map[string]bool{"excluded": true})
 	assert.Equal(t, http.StatusPreconditionFailed, stale.StatusCode, staleBody)
-	assert.Equal(t, "photo_stale_revision", decodeProblem(t, staleBody).Code)
+	assert.Equal(t, "stale_revision", decodeProblem(t, staleBody).Code)
 }
 
 func TestPhotoRoutesCreatePromoteAndConcurrentRevisionWinner(t *testing.T) {
@@ -70,7 +70,7 @@ func TestPhotoRoutesCreatePromoteAndConcurrentRevisionWinner(t *testing.T) {
 	missing, body := do(t, ts, http.MethodPost, "/api/v1/photos/nodes/"+strconv.FormatInt(node.ID, 10)+"/promote", nil,
 		map[string]string{"role": "raw"})
 	assert.Equal(t, http.StatusPreconditionFailed, missing.StatusCode, body)
-	assert.Equal(t, "photo_stale_revision", decodeProblem(t, body).Code)
+	assert.Equal(t, "stale_revision", decodeProblem(t, body).Code)
 
 	promoted, body := do(t, ts, http.MethodPost, "/api/v1/photos/nodes/"+strconv.FormatInt(node.ID, 10)+"/promote",
 		map[string]string{"If-Match": strconv.Quote(strconv.FormatInt(excludedAsset.Revision, 10))},

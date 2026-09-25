@@ -363,7 +363,7 @@ func stableDomainError(err error) (string, int) {
 		return "invalid_rendition_window", 0
 	case "invalid_rendition_encoding":
 		return "invalid_rendition_encoding", 0
-	case "invalid_photo_asset", "photo_node_not_eligible", "photo_node_owned", "photo_stale_revision", "audit_mutation_unsupported":
+	case "stale_revision", "invalid_photo_asset", "photo_node_not_eligible", "photo_node_owned", "audit_mutation_unsupported":
 		return facts.Code, 0
 	default:
 		return "", 0
@@ -400,10 +400,10 @@ func domainErrorMessage(code string) string {
 		return "The selected node cannot be enrolled in a photo asset."
 	case "photo_node_owned":
 		return "The selected node already belongs to a photo asset."
-	case "photo_stale_revision":
-		return "The photo asset revision is stale; inspect it and retry with the current revision."
+	case "stale_revision":
+		return "The revision is stale; read the current state and retry with its revision."
 	case "audit_mutation_unsupported":
-		return "Photo mutations are unavailable while audit mode is active."
+		return "This mutation is unavailable while audit mode is active."
 	default:
 		return "The Docbank operation could not be completed."
 	}

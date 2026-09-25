@@ -65,7 +65,7 @@ func adjustPhotosForPurgedNodesTx(ctx context.Context, tx *sql.Tx, nodeIDs []int
 	}
 	before := make(map[string]PhotoAsset, len(assetIDs))
 	for assetID := range assetIDs {
-		asset, err := loadPhotoAssetTx(ctx, tx, assetID)
+		asset, err := photoAssetByIDQuery(ctx, tx, assetID)
 		if err != nil {
 			return err
 		}
@@ -85,17 +85,11 @@ func adjustPhotosForPurgedNodesTx(ctx context.Context, tx *sql.Tx, nodeIDs []int
 		if _, err := commitPhotoAssetTx(ctx, tx, old, old, "purge"); err != nil {
 			return fmt.Errorf("repairing photo asset %s after purge: %w", old.ID, err)
 		}
-	}
-	return validatePhotoGraphTx(ctx, tx)
-}
-
-func photoFileIDPresent(files []PhotoFile, id string) bool {
-	for _, file := range files {
-		if file.ID == id {
-			return true
+		if err := validatePhotoAssetGraph(ctx, tx, old.ID); err != nil {
+			return err
 		}
 	}
-	return false
+	return nil
 }
 
 func doomedNodeIDsTx(ctx context.Context, tx *sql.Tx, selection string, args ...any) ([]int64, error) {
