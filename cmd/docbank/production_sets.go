@@ -217,6 +217,8 @@ func init() {
 		newProductionDraftFinalizeCommand())
 	jobs := &cobra.Command{Use: "jobs", Short: "Submit and inspect production jobs"}
 	jobs.AddCommand(newProductionJobAdmitCommand(), newProductionJobStatusCommand(), newProductionJobCancelCommand())
-	production.AddCommand(newProductionRecipesCommand(), sets, drafts, jobs)
+	packages := &cobra.Command{Use: "packages", Short: "Publish and download verified recipient packages"}
+	packages.AddCommand(newProductionPackagePublishCommand(), newProductionPackageDownloadCommand())
+	production.AddCommand(newProductionRecipesCommand(), sets, drafts, jobs, packages)
 	rootCmd.AddCommand(production)
 }
