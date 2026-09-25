@@ -123,7 +123,8 @@ pinned library cannot name as a subtype:
 - TIFF bytes with `.arw`, `.dng`, `.cr2`, or `.nef` use `image/x-sony-arw`,
   `image/x-adobe-dng`, `image/x-canon-cr2`, or `image/x-nikon-nef`.
 - Unknown `.raf` bytes use the fixed `image/x-fuji-raf` type.
-- PNG or APNG bytes with `.apng` use `image/apng`.
+- PNG or APNG bytes with `.png` or `.apng` use `image/png` and the existing
+  preview path.
 - Matroska bytes with `.mka` use `audio/x-matroska`.
 - Text-family bytes with `.xmp` use `application/rdf+xml`, including XMP
   packets without an XML declaration.

@@ -38,35 +38,39 @@ func TestByteFirstPNGRefinementKeepsAnimatedPNGPreviewable(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, blobs.Close()) })
 	source := syntheticAPNG(t, mediatest.PNG(4, 3, color.White))
-	sourcePath := filepath.Join(root, "animation.png")
-	require.NoError(t, os.WriteFile(sourcePath, source, 0o600))
-
 	ing := &ingest.Ingester{Store: catalog, Blobs: blobs}
-	result, err := ing.AddPaths(t.Context(), []string{sourcePath}, "/inbox")
-	require.NoError(t, err)
-	require.Equal(t, 1, result.Added)
-	node, err := catalog.NodeByPath(t.Context(), "/inbox/animation.png")
-	require.NoError(t, err)
-	require.Equal(t, "image/png", node.MimeType)
-	stored, err := blobs.Open(node.BlobHash)
-	require.NoError(t, err)
-	storedBytes, err := io.ReadAll(stored)
-	require.NoError(t, err)
-	require.NoError(t, stored.Close())
-	require.Equal(t, source, storedBytes)
+	for _, suffix := range []string{".png", ".apng"} {
+		t.Run(suffix, func(t *testing.T) {
+			sourcePath := filepath.Join(root, "animation"+suffix)
+			require.NoError(t, os.WriteFile(sourcePath, source, 0o600))
 
-	metadata, err := media.DetectBytes(storedBytes, node.MimeType)
-	require.NoError(t, err)
-	assert.True(t, metadata.Animated)
+			result, err := ing.AddPaths(t.Context(), []string{sourcePath}, "/inbox")
+			require.NoError(t, err)
+			require.Equal(t, 1, result.Added)
+			node, err := catalog.NodeByPath(t.Context(), "/inbox/animation"+suffix)
+			require.NoError(t, err)
+			require.Equal(t, "image/png", node.MimeType)
+			stored, err := blobs.Open(node.BlobHash)
+			require.NoError(t, err)
+			storedBytes, err := io.ReadAll(stored)
+			require.NoError(t, err)
+			require.NoError(t, stored.Close())
+			require.Equal(t, source, storedBytes)
 
-	digest := sha256.Sum256(storedBytes)
-	product, err := ProduceVisualPreview(t.Context(), bytes.NewReader(storedBytes), VisualPreviewTarget{
-		SourceSHA256: hex.EncodeToString(digest[:]), Size: node.Size, MediaType: node.MimeType,
-	})
-	require.NoError(t, err)
-	assert.Equal(t, document.VisualPreviewReady, product.Preview.State)
-	require.NotNil(t, product.Preview.Output)
-	require.NotEmpty(t, product.Output)
+			metadata, err := media.DetectBytes(storedBytes, node.MimeType)
+			require.NoError(t, err)
+			assert.True(t, metadata.Animated)
+
+			digest := sha256.Sum256(storedBytes)
+			product, err := ProduceVisualPreview(t.Context(), bytes.NewReader(storedBytes), VisualPreviewTarget{
+				SourceSHA256: hex.EncodeToString(digest[:]), Size: node.Size, MediaType: node.MimeType,
+			})
+			require.NoError(t, err)
+			assert.Equal(t, document.VisualPreviewReady, product.Preview.State)
+			require.NotNil(t, product.Preview.Output)
+			require.NotEmpty(t, product.Output)
+		})
+	}
 }
 
 func TestProduceVisualPreviewAppliesEXIFOrientation(t *testing.T) {
