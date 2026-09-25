@@ -344,6 +344,11 @@ requires the source lifetime locks. A header-only 32-byte WAL is admitted;
 WAL frames are refused. Archive inventory reads only the verified
 `application/catalog.sqlite` extra and records its metadata format.
 
+The report counts albums separately from album memberships and checkouts
+separately from checkout entries. Current Fotobank file bytes and unique
+embedded Docbank blob bytes are distinct measurements because retained
+immutable versions can make the latter larger.
+
 Schema version 26 exports assets, files, settings, receipts, and migration
 runs in stable JSONL order. Restore requires a pristine target and validates
 node ownership,

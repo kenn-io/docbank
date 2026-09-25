@@ -166,7 +166,9 @@ operation. Its request selects either a stopped install (`catalog_path` and
 holds the mutation gate while the reader writes the template and stores one
 immutable run. `GET /api/v1/migrations/runs` and
 `GET /api/v1/migrations/runs/{run_id}` return bounded run history and stay
-read-only. Browser sessions cannot call any of these routes.
+read-only. The report preserves separate album/membership and checkout/entry
+counts, along with current source bytes and retained unique blob bytes.
+Browser sessions cannot call any of these routes.
 
 The CLI and MCP inventory commands use these routes through the generated
 daemon client. MCP hides `inventory_fotobank` by default; the separate

@@ -55,9 +55,11 @@ lease.
 
 The JSON response contains the run UUID, source identity, report, owner-map
 template, and output path. The report includes owner, asset, file, byte,
-album, share, checkout, AI-result, hidden-setup, vector, and capacity counts.
-Embedding generations are marked rebuildable because Docbank will construct
-its own vector index after migration.
+album and album-membership, share, checkout and checkout-entry, AI-result,
+hidden-setup, vector, and capacity counts. Current Fotobank file bytes and
+unique embedded Docbank blob bytes are separate measurements; retained older
+versions can make the latter larger. Embedding generations are marked
+rebuildable because Docbank will construct its own vector index after migration.
 
 ## Review saved runs
 
