@@ -106,14 +106,28 @@ See [Storage](../architecture/storage.md) for the content records and
 
 Local imports inspect the first 512 bytes with Docbank's pinned signature
 detector. Recognized signatures take priority over the host's extension table,
-including JPEG, HEIC, and HEIF. The `.eml` rule remains first and always uses
+including JPEG, HEIC, and HEIF. The `.eml` rule runs first and always uses
 `message/rfc822`.
 
-The detector returns an extension mapping for broad or container results such
-as ZIP, MP4, OLE, Ogg, gzip, TIFF, and unknown bytes, and for text, JSON, and
-NDJSON types guessed from content when the extension has a mapping. This keeps
-file subtypes that the bytes cannot name, including DNG, CR2, and NEF, which
-the pinned detector sees as TIFF. An unknown extension uses the detected type.
+An extension can refine a broad detector result when it names the same MIME
+node, an alias, a child format, or another member of the `text/plain` family.
+Unknown bytes can use a valid extension mapping as their type. An unrelated,
+invalid, or binary ancestor mapping leaves the recognized detector result in
+place. Compatible resolver parameters remain on the selected value.
+
+The importer also has fixed suffix refinements for detector results that the
+pinned library cannot name as a subtype:
+
+- TIFF bytes with `.dng`, `.cr2`, or `.nef` use `image/x-adobe-dng`,
+  `image/x-canon-cr2`, or `image/x-nikon-nef`.
+- PNG or APNG bytes with `.apng` use `image/apng`.
+- Matroska bytes with `.mka` use `audio/x-matroska`.
+- XML-family bytes with `.xmp` use `application/rdf+xml`.
+- Text-family bytes with `.md` or `.markdown` use `text/markdown`.
+
+The pinned detector sees DNG, CR2, and NEF as TIFF. The suffix rules add the
+stored subtype without trusting an arbitrary host mapping. Each content version
+keeps the MIME observation selected when that version was imported.
 
 Directory arguments walk recursively. The directory's basename becomes a
 folder under `--dest`, and everything below keeps its relative structure:

@@ -104,6 +104,29 @@ func TestAddSingleFile(t *testing.T) {
 	require.NoError(t, err)
 }
 
+func TestAddRFC822HeuristicKeepsTextMIMEAndQueuesExtraction(t *testing.T) {
+	ing := newTestIngester(t)
+	ctx := t.Context()
+	raw := []byte("From: planning\nTo: engineering\n\nMeeting notes")
+	path := filepath.Join(t.TempDir(), "notes.txt")
+	require.NoError(t, os.WriteFile(path, raw, 0o644))
+
+	report, err := ing.AddPaths(ctx, []string{path}, "/inbox")
+	require.NoError(t, err)
+	require.Equal(t, 1, report.Added)
+	node, err := ing.Store.NodeByPath(ctx, "/inbox/notes.txt")
+	require.NoError(t, err)
+	require.Equal(t, "text/plain; charset=utf-8", node.MimeType)
+	versions, total, err := ing.Store.ContentVersions(ctx, node.ID, 10, 0)
+	require.NoError(t, err)
+	require.Equal(t, 1, total)
+	require.Equal(t, "text/plain; charset=utf-8", versions[0].MimeType)
+	pending, err := ing.Store.PendingTextExtractions(ctx, 10)
+	require.NoError(t, err)
+	require.Len(t, pending, 1)
+	require.Equal(t, node.BlobHash, pending[0].BlobHash)
+}
+
 func TestAddEMLDeclaresMessageRFC822WithoutChangingSource(t *testing.T) {
 	for _, name := range []string{"message.eml", "message.EML", "message.EmL"} {
 		t.Run(name, func(t *testing.T) {
@@ -170,88 +193,127 @@ func TestDetectMimeUsesRecognizedSignatureOverHostExtension(t *testing.T) {
 	}
 }
 
-func TestDetectMimeKeepsExtensionForAmbiguousContent(t *testing.T) {
-	tests := []struct {
-		name     string
-		path     string
-		head     []byte
-		detected string
+func TestDetectMimeUsesCompatibleExtensionRelationships(t *testing.T) {
+	ole := make([]byte, 512)
+	copy(ole, []byte{0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1})
+	webm := []byte("\x1aE\xdf\xa3\x01\x00\x00\x00\x00\x00\x00\x1fB\x86\x81\x01B\xf7\x81\x01B\xf2\x81\x04B\xf3\x81\x08B\x82\x84webm")
+	ogg := []byte("OggS\x00")
+	for _, tc := range []struct {
+		name      string
+		path      string
+		head      []byte
+		resolver  string
+		want      string
+		detected  string
+		wantCalls bool
 	}{
-		{name: "zip", path: "archive.docx", head: []byte("PK\x03\x04")},
-		{name: "mp4", path: "recording.m4a", head: []byte("\x00\x00\x00\x18ftyp0000")},
-		{name: "ogg", path: "audio.oga", head: []byte("OggS\x00")},
-		{name: "gzip", path: "archive.gz", head: []byte{0x1f, 0x8b}},
-		{name: "tiff", path: "camera.dng", head: []byte{0x49, 0x49, 0x2a, 0x00}},
-		{name: "xml", path: "document.svg", head: []byte(`<?xml version="1.0"?><root/>`)},
-		{name: "plain text", path: "document.md", head: []byte("plain text\n")},
-		{name: "html text subtype", path: "README.md", head: []byte("<div align=\"center\">\n<!-- badges -->\n<p>"), detected: "text/html; charset=utf-8"},
-		{name: "csv text subtype", path: "data.txt", head: []byte("a,b,c\n1,2,3\n4,5,6\n"), detected: "text/csv"},
-		{name: "json subtype", path: "data.txt", head: []byte(`{"a": 1}`), detected: "application/json"},
-		{name: "ndjson subtype", path: "data.txt", head: []byte("{\"a\": 1}\n{\"b\": 2}\n"), detected: "application/x-ndjson"},
-		{name: "unknown", path: "document.bin", head: []byte{0x01, 0x02, 0x03}},
-	}
-	for _, tc := range tests {
+		{
+			name: "same node keeps parameters", path: "archive.zip", head: []byte("PK\x03\x04"),
+			resolver: "application/zip; version=1", want: "application/zip; version=1",
+			detected: "application/zip", wantCalls: true,
+		},
+		{
+			name: "downward office descendant", path: "document.docx", head: []byte("PK\x03\x04"),
+			resolver: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+			want:     "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+			detected: "application/zip", wantCalls: true,
+		},
+		{
+			name: "ole word descendant", path: "document.doc", head: ole,
+			resolver: "application/msword", want: "application/msword",
+			detected: "application/x-ole-storage", wantCalls: true,
+		},
+		{
+			name: "ole outlook descendant", path: "message.msg", head: ole,
+			resolver: "application/vnd.ms-outlook", want: "application/vnd.ms-outlook",
+			detected: "application/x-ole-storage", wantCalls: true,
+		},
+		{
+			name: "bounded text ancestor", path: "notes.txt",
+			head:     []byte("From: planning\nTo: engineering\n\nMeeting notes"),
+			resolver: "text/plain; charset=utf-8", want: "text/plain; charset=utf-8",
+			detected: "message/rfc822", wantCalls: true,
+		},
+		{
+			name: "bounded text same node parameters", path: "document.svg",
+			head:     []byte(`<?xml version="1.0"?><svg xmlns="http://www.w3.org/2000/svg"></svg>`),
+			resolver: "image/svg+xml; profile=full", want: "image/svg+xml; profile=full",
+			detected: "image/svg+xml", wantCalls: true,
+		},
+		{
+			name: "webm alias", path: "recording.weba", head: webm,
+			resolver: "audio/webm", want: "audio/webm", detected: "video/webm", wantCalls: true,
+		},
+		{
+			name: "mp4 descendant", path: "recording.m4a",
+			head: []byte("\x00\x00\x00\x18ftyp0000"), resolver: "audio/x-m4a", want: "audio/x-m4a",
+			detected: "video/mp4", wantCalls: true,
+		},
+		{
+			name: "ogg descendant", path: "recording.oga", head: ogg,
+			resolver: "audio/ogg", want: "audio/ogg", detected: "application/ogg", wantCalls: true,
+		},
+		{
+			name: "gzip alias", path: "archive.gz", head: []byte{0x1f, 0x8b},
+			resolver: "application/x-gzip", want: "application/x-gzip", detected: "application/gzip", wantCalls: true,
+		},
+	} {
 		t.Run(tc.name, func(t *testing.T) {
-			if tc.detected != "" {
-				require.Equal(t, tc.detected, mimetype.Detect(tc.head).String())
-			}
+			require.Equal(t, tc.detected, mimetype.Detect(tc.head).String())
 			called := false
 			got := detectMimeWithExtension(tc.path, tc.head, func(string) string {
 				called = true
-				return "application/x-known-extension"
+				return tc.resolver
 			})
-			require.Equal(t, "application/x-known-extension", got)
-			require.True(t, called)
+			require.Equal(t, tc.want, got)
+			require.Equal(t, tc.wantCalls, called)
 		})
 	}
-
-	t.Run("unknown without extension keeps detector result", func(t *testing.T) {
-		called := false
-		got := detectMimeWithExtension("document", []byte{0x01, 0x02, 0x03}, func(string) string {
-			called = true
-			return ""
-		})
-		require.Equal(t, "application/octet-stream", got)
-		require.True(t, called)
-	})
 }
 
-func TestDetectMimeKeepsExtensionForOLEContainer(t *testing.T) {
-	ole := make([]byte, 512)
-	copy(ole, []byte{0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1})
+func TestDetectMimeRejectsIncompatibleExtension(t *testing.T) {
 	for _, tc := range []struct {
-		name string
-		path string
-		want string
+		name      string
+		path      string
+		head      []byte
+		resolver  string
+		want      string
+		wantCalls bool
 	}{
-		{name: "word", path: "document.doc", want: "application/msword"},
-		{name: "outlook", path: "message.msg", want: "application/vnd.ms-outlook"},
+		{
+			name: "jpeg plus octet stream", path: "photo.jpg", head: []byte{0xff, 0xd8, 0xff},
+			resolver: "application/octet-stream", want: "image/jpeg",
+		},
+		{
+			name: "heic plus video ancestor", path: "photo.heic",
+			head: []byte("\x00\x00\x00\x18ftypheic"), resolver: "video/mp4", want: "image/heic",
+		},
+		{
+			name: "zip plus octet stream", path: "archive.zip", head: []byte("PK\x03\x04"),
+			resolver: "application/octet-stream", want: "application/zip", wantCalls: true,
+		},
+		{
+			name: "zip plus unrelated value", path: "archive.zip", head: []byte("PK\x03\x04"),
+			resolver: "application/pdf", want: "application/zip", wantCalls: true,
+		},
+		{
+			name: "jpeg plus unrelated value", path: "photo.jpg", head: []byte{0xff, 0xd8, 0xff},
+			resolver: "application/x-host-dependent", want: "image/jpeg",
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			called := false
-			got := detectMimeWithExtension(tc.path, ole, func(extension string) string {
+			got := detectMimeWithExtension(tc.path, tc.head, func(string) string {
 				called = true
-				return map[string]string{
-					".doc": "application/msword", ".msg": "application/vnd.ms-outlook",
-				}[extension]
+				return tc.resolver
 			})
 			require.Equal(t, tc.want, got)
-			require.True(t, called)
+			require.Equal(t, tc.wantCalls, called)
 		})
 	}
-
-	t.Run("without extension", func(t *testing.T) {
-		called := false
-		got := detectMimeWithExtension("document", ole, func(string) string {
-			called = true
-			return ""
-		})
-		require.Equal(t, "application/x-ole-storage", got)
-		require.True(t, called)
-	})
 }
 
-func TestDetectMimeKeepsSpecificAPNGExtension(t *testing.T) {
+func TestDetectMimeUsesClosedSuffixRefinements(t *testing.T) {
 	const pngHeader = "\x89PNG\r\n\x1a\n"
 	makeAPNG := func(offset int) []byte {
 		data := make([]byte, offset+4)
@@ -259,42 +321,62 @@ func TestDetectMimeKeepsSpecificAPNGExtension(t *testing.T) {
 		copy(data[offset:], "acTL")
 		return data
 	}
+	matroska := []byte("\x1a\x45\xdf\xa3\x01\x00\x00\x00\x00\x00\x00\x23\x42\x86\x81\x01\x42\xf7\x81\x01\x42\xf2\x81\x04\x42\xf3\x81\x08\x42\x82\x88matroska")
+	xmp := []byte(`<?xml version="1.0"?><x:xmpmeta xmlns:x="adobe:ns:meta/"><rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"></rdf:RDF></x:xmpmeta>`)
 	for _, tc := range []struct {
-		name   string
-		path   string
-		head   []byte
-		want   string
-		called bool
+		name      string
+		path      string
+		head      []byte
+		resolver  string
+		want      string
+		wantCalls bool
 	}{
-		{name: "recognized apng extension", path: "animation.apng", head: makeAPNG(37), want: "image/apng", called: true},
-		{name: "recognized png extension", path: "animation.png", head: makeAPNG(37), want: "image/vnd.mozilla.apng"},
-		{name: "acTL beyond prefix", path: "animation.apng", head: makeAPNG(513)[:512], want: "image/apng", called: true},
-		{name: "generic png", path: "image.png", head: []byte(pngHeader), want: "image/png"},
-		{name: "generic png with apng extension", path: "image.apng", head: []byte(pngHeader), want: "image/apng", called: true},
+		{name: "adobe raw", path: "camera.dng", head: []byte{0x49, 0x49, 0x2a, 0x00}, resolver: "application/pdf", want: "image/x-adobe-dng"},
+		{name: "canon raw", path: "camera.cr2", head: []byte{0x49, 0x49, 0x2a, 0x00}, resolver: "application/pdf", want: "image/x-canon-cr2"},
+		{name: "nikon raw", path: "camera.nef", head: []byte{0x49, 0x49, 0x2a, 0x00}, resolver: "application/pdf", want: "image/x-nikon-nef"},
+		{name: "actual apng", path: "animation.apng", head: makeAPNG(37), resolver: "application/pdf", want: "image/apng"},
+		{name: "actual apng with png suffix", path: "animation.png", head: makeAPNG(37), resolver: "application/pdf", want: "image/vnd.mozilla.apng"},
+		{name: "apng beyond prefix", path: "animation.apng", head: makeAPNG(513)[:512], resolver: "application/pdf", want: "image/apng"},
+		{name: "generic png suffix", path: "animation.apng", head: []byte(pngHeader), resolver: "application/pdf", want: "image/apng"},
+		{name: "matroska audio", path: "audio.mka", head: matroska, resolver: "application/pdf", want: "audio/x-matroska"},
+		{name: "xmp sidecar", path: "sidecar.xmp", head: xmp, resolver: "application/pdf", want: "application/rdf+xml"},
+		{name: "markdown", path: "notes.md", head: []byte("# Meeting notes\n\nA short paragraph.\n"), resolver: "application/pdf", want: "text/markdown"},
+		{name: "markdown long suffix", path: "notes.MARKDOWN", head: []byte("# Meeting notes\n\nA short paragraph.\n"), resolver: "application/pdf", want: "text/markdown"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			called := false
-			got := detectMimeWithExtension(tc.path, tc.head, func(extension string) string {
+			got := detectMimeWithExtension(tc.path, tc.head, func(string) string {
 				called = true
-				if extension == ".apng" {
-					return "image/apng"
-				}
-				return "image/png"
+				return tc.resolver
 			})
 			require.Equal(t, tc.want, got)
-			require.Equal(t, tc.called, called)
+			require.Equal(t, tc.wantCalls, called)
 		})
 	}
 }
 
-func TestDetectMimeSniffsWhenExtensionIsUnknown(t *testing.T) {
-	called := false
-	got := detectMimeWithExtension("photo.unknown", []byte{0xff, 0xd8, 0xff}, func(string) string {
-		called = true
-		return "application/x-host-dependent"
-	})
-	require.Equal(t, "image/jpeg", got)
-	require.False(t, called)
+func TestDetectMimeUsesExtensionForUnknownBytes(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		path      string
+		resolver  string
+		want      string
+		wantCalls bool
+	}{
+		{name: "known extension", path: "document.custom", resolver: "application/x-host-dependent; version=1", want: "application/x-host-dependent; version=1", wantCalls: true},
+		{name: "empty extension", path: "document", resolver: "", want: "application/octet-stream", wantCalls: true},
+		{name: "invalid extension value", path: "document.custom", resolver: "not a media type", want: "application/octet-stream", wantCalls: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			called := false
+			got := detectMimeWithExtension(tc.path, []byte{0x01, 0x02, 0x03}, func(string) string {
+				called = true
+				return tc.resolver
+			})
+			require.Equal(t, tc.want, got)
+			require.Equal(t, tc.wantCalls, called)
+		})
+	}
 }
 
 func TestDetectMimeUsesNativeWindowsJPEGRegistry(t *testing.T) {

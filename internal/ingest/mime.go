@@ -3,6 +3,7 @@ package ingest
 import (
 	"mime"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/gabriel-vasile/mimetype"
@@ -13,36 +14,143 @@ func detectMime(path string, head []byte) string {
 	return detectMimeWithExtension(path, head, mime.TypeByExtension)
 }
 
-func detectMimeWithExtension(path string, head []byte, byExtension func(string) string) string {
+func detectMimeWithExtension(
+	path string,
+	head []byte,
+	byExtension func(string) string,
+) string {
 	extension := filepath.Ext(path)
-	if len(extension) == 4 && extension[0] == '.' &&
-		(extension[1] == 'e' || extension[1] == 'E') &&
-		(extension[2] == 'm' || extension[2] == 'M') &&
-		(extension[3] == 'l' || extension[3] == 'L') {
+	if strings.EqualFold(extension, ".eml") {
 		return "message/rfc822"
 	}
 
-	detected := mimetype.Detect(head).String()
-	mediaType, _, err := mime.ParseMediaType(detected)
-	if err != nil {
-		mediaType = detected
+	detected := mimetype.Detect(head)
+	if detected.Is("application/octet-stream") {
+		return extensionMIME(extension, byExtension, detected.String())
 	}
 
-	switch {
-	case strings.HasPrefix(mediaType, "text/"), mediaType == "application/json",
-		mediaType == "application/x-ndjson", mediaType == "application/octet-stream",
-		mediaType == "application/zip", mediaType == "application/gzip",
-		mediaType == "application/ogg", mediaType == "application/x-ole-storage",
-		mediaType == "image/tiff", mediaType == "video/mp4":
-		if byExt := byExtension(extension); byExt != "" {
-			return byExt
-		}
-	case mediaType == "image/png" || mediaType == "image/vnd.mozilla.apng":
-		if strings.EqualFold(extension, ".apng") {
-			if byExt := byExtension(extension); byExt == "image/apng" {
-				return byExt
-			}
+	if closedRefinement := closedMIMERefinement(detected, extension); closedRefinement != "" {
+		return closedRefinement
+	}
+	if !extensionCanRefine(detected) {
+		return detected.String()
+	}
+
+	if extensionMIME, ok := parsedExtensionMIME(extension, byExtension); ok &&
+		compatibleMIME(detected, extensionMIME) {
+		return extensionMIME
+	}
+	return detected.String()
+}
+
+func extensionMIME(
+	extension string,
+	byExtension func(string) string,
+	fallback string,
+) string {
+	value, ok := parsedExtensionMIME(extension, byExtension)
+	if !ok {
+		return fallback
+	}
+	return value
+}
+
+func parsedExtensionMIME(
+	extension string,
+	byExtension func(string) string,
+) (string, bool) {
+	value := byExtension(extension)
+	mediaType, _, err := mime.ParseMediaType(value)
+	if err != nil || mediaType == "" {
+		return "", false
+	}
+	return value, true
+}
+
+func compatibleMIME(detected *mimetype.MIME, extension string) bool {
+	extensionMediaType, _, err := mime.ParseMediaType(extension)
+	if err != nil {
+		return false
+	}
+	extensionNode := mimetype.Lookup(extensionMediaType)
+	if extensionNode == nil {
+		return false
+	}
+	if sameMIMENode(detected, extensionNode) || descendantOf(extensionNode, detected) {
+		return true
+	}
+	return textFamilyMIME(detected) && textFamilyMIME(extensionNode)
+}
+
+func sameMIMENode(left, right *mimetype.MIME) bool {
+	return left.Is(right.String()) || right.Is(left.String())
+}
+
+func descendantOf(child, ancestor *mimetype.MIME) bool {
+	if ancestor == nil {
+		return false
+	}
+	for current := child; current != nil; current = current.Parent() {
+		if sameMIMENode(current, ancestor) {
+			return true
 		}
 	}
-	return detected
+	return false
+}
+
+func textFamilyMIME(value *mimetype.MIME) bool {
+	text := mimetype.Lookup("text/plain")
+	return text != nil && descendantOf(value, text)
+}
+
+func extensionCanRefine(detected *mimetype.MIME) bool {
+	if textFamilyMIME(detected) {
+		return true
+	}
+	// These detector roots leave subtype selection to the filename.
+	return slices.ContainsFunc([]string{
+		"application/zip",
+		"application/x-ole-storage",
+		"application/ogg",
+		"application/gzip",
+		"video/mp4",
+		"video/webm",
+	}, detected.Is)
+}
+
+func closedMIMERefinement(
+	detected *mimetype.MIME,
+	extension string,
+) string {
+	switch strings.ToLower(extension) {
+	case ".dng":
+		if detected.Is("image/tiff") {
+			return "image/x-adobe-dng"
+		}
+	case ".cr2":
+		if detected.Is("image/tiff") {
+			return "image/x-canon-cr2"
+		}
+	case ".nef":
+		if detected.Is("image/tiff") {
+			return "image/x-nikon-nef"
+		}
+	case ".apng":
+		if descendantOf(detected, mimetype.Lookup("image/png")) {
+			return "image/apng"
+		}
+	case ".mka":
+		if detected.Is("video/x-matroska") {
+			return "audio/x-matroska"
+		}
+	case ".xmp":
+		if descendantOf(detected, mimetype.Lookup("text/xml")) {
+			return "application/rdf+xml"
+		}
+	case ".md", ".markdown":
+		if textFamilyMIME(detected) {
+			return "text/markdown"
+		}
+	}
+	return ""
 }
