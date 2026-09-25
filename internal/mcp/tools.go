@@ -175,6 +175,24 @@ var applyProductionChangesToolDefinition = toolDefinition{
 	schemas:     applyProductionChangesSchemas, write: true, idempotent: true,
 }
 
+var finalizeProductionDraftToolDefinition = toolDefinition{
+	name: "finalize_production_draft", title: "Finalize production draft",
+	description: "Finalize one fully reviewed revision under its exact ETag and operation UUID.",
+	schemas:     finalizeProductionDraftSchemas, write: true, idempotent: true,
+}
+
+var admitProductionJobToolDefinition = toolDefinition{
+	name: "admit_production_job", title: "Admit production job",
+	description: "Admit or replay one job from finalized authority with explicit job and operation UUIDs.",
+	schemas:     admitProductionJobSchemas, write: true, idempotent: true,
+}
+
+var cancelProductionJobToolDefinition = toolDefinition{
+	name: "cancel_production_job", title: "Cancel production job",
+	description: "Cancel one exact production job with its ETag and operation UUID.",
+	schemas:     cancelProductionJobSchemas, write: true, idempotent: true, destructive: true,
+}
+
 func toolCatalog(allowProcessing bool) []*sdkmcp.Tool {
 	definitions := readToolDefinitions
 	if allowProcessing {
@@ -185,7 +203,8 @@ func toolCatalog(allowProcessing bool) []*sdkmcp.Tool {
 			createProductionSetToolDefinition, forkProductionDraftToolDefinition,
 			editProductionInstructionsToolDefinition, sealProductionMembershipToolDefinition,
 			reviewProductionMemberToolDefinition, appendProductionMembersToolDefinition,
-			applyProductionChangesToolDefinition)
+			applyProductionChangesToolDefinition, finalizeProductionDraftToolDefinition,
+			admitProductionJobToolDefinition, cancelProductionJobToolDefinition)
 	}
 	tools := make([]*sdkmcp.Tool, 0, len(definitions))
 	for _, definition := range definitions {
@@ -233,6 +252,9 @@ func registerToolCatalog(
 			handler = productionReviewWriteToolHandler(lease, tool.Name, output, logger)
 		case appendProductionMembersToolDefinition.name, applyProductionChangesToolDefinition.name:
 			handler = productionChangesWriteToolHandler(lease, tool.Name, output, logger)
+		case finalizeProductionDraftToolDefinition.name, admitProductionJobToolDefinition.name,
+			cancelProductionJobToolDefinition.name:
+			handler = productionJobWriteToolHandler(lease, tool.Name, output, logger)
 		default:
 			handler = readToolHandler(lease, plans, tool.Name, output, logger)
 		}
@@ -441,6 +463,12 @@ func stableDomainError(err error) (string, int) {
 		return facts.Code, 0
 	case "production_operation_conflict", "production_revision_conflict":
 		return facts.Code, 0
+	case "production_job_conflict", "production_numbering_conflict", "invalid_production",
+		"source_stale", "decision_conflict", "selection_expansion_required", "mapping_incomplete",
+		"invalid_mode", "render_limit", "changed_payload", "approval_required", "approval_stale",
+		"policy_unsatisfied", "privilege_log_required", "privilege_log_stale", "retention_required",
+		"artifact_missing", "artifact_mismatch", "invalid_contract", "limit":
+		return facts.Code, 0
 	default:
 		return "", 0
 	}
@@ -484,6 +512,21 @@ func domainErrorMessage(code string) string {
 		return "The operation ID names different production input."
 	case "production_revision_conflict":
 		return "The production revision changed. Read its current ETag before editing."
+	case "production_job_conflict":
+		return "The production job cannot be changed in its current state."
+	case "production_numbering_conflict":
+		return "The production numbering authority changed. Review the namespace and retry."
+	case "source_stale", "changed_payload", "approval_stale", "privilege_log_stale",
+		"artifact_missing", "artifact_mismatch":
+		return "Production inputs or required evidence changed. Review current authority."
+	case "approval_required", "policy_unsatisfied", "privilege_log_required", "retention_required":
+		return "The selected production policy requires more evidence before this operation."
+	case "decision_conflict", "selection_expansion_required", "mapping_incomplete", "invalid_mode":
+		return "The production selection needs review before this operation."
+	case "render_limit", "limit":
+		return "The production input exceeds a configured limit."
+	case "invalid_contract", "invalid_production":
+		return "The production input is invalid."
 	default:
 		return "The Docbank operation could not be completed."
 	}
