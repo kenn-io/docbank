@@ -190,6 +190,9 @@ func ReadExactArtifact(
 	}
 	stream, size, err := blobs.OpenStreamContext(ctx, hash)
 	if err != nil {
+		if classified := packstore.ClassifyIntegrityError(err); errors.Is(classified, packstore.ErrPhysicalCorrupt) {
+			return nil, fmt.Errorf("%w: opening blob stream: %w", ErrMediaArtifactCorrupt, classified)
+		}
 		return nil, fmt.Errorf("%w: %w", ErrMediaArtifactUnavailable, err)
 	}
 	if stream == nil {

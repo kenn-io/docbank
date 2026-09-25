@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"strings"
@@ -18,6 +19,7 @@ import (
 
 	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/internal/store"
+	"go.kenn.io/kit/pack"
 	"go.kenn.io/kit/packstore"
 )
 
@@ -55,6 +57,18 @@ func TestReadExactArtifactRejectsDeclaredOversizeBeforeOpening(t *testing.T) {
 
 	_, err = ReadExactArtifact(t.Context(), blobs, hash, int64(len(raw))+1, int64(len(raw))+1)
 	require.ErrorIs(t, err, ErrMediaArtifactCorrupt)
+}
+
+func TestReadExactArtifactClassifiesOpenTimeIntegrityErrors(t *testing.T) {
+	raw := []byte("synthetic artifact")
+	blobs := &artifactReaderFixture{openErr: fmt.Errorf("opening compressed header: %w", pack.ErrBadMagic)}
+
+	_, err := ReadExactArtifact(t.Context(), blobs, mediaTestHash(raw), int64(len(raw)), 64<<20)
+
+	require.ErrorIs(t, err, ErrMediaArtifactCorrupt)
+	require.ErrorIs(t, err, packstore.ErrPhysicalCorrupt)
+	require.NotErrorIs(t, err, ErrMediaArtifactUnavailable)
+	require.Equal(t, 1, blobs.opens)
 }
 
 func TestReadExactArtifactVerifiesClosesAndHonorsCancellation(t *testing.T) {
@@ -325,15 +339,19 @@ func mediaTestHash(raw []byte) string {
 }
 
 type artifactReaderFixture struct {
-	stream *artifactStreamFixture
-	size   int64
-	opens  int
+	stream  *artifactStreamFixture
+	size    int64
+	opens   int
+	openErr error
 }
 
 func (reader *artifactReaderFixture) OpenStreamContext(
 	_ context.Context, _ string,
 ) (packstore.VerifiedReadCloser, int64, error) {
 	reader.opens++
+	if reader.openErr != nil {
+		return nil, 0, reader.openErr
+	}
 	return reader.stream, reader.size, nil
 }
 
