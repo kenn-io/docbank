@@ -29,10 +29,10 @@ func productionDraftSchema() schema {
 
 func listProductionSetsSchemas() (schema, schema) {
 	return rootObjectSchema(schema{
-			"cursor": stringSchema(2048), "limit": integerSchema(1, redaction.MaxProductionPage),
+			schemaCursorField: stringSchema(2048), "limit": integerSchema(1, redaction.MaxProductionPage),
 		}), rootObjectSchema(withPrivateCache(schema{
-			"items":       arraySchema(productionSetSchema(), redaction.MaxProductionPage), //nolint:goconst // JSON Schema vocabulary is repeated across tool definitions.
-			"next_cursor": stringSchema(2048),
+			"items":               arraySchema(productionSetSchema(), redaction.MaxProductionPage), //nolint:goconst // JSON Schema vocabulary is repeated across tool definitions.
+			schemaNextCursorField: stringSchema(2048),
 		}), cacheRequired("items", "next_cursor")...)
 }
 

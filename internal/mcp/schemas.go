@@ -12,6 +12,8 @@ const (
 	packageIDField        = "package_id"
 	schemaStateField      = "state"
 	schemaLimitField      = "limit"
+	schemaCursorField     = "cursor"
+	schemaNextCursorField = "next_cursor"
 	jsonSchemaConst       = "const"
 	maxToolResponseBytes  = 1 << 20
 	maxToolErrorBytes     = 1024
@@ -158,10 +160,10 @@ func getPackagePreflightSchemas() (schema, schema) {
 
 func listPackagePreflightDiagnosticsSchemas() (schema, schema) {
 	return rootObjectSchema(schema{
-			"preflight_id": uuidSchema(), "cursor": stringSchema(maxCursorCharacters), schemaLimitField: integerSchema(1, 100),
+			"preflight_id": uuidSchema(), schemaCursorField: stringSchema(maxCursorCharacters), schemaLimitField: integerSchema(1, 100),
 		}, "preflight_id"), rootObjectSchema(withPrivateCache(schema{
 			"diagnostics": arraySchema(packageDiagnosticSchema(), 100), "total": integerSchema(0, 0),
-			"next_cursor": stringSchema(maxCursorCharacters),
+			schemaNextCursorField: stringSchema(maxCursorCharacters),
 		}), cacheRequired("diagnostics", "total")...)
 }
 
@@ -182,14 +184,14 @@ func custodianAssignmentProperties() schema {
 func custodianPageOutputSchema() schema {
 	return rootObjectSchema(withPrivateCache(schema{
 		"items": arraySchema(custodianAssignmentSchema(), 250), "total": integerSchema(0, 0),
-		"next_cursor": stringSchema(maxCursorCharacters),
+		schemaNextCursorField: stringSchema(maxCursorCharacters),
 	}), cacheRequired("items", "total")...)
 }
 
 func listPackageCustodiansSchemas() (schema, schema) {
 	return rootObjectSchema(schema{
 		packageIDField: uuidSchema(), "row_id": schema{"type": "string", "minLength": 64, "maxLength": 64, "pattern": "^[0-9a-f]{64}$"},
-		"unresolved_only": booleanSchema(), "cursor": stringSchema(maxCursorCharacters), schemaLimitField: integerSchema(1, 250),
+		"unresolved_only": booleanSchema(), schemaCursorField: stringSchema(maxCursorCharacters), schemaLimitField: integerSchema(1, 250),
 	}, packageIDField), custodianPageOutputSchema()
 }
 
@@ -199,9 +201,9 @@ func findPeopleSchemas() (schema, schema) {
 		"revision": integerSchema(1, 0),
 	}, "person_id", "display_name", schemaStateField, "revision")
 	return rootObjectSchema(schema{
-			"query": stringSchema(200), "cursor": stringSchema(maxCursorCharacters), schemaLimitField: integerSchema(1, 250),
+			"query": stringSchema(200), schemaCursorField: stringSchema(maxCursorCharacters), schemaLimitField: integerSchema(1, 250),
 		}), rootObjectSchema(withPrivateCache(schema{
-			"items": arraySchema(person, 250), "next_cursor": stringSchema(maxCursorCharacters),
+			"items": arraySchema(person, 250), schemaNextCursorField: stringSchema(maxCursorCharacters),
 		}), cacheRequired("items")...)
 }
 
@@ -223,9 +225,9 @@ func assignPackageCustodianSchemas() (schema, schema) {
 
 func listPackagesSchemas() (schema, schema) {
 	return rootObjectSchema(schema{
-			"direction": enumSchema("received", "produced"),
-			"page_size": integerSchema(1, 250),
-			"cursor":    uuidSchema(),
+			"direction":       enumSchema("received", "produced"),
+			"page_size":       integerSchema(1, 250),
+			schemaCursorField: uuidSchema(),
 		}), rootObjectSchema(withPrivateCache(schema{
 			"items":     arraySchema(schema{"type": "object"}, 250),
 			"direction": enumSchema("received", "produced"),
@@ -275,10 +277,10 @@ func getPackageRecordSchemas() (schema, schema) {
 func lookupBatesLabelSchemas() (schema, schema) {
 	return rootObjectSchema(schema{
 			"label": stringSchema(256), packageIDField: uuidSchema(), "label_set": stringSchema(256),
-			"provenance": enumSchema("received", "assigned"), "cursor": stringSchema(maxCursorCharacters),
+			"provenance": enumSchema("received", "assigned"), schemaCursorField: stringSchema(maxCursorCharacters),
 			"page_size": integerSchema(1, 250),
 		}, "label"), rootObjectSchema(withPrivateCache(schema{
-			"items": arraySchema(schema{"type": "object"}, 250), "next_cursor": stringSchema(maxCursorCharacters),
+			"items": arraySchema(schema{"type": "object"}, 250), schemaNextCursorField: stringSchema(maxCursorCharacters),
 			schemaLimitField: integerSchema(1, 250),
 		}), cacheRequired("items", schemaLimitField)...)
 }
@@ -327,10 +329,10 @@ func batesAllocationOutputSchema() schema {
 }
 
 func listBatesNamespacesSchemas() (schema, schema) {
-	input := rootObjectSchema(schema{"cursor": uuidSchema(), schemaLimitField: integerSchema(1, maxBatesLabels)})
+	input := rootObjectSchema(schema{schemaCursorField: uuidSchema(), schemaLimitField: integerSchema(1, maxBatesLabels)})
 	output := rootObjectSchema(withPrivateCache(schema{
 		"items": arraySchema(batesNamespaceSchema(), maxBatesLabels), "total": integerSchema(0, 0),
-		"next_cursor": uuidSchema(),
+		schemaNextCursorField: uuidSchema(),
 	}), cacheRequired("items", "total")...)
 	return input, output
 }
@@ -422,7 +424,7 @@ func publishBatesExportSchemas() (schema, schema) {
 func findBatesExportsSchemas() (schema, schema) {
 	input := rootObjectSchema(schema{
 		"bates_label": stringSchema(256), "custodian_label": stringSchema(200), "person_id": uuidSchema(),
-		"cursor": stringSchema(maxCursorCharacters), schemaLimitField: integerSchema(1, 250),
+		schemaCursorField: stringSchema(maxCursorCharacters), schemaLimitField: integerSchema(1, 250),
 	})
 	input["dependentSchemas"] = schema{
 		"bates_label":     selectorExcludes("custodian_label", "person_id"),
@@ -444,7 +446,7 @@ func findBatesExportsSchemas() (schema, schema) {
 		"evidence_truncated": booleanSchema(), "evidence_cursor": stringSchema(maxCursorCharacters),
 	}, "artifact_id", "allocation_id", "snapshot_id", "blob_sha256", "size", "media_type", "page_count", "manifest_sha256", schemaStateField, "created_at", "evidence", "evidence_truncated")
 	return input, rootObjectSchema(withPrivateCache(schema{
-		"items": arraySchema(candidate, 250), "next_cursor": stringSchema(maxCursorCharacters),
+		"items": arraySchema(candidate, 250), schemaNextCursorField: stringSchema(maxCursorCharacters),
 	}), cacheRequired("items")...)
 }
 
@@ -601,20 +603,20 @@ func getVaultInfoSchemas() (schema, schema) {
 
 func listDocumentsSchemas() (schema, schema) {
 	input := rootObjectSchema(schema{
-		"path_prefix": schema{"type": "string", "maxLength": maxPathCharacters, "pattern": "^/"},
-		"sort":        enumSchema("path", "name", "modified_at", "size", "media_type"),
-		"direction":   enumSchema("asc", "desc"),
-		"page_size":   integerSchema(1, 250),
-		"cursor":      cursorSchema(),
-	})
-	output := rootObjectSchema(withPrivateCache(schema{
 		"path_prefix":     schema{"type": "string", "maxLength": maxPathCharacters, "pattern": "^/"},
 		"sort":            enumSchema("path", "name", "modified_at", "size", "media_type"),
 		"direction":       enumSchema("asc", "desc"),
 		"page_size":       integerSchema(1, 250),
-		"items":           arraySchema(documentSummarySchema(), 250),
-		"next_cursor":     cursorSchema(),
-		"previous_cursor": cursorSchema(),
+		schemaCursorField: cursorSchema(),
+	})
+	output := rootObjectSchema(withPrivateCache(schema{
+		"path_prefix":         schema{"type": "string", "maxLength": maxPathCharacters, "pattern": "^/"},
+		"sort":                enumSchema("path", "name", "modified_at", "size", "media_type"),
+		"direction":           enumSchema("asc", "desc"),
+		"page_size":           integerSchema(1, 250),
+		"items":               arraySchema(documentSummarySchema(), 250),
+		schemaNextCursorField: cursorSchema(),
+		"previous_cursor":     cursorSchema(),
 	}), cacheRequired("path_prefix", "sort", "direction", "page_size", "items")...)
 	return input, output
 }

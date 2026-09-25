@@ -66,6 +66,9 @@ var readToolDefinitions = []toolDefinition{
 	{name: "list_production_sets", title: "List production sets", description: "Page through bounded production set summaries.", schemas: listProductionSetsSchemas},
 	{name: "get_production_set", title: "Get production set", description: "Read one exact production set.", schemas: getProductionSetSchemas},
 	{name: "get_production_draft", title: "Get production draft", description: "Read one exact production revision and ETag.", schemas: getProductionDraftSchemas},
+	{name: "list_production_members", title: "List production members", description: "Page through bounded member summaries for an exact revision.", schemas: listProductionMembersSchemas},
+	{name: "list_production_decisions", title: "List production decisions", description: "Page through bounded decision summaries for an exact revision.", schemas: listProductionDecisionsSchemas},
+	{name: "get_production_job", title: "Get production job", description: "Read one exact production job status.", schemas: getProductionJobSchemas},
 }
 
 var processingToolDefinition = toolDefinition{
