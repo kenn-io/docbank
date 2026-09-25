@@ -26,15 +26,17 @@ type MigrationSchema struct {
 }
 
 type MigrationCounts struct {
-	Owners      int64 `json:"owners"`
-	Assets      int64 `json:"assets"`
-	Files       int64 `json:"files"`
-	Bytes       int64 `json:"bytes"`
-	Albums      int64 `json:"albums"`
-	Shares      int64 `json:"shares"`
-	Checkouts   int64 `json:"checkouts"`
-	AIResults   int64 `json:"ai_results"`
-	HiddenSetup int64 `json:"hidden_setup"`
+	Owners           int64 `json:"owners"`
+	Assets           int64 `json:"assets"`
+	Files            int64 `json:"files"`
+	Bytes            int64 `json:"bytes"`
+	Albums           int64 `json:"albums"`
+	AlbumMemberships int64 `json:"album_memberships"`
+	Shares           int64 `json:"shares"`
+	Checkouts        int64 `json:"checkouts"`
+	CheckoutEntries  int64 `json:"checkout_entries"`
+	AIResults        int64 `json:"ai_results"`
+	HiddenSetup      int64 `json:"hidden_setup"`
 }
 
 type MigrationVectorGeneration struct {
@@ -96,7 +98,7 @@ func fromPhotoMigrationRun(run store.PhotoMigrationRun) MigrationRun {
 func fromPhotoMigrationReport(report photomigration.Report) MigrationReport {
 	result := MigrationReport{Source: MigrationSource{Kind: report.Source.Kind, Identity: report.Source.Identity},
 		Schema:   MigrationSchema{CatalogVersion: report.Schema.CatalogVersion, CatalogFingerprint: report.Schema.CatalogFingerprint, EmbeddedDocbankVersion: report.Schema.EmbeddedDocbankVersion, ArchiveMetadataFormat: report.Schema.ArchiveMetadataFormat},
-		Counts:   MigrationCounts{Owners: report.Counts.Owners, Assets: report.Counts.Assets, Files: report.Counts.Files, Bytes: report.Counts.Bytes, Albums: report.Counts.Albums, Shares: report.Counts.Shares, Checkouts: report.Counts.Checkouts, AIResults: report.Counts.AIResults, HiddenSetup: report.Counts.HiddenSetup},
+		Counts:   MigrationCounts{Owners: report.Counts.Owners, Assets: report.Counts.Assets, Files: report.Counts.Files, Bytes: report.Counts.Bytes, Albums: report.Counts.Albums, AlbumMemberships: report.Counts.AlbumMemberships, Shares: report.Counts.Shares, Checkouts: report.Counts.Checkouts, CheckoutEntries: report.Counts.CheckoutEntries, AIResults: report.Counts.AIResults, HiddenSetup: report.Counts.HiddenSetup},
 		Capacity: MigrationCapacity{SourceBytes: report.Capacity.SourceBytes, UniqueBlobBytes: report.Capacity.UniqueBlobBytes, MinimumContentBytes: report.Capacity.MinimumContentBytes}, CreatedAt: report.CreatedAt}
 	for _, vector := range report.Vectors {
 		result.Vectors = append(result.Vectors, MigrationVectorGeneration{ID: vector.ID, Fingerprint: vector.Fingerprint, State: vector.State, Rebuildable: vector.Rebuildable})

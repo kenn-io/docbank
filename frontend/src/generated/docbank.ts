@@ -3243,9 +3243,11 @@ export interface MigrationCapacity {
 
 export interface MigrationCounts {
   ai_results: number;
+  album_memberships: number;
   albums: number;
   assets: number;
   bytes: number;
+  checkout_entries: number;
   checkouts: number;
   files: number;
   hidden_setup: number;

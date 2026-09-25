@@ -7829,6 +7829,9 @@ components:
         ai_results:
           format: int64
           type: integer
+        album_memberships:
+          format: int64
+          type: integer
         albums:
           format: int64
           type: integer
@@ -7836,6 +7839,9 @@ components:
           format: int64
           type: integer
         bytes:
+          format: int64
+          type: integer
+        checkout_entries:
           format: int64
           type: integer
         checkouts:
@@ -7859,8 +7865,10 @@ components:
         - files
         - bytes
         - albums
+        - album_memberships
         - shares
         - checkouts
+        - checkout_entries
         - ai_results
         - hidden_setup
       type: object
