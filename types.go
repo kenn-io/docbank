@@ -175,6 +175,40 @@ type MediaReceipt struct {
 	SuppliedInputID  string `json:"supplied_input_id,omitempty"`
 }
 
+type MediaTranscriptRequest struct {
+	SourceID         string
+	SourceVersionID  string
+	ContentVersionID string
+}
+
+type MediaTranscriptUnit struct {
+	Text    string
+	StartMS *int64
+	EndMS   *int64
+	Speaker string
+}
+
+type MediaTranscriptEvidence struct {
+	Origin       string
+	Provider     string
+	Language     string
+	Completeness string
+	Truncated    bool
+	HasOmissions bool
+	Units        []MediaTranscriptUnit
+}
+
+type MediaTranscript struct {
+	VaultUID         string
+	SourceID         string
+	SourceVersionID  string
+	ContentVersionID string
+	EvidenceState    string
+	CoverageState    string
+	OperationState   string
+	Transcript       *MediaTranscriptEvidence
+}
+
 type MediaArtifactRequest struct {
 	OperationID, SourceID, OccurrenceID string
 	Kind, Origin, Provider, Language    string

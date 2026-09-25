@@ -61,6 +61,27 @@ func registerMediaRoutes(mux *http.ServeMux, api huma.API, d Deps, g *gate) {
 			return &receiptOutput{Body: fromMediaReceipt(receipt)}, nil
 		})
 
+	type transcriptOutput struct{ Body MediaTranscript }
+	huma.Register(api, huma.Operation{OperationID: "getMediaTranscript", Method: http.MethodGet,
+		Path:    "/api/v1/media/sources/{source_id}/versions/{source_version_id}/transcript",
+		Summary: "Read one exact retained media transcript"},
+		func(ctx context.Context, input *struct {
+			SourceID         string `path:"source_id" minLength:"1" maxLength:"256"`
+			SourceVersionID  string `path:"source_version_id" minLength:"1" maxLength:"256"`
+			ContentVersionID string `query:"content_version_id" required:"true" minLength:"1" maxLength:"256"`
+		}) (*transcriptOutput, error) {
+			if d.Processing == nil {
+				return nil, mediaUnavailable()
+			}
+			transcript, err := d.Processing.MediaTranscript(ctx, processing.MediaTranscriptRequest{
+				SourceID: input.SourceID, SourceVersionID: input.SourceVersionID,
+				ContentVersionID: input.ContentVersionID})
+			if err != nil {
+				return nil, fromMediaError(err)
+			}
+			return &transcriptOutput{Body: fromMediaTranscript(transcript)}, nil
+		})
+
 	huma.Register(api, huma.Operation{OperationID: "retryMediaSource", Method: http.MethodPost,
 		Path: "/api/v1/media/sources/{source_id}/retry", Summary: "Retry explicit processing for one source",
 		BodyReadTimeout: -1},
@@ -466,6 +487,26 @@ func fromMediaReceipt(value processing.MediaReceipt) MediaReceipt {
 	return result
 }
 
+func fromMediaTranscript(value processing.MediaTranscript) MediaTranscript {
+	result := MediaTranscript{VaultUID: value.VaultUID, SourceID: value.SourceID,
+		SourceVersionID: value.SourceVersionID, ContentVersionID: value.ContentVersionID,
+		EvidenceState: value.EvidenceState, CoverageState: value.CoverageState,
+		OperationState: value.OperationState}
+	if value.Transcript == nil {
+		return result
+	}
+	result.Transcript = &MediaTranscriptEvidence{Origin: value.Transcript.Origin,
+		Provider: value.Transcript.Provider, Language: value.Transcript.Language,
+		Completeness: value.Transcript.Completeness, Truncated: value.Transcript.Truncated,
+		HasOmissions: value.Transcript.HasOmissions,
+		Units:        make([]MediaTranscriptUnit, len(value.Transcript.Units))}
+	for index, unit := range value.Transcript.Units {
+		result.Transcript.Units[index] = MediaTranscriptUnit{Text: unit.Text,
+			StartMS: unit.StartMS, EndMS: unit.EndMS, Speaker: unit.Speaker}
+	}
+	return result
+}
+
 func fromMediaSourcePage(value processing.MediaSourcePage) MediaSourcePage {
 	result := MediaSourcePage{Items: make([]MediaSourceRow, len(value.Items)), Total: value.Total, NextCursor: value.NextCursor}
 	for index, item := range value.Items {
@@ -517,8 +558,22 @@ func fromMediaError(err error) *Error {
 		{store.ErrMediaOperationConflict, http.StatusConflict, "operation_conflict"},
 		{store.ErrMediaOccurrenceConflict, http.StatusConflict, "occurrence_conflict"},
 		{store.ErrMediaSourceConflict, http.StatusConflict, "source_conflict"},
+		{processing.ErrMediaTranscriptInvalid, http.StatusUnprocessableEntity, "validation"},
+		{processing.ErrMediaTranscriptOversize, http.StatusRequestEntityTooLarge, "media_transcript_too_large"},
+		{processing.ErrMediaTranscriptUnavailable, http.StatusServiceUnavailable, "media_transcript_unavailable"},
+		{processing.ErrMediaTranscriptCorrupt, http.StatusInternalServerError, "media_transcript_corrupt"},
 	} {
 		if errors.Is(err, item.target) {
+			switch item.target {
+			case processing.ErrMediaTranscriptInvalid:
+				return NewError(item.status, item.code, "media transcript request is invalid")
+			case processing.ErrMediaTranscriptOversize:
+				return NewError(item.status, item.code, "media transcript exceeds its size limit")
+			case processing.ErrMediaTranscriptUnavailable:
+				return NewError(item.status, item.code, "media transcript evidence is unavailable")
+			case processing.ErrMediaTranscriptCorrupt:
+				return NewError(item.status, item.code, "media transcript evidence is corrupt")
+			}
 			return NewError(item.status, item.code, err.Error())
 		}
 	}

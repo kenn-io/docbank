@@ -7713,6 +7713,99 @@ components:
       x-go-type-import:
         path: go.kenn.io/docbank/internal/api
         name: api
+    MediaTranscript:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/MediaTranscript.json
+          format: uri
+          readOnly: true
+          type: string
+        content_version_id:
+          type: string
+        coverage_state:
+          type: string
+        evidence_state:
+          type: string
+        operation_state:
+          type: string
+        source_id:
+          type: string
+        source_version_id:
+          type: string
+        transcript:
+          $ref: "#/components/schemas/MediaTranscriptEvidence"
+        vault_uid:
+          type: string
+      required:
+        - vault_uid
+        - source_id
+        - source_version_id
+        - content_version_id
+        - evidence_state
+        - coverage_state
+        - operation_state
+      type: object
+      x-go-type: api.MediaTranscript
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
+    MediaTranscriptEvidence:
+      additionalProperties: false
+      properties:
+        completeness:
+          type: string
+        has_omissions:
+          type: boolean
+        language:
+          type: string
+        origin:
+          type: string
+        provider:
+          type: string
+        truncated:
+          type: boolean
+        units:
+          items:
+            $ref: "#/components/schemas/MediaTranscriptUnit"
+          type: array
+      required:
+        - origin
+        - completeness
+        - truncated
+        - has_omissions
+        - units
+      type: object
+      x-go-type: api.MediaTranscriptEvidence
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
+    MediaTranscriptUnit:
+      additionalProperties: false
+      properties:
+        end_ms:
+          format: int64
+          type:
+            - integer
+            - "null"
+        speaker:
+          type: string
+        start_ms:
+          format: int64
+          type:
+            - integer
+            - "null"
+        text:
+          type: string
+      required:
+        - text
+      type: object
+      x-go-type: api.MediaTranscriptUnit
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     Member:
       additionalProperties: false
       properties:
@@ -17304,6 +17397,46 @@ paths:
                 $ref: "#/components/schemas/Error"
           description: Error
       summary: Retry explicit processing for one source
+  /api/v1/media/sources/{source_id}/versions/{source_version_id}/transcript:
+    get:
+      operationId: getMediaTranscript
+      parameters:
+        - in: path
+          name: source_id
+          required: true
+          schema:
+            maxLength: 256
+            minLength: 1
+            type: string
+        - in: path
+          name: source_version_id
+          required: true
+          schema:
+            maxLength: 256
+            minLength: 1
+            type: string
+        - explode: false
+          in: query
+          name: content_version_id
+          required: true
+          schema:
+            maxLength: 256
+            minLength: 1
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MediaTranscript"
+          description: OK
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: Read one exact retained media transcript
   /api/v1/nodes:
     post:
       description: kind must be "dir"; file creation is POST /api/v1/ingest for server-side paths or digest-checked POST /api/v1/uploads for remote bytes.

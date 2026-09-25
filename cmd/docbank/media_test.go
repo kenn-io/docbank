@@ -38,3 +38,9 @@ func TestOpenMediaUploadUsesFixedMediaTypes(t *testing.T) {
 		})
 	}
 }
+
+func TestMediaTranscriptCLIRequiresStableVersionFlags(t *testing.T) {
+	require.Equal(t, "transcript <source-id>", mediaTranscriptCmd.Use)
+	require.NotNil(t, mediaTranscriptCmd.Flags().Lookup("source-version-id"))
+	require.NotNil(t, mediaTranscriptCmd.Flags().Lookup("content-version-id"))
+}

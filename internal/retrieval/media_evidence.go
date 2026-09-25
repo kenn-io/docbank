@@ -11,6 +11,7 @@ import (
 	"sync"
 
 	"go.kenn.io/docbank/document"
+	"go.kenn.io/docbank/internal/canonical"
 	"go.kenn.io/docbank/internal/store"
 	"go.kenn.io/kit/packstore"
 )
@@ -21,7 +22,15 @@ type MediaEvidenceBlobReader interface {
 	OpenStreamContext(ctx context.Context, hash string) (packstore.VerifiedReadCloser, int64, error)
 }
 
-func mediaTimeSpan(locator document.EvidenceLocatorV1) (*MediaTimeSpan, error) {
+var (
+	ErrMediaArtifactUnavailable = errors.New("retained media artifact is unavailable")
+	ErrMediaArtifactCorrupt     = errors.New("retained media artifact is corrupt")
+	ErrMediaArtifactOversize    = errors.New("retained media artifact exceeds its bound")
+)
+
+// MediaTimeSpanFromLocator converts a retained segment locator without
+// inventing timing for generic evidence.
+func MediaTimeSpanFromLocator(locator document.EvidenceLocatorV1) (*MediaTimeSpan, error) {
 	if locator.Kind != document.EvidenceLocatorSegment {
 		return nil, nil //nolint:nilnil // Absence is the truthful result for an untimed locator.
 	}
@@ -29,6 +38,10 @@ func mediaTimeSpan(locator document.EvidenceLocatorV1) (*MediaTimeSpan, error) {
 		return nil, errors.New("invalid retained media locator")
 	}
 	return &MediaTimeSpan{StartMS: locator.Start, EndMS: locator.End}, nil
+}
+
+func mediaTimeSpan(locator document.EvidenceLocatorV1) (*MediaTimeSpan, error) {
+	return MediaTimeSpanFromLocator(locator)
 }
 
 // MediaEvidenceResolver projects verified immutable artifacts into search locators.
@@ -142,7 +155,7 @@ func (resolver *MediaEvidenceResolver) load(ctx context.Context, artifacts store
 	}
 	inputs := make(map[string]mediaEvidenceInput, len(generation.Inputs))
 	for _, input := range generation.Inputs {
-		span, err := mediaTimeSpan(evidence.Units[input.SourceSpan.UnitIndex].Locator)
+		span, err := MediaTimeSpanFromLocator(evidence.Units[input.SourceSpan.UnitIndex].Locator)
 		if err != nil {
 			return nil, err
 		}
@@ -154,30 +167,61 @@ func (resolver *MediaEvidenceResolver) load(ctx context.Context, artifacts store
 func readExactSearchBlob(
 	ctx context.Context, blobs MediaEvidenceBlobReader, hash string, expectedSize int64,
 ) (_ []byte, retErr error) {
+	return ReadExactArtifact(ctx, blobs, hash, expectedSize, maxCachedMediaBytes)
+}
+
+// ReadExactArtifact reads one cataloged artifact only after its declared size
+// passes the caller's hard bound. The stream is verified and hashed before any
+// bytes leave this helper.
+func ReadExactArtifact(
+	ctx context.Context, blobs MediaEvidenceBlobReader, hash string, expectedSize, maxSize int64,
+) (_ []byte, retErr error) {
 	if blobs == nil {
-		return nil, errors.New("media evidence blob reader is unavailable")
+		return nil, ErrMediaArtifactUnavailable
+	}
+	if !canonical.IsSHA256Hex(hash) || expectedSize <= 0 || maxSize <= 0 {
+		return nil, fmt.Errorf("%w: invalid catalog size", ErrMediaArtifactCorrupt)
+	}
+	if expectedSize > maxSize {
+		return nil, fmt.Errorf("%w: declared size %d exceeds %d", ErrMediaArtifactOversize, expectedSize, maxSize)
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
 	}
 	stream, size, err := blobs.OpenStreamContext(ctx, hash)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("%w: %w", ErrMediaArtifactUnavailable, err)
 	}
-	defer func() { retErr = errors.Join(retErr, stream.Close()) }()
+	if stream == nil {
+		return nil, fmt.Errorf("%w: blob reader returned a nil stream", ErrMediaArtifactCorrupt)
+	}
+	defer func() {
+		if closeErr := stream.Close(); closeErr != nil {
+			retErr = errors.Join(retErr, fmt.Errorf("%w: closing stream: %w", ErrMediaArtifactCorrupt, closeErr))
+		}
+	}()
 	if size != expectedSize {
-		return nil, errors.New("retained artifact size disagrees with catalog authority")
+		return nil, fmt.Errorf("%w: retained artifact size disagrees with catalog authority", ErrMediaArtifactCorrupt)
 	}
 	data, err := io.ReadAll(io.LimitReader(stream, expectedSize+1))
 	if err != nil {
-		return nil, err
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return nil, ctxErr
+		}
+		return nil, fmt.Errorf("%w: reading bytes: %w", ErrMediaArtifactCorrupt, err)
 	}
 	if int64(len(data)) != expectedSize {
-		return nil, errors.New("retained artifact bytes disagree with catalog authority")
+		return nil, fmt.Errorf("%w: retained artifact bytes disagree with catalog authority", ErrMediaArtifactCorrupt)
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
 	}
 	if err := stream.Verify(); err != nil {
-		return nil, fmt.Errorf("verifying retained artifact: %w", err)
+		return nil, fmt.Errorf("%w: verifying retained artifact: %w", ErrMediaArtifactCorrupt, err)
 	}
 	digest := sha256.Sum256(data)
 	if hex.EncodeToString(digest[:]) != hash {
-		return nil, errors.New("retained artifact checksum disagrees with catalog authority")
+		return nil, fmt.Errorf("%w: retained artifact checksum disagrees with catalog authority", ErrMediaArtifactCorrupt)
 	}
 	return data, nil
 }

@@ -68,6 +68,20 @@ func (v *Vault) MediaStatus(ctx context.Context, sourceID string) (MediaReceipt,
 	return fromInternalMediaReceipt(receipt), err
 }
 
+// MediaTranscript reads one exact retained transcript by stable media
+// identities. The result carries evidence, coverage, and latest operation
+// state separately.
+func (v *Vault) MediaTranscript(ctx context.Context, request MediaTranscriptRequest) (MediaTranscript, error) {
+	if err := v.begin(); err != nil {
+		return MediaTranscript{}, err
+	}
+	defer v.lifecycle.RUnlock()
+	value, err := v.processing.MediaTranscript(ctx, internalprocessing.MediaTranscriptRequest{
+		SourceID: request.SourceID, SourceVersionID: request.SourceVersionID,
+		ContentVersionID: request.ContentVersionID})
+	return fromInternalMediaTranscript(value), err
+}
+
 func (v *Vault) RetryMedia(
 	ctx context.Context, operationID, sourceID string, request MediaProcessingRequest,
 ) (MediaReceipt, error) {
@@ -174,4 +188,24 @@ func fromInternalMediaReceipt(value internalprocessing.MediaReceipt) MediaReceip
 		Outcome: value.Outcome, OperationState: value.OperationState, CoverageState: value.CoverageState,
 		SuppliedInputID: value.SuppliedInputID,
 	}
+}
+
+func fromInternalMediaTranscript(value internalprocessing.MediaTranscript) MediaTranscript {
+	result := MediaTranscript{VaultUID: value.VaultUID, SourceID: value.SourceID,
+		SourceVersionID: value.SourceVersionID, ContentVersionID: value.ContentVersionID,
+		EvidenceState: value.EvidenceState, CoverageState: value.CoverageState,
+		OperationState: value.OperationState}
+	if value.Transcript == nil {
+		return result
+	}
+	result.Transcript = &MediaTranscriptEvidence{Origin: value.Transcript.Origin,
+		Provider: value.Transcript.Provider, Language: value.Transcript.Language,
+		Completeness: value.Transcript.Completeness, Truncated: value.Transcript.Truncated,
+		HasOmissions: value.Transcript.HasOmissions,
+		Units:        make([]MediaTranscriptUnit, len(value.Transcript.Units))}
+	for index, unit := range value.Transcript.Units {
+		result.Transcript.Units[index] = MediaTranscriptUnit{Text: unit.Text,
+			StartMS: unit.StartMS, EndMS: unit.EndMS, Speaker: unit.Speaker}
+	}
+	return result
 }
