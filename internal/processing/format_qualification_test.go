@@ -16,6 +16,7 @@ import (
 )
 
 func TestSourceMetadataQualificationsExecuteRegisteredFixtures(t *testing.T) {
+	t.Parallel()
 	type fixture struct {
 		catalogID string
 		evidence  string

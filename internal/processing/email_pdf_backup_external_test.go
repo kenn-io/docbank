@@ -13,6 +13,7 @@ import (
 )
 
 func TestEmailPDFRetainedReceiptReuseAndPhysicalBackup(t *testing.T) {
+	t.Parallel()
 	for _, released := range []bool{false, true} {
 		name := "fresh"
 		if released {
@@ -43,6 +44,7 @@ func TestEmailPDFRetainedReceiptReuseAndPhysicalBackup(t *testing.T) {
 }
 
 func TestEmailPDFRealBackupFixture(t *testing.T) {
+	t.Parallel()
 	processing.RunEmailPDFRealBackupFixture(t, func(path string, catalog *store.Store, blobs *blob.Store) {
 		repository, err := backup.Init(path)
 		require.NoError(t, err)

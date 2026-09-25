@@ -10,6 +10,7 @@ import (
 )
 
 func TestExportPublicationChoicesIncludeEmptySetsAndPage(t *testing.T) {
+	t.Parallel()
 	f := newEmailPipelineFixture(t)
 	target := f.add(t, "empty.eml", "Subject: Empty\r\nContent-Type: text/plain\r\n\r\nNo attachments.\r\n", "message/rfc822")
 	view, err := EnsureEmailTarget(t.Context(), f.catalog, f.blobs, f.spool, target)

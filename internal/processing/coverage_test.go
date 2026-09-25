@@ -16,6 +16,7 @@ import (
 var updateFormatCoverage = flag.Bool("update", false, "update the pinned format coverage fixture")
 
 func TestFormatCoverageMatchesPinnedFixture(t *testing.T) {
+	t.Parallel()
 	record, err := internalformatcoverage.Compute(nil, SourceMetadataExtractorFingerprint)
 	require.NoError(t, err)
 	encoded, _, err := document.MarshalFormatCoverageV1(record)
@@ -30,6 +31,7 @@ func TestFormatCoverageMatchesPinnedFixture(t *testing.T) {
 }
 
 func TestFormatCoverageComposesQualifiedOwnersWithoutInflatingClaims(t *testing.T) {
+	t.Parallel()
 	record, err := internalformatcoverage.Compute(nil, SourceMetadataExtractorFingerprint)
 	require.NoError(t, err)
 	assert.Len(t, record.Formats, 52)
@@ -65,6 +67,7 @@ func TestFormatCoverageComposesQualifiedOwnersWithoutInflatingClaims(t *testing.
 }
 
 func TestFormatCoverageUsesExecutedSyntheticProviderQualification(t *testing.T) {
+	t.Parallel()
 	descriptor := syntheticMarkdownCoverageDescriptor(t)
 	record, err := internalformatcoverage.Compute([]document.RenditionDescriptor{descriptor}, SourceMetadataExtractorFingerprint)
 	require.NoError(t, err)
@@ -76,6 +79,7 @@ func TestFormatCoverageUsesExecutedSyntheticProviderQualification(t *testing.T) 
 }
 
 func TestFormatCoverageRequiresTheActiveMetadataExtractorQualification(t *testing.T) {
+	t.Parallel()
 	record, err := internalformatcoverage.Compute(nil, "synthetic-extractor/v2")
 	require.NoError(t, err)
 	assert.Equal(t, "synthetic-extractor/v2", record.GeneratedBy.ExtractorID)
@@ -85,6 +89,7 @@ func TestFormatCoverageRequiresTheActiveMetadataExtractorQualification(t *testin
 }
 
 func TestLookupFormatDistinguishesCatalogPendingAndUnknown(t *testing.T) {
+	t.Parallel()
 	for _, testCase := range []struct {
 		query string
 		match document.FormatLookupMatch

@@ -22,6 +22,7 @@ import (
 )
 
 func TestLoomRecording(t *testing.T) {
+	t.Parallel()
 	accepted := []string{
 		"https://www.loom.com/share/synthloom01",
 		"https://loom.com/share/synthloom01?sid=synthetic",
@@ -50,6 +51,7 @@ func TestLoomRecording(t *testing.T) {
 }
 
 func TestLoomAcquireRetainsUnsupportedReference(t *testing.T) {
+	t.Parallel()
 	fixture := newPublicationFixture(t)
 	service := newRemoteRecordingTestService(t, fixture, "operator:loom", 0, nil)
 	request := RemoteRecordingRequest{
@@ -67,6 +69,7 @@ func TestLoomAcquireRetainsUnsupportedReference(t *testing.T) {
 }
 
 func TestLoomRecordingIdentity(t *testing.T) {
+	t.Parallel()
 	fixture := newPublicationFixture(t)
 	service := newRemoteRecordingTestService(t, fixture, "operator:loom-identity", 0, nil)
 	request := func(operationID, canonicalURL, ref string) RemoteRecordingRequest {
@@ -91,6 +94,7 @@ func TestLoomRecordingIdentity(t *testing.T) {
 }
 
 func TestLoomRecognitionPreservesLegacyURLIdentity(t *testing.T) {
+	t.Parallel()
 	fixture := newPublicationFixture(t)
 	service := newRemoteRecordingTestService(t, fixture, "operator:legacy-loom", 0, nil)
 	canonicalURL := "https://www.loom.com/share/legacyloom"
@@ -125,6 +129,7 @@ func TestLoomRecognitionPreservesLegacyURLIdentity(t *testing.T) {
 }
 
 func TestRemoteRecordingVideoPolicy(t *testing.T) {
+	t.Parallel()
 	video := remoteRecordingInspectionPolicy("loom.mp4", "video/mp4", strings.Repeat("a", 64), 123,
 		20<<20, true)
 	assert.Equal(t, int64(20<<20), video.MaxSourceBytes)
@@ -136,6 +141,7 @@ func TestRemoteRecordingVideoPolicy(t *testing.T) {
 }
 
 func TestRemoteRecordingVideoAdmission(t *testing.T) {
+	t.Parallel()
 	fixture := newPublicationFixture(t)
 	service := newRemoteRecordingTestService(t, fixture, "operator:loom-video", 0, nil)
 	remote := loomRemoteForTest(t, service, "video")
@@ -254,6 +260,7 @@ func TestRemoteRecordingVideoAdmission(t *testing.T) {
 }
 
 func TestSuppliedCaptionBindingsStayBySource(t *testing.T) {
+	t.Parallel()
 	fixture := newPublicationFixture(t)
 	service := newRemoteRecordingTestService(t, fixture, "operator:loom-caption", 0, nil)
 	first := loomRemoteForTest(t, service, "caption-a")
@@ -316,6 +323,7 @@ func TestSuppliedCaptionBindingsStayBySource(t *testing.T) {
 }
 
 func TestSuppliedCaptionInvalidBytesAreMalformed(t *testing.T) {
+	t.Parallel()
 	fixture := newPublicationFixture(t)
 	service := newRemoteRecordingTestService(t, fixture, "operator:loom-invalid-caption", 0, nil)
 	remote := loomRemoteForTest(t, service, "invalid-caption")
@@ -342,7 +350,7 @@ func TestSuppliedCaptionInvalidBytesAreMalformed(t *testing.T) {
 	assert.Equal(t, document.RenditionErrorMalformedEvidence, providerErr.Code())
 }
 
-func TestLoomCaptionProcessingRequiresConsentAndNoEgress(t *testing.T) {
+func TestLoomCaptionProcessingRequiresConsentAndNoEgress(t *testing.T) { //nolint:paralleltest // swaps the process-wide http.DefaultTransport
 	fixture := newPublicationFixture(t)
 	base := newRemoteRecordingTestService(t, fixture, "operator:loom-consent", 0, nil)
 	remote := loomRemoteForTest(t, base, "consent")
@@ -408,7 +416,7 @@ func TestLoomCaptionProcessingRequiresConsentAndNoEgress(t *testing.T) {
 	require.Error(t, err)
 }
 
-func TestLoomCoverageStaysTruthful(t *testing.T) {
+func TestLoomCoverageStaysTruthful(t *testing.T) { //nolint:paralleltest // swaps the process-wide http.DefaultTransport
 	fixture := newPublicationFixture(t)
 	service := newRemoteRecordingTestService(t, fixture, "operator:loom-coverage", 0, nil)
 	remote := loomRemoteForTest(t, service, "coverage")

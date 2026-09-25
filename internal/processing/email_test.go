@@ -64,6 +64,7 @@ func (f emailPipelineFixture) emptySpool(t *testing.T) {
 	require.Empty(t, entries)
 }
 func TestEmailPipelineChosenBodySearchAndQMD(t *testing.T) {
+	t.Parallel()
 	f := newEmailPipelineFixture(t)
 	target := f.add(t, "message.eml", emailPipelineSource, "message/rfc822")
 	view, err := EnsureEmailTarget(t.Context(), f.catalog, f.blobs, f.spool, target)
@@ -118,6 +119,7 @@ func TestEmailPipelineChosenBodySearchAndQMD(t *testing.T) {
 }
 
 func TestEmailPipelineExcludesAmbiguousAttachments(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name, disposition, nameParameter string
 		container, body                  bool
@@ -238,6 +240,7 @@ func (r *emailCorruptStream) Read(p []byte) (int, error) {
 	return n, err
 }
 func TestEmailPipelineFailureBoundariesAndRetry(t *testing.T) {
+	t.Parallel()
 	for _, failure := range []string{"source corruption", "CAS write", "CAS content", "cancellation", "inventory publication", "inventory references", "body publication", "body bytes"} {
 		t.Run(failure, func(t *testing.T) {
 			f := newEmailPipelineFixture(t)
@@ -336,6 +339,7 @@ func TestEmailPipelineFailureBoundariesAndRetry(t *testing.T) {
 	}
 }
 func TestEmailPipelineUnavailableDoesNotRequeue(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct{ name, source, reason string }{
 		{"blank", "Content-Type: text/plain\r\n\r\n \t\r\n", "empty_body"},
 		{"NUL text", "Content-Type: text/plain\r\n\r\nbefore\x00after", "unsupported_body"},
@@ -372,6 +376,7 @@ func TestEmailPipelineUnavailableDoesNotRequeue(t *testing.T) {
 	}
 }
 func TestEmailPipelineOversizedCatalogRefusalDoesNotReadSource(t *testing.T) {
+	t.Parallel()
 	f := newEmailPipelineFixture(t)
 	node, err := f.catalog.CreateFile(t.Context(), f.catalog.RootID(), "oversize.eml", processingHash("synthetic catalog-only original"), (128<<20)+1, "message/rfc822")
 	require.NoError(t, err)
@@ -392,6 +397,7 @@ func TestEmailPipelineOversizedCatalogRefusalDoesNotReadSource(t *testing.T) {
 	f.emptySpool(t)
 }
 func TestEmailPipelineEqualBytesReuseAndDistinctAttachments(t *testing.T) {
+	t.Parallel()
 	f := newEmailPipelineFixture(t)
 	first := f.add(t, "first.eml", emailPipelineSource, "message/rfc822")
 	second := f.add(t, "second.eml", emailPipelineSource, "application/octet-stream")
@@ -422,6 +428,7 @@ func TestEmailPipelineEqualBytesReuseAndDistinctAttachments(t *testing.T) {
 	f.emptySpool(t)
 }
 func TestEmailPipelineBackfillJoinsFailuresAndProgresses(t *testing.T) {
+	t.Parallel()
 	f := newEmailPipelineFixture(t)
 	one := f.add(t, "one.eml", emailPipelineSource, "message/rfc822")
 	two := f.add(t, "two.eml", emailPipelineSource, "message/rfc822")
@@ -455,6 +462,7 @@ func TestEmailPipelineBackfillJoinsFailuresAndProgresses(t *testing.T) {
 }
 
 func TestEmailPipelinePreservesLegacyAndUnrelatedHeads(t *testing.T) {
+	t.Parallel()
 	f := newEmailPipelineFixture(t)
 	legacy := f.add(t, "old.txt", "legacypreservedmarker", "text/plain")
 	require.NoError(t, f.catalog.RecordExtraction(t.Context(), store.ExtractionResult{BlobHash: legacy.Version.BlobHash, Extractor: "plain-text", ExtractorVersion: 1, Status: store.ExtractionOK, Text: "legacypreservedmarker"}))
@@ -531,6 +539,7 @@ func TestEmailPipelinePreservesLegacyAndUnrelatedHeads(t *testing.T) {
 	require.NoError(t, f.catalog.ValidateMetadata(t.Context()))
 }
 func TestEmailPipelineSuppressionRaces(t *testing.T) {
+	t.Parallel()
 	for _, phase := range []string{"inventory", "body inventory purge", "body final fence", "body staging fence"} {
 		t.Run(phase, func(t *testing.T) {
 			f := newEmailPipelineFixture(t)
@@ -610,6 +619,7 @@ func TestEmailPipelineSuppressionRaces(t *testing.T) {
 	}
 }
 func TestEmailPipelineStaleProjectionRebuilds(t *testing.T) {
+	t.Parallel()
 	f := newEmailPipelineFixture(t)
 	target := f.add(t, "message.eml", emailPipelineSource, "message/rfc822")
 	later := f.add(t, "later.eml", "Content-Type: text/plain\r\n\r\nlaterprojectionmarker", "message/rfc822")
@@ -635,6 +645,7 @@ func TestEmailPipelineStaleProjectionRebuilds(t *testing.T) {
 	f.emptySpool(t)
 }
 func TestEmailPipelineFullBodyTailIsSearchable(t *testing.T) {
+	t.Parallel()
 	f := newEmailPipelineFixture(t)
 	source := "Content-Type: text/plain; charset=utf-8\r\n\r\n" + strings.Repeat("x ", (16<<20)/2-14) + " fullbodytailmarker"
 	target := f.add(t, "large.eml", source, "message/rfc822")
@@ -663,6 +674,7 @@ func (f emailFaultCatalog) RenditionBuild(ctx context.Context, id string) (store
 	return f.Store.RenditionBuild(ctx, id)
 }
 func TestEmailPipelineBodyObservationsAndStagedRetry(t *testing.T) {
+	t.Parallel()
 	f := newEmailPipelineFixture(t)
 	target := f.add(t, "message.eml", emailPipelineSource, "message/rfc822")
 	injected := errors.New("synthetic staged body failure")
@@ -731,6 +743,7 @@ func TestEmailPipelineBodyObservationsAndStagedRetry(t *testing.T) {
 	f.emptySpool(t)
 }
 func TestEmailPipelineConcurrentFirstBuildInsertionReusesCompletion(t *testing.T) {
+	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {
 		f := newEmailPipelineFixture(t)
 		target := f.add(t, "message.eml", emailPipelineSource, "message/rfc822")

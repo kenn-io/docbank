@@ -26,6 +26,7 @@ import (
 // A PDF export must bind the retained receipt, never the current node head or
 // a newly selected renderer; a missing receipt cannot become an original role.
 func TestExportEmailPDFPinsRetainedReceiptAndArchive(t *testing.T) {
+	t.Parallel()
 	f := newEmailPipelineFixture(t)
 	target := f.add(t, "synthetic.eml", emailPipelineSource, "message/rfc822")
 	view, err := EnsureEmailTarget(t.Context(), f.catalog, f.blobs, f.spool, target)
@@ -207,6 +208,7 @@ func repackEmailExportManifest(t *testing.T, source io.ReaderAt, size int64, man
 // A batch shares a renderer recipe, not a source-specific processing profile.
 // Changing that recipe after sealing must not select newly rendered bytes.
 func TestExportEmailPDFRecipeAcrossDistinctMessages(t *testing.T) {
+	t.Parallel()
 	f := newEmailPipelineFixture(t)
 	pdf := fpdf.New("P", "mm", "A4", "")
 	pdf.AddPage()

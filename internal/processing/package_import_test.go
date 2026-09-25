@@ -177,6 +177,7 @@ func (e *packageImportTestEnv) config() PackageImportConfig {
 }
 
 func TestPackageImportWorkerCommitsOneVerifiedRootRecord(t *testing.T) {
+	t.Parallel()
 	env := newPackageImportTestEnv(t, 1, false)
 	worker, err := NewPackageImportWorker(env.config())
 	require.NoError(t, err)
@@ -205,6 +206,7 @@ func TestPackageImportWorkerCommitsOneVerifiedRootRecord(t *testing.T) {
 }
 
 func TestPackageRecordLabelsKeepReceivedAndAssignedProvenanceSeparate(t *testing.T) {
+	t.Parallel()
 	record := loadfile.Record{Fields: []loadfile.Field{
 		{Canonical: "loadfile.label.set", Raw: "EXT"},
 		{Canonical: "loadfile.label.begin", Raw: "EXT000001"},
@@ -226,6 +228,7 @@ func TestPackageRecordLabelsKeepReceivedAndAssignedProvenanceSeparate(t *testing
 }
 
 func TestPackageImportWorkerResumesAfterCommittedRecord(t *testing.T) {
+	t.Parallel()
 	env := newPackageImportTestEnv(t, 2, false)
 	injected := errors.New("synthetic interruption before second record")
 	firstKey, err := store.PackageRecordKey("VOL001/DATA.DAT", 1, "DOC-A")
@@ -264,6 +267,7 @@ func TestPackageImportWorkerResumesAfterCommittedRecord(t *testing.T) {
 }
 
 func TestPackageImportWorkerPersistsSuppliedTextGenerationInReceipt(t *testing.T) {
+	t.Parallel()
 	env := newPackageImportTestEnvOptions(t, 1, false, false, true)
 	worker, err := NewPackageImportWorker(env.config())
 	require.NoError(t, err)
@@ -307,6 +311,7 @@ func mustPackage(t *testing.T, env *packageImportTestEnv) store.Package {
 }
 
 func TestPackageImportWorkerRecoversStagedNodeWithoutRecordReceipt(t *testing.T) {
+	t.Parallel()
 	env := newPackageImportTestEnv(t, 1, false)
 	injected := errors.New("synthetic interruption after staging")
 	key, err := store.PackageRecordKey("VOL001/DATA.DAT", 1, "DOC-A")
@@ -353,6 +358,7 @@ func TestPackageImportWorkerRecoversStagedNodeWithoutRecordReceipt(t *testing.T)
 }
 
 func TestPackageImportWorkerAcceptsMissingPostPreflightFileAsPartial(t *testing.T) {
+	t.Parallel()
 	env := newPackageImportTestEnv(t, 2, true)
 	require.NoError(t, os.Remove(filepath.Join(env.Root, "VOL001", "B.txt")))
 	worker, err := NewPackageImportWorker(env.config())
@@ -375,6 +381,7 @@ func TestPackageImportWorkerAcceptsMissingPostPreflightFileAsPartial(t *testing.
 }
 
 func TestPackageImportWorkerStrictModeRejectsDriftedRootBeforePublishing(t *testing.T) {
+	t.Parallel()
 	env := newPackageImportTestEnv(t, 2, false)
 	require.NoError(t, os.Remove(filepath.Join(env.Root, "VOL001", "B.txt")))
 	worker, err := NewPackageImportWorker(env.config())
@@ -393,6 +400,7 @@ func TestPackageImportWorkerStrictModeRejectsDriftedRootBeforePublishing(t *test
 }
 
 func TestPackageImportWorkerFailsChangedAdmittedBytes(t *testing.T) {
+	t.Parallel()
 	for _, name := range []string{"B.txt", "B-supplied.txt", "B-1.tif"} {
 		t.Run(name, func(t *testing.T) {
 			env := newPackageImportTestEnvOptions(t, 2, false, true, true)
@@ -426,11 +434,13 @@ func TestPackageImportWorkerFailsChangedAdmittedBytes(t *testing.T) {
 }
 
 func TestPackageImportWorkerTreatsInvalidDestinationsAsTerminal(t *testing.T) {
+	t.Parallel()
 	require.True(t, terminalPackageImportError(store.ErrNotFound))
 	require.True(t, terminalPackageImportError(store.ErrNotDir))
 }
 
 func TestPackageImportWorkerRetainsFamilyAndMissingDeclaredPage(t *testing.T) {
+	t.Parallel()
 	env := newPackageImportTestEnv(t, 2, true, true)
 	require.NoError(t, os.Remove(filepath.Join(env.Root, "VOL001", "B-1.tif")))
 	worker, err := NewPackageImportWorker(env.config())
@@ -463,6 +473,7 @@ func TestPackageImportWorkerRetainsFamilyAndMissingDeclaredPage(t *testing.T) {
 }
 
 func TestPackageImportWorkerRerootsChildWhenParentIsRejected(t *testing.T) {
+	t.Parallel()
 	env := newPackageImportTestEnv(t, 2, true, true)
 	for _, name := range []string{"A.txt", "A-1.tif", "A-2.tif"} {
 		require.NoError(t, os.Remove(filepath.Join(env.Root, "VOL001", name)))
@@ -483,6 +494,7 @@ func TestPackageImportWorkerRerootsChildWhenParentIsRejected(t *testing.T) {
 }
 
 func TestPackageImportWorkerPreservesExplicitFamilyGroups(t *testing.T) {
+	t.Parallel()
 	for _, rejectFirst := range []bool{false, true} {
 		t.Run(fmt.Sprintf("reject_first=%t", rejectFirst), func(t *testing.T) {
 			env := newPackageImportTestEnvOptions(t, 5, rejectFirst, false, false,
@@ -524,6 +536,7 @@ func TestPackageImportWorkerPreservesExplicitFamilyGroups(t *testing.T) {
 }
 
 func TestPackageImportWorkerOpensOwnerSealedZIPSource(t *testing.T) {
+	t.Parallel()
 	env := newPackageImportTestEnv(t, 1, false)
 	var archive bytes.Buffer
 	zipWriter := zip.NewWriter(&archive)
@@ -570,6 +583,7 @@ func packageImportTestPhysical(t *testing.T, receipt blob.WriteReceipt) store.Bl
 }
 
 func TestPackageImageFilesFollowDocumentBreaksAndVerifiedFileStatus(t *testing.T) {
+	t.Parallel()
 	manifest := loadfile.Manifest{
 		Records: []loadfile.Record{
 			{DocID: "DOC-A", Fields: []loadfile.Field{{Canonical: "loadfile.label.begin", Raw: "EXT000001"}}},
@@ -598,6 +612,7 @@ func TestPackageImageFilesFollowDocumentBreaksAndVerifiedFileStatus(t *testing.T
 }
 
 func TestFrozenPackageFieldsPreservePerFieldDisclosure(t *testing.T) {
+	t.Parallel()
 	zero, one := 0, 1
 	record := loadfile.Record{Fields: []loadfile.Field{
 		{Column: "BEGBATES", Ordinal: 0, Canonical: "loadfile.label.begin", Raw: "EXT000001"},
@@ -614,6 +629,7 @@ func TestFrozenPackageFieldsPreservePerFieldDisclosure(t *testing.T) {
 }
 
 func TestPackageInputVerificationRejectsSameSizeMetadataReplacement(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	require.NoError(t, os.Mkdir(filepath.Join(root, "VOL001"), 0o700))
 	file := filepath.Join(root, "VOL001", "DATA.DAT")

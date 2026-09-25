@@ -22,6 +22,7 @@ import (
 )
 
 func TestProcessingServiceSourceFenceIsBoundedCanonicalAuthority(t *testing.T) {
+	t.Parallel()
 	ids := []string{"00000000-0000-4000-8000-000000000002", "00000000-0000-4000-8000-000000000001"}
 	normalized, err := normalizeFenceIDs(ids)
 	require.NoError(t, err)
@@ -37,6 +38,7 @@ func TestProcessingServiceSourceFenceIsBoundedCanonicalAuthority(t *testing.T) {
 }
 
 func TestDerivativePurgeRequiresCanonicalContentVersionIDs(t *testing.T) {
+	t.Parallel()
 	const canonical = "abcdefab-1234-4abc-8def-123456789abc"
 	for _, id := range []string{
 		canonical,
@@ -59,6 +61,7 @@ func TestDerivativePurgeRequiresCanonicalContentVersionIDs(t *testing.T) {
 }
 
 func TestProcessingServicePlanFingerprintSealsDisclosure(t *testing.T) {
+	t.Parallel()
 	plan := Plan{VaultUID: "00000000-0000-4000-8000-000000000001",
 		Selector:           Selector{NodeID: 1, ContentVersionID: "00000000-0000-4000-8000-000000000002", Profile: "private"},
 		ProfileFingerprint: frontmatterHashForService("profile"),
@@ -82,6 +85,7 @@ func TestProcessingServicePlanFingerprintSealsDisclosure(t *testing.T) {
 }
 
 func TestAggregateStatusNeverReportsUnfinishedEmbeddingsAsCompleted(t *testing.T) {
+	t.Parallel()
 	embeddings := []store.EmbeddingJobStatus{{ID: "a", State: "completed"}, {ID: "b", State: "abandoned"}}
 	status := aggregateStatus("a", nil, embeddings)
 	require.Equal(t, "abandoned", status.State)
@@ -95,6 +99,7 @@ func TestAggregateStatusNeverReportsUnfinishedEmbeddingsAsCompleted(t *testing.T
 }
 
 func TestInspectionPolicyCanonicalizesDeclaredMediaTypeForDurableReplay(t *testing.T) {
+	t.Parallel()
 	profile := configuredProfile{
 		portable: document.ProcessingProfileV1{Rendition: &document.RenditionBindingV1{
 			MaxDocumentBytes: 1024, DisclosureFingerprint: strings.Repeat("1", 64),
@@ -140,6 +145,7 @@ func frontmatterHashForService(value string) string {
 }
 
 func TestProcessingServiceWaitsForEmbeddingRetryAndHonorsCancellation(t *testing.T) {
+	t.Parallel()
 	fixture, fake, _, request := newRealEmbeddingWorker(t, document.EmbeddingInputOriginalFile)
 	fake.runtime.failures[request.BindingID] = []error{embeddingTransientError{}, embeddingTransientError{}, embeddingTransientError{}}
 	provider := &embeddingWorkerProvider{runtime: fake.runtime, binding: request.BindingID, descriptor: request.Descriptor}
@@ -178,7 +184,7 @@ func TestProcessingServiceWaitsForEmbeddingRetryAndHonorsCancellation(t *testing
 			}
 		}
 		return false
-	}, 3*time.Second, time.Millisecond)
+	}, 10*time.Second, time.Millisecond)
 	cancel()
 	<-finished
 	require.ErrorIs(t, runErr, context.Canceled)
@@ -194,6 +200,7 @@ func TestProcessingServiceWaitsForEmbeddingRetryAndHonorsCancellation(t *testing
 }
 
 func TestProcessingServiceCompletesEmbeddingAfterWorkerStops(t *testing.T) {
+	t.Parallel()
 	fixture, fake, worker, original := newRealEmbeddingWorker(t, document.EmbeddingInputOriginalFile)
 	workerContext, stopWorker := context.WithCancel(t.Context())
 	stopWorker()
@@ -224,6 +231,7 @@ func TestProcessingServiceCompletesEmbeddingAfterWorkerStops(t *testing.T) {
 }
 
 func TestProcessingServiceAnnouncesFirstEmbeddingBeforeLaterEnqueues(t *testing.T) {
+	t.Parallel()
 	for _, stop := range []string{"request-canceled", "later-consent-missing"} {
 		t.Run(stop, func(t *testing.T) {
 			fixture, fake, worker, original := newRealEmbeddingWorker(t, document.EmbeddingInputOriginalFile)
@@ -309,6 +317,7 @@ func TestProcessingServiceAnnouncesFirstEmbeddingBeforeLaterEnqueues(t *testing.
 }
 
 func TestProcessingServiceCoverageBeforeProfileRegistration(t *testing.T) {
+	t.Parallel()
 	fixture := newPublicationFixture(t)
 	record := embeddingWorkerProfile(t, embeddingWorkerDescriptor(t))
 	var profile document.ProcessingProfileV1
@@ -349,6 +358,7 @@ func TestProcessingServiceCoverageBeforeProfileRegistration(t *testing.T) {
 }
 
 func TestProcessingServiceCoverageMissingClassesTakePrecedenceOverRebuilding(t *testing.T) {
+	t.Parallel()
 	for _, test := range []struct {
 		name               string
 		renditionRequired  bool
@@ -429,6 +439,7 @@ func TestProcessingServiceCoverageMissingClassesTakePrecedenceOverRebuilding(t *
 }
 
 func TestAggregateStatusUsesBindingActivation(t *testing.T) {
+	t.Parallel()
 	for _, activation := range []document.EmbeddingActivation{document.EmbeddingRequired, document.EmbeddingOptional} {
 		for _, state := range []string{"failed", "abandoned"} {
 			t.Run(string(activation)+"/"+state, func(t *testing.T) {
@@ -448,6 +459,7 @@ func TestAggregateStatusUsesBindingActivation(t *testing.T) {
 }
 
 func TestProcessingServiceRejectsRevokedRenditionWaiter(t *testing.T) {
+	t.Parallel()
 	fixture := newPublicationFixture(t)
 	provider := newWorkerProvider(t)
 	profile := workerProcessingProfile(t, provider.Descriptor())
@@ -484,7 +496,7 @@ func TestProcessingServiceRejectsRevokedRenditionWaiter(t *testing.T) {
 	require.ErrorIs(t, err, ErrConsentRequired)
 }
 
-func TestEmbeddingOnlyConsentPreconditions(t *testing.T) {
+func TestEmbeddingOnlyConsentPreconditions(t *testing.T) { //nolint:paralleltest // the two-second consent expiry is measured on the real clock
 	for _, phase := range []string{"missing", "revoked", "expired-before", "expired-during", "allowed", "provider-authorization"} {
 		t.Run(phase, func(t *testing.T) {
 			fixture, fake, _, original := newRealEmbeddingWorker(t, document.EmbeddingInputOriginalFile)
@@ -562,6 +574,7 @@ func TestEmbeddingOnlyConsentPreconditions(t *testing.T) {
 }
 
 func TestDocumentSourceFenceFingerprintIsStableAndBindsExactAuthority(t *testing.T) {
+	t.Parallel()
 	fence := SourceFence{VaultUID: "11111111-1111-4111-8111-111111111111", ContentVersionIDs: []string{
 		"33333333-3333-4333-8333-333333333333",
 		"22222222-2222-4222-8222-222222222222",
@@ -596,11 +609,13 @@ func TestDocumentSourceFenceFingerprintIsStableAndBindsExactAuthority(t *testing
 }
 
 func TestDocumentSourceFenceFingerprintRejectsUint32LengthOverflow(t *testing.T) {
+	t.Parallel()
 	var encoded []byte
 	require.ErrorContains(t, appendSourceFenceUint32(&encoded, uint64(math.MaxUint32)+1), "uint32")
 }
 
 func TestProcessingServicePlanFingerprintSealsCompleteRuntimeDisclosure(t *testing.T) {
+	t.Parallel()
 	plan := Plan{VaultUID: "00000000-0000-4000-8000-000000000001",
 		Selector:           Selector{NodeID: 1, ContentVersionID: "00000000-0000-4000-8000-000000000002", Profile: "private"},
 		ProfileFingerprint: frontmatterHashForService("profile"),
@@ -673,6 +688,7 @@ func TestProcessingServicePlanFingerprintSealsCompleteRuntimeDisclosure(t *testi
 }
 
 func TestProcessingServiceCoverageReportsRebuildWhilePreviousGenerationServes(t *testing.T) {
+	t.Parallel()
 	fixture := newPublicationFixture(t)
 	provider := newWorkerProvider(t)
 	profile := workerProcessingProfile(t, provider.Descriptor())

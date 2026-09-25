@@ -16,6 +16,7 @@ import (
 )
 
 func TestEmailStoreArchivePhysicalPortabilityAndMaintenance(t *testing.T) {
+	t.Parallel()
 	f := processing.NewEmailStoreRestoreTestFixture(t)
 	buildID := f.PublishBody()
 	repo, err := backup.Init(filepath.Join(t.TempDir(), "repository"))
@@ -77,6 +78,7 @@ func TestEmailStoreArchivePhysicalPortabilityAndMaintenance(t *testing.T) {
 }
 
 func TestEmailStoreMissingRetainedPartBytesFailVerification(t *testing.T) {
+	t.Parallel()
 	f := processing.NewEmailStoreRestoreTestFixture(t)
 	require.NoError(t, f.Catalog.VerifyRenditionBlobBytes(t.Context(), f.Blobs))
 	header := f.Email.Evidence.Inventory.Parts[0].HeaderBlock

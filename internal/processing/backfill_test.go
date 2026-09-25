@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"testing/synctest"
 	"time"
@@ -68,6 +69,7 @@ func newTestBackfill(catalog *fakeBackfillCatalog, page int, drain bool) *Backfi
 }
 
 func TestBackfillDrainsEveryTargetAcrossPagesAndStops(t *testing.T) {
+	t.Parallel()
 	catalog := newFakeBackfillCatalog("a", "b", "c", "d", "e")
 	backfill := newTestBackfill(catalog, 2, true)
 	gated := 0
@@ -82,12 +84,15 @@ func TestBackfillDrainsEveryTargetAcrossPagesAndStops(t *testing.T) {
 }
 
 func TestBackfillQuarantinesFailingTargetsWithoutBlockingOthers(t *testing.T) {
+	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {
 		catalog := newFakeBackfillCatalog("a", "b", "c")
 		catalog.failing["b"] = 1
-		now := time.Date(2026, time.September, 2, 12, 0, 0, 0, time.UTC)
+		var now atomic.Pointer[time.Time]
+		start := time.Date(2026, time.September, 2, 12, 0, 0, 0, time.UTC)
+		now.Store(&start)
 		backfill := newTestBackfill(catalog, 10, true)
-		backfill.Now = func() time.Time { return now }
+		backfill.Now = func() time.Time { return *now.Load() }
 
 		ctx, cancel := context.WithTimeout(t.Context(), 2*time.Second)
 		defer cancel()
@@ -100,7 +105,8 @@ func TestBackfillQuarantinesFailingTargetsWithoutBlockingOthers(t *testing.T) {
 			defer catalog.mu.Unlock()
 			return catalog.done["a"] && catalog.done["c"] && catalog.attempts["b"] == 1
 		}(), "siblings progress while b is quarantined")
-		now = now.Add(backfillFirstRetryDelay)
+		retry := start.Add(backfillFirstRetryDelay)
+		now.Store(&retry)
 		require.NoError(t, <-done, "the retry of b succeeds and the drain completes")
 		assert.True(t, catalog.done["b"])
 		assert.Equal(t, 2, catalog.attempts["b"])
@@ -108,6 +114,7 @@ func TestBackfillQuarantinesFailingTargetsWithoutBlockingOthers(t *testing.T) {
 }
 
 func TestBackfillRetriesAListingFailure(t *testing.T) {
+	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {
 		catalog := newFakeBackfillCatalog("a")
 		catalog.listErrs = 1
@@ -122,6 +129,7 @@ func TestBackfillRetriesAListingFailure(t *testing.T) {
 }
 
 func TestBackfillBoundsOnlyDrainRetries(t *testing.T) {
+	t.Parallel()
 	for _, testCase := range []struct {
 		name    string
 		listing bool
@@ -163,6 +171,7 @@ func TestBackfillBoundsOnlyDrainRetries(t *testing.T) {
 }
 
 func TestBackfillKeepsWatchingWhenNotDraining(t *testing.T) {
+	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {
 		catalog := newFakeBackfillCatalog("a")
 		backfill := newTestBackfill(catalog, 10, false)
@@ -183,11 +192,13 @@ func TestBackfillKeepsWatchingWhenNotDraining(t *testing.T) {
 }
 
 func TestBackfillRejectsIncompleteConfiguration(t *testing.T) {
+	t.Parallel()
 	backfill := &Backfill[string]{Page: 1, IdleDelay: time.Millisecond}
 	require.Error(t, backfill.Run(t.Context()))
 }
 
 func TestBackfillRetrySetDropsTargetsAbsentFromCompletedScan(t *testing.T) {
+	t.Parallel()
 	now := time.Date(2026, time.August, 30, 12, 0, 0, 0, time.UTC)
 	retries := newBackfillRetrySet()
 	retries.failed("gone", now)

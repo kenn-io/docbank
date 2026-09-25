@@ -18,6 +18,7 @@ import (
 )
 
 func TestReadUnicodeRenditionWindowUsesCodePointOffsets(t *testing.T) {
+	t.Parallel()
 	text, actualEnd, eof, err := readUnicodeRenditionWindow(t.Context(), strings.NewReader("aé界🙂z"), 1, 3)
 	require.NoError(t, err)
 	assert.Equal(t, "é界🙂", text)
@@ -38,6 +39,7 @@ func TestReadUnicodeRenditionWindowUsesCodePointOffsets(t *testing.T) {
 }
 
 func TestReadUnicodeRenditionWindowFailsClosed(t *testing.T) {
+	t.Parallel()
 	text, actualEnd, eof, err := readUnicodeRenditionWindow(t.Context(), strings.NewReader("short"), 6, 1)
 	require.Empty(t, text)
 	require.Zero(t, actualEnd)
@@ -60,6 +62,7 @@ func TestReadUnicodeRenditionWindowFailsClosed(t *testing.T) {
 }
 
 func TestReadUnicodeRenditionWindowNeverRequestsAnUnboundedBuffer(t *testing.T) {
+	t.Parallel()
 	reader := &maximumReadReader{reader: strings.NewReader(strings.Repeat("x", 100_000))}
 	text, _, eof, err := readUnicodeRenditionWindow(t.Context(), reader, 80_000, 16_000)
 	require.NoError(t, err)
@@ -69,6 +72,7 @@ func TestReadUnicodeRenditionWindowNeverRequestsAnUnboundedBuffer(t *testing.T) 
 }
 
 func TestReadRenditionBlobWindowStreamsOnlyTheRequestedPrefix(t *testing.T) {
+	t.Parallel()
 	stream := &instrumentedVerifiedStream{reader: strings.NewReader(strings.Repeat("x", 1<<20))}
 	source := instrumentedVerifiedSource{stream: stream, size: 1 << 20}
 
@@ -86,6 +90,7 @@ func TestReadRenditionBlobWindowStreamsOnlyTheRequestedPrefix(t *testing.T) {
 }
 
 func TestReadRenditionBlobWindowPreservesCancellationAndCleanupErrors(t *testing.T) {
+	t.Parallel()
 	canceled, cancel := context.WithCancel(t.Context())
 	cancel()
 	stream := &instrumentedVerifiedStream{reader: strings.NewReader("synthetic")}
@@ -109,6 +114,7 @@ func TestReadRenditionBlobWindowPreservesCancellationAndCleanupErrors(t *testing
 }
 
 func TestRenditionTextWindowBindsTheCurrentLiveTuple(t *testing.T) {
+	t.Parallel()
 	fixture := newPublicationFixture(t)
 	publisher, err := NewArtifactPublisher(fixture.catalog, fixture.blobs)
 	require.NoError(t, err)
@@ -177,6 +183,7 @@ func TestRenditionTextWindowBindsTheCurrentLiveTuple(t *testing.T) {
 }
 
 func TestRenditionTextWindowRejectsInactiveAndSupersededAuthority(t *testing.T) {
+	t.Parallel()
 	newPublishedWindow := func(t *testing.T) (publicationFixture, *Service, RenditionTextWindow, string) {
 		t.Helper()
 		fixture := newPublicationFixture(t)
@@ -233,6 +240,7 @@ func TestRenditionTextWindowRejectsInactiveAndSupersededAuthority(t *testing.T) 
 }
 
 func TestRenditionTextWindowAcceptsAnEmptyActiveMarkdownArtifact(t *testing.T) {
+	t.Parallel()
 	fixture := newPublicationFixture(t)
 	staged := fixture.stage(t,
 		publicationIDs{"empty-build", "empty-attachment", "empty-generation"},
