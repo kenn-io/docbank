@@ -12,6 +12,7 @@ import (
 	"io"
 	"math"
 	"path"
+	"slices"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -1254,46 +1255,990 @@ func decodeMetadataHeader(raw jsontext.Value) (metadataHeader, error) {
 	return header, nil
 }
 
-// MetadataUniqueBlobBytes validates metadata JSONL and sums its unique blobs.
-func MetadataUniqueBlobBytes(r io.Reader) (total int64, retErr error) {
-	dec := jsontext.NewDecoder(bufio.NewReader(r))
-	rawHeader, err := dec.ReadValue()
+const (
+	metadataWalkerControlBytes = 256
+	// Match encoding/json/jsontext's maximum nesting depth.
+	metadataWalkerMaxDepth = 10_000
+)
+
+type metadataWalkerValueKind uint8
+
+const (
+	metadataWalkerValueMissing metadataWalkerValueKind = iota
+	metadataWalkerValueNull
+	metadataWalkerValueString
+	metadataWalkerValueNumber
+	metadataWalkerValueLiteral
+	metadataWalkerValueCompound
+)
+
+type metadataWalkerString struct {
+	bytes    [metadataWalkerControlBytes]byte
+	length   int
+	overflow bool
+}
+
+func (s *metadataWalkerString) append(value []byte) {
+	if s.overflow {
+		return
+	}
+	if len(value) > len(s.bytes)-s.length {
+		s.overflow = true
+		return
+	}
+	copy(s.bytes[s.length:], value)
+	s.length += len(value)
+}
+
+func (s *metadataWalkerString) value(field string) (string, error) {
+	if s.overflow {
+		return "", fmt.Errorf("metadata field %q exceeds %d-byte control limit", field, metadataWalkerControlBytes)
+	}
+	return string(s.bytes[:s.length]), nil
+}
+
+type metadataWalkerNumber struct {
+	negative bool
+	digits   uint64
+	overflow bool
+	integer  bool
+}
+
+func (n *metadataWalkerNumber) value(field string) (int64, error) {
+	if !n.integer || n.overflow {
+		return 0, fmt.Errorf("metadata field %q must be a bounded integer", field)
+	}
+	if n.negative {
+		if n.digits == uint64(math.MaxInt64)+1 {
+			return math.MinInt64, nil
+		}
+		return -int64(n.digits), nil // #nosec G115 -- overflow is ruled out above.
+	}
+	return int64(n.digits), nil // #nosec G115 -- overflow is tracked while scanning.
+}
+
+type metadataWalkerField struct {
+	kind          metadataWalkerValueKind
+	stringValue   metadataWalkerString
+	numberValue   metadataWalkerNumber
+	captureString bool
+	captureNumber bool
+}
+
+type metadataWalkerRecord struct {
+	fields map[string]*metadataWalkerField
+}
+
+type metadataJSONWalker struct {
+	r   io.Reader
+	buf [32 * 1024]byte
+	pos int
+	n   int
+	err error
+}
+
+func newMetadataJSONWalker(r io.Reader) *metadataJSONWalker {
+	return &metadataJSONWalker{r: r}
+}
+
+func (w *metadataJSONWalker) fill() error {
+	if w.err != nil {
+		return w.err
+	}
+	for {
+		n, err := w.r.Read(w.buf[:])
+		if n > 0 {
+			w.pos, w.n = 0, n
+			if err != nil {
+				w.err = err
+			}
+			return nil
+		}
+		if err != nil {
+			w.err = err
+			return err
+		}
+	}
+}
+
+func (w *metadataJSONWalker) peek() (byte, error) {
+	if w.pos >= w.n {
+		if err := w.fill(); err != nil {
+			return 0, err
+		}
+	}
+	return w.buf[w.pos], nil
+}
+
+func (w *metadataJSONWalker) take() (byte, error) {
+	b, err := w.peek()
 	if err != nil {
+		return 0, err
+	}
+	w.pos++
+	return b, nil
+}
+
+func isMetadataJSONWhitespace(value byte) bool {
+	return value == ' ' || value == '\t' || value == '\r' || value == '\n'
+}
+
+func (w *metadataJSONWalker) skipWhitespace() error {
+	for {
+		value, err := w.peek()
+		if err != nil {
+			return err
+		}
+		if !isMetadataJSONWhitespace(value) {
+			return nil
+		}
+		_, _ = w.take()
+	}
+}
+
+func (w *metadataJSONWalker) readString(dst *metadataWalkerString) error {
+	return w.readStringInto(dst, nil)
+}
+
+func (w *metadataJSONWalker) readStringInto(dst *metadataWalkerString, decoded *strings.Builder) error {
+	opening, err := w.take()
+	if err != nil {
+		return err
+	}
+	if opening != '"' {
+		return errors.New("metadata JSON string must begin with a quote")
+	}
+	var highSurrogate uint16
+	appendDecoded := func(value []byte) {
+		if dst != nil {
+			dst.append(value)
+		}
+		if decoded != nil {
+			_, _ = decoded.Write(value)
+		}
+	}
+	appendRune := func(value rune) {
+		var encoded [utf8.UTFMax]byte
+		length := utf8.EncodeRune(encoded[:], value)
+		appendDecoded(encoded[:length])
+	}
+	rejectUnpairedHigh := func() error {
+		if highSurrogate != 0 {
+			return errors.New("metadata JSON string contains an unpaired high surrogate")
+		}
+		return nil
+	}
+	for {
+		value, err := w.take()
+		if err != nil {
+			return fmt.Errorf("unterminated metadata JSON string: %w", err)
+		}
+		switch value {
+		case '"':
+			if err := rejectUnpairedHigh(); err != nil {
+				return err
+			}
+			return nil
+		case '\\':
+			escape, err := w.take()
+			if err != nil {
+				return fmt.Errorf("unterminated metadata JSON escape: %w", err)
+			}
+			switch escape {
+			case '"', '\\', '/', 'b', 'f', 'n', 'r', 't':
+				if err := rejectUnpairedHigh(); err != nil {
+					return err
+				}
+				decoded := rune(escape)
+				switch escape {
+				case 'b':
+					decoded = '\b'
+				case 'f':
+					decoded = '\f'
+				case 'n':
+					decoded = '\n'
+				case 'r':
+					decoded = '\r'
+				case 't':
+					decoded = '\t'
+				}
+				appendRune(decoded)
+			case 'u':
+				var code uint16
+				for range 4 {
+					digit, err := w.take()
+					if err != nil {
+						return fmt.Errorf("unterminated metadata Unicode escape: %w", err)
+					}
+					value, ok := metadataHexDigit(digit)
+					if !ok {
+						return errors.New("invalid metadata Unicode escape")
+					}
+					code = code<<4 | uint16(value)
+				}
+				switch {
+				case code >= 0xd800 && code <= 0xdbff:
+					if err := rejectUnpairedHigh(); err != nil {
+						return err
+					}
+					highSurrogate = code
+				case code >= 0xdc00 && code <= 0xdfff:
+					if highSurrogate == 0 {
+						return errors.New("metadata JSON string contains an unpaired low surrogate")
+					}
+					codepoint := 0x10000 + (int(highSurrogate)-0xd800)*0x400 + (int(code) - 0xdc00)
+					appendRune(rune(codepoint))
+					highSurrogate = 0
+				default:
+					if err := rejectUnpairedHigh(); err != nil {
+						return err
+					}
+					appendRune(rune(code))
+				}
+			default:
+				return fmt.Errorf("invalid metadata JSON escape %q", escape)
+			}
+		case '\n', '\r':
+			if err := rejectUnpairedHigh(); err != nil {
+				return err
+			}
+			return errors.New("metadata JSON string contains an unescaped newline")
+		default:
+			if err := rejectUnpairedHigh(); err != nil {
+				return err
+			}
+			if value < 0x20 {
+				return errors.New("metadata JSON string contains an unescaped control character")
+			}
+			if value < utf8.RuneSelf {
+				appendRune(rune(value))
+				continue
+			}
+			var encoded [utf8.UTFMax]byte
+			encoded[0] = value
+			var length int
+			switch {
+			case value >= 0xc2 && value <= 0xdf:
+				length = 2
+			case value >= 0xe0 && value <= 0xef:
+				length = 3
+			case value >= 0xf0 && value <= 0xf4:
+				length = 4
+			default:
+				return errors.New("metadata JSON string is not valid UTF-8")
+			}
+			for index := 1; index < length; index++ {
+				continuation, err := w.take()
+				if err != nil {
+					return fmt.Errorf("truncated metadata UTF-8 sequence: %w", err)
+				}
+				if continuation < 0x80 || continuation > 0xbf {
+					return errors.New("metadata JSON string is not valid UTF-8")
+				}
+				encoded[index] = continuation
+			}
+			if !utf8.Valid(encoded[:length]) {
+				return errors.New("metadata JSON string is not valid UTF-8")
+			}
+			appendDecoded(encoded[:length])
+		}
+	}
+}
+
+func metadataHexDigit(value byte) (byte, bool) {
+	switch {
+	case value >= '0' && value <= '9':
+		return value - '0', true
+	case value >= 'a' && value <= 'f':
+		return value - 'a' + 10, true
+	case value >= 'A' && value <= 'F':
+		return value - 'A' + 10, true
+	default:
+		return 0, false
+	}
+}
+
+func (w *metadataJSONWalker) readLiteral(literal string) error {
+	for index := range len(literal) {
+		value, err := w.take()
+		if err != nil {
+			return fmt.Errorf("truncated metadata JSON literal: %w", err)
+		}
+		if value != literal[index] {
+			return errors.New("invalid metadata JSON literal")
+		}
+	}
+	return nil
+}
+
+func (w *metadataJSONWalker) readNumber(dst *metadataWalkerNumber) error {
+	if dst != nil {
+		*dst = metadataWalkerNumber{integer: true}
+	}
+	negative := false
+	value, err := w.peek()
+	if err != nil {
+		return err
+	}
+	if value == '-' {
+		negative = true
+		_, _ = w.take()
+		value, err = w.peek()
+		if err != nil {
+			return fmt.Errorf("metadata number has no digits: %w", err)
+		}
+	}
+	if value < '0' || value > '9' {
+		return errors.New("metadata number has no digits")
+	}
+	if value == '0' {
+		_, _ = w.take()
+		if next, err := w.peek(); err == nil && next >= '0' && next <= '9' {
+			return errors.New("metadata number has leading zero")
+		}
+		if dst != nil {
+			dst.negative = negative
+		}
+	} else {
+		for {
+			value, err = w.peek()
+			if err != nil {
+				if !errors.Is(err, io.EOF) {
+					return err
+				}
+				break
+			}
+			if value < '0' || value > '9' {
+				break
+			}
+			_, _ = w.take()
+			if dst != nil {
+				digit := uint64(value - '0')
+				limit := uint64(math.MaxInt64)
+				if negative {
+					limit++
+				}
+				if dst.digits > (limit-digit)/10 {
+					dst.overflow = true
+				} else if !dst.overflow {
+					dst.digits = dst.digits*10 + digit
+				}
+			}
+		}
+		if dst != nil {
+			dst.negative = negative
+		}
+	}
+	if value, err = w.peek(); err == nil && value == '.' {
+		if dst != nil {
+			dst.integer = false
+		}
+		_, _ = w.take()
+		value, err = w.peek()
+		if err != nil || value < '0' || value > '9' {
+			return errors.New("metadata number fraction has no digits")
+		}
+		for {
+			value, err = w.peek()
+			if err != nil {
+				if !errors.Is(err, io.EOF) {
+					return err
+				}
+				break
+			}
+			if value < '0' || value > '9' {
+				break
+			}
+			_, _ = w.take()
+		}
+	}
+	if value, err = w.peek(); err == nil && (value == 'e' || value == 'E') {
+		if dst != nil {
+			dst.integer = false
+		}
+		_, _ = w.take()
+		if value, err = w.peek(); err == nil && (value == '+' || value == '-') {
+			_, _ = w.take()
+		}
+		value, err = w.peek()
+		if err != nil || value < '0' || value > '9' {
+			return errors.New("metadata number exponent has no digits")
+		}
+		for {
+			value, err = w.peek()
+			if err != nil {
+				if !errors.Is(err, io.EOF) {
+					return err
+				}
+				break
+			}
+			if value < '0' || value > '9' {
+				break
+			}
+			_, _ = w.take()
+		}
+	}
+	return nil
+}
+
+const (
+	metadataWalkerObjectKeyOrEnd uint8 = iota
+	metadataWalkerObjectKey
+	metadataWalkerObjectColon
+	metadataWalkerObjectValue
+	metadataWalkerObjectCommaOrEnd
+	metadataWalkerArrayValueOrEnd
+	metadataWalkerArrayValue
+	metadataWalkerArrayCommaOrEnd
+)
+
+type metadataWalkerFrame struct {
+	kind  byte
+	state uint8
+	keys  map[string]struct{}
+}
+
+func (w *metadataJSONWalker) readObjectKey() (string, error) {
+	var key strings.Builder
+	if err := w.readStringInto(nil, &key); err != nil {
+		return "", err
+	}
+	return key.String(), nil
+}
+
+func (w *metadataJSONWalker) readScalar() error {
+	value, err := w.peek()
+	if err != nil {
+		return err
+	}
+	switch value {
+	case '"':
+		return w.readString(nil)
+	case 't':
+		return w.readLiteral("true")
+	case 'f':
+		return w.readLiteral("false")
+	case 'n':
+		return w.readLiteral("null")
+	case '-', '0', '1', '2', '3', '4', '5', '6', '7', '8', '9':
+		return w.readNumber(nil)
+	default:
+		return errors.New("metadata JSON value is invalid")
+	}
+}
+
+func (w *metadataJSONWalker) readCompound(opening byte) error {
+	stack := [metadataWalkerMaxDepth]metadataWalkerFrame{{
+		kind: opening,
+		state: func() uint8 {
+			if opening == '{' {
+				return metadataWalkerObjectKeyOrEnd
+			}
+			return metadataWalkerArrayValueOrEnd
+		}(),
+	}}
+	top := 0
+	for top >= 0 {
+		frame := &stack[top]
+		if err := w.skipWhitespace(); err != nil {
+			return err
+		}
+		value, err := w.peek()
+		if err != nil {
+			return err
+		}
+		switch frame.state {
+		case metadataWalkerObjectKeyOrEnd, metadataWalkerObjectKey:
+			if frame.state == metadataWalkerObjectKeyOrEnd && value == '}' {
+				_, _ = w.take()
+				frame.keys = nil
+				top--
+				continue
+			}
+			if value != '"' {
+				return errors.New("metadata JSON object key is invalid")
+			}
+			key, err := w.readObjectKey()
+			if err != nil {
+				return err
+			}
+			if frame.keys == nil {
+				frame.keys = make(map[string]struct{})
+			}
+			if _, exists := frame.keys[key]; exists {
+				return fmt.Errorf("metadata JSON object repeats member name %q", key)
+			}
+			frame.keys[key] = struct{}{}
+			frame.state = metadataWalkerObjectColon
+		case metadataWalkerObjectColon:
+			if value != ':' {
+				return errors.New("metadata JSON object lacks a colon")
+			}
+			_, _ = w.take()
+			frame.state = metadataWalkerObjectValue
+		case metadataWalkerObjectValue:
+			if value == '{' || value == '[' {
+				_, _ = w.take()
+				frame.state = metadataWalkerObjectCommaOrEnd
+				top++
+				if top == len(stack) {
+					return errors.New("metadata JSON nesting exceeds parser depth")
+				}
+				stack[top] = metadataWalkerFrame{kind: value, state: func() uint8 {
+					if value == '{' {
+						return metadataWalkerObjectKeyOrEnd
+					}
+					return metadataWalkerArrayValueOrEnd
+				}()}
+				continue
+			}
+			if err := w.readScalar(); err != nil {
+				return err
+			}
+			frame.state = metadataWalkerObjectCommaOrEnd
+		case metadataWalkerObjectCommaOrEnd:
+			if value == ',' {
+				_, _ = w.take()
+				frame.state = metadataWalkerObjectKey
+				continue
+			}
+			if value == '}' {
+				_, _ = w.take()
+				frame.keys = nil
+				top--
+				continue
+			}
+			return errors.New("metadata JSON object lacks a comma")
+		case metadataWalkerArrayValueOrEnd, metadataWalkerArrayValue:
+			if frame.state == metadataWalkerArrayValueOrEnd && value == ']' {
+				_, _ = w.take()
+				top--
+				continue
+			}
+			if value == '{' || value == '[' {
+				_, _ = w.take()
+				frame.state = metadataWalkerArrayCommaOrEnd
+				top++
+				if top == len(stack) {
+					return errors.New("metadata JSON nesting exceeds parser depth")
+				}
+				stack[top] = metadataWalkerFrame{kind: value, state: func() uint8 {
+					if value == '{' {
+						return metadataWalkerObjectKeyOrEnd
+					}
+					return metadataWalkerArrayValueOrEnd
+				}()}
+				continue
+			}
+			if err := w.readScalar(); err != nil {
+				return err
+			}
+			frame.state = metadataWalkerArrayCommaOrEnd
+		case metadataWalkerArrayCommaOrEnd:
+			if value == ',' {
+				_, _ = w.take()
+				frame.state = metadataWalkerArrayValue
+				continue
+			}
+			if value == ']' {
+				_, _ = w.take()
+				top--
+				continue
+			}
+			return errors.New("metadata JSON array lacks a comma")
+		default:
+			return errors.New("metadata JSON parser state is invalid")
+		}
+	}
+	return nil
+}
+
+func metadataFieldIsKnown(field string) bool {
+	for _, required := range metadataRequiredFields {
+		if slices.Contains(required, field) {
+			return true
+		}
+	}
+	return slices.Contains(metadataHeaderFields, field)
+}
+
+func metadataFieldCapturesString(field string) bool {
+	switch field {
+	case metadataTypeField, "format", auditVaultIDField, "hash", metadataCreatedAtField:
+		return true
+	default:
+		return false
+	}
+}
+
+func metadataFieldCapturesNumber(field string) bool {
+	switch field {
+	case "version", "node_sequence", metadataSizeField:
+		return true
+	default:
+		return false
+	}
+}
+
+func (w *metadataJSONWalker) readValue(field *metadataWalkerField) error {
+	if err := w.skipWhitespace(); err != nil {
+		return err
+	}
+	value, err := w.peek()
+	if err != nil {
+		return err
+	}
+	switch value {
+	case '"':
+		field.kind = metadataWalkerValueString
+		var dst *metadataWalkerString
+		if field.captureString {
+			dst = &field.stringValue
+		}
+		return w.readString(dst)
+	case 'n':
+		field.kind = metadataWalkerValueNull
+		return w.readLiteral("null")
+	case 't':
+		field.kind = metadataWalkerValueLiteral
+		return w.readLiteral("true")
+	case 'f':
+		field.kind = metadataWalkerValueLiteral
+		return w.readLiteral("false")
+	case '-', '0', '1', '2', '3', '4', '5', '6', '7', '8', '9':
+		field.kind = metadataWalkerValueNumber
+		var dst *metadataWalkerNumber
+		if field.captureNumber {
+			dst = &field.numberValue
+		}
+		return w.readNumber(dst)
+	case '{', '[':
+		field.kind = metadataWalkerValueCompound
+		_, _ = w.take()
+		return w.readCompound(value)
+	default:
+		return errors.New("metadata JSON value is invalid")
+	}
+}
+
+func (w *metadataJSONWalker) finishRecord() error {
+	for {
+		value, err := w.peek()
+		if err != nil {
+			if errors.Is(err, io.EOF) {
+				return nil
+			}
+			return err
+		}
+		if value == ' ' || value == '\t' {
+			_, _ = w.take()
+			continue
+		}
+		if value == '\r' {
+			_, _ = w.take()
+			if next, err := w.peek(); err == nil && next == '\n' {
+				_, _ = w.take()
+			}
+			return nil
+		}
+		if value == '\n' {
+			_, _ = w.take()
+			return nil
+		}
+		return errors.New("metadata JSON record must end at a line boundary")
+	}
+}
+
+func (w *metadataJSONWalker) nextRecord() (record *metadataWalkerRecord, err error) {
+	if err := w.skipWhitespace(); err != nil {
+		if errors.Is(err, io.EOF) {
+			return nil, io.EOF
+		}
+		return nil, err
+	}
+	value, err := w.take()
+	if err != nil {
+		return nil, err
+	}
+	if value != '{' {
+		return nil, errors.New("metadata record must be a JSON object")
+	}
+	defer func() {
+		if err != nil && errors.Is(err, io.EOF) {
+			err = errors.New("metadata JSON record is truncated: " + err.Error())
+		}
+	}()
+	record = &metadataWalkerRecord{fields: make(map[string]*metadataWalkerField)}
+	if err := w.skipWhitespace(); err != nil {
+		return nil, err
+	}
+	value, err = w.peek()
+	if err != nil {
+		return nil, err
+	}
+	if value == '}' {
+		_, _ = w.take()
+		return record, w.finishRecord()
+	}
+	for {
+		if value != '"' {
+			return nil, errors.New("metadata JSON object key is invalid")
+		}
+		var key metadataWalkerString
+		if err := w.readString(&key); err != nil {
+			return nil, err
+		}
+		fieldName, err := key.value("object key")
+		if err != nil {
+			return nil, err
+		}
+		knownField := metadataFieldIsKnown(fieldName)
+		if knownField {
+			if _, exists := record.fields[fieldName]; exists {
+				return nil, fmt.Errorf("metadata record repeats field %q", fieldName)
+			}
+		} else {
+			return nil, fmt.Errorf("metadata record contains unknown or non-canonical field %q", fieldName)
+		}
+		if err := w.skipWhitespace(); err != nil {
+			return nil, err
+		}
+		value, err = w.take()
+		if err != nil {
+			return nil, err
+		}
+		if value != ':' {
+			return nil, errors.New("metadata JSON object lacks a colon")
+		}
+		field := &metadataWalkerField{
+			captureString: knownField && metadataFieldCapturesString(fieldName),
+			captureNumber: knownField && metadataFieldCapturesNumber(fieldName),
+		}
+		if err := w.readValue(field); err != nil {
+			return nil, err
+		}
+		if knownField {
+			record.fields[fieldName] = field
+		}
+		if err := w.skipWhitespace(); err != nil {
+			return nil, err
+		}
+		value, err = w.take()
+		if err != nil {
+			return nil, err
+		}
+		if value == '}' {
+			return record, w.finishRecord()
+		}
+		if value != ',' {
+			return nil, errors.New("metadata JSON object lacks a comma")
+		}
+		if err := w.skipWhitespace(); err != nil {
+			return nil, err
+		}
+		value, err = w.peek()
+		if err != nil {
+			return nil, err
+		}
+	}
+}
+
+func (r *metadataWalkerRecord) field(name string) (*metadataWalkerField, bool) {
+	field, ok := r.fields[name]
+	return field, ok
+}
+
+func (r *metadataWalkerRecord) validateControlBounds() error {
+	for name, field := range r.fields {
+		if field.captureString && field.stringValue.overflow {
+			return fmt.Errorf("metadata field %q exceeds %d-byte control limit", name, metadataWalkerControlBytes)
+		}
+		if field.captureNumber && field.numberValue.overflow {
+			return fmt.Errorf("metadata field %q exceeds bounded integer", name)
+		}
+	}
+	return nil
+}
+
+func (r *metadataWalkerRecord) validateFields(required []string, nullable map[string]bool) error {
+	allowed := make(map[string]struct{}, len(required))
+	for _, fieldName := range required {
+		allowed[fieldName] = struct{}{}
+		field, ok := r.field(fieldName)
+		if !ok {
+			return fmt.Errorf("metadata record lacks required field %q", fieldName)
+		}
+		if field.kind == metadataWalkerValueNull && !nullable[fieldName] {
+			return fmt.Errorf("metadata field %q cannot be null", fieldName)
+		}
+	}
+	for fieldName := range r.fields {
+		if _, ok := allowed[fieldName]; !ok {
+			return fmt.Errorf("metadata record contains unknown or non-canonical field %q", fieldName)
+		}
+	}
+	return nil
+}
+
+func (r *metadataWalkerRecord) stringField(name string) (string, error) {
+	field, ok := r.field(name)
+	if !ok {
+		return "", fmt.Errorf("metadata record lacks required field %q", name)
+	}
+	if field.kind != metadataWalkerValueString {
+		return "", fmt.Errorf("metadata field %q must be a string", name)
+	}
+	return field.stringValue.value(name)
+}
+
+func (r *metadataWalkerRecord) numberField(name string) (int64, error) {
+	field, ok := r.field(name)
+	if !ok {
+		return 0, fmt.Errorf("metadata record lacks required field %q", name)
+	}
+	if field.kind != metadataWalkerValueNumber {
+		return 0, fmt.Errorf("metadata field %q must be a number", name)
+	}
+	return field.numberValue.value(name)
+}
+
+func (r *metadataWalkerRecord) header() (metadataHeader, error) {
+	if err := r.validateFields(metadataHeaderFields, nil); err != nil {
+		return metadataHeader{}, err
+	}
+	typeValue, err := r.stringField(metadataTypeField)
+	if err != nil {
+		return metadataHeader{}, err
+	}
+	format, err := r.stringField("format")
+	if err != nil {
+		return metadataHeader{}, err
+	}
+	vaultID, err := r.stringField(auditVaultIDField)
+	if err != nil {
+		return metadataHeader{}, err
+	}
+	version, err := r.numberField("version")
+	if err != nil {
+		return metadataHeader{}, err
+	}
+	nodeSequence, err := r.numberField("node_sequence")
+	if err != nil {
+		return metadataHeader{}, err
+	}
+	header := metadataHeader{
+		Type:         typeValue,
+		Format:       format,
+		Version:      int(version),
+		VaultID:      vaultID,
+		NodeSequence: nodeSequence,
+	}
+	if header.Type != "meta" || header.Format != "docbank-metadata" ||
+		header.Version != metadataFormatVersion || header.NodeSequence <= 0 {
+		return metadataHeader{}, fmt.Errorf("unsupported metadata header: type=%q format=%q version=%d node_sequence=%d",
+			header.Type, header.Format, header.Version, header.NodeSequence)
+	}
+	if err := validateUUIDv4(header.VaultID); err != nil {
+		return metadataHeader{}, fmt.Errorf("invalid metadata vault_id: %w", err)
+	}
+	return header, nil
+}
+
+func (r *metadataWalkerRecord) kind() (string, error) {
+	field, ok := r.field(metadataTypeField)
+	if !ok {
+		return "", errors.New(`unknown record type ""`)
+	}
+	if field.kind == metadataWalkerValueNull {
+		return "", fmt.Errorf("metadata field %q cannot be null", metadataTypeField)
+	}
+	kind, err := r.stringField(metadataTypeField)
+	if err != nil {
+		return "", err
+	}
+	return kind, nil
+}
+
+func (r *metadataWalkerRecord) blob() (metadataBlob, error) {
+	if err := r.validateFields(metadataRequiredFields["blob"], metadataNullableFields["blob"]); err != nil {
+		return metadataBlob{}, err
+	}
+	typeValue, err := r.stringField(metadataTypeField)
+	if err != nil {
+		return metadataBlob{}, err
+	}
+	hash, err := r.stringField("hash")
+	if err != nil {
+		return metadataBlob{}, err
+	}
+	size, err := r.numberField("size")
+	if err != nil {
+		return metadataBlob{}, err
+	}
+	createdAt, err := r.stringField(metadataCreatedAtField)
+	if err != nil {
+		return metadataBlob{}, err
+	}
+	return metadataBlob{Type: typeValue, Hash: hash, Size: size, CreatedAt: createdAt}, nil
+}
+
+// MetadataUniqueBlobBytes validates metadata envelope and blob records, then sums unique blob bytes.
+func MetadataUniqueBlobBytes(r io.Reader) (total int64, retErr error) {
+	walker := newMetadataJSONWalker(r)
+	record, err := walker.nextRecord()
+	if err != nil {
+		if errors.Is(err, io.EOF) {
+			return 0, fmt.Errorf("decoding metadata header: %w", io.EOF)
+		}
 		return 0, fmt.Errorf("decoding metadata header: %w", err)
 	}
-	if _, err := decodeMetadataHeader(rawHeader); err != nil {
+	if record == nil {
+		return 0, fmt.Errorf("decoding metadata header: %w", io.EOF)
+	}
+	if err := record.validateControlBounds(); err != nil {
+		return 0, fmt.Errorf("decoding metadata header: %w", err)
+	}
+	if _, err := record.header(); err != nil {
 		return 0, fmt.Errorf("decoding metadata header: %w", err)
 	}
 	seen := make(map[string]struct{})
-	for record := 2; ; record++ {
-		raw, err := dec.ReadValue()
-		if errors.Is(err, io.EOF) {
+	for recordNumber := 2; ; recordNumber++ {
+		record, err := walker.nextRecord()
+		if err != nil {
+			if errors.Is(err, io.EOF) {
+				return total, nil
+			}
+			return 0, fmt.Errorf("decoding metadata record %d: %w", recordNumber, err)
+		}
+		if record == nil {
 			return total, nil
 		}
+		if err := record.validateControlBounds(); err != nil {
+			return 0, fmt.Errorf("decoding metadata record %d: %w", recordNumber, err)
+		}
+		kind, err := record.kind()
 		if err != nil {
-			return 0, fmt.Errorf("decoding metadata record %d: %w", record, err)
+			return 0, fmt.Errorf("decoding metadata record %d type: %w", recordNumber, err)
 		}
-		var kind struct {
-			Type string `json:"type"`
+		required, ok := metadataRequiredFields[kind]
+		if !ok {
+			return 0, fmt.Errorf("validating metadata record %d (%s): unknown record type %q", recordNumber, kind, kind)
 		}
-		if err := json.Unmarshal(raw, &kind); err != nil {
-			return 0, fmt.Errorf("decoding metadata record %d type: %w", record, err)
+		if err := record.validateFields(required, metadataNullableFields[kind]); err != nil {
+			return 0, fmt.Errorf("validating metadata record %d (%s): %w", recordNumber, kind, err)
 		}
-		if err := validateMetadataRecordShape(kind.Type, raw); err != nil {
-			return 0, fmt.Errorf("validating metadata record %d (%s): %w", record, kind.Type, err)
-		}
-		if kind.Type != "blob" {
+		if kind != "blob" {
 			continue
 		}
-		var blob metadataBlob
-		if err := decodeMetadataRecord(raw, &blob); err != nil {
-			return 0, fmt.Errorf("decoding metadata record %d (blob): %w", record, err)
+		blob, err := record.blob()
+		if err != nil {
+			return 0, fmt.Errorf("decoding metadata record %d (blob): %w", recordNumber, err)
 		}
 		if err := validateBlobRecord(blob); err != nil {
-			return 0, fmt.Errorf("validating metadata record %d (blob): %w", record, err)
+			return 0, fmt.Errorf("validating metadata record %d (blob): %w", recordNumber, err)
 		}
 		if _, ok := seen[blob.Hash]; ok {
-			return 0, fmt.Errorf("metadata record %d repeats blob %q", record, blob.Hash)
+			return 0, fmt.Errorf("metadata record %d repeats blob %q", recordNumber, blob.Hash)
 		}
 		seen[blob.Hash] = struct{}{}
 		if blob.Size > math.MaxInt64-total {
