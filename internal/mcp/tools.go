@@ -63,6 +63,9 @@ var readToolDefinitions = []toolDefinition{
 	{name: "find_bates_exports", title: "Find Bates exports", description: "Return bounded candidates for one exact Bates label, custodian label, or canonical person.", schemas: findBatesExportsSchemas},
 	{name: "find_production_numbers", title: "Find production numbers", description: "Resolve an exact published production number or page through a bounded numeric range.", schemas: findProductionNumbersSchemas},
 	{name: "find_production_number_candidates", title: "Find production number candidates", description: "Find verified published outputs for exact, prefix, or substring label text and report ambiguity.", schemas: findProductionNumberCandidatesSchemas},
+	{name: "list_production_sets", title: "List production sets", description: "Page through bounded production set summaries.", schemas: listProductionSetsSchemas},
+	{name: "get_production_set", title: "Get production set", description: "Read one exact production set.", schemas: getProductionSetSchemas},
+	{name: "get_production_draft", title: "Get production draft", description: "Read one exact production revision and ETag.", schemas: getProductionDraftSchemas},
 }
 
 var processingToolDefinition = toolDefinition{
