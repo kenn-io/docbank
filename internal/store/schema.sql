@@ -2099,8 +2099,8 @@ CREATE TABLE IF NOT EXISTS photo_change_receipts (
     created_at     TEXT NOT NULL
 );
 
--- Completed source inventories are immutable operational history. The map is
--- intentionally empty until a later migration slice creates destinations.
+-- Completed source inventories are immutable operational history. The map
+-- stays empty until a later migration slice creates destinations.
 CREATE TABLE IF NOT EXISTS photo_migration_runs (
     run_id          TEXT PRIMARY KEY,
     source_kind     TEXT NOT NULL,
@@ -2112,12 +2112,12 @@ CREATE TABLE IF NOT EXISTS photo_migration_runs (
 
 CREATE TABLE IF NOT EXISTS photo_migration_map (
     run_id           TEXT NOT NULL REFERENCES photo_migration_runs(run_id) ON DELETE CASCADE,
-    source_hub       TEXT NOT NULL,
-    source_user_id   TEXT NOT NULL,
-    storage_key      TEXT NOT NULL,
-    docbank_owner_id TEXT,
-    state            TEXT NOT NULL,
-    PRIMARY KEY (run_id, source_hub, source_user_id, storage_key)
+    source_table     TEXT NOT NULL,
+    source_id        TEXT NOT NULL,
+    destination_kind TEXT NOT NULL,
+    destination_id   TEXT NOT NULL,
+    disposition      TEXT NOT NULL,
+    PRIMARY KEY (run_id, source_table, source_id)
 );
 
 CREATE INDEX IF NOT EXISTS photo_migration_runs_recent
