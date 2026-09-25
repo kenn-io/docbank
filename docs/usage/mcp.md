@@ -1,5 +1,5 @@
 ---
-last_edited: 2026-08-29
+last_edited: 2026-09-24
 title: Model Context Protocol
 description: Connect a local MCP client to Docbank's bounded, daemon-first document surface.
 ---
@@ -80,10 +80,13 @@ client registration, scopes, or token refresh. A client may connect locally or
 through a trusted tunnel, but it must be able to set the Authorization header;
 clients that require the MCP HTTP OAuth flow are unsupported.
 
-Both transports have the fixed 19-tool read catalog described below.
+Both transports have the fixed 28-tool read catalog described below.
 `--allow-processing` adds only guarded processing start.
 `--allow-package-writes` separately permits load-file preflight, import, and
-custodian changes. Enable either flag or both when starting the process.
+custodian changes. `--allow-export-writes` independently permits exact native
+document export operations. `--allow-report-writes` separately permits frozen
+report creation and reviewed date revisions. Enable only the writes this
+process needs.
 
 ## Exact protocol contract
 
@@ -142,6 +145,8 @@ links, is capped at 1 MiB.
 | `get_processing_plan` | Requires an exact node ID, content-version UUID, and 1–128-character processing profile name. Returns the complete provider, trust-boundary, retention, estimate, consent, and backup disclosure plus its fingerprint. |
 | `get_processing_status` | Reads one stable 64-hex-character job identity. A response contains at most 64 embedding job IDs. |
 | `get_processing_coverage` | Reports rendition and embedding coverage for 1–4,096 unique version IDs in one exact vault fence and one 1–128-character processing profile. The response has at most 65 coverage classes. |
+| `list_processing_profiles` | Lists up to 128 locally executable processing profiles, including their fingerprints and available rendition, embedding, query embedding, and reranking capabilities. It does not return provider credentials. |
+| `get_format_coverage` | Reads the verified `format-coverage/v1` inventory. Optional `family`, `format`, and `extension` filters are bounded; choose `format` or `extension`, not both. The result includes an exact lookup when a selector is supplied and is capped by the shared 1 MiB tool limit. |
 | `get_package_import` | Reads durable progress for one import operation UUID. |
 | `get_package_preflight` | Reads one retained preflight by its exact identity. |
 | `list_package_preflight_diagnostics` | Pages through bounded diagnostics for a retained preflight. |
@@ -152,6 +157,31 @@ links, is capped at 1 MiB.
 | `list_package_members` | Pages through a package's immutable document occurrences. |
 | `get_package_record` | Reads one immutable sender row by its package-scoped record key. |
 | `lookup_bates_label` | Finds bounded package-scoped matches for an exact received or assigned label. |
+| `preview_export_plan` | Reads the frozen role availability, member hash, and fingerprint for one native document export plan. |
+| `get_export_job` | Reads one export job's current state and its retained archive receipt after completion. |
+| `open_export_archive` | Verifies a completed ZIP and opens a private, 15-minute download handle for an archive of at most 512 MiB. This read is available without the export write flag. |
+| `download_export_archive` | Reads at most 256 KiB per call. It checks the current owner and source visibility before every chunk, then returns base64 bytes and the archive SHA-256. `close=true` releases the handle. |
+| `open_report_artifact` | Opens one retained CSV or bundle by its 48-character report ID. The daemon checks the current owner; the returned signed handle expires after 15 minutes. Each open makes a new private handle and is non-idempotent. |
+| `download_report_artifact` | Reads up to 256 KiB from a signed handle at an explicit offset, encoded as base64. Each call rechecks the owner, artifact size, and SHA-256 against the daemon before returning any bytes. `close=true` releases the handle, so the tool is non-idempotent. |
+| `get_report_summary` | Reads the owner-bound frozen counts, coverage, review state, and artifact hashes for one report ID. Current source visibility is checked before the summary is returned. |
+| `list_report_history` | Pages through up to 10 retained requests and summaries. The daemon checks the current owner and source visibility; withdrawn counts are withheld. |
+| `get_report_dates` | Pages through at most 20 review records at a time, retaining exact document, candidate, and evidence identities for a later reviewed choice. |
+
+`--allow-report-writes` adds `create_report` and `revise_report`. Creation accepts
+the same bounded request as the CLI, including exact v2 selected document
+identities. Revision creates a new report from choices tied to frozen candidate
+and evidence hashes. The server does not retry either write after a lost
+response; check report history before submitting it again.
+
+Report artifacts are limited to 512 MiB, with at most 16 open handles and
+512 MiB of retained private spool storage per MCP server. Companion bundle
+verification is serialized across the process, so another CSV or bundle open
+may wait. A handle is published only after the complete artifact matches the
+authenticated daemon's size and SHA-256 response. Bundles pass independent
+packet verification; CSV also has to match the verified companion packet's
+`hits.csv` before a handle is issued.
+A changed owner denies later chunks. Handle expiry, explicit close, and server
+shutdown release the temporary storage.
 
 `list_documents` uses live keyset pagination, not a snapshot. A mutation between
 pages can change later membership or order. Each opaque cursor is at most 32 KiB of ASCII, expires after 15 minutes, and
@@ -201,6 +231,10 @@ capped at 1 KiB and a stable code:
 - `invalid_document_cursor`
 - `invalid_rendition_window`
 - `invalid_rendition_encoding`
+- `report_unavailable`
+- `report_capacity`
+- `visibility_changed`
+- `access_denied`
 
 Invalid tool arguments use JSON-RPC `-32602`. Unexpected failures use a
 sanitized JSON-RPC internal error. Stderr records the operation and a fixed
@@ -310,9 +344,35 @@ only when the agent may perform these local reads and vault changes.
 `--allow-processing` does not enable package writes. Use both flags when both
 capabilities are needed.
 
+## Optional native export writes
+
+To let an MCP client create a native document export, start a separate process
+with `--allow-export-writes`:
+
+```bash
+docbank mcp --transport stdio --allow-export-writes
+```
+
+This adds `create_export_source`, `create_export_plan`, `start_export_job`, and
+`cancel_export_job`. Source creation accepts 1–100 exact document identities
+(`node_id`, content `version_id`, SHA-256, and size) and a caller-generated
+operation UUID. A plan binds the returned source ID and member hash to at most
+eight output roles. Review it with `preview_export_plan` before starting a job
+using that plan's exact fingerprint. `get_export_job` works without the write
+flag and returns a completed archive receipt when available. The write flag
+does not enable processing or load-file package writes.
+
+Use `open_export_archive` and then `download_export_archive` for a completed
+archive of at most 512 MiB. The MCP process verifies the whole ZIP before
+issuing a handle, keeps at most 512 MiB of private spools across its servers,
+and drops a handle when its source is withdrawn. Reassemble the chunks in
+offset order and check the final SHA-256. Larger archives use the authenticated
+CLI `docbank export archive`, which supports the native archive size limit.
+
 No MCP tool can delete documents, move, rename, tag, restore, prune, pack,
 repack, change configuration, select credentials, grant processing consent,
-or return source bytes. Package preflight may upload a local source container;
+or return individual source bytes. Verified export archives are the bounded
+byte-download exception. Package preflight may upload a local source container;
 there is no general document upload tool.
 
 ## Cache behavior
