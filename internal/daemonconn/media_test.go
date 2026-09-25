@@ -91,3 +91,33 @@ func TestMediaClientAcceptsEarlyReplayResponse(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "source", result.SourceID)
 }
+
+func TestMediaTranscriptValidationPreservesZeroTiming(t *testing.T) {
+	start, end := int64(0), int64(1000)
+	transcript := api.MediaTranscript{
+		VaultUID: "vault", SourceID: "source", SourceVersionID: "source-version", ContentVersionID: "content",
+		EvidenceState: "ready", CoverageState: "transcribed", OperationState: "succeeded",
+		Transcript: &api.MediaTranscriptEvidence{Origin: "supplied",
+			Units: []api.MediaTranscriptUnit{{Text: "cue", StartMS: &start, EndMS: &end}}},
+	}
+	require.NoError(t, validateMediaTranscript(transcript, "source", "source-version", "content"))
+	transcript.Transcript.Units[0].EndMS = nil
+	require.Error(t, validateMediaTranscript(transcript, "source", "source-version", "content"))
+}
+
+func TestMediaTranscriptClientSendsTheCompleteTuple(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/api/v1/media/sources/source/versions/source-version/transcript" ||
+			r.URL.Query().Get("content_version_id") != "content" {
+			t.Errorf("unexpected transcript request: %s %s", r.Method, r.URL.String())
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"vault_uid":"vault","source_id":"source","source_version_id":"source-version","content_version_id":"content","evidence_state":"ready","coverage_state":"transcribed","operation_state":"succeeded","transcript":{"origin":"supplied","units":[{"text":"cue","start_ms":0,"end_ms":1000}]}}`))
+	}))
+	t.Cleanup(server.Close)
+	result, err := New(server.URL, "key").MediaTranscript(t.Context(), "source", "source-version", "content")
+	require.NoError(t, err)
+	require.Equal(t, "ready", result.EvidenceState)
+	require.NotNil(t, result.Transcript)
+	require.Equal(t, int64(0), *result.Transcript.Units[0].StartMS)
+}

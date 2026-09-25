@@ -6,6 +6,8 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"io"
 	"os"
 	"strings"
@@ -17,6 +19,7 @@ import (
 
 	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/internal/store"
+	"go.kenn.io/kit/pack"
 	"go.kenn.io/kit/packstore"
 )
 
@@ -35,6 +38,82 @@ func TestMediaTimeSpanPreservesZeroAndRejectsInventedTiming(t *testing.T) {
 	span, err = mediaTimeSpan(document.EvidenceLocatorV1{Kind: document.EvidenceLocatorGeneric})
 	require.NoError(t, err)
 	require.Nil(t, span)
+}
+
+func TestReadExactArtifactRejectsDeclaredOversizeBeforeOpening(t *testing.T) {
+	raw := []byte("synthetic artifact")
+	digest := sha256.Sum256(raw)
+	hash := hex.EncodeToString(digest[:])
+	blobs := &mediaBlobFixture{data: map[string][]byte{hash: raw}}
+
+	_, err := ReadExactArtifact(t.Context(), blobs, hash, 17, 16)
+	require.ErrorIs(t, err, ErrMediaArtifactOversize)
+	require.Zero(t, blobs.opens, "the declared size gate runs before blob access")
+
+	got, err := ReadExactArtifact(t.Context(), blobs, hash, int64(len(raw)), int64(len(raw)))
+	require.NoError(t, err)
+	require.Equal(t, raw, got)
+	require.Equal(t, 1, blobs.opens)
+
+	_, err = ReadExactArtifact(t.Context(), blobs, hash, int64(len(raw))+1, int64(len(raw))+1)
+	require.ErrorIs(t, err, ErrMediaArtifactCorrupt)
+}
+
+func TestReadExactArtifactClassifiesOpenTimeIntegrityErrors(t *testing.T) {
+	raw := []byte("synthetic artifact")
+	blobs := &artifactReaderFixture{openErr: fmt.Errorf("opening compressed header: %w", pack.ErrBadMagic)}
+
+	_, err := ReadExactArtifact(t.Context(), blobs, mediaTestHash(raw), int64(len(raw)), 64<<20)
+
+	require.ErrorIs(t, err, ErrMediaArtifactCorrupt)
+	require.ErrorIs(t, err, packstore.ErrPhysicalCorrupt)
+	require.NotErrorIs(t, err, ErrMediaArtifactUnavailable)
+	require.Equal(t, 1, blobs.opens)
+}
+
+func TestReadExactArtifactVerifiesClosesAndHonorsCancellation(t *testing.T) {
+	raw := []byte("verified artifact")
+	hash := mediaTestHash(raw)
+	verifyErr := errors.New("verify failed")
+	closeErr := errors.New("close failed")
+	for name, test := range map[string]struct {
+		verifyErr error
+		closeErr  error
+		wantErr   error
+	}{
+		"verify": {verifyErr: verifyErr, wantErr: ErrMediaArtifactCorrupt},
+		"close":  {closeErr: closeErr, wantErr: ErrMediaArtifactCorrupt},
+	} {
+		t.Run(name, func(t *testing.T) {
+			stream := &artifactStreamFixture{reader: bytes.NewReader(raw), verifyErr: test.verifyErr, closeErr: test.closeErr}
+			blobs := &artifactReaderFixture{stream: stream, size: int64(len(raw))}
+			got, err := ReadExactArtifact(t.Context(), blobs, hash, int64(len(raw)), 64<<20)
+			if test.verifyErr != nil {
+				require.ErrorIs(t, err, test.wantErr)
+				require.Nil(t, got)
+			} else {
+				require.ErrorIs(t, err, test.wantErr)
+				require.Equal(t, raw, got)
+			}
+			require.Equal(t, 1, blobs.opens)
+			require.True(t, stream.closed)
+		})
+	}
+
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	blobs := &artifactReaderFixture{stream: &artifactStreamFixture{reader: bytes.NewReader(raw)}, size: int64(len(raw))}
+	_, err := ReadExactArtifact(ctx, blobs, hash, int64(len(raw)), 64<<20)
+	require.ErrorIs(t, err, context.Canceled)
+	require.Zero(t, blobs.opens)
+
+	ctx, cancel = context.WithCancel(t.Context())
+	stream := &artifactStreamFixture{reader: bytes.NewReader(raw), cancelRead: cancel}
+	blobs = &artifactReaderFixture{stream: stream, size: int64(len(raw))}
+	_, err = ReadExactArtifact(ctx, blobs, hash, int64(len(raw)), 64<<20)
+	require.ErrorIs(t, err, context.Canceled)
+	require.True(t, stream.closed)
+	t.Logf("artifact verification: verify=corrupt close=corrupt canceled_before_open=0 opens canceled_during_read=1 closed=true")
 }
 
 func TestSearchSkipsUnavailableMediaEvidence(t *testing.T) {
@@ -253,3 +332,47 @@ type mediaFixtureStream struct{ io.ReadCloser }
 
 func (mediaFixtureStream) Verify() error  { return nil }
 func (mediaFixtureStream) Verified() bool { return true }
+
+func mediaTestHash(raw []byte) string {
+	digest := sha256.Sum256(raw)
+	return hex.EncodeToString(digest[:])
+}
+
+type artifactReaderFixture struct {
+	stream  *artifactStreamFixture
+	size    int64
+	opens   int
+	openErr error
+}
+
+func (reader *artifactReaderFixture) OpenStreamContext(
+	_ context.Context, _ string,
+) (packstore.VerifiedReadCloser, int64, error) {
+	reader.opens++
+	if reader.openErr != nil {
+		return nil, 0, reader.openErr
+	}
+	return reader.stream, reader.size, nil
+}
+
+type artifactStreamFixture struct {
+	reader     *bytes.Reader
+	verifyErr  error
+	closeErr   error
+	cancelRead context.CancelFunc
+	closed     bool
+}
+
+func (stream *artifactStreamFixture) Read(p []byte) (int, error) {
+	if stream.cancelRead != nil {
+		stream.cancelRead()
+		stream.cancelRead = nil
+	}
+	return stream.reader.Read(p) //nolint:wrapcheck // Test fixture forwards the reader's EOF.
+}
+func (stream *artifactStreamFixture) Close() error {
+	stream.closed = true
+	return stream.closeErr
+}
+func (stream *artifactStreamFixture) Verify() error  { return stream.verifyErr }
+func (stream *artifactStreamFixture) Verified() bool { return stream.verifyErr == nil }

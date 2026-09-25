@@ -362,6 +362,22 @@ Origin registration is daemon configuration. Embedded vaults register no
 self-hosted Cap origins, so the embedded API does not apply their registered
 origin identity rules.
 
+Read the published transcript with the same stable tuple used for processing:
+
+```go
+transcript, err := vault.MediaTranscript(ctx, docbank.MediaTranscriptRequest{
+    SourceID: remote.SourceID,
+    SourceVersionID: receipt.SourceVersionID,
+    ContentVersionID: receipt.ContentVersionID,
+})
+```
+
+`EvidenceState` is independent of `CoverageState` and `OperationState`.
+`EvidenceState == "ready"` is the only state with text. Units preserve
+retained timing and speaker facts, and `Origin` distinguishes supplied from
+generated evidence. A mismatched content version returns `stale` without
+text, so callers must check the complete tuple before displaying a transcript.
+
 ## Extract and read source metadata
 
 `EnsureSourceMetadata` verifies and processes one immutable content version

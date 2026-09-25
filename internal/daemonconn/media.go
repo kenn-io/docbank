@@ -90,6 +90,23 @@ func (c *Connection) MediaStatus(ctx context.Context, sourceID string) (api.Medi
 	return result, validateMediaReceipt(result, "", err)
 }
 
+func (c *Connection) MediaTranscript(
+	ctx context.Context, sourceID, sourceVersionID, contentVersionID string,
+) (api.MediaTranscript, error) {
+	var result api.MediaTranscript
+	apiResponse, err := c.API().GetMediaTranscript(ctx, &apiclient.GetMediaTranscriptRequestOptions{
+		PathParams: &apiclient.GetMediaTranscriptPath{SourceID: sourceID, SourceVersionID: sourceVersionID},
+		Query:      &apiclient.GetMediaTranscriptQuery{ContentVersionID: contentVersionID},
+	})
+	if err == nil {
+		result = *apiResponse
+	}
+	if err == nil {
+		err = validateMediaTranscript(result, sourceID, sourceVersionID, contentVersionID)
+	}
+	return result, err
+}
+
 func (c *Connection) RetryMedia(
 	ctx context.Context, sourceID string, request api.MediaRetryBody,
 ) (api.MediaReceipt, error) {
@@ -297,6 +314,51 @@ func validateMediaReceipt(receipt api.MediaReceipt, operationID string, err erro
 	case "queued", "running", "succeeded", "failed", "cancelled":
 	default:
 		return errors.New("daemon returned an invalid media operation state")
+	}
+	return nil
+}
+
+func validateMediaTranscript(
+	transcript api.MediaTranscript, sourceID, sourceVersionID, contentVersionID string,
+) error {
+	if transcript.VaultUID == "" || transcript.SourceID != sourceID ||
+		transcript.SourceVersionID != sourceVersionID || transcript.ContentVersionID != contentVersionID {
+		return errors.New("daemon returned an invalid media transcript identity")
+	}
+	switch transcript.EvidenceState {
+	case "ready", "pending", "unavailable", "stale":
+	default:
+		return errors.New("daemon returned an invalid media transcript evidence state")
+	}
+	switch transcript.CoverageState {
+	case "unprocessed", "pending", "transcribed", "unavailable", "stale":
+	default:
+		return errors.New("daemon returned an invalid media transcript coverage state")
+	}
+	switch transcript.OperationState {
+	case "queued", "running", "succeeded", "failed", "cancelled":
+	default:
+		return errors.New("daemon returned an invalid media transcript operation state")
+	}
+	if transcript.EvidenceState != "ready" {
+		if transcript.Transcript != nil {
+			return errors.New("daemon returned transcript text for a non-ready evidence state")
+		}
+		return nil
+	}
+	if transcript.Transcript == nil || (transcript.Transcript.Origin != "supplied" && transcript.Transcript.Origin != "generated") {
+		return errors.New("daemon returned an invalid ready media transcript")
+	}
+	if len(transcript.Transcript.Units) == 0 {
+		return errors.New("daemon returned an empty media transcript")
+	}
+	for _, unit := range transcript.Transcript.Units {
+		if unit.Text == "" || (unit.StartMS == nil) != (unit.EndMS == nil) {
+			return errors.New("daemon returned an invalid media transcript unit")
+		}
+		if unit.StartMS != nil && (*unit.StartMS < 0 || *unit.EndMS <= *unit.StartMS) {
+			return errors.New("daemon returned an invalid media transcript timing span")
+		}
 	}
 	return nil
 }

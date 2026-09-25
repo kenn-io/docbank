@@ -78,6 +78,28 @@ The rendered documentation is available to people at directory routes such as
 `/agents/integration/`. The same maintained source is published for agents at
 the sibling `/agents/integration.md` URL.
 
+## Read an exact media transcript
+
+Carry all three stable media identities when reading retained transcript evidence:
+
+```bash
+curl --fail-with-body --get \
+  -H "X-Api-Key: $DOCBANK_API_KEY" \
+  --data-urlencode 'content_version_id=<content-version-id>' \
+  "$DOCBANK_URL/api/v1/media/sources/<source-id>/versions/<source-version-id>/transcript"
+```
+
+Check `evidence_state` before using `transcript`. Only `ready` includes text;
+`pending`, `unavailable`, and `stale` contain no transcript. The response keeps
+`coverage_state` and `operation_state` separate, and unit timing fields are
+paired nullable values from retained evidence. The equivalent CLI command is:
+
+```bash
+docbank media transcript SOURCE_ID \
+  --source-version-id SOURCE_VERSION_ID \
+  --content-version-id CONTENT_VERSION_ID
+```
+
 ## Give an independent client a stable endpoint
 
 The docbank CLI can discover an ephemeral port and per-run key from the

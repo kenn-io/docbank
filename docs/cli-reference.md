@@ -1372,6 +1372,8 @@ docbank media submit --file CALL.wav --operation-id UUID \
   --occurrence-ref REF --revision REV
 docbank media list
 docbank media status SOURCE_ID
+docbank media transcript SOURCE_ID --source-version-id SOURCE_VERSION_ID \
+  --content-version-id CONTENT_VERSION_ID
 docbank media import-artifact SOURCE_ID --kind media --file CALL.wav \
   --occurrence-id OCCURRENCE_ID --operation-id UUID
 docbank media import-artifact SOURCE_ID --kind transcript \
@@ -1439,6 +1441,13 @@ revoking that transcript's occurrence makes its coverage `stale`. Before any
 successful processing, coverage describes the current attempt.
 Media processing requires a profile with a rendition provider. Profiles that
 only produce embeddings are rejected.
+
+`media transcript` reads one exact retained transcript through the daemon.
+Both version flags are required so a newer recording cannot be accepted by
+accident. The JSON result keeps `evidence_state`, `coverage_state`, and
+`operation_state` separate; only a `ready` evidence state includes transcript
+units. Units retain optional paired timing and speaker facts, and the origin
+identifies supplied versus generated evidence.
 
 Remote references submitted by the CLI are read from `--reference-file PATH`,
 or from stdin with `--reference-file -`. They are never accepted as a

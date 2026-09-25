@@ -77,6 +77,17 @@ func TestLoomCaptionSearchHonorsExactFence(t *testing.T) {
 			status, statusErr := vault.MediaStatus(t.Context(), item.remote.SourceID)
 			return statusErr == nil && status.OperationState == "succeeded" && status.CoverageState == "transcribed"
 		}, 30*time.Second, 20*time.Millisecond)
+		status, err := vault.MediaStatus(t.Context(), item.remote.SourceID)
+		require.NoError(t, err)
+		transcript, err := vault.MediaTranscript(t.Context(), MediaTranscriptRequest{
+			SourceID: item.remote.SourceID, SourceVersionID: status.SourceVersionID,
+			ContentVersionID: item.original.ContentVersionID,
+		})
+		require.NoError(t, err)
+		require.Equal(t, "ready", transcript.EvidenceState)
+		require.NotNil(t, transcript.Transcript)
+		require.Len(t, transcript.Transcript.Units, 1)
+		require.Equal(t, item.phrase, transcript.Transcript.Units[0].Text)
 	}
 	search := func(versionID string) DocumentSearchReport {
 		results, searchErr := vault.SearchDocuments(t.Context(), DocumentSearchRequest{
@@ -184,6 +195,17 @@ func runLoomManualExportEmbedded(t *testing.T, captionOrigin string) {
 		t.Fatalf("final status=%+v err=%v", status, err)
 	}
 	require.Equal(t, original.ContentVersionID, status.ContentVersionID)
+	transcript, err := vault.MediaTranscript(t.Context(), MediaTranscriptRequest{
+		SourceID: remote.SourceID, SourceVersionID: status.SourceVersionID,
+		ContentVersionID: original.ContentVersionID,
+	})
+	require.NoError(t, err)
+	require.Equal(t, "ready", transcript.EvidenceState)
+	require.NotNil(t, transcript.Transcript)
+	require.Equal(t, "supplied", transcript.Transcript.Origin)
+	require.Equal(t, "loom", transcript.Transcript.Provider)
+	require.Len(t, transcript.Transcript.Units, 2)
+	require.Equal(t, int64(1_250), *transcript.Transcript.Units[0].StartMS)
 
 	for _, mode := range []DocumentSearchMode{DocumentSearchLexical, DocumentSearchAuto} {
 		results, searchErr := vault.SearchDocuments(t.Context(), DocumentSearchRequest{

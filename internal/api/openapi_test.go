@@ -31,6 +31,7 @@ func TestOpenAPIDocumentOffline(t *testing.T) {
 		"getDocumentProcessingJob", "grantDocumentProcessingConsent", "revokeDocumentProcessingConsent",
 		"planDerivativePurge", "runDerivativePurge", "getDocumentRendition",
 		"getDocumentProcessingCoverage", "validateDocumentSearch", "searchDocuments",
+		"getMediaTranscript",
 		"search", "createNode", "moveNode", "movePath", "trashNode", "trashPath", "restoreNode",
 		"storageStatus", "storagePack", "storageRepack", "ingest", "uploadFile", "listTrash", "emptyTrash", "gc", "verify", "appendNodeProvenance",
 		"createPhotoAsset", "getPhotoAsset", "getPhotoAssetByNode", "attachPhotoFile", "detachPhotoFile",
@@ -57,6 +58,19 @@ func TestOpenAPIDocumentOffline(t *testing.T) {
 			assert.NotContains(t, block, "        dest:")
 		}
 	}
+}
+
+func TestOpenAPIMediaTranscriptRouteUsesTheStableTuple(t *testing.T) {
+	doc := api.NewOfflineServer().API().OpenAPI()
+	path := doc.Paths["/api/v1/media/sources/{source_id}/versions/{source_version_id}/transcript"]
+	require.NotNil(t, path)
+	require.NotNil(t, path.Get)
+	assert.Equal(t, "getMediaTranscript", path.Get.OperationID)
+	required := map[string]bool{}
+	for _, parameter := range path.Get.Parameters {
+		required[parameter.Name] = parameter.Required
+	}
+	assert.True(t, required["content_version_id"])
 }
 
 func TestOpenAPISavedQueriesAreStructuredAndRevisionFenced(t *testing.T) {
