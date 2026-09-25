@@ -14,14 +14,14 @@ func finalizeProductionDraftSchemas() (schema, schema) {
 }
 
 func admitProductionJobSchemas() (schema, schema) {
-	input := productionMutationInputSchema(schema{"job_id": uuidSchema()}, "job_id")
+	input := productionMutationInputSchema(schema{schemaJobIDField: uuidSchema()}, "job_id")
 	_, output := getProductionJobSchemas()
 	return input, output
 }
 
 func cancelProductionJobSchemas() (schema, schema) {
 	input := rootObjectSchema(schema{
-		schemaSetIDField: uuidSchema(), "job_id": uuidSchema(),
+		schemaSetIDField: uuidSchema(), schemaJobIDField: uuidSchema(),
 		schemaETagField: integerSchema(1, 0), schemaOperationIDField: uuidSchema(),
 	}, schemaSetIDField, "job_id", schemaETagField, schemaOperationIDField)
 	return input, productionReceiptSchema()

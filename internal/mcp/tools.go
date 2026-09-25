@@ -193,6 +193,12 @@ var cancelProductionJobToolDefinition = toolDefinition{
 	schemas:     cancelProductionJobSchemas, write: true, idempotent: true, destructive: true,
 }
 
+var publishProductionPackageToolDefinition = toolDefinition{
+	name: "publish_production_package", title: "Publish production package",
+	description: "Publish or replay one verified recipient package from a successful job.",
+	schemas:     publishProductionPackageSchemas, write: true, idempotent: true,
+}
+
 func toolCatalog(allowProcessing bool) []*sdkmcp.Tool {
 	definitions := readToolDefinitions
 	if allowProcessing {
@@ -204,7 +210,8 @@ func toolCatalog(allowProcessing bool) []*sdkmcp.Tool {
 			editProductionInstructionsToolDefinition, sealProductionMembershipToolDefinition,
 			reviewProductionMemberToolDefinition, appendProductionMembersToolDefinition,
 			applyProductionChangesToolDefinition, finalizeProductionDraftToolDefinition,
-			admitProductionJobToolDefinition, cancelProductionJobToolDefinition)
+			admitProductionJobToolDefinition, cancelProductionJobToolDefinition,
+			publishProductionPackageToolDefinition)
 	}
 	tools := make([]*sdkmcp.Tool, 0, len(definitions))
 	for _, definition := range definitions {
@@ -255,6 +262,8 @@ func registerToolCatalog(
 		case finalizeProductionDraftToolDefinition.name, admitProductionJobToolDefinition.name,
 			cancelProductionJobToolDefinition.name:
 			handler = productionJobWriteToolHandler(lease, tool.Name, output, logger)
+		case publishProductionPackageToolDefinition.name:
+			handler = productionPackagePublishToolHandler(lease, output, logger)
 		default:
 			handler = readToolHandler(lease, plans, tool.Name, output, logger)
 		}
@@ -469,6 +478,9 @@ func stableDomainError(err error) (string, int) {
 		"policy_unsatisfied", "privilege_log_required", "privilege_log_stale", "retention_required",
 		"artifact_missing", "artifact_mismatch", "invalid_contract", "limit":
 		return facts.Code, 0
+	case "production_package_conflict", "invalid_production_package", "production_package_canceled",
+		"production_package_timeout", "production_unavailable":
+		return facts.Code, 0
 	default:
 		return "", 0
 	}
@@ -527,6 +539,14 @@ func domainErrorMessage(code string) string {
 		return "The production input exceeds a configured limit."
 	case "invalid_contract", "invalid_production":
 		return "The production input is invalid."
+	case "production_package_conflict":
+		return "The package conflicts with verified production authority."
+	case "invalid_production_package":
+		return "The production package request is invalid."
+	case "production_package_canceled", "production_package_timeout":
+		return "Package publication stopped before a result was confirmed. Retry with the same operation ID."
+	case "production_unavailable":
+		return "The production package publisher is unavailable."
 	default:
 		return "The Docbank operation could not be completed."
 	}

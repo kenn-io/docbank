@@ -42,10 +42,10 @@ func listProductionDecisionsSchemas() (schema, schema) {
 
 func getProductionJobSchemas() (schema, schema) {
 	job := objectSchema(schema{
-		"job_id": uuidSchema(), schemaSetIDField: uuidSchema(), schemaRevisionField: integerSchema(1, 0),
+		schemaJobIDField: uuidSchema(), schemaSetIDField: uuidSchema(), schemaRevisionField: integerSchema(1, 0),
 		"state":           enumSchema("queued", "running", "failed", "canceled", "succeeded"),
 		"revision_sha256": sha256Schema(), "receipt_sha256": sha256Schema(),
 	}, "job_id", "set_id", "revision", "state", "revision_sha256")
-	return rootObjectSchema(schema{schemaSetIDField: uuidSchema(), "job_id": uuidSchema()}, "set_id", "job_id"),
+	return rootObjectSchema(schema{schemaSetIDField: uuidSchema(), schemaJobIDField: uuidSchema()}, "set_id", "job_id"),
 		rootObjectSchema(withPrivateCache(schema{"job": job}), cacheRequired("job")...)
 }

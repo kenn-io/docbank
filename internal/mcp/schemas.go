@@ -18,6 +18,7 @@ const (
 	schemaRevisionField    = "revision"
 	schemaETagField        = "etag"
 	schemaOperationIDField = "operation_id"
+	schemaJobIDField       = "job_id"
 	jsonSchemaConst        = "const"
 	maxToolResponseBytes   = 1 << 20
 	maxToolErrorBytes      = 1024
