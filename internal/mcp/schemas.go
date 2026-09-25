@@ -628,9 +628,10 @@ func migrationReportSchema() schema {
 		}),
 		"counts": objectSchema(schema{
 			"owners": integerSchema(0, 0), "assets": integerSchema(0, 0), "files": integerSchema(0, 0),
-			"bytes": integerSchema(0, 0), "albums": integerSchema(0, 0), "shares": integerSchema(0, 0),
-			"checkouts": integerSchema(0, 0), "ai_results": integerSchema(0, 0), "hidden_setup": integerSchema(0, 0),
-		}, "owners", "assets", "files", "bytes", "albums", "shares", "checkouts", "ai_results", "hidden_setup"),
+			"bytes": integerSchema(0, 0), "albums": integerSchema(0, 0), "album_memberships": integerSchema(0, 0),
+			"shares": integerSchema(0, 0), "checkouts": integerSchema(0, 0), "checkout_entries": integerSchema(0, 0),
+			"ai_results": integerSchema(0, 0), "hidden_setup": integerSchema(0, 0),
+		}, "owners", "assets", "files", "bytes", "albums", "album_memberships", "shares", "checkouts", "checkout_entries", "ai_results", "hidden_setup"),
 		"vectors": arraySchema(vector, 1024),
 		"capacity": objectSchema(schema{
 			"source_bytes": integerSchema(0, 0), "unique_blob_bytes": integerSchema(0, 0), "minimum_content_bytes": integerSchema(0, 0),
