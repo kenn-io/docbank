@@ -7,6 +7,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json/v2"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -79,6 +80,7 @@ func TestProductionCLIRealDaemonFinalizesAndDownloadsPackage(t *testing.T) {
 		revisionText, "--limit", "1", "--json")), &decisionPage))
 	require.Len(t, decisionPage.Items, 1)
 	require.NotEmpty(t, decisionPage.NextCursor)
+	require.Equal(t, members[0].ID, decisionPage.Items[0].MemberID)
 	var secondDecisionPage api.ProductionDecisionPage
 	require.NoError(t, json.Unmarshal([]byte(cli("production", "drafts", "decisions", setID,
 		revisionText, "--limit", "1", "--cursor", decisionPage.NextCursor, "--json")), &secondDecisionPage))
@@ -159,4 +161,79 @@ func TestProductionCLIRealDaemonFinalizesAndDownloadsPackage(t *testing.T) {
 	reader, err := zip.NewReader(bytes.NewReader(archive), int64(len(archive)))
 	require.NoError(t, err)
 	require.NotEmpty(t, reader.File)
+
+	const forkOperation = "79000000-0000-4000-8000-000000000066"
+	forkedJSON := cli("production", "drafts", "fork", setID, revisionText,
+		"--operation-id", forkOperation, "--json")
+	var forked redaction.Draft
+	require.NoError(t, json.Unmarshal([]byte(forkedJSON), &forked))
+	require.Equal(t, revision+1, forked.Revision)
+	require.EqualValues(t, 1, forked.ETag)
+	require.False(t, forked.MembershipSealed)
+	forkRevision := strconv.FormatInt(forked.Revision, 10)
+	added := members[0]
+	added.ID = "79000000-0000-4000-8000-000000000067"
+	added.Ordinal = 3
+	added.Reviewed = false
+	added.ReviewBinding = ""
+	membersJSON, err := json.Marshal([]api.ProductionMember{api.ProductionMember(added)})
+	require.NoError(t, err)
+	membersFile := filepath.Join(t.TempDir(), "synthetic-members.json")
+	require.NoError(t, os.WriteFile(membersFile, membersJSON, 0o600))
+	const appendOperation = "79000000-0000-4000-8000-000000000068"
+	appendArgs := []string{"production", "drafts", "append", setID, forkRevision,
+		"--etag", "1", "--members-file", membersFile, "--operation-id", appendOperation, "--json"}
+	appendedJSON := cli(appendArgs...)
+	var appended redaction.Receipt
+	require.NoError(t, json.Unmarshal([]byte(appendedJSON), &appended))
+	require.EqualValues(t, 2, appended.ETag)
+	require.JSONEq(t, appendedJSON, cli(appendArgs...))
+	decision := redaction.Decision(decisionPage.Items[0])
+	decision.ID = "79000000-0000-4000-8000-000000000073"
+	decision.MemberID = added.ID
+	decision.Actor, decision.CreatedAt, decision.Revision = "", "", 0
+	apiDecision := api.ProductionDecision(decision)
+	changesJSON, err := json.Marshal([]api.ProductionChange{{Kind: "decision", Decision: &apiDecision}})
+	require.NoError(t, err)
+	changesFile := filepath.Join(t.TempDir(), "synthetic-decision.json")
+	require.NoError(t, os.WriteFile(changesFile, changesJSON, 0o600))
+	var decisionReceipt redaction.Receipt
+	require.NoError(t, json.Unmarshal([]byte(cli("production", "drafts", "changes", setID, forkRevision,
+		"--etag", "2", "--changes-file", changesFile,
+		"--operation-id", "79000000-0000-4000-8000-000000000074", "--json")), &decisionReceipt))
+	require.EqualValues(t, 3, decisionReceipt.ETag)
+	var expanded redaction.Draft
+	require.NoError(t, json.Unmarshal([]byte(cli("production", "drafts", "show", setID,
+		forkRevision, "--json")), &expanded))
+	const sealOperation = "79000000-0000-4000-8000-000000000069"
+	sealArgs := []string{"production", "drafts", "seal", setID, forkRevision,
+		"--etag", "3", "--total", "3", "--member-hash", expanded.MemberHash,
+		"--operation-id", sealOperation, "--json"}
+	sealedJSON := cli(sealArgs...)
+	var sealed redaction.Receipt
+	require.NoError(t, json.Unmarshal([]byte(sealedJSON), &sealed))
+	require.EqualValues(t, 4, sealed.ETag)
+	require.JSONEq(t, sealedJSON, cli(sealArgs...))
+	currentETag := sealed.ETag
+	for index, id := range []string{members[0].ID, members[1].ID, added.ID} {
+		var plan api.ProductionResolvedMaskPage
+		require.NoError(t, json.Unmarshal([]byte(cli("production", "drafts", "resolve", setID,
+			forkRevision, id, "1", "--etag", strconv.FormatInt(currentETag, 10), "--json")), &plan))
+		require.NotEmpty(t, plan.ReviewBinding)
+		operationID := fmt.Sprintf("79000000-0000-4000-8000-%012d", 70+index)
+		var reviewed redaction.Receipt
+		require.NoError(t, json.Unmarshal([]byte(cli("production", "drafts", "review", setID,
+			forkRevision, id, "--etag", strconv.FormatInt(currentETag, 10),
+			"--binding", plan.ReviewBinding, "--operation-id", operationID, "--json")), &reviewed))
+		require.Equal(t, currentETag+1, reviewed.ETag)
+		currentETag = reviewed.ETag
+	}
+	var reviewedMembers api.ProductionMemberPage
+	require.NoError(t, json.Unmarshal([]byte(cli("production", "drafts", "members", setID,
+		forkRevision, "--limit", "3", "--json")), &reviewedMembers))
+	require.Len(t, reviewedMembers.Items, 3)
+	for _, member := range reviewedMembers.Items {
+		require.True(t, member.Reviewed)
+		require.NotEmpty(t, member.ReviewBinding)
+	}
 }

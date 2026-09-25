@@ -212,7 +212,7 @@ func init() {
 	sets.AddCommand(newProductionSetCreateCommand(), newProductionSetListCommand(), newProductionSetShowCommand())
 	drafts.AddCommand(newProductionDraftShowCommand(), newProductionDraftMembersCommand(),
 		newProductionDraftDecisionsCommand(), newProductionDraftInstructionsCommand(),
-		newProductionDraftChangesCommand(), newProductionDraftForkCommand(),
+		newProductionDraftChangesCommand(), newProductionDraftAppendCommand(), newProductionDraftForkCommand(),
 		newProductionDraftSealCommand(), newProductionDraftResolveCommand(), newProductionDraftReviewCommand(),
 		newProductionDraftFinalizeCommand())
 	jobs := &cobra.Command{Use: "jobs", Short: "Submit and inspect production jobs"}
