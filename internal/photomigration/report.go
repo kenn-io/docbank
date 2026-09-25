@@ -13,6 +13,8 @@ import (
 	"strings"
 	"time"
 
+	"go.kenn.io/kit/safefileio"
+
 	"go.kenn.io/docbank/internal/canonical"
 )
 
@@ -242,7 +244,7 @@ func WriteOwnerMapTemplate(path string, template OwnerMapTemplate, sourceRoots .
 	if len(raw) > MaxOwnerMapBytes {
 		return fmt.Errorf("owner map template exceeds %d bytes", MaxOwnerMapBytes)
 	}
-	f, err := os.OpenFile(cleanPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	f, err := safefileio.CreatePrivateFile(cleanPath)
 	if err != nil {
 		return fmt.Errorf("create owner map template: %w", err)
 	}
