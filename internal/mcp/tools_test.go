@@ -60,7 +60,8 @@ func TestProcessingToolIsConstructionTimeOptIn(t *testing.T) {
 		"export_bates_file", "export_load_file_package", "create_production_set", "fork_production_draft",
 		"edit_production_instructions", "seal_production_membership", "review_production_member",
 		"append_production_members", "apply_production_changes", "finalize_production_draft",
-		"admit_production_job", "cancel_production_job", "publish_production_package"), enabled)
+		"admit_production_job", "cancel_production_job", "publish_production_package",
+		"download_production_package"), enabled)
 
 	for _, write := range enabledTools[len(readOnly):] {
 		require.NotNil(t, write.Annotations)
@@ -71,7 +72,8 @@ func TestProcessingToolIsConstructionTimeOptIn(t *testing.T) {
 			"apply_production_changes", "finalize_production_draft", "admit_production_job",
 			"cancel_production_job", "publish_production_package"}, write.Name), write.Annotations.IdempotentHint)
 		assert.Equal(t, new(write.Name == "assign_package_custodian" || write.Name == "export_bates_file" ||
-			write.Name == "export_load_file_package" || write.Name == "cancel_production_job"), write.Annotations.DestructiveHint)
+			write.Name == "export_load_file_package" || write.Name == "cancel_production_job" ||
+			write.Name == "download_production_package"), write.Annotations.DestructiveHint)
 		assert.Equal(t, new(true), write.Annotations.OpenWorldHint)
 	}
 

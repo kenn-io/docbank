@@ -199,6 +199,12 @@ var publishProductionPackageToolDefinition = toolDefinition{
 	schemas:     publishProductionPackageSchemas, write: true, idempotent: true,
 }
 
+var downloadProductionPackageToolDefinition = toolDefinition{
+	name: "download_production_package", title: "Download production package",
+	description: "Verify a retained package and atomically publish it to a local absolute path.",
+	schemas:     downloadProductionPackageSchemas, write: true, destructive: true,
+}
+
 func toolCatalog(allowProcessing bool) []*sdkmcp.Tool {
 	definitions := readToolDefinitions
 	if allowProcessing {
@@ -211,7 +217,7 @@ func toolCatalog(allowProcessing bool) []*sdkmcp.Tool {
 			reviewProductionMemberToolDefinition, appendProductionMembersToolDefinition,
 			applyProductionChangesToolDefinition, finalizeProductionDraftToolDefinition,
 			admitProductionJobToolDefinition, cancelProductionJobToolDefinition,
-			publishProductionPackageToolDefinition)
+			publishProductionPackageToolDefinition, downloadProductionPackageToolDefinition)
 	}
 	tools := make([]*sdkmcp.Tool, 0, len(definitions))
 	for _, definition := range definitions {
@@ -264,6 +270,8 @@ func registerToolCatalog(
 			handler = productionJobWriteToolHandler(lease, tool.Name, output, logger)
 		case publishProductionPackageToolDefinition.name:
 			handler = productionPackagePublishToolHandler(lease, output, logger)
+		case downloadProductionPackageToolDefinition.name:
+			handler = productionPackageDownloadToolHandler(lease, output, logger)
 		default:
 			handler = readToolHandler(lease, plans, tool.Name, output, logger)
 		}
@@ -427,6 +435,8 @@ func stableDomainError(err error) (string, int) {
 		return "processing_outcome_unknown", 0
 	case errors.Is(err, errProductionOutcomeUnknown):
 		return "production_outcome_unknown", 0
+	case errors.Is(err, errProductionDownloadFailed):
+		return "production_download_failed", 0
 	case errors.Is(err, errBatesOutcomeUnknown):
 		return "bates_outcome_unknown", 0
 	case errors.Is(err, errDaemonUnavailable):
@@ -479,7 +489,8 @@ func stableDomainError(err error) (string, int) {
 		"artifact_missing", "artifact_mismatch", "invalid_contract", "limit":
 		return facts.Code, 0
 	case "production_package_conflict", "invalid_production_package", "production_package_canceled",
-		"production_package_timeout", "production_unavailable":
+		"production_package_timeout", "production_unavailable", "production_download_canceled",
+		"production_download_timeout":
 		return facts.Code, 0
 	default:
 		return "", 0
@@ -547,6 +558,10 @@ func domainErrorMessage(code string) string {
 		return "Package publication stopped before a result was confirmed. Retry with the same operation ID."
 	case "production_unavailable":
 		return "The production package publisher is unavailable."
+	case "production_download_failed":
+		return "The package download failed verification. No destination file was published."
+	case "production_download_canceled", "production_download_timeout":
+		return "The production package download stopped before a file was published."
 	default:
 		return "The Docbank operation could not be completed."
 	}
