@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strconv"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -100,8 +101,11 @@ func TestProductionSetHTTPCreateReadAndPage(t *testing.T) {
 	clientDecisions, err := client.ProductionDecisions(t.Context(), created.Set.ID, 1, "", 1)
 	require.NoError(t, err)
 	require.Empty(t, clientDecisions.Items)
-	for _, suffix := range []string{"members", "decisions"} {
-		status, data = call(http.MethodGet, revisionPath+"/"+suffix+"?limit=1", nil, true)
+	for _, endpoint := range []struct {
+		suffix string
+		limit  int
+	}{{"members", redaction.MaxProductionPage}, {"decisions", redaction.MaxProductionDecisionPage}} {
+		status, data = call(http.MethodGet, revisionPath+"/"+endpoint.suffix+"?limit=1", nil, true)
 		require.Equal(t, http.StatusOK, status, string(data))
 		var page struct {
 			Items      []any  `json:"items"`
@@ -110,7 +114,11 @@ func TestProductionSetHTTPCreateReadAndPage(t *testing.T) {
 		require.NoError(t, json.Unmarshal(data, &page))
 		require.Empty(t, page.Items)
 		require.Empty(t, page.NextCursor)
-		status, _ = call(http.MethodGet, revisionPath+"/"+suffix+"?limit=201", nil, true)
+		status, _ = call(http.MethodGet, revisionPath+"/"+endpoint.suffix+
+			"?limit="+strconv.Itoa(endpoint.limit), nil, true)
+		require.Equal(t, http.StatusOK, status)
+		status, _ = call(http.MethodGet, revisionPath+"/"+endpoint.suffix+
+			"?limit="+strconv.Itoa(endpoint.limit+1), nil, true)
 		require.Equal(t, http.StatusUnprocessableEntity, status)
 	}
 	status, _ = call(http.MethodGet, path+"/99999999-9999-4999-8999-999999999999", nil, true)

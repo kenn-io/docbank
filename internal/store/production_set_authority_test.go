@@ -192,7 +192,9 @@ func TestProductionGateLoadsStoredDerivedAuthority(t *testing.T) {
 	require.False(t, forkedMembers[1].Reviewed, "forked review declarations must be invalidated")
 	_, _, err = s.ProductionMembers(t.Context(), set.ID, draft.Revision, "", redaction.MaxProductionPage+1)
 	require.ErrorIs(t, err, ErrInvalidProduction)
-	_, _, err = s.ProductionDecisions(t.Context(), set.ID, draft.Revision, "", redaction.MaxProductionPage+1)
+	_, _, err = s.ProductionDecisions(t.Context(), set.ID, draft.Revision, "", redaction.MaxProductionDecisionPage)
+	require.NoError(t, err)
+	_, _, err = s.ProductionDecisions(t.Context(), set.ID, draft.Revision, "", redaction.MaxProductionDecisionPage+1)
 	require.ErrorIs(t, err, ErrInvalidProduction)
 
 	changed := page[0]
