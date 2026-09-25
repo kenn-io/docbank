@@ -508,6 +508,11 @@ func exportMetadataSnapshotWithVaultIdentity(
 			return err
 		}
 	}
+	if layout.schemaVersion >= photoMigrationStorageVersion {
+		if err := exportPhotoMigrationMetadata(ctx, tx, write); err != nil {
+			return err
+		}
+	}
 	return exportDerivativePurgeSuppressions(ctx, tx, write)
 }
 
@@ -1052,6 +1057,8 @@ func requirePristineMetadataTarget(ctx context.Context, tx *sql.Tx) error {
 		    + (SELECT COUNT(*) FROM photo_files)
 		    + (SELECT COUNT(*) FROM photo_library_settings)
 		    + (SELECT COUNT(*) FROM photo_change_receipts)
+		    + (SELECT COUNT(*) FROM photo_migration_runs)
+		    + (SELECT COUNT(*) FROM photo_migration_map)
 		    + (SELECT COUNT(*) FROM mailbox_containers)
 		    + (SELECT COUNT(*) FROM mailbox_chunks)
 		    + (SELECT COUNT(*) FROM mailbox_archives)
@@ -1249,6 +1256,9 @@ func (s *Store) importMetadataRecord(
 		return err
 	}
 	if strings.HasPrefix(kind, "photo_") {
+		if kind == metadataPhotoMigrationRunType || kind == metadataPhotoMigrationMapType {
+			return importPhotoMigrationMetadataRecord(ctx, tx, kind, raw)
+		}
 		return importPhotoMetadataRecord(ctx, tx, kind, raw)
 	}
 	if strings.HasPrefix(kind, "email_") {
@@ -1585,6 +1595,8 @@ const (
 	metadataPhotoFileType                 = "photo_file"
 	metadataPhotoSettingsType             = "photo_library_settings"
 	metadataPhotoReceiptType              = "photo_change_receipt"
+	metadataPhotoMigrationRunType         = "photo_migration_run"
+	metadataPhotoMigrationMapType         = "photo_migration_map"
 )
 
 var metadataHeaderFields = []string{metadataTypeField, "format", "version", auditVaultIDField, "node_sequence"}
@@ -1617,6 +1629,8 @@ var metadataRequiredFields = map[string][]string{
 	metadataPhotoFileType:                        {metadataTypeField, "file_id", "asset_id", metadataNodeIDField, "role", "sidecar_of_file_id", metadataCreatedAtField},
 	metadataPhotoSettingsType:                    {metadataTypeField, "preference", metadataRevisionField, metadataUpdatedAtField},
 	metadataPhotoReceiptType:                     {metadataTypeField, "receipt_id", "operation", "asset_id", "settings_key", "before_revision", "after_revision", "before_json", "after_json", metadataCreatedAtField},
+	metadataPhotoMigrationRunType:                {metadataTypeField, "run_id", "source_kind", "source_identity", metadataCreatedAtField, "report_json", "owner_map_json"},
+	metadataPhotoMigrationMapType:                {metadataTypeField, "run_id", "source_hub", "source_user_id", "storage_key", "docbank_owner_id", "state"},
 	metadataCollectionSnapshotType:               {metadataTypeField, "snapshot_id", "vault_id", metadataCanonicalJSONField, metadataPageChecksumField},
 	metadataCollectionSnapshotMemberType:         {metadataTypeField, "snapshot_id", "ordinal", metadataCanonicalJSONField, metadataPageChecksumField},
 	metadataCollectionSnapshotRepresentationType: {metadataTypeField, "snapshot_id", "occurrence_id", "role", "ordinal", metadataCanonicalJSONField, metadataPageChecksumField},
@@ -1686,13 +1700,14 @@ var metadataNullableFields = map[string]map[string]bool{
 		"parent_id": true, "current_version_id": true, "trashed_at": true,
 		"trash_parent": true, "trash_name": true,
 	},
-	"content_version":           {"mime_type": true, auditSourceVersionIDField: true},
-	metadataProvenanceType:      {"original_mtime": true, "supersedes": true},
-	metadataCollectionLabelType: {"label": true},
-	metadataPhotoAssetType:      {"excluded_at": true, "display_file_id": true, "display_override_file_id": true},
-	metadataPhotoFileType:       {"sidecar_of_file_id": true},
-	metadataPhotoSettingsType:   {"preference": true},
-	metadataPhotoReceiptType:    {"asset_id": true, "settings_key": true},
+	"content_version":             {"mime_type": true, auditSourceVersionIDField: true},
+	metadataProvenanceType:        {"original_mtime": true, "supersedes": true},
+	metadataCollectionLabelType:   {"label": true},
+	metadataPhotoAssetType:        {"excluded_at": true, "display_file_id": true, "display_override_file_id": true},
+	metadataPhotoFileType:         {"sidecar_of_file_id": true},
+	metadataPhotoSettingsType:     {"preference": true},
+	metadataPhotoReceiptType:      {"asset_id": true, "settings_key": true},
+	metadataPhotoMigrationMapType: {"docbank_owner_id": true},
 	metadataSavedQueryRunType: {
 		"previous_run_id": true, "previous_member_hash": true,
 		"previous_total": true, "previous_query_fingerprint": true,

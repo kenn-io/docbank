@@ -14,6 +14,7 @@ lists the checks contributors must preserve.
 | `internal/ingest` | source traversal and bytes-before-reference pipeline | daemon discovery or UI behavior |
 | `internal/api` | wire contract, auth, middleware, gate classification, error mapping | direct CLI output policy |
 | `internal/daemonconn` | daemon convergence and receipt validation for the generated client | opening SQLite or blobs |
+| `internal/photomigration` | admission and reports | no destination |
 | `internal/home` | vault layout, privacy, and portable vault/tree locking | data operations |
 | `internal/config` | strict config parsing and security validation | runtime discovery |
 | `document/mistral` | Mistral OCR, capability evidence, unit limits, and the optional office render-to-PDF route | generic format detection, office conversion, or storage authority |
@@ -59,6 +60,16 @@ embedded injection route.
 5. Generate and inspect OpenAPI.
 6. Update the public reference and agent guidance.
 7. Check that the CLI still reaches the vault only through HTTP.
+
+### Add a photo migration source
+
+Keep source admission in `internal/photomigration/fotobank`. It must acquire
+the source lifetime locks, admit only a clean catalog, and open both databases
+through immutable SQLite connections. Write the report and owner-map template
+before the daemon stores the immutable run. Archives use Kit's verified blob
+stream for `application/catalog.sqlite`; the reader never restores the archive.
+Clients call the daemon route through `internal/daemonconn`, including the
+CLI and the opt-in MCP inventory tool.
 
 ### Change a wire contract
 
