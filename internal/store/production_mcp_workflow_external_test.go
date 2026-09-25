@@ -8,6 +8,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json/v2"
+	"fmt"
 	"io"
 	"os"
 	"os/exec"
@@ -17,6 +18,8 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/docbank/document/redaction"
+	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/daemonconn"
 	"go.kenn.io/docbank/internal/store"
 )
@@ -28,6 +31,12 @@ func TestProductionMCPRealDaemonFinalizesAndDownloadsPackage(t *testing.T) {
 		t.Skip("opt-in real daemon production MCP workflow proof")
 	}
 	vault, root, setID, revision, etag, namespaceID := store.ProductionRenderDaemonHTTPFixture(t)
+	sourceMembers, _, err := vault.ProductionMembers(t.Context(), setID, revision, "", 200)
+	require.NoError(t, err)
+	require.NotEmpty(t, sourceMembers)
+	sourceDecisions, _, err := vault.ProductionDecisions(t.Context(), setID, revision, "", 500)
+	require.NoError(t, err)
+	require.NotEmpty(t, sourceDecisions)
 	require.NoError(t, vault.Close())
 	name := "docbank"
 	if runtime.GOOS == "windows" {
@@ -56,7 +65,7 @@ func TestProductionMCPRealDaemonFinalizesAndDownloadsPackage(t *testing.T) {
 			args["cursor"] = memberCursor
 		}
 		page := client.call(t, "list_production_members", args)
-		for _, item := range arrayValue(t, page, "items") {
+		for _, item := range arrayValue(t, page) {
 			member, ok := item.(map[string]any)
 			require.True(t, ok)
 			id, ok := member["id"].(string)
@@ -77,7 +86,7 @@ func TestProductionMCPRealDaemonFinalizesAndDownloadsPackage(t *testing.T) {
 			args["cursor"] = decisionCursor
 		}
 		page := client.call(t, "list_production_decisions", args)
-		decisionCount += len(arrayValue(t, page, "items"))
+		decisionCount += len(arrayValue(t, page))
 		decisionCursor, _ = page["next_cursor"].(string)
 		if decisionCursor == "" {
 			break
@@ -148,6 +157,123 @@ func TestProductionMCPRealDaemonFinalizesAndDownloadsPackage(t *testing.T) {
 	reader, err := zip.NewReader(bytes.NewReader(archive), int64(len(archive)))
 	require.NoError(t, err)
 	require.NotEmpty(t, reader.File)
+	proveProductionMCPLargeSelectionAndReview(t, client, setID, revision, sourceMembers[0], sourceDecisions[0])
+}
+
+func proveProductionMCPLargeSelectionAndReview(t *testing.T, client *productionMCPTestClient,
+	setID string, revision int64, source redaction.Member, sourceDecision redaction.Decision) {
+	t.Helper()
+	const forkOperation = "79000000-0000-4000-8000-000000000206"
+	forked := objectValue(t, client.call(t, "fork_production_draft", map[string]any{
+		"set_id": setID, "revision": revision, "operation_id": forkOperation}), "draft")
+	forkRevision := revision + 1
+	require.EqualValues(t, forkRevision, forked["revision"])
+	require.EqualValues(t, 1, forked["etag"])
+
+	// A full 200-item page followed by a second page proves that an operator
+	// can traverse a selection larger than the MCP member page ceiling.
+	members := make([]api.ProductionMember, 0, 199)
+	changes := make([]api.ProductionChange, 0, 199)
+	for index := range 199 {
+		member := source
+		member.ID = fmt.Sprintf("79000000-0000-4000-8000-%012d", 300+index)
+		member.Ordinal = int64(index + 3)
+		member.Reviewed = false
+		member.ReviewBinding = ""
+		members = append(members, api.ProductionMember(member))
+		decision := sourceDecision
+		decision.ID = fmt.Sprintf("79000000-0000-4000-8000-%012d", 600+index)
+		decision.MemberID = member.ID
+		decision.Actor, decision.CreatedAt, decision.Revision = "", "", 0
+		apiDecision := api.ProductionDecision(decision)
+		changes = append(changes, api.ProductionChange{Kind: "decision", Decision: &apiDecision})
+	}
+	membersJSON, err := json.Marshal(members)
+	require.NoError(t, err)
+	const appendOperation = "79000000-0000-4000-8000-000000000207"
+	appendArgs := map[string]any{"set_id": setID, "revision": forkRevision, "etag": 1,
+		"operation_id": appendOperation, "members_json": string(membersJSON)}
+	appended := client.call(t, "append_production_members", appendArgs)
+	require.EqualValues(t, 2, appended["etag"])
+	require.Equal(t, appended, client.call(t, "append_production_members", appendArgs))
+	changesJSON, err := json.Marshal(changes)
+	require.NoError(t, err)
+	const changesOperation = "79000000-0000-4000-8000-000000000208"
+	changed := client.call(t, "apply_production_changes", map[string]any{
+		"set_id": setID, "revision": forkRevision, "etag": 2,
+		"operation_id": changesOperation, "changes_json": string(changesJSON)})
+	require.EqualValues(t, 3, changed["etag"])
+
+	var memberCursor string
+	seenMembers := make(map[string]struct{}, 201)
+	for pageIndex := range 2 {
+		args := map[string]any{"set_id": setID, "revision": forkRevision, "limit": 200}
+		if memberCursor != "" {
+			args["cursor"] = memberCursor
+		}
+		page := client.call(t, "list_production_members", args)
+		if pageIndex == 0 {
+			require.Len(t, arrayValue(t, page), 200)
+		} else {
+			require.Len(t, arrayValue(t, page), 1)
+		}
+		for _, item := range arrayValue(t, page) {
+			member, ok := item.(map[string]any)
+			require.True(t, ok)
+			id, ok := member["id"].(string)
+			require.True(t, ok)
+			_, exists := seenMembers[id]
+			require.False(t, exists)
+			seenMembers[id] = struct{}{}
+		}
+		memberCursor, _ = page["next_cursor"].(string)
+	}
+	require.Len(t, seenMembers, 201)
+	require.Empty(t, memberCursor)
+
+	var decisionCursor string
+	seenDecisions := make(map[string]struct{}, 201)
+	for pageIndex := range 3 {
+		args := map[string]any{"set_id": setID, "revision": forkRevision, "limit": 100}
+		if decisionCursor != "" {
+			args["cursor"] = decisionCursor
+		}
+		page := client.call(t, "list_production_decisions", args)
+		if pageIndex < 2 {
+			require.Len(t, arrayValue(t, page), 100)
+		} else {
+			require.Len(t, arrayValue(t, page), 1)
+		}
+		for _, item := range arrayValue(t, page) {
+			decision, ok := item.(map[string]any)
+			require.True(t, ok)
+			id, ok := decision["id"].(string)
+			require.True(t, ok)
+			_, exists := seenDecisions[id]
+			require.False(t, exists)
+			seenDecisions[id] = struct{}{}
+		}
+		decisionCursor, _ = page["next_cursor"].(string)
+	}
+	require.Len(t, seenDecisions, 201)
+	require.Empty(t, decisionCursor)
+
+	draft := objectValue(t, client.call(t, "get_production_draft", map[string]any{
+		"set_id": setID, "revision": forkRevision}), "draft")
+	sealed := client.call(t, "seal_production_membership", map[string]any{
+		"set_id": setID, "revision": forkRevision, "etag": 3,
+		"operation_id": "79000000-0000-4000-8000-000000000209",
+		"total":        201, "member_hash": draft["member_hash"]})
+	require.EqualValues(t, 4, sealed["etag"])
+	resolved := client.call(t, "resolve_production_selection", map[string]any{
+		"set_id": setID, "revision": forkRevision, "etag": 4,
+		"member_id": members[0].ID, "page": 1, "limit": 1})
+	require.NotEmpty(t, resolved["review_binding"])
+	reviewed := client.call(t, "review_production_member", map[string]any{
+		"set_id": setID, "revision": forkRevision, "etag": 4,
+		"member_id": members[0].ID, "binding": resolved["review_binding"],
+		"operation_id": "79000000-0000-4000-8000-000000000210"})
+	require.EqualValues(t, 5, reviewed["etag"])
 }
 
 type productionMCPTestClient struct {
@@ -211,9 +337,9 @@ func objectValue(t *testing.T, object map[string]any, key string) map[string]any
 	return value
 }
 
-func arrayValue(t *testing.T, object map[string]any, key string) []any {
+func arrayValue(t *testing.T, object map[string]any) []any {
 	t.Helper()
-	value, ok := object[key].([]any)
-	require.True(t, ok, "%q: %#v", key, object[key])
+	value, ok := object["items"].([]any)
+	require.True(t, ok, "items: %#v", object["items"])
 	return value
 }
