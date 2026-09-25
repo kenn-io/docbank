@@ -54,8 +54,42 @@ func TestFotobankInventoryInstall(t *testing.T) {
 	if report.Capacity.SourceBytes != 10 || report.Capacity.UniqueBlobBytes != 10 || report.Capacity.MinimumContentBytes != 10 {
 		t.Fatalf("unexpected capacity estimate: %#v", report.Capacity)
 	}
-	if report.Schema.CatalogVersion != 1 || report.Schema.EmbeddedDocbankVersion != 16 || len(report.Vectors) != 1 || !report.Vectors[0].Rebuildable {
+	if report.Schema.CatalogVersion != 1 || report.Schema.EmbeddedDocbankVersion != 16 || len(report.Vectors) != 1 ||
+		report.Vectors[0].ID != 1 || report.Vectors[0].Fingerprint != "synthetic" || report.Vectors[0].State != "active" || !report.Vectors[0].Rebuildable {
 		t.Fatalf("unexpected inventory schema: %#v", report)
+	}
+}
+
+func TestFotobankInventoryCountsRetainedDocbankVersions(t *testing.T) {
+	fixture := createInventoryFixture(t)
+	db, err := store.DefaultSQLiteDriver().Open(filepath.Join(fixture.VaultRoot, "docbank.db"), sqliteWriteOptions())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`INSERT INTO blobs(hash,size,created_at) VALUES(?, ?, ?)`, strings.Repeat("e", 64), 10, "2026-01-02T00:00:00Z"); err != nil {
+		_ = db.Close()
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	before, err := fixture.Digest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	report, _, err := Inventory(context.Background(), store.DefaultSQLiteDriver(), inventoryRequest(fixture, fixture.OwnerMapPath))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if report.Capacity.SourceBytes != 10 || report.Capacity.UniqueBlobBytes != 20 || report.Capacity.MinimumContentBytes != 20 {
+		t.Fatalf("unexpected retained-version capacity estimate: %#v", report.Capacity)
+	}
+	after, err := fixture.Digest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if before != after {
+		t.Fatalf("source digest changed from %s to %s", before, after)
 	}
 }
 
@@ -384,13 +418,6 @@ func TestFotobankInventoryRejectsRelativeSourcePaths(t *testing.T) {
 	}
 	if _, err := os.Stat(fixture.OwnerMapPath); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("relative path refusal left owner-map output behind: %v", err)
-	}
-}
-
-func TestFotobankVecIsRebuildable(t *testing.T) {
-	fixture := createInventoryFixture(t)
-	if _, _, err := Inventory(context.Background(), store.DefaultSQLiteDriver(), inventoryRequest(fixture, fixture.OwnerMapPath)); err != nil {
-		t.Fatal(err)
 	}
 }
 

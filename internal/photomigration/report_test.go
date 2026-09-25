@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 )
 
@@ -34,6 +35,35 @@ func TestReportCanonicalRoundTrip(t *testing.T) {
 	}
 	if !bytes.Equal(raw, other) || bytes.Contains(raw, []byte("/private")) {
 		t.Fatalf("report is not stable or contains a host path: %s", raw)
+	}
+}
+
+func TestReportAllowsRetainedVersionsToExceedCurrentFileBytes(t *testing.T) {
+	report := testReport()
+	report.Capacity = Capacity{SourceBytes: 10, UniqueBlobBytes: 20, MinimumContentBytes: 20}
+	raw, err := EncodeReport(report)
+	if err != nil {
+		t.Fatal(err)
+	}
+	decoded, err := DecodeReport(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if decoded.Capacity != report.Capacity {
+		t.Fatalf("retained-version capacity changed: got %#v, want %#v", decoded.Capacity, report.Capacity)
+	}
+}
+
+func TestReportRejectsNegativeRelationshipCounts(t *testing.T) {
+	for _, mutate := range []func(*Report){
+		func(report *Report) { report.Counts.AlbumMemberships = -1 },
+		func(report *Report) { report.Counts.CheckoutEntries = -1 },
+	} {
+		report := testReport()
+		mutate(&report)
+		if err := ValidateReport(report); err == nil {
+			t.Fatalf("accepted negative relationship count: %#v", report.Counts)
+		}
 	}
 }
 
@@ -69,5 +99,28 @@ func TestOwnerMapTemplate(t *testing.T) {
 	}
 	if err := WriteOwnerMapTemplate(path, template); err == nil {
 		t.Fatal("owner map creation was not exclusive")
+	}
+}
+
+func TestOwnerMapTemplateRejectsSourceAlias(t *testing.T) {
+	sourceRoot := filepath.Join(t.TempDir(), "source")
+	if err := os.Mkdir(sourceRoot, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	aliasRoot := filepath.Join(t.TempDir(), "source-alias")
+	if err := os.Symlink(sourceRoot, aliasRoot); err != nil {
+		t.Skipf("create directory symlink: %v", err)
+	}
+	template, err := NewOwnerMapTemplate(testReport(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	output := filepath.Join(aliasRoot, "nested", "owner-map.json")
+	err = WriteOwnerMapTemplate(output, template, sourceRoot)
+	if err == nil || !strings.Contains(err.Error(), "overlaps a source tree") {
+		t.Fatalf("expected alias to source tree to be refused, got %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(sourceRoot, "nested", "owner-map.json")); !os.IsNotExist(err) {
+		t.Fatalf("source tree contains owner-map output: %v", err)
 	}
 }

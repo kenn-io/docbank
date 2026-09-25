@@ -3,6 +3,9 @@ package api_test
 import (
 	"bytes"
 	"encoding/json/v2"
+	"errors"
+	"fmt"
+	"io/fs"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -35,6 +38,8 @@ func TestFotobankInventoryOperatorRoute(t *testing.T) {
 	require.NotEmpty(t, run.ID)
 	require.Equal(t, request.OwnerMapPath, run.OwnerMapPath)
 	require.Equal(t, int64(1), run.Report.Counts.Owners)
+	require.Equal(t, int64(1), run.Report.Counts.AlbumMemberships)
+	require.Equal(t, int64(1), run.Report.Counts.CheckoutEntries)
 
 	unauthorized, unauthorizedBody := do(t, ts, http.MethodPost, "/api/v1/migrations/fotobank/inventories", map[string]string{"X-Api-Key": ""}, request)
 	require.Equal(t, http.StatusUnauthorized, unauthorized.StatusCode, unauthorizedBody)
@@ -80,12 +85,16 @@ func TestMigrationRunRoutes(t *testing.T) {
 	require.NoError(t, json.Unmarshal([]byte(listBody), &page))
 	require.Equal(t, 1, page.Total)
 	require.Len(t, page.Items, 1)
+	require.Equal(t, int64(1), page.Items[0].Report.Counts.AlbumMemberships)
+	require.Equal(t, int64(1), page.Items[0].Report.Counts.CheckoutEntries)
 
 	shown, showBody := get(t, ts, "/api/v1/migrations/runs/"+run.ID, nil)
 	require.Equal(t, http.StatusOK, shown.StatusCode, showBody)
 	var got api.MigrationRun
 	require.NoError(t, json.Unmarshal([]byte(showBody), &got))
 	require.Equal(t, run.ID, got.ID)
+	require.Equal(t, int64(1), got.Report.Counts.AlbumMemberships)
+	require.Equal(t, int64(1), got.Report.Counts.CheckoutEntries)
 
 	missing, missingBody := get(t, ts, "/api/v1/migrations/runs/00000000-0000-4000-8000-000000000099", nil)
 	require.Equal(t, http.StatusNotFound, missing.StatusCode, missingBody)
@@ -106,6 +115,70 @@ func TestFotobankInventoryRemovesTemplateWhenRunSaveFails(t *testing.T) {
 	response, body := do(t, ts, http.MethodPost, "/api/v1/migrations/fotobank/inventories", nil, request)
 	require.NotEqual(t, http.StatusCreated, response.StatusCode, body)
 	_, err = os.Stat(request.OwnerMapPath)
+	require.ErrorIs(t, err, os.ErrNotExist)
+	page, err := server.ListPhotoMigrationRuns(t.Context(), 0, 50)
+	require.NoError(t, err)
+	require.Zero(t, page.Total)
+}
+
+func TestFotobankInventoryCorruptArchiveLeavesSourceAndRunUntouched(t *testing.T) {
+	testdata, err := filepath.Abs(filepath.Join("..", "photomigration", "fotobank", "testdata", "fotobank-kit-v0.24.1"))
+	require.NoError(t, err)
+	archiveRoot := filepath.Join(t.TempDir(), "damaged-archive")
+	err = filepath.WalkDir(testdata, func(path string, entry fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		relative, err := filepath.Rel(testdata, path)
+		if err != nil {
+			return err
+		}
+		destination := filepath.Join(archiveRoot, relative)
+		if entry.IsDir() {
+			return os.MkdirAll(destination, 0o700)
+		}
+		info, err := entry.Info()
+		if err != nil {
+			return fmt.Errorf("inspect archive fixture metadata: %w", err)
+		}
+		if !info.Mode().IsRegular() {
+			return errors.New("archive fixture contains a non-regular file")
+		}
+		contents, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		return os.WriteFile(destination, contents, info.Mode().Perm())
+	})
+	require.NoError(t, err)
+	var packPath string
+	err = filepath.WalkDir(archiveRoot, func(path string, entry fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if !entry.IsDir() && filepath.Ext(path) == ".mvpack" {
+			packPath = path
+		}
+		return nil
+	})
+	require.NoError(t, err)
+	require.NotEmpty(t, packPath)
+	packed, err := os.ReadFile(packPath)
+	require.NoError(t, err)
+	require.NotEmpty(t, packed)
+	packed[len(packed)/2] ^= 0xff
+	require.NoError(t, os.WriteFile(packPath, packed, 0o600))
+	archiveBefore, err := (fotobanktest.Install{Root: archiveRoot}).Digest()
+	require.NoError(t, err)
+	ownerMapPath := filepath.Join(t.TempDir(), "owner-map.json")
+	ts, server := newTestServer(t, nil)
+	request := api.FotobankInventoryRequest{ArchiveRoot: archiveRoot, OwnerMapPath: ownerMapPath}
+	response, body := do(t, ts, http.MethodPost, "/api/v1/migrations/fotobank/inventories", nil, request)
+	require.NotEqual(t, http.StatusCreated, response.StatusCode, body)
+	archiveAfter, err := (fotobanktest.Install{Root: archiveRoot}).Digest()
+	require.NoError(t, err)
+	require.Equal(t, archiveBefore, archiveAfter)
+	_, err = os.Stat(ownerMapPath)
 	require.ErrorIs(t, err, os.ErrNotExist)
 	page, err := server.ListPhotoMigrationRuns(t.Context(), 0, 50)
 	require.NoError(t, err)

@@ -54,7 +54,7 @@ func TestMigrationMCPUsesDaemon(t *testing.T) {
 		Source: api.MigrationSource{Kind: "install", Identity: strings.Repeat("a", 64)}, CreatedAt: createdAt,
 		Report: api.MigrationReport{
 			Source: api.MigrationSource{Kind: "install", Identity: strings.Repeat("a", 64)},
-			Counts: api.MigrationCounts{}, Capacity: api.MigrationCapacity{}, CreatedAt: createdAt,
+			Counts: api.MigrationCounts{AlbumMemberships: 1, CheckoutEntries: 2}, Capacity: api.MigrationCapacity{}, CreatedAt: createdAt,
 		},
 		OwnerMap:     api.MigrationOwnerMap{Source: api.MigrationSource{Kind: "install", Identity: strings.Repeat("a", 64)}, Entries: []api.MigrationMapEntry{}},
 		OwnerMapPath: ownerMapPath,
@@ -85,6 +85,8 @@ func TestMigrationMCPUsesDaemon(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, run.ID, output.ID)
 	assert.Equal(t, ownerMapPath, output.OwnerMapPath)
+	assert.Equal(t, int64(1), output.Report.Counts.AlbumMemberships)
+	assert.Equal(t, int64(2), output.Report.Counts.CheckoutEntries)
 	assert.Equal(t, int32(1), int32(calls))
 	encoded, err := json.Marshal(output)
 	require.NoError(t, err)

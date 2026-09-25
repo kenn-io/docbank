@@ -94,6 +94,7 @@ INSERT INTO embedding_generations(fingerprint,fingerprint_hash,model_id,input_pr
 }
 
 func registerVectorFixture(db *sql.DB) error {
+	// This records the vec0 schema descriptor without loading sqlite-vec.
 	for _, name := range []string{
 		"media_embeddings_g1", "media_embeddings_g1_chunks", "media_embeddings_g1_rowids",
 		"media_embeddings_g1_vector_chunks00", "media_embeddings_g1_info",

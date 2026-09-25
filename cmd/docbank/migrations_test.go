@@ -25,12 +25,16 @@ func TestMigrationCLIUsesDaemon(t *testing.T) {
 	require.NoError(t, json.Unmarshal([]byte(out), &run))
 	require.NotEmpty(t, run.ID)
 	require.Equal(t, int64(1), run.Report.Counts.Owners)
+	require.Equal(t, int64(1), run.Report.Counts.AlbumMemberships)
+	require.Equal(t, int64(1), run.Report.Counts.CheckoutEntries)
 
 	out, err = runCLI(t, "photos", "migrate", "runs", "show", run.ID)
 	require.NoError(t, err)
 	var shown api.MigrationRun
 	require.NoError(t, json.Unmarshal([]byte(out), &shown))
 	require.Equal(t, run.ID, shown.ID)
+	require.Equal(t, int64(1), shown.Report.Counts.AlbumMemberships)
+	require.Equal(t, int64(1), shown.Report.Counts.CheckoutEntries)
 
 	out, err = runCLI(t, "photos", "migrate", "runs", "list", "--limit", "1")
 	require.NoError(t, err)
@@ -39,6 +43,8 @@ func TestMigrationCLIUsesDaemon(t *testing.T) {
 	require.Equal(t, 1, page.Total)
 	require.Len(t, page.Items, 1)
 	require.Equal(t, run.ID, page.Items[0].ID)
+	require.Equal(t, int64(1), page.Items[0].Report.Counts.AlbumMemberships)
+	require.Equal(t, int64(1), page.Items[0].Report.Counts.CheckoutEntries)
 }
 
 func TestMigrationInventoryFlagsRequireAbsolutePaths(t *testing.T) {

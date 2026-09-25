@@ -132,15 +132,13 @@ func ValidateReport(report Report) error {
 	}
 	if report.Counts.Owners < 0 || report.Counts.Assets < 0 || report.Counts.Files < 0 ||
 		report.Counts.Bytes < 0 || report.Counts.Albums < 0 || report.Counts.Shares < 0 ||
-		report.Counts.Checkouts < 0 || report.Counts.AIResults < 0 || report.Counts.HiddenSetup < 0 {
+		report.Counts.AlbumMemberships < 0 || report.Counts.Checkouts < 0 || report.Counts.CheckoutEntries < 0 ||
+		report.Counts.AIResults < 0 || report.Counts.HiddenSetup < 0 {
 		return errors.New("migration report has negative count")
 	}
 	if report.Capacity.SourceBytes < 0 || report.Capacity.UniqueBlobBytes < 0 ||
 		report.Capacity.MinimumContentBytes < 0 {
 		return errors.New("migration report has negative capacity")
-	}
-	if report.Capacity.UniqueBlobBytes > report.Capacity.SourceBytes && report.Capacity.SourceBytes != 0 {
-		return errors.New("migration report has more unique bytes than source bytes")
 	}
 	seen := make(map[int64]struct{}, len(report.Vectors))
 	for _, vector := range report.Vectors {
@@ -226,7 +224,14 @@ func WriteOwnerMapTemplate(path string, template OwnerMapTemplate, sourceRoots .
 		return err
 	}
 	for _, root := range sourceRoots {
-		if root != "" && pathWithin(cleanPath, root) {
+		if root == "" {
+			continue
+		}
+		within, err := pathWithin(cleanPath, root)
+		if err != nil {
+			return fmt.Errorf("resolve owner map source boundary: %w", err)
+		}
+		if within {
 			return errors.New("owner map path overlaps a source tree")
 		}
 	}
@@ -286,9 +291,50 @@ func DecodeOwnerMapTemplate(raw []byte) (OwnerMapTemplate, error) {
 	return decoded, nil
 }
 
-func pathWithin(path, root string) bool {
-	path, _ = filepath.Abs(path)
-	root, _ = filepath.Abs(root)
+func pathWithin(path, root string) (bool, error) {
+	path, err := resolveExistingPath(path)
+	if err != nil {
+		return false, err
+	}
+	root, err = resolveExistingPath(root)
+	if err != nil {
+		return false, err
+	}
+	if !strings.EqualFold(filepath.VolumeName(path), filepath.VolumeName(root)) {
+		return false, nil
+	}
 	rel, err := filepath.Rel(root, path)
-	return err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) && rel != "."
+	return err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) && rel != ".", err
+}
+
+// Resolving the nearest existing prefix follows aliases before an output leaf exists.
+func resolveExistingPath(path string) (string, error) {
+	path, err := filepath.Abs(path)
+	if err != nil {
+		return "", err
+	}
+	path = filepath.Clean(path)
+	existing := path
+	var missing []string
+	for {
+		if _, err := os.Lstat(existing); err == nil {
+			break
+		} else if !os.IsNotExist(err) {
+			return "", err
+		}
+		parent := filepath.Dir(existing)
+		if parent == existing {
+			return "", fmt.Errorf("no existing path prefix for %q", path)
+		}
+		missing = append(missing, filepath.Base(existing))
+		existing = parent
+	}
+	existing, err = filepath.EvalSymlinks(existing)
+	if err != nil {
+		return "", err
+	}
+	for i := range slices.Backward(missing) {
+		existing = filepath.Join(existing, missing[i])
+	}
+	return filepath.Clean(existing), nil
 }
