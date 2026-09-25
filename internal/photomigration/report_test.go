@@ -12,7 +12,7 @@ func testReport() Report {
 	return Report{
 		Source:    Source{Kind: SourceInstall, Identity: "catalog-sha256"},
 		Schema:    Schema{CatalogVersion: 1, CatalogFingerprint: "fingerprint", EmbeddedDocbankVersion: 16},
-		Counts:    Counts{Owners: 1, Assets: 2, Files: 3, Bytes: 10, Albums: 1, Shares: 1, Checkouts: 1, AIResults: 1, HiddenSetup: 1},
+		Counts:    Counts{Owners: 1, Assets: 2, Files: 3, Bytes: 10, Albums: 1, AlbumMemberships: 2, Shares: 1, Checkouts: 1, CheckoutEntries: 3, AIResults: 1, HiddenSetup: 1},
 		Vectors:   []VectorGeneration{{ID: 1, Fingerprint: "vectors", State: "active", Rebuildable: true}},
 		Capacity:  Capacity{SourceBytes: 10, UniqueBlobBytes: 8, MinimumContentBytes: 8},
 		CreatedAt: "2026-09-25T00:00:00Z",

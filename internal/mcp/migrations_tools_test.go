@@ -15,7 +15,7 @@ import (
 )
 
 func TestMCPMigrationWriteOptIn(t *testing.T) {
-	readOnly := catalogMap(toolCatalog(false, false, false))
+	readOnly := catalogMap(toolCatalog(false, false, false, false))
 	assert.NotContains(t, readOnly, "inventory_fotobank")
 	assert.Contains(t, readOnly, "list_migration_runs")
 	assert.Contains(t, readOnly, "show_migration_run")

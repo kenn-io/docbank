@@ -1,0 +1,81 @@
+{
+  "format_version": 4,
+  "min_reader_version": 4,
+  "msgvault_version": "dev",
+  "snapshot_id": "20260925T092455Z-cdd3739ab450a586ceb56cc31a8aa979",
+  "parent_id": "",
+  "created_at": "2026-09-25T09:24:55Z",
+  "options": {
+    "include_config": false,
+    "include_tokens": false,
+    "zstd_level": 3,
+    "tag": "docbank-inventory-fixture"
+  },
+  "db": {
+    "engine": "",
+    "page_size": 0,
+    "page_count": 0,
+    "page_map": "",
+    "page_hash_map": "",
+    "map_chain_depth": 0
+  },
+  "metadata": {
+    "format": "docbank-metadata-jsonl-v1",
+    "blob": "0f0c8f4d9b521d6ce48de2d18bd243f2a7c623ea88a2eb01297ed0c638653a59",
+    "bytes": 2430
+  },
+  "auxiliary": [
+    {
+      "name": "placement",
+      "format": "docbank-placement-v1",
+      "blob": "82c39ce5a79bea7ee0ce9ad8c61f64cb787c2fd3f5df85f753fe969a0dcbc280",
+      "bytes": 311,
+      "sha256": "82c39ce5a79bea7ee0ce9ad8c61f64cb787c2fd3f5df85f753fe969a0dcbc280"
+    }
+  ],
+  "attachments": {
+    "layout": [
+      "loose"
+    ],
+    "rows": 1,
+    "blobs": 1,
+    "blob_bytes": 43,
+    "recipes": [],
+    "lists": [
+      "d62abd102a6a90f368822b738505b971be0cc23e02604371b7ae37f483809e42"
+    ]
+  },
+  "extras": {
+    "tree": "e542ed1a489fe4dd0ebe479312b82dc2c5c3551d4746a1d806bf6f5eef22a5fe"
+  },
+  "excluded": [
+    "config.toml",
+    "logs/",
+    "vault.lock",
+    "launch.lock",
+    "daemon.*.json",
+    "web-launch/",
+    "web-downloads/",
+    "blobs/tmp/"
+  ],
+  "stats": {
+    "nodes": 6,
+    "files": 1,
+    "directories": 5,
+    "trashed_nodes": 0,
+    "blobs": 1,
+    "blob_bytes": 43,
+    "content_versions": 1,
+    "ingests": 0,
+    "provenance": 0,
+    "tags": 0,
+    "node_tags": 0,
+    "extracted_text": 0
+  },
+  "new_packs": [
+    "01m3by3manskpybq2rapz0sgkw"
+  ],
+  "new_index": "01m3by3mc38e8ybbz6jren4knr",
+  "duration_seconds": 0.123758757,
+  "bytes_added": 11858
+}

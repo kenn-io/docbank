@@ -13,8 +13,6 @@ import (
 
 	"github.com/gofrs/flock"
 	kitbackup "go.kenn.io/kit/backup"
-	"go.kenn.io/kit/pack"
-	"go.kenn.io/kit/packstore"
 
 	"go.kenn.io/docbank/internal/backupapp"
 	"go.kenn.io/docbank/internal/home"
@@ -38,86 +36,109 @@ type Request struct {
 	DestinationRoot string
 }
 
-func Inventory(ctx context.Context, driver docsqlite.Driver, req Request) (photomigration.Report, error) {
+func Inventory(ctx context.Context, driver docsqlite.Driver, req Request) (photomigration.Report, photomigration.OwnerMapTemplate, error) {
 	if err := docsqlite.Validate(driver); err != nil {
-		return photomigration.Report{}, err
+		return photomigration.Report{}, photomigration.OwnerMapTemplate{}, err
 	}
-	if req.OwnerMapPath == "" {
-		return photomigration.Report{}, errors.New("owner map output path is required")
+	if req.OwnerMapPath == "" || !filepath.IsAbs(req.OwnerMapPath) {
+		return photomigration.Report{}, photomigration.OwnerMapTemplate{}, errors.New("owner map output path must be absolute")
 	}
+	var report photomigration.Report
+	var template photomigration.OwnerMapTemplate
+	var sourceRoots []string
+	var err error
 	if req.ArchiveRoot != "" {
-		return inventoryArchive(ctx, driver, req)
+		if req.CatalogPath != "" || req.VaultRoot != "" {
+			return photomigration.Report{}, photomigration.OwnerMapTemplate{}, errors.New("archive inventory cannot include install paths")
+		}
+		archiveRoot, pathErr := absoluteDir(req.ArchiveRoot, "archive root")
+		if pathErr != nil {
+			return photomigration.Report{}, photomigration.OwnerMapTemplate{}, pathErr
+		}
+		report, template, err = inventoryArchive(ctx, driver, req, archiveRoot)
+		sourceRoots = []string{archiveRoot}
+	} else {
+		catalog, pathErr := absoluteRegular(req.CatalogPath, "catalog")
+		if pathErr != nil {
+			return photomigration.Report{}, photomigration.OwnerMapTemplate{}, pathErr
+		}
+		vaultRoot, pathErr := absoluteDir(req.VaultRoot, "vault root")
+		if pathErr != nil {
+			return photomigration.Report{}, photomigration.OwnerMapTemplate{}, pathErr
+		}
+		report, template, err = inventoryInstall(ctx, driver, catalog, vaultRoot)
+		sourceRoots = []string{filepath.Dir(catalog), vaultRoot}
 	}
-	return inventoryInstall(ctx, driver, req)
+	if err != nil {
+		return photomigration.Report{}, photomigration.OwnerMapTemplate{}, err
+	}
+	sourceRoots = append(sourceRoots, req.DestinationRoot)
+	if err := photomigration.WriteOwnerMapTemplate(req.OwnerMapPath, template, sourceRoots...); err != nil {
+		return photomigration.Report{}, photomigration.OwnerMapTemplate{}, err
+	}
+	return report, template, nil
 }
 
-func inventoryInstall(ctx context.Context, driver docsqlite.Driver, req Request) (photomigration.Report, error) {
-	catalog, err := absoluteRegular(req.CatalogPath, "catalog")
-	if err != nil {
-		return photomigration.Report{}, err
-	}
-	vaultRoot, err := absoluteDir(req.VaultRoot, "vault root")
-	if err != nil {
-		return photomigration.Report{}, err
-	}
+func inventoryInstall(ctx context.Context, driver docsqlite.Driver, catalog, vaultRoot string) (photomigration.Report, photomigration.OwnerMapTemplate, error) {
 	vaultDB := filepath.Join(vaultRoot, "docbank.db")
 	if _, err := absoluteRegular(vaultDB, "embedded Docbank database"); err != nil {
-		return photomigration.Report{}, err
+		return photomigration.Report{}, photomigration.OwnerMapTemplate{}, err
 	}
 	if err := admitSidecars(catalog); err != nil {
-		return photomigration.Report{}, err
+		return photomigration.Report{}, photomigration.OwnerMapTemplate{}, err
 	}
 	if err := admitSidecars(vaultDB); err != nil {
-		return photomigration.Report{}, err
+		return photomigration.Report{}, photomigration.OwnerMapTemplate{}, err
 	}
 	hierarchy, err := (home.Layout{Root: vaultRoot}).TryLockExistingAncestors()
 	if err != nil {
-		return photomigration.Report{}, fmt.Errorf("locking Fotobank vault hierarchy: %w", err)
+		return photomigration.Report{}, photomigration.OwnerMapTemplate{}, fmt.Errorf("locking Fotobank vault hierarchy: %w", err)
 	}
 	defer func() { _ = hierarchy.Release() }()
 	catLock, err := openExistingCatalogLock(catalog + ".server.lock")
 	if err != nil {
-		return photomigration.Report{}, err
+		return photomigration.Report{}, photomigration.OwnerMapTemplate{}, err
 	}
 	defer func() { _ = catLock.Unlock() }()
 	if err := admitSidecars(catalog); err != nil {
-		return photomigration.Report{}, err
+		return photomigration.Report{}, photomigration.OwnerMapTemplate{}, err
 	}
 	if err := admitSidecars(vaultDB); err != nil {
-		return photomigration.Report{}, err
+		return photomigration.Report{}, photomigration.OwnerMapTemplate{}, err
 	}
 	db, err := driver.Open(catalog, docsqlite.OpenOptions{Access: docsqlite.ReadOnlyImmutable, TransactionMode: docsqlite.Deferred})
 	if err != nil {
-		return photomigration.Report{}, fmt.Errorf("opening Fotobank catalog immutably: %w", err)
+		return photomigration.Report{}, photomigration.OwnerMapTemplate{}, fmt.Errorf("opening Fotobank catalog immutably: %w", err)
 	}
 	db.SetMaxOpenConns(1)
 	defer func() { _ = db.Close() }()
-	if err := validateCatalog(ctx, db); err != nil {
-		return photomigration.Report{}, err
-	}
-	report, entries, err := readCatalog(ctx, db, catalog, vaultRoot, driver)
+	version, layouts, err := validateCatalog(ctx, db)
 	if err != nil {
-		return photomigration.Report{}, err
+		return photomigration.Report{}, photomigration.OwnerMapTemplate{}, err
 	}
-	if err := validateEmbeddedDocbank(ctx, driver, vaultDB); err != nil {
-		return photomigration.Report{}, err
+	report, entries, err := readCatalog(ctx, db, catalog, version, layouts)
+	if err != nil {
+		return photomigration.Report{}, photomigration.OwnerMapTemplate{}, err
 	}
+	uniqueBlobBytes, err := validateEmbeddedDocbank(ctx, driver, vaultDB)
+	if err != nil {
+		return photomigration.Report{}, photomigration.OwnerMapTemplate{}, err
+	}
+	report.Capacity.UniqueBlobBytes = uniqueBlobBytes
+	report.Capacity.MinimumContentBytes = uniqueBlobBytes
 	report.Schema.EmbeddedDocbankVersion = 16
 	report.CreatedAt = time.Now().UTC().Format(time.RFC3339Nano)
 	template, err := photomigration.NewOwnerMapTemplate(report, entries)
 	if err != nil {
-		return photomigration.Report{}, err
+		return photomigration.Report{}, photomigration.OwnerMapTemplate{}, err
 	}
-	if err := photomigration.WriteOwnerMapTemplate(req.OwnerMapPath, template, catalog, vaultRoot, req.DestinationRoot); err != nil {
-		return photomigration.Report{}, err
-	}
-	return report, nil
+	return report, template, nil
 }
 
-func inventoryArchive(ctx context.Context, driver docsqlite.Driver, req Request) (photomigration.Report, error) {
-	repo, err := kitbackup.Open(req.ArchiveRoot)
+func inventoryArchive(ctx context.Context, driver docsqlite.Driver, req Request, archiveRoot string) (photomigration.Report, photomigration.OwnerMapTemplate, error) {
+	repo, err := kitbackup.Open(archiveRoot)
 	if err != nil {
-		return photomigration.Report{}, fmt.Errorf("open Fotobank recovery archive: %w", err)
+		return photomigration.Report{}, photomigration.OwnerMapTemplate{}, fmt.Errorf("open Fotobank recovery archive: %w", err)
 	}
 	snapshotID := req.SnapshotID
 	if snapshotID == "" {
@@ -126,90 +147,62 @@ func inventoryArchive(ctx context.Context, driver docsqlite.Driver, req Request)
 			if latestErr == nil {
 				latestErr = errors.New("archive has no snapshots")
 			}
-			return photomigration.Report{}, latestErr
+			return photomigration.Report{}, photomigration.OwnerMapTemplate{}, latestErr
 		}
 		snapshotID = latest.SnapshotID
 	}
 	scratch, err := os.MkdirTemp("", "docbank-fotobank-inventory-")
 	if err != nil {
-		return photomigration.Report{}, err
+		return photomigration.Report{}, photomigration.OwnerMapTemplate{}, err
 	}
 	defer func() { _ = os.RemoveAll(scratch) }()
 	catalog := filepath.Join(scratch, "catalog.sqlite")
 	if err := backupapp.ReadSnapshotExtraFile(ctx, repo, snapshotID, "application/catalog.sqlite", catalog); err != nil {
-		return photomigration.Report{}, err
+		return photomigration.Report{}, photomigration.OwnerMapTemplate{}, err
 	}
 	if err := admitSidecars(catalog); err != nil {
-		return photomigration.Report{}, err
+		return photomigration.Report{}, photomigration.OwnerMapTemplate{}, err
 	}
 	db, err := driver.Open(catalog, docsqlite.OpenOptions{Access: docsqlite.ReadOnlyImmutable, TransactionMode: docsqlite.Deferred})
 	if err != nil {
-		return photomigration.Report{}, fmt.Errorf("opening archived Fotobank catalog immutably: %w", err)
+		return photomigration.Report{}, photomigration.OwnerMapTemplate{}, fmt.Errorf("opening archived Fotobank catalog immutably: %w", err)
 	}
 	db.SetMaxOpenConns(1)
 	defer func() { _ = db.Close() }()
-	if err := validateCatalog(ctx, db); err != nil {
-		return photomigration.Report{}, err
-	}
-	report, entries, err := readCatalog(ctx, db, catalog, "", driver)
+	version, layouts, err := validateCatalog(ctx, db)
 	if err != nil {
-		return photomigration.Report{}, err
+		return photomigration.Report{}, photomigration.OwnerMapTemplate{}, err
+	}
+	report, entries, err := readCatalog(ctx, db, catalog, version, layouts)
+	if err != nil {
+		return photomigration.Report{}, photomigration.OwnerMapTemplate{}, err
 	}
 	manifest, err := repo.LoadManifest(snapshotID)
 	if err != nil {
-		return photomigration.Report{}, fmt.Errorf("load archive manifest: %w", err)
+		return photomigration.Report{}, photomigration.OwnerMapTemplate{}, fmt.Errorf("load archive manifest: %w", err)
 	}
 	if manifest.Metadata == nil || manifest.Metadata.Format != backupapp.MetadataFormat {
 		format := ""
 		if manifest.Metadata != nil {
 			format = manifest.Metadata.Format
 		}
-		return photomigration.Report{}, fmt.Errorf("%w: archive metadata format %q, expected %q", ErrSchemaMismatch, format, backupapp.MetadataFormat)
+		return photomigration.Report{}, photomigration.OwnerMapTemplate{}, fmt.Errorf("%w: archive metadata format %q, expected %q", ErrSchemaMismatch, format, backupapp.MetadataFormat)
 	}
-	if err := verifyArchiveMetadata(ctx, repo, manifest); err != nil {
-		return photomigration.Report{}, fmt.Errorf("read archive metadata: %w", err)
+	uniqueBlobBytes, err := backupapp.SnapshotUniqueBlobBytes(ctx, repo, manifest)
+	if err != nil {
+		return photomigration.Report{}, photomigration.OwnerMapTemplate{}, fmt.Errorf("read archive metadata: %w", err)
 	}
+	report.Capacity.UniqueBlobBytes = uniqueBlobBytes
+	report.Capacity.MinimumContentBytes = uniqueBlobBytes
 	format := manifest.Metadata.Format
 	report.Source = photomigration.Source{Kind: photomigration.SourceArchive, Identity: snapshotID}
 	report.Schema.ArchiveMetadataFormat = format
 	report.CreatedAt = time.Now().UTC().Format(time.RFC3339Nano)
 	template, err := photomigration.NewOwnerMapTemplate(report, entries)
 	if err != nil {
-		return photomigration.Report{}, err
+		return photomigration.Report{}, photomigration.OwnerMapTemplate{}, err
 	}
-	if err := photomigration.WriteOwnerMapTemplate(req.OwnerMapPath, template, req.ArchiveRoot, req.DestinationRoot); err != nil {
-		return photomigration.Report{}, err
-	}
-	return report, nil
-}
-
-func verifyArchiveMetadata(ctx context.Context, repo *kitbackup.Repo, manifest *kitbackup.Manifest) error {
-	metadataID, err := pack.ParseBlobID(manifest.Metadata.Blob)
-	if err != nil {
-		return fmt.Errorf("parse metadata blob: %w", err)
-	}
-	known, err := repo.LoadBlobIndex()
-	if err != nil {
-		return fmt.Errorf("load metadata blob index: %w", err)
-	}
-	stream, err := repo.OpenBlob(ctx, known, metadataID, nil, packstore.PackExt)
-	if err != nil {
-		return fmt.Errorf("open metadata blob: %w", err)
-	}
-	if stream.Size() != manifest.Metadata.Bytes {
-		_ = stream.Close()
-		return fmt.Errorf("metadata blob size is %d, expected %d", stream.Size(), manifest.Metadata.Bytes)
-	}
-	readBytes, readErr := io.Copy(io.Discard, stream)
-	verifyErr := stream.Verify()
-	closeErr := stream.Close()
-	if err := errors.Join(readErr, verifyErr, closeErr); err != nil {
-		return fmt.Errorf("verify metadata blob: %w", err)
-	}
-	if readBytes != manifest.Metadata.Bytes {
-		return fmt.Errorf("metadata stream size is %d, expected %d", readBytes, manifest.Metadata.Bytes)
-	}
-	return nil
+	return report, template, nil
 }
 
 func admitSidecars(path string) error {
@@ -252,39 +245,33 @@ func openExistingCatalogLock(path string) (*flock.Flock, error) {
 }
 
 func absoluteRegular(path, label string) (string, error) {
-	if path == "" {
-		return "", fmt.Errorf("%s path is required", label)
+	if path == "" || !filepath.IsAbs(path) {
+		return "", fmt.Errorf("%s path must be absolute", label)
 	}
-	abs, err := filepath.Abs(path)
-	if err != nil {
-		return "", err
-	}
-	info, err := os.Stat(abs)
+	path = filepath.Clean(path)
+	info, err := os.Stat(path)
 	if err != nil {
 		return "", fmt.Errorf("stat %s: %w", label, err)
 	}
 	if !info.Mode().IsRegular() {
 		return "", fmt.Errorf("%s is not a regular file", label)
 	}
-	return abs, nil
+	return path, nil
 }
 
 func absoluteDir(path, label string) (string, error) {
-	if path == "" {
-		return "", fmt.Errorf("%s path is required", label)
+	if path == "" || !filepath.IsAbs(path) {
+		return "", fmt.Errorf("%s path must be absolute", label)
 	}
-	abs, err := filepath.Abs(path)
-	if err != nil {
-		return "", err
-	}
-	info, err := os.Stat(abs)
+	path = filepath.Clean(path)
+	info, err := os.Stat(path)
 	if err != nil {
 		return "", fmt.Errorf("stat %s: %w", label, err)
 	}
 	if !info.IsDir() {
 		return "", fmt.Errorf("%s is not a directory", label)
 	}
-	return abs, nil
+	return path, nil
 }
 
 func fileIdentity(path string) string {

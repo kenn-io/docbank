@@ -2,10 +2,12 @@ package backupapp
 
 import (
 	"context"
+	"encoding/json/jsontext"
 	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"os"
 	"path/filepath"
 	"strings"
@@ -90,4 +92,77 @@ func ReadSnapshotExtraFile(ctx context.Context, repository *backup.Repo, snapsho
 		return fmt.Errorf("read extra %q: %w", name, err)
 	}
 	return nil
+}
+
+// SnapshotUniqueBlobBytes reads verified logical blob metadata without
+// restoring the snapshot or opening a destination store.
+func SnapshotUniqueBlobBytes(ctx context.Context, repository *backup.Repo, manifest *backup.Manifest) (total int64, retErr error) {
+	if repository == nil || manifest == nil || manifest.Metadata == nil || manifest.Metadata.Format != MetadataFormat {
+		return 0, errors.New("snapshot has unsupported Docbank metadata")
+	}
+	metadataID, err := pack.ParseBlobID(manifest.Metadata.Blob)
+	if err != nil {
+		return 0, fmt.Errorf("parse metadata blob: %w", err)
+	}
+	known, err := repository.LoadBlobIndex()
+	if err != nil {
+		return 0, fmt.Errorf("load metadata blob index: %w", err)
+	}
+	stream, err := repository.OpenBlob(ctx, known, metadataID, nil, packstore.PackExt)
+	if err != nil {
+		return 0, fmt.Errorf("open metadata blob: %w", err)
+	}
+	defer func() { retErr = errors.Join(retErr, stream.Close()) }()
+	if stream.Size() != manifest.Metadata.Bytes {
+		return 0, fmt.Errorf("metadata blob size is %d, expected %d", stream.Size(), manifest.Metadata.Bytes)
+	}
+	decoder := jsontext.NewDecoder(stream)
+	seen := make(map[string]struct{})
+	var headerSeen bool
+	for row := 0; ; row++ {
+		var record struct {
+			Type    string `json:"type"`
+			Format  string `json:"format"`
+			Version int    `json:"version"`
+			Hash    string `json:"hash"`
+			Size    int64  `json:"size"`
+		}
+		raw, err := decoder.ReadValue()
+		if errors.Is(err, io.EOF) {
+			break
+		} else if err != nil {
+			return 0, fmt.Errorf("decode metadata record %d: %w", row, err)
+		}
+		if err := json.Unmarshal(raw, &record); err != nil {
+			return 0, fmt.Errorf("decode metadata record %d: %w", row, err)
+		}
+		if row == 0 {
+			if record.Type != "meta" || record.Format != "docbank-metadata" || record.Version != 1 {
+				return 0, errors.New("metadata header is unsupported")
+			}
+			headerSeen = true
+			continue
+		}
+		if record.Type != "blob" {
+			continue
+		}
+		if record.Hash == "" || record.Size < 0 {
+			return 0, errors.New("metadata has an invalid blob record")
+		}
+		if _, ok := seen[record.Hash]; ok {
+			return 0, fmt.Errorf("metadata repeats blob %q", record.Hash)
+		}
+		seen[record.Hash] = struct{}{}
+		if record.Size > math.MaxInt64-total {
+			return 0, errors.New("metadata blob sizes exceed int64")
+		}
+		total += record.Size
+	}
+	if !headerSeen {
+		return 0, errors.New("metadata header is missing")
+	}
+	if err := stream.Verify(); err != nil {
+		return 0, fmt.Errorf("verify metadata blob: %w", err)
+	}
+	return total, nil
 }

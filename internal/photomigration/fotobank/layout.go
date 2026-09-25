@@ -64,7 +64,7 @@ var catalogTables = map[string][]string{
 
 var vecName = regexp.MustCompile(`^media_embeddings_g[0-9]+$`)
 
-const catalogFingerprint = "13cf6940c84ae81244d7972d2ee0224e54ae858152356ac875e4930413ab5297"
+const catalogFingerprint = "8e60d54091ad032c8b45375e5a9abefb20b691d9fcd9b6a9caf6f22ad1a192c8"
 
 var catalogTableMetadata = map[string]string{
 	"ai_failures":               "attempt_count:INTEGER:1::0,failed_at:TIMESTAMP:1::0,input_profile:TEXT:1::5,last_error:TEXT:1::0,last_error_kind:TEXT:1::0,media_id:UUID:1::1,model_id:TEXT:1::3,prompt_version:TEXT:1::4,task:TEXT:1::2",
@@ -94,7 +94,7 @@ var catalogTableMetadata = map[string]string{
 	"media_tags":                "rank:INTEGER:1::0,result_id:UUID:1::1,tag_key:TEXT:1::2,tag_label:TEXT:1::0",
 	"owners":                    "created_at:TIMESTAMP:1::0,display_handle:TEXT:0::0,hub:TEXT:1::1,storage_key:TEXT:1::0,user_id:TEXT:1::2",
 	"principal_display":         "cached_at:TIMESTAMP:1::0,handle:TEXT:0::0,hub:TEXT:1::1,user_id:TEXT:1::2",
-	"schema_migrations":         "dirty:BOOLEAN:1::0,version:BIGINT:1::1",
+	"schema_migrations":         "dirty:bool:0::0,version:uint64:0::0",
 	"scope_media":               "media_id:UUID:1::2,scope_uuid:UUID:1::1",
 	"scopes":                    "allow_download:BOOLEAN:1:0:0,broker_attempts:INTEGER:1:0:0,broker_granted_at:TIMESTAMP:0::0,broker_last_error:TEXT:0::0,broker_next_attempt_at:TIMESTAMP:0::0,broker_registered_at:TIMESTAMP:0::0,broker_revoked_at:TIMESTAMP:0::0,broker_status:TEXT:1::0,created_at:TIMESTAMP:1::0,expires_at:TIMESTAMP:0::0,grantee_hub:TEXT:1::0,grantee_user_id:TEXT:1::0,label:TEXT:0::0,owner_hub:TEXT:1::0,owner_user_id:TEXT:1::0,revoked_at:TIMESTAMP:0::0,target_album_id:UUID:0::0,target_type:TEXT:1::0,uuid:UUID:0::1",
 	"user_settings":             "key:TEXT:1::3,principal_hub:TEXT:1::1,principal_user_id:TEXT:1::2,updated_at:TIMESTAMP:1::0,value:TEXT:1::0",

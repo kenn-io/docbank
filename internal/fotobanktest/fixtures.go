@@ -45,7 +45,8 @@ func CreateInstall(root string, driver sqlite.Driver) (Install, error) {
 	if err != nil {
 		return Install{}, err
 	}
-	if _, err := db.Exec(`CREATE TABLE schema_migrations(version BIGINT NOT NULL PRIMARY KEY, dirty BOOLEAN NOT NULL); INSERT INTO schema_migrations VALUES(1,0);` + catalogSchemaSQL); err != nil {
+	// This marker matches golang-migrate v4.19.1's sqlite3 driver, which Fotobank uses before applying migration 1.
+	if _, err := db.Exec(`CREATE TABLE schema_migrations (version uint64, dirty bool); CREATE UNIQUE INDEX version_unique ON schema_migrations (version); INSERT INTO schema_migrations VALUES(1,0);` + catalogSchemaSQL); err != nil {
 		_ = db.Close()
 		return Install{}, fmt.Errorf("create catalog schema: %w", err)
 	}
@@ -81,8 +82,10 @@ INSERT INTO owners(hub,user_id,storage_key,display_handle,created_at) VALUES('hu
 INSERT INTO assets(id,owner_hub,owner_user_id,state,media_type,imported_at,thumb_status,thumb_version) VALUES('123e4567-e89b-42d3-a456-426614174001','hub','user','pending','photo','2026-01-01T00:00:00Z','pending',0);
 INSERT INTO media_files(id,asset_id,owner_hub,owner_user_id,role,mime_type,original_filename,import_source_path,size,docbank_node_id,docbank_virtual_path,current_version_id,sha256) VALUES('123e4567-e89b-42d3-a456-426614174002','123e4567-e89b-42d3-a456-426614174001','hub','user','original','image/jpeg','photo.jpg','',10,1,'/owners/hub/media/123e4567-e89b-42d3-a456-426614174002/photo.jpg','123e4567-e89b-42d3-a456-426614174007','aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa');
 INSERT INTO albums(id,owner_hub,owner_user_id,name,created_at,updated_at) VALUES('123e4567-e89b-42d3-a456-426614174003','hub','user','album','2026-01-01T00:00:00Z','2026-01-01T00:00:00Z');
+INSERT INTO album_media(album_id,media_id,added_at,position) VALUES('123e4567-e89b-42d3-a456-426614174003','123e4567-e89b-42d3-a456-426614174001','2026-01-01T00:00:00Z',0);
 INSERT INTO scopes(uuid,owner_hub,owner_user_id,grantee_hub,grantee_user_id,target_type,target_album_id,allow_download,created_at,broker_status,broker_attempts) VALUES('123e4567-e89b-42d3-a456-426614174004','hub','user','other','user','media_set',NULL,1,'2026-01-01T00:00:00Z','pending',0);
 INSERT INTO checkouts(id,owner_hub,owner_user_id,root,layout,include_all,state,created_at,updated_at) VALUES('123e4567-e89b-42d3-a456-426614174005','hub','user','/tmp/checkout','capture_date',0,'active','2026-01-01T00:00:00Z','2026-01-01T00:00:00Z');
+INSERT INTO checkout_entries(checkout_id,file_id,relative_path,base_version_id,base_sha256,base_size,observed_size,observed_mtime,observed_identity,observed_sha256,state,created_at,updated_at) VALUES('123e4567-e89b-42d3-a456-426614174005','123e4567-e89b-42d3-a456-426614174002','photo.jpg','123e4567-e89b-42d3-a456-426614174007','aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',10,10,'2026-01-01T00:00:00Z','inode-1','aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa','clean','2026-01-01T00:00:00Z','2026-01-01T00:00:00Z');
 INSERT INTO ai_results(id,media_id,task,model_id,prompt_version,prompt_hash,input_profile,status,generated_at) VALUES('123e4567-e89b-42d3-a456-426614174006','123e4567-e89b-42d3-a456-426614174001','tag','model','v1','bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb','default','active','2026-01-01T00:00:00Z');
 INSERT INTO auth_hidden_credential(principal_hub,principal_user_id,passcode_hash,created_at,updated_at) VALUES('hub','user','synthetic','2026-01-01T00:00:00Z','2026-01-01T00:00:00Z');
 INSERT INTO embedding_generations(fingerprint,fingerprint_hash,model_id,input_profile,vec_table_name,dimension,state,created_at) VALUES('synthetic','cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc','model','default','media_embeddings_g1',3,'active','2026-01-01T00:00:00Z');
