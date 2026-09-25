@@ -107,39 +107,42 @@ jobs:
 
       - name: Start S3-compatible test service
         env:
-          MINIO_ROOT_USER: docbank-test
-          MINIO_ROOT_PASSWORD: docbank-test-secret
+          RUSTFS_ACCESS_KEY: docbank-test
+          RUSTFS_SECRET_KEY: docbank-test-secret
         run: |
           set -eu
-          name="docbank-minio-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
-          image="docbank-minio-ci:${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
-          build_dir="$(mktemp -d "$RUNNER_TEMP/docbank-minio.XXXXXX")"
-          trap 'rm -rf "$build_dir"' EXIT
-          # MinIO no longer publishes community binaries or container images.
-          # Build RELEASE.2025-10-15T17-29-55Z from its pinned source instead.
-          CGO_ENABLED=0 GOBIN="$build_dir" go install github.com/minio/minio@9e49d5e7a648f00e26f2246f4dc28e6b07f8c84a
-          echo "DOCBANK_MINIO_IMAGE=$image" >> "$GITHUB_ENV"
-          printf 'FROM scratch\nCOPY minio /minio\nENTRYPOINT ["/minio"]\n' | \
-            docker build --tag "$image" --file - "$build_dir"
-          echo "DOCBANK_MINIO_CONTAINER=$name" >> "$GITHUB_ENV"
-          docker run --rm -d --name "$name" \
-            -p 127.0.0.1::9000 \
-            -e MINIO_ROOT_USER -e MINIO_ROOT_PASSWORD \
-            "$image" \
-            server /data >/dev/null
+          name="docbank-s3-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          # MinIO no longer publishes images, so tests run against RustFS 1.0.0.
+          image="docker.io/rustfs/rustfs@sha256:8cc9801755448b71a786705ce76692c77e14936cccd87cf2fc31842e58f4d1ff"
+          if ! docker image inspect "$image" >/dev/null 2>&1; then
+            for attempt in 1 2 3; do
+              if docker pull "$image"; then
+                break
+              fi
+              if [ "$attempt" = 3 ]; then
+                exit 1
+              fi
+              sleep $((attempt * 5))
+            done
+          fi
+          echo "DOCBANK_S3_CONTAINER=$name" >> "$GITHUB_ENV"
+          docker run --rm -d --name "$name"             -p 127.0.0.1::9000             -e RUSTFS_ACCESS_KEY -e RUSTFS_SECRET_KEY             "$image" >/dev/null
           port="$(docker port "$name" 9000/tcp | head -1 | awk -F: '{print $NF}')"
           endpoint="http://127.0.0.1:${port}"
           for _ in $(seq 1 30); do
-            if curl --fail --silent "${endpoint}/minio/health/live" >/dev/null; then
+            if curl --fail --silent "${endpoint}/health/ready" >/dev/null; then
               break
             fi
             sleep 1
           done
-          curl --fail --silent "${endpoint}/minio/health/live" >/dev/null
+          if ! curl --fail --silent "${endpoint}/health/ready" >/dev/null; then
+            docker logs "$name"
+            exit 1
+          fi
           {
             echo "DOCBANK_S3_TEST_ENDPOINT=$endpoint"
-            echo "DOCBANK_S3_TEST_ACCESS_KEY=$MINIO_ROOT_USER"
-            echo "DOCBANK_S3_TEST_SECRET_KEY=$MINIO_ROOT_PASSWORD"
+            echo "DOCBANK_S3_TEST_ACCESS_KEY=$RUSTFS_ACCESS_KEY"
+            echo "DOCBANK_S3_TEST_SECRET_KEY=$RUSTFS_SECRET_KEY"
           } >> "$GITHUB_ENV"
 
       - name: Test
@@ -150,11 +153,8 @@ jobs:
       - name: Stop S3-compatible test service
         if: always()
         run: |
-          if [ -n "${DOCBANK_MINIO_CONTAINER:-}" ]; then
-            docker rm -f "$DOCBANK_MINIO_CONTAINER" >/dev/null 2>&1 || true
-          fi
-          if [ -n "${DOCBANK_MINIO_IMAGE:-}" ]; then
-            docker image rm "$DOCBANK_MINIO_IMAGE" >/dev/null 2>&1 || true
+          if [ -n "${DOCBANK_S3_CONTAINER:-}" ]; then
+            docker rm -f "$DOCBANK_S3_CONTAINER" >/dev/null 2>&1 || true
           fi
 
   purego:
