@@ -546,6 +546,7 @@ func TestPublishRenditionExcludesDerivativePurgeAcrossEveryStagingBoundary(t *te
 type publicationFixture struct {
 	catalog         *store.Store
 	blobs           *blob.Store
+	blobsDir        string
 	profile         store.ProcessingProfileRecord
 	evidencePolicy  document.EvidencePolicy
 	renditionPolicy document.RenditionPolicy
@@ -582,7 +583,7 @@ func newPublicationFixture(t *testing.T) publicationFixture {
 	})
 	require.NoError(t, err)
 	return publicationFixture{
-		catalog: catalog, blobs: blobs, profile: processingProfile(t),
+		catalog: catalog, blobs: blobs, blobsDir: filepath.Join(root, "blobs"), profile: processingProfile(t),
 		evidencePolicy: evidencePolicy, renditionPolicy: renditionPolicy,
 		versionID: node.CurrentVersionID,
 	}

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"io"
+	"os"
 	"strings"
 	"sync"
 	"testing"
@@ -375,6 +376,90 @@ func TestMediaTranscriptRechecksAuthority(t *testing.T) {
 	case <-replacementCtx.Done():
 		t.Fatalf("transcript read did not finish after replacement: %v", replacementCtx.Err())
 	}
+}
+
+func TestMediaTranscriptClassifiesPhysicalArtifactCorruption(t *testing.T) {
+	fixture := newPublicationFixture(t)
+	var err error
+	base := newRemoteRecordingTestService(t, fixture, "operator:transcript-corrupt", 0, nil)
+	remote := loomRemoteForTest(t, base, "transcript-corrupt")
+	video := mediatest.H264AACMP4()
+	videoReceipt, err := base.ImportRecordingArtifact(t.Context(), MediaArtifactRequest{
+		OperationID: uuid.New().String(), SourceID: remote.SourceID, OccurrenceID: remote.OccurrenceID,
+		Kind: "media", Origin: "supplied", Provider: "synthetic", Filename: "call.mp4", MediaType: "video/mp4",
+		SHA256: processingSHA256(video), ByteLength: int64(len(video)), Content: bytes.NewReader(video),
+	})
+	require.NoError(t, err)
+	srt := []byte("1\n00:00:00,000 --> 00:00:01,000\nphysical corruption cue\n")
+	caption, err := base.ImportRecordingArtifact(t.Context(), MediaArtifactRequest{
+		OperationID: uuid.New().String(), SourceID: remote.SourceID, OccurrenceID: remote.OccurrenceID,
+		Kind: "caption", Origin: "supplied", Provider: "synthetic", Filename: "call.srt",
+		MediaType: "application/x-subrip", SHA256: processingSHA256(srt), ByteLength: int64(len(srt)),
+		Content: bytes.NewReader(srt),
+	})
+	require.NoError(t, err)
+	name, profile, err := NewSuppliedCaptionProfile(fixture.catalog, fixture.blobs, base.principal)
+	require.NoError(t, err)
+	service, err := NewService(ServiceConfig{Catalog: fixture.catalog, Blobs: fixture.blobs,
+		Gate: newWorkerTestGate(), SpoolDirectory: t.TempDir(), Principal: base.principal,
+		Profiles: map[string]ProfileConfig{name: profile}})
+	require.NoError(t, err)
+	version, err := fixture.catalog.ContentVersionByID(t.Context(), videoReceipt.ContentVersionID)
+	require.NoError(t, err)
+	selector := Selector{NodeID: version.NodeID, ContentVersionID: version.ID, Profile: name}
+	plan, err := service.Plan(t.Context(), selector)
+	require.NoError(t, err)
+	_, err = service.GrantConsent(t.Context(), ConsentGrantRequest{Selector: selector, PlanFingerprint: plan.Fingerprint})
+	require.NoError(t, err)
+	queued, err := service.RetryMedia(t.Context(), uuid.New().String(), remote.SourceID,
+		MediaProcessingRequest{Profile: name, SuppliedInputID: caption.SuppliedInputID})
+	require.NoError(t, err)
+	runLoomRenditionJob(t, service, queued.JobID)
+
+	view, err := fixture.catalog.ActiveRendition(t.Context(), queued.ContentVersionID,
+		service.profiles[name].record.Fingerprint)
+	require.NoError(t, err)
+	var transcriptHash string
+	for _, artifact := range view.Build.Artifacts {
+		if artifact.Role == string(document.EvidenceArtifactTranscript) {
+			transcriptHash = artifact.BlobHash
+			break
+		}
+	}
+	require.NotEmpty(t, transcriptHash)
+	resolution, err := fixture.catalog.ResolveBlobLocations(t.Context(), packstore.Hash(transcriptHash))
+	require.NoError(t, err)
+	require.Len(t, resolution.Candidates, 1)
+	location := resolution.Candidates[0]
+	require.NotNil(t, location.Loose)
+	layout, err := packstore.NewLayout(fixture.blobsDir, packstore.LayoutOptions{
+		Staging: packstore.StagingStoreDirectory, StagingDir: "tmp",
+	})
+	require.NoError(t, err)
+	hash := packstore.Hash(transcriptHash)
+	var path string
+	switch location.Loose.Encoding {
+	case packstore.LooseEncodingRaw:
+		path = layout.LoosePath(hash)
+	case packstore.LooseEncodingZstd:
+		path = layout.CompressedLoosePath(hash)
+	default:
+		t.Fatalf("unexpected transcript encoding: %v", location.Loose.Encoding)
+	}
+	physical, err := os.ReadFile(path)
+	require.NoError(t, err)
+	require.NotEmpty(t, physical)
+	damaged := append([]byte(nil), physical...)
+	damaged[len(damaged)-1] ^= 0xff
+	require.NoError(t, os.WriteFile(path, damaged, 0o600))
+
+	result, err := service.MediaTranscript(t.Context(), MediaTranscriptRequest{
+		SourceID: remote.SourceID, SourceVersionID: queued.SourceVersionID, ContentVersionID: queued.ContentVersionID,
+	})
+	require.ErrorIs(t, err, ErrMediaTranscriptCorrupt)
+	require.NotErrorIs(t, err, retrieval.ErrMediaArtifactUnavailable)
+	require.Nil(t, result.Transcript)
+	t.Logf("physical artifact corruption: source=published_transcript outcome=corrupt text=nil")
 }
 
 func TestMediaTranscriptMismatchedContentVersionReturnsStaleWithoutText(t *testing.T) {
