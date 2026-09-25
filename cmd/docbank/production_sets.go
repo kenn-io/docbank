@@ -208,9 +208,10 @@ func newProductionDraftShowCommand() *cobra.Command {
 func init() {
 	production := &cobra.Command{Use: "production", Short: "Create and inspect production work"}
 	sets := &cobra.Command{Use: "sets", Short: "Create and inspect production sets"}
-	drafts := &cobra.Command{Use: "drafts", Short: "Inspect exact production draft revisions"}
+	drafts := &cobra.Command{Use: "drafts", Short: "Inspect and edit exact production draft revisions"}
 	sets.AddCommand(newProductionSetCreateCommand(), newProductionSetListCommand(), newProductionSetShowCommand())
-	drafts.AddCommand(newProductionDraftShowCommand())
+	drafts.AddCommand(newProductionDraftShowCommand(), newProductionDraftMembersCommand(),
+		newProductionDraftDecisionsCommand(), newProductionDraftInstructionsCommand())
 	production.AddCommand(newProductionRecipesCommand(), sets, drafts)
 	rootCmd.AddCommand(production)
 }
