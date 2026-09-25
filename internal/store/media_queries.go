@@ -70,7 +70,7 @@ func (s *Store) MediaSources(
 			return nil, 0, err
 		}
 		item.Receipt, item.ProcessingReceipt, item.CoverageReceipt, err = s.latestMediaReceipts(ctx, principal,
-			item.SourceID, item.SourceVersionID)
+			item.SourceID, item.SourceVersionID, false)
 		if err != nil {
 			return nil, 0, err
 		}
@@ -131,7 +131,7 @@ func (s *Store) mediaSourceProjection(
 		return MediaSourceProjection{}, err
 	}
 	item.Receipt, item.ProcessingReceipt, item.CoverageReceipt, err = s.latestMediaReceipts(ctx, principal,
-		sourceID, item.SourceVersionID)
+		sourceID, item.SourceVersionID, sourceVersionID != "")
 	return item, err
 }
 
@@ -194,14 +194,24 @@ func (s *Store) MediaSourceBindingForContentVersion(
 }
 
 func (s *Store) latestMediaReceipts(
-	ctx context.Context, principal, sourceID, sourceVersionID string,
+	ctx context.Context, principal, sourceID, sourceVersionID string, exactVersion bool,
 ) (MediaPublicationReceipt, *MediaPublicationReceipt, *MediaPublicationReceipt, error) {
 	var raw string
-	err := s.db.QueryRowContext(ctx, `SELECT receipt_json FROM media_operations
+	query := `SELECT receipt_json FROM media_operations
 		WHERE principal=? AND source_id=?
-			AND verb IN ('submit_supplied_media','submit_remote_recording')
-		ORDER BY updated_at DESC,operation_id DESC LIMIT 1`,
-		principal, sourceID).Scan(&raw)
+			AND verb IN ('submit_supplied_media','submit_remote_recording')`
+	args := []any{principal, sourceID}
+	if exactVersion {
+		query += ` AND (json_extract(receipt_json, '$.source_version_id')=?
+			OR COALESCE(json_extract(receipt_json, '$.source_version_id'), '')='')`
+		args = append(args, sourceVersionID)
+		query += ` ORDER BY CASE WHEN json_extract(receipt_json, '$.source_version_id')=? THEN 0 ELSE 1 END,
+			updated_at DESC,operation_id DESC LIMIT 1`
+		args = append(args, sourceVersionID)
+	} else {
+		query += ` ORDER BY updated_at DESC,operation_id DESC LIMIT 1`
+	}
+	err := s.db.QueryRowContext(ctx, query, args...).Scan(&raw)
 	if errors.Is(err, sql.ErrNoRows) {
 		return MediaPublicationReceipt{}, nil, nil, ErrNotFound
 	}
