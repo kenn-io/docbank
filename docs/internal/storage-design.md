@@ -335,8 +335,9 @@ keep their revision and append no receipt.
 canonical inventory report, and owner-map template. Install identities are
 catalog content digests; archive identities are Kit snapshot IDs. Absolute
 source and output paths stay in the operator response and owner-map file, not
-in the run record. `photo_migration_map` remains empty until a later migration
-step assigns destination owners.
+in the run record. `photo_migration_map` stores one source-table/source-ID to
+destination-kind/destination-ID mapping and disposition per migrated record.
+It remains empty until Slice 23 creates destinations.
 
 The Fotobank reader checks its pinned catalog layout and the embedded Docbank
 v16 layout before it counts rows. It opens both databases as immutable and

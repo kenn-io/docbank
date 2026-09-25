@@ -21,13 +21,13 @@ type metadataPhotoMigrationRun struct {
 }
 
 type metadataPhotoMigrationMap struct {
-	Type           string  `json:"type"`
-	RunID          string  `json:"run_id"`
-	SourceHub      string  `json:"source_hub"`
-	SourceUserID   string  `json:"source_user_id"`
-	StorageKey     string  `json:"storage_key"`
-	DocbankOwnerID *string `json:"docbank_owner_id"`
-	State          string  `json:"state"`
+	Type            string `json:"type"`
+	RunID           string `json:"run_id"`
+	SourceTable     string `json:"source_table"`
+	SourceID        string `json:"source_id"`
+	DestinationKind string `json:"destination_kind"`
+	DestinationID   string `json:"destination_id"`
+	Disposition     string `json:"disposition"`
 }
 
 func exportPhotoMigrationMetadata(ctx context.Context, q metadataQuerier, write metadataWrite) error {
@@ -51,14 +51,14 @@ func exportPhotoMigrationMetadata(ctx context.Context, q metadataQuerier, write 
 	if err := rows.Err(); err != nil {
 		return err
 	}
-	rows, err = q.QueryContext(ctx, `SELECT run_id,source_hub,source_user_id,storage_key,docbank_owner_id,state FROM photo_migration_map ORDER BY run_id,source_hub,source_user_id,storage_key`)
+	rows, err = q.QueryContext(ctx, `SELECT run_id,source_table,source_id,destination_kind,destination_id,disposition FROM photo_migration_map ORDER BY run_id,source_table,source_id`)
 	if err != nil {
 		return fmt.Errorf("exporting photo migration map: %w", err)
 	}
 	defer func() { _ = rows.Close() }()
 	for rows.Next() {
 		record := metadataPhotoMigrationMap{Type: metadataPhotoMigrationMapType}
-		if err := rows.Scan(&record.RunID, &record.SourceHub, &record.SourceUserID, &record.StorageKey, &record.DocbankOwnerID, &record.State); err != nil {
+		if err := rows.Scan(&record.RunID, &record.SourceTable, &record.SourceID, &record.DestinationKind, &record.DestinationID, &record.Disposition); err != nil {
 			return err
 		}
 		if err := validatePhotoMigrationMapRecord(record); err != nil {
@@ -94,10 +94,10 @@ func validatePhotoMigrationMapRecord(record metadataPhotoMigrationMap) error {
 	if err := validateUUIDv4(record.RunID); err != nil {
 		return err
 	}
-	if err := photomigration.ValidateMapEntry(photomigration.MapEntry{SourceHub: record.SourceHub, SourceUserID: record.SourceUserID, StorageKey: record.StorageKey}); err != nil {
-		return err
+	if record.SourceTable == "" || record.SourceID == "" || record.DestinationKind == "" || record.DestinationID == "" {
+		return errors.New("photo migration map source and destination fields are required")
 	}
-	return ValidatePhotoMigrationState(record.State)
+	return ValidatePhotoMigrationDisposition(record.Disposition)
 }
 
 func importPhotoMigrationMetadataRecord(ctx context.Context, tx *sql.Tx, kind string, raw jsontext.Value) error {
@@ -124,7 +124,7 @@ func importPhotoMigrationMetadataRecord(ctx context.Context, tx *sql.Tx, kind st
 		if err := tx.QueryRowContext(ctx, `SELECT 1 FROM photo_migration_runs WHERE run_id=?`, record.RunID).Scan(&exists); err != nil {
 			return fmt.Errorf("photo migration map references unknown run: %w", err)
 		}
-		_, err := tx.ExecContext(ctx, `INSERT INTO photo_migration_map(run_id,source_hub,source_user_id,storage_key,docbank_owner_id,state) VALUES(?,?,?,?,?,?)`, record.RunID, record.SourceHub, record.SourceUserID, record.StorageKey, record.DocbankOwnerID, record.State)
+		_, err := tx.ExecContext(ctx, `INSERT INTO photo_migration_map(run_id,source_table,source_id,destination_kind,destination_id,disposition) VALUES(?,?,?,?,?,?)`, record.RunID, record.SourceTable, record.SourceID, record.DestinationKind, record.DestinationID, record.Disposition)
 		return err
 	default:
 		return fmt.Errorf("unknown photo migration metadata record %q", kind)
