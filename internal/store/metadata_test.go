@@ -1281,6 +1281,42 @@ func TestImportMetadataRejectsUnknownVersionAndFields(t *testing.T) {
 	}
 }
 
+func TestMetadataUniqueBlobBytes(t *testing.T) {
+	const (
+		header = `{"type":"meta","format":"docbank-metadata","version":1,"vault_id":"dddddddd-dddd-4ddd-8ddd-dddddddddddd","node_sequence":1}` + "\n"
+		node   = `{"type":"node","id":1,"parent_id":null,"name":"","kind":"dir","current_version_id":null,"revision":1,"created_at":"2026-01-01T00:00:00.000000000Z","modified_at":"2026-01-01T00:00:00.000000000Z","trashed_at":null,"trash_parent":null,"trash_name":null}` + "\n"
+		blobA  = `{"type":"blob","hash":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","size":7,"created_at":"2026-01-01T00:00:00.000000000Z"}` + "\n"
+		blobB  = `{"type":"blob","hash":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","size":11,"created_at":"2026-01-01T00:00:00.000000000Z"}` + "\n"
+	)
+	for _, test := range []struct {
+		name      string
+		input     string
+		want      int64
+		wantError string
+	}{
+		{name: "known non-blob record", input: header + node + blobA + blobB, want: 18},
+		{name: "malformed header", input: "{\n", wantError: "decoding metadata header"},
+		{name: "incomplete header", input: `{"type":"meta","format":"docbank-metadata","version":1,"vault_id":"dddddddd-dddd-4ddd-8ddd-dddddddddddd"}` + "\n", wantError: `lacks required field "node_sequence"`},
+		{name: "extra blob field", input: header + `{"type":"blob","hash":"` + metadataHashCurrent + `","size":7,"created_at":"2026-01-01T00:00:00.000000000Z","extra":true}` + "\n", wantError: `unknown or non-canonical field "extra"`},
+		{name: "malformed nonempty hash", input: header + `{"type":"blob","hash":"not-a-hash","size":7,"created_at":"2026-01-01T00:00:00.000000000Z"}` + "\n", wantError: "invalid blob hash"},
+		{name: "missing timestamp", input: header + `{"type":"blob","hash":"` + metadataHashCurrent + `","size":7}` + "\n", wantError: `lacks required field "created_at"`},
+		{name: "noncanonical timestamp", input: header + `{"type":"blob","hash":"` + metadataHashCurrent + `","size":7,"created_at":"2026-01-01T00:00:00.000000000+00:00"}` + "\n", wantError: "timestamp is not canonical UTC"},
+		{name: "unknown record type", input: header + `{"type":"future_record","value":1}` + "\n", wantError: `unknown record type "future_record"`},
+		{name: "duplicate hash", input: header + blobA + blobA, wantError: "repeats blob"},
+		{name: "sum overflow", input: header + `{"type":"blob","hash":"` + metadataHashCurrent + `","size":9223372036854775807,"created_at":"2026-01-01T00:00:00.000000000Z"}` + "\n" + `{"type":"blob","hash":"` + metadataHashTrashed + `","size":1,"created_at":"2026-01-01T00:00:00.000000000Z"}` + "\n", wantError: "exceed int64"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			got, err := MetadataUniqueBlobBytes(strings.NewReader(test.input))
+			if test.wantError != "" {
+				require.ErrorContains(t, err, test.wantError)
+				return
+			}
+			require.NoError(t, err)
+			require.Equal(t, test.want, got)
+		})
+	}
+}
+
 func TestExportMetadataRejectsMalformedVaultIdentity(t *testing.T) {
 	t.Parallel()
 	source := newTestStore(t)
