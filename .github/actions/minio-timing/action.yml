@@ -1,0 +1,74 @@
+name: MinIO timing
+description: time build-from-source vs Chainguard pull
+inputs:
+  runner:
+    required: true
+  cache:
+    required: true
+runs:
+  using: composite
+  steps:
+    - name: Set up Go
+      uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+      with:
+        go-version-file: go.mod
+        cache: ${{ inputs.cache }}
+
+    - name: Cache state before
+      shell: bash
+      run: |
+        set -eu
+        echo "host: $(hostname)  runner: ${{ inputs.runner }}" | tee -a "$GITHUB_STEP_SUMMARY"
+        echo "GOMODCACHE=$(go env GOMODCACHE) GOCACHE=$(go env GOCACHE)"
+        du -sh "$(go env GOMODCACHE)" "$(go env GOCACHE)" 2>/dev/null || true
+        if [ -d "$(go env GOMODCACHE)/github.com/minio" ]; then
+          echo "minio modules already in module cache: $(ls "$(go env GOMODCACHE)/github.com/minio" | tr '\n' ' ')" | tee -a "$GITHUB_STEP_SUMMARY"
+        else
+          echo "minio modules not in module cache (cold)" | tee -a "$GITHUB_STEP_SUMMARY"
+        fi
+        docker images --format '{{.Repository}}@{{.Digest}}' | grep -c minio || echo "no minio images in docker (cold)"
+
+    - name: Build MinIO from source (PR 557)
+      shell: bash
+      run: |
+        set -eu
+        start=$(date +%s)
+        build_dir="$(mktemp -d "$RUNNER_TEMP/docbank-minio.XXXXXX")"
+        CGO_ENABLED=0 GOBIN="$build_dir" go install github.com/minio/minio@9e49d5e7a648f00e26f2246f4dc28e6b07f8c84a
+        mid=$(date +%s)
+        printf 'FROM scratch\nCOPY minio /minio\nENTRYPOINT ["/minio"]\n' | \
+          docker build --tag docbank-minio-ci:timing --file - "$build_dir"
+        end=$(date +%s)
+        echo "build from source: go install $((mid-start))s, docker build $((end-mid))s, total $((end-start))s" | tee -a "$GITHUB_STEP_SUMMARY"
+        ls -la "$build_dir/minio"
+
+    - name: Pull Chainguard image
+      shell: bash
+      run: |
+        set -eu
+        start=$(date +%s)
+        docker pull cgr.dev/chainguard/minio@sha256:bd014394a80898e68c149f2311fdf8d5a2c2f3bb2c33b9327ae6d02b4b065ae1
+        end=$(date +%s)
+        echo "chainguard pull: $((end-start))s" | tee -a "$GITHUB_STEP_SUMMARY"
+
+    - name: Start both and probe health
+      env:
+        MINIO_ROOT_USER: docbank-test
+        MINIO_ROOT_PASSWORD: docbank-test-secret
+      shell: bash
+      run: |
+        set -eu
+        for image in docbank-minio-ci:timing cgr.dev/chainguard/minio@sha256:bd014394a80898e68c149f2311fdf8d5a2c2f3bb2c33b9327ae6d02b4b065ae1; do
+          name="minio-timing-$RANDOM"
+          start=$(date +%s)
+          docker run --rm -d --name "$name" -p 127.0.0.1::9000 -e MINIO_ROOT_USER -e MINIO_ROOT_PASSWORD "$image" server /data >/dev/null
+          port=$(docker port "$name" 9000/tcp | head -n1 | sed 's/.*://')
+          for _ in $(seq 1 60); do
+            if curl --fail --silent "http://127.0.0.1:${port}/minio/health/live" >/dev/null; then break; fi
+            sleep 1
+          done
+          curl --fail --silent "http://127.0.0.1:${port}/minio/health/live" >/dev/null
+          end=$(date +%s)
+          echo "start to healthy ($image): $((end-start))s" | tee -a "$GITHUB_STEP_SUMMARY"
+          docker rm -f "$name" >/dev/null
+        done
