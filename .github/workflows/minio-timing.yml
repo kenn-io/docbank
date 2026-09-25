@@ -1,17 +1,18 @@
 name: MinIO timing
 
 on:
-  workflow_dispatch:
-    inputs:
-      runner:
-        description: runs-on label
-        required: true
-        default: ubuntu-latest
+  push:
+    branches: [tmp/minio-timing]
 
 jobs:
   timing:
-    name: MinIO timing on ${{ inputs.runner }}
-    runs-on: ${{ inputs.runner }}
+    name: MinIO timing on ${{ matrix.runner }}
+    if: matrix.runner == 'ubuntu-latest' || github.repository == 'kenn-io/docbank'
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-latest, kenn-linux-x64-public]
+    runs-on: ${{ matrix.runner }}
     steps:
       - name: Check out repository
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
@@ -22,12 +23,12 @@ jobs:
         uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
         with:
           go-version-file: go.mod
-          cache: ${{ inputs.runner == 'ubuntu-latest' && 'true' || 'false' }}
+          cache: ${{ matrix.runner == 'ubuntu-latest' && 'true' || 'false' }}
 
       - name: Cache state before
         run: |
           set -eu
-          echo "host: $(hostname)  runner: ${{ inputs.runner }}" | tee -a "$GITHUB_STEP_SUMMARY"
+          echo "host: $(hostname)  runner: ${{ matrix.runner }}" | tee -a "$GITHUB_STEP_SUMMARY"
           echo "GOMODCACHE=$(go env GOMODCACHE) GOCACHE=$(go env GOCACHE)"
           du -sh "$(go env GOMODCACHE)" "$(go env GOCACHE)" 2>/dev/null || true
           if [ -d "$(go env GOMODCACHE)/github.com/minio" ]; then
