@@ -40,6 +40,7 @@ func timeoutExempt(method, path string) bool {
 	switch path {
 	case "/api/v1/ingest", "/api/v1/ingest/stream", "/api/v1/ingest/preflight", "/api/v1/packages/preflights", "/api/v1/gc", "/api/v1/verify", "/api/v1/audit/verify", "/api/v1/trash/empty",
 		"/api/v1/processing/jobs", "/api/v1/derivatives/purge-jobs",
+		"/api/v1/migrations/fotobank/inventories",
 		"/api/v1/exports/sources", "/api/v1/exports/plans",
 		"/api/v1/storage/pack", "/api/v1/storage/repack", "/api/v1/uploads",
 		"/api/v1/backup/snapshots", "/api/v1/backup/snapshots/stream",
@@ -249,7 +250,7 @@ func loopbackMiddleware(next http.Handler) http.Handler {
 }
 
 func isServerPathIngestRoute(path string) bool {
-	return path == "/api/v1/ingest" || path == "/api/v1/ingest/stream" || path == "/api/v1/ingest/preflight" || path == "/api/v1/packages/preflights"
+	return path == "/api/v1/ingest" || path == "/api/v1/ingest/stream" || path == "/api/v1/ingest/preflight" || path == "/api/v1/packages/preflights" || path == "/api/v1/migrations/fotobank/inventories"
 }
 
 func isLoopbackRemote(remoteAddr string) bool {

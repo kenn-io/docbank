@@ -189,6 +189,23 @@ the display member.
 Photo assets, settings, and bounded decision receipts are included in JSONL
 backup and restore.
 
+### docbank photos migrate
+
+```text
+docbank photos migrate fotobank inventory \
+  (--catalog-path <path> --vault-root <path> | --archive-root <path>) \
+  --owner-map-path <path> [--snapshot-id <id>]
+docbank photos migrate runs list [--offset <count>] [--limit <1-50>]
+docbank photos migrate runs show <run-id>
+```
+
+`fotobank inventory` selects a stopped install or a recovery archive and
+writes a new owner-map template at the required absolute path. It sends the
+request through the daemon; the CLI never opens either source database. An
+archive uses the latest snapshot unless `--snapshot-id` is supplied. The JSON
+response includes the immutable run, report, owner-map template, and output
+path. `runs list` and `runs show` read the stored bounded history.
+
 ## docbank stat
 
 ```
@@ -1046,6 +1063,7 @@ contains a live scoped browser session and must be handled as a secret. See the
 ```text
 docbank mcp [--transport stdio|http] [--listen <loopback-ip:port>]
             [--allow-processing] [--allow-package-writes]
+            [--allow-photo-edits] [--allow-migration-writes]
 ```
 
 Runs the selected vault's exact MCP `2026-07-28` server as another client of
@@ -1060,7 +1078,8 @@ named environment variable when the MCP process starts. It must differ from
 the daemon's effective API key. There is no token flag, remote-daemon option,
 or non-loopback listener.
 
-The catalog contains 20 read tools by default, including `get_photo_asset`.
+The catalog contains bounded read tools by default, including
+`get_photo_asset`, `list_migration_runs`, and `show_migration_run`.
 `--allow-processing` adds only the guarded `start_processing` tool: the agent
 must first retrieve the
 exact plan from the same process, and the operator must already have consented
@@ -1077,6 +1096,11 @@ sources and change the vault without using the processing consent flow.
 `--allow-photo-edits` separately adds guarded photo asset mutations. Each
 write uses an asset revision and one daemon request. Display and settings
 writes remain in the HTTP and CLI surfaces.
+
+`--allow-migration-writes` separately adds `inventory_fotobank`. It inventories
+either a stopped Fotobank install or a recovery archive through the daemon,
+writes an exclusive owner-map template, and stores an immutable run. It never
+enables the other write flags.
 
 No flag enables another flag's tools; combine the flags to allow more than one
 kind of work.

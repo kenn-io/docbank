@@ -813,6 +813,25 @@ The CLI resolves a relative `--repo` against its own working directory before
 sending it. API clients over an SSH tunnel must reason about the daemon host's
 filesystem, not the caller's. Every endpoint requires the daemon API key.
 
+### Fotobank migration inventory
+
+These operator routes inspect a stopped Fotobank source and create an
+immutable migration run. They require the daemon API key, the loopback
+boundary, and an operator request; browser sessions are refused.
+
+| Route | Contract |
+| --- | --- |
+| `POST /api/v1/migrations/fotobank/inventories` | Create inventory. |
+| `GET /api/v1/migrations/runs?offset=&limit=` | List immutable runs. |
+| `GET /api/v1/migrations/runs/{run_id}` | Read one run. |
+
+Install inventory reads the catalog and embedded Docbank database with
+immutable connections after acquiring the source lifetime locks. Archive
+inventory reads only the verified `application/catalog.sqlite` extra from the
+selected Kit snapshot. The report records a catalog digest for installs or a
+snapshot ID for archives; source and output paths are not persisted in the
+run.
+
 ### Audit expected-evidence verification
 
 `POST /audit/verify` accepts an empty body for a fresh proof. To prove ancestry,
@@ -1521,8 +1540,9 @@ bearer is resolved from a named credential binding and cannot equal the
 daemon's configured, ephemeral, or runtime-discovered API key. The daemon API
 key is never accepted as an inbound MCP credential.
 
-MCP exposes ten bounded read tools, including photo inspection, plus optional
-processing enqueue and opt-in photo mutation tools. The
+MCP exposes bounded read tools, including photo inspection and migration-run
+history, plus optional processing enqueue, photo mutation, and migration
+inventory tools. The
 enqueue preserves the daemon's existing consent and plan-fingerprint checks;
 it cannot grant consent or replay an ambiguous start. Rendition resources bind
 the stable vault, node, content-version, and attachment tuple and expose only

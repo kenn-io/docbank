@@ -2621,6 +2621,16 @@ export interface FormatCoverageResponse {
   pending: PendingFormatV1[];
 }
 
+export interface FotobankInventoryRequest {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  archive_root?: string;
+  catalog_path?: string;
+  owner_map_path: string;
+  snapshot_id?: string;
+  vault_root?: string;
+}
+
 export interface GCReport {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
@@ -3223,6 +3233,82 @@ export interface Message {
   separator: string;
   sequence: number;
   start: number;
+}
+
+export interface MigrationCapacity {
+  minimum_content_bytes: number;
+  source_bytes: number;
+  unique_blob_bytes: number;
+}
+
+export interface MigrationCounts {
+  ai_results: number;
+  albums: number;
+  assets: number;
+  bytes: number;
+  checkouts: number;
+  files: number;
+  hidden_setup: number;
+  owners: number;
+  shares: number;
+}
+
+export interface MigrationMapEntry {
+  docbank_owner_id?: string;
+  source_hub: string;
+  source_user_id: string;
+  storage_key: string;
+}
+
+export interface MigrationSource {
+  identity: string;
+  kind: string;
+}
+
+export interface MigrationOwnerMap {
+  entries: MigrationMapEntry[];
+  source: MigrationSource;
+}
+
+export interface MigrationSchema {
+  archive_metadata_format?: string;
+  catalog_fingerprint?: string;
+  catalog_version?: number;
+  embedded_docbank_version?: number;
+}
+
+export interface MigrationVectorGeneration {
+  fingerprint: string;
+  id: number;
+  rebuildable: boolean;
+  state: string;
+}
+
+export interface MigrationReport {
+  capacity: MigrationCapacity;
+  counts: MigrationCounts;
+  created_at: string;
+  schema: MigrationSchema;
+  source: MigrationSource;
+  vectors?: MigrationVectorGeneration[];
+}
+
+export interface MigrationRun {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  created_at: string;
+  id: string;
+  owner_map: MigrationOwnerMap;
+  owner_map_path?: string;
+  report: MigrationReport;
+  source: MigrationSource;
+}
+
+export interface MigrationRunPage {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  items: MigrationRun[];
+  total: number;
 }
 
 export interface MkdirPathRequest {
@@ -6026,6 +6112,18 @@ export type SubmitMediaSourceBodyTwo = {
 export type ImportMediaArtifactBody = {
   file: Blob | File;
   metadata: MediaArtifactMetadata;
+};
+
+export type ListMigrationRunsParams = {
+/**
+ * @minimum 1
+ * @maximum 50
+ */
+limit?: number;
+/**
+ * @minimum 0
+ */
+offset?: number;
 };
 
 export type MoveNodeHeaders = {
@@ -9999,6 +10097,99 @@ return sessionJSON<MediaReceipt>(getRetryMediaSourceUrl(sourceId),
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
     body: JSON.stringify(mediaRetryBody)
+  }
+);}
+
+
+
+export const getCreateFotobankInventoryUrl = () => {
+
+
+
+
+  return `/api/v1/migrations/fotobank/inventories`
+}
+
+/**
+ * @summary Inventory a stopped Fotobank install or recovery archive
+ */
+export const createFotobankInventory = async (fotobankInventoryRequest: NonReadonly<FotobankInventoryRequest>, options?: Parameters<typeof sessionJSON>[1]): Promise<MigrationRun> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return sessionJSON<MigrationRun>(getCreateFotobankInventoryUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(fotobankInventoryRequest)
+  }
+);}
+
+
+
+export const getListMigrationRunsUrl = (params?: ListMigrationRunsParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/v1/migrations/runs?${stringifiedParams}` : `/api/v1/migrations/runs`
+}
+
+/**
+ * @summary List completed photo migration inventories
+ */
+export const listMigrationRuns = async (params?: ListMigrationRunsParams, options?: Parameters<typeof sessionJSON>[1]): Promise<MigrationRunPage> => {
+
+  return sessionJSON<MigrationRunPage>(getListMigrationRunsUrl(params),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+export const getGetMigrationRunUrl = (runId: string,) => {
+
+
+
+
+  return `/api/v1/migrations/runs/${encodeURIComponent(String(runId))}`
+}
+
+/**
+ * @summary Read one completed photo migration inventory
+ */
+export const getMigrationRun = async (runId: string, options?: Parameters<typeof sessionJSON>[1]): Promise<MigrationRun> => {
+
+  return sessionJSON<MigrationRun>(getGetMigrationRunUrl(runId),
+  {
+    ...options,
+    method: 'GET'
+
+
   }
 );}
 

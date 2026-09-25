@@ -4580,6 +4580,151 @@ func (c *Client) RetryMediaSource(ctx context.Context, options *RetryMediaSource
 	return responseParser(ctx, resp)
 }
 
+// CreateFotobankInventory Inventory a stopped Fotobank install or recovery archive
+func (c *Client) CreateFotobankInventory(ctx context.Context, options *CreateFotobankInventoryRequestOptions, reqEditors ...runtime.RequestEditorFn) (*CreateFotobankInventoryResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/migrations/fotobank/inventories",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*CreateFotobankInventoryResponse, error) {
+		switch resp.StatusCode {
+
+		case 201:
+
+			target := new(CreateFotobankInventoryResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "CreateFotobankInventoryResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[CreateFotobankInventoryErrorResponse](resp, "CreateFotobankInventoryErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/migrations/fotobank/inventories")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 201)
+	}
+	return responseParser(ctx, resp)
+}
+
+// ListMigrationRuns List completed photo migration inventories
+func (c *Client) ListMigrationRuns(ctx context.Context, options *ListMigrationRunsRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ListMigrationRunsResponse, error) {
+	var err error
+
+	queryEncoding := map[string]runtime.QueryEncoding{
+		"limit":  {Style: "form", Explode: &[]bool{false}[0]},
+		"offset": {Style: "form", Explode: &[]bool{false}[0]},
+	}
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:    c.apiClient.GetBaseURL() + "/api/v1/migrations/runs",
+		Method:        "GET",
+		Options:       options,
+		QueryEncoding: queryEncoding,
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*ListMigrationRunsResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(ListMigrationRunsResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "ListMigrationRunsResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[ListMigrationRunsErrorResponse](resp, "ListMigrationRunsErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/migrations/runs")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
+// GetMigrationRun Read one completed photo migration inventory
+func (c *Client) GetMigrationRun(ctx context.Context, options *GetMigrationRunRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetMigrationRunResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/migrations/runs/{run_id}",
+		Method:     "GET",
+		Options:    options,
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*GetMigrationRunResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(GetMigrationRunResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "GetMigrationRunResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[GetMigrationRunErrorResponse](resp, "GetMigrationRunErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/migrations/runs/{run_id}")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
 // CreateNode Create a directory
 func (c *Client) CreateNode(ctx context.Context, options *CreateNodeRequestOptions, reqEditors ...runtime.RequestEditorFn) (*CreateNodeResponse, error) {
 	var err error
@@ -14003,6 +14148,96 @@ func (o *RetryMediaSourceRequestOptions) GetHeader() (map[string]string, error) 
 	return nil, nil
 }
 
+// CreateFotobankInventoryRequestOptions is the options needed to make a request to CreateFotobankInventory.
+type CreateFotobankInventoryRequestOptions struct {
+	Body *CreateFotobankInventoryBody
+}
+
+// GetPathParams returns the path params as a map.
+func (o *CreateFotobankInventoryRequestOptions) GetPathParams() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetQuery returns the query params as a map.
+func (o *CreateFotobankInventoryRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *CreateFotobankInventoryRequestOptions) GetBody() any {
+	if o.Body == nil {
+		return nil
+	}
+	return o.Body
+}
+
+// GetHeader returns the headers as a map.
+func (o *CreateFotobankInventoryRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
+// ListMigrationRunsRequestOptions is the options needed to make a request to ListMigrationRuns.
+type ListMigrationRunsRequestOptions struct {
+	Query *ListMigrationRunsQuery
+}
+
+// GetPathParams returns the path params as a map.
+func (o *ListMigrationRunsRequestOptions) GetPathParams() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetQuery returns the query params as a map.
+func (o *ListMigrationRunsRequestOptions) GetQuery() (map[string]any, error) {
+	encoded, err := json.Marshal(o.Query, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *ListMigrationRunsRequestOptions) GetBody() any {
+	return nil
+}
+
+// GetHeader returns the headers as a map.
+func (o *ListMigrationRunsRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
+// GetMigrationRunRequestOptions is the options needed to make a request to GetMigrationRun.
+type GetMigrationRunRequestOptions struct {
+	PathParams *GetMigrationRunPath
+}
+
+// GetPathParams returns the path params as a map.
+func (o *GetMigrationRunRequestOptions) GetPathParams() (map[string]any, error) {
+	encoded, err := json.Marshal(o.PathParams, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetQuery returns the query params as a map.
+func (o *GetMigrationRunRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *GetMigrationRunRequestOptions) GetBody() any {
+	return nil
+}
+
+// GetHeader returns the headers as a map.
+func (o *GetMigrationRunRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
 // CreateNodeRequestOptions is the options needed to make a request to CreateNode.
 type CreateNodeRequestOptions struct {
 	Body *CreateNodeBody
@@ -18694,6 +18929,10 @@ type RetryMediaSourcePath struct {
 	SourceID string `json:"source_id"`
 }
 
+type GetMigrationRunPath struct {
+	RunID string `json:"run_id"`
+}
+
 type GetNodePath struct {
 	ID int64 `json:"id"`
 }
@@ -19092,6 +19331,8 @@ type ImportMediaArtifactBody struct {
 
 type RetryMediaSourceBody = MediaRetryBody
 
+type CreateFotobankInventoryBody = FotobankInventoryRequest
+
 type CreateNodeBody = CreateNodeRequest
 
 type MoveNodeBody = MoveNodeRequest
@@ -19358,6 +19599,11 @@ type ListMediaOccurrencesQuery struct {
 type ListMediaSourcesQuery struct {
 	Cursor *string `json:"cursor,omitempty"`
 	Limit  *int64  `json:"limit,omitempty"`
+}
+
+type ListMigrationRunsQuery struct {
+	Limit  *int64 `json:"limit,omitempty"`
+	Offset *int64 `json:"offset,omitempty"`
 }
 
 type ListChildrenQuery struct {
@@ -19878,6 +20124,18 @@ type ImportMediaArtifactResponse = api.MediaReceipt
 type RetryMediaSourceResponse = api.MediaReceipt
 
 type RetryMediaSourceErrorResponse = Error
+
+type CreateFotobankInventoryResponse = api.MigrationRun
+
+type CreateFotobankInventoryErrorResponse = Error
+
+type ListMigrationRunsResponse = api.MigrationRunPage
+
+type ListMigrationRunsErrorResponse = Error
+
+type GetMigrationRunResponse = api.MigrationRun
+
+type GetMigrationRunErrorResponse = Error
 
 type CreateNodeResponse = api.Node
 
@@ -20932,6 +21190,8 @@ type FormatLookupV1 = document.FormatLookupV1
 
 type FormatVariantCapabilityV1 = document.FormatVariantCapabilityV1
 
+type FotobankInventoryRequest = api.FotobankInventoryRequest
+
 type GCReport = api.GCReport
 
 type GcRequest struct {
@@ -21073,6 +21333,26 @@ type MediaTimestamp = api.MediaTimestamp
 type Member = bundle.Member
 
 type Message = mailbox.Message
+
+type MigrationCapacity = api.MigrationCapacity
+
+type MigrationCounts = api.MigrationCounts
+
+type MigrationMapEntry = api.MigrationMapEntry
+
+type MigrationOwnerMap = api.MigrationOwnerMap
+
+type MigrationReport = api.MigrationReport
+
+type MigrationRun = api.MigrationRun
+
+type MigrationRunPage = api.MigrationRunPage
+
+type MigrationSchema = api.MigrationSchema
+
+type MigrationSource = api.MigrationSource
+
+type MigrationVectorGeneration = api.MigrationVectorGeneration
 
 type MkdirPathRequest struct {
 	// Schema A URL to the JSON Schema for this object.

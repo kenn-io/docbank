@@ -92,6 +92,10 @@ func executeReadTool(
 		output, err = lookupBatesLabel(ctx, lease, raw)
 	case "get_photo_asset":
 		output, err = getPhotoAsset(ctx, lease, raw)
+	case "list_migration_runs":
+		output, err = listMigrationRuns(ctx, lease, raw)
+	case "show_migration_run":
+		output, err = showMigrationRun(ctx, lease, raw)
 	default:
 		return nil, errors.New("unknown Docbank read tool")
 	}
