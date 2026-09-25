@@ -21,6 +21,7 @@ import (
 )
 
 func TestMailboxChunkUsesPinnedBrowserStream(t *testing.T) {
+	t.Parallel()
 	ts, s := newTestServer(t, nil)
 	ctx := t.Context()
 	raw := []byte("synthetic source")
@@ -59,6 +60,7 @@ func TestMailboxChunkUsesPinnedBrowserStream(t *testing.T) {
 }
 
 func TestBrowserUploadUsesAuthenticatedPinnedChannel(t *testing.T) {
+	t.Parallel()
 	gate := api.NewOperationGate()
 	ts, s := newTestServer(t, func(d *api.Deps) {
 		d.Gate = gate
@@ -175,6 +177,7 @@ func TestBrowserUploadUsesAuthenticatedPinnedChannel(t *testing.T) {
 }
 
 func TestServerShutdownDrainsActiveBrowserUpload(t *testing.T) {
+	t.Parallel()
 	gate := api.NewOperationGate()
 	ts, s := newTestServer(t, func(d *api.Deps) {
 		d.Gate = gate

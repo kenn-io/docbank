@@ -72,6 +72,7 @@ func uploadIdentity(content []byte) string {
 }
 
 func TestUploadCreatesReceiptAndIdempotentRetry(t *testing.T) {
+	t.Parallel()
 	ts, s := newTestServer(t, nil)
 	content := []byte("remote upload")
 	in := uploadRequest{
@@ -115,6 +116,7 @@ func TestUploadCreatesReceiptAndIdempotentRetry(t *testing.T) {
 }
 
 func TestUploadAcceptsEmptyFile(t *testing.T) {
+	t.Parallel()
 	ts, s := newTestServer(t, nil)
 	content := []byte{}
 	in := uploadRequest{name: "empty.txt", content: content,
@@ -128,6 +130,7 @@ func TestUploadAcceptsEmptyFile(t *testing.T) {
 }
 
 func TestUploadRejectsDeclaredSizeAboveIngestLimit(t *testing.T) {
+	t.Parallel()
 	ts, s := newTestServer(t, nil)
 	content := []byte("small envelope")
 	in := uploadRequest{name: "too-large.bin", content: content,
@@ -140,6 +143,7 @@ func TestUploadRejectsDeclaredSizeAboveIngestLimit(t *testing.T) {
 }
 
 func TestUploadRejectsMismatchedEvidenceWithoutAuthority(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name       string
 		mutate     func(*uploadRequest)
@@ -177,6 +181,7 @@ func TestUploadRejectsMismatchedEvidenceWithoutAuthority(t *testing.T) {
 }
 
 func TestUploadRejectsNonDirectoryBeforeReadingContent(t *testing.T) {
+	t.Parallel()
 	ts, s := newTestServer(t, nil)
 	parent := createFileWithContent(t, ts, s, "/not-a-dir", "existing")
 	content := []byte("remote upload")
@@ -188,6 +193,7 @@ func TestUploadRejectsNonDirectoryBeforeReadingContent(t *testing.T) {
 }
 
 func TestUploadRejectsTruncatedMultipartAsValidation(t *testing.T) {
+	t.Parallel()
 	ts, s := newTestServer(t, nil)
 	content := "truncated"
 	boundary := "missing-closing-boundary"

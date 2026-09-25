@@ -12,6 +12,7 @@ import (
 )
 
 func TestTermReportDownloadTimeoutBoundary(t *testing.T) {
+	t.Parallel()
 	base := "/api/v1/search-exports/" + strings.Repeat("a", 48)
 	for _, tc := range []struct {
 		method, path string

@@ -14,6 +14,7 @@ import (
 )
 
 func TestFormatCapabilitiesFiltersAndLooksUp(t *testing.T) {
+	t.Parallel()
 	ts, _ := newTestServer(t, nil)
 
 	resp, body := get(t, ts, "/api/v1/formats/capabilities", nil)
@@ -74,6 +75,7 @@ func TestFormatCapabilitiesFiltersAndLooksUp(t *testing.T) {
 }
 
 func TestFormatCapabilitiesLookupUsesFullSnapshotBeforeFamilyFilter(t *testing.T) {
+	t.Parallel()
 	ts, _ := newTestServer(t, nil)
 	resp, body := get(t, ts,
 		"/api/v1/formats/capabilities?family=archive&format=pdf", nil)
@@ -89,6 +91,7 @@ func TestFormatCapabilitiesLookupUsesFullSnapshotBeforeFamilyFilter(t *testing.T
 }
 
 func TestFormatCapabilitiesSnapshotIsFrozenAndDeepCopied(t *testing.T) {
+	t.Parallel()
 	configure := configureProcessingTestService(t)
 	var snapshot document.FormatCoverageV1
 	ts, _ := newTestServer(t, func(d *api.Deps) {
@@ -120,6 +123,7 @@ func TestFormatCapabilitiesSnapshotIsFrozenAndDeepCopied(t *testing.T) {
 }
 
 func TestFormatsRouteRequiresAuthentication(t *testing.T) {
+	t.Parallel()
 	ts, _ := newTestServer(t, nil)
 	r, err := http.Get(ts.URL + "/api/v1/formats/capabilities")
 	require.NoError(t, err)
@@ -136,6 +140,7 @@ func TestFormatsRouteRequiresAuthentication(t *testing.T) {
 }
 
 func TestFormatsRouteEnforcesSelectorByteLimits(t *testing.T) {
+	t.Parallel()
 	ts, _ := newTestServer(t, nil)
 
 	resp, _ := get(t, ts, "/api/v1/formats/capabilities?extension="+strings.Repeat("é", 8), nil)
@@ -151,6 +156,7 @@ func TestFormatsRouteEnforcesSelectorByteLimits(t *testing.T) {
 }
 
 func TestFormatsRouteBrowserPolicyBoundsSelectors(t *testing.T) {
+	t.Parallel()
 	ts, _ := newTestServer(t, nil)
 	resp, body := do(t, ts, http.MethodPost, "/api/daemon/web-session", nil, nil)
 	require.Equal(t, http.StatusCreated, resp.StatusCode)

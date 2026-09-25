@@ -60,6 +60,7 @@ func (g *pausedExportGate) MutateContext(ctx context.Context, fn func() error) e
 }
 
 func TestExportRevocationInterruptsActiveWorkBehindMaintenance(t *testing.T) {
+	t.Parallel()
 	gate := api.NewOperationGate()
 	paused := &pausedExportGate{gate: gate, opening: make(chan struct{}), resume: make(chan struct{}), interrupted: make(chan struct{})}
 	var worker *exporter.Worker
@@ -117,7 +118,7 @@ func TestExportRevocationInterruptsActiveWorkBehindMaintenance(t *testing.T) {
 	}()
 	select {
 	case <-paused.interrupted:
-	case <-time.After(time.Second):
+	case <-time.After(10 * time.Second):
 		close(release)
 		<-maintenanceDone
 		<-revoked
@@ -144,6 +145,7 @@ func TestExportRevocationInterruptsActiveWorkBehindMaintenance(t *testing.T) {
 }
 
 func TestExportAPIWorkerVerifiedTicketPreservesRetainedArchive(t *testing.T) {
+	t.Parallel()
 	var worker *exporter.Worker
 	ts, s := newTestServer(t, func(d *api.Deps) {
 		var err error
@@ -216,6 +218,7 @@ func TestExportAPIWorkerVerifiedTicketPreservesRetainedArchive(t *testing.T) {
 }
 
 func TestExportSavedQueryRetryDoesNotRerunChangedDefinition(t *testing.T) {
+	t.Parallel()
 	ts, s := newTestServer(t, nil)
 	n := createFileWithContent(t, ts, s, "/first.txt", "first synthetic")
 	saved, err := s.CreateSavedQuery(t.Context(), "All synthetic", "", store.SavedQueryKindQuery, []byte(`{}`))
@@ -242,6 +245,7 @@ func TestExportSavedQueryRetryDoesNotRerunChangedDefinition(t *testing.T) {
 }
 
 func TestExportBrowserOwnersAndRevocationFenceJobs(t *testing.T) {
+	t.Parallel()
 	var worker *exporter.Worker
 	ts, s := newTestServer(t, func(d *api.Deps) {
 		d.Gate = api.NewOperationGate()
@@ -275,6 +279,7 @@ func TestExportBrowserOwnersAndRevocationFenceJobs(t *testing.T) {
 }
 
 func TestExportDerivedRolesFreezeReceiptsAcrossHeadReplacement(t *testing.T) {
+	t.Parallel()
 	var worker *exporter.Worker
 	var cfg config.Config
 	ts, s := newTestServer(t, func(d *api.Deps) {

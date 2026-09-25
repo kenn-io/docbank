@@ -10,6 +10,7 @@ import (
 )
 
 func TestWebEmailPDFDownloadRequiresRetainedReceipt(t *testing.T) {
+	t.Parallel()
 	ts, s := newTestServer(t, nil)
 	node := createFileWithContent(t, ts, s, "/synthetic.eml", "Subject: Synthetic\r\n\r\nbody")
 	b, err := json.Marshal(map[string]any{"node_id": node.ID, "revision": node.Revision, "version_id": node.CurrentVersionID, "blob_hash": node.BlobHash, "size": node.Size, "email_pdf_profile": strings.Repeat("a", 64), "email_pdf_attachment": strings.Repeat("b", 64)})

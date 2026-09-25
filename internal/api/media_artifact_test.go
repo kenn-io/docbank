@@ -15,6 +15,7 @@ import (
 )
 
 func TestMediaArtifactImportReusesImmutableInputBeforeCreatingNodes(t *testing.T) {
+	t.Parallel()
 	for _, test := range []struct {
 		name, filename, mediaType, language string
 		newOperation, conflict              bool
@@ -75,6 +76,7 @@ func TestMediaArtifactImportReusesImmutableInputBeforeCreatingNodes(t *testing.T
 }
 
 func TestMediaArtifactConcurrentConflictsDoNotCreateExtraNodes(t *testing.T) {
+	t.Parallel()
 	ts, catalog := newTestServer(t, configureMediaTestService(t))
 	c := daemonconn.New(ts.URL, testAPIKey)
 	wav := mediatest.WAV()

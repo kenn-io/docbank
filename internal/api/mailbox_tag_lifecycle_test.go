@@ -13,6 +13,7 @@ import (
 )
 
 func TestMailboxMappedTagDeletionReturnsConflict(t *testing.T) {
+	t.Parallel()
 	ts, s := newTestServer(t, nil)
 	ctx := t.Context()
 	c := store.MailboxContainerRequest{ID: "synthetic-source", Owner: "vault:" + s.VaultID(), SHA256: strings.Repeat("a", 64), Size: 3, Format: "mbox"}

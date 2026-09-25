@@ -13,6 +13,7 @@ import (
 )
 
 func TestPageAPIRequiresExactSelectionAndConfiguredRuntime(t *testing.T) {
+	t.Parallel()
 	ts, s := newTestServer(t, nil)
 	data := []byte("synthetic unsupported source")
 	hash, size, err := s.Blobs.Write(bytes.NewReader(data))

@@ -37,6 +37,7 @@ func postContentPrune(
 }
 
 func TestContentVersionPrunePreviewsThenReleasesHistory(t *testing.T) {
+	t.Parallel()
 	ts, s := newTestServer(t, nil)
 	created := createFileWithContent(t, ts, s, "/report.txt", "old content")
 	oldVersionID := created.CurrentVersionID
@@ -89,6 +90,7 @@ func TestContentVersionPrunePreviewsThenReleasesHistory(t *testing.T) {
 }
 
 func TestContentVersionPruneRequiresRevisionAndOneSelector(t *testing.T) {
+	t.Parallel()
 	ts, s := newTestServer(t, nil)
 	created := createFileWithContent(t, ts, s, "/report.txt", "content")
 

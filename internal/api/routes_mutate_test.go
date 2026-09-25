@@ -20,6 +20,7 @@ import (
 )
 
 func TestCreateDirectory(t *testing.T) {
+	t.Parallel()
 	ts, s := newTestServer(t, nil)
 	resp, body := do(t, ts, http.MethodPost, "/api/v1/nodes", nil,
 		map[string]any{"parent_id": s.RootID(), "name": "taxes", "kind": "dir"})
@@ -39,6 +40,7 @@ func TestCreateDirectory(t *testing.T) {
 }
 
 func TestCreateDirectoryByExactPath(t *testing.T) {
+	t.Parallel()
 	ts, s := newTestServer(t, nil)
 	parent, err := s.Mkdir(t.Context(), s.RootID(), "projects")
 	require.NoError(t, err)
@@ -65,6 +67,7 @@ func TestCreateDirectoryByExactPath(t *testing.T) {
 }
 
 func TestMoveRequiresIfMatch(t *testing.T) {
+	t.Parallel()
 	ts, s := newTestServer(t, nil)
 	_, err := s.Mkdir(t.Context(), s.RootID(), "docs")
 	require.NoError(t, err)
@@ -130,6 +133,7 @@ func TestMoveRequiresIfMatch(t *testing.T) {
 }
 
 func TestMovePathAndTrashPath(t *testing.T) {
+	t.Parallel()
 	ts, s := newTestServer(t, nil)
 	_, err := s.Mkdir(t.Context(), s.RootID(), "docs")
 	require.NoError(t, err)
@@ -166,6 +170,7 @@ func TestMovePathAndTrashPath(t *testing.T) {
 }
 
 func TestBatchMoveSwapsCoordinatesThroughTypedClient(t *testing.T) {
+	t.Parallel()
 	ts, s := newTestServer(t, nil)
 	left, err := s.Mkdir(t.Context(), s.RootID(), "left")
 	require.NoError(t, err)
@@ -199,6 +204,7 @@ func TestBatchMoveSwapsCoordinatesThroughTypedClient(t *testing.T) {
 }
 
 func TestTypedRoutesRejectDuplicateJSONMembers(t *testing.T) {
+	t.Parallel()
 	ts, _ := newTestServer(t, nil)
 	req, err := http.NewRequest(http.MethodPost, ts.URL+"/api/v1/path/trash",
 		bytes.NewBufferString(`{"path":"/first","path":"/second"}`))
@@ -215,6 +221,7 @@ func TestTypedRoutesRejectDuplicateJSONMembers(t *testing.T) {
 }
 
 func TestPathMutationsRejectInvalidUTF8BeforeJSONDecoding(t *testing.T) {
+	t.Parallel()
 	ts, s := newTestServer(t, nil)
 	const replacementName = "bad\ufffd.txt"
 	created := createFileWithContent(t, ts, s, "/"+replacementName, "keep")
@@ -267,6 +274,7 @@ func TestPathMutationsRejectInvalidUTF8BeforeJSONDecoding(t *testing.T) {
 }
 
 func TestTrashAndRestoreRoundTripHTTP(t *testing.T) {
+	t.Parallel()
 	ts, s := newTestServer(t, nil)
 	_, err := s.Mkdir(t.Context(), s.RootID(), "inbox")
 	require.NoError(t, err)
@@ -299,6 +307,7 @@ func TestTrashAndRestoreRoundTripHTTP(t *testing.T) {
 }
 
 func TestMutationReceiptsRemainBoundDuringCompetingMutation(t *testing.T) {
+	t.Parallel()
 	t.Run("move", func(t *testing.T) {
 		ts, s := newTestServer(t, nil)
 		left, err := s.Mkdir(t.Context(), s.RootID(), "left")

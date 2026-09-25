@@ -9,6 +9,7 @@ import (
 )
 
 func TestAttachmentNavigationBrowserReadsAreExactAndBounded(t *testing.T) {
+	t.Parallel()
 	const version = "11111111-1111-4111-8111-111111111111"
 	for _, test := range []struct {
 		method, path string

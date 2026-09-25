@@ -78,6 +78,7 @@ func streamedJSONRequest(
 }
 
 func TestSavedQueryPayloadRejectsOversizeBeforeMutatingReceiver(t *testing.T) {
+	t.Parallel()
 	payload := api.SavedQueryPayload(`{"text":"preserved"}`)
 	before := append(api.SavedQueryPayload(nil), payload...)
 	oversized := []byte("{" + strings.Repeat(" ", 128<<10) + "}")
@@ -90,6 +91,7 @@ func TestSavedQueryPayloadRejectsOversizeBeforeMutatingReceiver(t *testing.T) {
 }
 
 func TestSavedQueryHTTPRequestBodyBounds(t *testing.T) {
+	t.Parallel()
 	const maxRequestBytes = 160 << 10
 
 	t.Run("accepts maximum payload with legal escaped envelope and omitted payload patch", func(t *testing.T) {
@@ -171,6 +173,7 @@ func TestSavedQueryHTTPRequestBodyBounds(t *testing.T) {
 }
 
 func TestSavedQueryHTTPRoundTripPaginationAndFences(t *testing.T) {
+	t.Parallel()
 	ts, _ := newTestServer(t, nil)
 
 	created, etag := createSavedQuery(t, ts.URL, "Synthetic search", fullSavedQueryPayload)
@@ -278,6 +281,7 @@ func savedQueryText(t *testing.T, payload []byte) string {
 }
 
 func TestSavedQueryHTTPNormalizesDuplicateFilterSetsAndAcceptsOptionalNulls(t *testing.T) {
+	t.Parallel()
 	ts, _ := newTestServer(t, nil)
 	const duplicatePayload = `{"filters":{"paths":["/zeta","/alpha","/alpha"],"exclude_paths":["/archive","/archive"],"collection_ids":["11111111-1111-4111-8111-111111111111","11111111-1111-4111-8111-111111111111"],"exclude_collection_ids":["22222222-2222-4222-8222-222222222222","22222222-2222-4222-8222-222222222222"],"tag_ids":["33333333-3333-4333-8333-333333333333","33333333-3333-4333-8333-333333333333"],"exclude_tag_ids":["44444444-4444-4444-8444-444444444444","44444444-4444-4444-8444-444444444444"],"no_tags":null,"media_families":["document","document"],"mime_types":["application/pdf","application/pdf"],"extensions":["pdf","pdf"],"modified_after":null,"modified_before":null,"size_min":null,"size_max":null,"text_coverage":["complete","complete"],"has_duplicates":null,"collapse_duplicates":null}}`
 	const deduplicatedPayload = `{"filters":{"paths":["/alpha","/zeta"],"exclude_paths":["/archive"],"collection_ids":["11111111-1111-4111-8111-111111111111"],"exclude_collection_ids":["22222222-2222-4222-8222-222222222222"],"tag_ids":["33333333-3333-4333-8333-333333333333"],"exclude_tag_ids":["44444444-4444-4444-8444-444444444444"],"media_families":["document"],"mime_types":["application/pdf"],"extensions":["pdf"],"text_coverage":["complete"]}}`
@@ -300,6 +304,7 @@ func TestSavedQueryHTTPNormalizesDuplicateFilterSetsAndAcceptsOptionalNulls(t *t
 }
 
 func TestSavedQueryHTTPNormalizesNamesBeforeApplyingUTF8ByteLimit(t *testing.T) {
+	t.Parallel()
 	ts, _ := newTestServer(t, nil)
 	decomposed := strings.Repeat("U\u0308\u0304", 100)
 	normalized := strings.Repeat("Ǖ", 100)
@@ -358,6 +363,7 @@ func TestSavedQueryHTTPNormalizesNamesBeforeApplyingUTF8ByteLimit(t *testing.T) 
 }
 
 func TestSavedQueryHTTPDefaultsOmittedHighlightVersionOnCreateAndPatch(t *testing.T) {
+	t.Parallel()
 	ts, _ := newTestServer(t, nil)
 	const omitted = `{"terms":[{"text":"omitted version","color":"#123abc"}]}`
 	const explicit = `{"v":1,"terms":[{"text":"omitted version","color":"#123abc"}]}`
@@ -394,6 +400,7 @@ func TestSavedQueryHTTPDefaultsOmittedHighlightVersionOnCreateAndPatch(t *testin
 }
 
 func TestSavedQueryHTTPRejectsMalformedOrOversizeFilterSetsWithoutMutation(t *testing.T) {
+	t.Parallel()
 	ts, _ := newTestServer(t, nil)
 	created, _ := createSavedQuery(t, ts.URL, "Stable filters", `{"filters":{"paths":["/records"]}}`)
 	overLimit := strings.TrimSuffix(strings.Repeat(`"/records",`, 65), ",")
@@ -449,6 +456,7 @@ func TestSavedQueryHTTPRejectsMalformedOrOversizeFilterSetsWithoutMutation(t *te
 }
 
 func TestSavedQueryHTTPRejectsInvalidRequestsWithoutMutation(t *testing.T) {
+	t.Parallel()
 	ts, _ := newTestServer(t, nil)
 	created, _ := createSavedQuery(t, ts.URL, "Collision", `{}`)
 
@@ -516,6 +524,7 @@ func TestSavedQueryHTTPRejectsInvalidRequestsWithoutMutation(t *testing.T) {
 }
 
 func TestSavedQueryHTTPRequiresDaemonAuthentication(t *testing.T) {
+	t.Parallel()
 	ts, _ := newTestServer(t, nil)
 	for _, headers := range []map[string]string{
 		{"X-Api-Key": ""},
@@ -528,6 +537,7 @@ func TestSavedQueryHTTPRequiresDaemonAuthentication(t *testing.T) {
 }
 
 func TestSavedQueryHTTPRejectsMutationsAfterAuditEnrollmentAndKeepsReads(t *testing.T) {
+	t.Parallel()
 	ts, s := newTestServer(t, nil)
 	created, _ := createSavedQuery(t, ts.URL, "Audit boundary", `{}`)
 	c := daemonconn.New(ts.URL, testAPIKey)
@@ -572,6 +582,7 @@ func TestSavedQueryHTTPRejectsMutationsAfterAuditEnrollmentAndKeepsReads(t *test
 }
 
 func TestBrowserSessionAllowsOnlyExactSavedQueryRoutes(t *testing.T) {
+	t.Parallel()
 	ts, _ := newTestServer(t, nil)
 	resp, body := do(t, ts, http.MethodPost, "/api/daemon/web-session", nil, nil)
 	require.Equal(t, http.StatusCreated, resp.StatusCode, body)

@@ -21,6 +21,7 @@ import (
 )
 
 func TestEmailPDFUnavailableDoesNotQueueOrFabricateOutput(t *testing.T) {
+	t.Parallel()
 	const reason = "email PDF unavailable: enable memory and pids controller delegation for the systemd user manager"
 	ts, _ := newTestServer(t, func(d *api.Deps) { d.EmailPDFUnavailableReason = reason })
 	response, body := do(t, ts, http.MethodPost, "/api/v1/email-pdfs", nil, map[string]any{"version_id": "00000000-0000-4000-8000-000000000001", "generation_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "paper": "A4"})
@@ -36,6 +37,7 @@ func (pdf emailPDFTestRenderer) Render(context.Context, emailpdf.HTML) ([]byte, 
 }
 
 func TestEmailPDFMetadataDoesNotReadPDFBytes(t *testing.T) {
+	t.Parallel()
 	pdf := fpdf.New("P", "mm", "A4", "")
 	pdf.AddPage()
 	pdf.SetFont("Helvetica", "", 12)

@@ -9,6 +9,7 @@ import (
 )
 
 func TestPageBrowserAllowlist(t *testing.T) {
+	t.Parallel()
 	job := "/api/v1/pages/jobs/00000000-0000-4000-8000-000000000001"
 	for _, path := range []string{"/api/v1/pages/inventory", "/api/v1/pages/jobs", job, job + "/cancel"} {
 		require.True(t, webSessionRequestAllowed(httptest.NewRequest(http.MethodPost, path, nil)))

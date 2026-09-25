@@ -10,6 +10,7 @@ import (
 )
 
 func TestPackagesBrowserRuleRefusesChunksAndServerPaths(t *testing.T) {
+	t.Parallel()
 	require.False(t, packagesBrowserRequestAllowed(httptest.NewRequest(http.MethodPut, "/api/v1/packages/containers/c1/chunks/0", nil)))
 	require.True(t, packagesBrowserRequestAllowed(httptest.NewRequest(http.MethodPost, "/api/v1/packages/containers", nil)))
 	require.True(t, packagesBrowserRequestAllowed(httptest.NewRequest(http.MethodPost, "/api/v1/packages/containers/c1/preflight", nil)))
@@ -30,6 +31,7 @@ func TestPackagesBrowserRuleRefusesChunksAndServerPaths(t *testing.T) {
 }
 
 func TestPackageContainerByteOperationsAreNotCutOffByRequestTimeout(t *testing.T) {
+	t.Parallel()
 	for _, path := range []string{
 		"/api/v1/packages/containers/c1/chunks/0",
 		"/api/v1/packages/containers/c1/seal",

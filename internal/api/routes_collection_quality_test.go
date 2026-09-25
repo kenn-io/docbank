@@ -26,6 +26,7 @@ func collectionCoverageConfig(d *api.Deps, names ...string) {
 }
 
 func TestCollectionQualityHTTPConfigurationAndCoverage(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name                   string
 		profiles               []string
@@ -84,6 +85,7 @@ func TestCollectionQualityHTTPConfigurationAndCoverage(t *testing.T) {
 }
 
 func TestCollectionQualityHTTPRejectsUnknownInputsAndMissingAuth(t *testing.T) {
+	t.Parallel()
 	ts, _ := newTestServer(t, nil)
 	imported := importCollection(t, ts.URL, ts.Client(), "manual.txt", "synthetic manual", nil)
 	base := "/api/v1/collections/" + imported.IngestID

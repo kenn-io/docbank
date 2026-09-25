@@ -17,6 +17,7 @@ import (
 )
 
 func TestStorageRegistrationPreviewDoesNotRepairExistingNamespace(t *testing.T) {
+	t.Parallel()
 	namespace := filepath.Join(t.TempDir(), "archive")
 	require.NoError(t, os.Mkdir(namespace, 0o700))
 	require.NoError(t, os.Chmod(namespace, 0o755))

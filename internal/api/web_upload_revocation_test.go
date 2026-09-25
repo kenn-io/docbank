@@ -18,6 +18,7 @@ import (
 )
 
 func TestBrowserUploadRevocationReleasesQueuedMaintenance(t *testing.T) {
+	t.Parallel()
 	for _, action := range []string{"revoke", "shutdown"} {
 		t.Run(action, func(t *testing.T) {
 			gate := api.NewOperationGate()

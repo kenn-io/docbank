@@ -16,6 +16,7 @@ import (
 )
 
 func TestPackageImportIndexesSuppliedTextWithOrWithoutNative(t *testing.T) {
+	t.Parallel()
 	for _, testCase := range []struct {
 		name   string
 		native bool
@@ -96,6 +97,7 @@ func TestPackageImportIndexesSuppliedTextWithOrWithoutNative(t *testing.T) {
 }
 
 func TestPackageImportTerminalFailureRemovesOnlyUnreceiptedDocuments(t *testing.T) {
+	t.Parallel()
 	srv, catalog := newPackageTestServer(t)
 	ctx := t.Context()
 	root := t.TempDir()
