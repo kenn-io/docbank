@@ -136,17 +136,13 @@ func (service *Service) mediaTranscript(
 	}
 	profileFingerprint, profileName := mediaTranscriptProfile(service, item)
 	if profileFingerprint == "" {
-		result.EvidenceState = mediaTranscriptAvailability(result, false)
+		result.EvidenceState = mediaTranscriptNoEvidenceState(result, item.SourceVersionActive)
 		return result, nil
 	}
 	view, err := service.catalog.ActiveRendition(ctx, request.ContentVersionID, profileFingerprint)
 	if err != nil {
 		if errors.Is(err, store.ErrNotFound) {
-			if !item.SourceVersionActive {
-				result.EvidenceState = mediaTranscriptEvidenceStale
-				return result, nil
-			}
-			result.EvidenceState = mediaTranscriptAvailability(result, false)
+			result.EvidenceState = mediaTranscriptNoEvidenceState(result, item.SourceVersionActive)
 			return result, nil
 		}
 		return result, err
@@ -284,6 +280,13 @@ func mediaTranscriptAvailability(result MediaTranscript, hasEvidence bool) strin
 	default:
 		return mediaTranscriptEvidenceUnavailable
 	}
+}
+
+func mediaTranscriptNoEvidenceState(result MediaTranscript, sourceVersionActive bool) string {
+	if !sourceVersionActive || result.CoverageState == "stale" {
+		return mediaTranscriptEvidenceStale
+	}
+	return mediaTranscriptAvailability(result, false)
 }
 
 func mediaTranscriptProfile(service *Service, item store.MediaSourceProjection) (string, string) {

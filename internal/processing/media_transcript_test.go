@@ -336,6 +336,45 @@ func TestMediaTranscriptRechecksAuthority(t *testing.T) {
 	case <-readCtx.Done():
 		t.Fatalf("transcript read did not finish after authority mutation: %v", readCtx.Err())
 	}
+
+	replacementOpened := make(chan struct{})
+	replacementRelease := make(chan struct{})
+	replacementReader := &mediaTranscriptBarrierReader{delegate: fixture.blobs,
+		opened: replacementOpened, release: replacementRelease}
+	replacementCtx, replacementCancel := context.WithTimeout(t.Context(), 10*time.Second)
+	defer replacementCancel()
+	replacementDone := make(chan transcriptReadResult, 1)
+	go func() {
+		value, readErr := service.mediaTranscript(replacementCtx, request, replacementReader)
+		replacementDone <- transcriptReadResult{value: value, err: readErr}
+	}()
+	select {
+	case <-replacementOpened:
+	case <-replacementCtx.Done():
+		close(replacementRelease)
+		t.Fatalf("replacement race did not reach the blob barrier: %v", replacementCtx.Err())
+	}
+
+	currentNode, err := fixture.catalog.NodeByID(t.Context(), version.NodeID)
+	require.NoError(t, err)
+	changed := append([]byte(nil), video...)
+	changed[len(changed)-1]++
+	changedBlob, err := fixture.blobs.WriteDetailedContext(t.Context(), bytes.NewReader(changed))
+	require.NoError(t, err)
+	_, _, err = fixture.catalog.ReplaceContent(t.Context(), currentNode.ID, currentNode.Revision,
+		changedBlob.Hash, changedBlob.Size, "video/mp4", processingBlobPhysical(t, changedBlob))
+	require.NoError(t, err)
+	close(replacementRelease)
+
+	select {
+	case result := <-replacementDone:
+		require.NoError(t, result.err)
+		require.Equal(t, mediaTranscriptEvidenceStale, result.value.EvidenceState)
+		require.Nil(t, result.value.Transcript)
+		t.Logf("read race: barrier=normalized_open mutation=content_replacement outcome=%s text=nil", result.value.EvidenceState)
+	case <-replacementCtx.Done():
+		t.Fatalf("transcript read did not finish after replacement: %v", replacementCtx.Err())
+	}
 }
 
 func TestMediaTranscriptMismatchedContentVersionReturnsStaleWithoutText(t *testing.T) {
@@ -494,7 +533,8 @@ func TestMediaTranscriptCoverageAfterRetry(t *testing.T) {
 		SourceID: remote.SourceID, SourceVersionID: queued.SourceVersionID, ContentVersionID: queued.ContentVersionID,
 	})
 	require.NoError(t, err)
-	require.Equal(t, mediaTranscriptEvidenceUnavailable, revokedInput.EvidenceState)
+	require.Equal(t, mediaTranscriptEvidenceStale, revokedInput.EvidenceState)
+	require.Equal(t, "stale", revokedInput.CoverageState)
 	require.Nil(t, revokedInput.Transcript)
 
 	node, err := fixture.catalog.NodeByID(t.Context(), version.NodeID)
