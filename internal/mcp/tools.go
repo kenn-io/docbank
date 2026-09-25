@@ -133,13 +133,26 @@ var exportLoadFilePackageToolDefinition = toolDefinition{
 	schemas:     exportLoadFilePackageSchemas, write: true, destructive: true,
 }
 
+var createProductionSetToolDefinition = toolDefinition{
+	name: "create_production_set", title: "Create production set",
+	description: "Create or replay one production set with an explicit operation UUID.",
+	schemas:     createProductionSetSchemas, write: true, idempotent: true,
+}
+
+var forkProductionDraftToolDefinition = toolDefinition{
+	name: "fork_production_draft", title: "Fork production draft",
+	description: "Create or replay a new editable revision from an exact source revision.",
+	schemas:     forkProductionDraftSchemas, write: true, idempotent: true,
+}
+
 func toolCatalog(allowProcessing bool) []*sdkmcp.Tool {
 	definitions := readToolDefinitions
 	if allowProcessing {
 		definitions = append(slices.Clone(definitions), processingToolDefinition, preflightLoadFilePackageToolDefinition,
 			packageImportToolDefinition, resolvePackageCustodianToolDefinition, assignPackageCustodianToolDefinition,
 			ensureBatesNamespaceToolDefinition, reserveBatesRangeToolDefinition, publishBatesExportToolDefinition,
-			exportBatesFileToolDefinition, exportLoadFilePackageToolDefinition)
+			exportBatesFileToolDefinition, exportLoadFilePackageToolDefinition,
+			createProductionSetToolDefinition, forkProductionDraftToolDefinition)
 	}
 	tools := make([]*sdkmcp.Tool, 0, len(definitions))
 	for _, definition := range definitions {
@@ -180,6 +193,8 @@ func registerToolCatalog(
 			handler = batesWriteToolHandler(lease, tool.Name, output, logger)
 		case exportLoadFilePackageToolDefinition.name:
 			handler = packageExportToolHandler(lease, output, logger)
+		case createProductionSetToolDefinition.name, forkProductionDraftToolDefinition.name:
+			handler = productionDraftWriteToolHandler(lease, tool.Name, output, logger)
 		default:
 			handler = readToolHandler(lease, plans, tool.Name, output, logger)
 		}
@@ -341,6 +356,8 @@ func stableDomainError(err error) (string, int) {
 		return "consent_required", 0
 	case errors.Is(err, errProcessingOutcomeUnknown):
 		return "processing_outcome_unknown", 0
+	case errors.Is(err, errProductionOutcomeUnknown):
+		return "production_outcome_unknown", 0
 	case errors.Is(err, errBatesOutcomeUnknown):
 		return "bates_outcome_unknown", 0
 	case errors.Is(err, errDaemonUnavailable):
@@ -384,6 +401,8 @@ func stableDomainError(err error) (string, int) {
 		return "invalid_rendition_encoding", 0
 	case "bates_reservation_conflict", "bates_page_count_mismatch", "bates_overflow":
 		return facts.Code, 0
+	case "production_operation_conflict", "production_revision_conflict":
+		return facts.Code, 0
 	default:
 		return "", 0
 	}
@@ -421,6 +440,12 @@ func domainErrorMessage(code string) string {
 		return "The Bates range exceeds the namespace padding."
 	case "bates_outcome_unknown":
 		return "The Bates authority write outcome is unknown; reconcile the namespace or allocation before retrying."
+	case "production_outcome_unknown":
+		return "The production write outcome is unknown. Retry only with the same operation ID."
+	case "production_operation_conflict":
+		return "The operation ID names different production input."
+	case "production_revision_conflict":
+		return "The production revision changed. Read its current ETag before editing."
 	default:
 		return "The Docbank operation could not be completed."
 	}
