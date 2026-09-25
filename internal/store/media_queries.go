@@ -69,10 +69,6 @@ func (s *Store) MediaSources(
 			&item.OccurrenceID, &item.Filename, &item.CaptureJSON, &item.SourceSHA256, &item.SourceBytes); err != nil {
 			return nil, 0, err
 		}
-		item.SourceVersionActive, err = s.mediaSourceVersionActive(ctx, item.SourceID, item.SourceVersionID)
-		if err != nil {
-			return nil, 0, err
-		}
 		item.Receipt, item.ProcessingReceipt, item.CoverageReceipt, err = s.latestMediaReceipts(ctx, principal,
 			item.SourceID, item.SourceVersionID)
 		if err != nil {

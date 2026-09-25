@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"io"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -96,6 +97,19 @@ func TestMediaTranscriptProvenance(t *testing.T) {
 	require.Equal(t, int64(0), *timed.Units[0].StartMS)
 	require.Equal(t, int64(1000), *timed.Units[0].EndMS)
 
+	longText := strings.Repeat("transcript ", 20)
+	longSource, fullArtifact, err := mediatranscript.Build(mediatranscript.ArtifactV1{
+		ContractVersion: "media-transcript/v1", Origin: "generated", Provider: "synthetic",
+		Segments: []mediatranscript.Segment{{Order: 0, StartMS: 0, EndMS: 1000, Text: longText}},
+	}, "audio", policy)
+	require.NoError(t, err)
+	longEvidence, err := document.NormalizeEvidenceV1(longSource, policy)
+	require.NoError(t, err)
+	truncatedTranscript, err := decodeMediaTranscriptArtifact(fullArtifact.Payload, longEvidence, true)
+	require.NoError(t, err)
+	require.True(t, truncatedTranscript.Truncated)
+	require.Equal(t, longText, truncatedTranscript.Units[0].Text)
+
 	_, err = decodeMediaTranscriptArtifact([]byte(`{"contract_version":"media-transcript/v2"}`), timedEvidence, false)
 	require.ErrorIs(t, err, errUnknownMediaTranscriptFormat)
 	_, err = decodeMediaTranscriptArtifact([]byte(`{"contract_version":"media-transcript/v1","segments":`), timedEvidence, false)
@@ -105,6 +119,39 @@ func TestMediaTranscriptProvenance(t *testing.T) {
 		*timed.Units[0].StartMS, *timed.Units[0].EndMS)
 }
 
+func TestMediaTranscriptUsesCoverageProfileDuringSuppliedRetry(t *testing.T) {
+	coverage := store.MediaPublicationReceipt{
+		ProcessingProfile: "generated-media", ProcessingProfileFingerprint: "generated-fingerprint",
+	}
+	processing := store.MediaPublicationReceipt{
+		ProcessingProfile: SuppliedCaptionProfileName, ProcessingProfileFingerprint: "supplied-fingerprint",
+	}
+	item := store.MediaSourceProjection{CoverageReceipt: &coverage, ProcessingReceipt: &processing}
+	fingerprint, profile := mediaTranscriptProfile(&Service{}, item)
+	_, supplied := suppliedInputKind(profile)
+	require.Equal(t, "generated-fingerprint", fingerprint)
+	require.Equal(t, "generated-media", profile)
+	require.False(t, supplied)
+
+	coverage.ProcessingProfile = "removed-profile"
+	coverage.ProcessingProfileFingerprint = ""
+	fingerprint, profile = mediaTranscriptProfile(&Service{}, item)
+	require.Empty(t, fingerprint)
+	require.Empty(t, profile, "a later retry cannot replace an unavailable successful profile")
+}
+
+func TestMediaTranscriptAvailabilityStates(t *testing.T) {
+	for operation, want := range map[string]string{
+		"queued": mediaTranscriptEvidencePending, "running": mediaTranscriptEvidencePending,
+		"succeeded": mediaTranscriptEvidenceUnavailable, "failed": mediaTranscriptEvidenceUnavailable,
+	} {
+		t.Run(operation, func(t *testing.T) {
+			got := mediaTranscriptAvailability(MediaTranscript{OperationState: operation}, false)
+			require.Equal(t, want, got)
+		})
+	}
+}
+
 func TestMediaTranscriptNodeAndContentVersionStates(t *testing.T) {
 	version := store.ContentVersion{ID: "version-1", NodeRevision: 1}
 	trashedAt := "2026-09-24T00:00:00Z"
@@ -112,11 +159,11 @@ func TestMediaTranscriptNodeAndContentVersionStates(t *testing.T) {
 		node store.Node
 		want bool
 	}{
-		"live file":        {node: store.Node{Kind: "file", CurrentVersionID: version.ID, Revision: 1}, want: true},
-		"directory":        {node: store.Node{Kind: "dir", CurrentVersionID: version.ID, Revision: 1}},
-		"trash":            {node: store.Node{Kind: "file", CurrentVersionID: version.ID, Revision: 1, TrashedAt: &trashedAt}},
-		"changed head":     {node: store.Node{Kind: "file", CurrentVersionID: "version-2", Revision: 2}},
-		"changed revision": {node: store.Node{Kind: "file", CurrentVersionID: version.ID, Revision: 2}},
+		"live file":         {node: store.Node{Kind: "file", CurrentVersionID: version.ID, Revision: 1}, want: true},
+		"directory":         {node: store.Node{Kind: "dir", CurrentVersionID: version.ID, Revision: 1}},
+		"trash":             {node: store.Node{Kind: "file", CurrentVersionID: version.ID, Revision: 1, TrashedAt: &trashedAt}},
+		"changed head":      {node: store.Node{Kind: "file", CurrentVersionID: "version-2", Revision: 2}},
+		"metadata revision": {node: store.Node{Kind: "file", CurrentVersionID: version.ID, Revision: 2}, want: true},
 	} {
 		t.Run(name, func(t *testing.T) {
 			require.Equal(t, test.want, mediaTranscriptNodeReadable(version, test.node))
@@ -254,7 +301,7 @@ func TestMediaTranscriptRechecksAuthority(t *testing.T) {
 	opened := make(chan struct{})
 	release := make(chan struct{})
 	serviceReader := &mediaTranscriptBarrierReader{delegate: fixture.blobs, opened: opened, release: release}
-	readCtx, cancel := context.WithTimeout(withMediaTranscriptBlobReader(t.Context(), serviceReader), 10*time.Second)
+	readCtx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 	defer cancel()
 	type transcriptReadResult struct {
 		value MediaTranscript
@@ -262,7 +309,7 @@ func TestMediaTranscriptRechecksAuthority(t *testing.T) {
 	}
 	readDone := make(chan transcriptReadResult, 1)
 	go func() {
-		value, readErr := service.MediaTranscript(readCtx, request)
+		value, readErr := service.mediaTranscript(readCtx, request, serviceReader)
 		readDone <- transcriptReadResult{value: value, err: readErr}
 	}()
 	select {
@@ -272,23 +319,20 @@ func TestMediaTranscriptRechecksAuthority(t *testing.T) {
 		t.Fatalf("transcript read did not reach the blob barrier: %v", readCtx.Err())
 	}
 
-	node, err := fixture.catalog.NodeByID(t.Context(), version.NodeID)
+	node, err := fixture.catalog.NodeViewByID(t.Context(), version.NodeID)
 	require.NoError(t, err)
-	changed := append([]byte(nil), video...)
-	changed[len(changed)-1]++
-	changedBlob, err := fixture.blobs.WriteDetailedContext(t.Context(), bytes.NewReader(changed))
+	moved, _, err := fixture.catalog.MovePath(t.Context(), node.Path, node.Path+".renamed")
 	require.NoError(t, err)
-	_, _, err = fixture.catalog.ReplaceContent(t.Context(), node.ID, node.Revision,
-		changedBlob.Hash, changedBlob.Size, "video/mp4", processingBlobPhysical(t, changedBlob))
-	require.NoError(t, err)
+	require.NotEqual(t, version.NodeRevision, moved.Revision)
 	close(release)
 
 	select {
 	case result := <-readDone:
 		require.NoError(t, result.err)
-		require.Equal(t, mediaTranscriptEvidenceStale, result.value.EvidenceState)
-		require.Nil(t, result.value.Transcript)
-		t.Logf("read race: barrier=normalized_open mutation=node_replace outcome=%s text=nil", result.value.EvidenceState)
+		require.Equal(t, mediaTranscriptEvidenceReady, result.value.EvidenceState)
+		require.NotNil(t, result.value.Transcript)
+		require.Equal(t, "race cue", result.value.Transcript.Units[0].Text)
+		t.Logf("read race: barrier=normalized_open mutation=metadata_rename outcome=%s text=retained", result.value.EvidenceState)
 	case <-readCtx.Done():
 		t.Fatalf("transcript read did not finish after authority mutation: %v", readCtx.Err())
 	}
@@ -386,6 +430,20 @@ func TestMediaTranscriptCoverageAfterRetry(t *testing.T) {
 	require.Equal(t, int64(0), *result.Transcript.Units[0].StartMS)
 	require.Equal(t, "transcribed", result.CoverageState)
 	require.Equal(t, "succeeded", result.OperationState)
+	contentVersion, err := fixture.catalog.ContentVersionByID(t.Context(), queued.ContentVersionID)
+	require.NoError(t, err)
+	beforeMove, err := fixture.catalog.NodeViewByID(t.Context(), contentVersion.NodeID)
+	require.NoError(t, err)
+	moved, _, err := fixture.catalog.MovePath(t.Context(), beforeMove.Path, beforeMove.Path+".renamed")
+	require.NoError(t, err)
+	require.NotEqual(t, contentVersion.NodeRevision, moved.Revision)
+	afterMove, err := captionService.MediaTranscript(t.Context(), MediaTranscriptRequest{
+		SourceID: remote.SourceID, SourceVersionID: queued.SourceVersionID, ContentVersionID: queued.ContentVersionID,
+	})
+	require.NoError(t, err)
+	require.Equal(t, mediaTranscriptEvidenceReady, afterMove.EvidenceState)
+	require.NotNil(t, afterMove.Transcript)
+	require.Equal(t, "synthetic cue", afterMove.Transcript.Units[0].Text)
 
 	invalid := []byte("1\n00:00:00,000 --> 00:00:01,000\ncaf\xe9\n")
 	badCaption, err := base.ImportRecordingArtifact(t.Context(), MediaArtifactRequest{

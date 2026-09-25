@@ -97,8 +97,7 @@ paired nullable values from retained evidence. The equivalent CLI command is:
 ```bash
 docbank media transcript SOURCE_ID \
   --source-version-id SOURCE_VERSION_ID \
-  --content-version-id CONTENT_VERSION_ID \
-  --json
+  --content-version-id CONTENT_VERSION_ID
 ```
 
 ## Give an independent client a stable endpoint

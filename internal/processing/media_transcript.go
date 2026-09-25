@@ -36,22 +36,6 @@ var (
 	ErrMediaTranscriptOversize    = errors.New("media transcript response is too large")
 )
 
-type mediaTranscriptBlobReaderKey struct{}
-
-func withMediaTranscriptBlobReader(ctx context.Context, reader retrieval.MediaEvidenceBlobReader) context.Context {
-	if reader == nil {
-		return ctx
-	}
-	return context.WithValue(ctx, mediaTranscriptBlobReaderKey{}, reader)
-}
-
-func mediaTranscriptBlobReader(ctx context.Context, fallback retrieval.MediaEvidenceBlobReader) retrieval.MediaEvidenceBlobReader {
-	if reader, ok := ctx.Value(mediaTranscriptBlobReaderKey{}).(retrieval.MediaEvidenceBlobReader); ok && reader != nil {
-		return reader
-	}
-	return fallback
-}
-
 // MediaTranscriptRequest names one immutable media tuple. The expected
 // content version is part of the request so a caller cannot accept a newer
 // source revision by accident.
@@ -71,7 +55,7 @@ type MediaTranscriptEvidence struct {
 	Provider     string
 	Language     string
 	Completeness string
-	Truncated    bool
+	Truncated    bool // Reports build truncation; Units retain the matched transcript artifact's text.
 	HasOmissions bool
 	Units        []MediaTranscriptUnit
 }
@@ -94,11 +78,20 @@ type MediaTranscript struct {
 func (service *Service) MediaTranscript(
 	ctx context.Context, request MediaTranscriptRequest,
 ) (MediaTranscript, error) {
+	return service.mediaTranscript(ctx, request, nil)
+}
+
+func (service *Service) mediaTranscript(
+	ctx context.Context, request MediaTranscriptRequest, blobs retrieval.MediaEvidenceBlobReader,
+) (MediaTranscript, error) {
 	result := MediaTranscript{VaultUID: serviceVaultID(service), SourceID: request.SourceID,
 		SourceVersionID: request.SourceVersionID, ContentVersionID: request.ContentVersionID,
 		EvidenceState: mediaTranscriptEvidenceUnavailable}
 	if service == nil || service.catalog == nil || service.blobs == nil {
 		return result, ErrMediaCapabilityUnavailable
+	}
+	if blobs == nil {
+		blobs = service.blobs
 	}
 	if err := validateMediaTranscriptRequest(request); err != nil {
 		return result, err
@@ -115,10 +108,9 @@ func (service *Service) MediaTranscript(
 		result.EvidenceState = mediaTranscriptEvidenceStale
 		return result, nil
 	}
-	if item.ContentVersionID == "" || item.SourceSHA256 == "" {
+	if item.SourceSHA256 == "" {
 		return result, nil
 	}
-	blobReader := mediaTranscriptBlobReader(ctx, service.blobs)
 	visibilityFence, err := service.catalog.MediaVisibilityFence(ctx, service.principal)
 	if err != nil {
 		return result, err
@@ -142,7 +134,7 @@ func (service *Service) MediaTranscript(
 		result.EvidenceState = mediaTranscriptEvidenceStale
 		return result, nil
 	}
-	profileFingerprint := mediaTranscriptProfileFingerprint(service, item)
+	profileFingerprint, profileName := mediaTranscriptProfile(service, item)
 	if profileFingerprint == "" {
 		result.EvidenceState = mediaTranscriptAvailability(result, false)
 		return result, nil
@@ -159,11 +151,15 @@ func (service *Service) MediaTranscript(
 		}
 		return result, err
 	}
+	if view.Attachment.Profile.Fingerprint != profileFingerprint {
+		result.EvidenceState = mediaTranscriptEvidenceStale
+		return result, nil
+	}
 	inputBinding, err := service.catalog.RenditionInputBinding(ctx, view.Build.ID)
 	if err != nil {
 		return result, err
 	}
-	if err := service.validateMediaTranscriptView(ctx, item, view, inputBinding); err != nil {
+	if err := service.validateMediaTranscriptView(ctx, item, view, inputBinding, profileName); err != nil {
 		if errors.Is(err, ErrMediaTranscriptStale) {
 			result.EvidenceState = mediaTranscriptEvidenceStale
 			return result, nil
@@ -178,7 +174,7 @@ func (service *Service) MediaTranscript(
 		}
 		return result, fmt.Errorf("normalized transcript evidence: %w", err)
 	}
-	normalizedBytes, err := retrieval.ReadExactArtifact(ctx, blobReader, normalized.BlobHash,
+	normalizedBytes, err := retrieval.ReadExactArtifact(ctx, blobs, normalized.BlobHash,
 		normalized.Size, mediaTranscriptMaxArtifactBytes)
 	if err != nil {
 		return result, classifyMediaTranscriptArtifactError(err)
@@ -199,7 +195,7 @@ func (service *Service) MediaTranscript(
 		result.EvidenceState = mediaTranscriptEvidenceUnavailable
 		return result, nil
 	}
-	transcriptBytes, err := readMediaTranscriptArtifact(ctx, blobReader, transcriptRecord, evidence)
+	transcriptBytes, err := readMediaTranscriptArtifact(ctx, blobs, transcriptRecord, evidence)
 	if err != nil {
 		return result, classifyMediaTranscriptArtifactError(err)
 	}
@@ -223,7 +219,7 @@ func (service *Service) MediaTranscript(
 		return result, ErrMediaTranscriptOversize
 	}
 
-	if err := service.recheckMediaTranscriptAuthority(ctx, request, item, version, node, view, inputBinding, visibilityFence); err != nil {
+	if err := service.recheckMediaTranscriptAuthority(ctx, request, item, version, view, inputBinding, visibilityFence); err != nil {
 		if errors.Is(err, ErrMediaTranscriptStale) {
 			result.EvidenceState = mediaTranscriptEvidenceStale
 			result.Transcript = nil
@@ -238,7 +234,7 @@ func (service *Service) MediaTranscript(
 
 func mediaTranscriptNodeReadable(version store.ContentVersion, node store.Node) bool {
 	return node.Kind == "file" && node.TrashedAt == nil &&
-		node.CurrentVersionID == version.ID && version.NodeRevision == node.Revision
+		node.CurrentVersionID == version.ID
 }
 
 func serviceVaultID(service *Service) string {
@@ -283,26 +279,28 @@ func mediaTranscriptAvailability(result MediaTranscript, hasEvidence bool) strin
 		return mediaTranscriptEvidenceUnavailable
 	}
 	switch result.OperationState {
-	case "queued", "running", "retry_wait":
+	case "queued", "running":
 		return mediaTranscriptEvidencePending
 	default:
 		return mediaTranscriptEvidenceUnavailable
 	}
 }
 
-func mediaTranscriptProfileFingerprint(service *Service, item store.MediaSourceProjection) string {
-	for _, receipt := range []*store.MediaPublicationReceipt{item.CoverageReceipt, item.ProcessingReceipt} {
-		if receipt == nil {
-			continue
-		}
-		if receipt.ProcessingProfileFingerprint != "" {
-			return receipt.ProcessingProfileFingerprint
-		}
-		if profile, ok := service.profiles[receipt.ProcessingProfile]; ok {
-			return profile.record.Fingerprint
-		}
+func mediaTranscriptProfile(service *Service, item store.MediaSourceProjection) (string, string) {
+	receipt := item.CoverageReceipt
+	if receipt == nil {
+		receipt = item.ProcessingReceipt
 	}
-	return ""
+	if receipt == nil {
+		return "", ""
+	}
+	if receipt.ProcessingProfileFingerprint != "" {
+		return receipt.ProcessingProfileFingerprint, receipt.ProcessingProfile
+	}
+	if profile, ok := service.profiles[receipt.ProcessingProfile]; ok {
+		return profile.record.Fingerprint, receipt.ProcessingProfile
+	}
+	return "", ""
 }
 
 func (service *Service) mediaTranscriptNode(
@@ -379,10 +377,11 @@ func mediaTranscriptArtifactLimit(evidence document.NormalizedEvidenceV1) int64 
 }
 
 func (service *Service) validateMediaTranscriptView(
-	ctx context.Context, item store.MediaSourceProjection, view store.RenditionView, inputBinding string,
+	ctx context.Context, item store.MediaSourceProjection, view store.RenditionView, inputBinding, profileName string,
 ) error {
+	_, suppliedProfile := suppliedInputKind(profileName)
 	if view.Attachment.ContentVersionID != item.ContentVersionID || view.Head.ContentVersionID != item.ContentVersionID ||
-		view.Build.SourceSHA256 != item.SourceSHA256 || inputBinding == "" && suppliedProfileForItem(item) {
+		view.Build.SourceSHA256 != item.SourceSHA256 || inputBinding == "" && suppliedProfile {
 		return ErrMediaTranscriptStale
 	}
 	if inputBinding == "" {
@@ -409,20 +408,9 @@ func (service *Service) validateMediaTranscriptView(
 	return ErrMediaTranscriptStale
 }
 
-func suppliedProfileForItem(item store.MediaSourceProjection) bool {
-	for _, receipt := range []*store.MediaPublicationReceipt{item.CoverageReceipt, item.ProcessingReceipt} {
-		if receipt != nil {
-			if _, ok := suppliedInputKind(receipt.ProcessingProfile); ok {
-				return true
-			}
-		}
-	}
-	return false
-}
-
 func (service *Service) recheckMediaTranscriptAuthority(
 	ctx context.Context, request MediaTranscriptRequest, before store.MediaSourceProjection,
-	version store.ContentVersion, node store.Node, view store.RenditionView, inputBinding string,
+	version store.ContentVersion, view store.RenditionView, inputBinding string,
 	visibilityFence int64,
 ) error {
 	after, err := service.catalog.MediaSourceVersion(ctx, service.principal, request.SourceID, request.SourceVersionID)
@@ -442,7 +430,6 @@ func (service *Service) recheckMediaTranscriptAuthority(
 	}
 	if currentVersion.BlobHash != after.SourceSHA256 || currentVersion.Size != after.SourceBytes ||
 		currentVersion.BlobHash != version.BlobHash || currentVersion.Size != version.Size ||
-		currentVersion.NodeRevision != version.NodeRevision || currentNode.Revision != node.Revision ||
 		currentNode.CurrentVersionID != version.ID || currentNode.TrashedAt != nil {
 		return ErrMediaTranscriptStale
 	}
