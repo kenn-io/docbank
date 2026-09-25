@@ -564,17 +564,7 @@ func fromMediaError(err error) *Error {
 		{processing.ErrMediaTranscriptCorrupt, http.StatusInternalServerError, "media_transcript_corrupt"},
 	} {
 		if errors.Is(err, item.target) {
-			switch item.target {
-			case processing.ErrMediaTranscriptInvalid:
-				return NewError(item.status, item.code, "media transcript request is invalid")
-			case processing.ErrMediaTranscriptOversize:
-				return NewError(item.status, item.code, "media transcript exceeds its size limit")
-			case processing.ErrMediaTranscriptUnavailable:
-				return NewError(item.status, item.code, "media transcript evidence is unavailable")
-			case processing.ErrMediaTranscriptCorrupt:
-				return NewError(item.status, item.code, "media transcript evidence is corrupt")
-			}
-			return NewError(item.status, item.code, err.Error())
+			return NewError(item.status, item.code, mediaTranscriptErrorDetail(err))
 		}
 	}
 	if problem, ok := errors.AsType[*Error](fromProcessingError(err)); ok && problem.Status < http.StatusInternalServerError {
@@ -589,4 +579,19 @@ func fromMediaError(err error) *Error {
 		return NewError(http.StatusUnprocessableEntity, "validation", err.Error())
 	}
 	return NewError(http.StatusInternalServerError, "media_failed", "media operation failed")
+}
+
+func mediaTranscriptErrorDetail(err error) string {
+	switch {
+	case errors.Is(err, processing.ErrMediaTranscriptInvalid):
+		return "media transcript request is invalid"
+	case errors.Is(err, processing.ErrMediaTranscriptOversize):
+		return "media transcript exceeds its size limit"
+	case errors.Is(err, processing.ErrMediaTranscriptUnavailable):
+		return "media transcript evidence is unavailable"
+	case errors.Is(err, processing.ErrMediaTranscriptCorrupt):
+		return "media transcript evidence is corrupt"
+	default:
+		return err.Error()
+	}
 }

@@ -1373,7 +1373,7 @@ docbank media submit --file CALL.wav --operation-id UUID \
 docbank media list
 docbank media status SOURCE_ID
 docbank media transcript SOURCE_ID --source-version-id SOURCE_VERSION_ID \
-  --content-version-id CONTENT_VERSION_ID [--json]
+  --content-version-id CONTENT_VERSION_ID
 docbank media import-artifact SOURCE_ID --kind media --file CALL.wav \
   --occurrence-id OCCURRENCE_ID --operation-id UUID
 docbank media import-artifact SOURCE_ID --kind transcript \
