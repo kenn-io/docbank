@@ -77,7 +77,7 @@ var readToolDefinitions = []toolDefinition{
 	{name: "find_bates_exports", title: "Find Bates exports", description: "Return bounded candidates for one exact Bates label, custodian label, or canonical person.", schemas: findBatesExportsSchemas},
 	{name: "get_photo_asset", title: "Get photo asset", description: "Read one bounded photo asset by asset or node identity.", schemas: getPhotoAssetSchemas},
 	{name: "list_migration_runs", title: "List migration runs", description: "List bounded completed Fotobank inventory runs.", schemas: listMigrationRunsSchemas},
-	{name: "show_migration_run", title: "Show migration run", description: "Read one completed Fotobank inventory report and owner map.", schemas: showMigrationRunSchemas},
+	{name: "show_migration_run", title: "Show migration run", description: "Read one bounded completed Fotobank inventory summary.", schemas: showMigrationRunSchemas},
 }
 
 var processingToolDefinition = toolDefinition{
