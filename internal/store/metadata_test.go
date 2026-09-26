@@ -1269,6 +1269,13 @@ func TestMetadataUniqueBlobBytes(t *testing.T) {
 		blobA  = `{"type":"blob","hash":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","size":7,"created_at":"2026-01-01T00:00:00.000000000Z"}` + "\n"
 		blobB  = `{"type":"blob","hash":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","size":11,"created_at":"2026-01-01T00:00:00.000000000Z"}` + "\n"
 	)
+	nestedObject := func(key string) string {
+		return header + `{"type":"audit_record","digest":"x","record":{"` + key + `":1}}` + "\n" + blobA
+	}
+	rawKey256 := strings.Repeat("a", metadataWalkerControlBytes)
+	rawKey257 := strings.Repeat("a", metadataWalkerControlBytes+1)
+	escapedKey256 := strings.Repeat(`\u0061`, metadataWalkerControlBytes)
+	escapedKey257 := strings.Repeat(`\u0061`, metadataWalkerControlBytes+1)
 	for _, test := range []struct {
 		name      string
 		input     string
@@ -1289,6 +1296,10 @@ func TestMetadataUniqueBlobBytes(t *testing.T) {
 		{name: "nested duplicate names", input: header + `{"type":"audit_record","digest":"x","record":{"key":1,"key":2}}` + "\n" + blobA, wantError: `repeats member name "key"`},
 		{name: "nested duplicate escaped names", input: header + `{"type":"audit_record","digest":"x","record":{"key":1,"\u006Bey":2}}` + "\n" + blobA, wantError: `repeats member name "key"`},
 		{name: "same nested name in separate objects", input: header + `{"type":"audit_record","digest":"x","record":{"first":{"key":1},"second":{"key":2}}}` + "\n" + blobA, want: 7},
+		{name: "nested raw key at control limit", input: nestedObject(rawKey256), want: 7},
+		{name: "nested raw key over control limit", input: nestedObject(rawKey257), wantError: `metadata field "object key" exceeds`},
+		{name: "nested escaped key at decoded control limit", input: nestedObject(escapedKey256), want: 7},
+		{name: "nested escaped key over decoded control limit", input: nestedObject(escapedKey257), wantError: `metadata field "object key" exceeds`},
 		{name: "duplicate header type escaped", input: `{"type":"meta","\u0074ype":"meta","format":"docbank-metadata","version":1,"vault_id":"dddddddd-dddd-4ddd-8ddd-dddddddddddd","node_sequence":1}` + "\n", wantError: `repeats field "type"`},
 		{name: "duplicate blob hash escaped", input: header + `{"type":"blob","hash":"` + metadataHashCurrent + `","\u0068ash":"` + metadataHashCurrent + `","size":7,"created_at":"2026-01-01T00:00:00.000000000Z"}` + "\n", wantError: `repeats field "hash"`},
 		{name: "nested object trailing comma", input: header + `{"type":"audit_record","digest":"x","record":{"nested":[1,]}}` + "\n", wantError: "decoding metadata record 2"},
