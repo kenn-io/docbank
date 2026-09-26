@@ -99,6 +99,7 @@ var currentSchemaTables = [...]string{
 	"document_people_state", "person_match_candidates", "person_document_assertions",
 	"document_people_generations", "document_people_heads", "document_people_builds",
 	"document_people",
+	"document_identities", "document_identity_aliases", "adopted_passage_authorities",
 }
 
 // prepareReleasedSchemaUpgrade recognizes only storage layouts that shipped in

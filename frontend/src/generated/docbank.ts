@@ -849,6 +849,12 @@ export interface CatalogEntry {
   primary: boolean;
 }
 
+export interface ChunkSpan {
+  CharEnd: number;
+  CharStart: number;
+  UnitIndex: number;
+}
+
 export interface Collection {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
@@ -1017,6 +1023,161 @@ export interface CollectionSnapshotRepresentation {
   status: string;
   text_authority: string;
   verified_page_count: number;
+}
+
+export interface PassageRefV1 {
+  attachment_id: string;
+  body_sha256: string;
+  byte_end: number;
+  byte_start: number;
+  content_version_id: string;
+  document_uid: string;
+  federation_domain_uid?: string;
+  quote_sha256: string;
+  rendition_build_id: string;
+  source_sha256: string;
+  vault_uid: string;
+  version: number;
+}
+
+export interface ConnectionDuplicateMember {
+  embedding_set_id?: string;
+  id: string;
+  index_generation_id?: string;
+  input_generation_id?: string;
+  input_id?: string;
+  score: number;
+  score_metric: string;
+  source_generation_id?: string;
+  source_input_id?: string;
+  source_segment?: PassageRefV1;
+  source_segment_quote?: string;
+  source_span?: ChunkSpan;
+  target: PassageRefV1;
+  target_node_id: number;
+  target_path: string;
+  target_quote: string;
+  target_span?: ChunkSpan;
+  vector_space_id?: string;
+}
+
+export interface ConnectionSeedSegment {
+  generation_id: string;
+  input_id: string;
+  passage: PassageRefV1;
+  quote: string;
+  span: ChunkSpan;
+}
+
+export interface ConnectionSuggestion {
+  aggregation: string;
+  duplicate_count: number;
+  /** @maxItems 4095 */
+  duplicate_members: ConnectionDuplicateMember[];
+  embedding_set_id?: string;
+  id: string;
+  index_generation_id?: string;
+  input_generation_id?: string;
+  input_id?: string;
+  method: string;
+  reason: string;
+  score: number;
+  score_metric: string;
+  source: PassageRefV1;
+  source_generation_id?: string;
+  source_input_id?: string;
+  source_quote: string;
+  source_segment?: PassageRefV1;
+  source_segment_quote?: string;
+  source_span?: ChunkSpan;
+  target: PassageRefV1;
+  target_node_id: number;
+  target_path: string;
+  target_quote: string;
+  target_span?: ChunkSpan;
+  vector_space_id?: string;
+}
+
+export type ConnectionSuggestionReportState = typeof ConnectionSuggestionReportState[keyof typeof ConnectionSuggestionReportState];
+
+
+export const ConnectionSuggestionReportState = {
+  ready: 'ready',
+  unavailable: 'unavailable',
+} as const;
+
+export interface ConnectionSuggestionReport {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  aggregation?: string;
+  candidate_count: number;
+  candidates: ConnectionSuggestion[];
+  coverage_reason?: string;
+  fallback_methods: string[];
+  index_generation_id?: string;
+  method: string;
+  score_metric?: string;
+  seed_kind: string;
+  seed_segment_count: number;
+  /** @maxItems 4096 */
+  seed_segments: ConnectionSeedSegment[];
+  source: PassageRefV1;
+  source_embedding_set_id?: string;
+  source_manifest_checksum?: string;
+  state: ConnectionSuggestionReportState;
+  truncated: boolean;
+  vector_space_id?: string;
+}
+
+export type ConnectionSuggestionRequestMethod = typeof ConnectionSuggestionRequestMethod[keyof typeof ConnectionSuggestionRequestMethod];
+
+
+export const ConnectionSuggestionRequestMethod = {
+  semantic: 'semantic',
+  lexical: 'lexical',
+  tag: 'tag',
+  hybrid: 'hybrid',
+} as const;
+
+export type ConnectionSuggestionRequestSeedKind = typeof ConnectionSuggestionRequestSeedKind[keyof typeof ConnectionSuggestionRequestSeedKind];
+
+
+export const ConnectionSuggestionRequestSeedKind = {
+  passage: 'passage',
+  document: 'document',
+} as const;
+
+export interface DocumentSourceFence {
+  /**
+     * @minItems 1
+     * @maxItems 4096
+     */
+  content_version_ids: string[];
+  vault_uid: string;
+}
+
+export interface ConnectionSuggestionRequest {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  /**
+     * @minLength 1
+     * @maxLength 128
+     */
+  binding_id: string;
+  fence: DocumentSourceFence;
+  /**
+     * @minimum 1
+     * @maximum 100
+     */
+  limit?: number;
+  method?: ConnectionSuggestionRequestMethod;
+  /**
+     * @minLength 1
+     * @maxLength 128
+     */
+  profile: string;
+  seed_kind?: ConnectionSuggestionRequestSeedKind;
+  source: PassageRefV1;
 }
 
 export type ContentVersionTransitionKind = typeof ContentVersionTransitionKind[keyof typeof ContentVersionTransitionKind];
@@ -1601,15 +1762,6 @@ export const DocumentSearchRequestMode = {
   semantic: 'semantic',
   hybrid: 'hybrid',
 } as const;
-
-export interface DocumentSourceFence {
-  /**
-     * @minItems 1
-     * @maxItems 4096
-     */
-  content_version_ids: string[];
-  vault_uid: string;
-}
 
 export interface DocumentSearchRequest {
   /** A URL to the JSON Schema for this object. */
@@ -2483,6 +2635,14 @@ export interface Entry {
   name: string;
   sha256: string;
   size: number;
+}
+
+export interface EvidenceLocatorV1 {
+  end: number;
+  index_origin: string;
+  kind: string;
+  name?: string;
+  start: number;
 }
 
 export interface Receipt {
@@ -3741,6 +3901,46 @@ export interface PageSelectionRequest {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
   selection: PageBinding;
+}
+
+export type PassageResolutionAvailability = typeof PassageResolutionAvailability[keyof typeof PassageResolutionAvailability];
+
+
+export const PassageResolutionAvailability = {
+  available: 'available',
+} as const;
+
+export type PassageResolutionFreshness = typeof PassageResolutionFreshness[keyof typeof PassageResolutionFreshness];
+
+
+export const PassageResolutionFreshness = {
+  current: 'current',
+  historical: 'historical',
+} as const;
+
+export interface PassageResolution {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  availability: PassageResolutionAvailability;
+  freshness: PassageResolutionFreshness;
+  /** @pattern ^[0-9a-f]{64}$ */
+  passage_id: string;
+  ref: PassageRefV1;
+  section_path: string[];
+  source_locator?: EvidenceLocatorV1;
+  source_path: string;
+  text: string;
+}
+
+export interface PassageResolveRequest {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  /**
+     * @minimum 1
+     * @maximum 262144
+     */
+  max_bytes?: number;
+  ref: PassageRefV1;
 }
 
 export type PeopleBuildState = typeof PeopleBuildState[keyof typeof PeopleBuildState];
@@ -7323,6 +7523,44 @@ export const getCollectionQuality = async (id: string,
     method: 'GET'
 
 
+  }
+);}
+
+
+
+export const getSuggestConnectionsUrl = () => {
+
+
+
+
+  return `/api/v1/connections/suggest`
+}
+
+/**
+ * @summary Suggest exact passage connections from stored evidence
+ */
+export const suggestConnections = async (connectionSuggestionRequest: NonReadonly<ConnectionSuggestionRequest>, options?: Parameters<typeof sessionJSON>[1]): Promise<ConnectionSuggestionReport> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return sessionJSON<ConnectionSuggestionReport>(getSuggestConnectionsUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(connectionSuggestionRequest)
   }
 );}
 
@@ -11298,6 +11536,44 @@ return sessionJSON<PageRenderJob>(getCancelPageRenderJobUrl(id),
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
     body: JSON.stringify(pageSelectionRequest)
+  }
+);}
+
+
+
+export const getResolvePassageUrl = () => {
+
+
+
+
+  return `/api/v1/passages/resolve`
+}
+
+/**
+ * @summary Resolve one exact retained Markdown passage
+ */
+export const resolvePassage = async (passageResolveRequest: NonReadonly<PassageResolveRequest>, options?: Parameters<typeof sessionJSON>[1]): Promise<PassageResolution> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return sessionJSON<PassageResolution>(getResolvePassageUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(passageResolveRequest)
   }
 );}
 

@@ -1408,6 +1408,53 @@ func (c *Client) GetCollectionQuality(ctx context.Context, options *GetCollectio
 	return responseParser(ctx, resp)
 }
 
+// SuggestConnections Suggest exact passage connections from stored evidence
+func (c *Client) SuggestConnections(ctx context.Context, options *SuggestConnectionsRequestOptions, reqEditors ...runtime.RequestEditorFn) (*SuggestConnectionsResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/connections/suggest",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*SuggestConnectionsResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(SuggestConnectionsResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "SuggestConnectionsResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[SuggestConnectionsErrorResponse](resp, "SuggestConnectionsErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/connections/suggest")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
 // LookupContentReferences Find stable document versions that retain a SHA-256 identity
 func (c *Client) LookupContentReferences(ctx context.Context, options *LookupContentReferencesRequestOptions, reqEditors ...runtime.RequestEditorFn) (*LookupContentReferencesResponse, error) {
 	var err error
@@ -6674,6 +6721,53 @@ func (c *Client) CancelPageRenderJob(ctx context.Context, options *CancelPageRen
 	return responseParser(ctx, resp)
 }
 
+// ResolvePassage Resolve one exact retained Markdown passage
+func (c *Client) ResolvePassage(ctx context.Context, options *ResolvePassageRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ResolvePassageResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/passages/resolve",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*ResolvePassageResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(ResolvePassageResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "ResolvePassageResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[ResolvePassageErrorResponse](resp, "ResolvePassageErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/passages/resolve")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
 // ResolvePath Resolve an absolute virtual path to its node
 func (c *Client) ResolvePath(ctx context.Context, options *ResolvePathRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ResolvePathResponse, error) {
 	var err error
@@ -11498,6 +11592,34 @@ func (o *GetCollectionQualityRequestOptions) GetHeader() (map[string]string, err
 	return nil, nil
 }
 
+// SuggestConnectionsRequestOptions is the options needed to make a request to SuggestConnections.
+type SuggestConnectionsRequestOptions struct {
+	Body *SuggestConnectionsBody
+}
+
+// GetPathParams returns the path params as a map.
+func (o *SuggestConnectionsRequestOptions) GetPathParams() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetQuery returns the query params as a map.
+func (o *SuggestConnectionsRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *SuggestConnectionsRequestOptions) GetBody() any {
+	if o.Body == nil {
+		return nil
+	}
+	return o.Body
+}
+
+// GetHeader returns the headers as a map.
+func (o *SuggestConnectionsRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
 // LookupContentReferencesRequestOptions is the options needed to make a request to LookupContentReferences.
 type LookupContentReferencesRequestOptions struct {
 	Query *LookupContentReferencesQuery
@@ -15025,6 +15147,34 @@ func (o *CancelPageRenderJobRequestOptions) GetHeader() (map[string]string, erro
 	return nil, nil
 }
 
+// ResolvePassageRequestOptions is the options needed to make a request to ResolvePassage.
+type ResolvePassageRequestOptions struct {
+	Body *ResolvePassageBody
+}
+
+// GetPathParams returns the path params as a map.
+func (o *ResolvePassageRequestOptions) GetPathParams() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetQuery returns the query params as a map.
+func (o *ResolvePassageRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *ResolvePassageRequestOptions) GetBody() any {
+	if o.Body == nil {
+		return nil
+	}
+	return o.Body
+}
+
+// GetHeader returns the headers as a map.
+func (o *ResolvePassageRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
 // ResolvePathRequestOptions is the options needed to make a request to ResolvePath.
 type ResolvePathRequestOptions struct {
 	Query *ResolvePathQuery
@@ -18146,6 +18296,8 @@ type PreviewBatchTagsBody = PreviewBatchTagsRequest
 
 type SetCollectionLabelBody = SetCollectionLabelRequest
 
+type SuggestConnectionsBody = ConnectionSuggestionRequest
+
 type RunDerivativePurgeBody = DerivativePurgeJobRequest
 
 type PlanDerivativePurgeBody = DerivativePurgePlanRequest
@@ -18248,6 +18400,8 @@ type CreatePageRenderJobBody = PageRenderRequest
 type GetPageRenderJobBody = PageSelectionRequest
 
 type CancelPageRenderJobBody = PageSelectionRequest
+
+type ResolvePassageBody = PassageResolveRequest
 
 type MkdirPathBody = MkdirPathRequest
 
@@ -18731,6 +18885,10 @@ type ListCollectionMembersErrorResponse = Error
 type GetCollectionQualityResponse = api.CollectionQuality
 
 type GetCollectionQualityErrorResponse = Error
+
+type SuggestConnectionsResponse = api.ConnectionSuggestionReport
+
+type SuggestConnectionsErrorResponse = Error
 
 type LookupContentReferencesResponse = api.ContentReferencePage
 
@@ -19238,6 +19396,10 @@ type CancelPageRenderJobResponse = store.PageRenderJob
 
 type CancelPageRenderJobErrorResponse = Error
 
+type ResolvePassageResponse = api.PassageResolution
+
+type ResolvePassageErrorResponse = Error
+
 type ResolvePathResponse = api.Node
 
 type ResolvePathErrorResponse = Error
@@ -19717,6 +19879,8 @@ type CapabilityStateV1 = document.CapabilityStateV1
 
 type CatalogEntry = loadfile.CatalogEntry
 
+type ChunkSpan = document.ChunkSpan
+
 type Collection = api.Collection
 
 type CollectionLabel = api.CollectionLabel
@@ -19730,6 +19894,16 @@ type CollectionQuality = api.CollectionQuality
 type CollectionQualitySummary = api.CollectionQualitySummary
 
 type CollectionSnapshotRepresentation = store.CollectionSnapshotRepresentation
+
+type ConnectionDuplicateMember = api.ConnectionDuplicateMember
+
+type ConnectionSeedSegment = api.ConnectionSeedSegment
+
+type ConnectionSuggestion = api.ConnectionSuggestion
+
+type ConnectionSuggestionReport = api.ConnectionSuggestionReport
+
+type ConnectionSuggestionRequest = api.ConnectionSuggestionRequest
 
 type ContentReference = api.ContentReference
 
@@ -19980,6 +20154,8 @@ type Error = api.Error
 type ErrorPosition = api.ErrorPosition
 
 type EvidenceLexicalPolicyV1 = document.EvidenceLexicalPolicyV1
+
+type EvidenceLocatorV1 = document.EvidenceLocatorV1
 
 type EvidencePolicyIdentity = document.EvidencePolicyIdentity
 
@@ -20253,6 +20429,12 @@ type PageRuntimeIdentity = document.PageRuntimeIdentity
 type PageSelectionRequest = api.PageSelectionRequest
 
 type PageSource = document.PageSource
+
+type PassageRefV1 = document.PassageRefV1
+
+type PassageResolution = api.PassageResolution
+
+type PassageResolveRequest = api.PassageResolveRequest
 
 type PendingFormatV1 = document.PendingFormatV1
 

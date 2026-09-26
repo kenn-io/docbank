@@ -1680,6 +1680,27 @@ components:
       x-go-type-import:
         path: go.kenn.io/docbank/internal/loadfile
         name: loadfile
+    ChunkSpan:
+      additionalProperties: false
+      properties:
+        CharEnd:
+          format: int64
+          type: integer
+        CharStart:
+          format: int64
+          type: integer
+        UnitIndex:
+          format: int64
+          type: integer
+      required:
+        - UnitIndex
+        - CharStart
+        - CharEnd
+      type: object
+      x-go-type: document.ChunkSpan
+      x-go-type-import:
+        path: go.kenn.io/docbank/document
+        name: document
     Collection:
       additionalProperties: false
       properties:
@@ -2033,6 +2054,284 @@ components:
       x-go-type-import:
         path: go.kenn.io/docbank/internal/store
         name: store
+    ConnectionDuplicateMember:
+      additionalProperties: false
+      properties:
+        embedding_set_id:
+          type: string
+        id:
+          type: string
+        index_generation_id:
+          type: string
+        input_generation_id:
+          type: string
+        input_id:
+          type: string
+        score:
+          format: double
+          type: number
+        score_metric:
+          type: string
+        source_generation_id:
+          type: string
+        source_input_id:
+          type: string
+        source_segment:
+          $ref: "#/components/schemas/PassageRefV1"
+        source_segment_quote:
+          type: string
+        source_span:
+          $ref: "#/components/schemas/ChunkSpan"
+        target:
+          $ref: "#/components/schemas/PassageRefV1"
+        target_node_id:
+          format: int64
+          type: integer
+        target_path:
+          type: string
+        target_quote:
+          type: string
+        target_span:
+          $ref: "#/components/schemas/ChunkSpan"
+        vector_space_id:
+          type: string
+      required:
+        - id
+        - target
+        - target_quote
+        - target_node_id
+        - target_path
+        - score
+        - score_metric
+      type: object
+      x-go-type: api.ConnectionDuplicateMember
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
+    ConnectionSeedSegment:
+      additionalProperties: false
+      properties:
+        generation_id:
+          type: string
+        input_id:
+          type: string
+        passage:
+          $ref: "#/components/schemas/PassageRefV1"
+        quote:
+          type: string
+        span:
+          $ref: "#/components/schemas/ChunkSpan"
+      required:
+        - input_id
+        - passage
+        - quote
+        - span
+        - generation_id
+      type: object
+      x-go-type: api.ConnectionSeedSegment
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
+    ConnectionSuggestion:
+      additionalProperties: false
+      properties:
+        aggregation:
+          type: string
+        duplicate_count:
+          format: int64
+          type: integer
+        duplicate_members:
+          items:
+            $ref: "#/components/schemas/ConnectionDuplicateMember"
+          maxItems: 4095
+          type: array
+        embedding_set_id:
+          type: string
+        id:
+          type: string
+        index_generation_id:
+          type: string
+        input_generation_id:
+          type: string
+        input_id:
+          type: string
+        method:
+          type: string
+        reason:
+          type: string
+        score:
+          format: double
+          type: number
+        score_metric:
+          type: string
+        source:
+          $ref: "#/components/schemas/PassageRefV1"
+        source_generation_id:
+          type: string
+        source_input_id:
+          type: string
+        source_quote:
+          type: string
+        source_segment:
+          $ref: "#/components/schemas/PassageRefV1"
+        source_segment_quote:
+          type: string
+        source_span:
+          $ref: "#/components/schemas/ChunkSpan"
+        target:
+          $ref: "#/components/schemas/PassageRefV1"
+        target_node_id:
+          format: int64
+          type: integer
+        target_path:
+          type: string
+        target_quote:
+          type: string
+        target_span:
+          $ref: "#/components/schemas/ChunkSpan"
+        vector_space_id:
+          type: string
+      required:
+        - id
+        - method
+        - reason
+        - source
+        - source_quote
+        - target
+        - target_quote
+        - target_node_id
+        - target_path
+        - score
+        - score_metric
+        - aggregation
+        - duplicate_count
+        - duplicate_members
+      type: object
+      x-go-type: api.ConnectionSuggestion
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
+    ConnectionSuggestionReport:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/ConnectionSuggestionReport.json
+          format: uri
+          readOnly: true
+          type: string
+        aggregation:
+          type: string
+        candidate_count:
+          format: int64
+          type: integer
+        candidates:
+          items:
+            $ref: "#/components/schemas/ConnectionSuggestion"
+          type: array
+        coverage_reason:
+          type: string
+        fallback_methods:
+          items:
+            type: string
+          type: array
+        index_generation_id:
+          type: string
+        method:
+          type: string
+        score_metric:
+          type: string
+        seed_kind:
+          type: string
+        seed_segment_count:
+          format: int64
+          type: integer
+        seed_segments:
+          items:
+            $ref: "#/components/schemas/ConnectionSeedSegment"
+          maxItems: 4096
+          type: array
+        source:
+          $ref: "#/components/schemas/PassageRefV1"
+        source_embedding_set_id:
+          type: string
+        source_manifest_checksum:
+          type: string
+        state:
+          enum:
+            - ready
+            - unavailable
+          type: string
+        truncated:
+          type: boolean
+        vector_space_id:
+          type: string
+      required:
+        - state
+        - source
+        - seed_kind
+        - method
+        - candidate_count
+        - seed_segment_count
+        - seed_segments
+        - truncated
+        - candidates
+        - fallback_methods
+      type: object
+      x-go-type: api.ConnectionSuggestionReport
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
+    ConnectionSuggestionRequest:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/ConnectionSuggestionRequest.json
+          format: uri
+          readOnly: true
+          type: string
+        binding_id:
+          maxLength: 128
+          minLength: 1
+          type: string
+        fence:
+          $ref: "#/components/schemas/DocumentSourceFence"
+        limit:
+          format: int64
+          maximum: 100
+          minimum: 1
+          type: integer
+        method:
+          enum:
+            - semantic
+            - lexical
+            - tag
+            - hybrid
+          type: string
+        profile:
+          maxLength: 128
+          minLength: 1
+          type: string
+        seed_kind:
+          enum:
+            - passage
+            - document
+          type: string
+        source:
+          $ref: "#/components/schemas/PassageRefV1"
+      required:
+        - source
+        - profile
+        - binding_id
+        - fence
+      type: object
+      x-go-type: api.ConnectionSuggestionRequest
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     ContentReference:
       additionalProperties: false
       properties:
@@ -5685,6 +5984,31 @@ components:
         - source_evidence_contract
       type: object
       x-go-type: document.EvidenceLexicalPolicyV1
+      x-go-type-import:
+        path: go.kenn.io/docbank/document
+        name: document
+    EvidenceLocatorV1:
+      additionalProperties: false
+      properties:
+        end:
+          format: int64
+          type: integer
+        index_origin:
+          type: string
+        kind:
+          type: string
+        name:
+          type: string
+        start:
+          format: int64
+          type: integer
+      required:
+        - end
+        - index_origin
+        - kind
+        - start
+      type: object
+      x-go-type: document.EvidenceLocatorV1
       x-go-type-import:
         path: go.kenn.io/docbank/document
         name: document
@@ -9404,6 +9728,125 @@ components:
       x-go-type-import:
         path: go.kenn.io/docbank/document
         name: document
+    PassageRefV1:
+      additionalProperties: false
+      properties:
+        attachment_id:
+          type: string
+        body_sha256:
+          type: string
+        byte_end:
+          format: int64
+          type: integer
+        byte_start:
+          format: int64
+          type: integer
+        content_version_id:
+          type: string
+        document_uid:
+          type: string
+        federation_domain_uid:
+          type: string
+        quote_sha256:
+          type: string
+        rendition_build_id:
+          type: string
+        source_sha256:
+          type: string
+        vault_uid:
+          type: string
+        version:
+          format: int64
+          type: integer
+      required:
+        - version
+        - vault_uid
+        - document_uid
+        - content_version_id
+        - source_sha256
+        - rendition_build_id
+        - attachment_id
+        - body_sha256
+        - byte_start
+        - byte_end
+        - quote_sha256
+      type: object
+      x-go-type: document.PassageRefV1
+      x-go-type-import:
+        path: go.kenn.io/docbank/document
+        name: document
+    PassageResolution:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/PassageResolution.json
+          format: uri
+          readOnly: true
+          type: string
+        availability:
+          enum:
+            - available
+          type: string
+        freshness:
+          enum:
+            - current
+            - historical
+          type: string
+        passage_id:
+          pattern: ^[0-9a-f]{64}$
+          type: string
+        ref:
+          $ref: "#/components/schemas/PassageRefV1"
+        section_path:
+          items:
+            type: string
+          type: array
+        source_locator:
+          $ref: "#/components/schemas/EvidenceLocatorV1"
+        source_path:
+          type: string
+        text:
+          type: string
+      required:
+        - availability
+        - freshness
+        - passage_id
+        - ref
+        - text
+        - section_path
+        - source_path
+      type: object
+      x-go-type: api.PassageResolution
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
+    PassageResolveRequest:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/PassageResolveRequest.json
+          format: uri
+          readOnly: true
+          type: string
+        max_bytes:
+          default: 32768
+          format: int64
+          maximum: 262144
+          minimum: 1
+          type: integer
+        ref:
+          $ref: "#/components/schemas/PassageRefV1"
+      required:
+        - ref
+      type: object
+      x-go-type: api.PassageResolveRequest
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     PendingFormatV1:
       additionalProperties: false
       properties:
@@ -15116,6 +15559,29 @@ paths:
                 $ref: "#/components/schemas/Error"
           description: Error
       summary: Inspect bounded current collection quality and text coverage
+  /api/v1/connections/suggest:
+    post:
+      operationId: suggestConnections
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ConnectionSuggestionRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ConnectionSuggestionReport"
+          description: OK
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: Suggest exact passage connections from stored evidence
   /api/v1/content-references:
     get:
       description: Results are logical content-version references, not physical loose or pack entries. Live current references sort first, followed by live history and trashed references.
@@ -18771,6 +19237,29 @@ paths:
                 $ref: "#/components/schemas/Error"
           description: Error
       summary: Cancel a render job and fence late output
+  /api/v1/passages/resolve:
+    post:
+      operationId: resolvePassage
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PassageResolveRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PassageResolution"
+          description: OK
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: Resolve one exact retained Markdown passage
   /api/v1/path:
     get:
       description: path is a query parameter (one well-defined encoding; catch-all URL segments are ambiguous for encoded slashes). Must start with '/'; '/' resolves the root.

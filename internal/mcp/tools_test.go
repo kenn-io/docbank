@@ -23,7 +23,7 @@ import (
 func TestDefaultToolCatalogIsFixedBoundedAndReadOnly(t *testing.T) {
 	tools := toolCatalog(false, false)
 	wantNames := []string{
-		"get_vault_info", "list_documents", "search_documents", "get_document",
+		"get_vault_info", "list_documents", "search_documents", "suggest_connections", "get_document",
 		"list_document_versions", "read_rendition_text", "get_processing_plan",
 		"get_processing_status", "get_processing_coverage", "get_package_import",
 		"get_package_preflight", "list_package_preflight_diagnostics",
@@ -437,6 +437,7 @@ func assertOutputIdentityProperties(t *testing.T, name string, raw any) {
 		"get_vault_info":          {"vault_id"},
 		"list_documents":          {"node_id", "content_version_id", "attachment_id"},
 		"search_documents":        {"fence_fingerprint", "content_version_ids", "node_id"},
+		"suggest_connections":     {"source", "target", "content_version_id", "quote_sha256"},
 		"get_document":            {"node_id", "content_version_id", "attachment_id"},
 		"list_document_versions":  {"node_id", "content_version_id"},
 		"read_rendition_text":     {"node_id", "content_version_id", "attachment_id", "build_id"},
