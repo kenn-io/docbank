@@ -115,6 +115,15 @@ export interface ProductionPreviewTicket {
   text: { url: string; sha256: string; size: number };
 }
 
+export interface ProductionJobStatus {
+  job_id: string;
+  set_id: string;
+  revision: number;
+  state: "queued" | "running" | "succeeded" | "failed" | "canceled";
+  revision_sha256: string;
+  receipt_sha256?: string;
+}
+
 const setBase = "/api/v1/productions/sets";
 
 export function listProductionSets(session: string, cursor = "", signal?: AbortSignal): Promise<ProductionSetPage> {
@@ -186,6 +195,12 @@ export function createProductionPreview(session: string, setID: string, revision
     session, signal, method: "POST", headers: { "Content-Type": "application/json", "If-Match": String(etag) },
     body: JSON.stringify({ operation_id: operationID, member_id: memberID, page }),
   });
+}
+
+export function getProductionJobStatus(session: string, setID: string, jobID: string,
+  signal?: AbortSignal): Promise<ProductionJobStatus> {
+  return sessionJSON<ProductionJobStatus>(`${setBase}/${encodeURIComponent(setID)}/jobs/${encodeURIComponent(jobID)}`,
+    { session, signal });
 }
 
 export function createProductionSet(session: string, name: string, instructions: string,

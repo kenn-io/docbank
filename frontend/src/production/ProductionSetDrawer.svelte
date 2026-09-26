@@ -5,6 +5,7 @@
   import { APIError } from "../api-transport.js";
   import { createProductionSet, getProductionDraft, getProductionSet, listProductionSets, type ProductionDraft, type ProductionSet } from "./api.js";
   import ProductionReview from "./ProductionReview.svelte";
+  import ProductionJobLookup from "./ProductionJobLookup.svelte";
 
   interface Props {
     session: string;
@@ -180,6 +181,10 @@
           <p>Draft changes and review declarations are bound to this exact revision.</p>
         {/if}
       </Card>
+      {#key selected.id}
+        <ProductionJobLookup {session} setID={selected.id}
+          onauthfailure={cause => { onauthfailure(cause); onclose(); }} />
+      {/key}
       {#if draft}
         {#key `${selected.id}:${draft.revision}:${draft.etag}`}
           <ProductionReview {session} set={selected} {draft} onrefresh={() => void refresh()} {onauthfailure} {onclose} />
