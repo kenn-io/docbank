@@ -1505,13 +1505,13 @@ func TestSerializeRenditionTreeUsesOneBudgetedLinearWalk(t *testing.T) {
 	smallDecimal := decimalList(2_048, 32)
 	largeDecimal := decimalList(4_096, 64)
 	smallDecimalBytes := allocatedBytes(func() (string, bool) {
-		return serializeRenditionList(smallDecimal, 8)
+		return serializeRenditionList(smallDecimal, 8, false)
 	})
 	largeDecimalBytes := allocatedBytes(func() (string, bool) {
-		return serializeRenditionList(largeDecimal, 8)
+		return serializeRenditionList(largeDecimal, 8, false)
 	})
 	require.Less(t, largeDecimalBytes, smallDecimalBytes*3, "unadmitted decimal ordinals must not be preallocated")
-	value, truncated := serializeRenditionList(largeDecimal, 8)
+	value, truncated := serializeRenditionList(largeDecimal, 8, false)
 	assert.Empty(t, value)
 	assert.True(t, truncated)
 
@@ -1527,13 +1527,13 @@ func TestSerializeRenditionTreeUsesOneBudgetedLinearWalk(t *testing.T) {
 	})
 	wantCrossing := "- 999999999\\. " + firstText + "\n- 1000000000\\. x"
 	singleBytes := allocatedBytes(func() (string, bool) {
-		return serializeRenditionList(singleRepresentable, len(wantCrossing)-1)
+		return serializeRenditionList(singleRepresentable, len(wantCrossing)-1, false)
 	})
 	crossingBytes := allocatedBytes(func() (string, bool) {
-		return serializeRenditionList(crossing, len(wantCrossing))
+		return serializeRenditionList(crossing, len(wantCrossing), false)
 	})
 	require.Less(t, crossingBytes, singleBytes*2, "ordered degradation must not rebuild admitted item subtrees")
-	value, truncated = serializeRenditionList(crossing, len(wantCrossing))
+	value, truncated = serializeRenditionList(crossing, len(wantCrossing), false)
 	assert.Equal(t, wantCrossing, value)
 	assert.False(t, truncated)
 	evidence := normalizeRenditionEvidence(t, SourceEvidenceV1{
@@ -1592,10 +1592,10 @@ func TestSerializeRenditionTreeUsesOneBudgetedLinearWalk(t *testing.T) {
 	smallLooseMarkdown := expectedLooseTree(smallDepth)
 	largeLooseMarkdown := expectedLooseTree(largeDepth)
 	smallLooseBytes := allocatedBytes(func() (string, bool) {
-		return serializeRenditionList(smallLoose, len(smallLooseMarkdown))
+		return serializeRenditionList(smallLoose, len(smallLooseMarkdown), false)
 	})
 	largeLooseBytes := allocatedBytes(func() (string, bool) {
-		return serializeRenditionList(largeLoose, len(largeLooseMarkdown))
+		return serializeRenditionList(largeLoose, len(largeLooseMarkdown), false)
 	})
 	require.Less(
 		t,
@@ -1609,7 +1609,7 @@ func TestSerializeRenditionTreeUsesOneBudgetedLinearWalk(t *testing.T) {
 		markdown string
 	}{{name: "small", list: smallLoose, markdown: smallLooseMarkdown}, {name: "large", list: largeLoose, markdown: largeLooseMarkdown}} {
 		t.Run(test.name+" fully admitted", func(t *testing.T) {
-			actual, actualTruncated := serializeRenditionList(test.list, len(test.markdown))
+			actual, actualTruncated := serializeRenditionList(test.list, len(test.markdown), false)
 			require.False(t, actualTruncated)
 			assert.Equal(t, test.markdown, actual)
 			assert.Contains(t, actual, "leaf")

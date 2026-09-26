@@ -2,7 +2,6 @@ package document
 
 import (
 	"bytes"
-	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/xml"
@@ -31,49 +30,29 @@ var ErrRenditionXHTMLBudget = errors.New("XHTML rendition exceeds its work or ou
 
 // RenditionMarkdownFromXHTML converts a complete UTF-8 XML document to bounded Markdown.
 func RenditionMarkdownFromXHTML(source []byte, maxRunes int) (string, error) {
-	return RenditionMarkdownFromXHTMLContext(context.Background(), source, maxRunes)
-}
-
-// RenditionMarkdownFromXHTMLContext converts XHTML while observing cancellation.
-func RenditionMarkdownFromXHTMLContext(ctx context.Context, source []byte, maxRunes int) (string, error) {
-	if ctx == nil {
-		ctx = context.Background()
-	}
-	if err := ctx.Err(); err != nil {
-		return "", err
-	}
 	if maxRunes < 0 || len(source) > 100<<20 {
 		return "", ErrRenditionXHTMLBudget
 	}
 	if !utf8.Valid(source) {
 		return "", errors.New("XHTML must be UTF-8")
 	}
-	if err := checkRenditionXHTMLAttributeBound(ctx, source); err != nil {
+	if err := checkRenditionXHTMLAttributeBound(source); err != nil {
 		return "", err
 	}
 	maxRunes = min(maxRunes, maxEvidenceTextBytes)
 	inlineAllocation := int64(unsafe.Sizeof(renditionInline{}))
 	inlineAllowance := 4*inlineAllocation + 4
 	budget := min(int64(100<<20), int64(len(source))+(int64(maxRunes)+1)*inlineAllowance)
-	writer := renditionHTMLWriter{ctx: ctx, maxLinkChars: renditionMaxLinkChars, work: &renditionXHTMLWork{remaining: budget}}
-	decoder := xml.NewDecoder(contextReader{ctx: ctx, reader: bytes.NewReader(bytes.TrimPrefix(source, []byte{0xef, 0xbb, 0xbf}))})
+	writer := renditionHTMLWriter{maxLinkChars: renditionMaxLinkChars, work: &renditionXHTMLWork{remaining: budget}}
+	decoder := xml.NewDecoder(bytes.NewReader(bytes.TrimPrefix(source, []byte{0xef, 0xbb, 0xbf})))
 	decoder.Entity = xml.HTMLEntity
 	depth, roots, head := 0, 0, 0
 	for {
-		if err := ctx.Err(); err != nil {
-			return "", err
-		}
 		token, err := decoder.Token()
 		if errors.Is(err, io.EOF) {
 			break
 		}
 		if err != nil {
-			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-				return "", fmt.Errorf("decode XHTML: %w", err)
-			}
-			if ctxErr := ctx.Err(); ctxErr != nil {
-				return "", ctxErr
-			}
 			return "", errors.New("XHTML XML is invalid or uses an unsupported encoding")
 		}
 		if !writer.charge(1) {
@@ -97,18 +76,12 @@ func RenditionMarkdownFromXHTMLContext(ctx context.Context, source []byte, maxRu
 			}
 			converted := html.Token{Data: token.Name.Local}
 			for _, attr := range token.Attr {
-				if err := ctx.Err(); err != nil {
-					return "", err
-				}
 				if !writer.charge(int64(len(attr.Name.Local)) + int64(len(attr.Value)) + 2*int64(unsafe.Sizeof(html.Attribute{}))) {
 					return "", ErrRenditionXHTMLBudget
 				}
 				converted.Attr = append(converted.Attr, html.Attribute{Key: attr.Name.Local, Val: attr.Value})
 			}
 			writer.startTag(converted, 0, false)
-			if err := writer.contextError(); err != nil {
-				return "", err
-			}
 		case xml.EndElement:
 			depth--
 			if head > 0 {
@@ -116,9 +89,6 @@ func RenditionMarkdownFromXHTMLContext(ctx context.Context, source []byte, maxRu
 				continue
 			}
 			writer.endTag(token.Name.Local)
-			if err := writer.contextError(); err != nil {
-				return "", err
-			}
 		case xml.CharData:
 			if depth == 0 && len(bytes.TrimSpace(token)) > 0 {
 				return "", errors.New("XHTML has text outside its root")
@@ -127,47 +97,23 @@ func RenditionMarkdownFromXHTMLContext(ctx context.Context, source []byte, maxRu
 				if !writer.charge(int64(len(token))) {
 					return "", ErrRenditionXHTMLBudget
 				}
-				value, err := canonicalEvidenceStringContext(ctx, string(token))
-				if err != nil {
-					return "", err
-				}
-				if err := writer.writeTextContext(ctx, value); err != nil {
-					return "", err
-				}
+				writer.writeText(canonicalEvidenceString(string(token)))
 			}
 		}
 		if writer.work.exceeded || writer.linkDepthTruncated {
 			return "", ErrRenditionXHTMLBudget
 		}
 	}
-	if err := ctx.Err(); err != nil {
-		return "", err
-	}
 	if roots != 1 || depth != 0 {
 		return "", errors.New("XHTML document is incomplete")
 	}
 	writer.finalize()
-	if err := canonicalizeRenditionBlocks(ctx, writer.blocks); err != nil {
-		return "", err
-	}
-	fits, err := renditionXHTMLSerializationFits(ctx, writer.blocks, budget)
-	if err != nil {
-		return "", err
-	}
-	if writer.work.exceeded || !fits {
+	canonicalizeRenditionBlocks(writer.blocks)
+	if writer.work.exceeded || !renditionXHTMLSerializationFits(writer.blocks, budget) {
 		return "", ErrRenditionXHTMLBudget
 	}
-	text, truncated, err := serializeRenditionBlocksContext(ctx, writer.blocks, maxRunes)
-	if err != nil {
-		return "", err
-	}
-	if err := ctx.Err(); err != nil {
-		return "", err
-	}
-	text, err = canonicalEvidenceStringContext(ctx, text)
-	if err != nil {
-		return "", err
-	}
+	text, truncated := serializeRenditionBlocks(writer.blocks, maxRunes)
+	text = canonicalEvidenceString(text)
 	if truncated || len(text) > maxEvidenceTextBytes || utf8.RuneCountInString(text) > maxRunes {
 		return "", ErrRenditionXHTMLBudget
 	}
@@ -176,19 +122,8 @@ func RenditionMarkdownFromXHTMLContext(ctx context.Context, source []byte, maxRu
 
 const maxRenditionXHTMLAttributes = 1 << 18
 
-func checkRenditionXHTMLAttributeBound(ctx context.Context, source []byte) error {
-	checks := 0
-	check := func() error {
-		checks++
-		if checks&1023 == 0 {
-			return ctx.Err()
-		}
-		return nil
-	}
+func checkRenditionXHTMLAttributeBound(source []byte) error {
 	for index := 0; index < len(source); {
-		if err := check(); err != nil {
-			return err
-		}
 		if source[index] != '<' || index+1 >= len(source) {
 			index++
 			continue
@@ -196,9 +131,6 @@ func checkRenditionXHTMLAttributeBound(ctx context.Context, source []byte) error
 		if bytes.HasPrefix(source[index:], []byte("<!--")) {
 			index += len("<!--")
 			for index+2 < len(source) && !bytes.Equal(source[index:index+3], []byte("-->")) {
-				if err := check(); err != nil {
-					return err
-				}
 				index++
 			}
 			index += min(3, len(source)-index)
@@ -207,9 +139,6 @@ func checkRenditionXHTMLAttributeBound(ctx context.Context, source []byte) error
 		if bytes.HasPrefix(source[index:], []byte("<![CDATA[")) {
 			index += len("<![CDATA[")
 			for index+2 < len(source) && !bytes.Equal(source[index:index+3], []byte("]]>")) {
-				if err := check(); err != nil {
-					return err
-				}
 				index++
 			}
 			index += min(3, len(source)-index)
@@ -218,9 +147,6 @@ func checkRenditionXHTMLAttributeBound(ctx context.Context, source []byte) error
 		if source[index+1] == '?' {
 			index += 2
 			for index+1 < len(source) && (source[index] != '?' || source[index+1] != '>') {
-				if err := check(); err != nil {
-					return err
-				}
 				index++
 			}
 			index += min(2, len(source)-index)
@@ -233,15 +159,9 @@ func checkRenditionXHTMLAttributeBound(ctx context.Context, source []byte) error
 			index++
 			quote := byte(0)
 			for index < len(source) {
-				if err := check(); err != nil {
-					return err
-				}
 				if quote == 0 && bytes.HasPrefix(source[index:], []byte("<!--")) {
 					index += len("<!--")
 					for index+2 < len(source) && !bytes.Equal(source[index:index+3], []byte("-->")) {
-						if err := check(); err != nil {
-							return err
-						}
 						index++
 					}
 					index += min(3, len(source)-index)
@@ -254,6 +174,8 @@ func checkRenditionXHTMLAttributeBound(ctx context.Context, source []byte) error
 					}
 				} else if character == '\'' || character == '"' {
 					quote = character
+				} else if character == '<' {
+					return errors.New("XHTML DOCTYPE contains unsupported markup")
 				} else if character == '[' {
 					return errors.New("XHTML internal DTD subsets are unsupported")
 				} else if character == '>' {
@@ -267,9 +189,6 @@ func checkRenditionXHTMLAttributeBound(ctx context.Context, source []byte) error
 		if source[index+1] == '/' {
 			index++
 			for index < len(source) && source[index] != '>' {
-				if err := check(); err != nil {
-					return err
-				}
 				index++
 			}
 			index += min(1, len(source)-index)
@@ -280,9 +199,6 @@ func checkRenditionXHTMLAttributeBound(ctx context.Context, source []byte) error
 		attributes := 0
 		quote := byte(0)
 		for index < len(source) {
-			if err := check(); err != nil {
-				return err
-			}
 			character := source[index]
 			if quote != 0 {
 				if character == quote {
@@ -305,114 +221,49 @@ func checkRenditionXHTMLAttributeBound(ctx context.Context, source []byte) error
 	return nil
 }
 
-type contextReader struct {
-	ctx    context.Context
-	reader io.Reader
-}
-
-func (reader contextReader) Read(p []byte) (int, error) {
-	if err := reader.ctx.Err(); err != nil {
-		return 0, err
-	}
-	n, err := reader.reader.Read(p)
-	if contextErr := reader.ctx.Err(); contextErr != nil {
-		return n, contextErr
-	}
-	return n, err
-}
-
-func canonicalizeRenditionBlocks(ctx context.Context, blocks []renditionBlock) error {
+func canonicalizeRenditionBlocks(blocks []renditionBlock) {
 	for index := range blocks {
-		if err := ctx.Err(); err != nil {
-			return err
-		}
-		block := &blocks[index]
-		canonical, err := canonicalEvidenceStringContext(ctx, block.code)
-		if err != nil {
-			return err
-		}
-		block.code = canonical
-		inlines, err := canonicalizeRenditionInlines(ctx, block.inlines)
-		if err != nil {
-			return err
-		}
-		block.inlines = inlines
-		for rowIndex, row := range block.rows {
-			if err := ctx.Err(); err != nil {
-				return err
+		blocks[index].code = canonicalEvidenceString(blocks[index].code)
+		blocks[index].inlines = canonicalizeRenditionInlines(blocks[index].inlines)
+		for rowIndex := range blocks[index].rows {
+			for cellIndex := range blocks[index].rows[rowIndex] {
+				blocks[index].rows[rowIndex][cellIndex] = canonicalizeRenditionInlines(blocks[index].rows[rowIndex][cellIndex])
 			}
-			for cellIndex, cell := range row {
-				if err := ctx.Err(); err != nil {
-					return err
-				}
-				inlines, err := canonicalizeRenditionInlines(ctx, cell)
-				if err != nil {
-					return err
-				}
-				row[cellIndex] = inlines
-			}
-			block.rows[rowIndex] = row
 		}
-		if block.list == nil {
+		if blocks[index].list == nil {
 			continue
 		}
-		for _, item := range block.list.items {
-			if err := ctx.Err(); err != nil {
-				return err
-			}
-			if err := canonicalizeRenditionBlocks(ctx, item.blocks); err != nil {
-				return err
-			}
+		for itemIndex := range blocks[index].list.items {
+			canonicalizeRenditionBlocks(blocks[index].list.items[itemIndex].blocks)
 		}
 	}
-	return nil
 }
 
-func canonicalizeRenditionInlines(ctx context.Context, values []renditionInline) ([]renditionInline, error) {
+func canonicalizeRenditionInlines(values []renditionInline) []renditionInline {
 	result := values[:0]
 	var text strings.Builder
-	flushText := func() error {
+	flushText := func() {
 		if text.Len() == 0 {
-			return nil
+			return
 		}
-		canonical, err := canonicalEvidenceStringContext(ctx, text.String())
-		if err != nil {
-			return err
-		}
-		result = append(result, renditionInline{kind: renditionText, text: canonical})
+		result = append(result, renditionInline{kind: renditionText, text: canonicalEvidenceString(text.String())})
 		text.Reset()
-		return nil
 	}
 	for _, value := range values {
-		if err := ctx.Err(); err != nil {
-			return nil, err
-		}
 		if value.kind == renditionText {
 			text.WriteString(value.text)
 			continue
 		}
-		if err := flushText(); err != nil {
-			return nil, err
-		}
+		flushText()
 		if value.kind == renditionInlineCode {
-			var err error
-			value.text, err = canonicalEvidenceStringContext(ctx, value.text)
-			if err != nil {
-				return nil, err
-			}
+			value.text = canonicalEvidenceString(value.text)
 		} else {
-			children, err := canonicalizeRenditionInlines(ctx, value.children)
-			if err != nil {
-				return nil, err
-			}
-			value.children = children
+			value.children = canonicalizeRenditionInlines(value.children)
 		}
 		result = append(result, value)
 	}
-	if err := flushText(); err != nil {
-		return nil, err
-	}
-	return result, nil
+	flushText()
+	return result
 }
 
 type renditionXHTMLWork struct {
@@ -433,105 +284,55 @@ func (w *renditionHTMLWriter) charge(amount int64) bool {
 }
 
 // Bound rectangular table padding and temporary serialization before allocation.
-func renditionXHTMLSerializationFits(ctx context.Context, blocks []renditionBlock, budget int64) (bool, error) {
-	var inlines func([]renditionInline) (int64, error)
-	inlines = func(values []renditionInline) (int64, error) {
+func renditionXHTMLSerializationFits(blocks []renditionBlock, budget int64) bool {
+	var inlines func([]renditionInline) int64
+	inlines = func(values []renditionInline) int64 {
 		var size int64
 		for _, value := range values {
-			if err := ctx.Err(); err != nil {
-				return 0, err
-			}
 			size += int64(len(value.text))
 			switch value.kind {
 			case renditionText:
-				runes := 0
 				for _, r := range value.text {
-					if runes&1023 == 0 {
-						if err := ctx.Err(); err != nil {
-							return 0, err
-						}
-					}
-					runes++
 					if isMarkdownASCIIPunctuation(r) {
 						size++
 					}
 				}
 			case renditionInlineCode:
-				backticks, err := maxBacktickRunContext(ctx, value.text)
-				if err != nil {
-					return 0, err
-				}
-				size += 2*int64(backticks+1) + 4 + int64(strings.Count(value.text, "|"))
+				size += 2*int64(maxBacktickRun(value.text)+1) + 4 + int64(strings.Count(value.text, "|"))
 			case renditionLinkInline:
-				children, err := inlines(value.children)
-				if err != nil {
-					return 0, err
-				}
-				size += int64(len(value.destination)) + 8 + children
+				size += int64(len(value.destination)) + 8 + inlines(value.children)
 			}
 		}
-		return size, nil
+		return size
 	}
-	var cost func([]renditionBlock, int) (int64, error)
-	cost = func(blocks []renditionBlock, indent int) (int64, error) {
+	var cost func([]renditionBlock, int) int64
+	cost = func(blocks []renditionBlock, indent int) int64 {
 		var total int64
 		for _, block := range blocks {
-			if err := ctx.Err(); err != nil {
-				return 0, err
-			}
-			inlineSize, err := inlines(block.inlines)
-			if err != nil {
-				return 0, err
-			}
-			total += 16 + int64(indent)*int64(3+strings.Count(block.code, "\n")+len(block.rows)) + inlineSize
+			total += 16 + int64(indent)*int64(3+strings.Count(block.code, "\n")+len(block.rows)) + inlines(block.inlines)
 			if block.kind == renditionCodeBlock {
-				backticks, err := maxBacktickRunContext(ctx, block.code)
-				if err != nil {
-					return 0, err
-				}
-				total += int64(len(block.code) + len(block.language) + 3 + 2*max(3, backticks+1))
+				total += int64(len(block.code) + len(block.language) + 3 + 2*max(3, maxBacktickRun(block.code)+1))
 			}
 			columns := 0
 			for _, row := range block.rows {
-				if err := ctx.Err(); err != nil {
-					return 0, err
-				}
 				columns = max(columns, len(row))
 				for _, cell := range row {
-					if err := ctx.Err(); err != nil {
-						return 0, err
-					}
-					cellSize, err := inlines(cell)
-					if err != nil {
-						return 0, err
-					}
-					total += cellSize
+					total += inlines(cell)
 				}
 			}
 			total += int64(len(block.rows)+1) * (int64(columns)*6 + 3)
 			if block.list != nil {
 				for _, item := range block.list.items {
-					if err := ctx.Err(); err != nil {
-						return 0, err
-					}
-					itemCost, err := cost(item.blocks, indent+maxOrderedListMarkerDigits+4)
-					if err != nil {
-						return 0, err
-					}
-					total += itemCost + int64(len(block.list.start)) + 16
+					total += cost(item.blocks, indent+maxOrderedListMarkerDigits+4) + int64(len(block.list.start)) + 16
 				}
 			}
 			if total > budget {
-				return total, nil
+				return total
 			}
 		}
-		return total, nil
+		return total
 	}
-	total, err := cost(blocks, 0)
-	if err != nil {
-		return false, err
-	}
-	return total <= budget, nil
+	return cost(blocks, 0) <= budget
 }
 
 const (
@@ -835,10 +636,7 @@ func sanitizeRenditionMarkdown(markdown string, maxLinkChars, maxSourceBytes, ma
 	if err := writer.consumeFragments(rendered.Bytes(), rawSpans); err != nil {
 		return "", false, false, err
 	}
-	text, renditionTruncated, err := serializeRenditionBlocksContext(context.Background(), writer.blocks, maxRunes)
-	if err != nil {
-		return "", false, false, err
-	}
+	text, renditionTruncated := serializeRenditionBlocks(writer.blocks, maxRunes)
 	renditionTruncated = renditionTruncated || writer.linkDepthTruncated
 	return text, sourceTruncated, renditionTruncated, nil
 }
@@ -1045,8 +843,6 @@ type renditionListFrame struct {
 // Markdown is emitted. Its output is intentionally separate from the frozen
 // canonicalHTMLWriter used by NormalizeDocument.
 type renditionHTMLWriter struct {
-	ctx            context.Context
-	err            error
 	work           *renditionXHTMLWork
 	maxLinkChars   int
 	rawFragment    bool
@@ -1119,9 +915,6 @@ func (w *renditionHTMLWriter) consumeFragments(rendered []byte, rawSpans []rendi
 				return err
 			}
 		}
-		if err := w.contextError(); err != nil {
-			return err
-		}
 		w.renderedOffset = span.end
 		offset = span.end
 	}
@@ -1131,7 +924,7 @@ func (w *renditionHTMLWriter) consumeFragments(rendered []byte, rawSpans []rendi
 		}
 	}
 	w.finalize()
-	return w.contextError()
+	return nil
 }
 
 func pairRenditionRawActiveElements(rendered []byte, spans []renditionRawSpan) {
@@ -1256,14 +1049,11 @@ func isInlineGeneratedHTML(fragment []byte) bool {
 }
 
 func (w *renditionHTMLWriter) consumeRawFragment(fragment []byte, inline bool) error {
-	raw := renditionHTMLWriter{ctx: w.context(), maxLinkChars: w.maxLinkChars, rawFragment: true}
+	raw := renditionHTMLWriter{maxLinkChars: w.maxLinkChars, rawFragment: true}
 	if err := raw.consumeFragment(fragment, false); err != nil {
 		return err
 	}
 	raw.finalize()
-	if err := raw.contextError(); err != nil {
-		return err
-	}
 	w.linkDepthTruncated = w.linkDepthTruncated || raw.linkDepthTruncated
 	raw.blocks = readableRawBlocks(raw.blocks)
 	if inline {
@@ -1340,9 +1130,6 @@ func (w *renditionHTMLWriter) appendRawInlineBlocks(blocks []renditionBlock) {
 func (w *renditionHTMLWriter) consumeFragment(fragment []byte, suppressText bool) error {
 	tokenizer := html.NewTokenizer(bytes.NewReader(fragment))
 	for {
-		if err := w.contextError(); err != nil {
-			return err
-		}
 		tokenType := tokenizer.Next()
 		tokenOffset := w.renderedOffset
 		w.renderedOffset += len(tokenizer.Raw())
@@ -1354,27 +1141,16 @@ func (w *renditionHTMLWriter) consumeFragment(fragment []byte, suppressText bool
 			return fmt.Errorf("tokenize rendition HTML: %w", tokenizer.Err())
 		case html.TextToken:
 			if w.skipDepth == 0 && !suppressText {
-				if err := w.writeTextContext(w.context(), string(tokenizer.Text())); err != nil {
-					return err
-				}
+				w.writeText(string(tokenizer.Text()))
 			}
 		case html.StartTagToken:
 			w.startTag(tokenizer.Token(), tokenOffset, suppressText)
-			if err := w.contextError(); err != nil {
-				return err
-			}
 		case html.SelfClosingTagToken:
 			w.startTag(tokenizer.Token(), tokenOffset, suppressText)
-			if err := w.contextError(); err != nil {
-				return err
-			}
 		case html.EndTagToken:
 			tag := tokenizer.Token().Data
 			if !w.endSuppressedTag(tag) {
 				w.endTag(tag)
-			}
-			if err := w.contextError(); err != nil {
-				return err
 			}
 		case html.CommentToken, html.DoctypeToken:
 			// Not searchable evidence.
@@ -1419,12 +1195,7 @@ func (w *renditionHTMLWriter) startTag(token html.Token, tokenOffset int, suppre
 		return
 	}
 	if tag == "input" && !w.rawFragment && !suppressText {
-		marker, ok, err := parserGeneratedCheckboxMarkerContext(w.context(), token)
-		if err != nil {
-			w.err = err
-			return
-		}
-		if ok {
+		if marker, ok := parserGeneratedCheckboxMarker(token); ok {
 			w.writeText(marker)
 			return
 		}
@@ -1462,17 +1233,8 @@ func (w *renditionHTMLWriter) startTag(token html.Token, tokenOffset int, suppre
 		}
 		if tag == "ol" {
 			for _, attribute := range token.Attr {
-				if err := w.contextError(); err != nil {
-					w.err = err
-					return
-				}
 				if attribute.Key == "start" {
-					parsed, ok, err := canonicalNonnegativeDecimalContext(w.context(), attribute.Val)
-					if err != nil {
-						w.err = err
-						return
-					}
-					if ok {
+					if parsed, ok := canonicalNonnegativeDecimal(attribute.Val); ok {
 						start = parsed
 					}
 				}
@@ -1543,10 +1305,6 @@ func (w *renditionHTMLWriter) startTag(token html.Token, tokenOffset int, suppre
 	case "code":
 		if w.inPre {
 			for _, attribute := range token.Attr {
-				if err := w.contextError(); err != nil {
-					w.err = err
-					return
-				}
 				if attribute.Key == "class" && strings.HasPrefix(attribute.Val, "language-") {
 					w.preLang = safeCodeLanguage(strings.TrimPrefix(attribute.Val, "language-"))
 				}
@@ -1561,10 +1319,6 @@ func (w *renditionHTMLWriter) startTag(token html.Token, tokenOffset int, suppre
 			return
 		}
 		for _, attribute := range token.Attr {
-			if err := w.contextError(); err != nil {
-				w.err = err
-				return
-			}
 			if attribute.Key == "alt" {
 				w.writeText(attribute.Val)
 				break
@@ -1574,10 +1328,6 @@ func (w *renditionHTMLWriter) startTag(token html.Token, tokenOffset int, suppre
 		w.flushPendingSpace()
 		destination := ""
 		for _, attribute := range token.Attr {
-			if err := w.contextError(); err != nil {
-				w.err = err
-				return
-			}
 			if attribute.Key == "href" {
 				destination = safeRenditionLink(attribute.Val, w.maxLinkChars)
 				break
@@ -1608,12 +1358,9 @@ func (w *renditionHTMLWriter) endSuppressedTag(tag string) bool {
 	return true
 }
 
-func parserGeneratedCheckboxMarkerContext(ctx context.Context, token html.Token) (string, bool, error) {
+func parserGeneratedCheckboxMarker(token html.Token) (string, bool) {
 	checkbox, checked := false, false
 	for _, attribute := range token.Attr {
-		if err := ctx.Err(); err != nil {
-			return "", false, err
-		}
 		switch attribute.Key {
 		case "type":
 			checkbox = attribute.Val == "checkbox"
@@ -1622,12 +1369,12 @@ func parserGeneratedCheckboxMarkerContext(ctx context.Context, token html.Token)
 		}
 	}
 	if !checkbox {
-		return "", false, nil
+		return "", false
 	}
 	if checked {
-		return "[x] ", true, nil
+		return "[x] ", true
 	}
-	return "[ ] ", true, nil
+	return "[ ] ", true
 }
 
 func (w *renditionHTMLWriter) endTag(tag string) {
@@ -1713,18 +1460,9 @@ func (w *renditionHTMLWriter) endTag(tag string) {
 		}
 	case "pre":
 		if w.inPre {
-			content, err := stripUnsafeControlsContext(w.context(), w.preText.String())
-			if err != nil {
-				w.err = err
-				return
-			}
+			content := stripUnsafeControls(w.preText.String())
 			if w.preInCell {
-				collapsed, err := collapseRenditionWhitespaceContext(w.context(), content, w.charge)
-				if err != nil {
-					w.err = err
-					return
-				}
-				w.appendInline(renditionInline{kind: renditionInlineCode, text: collapsed})
+				w.appendInline(renditionInline{kind: renditionInlineCode, text: w.collapseWhitespace(content)})
 			} else {
 				w.appendBlock(renditionBlock{kind: renditionCodeBlock, language: w.preLang, code: content})
 			}
@@ -1735,12 +1473,7 @@ func (w *renditionHTMLWriter) endTag(tag string) {
 		}
 	case "code":
 		if !w.inPre && w.inlineCode {
-			content, err := stripUnsafeControlsContext(w.context(), w.inlineText.String())
-			if err != nil {
-				w.err = err
-				return
-			}
-			w.appendInline(renditionInline{kind: renditionInlineCode, text: content})
+			w.appendInline(renditionInline{kind: renditionInlineCode, text: stripUnsafeControls(w.inlineText.String())})
 			w.inlineCode = false
 			w.inlineText.Reset()
 		}
@@ -1772,30 +1505,20 @@ func (w *renditionHTMLWriter) startLink(destination string) {
 }
 
 func (w *renditionHTMLWriter) writeText(value string) {
-	if err := w.writeTextContext(w.context(), value); err != nil {
-		w.err = err
-	}
-}
-
-func (w *renditionHTMLWriter) writeTextContext(ctx context.Context, value string) error {
-	var err error
-	value, err = stripUnsafeControlsContext(ctx, value)
-	if err != nil {
-		return err
-	}
+	value = stripUnsafeControls(value)
 	if w.inPre {
 		if !w.charge(2 * int64(len(value))) {
-			return ErrRenditionXHTMLBudget
+			return
 		}
 		w.preText.WriteString(value)
-		return nil
+		return
 	}
 	if w.inlineCode {
 		if !w.charge(2 * int64(len(value))) {
-			return ErrRenditionXHTMLBudget
+			return
 		}
 		w.inlineText.WriteString(value)
-		return nil
+		return
 	}
 	var chunk strings.Builder
 	flushChunk := func() {
@@ -1805,14 +1528,7 @@ func (w *renditionHTMLWriter) writeTextContext(ctx context.Context, value string
 		w.appendText(chunk.String())
 		chunk.Reset()
 	}
-	runes := 0
 	for _, character := range value {
-		if runes&1023 == 0 {
-			if err := ctx.Err(); err != nil {
-				return err
-			}
-		}
-		runes++
 		if unicode.IsSpace(character) {
 			flushChunk()
 			w.pendingSpace = true
@@ -1825,75 +1541,28 @@ func (w *renditionHTMLWriter) writeTextContext(ctx context.Context, value string
 		chunk.WriteRune(character)
 	}
 	flushChunk()
-	return ctx.Err()
 }
 
-func collapseRenditionWhitespaceContext(ctx context.Context, value string, charge func(int64) bool) (string, error) {
+func (w *renditionHTMLWriter) collapseWhitespace(value string) string {
 	var size int64
-	pendingSpace, wrote := false, false
-	runes := 0
-	for _, character := range value {
-		runes++
-		if runes&1023 == 0 {
-			if err := ctx.Err(); err != nil {
-				return "", err
-			}
-		}
-		if unicode.IsSpace(character) {
-			if wrote {
-				pendingSpace = true
-			}
-			continue
-		}
-		if pendingSpace {
+	for field := range strings.FieldsSeq(value) {
+		if size > 0 {
 			size++
 		}
-		size += int64(utf8.RuneLen(character))
-		pendingSpace = false
-		wrote = true
+		size += int64(len(field))
 	}
-	if !charge(size) {
-		return "", ErrRenditionXHTMLBudget
+	if !w.charge(size) {
+		return ""
 	}
 	var output strings.Builder
 	output.Grow(int(size))
-	pendingSpace, wrote = false, false
-	runes = 0
-	for _, character := range value {
-		runes++
-		if runes&1023 == 0 {
-			if err := ctx.Err(); err != nil {
-				return "", err
-			}
-		}
-		if unicode.IsSpace(character) {
-			if wrote {
-				pendingSpace = true
-			}
-			continue
-		}
-		if pendingSpace {
+	for field := range strings.FieldsSeq(value) {
+		if output.Len() > 0 {
 			output.WriteByte(' ')
 		}
-		output.WriteRune(character)
-		pendingSpace = false
-		wrote = true
+		output.WriteString(field)
 	}
-	return output.String(), nil
-}
-
-func (w *renditionHTMLWriter) context() context.Context {
-	if w.ctx == nil {
-		return context.Background()
-	}
-	return w.ctx
-}
-
-func (w *renditionHTMLWriter) contextError() error {
-	if w.err != nil {
-		return w.err
-	}
-	return w.context().Err()
+	return output.String()
 }
 
 func (w *renditionHTMLWriter) startBlock(kind renditionBlockKind, level int) {
@@ -1966,10 +1635,6 @@ func (w *renditionHTMLWriter) appendBlock(block renditionBlock) {
 
 func (w *renditionHTMLWriter) appendFlattenedInlines(inlines []renditionInline) {
 	for _, inline := range inlines {
-		if err := w.contextError(); err != nil {
-			w.err = err
-			return
-		}
 		switch inline.kind {
 		case renditionText, renditionInlineCode:
 			w.appendText(inline.text)
@@ -2026,8 +1691,6 @@ func appendRenditionInline(target []renditionInline, inline renditionInline) []r
 type renditionBuilder struct {
 	strings.Builder
 
-	ctx   context.Context
-	err   error
 	runes int
 }
 
@@ -2036,17 +1699,14 @@ func (b *renditionBuilder) WriteString(value string) {
 	b.runes += utf8.RuneCountInString(value)
 }
 
-func serializeRenditionBlocksContext(ctx context.Context, blocks []renditionBlock, limit int) (string, bool, error) {
-	output := renditionBuilder{ctx: ctx}
+func serializeRenditionBlocks(blocks []renditionBlock, limit int) (string, bool) {
+	var output renditionBuilder
 	truncated := false
 	previousList := false
 	previousListOrdered := false
 	previousListAlternate := false
 	previousKind := renditionParagraph
 	for _, block := range blocks {
-		if err := output.contextError(); err != nil {
-			return "", false, err
-		}
 		separator := ""
 		listAlternate := false
 		if output.Len() > 0 {
@@ -2065,14 +1725,11 @@ func serializeRenditionBlocksContext(ctx context.Context, blocks []renditionBloc
 		}
 		available := limit - output.runes - utf8.RuneCountInString(separator)
 		if available < 0 {
-			return finishRenditionMarkdown(output.String()), true, nil
+			return finishRenditionMarkdown(output.String()), true
 		}
-		value, blockTruncated, err := serializeRenditionBlock(ctx, block, available, listAlternate)
-		if err != nil {
-			return "", false, err
-		}
+		value, blockTruncated := serializeRenditionBlock(block, available, listAlternate)
 		if value == "" && blockTruncated {
-			return finishRenditionMarkdown(output.String()), true, nil
+			return finishRenditionMarkdown(output.String()), true
 		}
 		if value != "" {
 			output.WriteString(separator)
@@ -2089,51 +1746,28 @@ func serializeRenditionBlocksContext(ctx context.Context, blocks []renditionBloc
 			break
 		}
 	}
-	return finishRenditionMarkdown(output.String()), truncated, nil
-}
-
-func (b *renditionBuilder) contextError() error {
-	if b.err != nil {
-		return b.err
-	}
-	if b.ctx != nil {
-		b.err = b.ctx.Err()
-	}
-	return b.err
+	return finishRenditionMarkdown(output.String()), truncated
 }
 
 func finishRenditionMarkdown(value string) string {
 	return strings.TrimRight(value, "\n")
 }
 
-func canonicalNonnegativeDecimalContext(ctx context.Context, value string) (string, bool, error) {
+func canonicalNonnegativeDecimal(value string) (string, bool) {
 	value = strings.TrimPrefix(value, "+")
 	if value == "" {
-		return "", false, nil
+		return "", false
 	}
-	for index, character := range value {
-		if index&1023 == 0 {
-			if err := ctx.Err(); err != nil {
-				return "", false, err
-			}
-		}
+	for _, character := range value {
 		if character < '0' || character > '9' {
-			return "", false, nil
+			return "", false
 		}
 	}
-	first := 0
-	for first < len(value) && value[first] == '0' {
-		if first&1023 == 0 {
-			if err := ctx.Err(); err != nil {
-				return "", false, err
-			}
-		}
-		first++
+	value = strings.TrimLeft(value, "0")
+	if value == "" {
+		return "0", true
 	}
-	if first == len(value) {
-		return "0", true, nil
-	}
-	return value[first:], true, nil
+	return value, true
 }
 
 func incrementNonnegativeDecimal(value string) string {
@@ -2148,32 +1782,25 @@ func incrementNonnegativeDecimal(value string) string {
 	return "1" + string(digits)
 }
 
-func serializeRenditionBlock(ctx context.Context, block renditionBlock, available int, listAlternate bool) (string, bool, error) {
+func serializeRenditionBlock(block renditionBlock, available int, listAlternate bool) (string, bool) {
 	switch block.kind {
 	case renditionCodeBlock:
-		value, err := serializeRenditionCodeBlockContext(ctx, block.language, block.code)
-		if err != nil {
-			return "", false, err
-		}
+		value := serializeRenditionCodeBlock(block.language, block.code)
 		if utf8.RuneCountInString(value) > available {
-			return "", true, nil
+			return "", true
 		}
-		return value, false, nil
+		return value, false
 	case renditionTable:
-		value, err := serializeRenditionTable(ctx, block.rows)
-		if err != nil {
-			return "", false, err
-		}
+		value := serializeRenditionTable(block.rows)
 		if utf8.RuneCountInString(value) > available {
-			return "", true, nil
+			return "", true
 		}
-		return value, false, nil
+		return value, false
 	case renditionListBlock:
 		if block.list == nil {
-			return "", false, nil
+			return "", false
 		}
-		value, truncated, err := serializeRenditionListContext(ctx, *block.list, available, listAlternate)
-		return value, truncated, err
+		return serializeRenditionList(*block.list, available, listAlternate)
 	case renditionParagraph, renditionHeading:
 		prefix := ""
 		switch block.kind {
@@ -2182,36 +1809,25 @@ func serializeRenditionBlock(ctx context.Context, block renditionBlock, availabl
 		case renditionHeading:
 			prefix = strings.Repeat("#", block.level) + " "
 		case renditionCodeBlock, renditionTable, renditionListBlock:
-			return "", false, nil
+			return "", false
 		}
 		if utf8.RuneCountInString(prefix) > available {
-			return "", true, nil
+			return "", true
 		}
-		value, truncated, err := serializeRenditionInlinesContext(ctx, block.inlines, available-utf8.RuneCountInString(prefix), false)
-		if err != nil {
-			return "", false, err
-		}
+		value, truncated := serializeRenditionInlines(block.inlines, available-utf8.RuneCountInString(prefix), false)
 		if value == "" && truncated {
-			return "", true, nil
+			return "", true
 		}
-		return prefix + value, truncated, nil
+		return prefix + value, truncated
 	default:
-		return "", false, nil
+		return "", false
 	}
 }
 
-func serializeRenditionList(list renditionList, available int) (string, bool) {
-	value, truncated, _ := serializeRenditionListContext(context.Background(), list, available, false)
-	return value, truncated
-}
-
-func serializeRenditionListContext(ctx context.Context, list renditionList, available int, alternate bool) (string, bool, error) {
-	output := renditionBuffer{ctx: ctx}
+func serializeRenditionList(list renditionList, available int, alternate bool) (string, bool) {
+	var output renditionBuffer
 	result := appendRenditionList(&output, list, available, 0, alternate)
-	if output.err != nil {
-		return "", false, output.err
-	}
-	return output.String(), result.truncated, nil
+	return output.String(), result.truncated
 }
 
 type renditionListResult struct {
@@ -2237,9 +1853,6 @@ func appendRenditionList(
 ) renditionListResult {
 	start := output.checkpoint()
 	var result renditionListResult
-	if output.contextError() != nil {
-		return renditionListResult{truncated: true}
-	}
 	if list.ordered && len(list.start) <= maxOrderedListMarkerDigits {
 		result = appendRepresentableOrderedListItems(output, list, limit, indent, alternate)
 	} else {
@@ -2280,9 +1893,6 @@ func appendRepresentableOrderedListItems(
 	var fallback []byte
 	fallbackRunes := 0
 	for _, item := range list.items {
-		if output.contextError() != nil {
-			return renditionListResult{truncated: true}
-		}
 		if !item.present {
 			continue
 		}
@@ -2291,21 +1901,13 @@ func appendRepresentableOrderedListItems(
 			fallbackRunes = output.runes - listStart.runes
 			var converted renditionBuffer
 			for index, entry := range entries {
-				if output.contextError() != nil {
-					return renditionListResult{truncated: true}
-				}
 				if index > 0 {
 					converted.WriteString(renditionListItemSeparator(list.tight))
 				}
-				degradedItem, err := degradeOrderedListItem(output.ctx, serializedOrderedListItem{
+				converted.WriteString(degradeOrderedListItem(serializedOrderedListItem{
 					ordinal: entry.ordinal,
 					value:   string(output.bytes[entry.start:entry.end]),
-				}, indent, alternate)
-				if err != nil {
-					output.err = err
-					return renditionListResult{truncated: true}
-				}
-				converted.WriteString(degradedItem)
+				}, indent, alternate))
 			}
 			output.rollback(listStart.bytes, listStart.runes)
 			output.WriteString(converted.String())
@@ -2375,9 +1977,6 @@ func appendRenditionListItems(
 	result := renditionListResult{}
 	ordinal := list.start
 	for _, item := range list.items {
-		if output.contextError() != nil {
-			return renditionListResult{truncated: true}
-		}
 		if !item.present {
 			continue
 		}
@@ -2468,9 +2067,6 @@ func appendRenditionListItem(
 	previousListAlternate := false
 	previousListIndent := contentIndent
 	for _, block := range item.blocks {
-		if output.contextError() != nil {
-			return output.runes > start.runes, true
-		}
 		separator := ""
 		listAlternate := false
 		listIndent := contentIndent
@@ -2571,7 +2167,7 @@ func renditionListItemSeparator(tight bool) string {
 	return "\n\n"
 }
 
-func degradeOrderedListItem(ctx context.Context, item serializedOrderedListItem, indent int, alternate bool) (string, error) {
+func degradeOrderedListItem(item serializedOrderedListItem, indent int, alternate bool) string {
 	normalMarker := item.ordinal + "."
 	degradedMarker := "-"
 	if alternate {
@@ -2580,37 +2176,16 @@ func degradeOrderedListItem(ctx context.Context, item serializedOrderedListItem,
 	}
 	normalPrefix := strings.Repeat(" ", indent) + normalMarker
 	degradedPrefix := strings.Repeat(" ", indent) + degradedMarker + " " + item.ordinal + "\\."
+	lines := strings.Split(item.value, "\n")
+	lines[0] = degradedPrefix + strings.TrimPrefix(lines[0], normalPrefix)
 	normalIndent := strings.Repeat(" ", indent+utf8.RuneCountInString(normalMarker)+1)
 	degradedIndent := strings.Repeat(" ", indent+2)
-	var result strings.Builder
-	lineStart := 0
-	for offset := 0; offset <= len(item.value); offset++ {
-		if offset&1023 == 0 {
-			if err := ctx.Err(); err != nil {
-				return "", err
-			}
-		}
-		if offset != len(item.value) && item.value[offset] != '\n' {
-			continue
-		}
-		if lineStart == 0 {
-			result.WriteString(degradedPrefix)
-			result.WriteString(strings.TrimPrefix(item.value[lineStart:offset], normalPrefix))
-		} else if after, ok := strings.CutPrefix(item.value[lineStart:offset], normalIndent); ok {
-			result.WriteString(degradedIndent)
-			result.WriteString(after)
-		} else {
-			result.WriteString(item.value[lineStart:offset])
-		}
-		if offset < len(item.value) {
-			result.WriteByte('\n')
-			lineStart = offset + 1
+	for index := 1; index < len(lines); index++ {
+		if after, ok := strings.CutPrefix(lines[index], normalIndent); ok {
+			lines[index] = degradedIndent + after
 		}
 	}
-	if err := ctx.Err(); err != nil {
-		return "", err
-	}
-	return result.String(), nil
+	return strings.Join(lines, "\n")
 }
 
 func appendRenditionItemBlock(
@@ -2646,27 +2221,13 @@ func appendRenditionItemBlock(
 	var value string
 	switch block.kind {
 	case renditionCodeBlock:
-		var err error
-		value, err = serializeRenditionCodeBlockContext(output.ctx, block.language, block.code)
-		if err != nil {
-			output.err = err
-			return false, true
-		}
+		value = serializeRenditionCodeBlock(block.language, block.code)
 	case renditionTable:
-		var err error
-		value, err = serializeRenditionTable(output.ctx, block.rows)
-		if err != nil {
-			output.err = err
-			return false, true
-		}
+		value = serializeRenditionTable(block.rows)
 	default:
 		return false, false
 	}
-	value, err := prefixRenditionLinesContext(output.ctx, value, firstPrefix, continuationPrefix)
-	if err != nil {
-		output.err = err
-		return false, true
-	}
+	value = prefixRenditionLines(value, firstPrefix, continuationPrefix)
 	if output.runes+utf8.RuneCountInString(value) > limit {
 		return false, true
 	}
@@ -2675,55 +2236,19 @@ func appendRenditionItemBlock(
 	return true, false
 }
 
-func prefixRenditionLinesContext(ctx context.Context, value, firstPrefix, continuationPrefix string) (string, error) {
-	var result strings.Builder
-	result.WriteString(firstPrefix)
-	for index := range len(value) {
-		if index&1023 == 0 {
-			if err := ctx.Err(); err != nil {
-				return "", err
-			}
-		}
-		result.WriteByte(value[index])
-		if value[index] == '\n' {
-			result.WriteString(continuationPrefix)
-		}
-	}
-	if err := ctx.Err(); err != nil {
-		return "", err
-	}
-	return result.String(), nil
+func prefixRenditionLines(value, firstPrefix, continuationPrefix string) string {
+	return firstPrefix + strings.ReplaceAll(value, "\n", "\n"+continuationPrefix)
 }
 
 func serializeRenditionInlines(inlines []renditionInline, available int, inTable bool) (string, bool) {
-	value, truncated, _ := serializeRenditionInlinesContext(context.Background(), inlines, available, inTable)
-	return value, truncated
-}
-
-func serializeRenditionInlinesContext(ctx context.Context, inlines []renditionInline, available int, inTable bool) (string, bool, error) {
-	output := renditionBuffer{ctx: ctx}
+	var output renditionBuffer
 	truncated := appendRenditionInlines(&output, inlines, available, inTable)
-	if output.err != nil {
-		return "", false, output.err
-	}
-	return output.String(), truncated, nil
+	return output.String(), truncated
 }
 
 type renditionBuffer struct {
 	bytes []byte
 	runes int
-	ctx   context.Context
-	err   error
-}
-
-func (b *renditionBuffer) contextError() error {
-	if b.err != nil {
-		return b.err
-	}
-	if b.ctx != nil {
-		b.err = b.ctx.Err()
-	}
-	return b.err
 }
 
 type renditionBufferCheckpoint struct {
@@ -2746,27 +2271,22 @@ func (f *renditionBufferFallback) mark(output *renditionBuffer) {
 	f.valid = true
 }
 
-func (f *renditionBufferFallback) markEscapedTextContext(
-	ctx context.Context,
+func (f *renditionBufferFallback) markEscapedText(
 	start renditionBufferCheckpoint,
 	value string,
-) error {
+) {
 	if f == nil || start.runes >= f.limit {
-		return nil
+		return
 	}
-	prefix, err := truncateEscapedRenditionTextContext(ctx, value, f.limit-start.runes)
-	if err != nil {
-		return err
-	}
+	prefix := truncateEscapedRenditionText(value, f.limit-start.runes)
 	if prefix == "" {
-		return nil
+		return
 	}
 	f.checkpoint = renditionBufferCheckpoint{
 		bytes: start.bytes + len(prefix),
 		runes: start.runes + utf8.RuneCountInString(prefix),
 	}
 	f.valid = true
-	return nil
 }
 
 func (f *renditionBufferFallback) result() (renditionBufferCheckpoint, bool) {
@@ -2817,9 +2337,6 @@ func appendRenditionInlinesWithFallback(
 ) bool {
 	startRunes := output.runes
 	for _, inline := range inlines {
-		if output.contextError() != nil {
-			return true
-		}
 		if inline.kind == renditionLinkInline && inline.destination == "" {
 			remaining := available
 			if available >= 0 {
@@ -2837,35 +2354,16 @@ func appendRenditionInlinesWithFallback(
 		switch inline.kind {
 		case renditionText:
 			textStart := output.checkpoint()
-			value, err := escapeRenditionTextContext(output.ctx, inline.text)
-			if err != nil {
-				output.err = err
-				return true
-			}
+			value := escapeRenditionText(inline.text)
 			if available >= 0 && utf8.RuneCountInString(value) > remaining {
-				value, err = truncateEscapedRenditionTextContext(output.ctx, inline.text, max(0, remaining))
-				if err != nil {
-					output.err = err
-					return true
-				}
-				output.WriteString(value)
-				if err := fallback.markEscapedTextContext(output.ctx, textStart, inline.text); err != nil {
-					output.err = err
-					return true
-				}
+				output.WriteString(truncateEscapedRenditionText(inline.text, max(0, remaining)))
+				fallback.markEscapedText(textStart, inline.text)
 				return true
 			}
 			output.WriteString(value)
-			if err := fallback.markEscapedTextContext(output.ctx, textStart, inline.text); err != nil {
-				output.err = err
-				return true
-			}
+			fallback.markEscapedText(textStart, inline.text)
 		case renditionInlineCode:
-			value, err := serializeRenditionInlineCodeContext(output.ctx, inline.text, inTable)
-			if err != nil {
-				output.err = err
-				return true
-			}
+			value := serializeRenditionInlineCode(inline.text, inTable)
 			if available >= 0 && utf8.RuneCountInString(value) > remaining {
 				return true
 			}
@@ -2910,9 +2408,6 @@ func appendRenditionPlainLabel(
 ) bool {
 	startRunes := output.runes
 	for _, inline := range inlines {
-		if output.contextError() != nil {
-			return true
-		}
 		remaining := available
 		if available >= 0 {
 			remaining -= output.runes - startRunes
@@ -2920,29 +2415,14 @@ func appendRenditionPlainLabel(
 		switch inline.kind {
 		case renditionText, renditionInlineCode:
 			textStart := output.checkpoint()
-			value, err := escapeRenditionTextContext(output.ctx, inline.text)
-			if err != nil {
-				output.err = err
-				return true
-			}
+			value := escapeRenditionText(inline.text)
 			if available >= 0 && utf8.RuneCountInString(value) > remaining {
-				value, err = truncateEscapedRenditionTextContext(output.ctx, inline.text, max(0, remaining))
-				if err != nil {
-					output.err = err
-					return true
-				}
-				output.WriteString(value)
-				if err := fallback.markEscapedTextContext(output.ctx, textStart, inline.text); err != nil {
-					output.err = err
-					return true
-				}
+				output.WriteString(truncateEscapedRenditionText(inline.text, max(0, remaining)))
+				fallback.markEscapedText(textStart, inline.text)
 				return true
 			}
 			output.WriteString(value)
-			if err := fallback.markEscapedTextContext(output.ctx, textStart, inline.text); err != nil {
-				output.err = err
-				return true
-			}
+			fallback.markEscapedText(textStart, inline.text)
 		case renditionLinkInline:
 			if appendRenditionPlainLabel(output, inline.children, remaining, fallback) {
 				return true
@@ -2952,35 +2432,21 @@ func appendRenditionPlainLabel(
 	return false
 }
 
-func escapeRenditionTextContext(ctx context.Context, value string) (string, error) {
+func escapeRenditionText(value string) string {
 	var output strings.Builder
-	runes := 0
 	for _, character := range value {
-		if runes&1023 == 0 {
-			if err := ctx.Err(); err != nil {
-				return "", err
-			}
-		}
-		runes++
 		if isMarkdownASCIIPunctuation(character) {
 			output.WriteByte('\\')
 		}
 		output.WriteRune(character)
 	}
-	return output.String(), nil
+	return output.String()
 }
 
-func truncateEscapedRenditionTextContext(ctx context.Context, value string, limit int) (string, error) {
+func truncateEscapedRenditionText(value string, limit int) string {
 	var output strings.Builder
 	used := 0
-	runes := 0
 	for _, character := range value {
-		if runes&1023 == 0 {
-			if err := ctx.Err(); err != nil {
-				return "", err
-			}
-		}
-		runes++
 		cost := 1
 		if isMarkdownASCIIPunctuation(character) {
 			cost++
@@ -2994,7 +2460,7 @@ func truncateEscapedRenditionTextContext(ctx context.Context, value string, limi
 		output.WriteRune(character)
 		used += cost
 	}
-	return output.String(), nil
+	return output.String()
 }
 
 func isMarkdownASCIIPunctuation(character rune) bool {
@@ -3002,108 +2468,53 @@ func isMarkdownASCIIPunctuation(character rune) bool {
 		character >= '[' && character <= '`' || character >= '{' && character <= '~'
 }
 
-func serializeRenditionInlineCodeContext(ctx context.Context, content string, inTable bool) (string, error) {
-	var normalized strings.Builder
-	for index := 0; index < len(content); {
-		if index&1023 == 0 {
-			if err := ctx.Err(); err != nil {
-				return "", err
-			}
-		}
-		switch content[index] {
-		case '\r':
-			if index+1 < len(content) && content[index+1] == '\n' {
-				normalized.WriteByte(' ')
-				index += 2
-				continue
-			}
-		case '\n':
-			normalized.WriteByte(' ')
-			index++
-			continue
-		case '|':
-			if inTable {
-				normalized.WriteString(`\|`)
-				index++
-				continue
-			}
-		}
-		_, size := utf8.DecodeRuneInString(content[index:])
-		normalized.WriteString(content[index : index+size])
-		index += size
+func serializeRenditionInlineCode(content string, inTable bool) string {
+	content = strings.ReplaceAll(strings.ReplaceAll(content, "\r\n", " "), "\n", " ")
+	if inTable {
+		content = strings.ReplaceAll(content, "|", "\\|")
 	}
-	content = normalized.String()
-	backticks, err := maxBacktickRunContext(ctx, content)
-	if err != nil {
-		return "", err
-	}
-	fence := strings.Repeat("`", backticks+1)
+	fence := strings.Repeat("`", maxBacktickRun(content)+1)
 	if strings.HasPrefix(content, "`") || strings.HasSuffix(content, "`") {
 		content = " " + content + " "
 	}
-	return fence + content + fence, nil
+	return fence + content + fence
 }
 
-func serializeRenditionCodeBlockContext(ctx context.Context, language, content string) (string, error) {
-	backticks, err := maxBacktickRunContext(ctx, content)
-	if err != nil {
-		return "", err
-	}
-	fence := strings.Repeat("`", max(3, backticks+1))
+func serializeRenditionCodeBlock(language, content string) string {
+	fence := strings.Repeat("`", max(3, maxBacktickRun(content)+1))
 	if !strings.HasSuffix(content, "\n") {
 		content += "\n"
 	}
-	return fence + language + "\n" + content + fence, nil
+	return fence + language + "\n" + content + fence
 }
 
-func serializeRenditionTable(ctx context.Context, rows [][][]renditionInline) (string, error) {
+func serializeRenditionTable(rows [][][]renditionInline) string {
 	if len(rows) == 0 {
-		return "", nil
+		return ""
 	}
 	columns := 0
 	for _, row := range rows {
-		if err := ctx.Err(); err != nil {
-			return "", err
-		}
 		columns = max(columns, len(row))
 	}
 	if columns == 0 {
-		return "", nil
+		return ""
 	}
-	format := func(row [][]renditionInline) (string, error) {
+	format := func(row [][]renditionInline) string {
 		cells := make([]string, columns)
 		for index, cell := range row {
-			if err := ctx.Err(); err != nil {
-				return "", err
-			}
-			value, _, err := serializeRenditionInlinesContext(ctx, cell, -1, true)
-			if err != nil {
-				return "", err
-			}
-			cells[index] = value
+			cells[index], _ = serializeRenditionInlines(cell, -1, true)
 		}
-		return "| " + strings.Join(cells, " | ") + " |", nil
+		return "| " + strings.Join(cells, " | ") + " |"
 	}
 	delimiter := make([]string, columns)
 	for index := range delimiter {
 		delimiter[index] = "---"
 	}
-	first, err := format(rows[0])
-	if err != nil {
-		return "", err
-	}
-	lines := []string{first, "| " + strings.Join(delimiter, " | ") + " |"}
+	lines := []string{format(rows[0]), "| " + strings.Join(delimiter, " | ") + " |"}
 	for _, row := range rows[1:] {
-		if err := ctx.Err(); err != nil {
-			return "", err
-		}
-		line, err := format(row)
-		if err != nil {
-			return "", err
-		}
-		lines = append(lines, line)
+		lines = append(lines, format(row))
 	}
-	return strings.Join(lines, "\n"), nil
+	return strings.Join(lines, "\n")
 }
 
 type canonicalHTMLWriter struct {
@@ -3365,17 +2776,10 @@ func (w *canonicalHTMLWriter) writeText(value string) {
 	}
 }
 
-func maxBacktickRunContext(ctx context.Context, value string) (int, error) {
+func maxBacktickRun(value string) int {
 	maximum := 0
 	current := 0
-	runes := 0
 	for _, character := range value {
-		if runes&1023 == 0 {
-			if err := ctx.Err(); err != nil {
-				return 0, err
-			}
-		}
-		runes++
 		if character == '`' {
 			current++
 			maximum = max(maximum, current)
@@ -3383,7 +2787,7 @@ func maxBacktickRunContext(ctx context.Context, value string) (int, error) {
 			current = 0
 		}
 	}
-	return maximum, nil
+	return maximum
 }
 
 func (w *canonicalHTMLWriter) flushPendingSpace() {
@@ -3409,48 +2813,21 @@ func (w *canonicalHTMLWriter) block() {
 }
 
 func stripUnsafeControls(value string) string {
-	cleaned, _ := stripUnsafeControlsContext(context.Background(), value)
-	return cleaned
-}
-
-func stripUnsafeControlsContext(ctx context.Context, value string) (string, error) {
-	var cleaned strings.Builder
-	cleaned.Grow(len(value))
-	iterations := 0
-	for index := 0; index < len(value); {
-		if iterations&1023 == 0 {
-			if err := ctx.Err(); err != nil {
-				return "", err
-			}
-		}
-		iterations++
-		if value[index] == '\r' {
-			cleaned.WriteByte('\n')
-			index++
-			if index < len(value) && value[index] == '\n' {
-				index++
-			}
-			continue
-		}
-		character, size := utf8.DecodeRuneInString(value[index:])
-		index += size
+	return strings.Map(func(character rune) rune {
 		switch character {
 		case '\n', '\t':
-			cleaned.WriteRune(character)
+			return character
 		case '\f', '\v', '\u0085', '\u2028', '\u2029':
-			cleaned.WriteByte('\n')
-		default:
-			if unicode.IsSpace(character) {
-				cleaned.WriteByte(' ')
-			} else if !unicode.IsControl(character) && character != headingSentinelStart && character != headingSentinelEnd {
-				cleaned.WriteRune(character)
-			}
+			return '\n'
 		}
-	}
-	if err := ctx.Err(); err != nil {
-		return "", err
-	}
-	return cleaned.String(), nil
+		if unicode.IsSpace(character) {
+			return ' '
+		}
+		if unicode.IsControl(character) || character == headingSentinelStart || character == headingSentinelEnd {
+			return -1
+		}
+		return character
+	}, strings.ReplaceAll(strings.ReplaceAll(value, "\r\n", "\n"), "\r", "\n"))
 }
 
 func safeStoredLink(value string, maxChars int) string {
