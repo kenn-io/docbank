@@ -1,0 +1,292 @@
+package agentops
+
+import "strings"
+
+// CurrentRoutes is the reviewed exact HTTP route inventory of the candidate daemon.
+// The route census test compares this list against Huma and raw ServeMux registrations.
+func CurrentRoutes() []Route {
+	routes := make([]Route, 0, len(currentRoutePatterns))
+	for _, pattern := range currentRoutePatterns {
+		method, path, _ := strings.Cut(pattern, " ")
+		class, operatorOnly := currentRouteClass(method, path)
+		routes = append(routes, Route{ID: pattern, Method: method, Pattern: path, Class: class, OperatorOnly: operatorOnly})
+	}
+	return routes
+}
+
+func currentRouteClass(method, path string) (Class, bool) {
+	// These routes operate on vault-wide storage, retention or authority. A
+	// processing-consent grant does not imply permission to call any of them.
+	for _, prefix := range []string{
+		"/api/v1/agent-sessions", "/api/v1/backup/", "/api/v1/storage", "/api/v1/audit/",
+		"/api/v1/derivatives/purge", "/api/v1/processing/consent",
+		"/api/v1/media/consent/",
+	} {
+		if strings.HasPrefix(path, prefix) {
+			return Admin, true
+		}
+	}
+	switch path {
+	case "/api/v1/gc", "/api/v1/verify", "/api/v1/trash/empty",
+		"/api/v1/nodes/{id}/versions/prune":
+		// Run=true permanently releases selected content-version history.
+		return Admin, true
+	case "/api/v1/info":
+		// The current owner info response includes a host path.
+		return Read, true
+	case "/api/v1/ingest", "/api/v1/ingest/stream", "/api/v1/ingest/preflight", "/api/v1/packages/preflights":
+		// These accept a path on the daemon host, not an upload handle.
+		return Write, true
+	case "/api/v1/search-exports/{id}/download", "/api/v1/exports/jobs/{id}/download":
+		// These issue browser download tickets, not scoped artifact bytes.
+		return Session, true
+	}
+	if method == "GET" || method == "HEAD" {
+		return Read, false
+	}
+	if method == "POST" {
+		switch path {
+		case "/api/v1/batch/tags/preview", "/api/v1/documents/resolve", "/api/v1/documents/scoped",
+			"/api/v1/mailbox/containers/{id}/preview", "/api/v1/media/acquisition-plan",
+			"/api/v1/nodes/{id}/verify", "/api/v1/pages/inventory", "/api/v1/pages/jobs/{id}",
+			"/api/v1/processing/plans", "/api/v1/processing/source-fences/resolve",
+			"/api/v1/queries/highlights", "/api/v1/queries/parse",
+			"/api/v1/renditions/select", "/api/v1/renditions/text", "/api/v1/renditions/windows",
+			"/api/v1/search", "/api/v1/search/similar", "/api/v1/search/validate",
+			"/api/v1/search-exports/{id}/dates":
+			return Read, false
+		case "/api/v1/workspace/queries", "/api/v1/workspace/queries/{id}/pages":
+			return Session, false
+		}
+	}
+	// Default-deny for every newly added non-read method until a reviewer
+	// establishes a narrower class and records it above.
+	return Write, false
+}
+
+var currentRoutePatterns = []string{
+	"DELETE /api/v1/agent-sessions/{id}",
+	"DELETE /api/v1/email-document-publications/{operation_id}",
+	"DELETE /api/v1/mailbox/containers/{id}",
+	"DELETE /api/v1/media/occurrences/{occurrence_id}",
+	"DELETE /api/v1/nodes/{id}/tags/{tag_id}",
+	"DELETE /api/v1/packages/containers/{id}",
+	"DELETE /api/v1/path/tags/{tag_id}",
+	"DELETE /api/v1/saved-queries/{saved_query_id}",
+	"DELETE /api/v1/storage/stores/{store_id}",
+	"DELETE /api/v1/tags/{tag_id}",
+	"GET /api/v1/audit/history",
+	"GET /api/v1/audit/scopes/{scope_id}/history",
+	"GET /api/v1/audit/status",
+	"GET /api/v1/backup/snapshots",
+	"GET /api/v1/capabilities",
+	"GET /api/v1/collections",
+	"GET /api/v1/collections/{id}",
+	"GET /api/v1/collections/{id}/label",
+	"GET /api/v1/collections/{id}/members",
+	"GET /api/v1/collections/{id}/quality",
+	"GET /api/v1/content-references",
+	"GET /api/v1/coverage",
+	"GET /api/v1/documents",
+	"GET /api/v1/duplicates",
+	"GET /api/v1/duplicates/by-hash",
+	"GET /api/v1/email-document-publications/{operation_id}",
+	"GET /api/v1/email-document-relations",
+	"GET /api/v1/email-pdf-jobs/{job_id}",
+	"GET /api/v1/email-pdfs/{version_id}",
+	"GET /api/v1/email-pdfs/{version_id}/{profile}",
+	"GET /api/v1/email-pdfs/{version_id}/{profile}/content",
+	"GET /api/v1/exports/jobs/{id}",
+	"GET /api/v1/exports/jobs/{id}/archive",
+	"GET /api/v1/exports/jobs/{id}/archive/authority",
+	"GET /api/v1/exports/jobs/{id}/events",
+	"GET /api/v1/exports/plans/{id}",
+	"GET /api/v1/exports/plans/{id}/preview",
+	"GET /api/v1/exports/plans/{id}/problems",
+	"GET /api/v1/exports/sources/{id}/attachment-publications",
+	"GET /api/v1/exports/sources/{id}/email-pdf-recipes",
+	"GET /api/v1/formats/capabilities",
+	"GET /api/v1/info",
+	"GET /api/v1/jobs",
+	"GET /api/v1/jobs/{operation_id}",
+	"GET /api/v1/mailbox/containers/{id}",
+	"GET /api/v1/mailbox/jobs",
+	"GET /api/v1/mailbox/jobs/{id}",
+	"GET /api/v1/mailbox/jobs/{id}/events",
+	"GET /api/v1/mailbox/jobs/{id}/occurrences",
+	"GET /api/v1/media/occurrences",
+	"GET /api/v1/media/origins",
+	"GET /api/v1/media/sources",
+	"GET /api/v1/media/sources/{source_id}",
+	"GET /api/v1/nodes/{id}",
+	"GET /api/v1/nodes/{id}/children",
+	"GET /api/v1/nodes/{id}/content",
+	"GET /api/v1/nodes/{id}/provenance",
+	"GET /api/v1/nodes/{id}/tags",
+	"GET /api/v1/nodes/{id}/versions",
+	"GET /api/v1/packages",
+	"GET /api/v1/packages/by-id/{package_id}",
+	"GET /api/v1/packages/by-id/{package_id}/custodians",
+	"GET /api/v1/packages/by-id/{package_id}/members",
+	"GET /api/v1/packages/by-id/{package_id}/records/{row_id}",
+	"GET /api/v1/packages/by-id/{package_id}/timeline-inputs",
+	"GET /api/v1/packages/containers/{id}",
+	"GET /api/v1/packages/field-catalog",
+	"GET /api/v1/packages/imports/{operation_id}",
+	"GET /api/v1/packages/label-candidates",
+	"GET /api/v1/packages/preflights/{preflight_id}",
+	"GET /api/v1/packages/preflights/{preflight_id}/diagnostics",
+	"GET /api/v1/pages/image",
+	"GET /api/v1/path",
+	"GET /api/v1/people",
+	"GET /api/v1/people/coverage",
+	"GET /api/v1/people/rebuilds/{operation_id}",
+	"GET /api/v1/processing/jobs/{id}",
+	"GET /api/v1/processing/profiles",
+	"GET /api/v1/renditions/text/content",
+	"GET /api/v1/renditions/{attachment_id}",
+	"GET /api/v1/saved-queries",
+	"GET /api/v1/saved-queries/{saved_query_id}",
+	"GET /api/v1/search",
+	"GET /api/v1/search-exports",
+	"GET /api/v1/search-exports/{id}",
+	"GET /api/v1/search-exports/{id}/bundle",
+	"GET /api/v1/search-exports/{id}/csv",
+	"GET /api/v1/storage",
+	"GET /api/v1/storage/stores",
+	"GET /api/v1/tags",
+	"GET /api/v1/tags/by-name",
+	"GET /api/v1/tags/{tag_id}",
+	"GET /api/v1/tags/{tag_id}/nodes",
+	"GET /api/v1/timeline/coverage",
+	"GET /api/v1/timeline/rebuilds/{operation_id}",
+	"GET /api/v1/trash",
+	"GET /api/v1/versions/{version_id}",
+	"GET /api/v1/versions/{version_id}/content",
+	"GET /api/v1/versions/{version_id}/email",
+	"GET /api/v1/versions/{version_id}/email/generations/{generation_id}",
+	"GET /api/v1/versions/{version_id}/email/generations/{generation_id}/parts/{part_path}/{role}",
+	"GET /api/v1/watches",
+	"PATCH /api/v1/nodes/{id}",
+	"PATCH /api/v1/saved-queries/{saved_query_id}",
+	"PATCH /api/v1/tags/{tag_id}",
+	"POST /api/v1/agent-sessions",
+	"POST /api/v1/audit/enable",
+	"POST /api/v1/audit/preview",
+	"POST /api/v1/audit/verify",
+	"POST /api/v1/backup/init",
+	"POST /api/v1/backup/restore",
+	"POST /api/v1/backup/restore/stream",
+	"POST /api/v1/backup/snapshots",
+	"POST /api/v1/backup/snapshots/stream",
+	"POST /api/v1/backup/verify",
+	"POST /api/v1/backup/verify/stream",
+	"POST /api/v1/batch/move",
+	"POST /api/v1/batch/tags",
+	"POST /api/v1/batch/tags/preview",
+	"POST /api/v1/derivatives/purge-jobs",
+	"POST /api/v1/derivatives/purge-plans",
+	"POST /api/v1/documents/resolve",
+	"POST /api/v1/documents/scoped",
+	"POST /api/v1/email-document-processing",
+	"POST /api/v1/email-document-publications",
+	"POST /api/v1/email-pdfs",
+	"POST /api/v1/exports/jobs",
+	"POST /api/v1/exports/jobs/{id}/cancel",
+	"POST /api/v1/exports/jobs/{id}/download",
+	"POST /api/v1/exports/plans",
+	"POST /api/v1/exports/sources",
+	"POST /api/v1/exports/sources/{id}/seal",
+	"POST /api/v1/gc",
+	"POST /api/v1/ingest",
+	"POST /api/v1/ingest/preflight",
+	"POST /api/v1/ingest/stream",
+	"POST /api/v1/jobs/{operation_id}/cancel",
+	"POST /api/v1/mailbox/archives",
+	"POST /api/v1/mailbox/containers",
+	"POST /api/v1/mailbox/containers/{id}/preview",
+	"POST /api/v1/mailbox/containers/{id}/seal",
+	"POST /api/v1/mailbox/jobs",
+	"POST /api/v1/mailbox/jobs/{id}/cancel",
+	"POST /api/v1/mailbox/jobs/{id}/resume",
+	"POST /api/v1/mailbox/transfers",
+	"POST /api/v1/media/acquisition-plan",
+	"POST /api/v1/media/consent/grants",
+	"POST /api/v1/media/consent/revocations",
+	"POST /api/v1/media/occurrences",
+	"POST /api/v1/media/sources",
+	"POST /api/v1/media/sources/{source_id}/artifacts",
+	"POST /api/v1/media/sources/{source_id}/retry",
+	"POST /api/v1/nodes",
+	"POST /api/v1/nodes/{id}/provenance",
+	"POST /api/v1/nodes/{id}/restore",
+	"POST /api/v1/nodes/{id}/revert",
+	"POST /api/v1/nodes/{id}/trash",
+	"POST /api/v1/nodes/{id}/verify",
+	"POST /api/v1/nodes/{id}/versions/prune",
+	"POST /api/v1/packages/containers",
+	"POST /api/v1/packages/containers/{id}/preflight",
+	"POST /api/v1/packages/containers/{id}/seal",
+	"POST /api/v1/packages/custodians/{assignment_id}/resolve",
+	"POST /api/v1/packages/imports",
+	"POST /api/v1/packages/imports/{operation_id}/cancel",
+	"POST /api/v1/packages/preflights",
+	"POST /api/v1/pages/inventory",
+	"POST /api/v1/pages/jobs",
+	"POST /api/v1/pages/jobs/{id}",
+	"POST /api/v1/pages/jobs/{id}/cancel",
+	"POST /api/v1/path/mkdir",
+	"POST /api/v1/path/move",
+	"POST /api/v1/path/trash",
+	"POST /api/v1/people/rebuilds",
+	"POST /api/v1/processing/consent/grants",
+	"POST /api/v1/processing/consent/revocations",
+	"POST /api/v1/processing/consents",
+	"POST /api/v1/processing/consents/revoke",
+	"POST /api/v1/processing/jobs",
+	"POST /api/v1/processing/plans",
+	"POST /api/v1/processing/source-fences/resolve",
+	"POST /api/v1/queries/highlights",
+	"POST /api/v1/queries/parse",
+	"POST /api/v1/renditions/select",
+	"POST /api/v1/renditions/text",
+	"POST /api/v1/renditions/windows",
+	"POST /api/v1/saved-queries",
+	"POST /api/v1/saved-queries/{saved_query_id}/runs",
+	"POST /api/v1/search",
+	"POST /api/v1/search-exports",
+	"POST /api/v1/search-exports/{id}/dates",
+	"POST /api/v1/search-exports/{id}/download",
+	"POST /api/v1/search-exports/{id}/revisions",
+	"POST /api/v1/search/similar",
+	"POST /api/v1/search/validate",
+	"POST /api/v1/storage/evacuate",
+	"POST /api/v1/storage/evacuate/preview",
+	"POST /api/v1/storage/pack",
+	"POST /api/v1/storage/place",
+	"POST /api/v1/storage/place/preview",
+	"POST /api/v1/storage/repack",
+	"POST /api/v1/storage/repair",
+	"POST /api/v1/storage/repair/preview",
+	"POST /api/v1/storage/salvage",
+	"POST /api/v1/storage/salvage/preview",
+	"POST /api/v1/storage/stores",
+	"POST /api/v1/storage/stores/preview",
+	"POST /api/v1/storage/stores/{store_id}/detach",
+	"POST /api/v1/tags",
+	"POST /api/v1/timeline/rebuilds",
+	"POST /api/v1/trash/empty",
+	"POST /api/v1/uploads",
+	"POST /api/v1/verify",
+	"POST /api/v1/versions/{version_id}/email",
+	"POST /api/v1/workspace/queries",
+	"POST /api/v1/workspace/queries/{id}/pages",
+	"PUT /api/v1/collections/{id}/label",
+	"PUT /api/v1/exports/sources/{id}/chunks/{index}",
+	"PUT /api/v1/mailbox/containers/{id}/chunks/{index}",
+	"PUT /api/v1/nodes/{id}/content",
+	"PUT /api/v1/nodes/{id}/tags/{tag_id}",
+	"PUT /api/v1/packages/by-id/{package_id}/custodian",
+	"PUT /api/v1/packages/containers/{id}/chunks/{index}",
+	"PUT /api/v1/path/tags/{tag_id}",
+}
