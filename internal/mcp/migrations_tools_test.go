@@ -15,6 +15,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/daemonconn"
+	"go.kenn.io/docbank/internal/photomigration"
 )
 
 func TestMCPMigrationWriteOptIn(t *testing.T) {
@@ -114,7 +115,7 @@ func TestMCPMigrationRunSummariesStayBounded(t *testing.T) {
 	for index := range entries {
 		entries[index] = api.MigrationMapEntry{
 			SourceHub:      strings.Repeat("h", 256),
-			SourceUserID:   strings.Repeat("u", 256),
+			SourceUserID:   fmt.Sprintf("%0244d", index) + strings.Repeat("u", 12),
 			StorageKey:     strings.Repeat("k", 128),
 			DocbankOwnerID: fmt.Sprintf("00000000-0000-4000-8000-%012d", index),
 		}
@@ -143,6 +144,14 @@ func TestMCPMigrationRunSummariesStayBounded(t *testing.T) {
 		OwnerMap:     api.MigrationOwnerMap{Source: api.MigrationSource{Kind: "install", Identity: identity}, Entries: entries},
 		OwnerMapPath: ownerMapPath,
 	}
+	ownerMapJSON, err := json.Marshal(run.OwnerMap)
+	require.NoError(t, err)
+	var template photomigration.OwnerMapTemplate
+	require.NoError(t, json.Unmarshal(ownerMapJSON, &template))
+	ownerMapJSON, err = photomigration.EncodeOwnerMapTemplate(template)
+	require.NoError(t, err)
+	require.Greater(t, len(ownerMapJSON), maxToolResponseBytes)
+	require.LessOrEqual(t, len(ownerMapJSON), photomigration.MaxOwnerMapBytes)
 	pageItems := make([]api.MigrationRun, listCount)
 	for index := range pageItems {
 		pageItems[index] = run
