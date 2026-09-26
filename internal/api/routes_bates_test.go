@@ -217,6 +217,13 @@ func TestBatesInputErrorsAreValidationFailures(t *testing.T) {
 	prefix := srv.call(t, http.MethodPost, "/api/v1/bates/namespaces", `{"prefix":"BAD%","padding":6}`, nil)
 	require.Equal(t, http.StatusUnprocessableEntity, prefix.Code, prefix.Body.String())
 	require.Contains(t, prefix.Body.String(), `"invalid_bates_request"`)
+	longest := srv.call(t, http.MethodPost, "/api/v1/bates/namespaces",
+		`{"prefix":"`+strings.Repeat("A", 128)+`","padding":6}`, nil)
+	require.Equal(t, http.StatusCreated, longest.Code, longest.Body.String())
+	tooLong := srv.call(t, http.MethodPost, "/api/v1/bates/namespaces",
+		`{"prefix":"B","suffix":"`+strings.Repeat("Z", 129)+`","padding":6}`, nil)
+	require.Equal(t, http.StatusUnprocessableEntity, tooLong.Code, tooLong.Body.String())
+	require.Contains(t, tooLong.Body.String(), "longer than 128")
 }
 
 func TestBatesCandidateRouteRequiresOneSelectorAndReturnsBoundedCandidates(t *testing.T) {

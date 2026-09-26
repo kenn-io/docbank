@@ -386,3 +386,32 @@ func TestBatesLedgerValidationRejectsAllocationsOverThePageLimit(t *testing.T) {
 	require.ErrorIs(t, err, ErrInvalidBatesLedger)
 	require.ErrorContains(t, err, allocationID)
 }
+
+func TestBatesExplicitPagesMatchASealedPDFWithoutPageDocument(t *testing.T) {
+	s := newTestStore(t)
+	node, err := s.CreateFile(t.Context(), s.RootID(), "native.pdf", fakeHash("d1"), 123, "application/pdf")
+	require.NoError(t, err)
+	occurrence := strings.Repeat("d", 32)
+	id, err := newUUIDv4()
+	require.NoError(t, err)
+	snapshot, err := s.SealCollectionSnapshot(t.Context(), SnapshotSealRequest{SnapshotID: id, Members: []CollectionSnapshotMember{{
+		Ordinal: 1, OccurrenceID: occurrence, NodeID: node.ID, ContentVersionID: node.CurrentVersionID,
+		BlobSHA256: node.BlobHash, Size: 123, FamilyID: occurrence, FamilyOrder: 1, DisplayName: node.Name,
+		FrozenFieldsJSON: "{}", DocumentKind: "other", SourcePageCount: 2, SelectedPDFSHA256: node.BlobHash,
+		Representations: []CollectionSnapshotRepresentation{{OccurrenceID: occurrence, Role: "native",
+			Status: roleAvailable, TextAuthority: "none", ContentVersionID: node.CurrentVersionID,
+			BlobSHA256: node.BlobHash, MediaType: "application/pdf", Size: 123, VerifiedPageCount: 2}},
+	}}})
+	require.NoError(t, err)
+	ns, err := s.EnsureBatesNamespace(t.Context(), "NAT", "", 6)
+	require.NoError(t, err)
+	request := batesRequest(t, ns, snapshot, []BatesPageInput{
+		{OccurrenceID: occurrence, UnstampedSHA256: node.BlobHash, SourcePage: 1, VerifiedPageCount: 2},
+		{OccurrenceID: occurrence, UnstampedSHA256: node.BlobHash, SourcePage: 2, VerifiedPageCount: 2},
+	})
+
+	plan, err := s.PreviewBatesRange(t.Context(), request)
+
+	require.NoError(t, err, "the sealed PDF record verifies the page count when no page document exists")
+	require.Len(t, plan.Labels, 2)
+}

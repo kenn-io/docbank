@@ -155,7 +155,7 @@ export async function listBatesNamespaces(session: string, signal?: AbortSignal)
 }
 
 export async function createBatesNamespace(session: string, prefix: string, suffix: string, padding: number, signal?: AbortSignal): Promise<BatesNamespace> {
-  valid(prefix.length + suffix.length <= 128 && !/[\0\r\n]/.test(prefix + suffix), "Use a short single-line Bates prefix and suffix.");
+  valid(prefix.length <= 128 && suffix.length <= 128 && !/[\0\r\n]/.test(prefix + suffix), "Use a single-line Bates prefix and suffix of at most 128 characters each.");
   valid(safeInteger(padding, 1) && padding <= 10, "Bates padding must be between 1 and 10 digits.");
   return readNamespace(await generated.createBatesNamespace({ prefix, suffix, padding }, { session, signal }));
 }

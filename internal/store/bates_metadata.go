@@ -7,6 +7,7 @@ import (
 	"fmt"
 
 	"go.kenn.io/docbank/internal/canonical"
+	"go.kenn.io/docbank/internal/pdfstamp"
 )
 
 const (
@@ -190,7 +191,7 @@ func importBatesMetadata(ctx context.Context, tx *sql.Tx, kind string, raw jsont
 			return err
 		}
 		if r.Type != kind || validateUUIDv4(r.NamespaceID) != nil || r.Padding < 1 || r.Padding > maxBatesPadding ||
-			!validBatesLabelPart(r.Prefix) || !validBatesLabelPart(r.Suffix) || validateMetadataTime("Bates namespace", r.CreatedAt) != nil {
+			pdfstamp.ValidateLabelPart("prefix", r.Prefix) != nil || pdfstamp.ValidateLabelPart("suffix", r.Suffix) != nil || validateMetadataTime("Bates namespace", r.CreatedAt) != nil {
 			return invalidBatesRecord(kind, r.NamespaceID)
 		}
 		_, err := tx.ExecContext(ctx, `INSERT INTO bates_namespaces(namespace_id,prefix,suffix,padding,created_at) VALUES(?,?,?,?,?)`, r.NamespaceID, r.Prefix, r.Suffix, r.Padding, r.CreatedAt)

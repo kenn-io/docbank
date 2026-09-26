@@ -10,6 +10,7 @@ import (
 	"fmt"
 
 	"go.kenn.io/docbank/internal/canonical"
+	"go.kenn.io/docbank/internal/pdfstamp"
 )
 
 type BatesNamespace struct {
@@ -171,8 +172,11 @@ func (s *Store) EnsureBatesNamespace(ctx context.Context, prefix, suffix string,
 	if padding < 1 || padding > maxBatesPadding {
 		return BatesNamespace{}, invalidBatesRequest(fmt.Sprintf("padding must be between 1 and %d", maxBatesPadding))
 	}
-	if !validBatesLabelPart(prefix) || !validBatesLabelPart(suffix) {
-		return BatesNamespace{}, invalidBatesRequest("prefix and suffix must be printable ASCII without % or \\")
+	if err := pdfstamp.ValidateLabelPart("prefix", prefix); err != nil {
+		return BatesNamespace{}, invalidBatesRequest(err.Error())
+	}
+	if err := pdfstamp.ValidateLabelPart("suffix", suffix); err != nil {
+		return BatesNamespace{}, invalidBatesRequest(err.Error())
 	}
 	var result BatesNamespace
 	err := s.withLogicalTx(ctx, func(tx *sql.Tx) error {
@@ -341,14 +345,20 @@ func expectedBatesPagesLimited(ctx context.Context, tx metadataQuerier, snapshot
 				return nil, ErrBatesPageCountMismatch
 			}
 			pageDoc, err := loadPageDocument(ctx, tx, member.ContentVersionID)
-			if errors.Is(err, ErrNotFound) && snapshotPDFRepresentationValid(member) {
-				err = nil
-			}
-			if err != nil || pageDoc.PageCount != 0 && (pageDoc.PageCount != member.SourcePageCount || pageDoc.Source.SHA256 != member.SelectedPDFSHA256) {
+			switch {
+			case errors.Is(err, ErrNotFound):
+				// Without a page document, the sealed PDF representation is the
+				// page-count authority.
+				if !snapshotPDFRepresentationValid(member) {
+					return nil, ErrBatesPageCountMismatch
+				}
+			case err != nil:
+				return nil, err
+			case pageDoc.PageCount != member.SourcePageCount || pageDoc.Source.SHA256 != member.SelectedPDFSHA256:
 				return nil, ErrBatesPageCountMismatch
 			}
 			for _, page := range member.SelectedSourcePages {
-				expected = append(expected, BatesPageInput{member.OccurrenceID, member.SelectedPDFSHA256, page, pageDoc.PageCount})
+				expected = append(expected, BatesPageInput{member.OccurrenceID, member.SelectedPDFSHA256, page, member.SourcePageCount})
 				if len(expected) > limit {
 					return nil, ErrBatesPageLimit
 				}
@@ -440,15 +450,6 @@ func (s *Store) ReserveBatesRange(ctx context.Context, r BatesPlanRequest) (Bate
 		return BatesAllocation{}, err
 	}
 	return allocation, err
-}
-
-func validBatesLabelPart(value string) bool {
-	for _, character := range value {
-		if character < 0x20 || character > 0x7e || character == '%' || character == '\\' {
-			return false
-		}
-	}
-	return true
 }
 
 func loadBatesAllocation(ctx context.Context, q metadataQuerier, id string) (BatesAllocation, error) {

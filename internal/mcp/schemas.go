@@ -5,6 +5,7 @@ import (
 
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/loadfile"
+	"go.kenn.io/docbank/internal/pdfstamp"
 	"go.kenn.io/docbank/internal/store"
 )
 
@@ -24,7 +25,7 @@ const (
 	defaultRenditionChars = 8_000
 	maxPackageDiagnostics = 250
 	maxBatesLabels        = 250
-	maxBatesAffixChars    = 128
+	maxBatesAffixChars    = pdfstamp.MaxLabelPartChars
 	maxBatesLabelChars    = maxBatesAffixChars*2 + 10
 )
 

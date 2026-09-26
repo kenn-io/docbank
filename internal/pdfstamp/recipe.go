@@ -114,9 +114,21 @@ func (r Recipe) Normalized() Recipe {
 	return r
 }
 
+// MaxLabelPartChars bounds a Bates prefix or suffix. Every label must stay
+// short enough to fit its stamp and API responses.
+const MaxLabelPartChars = 128
+
+// ValidateLabelPart checks one Bates prefix or suffix.
+func ValidateLabelPart(name, value string) error {
+	return validateLabelPart(name, value)
+}
+
 func validateLabelPart(name, value string) error {
 	if !utf8.ValidString(value) {
 		return fmt.Errorf("bates stamp %s is not valid UTF-8", name)
+	}
+	if len(value) > MaxLabelPartChars {
+		return fmt.Errorf("bates stamp %s is longer than %d characters", name, MaxLabelPartChars)
 	}
 	for _, character := range value {
 		if character < 0x20 || character > 0x7e {
