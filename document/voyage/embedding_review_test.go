@@ -346,6 +346,10 @@ func TestVoyageEmbeddingAttemptTimeouts(t *testing.T) {
 				profile := voyageTextProfile(t, voyage.EmbeddingModeText)
 				profile.Endpoint, profile.EgressPolicy = endpoint, egress
 				profile.RequestTimeout, profile.MaxRetries = 100*time.Millisecond, 3
+				if outcome == "caller_cancel" {
+					// A slow connect must not expire the attempt before the caller cancels.
+					profile.RequestTimeout = time.Minute
+				}
 				profile.RetryBaseDelay = time.Nanosecond
 				profile = refingerprintVoyageProfile(t, profile)
 				provider, err := newVoyageEmbeddingTestProvider(t, profile, secrets, resolver)
