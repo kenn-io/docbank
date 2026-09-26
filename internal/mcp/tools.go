@@ -18,16 +18,20 @@ import (
 
 const toolCatalogTTLMs = 60_000
 
-func catalogInstructions(allowProcessing, allowPackageWrites bool) string {
-	if !allowProcessing && !allowPackageWrites {
-		return "Docbank exposes a bounded read-only document and package surface."
+func catalogInstructions(allowProcessing, allowPackageWrites bool, allowExportWrites ...bool) string {
+	exportWrites := len(allowExportWrites) != 0 && allowExportWrites[0]
+	if !allowProcessing && !allowPackageWrites && !exportWrites {
+		return "Docbank exposes a bounded read-only document, package, and export surface."
 	}
-	instructions := "Docbank exposes bounded document and package reads."
+	instructions := "Docbank exposes bounded document, package, and export reads."
 	if allowProcessing {
 		instructions += " start_processing requires a reviewed plan and prior operator consent."
 	}
 	if allowPackageWrites {
 		instructions += " Package writes can preflight local sources, import packages, and assign or resolve custodians."
+	}
+	if exportWrites {
+		instructions += " Export writes require exact selected document identities and explicit operation IDs."
 	}
 	return instructions
 }
@@ -62,6 +66,15 @@ var readToolDefinitions = []toolDefinition{
 	{name: "list_package_members", title: "List package members", description: "Page through one package's immutable document occurrences.", schemas: listPackageMembersSchemas},
 	{name: "get_package_record", title: "Get package record", description: "Read one immutable sender row by its package-scoped record key.", schemas: getPackageRecordSchemas},
 	{name: "lookup_bates_label", title: "Look up Bates label", description: "Find every bounded package-scoped match for an exact received or assigned label.", schemas: lookupBatesLabelSchemas},
+	{name: "preview_export_plan", title: "Preview export plan", description: "Inspect frozen role availability before starting a native document export.", schemas: previewExportPlanSchemas},
+	{name: "get_export_job", title: "Get export job", description: "Read bounded progress and the retained receipt for one native export job.", schemas: getExportJobSchemas},
+}
+
+var exportWriteToolDefinitions = []toolDefinition{
+	{name: "create_export_source", title: "Create export source", description: "Freeze up to 100 exact selected document versions for export.", schemas: createExportSourceSchemas, write: true, idempotent: true},
+	{name: "create_export_plan", title: "Create export plan", description: "Bind a frozen source and selected output roles to an export plan.", schemas: createExportPlanSchemas, write: true, idempotent: true},
+	{name: "start_export_job", title: "Start export job", description: "Start one durable export from an exact previewed plan fingerprint.", schemas: startExportJobSchemas, write: true, idempotent: true},
+	{name: "cancel_export_job", title: "Cancel export job", description: "Cancel one queued or running native export job.", schemas: cancelExportJobSchemas, write: true, destructive: true},
 }
 
 var processingToolDefinition = toolDefinition{
@@ -94,7 +107,7 @@ var assignPackageCustodianToolDefinition = toolDefinition{
 	schemas:     assignPackageCustodianSchemas, write: true, destructive: true,
 }
 
-func toolCatalog(allowProcessing, allowPackageWrites bool) []*sdkmcp.Tool {
+func toolCatalog(allowProcessing, allowPackageWrites bool, allowExportWrites ...bool) []*sdkmcp.Tool {
 	definitions := slices.Clone(readToolDefinitions)
 	if allowProcessing {
 		definitions = append(definitions, processingToolDefinition)
@@ -102,6 +115,9 @@ func toolCatalog(allowProcessing, allowPackageWrites bool) []*sdkmcp.Tool {
 	if allowPackageWrites {
 		definitions = append(definitions, preflightLoadFilePackageToolDefinition, packageImportToolDefinition,
 			resolvePackageCustodianToolDefinition, assignPackageCustodianToolDefinition)
+	}
+	if len(allowExportWrites) != 0 && allowExportWrites[0] {
+		definitions = append(definitions, exportWriteToolDefinitions...)
 	}
 	tools := make([]*sdkmcp.Tool, 0, len(definitions))
 	for _, definition := range definitions {
@@ -121,9 +137,9 @@ func toolCatalog(allowProcessing, allowPackageWrites bool) []*sdkmcp.Tool {
 }
 
 func registerToolCatalog(
-	server *sdkmcp.Server, allowProcessing, allowPackageWrites bool, lease *daemonLease, plans *processingPlanRegistry, logger *slog.Logger,
+	server *sdkmcp.Server, allowProcessing, allowPackageWrites, allowExportWrites bool, lease *daemonLease, plans *processingPlanRegistry, logger *slog.Logger,
 ) {
-	tools := toolCatalog(allowProcessing, allowPackageWrites)
+	tools := toolCatalog(allowProcessing, allowPackageWrites, allowExportWrites)
 	server.AddReceivingMiddleware(validateToolInputs(tools))
 	for _, tool := range tools {
 		output := mustResolveSchema(tool.OutputSchema)
@@ -137,6 +153,8 @@ func registerToolCatalog(
 			handler = packagePreflightToolHandler(lease, output, logger)
 		case resolvePackageCustodianToolDefinition.name, assignPackageCustodianToolDefinition.name:
 			handler = packageCustodianWriteToolHandler(lease, tool.Name, output, logger)
+		case "preview_export_plan", "get_export_job", "create_export_source", "create_export_plan", "start_export_job", "cancel_export_job":
+			handler = exportToolHandler(lease, tool.Name, output, logger)
 		default:
 			handler = readToolHandler(lease, plans, tool.Name, output, logger)
 		}

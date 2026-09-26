@@ -1,5 +1,5 @@
 ---
-last_edited: 2026-09-16
+last_edited: 2026-09-24
 title: CLI Reference
 description: Every docbank command, flag, output format, and error behavior.
 ---
@@ -927,6 +927,33 @@ Export dated search counts and retain the evidence needed to check them.
 Commands with `--output` also accept `--overwrite`. Existing destinations are
 otherwise preserved. See [Search exports](usage/search-exports.md) for the
 version 1 request format, date choices, counts, and retention limits.
+
+## docbank export
+
+```
+docbank export source --input source.json
+docbank export plan --input plan.json
+docbank export preview <plan-id>
+docbank export start --input job.json
+docbank export status <job-id>
+docbank export cancel <job-id>
+docbank export archive <job-id> --output export.zip [--overwrite]
+```
+
+These commands use the authenticated daemon. `source` freezes exact document
+versions and prints the source receipt as JSON. Put its `id` and `member_hash`
+in the plan request, choose the output roles, and inspect `preview` before
+starting a job. Put the plan's `id` and `fingerprint` in the job request. Each
+request needs a caller-generated `operation_id` UUIDv4; JSON input is limited
+to 64 MiB and rejects unknown fields. `source`, `plan`, `preview`, `start`, and
+`status` write only JSON to stdout so their retained IDs can be reused in a
+later CLI invocation.
+
+`archive` downloads a completed native document export.
+Before the file replaces its destination, Docbank checks the received size and
+SHA-256 against the daemon response and verifies the ZIP's plan fingerprint,
+member hashes, and manifest. A missing, unfinished, foreign-owner, or
+withdrawn-source job produces no output file.
 
 ## docbank processing
 
