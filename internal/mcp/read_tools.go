@@ -11,6 +11,7 @@ import (
 
 	"github.com/google/jsonschema-go/jsonschema"
 	sdkmcp "github.com/modelcontextprotocol/go-sdk/mcp"
+	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/apiclient"
 	"go.kenn.io/docbank/internal/daemonconn"
@@ -64,6 +65,14 @@ func executeReadTool(
 		output, err = listDocumentVersions(ctx, lease, raw)
 	case "read_rendition_text":
 		output, err = readRenditionText(ctx, lease, raw)
+	case "resolve_passage":
+		output, err = resolvePassage(ctx, lease, raw)
+	case "get_document_outline":
+		output, err = getDocumentOutline(ctx, lease, raw)
+	case "read_passage_section":
+		output, err = readPassageSection(ctx, lease, raw)
+	case "get_context_pack":
+		output, err = getContextPack(ctx, lease, raw)
 	case "get_processing_plan":
 		output, err = getProcessingPlan(ctx, lease, raw)
 	case "get_processing_status":
@@ -261,6 +270,124 @@ func optionalInt64(value int) *int64 {
 	}
 	converted := int64(value)
 	return &converted
+}
+
+type documentOutlineInput struct {
+	Ref document.PassageRefV1 `json:"ref"`
+}
+
+type resolvePassageInput struct {
+	Ref      document.PassageRefV1 `json:"ref"`
+	MaxBytes int                   `json:"max_bytes"`
+}
+
+type resolvePassageOutput struct {
+	api.PassageResolution
+	privateCache
+}
+
+func resolvePassage(ctx context.Context, lease *daemonLease, raw []byte) (resolvePassageOutput, error) {
+	var input resolvePassageInput
+	if err := decodeReadArguments(raw, &input); err != nil {
+		return resolvePassageOutput{}, err
+	}
+	passage, err := daemonRead(ctx, lease, func(ctx context.Context, c *daemonconn.Connection) (api.PassageResolution, error) {
+		return c.ResolvePassage(ctx, api.PassageResolveRequest{Ref: input.Ref, MaxBytes: input.MaxBytes})
+	})
+	if err != nil {
+		return resolvePassageOutput{}, err
+	}
+	return resolvePassageOutput{PassageResolution: passage, privateCache: newPrivateCache()}, nil
+}
+
+type documentOutlineOutput struct {
+	api.PassageOutline
+	privateCache
+}
+
+func getDocumentOutline(
+	ctx context.Context, lease *daemonLease, raw []byte,
+) (documentOutlineOutput, error) {
+	var input documentOutlineInput
+	if err := decodeReadArguments(raw, &input); err != nil {
+		return documentOutlineOutput{}, err
+	}
+	outline, err := daemonRead(ctx, lease, func(ctx context.Context, c *daemonconn.Connection) (api.PassageOutline, error) {
+		return c.PassageOutline(ctx, api.PassageOutlineRequest{Ref: input.Ref})
+	})
+	if err != nil {
+		return documentOutlineOutput{}, err
+	}
+	return documentOutlineOutput{PassageOutline: outline, privateCache: newPrivateCache()}, nil
+}
+
+type passageSectionInput struct {
+	Ref             document.PassageRefV1 `json:"ref"`
+	NavigationKey   string                `json:"navigation_key"`
+	IncludeChildren bool                  `json:"include_children"`
+	MaxBytes        int                   `json:"max_bytes"`
+	Continuation    string                `json:"continuation"`
+}
+
+type passageSectionOutput struct {
+	api.PassageSectionPage
+	privateCache
+}
+
+func readPassageSection(
+	ctx context.Context, lease *daemonLease, raw []byte,
+) (passageSectionOutput, error) {
+	var input passageSectionInput
+	if err := decodeReadArguments(raw, &input); err != nil {
+		return passageSectionOutput{}, err
+	}
+	page, err := daemonRead(ctx, lease, func(ctx context.Context, c *daemonconn.Connection) (api.PassageSectionPage, error) {
+		return c.ReadPassageSection(ctx, api.PassageReadSectionRequest{
+			Ref: input.Ref, NavigationKey: input.NavigationKey, IncludeChildren: input.IncludeChildren,
+			MaxBytes: input.MaxBytes, Continuation: input.Continuation,
+		})
+	})
+	if err != nil {
+		return passageSectionOutput{}, err
+	}
+	return passageSectionOutput{PassageSectionPage: page, privateCache: newPrivateCache()}, nil
+}
+
+type contextPackInput struct {
+	VaultUID              string                 `json:"vault_uid"`
+	ContentVersionIDs     []string               `json:"content_version_ids"`
+	Query                 string                 `json:"query"`
+	Seed                  *document.PassageRefV1 `json:"seed"`
+	Profile               string                 `json:"profile"`
+	MaxBytes              int                    `json:"max_bytes"`
+	PerDocumentPassages   int                    `json:"per_document_passages"`
+	MaxDocuments          int                    `json:"max_documents"`
+	IncludeSectionContext bool                   `json:"include_section_context"`
+}
+
+type contextPackOutput struct {
+	api.ContextPackResponse
+	privateCache
+}
+
+func getContextPack(ctx context.Context, lease *daemonLease, raw []byte) (contextPackOutput, error) {
+	var input contextPackInput
+	if err := decodeReadArguments(raw, &input); err != nil {
+		return contextPackOutput{}, err
+	}
+	pack, err := daemonRead(ctx, lease, func(ctx context.Context, c *daemonconn.Connection) (api.ContextPackResponse, error) {
+		return c.ContextPack(ctx, api.ContextPackRequest{
+			Fence: api.DocumentSourceFence{VaultUID: input.VaultUID,
+				ContentVersionIDs: input.ContentVersionIDs},
+			Query: input.Query, Seed: input.Seed, Profile: input.Profile,
+			MaxBytes: input.MaxBytes, PerDocumentPassages: input.PerDocumentPassages,
+			MaxDocuments: input.MaxDocuments, IncludeSectionContext: input.IncludeSectionContext,
+		})
+	})
+	if err != nil {
+		return contextPackOutput{}, err
+	}
+	return contextPackOutput{ContextPackResponse: pack, privateCache: newPrivateCache()}, nil
 }
 
 func decodeReadArguments(raw []byte, target any) error {

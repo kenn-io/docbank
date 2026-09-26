@@ -337,6 +337,10 @@ func (layout metadataSourceLayout) hasPersons() bool {
 	return layout.schemaVersion >= peopleStorageSchemaVersion
 }
 
+func (layout metadataSourceLayout) hasDocumentIdentities() bool {
+	return layout.schemaVersion >= documentIdentityStorageSchemaVersion
+}
+
 func exportMetadataSnapshot(ctx context.Context, tx metadataQuerier, w io.Writer) error {
 	return exportMetadataSnapshotWithVaultIdentity(ctx, tx, w, currentMetadataLayout())
 }
@@ -404,6 +408,11 @@ func exportMetadataSnapshotWithVaultIdentity(
 	}
 	if err := exportContentVersions(ctx, tx, write); err != nil {
 		return err
+	}
+	if layout.hasDocumentIdentities() {
+		if err := exportDocumentIdentityMetadata(ctx, tx, write); err != nil {
+			return err
+		}
 	}
 	if layout.hasPersons() {
 		if err := exportPersonMetadata(ctx, tx, write); err != nil {
@@ -482,6 +491,11 @@ func exportMetadataSnapshotWithVaultIdentity(
 	}
 	if err := exportProcessingMetadata(ctx, tx, write); err != nil {
 		return err
+	}
+	if layout.hasDocumentIdentities() {
+		if err := exportAdoptedPassageAuthorityMetadata(ctx, tx, write); err != nil {
+			return err
+		}
 	}
 	if err := exportEmbeddingMetadata(ctx, tx, write); err != nil {
 		return err
@@ -1080,6 +1094,9 @@ func requirePristineMetadataTarget(ctx context.Context, tx *sql.Tx) error {
 		    + (SELECT COUNT(*) FROM text_extraction_queue)
 		    + (SELECT COUNT(*) FROM text_searchable_versions)
 		    + (SELECT COUNT(*) FROM content_fts)
+		    + (SELECT COUNT(*) FROM document_identities)
+		    + (SELECT COUNT(*) FROM document_identity_aliases)
+		    + (SELECT COUNT(*) FROM adopted_passage_authorities)
 		    + (SELECT COUNT(*) FROM audit_records)
 		    + (SELECT COUNT(*) FROM audit_authority)
 		    + (SELECT COUNT(*) FROM audit_scopes)
@@ -1255,6 +1272,10 @@ func (s *Store) importMetadataRecord(
 	}
 	if isPersonMetadataType(kind) {
 		return importPersonMetadataRecord(ctx, tx, kind, raw)
+	}
+	if kind == metadataDocumentIdentityType || kind == metadataDocumentIdentityAliasType ||
+		kind == metadataAdoptedPassageAuthorityType {
+		return importDocumentIdentityMetadataRecord(ctx, tx, kind, raw)
 	}
 	switch kind {
 	case "blob":
@@ -1618,6 +1639,9 @@ var metadataRequiredFields = map[string][]string{
 	metadataPersonCandidateType:                  personMetadataRequiredFields[metadataPersonCandidateType],
 	"node":                                       {metadataTypeField, "id", "parent_id", "name", "kind", "current_version_id", metadataRevisionField, metadataCreatedAtField, "modified_at", "trashed_at", "trash_parent", "trash_name"},
 	"content_version":                            {metadataTypeField, "version_id", metadataNodeIDField, columnBlobHash, metadataSizeField, "mime_type", auditRecordedAtField, "node_revision", "introduced_operation_id", "transition_kind", auditSourceVersionIDField},
+	metadataDocumentIdentityType:                 {metadataTypeField, "document_uid", metadataNodeIDField, metadataCreatedAtField},
+	metadataDocumentIdentityAliasType:            {metadataTypeField, "domain_uid", "source_vault_uid", "source_document_uid", "local_document_uid", "mapped_at"},
+	metadataAdoptedPassageAuthorityType:          {metadataTypeField, "domain_uid", "source_vault_uid", "source_document_uid", "source_content_version_id", "source_build_id", "source_attachment_id", "local_document_uid", "local_content_version_id", "local_build_id", "local_attachment_id", "mapped_at"},
 	metadataIngestType:                           {metadataTypeField, metadataIngestIDField, "started_at", "source_kind", "source_desc"},
 	metadataCollectionLabelType:                  {metadataTypeField, metadataIngestIDField, "label", metadataRevisionField, "updated_at"},
 	metadataProvenanceType:                       {metadataTypeField, "identity", metadataNodeIDField, metadataIngestIDField, "original_path", "original_mtime", "supersedes"},
@@ -2033,6 +2057,11 @@ func validateMetadataStateWithVaultIdentity(
 	if err := validateMetadataRelations(ctx, tx); err != nil {
 		return err
 	}
+	if layout.hasDocumentIdentities() {
+		if err := validateDocumentIdentityMetadataState(ctx, tx); err != nil {
+			return err
+		}
+	}
 	if layout.hasPostV3Metadata() {
 		if err := validateProvenanceVersionBindingRelations(ctx, tx); err != nil {
 			return err
@@ -2304,6 +2333,36 @@ func validateMetadataRelations(ctx context.Context, tx metadataQuerier) error {
 			  SELECT p.identity FROM provenance p JOIN reachable r ON p.supersedes=r.identity
 			)
 			SELECT (SELECT COUNT(*) FROM reachable) != (SELECT COUNT(*) FROM provenance)`},
+	}
+	for _, check := range checks {
+		var failed bool
+		if err := tx.QueryRowContext(ctx, check.query).Scan(&failed); err != nil {
+			return fmt.Errorf("validating metadata (%s): %w", check.name, err)
+		}
+		if failed {
+			return errors.New(check.name)
+		}
+	}
+	return nil
+}
+
+func validateDocumentIdentityMetadataState(ctx context.Context, tx metadataQuerier) error {
+	checks := []struct{ name, query string }{
+		{"document identity references non-file node", `SELECT EXISTS(SELECT 1 FROM document_identities i LEFT JOIN nodes n ON n.id=i.node_id WHERE n.id IS NULL OR n.kind != 'file')`},
+		{"document identity alias references missing authority", `SELECT EXISTS(SELECT 1 FROM document_identity_aliases a LEFT JOIN document_identities i ON i.document_uid=a.local_document_uid WHERE i.document_uid IS NULL)`},
+		{"adopted passage authority differs from retained local tuple", `SELECT EXISTS(
+			SELECT 1 FROM adopted_passage_authorities pa
+			LEFT JOIN document_identity_aliases da ON da.domain_uid=pa.domain_uid
+				AND da.source_vault_uid=pa.source_vault_uid AND da.source_document_uid=pa.source_document_uid
+				AND da.local_document_uid=pa.local_document_uid
+			LEFT JOIN document_identities di ON di.document_uid=pa.local_document_uid
+			LEFT JOIN content_versions v ON v.version_id=pa.local_content_version_id AND v.node_id=di.node_id
+			LEFT JOIN rendition_attachments a ON a.attachment_id=pa.local_attachment_id
+				AND a.content_version_id=v.version_id AND a.build_id=pa.local_build_id
+			LEFT JOIN rendition_builds b ON b.build_id=pa.local_build_id
+				AND b.vault_uid=a.vault_uid AND b.source_sha256=v.blob_hash
+			WHERE da.domain_uid IS NULL OR v.version_id IS NULL OR a.attachment_id IS NULL
+				OR b.build_id IS NULL)`},
 	}
 	for _, check := range checks {
 		var failed bool

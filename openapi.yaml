@@ -2289,6 +2289,157 @@ components:
       x-go-type-import:
         path: go.kenn.io/docbank/internal/api
         name: api
+    ContextCoverage:
+      additionalProperties: false
+      properties:
+        available_sources:
+          format: int64
+          type: integer
+        rendition_available_sources:
+          format: int64
+          type: integer
+        rendition_missing_sources:
+          format: int64
+          type: integer
+        requested_sources:
+          format: int64
+          type: integer
+        selected_sources:
+          format: int64
+          type: integer
+      required:
+        - requested_sources
+        - available_sources
+        - selected_sources
+        - rendition_available_sources
+        - rendition_missing_sources
+      type: object
+      x-go-type: processing.ContextCoverage
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/processing
+        name: processing
+    ContextPackRequest:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/ContextPackRequest.json
+          format: uri
+          readOnly: true
+          type: string
+        fence:
+          $ref: "#/components/schemas/DocumentSourceFence"
+        include_section_context:
+          type: boolean
+        max_bytes:
+          default: 65536
+          format: int64
+          maximum: 262144
+          minimum: 1
+          type: integer
+        max_documents:
+          default: 20
+          format: int64
+          maximum: 20
+          minimum: 1
+          type: integer
+        per_document_passages:
+          default: 2
+          format: int64
+          maximum: 8
+          minimum: 1
+          type: integer
+        profile:
+          maxLength: 128
+          type: string
+        query:
+          maxLength: 8192
+          type: string
+        seed:
+          $ref: "#/components/schemas/PassageRefV1"
+      required:
+        - fence
+      type: object
+      x-go-type: api.ContextPackRequest
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
+    ContextPackResponse:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/ContextPackResponse.json
+          format: uri
+          readOnly: true
+          type: string
+        complete:
+          type: boolean
+        coverage:
+          $ref: "#/components/schemas/ContextCoverage"
+        deduplicated:
+          format: int64
+          type: integer
+        fence_fingerprint:
+          type: string
+        index_generation_id:
+          type: string
+        index_manifest_digest:
+          type: string
+        omitted:
+          additionalProperties:
+            format: int64
+            type: integer
+          type: object
+        passages:
+          items:
+            $ref: "#/components/schemas/ContextPassage"
+          type: array
+        profile_fingerprint:
+          type: string
+        search_truncated:
+          type: boolean
+        truncated:
+          type: boolean
+      required:
+        - fence_fingerprint
+        - coverage
+        - passages
+        - omitted
+        - deduplicated
+        - search_truncated
+        - complete
+        - truncated
+      type: object
+      x-go-type: api.ContextPackResponse
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
+    ContextPassage:
+      additionalProperties: false
+      properties:
+        path:
+          type: string
+        reasons:
+          items:
+            type: string
+          type: array
+        ref:
+          $ref: "#/components/schemas/PassageRefV1"
+        text:
+          type: string
+      required:
+        - ref
+        - text
+        - path
+        - reasons
+      type: object
+      x-go-type: processing.ContextPassage
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/processing
+        name: processing
     Counts:
       additionalProperties: false
       properties:
@@ -5685,6 +5836,31 @@ components:
         - source_evidence_contract
       type: object
       x-go-type: document.EvidenceLexicalPolicyV1
+      x-go-type-import:
+        path: go.kenn.io/docbank/document
+        name: document
+    EvidenceLocatorV1:
+      additionalProperties: false
+      properties:
+        end:
+          format: int64
+          type: integer
+        index_origin:
+          type: string
+        kind:
+          type: string
+        name:
+          type: string
+        start:
+          format: int64
+          type: integer
+      required:
+        - end
+        - index_origin
+        - kind
+        - start
+      type: object
+      x-go-type: document.EvidenceLocatorV1
       x-go-type-import:
         path: go.kenn.io/docbank/document
         name: document
@@ -9404,6 +9580,361 @@ components:
       x-go-type-import:
         path: go.kenn.io/docbank/document
         name: document
+    PassageOutline:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/PassageOutline.json
+          format: uri
+          readOnly: true
+          type: string
+        body_sha256:
+          pattern: ^[0-9a-f]{64}$
+          type: string
+        rendition_build_id:
+          pattern: ^[0-9a-f]{64}$
+          type: string
+        sections:
+          items:
+            $ref: "#/components/schemas/PassageOutlineSection"
+          type: array
+      required:
+        - body_sha256
+        - rendition_build_id
+        - sections
+      type: object
+      x-go-type: api.PassageOutline
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
+    PassageOutlineRequest:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/PassageOutlineRequest.json
+          format: uri
+          readOnly: true
+          type: string
+        ref:
+          $ref: "#/components/schemas/PassageRefV1"
+      required:
+        - ref
+      type: object
+      x-go-type: api.PassageOutlineRequest
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
+    PassageOutlineSection:
+      additionalProperties: false
+      properties:
+        byte_end:
+          format: int64
+          minimum: 0
+          type: integer
+        byte_start:
+          format: int64
+          minimum: 0
+          type: integer
+        child_count:
+          format: int64
+          minimum: 0
+          type: integer
+        children:
+          items:
+            $ref: "#/components/schemas/PassageOutlineSection"
+          type: array
+        estimated_runes:
+          format: int64
+          minimum: 0
+          type: integer
+        estimated_utf8_bytes:
+          format: int64
+          minimum: 0
+          type: integer
+        key:
+          pattern: ^[0-9a-f]{64}$
+          type: string
+        level:
+          format: int64
+          maximum: 6
+          minimum: 0
+          type: integer
+        occurrence:
+          format: int64
+          minimum: 1
+          type: integer
+        own_byte_end:
+          format: int64
+          minimum: 0
+          type: integer
+        preamble:
+          type: boolean
+        source_locator:
+          $ref: "#/components/schemas/EvidenceLocatorV1"
+        title:
+          maxLength: 8192
+          type: string
+      required:
+        - key
+        - title
+        - level
+        - occurrence
+        - byte_start
+        - byte_end
+        - own_byte_end
+        - estimated_utf8_bytes
+        - estimated_runes
+        - child_count
+        - preamble
+        - children
+      type: object
+      x-go-type: api.PassageOutlineSection
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
+    PassageReadSectionRequest:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/PassageReadSectionRequest.json
+          format: uri
+          readOnly: true
+          type: string
+        continuation:
+          maxLength: 4096
+          type: string
+        include_children:
+          type: boolean
+        max_bytes:
+          default: 32768
+          format: int64
+          maximum: 262144
+          minimum: 1
+          type: integer
+        navigation_key:
+          pattern: ^[0-9a-f]{64}$
+          type: string
+        ref:
+          $ref: "#/components/schemas/PassageRefV1"
+      required:
+        - ref
+        - navigation_key
+        - include_children
+      type: object
+      x-go-type: api.PassageReadSectionRequest
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
+    PassageRefV1:
+      additionalProperties: false
+      properties:
+        attachment_id:
+          type: string
+        body_sha256:
+          type: string
+        byte_end:
+          format: int64
+          type: integer
+        byte_start:
+          format: int64
+          type: integer
+        content_version_id:
+          type: string
+        document_uid:
+          type: string
+        federation_domain_uid:
+          type: string
+        quote_sha256:
+          type: string
+        rendition_build_id:
+          type: string
+        source_sha256:
+          type: string
+        vault_uid:
+          type: string
+        version:
+          format: int64
+          type: integer
+      required:
+        - version
+        - vault_uid
+        - document_uid
+        - content_version_id
+        - source_sha256
+        - rendition_build_id
+        - attachment_id
+        - body_sha256
+        - byte_start
+        - byte_end
+        - quote_sha256
+      type: object
+      x-go-type: document.PassageRefV1
+      x-go-type-import:
+        path: go.kenn.io/docbank/document
+        name: document
+    PassageResolution:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/PassageResolution.json
+          format: uri
+          readOnly: true
+          type: string
+        availability:
+          enum:
+            - available
+          type: string
+        freshness:
+          enum:
+            - current
+            - historical
+          type: string
+        passage_id:
+          pattern: ^[0-9a-f]{64}$
+          type: string
+        ref:
+          $ref: "#/components/schemas/PassageRefV1"
+        section_path:
+          items:
+            type: string
+          type: array
+        source_locator:
+          $ref: "#/components/schemas/EvidenceLocatorV1"
+        source_path:
+          type: string
+        text:
+          type: string
+      required:
+        - availability
+        - freshness
+        - passage_id
+        - ref
+        - text
+        - section_path
+        - source_path
+      type: object
+      x-go-type: api.PassageResolution
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
+    PassageResolveRequest:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/PassageResolveRequest.json
+          format: uri
+          readOnly: true
+          type: string
+        max_bytes:
+          default: 32768
+          format: int64
+          maximum: 262144
+          minimum: 1
+          type: integer
+        ref:
+          $ref: "#/components/schemas/PassageRefV1"
+      required:
+        - ref
+      type: object
+      x-go-type: api.PassageResolveRequest
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
+    PassageSectionPage:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/PassageSectionPage.json
+          format: uri
+          readOnly: true
+          type: string
+        body_sha256:
+          pattern: ^[0-9a-f]{64}$
+          type: string
+        complete:
+          type: boolean
+        continuation:
+          type: string
+        page_end:
+          format: int64
+          minimum: 0
+          type: integer
+        page_start:
+          format: int64
+          minimum: 0
+          type: integer
+        ref:
+          $ref: "#/components/schemas/PassageRefV1"
+        rendition_build_id:
+          pattern: ^[0-9a-f]{64}$
+          type: string
+        section:
+          $ref: "#/components/schemas/PassageSectionSelection"
+        text:
+          type: string
+      required:
+        - body_sha256
+        - rendition_build_id
+        - section
+        - text
+        - page_start
+        - page_end
+        - complete
+      type: object
+      x-go-type: api.PassageSectionPage
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
+    PassageSectionSelection:
+      additionalProperties: false
+      properties:
+        byte_end:
+          format: int64
+          minimum: 0
+          type: integer
+        byte_start:
+          format: int64
+          minimum: 0
+          type: integer
+        include_children:
+          type: boolean
+        key:
+          pattern: ^[0-9a-f]{64}$
+          type: string
+        level:
+          format: int64
+          maximum: 6
+          minimum: 0
+          type: integer
+        source_locator:
+          $ref: "#/components/schemas/EvidenceLocatorV1"
+        title:
+          maxLength: 8192
+          type: string
+      required:
+        - key
+        - title
+        - level
+        - byte_start
+        - byte_end
+        - include_children
+      type: object
+      x-go-type: api.PassageSectionSelection
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     PendingFormatV1:
       additionalProperties: false
       properties:
@@ -15159,6 +15690,29 @@ paths:
                 $ref: "#/components/schemas/Error"
           description: Error
       summary: Find stable document versions that retain a SHA-256 identity
+  /api/v1/context-packs:
+    post:
+      operationId: createContextPack
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ContextPackRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ContextPackResponse"
+          description: OK
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: Read bounded exact context from a source fence
   /api/v1/coverage:
     get:
       operationId: getDocumentProcessingCoverage
@@ -15309,6 +15863,29 @@ paths:
                 $ref: "#/components/schemas/Error"
           description: Error
       summary: List current live documents with authenticated keyset pagination
+  /api/v1/documents/outline:
+    post:
+      operationId: outlineDocument
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PassageOutlineRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PassageOutline"
+          description: OK
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: Outline one exact retained Markdown rendition
   /api/v1/documents/resolve:
     post:
       operationId: resolveDocumentSummaries
@@ -18771,6 +19348,52 @@ paths:
                 $ref: "#/components/schemas/Error"
           description: Error
       summary: Cancel a render job and fence late output
+  /api/v1/passages/read-section:
+    post:
+      operationId: readPassageSection
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PassageReadSectionRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PassageSectionPage"
+          description: OK
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: Read a bounded page from one exact section
+  /api/v1/passages/resolve:
+    post:
+      operationId: resolvePassage
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PassageResolveRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PassageResolution"
+          description: OK
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: Resolve one exact retained Markdown passage
   /api/v1/path:
     get:
       description: path is a query parameter (one well-defined encoding; catch-all URL segments are ambiguous for encoded slashes). Must start with '/'; '/' resolves the root.

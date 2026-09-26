@@ -20,6 +20,8 @@ const (
 	maxRenditionChars     = 16_000
 	defaultRenditionChars = 8_000
 	maxPackageDiagnostics = 250
+	jsonSchemaBoolean     = "boolean"
+	jsonSchemaMaxItems    = "maxItems"
 )
 
 type schema = map[string]any
@@ -65,7 +67,7 @@ func integerSchema(minimum, maximum int64) schema {
 func arraySchema(items schema, maximum int) schema {
 	result := schema{"type": "array", "items": items} //nolint:goconst // JSON Schema vocabulary is intentionally repeated.
 	if maximum > 0 {
-		result["maxItems"] = maximum
+		result[jsonSchemaMaxItems] = maximum
 	}
 	return result
 }
@@ -321,7 +323,7 @@ func documentSummarySchema() schema {
 func fenceInputProperties() schema {
 	return schema{
 		"content_version_ids": schema{
-			"type": "array", "items": uuidSchema(), "minItems": 1, "maxItems": 4096, "uniqueItems": true,
+			"type": "array", "items": uuidSchema(), "minItems": 1, jsonSchemaMaxItems: 4096, "uniqueItems": true,
 		},
 		"filters": objectSchema(schema{
 			"tag_id":          uuidSchema(),
@@ -336,7 +338,7 @@ func fenceInputProperties() schema {
 func fenceAuthoritySchema() schema {
 	return objectSchema(schema{
 		"vault_id":            uuidSchema(),
-		"content_version_ids": schema{"type": "array", "items": uuidSchema(), "maxItems": 4096, "uniqueItems": true},
+		"content_version_ids": schema{"type": "array", "items": uuidSchema(), jsonSchemaMaxItems: 4096, "uniqueItems": true},
 	}, "vault_id", "content_version_ids")
 }
 
@@ -480,6 +482,158 @@ func readRenditionTextSchemas() (schema, schema) {
 	return input, output
 }
 
+func passageRefSchema() schema {
+	return objectSchema(schema{
+		"version":               schema{"type": "integer", "const": 1},
+		"federation_domain_uid": uuidSchema(),
+		"vault_uid":             uuidSchema(),
+		"document_uid":          uuidSchema(),
+		"content_version_id":    uuidSchema(),
+		"source_sha256":         sha256Schema(),
+		"rendition_build_id":    sha256Schema(),
+		"attachment_id":         sha256Schema(),
+		"body_sha256":           sha256Schema(),
+		"byte_start":            integerSchema(0, 1<<31-1),
+		"byte_end":              integerSchema(1, 1<<31-1),
+		"quote_sha256":          sha256Schema(),
+	}, "version", "vault_uid", "document_uid", "content_version_id", "source_sha256",
+		"rendition_build_id", "attachment_id", "body_sha256", "byte_start", "byte_end", "quote_sha256")
+}
+
+func sourceLocatorSchema() schema {
+	return objectSchema(schema{
+		"kind":         enumSchema("generic", "line", "message", "page", "record", "segment", "section", "sheet", "slide", "spine"),
+		"index_origin": enumSchema("none", "one", "zero"),
+		"start":        integerSchema(0, 1<<31-1),
+		"end":          integerSchema(0, 1<<31-1),
+		"name":         stringSchema(1024),
+	}, "kind", "index_origin", "start", "end")
+}
+
+func resolvePassageSchemas() (schema, schema) {
+	input := rootObjectSchema(schema{
+		"ref":       passageRefSchema(),
+		"max_bytes": schema{"type": "integer", "minimum": 1, "maximum": 256 << 10, "default": 32 << 10},
+	}, "ref")
+	output := rootObjectSchema(withPrivateCache(schema{
+		"availability":   schema{"type": "string", "const": "available"},
+		"freshness":      enumSchema("current", "historical"),
+		"passage_id":     sha256Schema(),
+		"ref":            passageRefSchema(),
+		"text":           stringSchema(256 << 10),
+		"section_path":   arraySchema(stringSchema(8192), 4096),
+		"source_locator": sourceLocatorSchema(),
+		"source_path": schema{"type": "string", "minLength": 1,
+			"maxLength": maxPathCharacters, "pattern": "^/"},
+	}), cacheRequired("availability", "freshness", "passage_id", "ref", "text", "section_path", "source_path")...)
+	return input, output
+}
+
+func outlineSectionSchema() schema {
+	return objectSchema(schema{
+		"key":                  sha256Schema(),
+		"title":                stringSchema(8192),
+		"level":                integerSchema(0, 6),
+		"occurrence":           integerSchema(1, 4096),
+		"byte_start":           integerSchema(0, 1<<31-1),
+		"byte_end":             integerSchema(0, 1<<31-1),
+		"own_byte_end":         integerSchema(0, 1<<31-1),
+		"estimated_utf8_bytes": integerSchema(0, 1<<31-1),
+		"estimated_runes":      integerSchema(0, 1<<31-1),
+		"child_count":          integerSchema(0, 4096),
+		"preamble":             schema{"type": jsonSchemaBoolean},
+		"source_locator":       sourceLocatorSchema(),
+		"children": schema{
+			"type": "array", "items": schema{"$ref": "#/$defs/outlineSection"}, jsonSchemaMaxItems: 4096,
+		},
+	}, "key", "title", "level", "occurrence", "byte_start", "byte_end", "own_byte_end",
+		"estimated_utf8_bytes", "estimated_runes", "child_count", "preamble", "children")
+}
+
+func getDocumentOutlineSchemas() (schema, schema) {
+	input := rootObjectSchema(schema{"ref": passageRefSchema()}, "ref")
+	output := rootObjectSchema(withPrivateCache(schema{
+		"body_sha256":        sha256Schema(),
+		"rendition_build_id": sha256Schema(),
+		"sections": schema{
+			"type": "array", "items": schema{"$ref": "#/$defs/outlineSection"},
+			"minItems": 1, jsonSchemaMaxItems: 4096,
+		},
+	}), cacheRequired("body_sha256", "rendition_build_id", "sections")...)
+	output["$defs"] = schema{"outlineSection": outlineSectionSchema()}
+	return input, output
+}
+
+func readPassageSectionSchemas() (schema, schema) {
+	input := rootObjectSchema(schema{
+		"ref":              passageRefSchema(),
+		"navigation_key":   sha256Schema(),
+		"include_children": schema{"type": jsonSchemaBoolean, "default": false},
+		"max_bytes": schema{
+			"type": "integer", "minimum": 1, "maximum": 256 << 10, "default": 32 << 10,
+		},
+		"continuation": stringSchema(4096),
+	}, "ref", "navigation_key")
+	selection := objectSchema(schema{
+		"key": sha256Schema(), "title": stringSchema(8192), "level": integerSchema(0, 6),
+		"byte_start": integerSchema(0, 1<<31-1), "byte_end": integerSchema(0, 1<<31-1),
+		"include_children": schema{"type": jsonSchemaBoolean}, "source_locator": sourceLocatorSchema(),
+	}, "key", "title", "level", "byte_start", "byte_end", "include_children")
+	output := rootObjectSchema(withPrivateCache(schema{
+		"body_sha256": sha256Schema(), "rendition_build_id": sha256Schema(),
+		"section": selection, "text": stringSchema(256 << 10), "ref": passageRefSchema(),
+		"page_start": integerSchema(0, 1<<31-1), "page_end": integerSchema(0, 1<<31-1),
+		"complete": schema{"type": jsonSchemaBoolean}, "continuation": stringSchema(4096),
+	}), cacheRequired("body_sha256", "rendition_build_id", "section", "text", "page_start",
+		"page_end", "complete")...)
+	return input, output
+}
+
+func getContextPackSchemas() (schema, schema) {
+	input := rootObjectSchema(schema{
+		"vault_uid": uuidSchema(),
+		"content_version_ids": schema{"type": "array", "items": uuidSchema(),
+			"minItems": 1, jsonSchemaMaxItems: 4096, "uniqueItems": true},
+		"query": schema{"type": "string", "minLength": 1, "maxLength": 8192},
+		"seed":  passageRefSchema(),
+		"profile": schema{"type": "string", "minLength": 1, "maxLength": 128,
+			"pattern": "^[a-z][a-z0-9_-]*$"},
+		"max_bytes": schema{"type": "integer", "minimum": 1, "maximum": 256 << 10,
+			"default": 64 << 10},
+		"per_document_passages": schema{"type": "integer", "minimum": 1, "maximum": 8,
+			"default": 2},
+		"max_documents": schema{"type": "integer", "minimum": 1, "maximum": 20,
+			"default": 20},
+		"include_section_context": schema{"type": jsonSchemaBoolean, "default": false},
+	}, "vault_uid", "content_version_ids")
+	passage := objectSchema(schema{
+		"ref": passageRefSchema(), "text": stringSchema(256 << 10),
+		"path":    schema{"type": "string", "minLength": 1, "maxLength": maxPathCharacters, "pattern": "^/"},
+		"reasons": arraySchema(stringSchema(64), 16),
+	}, "ref", "text", "path", "reasons")
+	coverage := objectSchema(schema{
+		"requested_sources":           integerSchema(1, 4096),
+		"available_sources":           integerSchema(0, 4096),
+		"selected_sources":            integerSchema(0, 20),
+		"rendition_available_sources": integerSchema(0, 4096),
+		"rendition_missing_sources":   integerSchema(0, 4096),
+	}, "requested_sources", "available_sources", "selected_sources",
+		"rendition_available_sources", "rendition_missing_sources")
+	output := rootObjectSchema(withPrivateCache(schema{
+		"fence_fingerprint":   schema{"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+		"profile_fingerprint": sha256Schema(), "index_generation_id": sha256Schema(),
+		"index_manifest_digest": sha256Schema(), "coverage": coverage,
+		"passages":         arraySchema(passage, 160),
+		"omitted":          schema{"type": "object", "additionalProperties": integerSchema(1, 8192)},
+		"deduplicated":     integerSchema(0, 320),
+		"search_truncated": schema{"type": jsonSchemaBoolean},
+		"complete":         schema{"type": jsonSchemaBoolean},
+		"truncated":        schema{"type": jsonSchemaBoolean},
+	}), cacheRequired("fence_fingerprint", "coverage", "passages", "omitted", "deduplicated",
+		"search_truncated", "complete", "truncated")...)
+	return input, output
+}
+
 func processingSelectorProperties() schema {
 	return schema{
 		"node_id": integerSchema(1, 0), "content_version_id": uuidSchema(),
@@ -497,14 +651,14 @@ func getProcessingPlanSchemas() (schema, schema) {
 		"model":                   stringSchema(1024),
 		"model_revision":          stringSchema(1024),
 		"vector_space":            stringSchema(1024),
-		"metadata_classes":        schema{"type": "array", "items": stringSchema(128), "maxItems": 64, "uniqueItems": true},
-		"retained_artifact_roles": schema{"type": "array", "items": stringSchema(128), "maxItems": 64, "uniqueItems": true},
+		"metadata_classes":        schema{"type": "array", "items": stringSchema(128), jsonSchemaMaxItems: 64, "uniqueItems": true},
+		"retained_artifact_roles": schema{"type": "array", "items": stringSchema(128), jsonSchemaMaxItems: 64, "uniqueItems": true},
 	}, "immediate_processor", "ultimate_processor", "endpoint", "deployment", "metadata_classes", "retained_artifact_roles")
 	flowHop := objectSchema(schema{
 		"capability":         enumSchema("rendition", "embedding", "query_embedding"),
 		"provider_id":        stringSchema(128),
 		"trust_boundary":     enumSchema("local_process", "operator_network", "hosted_provider"),
-		"input_classes":      schema{"type": "array", "items": enumSchema("original_file", "rendition_chunk", "query_text"), "maxItems": 3, "uniqueItems": true},
+		"input_classes":      schema{"type": "array", "items": enumSchema("original_file", "rendition_chunk", "query_text"), jsonSchemaMaxItems: 3, "uniqueItems": true},
 		"runtime_disclosure": runtimeDisclosure,
 		"disclose_filename":  booleanSchema(),
 		"filename":           stringSchema(255),
@@ -516,10 +670,10 @@ func getProcessingPlanSchemas() (schema, schema) {
 		"profile_fingerprint": sha256Schema(),
 		"flow":                arraySchema(flowHop, 129),
 		"disclosed_classes": schema{
-			"type": "array", "items": stringSchema(128), "maxItems": 129, "uniqueItems": true,
+			"type": "array", "items": stringSchema(128), jsonSchemaMaxItems: 129, "uniqueItems": true,
 		},
 		"retained_classes": schema{
-			"type": "array", "items": stringSchema(128), "maxItems": 129, "uniqueItems": true,
+			"type": "array", "items": stringSchema(128), jsonSchemaMaxItems: 129, "uniqueItems": true,
 		},
 		"estimate": objectSchema(schema{
 			"source_bytes": integerSchema(0, 0), "provider_calls": integerSchema(0, 0), "vector_spaces": integerSchema(0, 0),
@@ -546,7 +700,7 @@ func getProcessingCoverageSchemas() (schema, schema) {
 	input := rootObjectSchema(schema{
 		"profile":             schema{"type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-z][a-z0-9_-]*$"},
 		"vault_id":            uuidSchema(),
-		"content_version_ids": schema{"type": "array", "items": uuidSchema(), "minItems": 1, "maxItems": 4096, "uniqueItems": true},
+		"content_version_ids": schema{"type": "array", "items": uuidSchema(), "minItems": 1, jsonSchemaMaxItems: 4096, "uniqueItems": true},
 	}, "profile", "vault_id", "content_version_ids")
 	class := objectSchema(schema{
 		"name": stringSchema(128), "required": booleanSchema(), "state": stringSchema(64),
