@@ -13,7 +13,7 @@ const set: ProductionSet = { id: "11111111-1111-4111-8111-111111111111", name: "
 const draft: ProductionDraft = { set_id: set.id, revision: 2, etag: 4, state: "draft", membership_sealed: false };
 const sourcePDF = new TextEncoder().encode("%PDF-1.7\nsynthetic review page\n%%EOF");
 const sourcePDFSHA = bytesToHex(sha256(sourcePDF));
-const member = (id: string, ordinal: number) => ({ id, ordinal, node_id: ordinal + 10, source_version_id: `00000000-0000-4000-8000-${String(ordinal).padStart(12, "0")}`, pdf_sha256: sourcePDFSHA, pdf_size: sourcePDF.length, mode: "redact_selected", reviewed: false });
+const member = (id: string, ordinal: number) => ({ id, ordinal, node_id: ordinal + 10, source_version_id: `00000000-0000-4000-8000-${String(ordinal).padStart(12, "0")}`, pdf_sha256: sourcePDFSHA, pdf_size: sourcePDF.length, map_sha256: "a".repeat(64), mode: "redact_selected", reviewed: false });
 const memberA = member("22222222-2222-4222-8222-222222222222", 1);
 const memberB = member("33333333-3333-4333-8333-333333333333", 2);
 const flag = (id: string, memberID: string, page: number) => ({ id, member_id: memberID, action: "keep", uncertain: true,

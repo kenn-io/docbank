@@ -1,4 +1,6 @@
 /** Exact page-frame coordinates used by the production draft API. */
+import { rotateRect, transformSize, type Box as EmbedPDFBox, type Rect as EmbedPDFRect, type Rotation } from "@embedpdf/models";
+
 export type Frame = { page: number; sha256: string; width: number; height: number };
 export type PhysicalBox = {
   page: number; frame_sha256: string; x0: number; y0: number; x1: number; y1: number;
@@ -6,6 +8,41 @@ export type PhysicalBox = {
 
 type Rect = { x: number; y: number; width: number; height: number };
 type Size = { width: number; height: number };
+type EmbedPDFPage = { size: Size; rotation: number; boxes?: { crop: EmbedPDFBox } };
+
+function sameShape(left: Size, right: Size): boolean {
+  return Math.abs(left.width / left.height - right.width / right.height) <=
+    Math.max(left.width / left.height, right.width / right.height) * 0.001;
+}
+
+function samePhysicalSize(points: number, frameUnits: number): boolean {
+  const expected = points * 10000 / 72;
+  return Number.isFinite(expected) && Math.abs(frameUnits - expected) <= Math.max(2, expected * 0.00001);
+}
+
+/** EmbedPDF marquee coordinates are local to its unrotated, cropped page. */
+export function embedpdfMarqueeBox(frame: Frame, selection: EmbedPDFRect, page: EmbedPDFPage,
+  displayed: Size): PhysicalBox {
+  const size = page.size;
+  const crop = page.boxes?.crop;
+  // PDF user space is bottom-up: EmbedPDF's crop.top is greater than crop.bottom.
+  const cropSize = crop ? { width: crop.right - crop.left, height: crop.top - crop.bottom } : null;
+  if (![size.width, size.height, displayed.width, displayed.height].every(value => Number.isFinite(value) && value > 0) ||
+      !Number.isInteger(page.rotation) || page.rotation < 0 || page.rotation > 3 ||
+      crop && (![crop.left, crop.top, crop.right, crop.bottom].every(Number.isFinite) || !cropSize ||
+        !sameShape(cropSize, size) ||
+        Math.abs(cropSize.width - size.width) > 0.01 ||
+        Math.abs(cropSize.height - size.height) > 0.01))
+    throw new Error("The PDF page geometry does not match the verified page frame.");
+  const rotation = page.rotation as Rotation;
+  const oriented = transformSize(size, rotation, 1);
+  if (!sameShape(oriented, displayed) || !sameShape(oriented, { width: frame.width, height: frame.height }) ||
+      !samePhysicalSize(oriented.width, frame.width) || !samePhysicalSize(oriented.height, frame.height))
+    throw new Error("The PDF page geometry does not match the verified page frame.");
+  const rotated = rotateRect(size, selection, rotation);
+  return viewportBox(frame, { x: rotated.origin.x, y: rotated.origin.y,
+    width: rotated.size.width, height: rotated.size.height }, oriented);
+}
 
 /**
  * Scale an already unrotated, frame-aligned viewport rectangle into the

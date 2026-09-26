@@ -8,6 +8,9 @@
   } from "./api.js";
   import { loadReviewContext, type ReviewContext } from "./reviewContext.js";
   import { loadProductionSourcePDF } from "./sourcePDF.js";
+  import { embedpdfMarqueeBox, type Frame } from "./embedpdfAdapter.js";
+  import { loadSelectionFrame } from "./selectionFrame.js";
+  import type { Marquee } from "./SourcePageSelection.svelte";
 
   interface Props {
     session: string;
@@ -41,12 +44,16 @@
   let sourceMemberID = $state("");
   let sourceEditor = $state.raw<{ member: ProductionMember; bytes: Uint8Array<ArrayBuffer> } | null>(null);
   let SourceViewer = $state.raw<typeof import("./SourcePDFViewer.svelte").default | null>(null);
+  let selectionLoading = $state(false);
+  let selectionError = $state("");
+  let selectedRegion = $state<{ member: ProductionMember; page: number; frame: Frame; selector: ProductionDecision["selector"] } | null>(null);
   let authFailed = false;
   let membersController = new AbortController();
   let flagsController = new AbortController();
   let changeController = new AbortController();
   let contextController = new AbortController();
   let sourceController = new AbortController();
+  let selectionController = new AbortController();
 
   type Scope = { session: string; setID: string; revision: number; etag: number };
   type PendingChange = { scope: Scope; operationID: string; change: ProductionChange };
@@ -59,11 +66,13 @@
     changeController.abort();
     contextController.abort();
     sourceController.abort();
+    selectionController.abort();
     membersController = new AbortController();
     flagsController = new AbortController();
     changeController = new AbortController();
     contextController = new AbortController();
     sourceController = new AbortController();
+    selectionController = new AbortController();
     members = [];
     flags = [];
     memberCursor = "";
@@ -86,12 +95,15 @@
     sourceError = "";
     sourceMemberID = "";
     sourceEditor = null;
+    selectionLoading = false;
+    selectionError = "";
+    selectedRegion = null;
     authFailed = false;
     void loadMembers(scope, "", membersController.signal);
     void loadFlags(scope, "", flagsController.signal);
-    return () => { membersController.abort(); flagsController.abort(); changeController.abort(); contextController.abort(); sourceController.abort(); };
+    return () => { membersController.abort(); flagsController.abort(); changeController.abort(); contextController.abort(); sourceController.abort(); selectionController.abort(); };
   });
-  onDestroy(() => { membersController.abort(); flagsController.abort(); changeController.abort(); contextController.abort(); sourceController.abort(); });
+  onDestroy(() => { membersController.abort(); flagsController.abort(); changeController.abort(); contextController.abort(); sourceController.abort(); selectionController.abort(); });
 
   function current(scope: Scope, signal: AbortSignal): boolean {
     return !signal.aborted && !stale && scope.session === session && scope.setID === set.id &&
@@ -107,7 +119,9 @@
       changeController.abort();
       contextController.abort();
       sourceController.abort();
+      selectionController.abort();
       sourceEditor = null;
+      selectedRegion = null;
       return "";
     }
     return cause instanceof Error ? cause.message : String(cause);
@@ -165,7 +179,9 @@
     inspected = null;
     contextController.abort();
     sourceController.abort();
+    selectionController.abort();
     sourceEditor = null;
+    selectedRegion = null;
     changeError = "";
     membersController.abort();
     flagsController.abort();
@@ -223,6 +239,8 @@
     const signal = sourceController.signal;
     const exact = scope();
     sourceEditor = null;
+    selectionController.abort();
+    selectedRegion = null;
     sourceMemberID = member.id;
     sourceError = "";
     sourceLoading = true;
@@ -245,11 +263,41 @@
   async function closeSource(): Promise<void> {
     const memberID = sourceMemberID;
     sourceController.abort();
+    selectionController.abort();
     sourceEditor = null;
+    selectedRegion = null;
     sourceLoading = false;
     sourceError = "";
     await tick();
     document.getElementById(`production-source-open-${memberID}`)?.querySelector("button")?.focus();
+  }
+
+  async function selectRegion(member: ProductionMember, page: number, marquee?: Marquee): Promise<void> {
+    if (draft.state !== "draft" || stale || sourceEditor?.member.id !== member.id || changing || pendingChange) return;
+    selectionController.abort();
+    selectionController = new AbortController();
+    const signal = selectionController.signal;
+    const exact = scope();
+    selectionLoading = true;
+    selectionError = "";
+    selectedRegion = null;
+    try {
+      const frame = await loadSelectionFrame(exact.session, exact.setID, exact.revision, exact.etag,
+        member.id, member.map_sha256, page, signal);
+      if (!current(exact, signal) || sourceEditor?.member.id !== member.id) return;
+      if (marquee && marquee.pageIndex + 1 !== page) throw new Error("The selection is on another page.");
+      const selector: ProductionDecision["selector"] = marquee
+        ? { kind: "rectangle", map_sha256: member.map_sha256,
+          boxes: [embedpdfMarqueeBox(frame, marquee.rect, marquee.page, marquee.displayed)] }
+        : { kind: "page", map_sha256: member.map_sha256, pages: [page] };
+      selectedRegion = { member, page, frame, selector };
+      await tick();
+      document.getElementById("production-selected-region")?.focus();
+    } catch (cause) {
+      if (current(exact, signal)) selectionError = fail(cause);
+    } finally {
+      if (!signal.aborted) selectionLoading = false;
+    }
   }
 
   async function inspect(flag: ProductionDecision): Promise<void> {
@@ -323,9 +371,28 @@
         <div role="region" aria-label={`Original PDF for member ${sourceEditor.member.ordinal}`}>
           <div class="section-heading"><strong>Original PDF · member {sourceEditor.member.ordinal}</strong>
             <span id="production-source-close"><Button size="sm" surface="soft" onclick={() => void closeSource()}>Close original PDF</Button></span></div>
-          {#key sourceEditor.member.id}
-            <SourceViewer bytes={sourceEditor.bytes} memberID={sourceEditor.member.id} />
-          {/key}
+          <div class="source-workspace" class:has-selection={!!selectedRegion}>
+            <div class="source-viewer-column">
+              {#key sourceEditor.member.id}
+                <SourceViewer bytes={sourceEditor.bytes} memberID={sourceEditor.member.id}
+                  highlight={selectedRegion ? { page: selectedRegion.page, frame: selectedRegion.frame,
+                    box: selectedRegion.selector.boxes?.[0] } : null}
+                  onmarquee={selection => void selectRegion(sourceEditor!.member, selection.pageIndex + 1, selection)}
+                  onpage={page => void selectRegion(sourceEditor!.member, page)} />
+              {/key}
+            </div>
+            {#if selectedRegion}
+              <div id="production-selected-region" class="selected-region" role="region" tabindex="-1" aria-label={`Selected region on page ${selectedRegion.page}`}>
+                <strong>{selectedRegion.selector.kind === "page" ? "Whole page" : "Selected rectangle"} · page {selectedRegion.page}</strong>
+                <p>The selection is bound to this member’s retained map and current draft.</p>
+                <div class="decision-actions">
+                  <Button size="sm" surface="soft" disabled={changing || !!pendingChange} onclick={() => selectedRegion = null}>Clear selection</Button>
+                </div>
+              </div>
+            {/if}
+          </div>
+          {#if selectionLoading}<p class="loading" role="status"><Spinner size={16} /> Verifying selected page…</p>{/if}
+          {#if selectionError}<p class="error" role="alert">{selectionError}</p>{/if}
         </div>
       {/if}
       {#if memberCursor}<Button size="sm" disabled={membersLoading} onclick={() => void loadMembers(scope(), memberCursor, membersController.signal)}>{membersLoading ? "Loading…" : "Load more members"}</Button>{/if}
@@ -383,6 +450,9 @@
   .change-error{display:flex;align-items:center;gap:var(--space-2);flex-wrap:wrap;color:var(--accent-red)}
   .decision-actions{display:flex;justify-content:flex-start;gap:var(--space-2);flex-wrap:wrap}
   .source-context{padding:var(--space-3);border:1px solid var(--border-muted);border-radius:var(--radius-md);background:var(--bg-raised);white-space:pre-wrap;overflow-wrap:anywhere}
+  .source-workspace{display:grid;gap:var(--space-3)}.source-viewer-column{min-width:0}.source-workspace.has-selection{grid-template-columns:minmax(0,1fr) minmax(260px,340px)}
+  .selected-region{display:grid;gap:var(--space-2);align-self:start;padding:var(--space-3);border:1px solid var(--border-default);border-radius:var(--radius-md);background:var(--bg-raised)}
+  @media(max-width:900px){.source-workspace.has-selection{grid-template-columns:minmax(0,1fr)}}
   label{display:grid;gap:var(--space-1);font-size:var(--font-size-xs);color:var(--text-secondary)}
   textarea,input{width:100%;box-sizing:border-box;padding:var(--space-2);border:1px solid var(--border-muted);border-radius:var(--radius-md);background:var(--bg-raised);color:var(--text-primary);font:inherit}
   mark{color:var(--text-primary);background:color-mix(in srgb,var(--accent-amber) 30%,var(--bg-raised))}

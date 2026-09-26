@@ -44,7 +44,7 @@ test("creates and inspects an exact production review through the real daemon", 
   }
 });
 
-test("opens a retained synthetic member PDF through the real daemon", async ({ page }) => {
+test("selects a rectangle on a retained synthetic member PDF through the real daemon", async ({ page }) => {
   test.setTimeout(300_000);
   const workspace = await mkdtemp(path.join(tmpdir(), "docbank-editor-screenshot-"));
   const ready = path.join(workspace, "fixture-ready.json");
@@ -97,8 +97,33 @@ test("opens a retained synthetic member PDF through the real daemon", async ({ p
       const dom = await drawer.getByRole("region", { name: "Original PDF for member 1" }).evaluate(element => element.outerHTML.slice(0, 5000));
       throw new Error(`${String(error)}\nBrowser errors: ${browserErrors.join(" | ")}\nViewer DOM: ${dom}`);
     }
+    await expect(drawer.getByRole("combobox", { name: "PDF page" })).toBeVisible();
+    await drawer.getByRole("button", { name: "Select whole page", exact: true }).click();
+    await expect(drawer.getByRole("region", { name: "Selected region on page 1" })).toBeVisible();
+    await drawer.getByRole("button", { name: "Clear selection" }).click();
+    const pageBox = await drawer.getByRole("img", { name: "Original page 1" }).boundingBox();
+    expect(pageBox).not.toBeNull();
+    await page.mouse.move(pageBox!.x + 8, pageBox!.y + 10);
+    await page.mouse.down();
+    await page.mouse.move(pageBox!.x + 38, pageBox!.y + 42, { steps: 5 });
+    await page.mouse.up();
+    try { await expect(drawer.getByRole("region", { name: "Selected region on page 1" })).toBeVisible(); }
+    catch (error) {
+      const dom = await drawer.getByRole("region", { name: "Original PDF for member 1" }).evaluate(element => element.outerHTML.slice(0, 8000));
+      throw new Error(`${String(error)}\nBrowser errors: ${browserErrors.join(" | ")}\nViewer DOM: ${dom}`);
+    }
+    const selectionBox = await drawer.getByRole("region", { name: "Selected region on page 1" }).boundingBox();
+    const visiblePageBox = await drawer.getByRole("img", { name: "Original page 1" }).boundingBox();
+    expect(Math.abs(selectionBox!.y - visiblePageBox!.y)).toBeLessThan(500);
+    expect(selectionBox!.height).toBeLessThan(360);
+    const overlay = drawer.locator(".source-selection-overlay");
+    await expect(overlay).toBeVisible();
+    const overlayBox = await overlay.boundingBox();
+    expect(overlayBox!.width).toBeGreaterThan(5);
+    expect(overlayBox!.width).toBeLessThan(visiblePageBox!.width);
     expect(outside).toEqual([]);
-    await page.screenshot({ path: path.join(output!, "web-production-original-pdf.png"), fullPage: true, animations: "disabled" });
+    expect(browserErrors).toEqual([]);
+    await page.screenshot({ path: path.join(output!, "web-production-rectangle-selection.png"), fullPage: true, animations: "disabled" });
   } finally {
     await writeFile(done, "stopped", { mode: 0o600 });
     if (daemonStarted) await docbank("daemon", "stop");

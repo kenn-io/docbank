@@ -33,6 +33,7 @@ export interface ProductionMember {
   source_version_id: string;
   pdf_sha256: string;
   pdf_size: number;
+  map_sha256: string;
   mode: "redact_selected" | "keep_selected";
   reviewed: boolean;
 }
@@ -76,6 +77,21 @@ export interface ProductionMapChunk {
 
 export interface ProductionPage<T> {
   items: T[];
+  next_cursor: string;
+}
+
+export interface ProductionResolvedMaskPage {
+  set_id: string;
+  revision: number;
+  etag: number;
+  member_id: string;
+  page: { number: number; frame_sha256: string; width: number; height: number; span: { start: number; end: number } };
+  map_sha256: string;
+  recipe_sha256: string;
+  resolved_sha256: string;
+  review_binding: string;
+  total_boxes: number;
+  items: { page: number; frame_sha256: string; x0: number; y0: number; x1: number; y1: number }[];
   next_cursor: string;
 }
 
@@ -126,6 +142,14 @@ export function getProductionMapChunk(session: string, setID: string, revision: 
   const params = new URLSearchParams({ limit: "65536" });
   if (cursor) params.set("cursor", cursor);
   return sessionJSON<ProductionMapChunk>(`${setBase}/${encodeURIComponent(setID)}/revisions/${revision}/maps/${encodeURIComponent(memberID)}?${params}`, { session, signal });
+}
+
+export function resolveProductionPage(session: string, setID: string, revision: number, etag: number,
+  memberID: string, page: number, signal?: AbortSignal): Promise<ProductionResolvedMaskPage> {
+  return sessionJSON<ProductionResolvedMaskPage>(`${setBase}/${encodeURIComponent(setID)}/revisions/${revision}/resolve`, {
+    session, signal, method: "POST", headers: { "Content-Type": "application/json", "If-Match": String(etag) },
+    body: JSON.stringify({ member_id: memberID, page, limit: 1 }),
+  });
 }
 
 export function createProductionSet(session: string, name: string, instructions: string,

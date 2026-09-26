@@ -11,7 +11,7 @@ const pdfSHA = bytesToHex(sha256(pdf));
 const member: ProductionMember = {
   id: memberID, ordinal: 1, node_id: 7,
   source_version_id: "33333333-3333-4333-8333-333333333333",
-  pdf_sha256: pdfSHA, pdf_size: pdf.length,
+  pdf_sha256: pdfSHA, pdf_size: pdf.length, map_sha256: "a".repeat(64),
   mode: "redact_selected", reviewed: false,
 };
 
