@@ -13235,6 +13235,221 @@ components:
       x-go-type-import:
         path: go.kenn.io/docbank/internal/api
         name: api
+    TagGraphDocument:
+      additionalProperties: false
+      properties:
+        content_version_id:
+          format: uuid
+          type: string
+        graph_path:
+          items:
+            $ref: "#/components/schemas/TagGraphPathStep"
+          type: array
+        modified_at:
+          format: date-time
+          type: string
+        name:
+          type: string
+        node_id:
+          format: int64
+          minimum: 1
+          type: integer
+        path:
+          type: string
+        score:
+          format: double
+          minimum: 0
+          type: number
+        shared_tags:
+          items:
+            $ref: "#/components/schemas/TagGraphTag"
+          type: array
+      required:
+        - node_id
+        - content_version_id
+        - name
+        - path
+        - modified_at
+        - score
+        - shared_tags
+        - graph_path
+      type: object
+      x-go-type: api.TagGraphDocument
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
+    TagGraphPathStep:
+      additionalProperties: false
+      properties:
+        kind:
+          enum:
+            - document
+            - tag
+          type: string
+        node_id:
+          format: int64
+          minimum: 1
+          type: integer
+        tag_id:
+          format: uuid
+          type: string
+      required:
+        - kind
+      type: object
+      x-go-type: api.TagGraphPathStep
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
+    TagGraphSeed:
+      additionalProperties: false
+      properties:
+        node_id:
+          format: int64
+          minimum: 1
+          type: integer
+        passage_id:
+          maxLength: 128
+          type: string
+        tag_id:
+          format: uuid
+          type: string
+      type: object
+      x-go-type: api.TagGraphSeed
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
+    TagGraphTag:
+      additionalProperties: false
+      properties:
+        assignment_origin:
+          enum:
+            - legacy
+          type: string
+        id:
+          format: uuid
+          type: string
+        name:
+          type: string
+        path:
+          items:
+            $ref: "#/components/schemas/TagGraphPathStep"
+          type: array
+        scoped_document_count:
+          format: int64
+          minimum: 0
+          type: integer
+        weight:
+          format: double
+          minimum: 0
+          type: number
+      required:
+        - id
+        - name
+        - scoped_document_count
+        - weight
+        - assignment_origin
+        - path
+      type: object
+      x-go-type: api.TagGraphTag
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
+    TagNeighborhoodRequest:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/TagNeighborhoodRequest.json
+          format: uri
+          readOnly: true
+          type: string
+        assignment_kinds:
+          items:
+            type: string
+          minItems: 1
+          type: array
+          uniqueItems: true
+        fence:
+          $ref: "#/components/schemas/ResolvedDocumentSourceFence"
+        limit:
+          default: 20
+          format: int64
+          maximum: 100
+          minimum: 1
+          type: integer
+        max_hops:
+          default: 2
+          format: int64
+          maximum: 10
+          minimum: 1
+          type: integer
+        max_visited:
+          default: 1000
+          format: int64
+          maximum: 1000
+          minimum: 1
+          type: integer
+        seed:
+          $ref: "#/components/schemas/TagGraphSeed"
+      required:
+        - fence
+        - seed
+        - assignment_kinds
+      type: object
+      x-go-type: api.TagNeighborhoodRequest
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
+    TagNeighborhoodResponse:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/TagNeighborhoodResponse.json
+          format: uri
+          readOnly: true
+          type: string
+        document_count:
+          format: int64
+          minimum: 0
+          type: integer
+        documents:
+          items:
+            $ref: "#/components/schemas/TagGraphDocument"
+          type: array
+        tags:
+          items:
+            $ref: "#/components/schemas/TagGraphTag"
+          type: array
+        truncated:
+          type: boolean
+        untagged_document_count:
+          format: int64
+          minimum: 0
+          type: integer
+        vault_uid:
+          format: uuid
+          type: string
+        visited_nodes:
+          format: int64
+          maximum: 1000
+          minimum: 1
+          type: integer
+      required:
+        - vault_uid
+        - document_count
+        - untagged_document_count
+        - visited_nodes
+        - truncated
+        - documents
+        - tags
+      type: object
+      x-go-type: api.TagNeighborhoodResponse
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     TagPage:
       additionalProperties: false
       properties:
@@ -20624,6 +20839,29 @@ paths:
                 $ref: "#/components/schemas/Error"
           description: Error
       summary: Resolve an exact tag name to its stable ID
+  /api/v1/tags/neighborhood:
+    post:
+      operationId: tagNeighborhood
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TagNeighborhoodRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TagNeighborhoodResponse"
+          description: OK
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: Find related documents and tags inside an exact source fence
   /api/v1/tags/{tag_id}:
     delete:
       operationId: deleteTag
