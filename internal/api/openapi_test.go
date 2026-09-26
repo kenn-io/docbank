@@ -172,6 +172,27 @@ func TestOpenAPISavedQueriesAreStructuredAndRevisionFenced(t *testing.T) {
 	assert.Equal(t, 256, *record.Properties["name"].MaxLength)
 }
 
+func TestOpenAPIContentMapRevisionPreconditionsRequired(t *testing.T) {
+	doc := api.NewOfflineServer().API().OpenAPI()
+	item := doc.Paths["/api/v1/maps/{map_id}"]
+	require.NotNil(t, item)
+	snapshots := doc.Paths["/api/v1/maps/{map_id}/snapshots"]
+	require.NotNil(t, snapshots)
+	refresh := doc.Paths["/api/v1/maps/{map_id}/refresh"]
+	require.NotNil(t, refresh)
+	for _, operation := range []*huma.Operation{item.Patch, item.Delete, snapshots.Post, refresh.Post} {
+		require.NotNil(t, operation)
+		var found bool
+		for _, parameter := range operation.Parameters {
+			if parameter.In == "header" && parameter.Name == "If-Match" {
+				found = true
+				assert.True(t, parameter.Required, operation.OperationID)
+			}
+		}
+		assert.True(t, found, operation.OperationID)
+	}
+}
+
 func TestOpenAPIWorkspaceSnapshotsExposeStrictBoundedAuthority(t *testing.T) {
 	doc := api.NewOfflineServer().API().OpenAPI()
 	create := doc.Paths["/api/v1/workspace/queries"].Post

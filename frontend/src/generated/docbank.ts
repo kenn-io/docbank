@@ -1019,6 +1019,196 @@ export interface CollectionSnapshotRepresentation {
   verified_page_count: number;
 }
 
+export interface PassageRefV1 {
+  attachment_id: string;
+  body_sha256: string;
+  byte_end: number;
+  byte_start: number;
+  content_version_id: string;
+  document_uid: string;
+  federation_domain_uid?: string;
+  quote_sha256: string;
+  rendition_build_id: string;
+  source_sha256: string;
+  vault_uid: string;
+  version: number;
+}
+
+export interface ContentMapPin {
+  content_version_id?: string;
+  document_uid: string;
+  mode: string;
+  passage?: PassageRefV1;
+}
+
+export interface Filters {
+  collapse_duplicates?: boolean;
+  collection_ids?: string[];
+  exclude_collection_ids?: string[];
+  exclude_paths?: string[];
+  exclude_tag_ids?: string[];
+  extensions?: string[];
+  has_duplicates?: boolean;
+  media_families?: string[];
+  mime_types?: string[];
+  modified_after?: string;
+  modified_before?: string;
+  no_tags?: boolean;
+  paths?: string[];
+  /** @nullable */
+  size_max?: number | null;
+  size_min?: number;
+  tag_ids?: string[];
+  text_coverage?: string[];
+}
+
+export interface Sort {
+  direction: string;
+  field: string;
+}
+
+export interface Query {
+  filters: Filters;
+  mode: string;
+  sort: Sort;
+  syntax: string;
+  text: string;
+  v: number;
+}
+
+export interface ContentMapSection {
+  description: string;
+  description_sources?: ContentMapPin[];
+  exclude: ContentMapPin[];
+  heading: string;
+  heading_sources?: ContentMapPin[];
+  id: string;
+  include: ContentMapPin[];
+  max_entries: number;
+  ordering: string;
+  selector?: Query;
+}
+
+export interface ContentMapDefinition {
+  scope: string;
+  sections: ContentMapSection[];
+  template_id?: string;
+  template_version?: string;
+  title: string;
+}
+
+export interface ContentMap {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  archived_at?: string;
+  created_at: string;
+  definition: ContentMapDefinition;
+  definition_digest: string;
+  id: string;
+  owner: string;
+  revision: number;
+  updated_at: string;
+}
+
+export interface ContentMapDeltaChange {
+  after_content_version_id?: string;
+  after_index: number;
+  before_content_version_id?: string;
+  before_index: number;
+  document_uid: string;
+  passage_id?: string;
+  section_id: string;
+}
+
+export interface ContentMapDeltaCounts {
+  added: number;
+  removed: number;
+  reordered: number;
+  unavailable: number;
+  version_changed: number;
+}
+
+export interface ContentMapDelta {
+  added: ContentMapDeltaChange[];
+  after_snapshot_id: string;
+  before_snapshot_id?: string;
+  changed: boolean;
+  counts: ContentMapDeltaCounts;
+  definition_changed: boolean;
+  map_id: string;
+  removed: ContentMapDeltaChange[];
+  reordered: ContentMapDeltaChange[];
+  truncated: boolean;
+  unavailable: ContentMapDeltaChange[];
+  version_changed: ContentMapDeltaChange[];
+}
+
+export interface ContentMapPlan {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  definition: ContentMapDefinition;
+  definition_digest: string;
+  metadata_bytes: number;
+}
+
+export interface ContentMapProposalRequest {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  query?: Query;
+  tag_id?: string;
+  title?: string;
+}
+
+export interface SnapshotMember {
+  blob_hash: string;
+  content_version_id: string;
+  node_id: number;
+  revision: number;
+  size: number;
+}
+
+export interface ContentMapSnapshotEntry {
+  availability: string;
+  document_uid: string;
+  member: SnapshotMember;
+  modified_at: string;
+  name: string;
+  passage?: PassageRefV1;
+  path: string;
+  pin_mode?: string;
+  requested_content_version_id?: string;
+  tag_count: number;
+}
+
+export interface ContentMapSnapshotSection {
+  description: string;
+  entries: ContentMapSnapshotEntry[];
+  heading: string;
+  id: string;
+  member_hash: string;
+}
+
+export interface ContentMapSnapshot {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  created_at: string;
+  definition_digest: string;
+  id: string;
+  map_id: string;
+  map_revision: number;
+  member_hash: string;
+  owner: string;
+  scope_digest: string;
+  sections: ContentMapSnapshotSection[];
+}
+
+export interface ContentMapRefresh {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  delta: ContentMapDelta;
+  snapshot: ContentMapSnapshot;
+}
+
 export type ContentVersionTransitionKind = typeof ContentVersionTransitionKind[keyof typeof ContentVersionTransitionKind];
 
 
@@ -2485,6 +2675,14 @@ export interface Entry {
   size: number;
 }
 
+export interface EvidenceLocatorV1 {
+  end: number;
+  index_origin: string;
+  kind: string;
+  name?: string;
+  start: number;
+}
+
 export interface Receipt {
   entries: number;
   format: string;
@@ -2509,27 +2707,6 @@ export interface ExportJob {
   receipt?: Receipt;
   sequence: number;
   state: string;
-}
-
-export interface Filters {
-  collapse_duplicates?: boolean;
-  collection_ids?: string[];
-  exclude_collection_ids?: string[];
-  exclude_paths?: string[];
-  exclude_tag_ids?: string[];
-  extensions?: string[];
-  has_duplicates?: boolean;
-  media_families?: string[];
-  mime_types?: string[];
-  modified_after?: string;
-  modified_before?: string;
-  no_tags?: boolean;
-  paths?: string[];
-  /** @nullable */
-  size_max?: number | null;
-  size_min?: number;
-  tag_ids?: string[];
-  text_coverage?: string[];
 }
 
 export type FormatCapabilityV1Capabilities = {[key: string]: CapabilityStateV1};
@@ -2963,6 +3140,25 @@ export interface MailboxTransferReceipt {
   request_digest: string;
   target: EmailDocumentIdentity;
   target_revision: number;
+}
+
+export interface MapPlanRequest {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  definition: ContentMapDefinition;
+}
+
+export interface MapRefreshRequest {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  previous_snapshot_id: string;
+}
+
+export interface MapWriteRequest {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  definition: ContentMapDefinition;
+  definition_digest: string;
 }
 
 export interface MediaAcquisitionGrantBody {
@@ -3743,6 +3939,46 @@ export interface PageSelectionRequest {
   selection: PageBinding;
 }
 
+export type PassageResolutionAvailability = typeof PassageResolutionAvailability[keyof typeof PassageResolutionAvailability];
+
+
+export const PassageResolutionAvailability = {
+  available: 'available',
+} as const;
+
+export type PassageResolutionFreshness = typeof PassageResolutionFreshness[keyof typeof PassageResolutionFreshness];
+
+
+export const PassageResolutionFreshness = {
+  current: 'current',
+  historical: 'historical',
+} as const;
+
+export interface PassageResolution {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  availability: PassageResolutionAvailability;
+  freshness: PassageResolutionFreshness;
+  /** @pattern ^[0-9a-f]{64}$ */
+  passage_id: string;
+  ref: PassageRefV1;
+  section_path: string[];
+  source_locator?: EvidenceLocatorV1;
+  source_path: string;
+  text: string;
+}
+
+export interface PassageResolveRequest {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  /**
+     * @minimum 1
+     * @maximum 262144
+     */
+  max_bytes?: number;
+  ref: PassageRefV1;
+}
+
 export type PeopleBuildState = typeof PeopleBuildState[keyof typeof PeopleBuildState];
 
 
@@ -4267,20 +4503,6 @@ export interface PutExportChunkRequest {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
   members: Member[];
-}
-
-export interface Sort {
-  direction: string;
-  field: string;
-}
-
-export interface Query {
-  filters: Filters;
-  mode: string;
-  sort: Sort;
-  syntax: string;
-  text: string;
-  v: number;
 }
 
 export interface QueryDependency {
@@ -5234,6 +5456,102 @@ export interface TagDeletionReceipt {
   tag: Tag;
 }
 
+export type TagGraphPathStepKind = typeof TagGraphPathStepKind[keyof typeof TagGraphPathStepKind];
+
+
+export const TagGraphPathStepKind = {
+  document: 'document',
+  tag: 'tag',
+} as const;
+
+export interface TagGraphPathStep {
+  kind: TagGraphPathStepKind;
+  /** @minimum 1 */
+  node_id?: number;
+  tag_id?: string;
+}
+
+export type TagGraphTagAssignmentOrigin = typeof TagGraphTagAssignmentOrigin[keyof typeof TagGraphTagAssignmentOrigin];
+
+
+export const TagGraphTagAssignmentOrigin = {
+  legacy: 'legacy',
+} as const;
+
+export interface TagGraphTag {
+  assignment_origin: TagGraphTagAssignmentOrigin;
+  id: string;
+  name: string;
+  path: TagGraphPathStep[];
+  /** @minimum 0 */
+  scoped_document_count: number;
+  /** @minimum 0 */
+  weight: number;
+}
+
+export interface TagGraphDocument {
+  content_version_id: string;
+  graph_path: TagGraphPathStep[];
+  modified_at: string;
+  name: string;
+  /** @minimum 1 */
+  node_id: number;
+  path: string;
+  /** @minimum 0 */
+  score: number;
+  shared_tags: TagGraphTag[];
+}
+
+export interface TagGraphSeed {
+  /** @minimum 1 */
+  node_id?: number;
+  /** @maxLength 128 */
+  passage_id?: string;
+  tag_id?: string;
+}
+
+export interface TagNeighborhoodRequest {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  /** @minItems 1 */
+  assignment_kinds: string[];
+  fence: ResolvedDocumentSourceFence;
+  /**
+     * @minimum 1
+     * @maximum 100
+     */
+  limit?: number;
+  /**
+     * @minimum 1
+     * @maximum 10
+     */
+  max_hops?: number;
+  /**
+     * @minimum 1
+     * @maximum 1000
+     */
+  max_visited?: number;
+  seed: TagGraphSeed;
+}
+
+export interface TagNeighborhoodResponse {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  /** @minimum 0 */
+  document_count: number;
+  documents: TagGraphDocument[];
+  tags: TagGraphTag[];
+  truncated: boolean;
+  /** @minimum 0 */
+  untagged_document_count: number;
+  vault_uid: string;
+  /**
+     * @minimum 1
+     * @maximum 1000
+     */
+  visited_nodes: number;
+}
+
 export interface TagPage {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
@@ -5805,6 +6123,22 @@ export type TransferMailboxEMLHeaders = {
  * Base64url JSON MailboxTransferRequest (at most 32768 encoded bytes)
  */
 'X-Docbank-Transfer': string;
+};
+
+export type ArchiveContentMapHeaders = {
+'If-Match': string;
+};
+
+export type UpdateContentMapHeaders = {
+'If-Match': string;
+};
+
+export type RefreshContentMapHeaders = {
+'If-Match': string;
+};
+
+export type CreateContentMapSnapshotHeaders = {
+'If-Match': string;
 };
 
 export type ListMediaOccurrencesParams = {
@@ -9366,6 +9700,326 @@ return sessionJSON<MailboxTransferReceipt>(getTransferMailboxEMLUrl(),
 
 
 
+export const getGetContentMapSnapshotUrl = (snapshotId: string,) => {
+
+
+
+
+  return `/api/v1/map-snapshots/${encodeURIComponent(String(snapshotId))}`
+}
+
+/**
+ * @summary Read one immutable authorized map snapshot
+ */
+export const getContentMapSnapshot = async (snapshotId: string, options?: Parameters<typeof sessionJSON>[1]): Promise<ContentMapSnapshot> => {
+
+  return sessionJSON<ContentMapSnapshot>(getGetContentMapSnapshotUrl(snapshotId),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+export const getCreateContentMapUrl = () => {
+
+
+
+
+  return `/api/v1/maps`
+}
+
+/**
+ * @summary Save an accepted structured map plan
+ */
+export const createContentMap = async (mapWriteRequest: NonReadonly<MapWriteRequest>, options?: Parameters<typeof sessionJSON>[1]): Promise<ContentMap> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return sessionJSON<ContentMap>(getCreateContentMapUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(mapWriteRequest)
+  }
+);}
+
+
+
+export const getPreviewContentMapUrl = () => {
+
+
+
+
+  return `/api/v1/maps/plans`
+}
+
+/**
+ * @summary Preview a structured map definition
+ */
+export const previewContentMap = async (mapPlanRequest: NonReadonly<MapPlanRequest>, options?: Parameters<typeof sessionJSON>[1]): Promise<ContentMapPlan> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return sessionJSON<ContentMapPlan>(getPreviewContentMapUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(mapPlanRequest)
+  }
+);}
+
+
+
+export const getProposeContentMapUrl = () => {
+
+
+
+
+  return `/api/v1/maps/proposals`
+}
+
+/**
+ * @summary Propose a map from an existing tag or scoped query
+ */
+export const proposeContentMap = async (contentMapProposalRequest: NonReadonly<ContentMapProposalRequest>, options?: Parameters<typeof sessionJSON>[1]): Promise<ContentMapPlan> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return sessionJSON<ContentMapPlan>(getProposeContentMapUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(contentMapProposalRequest)
+  }
+);}
+
+
+
+export const getArchiveContentMapUrl = (mapId: string,) => {
+
+
+
+
+  return `/api/v1/maps/${encodeURIComponent(String(mapId))}`
+}
+
+/**
+ * @summary Archive a map while retaining snapshots
+ */
+export const archiveContentMap = async (mapId: string,
+    headers: ArchiveContentMapHeaders, options?: Parameters<typeof sessionJSON>[1]): Promise<ContentMap> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return sessionJSON<ContentMap>(getArchiveContentMapUrl(mapId),
+  {
+    ...options,
+    method: 'DELETE',
+    headers: { ...headers, ...getHeaders(options?.headers) }
+
+  }
+);}
+
+
+
+export const getGetContentMapUrl = (mapId: string,) => {
+
+
+
+
+  return `/api/v1/maps/${encodeURIComponent(String(mapId))}`
+}
+
+/**
+ * @summary Read a structured map definition
+ */
+export const getContentMap = async (mapId: string, options?: Parameters<typeof sessionJSON>[1]): Promise<ContentMap> => {
+
+  return sessionJSON<ContentMap>(getGetContentMapUrl(mapId),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+export const getUpdateContentMapUrl = (mapId: string,) => {
+
+
+
+
+  return `/api/v1/maps/${encodeURIComponent(String(mapId))}`
+}
+
+/**
+ * @summary Replace a map definition at an expected revision
+ */
+export const updateContentMap = async (mapId: string,
+    mapWriteRequest: NonReadonly<MapWriteRequest>,
+    headers: UpdateContentMapHeaders, options?: Parameters<typeof sessionJSON>[1]): Promise<ContentMap> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return sessionJSON<ContentMap>(getUpdateContentMapUrl(mapId),
+  {
+    ...options,
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json',...headers, ...getHeaders(options?.headers) },
+    body: JSON.stringify(mapWriteRequest)
+  }
+);}
+
+
+
+export const getRefreshContentMapUrl = (mapId: string,) => {
+
+
+
+
+  return `/api/v1/maps/${encodeURIComponent(String(mapId))}/refresh`
+}
+
+/**
+ * @summary Freeze a refreshed map and compare it with the previous snapshot
+ */
+export const refreshContentMap = async (mapId: string,
+    mapRefreshRequest: NonReadonly<MapRefreshRequest>,
+    headers: RefreshContentMapHeaders, options?: Parameters<typeof sessionJSON>[1]): Promise<ContentMapRefresh> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return sessionJSON<ContentMapRefresh>(getRefreshContentMapUrl(mapId),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json',...headers, ...getHeaders(options?.headers) },
+    body: JSON.stringify(mapRefreshRequest)
+  }
+);}
+
+
+
+export const getCreateContentMapSnapshotUrl = (mapId: string,) => {
+
+
+
+
+  return `/api/v1/maps/${encodeURIComponent(String(mapId))}/snapshots`
+}
+
+/**
+ * @summary Freeze permitted exact map membership
+ */
+export const createContentMapSnapshot = async (mapId: string,
+    headers: CreateContentMapSnapshotHeaders, options?: Parameters<typeof sessionJSON>[1]): Promise<ContentMapSnapshot> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return sessionJSON<ContentMapSnapshot>(getCreateContentMapSnapshotUrl(mapId),
+  {
+    ...options,
+    method: 'POST',
+    headers: { ...headers, ...getHeaders(options?.headers) }
+
+  }
+);}
+
+
+
 export const getPlanMediaAcquisitionUrl = () => {
 
 
@@ -11298,6 +11952,44 @@ return sessionJSON<PageRenderJob>(getCancelPageRenderJobUrl(id),
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
     body: JSON.stringify(pageSelectionRequest)
+  }
+);}
+
+
+
+export const getResolvePassageUrl = () => {
+
+
+
+
+  return `/api/v1/passages/resolve`
+}
+
+/**
+ * @summary Resolve one exact retained Markdown passage
+ */
+export const resolvePassage = async (passageResolveRequest: NonReadonly<PassageResolveRequest>, options?: Parameters<typeof sessionJSON>[1]): Promise<PassageResolution> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return sessionJSON<PassageResolution>(getResolvePassageUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(passageResolveRequest)
   }
 );}
 
@@ -13497,6 +14189,44 @@ export const resolveTagByName = async (params: ResolveTagByNameParams, options?:
     method: 'GET'
 
 
+  }
+);}
+
+
+
+export const getTagNeighborhoodUrl = () => {
+
+
+
+
+  return `/api/v1/tags/neighborhood`
+}
+
+/**
+ * @summary Find related documents and tags inside an exact source fence
+ */
+export const tagNeighborhood = async (tagNeighborhoodRequest: NonReadonly<TagNeighborhoodRequest>, options?: Parameters<typeof sessionJSON>[1]): Promise<TagNeighborhoodResponse> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return sessionJSON<TagNeighborhoodResponse>(getTagNeighborhoodUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(tagNeighborhoodRequest)
   }
 );}
 

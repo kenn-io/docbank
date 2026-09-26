@@ -3998,6 +3998,425 @@ func (c *Client) TransferMailboxEML(ctx context.Context, options *TransferMailbo
 	return responseParser(ctx, resp)
 }
 
+// GetContentMapSnapshot Read one immutable authorized map snapshot
+func (c *Client) GetContentMapSnapshot(ctx context.Context, options *GetContentMapSnapshotRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetContentMapSnapshotResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/map-snapshots/{snapshot_id}",
+		Method:     "GET",
+		Options:    options,
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*GetContentMapSnapshotResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(GetContentMapSnapshotResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "GetContentMapSnapshotResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[GetContentMapSnapshotErrorResponse](resp, "GetContentMapSnapshotErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/map-snapshots/{snapshot_id}")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
+// CreateContentMap Save an accepted structured map plan
+func (c *Client) CreateContentMap(ctx context.Context, options *CreateContentMapRequestOptions, reqEditors ...runtime.RequestEditorFn) (*CreateContentMapResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/maps",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*CreateContentMapResponse, error) {
+		switch resp.StatusCode {
+
+		case 201:
+
+			target := new(CreateContentMapResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "CreateContentMapResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[CreateContentMapErrorResponse](resp, "CreateContentMapErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/maps")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 201)
+	}
+	return responseParser(ctx, resp)
+}
+
+// PreviewContentMap Preview a structured map definition
+func (c *Client) PreviewContentMap(ctx context.Context, options *PreviewContentMapRequestOptions, reqEditors ...runtime.RequestEditorFn) (*PreviewContentMapResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/maps/plans",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*PreviewContentMapResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(PreviewContentMapResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "PreviewContentMapResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[PreviewContentMapErrorResponse](resp, "PreviewContentMapErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/maps/plans")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
+// ProposeContentMap Propose a map from an existing tag or scoped query
+func (c *Client) ProposeContentMap(ctx context.Context, options *ProposeContentMapRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ProposeContentMapResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/maps/proposals",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*ProposeContentMapResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(ProposeContentMapResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "ProposeContentMapResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[ProposeContentMapErrorResponse](resp, "ProposeContentMapErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/maps/proposals")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
+// ArchiveContentMap Archive a map while retaining snapshots
+func (c *Client) ArchiveContentMap(ctx context.Context, options *ArchiveContentMapRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ArchiveContentMapResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/maps/{map_id}",
+		Method:     "DELETE",
+		Options:    options,
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*ArchiveContentMapResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(ArchiveContentMapResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "ArchiveContentMapResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[ArchiveContentMapErrorResponse](resp, "ArchiveContentMapErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/maps/{map_id}")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
+// GetContentMap Read a structured map definition
+func (c *Client) GetContentMap(ctx context.Context, options *GetContentMapRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetContentMapResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/maps/{map_id}",
+		Method:     "GET",
+		Options:    options,
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*GetContentMapResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(GetContentMapResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "GetContentMapResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[GetContentMapErrorResponse](resp, "GetContentMapErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/maps/{map_id}")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
+// UpdateContentMap Replace a map definition at an expected revision
+func (c *Client) UpdateContentMap(ctx context.Context, options *UpdateContentMapRequestOptions, reqEditors ...runtime.RequestEditorFn) (*UpdateContentMapResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/maps/{map_id}",
+		Method:      "PATCH",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*UpdateContentMapResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(UpdateContentMapResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "UpdateContentMapResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[UpdateContentMapErrorResponse](resp, "UpdateContentMapErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/maps/{map_id}")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
+// RefreshContentMap Freeze a refreshed map and compare it with the previous snapshot
+func (c *Client) RefreshContentMap(ctx context.Context, options *RefreshContentMapRequestOptions, reqEditors ...runtime.RequestEditorFn) (*RefreshContentMapResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/maps/{map_id}/refresh",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*RefreshContentMapResponse, error) {
+		switch resp.StatusCode {
+
+		case 201:
+
+			target := new(RefreshContentMapResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "RefreshContentMapResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[RefreshContentMapErrorResponse](resp, "RefreshContentMapErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/maps/{map_id}/refresh")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 201)
+	}
+	return responseParser(ctx, resp)
+}
+
+// CreateContentMapSnapshot Freeze permitted exact map membership
+func (c *Client) CreateContentMapSnapshot(ctx context.Context, options *CreateContentMapSnapshotRequestOptions, reqEditors ...runtime.RequestEditorFn) (*CreateContentMapSnapshotResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/maps/{map_id}/snapshots",
+		Method:     "POST",
+		Options:    options,
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*CreateContentMapSnapshotResponse, error) {
+		switch resp.StatusCode {
+
+		case 201:
+
+			target := new(CreateContentMapSnapshotResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "CreateContentMapSnapshotResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[CreateContentMapSnapshotErrorResponse](resp, "CreateContentMapSnapshotErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/maps/{map_id}/snapshots")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 201)
+	}
+	return responseParser(ctx, resp)
+}
+
 // PlanMediaAcquisition Recognize a private reference without network access
 func (c *Client) PlanMediaAcquisition(ctx context.Context, options *PlanMediaAcquisitionRequestOptions, reqEditors ...runtime.RequestEditorFn) (*PlanMediaAcquisitionResponse, error) {
 	var err error
@@ -6665,6 +7084,53 @@ func (c *Client) CancelPageRenderJob(ctx context.Context, options *CancelPageRen
 	}
 
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/pages/jobs/{id}/cancel")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
+// ResolvePassage Resolve one exact retained Markdown passage
+func (c *Client) ResolvePassage(ctx context.Context, options *ResolvePassageRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ResolvePassageResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/passages/resolve",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*ResolvePassageResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(ResolvePassageResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "ResolvePassageResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[ResolvePassageErrorResponse](resp, "ResolvePassageErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/passages/resolve")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
@@ -9633,6 +10099,53 @@ func (c *Client) ResolveTagByName(ctx context.Context, options *ResolveTagByName
 	}
 
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/tags/by-name")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
+// TagNeighborhood Find related documents and tags inside an exact source fence
+func (c *Client) TagNeighborhood(ctx context.Context, options *TagNeighborhoodRequestOptions, reqEditors ...runtime.RequestEditorFn) (*TagNeighborhoodResponseJSON, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/tags/neighborhood",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*TagNeighborhoodResponseJSON, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(TagNeighborhoodResponseJSON)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "TagNeighborhoodResponseJSON", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[TagNeighborhoodErrorResponse](resp, "TagNeighborhoodErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/tags/neighborhood")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
@@ -13195,6 +13708,312 @@ func (o *TransferMailboxEMLRequestOptions) GetHeader() (map[string]string, error
 	return headers, err
 }
 
+// GetContentMapSnapshotRequestOptions is the options needed to make a request to GetContentMapSnapshot.
+type GetContentMapSnapshotRequestOptions struct {
+	PathParams *GetContentMapSnapshotPath
+}
+
+// GetPathParams returns the path params as a map.
+func (o *GetContentMapSnapshotRequestOptions) GetPathParams() (map[string]any, error) {
+	encoded, err := json.Marshal(o.PathParams, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetQuery returns the query params as a map.
+func (o *GetContentMapSnapshotRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *GetContentMapSnapshotRequestOptions) GetBody() any {
+	return nil
+}
+
+// GetHeader returns the headers as a map.
+func (o *GetContentMapSnapshotRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
+// CreateContentMapRequestOptions is the options needed to make a request to CreateContentMap.
+type CreateContentMapRequestOptions struct {
+	Body *CreateContentMapBody
+}
+
+// GetPathParams returns the path params as a map.
+func (o *CreateContentMapRequestOptions) GetPathParams() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetQuery returns the query params as a map.
+func (o *CreateContentMapRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *CreateContentMapRequestOptions) GetBody() any {
+	if o.Body == nil {
+		return nil
+	}
+	return o.Body
+}
+
+// GetHeader returns the headers as a map.
+func (o *CreateContentMapRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
+// PreviewContentMapRequestOptions is the options needed to make a request to PreviewContentMap.
+type PreviewContentMapRequestOptions struct {
+	Body *PreviewContentMapBody
+}
+
+// GetPathParams returns the path params as a map.
+func (o *PreviewContentMapRequestOptions) GetPathParams() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetQuery returns the query params as a map.
+func (o *PreviewContentMapRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *PreviewContentMapRequestOptions) GetBody() any {
+	if o.Body == nil {
+		return nil
+	}
+	return o.Body
+}
+
+// GetHeader returns the headers as a map.
+func (o *PreviewContentMapRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
+// ProposeContentMapRequestOptions is the options needed to make a request to ProposeContentMap.
+type ProposeContentMapRequestOptions struct {
+	Body *ProposeContentMapBody
+}
+
+// GetPathParams returns the path params as a map.
+func (o *ProposeContentMapRequestOptions) GetPathParams() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetQuery returns the query params as a map.
+func (o *ProposeContentMapRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *ProposeContentMapRequestOptions) GetBody() any {
+	if o.Body == nil {
+		return nil
+	}
+	return o.Body
+}
+
+// GetHeader returns the headers as a map.
+func (o *ProposeContentMapRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
+// ArchiveContentMapRequestOptions is the options needed to make a request to ArchiveContentMap.
+type ArchiveContentMapRequestOptions struct {
+	PathParams *ArchiveContentMapPath
+	Header     *ArchiveContentMapHeaders
+}
+
+// GetPathParams returns the path params as a map.
+func (o *ArchiveContentMapRequestOptions) GetPathParams() (map[string]any, error) {
+	encoded, err := json.Marshal(o.PathParams, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetQuery returns the query params as a map.
+func (o *ArchiveContentMapRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *ArchiveContentMapRequestOptions) GetBody() any {
+	return nil
+}
+
+// GetHeader returns the headers as a map.
+func (o *ArchiveContentMapRequestOptions) GetHeader() (map[string]string, error) {
+	encoded, err := json.Marshal(o.Header, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var headers map[string]string
+	err = json.Unmarshal(encoded, &headers)
+	return headers, err
+}
+
+// GetContentMapRequestOptions is the options needed to make a request to GetContentMap.
+type GetContentMapRequestOptions struct {
+	PathParams *GetContentMapPath
+}
+
+// GetPathParams returns the path params as a map.
+func (o *GetContentMapRequestOptions) GetPathParams() (map[string]any, error) {
+	encoded, err := json.Marshal(o.PathParams, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetQuery returns the query params as a map.
+func (o *GetContentMapRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *GetContentMapRequestOptions) GetBody() any {
+	return nil
+}
+
+// GetHeader returns the headers as a map.
+func (o *GetContentMapRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
+// UpdateContentMapRequestOptions is the options needed to make a request to UpdateContentMap.
+type UpdateContentMapRequestOptions struct {
+	PathParams *UpdateContentMapPath
+	Body       *UpdateContentMapBody
+	Header     *UpdateContentMapHeaders
+}
+
+// GetPathParams returns the path params as a map.
+func (o *UpdateContentMapRequestOptions) GetPathParams() (map[string]any, error) {
+	encoded, err := json.Marshal(o.PathParams, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetQuery returns the query params as a map.
+func (o *UpdateContentMapRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *UpdateContentMapRequestOptions) GetBody() any {
+	if o.Body == nil {
+		return nil
+	}
+	return o.Body
+}
+
+// GetHeader returns the headers as a map.
+func (o *UpdateContentMapRequestOptions) GetHeader() (map[string]string, error) {
+	encoded, err := json.Marshal(o.Header, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var headers map[string]string
+	err = json.Unmarshal(encoded, &headers)
+	return headers, err
+}
+
+// RefreshContentMapRequestOptions is the options needed to make a request to RefreshContentMap.
+type RefreshContentMapRequestOptions struct {
+	PathParams *RefreshContentMapPath
+	Body       *RefreshContentMapBody
+	Header     *RefreshContentMapHeaders
+}
+
+// GetPathParams returns the path params as a map.
+func (o *RefreshContentMapRequestOptions) GetPathParams() (map[string]any, error) {
+	encoded, err := json.Marshal(o.PathParams, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetQuery returns the query params as a map.
+func (o *RefreshContentMapRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *RefreshContentMapRequestOptions) GetBody() any {
+	if o.Body == nil {
+		return nil
+	}
+	return o.Body
+}
+
+// GetHeader returns the headers as a map.
+func (o *RefreshContentMapRequestOptions) GetHeader() (map[string]string, error) {
+	encoded, err := json.Marshal(o.Header, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var headers map[string]string
+	err = json.Unmarshal(encoded, &headers)
+	return headers, err
+}
+
+// CreateContentMapSnapshotRequestOptions is the options needed to make a request to CreateContentMapSnapshot.
+type CreateContentMapSnapshotRequestOptions struct {
+	PathParams *CreateContentMapSnapshotPath
+	Header     *CreateContentMapSnapshotHeaders
+}
+
+// GetPathParams returns the path params as a map.
+func (o *CreateContentMapSnapshotRequestOptions) GetPathParams() (map[string]any, error) {
+	encoded, err := json.Marshal(o.PathParams, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetQuery returns the query params as a map.
+func (o *CreateContentMapSnapshotRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *CreateContentMapSnapshotRequestOptions) GetBody() any {
+	return nil
+}
+
+// GetHeader returns the headers as a map.
+func (o *CreateContentMapSnapshotRequestOptions) GetHeader() (map[string]string, error) {
+	encoded, err := json.Marshal(o.Header, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var headers map[string]string
+	err = json.Unmarshal(encoded, &headers)
+	return headers, err
+}
+
 // PlanMediaAcquisitionRequestOptions is the options needed to make a request to PlanMediaAcquisition.
 type PlanMediaAcquisitionRequestOptions struct {
 	Body *PlanMediaAcquisitionBody
@@ -15025,6 +15844,34 @@ func (o *CancelPageRenderJobRequestOptions) GetHeader() (map[string]string, erro
 	return nil, nil
 }
 
+// ResolvePassageRequestOptions is the options needed to make a request to ResolvePassage.
+type ResolvePassageRequestOptions struct {
+	Body *ResolvePassageBody
+}
+
+// GetPathParams returns the path params as a map.
+func (o *ResolvePassageRequestOptions) GetPathParams() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetQuery returns the query params as a map.
+func (o *ResolvePassageRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *ResolvePassageRequestOptions) GetBody() any {
+	if o.Body == nil {
+		return nil
+	}
+	return o.Body
+}
+
+// GetHeader returns the headers as a map.
+func (o *ResolvePassageRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
 // ResolvePathRequestOptions is the options needed to make a request to ResolvePath.
 type ResolvePathRequestOptions struct {
 	Query *ResolvePathQuery
@@ -16849,6 +17696,34 @@ func (o *ResolveTagByNameRequestOptions) GetHeader() (map[string]string, error) 
 	return nil, nil
 }
 
+// TagNeighborhoodRequestOptions is the options needed to make a request to TagNeighborhood.
+type TagNeighborhoodRequestOptions struct {
+	Body *TagNeighborhoodBody
+}
+
+// GetPathParams returns the path params as a map.
+func (o *TagNeighborhoodRequestOptions) GetPathParams() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetQuery returns the query params as a map.
+func (o *TagNeighborhoodRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *TagNeighborhoodRequestOptions) GetBody() any {
+	if o.Body == nil {
+		return nil
+	}
+	return o.Body
+}
+
+// GetHeader returns the headers as a map.
+func (o *TagNeighborhoodRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
 // DeleteTagRequestOptions is the options needed to make a request to DeleteTag.
 type DeleteTagRequestOptions struct {
 	PathParams *DeleteTagPath
@@ -17602,6 +18477,22 @@ type TransferMailboxEMLHeaders struct {
 	XDocbankTransfer string `json:"X-Docbank-Transfer"`
 }
 
+type ArchiveContentMapHeaders struct {
+	IfMatch string `json:"If-Match"`
+}
+
+type UpdateContentMapHeaders struct {
+	IfMatch string `json:"If-Match"`
+}
+
+type RefreshContentMapHeaders struct {
+	IfMatch string `json:"If-Match"`
+}
+
+type CreateContentMapSnapshotHeaders struct {
+	IfMatch string `json:"If-Match"`
+}
+
 type MoveNodeHeaders struct {
 	IfMatch string `json:"If-Match"`
 }
@@ -17828,6 +18719,30 @@ type MailboxOccurrencesPath struct {
 
 type ResumeMailboxJobPath struct {
 	ID string `json:"id"`
+}
+
+type GetContentMapSnapshotPath struct {
+	SnapshotID string `json:"snapshot_id"`
+}
+
+type ArchiveContentMapPath struct {
+	MapID string `json:"map_id"`
+}
+
+type GetContentMapPath struct {
+	MapID string `json:"map_id"`
+}
+
+type UpdateContentMapPath struct {
+	MapID string `json:"map_id"`
+}
+
+type RefreshContentMapPath struct {
+	MapID string `json:"map_id"`
+}
+
+type CreateContentMapSnapshotPath struct {
+	MapID string `json:"map_id"`
 }
 
 type RevokeMediaOccurrencePath struct {
@@ -18196,6 +19111,16 @@ type ResumeMailboxJobBody = MailboxResumeInput
 
 type TransferMailboxEMLBody = runtime.File
 
+type CreateContentMapBody = MapWriteRequest
+
+type PreviewContentMapBody = MapPlanRequest
+
+type ProposeContentMapBody = ContentMapProposalRequest
+
+type UpdateContentMapBody = MapWriteRequest
+
+type RefreshContentMapBody = MapRefreshRequest
+
 type PlanMediaAcquisitionBody = MediaReferenceBody
 
 type GrantMediaAcquisitionConsentBody = MediaAcquisitionGrantBody
@@ -18248,6 +19173,8 @@ type CreatePageRenderJobBody = PageRenderRequest
 type GetPageRenderJobBody = PageSelectionRequest
 
 type CancelPageRenderJobBody = PageSelectionRequest
+
+type ResolvePassageBody = PassageResolveRequest
 
 type MkdirPathBody = MkdirPathRequest
 
@@ -18328,6 +19255,8 @@ type RegisterBlobStoreBody = RegisterBlobStoreRequest
 type PreviewBlobStoreRegistrationBody = PreviewBlobStoreRegistrationRequest
 
 type CreateTagBody = CreateTagRequest
+
+type TagNeighborhoodBody = TagNeighborhoodRequest
 
 type RenameTagBody = RenameTagRequest
 
@@ -18942,6 +19871,42 @@ type TransferMailboxEMLResponse = store.MailboxTransferReceipt
 
 type TransferMailboxEMLErrorResponse = Error
 
+type GetContentMapSnapshotResponse = store.ContentMapSnapshot
+
+type GetContentMapSnapshotErrorResponse = Error
+
+type CreateContentMapResponse = store.ContentMap
+
+type CreateContentMapErrorResponse = Error
+
+type PreviewContentMapResponse = store.ContentMapPlan
+
+type PreviewContentMapErrorResponse = Error
+
+type ProposeContentMapResponse = store.ContentMapPlan
+
+type ProposeContentMapErrorResponse = Error
+
+type ArchiveContentMapResponse = store.ContentMap
+
+type ArchiveContentMapErrorResponse = Error
+
+type GetContentMapResponse = store.ContentMap
+
+type GetContentMapErrorResponse = Error
+
+type UpdateContentMapResponse = store.ContentMap
+
+type UpdateContentMapErrorResponse = Error
+
+type RefreshContentMapResponse = store.ContentMapRefresh
+
+type RefreshContentMapErrorResponse = Error
+
+type CreateContentMapSnapshotResponse = store.ContentMapSnapshot
+
+type CreateContentMapSnapshotErrorResponse = Error
+
 type PlanMediaAcquisitionResponse = api.MediaAcquisitionPlan
 
 type PlanMediaAcquisitionErrorResponse = Error
@@ -19238,6 +20203,10 @@ type CancelPageRenderJobResponse = store.PageRenderJob
 
 type CancelPageRenderJobErrorResponse = Error
 
+type ResolvePassageResponse = api.PassageResolution
+
+type ResolvePassageErrorResponse = Error
+
 type ResolvePathResponse = api.Node
 
 type ResolvePathErrorResponse = Error
@@ -19492,6 +20461,10 @@ type ResolveTagByNameResponse = api.Tag
 
 type ResolveTagByNameErrorResponse = Error
 
+type TagNeighborhoodResponseJSON = api.TagNeighborhoodResponse
+
+type TagNeighborhoodErrorResponse = Error
+
 type DeleteTagResponse = api.TagDeletionReceipt
 
 type DeleteTagErrorResponse = Error
@@ -19730,6 +20703,32 @@ type CollectionQuality = api.CollectionQuality
 type CollectionQualitySummary = api.CollectionQualitySummary
 
 type CollectionSnapshotRepresentation = store.CollectionSnapshotRepresentation
+
+type ContentMap = store.ContentMap
+
+type ContentMapDefinition = store.ContentMapDefinition
+
+type ContentMapDelta = store.ContentMapDelta
+
+type ContentMapDeltaChange = store.ContentMapDeltaChange
+
+type ContentMapDeltaCounts = store.ContentMapDeltaCounts
+
+type ContentMapPin = document.ContentMapPin
+
+type ContentMapPlan = store.ContentMapPlan
+
+type ContentMapProposalRequest = store.ContentMapProposalRequest
+
+type ContentMapRefresh = store.ContentMapRefresh
+
+type ContentMapSection = store.ContentMapSection
+
+type ContentMapSnapshot = store.ContentMapSnapshot
+
+type ContentMapSnapshotEntry = store.ContentMapSnapshotEntry
+
+type ContentMapSnapshotSection = store.ContentMapSnapshotSection
 
 type ContentReference = api.ContentReference
 
@@ -19981,6 +20980,8 @@ type ErrorPosition = api.ErrorPosition
 
 type EvidenceLexicalPolicyV1 = document.EvidenceLexicalPolicyV1
 
+type EvidenceLocatorV1 = document.EvidenceLocatorV1
+
 type EvidencePolicyIdentity = document.EvidencePolicyIdentity
 
 type ExportJob = bundle.ExportJob
@@ -20090,6 +21091,25 @@ type MailboxSettingsInput = api.MailboxSettingsInput
 type MailboxTransferReceipt = store.MailboxTransferReceipt
 
 type MailboxTransferRequest = store.MailboxTransferRequest
+
+type MapPlanRequest struct {
+	// Schema A URL to the JSON Schema for this object.
+	Schema     *string              `json:"$schema,omitempty"`
+	Definition ContentMapDefinition `json:"definition"`
+}
+
+type MapRefreshRequest struct {
+	// Schema A URL to the JSON Schema for this object.
+	Schema             *string `json:"$schema,omitempty"`
+	PreviousSnapshotID string  `json:"previous_snapshot_id"`
+}
+
+type MapWriteRequest struct {
+	// Schema A URL to the JSON Schema for this object.
+	Schema           *string              `json:"$schema,omitempty"`
+	Definition       ContentMapDefinition `json:"definition"`
+	DefinitionDigest string               `json:"definition_digest"`
+}
 
 type MediaAcquisitionGrantBody = api.MediaAcquisitionGrantBody
 
@@ -20253,6 +21273,12 @@ type PageRuntimeIdentity = document.PageRuntimeIdentity
 type PageSelectionRequest = api.PageSelectionRequest
 
 type PageSource = document.PageSource
+
+type PassageRefV1 = document.PassageRefV1
+
+type PassageResolution = api.PassageResolution
+
+type PassageResolveRequest = api.PassageResolveRequest
 
 type PendingFormatV1 = document.PendingFormatV1
 
@@ -20579,6 +21605,8 @@ type SetCollectionLabelRequest struct {
 	Label  *string `json:"label,omitempty"`
 }
 
+type SnapshotMember = store.SnapshotMember
+
 type Sort = query.Sort
 
 type Source = bundle.Source
@@ -20658,6 +21686,18 @@ type Tag = api.Tag
 type TagAssignmentReceipt = api.TagAssignmentReceipt
 
 type TagDeletionReceipt = api.TagDeletionReceipt
+
+type TagGraphDocument = api.TagGraphDocument
+
+type TagGraphPathStep = api.TagGraphPathStep
+
+type TagGraphSeed = api.TagGraphSeed
+
+type TagGraphTag = api.TagGraphTag
+
+type TagNeighborhoodRequest = api.TagNeighborhoodRequest
+
+type TagNeighborhoodResponse = api.TagNeighborhoodResponse
 
 type TagPage = api.TagPage
 

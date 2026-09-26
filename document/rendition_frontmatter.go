@@ -134,18 +134,36 @@ func EnvelopeRenditionV1(rendition RenditionV1, envelope RenditionEnvelopeV1) (R
 // ParseRenditionFrontMatterV1 validates the exact deterministic envelope and
 // returns its body as a view into data. Navigation offsets are body-relative.
 func ParseRenditionFrontMatterV1(data []byte) (RenditionFrontMatterV1, []byte, error) {
+	frontmatter, headerLength, err := ParseRenditionFrontMatterHeaderV1(data)
+	if err != nil {
+		return RenditionFrontMatterV1{}, nil, err
+	}
+	body := data[headerLength:]
+	if len(body) == 0 || !utf8.Valid(body) {
+		return RenditionFrontMatterV1{}, nil, errors.New("rendition Markdown body is empty or not UTF-8")
+	}
+	if err := validateRenditionFrontMatterV1(frontmatter, body); err != nil {
+		return RenditionFrontMatterV1{}, nil, err
+	}
+	return frontmatter, body, nil
+}
+
+// ParseRenditionFrontMatterHeaderV1 validates a complete canonical header
+// without requiring the body in memory. Callers must separately verify the
+// body hash, UTF-8, and navigation coordinates before trusting the envelope.
+func ParseRenditionFrontMatterHeaderV1(data []byte) (RenditionFrontMatterV1, int, error) {
 	const opening = "---\n"
 	closing := []byte("\n---\n")
 	if !bytes.HasPrefix(data, []byte(opening)) {
-		return RenditionFrontMatterV1{}, nil, errors.New("rendition frontmatter opening delimiter is missing")
+		return RenditionFrontMatterV1{}, 0, errors.New("rendition frontmatter opening delimiter is missing")
 	}
 	relativeEnd := bytes.Index(data[len(opening):], closing)
 	if relativeEnd < 0 {
-		return RenditionFrontMatterV1{}, nil, errors.New("rendition frontmatter closing delimiter is missing")
+		return RenditionFrontMatterV1{}, 0, errors.New("rendition frontmatter closing delimiter is missing")
 	}
 	headerLength := len(opening) + relativeEnd + len(closing)
 	if headerLength > maxRenditionFrontMatterBytes {
-		return RenditionFrontMatterV1{}, nil, errors.New("rendition frontmatter exceeds its byte bound")
+		return RenditionFrontMatterV1{}, 0, errors.New("rendition frontmatter exceeds its byte bound")
 	}
 	yamlEnd := len(opening) + relativeEnd + 1
 	var envelope struct {
@@ -154,30 +172,51 @@ func ParseRenditionFrontMatterV1(data []byte) (RenditionFrontMatterV1, []byte, e
 	decoder := yaml.NewDecoder(bytes.NewReader(data[len(opening):yamlEnd]))
 	decoder.KnownFields(true)
 	if err := decoder.Decode(&envelope); err != nil {
-		return RenditionFrontMatterV1{}, nil, fmt.Errorf("decoding rendition frontmatter: %w", err)
+		return RenditionFrontMatterV1{}, 0, fmt.Errorf("decoding rendition frontmatter: %w", err)
 	}
 	var extra any
 	if err := decoder.Decode(&extra); !errors.Is(err, io.EOF) {
-		return RenditionFrontMatterV1{}, nil, errors.New("rendition frontmatter contains multiple YAML documents")
+		return RenditionFrontMatterV1{}, 0, errors.New("rendition frontmatter contains multiple YAML documents")
 	}
-	frontmatter, body := envelope.Docbank, data[headerLength:]
-	if len(body) == 0 || !utf8.Valid(body) {
-		return RenditionFrontMatterV1{}, nil, errors.New("rendition Markdown body is empty or not UTF-8")
-	}
-	if err := validateRenditionFrontMatterV1(frontmatter, body); err != nil {
-		return RenditionFrontMatterV1{}, nil, err
+	frontmatter := envelope.Docbank
+	if err := validateRenditionFrontMatterIdentityV1(frontmatter); err != nil {
+		return RenditionFrontMatterV1{}, 0, err
 	}
 	canonical, err := marshalRenditionFrontMatterV1(frontmatter)
 	if err != nil {
-		return RenditionFrontMatterV1{}, nil, err
+		return RenditionFrontMatterV1{}, 0, err
 	}
 	if !bytes.Equal(canonical, data[:headerLength]) {
-		return RenditionFrontMatterV1{}, nil, errors.New("rendition frontmatter is not canonical")
+		return RenditionFrontMatterV1{}, 0, errors.New("rendition frontmatter is not canonical")
 	}
-	return frontmatter, body, nil
+	return frontmatter, headerLength, nil
 }
 
 func validateRenditionFrontMatterV1(value RenditionFrontMatterV1, body []byte) error {
+	if err := validateRenditionFrontMatterIdentityV1(value); err != nil {
+		return err
+	}
+	if got := checksumBytes(body); got != value.Rendition.BodySHA256 {
+		return fmt.Errorf("rendition body SHA-256 %s differs from frontmatter %s", got, value.Rendition.BodySHA256)
+	}
+	seen := make(map[string]struct{}, len(value.Navigation.Entries))
+	priorByte := -1
+	for _, entry := range value.Navigation.Entries {
+		if entry.Key == "" || !renditionFrontMatterLocatorKind(entry.Kind) || entry.Byte < 0 ||
+			entry.Byte >= len(body) || entry.Byte < priorByte || !utf8.RuneStart(body[entry.Byte]) ||
+			entry.Line != 1+bytes.Count(body[:entry.Byte], []byte{'\n'}) {
+			return errors.New("rendition frontmatter navigation is invalid")
+		}
+		if _, exists := seen[entry.Key]; exists {
+			return errors.New("rendition frontmatter navigation contains a duplicate key")
+		}
+		seen[entry.Key] = struct{}{}
+		priorByte = entry.Byte
+	}
+	return nil
+}
+
+func validateRenditionFrontMatterIdentityV1(value RenditionFrontMatterV1) error {
 	validDigest := func(value string) bool {
 		if len(value) != sha256.Size*2 || value != strings.ToLower(value) {
 			return false
@@ -202,23 +241,6 @@ func validateRenditionFrontMatterV1(value RenditionFrontMatterV1, body []byte) e
 		len(value.Navigation.Entries) > maxRenditionNavigationEntries ||
 		len(value.Navigation.Entries) > value.Document.UnitCount {
 		return errors.New("rendition frontmatter contract is invalid")
-	}
-	if got := checksumBytes(body); got != value.Rendition.BodySHA256 {
-		return fmt.Errorf("rendition body SHA-256 %s differs from frontmatter %s", got, value.Rendition.BodySHA256)
-	}
-	seen := make(map[string]struct{}, len(value.Navigation.Entries))
-	priorByte := -1
-	for _, entry := range value.Navigation.Entries {
-		if entry.Key == "" || !renditionFrontMatterLocatorKind(entry.Kind) || entry.Byte < 0 ||
-			entry.Byte >= len(body) || entry.Byte < priorByte || !utf8.RuneStart(body[entry.Byte]) ||
-			entry.Line != 1+bytes.Count(body[:entry.Byte], []byte{'\n'}) {
-			return errors.New("rendition frontmatter navigation is invalid")
-		}
-		if _, exists := seen[entry.Key]; exists {
-			return errors.New("rendition frontmatter navigation contains a duplicate key")
-		}
-		seen[entry.Key] = struct{}{}
-		priorByte = entry.Byte
 	}
 	return nil
 }
