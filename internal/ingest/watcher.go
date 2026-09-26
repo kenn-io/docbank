@@ -219,7 +219,7 @@ func openWatchFile(root *os.Root, ref string) (*os.File, error) {
 	if before.Mode()&fs.ModeSymlink != 0 || !before.Mode().IsRegular() {
 		return nil, ErrSourceChanged
 	}
-	f, err := dir.Open(name)
+	f, err := openWatchLeaf(dir, name)
 	if err != nil {
 		return nil, err
 	}
