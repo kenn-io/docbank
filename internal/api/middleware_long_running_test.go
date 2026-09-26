@@ -57,6 +57,35 @@ func TestExportTicketPreparationTimeoutBoundary(t *testing.T) {
 	})).ServeHTTP(httptest.NewRecorder(), httptest.NewRequestWithContext(parent, http.MethodPost, download, nil))
 }
 
+func TestModelProvisionTimeoutBoundary(t *testing.T) {
+	const provision = "/api/v1/models/provisions"
+	for _, test := range []struct {
+		method, path string
+		deadline     bool
+	}{
+		{http.MethodPost, provision, false},
+		{http.MethodGet, provision, true},
+		{http.MethodPost, provision + "/", true},
+		{http.MethodPost, provision + "/extra", true},
+		{http.MethodPost, "/api/v1/models/plans", true},
+	} {
+		t.Run(test.method+test.path, func(t *testing.T) {
+			timeoutMiddleware(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+				_, hasDeadline := r.Context().Deadline()
+				assert.Equal(t, test.deadline, hasDeadline)
+			})).ServeHTTP(httptest.NewRecorder(), httptest.NewRequestWithContext(t.Context(), test.method, test.path, nil))
+		})
+	}
+	parent, cancel := context.WithTimeout(t.Context(), 2*time.Minute)
+	defer cancel()
+	want, _ := parent.Deadline()
+	timeoutMiddleware(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+		got, ok := r.Context().Deadline()
+		assert.True(t, ok)
+		assert.Equal(t, want, got, "provisioning must preserve the caller's own deadline")
+	})).ServeHTTP(httptest.NewRecorder(), httptest.NewRequestWithContext(parent, http.MethodPost, provision, nil))
+}
+
 func TestMailboxWatchTimeoutBoundary(t *testing.T) {
 	const events = "/api/v1/mailbox/jobs/synthetic-import/events"
 	for _, test := range []struct {
