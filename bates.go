@@ -15,6 +15,7 @@ var (
 	ErrBatesOverflow            = store.ErrBatesOverflow
 	ErrBatesPageCountMismatch   = store.ErrBatesPageCountMismatch
 	ErrBatesPageLimit           = store.ErrBatesPageLimit
+	ErrBatesSourceTooLarge      = store.ErrBatesSourceTooLarge
 	ErrBatesLabelCollision      = store.ErrBatesLabelCollision
 	ErrInvalidBatesRequest      = store.ErrInvalidBatesRequest
 	ErrInvalidBatesCursor       = store.ErrInvalidBatesCursor

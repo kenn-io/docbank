@@ -11,6 +11,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/internal/canonical"
+	"go.kenn.io/docbank/internal/pdfstamp"
 )
 
 func batesFixture(t *testing.T, s *Store) (CollectionSnapshot, []BatesPageInput) {
@@ -428,4 +429,38 @@ func TestBatesExplicitPagesMatchASealedPDFWithoutPageDocument(t *testing.T) {
 
 	require.NoError(t, err, "the sealed PDF record verifies the page count when no page document exists")
 	require.Len(t, plan.Labels, 2)
+}
+
+func TestBatesRefusesToReserveASourceTooLargeToStamp(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	size := pdfstamp.MaxOutputBytes + 1
+	node, err := s.CreateFile(t.Context(), s.RootID(), "huge.pdf", fakeHash("e1"), size, "application/pdf")
+	require.NoError(t, err)
+	occurrence := strings.Repeat("e", 32)
+	id, err := newUUIDv4()
+	require.NoError(t, err)
+	snapshot, err := s.SealCollectionSnapshot(t.Context(), SnapshotSealRequest{SnapshotID: id, Members: []CollectionSnapshotMember{{
+		Ordinal: 1, OccurrenceID: occurrence, NodeID: node.ID, ContentVersionID: node.CurrentVersionID,
+		BlobSHA256: node.BlobHash, Size: size, FamilyID: occurrence, FamilyOrder: 1, DisplayName: node.Name,
+		FrozenFieldsJSON: "{}", DocumentKind: "other", SourcePageCount: 1, SelectedPDFSHA256: node.BlobHash,
+		Representations: []CollectionSnapshotRepresentation{{OccurrenceID: occurrence, Role: "native",
+			Status: roleAvailable, TextAuthority: "none", ContentVersionID: node.CurrentVersionID,
+			BlobSHA256: node.BlobHash, MediaType: "application/pdf", Size: size, VerifiedPageCount: 1}},
+	}}})
+	require.NoError(t, err)
+	ns, err := s.EnsureBatesNamespace(t.Context(), "HUGE", "", 6)
+	require.NoError(t, err)
+	request := batesRequest(t, ns, snapshot, []BatesPageInput{
+		{OccurrenceID: occurrence, UnstampedSHA256: node.BlobHash, SourcePage: 1, VerifiedPageCount: 1},
+	})
+
+	_, err = s.PreviewBatesRange(t.Context(), request)
+	require.ErrorIs(t, err, ErrBatesSourceTooLarge)
+	_, err = s.ReserveBatesRange(t.Context(), request)
+	require.ErrorIs(t, err, ErrBatesSourceTooLarge)
+
+	var cursor int64
+	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT next_sequence FROM bates_namespace_cursors WHERE namespace_id=?`, ns.NamespaceID).Scan(&cursor))
+	require.Equal(t, int64(1), cursor, "no numbers may be reserved for a source that cannot be stamped")
 }

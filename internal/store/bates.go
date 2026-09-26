@@ -53,8 +53,10 @@ var (
 	ErrBatesPageCountMismatch   = errors.New("bates_page_count_mismatch: verified page counts differ from the sealed plan")
 	ErrBatesPageLimit           = fmt.Errorf("bates_page_limit: a Bates export holds at most %d pages", MaxBatesExportPages)
 	ErrBatesLabelCollision      = errors.New("bates_label_collision: a label in this range is already allocated by another namespace")
-	ErrInvalidBatesRequest      = errors.New("invalid_bates_request")
-	ErrInvalidBatesCursor       = errors.New("invalid Bates export history cursor")
+	ErrBatesSourceTooLarge      = fmt.Errorf("bates_source_too_large: a source PDF is larger than the %d-byte stamping limit",
+		pdfstamp.MaxOutputBytes)
+	ErrInvalidBatesRequest = errors.New("invalid_bates_request")
+	ErrInvalidBatesCursor  = errors.New("invalid Bates export history cursor")
 	// ErrInvalidBatesLedger reports restored or audited Bates rows that break
 	// the reservation ledger's invariants.
 	ErrInvalidBatesLedger = errors.New("invalid Bates ledger")
@@ -317,6 +319,23 @@ func validateBatesPages(ctx context.Context, tx *sql.Tx, r BatesPlanRequest) err
 	return nil
 }
 
+// checkBatesSourceSize rejects a source that publication could never stamp,
+// before its numbers are reserved.
+func checkBatesSourceSize(ctx context.Context, q metadataQuerier, sha256 string) error {
+	var size int64
+	err := q.QueryRowContext(ctx, `SELECT size FROM blobs WHERE hash=?`, sha256).Scan(&size)
+	if errors.Is(err, sql.ErrNoRows) {
+		return ErrBatesPageCountMismatch
+	}
+	if err != nil {
+		return fmt.Errorf("reading Bates source %s size: %w", sha256, err)
+	}
+	if size > pdfstamp.MaxOutputBytes {
+		return fmt.Errorf("%w: %s is %d bytes", ErrBatesSourceTooLarge, sha256, size)
+	}
+	return nil
+}
+
 // SnapshotBatesPages reads the exact sealed source-page order of a snapshot
 // small enough for one Bates export.
 func (s *Store) SnapshotBatesPages(ctx context.Context, snapshotID string) ([]BatesPageInput, error) {
@@ -356,6 +375,9 @@ func expectedBatesPagesLimited(ctx context.Context, tx metadataQuerier, snapshot
 				return nil, err
 			case pageDoc.PageCount != member.SourcePageCount || pageDoc.Source.SHA256 != member.SelectedPDFSHA256:
 				return nil, ErrBatesPageCountMismatch
+			}
+			if err := checkBatesSourceSize(ctx, tx, member.SelectedPDFSHA256); err != nil {
+				return nil, err
 			}
 			for _, page := range member.SelectedSourcePages {
 				expected = append(expected, BatesPageInput{member.OccurrenceID, member.SelectedPDFSHA256, page, member.SourcePageCount})
