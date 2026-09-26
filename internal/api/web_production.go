@@ -68,6 +68,10 @@ func productionSetBrowserRequestAllowed(r *http.Request) bool {
 			return true
 		}
 	}
+	if len(parts) == 5 && parts[3] == "decisions" && parts[4] == "check" &&
+		r.Method == http.MethodPost && r.URL.RawQuery == "" {
+		return true
+	}
 	if len(parts) == 6 && r.Method == http.MethodPost && r.URL.RawQuery == "" &&
 		parts[3] == "members" && validPageJobPathID(parts[4]) && parts[5] == "review" {
 		return true

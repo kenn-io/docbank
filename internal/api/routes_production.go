@@ -121,6 +121,42 @@ type ProductionResolveRequest struct {
 	Limit    int    `json:"limit,omitzero"`
 }
 
+type ProductionDecisionCheckRequest struct {
+	Decision ProductionDecision `json:"decision"`
+}
+
+// ProductionDecisionCheckResult records a read-only check. The caller makes a
+// separate ETag-bound change after accepting any expanded selector.
+type ProductionDecisionCheckResult struct {
+	SetID            string              `json:"set_id"`
+	Revision         int64               `json:"revision"`
+	ETag             int64               `json:"etag"`
+	MemberID         string              `json:"member_id"`
+	DecisionID       string              `json:"decision_id"`
+	Outcome          string              `json:"outcome"`
+	Expanded         *redaction.Selector `json:"expanded,omitzero"`
+	ExpandedBoxCount int                 `json:"expanded_box_count,omitzero"`
+	DecisionIDs      []string            `json:"decision_ids,omitzero"`
+}
+
+const maxProductionDecisionExpansionBoxes = 64
+
+func productionDecisionCheckResult(setID string, revision, etag int64,
+	decision redaction.Decision, problem *redaction.Problem) ProductionDecisionCheckResult {
+	result := ProductionDecisionCheckResult{SetID: setID, Revision: revision,
+		ETag: etag, MemberID: decision.MemberID, DecisionID: decision.ID, Outcome: "ready"}
+	if problem != nil {
+		result.Outcome = problem.Code
+		result.DecisionIDs = problem.DecisionIDs
+		result.ExpandedBoxCount = len(problem.ExpandedBoxes)
+		if problem.Expanded != nil && len(problem.Expanded.Boxes) <= maxProductionDecisionExpansionBoxes &&
+			len(problem.Expanded.Pages) <= maxProductionDecisionExpansionBoxes {
+			result.Expanded = problem.Expanded
+		}
+	}
+	return result
+}
+
 // ProductionResolvedMaskPage is a bounded projection of the current resolved
 // plan, including the server-derived review binding for its full member.
 type ProductionResolvedMaskPage store.ProductionResolvedMaskPage
@@ -431,6 +467,27 @@ func registerProductionRoutes(api huma.API, d Deps, g *OperationGate) {
 				return nil, productionSetError(err)
 			}
 			return &struct{ Body ProductionResolvedMaskPage }{Body: ProductionResolvedMaskPage(page)}, nil
+		})
+	huma.Register(api, huma.Operation{OperationID: "checkProductionDecision", Method: http.MethodPost,
+		Path:    "/api/v1/productions/sets/{set_id}/revisions/{revision}/decisions/check",
+		Summary: "Assess one proposed production decision without changing the draft", MaxBodyBytes: 64 << 10},
+		func(ctx context.Context, in *struct {
+			SetID    string `path:"set_id" format:"uuid"`
+			Revision int64  `path:"revision" minimum:"1"`
+			IfMatch  string `header:"If-Match"`
+			Body     ProductionDecisionCheckRequest
+		}) (*struct{ Body ProductionDecisionCheckResult }, error) {
+			etag, err := parseIfMatch(in.IfMatch)
+			if err != nil {
+				return nil, err
+			}
+			decision := redaction.Decision(in.Body.Decision)
+			problem, err := d.Store.AssessProductionDecision(ctx, in.SetID, in.Revision, etag, decision)
+			if err != nil {
+				return nil, productionSetError(err)
+			}
+			result := productionDecisionCheckResult(in.SetID, in.Revision, etag, decision, problem)
+			return &struct{ Body ProductionDecisionCheckResult }{Body: result}, nil
 		})
 	huma.Register(api, huma.Operation{OperationID: "finalizeProductionDraft", Method: http.MethodPost,
 		Path:    "/api/v1/productions/sets/{set_id}/revisions/{revision}/finalize",
