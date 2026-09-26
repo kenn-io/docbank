@@ -11,6 +11,7 @@
   import { embedpdfMarqueeBox, type Frame } from "./embedpdfAdapter.js";
   import { loadSelectionFrame } from "./selectionFrame.js";
   import { assessSelectionDecision } from "./decisionCheck.js";
+  import ProductionPagePreview from "./ProductionPagePreview.svelte";
   import type { Marquee } from "./SourcePageSelection.svelte";
 
   interface Props {
@@ -540,6 +541,11 @@
                     onclick={() => decideSelection("redact")}>Redact selection</Button>
                   <Button size="sm" surface="soft" disabled={changing || !!pendingChange} onclick={clearSelection}>Clear selection</Button>
                 </div>
+                {#key selectedRegion}
+                  <ProductionPagePreview {session} setID={set.id} revision={draft.revision} etag={draft.etag}
+                    member={selectedRegion.member} page={selectedRegion.page} onstale={markStale}
+                    onauthfailure={cause => { onauthfailure(cause); onclose(); }} />
+                {/key}
               </div>
             {/if}
           </div>

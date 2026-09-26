@@ -107,6 +107,14 @@ export interface ProductionDecisionCheckResult {
   decision_ids?: string[];
 }
 
+export interface ProductionPreviewTicket {
+  operation_id: string;
+  preview_input_sha256: string;
+  resolved_sha256: string;
+  image: { url: string; sha256: string; size: number };
+  text: { url: string; sha256: string; size: number };
+}
+
 const setBase = "/api/v1/productions/sets";
 
 export function listProductionSets(session: string, cursor = "", signal?: AbortSignal): Promise<ProductionSetPage> {
@@ -169,6 +177,14 @@ export function checkProductionDecision(session: string, setID: string, revision
   return sessionJSON<ProductionDecisionCheckResult>(`${setBase}/${encodeURIComponent(setID)}/revisions/${revision}/decisions/check`, {
     session, signal, method: "POST", headers: { "Content-Type": "application/json", "If-Match": String(etag) },
     body: JSON.stringify({ decision }),
+  });
+}
+
+export function createProductionPreview(session: string, setID: string, revision: number, etag: number,
+  memberID: string, page: number, operationID: string, signal?: AbortSignal): Promise<ProductionPreviewTicket> {
+  return sessionJSON<ProductionPreviewTicket>(`${setBase}/${encodeURIComponent(setID)}/revisions/${revision}/previews`, {
+    session, signal, method: "POST", headers: { "Content-Type": "application/json", "If-Match": String(etag) },
+    body: JSON.stringify({ operation_id: operationID, member_id: memberID, page }),
   });
 }
 

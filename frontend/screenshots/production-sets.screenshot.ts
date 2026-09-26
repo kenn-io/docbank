@@ -133,6 +133,18 @@ test("selects a rectangle on a retained synthetic member PDF through the real da
     await page.screenshot({ path: path.join(output!, "web-production-rectangle-selection.png"), fullPage: true, animations: "disabled" });
     await drawer.getByRole("button", { name: "Use expanded selection" }).click();
     await expect(drawer.locator("dt").filter({ hasText: "Change version" }).locator("xpath=following-sibling::dd[1]")).toHaveText("3");
+    await drawer.getByRole("button", { name: "Open original PDF for member 1" }).click();
+    await expect(drawer.getByRole("img", { name: "Original page 1" })).toBeVisible();
+    await drawer.getByRole("button", { name: "Select whole page", exact: true }).click();
+    await drawer.getByRole("button", { name: "Preview production output" }).click();
+    const produced = drawer.getByRole("region", { name: "Production preview for member 1 page 1" });
+    await expect(produced.getByRole("img", { name: "Verified produced page 1 for member 1" })).toBeVisible();
+    await expect(produced.getByRole("link", { name: "Open full-size image" })).toHaveAttribute("href", /^blob:/);
+    await expect(produced.locator("pre")).toBeVisible();
+    expect(await produced.locator("pre").textContent()).not.toContain("Synthetic review reason");
+    expect(outside).toEqual([]);
+    expect(browserErrors).toEqual([]);
+    await produced.screenshot({ path: path.join(output!, "web-production-page-preview.png"), animations: "disabled" });
     await drawer.getByRole("button", { name: "Synthetic keep" }).click();
     await drawer.getByRole("button", { name: "Open original PDF for member 1" }).click();
     await expect(drawer.getByRole("img", { name: "Original page 1" })).toBeVisible();
