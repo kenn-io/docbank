@@ -84,7 +84,7 @@ func contentResponses() map[string]*huma.Response {
 					Schema: &huma.Schema{Type: openAPIStringType}},
 			},
 			Content: map[string]*huma.MediaType{
-				"application/octet-stream": {Schema: &huma.Schema{Type: openAPIStringType, Format: "binary"}},
+				"application/octet-stream": {Schema: &huma.Schema{Type: openAPIStringType, Format: openAPIBinaryFormat}},
 			},
 		},
 	}

@@ -6,6 +6,7 @@ import (
 )
 
 const openAPIStringType = "string"
+const openAPIBinaryFormat = "binary"
 const openAPIQueryLocation = "query"
 const openAPIPathLocation = "path"
 

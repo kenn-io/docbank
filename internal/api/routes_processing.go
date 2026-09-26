@@ -328,7 +328,7 @@ func registerProcessingRoutes(api huma.API, d Deps) {
 		renditionHeaders[name] = &huma.Param{Schema: &huma.Schema{Type: "string"}}
 	}
 	renditionResponse := &huma.Response{Description: "Sanitized Markdown bytes with immutable identity headers", Headers: renditionHeaders,
-		Content: map[string]*huma.MediaType{"text/markdown": {Schema: &huma.Schema{Type: "string", Format: "binary"}}}}
+		Content: map[string]*huma.MediaType{"text/markdown": {Schema: &huma.Schema{Type: "string", Format: openAPIBinaryFormat}}}}
 	huma.Register(api, huma.Operation{
 		OperationID: "getDocumentRendition", Method: http.MethodGet,
 		Responses: map[string]*huma.Response{"200": renditionResponse, "206": renditionResponse},

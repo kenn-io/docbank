@@ -72,6 +72,10 @@ func productionSetBrowserRequestAllowed(r *http.Request) bool {
 		parts[3] == "members" && validPageJobPathID(parts[4]) && parts[5] == "review" {
 		return true
 	}
+	if len(parts) == 6 && r.Method == http.MethodGet && r.URL.RawQuery == "" &&
+		parts[3] == "members" && validPageJobPathID(parts[4]) && parts[5] == "pdf" {
+		return true
+	}
 	if len(parts) == 5 && r.Method == http.MethodGet && parts[3] == "maps" && validPageJobPathID(parts[4]) {
 		return productionBoundedQueryAllowed(r.URL.RawQuery, 512, 65536)
 	}

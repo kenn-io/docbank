@@ -47,7 +47,7 @@ func registerPackageContainerOpenAPI(api huma.API) {
 				&huma.Param{Name: BlobSizeHeader, In: mailboxHeaderLocation, Required: true, Schema: &huma.Schema{Type: mailboxIntegerType, Format: "int64"}},
 			)
 			op.RequestBody = &huma.RequestBody{Required: true, Description: "One complete 64 MiB chunk, except the exact shorter final chunk; API-key clients only", Content: map[string]*huma.MediaType{
-				"application/octet-stream": {Schema: &huma.Schema{Type: openAPIStringType, Format: "binary"}},
+				"application/octet-stream": {Schema: &huma.Schema{Type: openAPIStringType, Format: openAPIBinaryFormat}},
 			}}
 		}
 		api.OpenAPI().AddOperation(op)

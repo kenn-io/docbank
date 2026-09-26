@@ -222,6 +222,7 @@ func NewServer(d Deps) *Server {
 	registerProductionNumberRoutes(humaAPI, d)
 	registerProductionRoutes(humaAPI, d, g)
 	registerProductionPreviewRoutes(humaAPI, d, g, s.webDownloads, s.webSessions)
+	registerProductionSourcePDFRoute(humaAPI, d)
 	clearLongRunningBodyReadDeadlines(humaAPI)
 	markRevisionPreconditionsRequired(humaAPI)
 	registerDaemonOpenAPI(humaAPI)
