@@ -57,6 +57,9 @@ func TestCreateStageRemovesOnlyStaleAbandonedStages(t *testing.T) {
 	require.NoError(t, os.Mkdir(userDir, 0o700))
 	require.NoError(t, os.WriteFile(filepath.Join(userDir, "notes.txt"), []byte("keep"), 0o600))
 	require.NoError(t, os.Chtimes(userDir, stale, stale))
+	emptyUserDir := filepath.Join(parent, ".docbank-test-empty")
+	require.NoError(t, os.Mkdir(emptyUserDir, 0o700))
+	require.NoError(t, os.Chtimes(emptyUserDir, stale, stale))
 
 	next, err := CreateStage(parent, ".docbank-test-")
 	require.NoError(t, err)
@@ -65,4 +68,5 @@ func TestCreateStageRemovesOnlyStaleAbandonedStages(t *testing.T) {
 	require.NoDirExists(t, abandoned.dir)
 	require.DirExists(t, live.dir)
 	require.FileExists(t, filepath.Join(userDir, "notes.txt"))
+	require.DirExists(t, emptyUserDir, "an old empty user folder sharing the prefix must survive")
 }

@@ -1,6 +1,8 @@
 package filepublish
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"os"
@@ -102,15 +104,16 @@ func (s *Stage) Cleanup() error {
 }
 
 // removeStaleStages is best effort: a leftover stage must not block a new
-// export. It removes only the payload file and the then-empty directory, so a
-// user directory that happens to share the prefix is never emptied.
+// export. It considers only names CreateStage generates, and removes only the
+// payload file and the then-empty directory, so a user directory is never
+// emptied or deleted.
 func removeStaleStages(parent, prefix string) {
 	entries, err := os.ReadDir(parent)
 	if err != nil {
 		return
 	}
 	for _, entry := range entries {
-		if !entry.IsDir() || !strings.HasPrefix(entry.Name(), prefix) {
+		if !entry.IsDir() || !isStageName(entry.Name(), prefix) {
 			continue
 		}
 		info, err := entry.Info()
@@ -121,4 +124,29 @@ func removeStaleStages(parent, prefix string) {
 		_ = os.Remove(filepath.Join(dir, "payload.tmp"))
 		_ = os.Remove(dir)
 	}
+}
+
+// stageRandomBytes names a stage with 32 lowercase hex characters after the
+// prefix; cleanup recognizes only that exact shape.
+const stageRandomBytes = 16
+
+func newStageName(prefix string) (string, error) {
+	random := make([]byte, stageRandomBytes)
+	if _, err := rand.Read(random); err != nil {
+		return "", fmt.Errorf("generating stage name: %w", err)
+	}
+	return prefix + hex.EncodeToString(random), nil
+}
+
+func isStageName(name, prefix string) bool {
+	suffix, ok := strings.CutPrefix(name, prefix)
+	if !ok || len(suffix) != hex.EncodedLen(stageRandomBytes) {
+		return false
+	}
+	for _, character := range suffix {
+		if (character < '0' || character > '9') && (character < 'a' || character > 'f') {
+			return false
+		}
+	}
+	return true
 }
