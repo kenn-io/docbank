@@ -1,5 +1,5 @@
 ---
-last_edited: 2026-09-16
+last_edited: 2026-09-24
 title: CLI Reference
 description: Every docbank command, flag, output format, and error behavior.
 ---
@@ -927,6 +927,19 @@ Export dated search counts and retain the evidence needed to check them.
 Commands with `--output` also accept `--overwrite`. Existing destinations are
 otherwise preserved. See [Search exports](usage/search-exports.md) for the
 version 1 request format, date choices, counts, and retention limits.
+
+## docbank export
+
+```
+docbank export archive <job-id> --output export.zip [--overwrite]
+```
+
+Downloads a completed native document export from the authenticated daemon.
+Before the file replaces its destination, Docbank checks the received size and
+SHA-256 against the daemon response and verifies the ZIP's plan fingerprint,
+member hashes, and manifest. A missing, unfinished, foreign-owner, or
+withdrawn-source job produces no output file. This command reads an existing
+job; it does not create a source, plan, or job.
 
 ## docbank processing
 

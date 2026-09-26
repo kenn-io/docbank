@@ -15679,6 +15679,55 @@ paths:
                 $ref: "#/components/schemas/Error"
           description: Error
       summary: Read current durable export progress and receipt
+  /api/v1/exports/jobs/{id}/archive:
+    get:
+      operationId: readExportArchive
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            format: uuid
+            type: string
+      responses:
+        "200":
+          content:
+            application/zip:
+              schema:
+                contentMediaType: application/octet-stream
+                format: binary
+                type: string
+          description: Verified ZIP archive
+        default:
+          content:
+            application/problem+json:
+              schema:
+                additionalProperties: false
+                properties:
+                  code:
+                    type: string
+                  detail:
+                    type: string
+                  errors:
+                    items:
+                      type: string
+                    type: array
+                  observed_scope_count:
+                    format: int64
+                    type: integer
+                  position:
+                    $ref: "#/components/schemas/ErrorPosition"
+                  status:
+                    format: int64
+                    type: integer
+                  title:
+                    type: string
+                required:
+                  - title
+                  - status
+                type: object
+          description: Export request failed
+      summary: Read a completed, reverified export archive
   /api/v1/exports/jobs/{id}/cancel:
     post:
       operationId: cancelExportJob
