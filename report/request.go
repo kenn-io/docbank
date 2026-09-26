@@ -19,14 +19,24 @@ const (
 // caller's row order, expressions, or date cutoffs. Store-dependent identities
 // and evidence bindings are checked when the frozen observation is built.
 func NormalizeRequest(r Request) (Request, error) {
-	if r.Version != 1 {
+	if r.Version != 1 && r.Version != 2 {
 		return Request{}, fmt.Errorf("unsupported report request version %d", r.Version)
 	}
 	if len(r.Profile) > 128 || strings.TrimSpace(r.Profile) != r.Profile {
 		return Request{}, errors.New("invalid report processing profile")
 	}
-	if r.AllDocuments == (len(r.CollectionIDs) > 0) {
-		return Request{}, errors.New("select all documents or at least one collection")
+	scopes := 0
+	if r.AllDocuments {
+		scopes++
+	}
+	if len(r.CollectionIDs) > 0 {
+		scopes++
+	}
+	if len(r.SelectedDocuments) > 0 {
+		scopes++
+	}
+	if scopes != 1 || r.Version == 1 && len(r.SelectedDocuments) > 0 {
+		return Request{}, errors.New("select all documents, collections, or exact documents")
 	}
 	if len(r.CollectionIDs) > 50000 {
 		return Request{}, errors.New("too many collections")
@@ -37,6 +47,16 @@ func NormalizeRequest(r Request) (Request, error) {
 			return Request{}, errors.New("invalid or duplicate collection ID")
 		}
 		seenCollections[id] = true
+	}
+	if len(r.SelectedDocuments) > 50000 {
+		return Request{}, errors.New("too many selected documents")
+	}
+	selectedNodes := make(map[int64]bool, len(r.SelectedDocuments))
+	for _, member := range r.SelectedDocuments {
+		if member.NodeID <= 0 || member.VersionID == "" || !validSHA256(member.SHA256) || selectedNodes[member.NodeID] {
+			return Request{}, errors.New("invalid or duplicate selected document")
+		}
+		selectedNodes[member.NodeID] = true
 	}
 	if err := validateTimezone(r.Timezone); err != nil {
 		return Request{}, fmt.Errorf("report timezone: %w", err)
@@ -94,6 +114,7 @@ func NormalizeRequest(r Request) (Request, error) {
 		seenChoices[choice.Document] = true
 	}
 	r.CollectionIDs = append([]string(nil), r.CollectionIDs...)
+	r.SelectedDocuments = append([]Identity(nil), r.SelectedDocuments...)
 	r.Terms = append([]Term(nil), r.Terms...)
 	r.DateChoices = append([]DateChoice(nil), r.DateChoices...)
 	return r, nil
