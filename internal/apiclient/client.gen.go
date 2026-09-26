@@ -15,6 +15,7 @@ import (
 	api "go.kenn.io/docbank/internal/api"
 	loadfile "go.kenn.io/docbank/internal/loadfile"
 	mailbox "go.kenn.io/docbank/internal/mailbox"
+	processing "go.kenn.io/docbank/internal/processing"
 	query "go.kenn.io/docbank/internal/query"
 	store "go.kenn.io/docbank/internal/store"
 	report "go.kenn.io/docbank/report"
@@ -2993,6 +2994,152 @@ func (c *Client) Gc(ctx context.Context, options *GcRequestOptions, reqEditors .
 	}
 
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/gc")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
+// PlanIndexRepair Preview bounded work, providers and cost for targeted index repair
+func (c *Client) PlanIndexRepair(ctx context.Context, options *PlanIndexRepairRequestOptions, reqEditors ...runtime.RequestEditorFn) (*PlanIndexRepairResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/index/repair-plans",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*PlanIndexRepairResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(PlanIndexRepairResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "PlanIndexRepairResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[PlanIndexRepairErrorResponse](resp, "PlanIndexRepairErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/index/repair-plans")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
+// RepairIndexes Build, validate and atomically publish targeted index generations
+func (c *Client) RepairIndexes(ctx context.Context, options *RepairIndexesRequestOptions, reqEditors ...runtime.RequestEditorFn) (*RepairIndexesResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/index/repairs",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*RepairIndexesResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(RepairIndexesResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "RepairIndexesResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[RepairIndexesErrorResponse](resp, "RepairIndexesErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/index/repairs")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
+// GetIndexStatus Read projection generations, coverage and freshness
+func (c *Client) GetIndexStatus(ctx context.Context, options *GetIndexStatusRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetIndexStatusResponse, error) {
+	var err error
+
+	queryEncoding := map[string]runtime.QueryEncoding{
+		"require_fresh": {Style: "form", Explode: &[]bool{false}[0]},
+		"wait_ms":       {Style: "form", Explode: &[]bool{false}[0]},
+	}
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:    c.apiClient.GetBaseURL() + "/api/v1/index/status",
+		Method:        "GET",
+		Options:       options,
+		QueryEncoding: queryEncoding,
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*GetIndexStatusResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(GetIndexStatusResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "GetIndexStatusResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[GetIndexStatusErrorResponse](resp, "GetIndexStatusErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/index/status")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
@@ -12563,6 +12710,93 @@ func (o *GcRequestOptions) GetHeader() (map[string]string, error) {
 	return nil, nil
 }
 
+// PlanIndexRepairRequestOptions is the options needed to make a request to PlanIndexRepair.
+type PlanIndexRepairRequestOptions struct {
+	Body *PlanIndexRepairBody
+}
+
+// GetPathParams returns the path params as a map.
+func (o *PlanIndexRepairRequestOptions) GetPathParams() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetQuery returns the query params as a map.
+func (o *PlanIndexRepairRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *PlanIndexRepairRequestOptions) GetBody() any {
+	if o.Body == nil {
+		return nil
+	}
+	return o.Body
+}
+
+// GetHeader returns the headers as a map.
+func (o *PlanIndexRepairRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
+// RepairIndexesRequestOptions is the options needed to make a request to RepairIndexes.
+type RepairIndexesRequestOptions struct {
+	Body *RepairIndexesBody
+}
+
+// GetPathParams returns the path params as a map.
+func (o *RepairIndexesRequestOptions) GetPathParams() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetQuery returns the query params as a map.
+func (o *RepairIndexesRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *RepairIndexesRequestOptions) GetBody() any {
+	if o.Body == nil {
+		return nil
+	}
+	return o.Body
+}
+
+// GetHeader returns the headers as a map.
+func (o *RepairIndexesRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
+// GetIndexStatusRequestOptions is the options needed to make a request to GetIndexStatus.
+type GetIndexStatusRequestOptions struct {
+	Query *GetIndexStatusQuery
+}
+
+// GetPathParams returns the path params as a map.
+func (o *GetIndexStatusRequestOptions) GetPathParams() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetQuery returns the query params as a map.
+func (o *GetIndexStatusRequestOptions) GetQuery() (map[string]any, error) {
+	encoded, err := json.Marshal(o.Query, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *GetIndexStatusRequestOptions) GetBody() any {
+	return nil
+}
+
+// GetHeader returns the headers as a map.
+func (o *GetIndexStatusRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
 // IngestRequestOptions is the options needed to make a request to Ingest.
 type IngestRequestOptions struct {
 	Body *IngestBody
@@ -18176,6 +18410,10 @@ type SealExportSourceBody = SealExportSourceRequest
 
 type GcBody = GcRequest
 
+type PlanIndexRepairBody = IndexRepairPlanRequest
+
+type RepairIndexesBody = IndexRepairRequest
+
 type IngestBody = IngestRequest
 
 type PreflightIngestBody = IngestPreflightRequest
@@ -18444,6 +18682,11 @@ type ReadFormatCapabilitiesQuery struct {
 	Family    *string `json:"family,omitempty"`
 	Format    *string `json:"format,omitempty"`
 	Extension *string `json:"extension,omitempty"`
+}
+
+type GetIndexStatusQuery struct {
+	RequireFresh *bool  `json:"require_fresh,omitempty"`
+	WaitMs       *int64 `json:"wait_ms,omitempty"`
 }
 
 type ListMailboxJobsQuery struct {
@@ -18857,6 +19100,18 @@ type ReadFormatCapabilitiesErrorResponse = Error
 type GcResponse = api.GCReport
 
 type GcErrorResponse = Error
+
+type PlanIndexRepairResponse = processing.IndexRepairPlan
+
+type PlanIndexRepairErrorResponse = Error
+
+type RepairIndexesResponse = processing.IndexRepairReport
+
+type RepairIndexesErrorResponse = Error
+
+type GetIndexStatusResponse = processing.IndexStatusReport
+
+type GetIndexStatusErrorResponse = Error
 
 type VaultInfoResponse = api.VaultInfo
 
@@ -20014,6 +20269,30 @@ type HighlightSetV1Schema struct {
 }
 
 type Identity = report.Identity
+
+type IndexCoverage = processing.IndexCoverage
+
+type IndexProjectionStatus = processing.IndexProjectionStatus
+
+type IndexProviderDisclosure = processing.IndexProviderDisclosure
+
+type IndexRepairPlan = processing.IndexRepairPlan
+
+type IndexRepairPlanRequest = processing.IndexRepairPlanRequest
+
+type IndexRepairProjectionPlan = processing.IndexRepairProjectionPlan
+
+type IndexRepairReport = processing.IndexRepairReport
+
+type IndexRepairRequest = processing.IndexRepairRequest
+
+type IndexRepairResult = processing.IndexRepairResult
+
+type IndexRepairWork = processing.IndexRepairWork
+
+type IndexStatusReport = processing.IndexStatusReport
+
+type IndexTarget = processing.IndexTarget
 
 type IngestEvent = api.IngestEvent
 

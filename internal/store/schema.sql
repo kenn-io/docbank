@@ -1541,6 +1541,27 @@ CREATE TABLE IF NOT EXISTS rendition_lexical_superseded (
         REFERENCES rendition_lexical_generations(generation_id) ON DELETE CASCADE
 );
 
+-- Projection watermarks are durable, rebuildable operational state. Source
+-- and authorization checksums advance independently so a repair can fence
+-- both the content it observed and the authority under which it runs.
+CREATE TABLE IF NOT EXISTS index_projection_state (
+    projection_kind         TEXT NOT NULL,
+    projection_key          TEXT NOT NULL,
+    source_checksum         TEXT NOT NULL,
+    authorization_checksum  TEXT NOT NULL,
+    source_watermark        INTEGER NOT NULL CHECK (source_watermark > 0),
+    authorization_watermark INTEGER NOT NULL CHECK (authorization_watermark > 0),
+    index_watermark         INTEGER NOT NULL DEFAULT 0 CHECK (index_watermark >= 0),
+    generation_id           TEXT NOT NULL DEFAULT '',
+    expected_count          INTEGER NOT NULL DEFAULT 0 CHECK (expected_count >= 0),
+    indexed_count           INTEGER NOT NULL DEFAULT 0 CHECK (indexed_count >= 0),
+    unavailable_count       INTEGER NOT NULL DEFAULT 0 CHECK (unavailable_count >= 0),
+    failure_reason          TEXT NOT NULL DEFAULT '',
+    updated_at              TEXT NOT NULL,
+    PRIMARY KEY (projection_kind, projection_key),
+    CHECK (indexed_count + unavailable_count <= expected_count)
+);
+
 -- Vector indexes are disposable, vault-local projection state. These rows are
 -- deliberately absent from metadata-v1 export/import: restore reconstructs
 -- them from current logical embedding authority and retained vector-set blobs.

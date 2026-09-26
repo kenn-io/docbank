@@ -331,22 +331,69 @@ func runServe(ctx context.Context) (retErr error) {
 		}); err != nil {
 		return err
 	}
+	vectorIndexWorker, err := vectorworker.NewIndexWorker(vectorworker.IndexWorkerConfig{
+		Mutate:    operationGate.MutateContext,
+		Retryable: vectorIndexRetryPolicy(s.SQLiteDriver().IsBusy),
+		ReadVectorSet: func(ctx context.Context, member store.VectorIndexMember) ([]byte, error) {
+			return s.ReadVectorIndexVectorSet(ctx, blobs, member)
+		},
+		Catalog: s, Owner: "daemon-vector-index-worker", BuildLease: 30 * time.Minute,
+		ReaderLease: 5 * time.Minute, IdleDelay: time.Second,
+	})
+	if err != nil {
+		return fmt.Errorf("configuring vector index worker: %w", err)
+	}
 	if err := startVectorIndexWorker(jobSupervisor, func() (embeddingJobRunner, error) {
-		worker, workerErr := vectorworker.NewIndexWorker(vectorworker.IndexWorkerConfig{
-			Mutate:    operationGate.MutateContext,
-			Retryable: vectorIndexRetryPolicy(s.SQLiteDriver().IsBusy),
-			ReadVectorSet: func(ctx context.Context, member store.VectorIndexMember) ([]byte, error) {
-				return s.ReadVectorIndexVectorSet(ctx, blobs, member)
-			},
-			Catalog: s, Owner: "daemon-vector-index-worker", BuildLease: 30 * time.Minute,
-			ReaderLease: 5 * time.Minute, IdleDelay: time.Second,
-		})
-		if workerErr != nil {
-			return nil, fmt.Errorf("configuring vector index worker: %w", workerErr)
-		}
-		return worker, nil
+		return vectorIndexWorker, nil
 	}); err != nil {
 		return err
+	}
+	indexBackends := make([]processing.IndexProjectionBackend, 0, 4)
+	lexicalIndex, err := processing.NewLexicalIndexBackend(processing.LexicalIndexBackendConfig{
+		Store: s, Mutate: operationGate.MutateContext, RollbackRetention: 24 * time.Hour,
+	})
+	if err != nil {
+		return fmt.Errorf("configuring lexical index repair: %w", err)
+	}
+	indexBackends = append(indexBackends, lexicalIndex)
+	for _, target := range []processing.IndexTarget{
+		{Kind: processing.IndexMetadata}, {Kind: processing.IndexTag}, {Kind: processing.IndexMap},
+	} {
+		backend, backendErr := processing.NewDisabledIndexBackend(target)
+		if backendErr != nil {
+			return fmt.Errorf("configuring disabled index projection: %w", backendErr)
+		}
+		indexBackends = append(indexBackends, backend)
+	}
+	discoverVectorIndexes := func(ctx context.Context) ([]processing.IndexProjectionBackend, error) {
+		vectorSpaces, err := s.ListVectorIndexSpaces(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("discovering vector index spaces: %w", err)
+		}
+		backends := make([]processing.IndexProjectionBackend, 0, len(vectorSpaces))
+		for _, vectorSpaceID := range vectorSpaces {
+			backend, backendErr := processing.NewVectorIndexBackend(processing.VectorIndexBackendConfig{
+				Store: s, Worker: vectorIndexWorker, Mutate: operationGate.MutateContext,
+				VectorSpaceID: vectorSpaceID, RollbackRetention: 24 * time.Hour,
+			})
+			if backendErr != nil {
+				return nil, fmt.Errorf("configuring vector index repair: %w", backendErr)
+			}
+			backends = append(backends, backend)
+		}
+		return backends, nil
+	}
+	vectorIndexBackends, err := discoverVectorIndexes(sigCtx)
+	if err != nil {
+		return err
+	}
+	indexBackends = append(indexBackends, vectorIndexBackends...)
+	indexCoordinator, err := processing.NewIndexCoordinator(processing.IndexCoordinatorConfig{
+		Backends: indexBackends, Discover: discoverVectorIndexes, MaxFreshWait: 10 * time.Second,
+		PollInterval: 25 * time.Millisecond, CleanupTimeout: 5 * time.Second,
+	})
+	if err != nil {
+		return fmt.Errorf("configuring index coordinator: %w", err)
 	}
 	placementRunner := blob.PlacementRunner{
 		Metadata: s, Blobs: blobs, Commit: operationGate.PhysicalMutate,
@@ -473,7 +520,7 @@ func runServe(ctx context.Context) (retErr error) {
 		EmailPDFUnavailableReason: emailPDFUnavailableReason,
 		StartedAt:                 time.Now(), ShutdownToken: shutdownToken, Shutdown: stop, Tracker: tracker,
 		Jobs: jobSupervisor, Gate: operationGate, WebURL: webURL, BlobRegistry: blobRegistry,
-		Processing: processingService, EnsureEmail: processing.EnsureEmailTarget,
+		Processing: processingService, Indexes: indexCoordinator, EnsureEmail: processing.EnsureEmailTarget,
 		PublishEmailDocuments: processing.PublishEmailDocuments,
 		PageRuntime:           pageRuntime,
 		Exports:               exportWorker,

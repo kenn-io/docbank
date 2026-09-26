@@ -74,6 +74,7 @@ type Deps struct {
 	WebURL                string           // fresh per-daemon loopback origin; empty disables browser sessions
 	BlobRegistry          *blob.Registry   // nil keeps storage-registry routes read-only to the primary
 	Processing            *processing.Service
+	Indexes               *processing.IndexCoordinator
 	RequestEmailPDF       func(context.Context, document.EmailPDFRequest) (document.EmailPDFJob, error)
 	PublishEmailDocuments PublishEmailDocumentsFunc
 
@@ -224,6 +225,7 @@ func NewServer(d Deps) *Server {
 	registerTermReportRoutes(humaAPI, d, g, s.termReports, s.webDownloads, s.webSessions)
 	registerAuditRoutes(humaAPI, d, g, s.auditPreviews)
 	registerProcessingRoutes(humaAPI, d)
+	RegisterIndexRoutes(humaAPI, d.Indexes)
 	registerEmailRoutes(mux, humaAPI, d, g)
 	registerTimelineRoutes(humaAPI, d, g)
 	registerMediaRoutes(mux, humaAPI, d, g)

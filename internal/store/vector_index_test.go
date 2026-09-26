@@ -121,6 +121,56 @@ func TestVectorIndexReaderLeasePinsPriorGenerationAndExpiresWithFence(t *testing
 	assert.False(t, vectorIndexGenerationExistsForTest(t, s, first.ID))
 }
 
+func TestVectorIndexTargetedPublicationRetainsRollbackAndAdvancesWatermark(t *testing.T) {
+	s, _, source := newPublishedVectorIndexFixture(t)
+	now := time.Date(2026, 8, 26, 14, 0, 0, 0, time.UTC)
+	priorClaim, claimed, err := s.ClaimVectorIndexBuild(
+		t.Context(), source.VectorSpaceID, source.ManifestChecksum,
+		"prior-worker", now, time.Minute,
+	)
+	require.NoError(t, err)
+	require.True(t, claimed)
+	prior := vectorIndexGenerationFixture("targeted-prior", source, []byte("prior"), now)
+	require.NoError(t, s.StageVectorIndexGeneration(t.Context(), priorClaim, prior, now))
+	require.NoError(t, s.PublishVectorIndexGeneration(t.Context(), priorClaim, prior.ID, now))
+
+	projection, err := s.InspectVectorIndexProjection(t.Context(), source.VectorSpaceID)
+	require.NoError(t, err)
+	require.True(t, projection.Serving)
+	assert.Equal(t, prior.ID, projection.State.GenerationID)
+
+	nextAt := now.Add(2 * time.Minute)
+	nextClaim, claimed, err := s.ClaimVectorIndexBuild(
+		t.Context(), source.VectorSpaceID, source.ManifestChecksum,
+		"repair-worker", nextAt, time.Minute,
+	)
+	require.NoError(t, err)
+	require.True(t, claimed)
+	next := vectorIndexGenerationFixture("targeted-next", source, []byte("next"), nextAt)
+	require.NoError(t, s.StageVectorIndexGeneration(t.Context(), nextClaim, next, nextAt))
+	require.NoError(t, s.PublishVectorIndexGenerationWithRollback(
+		t.Context(), nextClaim, next.ID, nextAt, time.Hour,
+	))
+
+	state, err := s.IndexProjectionState(t.Context(), IndexProjectionVector, source.VectorSpaceID)
+	require.NoError(t, err)
+	assert.Equal(t, next.ID, state.GenerationID)
+	assert.Equal(t, state.SourceWatermark, state.IndexWatermark)
+	var retained int
+	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT COUNT(*)
+		FROM vector_index_reader_leases WHERE generation_id=?`, prior.ID).Scan(&retained))
+	assert.Equal(t, 1, retained)
+
+	removed, err := s.ReclaimVectorIndexGenerations(t.Context(), nextAt.Add(30*time.Minute))
+	require.NoError(t, err)
+	assert.Zero(t, removed)
+	assert.True(t, vectorIndexGenerationExistsForTest(t, s, prior.ID))
+	removed, err = s.ReclaimVectorIndexGenerations(t.Context(), nextAt.Add(2*time.Hour))
+	require.NoError(t, err)
+	assert.Equal(t, 1, removed)
+	assert.False(t, vectorIndexGenerationExistsForTest(t, s, prior.ID))
+}
+
 func TestVectorIndexProjectionStateIsExcludedFromPortableMetadata(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
@@ -145,7 +195,8 @@ func TestVectorIndexProjectionStateIsExcludedFromPortableMetadata(t *testing.T) 
 	restored := newTestStore(t)
 	require.NoError(t, restored.ImportMetadata(t.Context(), bytes.NewReader(metadata.Bytes())))
 	for _, table := range []string{"vector_index_generations", "vector_index_heads",
-		"vector_index_build_jobs", "vector_index_reader_leases", "vector_index_unavailable_coverage"} {
+		"vector_index_build_jobs", "vector_index_reader_leases", "vector_index_unavailable_coverage",
+		"index_projection_state"} {
 		var count int
 		require.NoError(t, restored.db.QueryRow(`SELECT COUNT(*) FROM `+table).Scan(&count))
 		assert.Zero(t, count, table)

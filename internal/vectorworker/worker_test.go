@@ -251,6 +251,19 @@ func (c *fakeIndexCatalog) PublishVectorIndexGeneration(_ context.Context, _ sto
 	c.active = c.staged[id]
 	return nil
 }
+func (c *fakeIndexCatalog) PublishVectorIndexGenerationWithRollback(
+	ctx context.Context, claim store.VectorIndexBuildClaim, id string, at time.Time, _ time.Duration,
+) error {
+	return c.PublishVectorIndexGeneration(ctx, claim, id, at)
+}
+func (c *fakeIndexCatalog) DiscardVectorIndexGeneration(
+	_ context.Context, _ store.VectorIndexBuildClaim, id string, _ time.Time,
+) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	delete(c.staged, id)
+	return nil
+}
 func (c *fakeIndexCatalog) ActiveVectorIndexGeneration(context.Context, string) (store.VectorIndexGenerationRecord, error) {
 	c.mu.Lock()
 	c.activeLoads++
@@ -306,6 +319,22 @@ func TestIndexWorkerSharedVectorsKeepDistinctMembershipGenerations(t *testing.T)
 	require.Equal(t, first.Bytes, second.Bytes, "shared vectors are indexed once")
 	require.NotEqual(t, first.ID, second.ID, "distinct logical membership must not collide in the catalog")
 	require.Equal(t, source.ManifestChecksum, second.SourceManifestChecksum)
+}
+
+func TestIndexWorkerRepairCandidateRemainsUnreachableUntilPublication(t *testing.T) {
+	catalog, space := newIndexCatalogFixture(t)
+	worker := newIndexWorkerForTest(t, catalog)
+	candidate, err := worker.PrepareRepair(t.Context(), space)
+	require.NoError(t, err)
+	require.NotEmpty(t, candidate.Record.ID)
+	require.NotEqual(t, indexGenerationID(candidate.Source.ManifestChecksum, candidate.Record.Bytes), candidate.Record.ID,
+		"a targeted candidate must not collide with a corrupt serving generation built from the same source")
+	require.Empty(t, catalog.active.ID)
+	require.Zero(t, catalog.publishCalls)
+	require.NoError(t, worker.ValidateRepairCandidate(t.Context(), candidate))
+	require.NoError(t, worker.PublishRepairCandidate(t.Context(), candidate, time.Hour))
+	require.Equal(t, candidate.Record.ID, catalog.active.ID)
+	require.Equal(t, 1, catalog.publishCalls)
 }
 
 func (c *fakeIndexCatalog) AbandonVectorIndexBuild(context.Context, store.VectorIndexBuildClaim, time.Time) error {

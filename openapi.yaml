@@ -6068,6 +6068,340 @@ components:
       x-go-type-import:
         path: go.kenn.io/docbank/report
         name: report
+    IndexCoverage:
+      additionalProperties: false
+      properties:
+        expected:
+          format: int64
+          minimum: 0
+          type: integer
+        indexed:
+          format: int64
+          minimum: 0
+          type: integer
+        unavailable:
+          format: int64
+          minimum: 0
+          type: integer
+      required:
+        - expected
+        - indexed
+        - unavailable
+      type: object
+      x-go-type: processing.IndexCoverage
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/processing
+        name: processing
+    IndexProjectionStatus:
+      additionalProperties: false
+      properties:
+        coverage:
+          $ref: "#/components/schemas/IndexCoverage"
+        failure_reason:
+          type: string
+        generation:
+          type: string
+        index_watermark:
+          format: int64
+          minimum: 0
+          type: integer
+        serving:
+          type: boolean
+        source_watermark:
+          format: int64
+          minimum: 0
+          type: integer
+        state:
+          enum:
+            - queryable
+            - building
+            - stale
+            - failed
+            - disabled
+          type: string
+        target:
+          $ref: "#/components/schemas/IndexTarget"
+      required:
+        - target
+        - state
+        - serving
+        - source_watermark
+        - index_watermark
+        - coverage
+      type: object
+      x-go-type: processing.IndexProjectionStatus
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/processing
+        name: processing
+    IndexProviderDisclosure:
+      additionalProperties: false
+      properties:
+        data_classes:
+          items:
+            type: string
+          maxItems: 64
+          type: array
+        endpoint:
+          maxLength: 2048
+          type: string
+        model:
+          maxLength: 256
+          type: string
+        processor:
+          maxLength: 256
+          type: string
+      required:
+        - processor
+      type: object
+      x-go-type: processing.IndexProviderDisclosure
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/processing
+        name: processing
+    IndexRepairPlan:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/IndexRepairPlan.json
+          format: uri
+          readOnly: true
+          type: string
+        fingerprint:
+          pattern: ^[0-9a-f]{64}$
+          type: string
+        projections:
+          items:
+            $ref: "#/components/schemas/IndexRepairProjectionPlan"
+          type: array
+      required:
+        - fingerprint
+        - projections
+      type: object
+      x-go-type: processing.IndexRepairPlan
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/processing
+        name: processing
+    IndexRepairPlanRequest:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/IndexRepairPlanRequest.json
+          format: uri
+          readOnly: true
+          type: string
+        targets:
+          items:
+            $ref: "#/components/schemas/IndexTarget"
+          maxItems: 64
+          type: array
+      type: object
+      x-go-type: processing.IndexRepairPlanRequest
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/processing
+        name: processing
+    IndexRepairProjectionPlan:
+      additionalProperties: false
+      properties:
+        authorization_watermark:
+          format: int64
+          minimum: 0
+          type: integer
+        current_generation:
+          type: string
+        index_watermark:
+          format: int64
+          minimum: 0
+          type: integer
+        source_watermark:
+          format: int64
+          minimum: 0
+          type: integer
+        target:
+          $ref: "#/components/schemas/IndexTarget"
+        work:
+          $ref: "#/components/schemas/IndexRepairWork"
+      required:
+        - target
+        - source_watermark
+        - index_watermark
+        - authorization_watermark
+        - work
+      type: object
+      x-go-type: processing.IndexRepairProjectionPlan
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/processing
+        name: processing
+    IndexRepairReport:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/IndexRepairReport.json
+          format: uri
+          readOnly: true
+          type: string
+        plan_fingerprint:
+          type: string
+        projections:
+          items:
+            $ref: "#/components/schemas/IndexRepairResult"
+          type: array
+      required:
+        - plan_fingerprint
+        - projections
+      type: object
+      x-go-type: processing.IndexRepairReport
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/processing
+        name: processing
+    IndexRepairRequest:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/IndexRepairRequest.json
+          format: uri
+          readOnly: true
+          type: string
+        allow_provider_work:
+          type: boolean
+        plan_fingerprint:
+          pattern: ^[0-9a-f]{64}$
+          type: string
+        targets:
+          items:
+            $ref: "#/components/schemas/IndexTarget"
+          maxItems: 1
+          minItems: 1
+          type: array
+      required:
+        - targets
+        - plan_fingerprint
+        - allow_provider_work
+      type: object
+      x-go-type: processing.IndexRepairRequest
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/processing
+        name: processing
+    IndexRepairResult:
+      additionalProperties: false
+      properties:
+        generation:
+          type: string
+        previous_generation:
+          type: string
+        source_watermark:
+          format: int64
+          minimum: 0
+          type: integer
+        target:
+          $ref: "#/components/schemas/IndexTarget"
+      required:
+        - target
+        - generation
+        - source_watermark
+      type: object
+      x-go-type: processing.IndexRepairResult
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/processing
+        name: processing
+    IndexRepairWork:
+      additionalProperties: false
+      properties:
+        bytes:
+          format: int64
+          minimum: 0
+          type: integer
+        cost_currency:
+          pattern: ^[A-Z]{3}$
+          type: string
+        documents:
+          format: int64
+          minimum: 0
+          type: integer
+        estimated_cost_micros:
+          format: int64
+          minimum: 0
+          type: integer
+        provider_calls:
+          format: int64
+          minimum: 0
+          type: integer
+        providers:
+          items:
+            $ref: "#/components/schemas/IndexProviderDisclosure"
+          maxItems: 16
+          type: array
+      required:
+        - documents
+        - bytes
+        - provider_calls
+        - estimated_cost_micros
+      type: object
+      x-go-type: processing.IndexRepairWork
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/processing
+        name: processing
+    IndexStatusReport:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/IndexStatusReport.json
+          format: uri
+          readOnly: true
+          type: string
+        fresh:
+          type: boolean
+        index_watermark:
+          format: int64
+          minimum: 0
+          type: integer
+        projections:
+          items:
+            $ref: "#/components/schemas/IndexProjectionStatus"
+          type: array
+        source_watermark:
+          format: int64
+          minimum: 0
+          type: integer
+      required:
+        - fresh
+        - source_watermark
+        - index_watermark
+        - projections
+      type: object
+      x-go-type: processing.IndexStatusReport
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/processing
+        name: processing
+    IndexTarget:
+      additionalProperties: false
+      properties:
+        key:
+          maxLength: 256
+          type: string
+        kind:
+          enum:
+            - lexical
+            - metadata
+            - tag
+            - map
+            - vector
+          type: string
+      required:
+        - kind
+      type: object
+      x-go-type: processing.IndexTarget
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/processing
+        name: processing
     IngestEvent:
       additionalProperties: false
       properties:
@@ -16115,6 +16449,83 @@ paths:
                 $ref: "#/components/schemas/Error"
           description: Error
       summary: Report (run=false) or reclaim (run=true) unreachable blobs
+  /api/v1/index/repair-plans:
+    post:
+      operationId: planIndexRepair
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/IndexRepairPlanRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IndexRepairPlan"
+          description: OK
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: Preview bounded work, providers and cost for targeted index repair
+  /api/v1/index/repairs:
+    post:
+      operationId: repairIndexes
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/IndexRepairRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IndexRepairReport"
+          description: OK
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: Build, validate and atomically publish targeted index generations
+  /api/v1/index/status:
+    get:
+      operationId: getIndexStatus
+      parameters:
+        - explode: false
+          in: query
+          name: require_fresh
+          schema:
+            type: boolean
+        - explode: false
+          in: query
+          name: wait_ms
+          schema:
+            format: int64
+            maximum: 10000
+            minimum: 0
+            type: integer
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IndexStatusReport"
+          description: OK
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: Read projection generations, coverage and freshness
   /api/v1/info:
     get:
       operationId: vaultInfo
