@@ -1281,7 +1281,7 @@ func decodeMetadataHeader(raw jsontext.Value) (metadataHeader, error) {
 
 const (
 	metadataWalkerControlBytes = 256
-	// Match encoding/json/jsontext's maximum nesting depth.
+	// Match encoding/json/jsontext's maximum nesting depth, including the record object.
 	metadataWalkerMaxDepth = 10_000
 )
 
@@ -1752,7 +1752,7 @@ func (w *metadataJSONWalker) readScalar() error {
 }
 
 func (w *metadataJSONWalker) readCompound(opening byte) error {
-	stack := [metadataWalkerMaxDepth]metadataWalkerFrame{{
+	stack := [metadataWalkerMaxDepth - 1]metadataWalkerFrame{{
 		kind: opening,
 		state: func() uint8 {
 			if opening == '{' {
