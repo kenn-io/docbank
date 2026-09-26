@@ -12,6 +12,7 @@
   import { loadSelectionFrame } from "./selectionFrame.js";
   import { assessSelectionDecision } from "./decisionCheck.js";
   import ProductionPagePreview from "./ProductionPagePreview.svelte";
+  import ProductionMemberReview from "./ProductionMemberReview.svelte";
   import type { Marquee } from "./SourcePageSelection.svelte";
 
   interface Props {
@@ -484,6 +485,10 @@
                   onclick={() => change({ kind: "mode", member_id: member.id, mode: member.mode === "keep_selected" ? "redact_selected" : "keep_selected" })}>
                   Use {member.mode === "keep_selected" ? "Redact" : "Keep"} selected
                 </Button>
+                {#if !member.reviewed}
+                  <ProductionMemberReview {session} setID={set.id} revision={draft.revision} etag={draft.etag} {member}
+                    {onrefresh} onstale={markStale} onauthfailure={cause => { onauthfailure(cause); onclose(); }} />
+                {/if}
               {/if}
             </li>
           {/each}

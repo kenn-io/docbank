@@ -203,6 +203,15 @@ export function getProductionJobStatus(session: string, setID: string, jobID: st
     { session, signal });
 }
 
+export function reviewProductionMember(session: string, setID: string, revision: number, etag: number,
+  memberID: string, binding: string, operationID: string, signal?: AbortSignal): Promise<ProductionReceipt> {
+  return sessionJSON<ProductionReceipt>(`${setBase}/${encodeURIComponent(setID)}/revisions/${revision}` +
+    `/members/${encodeURIComponent(memberID)}/review`, {
+    session, signal, method: "POST", headers: { "Content-Type": "application/json", "If-Match": String(etag) },
+    body: JSON.stringify({ operation_id: operationID, binding, complete: true }),
+  });
+}
+
 export function createProductionSet(session: string, name: string, instructions: string,
   operationID: string, signal?: AbortSignal): Promise<ProductionSetCreated> {
   return sessionJSON<ProductionSetCreated>(setBase, {

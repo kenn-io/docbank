@@ -145,6 +145,11 @@ test("selects a rectangle on a retained synthetic member PDF through the real da
     expect(outside).toEqual([]);
     expect(browserErrors).toEqual([]);
     await produced.screenshot({ path: path.join(output!, "web-production-page-preview.png"), animations: "disabled" });
+    await drawer.getByRole("checkbox", { name: "I reviewed the original and decisions for member 1." }).check();
+    await page.screenshot({ path: path.join(output!, "web-production-review-declaration.png"), fullPage: true, animations: "disabled" });
+    await drawer.getByRole("button", { name: "Declare review complete" }).click();
+    await expect(drawer.getByText("Reviewed", { exact: true })).toBeVisible();
+    await expect(drawer.locator("dt").filter({ hasText: "Change version" }).locator("xpath=following-sibling::dd[1]")).toHaveText("4");
     await drawer.getByRole("button", { name: "Synthetic keep" }).click();
     await drawer.getByRole("button", { name: "Open original PDF for member 1" }).click();
     await expect(drawer.getByRole("img", { name: "Original page 1" })).toBeVisible();
