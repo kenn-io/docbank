@@ -5,6 +5,7 @@ import (
 	"encoding/json/jsontext"
 	"encoding/json/v2"
 	"errors"
+	"fmt"
 	"log/slog"
 	"slices"
 	"time"
@@ -27,7 +28,7 @@ func catalogInstructions(allowProcessing, allowPackageWrites bool) string {
 		instructions += " start_processing requires a reviewed plan and prior operator consent."
 	}
 	if allowPackageWrites {
-		instructions += " Package writes can preflight local sources, import packages, and assign or resolve custodians."
+		instructions += " Package writes can preflight local sources, import packages, assign or resolve custodians, and publish or export Bates PDFs. Bates reservation does not stamp or publish files."
 	}
 	return instructions
 }
@@ -62,6 +63,12 @@ var readToolDefinitions = []toolDefinition{
 	{name: "list_package_members", title: "List package members", description: "Page through one package's immutable document occurrences.", schemas: listPackageMembersSchemas},
 	{name: "get_package_record", title: "Get package record", description: "Read one immutable sender row by its package-scoped record key.", schemas: getPackageRecordSchemas},
 	{name: "lookup_bates_label", title: "Look up Bates label", description: "Find every bounded package-scoped match for an exact received or assigned label.", schemas: lookupBatesLabelSchemas},
+	{name: "list_bates_namespaces", title: "List Bates namespaces", description: "Page through bounded Bates label namespaces.", schemas: listBatesNamespacesSchemas},
+	{name: "preview_bates_stamp", title: "Preview Bates stamp", description: "Preview tentative Bates labels for one sealed snapshot without reserving or stamping anything.", schemas: previewBatesStampSchemas},
+	{name: "get_bates_allocation", title: "Get Bates allocation", description: "Read one exact Bates allocation.", schemas: getBatesAllocationSchemas},
+	{name: "list_bates_exports", title: "List Bates exports", description: "Page through bounded verified Bates export history.", schemas: listBatesExportsSchemas},
+	{name: "get_bates_export", title: "Get Bates export", description: "Read one exact verified Bates export receipt.", schemas: getBatesExportSchemas},
+	{name: "find_bates_exports", title: "Find Bates exports", description: "Return bounded candidates for one exact Bates label, custodian label, or canonical person.", schemas: findBatesExportsSchemas},
 }
 
 var processingToolDefinition = toolDefinition{
@@ -94,6 +101,30 @@ var assignPackageCustodianToolDefinition = toolDefinition{
 	schemas:     assignPackageCustodianSchemas, write: true, destructive: true,
 }
 
+var ensureBatesNamespaceToolDefinition = toolDefinition{
+	name: "ensure_bates_namespace", title: "Ensure Bates namespace",
+	description: "Create or find the exact Bates label namespace.",
+	schemas:     ensureBatesNamespaceSchemas, write: true, idempotent: true,
+}
+
+var reserveBatesRangeToolDefinition = toolDefinition{
+	name: "reserve_bates_range", title: "Reserve Bates range",
+	description: "Reserve one idempotent Bates range for a sealed snapshot without stamping files. Pass the reviewed recipe; its namespace_id and start_at choose the range, and publish_bates_export must use the same recipe.",
+	schemas:     reserveBatesRangeSchemas, write: true, idempotent: true,
+}
+
+var publishBatesExportToolDefinition = toolDefinition{
+	name: "publish_bates_export", title: "Publish Bates export",
+	description: "Publish one bounded verified Bates PDF from an exact reserved allocation and reviewed recipe.",
+	schemas:     publishBatesExportSchemas, write: true, idempotent: true,
+}
+
+var exportBatesFileToolDefinition = toolDefinition{
+	name: "export_bates_file", title: "Export Bates file",
+	description: "Write one exact retained Bates PDF to a local path after independent verification.",
+	schemas:     exportBatesFileSchemas, write: true, destructive: true,
+}
+
 func toolCatalog(allowProcessing, allowPackageWrites bool) []*sdkmcp.Tool {
 	definitions := slices.Clone(readToolDefinitions)
 	if allowProcessing {
@@ -101,7 +132,9 @@ func toolCatalog(allowProcessing, allowPackageWrites bool) []*sdkmcp.Tool {
 	}
 	if allowPackageWrites {
 		definitions = append(definitions, preflightLoadFilePackageToolDefinition, packageImportToolDefinition,
-			resolvePackageCustodianToolDefinition, assignPackageCustodianToolDefinition)
+			resolvePackageCustodianToolDefinition, assignPackageCustodianToolDefinition,
+			ensureBatesNamespaceToolDefinition, reserveBatesRangeToolDefinition, publishBatesExportToolDefinition,
+			exportBatesFileToolDefinition)
 	}
 	tools := make([]*sdkmcp.Tool, 0, len(definitions))
 	for _, definition := range definitions {
@@ -137,6 +170,9 @@ func registerToolCatalog(
 			handler = packagePreflightToolHandler(lease, output, logger)
 		case resolvePackageCustodianToolDefinition.name, assignPackageCustodianToolDefinition.name:
 			handler = packageCustodianWriteToolHandler(lease, tool.Name, output, logger)
+		case ensureBatesNamespaceToolDefinition.name, reserveBatesRangeToolDefinition.name,
+			publishBatesExportToolDefinition.name, exportBatesFileToolDefinition.name:
+			handler = batesWriteToolHandler(lease, tool.Name, output, logger)
 		default:
 			handler = readToolHandler(lease, plans, tool.Name, output, logger)
 		}
@@ -298,12 +334,30 @@ func stableDomainError(err error) (string, int) {
 		return "consent_required", 0
 	case errors.Is(err, errProcessingOutcomeUnknown):
 		return "processing_outcome_unknown", 0
+	case errors.Is(err, errBatesOutcomeUnknown):
+		return "bates_outcome_unknown", 0
 	case errors.Is(err, errDaemonUnavailable):
 		return "daemon_unavailable", 0
 	case errors.Is(err, store.ErrDocumentCursorExpired):
 		return "cursor_expired", 0
 	case errors.Is(err, store.ErrInvalidDocumentCursor):
 		return "invalid_document_cursor", 0
+	case errors.Is(err, store.ErrBatesReservationConflict):
+		return "bates_reservation_conflict", 0
+	case errors.Is(err, store.ErrBatesPageCountMismatch):
+		return "bates_page_count_mismatch", 0
+	case errors.Is(err, store.ErrBatesOverflow):
+		return "bates_overflow", 0
+	case errors.Is(err, store.ErrBatesPageLimit):
+		return "bates_page_limit", 0
+	case errors.Is(err, store.ErrBatesLabelCollision):
+		return "bates_label_collision", 0
+	case errors.Is(err, store.ErrInvalidBatesRequest):
+		return "invalid_bates_request", 0
+	case errors.Is(err, store.ErrInvalidBatesCursor):
+		return "invalid_bates_cursor", 0
+	case errors.Is(err, store.ErrInvalidBatesSelector):
+		return "invalid_bates_selector", 0
 	}
 	facts, ok := daemonProblemFacts(err)
 	if !ok {
@@ -331,6 +385,10 @@ func stableDomainError(err error) (string, int) {
 		return "invalid_rendition_window", 0
 	case "invalid_rendition_encoding":
 		return "invalid_rendition_encoding", 0
+	case "bates_reservation_conflict", "bates_page_count_mismatch", "bates_overflow", "bates_page_limit",
+		"bates_label_collision", "invalid_bates_request", "invalid_bates_cursor", "invalid_bates_selector",
+		"stale_bates_cursor":
+		return facts.Code, 0
 	default:
 		return "", 0
 	}
@@ -360,6 +418,26 @@ func domainErrorMessage(code string) string {
 		return "The requested rendition text window is outside the supported range."
 	case "invalid_rendition_encoding":
 		return "The active rendition is not valid UTF-8 text."
+	case "bates_reservation_conflict":
+		return "The Bates reservation conflicts with an existing namespace, reservation, or later cursor; preview again."
+	case "bates_page_count_mismatch":
+		return "The sealed snapshot pages no longer match the Bates request."
+	case "bates_overflow":
+		return "The Bates range exceeds the namespace padding."
+	case "bates_page_limit":
+		return fmt.Sprintf("A Bates export holds at most %d pages; seal a smaller snapshot.", store.MaxBatesExportPages)
+	case "bates_label_collision":
+		return "A label in this range is already allocated by another namespace; preview a later start_at."
+	case "invalid_bates_request":
+		return "The Bates request is invalid; check IDs, padding, prefix and suffix, and the recipe start_at."
+	case "invalid_bates_cursor":
+		return "The Bates cursor is invalid for this listing; restart from the first page."
+	case "invalid_bates_selector":
+		return "Give exactly one of bates_label, custodian_label, or person_id."
+	case "stale_bates_cursor":
+		return "Person bindings changed; restart Bates export discovery from the first page."
+	case "bates_outcome_unknown":
+		return "The Bates authority write outcome is unknown; reconcile the namespace or allocation before retrying."
 	default:
 		return "The Docbank operation could not be completed."
 	}

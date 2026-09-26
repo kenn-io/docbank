@@ -197,7 +197,8 @@ func NewServer(d Deps) *Server {
 	registerPeopleRebuildRoutes(humaAPI, d, g)
 	registerCollectionQualityRoutes(humaAPI, d)
 	registerDuplicateRoutes(humaAPI, d)
-	registerDocumentQueryRoute(humaAPI, newDocumentQueryService(d))
+	cursorService := newDocumentQueryService(d)
+	registerDocumentQueryRoute(humaAPI, cursorService)
 	registerInfoRoute(humaAPI, d)
 	registerFormatRoutes(humaAPI, d)
 	registerMutateRoutes(humaAPI, d, g) // Task 6
@@ -228,6 +229,7 @@ func NewServer(d Deps) *Server {
 	registerTimelineRoutes(humaAPI, d, g)
 	registerMediaRoutes(mux, humaAPI, d, g)
 	registerPackageRoutes(mux, humaAPI, d, g)
+	registerBatesRoutes(mux, humaAPI, d, g, s.webDownloads, s.webSessions, cursorService)
 	clearLongRunningBodyReadDeadlines(humaAPI)
 	markRevisionPreconditionsRequired(humaAPI)
 	registerDaemonOpenAPI(humaAPI)
