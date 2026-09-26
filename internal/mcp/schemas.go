@@ -5,6 +5,7 @@ import (
 
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/loadfile"
+	mapviews "go.kenn.io/docbank/internal/maps"
 	"go.kenn.io/docbank/internal/store"
 )
 
@@ -20,6 +21,7 @@ const (
 	maxRenditionChars     = 16_000
 	defaultRenditionChars = 8_000
 	maxPackageDiagnostics = 250
+	mapSchemaBoolean      = "boolean"
 )
 
 type schema = map[string]any
@@ -434,6 +436,42 @@ func getDocumentSchemas() (schema, schema) {
 		"modified_at":        dateTimeSchema(),
 		"active_renditions":  arraySchema(renditionIdentitySchema(), 64),
 	}), cacheRequired("node_id", "content_version_id", "path", "name", "media_type", "size", "modified_at", "active_renditions")...)
+	return input, output
+}
+
+func readContentMapSchemas() (schema, schema) {
+	input := rootObjectSchema(schema{
+		"kind":               enumSchema("definition", "snapshot", "delta"),
+		"map_id":             uuidSchema(),
+		"snapshot_id":        uuidSchema(),
+		"before_snapshot_id": uuidSchema(),
+		"offset":             integerSchema(0, 1_000_000),
+		"limit":              integerSchema(1, mapviews.MaxMapReadEntries),
+	}, "kind")
+	output := rootObjectSchema(withPrivateCache(schema{
+		"kind":                    enumSchema("definition", "snapshot", "delta"),
+		"map_id":                  uuidSchema(),
+		"map_revision":            integerSchema(0, 0),
+		"snapshot_id":             uuidSchema(),
+		"before_snapshot_id":      uuidSchema(),
+		"markdown":                stringSchema(mapviews.MaxMapReadBytes),
+		"freshness":               enumSchema("current_definition", "frozen_snapshot", "snapshot_comparison"),
+		"coverage":                enumSchema("authorized_page"),
+		"scope_digest":            stringSchema(80),
+		"before_snapshot_created": dateTimeSchema(),
+		"snapshot_created":        dateTimeSchema(),
+		"total_sections":          integerSchema(0, 50),
+		"total_entries":           integerSchema(0, 100_000),
+		"available_entries":       integerSchema(0, 100_000),
+		"offset":                  integerSchema(0, 1_000_000),
+		"offset_unit":             enumSchema("item", "section", "event"),
+		"returned_entries":        integerSchema(0, mapviews.MaxMapReadEntries),
+		"next_offset":             integerSchema(0, 100_000),
+		"truncated":               schema{"type": "boolean"},
+		"changed":                 schema{"type": mapSchemaBoolean},
+		"definition_changed":      schema{"type": mapSchemaBoolean},
+	}), cacheRequired("kind", "map_id", "map_revision", "markdown", "freshness", "coverage", "total_sections",
+		"total_entries", "available_entries", "offset", "offset_unit", "returned_entries", "next_offset", "truncated")...)
 	return input, output
 }
 

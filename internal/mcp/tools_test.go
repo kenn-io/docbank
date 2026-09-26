@@ -29,7 +29,7 @@ func TestDefaultToolCatalogIsFixedBoundedAndReadOnly(t *testing.T) {
 		"get_package_preflight", "list_package_preflight_diagnostics",
 		"list_package_custodians", "find_people",
 		"list_packages", "get_package", "list_package_members", "get_package_record",
-		"lookup_bates_label",
+		"lookup_bates_label", "read_content_map",
 	}
 	require.Len(t, tools, len(wantNames))
 	for index, tool := range tools {
@@ -124,6 +124,15 @@ func TestRegisteredToolsRejectUnknownArgumentsBeforeHandlers(t *testing.T) {
 	response := exchangeRaw(t, newTestServer(), requestFor("tools/call", map[string]any{
 		"name": "list_documents", "arguments": map[string]any{"unknown": "synthetic"},
 	}))
+	wireErr := decodeWireError(t, response)
+	assert.Equal(t, int64(jsonrpc.CodeInvalidParams), wireErr.Code)
+	assert.Equal(t, "invalid tool arguments", wireErr.Message)
+}
+
+func TestContentMapReadToolRequiresExactKindIdentifiers(t *testing.T) {
+	response := callToolWire(t, "read_content_map", map[string]any{
+		"kind": "delta", "snapshot_id": "33333333-3333-4333-8333-333333333333",
+	})
 	wireErr := decodeWireError(t, response)
 	assert.Equal(t, int64(jsonrpc.CodeInvalidParams), wireErr.Code)
 	assert.Equal(t, "invalid tool arguments", wireErr.Message)

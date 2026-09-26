@@ -14,6 +14,7 @@ import (
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/apiclient"
 	"go.kenn.io/docbank/internal/daemonconn"
+	mapviews "go.kenn.io/docbank/internal/maps"
 	"go.kenn.io/docbank/internal/store"
 )
 
@@ -90,6 +91,8 @@ func executeReadTool(
 		output, err = getPackageRecord(ctx, lease, raw)
 	case "lookup_bates_label":
 		output, err = lookupBatesLabel(ctx, lease, raw)
+	case "read_content_map":
+		output, err = readContentMap(ctx, lease, raw)
 	default:
 		return nil, errors.New("unknown Docbank read tool")
 	}
@@ -271,6 +274,100 @@ func decodeReadArguments(raw []byte, target any) error {
 		return invalidToolArgumentsError()
 	}
 	return nil
+}
+
+type readContentMapInput struct {
+	Kind             string `json:"kind"`
+	MapID            string `json:"map_id"`
+	SnapshotID       string `json:"snapshot_id"`
+	BeforeSnapshotID string `json:"before_snapshot_id"`
+	Offset           int    `json:"offset"`
+	Limit            int    `json:"limit"`
+}
+
+type readContentMapOutput struct {
+	privateCache
+
+	Kind                  string `json:"kind"`
+	MapID                 string `json:"map_id"`
+	MapRevision           int64  `json:"map_revision"`
+	SnapshotID            string `json:"snapshot_id,omitzero"`
+	BeforeSnapshotID      string `json:"before_snapshot_id,omitzero"`
+	Markdown              string `json:"markdown"`
+	Freshness             string `json:"freshness"`
+	Coverage              string `json:"coverage"`
+	ScopeDigest           string `json:"scope_digest,omitzero"`
+	BeforeSnapshotCreated string `json:"before_snapshot_created,omitzero"`
+	SnapshotCreated       string `json:"snapshot_created,omitzero"`
+	TotalSections         int    `json:"total_sections"`
+	TotalEntries          int    `json:"total_entries"`
+	AvailableEntries      int    `json:"available_entries"`
+	Offset                int    `json:"offset"`
+	OffsetUnit            string `json:"offset_unit"`
+	ReturnedEntries       int    `json:"returned_entries"`
+	NextOffset            int    `json:"next_offset"`
+	Truncated             bool   `json:"truncated"`
+	Changed               *bool  `json:"changed,omitzero"`
+	DefinitionChanged     *bool  `json:"definition_changed,omitzero"`
+}
+
+func readContentMap(ctx context.Context, lease *daemonLease, raw []byte) (readContentMapOutput, error) {
+	var input readContentMapInput
+	if err := decodeReadArguments(raw, &input); err != nil {
+		return readContentMapOutput{}, err
+	}
+	if input.Limit == 0 {
+		input.Limit = 20
+	}
+	offset, limit := int64(input.Offset), int64(input.Limit)
+	query := &apiclient.ReadContentMapViewQuery{Kind: apiclient.ReadContentMapViewQueryKind(input.Kind),
+		Offset: &offset, Limit: &limit}
+	if input.MapID != "" {
+		id, parseErr := uuid.Parse(input.MapID)
+		if parseErr != nil {
+			return readContentMapOutput{}, invalidToolArgumentsError()
+		}
+		query.MapID = &id
+	}
+	if input.SnapshotID != "" {
+		id, parseErr := uuid.Parse(input.SnapshotID)
+		if parseErr != nil {
+			return readContentMapOutput{}, invalidToolArgumentsError()
+		}
+		query.SnapshotID = &id
+	}
+	if input.BeforeSnapshotID != "" {
+		id, parseErr := uuid.Parse(input.BeforeSnapshotID)
+		if parseErr != nil {
+			return readContentMapOutput{}, invalidToolArgumentsError()
+		}
+		query.BeforeSnapshotID = &id
+	}
+	view, err := daemonRead(ctx, lease, func(ctx context.Context, c *daemonconn.Connection) (mapviews.ReadView, error) {
+		response, callErr := c.API().ReadContentMapView(ctx, &apiclient.ReadContentMapViewRequestOptions{Query: query})
+		if callErr != nil {
+			return mapviews.ReadView{}, callErr
+		}
+		return *response, nil
+	})
+	if err != nil {
+		return readContentMapOutput{}, err
+	}
+	var changed, definitionChanged *bool
+	if view.Delta != nil {
+		changed = &view.Delta.Changed
+		definitionChanged = &view.Delta.DefinitionChanged
+	}
+	return readContentMapOutput{privateCache: newPrivateCache(), Kind: view.Kind, MapID: view.MapID,
+		MapRevision: view.MapRevision, SnapshotID: view.SnapshotID,
+		BeforeSnapshotID: view.BeforeSnapshotID, Markdown: view.Markdown, Freshness: view.Freshness,
+		Coverage: view.Coverage, ScopeDigest: view.ScopeDigest,
+		BeforeSnapshotCreated: view.BeforeSnapshotCreated, SnapshotCreated: view.SnapshotCreated,
+		TotalSections: view.TotalSections, TotalEntries: view.TotalEntries,
+		AvailableEntries: view.AvailableEntries, Offset: view.Offset, OffsetUnit: view.OffsetUnit,
+		ReturnedEntries: view.ReturnedEntries,
+		NextOffset:      view.NextOffset, Truncated: view.Truncated,
+		Changed: changed, DefinitionChanged: definitionChanged}, nil
 }
 
 type vaultInfoOutput struct {

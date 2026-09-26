@@ -18,7 +18,9 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/daemonconn"
+	mapviews "go.kenn.io/docbank/internal/maps"
 	"go.kenn.io/docbank/internal/processing"
+	"go.kenn.io/docbank/internal/store"
 )
 
 const (
@@ -41,7 +43,7 @@ var (
 	}()
 )
 
-func TestNineReadToolHandlersReturnBoundedPrivateStructuredResults(t *testing.T) {
+func TestReadToolHandlersReturnBoundedPrivateStructuredResults(t *testing.T) {
 	daemon := newReadToolDaemon(t)
 	lease := newDaemonLeaseWith(func(context.Context) (*daemonconn.Connection, error) {
 		return daemonconn.New(daemon.URL, "synthetic-key"), nil
@@ -100,6 +102,14 @@ func TestNineReadToolHandlersReturnBoundedPrivateStructuredResults(t *testing.T)
 			require.True(t, ok)
 			assert.EqualValues(t, 0, class["previous_generation_serving"])
 		}},
+		{name: "read_content_map", arguments: map[string]any{"kind": "snapshot",
+			"snapshot_id": "33333333-3333-4333-8333-333333333333"},
+			check: func(t *testing.T, output map[string]any, _ *sdkmcp.CallToolResult) {
+				t.Helper()
+				assert.Equal(t, "snapshot", output["kind"])
+				assert.Equal(t, "# Synthetic map\n", output["markdown"])
+				assert.EqualValues(t, 1, output["total_entries"])
+			}},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -120,6 +130,38 @@ func TestNineReadToolHandlersReturnBoundedPrivateStructuredResults(t *testing.T)
 			}
 		})
 	}
+}
+
+func TestReadContentMapReportsDefinitionOnlyRefresh(t *testing.T) {
+	const before = "11111111-1111-4111-8111-111111111111"
+	const after = "22222222-2222-4222-8222-222222222222"
+	view, err := mapviews.RenderDelta(store.ContentMapDelta{
+		MapID: "33333333-3333-4333-8333-333333333333", BeforeSnapshotID: before,
+		AfterSnapshotID: after, ScopeDigest: "sha256:synthetic", Changed: true,
+		DefinitionChanged: true,
+	}, 0, 20)
+	require.NoError(t, err)
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		assert.Equal(t, "/api/v1/map-views", request.URL.Path)
+		assert.Equal(t, "delta", request.URL.Query().Get("kind"))
+		assert.Equal(t, before, request.URL.Query().Get("before_snapshot_id"))
+		assert.Equal(t, after, request.URL.Query().Get("snapshot_id"))
+		writeDaemonJSON(t, response, view)
+	}))
+	t.Cleanup(server.Close)
+	lease := newDaemonLeaseWith(func(context.Context) (*daemonconn.Connection, error) {
+		return daemonconn.New(server.URL, "synthetic-key"), nil
+	}, func(*daemonconn.Connection) error { return nil })
+
+	result, err := invokeReadTool(t.Context(), lease, "read_content_map", map[string]any{
+		"kind": "delta", "before_snapshot_id": before, "snapshot_id": after,
+	})
+	require.NoError(t, err)
+	output := structuredMap(t, result.StructuredContent)
+	assert.Equal(t, true, output["changed"])
+	assert.Equal(t, true, output["definition_changed"])
+	assert.Contains(t, output["markdown"], "Definition changed: yes")
+	assertSchemaAccepts(t, catalogMap(toolCatalog(false, false))["read_content_map"].OutputSchema, output)
 }
 
 func TestReadToolCancellationPropagatesToDaemon(t *testing.T) {
@@ -570,6 +612,15 @@ func newReadToolDaemon(t *testing.T) *httptest.Server {
 	return httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 		assert.Equal(t, "synthetic-key", request.Header.Get("X-Api-Key"))
 		switch request.URL.Path {
+		case "/api/v1/map-views":
+			assert.Equal(t, "snapshot", request.URL.Query().Get("kind"))
+			assert.Equal(t, "33333333-3333-4333-8333-333333333333", request.URL.Query().Get("snapshot_id"))
+			writeDaemonJSON(t, response, mapviews.ReadView{Kind: "snapshot",
+				MapID:      "44444444-4444-4444-8444-444444444444",
+				SnapshotID: "33333333-3333-4333-8333-333333333333",
+				Markdown:   "# Synthetic map\n", Freshness: "frozen_snapshot", Coverage: "authorized_page",
+				TotalEntries: 1, AvailableEntries: 1, OffsetUnit: "item",
+				ReturnedEntries: 1, TotalSections: 1, Sections: []mapviews.ReadSection{}})
 		case "/api/v1/info":
 			writeDaemonJSON(t, response, api.VaultInfo{VaultID: testVaultID, VaultPath: "/synthetic/private/vault",
 				LiveFiles: 1, LiveDirectories: 1, ContentVersions: 1, TrackedBlobs: 1})
