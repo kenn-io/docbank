@@ -5,9 +5,15 @@ import { bytesToHex } from "@noble/hashes/utils.js";
 import ProductionReview from "./ProductionReview.svelte";
 import type { ProductionDraft, ProductionSet } from "./api.js";
 
+// The review owns byte verification and focus; the PDF engine is covered by
+// the real-daemon browser capture.
+vi.mock("./SourcePDFViewer.svelte", () => ({ default: () => {} }));
+
 const set: ProductionSet = { id: "11111111-1111-4111-8111-111111111111", name: "Synthetic review", creator: "test", created_at: "2026-09-25T00:00:00Z", head_revision: 2 };
 const draft: ProductionDraft = { set_id: set.id, revision: 2, etag: 4, state: "draft", membership_sealed: false };
-const member = (id: string, ordinal: number) => ({ id, ordinal, node_id: ordinal + 10, source_version_id: `00000000-0000-4000-8000-${String(ordinal).padStart(12, "0")}`, mode: "redact_selected", reviewed: false });
+const sourcePDF = new TextEncoder().encode("%PDF-1.7\nsynthetic review page\n%%EOF");
+const sourcePDFSHA = bytesToHex(sha256(sourcePDF));
+const member = (id: string, ordinal: number) => ({ id, ordinal, node_id: ordinal + 10, source_version_id: `00000000-0000-4000-8000-${String(ordinal).padStart(12, "0")}`, pdf_sha256: sourcePDFSHA, pdf_size: sourcePDF.length, mode: "redact_selected", reviewed: false });
 const memberA = member("22222222-2222-4222-8222-222222222222", 1);
 const memberB = member("33333333-3333-4333-8333-333333333333", 2);
 const flag = (id: string, memberID: string, page: number) => ({ id, member_id: memberID, action: "keep", uncertain: true,
@@ -51,6 +57,42 @@ it("pages exact members and uncertain decisions without mixing revisions", async
   expect(requests).toContain(`/api/v1/productions/sets/${set.id}/revisions/2/members?limit=50&cursor=member-next`);
   expect(requests).toContain(`/api/v1/productions/sets/${set.id}/revisions/2/decisions?limit=50&uncertain=true&cursor=flag-next`);
 });
+
+it("offers an exact original PDF for a retained member", async () => {
+  vi.spyOn(globalThis, "fetch").mockImplementation(async input => {
+    const url = String(input);
+    if (url === `/api/v1/productions/sets/${set.id}/revisions/2`) return json(draft);
+    if (url.endsWith("/members?limit=50")) return json({ items: [memberA], next_cursor: "" });
+    if (url.endsWith("/decisions?limit=50&uncertain=true")) return json({ items: [], next_cursor: "" });
+    throw new Error(`unexpected request ${url}`);
+  });
+  render(ProductionReview, { session: "synthetic", set, draft, onrefresh: vi.fn(), onauthfailure: vi.fn(), onclose: vi.fn() });
+  expect(await screen.findByRole("button", { name: "Open original PDF for member 1" })).toBeTruthy();
+});
+
+it("opens only verified source bytes and returns focus when closed", async () => {
+  vi.spyOn(globalThis, "fetch").mockImplementation(async input => {
+    const url = String(input);
+    if (url === `/api/v1/productions/sets/${set.id}/revisions/2`) return json(draft);
+    if (url.endsWith("/members?limit=50")) return json({ items: [memberA], next_cursor: "" });
+    if (url.endsWith("/decisions?limit=50&uncertain=true")) return json({ items: [], next_cursor: "" });
+    if (url.endsWith(`/members/${memberA.id}/pdf`)) return new Response(sourcePDF as BodyInit, { headers: {
+      "Content-Type": "application/pdf", "X-Docbank-Blob-Hash": sourcePDFSHA,
+      "X-Docbank-Blob-Size": String(sourcePDF.length),
+      "Content-Digest": `sha-256=:${Buffer.from(sha256(sourcePDF)).toString("base64")}:`,
+    } });
+    throw new Error(`unexpected request ${url}`);
+  });
+  render(ProductionReview, { session: "synthetic", set, draft, onrefresh: vi.fn(), onauthfailure: vi.fn(), onclose: vi.fn() });
+  const open = await screen.findByRole("button", { name: "Open original PDF for member 1" });
+  await fireEvent.click(open);
+  expect(await screen.findByRole("region", { name: "Original PDF for member 1" }, { timeout: 10_000 })).toBeTruthy();
+  const close = screen.getByRole("button", { name: "Close original PDF" });
+  await waitFor(() => expect(document.activeElement).toBe(close), { timeout: 5_000 });
+  await fireEvent.click(close);
+  await waitFor(() => expect(document.activeElement).toBe(open), { timeout: 5_000 });
+  expect(screen.queryByRole("region", { name: "Original PDF for member 1" })).toBeNull();
+}, 20_000);
 
 it("discards a page when its exact draft ETag changes during the read", async () => {
   const refresh = vi.fn();

@@ -31,6 +31,8 @@ export interface ProductionMember {
   ordinal: number;
   node_id: number;
   source_version_id: string;
+  pdf_sha256: string;
+  pdf_size: number;
   mode: "redact_selected" | "keep_selected";
   reviewed: boolean;
 }

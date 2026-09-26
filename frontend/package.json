@@ -19,6 +19,18 @@
     "generate:api": "orval --config orval.config.ts"
   },
   "dependencies": {
+    "@embedpdf/core": "2.15.0",
+    "@embedpdf/engines": "2.15.0",
+    "@embedpdf/pdfium": "2.15.0",
+    "@embedpdf/plugin-annotation": "2.15.0",
+    "@embedpdf/plugin-document-manager": "2.15.0",
+    "@embedpdf/plugin-history": "2.15.0",
+    "@embedpdf/plugin-interaction-manager": "2.15.0",
+    "@embedpdf/plugin-redaction": "2.15.0",
+    "@embedpdf/plugin-render": "2.15.0",
+    "@embedpdf/plugin-scroll": "2.15.0",
+    "@embedpdf/plugin-selection": "2.15.0",
+    "@embedpdf/plugin-viewport": "2.15.0",
     "@kenn-io/kit-ui": "git+https://github.com/kenn-io/kit-ui.git#b35e4ca7df66969f4650327d6e315986afef8716",
     "@lucide/svelte": "1.24.0",
     "@noble/hashes": "^2.2.0",

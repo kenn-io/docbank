@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onDestroy } from "svelte";
+  import { onDestroy, tick } from "svelte";
   import { Button, Chip, EmptyState, Spinner } from "@kenn-io/kit-ui";
   import { APIError } from "../api-transport.js";
   import {
@@ -7,6 +7,7 @@
     type ProductionChange, type ProductionDecision, type ProductionDraft, type ProductionMember, type ProductionSet,
   } from "./api.js";
   import { loadReviewContext, type ReviewContext } from "./reviewContext.js";
+  import { loadProductionSourcePDF } from "./sourcePDF.js";
 
   interface Props {
     session: string;
@@ -35,11 +36,17 @@
   let redactReason = $state("");
   let redactLabel = $state("");
   let stale = $state(false);
+  let sourceLoading = $state(false);
+  let sourceError = $state("");
+  let sourceMemberID = $state("");
+  let sourceEditor = $state.raw<{ member: ProductionMember; bytes: Uint8Array<ArrayBuffer> } | null>(null);
+  let SourceViewer = $state.raw<typeof import("./SourcePDFViewer.svelte").default | null>(null);
   let authFailed = false;
   let membersController = new AbortController();
   let flagsController = new AbortController();
   let changeController = new AbortController();
   let contextController = new AbortController();
+  let sourceController = new AbortController();
 
   type Scope = { session: string; setID: string; revision: number; etag: number };
   type PendingChange = { scope: Scope; operationID: string; change: ProductionChange };
@@ -51,10 +58,12 @@
     flagsController.abort();
     changeController.abort();
     contextController.abort();
+    sourceController.abort();
     membersController = new AbortController();
     flagsController = new AbortController();
     changeController = new AbortController();
     contextController = new AbortController();
+    sourceController = new AbortController();
     members = [];
     flags = [];
     memberCursor = "";
@@ -73,12 +82,16 @@
     redactReason = "";
     redactLabel = "";
     stale = false;
+    sourceLoading = false;
+    sourceError = "";
+    sourceMemberID = "";
+    sourceEditor = null;
     authFailed = false;
     void loadMembers(scope, "", membersController.signal);
     void loadFlags(scope, "", flagsController.signal);
-    return () => { membersController.abort(); flagsController.abort(); changeController.abort(); contextController.abort(); };
+    return () => { membersController.abort(); flagsController.abort(); changeController.abort(); contextController.abort(); sourceController.abort(); };
   });
-  onDestroy(() => { membersController.abort(); flagsController.abort(); changeController.abort(); contextController.abort(); });
+  onDestroy(() => { membersController.abort(); flagsController.abort(); changeController.abort(); contextController.abort(); sourceController.abort(); });
 
   function current(scope: Scope, signal: AbortSignal): boolean {
     return !signal.aborted && !stale && scope.session === session && scope.setID === set.id &&
@@ -93,6 +106,8 @@
       flagsController.abort();
       changeController.abort();
       contextController.abort();
+      sourceController.abort();
+      sourceEditor = null;
       return "";
     }
     return cause instanceof Error ? cause.message : String(cause);
@@ -149,6 +164,8 @@
     pendingChange = null;
     inspected = null;
     contextController.abort();
+    sourceController.abort();
+    sourceEditor = null;
     changeError = "";
     membersController.abort();
     flagsController.abort();
@@ -197,6 +214,42 @@
     const encoder = new TextEncoder();
     return redactReason.trim().length > 0 && encoder.encode(redactReason.trim()).length <= 4096 &&
       encoder.encode(redactLabel.trim()).length <= 256;
+  }
+
+  async function openSource(member: ProductionMember): Promise<void> {
+    if (draft.state !== "draft" || sourceLoading || stale) return;
+    sourceController.abort();
+    sourceController = new AbortController();
+    const signal = sourceController.signal;
+    const exact = scope();
+    sourceEditor = null;
+    sourceMemberID = member.id;
+    sourceError = "";
+    sourceLoading = true;
+    try {
+      const bytes = await loadProductionSourcePDF(exact.session, exact.setID, exact.revision, exact.etag, member, signal);
+      if (!await unchanged(exact, signal)) return;
+      if (!current(exact, signal)) return;
+      SourceViewer = (await import("./SourcePDFViewer.svelte")).default;
+      if (!current(exact, signal)) return;
+      sourceEditor = { member, bytes };
+      await tick();
+      document.getElementById("production-source-close")?.querySelector("button")?.focus();
+    } catch (cause) {
+      if (current(exact, signal)) sourceError = fail(cause);
+    } finally {
+      if (!signal.aborted) sourceLoading = false;
+    }
+  }
+
+  async function closeSource(): Promise<void> {
+    const memberID = sourceMemberID;
+    sourceController.abort();
+    sourceEditor = null;
+    sourceLoading = false;
+    sourceError = "";
+    await tick();
+    document.getElementById(`production-source-open-${memberID}`)?.querySelector("button")?.focus();
   }
 
   async function inspect(flag: ProductionDecision): Promise<void> {
@@ -251,6 +304,9 @@
               <small>Source version <code>{member.source_version_id}</code></small>
               <small>Mode {member.mode === "keep_selected" ? "Keep selected" : "Redact selected"}</small>
               {#if draft.state === "draft"}
+                <span id={`production-source-open-${member.id}`}><Button size="sm" surface="soft" disabled={sourceLoading}
+                  ariaLabel={`Open original PDF for member ${member.ordinal}`}
+                  onclick={() => void openSource(member)}>Open original PDF</Button></span>
                 <Button size="sm" surface="soft" disabled={changing || !!pendingChange}
                   ariaLabel={`Use ${member.mode === "keep_selected" ? "Redact" : "Keep"} selected for member ${member.ordinal}`}
                   onclick={() => change({ kind: "mode", member_id: member.id, mode: member.mode === "keep_selected" ? "redact_selected" : "keep_selected" })}>
@@ -260,6 +316,17 @@
             </li>
           {/each}
         </ol>
+      {/if}
+      {#if sourceLoading}<p class="loading" role="status"><Spinner size={16} /> Verifying original PDF…</p>{/if}
+      {#if sourceError}<p class="error" role="alert">{sourceError}</p>{/if}
+      {#if sourceEditor && SourceViewer}
+        <div role="region" aria-label={`Original PDF for member ${sourceEditor.member.ordinal}`}>
+          <div class="section-heading"><strong>Original PDF · member {sourceEditor.member.ordinal}</strong>
+            <span id="production-source-close"><Button size="sm" surface="soft" onclick={() => void closeSource()}>Close original PDF</Button></span></div>
+          {#key sourceEditor.member.id}
+            <SourceViewer bytes={sourceEditor.bytes} memberID={sourceEditor.member.id} />
+          {/key}
+        </div>
       {/if}
       {#if memberCursor}<Button size="sm" disabled={membersLoading} onclick={() => void loadMembers(scope(), memberCursor, membersController.signal)}>{membersLoading ? "Loading…" : "Load more members"}</Button>{/if}
     </section>

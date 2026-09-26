@@ -1,0 +1,24 @@
+{
+  "contract": "embedpdf-production-editor-dependencies/v1",
+  "version": "2.15.0",
+  "packages": [
+    "@embedpdf/core",
+    "@embedpdf/engines",
+    "@embedpdf/pdfium",
+    "@embedpdf/plugin-document-manager",
+    "@embedpdf/plugin-viewport",
+    "@embedpdf/plugin-scroll",
+    "@embedpdf/plugin-render",
+    "@embedpdf/plugin-selection",
+    "@embedpdf/plugin-interaction-manager",
+    "@embedpdf/plugin-redaction",
+    "@embedpdf/plugin-annotation",
+    "@embedpdf/plugin-history"
+  ],
+  "wasm": {
+    "package": "@embedpdf/pdfium/pdfium.wasm",
+    "runtime_path": "/assets/pdfium-<build-hash>.wasm",
+    "sha256": "c0af5a6aca30d7e54a149c3a68e317116ca906d6edc28fd3318b12c7d9478ac8",
+    "license_paths": ["public/assets/vendor/embedpdf/LICENSE.embedpdf", "public/assets/vendor/embedpdf/LICENSE.pdfium"]
+  }
+}
