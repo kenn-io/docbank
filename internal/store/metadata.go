@@ -1397,10 +1397,10 @@ func (w *metadataJSONWalker) skipWhitespace() error {
 }
 
 func (w *metadataJSONWalker) readString(dst *metadataWalkerString) error {
-	return w.readStringInto(dst, nil)
+	return w.readStringInto(dst)
 }
 
-func (w *metadataJSONWalker) readStringInto(dst *metadataWalkerString, decoded *strings.Builder) error {
+func (w *metadataJSONWalker) readStringInto(dst *metadataWalkerString) error {
 	opening, err := w.take()
 	if err != nil {
 		return err
@@ -1412,9 +1412,6 @@ func (w *metadataJSONWalker) readStringInto(dst *metadataWalkerString, decoded *
 	appendDecoded := func(value []byte) {
 		if dst != nil {
 			dst.append(value)
-		}
-		if decoded != nil {
-			_, _ = decoded.Write(value)
 		}
 	}
 	appendRune := func(value rune) {
@@ -1699,11 +1696,11 @@ type metadataWalkerFrame struct {
 }
 
 func (w *metadataJSONWalker) readObjectKey() (string, error) {
-	var key strings.Builder
-	if err := w.readStringInto(nil, &key); err != nil {
+	var key metadataWalkerString
+	if err := w.readString(&key); err != nil {
 		return "", err
 	}
-	return key.String(), nil
+	return key.value("object key")
 }
 
 func (w *metadataJSONWalker) readScalar() error {
