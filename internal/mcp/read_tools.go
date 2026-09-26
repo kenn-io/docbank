@@ -11,6 +11,7 @@ import (
 
 	"github.com/google/jsonschema-go/jsonschema"
 	sdkmcp "github.com/modelcontextprotocol/go-sdk/mcp"
+	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/apiclient"
 	"go.kenn.io/docbank/internal/daemonconn"
@@ -64,6 +65,10 @@ func executeReadTool(
 		output, err = listDocumentVersions(ctx, lease, raw)
 	case "read_rendition_text":
 		output, err = readRenditionText(ctx, lease, raw)
+	case "get_document_outline":
+		output, err = getDocumentOutline(ctx, lease, raw)
+	case "read_passage_section":
+		output, err = readPassageSection(ctx, lease, raw)
 	case "get_processing_plan":
 		output, err = getProcessingPlan(ctx, lease, raw)
 	case "get_processing_status":
@@ -261,6 +266,63 @@ func optionalInt64(value int) *int64 {
 	}
 	converted := int64(value)
 	return &converted
+}
+
+type documentOutlineInput struct {
+	Ref document.PassageRefV1 `json:"ref"`
+}
+
+type documentOutlineOutput struct {
+	api.PassageOutline
+	privateCache
+}
+
+func getDocumentOutline(
+	ctx context.Context, lease *daemonLease, raw []byte,
+) (documentOutlineOutput, error) {
+	var input documentOutlineInput
+	if err := decodeReadArguments(raw, &input); err != nil {
+		return documentOutlineOutput{}, err
+	}
+	outline, err := daemonRead(ctx, lease, func(ctx context.Context, c *daemonconn.Connection) (api.PassageOutline, error) {
+		return c.PassageOutline(ctx, api.PassageOutlineRequest{Ref: input.Ref})
+	})
+	if err != nil {
+		return documentOutlineOutput{}, err
+	}
+	return documentOutlineOutput{PassageOutline: outline, privateCache: newPrivateCache()}, nil
+}
+
+type passageSectionInput struct {
+	Ref             document.PassageRefV1 `json:"ref"`
+	NavigationKey   string                `json:"navigation_key"`
+	IncludeChildren bool                  `json:"include_children"`
+	MaxBytes        int                   `json:"max_bytes"`
+	Continuation    string                `json:"continuation"`
+}
+
+type passageSectionOutput struct {
+	api.PassageSectionPage
+	privateCache
+}
+
+func readPassageSection(
+	ctx context.Context, lease *daemonLease, raw []byte,
+) (passageSectionOutput, error) {
+	var input passageSectionInput
+	if err := decodeReadArguments(raw, &input); err != nil {
+		return passageSectionOutput{}, err
+	}
+	page, err := daemonRead(ctx, lease, func(ctx context.Context, c *daemonconn.Connection) (api.PassageSectionPage, error) {
+		return c.ReadPassageSection(ctx, api.PassageReadSectionRequest{
+			Ref: input.Ref, NavigationKey: input.NavigationKey, IncludeChildren: input.IncludeChildren,
+			MaxBytes: input.MaxBytes, Continuation: input.Continuation,
+		})
+	})
+	if err != nil {
+		return passageSectionOutput{}, err
+	}
+	return passageSectionOutput{PassageSectionPage: page, privateCache: newPrivateCache()}, nil
 }
 
 func decodeReadArguments(raw []byte, target any) error {

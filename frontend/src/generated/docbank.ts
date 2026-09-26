@@ -2485,6 +2485,14 @@ export interface Entry {
   size: number;
 }
 
+export interface EvidenceLocatorV1 {
+  end: number;
+  index_origin: string;
+  kind: string;
+  name?: string;
+  start: number;
+}
+
 export interface Receipt {
   entries: number;
   format: string;
@@ -3741,6 +3749,158 @@ export interface PageSelectionRequest {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
   selection: PageBinding;
+}
+
+export interface PassageOutlineSection {
+  /** @minimum 0 */
+  byte_end: number;
+  /** @minimum 0 */
+  byte_start: number;
+  /** @minimum 0 */
+  child_count: number;
+  children: PassageOutlineSection[];
+  /** @minimum 0 */
+  estimated_runes: number;
+  /** @minimum 0 */
+  estimated_utf8_bytes: number;
+  /** @pattern ^[0-9a-f]{64}$ */
+  key: string;
+  /**
+     * @minimum 0
+     * @maximum 6
+     */
+  level: number;
+  /** @minimum 1 */
+  occurrence: number;
+  /** @minimum 0 */
+  own_byte_end: number;
+  preamble: boolean;
+  source_locator?: EvidenceLocatorV1;
+  /** @maxLength 8192 */
+  title: string;
+}
+
+export interface PassageOutline {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  /** @pattern ^[0-9a-f]{64}$ */
+  body_sha256: string;
+  /** @pattern ^[0-9a-f]{64}$ */
+  rendition_build_id: string;
+  sections: PassageOutlineSection[];
+}
+
+export interface PassageRefV1 {
+  attachment_id: string;
+  body_sha256: string;
+  byte_end: number;
+  byte_start: number;
+  content_version_id: string;
+  document_uid: string;
+  federation_domain_uid?: string;
+  quote_sha256: string;
+  rendition_build_id: string;
+  source_sha256: string;
+  vault_uid: string;
+  version: number;
+}
+
+export interface PassageOutlineRequest {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  ref: PassageRefV1;
+}
+
+export interface PassageReadSectionRequest {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  /** @maxLength 4096 */
+  continuation?: string;
+  include_children: boolean;
+  /**
+     * @minimum 1
+     * @maximum 262144
+     */
+  max_bytes?: number;
+  /** @pattern ^[0-9a-f]{64}$ */
+  navigation_key: string;
+  ref: PassageRefV1;
+}
+
+export type PassageResolutionAvailability = typeof PassageResolutionAvailability[keyof typeof PassageResolutionAvailability];
+
+
+export const PassageResolutionAvailability = {
+  available: 'available',
+} as const;
+
+export type PassageResolutionFreshness = typeof PassageResolutionFreshness[keyof typeof PassageResolutionFreshness];
+
+
+export const PassageResolutionFreshness = {
+  current: 'current',
+  historical: 'historical',
+} as const;
+
+export interface PassageResolution {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  availability: PassageResolutionAvailability;
+  freshness: PassageResolutionFreshness;
+  /** @pattern ^[0-9a-f]{64}$ */
+  passage_id: string;
+  ref: PassageRefV1;
+  section_path: string[];
+  source_locator?: EvidenceLocatorV1;
+  source_path: string;
+  text: string;
+}
+
+export interface PassageResolveRequest {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  /**
+     * @minimum 1
+     * @maximum 262144
+     */
+  max_bytes?: number;
+  ref: PassageRefV1;
+}
+
+export interface PassageSectionSelection {
+  /** @minimum 0 */
+  byte_end: number;
+  /** @minimum 0 */
+  byte_start: number;
+  include_children: boolean;
+  /** @pattern ^[0-9a-f]{64}$ */
+  key: string;
+  /**
+     * @minimum 0
+     * @maximum 6
+     */
+  level: number;
+  source_locator?: EvidenceLocatorV1;
+  /** @maxLength 8192 */
+  title: string;
+}
+
+export interface PassageSectionPage {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  /** @pattern ^[0-9a-f]{64}$ */
+  body_sha256: string;
+  complete: boolean;
+  continuation?: string;
+  /** @minimum 0 */
+  page_end: number;
+  /** @minimum 0 */
+  page_start: number;
+  ref?: PassageRefV1;
+  /** @pattern ^[0-9a-f]{64}$ */
+  rendition_build_id: string;
+  section: PassageSectionSelection;
+  text: string;
 }
 
 export type PeopleBuildState = typeof PeopleBuildState[keyof typeof PeopleBuildState];
@@ -7502,6 +7662,44 @@ export const listDocuments = async (params?: ListDocumentsParams, options?: Para
     method: 'GET'
 
 
+  }
+);}
+
+
+
+export const getOutlineDocumentUrl = () => {
+
+
+
+
+  return `/api/v1/documents/outline`
+}
+
+/**
+ * @summary Outline one exact retained Markdown rendition
+ */
+export const outlineDocument = async (passageOutlineRequest: NonReadonly<PassageOutlineRequest>, options?: Parameters<typeof sessionJSON>[1]): Promise<PassageOutline> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return sessionJSON<PassageOutline>(getOutlineDocumentUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(passageOutlineRequest)
   }
 );}
 
@@ -11298,6 +11496,82 @@ return sessionJSON<PageRenderJob>(getCancelPageRenderJobUrl(id),
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
     body: JSON.stringify(pageSelectionRequest)
+  }
+);}
+
+
+
+export const getReadPassageSectionUrl = () => {
+
+
+
+
+  return `/api/v1/passages/read-section`
+}
+
+/**
+ * @summary Read a bounded page from one exact section
+ */
+export const readPassageSection = async (passageReadSectionRequest: NonReadonly<PassageReadSectionRequest>, options?: Parameters<typeof sessionJSON>[1]): Promise<PassageSectionPage> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return sessionJSON<PassageSectionPage>(getReadPassageSectionUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(passageReadSectionRequest)
+  }
+);}
+
+
+
+export const getResolvePassageUrl = () => {
+
+
+
+
+  return `/api/v1/passages/resolve`
+}
+
+/**
+ * @summary Resolve one exact retained Markdown passage
+ */
+export const resolvePassage = async (passageResolveRequest: NonReadonly<PassageResolveRequest>, options?: Parameters<typeof sessionJSON>[1]): Promise<PassageResolution> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return sessionJSON<PassageResolution>(getResolvePassageUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(passageResolveRequest)
   }
 );}
 
