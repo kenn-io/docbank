@@ -125,6 +125,23 @@ func downloadReportPacket(ctx context.Context, connection *daemonconn.Connection
 	})
 }
 
+func downloadReportArtifactFile(ctx context.Context, connection *daemonconn.Connection,
+	id, format, output string, overwrite bool,
+) error {
+	if format == "bundle" {
+		return downloadReportPacket(ctx, connection, id, output, overwrite)
+	}
+	return publishReportOutput(output, overwrite, func(file *os.File) error {
+		stream, err := connection.OpenTermReport(ctx, id, format)
+		if err != nil {
+			return err
+		}
+		defer func() { _ = stream.Close() }()
+		_, err = stream.CopyVerified(file)
+		return err
+	})
+}
+
 func init() {
 	root := &cobra.Command{Use: "search-export", Short: "Export search counts and review saved evidence"}
 	terms := &cobra.Command{Use: "create", Short: "Export search counts from the current vault", Args: cobra.NoArgs}
@@ -185,6 +202,27 @@ func init() {
 			}
 			return nil
 		}}
+
+	download := &cobra.Command{Use: "download <report-id>", Short: "Download a frozen report artifact", Args: cobra.ExactArgs(1)}
+	var downloadFormat, downloadOutput string
+	var downloadOverwrite bool
+	download.Flags().StringVar(&downloadFormat, "format", "", "Artifact format: csv or bundle")
+	download.Flags().StringVar(&downloadOutput, "output", "", "Destination for the artifact")
+	download.Flags().BoolVar(&downloadOverwrite, "overwrite", false, "Replace an existing destination")
+	download.RunE = func(cmd *cobra.Command, args []string) error {
+		if (downloadFormat != "csv" && downloadFormat != "bundle") || downloadOutput == "" {
+			return usageError(errors.New("search-export download requires --format csv|bundle and --output"))
+		}
+		if _, err := prepareGetDestination(downloadOutput, downloadOverwrite); err != nil {
+			return err
+		}
+		connection, err := daemonconn.Ensure(cmd.Context())
+		if err != nil {
+			return err
+		}
+		return downloadReportArtifactFile(cmd.Context(), connection, args[0], downloadFormat,
+			downloadOutput, downloadOverwrite)
+	}
 
 	csv := &cobra.Command{Use: "csv <report.zip>", Short: "Extract verified report counts without opening a vault", Args: cobra.ExactArgs(1)}
 	var csvOutput string
@@ -280,6 +318,6 @@ func init() {
 		}
 		return nil
 	}
-	root.AddCommand(terms, verify, csv, dates, revise)
+	root.AddCommand(terms, verify, csv, dates, revise, download)
 	rootCmd.AddCommand(root)
 }
