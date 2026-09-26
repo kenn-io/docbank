@@ -368,7 +368,13 @@ func RenderRendition(
 		}
 		return RenditionResult{}, err
 	}
-	result, err = validateAndOwnRenditionResult(executionCtx, descriptor, sealed, result)
+	result, err = validateAndOwnRenditionResult(descriptor, sealed, result)
+	if contextErr := ctx.Err(); contextErr != nil {
+		return RenditionResult{}, contextErr
+	}
+	if currentErr := validateAuthorizationCurrentAt(sealed, time.Now().UTC()); currentErr != nil {
+		return RenditionResult{}, currentErr
+	}
 	if err != nil {
 		return RenditionResult{}, err
 	}
@@ -391,16 +397,16 @@ func RenderRendition(
 }
 
 func validateAndOwnRenditionResult(
-	ctx context.Context, descriptor RenditionDescriptor, authorization RenditionAuthorization, result RenditionResult,
+	descriptor RenditionDescriptor, authorization RenditionAuthorization, result RenditionResult,
 ) (RenditionResult, error) {
 	if err := validateRenditionArtifactCount(authorization.MaxArtifacts, result.Artifacts); err != nil {
 		return RenditionResult{}, err
 	}
-	if err := preflightRenditionResultContext(ctx, authorization.MaxTotalResultBytes, result); err != nil {
+	if err := preflightRenditionResult(authorization.MaxTotalResultBytes, result); err != nil {
 		return RenditionResult{}, err
 	}
 	result = cloneRenditionResult(result)
-	if err := ValidateRenditionResultContext(ctx, descriptor, authorization, result); err != nil {
+	if err := ValidateRenditionResult(descriptor, authorization, result); err != nil {
 		return RenditionResult{}, err
 	}
 	return result, nil
@@ -523,19 +529,6 @@ func validateRenditionResumeHandle(handle RenditionResumeHandle) error {
 func ValidateRenditionResult(
 	descriptor RenditionDescriptor, authorization RenditionAuthorization, result RenditionResult,
 ) error {
-	return ValidateRenditionResultContext(context.Background(), descriptor, authorization, result)
-}
-
-// ValidateRenditionResultContext rejects provider output while observing cancellation.
-func ValidateRenditionResultContext(
-	ctx context.Context, descriptor RenditionDescriptor, authorization RenditionAuthorization, result RenditionResult,
-) error {
-	if ctx == nil {
-		ctx = context.Background()
-	}
-	if err := ctx.Err(); err != nil {
-		return err
-	}
 	if err := validateRenditionDescriptor(descriptor); err != nil {
 		return err
 	}
@@ -545,14 +538,11 @@ func ValidateRenditionResultContext(
 	if err := validateRenditionArtifactCount(authorization.MaxArtifacts, result.Artifacts); err != nil {
 		return err
 	}
-	if err := preflightRenditionResultContext(ctx, authorization.MaxTotalResultBytes, result); err != nil {
+	if err := preflightRenditionResult(authorization.MaxTotalResultBytes, result); err != nil {
 		return err
 	}
-	if err := ValidateSourceEvidenceV1Context(ctx, result.Evidence); err != nil {
+	if err := ValidateSourceEvidenceV1(result.Evidence); err != nil {
 		return fmt.Errorf("provider evidence: %w", err)
-	}
-	if err := ctx.Err(); err != nil {
-		return err
 	}
 	if result.Evidence.Family != authorization.MediaFamily {
 		return errors.New("provider evidence family does not match authorization")
@@ -563,10 +553,7 @@ func ValidateRenditionResultContext(
 	if len(result.ProviderMarkdown) > authorization.MaxProviderMarkdownBytes {
 		return errors.New("provider Markdown exceeds authorized byte limit")
 	}
-	if err := validateRenditionArtifactsContext(ctx, descriptor, authorization, result.Artifacts); err != nil {
-		return err
-	}
-	if err := ctx.Err(); err != nil {
+	if err := validateRenditionArtifacts(descriptor, authorization, result.Artifacts); err != nil {
 		return err
 	}
 	if err := validateEvidenceArtifactAuthorization(
@@ -576,23 +563,16 @@ func ValidateRenditionResultContext(
 	if err := validateRenditionReceipt(descriptor, authorization, result.Receipt); err != nil {
 		return err
 	}
-	if err := ctx.Err(); err != nil {
-		return err
-	}
 	return nil
 }
 
 var errRenditionResultTooLarge = errors.New("provider total result bytes exceed authorization")
 
 type renditionResultSizeWriter struct {
-	ctx       context.Context
 	remaining int64
 }
 
 func (writer *renditionResultSizeWriter) Write(value []byte) (int, error) {
-	if err := writer.ctx.Err(); err != nil {
-		return 0, err
-	}
 	if int64(len(value)) > writer.remaining {
 		return 0, errRenditionResultTooLarge
 	}
@@ -600,27 +580,15 @@ func (writer *renditionResultSizeWriter) Write(value []byte) (int, error) {
 	return len(value), nil
 }
 
-func preflightRenditionResultContext(ctx context.Context, maxBytes int, result RenditionResult) error {
-	if ctx == nil {
-		ctx = context.Background()
-	}
-	if err := ctx.Err(); err != nil {
-		return err
-	}
+func preflightRenditionResult(maxBytes int, result RenditionResult) error {
 	// Bound encoded string and byte tokens without first copying them into
 	// the streaming encoder's buffer, then count the complete JSON structure.
 	remaining := int64(maxBytes)
-	if !consumeRenditionResultTokens(ctx, reflect.ValueOf(result), &remaining) {
-		if err := ctx.Err(); err != nil {
-			return err
-		}
+	if !consumeRenditionResultTokens(reflect.ValueOf(result), &remaining) {
 		return errRenditionResultTooLarge
 	}
-	writer := renditionResultSizeWriter{ctx: ctx, remaining: int64(maxBytes)}
+	writer := renditionResultSizeWriter{remaining: int64(maxBytes)}
 	if err := json.MarshalWrite(&writer, result); err != nil {
-		if contextErr := ctx.Err(); contextErr != nil {
-			return contextErr
-		}
 		if errors.Is(err, errRenditionResultTooLarge) {
 			return errRenditionResultTooLarge
 		}
@@ -629,18 +597,15 @@ func preflightRenditionResultContext(ctx context.Context, maxBytes int, result R
 	return nil
 }
 
-func consumeRenditionResultTokens(ctx context.Context, value reflect.Value, remaining *int64) bool {
-	if err := ctx.Err(); err != nil {
-		return false
-	}
+func consumeRenditionResultTokens(value reflect.Value, remaining *int64) bool {
 	if !value.IsValid() {
 		return true
 	}
 	switch value.Kind() {
 	case reflect.Interface, reflect.Pointer:
-		return value.IsNil() || consumeRenditionResultTokens(ctx, value.Elem(), remaining)
+		return value.IsNil() || consumeRenditionResultTokens(value.Elem(), remaining)
 	case reflect.String:
-		return consumeRenditionJSONString(ctx, value.String(), remaining)
+		return consumeRenditionJSONString(value.String(), remaining)
 	case reflect.Slice:
 		if value.Type().Elem().Kind() == reflect.Uint8 {
 			if value.Len() == 0 {
@@ -655,42 +620,23 @@ func consumeRenditionResultTokens(ctx context.Context, value reflect.Value, rema
 		fallthrough
 	case reflect.Array:
 		for index := range value.Len() {
-			if index&1023 == 0 {
-				if err := ctx.Err(); err != nil {
-					return false
-				}
-			}
-			if !consumeRenditionResultTokens(ctx, value.Index(index), remaining) {
+			if !consumeRenditionResultTokens(value.Index(index), remaining) {
 				return false
 			}
 		}
 	case reflect.Struct:
-		index := 0
 		for _, field := range value.Fields() {
-			if index&1023 == 0 {
-				if err := ctx.Err(); err != nil {
-					return false
-				}
-			}
-			if !consumeRenditionResultTokens(ctx, field, remaining) {
+			if !consumeRenditionResultTokens(field, remaining) {
 				return false
 			}
-			index++
 		}
 	case reflect.Map:
 		iterator := value.MapRange()
-		index := 0
 		for iterator.Next() {
-			if index&1023 == 0 {
-				if err := ctx.Err(); err != nil {
-					return false
-				}
-			}
-			if !consumeRenditionResultTokens(ctx, iterator.Key(), remaining) ||
-				!consumeRenditionResultTokens(ctx, iterator.Value(), remaining) {
+			if !consumeRenditionResultTokens(iterator.Key(), remaining) ||
+				!consumeRenditionResultTokens(iterator.Value(), remaining) {
 				return false
 			}
-			index++
 		}
 	case reflect.Invalid,
 		reflect.Bool,
@@ -703,7 +649,7 @@ func consumeRenditionResultTokens(ctx context.Context, value reflect.Value, rema
 	return true
 }
 
-func consumeRenditionJSONString(ctx context.Context, value string, remaining *int64) bool {
+func consumeRenditionJSONString(value string, remaining *int64) bool {
 	if value == "" {
 		return true
 	}
@@ -711,11 +657,6 @@ func consumeRenditionJSONString(ctx context.Context, value string, remaining *in
 		return false
 	}
 	for index := range len(value) {
-		if index&1023 == 0 {
-			if err := ctx.Err(); err != nil {
-				return false
-			}
-		}
 		encodedBytes := int64(1)
 		switch value[index] {
 		case '\\', '"', '\b', '\f', '\n', '\r', '\t':
@@ -1272,24 +1213,15 @@ func validateAuthorizedRoles(descriptor RenditionDescriptor, roles []EvidenceArt
 	return nil
 }
 
-func validateRenditionArtifactsContext(
-	ctx context.Context,
+func validateRenditionArtifacts(
 	descriptor RenditionDescriptor, authorization RenditionAuthorization, artifacts []RenditionArtifact,
 ) error {
-	if err := ctx.Err(); err != nil {
-		return err
-	}
 	type identity struct {
 		role   EvidenceArtifactRole
 		sha256 string
 	}
 	seen := make(map[identity]struct{}, len(artifacts))
-	for index, artifact := range artifacts {
-		if index&1023 == 0 {
-			if err := ctx.Err(); err != nil {
-				return err
-			}
-		}
+	for _, artifact := range artifacts {
 		if !validProfileArtifactRole(artifact.Role) || !slices.Contains(descriptor.ArtifactRoles, artifact.Role) ||
 			!slices.Contains(authorization.AllowedArtifactRoles, artifact.Role) {
 			return errors.New("provider artifact role is not authorized")
@@ -1300,21 +1232,8 @@ func validateRenditionArtifactsContext(
 		if len(artifact.Payload) > authorization.MaxArtifactBytes {
 			return errors.New("provider artifact exceeds authorized byte limit")
 		}
-		digest := sha256.New()
-		for offset := 0; offset < len(artifact.Payload); {
-			if offset&((1<<20)-1) == 0 {
-				if err := ctx.Err(); err != nil {
-					return err
-				}
-			}
-			end := min(offset+1<<20, len(artifact.Payload))
-			_, _ = digest.Write(artifact.Payload[offset:end])
-			offset = end
-		}
-		if err := ctx.Err(); err != nil {
-			return err
-		}
-		if artifact.SHA256 != hex.EncodeToString(digest.Sum(nil)) {
+		digest := sha256.Sum256(artifact.Payload)
+		if artifact.SHA256 != hex.EncodeToString(digest[:]) {
 			return errors.New("provider artifact checksum does not match payload")
 		}
 		key := identity{role: artifact.Role, sha256: artifact.SHA256}

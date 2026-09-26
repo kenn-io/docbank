@@ -2,7 +2,6 @@ package document
 
 import (
 	"cmp"
-	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json/jsontext"
@@ -44,28 +43,11 @@ const (
 // ValidateSourceEvidenceV1 validates a bounded source-evidence/v1 manifest
 // without assigning durable IDs.
 func ValidateSourceEvidenceV1(source SourceEvidenceV1) error {
-	return ValidateSourceEvidenceV1Context(context.Background(), source)
-}
-
-// ValidateSourceEvidenceV1Context validates source evidence while observing cancellation.
-func ValidateSourceEvidenceV1Context(ctx context.Context, source SourceEvidenceV1) error {
-	if ctx == nil {
-		ctx = context.Background()
-	}
-	_, err := validateSourceEvidenceV1Context(ctx, source, -1)
+	_, err := validateSourceEvidenceV1(source, -1)
 	return err
 }
 
 func validateSourceEvidenceV1(source SourceEvidenceV1, maxDocumentChars int) ([]evidenceTextMap, error) {
-	return validateSourceEvidenceV1Context(context.Background(), source, maxDocumentChars)
-}
-
-func validateSourceEvidenceV1Context(
-	ctx context.Context, source SourceEvidenceV1, maxDocumentChars int,
-) ([]evidenceTextMap, error) {
-	if err := ctx.Err(); err != nil {
-		return nil, err
-	}
 	if source.ContractVersion != SourceEvidenceContractV1 {
 		return nil, fmt.Errorf("source evidence contract version must be %q", SourceEvidenceContractV1)
 	}
@@ -84,10 +66,10 @@ func validateSourceEvidenceV1Context(
 	if err := validateSourceOmissionLimit(source, maxEvidenceOmissions); err != nil {
 		return nil, err
 	}
-	if err := validateSourceHeadingLimitsContext(ctx, source.Units); err != nil {
+	if err := validateSourceHeadingLimits(source.Units); err != nil {
 		return nil, err
 	}
-	if err := validateCompletenessOmissionsContext(ctx, source); err != nil {
+	if err := validateCompletenessOmissions(source); err != nil {
 		return nil, err
 	}
 
@@ -96,25 +78,15 @@ func validateSourceEvidenceV1Context(
 		return nil, err
 	}
 	textMaps := make([]evidenceTextMap, len(source.Units))
-	documentRangeOffsets, err := partitionSourceOmissionRangeOffsetsContext(ctx, source.Omissions, len(source.Units))
-	if err != nil {
-		return nil, err
-	}
+	documentRangeOffsets := partitionSourceOmissionRangeOffsets(source.Omissions, len(source.Units))
 	remainingChars := maxDocumentChars
 	for index, unit := range source.Units {
-		if index&1023 == 0 {
-			if err := ctx.Err(); err != nil {
-				return nil, err
-			}
-		}
-		if err := validateEvidenceTextContext(ctx, unit.Text, "unit text"); err != nil {
+		if err := validateEvidenceText(unit.Text, "unit text"); err != nil {
 			return nil, fmt.Errorf("source evidence unit %d: %w", index, err)
 		}
-		rangeOffsets, err := collectSourceRangeOffsetsContext(ctx, unit, documentRangeOffsets[index])
-		if err != nil {
-			return nil, fmt.Errorf("source evidence unit %d range offsets: %w", index, err)
-		}
-		textMap, err := newEvidenceTextMapContext(ctx, unit.Text, rangeOffsets, remainingChars)
+		textMap, err := newEvidenceTextMap(
+			unit.Text, collectSourceRangeOffsets(unit, documentRangeOffsets[index]), remainingChars,
+		)
 		if err != nil {
 			return nil, fmt.Errorf("source evidence unit %d exceeds policy character limit: %w", index, err)
 		}
@@ -125,29 +97,17 @@ func validateSourceEvidenceV1Context(
 	}
 	locatorSequence := evidenceLocatorSequence{completeness: source.Completeness}
 	for index := range source.Units {
-		if index&1023 == 0 {
-			if err := ctx.Err(); err != nil {
-				return nil, err
-			}
-		}
-		if err := validateSourceUnit(ctx, source, index, artifactIDs, textMaps[index]); err != nil {
+		if err := validateSourceUnit(source, index, artifactIDs, textMaps[index]); err != nil {
 			return nil, err
 		}
 		if err := locatorSequence.add(evidenceLocatorFromSource(source.Units[index].Locator)); err != nil {
 			return nil, fmt.Errorf("source evidence unit %d: %w", index, err)
 		}
 	}
-	if err := validateSourceOmissionsContext(ctx, source.Omissions, textMaps); err != nil {
+	if err := validateSourceOmissions(source.Omissions, textMaps); err != nil {
 		return nil, fmt.Errorf("source evidence omissions: %w", err)
 	}
-	if err := ctx.Err(); err != nil {
-		return nil, err
-	}
-	omitted, err := normalizeUnitOmissionLocatorsContext(ctx, source.Omissions)
-	if err != nil {
-		return nil, err
-	}
-	if err := locatorSequence.requireGapOmissionsContext(ctx, omitted); err != nil {
+	if err := locatorSequence.requireGapOmissions(normalizeUnitOmissionLocators(source.Omissions)); err != nil {
 		return nil, err
 	}
 	return textMaps, nil
@@ -198,7 +158,6 @@ func validateSourceArtifacts(artifacts []SourceEvidenceArtifactV1) (map[string]s
 }
 
 func validateSourceUnit(
-	ctx context.Context,
 	source SourceEvidenceV1,
 	index int,
 	artifactIDs map[string]struct{},
@@ -214,7 +173,7 @@ func validateSourceUnit(
 		}
 	}
 	if unit.Speaker != "" {
-		if err := validateBoundedUTF8Context(ctx, unit.Speaker, maxEvidenceSpeakerBytes, "unit speaker"); err != nil {
+		if err := validateBoundedUTF8(unit.Speaker, maxEvidenceSpeakerBytes, "unit speaker"); err != nil {
 			return fmt.Errorf("source evidence unit %d: %w", index, err)
 		}
 		if strings.ContainsRune(unit.Speaker, '\x00') {
@@ -225,7 +184,7 @@ func validateSourceUnit(
 		return fmt.Errorf("source evidence unit %d: %w", index, err)
 	}
 	for headingIndex, heading := range unit.HeadingPath {
-		if err := validateEvidenceTextContext(ctx, heading, "heading"); err != nil || heading == "" {
+		if err := validateEvidenceText(heading, "heading"); err != nil || heading == "" {
 			if err == nil {
 				err = errors.New("heading is empty")
 			}
@@ -235,14 +194,14 @@ func validateSourceUnit(
 	if err := validateSourceConfidence(unit.Confidence); err != nil {
 		return fmt.Errorf("source evidence unit %d: %w", index, err)
 	}
-	regionIDs, err := validateSourceRegions(ctx, index, textMap, unit.Regions, artifactIDs)
+	regionIDs, err := validateSourceRegions(index, textMap, unit.Regions, artifactIDs)
 	if err != nil {
 		return err
 	}
-	if err := validateSourceTables(ctx, index, textMap, unit.Tables, regionIDs); err != nil {
+	if err := validateSourceTables(index, textMap, unit.Tables, regionIDs); err != nil {
 		return err
 	}
-	if err := validateUnitOmissionsContext(ctx, unit.Omissions, index, textMap); err != nil {
+	if err := validateUnitOmissions(unit.Omissions, index, textMap); err != nil {
 		return fmt.Errorf("source evidence unit %d omissions: %w", index, err)
 	}
 	return nil
@@ -389,15 +348,6 @@ func (sequence *evidenceLocatorSequence) add(locator EvidenceLocatorV1) error {
 }
 
 func (sequence *evidenceLocatorSequence) requireGapOmissions(omitted []EvidenceLocatorV1) error {
-	return sequence.requireGapOmissionsContext(context.Background(), omitted)
-}
-
-func (sequence *evidenceLocatorSequence) requireGapOmissionsContext(
-	ctx context.Context, omitted []EvidenceLocatorV1,
-) error {
-	if err := ctx.Err(); err != nil {
-		return err
-	}
 	if sequence.seen && (sequence.previous.Kind == EvidenceLocatorMessage ||
 		sequence.previous.Kind == EvidenceLocatorSection) {
 		if len(omitted) > 0 && sequence.unnamed {
@@ -405,11 +355,6 @@ func (sequence *evidenceLocatorSequence) requireGapOmissionsContext(
 		}
 		omittedNames := make(map[string]struct{}, len(omitted))
 		for index, locator := range omitted {
-			if index&1023 == 0 {
-				if err := ctx.Err(); err != nil {
-					return err
-				}
-			}
 			if locator.Kind != sequence.previous.Kind || locator.IndexOrigin != EvidenceIndexOriginNone ||
 				locator.Start != 0 || locator.End != 0 || strings.TrimSpace(locator.Name) == "" {
 				return fmt.Errorf("unit omission %d does not match the named locator sequence", index)
@@ -427,11 +372,6 @@ func (sequence *evidenceLocatorSequence) requireGapOmissionsContext(
 	}
 
 	for index, locator := range omitted {
-		if index&1023 == 0 {
-			if err := ctx.Err(); err != nil {
-				return err
-			}
-		}
 		if !sequence.seen || locator.Kind != sequence.previous.Kind ||
 			locator.IndexOrigin != sequence.previous.IndexOrigin {
 			return fmt.Errorf("unit omission %d does not match a locator gap", index)
@@ -442,28 +382,16 @@ func (sequence *evidenceLocatorSequence) requireGapOmissionsContext(
 		return nil
 	}
 	ordered := slices.Clone(omitted)
-	if err := sortWithContext(ctx, ordered, func(left, right EvidenceLocatorV1) int {
+	slices.SortFunc(ordered, func(left, right EvidenceLocatorV1) int {
 		if result := cmp.Compare(left.Start, right.Start); result != 0 {
 			return result
 		}
 		return cmp.Compare(left.End, right.End)
-	}); err != nil {
-		return err
-	}
+	})
 	omissionIndex := 0
-	for gapIndex, gap := range sequence.gaps {
-		if gapIndex&1023 == 0 {
-			if err := ctx.Err(); err != nil {
-				return err
-			}
-		}
+	for _, gap := range sequence.gaps {
 		cursor := gap.Start
 		for omissionIndex < len(ordered) && locatorStartsWithinGap(ordered[omissionIndex], gap) {
-			if omissionIndex&1023 == 0 {
-				if err := ctx.Err(); err != nil {
-					return err
-				}
-			}
 			locator := ordered[omissionIndex]
 			if locator.Start != cursor || locator.End > gap.End {
 				return fmt.Errorf("unit omission %d does not match a locator gap", omissionIndex)
@@ -477,11 +405,6 @@ func (sequence *evidenceLocatorSequence) requireGapOmissionsContext(
 	}
 	trailingCursor := locatorPositionAfter(sequence.previous)
 	for omissionIndex < len(ordered) {
-		if omissionIndex&1023 == 0 {
-			if err := ctx.Err(); err != nil {
-				return err
-			}
-		}
 		locator := ordered[omissionIndex]
 		if locator.Start != trailingCursor {
 			return fmt.Errorf("unit omission %d does not match a locator gap", omissionIndex)
@@ -506,35 +429,23 @@ func evidenceLocatorGap(locator EvidenceLocatorV1, start, end int64) EvidenceLoc
 	}
 }
 
-func normalizeUnitOmissionLocatorsContext(
-	ctx context.Context, omissions []SourceEvidenceOmissionV1,
-) ([]EvidenceLocatorV1, error) {
+func normalizeUnitOmissionLocators(omissions []SourceEvidenceOmissionV1) []EvidenceLocatorV1 {
 	result := make([]EvidenceLocatorV1, 0, len(omissions))
-	for index, omission := range omissions {
-		if index&1023 == 0 {
-			if err := ctx.Err(); err != nil {
-				return nil, err
-			}
-		}
+	for _, omission := range omissions {
 		if omission.Kind == EvidenceOmissionUnit && omission.Locator != nil {
 			result = append(result, evidenceLocatorFromSource(*omission.Locator))
 		}
 	}
-	return result, nil
+	return result
 }
 
 func evidenceLocatorFromSource(locator SourceEvidenceLocatorV1) EvidenceLocatorV1 {
 	return EvidenceLocatorV1(locator)
 }
 
-func validateSourceHeadingLimitsContext(ctx context.Context, units []SourceEvidenceUnitV1) error {
+func validateSourceHeadingLimits(units []SourceEvidenceUnitV1) error {
 	remaining := maxEvidenceHeadingBytes
 	for index, unit := range units {
-		if index&1023 == 0 {
-			if err := ctx.Err(); err != nil {
-				return err
-			}
-		}
 		if err := validateHeadingPathLimits(unit.HeadingPath, &remaining); err != nil {
 			return fmt.Errorf("source evidence unit %d: %w", index, err)
 		}
@@ -614,7 +525,6 @@ func validEvidenceFamily(family string) bool {
 }
 
 func validateSourceRegions(
-	ctx context.Context,
 	unitIndex int,
 	textMap evidenceTextMap,
 	regions []SourceEvidenceRegionV1,
@@ -625,11 +535,6 @@ func validateSourceRegions(
 	}
 	providerIDs := make(map[string]sourceRegionRef, len(regions))
 	for index, region := range regions {
-		if index&1023 == 0 {
-			if err := ctx.Err(); err != nil {
-				return nil, err
-			}
-		}
 		if region.Order != index {
 			return nil, fmt.Errorf("source evidence unit %d has noncontiguous region order", unitIndex)
 		}
@@ -660,7 +565,7 @@ func validateSourceRegions(
 		if err := validateSourceConfidence(region.Confidence); err != nil {
 			return nil, fmt.Errorf("source evidence unit %d region %d: %w", unitIndex, index, err)
 		}
-		if err := validateSourceGeometryContext(ctx, region.Geometry); err != nil {
+		if err := validateSourceGeometry(region.Geometry); err != nil {
 			return nil, fmt.Errorf("source evidence unit %d region %d: %w", unitIndex, index, err)
 		}
 	}
@@ -668,7 +573,6 @@ func validateSourceRegions(
 }
 
 func validateSourceTables(
-	ctx context.Context,
 	unitIndex int,
 	textMap evidenceTextMap,
 	tables []SourceEvidenceTableV1,
@@ -681,11 +585,6 @@ func validateSourceTables(
 	tableRegions := make(map[string]struct{})
 	cellRegions := make(map[string]struct{})
 	for index, table := range tables {
-		if index&1023 == 0 {
-			if err := ctx.Err(); err != nil {
-				return err
-			}
-		}
 		if table.Order != index {
 			return fmt.Errorf("source evidence unit %d has noncontiguous table order", unitIndex)
 		}
@@ -713,22 +612,13 @@ func validateSourceTables(
 			return fmt.Errorf("source evidence unit %d table %d has too many cells", unitIndex, index)
 		}
 		for cellIndex, cell := range table.Cells {
-			if cellIndex&1023 == 0 {
-				if err := ctx.Err(); err != nil {
-					return err
-				}
-			}
 			if err := validateSourceTableCell(textMap, table, cell, cellIndex, regionIDs, cellRegions); err != nil {
 				return fmt.Errorf("source evidence unit %d table %d cell %d: %w", unitIndex, index, cellIndex, err)
 			}
 		}
-		overlaps, err := evidenceTableCellsOverlapContext(ctx, table.Cells, func(cell SourceEvidenceTableCellV1) (int, int, int, int) {
+		if evidenceTableCellsOverlap(table.Cells, func(cell SourceEvidenceTableCellV1) (int, int, int, int) {
 			return cell.Row, cell.Row + cell.RowSpan, cell.Column, cell.Column + cell.ColumnSpan
-		})
-		if err != nil {
-			return err
-		}
-		if overlaps {
+		}) {
 			return fmt.Errorf("source evidence unit %d table %d has overlapping cells", unitIndex, index)
 		}
 	}
@@ -788,26 +678,12 @@ func evidenceTableCellsOverlap[T any](
 	cells []T,
 	bounds func(T) (rowStart, rowEnd, columnStart, columnEnd int),
 ) bool {
-	overlaps, _ := evidenceTableCellsOverlapContext(context.Background(), cells, bounds)
-	return overlaps
-}
-
-func evidenceTableCellsOverlapContext[T any](
-	ctx context.Context,
-	cells []T,
-	bounds func(T) (rowStart, rowEnd, columnStart, columnEnd int),
-) (bool, error) {
 	if len(cells) < 2 {
-		return false, nil
+		return false
 	}
 	events := make([]evidenceTableCellEvent, 0, len(cells)*2)
 	columns := make([]int, 0, len(cells)*2)
-	for index, cell := range cells {
-		if index&1023 == 0 {
-			if err := ctx.Err(); err != nil {
-				return false, err
-			}
-		}
+	for _, cell := range cells {
 		rowStart, rowEnd, columnStart, columnEnd := bounds(cell)
 		columns = append(columns, columnStart, columnEnd)
 		events = append(events,
@@ -819,93 +695,26 @@ func evidenceTableCellsOverlapContext[T any](
 			},
 		)
 	}
-	if err := ctx.Err(); err != nil {
-		return false, err
-	}
-	if err := sortWithContext(ctx, columns, cmp.Compare[int]); err != nil {
-		return false, err
-	}
+	slices.Sort(columns)
 	columns = slices.Compact(columns)
-	if err := sortWithContext(ctx, events, func(left, right evidenceTableCellEvent) int {
+	slices.SortFunc(events, func(left, right evidenceTableCellEvent) int {
 		if result := cmp.Compare(left.row, right.row); result != 0 {
 			return result
 		}
 		return cmp.Compare(left.delta, right.delta)
-	}); err != nil {
-		return false, err
-	}
+	})
 	segmentCount := len(columns) - 1
 	maximum := make([]int32, 4*segmentCount)
 	lazy := make([]int32, 4*segmentCount)
-	for index, event := range events {
-		if index&1023 == 0 {
-			if err := ctx.Err(); err != nil {
-				return false, err
-			}
-		}
+	for _, event := range events {
 		columnStart, _ := slices.BinarySearch(columns, event.columnStart)
 		columnEnd, _ := slices.BinarySearch(columns, event.columnEnd)
 		addEvidenceCellCoverage(maximum, lazy, 1, 0, segmentCount, columnStart, columnEnd, event.delta)
 		if maximum[1] > 1 {
-			return true, nil
+			return true
 		}
 	}
-	return false, ctx.Err()
-}
-
-func sortWithContext[T any](ctx context.Context, values []T, compare func(T, T) int) error {
-	if err := ctx.Err(); err != nil {
-		return err
-	}
-	if len(values) < 2 {
-		return nil
-	}
-	scratch := make([]T, len(values))
-	source, destination := values, scratch
-	sourceIsValues := true
-	for width := 1; width < len(values); width *= 2 {
-		for left := 0; left < len(values); left += 2 * width {
-			if left&1023 == 0 {
-				if err := ctx.Err(); err != nil {
-					return err
-				}
-			}
-			middle := min(left+width, len(values))
-			right := min(left+2*width, len(values))
-			sourceIndex, otherIndex := left, middle
-			for index := left; index < right; index++ {
-				if index&1023 == 0 {
-					if err := ctx.Err(); err != nil {
-						return err
-					}
-				}
-				switch {
-				case sourceIndex >= middle:
-					destination[index] = source[otherIndex]
-					otherIndex++
-				case otherIndex >= right || compare(source[sourceIndex], source[otherIndex]) <= 0:
-					destination[index] = source[sourceIndex]
-					sourceIndex++
-				default:
-					destination[index] = source[otherIndex]
-					otherIndex++
-				}
-			}
-		}
-		source, destination = destination, source
-		sourceIsValues = !sourceIsValues
-	}
-	if !sourceIsValues {
-		for index, value := range source {
-			if index&1023 == 0 {
-				if err := ctx.Err(); err != nil {
-					return err
-				}
-			}
-			values[index] = value
-		}
-	}
-	return ctx.Err()
+	return false
 }
 
 func addEvidenceCellCoverage(
@@ -952,13 +761,6 @@ func validateSourceConfidence(confidence *SourceEvidenceConfidenceV1) error {
 }
 
 func validateSourceGeometry(geometry *SourceEvidenceGeometryV1) error {
-	return validateSourceGeometryContext(context.Background(), geometry)
-}
-
-func validateSourceGeometryContext(ctx context.Context, geometry *SourceEvidenceGeometryV1) error {
-	if err := ctx.Err(); err != nil {
-		return err
-	}
 	if geometry == nil {
 		return nil
 	}
@@ -975,22 +777,12 @@ func validateSourceGeometryContext(ctx context.Context, geometry *SourceEvidence
 		return errors.New("source evidence geometry has too many polygons")
 	}
 	for index, box := range geometry.Boxes {
-		if index&1023 == 0 {
-			if err := ctx.Err(); err != nil {
-				return err
-			}
-		}
 		if err := validateEvidenceBox(geometry, box); err != nil {
 			return fmt.Errorf("source evidence geometry box %d: %w", index, err)
 		}
 	}
 	remainingPoints := maxEvidenceGeometryPoints
 	for index, polygon := range geometry.Polygons {
-		if index&1023 == 0 {
-			if err := ctx.Err(); err != nil {
-				return err
-			}
-		}
 		if len(polygon.Points) < 3 {
 			return fmt.Errorf("source evidence geometry polygon %d has invalid point count", index)
 		}
@@ -998,12 +790,7 @@ func validateSourceGeometryContext(ctx context.Context, geometry *SourceEvidence
 			return errors.New("source evidence geometry has too many polygon points")
 		}
 		remainingPoints -= len(polygon.Points)
-		for pointIndex, point := range polygon.Points {
-			if pointIndex&1023 == 0 {
-				if err := ctx.Err(); err != nil {
-					return err
-				}
-			}
+		for _, point := range polygon.Points {
 			if point.X < 0 || point.Y < 0 || point.X > geometry.Width || point.Y > geometry.Height {
 				return fmt.Errorf("source evidence geometry polygon %d leaves its frame", index)
 			}
@@ -1714,14 +1501,9 @@ func validateNormalizedOmissionLimit(evidence NormalizedEvidenceV1) error {
 	return nil
 }
 
-func validateCompletenessOmissionsContext(ctx context.Context, source SourceEvidenceV1) error {
+func validateCompletenessOmissions(source SourceEvidenceV1) error {
 	omissionCount := len(source.Omissions)
-	for index, unit := range source.Units {
-		if index&1023 == 0 {
-			if err := ctx.Err(); err != nil {
-				return err
-			}
-		}
+	for _, unit := range source.Units {
 		omissionCount += len(unit.Omissions)
 	}
 	if source.Completeness == EvidenceComplete && omissionCount != 0 {
@@ -1733,40 +1515,24 @@ func validateCompletenessOmissionsContext(ctx context.Context, source SourceEvid
 	return nil
 }
 
-func validateSourceOmissionsContext(
-	ctx context.Context, omissions []SourceEvidenceOmissionV1, textMaps []evidenceTextMap,
-) error {
-	return validateOmissionsContext(ctx, omissions, textMaps, false)
+func validateSourceOmissions(omissions []SourceEvidenceOmissionV1, textMaps []evidenceTextMap) error {
+	return validateOmissions(omissions, textMaps, false)
 }
 
-func validateUnitOmissionsContext(
-	ctx context.Context, omissions []SourceEvidenceOmissionV1, unitOrder int, textMap evidenceTextMap,
-) error {
+func validateUnitOmissions(omissions []SourceEvidenceOmissionV1, unitOrder int, textMap evidenceTextMap) error {
 	for index := range omissions {
-		if index&1023 == 0 {
-			if err := ctx.Err(); err != nil {
-				return err
-			}
-		}
 		if omissions[index].UnitOrder != 0 && omissions[index].UnitOrder != unitOrder {
 			return fmt.Errorf("omission %d references a different unit", index)
 		}
 	}
-	return validateOmissionsContext(ctx, omissions, []evidenceTextMap{textMap}, true)
+	return validateOmissions(omissions, []evidenceTextMap{textMap}, true)
 }
 
-func validateOmissionsContext(
-	ctx context.Context, omissions []SourceEvidenceOmissionV1, textMaps []evidenceTextMap, unitLocal bool,
-) error {
+func validateOmissions(omissions []SourceEvidenceOmissionV1, textMaps []evidenceTextMap, unitLocal bool) error {
 	if len(omissions) > maxEvidenceOmissions {
 		return errors.New("too many omissions")
 	}
 	for index, omission := range omissions {
-		if index&1023 == 0 {
-			if err := ctx.Err(); err != nil {
-				return err
-			}
-		}
 		if !validEvidenceOmissionKind(omission.Kind) {
 			return fmt.Errorf("omission %d has invalid kind", index)
 		}
@@ -2034,47 +1800,22 @@ type evidenceTextMap struct {
 	sourceRunes     int
 }
 
-func collectSourceRangeOffsetsContext(
-	ctx context.Context, unit SourceEvidenceUnitV1, documentOffsets []int,
-) ([]int, error) {
-	if err := ctx.Err(); err != nil {
-		return nil, err
-	}
+func collectSourceRangeOffsets(unit SourceEvidenceUnitV1, documentOffsets []int) []int {
 	offsets := append([]int{0}, documentOffsets...)
-	for index, region := range unit.Regions {
-		if index&1023 == 0 {
-			if err := ctx.Err(); err != nil {
-				return nil, err
-			}
-		}
+	for _, region := range unit.Regions {
 		offsets = append(offsets, region.TextRange.Start, region.TextRange.End)
 	}
-	for tableIndex, table := range unit.Tables {
-		if tableIndex&1023 == 0 {
-			if err := ctx.Err(); err != nil {
-				return nil, err
-			}
-		}
-		for cellIndex, cell := range table.Cells {
-			if cellIndex&1023 == 0 {
-				if err := ctx.Err(); err != nil {
-					return nil, err
-				}
-			}
+	for _, table := range unit.Tables {
+		for _, cell := range table.Cells {
 			offsets = append(offsets, cell.TextRange.Start, cell.TextRange.End)
 		}
 	}
-	for index, omission := range unit.Omissions {
-		if index&1023 == 0 {
-			if err := ctx.Err(); err != nil {
-				return nil, err
-			}
-		}
+	for _, omission := range unit.Omissions {
 		if omission.Range != nil {
 			offsets = append(offsets, omission.Range.Start, omission.Range.End)
 		}
 	}
-	return offsets, nil
+	return offsets
 }
 
 func collectNormalizedRangeOffsets(unit NormalizedEvidenceUnitV1) []int {
@@ -2095,32 +1836,19 @@ func collectNormalizedRangeOffsets(unit NormalizedEvidenceUnitV1) []int {
 	return offsets
 }
 
-func partitionSourceOmissionRangeOffsetsContext(
-	ctx context.Context, omissions []SourceEvidenceOmissionV1, unitCount int,
-) ([][]int, error) {
+func partitionSourceOmissionRangeOffsets(omissions []SourceEvidenceOmissionV1, unitCount int) [][]int {
 	result := make([][]int, unitCount)
-	for index, omission := range omissions {
-		if index&1023 == 0 {
-			if err := ctx.Err(); err != nil {
-				return nil, err
-			}
-		}
+	for _, omission := range omissions {
 		if omission.Range != nil && omission.UnitOrder >= 0 && omission.UnitOrder < unitCount {
 			result[omission.UnitOrder] = append(
 				result[omission.UnitOrder], omission.Range.Start, omission.Range.End,
 			)
 		}
 	}
-	return result, nil
+	return result
 }
 
 func newEvidenceTextMap(source string, offsets []int, maxRunes int) (evidenceTextMap, error) {
-	return newEvidenceTextMapContext(context.Background(), source, offsets, maxRunes)
-}
-
-func newEvidenceTextMapContext(
-	ctx context.Context, source string, offsets []int, maxRunes int,
-) (evidenceTextMap, error) {
 	requested := make(map[int]struct{}, len(offsets))
 	for _, offset := range offsets {
 		if offset >= 0 {
@@ -2142,14 +1870,7 @@ func newEvidenceTextMapContext(
 	iterator.InitString(norm.NFC, source)
 	sourceOffset := 0
 	normalizedOffset := 0
-	segments := 0
 	for !iterator.Done() {
-		if segments&1023 == 0 {
-			if err := ctx.Err(); err != nil {
-				return evidenceTextMap{}, err
-			}
-		}
-		segments++
 		sourceStart := iterator.Pos()
 		segment := iterator.Next()
 		sourceEnd := iterator.Pos()
@@ -2268,31 +1989,13 @@ func validateSourceRegionID(
 }
 
 func validateEvidenceText(value, subject string) error {
-	return validateEvidenceTextContext(context.Background(), value, subject)
-}
-
-func validateEvidenceTextContext(ctx context.Context, value, subject string) error {
-	if len(value) > maxEvidenceTextBytes {
+	if !utf8.ValidString(value) || len(value) > maxEvidenceTextBytes {
 		return fmt.Errorf("%s must be bounded UTF-8", subject)
 	}
-	checks := 0
-	for index := 0; index < len(value); {
-		if checks&1023 == 0 {
-			if err := ctx.Err(); err != nil {
-				return err
-			}
-		}
-		checks++
-		character, size := utf8.DecodeRuneInString(value[index:])
-		if character == utf8.RuneError && size == 1 {
-			return fmt.Errorf("%s must be bounded UTF-8", subject)
-		}
-		if character == '\x00' {
-			return fmt.Errorf("%s contains NUL", subject)
-		}
-		index += size
+	if strings.ContainsRune(value, '\x00') {
+		return fmt.Errorf("%s contains NUL", subject)
 	}
-	return ctx.Err()
+	return nil
 }
 
 func validateEvidenceIdentifier(value, subject string) error {
@@ -2309,81 +2012,16 @@ func validateEvidenceIdentifier(value, subject string) error {
 }
 
 func validateBoundedUTF8(value string, maxBytes int, subject string) error {
-	return validateBoundedUTF8Context(context.Background(), value, maxBytes, subject)
-}
-
-func validateBoundedUTF8Context(ctx context.Context, value string, maxBytes int, subject string) error {
-	if value == "" || len(value) > maxBytes {
+	if value == "" || !utf8.ValidString(value) || len(value) > maxBytes {
 		return fmt.Errorf("%s must be non-empty bounded UTF-8", subject)
 	}
-	checks := 0
-	for index := 0; index < len(value); {
-		if checks&1023 == 0 {
-			if err := ctx.Err(); err != nil {
-				return err
-			}
-		}
-		checks++
-		_, size := utf8.DecodeRuneInString(value[index:])
-		if size == 1 && value[index] >= utf8.RuneSelf {
-			return fmt.Errorf("%s must be non-empty bounded UTF-8", subject)
-		}
-		index += size
-	}
-	return ctx.Err()
+	return nil
 }
 
 func canonicalEvidenceString(value string) string {
-	canonical, _ := canonicalEvidenceStringContext(context.Background(), value)
-	return canonical
-}
-
-func canonicalEvidenceStringContext(ctx context.Context, value string) (string, error) {
-	value, err := canonicalEvidenceLineEndingsContext(ctx, value)
-	if err != nil {
-		return "", err
-	}
-	var iterator norm.Iter
-	iterator.InitString(norm.NFC, value)
-	var canonical strings.Builder
-	for !iterator.Done() {
-		if err := ctx.Err(); err != nil {
-			return "", err
-		}
-		canonical.Write(iterator.Next())
-	}
-	if err := ctx.Err(); err != nil {
-		return "", err
-	}
-	return canonical.String(), nil
-}
-
-func canonicalEvidenceLineEndingsContext(ctx context.Context, value string) (string, error) {
-	var normalized strings.Builder
-	normalized.Grow(len(value))
-	iterations := 0
-	for index := 0; index < len(value); {
-		if iterations&1023 == 0 {
-			if err := ctx.Err(); err != nil {
-				return "", err
-			}
-		}
-		iterations++
-		if value[index] == '\r' {
-			normalized.WriteByte('\n')
-			index++
-			if index < len(value) && value[index] == '\n' {
-				index++
-			}
-			continue
-		}
-		normalized.WriteByte(value[index])
-		index++
-	}
-	if err := ctx.Err(); err != nil {
-		return "", err
-	}
-	return normalized.String(), nil
+	value = strings.ReplaceAll(value, "\r\n", "\n")
+	value = strings.ReplaceAll(value, "\r", "\n")
+	return norm.NFC.String(value)
 }
 
 func locatorKindForUnit(kind EvidenceUnitKind) EvidenceLocatorKind {
