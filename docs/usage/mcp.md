@@ -1,5 +1,5 @@
 ---
-last_edited: 2026-08-29
+last_edited: 2026-09-24
 title: Model Context Protocol
 description: Connect a local MCP client to Docbank's bounded, daemon-first document surface.
 ---
@@ -80,7 +80,7 @@ client registration, scopes, or token refresh. A client may connect locally or
 through a trusted tunnel, but it must be able to set the Authorization header;
 clients that require the MCP HTTP OAuth flow are unsupported.
 
-Both transports have the fixed 19-tool read catalog described below.
+Both transports have the fixed 21-tool read catalog described below.
 `--allow-processing` adds only guarded processing start.
 `--allow-package-writes` separately permits load-file preflight, import, and
 custodian changes. Enable either flag or both when starting the process.
@@ -152,6 +152,18 @@ links, is capped at 1 MiB.
 | `list_package_members` | Pages through a package's immutable document occurrences. |
 | `get_package_record` | Reads one immutable sender row by its package-scoped record key. |
 | `lookup_bates_label` | Finds bounded package-scoped matches for an exact received or assigned label. |
+| `open_report_artifact` | Opens one retained CSV or bundle by its 48-character report ID. The daemon checks the current owner; the returned signed handle expires after 15 minutes. Each open makes a new private handle and is non-idempotent. |
+| `download_report_artifact` | Reads up to 256 KiB from a signed handle at an explicit offset, encoded as base64. Each call rechecks the owner, artifact size, and SHA-256 against the daemon before returning any bytes. `close=true` releases the handle, so the tool is non-idempotent. |
+
+Report artifacts are limited to 512 MiB, with at most 16 open handles and
+512 MiB of retained private spool storage per MCP server. Companion bundle
+verification is serialized across the process, so another CSV or bundle open
+may wait. A handle is published only after the complete artifact matches the
+authenticated daemon's size and SHA-256 response. Bundles pass independent
+packet verification; CSV also has to match the verified companion packet's
+`hits.csv` before a handle is issued.
+A changed owner denies later chunks. Handle expiry, explicit close, and server
+shutdown release the temporary storage.
 
 `list_documents` uses live keyset pagination, not a snapshot. A mutation between
 pages can change later membership or order. Each opaque cursor is at most 32 KiB of ASCII, expires after 15 minutes, and
@@ -201,6 +213,10 @@ capped at 1 KiB and a stable code:
 - `invalid_document_cursor`
 - `invalid_rendition_window`
 - `invalid_rendition_encoding`
+- `report_unavailable`
+- `report_capacity`
+- `visibility_changed`
+- `access_denied`
 
 Invalid tool arguments use JSON-RPC `-32602`. Unexpected failures use a
 sanitized JSON-RPC internal error. Stderr records the operation and a fixed
