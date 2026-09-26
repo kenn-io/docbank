@@ -6674,6 +6674,100 @@ func (c *Client) CancelPageRenderJob(ctx context.Context, options *CancelPageRen
 	return responseParser(ctx, resp)
 }
 
+// CreatePassage Create an exact retained Markdown passage reference
+func (c *Client) CreatePassage(ctx context.Context, options *CreatePassageRequestOptions, reqEditors ...runtime.RequestEditorFn) (*CreatePassageResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/passages/create",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*CreatePassageResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(CreatePassageResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "CreatePassageResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[CreatePassageErrorResponse](resp, "CreatePassageErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/passages/create")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
+// ResolvePassage Resolve one exact retained Markdown passage
+func (c *Client) ResolvePassage(ctx context.Context, options *ResolvePassageRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ResolvePassageResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/passages/resolve",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*ResolvePassageResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(ResolvePassageResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "ResolvePassageResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[ResolvePassageErrorResponse](resp, "ResolvePassageErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/passages/resolve")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
 // ResolvePath Resolve an absolute virtual path to its node
 func (c *Client) ResolvePath(ctx context.Context, options *ResolvePathRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ResolvePathResponse, error) {
 	var err error
@@ -15025,6 +15119,62 @@ func (o *CancelPageRenderJobRequestOptions) GetHeader() (map[string]string, erro
 	return nil, nil
 }
 
+// CreatePassageRequestOptions is the options needed to make a request to CreatePassage.
+type CreatePassageRequestOptions struct {
+	Body *CreatePassageBody
+}
+
+// GetPathParams returns the path params as a map.
+func (o *CreatePassageRequestOptions) GetPathParams() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetQuery returns the query params as a map.
+func (o *CreatePassageRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *CreatePassageRequestOptions) GetBody() any {
+	if o.Body == nil {
+		return nil
+	}
+	return o.Body
+}
+
+// GetHeader returns the headers as a map.
+func (o *CreatePassageRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
+// ResolvePassageRequestOptions is the options needed to make a request to ResolvePassage.
+type ResolvePassageRequestOptions struct {
+	Body *ResolvePassageBody
+}
+
+// GetPathParams returns the path params as a map.
+func (o *ResolvePassageRequestOptions) GetPathParams() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetQuery returns the query params as a map.
+func (o *ResolvePassageRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *ResolvePassageRequestOptions) GetBody() any {
+	if o.Body == nil {
+		return nil
+	}
+	return o.Body
+}
+
+// GetHeader returns the headers as a map.
+func (o *ResolvePassageRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
 // ResolvePathRequestOptions is the options needed to make a request to ResolvePath.
 type ResolvePathRequestOptions struct {
 	Query *ResolvePathQuery
@@ -18249,6 +18399,10 @@ type GetPageRenderJobBody = PageSelectionRequest
 
 type CancelPageRenderJobBody = PageSelectionRequest
 
+type CreatePassageBody = PassageCreateRequest
+
+type ResolvePassageBody = PassageResolveRequest
+
 type MkdirPathBody = MkdirPathRequest
 
 type MovePathBody = MovePathRequest
@@ -19238,6 +19392,14 @@ type CancelPageRenderJobResponse = store.PageRenderJob
 
 type CancelPageRenderJobErrorResponse = Error
 
+type CreatePassageResponse = api.PassageCreation
+
+type CreatePassageErrorResponse = Error
+
+type ResolvePassageResponse = api.PassageResolution
+
+type ResolvePassageErrorResponse = Error
+
 type ResolvePathResponse = api.Node
 
 type ResolvePathErrorResponse = Error
@@ -19981,6 +20143,8 @@ type ErrorPosition = api.ErrorPosition
 
 type EvidenceLexicalPolicyV1 = document.EvidenceLexicalPolicyV1
 
+type EvidenceLocatorV1 = document.EvidenceLocatorV1
+
 type EvidencePolicyIdentity = document.EvidencePolicyIdentity
 
 type ExportJob = bundle.ExportJob
@@ -20253,6 +20417,16 @@ type PageRuntimeIdentity = document.PageRuntimeIdentity
 type PageSelectionRequest = api.PageSelectionRequest
 
 type PageSource = document.PageSource
+
+type PassageCreateRequest = api.PassageCreateRequest
+
+type PassageCreation = api.PassageCreation
+
+type PassageRefV1 = document.PassageRefV1
+
+type PassageResolution = api.PassageResolution
+
+type PassageResolveRequest = api.PassageResolveRequest
 
 type PendingFormatV1 = document.PendingFormatV1
 

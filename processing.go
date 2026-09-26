@@ -15,7 +15,29 @@ var (
 	ErrProcessingConsentRequired    = internalprocessing.ErrConsentRequired
 	ErrRenditionFailed              = internalprocessing.ErrRenditionFailed
 	ErrRenditionOperatorRequired    = internalprocessing.ErrRenditionOperatorRequired
+	ErrPassageInvalid               = internalprocessing.ErrPassageInvalid
+	ErrPassageUnavailable           = internalprocessing.ErrPassageUnavailable
+	ErrPassageUnauthorized          = internalprocessing.ErrPassageUnauthorized
+	ErrPassageCorrupt               = internalprocessing.ErrPassageCorrupt
 )
+
+// CreatePassage mints a stable reference only from the selected retained
+// rendition and verified UTF-8 byte range. It never runs a provider.
+func (v *Vault) CreatePassage(ctx context.Context, request PassageCreateRequest) (PassageCreation, error) {
+	if err := v.begin(); err != nil {
+		return PassageCreation{}, err
+	}
+	defer v.lifecycle.RUnlock()
+	created, err := v.processing.CreatePassage(ctx, internalprocessing.PassageCreateRequest{
+		NodeID: request.NodeID, ContentVersionID: request.ContentVersionID,
+		RenditionBuildID: request.RenditionBuildID, AttachmentID: request.AttachmentID,
+		ByteStart: request.ByteStart, ByteEnd: request.ByteEnd,
+	})
+	if err != nil {
+		return PassageCreation{}, err
+	}
+	return PassageCreation{Ref: created.Ref, PassageID: created.PassageID, Text: created.Text}, nil
+}
 
 func (v *Vault) PlanProcessing(ctx context.Context, request ProcessingPlanRequest) (ProcessingPlan, error) {
 	if err := v.begin(); err != nil {
