@@ -89,7 +89,7 @@ func TestMCPCommandExposesTransportAndCapabilityFlags(t *testing.T) {
 	require.Equal(t, "mcp", command.Name())
 	var names []string
 	command.Flags().VisitAll(func(flag *pflag.Flag) { names = append(names, flag.Name) })
-	assert.ElementsMatch(t, []string{"allow-processing", "allow-package-writes", "listen", "transport"}, names)
+	assert.ElementsMatch(t, []string{"allow-processing", "allow-package-writes", "allow-export-writes", "allow-report-writes", "listen", "transport"}, names)
 	for _, forbidden := range []string{"token", "api-key", "daemon", "url", "remote"} {
 		assert.Nil(t, command.Flags().Lookup(forbidden))
 	}
@@ -105,12 +105,15 @@ func TestMCPCommandWriteFlagsSelectTools(t *testing.T) {
 		os.Exit(0)
 	}
 	for _, test := range []struct {
-		args                 string
-		processing, packages bool
+		args                                   string
+		processing, packages, exports, reports bool
 	}{
 		{args: "mcp"},
 		{args: "mcp --allow-processing", processing: true},
 		{args: "mcp --allow-package-writes", packages: true},
+		{args: "mcp --allow-export-writes", exports: true},
+		{args: "mcp --allow-report-writes", reports: true},
+		{args: "mcp --allow-export-writes --allow-report-writes", exports: true, reports: true},
 		{args: "mcp --allow-processing --allow-package-writes", processing: true, packages: true},
 	} {
 		t.Run(test.args, func(t *testing.T) {
@@ -144,7 +147,16 @@ func TestMCPCommandWriteFlagsSelectTools(t *testing.T) {
 				names[tool.Name] = true
 			}
 			assert.True(t, names["get_package_record"], "reads remain available with every flag combination")
+			assert.True(t, names["preview_export_plan"])
+			assert.True(t, names["get_export_job"])
+			assert.True(t, names["get_report_summary"])
+			assert.True(t, names["get_report_dates"])
+			assert.Equal(t, test.reports, names["create_report"])
+			assert.Equal(t, test.reports, names["revise_report"])
 			assert.Equal(t, test.processing, names["start_processing"])
+			for _, name := range []string{"create_export_source", "create_export_plan", "start_export_job", "cancel_export_job"} {
+				assert.Equal(t, test.exports, names[name], name)
+			}
 			for _, name := range []string{"preflight_load_file_package", "start_package_import", "resolve_package_custodian", "assign_package_custodian"} {
 				assert.Equal(t, test.packages, names[name], name)
 			}
@@ -152,6 +164,50 @@ func TestMCPCommandWriteFlagsSelectTools(t *testing.T) {
 			require.NoError(t, command.Wait())
 		})
 	}
+}
+
+func TestMCPCommandSessionFileNarrowsAdvertisedTools(t *testing.T) {
+	const childVariable = "DOCBANK_TEST_MCP_SCOPED_CATALOG"
+	if os.Getenv(childVariable) != "" {
+		rootCmd.SetArgs([]string{"mcp", "--allow-export-writes", "--allow-report-writes"})
+		if err := rootCmd.Execute(); err != nil {
+			os.Exit(1)
+		}
+		os.Exit(0)
+	}
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+	defer cancel()
+	executable, err := os.Executable()
+	require.NoError(t, err)
+	command := exec.CommandContext(ctx, executable, "-test.run=^TestMCPCommandSessionFileNarrowsAdvertisedTools$")
+	command.Env = append(os.Environ(), childVariable+"=1", "DOCBANK_HOME="+t.TempDir(),
+		"DOCBANK_AGENT_SESSION_FILE=/synthetic/private-session.json")
+	input, err := command.StdinPipe()
+	require.NoError(t, err)
+	defer func() { _ = input.Close() }()
+	output, err := command.StdoutPipe()
+	require.NoError(t, err)
+	require.NoError(t, command.Start())
+	t.Cleanup(func() { _ = command.Process.Kill() })
+	_, err = io.WriteString(input, `{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{"_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28","io.modelcontextprotocol/clientCapabilities":{}}}}`+"\n")
+	require.NoError(t, err)
+	response, err := bufio.NewReader(output).ReadBytes('\n')
+	require.NoError(t, err)
+	var catalog struct {
+		Result struct {
+			Tools []struct {
+				Name string `json:"name"`
+			} `json:"tools"`
+		} `json:"result"`
+	}
+	require.NoError(t, json.Unmarshal(response, &catalog))
+	names := make([]string, 0, len(catalog.Result.Tools))
+	for _, tool := range catalog.Result.Tools {
+		names = append(names, tool.Name)
+	}
+	assert.ElementsMatch(t, []string{"get_agent_capabilities", "list_tags", "list_processing_profiles", "get_format_coverage"}, names)
+	require.NoError(t, input.Close())
+	require.NoError(t, command.Wait())
 }
 
 func TestMCPCommandValidatesTransportSpecificOptionsBeforeStarting(t *testing.T) {

@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"strings"
@@ -133,6 +134,36 @@ func (s *Store) TagByName(ctx context.Context, name string) (Tag, error) {
 		return Tag{}, fmt.Errorf("tag %q: %w", name, err)
 	}
 	return tag, nil
+}
+
+// CountTagAssignmentsForCurrentVersions counts tagged live files whose current
+// content version is in the caller's exact bounded source fence.
+func (s *Store) CountTagAssignmentsForCurrentVersions(
+	ctx context.Context, tagID string, sourceIDs []string,
+) (int, error) {
+	if len(sourceIDs) > MaxSearchSourceFenceIDs {
+		return 0, fmt.Errorf("%w: source scope exceeds %d IDs", ErrInvalidProcessingSourceFence, MaxSearchSourceFenceIDs)
+	}
+	for _, id := range sourceIDs {
+		if err := validateUUIDv4(id); err != nil {
+			return 0, fmt.Errorf("%w: invalid source ID", ErrInvalidProcessingSourceFence)
+		}
+	}
+	encoded, err := json.Marshal(sourceIDs)
+	if err != nil {
+		return 0, fmt.Errorf("encoding tag source fence: %w", err)
+	}
+	var count int
+	err = s.db.QueryRowContext(ctx, `
+		SELECT COUNT(DISTINCT n.id)
+		FROM json_each(?) source
+		JOIN nodes n ON n.current_version_id = source.value
+		JOIN node_tags nt ON nt.node_id = n.id AND nt.tag_id = ?
+		WHERE n.kind = 'file' AND n.trashed_at IS NULL`, string(encoded), tagID).Scan(&count)
+	if err != nil {
+		return 0, fmt.Errorf("counting scoped assignments for tag %s: %w", tagID, err)
+	}
+	return count, nil
 }
 
 // Tags lists one name-sorted page and the total number of definitions.
