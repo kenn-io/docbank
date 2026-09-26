@@ -6,12 +6,17 @@ import (
 	"os"
 	"path/filepath"
 
+	"go.kenn.io/docbank/internal/winsecurity"
 	"golang.org/x/sys/windows"
 )
 
 func openWatchLeaf(root *os.Root, name string) (*os.File, error) {
 	path := filepath.Join(root.Name(), name)
-	path16, err := windows.UTF16PtrFromString(path)
+	extended, err := winsecurity.ExtendedLengthPath(path)
+	if err != nil {
+		return nil, &os.PathError{Op: "open", Path: path, Err: err}
+	}
+	path16, err := windows.UTF16PtrFromString(extended)
 	if err != nil {
 		return nil, &os.PathError{Op: "open", Path: path, Err: err}
 	}
