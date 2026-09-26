@@ -29,14 +29,14 @@ func TestDefaultToolCatalogIsFixedBoundedAndReadOnly(t *testing.T) {
 		"get_package_preflight", "list_package_preflight_diagnostics",
 		"list_package_custodians", "find_people",
 		"list_packages", "get_package", "list_package_members", "get_package_record",
-		"lookup_bates_label",
+		"lookup_bates_label", "preview_export_plan", "get_export_job", "open_export_archive", "download_export_archive",
 	}
 	require.Len(t, tools, len(wantNames))
 	for index, tool := range tools {
 		assert.Equal(t, wantNames[index], tool.Name)
 		require.NotNil(t, tool.Annotations)
 		assert.True(t, tool.Annotations.ReadOnlyHint)
-		assert.True(t, tool.Annotations.IdempotentHint)
+		assert.Equal(t, tool.Name != "open_export_archive" && tool.Name != "download_export_archive", tool.Annotations.IdempotentHint)
 		assert.Equal(t, new(false), tool.Annotations.DestructiveHint)
 		assert.Equal(t, new(false), tool.Annotations.OpenWorldHint)
 		assertSchemaContract(t, tool.InputSchema, true)
