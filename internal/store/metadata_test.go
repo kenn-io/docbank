@@ -1310,13 +1310,26 @@ func TestMetadataUniqueBlobBytes(t *testing.T) {
 			require.Equal(t, test.want, got)
 		})
 	}
-	t.Run("compatible nested value depth", func(t *testing.T) {
-		const depth = 257
-		nested := strings.Repeat("[", depth) + "0" + strings.Repeat("]", depth)
-		got, err := MetadataUniqueBlobBytes(strings.NewReader(header + `{"type":"audit_record","digest":"x","record":` + nested + "}\n"))
-		require.NoError(t, err)
-		require.Zero(t, got)
-	})
+	for _, test := range []struct {
+		name        string
+		nestedDepth int
+		wantError   string
+	}{
+		{name: "total JSON depth 10000", nestedDepth: metadataWalkerMaxDepth - 1},
+		{name: "total JSON depth 10001", nestedDepth: metadataWalkerMaxDepth, wantError: "nesting exceeds parser depth"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			nested := strings.Repeat("[", test.nestedDepth) + "0" + strings.Repeat("]", test.nestedDepth)
+			got, err := MetadataUniqueBlobBytes(strings.NewReader(header + `{"type":"audit_record","digest":"x","record":` + nested + "}\n"))
+			if test.wantError != "" {
+				require.ErrorContains(t, err, test.wantError)
+				assert.Zero(t, got)
+				return
+			}
+			require.NoError(t, err)
+			require.Zero(t, got)
+		})
+	}
 	testMetadataUniqueBlobBytesCanonicalLargeExtraction(t)
 }
 
