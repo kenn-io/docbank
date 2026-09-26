@@ -176,6 +176,14 @@ Key assumptions reviewers MUST account for:
    malformed success as an unknown outcome; they do not re-derive the
    store's decisions from the response.
 
+19. JSON OUTPUT BOUNDARIES: reviewers must inspect the encoder used at the
+    output boundary. Go `encoding/json/v2` emits nil slices as `[]` and nil
+    maps as `{}` unless the active path explicitly enables
+    `FormatNilSliceAsNull` or `FormatNilMapAsNull`. Check legacy
+    `encoding/json`, custom marshalers, and hand-written JSON separately. Do
+    not require an allocated empty collection solely to change JSON v2 output
+    when the active boundary uses the default options.
+
 Do NOT flag issues that only apply to public-facing, multi-tenant, or
 internet-exposed services. Focus on bugs, logic errors, data corruption
 risks, and code quality issues.
