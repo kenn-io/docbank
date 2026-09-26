@@ -311,6 +311,93 @@ func (c *Client) CreateWebSession(ctx context.Context, reqEditors ...runtime.Req
 	return responseParser(ctx, resp)
 }
 
+// IssueAgentSession Issue a bounded read-only agent session
+func (c *Client) IssueAgentSession(ctx context.Context, options *IssueAgentSessionRequestOptions, reqEditors ...runtime.RequestEditorFn) (*IssueAgentSessionResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/agent-sessions",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*IssueAgentSessionResponse, error) {
+		switch resp.StatusCode {
+
+		case 201:
+
+			target := new(IssueAgentSessionResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "IssueAgentSessionResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[IssueAgentSessionErrorResponse](resp, "IssueAgentSessionErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/agent-sessions")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 201)
+	}
+	return responseParser(ctx, resp)
+}
+
+// RevokeAgentSession Revoke one agent session
+func (c *Client) RevokeAgentSession(ctx context.Context, options *RevokeAgentSessionRequestOptions, reqEditors ...runtime.RequestEditorFn) (*struct{}, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/agent-sessions/{id}",
+		Method:     "DELETE",
+		Options:    options,
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*struct{}, error) {
+		switch resp.StatusCode {
+
+		case 204:
+
+			target := new(struct{})
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[RevokeAgentSessionErrorResponse](resp, "RevokeAgentSessionErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/agent-sessions/{id}")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 204)
+	}
+	return responseParser(ctx, resp)
+}
+
 // EnableAudit Permanently enable the exact reviewed audit scope
 func (c *Client) EnableAudit(ctx context.Context, options *EnableAuditRequestOptions, reqEditors ...runtime.RequestEditorFn) (*EnableAuditResponse, error) {
 	var err error
@@ -1113,6 +1200,51 @@ func (c *Client) PreviewBatchTags(ctx context.Context, options *PreviewBatchTags
 	return responseParser(ctx, resp)
 }
 
+// ReadCapabilities Negotiate remote daemon capabilities
+func (c *Client) ReadCapabilities(ctx context.Context, reqEditors ...runtime.RequestEditorFn) (*ReadCapabilitiesResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/capabilities",
+		Method:     "GET",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*ReadCapabilitiesResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(ReadCapabilitiesResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "ReadCapabilitiesResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[ReadCapabilitiesErrorResponse](resp, "ReadCapabilitiesErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/capabilities")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
 // ListCollections List document-bearing ingest runs, newest first
 func (c *Client) ListCollections(ctx context.Context, options *ListCollectionsRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ListCollectionsResponse, error) {
 	var err error
@@ -1694,6 +1826,53 @@ func (c *Client) ResolveDocumentSummaries(ctx context.Context, options *ResolveD
 	}
 
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/documents/resolve")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
+// ListScopedDocuments List source-fenced live documents with authenticated keyset pagination
+func (c *Client) ListScopedDocuments(ctx context.Context, options *ListScopedDocumentsRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ListScopedDocumentsResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/documents/scoped",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*ListScopedDocumentsResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(ListScopedDocumentsResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "ListScopedDocumentsResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[ListScopedDocumentsErrorResponse](resp, "ListScopedDocumentsErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/documents/scoped")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
@@ -10792,6 +10971,65 @@ func (o *PrepareWebDownloadRequestOptions) GetHeader() (map[string]string, error
 	return nil, nil
 }
 
+// IssueAgentSessionRequestOptions is the options needed to make a request to IssueAgentSession.
+type IssueAgentSessionRequestOptions struct {
+	Body *IssueAgentSessionBody
+}
+
+// GetPathParams returns the path params as a map.
+func (o *IssueAgentSessionRequestOptions) GetPathParams() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetQuery returns the query params as a map.
+func (o *IssueAgentSessionRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *IssueAgentSessionRequestOptions) GetBody() any {
+	if o.Body == nil {
+		return nil
+	}
+	return o.Body
+}
+
+// GetHeader returns the headers as a map.
+func (o *IssueAgentSessionRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
+// RevokeAgentSessionRequestOptions is the options needed to make a request to RevokeAgentSession.
+type RevokeAgentSessionRequestOptions struct {
+	PathParams *RevokeAgentSessionPath
+}
+
+// GetPathParams returns the path params as a map.
+func (o *RevokeAgentSessionRequestOptions) GetPathParams() (map[string]any, error) {
+	encoded, err := json.Marshal(o.PathParams, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetQuery returns the query params as a map.
+func (o *RevokeAgentSessionRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *RevokeAgentSessionRequestOptions) GetBody() any {
+	return nil
+}
+
+// GetHeader returns the headers as a map.
+func (o *RevokeAgentSessionRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
 // EnableAuditRequestOptions is the options needed to make a request to EnableAudit.
 type EnableAuditRequestOptions struct {
 	Body *EnableAuditBody
@@ -11672,6 +11910,34 @@ func (o *ResolveDocumentSummariesRequestOptions) GetBody() any {
 
 // GetHeader returns the headers as a map.
 func (o *ResolveDocumentSummariesRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
+// ListScopedDocumentsRequestOptions is the options needed to make a request to ListScopedDocuments.
+type ListScopedDocumentsRequestOptions struct {
+	Body *ListScopedDocumentsBody
+}
+
+// GetPathParams returns the path params as a map.
+func (o *ListScopedDocumentsRequestOptions) GetPathParams() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetQuery returns the query params as a map.
+func (o *ListScopedDocumentsRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *ListScopedDocumentsRequestOptions) GetBody() any {
+	if o.Body == nil {
+		return nil
+	}
+	return o.Body
+}
+
+// GetHeader returns the headers as a map.
+func (o *ListScopedDocumentsRequestOptions) GetHeader() (map[string]string, error) {
 	return nil, nil
 }
 
@@ -17686,6 +17952,10 @@ type UploadFileHeaders struct {
 	XDocbankBlobSize int64 `json:"X-Docbank-Blob-Size"`
 }
 
+type RevokeAgentSessionPath struct {
+	ID string `json:"id"`
+}
+
 type AuditScopeHistoryPath struct {
 	ScopeID string `json:"scope_id"`
 }
@@ -18118,6 +18388,8 @@ type PrepareWebDownloadBody struct {
 	VersionID          string  `json:"version_id"`
 }
 
+type IssueAgentSessionBody = AgentSessionRequest
+
 type EnableAuditBody = EnableAuditRequest
 
 type PreviewAuditEnrollmentBody = PreviewAuditEnrollmentRequest
@@ -18151,6 +18423,8 @@ type RunDerivativePurgeBody = DerivativePurgeJobRequest
 type PlanDerivativePurgeBody = DerivativePurgePlanRequest
 
 type ResolveDocumentSummariesBody = DocumentSummaryResolveRequest
+
+type ListScopedDocumentsBody = ScopedDocumentQuery
 
 type RequestEmailDocumentProcessingBody = EmailDocumentProcessingRequest
 
@@ -18640,6 +18914,12 @@ type CreateWebSessionResponse struct {
 	URL          string `json:"url"`
 }
 
+type IssueAgentSessionResponse = AgentSessionResponse
+
+type IssueAgentSessionErrorResponse = Error
+
+type RevokeAgentSessionErrorResponse = Error
+
 type EnableAuditResponse = api.AuditStatus
 
 type EnableAuditErrorResponse = Error
@@ -18708,6 +18988,10 @@ type PreviewBatchTagsResponse = api.BatchTagPreview
 
 type PreviewBatchTagsErrorResponse = Error
 
+type ReadCapabilitiesResponse = api.Capabilities
+
+type ReadCapabilitiesErrorResponse = Error
+
 type ListCollectionsResponse = api.CollectionPage
 
 type ListCollectionsErrorResponse = Error
@@ -18755,6 +19039,10 @@ type ListDocumentsErrorResponse = Error
 type ResolveDocumentSummariesResponse = api.DocumentSummaryResolveResponse
 
 type ResolveDocumentSummariesErrorResponse = Error
+
+type ListScopedDocumentsResponse = api.DocumentPage
+
+type ListScopedDocumentsErrorResponse = Error
 
 type ListDuplicateContentResponse = api.DuplicatePage
 
@@ -19582,6 +19870,22 @@ type HealthResponse struct {
 	Version       string `json:"version"`
 }
 
+type AgentSessionRequest struct {
+	// Schema A URL to the JSON Schema for this object.
+	Schema     *string  `json:"$schema,omitempty"`
+	Operations []string `json:"operations"`
+	SourceIds  []string `json:"source_ids"`
+	TTLSeconds int64    `json:"ttl_seconds"`
+}
+
+type AgentSessionResponse struct {
+	// Schema A URL to the JSON Schema for this object.
+	Schema    *string   `json:"$schema,omitempty"`
+	ExpiresAt time.Time `json:"expires_at"`
+	ID        string    `json:"id"`
+	Token     string    `json:"token"`
+}
+
 type AssignTagPathRequest struct {
 	// Schema A URL to the JSON Schema for this object.
 	Schema *string `json:"$schema,omitempty"`
@@ -19712,6 +20016,8 @@ type CancelExportJobRequest struct {
 	// Schema A URL to the JSON Schema for this object.
 	Schema *string `json:"$schema,omitempty"`
 }
+
+type Capabilities = api.Capabilities
 
 type CapabilityStateV1 = document.CapabilityStateV1
 
@@ -20563,6 +20869,8 @@ type SavedQueryV1Schema struct {
 	Text    *string                   `json:"text,omitempty"`
 	V       *SavedQueryV1SchemaV      `json:"v,omitempty"`
 }
+
+type ScopedDocumentQuery = api.ScopedDocumentQuery
 
 type SealExportSourceRequest struct {
 	// Schema A URL to the JSON Schema for this object.
