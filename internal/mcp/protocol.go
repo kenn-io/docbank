@@ -26,9 +26,10 @@ const (
 
 // Server owns the Docbank ingress gate and the SDK server behind it.
 type Server struct {
-	sdk    *sdkmcp.Server
-	daemon *daemonLease
-	plans  *processingPlanRegistry
+	sdk     *sdkmcp.Server
+	daemon  *daemonLease
+	plans   *processingPlanRegistry
+	reports *reportHandleSigner
 }
 
 // ServerOptions fixes process-wide capabilities before the MCP server starts.
@@ -36,6 +37,7 @@ type Server struct {
 type ServerOptions struct {
 	AllowProcessing    bool
 	AllowPackageWrites bool
+	AllowReportWrites  bool
 	Logger             *slog.Logger
 }
 
@@ -45,7 +47,7 @@ func NewServer() *Server {
 }
 
 // NewServerWithOptions creates an exact-version server with a process-fixed
-// catalog. Processing and package writes each require an explicit opt-in.
+// catalog. Processing, package, and report writes each require an explicit opt-in.
 func NewServerWithOptions(options ServerOptions) *Server {
 	return newServerWithOptions(&sdkmcp.Implementation{
 		Name:        "docbank",
@@ -78,16 +80,16 @@ func newServerWithOptionsAndDaemon(
 			Resources: &sdkmcp.ResourceCapabilities{},
 			Tools:     &sdkmcp.ToolCapabilities{},
 		},
-		Instructions: catalogInstructions(options.AllowProcessing, options.AllowPackageWrites),
+		Instructions: catalogInstructions(options.AllowProcessing, options.AllowPackageWrites, options.AllowReportWrites),
 	})
 	plans := newProcessingPlanRegistry()
-	registerToolCatalog(sdk, options.AllowProcessing, options.AllowPackageWrites, daemon, plans, logger)
+	reports := registerToolCatalog(sdk, options.AllowProcessing, options.AllowPackageWrites, options.AllowReportWrites, daemon, plans, logger)
 	registerResourceSurface(sdk, daemon, logger)
 	sdk.AddReceivingMiddleware(normalizeDiscovery)
 	sdk.AddReceivingMiddleware(normalizeToolCatalog)
 	sdk.AddReceivingMiddleware(normalizeResourceCatalogs)
 	sdk.AddReceivingMiddleware(enforcePrivateResultCap(implementation, logger))
-	return &Server{sdk: sdk, daemon: daemon, plans: plans}
+	return &Server{sdk: sdk, daemon: daemon, plans: plans, reports: reports}
 }
 
 func enforcePrivateResultCap(implementation *sdkmcp.Implementation, logger *slog.Logger) sdkmcp.Middleware {

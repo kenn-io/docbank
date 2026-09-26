@@ -20,6 +20,7 @@ var (
 	mcpListen             string
 	mcpAllowProcessing    bool
 	mcpAllowPackageWrites bool
+	mcpAllowReportWrites  bool
 )
 
 var mcpCmd = &cobra.Command{
@@ -46,7 +47,8 @@ func runMCP(cmd *cobra.Command) (retErr error) {
 	defer cancel()
 
 	server := docmcp.NewServerWithOptions(docmcp.ServerOptions{
-		AllowProcessing: mcpAllowProcessing, AllowPackageWrites: mcpAllowPackageWrites, Logger: logger,
+		AllowProcessing: mcpAllowProcessing, AllowPackageWrites: mcpAllowPackageWrites,
+		AllowReportWrites: mcpAllowReportWrites, Logger: logger,
 	})
 	switch mcpTransport {
 	case "stdio":
@@ -136,5 +138,7 @@ func init() {
 		"expose guarded start_processing (still requires prior operator consent)")
 	mcpCmd.Flags().BoolVar(&mcpAllowPackageWrites, "allow-package-writes", false,
 		"allow load-file preflight, import, and package custodian writes")
+	mcpCmd.Flags().BoolVar(&mcpAllowReportWrites, "allow-report-writes", false,
+		"allow creating frozen reports and revising reviewed dates")
 	rootCmd.AddCommand(mcpCmd)
 }
