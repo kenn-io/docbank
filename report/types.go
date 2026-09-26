@@ -1,7 +1,14 @@
 // Package report defines portable search-term report evidence and calculations.
 package report
 
-import "time"
+import (
+	"errors"
+	"time"
+)
+
+// ErrVisibilityChanged means source authority was withdrawn after observation.
+// Frozen counts must be withheld rather than recalculated.
+var ErrVisibilityChanged = errors.New("report source visibility changed")
 
 // StateComplete marks evidence that covers the captured document fully.
 const StateComplete = "complete"
@@ -44,25 +51,26 @@ type DateChoice struct {
 	ReviewedRole     string   `json:"reviewed_role,omitempty"`
 }
 
-// Request is the durable v1 search-export request shared by recent export history, run
-// receipts, and offline bundles. Version must be 1. Exactly one scope is required:
-// AllDocuments or a nonempty CollectionIDs list. Timezone is an explicit IANA
+// Request is the durable search-export request shared by recent export history, run
+// receipts, and offline bundles. Version 1 accepts all documents or collections;
+// version 2 also accepts exact selected document identities. Timezone is an explicit IANA
 // timezone; SourceTimezone and NumericDateOrder (MDY or DMY) resolve missing source
 // timezone and numeric-date ambiguity. CoverageMode defaults to strict, while
 // available_only permits incomplete evidence. Terms retain caller order and fixed
 // date cutoffs. DateChoices bind reviewed decisions to the captured evidence.
 // NormalizeRequest validates this contract without consulting a vault.
 type Request struct {
-	Version          int          `json:"version"`
-	Profile          string       `json:"profile,omitempty"`
-	AllDocuments     bool         `json:"all_documents"`
-	CollectionIDs    []string     `json:"collection_ids,omitempty"`
-	Timezone         string       `json:"timezone"`
-	SourceTimezone   string       `json:"source_timezone,omitempty"`
-	NumericDateOrder string       `json:"numeric_date_order,omitempty"`
-	CoverageMode     string       `json:"coverage_mode"`
-	Terms            []Term       `json:"terms"`
-	DateChoices      []DateChoice `json:"date_choices,omitempty"`
+	Version           int          `json:"version"`
+	Profile           string       `json:"profile,omitempty"`
+	AllDocuments      bool         `json:"all_documents"`
+	CollectionIDs     []string     `json:"collection_ids,omitempty"`
+	SelectedDocuments []Identity   `json:"selected_documents,omitempty"`
+	Timezone          string       `json:"timezone"`
+	SourceTimezone    string       `json:"source_timezone,omitempty"`
+	NumericDateOrder  string       `json:"numeric_date_order,omitempty"`
+	CoverageMode      string       `json:"coverage_mode"`
+	Terms             []Term       `json:"terms"`
+	DateChoices       []DateChoice `json:"date_choices,omitempty"`
 }
 
 // Locator identifies retained date evidence. Text offsets are zero-based bytes
