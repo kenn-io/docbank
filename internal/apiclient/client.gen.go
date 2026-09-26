@@ -1113,6 +1113,51 @@ func (c *Client) PreviewBatchTags(ctx context.Context, options *PreviewBatchTags
 	return responseParser(ctx, resp)
 }
 
+// ReadCapabilities Negotiate remote daemon capabilities
+func (c *Client) ReadCapabilities(ctx context.Context, reqEditors ...runtime.RequestEditorFn) (*ReadCapabilitiesResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/capabilities",
+		Method:     "GET",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*ReadCapabilitiesResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(ReadCapabilitiesResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "ReadCapabilitiesResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[ReadCapabilitiesErrorResponse](resp, "ReadCapabilitiesErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/capabilities")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
 // ListCollections List document-bearing ingest runs, newest first
 func (c *Client) ListCollections(ctx context.Context, options *ListCollectionsRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ListCollectionsResponse, error) {
 	var err error
@@ -18708,6 +18753,10 @@ type PreviewBatchTagsResponse = api.BatchTagPreview
 
 type PreviewBatchTagsErrorResponse = Error
 
+type ReadCapabilitiesResponse = api.Capabilities
+
+type ReadCapabilitiesErrorResponse = Error
+
 type ListCollectionsResponse = api.CollectionPage
 
 type ListCollectionsErrorResponse = Error
@@ -19712,6 +19761,8 @@ type CancelExportJobRequest struct {
 	// Schema A URL to the JSON Schema for this object.
 	Schema *string `json:"$schema,omitempty"`
 }
+
+type Capabilities = api.Capabilities
 
 type CapabilityStateV1 = document.CapabilityStateV1
 

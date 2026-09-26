@@ -1633,6 +1633,40 @@ components:
           readOnly: true
           type: string
       type: object
+    Capabilities:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/Capabilities.json
+          format: uri
+          readOnly: true
+          type: string
+        api_version:
+          type: string
+        limits:
+          additionalProperties:
+            format: int64
+            type: integer
+          type: object
+        operations:
+          items:
+            type: string
+          type: array
+        vault_uid:
+          format: uuid
+          type: string
+      required:
+        - vault_uid
+        - api_version
+        - operations
+        - limits
+      type: object
+      x-go-type: api.Capabilities
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     CapabilityStateV1:
       additionalProperties: false
       properties:
@@ -14917,6 +14951,23 @@ paths:
                 $ref: "#/components/schemas/Error"
           description: Error
       summary: Observe exact tag membership for a revision-fenced selected set
+  /api/v1/capabilities:
+    get:
+      operationId: readCapabilities
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Capabilities"
+          description: OK
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: Negotiate remote daemon capabilities
   /api/v1/collections:
     get:
       description: Counts and bytes describe current live members. Empty runs remain directly accessible only when they retain label authority.

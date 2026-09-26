@@ -834,6 +834,17 @@ export interface CancelExportJobRequest {
   readonly $schema?: string;
 }
 
+export type CapabilitiesLimits = {[key: string]: number};
+
+export interface Capabilities {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  api_version: string;
+  limits: CapabilitiesLimits;
+  operations: string[];
+  vault_uid: string;
+}
+
 export interface CapabilityStateV1 {
   evidence: string;
   note: string;
@@ -7136,6 +7147,30 @@ return sessionJSON<BatchTagPreview>(getPreviewBatchTagsUrl(),
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
     body: JSON.stringify(previewBatchTagsRequest)
+  }
+);}
+
+
+
+export const getReadCapabilitiesUrl = () => {
+
+
+
+
+  return `/api/v1/capabilities`
+}
+
+/**
+ * @summary Negotiate remote daemon capabilities
+ */
+export const readCapabilities = async ( options?: Parameters<typeof sessionJSON>[1]): Promise<Capabilities> => {
+
+  return sessionJSON<Capabilities>(getReadCapabilitiesUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
   }
 );}
 

@@ -199,6 +199,7 @@ func NewServer(d Deps) *Server {
 	registerDuplicateRoutes(humaAPI, d)
 	registerDocumentQueryRoute(humaAPI, newDocumentQueryService(d))
 	registerInfoRoute(humaAPI, d)
+	RegisterCapabilitiesRoute(humaAPI, d)
 	registerFormatRoutes(humaAPI, d)
 	registerMutateRoutes(humaAPI, d, g) // Task 6
 	registerOpsRoutes(humaAPI, d, g)    // Task 7
