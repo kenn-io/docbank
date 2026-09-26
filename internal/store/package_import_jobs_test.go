@@ -469,6 +469,7 @@ func TestRevokePackageImportOwnerCancelsQueuedWork(t *testing.T) {
 }
 
 func TestPackageImportDiscardRepairsPhotoAssets(t *testing.T) {
+	t.Parallel()
 	for _, outcome := range []string{"cancelled", "failed"} {
 		t.Run(outcome, func(t *testing.T) {
 			s := newTestStore(t)

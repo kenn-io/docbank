@@ -246,6 +246,7 @@ func TestUpgradeReleasedSchemaCreatesEmptySavedQueryRunAuthority(t *testing.T) {
 }
 
 func TestUpgradeReleasedSchemasCreateEmptyPhotoAuthority(t *testing.T) {
+	t.Parallel()
 	for _, test := range v090UpgradeDrivers() {
 		t.Run(test.name, func(t *testing.T) {
 			dbPath := filepath.Join(t.TempDir(), "docbank.db")

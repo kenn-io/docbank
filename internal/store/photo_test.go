@@ -12,6 +12,7 @@ import (
 )
 
 func TestClassifyPhotoMediaMatrix(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name, mime, filename, kind string
 		qualifies                  bool
@@ -34,6 +35,7 @@ func TestClassifyPhotoMediaMatrix(t *testing.T) {
 }
 
 func TestPhotoEnrollmentClassifiesCreatedNodes(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
 	image, err := s.CreateFile(ctx, s.RootID(), "image.jpg", fakeHash("a1"), 4, "image/jpeg")
@@ -58,6 +60,7 @@ func TestPhotoEnrollmentClassifiesCreatedNodes(t *testing.T) {
 }
 
 func TestPhotoAssetGroupsRawJPEGSidecar(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
 	raw, err := s.CreateFile(ctx, s.RootID(), "capture.cr2", fakeHash("a1"), 4, "application/octet-stream")
@@ -93,6 +96,7 @@ func TestPhotoAssetGroupsRawJPEGSidecar(t *testing.T) {
 }
 
 func TestPhotoDisplayPrecedenceAndDetachFallback(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
 	raw, err := s.CreateFile(ctx, s.RootID(), "capture.cr2", fakeHash("a1"), 4, "application/octet-stream")
@@ -125,6 +129,7 @@ func TestPhotoDisplayPrecedenceAndDetachFallback(t *testing.T) {
 }
 
 func TestPhotoSettingsRecomputeInheritedAssets(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
 	first, err := s.CreateFile(ctx, s.RootID(), "a.jpg", fakeHash("a1"), 1, "image/jpeg")
@@ -173,6 +178,7 @@ func TestPhotoSettingsRecomputeInheritedAssets(t *testing.T) {
 }
 
 func TestPhotoNodeModesAndPurgeRepair(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
 	image, err := s.CreateFile(ctx, s.RootID(), "a.jpg", fakeHash("a1"), 1, "image/jpeg")
@@ -209,6 +215,7 @@ func TestPhotoNodeModesAndPurgeRepair(t *testing.T) {
 }
 
 func TestPhotoMetadataRoundTripAndInvalidReferences(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
 	image, err := s.CreateFile(ctx, s.RootID(), "a.jpg", fakeHash("a1"), 1, "image/jpeg")
@@ -255,6 +262,7 @@ func TestPhotoMetadataRoundTripAndInvalidReferences(t *testing.T) {
 }
 
 func TestPhotoMetadataRejectsUnattachedSidecar(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
 	raw, err := s.CreateFile(ctx, s.RootID(), "restore.capture", fakeHash("bb01"), 1, "application/octet-stream")
@@ -286,6 +294,7 @@ func TestPhotoMetadataRejectsUnattachedSidecar(t *testing.T) {
 }
 
 func TestPhotoMetadataRejectsRoleMediaAndAssetKindMismatch(t *testing.T) {
+	t.Parallel()
 	for _, test := range []struct {
 		name   string
 		update string
@@ -306,6 +315,7 @@ func TestPhotoMetadataRejectsRoleMediaAndAssetKindMismatch(t *testing.T) {
 }
 
 func TestPhotoMetadataAcceptsReceiptIndependentRevisionOneState(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
 	raw, err := s.CreateFile(ctx, s.RootID(), "migrated.raw", fakeHash("migrated-raw"), 1, "application/octet-stream")
@@ -331,6 +341,7 @@ func TestPhotoMetadataAcceptsReceiptIndependentRevisionOneState(t *testing.T) {
 }
 
 func TestPhotoMetadataRejectsOrphanReceipts(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
 	image, err := s.CreateFile(ctx, s.RootID(), "orphan.jpg", fakeHash("0a0a"), 1, "image/jpeg")
@@ -371,6 +382,7 @@ func TestPhotoMetadataRejectsOrphanReceipts(t *testing.T) {
 }
 
 func TestPhotoExplicitVideoAdmitsGenericVideo(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
 	clip, err := s.CreateFile(ctx, s.RootID(), "clip.mp4", fakeHash("0c11"), 1, "application/octet-stream")
@@ -394,6 +406,7 @@ func TestPhotoExplicitVideoAdmitsGenericVideo(t *testing.T) {
 }
 
 func TestPhotoMutationsRequireRevision(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
 	image, err := s.CreateFile(ctx, s.RootID(), "a.jpg", fakeHash("a1"), 1, "image/jpeg")
@@ -405,6 +418,7 @@ func TestPhotoMutationsRequireRevision(t *testing.T) {
 }
 
 func TestPhotoSidecarTargetsAndNoDisplayableMember(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
 	raw, err := s.CreateFile(ctx, s.RootID(), "a.cr2", fakeHash("a1"), 1, "application/octet-stream")
@@ -426,6 +440,7 @@ func TestPhotoSidecarTargetsAndNoDisplayableMember(t *testing.T) {
 }
 
 func TestPhotoExcludePromotePreservesIdentityAndReceipt(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
 	image, err := s.CreateFile(ctx, s.RootID(), "a.jpg", fakeHash("a1"), 1, "image/jpeg")
@@ -454,6 +469,7 @@ func TestPhotoExcludePromotePreservesIdentityAndReceipt(t *testing.T) {
 }
 
 func TestPhotoPromoteExistingAssetChecksLiveNode(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
 	image, err := s.CreateFile(ctx, s.RootID(), "trashed-existing.jpg", fakeHash("cc01"), 1, "image/jpeg")
@@ -473,6 +489,7 @@ func TestPhotoPromoteExistingAssetChecksLiveNode(t *testing.T) {
 }
 
 func TestPhotoPromoteUnownedNodeRejectsRevisionPrecondition(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
 	raw, err := s.CreateFile(ctx, s.RootID(), "unowned.cr2", fakeHash("unowned"), 1, "application/octet-stream")
@@ -486,6 +503,7 @@ func TestPhotoPromoteUnownedNodeRejectsRevisionPrecondition(t *testing.T) {
 }
 
 func TestPhotoVersionTransitionsKeepIdentity(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
 	image, err := s.CreateFile(ctx, s.RootID(), "a.jpg", fakeHash("a1"), 1, "image/jpeg")
@@ -520,6 +538,7 @@ func TestPhotoVersionTransitionsKeepIdentity(t *testing.T) {
 }
 
 func TestPhotoVersionPrunePreservesChangedMediaMembership(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
 	image, err := s.CreateFile(ctx, s.RootID(), "pruned.jpg", fakeHash("prune-media-a"), 1, "image/jpeg")
@@ -539,6 +558,7 @@ func TestPhotoVersionPrunePreservesChangedMediaMembership(t *testing.T) {
 }
 
 func TestPhotoRenamePreservesAdmissionClassification(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
 	image, err := s.CreateFile(ctx, s.RootID(), "generic.jpg", fakeHash("c001"), 1, "application/octet-stream")
@@ -554,6 +574,7 @@ func TestPhotoRenamePreservesAdmissionClassification(t *testing.T) {
 }
 
 func TestPhotoPolicy(t *testing.T) {
+	t.Parallel()
 	require.ErrorIs(t, validatePhotoAssetPointers(PhotoAsset{ID: "x", Kind: PhotoKindPhoto, Revision: 1, DisplayFileID: new("missing")}, nil), ErrInvalidPhotoAsset)
 	assert.False(t, photoRoleValid("primary"))
 	assert.True(t, photoPreferenceValid(new("image")))
@@ -561,6 +582,7 @@ func TestPhotoPolicy(t *testing.T) {
 }
 
 func TestPhotoExplicitRawAdmissionAndTargetBoundaries(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
 	raw, err := s.CreateFile(ctx, s.RootID(), "vendor.capture", fakeHash("raw"), 1, "application/octet-stream")
@@ -597,6 +619,7 @@ func TestPhotoExplicitRawAdmissionAndTargetBoundaries(t *testing.T) {
 }
 
 func TestPhotoCameraRawMIMEsAllowExplicitRaw(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
 	mediaTypes := []string{
@@ -623,6 +646,7 @@ func TestPhotoCameraRawMIMEsAllowExplicitRaw(t *testing.T) {
 }
 
 func TestPhotoAttachRequiresExplicitRawForNonqualifyingNodes(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
 	raw, err := s.CreateFile(ctx, s.RootID(), "attach.capture", fakeHash("aa01"), 1, "application/octet-stream")
@@ -644,6 +668,7 @@ func TestPhotoAttachRequiresExplicitRawForNonqualifyingNodes(t *testing.T) {
 }
 
 func TestPhotoNodeModesRefuseDirectoryAndTrashedPromotion(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
 	directory, _, err := s.MkdirPath(ctx, "/photos")
@@ -660,6 +685,7 @@ func TestPhotoNodeModesRefuseDirectoryAndTrashedPromotion(t *testing.T) {
 }
 
 func TestPhotoEnrollmentSkipsEmailChildAndKeepsProcessedSource(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
 	const raw = "Content-Type: multipart/mixed; boundary=photos\r\n\r\n--photos\r\nContent-Type: image/jpeg\r\nContent-Transfer-Encoding: base64\r\nContent-Disposition: attachment; filename=child.jpg\r\n\r\nAAECAw==\r\n--photos--\r\n"
@@ -705,6 +731,7 @@ func TestPhotoEnrollmentSkipsEmailChildAndKeepsProcessedSource(t *testing.T) {
 }
 
 func TestPhotoAuditModePreservesCreationAndGraph(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
 	image, err := s.CreateFile(ctx, s.RootID(), "before-audit.jpg", fakeHash("a1"), 1, "image/jpeg")
