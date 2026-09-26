@@ -81,14 +81,14 @@ lint: check-timing-budgets
 		echo "golangci-lint not found. Install: https://golangci-lint.run/usage/install/" >&2; \
 		exit 1; \
 	fi
-	golangci-lint run --fix ./...
+	golangci-lint run --allow-serial-runners --fix ./...
 
 lint-ci: check-timing-budgets
 	@if ! command -v golangci-lint >/dev/null 2>&1; then \
 		echo "golangci-lint not found. Install: https://golangci-lint.run/usage/install/" >&2; \
 		exit 1; \
 	fi
-	golangci-lint run ./...
+	golangci-lint run --allow-serial-runners ./...
 
 tidy:
 	go mod tidy
