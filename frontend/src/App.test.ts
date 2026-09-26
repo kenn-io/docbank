@@ -1067,6 +1067,35 @@ it("opens an export for the exact page selection without mutation revisions or u
   expect(screen.getByText("1 selected on this page")).toBeTruthy();
 });
 
+it("opens a report for the exact selected row version and hash", async () => {
+  prepareSelectionApp();
+  const { fetchMock } = installSelectionBackend();
+  const original = fetchMock.getMockImplementation()!;
+  let submitted: unknown;
+  const json = (value: unknown) => new Response(JSON.stringify(value), { headers: { "Content-Type": "application/json" } });
+  fetchMock.mockImplementation(async (input, init) => {
+    const url = String(input);
+    if (url.startsWith("/api/v1/collections?")) return json({ items: [], total: 0 });
+    if (url.startsWith("/api/v1/search-exports?") && init?.method === "GET") return json({ items: [], total: 0 });
+    if (url === "/api/v1/search-exports" && init?.method === "POST") {
+      submitted = JSON.parse(String(init.body));
+      return json({ id: "a".repeat(48), state: "complete", observed_at: "2026-09-20T12:00:00Z",
+        expires_at: "2026-09-20T12:30:00Z", terms: [], counts: [],
+        coverage: { scoped: 1, searchable: 1, missing_text: 0, incomplete_families: 0, fallback_dates: 0 }, unresolved_dates: 0 });
+    }
+    return original(input, init);
+  });
+  render(App);
+  await fireEvent.click(await screen.findByRole("checkbox", { name: "Select readme.txt" }));
+  await fireEvent.click(screen.getByRole("button", { name: "Report selected documents" }));
+  const drawer = await screen.findByRole("dialog", { name: "Search exports" });
+  expect(within(drawer).getByRole("radio", { name: /Selected documents/ })).toHaveProperty("checked", true);
+  await fireEvent.input(within(drawer).getByRole("textbox", { name: "Expression for term 1" }), { target: { value: "readme" } });
+  await fireEvent.click(within(drawer).getByRole("button", { name: "Create export" }));
+  await waitFor(() => expect(submitted).toMatchObject({ version: 2, all_documents: false,
+    selected_documents: [{ node_id: 3, version_id: "00000003-1111-4111-8111-111111111111", sha256: "3".repeat(64) }] }));
+}, 15_000);
+
 it("opens bounded tag assignment for the exact page selection", async () => {
   prepareSelectionApp();
   installSelectionBackend();
