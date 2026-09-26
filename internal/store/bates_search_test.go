@@ -36,6 +36,7 @@ func seedBatesSearchArtifact(t *testing.T, s *Store) (BatesArtifact, CollectionS
 }
 
 func TestFindBatesArtifactsReturnsCandidatesForExactlyOneSelector(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	artifact, member := seedBatesSearchArtifact(t, s)
 	person, err := s.CreatePerson(t.Context(), "Synthetic Keeper", "operator")
@@ -69,6 +70,7 @@ func TestFindBatesArtifactsReturnsCandidatesForExactlyOneSelector(t *testing.T) 
 }
 
 func TestFindBatesArtifactEvidenceContinuesWithoutChangingCandidate(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	artifact, member := seedBatesSearchArtifact(t, s)
 	for index := range maxBatesCandidateEvidence + 2 {

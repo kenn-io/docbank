@@ -60,6 +60,7 @@ func batesRequest(t *testing.T, ns BatesNamespace, snapshot CollectionSnapshot, 
 }
 
 func TestBatesRangeContinuesAndRejectsExplicitOverlap(t *testing.T) {
+	t.Parallel()
 	start, end, err := batesRange(44, 0, 3, 6)
 	require.NoError(t, err)
 	require.Equal(t, int64(44), start)
@@ -71,6 +72,7 @@ func TestBatesRangeContinuesAndRejectsExplicitOverlap(t *testing.T) {
 }
 
 func TestBatesPreviewIsTentativeAndRepeatable(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	snapshot, inputs := batesFixture(t, s)
 	ns, err := s.EnsureBatesNamespace(t.Context(), "OUR", "", 6)
@@ -92,6 +94,7 @@ func TestBatesPreviewIsTentativeAndRepeatable(t *testing.T) {
 }
 
 func TestABFixtureAllocatesFortyOneToFortyThree(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	snapshot, inputs := batesFixture(t, s)
 	ns, err := s.EnsureBatesNamespace(t.Context(), "OUR", "", 6)
@@ -123,6 +126,7 @@ func TestABFixtureAllocatesFortyOneToFortyThree(t *testing.T) {
 }
 
 func TestBatesReserveRequiresTheRecipeStart(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	snapshot, inputs := batesFixture(t, s)
 	ns, err := s.EnsureBatesNamespace(t.Context(), "OUR", "", 6)
@@ -137,6 +141,7 @@ func TestBatesReserveRequiresTheRecipeStart(t *testing.T) {
 }
 
 func TestBatesExportPageLimit(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	snapshot, inputs := batesFixture(t, s)
 	ns, err := s.EnsureBatesNamespace(t.Context(), "OUR", "", 6)
@@ -150,6 +155,7 @@ func TestBatesExportPageLimit(t *testing.T) {
 }
 
 func TestNamespaceUniquenessOverflowAndUnverifiedPages(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	snapshot, inputs := batesFixture(t, s)
 	for _, prefix := range []string{"BAD%", `BAD\`, "BÄD"} {
@@ -176,6 +182,7 @@ func TestNamespaceUniquenessOverflowAndUnverifiedPages(t *testing.T) {
 }
 
 func TestBatesGlobalLabelCollisionRollsBackCursor(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	snapshot, inputs := batesFixture(t, s)
 	first, err := s.EnsureBatesNamespace(t.Context(), "A", "", 2)
@@ -200,6 +207,7 @@ func TestBatesGlobalLabelCollisionRollsBackCursor(t *testing.T) {
 }
 
 func TestBatesLedgerRejectsMutationAndCursorRewind(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	snapshot, inputs := batesFixture(t, s)
 	ns, err := s.EnsureBatesNamespace(t.Context(), "OUR", "", 6)
@@ -219,6 +227,7 @@ func TestBatesLedgerRejectsMutationAndCursorRewind(t *testing.T) {
 }
 
 func TestConcurrentBatesReservationsNeverOverlap(t *testing.T) {
+	t.Parallel()
 	path := filepath.Join(t.TempDir(), "bates.db")
 	a, err := Open(path)
 	require.NoError(t, err)
@@ -265,6 +274,7 @@ func TestConcurrentBatesReservationsNeverOverlap(t *testing.T) {
 }
 
 func TestBatesLedgerSurvivesMetadataRestore(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	snapshot, inputs := batesFixture(t, s)
 	ns, err := s.EnsureBatesNamespace(t.Context(), "OUR", "", 6)
@@ -295,6 +305,7 @@ func TestBatesLedgerSurvivesMetadataRestore(t *testing.T) {
 }
 
 func TestBatesArtifactReceiptsMustNameTheSealedSourcePDF(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	snapshot, inputs := batesFixture(t, s)
 	namespace, err := s.EnsureBatesNamespace(t.Context(), "SRC", "", 6)
@@ -319,6 +330,7 @@ func TestBatesArtifactReceiptsMustNameTheSealedSourcePDF(t *testing.T) {
 }
 
 func TestBatesRestoreRejectsCursorPastPadding(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	snapshot, inputs := batesFixture(t, s)
 	ns, err := s.EnsureBatesNamespace(t.Context(), "PAD", "", 2)
@@ -335,6 +347,7 @@ func TestBatesRestoreRejectsCursorPastPadding(t *testing.T) {
 }
 
 func TestBatesLedgerValidationRejectsAllocationsOverThePageLimit(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	pages := MaxBatesExportPages + 1
 	node, err := s.CreateFile(t.Context(), s.RootID(), "large.pdf", fakeHash("c1"), 123, "application/pdf")
@@ -388,6 +401,7 @@ func TestBatesLedgerValidationRejectsAllocationsOverThePageLimit(t *testing.T) {
 }
 
 func TestBatesExplicitPagesMatchASealedPDFWithoutPageDocument(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	node, err := s.CreateFile(t.Context(), s.RootID(), "native.pdf", fakeHash("d1"), 123, "application/pdf")
 	require.NoError(t, err)
