@@ -617,9 +617,6 @@ func migrationSourceSchema() schema {
 }
 
 func migrationReportSchema() schema {
-	vector := objectSchema(schema{
-		"id": integerSchema(1, 0), "fingerprint": stringSchema(256), "state": stringSchema(64), "rebuildable": booleanSchema(),
-	}, "id", "fingerprint", "state", "rebuildable")
 	return objectSchema(schema{
 		"source": migrationSourceSchema(),
 		"schema": objectSchema(schema{
@@ -632,19 +629,16 @@ func migrationReportSchema() schema {
 			"shares": integerSchema(0, 0), "checkouts": integerSchema(0, 0), "checkout_entries": integerSchema(0, 0),
 			"ai_results": integerSchema(0, 0), "hidden_setup": integerSchema(0, 0),
 		}, "owners", "assets", "files", "bytes", "albums", "album_memberships", "shares", "checkouts", "checkout_entries", "ai_results", "hidden_setup"),
-		"vectors": arraySchema(vector, 1024),
+		"vector_generation_count": integerSchema(0, 0),
 		"capacity": objectSchema(schema{
 			"source_bytes": integerSchema(0, 0), "unique_blob_bytes": integerSchema(0, 0), "minimum_content_bytes": integerSchema(0, 0),
 		}, "source_bytes", "unique_blob_bytes", "minimum_content_bytes"),
 		"created_at": dateTimeSchema(),
-	}, "source", "schema", "counts", "capacity", "created_at")
+	}, "source", "schema", "counts", "vector_generation_count", "capacity", "created_at")
 }
 
 func migrationOwnerMapSchema() schema {
-	entry := objectSchema(schema{
-		"source_hub": stringSchema(256), "source_user_id": stringSchema(256), "storage_key": stringSchema(128), "docbank_owner_id": uuidSchema(),
-	}, "source_hub", "source_user_id", "storage_key")
-	return objectSchema(schema{"source": migrationSourceSchema(), "entries": arraySchema(entry, 100_000)}, "source", "entries")
+	return objectSchema(schema{"source": migrationSourceSchema(), "entry_count": integerSchema(0, 0)}, "source", "entry_count")
 }
 
 func migrationRunProperties(includePath bool) schema {

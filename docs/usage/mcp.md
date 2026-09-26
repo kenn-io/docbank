@@ -155,8 +155,8 @@ links, is capped at 1 MiB.
 | `get_package_record` | Reads one immutable sender row by its package-scoped record key. |
 | `lookup_bates_label` | Finds bounded package-scoped matches for an exact received or assigned label. |
 | `get_photo_asset` | Reads one photo asset by asset UUID or positive node ID. The response has at most 256 files and includes the selected display source. |
-| `list_migration_runs` | Lists at most 50 completed inventory runs. |
-| `show_migration_run` | Reads one report and owner map. |
+| `list_migration_runs` | Lists at most 50 completed inventory summaries. Each item includes the report counts, capacity, vector-generation count, and owner-map source and entry count. |
+| `show_migration_run` | Reads one bounded inventory summary with the report counts, capacity, vector-generation count, and owner-map source and entry count. |
 
 Starting the server with `--allow-photo-edits` adds these write tools:
 
@@ -185,9 +185,16 @@ The catalog then adds `inventory_fotobank`. Its input selects either
 `catalog_path` plus `vault_root`, or `archive_root` with an optional
 `snapshot_id`, and requires an absolute `owner_map_path`. The daemon reads the
 source, writes the exclusive owner-map template, and stores the immutable run.
-The tool returns the report and output path. A transport failure is not
-replayed because the write may already have completed. Use
-`list_migration_runs` or `show_migration_run` to inspect saved history.
+The tool returns a bounded summary with all report counts, capacity,
+`vector_generation_count`, owner-map source and `entry_count`, plus the
+`owner_map_path`. The full owner map stays in that file. A transport failure
+is not replayed because the write may already have completed. Use
+`list_migration_runs` or `show_migration_run` to inspect saved history. Those
+tools return the same bounded summary and omit the host path.
+
+The daemon HTTP API and CLI retain the complete stored report and owner map.
+MCP projects those full daemon responses into the bounded summary before it
+returns the result.
 
 `list_documents` uses live keyset pagination, not a snapshot. A mutation between
 pages can change later membership or order. Each opaque cursor is at most 32 KiB of ASCII, expires after 15 minutes, and

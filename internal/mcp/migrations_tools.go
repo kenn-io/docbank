@@ -13,13 +13,39 @@ import (
 )
 
 type migrationRunToolOutput struct {
-	api.MigrationRun
 	privateCache
+	migrationRunSummary
+
+	OwnerMapPath string `json:"owner_map_path,omitzero"`
 }
 
 type migrationRunPageToolOutput struct {
-	api.MigrationRunPage
 	privateCache
+
+	Total int                   `json:"total"`
+	Items []migrationRunSummary `json:"items"`
+}
+
+type migrationReportSummary struct {
+	Source                api.MigrationSource   `json:"source"`
+	Schema                api.MigrationSchema   `json:"schema"`
+	Counts                api.MigrationCounts   `json:"counts"`
+	Capacity              api.MigrationCapacity `json:"capacity"`
+	CreatedAt             string                `json:"created_at"`
+	VectorGenerationCount int                   `json:"vector_generation_count"`
+}
+
+type migrationOwnerMapSummary struct {
+	Source     api.MigrationSource `json:"source"`
+	EntryCount int                 `json:"entry_count"`
+}
+
+type migrationRunSummary struct {
+	ID        string                   `json:"id"`
+	Source    api.MigrationSource      `json:"source"`
+	CreatedAt string                   `json:"created_at"`
+	Report    migrationReportSummary   `json:"report"`
+	OwnerMap  migrationOwnerMapSummary `json:"owner_map"`
 }
 
 func migrationInventoryToolHandler(lease *daemonLease, validator *jsonschema.Resolved, logger *slog.Logger) sdkmcp.ToolHandler {
@@ -56,7 +82,11 @@ func inventoryFotobank(ctx context.Context, lease *daemonLease, raw []byte) (mig
 	if run.OwnerMapPath != input.OwnerMapPath {
 		return migrationRunToolOutput{}, errors.New("migration response did not bind the owner-map path")
 	}
-	return migrationRunToolOutput{MigrationRun: run, privateCache: newPrivateCache()}, nil
+	return migrationRunToolOutput{
+		migrationRunSummary: projectMigrationRun(run),
+		OwnerMapPath:        run.OwnerMapPath,
+		privateCache:        newPrivateCache(),
+	}, nil
 }
 
 func listMigrationRuns(ctx context.Context, lease *daemonLease, raw []byte) (migrationRunPageToolOutput, error) {
@@ -82,10 +112,11 @@ func listMigrationRuns(ctx context.Context, lease *daemonLease, raw []byte) (mig
 	if len(page.Items) > input.Limit || page.Total < len(page.Items) {
 		return migrationRunPageToolOutput{}, errors.New("migration run page exceeded its requested bound")
 	}
-	if page.Items == nil {
-		page.Items = []api.MigrationRun{}
+	items := make([]migrationRunSummary, 0, len(page.Items))
+	for _, run := range page.Items {
+		items = append(items, projectMigrationRun(run))
 	}
-	return migrationRunPageToolOutput{MigrationRunPage: page, privateCache: newPrivateCache()}, nil
+	return migrationRunPageToolOutput{Total: page.Total, Items: items, privateCache: newPrivateCache()}, nil
 }
 
 func showMigrationRun(ctx context.Context, lease *daemonLease, raw []byte) (migrationRunToolOutput, error) {
@@ -101,7 +132,27 @@ func showMigrationRun(ctx context.Context, lease *daemonLease, raw []byte) (migr
 	if err != nil {
 		return migrationRunToolOutput{}, err
 	}
-	return migrationRunToolOutput{MigrationRun: run, privateCache: newPrivateCache()}, nil
+	return migrationRunToolOutput{migrationRunSummary: projectMigrationRun(run), privateCache: newPrivateCache()}, nil
+}
+
+func projectMigrationRun(run api.MigrationRun) migrationRunSummary {
+	return migrationRunSummary{
+		ID:        run.ID,
+		Source:    run.Source,
+		CreatedAt: run.CreatedAt,
+		Report: migrationReportSummary{
+			Source:                run.Report.Source,
+			Schema:                run.Report.Schema,
+			Counts:                run.Report.Counts,
+			Capacity:              run.Report.Capacity,
+			CreatedAt:             run.Report.CreatedAt,
+			VectorGenerationCount: len(run.Report.Vectors),
+		},
+		OwnerMap: migrationOwnerMapSummary{
+			Source:     run.OwnerMap.Source,
+			EntryCount: len(run.OwnerMap.Entries),
+		},
+	}
 }
 
 func validateMigrationInventoryRequest(request api.FotobankInventoryRequest) error {
