@@ -14,14 +14,64 @@ import (
 	"image/jpeg"
 	"image/png"
 	"io"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"go.kenn.io/docbank/document"
+	"go.kenn.io/docbank/document/media"
 	"go.kenn.io/docbank/document/media/mediatest"
+	"go.kenn.io/docbank/internal/blob"
+	"go.kenn.io/docbank/internal/ingest"
+	"go.kenn.io/docbank/internal/store"
 )
+
+func TestByteFirstPNGRefinementKeepsAnimatedPNGPreviewable(t *testing.T) {
+	root := t.TempDir()
+	catalog, err := store.Open(filepath.Join(root, "docbank.db"))
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, catalog.Close()) })
+	blobs, err := blob.New(store.NewPackCatalog(catalog), filepath.Join(root, "blobs"))
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, blobs.Close()) })
+	source := syntheticAPNG(t, mediatest.PNG(4, 3, color.White))
+	ing := &ingest.Ingester{Store: catalog, Blobs: blobs}
+	for _, suffix := range []string{".png", ".apng"} {
+		t.Run(suffix, func(t *testing.T) {
+			sourcePath := filepath.Join(root, "animation"+suffix)
+			require.NoError(t, os.WriteFile(sourcePath, source, 0o600))
+
+			result, err := ing.AddPaths(t.Context(), []string{sourcePath}, "/inbox")
+			require.NoError(t, err)
+			require.Equal(t, 1, result.Added)
+			node, err := catalog.NodeByPath(t.Context(), "/inbox/animation"+suffix)
+			require.NoError(t, err)
+			require.Equal(t, "image/png", node.MimeType)
+			stored, err := blobs.Open(node.BlobHash)
+			require.NoError(t, err)
+			storedBytes, err := io.ReadAll(stored)
+			require.NoError(t, err)
+			require.NoError(t, stored.Close())
+			require.Equal(t, source, storedBytes)
+
+			metadata, err := media.DetectBytes(storedBytes, node.MimeType)
+			require.NoError(t, err)
+			assert.True(t, metadata.Animated)
+
+			digest := sha256.Sum256(storedBytes)
+			product, err := ProduceVisualPreview(t.Context(), bytes.NewReader(storedBytes), VisualPreviewTarget{
+				SourceSHA256: hex.EncodeToString(digest[:]), Size: node.Size, MediaType: node.MimeType,
+			})
+			require.NoError(t, err)
+			assert.Equal(t, document.VisualPreviewReady, product.Preview.State)
+			require.NotNil(t, product.Preview.Output)
+			require.NotEmpty(t, product.Output)
+		})
+	}
+}
 
 func TestProduceVisualPreviewAppliesEXIFOrientation(t *testing.T) {
 	tiff := syntheticTIFF(42,
@@ -641,6 +691,60 @@ func syntheticPNGChunk(t *testing.T, source []byte, chunkType string, payload []
 	result := append([]byte{}, source[:33]...)
 	result = append(result, chunk...)
 	return append(result, source[33:]...)
+}
+
+func syntheticAPNG(t *testing.T, source []byte) []byte {
+	t.Helper()
+	require.GreaterOrEqual(t, len(source), 33)
+	var idatPayloads [][]byte
+	for offset := 33; offset+12 <= len(source); {
+		length := int(binary.BigEndian.Uint32(source[offset : offset+4]))
+		end := offset + 12 + length
+		require.LessOrEqual(t, end, len(source))
+		switch string(source[offset+4 : offset+8]) {
+		case "IDAT":
+			idatPayloads = append(idatPayloads, append([]byte(nil), source[offset+8:offset+8+length]...))
+		case "IEND":
+			offset = len(source)
+			continue
+		}
+		offset = end
+	}
+	require.NotEmpty(t, idatPayloads)
+
+	output := append([]byte(nil), source[:33]...)
+	actl := make([]byte, 8)
+	binary.BigEndian.PutUint32(actl[:4], 2)
+	output = appendSyntheticPNGChunk(output, "acTL", actl)
+	sequence := uint32(0)
+	for frame := range 2 {
+		fctl := make([]byte, 26)
+		binary.BigEndian.PutUint32(fctl[:4], sequence)
+		sequence++
+		copy(fctl[4:12], source[16:24])
+		fctl[23] = 10
+		output = appendSyntheticPNGChunk(output, "fcTL", fctl)
+		for _, payload := range idatPayloads {
+			if frame == 0 {
+				output = appendSyntheticPNGChunk(output, "IDAT", payload)
+				continue
+			}
+			frameData := binary.BigEndian.AppendUint32(nil, sequence)
+			sequence++
+			frameData = append(frameData, payload...)
+			output = appendSyntheticPNGChunk(output, "fdAT", frameData)
+		}
+	}
+	return appendSyntheticPNGChunk(output, "IEND", nil)
+}
+
+func appendSyntheticPNGChunk(output []byte, chunkType string, payload []byte) []byte {
+	chunk := make([]byte, 12+len(payload))
+	binary.BigEndian.PutUint32(chunk[:4], uint32(len(payload)))
+	copy(chunk[4:8], chunkType)
+	copy(chunk[8:], payload)
+	binary.BigEndian.PutUint32(chunk[len(chunk)-4:], crc32.ChecksumIEEE(chunk[4:len(chunk)-4]))
+	return append(output, chunk...)
 }
 
 func mustDecodeWebP(t *testing.T) []byte {

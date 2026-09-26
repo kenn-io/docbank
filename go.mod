@@ -15,6 +15,7 @@ require (
 	github.com/coder/websocket v1.8.15
 	github.com/danielgtaylor/huma/v2 v2.38.0
 	github.com/doordash-oss/oapi-codegen-dd/v3 v3.75.15
+	github.com/gabriel-vasile/mimetype v1.4.13
 	github.com/go-pdf/fpdf v0.9.0
 	github.com/gofrs/flock v0.13.0
 	github.com/google/jsonschema-go v0.4.3
@@ -68,7 +69,6 @@ require (
 	github.com/clipperhouse/uax29/v2 v2.7.0 // indirect
 	github.com/dustin/go-humanize v1.0.1 // indirect
 	github.com/ebitengine/purego v0.10.0 // indirect
-	github.com/gabriel-vasile/mimetype v1.4.13 // indirect
 	github.com/go-ole/go-ole v1.2.6 // indirect
 	github.com/go-playground/locales v0.14.1 // indirect
 	github.com/go-playground/universal-translator v0.18.1 // indirect

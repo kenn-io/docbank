@@ -8,14 +8,17 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"mime"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"testing"
 	"unicode/utf8"
 
+	"github.com/gabriel-vasile/mimetype"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/document"
@@ -101,6 +104,29 @@ func TestAddSingleFile(t *testing.T) {
 	require.NoError(t, err)
 }
 
+func TestAddRFC822HeuristicKeepsTextMIMEAndQueuesExtraction(t *testing.T) {
+	ing := newTestIngester(t)
+	ctx := t.Context()
+	raw := []byte("From: planning\nTo: engineering\n\nMeeting notes")
+	path := filepath.Join(t.TempDir(), "notes.txt")
+	require.NoError(t, os.WriteFile(path, raw, 0o644))
+
+	report, err := ing.AddPaths(ctx, []string{path}, "/inbox")
+	require.NoError(t, err)
+	require.Equal(t, 1, report.Added)
+	node, err := ing.Store.NodeByPath(ctx, "/inbox/notes.txt")
+	require.NoError(t, err)
+	require.Equal(t, "text/plain; charset=utf-8", node.MimeType)
+	versions, total, err := ing.Store.ContentVersions(ctx, node.ID, 10, 0)
+	require.NoError(t, err)
+	require.Equal(t, 1, total)
+	require.Equal(t, "text/plain; charset=utf-8", versions[0].MimeType)
+	pending, err := ing.Store.PendingTextExtractions(ctx, 10)
+	require.NoError(t, err)
+	require.Len(t, pending, 1)
+	require.Equal(t, node.BlobHash, pending[0].BlobHash)
+}
+
 func TestAddEMLDeclaresMessageRFC822WithoutChangingSource(t *testing.T) {
 	for _, name := range []string{"message.eml", "message.EML", "message.EmL"} {
 		t.Run(name, func(t *testing.T) {
@@ -134,6 +160,307 @@ func TestDetectMimeDeclaresEMLBeforeHostRegistry(t *testing.T) {
 			require.False(t, called)
 		})
 	}
+}
+
+func TestDetectMimeUsesRecognizedSignatureOverHostExtension(t *testing.T) {
+	tests := []struct {
+		name string
+		path string
+		head []byte
+		want string
+	}{
+		{name: "polluted-jpg", path: "photo.jpg", head: []byte{0xff, 0xd8, 0xff}, want: "image/jpeg"},
+		{name: "jpeg-dng", path: "photo.dng", head: []byte{0xff, 0xd8, 0xff}, want: "image/jpeg"},
+		{name: "png", path: "photo.jpg", head: []byte{0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a}, want: "image/png"},
+		{name: "gif", path: "photo.jpg", head: []byte("GIF89a"), want: "image/gif"},
+		{name: "webp", path: "photo.jpg", head: []byte("RIFF\x00\x00\x00\x00WEBPVP8 "), want: "image/webp"},
+		{name: "pdf", path: "photo.jpg", head: []byte("%PDF-"), want: "application/pdf"},
+		{name: "postscript", path: "photo.jpg", head: []byte("%!PS-Adobe-"), want: "application/postscript"},
+		{name: "wasm", path: "photo.jpg", head: []byte{0x00, 0x61, 0x73, 0x6d}, want: "application/wasm"},
+		{name: "heic", path: "photo.jpg", head: []byte("\x00\x00\x00\x18ftypheic"), want: "image/heic"},
+		{name: "heif", path: "photo.jpg", head: []byte("\x00\x00\x00\x18ftypmif1"), want: "image/heif"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			called := false
+			got := detectMimeWithExtension(tc.path, tc.head, func(string) string {
+				called = true
+				return "application/x-host-dependent"
+			})
+			require.Equal(t, tc.want, got)
+			require.False(t, called)
+		})
+	}
+}
+
+func TestDetectMimeUsesCompatibleExtensionRelationships(t *testing.T) {
+	ole := make([]byte, 512)
+	copy(ole, []byte{0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1})
+	webm := []byte("\x1aE\xdf\xa3\x01\x00\x00\x00\x00\x00\x00\x1fB\x86\x81\x01B\xf7\x81\x01B\xf2\x81\x04B\xf3\x81\x08B\x82\x84webm")
+	ogg := []byte("OggS\x00")
+	for _, tc := range []struct {
+		name      string
+		path      string
+		head      []byte
+		resolver  string
+		want      string
+		detected  string
+		wantCalls bool
+	}{
+		{
+			name: "same node keeps parameters", path: "archive.zip", head: []byte("PK\x03\x04"),
+			resolver: "application/zip; version=1", want: "application/zip; version=1",
+			detected: "application/zip", wantCalls: true,
+		},
+		{
+			name: "downward office descendant", path: "document.docx", head: []byte("PK\x03\x04"),
+			resolver: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+			want:     "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+			detected: "application/zip", wantCalls: true,
+		},
+		{
+			name: "ole word descendant", path: "document.doc", head: ole,
+			resolver: "application/msword", want: "application/msword",
+			detected: "application/x-ole-storage", wantCalls: true,
+		},
+		{
+			name: "ole outlook descendant", path: "message.msg", head: ole,
+			resolver: "application/vnd.ms-outlook", want: "application/vnd.ms-outlook",
+			detected: "application/x-ole-storage", wantCalls: true,
+		},
+		{
+			name: "bounded text ancestor", path: "notes.txt",
+			head:     []byte("From: planning\nTo: engineering\n\nMeeting notes"),
+			resolver: "text/plain; charset=utf-8", want: "text/plain; charset=utf-8",
+			detected: "message/rfc822", wantCalls: true,
+		},
+		{
+			name: "bounded text same node parameters", path: "document.svg",
+			head:     []byte(`<?xml version="1.0"?><svg xmlns="http://www.w3.org/2000/svg"></svg>`),
+			resolver: "image/svg+xml; profile=full", want: "image/svg+xml; profile=full",
+			detected: "image/svg+xml", wantCalls: true,
+		},
+		{
+			name: "webm alias", path: "recording.weba", head: webm,
+			resolver: "audio/webm", want: "audio/webm", detected: "video/webm", wantCalls: true,
+		},
+		{
+			name: "mp4 descendant", path: "recording.m4a",
+			head: []byte("\x00\x00\x00\x18ftyp0000"), resolver: "audio/x-m4a", want: "audio/x-m4a",
+			detected: "video/mp4", wantCalls: true,
+		},
+		{
+			name: "ogg descendant", path: "recording.oga", head: ogg,
+			resolver: "audio/ogg", want: "audio/ogg", detected: "application/ogg", wantCalls: true,
+		},
+		{
+			name: "gzip alias", path: "archive.gz", head: []byte{0x1f, 0x8b},
+			resolver: "application/x-gzip", want: "application/x-gzip", detected: "application/gzip", wantCalls: true,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			require.Equal(t, tc.detected, mimetype.Detect(tc.head).String())
+			called := false
+			got := detectMimeWithExtension(tc.path, tc.head, func(string) string {
+				called = true
+				return tc.resolver
+			})
+			require.Equal(t, tc.want, got)
+			require.Equal(t, tc.wantCalls, called)
+		})
+	}
+}
+
+func TestDetectMimeRejectsIncompatibleExtension(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		path      string
+		head      []byte
+		resolver  string
+		want      string
+		wantCalls bool
+	}{
+		{
+			name: "jpeg plus octet stream", path: "photo.jpg", head: []byte{0xff, 0xd8, 0xff},
+			resolver: "application/octet-stream", want: "image/jpeg",
+		},
+		{
+			name: "heic plus video ancestor", path: "photo.heic",
+			head: []byte("\x00\x00\x00\x18ftypheic"), resolver: "video/mp4", want: "image/heic",
+		},
+		{
+			name: "zip plus octet stream", path: "archive.zip", head: []byte("PK\x03\x04"),
+			resolver: "application/octet-stream", want: "application/zip", wantCalls: true,
+		},
+		{
+			name: "zip plus unrelated value", path: "archive.zip", head: []byte("PK\x03\x04"),
+			resolver: "application/pdf", want: "application/zip", wantCalls: true,
+		},
+		{
+			name: "jpeg plus unrelated value", path: "photo.jpg", head: []byte{0xff, 0xd8, 0xff},
+			resolver: "application/x-host-dependent", want: "image/jpeg",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			called := false
+			got := detectMimeWithExtension(tc.path, tc.head, func(string) string {
+				called = true
+				return tc.resolver
+			})
+			require.Equal(t, tc.want, got)
+			require.Equal(t, tc.wantCalls, called)
+		})
+	}
+}
+
+func TestDetectMimeUsesClosedSuffixRefinements(t *testing.T) {
+	const pngHeader = "\x89PNG\r\n\x1a\n"
+	makeAPNG := func(offset int) []byte {
+		data := make([]byte, offset+4)
+		copy(data, pngHeader)
+		copy(data[offset:], "acTL")
+		return data
+	}
+	matroska := []byte("\x1a\x45\xdf\xa3\x01\x00\x00\x00\x00\x00\x00\x23\x42\x86\x81\x01\x42\xf7\x81\x01\x42\xf2\x81\x04\x42\xf3\x81\x08\x42\x82\x88matroska")
+	xmp := []byte(`<?xml version="1.0"?><x:xmpmeta xmlns:x="adobe:ns:meta/"><rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"></rdf:RDF></x:xmpmeta>`)
+	xmpWithoutDeclaration := []byte(`<x:xmpmeta xmlns:x="adobe:ns:meta/"><rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"></rdf:RDF></x:xmpmeta>`)
+	for _, tc := range []struct {
+		name      string
+		path      string
+		head      []byte
+		resolver  string
+		want      string
+		wantCalls bool
+	}{
+		{name: "sony raw", path: "camera.arw", head: []byte{0x49, 0x49, 0x2a, 0x00}, resolver: "application/pdf", want: "image/x-sony-arw"},
+		{name: "adobe raw", path: "camera.dng", head: []byte{0x49, 0x49, 0x2a, 0x00}, resolver: "application/pdf", want: "image/x-adobe-dng"},
+		{name: "canon raw", path: "camera.cr2", head: []byte{0x49, 0x49, 0x2a, 0x00}, resolver: "application/pdf", want: "image/x-canon-cr2"},
+		{name: "nikon raw", path: "camera.nef", head: []byte{0x49, 0x49, 0x2a, 0x00}, resolver: "application/pdf", want: "image/x-nikon-nef"},
+		{name: "actual apng", path: "animation.apng", head: makeAPNG(37), resolver: "application/pdf", want: "image/png"},
+		{name: "actual apng with png suffix", path: "animation.png", head: makeAPNG(37), resolver: "application/pdf", want: "image/png"},
+		{name: "apng beyond prefix", path: "animation.apng", head: makeAPNG(513)[:512], resolver: "application/pdf", want: "image/png"},
+		{name: "generic png suffix", path: "animation.apng", head: []byte(pngHeader), resolver: "application/pdf", want: "image/png"},
+		{name: "matroska audio", path: "audio.mka", head: matroska, resolver: "application/pdf", want: "audio/x-matroska"},
+		{name: "xmp sidecar", path: "sidecar.xmp", head: xmp, resolver: "application/pdf", want: "application/rdf+xml"},
+		{name: "xmp packet without xml declaration", path: "sidecar.xmp", head: xmpWithoutDeclaration, resolver: "application/pdf", want: "application/rdf+xml"},
+		{name: "go source", path: "source.go", head: []byte("package sample\nfunc add(a, b int) int { return a + b }\n"), resolver: "application/pdf", want: "text/x-go"},
+		{name: "restructured text", path: "notes.rst", head: []byte("Title\n=====\n\nText.\n"), resolver: "application/pdf", want: "text/x-rst"},
+		{name: "yaml", path: "config.yaml", head: []byte("name: docbank\n"), resolver: "application/pdf", want: "application/yaml"},
+		{name: "yaml short suffix", path: "config.YML", head: []byte("name: docbank\n"), resolver: "application/pdf", want: "application/yaml"},
+		{name: "tex source", path: "paper.tex", head: []byte("\\documentclass{article}\n\\begin{document}Text\\end{document}\n"), resolver: "application/pdf", want: "application/x-tex"},
+		{name: "markdown", path: "notes.md", head: []byte("# Meeting notes\n\nA short paragraph.\n"), resolver: "application/pdf", want: "text/markdown"},
+		{name: "markdown long suffix", path: "notes.MARKDOWN", head: []byte("# Meeting notes\n\nA short paragraph.\n"), resolver: "application/pdf", want: "text/markdown"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			called := false
+			got := detectMimeWithExtension(tc.path, tc.head, func(string) string {
+				called = true
+				return tc.resolver
+			})
+			require.Equal(t, tc.want, got)
+			require.Equal(t, tc.wantCalls, called)
+		})
+	}
+}
+
+func TestDetectMimeUsesExtensionForUnknownBytes(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		path      string
+		resolver  string
+		want      string
+		wantCalls bool
+	}{
+		{name: "known extension", path: "document.custom", resolver: "application/x-host-dependent; version=1", want: "application/x-host-dependent; version=1", wantCalls: true},
+		{name: "fuji raw suffix", path: "camera.raf", resolver: "application/pdf", want: "image/x-fuji-raf", wantCalls: false},
+		{name: "empty extension", path: "document", resolver: "", want: "application/octet-stream", wantCalls: true},
+		{name: "invalid extension value", path: "document.custom", resolver: "not a media type", want: "application/octet-stream", wantCalls: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			called := false
+			got := detectMimeWithExtension(tc.path, []byte{0x01, 0x02, 0x03}, func(string) string {
+				called = true
+				return tc.resolver
+			})
+			require.Equal(t, tc.want, got)
+			require.Equal(t, tc.wantCalls, called)
+		})
+	}
+}
+
+func TestDetectMimeUsesExtensionForEmptyBytes(t *testing.T) {
+	called := false
+	got := detectMimeWithExtension("report.pdf", []byte{}, func(extension string) string {
+		called = true
+		require.Equal(t, ".pdf", extension)
+		return "application/pdf"
+	})
+	require.Equal(t, "application/pdf", got)
+	require.True(t, called)
+}
+
+func TestDetectMimeUsesFujiTypeForEmptyRAF(t *testing.T) {
+	called := false
+	got := detectMimeWithExtension("camera.raf", nil, func(string) string {
+		called = true
+		return "application/pdf"
+	})
+	require.Equal(t, "image/x-fuji-raf", got)
+	require.False(t, called)
+}
+
+func TestAddByteFirstMIMEKeepsYAMLAndTeXSearchable(t *testing.T) {
+	ing := newTestIngester(t)
+	root := writeTree(t, map[string]string{
+		"config.yaml": "name: yamlsearchmarker\n",
+		"paper.tex":   "\\documentclass{article}\n\\begin{document} texsearchmarker \\end{document}\n",
+	})
+
+	report, err := ing.AddPaths(t.Context(), []string{
+		filepath.Join(root, "config.yaml"), filepath.Join(root, "paper.tex"),
+	}, "/inbox")
+	require.NoError(t, err)
+	require.Equal(t, 2, report.Added)
+	require.Empty(t, report.Failed)
+
+	for _, tc := range []struct {
+		path, mimeType, marker string
+	}{
+		{path: "/inbox/config.yaml", mimeType: "application/yaml", marker: "yamlsearchmarker"},
+		{path: "/inbox/paper.tex", mimeType: "application/x-tex", marker: "texsearchmarker"},
+	} {
+		node, nodeErr := ing.Store.NodeByPath(t.Context(), tc.path)
+		require.NoError(t, nodeErr)
+		require.Equal(t, tc.mimeType, node.MimeType)
+		pending, pendingErr := ing.Store.PendingTextExtractions(t.Context(), 10)
+		require.NoError(t, pendingErr)
+		require.Contains(t, pending, store.ExtractionCandidate{BlobHash: node.BlobHash, Size: node.Size})
+		require.NoError(t, ing.Store.RecordExtraction(t.Context(), store.ExtractionResult{
+			BlobHash: node.BlobHash, Extractor: "mime-search-test", ExtractorVersion: 1,
+			Status: store.ExtractionOK, Text: tc.marker,
+		}))
+		hits, _, searchErr := ing.Store.SearchPage(t.Context(), tc.marker, 10)
+		require.NoError(t, searchErr)
+		require.Len(t, hits, 1)
+		require.Equal(t, store.SearchMatchContent, hits[0].Match)
+		require.Equal(t, node.ID, hits[0].Node.ID)
+	}
+}
+
+func TestDetectMimeUsesNativeWindowsJPEGRegistry(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("native registry proof runs on Windows")
+	}
+	extensionMIME := mime.TypeByExtension(".jpg")
+	registry, err := exec.Command("reg", "query", `HKCR\.jpg`, "/v", "Content Type").CombinedOutput()
+	require.NoError(t, err, string(registry))
+	t.Logf("registry: %s; Go lookup: %s", strings.TrimSpace(string(registry)), extensionMIME)
+	if extensionMIME != "application/jpg" {
+		t.Skipf("native .jpg mapping is %q; polluted association is not present", extensionMIME)
+	}
+	require.Contains(t, string(registry), "application/jpg")
+	got := detectMime("photo.jpg", []byte{0xff, 0xd8, 0xff})
+	require.Equal(t, "image/jpeg", got)
 }
 
 func TestPrepareUploadRetainsOriginalBytesForEveryCatalogFormat(t *testing.T) {
@@ -322,6 +649,87 @@ func TestAddReplaceSkipsUnchangedBytesAndStoredMIME(t *testing.T) {
 	collection, err := ing.Store.CollectionByID(ctx, rep.IngestID)
 	require.NoError(t, err)
 	assert.Equal(t, int64(1), collection.FileCount)
+}
+
+func TestAddPathsRecordsSignatureMediaType(t *testing.T) {
+	ing := newTestIngester(t)
+	ctx := t.Context()
+	source := filepath.Join(t.TempDir(), "photo.jpg")
+	jpeg := []byte{0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10}
+	png := []byte{0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00}
+	require.NoError(t, os.WriteFile(source, jpeg, 0o644))
+
+	report, err := ing.AddPaths(ctx, []string{source}, "/inbox")
+	require.NoError(t, err)
+	require.Equal(t, 1, report.Added)
+	created, err := ing.Store.NodeByPath(ctx, "/inbox/photo.jpg")
+	require.NoError(t, err)
+	require.Equal(t, "image/jpeg", created.MimeType)
+	createdVersions, total, err := ing.Store.ContentVersions(ctx, created.ID, 10, 0)
+	require.NoError(t, err)
+	require.Equal(t, 1, total)
+	require.Equal(t, created.CurrentVersionID, createdVersions[0].ID)
+	require.Equal(t, "image/jpeg", createdVersions[0].MimeType)
+	stored, err := ing.Blobs.Open(created.BlobHash)
+	require.NoError(t, err)
+	storedBytes, readErr := io.ReadAll(stored)
+	require.NoError(t, errors.Join(readErr, stored.Close()))
+	require.Equal(t, jpeg, storedBytes)
+
+	rewriteSource(t, source, png)
+	report, err = ing.AddPathsWithOptions(ctx, []string{source}, "/inbox", Options{Replace: true})
+	require.NoError(t, err)
+	require.Equal(t, 1, report.Added)
+	updated, err := ing.Store.NodeByPath(ctx, "/inbox/photo.jpg")
+	require.NoError(t, err)
+	require.Equal(t, created.ID, updated.ID)
+	require.Equal(t, "image/png", updated.MimeType)
+	versions, total, err := ing.Store.ContentVersions(ctx, updated.ID, 10, 0)
+	require.NoError(t, err)
+	require.Equal(t, 2, total)
+	require.Len(t, versions, 2)
+	require.Equal(t, "image/png", versions[0].MimeType)
+	require.Equal(t, "content_replace", versions[0].TransitionKind)
+	require.Equal(t, "image/jpeg", versions[1].MimeType)
+	require.Equal(t, created.CurrentVersionID, versions[1].ID)
+	require.Equal(t, created.BlobHash, versions[1].BlobHash)
+	stored, err = ing.Blobs.Open(updated.BlobHash)
+	require.NoError(t, err)
+	storedBytes, readErr = io.ReadAll(stored)
+	require.NoError(t, errors.Join(readErr, stored.Close()))
+	require.Equal(t, png, storedBytes)
+	stored, err = ing.Blobs.Open(versions[1].BlobHash)
+	require.NoError(t, err)
+	storedBytes, readErr = io.ReadAll(stored)
+	require.NoError(t, errors.Join(readErr, stored.Close()))
+	require.Equal(t, jpeg, storedBytes)
+}
+
+func TestAddReplaceKeepsStoredMIMEForUnchangedSignatureBytes(t *testing.T) {
+	ing := newTestIngester(t)
+	ctx := t.Context()
+	jpeg := []byte{0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10}
+	source := filepath.Join(t.TempDir(), "photo.jpg")
+	require.NoError(t, os.WriteFile(source, jpeg, 0o644))
+	written, err := ing.Blobs.WriteDetailedContext(ctx, bytes.NewReader(jpeg))
+	require.NoError(t, err)
+	created, err := ing.Store.CreateFile(ctx, ing.Store.RootID(), "photo.jpg",
+		written.Hash, written.Size, "application/jpg")
+	require.NoError(t, err)
+
+	report, err := ing.AddPathsWithOptions(ctx, []string{source}, "/", Options{Replace: true})
+	require.NoError(t, err)
+	require.Zero(t, report.Added)
+	require.Equal(t, 1, report.Skipped)
+	unchanged, err := ing.Store.NodeByID(ctx, created.ID)
+	require.NoError(t, err)
+	require.Equal(t, "application/jpg", unchanged.MimeType)
+	require.Equal(t, created.CurrentVersionID, unchanged.CurrentVersionID)
+	versions, total, err := ing.Store.ContentVersions(ctx, created.ID, 10, 0)
+	require.NoError(t, err)
+	require.Equal(t, 1, total)
+	require.Len(t, versions, 1)
+	require.Equal(t, "application/jpg", versions[0].MimeType)
 }
 
 func TestLabeledEmptyTreeCreatesDirectoriesWithoutReceipt(t *testing.T) {

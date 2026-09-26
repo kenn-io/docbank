@@ -6,11 +6,9 @@ import (
 	"encoding/hex"
 	"encoding/json/jsontext"
 	"encoding/json/v2"
-	"errors"
 	"fmt"
 	"io"
 	"mime"
-	"net/http"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -22,6 +20,7 @@ import (
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/blob"
 	"go.kenn.io/docbank/internal/daemonconn"
+	"go.kenn.io/docbank/internal/ingest"
 	"go.kenn.io/docbank/internal/store"
 )
 
@@ -51,12 +50,12 @@ var putCmd = &cobra.Command{
 		}
 		defer func() { _ = source.Close() }()
 
-		mimeType, err := putSourceMIME(source, sourcePath, putMIMEType)
-		if err != nil {
-			if putMIMEType != "" {
+		mimeType := ""
+		if putMIMEType != "" {
+			mimeType, err = putSourceMIME(sourcePath, nil, putMIMEType)
+			if err != nil {
 				return usageError(err)
 			}
-			return err
 		}
 		mode := backupProgressAuto
 		if !putJSON {
@@ -70,7 +69,7 @@ var putCmd = &cobra.Command{
 
 		hash := sha256.New()
 		hashReader := newPutProgressReader(cmd.Context(), source, size, "hash", renderer, putJSON)
-		read, err := io.Copy(hash, hashReader)
+		read, prefix, err := hashPutSource(hashReader, hash)
 		if err != nil {
 			return fmt.Errorf("hashing %s: %w", sourcePath, err)
 		}
@@ -78,6 +77,12 @@ var putCmd = &cobra.Command{
 			return fmt.Errorf("hashing %s: source size changed from %d to %d bytes", sourcePath, size, read)
 		}
 		hashReader.finish()
+		if putMIMEType == "" {
+			mimeType, err = putSourceMIME(sourcePath, prefix, "")
+			if err != nil {
+				return err
+			}
+		}
 		if _, err := source.Seek(0, io.SeekStart); err != nil {
 			return fmt.Errorf("rewinding %s: %w", sourcePath, err)
 		}
@@ -159,7 +164,7 @@ func validatePutSourcePath(raw string) error {
 		strconv.QuoteToASCII(raw))
 }
 
-func putSourceMIME(source io.ReadSeeker, path, override string) (string, error) {
+func putSourceMIME(path string, prefix []byte, override string) (string, error) {
 	if override != "" {
 		mediaType, params, err := mime.ParseMediaType(override)
 		if err != nil {
@@ -167,18 +172,26 @@ func putSourceMIME(source io.ReadSeeker, path, override string) (string, error) 
 		}
 		return mime.FormatMediaType(mediaType, params), nil
 	}
-	head := make([]byte, 512)
-	n, err := io.ReadFull(source, head)
-	if err != nil && !errors.Is(err, io.EOF) && !errors.Is(err, io.ErrUnexpectedEOF) {
-		return "", fmt.Errorf("reading %s for media type: %w", path, err)
+	return ingest.DetectMIME(path, prefix), nil
+}
+
+func hashPutSource(source io.Reader, dst io.Writer) (int64, []byte, error) {
+	prefix := putMIMEPrefixCapture(make([]byte, 0, 512))
+	read, err := io.Copy(io.MultiWriter(dst, &prefix), source)
+	return read, []byte(prefix), err
+}
+
+type putMIMEPrefixCapture []byte
+
+func (p *putMIMEPrefixCapture) Write(data []byte) (int, error) {
+	n := len(data)
+	if remaining := 512 - len(*p); remaining > 0 {
+		if remaining > n {
+			remaining = n
+		}
+		*p = append(*p, data[:remaining]...)
 	}
-	if _, err := source.Seek(0, io.SeekStart); err != nil {
-		return "", fmt.Errorf("rewinding %s after media-type detection: %w", path, err)
-	}
-	if byExtension := mime.TypeByExtension(filepath.Ext(path)); byExtension != "" {
-		return byExtension, nil
-	}
-	return http.DetectContentType(head[:n]), nil
+	return n, nil
 }
 
 type putProgressReader struct {

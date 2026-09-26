@@ -101,7 +101,7 @@ func TestPackageImportTerminalFailureRemovesOnlyUnreceiptedDocuments(t *testing.
 	root := t.TempDir()
 	volume := filepath.Join(root, "VOL001")
 	require.NoError(t, os.Mkdir(volume, 0o700))
-	const nativeB = "Synthetic native document B\n"
+	const nativeB = "\x00\x01\x02\x03"
 	const suppliedB = "Synthetic supplied text B\n"
 	files := map[string]string{
 		"A.txt":          "Synthetic native document A\n",

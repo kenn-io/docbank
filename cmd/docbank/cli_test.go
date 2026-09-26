@@ -503,6 +503,35 @@ func TestPutReplacesContentAndRetainsHistory(t *testing.T) {
 	assert.Contains(t, out, "Source version:  "+initialVersion)
 }
 
+func TestPutAutomaticMIMEUsesTheHashedSourceBytes(t *testing.T) {
+	_ = setupVaultHome(t)
+	initial := writeSourceFile(t, "document.txt", "initial content")
+	_, err := runCLI(t, "add", initial, "--dest", "/inbox")
+	require.NoError(t, err)
+	c, err := daemonconn.Ensure(context.Background())
+	require.NoError(t, err)
+	document, err := c.API().ResolvePath(context.Background(), &apiclient.ResolvePathRequestOptions{
+		Query: &apiclient.ResolvePathQuery{Path: "/inbox/document.txt"},
+	})
+	require.NoError(t, err)
+
+	jpeg := []byte{0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 'J', 'F', 'I', 'F', 0x00}
+	replacement := writeSourceFile(t, "replacement.txt", string(jpeg))
+	out, err := runCLI(t, "put", replacement, formatNodeSelector(document.ID), "--json")
+	require.NoError(t, err, out)
+	var receipt api.ContentReplacementReceipt
+	require.NoError(t, json.Unmarshal([]byte(out), &receipt))
+	wantHash := sha256.Sum256(jpeg)
+	assert.Equal(t, hex.EncodeToString(wantHash[:]), receipt.ComputedHash)
+	assert.Equal(t, int64(len(jpeg)), receipt.ComputedSize)
+	assert.Equal(t, "image/jpeg", receipt.Version.MimeType)
+	assert.Equal(t, "image/jpeg", receipt.Node.MimeType)
+
+	out, err = runCLI(t, "cat", formatNodeSelector(document.ID))
+	require.NoError(t, err)
+	assert.Equal(t, string(jpeg), out)
+}
+
 func TestVersionsPruneIsPreviewFirstAndKeepsCurrentContent(t *testing.T) {
 	_ = setupVaultHome(t)
 	initial := writeSourceFile(t, "document.txt", "initial content")
