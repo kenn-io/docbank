@@ -12,6 +12,7 @@ import (
 	"github.com/google/jsonschema-go/jsonschema"
 	"github.com/modelcontextprotocol/go-sdk/jsonrpc"
 	sdkmcp "github.com/modelcontextprotocol/go-sdk/mcp"
+	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/daemonconn"
 	"go.kenn.io/docbank/internal/store"
 )
@@ -121,16 +122,28 @@ func toolCatalog(allowProcessing, allowPackageWrites bool) []*sdkmcp.Tool {
 }
 
 func registerToolCatalog(
-	server *sdkmcp.Server, allowProcessing, allowPackageWrites bool, lease *daemonLease, plans *processingPlanRegistry, logger *slog.Logger,
+	server *sdkmcp.Server, allowProcessing, allowPackageWrites bool, lease *daemonLease, plans *processingPlanRegistry, policy operationPolicy, logger *slog.Logger,
 ) {
 	tools := toolCatalog(allowProcessing, allowPackageWrites)
+	if !policy.local() {
+		tools = slices.DeleteFunc(tools, func(tool *sdkmcp.Tool) bool {
+			switch tool.Name {
+			case "get_vault_info", "list_documents", "search_documents", "get_document",
+				"read_rendition_text", "get_processing_plan", "get_processing_status",
+				"get_processing_coverage", "start_processing":
+				return false
+			default:
+				return true
+			}
+		})
+	}
 	server.AddReceivingMiddleware(validateToolInputs(tools))
 	for _, tool := range tools {
 		output := mustResolveSchema(tool.OutputSchema)
 		var handler sdkmcp.ToolHandler
 		switch tool.Name {
 		case processingToolDefinition.name:
-			handler = processingToolHandler(lease, plans, output, logger)
+			handler = processingToolHandler(lease, plans, policy, output, logger)
 		case packageImportToolDefinition.name:
 			handler = packageImportToolHandler(lease, output, logger)
 		case preflightLoadFilePackageToolDefinition.name:
@@ -138,7 +151,7 @@ func registerToolCatalog(
 		case resolvePackageCustodianToolDefinition.name, assignPackageCustodianToolDefinition.name:
 			handler = packageCustodianWriteToolHandler(lease, tool.Name, output, logger)
 		default:
-			handler = readToolHandler(lease, plans, tool.Name, output, logger)
+			handler = readToolHandler(lease, plans, policy, tool.Name, output, logger)
 		}
 		server.AddTool(tool, handler)
 	}
@@ -286,6 +299,12 @@ func stableDomainError(err error) (string, int) {
 	}
 	var scope *daemonconn.SourceFenceScopeTooLargeError
 	switch {
+	case errors.Is(err, api.ErrOperationNotFound):
+		return "not_found", 0
+	case errors.Is(err, api.ErrOperationDenied), errors.Is(err, api.ErrOperationGrantExpired), errors.Is(err, api.ErrOperationGrantRevoked):
+		return "operation_denied", 0
+	case errors.Is(err, api.ErrOperationScopeTooLarge):
+		return "scope_too_large", 0
 	case errors.As(err, &scope):
 		return "scope_too_large", scope.ObservedScopeCount
 	case errors.Is(err, store.ErrNotFound):
@@ -340,6 +359,8 @@ func domainErrorMessage(code string) string {
 	switch code {
 	case "not_found":
 		return "The requested Docbank identity was not found."
+	case "operation_denied":
+		return "The authenticated principal is not permitted to perform this operation."
 	case "stale_version":
 		return "The requested content version is no longer current and live."
 	case "plan_changed":
