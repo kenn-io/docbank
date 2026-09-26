@@ -40,12 +40,36 @@ export interface ProductionDecision {
   member_id: string;
   action: "keep" | "redact";
   uncertain: boolean;
+  reason: string;
+  label: string;
   selector: {
     kind: string;
+    map_sha256: string;
+    unit_id?: string;
     pages?: number[];
-    boxes?: { page: number }[];
+    boxes?: { page: number; frame_sha256: string; x0: number; y0: number; x1: number; y1: number }[];
     span?: { start: number; end: number };
   };
+}
+
+export type ProductionChange =
+  | { kind: "mode"; member_id: string; mode: ProductionMember["mode"] }
+  | { kind: "decision"; decision: ProductionDecision };
+
+export interface ProductionReceipt {
+  operation_id: string;
+  set_id: string;
+  revision: number;
+  etag: number;
+}
+
+export interface ProductionMapChunk {
+  map_sha256: string;
+  offset: number;
+  total_bytes: number;
+  data: string;
+  chunk_sha256: string;
+  next_cursor: string;
 }
 
 export interface ProductionPage<T> {
@@ -85,6 +109,21 @@ export function listUncertainDecisions(session: string, setID: string, revision:
   const params = new URLSearchParams({ limit: "50", uncertain: "true" });
   if (cursor) params.set("cursor", cursor);
   return sessionJSON<ProductionPage<ProductionDecision>>(`${setBase}/${encodeURIComponent(setID)}/revisions/${revision}/decisions?${params}`, { session, signal });
+}
+
+export function applyProductionChange(session: string, setID: string, revision: number,
+  etag: number, operationID: string, change: ProductionChange, signal?: AbortSignal): Promise<ProductionReceipt> {
+  return sessionJSON<ProductionReceipt>(`${setBase}/${encodeURIComponent(setID)}/revisions/${revision}/changes`, {
+    session, signal, method: "POST", headers: { "Content-Type": "application/json", "If-Match": String(etag) },
+    body: JSON.stringify({ operation_id: operationID, changes: [change] }),
+  });
+}
+
+export function getProductionMapChunk(session: string, setID: string, revision: number, memberID: string,
+  cursor = "", signal?: AbortSignal): Promise<ProductionMapChunk> {
+  const params = new URLSearchParams({ limit: "65536" });
+  if (cursor) params.set("cursor", cursor);
+  return sessionJSON<ProductionMapChunk>(`${setBase}/${encodeURIComponent(setID)}/revisions/${revision}/maps/${encodeURIComponent(memberID)}?${params}`, { session, signal });
 }
 
 export function createProductionSet(session: string, name: string, instructions: string,
