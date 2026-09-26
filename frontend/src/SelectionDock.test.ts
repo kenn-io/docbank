@@ -102,6 +102,21 @@ it("labels and invokes the visible-page CSV action for the current selection", a
   expect(oncsv).toHaveBeenCalledOnce();
 });
 
+it("opens an exact-document report from the selected rows", async () => {
+  const onreport = vi.fn();
+  render(SelectionDock, {
+    selectedCount: 2,
+    visibleDocumentCount: 3,
+    truncated: false,
+    onclear: vi.fn(),
+    onselectvisible: vi.fn(),
+    onreport,
+  });
+
+  await fireEvent.click(screen.getByRole("button", { name: "Report selected documents" }));
+  expect(onreport).toHaveBeenCalledOnce();
+});
+
 it("names snapshot-page tagging separately from the whole frozen query", async () => {
   const ontags = vi.fn();
   const onwholequerytags = vi.fn();
