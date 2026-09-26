@@ -46,6 +46,7 @@ test("creates and inspects an exact production review through the real daemon", 
 
 test("selects a rectangle on a retained synthetic member PDF through the real daemon", async ({ page }) => {
   test.setTimeout(300_000);
+  page.setDefaultTimeout(15_000);
   const workspace = await mkdtemp(path.join(tmpdir(), "docbank-editor-screenshot-"));
   const ready = path.join(workspace, "fixture-ready.json");
   const done = path.join(workspace, "fixture-done");
@@ -88,7 +89,7 @@ test("selects a rectangle on a retained synthetic member PDF through the real da
     await page.goto(webURL, { waitUntil: "domcontentloaded" });
     await page.getByRole("button", { name: "Production sets" }).click();
     const drawer = page.getByRole("dialog", { name: "Production sets" });
-    await drawer.getByRole("button", { name: "Synthetic preview" }).click();
+    await drawer.getByRole("button", { name: "Synthetic editor" }).click();
     await expect(drawer.getByRole("button", { name: "Open original PDF for member 1" })).toBeVisible();
     await drawer.getByRole("button", { name: "Open original PDF for member 1" }).click();
     await expect(drawer.getByRole("region", { name: "Original PDF for member 1" })).toBeVisible();
@@ -121,9 +122,25 @@ test("selects a rectangle on a retained synthetic member PDF through the real da
     const overlayBox = await overlay.boundingBox();
     expect(overlayBox!.width).toBeGreaterThan(5);
     expect(overlayBox!.width).toBeLessThan(visiblePageBox!.width);
+    await drawer.getByRole("textbox", { name: "Private reason for redaction" }).fill("Synthetic review reason");
+    await drawer.getByRole("textbox", { name: "Public label" }).fill("Synthetic label");
+    await drawer.getByRole("button", { name: "Redact selection" }).click();
+    await expect(drawer.getByRole("region", { name: "Expansion required on page 1" })).toBeVisible();
+    await expect(drawer.locator(".source-expansion-overlay")).toBeVisible();
+    await expect(drawer.locator("dt").filter({ hasText: "Change version" }).locator("xpath=following-sibling::dd[1]")).toHaveText("2");
     expect(outside).toEqual([]);
     expect(browserErrors).toEqual([]);
     await page.screenshot({ path: path.join(output!, "web-production-rectangle-selection.png"), fullPage: true, animations: "disabled" });
+    await drawer.getByRole("button", { name: "Use expanded selection" }).click();
+    await expect(drawer.locator("dt").filter({ hasText: "Change version" }).locator("xpath=following-sibling::dd[1]")).toHaveText("3");
+    await drawer.getByRole("button", { name: "Synthetic keep" }).click();
+    await drawer.getByRole("button", { name: "Open original PDF for member 1" }).click();
+    await expect(drawer.getByRole("img", { name: "Original page 1" })).toBeVisible();
+    await drawer.getByRole("button", { name: "Select whole page", exact: true }).click();
+    await expect(drawer.getByRole("region", { name: "Selected region on page 1" })).toBeVisible();
+    await drawer.getByRole("button", { name: "Keep selection" }).click();
+    await expect(drawer.locator("dt").filter({ hasText: "Change version" }).locator("xpath=following-sibling::dd[1]")).toHaveText("3");
+    expect(browserErrors).toEqual([]);
   } finally {
     await writeFile(done, "stopped", { mode: 0o600 });
     if (daemonStarted) await docbank("daemon", "stop");

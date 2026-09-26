@@ -95,6 +95,18 @@ export interface ProductionResolvedMaskPage {
   next_cursor: string;
 }
 
+export interface ProductionDecisionCheckResult {
+  set_id: string;
+  revision: number;
+  etag: number;
+  member_id: string;
+  decision_id: string;
+  outcome: "ready" | "selection_expansion_required" | "decision_conflict";
+  expanded?: ProductionDecision["selector"];
+  expanded_box_count?: number;
+  decision_ids?: string[];
+}
+
 const setBase = "/api/v1/productions/sets";
 
 export function listProductionSets(session: string, cursor = "", signal?: AbortSignal): Promise<ProductionSetPage> {
@@ -149,6 +161,14 @@ export function resolveProductionPage(session: string, setID: string, revision: 
   return sessionJSON<ProductionResolvedMaskPage>(`${setBase}/${encodeURIComponent(setID)}/revisions/${revision}/resolve`, {
     session, signal, method: "POST", headers: { "Content-Type": "application/json", "If-Match": String(etag) },
     body: JSON.stringify({ member_id: memberID, page, limit: 1 }),
+  });
+}
+
+export function checkProductionDecision(session: string, setID: string, revision: number, etag: number,
+  decision: ProductionDecision, signal?: AbortSignal): Promise<ProductionDecisionCheckResult> {
+  return sessionJSON<ProductionDecisionCheckResult>(`${setBase}/${encodeURIComponent(setID)}/revisions/${revision}/decisions/check`, {
+    session, signal, method: "POST", headers: { "Content-Type": "application/json", "If-Match": String(etag) },
+    body: JSON.stringify({ decision }),
   });
 }
 

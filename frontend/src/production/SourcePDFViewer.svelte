@@ -17,7 +17,7 @@
 
   let { bytes, memberID, onmarquee, onpage, highlight = null }: { bytes: Uint8Array<ArrayBuffer>; memberID: string;
     onmarquee: (selection: Marquee) => void; onpage: (page: number) => void;
-    highlight?: { page: number; frame: Frame; box?: PhysicalBox } | null } = $props();
+    highlight?: { page: number; frame: Frame; box?: PhysicalBox; expandedBoxes?: PhysicalBox[] } | null } = $props();
   // EmbedPDF's worker bundle uses blob workers, which the web CSP does not allow.
   const engine = usePdfiumEngine({ wasmUrl: pdfiumWasmURL, worker: false, fontFallback: null });
   let loadError = $state("");
@@ -76,6 +76,10 @@
                       </PagePointerProvider>
                       {#if highlight?.page === page.pageNumber}
                         {@const box = highlight.box}
+                        {#each highlight.expandedBoxes ?? [] as expandedBox}
+                          <div class="source-expansion-overlay" aria-hidden="true"
+                            style={`left: ${expandedBox.x0 / highlight.frame.width * 100}%; top: ${expandedBox.y0 / highlight.frame.height * 100}%; width: ${(expandedBox.x1 - expandedBox.x0) / highlight.frame.width * 100}%; height: ${(expandedBox.y1 - expandedBox.y0) / highlight.frame.height * 100}%`}></div>
+                        {/each}
                         <div class="source-selection-overlay" aria-hidden="true"
                           style={`left: ${box ? box.x0 / highlight.frame.width * 100 : 0}%; top: ${box ? box.y0 / highlight.frame.height * 100 : 0}%; width: ${box ? (box.x1 - box.x0) / highlight.frame.width * 100 : 100}%; height: ${box ? (box.y1 - box.y0) / highlight.frame.height * 100 : 100}%`}></div>
                       {/if}
@@ -105,7 +109,8 @@
   .source-frame { height: min(50vh, 520px); min-height: 320px; width: 100%; }
   .source-page { position: relative; margin-inline: auto; background: white; box-shadow: 0 2px 14px var(--border-default); }
   .source-page :global(img) { display: block; width: 100%; height: 100%; pointer-events: none; user-select: none; -webkit-user-drag: none; }
-  .source-selection-overlay { position: absolute; z-index: 2; box-sizing: border-box; pointer-events: none; border: 2px solid var(--accent-blue); background: color-mix(in srgb, var(--accent-blue) 23%, transparent); }
+  .source-expansion-overlay { position: absolute; z-index: 2; box-sizing: border-box; pointer-events: none; border: 2px solid var(--accent-amber); background: color-mix(in srgb, var(--accent-amber) 25%, transparent); }
+  .source-selection-overlay { position: absolute; z-index: 3; box-sizing: border-box; pointer-events: none; border: 2px solid var(--accent-blue); background: color-mix(in srgb, var(--accent-blue) 23%, transparent); }
   .source-toolbar { display: flex; align-items: end; gap: var(--space-2); flex-wrap: wrap; margin-block: var(--space-2); }
   .source-toolbar label { display: grid; gap: var(--space-1); font-size: var(--font-size-xs); color: var(--text-secondary); }
   .source-toolbar select { padding: var(--space-1) var(--space-2); border: 1px solid var(--border-muted); border-radius: var(--radius-sm); background: var(--bg-raised); color: var(--text-primary); }

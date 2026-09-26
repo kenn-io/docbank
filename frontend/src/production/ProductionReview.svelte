@@ -10,6 +10,7 @@
   import { loadProductionSourcePDF } from "./sourcePDF.js";
   import { embedpdfMarqueeBox, type Frame } from "./embedpdfAdapter.js";
   import { loadSelectionFrame } from "./selectionFrame.js";
+  import { assessSelectionDecision } from "./decisionCheck.js";
   import type { Marquee } from "./SourcePageSelection.svelte";
 
   interface Props {
@@ -47,6 +48,10 @@
   let selectionLoading = $state(false);
   let selectionError = $state("");
   let selectedRegion = $state<{ member: ProductionMember; page: number; frame: Frame; selector: ProductionDecision["selector"] } | null>(null);
+  let selectionReason = $state("");
+  let selectionLabel = $state("");
+  let decisionLoading = $state(false);
+  let pendingExpansion = $state<{ decision: ProductionDecision } | null>(null);
   let authFailed = false;
   let membersController = new AbortController();
   let flagsController = new AbortController();
@@ -54,6 +59,7 @@
   let contextController = new AbortController();
   let sourceController = new AbortController();
   let selectionController = new AbortController();
+  let decisionController = new AbortController();
 
   type Scope = { session: string; setID: string; revision: number; etag: number };
   type PendingChange = { scope: Scope; operationID: string; change: ProductionChange };
@@ -67,12 +73,14 @@
     contextController.abort();
     sourceController.abort();
     selectionController.abort();
+    decisionController.abort();
     membersController = new AbortController();
     flagsController = new AbortController();
     changeController = new AbortController();
     contextController = new AbortController();
     sourceController = new AbortController();
     selectionController = new AbortController();
+    decisionController = new AbortController();
     members = [];
     flags = [];
     memberCursor = "";
@@ -98,12 +106,16 @@
     selectionLoading = false;
     selectionError = "";
     selectedRegion = null;
+    selectionReason = "";
+    selectionLabel = "";
+    decisionLoading = false;
+    pendingExpansion = null;
     authFailed = false;
     void loadMembers(scope, "", membersController.signal);
     void loadFlags(scope, "", flagsController.signal);
-    return () => { membersController.abort(); flagsController.abort(); changeController.abort(); contextController.abort(); sourceController.abort(); selectionController.abort(); };
+    return () => { membersController.abort(); flagsController.abort(); changeController.abort(); contextController.abort(); sourceController.abort(); selectionController.abort(); decisionController.abort(); };
   });
-  onDestroy(() => { membersController.abort(); flagsController.abort(); changeController.abort(); contextController.abort(); sourceController.abort(); selectionController.abort(); });
+  onDestroy(() => { membersController.abort(); flagsController.abort(); changeController.abort(); contextController.abort(); sourceController.abort(); selectionController.abort(); decisionController.abort(); });
 
   function current(scope: Scope, signal: AbortSignal): boolean {
     return !signal.aborted && !stale && scope.session === session && scope.setID === set.id &&
@@ -120,8 +132,10 @@
       contextController.abort();
       sourceController.abort();
       selectionController.abort();
+      decisionController.abort();
       sourceEditor = null;
       selectedRegion = null;
+      pendingExpansion = null;
       return "";
     }
     return cause instanceof Error ? cause.message : String(cause);
@@ -180,8 +194,12 @@
     contextController.abort();
     sourceController.abort();
     selectionController.abort();
+    decisionController.abort();
     sourceEditor = null;
     selectedRegion = null;
+    pendingExpansion = null;
+    selectionLoading = false;
+    decisionLoading = false;
     changeError = "";
     membersController.abort();
     flagsController.abort();
@@ -240,7 +258,11 @@
     const exact = scope();
     sourceEditor = null;
     selectionController.abort();
+    decisionController.abort();
     selectedRegion = null;
+    pendingExpansion = null;
+    selectionLoading = false;
+    decisionLoading = false;
     sourceMemberID = member.id;
     sourceError = "";
     sourceLoading = true;
@@ -264,8 +286,12 @@
     const memberID = sourceMemberID;
     sourceController.abort();
     selectionController.abort();
+    decisionController.abort();
     sourceEditor = null;
     selectedRegion = null;
+    pendingExpansion = null;
+    selectionLoading = false;
+    decisionLoading = false;
     sourceLoading = false;
     sourceError = "";
     await tick();
@@ -275,12 +301,17 @@
   async function selectRegion(member: ProductionMember, page: number, marquee?: Marquee): Promise<void> {
     if (draft.state !== "draft" || stale || sourceEditor?.member.id !== member.id || changing || pendingChange) return;
     selectionController.abort();
+    decisionController.abort();
     selectionController = new AbortController();
     const signal = selectionController.signal;
     const exact = scope();
     selectionLoading = true;
     selectionError = "";
     selectedRegion = null;
+    pendingExpansion = null;
+    decisionLoading = false;
+    selectionReason = "";
+    selectionLabel = "";
     try {
       const frame = await loadSelectionFrame(exact.session, exact.setID, exact.revision, exact.etag,
         member.id, member.map_sha256, page, signal);
@@ -298,6 +329,98 @@
     } finally {
       if (!signal.aborted) selectionLoading = false;
     }
+  }
+
+  function clearSelection(): void {
+    selectionController.abort();
+    decisionController.abort();
+    selectedRegion = null;
+    pendingExpansion = null;
+    selectionError = "";
+    selectionReason = "";
+    selectionLabel = "";
+    selectionLoading = false;
+    decisionLoading = false;
+  }
+
+  function validSelectionLabel(): boolean {
+    return new TextEncoder().encode(selectionLabel.trim()).length <= 256;
+  }
+
+  function validSelectionRedactInput(): boolean {
+    const reason = selectionReason.trim();
+    return reason.length > 0 && new TextEncoder().encode(reason).length <= 4096 && validSelectionLabel();
+  }
+
+  async function checkSelection(decision: ProductionDecision, allowExpansion: boolean): Promise<void> {
+    const selected = selectedRegion;
+    if (!selected || decisionLoading || changing || pendingChange || stale || draft.state !== "draft") return;
+    decisionController.abort();
+    decisionController = new AbortController();
+    const signal = decisionController.signal;
+    const exact = scope();
+    decisionLoading = true;
+    selectionError = "";
+    try {
+      const result = await assessSelectionDecision(exact.session, exact.setID, exact.revision,
+        exact.etag, decision, selected.frame, signal);
+      if (!current(exact, signal) || selectedRegion !== selected || sourceEditor?.member.id !== selected.member.id) return;
+      switch (result.kind) {
+        case "ready":
+          pendingExpansion = null;
+          change({ kind: "decision", decision });
+          break;
+        case "expansion":
+          if (!allowExpansion) {
+            pendingExpansion = null;
+            selectionError = "The expanded selection still needs review. Draw a new selection.";
+          } else {
+            pendingExpansion = { decision: { ...decision, selector: result.selector } };
+          }
+          break;
+        case "conflict":
+          pendingExpansion = null;
+          selectionError = "This selection conflicts with the current draft decisions. Adjust the selection before continuing.";
+          break;
+        case "expansion_unavailable":
+          pendingExpansion = null;
+          selectionError = "The expanded selection is too large to review here. Select a whole page or a smaller region.";
+          break;
+      }
+    } catch (cause) {
+      if (current(exact, signal)) {
+        if (cause instanceof APIError && cause.status === 409 &&
+            (cause.code === "production_revision_conflict" || cause.code === "source_stale")) markStale();
+        else selectionError = fail(cause);
+      }
+    } finally {
+      if (!signal.aborted) decisionLoading = false;
+    }
+  }
+
+  function decideSelection(action: "keep" | "redact"): void {
+    const selected = selectedRegion;
+    if (!selected || !validSelectionLabel() || action === "redact" && !validSelectionRedactInput()) return;
+    pendingExpansion = null;
+    const decision: ProductionDecision = {
+      id: crypto.randomUUID(), member_id: selected.member.id, action, uncertain: false,
+      reason: action === "redact" ? selectionReason.trim() : "", label: selectionLabel.trim(),
+      selector: selected.selector,
+    };
+    void checkSelection(decision, true);
+  }
+
+  function acceptExpansion(): void {
+    const pending = pendingExpansion;
+    if (!pending) return;
+    if (pending.decision.reason !== (pending.decision.action === "redact" ? selectionReason.trim() : "") ||
+        pending.decision.label !== selectionLabel.trim()) {
+      pendingExpansion = null;
+      selectionError = "The review fields changed. Check this selection again.";
+      return;
+    }
+    pendingExpansion = null;
+    void checkSelection(pending.decision, false);
   }
 
   async function inspect(flag: ProductionDecision): Promise<void> {
@@ -376,7 +499,7 @@
               {#key sourceEditor.member.id}
                 <SourceViewer bytes={sourceEditor.bytes} memberID={sourceEditor.member.id}
                   highlight={selectedRegion ? { page: selectedRegion.page, frame: selectedRegion.frame,
-                    box: selectedRegion.selector.boxes?.[0] } : null}
+                    box: selectedRegion.selector.boxes?.[0], expandedBoxes: pendingExpansion?.decision.selector.boxes } : null}
                   onmarquee={selection => void selectRegion(sourceEditor!.member, selection.pageIndex + 1, selection)}
                   onpage={page => void selectRegion(sourceEditor!.member, page)} />
               {/key}
@@ -385,13 +508,43 @@
               <div id="production-selected-region" class="selected-region" role="region" tabindex="-1" aria-label={`Selected region on page ${selectedRegion.page}`}>
                 <strong>{selectedRegion.selector.kind === "page" ? "Whole page" : "Selected rectangle"} · page {selectedRegion.page}</strong>
                 <p>The selection is bound to this member’s retained map and current draft.</p>
+                <label for="production-selected-reason">Private reason for redaction
+                  <textarea id="production-selected-reason" bind:value={selectionReason} oninput={() => pendingExpansion = null}
+                    disabled={decisionLoading || changing || !!pendingChange}
+                    rows="2" maxlength="4096" placeholder="Enter the reason for this redaction"></textarea>
+                </label>
+                <label for="production-selected-label">Public label
+                  <input id="production-selected-label" type="text" bind:value={selectionLabel} oninput={() => pendingExpansion = null}
+                    disabled={decisionLoading || changing || !!pendingChange}
+                    maxlength="256" placeholder="Optional label" />
+                </label>
+                {#if !selectionReason.trim()}<small>Enter a private reason to redact this selection.</small>{/if}
+                {#if !validSelectionLabel() || selectionReason.trim() && !validSelectionRedactInput()}
+                  <small class="error">Reason or label exceeds its UTF-8 byte limit.</small>
+                {/if}
+                {#if pendingExpansion}
+                  <div class="expansion-review" role="region" aria-label={`Expansion required on page ${selectedRegion.page}`}>
+                    <strong>Selection must expand</strong>
+                    <p>The amber area covers mapped content outside the blue box. Review the full area before using it.</p>
+                    <div class="decision-actions">
+                      <Button size="sm" disabled={decisionLoading || changing || !!pendingChange}
+                        onclick={acceptExpansion}>Use expanded selection</Button>
+                      <Button size="sm" surface="soft" disabled={decisionLoading} onclick={() => pendingExpansion = null}>Cancel expansion</Button>
+                    </div>
+                  </div>
+                {/if}
                 <div class="decision-actions">
-                  <Button size="sm" surface="soft" disabled={changing || !!pendingChange} onclick={() => selectedRegion = null}>Clear selection</Button>
+                  <Button size="sm" surface="soft" disabled={decisionLoading || changing || !!pendingChange || !!pendingExpansion || !validSelectionLabel()}
+                    onclick={() => decideSelection("keep")}>Keep selection</Button>
+                  <Button size="sm" tone="danger" disabled={decisionLoading || changing || !!pendingChange || !!pendingExpansion || !validSelectionRedactInput()}
+                    onclick={() => decideSelection("redact")}>Redact selection</Button>
+                  <Button size="sm" surface="soft" disabled={changing || !!pendingChange} onclick={clearSelection}>Clear selection</Button>
                 </div>
               </div>
             {/if}
           </div>
           {#if selectionLoading}<p class="loading" role="status"><Spinner size={16} /> Verifying selected page…</p>{/if}
+          {#if decisionLoading}<p class="loading" role="status"><Spinner size={16} /> Checking selected decision…</p>{/if}
           {#if selectionError}<p class="error" role="alert">{selectionError}</p>{/if}
         </div>
       {/if}
@@ -452,6 +605,8 @@
   .source-context{padding:var(--space-3);border:1px solid var(--border-muted);border-radius:var(--radius-md);background:var(--bg-raised);white-space:pre-wrap;overflow-wrap:anywhere}
   .source-workspace{display:grid;gap:var(--space-3)}.source-viewer-column{min-width:0}.source-workspace.has-selection{grid-template-columns:minmax(0,1fr) minmax(260px,340px)}
   .selected-region{display:grid;gap:var(--space-2);align-self:start;padding:var(--space-3);border:1px solid var(--border-default);border-radius:var(--radius-md);background:var(--bg-raised)}
+  .expansion-review{display:grid;gap:var(--space-2);padding:var(--space-2);border:1px solid var(--accent-amber);border-radius:var(--radius-md);background:color-mix(in srgb,var(--accent-amber) 9%,var(--bg-raised))}
+  .expansion-review p{margin:0}
   @media(max-width:900px){.source-workspace.has-selection{grid-template-columns:minmax(0,1fr)}}
   label{display:grid;gap:var(--space-1);font-size:var(--font-size-xs);color:var(--text-secondary)}
   textarea,input{width:100%;box-sizing:border-box;padding:var(--space-2);border:1px solid var(--border-muted);border-radius:var(--radius-md);background:var(--bg-raised);color:var(--text-primary);font:inherit}

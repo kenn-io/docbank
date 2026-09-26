@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/docbank/document/redaction"
 	"go.kenn.io/docbank/internal/blob"
 	"go.kenn.io/docbank/internal/store"
 )
@@ -21,7 +22,22 @@ func TestProductionEditorScreenshotFixture(t *testing.T) {
 	if ready == "" || done == "" {
 		t.Skip("opt-in production editor screenshot fixture")
 	}
-	vault, root, set, _, member, pdf := store.ProductionPreviewStageFixture(t)
+	vault, root, _, _, member, pdf := store.ProductionPreviewStageFixture(t)
+	createUndecided := func(name string, createID, addID string) redaction.Set {
+		t.Helper()
+		set, draft, err := vault.CreateProductionSet(t.Context(), "synthetic-operator", redaction.CreateRequest{
+			OperationID: createID, Name: name})
+		require.NoError(t, err)
+		_, err = vault.ApplyProductionChanges(t.Context(), "synthetic-operator", set.ID, draft.Revision,
+			redaction.ApplyRequest{OperationID: addID, ETag: draft.ETag,
+				Changes: []redaction.Change{{Kind: "member", Member: &member}}})
+		require.NoError(t, err)
+		return set
+	}
+	set := createUndecided("Synthetic editor", "89000000-0000-4000-8000-000000000051",
+		"89000000-0000-4000-8000-000000000052")
+	_ = createUndecided("Synthetic keep", "89000000-0000-4000-8000-000000000053",
+		"89000000-0000-4000-8000-000000000054")
 	blobs, err := blob.New(store.NewPackCatalog(vault), filepath.Join(root, "blobs"))
 	require.NoError(t, err)
 	written, err := blobs.WriteDetailedContext(t.Context(), bytes.NewReader(pdf))
