@@ -29,6 +29,8 @@ func termReportError(err error) *Error {
 		return problem
 	}
 	switch {
+	case errors.Is(err, report.ErrVisibilityChanged):
+		return NewError(http.StatusConflict, "visibility_changed", "Report source visibility changed; frozen counts and downloads are withheld.")
 	case errors.Is(err, reporting.ErrUnavailable):
 		return NewError(http.StatusGone, "report_unavailable", "This report handle is no longer available.")
 	case errors.Is(err, reporting.ErrCapacity):
@@ -41,7 +43,8 @@ func termReportError(err error) *Error {
 		return NewError(http.StatusUnprocessableEntity, "incomplete_date_coverage", "Some report dates need review before strict counts can be produced.")
 	case errors.Is(err, reporting.ErrInvalidRevision), errors.Is(err, report.ErrInvalidChoice):
 		return NewError(http.StatusBadRequest, "invalid_report_choice", err.Error())
-	case errors.Is(err, report.ErrStaleChoice), errors.Is(err, reporting.ErrStaleRenditionEvidence):
+	case errors.Is(err, report.ErrStaleChoice), errors.Is(err, reporting.ErrStaleRenditionEvidence),
+		errors.Is(err, store.ErrReportSelectionChanged):
 		return NewError(http.StatusConflict, "stale_evidence", "The reviewed or captured evidence does not match this report.")
 	case errors.Is(err, reporting.ErrReviewRequired):
 		return NewError(http.StatusConflict, "date_review_required", "Review the report dates before downloading counts.")
@@ -59,6 +62,16 @@ func termReportError(err error) *Error {
 	}
 }
 
+func withholdTermReportHistory(summary *report.Summary, state string) {
+	summary.State = state
+	summary.Counts = nil
+	summary.Coverage = report.Coverage{}
+	summary.RowCoverage = nil
+	summary.UnresolvedDates = 0
+	summary.CSVSHA256, summary.BundleSHA256 = "", ""
+	summary.CSVBytes, summary.BundleBytes = 0, 0
+}
+
 func registerTermReportRoutes(api huma.API, d Deps, gate *OperationGate, cache *reporting.Cache,
 	downloads *webDownloadRegistry, sessions *webSessionRegistry,
 ) {
@@ -73,7 +86,7 @@ func registerTermReportRoutes(api huma.API, d Deps, gate *OperationGate, cache *
 		return owner, nil
 	}
 	serviceFor := func(profile string) *reporting.Service {
-		return &reporting.Service{Source: d.Store,
+		return &reporting.Service{Source: d.Store, Visibility: d.Store.CheckTermReportVisibility,
 			Text: reporting.CapturedTextReader{Open: d.Blobs.OpenStreamContext},
 			Coverage: func(context.Context) (report.CoverageSelection, error) {
 				selection, err := selectCollectionProfile(d.Cfg, profile)
@@ -106,8 +119,14 @@ func registerTermReportRoutes(api huma.API, d Deps, gate *OperationGate, cache *
 		if err != nil {
 			return nil, termReportError(err)
 		}
+		members, err := cache.MemberIdentities(ctx, owner, summary.ID)
+		if err != nil {
+			cache.Drop(owner, summary.ID)
+			return nil, termReportError(err)
+		}
 		if err := gate.MutateContext(ctx, func() error {
-			return d.Store.SaveTermReportHistory(ctx, store.TermReportHistory{Request: request, Summary: summary})
+			return d.Store.SaveTermReportHistory(ctx, store.TermReportHistory{Request: request, Summary: summary,
+				VisibilityKnown: true, VisibilityMembers: members})
 		}); err != nil {
 			cache.Drop(owner, summary.ID)
 			return nil, FromStoreError(err)
@@ -120,7 +139,8 @@ func registerTermReportRoutes(api huma.API, d Deps, gate *OperationGate, cache *
 			Offset int `query:"offset" minimum:"0" maximum:"100"`
 			Limit  int `query:"limit" minimum:"0" maximum:"50"`
 		}) (*struct{ Body store.TermReportHistoryPage }, error) {
-			if _, err := termReportOwner(ctx); err != nil {
+			owner, err := termReportOwner(ctx)
+			if err != nil {
 				return nil, err
 			}
 			limit := in.Limit
@@ -130,6 +150,32 @@ func registerTermReportRoutes(api huma.API, d Deps, gate *OperationGate, cache *
 			page, err := d.Store.ListTermReportHistory(ctx, in.Offset, limit)
 			if err != nil {
 				return nil, FromStoreError(err)
+			}
+			for i := range page.Items {
+				item := &page.Items[i]
+				if item.VisibilityKnown {
+					frame := report.Frame{Members: make([]report.Member, len(item.VisibilityMembers))}
+					for j, identity := range item.VisibilityMembers {
+						frame.Members[j].Identity = identity
+					}
+					if err := d.Store.CheckTermReportVisibility(ctx, frame); err != nil {
+						if !errors.Is(err, report.ErrVisibilityChanged) {
+							return nil, FromStoreError(err)
+						}
+						withholdTermReportHistory(&item.Summary, "visibility_changed")
+					}
+					continue
+				}
+				_, visibilityErr := cache.SummaryContext(ctx, owner, item.Summary.ID)
+				switch {
+				case visibilityErr == nil:
+				case errors.Is(visibilityErr, report.ErrVisibilityChanged):
+					withholdTermReportHistory(&item.Summary, "visibility_changed")
+				case errors.Is(visibilityErr, reporting.ErrUnavailable):
+					withholdTermReportHistory(&item.Summary, "history_unavailable")
+				default:
+					return nil, termReportError(visibilityErr)
+				}
 			}
 			return &struct{ Body store.TermReportHistoryPage }{Body: page}, nil
 		})
@@ -142,7 +188,7 @@ func registerTermReportRoutes(api huma.API, d Deps, gate *OperationGate, cache *
 			if err != nil {
 				return nil, err
 			}
-			summary, err := cache.Summary(owner, in.ID)
+			summary, err := cache.SummaryContext(ctx, owner, in.ID)
 			if err != nil {
 				return nil, termReportError(err)
 			}
@@ -176,7 +222,7 @@ func registerTermReportRoutes(api huma.API, d Deps, gate *OperationGate, cache *
 		if err != nil {
 			return nil, err
 		}
-		request, err := cache.Request(owner, in.ID)
+		request, err := cache.RequestContext(ctx, owner, in.ID)
 		if err != nil {
 			return nil, termReportError(err)
 		}
@@ -189,9 +235,15 @@ func registerTermReportRoutes(api huma.API, d Deps, gate *OperationGate, cache *
 		if err != nil {
 			return nil, termReportError(err)
 		}
+		members, err := cache.MemberIdentities(ctx, owner, summary.ID)
+		if err != nil {
+			cache.Drop(owner, summary.ID)
+			return nil, termReportError(err)
+		}
 		request.DateChoices = nil
 		if err := gate.MutateContext(ctx, func() error {
-			return d.Store.SaveTermReportHistory(ctx, store.TermReportHistory{Request: request, Summary: summary})
+			return d.Store.SaveTermReportHistory(ctx, store.TermReportHistory{Request: request, Summary: summary,
+				VisibilityKnown: true, VisibilityMembers: members})
 		}); err != nil {
 			cache.Drop(owner, summary.ID)
 			return nil, FromStoreError(err)
