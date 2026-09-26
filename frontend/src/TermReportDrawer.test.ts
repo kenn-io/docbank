@@ -147,3 +147,62 @@ it("loads a prior request, changes its source, and sends a fresh run without old
     { target: { value: "beta" } });
   expect(await screen.findByText(/Draft changed; the counts and downloads below belong to the previous frozen run/)).toBeTruthy();
 });
+
+it("names withheld history and reruns an exact selected-document scope", async () => {
+  vi.stubGlobal("ResizeObserver", class { observe() {} unobserve() {} disconnect() {} });
+  const selected = { node_id: 7, version_id: "synthetic-version", sha256: "a".repeat(64) };
+  const selectedRequest = { ...original, version: 2, all_documents: false,
+    selected_documents: [selected], collection_ids: [] };
+  const submitted: unknown[] = [];
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (url, init) => {
+    const path = String(url);
+    if (path.startsWith("/api/v1/collections?")) return json({ items: [], total: 0 });
+    if (path.startsWith("/api/v1/search-exports?") && init?.method === "GET") {
+      return json({ items: [
+        { request: selectedRequest, summary: { ...oldSummary, id: "b".repeat(48), state: "visibility_changed", counts: [] } },
+        { request: original, summary: { ...oldSummary, id: "c".repeat(48), state: "history_unavailable", counts: [] } },
+        { request: original, summary: { ...oldSummary, id: "d".repeat(48), state: "needs_review", counts: [] } },
+      ], total: 3 });
+    }
+    if (path === "/api/v1/search-exports" && init?.method === "POST") {
+      submitted.push(JSON.parse(String(init.body)));
+      return json({ ...oldSummary, id: "e".repeat(48) });
+    }
+    throw new Error(`unexpected request ${path}`);
+  });
+  render(TermReportDrawer, { session: "session", initialExpression: "alpha", onclose: vi.fn(), onauthfailure: vi.fn() });
+  expect(await screen.findByText(/Source visibility changed/)).toBeTruthy();
+  expect(screen.getByText(/History unavailable/)).toBeTruthy();
+  expect(screen.getByText(/Date review needed/)).toBeTruthy();
+  const selectedRow = screen.getByText(/1 selected document/).closest(".history-item");
+  expect(selectedRow).not.toBeNull();
+  await fireEvent.click(within(selectedRow as HTMLElement).getByRole("button", { name: "Use as draft" }));
+  expect(screen.getByRole("radio", { name: /Selected documents/ })).toHaveProperty("checked", true);
+  await fireEvent.click(screen.getByRole("button", { name: "Create export" }));
+  await waitFor(() => expect(submitted).toHaveLength(1));
+  expect(submitted[0]).toMatchObject({ version: 2, all_documents: false, selected_documents: [selected] });
+});
+
+it("starts a version 2 report from the exact selected row identity", async () => {
+  vi.stubGlobal("ResizeObserver", class { observe() {} unobserve() {} disconnect() {} });
+  const selected = { node_id: 7, version_id: "synthetic-version", sha256: "a".repeat(64) };
+  const submitted: unknown[] = [];
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (url, init) => {
+    const path = String(url);
+    if (path.startsWith("/api/v1/collections?")) return json({ items: [], total: 0 });
+    if (path.startsWith("/api/v1/search-exports?") && init?.method === "GET") return json({ items: [], total: 0 });
+    if (path === "/api/v1/search-exports" && init?.method === "POST") {
+      submitted.push(JSON.parse(String(init.body)));
+      return json(oldSummary);
+    }
+    throw new Error(`unexpected request ${path}`);
+  });
+
+  render(TermReportDrawer, { session: "session", initialExpression: "alpha",
+    initialSelectedDocuments: [selected], onclose: vi.fn(), onauthfailure: vi.fn() });
+  expect(screen.getByRole("radio", { name: /Selected documents/ })).toHaveProperty("checked", true);
+  expect(screen.getByRole("radio", { name: "Selected documents (1)" })).toBeTruthy();
+  await fireEvent.click(screen.getByRole("button", { name: "Create export" }));
+  await waitFor(() => expect(submitted).toHaveLength(1));
+  expect(submitted[0]).toMatchObject({ version: 2, all_documents: false, selected_documents: [selected] });
+});

@@ -52,6 +52,48 @@ func TestDocumentCatalogSortsCurrentLiveFilesDeterministically(t *testing.T) {
 	}
 }
 
+func TestDocumentCatalogSourceFenceAppliesBeforePagination(t *testing.T) {
+	t.Parallel()
+	drivers := []struct {
+		name   string
+		driver docsqlite.Driver
+	}{{"default", DefaultSQLiteDriver()}, {"pure Go", modernc.Driver{}}}
+	for _, driver := range drivers {
+		t.Run(driver.name, func(t *testing.T) {
+			s := newTestStoreWithDriver(t, driver.driver)
+			for _, name := range []string{"a-hidden.txt", "b-visible.txt", "c-hidden.txt", "d-visible.txt"} {
+				_, err := s.CreateFile(t.Context(), s.RootID(), name, fakeHash(name), 1, "text/plain")
+				require.NoError(t, err)
+			}
+			all, err := s.ListDocuments(t.Context(), DocumentCatalogQuery{PageSize: 4}, nil, DocumentCatalogTraversalNext)
+			require.NoError(t, err)
+			ids := []string{all.Items[1].ContentVersionID, all.Items[3].ContentVersionID}
+			query := DocumentCatalogQuery{PageSize: 1, SourceIDs: ids}
+			first, err := s.ListDocuments(t.Context(), query, nil, DocumentCatalogTraversalNext)
+			require.NoError(t, err)
+			assert.Equal(t, []string{"/b-visible.txt"}, documentCatalogPaths(first.Items))
+			assert.True(t, first.HasNext)
+			second, err := s.ListDocuments(t.Context(), query, &first.LastPosition, DocumentCatalogTraversalNext)
+			require.NoError(t, err)
+			assert.Equal(t, []string{"/d-visible.txt"}, documentCatalogPaths(second.Items))
+			assert.True(t, second.HasPrevious)
+			assert.False(t, second.HasNext)
+
+			maxFence := make([]string, MaxDocumentCatalogSourceIDs)
+			for index := range maxFence[:len(maxFence)-1] {
+				maxFence[index] = fmt.Sprintf("00000000-0000-4000-8000-%012d", index)
+			}
+			maxFence[len(maxFence)-1] = ids[0]
+			bounded, err := s.ListDocuments(t.Context(), DocumentCatalogQuery{
+				PageSize: 1, SourceIDs: maxFence,
+			}, nil, DocumentCatalogTraversalNext)
+			require.NoError(t, err)
+			assert.Equal(t, []string{"/b-visible.txt"}, documentCatalogPaths(bounded.Items))
+			assert.False(t, bounded.HasNext)
+		})
+	}
+}
+
 func TestDocumentCatalogNormalizesPathPrefixAndUsesStableTies(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)

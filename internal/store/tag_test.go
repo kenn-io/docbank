@@ -88,6 +88,58 @@ func TestTagLifecycleAndNodeRevisions(t *testing.T) {
 	assert.Zero(t, assignments)
 }
 
+func TestCountTagAssignmentsForCurrentVersionsExcludesOtherScopesAndStaleHeads(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := t.Context()
+	first, err := s.CreateFile(ctx, s.RootID(), "synthetic-first.txt", fakeHash("tag-first"), 5, "text/plain")
+	require.NoError(t, err)
+	second, err := s.CreateFile(ctx, s.RootID(), "synthetic-second.txt", fakeHash("tag-second"), 6, "text/plain")
+	require.NoError(t, err)
+	directory, err := s.Mkdir(ctx, s.RootID(), "synthetic-directory")
+	require.NoError(t, err)
+	tag, err := s.CreateTag(ctx, "synthetic-shared")
+	require.NoError(t, err)
+	for _, node := range []Node{first, second, directory} {
+		_, err = s.AssignTag(ctx, tag.ID, node.ID, node.Revision)
+		require.NoError(t, err)
+	}
+	first, err = s.NodeByID(ctx, first.ID)
+	require.NoError(t, err)
+	global, err := s.TagByID(ctx, tag.ID)
+	require.NoError(t, err)
+	require.Equal(t, 3, global.AssignmentCount)
+
+	for _, testCase := range []struct {
+		name string
+		ids  []string
+		want int
+	}{
+		{"first only", []string{first.CurrentVersionID}, 1},
+		{"both files", []string{first.CurrentVersionID, second.CurrentVersionID}, 2},
+		{"duplicate source", []string{first.CurrentVersionID, first.CurrentVersionID}, 1},
+		{"empty fence", nil, 0},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			count, err := s.CountTagAssignmentsForCurrentVersions(ctx, tag.ID, testCase.ids)
+			require.NoError(t, err)
+			require.Equal(t, testCase.want, count)
+		})
+	}
+	oldVersion := first.CurrentVersionID
+	first, _, err = s.ReplaceContent(ctx, first.ID, first.Revision, fakeHash("tag-new-head"), 7, "text/plain")
+	require.NoError(t, err)
+	count, err := s.CountTagAssignmentsForCurrentVersions(ctx, tag.ID, []string{oldVersion})
+	require.NoError(t, err)
+	require.Zero(t, count)
+	count, err = s.CountTagAssignmentsForCurrentVersions(ctx, tag.ID, []string{first.CurrentVersionID})
+	require.NoError(t, err)
+	require.Equal(t, 1, count)
+
+	_, err = s.CountTagAssignmentsForCurrentVersions(ctx, tag.ID, make([]string, MaxSearchSourceFenceIDs+1))
+	require.ErrorIs(t, err, ErrInvalidProcessingSourceFence)
+}
+
 func TestTagRenameAndDeleteRejectStaleRevision(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)

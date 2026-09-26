@@ -57,6 +57,7 @@ type ExportProgressEvent struct {
 }
 
 func registerExportRoutes(mux *http.ServeMux, api huma.API, d Deps, g *OperationGate, snapshots *store.QuerySnapshotService, downloads *webDownloadRegistry, sessions *webSessionRegistry) {
+	registerExportArchiveRead(mux, api, d)
 	type sourceOutput struct{ Body bundle.Source }
 	huma.Register(api, huma.Operation{OperationID: "createExportSource", Method: http.MethodPost, Path: "/api/v1/exports/sources", Summary: "Freeze exact export membership or begin a chunk upload", MaxBodyBytes: 1 << 20}, func(ctx context.Context, in *struct {
 		Body    bundle.SourceRequest

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -108,6 +109,294 @@ func TestCacheOwnerBoundImmutableRevisionAndExpiry(t *testing.T) {
 	cache.InvalidateAll()
 	if used := budget.Used(); used != 0 {
 		t.Fatalf("retained %d bytes after invalidation", used)
+	}
+}
+
+func TestReportFrozenWithdrawalAfterCompletionWithholdsCountsAndDownload(t *testing.T) {
+	now := time.Date(2026, 9, 20, 12, 0, 0, 0, time.UTC)
+	budget := report.NewBudget(16 << 20)
+	defer func() { _ = budget.Close() }()
+	cache := NewCache(func() time.Time { return now }, budget)
+	defer cache.InvalidateAll()
+	reads, withdrawn := 0, false
+	svc := cacheFixture(now, &reads)
+	svc.Visibility = func(_ context.Context, _ report.Frame) error {
+		if withdrawn {
+			return ErrVisibilityChanged
+		}
+		return nil
+	}
+	summary, err := cache.Create(t.Context(), "owner", svc, testRequest())
+	if err != nil || summary.Counts[0].Hits != 1 {
+		t.Fatalf("initial report: %+v %v", summary, err)
+	}
+	withdrawn = true
+	if got, err := cache.Summary("owner", summary.ID); !errors.Is(err, ErrVisibilityChanged) || len(got.Counts) != 0 {
+		t.Fatalf("withdrawn counts disclosed: %+v %v", got, err)
+	}
+	if reader, _, _, err := cache.Acquire(t.Context(), "owner", summary.ID, "bundle"); !errors.Is(err, ErrVisibilityChanged) || reader != nil {
+		t.Fatalf("withdrawn artifact disclosed: %v", err)
+	}
+}
+
+func TestReportFrozenHistoryReceiptIncludesUnselectedFamilyDocument(t *testing.T) {
+	now := time.Date(2026, 9, 20, 12, 0, 0, 0, time.UTC)
+	budget := report.NewBudget(16 << 20)
+	defer func() { _ = budget.Close() }()
+	cache := NewCache(func() time.Time { return now }, budget)
+	defer cache.InvalidateAll()
+	reads := 0
+	svc := cacheFixture(now, &reads)
+	source := svc.Source
+	parent := testMember().Identity
+	child := report.Identity{NodeID: 2, VersionID: "v2", SHA256: strings.Repeat("c", 64)}
+	svc.Source = frameSourceFunc(func(ctx context.Context, request report.Request,
+		selection report.CoverageSelection, scope, textScope report.Budget) (report.Frame, error) {
+		frame, err := source.MaterializeTermReportFrame(ctx, request, selection, scope, textScope)
+		if err != nil {
+			return report.Frame{}, err
+		}
+		frame.Members[0].FamilyID = parent.VersionID
+		frame.Relations = []report.Relation{{Parent: parent, Child: child,
+			EvidenceID: "synthetic-family", EvidenceSHA256: strings.Repeat("d", 64)}}
+		return frame, nil
+	})
+	request := testRequest()
+	request.Version, request.AllDocuments = 2, false
+	request.SelectedDocuments = []report.Identity{parent}
+	summary, err := cache.Create(t.Context(), "owner", svc, request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	identities, err := cache.MemberIdentities(t.Context(), "owner", summary.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(identities) != 2 || identities[0] != parent || identities[1] != child {
+		t.Fatalf("durable visibility dependencies: %+v", identities)
+	}
+}
+
+func TestReportFrozenDependencyLimitRejectsBeforePublication(t *testing.T) {
+	now := time.Date(2026, 9, 20, 12, 0, 0, 0, time.UTC)
+	budget := report.NewBudget(16 << 20)
+	defer func() { _ = budget.Close() }()
+	cache := NewCache(func() time.Time { return now }, budget)
+	defer cache.InvalidateAll()
+	member := testMember()
+	member.Candidates = []report.DateCandidate{
+		{ID: "first", Document: member.Identity, Role: "created", SourceClass: "native",
+			Value: "2024-05-06", Precision: "date", Locator: report.Locator{EvidenceSHA256: strings.Repeat("b", 64)}},
+		{ID: "second", Document: member.Identity, Role: "created", SourceClass: "native",
+			Value: "2024-06-07", Precision: "date", Locator: report.Locator{EvidenceSHA256: strings.Repeat("c", 64)}},
+	}
+	relations := make([]report.Relation, 50000)
+	for i := range relations {
+		relations[i] = report.Relation{Parent: member.Identity,
+			Child: report.Identity{NodeID: int64(i + 2), VersionID: "child-" + strconv.Itoa(i), SHA256: strings.Repeat("d", 64)}}
+	}
+	svc := &Service{Source: frameSourceFunc(func(_ context.Context, request report.Request,
+		selection report.CoverageSelection, _, _ report.Budget) (report.Frame, error) {
+		return report.Frame{VaultID: "synthetic-vault", GenerationKind: "native", ObservedAt: now,
+			Request: request, CoverageSelection: selection, Members: []report.Member{member}, Relations: relations}, nil
+	}), Visibility: func(_ context.Context, frame report.Frame) error {
+		_, err := report.VisibilityIdentities(frame)
+		return err
+	}}
+	_, err := cache.Create(t.Context(), "owner", svc, testRequest())
+	if !errors.Is(err, report.ErrReportLimit) {
+		t.Fatalf("dependency limit: %v", err)
+	}
+	if len(cache.entries) != 0 || budget.Used() != 0 {
+		t.Fatalf("over-limit observation published or retained resources: entries=%d bytes=%d", len(cache.entries), budget.Used())
+	}
+}
+
+func TestReportFrozenWithdrawalAfterPreviewWithholdsReview(t *testing.T) {
+	now := time.Date(2026, 9, 20, 12, 0, 0, 0, time.UTC)
+	budget := report.NewBudget(16 << 20)
+	defer func() { _ = budget.Close() }()
+	cache := NewCache(func() time.Time { return now }, budget)
+	defer cache.InvalidateAll()
+	member := testMember()
+	for i, value := range []string{"2024-05-06", "2024-06-07"} {
+		member.Candidates = append(member.Candidates, report.DateCandidate{ID: string(rune('a' + i)), Document: member.Identity,
+			Role: "created", SourceClass: "native", Value: value, Precision: "date",
+			Locator: report.Locator{EvidenceSHA256: strings.Repeat("b", 64)}})
+	}
+	withdrawn := false
+	svc := &Service{Source: frameSourceFunc(func(_ context.Context, request report.Request,
+		selection report.CoverageSelection, _, _ report.Budget) (report.Frame, error) {
+		return report.Frame{VaultID: "synthetic-vault", GenerationKind: "native", ObservedAt: now,
+			Request: request, CoverageSelection: selection, Members: []report.Member{member}}, nil
+	}), Visibility: func(_ context.Context, _ report.Frame) error {
+		if withdrawn {
+			return ErrVisibilityChanged
+		}
+		return nil
+	}}
+	summary, err := cache.Create(t.Context(), "owner", svc, testRequest())
+	if err != nil || summary.State != "needs_review" {
+		t.Fatalf("preview: %+v %v", summary, err)
+	}
+	withdrawn = true
+	if page, err := cache.Dates(t.Context(), "owner", summary.ID, report.DatePageRequest{}); !errors.Is(err, ErrVisibilityChanged) || len(page.Members) != 0 {
+		t.Fatalf("withdrawn preview disclosed: %+v %v", page, err)
+	}
+	if _, err := cache.Revise(t.Context(), "owner", summary.ID, svc, nil); !errors.Is(err, ErrVisibilityChanged) {
+		t.Fatalf("withdrawn revision: %v", err)
+	}
+}
+
+func TestReportFrozenWithdrawalDuringPublicationRejectsReport(t *testing.T) {
+	now := time.Date(2026, 9, 20, 12, 0, 0, 0, time.UTC)
+	budget := report.NewBudget(16 << 20)
+	defer func() { _ = budget.Close() }()
+	cache := NewCache(func() time.Time { return now }, budget)
+	defer cache.InvalidateAll()
+	reads := 0
+	svc := cacheFixture(now, &reads)
+	checking, release := make(chan struct{}), make(chan struct{})
+	withdrawn := false
+	svc.Visibility = func(_ context.Context, _ report.Frame) error {
+		close(checking)
+		<-release
+		if withdrawn {
+			return ErrVisibilityChanged
+		}
+		return nil
+	}
+	done := make(chan error, 1)
+	go func() { _, err := cache.Create(t.Context(), "owner", svc, testRequest()); done <- err }()
+	<-checking
+	withdrawn = true
+	close(release)
+	if err := <-done; !errors.Is(err, ErrVisibilityChanged) {
+		t.Fatalf("publication after withdrawal: %v", err)
+	}
+}
+
+func TestReportFrozenPublicationHonorsRequestCancellation(t *testing.T) {
+	now := time.Date(2026, 9, 20, 12, 0, 0, 0, time.UTC)
+	budget := report.NewBudget(16 << 20)
+	defer func() { _ = budget.Close() }()
+	cache := NewCache(func() time.Time { return now }, budget)
+	defer cache.InvalidateAll()
+	reads := 0
+	svc := cacheFixture(now, &reads)
+	checking, release := make(chan struct{}), make(chan struct{})
+	svc.Visibility = func(ctx context.Context, _ report.Frame) error {
+		close(checking)
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-release:
+			return nil
+		}
+	}
+	ctx, cancel := context.WithCancel(t.Context())
+	done := make(chan error, 1)
+	go func() { _, err := cache.Create(ctx, "owner", svc, testRequest()); done <- err }()
+	<-checking
+	cancel()
+	select {
+	case err := <-done:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("canceled publication: %v", err)
+		}
+	case <-time.After(time.Second):
+		close(release)
+		<-done
+		t.Fatal("publication visibility check ignored request cancellation")
+	}
+}
+
+func TestReportFrozenBlockedVisibilityDoesNotStallAnotherOwner(t *testing.T) {
+	now := time.Date(2026, 9, 20, 12, 0, 0, 0, time.UTC)
+	budget := report.NewBudget(32 << 20)
+	defer func() { _ = budget.Close() }()
+	cache := NewCache(func() time.Time { return now }, budget)
+	defer cache.InvalidateAll()
+	reads := 0
+	firstService := cacheFixture(now, &reads)
+	block := false
+	entered, release := make(chan struct{}), make(chan struct{})
+	firstService.Visibility = func(_ context.Context, _ report.Frame) error {
+		if block {
+			close(entered)
+			<-release
+		}
+		return nil
+	}
+	first, err := cache.Create(t.Context(), "owner-a", firstService, testRequest())
+	if err != nil {
+		t.Fatal(err)
+	}
+	secondService := cacheFixture(now, &reads)
+	second, err := cache.Create(t.Context(), "owner-b", secondService, testRequest())
+	if err != nil {
+		t.Fatal(err)
+	}
+	block = true
+	firstDone := make(chan error, 1)
+	go func() { _, err := cache.Summary("owner-a", first.ID); firstDone <- err }()
+	<-entered
+	secondDone := make(chan error, 1)
+	go func() { _, err := cache.Summary("owner-b", second.ID); secondDone <- err }()
+	select {
+	case err := <-secondDone:
+		if err != nil {
+			t.Fatalf("other owner's read: %v", err)
+		}
+	case <-time.After(time.Second):
+		close(release)
+		<-firstDone
+		<-secondDone
+		t.Fatal("blocked source visibility held the global cache mutex")
+	}
+	close(release)
+	if err := <-firstDone; err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestReportFrozenRevokedDuringVisibilityCheckWithholdsSummary(t *testing.T) {
+	now := time.Date(2026, 9, 20, 12, 0, 0, 0, time.UTC)
+	budget := report.NewBudget(32 << 20)
+	defer func() { _ = budget.Close() }()
+	cache := NewCache(func() time.Time { return now }, budget)
+	defer cache.InvalidateAll()
+	reads := 0
+	svc := cacheFixture(now, &reads)
+	block := false
+	entered, release := make(chan struct{}), make(chan struct{})
+	svc.Visibility = func(_ context.Context, _ report.Frame) error {
+		if block {
+			close(entered)
+			<-release
+		}
+		return nil
+	}
+	summary, err := cache.Create(t.Context(), "owner", svc, testRequest())
+	if err != nil {
+		t.Fatal(err)
+	}
+	block = true
+	readDone := make(chan error, 1)
+	go func() { _, err := cache.Summary("owner", summary.ID); readDone <- err }()
+	<-entered
+	revokeDone := make(chan struct{})
+	go func() { cache.Revoke("owner"); close(revokeDone) }()
+	select {
+	case <-revokeDone:
+	case <-time.After(time.Second):
+		close(release)
+		<-readDone
+		t.Fatal("revoke waited for source visibility I/O")
+	}
+	close(release)
+	if err := <-readDone; !errors.Is(err, ErrUnavailable) {
+		t.Fatalf("revoked summary: %v", err)
 	}
 }
 

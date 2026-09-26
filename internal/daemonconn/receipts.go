@@ -336,16 +336,25 @@ type APIKeyExclusionPolicy func(*Connection) bool
 func NewAPIKeyExclusionPolicy(forbidden string) APIKeyExclusionPolicy {
 	forbiddenHash := sha256.Sum256([]byte(forbidden))
 	return func(c *Connection) bool {
-		if c == nil || c.key == "" {
+		if c == nil {
 			return false
 		}
-		keyHash := sha256.Sum256([]byte(c.key))
+		credential := c.key
+		if credential == "" && c.hc != nil {
+			if scoped, ok := c.hc.Transport.(*agentSessionTransport); ok {
+				credential = scoped.token
+			}
+		}
+		if credential == "" {
+			return false
+		}
+		keyHash := sha256.Sum256([]byte(credential))
 		return subtle.ConstantTimeCompare(forbiddenHash[:], keyHash[:]) != 1
 	}
 }
 
-// Allows reports whether the ownership-proven client has a non-empty API key
-// distinct from the policy's forbidden credential.
+// Allows reports whether the client uses a non-empty daemon or agent-session
+// credential distinct from the policy's forbidden credential.
 func (policy APIKeyExclusionPolicy) Allows(c *Connection) bool {
 	return policy != nil && policy(c)
 }

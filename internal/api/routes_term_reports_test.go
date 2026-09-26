@@ -2,6 +2,8 @@ package api_test
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json/v2"
 	"io"
 	"net/http"
@@ -9,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/internal/api"
@@ -99,6 +102,39 @@ func TestTermReportRoutesFreezeSummaryDatesAndDownload(t *testing.T) {
 	require.Equal(t, http.StatusGone, resp.StatusCode, body)
 }
 
+func TestReportSealedRouteAdmitsOnlyExactSelectedVersion(t *testing.T) {
+	ts, s := newTestServer(t, nil)
+	selected := createFileWithContent(t, ts, s, "/synthetic-alpha.txt", "synthetic alpha")
+	createFileWithContent(t, ts, s, "/synthetic-beta.txt", "synthetic beta")
+	request := report.Request{Version: 2, SelectedDocuments: []report.Identity{{
+		NodeID: selected.ID, VersionID: selected.CurrentVersionID, SHA256: selected.BlobHash,
+	}}, Timezone: "UTC", CoverageMode: "available_only", Terms: []report.Term{{
+		Number: 1, Expression: "alpha", Syntax: "simple",
+		Dates: report.DateRange{Start: "2026-01-01", End: "2026-12-31"},
+	}}}
+	post := func() (*http.Response, string) {
+		t.Helper()
+		encoded, err := json.Marshal(request)
+		require.NoError(t, err)
+		return rawJSONRequest(t, ts.URL, http.MethodPost, "/api/v1/search-exports",
+			map[string]string{"X-Api-Key": testAPIKey}, string(encoded))
+	}
+	response, body := post()
+	require.Equal(t, http.StatusOK, response.StatusCode, body)
+	var summary report.Summary
+	require.NoError(t, json.Unmarshal([]byte(body), &summary))
+	require.Equal(t, int64(1), summary.Coverage.Scoped)
+	require.Equal(t, int64(1), summary.Counts[0].Hits)
+	response, packet := get(t, ts, "/api/v1/search-exports/"+summary.ID+"/bundle", nil)
+	require.Equal(t, http.StatusOK, response.StatusCode)
+	_, err := report.VerifyBundle(t.Context(), report.NewBudget(8<<20), bytes.NewReader([]byte(packet)), int64(len(packet)))
+	require.NoError(t, err)
+	request.SelectedDocuments[0].SHA256 = strings.Repeat("0", 64)
+	response, body = post()
+	require.Equal(t, http.StatusConflict, response.StatusCode, body)
+	require.Contains(t, body, "stale_evidence")
+}
+
 func TestTermReportRejectsInvalidRequestAsClientError(t *testing.T) {
 	ts, _ := newTestServer(t, nil)
 	request := `{"version":1,"all_documents":true,"timezone":"Invalid/Zone","coverage_mode":"strict",` +
@@ -182,7 +218,7 @@ func TestTermReportNativeTextLimitReturnsClientError(t *testing.T) {
 	require.Contains(t, body, "report_limit")
 }
 
-func TestTermReportOldDownloadStaysFrozenAfterSourceChange(t *testing.T) {
+func TestReportFrozenDownloadStaysFrozenAfterHeadChangeAndWithholdsTrash(t *testing.T) {
 	ts, s := newTestServer(t, nil)
 	node := createFileWithContent(t, ts, s, "/alpha.txt", "synthetic original")
 	request := report.Request{Version: 1, AllDocuments: true, Timezone: "UTC",
@@ -202,15 +238,104 @@ func TestTermReportOldDownloadStaysFrozenAfterSourceChange(t *testing.T) {
 	require.Equal(t, int64(1), first.Counts[0].Hits)
 	response, frozenBundle := get(t, ts, "/api/v1/search-exports/"+first.ID+"/bundle", nil)
 	require.Equal(t, http.StatusOK, response.StatusCode)
-	_, _, err = s.Trash(t.Context(), node.ID, node.Revision)
+	changedBytes := []byte("changed report content")
+	changedHash := sha256.Sum256(changedBytes)
+	changed, _, err := s.ReplaceContent(t.Context(), node.ID, node.Revision,
+		hex.EncodeToString(changedHash[:]), int64(len(changedBytes)), "text/plain")
+	require.NoError(t, err)
+	response, stillFrozen := get(t, ts, "/api/v1/search-exports/"+first.ID+"/bundle", nil)
+	require.Equal(t, http.StatusOK, response.StatusCode)
+	require.Equal(t, frozenBundle, stillFrozen)
+	response, body := get(t, ts, "/api/v1/search-exports/"+first.ID, nil)
+	require.Equal(t, http.StatusOK, response.StatusCode, body)
+	var unchanged report.Summary
+	require.NoError(t, json.Unmarshal([]byte(body), &unchanged))
+	require.Equal(t, first.Counts, unchanged.Counts)
+	response, body = get(t, ts, "/api/v1/search-exports", nil)
+	require.Equal(t, http.StatusOK, response.StatusCode, body)
+	var beforeTrash store.TermReportHistoryPage
+	require.NoError(t, json.Unmarshal([]byte(body), &beforeTrash))
+	require.Equal(t, first.Counts, beforeTrash.Items[0].Summary.Counts)
+	_, _, err = s.Trash(t.Context(), node.ID, changed.Revision)
 	require.NoError(t, err)
 	createFileWithContent(t, ts, s, "/beta.txt", "synthetic replacement")
 	second := create()
 	require.NotEqual(t, first.ID, second.ID)
 	require.Zero(t, second.Counts[0].Hits)
-	response, stillFrozen := get(t, ts, "/api/v1/search-exports/"+first.ID+"/bundle", nil)
-	require.Equal(t, http.StatusOK, response.StatusCode)
-	require.Equal(t, frozenBundle, stillFrozen)
+	response, body = get(t, ts, "/api/v1/search-exports/"+first.ID, nil)
+	require.Equal(t, http.StatusConflict, response.StatusCode, body)
+	require.Contains(t, body, "visibility_changed")
+	response, body = get(t, ts, "/api/v1/search-exports/"+first.ID+"/bundle", nil)
+	require.Equal(t, http.StatusConflict, response.StatusCode, body)
+	require.Contains(t, body, "visibility_changed")
+	response, body = get(t, ts, "/api/v1/search-exports", nil)
+	require.Equal(t, http.StatusOK, response.StatusCode, body)
+	var history store.TermReportHistoryPage
+	require.NoError(t, json.Unmarshal([]byte(body), &history))
+	for _, item := range history.Items {
+		if item.Summary.ID == first.ID {
+			require.Empty(t, item.Summary.Counts)
+			require.Equal(t, "visibility_changed", item.Summary.State)
+		}
+	}
+}
+
+func TestReportFrozenHistoryAfterHandleLossChecksDurableSource(t *testing.T) {
+	ts, s := newTestServer(t, nil)
+	node := createFileWithContent(t, ts, s, "/synthetic-history.txt", "synthetic history")
+	request := report.Request{Version: 1, AllDocuments: true, Timezone: "UTC", CoverageMode: "available_only",
+		Terms: []report.Term{{Number: 1, Expression: "synthetic", Syntax: "simple",
+			Dates: report.DateRange{Start: "2026-01-01", End: "2026-12-31"}}}}
+	now := time.Now().UTC().Add(-time.Hour)
+	item := store.TermReportHistory{Request: request, VisibilityKnown: true, VisibilityMembers: []report.Identity{{
+		NodeID: node.ID, VersionID: node.CurrentVersionID, SHA256: node.BlobHash,
+	}}, Summary: report.Summary{ID: strings.Repeat("d", 48), State: "complete", ObservedAt: now,
+		ExpiresAt: now.Add(30 * time.Minute), Terms: request.Terms, Counts: []report.Counts{{Hits: 1}}}}
+	require.NoError(t, s.SaveTermReportHistory(t.Context(), item))
+	read := func() store.TermReportHistoryPage {
+		t.Helper()
+		response, body := get(t, ts, "/api/v1/search-exports", nil)
+		require.Equal(t, http.StatusOK, response.StatusCode, body)
+		require.NotContains(t, body, "visibility_members")
+		var page store.TermReportHistoryPage
+		require.NoError(t, json.Unmarshal([]byte(body), &page))
+		require.Len(t, page.Items, 1)
+		return page
+	}
+	page := read()
+	require.Equal(t, "complete", page.Items[0].Summary.State)
+	require.Equal(t, int64(1), page.Items[0].Summary.Counts[0].Hits)
+	// A fresh daemon cache must use the saved dependency evidence, even after
+	// the old report handle has expired.
+	ts.Close()
+	ts, _ = newTestServer(t, func(d *api.Deps) { d.Store, d.Blobs = s.Store, s.Blobs })
+	page = read()
+	require.Equal(t, "complete", page.Items[0].Summary.State)
+	require.Equal(t, int64(1), page.Items[0].Summary.Counts[0].Hits)
+	_, _, err := s.Trash(t.Context(), node.ID, node.Revision)
+	require.NoError(t, err)
+	page = read()
+	require.Equal(t, "visibility_changed", page.Items[0].Summary.State)
+	require.Empty(t, page.Items[0].Summary.Counts)
+}
+
+func TestReportFrozenLegacyHistoryWithoutDependenciesWithholdsCounts(t *testing.T) {
+	ts, s := newTestServer(t, nil)
+	request := report.Request{Version: 1, AllDocuments: true, Timezone: "UTC", CoverageMode: "available_only",
+		Terms: []report.Term{{Number: 1, Expression: "synthetic", Syntax: "simple",
+			Dates: report.DateRange{Start: "2026-01-01", End: "2026-12-31"}}}}
+	now := time.Now().UTC().Add(-time.Hour)
+	item := store.TermReportHistory{Request: request, Summary: report.Summary{ID: strings.Repeat("e", 48),
+		State: "complete", ObservedAt: now, ExpiresAt: now.Add(30 * time.Minute),
+		Terms: request.Terms, Counts: []report.Counts{{Hits: 1}}}}
+	require.NoError(t, s.SaveTermReportHistory(t.Context(), item))
+	response, body := get(t, ts, "/api/v1/search-exports", nil)
+	require.Equal(t, http.StatusOK, response.StatusCode, body)
+	var page store.TermReportHistoryPage
+	require.NoError(t, json.Unmarshal([]byte(body), &page))
+	require.Len(t, page.Items, 1)
+	require.Equal(t, "history_unavailable", page.Items[0].Summary.State)
+	require.Empty(t, page.Items[0].Summary.Counts)
 }
 
 func TestTermReportBrowserTicketIsOneUseAndOwnerBound(t *testing.T) {

@@ -12,6 +12,7 @@ import (
 	"go.kenn.io/docbank/document/bundle"
 	"go.kenn.io/docbank/internal/loadfile"
 	"go.kenn.io/docbank/internal/store"
+	"go.kenn.io/docbank/report"
 )
 
 // Error is the wire error envelope: RFC 7807 fields plus a machine-readable
@@ -89,6 +90,7 @@ var storeErrCodes = []struct {
 	status int
 	code   string
 }{
+	{report.ErrReportLimit, http.StatusRequestEntityTooLarge, "report_limit"},
 	{store.ErrSearchQueryRequired, http.StatusUnprocessableEntity, "search_query_required"},
 	{store.ErrNotFound, http.StatusNotFound, "not_found"},
 	{store.ErrExists, http.StatusConflict, "exists"},

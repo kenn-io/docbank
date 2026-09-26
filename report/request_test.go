@@ -31,7 +31,7 @@ func TestRequestRejectsInvalidScopeDatesAndTerms(t *testing.T) {
 		name string
 		edit func(*Request)
 	}{
-		{"version", func(r *Request) { r.Version = 2 }},
+		{"version", func(r *Request) { r.Version = 3 }},
 		{"no scope", func(r *Request) { r.AllDocuments = false }},
 		{"both scopes", func(r *Request) { r.CollectionIDs = []string{"c1"} }},
 		{"duplicate collection", func(r *Request) { r.AllDocuments = false; r.CollectionIDs = []string{"c1", "c1"} }},
@@ -58,6 +58,36 @@ func TestRequestRejectsInvalidScopeDatesAndTerms(t *testing.T) {
 				t.Fatal("accepted invalid request")
 			}
 		})
+	}
+}
+
+func TestReportSealedRequestKeepsExactDocuments(t *testing.T) {
+	r := validRequest()
+	r.Version = 2
+	r.AllDocuments = false
+	r.SelectedDocuments = []Identity{{NodeID: 2, VersionID: "version-b", SHA256: strings.Repeat("b", 64)},
+		{NodeID: 1, VersionID: "version-a", SHA256: strings.Repeat("a", 64)}}
+	got, err := NormalizeRequest(r)
+	if err != nil || len(got.SelectedDocuments) != 2 || got.SelectedDocuments[0] != r.SelectedDocuments[0] {
+		t.Fatalf("sealed selection changed: %+v, %v", got.SelectedDocuments, err)
+	}
+	r.SelectedDocuments[0].VersionID = "changed"
+	if got.SelectedDocuments[0].VersionID != "version-b" {
+		t.Fatal("normalized request aliases caller selection")
+	}
+	for _, edit := range []func(*Request){
+		func(r *Request) { r.SelectedDocuments[1] = r.SelectedDocuments[0] },
+		func(r *Request) { r.SelectedDocuments[1].NodeID = r.SelectedDocuments[0].NodeID },
+		func(r *Request) { r.SelectedDocuments[1].SHA256 = "bad" },
+		func(r *Request) { r.CollectionIDs = []string{"collection"} },
+		func(r *Request) { r.AllDocuments = true },
+	} {
+		candidate := got
+		candidate.SelectedDocuments = append([]Identity(nil), got.SelectedDocuments...)
+		edit(&candidate)
+		if _, err := NormalizeRequest(candidate); err == nil {
+			t.Fatalf("accepted invalid sealed selection: %+v", candidate)
+		}
 	}
 }
 

@@ -89,7 +89,7 @@ func validSHA256Identity(value string) bool {
 	return true
 }
 
-func registerResourceSurface(server *sdkmcp.Server, lease *daemonLease, logger *slog.Logger) {
+func registerResourceSurface(server *sdkmcp.Server, lease *daemonLease, policy operationPolicy, logger *slog.Logger) {
 	server.AddResourceTemplate(&sdkmcp.ResourceTemplate{
 		URITemplate: renditionResourceTemplate,
 		Name:        "docbank-rendition-text",
@@ -100,16 +100,19 @@ func registerResourceSurface(server *sdkmcp.Server, lease *daemonLease, logger *
 			"defaultMaxChars": defaultRenditionChars, "maxChars": maxRenditionChars,
 			"maxResponseBytes": maxToolResponseBytes,
 		}},
-	}, renditionResourceHandler(lease, logger))
+	}, renditionResourceHandler(lease, policy, logger))
 }
 
-func renditionResourceHandler(lease *daemonLease, logger *slog.Logger) sdkmcp.ResourceHandler {
+func renditionResourceHandler(lease *daemonLease, policy operationPolicy, logger *slog.Logger) sdkmcp.ResourceHandler {
 	return func(ctx context.Context, request *sdkmcp.ReadResourceRequest) (*sdkmcp.ReadResourceResult, error) {
 		if request == nil || request.Params == nil {
 			return nil, sanitizedRPCError(errors.New("missing resource request"))
 		}
 		identity, requested, err := parseRenditionResourceURI(request.Params.URI)
 		if err != nil {
+			return nil, sdkmcp.ResourceNotFoundError(request.Params.URI)
+		}
+		if _, err := policy.authorize(ctx, api.OperationRead, []string{identity.ContentVersionID}, true, true); err != nil {
 			return nil, sdkmcp.ResourceNotFoundError(request.Params.URI)
 		}
 		window, err := daemonRead(ctx, lease, func(ctx context.Context, c *daemonconn.Connection) (api.RenditionTextWindow, error) {

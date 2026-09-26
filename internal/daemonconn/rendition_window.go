@@ -41,10 +41,16 @@ func (c *Connection) RenditionTextWindow(
 	if len(encoded) > maxRenditionWindowResponseBytes {
 		return api.RenditionTextWindow{}, errors.New("rendition window response is too large")
 	}
-	var result api.RenditionTextWindow
-	if err := json.Unmarshal(encoded, &result, json.RejectUnknownMembers(true)); err != nil {
+	// Huma includes its schema link in successful typed JSON responses.
+	var decoded struct {
+		api.RenditionTextWindow
+
+		Schema string `json:"$schema"`
+	}
+	if err := json.Unmarshal(encoded, &decoded, json.RejectUnknownMembers(true)); err != nil {
 		return api.RenditionTextWindow{}, errors.New("rendition window response is invalid")
 	}
+	result := decoded.RenditionTextWindow
 	if err := validateRenditionTextWindow(request, result); err != nil {
 		return api.RenditionTextWindow{}, err
 	}

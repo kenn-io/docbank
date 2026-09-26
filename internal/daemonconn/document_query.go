@@ -4,12 +4,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"go.kenn.io/docbank/internal/apiclient"
 	pathpkg "path"
 	"strings"
 	"time"
 
 	"go.kenn.io/docbank/internal/api"
+	"go.kenn.io/docbank/internal/apiclient"
 	"go.kenn.io/docbank/internal/store"
 )
 
@@ -47,6 +47,40 @@ func (c *Connection) ListDocuments(
 	page = *apiResponse
 	if err := validateDocumentPage(query, page); err != nil {
 		return api.DocumentPage{}, err
+	}
+	return page, nil
+}
+
+// ListScopedDocuments submits a bounded source fence in the request body so
+// the daemon can filter catalog candidates before applying its page limit.
+func (c *Connection) ListScopedDocuments(
+	ctx context.Context, query api.ScopedDocumentQuery,
+) (api.DocumentPage, error) {
+	if err := validateDocumentQuery(query.DocumentQuery); err != nil {
+		return api.DocumentPage{}, err
+	}
+	if len(query.ContentVersionIDs) == 0 || len(query.ContentVersionIDs) > store.MaxDocumentCatalogSourceIDs {
+		return api.DocumentPage{}, store.ErrInvalidDocumentQuery
+	}
+	allowed := make(map[string]bool, len(query.ContentVersionIDs))
+	for _, id := range query.ContentVersionIDs {
+		if !validUUIDv4(id) {
+			return api.DocumentPage{}, store.ErrInvalidDocumentQuery
+		}
+		allowed[id] = true
+	}
+	response, err := c.API().ListScopedDocuments(ctx, &apiclient.ListScopedDocumentsRequestOptions{Body: &query})
+	if err != nil {
+		return api.DocumentPage{}, err
+	}
+	page := *response
+	if err := validateDocumentPage(query.DocumentQuery, page); err != nil {
+		return api.DocumentPage{}, err
+	}
+	for _, item := range page.Items {
+		if !allowed[item.ContentVersionID] {
+			return api.DocumentPage{}, errors.New("scoped document page returned an out-of-fence source")
+		}
 	}
 	return page, nil
 }

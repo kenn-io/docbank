@@ -93,7 +93,7 @@ type apiKeyTransport struct {
 }
 
 func (a *apiKeyTransport) RoundTrip(req *http.Request) (*http.Response, error) {
-	if _, present := req.Header["X-Api-Key"]; !present && a.key != "" {
+	if _, present := req.Header["X-Api-Key"]; !present && req.Header.Get("Authorization") == "" && a.key != "" {
 		req = req.Clone(req.Context())
 		req.Header.Set("X-Api-Key", a.key)
 	}

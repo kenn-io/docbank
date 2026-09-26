@@ -219,6 +219,7 @@ func TestProcessingServiceCompletesEmbeddingAfterWorkerStops(t *testing.T) {
 	require.NoError(t, err, "foreground processing must progress without a background worker")
 	status, err := service.Status(t.Context(), job.ID)
 	require.NoError(t, err)
+	require.Equal(t, original.ContentVersionID, status.ContentVersionID)
 	require.Equal(t, "completed", status.State)
 	require.Equal(t, 1, status.CompletedBindings)
 }

@@ -16,6 +16,7 @@ import (
 )
 
 var ErrUnknownReportCollection = errors.New("unknown report collection")
+var ErrReportSelectionChanged = errors.New("selected report document changed")
 
 type termReportVersion struct {
 	identity           report.Identity
@@ -146,7 +147,7 @@ func (s *Store) MaterializeTermReportFrame(
 
 func reportCollectionWitnesses(ctx context.Context, q metadataQuerier, request report.Request, budget report.Budget) (map[int64][]report.CollectionWitness, error) {
 	result := make(map[int64][]report.CollectionWitness)
-	if request.AllDocuments {
+	if request.AllDocuments || len(request.SelectedDocuments) > 0 {
 		return result, nil
 	}
 	collectionIDs, err := json.Marshal(request.CollectionIDs)
@@ -208,10 +209,21 @@ func readTermReportMembers(ctx context.Context, q metadataQuerier, request repor
 	versions := make([]termReportVersion, 0)
 	var scope string
 	var args []any
-	if !request.AllDocuments {
+	if len(request.CollectionIDs) > 0 {
 		nodeIDs := make([]int64, 0, len(witnesses))
 		for nodeID := range witnesses {
 			nodeIDs = append(nodeIDs, nodeID)
+		}
+		encoded, err := json.Marshal(nodeIDs)
+		if err != nil {
+			return nil, nil, err
+		}
+		scope = ` AND n.id IN (SELECT value FROM json_each(?))`
+		args = append(args, string(encoded))
+	} else if len(request.SelectedDocuments) > 0 {
+		nodeIDs := make([]int64, len(request.SelectedDocuments))
+		for i, member := range request.SelectedDocuments {
+			nodeIDs[i] = member.NodeID
 		}
 		encoded, err := json.Marshal(nodeIDs)
 		if err != nil {
@@ -274,7 +286,20 @@ func readTermReportMembers(ctx context.Context, q metadataQuerier, request repor
 		versions = append(versions, version)
 		frame.Members = append(frame.Members, member)
 	}
-	return index, versions, errors.Join(rows.Err(), rows.Close())
+	if err := errors.Join(rows.Err(), rows.Close()); err != nil {
+		return nil, nil, err
+	}
+	if len(request.SelectedDocuments) > 0 {
+		if len(versions) != len(request.SelectedDocuments) {
+			return nil, nil, ErrReportSelectionChanged
+		}
+		for _, selected := range request.SelectedDocuments {
+			if i, ok := index[selected.NodeID]; !ok || frame.Members[i].Identity != selected {
+				return nil, nil, ErrReportSelectionChanged
+			}
+		}
+	}
+	return index, versions, nil
 }
 
 func (s *Store) readTermReportDateAuthority(ctx context.Context, q metadataQuerier,

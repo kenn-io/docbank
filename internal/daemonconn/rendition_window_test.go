@@ -45,6 +45,46 @@ func TestRenditionTextWindowUsesTypedDaemonRouteAndValidatesAuthority(t *testing
 	assert.Equal(t, want, got)
 }
 
+func TestRenditionTextWindowAcceptsSchemaLinkButRejectsOtherUnknownFields(t *testing.T) {
+	request := api.RenditionWindowRequest{
+		VaultID: "11111111-1111-4111-8111-111111111111", NodeID: 7,
+		ContentVersionID: "22222222-2222-4222-8222-222222222222",
+		AttachmentID:     strings.Repeat("a", 64), MaxChars: 1,
+	}
+	want := api.RenditionTextWindow{
+		VaultID: request.VaultID, NodeID: request.NodeID,
+		ContentVersionID: request.ContentVersionID, AttachmentID: request.AttachmentID,
+		BuildID: strings.Repeat("b", 64), ProfileFingerprint: strings.Repeat("c", 64),
+		Text: "x", MediaType: "text/markdown", Checksum: strings.Repeat("d", 64),
+		ActualEnd: 1, NextOffset: 1, EOF: true, ResponseBytes: 1,
+	}
+	encoded, err := json.Marshal(want)
+	require.NoError(t, err)
+	for _, tc := range []struct {
+		name, prefix string
+		valid        bool
+	}{
+		{"schema link", `"$schema":"http://127.0.0.1/schemas/RenditionTextWindow.json",`, true},
+		{"other unknown field", `"$schema":"http://127.0.0.1/schemas/RenditionTextWindow.json","untrusted":true,`, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, _ *http.Request) {
+				response.Header().Set("Content-Type", "application/json")
+				_, writeErr := response.Write([]byte("{" + tc.prefix + string(encoded[1:])))
+				assert.NoError(t, writeErr)
+			}))
+			t.Cleanup(server.Close)
+			got, readErr := New(server.URL, "synthetic-key").RenditionTextWindow(t.Context(), request)
+			if tc.valid {
+				require.NoError(t, readErr)
+				assert.Equal(t, want, got)
+			} else {
+				require.ErrorContains(t, readErr, "response is invalid")
+			}
+		})
+	}
+}
+
 func TestRenditionTextWindowValidatesPublishedOffsetArithmetic(t *testing.T) {
 	const maxPublishedOffset = 1<<31 - 1
 	vaultID := "11111111-1111-4111-8111-111111111111"

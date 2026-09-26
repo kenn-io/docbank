@@ -20,9 +20,10 @@ import (
 )
 
 var (
-	ErrUnavailable     = errors.New("report handle unavailable")
-	ErrCapacity        = errors.New("report capacity exhausted")
-	ErrInvalidRevision = errors.New("invalid report revision")
+	ErrUnavailable       = errors.New("report handle unavailable")
+	ErrCapacity          = errors.New("report capacity exhausted")
+	ErrInvalidRevision   = errors.New("invalid report revision")
+	ErrVisibilityChanged = report.ErrVisibilityChanged
 )
 
 type sharedFrame struct {
@@ -32,20 +33,22 @@ type sharedFrame struct {
 }
 
 type cacheEntry struct {
-	owner    string
-	frame    *sharedFrame
-	artifact *report.Artifact
-	summary  report.Summary
-	choices  []report.DateChoice
-	selected []report.DateSelection
-	scope    report.Budget
-	pins     int
-	readers  map[*pinnedReader]struct{}
-	removed  bool
+	owner      string
+	frame      *sharedFrame
+	artifact   *report.Artifact
+	summary    report.Summary
+	choices    []report.DateChoice
+	selected   []report.DateSelection
+	scope      report.Budget
+	pins       int
+	readers    map[*pinnedReader]struct{}
+	removed    bool
+	visibility func(context.Context, report.Frame) error
 }
 
 type activeBuild struct {
 	owner       string
+	ctx         context.Context
 	cancel      context.CancelFunc
 	invalidated bool
 }
@@ -93,7 +96,7 @@ func (c *Cache) startBuild(parent context.Context, owner string) (context.Contex
 		cancel()
 		return nil, nil, ErrCapacity
 	}
-	build := &activeBuild{owner: owner, cancel: cancel}
+	build := &activeBuild{owner: owner, ctx: ctx, cancel: cancel}
 	c.builders[build] = struct{}{}
 	c.ownerPending[owner]++
 	c.wg.Add(1)
@@ -146,11 +149,8 @@ func (c *Cache) Revise(ctx context.Context, owner, id string, service *Service, 
 	if service == nil {
 		return report.Summary{}, ErrUnavailable
 	}
-	c.mu.Lock()
-	c.sweepExpiredLocked()
-	parent, err := c.lookupLocked(owner, id)
+	parent, err := c.visibleEntryLocked(ctx, owner, id)
 	if err != nil {
-		c.mu.Unlock()
 		return report.Summary{}, err
 	}
 	parent.frame.refs++
@@ -228,7 +228,8 @@ func (c *Cache) makeEntryWithFrame(ctx context.Context, owner, parent string, sh
 	serviceCopy.Budget = calculationScope
 	result, err := serviceCopy.Finalize(ctx, frame, nil)
 	entry := &cacheEntry{owner: owner, frame: shared, scope: artifactScope,
-		readers: make(map[*pinnedReader]struct{}), summary: report.Summary{
+		visibility: service.Visibility,
+		readers:    make(map[*pinnedReader]struct{}), summary: report.Summary{
 			ID: id, ParentID: parent, ObservedAt: shared.value.ObservedAt, ExpiresAt: expires,
 			Terms: slices.Clone(frame.Request.Terms),
 		}}
@@ -317,6 +318,9 @@ func randomReportID() (string, error) {
 }
 
 func (c *Cache) publish(build *activeBuild, entry *cacheEntry) error {
+	if err := c.checkVisibility(build.ctx, entry); err != nil {
+		return err
+	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.closed || build.invalidated || !c.now().Before(entry.summary.ExpiresAt) {
@@ -337,31 +341,47 @@ func (c *Cache) publish(build *activeBuild, entry *cacheEntry) error {
 }
 
 func (c *Cache) Summary(owner, id string) (report.Summary, error) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	c.sweepExpiredLocked()
-	entry, err := c.lookupLocked(owner, id)
+	return c.SummaryContext(context.Background(), owner, id)
+}
+
+func (c *Cache) SummaryContext(ctx context.Context, owner, id string) (report.Summary, error) {
+	entry, err := c.visibleEntryLocked(ctx, owner, id)
 	if err != nil {
 		return report.Summary{}, err
 	}
+	defer c.mu.Unlock()
 	return cloneSummary(entry.summary), nil
 }
 
 // Request returns the reusable shape of a frozen run. Reviewed evidence is
 // deliberately omitted because it belongs to that observation only.
 func (c *Cache) Request(owner, id string) (report.Request, error) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	c.sweepExpiredLocked()
-	entry, err := c.lookupLocked(owner, id)
+	return c.RequestContext(context.Background(), owner, id)
+}
+
+func (c *Cache) RequestContext(ctx context.Context, owner, id string) (report.Request, error) {
+	entry, err := c.visibleEntryLocked(ctx, owner, id)
 	if err != nil {
 		return report.Request{}, err
 	}
+	defer c.mu.Unlock()
 	request := entry.frame.value.Request
 	request.CollectionIDs = slices.Clone(request.CollectionIDs)
+	request.SelectedDocuments = slices.Clone(request.SelectedDocuments)
 	request.Terms = slices.Clone(request.Terms)
 	request.DateChoices = nil
 	return request, nil
+}
+
+// MemberIdentities returns the exact member and relation dependencies for a
+// durable history receipt. It checks live visibility before commit.
+func (c *Cache) MemberIdentities(ctx context.Context, owner, id string) ([]report.Identity, error) {
+	entry, err := c.visibleEntryLocked(ctx, owner, id)
+	if err != nil {
+		return nil, err
+	}
+	defer c.mu.Unlock()
+	return report.VisibilityIdentities(entry.frame.value)
 }
 
 func (c *Cache) Drop(owner, id string) {
@@ -384,6 +404,48 @@ func (c *Cache) lookupLocked(owner, id string) (*cacheEntry, error) {
 	entry := c.entries[id]
 	if owner == "" || entry == nil || entry.owner != owner || entry.removed ||
 		!c.now().Before(entry.summary.ExpiresAt) {
+		return nil, ErrUnavailable
+	}
+	return entry, nil
+}
+
+func (c *Cache) checkVisibility(ctx context.Context, entry *cacheEntry) error {
+	if entry.visibility == nil {
+		return nil
+	}
+	return entry.visibility(ctx, entry.frame.value)
+}
+
+// visibleEntryLocked pins the entry while source I/O runs without the cache
+// mutex. On success it returns with the mutex held, so the caller can read or
+// pin the checked entry before a concurrent revoke or expiry removes it.
+func (c *Cache) visibleEntryLocked(ctx context.Context, owner, id string) (*cacheEntry, error) {
+	c.mu.Lock()
+	c.sweepExpiredLocked()
+	entry, err := c.lookupLocked(owner, id)
+	if err != nil {
+		c.mu.Unlock()
+		return nil, err
+	}
+	entry.pins++
+	c.mu.Unlock()
+
+	err = ctx.Err()
+	if err == nil {
+		err = c.checkVisibility(ctx, entry)
+	}
+	c.mu.Lock()
+	entry.pins--
+	if entry.removed && entry.pins == 0 {
+		c.releaseEntryLocked(entry)
+	}
+	if err != nil {
+		c.mu.Unlock()
+		return nil, err
+	}
+	current, lookupErr := c.lookupLocked(owner, id)
+	if lookupErr != nil || current != entry {
+		c.mu.Unlock()
 		return nil, ErrUnavailable
 	}
 	return entry, nil
@@ -437,11 +499,8 @@ func (c *Cache) Dates(ctx context.Context, owner, id string, page report.DatePag
 	if page.Limit < 1 || page.Limit > 100 {
 		return report.DatePage{}, report.ErrReportLimit
 	}
-	c.mu.Lock()
-	c.sweepExpiredLocked()
-	entry, err := c.lookupLocked(owner, id)
+	entry, err := c.visibleEntryLocked(ctx, owner, id)
 	if err != nil {
-		c.mu.Unlock()
 		return report.DatePage{}, err
 	}
 	entry.frame.refs++
@@ -550,13 +609,11 @@ func (reader *pinnedReader) Close() error {
 }
 
 func (c *Cache) Acquire(ctx context.Context, owner, id, format string) (io.ReadCloser, int64, string, error) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	c.sweepExpiredLocked()
-	entry, err := c.lookupLocked(owner, id)
+	entry, err := c.visibleEntryLocked(ctx, owner, id)
 	if err != nil {
 		return nil, 0, "", err
 	}
+	defer c.mu.Unlock()
 	if entry.artifact == nil {
 		return nil, 0, "", ErrReviewRequired
 	}

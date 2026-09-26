@@ -157,6 +157,9 @@ func registerReadRoutes(api huma.API, d Deps) {
 	}, func(ctx context.Context, in *struct {
 		VersionID string `path:"version_id"`
 	}) (*contentVersionOutput, error) {
+		if _, err := authorizeRequest(ctx, d, OperationRead, []string{in.VersionID}, true, true); err != nil {
+			return nil, err
+		}
 		version, err := d.Store.ContentVersionByID(ctx, in.VersionID)
 		if err != nil {
 			return nil, FromStoreError(err)
@@ -183,6 +186,9 @@ func registerReadRoutes(api huma.API, d Deps) {
 	}, func(ctx context.Context, in *struct {
 		VersionID string `path:"version_id"`
 	}) (*huma.StreamResponse, error) {
+		if _, err := authorizeRequest(ctx, d, OperationRead, []string{in.VersionID}, true, true); err != nil {
+			return nil, err
+		}
 		version, err := d.Store.ContentVersionByID(ctx, in.VersionID)
 		if err != nil {
 			return nil, FromStoreError(err)

@@ -15,6 +15,7 @@
     onwholequerytags?: () => void;
     onexport?: () => void;
     onexportquery?: () => void;
+    onreport?: () => void;
   }
 
   let {
@@ -31,6 +32,7 @@
     onwholequerytags,
     onexport,
     onexportquery,
+    onreport,
   }: Props = $props();
 </script>
 
@@ -69,6 +71,7 @@
     {/if}
     {#if oncsv}<Button size="sm" onclick={oncsv}>Export page CSV</Button>{/if}
     {#if onexport}<Button size="sm" onclick={onexport}>Export selection</Button>{/if}
+    {#if onreport}<Button size="sm" onclick={onreport}>Report selected documents</Button>{/if}
     {#if context === "snapshot" && onexportquery}<Button size="sm" onclick={onexportquery}>Export frozen query</Button>{/if}
   </div>
 </BottomDock>

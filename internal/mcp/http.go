@@ -632,6 +632,9 @@ func (writer *boundedResponseWriter) Flush() {
 
 // ServeHTTP listens on one explicit loopback address until ctx is cancelled.
 func ServeHTTP(ctx context.Context, server *Server, address string, options HTTPOptions) error {
+	if server != nil {
+		defer server.reports.closeAll()
+	}
 	if err := ValidateHTTPListenAddress(address); err != nil {
 		return err
 	}

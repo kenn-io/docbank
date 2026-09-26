@@ -285,6 +285,7 @@ type Job struct {
 
 type Status struct {
 	JobID             string
+	ContentVersionID  string
 	State             string
 	Phase             string
 	FailureCode       string
@@ -1158,7 +1159,7 @@ func (service *Service) Status(ctx context.Context, jobID string) (Status, error
 			if failureCode == "" {
 				failureCode = "authorization"
 			}
-			return Status{JobID: jobID, State: "failed", Phase: "authorization",
+			return Status{JobID: jobID, ContentVersionID: waiter.ContentVersionID, State: "failed", Phase: "authorization",
 				FailureCode: failureCode, EmbeddingJobIDs: []string{}}, nil
 		}
 		var rendition store.RenditionJob
@@ -1178,7 +1179,9 @@ func (service *Service) Status(ctx context.Context, jobID string) (Status, error
 		if err != nil {
 			return Status{}, err
 		}
-		return aggregateStatus(jobID, &rendition, embeddings), nil
+		status := aggregateStatus(jobID, &rendition, embeddings)
+		status.ContentVersionID = waiter.ContentVersionID
+		return status, nil
 	}
 	if !errors.Is(waiterErr, store.ErrNotFound) {
 		return Status{}, waiterErr
@@ -1191,7 +1194,9 @@ func (service *Service) Status(ctx context.Context, jobID string) (Status, error
 		if err != nil {
 			return Status{}, err
 		}
-		return aggregateStatus(jobID, nil, embeddings), nil
+		status := aggregateStatus(jobID, nil, embeddings)
+		status.ContentVersionID = embedding.ContentVersionID
+		return status, nil
 	}
 	if !errors.Is(embeddingErr, store.ErrNotFound) {
 		return Status{}, embeddingErr
@@ -1202,7 +1207,10 @@ func (service *Service) Status(ctx context.Context, jobID string) (Status, error
 	if err != nil {
 		return Status{}, err
 	}
-	return aggregateStatus(jobID, &rendition, nil), nil
+	status := aggregateStatus(jobID, &rendition, nil)
+	// A shared rendition build can serve several content versions. It has no
+	// single source identity that a scoped caller could authorize.
+	return status, nil
 }
 
 func aggregateStatus(jobID string, rendition *store.RenditionJob,

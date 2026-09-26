@@ -34,6 +34,31 @@ func TestBundleRoundTripRecomputesSevenDocumentOracle(t *testing.T) {
 	}
 }
 
+func TestReportSealedBundleVerifiesExactMembership(t *testing.T) {
+	frame := oracleFrame()
+	frame.Request.Version, frame.Request.AllDocuments = 2, false
+	for _, member := range frame.Members {
+		frame.Request.SelectedDocuments = append(frame.Request.SelectedDocuments, member.Identity)
+	}
+	budget := NewBudget(4 << 20)
+	defer func() { _ = budget.Close() }()
+	result, err := Calculate(t.Context(), budget, frame)
+	if err != nil {
+		t.Fatal(err)
+	}
+	packet, err := BuildBundle(t.Context(), budget, result)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := VerifyBundle(t.Context(), budget, bytes.NewReader(packet), int64(len(packet))); err != nil {
+		t.Fatal(err)
+	}
+	result.Frame.Request.SelectedDocuments = result.Frame.Request.SelectedDocuments[:len(result.Frame.Request.SelectedDocuments)-1]
+	if _, err := BuildBundle(t.Context(), budget, result); !errors.Is(err, ErrInvalidPacket) {
+		t.Fatalf("accepted member outside sealed selection: %v", err)
+	}
+}
+
 func TestBundleRejectsMutatedCountAndCSV(t *testing.T) {
 	budget := NewBudget(4 << 20)
 	defer func() { _ = budget.Close() }()

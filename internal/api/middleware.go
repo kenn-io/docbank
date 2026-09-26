@@ -13,6 +13,8 @@ import (
 
 	"github.com/danielgtaylor/huma/v2"
 
+	"go.kenn.io/docbank/document/agentops"
+	"go.kenn.io/docbank/internal/agentapi"
 	"go.kenn.io/docbank/internal/daemonauth"
 )
 
@@ -31,10 +33,11 @@ func browserSessionRequest(ctx context.Context) bool {
 	return authentication == "browser"
 }
 
-// timeout-exempt: long-running maintenance, integrity reads, bulk ingest, and
-// export preparation.
+// timeout-exempt: long-running maintenance, integrity reads, bulk ingest,
+// export preparation, and model provisioning.
 func timeoutExempt(method, path string) bool {
-	if packageContainerTimeoutExempt(method, path) {
+	if packageContainerTimeoutExempt(method, path) ||
+		(method == http.MethodPost && path == "/api/v1/models/provisions") {
 		return true
 	}
 	switch path {
@@ -52,6 +55,11 @@ func timeoutExempt(method, path string) bool {
 		return mailboxTimeoutExempt(method, path)
 	}
 	if method == http.MethodGet {
+		if id, ok := strings.CutPrefix(path, "/api/v1/exports/jobs/"); ok {
+			if id, ok = strings.CutSuffix(id, "/archive"); ok && validPageJobPathID(id) {
+				return true
+			}
+		}
 		if rest, ok := strings.CutPrefix(path, "/api/v1/search-exports/"); ok {
 			id, format, found := strings.Cut(rest, "/")
 			return found && id != "" && (format == "csv" || format == "bundle")
@@ -197,10 +205,54 @@ func writeError(w http.ResponseWriter, e *Error) {
 // keyless bypass: NewServer refuses to build a server with an empty key
 // (the offline OpenAPI-document path is the only caller that doesn't serve
 // requests, and it supplies a placeholder key), so key is always set here.
-func authMiddleware(next http.Handler, key string, sessions *webSessionRegistry, masterOwner string) http.Handler {
+func authMiddleware(next http.Handler, key string, sessions *webSessionRegistry, masterOwner string, authenticators ...PrincipalAuthenticator) http.Handler {
+	var authenticator PrincipalAuthenticator
+	if len(authenticators) > 0 {
+		authenticator = authenticators[0]
+	}
+	return authMiddlewareWithRegistry(next, key, sessions, masterOwner, authenticator, nil)
+}
+
+func authMiddlewareWithRegistry(next http.Handler, key string, sessions *webSessionRegistry, masterOwner string, authenticator PrincipalAuthenticator, registry *agentapi.Registry) http.Handler {
+	return authMiddlewareWithAgentSessions(next, key, sessions, masterOwner, authenticator, registry, nil)
+}
+
+const AgentSessionHeader = "X-Docbank-Agent-Session"
+
+func authMiddlewareWithAgentSessions(next http.Handler, key string, sessions *webSessionRegistry, masterOwner string, authenticator PrincipalAuthenticator, registry *agentapi.Registry, agentSessions *agentSessionRegistry) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if len(r.Header.Values(AgentSessionHeader)) > 0 {
+			if r.Header.Get("X-Api-Key") != "" || r.Header.Get("Authorization") != "" ||
+				r.Header.Get(WebSessionHeader) != "" || agentSessions == nil {
+				writeError(w, NewError(http.StatusUnauthorized, "unauthorized", "mixed or invalid agent session credential"))
+				return
+			}
+			principal, lifetime, ok := agentSessions.authenticate(r.Header.Get(AgentSessionHeader))
+			if !ok {
+				writeError(w, NewError(http.StatusUnauthorized, "unauthorized", "invalid agent session credential"))
+				return
+			}
+			if !scopedRequestAllowed(r.Method, r.URL.Path) || !scopedRegistryRouteAllowed(registry, r) {
+				writeError(w, NewError(http.StatusNotFound, "not_found", "not found"))
+				return
+			}
+			ctx, cancel := context.WithCancel(r.Context())
+			stop := context.AfterFunc(lifetime, cancel)
+			defer stop()
+			defer cancel()
+			ctx = context.WithValue(ctx, authenticationContextKey{}, principal.CredentialKind)
+			ctx = context.WithValue(ctx, workspaceSnapshotOwnerContextKey{},
+				operationCacheKey(principal.SubjectID, principal.GrantRevision, OperationRead, nil))
+			ctx = ContextWithPrincipal(ctx, principal)
+			next.ServeHTTP(w, r.WithContext(ctx))
+			return
+		}
 		if authExempt(r.URL.Path) {
 			next.ServeHTTP(w, r)
+			return
+		}
+		if r.Header.Get("X-Api-Key") != "" && r.Header.Get("Authorization") != "" {
+			writeError(w, NewError(http.StatusUnauthorized, "unauthorized", "mixed API credentials"))
 			return
 		}
 		got := r.Header.Get("X-Api-Key")
@@ -210,8 +262,26 @@ func authMiddleware(next http.Handler, key string, sessions *webSessionRegistry,
 		if subtle.ConstantTimeCompare([]byte(got), []byte(key)) == 1 {
 			ctx := context.WithValue(r.Context(), authenticationContextKey{}, "master")
 			ctx = context.WithValue(ctx, workspaceSnapshotOwnerContextKey{}, masterOwner)
+			ctx = ContextWithPrincipal(ctx, LocalAdminPrincipal())
 			next.ServeHTTP(w, r.WithContext(ctx))
 			return
+		}
+		if authenticator != nil {
+			if principal, ok := authenticator(r); ok {
+				if principal.Local {
+					writeError(w, NewError(http.StatusUnauthorized, "unauthorized", "invalid scoped credential"))
+					return
+				}
+				if !scopedRequestAllowed(r.Method, r.URL.Path) || !scopedRegistryRouteAllowed(registry, r) {
+					writeError(w, NewError(http.StatusNotFound, "not_found", "not found"))
+					return
+				}
+				ctx := context.WithValue(r.Context(), authenticationContextKey{}, principal.CredentialKind)
+				ctx = context.WithValue(ctx, workspaceSnapshotOwnerContextKey{}, operationCacheKey(principal.SubjectID, principal.GrantRevision, OperationRead, nil))
+				ctx = ContextWithPrincipal(ctx, principal)
+				next.ServeHTTP(w, r.WithContext(ctx))
+				return
+			}
 		}
 		webToken := r.Header.Get(WebSessionHeader)
 		if owner, sessionCtx, ok := sessions.authenticate(webToken); sessions != nil && ok {
@@ -226,12 +296,24 @@ func authMiddleware(next http.Handler, key string, sessions *webSessionRegistry,
 			defer cancel()
 			ctx = context.WithValue(ctx, authenticationContextKey{}, "browser")
 			ctx = context.WithValue(ctx, workspaceSnapshotOwnerContextKey{}, owner)
+			principal := LocalAdminPrincipal()
+			principal.SubjectID, principal.CredentialKind = "browser:"+owner, "local_browser"
+			ctx = ContextWithPrincipal(ctx, principal)
 			next.ServeHTTP(w, r.WithContext(ctx))
 			return
 		}
 		writeError(w, NewError(http.StatusUnauthorized, "unauthorized",
 			"missing or invalid API key or browser session"))
 	})
+}
+
+func scopedRegistryRouteAllowed(registry *agentapi.Registry, request *http.Request) bool {
+	if registry == nil {
+		return true // Legacy direct middleware tests provide no registry.
+	}
+	route, ok := registry.Match(request)
+	return ok && !route.OperatorOnly &&
+		(route.Class == agentops.Read || route.Class == agentops.Write)
 }
 
 // loopbackMiddleware fences endpoints that grant local-filesystem

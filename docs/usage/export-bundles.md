@@ -1,12 +1,12 @@
 ---
-last_edited: 2026-09-19
+last_edited: 2026-09-24
 title: Verified export bundles
 description: Download exact document versions, verified email PDFs and attachment sets in reconciled ZIP bundles.
 ---
 
 # Verified export bundles
 
-Use the web app or authenticated HTTP API to export exact document versions,
+Use the web app, CLI, or authenticated HTTP API to export exact document versions,
 retained email PDFs, attachment originals, Markdown text, and page images.
 Docbank freezes the selection and role receipts
 before writing the archive. A later edit to a saved query, tag, document head,
@@ -17,7 +17,8 @@ query. A completed mailbox import also offers **Export completed collection**.
 Review the frozen counts, start the export, then download its verified ZIP.
 Closing the drawer does not cancel an admitted job; reopen it in the same
 browser session to reconnect. Original files remain original bytes; the bundle
-does not redact or sanitize them. There is no CLI bundle-export command.
+does not redact or sanitize them. For a daemon-first CLI workflow, see
+[`docbank export`](../cli-reference.md#docbank-export).
 
 ## Email PDFs and attachments
 
@@ -72,10 +73,13 @@ paths keep repeated subjects separate.
    stream record is a current-state delivery with a monotonic sequence, not
    a replay of missing events. A stream lasts at most 30 seconds; reconnect
    with `?after=<sequence>`. Only `completed` carries an archive receipt.
-5. `POST /api/v1/exports/jobs/{id}/download` with `{}` or a safe `basename`.
-   Docbank rechecks the
-   actual archive and returns a two-minute, one-use download URL and receipt.
-   Verify the complete downloaded ZIP against the receipt's SHA-256 and size.
+5. In a browser session, `POST /api/v1/exports/jobs/{id}/download` with `{}`
+   or a safe `basename`. Docbank rechecks the archive and returns a two-minute,
+   one-use download URL and receipt. Verify the downloaded ZIP against its
+   SHA-256 and size. API-key callers can instead read
+   `GET /api/v1/exports/jobs/{id}/archive`; `docbank export archive <job-id>
+   --output export.zip` uses that read, verifies the ZIP, and publishes only
+   complete bytes. Both reads recheck live source visibility.
 
 Repeat the same operation UUID and request after a lost response. Changed
 input under an existing UUID conflicts. An interrupted source resolution

@@ -53,6 +53,13 @@ func verifyFrameEvidence(ctx context.Context, budget Budget, frame Frame) error 
 	for _, id := range request.CollectionIDs {
 		selected[id] = true
 	}
+	selectedDocuments := make(map[Identity]bool, len(request.SelectedDocuments))
+	for _, identity := range request.SelectedDocuments {
+		selectedDocuments[identity] = true
+	}
+	if len(selectedDocuments) > 0 && len(frame.Members) != len(selectedDocuments) {
+		return fmt.Errorf("%w: sealed member count differs", ErrInvalidPacket)
+	}
 	identities := make(map[int64]Identity, len(frame.Members))
 	memberIndex := make(map[Identity]int, len(frame.Members))
 	choices := make(map[Identity]*DateChoice, len(request.DateChoices))
@@ -79,7 +86,10 @@ func verifyFrameEvidence(ctx context.Context, budget Budget, frame Frame) error 
 		}
 		identities[member.Identity.NodeID] = member.Identity
 		memberIndex[member.Identity] = i
-		if !request.AllDocuments {
+		if len(selectedDocuments) > 0 && !selectedDocuments[member.Identity] {
+			return fmt.Errorf("%w: member is outside sealed selection", ErrInvalidPacket)
+		}
+		if len(selected) > 0 {
 			witnessed := false
 			for _, witness := range member.CollectionWitnesses {
 				if witness.MembershipID == "" || witness.OriginalPath == "" ||
@@ -236,6 +246,14 @@ func VerifyBundle(ctx context.Context, budget Budget, input io.Reader, size int6
 	raw := make([]byte, size)
 	if _, err := io.ReadFull(input, raw); err != nil {
 		return Verification{}, err
+	}
+	// V1 packets are written as plain ZIPs with no prefix or archive comment.
+	// archive/zip accepts self-extracting prefixes and bytes after the end
+	// record, which would let a matching transport hash bless outside bytes.
+	if len(raw) < 22 || !bytes.HasPrefix(raw, []byte("PK\x03\x04")) ||
+		!bytes.Equal(raw[len(raw)-22:len(raw)-18], []byte("PK\x05\x06")) ||
+		raw[len(raw)-2] != 0 || raw[len(raw)-1] != 0 {
+		return Verification{}, ErrInvalidPacket
 	}
 	archive, err := zip.NewReader(bytes.NewReader(raw), size)
 	if err != nil {

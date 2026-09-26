@@ -65,7 +65,7 @@ func newDocumentQueryService(deps Deps) *documentQueryService {
 	return service
 }
 
-func registerDocumentQueryRoute(api huma.API, service *documentQueryService) {
+func registerDocumentQueryRoute(api huma.API, service *documentQueryService, d Deps) {
 	type response struct {
 		Body DocumentPage
 	}
@@ -90,6 +90,44 @@ func registerDocumentQueryRoute(api huma.API, service *documentQueryService) {
 		traversal := store.DocumentCatalogTraversalNext
 		if input.Cursor != "" {
 			position, cursorTraversal, decodeErr := service.decodeCursor(input.Cursor, query)
+			if decodeErr != nil {
+				return nil, FromStoreError(decodeErr)
+			}
+			boundary, traversal = &position, cursorTraversal
+		}
+		page, err := service.store.ListDocuments(ctx, query, boundary, traversal)
+		if err != nil {
+			return nil, FromStoreError(err)
+		}
+		wire, err := service.toDocumentPage(page)
+		if err != nil {
+			return nil, FromStoreError(err)
+		}
+		return &response{Body: wire}, nil
+	})
+	huma.Register(api, huma.Operation{
+		OperationID: "listScopedDocuments", Method: http.MethodPost, Path: "/api/v1/documents/scoped",
+		Summary: "List source-fenced live documents with authenticated keyset pagination",
+	}, func(ctx context.Context, input *struct {
+		Body ScopedDocumentQuery
+	}) (*response, error) {
+		query, err := store.NormalizeDocumentCatalogQuery(store.DocumentCatalogQuery{
+			PathPrefix: input.Body.PathPrefix, Sort: store.DocumentCatalogSort(input.Body.Sort),
+			Direction: store.DocumentCatalogDirection(input.Body.Direction), PageSize: input.Body.PageSize,
+			SourceIDs: input.Body.ContentVersionIDs,
+		})
+		if err != nil {
+			return nil, FromStoreError(err)
+		}
+		decision, err := authorizeRequest(ctx, d, OperationRead, query.SourceIDs, true, true)
+		if err != nil {
+			return nil, err
+		}
+		query.SourceIDs = decision.SourceIDs
+		var boundary *store.DocumentCatalogPosition
+		traversal := store.DocumentCatalogTraversalNext
+		if input.Body.Cursor != "" {
+			position, cursorTraversal, decodeErr := service.decodeCursor(input.Body.Cursor, query)
 			if decodeErr != nil {
 				return nil, FromStoreError(decodeErr)
 			}
@@ -178,8 +216,8 @@ func documentSummariesFromStore(items []store.DocumentSummary) []DocumentSummary
 }
 
 func documentCursorQueryHash(query store.DocumentCatalogQuery) [sha256.Size]byte {
-	return sha256.Sum256([]byte(fmt.Sprintf("%q %s %s %d",
-		query.PathPrefix, query.Sort, query.Direction, query.PageSize)))
+	return sha256.Sum256([]byte(fmt.Sprintf("%q %s %s %d %q",
+		query.PathPrefix, query.Sort, query.Direction, query.PageSize, query.SourceIDs)))
 }
 
 func (service *documentQueryService) encodeCursors(
