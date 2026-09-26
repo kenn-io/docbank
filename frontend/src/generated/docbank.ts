@@ -5234,6 +5234,102 @@ export interface TagDeletionReceipt {
   tag: Tag;
 }
 
+export type TagGraphPathStepKind = typeof TagGraphPathStepKind[keyof typeof TagGraphPathStepKind];
+
+
+export const TagGraphPathStepKind = {
+  document: 'document',
+  tag: 'tag',
+} as const;
+
+export interface TagGraphPathStep {
+  kind: TagGraphPathStepKind;
+  /** @minimum 1 */
+  node_id?: number;
+  tag_id?: string;
+}
+
+export type TagGraphTagAssignmentOrigin = typeof TagGraphTagAssignmentOrigin[keyof typeof TagGraphTagAssignmentOrigin];
+
+
+export const TagGraphTagAssignmentOrigin = {
+  legacy: 'legacy',
+} as const;
+
+export interface TagGraphTag {
+  assignment_origin: TagGraphTagAssignmentOrigin;
+  id: string;
+  name: string;
+  path: TagGraphPathStep[];
+  /** @minimum 0 */
+  scoped_document_count: number;
+  /** @minimum 0 */
+  weight: number;
+}
+
+export interface TagGraphDocument {
+  content_version_id: string;
+  graph_path: TagGraphPathStep[];
+  modified_at: string;
+  name: string;
+  /** @minimum 1 */
+  node_id: number;
+  path: string;
+  /** @minimum 0 */
+  score: number;
+  shared_tags: TagGraphTag[];
+}
+
+export interface TagGraphSeed {
+  /** @minimum 1 */
+  node_id?: number;
+  /** @maxLength 128 */
+  passage_id?: string;
+  tag_id?: string;
+}
+
+export interface TagNeighborhoodRequest {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  /** @minItems 1 */
+  assignment_kinds: string[];
+  fence: ResolvedDocumentSourceFence;
+  /**
+     * @minimum 1
+     * @maximum 100
+     */
+  limit?: number;
+  /**
+     * @minimum 1
+     * @maximum 10
+     */
+  max_hops?: number;
+  /**
+     * @minimum 1
+     * @maximum 1000
+     */
+  max_visited?: number;
+  seed: TagGraphSeed;
+}
+
+export interface TagNeighborhoodResponse {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  /** @minimum 0 */
+  document_count: number;
+  documents: TagGraphDocument[];
+  tags: TagGraphTag[];
+  truncated: boolean;
+  /** @minimum 0 */
+  untagged_document_count: number;
+  vault_uid: string;
+  /**
+     * @minimum 1
+     * @maximum 1000
+     */
+  visited_nodes: number;
+}
+
 export interface TagPage {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
@@ -13497,6 +13593,44 @@ export const resolveTagByName = async (params: ResolveTagByNameParams, options?:
     method: 'GET'
 
 
+  }
+);}
+
+
+
+export const getTagNeighborhoodUrl = () => {
+
+
+
+
+  return `/api/v1/tags/neighborhood`
+}
+
+/**
+ * @summary Find related documents and tags inside an exact source fence
+ */
+export const tagNeighborhood = async (tagNeighborhoodRequest: NonReadonly<TagNeighborhoodRequest>, options?: Parameters<typeof sessionJSON>[1]): Promise<TagNeighborhoodResponse> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return sessionJSON<TagNeighborhoodResponse>(getTagNeighborhoodUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(tagNeighborhoodRequest)
   }
 );}
 

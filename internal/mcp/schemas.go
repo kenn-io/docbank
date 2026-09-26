@@ -419,6 +419,52 @@ func searchDocumentsSchemas() (schema, schema) {
 	return input, output
 }
 
+func tagNeighborhoodSchemas() (schema, schema) {
+	input := rootObjectSchema(schema{
+		"vault_id": uuidSchema(),
+		"content_version_ids": schema{"type": "array", "items": uuidSchema(),
+			"minItems": 1, "maxItems": store.MaxSearchSourceFenceIDs, "uniqueItems": true},
+		"seed_node_id": integerSchema(1, 0),
+		"seed_tag_id":  uuidSchema(),
+		"limit":        integerSchema(1, store.MaxTagNeighborhoodLimit),
+		"max_hops":     integerSchema(1, store.MaxTagGraphHops),
+		"max_visited":  integerSchema(1, store.MaxTagGraphVisitedNodes),
+	}, "vault_id", "content_version_ids")
+	input["if"] = schema{"required": []string{"seed_node_id"}}
+	input["then"] = schema{"not": schema{"required": []string{"seed_tag_id"}}}
+	input["else"] = schema{"required": []string{"seed_tag_id"}}
+
+	pathStep := objectSchema(schema{
+		"kind":    enumSchema(store.TagGraphNodeDocument, store.TagGraphNodeTag),
+		"node_id": integerSchema(1, 0), "tag_id": uuidSchema(),
+	}, "kind")
+	tag := objectSchema(schema{
+		"id": uuidSchema(), "name": schema{"type": "string", "minLength": 1},
+		"scoped_document_count": integerSchema(1, store.MaxSearchSourceFenceIDs),
+		"weight":                schema{"type": "number", "minimum": 0},
+		"assignment_origin":     enumSchema(store.TagAssignmentOriginLegacy),
+		"path":                  arraySchema(pathStep, store.MaxTagGraphHops+1),
+	}, "id", "name", "scoped_document_count", "weight", "assignment_origin", "path")
+	document := objectSchema(schema{
+		"node_id": integerSchema(1, 0), "content_version_id": uuidSchema(),
+		"name": stringSchema(0), "path": schema{"type": "string", "pattern": "^/"},
+		"modified_at": dateTimeSchema(), "score": schema{"type": "number", "minimum": 0},
+		"shared_tags": arraySchema(tag, store.MaxSearchSourceFenceIDs),
+		"graph_path":  arraySchema(pathStep, store.MaxTagGraphHops+1),
+	}, "node_id", "content_version_id", "name", "path", "modified_at", "score", "shared_tags", "graph_path")
+	output := rootObjectSchema(withPrivateCache(schema{
+		"vault_uid":               uuidSchema(),
+		"document_count":          integerSchema(0, store.MaxSearchSourceFenceIDs),
+		"untagged_document_count": integerSchema(0, store.MaxSearchSourceFenceIDs),
+		"visited_nodes":           integerSchema(1, store.MaxTagGraphVisitedNodes),
+		"truncated":               schema{"type": "boolean"},
+		"documents":               arraySchema(document, store.MaxTagNeighborhoodLimit),
+		"tags":                    arraySchema(tag, store.MaxTagNeighborhoodLimit),
+	}), cacheRequired("vault_uid", "document_count", "untagged_document_count", "visited_nodes",
+		"truncated", "documents", "tags")...)
+	return input, output
+}
+
 func getDocumentSchemas() (schema, schema) {
 	input := rootObjectSchema(schema{
 		"node_id":            integerSchema(1, 0),

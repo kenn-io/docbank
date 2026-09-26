@@ -58,6 +58,8 @@ func executeReadTool(
 		output, links, err = listDocuments(ctx, lease, raw)
 	case "search_documents":
 		output, links, err = searchDocuments(ctx, lease, raw)
+	case "get_tag_neighborhood":
+		output, err = getTagNeighborhood(ctx, lease, raw)
 	case "get_document":
 		output, links, err = getDocument(ctx, lease, raw)
 	case "list_document_versions":
