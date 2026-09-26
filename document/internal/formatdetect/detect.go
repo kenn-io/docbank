@@ -145,11 +145,11 @@ func validatePDFStructure(reader io.ReaderAt, size int64, prefix []byte) error {
 		return errors.New("PDF end marker is missing or not final")
 	}
 	beforeEOF := tail[:eofIndex]
-	startXRefIndex := bytes.LastIndex(beforeEOF, []byte("startxref"))
-	if startXRefIndex < 0 {
+	before, after, ok := bytes.CutLast(beforeEOF, []byte("startxref"))
+	if !ok {
 		return errors.New("PDF startxref is missing")
 	}
-	offsetText := trimPDFWhitespace(beforeEOF[startXRefIndex+len("startxref"):])
+	offsetText := trimPDFWhitespace(after)
 	digitEnd := 0
 	for digitEnd < len(offsetText) && offsetText[digitEnd] >= '0' && offsetText[digitEnd] <= '9' {
 		digitEnd++
@@ -170,7 +170,7 @@ func validatePDFStructure(reader io.ReaderAt, size int64, prefix []byte) error {
 	if int64(read) != xrefLength {
 		return errors.New("document bytes changed during PDF cross-reference read")
 	}
-	if validPDFTableXRef(xref, beforeEOF[:startXRefIndex]) || validPDFStreamXRef(xref) {
+	if validPDFTableXRef(xref, before) || validPDFStreamXRef(xref) {
 		return nil
 	}
 	return errors.New("PDF cross-reference data is invalid")

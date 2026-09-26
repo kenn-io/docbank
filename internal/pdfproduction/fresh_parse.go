@@ -53,11 +53,11 @@ func parseFreshIndex(ctx context.Context, reader io.ReaderAt, size int64, pages 
 	if _, err := reader.ReadAt(tail, size-128); err != nil {
 		return nil, err
 	}
-	startLine := bytes.LastIndex(tail, []byte("startxref\n"))
-	if startLine < 0 {
+	_, after, ok0 := bytes.CutLast(tail, []byte("startxref\n"))
+	if !ok0 {
 		return nil, errors.New("missing fresh PDF trailer")
 	}
-	startText, ok := strings.CutSuffix(string(tail[startLine+10:]), "\n%%EOF\n")
+	startText, ok := strings.CutSuffix(string(after), "\n%%EOF\n")
 	start, err := strconv.ParseInt(startText, 10, 64)
 	if !ok || err != nil || startText != strconv.FormatInt(start, 10) || start < int64(len(freshHeader)) || start >= size {
 		return nil, errors.New("invalid fresh PDF trailer")

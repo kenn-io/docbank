@@ -35,6 +35,14 @@ test("recent export reruns against a changed source scope", async ({ page }) => 
     expect(searchable).toBe(true);
     const url = await run("web", "--no-browser");
     await page.goto(url);
+    await page.getByRole("checkbox", { name: "Select synthetic-review.txt" }).check();
+    await page.getByRole("button", { name: "Report selected documents" }).click();
+    const selectedDrawer = page.getByRole("dialog", { name: "Search exports" });
+    await expect(selectedDrawer.getByRole("radio", { name: "Selected documents (1)" })).toBeChecked();
+    await selectedDrawer.getByRole("textbox", { name: "Expression for term 1" }).fill("alpha");
+    await selectedDrawer.getByText("New search export", { exact: true }).scrollIntoViewIfNeeded();
+    await page.screenshot({ path: path.join(screenshots!, "web-selected-document-report.png"), animations: "disabled" });
+    await selectedDrawer.getByRole("button", { name: "Close search exports" }).click();
     await page.getByRole("button", { name: "Search exports", exact: true }).click();
     const drawer = page.getByRole("dialog", { name: "Search exports" });
     await expect(drawer).toBeVisible();
@@ -58,6 +66,14 @@ test("recent export reruns against a changed source scope", async ({ page }) => 
     await expect(drawer.getByText("1 collection").first()).toBeVisible();
     await drawer.getByText("Recent exports", { exact: true }).scrollIntoViewIfNeeded();
     await page.screenshot({ path: path.join(screenshots!, "web-recent-exports.png"), animations: "disabled" });
+
+    await run("rm", "/synthetic-review.txt");
+    await drawer.getByRole("button", { name: "Close search exports" }).click();
+    await page.getByRole("button", { name: "Search exports", exact: true }).click();
+    const withdrawnDrawer = page.getByRole("dialog", { name: "Search exports" });
+    await expect(withdrawnDrawer.getByText("Source visibility changed").first()).toBeVisible();
+    await withdrawnDrawer.getByText("Recent exports", { exact: true }).scrollIntoViewIfNeeded();
+    await page.screenshot({ path: path.join(screenshots!, "web-withdrawn-report-history.png"), animations: "disabled" });
   } finally {
     if (running) {
       await run("daemon", "stop");

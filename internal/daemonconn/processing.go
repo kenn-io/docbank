@@ -143,8 +143,10 @@ func validateDocumentSourceFenceResolution(
 	if len(request.ContentVersionIDs) != 0 {
 		expected := slices.Clone(request.ContentVersionIDs)
 		slices.Sort(expected)
-		if !slices.Equal(expected, ids) {
-			return errors.New("explicit source authority changed")
+		for _, id := range ids {
+			if _, found := slices.BinarySearch(expected, id); !found {
+				return errors.New("explicit source authority widened")
+			}
 		}
 	}
 	fingerprint, err := processing.SourceFenceFingerprint(processing.SourceFence{
@@ -166,6 +168,9 @@ func (c *Connection) StartProcessing(ctx context.Context, request api.StartProce
 	defer func() { _ = stream.Close() }()
 	first, err := stream.Next()
 	if err != nil {
+		if _, ok := ProblemCode(err); ok {
+			return api.ProcessingJob{}, err
+		}
 		return api.ProcessingJob{}, &responseDecodeError{err: err}
 	}
 	terminal, err := stream.Next()
@@ -188,14 +193,16 @@ func (c *Connection) EnqueueProcessing(ctx context.Context, request api.StartPro
 	defer func() { _ = stream.Close() }()
 	first, err := stream.Next()
 	if err != nil {
+		if _, ok := ProblemCode(err); ok {
+			return api.ProcessingJob{}, err
+		}
 		return api.ProcessingJob{}, &responseDecodeError{err: err}
 	}
 	return *first.Job, nil
 }
 
-// ProcessingEventStream incrementally validates the exact two-event processing
-// stream. The durable job is returned before terminal delivery; the terminal
-// event is returned only after end-of-stream has been verified.
+// ProcessingEventStream validates a job plus terminal event, or one terminal
+// denial before the job is disclosed. Terminal delivery requires end-of-stream.
 type ProcessingEventStream struct {
 	body               io.ReadCloser
 	decoder            *jsontext.Decoder
@@ -256,6 +263,22 @@ func (stream *ProcessingEventStream) Next() (api.ProcessingJobEvent, error) {
 		return api.ProcessingJobEvent{}, errProcessingStreamTooLarge
 	}
 	if stream.sequence == 0 {
+		if event.Sequence == 1 && event.Type == "error" && event.Terminal &&
+			event.Job == nil && event.Status == nil && event.Error != nil {
+			var extra api.ProcessingJobEvent
+			if err := json.UnmarshalDecode(stream.decoder, &extra, json.RejectUnknownMembers(true)); !errors.Is(err, io.EOF) {
+				_ = stream.Close()
+				if stream.bounded.exceeded {
+					return api.ProcessingJobEvent{}, errProcessingStreamTooLarge
+				}
+				return api.ProcessingJobEvent{}, errors.New("processing stream continued after its terminal error")
+			}
+			stream.sequence, stream.done = 1, true
+			if err := stream.Close(); err != nil {
+				return event, fmt.Errorf("closing processing stream: %w", err)
+			}
+			return event, apiProblemError(*event.Error)
+		}
 		if event.Sequence != 1 || event.Type != "job" || event.Job == nil || event.Status != nil || event.Error != nil || event.Terminal ||
 			!stream.validJob(*event.Job) {
 			_ = stream.Close()
