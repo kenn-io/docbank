@@ -3,6 +3,7 @@
 package filepublish
 
 import (
+	"fmt"
 	"os"
 
 	"golang.org/x/sys/windows"
@@ -11,10 +12,13 @@ import (
 func windowsPaths(stagedPath, destinationPath string) (*uint16, *uint16, error) {
 	staged, err := windows.UTF16PtrFromString(stagedPath)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, fmt.Errorf("encoding staged path %q: %w", stagedPath, err)
 	}
 	destination, err := windows.UTF16PtrFromString(destinationPath)
-	return staged, destination, err
+	if err != nil {
+		return nil, nil, fmt.Errorf("encoding destination path %q: %w", destinationPath, err)
+	}
+	return staged, destination, nil
 }
 
 func renameNoReplace(stagedPath, destinationPath string) error {
