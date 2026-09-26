@@ -4679,6 +4679,7 @@ export interface Request {
   date_choices?: DateChoice[];
   numeric_date_order?: string;
   profile?: string;
+  selected_documents?: Identity[];
   source_timezone?: string;
   terms: Term[];
   timezone: string;
