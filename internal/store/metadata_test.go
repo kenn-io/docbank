@@ -684,6 +684,7 @@ func TestImportMetadataAcceptsValidSurrogatePair(t *testing.T) {
 }
 
 func TestImportMetadataRejectsNestedDuplicateNames(t *testing.T) {
+	t.Parallel()
 	input := strings.Join([]string{
 		`{"type":"meta","format":"docbank-metadata","version":1,"vault_id":"dddddddd-dddd-4ddd-8ddd-dddddddddddd","node_sequence":1}`,
 		`{"type":"node","id":1,"parent_id":null,"name":"","kind":"dir","current_version_id":null,"revision":1,"created_at":"2026-01-01T00:00:00.000000000Z","modified_at":"2026-01-01T00:00:00.000000000Z","trashed_at":null,"trash_parent":null,"trash_name":null}`,
@@ -1294,6 +1295,7 @@ func TestImportMetadataRejectsUnknownVersionAndFields(t *testing.T) {
 }
 
 func TestMetadataUniqueBlobBytes(t *testing.T) {
+	t.Parallel()
 	const (
 		header = `{"type":"meta","format":"docbank-metadata","version":1,"vault_id":"dddddddd-dddd-4ddd-8ddd-dddddddddddd","node_sequence":1}` + "\n"
 		node   = `{"type":"node","id":1,"parent_id":null,"name":"","kind":"dir","current_version_id":null,"revision":1,"created_at":"2026-01-01T00:00:00.000000000Z","modified_at":"2026-01-01T00:00:00.000000000Z","trashed_at":null,"trash_parent":null,"trash_name":null}` + "\n"
@@ -1376,6 +1378,7 @@ func TestMetadataUniqueBlobBytes(t *testing.T) {
 }
 
 func TestMetadataJSONWalkerSurrogateEscapes(t *testing.T) {
+	t.Parallel()
 	for _, test := range []struct {
 		name    string
 		input   string

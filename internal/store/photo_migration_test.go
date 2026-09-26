@@ -25,6 +25,7 @@ func migrationTestRun() PhotoMigrationRun {
 }
 
 func TestPhotoMigrationJSONLRoundTrip(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	source, err := Open(t.TempDir() + "/source.db")
 	if err != nil {
@@ -88,6 +89,7 @@ func TestPhotoMigrationJSONLRoundTrip(t *testing.T) {
 }
 
 func TestPhotoMigrationAuditedVault(t *testing.T) {
+	t.Parallel()
 	s, err := Open(t.TempDir() + "/audited.db")
 	if err != nil {
 		t.Fatal(err)
