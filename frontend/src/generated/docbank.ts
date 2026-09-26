@@ -42,6 +42,26 @@ export interface AssignTagPathRequest {
   path: string;
 }
 
+export type AttachPhotoFileRequestRole = typeof AttachPhotoFileRequestRole[keyof typeof AttachPhotoFileRequestRole];
+
+
+export const AttachPhotoFileRequestRole = {
+  raw: 'raw',
+  image: 'image',
+  video: 'video',
+  sidecar: 'sidecar',
+} as const;
+
+export interface AttachPhotoFileRequest {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  /** @minimum 1 */
+  node_id: number;
+  role?: AttachPhotoFileRequestRole;
+  /** @nullable */
+  sidecar_of_file_id?: string | null;
+}
+
 export interface AttachmentPublicationChoice {
   attachments: number;
   created_at: string;
@@ -1187,6 +1207,33 @@ export interface CreateNodeRequest {
   /** @minLength 1 */
   name: string;
   parent_id: number;
+}
+
+export type CreatePhotoAssetRequestKind = typeof CreatePhotoAssetRequestKind[keyof typeof CreatePhotoAssetRequestKind];
+
+
+export const CreatePhotoAssetRequestKind = {
+  photo: 'photo',
+  video: 'video',
+} as const;
+
+export type CreatePhotoAssetRequestRole = typeof CreatePhotoAssetRequestRole[keyof typeof CreatePhotoAssetRequestRole];
+
+
+export const CreatePhotoAssetRequestRole = {
+  raw: 'raw',
+  image: 'image',
+  video: 'video',
+  sidecar: 'sidecar',
+} as const;
+
+export interface CreatePhotoAssetRequest {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  kind?: CreatePhotoAssetRequestKind;
+  /** @minimum 1 */
+  node_id: number;
+  role?: CreatePhotoAssetRequestRole;
 }
 
 export interface CreateTagRequest {
@@ -3810,6 +3857,86 @@ export interface PersonPage {
   next_cursor?: string;
 }
 
+export type PhotoAssetDisplaySource = typeof PhotoAssetDisplaySource[keyof typeof PhotoAssetDisplaySource];
+
+
+export const PhotoAssetDisplaySource = {
+  asset: 'asset',
+  vault: 'vault',
+  default: 'default',
+  none: 'none',
+} as const;
+
+export type PhotoAssetKind = typeof PhotoAssetKind[keyof typeof PhotoAssetKind];
+
+
+export const PhotoAssetKind = {
+  photo: 'photo',
+  video: 'video',
+} as const;
+
+export type PhotoFileRole = typeof PhotoFileRole[keyof typeof PhotoFileRole];
+
+
+export const PhotoFileRole = {
+  raw: 'raw',
+  image: 'image',
+  video: 'video',
+  sidecar: 'sidecar',
+} as const;
+
+export interface PhotoFile {
+  asset_id: string;
+  created_at: string;
+  id: string;
+  /** @minimum 1 */
+  node_id: number;
+  role: PhotoFileRole;
+  /** @nullable */
+  sidecar_of_file_id?: string | null;
+}
+
+export interface PhotoAsset {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  created_at: string;
+  /** @nullable */
+  display_file_id?: string | null;
+  /** @nullable */
+  display_override_file_id?: string | null;
+  display_source: PhotoAssetDisplaySource;
+  /** @nullable */
+  excluded_at?: string | null;
+  /** @maxItems 256 */
+  files: PhotoFile[];
+  id: string;
+  kind: PhotoAssetKind;
+  /** @minimum 1 */
+  revision: number;
+  updated_at: string;
+}
+
+/**
+ * @nullable
+ */
+export type PhotoSettingsPreference = typeof PhotoSettingsPreference[keyof typeof PhotoSettingsPreference] | null;
+
+
+export const PhotoSettingsPreference = {
+  raw: 'raw',
+  image: 'image',
+} as const;
+
+export interface PhotoSettings {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  /** @nullable */
+  preference?: PhotoSettingsPreference;
+  /** @minimum 1 */
+  revision: number;
+  updated_at?: string;
+}
+
 export interface RolePolicy {
   allow_unavailable?: boolean;
   profile_fingerprint?: string;
@@ -4204,6 +4331,31 @@ export interface ProcessingProfileSummary {
   query_embedding_bindings: string[];
   rendition: boolean;
   reranking_available?: boolean;
+}
+
+export type PromotePhotoNodeRequestKind = typeof PromotePhotoNodeRequestKind[keyof typeof PromotePhotoNodeRequestKind];
+
+
+export const PromotePhotoNodeRequestKind = {
+  photo: 'photo',
+  video: 'video',
+} as const;
+
+export type PromotePhotoNodeRequestRole = typeof PromotePhotoNodeRequestRole[keyof typeof PromotePhotoNodeRequestRole];
+
+
+export const PromotePhotoNodeRequestRole = {
+  raw: 'raw',
+  image: 'image',
+  video: 'video',
+  sidecar: 'sidecar',
+} as const;
+
+export interface PromotePhotoNodeRequest {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  kind?: PromotePhotoNodeRequestKind;
+  role?: PromotePhotoNodeRequestRole;
 }
 
 export interface ProvenanceFact {
@@ -5012,6 +5164,37 @@ export interface SetCollectionLabelRequest {
   readonly $schema?: string;
   /** @nullable */
   label: string | null;
+}
+
+export interface SetPhotoDisplayRequest {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  /** @nullable */
+  file_id?: string | null;
+}
+
+export interface SetPhotoExcludedRequest {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  excluded: boolean;
+}
+
+/**
+ * @nullable
+ */
+export type SetPhotoSettingsRequestPreference = typeof SetPhotoSettingsRequestPreference[keyof typeof SetPhotoSettingsRequestPreference] | null;
+
+
+export const SetPhotoSettingsRequestPreference = {
+  raw: 'raw',
+  image: 'image',
+} as const;
+
+export interface SetPhotoSettingsRequest {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  /** @nullable */
+  preference?: SetPhotoSettingsRequestPreference;
 }
 
 export interface SourceRequest {
@@ -6110,6 +6293,34 @@ query?: string;
  */
 limit?: number;
 cursor?: string;
+};
+
+export type SetPhotoDisplayHeaders = {
+'If-Match': string;
+};
+
+export type ExcludePhotoAssetHeaders = {
+'If-Match': string;
+};
+
+export type AttachPhotoFileHeaders = {
+'If-Match': string;
+};
+
+export type DetachPhotoFileParams = {
+clear_dependent_sidecars?: boolean;
+};
+
+export type DetachPhotoFileHeaders = {
+'If-Match': string;
+};
+
+export type PromotePhotoNodeHeaders = {
+'If-Match'?: string;
+};
+
+export type SetPhotoSettingsHeaders = {
+'If-Match': string;
 };
 
 export type ReadRenditionTextParams = {
@@ -11642,6 +11853,365 @@ export const getPeopleRebuild = async (operationId: string, options?: Parameters
     method: 'GET'
 
 
+  }
+);}
+
+
+
+export const getCreatePhotoAssetUrl = () => {
+
+
+
+
+  return `/api/v1/photos/assets`
+}
+
+/**
+ * @summary Create a photo asset for one file
+ */
+export const createPhotoAsset = async (createPhotoAssetRequest: NonReadonly<CreatePhotoAssetRequest>, options?: Parameters<typeof sessionJSON>[1]): Promise<PhotoAsset> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return sessionJSON<PhotoAsset>(getCreatePhotoAssetUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(createPhotoAssetRequest)
+  }
+);}
+
+
+
+export const getGetPhotoAssetUrl = (assetId: string,) => {
+
+
+
+
+  return `/api/v1/photos/assets/${encodeURIComponent(String(assetId))}`
+}
+
+/**
+ * @summary Inspect one photo asset
+ */
+export const getPhotoAsset = async (assetId: string, options?: Parameters<typeof sessionJSON>[1]): Promise<PhotoAsset> => {
+
+  return sessionJSON<PhotoAsset>(getGetPhotoAssetUrl(assetId),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+export const getSetPhotoDisplayUrl = (assetId: string,) => {
+
+
+
+
+  return `/api/v1/photos/assets/${encodeURIComponent(String(assetId))}/display`
+}
+
+/**
+ * @summary Set or reset a photo display override
+ */
+export const setPhotoDisplay = async (assetId: string,
+    setPhotoDisplayRequest: NonReadonly<SetPhotoDisplayRequest>,
+    headers: SetPhotoDisplayHeaders, options?: Parameters<typeof sessionJSON>[1]): Promise<PhotoAsset> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return sessionJSON<PhotoAsset>(getSetPhotoDisplayUrl(assetId),
+  {
+    ...options,
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json',...headers, ...getHeaders(options?.headers) },
+    body: JSON.stringify(setPhotoDisplayRequest)
+  }
+);}
+
+
+
+export const getExcludePhotoAssetUrl = (assetId: string,) => {
+
+
+
+
+  return `/api/v1/photos/assets/${encodeURIComponent(String(assetId))}/exclude`
+}
+
+/**
+ * @summary Exclude or include a photo asset
+ */
+export const excludePhotoAsset = async (assetId: string,
+    setPhotoExcludedRequest: NonReadonly<SetPhotoExcludedRequest>,
+    headers: ExcludePhotoAssetHeaders, options?: Parameters<typeof sessionJSON>[1]): Promise<PhotoAsset> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return sessionJSON<PhotoAsset>(getExcludePhotoAssetUrl(assetId),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json',...headers, ...getHeaders(options?.headers) },
+    body: JSON.stringify(setPhotoExcludedRequest)
+  }
+);}
+
+
+
+export const getAttachPhotoFileUrl = (assetId: string,) => {
+
+
+
+
+  return `/api/v1/photos/assets/${encodeURIComponent(String(assetId))}/files`
+}
+
+/**
+ * @summary Attach one node to a photo asset
+ */
+export const attachPhotoFile = async (assetId: string,
+    attachPhotoFileRequest: NonReadonly<AttachPhotoFileRequest>,
+    headers: AttachPhotoFileHeaders, options?: Parameters<typeof sessionJSON>[1]): Promise<PhotoAsset> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return sessionJSON<PhotoAsset>(getAttachPhotoFileUrl(assetId),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json',...headers, ...getHeaders(options?.headers) },
+    body: JSON.stringify(attachPhotoFileRequest)
+  }
+);}
+
+
+
+export const getDetachPhotoFileUrl = (assetId: string,
+    fileId: string,
+    params?: DetachPhotoFileParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/v1/photos/assets/${encodeURIComponent(String(assetId))}/files/${encodeURIComponent(String(fileId))}?${stringifiedParams}` : `/api/v1/photos/assets/${encodeURIComponent(String(assetId))}/files/${encodeURIComponent(String(fileId))}`
+}
+
+/**
+ * @summary Detach one file from a photo asset
+ */
+export const detachPhotoFile = async (assetId: string,
+    fileId: string,
+    headers: DetachPhotoFileHeaders,
+    params?: DetachPhotoFileParams, options?: Parameters<typeof sessionJSON>[1]): Promise<PhotoAsset> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return sessionJSON<PhotoAsset>(getDetachPhotoFileUrl(assetId,fileId,params),
+  {
+    ...options,
+    method: 'DELETE',
+    headers: { ...headers, ...getHeaders(options?.headers) }
+
+  }
+);}
+
+
+
+export const getGetPhotoAssetByNodeUrl = (nodeId: number,) => {
+
+
+
+
+  return `/api/v1/photos/nodes/${encodeURIComponent(String(nodeId))}/asset`
+}
+
+/**
+ * @summary Inspect the photo asset containing one node
+ */
+export const getPhotoAssetByNode = async (nodeId: number, options?: Parameters<typeof sessionJSON>[1]): Promise<PhotoAsset> => {
+
+  return sessionJSON<PhotoAsset>(getGetPhotoAssetByNodeUrl(nodeId),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+export const getPromotePhotoNodeUrl = (nodeId: number,) => {
+
+
+
+
+  return `/api/v1/photos/nodes/${encodeURIComponent(String(nodeId))}/promote`
+}
+
+/**
+ * @summary Promote one node into a photo asset
+ */
+export const promotePhotoNode = async (nodeId: number,
+    promotePhotoNodeRequest: NonReadonly<PromotePhotoNodeRequest>,
+    headers?: PromotePhotoNodeHeaders, options?: Parameters<typeof sessionJSON>[1]): Promise<PhotoAsset> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return sessionJSON<PhotoAsset>(getPromotePhotoNodeUrl(nodeId),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json',...headers, ...getHeaders(options?.headers) },
+    body: JSON.stringify(promotePhotoNodeRequest)
+  }
+);}
+
+
+
+export const getGetPhotoSettingsUrl = () => {
+
+
+
+
+  return `/api/v1/photos/settings`
+}
+
+/**
+ * @summary Inspect the photo display preference
+ */
+export const getPhotoSettings = async ( options?: Parameters<typeof sessionJSON>[1]): Promise<PhotoSettings> => {
+
+  return sessionJSON<PhotoSettings>(getGetPhotoSettingsUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+export const getSetPhotoSettingsUrl = () => {
+
+
+
+
+  return `/api/v1/photos/settings`
+}
+
+/**
+ * @summary Set or reset the photo display preference
+ */
+export const setPhotoSettings = async (setPhotoSettingsRequest: NonReadonly<SetPhotoSettingsRequest>,
+    headers: SetPhotoSettingsHeaders, options?: Parameters<typeof sessionJSON>[1]): Promise<PhotoSettings> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return sessionJSON<PhotoSettings>(getSetPhotoSettingsUrl(),
+  {
+    ...options,
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json',...headers, ...getHeaders(options?.headers) },
+    body: JSON.stringify(setPhotoSettingsRequest)
   }
 );}
 

@@ -160,9 +160,34 @@ The destination of `mv` remains an absolute path because it describes where
 the node should go. `restore` also accepts its older bare numeric form for
 compatibility, although new scripts should use the unambiguous `id:42` form.
 Commands that require a live tree entry reject trashed selectors. Read-only
-`stat`, `cat`, `versions list`, audit status, and audit history can still inspect a
-trashed node by stable ID; `restore` is the mutation that returns it to the
+`stat`, `cat`, `versions list`, `photos assets inspect`, audit status, and audit
+history can still inspect a trashed node by stable ID; `restore` is the mutation that returns it to the
 live tree.
+
+## docbank photos
+
+```text
+docbank photos assets create <node-selector> [--kind photo|video] [--role ROLE]
+docbank photos assets inspect <asset-id|node-selector>
+docbank photos assets attach <asset-id> <node-selector> [--revision REV] [--role ROLE] [--sidecar-of-file-id ID]
+docbank photos assets detach <asset-id> <file-id> [--revision REV]
+docbank photos assets exclude <asset-id> [--revision REV] [--excluded=true]
+docbank photos assets promote <node-selector> [--revision REV] [--kind KIND] [--role ROLE]
+docbank photos assets display <asset-id> [file-id] [--revision REV]
+docbank photos settings show
+docbank photos settings set raw|image [--revision REV]
+docbank photos settings reset [--revision REV]
+```
+
+Photo commands emit JSON through the daemon. Image and concrete video files
+are enrolled when created; generic RAW files require explicit promotion.
+Existing-asset and settings mutations read the current revision and retry
+once if another write changes it first. Pass `--revision` to fail with exit
+code 4 instead. `inspect` also accepts an `id:N` or path selector for a
+member file; `id:N` also finds a trashed member. Sidecars must point at a same-asset RAW member and never become
+the display member.
+Photo assets, settings, and bounded decision receipts are included in JSONL
+backup and restore.
 
 ## docbank stat
 
@@ -1035,8 +1060,9 @@ named environment variable when the MCP process starts. It must differ from
 the daemon's effective API key. There is no token flag, remote-daemon option,
 or non-loopback listener.
 
-The catalog contains 19 read tools by default. `--allow-processing` adds
-only the guarded `start_processing` tool: the agent must first retrieve the
+The catalog contains 20 read tools by default, including `get_photo_asset`.
+`--allow-processing` adds only the guarded `start_processing` tool: the agent
+must first retrieve the
 exact plan from the same process, and the operator must already have consented
 to that unchanged disclosure. The flag does not let MCP grant consent. The
 supported CLI consent path is `docbank processing plan`, followed by `docbank
@@ -1047,8 +1073,13 @@ processing](usage/document-processing.md) for the exact flow.
 `--allow-package-writes` separately adds load-file preflight, package import,
 and package custodian assignment and resolution. These tools can read local
 sources and change the vault without using the processing consent flow.
-Neither flag enables the other's tools; use both flags to allow both kinds of
-work.
+
+`--allow-photo-edits` separately adds guarded photo asset mutations. Each
+write uses an asset revision and one daemon request. Display and settings
+writes remain in the HTTP and CLI surfaces.
+
+No flag enables another flag's tools; combine the flags to allow more than one
+kind of work.
 
 See [Model Context Protocol](usage/mcp.md) for client setup, tool and resource
 catalogs, transport limits, caching, and unsupported capabilities.

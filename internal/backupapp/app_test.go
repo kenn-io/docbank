@@ -279,6 +279,45 @@ func TestJSONLBackupRestoresPeopleAndRebuildsAttribution(t *testing.T) {
 	require.ElementsMatch(t, []string{"author", "custodian"}, roles)
 }
 
+func TestPhotoBackupRoundTrip(t *testing.T) {
+	fixture := newArchiveFixture(t)
+	ctx := t.Context()
+	hash, size, err := fixture.blobs.Write(strings.NewReader("photo bytes"))
+	require.NoError(t, err)
+	node, err := fixture.metadata.CreateFile(ctx, fixture.metadata.RootID(), "photo.jpg",
+		hash, size, "image/jpeg")
+	require.NoError(t, err)
+	asset, err := fixture.metadata.PhotoAssetForNode(ctx, node.ID)
+	require.NoError(t, err)
+	asset, err = fixture.metadata.SetPhotoAssetExcluded(ctx, asset.ID, asset.Revision, true)
+	require.NoError(t, err)
+	preference := "image"
+	_, err = fixture.metadata.SetPhotoSettings(ctx, 1, &preference)
+	require.NoError(t, err)
+
+	repo, err := backup.Init(filepath.Join(t.TempDir(), "repo"))
+	require.NoError(t, err)
+	_, err = backupapp.Create(ctx, repo, "photo-round-trip", fixture.metadata, fixture.blobs,
+		backup.CreateOptions{})
+	require.NoError(t, err)
+	target := filepath.Join(t.TempDir(), "restored")
+	_, err = backupapp.Restore(ctx, repo, "photo-round-trip", backup.RestoreOptions{TargetDir: target})
+	require.NoError(t, err)
+	restored, err := store.Open(filepath.Join(target, "docbank.db"))
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, restored.Close()) })
+
+	restoredAsset, err := restored.PhotoAssetByID(ctx, asset.ID)
+	require.NoError(t, err)
+	assert.Equal(t, asset.ID, restoredAsset.ID)
+	assert.NotNil(t, restoredAsset.ExcludedAt)
+	settings, err := restored.PhotoSettings(ctx)
+	require.NoError(t, err)
+	require.NotNil(t, settings.Preference)
+	assert.Equal(t, "image", *settings.Preference)
+	assert.Contains(t, string(exportMetadata(t, restored)), `"photo_change_receipt"`)
+}
+
 func TestJSONLLooseSnapshotVerifyAndRestore(t *testing.T) {
 	fixture := newArchiveFixture(t)
 	wantMetadata := exportMetadata(t, fixture.metadata)

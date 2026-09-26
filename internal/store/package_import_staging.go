@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json/v2"
 	"errors"
+	"slices"
 )
 
 // IngestPackageFileWithReceipt fences staging in the transaction that creates
@@ -71,6 +72,9 @@ func discardUnreceiptedPackageFilesTx(ctx context.Context, tx *sql.Tx, pkg Packa
 		return nil
 	}
 	if err := deleteRenditionAuthorityForVersionsTx(ctx, tx, versionIDs); err != nil {
+		return err
+	}
+	if err := adjustPhotosForPurgedNodesTx(ctx, tx, slices.Compact(slices.Clone(nodeIDs))); err != nil {
 		return err
 	}
 	encoded, err := json.Marshal(nodeIDs)
