@@ -19,9 +19,9 @@ The profile graph has four named layers:
 
 - `[rendition_profiles.<name>]` binds a rendition adapter, its descriptor,
   bounded document/response/unit limits, requested artifact roles, disclosure
-  settings, and trust boundary. The daemon's built-in adapter is
-  `docbank-plaintext-rendition/v1`; it must agree with the configured descriptor
-  and local-process trust boundary.
+  settings, and trust boundary. The daemon's local adapters are
+  `docbank-plaintext-rendition/v1` and `docbank-epub-rendition/v1`. Each must
+  agree with the configured descriptor and `local_process` trust boundary.
 - `[embedding_profiles.<name>]` binds an embedding descriptor, input kind,
   optional rendition-chunk tokenizer and limits, and optionally a pinned hosted
   runtime. Its trust boundary, descriptor, disclosure fingerprint, and model
@@ -39,6 +39,17 @@ duplicate embedding bindings are rejected at daemon startup. Run `docbank
 processing profiles` after restart to see the profiles that are actually
 executable; a configured name is not usable until every selected adapter,
 descriptor, and required tokenizer agrees with its portable contract.
+
+## Local EPUB rendition
+
+For local EPUB extraction, use `docbank-epub-rendition/v1` with descriptor ID
+`epub.in-process-v1`. Set `max_document_bytes` from 1 through 524288000 and
+`max_units` from 1 through 1000000. Construct the descriptor with those same
+limits through `epub.New`, then use its fingerprint as
+`descriptor_fingerprint`. Changing either limit requires a new descriptor.
+Filename disclosure follows `disclose_filename`. See
+[local EPUB extraction](../document-understanding.md#extract-epub-locally) for
+supported packages and virtual-unit counting.
 
 ## Credentials and hosted runtimes
 

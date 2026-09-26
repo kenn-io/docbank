@@ -44,7 +44,11 @@ and virtual usage. It consumes the shared utility and the bounded
 Markdown writer with explicit XML token handling. Existing Markdown input
 keeps its own token semantics. Provider libraries own no vault, consent, or
 publication state. See [local EPUB extraction][epub-local] for limits and the
-embedded injection route.
+embedded and daemon routes. `cmd/docbank/rendition_runtime.go` selects the EPUB
+provider using the existing generic profile limits and descriptor guard.
+Keep virtual-unit counting in `document/epub`. Daemon coverage uses the public
+planning, consent, retained-read, and lexical-search path with exact source
+bytes and both filename-disclosure settings.
 
 [epub-local]: ../document-understanding.md#extract-epub-locally
 

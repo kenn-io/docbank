@@ -1,6 +1,7 @@
 package main
 
 import (
+	"archive/zip"
 	"bytes"
 	"context"
 	"crypto/sha256"
@@ -19,8 +20,10 @@ import (
 
 	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/document/docling"
+	"go.kenn.io/docbank/document/epub"
 	"go.kenn.io/docbank/document/plaintext"
 	"go.kenn.io/docbank/internal/api"
+	"go.kenn.io/docbank/internal/apiclient"
 	"go.kenn.io/docbank/internal/config"
 	"go.kenn.io/docbank/internal/daemonconn"
 	"go.kenn.io/docbank/internal/processing"
@@ -429,6 +432,185 @@ func plaintextProcessingConfig(descriptorFingerprint string) config.Config {
 		SanitizerFingerprint: strings.Repeat("a", 64), TrustBoundary: "vault-primary",
 	}
 	return cfg
+}
+
+func epubRuntimeConfig(t *testing.T, maxBytes int64, maxUnits int) config.Config {
+	t.Helper()
+	provider, err := epub.New(epub.Profile{MaxDocumentBytes: maxBytes, MaxUnits: int64(maxUnits)})
+	require.NoError(t, err)
+	cfg := plaintextProcessingConfig(provider.Descriptor().Fingerprint)
+	profile := cfg.RenditionProfiles["plaintext"]
+	profile.AdapterContract = epubRenditionAdapter
+	profile.DescriptorID = provider.Descriptor().ID
+	profile.MaxDocumentBytes, profile.MaxUnits = maxBytes, maxUnits
+	delete(cfg.RenditionProfiles, "plaintext")
+	cfg.RenditionProfiles["epub"] = profile
+	processingProfile := cfg.ProcessingProfiles["private-text"]
+	processingProfile.Rendition = "epub"
+	delete(cfg.ProcessingProfiles, "private-text")
+	cfg.ProcessingProfiles["epub"] = processingProfile
+	return cfg
+}
+
+func TestEPUBRuntimeDescriptorAndLimits(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		change func(*config.RenditionProfileConfig)
+		want   string
+	}{
+		{"500 MiB boundary", func(*config.RenditionProfileConfig) {}, ""},
+		{"above 500 MiB", func(p *config.RenditionProfileConfig) { p.MaxDocumentBytes++ }, "max document bytes"},
+		{"stale fingerprint", func(p *config.RenditionProfileConfig) { p.DescriptorFingerprint = strings.Repeat("0", 64) }, "descriptor differs"},
+		{"wrong provider", func(p *config.RenditionProfileConfig) { p.DescriptorID = "plaintext.in-process-v1" }, "descriptor differs"},
+		{"wrong trust", func(p *config.RenditionProfileConfig) { p.TrustBoundary = "operator_network" }, "descriptor differs"},
+		{"changed byte limit", func(p *config.RenditionProfileConfig) { p.MaxDocumentBytes-- }, "descriptor differs"},
+		{"changed unit limit", func(p *config.RenditionProfileConfig) { p.MaxUnits++ }, "descriptor differs"},
+		{"unknown adapter", func(p *config.RenditionProfileConfig) { p.AdapterContract = "missing/v1" }, "skip"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			cfg := epubRuntimeConfig(t, 500<<20, 1)
+			profile := cfg.RenditionProfiles["epub"]
+			test.change(&profile)
+			cfg.RenditionProfiles["epub"] = profile
+			require.NoError(t, cfg.Validate())
+			profiles, err := executableProcessingProfiles(cfg, embeddingRuntimeBundle{})
+			switch test.want {
+			case "skip":
+				require.NoError(t, err)
+				require.NotContains(t, profiles, "epub")
+			case "":
+				require.NoError(t, err)
+				require.Contains(t, profiles, "epub")
+				expected, err := epub.New(epub.Profile{MaxDocumentBytes: 500 << 20, MaxUnits: 1})
+				require.NoError(t, err)
+				require.Equal(t, expected.Descriptor(), profiles["epub"].RenditionProvider.Descriptor())
+			default:
+				require.ErrorContains(t, err, test.want)
+			}
+		})
+	}
+}
+
+func TestDaemonEPUBAndPlaintextProcessing(t *testing.T) {
+	for _, test := range []struct {
+		name, mode       string
+		discloseFilename bool
+	}{
+		{"exact units/disclosed", "exact units", true},
+		{"exact units/withheld", "exact units", false},
+		{"over units/disclosed", "over units", true},
+		{"over units/withheld", "over units", false},
+		{"plaintext", "plaintext", false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			mode := test.mode
+			cfg := epubRuntimeConfig(t, 500<<20, 1)
+			profile := cfg.RenditionProfiles["epub"]
+			profile.DiscloseFilename = test.discloseFilename
+			cfg.RenditionProfiles["epub"] = profile
+			profileName, filename := "epub", "book.epub"
+			text := "needle " + strings.Repeat("x", 80*48-len("needle "))
+			if mode == "over units" {
+				text += "x"
+			}
+			var source bytes.Buffer
+			writer := zip.NewWriter(&source)
+			for _, entry := range []struct{ name, body string }{
+				{"mimetype", "application/epub+zip"},
+				{"META-INF/container.xml", `<container xmlns="urn:oasis:names:tc:opendocument:xmlns:container"><rootfiles><rootfile full-path="book.opf"/></rootfiles></container>`},
+				{"book.opf", `<package xmlns="http://www.idpf.org/2007/opf"><manifest><item id="a" href="a.xhtml" media-type="application/xhtml+xml"/></manifest><spine><itemref idref="a"/></spine></package>`},
+				{"a.xhtml", `<html xmlns="http://www.w3.org/1999/xhtml"><body><p>` + text + `</p></body></html>`},
+			} {
+				entryWriter, err := writer.Create(entry.name)
+				require.NoError(t, err)
+				_, err = entryWriter.Write([]byte(entry.body))
+				require.NoError(t, err)
+			}
+			require.NoError(t, writer.Close())
+			if mode == "plaintext" {
+				fingerprint, err := plaintextProviderForDaemonTest()
+				require.NoError(t, err)
+				cfg = plaintextProcessingConfig(fingerprint)
+				profileName, filename = "private-text", "ordinary.txt"
+				text = "needle plaintext stays local"
+				source.Reset()
+				source.WriteString(text)
+			}
+			require.NoError(t, cfg.Validate())
+			cfg.Server.APIKey = "synthetic-epub-runtime-key"
+			root := t.TempDir()
+			require.NoError(t, writeDaemonASRConfig(root, cfg))
+			t.Setenv("DOCBANK_HOME", root)
+			startServe(t)
+			runtime := waitForDaemon(t, root)
+			daemon := daemonconn.New("http://"+runtime.Address, cfg.Server.APIKey)
+			t.Cleanup(func() { require.NoError(t, daemon.Close()) })
+			path := filepath.Join(t.TempDir(), filename)
+			require.NoError(t, os.WriteFile(path, source.Bytes(), 0o600))
+			_, err := runCLI(t, "add", path, "--dest", "/books")
+			require.NoError(t, err)
+			node, err := daemon.API().ResolvePath(t.Context(), &apiclient.ResolvePathRequestOptions{Query: &apiclient.ResolvePathQuery{Path: "/books/" + filename}})
+			require.NoError(t, err)
+			selector := api.ProcessingSelector{NodeID: node.ID, ContentVersionID: node.CurrentVersionID, Profile: profileName}
+			plan, err := daemon.API().PlanDocumentProcessing(t.Context(), &apiclient.PlanDocumentProcessingRequestOptions{Body: &api.ProcessingPlanRequest{Selector: selector}})
+			require.NoError(t, err)
+			require.Len(t, plan.Flow, 1)
+			require.Equal(t, "local_process", plan.Flow[0].TrustBoundary)
+			require.Equal(t, "in-process", plan.Flow[0].RuntimeDisclosure.Endpoint)
+			if mode != "plaintext" {
+				require.Equal(t, "epub.in-process-v1", plan.Flow[0].RuntimeDisclosure.UltimateProcessor)
+				require.Equal(t, test.discloseFilename, plan.Flow[0].DiscloseFilename)
+				if test.discloseFilename {
+					require.Equal(t, filename, plan.Flow[0].Filename)
+				} else {
+					require.Empty(t, plan.Flow[0].Filename)
+				}
+			}
+			require.True(t, plan.ConsentRequired)
+			_, err = daemon.StartProcessing(t.Context(), api.StartProcessingRequest{Selector: selector, PlanFingerprint: plan.Fingerprint}, plan.ProfileFingerprint)
+			require.Error(t, err)
+			job, err := daemon.StartProcessing(t.Context(), api.StartProcessingRequest{Selector: selector, PlanFingerprint: plan.Fingerprint, Consent: true}, plan.ProfileFingerprint)
+			if mode == "over units" {
+				require.ErrorContains(t, err, "rendition job is terminal")
+			} else {
+				require.NoError(t, err)
+				require.EventuallyWithT(t, func(collect *assert.CollectT) {
+					status, statusErr := daemon.ProcessingStatus(t.Context(), job.ID)
+					require.NoError(collect, statusErr)
+					require.Equal(collect, "completed", status.State, "%+v", status)
+				}, 10*time.Second, 20*time.Millisecond)
+			}
+			original, err := daemon.VersionContent(t.Context(), selector.ContentVersionID)
+			require.NoError(t, err)
+			var originalBytes bytes.Buffer
+			_, err = original.CopyVerified(&originalBytes)
+			require.NoError(t, err)
+			require.NoError(t, original.Close())
+			require.Equal(t, source.Bytes(), originalBytes.Bytes())
+			stream, err := daemon.RenditionForSelector(t.Context(), selector, 1<<20)
+			if mode == "over units" {
+				require.Error(t, err)
+			} else {
+				require.NoError(t, err)
+				var body bytes.Buffer
+				_, err = stream.CopyVerified(&body)
+				require.NoError(t, err)
+				require.NoError(t, stream.Close())
+				require.Contains(t, body.String(), text)
+			}
+			search, err := daemon.SearchDocuments(t.Context(), api.DocumentSearchRequest{
+				Query: "needle", Mode: "lexical", Profile: profileName, Limit: 10,
+				Fence: api.DocumentSourceFence{VaultUID: plan.VaultUID, ContentVersionIDs: []string{selector.ContentVersionID}},
+			})
+			require.NoError(t, err)
+			if mode == "over units" {
+				require.Empty(t, search.Results)
+			} else {
+				require.Len(t, search.Results, 1)
+				require.Equal(t, selector.ContentVersionID, search.Results[0].ContentVersionID)
+			}
+		})
+	}
 }
 
 func TestDaemonStartsConfiguredRenditionWorker(t *testing.T) {

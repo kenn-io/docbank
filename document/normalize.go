@@ -14,6 +14,7 @@ import (
 	"strings"
 	"unicode"
 	"unicode/utf8"
+	"unsafe"
 
 	"github.com/yuin/goldmark"
 	goldmarkast "github.com/yuin/goldmark/ast"
@@ -35,8 +36,13 @@ func RenditionMarkdownFromXHTML(source []byte, maxRunes int) (string, error) {
 	if !utf8.Valid(source) {
 		return "", errors.New("XHTML must be UTF-8")
 	}
+	if err := checkRenditionXHTMLAttributeBound(source); err != nil {
+		return "", err
+	}
 	maxRunes = min(maxRunes, maxEvidenceTextBytes)
-	budget := min(int64(100<<20), int64(len(source))+4*int64(maxRunes))
+	inlineAllocation := int64(unsafe.Sizeof(renditionInline{}))
+	inlineAllowance := 4*inlineAllocation + 4
+	budget := min(int64(100<<20), int64(len(source))+(int64(maxRunes)+1)*inlineAllowance)
 	writer := renditionHTMLWriter{maxLinkChars: renditionMaxLinkChars, work: &renditionXHTMLWork{remaining: budget}}
 	decoder := xml.NewDecoder(bytes.NewReader(bytes.TrimPrefix(source, []byte{0xef, 0xbb, 0xbf})))
 	decoder.Entity = xml.HTMLEntity
@@ -70,7 +76,7 @@ func RenditionMarkdownFromXHTML(source []byte, maxRunes int) (string, error) {
 			}
 			converted := html.Token{Data: token.Name.Local}
 			for _, attr := range token.Attr {
-				if !writer.charge(int64(len(attr.Value)) + 1) {
+				if !writer.charge(int64(len(attr.Name.Local)) + int64(len(attr.Value)) + 2*int64(unsafe.Sizeof(html.Attribute{}))) {
 					return "", ErrRenditionXHTMLBudget
 				}
 				converted.Attr = append(converted.Attr, html.Attribute{Key: attr.Name.Local, Val: attr.Value})
@@ -103,7 +109,7 @@ func RenditionMarkdownFromXHTML(source []byte, maxRunes int) (string, error) {
 	}
 	writer.finalize()
 	canonicalizeRenditionBlocks(writer.blocks)
-	if writer.work.exceeded || !renditionXHTMLSerializationFits(writer.blocks, budget, 0) {
+	if writer.work.exceeded || !renditionXHTMLSerializationFits(writer.blocks, budget) {
 		return "", ErrRenditionXHTMLBudget
 	}
 	text, truncated := serializeRenditionBlocks(writer.blocks, maxRunes)
@@ -112,6 +118,107 @@ func RenditionMarkdownFromXHTML(source []byte, maxRunes int) (string, error) {
 		return "", ErrRenditionXHTMLBudget
 	}
 	return text, nil
+}
+
+const maxRenditionXHTMLAttributes = 1 << 18
+
+func checkRenditionXHTMLAttributeBound(source []byte) error {
+	for index := 0; index < len(source); {
+		if source[index] != '<' || index+1 >= len(source) {
+			index++
+			continue
+		}
+		if bytes.HasPrefix(source[index:], []byte("<!--")) {
+			index += len("<!--")
+			for index+2 < len(source) && !bytes.Equal(source[index:index+3], []byte("-->")) {
+				index++
+			}
+			index += min(3, len(source)-index)
+			continue
+		}
+		if bytes.HasPrefix(source[index:], []byte("<![CDATA[")) {
+			index += len("<![CDATA[")
+			for index+2 < len(source) && !bytes.Equal(source[index:index+3], []byte("]]>")) {
+				index++
+			}
+			index += min(3, len(source)-index)
+			continue
+		}
+		if source[index+1] == '?' {
+			index += 2
+			for index+1 < len(source) && (source[index] != '?' || source[index+1] != '>') {
+				index++
+			}
+			index += min(2, len(source)-index)
+			continue
+		}
+		if source[index+1] == '!' {
+			if !bytes.HasPrefix(source[index:], []byte("<!DOCTYPE")) {
+				return errors.New("unsupported XHTML directive")
+			}
+			index++
+			quote := byte(0)
+			for index < len(source) {
+				if quote == 0 && bytes.HasPrefix(source[index:], []byte("<!--")) {
+					index += len("<!--")
+					for index+2 < len(source) && !bytes.Equal(source[index:index+3], []byte("-->")) {
+						index++
+					}
+					index += min(3, len(source)-index)
+					continue
+				}
+				character := source[index]
+				if quote != 0 {
+					if character == quote {
+						quote = 0
+					}
+				} else if character == '\'' || character == '"' {
+					quote = character
+				} else if character == '<' {
+					return errors.New("XHTML DOCTYPE contains unsupported markup")
+				} else if character == '[' {
+					return errors.New("XHTML internal DTD subsets are unsupported")
+				} else if character == '>' {
+					index++
+					break
+				}
+				index++
+			}
+			continue
+		}
+		if source[index+1] == '/' {
+			index++
+			for index < len(source) && source[index] != '>' {
+				index++
+			}
+			index += min(1, len(source)-index)
+			continue
+		}
+
+		index++
+		attributes := 0
+		quote := byte(0)
+		for index < len(source) {
+			character := source[index]
+			if quote != 0 {
+				if character == quote {
+					quote = 0
+				}
+			} else if character == '\'' || character == '"' {
+				quote = character
+			} else if character == '=' {
+				attributes++
+				if attributes > maxRenditionXHTMLAttributes {
+					return ErrRenditionXHTMLBudget
+				}
+			} else if character == '>' {
+				index++
+				break
+			}
+			index++
+		}
+	}
+	return nil
 }
 
 func canonicalizeRenditionBlocks(blocks []renditionBlock) {
@@ -133,7 +240,7 @@ func canonicalizeRenditionBlocks(blocks []renditionBlock) {
 }
 
 func canonicalizeRenditionInlines(values []renditionInline) []renditionInline {
-	result := make([]renditionInline, 0, len(values))
+	result := values[:0]
 	var text strings.Builder
 	flushText := func() {
 		if text.Len() == 0 {
@@ -177,7 +284,7 @@ func (w *renditionHTMLWriter) charge(amount int64) bool {
 }
 
 // Bound rectangular table padding and temporary serialization before allocation.
-func renditionXHTMLSerializationFits(blocks []renditionBlock, budget int64, indent int) bool {
+func renditionXHTMLSerializationFits(blocks []renditionBlock, budget int64) bool {
 	var inlines func([]renditionInline) int64
 	inlines = func(values []renditionInline) int64 {
 		var size int64
@@ -225,7 +332,7 @@ func renditionXHTMLSerializationFits(blocks []renditionBlock, budget int64, inde
 		}
 		return total
 	}
-	return cost(blocks, indent) <= budget
+	return cost(blocks, 0) <= budget
 }
 
 const (
@@ -1133,6 +1240,9 @@ func (w *renditionHTMLWriter) startTag(token html.Token, tokenOffset int, suppre
 				}
 			}
 		}
+		if !w.charge(2*int64(unsafe.Sizeof(renditionList{})) + 2*int64(unsafe.Sizeof(renditionListFrame{}))) {
+			return
+		}
 		list := &renditionList{ordered: tag == "ol", start: start, tight: tight}
 		w.appendBlock(renditionBlock{kind: renditionListBlock, list: list})
 		w.lists = append(w.lists, renditionListFrame{list: list, itemIndex: -1})
@@ -1314,20 +1424,20 @@ func (w *renditionHTMLWriter) endTag(tag string) {
 			if w.inCell {
 				w.endTag("td")
 			}
-			if !w.charge(int64(len(w.tableRow)) + 1) {
+			if !w.charge(2 * int64(unsafe.Sizeof([][]renditionInline{}))) {
 				return
 			}
-			w.table = append(w.table, append([][]renditionInline(nil), w.tableRow...))
+			w.table = append(w.table, w.tableRow)
 			w.tableRow = nil
 			w.inRow = false
 		}
 	case "td", "th":
 		if w.inTable && w.inCell {
 			w.flushPendingSpace()
-			if !w.charge(int64(len(w.tableCell)) + 1) {
+			if !w.charge(2 * int64(unsafe.Sizeof([]renditionInline{}))) {
 				return
 			}
-			w.tableRow = append(w.tableRow, append([]renditionInline(nil), w.tableCell...))
+			w.tableRow = append(w.tableRow, w.tableCell)
 			w.tableCell = nil
 			w.inCell = false
 		}
@@ -1352,7 +1462,7 @@ func (w *renditionHTMLWriter) endTag(tag string) {
 		if w.inPre {
 			content := stripUnsafeControls(w.preText.String())
 			if w.preInCell {
-				w.appendInline(renditionInline{kind: renditionInlineCode, text: strings.Join(strings.Fields(content), " ")})
+				w.appendInline(renditionInline{kind: renditionInlineCode, text: w.collapseWhitespace(content)})
 			} else {
 				w.appendBlock(renditionBlock{kind: renditionCodeBlock, language: w.preLang, code: content})
 			}
@@ -1397,10 +1507,16 @@ func (w *renditionHTMLWriter) startLink(destination string) {
 func (w *renditionHTMLWriter) writeText(value string) {
 	value = stripUnsafeControls(value)
 	if w.inPre {
+		if !w.charge(2 * int64(len(value))) {
+			return
+		}
 		w.preText.WriteString(value)
 		return
 	}
 	if w.inlineCode {
+		if !w.charge(2 * int64(len(value))) {
+			return
+		}
 		w.inlineText.WriteString(value)
 		return
 	}
@@ -1427,6 +1543,28 @@ func (w *renditionHTMLWriter) writeText(value string) {
 	flushChunk()
 }
 
+func (w *renditionHTMLWriter) collapseWhitespace(value string) string {
+	var size int64
+	for field := range strings.FieldsSeq(value) {
+		if size > 0 {
+			size++
+		}
+		size += int64(len(field))
+	}
+	if !w.charge(size) {
+		return ""
+	}
+	var output strings.Builder
+	output.Grow(int(size))
+	for field := range strings.FieldsSeq(value) {
+		if output.Len() > 0 {
+			output.WriteByte(' ')
+		}
+		output.WriteString(field)
+	}
+	return output.String()
+}
+
 func (w *renditionHTMLWriter) startBlock(kind renditionBlockKind, level int) {
 	if w.inTable {
 		w.pendingSpace = true
@@ -1439,7 +1577,7 @@ func (w *renditionHTMLWriter) startBlock(kind renditionBlockKind, level int) {
 }
 
 func (w *renditionHTMLWriter) startListItem() {
-	if !w.charge(1) {
+	if !w.charge(2 * int64(unsafe.Sizeof(renditionListItem{}))) {
 		return
 	}
 	w.closeLinks()
@@ -1481,7 +1619,7 @@ func (w *renditionHTMLWriter) closeLinks() {
 }
 
 func (w *renditionHTMLWriter) appendBlock(block renditionBlock) {
-	if !w.charge(1) {
+	if !w.charge(2 * int64(unsafe.Sizeof(renditionBlock{}))) {
 		return
 	}
 	if len(w.lists) > 0 {
@@ -1531,7 +1669,7 @@ func (w *renditionHTMLWriter) appendText(value string) {
 }
 
 func (w *renditionHTMLWriter) appendInline(inline renditionInline) {
-	if !w.charge(int64(len(inline.text)) + int64(len(inline.destination)) + 1) {
+	if !w.charge(int64(len(inline.text)) + int64(len(inline.destination)) + 2*int64(unsafe.Sizeof(renditionInline{}))) {
 		return
 	}
 	if len(w.links) > 0 {

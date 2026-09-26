@@ -11,13 +11,17 @@ import (
 
 	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/document/docling"
+	"go.kenn.io/docbank/document/epub"
 	"go.kenn.io/docbank/document/plaintext"
 	"go.kenn.io/docbank/document/providerhttp"
 	"go.kenn.io/docbank/internal/config"
 	"go.kenn.io/docbank/internal/processing"
 )
 
-const plaintextRenditionAdapter = "docbank-plaintext-rendition/v1"
+const (
+	plaintextRenditionAdapter = "docbank-plaintext-rendition/v1"
+	epubRenditionAdapter      = "docbank-epub-rendition/v1"
+)
 
 type renditionProviderInputs struct {
 	profile               docling.ASRProfile
@@ -73,6 +77,8 @@ func configureRenditionProviders(cfg config.Config) (
 		switch configured.AdapterContract {
 		case plaintextRenditionAdapter:
 			provider, err = plaintext.New(plaintext.Profile{MaxDocumentBytes: configured.MaxDocumentBytes})
+		case epubRenditionAdapter:
+			provider, err = epub.New(epub.Profile{MaxDocumentBytes: configured.MaxDocumentBytes, MaxUnits: int64(configured.MaxUnits)})
 		case config.DoclingASRAdapterContract:
 			provider, disclosures[name], err = configureDoclingASR(cfg, name, secrets, registered)
 		default:

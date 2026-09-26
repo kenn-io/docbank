@@ -3,6 +3,8 @@ package epubutil
 
 import (
 	"archive/zip"
+	"bytes"
+	"context"
 	"encoding/xml"
 	"errors"
 	"fmt"
@@ -11,6 +13,8 @@ import (
 	"path"
 	"slices"
 	"strings"
+	"unicode"
+	"unicode/utf8"
 )
 
 // Package preserves manifest declarations and spine occurrences before admission.
@@ -56,6 +60,14 @@ type Itemref struct {
 
 // ReadPackages reads every declared rootfile in order under the caller's entry limit.
 func ReadPackages(files []*zip.File, limit int64) ([]Package, error) {
+	return ReadPackagesContext(context.Background(), files, limit)
+}
+
+// ReadPackagesContext reads package metadata while observing cancellation.
+func ReadPackagesContext(ctx context.Context, files []*zip.File, limit int64) ([]Package, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	entries := make(map[string]*zip.File, len(files))
 	for _, file := range files {
 		if entries[file.Name] == nil {
@@ -66,8 +78,14 @@ func ReadPackages(files []*zip.File, limit int64) ([]Package, error) {
 	if container == nil {
 		return nil, errors.New("EPUB container document is missing")
 	}
-	body, err := ReadZIPEntry(container, limit)
+	body, err := ReadZIPEntryContext(ctx, container, limit)
 	if err != nil {
+		return nil, err
+	}
+	if err := validateMetadataXML(body); err != nil {
+		return nil, err
+	}
+	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
 	var containerDocument struct {
@@ -78,12 +96,21 @@ func ReadPackages(files []*zip.File, limit int64) ([]Package, error) {
 			} `xml:"rootfile"`
 		} `xml:"rootfiles"`
 	}
-	if err := xml.Unmarshal(body, &containerDocument); err != nil || containerDocument.XMLName.Space != "urn:oasis:names:tc:opendocument:xmlns:container" || len(containerDocument.Rootfiles.Items) == 0 {
+	if err := xml.Unmarshal(body, &containerDocument); err != nil {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return nil, ctxErr
+		}
+		return nil, errors.New("EPUB container document is invalid")
+	}
+	if containerDocument.XMLName.Space != "urn:oasis:names:tc:opendocument:xmlns:container" || len(containerDocument.Rootfiles.Items) == 0 {
 		return nil, errors.New("EPUB container document is invalid")
 	}
 	var records []Package
 	parsed := make(map[string]Package)
 	for _, rootfile := range containerDocument.Rootfiles.Items {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		packagePath, err := ArchivePath(rootfile.FullPath, "")
 		if err != nil {
 			return nil, err
@@ -96,19 +123,278 @@ func ReadPackages(files []*zip.File, limit int64) ([]Package, error) {
 		if file == nil {
 			return nil, errors.New("EPUB package document is missing")
 		}
-		body, err := ReadZIPEntry(file, limit)
+		body, err := ReadZIPEntryContext(ctx, file, limit)
 		if err != nil {
+			return nil, err
+		}
+		if err := validateMetadataXML(body); err != nil {
+			return nil, err
+		}
+		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
 		var record Package
 		if err := xml.Unmarshal(body, &record); err != nil {
+			if ctxErr := ctx.Err(); ctxErr != nil {
+				return nil, ctxErr
+			}
 			return nil, errors.New("EPUB package document is invalid")
 		}
 		record.Path = packagePath
 		parsed[packagePath] = record
 		records = append(records, record)
 	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	return records, nil
+}
+
+const (
+	maxMetadataXMLAttributes = 1 << 16
+	maxMetadataXMLElements   = 100_000
+)
+
+func validateMetadataXML(body []byte) error {
+	elements := 0
+	doctypeSeen := false
+	for index := 0; index < len(body); {
+		if body[index] != '<' || index+1 >= len(body) {
+			index++
+			continue
+		}
+		if bytes.HasPrefix(body[index:], []byte("<!--")) {
+			index += len("<!--")
+			for index+2 < len(body) && !bytes.Equal(body[index:index+3], []byte("-->")) {
+				index++
+			}
+			index += min(3, len(body)-index)
+			continue
+		}
+		if bytes.HasPrefix(body[index:], []byte("<![CDATA[")) {
+			index += len("<![CDATA[")
+			for index+2 < len(body) && !bytes.Equal(body[index:index+3], []byte("]]>")) {
+				index++
+			}
+			index += min(3, len(body)-index)
+			continue
+		}
+		if bytes.HasPrefix(body[index:], []byte("<!DOCTYPE")) {
+			if doctypeSeen || elements > 0 {
+				return errors.New("EPUB XML DOCTYPE must appear once before the root element")
+			}
+			doctypeSeen = true
+			var err error
+			index, err = validateMetadataXMLDoctype(body, index+len("<!DOCTYPE"))
+			if err != nil {
+				return err
+			}
+			continue
+		}
+		if body[index+1] == '?' {
+			index += 2
+			for index+1 < len(body) && (body[index] != '?' || body[index+1] != '>') {
+				index++
+			}
+			index += min(2, len(body)-index)
+			continue
+		}
+		if body[index+1] == '!' {
+			return errors.New("EPUB XML directive is unsupported")
+		}
+		closing := body[index+1] == '/'
+		index++
+		if closing {
+			for index < len(body) && body[index] != '>' {
+				index++
+			}
+			index += min(1, len(body)-index)
+			continue
+		}
+		elements++
+		if elements > maxMetadataXMLElements {
+			return errors.New("EPUB XML contains too many elements")
+		}
+		attributes := 0
+		quote := byte(0)
+		for index < len(body) {
+			character := body[index]
+			if quote != 0 {
+				if character == quote {
+					quote = 0
+				}
+			} else if character == '\'' || character == '"' {
+				quote = character
+			} else if character == '=' {
+				attributes++
+				if attributes > maxMetadataXMLAttributes {
+					return errors.New("EPUB XML element has too many attributes")
+				}
+			} else if character == '>' {
+				index++
+				break
+			}
+			index++
+		}
+	}
+	return nil
+}
+
+func isXMLWhitespace(character byte) bool {
+	switch character {
+	case ' ', '\t', '\r', '\n':
+		return true
+	default:
+		return false
+	}
+}
+
+func validateMetadataXMLDoctype(body []byte, index int) (int, error) {
+	if index >= len(body) || !isXMLWhitespace(body[index]) {
+		return index, errors.New("EPUB XML DOCTYPE is invalid")
+	}
+	var err error
+	index = skipXMLWhitespace(body, index)
+	index, err = readXMLDoctypeName(body, index)
+	if err != nil {
+		return index, err
+	}
+	if index >= len(body) {
+		return index, errors.New("EPUB XML DOCTYPE is invalid")
+	}
+	if body[index] == '[' {
+		return index, errors.New("EPUB XML DOCTYPE internal subset is unsupported")
+	}
+	if body[index] == '>' {
+		return index + 1, nil
+	}
+	if !isXMLWhitespace(body[index]) {
+		return index, errors.New("EPUB XML DOCTYPE is invalid")
+	}
+	index = skipXMLWhitespace(body, index)
+	if index < len(body) && body[index] == '[' {
+		return index, errors.New("EPUB XML DOCTYPE internal subset is unsupported")
+	}
+	if index < len(body) && body[index] == '>' {
+		return index + 1, nil
+	}
+	keywordStart := index
+	index, err = readXMLDoctypeWord(body, index)
+	if err != nil {
+		return index, err
+	}
+	keyword := string(body[keywordStart:index])
+	if keyword != "SYSTEM" && keyword != "PUBLIC" {
+		return index, errors.New("EPUB XML DOCTYPE is invalid")
+	}
+	if index >= len(body) || !isXMLWhitespace(body[index]) {
+		return index, errors.New("EPUB XML DOCTYPE is invalid")
+	}
+	index = skipXMLWhitespace(body, index)
+	index, err = readXMLDoctypeLiteral(body, index, keyword == "PUBLIC")
+	if err != nil {
+		return index, err
+	}
+	if keyword == "PUBLIC" {
+		if index >= len(body) || !isXMLWhitespace(body[index]) {
+			return index, errors.New("EPUB XML PUBLIC identifier is invalid")
+		}
+		index = skipXMLWhitespace(body, index)
+		index, err = readXMLDoctypeLiteral(body, index, false)
+		if err != nil {
+			return index, err
+		}
+	}
+	index = skipXMLWhitespace(body, index)
+	if index < len(body) && body[index] == '[' {
+		return index, errors.New("EPUB XML DOCTYPE internal subset is unsupported")
+	}
+	if index >= len(body) || body[index] != '>' {
+		return index, errors.New("EPUB XML DOCTYPE is invalid")
+	}
+	return index + 1, nil
+}
+
+func readXMLDoctypeLiteral(body []byte, index int, publicID bool) (int, error) {
+	if index >= len(body) || (body[index] != '\'' && body[index] != '"') {
+		return index, errors.New("EPUB XML DOCTYPE literal is invalid")
+	}
+	quote := body[index]
+	index++
+	for ; index < len(body); index++ {
+		if body[index] == quote {
+			return index + 1, nil
+		}
+		if publicID && !isXMLPubidCharacter(body[index]) {
+			return index, errors.New("EPUB XML PUBLIC identifier is invalid")
+		}
+		if !publicID {
+			character, size := utf8.DecodeRune(body[index:])
+			if character == utf8.RuneError && size == 1 || !isXMLCharacter(character) {
+				return index, errors.New("EPUB XML DOCTYPE literal contains an invalid character")
+			}
+			index += size - 1
+		}
+	}
+	return index, errors.New("EPUB XML DOCTYPE literal is invalid")
+}
+
+func skipXMLWhitespace(body []byte, index int) int {
+	for index < len(body) && isXMLWhitespace(body[index]) {
+		index++
+	}
+	return index
+}
+
+func readXMLDoctypeName(body []byte, index int) (int, error) {
+	start := index
+	for index < len(body) {
+		character, size := utf8.DecodeRune(body[index:])
+		valid := isXMLNameStart(character)
+		if index != start {
+			valid = isXMLNameCharacter(character)
+		}
+		if !valid {
+			break
+		}
+		index += size
+	}
+	if index == start {
+		return index, errors.New("EPUB XML DOCTYPE name is invalid")
+	}
+	return index, nil
+}
+
+func readXMLDoctypeWord(body []byte, index int) (int, error) {
+	start := index
+	for index < len(body) && !isXMLWhitespace(body[index]) && body[index] != '>' && body[index] != '[' && body[index] != ']' && body[index] != '\'' && body[index] != '"' {
+		index++
+	}
+	if index == start {
+		return index, errors.New("EPUB XML DOCTYPE keyword is invalid")
+	}
+	return index, nil
+}
+
+func isXMLNameStart(character rune) bool {
+	return character == ':' || character == '_' || unicode.IsLetter(character)
+}
+
+func isXMLNameCharacter(character rune) bool {
+	return isXMLNameStart(character) || unicode.IsDigit(character) || character == '-' || character == '.' || character == 0xb7 || character >= 0x300 && character <= 0x36f
+}
+
+func isXMLCharacter(character rune) bool {
+	return character == 0x9 || character == 0xa || character == 0xd ||
+		character >= 0x20 && character <= 0xd7ff ||
+		character >= 0xe000 && character <= 0xfffd ||
+		character >= 0x10000 && character <= 0x10ffff
+}
+
+func isXMLPubidCharacter(character byte) bool {
+	return character == 0x20 || character == 0xd || character == 0xa ||
+		character >= 'a' && character <= 'z' || character >= 'A' && character <= 'Z' ||
+		character >= '0' && character <= '9' || strings.ContainsRune("-'()+,./:=?;!*#@$_%", rune(character))
 }
 
 // ResolveArchiveDir applies directory-versus-document base semantics.
@@ -193,6 +479,14 @@ func LeavesArchiveRoot(resolved string) bool {
 
 // ReadZIPEntry verifies a complete entry within the caller's byte limit.
 func ReadZIPEntry(file *zip.File, limit int64) ([]byte, error) {
+	return ReadZIPEntryContext(context.Background(), file, limit)
+}
+
+// ReadZIPEntryContext verifies a complete entry while observing cancellation.
+func ReadZIPEntryContext(ctx context.Context, file *zip.File, limit int64) ([]byte, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	if limit < 0 || file.UncompressedSize64 > uint64(limit) {
 		return nil, errors.New("ZIP entry exceeds bound")
 	}
@@ -201,11 +495,58 @@ func ReadZIPEntry(file *zip.File, limit int64) ([]byte, error) {
 		return nil, fmt.Errorf("open ZIP entry: %w", err)
 	}
 	defer func() { _ = reader.Close() }()
-	data, err := io.ReadAll(io.LimitReader(reader, limit+1))
-	if err != nil || int64(len(data)) > limit || uint64(len(data)) != file.UncompressedSize64 {
+	data, err := io.ReadAll(io.LimitReader(contextReader{ctx: ctx, reader: reader}, limit+1))
+	if err != nil {
+		return nil, fmt.Errorf("read ZIP entry: %w", err)
+	}
+	if int64(len(data)) > limit || uint64(len(data)) != file.UncompressedSize64 {
 		return nil, errors.New("ZIP entry exceeds bound")
 	}
 	return data, nil
+}
+
+// NewReaderContext builds a ZIP reader whose entry decompression observes ctx.
+func NewReaderContext(ctx context.Context, reader io.ReaderAt, size int64) (*zip.Reader, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	archive, err := zip.NewReader(contextReaderAt{ctx: ctx, reader: reader}, size)
+	if err != nil {
+		return nil, fmt.Errorf("open ZIP container: %w", err)
+	}
+	return archive, nil
+}
+
+type contextReaderAt struct {
+	ctx    context.Context
+	reader io.ReaderAt
+}
+
+func (reader contextReaderAt) ReadAt(buffer []byte, offset int64) (int, error) {
+	if err := reader.ctx.Err(); err != nil {
+		return 0, err
+	}
+	read, err := reader.reader.ReadAt(buffer, offset)
+	if contextErr := reader.ctx.Err(); contextErr != nil {
+		return read, contextErr
+	}
+	return read, err
+}
+
+type contextReader struct {
+	ctx    context.Context
+	reader io.Reader
+}
+
+func (reader contextReader) Read(p []byte) (int, error) {
+	if err := reader.ctx.Err(); err != nil {
+		return 0, err
+	}
+	n, err := reader.reader.Read(p)
+	if contextErr := reader.ctx.Err(); contextErr != nil {
+		return n, contextErr
+	}
+	return n, err
 }
 
 // ManifestBases preserves every intermediate XML-base interpretation.

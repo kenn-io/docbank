@@ -86,8 +86,11 @@ binds both limits to its policy identity.
 
 Pass the provider to an embedded vault through
 `ProcessingProfileConfig.RenditionProvider`, together with its processing
-profile. Use the public planning and consent flow before processing. The
-standalone daemon's configured EPUB route continues to use Marker.
+profile. The daemon also selects this provider with the `docbank-epub-rendition/v1`
+adapter. Its `max_document_bytes` and `max_units` must match the limits used to
+construct the descriptor. Use the public planning and consent flow before
+processing. Filename disclosure follows the profile's `disclose_filename`
+setting; extraction works with the filename disclosed or withheld.
 
 Each declared spine occurrence produces one ordered evidence unit with its
 archive path. Repeated references and `linear=no` entries count separately.

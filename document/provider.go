@@ -369,6 +369,12 @@ func RenderRendition(
 		return RenditionResult{}, err
 	}
 	result, err = validateAndOwnRenditionResult(descriptor, sealed, result)
+	if contextErr := ctx.Err(); contextErr != nil {
+		return RenditionResult{}, contextErr
+	}
+	if currentErr := validateAuthorizationCurrentAt(sealed, time.Now().UTC()); currentErr != nil {
+		return RenditionResult{}, currentErr
+	}
 	if err != nil {
 		return RenditionResult{}, err
 	}

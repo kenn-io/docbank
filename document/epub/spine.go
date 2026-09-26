@@ -2,6 +2,9 @@ package epub
 
 import (
 	"archive/zip"
+	"errors"
+	"mime"
+	"net/url"
 	"path"
 	"strings"
 	"unicode/utf8"
@@ -39,10 +42,19 @@ func admitSpine(files []*zip.File, records []epubutil.Package) ([]*zip.File, err
 		}
 		manifest[item.ID] = item
 	}
+	resources := make(map[string]*zip.File, len(manifest))
 	var spine []*zip.File
 	for _, ref := range record.Spine.Items {
+		if strings.Contains(ref.Properties, "rendition:layout-pre-paginated") {
+			return nil, unsupported()
+		}
+		if resource := resources[ref.IDRef]; resource != nil {
+			spine = append(spine, resource)
+			continue
+		}
 		item, ok := manifest[ref.IDRef]
-		if !ok || item.MediaType != "application/xhtml+xml" || strings.Contains(item.Properties, "rendition:layout-pre-paginated") || strings.Contains(ref.Properties, "rendition:layout-pre-paginated") {
+		mediaType, _, mediaErr := mime.ParseMediaType(item.MediaType)
+		if !ok || mediaErr != nil || !strings.EqualFold(mediaType, "application/xhtml+xml") || strings.Contains(item.Properties, "rendition:layout-pre-paginated") {
 			return nil, unsupported()
 		}
 		directory := path.Dir(record.Path)
@@ -56,13 +68,30 @@ func admitSpine(files []*zip.File, records []epubutil.Package) ([]*zip.File, err
 				return nil, unsupported()
 			}
 		}
-		resource, err := epubutil.ArchivePath(item.HRef, directory)
-		if err != nil || entries[resource] == nil {
+		href, err := localSpineReference(item.HRef)
+		if err != nil {
 			return nil, unsupported()
 		}
-		spine = append(spine, entries[resource])
+		archivePath, err := epubutil.ArchivePath(href, directory)
+		if err != nil || entries[archivePath] == nil {
+			return nil, unsupported()
+		}
+		resources[ref.IDRef] = entries[archivePath]
+		spine = append(spine, entries[archivePath])
 	}
 	return spine, nil
+}
+
+func localSpineReference(reference string) (string, error) {
+	parsed, err := url.Parse(epubutil.StripReferenceWhitespace(reference))
+	if err != nil || parsed.IsAbs() || parsed.Host != "" || parsed.Opaque != "" {
+		return "", errors.New("EPUB spine reference is invalid")
+	}
+	path := parsed.EscapedPath()
+	if path == "" {
+		return "", errors.New("EPUB spine reference is empty")
+	}
+	return path, nil
 }
 
 // virtualUnits counts complete Markdown without inserting wrapping into it.
