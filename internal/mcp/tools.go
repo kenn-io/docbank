@@ -20,9 +20,9 @@ const toolCatalogTTLMs = 60_000
 
 func catalogInstructions(allowProcessing, allowPackageWrites bool) string {
 	if !allowProcessing && !allowPackageWrites {
-		return "Docbank exposes a bounded read-only document and package surface."
+		return "Docbank exposes bounded read-only document, package, and report operations."
 	}
-	instructions := "Docbank exposes bounded document and package reads."
+	instructions := "Docbank exposes bounded document, package, and report reads."
 	if allowProcessing {
 		instructions += " start_processing requires a reviewed plan and prior operator consent."
 	}
@@ -33,13 +33,14 @@ func catalogInstructions(allowProcessing, allowPackageWrites bool) string {
 }
 
 type toolDefinition struct {
-	name        string
-	title       string
-	description string
-	schemas     func() (schema, schema)
-	write       bool
-	idempotent  bool
-	destructive bool
+	name          string
+	title         string
+	description   string
+	schemas       func() (schema, schema)
+	write         bool
+	idempotent    bool
+	nonIdempotent bool
+	destructive   bool
 }
 
 var readToolDefinitions = []toolDefinition{
@@ -62,6 +63,8 @@ var readToolDefinitions = []toolDefinition{
 	{name: "list_package_members", title: "List package members", description: "Page through one package's immutable document occurrences.", schemas: listPackageMembersSchemas},
 	{name: "get_package_record", title: "Get package record", description: "Read one immutable sender row by its package-scoped record key.", schemas: getPackageRecordSchemas},
 	{name: "lookup_bates_label", title: "Look up Bates label", description: "Find every bounded package-scoped match for an exact received or assigned label.", schemas: lookupBatesLabelSchemas},
+	{name: "open_report_artifact", title: "Open report artifact", description: "Open an owner-checked frozen CSV or bundle artifact and return a short-lived handle.", schemas: openReportArtifactSchemas, nonIdempotent: true},
+	{name: "download_report_artifact", title: "Download report artifact", description: "Read a verified bounded chunk of a frozen report artifact; authorization is checked on every call.", schemas: downloadReportArtifactSchemas, nonIdempotent: true},
 }
 
 var processingToolDefinition = toolDefinition{
@@ -109,7 +112,8 @@ func toolCatalog(allowProcessing, allowPackageWrites bool) []*sdkmcp.Tool {
 		openWorld := definition.write
 		annotation := &sdkmcp.ToolAnnotations{
 			Title: definition.title, ReadOnlyHint: !definition.write,
-			IdempotentHint: !definition.write || definition.idempotent, DestructiveHint: &definition.destructive, OpenWorldHint: &openWorld,
+			IdempotentHint:  !definition.nonIdempotent && (!definition.write || definition.idempotent),
+			DestructiveHint: &definition.destructive, OpenWorldHint: &openWorld,
 		}
 		tools = append(tools, &sdkmcp.Tool{
 			Name: definition.name, Title: definition.title, Description: definition.description,
@@ -122,8 +126,9 @@ func toolCatalog(allowProcessing, allowPackageWrites bool) []*sdkmcp.Tool {
 
 func registerToolCatalog(
 	server *sdkmcp.Server, allowProcessing, allowPackageWrites bool, lease *daemonLease, plans *processingPlanRegistry, logger *slog.Logger,
-) {
+) *reportHandleSigner {
 	tools := toolCatalog(allowProcessing, allowPackageWrites)
+	reportHandles := newReportHandleSigner()
 	server.AddReceivingMiddleware(validateToolInputs(tools))
 	for _, tool := range tools {
 		output := mustResolveSchema(tool.OutputSchema)
@@ -137,11 +142,14 @@ func registerToolCatalog(
 			handler = packagePreflightToolHandler(lease, output, logger)
 		case resolvePackageCustodianToolDefinition.name, assignPackageCustodianToolDefinition.name:
 			handler = packageCustodianWriteToolHandler(lease, tool.Name, output, logger)
+		case "open_report_artifact", "download_report_artifact":
+			handler = reportToolHandler(lease, reportHandles, tool.Name, output, logger)
 		default:
 			handler = readToolHandler(lease, plans, tool.Name, output, logger)
 		}
 		server.AddTool(tool, handler)
 	}
+	return reportHandles
 }
 
 func validateToolInputs(tools []*sdkmcp.Tool) func(sdkmcp.MethodHandler) sdkmcp.MethodHandler {
@@ -304,6 +312,10 @@ func stableDomainError(err error) (string, int) {
 		return "cursor_expired", 0
 	case errors.Is(err, store.ErrInvalidDocumentCursor):
 		return "invalid_document_cursor", 0
+	case errors.Is(err, errReportHandleUnavailable):
+		return "report_unavailable", 0
+	case errors.Is(err, errReportSpoolCapacity):
+		return "report_capacity", 0
 	}
 	facts, ok := daemonProblemFacts(err)
 	if !ok {
@@ -331,6 +343,10 @@ func stableDomainError(err error) (string, int) {
 		return "invalid_rendition_window", 0
 	case "invalid_rendition_encoding":
 		return "invalid_rendition_encoding", 0
+	case "report_unavailable", "visibility_changed":
+		return facts.Code, 0
+	case "unauthorized", "forbidden":
+		return "access_denied", 0
 	default:
 		return "", 0
 	}
@@ -360,6 +376,14 @@ func domainErrorMessage(code string) string {
 		return "The requested rendition text window is outside the supported range."
 	case "invalid_rendition_encoding":
 		return "The active rendition is not valid UTF-8 text."
+	case "report_unavailable":
+		return "The report artifact is unavailable to this owner."
+	case "report_capacity":
+		return "Report download capacity is exhausted; close a handle or retry later."
+	case "visibility_changed":
+		return "The report artifact is withheld because source visibility changed."
+	case "access_denied":
+		return "The current credential cannot access this Docbank operation."
 	default:
 		return "The Docbank operation could not be completed."
 	}

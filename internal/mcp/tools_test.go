@@ -6,6 +6,8 @@ import (
 	"errors"
 	"fmt"
 	"maps"
+	"net/http"
+	"net/http/httptest"
 	"slices"
 	"strings"
 	"testing"
@@ -30,13 +32,15 @@ func TestDefaultToolCatalogIsFixedBoundedAndReadOnly(t *testing.T) {
 		"list_package_custodians", "find_people",
 		"list_packages", "get_package", "list_package_members", "get_package_record",
 		"lookup_bates_label",
+		"open_report_artifact", "download_report_artifact",
 	}
 	require.Len(t, tools, len(wantNames))
 	for index, tool := range tools {
 		assert.Equal(t, wantNames[index], tool.Name)
 		require.NotNil(t, tool.Annotations)
 		assert.True(t, tool.Annotations.ReadOnlyHint)
-		assert.True(t, tool.Annotations.IdempotentHint)
+		assert.Equal(t, tool.Name != "open_report_artifact" && tool.Name != "download_report_artifact",
+			tool.Annotations.IdempotentHint)
 		assert.Equal(t, new(false), tool.Annotations.DestructiveHint)
 		assert.Equal(t, new(false), tool.Annotations.OpenWorldHint)
 		assertSchemaContract(t, tool.InputSchema, true)
@@ -44,6 +48,47 @@ func TestDefaultToolCatalogIsFixedBoundedAndReadOnly(t *testing.T) {
 		assert.Equal(t, map[string]any{"maxResponseBytes": maxToolResponseBytes}, tool.Meta["io.docbank/bounds"])
 	}
 	assert.NotContains(t, catalogNames(tools), "start_processing")
+}
+
+func TestReportArtifactCatalogIsNonIdempotent(t *testing.T) {
+	for _, name := range []string{"open_report_artifact", "download_report_artifact"} {
+		tool := catalogMap(toolCatalog(false, false))[name]
+		require.NotNil(t, tool)
+		require.NotNil(t, tool.Annotations)
+		assert.True(t, tool.Annotations.ReadOnlyHint)
+		assert.False(t, tool.Annotations.IdempotentHint, name)
+	}
+}
+
+func TestAccessDeniedMessageIsGenericAcrossReadTools(t *testing.T) {
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/problem+json")
+		w.WriteHeader(http.StatusForbidden)
+		_, _ = w.Write([]byte(`{"title":"Forbidden","status":403,"code":"forbidden"}`))
+	}))
+	t.Cleanup(backend.Close)
+	lease := newDaemonLeaseWith(func(context.Context) (*daemonconn.Connection, error) {
+		return daemonconn.New(backend.URL, "synthetic-owner"), nil
+	}, func(client *daemonconn.Connection) error { return client.Close() })
+	server := newServerWithOptionsAndDaemon(testImplementation(), ServerOptions{}, lease)
+	for _, testCase := range []struct {
+		name string
+		args map[string]any
+	}{
+		{name: "get_vault_info", args: map[string]any{}},
+		{name: "open_report_artifact", args: map[string]any{
+			"report_id": strings.Repeat("a", 48), "format": "csv"}},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			response := exchangeRaw(t, server, requestFor("tools/call", map[string]any{
+				"name": testCase.name, "arguments": testCase.args,
+			}))
+			result := decodeResult(t, response)
+			output := objectField(t, result, "structuredContent")
+			assert.Equal(t, "access_denied", output["code"])
+			assert.Equal(t, "The current credential cannot access this Docbank operation.", output["message"])
+		})
+	}
 }
 
 func TestWriteToolsAreIndependentConstructionTimeOptIns(t *testing.T) {
