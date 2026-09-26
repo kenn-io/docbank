@@ -395,7 +395,7 @@ func TestOpenRejectsCurrentDatabaseWithoutAttributionTables(t *testing.T) {
 	}
 }
 
-func TestOpenAcceptsCurrentSchemaColumnAddedToEmbeddedSchema(t *testing.T) {
+func TestOpenAcceptsCurrentSchemaColumnAddedToEmbeddedSchema(t *testing.T) { //nolint:paralleltest // swaps the package-level schemaSQL
 	originalSchema := schemaSQL
 	t.Cleanup(func() { schemaSQL = originalSchema })
 
@@ -420,7 +420,7 @@ func TestOpenAcceptsCurrentSchemaColumnAddedToEmbeddedSchema(t *testing.T) {
 	}
 }
 
-func TestCanonicalCurrentSchemaDerivationDoesNotCacheErrors(t *testing.T) {
+func TestCanonicalCurrentSchemaDerivationDoesNotCacheErrors(t *testing.T) { //nolint:paralleltest // swaps the package-level schemaSQL
 	originalSchema := schemaSQL
 	t.Cleanup(func() { schemaSQL = originalSchema })
 	schemaSQL = schemaSQLWithAddedColumn(t, originalSchema, "blobs", "synthetic_derivation_retry_269")
@@ -937,7 +937,7 @@ func TestInterruptedUpgradeStageMigratesLegacyBeforePublication(t *testing.T) {
 	}
 }
 
-func TestInvalidStageRestoresSourceBeforeRemovingRecoveryMarker(t *testing.T) {
+func TestInvalidStageRestoresSourceBeforeRemovingRecoveryMarker(t *testing.T) { //nolint:paralleltest // swaps the package-level removeInvalidUpgradeStage
 	driver := DefaultSQLiteDriver()
 	dbPath := filepath.Join(t.TempDir(), "docbank.db")
 	createV090Fixture(t, dbPath, driver)
@@ -966,7 +966,7 @@ func TestInvalidStageRestoresSourceBeforeRemovingRecoveryMarker(t *testing.T) {
 	require.NoError(t, recovered.Close())
 }
 
-func TestV090CutoverPublicationFailureRestoresReleasedDatabase(t *testing.T) {
+func TestV090CutoverPublicationFailureRestoresReleasedDatabase(t *testing.T) { //nolint:paralleltest // swaps the package-level renameUpgradeFile
 	driver := DefaultSQLiteDriver()
 	dbPath := filepath.Join(t.TempDir(), "docbank.db")
 	createV090Fixture(t, dbPath, driver)

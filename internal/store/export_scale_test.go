@@ -56,7 +56,7 @@ func TestExportUpload1001MembersRequiresEveryChunkAndExactDigest(t *testing.T) {
 	require.Zero(t, retained)
 }
 
-func TestExportScale(t *testing.T) {
+func TestExportScale(t *testing.T) { //nolint:paralleltest // reports timings and memory that other tests would skew
 	if os.Getenv("DOCBANK_EXPORT_SCALE") != "1" {
 		t.Skip("set DOCBANK_EXPORT_SCALE=1 for 25k/118k export admission measurements")
 	}

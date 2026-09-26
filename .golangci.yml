@@ -66,6 +66,7 @@ linters:
     - nilnil
     - nolintlint
     - nosprintfhostport
+    - paralleltest
     - perfsprint
     - predeclared
     - promlinter
@@ -96,7 +97,7 @@ linters:
   #     dupword, fatcontext, funcorder, containedctx, godox, interfacebloat, unqueryvet
   #   complexity (trust reviewer judgment): funlen, cyclop, gocognit, maintidx, gocyclo, nestif
   #   project misfit: depguard, mnd, gochecknoglobals, gochecknoinits, testpackage,
-  #     paralleltest, tparallel, gosmopolitan, prealloc, err113, forbidigo
+  #     tparallel, gosmopolitan, prealloc, err113, forbidigo
   #   deprecated: gomodguard (use gomodguard_v2)
   #   pending dedicated passes: contextcheck, noctx (see follow-up PRs)
 
@@ -126,6 +127,10 @@ linters:
         # input reaches the format string. Real bind params still use ? / $N.
         - G201
         - G202
+
+    paralleltest:
+      # Subtests inside a parallel test share its fixture, so only top-level tests must opt in.
+      ignore-missing-subtests: true
 
     goconst:
       # Default is 3; raise to filter noise like TUI keycodes, runtime.GOOS
@@ -232,3 +237,7 @@ linters:
       # the package calls it, so the exclusion covers the whole package.
       - linters: [bodyclose]
         path: internal/api/.*_test\.go
+
+      # Only the storage tests run in parallel so far.
+      - linters: [paralleltest]
+        path-except: internal/store/

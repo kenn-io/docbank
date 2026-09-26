@@ -252,7 +252,7 @@ func qualityDimension(t *testing.T, quality CollectionQuality, field string) Qua
 
 // Opt in explicitly: this proof creates 250001 real current versions and is
 // intentionally excluded from routine test runs. All files and text are synthetic.
-func TestCollectionQualityScaleProof(t *testing.T) {
+func TestCollectionQualityScaleProof(t *testing.T) { //nolint:paralleltest // reports timings that other tests would skew
 	if os.Getenv("DOCBANK_COLLECTION_QUALITY_SCALE") != "1" {
 		t.Skip("set DOCBANK_COLLECTION_QUALITY_SCALE=1 for the large synthetic census proof")
 	}
