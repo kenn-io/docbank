@@ -7,9 +7,21 @@ import (
 	"os"
 
 	"golang.org/x/sys/windows"
+
+	"go.kenn.io/docbank/internal/winsecurity"
 )
 
+// windowsPaths uses the extended-length form, so MoveFileW accepts paths
+// longer than MAX_PATH even when the system has not enabled long paths.
 func windowsPaths(stagedPath, destinationPath string) (*uint16, *uint16, error) {
+	stagedPath, err := winsecurity.ExtendedLengthPath(stagedPath)
+	if err != nil {
+		return nil, nil, fmt.Errorf("resolving staged path: %w", err)
+	}
+	destinationPath, err = winsecurity.ExtendedLengthPath(destinationPath)
+	if err != nil {
+		return nil, nil, fmt.Errorf("resolving destination path: %w", err)
+	}
 	staged, err := windows.UTF16PtrFromString(stagedPath)
 	if err != nil {
 		return nil, nil, fmt.Errorf("encoding staged path %q: %w", stagedPath, err)
