@@ -79,6 +79,13 @@ func Calculate(ctx context.Context, budget Budget, frame Frame) (_ Result, err e
 	for _, id := range request.CollectionIDs {
 		selectedCollections[id] = true
 	}
+	selectedDocuments := make(map[Identity]bool, len(request.SelectedDocuments))
+	for _, identity := range request.SelectedDocuments {
+		selectedDocuments[identity] = true
+	}
+	if len(selectedDocuments) > 0 && memberCount != len(selectedDocuments) {
+		return Result{}, errors.New("sealed report member count differs")
+	}
 	identities := make(map[Identity]int, memberCount)
 	families := make(map[familyKey]int, memberCount)
 	familyForMember := make([]int, memberCount)
@@ -99,7 +106,10 @@ func Calculate(ctx context.Context, budget Budget, frame Frame) (_ Result, err e
 		if len(member.RawMatches) != terms {
 			return Result{}, fmt.Errorf("member %d has %d match bits, need %d", index, len(member.RawMatches), terms)
 		}
-		if !request.AllDocuments {
+		if len(selectedDocuments) > 0 && !selectedDocuments[member.Identity] {
+			return Result{}, fmt.Errorf("member %d is outside sealed selection", index)
+		}
+		if len(selectedCollections) > 0 {
 			matched := false
 			for _, witness := range member.CollectionWitnesses {
 				if selectedCollections[witness.CollectionID] && witness.MembershipID != "" && validSHA256(witness.MembershipSHA256) {
