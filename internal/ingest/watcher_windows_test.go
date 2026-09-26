@@ -13,6 +13,7 @@ import (
 	"golang.org/x/sys/windows"
 
 	"go.kenn.io/docbank/internal/config"
+	"go.kenn.io/docbank/internal/store"
 )
 
 func TestWatcherRetriesExclusivelyOpenedFile(t *testing.T) {
@@ -39,14 +40,18 @@ func TestWatcherRetriesExclusivelyOpenedFile(t *testing.T) {
 
 	t0 := time.Now()
 	require.NoError(t, scanWatcherAt(t.Context(), watcher, root, t0))
+	require.NoError(t, scanWatcherAt(t.Context(), watcher, root, t0.Add(time.Second)))
+	_, err = ing.Store.NodeByPath(t.Context(), "/inbox/document.txt")
+	require.ErrorIs(t, err, store.ErrNotFound,
+		"an exclusively held file must remain unprocessed instead of stopping the watcher")
 	assert.Empty(t, watcher.observations,
-		"an exclusively held file must remain unsettled instead of stopping the watcher")
+		"a failed locked-file read must restart the settle window")
 	require.NoError(t, windows.CloseHandle(handle))
 	closed = true
 
-	require.NoError(t, scanWatcherAt(t.Context(), watcher, root, t0.Add(time.Second)))
-	assert.Len(t, watcher.observations, 1)
 	require.NoError(t, scanWatcherAt(t.Context(), watcher, root, t0.Add(2*time.Second)))
+	assert.Len(t, watcher.observations, 1)
+	require.NoError(t, scanWatcherAt(t.Context(), watcher, root, t0.Add(3*time.Second)))
 	node, err := ing.Store.NodeByPath(t.Context(), "/inbox/document.txt")
 	require.NoError(t, err)
 	assert.Equal(t, "document.txt", node.Name)
