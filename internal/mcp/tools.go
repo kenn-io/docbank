@@ -49,6 +49,9 @@ var readToolDefinitions = []toolDefinition{
 	{name: "get_document", title: "Get document", description: "Read metadata for one exact current document identity.", schemas: getDocumentSchemas},
 	{name: "list_document_versions", title: "List document versions", description: "Page through immutable content versions for one stable document node.", schemas: listDocumentVersionsSchemas},
 	{name: "read_rendition_text", title: "Read rendition text", description: "Read a bounded Unicode window from an active sanitized Markdown rendition.", schemas: readRenditionTextSchemas},
+	{name: "get_document_outline", title: "Get document outline", description: "Read the bounded heading hierarchy for one exact retained Markdown rendition.", schemas: getDocumentOutlineSchemas},
+	{name: "read_passage_section", title: "Read passage section", description: "Read one complete exact section through bounded continuation pages.", schemas: readPassageSectionSchemas},
+	{name: "get_context_pack", title: "Get context pack", description: "Read verified exact passages within an explicit source fence and byte budget.", schemas: getContextPackSchemas},
 	{name: "get_processing_plan", title: "Get processing plan", description: "Preview the exact provider disclosure and consent state for one document version.", schemas: getProcessingPlanSchemas},
 	{name: "get_processing_status", title: "Get processing status", description: "Read the current state of one stable processing job.", schemas: getProcessingStatusSchemas},
 	{name: "get_processing_coverage", title: "Get processing coverage", description: "Read rendition and embedding coverage for an exact source fence.", schemas: getProcessingCoverageSchemas},
@@ -194,6 +197,17 @@ func validToolSemantics(name string, arguments map[string]any) bool {
 		}
 		return validOptionalRFC3339Nano(filters, "modified_since") &&
 			validOptionalRFC3339Nano(filters, "modified_before")
+	case "get_context_pack":
+		_, query := arguments["query"]
+		_, seed := arguments["seed"]
+		if query == seed {
+			return false
+		}
+		if query {
+			_, profile := arguments["profile"]
+			return profile
+		}
+		return true
 	default:
 		return true
 	}
@@ -331,6 +345,14 @@ func stableDomainError(err error) (string, int) {
 		return "invalid_rendition_window", 0
 	case "invalid_rendition_encoding":
 		return "invalid_rendition_encoding", 0
+	case "section_unavailable":
+		return "section_unavailable", 0
+	case "section_changed":
+		return "section_changed", 0
+	case "section_budget_too_small":
+		return "section_budget_too_small", 0
+	case "outline_too_large":
+		return "outline_too_large", 0
 	default:
 		return "", 0
 	}
@@ -360,6 +382,14 @@ func domainErrorMessage(code string) string {
 		return "The requested rendition text window is outside the supported range."
 	case "invalid_rendition_encoding":
 		return "The active rendition is not valid UTF-8 text."
+	case "section_unavailable":
+		return "The requested section is unavailable; fetch a fresh outline and select an available section."
+	case "section_changed":
+		return "The section changed or its continuation expired; fetch a fresh outline and restart the section read."
+	case "section_budget_too_small":
+		return "The section response budget is too small; increase max_bytes and retry."
+	case "outline_too_large":
+		return "The document outline exceeds the bounded tool response limit."
 	default:
 		return "The Docbank operation could not be completed."
 	}

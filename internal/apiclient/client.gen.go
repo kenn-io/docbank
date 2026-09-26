@@ -15,6 +15,7 @@ import (
 	api "go.kenn.io/docbank/internal/api"
 	loadfile "go.kenn.io/docbank/internal/loadfile"
 	mailbox "go.kenn.io/docbank/internal/mailbox"
+	processing "go.kenn.io/docbank/internal/processing"
 	query "go.kenn.io/docbank/internal/query"
 	store "go.kenn.io/docbank/internal/store"
 	report "go.kenn.io/docbank/report"
@@ -1461,6 +1462,53 @@ func (c *Client) LookupContentReferences(ctx context.Context, options *LookupCon
 	return responseParser(ctx, resp)
 }
 
+// CreateContextPack Read bounded exact context from a source fence
+func (c *Client) CreateContextPack(ctx context.Context, options *CreateContextPackRequestOptions, reqEditors ...runtime.RequestEditorFn) (*CreateContextPackResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/context-packs",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*CreateContextPackResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(CreateContextPackResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "CreateContextPackResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[CreateContextPackErrorResponse](resp, "CreateContextPackErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/context-packs")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
 // GetDocumentProcessingCoverage Report rendition and embedding coverage for exact document versions
 func (c *Client) GetDocumentProcessingCoverage(ctx context.Context, options *GetDocumentProcessingCoverageRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetDocumentProcessingCoverageResponse, error) {
 	var err error
@@ -1647,6 +1695,53 @@ func (c *Client) ListDocuments(ctx context.Context, options *ListDocumentsReques
 	}
 
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/documents")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
+// OutlineDocument Outline one exact retained Markdown rendition
+func (c *Client) OutlineDocument(ctx context.Context, options *OutlineDocumentRequestOptions, reqEditors ...runtime.RequestEditorFn) (*OutlineDocumentResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/documents/outline",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*OutlineDocumentResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(OutlineDocumentResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "OutlineDocumentResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[OutlineDocumentErrorResponse](resp, "OutlineDocumentErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/documents/outline")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
@@ -6674,6 +6769,100 @@ func (c *Client) CancelPageRenderJob(ctx context.Context, options *CancelPageRen
 	return responseParser(ctx, resp)
 }
 
+// ReadPassageSection Read a bounded page from one exact section
+func (c *Client) ReadPassageSection(ctx context.Context, options *ReadPassageSectionRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ReadPassageSectionResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/passages/read-section",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*ReadPassageSectionResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(ReadPassageSectionResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "ReadPassageSectionResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[ReadPassageSectionErrorResponse](resp, "ReadPassageSectionErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/passages/read-section")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
+// ResolvePassage Resolve one exact retained Markdown passage
+func (c *Client) ResolvePassage(ctx context.Context, options *ResolvePassageRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ResolvePassageResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/passages/resolve",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*ResolvePassageResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(ResolvePassageResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "ResolvePassageResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[ResolvePassageErrorResponse](resp, "ResolvePassageErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/passages/resolve")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
 // ResolvePath Resolve an absolute virtual path to its node
 func (c *Client) ResolvePath(ctx context.Context, options *ResolvePathRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ResolvePathResponse, error) {
 	var err error
@@ -11529,6 +11718,34 @@ func (o *LookupContentReferencesRequestOptions) GetHeader() (map[string]string, 
 	return nil, nil
 }
 
+// CreateContextPackRequestOptions is the options needed to make a request to CreateContextPack.
+type CreateContextPackRequestOptions struct {
+	Body *CreateContextPackBody
+}
+
+// GetPathParams returns the path params as a map.
+func (o *CreateContextPackRequestOptions) GetPathParams() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetQuery returns the query params as a map.
+func (o *CreateContextPackRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *CreateContextPackRequestOptions) GetBody() any {
+	if o.Body == nil {
+		return nil
+	}
+	return o.Body
+}
+
+// GetHeader returns the headers as a map.
+func (o *CreateContextPackRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
 // GetDocumentProcessingCoverageRequestOptions is the options needed to make a request to GetDocumentProcessingCoverage.
 type GetDocumentProcessingCoverageRequestOptions struct {
 	Query *GetDocumentProcessingCoverageQuery
@@ -11644,6 +11861,34 @@ func (o *ListDocumentsRequestOptions) GetBody() any {
 
 // GetHeader returns the headers as a map.
 func (o *ListDocumentsRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
+// OutlineDocumentRequestOptions is the options needed to make a request to OutlineDocument.
+type OutlineDocumentRequestOptions struct {
+	Body *OutlineDocumentBody
+}
+
+// GetPathParams returns the path params as a map.
+func (o *OutlineDocumentRequestOptions) GetPathParams() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetQuery returns the query params as a map.
+func (o *OutlineDocumentRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *OutlineDocumentRequestOptions) GetBody() any {
+	if o.Body == nil {
+		return nil
+	}
+	return o.Body
+}
+
+// GetHeader returns the headers as a map.
+func (o *OutlineDocumentRequestOptions) GetHeader() (map[string]string, error) {
 	return nil, nil
 }
 
@@ -15025,6 +15270,62 @@ func (o *CancelPageRenderJobRequestOptions) GetHeader() (map[string]string, erro
 	return nil, nil
 }
 
+// ReadPassageSectionRequestOptions is the options needed to make a request to ReadPassageSection.
+type ReadPassageSectionRequestOptions struct {
+	Body *ReadPassageSectionBody
+}
+
+// GetPathParams returns the path params as a map.
+func (o *ReadPassageSectionRequestOptions) GetPathParams() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetQuery returns the query params as a map.
+func (o *ReadPassageSectionRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *ReadPassageSectionRequestOptions) GetBody() any {
+	if o.Body == nil {
+		return nil
+	}
+	return o.Body
+}
+
+// GetHeader returns the headers as a map.
+func (o *ReadPassageSectionRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
+// ResolvePassageRequestOptions is the options needed to make a request to ResolvePassage.
+type ResolvePassageRequestOptions struct {
+	Body *ResolvePassageBody
+}
+
+// GetPathParams returns the path params as a map.
+func (o *ResolvePassageRequestOptions) GetPathParams() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetQuery returns the query params as a map.
+func (o *ResolvePassageRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *ResolvePassageRequestOptions) GetBody() any {
+	if o.Body == nil {
+		return nil
+	}
+	return o.Body
+}
+
+// GetHeader returns the headers as a map.
+func (o *ResolvePassageRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
 // ResolvePathRequestOptions is the options needed to make a request to ResolvePath.
 type ResolvePathRequestOptions struct {
 	Query *ResolvePathQuery
@@ -18146,9 +18447,13 @@ type PreviewBatchTagsBody = PreviewBatchTagsRequest
 
 type SetCollectionLabelBody = SetCollectionLabelRequest
 
+type CreateContextPackBody = ContextPackRequest
+
 type RunDerivativePurgeBody = DerivativePurgeJobRequest
 
 type PlanDerivativePurgeBody = DerivativePurgePlanRequest
+
+type OutlineDocumentBody = PassageOutlineRequest
 
 type ResolveDocumentSummariesBody = DocumentSummaryResolveRequest
 
@@ -18248,6 +18553,10 @@ type CreatePageRenderJobBody = PageRenderRequest
 type GetPageRenderJobBody = PageSelectionRequest
 
 type CancelPageRenderJobBody = PageSelectionRequest
+
+type ReadPassageSectionBody = PassageReadSectionRequest
+
+type ResolvePassageBody = PassageResolveRequest
 
 type MkdirPathBody = MkdirPathRequest
 
@@ -18736,6 +19045,10 @@ type LookupContentReferencesResponse = api.ContentReferencePage
 
 type LookupContentReferencesErrorResponse = Error
 
+type CreateContextPackResponse = api.ContextPackResponse
+
+type CreateContextPackErrorResponse = Error
+
 type GetDocumentProcessingCoverageResponse = api.CoverageReport
 
 type GetDocumentProcessingCoverageErrorResponse = Error
@@ -18751,6 +19064,10 @@ type PlanDerivativePurgeErrorResponse = Error
 type ListDocumentsResponse = api.DocumentPage
 
 type ListDocumentsErrorResponse = Error
+
+type OutlineDocumentResponse = api.PassageOutline
+
+type OutlineDocumentErrorResponse = Error
 
 type ResolveDocumentSummariesResponse = api.DocumentSummaryResolveResponse
 
@@ -19237,6 +19554,14 @@ type GetPageRenderJobErrorResponse = Error
 type CancelPageRenderJobResponse = store.PageRenderJob
 
 type CancelPageRenderJobErrorResponse = Error
+
+type ReadPassageSectionResponse = api.PassageSectionPage
+
+type ReadPassageSectionErrorResponse = Error
+
+type ResolvePassageResponse = api.PassageResolution
+
+type ResolvePassageErrorResponse = Error
 
 type ResolvePathResponse = api.Node
 
@@ -19745,6 +20070,14 @@ type ContentVersion = api.ContentVersion
 
 type ContentVersionPage = api.ContentVersionPage
 
+type ContextCoverage = processing.ContextCoverage
+
+type ContextPackRequest = api.ContextPackRequest
+
+type ContextPackResponse = api.ContextPackResponse
+
+type ContextPassage = processing.ContextPassage
+
 type Counts = report.Counts
 
 type Coverage = report.Coverage
@@ -19980,6 +20313,8 @@ type Error = api.Error
 type ErrorPosition = api.ErrorPosition
 
 type EvidenceLexicalPolicyV1 = document.EvidenceLexicalPolicyV1
+
+type EvidenceLocatorV1 = document.EvidenceLocatorV1
 
 type EvidencePolicyIdentity = document.EvidencePolicyIdentity
 
@@ -20253,6 +20588,24 @@ type PageRuntimeIdentity = document.PageRuntimeIdentity
 type PageSelectionRequest = api.PageSelectionRequest
 
 type PageSource = document.PageSource
+
+type PassageOutline = api.PassageOutline
+
+type PassageOutlineRequest = api.PassageOutlineRequest
+
+type PassageOutlineSection = api.PassageOutlineSection
+
+type PassageReadSectionRequest = api.PassageReadSectionRequest
+
+type PassageRefV1 = document.PassageRefV1
+
+type PassageResolution = api.PassageResolution
+
+type PassageResolveRequest = api.PassageResolveRequest
+
+type PassageSectionPage = api.PassageSectionPage
+
+type PassageSectionSelection = api.PassageSectionSelection
 
 type PendingFormatV1 = document.PendingFormatV1
 
