@@ -14,6 +14,7 @@ export interface ProductionDraft {
   etag: number;
   state: string;
   membership_sealed: boolean;
+  member_hash: string;
 }
 
 export interface ProductionSetPage {
@@ -209,6 +210,14 @@ export function reviewProductionMember(session: string, setID: string, revision:
     `/members/${encodeURIComponent(memberID)}/review`, {
     session, signal, method: "POST", headers: { "Content-Type": "application/json", "If-Match": String(etag) },
     body: JSON.stringify({ operation_id: operationID, binding, complete: true }),
+  });
+}
+
+export function sealProductionMembership(session: string, setID: string, revision: number, etag: number,
+  total: number, memberHash: string, operationID: string, signal?: AbortSignal): Promise<ProductionReceipt> {
+  return sessionJSON<ProductionReceipt>(`${setBase}/${encodeURIComponent(setID)}/revisions/${revision}/seal`, {
+    session, signal, method: "POST", headers: { "Content-Type": "application/json", "If-Match": String(etag) },
+    body: JSON.stringify({ operation_id: operationID, total, member_hash: memberHash }),
   });
 }
 

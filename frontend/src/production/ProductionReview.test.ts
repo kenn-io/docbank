@@ -10,7 +10,7 @@ import type { ProductionDraft, ProductionSet } from "./api.js";
 vi.mock("./SourcePDFViewer.svelte", () => ({ default: () => {} }));
 
 const set: ProductionSet = { id: "11111111-1111-4111-8111-111111111111", name: "Synthetic review", creator: "test", created_at: "2026-09-25T00:00:00Z", head_revision: 2 };
-const draft: ProductionDraft = { set_id: set.id, revision: 2, etag: 4, state: "draft", membership_sealed: false };
+const draft: ProductionDraft = { set_id: set.id, revision: 2, etag: 4, state: "draft", membership_sealed: false, member_hash: "a".repeat(64) };
 const sourcePDF = new TextEncoder().encode("%PDF-1.7\nsynthetic review page\n%%EOF");
 const sourcePDFSHA = bytesToHex(sha256(sourcePDF));
 const member = (id: string, ordinal: number) => ({ id, ordinal, node_id: ordinal + 10, source_version_id: `00000000-0000-4000-8000-${String(ordinal).padStart(12, "0")}`, pdf_sha256: sourcePDFSHA, pdf_size: sourcePDF.length, map_sha256: "a".repeat(64), mode: "redact_selected", reviewed: false });

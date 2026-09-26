@@ -13,6 +13,7 @@
   import { assessSelectionDecision } from "./decisionCheck.js";
   import ProductionPagePreview from "./ProductionPagePreview.svelte";
   import ProductionMemberReview from "./ProductionMemberReview.svelte";
+  import ProductionMembershipSeal from "./ProductionMembershipSeal.svelte";
   import type { Marquee } from "./SourcePageSelection.svelte";
 
   interface Props {
@@ -560,6 +561,10 @@
         </div>
       {/if}
       {#if memberCursor}<Button size="sm" disabled={membersLoading} onclick={() => void loadMembers(scope(), memberCursor, membersController.signal)}>{membersLoading ? "Loading…" : "Load more members"}</Button>{/if}
+      {#if draft.state === "draft" && !draft.membership_sealed && !membersLoading && !membersError && members.length > 0}
+        <ProductionMembershipSeal {session} {draft} {members} nextCursor={memberCursor} {onrefresh} onstale={markStale}
+          onauthfailure={cause => { onauthfailure(cause); onclose(); }} />
+      {/if}
     </section>
 
     <section aria-labelledby="production-flags-heading">
