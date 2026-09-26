@@ -16,11 +16,12 @@ import (
 )
 
 var (
-	mcpTransport          string
-	mcpListen             string
-	mcpAllowProcessing    bool
-	mcpAllowPackageWrites bool
-	mcpAllowPhotoEdits    bool
+	mcpTransport            string
+	mcpListen               string
+	mcpAllowProcessing      bool
+	mcpAllowPackageWrites   bool
+	mcpAllowPhotoEdits      bool
+	mcpAllowMigrationWrites bool
 )
 
 var mcpCmd = &cobra.Command{
@@ -49,6 +50,7 @@ func runMCP(cmd *cobra.Command) (retErr error) {
 	server := docmcp.NewServerWithOptions(docmcp.ServerOptions{
 		AllowProcessing: mcpAllowProcessing, AllowPackageWrites: mcpAllowPackageWrites,
 		AllowPhotoEdits: mcpAllowPhotoEdits, Logger: logger,
+		AllowMigrationWrites: mcpAllowMigrationWrites,
 	})
 	switch mcpTransport {
 	case "stdio":
@@ -140,5 +142,7 @@ func init() {
 		"allow load-file preflight, import, and package custodian writes")
 	mcpCmd.Flags().BoolVar(&mcpAllowPhotoEdits, "allow-photo-edits", false,
 		"expose guarded photo asset mutations")
+	mcpCmd.Flags().BoolVar(&mcpAllowMigrationWrites, "allow-migration-writes", false,
+		"expose Fotobank inventory, which writes a report and owner-map template")
 	rootCmd.AddCommand(mcpCmd)
 }

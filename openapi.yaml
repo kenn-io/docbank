@@ -6017,6 +6017,33 @@ components:
       x-go-type-import:
         path: go.kenn.io/docbank/document
         name: document
+    FotobankInventoryRequest:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/FotobankInventoryRequest.json
+          format: uri
+          readOnly: true
+          type: string
+        archive_root:
+          type: string
+        catalog_path:
+          type: string
+        owner_map_path:
+          type: string
+        snapshot_id:
+          type: string
+        vault_root:
+          type: string
+      required:
+        - owner_map_path
+      type: object
+      x-go-type: api.FotobankInventoryRequest
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     GCReport:
       additionalProperties: false
       properties:
@@ -7775,6 +7802,261 @@ components:
       x-go-type-import:
         path: go.kenn.io/docbank/internal/mailbox
         name: mailbox
+    MigrationCapacity:
+      additionalProperties: false
+      properties:
+        minimum_content_bytes:
+          format: int64
+          type: integer
+        source_bytes:
+          format: int64
+          type: integer
+        unique_blob_bytes:
+          format: int64
+          type: integer
+      required:
+        - source_bytes
+        - unique_blob_bytes
+        - minimum_content_bytes
+      type: object
+      x-go-type: api.MigrationCapacity
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
+    MigrationCounts:
+      additionalProperties: false
+      properties:
+        ai_results:
+          format: int64
+          type: integer
+        album_memberships:
+          format: int64
+          type: integer
+        albums:
+          format: int64
+          type: integer
+        assets:
+          format: int64
+          type: integer
+        bytes:
+          format: int64
+          type: integer
+        checkout_entries:
+          format: int64
+          type: integer
+        checkouts:
+          format: int64
+          type: integer
+        files:
+          format: int64
+          type: integer
+        hidden_setup:
+          format: int64
+          type: integer
+        owners:
+          format: int64
+          type: integer
+        shares:
+          format: int64
+          type: integer
+      required:
+        - owners
+        - assets
+        - files
+        - bytes
+        - albums
+        - album_memberships
+        - shares
+        - checkouts
+        - checkout_entries
+        - ai_results
+        - hidden_setup
+      type: object
+      x-go-type: api.MigrationCounts
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
+    MigrationMapEntry:
+      additionalProperties: false
+      properties:
+        docbank_owner_id:
+          type: string
+        source_hub:
+          type: string
+        source_user_id:
+          type: string
+        storage_key:
+          type: string
+      required:
+        - source_hub
+        - source_user_id
+        - storage_key
+      type: object
+      x-go-type: api.MigrationMapEntry
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
+    MigrationOwnerMap:
+      additionalProperties: false
+      properties:
+        entries:
+          items:
+            $ref: "#/components/schemas/MigrationMapEntry"
+          type: array
+        source:
+          $ref: "#/components/schemas/MigrationSource"
+      required:
+        - source
+        - entries
+      type: object
+      x-go-type: api.MigrationOwnerMap
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
+    MigrationReport:
+      additionalProperties: false
+      properties:
+        capacity:
+          $ref: "#/components/schemas/MigrationCapacity"
+        counts:
+          $ref: "#/components/schemas/MigrationCounts"
+        created_at:
+          format: date-time
+          type: string
+        schema:
+          $ref: "#/components/schemas/MigrationSchema"
+        source:
+          $ref: "#/components/schemas/MigrationSource"
+        vectors:
+          items:
+            $ref: "#/components/schemas/MigrationVectorGeneration"
+          type: array
+      required:
+        - source
+        - schema
+        - counts
+        - capacity
+        - created_at
+      type: object
+      x-go-type: api.MigrationReport
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
+    MigrationRun:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/MigrationRun.json
+          format: uri
+          readOnly: true
+          type: string
+        created_at:
+          format: date-time
+          type: string
+        id:
+          format: uuid
+          type: string
+        owner_map:
+          $ref: "#/components/schemas/MigrationOwnerMap"
+        owner_map_path:
+          type: string
+        report:
+          $ref: "#/components/schemas/MigrationReport"
+        source:
+          $ref: "#/components/schemas/MigrationSource"
+      required:
+        - id
+        - source
+        - created_at
+        - report
+        - owner_map
+      type: object
+      x-go-type: api.MigrationRun
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
+    MigrationRunPage:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/MigrationRunPage.json
+          format: uri
+          readOnly: true
+          type: string
+        items:
+          items:
+            $ref: "#/components/schemas/MigrationRun"
+          type: array
+        total:
+          format: int64
+          type: integer
+      required:
+        - total
+        - items
+      type: object
+      x-go-type: api.MigrationRunPage
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
+    MigrationSchema:
+      additionalProperties: false
+      properties:
+        archive_metadata_format:
+          type: string
+        catalog_fingerprint:
+          type: string
+        catalog_version:
+          format: int64
+          type: integer
+        embedded_docbank_version:
+          format: int64
+          type: integer
+      type: object
+      x-go-type: api.MigrationSchema
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
+    MigrationSource:
+      additionalProperties: false
+      properties:
+        identity:
+          type: string
+        kind:
+          type: string
+      required:
+        - kind
+        - identity
+      type: object
+      x-go-type: api.MigrationSource
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
+    MigrationVectorGeneration:
+      additionalProperties: false
+      properties:
+        fingerprint:
+          type: string
+        id:
+          format: int64
+          type: integer
+        rebuildable:
+          type: boolean
+        state:
+          type: string
+      required:
+        - id
+        - fingerprint
+        - state
+        - rebuildable
+      type: object
+      x-go-type: api.MigrationVectorGeneration
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     MkdirPathRequest:
       additionalProperties: false
       properties:
@@ -17304,6 +17586,85 @@ paths:
                 $ref: "#/components/schemas/Error"
           description: Error
       summary: Retry explicit processing for one source
+  /api/v1/migrations/fotobank/inventories:
+    post:
+      operationId: createFotobankInventory
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/FotobankInventoryRequest"
+        required: true
+      responses:
+        "201":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MigrationRun"
+          description: Created
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: Inventory a stopped Fotobank install or recovery archive
+  /api/v1/migrations/runs:
+    get:
+      operationId: listMigrationRuns
+      parameters:
+        - explode: false
+          in: query
+          name: limit
+          schema:
+            format: int64
+            maximum: 50
+            minimum: 1
+            type: integer
+        - explode: false
+          in: query
+          name: offset
+          schema:
+            format: int64
+            minimum: 0
+            type: integer
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MigrationRunPage"
+          description: OK
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: List completed photo migration inventories
+  /api/v1/migrations/runs/{run_id}:
+    get:
+      operationId: getMigrationRun
+      parameters:
+        - in: path
+          name: run_id
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MigrationRun"
+          description: OK
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: Read one completed photo migration inventory
   /api/v1/nodes:
     post:
       description: kind must be "dir"; file creation is POST /api/v1/ingest for server-side paths or digest-checked POST /api/v1/uploads for remote bytes.

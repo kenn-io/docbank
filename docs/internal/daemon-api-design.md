@@ -157,6 +157,28 @@ opt-in through `docbank mcp --allow-photo-edits`; each write makes one daemon
 request and treats ambiguous transport failure as an unknown outcome. Display
 and settings writes remain HTTP and CLI operations.
 
+### Photo migration inventory routes
+
+`POST /api/v1/migrations/fotobank/inventories` is an operator-only additive
+operation. Its request selects either a stopped install (`catalog_path` and
+`vault_root`) or a recovery archive (`archive_root`, with an optional
+`snapshot_id`) and supplies an absolute exclusive `owner_map_path`. The route
+holds the mutation gate while the reader writes the template and stores one
+immutable run. `GET /api/v1/migrations/runs` and
+`GET /api/v1/migrations/runs/{run_id}` return the complete stored report and
+owner map and stay read-only. The report preserves separate album/membership
+and checkout/entry counts, along with current source bytes and retained unique
+blob bytes. Browser sessions cannot call any of these routes.
+
+The CLI and MCP inventory commands use these routes through the generated
+daemon client. MCP hides `inventory_fotobank` by default; the separate
+`--allow-migration-writes` flag exposes it. A transport failure is never
+replayed because the source may already have produced an owner-map file and a
+stored run. MCP projects each full daemon run into a bounded summary with the
+report counts, capacity, vector-generation count, and owner-map source and
+entry count. The create tool includes `owner_map_path`; list and show omit the
+host path. The CLI keeps the complete report and owner map.
+
 Similar-document reads use the processing service and store authority through
 `POST /api/v1/search/similar`. Keep query encoding and provider authorization
 outside that call path. The store owns source validation, fenced membership,

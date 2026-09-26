@@ -612,6 +612,67 @@ func getPhotoAssetSchemas() (schema, schema) {
 	})
 }
 
+func migrationSourceSchema() schema {
+	return objectSchema(schema{"kind": enumSchema("install", "archive"), "identity": stringSchema(256)}, "kind", "identity")
+}
+
+func migrationReportSchema() schema {
+	return objectSchema(schema{
+		"source": migrationSourceSchema(),
+		"schema": objectSchema(schema{
+			"catalog_version": integerSchema(0, 0), "catalog_fingerprint": stringSchema(128),
+			"embedded_docbank_version": integerSchema(0, 0), "archive_metadata_format": stringSchema(128),
+		}),
+		"counts": objectSchema(schema{
+			"owners": integerSchema(0, 0), "assets": integerSchema(0, 0), "files": integerSchema(0, 0),
+			"bytes": integerSchema(0, 0), "albums": integerSchema(0, 0), "album_memberships": integerSchema(0, 0),
+			"shares": integerSchema(0, 0), "checkouts": integerSchema(0, 0), "checkout_entries": integerSchema(0, 0),
+			"ai_results": integerSchema(0, 0), "hidden_setup": integerSchema(0, 0),
+		}, "owners", "assets", "files", "bytes", "albums", "album_memberships", "shares", "checkouts", "checkout_entries", "ai_results", "hidden_setup"),
+		"vector_generation_count": integerSchema(0, 0),
+		"capacity": objectSchema(schema{
+			"source_bytes": integerSchema(0, 0), "unique_blob_bytes": integerSchema(0, 0), "minimum_content_bytes": integerSchema(0, 0),
+		}, "source_bytes", "unique_blob_bytes", "minimum_content_bytes"),
+		"created_at": dateTimeSchema(),
+	}, "source", "schema", "counts", "vector_generation_count", "capacity", "created_at")
+}
+
+func migrationOwnerMapSchema() schema {
+	return objectSchema(schema{"source": migrationSourceSchema(), "entry_count": integerSchema(0, 0)}, "source", "entry_count")
+}
+
+func migrationRunProperties(includePath bool) schema {
+	returnProperties := schema{
+		"id": uuidSchema(), "source": migrationSourceSchema(), "created_at": dateTimeSchema(),
+		"report": migrationReportSchema(), "owner_map": migrationOwnerMapSchema(),
+	}
+	if includePath {
+		returnProperties["owner_map_path"] = stringSchema(maxPathCharacters)
+	}
+	return returnProperties
+}
+
+func inventoryFotobankSchemas() (schema, schema) {
+	input := rootObjectSchema(schema{
+		"catalog_path": stringSchema(maxPathCharacters), "vault_root": stringSchema(maxPathCharacters),
+		"archive_root": stringSchema(maxPathCharacters), "snapshot_id": stringSchema(256),
+		"owner_map_path": stringSchema(maxPathCharacters),
+	}, "owner_map_path")
+	return input, rootObjectSchema(withPrivateCache(migrationRunProperties(true)), cacheRequired("id", "source", "created_at", "report", "owner_map", "owner_map_path")...)
+}
+
+func listMigrationRunsSchemas() (schema, schema) {
+	input := rootObjectSchema(schema{"offset": integerSchema(0, 1_000_000), "limit": integerSchema(1, 50)})
+	output := rootObjectSchema(withPrivateCache(schema{
+		"total": integerSchema(0, 0), "items": arraySchema(objectSchema(migrationRunProperties(false), "id", "source", "created_at", "report", "owner_map"), 50),
+	}), cacheRequired("total", "items")...)
+	return input, output
+}
+
+func showMigrationRunSchemas() (schema, schema) {
+	return rootObjectSchema(schema{"run_id": uuidSchema()}, "run_id"), rootObjectSchema(withPrivateCache(migrationRunProperties(false)), cacheRequired("id", "source", "created_at", "report", "owner_map")...)
+}
+
 func createPhotoAssetSchemas() (schema, schema) {
 	return photoAssetMutationSchemas(schema{
 		"node_id": integerSchema(1, 0),
