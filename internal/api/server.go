@@ -18,7 +18,9 @@ import (
 	kitdaemon "go.kenn.io/kit/daemon"
 
 	"go.kenn.io/docbank/document"
+	"go.kenn.io/docbank/document/agentops"
 	"go.kenn.io/docbank/document/pagerender"
+	"go.kenn.io/docbank/internal/agentapi"
 	"go.kenn.io/docbank/internal/blob"
 	"go.kenn.io/docbank/internal/config"
 	"go.kenn.io/docbank/internal/daemonauth"
@@ -74,6 +76,8 @@ type Deps struct {
 	WebURL                string           // fresh per-daemon loopback origin; empty disables browser sessions
 	BlobRegistry          *blob.Registry   // nil keeps storage-registry routes read-only to the primary
 	Processing            *processing.Service
+	OperationPolicy       *OperationPolicy
+	AuthenticatePrincipal PrincipalAuthenticator
 	RequestEmailPDF       func(context.Context, document.EmailPDFRequest) (document.EmailPDFJob, error)
 	PublishEmailDocuments PublishEmailDocumentsFunc
 
@@ -96,6 +100,7 @@ type Server struct {
 	api           huma.API
 	auditPreviews *auditPreviewRegistry
 	webSessions   *webSessionRegistry
+	agentSessions *agentSessionRegistry
 	webDownloads  *webDownloadRegistry
 	snapshots     *store.QuerySnapshotService
 	termReports   *reporting.Cache
@@ -124,6 +129,7 @@ func NewServer(d Deps) *Server {
 	if d.StartedAt.IsZero() {
 		d.StartedAt = time.Now()
 	}
+	defaultOperationPolicy := d.OperationPolicy == nil
 	mux := http.NewServeMux()
 	cfg := huma.DefaultConfig("docbank", version.Version)
 	jsonFormat := huma.Format{
@@ -168,7 +174,7 @@ func NewServer(d Deps) *Server {
 	if g == nil {
 		g = NewOperationGate()
 	}
-	s.webSessions = newWebSessionRegistry(func(owner string) {
+	revokeOwner := func(owner string) {
 		if d.Exports != nil {
 			d.Exports.CancelOwner(owner)
 		}
@@ -190,7 +196,15 @@ func NewServer(d Deps) *Server {
 				d.Logger.Error("cancel revoked browser package imports", "error", err)
 			}
 		}
-	})
+	}
+	s.webSessions = newWebSessionRegistry(revokeOwner)
+	if d.Store != nil {
+		s.agentSessions = newAgentSessionRegistry(d.Store.VaultID(), time.Now, revokeOwner)
+	}
+	if defaultOperationPolicy {
+		d.OperationPolicy = NewOperationPolicy(OperationPolicyOptions{Authority: s.agentSessions})
+	}
+	s.deps.OperationPolicy = d.OperationPolicy
 
 	registerReadRoutes(humaAPI, d) // Task 5 (stat-by-id lands in this task)
 	registerCollectionRoutes(humaAPI, d, g)
@@ -199,6 +213,8 @@ func NewServer(d Deps) *Server {
 	registerDuplicateRoutes(humaAPI, d)
 	registerDocumentQueryRoute(humaAPI, newDocumentQueryService(d))
 	registerInfoRoute(humaAPI, d)
+	RegisterCapabilitiesRoute(humaAPI, d)
+	registerAgentSessionRoutes(humaAPI, s.agentSessions)
 	registerFormatRoutes(humaAPI, d)
 	registerMutateRoutes(humaAPI, d, g) // Task 6
 	registerOpsRoutes(humaAPI, d, g)    // Task 7
@@ -243,7 +259,11 @@ func NewServer(d Deps) *Server {
 	registerWebDownload(mux, d.Cfg.Web.Enabled, d, s.webDownloads, s.webSessions, s.termReports)
 
 	h := http.Handler(mux)
-	h = authMiddleware(h, d.Cfg.Server.APIKey, s.webSessions, s.masterOwner)
+	registry, err := agentapi.New(agentops.CurrentRoutes(), agentops.CurrentOperations())
+	if err != nil {
+		panic("api: invalid agent route registry: " + err.Error())
+	}
+	h = authMiddlewareWithAgentSessions(h, d.Cfg.Server.APIKey, s.webSessions, s.masterOwner, d.AuthenticatePrincipal, registry, s.agentSessions)
 	h = loopbackMiddleware(h)
 	h = timeoutMiddleware(h)
 	h = recoverMiddleware(h, d.Logger)
@@ -287,6 +307,9 @@ func (s *Server) Close() {
 // Shutdown revokes browser credentials, closes every accepted upload
 // connection, cancels processing, and waits for their executions to return.
 func (s *Server) Shutdown(ctx context.Context) error {
+	if s.agentSessions != nil {
+		s.agentSessions.closeAll()
+	}
 	if s.deps.Processing != nil {
 		s.deps.Processing.Stop()
 	}

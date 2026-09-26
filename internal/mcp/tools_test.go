@@ -46,6 +46,22 @@ func TestDefaultToolCatalogIsFixedBoundedAndReadOnly(t *testing.T) {
 	assert.NotContains(t, catalogNames(tools), "start_processing")
 }
 
+func TestScopedCatalogOmitsUnfencedPackageTools(t *testing.T) {
+	principal := api.Principal{SubjectID: "synthetic-scoped", CredentialKind: "agent", Audience: "docbank:test"}
+	server := newServerWithOptions(testImplementation(), ServerOptions{
+		Principal: principal, AllowPackageWrites: true,
+	})
+	listed := decodeResult(t, exchangeRaw(t, server, requestFor("tools/list", map[string]any{})))
+	names := listedToolNames(t, listed)
+	assert.Contains(t, names, "search_documents")
+	for _, name := range []string{
+		"get_package", "get_package_record", "lookup_bates_label",
+		"start_package_import", "resolve_package_custodian",
+	} {
+		assert.NotContains(t, names, name)
+	}
+}
+
 func TestWriteToolsAreIndependentConstructionTimeOptIns(t *testing.T) {
 	readOnly := catalogNames(toolCatalog(false, false))
 	enabledTools := toolCatalog(true, true)

@@ -78,6 +78,37 @@ func TestListDocumentsUsesStoreUnicodePathNormalization(t *testing.T) {
 	assert.Equal(t, "/Café", page.PathPrefix)
 }
 
+func TestListScopedDocumentsSendsFenceAndRejectsOutOfFencePage(t *testing.T) {
+	allowedID := "11111111-1111-4111-8111-111111111111"
+	hiddenID := "22222222-2222-4222-8222-222222222222"
+	selectedID := allowedID
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
+		assert.Equal(t, http.MethodPost, request.Method)
+		assert.Equal(t, "/api/v1/documents/scoped", request.URL.Path)
+		assert.Equal(t, "daemon-key", request.Header.Get("X-Api-Key"))
+		var query api.ScopedDocumentQuery
+		if !assert.NoError(t, json.UnmarshalRead(request.Body, &query)) {
+			return
+		}
+		assert.Equal(t, []string{allowedID}, query.ContentVersionIDs)
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.MarshalWrite(w, api.DocumentPage{PathPrefix: "/", Sort: "path", Direction: "asc",
+			PageSize: 1, Items: []api.DocumentSummary{{NodeID: 7, ContentVersionID: selectedID,
+				Path: "/visible.md", Name: "visible.md", ModifiedAt: "2026-09-22T00:00:00Z",
+				ActiveRenditions: []api.DocumentRenditionIdentity{}}}})
+	}))
+	t.Cleanup(ts.Close)
+	c := daemonconn.New(ts.URL, "daemon-key")
+	query := api.ScopedDocumentQuery{PageSize: 1,
+		ContentVersionIDs: []string{allowedID}}
+	page, err := c.ListScopedDocuments(t.Context(), query)
+	require.NoError(t, err)
+	require.Len(t, page.Items, 1)
+	selectedID = hiddenID
+	_, err = c.ListScopedDocuments(t.Context(), query)
+	require.ErrorContains(t, err, "out-of-fence")
+}
+
 func TestResolveDocumentSummariesRejectsDuplicateIdentity(t *testing.T) {
 	identity := api.DocumentIdentity{NodeID: 7, ContentVersionID: "11111111-1111-4111-8111-111111111111", Path: "/report.txt"}
 	_, err := daemonconn.New("http://127.0.0.1:1", "synthetic-key").ResolveDocumentSummaries(t.Context(),

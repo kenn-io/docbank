@@ -28,13 +28,43 @@ type reviewedProcessingPlan struct {
 // complete disclosures were returned by this MCP process. The daemon still
 // recomputes and verifies the fingerprint immediately before enqueue.
 type processingPlanRegistry struct {
-	mu      sync.Mutex
-	entries map[processingPlanKey]reviewedProcessingPlan
-	order   []processingPlanKey
+	mu         sync.Mutex
+	entries    map[processingPlanKey]reviewedProcessingPlan
+	order      []processingPlanKey
+	jobSources map[string]string
+	jobOrder   []string
 }
 
 func newProcessingPlanRegistry() *processingPlanRegistry {
-	return &processingPlanRegistry{entries: make(map[processingPlanKey]reviewedProcessingPlan)}
+	return &processingPlanRegistry{entries: make(map[processingPlanKey]reviewedProcessingPlan), jobSources: make(map[string]string)}
+}
+
+func (registry *processingPlanRegistry) rememberJob(jobID, contentVersionID string) {
+	if registry == nil || jobID == "" || contentVersionID == "" {
+		return
+	}
+	registry.mu.Lock()
+	defer registry.mu.Unlock()
+	if _, exists := registry.jobSources[jobID]; !exists {
+		if len(registry.jobOrder) == maxRememberedProcessingPlans {
+			delete(registry.jobSources, registry.jobOrder[0])
+			copy(registry.jobOrder, registry.jobOrder[1:])
+			registry.jobOrder[len(registry.jobOrder)-1] = jobID
+		} else {
+			registry.jobOrder = append(registry.jobOrder, jobID)
+		}
+	}
+	registry.jobSources[jobID] = contentVersionID
+}
+
+func (registry *processingPlanRegistry) jobSource(jobID string) (string, bool) {
+	if registry == nil {
+		return "", false
+	}
+	registry.mu.Lock()
+	defer registry.mu.Unlock()
+	sourceID, ok := registry.jobSources[jobID]
+	return sourceID, ok
 }
 
 func (registry *processingPlanRegistry) remember(plan api.ProcessingPlan) {
@@ -94,13 +124,13 @@ type startProcessingOutput struct {
 }
 
 func processingToolHandler(
-	lease *daemonLease, plans *processingPlanRegistry, validator *jsonschema.Resolved, logger *slog.Logger,
+	lease *daemonLease, plans *processingPlanRegistry, policy operationPolicy, validator *jsonschema.Resolved, logger *slog.Logger,
 ) sdkmcp.ToolHandler {
 	return func(ctx context.Context, request *sdkmcp.CallToolRequest) (*sdkmcp.CallToolResult, error) {
 		if request == nil || request.Params == nil {
 			return nil, invalidToolArgumentsError()
 		}
-		result, err := executeProcessingTool(ctx, lease, plans, validator, request.Params.Arguments)
+		result, err := executeProcessingToolWithPolicy(ctx, lease, plans, policy, validator, request.Params.Arguments)
 		if err != nil {
 			logOperationError(logger, processingToolDefinition.name, err)
 			if domain, ok := domainToolError(err); ok {
@@ -115,11 +145,20 @@ func processingToolHandler(
 func executeProcessingTool(
 	ctx context.Context, lease *daemonLease, plans *processingPlanRegistry, validator *jsonschema.Resolved, raw []byte,
 ) (*sdkmcp.CallToolResult, error) {
+	return executeProcessingToolWithPolicy(ctx, lease, plans, newOperationPolicy(nil, api.Principal{}), validator, raw)
+}
+
+func executeProcessingToolWithPolicy(
+	ctx context.Context, lease *daemonLease, plans *processingPlanRegistry, policy operationPolicy, validator *jsonschema.Resolved, raw []byte,
+) (*sdkmcp.CallToolResult, error) {
 	if err := contextCancellation(ctx, nil); err != nil {
 		return nil, err
 	}
 	var input startProcessingInput
 	if err := decodeReadArguments(raw, &input); err != nil {
+		return nil, err
+	}
+	if _, err := policy.authorize(ctx, api.OperationProcessing, []string{input.ContentVersionID}, true, true); err != nil {
 		return nil, err
 	}
 	reviewed, err := plans.reviewed(input.ContentVersionID, input.PlanFingerprint)
@@ -142,6 +181,7 @@ func executeProcessingTool(
 	if job.EmbeddingJobIDs == nil {
 		job.EmbeddingJobIDs = []string{}
 	}
+	plans.rememberJob(job.ID, job.ContentVersionID)
 	output := startProcessingOutput{JobID: job.ID, RenditionJobID: job.RenditionJobID,
 		AttachmentID: job.AttachmentID, EmbeddingJobIDs: job.EmbeddingJobIDs,
 		ProfileFingerprint: job.ProfileFingerprint, ContentVersionID: job.ContentVersionID,

@@ -1,5 +1,55 @@
 components:
   schemas:
+    AgentSessionRequest:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/AgentSessionRequest.json
+          format: uri
+          readOnly: true
+          type: string
+        operations:
+          items:
+            type: string
+          type: array
+        source_ids:
+          items:
+            type: string
+          maxItems: 4096
+          minItems: 1
+          type: array
+        ttl_seconds:
+          format: int64
+          type: integer
+      required:
+        - operations
+        - source_ids
+        - ttl_seconds
+      type: object
+    AgentSessionResponse:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/AgentSessionResponse.json
+          format: uri
+          readOnly: true
+          type: string
+        expires_at:
+          format: date-time
+          type: string
+        id:
+          type: string
+        token:
+          type: string
+      required:
+        - id
+        - token
+        - expires_at
+      type: object
     AssignTagPathRequest:
       additionalProperties: false
       properties:
@@ -1633,6 +1683,40 @@ components:
           readOnly: true
           type: string
       type: object
+    Capabilities:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/Capabilities.json
+          format: uri
+          readOnly: true
+          type: string
+        api_version:
+          type: string
+        limits:
+          additionalProperties:
+            format: int64
+            type: integer
+          type: object
+        operations:
+          items:
+            type: string
+          type: array
+        vault_uid:
+          format: uuid
+          type: string
+      required:
+        - vault_uid
+        - api_version
+        - operations
+        - limits
+      type: object
+      x-go-type: api.Capabilities
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     CapabilityStateV1:
       additionalProperties: false
       properties:
@@ -12146,6 +12230,51 @@ components:
           format: int64
           type: integer
       type: object
+    ScopedDocumentQuery:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/ScopedDocumentQuery.json
+          format: uri
+          readOnly: true
+          type: string
+        content_version_ids:
+          items:
+            type: string
+          maxItems: 4096
+          minItems: 1
+          type: array
+        cursor:
+          type: string
+        direction:
+          enum:
+            - asc
+            - desc
+          type: string
+        page_size:
+          format: int64
+          maximum: 250
+          minimum: 1
+          type: integer
+        path_prefix:
+          type: string
+        sort:
+          enum:
+            - path
+            - name
+            - modified_at
+            - size
+            - media_type
+          type: string
+      required:
+        - content_version_ids
+      type: object
+      x-go-type: api.ScopedDocumentQuery
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     SealExportSourceRequest:
       additionalProperties: false
       properties:
@@ -14475,6 +14604,49 @@ paths:
                 type: object
           description: Browser session
       summary: Issue a scoped browser session
+  /api/v1/agent-sessions:
+    post:
+      description: Only the read operation is currently accepted. Scope to exact source IDs and a lifetime of at most one hour.
+      operationId: issueAgentSession
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AgentSessionRequest"
+        required: true
+      responses:
+        "201":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AgentSessionResponse"
+          description: Created
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: Issue a bounded read-only agent session
+  /api/v1/agent-sessions/{id}:
+    delete:
+      operationId: revokeAgentSession
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      responses:
+        "204":
+          description: No Content
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: Revoke one agent session
   /api/v1/audit/enable:
     post:
       description: Consumes a one-use preview token. The acknowledgment explicitly accepts permanent protected history plus names, topology, tags, assignments, ingests, and provenance across the vault, including outside the selected scope; preview again after any stale-token response.
@@ -14917,6 +15089,23 @@ paths:
                 $ref: "#/components/schemas/Error"
           description: Error
       summary: Observe exact tag membership for a revision-fenced selected set
+  /api/v1/capabilities:
+    get:
+      operationId: readCapabilities
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Capabilities"
+          description: OK
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: Negotiate remote daemon capabilities
   /api/v1/collections:
     get:
       description: Counts and bytes describe current live members. Empty runs remain directly accessible only when they retain label authority.
@@ -15332,6 +15521,29 @@ paths:
                 $ref: "#/components/schemas/Error"
           description: Error
       summary: Resolve bounded exact current live document summaries
+  /api/v1/documents/scoped:
+    post:
+      operationId: listScopedDocuments
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ScopedDocumentQuery"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DocumentPage"
+          description: OK
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: List source-fenced live documents with authenticated keyset pagination
   /api/v1/duplicates:
     get:
       description: Groups are ordered by SHA-256. Counts exclude historical versions and trash; each group displays at most 16 current references. No content is deleted or merged.
@@ -19155,7 +19367,7 @@ paths:
       summary: Revoke a principal and scope before further provider access
   /api/v1/processing/jobs:
     post:
-      description: Returns exactly one job event followed by one terminal status or status-read error event as newline-delimited JSON.
+      description: Returns a job event followed by terminal status or error, or one terminal error if access is revoked before the job event.
       operationId: startDocumentProcessing
       requestBody:
         content:
