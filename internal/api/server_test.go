@@ -84,6 +84,20 @@ func newTestServer(t *testing.T, mutate func(*api.Deps)) (*httptest.Server, *tes
 	}
 }
 
+func TestNewServerRegistersPassageResolveRoute(t *testing.T) {
+	ts, _ := newTestServer(t, nil)
+
+	resp, body := do(t, ts, http.MethodPost, "/api/v1/passages/resolve", nil, map[string]any{})
+	require.Equal(t, http.StatusUnprocessableEntity, resp.StatusCode, body)
+
+	request, err := http.NewRequest(http.MethodPost, ts.URL+"/api/v1/passages/resolve", nil)
+	require.NoError(t, err)
+	response, err := http.DefaultClient.Do(request)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, response.Body.Close()) })
+	assert.Equal(t, http.StatusUnauthorized, response.StatusCode)
+}
+
 // apiKeyTransport injects key as X-Api-Key on any request that doesn't
 // already carry the header explicitly (present-with-empty-value counts as
 // explicit, so callers can opt out by setting it to "").
