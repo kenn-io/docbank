@@ -440,10 +440,9 @@ func epubRuntimeConfig(t *testing.T, maxBytes int64, maxUnits int) config.Config
 	require.NoError(t, err)
 	cfg := plaintextProcessingConfig(provider.Descriptor().Fingerprint)
 	profile := cfg.RenditionProfiles["plaintext"]
-	profile.AdapterContract = "epub.in-process/v1"
+	profile.AdapterContract = epubRenditionAdapter
 	profile.DescriptorID = provider.Descriptor().ID
 	profile.MaxDocumentBytes, profile.MaxUnits = maxBytes, maxUnits
-	profile.DiscloseFilename = true
 	delete(cfg.RenditionProfiles, "plaintext")
 	cfg.RenditionProfiles["epub"] = profile
 	processingProfile := cfg.ProcessingProfiles["private-text"]
@@ -493,9 +492,22 @@ func TestEPUBRuntimeDescriptorAndLimits(t *testing.T) {
 }
 
 func TestDaemonEPUBAndPlaintextProcessing(t *testing.T) {
-	for _, mode := range []string{"exact units", "over units", "plaintext"} {
-		t.Run(mode, func(t *testing.T) {
+	for _, test := range []struct {
+		name, mode       string
+		discloseFilename bool
+	}{
+		{"exact units/disclosed", "exact units", true},
+		{"exact units/withheld", "exact units", false},
+		{"over units/disclosed", "over units", true},
+		{"over units/withheld", "over units", false},
+		{"plaintext", "plaintext", false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			mode := test.mode
 			cfg := epubRuntimeConfig(t, 500<<20, 1)
+			profile := cfg.RenditionProfiles["epub"]
+			profile.DiscloseFilename = test.discloseFilename
+			cfg.RenditionProfiles["epub"] = profile
 			profileName, filename := "epub", "book.epub"
 			text := "needle " + strings.Repeat("x", 80*48-len("needle "))
 			if mode == "over units" {
@@ -547,8 +559,12 @@ func TestDaemonEPUBAndPlaintextProcessing(t *testing.T) {
 			require.Equal(t, "in-process", plan.Flow[0].RuntimeDisclosure.Endpoint)
 			if mode != "plaintext" {
 				require.Equal(t, "epub.in-process-v1", plan.Flow[0].RuntimeDisclosure.UltimateProcessor)
-				require.True(t, plan.Flow[0].DiscloseFilename)
-				require.Equal(t, filename, plan.Flow[0].Filename)
+				require.Equal(t, test.discloseFilename, plan.Flow[0].DiscloseFilename)
+				if test.discloseFilename {
+					require.Equal(t, filename, plan.Flow[0].Filename)
+				} else {
+					require.Empty(t, plan.Flow[0].Filename)
+				}
 			}
 			require.True(t, plan.ConsentRequired)
 			_, err = daemon.StartProcessing(t.Context(), api.StartProcessingRequest{Selector: selector, PlanFingerprint: plan.Fingerprint}, plan.ProfileFingerprint)

@@ -109,6 +109,7 @@ func SupportedFormats() []document.RenditionFormatCapability {
 		{MediaFamily: "word", MediaType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document", InputKind: document.RenditionInputOriginalFile},
 		{MediaFamily: "spreadsheet", MediaType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", InputKind: document.RenditionInputOriginalFile},
 		{MediaFamily: "presentation", MediaType: "application/vnd.openxmlformats-officedocument.presentationml.presentation", InputKind: document.RenditionInputOriginalFile},
+		{MediaFamily: "ebook", MediaType: "application/epub+zip", InputKind: document.RenditionInputOriginalFile},
 		{MediaFamily: "text", MediaType: "text/html", InputKind: document.RenditionInputOriginalFile},
 	}
 }
@@ -546,6 +547,8 @@ func uploadFilename(metadata document.AuthorizedUploadMetadata) (string, bool) {
 		return filenameWithExtension(metadata.Filename, ext, ".xlsx")
 	case "application/vnd.openxmlformats-officedocument.presentationml.presentation":
 		return filenameWithExtension(metadata.Filename, ext, ".pptx")
+	case "application/epub+zip":
+		return filenameWithExtension(metadata.Filename, ext, ".epub")
 	case "text/html":
 		if metadata.Filename == "" {
 			return "document.html", true

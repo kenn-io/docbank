@@ -8,27 +8,9 @@ import (
 	"fmt"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/require"
 )
-
-type cancelAfterParseContext struct {
-	calls    int
-	cancelAt int
-}
-
-func (ctx *cancelAfterParseContext) Deadline() (time.Time, bool) { return time.Time{}, false }
-func (ctx *cancelAfterParseContext) Done() <-chan struct{}       { return nil }
-func (ctx *cancelAfterParseContext) Value(any) any               { return nil }
-
-func (ctx *cancelAfterParseContext) Err() error {
-	ctx.calls++
-	if ctx.calls >= ctx.cancelAt {
-		return context.Canceled
-	}
-	return nil
-}
 
 func TestArchivePathAndBases(t *testing.T) {
 	for _, test := range []struct{ ref, base, want string }{
@@ -101,15 +83,6 @@ func TestReadPackagesPreservesDeclarationsAndOccurrences(t *testing.T) {
 	require.Error(t, err)
 }
 
-func TestDecodeXMLContextCancelsDuringPackageParse(t *testing.T) {
-	body := []byte(`<package>` + strings.Repeat(`<meta property="x" content="value"/>`, 1000) + `</package>`)
-	ctx := &cancelAfterParseContext{cancelAt: 3}
-	var record Package
-	err := decodeXMLContext(ctx, body, &record)
-	require.ErrorIs(t, err, context.Canceled)
-	require.GreaterOrEqual(t, ctx.calls, ctx.cancelAt)
-}
-
 func TestContextReaderStopsAfterCancellation(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	reader := contextReader{ctx: ctx, reader: strings.NewReader("payload")}
@@ -120,27 +93,6 @@ func TestContextReaderStopsAfterCancellation(t *testing.T) {
 	cancel()
 	_, err = reader.Read(buffer)
 	require.ErrorIs(t, err, context.Canceled)
-}
-
-func TestReadZIPEntryContextCancelsDuringDecompression(t *testing.T) {
-	var buffer bytes.Buffer
-	writer := zip.NewWriter(&buffer)
-	entry, err := writer.Create("payload")
-	require.NoError(t, err)
-	payload := make([]byte, 128<<10)
-	for index := range payload {
-		payload[index] = byte((index*31 + index/251) % 251)
-	}
-	_, err = entry.Write(payload)
-	require.NoError(t, err)
-	require.NoError(t, writer.Close())
-	archive, err := zip.NewReader(bytes.NewReader(buffer.Bytes()), int64(buffer.Len()))
-	require.NoError(t, err)
-
-	ctx := &cancelAfterParseContext{cancelAt: 6}
-	_, err = ReadZIPEntryContext(ctx, archive.File[0], int64(len(payload)))
-	require.ErrorIs(t, err, context.Canceled)
-	require.GreaterOrEqual(t, ctx.calls, ctx.cancelAt)
 }
 
 func TestNewReaderContextCancelsDuringDecompression(t *testing.T) {
@@ -168,43 +120,6 @@ func TestNewReaderContextCancelsDuringDecompression(t *testing.T) {
 	require.Zero(t, readsAfterCancel)
 }
 
-func TestReadPackagesContextCancelsOnCachedRootfile(t *testing.T) {
-	var buffer bytes.Buffer
-	writer := zip.NewWriter(&buffer)
-	container := `<container xmlns="urn:oasis:names:tc:opendocument:xmlns:container"><rootfiles>` + strings.Repeat(`<rootfile full-path="book.opf"/>`, 1000) + `</rootfiles></container>`
-	for _, entry := range []struct{ name, body string }{
-		{"META-INF/container.xml", container},
-		{"book.opf", `<package xmlns="http://www.idpf.org/2007/opf"><manifest/><spine><itemref idref="book"/></spine></package>`},
-	} {
-		file, err := writer.Create(entry.name)
-		require.NoError(t, err)
-		_, err = file.Write([]byte(entry.body))
-		require.NoError(t, err)
-	}
-	require.NoError(t, writer.Close())
-	archive, err := zip.NewReader(bytes.NewReader(buffer.Bytes()), int64(buffer.Len()))
-	require.NoError(t, err)
-
-	ctx := &cancelAfterParseContext{cancelAt: 100}
-	_, err = ReadPackagesContext(ctx, archive.File, 1<<20)
-	require.ErrorIs(t, err, context.Canceled)
-	require.GreaterOrEqual(t, ctx.calls, ctx.cancelAt)
-}
-
-func TestMetadataXMLContextCancelsDuringComment(t *testing.T) {
-	body := []byte(`<container><!--` + strings.Repeat("x", 1<<20) + `--></container>`)
-	ctx := &cancelAfterParseContext{cancelAt: 2}
-	err := validateMetadataXMLContext(ctx, body)
-	require.ErrorIs(t, err, context.Canceled)
-	require.GreaterOrEqual(t, ctx.calls, ctx.cancelAt)
-
-	comment := `<!--` + strings.Repeat("x", 1017) + `-->`
-	body = []byte(strings.Repeat("x", 1022) + strings.Repeat(comment, 1024))
-	ctx = &cancelAfterParseContext{cancelAt: 2}
-	err = validateMetadataXMLContext(ctx, body)
-	require.ErrorIs(t, err, context.Canceled)
-}
-
 func TestMetadataXMLAllowsExternalDOCTYPE(t *testing.T) {
 	for _, body := range []string{
 		`<!DOCTYPE container ><container/>`,
@@ -212,7 +127,7 @@ func TestMetadataXMLAllowsExternalDOCTYPE(t *testing.T) {
 		`<!DOCTYPE container SYSTEM "container.dtd"><container/>`,
 		`<!DOCTYPE container PUBLIC "-//OASIS//DTD Container 1.0//EN" "https://example.org/container.dtd"><container/>`,
 	} {
-		require.NoError(t, validateMetadataXMLContext(t.Context(), []byte(body)))
+		require.NoError(t, validateMetadataXML([]byte(body)))
 	}
 	for _, test := range []struct {
 		body string
@@ -222,19 +137,16 @@ func TestMetadataXMLAllowsExternalDOCTYPE(t *testing.T) {
 		{`<!DOCTYPE container PUBLIC "id"><container/>`, "PUBLIC identifier"},
 		{`<!DOCTYPE container PUBLIC "id&bad" "system"><container/>`, "PUBLIC identifier"},
 		{`<!DOCTYPE container "bogus"><container/>`, "DOCTYPE keyword"},
+		{`<!DOCTYPE container <x> <? >><container/>`, "DOCTYPE is invalid"},
 		{`<!DOCTYPE 1><container/>`, "DOCTYPE name"},
 		{`<!DOCTYPE )><container/>`, "DOCTYPE name"},
 		{`<!DOCTYPE container SYSTEM "bad` + "\x00" + `"><container/>`, "invalid character"},
 	} {
-		require.ErrorContains(t, validateMetadataXMLContext(t.Context(), []byte(test.body)), test.want)
+		require.ErrorContains(t, validateMetadataXML([]byte(test.body)), test.want)
 	}
-	require.ErrorContains(t, validateMetadataXMLContext(t.Context(), []byte(`<container><!DOCTYPE container></container>`)), "before the root")
-	require.ErrorContains(t, validateMetadataXMLContext(t.Context(), []byte(`<!DOCTYPE container><!DOCTYPE container><container/>`)), "once")
-	require.ErrorContains(t, validateMetadataXMLContext(t.Context(), []byte("<!DOCTYPE container SYSTEM \"bad\xff\"><container/>")), "invalid character")
-
-	body := []byte(`<!DOCTYPE ` + strings.Repeat("container", 1<<17) + `><container/>`)
-	ctx := &cancelAfterParseContext{cancelAt: 2}
-	require.ErrorIs(t, validateMetadataXMLContext(ctx, body), context.Canceled)
+	require.ErrorContains(t, validateMetadataXML([]byte(`<container><!DOCTYPE container></container>`)), "before the root")
+	require.ErrorContains(t, validateMetadataXML([]byte(`<!DOCTYPE container><!DOCTYPE container><container/>`)), "once")
+	require.ErrorContains(t, validateMetadataXML([]byte("<!DOCTYPE container SYSTEM \"bad\xff\"><container/>")), "invalid character")
 }
 
 type cancelOnOffsetReaderAt struct {

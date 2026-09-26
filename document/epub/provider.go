@@ -19,9 +19,8 @@ const (
 	providerID = "epub.in-process-v1"
 	provider   = providerutil.Provider("epub")
 	// Changes to admission, normalization, budgets, or counting require a new version.
-	policyVersion         = "epub/v3:single-reflowable-unencrypted;paths-v1;xhtml-xml-v1;complete-or-reject;input=min(profile,100MiB);work=500MiB;intermediate=min(100MiB,input+inline-and-structural-storage);runes=min(result-bytes,3888*remaining-units);evidence-bounds;LF-NFC;80-codepoints;48-lines;per-occurrence;repeats;linear-no;empty-zero;internal-blanks;terminal-newline-free;exact-limit;virtual-only"
-	maxXHTMLBytes         = int64(100 << 20)
-	maxSpineEvidenceUnits = 100_000
+	policyVersion = "epub/v3:single-reflowable-unencrypted;paths-v1;xhtml-xml-v1;complete-or-reject;input=min(profile,100MiB);work=500MiB;intermediate=min(100MiB,input+inline-and-structural-storage);runes=min(result-bytes,3888*remaining-units);evidence-bounds;LF-NFC;80-codepoints;48-lines;per-occurrence;repeats;linear-no;empty-zero;internal-blanks;terminal-newline-free;exact-limit;virtual-only"
+	maxXHTMLBytes = int64(100 << 20)
 )
 
 // Profile fixes both input bytes and cumulative virtual units; zero is invalid.
@@ -108,14 +107,11 @@ func (p *Provider) Render(ctx context.Context, upload document.AuthorizedUpload,
 		}
 		return document.RenditionResult{}, unsupported()
 	}
-	entries, err := admitSpine(ctx, archive.File, records)
+	entries, err := admitSpine(archive.File, records)
 	if err != nil {
 		if ctxErr := ctx.Err(); ctxErr != nil {
 			return document.RenditionResult{}, provider.Canceled(ctxErr)
 		}
-		return document.RenditionResult{}, err
-	}
-	if err := rejectSpineEvidenceUnitOverflow(len(entries)); err != nil {
 		return document.RenditionResult{}, err
 	}
 	if err := ctx.Err(); err != nil {
@@ -147,9 +143,9 @@ func (p *Provider) Render(ctx context.Context, upload document.AuthorizedUpload,
 			return document.RenditionResult{}, rejected("EPUB output exceeds its limit")
 		}
 		maxRunes := min(remainingBytes, 3888*(p.profile.MaxUnits-units))
-		markdown, err := document.RenditionMarkdownFromXHTMLContext(ctx, content, int(maxRunes))
-		if err != nil && ctx.Err() != nil {
-			return document.RenditionResult{}, provider.Canceled(ctx.Err())
+		markdown, err := document.RenditionMarkdownFromXHTML(content, int(maxRunes))
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return document.RenditionResult{}, provider.Canceled(ctxErr)
 		}
 		if errors.Is(err, document.ErrRenditionXHTMLBudget) {
 			return document.RenditionResult{}, rejected("EPUB normalization exceeds its limit")
@@ -157,10 +153,7 @@ func (p *Provider) Render(ctx context.Context, upload document.AuthorizedUpload,
 		if err != nil {
 			return document.RenditionResult{}, unsupported()
 		}
-		used, err := virtualUnitsContext(ctx, markdown)
-		if err != nil {
-			return document.RenditionResult{}, provider.Canceled(err)
-		}
+		used := virtualUnits(markdown)
 		if used > p.profile.MaxUnits-units || int64(len(markdown)) > remainingBytes {
 			return document.RenditionResult{}, rejected("EPUB output exceeds its limit")
 		}
@@ -170,11 +163,14 @@ func (p *Provider) Render(ctx context.Context, upload document.AuthorizedUpload,
 			Kind: document.EvidenceLocatorSpine, IndexOrigin: document.EvidenceIndexOriginZero, Start: int64(index), End: int64(index), Name: entry.Name,
 		}})
 	}
-	if err := document.ValidateSourceEvidenceV1Context(ctx, evidence); err != nil {
+	if err := document.ValidateSourceEvidenceV1(evidence); err != nil {
 		if ctxErr := ctx.Err(); ctxErr != nil {
 			return document.RenditionResult{}, provider.Canceled(ctxErr)
 		}
 		return document.RenditionResult{}, rejected("EPUB evidence exceeds its limits")
+	}
+	if err := ctx.Err(); err != nil {
+		return document.RenditionResult{}, provider.Canceled(err)
 	}
 	receipt, err := providerutil.NewReceipt(provider, providerutil.Receipt{
 		Descriptor: p.descriptor, Authorization: authorization, SourceSHA256: metadata.SHA256,
@@ -185,11 +181,14 @@ func (p *Provider) Render(ctx context.Context, upload document.AuthorizedUpload,
 		return document.RenditionResult{}, err
 	}
 	result := document.RenditionResult{Evidence: evidence, Receipt: receipt}
-	if err := document.ValidateRenditionResultContext(ctx, p.descriptor, authorization, result); err != nil {
+	if err := document.ValidateRenditionResult(p.descriptor, authorization, result); err != nil {
 		if ctxErr := ctx.Err(); ctxErr != nil {
 			return document.RenditionResult{}, provider.Canceled(ctxErr)
 		}
 		return document.RenditionResult{}, rejected("EPUB result exceeds its authorization")
+	}
+	if err := ctx.Err(); err != nil {
+		return document.RenditionResult{}, provider.Canceled(err)
 	}
 	return result, nil
 }
@@ -199,13 +198,6 @@ func rejected(message string) error {
 }
 func unsupported() error {
 	return provider.Classified(document.RenditionErrorUnsupportedInput, "EPUB package is malformed or unsupported", nil)
-}
-
-func rejectSpineEvidenceUnitOverflow(count int) error {
-	if count > maxSpineEvidenceUnits {
-		return rejected("EPUB evidence exceeds its limits")
-	}
-	return nil
 }
 
 var _ document.RenditionProvider = (*Provider)(nil)

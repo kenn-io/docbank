@@ -36,13 +36,11 @@ consent or enqueue work.
 
 [embedding-runtime]: ../configuration.md#embedding-workers-and-credentials
 
-`configureRenditionProviders` selects `document/epub` for `epub.in-process/v1`
+`configureRenditionProviders` selects `document/epub` for `docbank-epub-rendition/v1`
 and passes the existing byte and unit limits to its constructor. The provider
 owns the `epub.in-process-v1` descriptor and virtual-unit policy. Startup
 rejects descriptor or trust-boundary drift; unknown adapters remain
-unavailable. Marker advertises no EPUB capability and rejects EPUB upload
-metadata before egress. Its other formats retain their staging and fallback
-behavior.
+unavailable.
 
 [Document processing](../usage/document-processing.md) follows the operator
 workflow from profile selection through preview, consent, execution, and reads.

@@ -53,7 +53,7 @@ provider descriptor and profile, not to a filename extension.
 | [`document/pymupdf`](https://github.com/kenn-io/docbank/tree/main/document/pymupdf) | Local process | PDF text through a pinned, digest-verified executable |
 | [`document/trafilatura`](https://github.com/kenn-io/docbank/tree/main/document/trafilatura) | Local process | Supplied HTML through a pinned isolated runner; the native runner requires Linux namespace and Landlock support |
 | [`document/docling`](https://github.com/kenn-io/docbank/tree/main/document/docling) | Operator-hosted | Uploaded files through Docling Serve; structured output and Markdown |
-| [`document/marker`](https://github.com/kenn-io/docbank/tree/main/document/marker) | Operator-hosted | PDF, common images, DOCX, XLSX, PPTX, and HTML through the fixed Marker contract |
+| [`document/marker`](https://github.com/kenn-io/docbank/tree/main/document/marker) | Operator-hosted | PDF, common images, DOCX, XLSX, PPTX, EPUB, and HTML through the fixed Marker contract |
 | [`document/unstructured`](https://github.com/kenn-io/docbank/tree/main/document/unstructured) | Operator-hosted | Pinned broad-format compatibility profile for the standard rendition bridge |
 | [`document/tika`](https://github.com/kenn-io/docbank/tree/main/document/tika) | Operator-hosted | Pinned Apache Tika compatibility profile for the standard rendition bridge |
 | [`document/datalab`](https://github.com/kenn-io/docbank/tree/main/document/datalab) | Hosted | Uploaded files through Datalab Convert |
@@ -86,13 +86,11 @@ binds both limits to its policy identity.
 
 Pass the provider to an embedded vault through
 `ProcessingProfileConfig.RenditionProvider`, together with its processing
-profile. The daemon also selects this provider with the `epub.in-process/v1`
+profile. The daemon also selects this provider with the `docbank-epub-rendition/v1`
 adapter. Its `max_document_bytes` and `max_units` must match the limits used to
 construct the descriptor. Use the public planning and consent flow before
-processing. Marker rejects EPUB before upload. Its changed format set changes
-the policy fingerprint, so existing Marker descriptors must be regenerated.
-The daemon EPUB flow is verified with `disclose_filename = true`; withheld
-filename handling is outside this guarantee.
+processing. Filename disclosure follows the profile's `disclose_filename`
+setting; extraction works with the filename disclosed or withheld.
 
 Each declared spine occurrence produces one ordered evidence unit with its
 archive path. Repeated references and `linear=no` entries count separately.

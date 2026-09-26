@@ -101,12 +101,11 @@ useful shapes:
   profile, it runs in process, opens no network connection, accepts supported
   UTF-8 text-like media types up to 16 MiB, and produces one generic evidence
   unit. Its provenance is therefore reported as degraded rather than invented.
-  The `epub.in-process/v1` adapter also runs locally. It extracts ordered XHTML
-  spine text from supported EPUB packages and retains source locations. Set
-  `disclose_filename = true` for the verified daemon path. The plan reports
-  `local_process` and the `in-process` destination before consent. See
+  The `docbank-epub-rendition/v1` adapter also runs locally. It extracts ordered
+  XHTML spine text from supported EPUB packages and retains source locations.
+  The plan reports `local_process` and the `in-process` destination before consent. See
   [local EPUB extraction](../document-understanding.md#extract-epub-locally)
-  for limits and counting rules. Marker rejects EPUB before upload.
+  for limits and counting rules.
 - **Hosted provider.** A configured embedding runtime, or an embedded caller's
   rendition or embedding provider, may cross a hosted-provider trust boundary.
   The reviewed plan identifies the provider and the exact input class it

@@ -18,43 +18,8 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"go.kenn.io/docbank/document"
-	"go.kenn.io/docbank/document/internal/epubutil"
 	"go.kenn.io/docbank/document/internal/formatdetect"
 )
-
-type cancelAfterSpineContext struct {
-	calls    int
-	cancelAt int
-}
-
-func (ctx *cancelAfterSpineContext) Deadline() (time.Time, bool) { return time.Time{}, false }
-func (ctx *cancelAfterSpineContext) Done() <-chan struct{}       { return nil }
-func (ctx *cancelAfterSpineContext) Value(any) any               { return nil }
-
-func (ctx *cancelAfterSpineContext) Err() error {
-	ctx.calls++
-	if ctx.calls >= ctx.cancelAt {
-		return context.Canceled
-	}
-	return nil
-}
-
-type cancelOnSpineContext struct {
-	calls    int
-	cancelAt int
-}
-
-func (ctx *cancelOnSpineContext) Deadline() (time.Time, bool) { return time.Time{}, false }
-func (ctx *cancelOnSpineContext) Done() <-chan struct{}       { return nil }
-func (ctx *cancelOnSpineContext) Value(any) any               { return nil }
-
-func (ctx *cancelOnSpineContext) Err() error {
-	ctx.calls++
-	if ctx.calls == ctx.cancelAt {
-		return context.Canceled
-	}
-	return nil
-}
 
 type testUpload struct {
 	reader   *bytes.Reader
@@ -348,50 +313,15 @@ func TestProviderProfileIdentityAndPreReadLimits(t *testing.T) {
 	require.Equal(t, 1, upload.closes)
 }
 
-func TestProviderRejectsPreviousPolicyAuthorization(t *testing.T) {
+func TestProviderRejectsV1PolicyAuthorization(t *testing.T) {
 	p, err := New(Profile{formatdetect.MaxDocumentBytes, 1_000_000})
 	require.NoError(t, err)
 	upload := newTestUpload(epubBytes(t, nil))
 	authorization := testAuthorization(p.Descriptor(), upload.Metadata())
-	previousVersion := strings.Replace(policyVersion, "epub/v3:", "epub/v2:", 1)
-	identity := previousVersion + "\x00" + formatdetect.DetectionImplementationID + "\x00" + strconv.FormatInt(p.profile.MaxDocumentBytes, 10) + "\x00" + strconv.FormatInt(p.profile.MaxUnits, 10)
-	previousPolicy := sha256.Sum256([]byte(identity))
-	authorization.PolicyFingerprint = hex.EncodeToString(previousPolicy[:])
+	// The main-branch epub/v1 policy for this profile.
+	authorization.PolicyFingerprint = "1fe8b20ad28df1dfa5d15516ef501974e8f8d68426bab39caab13c924576c29e"
 	_, err = document.RenderRendition(t.Context(), p, upload, authorization)
 	require.ErrorContains(t, err, "policy fingerprint")
-}
-
-func TestAdmitSpineContextCancellation(t *testing.T) {
-	data := epubBytes(t, nil)
-	archive, err := zip.NewReader(bytes.NewReader(data), int64(len(data)))
-	require.NoError(t, err)
-	records, err := epubutil.ReadPackages(archive.File, 1<<20)
-	require.NoError(t, err)
-
-	ctx := &cancelAfterSpineContext{cancelAt: 8}
-	_, err = admitSpine(ctx, archive.File, records)
-	require.ErrorIs(t, err, context.Canceled)
-	require.GreaterOrEqual(t, ctx.calls, ctx.cancelAt)
-
-	ctx2 := &cancelOnSpineContext{
-		cancelAt: 2 + len(archive.File) + len(records[0].Metadata.Meta) + len(records[0].Manifest.Items),
-	}
-	_, err = admitSpine(ctx2, archive.File, records)
-	require.ErrorIs(t, err, context.Canceled)
-	require.Equal(t, ctx2.cancelAt, ctx2.calls)
-}
-
-func TestProviderRejectsSpineEvidenceUnitOverflow(t *testing.T) {
-	emptyEntry := &zip.File{Name: "OPS/empty.xhtml"}
-	entries := make([]*zip.File, maxSpineEvidenceUnits+1)
-	for index := range entries {
-		entries[index] = emptyEntry
-	}
-	require.NoError(t, rejectSpineEvidenceUnitOverflow(len(entries[:maxSpineEvidenceUnits])))
-	err := rejectSpineEvidenceUnitOverflow(len(entries))
-	classified, ok := errors.AsType[*document.RenditionProviderError](err)
-	require.True(t, ok)
-	require.Equal(t, document.RenditionErrorPolicyRejected, classified.Code())
 }
 
 func TestProviderRejectsMetadataAttributeOverflow(t *testing.T) {

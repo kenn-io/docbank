@@ -2,20 +2,17 @@ package epub
 
 import (
 	"archive/zip"
-	"context"
 	"errors"
 	"mime"
 	"net/url"
 	"path"
 	"strings"
+	"unicode/utf8"
 
 	"go.kenn.io/docbank/document/internal/epubutil"
 )
 
-func admitSpine(ctx context.Context, files []*zip.File, records []epubutil.Package) ([]*zip.File, error) {
-	if err := ctx.Err(); err != nil {
-		return nil, err
-	}
+func admitSpine(files []*zip.File, records []epubutil.Package) ([]*zip.File, error) {
 	if len(records) != 1 {
 		return nil, unsupported()
 	}
@@ -25,27 +22,18 @@ func admitSpine(ctx context.Context, files []*zip.File, records []epubutil.Packa
 	}
 	entries := make(map[string]*zip.File, len(files))
 	for _, file := range files {
-		if err := ctx.Err(); err != nil {
-			return nil, err
-		}
 		if file.Name == "META-INF/encryption.xml" {
 			return nil, unsupported()
 		}
 		entries[file.Name] = file
 	}
 	for _, meta := range record.Metadata.Meta {
-		if err := ctx.Err(); err != nil {
-			return nil, err
-		}
 		if meta.Property == "rendition:layout" && strings.TrimSpace(meta.Value) != "reflowable" || meta.Name == "fixed-layout" && meta.Content != "false" {
 			return nil, unsupported()
 		}
 	}
 	manifest := make(map[string]epubutil.Item, len(record.Manifest.Items))
 	for _, item := range record.Manifest.Items {
-		if err := ctx.Err(); err != nil {
-			return nil, err
-		}
 		if item.ID == "" {
 			return nil, unsupported()
 		}
@@ -54,59 +42,42 @@ func admitSpine(ctx context.Context, files []*zip.File, records []epubutil.Packa
 		}
 		manifest[item.ID] = item
 	}
-	type cachedSpineResource struct {
-		entry *zip.File
-		err   error
-	}
-	resources := make(map[string]cachedSpineResource, len(manifest))
+	resources := make(map[string]*zip.File, len(manifest))
 	var spine []*zip.File
 	for _, ref := range record.Spine.Items {
-		if err := ctx.Err(); err != nil {
-			return nil, err
-		}
 		if strings.Contains(ref.Properties, "rendition:layout-pre-paginated") {
 			return nil, unsupported()
 		}
-		resource, found := resources[ref.IDRef]
-		if !found {
-			resource = cachedSpineResource{}
-			item, ok := manifest[ref.IDRef]
-			mediaType, _, mediaErr := mime.ParseMediaType(item.MediaType)
-			if !ok || mediaErr != nil || !strings.EqualFold(mediaType, "application/xhtml+xml") || strings.Contains(item.Properties, "rendition:layout-pre-paginated") {
-				resource.err = unsupported()
-			} else {
-				directory := path.Dir(record.Path)
-				for _, base := range []string{record.Base, record.Manifest.Base, item.Base} {
-					if strings.TrimSpace(base) == "" {
-						continue
-					}
-					var err error
-					directory, err = epubutil.ResolveArchiveBase(directory, base)
-					if err != nil {
-						resource.err = unsupported()
-						break
-					}
-				}
-				if resource.err == nil {
-					href, err := localSpineReference(item.HRef)
-					if err != nil {
-						resource.err = unsupported()
-					} else {
-						archivePath, err := epubutil.ArchivePath(href, directory)
-						if err != nil || entries[archivePath] == nil {
-							resource.err = unsupported()
-						} else {
-							resource.entry = entries[archivePath]
-						}
-					}
-				}
+		if resource := resources[ref.IDRef]; resource != nil {
+			spine = append(spine, resource)
+			continue
+		}
+		item, ok := manifest[ref.IDRef]
+		mediaType, _, mediaErr := mime.ParseMediaType(item.MediaType)
+		if !ok || mediaErr != nil || !strings.EqualFold(mediaType, "application/xhtml+xml") || strings.Contains(item.Properties, "rendition:layout-pre-paginated") {
+			return nil, unsupported()
+		}
+		directory := path.Dir(record.Path)
+		for _, base := range []string{record.Base, record.Manifest.Base, item.Base} {
+			if strings.TrimSpace(base) == "" {
+				continue
 			}
-			resources[ref.IDRef] = resource
+			var err error
+			directory, err = epubutil.ResolveArchiveBase(directory, base)
+			if err != nil {
+				return nil, unsupported()
+			}
 		}
-		if resource.err != nil {
-			return nil, resource.err
+		href, err := localSpineReference(item.HRef)
+		if err != nil {
+			return nil, unsupported()
 		}
-		spine = append(spine, resource.entry)
+		archivePath, err := epubutil.ArchivePath(href, directory)
+		if err != nil || entries[archivePath] == nil {
+			return nil, unsupported()
+		}
+		resources[ref.IDRef] = entries[archivePath]
+		spine = append(spine, entries[archivePath])
 	}
 	return spine, nil
 }
@@ -125,37 +96,13 @@ func localSpineReference(reference string) (string, error) {
 
 // virtualUnits counts complete Markdown without inserting wrapping into it.
 func virtualUnits(markdown string) int64 {
-	units, _ := virtualUnitsContext(context.Background(), markdown)
-	return units
-}
-
-func virtualUnitsContext(ctx context.Context, markdown string) (int64, error) {
-	if err := ctx.Err(); err != nil {
-		return 0, err
-	}
 	if markdown == "" {
-		return 0, nil
+		return 0
 	}
 	markdown = strings.TrimSuffix(markdown, "\n")
 	var lines int64
-	lineIndex := 0
 	for line := range strings.SplitSeq(markdown, "\n") {
-		if lineIndex&1023 == 0 {
-			if err := ctx.Err(); err != nil {
-				return 0, err
-			}
-		}
-		runes := 0
-		for range line {
-			if runes&1023 == 0 {
-				if err := ctx.Err(); err != nil {
-					return 0, err
-				}
-			}
-			runes++
-		}
-		lines += max(1, (int64(runes)+79)/80)
-		lineIndex++
+		lines += max(1, (int64(utf8.RuneCountInString(line))+79)/80)
 	}
-	return (lines + 47) / 48, nil
+	return (lines + 47) / 48
 }
