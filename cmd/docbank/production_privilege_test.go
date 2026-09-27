@@ -1,14 +1,22 @@
 package main
 
 import (
+	"bytes"
+	"context"
 	"encoding/json/v2"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	documentproduction "go.kenn.io/docbank/document/production"
 	"go.kenn.io/docbank/internal/api"
+	"go.kenn.io/docbank/internal/daemonconn"
 	"go.kenn.io/docbank/internal/productiontest"
 	"go.kenn.io/docbank/internal/store"
 )
@@ -39,6 +47,77 @@ func TestProductionPrivilegeCLIExportsPublicFrozenBytesFromRealDaemon(t *testing
 	again, err := os.ReadFile(destination)
 	require.NoError(t, err)
 	require.Equal(t, content, again)
+}
+
+func TestProductionPrivilegeCLIDraftsPrivateRowsThroughDaemonClient(t *testing.T) {
+	const logID = "21212121-2121-4121-8121-212121212121"
+	request := api.ProductionPrivilegeDraftCreateRequest{
+		OperationID: "22222222-2222-4222-8222-222222222222",
+		SetID:       "23232323-2323-4232-8232-232323232323", SetRevision: 1,
+		PlayersSHA256: strings.Repeat("a", 64),
+		Rows: []documentproduction.PrivilegeRow{{
+			ID:               "24242424-2424-4242-8242-242424242424",
+			WithheldMemberID: "25252525-2525-4252-8252-252525252525",
+			FamilyOrder:      1, SourceVersionID: "26262626-2626-4262-8262-262626262626",
+			Basis: "synthetic_basis", PublicDescription: "Synthetic description.",
+			PrivateRationale: "Synthetic private rationale.", EvidenceSHA256: strings.Repeat("b", 64),
+			PersonIDs: []string{"27272727-2727-4272-8272-272727272727"},
+			Fields:    []documentproduction.PrivilegeField{{Name: "date", Value: "2026-09-22"}},
+		}},
+	}
+	var calls int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		assert.Equal(t, http.MethodPost, r.Method)
+		assert.Equal(t, "/api/v1/production-privilege-logs/"+logID+"/revisions/1/draft", r.URL.Path)
+		assert.Equal(t, "synthetic-api-key", r.Header.Get("X-Api-Key"))
+		var actual api.ProductionPrivilegeDraftCreateRequest
+		assert.NoError(t, json.UnmarshalRead(r.Body, &actual))
+		assert.Equal(t, request, actual)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusCreated)
+		assert.NoError(t, json.MarshalWrite(w, api.ProductionPrivilegeDraftGeneration{
+			LogID: logID, Revision: 1, Generation: 1,
+		}))
+	}))
+	t.Cleanup(server.Close)
+	rowsJSON, err := json.Marshal(request.Rows)
+	require.NoError(t, err)
+	file := filepath.Join(t.TempDir(), "private-draft-rows.json")
+	require.NoError(t, os.WriteFile(file, rowsJSON, 0o600))
+	var ensureCalls int
+	cmd := newProductionPrivilegeDraftCommandWithEnsure(func(context.Context) (*daemonconn.Connection, error) {
+		ensureCalls++
+		return daemonconn.New(server.URL, "synthetic-api-key"), nil
+	})
+	var out bytes.Buffer
+	cmd.SetOut(&out)
+	cmd.SetArgs([]string{logID, "1", "--operation-id", request.OperationID,
+		"--set-id", request.SetID, "--set-revision", "1",
+		"--players-sha256", request.PlayersSHA256, "--file", file, "--json"})
+	require.NoError(t, cmd.ExecuteContext(t.Context()))
+	var created api.ProductionPrivilegeDraftGeneration
+	require.NoError(t, json.Unmarshal(out.Bytes(), &created))
+	require.Equal(t, int64(1), created.Generation)
+	require.NotContains(t, out.String(), request.Rows[0].PrivateRationale)
+	require.Equal(t, 1, calls)
+	require.Equal(t, 1, ensureCalls)
+	require.NoError(t, os.WriteFile(file, []byte(`[{"unexpected_private_field":true}]`), 0o600))
+	bad := newProductionPrivilegeDraftCommandWithEnsure(func(context.Context) (*daemonconn.Connection, error) {
+		ensureCalls++
+		return daemonconn.New(server.URL, "synthetic-api-key"), nil
+	})
+	bad.SetArgs([]string{logID, "1", "--operation-id", request.OperationID,
+		"--set-id", request.SetID, "--set-revision", "1",
+		"--players-sha256", request.PlayersSHA256, "--file", file})
+	require.ErrorContains(t, bad.ExecuteContext(t.Context()), "invalid privilege rows JSON")
+	require.Equal(t, 1, ensureCalls)
+
+	help, err := runCLI(t, "production", "privilege-log", "draft", "--help")
+	require.NoError(t, err)
+	require.Contains(t, help, "--set-id")
+	require.Contains(t, help, "--players-sha256")
+	require.Contains(t, help, "--file")
 }
 
 func TestProductionPrivilegeCLIReadsFrozenPublicPagesFromRealDaemon(t *testing.T) {

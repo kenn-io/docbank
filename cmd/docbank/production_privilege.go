@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json/v2"
 	"errors"
 	"fmt"
@@ -39,6 +40,71 @@ func readProductionPrivilegeRowsFile(path string) ([]documentproduction.Privileg
 		return nil, usageError(errors.New("invalid privilege rows JSON"))
 	}
 	return rows, nil
+}
+
+func submitProductionPrivilegeDraft(cmd *cobra.Command, connection *daemonconn.Connection,
+	logID string, revision int64, request api.ProductionPrivilegeDraftCreateRequest, asJSON bool) error {
+	created, err := connection.CreateProductionPrivilegeLogDraft(cmd.Context(), logID, revision, request)
+	if err != nil {
+		return err
+	}
+	if asJSON {
+		return writeCLIJSON(cmd.OutOrStdout(), created)
+	}
+	_, err = fmt.Fprintf(cmd.OutOrStdout(), "%s revision=%d generation=%d\n",
+		created.LogID, created.Revision, created.Generation)
+	if err != nil {
+		return fmt.Errorf("writing privilege draft receipt: %w", err)
+	}
+	return nil
+}
+
+func newProductionPrivilegeDraftCommand() *cobra.Command {
+	return newProductionPrivilegeDraftCommandWithEnsure(daemonconn.Ensure)
+}
+
+func newProductionPrivilegeDraftCommandWithEnsure(
+	ensure func(context.Context) (*daemonconn.Connection, error)) *cobra.Command {
+	var operationID, setID, playersSHA256, file string
+	var predecessorLogID, predecessorReceiptSHA256 string
+	var setRevision int64
+	var asJSON bool
+	cmd := &cobra.Command{Use: "draft <log-id> <revision>", Short: "Create a private privilege-log draft from sealed production authority",
+		Args: cobra.ExactArgs(2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			revision, err := strconv.ParseInt(args[1], 10, 64)
+			if err != nil || revision < 1 || operationID == "" || setID == "" || setRevision < 1 ||
+				playersSHA256 == "" || file == "" {
+				return usageError(errors.New("log revision, --operation-id, --set-id, --set-revision, --players-sha256, and --file are required"))
+			}
+			if (predecessorLogID == "") != (predecessorReceiptSHA256 == "") {
+				return usageError(errors.New("--predecessor-log-id and --predecessor-receipt-sha256 must be supplied together"))
+			}
+			rows, err := readProductionPrivilegeRowsFile(file)
+			if err != nil {
+				return err
+			}
+			connection, err := ensure(cmd.Context())
+			if err != nil {
+				return err
+			}
+			return submitProductionPrivilegeDraft(cmd, connection, args[0], revision,
+				api.ProductionPrivilegeDraftCreateRequest{
+					OperationID: operationID, SetID: setID, SetRevision: setRevision,
+					PlayersSHA256: playersSHA256, Rows: rows,
+					PredecessorLogID:         predecessorLogID,
+					PredecessorReceiptSHA256: predecessorReceiptSHA256,
+				}, asJSON)
+		}}
+	cmd.Flags().StringVar(&operationID, "operation-id", "", "stable UUID for exact retries")
+	cmd.Flags().StringVar(&setID, "set-id", "", "sealed production set UUID")
+	cmd.Flags().Int64Var(&setRevision, "set-revision", 0, "sealed production revision")
+	cmd.Flags().StringVar(&playersSHA256, "players-sha256", "", "stored player snapshot SHA-256")
+	cmd.Flags().StringVar(&file, "file", "", "JSON file containing the complete private row array")
+	cmd.Flags().StringVar(&predecessorLogID, "predecessor-log-id", "", "frozen predecessor log UUID for a correction")
+	cmd.Flags().StringVar(&predecessorReceiptSHA256, "predecessor-receipt-sha256", "", "frozen predecessor receipt SHA-256")
+	cmd.Flags().BoolVar(&asJSON, "json", false, "emit machine-readable generation receipt JSON")
+	return cmd
 }
 
 func newProductionPrivilegeRowsReplaceCommand() *cobra.Command {
@@ -224,6 +290,7 @@ func newProductionPrivilegeShowCommand() *cobra.Command {
 func init() {
 	rowsCmd := &cobra.Command{Use: "rows", Short: "Edit private privilege draft rows"}
 	rowsCmd.AddCommand(newProductionPrivilegeRowsReplaceCommand())
+	productionPrivilegeCmd.AddCommand(newProductionPrivilegeDraftCommand())
 	productionPrivilegeCmd.AddCommand(rowsCmd)
 	productionPrivilegeCmd.AddCommand(newProductionPrivilegeValidateCommand())
 	productionPrivilegeCmd.AddCommand(newProductionPrivilegeShowCommand())
