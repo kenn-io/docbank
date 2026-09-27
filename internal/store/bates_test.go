@@ -508,3 +508,51 @@ func TestBatesLedgerValidationRejectsSourcesTooLargeToStamp(t *testing.T) {
 
 	require.ErrorIs(t, err, ErrBatesSourceTooLarge)
 }
+
+func TestBatesLedgerValidationRequiresAnExportForEveryCommit(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	snapshot, inputs := batesFixture(t, s)
+	ns, err := s.EnsureBatesNamespace(t.Context(), "COMMIT", "", 6)
+	require.NoError(t, err)
+	allocation, err := s.ReserveBatesRange(t.Context(), batesRequest(t, ns, snapshot, inputs))
+	require.NoError(t, err)
+	// Publication commits and records the export together; write only the commit.
+	_, err = s.db.ExecContext(t.Context(), `UPDATE bates_allocations SET state=?,committed_at=? WHERE allocation_id=?`,
+		batesAllocationStateCommitted, nowRFC3339(), allocation.AllocationID)
+	require.NoError(t, err)
+	var encoded bytes.Buffer
+
+	err = s.ExportMetadata(t.Context(), &encoded)
+
+	require.ErrorIs(t, err, ErrInvalidBatesLedger)
+	require.ErrorContains(t, err, allocation.AllocationID)
+}
+
+func TestBatesRefusesAnEmptySource(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	node, err := s.CreateFile(t.Context(), s.RootID(), "empty.pdf", fakeHash("a0"), 0, "application/pdf")
+	require.NoError(t, err)
+	occurrence := strings.Repeat("a", 32)
+	id, err := newUUIDv4()
+	require.NoError(t, err)
+	snapshot, err := s.SealCollectionSnapshot(t.Context(), SnapshotSealRequest{SnapshotID: id, Members: []CollectionSnapshotMember{{
+		Ordinal: 1, OccurrenceID: occurrence, NodeID: node.ID, ContentVersionID: node.CurrentVersionID,
+		BlobSHA256: node.BlobHash, Size: 0, FamilyID: occurrence, FamilyOrder: 1, DisplayName: node.Name,
+		FrozenFieldsJSON: "{}", DocumentKind: "other", SourcePageCount: 1, SelectedPDFSHA256: node.BlobHash,
+		Representations: []CollectionSnapshotRepresentation{{OccurrenceID: occurrence, Role: "native",
+			Status: roleAvailable, TextAuthority: "none", ContentVersionID: node.CurrentVersionID,
+			BlobSHA256: node.BlobHash, MediaType: "application/pdf", Size: 0, VerifiedPageCount: 1}},
+	}}})
+	require.NoError(t, err)
+	ns, err := s.EnsureBatesNamespace(t.Context(), "EMPTY", "", 6)
+	require.NoError(t, err)
+
+	_, err = s.PreviewBatesRange(t.Context(), batesRequest(t, ns, snapshot, []BatesPageInput{
+		{OccurrenceID: occurrence, UnstampedSHA256: node.BlobHash, SourcePage: 1, VerifiedPageCount: 1},
+	}))
+
+	require.ErrorIs(t, err, ErrBatesPageCountMismatch)
+	require.ErrorContains(t, err, "empty")
+}

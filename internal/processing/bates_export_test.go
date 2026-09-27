@@ -306,3 +306,29 @@ func TestBatesExportRejectsRestamp(t *testing.T) {
 	_, err = env.catalog.BatesArtifact(t.Context(), env.allocationID)
 	require.ErrorIs(t, err, store.ErrNotFound)
 }
+
+func TestCheckBatesSourcesRefusesPDFsTheStamperRejects(t *testing.T) {
+	env := newBatesExportFixture(t)
+	_, pages, err := env.catalog.BatesPublicationPlan(t.Context(), env.allocationID)
+	require.NoError(t, err)
+	inputs := []store.BatesPageInput{{OccurrenceID: pages[0].OccurrenceID, UnstampedSHA256: pages[0].SourceBlobSHA256,
+		SourcePage: pages[0].SourcePage}}
+	require.NoError(t, CheckBatesSources(t.Context(), env.blobs, inputs))
+
+	annotated := fpdf.NewCustom(&fpdf.InitType{UnitStr: "pt", Size: fpdf.SizeType{Wd: 612, Ht: 792}})
+	annotated.AddPage()
+	annotated.LinkString(72, 72, 200, 20, "https://example.com/synthetic")
+	var source bytes.Buffer
+	require.NoError(t, annotated.Output(&source))
+	written, err := env.blobs.WriteDetailedContext(t.Context(), bytes.NewReader(source.Bytes()))
+	require.NoError(t, err)
+	_, err = env.catalog.CreateFile(t.Context(), env.catalog.RootID(), "annotated.pdf", written.Hash, written.Size,
+		"application/pdf", processingBlobPhysical(t, written))
+	require.NoError(t, err)
+	inputs[0].UnstampedSHA256 = written.Hash
+
+	err = CheckBatesSources(t.Context(), env.blobs, inputs)
+
+	require.ErrorIs(t, err, store.ErrBatesSourceUnstampable)
+	require.ErrorContains(t, err, "flatten annotations")
+}

@@ -125,6 +125,7 @@ var storeErrCodes = []struct {
 	{store.ErrBatesOverflow, http.StatusUnprocessableEntity, "bates_overflow"},
 	{store.ErrBatesPageLimit, http.StatusUnprocessableEntity, "bates_page_limit"},
 	{store.ErrBatesSourceTooLarge, http.StatusUnprocessableEntity, "bates_source_too_large"},
+	{store.ErrBatesSourceUnstampable, http.StatusUnprocessableEntity, "bates_source_unstampable"},
 	{store.ErrBatesLabelCollision, http.StatusConflict, "bates_label_collision"},
 	{store.ErrInvalidBatesRequest, http.StatusUnprocessableEntity, "invalid_bates_request"},
 	{store.ErrInvalidBatesCursor, http.StatusUnprocessableEntity, "invalid_bates_cursor"},

@@ -1,11 +1,13 @@
 package api_test
 
 import (
+	"bytes"
 	"encoding/json/v2"
 	"net/http"
 	"strings"
 	"testing"
 
+	"github.com/go-pdf/fpdf"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/document"
@@ -17,6 +19,12 @@ import (
 
 func seedBatesSnapshot(t *testing.T, s *testStore) (store.CollectionSnapshot, []api.BatesPageInput) {
 	t.Helper()
+	return seedBatesSnapshotWith(t, s, batesTestPDF)
+}
+
+func seedBatesSnapshotWith(t *testing.T, s *testStore, pdfWithPages func(*testing.T, int) []byte,
+) (store.CollectionSnapshot, []api.BatesPageInput) {
+	t.Helper()
 	db, err := store.DefaultSQLiteDriver().Open(s.DBPath, sqlite.OpenOptions{Access: sqlite.ReadWriteExisting, TransactionMode: sqlite.Deferred})
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, db.Close()) })
@@ -24,10 +32,12 @@ func seedBatesSnapshot(t *testing.T, s *testStore) (store.CollectionSnapshot, []
 	var pages []api.BatesPageInput
 	for i, count := range []int{2, 1} {
 		name := []string{"A.pdf", "B.pdf"}[i]
-		hash := strings.Repeat([]string{"a", "b"}[i], 64)
-		node, err := s.CreateFile(t.Context(), s.RootID(), name, hash, 123, "application/pdf")
+		// Reservation inspects the real source bytes, so store stampable PDFs.
+		hash, size, err := s.Blobs.Write(bytes.NewReader(pdfWithPages(t, count)))
 		require.NoError(t, err)
-		source := document.PageSource{VersionID: node.CurrentVersionID, SHA256: node.BlobHash, Size: 123}
+		node, err := s.CreateFile(t.Context(), s.RootID(), name, hash, size, "application/pdf")
+		require.NoError(t, err)
+		source := document.PageSource{VersionID: node.CurrentVersionID, SHA256: node.BlobHash, Size: size}
 		frames := make([]document.PageFrameV1, count)
 		for p := range frames {
 			frames[p], err = document.NewPDFPageFrame(source, p+1, [4]float64{0, 0, 72, 72}, [4]float64{0, 0, 72, 72}, 0)
@@ -46,7 +56,7 @@ func seedBatesSnapshot(t *testing.T, s *testStore) (store.CollectionSnapshot, []
 			require.NoError(t, err)
 		}
 		member := store.CollectionSnapshotMember{Ordinal: i + 1, OccurrenceID: strings.Repeat([]string{"c", "d"}[i], 32),
-			NodeID: node.ID, ContentVersionID: node.CurrentVersionID, BlobSHA256: node.BlobHash, Size: 123,
+			NodeID: node.ID, ContentVersionID: node.CurrentVersionID, BlobSHA256: node.BlobHash, Size: size,
 			FamilyID: strings.Repeat("c", 32), FamilyOrder: i + 1, DisplayName: name,
 			FrozenFieldsJSON: "{}", DocumentKind: "other", SourcePageCount: count, SelectedPDFSHA256: node.BlobHash}
 		if i == 1 {
@@ -170,6 +180,53 @@ func TestBatesPlanPreviewsWithoutStampingAnything(t *testing.T) {
 	require.Empty(t, page.NextCursor)
 }
 
+func batesTestPDF(t *testing.T, pages int) []byte {
+	t.Helper()
+	pdf := fpdf.NewCustom(&fpdf.InitType{UnitStr: "pt", Size: fpdf.SizeType{Wd: 612, Ht: 792}})
+	for range pages {
+		pdf.AddPage()
+	}
+	var output bytes.Buffer
+	require.NoError(t, pdf.Output(&output))
+	return output.Bytes()
+}
+
+func batesAnnotatedPDF(t *testing.T, pages int) []byte {
+	t.Helper()
+	pdf := fpdf.NewCustom(&fpdf.InitType{UnitStr: "pt", Size: fpdf.SizeType{Wd: 612, Ht: 792}})
+	for range pages {
+		pdf.AddPage()
+		pdf.LinkString(72, 72, 200, 20, "https://example.com/synthetic")
+	}
+	var output bytes.Buffer
+	require.NoError(t, pdf.Output(&output))
+	return output.Bytes()
+}
+
+func TestBatesReserveRefusesSourcesTheStamperRejects(t *testing.T) {
+	srv, s := newPackageTestServer(t)
+	snapshot, pages := seedBatesSnapshotWith(t, s, batesAnnotatedPDF)
+	created := srv.call(t, http.MethodPost, "/api/v1/bates/namespaces", `{"prefix":"ANN","padding":6}`, nil)
+	require.Equal(t, http.StatusCreated, created.Code, created.Body.String())
+	var ns api.BatesNamespace
+	require.NoError(t, json.Unmarshal(created.Body.Bytes(), &ns))
+	body, err := json.Marshal(api.BatesReserveRequest{OperationID: uuid.NewString(), SnapshotID: snapshot.SnapshotID,
+		Recipe: batesTestRecipe(ns, 1), Pages: pages})
+	require.NoError(t, err)
+
+	rejected := srv.call(t, http.MethodPost, "/api/v1/bates/allocations", string(body), nil)
+
+	require.Equal(t, http.StatusUnprocessableEntity, rejected.Code, rejected.Body.String())
+	require.Contains(t, rejected.Body.String(), "bates_source_unstampable")
+	require.Contains(t, rejected.Body.String(), "flatten annotations")
+	preview := srv.call(t, http.MethodPost, "/api/v1/bates/preview",
+		`{"namespace_id":"`+ns.NamespaceID+`","snapshot_id":"`+snapshot.SnapshotID+`","start_at":0}`, nil)
+	require.Equal(t, http.StatusOK, preview.Code, preview.Body.String())
+	var plan api.BatesPlan
+	require.NoError(t, json.Unmarshal(preview.Body.Bytes(), &plan))
+	require.Equal(t, int64(1), plan.StartSequence, "a refused reservation must not consume numbers")
+}
+
 func batesTestRecipe(namespace api.BatesNamespace, start int) pdfstamp.Recipe {
 	return pdfstamp.Recipe{Contract: pdfstamp.RecipeContractV1, NamespaceID: namespace.NamespaceID,
 		Prefix: namespace.Prefix, Suffix: namespace.Suffix, Padding: namespace.Padding, StartAt: start,
@@ -224,6 +281,14 @@ func TestBatesInputErrorsAreValidationFailures(t *testing.T) {
 		`{"prefix":"B","suffix":"`+strings.Repeat("Z", 129)+`","padding":6}`, nil)
 	require.Equal(t, http.StatusUnprocessableEntity, tooLong.Code, tooLong.Body.String())
 	require.Contains(t, tooLong.Body.String(), "longer than 128")
+}
+
+func TestBatesCandidateRouteAcceptsTheLongestPossibleLabel(t *testing.T) {
+	srv, _ := newPackageTestServer(t)
+	longest := srv.get(t, "/api/v1/bates/exports/candidates?limit=10&bates_label="+strings.Repeat("A", pdfstamp.MaxLabelChars))
+	require.Equal(t, http.StatusOK, longest.Code, longest.Body.String())
+	tooLong := srv.get(t, "/api/v1/bates/exports/candidates?limit=10&bates_label="+strings.Repeat("A", pdfstamp.MaxLabelChars+1))
+	require.Equal(t, http.StatusUnprocessableEntity, tooLong.Code, tooLong.Body.String())
 }
 
 func TestBatesCandidateRouteRequiresOneSelectorAndReturnsBoundedCandidates(t *testing.T) {

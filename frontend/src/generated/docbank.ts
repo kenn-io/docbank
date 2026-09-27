@@ -5811,7 +5811,8 @@ limit?: number;
 
 export type FindBatesExportsParams = {
 /**
- * @maxLength 256
+ * Exact Bates label. Labels are at most 266 characters: a 128-character prefix, up to 10 digits, and a 128-character suffix.
+ * @maxLength 266
  */
 bates_label?: string;
 /**

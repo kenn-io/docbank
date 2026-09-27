@@ -26,7 +26,7 @@ const (
 	maxPackageDiagnostics = 250
 	maxBatesLabels        = 250
 	maxBatesAffixChars    = pdfstamp.MaxLabelPartChars
-	maxBatesLabelChars    = maxBatesAffixChars*2 + 10
+	maxBatesLabelChars    = pdfstamp.MaxLabelChars
 )
 
 type schema = map[string]any
@@ -290,7 +290,7 @@ func lookupBatesLabelSchemas() (schema, schema) {
 func batesNamespaceSchema() schema {
 	return objectSchema(schema{
 		"namespace_id": uuidSchema(), "prefix": stringSchema(maxBatesAffixChars),
-		"suffix": stringSchema(maxBatesAffixChars), "padding": integerSchema(1, 10),
+		"suffix": stringSchema(maxBatesAffixChars), "padding": integerSchema(1, pdfstamp.MaxPadding),
 		"created_at": dateTimeSchema(),
 	}, "namespace_id", "prefix", "suffix", "padding", "created_at")
 }
@@ -347,10 +347,10 @@ func listBatesNamespacesSchemas() (schema, schema) {
 func ensureBatesNamespaceSchemas() (schema, schema) {
 	return rootObjectSchema(schema{
 			"prefix": stringSchema(maxBatesAffixChars), "suffix": stringSchema(maxBatesAffixChars),
-			"padding": integerSchema(1, 10),
+			"padding": integerSchema(1, pdfstamp.MaxPadding),
 		}, "prefix", "padding"), rootObjectSchema(withPrivateCache(schema{
 			"namespace_id": uuidSchema(), "prefix": stringSchema(maxBatesAffixChars),
-			"suffix": stringSchema(maxBatesAffixChars), "padding": integerSchema(1, 10),
+			"suffix": stringSchema(maxBatesAffixChars), "padding": integerSchema(1, pdfstamp.MaxPadding),
 			"created_at": dateTimeSchema(),
 		}), cacheRequired("namespace_id", "prefix", "suffix", "padding", "created_at")...)
 }
@@ -395,7 +395,7 @@ func batesRecipeSchema() schema {
 	return objectSchema(schema{
 		"contract":     schema{"type": "string", jsonSchemaConst: "bates-stamp/v1"},
 		"namespace_id": uuidSchema(), "prefix": stringSchema(maxBatesAffixChars),
-		"suffix": stringSchema(maxBatesAffixChars), "padding": integerSchema(1, 10),
+		"suffix": stringSchema(maxBatesAffixChars), "padding": integerSchema(1, pdfstamp.MaxPadding),
 		"start_at":      integerSchema(1, 9_999_999_999),
 		"position":      enumSchema("top-left", "top-center", "top-right", "middle-left", "middle-center", "middle-right", "bottom-left", "bottom-center", "bottom-right"),
 		"margin_points": integerSchema(0, 144), "font_name": schema{"type": "string", jsonSchemaConst: "Helvetica"},
@@ -430,7 +430,7 @@ func publishBatesExportSchemas() (schema, schema) {
 
 func findBatesExportsSchemas() (schema, schema) {
 	input := rootObjectSchema(schema{
-		"bates_label": stringSchema(256), "custodian_label": stringSchema(200), "person_id": uuidSchema(),
+		"bates_label": stringSchema(maxBatesLabelChars), "custodian_label": stringSchema(200), "person_id": uuidSchema(),
 		"cursor": stringSchema(maxCursorCharacters), schemaLimitField: integerSchema(1, 250),
 	})
 	input["dependentSchemas"] = schema{

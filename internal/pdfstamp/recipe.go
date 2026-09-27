@@ -61,8 +61,8 @@ func (r Recipe) Validate() error {
 	if err := validateLabelPart("suffix", r.Suffix); err != nil {
 		return err
 	}
-	if r.Padding < 1 || r.Padding > 10 {
-		return errors.New("bates stamp padding must be between 1 and 10")
+	if r.Padding < 1 || r.Padding > MaxPadding {
+		return fmt.Errorf("bates stamp padding must be between 1 and %d", MaxPadding)
 	}
 	if r.StartAt < 1 || len(strconv.Itoa(r.StartAt)) > r.Padding {
 		return errors.New("bates stamp starting sequence does not fit its padding")
@@ -117,6 +117,12 @@ func (r Recipe) Normalized() Recipe {
 // MaxLabelPartChars bounds a Bates prefix or suffix. Every label must stay
 // short enough to fit its stamp and API responses.
 const MaxLabelPartChars = 128
+
+// MaxPadding is the most digits a Bates number may have.
+const MaxPadding = 10
+
+// MaxLabelChars is the longest possible Bates label: prefix, number, suffix.
+const MaxLabelChars = 2*MaxLabelPartChars + MaxPadding
 
 // ValidateLabelPart checks one Bates prefix or suffix.
 func ValidateLabelPart(name, value string) error {

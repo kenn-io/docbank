@@ -352,6 +352,8 @@ func stableDomainError(err error) (string, int) {
 		return "bates_page_limit", 0
 	case errors.Is(err, store.ErrBatesSourceTooLarge):
 		return "bates_source_too_large", 0
+	case errors.Is(err, store.ErrBatesSourceUnstampable):
+		return "bates_source_unstampable", 0
 	case errors.Is(err, store.ErrBatesLabelCollision):
 		return "bates_label_collision", 0
 	case errors.Is(err, store.ErrInvalidBatesRequest):
@@ -388,7 +390,7 @@ func stableDomainError(err error) (string, int) {
 	case "invalid_rendition_encoding":
 		return "invalid_rendition_encoding", 0
 	case "bates_reservation_conflict", "bates_page_count_mismatch", "bates_overflow", "bates_page_limit",
-		"bates_source_too_large", "bates_label_collision", "invalid_bates_request", "invalid_bates_cursor", "invalid_bates_selector",
+		"bates_source_too_large", "bates_source_unstampable", "bates_label_collision", "invalid_bates_request", "invalid_bates_cursor", "invalid_bates_selector",
 		"stale_bates_cursor":
 		return facts.Code, 0
 	default:
@@ -430,6 +432,8 @@ func domainErrorMessage(code string) string {
 		return fmt.Sprintf("A Bates export holds at most %d pages; seal a smaller snapshot.", store.MaxBatesExportPages)
 	case "bates_source_too_large":
 		return "A source PDF in this snapshot is too large to stamp; seal a snapshot without it."
+	case "bates_source_unstampable":
+		return "A source PDF cannot be Bates-stamped (for example it is tagged, has annotations, or is already watermarked); fix the source and seal a new snapshot."
 	case "bates_label_collision":
 		return "A label in this range is already allocated by another namespace; preview a later start_at."
 	case "invalid_bates_request":

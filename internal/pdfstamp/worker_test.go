@@ -44,6 +44,21 @@ func TestSupervisedWorkerStampsSelectedPagesEndToEnd(t *testing.T) {
 	assert.Equal(t, result.SHA256, verified.SHA256)
 }
 
+func TestSupervisedInspectReportsWhatStampingWouldRefuse(t *testing.T) {
+	executable, err := os.Executable()
+	require.NoError(t, err)
+	ConfigureWorker(executable)
+	t.Cleanup(func() { ConfigureWorker("") })
+
+	pages, err := InspectSupervised(t.Context(), bytes.NewReader(syntheticNumberedPDF(t)))
+	require.NoError(t, err)
+	assert.Equal(t, 8, pages)
+
+	_, err = InspectSupervised(t.Context(), bytes.NewReader(syntheticAnnotated(t)))
+	require.ErrorIs(t, err, ErrStampEngineFailure)
+	require.ErrorContains(t, err, "flatten annotations before stamping")
+}
+
 func TestRunWorkerRejectsMalformedFraming(t *testing.T) {
 	frame := func(requestSize uint64, request []byte) []byte {
 		var input bytes.Buffer

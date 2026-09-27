@@ -347,8 +347,10 @@ func TestStampIsolatesSourceGraphicsState(t *testing.T) {
 	}
 }
 
-func TestStampRejectsAnnotationsBeforePublishing(t *testing.T) {
-	source := rewritePDF(t, syntheticPDF(t, 1, "Letter"), func(ctx *model.Context, page types.Dict) {
+// syntheticAnnotated returns a one-page PDF whose annotation could cover a stamp.
+func syntheticAnnotated(t *testing.T) []byte {
+	t.Helper()
+	return rewritePDF(t, syntheticPDF(t, 1, "Letter"), func(ctx *model.Context, page types.Dict) {
 		appearance, err := ctx.NewStreamDictForBuf([]byte("1 1 1 rg 0 0 612 792 re f"))
 		require.NoError(t, err)
 		appearance.InsertName("Type", "XObject")
@@ -366,6 +368,10 @@ func TestStampRejectsAnnotationsBeforePublishing(t *testing.T) {
 		require.NoError(t, err)
 		page.Update("Annots", types.Array{*annotation})
 	})
+}
+
+func TestStampRejectsAnnotationsBeforePublishing(t *testing.T) {
+	source := syntheticAnnotated(t)
 	for _, restamp := range []bool{false, true} {
 		t.Run(fmt.Sprintf("restamp=%t", restamp), func(t *testing.T) {
 			recipe := validRecipe(t)

@@ -381,6 +381,16 @@ func verifyStampedLabelsReader(source io.ReadSeeker, labels []PageLabel) error {
 	return nil
 }
 
+// Inspect applies the same source checks a Bates stamp applies and returns
+// the page count. It never restamps, matching Bates publication.
+func Inspect(source io.ReadSeeker) (int, error) {
+	pdfContext, _, err := inspectSource(source, false)
+	if err != nil {
+		return 0, err
+	}
+	return pdfContext.PageCount, nil
+}
+
 func inspectSource(source io.ReadSeeker, allowRestamp bool) (*model.Context, []types.Dim, error) {
 	if _, err := source.Seek(0, io.SeekStart); err != nil {
 		return nil, nil, stampFailure("rewind source", err)

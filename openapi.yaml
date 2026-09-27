@@ -15681,11 +15681,13 @@ paths:
     get:
       operationId: findBatesExports
       parameters:
-        - explode: false
+        - description: "Exact Bates label. Labels are at most 266 characters: a 128-character prefix, up to 10 digits, and a 128-character suffix."
+          explode: false
           in: query
           name: bates_label
           schema:
-            maxLength: 256
+            description: "Exact Bates label. Labels are at most 266 characters: a 128-character prefix, up to 10 digits, and a 128-character suffix."
+            maxLength: 266
             type: string
         - explode: false
           in: query

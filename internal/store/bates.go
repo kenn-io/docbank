@@ -53,6 +53,7 @@ var (
 	ErrBatesPageCountMismatch   = errors.New("bates_page_count_mismatch: verified page counts differ from the sealed plan")
 	ErrBatesPageLimit           = fmt.Errorf("bates_page_limit: a Bates export holds at most %d pages", MaxBatesExportPages)
 	ErrBatesLabelCollision      = errors.New("bates_label_collision: a label in this range is already allocated by another namespace")
+	ErrBatesSourceUnstampable   = errors.New("bates_source_unstampable: a source PDF cannot be Bates-stamped")
 	ErrBatesSourceTooLarge      = fmt.Errorf("bates_source_too_large: a source PDF is larger than the %d-byte stamping limit",
 		pdfstamp.MaxOutputBytes)
 	ErrInvalidBatesRequest = errors.New("invalid_bates_request")
@@ -67,7 +68,7 @@ const (
 	batesAllocationStateCommitted = "committed"
 	batesArtifactStateVerified    = "verified"
 	batesArtifactMediaTypePDF     = "application/pdf"
-	maxBatesPadding               = 10
+	maxBatesPadding               = pdfstamp.MaxPadding
 )
 
 // batesMaxSequence is the largest number that fits the padding, 10^padding-1.
@@ -329,6 +330,9 @@ func checkBatesSourceSize(ctx context.Context, q metadataQuerier, sha256 string)
 	}
 	if err != nil {
 		return fmt.Errorf("reading Bates source %s size: %w", sha256, err)
+	}
+	if size < 1 {
+		return fmt.Errorf("%w: source %s is empty", ErrBatesPageCountMismatch, sha256)
 	}
 	if size > pdfstamp.MaxOutputBytes {
 		return fmt.Errorf("%w: %s is %d bytes", ErrBatesSourceTooLarge, sha256, size)

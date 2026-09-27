@@ -16,6 +16,7 @@ var (
 	ErrBatesPageCountMismatch   = store.ErrBatesPageCountMismatch
 	ErrBatesPageLimit           = store.ErrBatesPageLimit
 	ErrBatesSourceTooLarge      = store.ErrBatesSourceTooLarge
+	ErrBatesSourceUnstampable   = store.ErrBatesSourceUnstampable
 	ErrBatesLabelCollision      = store.ErrBatesLabelCollision
 	ErrInvalidBatesRequest      = store.ErrInvalidBatesRequest
 	ErrInvalidBatesCursor       = store.ErrInvalidBatesCursor
@@ -116,6 +117,9 @@ func (v *Vault) ReserveBatesRange(ctx context.Context, request BatesReserveReque
 	}
 	bound, err := api.BindBatesReservation(ctx, v.metadata, request)
 	if err != nil {
+		return BatesAllocation{}, err
+	}
+	if err := internalprocessing.CheckBatesSources(ctx, v.blobs, bound.Pages); err != nil {
 		return BatesAllocation{}, err
 	}
 	var allocation store.BatesAllocation

@@ -147,6 +147,40 @@ func stampBatesGroup(ctx context.Context, blobs *blob.Store, sourceSHA256 string
 	return stamped.Bytes(), nil
 }
 
+// CheckBatesSources runs the stamper's source checks on every distinct
+// sealed source before a range is reserved. A tagged, annotated, or already
+// watermarked PDF is refused here instead of after its numbers are consumed.
+// Sealed sources are content-addressed, so the result stays valid.
+func CheckBatesSources(ctx context.Context, blobs *blob.Store, pages []store.BatesPageInput) error {
+	checked := make(map[string]bool, len(pages))
+	for _, page := range pages {
+		if checked[page.UnstampedSHA256] {
+			continue
+		}
+		checked[page.UnstampedSHA256] = true
+		if err := checkBatesSource(ctx, blobs, page.UnstampedSHA256); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func checkBatesSource(ctx context.Context, blobs *blob.Store, sourceSHA256 string) error {
+	workerContext, cancel := context.WithTimeout(ctx, batesWorkerTimeout)
+	defer cancel()
+	source, err := readVerifiedBatesSource(workerContext, blobs, sourceSHA256)
+	if err != nil {
+		return err
+	}
+	if _, err := pdfstamp.InspectSupervised(workerContext, bytes.NewReader(source)); err != nil {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		return fmt.Errorf("%w: source %s: %w", store.ErrBatesSourceUnstampable, sourceSHA256, err)
+	}
+	return nil
+}
+
 // readVerifiedBatesSource reads a sealed source PDF through the hash-checking
 // stream, so damaged stored bytes can never be stamped under the sealed hash.
 // The worker buffers the whole source anyway, so this costs no extra copy.

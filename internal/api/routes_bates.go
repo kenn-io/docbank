@@ -79,6 +79,9 @@ func registerBatesRoutes(mux *http.ServeMux, api huma.API, d Deps, g *gate, down
 		if err != nil {
 			return nil, FromStoreError(err)
 		}
+		if err := processing.CheckBatesSources(ctx, d.Blobs, request.Pages); err != nil {
+			return nil, FromStoreError(err)
+		}
 		var allocation store.BatesAllocation
 		err = g.mutate(func() error {
 			var err error
@@ -129,7 +132,7 @@ func registerBatesRoutes(mux *http.ServeMux, api huma.API, d Deps, g *gate, down
 	})
 	huma.Register(api, huma.Operation{OperationID: "findBatesExports", Method: http.MethodGet,
 		Path: "/api/v1/bates/exports/candidates", Summary: "Find verified Bates export candidates"}, func(ctx context.Context, in *struct {
-		BatesLabel     string `query:"bates_label" maxLength:"256"`
+		BatesLabel     string `query:"bates_label" maxLength:"266" doc:"Exact Bates label. Labels are at most 266 characters: a 128-character prefix, up to 10 digits, and a 128-character suffix."`
 		CustodianLabel string `query:"custodian_label" maxLength:"200"`
 		PersonID       string `query:"person_id"`
 		Cursor         string `query:"cursor" maxLength:"4096"`

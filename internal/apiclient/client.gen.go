@@ -19266,6 +19266,7 @@ type ListBatesExportsQuery struct {
 }
 
 type FindBatesExportsQuery struct {
+	// BatesLabel Exact Bates label. Labels are at most 266 characters: a 128-character prefix, up to 10 digits, and a 128-character suffix.
 	BatesLabel     *string `json:"bates_label,omitempty"`
 	CustodianLabel *string `json:"custodian_label,omitempty"`
 	PersonID       *string `json:"person_id,omitempty"`

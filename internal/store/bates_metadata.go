@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json/jsontext"
+	"errors"
 	"fmt"
 
 	"go.kenn.io/docbank/internal/canonical"
@@ -307,6 +308,9 @@ func validateBatesMetadataState(ctx context.Context, q metadataQuerier) error {
 			return err
 		}
 	}
+	if err := validateBatesCommitsHaveArtifacts(ctx, q); err != nil {
+		return err
+	}
 	allocationIDs, err := pageMetadataKeys(ctx, q, `SELECT allocation_id FROM bates_allocations ORDER BY allocation_id`)
 	if err != nil {
 		return err
@@ -342,6 +346,25 @@ func validateBatesMetadataState(ctx context.Context, q metadataQuerier) error {
 		}
 	}
 	return nil
+}
+
+// validateBatesCommitsHaveArtifacts requires a committed range to have its
+// verified export and a reserved range to have none, because publication
+// records both in one transaction.
+func validateBatesCommitsHaveArtifacts(ctx context.Context, q metadataQuerier) error {
+	var allocationID, state string
+	err := q.QueryRowContext(ctx, `SELECT a.allocation_id,a.state FROM bates_allocations a
+		LEFT JOIN bates_artifacts r USING(allocation_id)
+		WHERE (a.state=? AND r.artifact_id IS NULL) OR (a.state<>? AND r.artifact_id IS NOT NULL)
+		ORDER BY a.allocation_id LIMIT 1`, batesAllocationStateCommitted, batesAllocationStateCommitted).
+		Scan(&allocationID, &state)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("validating Bates commits: %w", err)
+	}
+	return fmt.Errorf("%w: %s allocation %s does not match its export record", ErrInvalidBatesLedger, state, allocationID)
 }
 
 // snapshotSelectedPages reads only the sealed page order and source PDF hashes,

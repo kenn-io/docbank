@@ -107,6 +107,21 @@ func CombineStampedSupervised(ctx context.Context, groups [][]byte, labels []Pag
 	return Result{SHA256: hex.EncodeToString(digest[:]), Size: int64(len(result)), PageCount: pageCount, Pages: slices.Clone(labels)}, nil
 }
 
+// InspectSupervised runs the stamper's source checks without stamping and
+// returns the page count. Callers use it before reserving Bates numbers, so a
+// source the stamper would refuse never consumes a range.
+func InspectSupervised(ctx context.Context, source io.ReadSeeker) (int, error) {
+	if configuredWorker() == "" {
+		return Inspect(source)
+	}
+	data, err := readWorkerSource(source)
+	if err != nil {
+		return 0, err
+	}
+	pageCount, _, err := runWorker(ctx, workerRequest{Operation: "inspect", Sources: 1}, [][]byte{data})
+	return pageCount, err
+}
+
 func readWorkerSource(source io.ReadSeeker) ([]byte, error) {
 	if source == nil {
 		return nil, stampFailure("read worker source", errors.New("nil source"))
@@ -162,14 +177,15 @@ func runWorker(ctx context.Context, request workerRequest, sources [][]byte) (in
 	}
 	var pageCount uint64
 	if err := binary.Read(&stdout, binary.BigEndian, &pageCount); err != nil || pageCount == 0 ||
-		pageCount > math.MaxInt32 || stdout.Len() == 0 {
+		pageCount > math.MaxInt32 || (stdout.Len() == 0) != (request.Operation == "inspect") {
 		return 0, nil, stampFailure("supervised PDF worker", errors.New("worker returned no verified PDF"))
 	}
 	return int(pageCount), stdout.Bytes(), nil
 }
 
 // RunWorker serves one framed transformation request on private process pipes.
-// It writes the verified page count as a big-endian uint64, then the PDF.
+// It writes the verified page count as a big-endian uint64, then the PDF. The
+// inspect operation writes only the page count.
 func RunWorker(ctx context.Context, input io.Reader, output io.Writer) error {
 	var requestSize uint64
 	if err := binary.Read(input, binary.BigEndian, &requestSize); err != nil {
@@ -209,6 +225,8 @@ func RunWorker(ctx context.Context, input io.Reader, output io.Writer) error {
 		var result Result
 		result, err = CombineStamped(ctx, sources, request.Labels, &staged)
 		pageCount = result.PageCount
+	case "inspect":
+		pageCount, err = Inspect(bytes.NewReader(sources[0]))
 	default:
 		return stampFailure("decode worker request", fmt.Errorf("unknown operation %q", request.Operation))
 	}
