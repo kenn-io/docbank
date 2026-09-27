@@ -95,7 +95,9 @@ func TestRetainProductionReproductionReplaysWithoutNewNumbers(t *testing.T) {
 	evidence := production.PackageDeliveryEvidence{RecipientCode: policy.RecipientCode,
 		Method: "offline-media", DeliveredAt: "2026-09-23T21:00:00Z", ProofPath: proofPath}
 	var firstDelivery, secondDelivery ReproductionDeliveryRecord
+	interruptedBeforeReceipt := errors.New("synthetic interruption after package retention")
 	lostResponse := errors.New("synthetic response lost after receipt commit")
+	interrupted := false
 	runtime := production.ReproductionRuntime{Catalog: s, Opener: f, StagingDir: t.TempDir(),
 		Retain: func(ctx context.Context, got documentproduction.ReproductionRequest,
 			_ production.ReproductionSelection, paths production.RecipientPackageRequest,
@@ -113,6 +115,14 @@ func TestRetainProductionReproductionReplaysWithoutNewNumbers(t *testing.T) {
 				_, staleErr := s.RetainProductionReproduction(ctx, job.ID, got, policy,
 					stalePaths, f, restartPackageBlobWriter(f))
 				require.Error(t, staleErr)
+			}
+			if !interrupted {
+				_, partialErr := s.RetainProductionPackage(ctx, job.ID, got.OperationID,
+					paths.ProfileID, paths.Limits, paths.ArchivePath, paths.QCPath,
+					paths.TransmittalPath, restartPackageBlobWriter(f))
+				require.NoError(t, partialErr)
+				interrupted = true
+				return interruptedBeforeReceipt
 			}
 			receipt, retainErr := s.RetainProductionReproduction(ctx, job.ID, got, policy,
 				paths, f, restartPackageBlobWriter(f))
@@ -172,6 +182,15 @@ func TestRetainProductionReproductionReplaysWithoutNewNumbers(t *testing.T) {
 	_, err = runtime.Run(t.Context(), job.ID, changedSource, policy, "export-dat-opt-images-v1", limits)
 	require.ErrorIs(t, err, production.ErrReproductionConflict)
 	_, err = runtime.Run(t.Context(), job.ID, request, policy, "export-dat-opt-images-v1", limits)
+	require.ErrorIs(t, err, interruptedBeforeReceipt)
+	partialPackage, err := s.LoadRetainedProductionPackage(t.Context(), job.ID, request.OperationID)
+	require.NoError(t, err)
+	_, err = s.LoadProductionReproduction(t.Context(), job.ID, request.OperationID)
+	require.ErrorIs(t, err, ErrNotFound)
+	staging, err := os.ReadDir(runtime.StagingDir)
+	require.NoError(t, err)
+	require.Empty(t, staging)
+	_, err = runtime.Run(t.Context(), job.ID, request, policy, "export-dat-opt-images-v1", limits)
 	require.ErrorIs(t, err, lostResponse)
 	require.NoError(t, documentproduction.ValidateReproductionReceipt(first))
 	require.Equal(t, request.OperationID, first.ID)
@@ -197,6 +216,7 @@ func TestRetainProductionReproductionReplaysWithoutNewNumbers(t *testing.T) {
 	require.Equal(t, first, loaded)
 	retained, err := s.LoadRetainedProductionPackage(t.Context(), job.ID, request.OperationID)
 	require.NoError(t, err)
+	require.Equal(t, partialPackage, retained, "retry must reuse the already retained package")
 	require.Equal(t, retained.Evidence.QCSHA256, first.PackageQCSHA256)
 	require.Equal(t, retained.QC.Version.BlobHash, firstDelivery.Receipt.PackageQCSHA256)
 	var allocationsAfter, operationCount int
