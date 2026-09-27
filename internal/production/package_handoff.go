@@ -335,14 +335,44 @@ func digestDeliveryProof(path string, excludedPaths ...string) (string, int64, e
 	return hex.EncodeToString(digest.Sum(nil)), n, nil
 }
 
+// PackageDeliveryBinding identifies the exact retained package that may be
+// acknowledged by a delivery receipt.
+type PackageDeliveryBinding struct {
+	ArchiveSHA256     string
+	ManifestSHA256    string
+	PackageQCSHA256   string
+	TransmittalSHA256 string
+}
+
 // RecordPackageDelivery only records caller supplied evidence of a completed
 // external delivery. It rechecks the actual archive, QC and public transmittal
 // at handoff and writes an immutable receipt outside the archive.
 func RecordPackageDelivery(archivePath, qcPath, transmittalPath, receiptPath string,
 	policy PackageDeliveryPolicy, evidence PackageDeliveryEvidence) (PackageDeliveryReceipt, error) {
+	return recordPackageDelivery(archivePath, qcPath, transmittalPath, receiptPath,
+		policy, evidence, nil)
+}
+
+// RecordPackageDeliveryBound checks the exact retained package before it
+// publishes a delivery sidecar.
+func RecordPackageDeliveryBound(archivePath, qcPath, transmittalPath, receiptPath string,
+	policy PackageDeliveryPolicy, evidence PackageDeliveryEvidence,
+	binding PackageDeliveryBinding) (PackageDeliveryReceipt, error) {
+	return recordPackageDelivery(archivePath, qcPath, transmittalPath, receiptPath,
+		policy, evidence, &binding)
+}
+
+func recordPackageDelivery(archivePath, qcPath, transmittalPath, receiptPath string,
+	policy PackageDeliveryPolicy, evidence PackageDeliveryEvidence,
+	binding *PackageDeliveryBinding) (PackageDeliveryReceipt, error) {
 	qc, qcSHA, transmittalSHA, err := packageHandoffInputs(archivePath, qcPath, transmittalPath)
 	if err != nil {
 		return PackageDeliveryReceipt{}, err
+	}
+	if binding != nil && (binding.ArchiveSHA256 != qc.ArchiveSHA256 ||
+		binding.ManifestSHA256 != qc.ManifestSHA256 || binding.PackageQCSHA256 != qcSHA ||
+		binding.TransmittalSHA256 != transmittalSHA) {
+		return PackageDeliveryReceipt{}, ErrRecipientArchive
 	}
 	policySHA, err := validateDeliveryEvidence(policy, evidence)
 	if err != nil {

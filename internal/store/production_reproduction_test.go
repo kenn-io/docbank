@@ -90,6 +90,22 @@ func TestRetainProductionReproductionReplaysWithoutNewNumbers(t *testing.T) {
 				require.Error(t, wrongErr)
 				_, statErr := os.Stat(wrongPath)
 				require.ErrorIs(t, statErr, os.ErrNotExist)
+				alternateDir := t.TempDir()
+				alternatePaths := production.RecipientPackageRequest{
+					JobID: job.ID, ProfileID: "export-dat-pdf-v1", Limits: paths.Limits,
+					ArchivePath:     filepath.Join(alternateDir, "recipient.zip"),
+					QCPath:          filepath.Join(alternateDir, "qc.json"),
+					TransmittalPath: filepath.Join(alternateDir, "transmittal.json"),
+				}
+				_, alternateErr := production.PublishRecipientPackage(ctx, s, f, alternatePaths)
+				require.NoError(t, alternateErr)
+				alternateDeliveryPath := filepath.Join(alternateDir, "delivery.json")
+				_, alternateErr = s.RecordProductionReproductionDelivery(ctx, job.ID,
+					got.OperationID, deliveryOperationID, policy, evidence, alternatePaths,
+					alternateDeliveryPath, restartPackageBlobWriter(f))
+				require.Error(t, alternateErr)
+				_, statErr = os.Stat(alternateDeliveryPath)
+				require.ErrorIs(t, statErr, os.ErrNotExist)
 			}
 			deliveryPath := filepath.Join(filepath.Dir(paths.ArchivePath), "delivery.json")
 			delivery, deliveryErr := s.RecordProductionReproductionDelivery(ctx, job.ID,

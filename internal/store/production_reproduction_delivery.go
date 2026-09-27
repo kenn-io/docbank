@@ -80,8 +80,14 @@ func (s *Store) RecordProductionReproductionDelivery(ctx context.Context,
 	if err != nil || policySHA != reproduction.DeliveryPolicySHA256 {
 		return bad()
 	}
-	receipt, err := production.RecordPackageDelivery(paths.ArchivePath, paths.QCPath,
-		paths.TransmittalPath, receiptPath, policy, evidence)
+	binding := production.PackageDeliveryBinding{
+		ArchiveSHA256:     retained.Evidence.ArchiveSHA256,
+		ManifestSHA256:    retained.Evidence.RecipientManifestSHA256,
+		PackageQCSHA256:   retained.QC.Version.BlobHash,
+		TransmittalSHA256: retained.Transmittal.Version.BlobHash,
+	}
+	receipt, err := production.RecordPackageDeliveryBound(paths.ArchivePath, paths.QCPath,
+		paths.TransmittalPath, receiptPath, policy, evidence, binding)
 	if err != nil || receipt.DeliveryPolicySHA256 != reproduction.DeliveryPolicySHA256 ||
 		receipt.ArchiveSHA256 != retained.Evidence.ArchiveSHA256 ||
 		receipt.ManifestSHA256 != retained.Evidence.RecipientManifestSHA256 ||
