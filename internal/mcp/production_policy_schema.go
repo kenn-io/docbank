@@ -5,6 +5,8 @@ import (
 	"go.kenn.io/docbank/internal/store"
 )
 
+const productionOperationIDField = "operation_id"
+
 func productionPolicySchema(withDigest bool) schema {
 	predicate := objectSchema(schema{
 		"field": stringSchema(256), "operator": enumSchema("equals", "one_of", "present", "date_between"),
@@ -52,8 +54,8 @@ func productionPolicyResultSchema() schema {
 
 func createProductionPolicySchemas() (schema, schema) {
 	return rootObjectSchema(schema{
-		"operation_id": uuidSchema(), "policy": productionPolicySchema(false),
-	}, "operation_id", "policy"), productionPolicyResultSchema()
+		productionOperationIDField: uuidSchema(), "policy": productionPolicySchema(false),
+	}, productionOperationIDField, "policy"), productionPolicyResultSchema()
 }
 
 func getProductionPolicySchemas() (schema, schema) {

@@ -10,9 +10,9 @@ func replaceProductionPrivilegeRowsSchemas() (schema, schema) {
 	path["minLength"] = 1
 	return rootObjectSchema(schema{
 			productionPrivilegeLogIDField: uuidSchema(), productionPrivilegeRevisionField: integerSchema(1, 0),
-			"operation_id": uuidSchema(), "expected_generation": integerSchema(1, 0),
+			productionOperationIDField: uuidSchema(), "expected_generation": integerSchema(1, 0),
 			"rows_file": path,
-		}, productionPrivilegeLogIDField, productionPrivilegeRevisionField, "operation_id", "expected_generation", "rows_file"),
+		}, productionPrivilegeLogIDField, productionPrivilegeRevisionField, productionOperationIDField, "expected_generation", "rows_file"),
 		rootObjectSchema(withPrivateCache(schema{
 			productionPrivilegeLogIDField: uuidSchema(), productionPrivilegeRevisionField: integerSchema(1, 0),
 			"generation": integerSchema(1, 0),

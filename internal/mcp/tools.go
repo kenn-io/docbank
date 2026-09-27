@@ -165,6 +165,12 @@ var exportProductionPrivilegeLogToolDefinition = toolDefinition{
 	schemas:     exportProductionPrivilegeLogSchemas, write: true, destructive: true,
 }
 
+var downloadProductionPackageToolDefinition = toolDefinition{
+	name: "download_production_package", title: "Download production package",
+	description: "Save an exact retained production archive to a local file after complete byte verification.",
+	schemas:     downloadProductionPackageSchemas, write: true, destructive: true,
+}
+
 func toolCatalog(allowProcessing bool) []*sdkmcp.Tool {
 	definitions := readToolDefinitions
 	if allowProcessing {
@@ -174,7 +180,7 @@ func toolCatalog(allowProcessing bool) []*sdkmcp.Tool {
 			exportBatesFileToolDefinition, exportLoadFilePackageToolDefinition, createProductionPolicyToolDefinition,
 			validateProductionPrivilegeLogToolDefinition, replaceProductionPrivilegeRowsToolDefinition,
 			createProductionPrivilegeDraftToolDefinition, freezeProductionPrivilegeLogToolDefinition,
-			exportProductionPrivilegeLogToolDefinition)
+			exportProductionPrivilegeLogToolDefinition, downloadProductionPackageToolDefinition)
 	}
 	tools := make([]*sdkmcp.Tool, 0, len(definitions))
 	for _, definition := range definitions {
@@ -227,6 +233,8 @@ func registerToolCatalog(
 			handler = createProductionPrivilegeDraftToolHandler(lease, output, logger)
 		case exportProductionPrivilegeLogToolDefinition.name:
 			handler = exportProductionPrivilegeLogToolHandler(lease, output, logger)
+		case downloadProductionPackageToolDefinition.name:
+			handler = downloadProductionPackageToolHandler(lease, output, logger)
 		default:
 			handler = readToolHandler(lease, plans, tool.Name, output, logger)
 		}
@@ -396,6 +404,10 @@ func stableDomainError(err error) (string, int) {
 		return "production_privilege_outcome_unknown", 0
 	case errors.Is(err, errProductionPrivilegeExportDestinationExists):
 		return "destination_exists", 0
+	case errors.Is(err, errProductionPackageDestinationExists):
+		return "destination_exists", 0
+	case errors.Is(err, errProductionPackageDownloadFailed):
+		return "package_download_failed", 0
 	case errors.Is(err, errDaemonUnavailable):
 		return "daemon_unavailable", 0
 	case errors.Is(err, store.ErrDocumentCursorExpired):
@@ -495,6 +507,8 @@ func domainErrorMessage(code string) string {
 		return "The privilege-log mutation outcome is unknown; retry only with the exact same operation ID and input."
 	case "destination_exists":
 		return "The export destination already exists; choose another path or explicitly allow overwrite."
+	case "package_download_failed":
+		return "The retained production archive could not be verified or saved."
 	default:
 		return "The Docbank operation could not be completed."
 	}
