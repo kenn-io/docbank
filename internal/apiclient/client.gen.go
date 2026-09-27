@@ -8222,6 +8222,53 @@ func (c *Client) ExportProductionPrivilegeLog(ctx context.Context, options *Expo
 	return responseParser(ctx, resp)
 }
 
+// FreezeProductionPrivilegeLog Freeze validated stored privilege rows after rechecking approval
+func (c *Client) FreezeProductionPrivilegeLog(ctx context.Context, options *FreezeProductionPrivilegeLogRequestOptions, reqEditors ...runtime.RequestEditorFn) (*FreezeProductionPrivilegeLogResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/production-privilege-logs/{log}/revisions/{revision}/freeze",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*FreezeProductionPrivilegeLogResponse, error) {
+		switch resp.StatusCode {
+
+		case 201:
+
+			target := new(FreezeProductionPrivilegeLogResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "FreezeProductionPrivilegeLogResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[FreezeProductionPrivilegeLogErrorResponse](resp, "FreezeProductionPrivilegeLogErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/production-privilege-logs/{log}/revisions/{revision}/freeze")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 201)
+	}
+	return responseParser(ctx, resp)
+}
+
 // ReplaceProductionPrivilegeLogRows Replace private privilege rows at an exact draft generation
 func (c *Client) ReplaceProductionPrivilegeLogRows(ctx context.Context, options *ReplaceProductionPrivilegeLogRowsRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ReplaceProductionPrivilegeLogRowsResponse, error) {
 	var err error
@@ -17187,6 +17234,41 @@ func (o *ExportProductionPrivilegeLogRequestOptions) GetHeader() (map[string]str
 	return nil, nil
 }
 
+// FreezeProductionPrivilegeLogRequestOptions is the options needed to make a request to FreezeProductionPrivilegeLog.
+type FreezeProductionPrivilegeLogRequestOptions struct {
+	PathParams *FreezeProductionPrivilegeLogPath
+	Body       *FreezeProductionPrivilegeLogBody
+}
+
+// GetPathParams returns the path params as a map.
+func (o *FreezeProductionPrivilegeLogRequestOptions) GetPathParams() (map[string]any, error) {
+	encoded, err := json.Marshal(o.PathParams, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetQuery returns the query params as a map.
+func (o *FreezeProductionPrivilegeLogRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *FreezeProductionPrivilegeLogRequestOptions) GetBody() any {
+	if o.Body == nil {
+		return nil
+	}
+	return o.Body
+}
+
+// GetHeader returns the headers as a map.
+func (o *FreezeProductionPrivilegeLogRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
 // ReplaceProductionPrivilegeLogRowsRequestOptions is the options needed to make a request to ReplaceProductionPrivilegeLogRows.
 type ReplaceProductionPrivilegeLogRowsRequestOptions struct {
 	PathParams *ReplaceProductionPrivilegeLogRowsPath
@@ -20141,6 +20223,11 @@ type ExportProductionPrivilegeLogPath struct {
 	Format   ExportProductionPrivilegeLogPathFormat `json:"format"`
 }
 
+type FreezeProductionPrivilegeLogPath struct {
+	Log      string `json:"log"`
+	Revision int64  `json:"revision"`
+}
+
 type ReplaceProductionPrivilegeLogRowsPath struct {
 	Log      string `json:"log"`
 	Revision int64  `json:"revision"`
@@ -20472,6 +20559,8 @@ type ResolveDocumentSourceFenceBody = DocumentSourceFenceResolveRequest
 type CreateProductionPlayersSnapshotBody = ProductionPlayersSnapshotCreateRequest
 
 type CreateProductionPrivilegeLogDraftBody = ProductionPrivilegeDraftCreateRequest
+
+type FreezeProductionPrivilegeLogBody = ProductionPrivilegeFreezeRequest
 
 type ReplaceProductionPrivilegeLogRowsBody = ProductionPrivilegeRowsReplaceRequest
 
@@ -21622,6 +21711,10 @@ type CreateProductionPrivilegeLogDraftResponse = api.ProductionPrivilegeDraftGen
 type CreateProductionPrivilegeLogDraftErrorResponse = Error
 
 type ExportProductionPrivilegeLogResponse = runtime.File
+
+type FreezeProductionPrivilegeLogResponse = production.PrivilegeLogReceipt
+
+type FreezeProductionPrivilegeLogErrorResponse = Error
 
 type ReplaceProductionPrivilegeLogRowsResponse = api.ProductionPrivilegeDraftGeneration
 
@@ -22801,6 +22894,8 @@ type ProductionPolicyPage = api.ProductionPolicyPage
 type ProductionPrivilegeDraftCreateRequest = api.ProductionPrivilegeDraftCreateRequest
 
 type ProductionPrivilegeDraftGeneration = api.ProductionPrivilegeDraftGeneration
+
+type ProductionPrivilegeFreezeRequest = api.ProductionPrivilegeFreezeRequest
 
 type ProductionPrivilegePublicPage = api.ProductionPrivilegePublicPage
 

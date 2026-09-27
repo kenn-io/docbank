@@ -10517,6 +10517,13 @@ components:
     PrivilegeLogReceipt:
       additionalProperties: false
       properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/PrivilegeLogReceipt.json
+          format: uri
+          readOnly: true
+          type: string
         approval_evaluation_sha256:
           type: string
         contract:
@@ -11846,6 +11853,38 @@ components:
         - generation
       type: object
       x-go-type: api.ProductionPrivilegeDraftGeneration
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
+    ProductionPrivilegeFreezeRequest:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/ProductionPrivilegeFreezeRequest.json
+          format: uri
+          readOnly: true
+          type: string
+        expected_approval_evaluation_sha256:
+          type: string
+        expected_generation:
+          format: int64
+          minimum: 1
+          type: integer
+        expected_inputs_sha256:
+          type: string
+        frozen_at:
+          type: string
+        operation_id:
+          type: string
+      required:
+        - operation_id
+        - expected_generation
+        - expected_inputs_sha256
+        - frozen_at
+      type: object
+      x-go-type: api.ProductionPrivilegeFreezeRequest
       x-go-type-import:
         path: go.kenn.io/docbank/internal/api
         name: api
@@ -21269,6 +21308,42 @@ paths:
                 pattern: ^[0-9a-f]{64}$
                 type: string
       summary: Download verified public bytes of a frozen privilege log
+  /api/v1/production-privilege-logs/{log}/revisions/{revision}/freeze:
+    post:
+      operationId: freezeProductionPrivilegeLog
+      parameters:
+        - in: path
+          name: log
+          required: true
+          schema:
+            type: string
+        - in: path
+          name: revision
+          required: true
+          schema:
+            format: int64
+            minimum: 1
+            type: integer
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ProductionPrivilegeFreezeRequest"
+        required: true
+      responses:
+        "201":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PrivilegeLogReceipt"
+          description: Created
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: Freeze validated stored privilege rows after rechecking approval
   /api/v1/production-privilege-logs/{log}/revisions/{revision}/rows:
     post:
       operationId: replaceProductionPrivilegeLogRows
