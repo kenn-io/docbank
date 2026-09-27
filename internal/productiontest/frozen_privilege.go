@@ -16,6 +16,7 @@ type PrivilegeDraft struct {
 	LogID      string
 	Revision   int64
 	Generation int64
+	Rows       []documentproduction.PrivilegeRow
 }
 
 func SeedPrivilegeLogDraft(t *testing.T, s *store.Store) PrivilegeDraft {
@@ -92,7 +93,7 @@ func SeedPrivilegeLogDraft(t *testing.T, s *store.Store) PrivilegeDraft {
 		Draft: draft, PlayersSHA256: players.SnapshotSHA256, Rows: rows,
 	})
 	require.NoError(t, err)
-	return PrivilegeDraft{LogID: draft.LogID, Revision: draft.Revision, Generation: generation}
+	return PrivilegeDraft{LogID: draft.LogID, Revision: draft.Revision, Generation: generation, Rows: rows}
 }
 
 func SeedFrozenPrivilegeLog(t *testing.T, s *store.Store) {

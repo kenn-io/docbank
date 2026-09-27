@@ -4,6 +4,7 @@ import (
 	"encoding/json/v2"
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -95,4 +96,47 @@ func TestProductionPrivilegeCLIValidatesStoredDraftFromRealDaemon(t *testing.T) 
 	args[8] = "2"
 	_, err = runCLI(t, args...)
 	require.Error(t, err)
+}
+
+func TestProductionPrivilegeCLIReplacesPrivateRowsThroughRealDaemon(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("DOCBANK_HOME", dir)
+	catalog, err := store.Open(filepath.Join(dir, "docbank.db"))
+	require.NoError(t, err)
+	draft := productiontest.SeedPrivilegeLogDraft(t, catalog)
+	require.NoError(t, catalog.Close())
+	startTestDaemon(t, dir)
+	rows := slices.Clone(draft.Rows)
+	rows[0].PublicDescription = "Updated synthetic public description."
+	rows[0].PrivateRationale = "Updated synthetic private rationale."
+	file := filepath.Join(t.TempDir(), "private-rows.json")
+	writeRows := func() {
+		t.Helper()
+		raw, err := json.Marshal(rows)
+		require.NoError(t, err)
+		require.NoError(t, os.WriteFile(file, raw, 0o600))
+	}
+	writeRows()
+	args := []string{"production", "privilege-log", "rows", "replace", draft.LogID, "1",
+		"--operation-id", "16161616-1616-4616-8616-161616161616",
+		"--generation", "1", "--file", file, "--json"}
+	out, err := runCLI(t, args...)
+	require.NoError(t, err)
+	var replaced api.ProductionPrivilegeDraftGeneration
+	require.NoError(t, json.Unmarshal([]byte(out), &replaced))
+	require.Equal(t, draft.Generation+1, replaced.Generation)
+	require.NotContains(t, out, rows[0].PrivateRationale)
+	replay, err := runCLI(t, args...)
+	require.NoError(t, err)
+	require.Equal(t, out, replay)
+	rows[0].PrivateRationale = "Changed again."
+	writeRows()
+	_, err = runCLI(t, args...)
+	require.Error(t, err)
+	args[7] = "17171717-1717-4717-8717-171717171717"
+	_, err = runCLI(t, args...)
+	require.Error(t, err)
+	require.NoError(t, os.WriteFile(file, []byte(`[{"unexpected_private_field":true}]`), 0o600))
+	_, err = runCLI(t, args...)
+	require.ErrorContains(t, err, "invalid privilege rows JSON")
 }

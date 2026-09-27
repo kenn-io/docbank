@@ -1,18 +1,88 @@
 package main
 
 import (
+	"encoding/json/v2"
 	"errors"
 	"fmt"
+	"io"
+	"os"
 	"path/filepath"
 	"strconv"
 
 	"github.com/spf13/cobra"
+	documentproduction "go.kenn.io/docbank/document/production"
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/daemonconn"
 	"go.kenn.io/docbank/internal/store"
 )
 
-var productionPrivilegeCmd = &cobra.Command{Use: "privilege-log", Short: "Validate drafts, read rows, and export frozen public privilege logs"}
+const maxProductionPrivilegeRowsFileBytes = 64 << 20
+
+var productionPrivilegeCmd = &cobra.Command{Use: "privilege-log", Short: "Edit and validate drafts, read rows, and export frozen public privilege logs"}
+
+func readProductionPrivilegeRowsFile(path string) ([]documentproduction.PrivilegeRow, error) {
+	reader, err := os.Open(path)
+	if err != nil {
+		return nil, fmt.Errorf("opening privilege rows file: %w", err)
+	}
+	defer func() { _ = reader.Close() }()
+	raw, err := io.ReadAll(io.LimitReader(reader, maxProductionPrivilegeRowsFileBytes+1))
+	if err != nil {
+		return nil, fmt.Errorf("reading privilege rows file: %w", err)
+	}
+	if len(raw) > maxProductionPrivilegeRowsFileBytes {
+		return nil, usageError(errors.New("privilege rows file exceeds 64 MiB"))
+	}
+	var rows []documentproduction.PrivilegeRow
+	if err := json.Unmarshal(raw, &rows, json.RejectUnknownMembers(true)); err != nil || len(rows) == 0 ||
+		len(rows) > documentproduction.MaxPrivilegeRows {
+		return nil, usageError(errors.New("invalid privilege rows JSON"))
+	}
+	return rows, nil
+}
+
+func newProductionPrivilegeRowsReplaceCommand() *cobra.Command {
+	var operationID, file string
+	var generation int64
+	var asJSON bool
+	cmd := &cobra.Command{Use: "replace <log-id> <revision>", Short: "Replace all private draft rows at an exact generation",
+		Args: cobra.ExactArgs(2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			revision, err := strconv.ParseInt(args[1], 10, 64)
+			if err != nil || revision < 1 || operationID == "" || generation < 1 || file == "" {
+				return usageError(errors.New("log revision, --operation-id, --generation, and --file are required"))
+			}
+			rows, err := readProductionPrivilegeRowsFile(file)
+			if err != nil {
+				return err
+			}
+			connection, err := daemonconn.Ensure(cmd.Context())
+			if err != nil {
+				return err
+			}
+			replaced, err := connection.ReplaceProductionPrivilegeLogRows(cmd.Context(), args[0], revision,
+				api.ProductionPrivilegeRowsReplaceRequest{
+					OperationID: operationID, ExpectedGeneration: generation, Rows: rows,
+				})
+			if err != nil {
+				return err
+			}
+			if asJSON {
+				return writeCLIJSON(cmd.OutOrStdout(), replaced)
+			}
+			_, err = fmt.Fprintf(cmd.OutOrStdout(), "%s revision=%d generation=%d\n",
+				replaced.LogID, replaced.Revision, replaced.Generation)
+			if err != nil {
+				return fmt.Errorf("writing privilege row receipt: %w", err)
+			}
+			return nil
+		}}
+	cmd.Flags().StringVar(&operationID, "operation-id", "", "stable UUID for exact retries")
+	cmd.Flags().Int64Var(&generation, "generation", 0, "expected draft generation")
+	cmd.Flags().StringVar(&file, "file", "", "JSON file containing the complete private row array")
+	cmd.Flags().BoolVar(&asJSON, "json", false, "emit machine-readable receipt JSON")
+	return cmd
+}
 
 func newProductionPrivilegeExportCommand() *cobra.Command {
 	var overwrite bool
@@ -152,6 +222,9 @@ func newProductionPrivilegeShowCommand() *cobra.Command {
 }
 
 func init() {
+	rowsCmd := &cobra.Command{Use: "rows", Short: "Edit private privilege draft rows"}
+	rowsCmd.AddCommand(newProductionPrivilegeRowsReplaceCommand())
+	productionPrivilegeCmd.AddCommand(rowsCmd)
 	productionPrivilegeCmd.AddCommand(newProductionPrivilegeValidateCommand())
 	productionPrivilegeCmd.AddCommand(newProductionPrivilegeShowCommand())
 	productionPrivilegeCmd.AddCommand(newProductionPrivilegeExportCommand())
