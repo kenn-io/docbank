@@ -221,6 +221,7 @@ func NewServer(d Deps) *Server {
 	registerProductionPackageRoutes(humaAPI, d, s.webDownloads, s.webSessions)
 	registerProductionNumberRoutes(humaAPI, d)
 	registerProductionRoutes(humaAPI, d, g)
+	registerProductionPolicyRoutes(humaAPI, d, g)
 	clearLongRunningBodyReadDeadlines(humaAPI)
 	markRevisionPreconditionsRequired(humaAPI)
 	registerDaemonOpenAPI(humaAPI)

@@ -12,6 +12,7 @@ import (
 	"github.com/doordash-oss/oapi-codegen-dd/v3/pkg/runtime"
 	document "go.kenn.io/docbank/document"
 	bundle "go.kenn.io/docbank/document/bundle"
+	production "go.kenn.io/docbank/document/production"
 	redaction "go.kenn.io/docbank/document/redaction"
 	api "go.kenn.io/docbank/internal/api"
 	loadfile "go.kenn.io/docbank/internal/loadfile"
@@ -8128,6 +8129,99 @@ func (c *Client) FindProductionNumberCandidates(ctx context.Context, options *Fi
 	}
 
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/productions/numbers/candidates")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
+// CreateProductionPolicyVersion Store an immutable production policy version
+func (c *Client) CreateProductionPolicyVersion(ctx context.Context, options *CreateProductionPolicyVersionRequestOptions, reqEditors ...runtime.RequestEditorFn) (*CreateProductionPolicyVersionResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/productions/policies",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*CreateProductionPolicyVersionResponse, error) {
+		switch resp.StatusCode {
+
+		case 201:
+
+			target := new(CreateProductionPolicyVersionResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "CreateProductionPolicyVersionResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[CreateProductionPolicyVersionErrorResponse](resp, "CreateProductionPolicyVersionErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/productions/policies")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 201)
+	}
+	return responseParser(ctx, resp)
+}
+
+// ReadProductionPolicyVersion Read an exact immutable production policy version
+func (c *Client) ReadProductionPolicyVersion(ctx context.Context, options *ReadProductionPolicyVersionRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ReadProductionPolicyVersionResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/productions/policies/{policy_id}/versions/{version}",
+		Method:     "GET",
+		Options:    options,
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*ReadProductionPolicyVersionResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(ReadProductionPolicyVersionResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "ReadProductionPolicyVersionResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[ReadProductionPolicyVersionErrorResponse](resp, "ReadProductionPolicyVersionErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/productions/policies/{policy_id}/versions/{version}")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
@@ -16588,6 +16682,65 @@ func (o *FindProductionNumberCandidatesRequestOptions) GetHeader() (map[string]s
 	return nil, nil
 }
 
+// CreateProductionPolicyVersionRequestOptions is the options needed to make a request to CreateProductionPolicyVersion.
+type CreateProductionPolicyVersionRequestOptions struct {
+	Body *CreateProductionPolicyVersionBody
+}
+
+// GetPathParams returns the path params as a map.
+func (o *CreateProductionPolicyVersionRequestOptions) GetPathParams() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetQuery returns the query params as a map.
+func (o *CreateProductionPolicyVersionRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *CreateProductionPolicyVersionRequestOptions) GetBody() any {
+	if o.Body == nil {
+		return nil
+	}
+	return o.Body
+}
+
+// GetHeader returns the headers as a map.
+func (o *CreateProductionPolicyVersionRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
+// ReadProductionPolicyVersionRequestOptions is the options needed to make a request to ReadProductionPolicyVersion.
+type ReadProductionPolicyVersionRequestOptions struct {
+	PathParams *ReadProductionPolicyVersionPath
+}
+
+// GetPathParams returns the path params as a map.
+func (o *ReadProductionPolicyVersionRequestOptions) GetPathParams() (map[string]any, error) {
+	encoded, err := json.Marshal(o.PathParams, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetQuery returns the query params as a map.
+func (o *ReadProductionPolicyVersionRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *ReadProductionPolicyVersionRequestOptions) GetBody() any {
+	return nil
+}
+
+// GetHeader returns the headers as a map.
+func (o *ReadProductionPolicyVersionRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
 // CreateProductionSetRequestOptions is the options needed to make a request to CreateProductionSet.
 type CreateProductionSetRequestOptions struct {
 	Body *CreateProductionSetBody
@@ -19222,6 +19375,11 @@ type DownloadProductionPackagePath struct {
 	OperationID uuid.UUID `json:"operation_id"`
 }
 
+type ReadProductionPolicyVersionPath struct {
+	PolicyID string `json:"policy_id"`
+	Version  int64  `json:"version"`
+}
+
 type GetProductionSetPath struct {
 	SetID uuid.UUID `json:"set_id"`
 }
@@ -19526,6 +19684,8 @@ type PlanDocumentProcessingBody = ProcessingPlanRequest
 type ResolveDocumentSourceFenceBody = DocumentSourceFenceResolveRequest
 
 type DownloadProductionPackageBody = DownloadProductionPackageRequest
+
+type CreateProductionPolicyVersionBody = ProductionPolicyCreateRequest
 
 type CreateProductionSetBody = CreateRequest
 
@@ -20650,6 +20810,14 @@ type FindProductionNumberCandidatesResponse = api.ProductionNumberCandidates
 
 type FindProductionNumberCandidatesErrorResponse = Error
 
+type CreateProductionPolicyVersionResponse = production.PolicyVersion
+
+type CreateProductionPolicyVersionErrorResponse = Error
+
+type ReadProductionPolicyVersionResponse = production.PolicyVersion
+
+type ReadProductionPolicyVersionErrorResponse = Error
+
 type ListProductionRecipesResponse = api.ProductionRecipeCatalog
 
 type ListProductionRecipesErrorResponse = Error
@@ -20923,6 +21091,8 @@ type HealthResponse struct {
 	UptimeSeconds int64  `json:"uptime_seconds"`
 	Version       string `json:"version"`
 }
+
+type ApprovalRequirement = production.ApprovalRequirement
 
 type AssignTagPathRequest struct {
 	// Schema A URL to the JSON Schema for this object.
@@ -21622,7 +21792,15 @@ type PlanPreview = bundle.PlanPreview
 
 type PlanRequest = bundle.PlanRequest
 
+type PolicyOutput = production.PolicyOutput
+
+type PolicyPredicate = production.PolicyPredicate
+
+type PolicyRule = production.PolicyRule
+
 type PolicySelection = redaction.PolicySelection
+
+type PolicyVersion = production.PolicyVersion
 
 type Preview = mailbox.Preview
 
@@ -21684,6 +21862,8 @@ type PreviewStorageSalvageRequest struct {
 	Hash   string  `json:"hash"`
 	Store  string  `json:"store"`
 }
+
+type PrivilegeLogRequirement = production.PrivilegeLogRequirement
 
 type ProcessingConsentGrant = api.ProcessingConsentGrant
 
@@ -21748,6 +21928,8 @@ type ProductionNumberPage = api.ProductionNumberPage
 type ProductionNumberReference = api.ProductionNumberReference
 
 type ProductionPackageDownloadTicket = api.ProductionPackageDownloadTicket
+
+type ProductionPolicyCreateRequest = api.ProductionPolicyCreateRequest
 
 type ProductionReceipt = api.ProductionReceipt
 

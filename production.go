@@ -3,13 +3,47 @@ package docbank
 import (
 	"context"
 
+	documentproduction "go.kenn.io/docbank/document/production"
 	"go.kenn.io/docbank/document/redaction"
 	"go.kenn.io/docbank/internal/api"
+	productionservice "go.kenn.io/docbank/internal/production"
 )
 
 type ProductionMemberPage = api.ProductionMemberPage
 type ProductionDecisionPage = api.ProductionDecisionPage
 type ProductionRecipeCatalog = api.ProductionRecipeCatalog
+
+// CreateProductionPolicyVersion stores one immutable policy in this embedded vault.
+// Reusing an operation ID with different policy content is a conflict.
+func (v *Vault) CreateProductionPolicyVersion(ctx context.Context, operationID string,
+	policy documentproduction.PolicyVersion) (documentproduction.PolicyVersion, error) {
+	v.lifecycle.RLock()
+	defer v.lifecycle.RUnlock()
+	if v.closed {
+		return documentproduction.PolicyVersion{}, ErrClosed
+	}
+	prepared, err := productionservice.PreparePolicyVersion(operationID, policy)
+	if err != nil {
+		return documentproduction.PolicyVersion{}, err
+	}
+	var stored documentproduction.PolicyVersion
+	err = embeddedMutationGate{vault: v}.MutateContext(ctx, func() error {
+		var err error
+		stored, err = v.metadata.PutProductionPolicy(ctx, prepared)
+		return err
+	})
+	return stored, err
+}
+
+func (v *Vault) ProductionPolicyVersion(ctx context.Context, policyID string,
+	version int64) (documentproduction.PolicyVersion, error) {
+	v.lifecycle.RLock()
+	defer v.lifecycle.RUnlock()
+	if v.closed {
+		return documentproduction.PolicyVersion{}, ErrClosed
+	}
+	return v.metadata.ProductionPolicy(ctx, policyID, version)
+}
 
 func (v *Vault) ProductionRecipes(ctx context.Context) (ProductionRecipeCatalog, error) {
 	v.lifecycle.RLock()

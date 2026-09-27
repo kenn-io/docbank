@@ -1,5 +1,23 @@
 components:
   schemas:
+    ApprovalRequirement:
+      additionalProperties: false
+      properties:
+        evidence_required:
+          type: boolean
+        max_age_seconds:
+          format: int64
+          type: integer
+        required:
+          type: boolean
+      required:
+        - required
+        - evidence_required
+      type: object
+      x-go-type: production.ApprovalRequirement
+      x-go-type-import:
+        path: go.kenn.io/docbank/document/production
+        name: production
     AssignTagPathRequest:
       additionalProperties: false
       properties:
@@ -10010,6 +10028,67 @@ components:
       x-go-type-import:
         path: go.kenn.io/docbank/document/bundle
         name: bundle
+    PolicyOutput:
+      additionalProperties: false
+      properties:
+        confidentiality_label:
+          type: string
+        endorsement_kind:
+          type: string
+        endorsement_text:
+          type: string
+      type: object
+      x-go-type: production.PolicyOutput
+      x-go-type-import:
+        path: go.kenn.io/docbank/document/production
+        name: production
+    PolicyPredicate:
+      additionalProperties: false
+      properties:
+        field:
+          type: string
+        from:
+          type: string
+        operator:
+          type: string
+        through:
+          type: string
+        values:
+          items:
+            type: string
+          type: array
+      required:
+        - field
+        - operator
+      type: object
+      x-go-type: production.PolicyPredicate
+      x-go-type-import:
+        path: go.kenn.io/docbank/document/production
+        name: production
+    PolicyRule:
+      additionalProperties: false
+      properties:
+        disposition:
+          type: string
+        family_mode:
+          type: string
+        id:
+          type: string
+        kind:
+          type: string
+        predicate:
+          $ref: "#/components/schemas/PolicyPredicate"
+        required_label:
+          type: string
+      required:
+        - id
+        - kind
+        - predicate
+      type: object
+      x-go-type: production.PolicyRule
+      x-go-type-import:
+        path: go.kenn.io/docbank/document/production
+        name: production
     PolicySelection:
       additionalProperties: false
       properties:
@@ -10029,6 +10108,57 @@ components:
       x-go-type-import:
         path: go.kenn.io/docbank/document/redaction
         name: redaction
+    PolicyVersion:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/PolicyVersion.json
+          format: uri
+          readOnly: true
+          type: string
+        approval:
+          $ref: "#/components/schemas/ApprovalRequirement"
+        conflict_mode:
+          type: string
+        contract:
+          type: string
+        created_at:
+          type: string
+        id:
+          type: string
+        name:
+          type: string
+        output:
+          $ref: "#/components/schemas/PolicyOutput"
+        privilege_log:
+          $ref: "#/components/schemas/PrivilegeLogRequirement"
+        rules:
+          items:
+            $ref: "#/components/schemas/PolicyRule"
+          type: array
+        sha256:
+          type: string
+        version:
+          format: int64
+          type: integer
+      required:
+        - contract
+        - id
+        - version
+        - name
+        - created_at
+        - rules
+        - output
+        - approval
+        - privilege_log
+        - conflict_mode
+      type: object
+      x-go-type: production.PolicyVersion
+      x-go-type-import:
+        path: go.kenn.io/docbank/document/production
+        name: production
     Preview:
       additionalProperties: false
       properties:
@@ -10230,6 +10360,31 @@ components:
         - hash
         - store
       type: object
+    PrivilegeLogRequirement:
+      additionalProperties: false
+      properties:
+        allowed_bases:
+          items:
+            type: string
+          type: array
+        require_frozen_receipt:
+          type: boolean
+        required:
+          type: boolean
+        required_fields:
+          items:
+            type: string
+          type: array
+      required:
+        - required
+        - require_frozen_receipt
+        - required_fields
+        - allowed_bases
+      type: object
+      x-go-type: production.PrivilegeLogRequirement
+      x-go-type-import:
+        path: go.kenn.io/docbank/document/production
+        name: production
     ProcessingConsentGrant:
       additionalProperties: false
       properties:
@@ -11236,6 +11391,28 @@ components:
         - version_id
       type: object
       x-go-type: api.ProductionPackageDownloadTicket
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
+    ProductionPolicyCreateRequest:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/ProductionPolicyCreateRequest.json
+          format: uri
+          readOnly: true
+          type: string
+        operation_id:
+          type: string
+        policy:
+          $ref: "#/components/schemas/PolicyVersion"
+      required:
+        - operation_id
+        - policy
+      type: object
+      x-go-type: api.ProductionPolicyCreateRequest
       x-go-type-import:
         path: go.kenn.io/docbank/internal/api
         name: api
@@ -20375,6 +20552,59 @@ paths:
                 $ref: "#/components/schemas/Error"
           description: Error
       summary: Find bounded verified production number candidates by exact, prefix or substring text
+  /api/v1/productions/policies:
+    post:
+      operationId: createProductionPolicyVersion
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ProductionPolicyCreateRequest"
+        required: true
+      responses:
+        "201":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PolicyVersion"
+          description: Created
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: Store an immutable production policy version
+  /api/v1/productions/policies/{policy_id}/versions/{version}:
+    get:
+      operationId: readProductionPolicyVersion
+      parameters:
+        - in: path
+          name: policy_id
+          required: true
+          schema:
+            type: string
+        - in: path
+          name: version
+          required: true
+          schema:
+            format: int64
+            minimum: 1
+            type: integer
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PolicyVersion"
+          description: OK
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: Read an exact immutable production policy version
   /api/v1/productions/recipes:
     get:
       operationId: listProductionRecipes

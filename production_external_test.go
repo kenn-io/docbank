@@ -5,10 +5,42 @@ import (
 
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank"
+	documentproduction "go.kenn.io/docbank/document/production"
 	"go.kenn.io/docbank/document/redaction"
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/store"
 )
+
+func TestEmbeddedProductionPolicyKeepsVaultRootsSeparate(t *testing.T) {
+	first, err := docbank.New(t.Context(), docbank.Config{Root: t.TempDir()})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, first.Close()) })
+	second, err := docbank.New(t.Context(), docbank.Config{Root: t.TempDir()})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, second.Close()) })
+	policy := documentproduction.PolicyVersion{
+		Contract: documentproduction.PolicyContractV1,
+		ID:       "11111111-1111-4111-8111-111111111111", Version: 1,
+		Name: "Synthetic policy", CreatedAt: "2026-09-22T13:00:00Z",
+		Rules: []documentproduction.PolicyRule{{
+			ID: "withhold-selected", Kind: documentproduction.PolicyRuleDisposition,
+			Predicate:   documentproduction.PolicyPredicate{Field: "member.id", Operator: documentproduction.PolicyOperatorPresent},
+			Disposition: documentproduction.PolicyDispositionWithhold,
+		}}, ConflictMode: documentproduction.PolicyConflictReject,
+	}
+	const operationID = "22222222-2222-4222-8222-222222222222"
+	created, err := first.CreateProductionPolicyVersion(t.Context(), operationID, policy)
+	require.NoError(t, err)
+	require.NoError(t, documentproduction.ValidatePolicyVersion(created))
+	replay, err := first.CreateProductionPolicyVersion(t.Context(), operationID, policy)
+	require.NoError(t, err)
+	require.Equal(t, created.SHA256, replay.SHA256)
+	read, err := first.ProductionPolicyVersion(t.Context(), policy.ID, policy.Version)
+	require.NoError(t, err)
+	require.Equal(t, created.SHA256, read.SHA256)
+	_, err = second.ProductionPolicyVersion(t.Context(), policy.ID, policy.Version)
+	require.ErrorIs(t, err, store.ErrNotFound)
+}
 
 func TestEmbeddedProductionSetsKeepVaultRootsSeparate(t *testing.T) {
 	first, err := docbank.New(t.Context(), docbank.Config{Root: t.TempDir()})
