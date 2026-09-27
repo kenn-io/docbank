@@ -8,6 +8,7 @@ import (
 	"go.kenn.io/docbank/document/redaction"
 	"go.kenn.io/docbank/internal/api"
 	productionservice "go.kenn.io/docbank/internal/production"
+	"go.kenn.io/docbank/internal/store"
 )
 
 type ProductionMemberPage = api.ProductionMemberPage
@@ -19,6 +20,9 @@ type ProductionPrivilegePublicPage = api.ProductionPrivilegePublicPage
 type ProductionPrivilegeValidationRequest = api.ProductionPrivilegeValidationRequest
 type ProductionPrivilegeValidation = api.ProductionPrivilegeValidation
 type ProductionPrivilegeExport = productionservice.PrivilegeLogExport
+type ProductionPrivilegeDraftCreateRequest = api.ProductionPrivilegeDraftCreateRequest
+type ProductionPrivilegeRowsReplaceRequest = api.ProductionPrivilegeRowsReplaceRequest
+type ProductionPrivilegeDraftGeneration = api.ProductionPrivilegeDraftGeneration
 
 // ProductionApprovalRequest names the exact subject and private evidence to
 // record in an embedded vault. It does not contain authentication authority.
@@ -129,6 +133,59 @@ func (v *Vault) ExportProductionPrivilegeLog(ctx context.Context, logID string, 
 		return ProductionPrivilegeExport{}, ErrClosed
 	}
 	return v.metadata.ExportProductionPrivilegeLog(ctx, logID, revision, format)
+}
+
+// CreateProductionPrivilegeLogDraft derives produced members from this vault's
+// sealed revision and stores the supplied private rows in the same transaction.
+func (v *Vault) CreateProductionPrivilegeLogDraft(ctx context.Context, logID string, revision int64,
+	request ProductionPrivilegeDraftCreateRequest) (ProductionPrivilegeDraftGeneration, error) {
+	v.lifecycle.RLock()
+	defer v.lifecycle.RUnlock()
+	if v.closed {
+		return ProductionPrivilegeDraftGeneration{}, ErrClosed
+	}
+	var generation int64
+	err := embeddedMutationGate{vault: v}.MutateContext(ctx, func() error {
+		var err error
+		generation, err = v.metadata.CreateStoredPrivilegeLogDraft(ctx, store.StoredPrivilegeLogDraftRequest{
+			SetID: request.SetID, SetRevision: request.SetRevision,
+			Draft: productionservice.PrivilegeLogDraftRequest{
+				OperationID: request.OperationID, LogID: logID, Revision: revision,
+				PredecessorLogID:         request.PredecessorLogID,
+				PredecessorReceiptSHA256: request.PredecessorReceiptSHA256,
+			},
+			PlayersSHA256: request.PlayersSHA256, Rows: request.Rows,
+		})
+		return err
+	})
+	if err != nil {
+		return ProductionPrivilegeDraftGeneration{}, err
+	}
+	return ProductionPrivilegeDraftGeneration{LogID: logID, Revision: revision, Generation: generation}, nil
+}
+
+// ReplaceProductionPrivilegeLogRows advances a mutable draft generation and
+// invalidates its prior validation and approval binding.
+func (v *Vault) ReplaceProductionPrivilegeLogRows(ctx context.Context, logID string, revision int64,
+	request ProductionPrivilegeRowsReplaceRequest) (ProductionPrivilegeDraftGeneration, error) {
+	v.lifecycle.RLock()
+	defer v.lifecycle.RUnlock()
+	if v.closed {
+		return ProductionPrivilegeDraftGeneration{}, ErrClosed
+	}
+	var generation int64
+	err := embeddedMutationGate{vault: v}.MutateContext(ctx, func() error {
+		var err error
+		generation, err = v.metadata.ReplacePrivilegeLogRows(ctx, store.PrivilegeLogRowUpdate{
+			OperationID: request.OperationID, LogID: logID, Revision: revision,
+			ExpectedGeneration: request.ExpectedGeneration, Rows: request.Rows,
+		})
+		return err
+	})
+	if err != nil {
+		return ProductionPrivilegeDraftGeneration{}, err
+	}
+	return ProductionPrivilegeDraftGeneration{LogID: logID, Revision: revision, Generation: generation}, nil
 }
 
 // ValidateProductionPrivilegeLog checks the stored draft rows and pinned

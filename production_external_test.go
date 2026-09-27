@@ -51,6 +51,36 @@ func TestEmbeddedProductionPolicyKeepsVaultRootsSeparate(t *testing.T) {
 	require.ErrorIs(t, err, store.ErrNotFound)
 }
 
+func TestEmbeddedPrivilegeDraftMutationsUseOwnedVault(t *testing.T) {
+	vault, err := docbank.New(t.Context(), docbank.Config{Root: t.TempDir()})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, vault.Close()) })
+	request := docbank.ProductionPrivilegeDraftCreateRequest{
+		OperationID: "87878787-8787-4787-8787-878787878701",
+		SetID:       "87878787-8787-4787-8787-878787878702", SetRevision: 1,
+		PlayersSHA256: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+	}
+	created, err := vault.CreateProductionPrivilegeLogDraft(t.Context(),
+		"87878787-8787-4787-8787-878787878703", 1, request)
+	require.ErrorIs(t, err, store.ErrNotFound)
+	require.Zero(t, created)
+	replaced, err := vault.ReplaceProductionPrivilegeLogRows(t.Context(),
+		"87878787-8787-4787-8787-878787878703", 1,
+		docbank.ProductionPrivilegeRowsReplaceRequest{
+			OperationID: "87878787-8787-4787-8787-878787878704", ExpectedGeneration: 1,
+			Rows: []documentproduction.PrivilegeRow{{
+				ID:               "87878787-8787-4787-8787-878787878705",
+				WithheldMemberID: "87878787-8787-4787-8787-878787878706",
+				FamilyOrder:      1, SourceVersionID: "87878787-8787-4787-8787-878787878707",
+				Basis: "synthetic_basis", PublicDescription: "Synthetic description.",
+				EvidenceSHA256: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+				PersonIDs:      []string{"87878787-8787-4787-8787-878787878708"},
+			}},
+		})
+	require.ErrorIs(t, err, store.ErrNotFound)
+	require.Zero(t, replaced)
+}
+
 func TestEmbeddedProductionSetsKeepVaultRootsSeparate(t *testing.T) {
 	first, err := docbank.New(t.Context(), docbank.Config{Root: t.TempDir()})
 	require.NoError(t, err)
