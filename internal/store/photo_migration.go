@@ -69,10 +69,15 @@ func (s *Store) ListPhotoMigrationRuns(ctx context.Context, offset, limit int) (
 		return PhotoMigrationRunPage{}, errors.New("invalid photo migration run page")
 	}
 	var page PhotoMigrationRunPage
-	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM photo_migration_runs`).Scan(&page.Total); err != nil {
+	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	if err != nil {
 		return page, err
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT run_id,source_kind,source_identity,created_at,report_json,owner_map_json
+	defer func() { _ = tx.Rollback() }()
+	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM photo_migration_runs`).Scan(&page.Total); err != nil {
+		return page, err
+	}
+	rows, err := tx.QueryContext(ctx, `SELECT run_id,source_kind,source_identity,created_at,report_json,owner_map_json
 		FROM photo_migration_runs ORDER BY created_at DESC,run_id DESC LIMIT ? OFFSET ?`, limit, offset)
 	if err != nil {
 		return page, err
@@ -85,7 +90,13 @@ func (s *Store) ListPhotoMigrationRuns(ctx context.Context, offset, limit int) (
 		}
 		page.Items = append(page.Items, run)
 	}
-	return page, rows.Err()
+	if err := rows.Err(); err != nil {
+		return PhotoMigrationRunPage{}, err
+	}
+	if err := rows.Close(); err != nil {
+		return PhotoMigrationRunPage{}, err
+	}
+	return page, tx.Commit()
 }
 
 func (s *Store) PhotoMigrationRun(ctx context.Context, id string) (PhotoMigrationRun, error) {

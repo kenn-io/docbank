@@ -24,6 +24,56 @@ func migrationTestRun() PhotoMigrationRun {
 	return PhotoMigrationRun{ID: uuid.NewString(), Source: report.Source, CreatedAt: report.CreatedAt, Report: report, OwnerMap: ownerMap}
 }
 
+func TestPhotoMigrationRunPagesConcurrentWrites(t *testing.T) {
+	t.Parallel()
+	s, err := Open(t.TempDir() + "/migration.db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = s.Close() }()
+	ctx := t.Context()
+	done := make(chan error, 1)
+	go func() {
+		for range 250 {
+			if err := s.SavePhotoMigrationRun(ctx, migrationTestRun()); err != nil {
+				done <- err
+				return
+			}
+		}
+		done <- nil
+	}()
+	for offset := 0; ; {
+		page, err := s.ListPhotoMigrationRuns(ctx, offset, 50)
+		if err != nil {
+			t.Error(err)
+		} else {
+			want := min(50, max(0, page.Total-offset))
+			if len(page.Items) != want {
+				t.Errorf("offset %d: total %d, got %d items, want %d", offset, page.Total, len(page.Items), want)
+			}
+			offset = max(0, page.Total-25)
+		}
+		select {
+		case err := <-done:
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, offset := range []int{0, 240, 250, 251} {
+				page, err := s.ListPhotoMigrationRuns(ctx, offset, 50)
+				if err != nil {
+					t.Fatal(err)
+				}
+				want := min(50, max(0, 250-offset))
+				if page.Total != 250 || len(page.Items) != want {
+					t.Fatalf("offset %d: total %d, items %d, want total 250 and %d items", offset, page.Total, len(page.Items), want)
+				}
+			}
+			return
+		default:
+		}
+	}
+}
+
 func TestPhotoMigrationJSONLRoundTrip(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
