@@ -28,11 +28,19 @@ start with [Document Understanding in Go](../document-understanding.md).
 | Web app and TUI | Preview processing, record consent, inspect jobs, and read retained sanitized renditions |
 
 The default configuration has no processing profiles. The daemon can execute
-its built-in plaintext rendition adapter and the OpenAI-compatible and Voyage
-embedding runtimes listed in [Configuration](../configuration.md#embedding-workers-and-credentials).
+its built-in plaintext and EPUB rendition adapters and the OpenAI-compatible
+and Voyage embedding runtimes listed in [Configuration][embedding-runtime].
 Other public provider packages are available to embedded Go callers; adding a
 package does not register a daemon runtime. Configuration alone does not grant
 consent or enqueue work.
+
+[embedding-runtime]: ../configuration.md#embedding-workers-and-credentials
+
+`configureRenditionProviders` selects `document/epub` for `docbank-epub-rendition/v1`
+and passes the existing byte and unit limits to its constructor. The provider
+owns the `epub.in-process-v1` descriptor and virtual-unit policy. Startup
+rejects descriptor or trust-boundary drift; unknown adapters remain
+unavailable.
 
 [Document processing](../usage/document-processing.md) follows the operator
 workflow from profile selection through preview, consent, execution, and reads.

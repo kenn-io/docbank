@@ -167,7 +167,7 @@ func epubProcessingProfile(t *testing.T, descriptor document.RenditionDescriptor
 	return document.ProcessingProfileV1{
 		ContractVersion: document.ProcessingProfileContractV1,
 		Rendition: &document.RenditionBindingV1{
-			AdapterContract: "epub.in-process/v1", AuthorizationFingerprint: hash("authorization"),
+			AdapterContract: "docbank-epub-rendition/v1", AuthorizationFingerprint: hash("authorization"),
 			CredentialBinding: "credential:none", DeploymentFingerprint: hash("deployment"),
 			Descriptor:            document.ProviderDescriptorV1{ID: descriptor.ID, Fingerprint: descriptor.Fingerprint},
 			DisclosureFingerprint: hash("rendition-disclosure"), MaxDocumentBytes: 1 << 20,

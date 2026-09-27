@@ -33,6 +33,8 @@ func TestOpenAPIDocumentOffline(t *testing.T) {
 		"getDocumentProcessingCoverage", "validateDocumentSearch", "searchDocuments",
 		"search", "createNode", "moveNode", "movePath", "trashNode", "trashPath", "restoreNode",
 		"storageStatus", "storagePack", "storageRepack", "ingest", "uploadFile", "listTrash", "emptyTrash", "gc", "verify", "appendNodeProvenance",
+		"createPhotoAsset", "getPhotoAsset", "getPhotoAssetByNode", "attachPhotoFile", "detachPhotoFile",
+		"excludePhotoAsset", "promotePhotoNode", "setPhotoDisplay", "getPhotoSettings", "setPhotoSettings",
 		"initBackupRepository", "createBackupSnapshot", "listBackupSnapshots", "listJobs"} {
 		assert.Contains(t, doc, op, "operation missing from OpenAPI doc")
 	}

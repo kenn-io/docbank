@@ -1804,7 +1804,7 @@ func TestPublishCollectsSupersededLexicalGenerationsWithoutCopyingText(t *testin
 // Those must be different locks: with one mutex, a publication in flight and
 // a concurrent purge each wait for the other until SQLite's busy timeout
 // fails the purge.
-func TestPublicationDoesNotDeadlockAgainstDerivativePurge(t *testing.T) {
+func TestPublicationDoesNotDeadlockAgainstDerivativePurge(t *testing.T) { //nolint:paralleltest // proves lock order through a real-time window
 	s, _ := newRenditionCatalogFixture(t)
 	ctx := t.Context()
 	build := catalogRenditionBuild(s, catalogProcessingProfile(t, false))
@@ -1844,7 +1844,7 @@ func TestPublicationDoesNotDeadlockAgainstDerivativePurge(t *testing.T) {
 // A standalone lease must not pin a generation that an in-flight publication
 // is about to collect. Acquisition waits for the publication to commit and
 // then pins the new head.
-func TestAcquireLexicalGenerationSerializesWithPublication(t *testing.T) {
+func TestAcquireLexicalGenerationSerializesWithPublication(t *testing.T) { //nolint:paralleltest // proves lock order through a real-time window
 	s, versions := newRenditionCatalogFixture(t)
 	ctx := t.Context()
 	profile := catalogProcessingProfile(t, false)

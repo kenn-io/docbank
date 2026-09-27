@@ -11,7 +11,7 @@ import (
 	"go.kenn.io/docbank/document"
 )
 
-func TestBackupCaptureFollowsBlobRootReferences(t *testing.T) {
+func TestBackupCaptureFollowsBlobRootReferences(t *testing.T) { //nolint:paralleltest // swaps the package-level blobRootReferences
 	s := newTestStore(t)
 	ctx := t.Context()
 	probe := fakeHash("267")

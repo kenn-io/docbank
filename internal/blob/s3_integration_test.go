@@ -308,7 +308,7 @@ func newS3TestClient(
 
 func writeS3TestProfile(t *testing.T, accessKey, secretKey string) string {
 	t.Helper()
-	const profile = "docbank-minio"
+	const profile = "docbank-s3"
 	credentialsPath := filepath.Join(t.TempDir(), "credentials")
 	require.NoError(t, os.WriteFile(credentialsPath, fmt.Appendf(nil,
 		"[%s]\naws_access_key_id = %s\naws_secret_access_key = %s\n",
@@ -328,7 +328,7 @@ func cleanupS3TestBucket(t *testing.T, client *s3.Client, bucket string) {
 			Bucket: aws.String(bucket), ContinuationToken: continuation,
 		})
 		if err != nil {
-			t.Logf("list MinIO cleanup objects: %v", err)
+			t.Logf("list S3 cleanup objects: %v", err)
 			return
 		}
 		for _, object := range page.Contents {
@@ -336,7 +336,7 @@ func cleanupS3TestBucket(t *testing.T, client *s3.Client, bucket string) {
 				Bucket: aws.String(bucket), Key: object.Key,
 			})
 			if err != nil {
-				t.Logf("delete MinIO cleanup object: %v", err)
+				t.Logf("delete S3 cleanup object: %v", err)
 			}
 		}
 		if page.IsTruncated == nil || !*page.IsTruncated {
@@ -347,7 +347,7 @@ func cleanupS3TestBucket(t *testing.T, client *s3.Client, bucket string) {
 	if _, err := client.DeleteBucket(ctx, &s3.DeleteBucketInput{
 		Bucket: aws.String(bucket),
 	}); err != nil {
-		t.Logf("delete MinIO test bucket: %v", err)
+		t.Logf("delete S3 test bucket: %v", err)
 	}
 }
 

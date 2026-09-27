@@ -41,22 +41,23 @@ type Set struct {
 }
 
 type Draft struct {
-	SetID                   string `json:"set_id"`
-	Revision                int64  `json:"revision"`
-	ETag                    int64  `json:"etag"`
-	InstructionsSHA256      string `json:"instructions_sha256"`
-	MemberHash              string `json:"member_hash"`
-	DecisionsSHA256         string `json:"decisions_sha256"`
-	RecipeID                string `json:"recipe_id"`
-	RecipeSHA256            string `json:"recipe_sha256"`
-	ProfileID               string `json:"profile_id"`
-	ProfileSHA256           string `json:"profile_sha256"`
-	DisclosureProfileID     string `json:"disclosure_profile_id"`
-	DisclosureProfileSHA256 string `json:"disclosure_profile_sha256"`
-	NumberingRecipeID       string `json:"numbering_recipe_id"`
-	NumberingRecipeSHA256   string `json:"numbering_recipe_sha256"`
-	State                   string `json:"state"`
-	MembershipSealed        bool   `json:"membership_sealed"`
+	SetID                   string          `json:"set_id"`
+	Revision                int64           `json:"revision"`
+	ETag                    int64           `json:"etag"`
+	InstructionsSHA256      string          `json:"instructions_sha256"`
+	MemberHash              string          `json:"member_hash"`
+	DecisionsSHA256         string          `json:"decisions_sha256"`
+	RecipeID                string          `json:"recipe_id"`
+	RecipeSHA256            string          `json:"recipe_sha256"`
+	ProfileID               string          `json:"profile_id"`
+	ProfileSHA256           string          `json:"profile_sha256"`
+	DisclosureProfileID     string          `json:"disclosure_profile_id"`
+	DisclosureProfileSHA256 string          `json:"disclosure_profile_sha256"`
+	NumberingRecipeID       string          `json:"numbering_recipe_id"`
+	NumberingRecipeSHA256   string          `json:"numbering_recipe_sha256"`
+	Policy                  PolicySelection `json:"policy"`
+	State                   string          `json:"state"`
+	MembershipSealed        bool            `json:"membership_sealed"`
 }
 
 type CreateRequest struct {
@@ -67,6 +68,8 @@ type CreateRequest struct {
 	ProfileID           string `json:"profile_id,omitzero"`
 	DisclosureProfileID string `json:"disclosure_profile_id,omitzero"`
 	NumberingRecipeID   string `json:"numbering_recipe_id,omitzero"`
+	PolicyID            string `json:"policy_id,omitzero"`
+	PolicyVersion       int64  `json:"policy_version,omitzero"`
 }
 
 type Change struct {
@@ -80,6 +83,8 @@ type Change struct {
 	ProfileID           string    `json:"profile_id,omitzero"`
 	DisclosureProfileID string    `json:"disclosure_profile_id,omitzero"`
 	NumberingRecipeID   string    `json:"numbering_recipe_id,omitzero"`
+	PolicyID            string    `json:"policy_id,omitzero"`
+	PolicyVersion       int64     `json:"policy_version,omitzero"`
 }
 
 type ApplyRequest struct {
@@ -115,7 +120,8 @@ func ValidateCreateRequest(value CreateRequest) error {
 		return errors.New("invalid production-set create request")
 	}
 	if !validOptionalCatalogID(value.RecipeID) || !validOptionalCatalogID(value.ProfileID) ||
-		!validOptionalCatalogID(value.DisclosureProfileID) || !validOptionalCatalogID(value.NumberingRecipeID) {
+		!validOptionalCatalogID(value.DisclosureProfileID) || !validOptionalCatalogID(value.NumberingRecipeID) ||
+		!validOptionalPolicyReference(value.PolicyID, value.PolicyVersion) {
 		return errors.New("invalid production-set catalog reference")
 	}
 	return nil
@@ -135,7 +141,7 @@ func ValidateDraft(value Draft) error {
 		!canonical.IsSHA256Hex(value.InstructionsSHA256) || !canonical.IsSHA256Hex(value.MemberHash) ||
 		!canonical.IsSHA256Hex(value.DecisionsSHA256) || !canonical.IsSHA256Hex(value.RecipeSHA256) ||
 		!canonical.IsSHA256Hex(value.ProfileSHA256) || !canonical.IsSHA256Hex(value.DisclosureProfileSHA256) ||
-		!canonical.IsSHA256Hex(value.NumberingRecipeSHA256) ||
+		!canonical.IsSHA256Hex(value.NumberingRecipeSHA256) || !validPolicySelection(value.Policy) ||
 		!validOptionalCatalogID(value.RecipeID) || !validOptionalCatalogID(value.ProfileID) ||
 		!validOptionalCatalogID(value.DisclosureProfileID) || !validOptionalCatalogID(value.NumberingRecipeID) ||
 		value.RecipeID == "" || value.ProfileID == "" || value.DisclosureProfileID == "" ||
@@ -200,16 +206,20 @@ func ValidateChange(value Change) error {
 			return errors.New("invalid decision removal")
 		}
 	case "mode":
-		if !canonicalUUIDv4(value.MemberID) || !validMode(value.Mode) || value.Member != nil || value.Decision != nil || value.DecisionID != "" || value.RecipeID != "" || value.ProfileID != "" || value.DisclosureProfileID != "" || value.NumberingRecipeID != "" {
+		if !canonicalUUIDv4(value.MemberID) || !validMode(value.Mode) || value.Member != nil || value.Decision != nil || value.DecisionID != "" || value.RecipeID != "" || value.ProfileID != "" || value.DisclosureProfileID != "" || value.NumberingRecipeID != "" || value.PolicyID != "" || value.PolicyVersion != 0 {
 			return errors.New("invalid member mode change")
 		}
 	case "recipe":
-		if value.RecipeID != RecipeID300DPI && value.RecipeID != RecipeID600DPI || hasIdentityOrPayload(value) || value.ProfileID != "" || value.DisclosureProfileID != "" || value.NumberingRecipeID != "" {
+		if value.RecipeID != RecipeID300DPI && value.RecipeID != RecipeID600DPI || hasIdentityOrPayload(value) || value.ProfileID != "" || value.DisclosureProfileID != "" || value.NumberingRecipeID != "" || value.PolicyID != "" || value.PolicyVersion != 0 {
 			return errors.New("invalid recipe change")
 		}
 	case "profile":
-		if hasIdentityOrPayload(value) || value.RecipeID != "" || !validOptionalCatalogID(value.ProfileID) || !validOptionalCatalogID(value.DisclosureProfileID) || !validOptionalCatalogID(value.NumberingRecipeID) {
+		if hasIdentityOrPayload(value) || value.RecipeID != "" || !validOptionalCatalogID(value.ProfileID) || !validOptionalCatalogID(value.DisclosureProfileID) || !validOptionalCatalogID(value.NumberingRecipeID) || value.PolicyID != "" || value.PolicyVersion != 0 {
 			return errors.New("invalid profile change")
+		}
+	case "policy":
+		if hasIdentityOrPayload(value) || value.RecipeID != "" || value.ProfileID != "" || value.DisclosureProfileID != "" || value.NumberingRecipeID != "" || !validRequiredPolicyReference(value.PolicyID, value.PolicyVersion) {
+			return errors.New("invalid policy change")
 		}
 	default:
 		return errors.New("unknown production change kind")
@@ -224,7 +234,7 @@ func ValidateMember(value Member) error {
 		!canonical.IsSHA256Hex(value.MapSHA256) || !canonical.IsSHA256Hex(value.PageInventorySHA256) || !validMode(value.Mode) {
 		return errors.New("invalid production member")
 	}
-	if err := validateFamilyContext(value.Family, value.SourceVersionID); err != nil {
+	if err := ValidateFamilyContext(value.Family, value.SourceVersionID); err != nil {
 		return err
 	}
 	if value.Reviewed != (canonical.IsSHA256Hex(value.ReviewBinding)) || !value.Reviewed && value.ReviewBinding != "" {
@@ -233,7 +243,7 @@ func ValidateMember(value Member) error {
 	return nil
 }
 
-func validateFamilyContext(value FamilyContext, sourceVersionID string) error {
+func ValidateFamilyContext(value FamilyContext, sourceVersionID string) error {
 	if !canonicalUUIDv4(value.RootVersionID) {
 		return errors.New("invalid production member family root")
 	}
@@ -256,6 +266,18 @@ func validMode(value string) bool { return value == "redact_selected" || value =
 
 func validOptionalCatalogID(value string) bool {
 	return value == "" || len(value) <= 128 && productionCatalogIDPattern.MatchString(value)
+}
+
+func validPolicySelection(value PolicySelection) bool {
+	return validRequiredPolicyReference(value.PolicyID, value.Version) && canonical.IsSHA256Hex(value.PolicySHA256)
+}
+
+func validOptionalPolicyReference(id string, version int64) bool {
+	return id == "" && version == 0 || validRequiredPolicyReference(id, version)
+}
+
+func validRequiredPolicyReference(id string, version int64) bool {
+	return canonicalUUIDv4(id) && version > 0
 }
 
 func invalidProductionText(value string, maximum int, emptyAllowed bool) bool {
@@ -287,9 +309,9 @@ func hasIdentityOrPayload(value Change) bool {
 }
 
 func hasNonMemberChangeFields(value Change) bool {
-	return value.Decision != nil || value.DecisionID != "" || value.Mode != "" || value.RecipeID != "" || value.ProfileID != "" || value.DisclosureProfileID != "" || value.NumberingRecipeID != ""
+	return value.Decision != nil || value.DecisionID != "" || value.Mode != "" || value.RecipeID != "" || value.ProfileID != "" || value.DisclosureProfileID != "" || value.NumberingRecipeID != "" || value.PolicyID != "" || value.PolicyVersion != 0
 }
 
 func hasNonDecisionChangeFields(value Change) bool {
-	return value.MemberID != "" || value.Member != nil || value.Mode != "" || value.RecipeID != "" || value.ProfileID != "" || value.DisclosureProfileID != "" || value.NumberingRecipeID != ""
+	return value.MemberID != "" || value.Member != nil || value.Mode != "" || value.RecipeID != "" || value.ProfileID != "" || value.DisclosureProfileID != "" || value.NumberingRecipeID != "" || value.PolicyID != "" || value.PolicyVersion != 0
 }

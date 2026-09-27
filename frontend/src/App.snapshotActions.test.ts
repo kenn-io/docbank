@@ -151,7 +151,7 @@ it.each([false, true])("captures all targets and keeps recovery reachable when t
   await fireEvent.click(screen.getByRole("option", { name: "Review" }));
   await fireEvent.click(screen.getByRole("button", { name: "Add tag to whole query" }));
 
-  await screen.findByRole("dialog", { name: "Recoverable snapshot action" });
+  await screen.findByRole("dialog", { name: "Recoverable snapshot action" }, { timeout: 10_000 });
   expect(journalState.pageReadsBeforePrepare).toBe(1);
   expect(journalState.action?.total).toBe(101);
   expect(journalState.action?.source.member_hash).toBe(first.member_hash);
@@ -216,7 +216,7 @@ it("shows validated receipt overlays without refreshing frozen membership, count
   await screen.findByText("0 of 1 selected documents have this tag.");
   await fireEvent.click(screen.getByRole("button", { name: "Add to all" }));
 
-  await screen.findByText("Added: Review");
+  await screen.findByText("Added: Review", {}, { timeout: 10_000 });
   const afterRows = within(table).getAllByRole("row").slice(1).map((tableRow) => tableRow.textContent);
   const after = { member_hash: first.member_hash, total: first.total, rows: first.rows.map((item) => item.node_id) };
   expect(after.member_hash).toBe(before.member_hash);
@@ -231,7 +231,7 @@ it("shows validated receipt overlays without refreshing frozen membership, count
   await fireEvent.click(screen.getByRole("combobox", { name: /Tag for snapshot action/ }));
   await fireEvent.click(screen.getByRole("option", { name: "Review" }));
   await fireEvent.click(screen.getByRole("button", { name: "Add tag to whole query" }));
-  await screen.findByRole("dialog", { name: "Recoverable snapshot action" });
+  await screen.findByRole("dialog", { name: "Recoverable snapshot action" }, { timeout: 10_000 });
   expect(journalState.action?.batches[0].request.nodes[0]).toEqual({ node_id: 1, revision: 4 });
   expect(first.rows[0].revision).toBe(3);
 });

@@ -36,6 +36,7 @@ type Server struct {
 type ServerOptions struct {
 	AllowProcessing    bool
 	AllowPackageWrites bool
+	AllowPhotoEdits    bool
 	Logger             *slog.Logger
 }
 
@@ -78,10 +79,10 @@ func newServerWithOptionsAndDaemon(
 			Resources: &sdkmcp.ResourceCapabilities{},
 			Tools:     &sdkmcp.ToolCapabilities{},
 		},
-		Instructions: catalogInstructions(options.AllowProcessing, options.AllowPackageWrites),
+		Instructions: catalogInstructions(options.AllowProcessing, options.AllowPackageWrites, options.AllowPhotoEdits),
 	})
 	plans := newProcessingPlanRegistry()
-	registerToolCatalog(sdk, options.AllowProcessing, options.AllowPackageWrites, daemon, plans, logger)
+	registerToolCatalog(sdk, options.AllowProcessing, options.AllowPackageWrites, options.AllowPhotoEdits, daemon, plans, logger)
 	registerResourceSurface(sdk, daemon, logger)
 	sdk.AddReceivingMiddleware(normalizeDiscovery)
 	sdk.AddReceivingMiddleware(normalizeToolCatalog)

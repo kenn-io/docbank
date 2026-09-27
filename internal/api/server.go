@@ -230,6 +230,7 @@ func NewServer(d Deps) *Server {
 	registerMediaRoutes(mux, humaAPI, d, g)
 	registerPackageRoutes(mux, humaAPI, d, g)
 	registerBatesRoutes(mux, humaAPI, d, g, s.webDownloads, s.webSessions, cursorService)
+	registerPhotoRoutes(humaAPI, d, g)
 	clearLongRunningBodyReadDeadlines(humaAPI)
 	markRevisionPreconditionsRequired(humaAPI)
 	registerDaemonOpenAPI(humaAPI)
@@ -342,6 +343,11 @@ func markRevisionPreconditionsRequired(api huma.API) {
 		{"/api/v1/saved-queries/{saved_query_id}", http.MethodPatch},
 		{"/api/v1/saved-queries/{saved_query_id}", http.MethodDelete},
 		{"/api/v1/saved-queries/{saved_query_id}/runs", http.MethodPost},
+		{"/api/v1/photos/assets/{asset_id}/files", http.MethodPost},
+		{"/api/v1/photos/assets/{asset_id}/files/{file_id}", http.MethodDelete},
+		{"/api/v1/photos/assets/{asset_id}/exclude", http.MethodPost},
+		{"/api/v1/photos/assets/{asset_id}/display", http.MethodPut},
+		{"/api/v1/photos/settings", http.MethodPut},
 	} {
 		markDocumentedHeaderRequired(api, route.path, route.method, "If-Match")
 	}

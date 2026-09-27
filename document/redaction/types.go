@@ -178,6 +178,15 @@ type ReviewInput struct {
 	ResolvedSHA256      string `json:"resolved_sha256"`
 }
 
+// PolicySelection pins the immutable production policy selected for a draft.
+// API commands name an ID and version; the service resolves and stores SHA256
+// before the draft can become authority.
+type PolicySelection struct {
+	PolicyID     string `json:"policy_id"`
+	Version      int64  `json:"version"`
+	PolicySHA256 string `json:"policy_sha256"`
+}
+
 type Endorsement struct {
 	Kind                string `json:"kind"`
 	Text                string `json:"text"`

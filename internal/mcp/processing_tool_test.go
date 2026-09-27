@@ -122,7 +122,7 @@ func TestStartProcessingEnqueuesOnceWithoutWaitingForProgress(t *testing.T) {
 		assert.Equal(t, "queued", output["state"])
 		assert.EqualValues(t, 0, output["ttlMs"])
 		assert.Equal(t, "private", output["cacheScope"])
-		assertSchemaAccepts(t, catalogMap(toolCatalog(true, false))["start_processing"].OutputSchema, output)
+		assertSchemaAccepts(t, catalogMap(toolCatalog(true, false, false))["start_processing"].OutputSchema, output)
 	case <-t.Context().Done():
 		t.Fatal("start_processing waited for terminal progress instead of returning the durable enqueue")
 	}
@@ -174,7 +174,7 @@ func TestStartProcessingWireResultMatchesPublishedSchema(t *testing.T) {
 
 	result := callProcessingTool(t, server, testProcessingPlanFingerprint)
 	output := objectField(t, result, "structuredContent")
-	assertSchemaAccepts(t, catalogMap(toolCatalog(true, false))["start_processing"].OutputSchema, output)
+	assertSchemaAccepts(t, catalogMap(toolCatalog(true, false, false))["start_processing"].OutputSchema, output)
 	assert.Equal(t, "queued", output["state"])
 	assert.NotContains(t, result, "status")
 	assert.NotContains(t, result, "progress")

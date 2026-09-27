@@ -5,6 +5,7 @@
 package winsecurity
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -72,11 +73,11 @@ func MkdirPrivatePinnedAt(parent *os.Root, component string) (*os.File, error) {
 		0,
 		0,
 	)
-	if err == windows.STATUS_OBJECT_NAME_COLLISION {
+	if errors.Is(err, windows.STATUS_OBJECT_NAME_COLLISION) {
 		return nil, fmt.Errorf("private directory %q: %w", component, os.ErrExist)
 	}
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("creating private directory %q: %w", component, err)
 	}
 	return os.NewFile(uintptr(handle), component), nil
 }
@@ -154,7 +155,7 @@ func openCurrentUserFileHandle(path string, access uint32) (windows.Handle, erro
 	}
 	path16, err := windows.UTF16PtrFromString(extended)
 	if err != nil {
-		return 0, err
+		return 0, fmt.Errorf("encoding %s: %w", path, err)
 	}
 	handle, err := windows.CreateFile(
 		path16,
@@ -166,7 +167,7 @@ func openCurrentUserFileHandle(path string, access uint32) (windows.Handle, erro
 		0,
 	)
 	if err != nil {
-		return 0, err
+		return 0, fmt.Errorf("opening %s: %w", path, err)
 	}
 	if err := validateCurrentUserFileHandle(path, handle); err != nil {
 		_ = windows.CloseHandle(handle)
@@ -178,7 +179,7 @@ func openCurrentUserFileHandle(path string, access uint32) (windows.Handle, erro
 func validateCurrentUserFileHandle(path string, handle windows.Handle) error {
 	var info windows.ByHandleFileInformation
 	if err := windows.GetFileInformationByHandle(handle, &info); err != nil {
-		return err
+		return fmt.Errorf("reading %s file information: %w", path, err)
 	}
 	if info.FileAttributes&windows.FILE_ATTRIBUTE_REPARSE_POINT != 0 {
 		return fmt.Errorf("%s is a reparse point", path)
@@ -192,11 +193,11 @@ func validateCurrentUserFileHandle(path string, handle windows.Handle) error {
 		windows.OWNER_SECURITY_INFORMATION,
 	)
 	if err != nil {
-		return err
+		return fmt.Errorf("reading %s owner: %w", path, err)
 	}
 	owner, _, err := descriptor.Owner()
 	if err != nil {
-		return err
+		return fmt.Errorf("decoding %s owner: %w", path, err)
 	}
 	user, err := currentUserSID()
 	if err != nil {
@@ -232,7 +233,7 @@ func validateRestrictedDACL(path string, handle windows.Handle) error {
 	if err != nil {
 		return fmt.Errorf("resolving trusted Windows principals: %w", err)
 	}
-	for i := uint16(0); i < dacl.AceCount; i++ {
+	for i := range dacl.AceCount {
 		var ace *windows.ACCESS_ALLOWED_ACE
 		if err := windows.GetAce(dacl, uint32(i), &ace); err != nil {
 			return fmt.Errorf("reading %s DACL entry: %w", path, err)
@@ -240,7 +241,7 @@ func validateRestrictedDACL(path string, handle windows.Handle) error {
 		if ace.Header.AceType != windows.ACCESS_ALLOWED_ACE_TYPE {
 			return fmt.Errorf("%s DACL contains a non-allow entry", path)
 		}
-		sid := (*windows.SID)(unsafe.Pointer(&ace.SidStart))
+		sid := (*windows.SID)(unsafe.Pointer(&ace.SidStart)) // #nosec G103 -- the ACE's SID begins at SidStart, per the Windows ACE layout.
 		if !sidIn(sid, allowed) {
 			return fmt.Errorf("%s DACL grants access to an unexpected principal", path)
 		}
@@ -255,11 +256,11 @@ func trustedSIDs() ([]*windows.SID, error) {
 	}
 	system, err := windows.CreateWellKnownSid(windows.WinLocalSystemSid)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("creating LocalSystem SID: %w", err)
 	}
 	admins, err := windows.CreateWellKnownSid(windows.WinBuiltinAdministratorsSid)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("creating Administrators SID: %w", err)
 	}
 	return []*windows.SID{user, system, admins}, nil
 }
@@ -267,7 +268,7 @@ func trustedSIDs() ([]*windows.SID, error) {
 func currentUserSID() (*windows.SID, error) {
 	user, err := windows.GetCurrentProcessToken().GetTokenUser()
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("reading current token user: %w", err)
 	}
 	return user.User.Sid, nil
 }
@@ -280,23 +281,28 @@ func currentTokenOwnerSID() (*windows.SID, error) {
 	token := windows.GetCurrentProcessToken()
 	size := uint32(64)
 	for {
-		buffer := make([]byte, size)
+		capacity := size
+		buffer := make([]byte, capacity)
 		err := windows.GetTokenInformation(
 			token,
 			windows.TokenOwner,
 			&buffer[0],
-			uint32(len(buffer)),
+			capacity,
 			&size,
 		)
 		if err == nil {
-			owner := (*tokenOwner)(unsafe.Pointer(&buffer[0]))
+			owner := (*tokenOwner)(unsafe.Pointer(&buffer[0])) // #nosec G103 -- GetTokenInformation fills the buffer with a TOKEN_OWNER structure.
 			if owner.Owner == nil {
-				return nil, fmt.Errorf("current token owner is missing")
+				return nil, errors.New("current token owner is missing")
 			}
-			return owner.Owner.Copy()
+			sid, err := owner.Owner.Copy()
+			if err != nil {
+				return nil, fmt.Errorf("copying current token owner SID: %w", err)
+			}
+			return sid, nil
 		}
-		if err != windows.ERROR_INSUFFICIENT_BUFFER || size <= uint32(len(buffer)) {
-			return nil, err
+		if !errors.Is(err, windows.ERROR_INSUFFICIENT_BUFFER) || size <= capacity {
+			return nil, fmt.Errorf("reading current token owner: %w", err)
 		}
 	}
 }
@@ -321,8 +327,8 @@ func ExtendedLengthPath(path string) (string, error) {
 	if strings.HasPrefix(abs, `\\?\`) || strings.HasPrefix(abs, `\\.\`) {
 		return abs, nil
 	}
-	if strings.HasPrefix(abs, `\\`) {
-		return `\\?\UNC\` + strings.TrimPrefix(abs, `\\`), nil
+	if rest, ok := strings.CutPrefix(abs, `\\`); ok {
+		return `\\?\UNC\` + rest, nil
 	}
 	return `\\?\` + abs, nil
 }

@@ -14,6 +14,7 @@ const (
 	packageIDField        = "package_id"
 	schemaStateField      = "state"
 	schemaLimitField      = "limit"
+	schemaCreatedAtField  = "created_at"
 	jsonSchemaConst       = "const"
 	maxToolResponseBytes  = 1 << 20
 	maxToolErrorBytes     = 1024
@@ -108,8 +109,8 @@ func packageImportOutputSchema() schema {
 		"preflight_id": uuidSchema(), schemaStateField: enumSchema("queued", "running", "complete", "partial", "failed", "cancelled"),
 		"committed": integerSchema(0, 100_000), "total": integerSchema(1, 100_000),
 		"gap_count": integerSchema(0, 100_000), "gaps": arraySchema(stringSchema(4096), 100),
-		"created_at": dateTimeSchema(), "updated_at": dateTimeSchema(),
-	}), cacheRequired("operation_id", "job_id", packageIDField, "preflight_id", schemaStateField, "committed", "total", "gap_count", "created_at", "updated_at")...)
+		schemaCreatedAtField: dateTimeSchema(), "updated_at": dateTimeSchema(),
+	}), cacheRequired("operation_id", "job_id", packageIDField, "preflight_id", schemaStateField, "committed", "total", "gap_count", schemaCreatedAtField, "updated_at")...)
 }
 
 func getPackageImportSchemas() (schema, schema) {
@@ -141,9 +142,9 @@ func packagePreflightOutputSchema() schema {
 		"volumes": arraySchema(schema{"type": "object"}, 64), "records": integerSchema(0, 100_000),
 		"pages": integerSchema(0, 1_000_000), "diagnostic_count": integerSchema(0, 0),
 		"diagnostics": arraySchema(packageDiagnosticSchema(), maxPackageDiagnostics), "blocking": booleanSchema(),
-		"created_at": dateTimeSchema(), "expires_at": dateTimeSchema(),
+		schemaCreatedAtField: dateTimeSchema(), "expires_at": dateTimeSchema(),
 	}), cacheRequired("preflight_id", "source_kind", "source_ref", "profile_sha256", "mapping_sha256",
-		"manifest_sha256", "volumes", "records", "pages", "diagnostic_count", "diagnostics", "blocking", "created_at", "expires_at")...)
+		"manifest_sha256", "volumes", "records", "pages", "diagnostic_count", "diagnostics", "blocking", schemaCreatedAtField, "expires_at")...)
 }
 
 func preflightLoadFilePackageSchemas() (schema, schema) {
@@ -246,12 +247,12 @@ func getPackageSchemas() (schema, schema) {
 		"manifest_sha256": sha256Schema(), "manifest_blob_sha256": sha256Schema(),
 		"predecessor_package_id": uuidSchema(), "relation": stringSchema(64), "ingest_id": uuidSchema(),
 		"export_plan_id": uuidSchema(), "produced_on": dateTimeSchema(), schemaStateField: stringSchema(32),
-		"created_at": dateTimeSchema(), "completed_at": dateTimeSchema(),
+		schemaCreatedAtField: dateTimeSchema(), "completed_at": dateTimeSchema(),
 		"member_count": integerSchema(0, 100_000), "page_count": integerSchema(0, 1_000_000),
 		"profile_json": stringSchema(1 << 20), "mapping_json": stringSchema(1 << 20),
 		"volumes": arraySchema(schema{"type": "object"}, 64),
 	}), cacheRequired(packageIDField, "direction", "package_name", "party_label", "profile_sha256",
-		"mapping_sha256", "manifest_sha256", "manifest_blob_sha256", schemaStateField, "created_at",
+		"mapping_sha256", "manifest_sha256", "manifest_blob_sha256", schemaStateField, schemaCreatedAtField,
 		"member_count", "page_count", "profile_json", "mapping_json", "volumes")...)
 }
 
@@ -291,8 +292,8 @@ func batesNamespaceSchema() schema {
 	return objectSchema(schema{
 		"namespace_id": uuidSchema(), "prefix": stringSchema(maxBatesAffixChars),
 		"suffix": stringSchema(maxBatesAffixChars), "padding": integerSchema(1, pdfstamp.MaxPadding),
-		"created_at": dateTimeSchema(),
-	}, "namespace_id", "prefix", "suffix", "padding", "created_at")
+		schemaCreatedAtField: dateTimeSchema(),
+	}, "namespace_id", "prefix", "suffix", "padding", schemaCreatedAtField)
 }
 
 func batesPageLabelSchema() schema {
@@ -329,10 +330,10 @@ func batesAllocationOutputSchema() schema {
 		"allocation_id": uuidSchema(), "namespace_id": uuidSchema(), "snapshot_id": uuidSchema(),
 		"recipe_sha256": sha256Schema(), schemaStateField: enumSchema("reserved", "committed"),
 		"start_sequence": integerSchema(1, 0), "end_sequence": integerSchema(1, 0),
-		"labels": arraySchema(batesPageLabelSchema(), maxBatesLabels), "created_at": dateTimeSchema(),
+		"labels": arraySchema(batesPageLabelSchema(), maxBatesLabels), schemaCreatedAtField: dateTimeSchema(),
 		"committed_at": dateTimeSchema(),
 	}), cacheRequired("allocation_id", "namespace_id", "snapshot_id", "recipe_sha256", schemaStateField,
-		"start_sequence", "end_sequence", "labels", "created_at")...)
+		"start_sequence", "end_sequence", "labels", schemaCreatedAtField)...)
 }
 
 func listBatesNamespacesSchemas() (schema, schema) {
@@ -351,8 +352,8 @@ func ensureBatesNamespaceSchemas() (schema, schema) {
 		}, "prefix", "padding"), rootObjectSchema(withPrivateCache(schema{
 			"namespace_id": uuidSchema(), "prefix": stringSchema(maxBatesAffixChars),
 			"suffix": stringSchema(maxBatesAffixChars), "padding": integerSchema(1, pdfstamp.MaxPadding),
-			"created_at": dateTimeSchema(),
-		}), cacheRequired("namespace_id", "prefix", "suffix", "padding", "created_at")...)
+			schemaCreatedAtField: dateTimeSchema(),
+		}), cacheRequired("namespace_id", "prefix", "suffix", "padding", schemaCreatedAtField)...)
 }
 
 func previewBatesStampSchemas() (schema, schema) {
@@ -381,14 +382,14 @@ func batesExportProperties() schema {
 		"size": integerSchema(1, 0), "media_type": schema{"type": "string", jsonSchemaConst: batesExportMediaType},
 		"page_count": integerSchema(1, maxBatesLabels), "recipe_sha256": sha256Schema(),
 		"manifest_sha256": sha256Schema(), schemaStateField: schema{"type": "string", jsonSchemaConst: "verified"},
-		"created_at": dateTimeSchema(), "pages": arraySchema(batesExportPageReceiptSchema(), maxBatesLabels),
+		schemaCreatedAtField: dateTimeSchema(), "pages": arraySchema(batesExportPageReceiptSchema(), maxBatesLabels),
 	}
 }
 
 func batesExportOutputSchema() schema {
 	return rootObjectSchema(withPrivateCache(batesExportProperties()), cacheRequired(
 		"artifact_id", "allocation_id", "blob_sha256", "size", "media_type", "page_count",
-		"recipe_sha256", "manifest_sha256", schemaStateField, "created_at", "pages")...)
+		"recipe_sha256", "manifest_sha256", schemaStateField, schemaCreatedAtField, "pages")...)
 }
 
 func batesRecipeSchema() schema {
@@ -414,7 +415,7 @@ func batesRecipeSchema() schema {
 func listBatesExportsSchemas() (schema, schema) {
 	input := rootObjectSchema(schema{"after": uuidSchema(), schemaLimitField: integerSchema(1, maxBatesLabels)})
 	output := rootObjectSchema(withPrivateCache(schema{
-		"items": arraySchema(objectSchema(batesExportProperties(), "artifact_id", "allocation_id", "blob_sha256", "size", "media_type", "page_count", "recipe_sha256", "manifest_sha256", schemaStateField, "created_at", "pages"), maxBatesLabels),
+		"items": arraySchema(objectSchema(batesExportProperties(), "artifact_id", "allocation_id", "blob_sha256", "size", "media_type", "page_count", "recipe_sha256", "manifest_sha256", schemaStateField, schemaCreatedAtField, "pages"), maxBatesLabels),
 		"total": integerSchema(0, 0), "next_after": uuidSchema(),
 	}), cacheRequired("items", "total")...)
 	return input, output
@@ -449,9 +450,9 @@ func findBatesExportsSchemas() (schema, schema) {
 		"artifact_id": uuidSchema(), "allocation_id": uuidSchema(), "snapshot_id": uuidSchema(),
 		"blob_sha256": sha256Schema(), "size": integerSchema(1, 0), "media_type": schema{"type": "string", jsonSchemaConst: batesExportMediaType},
 		"page_count": integerSchema(1, 1_000_000), "manifest_sha256": sha256Schema(), schemaStateField: enumSchema("verified"),
-		"created_at": dateTimeSchema(), "evidence": arraySchema(evidence, maxBatesCandidateEvidence),
+		schemaCreatedAtField: dateTimeSchema(), "evidence": arraySchema(evidence, maxBatesCandidateEvidence),
 		"evidence_truncated": booleanSchema(), "evidence_cursor": stringSchema(maxCursorCharacters),
-	}, "artifact_id", "allocation_id", "snapshot_id", "blob_sha256", "size", "media_type", "page_count", "manifest_sha256", schemaStateField, "created_at", "evidence", "evidence_truncated")
+	}, "artifact_id", "allocation_id", "snapshot_id", "blob_sha256", "size", "media_type", "page_count", "manifest_sha256", schemaStateField, schemaCreatedAtField, "evidence", "evidence_truncated")
 	return input, rootObjectSchema(withPrivateCache(schema{
 		"items": arraySchema(candidate, 250), "next_cursor": stringSchema(maxCursorCharacters),
 	}), cacheRequired("items")...)
@@ -768,4 +769,86 @@ func startProcessingSchemas() (schema, schema) {
 		"content_version_id": uuidSchema(), schemaStateField: schema{"type": "string", jsonSchemaConst: "queued"},
 	}), cacheRequired("job_id", "embedding_job_ids", "profile_fingerprint", "content_version_id", schemaStateField)...)
 	return input, output
+}
+
+func photoFileSchema() schema {
+	return objectSchema(schema{
+		"id":                 uuidSchema(),
+		"asset_id":           uuidSchema(),
+		"node_id":            integerSchema(1, 0),
+		"role":               enumSchema("raw", "image", "video", "sidecar"),
+		"sidecar_of_file_id": uuidSchema(),
+		schemaCreatedAtField: dateTimeSchema(),
+	}, "id", "asset_id", "node_id", "role", schemaCreatedAtField)
+}
+
+func photoAssetOutputSchema() schema {
+	return rootObjectSchema(withPrivateCache(schema{
+		"id":                       uuidSchema(),
+		"kind":                     enumSchema("photo", "video"),
+		"revision":                 integerSchema(1, 0),
+		"excluded_at":              dateTimeSchema(),
+		"display_file_id":          uuidSchema(),
+		"display_override_file_id": uuidSchema(),
+		"display_source":           enumSchema("asset", "vault", "default", "none"),
+		schemaCreatedAtField:       dateTimeSchema(),
+		"updated_at":               dateTimeSchema(),
+		"files":                    arraySchema(photoFileSchema(), 256),
+	}), "id", "kind", "revision", "display_source", schemaCreatedAtField, "updated_at", "files", "ttlMs", "cacheScope")
+}
+
+func photoAssetMutationSchemas(properties schema, required ...string) (schema, schema) {
+	input := rootObjectSchema(properties, required...)
+	return input, photoAssetOutputSchema()
+}
+
+func getPhotoAssetSchemas() (schema, schema) {
+	return photoAssetMutationSchemas(schema{
+		"asset_id": uuidSchema(),
+		"node_id":  integerSchema(1, 0),
+	})
+}
+
+func createPhotoAssetSchemas() (schema, schema) {
+	return photoAssetMutationSchemas(schema{
+		"node_id": integerSchema(1, 0),
+		"kind":    enumSchema("photo", "video"),
+		"role":    enumSchema("raw", "image", "video", "sidecar"),
+	}, "node_id")
+}
+
+func attachPhotoFileSchemas() (schema, schema) {
+	return photoAssetMutationSchemas(schema{
+		"asset_id":           uuidSchema(),
+		"revision":           integerSchema(1, 0),
+		"node_id":            integerSchema(1, 0),
+		"role":               enumSchema("raw", "image", "video", "sidecar"),
+		"sidecar_of_file_id": uuidSchema(),
+	}, "asset_id", "revision", "node_id")
+}
+
+func detachPhotoFileSchemas() (schema, schema) {
+	return photoAssetMutationSchemas(schema{
+		"asset_id":                 uuidSchema(),
+		"revision":                 integerSchema(1, 0),
+		"file_id":                  uuidSchema(),
+		"clear_dependent_sidecars": booleanSchema(),
+	}, "asset_id", "revision", "file_id")
+}
+
+func excludePhotoAssetSchemas() (schema, schema) {
+	return photoAssetMutationSchemas(schema{
+		"asset_id": uuidSchema(),
+		"revision": integerSchema(1, 0),
+		"excluded": booleanSchema(),
+	}, "asset_id", "revision", "excluded")
+}
+
+func promotePhotoNodeSchemas() (schema, schema) {
+	return photoAssetMutationSchemas(schema{
+		"node_id":  integerSchema(1, 0),
+		"revision": integerSchema(1, 0),
+		"kind":     enumSchema("photo", "video"),
+		"role":     enumSchema("raw", "image", "video", "sidecar"),
+	}, "node_id")
 }

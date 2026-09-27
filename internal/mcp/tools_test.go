@@ -21,7 +21,7 @@ import (
 )
 
 func TestDefaultToolCatalogIsFixedBoundedAndReadOnly(t *testing.T) {
-	tools := toolCatalog(false, false)
+	tools := toolCatalog(false, false, false)
 	wantNames := []string{
 		"get_vault_info", "list_documents", "search_documents", "get_document",
 		"list_document_versions", "read_rendition_text", "get_processing_plan",
@@ -31,7 +31,7 @@ func TestDefaultToolCatalogIsFixedBoundedAndReadOnly(t *testing.T) {
 		"list_packages", "get_package", "list_package_members", "get_package_record",
 		"lookup_bates_label",
 		"list_bates_namespaces", "preview_bates_stamp", "get_bates_allocation",
-		"list_bates_exports", "get_bates_export", "find_bates_exports",
+		"list_bates_exports", "get_bates_export", "find_bates_exports", "get_photo_asset",
 	}
 	require.Len(t, tools, len(wantNames))
 	for index, tool := range tools {
@@ -41,16 +41,16 @@ func TestDefaultToolCatalogIsFixedBoundedAndReadOnly(t *testing.T) {
 		assert.True(t, tool.Annotations.IdempotentHint)
 		assert.Equal(t, new(false), tool.Annotations.DestructiveHint)
 		assert.Equal(t, new(false), tool.Annotations.OpenWorldHint)
-		assertSchemaContract(t, tool.InputSchema, true)
-		assertSchemaContract(t, tool.OutputSchema, true)
+		assertSchemaContract(t, tool.InputSchema)
+		assertSchemaContract(t, tool.OutputSchema)
 		assert.Equal(t, map[string]any{"maxResponseBytes": maxToolResponseBytes}, tool.Meta["io.docbank/bounds"])
 	}
 	assert.NotContains(t, catalogNames(tools), "start_processing")
 }
 
 func TestWriteToolsAreIndependentConstructionTimeOptIns(t *testing.T) {
-	readOnly := catalogNames(toolCatalog(false, false))
-	enabledTools := toolCatalog(true, true)
+	readOnly := catalogNames(toolCatalog(false, false, false))
+	enabledTools := toolCatalog(true, true, false)
 	enabled := catalogNames(enabledTools)
 	require.Equal(t, append(append([]string{}, readOnly...), "start_processing", "preflight_load_file_package", "start_package_import",
 		"resolve_package_custodian", "assign_package_custodian", "ensure_bates_namespace", "reserve_bates_range", "publish_bates_export",
@@ -102,7 +102,7 @@ func TestToolsListTransmitsRegisteredSchemasAnnotationsAndBounds(t *testing.T) {
 	assert.Equal(t, "complete", listed["resultType"])
 	assert.Empty(t, listed["nextCursor"])
 	wireTools := listedToolsByName(t, listed)
-	registered := catalogMap(toolCatalog(true, true))
+	registered := catalogMap(toolCatalog(true, true, false))
 	require.Len(t, wireTools, len(registered))
 
 	for name, want := range registered {
@@ -195,7 +195,7 @@ func TestRegisteredToolsEnforceDaemonByteBounds(t *testing.T) {
 }
 
 func TestToolSchemasPinInputsBoundsAndStableIdentities(t *testing.T) {
-	tools := catalogMap(toolCatalog(true, true))
+	tools := catalogMap(toolCatalog(true, true, false))
 
 	assertSchemaAccepts(t, tools["get_vault_info"].InputSchema, map[string]any{})
 	assertSchemaRejects(t, tools["get_vault_info"].InputSchema, map[string]any{"extra": true})
@@ -316,6 +316,8 @@ func TestExpectedDomainErrorsAreBoundedToolResults(t *testing.T) {
 		{name: "Bates reservation conflict", err: store.ErrBatesReservationConflict, code: "bates_reservation_conflict"},
 		{name: "Bates page mismatch", err: store.ErrBatesPageCountMismatch, code: "bates_page_count_mismatch"},
 		{name: "Bates overflow", err: store.ErrBatesOverflow, code: "bates_overflow"},
+		{name: "stale revision", err: daemonProblem("stale_revision"), code: "stale_revision"},
+		{name: "audit mutation", err: daemonProblem("audit_mutation_unsupported"), code: "audit_mutation_unsupported"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -345,8 +347,14 @@ func TestExpectedDomainErrorsAreBoundedToolResults(t *testing.T) {
 		})
 	}
 
+	audit, ok := domainToolError(daemonProblem("audit_mutation_unsupported"))
+	require.True(t, ok)
+	auditOutput, auditOK := audit.StructuredContent.(toolErrorOutput)
+	require.True(t, auditOK)
+	assert.NotContains(t, auditOutput.Message, "Photo", "audit refusals are shared by every mutating tool")
+
 	secret := errors.New("unexpected /synthetic/private key=secret document text")
-	_, ok := domainToolError(secret)
+	_, ok = domainToolError(secret)
 	assert.False(t, ok)
 	rpcErr := sanitizedRPCError(secret)
 	assert.Equal(t, int64(jsonrpc.CodeInternalError), rpcErr.Code)
@@ -388,7 +396,7 @@ func authoritativeProcessingPlanFixture() map[string]any {
 	return result
 }
 
-func assertSchemaContract(t *testing.T, raw any, object bool) {
+func assertSchemaContract(t *testing.T, raw any) {
 	t.Helper()
 	schema := schemaMap(t, raw)
 	draft, ok := schema["$schema"].(string)
@@ -396,10 +404,8 @@ func assertSchemaContract(t *testing.T, raw any, object bool) {
 	if draft != jsonSchemaDraft {
 		t.Errorf("schema draft = %q, want %q", draft, jsonSchemaDraft)
 	}
-	if object {
-		assert.Equal(t, "object", schema["type"])
-		assert.Equal(t, false, schema["additionalProperties"])
-	}
+	assert.Equal(t, "object", schema["type"])
+	assert.Equal(t, false, schema["additionalProperties"])
 }
 
 func assertSchemaAccepts(t *testing.T, raw any, value any) {
@@ -552,4 +558,8 @@ func callToolWire(t *testing.T, name string, arguments map[string]any) []byte {
 	return exchangeRaw(t, newServerWithOptionsAndDaemon(testImplementation(),
 		ServerOptions{AllowProcessing: true, AllowPackageWrites: true}, lease),
 		requestFor("tools/call", map[string]any{"name": name, "arguments": arguments}))
+}
+
+func daemonProblem(code string) error {
+	return &daemonBoundaryError{message: errors.New("daemon problem"), facts: daemonconn.ProblemFacts{Code: code}}
 }

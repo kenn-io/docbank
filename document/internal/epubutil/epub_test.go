@@ -3,6 +3,10 @@ package epubutil
 import (
 	"archive/zip"
 	"bytes"
+	"context"
+	"encoding/binary"
+	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -45,8 +49,8 @@ func TestReadPackagesPreservesDeclarationsAndOccurrences(t *testing.T) {
 	var buffer bytes.Buffer
 	writer := zip.NewWriter(&buffer)
 	for _, entry := range []struct{ name, body string }{
-		{"META-INF/container.xml", `<container xmlns="urn:oasis:names:tc:opendocument:xmlns:container"><rootfiles><rootfile full-path="a.opf"/><rootfile full-path="b.opf"/></rootfiles></container>`},
-		{"a.opf", `<package xml:base="A/"><manifest xml:base="B/"><item id="a" href="chapter" media-type="application/xhtml+xml"/><item id="a" href="chapter" media-type="image/svg+xml"/></manifest><spine><itemref idref="a"/><itemref idref="a" linear="no"/></spine></package>`},
+		{"META-INF/container.xml", `<!DOCTYPE container SYSTEM "container.dtd"><container xmlns="urn:oasis:names:tc:opendocument:xmlns:container"><rootfiles><rootfile full-path="a.opf"/><rootfile full-path="b.opf"/></rootfiles></container>`},
+		{"a.opf", `<!DOCTYPE package PUBLIC "-//IDPF//DTD OEBPS Package Document 1.0//EN" "https://example.org/package.dtd"><package xml:base="A/"><manifest xml:base="B/"><item id="a" href="chapter" media-type="application/xhtml+xml"/><item id="a" href="chapter" media-type="image/svg+xml"/></manifest><spine><itemref idref="a"/><itemref idref="a" linear="no"/></spine></package>`},
 		{"b.opf", `<package><manifest><item id="b" href="chapter" media-type="application/xml"/></manifest></package>`},
 	} {
 		file, err := writer.Create(entry.name)
@@ -77,4 +81,95 @@ func TestReadPackagesPreservesDeclarationsAndOccurrences(t *testing.T) {
 	require.NoError(t, err)
 	_, err = ReadZIPEntry(file, int64(file.UncompressedSize64)-1)
 	require.Error(t, err)
+}
+
+func TestContextReaderStopsAfterCancellation(t *testing.T) {
+	ctx, cancel := context.WithCancel(t.Context())
+	reader := contextReader{ctx: ctx, reader: strings.NewReader("payload")}
+	buffer := make([]byte, 3)
+	read, err := reader.Read(buffer)
+	require.NoError(t, err)
+	require.Equal(t, 3, read)
+	cancel()
+	_, err = reader.Read(buffer)
+	require.ErrorIs(t, err, context.Canceled)
+}
+
+func TestNewReaderContextCancelsDuringDecompression(t *testing.T) {
+	var buffer bytes.Buffer
+	writer := zip.NewWriter(&buffer)
+	entry, err := writer.Create("payload")
+	require.NoError(t, err)
+	payload := make([]byte, 128<<10)
+	for index := range payload {
+		payload[index] = byte((index*31 + index/251) % 251)
+	}
+	_, err = entry.Write(payload)
+	require.NoError(t, err)
+	require.NoError(t, writer.Close())
+	data := buffer.Bytes()
+	dataOffset := int64(30 + binary.LittleEndian.Uint16(data[26:28]) + binary.LittleEndian.Uint16(data[28:30]))
+	ctx, cancel := context.WithCancel(t.Context())
+	reads, readsAfterCancel := 0, 0
+	reader := &cancelOnOffsetReaderAt{reader: bytes.NewReader(data), offset: dataOffset, cancel: cancel, reads: &reads, readsAfterCancel: &readsAfterCancel}
+	archive, err := NewReaderContext(ctx, reader, int64(len(data)))
+	require.NoError(t, err)
+	_, err = ReadZIPEntryContext(ctx, archive.File[0], int64(len(payload)))
+	require.ErrorIs(t, err, context.Canceled)
+	require.Positive(t, reads)
+	require.Zero(t, readsAfterCancel)
+}
+
+func TestMetadataXMLAllowsExternalDOCTYPE(t *testing.T) {
+	for _, body := range []string{
+		`<!DOCTYPE container ><container/>`,
+		`<!DOCTYPE container><container/>`,
+		`<!DOCTYPE container SYSTEM "container.dtd"><container/>`,
+		`<!DOCTYPE container PUBLIC "-//OASIS//DTD Container 1.0//EN" "https://example.org/container.dtd"><container/>`,
+	} {
+		require.NoError(t, validateMetadataXML([]byte(body)))
+	}
+	for _, test := range []struct {
+		body string
+		want string
+	}{
+		{`<!DOCTYPE container [<!ENTITY secret "value">]><container/>`, "internal subset"},
+		{`<!DOCTYPE container PUBLIC "id"><container/>`, "PUBLIC identifier"},
+		{`<!DOCTYPE container PUBLIC "id&bad" "system"><container/>`, "PUBLIC identifier"},
+		{`<!DOCTYPE container "bogus"><container/>`, "DOCTYPE keyword"},
+		{`<!DOCTYPE container <x> <? >><container/>`, "DOCTYPE is invalid"},
+		{`<!DOCTYPE 1><container/>`, "DOCTYPE name"},
+		{`<!DOCTYPE )><container/>`, "DOCTYPE name"},
+		{`<!DOCTYPE container SYSTEM "bad` + "\x00" + `"><container/>`, "invalid character"},
+	} {
+		require.ErrorContains(t, validateMetadataXML([]byte(test.body)), test.want)
+	}
+	require.ErrorContains(t, validateMetadataXML([]byte(`<container><!DOCTYPE container></container>`)), "before the root")
+	require.ErrorContains(t, validateMetadataXML([]byte(`<!DOCTYPE container><!DOCTYPE container><container/>`)), "once")
+	require.ErrorContains(t, validateMetadataXML([]byte("<!DOCTYPE container SYSTEM \"bad\xff\"><container/>")), "invalid character")
+}
+
+type cancelOnOffsetReaderAt struct {
+	reader           *bytes.Reader
+	offset           int64
+	cancel           context.CancelFunc
+	reads            *int
+	readsAfterCancel *int
+	canceled         bool
+}
+
+func (reader *cancelOnOffsetReaderAt) ReadAt(buffer []byte, offset int64) (int, error) {
+	if reader.canceled {
+		*reader.readsAfterCancel++
+	}
+	*reader.reads++
+	read, err := reader.reader.ReadAt(buffer, offset)
+	if offset == reader.offset {
+		reader.cancel()
+		reader.canceled = true
+	}
+	if err != nil {
+		return read, fmt.Errorf("read test data: %w", err)
+	}
+	return read, nil
 }

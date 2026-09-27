@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -168,6 +169,17 @@ func TestProviderOrderedOccurrencesAndReceipt(t *testing.T) {
 	requireClass(t, result, err, document.RenditionErrorPolicyRejected)
 }
 
+func TestProviderNormalizesSpineMediaTypeAndReference(t *testing.T) {
+	data := epubBytes(t, map[string]string{
+		"OPS/book.opf": `<package xmlns="http://www.idpf.org/2007/opf"><manifest><item id="a" href="a.xhtml?view=reader#chapter-1" media-type="Application/XHTML+XML; charset=utf-8"/></manifest><spine><itemref idref="a"/></spine></package>`,
+	})
+	result, err := renderTest(t, data, 1)
+	require.NoError(t, err)
+	require.Len(t, result.Evidence.Units, 1)
+	require.Equal(t, "alpha needle", result.Evidence.Units[0].Text)
+	require.Equal(t, "OPS/a.xhtml", result.Evidence.Units[0].Locator.Name)
+}
+
 func TestVirtualUnitsLiteralBoundaries(t *testing.T) {
 	for _, test := range []struct {
 		name, text string
@@ -299,6 +311,32 @@ func TestProviderProfileIdentityAndPreReadLimits(t *testing.T) {
 	requireClass(t, result, err, document.RenditionErrorPolicyRejected)
 	require.Zero(t, upload.reads)
 	require.Equal(t, 1, upload.closes)
+}
+
+func TestProviderRejectsV1PolicyAuthorization(t *testing.T) {
+	p, err := New(Profile{formatdetect.MaxDocumentBytes, 1_000_000})
+	require.NoError(t, err)
+	upload := newTestUpload(epubBytes(t, nil))
+	authorization := testAuthorization(p.Descriptor(), upload.Metadata())
+	// The main-branch epub/v1 policy for this profile.
+	authorization.PolicyFingerprint = "1fe8b20ad28df1dfa5d15516ef501974e8f8d68426bab39caab13c924576c29e"
+	_, err = document.RenderRendition(t.Context(), p, upload, authorization)
+	require.ErrorContains(t, err, "policy fingerprint")
+}
+
+func TestProviderRejectsMetadataAttributeOverflow(t *testing.T) {
+	var packageDocument strings.Builder
+	packageDocument.WriteString(`<package xmlns="http://www.idpf.org/2007/opf"`)
+	for index := range (1 << 16) + 1 {
+		packageDocument.WriteString(` a`)
+		packageDocument.WriteString(strconv.Itoa(index))
+		packageDocument.WriteString(`=""`)
+	}
+	packageDocument.WriteString(`><manifest><item id="a" href="a.xhtml" media-type="application/xhtml+xml"/></manifest><spine><itemref idref="a"/></spine></package>`)
+	override := oneChapter("")
+	override["OPS/book.opf"] = packageDocument.String()
+	result, err := renderTest(t, epubBytes(t, override), 1)
+	requireClass(t, result, err, document.RenditionErrorUnsupportedInput)
 }
 
 func TestProviderSourceAuthorizationFailures(t *testing.T) {

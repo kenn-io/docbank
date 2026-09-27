@@ -81,6 +81,14 @@ var (
 	// ErrStorageOperationTerminal means a completed, failed, or cancelled
 	// operation can no longer accept cancellation or progress.
 	ErrStorageOperationTerminal = errors.New("storage operation is already terminal")
+	// ErrInvalidPhotoAsset marks an invalid photo role, kind, pointer, or
+	// bounded graph.
+	ErrInvalidPhotoAsset = errors.New("invalid photo asset")
+	// ErrPhotoNodeNotEligible means automatic enrollment cannot classify a node
+	// as an image or concrete video.
+	ErrPhotoNodeNotEligible = errors.New("photo node is not eligible")
+	// ErrPhotoNodeOwned means a node already belongs to another photo asset.
+	ErrPhotoNodeOwned = errors.New("node already belongs to a photo asset")
 )
 
 // UnconditionalRev is the only ifRev value that skips the revision

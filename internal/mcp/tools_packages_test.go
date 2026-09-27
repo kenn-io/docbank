@@ -19,7 +19,7 @@ import (
 )
 
 func TestPackageReadToolsArePublishedAsBoundedReads(t *testing.T) {
-	catalog := toolCatalog(false, false)
+	catalog := toolCatalog(false, false, false)
 	byName := make(map[string]bool, len(catalog))
 	for _, tool := range catalog {
 		byName[tool.Name] = true
@@ -103,12 +103,12 @@ func mustJSONString(t *testing.T, value string) string {
 }
 
 func TestPackagePreflightToolsAreCandidateReadsAndGatedWrite(t *testing.T) {
-	readOnly := catalogNames(toolCatalog(false, false))
+	readOnly := catalogNames(toolCatalog(false, false, false))
 	assert.Contains(t, readOnly, "get_package_preflight")
 	assert.Contains(t, readOnly, "list_package_preflight_diagnostics")
 	assert.NotContains(t, readOnly, "preflight_load_file_package")
 
-	enabled := catalogMap(toolCatalog(false, true))
+	enabled := catalogMap(toolCatalog(false, true, false))
 	preflight := enabled["preflight_load_file_package"]
 	require.NotNil(t, preflight)
 	require.NotNil(t, preflight.Annotations)
@@ -142,13 +142,13 @@ func TestClassifyPackagePreflightSourceUsesAbsoluteDirectoriesAndZIPFiles(t *tes
 }
 
 func TestPackageCustodianToolsExposeCandidatesAndExactWrites(t *testing.T) {
-	readOnly := catalogMap(toolCatalog(false, false))
+	readOnly := catalogMap(toolCatalog(false, false, false))
 	for _, name := range []string{"list_package_custodians", "find_people"} {
 		tool := readOnly[name]
 		require.NotNil(t, tool, name)
 		assert.True(t, tool.Annotations.ReadOnlyHint, name)
 	}
-	enabled := catalogMap(toolCatalog(false, true))
+	enabled := catalogMap(toolCatalog(false, true, false))
 	for _, name := range []string{"resolve_package_custodian", "assign_package_custodian"} {
 		tool := enabled[name]
 		require.NotNil(t, tool, name)

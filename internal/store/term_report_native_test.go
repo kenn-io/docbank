@@ -9,7 +9,7 @@ import (
 	"go.kenn.io/docbank/report"
 )
 
-func TestTermReportNativeTextRejectsBeforeLoading(t *testing.T) {
+func TestTermReportNativeTextRejectsBeforeLoading(t *testing.T) { //nolint:paralleltest // reads process-wide allocation counters
 	for _, tc := range []struct {
 		name       string
 		runes      int

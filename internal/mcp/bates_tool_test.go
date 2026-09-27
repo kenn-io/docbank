@@ -139,7 +139,7 @@ func TestBatesWriteToolsAreOptInAndBindResponses(t *testing.T) {
 }
 
 func TestBatesToolSchemasRejectUnboundedAndUnstableInputs(t *testing.T) {
-	tools := catalogMap(toolCatalog(false, true))
+	tools := catalogMap(toolCatalog(false, true, false))
 	assertSchemaAccepts(t, tools["list_bates_namespaces"].InputSchema, map[string]any{"limit": 250})
 	assertSchemaRejects(t, tools["list_bates_namespaces"].InputSchema, map[string]any{"limit": 251})
 	assertSchemaRejects(t, tools["ensure_bates_namespace"].InputSchema, map[string]any{

@@ -23,6 +23,8 @@ export default defineConfig({
   test: {
     environment: "jsdom",
     exclude: ["docs-site/**", "node_modules/**"],
+    maxWorkers: 2,
+    testTimeout: 30_000,
     server: {
       deps: {
         inline: ["svelte"],

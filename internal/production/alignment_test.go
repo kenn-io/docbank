@@ -8,6 +8,7 @@ import (
 	"image"
 	"image/png"
 	"io"
+	"runtime/debug"
 	"strings"
 	"testing"
 	"testing/synctest"
@@ -645,6 +646,21 @@ func TestRenderTextRenditionDeterministicUnicodeAndSemanticUnits(t *testing.T) {
 	require.Len(t, firstMap.Units, 1)
 	require.Greater(t, len(firstMap.Units[0].Boxes), 1)
 	require.NoError(t, redaction.ValidateMap(firstMap))
+}
+
+func TestRenderTextRenditionReleasesCompletedPages(t *testing.T) {
+	pdf := redactiontest.PDF(t, []string{"native text"}, "rendition memory")
+	alignNativeFixture(t, pdf, "native text")
+	// Native alignment keeps its WASM backing available. Later renditions must
+	// release completed page rasters while that backing remains in the worker.
+	// Delay automatic GC so reclamation cannot depend on its scheduling.
+	defer debug.SetGCPercent(debug.SetGCPercent(-1))
+	text := strings.Repeat("Speaker 1 [00:00:01] café 給与 line with deterministic wrapping.\n", 900)
+	for range 2 {
+		_, textMap, err := RenderTextRendition(t.Context(), text, nil)
+		require.NoError(t, err)
+		require.Equal(t, text, textMap.Text)
+	}
 }
 
 func TestRenderTextRenditionPreservesWhitespaceOffsets(t *testing.T) {
