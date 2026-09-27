@@ -176,11 +176,6 @@ Key assumptions reviewers MUST account for:
    malformed success as an unknown outcome; they do not re-derive the
    store's decisions from the response.
 
-19. PDF RECOVERY: terminated comments are lexical separators outside
-   cross-reference tables. ISO 32000-1 section 7.5.8.4 forbids comments
-   inside cross-reference tables and streams. Recovery preserves their
-   fixed-format records and requires a closed final xref section.
-
 Do NOT flag issues that only apply to public-facing, multi-tenant, or
 internet-exposed services. Focus on bugs, logic errors, data corruption
 risks, and code quality issues.

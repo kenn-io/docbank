@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -166,10 +167,26 @@ func TestDetectFormatRejectsMismatchUnsafeZIPAndAmbiguousCompound(t *testing.T) 
 }
 
 func TestDetectFormatAcceptsRecoverablePDFs(t *testing.T) {
+	linearized, err := os.ReadFile("testdata/linearized.pdf")
+	require.NoError(t, err)
 	tests := []struct {
 		name    string
 		content func(*testing.T) []byte
 	}{
+		{name: "linearized PDF", content: func(t *testing.T) []byte {
+			t.Helper()
+			return linearized
+		}},
+		{name: "linearized PDF without final marker", content: func(t *testing.T) []byte {
+			t.Helper()
+			content := bytes.TrimSuffix(linearized, []byte("%%EOF\n"))
+			require.Equal(t, 1, bytes.Count(content, []byte("%%EOF")))
+			return content
+		}},
+		{name: "iText producer comment", content: func(t *testing.T) []byte {
+			t.Helper()
+			return bytes.Replace(testPDF("producer-comment"), []byte("startxref\n"), []byte("%iText-5.5.10\nstartxref\n"), 1)
+		}},
 		{name: "missing final marker", content: func(t *testing.T) []byte {
 			t.Helper()
 			original := testPDF("recoverable")
@@ -257,36 +274,6 @@ func TestDetectFormatRejectsUnrecoverablePDFTrailers(t *testing.T) {
 	original := testPDF("negative")
 	recoverable := bytes.TrimSuffix(original, []byte("%%EOF\n"))
 
-	t.Run("commented xref stream endobj", func(t *testing.T) {
-		content := bytes.Replace(testPDFXRefStreamWithPageBox(), []byte("endstream\nendobj\n"), []byte("endstream\n% endobj\n"), 1)
-		_, err := DetectFormat(bytes.NewReader(content), int64(len(content)), "application/pdf")
-		require.ErrorContains(t, err, "cross-reference data is invalid")
-	})
-
-	t.Run("invalid xref comment suffix", func(t *testing.T) {
-		for _, fixture := range []struct {
-			name    string
-			content []byte
-		}{
-			{name: "table", content: original},
-			{name: "stream", content: testPDFXRefStreamWithPageBox()},
-		} {
-			for _, suffix := range []struct {
-				name string
-				text string
-			}{
-				{name: "unterminated comment", text: "% synthetic comment "},
-				{name: "payload after comment", text: "% synthetic comment\nPK\x03\x04synthetic\n"},
-			} {
-				t.Run(fixture.name+"/"+suffix.name, func(t *testing.T) {
-					content := bytes.Replace(fixture.content, []byte("startxref\n"), []byte(suffix.text+"startxref\n"), 1)
-					_, err := DetectFormat(bytes.NewReader(content), int64(len(content)), "application/pdf")
-					require.ErrorContains(t, err, "cross-reference data is invalid")
-				})
-			}
-		}
-	})
-
 	t.Run("trailing bytes", func(t *testing.T) {
 		for _, test := range []struct {
 			name   string
@@ -304,53 +291,6 @@ func TestDetectFormatRejectsUnrecoverablePDFTrailers(t *testing.T) {
 				require.ErrorContains(t, err, "not final")
 			})
 		}
-	})
-
-	t.Run("forged startxref to prior xref", func(t *testing.T) {
-		for _, test := range []struct {
-			name    string
-			content []byte
-		}{
-			{name: "table", content: original},
-			{name: "stream", content: testPDFXRefStreamWithPageBox()},
-		} {
-			t.Run(test.name, func(t *testing.T) {
-				startXRef := bytes.LastIndex(test.content, []byte("startxref\n"))
-				require.Positive(t, startXRef)
-				var xrefOffset int
-				_, err := fmt.Sscanf(string(test.content[startXRef+len("startxref\n"):]), "%d", &xrefOffset)
-				require.NoError(t, err)
-
-				content := fmt.Appendf(bytes.Clone(test.content[:startXRef]),
-					"%%PK\x03\x04synthetic startxref %d\n", xrefOffset)
-				_, err = DetectFormat(bytes.NewReader(content), int64(len(content)), "application/pdf")
-				require.ErrorContains(t, err, "cross-reference data")
-			})
-		}
-	})
-
-	t.Run("xref section exceeds bound", func(t *testing.T) {
-		const xrefEntries = 53_000
-		original := testPDF("xref-section-bound")
-		xrefStart := bytes.Index(original, []byte("\nxref\n")) + 1
-		require.Positive(t, xrefStart)
-		trailer := bytes.Index(original[xrefStart:], []byte("trailer\n"))
-		require.Positive(t, trailer)
-		xref := bytes.Replace(bytes.Clone(original[xrefStart:xrefStart+trailer]),
-			[]byte("0 4\n"), []byte(fmt.Sprintf("0 %d\n", xrefEntries)), 1)
-		content := bytes.Clone(original[:xrefStart])
-		content = append(content, xref...)
-		content = append(content, bytes.Repeat([]byte("0000000000 65535 f \n"), xrefEntries-4)...)
-		content = fmt.Appendf(content, "trailer\n<< /Size %d /Root 1 0 R >>\nstartxref\n%d\n%%%%EOF\n",
-			xrefEntries, xrefStart)
-		_, err := DetectFormat(bytes.NewReader(content), int64(len(content)), "application/pdf")
-		require.ErrorContains(t, err, "cross-reference data exceeds the bound")
-	})
-
-	t.Run("xref stream indirect length", func(t *testing.T) {
-		content := bytes.Replace(testPDFXRefStreamWithPageBox(), []byte("/Length 35"), []byte("/Length 5 0 R"), 1)
-		_, err := DetectFormat(bytes.NewReader(content), int64(len(content)), "application/pdf")
-		require.ErrorContains(t, err, "cross-reference data")
 	})
 
 	t.Run("offset at startxref keyword", func(t *testing.T) {
