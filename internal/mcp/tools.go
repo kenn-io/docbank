@@ -141,6 +141,12 @@ var validateProductionPrivilegeLogToolDefinition = toolDefinition{
 	schemas:     validateProductionPrivilegeLogSchemas, write: true, idempotent: true,
 }
 
+var freezeProductionPrivilegeLogToolDefinition = toolDefinition{
+	name: "freeze_production_privilege_log", title: "Freeze production privilege log",
+	description: "Freeze an exact validated draft after the daemon rechecks stored rows and required approval.",
+	schemas:     freezeProductionPrivilegeLogSchemas, write: true, idempotent: true,
+}
+
 var replaceProductionPrivilegeRowsToolDefinition = toolDefinition{
 	name: "replace_production_privilege_rows", title: "Replace production privilege rows",
 	description: "Replace private rows of an exact draft generation from a local JSON file.",
@@ -167,7 +173,7 @@ func toolCatalog(allowProcessing bool) []*sdkmcp.Tool {
 			ensureBatesNamespaceToolDefinition, reserveBatesRangeToolDefinition, publishBatesExportToolDefinition,
 			exportBatesFileToolDefinition, exportLoadFilePackageToolDefinition, createProductionPolicyToolDefinition,
 			validateProductionPrivilegeLogToolDefinition, replaceProductionPrivilegeRowsToolDefinition,
-			createProductionPrivilegeDraftToolDefinition,
+			createProductionPrivilegeDraftToolDefinition, freezeProductionPrivilegeLogToolDefinition,
 			exportProductionPrivilegeLogToolDefinition)
 	}
 	tools := make([]*sdkmcp.Tool, 0, len(definitions))
@@ -213,6 +219,8 @@ func registerToolCatalog(
 			handler = createProductionPolicyToolHandler(lease, output, logger)
 		case validateProductionPrivilegeLogToolDefinition.name:
 			handler = validateProductionPrivilegeLogToolHandler(lease, output, logger)
+		case freezeProductionPrivilegeLogToolDefinition.name:
+			handler = freezeProductionPrivilegeLogToolHandler(lease, output, logger)
 		case replaceProductionPrivilegeRowsToolDefinition.name:
 			handler = replaceProductionPrivilegeRowsToolHandler(lease, output, logger)
 		case createProductionPrivilegeDraftToolDefinition.name:
@@ -429,7 +437,8 @@ func stableDomainError(err error) (string, int) {
 		return "invalid_rendition_encoding", 0
 	case "bates_reservation_conflict", "bates_page_count_mismatch", "bates_overflow":
 		return facts.Code, 0
-	case "production_policy_conflict", "invalid_production_policy", "production_privilege_conflict", "invalid_production_privilege":
+	case "production_policy_conflict", "invalid_production_policy", "production_privilege_conflict", "invalid_production_privilege",
+		"approval_required", "approval_stale":
 		return facts.Code, 0
 	default:
 		return "", 0
@@ -478,6 +487,10 @@ func domainErrorMessage(code string) string {
 		return "The privilege-log draft changed or the operation ID names different input."
 	case "invalid_production_privilege":
 		return "The privilege-log validation input is invalid."
+	case "approval_required":
+		return "This policy requires current human approval before the privilege log can be frozen."
+	case "approval_stale":
+		return "The stored human approval no longer matches this privilege-log revision."
 	case "production_privilege_outcome_unknown":
 		return "The privilege-log mutation outcome is unknown; retry only with the exact same operation ID and input."
 	case "destination_exists":
