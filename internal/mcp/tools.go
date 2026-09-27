@@ -198,6 +198,12 @@ var createProductionPlayersSnapshotToolDefinition = toolDefinition{
 	schemas:     createProductionPlayersSnapshotSchemas, write: true, idempotent: true,
 }
 
+var createProductionWithheldSelectionToolDefinition = toolDefinition{
+	name: "create_production_withheld_selection", title: "Create production withheld selection",
+	description: "Record an explicit version-pinned withheld selection from a private local JSON file.",
+	schemas:     createProductionWithheldSelectionSchemas, write: true, idempotent: true,
+}
+
 func toolCatalog(allowProcessing bool) []*sdkmcp.Tool {
 	definitions := readToolDefinitions
 	if allowProcessing {
@@ -209,7 +215,8 @@ func toolCatalog(allowProcessing bool) []*sdkmcp.Tool {
 			createProductionPrivilegeDraftToolDefinition, freezeProductionPrivilegeLogToolDefinition,
 			exportProductionPrivilegeLogToolDefinition, downloadProductionPackageToolDefinition,
 			createProductionSupplementToolDefinition, createProductionReproductionToolDefinition,
-			createProductionPackageToolDefinition, createProductionPlayersSnapshotToolDefinition)
+			createProductionPackageToolDefinition, createProductionPlayersSnapshotToolDefinition,
+			createProductionWithheldSelectionToolDefinition)
 	}
 	tools := make([]*sdkmcp.Tool, 0, len(definitions))
 	for _, definition := range definitions {
@@ -272,6 +279,8 @@ func registerToolCatalog(
 			handler = createProductionPackageToolHandler(lease, output, logger)
 		case createProductionPlayersSnapshotToolDefinition.name:
 			handler = createProductionPlayersSnapshotToolHandler(lease, output, logger)
+		case createProductionWithheldSelectionToolDefinition.name:
+			handler = createProductionWithheldSelectionToolHandler(lease, output, logger)
 		default:
 			handler = readToolHandler(lease, plans, tool.Name, output, logger)
 		}
@@ -447,6 +456,8 @@ func stableDomainError(err error) (string, int) {
 		return "production_package_outcome_unknown", 0
 	case errors.Is(err, errProductionPlayersOutcomeUnknown):
 		return "production_players_outcome_unknown", 0
+	case errors.Is(err, errProductionWithheldOutcomeUnknown):
+		return "production_withheld_outcome_unknown", 0
 	case errors.Is(err, errProductionPrivilegeExportDestinationExists):
 		return "destination_exists", 0
 	case errors.Is(err, errProductionPackageDestinationExists):
@@ -499,6 +510,7 @@ func stableDomainError(err error) (string, int) {
 		"invalid_production_reproduction", "production_reproduction_too_large",
 		"production_package_conflict", "invalid_production_package", "production_package_too_large",
 		"production_players_conflict", "invalid_production_players",
+		"production_withheld_conflict", "invalid_production_withheld_selection",
 		"approval_required", "approval_stale":
 		return facts.Code, 0
 	default:
@@ -580,6 +592,12 @@ func domainErrorMessage(code string) string {
 		return "The player snapshot is invalid."
 	case "production_players_outcome_unknown":
 		return "The player snapshot outcome is unknown; retry only with the same operation ID and identical input."
+	case "production_withheld_conflict":
+		return "The withheld selection conflicts with sealed production authority."
+	case "invalid_production_withheld_selection":
+		return "The withheld selection is invalid."
+	case "production_withheld_outcome_unknown":
+		return "The withheld selection outcome is unknown; retry only with the same operation ID and identical input."
 	case "destination_exists":
 		return "The export destination already exists; choose another path or explicitly allow overwrite."
 	case "package_download_failed":
