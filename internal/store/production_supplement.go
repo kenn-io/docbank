@@ -186,12 +186,13 @@ func loadProductionSupplement(ctx context.Context, q metadataQuerier, operationI
 	if err != nil || !bytes.Equal(encoded, raw) {
 		return production.SupplementRecord{}, production.ErrSupplementConflict
 	}
-	var parentState, parentReceipt, parentAllocationID string
+	var parentState, parentSetID, parentReceipt, parentAllocationID string
 	var parentRevision int64
-	err = q.QueryRowContext(ctx, `SELECT state,revision,receipt_sha256,allocation_id FROM production_jobs WHERE job_id=?`,
-		result.ParentJobID).Scan(&parentState, &parentRevision, &parentReceipt, &parentAllocationID)
+	err = q.QueryRowContext(ctx, `SELECT state,set_id,revision,receipt_sha256,allocation_id FROM production_jobs WHERE job_id=?`,
+		result.ParentJobID).Scan(&parentState, &parentSetID, &parentRevision, &parentReceipt, &parentAllocationID)
 	if err != nil || parentState != production.ProductionJobSucceeded ||
-		parentReceipt != result.ParentReceiptSHA256 || parentAllocationID != result.ParentAllocationID {
+		parentSetID != result.SetID || parentReceipt != result.ParentReceiptSHA256 ||
+		parentAllocationID != result.ParentAllocationID {
 		return production.SupplementRecord{}, production.ErrSupplementConflict
 	}
 	var childSetID, childPrepared, childReceipt, allocationID string
@@ -223,6 +224,20 @@ func loadProductionSupplement(ctx context.Context, q metadataQuerier, operationI
 	if err != nil || childAllocation.NamespaceID != result.NamespaceID ||
 		childAllocation.SnapshotID == parentAllocation.SnapshotID ||
 		childAllocation.StartSequence != result.StartSequence || childAllocation.EndSequence != result.EndSequence {
+		return production.SupplementRecord{}, production.ErrSupplementConflict
+	}
+	var parentNamespace, parentSnapshot, childNamespace, childSnapshot, preparedSHA, gateSHA string
+	err = q.QueryRowContext(ctx, `SELECT numbering_namespace_id,numbering_snapshot_id
+		FROM production_finalized_revisions WHERE set_id=? AND revision=?`,
+		parentSetID, parentRevision).Scan(&parentNamespace, &parentSnapshot)
+	if err != nil || parentNamespace != parentAllocation.NamespaceID || parentSnapshot != parentAllocation.SnapshotID {
+		return production.SupplementRecord{}, production.ErrSupplementConflict
+	}
+	err = q.QueryRowContext(ctx, `SELECT numbering_namespace_id,numbering_snapshot_id,
+		prepared_sha256,prepared_input_sha256 FROM production_finalized_revisions WHERE set_id=? AND revision=?`,
+		result.SetID, result.Revision).Scan(&childNamespace, &childSnapshot, &preparedSHA, &gateSHA)
+	if err != nil || childNamespace != result.NamespaceID || childSnapshot != childAllocation.SnapshotID ||
+		preparedSHA != result.PreparedSHA256 || gateSHA != result.PreparedInputSHA256 {
 		return production.SupplementRecord{}, production.ErrSupplementConflict
 	}
 	numbers := make([]documentproduction.AssignedNumber, 0, len(childAllocation.Labels))
