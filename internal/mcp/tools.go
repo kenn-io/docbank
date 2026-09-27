@@ -192,6 +192,12 @@ var createProductionPackageToolDefinition = toolDefinition{
 	schemas:     createProductionPackageSchemas, write: true, idempotent: true,
 }
 
+var createProductionPlayersSnapshotToolDefinition = toolDefinition{
+	name: "create_production_players_snapshot", title: "Create production players snapshot",
+	description: "Record a versioned player and alias snapshot from a private local JSON file.",
+	schemas:     createProductionPlayersSnapshotSchemas, write: true, idempotent: true,
+}
+
 func toolCatalog(allowProcessing bool) []*sdkmcp.Tool {
 	definitions := readToolDefinitions
 	if allowProcessing {
@@ -203,7 +209,7 @@ func toolCatalog(allowProcessing bool) []*sdkmcp.Tool {
 			createProductionPrivilegeDraftToolDefinition, freezeProductionPrivilegeLogToolDefinition,
 			exportProductionPrivilegeLogToolDefinition, downloadProductionPackageToolDefinition,
 			createProductionSupplementToolDefinition, createProductionReproductionToolDefinition,
-			createProductionPackageToolDefinition)
+			createProductionPackageToolDefinition, createProductionPlayersSnapshotToolDefinition)
 	}
 	tools := make([]*sdkmcp.Tool, 0, len(definitions))
 	for _, definition := range definitions {
@@ -264,6 +270,8 @@ func registerToolCatalog(
 			handler = createProductionReproductionToolHandler(lease, output, logger)
 		case createProductionPackageToolDefinition.name:
 			handler = createProductionPackageToolHandler(lease, output, logger)
+		case createProductionPlayersSnapshotToolDefinition.name:
+			handler = createProductionPlayersSnapshotToolHandler(lease, output, logger)
 		default:
 			handler = readToolHandler(lease, plans, tool.Name, output, logger)
 		}
@@ -437,6 +445,8 @@ func stableDomainError(err error) (string, int) {
 		return "production_reproduction_outcome_unknown", 0
 	case errors.Is(err, errProductionPackageOutcomeUnknown):
 		return "production_package_outcome_unknown", 0
+	case errors.Is(err, errProductionPlayersOutcomeUnknown):
+		return "production_players_outcome_unknown", 0
 	case errors.Is(err, errProductionPrivilegeExportDestinationExists):
 		return "destination_exists", 0
 	case errors.Is(err, errProductionPackageDestinationExists):
@@ -488,6 +498,7 @@ func stableDomainError(err error) (string, int) {
 		"production_supplement_conflict", "production_reproduction_conflict",
 		"invalid_production_reproduction", "production_reproduction_too_large",
 		"production_package_conflict", "invalid_production_package", "production_package_too_large",
+		"production_players_conflict", "invalid_production_players",
 		"approval_required", "approval_stale":
 		return facts.Code, 0
 	default:
@@ -563,6 +574,12 @@ func domainErrorMessage(code string) string {
 		return "The selected recipient package exceeds the supported retained archive size."
 	case "production_package_outcome_unknown":
 		return "The package outcome is unknown; read the exact job and operation ID before retrying identical input."
+	case "production_players_conflict":
+		return "The player snapshot operation conflicts with stored authority."
+	case "invalid_production_players":
+		return "The player snapshot is invalid."
+	case "production_players_outcome_unknown":
+		return "The player snapshot outcome is unknown; retry only with the same operation ID and identical input."
 	case "destination_exists":
 		return "The export destination already exists; choose another path or explicitly allow overwrite."
 	case "package_download_failed":
