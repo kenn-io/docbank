@@ -1,8 +1,14 @@
 package api_test
 
 import (
+	"crypto/sha256"
+	"encoding/base64"
+	"encoding/hex"
 	"encoding/json/v2"
+	"io"
 	"net/http"
+	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -11,6 +17,77 @@ import (
 	"go.kenn.io/docbank/internal/daemonconn"
 	"go.kenn.io/docbank/internal/productiontest"
 )
+
+func TestProductionPrivilegeExportClientRejectsAlteredBytes(t *testing.T) {
+	const logID = "13131313-1313-4313-8313-131313131313"
+	_, fixture := newTestServer(t, func(d *api.Deps) { productiontest.SeedFrozenPrivilegeLog(t, d.Store) })
+	proxy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		recorded := httptest.NewRecorder()
+		fixture.Server.Handler().ServeHTTP(recorded, r)
+		response := recorded.Result()
+		defer func() { _ = response.Body.Close() }()
+		content, err := io.ReadAll(response.Body)
+		if err != nil {
+			t.Errorf("read source response: %v", err)
+			return
+		}
+		for key, values := range response.Header {
+			for _, value := range values {
+				w.Header().Add(key, value)
+			}
+		}
+		if strings.HasSuffix(r.URL.Path, "/exports/csv") {
+			content[len(content)-1] = 'X'
+		}
+		w.WriteHeader(response.StatusCode)
+		_, _ = w.Write(content)
+	}))
+	t.Cleanup(proxy.Close)
+	client := daemonconn.New(proxy.URL, testAPIKey)
+	_, err := client.ExportProductionPrivilegeLog(t.Context(), logID, 1, "csv")
+	require.ErrorContains(t, err, "digest")
+}
+
+func TestProductionPrivilegeExportServesVerifiedPublicBytes(t *testing.T) {
+	const logID = "13131313-1313-4313-8313-131313131313"
+	ts, _ := newTestServer(t, func(d *api.Deps) { productiontest.SeedFrozenPrivilegeLog(t, d.Store) })
+	for _, test := range []struct{ format, mediaType string }{
+		{"json", "application/json"}, {"csv", "text/csv; charset=utf-8"},
+		{"xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"},
+		{"pdf", "application/pdf"},
+	} {
+		t.Run(test.format, func(t *testing.T) {
+			response, body := get(t, ts, "/api/v1/production-privilege-logs/"+logID+
+				"/revisions/1/exports/"+test.format, nil)
+			require.Equal(t, http.StatusOK, response.StatusCode, body)
+			require.Equal(t, test.mediaType, response.Header.Get("Content-Type"))
+			require.Equal(t, "no-store", response.Header.Get("Cache-Control"))
+			require.Equal(t, "nosniff", response.Header.Get("X-Content-Type-Options"))
+			require.NotEmpty(t, response.Header.Get("X-Docbank-Privilege-Receipt-Sha256"))
+			require.NotEmpty(t, response.Header.Get("X-Docbank-Privilege-Rows-Sha256"))
+			digest := sha256.Sum256([]byte(body))
+			require.Equal(t, "sha-256=:"+base64.StdEncoding.EncodeToString(digest[:])+":",
+				response.Header.Get("Content-Digest"))
+			require.NotContains(t, body, "Synthetic private rationale.")
+			require.NotContains(t, body, "synthetic@example.test")
+			client := daemonconn.New(ts.URL, testAPIKey)
+			clientExport, err := client.ExportProductionPrivilegeLog(t.Context(), logID, 1, test.format)
+			require.NoError(t, err)
+			require.Equal(t, []byte(body), clientExport.Content)
+			require.Equal(t, test.mediaType, clientExport.MediaType)
+			require.Equal(t, hex.EncodeToString(digest[:]), clientExport.ContentSHA256)
+		})
+	}
+	response, body := get(t, ts, "/api/v1/production-privilege-logs/"+logID+"/revisions/2/exports/csv", nil)
+	require.Equal(t, http.StatusNotFound, response.StatusCode, body)
+	response, body = get(t, ts, "/api/v1/production-privilege-logs/"+logID+"/revisions/0/exports/csv", nil)
+	require.Equal(t, http.StatusUnprocessableEntity, response.StatusCode, body)
+	response, body = get(t, ts, "/api/v1/production-privilege-logs/"+logID+"/revisions/1/exports/html", nil)
+	require.Equal(t, http.StatusUnprocessableEntity, response.StatusCode, body)
+	response, body = get(t, ts, "/api/v1/production-privilege-logs/"+logID+"/revisions/1/exports/csv",
+		map[string]string{"X-Api-Key": ""})
+	require.Equal(t, http.StatusUnauthorized, response.StatusCode, body)
+}
 
 func TestProductionPrivilegeReadPagesPublicFrozenRows(t *testing.T) {
 	const logID = "13131313-1313-4313-8313-131313131313"

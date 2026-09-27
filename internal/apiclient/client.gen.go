@@ -8082,6 +8082,52 @@ func (c *Client) ReadProductionPrivilegeLog(ctx context.Context, options *ReadPr
 	return responseParser(ctx, resp)
 }
 
+// ExportProductionPrivilegeLog Download verified public bytes of a frozen privilege log
+func (c *Client) ExportProductionPrivilegeLog(ctx context.Context, options *ExportProductionPrivilegeLogRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ExportProductionPrivilegeLogResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/production-privilege-logs/{log}/revisions/{revision}/exports/{format}",
+		Method:     "GET",
+		Options:    options,
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*ExportProductionPrivilegeLogResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(ExportProductionPrivilegeLogResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "ExportProductionPrivilegeLogResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, runtime.NewClientAPIError(fmt.Errorf("unexpected status code: %d", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/production-privilege-logs/{log}/revisions/{revision}/exports/{format}")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
 // ValidateProductionPrivilegeLog Validate the stored rows of a privilege-log draft
 func (c *Client) ValidateProductionPrivilegeLog(ctx context.Context, options *ValidateProductionPrivilegeLogRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ValidateProductionPrivilegeLogResponse, error) {
 	var err error
@@ -16852,6 +16898,37 @@ func (o *ReadProductionPrivilegeLogRequestOptions) GetHeader() (map[string]strin
 	return nil, nil
 }
 
+// ExportProductionPrivilegeLogRequestOptions is the options needed to make a request to ExportProductionPrivilegeLog.
+type ExportProductionPrivilegeLogRequestOptions struct {
+	PathParams *ExportProductionPrivilegeLogPath
+}
+
+// GetPathParams returns the path params as a map.
+func (o *ExportProductionPrivilegeLogRequestOptions) GetPathParams() (map[string]any, error) {
+	encoded, err := json.Marshal(o.PathParams, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetQuery returns the query params as a map.
+func (o *ExportProductionPrivilegeLogRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *ExportProductionPrivilegeLogRequestOptions) GetBody() any {
+	return nil
+}
+
+// GetHeader returns the headers as a map.
+func (o *ExportProductionPrivilegeLogRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
 // ValidateProductionPrivilegeLogRequestOptions is the options needed to make a request to ValidateProductionPrivilegeLog.
 type ValidateProductionPrivilegeLogRequestOptions struct {
 	PathParams *ValidateProductionPrivilegeLogPath
@@ -19249,6 +19326,15 @@ const (
 	ListPackageLabelCandidatesQueryProvenanceReceived ListPackageLabelCandidatesQueryProvenance = "received"
 )
 
+type ExportProductionPrivilegeLogPathFormat string
+
+const (
+	Csv  ExportProductionPrivilegeLogPathFormat = "csv"
+	JSON ExportProductionPrivilegeLogPathFormat = "json"
+	Pdf  ExportProductionPrivilegeLogPathFormat = "pdf"
+	Xlsx ExportProductionPrivilegeLogPathFormat = "xlsx"
+)
+
 type ListSavedQueriesQueryKind string
 
 const (
@@ -19709,6 +19795,12 @@ type ReadProductionApprovalPath struct {
 
 type ReadProductionPrivilegeLogPath struct {
 	Log string `json:"log"`
+}
+
+type ExportProductionPrivilegeLogPath struct {
+	Log      uuid.UUID                              `json:"log"`
+	Revision int64                                  `json:"revision"`
+	Format   ExportProductionPrivilegeLogPathFormat `json:"format"`
 }
 
 type ValidateProductionPrivilegeLogPath struct {
@@ -21164,6 +21256,8 @@ type ReadProductionApprovalErrorResponse = Error
 type ReadProductionPrivilegeLogResponse = api.ProductionPrivilegePublicPage
 
 type ReadProductionPrivilegeLogErrorResponse = Error
+
+type ExportProductionPrivilegeLogResponse = runtime.File
 
 type ValidateProductionPrivilegeLogResponse = api.ProductionPrivilegeValidation
 

@@ -20797,6 +20797,70 @@ paths:
                 $ref: "#/components/schemas/Error"
           description: Error
       summary: Page a frozen privilege log's public rows
+  /api/v1/production-privilege-logs/{log}/revisions/{revision}/exports/{format}:
+    get:
+      operationId: exportProductionPrivilegeLog
+      parameters:
+        - in: path
+          name: log
+          required: true
+          schema:
+            format: uuid
+            type: string
+        - in: path
+          name: revision
+          required: true
+          schema:
+            format: int64
+            minimum: 1
+            type: integer
+        - in: path
+          name: format
+          required: true
+          schema:
+            enum:
+              - json
+              - csv
+              - xlsx
+              - pdf
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                contentMediaType: application/octet-stream
+                format: binary
+                type: string
+            application/pdf:
+              schema:
+                contentMediaType: application/octet-stream
+                format: binary
+                type: string
+            application/vnd.openxmlformats-officedocument.spreadsheetml.sheet:
+              schema:
+                contentMediaType: application/octet-stream
+                format: binary
+                type: string
+            text/csv; charset=utf-8:
+              schema:
+                contentMediaType: application/octet-stream
+                format: binary
+                type: string
+          description: Verified public privilege-log export
+          headers:
+            Content-Digest:
+              schema:
+                type: string
+            X-Docbank-Privilege-Receipt-SHA256:
+              schema:
+                pattern: ^[0-9a-f]{64}$
+                type: string
+            X-Docbank-Privilege-Rows-SHA256:
+              schema:
+                pattern: ^[0-9a-f]{64}$
+                type: string
+      summary: Download verified public bytes of a frozen privilege log
   /api/v1/production-privilege-logs/{log}/revisions/{revision}/validate:
     post:
       operationId: validateProductionPrivilegeLog

@@ -3,13 +3,22 @@ package api
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/danielgtaylor/huma/v2"
 	documentproduction "go.kenn.io/docbank/document/production"
 	productionservice "go.kenn.io/docbank/internal/production"
 	"go.kenn.io/docbank/internal/store"
+)
+
+const (
+	ProductionPrivilegeReceiptHashHeader = "X-Docbank-Privilege-Receipt-SHA256"
+	ProductionPrivilegeRowsHashHeader    = "X-Docbank-Privilege-Rows-SHA256"
+	productionPrivilegeHashPattern       = "^[0-9a-f]{64}$"
+	productionPrivilegeBinaryFormat      = "binary"
 )
 
 // ProductionPrivilegePublicPage contains a frozen receipt and only the
@@ -45,7 +54,55 @@ func productionPrivilegeMutationError(err error) error {
 	return NewError(http.StatusInternalServerError, "production_privilege_failed", "privilege log operation failed")
 }
 
-func registerProductionPrivilegeRoutes(api huma.API, d Deps, g *OperationGate) {
+func registerProductionPrivilegeRoutes(mux *http.ServeMux, api huma.API, d Deps, g *OperationGate) {
+	mux.HandleFunc("GET /api/v1/production-privilege-logs/{log}/revisions/{revision}/exports/{format}",
+		func(w http.ResponseWriter, r *http.Request) {
+			revision, err := strconv.ParseInt(r.PathValue("revision"), 10, 64)
+			if err != nil || revision < 1 {
+				writeError(w, NewError(http.StatusUnprocessableEntity, "invalid_production_privilege_export",
+					"revision must be a positive integer"))
+				return
+			}
+			format := r.PathValue("format")
+			exported, err := d.Store.ExportProductionPrivilegeLog(r.Context(), r.PathValue("log"), revision, format)
+			if err != nil {
+				writeEmailStoreError(w, productionPrivilegeMutationError(err))
+				return
+			}
+			w.Header().Set("Content-Type", exported.MediaType)
+			w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="privilege-log-%s-%d.%s"`,
+				r.PathValue("log"), revision, format))
+			w.Header().Set("Content-Length", strconv.Itoa(len(exported.Content)))
+			w.Header().Set("Cache-Control", "no-store")
+			w.Header().Set("X-Content-Type-Options", "nosniff")
+			w.Header().Set(ProductionPrivilegeReceiptHashHeader, exported.ReceiptSHA256)
+			w.Header().Set(ProductionPrivilegeRowsHashHeader, exported.RowsSHA256)
+			w.Header().Set("Content-Digest", contentDigest(mustDecodeHash(exported.ContentSHA256)))
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write(exported.Content)
+		})
+	binary := &huma.Schema{Type: openAPIStringType, Format: productionPrivilegeBinaryFormat}
+	api.OpenAPI().AddOperation(&huma.Operation{OperationID: "exportProductionPrivilegeLog", Method: http.MethodGet,
+		Path:    "/api/v1/production-privilege-logs/{log}/revisions/{revision}/exports/{format}",
+		Summary: "Download verified public bytes of a frozen privilege log",
+		Parameters: []*huma.Param{
+			{Name: "log", In: openAPIPathLocation, Required: true, Schema: &huma.Schema{Type: openAPIStringType, Format: "uuid"}},
+			{Name: "revision", In: openAPIPathLocation, Required: true, Schema: &huma.Schema{Type: mailboxIntegerType, Format: "int64", Minimum: new(float64(1))}},
+			{Name: "format", In: openAPIPathLocation, Required: true, Schema: &huma.Schema{Type: openAPIStringType,
+				Enum: []any{"json", "csv", "xlsx", "pdf"}}},
+		},
+		Responses: map[string]*huma.Response{"200": {Description: "Verified public privilege-log export",
+			Headers: map[string]*huma.Param{
+				ProductionPrivilegeReceiptHashHeader: {Schema: &huma.Schema{Type: openAPIStringType, Pattern: productionPrivilegeHashPattern}},
+				ProductionPrivilegeRowsHashHeader:    {Schema: &huma.Schema{Type: openAPIStringType, Pattern: productionPrivilegeHashPattern}},
+				"Content-Digest":                     {Schema: &huma.Schema{Type: openAPIStringType}},
+			},
+			Content: map[string]*huma.MediaType{
+				productionservice.PrivilegeLogJSONMediaType: {Schema: binary},
+				productionservice.PrivilegeLogCSVMediaType:  {Schema: binary},
+				productionservice.PrivilegeLogXLSXMediaType: {Schema: binary},
+				productionservice.PrivilegeLogPDFMediaType:  {Schema: binary},
+			}}}})
 	huma.Register(api, huma.Operation{OperationID: "validateProductionPrivilegeLog", Method: http.MethodPost,
 		Path:    "/api/v1/production-privilege-logs/{log}/revisions/{revision}/validate",
 		Summary: "Validate the stored rows of a privilege-log draft", DefaultStatus: http.StatusCreated,
