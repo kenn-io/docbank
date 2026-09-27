@@ -143,14 +143,14 @@ func TestProductionCLIRealDaemonFinalizesAndDownloadsPackage(t *testing.T) {
 	downloadJSON := cli("production", "packages", "download", jobID, publishOperation,
 		destination, "--json")
 	var downloaded struct {
-		Path          string `json:"path"`
+		Destination   string `json:"destination"`
 		ArchiveSHA256 string `json:"archive_sha256"`
 		Size          int64  `json:"size"`
 		VersionID     string `json:"version_id"`
 	}
 	require.NoError(t, json.Unmarshal([]byte(downloadJSON), &downloaded))
 	require.NotContains(t, downloadJSON, "url")
-	require.Equal(t, destination, downloaded.Path)
+	require.Equal(t, destination, downloaded.Destination)
 	require.Equal(t, published.ArchiveSHA256, downloaded.ArchiveSHA256)
 	require.Equal(t, published.VersionID, downloaded.VersionID)
 	archive, err := os.ReadFile(destination)
