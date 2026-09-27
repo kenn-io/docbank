@@ -463,12 +463,18 @@ func validateRetentionReceipt(value RetentionReceipt, requireDigest bool) error 
 func validateReproductionRequest(value ReproductionRequest) error {
 	if value.Contract != ReproductionRequestContractV1 || !canonicalUUID(value.OperationID) ||
 		!allSHA256(value.OriginalProductionReceiptSHA256, value.DeliveryPolicySHA256) ||
-		len(value.ArtifactIDs) == 0 || len(value.ArtifactIDs) > MaxArtifacts {
+		len(value.ArtifactIDs) == 0 || len(value.ArtifactIDs) > MaxArtifacts ||
+		len(value.SourceVersionIDs) == 0 || len(value.SourceVersionIDs) > MaxArtifacts {
 		return invalidProblem("invalid reproduction request")
 	}
 	for _, id := range value.ArtifactIDs {
 		if !canonicalUUID(id) {
 			return invalidProblem("invalid reproduction artifact ID")
+		}
+	}
+	for _, id := range value.SourceVersionIDs {
+		if !canonicalUUID(id) {
+			return invalidProblem("invalid reproduction source version ID")
 		}
 	}
 	return nil

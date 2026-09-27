@@ -573,6 +573,7 @@ func TestNumberingProvenanceRetentionAndReproductionReceiptsAreImmutable(t *test
 	request := ReproductionRequest{
 		Contract: ReproductionRequestContractV1, OperationID: "25252525-2525-4525-8525-252525252525",
 		OriginalProductionReceiptSHA256: sha("b"), ArtifactIDs: []string{provenance.Entries[1].ArtifactID, provenance.Entries[0].ArtifactID},
+		SourceVersionIDs:     []string{"31313131-3131-4131-8131-313131313131", "32323232-3232-4232-8232-323232323232"},
 		DeliveryPolicySHA256: sha("c"),
 	}
 	requestBytes, requestDigest, err := CanonicalReproductionRequest(request)
@@ -582,6 +583,13 @@ func TestNumberingProvenanceRetentionAndReproductionReceiptsAreImmutable(t *test
 	require.NoError(t, err)
 	require.Equal(t, requestBytes, reorderedRequestBytes)
 	require.Equal(t, requestDigest, reorderedRequestDigest)
+	slices.Reverse(request.SourceVersionIDs)
+	_, swappedSourceDigest, err := CanonicalReproductionRequest(request)
+	require.NoError(t, err)
+	require.NotEqual(t, requestDigest, swappedSourceDigest)
+	request.SourceVersionIDs = nil
+	_, _, err = CanonicalReproductionRequest(request)
+	require.Error(t, err)
 
 	reproduction := ReproductionReceipt{
 		Contract: ReproductionReceiptContractV1, ID: "26262626-2626-4626-8626-262626262626",

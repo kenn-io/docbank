@@ -45,6 +45,7 @@ func reproductionFixture(t *testing.T) (PublishedPackageInputs, syntheticPackage
 			OperationID:                     "88888888-8888-4888-8888-888888888888",
 			OriginalProductionReceiptSHA256: job.Receipt.SHA256,
 			ArtifactIDs:                     ids,
+			SourceVersionIDs:                []string{members[0].SourceVersionID, members[1].SourceVersionID},
 			DeliveryPolicySHA256:            policySHA,
 		}, policy
 }
@@ -77,6 +78,19 @@ func TestPrepareReproductionRejectsChangedAuthorityAndUnverifiedBytes(t *testing
 		}},
 		{"missing source version", func(inputs *PublishedPackageInputs, _ *syntheticPackageOpener, _ *documentproduction.ReproductionRequest, _ *PackageDeliveryPolicy) {
 			inputs.Members[0].SourceVersionID = ""
+		}},
+		{"changed requested source version", func(_ *PublishedPackageInputs, _ *syntheticPackageOpener, request *documentproduction.ReproductionRequest, _ *PackageDeliveryPolicy) {
+			request.SourceVersionIDs[0] = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+		}},
+		{"changed historical source version", func(inputs *PublishedPackageInputs, _ *syntheticPackageOpener, _ *documentproduction.ReproductionRequest, _ *PackageDeliveryPolicy) {
+			inputs.Members[0].SourceVersionID = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+		}},
+		{"swapped historical source versions", func(inputs *PublishedPackageInputs, _ *syntheticPackageOpener, _ *documentproduction.ReproductionRequest, _ *PackageDeliveryPolicy) {
+			inputs.Members[0].SourceVersionID, inputs.Members[1].SourceVersionID =
+				inputs.Members[1].SourceVersionID, inputs.Members[0].SourceVersionID
+		}},
+		{"omitted requested source version", func(_ *PublishedPackageInputs, _ *syntheticPackageOpener, request *documentproduction.ReproductionRequest, _ *PackageDeliveryPolicy) {
+			request.SourceVersionIDs = request.SourceVersionIDs[:1]
 		}},
 		{"missing output", func(inputs *PublishedPackageInputs, opener *syntheticPackageOpener, _ *documentproduction.ReproductionRequest, _ *PackageDeliveryPolicy) {
 			delete(opener.data, inputs.Job.Manifest.Artifacts[0].ID)

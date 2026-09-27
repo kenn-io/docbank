@@ -499,7 +499,9 @@ type ReproductionRequest struct {
 	OperationID                     string   `json:"operation_id"`
 	OriginalProductionReceiptSHA256 string   `json:"original_production_receipt_sha256"`
 	ArtifactIDs                     []string `json:"artifact_ids"`
-	DeliveryPolicySHA256            string   `json:"delivery_policy_sha256"`
+	// SourceVersionIDs follows the frozen member order, including repeated versions.
+	SourceVersionIDs     []string `json:"source_version_ids"`
+	DeliveryPolicySHA256 string   `json:"delivery_policy_sha256"`
 }
 
 type ReproductionReceipt struct {

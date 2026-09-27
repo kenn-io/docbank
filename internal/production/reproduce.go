@@ -79,6 +79,9 @@ func PrepareReproduction(ctx context.Context, catalog PublishedPackageCatalog,
 		members[member.ID] = member
 		sourceVersions[index] = member.SourceVersionID
 	}
+	if !slices.Equal(request.SourceVersionIDs, sourceVersions) {
+		return bad()
+	}
 	selected := make(map[string]bool, len(request.ArtifactIDs))
 	for _, id := range request.ArtifactIDs {
 		if selected[id] {

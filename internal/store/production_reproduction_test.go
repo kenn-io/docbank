@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -41,12 +42,21 @@ func TestRetainProductionReproductionReplaysWithoutNewNumbers(t *testing.T) {
 	for index, artifact := range published.Manifest.Artifacts {
 		artifactIDs[index] = artifact.ID
 	}
+	packageInputs, err := s.LoadProductionPackageInputs(t.Context(), job.ID)
+	require.NoError(t, err)
+	sourceVersionIDs := make([]string, len(packageInputs.Members))
+	for index, member := range packageInputs.Members {
+		sourceVersionIDs[index] = member.SourceVersionID
+	}
 	request := documentproduction.ReproductionRequest{
 		Contract:                        documentproduction.ReproductionRequestContractV1,
 		OperationID:                     "88888888-8888-4888-8888-888888888888",
 		OriginalProductionReceiptSHA256: originalReceipt.SHA256,
-		ArtifactIDs:                     artifactIDs, DeliveryPolicySHA256: productionHash(string(policyRaw)),
+		ArtifactIDs:                     artifactIDs, SourceVersionIDs: sourceVersionIDs,
+		DeliveryPolicySHA256: productionHash(string(policyRaw)),
 	}
+	_, err = production.PrepareReproduction(t.Context(), s, f, job.ID, request, policy)
+	require.NoError(t, err)
 	var first, second documentproduction.ReproductionReceipt
 	const deliveryOperationID = "99999999-9999-4999-8999-999999999999"
 	proofPath := filepath.Join(t.TempDir(), "synthetic-transfer-proof.txt")
@@ -76,7 +86,7 @@ func TestRetainProductionReproductionReplaysWithoutNewNumbers(t *testing.T) {
 			receipt, retainErr := s.RetainProductionReproduction(ctx, job.ID, got, policy,
 				paths, f, restartPackageBlobWriter(f))
 			if retainErr != nil {
-				return retainErr
+				return fmt.Errorf("retain reproduction: %w", retainErr)
 			}
 			if first.ID == "" {
 				wrongPolicy := production.PackageDeliveryPolicy{RecipientCode: "wrong-recipient",
@@ -112,7 +122,7 @@ func TestRetainProductionReproductionReplaysWithoutNewNumbers(t *testing.T) {
 				got.OperationID, deliveryOperationID, policy, evidence, paths,
 				deliveryPath, restartPackageBlobWriter(f))
 			if deliveryErr != nil {
-				return deliveryErr
+				return fmt.Errorf("record reproduction delivery: %w", deliveryErr)
 			}
 			if first.ID == "" {
 				first = receipt
@@ -125,6 +135,11 @@ func TestRetainProductionReproductionReplaysWithoutNewNumbers(t *testing.T) {
 		},
 	}
 	limits := production.PackageLimits{MaxVolumeBytes: 50 << 20, MaxVolumeDocuments: 10}
+	changedSource := request
+	changedSource.SourceVersionIDs = append([]string(nil), request.SourceVersionIDs...)
+	changedSource.SourceVersionIDs[0] = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+	_, err = runtime.Run(t.Context(), job.ID, changedSource, policy, "export-dat-opt-images-v1", limits)
+	require.ErrorIs(t, err, production.ErrReproductionConflict)
 	_, err = runtime.Run(t.Context(), job.ID, request, policy, "export-dat-opt-images-v1", limits)
 	require.ErrorIs(t, err, lostResponse)
 	require.NoError(t, documentproduction.ValidateReproductionReceipt(first))
