@@ -3,6 +3,7 @@ package main
 import (
 	"errors"
 	"fmt"
+	"path/filepath"
 	"strconv"
 
 	"github.com/spf13/cobra"
@@ -11,7 +12,56 @@ import (
 	"go.kenn.io/docbank/internal/store"
 )
 
-var productionPrivilegeCmd = &cobra.Command{Use: "privilege-log", Short: "Validate drafts and read frozen public privilege logs"}
+var productionPrivilegeCmd = &cobra.Command{Use: "privilege-log", Short: "Validate drafts, read rows, and export frozen public privilege logs"}
+
+func newProductionPrivilegeExportCommand() *cobra.Command {
+	var overwrite bool
+	cmd := &cobra.Command{Use: "export <log-id> <revision> <format> <local-file>",
+		Short: "Download a verified public JSON, CSV, XLSX, or PDF privilege log",
+		Args:  cobra.ExactArgs(4),
+		RunE: func(cmd *cobra.Command, args []string) (retErr error) {
+			revision, err := strconv.ParseInt(args[1], 10, 64)
+			if err != nil || revision < 1 {
+				return usageError(errors.New("revision must be a positive integer"))
+			}
+			destination, err := prepareGetDestination(args[3], overwrite)
+			if err != nil {
+				return err
+			}
+			connection, err := daemonconn.Ensure(cmd.Context())
+			if err != nil {
+				return err
+			}
+			exported, err := connection.ExportProductionPrivilegeLog(cmd.Context(), args[0], revision, args[2])
+			if err != nil {
+				return err
+			}
+			staging, err := makePrivateStagingDirAt(filepath.Dir(destination), "docbank-privilege-export-")
+			if err != nil {
+				return err
+			}
+			defer func() { retErr = errors.Join(retErr, staging.removeAll()) }()
+			file, path, err := staging.createFile(filepath.Base(destination))
+			if err != nil {
+				return err
+			}
+			_, writeErr := file.Write(exported.Content)
+			if err := errors.Join(writeErr, file.Sync(), file.Close()); err != nil {
+				return err
+			}
+			if err := publishGetFile(path, destination, overwrite); err != nil {
+				return err
+			}
+			_, err = fmt.Fprintf(cmd.OutOrStdout(), "%s · SHA-256 %s · receipt %s\n",
+				destination, exported.ContentSHA256, exported.ReceiptSHA256)
+			if err != nil {
+				return fmt.Errorf("writing privilege export receipt: %w", err)
+			}
+			return nil
+		}}
+	cmd.Flags().BoolVar(&overwrite, "overwrite", false, "replace an existing destination")
+	return cmd
+}
 
 func newProductionPrivilegeValidateCommand() *cobra.Command {
 	var operationID string
@@ -104,5 +154,6 @@ func newProductionPrivilegeShowCommand() *cobra.Command {
 func init() {
 	productionPrivilegeCmd.AddCommand(newProductionPrivilegeValidateCommand())
 	productionPrivilegeCmd.AddCommand(newProductionPrivilegeShowCommand())
+	productionPrivilegeCmd.AddCommand(newProductionPrivilegeExportCommand())
 	productionCmd.AddCommand(productionPrivilegeCmd)
 }
