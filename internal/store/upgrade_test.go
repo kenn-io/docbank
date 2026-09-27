@@ -78,7 +78,7 @@ func TestOpenCutsOverReleasedV090ThroughJSONL(t *testing.T) {
 			assert.Zero(t, preflights)
 			var upgraded bytes.Buffer
 			require.NoError(t, s.ExportMetadata(t.Context(), &upgraded))
-			assertReleasedMetadataWithEmptyCurrentExtensions(t, fixture.metadata, upgraded.Bytes())
+			assertReleasedMetadataWithEmptyCurrentExtensions(t, fixture.metadata, upgraded.Bytes(), true)
 			var provenance, bindings, eventState int
 			require.NoError(t, s.db.QueryRow(`SELECT
 				(SELECT COUNT(*) FROM provenance),
@@ -601,8 +601,7 @@ func TestOpenCutsOverEveryReleasedSchemaV2LayoutThroughJSONL(t *testing.T) {
 				require.NoError(t, err)
 				var upgraded bytes.Buffer
 				require.NoError(t, s.ExportMetadata(t.Context(), &upgraded))
-				assert.Equal(t, fixture.metadata, upgraded.Bytes(),
-					"released logical authority survives byte-for-byte")
+				assertReleasedMetadataWithEmptyCurrentExtensions(t, fixture.metadata, upgraded.Bytes(), false)
 
 				primary, err := s.PrimaryBlobStore(t.Context())
 				require.NoError(t, err)
@@ -662,7 +661,7 @@ func TestOpenCutsOverReleasedSchemaV3ThroughJSONL(t *testing.T) {
 			assert.Equal(t, currentStorageSchemaVersion, schemaVersion)
 			var upgraded bytes.Buffer
 			require.NoError(t, s.ExportMetadata(t.Context(), &upgraded))
-			assert.Equal(t, fixture.metadata, upgraded.Bytes())
+			assertReleasedMetadataWithEmptyCurrentExtensions(t, fixture.metadata, upgraded.Bytes(), false)
 			var stores, locations int
 			require.NoError(t, s.db.QueryRow(`SELECT COUNT(*) FROM blob_stores
 				WHERE store_id IN (?,?)`, fixture.primaryStoreID, fixture.secondaryStoreID).Scan(&stores))
@@ -899,7 +898,7 @@ func TestOpenCompletesInterruptedReleasedCutover(t *testing.T) {
 	require.NoError(t, err)
 	var metadata bytes.Buffer
 	require.NoError(t, recovered.ExportMetadata(t.Context(), &metadata))
-	assertReleasedMetadataWithEmptyCurrentExtensions(t, fixture.metadata, metadata.Bytes())
+	assertReleasedMetadataWithEmptyCurrentExtensions(t, fixture.metadata, metadata.Bytes(), true)
 	require.NoError(t, recovered.Close())
 	_, err = os.Stat(stagePath)
 	require.ErrorIs(t, err, os.ErrNotExist)
@@ -1300,7 +1299,7 @@ func assertPhysicalContent(t *testing.T, s *Store, hash string, want PhysicalCon
 	assert.Equal(t, want, got)
 }
 
-func assertReleasedMetadataWithEmptyCurrentExtensions(t *testing.T, released, current []byte) {
+func assertReleasedMetadataWithEmptyCurrentExtensions(t *testing.T, released, current []byte, emptyLexicalAdded bool) {
 	t.Helper()
 	var retained [][]byte
 	var generations []metadataLexicalGeneration
@@ -1319,6 +1318,10 @@ func assertReleasedMetadataWithEmptyCurrentExtensions(t *testing.T, released, cu
 			require.True(t, bytes.HasSuffix(line, []byte(lifecycleFlag)))
 			retained = append(retained, append(bytes.Clone(line[:len(line)-len(lifecycleFlag)]), '}'))
 		case metadataLexicalGenerationType:
+			if !emptyLexicalAdded {
+				retained = append(retained, bytes.Clone(line))
+				continue
+			}
 			var generation metadataLexicalGeneration
 			require.NoError(t, json.Unmarshal(line, &generation))
 			generations = append(generations, generation)
@@ -1332,18 +1335,20 @@ func assertReleasedMetadataWithEmptyCurrentExtensions(t *testing.T, released, cu
 			retained = append(retained, bytes.Clone(line))
 		}
 	}
-	require.Len(t, generations, 1)
-	require.NotEmpty(t, generations[0].BuiltAt)
-	generations[0].BuiltAt = ""
-	assert.Equal(t, metadataLexicalGeneration{
-		Type:           metadataLexicalGenerationType,
-		GenerationID:   "0d552c0f8d591c15930b04a8a529cb7fe71bc38fdbe44046206c8cf45480e187",
-		SegmentCount:   0,
-		ManifestDigest: "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-		BuildIDs:       []string{},
-		BuildDigest:    "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-		Headed:         true,
-	}, generations[0])
+	if emptyLexicalAdded {
+		require.Len(t, generations, 1)
+		require.NotEmpty(t, generations[0].BuiltAt)
+		generations[0].BuiltAt = ""
+		assert.Equal(t, metadataLexicalGeneration{
+			Type:           metadataLexicalGenerationType,
+			GenerationID:   "0d552c0f8d591c15930b04a8a529cb7fe71bc38fdbe44046206c8cf45480e187",
+			SegmentCount:   0,
+			ManifestDigest: "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+			BuildIDs:       []string{},
+			BuildDigest:    "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+			Headed:         true,
+		}, generations[0])
+	}
 	require.Len(t, lifecycleManifests, 1)
 	digest := sha256.New()
 	for _, table := range productionLifecycleTables {
