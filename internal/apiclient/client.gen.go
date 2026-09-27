@@ -8029,6 +8029,53 @@ func (c *Client) ReadProductionApproval(ctx context.Context, options *ReadProduc
 	return responseParser(ctx, resp)
 }
 
+// CreateProductionPlayersSnapshot Record versioned people and aliases for privilege logs
+func (c *Client) CreateProductionPlayersSnapshot(ctx context.Context, options *CreateProductionPlayersSnapshotRequestOptions, reqEditors ...runtime.RequestEditorFn) (*CreateProductionPlayersSnapshotResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/production-player-snapshots/{snapshot_id}/revisions/{revision}",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*CreateProductionPlayersSnapshotResponse, error) {
+		switch resp.StatusCode {
+
+		case 201:
+
+			target := new(CreateProductionPlayersSnapshotResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "CreateProductionPlayersSnapshotResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[CreateProductionPlayersSnapshotErrorResponse](resp, "CreateProductionPlayersSnapshotErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/production-player-snapshots/{snapshot_id}/revisions/{revision}")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 201)
+	}
+	return responseParser(ctx, resp)
+}
+
 // ReadProductionPrivilegeLog Page a frozen privilege log's public rows
 func (c *Client) ReadProductionPrivilegeLog(ctx context.Context, options *ReadProductionPrivilegeLogRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ReadProductionPrivilegeLogResponse, error) {
 	var err error
@@ -17001,6 +17048,41 @@ func (o *ReadProductionApprovalRequestOptions) GetHeader() (map[string]string, e
 	return nil, nil
 }
 
+// CreateProductionPlayersSnapshotRequestOptions is the options needed to make a request to CreateProductionPlayersSnapshot.
+type CreateProductionPlayersSnapshotRequestOptions struct {
+	PathParams *CreateProductionPlayersSnapshotPath
+	Body       *CreateProductionPlayersSnapshotBody
+}
+
+// GetPathParams returns the path params as a map.
+func (o *CreateProductionPlayersSnapshotRequestOptions) GetPathParams() (map[string]any, error) {
+	encoded, err := json.Marshal(o.PathParams, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetQuery returns the query params as a map.
+func (o *CreateProductionPlayersSnapshotRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *CreateProductionPlayersSnapshotRequestOptions) GetBody() any {
+	if o.Body == nil {
+		return nil
+	}
+	return o.Body
+}
+
+// GetHeader returns the headers as a map.
+func (o *CreateProductionPlayersSnapshotRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
 // ReadProductionPrivilegeLogRequestOptions is the options needed to make a request to ReadProductionPrivilegeLog.
 type ReadProductionPrivilegeLogRequestOptions struct {
 	PathParams *ReadProductionPrivilegeLogPath
@@ -20039,6 +20121,11 @@ type ReadProductionApprovalPath struct {
 	Approval string `json:"approval"`
 }
 
+type CreateProductionPlayersSnapshotPath struct {
+	SnapshotID string `json:"snapshot_id"`
+	Revision   int64  `json:"revision"`
+}
+
 type ReadProductionPrivilegeLogPath struct {
 	Log string `json:"log"`
 }
@@ -20381,6 +20468,8 @@ type StartDocumentProcessingBody = StartProcessingRequest
 type PlanDocumentProcessingBody = ProcessingPlanRequest
 
 type ResolveDocumentSourceFenceBody = DocumentSourceFenceResolveRequest
+
+type CreateProductionPlayersSnapshotBody = ProductionPlayersSnapshotCreateRequest
 
 type CreateProductionPrivilegeLogDraftBody = ProductionPrivilegeDraftCreateRequest
 
@@ -21520,6 +21609,10 @@ type ReadProductionApprovalResponse = api.ProductionApprovalPublic
 
 type ReadProductionApprovalErrorResponse = Error
 
+type CreateProductionPlayersSnapshotResponse = production.PlayersSnapshot
+
+type CreateProductionPlayersSnapshotErrorResponse = Error
+
 type ReadProductionPrivilegeLogResponse = api.ProductionPrivilegePublicPage
 
 type ReadProductionPrivilegeLogErrorResponse = Error
@@ -22544,6 +22637,10 @@ type PlanPreview = bundle.PlanPreview
 
 type PlanRequest = bundle.PlanRequest
 
+type Player = production.Player
+
+type PlayersSnapshot = production.PlayersSnapshot
+
 type PolicyOutput = production.PolicyOutput
 
 type PolicyPredicate = production.PolicyPredicate
@@ -22694,6 +22791,8 @@ type ProductionNumberPage = api.ProductionNumberPage
 type ProductionNumberReference = api.ProductionNumberReference
 
 type ProductionPackageDownloadTicket = api.ProductionPackageDownloadTicket
+
+type ProductionPlayersSnapshotCreateRequest = api.ProductionPlayersSnapshotCreateRequest
 
 type ProductionPolicyCreateRequest = api.ProductionPolicyCreateRequest
 

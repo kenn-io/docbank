@@ -10077,6 +10077,62 @@ components:
       x-go-type-import:
         path: go.kenn.io/docbank/document/bundle
         name: bundle
+    Player:
+      additionalProperties: false
+      properties:
+        aliases:
+          items:
+            type: string
+          type: array
+        display_name:
+          type: string
+        evidence_sha256:
+          type: string
+        id:
+          type: string
+      required:
+        - id
+        - display_name
+        - aliases
+        - evidence_sha256
+      type: object
+      x-go-type: production.Player
+      x-go-type-import:
+        path: go.kenn.io/docbank/document/production
+        name: production
+    PlayersSnapshot:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/PlayersSnapshot.json
+          format: uri
+          readOnly: true
+          type: string
+        contract:
+          type: string
+        id:
+          type: string
+        players:
+          items:
+            $ref: "#/components/schemas/Player"
+          type: array
+        revision:
+          format: int64
+          type: integer
+        sha256:
+          type: string
+      required:
+        - contract
+        - id
+        - revision
+        - players
+      type: object
+      x-go-type: production.PlayersSnapshot
+      x-go-type-import:
+        path: go.kenn.io/docbank/document/production
+        name: production
     PolicyOutput:
       additionalProperties: false
       properties:
@@ -11654,6 +11710,30 @@ components:
         - version_id
       type: object
       x-go-type: api.ProductionPackageDownloadTicket
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
+    ProductionPlayersSnapshotCreateRequest:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/ProductionPlayersSnapshotCreateRequest.json
+          format: uri
+          readOnly: true
+          type: string
+        operation_id:
+          type: string
+        players:
+          items:
+            $ref: "#/components/schemas/Player"
+          type: array
+      required:
+        - operation_id
+        - players
+      type: object
+      x-go-type: api.ProductionPlayersSnapshotCreateRequest
       x-go-type-import:
         path: go.kenn.io/docbank/internal/api
         name: api
@@ -21009,6 +21089,42 @@ paths:
                 $ref: "#/components/schemas/Error"
           description: Error
       summary: Read a public production approval projection
+  /api/v1/production-player-snapshots/{snapshot_id}/revisions/{revision}:
+    post:
+      operationId: createProductionPlayersSnapshot
+      parameters:
+        - in: path
+          name: snapshot_id
+          required: true
+          schema:
+            type: string
+        - in: path
+          name: revision
+          required: true
+          schema:
+            format: int64
+            minimum: 1
+            type: integer
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ProductionPlayersSnapshotCreateRequest"
+        required: true
+      responses:
+        "201":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PlayersSnapshot"
+          description: Created
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: Record versioned people and aliases for privilege logs
   /api/v1/production-privilege-logs/{log}:
     get:
       operationId: readProductionPrivilegeLog

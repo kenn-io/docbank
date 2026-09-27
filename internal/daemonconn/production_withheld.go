@@ -3,7 +3,6 @@ package daemonconn
 import (
 	"context"
 	"errors"
-	"slices"
 
 	documentproduction "go.kenn.io/docbank/document/production"
 	"go.kenn.io/docbank/internal/api"
@@ -18,6 +17,14 @@ func (c *Connection) CreateProductionWithheldSelection(ctx context.Context, setI
 		!validUUIDv4(request.SelectionID) || len(request.PolicySHA256) != 64 || len(request.Members) == 0 {
 		return documentproduction.WithheldSelection{}, errors.New("invalid production withheld selection request")
 	}
+	_, expectedDigest, err := documentproduction.CanonicalWithheldSelection(documentproduction.WithheldSelection{
+		Contract: documentproduction.WithheldSelectionContractV1,
+		ID:       request.SelectionID, SetID: setID, Revision: revision,
+		PolicySHA256: request.PolicySHA256, Members: request.Members,
+	})
+	if err != nil {
+		return documentproduction.WithheldSelection{}, err
+	}
 	result, err := c.API().CreateProductionWithheldSelection(ctx,
 		&apiclient.CreateProductionWithheldSelectionRequestOptions{
 			PathParams: &apiclient.CreateProductionWithheldSelectionPath{SetID: setID, Revision: revision},
@@ -28,12 +35,7 @@ func (c *Connection) CreateProductionWithheldSelection(ctx context.Context, setI
 	}
 	if result == nil || documentproduction.ValidateWithheldSelection(*result) != nil ||
 		result.SetID != setID || result.Revision != revision || result.ID != request.SelectionID ||
-		result.PolicySHA256 != request.PolicySHA256 || !slices.EqualFunc(result.Members, request.Members,
-		func(a, b documentproduction.WithheldMember) bool {
-			return a.ID == b.ID && a.Ordinal == b.Ordinal &&
-				a.SourceVersionID == b.SourceVersionID && a.SourceSHA256 == b.SourceSHA256 &&
-				a.SourceSize == b.SourceSize && a.FamilyOrder == b.FamilyOrder && a.Family == b.Family
-		}) {
+		result.PolicySHA256 != request.PolicySHA256 || result.SHA256 != expectedDigest {
 		return documentproduction.WithheldSelection{}, integrityErrorf("production withheld selection is inconsistent")
 	}
 	return *result, nil
