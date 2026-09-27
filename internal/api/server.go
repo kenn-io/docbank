@@ -226,7 +226,7 @@ func NewServer(d Deps) *Server {
 	registerProductionPrivilegeRoutes(mux, humaAPI, d, g)
 	registerProductionPrivilegeFreezeRoutes(humaAPI, d, g)
 	registerProductionSupplementRoutes(humaAPI, d, g)
-	registerProductionReproductionRoutes(humaAPI, d)
+	registerProductionReproductionRoutes(humaAPI, d, g, s.webDownloads)
 	registerProductionWithheldRoutes(humaAPI, d, g)
 	registerProductionPlayersRoutes(humaAPI, d, g)
 	clearLongRunningBodyReadDeadlines(humaAPI)

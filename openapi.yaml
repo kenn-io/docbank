@@ -12121,6 +12121,56 @@ components:
       x-go-type-import:
         path: go.kenn.io/docbank/internal/api
         name: api
+    ProductionReproductionCreateRequest:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/ProductionReproductionCreateRequest.json
+          format: uri
+          readOnly: true
+          type: string
+        delivery_policy:
+          $ref: "#/components/schemas/ProductionReproductionDeliveryPolicy"
+        max_volume_bytes:
+          format: int64
+          type: integer
+        max_volume_documents:
+          format: int64
+          type: integer
+        profile_id:
+          type: string
+        request:
+          $ref: "#/components/schemas/ReproductionRequest"
+      required:
+        - request
+        - delivery_policy
+        - profile_id
+        - max_volume_bytes
+        - max_volume_documents
+      type: object
+      x-go-type: api.ProductionReproductionCreateRequest
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
+    ProductionReproductionDeliveryPolicy:
+      additionalProperties: false
+      properties:
+        allowed_methods:
+          items:
+            type: string
+          type: array
+        recipient_code:
+          type: string
+      required:
+        - recipient_code
+        - allowed_methods
+      type: object
+      x-go-type: api.ProductionReproductionDeliveryPolicy
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     ProductionSetCreated:
       additionalProperties: false
       properties:
@@ -13318,6 +13368,37 @@ components:
         - created_at
       type: object
       x-go-type: production.ReproductionReceipt
+      x-go-type-import:
+        path: go.kenn.io/docbank/document/production
+        name: production
+    ReproductionRequest:
+      additionalProperties: false
+      properties:
+        artifact_ids:
+          items:
+            type: string
+          type: array
+        contract:
+          type: string
+        delivery_policy_sha256:
+          type: string
+        operation_id:
+          type: string
+        original_production_receipt_sha256:
+          type: string
+        source_version_ids:
+          items:
+            type: string
+          type: array
+      required:
+        - contract
+        - operation_id
+        - original_production_receipt_sha256
+        - artifact_ids
+        - source_version_ids
+        - delivery_policy_sha256
+      type: object
+      x-go-type: production.ReproductionRequest
       x-go-type-import:
         path: go.kenn.io/docbank/document/production
         name: production
@@ -21608,6 +21689,36 @@ paths:
                 $ref: "#/components/schemas/Error"
           description: Error
       summary: Issue a one-use ticket for a verified retained production package
+  /api/v1/productions/jobs/{job_id}/reproductions:
+    post:
+      operationId: createProductionReproduction
+      parameters:
+        - in: path
+          name: job_id
+          required: true
+          schema:
+            format: uuid
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ProductionReproductionCreateRequest"
+        required: true
+      responses:
+        "201":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReproductionReceipt"
+          description: Created
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: Build and retain a new verified package using only published production artifacts
   /api/v1/productions/jobs/{job_id}/reproductions/{operation_id}:
     get:
       operationId: getProductionReproduction

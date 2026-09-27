@@ -94,3 +94,34 @@ func PublishedProductionReproductionHTTPFixture(t *testing.T) (*Store, string, s
 	f.reopen(t)
 	return f.Store, f.root, job.ID, receipt
 }
+
+// PreparedProductionReproductionHTTPFixture supplies a published original
+// production and exact synthetic selection for daemon-side package creation.
+func PreparedProductionReproductionHTTPFixture(t *testing.T) (*Store, string, string,
+	documentproduction.ReproductionRequest, production.PackageDeliveryPolicy) {
+	t.Helper()
+	f, job := publishedRealRetentionFixture(t)
+	inputs, err := f.LoadProductionPackageInputs(t.Context(), job.ID)
+	require.NoError(t, err)
+	artifactIDs := make([]string, len(job.Manifest.Artifacts))
+	for i, artifact := range job.Manifest.Artifacts {
+		artifactIDs[i] = artifact.ID
+	}
+	sourceVersionIDs := make([]string, len(inputs.Members))
+	for i, member := range inputs.Members {
+		sourceVersionIDs[i] = member.SourceVersionID
+	}
+	policy := production.PackageDeliveryPolicy{RecipientCode: "synthetic-recipient",
+		AllowedMethods: []string{"offline-media"}}
+	policySHA256, err := production.PackageDeliveryPolicySHA256(policy)
+	require.NoError(t, err)
+	request := documentproduction.ReproductionRequest{
+		Contract:                        documentproduction.ReproductionRequestContractV1,
+		OperationID:                     "88000000-0000-4000-8000-000000000021",
+		OriginalProductionReceiptSHA256: job.Receipt.SHA256,
+		ArtifactIDs:                     artifactIDs, SourceVersionIDs: sourceVersionIDs,
+		DeliveryPolicySHA256: policySHA256,
+	}
+	f.reopen(t)
+	return f.Store, f.root, job.ID, request, policy
+}
