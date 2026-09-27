@@ -16,6 +16,11 @@ type ProductionPolicyCreateRequest struct {
 	Policy      documentproduction.PolicyVersion `json:"policy"`
 }
 
+type ProductionPolicyPage struct {
+	Items      []documentproduction.PolicyVersion `json:"items"`
+	NextCursor string                             `json:"next_cursor"`
+}
+
 func productionPolicyError(err error) error {
 	if errors.Is(err, store.ErrNotFound) {
 		return FromStoreError(err)
@@ -30,6 +35,23 @@ func productionPolicyError(err error) error {
 }
 
 func registerProductionPolicyRoutes(api huma.API, d Deps, g *OperationGate) {
+	huma.Register(api, huma.Operation{OperationID: "listProductionPolicyVersions", Method: http.MethodGet,
+		Path: "/api/v1/productions/policies", Summary: "Page immutable production policy versions"},
+		func(ctx context.Context, in *struct {
+			Cursor string `query:"cursor" maxLength:"60"`
+			Limit  int    `query:"limit" minimum:"0" maximum:"100"`
+		}) (*struct{ Body ProductionPolicyPage }, error) {
+			limit := in.Limit
+			if limit == 0 {
+				limit = 25
+			}
+			page, err := d.Store.ListProductionPolicies(ctx, in.Cursor, limit)
+			if err != nil {
+				return nil, productionPolicyError(err)
+			}
+			return &struct{ Body ProductionPolicyPage }{Body: ProductionPolicyPage{
+				Items: page.Items, NextCursor: page.NextCursor}}, nil
+		})
 	huma.Register(api, huma.Operation{OperationID: "createProductionPolicyVersion", Method: http.MethodPost,
 		Path: "/api/v1/productions/policies", Summary: "Store an immutable production policy version",
 		DefaultStatus: http.StatusCreated, MaxBodyBytes: 1 << 20},

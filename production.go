@@ -12,6 +12,23 @@ import (
 type ProductionMemberPage = api.ProductionMemberPage
 type ProductionDecisionPage = api.ProductionDecisionPage
 type ProductionRecipeCatalog = api.ProductionRecipeCatalog
+type ProductionPolicyPage = api.ProductionPolicyPage
+
+func (v *Vault) ProductionPolicyVersions(ctx context.Context, cursor string, limit int) (ProductionPolicyPage, error) {
+	v.lifecycle.RLock()
+	defer v.lifecycle.RUnlock()
+	if v.closed {
+		return ProductionPolicyPage{}, ErrClosed
+	}
+	if limit == 0 {
+		limit = 25
+	}
+	page, err := v.metadata.ListProductionPolicies(ctx, cursor, limit)
+	if err != nil {
+		return ProductionPolicyPage{}, err
+	}
+	return ProductionPolicyPage{Items: page.Items, NextCursor: page.NextCursor}, nil
+}
 
 // CreateProductionPolicyVersion stores one immutable policy in this embedded vault.
 // Reusing an operation ID with different policy content is a conflict.

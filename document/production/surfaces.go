@@ -38,7 +38,7 @@ var surfaceOperations = []SurfaceOperation{
 	{"cancelProductionJob", methodPOST, "/api/v1/production-sets/{set}/jobs/{job}/cancel", "production_cancel", GeneratedClientTransport},
 	{"createProductionDownload", methodPOST, "/api/v1/production-sets/{set}/jobs/{job}/download", "production_download", GeneratedClientTransport},
 	{"createProductionPolicyVersion", methodPOST, "/api/v1/productions/policies", "production_policy_create", GeneratedClientTransport},
-	{"listProductionPolicyVersions", methodGET, "/api/v1/production-policies", "production_policy_list", GeneratedClientTransport},
+	{"listProductionPolicyVersions", methodGET, "/api/v1/productions/policies", "production_policy_list", GeneratedClientTransport},
 	{"readProductionPolicyVersion", methodGET, "/api/v1/productions/policies/{policy_id}/versions/{version}", "production_policy_show", GeneratedClientTransport},
 	{"recordProductionApproval", methodPOST, "/api/v1/production-approvals", "production_approval_record", GeneratedClientTransport},
 	{"readProductionApproval", methodGET, "/api/v1/production-approvals/{approval}", "production_approval_show", GeneratedClientTransport},

@@ -38,6 +38,11 @@ func TestEmbeddedProductionPolicyKeepsVaultRootsSeparate(t *testing.T) {
 	read, err := first.ProductionPolicyVersion(t.Context(), policy.ID, policy.Version)
 	require.NoError(t, err)
 	require.Equal(t, created.SHA256, read.SHA256)
+	page, err := first.ProductionPolicyVersions(t.Context(), "", 1)
+	require.NoError(t, err)
+	require.Len(t, page.Items, 1)
+	require.Equal(t, created.SHA256, page.Items[0].SHA256)
+	require.Empty(t, page.NextCursor)
 	_, err = second.ProductionPolicyVersion(t.Context(), policy.ID, policy.Version)
 	require.ErrorIs(t, err, store.ErrNotFound)
 }

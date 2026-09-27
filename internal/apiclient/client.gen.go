@@ -8138,6 +8138,58 @@ func (c *Client) FindProductionNumberCandidates(ctx context.Context, options *Fi
 	return responseParser(ctx, resp)
 }
 
+// ListProductionPolicyVersions Page immutable production policy versions
+func (c *Client) ListProductionPolicyVersions(ctx context.Context, options *ListProductionPolicyVersionsRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ListProductionPolicyVersionsResponse, error) {
+	var err error
+
+	queryEncoding := map[string]runtime.QueryEncoding{
+		"cursor": {Style: "form", Explode: &[]bool{false}[0]},
+		"limit":  {Style: "form", Explode: &[]bool{false}[0]},
+	}
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:    c.apiClient.GetBaseURL() + "/api/v1/productions/policies",
+		Method:        "GET",
+		Options:       options,
+		QueryEncoding: queryEncoding,
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*ListProductionPolicyVersionsResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(ListProductionPolicyVersionsResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "ListProductionPolicyVersionsResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[ListProductionPolicyVersionsErrorResponse](resp, "ListProductionPolicyVersionsErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/productions/policies")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
 // CreateProductionPolicyVersion Store an immutable production policy version
 func (c *Client) CreateProductionPolicyVersion(ctx context.Context, options *CreateProductionPolicyVersionRequestOptions, reqEditors ...runtime.RequestEditorFn) (*CreateProductionPolicyVersionResponse, error) {
 	var err error
@@ -16682,6 +16734,37 @@ func (o *FindProductionNumberCandidatesRequestOptions) GetHeader() (map[string]s
 	return nil, nil
 }
 
+// ListProductionPolicyVersionsRequestOptions is the options needed to make a request to ListProductionPolicyVersions.
+type ListProductionPolicyVersionsRequestOptions struct {
+	Query *ListProductionPolicyVersionsQuery
+}
+
+// GetPathParams returns the path params as a map.
+func (o *ListProductionPolicyVersionsRequestOptions) GetPathParams() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetQuery returns the query params as a map.
+func (o *ListProductionPolicyVersionsRequestOptions) GetQuery() (map[string]any, error) {
+	encoded, err := json.Marshal(o.Query, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *ListProductionPolicyVersionsRequestOptions) GetBody() any {
+	return nil
+}
+
+// GetHeader returns the headers as a map.
+func (o *ListProductionPolicyVersionsRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
 // CreateProductionPolicyVersionRequestOptions is the options needed to make a request to CreateProductionPolicyVersion.
 type CreateProductionPolicyVersionRequestOptions struct {
 	Body *CreateProductionPolicyVersionBody
@@ -19995,6 +20078,11 @@ type FindProductionNumberCandidatesQuery struct {
 	Limit *int64  `json:"limit,omitempty"`
 }
 
+type ListProductionPolicyVersionsQuery struct {
+	Cursor *string `json:"cursor,omitempty"`
+	Limit  *int64  `json:"limit,omitempty"`
+}
+
 type ListProductionDecisionsQuery struct {
 	Cursor *string `json:"cursor,omitempty"`
 	Limit  *int64  `json:"limit,omitempty"`
@@ -20809,6 +20897,10 @@ type FindProductionNumbersErrorResponse = Error
 type FindProductionNumberCandidatesResponse = api.ProductionNumberCandidates
 
 type FindProductionNumberCandidatesErrorResponse = Error
+
+type ListProductionPolicyVersionsResponse = api.ProductionPolicyPage
+
+type ListProductionPolicyVersionsErrorResponse = Error
 
 type CreateProductionPolicyVersionResponse = production.PolicyVersion
 
@@ -21930,6 +22022,8 @@ type ProductionNumberReference = api.ProductionNumberReference
 type ProductionPackageDownloadTicket = api.ProductionPackageDownloadTicket
 
 type ProductionPolicyCreateRequest = api.ProductionPolicyCreateRequest
+
+type ProductionPolicyPage = api.ProductionPolicyPage
 
 type ProductionReceipt = api.ProductionReceipt
 
