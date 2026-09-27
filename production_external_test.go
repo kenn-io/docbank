@@ -47,6 +47,8 @@ func TestEmbeddedProductionPolicyKeepsVaultRootsSeparate(t *testing.T) {
 	require.ErrorIs(t, err, store.ErrNotFound)
 	_, err = first.ProductionApproval(t.Context(), "33333333-3333-4333-8333-333333333333")
 	require.ErrorIs(t, err, store.ErrNotFound)
+	_, err = first.ProductionPrivilegeLog(t.Context(), "44444444-4444-4444-8444-444444444444", 1, "", 1)
+	require.ErrorIs(t, err, store.ErrNotFound)
 }
 
 func TestEmbeddedProductionSetsKeepVaultRootsSeparate(t *testing.T) {

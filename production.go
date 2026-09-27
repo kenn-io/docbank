@@ -15,6 +15,7 @@ type ProductionDecisionPage = api.ProductionDecisionPage
 type ProductionRecipeCatalog = api.ProductionRecipeCatalog
 type ProductionPolicyPage = api.ProductionPolicyPage
 type ProductionApprovalPublic = api.ProductionApprovalPublic
+type ProductionPrivilegePublicPage = api.ProductionPrivilegePublicPage
 
 // ProductionApprovalRequest names the exact subject and private evidence to
 // record in an embedded vault. It does not contain authentication authority.
@@ -93,6 +94,26 @@ func (v *Vault) ProductionApproval(ctx context.Context, approvalID string) (Prod
 		return ProductionApprovalPublic{}, err
 	}
 	return ProductionApprovalPublic{Grant: grant, Events: events}, nil
+}
+
+// ProductionPrivilegeLog reads a bounded page of public rows from one frozen
+// privilege-log revision in this embedded vault.
+func (v *Vault) ProductionPrivilegeLog(ctx context.Context, logID string, revision int64,
+	cursor string, limit int) (ProductionPrivilegePublicPage, error) {
+	v.lifecycle.RLock()
+	defer v.lifecycle.RUnlock()
+	if v.closed {
+		return ProductionPrivilegePublicPage{}, ErrClosed
+	}
+	if limit == 0 {
+		limit = 25
+	}
+	page, err := v.metadata.ProductionPrivilegePublicPage(ctx, logID, revision, cursor, limit)
+	if err != nil {
+		return ProductionPrivilegePublicPage{}, err
+	}
+	return ProductionPrivilegePublicPage{Receipt: page.Receipt,
+		Rows: page.Rows, NextCursor: page.NextCursor}, nil
 }
 
 // RecordProductionApproval stores one immutable approval using the host's

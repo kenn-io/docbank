@@ -8029,6 +8029,59 @@ func (c *Client) ReadProductionApproval(ctx context.Context, options *ReadProduc
 	return responseParser(ctx, resp)
 }
 
+// ReadProductionPrivilegeLog Page a frozen privilege log's public rows
+func (c *Client) ReadProductionPrivilegeLog(ctx context.Context, options *ReadProductionPrivilegeLogRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ReadProductionPrivilegeLogResponse, error) {
+	var err error
+
+	queryEncoding := map[string]runtime.QueryEncoding{
+		"cursor":   {Style: "form", Explode: &[]bool{false}[0]},
+		"limit":    {Style: "form", Explode: &[]bool{false}[0]},
+		"revision": {Style: "form", Explode: &[]bool{false}[0]},
+	}
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:    c.apiClient.GetBaseURL() + "/api/v1/production-privilege-logs/{log}",
+		Method:        "GET",
+		Options:       options,
+		QueryEncoding: queryEncoding,
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*ReadProductionPrivilegeLogResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(ReadProductionPrivilegeLogResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "ReadProductionPrivilegeLogResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[ReadProductionPrivilegeLogErrorResponse](resp, "ReadProductionPrivilegeLogErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/production-privilege-logs/{log}")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
 // DownloadProductionPackage Issue a one-use ticket for a verified retained production package
 func (c *Client) DownloadProductionPackage(ctx context.Context, options *DownloadProductionPackageRequestOptions, reqEditors ...runtime.RequestEditorFn) (*DownloadProductionPackageResponse, error) {
 	var err error
@@ -16714,6 +16767,44 @@ func (o *ReadProductionApprovalRequestOptions) GetHeader() (map[string]string, e
 	return nil, nil
 }
 
+// ReadProductionPrivilegeLogRequestOptions is the options needed to make a request to ReadProductionPrivilegeLog.
+type ReadProductionPrivilegeLogRequestOptions struct {
+	PathParams *ReadProductionPrivilegeLogPath
+	Query      *ReadProductionPrivilegeLogQuery
+}
+
+// GetPathParams returns the path params as a map.
+func (o *ReadProductionPrivilegeLogRequestOptions) GetPathParams() (map[string]any, error) {
+	encoded, err := json.Marshal(o.PathParams, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetQuery returns the query params as a map.
+func (o *ReadProductionPrivilegeLogRequestOptions) GetQuery() (map[string]any, error) {
+	encoded, err := json.Marshal(o.Query, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *ReadProductionPrivilegeLogRequestOptions) GetBody() any {
+	return nil
+}
+
+// GetHeader returns the headers as a map.
+func (o *ReadProductionPrivilegeLogRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
 // DownloadProductionPackageRequestOptions is the options needed to make a request to DownloadProductionPackage.
 type DownloadProductionPackageRequestOptions struct {
 	PathParams *DownloadProductionPackagePath
@@ -19534,6 +19625,10 @@ type ReadProductionApprovalPath struct {
 	Approval string `json:"approval"`
 }
 
+type ReadProductionPrivilegeLogPath struct {
+	Log string `json:"log"`
+}
+
 type DownloadProductionPackagePath struct {
 	JobID       uuid.UUID `json:"job_id"`
 	OperationID uuid.UUID `json:"operation_id"`
@@ -20143,6 +20238,12 @@ type ListPeopleQuery struct {
 	Query  *string `json:"query,omitempty"`
 	Limit  *int    `json:"limit,omitempty"`
 	Cursor *string `json:"cursor,omitempty"`
+}
+
+type ReadProductionPrivilegeLogQuery struct {
+	Revision *int64  `json:"revision,omitempty"`
+	Cursor   *string `json:"cursor,omitempty"`
+	Limit    *int64  `json:"limit,omitempty"`
 }
 
 type FindProductionNumbersQuery struct {
@@ -20970,6 +21071,10 @@ type ResolveDocumentSourceFenceErrorResponse = Error
 type ReadProductionApprovalResponse = api.ProductionApprovalPublic
 
 type ReadProductionApprovalErrorResponse = Error
+
+type ReadProductionPrivilegeLogResponse = api.ProductionPrivilegePublicPage
+
+type ReadProductionPrivilegeLogErrorResponse = Error
 
 type DownloadProductionPackageResponse = api.ProductionPackageDownloadTicket
 
@@ -22044,7 +22149,11 @@ type PreviewStorageSalvageRequest struct {
 	Store  string  `json:"store"`
 }
 
+type PrivilegeLogReceipt = production.PrivilegeLogReceipt
+
 type PrivilegeLogRequirement = production.PrivilegeLogRequirement
+
+type PrivilegePublicRow = production.PrivilegePublicRow
 
 type ProcessingConsentGrant = api.ProcessingConsentGrant
 
@@ -22115,6 +22224,8 @@ type ProductionPackageDownloadTicket = api.ProductionPackageDownloadTicket
 type ProductionPolicyCreateRequest = api.ProductionPolicyCreateRequest
 
 type ProductionPolicyPage = api.ProductionPolicyPage
+
+type ProductionPrivilegePublicPage = api.ProductionPrivilegePublicPage
 
 type ProductionReceipt = api.ProductionReceipt
 

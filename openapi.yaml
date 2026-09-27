@@ -10409,6 +10409,57 @@ components:
         - hash
         - store
       type: object
+    PrivilegeLogReceipt:
+      additionalProperties: false
+      properties:
+        approval_evaluation_sha256:
+          type: string
+        contract:
+          type: string
+        frozen_at:
+          type: string
+        inputs_sha256:
+          type: string
+        log_id:
+          type: string
+        players_sha256:
+          type: string
+        policy_sha256:
+          type: string
+        revision:
+          format: int64
+          type: integer
+        row_count:
+          format: int64
+          type: integer
+        rows_sha256:
+          type: string
+        sha256:
+          type: string
+        state:
+          type: string
+        validated_at:
+          type: string
+        withheld_selection_sha256:
+          type: string
+      required:
+        - contract
+        - log_id
+        - revision
+        - state
+        - withheld_selection_sha256
+        - policy_sha256
+        - players_sha256
+        - rows_sha256
+        - inputs_sha256
+        - row_count
+        - validated_at
+        - frozen_at
+      type: object
+      x-go-type: production.PrivilegeLogReceipt
+      x-go-type-import:
+        path: go.kenn.io/docbank/document/production
+        name: production
     PrivilegeLogRequirement:
       additionalProperties: false
       properties:
@@ -10431,6 +10482,34 @@ components:
         - allowed_bases
       type: object
       x-go-type: production.PrivilegeLogRequirement
+      x-go-type-import:
+        path: go.kenn.io/docbank/document/production
+        name: production
+    PrivilegePublicRow:
+      additionalProperties: false
+      properties:
+        basis:
+          type: string
+        family_order:
+          format: int64
+          type: integer
+        id:
+          type: string
+        public_description:
+          type: string
+        source_version_id:
+          type: string
+        withheld_member_id:
+          type: string
+      required:
+        - id
+        - withheld_member_id
+        - family_order
+        - source_version_id
+        - basis
+        - public_description
+      type: object
+      x-go-type: production.PrivilegePublicRow
       x-go-type-import:
         path: go.kenn.io/docbank/document/production
         name: production
@@ -11510,6 +11589,33 @@ components:
         - next_cursor
       type: object
       x-go-type: api.ProductionPolicyPage
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
+    ProductionPrivilegePublicPage:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/ProductionPrivilegePublicPage.json
+          format: uri
+          readOnly: true
+          type: string
+        next_cursor:
+          type: string
+        receipt:
+          $ref: "#/components/schemas/PrivilegeLogReceipt"
+        rows:
+          items:
+            $ref: "#/components/schemas/PrivilegePublicRow"
+          type: array
+      required:
+        - receipt
+        - rows
+        - next_cursor
+      type: object
+      x-go-type: api.ProductionPrivilegePublicPage
       x-go-type-import:
         path: go.kenn.io/docbank/internal/api
         name: api
@@ -20546,6 +20652,50 @@ paths:
                 $ref: "#/components/schemas/Error"
           description: Error
       summary: Read a public production approval projection
+  /api/v1/production-privilege-logs/{log}:
+    get:
+      operationId: readProductionPrivilegeLog
+      parameters:
+        - in: path
+          name: log
+          required: true
+          schema:
+            type: string
+        - explode: false
+          in: query
+          name: revision
+          schema:
+            format: int64
+            minimum: 1
+            type: integer
+        - explode: false
+          in: query
+          name: cursor
+          schema:
+            maxLength: 6
+            type: string
+        - explode: false
+          in: query
+          name: limit
+          schema:
+            format: int64
+            maximum: 100
+            minimum: 0
+            type: integer
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProductionPrivilegePublicPage"
+          description: OK
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: Page a frozen privilege log's public rows
   /api/v1/productions/jobs/{job_id}/packages/{operation_id}/download:
     post:
       operationId: downloadProductionPackage
