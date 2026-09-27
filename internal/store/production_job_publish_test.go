@@ -16,6 +16,12 @@ import (
 func stagedProductionPublicationFixture(t *testing.T) (*Store, production.JobClaim, production.Job,
 	documentproduction.ProductionReceipt, documentproduction.ArtifactManifest, []redaction.Endorsement) {
 	t.Helper()
+	return stagedProductionPublicationFixtureWithLocation(t, nil)
+}
+
+func stagedProductionPublicationFixtureWithLocation(t *testing.T, locate func(*documentproduction.Artifact)) (*Store, production.JobClaim, production.Job,
+	documentproduction.ProductionReceipt, documentproduction.ArtifactManifest, []redaction.Endorsement) {
+	t.Helper()
 	s, claim, _ := productionPageStageFixture(t)
 	job, err := s.LoadProductionJob(t.Context(), claim.JobID)
 	require.NoError(t, err)
@@ -39,6 +45,9 @@ func stagedProductionPublicationFixture(t *testing.T) (*Store, production.JobCla
 			Page: page.Page, Role: documentproduction.ArtifactRoleRedactedPage, Path: "VOL001/" + id + ".png",
 			SHA256: productionHash(fmt.Sprintf("synthetic page %s %d", page.MemberID, page.Page)), Size: 13,
 			MediaType: "image/png", Volume: "VOL001"}
+		if locate != nil {
+			locate(&artifact)
+		}
 		require.NoError(t, s.RecordBlob(t.Context(), artifact.SHA256, artifact.Size,
 			BlobPhysical{Encoding: "raw", StoredBytes: artifact.Size, Created: true}))
 		stage, err := production.BuildProductionPageStage(job, plan, member, page, artifact)
@@ -53,6 +62,9 @@ func stagedProductionPublicationFixture(t *testing.T) (*Store, production.JobCla
 			MemberOrdinal: member.Member.Ordinal, Role: documentproduction.ArtifactRoleRedactedPDF,
 			Path: "VOL001/" + id + ".pdf", SHA256: productionHash("synthetic final PDF " + member.Member.ID),
 			Size: 23, MediaType: "application/pdf", Volume: "VOL001"}
+		if locate != nil {
+			locate(&artifact)
+		}
 		require.NoError(t, s.RecordBlob(t.Context(), artifact.SHA256, artifact.Size,
 			BlobPhysical{Encoding: "raw", StoredBytes: artifact.Size, Created: true}))
 		require.NoError(t, s.StageProductionArtifact(t.Context(), claim, artifact))
@@ -64,6 +76,9 @@ func stagedProductionPublicationFixture(t *testing.T) (*Store, production.JobCla
 			MemberOrdinal: member.Member.Ordinal, Role: documentproduction.ArtifactRoleRedactedText,
 			Path: "VOL001/" + textID + ".txt", SHA256: productionHash(string(text)),
 			Size: int64(len(text)), MediaType: "text/plain; charset=utf-8", Volume: "VOL001"}
+		if locate != nil {
+			locate(&textArtifact)
+		}
 		require.NoError(t, s.RecordBlob(t.Context(), textArtifact.SHA256, textArtifact.Size,
 			BlobPhysical{Encoding: "raw", StoredBytes: textArtifact.Size, Created: true}))
 		require.NoError(t, s.StageProductionArtifact(t.Context(), claim, textArtifact))

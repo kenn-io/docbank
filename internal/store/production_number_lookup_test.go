@@ -1,12 +1,61 @@
 package store
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
 	documentproduction "go.kenn.io/docbank/document/production"
 )
+
+func TestFindPublishedProductionNumberUsesArtifactIdentityAcrossCustomFilenamesAndVolumes(t *testing.T) {
+	s, claim, job, receipt, manifest, endorsements := stagedProductionPublicationFixtureWithLocation(t,
+		func(artifact *documentproduction.Artifact) {
+			artifact.Volume = fmt.Sprintf("VOL%03d", artifact.MemberOrdinal)
+			extension := map[string]string{
+				documentproduction.ArtifactRoleRedactedPage: ".png",
+				documentproduction.ArtifactRoleRedactedPDF:  ".pdf",
+				documentproduction.ArtifactRoleRedactedText: ".txt",
+			}[artifact.Role]
+			artifact.Path = artifact.Volume + "/custom-name" + extension
+		})
+	published, err := s.PublishProductionJob(t.Context(), claim, job, receipt, manifest, endorsements)
+	require.NoError(t, err)
+	require.Equal(t, documentproduction.ArtifactManifestContractV1, published.Manifest.Contract)
+	plan, err := s.LoadProductionRenderPlan(t.Context(), job.ID)
+	require.NoError(t, err)
+	require.Len(t, plan.Reservation.Numbers, 2)
+	for index, number := range plan.Reservation.Numbers {
+		match, err := s.FindPublishedProductionNumber(t.Context(), number.Text)
+		require.NoError(t, err)
+		wantVolume := fmt.Sprintf("VOL%03d", index+1)
+		require.Equal(t, wantVolume, match.Volume)
+		require.Equal(t, wantVolume+"/custom-name.pdf", match.ArtifactPath)
+		require.Equal(t, number.MemberID, match.OccurrenceID)
+		stored, err := s.LoadProductionJobArtifact(t.Context(), job.ID, match.ArtifactID)
+		require.NoError(t, err)
+		require.Equal(t, match.ArtifactPath, stored.Path)
+		require.Equal(t, match.Volume, stored.Volume)
+		require.Equal(t, match.ArtifactSHA256, stored.SHA256)
+	}
+	first, err := s.FindPublishedProductionNumber(t.Context(), plan.Reservation.Numbers[0].Text)
+	require.NoError(t, err)
+	second, err := s.FindPublishedProductionNumber(t.Context(), plan.Reservation.Numbers[1].Text)
+	require.NoError(t, err)
+	require.NotEqual(t, first.ArtifactID, second.ArtifactID, "identical filenames in different volumes retain distinct artifact identities")
+	allocation, err := s.ProductionNumberingForJob(t.Context(), job.ID)
+	require.NoError(t, err)
+	page, err := s.FindPublishedProductionNumberRange(t.Context(), allocation.NamespaceID,
+		allocation.StartSequence, allocation.EndSequence, 0, 25)
+	require.NoError(t, err)
+	require.Equal(t, []PublishedProductionNumber{first, second}, page.Items)
+	candidates, err := s.FindPublishedProductionNumberCandidates(t.Context(), second.Label, 25)
+	require.NoError(t, err)
+	require.Equal(t, []PublishedProductionNumber{second}, candidates.Items)
+	_, err = s.FindPublishedProductionNumber(t.Context(), "custom-name.pdf")
+	require.ErrorIs(t, err, ErrNotFound, "a filename is not a published production number")
+}
 
 func TestFindPublishedProductionNumberBindsFrozenSourceAndFinalArtifact(t *testing.T) {
 	f, job := publishedRealRetentionFixture(t)
