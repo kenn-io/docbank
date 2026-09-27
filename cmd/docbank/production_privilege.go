@@ -6,11 +6,52 @@ import (
 	"strconv"
 
 	"github.com/spf13/cobra"
+	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/daemonconn"
 	"go.kenn.io/docbank/internal/store"
 )
 
-var productionPrivilegeCmd = &cobra.Command{Use: "privilege-log", Short: "Read frozen public privilege logs"}
+var productionPrivilegeCmd = &cobra.Command{Use: "privilege-log", Short: "Validate drafts and read frozen public privilege logs"}
+
+func newProductionPrivilegeValidateCommand() *cobra.Command {
+	var operationID string
+	var generation int64
+	var validatedAt string
+	var asJSON bool
+	cmd := &cobra.Command{Use: "validate <log-id> <revision>", Short: "Validate stored privilege-log draft rows",
+		Args: cobra.ExactArgs(2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			revision, err := strconv.ParseInt(args[1], 10, 64)
+			if err != nil || revision < 1 || operationID == "" || generation < 1 || validatedAt == "" {
+				return usageError(errors.New("log revision, --operation-id, --generation, and --validated-at are required"))
+			}
+			c, err := daemonconn.Ensure(cmd.Context())
+			if err != nil {
+				return err
+			}
+			result, err := c.ValidateProductionPrivilegeLog(cmd.Context(), args[0], revision,
+				api.ProductionPrivilegeValidationRequest{OperationID: operationID,
+					ExpectedGeneration: generation, ValidatedAt: validatedAt})
+			if err != nil {
+				return err
+			}
+			if asJSON {
+				return writeCLIJSON(cmd.OutOrStdout(), result)
+			}
+			_, err = fmt.Fprintf(cmd.OutOrStdout(), "%s revision=%d generation=%d inputs_sha256=%s rows_sha256=%s\n",
+				result.Validation.Inputs.LogID, result.Validation.Inputs.Revision,
+				result.DraftGeneration, result.Validation.InputsSHA256, result.Validation.RowsSHA256)
+			if err != nil {
+				return fmt.Errorf("writing privilege validation: %w", err)
+			}
+			return nil
+		}}
+	cmd.Flags().StringVar(&operationID, "operation-id", "", "stable UUID for exact retries")
+	cmd.Flags().Int64Var(&generation, "generation", 0, "expected draft generation")
+	cmd.Flags().StringVar(&validatedAt, "validated-at", "", "canonical UTC validation timestamp")
+	cmd.Flags().BoolVar(&asJSON, "json", false, "emit machine-readable JSON")
+	return cmd
+}
 
 func newProductionPrivilegeShowCommand() *cobra.Command {
 	var cursor string
@@ -61,6 +102,7 @@ func newProductionPrivilegeShowCommand() *cobra.Command {
 }
 
 func init() {
+	productionPrivilegeCmd.AddCommand(newProductionPrivilegeValidateCommand())
 	productionPrivilegeCmd.AddCommand(newProductionPrivilegeShowCommand())
 	productionCmd.AddCommand(productionPrivilegeCmd)
 }

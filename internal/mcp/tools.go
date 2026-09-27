@@ -135,13 +135,20 @@ var createProductionPolicyToolDefinition = toolDefinition{
 	schemas:     createProductionPolicySchemas, write: true, idempotent: true,
 }
 
+var validateProductionPrivilegeLogToolDefinition = toolDefinition{
+	name: "validate_production_privilege_log", title: "Validate production privilege log",
+	description: "Validate stored draft rows against exact withheld, policy, and player authority.",
+	schemas:     validateProductionPrivilegeLogSchemas, write: true, idempotent: true,
+}
+
 func toolCatalog(allowProcessing bool) []*sdkmcp.Tool {
 	definitions := readToolDefinitions
 	if allowProcessing {
 		definitions = append(slices.Clone(definitions), processingToolDefinition, preflightLoadFilePackageToolDefinition,
 			packageImportToolDefinition, resolvePackageCustodianToolDefinition, assignPackageCustodianToolDefinition,
 			ensureBatesNamespaceToolDefinition, reserveBatesRangeToolDefinition, publishBatesExportToolDefinition,
-			exportBatesFileToolDefinition, exportLoadFilePackageToolDefinition, createProductionPolicyToolDefinition)
+			exportBatesFileToolDefinition, exportLoadFilePackageToolDefinition, createProductionPolicyToolDefinition,
+			validateProductionPrivilegeLogToolDefinition)
 	}
 	tools := make([]*sdkmcp.Tool, 0, len(definitions))
 	for _, definition := range definitions {
@@ -184,6 +191,8 @@ func registerToolCatalog(
 			handler = packageExportToolHandler(lease, output, logger)
 		case createProductionPolicyToolDefinition.name:
 			handler = createProductionPolicyToolHandler(lease, output, logger)
+		case validateProductionPrivilegeLogToolDefinition.name:
+			handler = validateProductionPrivilegeLogToolHandler(lease, output, logger)
 		default:
 			handler = readToolHandler(lease, plans, tool.Name, output, logger)
 		}
@@ -349,6 +358,8 @@ func stableDomainError(err error) (string, int) {
 		return "bates_outcome_unknown", 0
 	case errors.Is(err, errProductionPolicyOutcomeUnknown):
 		return "production_policy_outcome_unknown", 0
+	case errors.Is(err, errProductionPrivilegeOutcomeUnknown):
+		return "production_privilege_outcome_unknown", 0
 	case errors.Is(err, errDaemonUnavailable):
 		return "daemon_unavailable", 0
 	case errors.Is(err, store.ErrDocumentCursorExpired):
@@ -390,7 +401,7 @@ func stableDomainError(err error) (string, int) {
 		return "invalid_rendition_encoding", 0
 	case "bates_reservation_conflict", "bates_page_count_mismatch", "bates_overflow":
 		return facts.Code, 0
-	case "production_policy_conflict", "invalid_production_policy":
+	case "production_policy_conflict", "invalid_production_policy", "production_privilege_conflict", "invalid_production_privilege":
 		return facts.Code, 0
 	default:
 		return "", 0
@@ -435,6 +446,12 @@ func domainErrorMessage(code string) string {
 		return "The production policy input is invalid."
 	case "production_policy_outcome_unknown":
 		return "The policy write outcome is unknown; read the exact version or retry with the same operation ID."
+	case "production_privilege_conflict":
+		return "The privilege-log draft changed or the operation ID names different input."
+	case "invalid_production_privilege":
+		return "The privilege-log validation input is invalid."
+	case "production_privilege_outcome_unknown":
+		return "The validation outcome is unknown; retry only with the exact same operation ID and input."
 	default:
 		return "The Docbank operation could not be completed."
 	}
