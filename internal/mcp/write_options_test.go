@@ -82,6 +82,20 @@ func TestWriteOptionsSeparateProcessingFromPackageMutations(t *testing.T) {
 				assert.NotZero(t, decodeWireError(t, response).Code)
 			}
 
+			bates := exchangeRaw(t, server, requestFor("tools/call", map[string]any{
+				"name": "ensure_bates_namespace", "arguments": map[string]any{"prefix": "CASE", "padding": 6},
+			}))
+			namespaces, _, _, err := catalog.BatesNamespaces(t.Context(), "", 10)
+			require.NoError(t, err)
+			if test.wantPackageWrite {
+				require.NotEqual(t, true, decodeResult(t, bates)["isError"])
+				require.Len(t, namespaces, 1)
+				assert.Equal(t, "CASE", namespaces[0].Prefix)
+			} else {
+				assert.Empty(t, namespaces, "Bates writes must require the package-write opt-in")
+				assert.NotZero(t, decodeWireError(t, bates).Code)
+			}
+
 			processing := exchangeRaw(t, server, requestFor("tools/call", map[string]any{
 				"name": "start_processing", "arguments": processingToolArguments(testProcessingPlanFingerprint),
 			}))

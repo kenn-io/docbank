@@ -31,6 +31,12 @@ func TestExportTicketPreparationTimeoutBoundary(t *testing.T) {
 		{http.MethodPost, "/api/v1/exports/jobs/a2b864dd-bcd9-4c63-a1bd-321293fbbd34/extra/download", true},
 		{http.MethodPost, "/api/v1/exports/jobs/not-a-job/download", true},
 		{http.MethodPost, download + "/", true},
+		{http.MethodPost, "/api/v1/bates/exports/a2b864dd-bcd9-4c63-a1bd-321293fbbd34/download", false},
+		{http.MethodGet, "/api/v1/bates/exports/a2b864dd-bcd9-4c63-a1bd-321293fbbd34/content", false},
+		{http.MethodGet, "/api/v1/bates/exports/a2b864dd-bcd9-4c63-a1bd-321293fbbd34/download", true},
+		{http.MethodGet, "/api/v1/bates/exports/a2b864dd-bcd9-4c63-a1bd-321293fbbd34", true},
+		{http.MethodGet, "/api/v1/bates/exports/candidates", true},
+		{http.MethodGet, "/api/v1/bates/exports/not-an-export/content", true},
 	} {
 		t.Run(test.method+test.path, func(t *testing.T) {
 			parent, cancel := context.WithCancel(t.Context())

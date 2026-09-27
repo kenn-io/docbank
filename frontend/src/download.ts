@@ -467,7 +467,7 @@ function validateReady(event: DownloadEvent, authority: DownloadAuthority): Prep
   };
 }
 
-export function offerPreparedDownload(download: PreparedDownload): void {
+export function offerPreparedDownload(download: Pick<PreparedDownload, "url" | "name">): void {
   const link = document.createElement("a");
   link.href = download.url;
   link.download = download.name;

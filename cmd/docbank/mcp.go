@@ -137,7 +137,7 @@ func init() {
 	mcpCmd.Flags().BoolVar(&mcpAllowProcessing, "allow-processing", false,
 		"expose guarded start_processing (still requires prior operator consent)")
 	mcpCmd.Flags().BoolVar(&mcpAllowPackageWrites, "allow-package-writes", false,
-		"allow load-file preflight, import, and package custodian writes")
+		"allow load-file preflight, import, package custodian writes, and Bates exports")
 	mcpCmd.Flags().BoolVar(&mcpAllowPhotoEdits, "allow-photo-edits", false,
 		"expose guarded photo asset mutations")
 	rootCmd.AddCommand(mcpCmd)

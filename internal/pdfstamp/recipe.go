@@ -48,7 +48,7 @@ type Recipe struct {
 }
 
 func (r Recipe) Validate() error {
-	r = r.normalized()
+	r = r.Normalized()
 	if r.Contract != RecipeContractV1 {
 		return fmt.Errorf("invalid Bates stamp recipe contract %q", r.Contract)
 	}
@@ -61,8 +61,8 @@ func (r Recipe) Validate() error {
 	if err := validateLabelPart("suffix", r.Suffix); err != nil {
 		return err
 	}
-	if r.Padding < 1 || r.Padding > 10 {
-		return errors.New("bates stamp padding must be between 1 and 10")
+	if r.Padding < 1 || r.Padding > MaxPadding {
+		return fmt.Errorf("bates stamp padding must be between 1 and %d", MaxPadding)
 	}
 	if r.StartAt < 1 || len(strconv.Itoa(r.StartAt)) > r.Padding {
 		return errors.New("bates stamp starting sequence does not fit its padding")
@@ -94,7 +94,7 @@ func (r Recipe) Validate() error {
 }
 
 func (r Recipe) SHA256() (string, error) {
-	r = r.normalized()
+	r = r.Normalized()
 	if err := r.Validate(); err != nil {
 		return "", err
 	}
@@ -106,16 +106,35 @@ func (r Recipe) SHA256() (string, error) {
 	return hex.EncodeToString(digest[:]), nil
 }
 
-func (r Recipe) normalized() Recipe {
+// Normalized applies recipe defaults. Hash, store, and stamp the same normalized value.
+func (r Recipe) Normalized() Recipe {
 	if r.Position == "" {
 		r.Position = "bottom-right"
 	}
 	return r
 }
 
+// MaxLabelPartChars bounds a Bates prefix or suffix. Every label must stay
+// short enough to fit its stamp and API responses.
+const MaxLabelPartChars = 128
+
+// MaxPadding is the most digits a Bates number may have.
+const MaxPadding = 10
+
+// MaxLabelChars is the longest possible Bates label: prefix, number, suffix.
+const MaxLabelChars = 2*MaxLabelPartChars + MaxPadding
+
+// ValidateLabelPart checks one Bates prefix or suffix.
+func ValidateLabelPart(name, value string) error {
+	return validateLabelPart(name, value)
+}
+
 func validateLabelPart(name, value string) error {
 	if !utf8.ValidString(value) {
 		return fmt.Errorf("bates stamp %s is not valid UTF-8", name)
+	}
+	if len(value) > MaxLabelPartChars {
+		return fmt.Errorf("bates stamp %s is longer than %d characters", name, MaxLabelPartChars)
 	}
 	for _, character := range value {
 		if character < 0x20 || character > 0x7e {
