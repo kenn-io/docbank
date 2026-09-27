@@ -2,6 +2,7 @@ package store
 
 import (
 	"bytes"
+	"fmt"
 	"testing"
 	"time"
 
@@ -12,11 +13,19 @@ import (
 
 func supplementChildFixture(t *testing.T, f *realRestartFixture, parent production.Job) production.Job {
 	t.Helper()
-	const forkID = "78000000-0000-4000-8000-000000000001"
+	return supplementChildFixtureWith(t, f, parent, 0, "")
+}
+
+func supplementChildFixtureWith(t *testing.T, f *realRestartFixture, parent production.Job, offset int, namespaceID string) production.Job {
+	t.Helper()
+	id := func(number int) string {
+		return fmt.Sprintf("78000000-0000-4000-8000-%012d", offset+number)
+	}
+	forkID := id(1)
 	fork, err := f.ForkProductionDraft(t.Context(), "synthetic-operator", parent.SetID, parent.Revision, forkID)
 	require.NoError(t, err)
 	_, err = f.SealProductionMembership(t.Context(), "synthetic-operator", fork.SetID, fork.Revision,
-		redaction.MembershipSealRequest{OperationID: "78000000-0000-4000-8000-000000000002",
+		redaction.MembershipSealRequest{OperationID: id(2),
 			ETag: fork.ETag, Total: 2, MemberHash: fork.MemberHash})
 	require.NoError(t, err)
 	members, _, err := f.ProductionMembers(t.Context(), fork.SetID, fork.Revision, "", 200)
@@ -25,10 +34,7 @@ func supplementChildFixture(t *testing.T, f *realRestartFixture, parent producti
 	for index, member := range members {
 		stored := loadProductionInputsForTest(t, f.Store, fork.SetID, fork.Revision)
 		_, err = f.ReviewProductionMember(t.Context(), "synthetic-operator", fork.SetID, fork.Revision,
-			ProductionReviewRequest{OperationID: []string{
-				"78000000-0000-4000-8000-000000000003",
-				"78000000-0000-4000-8000-000000000004",
-			}[index], ETag: stored.Draft.ETag, MemberID: member.ID,
+			ProductionReviewRequest{OperationID: id(index + 3), ETag: stored.Draft.ETag, MemberID: member.ID,
 				Binding: productionReviewBindingForTest(t, stored, member.ID), Complete: true})
 		require.NoError(t, err)
 	}
@@ -49,27 +55,30 @@ func supplementChildFixture(t *testing.T, f *realRestartFixture, parent producti
 	gateStore, err := NewProductionGateStore(f.Store, f.LoadProductionGateSnapshot)
 	require.NoError(t, err)
 	authority, err := production.RunPreparedInputGates(t.Context(), gateStore,
-		production.PreparedInputRequest{OperationID: "78000000-0000-4000-8000-000000000005",
-			ReceiptID: "78000000-0000-4000-8000-000000000006", SetID: fork.SetID,
+		production.PreparedInputRequest{OperationID: id(5),
+			ReceiptID: id(6), SetID: fork.SetID,
 			Revision: fork.Revision, ExpectedETag: stored.Draft.ETag,
 			ExpectedRevisionSHA256: revisionSHA, PreparedAt: time.Now().UTC()})
 	require.NoErrorf(t, err, "gate findings: %#v", authority.GateResults)
 	require.NotNil(t, authority.Receipt)
-	const snapshotID = "78000000-0000-4000-8000-000000000007"
+	snapshotID := id(7)
 	_, err = f.SealProductionNumberingSnapshot(t.Context(), snapshotID, authority.Audit.OperationID)
 	require.NoError(t, err)
 	parentAllocation, err := f.ProductionNumberingForJob(t.Context(), parent.ID)
 	require.NoError(t, err)
+	if namespaceID == "" {
+		namespaceID = parentAllocation.NamespaceID
+	}
 	draft := stored.Draft
 	draft.State = "finalized"
 	require.NoError(t, f.FinalizeProductionRevision(t.Context(), production.FinalizationRequest{
 		Finalized:   production.FinalizedProduction{Draft: draft, Authority: authority},
-		OperationID: authority.Audit.OperationID, NamespaceID: parentAllocation.NamespaceID,
+		OperationID: authority.Audit.OperationID, NamespaceID: namespaceID,
 		SnapshotID: snapshotID, RecipeSHA256: draft.NumberingRecipeSHA256,
 	}))
 	child, err := f.AdmitProductionJob(t.Context(), production.JobRequest{
-		JobID:       "78000000-0000-4000-8000-000000000008",
-		OperationID: "78000000-0000-4000-8000-000000000009",
+		JobID:       id(8),
+		OperationID: id(9),
 		SetID:       draft.SetID, Revision: draft.Revision, ETag: draft.ETag,
 		PreparedInputSHA256: authority.Receipt.SHA256, RevisionSHA256: authority.Prepared.SHA256,
 		NumberingProfileSHA256: draft.NumberingRecipeSHA256,
