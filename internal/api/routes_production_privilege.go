@@ -40,6 +40,25 @@ type ProductionPrivilegeValidation struct {
 	Validation      documentproduction.PrivilegeLogValidation `json:"validation"`
 }
 
+// ProductionPrivilegeDraftCreateRequest carries private rows for one sealed
+// production revision. The produced member selection is derived by storage.
+type ProductionPrivilegeDraftCreateRequest struct {
+	OperationID              string                            `json:"operation_id"`
+	SetID                    string                            `json:"set_id"`
+	SetRevision              int64                             `json:"set_revision" minimum:"1"`
+	PlayersSHA256            string                            `json:"players_sha256"`
+	PredecessorLogID         string                            `json:"predecessor_log_id,omitzero"`
+	PredecessorReceiptSHA256 string                            `json:"predecessor_receipt_sha256,omitzero"`
+	Rows                     []documentproduction.PrivilegeRow `json:"rows"`
+}
+
+// ProductionPrivilegeDraftGeneration excludes private row contents.
+type ProductionPrivilegeDraftGeneration struct {
+	LogID      string `json:"log_id"`
+	Revision   int64  `json:"revision"`
+	Generation int64  `json:"generation"`
+}
+
 func productionPrivilegeMutationError(err error) error {
 	if errors.Is(err, store.ErrNotFound) {
 		return FromStoreError(err)
@@ -103,6 +122,44 @@ func registerProductionPrivilegeRoutes(mux *http.ServeMux, api huma.API, d Deps,
 				productionservice.PrivilegeLogXLSXMediaType: {Schema: binary},
 				productionservice.PrivilegeLogPDFMediaType:  {Schema: binary},
 			}}}})
+	huma.Register(api, huma.Operation{OperationID: "createProductionPrivilegeLogDraft", Method: http.MethodPost,
+		Path:          "/api/v1/production-privilege-logs/{log}/revisions/{revision}/draft",
+		Summary:       "Draft private privilege rows from sealed production membership",
+		DefaultStatus: http.StatusCreated, MaxBodyBytes: 64 << 20},
+		func(ctx context.Context, in *struct {
+			Log      string `path:"log"`
+			Revision int64  `path:"revision" minimum:"1"`
+			Body     ProductionPrivilegeDraftCreateRequest
+		}) (*struct {
+			Body ProductionPrivilegeDraftGeneration
+		}, error) {
+			if _, ok := workspaceSnapshotOwner(ctx); !ok {
+				return nil, NewError(http.StatusUnauthorized, "unauthorized", "authenticated production actor is missing")
+			}
+			request := store.StoredPrivilegeLogDraftRequest{
+				SetID: in.Body.SetID, SetRevision: in.Body.SetRevision,
+				Draft: productionservice.PrivilegeLogDraftRequest{
+					OperationID: in.Body.OperationID, LogID: in.Log, Revision: in.Revision,
+					PredecessorLogID:         in.Body.PredecessorLogID,
+					PredecessorReceiptSHA256: in.Body.PredecessorReceiptSHA256,
+				},
+				PlayersSHA256: in.Body.PlayersSHA256, Rows: in.Body.Rows,
+			}
+			var generation int64
+			err := g.mutate(func() error {
+				var err error
+				generation, err = d.Store.CreateStoredPrivilegeLogDraft(ctx, request)
+				return err
+			})
+			if err != nil {
+				return nil, productionPrivilegeMutationError(err)
+			}
+			return &struct {
+				Body ProductionPrivilegeDraftGeneration
+			}{Body: ProductionPrivilegeDraftGeneration{
+				LogID: in.Log, Revision: in.Revision, Generation: generation,
+			}}, nil
+		})
 	huma.Register(api, huma.Operation{OperationID: "validateProductionPrivilegeLog", Method: http.MethodPost,
 		Path:    "/api/v1/production-privilege-logs/{log}/revisions/{revision}/validate",
 		Summary: "Validate the stored rows of a privilege-log draft", DefaultStatus: http.StatusCreated,

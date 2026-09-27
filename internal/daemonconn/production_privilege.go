@@ -12,6 +12,29 @@ import (
 	"go.kenn.io/docbank/internal/store"
 )
 
+// CreateProductionPrivilegeLogDraft submits private rows for one sealed
+// production revision and returns a digest-free generation receipt.
+func (c *Connection) CreateProductionPrivilegeLogDraft(ctx context.Context, logID string, revision int64,
+	request api.ProductionPrivilegeDraftCreateRequest) (api.ProductionPrivilegeDraftGeneration, error) {
+	if logID == "" || revision < 1 || request.OperationID == "" || request.SetID == "" ||
+		request.SetRevision < 1 || len(request.PlayersSHA256) != 64 ||
+		len(request.Rows) == 0 || len(request.Rows) > documentproduction.MaxPrivilegeRows {
+		return api.ProductionPrivilegeDraftGeneration{}, errors.New("invalid production privilege draft request")
+	}
+	result, err := c.API().CreateProductionPrivilegeLogDraft(ctx,
+		&apiclient.CreateProductionPrivilegeLogDraftRequestOptions{
+			PathParams: &apiclient.CreateProductionPrivilegeLogDraftPath{Log: logID, Revision: revision},
+			Body:       &request,
+		})
+	if err != nil {
+		return api.ProductionPrivilegeDraftGeneration{}, err
+	}
+	if result == nil || result.LogID != logID || result.Revision != revision || result.Generation < 1 {
+		return api.ProductionPrivilegeDraftGeneration{}, integrityErrorf("production privilege draft receipt is inconsistent")
+	}
+	return *result, nil
+}
+
 // ValidateProductionPrivilegeLog validates persisted draft authority through
 // the daemon and returns only its digest summary.
 func (c *Connection) ValidateProductionPrivilegeLog(ctx context.Context, logID string, revision int64,

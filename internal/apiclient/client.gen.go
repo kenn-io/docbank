@@ -8082,6 +8082,53 @@ func (c *Client) ReadProductionPrivilegeLog(ctx context.Context, options *ReadPr
 	return responseParser(ctx, resp)
 }
 
+// CreateProductionPrivilegeLogDraft Draft private privilege rows from sealed production membership
+func (c *Client) CreateProductionPrivilegeLogDraft(ctx context.Context, options *CreateProductionPrivilegeLogDraftRequestOptions, reqEditors ...runtime.RequestEditorFn) (*CreateProductionPrivilegeLogDraftResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/production-privilege-logs/{log}/revisions/{revision}/draft",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*CreateProductionPrivilegeLogDraftResponse, error) {
+		switch resp.StatusCode {
+
+		case 201:
+
+			target := new(CreateProductionPrivilegeLogDraftResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "CreateProductionPrivilegeLogDraftResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[CreateProductionPrivilegeLogDraftErrorResponse](resp, "CreateProductionPrivilegeLogDraftErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/production-privilege-logs/{log}/revisions/{revision}/draft")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 201)
+	}
+	return responseParser(ctx, resp)
+}
+
 // ExportProductionPrivilegeLog Download verified public bytes of a frozen privilege log
 func (c *Client) ExportProductionPrivilegeLog(ctx context.Context, options *ExportProductionPrivilegeLogRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ExportProductionPrivilegeLogResponse, error) {
 	var err error
@@ -16898,6 +16945,41 @@ func (o *ReadProductionPrivilegeLogRequestOptions) GetHeader() (map[string]strin
 	return nil, nil
 }
 
+// CreateProductionPrivilegeLogDraftRequestOptions is the options needed to make a request to CreateProductionPrivilegeLogDraft.
+type CreateProductionPrivilegeLogDraftRequestOptions struct {
+	PathParams *CreateProductionPrivilegeLogDraftPath
+	Body       *CreateProductionPrivilegeLogDraftBody
+}
+
+// GetPathParams returns the path params as a map.
+func (o *CreateProductionPrivilegeLogDraftRequestOptions) GetPathParams() (map[string]any, error) {
+	encoded, err := json.Marshal(o.PathParams, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetQuery returns the query params as a map.
+func (o *CreateProductionPrivilegeLogDraftRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *CreateProductionPrivilegeLogDraftRequestOptions) GetBody() any {
+	if o.Body == nil {
+		return nil
+	}
+	return o.Body
+}
+
+// GetHeader returns the headers as a map.
+func (o *CreateProductionPrivilegeLogDraftRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
 // ExportProductionPrivilegeLogRequestOptions is the options needed to make a request to ExportProductionPrivilegeLog.
 type ExportProductionPrivilegeLogRequestOptions struct {
 	PathParams *ExportProductionPrivilegeLogPath
@@ -19797,6 +19879,11 @@ type ReadProductionPrivilegeLogPath struct {
 	Log string `json:"log"`
 }
 
+type CreateProductionPrivilegeLogDraftPath struct {
+	Log      string `json:"log"`
+	Revision int64  `json:"revision"`
+}
+
 type ExportProductionPrivilegeLogPath struct {
 	Log      uuid.UUID                              `json:"log"`
 	Revision int64                                  `json:"revision"`
@@ -20120,6 +20207,8 @@ type StartDocumentProcessingBody = StartProcessingRequest
 type PlanDocumentProcessingBody = ProcessingPlanRequest
 
 type ResolveDocumentSourceFenceBody = DocumentSourceFenceResolveRequest
+
+type CreateProductionPrivilegeLogDraftBody = ProductionPrivilegeDraftCreateRequest
 
 type ValidateProductionPrivilegeLogBody = ProductionPrivilegeValidationRequest
 
@@ -21257,6 +21346,10 @@ type ReadProductionPrivilegeLogResponse = api.ProductionPrivilegePublicPage
 
 type ReadProductionPrivilegeLogErrorResponse = Error
 
+type CreateProductionPrivilegeLogDraftResponse = api.ProductionPrivilegeDraftGeneration
+
+type CreateProductionPrivilegeLogDraftErrorResponse = Error
+
 type ExportProductionPrivilegeLogResponse = runtime.File
 
 type ValidateProductionPrivilegeLogResponse = api.ProductionPrivilegeValidation
@@ -22336,6 +22429,8 @@ type PreviewStorageSalvageRequest struct {
 	Store  string  `json:"store"`
 }
 
+type PrivilegeField = production.PrivilegeField
+
 type PrivilegeLogInputs = production.PrivilegeLogInputs
 
 type PrivilegeLogReceipt = production.PrivilegeLogReceipt
@@ -22345,6 +22440,8 @@ type PrivilegeLogRequirement = production.PrivilegeLogRequirement
 type PrivilegeLogValidation = production.PrivilegeLogValidation
 
 type PrivilegePublicRow = production.PrivilegePublicRow
+
+type PrivilegeRow = production.PrivilegeRow
 
 type ProcessingConsentGrant = api.ProcessingConsentGrant
 
@@ -22415,6 +22512,10 @@ type ProductionPackageDownloadTicket = api.ProductionPackageDownloadTicket
 type ProductionPolicyCreateRequest = api.ProductionPolicyCreateRequest
 
 type ProductionPolicyPage = api.ProductionPolicyPage
+
+type ProductionPrivilegeDraftCreateRequest = api.ProductionPrivilegeDraftCreateRequest
+
+type ProductionPrivilegeDraftGeneration = api.ProductionPrivilegeDraftGeneration
 
 type ProductionPrivilegePublicPage = api.ProductionPrivilegePublicPage
 

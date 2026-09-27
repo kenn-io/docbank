@@ -10409,6 +10409,21 @@ components:
         - hash
         - store
       type: object
+    PrivilegeField:
+      additionalProperties: false
+      properties:
+        name:
+          type: string
+        value:
+          type: string
+      required:
+        - name
+        - value
+      type: object
+      x-go-type: production.PrivilegeField
+      x-go-type-import:
+        path: go.kenn.io/docbank/document/production
+        name: production
     PrivilegeLogInputs:
       additionalProperties: false
       properties:
@@ -10562,6 +10577,50 @@ components:
         - public_description
       type: object
       x-go-type: production.PrivilegePublicRow
+      x-go-type-import:
+        path: go.kenn.io/docbank/document/production
+        name: production
+    PrivilegeRow:
+      additionalProperties: false
+      properties:
+        basis:
+          type: string
+        evidence_sha256:
+          type: string
+        family_order:
+          format: int64
+          type: integer
+        fields:
+          items:
+            $ref: "#/components/schemas/PrivilegeField"
+          type: array
+        id:
+          type: string
+        person_ids:
+          items:
+            type: string
+          type: array
+        private_rationale:
+          type: string
+        public_description:
+          type: string
+        source_version_id:
+          type: string
+        withheld_member_id:
+          type: string
+      required:
+        - id
+        - withheld_member_id
+        - family_order
+        - source_version_id
+        - basis
+        - public_description
+        - private_rationale
+        - evidence_sha256
+        - person_ids
+        - fields
+      type: object
+      x-go-type: production.PrivilegeRow
       x-go-type-import:
         path: go.kenn.io/docbank/document/production
         name: production
@@ -11641,6 +11700,72 @@ components:
         - next_cursor
       type: object
       x-go-type: api.ProductionPolicyPage
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
+    ProductionPrivilegeDraftCreateRequest:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/ProductionPrivilegeDraftCreateRequest.json
+          format: uri
+          readOnly: true
+          type: string
+        operation_id:
+          type: string
+        players_sha256:
+          type: string
+        predecessor_log_id:
+          type: string
+        predecessor_receipt_sha256:
+          type: string
+        rows:
+          items:
+            $ref: "#/components/schemas/PrivilegeRow"
+          type: array
+        set_id:
+          type: string
+        set_revision:
+          format: int64
+          minimum: 1
+          type: integer
+      required:
+        - operation_id
+        - set_id
+        - set_revision
+        - players_sha256
+        - rows
+      type: object
+      x-go-type: api.ProductionPrivilegeDraftCreateRequest
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
+    ProductionPrivilegeDraftGeneration:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/ProductionPrivilegeDraftGeneration.json
+          format: uri
+          readOnly: true
+          type: string
+        generation:
+          format: int64
+          type: integer
+        log_id:
+          type: string
+        revision:
+          format: int64
+          type: integer
+      required:
+        - log_id
+        - revision
+        - generation
+      type: object
+      x-go-type: api.ProductionPrivilegeDraftGeneration
       x-go-type-import:
         path: go.kenn.io/docbank/internal/api
         name: api
@@ -20797,6 +20922,42 @@ paths:
                 $ref: "#/components/schemas/Error"
           description: Error
       summary: Page a frozen privilege log's public rows
+  /api/v1/production-privilege-logs/{log}/revisions/{revision}/draft:
+    post:
+      operationId: createProductionPrivilegeLogDraft
+      parameters:
+        - in: path
+          name: log
+          required: true
+          schema:
+            type: string
+        - in: path
+          name: revision
+          required: true
+          schema:
+            format: int64
+            minimum: 1
+            type: integer
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ProductionPrivilegeDraftCreateRequest"
+        required: true
+      responses:
+        "201":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProductionPrivilegeDraftGeneration"
+          description: Created
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: Draft private privilege rows from sealed production membership
   /api/v1/production-privilege-logs/{log}/revisions/{revision}/exports/{format}:
     get:
       operationId: exportProductionPrivilegeLog
