@@ -214,6 +214,14 @@ func TestDetectFormatAcceptsRecoverablePDFs(t *testing.T) {
 			require.NotEqual(t, original, content)
 			return content
 		}},
+		{name: "comments after trailer dictionary", content: func(t *testing.T) []byte {
+			t.Helper()
+			return bytes.Replace(testPDF("comment-trailer"), []byte("startxref\n"), []byte("% comment with CR\r% comment with CRLF\r\n% comment with LF\nstartxref\n"), 1)
+		}},
+		{name: "comments after xref stream object", content: func(t *testing.T) []byte {
+			t.Helper()
+			return bytes.Replace(testPDFXRefStreamWithPageBox(), []byte("startxref\n"), []byte("% comment with CR\r% comment with CRLF\r\n% comment with LF\nstartxref\n"), 1)
+		}},
 		{name: "large file without final marker", content: func(t *testing.T) []byte {
 			t.Helper()
 			original := testPDF(strings.Repeat("x", 40_000))
@@ -244,6 +252,30 @@ func TestDetectFormatAcceptsRecoverablePDFs(t *testing.T) {
 func TestDetectFormatRejectsUnrecoverablePDFTrailers(t *testing.T) {
 	original := testPDF("negative")
 	recoverable := bytes.TrimSuffix(original, []byte("%%EOF\n"))
+
+	t.Run("invalid xref comment suffix", func(t *testing.T) {
+		for _, fixture := range []struct {
+			name    string
+			content []byte
+		}{
+			{name: "table", content: original},
+			{name: "stream", content: testPDFXRefStreamWithPageBox()},
+		} {
+			for _, suffix := range []struct {
+				name string
+				text string
+			}{
+				{name: "unterminated comment", text: "% synthetic comment "},
+				{name: "payload after comment", text: "% synthetic comment\nPK\x03\x04synthetic\n"},
+			} {
+				t.Run(fixture.name+"/"+suffix.name, func(t *testing.T) {
+					content := bytes.Replace(fixture.content, []byte("startxref\n"), []byte(suffix.text+"startxref\n"), 1)
+					_, err := DetectFormat(bytes.NewReader(content), int64(len(content)), "application/pdf")
+					require.ErrorContains(t, err, "cross-reference data is invalid")
+				})
+			}
+		}
+	})
 
 	t.Run("trailing bytes", func(t *testing.T) {
 		for _, test := range []struct {

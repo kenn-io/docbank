@@ -786,18 +786,20 @@ func validPDFStreamXRef(xref []byte) bool {
 		return false
 	}
 	objectEnd := objectStart + endObjectLength
-	return onlyPDFWhitespace(xref[objectEnd:])
+	return onlyPDFWhitespaceAndComments(xref[objectEnd:])
 }
 
 func validPDFTrailer(data []byte, maxObjectNumber uint64) bool {
-	data = trimPDFWhitespace(data)
+	for len(data) > 0 && isPDFWhitespace(data[0]) {
+		data = data[1:]
+	}
 	trailerLength, ok := pdfKeywordLength(data, "trailer")
 	if !ok {
 		return false
 	}
 	trailerData := data[trailerLength:]
 	trailer, dictionaryEnd, ok := parsePDFDictionaryPrefix(trailerData)
-	if !ok || !onlyPDFWhitespace(trailerData[dictionaryEnd:]) || !validPDFRootReference(trailer["Root"]) {
+	if !ok || !onlyPDFWhitespaceAndComments(trailerData[dictionaryEnd:]) || !validPDFRootReference(trailer["Root"]) {
 		return false
 	}
 	size, sizeOK := pdfPositiveInteger(trailer["Size"])
@@ -1098,11 +1100,20 @@ func trimPDFWhitespace(value []byte) []byte {
 	return value
 }
 
-func onlyPDFWhitespace(value []byte) bool {
-	for _, char := range value {
-		if !isPDFWhitespace(char) {
+func onlyPDFWhitespaceAndComments(value []byte) bool {
+	for position := 0; position < len(value); position++ {
+		if isPDFWhitespace(value[position]) {
+			continue
+		}
+		if value[position] != '%' {
 			return false
 		}
+		lineEnd := bytes.IndexAny(value[position:], "\r\n")
+		// The selected startxref must begin outside the comment.
+		if lineEnd < 0 {
+			return false
+		}
+		position += lineEnd
 	}
 	return true
 }
