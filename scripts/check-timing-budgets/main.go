@@ -59,6 +59,7 @@ func run(args []string, stderr io.Writer) int {
 
 func check(root string, stderr io.Writer) (int, error) {
 	root = filepath.Clean(root)
+	// #nosec G703 -- this local checker intentionally scans the caller-selected source directory.
 	info, err := os.Lstat(root)
 	if err != nil {
 		return 0, err
@@ -76,6 +77,7 @@ func check(root string, stderr io.Writer) (int, error) {
 	}
 	used := make(map[budgetKey]int)
 	violations := 0
+	// #nosec G703 -- walkRoot is the absolute form of the caller-selected source directory.
 	err = filepath.WalkDir(walkRoot, func(path string, entry fs.DirEntry, err error) error {
 		if err != nil {
 			return err
@@ -103,6 +105,7 @@ func check(root string, stderr io.Writer) (int, error) {
 
 func findModuleRoot(dir string) string {
 	for {
+		// #nosec G703 -- dir ascends from the caller-selected source directory to its module root.
 		if _, err := os.Stat(filepath.Join(dir, "go.mod")); err == nil {
 			return dir
 		}
