@@ -137,6 +137,26 @@ need it unless their contract requires a globally quiescent snapshot.
 
 ## API shape and errors
 
+### Photo graph routes
+
+Photo endpoints are daemon-only typed routes over the store's graph authority.
+The browser session surface does not expose them in this slice. Asset reads
+accept an asset UUID or a member node ID and return the resolved display
+pointer, source, revision, ETag, and at most 256 members. Create and promote
+accept live file nodes; attach, detach, exclude, display, and settings use
+`If-Match` and `g.mutate` so the revision check and response are one mutation
+boundary.
+
+The route layer carries node IDs, UUIDs, roles, and ETags. It does not classify
+media, choose displays, validate sidecar locality, or repair purge state.
+Those decisions belong to the store policy. Generated clients validate
+identity, ETags, and response bounds without reproducing the policy.
+
+MCP always exposes photo inspection. Photo mutations are construction-time
+opt-in through `docbank mcp --allow-photo-edits`; each write makes one daemon
+request and treats ambiguous transport failure as an unknown outcome. Display
+and settings writes remain HTTP and CLI operations.
+
 Similar-document reads use the processing service and store authority through
 `POST /api/v1/search/similar`. Keep query encoding and provider authorization
 outside that call path. The store owns source validation, fenced membership,

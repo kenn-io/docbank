@@ -90,6 +90,8 @@ func executeReadTool(
 		output, err = getPackageRecord(ctx, lease, raw)
 	case "lookup_bates_label":
 		output, err = lookupBatesLabel(ctx, lease, raw)
+	case "get_photo_asset":
+		output, err = getPhotoAsset(ctx, lease, raw)
 	default:
 		return nil, errors.New("unknown Docbank read tool")
 	}

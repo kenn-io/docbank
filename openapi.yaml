@@ -18,6 +18,39 @@ components:
       required:
         - path
       type: object
+    AttachPhotoFileRequest:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/AttachPhotoFileRequest.json
+          format: uri
+          readOnly: true
+          type: string
+        node_id:
+          format: int64
+          minimum: 1
+          type: integer
+        role:
+          enum:
+            - raw
+            - image
+            - video
+            - sidecar
+          type: string
+        sidecar_of_file_id:
+          format: uuid
+          type:
+            - string
+            - "null"
+      required:
+        - node_id
+      type: object
+      x-go-type: api.AttachPhotoFileRequest
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     AttachmentPublicationChoice:
       additionalProperties: false
       properties:
@@ -2520,6 +2553,39 @@ components:
         - name
         - kind
       type: object
+    CreatePhotoAssetRequest:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/CreatePhotoAssetRequest.json
+          format: uri
+          readOnly: true
+          type: string
+        kind:
+          enum:
+            - photo
+            - video
+          type: string
+        node_id:
+          format: int64
+          minimum: 1
+          type: integer
+        role:
+          enum:
+            - raw
+            - image
+            - video
+            - sidecar
+          type: string
+      required:
+        - node_id
+      type: object
+      x-go-type: api.CreatePhotoAssetRequest
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     CreateTagRequest:
       additionalProperties: false
       properties:
@@ -9621,6 +9687,144 @@ components:
       x-go-type-import:
         path: go.kenn.io/docbank/internal/api
         name: api
+    PhotoAsset:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/PhotoAsset.json
+          format: uri
+          readOnly: true
+          type: string
+        created_at:
+          format: date-time
+          type: string
+        display_file_id:
+          format: uuid
+          type:
+            - string
+            - "null"
+        display_override_file_id:
+          format: uuid
+          type:
+            - string
+            - "null"
+        display_source:
+          enum:
+            - asset
+            - vault
+            - default
+            - none
+          type: string
+        excluded_at:
+          format: date-time
+          type:
+            - string
+            - "null"
+        files:
+          items:
+            $ref: "#/components/schemas/PhotoFile"
+          maxItems: 256
+          type: array
+        id:
+          format: uuid
+          type: string
+        kind:
+          enum:
+            - photo
+            - video
+          type: string
+        revision:
+          format: int64
+          minimum: 1
+          type: integer
+        updated_at:
+          format: date-time
+          type: string
+      required:
+        - id
+        - kind
+        - revision
+        - display_source
+        - created_at
+        - updated_at
+        - files
+      type: object
+      x-go-type: api.PhotoAsset
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
+    PhotoFile:
+      additionalProperties: false
+      properties:
+        asset_id:
+          format: uuid
+          type: string
+        created_at:
+          format: date-time
+          type: string
+        id:
+          format: uuid
+          type: string
+        node_id:
+          format: int64
+          minimum: 1
+          type: integer
+        role:
+          enum:
+            - raw
+            - image
+            - video
+            - sidecar
+          type: string
+        sidecar_of_file_id:
+          format: uuid
+          type:
+            - string
+            - "null"
+      required:
+        - id
+        - asset_id
+        - node_id
+        - role
+        - created_at
+      type: object
+      x-go-type: api.PhotoFile
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
+    PhotoSettings:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/PhotoSettings.json
+          format: uri
+          readOnly: true
+          type: string
+        preference:
+          enum:
+            - raw
+            - image
+          type:
+            - string
+            - "null"
+        revision:
+          format: int64
+          minimum: 1
+          type: integer
+        updated_at:
+          format: date-time
+          type: string
+      required:
+        - revision
+      type: object
+      x-go-type: api.PhotoSettings
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     Plan:
       additionalProperties: false
       properties:
@@ -10549,6 +10753,29 @@ components:
       x-go-type-import:
         path: go.kenn.io/docbank/internal/api
         name: api
+    PromotePhotoNodeRequest:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/PromotePhotoNodeRequest.json
+          format: uri
+          readOnly: true
+          type: string
+        kind:
+          enum:
+            - photo
+            - video
+          type: string
+        role:
+          enum:
+            - raw
+            - image
+            - video
+            - sidecar
+          type: string
+      type: object
     ProvenanceAppendReceipt:
       additionalProperties: false
       properties:
@@ -12235,6 +12462,67 @@ components:
       required:
         - label
       type: object
+    SetPhotoDisplayRequest:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/SetPhotoDisplayRequest.json
+          format: uri
+          readOnly: true
+          type: string
+        file_id:
+          format: uuid
+          type:
+            - string
+            - "null"
+      type: object
+      x-go-type: api.SetPhotoDisplayRequest
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
+    SetPhotoExcludedRequest:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/SetPhotoExcludedRequest.json
+          format: uri
+          readOnly: true
+          type: string
+        excluded:
+          type: boolean
+      required:
+        - excluded
+      type: object
+      x-go-type: api.SetPhotoExcludedRequest
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
+    SetPhotoSettingsRequest:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/SetPhotoSettingsRequest.json
+          format: uri
+          readOnly: true
+          type: string
+        preference:
+          enum:
+            - raw
+            - image
+          type:
+            - string
+            - "null"
+      type: object
+      x-go-type: api.SetPhotoSettingsRequest
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     Sort:
       additionalProperties: false
       properties:
@@ -19067,6 +19355,335 @@ paths:
                 $ref: "#/components/schemas/Error"
           description: Error
       summary: Read person attribution rebuild progress
+  /api/v1/photos/assets:
+    post:
+      operationId: createPhotoAsset
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreatePhotoAssetRequest"
+        required: true
+      responses:
+        "201":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PhotoAsset"
+          description: Created
+          headers:
+            ETag:
+              schema:
+                type: string
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: Create a photo asset for one file
+  /api/v1/photos/assets/{asset_id}:
+    get:
+      operationId: getPhotoAsset
+      parameters:
+        - in: path
+          name: asset_id
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PhotoAsset"
+          description: OK
+          headers:
+            ETag:
+              schema:
+                type: string
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: Inspect one photo asset
+  /api/v1/photos/assets/{asset_id}/display:
+    put:
+      operationId: setPhotoDisplay
+      parameters:
+        - in: path
+          name: asset_id
+          required: true
+          schema:
+            type: string
+        - in: header
+          name: If-Match
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SetPhotoDisplayRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PhotoAsset"
+          description: OK
+          headers:
+            ETag:
+              schema:
+                type: string
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: Set or reset a photo display override
+  /api/v1/photos/assets/{asset_id}/exclude:
+    post:
+      operationId: excludePhotoAsset
+      parameters:
+        - in: path
+          name: asset_id
+          required: true
+          schema:
+            type: string
+        - in: header
+          name: If-Match
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SetPhotoExcludedRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PhotoAsset"
+          description: OK
+          headers:
+            ETag:
+              schema:
+                type: string
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: Exclude or include a photo asset
+  /api/v1/photos/assets/{asset_id}/files:
+    post:
+      operationId: attachPhotoFile
+      parameters:
+        - in: path
+          name: asset_id
+          required: true
+          schema:
+            type: string
+        - in: header
+          name: If-Match
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AttachPhotoFileRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PhotoAsset"
+          description: OK
+          headers:
+            ETag:
+              schema:
+                type: string
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: Attach one node to a photo asset
+  /api/v1/photos/assets/{asset_id}/files/{file_id}:
+    delete:
+      operationId: detachPhotoFile
+      parameters:
+        - in: path
+          name: asset_id
+          required: true
+          schema:
+            type: string
+        - in: path
+          name: file_id
+          required: true
+          schema:
+            type: string
+        - in: header
+          name: If-Match
+          required: true
+          schema:
+            type: string
+        - explode: false
+          in: query
+          name: clear_dependent_sidecars
+          schema:
+            type: boolean
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PhotoAsset"
+          description: OK
+          headers:
+            ETag:
+              schema:
+                type: string
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: Detach one file from a photo asset
+  /api/v1/photos/nodes/{node_id}/asset:
+    get:
+      operationId: getPhotoAssetByNode
+      parameters:
+        - in: path
+          name: node_id
+          required: true
+          schema:
+            format: int64
+            type: integer
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PhotoAsset"
+          description: OK
+          headers:
+            ETag:
+              schema:
+                type: string
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: Inspect the photo asset containing one node
+  /api/v1/photos/nodes/{node_id}/promote:
+    post:
+      operationId: promotePhotoNode
+      parameters:
+        - in: path
+          name: node_id
+          required: true
+          schema:
+            format: int64
+            type: integer
+        - in: header
+          name: If-Match
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PromotePhotoNodeRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PhotoAsset"
+          description: OK
+          headers:
+            ETag:
+              schema:
+                type: string
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: Promote one node into a photo asset
+  /api/v1/photos/settings:
+    get:
+      operationId: getPhotoSettings
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PhotoSettings"
+          description: OK
+          headers:
+            ETag:
+              schema:
+                type: string
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: Inspect the photo display preference
+    put:
+      operationId: setPhotoSettings
+      parameters:
+        - in: header
+          name: If-Match
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SetPhotoSettingsRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PhotoSettings"
+          description: OK
+          headers:
+            ETag:
+              schema:
+                type: string
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: Set or reset the photo display preference
   /api/v1/processing/consent/grants:
     post:
       operationId: grantDocumentProcessingConsent

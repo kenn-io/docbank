@@ -2047,6 +2047,61 @@ CREATE TABLE IF NOT EXISTS email_document_relations (
 );
 CREATE INDEX IF NOT EXISTS email_document_relations_child ON email_document_relations(child_version_id);
 
+-- Photo grouping is an index over ordinary file nodes. Nodes and content
+-- versions remain the only byte and document identities.
+CREATE TABLE IF NOT EXISTS photo_assets (
+    asset_id                  TEXT PRIMARY KEY,
+    kind                      TEXT NOT NULL,
+    revision                  INTEGER NOT NULL DEFAULT 1,
+    excluded_at               TEXT,
+    display_file_id           TEXT,
+    display_override_file_id  TEXT,
+    created_at                TEXT NOT NULL,
+    updated_at                TEXT NOT NULL,
+    FOREIGN KEY (display_file_id) REFERENCES photo_files(file_id)
+        ON DELETE SET NULL DEFERRABLE INITIALLY DEFERRED,
+    FOREIGN KEY (display_override_file_id) REFERENCES photo_files(file_id)
+        ON DELETE SET NULL DEFERRABLE INITIALLY DEFERRED
+);
+
+CREATE TABLE IF NOT EXISTS photo_files (
+    file_id              TEXT PRIMARY KEY,
+    asset_id             TEXT NOT NULL REFERENCES photo_assets(asset_id)
+        ON DELETE CASCADE DEFERRABLE INITIALLY DEFERRED,
+    node_id              INTEGER NOT NULL UNIQUE REFERENCES nodes(id)
+        ON DELETE CASCADE,
+    role                 TEXT NOT NULL,
+    sidecar_of_file_id   TEXT,
+    created_at           TEXT NOT NULL,
+    FOREIGN KEY (sidecar_of_file_id) REFERENCES photo_files(file_id)
+        ON DELETE SET NULL DEFERRABLE INITIALLY DEFERRED
+);
+
+CREATE INDEX IF NOT EXISTS photo_files_asset ON photo_files(asset_id, role, file_id);
+CREATE INDEX IF NOT EXISTS photo_files_sidecar ON photo_files(sidecar_of_file_id);
+
+CREATE TABLE IF NOT EXISTS photo_library_settings (
+    singleton    INTEGER PRIMARY KEY,
+    preference   TEXT,
+    revision     INTEGER NOT NULL DEFAULT 1,
+    updated_at   TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS photo_change_receipts (
+    receipt_id     TEXT PRIMARY KEY,
+    operation      TEXT NOT NULL,
+    asset_id       TEXT,
+    settings_key   TEXT,
+    before_revision INTEGER NOT NULL,
+    after_revision INTEGER NOT NULL,
+    before_json    TEXT NOT NULL,
+    after_json     TEXT NOT NULL,
+    created_at     TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS photo_change_receipts_asset
+    ON photo_change_receipts(asset_id, receipt_id);
+
 CREATE TABLE IF NOT EXISTS persons (
     person_id TEXT PRIMARY KEY NOT NULL,
     display_name TEXT NOT NULL,

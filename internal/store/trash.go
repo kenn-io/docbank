@@ -492,6 +492,13 @@ func (s *Store) trashEmpty(
 		if err := deleteRenditionAuthorityForVersionsTx(ctx, tx, versionIDs); err != nil {
 			return err
 		}
+		doomedIDs, err := doomedNodeIDsTx(ctx, tx, selection, selectionArgs...)
+		if err != nil {
+			return fmt.Errorf("listing nodes affected by trash empty: %w", err)
+		}
+		if err := adjustPhotosForPurgedNodesTx(ctx, tx, doomedIDs); err != nil {
+			return err
+		}
 		// One trash-empty operation advances each affected tag once, even when
 		// several assignments disappear. A row-level node_tags trigger would
 		// instead expose physical cascade cardinality as revision semantics.

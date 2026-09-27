@@ -89,7 +89,7 @@ func TestMCPCommandExposesTransportAndCapabilityFlags(t *testing.T) {
 	require.Equal(t, "mcp", command.Name())
 	var names []string
 	command.Flags().VisitAll(func(flag *pflag.Flag) { names = append(names, flag.Name) })
-	assert.ElementsMatch(t, []string{"allow-processing", "allow-package-writes", "listen", "transport"}, names)
+	assert.ElementsMatch(t, []string{"allow-photo-edits", "allow-processing", "allow-package-writes", "listen", "transport"}, names)
 	for _, forbidden := range []string{"token", "api-key", "daemon", "url", "remote"} {
 		assert.Nil(t, command.Flags().Lookup(forbidden))
 	}

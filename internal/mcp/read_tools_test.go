@@ -46,7 +46,7 @@ func TestNineReadToolHandlersReturnBoundedPrivateStructuredResults(t *testing.T)
 	lease := newDaemonLeaseWith(func(context.Context) (*daemonconn.Connection, error) {
 		return daemonconn.New(daemon.URL, "synthetic-key"), nil
 	}, func(*daemonconn.Connection) error { return nil })
-	schemas := catalogMap(toolCatalog(false, false))
+	schemas := catalogMap(toolCatalog(false, false, false))
 
 	tests := []struct {
 		name      string
@@ -700,7 +700,7 @@ func invokeReadTool(
 	if err != nil {
 		return nil, err
 	}
-	validator := mustResolveSchema(catalogMap(toolCatalog(false, false))[name].OutputSchema)
+	validator := mustResolveSchema(catalogMap(toolCatalog(false, false, false))[name].OutputSchema)
 	result, err := executeReadTool(ctx, lease, newProcessingPlanRegistry(), name, validator, raw)
 	if domain, ok := domainToolError(err); ok {
 		return domain, nil
