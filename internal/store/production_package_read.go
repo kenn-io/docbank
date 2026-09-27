@@ -70,7 +70,8 @@ func (s *Store) LoadProductionPackageInputs(ctx context.Context, jobID string) (
 		if member.Ordinal != int64(index+1) || member.ID == "" || member.Family.RootVersionID == "" {
 			return bad()
 		}
-		members[index] = production.PackageMember{ID: member.ID, Ordinal: member.Ordinal, FamilyID: member.Family.RootVersionID}
+		members[index] = production.PackageMember{ID: member.ID, Ordinal: member.Ordinal,
+			FamilyID: member.Family.RootVersionID, SourceVersionID: member.SourceVersionID}
 	}
 	return production.PublishedPackageInputs{Job: job, Reservation: plan.Reservation, Members: members}, nil
 }

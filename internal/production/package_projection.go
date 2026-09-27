@@ -25,9 +25,10 @@ var ErrPackageProjection = errors.New("production package projection conflicts w
 // PackageMember supplies the family boundary for one published occurrence.
 // Its IDs are private planning inputs and never enter RecipientManifest.
 type PackageMember struct {
-	ID       string
-	Ordinal  int64
-	FamilyID string
+	ID              string
+	Ordinal         int64
+	FamilyID        string
+	SourceVersionID string
 }
 
 type PackageLimits struct {

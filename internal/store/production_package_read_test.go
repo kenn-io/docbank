@@ -22,6 +22,8 @@ func TestPublishedProductionPackageInputsSurviveSourceHeadChange(t *testing.T) {
 	require.Equal(t, before.Members[0].FamilyID, before.Members[1].FamilyID)
 	require.Equal(t, int64(1), before.Members[0].Ordinal)
 	require.Equal(t, int64(2), before.Members[1].Ordinal)
+	require.Equal(t, finalized.Authority.Prepared.Members[0].Member.SourceVersionID, before.Members[0].SourceVersionID)
+	require.Equal(t, finalized.Authority.Prepared.Members[1].Member.SourceVersionID, before.Members[1].SourceVersionID)
 	require.Equal(t, receipt.NumberReservationSHA256, before.Reservation.SHA256)
 	projection, err := production.PlanPackageProjection(before.Job, before.Reservation, before.Members,
 		"export-dat-opt-images-v1", production.PackageLimits{MaxVolumeBytes: 1 << 30, MaxVolumeDocuments: 100})
