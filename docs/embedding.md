@@ -799,9 +799,13 @@ _, err = repository.Restore(ctx, docbank.BackupRestoreOptions{
 return err
 ```
 
-An omitted snapshot ID selects the latest recovery point. Repository restore
-uses the build's default SQLite driver and restores declared host files along
-with vault content. It rejects the repository, declared protected roots, and
+An omitted snapshot ID selects the latest recovery point. Set `SQLite` in
+`BackupRestoreOptions` to use your application's driver, such as
+`modernc.Driver{}` from `go.kenn.io/docbank/sqlite/modernc`. Omitting it selects
+the build's default driver. An application using modernc in a CGO build should
+select it explicitly for restore too; the default CGO driver needs the `fts5`
+build tag. Restore includes declared host files along with vault content.
+It rejects the repository, declared protected roots, and
 targets held by another vault. Include any offline source or application
 storage you want to preserve in `ProtectedRoots`: the repository cannot infer
 their current locations. `Vault.RestoreBackup` also protects its open vault
