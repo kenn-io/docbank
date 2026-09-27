@@ -48,6 +48,12 @@ func TestRetainProductionReproductionReplaysWithoutNewNumbers(t *testing.T) {
 		ArtifactIDs:                     artifactIDs, DeliveryPolicySHA256: productionHash(string(policyRaw)),
 	}
 	var first, second documentproduction.ReproductionReceipt
+	const deliveryOperationID = "99999999-9999-4999-8999-999999999999"
+	proofPath := filepath.Join(t.TempDir(), "synthetic-transfer-proof.txt")
+	require.NoError(t, os.WriteFile(proofPath, []byte("synthetic transfer acknowledged"), 0o600))
+	evidence := production.PackageDeliveryEvidence{RecipientCode: policy.RecipientCode,
+		Method: "offline-media", DeliveredAt: "2026-09-23T21:00:00Z", ProofPath: proofPath}
+	var firstDelivery, secondDelivery ReproductionDeliveryRecord
 	lostResponse := errors.New("synthetic response lost after receipt commit")
 	runtime := production.ReproductionRuntime{Catalog: s, Opener: f, StagingDir: t.TempDir(),
 		Retain: func(ctx context.Context, got documentproduction.ReproductionRequest,
@@ -69,15 +75,37 @@ func TestRetainProductionReproductionReplaysWithoutNewNumbers(t *testing.T) {
 			}
 			receipt, retainErr := s.RetainProductionReproduction(ctx, job.ID, got, policy,
 				paths, f, restartPackageBlobWriter(f))
+			if retainErr != nil {
+				return retainErr
+			}
+			if first.ID == "" {
+				wrongPolicy := production.PackageDeliveryPolicy{RecipientCode: "wrong-recipient",
+					AllowedMethods: []string{"offline-media"}}
+				wrongEvidence := evidence
+				wrongEvidence.RecipientCode = wrongPolicy.RecipientCode
+				wrongPath := filepath.Join(filepath.Dir(paths.ArchivePath), "wrong-delivery.json")
+				_, wrongErr := s.RecordProductionReproductionDelivery(ctx, job.ID,
+					got.OperationID, deliveryOperationID, wrongPolicy, wrongEvidence, paths,
+					wrongPath, restartPackageBlobWriter(f))
+				require.Error(t, wrongErr)
+				_, statErr := os.Stat(wrongPath)
+				require.ErrorIs(t, statErr, os.ErrNotExist)
+			}
+			deliveryPath := filepath.Join(filepath.Dir(paths.ArchivePath), "delivery.json")
+			delivery, deliveryErr := s.RecordProductionReproductionDelivery(ctx, job.ID,
+				got.OperationID, deliveryOperationID, policy, evidence, paths,
+				deliveryPath, restartPackageBlobWriter(f))
+			if deliveryErr != nil {
+				return deliveryErr
+			}
 			if first.ID == "" {
 				first = receipt
-				if retainErr == nil {
-					return lostResponse
-				}
-			} else {
-				second = receipt
+				firstDelivery = delivery
+				return lostResponse
 			}
-			return retainErr
+			second = receipt
+			secondDelivery = delivery
+			return nil
 		},
 	}
 	limits := production.PackageLimits{MaxVolumeBytes: 50 << 20, MaxVolumeDocuments: 10}
@@ -92,12 +120,22 @@ func TestRetainProductionReproductionReplaysWithoutNewNumbers(t *testing.T) {
 	_, err = runtime.Run(t.Context(), job.ID, request, policy, "export-dat-opt-images-v1", limits)
 	require.NoError(t, err)
 	require.Equal(t, first, second)
+	require.Equal(t, firstDelivery, secondDelivery)
+	require.Equal(t, first.DeliveryPolicySHA256, firstDelivery.Receipt.DeliveryPolicySHA256)
+	loadedDelivery, err := s.LoadProductionReproductionDelivery(t.Context(), job.ID,
+		request.OperationID, deliveryOperationID)
+	require.NoError(t, err)
+	require.Equal(t, firstDelivery, loadedDelivery)
+	deliveryRaw, err := canonical.Marshal(firstDelivery)
+	require.NoError(t, err)
+	require.NotContains(t, string(deliveryRaw), proofPath)
 	loaded, err := s.LoadProductionReproduction(t.Context(), job.ID, request.OperationID)
 	require.NoError(t, err)
 	require.Equal(t, first, loaded)
 	retained, err := s.LoadRetainedProductionPackage(t.Context(), job.ID, request.OperationID)
 	require.NoError(t, err)
 	require.Equal(t, retained.Evidence.QCSHA256, first.PackageQCSHA256)
+	require.Equal(t, retained.QC.Version.BlobHash, firstDelivery.Receipt.PackageQCSHA256)
 	var allocationsAfter, operationCount int
 	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM bates_allocations`).Scan(&allocationsAfter))
 	require.Equal(t, allocationsBefore, allocationsAfter)
@@ -133,4 +171,19 @@ func TestRetainProductionReproductionReplaysWithoutNewNumbers(t *testing.T) {
 	restoredReceipt, err := restored.LoadProductionReproduction(t.Context(), job.ID, request.OperationID)
 	require.NoError(t, err)
 	require.Equal(t, first, restoredReceipt)
+	restoredDelivery, err := restored.LoadProductionReproductionDelivery(t.Context(), job.ID,
+		request.OperationID, deliveryOperationID)
+	require.NoError(t, err)
+	require.Equal(t, firstDelivery, restoredDelivery)
+	_, err = s.db.ExecContext(t.Context(), `DROP TRIGGER production_operation_receipts_immutable_update`)
+	require.NoError(t, err)
+	detached := firstDelivery
+	detached.JobID = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+	detachedRaw, err := canonical.Marshal(detached)
+	require.NoError(t, err)
+	_, err = s.db.ExecContext(t.Context(), `UPDATE production_operation_receipts
+		SET response_json=?,response_sha256=? WHERE operation_id=?`,
+		detachedRaw, digestProductionBytes(detachedRaw), deliveryOperationID)
+	require.NoError(t, err)
+	require.Error(t, s.ValidateMetadata(t.Context()))
 }

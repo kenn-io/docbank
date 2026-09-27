@@ -197,6 +197,12 @@ func deliveryPolicyDigest(value PackageDeliveryPolicy) (string, error) {
 	return hex.EncodeToString(digest[:]), nil
 }
 
+// PackageDeliveryPolicySHA256 returns the canonical identity of a selected
+// delivery policy before a delivery sidecar is published.
+func PackageDeliveryPolicySHA256(value PackageDeliveryPolicy) (string, error) {
+	return deliveryPolicyDigest(value)
+}
+
 func packageHandoffInputs(archivePath, qcPath, transmittalPath string) (PackageQC, string, string, error) {
 	return packageHandoffInputsContext(context.Background(), archivePath, qcPath, transmittalPath)
 }

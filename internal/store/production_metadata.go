@@ -798,6 +798,30 @@ func validateProductionOperationResponse(ctx context.Context, q metadataQuerier,
 			original.ArtifactManifestSHA256 != value.ArtifactManifestSHA256 {
 			return errors.New("reproduction artifact manifest is detached")
 		}
+	case productionOperationReproductionDelivery:
+		value, err := canonical.Decode[ReproductionDeliveryRecord](raw)
+		if err != nil || !validReproductionDeliveryRecord(value) || value.ID != operationID {
+			return errors.New("invalid reproduction delivery operation receipt")
+		}
+		var reproductionRaw []byte
+		if err := q.QueryRowContext(ctx, `SELECT response_json FROM production_operation_receipts
+			WHERE operation_id=? AND kind=?`, value.ReproductionID,
+			productionOperationReproduction).Scan(&reproductionRaw); err != nil {
+			return errors.New("reproduction delivery has no reproduction")
+		}
+		reproduction, err := canonical.Decode[documentproduction.ReproductionReceipt](reproductionRaw)
+		if err != nil || documentproduction.ValidateReproductionReceipt(reproduction) != nil ||
+			reproduction.ID != value.ReproductionID ||
+			reproduction.DeliveryPolicySHA256 != value.Receipt.DeliveryPolicySHA256 {
+			return errors.New("reproduction delivery policy is detached")
+		}
+		var originalJobID string
+		if err := q.QueryRowContext(ctx, `SELECT job_id FROM production_jobs
+			WHERE state='succeeded' AND receipt_sha256=?`,
+			reproduction.OriginalProductionReceiptSHA256).Scan(&originalJobID); err != nil ||
+			originalJobID != value.JobID {
+			return errors.New("reproduction delivery job is detached")
+		}
 	case productionOperationDraft, productionOperationRows, productionOperationApprovalBind:
 		if _, err := canonical.Decode[productionGenerationReceipt](raw); err != nil {
 			return err
@@ -814,7 +838,7 @@ func knownProductionOperation(kind string) bool {
 		productionOperationPlayers, productionOperationWithheld, productionOperationDraft,
 		productionOperationRows, productionOperationValidation, productionOperationApprovalBind,
 		productionOperationPreparedInputs, productionOperationFreeze, productionOperationAttachment,
-		productionOperationReproduction:
+		productionOperationReproduction, productionOperationReproductionDelivery:
 		return true
 	default:
 		return false
