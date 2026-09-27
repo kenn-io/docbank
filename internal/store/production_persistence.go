@@ -168,42 +168,84 @@ func (s *Store) PutProductionPlayersSnapshot(ctx context.Context, prepared produ
 func (s *Store) PutProductionWithheldSelection(ctx context.Context, prepared productionservice.PreparedWithheldSelection) (documentproduction.WithheldSelection, error) {
 	var result documentproduction.WithheldSelection
 	err := s.withStorageTx(ctx, func(tx *sql.Tx) error {
-		if replay, ok, err := productionOperationReplay[documentproduction.WithheldSelection](ctx, tx,
-			prepared.OperationID, productionOperationWithheld, prepared.RequestSHA256); err != nil || ok {
-			result = replay
-			return err
-		}
-		canonicalJSON, digest, err := documentproduction.CanonicalWithheldSelection(prepared.Selection)
-		if err != nil || !validPreparedOperation(prepared.OperationID, prepared.RequestSHA256) ||
-			digest != prepared.SelectionSHA256 || digest != prepared.RequestSHA256 ||
-			prepared.Selection.SHA256 != digest || !bytes.Equal(canonicalJSON, prepared.Canonical) {
-			return invalidProductionStorage("invalid prepared withheld selection")
-		}
-		if err = requireProductionDigest(ctx, tx, "production_policy_versions", "sha256", prepared.Selection.PolicySHA256); err != nil {
-			return err
-		}
-		var existing string
-		err = tx.QueryRowContext(ctx, `SELECT sha256 FROM production_withheld_selections
-			WHERE selection_id=?`, prepared.Selection.ID).Scan(&existing)
-		if err == nil && existing != digest {
-			return changedProductionPayload(prepared.Selection.ID)
-		}
-		if err != nil && !errors.Is(err, sql.ErrNoRows) {
-			return err
-		}
-		if errors.Is(err, sql.ErrNoRows) {
-			if _, err = tx.ExecContext(ctx, `INSERT INTO production_withheld_selections
-				(selection_id,set_id,revision,policy_sha256,sha256,canonical_json) VALUES(?,?,?,?,?,?)`,
-				prepared.Selection.ID, prepared.Selection.SetID, prepared.Selection.Revision,
-				prepared.Selection.PolicySHA256, digest, canonicalJSON); err != nil {
-				return err
-			}
-		}
-		result = prepared.Selection
-		return recordProductionOperation(ctx, tx, prepared.OperationID, productionOperationWithheld,
-			prepared.RequestSHA256, result)
+		var err error
+		result, err = s.putProductionWithheldSelectionTx(ctx, tx, prepared)
+		return err
 	})
 	return result, err
+}
+
+// CreateStoredProductionWithheldSelection binds an explicit withheld choice to
+// exact sealed membership before recording it. The remaining members are
+// derived in the same transaction and cannot be supplied by the caller.
+func (s *Store) CreateStoredProductionWithheldSelection(ctx context.Context, operationID string,
+	selection documentproduction.WithheldSelection) (documentproduction.WithheldSelection, error) {
+	if validateUUIDv4(selection.SetID) != nil || selection.Revision < 1 {
+		return documentproduction.WithheldSelection{}, invalidProductionStorage("invalid withheld production revision")
+	}
+	var result documentproduction.WithheldSelection
+	err := s.withStorageTx(ctx, func(tx *sql.Tx) error {
+		stored, err := s.loadProductionInputsTx(ctx, tx, selection.SetID, selection.Revision)
+		if err != nil {
+			return err
+		}
+		if !stored.Draft.MembershipSealed || selection.PolicySHA256 != stored.Policy.SHA256 {
+			return invalidProductionStorage("withheld selection requires sealed matching production policy")
+		}
+		produced, err := storedPrivilegeProducedMembers(stored.Members, selection)
+		if err != nil {
+			return err
+		}
+		prepared, err := productionservice.PrepareWithheldSelection(operationID, selection, produced)
+		if err != nil {
+			return err
+		}
+		if stored.Withheld != nil && stored.Withheld.SHA256 != prepared.SelectionSHA256 {
+			return changedProductionPayload(selection.ID)
+		}
+		result, err = s.putProductionWithheldSelectionTx(ctx, tx, prepared)
+		return err
+	})
+	return result, err
+}
+
+func (s *Store) putProductionWithheldSelectionTx(ctx context.Context, tx *sql.Tx,
+	prepared productionservice.PreparedWithheldSelection) (documentproduction.WithheldSelection, error) {
+	if replay, ok, err := productionOperationReplay[documentproduction.WithheldSelection](ctx, tx,
+		prepared.OperationID, productionOperationWithheld, prepared.RequestSHA256); err != nil || ok {
+		return replay, err
+	}
+	canonicalJSON, digest, err := documentproduction.CanonicalWithheldSelection(prepared.Selection)
+	if err != nil || !validPreparedOperation(prepared.OperationID, prepared.RequestSHA256) ||
+		digest != prepared.SelectionSHA256 || digest != prepared.RequestSHA256 ||
+		prepared.Selection.SHA256 != digest || !bytes.Equal(canonicalJSON, prepared.Canonical) {
+		return documentproduction.WithheldSelection{}, invalidProductionStorage("invalid prepared withheld selection")
+	}
+	if err = requireProductionDigest(ctx, tx, "production_policy_versions", "sha256", prepared.Selection.PolicySHA256); err != nil {
+		return documentproduction.WithheldSelection{}, err
+	}
+	var existing string
+	err = tx.QueryRowContext(ctx, `SELECT sha256 FROM production_withheld_selections
+		WHERE selection_id=?`, prepared.Selection.ID).Scan(&existing)
+	if err == nil && existing != digest {
+		return documentproduction.WithheldSelection{}, changedProductionPayload(prepared.Selection.ID)
+	}
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return documentproduction.WithheldSelection{}, err
+	}
+	if errors.Is(err, sql.ErrNoRows) {
+		if _, err = tx.ExecContext(ctx, `INSERT INTO production_withheld_selections
+			(selection_id,set_id,revision,policy_sha256,sha256,canonical_json) VALUES(?,?,?,?,?,?)`,
+			prepared.Selection.ID, prepared.Selection.SetID, prepared.Selection.Revision,
+			prepared.Selection.PolicySHA256, digest, canonicalJSON); err != nil {
+			return documentproduction.WithheldSelection{}, err
+		}
+	}
+	if err := recordProductionOperation(ctx, tx, prepared.OperationID, productionOperationWithheld,
+		prepared.RequestSHA256, prepared.Selection); err != nil {
+		return documentproduction.WithheldSelection{}, err
+	}
+	return prepared.Selection, nil
 }
 
 func (s *Store) PutProductionApproval(ctx context.Context, record productionservice.ApprovalRecord) (documentproduction.ApprovalGrant, error) {
