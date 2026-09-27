@@ -120,3 +120,43 @@ func verifyReproductionArtifact(ctx context.Context, opener PackageArtifactOpene
 	}
 	return nil
 }
+
+// ReproductionRuntime stages a fresh recipient archive and its own actual
+// archive QC for a previously published job. The caller retains the verified
+// package and its separate reproduction authority through Retain.
+type ReproductionRuntime struct {
+	Catalog    PublishedPackageCatalog
+	Opener     PackageArtifactOpener
+	StagingDir string
+	Retain     func(context.Context, documentproduction.ReproductionRequest,
+		ReproductionSelection, RecipientPackageRequest, PublishedRecipientPackage) error
+}
+
+type PublishedReproductionPackage struct {
+	Selection ReproductionSelection
+	Package   PublishedRecipientPackage
+}
+
+func (r ReproductionRuntime) Run(ctx context.Context, jobID string,
+	request documentproduction.ReproductionRequest, policy PackageDeliveryPolicy,
+	profileID string, limits PackageLimits) (PublishedReproductionPackage, error) {
+	if r.Retain == nil {
+		return PublishedReproductionPackage{}, ErrReproductionConflict
+	}
+	selection, err := PrepareReproduction(ctx, r.Catalog, r.Opener, jobID, request, policy)
+	if err != nil {
+		return PublishedReproductionPackage{}, err
+	}
+	packageRuntime := PackageRuntime{
+		Catalog: r.Catalog, Opener: r.Opener, StagingDir: r.StagingDir,
+		Retain: func(ctx context.Context, paths RecipientPackageRequest,
+			published PublishedRecipientPackage) error {
+			return r.Retain(ctx, request, selection, paths, published)
+		},
+	}
+	published, err := packageRuntime.Run(ctx, jobID, profileID, limits)
+	if err != nil {
+		return PublishedReproductionPackage{}, err
+	}
+	return PublishedReproductionPackage{Selection: selection, Package: published}, nil
+}
