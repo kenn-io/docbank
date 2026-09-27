@@ -14,6 +14,7 @@
   import ProductionPagePreview from "./ProductionPagePreview.svelte";
   import ProductionMemberReview from "./ProductionMemberReview.svelte";
   import ProductionMembershipSeal from "./ProductionMembershipSeal.svelte";
+  import ProductionMemberAppend from "./ProductionMemberAppend.svelte";
   import type { Marquee } from "./SourcePageSelection.svelte";
 
   interface Props {
@@ -23,9 +24,10 @@
     onrefresh: () => void;
     onauthfailure: (cause: unknown) => void;
     onclose: () => void;
+    availableSets?: ProductionSet[];
   }
 
-  let { session, set, draft, onrefresh, onauthfailure, onclose }: Props = $props();
+  let { session, set, draft, onrefresh, onauthfailure, onclose, availableSets = [] }: Props = $props();
   let members = $state<ProductionMember[]>([]);
   let flags = $state<ProductionDecision[]>([]);
   let memberCursor = $state("");
@@ -564,6 +566,10 @@
       {#if draft.state === "draft" && !draft.membership_sealed && !membersLoading && !membersError && members.length > 0}
         <ProductionMembershipSeal {session} {draft} {members} nextCursor={memberCursor} {onrefresh} onstale={markStale}
           onauthfailure={cause => { onauthfailure(cause); onclose(); }} />
+      {/if}
+      {#if draft.state === "draft" && !draft.membership_sealed && !membersLoading && !membersError}
+        <ProductionMemberAppend {session} {draft} sets={availableSets} targetMembers={members} targetCursor={memberCursor}
+          {onrefresh} onstale={markStale} onauthfailure={cause => { onauthfailure(cause); onclose(); }} />
       {/if}
     </section>
 

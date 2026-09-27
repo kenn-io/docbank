@@ -187,7 +187,7 @@
       {/key}
       {#if draft}
         {#key `${selected.id}:${draft.revision}:${draft.etag}`}
-          <ProductionReview {session} set={selected} {draft} onrefresh={() => void refresh()} {onauthfailure} {onclose} />
+          <ProductionReview {session} set={selected} {draft} availableSets={sets} onrefresh={() => void refresh()} {onauthfailure} {onclose} />
         {/key}
       {/if}
     {/if}

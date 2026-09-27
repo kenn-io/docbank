@@ -164,6 +164,20 @@ test("selects a rectangle on a retained synthetic member PDF through the real da
     await drawer.getByRole("button", { name: "Keep selection" }).click();
     await expect(drawer.locator("dt").filter({ hasText: "Change version" }).locator("xpath=following-sibling::dd[1]")).toHaveText("3");
     expect(browserErrors).toEqual([]);
+    await drawer.getByRole("textbox", { name: "Set name" }).fill("Synthetic copied occurrence");
+    await drawer.getByRole("button", { name: "Create draft" }).click();
+    const append = drawer.getByRole("region", { name: "Add prepared member" });
+    await expect(append).toBeVisible();
+    await append.getByRole("combobox", { name: /Prepared source set/ }).click();
+    await page.getByRole("option", { name: "Synthetic editor" }).click();
+    await expect(append.getByRole("button", { name: "Add member 1 as new occurrence" })).toBeVisible();
+    await page.screenshot({ path: path.join(output!, "web-production-member-copy-before.png"), fullPage: true, animations: "disabled" });
+    await append.getByRole("button", { name: "Add member 1 as new occurrence" }).click();
+    await expect(drawer.locator("dt").filter({ hasText: "Change version" }).locator("xpath=following-sibling::dd[1]")).toHaveText("2");
+    await expect(drawer.getByText("Needs review", { exact: true })).toBeVisible();
+    await page.screenshot({ path: path.join(output!, "web-production-member-copy-after.png"), fullPage: true, animations: "disabled" });
+    expect(outside).toEqual([]);
+    expect(browserErrors).toEqual([]);
   } finally {
     await writeFile(done, "stopped", { mode: 0o600 });
     if (daemonStarted) await docbank("daemon", "stop");

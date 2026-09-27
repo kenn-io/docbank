@@ -39,6 +39,21 @@ export interface ProductionMember {
   reviewed: boolean;
 }
 
+/** Full retained authority returned by the member read and required for append. */
+export interface ProductionPreparedMember extends ProductionMember {
+  vault_id: string;
+  source_sha256: string;
+  source_size: number;
+  page_inventory_sha256: string;
+  family: {
+    kind: "standalone" | "email_message" | "transcript" | "email_attachment";
+    root_version_id: string;
+    relation_operation_id?: string;
+    relation_order?: number;
+  };
+  review_binding: string;
+}
+
 export interface ProductionDecision {
   id: string;
   member_id: string;
@@ -146,10 +161,18 @@ export function getProductionSet(session: string, setID: string, signal?: AbortS
 }
 
 export function listProductionMembers(session: string, setID: string, revision: number,
-  cursor = "", signal?: AbortSignal): Promise<ProductionPage<ProductionMember>> {
+  cursor = "", signal?: AbortSignal): Promise<ProductionPage<ProductionPreparedMember>> {
   const params = new URLSearchParams({ limit: "50" });
   if (cursor) params.set("cursor", cursor);
-  return sessionJSON<ProductionPage<ProductionMember>>(`${setBase}/${encodeURIComponent(setID)}/revisions/${revision}/members?${params}`, { session, signal });
+  return sessionJSON<ProductionPage<ProductionPreparedMember>>(`${setBase}/${encodeURIComponent(setID)}/revisions/${revision}/members?${params}`, { session, signal });
+}
+
+export function appendProductionMember(session: string, setID: string, revision: number, etag: number,
+  member: ProductionPreparedMember, operationID: string, signal?: AbortSignal): Promise<ProductionReceipt> {
+  return sessionJSON<ProductionReceipt>(`${setBase}/${encodeURIComponent(setID)}/revisions/${revision}/members`, {
+    session, signal, method: "POST", headers: { "Content-Type": "application/json", "If-Match": String(etag) },
+    body: JSON.stringify({ operation_id: operationID, members: [member] }),
+  });
 }
 
 export function listUncertainDecisions(session: string, setID: string, revision: number,
