@@ -778,9 +778,7 @@ func validPDFStreamXRef(xref []byte) bool {
 		return false
 	}
 	objectStart := streamEnd + endStreamLength
-	for objectStart < len(xref) && isPDFWhitespace(xref[objectStart]) {
-		objectStart++
-	}
+	objectStart += skipPDFWhitespaceAndComments(xref[objectStart:])
 	endObjectLength, ok := pdfKeywordLength(xref[objectStart:], "endobj")
 	if !ok {
 		return false
@@ -1101,21 +1099,26 @@ func trimPDFWhitespace(value []byte) []byte {
 }
 
 func onlyPDFWhitespaceAndComments(value []byte) bool {
-	for position := 0; position < len(value); position++ {
+	return skipPDFWhitespaceAndComments(value) == len(value)
+}
+
+func skipPDFWhitespaceAndComments(value []byte) int {
+	position := 0
+	for ; position < len(value); position++ {
 		if isPDFWhitespace(value[position]) {
 			continue
 		}
 		if value[position] != '%' {
-			return false
+			break
 		}
 		lineEnd := bytes.IndexAny(value[position:], "\r\n")
 		// The selected startxref must begin outside the comment.
 		if lineEnd < 0 {
-			return false
+			break
 		}
 		position += lineEnd
 	}
-	return true
+	return position
 }
 
 func isPDFWhitespace(char byte) bool {

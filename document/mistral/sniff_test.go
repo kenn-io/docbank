@@ -222,6 +222,10 @@ func TestDetectFormatAcceptsRecoverablePDFs(t *testing.T) {
 			t.Helper()
 			return bytes.Replace(testPDFXRefStreamWithPageBox(), []byte("startxref\n"), []byte("% comment with CR\r% comment with CRLF\r\n% comment with LF\nstartxref\n"), 1)
 		}},
+		{name: "comments before xref stream endobj", content: func(t *testing.T) []byte {
+			t.Helper()
+			return bytes.Replace(testPDFXRefStreamWithPageBox(), []byte("endstream\nendobj\n"), []byte("endstream\n% endobj in a comment\r% another comment\nendobj\n"), 1)
+		}},
 		{name: "large file without final marker", content: func(t *testing.T) []byte {
 			t.Helper()
 			original := testPDF(strings.Repeat("x", 40_000))
@@ -252,6 +256,12 @@ func TestDetectFormatAcceptsRecoverablePDFs(t *testing.T) {
 func TestDetectFormatRejectsUnrecoverablePDFTrailers(t *testing.T) {
 	original := testPDF("negative")
 	recoverable := bytes.TrimSuffix(original, []byte("%%EOF\n"))
+
+	t.Run("commented xref stream endobj", func(t *testing.T) {
+		content := bytes.Replace(testPDFXRefStreamWithPageBox(), []byte("endstream\nendobj\n"), []byte("endstream\n% endobj\n"), 1)
+		_, err := DetectFormat(bytes.NewReader(content), int64(len(content)), "application/pdf")
+		require.ErrorContains(t, err, "cross-reference data is invalid")
+	})
 
 	t.Run("invalid xref comment suffix", func(t *testing.T) {
 		for _, fixture := range []struct {
