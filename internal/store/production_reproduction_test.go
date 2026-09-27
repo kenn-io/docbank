@@ -8,12 +8,31 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 	documentproduction "go.kenn.io/docbank/document/production"
 	"go.kenn.io/docbank/internal/canonical"
 	"go.kenn.io/docbank/internal/production"
 )
+
+func TestReproductionReceiptTimestampIsCanonicalWithTrailingZero(t *testing.T) {
+	when := time.Date(2026, time.September, 27, 5, 30, 0, 123456780, time.UTC)
+	createdAt := reproductionReceiptTimestamp(when)
+	require.Equal(t, "2026-09-27T05:30:00.12345678Z", createdAt)
+	receipt := documentproduction.ReproductionReceipt{
+		Contract:                        documentproduction.ReproductionReceiptContractV1,
+		ID:                              "88888888-8888-4888-8888-888888888888",
+		OriginalProductionReceiptSHA256: productionHash("original"),
+		OriginalNumberReservationSHA256: productionHash("numbers"),
+		ArtifactManifestSHA256:          productionHash("manifest"),
+		PackageQCSHA256:                 productionHash("qc"),
+		DeliveryPolicySHA256:            productionHash("policy"),
+		CreatedAt:                       createdAt,
+	}
+	_, _, err := documentproduction.CanonicalReproductionReceipt(receipt)
+	require.NoError(t, err)
+}
 
 func TestRetainProductionReproductionReplaysWithoutNewNumbers(t *testing.T) {
 	s, finalized, job := unreservedProductionCheckpointFixture(t)
@@ -33,6 +52,17 @@ func TestRetainProductionReproductionReplaysWithoutNewNumbers(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, production.ProductionJobSucceeded, published.State)
 	originalReceipt, originalManifest := published.Receipt, published.Manifest
+	originalSource := finalized.Authority.Prepared.Members[0].Member
+	replacement, err := f.write(t.Context(), bytes.NewReader([]byte("synthetic replacement source PDF")))
+	require.NoError(t, err)
+	liveSource, err := s.NodeByID(t.Context(), originalSource.NodeID)
+	require.NoError(t, err)
+	_, newerVersion, err := s.ReplaceContent(t.Context(), liveSource.ID, liveSource.Revision,
+		replacement.Hash, replacement.Size, liveSource.MimeType)
+	require.NoError(t, err)
+	require.NotEqual(t, originalSource.SourceVersionID, newerVersion.ID)
+	_, err = s.LoadFinalizedProduction(t.Context(), job.SetID, job.Revision)
+	require.ErrorIs(t, err, ErrInvalidProduction)
 	var allocationsBefore int
 	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM bates_allocations`).Scan(&allocationsBefore))
 	policy := production.PackageDeliveryPolicy{RecipientCode: "synthetic-recipient", AllowedMethods: []string{"offline-media"}}
@@ -48,6 +78,7 @@ func TestRetainProductionReproductionReplaysWithoutNewNumbers(t *testing.T) {
 	for index, member := range packageInputs.Members {
 		sourceVersionIDs[index] = member.SourceVersionID
 	}
+	require.Equal(t, originalSource.SourceVersionID, sourceVersionIDs[0])
 	request := documentproduction.ReproductionRequest{
 		Contract:                        documentproduction.ReproductionRequestContractV1,
 		OperationID:                     "88888888-8888-4888-8888-888888888888",
@@ -148,8 +179,9 @@ func TestRetainProductionReproductionReplaysWithoutNewNumbers(t *testing.T) {
 	require.Equal(t, originalReceipt.NumberReservationSHA256, first.OriginalNumberReservationSHA256)
 	require.Equal(t, originalManifest.SHA256, first.ArtifactManifestSHA256)
 	require.Zero(t, first.NumberAllocationCount)
-	_, err = runtime.Run(t.Context(), job.ID, request, policy, "export-dat-opt-images-v1", limits)
+	reproduced, err := runtime.Run(t.Context(), job.ID, request, policy, "export-dat-opt-images-v1", limits)
 	require.NoError(t, err)
+	require.Equal(t, sourceVersionIDs, reproduced.Selection.SourceVersionIDs)
 	require.Equal(t, first, second)
 	require.Equal(t, firstDelivery, secondDelivery)
 	require.Equal(t, first.DeliveryPolicySHA256, firstDelivery.Receipt.DeliveryPolicySHA256)

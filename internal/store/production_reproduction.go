@@ -5,6 +5,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"time"
 
 	documentproduction "go.kenn.io/docbank/document/production"
 	"go.kenn.io/docbank/internal/canonical"
@@ -12,6 +13,12 @@ import (
 )
 
 const productionOperationReproduction = "reproduction"
+
+// Reproduction receipts use the contract's canonical timestamp; Store's
+// fixed-width SQL timestamps may end in zero and fail contract validation.
+func reproductionReceiptTimestamp(now time.Time) string {
+	return now.UTC().Format(time.RFC3339Nano)
+}
 
 // RetainProductionReproduction keeps a new verified archive and a separate
 // immutable reproduction receipt under the request's operation identity. The
@@ -88,7 +95,7 @@ func (s *Store) RetainProductionReproduction(ctx context.Context, jobID string,
 			PackageQCSHA256:                 retained.Evidence.QCSHA256,
 			DeliveryPolicySHA256:            selection.DeliveryPolicySHA256,
 			NumberAllocationCount:           0,
-			CreatedAt:                       nowRFC3339(),
+			CreatedAt:                       reproductionReceiptTimestamp(time.Now()),
 		}
 		_, digest, err := documentproduction.CanonicalReproductionReceipt(result)
 		if err != nil {
