@@ -33,7 +33,11 @@ func TestPrivilegePublicProjectionAllowlist(t *testing.T) {
 	require.NoError(t, err)
 	csvExport, err := ExportPrivilegeLogCSV(receipt, withheld, rows)
 	require.NoError(t, err)
-	for _, exported := range []PrivilegeLogExport{jsonExport, csvExport} {
+	xlsxExport, err := ExportPrivilegeLogXLSX(receipt, withheld, rows)
+	require.NoError(t, err)
+	pdfExport, err := ExportPrivilegeLogPDF(receipt, withheld, rows)
+	require.NoError(t, err)
+	for _, exported := range []PrivilegeLogExport{jsonExport, csvExport, xlsxExport, pdfExport} {
 		require.Equal(t, receipt.SHA256, exported.ReceiptSHA256)
 		require.Equal(t, receipt.RowsSHA256, exported.RowsSHA256)
 		require.NotEmpty(t, exported.ContentSHA256)

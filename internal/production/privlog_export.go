@@ -16,7 +16,11 @@ import (
 const (
 	PrivilegeLogJSONMediaType = "application/json"
 	PrivilegeLogCSVMediaType  = "text/csv; charset=utf-8"
+	PrivilegeLogXLSXMediaType = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+	PrivilegeLogPDFMediaType  = "application/pdf"
 )
+
+var privilegeLogColumns = []string{"id", "withheld_member_id", "family_order", "source_version_id", "basis", "public_description"}
 
 // PrivilegeLogExport contains public bytes and the frozen authority needed to
 // verify them. Content includes only PrivilegePublicRow fields.
@@ -48,7 +52,7 @@ func ExportPrivilegeLogCSV(receipt documentproduction.PrivilegeLogReceipt, withh
 	}
 	var buffer bytes.Buffer
 	writer := csv.NewWriter(&buffer)
-	if err := writer.Write([]string{"id", "withheld_member_id", "family_order", "source_version_id", "basis", "public_description"}); err != nil {
+	if err := writer.Write(privilegeLogColumns); err != nil {
 		return PrivilegeLogExport{}, err
 	}
 	for _, row := range publicPrivilegeRowsInOrder(ordered) {

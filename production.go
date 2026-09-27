@@ -18,6 +18,7 @@ type ProductionApprovalPublic = api.ProductionApprovalPublic
 type ProductionPrivilegePublicPage = api.ProductionPrivilegePublicPage
 type ProductionPrivilegeValidationRequest = api.ProductionPrivilegeValidationRequest
 type ProductionPrivilegeValidation = api.ProductionPrivilegeValidation
+type ProductionPrivilegeExport = productionservice.PrivilegeLogExport
 
 // ProductionApprovalRequest names the exact subject and private evidence to
 // record in an embedded vault. It does not contain authentication authority.
@@ -116,6 +117,18 @@ func (v *Vault) ProductionPrivilegeLog(ctx context.Context, logID string, revisi
 	}
 	return ProductionPrivilegePublicPage{Receipt: page.Receipt,
 		Rows: page.Rows, NextCursor: page.NextCursor}, nil
+}
+
+// ExportProductionPrivilegeLog returns verified public bytes from one frozen
+// log in this embedded vault. Formats are json, csv, xlsx, and pdf.
+func (v *Vault) ExportProductionPrivilegeLog(ctx context.Context, logID string, revision int64,
+	format string) (ProductionPrivilegeExport, error) {
+	v.lifecycle.RLock()
+	defer v.lifecycle.RUnlock()
+	if v.closed {
+		return ProductionPrivilegeExport{}, ErrClosed
+	}
+	return v.metadata.ExportProductionPrivilegeLog(ctx, logID, revision, format)
 }
 
 // ValidateProductionPrivilegeLog checks the stored draft rows and pinned
