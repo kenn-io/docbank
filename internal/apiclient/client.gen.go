@@ -8410,6 +8410,53 @@ func (c *Client) CreateProductionPackage(ctx context.Context, options *CreatePro
 	return responseParser(ctx, resp)
 }
 
+// PublishProductionPackage Publish one verified recipient package from a successful production job
+func (c *Client) PublishProductionPackage(ctx context.Context, options *PublishProductionPackageRequestOptions, reqEditors ...runtime.RequestEditorFn) (*PublishProductionPackageResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/productions/jobs/{job_id}/packages/publish",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*PublishProductionPackageResponse, error) {
+		switch resp.StatusCode {
+
+		case 201:
+
+			target := new(PublishProductionPackageResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "PublishProductionPackageResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[PublishProductionPackageErrorResponse](resp, "PublishProductionPackageErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/productions/jobs/{job_id}/packages/publish")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 201)
+	}
+	return responseParser(ctx, resp)
+}
+
 // GetProductionPackage Read the exact verified evidence for a retained recipient package
 func (c *Client) GetProductionPackage(ctx context.Context, options *GetProductionPackageRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetProductionPackageResponse, error) {
 	var err error
@@ -8894,6 +8941,58 @@ func (c *Client) ListProductionRecipes(ctx context.Context, reqEditors ...runtim
 	return responseParser(ctx, resp)
 }
 
+// ListProductionSets Page retained production sets
+func (c *Client) ListProductionSets(ctx context.Context, options *ListProductionSetsRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ListProductionSetsResponse, error) {
+	var err error
+
+	queryEncoding := map[string]runtime.QueryEncoding{
+		"cursor": {Style: "form", Explode: &[]bool{false}[0]},
+		"limit":  {Style: "form", Explode: &[]bool{false}[0]},
+	}
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:    c.apiClient.GetBaseURL() + "/api/v1/productions/sets",
+		Method:        "GET",
+		Options:       options,
+		QueryEncoding: queryEncoding,
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*ListProductionSetsResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(ListProductionSetsResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "ListProductionSetsResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[ListProductionSetsErrorResponse](resp, "ListProductionSetsErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/productions/sets")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
 // CreateProductionSet Create an idempotent production set and first draft
 func (c *Client) CreateProductionSet(ctx context.Context, options *CreateProductionSetRequestOptions, reqEditors ...runtime.RequestEditorFn) (*CreateProductionSetResponse, error) {
 	var err error
@@ -8978,6 +9077,99 @@ func (c *Client) GetProductionSet(ctx context.Context, options *GetProductionSet
 	}
 
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/productions/sets/{set_id}")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
+// GetProductionJobStatus Read one set-scoped production job status
+func (c *Client) GetProductionJobStatus(ctx context.Context, options *GetProductionJobStatusRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetProductionJobStatusResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/productions/sets/{set_id}/jobs/{job_id}",
+		Method:     "GET",
+		Options:    options,
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*GetProductionJobStatusResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(GetProductionJobStatusResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "GetProductionJobStatusResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[GetProductionJobStatusErrorResponse](resp, "GetProductionJobStatusErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/productions/sets/{set_id}/jobs/{job_id}")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
+// CancelProductionJob Cancel one production job with a replay-safe operation ID
+func (c *Client) CancelProductionJob(ctx context.Context, options *CancelProductionJobRequestOptions, reqEditors ...runtime.RequestEditorFn) (*CancelProductionJobResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/productions/sets/{set_id}/jobs/{job_id}/cancel",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*CancelProductionJobResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(CancelProductionJobResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "CancelProductionJobResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[CancelProductionJobErrorResponse](resp, "CancelProductionJobErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/productions/sets/{set_id}/jobs/{job_id}/cancel")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
@@ -9085,8 +9277,9 @@ func (c *Client) ListProductionDecisions(ctx context.Context, options *ListProdu
 	var err error
 
 	queryEncoding := map[string]runtime.QueryEncoding{
-		"cursor": {Style: "form", Explode: &[]bool{false}[0]},
-		"limit":  {Style: "form", Explode: &[]bool{false}[0]},
+		"cursor":    {Style: "form", Explode: &[]bool{false}[0]},
+		"limit":     {Style: "form", Explode: &[]bool{false}[0]},
+		"uncertain": {Style: "form", Explode: &[]bool{false}[0]},
 	}
 	reqParams := runtime.RequestOptionsParameters{
 		RequestURL:    c.apiClient.GetBaseURL() + "/api/v1/productions/sets/{set_id}/revisions/{revision}/decisions",
@@ -9123,6 +9316,53 @@ func (c *Client) ListProductionDecisions(ctx context.Context, options *ListProdu
 	}
 
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/productions/sets/{set_id}/revisions/{revision}/decisions")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
+// FinalizeProductionDraft Finalize one reviewed production revision after current input gates
+func (c *Client) FinalizeProductionDraft(ctx context.Context, options *FinalizeProductionDraftRequestOptions, reqEditors ...runtime.RequestEditorFn) (*FinalizeProductionDraftResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/productions/sets/{set_id}/revisions/{revision}/finalize",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*FinalizeProductionDraftResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(FinalizeProductionDraftResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "FinalizeProductionDraftResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[FinalizeProductionDraftErrorResponse](resp, "FinalizeProductionDraftErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/productions/sets/{set_id}/revisions/{revision}/finalize")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
@@ -9226,6 +9466,105 @@ func (c *Client) EditProductionInstructions(ctx context.Context, options *EditPr
 	return responseParser(ctx, resp)
 }
 
+// AdmitProductionJob Admit one production job from finalized authority
+func (c *Client) AdmitProductionJob(ctx context.Context, options *AdmitProductionJobRequestOptions, reqEditors ...runtime.RequestEditorFn) (*AdmitProductionJobResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/productions/sets/{set_id}/revisions/{revision}/jobs",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*AdmitProductionJobResponse, error) {
+		switch resp.StatusCode {
+
+		case 201:
+
+			target := new(AdmitProductionJobResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "AdmitProductionJobResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[AdmitProductionJobErrorResponse](resp, "AdmitProductionJobErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/productions/sets/{set_id}/revisions/{revision}/jobs")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 201)
+	}
+	return responseParser(ctx, resp)
+}
+
+// GetProductionMapChunk Page the exact retained aligned-text map for one production member
+func (c *Client) GetProductionMapChunk(ctx context.Context, options *GetProductionMapChunkRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetProductionMapChunkResponse, error) {
+	var err error
+
+	queryEncoding := map[string]runtime.QueryEncoding{
+		"cursor": {Style: "form", Explode: &[]bool{false}[0]},
+		"limit":  {Style: "form", Explode: &[]bool{false}[0]},
+	}
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:    c.apiClient.GetBaseURL() + "/api/v1/productions/sets/{set_id}/revisions/{revision}/maps/{member_id}",
+		Method:        "GET",
+		Options:       options,
+		QueryEncoding: queryEncoding,
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*GetProductionMapChunkResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(GetProductionMapChunkResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "GetProductionMapChunkResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[GetProductionMapChunkErrorResponse](resp, "GetProductionMapChunkErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/productions/sets/{set_id}/revisions/{revision}/maps/{member_id}")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
 // ListProductionMembers Page exact production members
 func (c *Client) ListProductionMembers(ctx context.Context, options *ListProductionMembersRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ListProductionMembersResponse, error) {
 	var err error
@@ -9278,6 +9617,53 @@ func (c *Client) ListProductionMembers(ctx context.Context, options *ListProduct
 	return responseParser(ctx, resp)
 }
 
+// AppendProductionMembers Append new production members to an exact draft revision
+func (c *Client) AppendProductionMembers(ctx context.Context, options *AppendProductionMembersRequestOptions, reqEditors ...runtime.RequestEditorFn) (*AppendProductionMembersResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/productions/sets/{set_id}/revisions/{revision}/members",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*AppendProductionMembersResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(AppendProductionMembersResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "AppendProductionMembersResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[AppendProductionMembersErrorResponse](resp, "AppendProductionMembersErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/productions/sets/{set_id}/revisions/{revision}/members")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
 // ReviewProductionMember Record one exact production member review binding
 func (c *Client) ReviewProductionMember(ctx context.Context, options *ReviewProductionMemberRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ReviewProductionMemberResponse, error) {
 	var err error
@@ -9316,6 +9702,100 @@ func (c *Client) ReviewProductionMember(ctx context.Context, options *ReviewProd
 	}
 
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/productions/sets/{set_id}/revisions/{revision}/members/{member_id}/review")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
+// CreateProductionPreview Issue one-use tickets for a verified unnumbered production preview
+func (c *Client) CreateProductionPreview(ctx context.Context, options *CreateProductionPreviewRequestOptions, reqEditors ...runtime.RequestEditorFn) (*CreateProductionPreviewResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/productions/sets/{set_id}/revisions/{revision}/previews",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*CreateProductionPreviewResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(CreateProductionPreviewResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "CreateProductionPreviewResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[CreateProductionPreviewErrorResponse](resp, "CreateProductionPreviewErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/productions/sets/{set_id}/revisions/{revision}/previews")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
+// ResolveProductionSelection Preview one member's exact resolved mask and review binding
+func (c *Client) ResolveProductionSelection(ctx context.Context, options *ResolveProductionSelectionRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ResolveProductionSelectionResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/productions/sets/{set_id}/revisions/{revision}/resolve",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*ResolveProductionSelectionResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(ResolveProductionSelectionResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "ResolveProductionSelectionResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[ResolveProductionSelectionErrorResponse](resp, "ResolveProductionSelectionErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/productions/sets/{set_id}/revisions/{revision}/resolve")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
@@ -17653,6 +18133,41 @@ func (o *CreateProductionPackageRequestOptions) GetHeader() (map[string]string, 
 	return nil, nil
 }
 
+// PublishProductionPackageRequestOptions is the options needed to make a request to PublishProductionPackage.
+type PublishProductionPackageRequestOptions struct {
+	PathParams *PublishProductionPackagePath
+	Body       *PublishProductionPackageBody
+}
+
+// GetPathParams returns the path params as a map.
+func (o *PublishProductionPackageRequestOptions) GetPathParams() (map[string]any, error) {
+	encoded, err := json.Marshal(o.PathParams, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetQuery returns the query params as a map.
+func (o *PublishProductionPackageRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *PublishProductionPackageRequestOptions) GetBody() any {
+	if o.Body == nil {
+		return nil
+	}
+	return o.Body
+}
+
+// GetHeader returns the headers as a map.
+func (o *PublishProductionPackageRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
 // GetProductionPackageRequestOptions is the options needed to make a request to GetProductionPackage.
 type GetProductionPackageRequestOptions struct {
 	PathParams *GetProductionPackagePath
@@ -17937,6 +18452,37 @@ func (o *ReadProductionPolicyVersionRequestOptions) GetHeader() (map[string]stri
 	return nil, nil
 }
 
+// ListProductionSetsRequestOptions is the options needed to make a request to ListProductionSets.
+type ListProductionSetsRequestOptions struct {
+	Query *ListProductionSetsQuery
+}
+
+// GetPathParams returns the path params as a map.
+func (o *ListProductionSetsRequestOptions) GetPathParams() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetQuery returns the query params as a map.
+func (o *ListProductionSetsRequestOptions) GetQuery() (map[string]any, error) {
+	encoded, err := json.Marshal(o.Query, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *ListProductionSetsRequestOptions) GetBody() any {
+	return nil
+}
+
+// GetHeader returns the headers as a map.
+func (o *ListProductionSetsRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
 // CreateProductionSetRequestOptions is the options needed to make a request to CreateProductionSet.
 type CreateProductionSetRequestOptions struct {
 	Body *CreateProductionSetBody
@@ -17994,6 +18540,79 @@ func (o *GetProductionSetRequestOptions) GetBody() any {
 // GetHeader returns the headers as a map.
 func (o *GetProductionSetRequestOptions) GetHeader() (map[string]string, error) {
 	return nil, nil
+}
+
+// GetProductionJobStatusRequestOptions is the options needed to make a request to GetProductionJobStatus.
+type GetProductionJobStatusRequestOptions struct {
+	PathParams *GetProductionJobStatusPath
+}
+
+// GetPathParams returns the path params as a map.
+func (o *GetProductionJobStatusRequestOptions) GetPathParams() (map[string]any, error) {
+	encoded, err := json.Marshal(o.PathParams, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetQuery returns the query params as a map.
+func (o *GetProductionJobStatusRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *GetProductionJobStatusRequestOptions) GetBody() any {
+	return nil
+}
+
+// GetHeader returns the headers as a map.
+func (o *GetProductionJobStatusRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
+// CancelProductionJobRequestOptions is the options needed to make a request to CancelProductionJob.
+type CancelProductionJobRequestOptions struct {
+	PathParams *CancelProductionJobPath
+	Body       *CancelProductionJobBody
+	Header     *CancelProductionJobHeaders
+}
+
+// GetPathParams returns the path params as a map.
+func (o *CancelProductionJobRequestOptions) GetPathParams() (map[string]any, error) {
+	encoded, err := json.Marshal(o.PathParams, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetQuery returns the query params as a map.
+func (o *CancelProductionJobRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *CancelProductionJobRequestOptions) GetBody() any {
+	if o.Body == nil {
+		return nil
+	}
+	return o.Body
+}
+
+// GetHeader returns the headers as a map.
+func (o *CancelProductionJobRequestOptions) GetHeader() (map[string]string, error) {
+	encoded, err := json.Marshal(o.Header, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var headers map[string]string
+	err = json.Unmarshal(encoded, &headers)
+	return headers, err
 }
 
 // GetProductionDraftRequestOptions is the options needed to make a request to GetProductionDraft.
@@ -18107,6 +18726,48 @@ func (o *ListProductionDecisionsRequestOptions) GetHeader() (map[string]string, 
 	return nil, nil
 }
 
+// FinalizeProductionDraftRequestOptions is the options needed to make a request to FinalizeProductionDraft.
+type FinalizeProductionDraftRequestOptions struct {
+	PathParams *FinalizeProductionDraftPath
+	Body       *FinalizeProductionDraftBody
+	Header     *FinalizeProductionDraftHeaders
+}
+
+// GetPathParams returns the path params as a map.
+func (o *FinalizeProductionDraftRequestOptions) GetPathParams() (map[string]any, error) {
+	encoded, err := json.Marshal(o.PathParams, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetQuery returns the query params as a map.
+func (o *FinalizeProductionDraftRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *FinalizeProductionDraftRequestOptions) GetBody() any {
+	if o.Body == nil {
+		return nil
+	}
+	return o.Body
+}
+
+// GetHeader returns the headers as a map.
+func (o *FinalizeProductionDraftRequestOptions) GetHeader() (map[string]string, error) {
+	encoded, err := json.Marshal(o.Header, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var headers map[string]string
+	err = json.Unmarshal(encoded, &headers)
+	return headers, err
+}
+
 // ForkProductionDraftRequestOptions is the options needed to make a request to ForkProductionDraft.
 type ForkProductionDraftRequestOptions struct {
 	PathParams *ForkProductionDraftPath
@@ -18184,6 +18845,86 @@ func (o *EditProductionInstructionsRequestOptions) GetHeader() (map[string]strin
 	return headers, err
 }
 
+// AdmitProductionJobRequestOptions is the options needed to make a request to AdmitProductionJob.
+type AdmitProductionJobRequestOptions struct {
+	PathParams *AdmitProductionJobPath
+	Body       *AdmitProductionJobBody
+	Header     *AdmitProductionJobHeaders
+}
+
+// GetPathParams returns the path params as a map.
+func (o *AdmitProductionJobRequestOptions) GetPathParams() (map[string]any, error) {
+	encoded, err := json.Marshal(o.PathParams, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetQuery returns the query params as a map.
+func (o *AdmitProductionJobRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *AdmitProductionJobRequestOptions) GetBody() any {
+	if o.Body == nil {
+		return nil
+	}
+	return o.Body
+}
+
+// GetHeader returns the headers as a map.
+func (o *AdmitProductionJobRequestOptions) GetHeader() (map[string]string, error) {
+	encoded, err := json.Marshal(o.Header, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var headers map[string]string
+	err = json.Unmarshal(encoded, &headers)
+	return headers, err
+}
+
+// GetProductionMapChunkRequestOptions is the options needed to make a request to GetProductionMapChunk.
+type GetProductionMapChunkRequestOptions struct {
+	PathParams *GetProductionMapChunkPath
+	Query      *GetProductionMapChunkQuery
+}
+
+// GetPathParams returns the path params as a map.
+func (o *GetProductionMapChunkRequestOptions) GetPathParams() (map[string]any, error) {
+	encoded, err := json.Marshal(o.PathParams, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetQuery returns the query params as a map.
+func (o *GetProductionMapChunkRequestOptions) GetQuery() (map[string]any, error) {
+	encoded, err := json.Marshal(o.Query, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *GetProductionMapChunkRequestOptions) GetBody() any {
+	return nil
+}
+
+// GetHeader returns the headers as a map.
+func (o *GetProductionMapChunkRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
 // ListProductionMembersRequestOptions is the options needed to make a request to ListProductionMembers.
 type ListProductionMembersRequestOptions struct {
 	PathParams *ListProductionMembersPath
@@ -18222,6 +18963,48 @@ func (o *ListProductionMembersRequestOptions) GetHeader() (map[string]string, er
 	return nil, nil
 }
 
+// AppendProductionMembersRequestOptions is the options needed to make a request to AppendProductionMembers.
+type AppendProductionMembersRequestOptions struct {
+	PathParams *AppendProductionMembersPath
+	Body       *AppendProductionMembersBody
+	Header     *AppendProductionMembersHeaders
+}
+
+// GetPathParams returns the path params as a map.
+func (o *AppendProductionMembersRequestOptions) GetPathParams() (map[string]any, error) {
+	encoded, err := json.Marshal(o.PathParams, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetQuery returns the query params as a map.
+func (o *AppendProductionMembersRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *AppendProductionMembersRequestOptions) GetBody() any {
+	if o.Body == nil {
+		return nil
+	}
+	return o.Body
+}
+
+// GetHeader returns the headers as a map.
+func (o *AppendProductionMembersRequestOptions) GetHeader() (map[string]string, error) {
+	encoded, err := json.Marshal(o.Header, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var headers map[string]string
+	err = json.Unmarshal(encoded, &headers)
+	return headers, err
+}
+
 // ReviewProductionMemberRequestOptions is the options needed to make a request to ReviewProductionMember.
 type ReviewProductionMemberRequestOptions struct {
 	PathParams *ReviewProductionMemberPath
@@ -18255,6 +19038,90 @@ func (o *ReviewProductionMemberRequestOptions) GetBody() any {
 
 // GetHeader returns the headers as a map.
 func (o *ReviewProductionMemberRequestOptions) GetHeader() (map[string]string, error) {
+	encoded, err := json.Marshal(o.Header, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var headers map[string]string
+	err = json.Unmarshal(encoded, &headers)
+	return headers, err
+}
+
+// CreateProductionPreviewRequestOptions is the options needed to make a request to CreateProductionPreview.
+type CreateProductionPreviewRequestOptions struct {
+	PathParams *CreateProductionPreviewPath
+	Body       *CreateProductionPreviewBody
+	Header     *CreateProductionPreviewHeaders
+}
+
+// GetPathParams returns the path params as a map.
+func (o *CreateProductionPreviewRequestOptions) GetPathParams() (map[string]any, error) {
+	encoded, err := json.Marshal(o.PathParams, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetQuery returns the query params as a map.
+func (o *CreateProductionPreviewRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *CreateProductionPreviewRequestOptions) GetBody() any {
+	if o.Body == nil {
+		return nil
+	}
+	return o.Body
+}
+
+// GetHeader returns the headers as a map.
+func (o *CreateProductionPreviewRequestOptions) GetHeader() (map[string]string, error) {
+	encoded, err := json.Marshal(o.Header, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var headers map[string]string
+	err = json.Unmarshal(encoded, &headers)
+	return headers, err
+}
+
+// ResolveProductionSelectionRequestOptions is the options needed to make a request to ResolveProductionSelection.
+type ResolveProductionSelectionRequestOptions struct {
+	PathParams *ResolveProductionSelectionPath
+	Body       *ResolveProductionSelectionBody
+	Header     *ResolveProductionSelectionHeaders
+}
+
+// GetPathParams returns the path params as a map.
+func (o *ResolveProductionSelectionRequestOptions) GetPathParams() (map[string]any, error) {
+	encoded, err := json.Marshal(o.PathParams, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetQuery returns the query params as a map.
+func (o *ResolveProductionSelectionRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *ResolveProductionSelectionRequestOptions) GetBody() any {
+	if o.Body == nil {
+		return nil
+	}
+	return o.Body
+}
+
+// GetHeader returns the headers as a map.
+func (o *ResolveProductionSelectionRequestOptions) GetHeader() (map[string]string, error) {
 	encoded, err := json.Marshal(o.Header, json.StringifyNumbers(true))
 	if err != nil {
 		return nil, err
@@ -20215,6 +21082,13 @@ const (
 	Xlsx ExportProductionPrivilegeLogPathFormat = "xlsx"
 )
 
+type ListProductionDecisionsQueryUncertain string
+
+const (
+	False ListProductionDecisionsQueryUncertain = "false"
+	True  ListProductionDecisionsQueryUncertain = "true"
+)
+
 type ListSavedQueriesQueryKind string
 
 const (
@@ -20300,7 +21174,15 @@ type UploadPackageChunkHeaders struct {
 	XDocbankBlobSize int64  `json:"X-Docbank-Blob-Size"`
 }
 
+type CancelProductionJobHeaders struct {
+	IfMatch *string `json:"If-Match,omitempty"`
+}
+
 type ApplyProductionChangesHeaders struct {
+	IfMatch *string `json:"If-Match,omitempty"`
+}
+
+type FinalizeProductionDraftHeaders struct {
 	IfMatch *string `json:"If-Match,omitempty"`
 }
 
@@ -20308,7 +21190,23 @@ type EditProductionInstructionsHeaders struct {
 	IfMatch *string `json:"If-Match,omitempty"`
 }
 
+type AdmitProductionJobHeaders struct {
+	IfMatch *string `json:"If-Match,omitempty"`
+}
+
+type AppendProductionMembersHeaders struct {
+	IfMatch *string `json:"If-Match,omitempty"`
+}
+
 type ReviewProductionMemberHeaders struct {
+	IfMatch *string `json:"If-Match,omitempty"`
+}
+
+type CreateProductionPreviewHeaders struct {
+	IfMatch *string `json:"If-Match,omitempty"`
+}
+
+type ResolveProductionSelectionHeaders struct {
 	IfMatch *string `json:"If-Match,omitempty"`
 }
 
@@ -20712,6 +21610,10 @@ type CreateProductionPackagePath struct {
 	JobID uuid.UUID `json:"job_id"`
 }
 
+type PublishProductionPackagePath struct {
+	JobID uuid.UUID `json:"job_id"`
+}
+
 type GetProductionPackagePath struct {
 	JobID       uuid.UUID `json:"job_id"`
 	OperationID uuid.UUID `json:"operation_id"`
@@ -20740,6 +21642,16 @@ type GetProductionSetPath struct {
 	SetID uuid.UUID `json:"set_id"`
 }
 
+type GetProductionJobStatusPath struct {
+	SetID uuid.UUID `json:"set_id"`
+	JobID uuid.UUID `json:"job_id"`
+}
+
+type CancelProductionJobPath struct {
+	SetID uuid.UUID `json:"set_id"`
+	JobID uuid.UUID `json:"job_id"`
+}
+
 type GetProductionDraftPath struct {
 	SetID    uuid.UUID `json:"set_id"`
 	Revision int64     `json:"revision"`
@@ -20755,6 +21667,11 @@ type ListProductionDecisionsPath struct {
 	Revision int64     `json:"revision"`
 }
 
+type FinalizeProductionDraftPath struct {
+	SetID    uuid.UUID `json:"set_id"`
+	Revision int64     `json:"revision"`
+}
+
 type ForkProductionDraftPath struct {
 	SetID    uuid.UUID `json:"set_id"`
 	Revision int64     `json:"revision"`
@@ -20765,7 +21682,23 @@ type EditProductionInstructionsPath struct {
 	Revision int64     `json:"revision"`
 }
 
+type AdmitProductionJobPath struct {
+	SetID    uuid.UUID `json:"set_id"`
+	Revision int64     `json:"revision"`
+}
+
+type GetProductionMapChunkPath struct {
+	SetID    uuid.UUID `json:"set_id"`
+	Revision int64     `json:"revision"`
+	MemberID uuid.UUID `json:"member_id"`
+}
+
 type ListProductionMembersPath struct {
+	SetID    uuid.UUID `json:"set_id"`
+	Revision int64     `json:"revision"`
+}
+
+type AppendProductionMembersPath struct {
 	SetID    uuid.UUID `json:"set_id"`
 	Revision int64     `json:"revision"`
 }
@@ -20774,6 +21707,16 @@ type ReviewProductionMemberPath struct {
 	SetID    uuid.UUID `json:"set_id"`
 	Revision int64     `json:"revision"`
 	MemberID uuid.UUID `json:"member_id"`
+}
+
+type CreateProductionPreviewPath struct {
+	SetID    uuid.UUID `json:"set_id"`
+	Revision int64     `json:"revision"`
+}
+
+type ResolveProductionSelectionPath struct {
+	SetID    uuid.UUID `json:"set_id"`
+	Revision int64     `json:"revision"`
 }
 
 type SealProductionMembershipPath struct {
@@ -21060,6 +22003,8 @@ type ValidateProductionPrivilegeLogBody = ProductionPrivilegeValidationRequest
 
 type CreateProductionPackageBody = ProductionPackageCreateRequest
 
+type PublishProductionPackageBody = ProductionPackagePublishRequest
+
 type DownloadProductionPackageBody = DownloadProductionPackageRequest
 
 type CreateProductionReproductionBody = ProductionReproductionCreateRequest
@@ -21068,13 +22013,25 @@ type CreateProductionPolicyVersionBody = ProductionPolicyCreateRequest
 
 type CreateProductionSetBody = CreateRequest
 
+type CancelProductionJobBody = ProductionJobCancelRequest
+
 type ApplyProductionChangesBody = ProductionChangesRequest
+
+type FinalizeProductionDraftBody = ProductionFinalizeRequest
 
 type ForkProductionDraftBody = ProductionForkRequest
 
 type EditProductionInstructionsBody = ProductionInstructionsRequest
 
+type AdmitProductionJobBody = ProductionJobAdmissionRequest
+
+type AppendProductionMembersBody = ProductionMemberAppendRequest
+
 type ReviewProductionMemberBody = ProductionMemberReviewRequest
+
+type CreateProductionPreviewBody = ProductionPreviewRequest
+
+type ResolveProductionSelectionBody = ProductionResolveRequest
 
 type SealProductionMembershipBody = ProductionMembershipSealRequest
 
@@ -21389,7 +22346,18 @@ type ListProductionPolicyVersionsQuery struct {
 	Limit  *int64  `json:"limit,omitempty"`
 }
 
+type ListProductionSetsQuery struct {
+	Cursor *string `json:"cursor,omitempty"`
+	Limit  *int64  `json:"limit,omitempty"`
+}
+
 type ListProductionDecisionsQuery struct {
+	Cursor    *string                                `json:"cursor,omitempty"`
+	Limit     *int64                                 `json:"limit,omitempty"`
+	Uncertain *ListProductionDecisionsQueryUncertain `json:"uncertain,omitempty"`
+}
+
+type GetProductionMapChunkQuery struct {
 	Cursor *string `json:"cursor,omitempty"`
 	Limit  *int64  `json:"limit,omitempty"`
 }
@@ -22226,6 +23194,10 @@ type CreateProductionPackageResponse = api.ProductionPackageEvidenceReceipt
 
 type CreateProductionPackageErrorResponse = Error
 
+type PublishProductionPackageResponse = api.ProductionPackagePublished
+
+type PublishProductionPackageErrorResponse = Error
+
 type GetProductionPackageResponse = api.ProductionPackageEvidenceReceipt
 
 type GetProductionPackageErrorResponse = Error
@@ -22266,6 +23238,10 @@ type ListProductionRecipesResponse = api.ProductionRecipeCatalog
 
 type ListProductionRecipesErrorResponse = Error
 
+type ListProductionSetsResponse = api.ProductionSetPage
+
+type ListProductionSetsErrorResponse = Error
+
 type CreateProductionSetResponse = api.ProductionSetCreated
 
 type CreateProductionSetErrorResponse = Error
@@ -22273,6 +23249,14 @@ type CreateProductionSetErrorResponse = Error
 type GetProductionSetResponse = redaction.Set
 
 type GetProductionSetErrorResponse = Error
+
+type GetProductionJobStatusResponse = api.ProductionJobStatus
+
+type GetProductionJobStatusErrorResponse = Error
+
+type CancelProductionJobResponse = api.ProductionReceipt
+
+type CancelProductionJobErrorResponse = Error
 
 type GetProductionDraftResponse = redaction.Draft
 
@@ -22286,6 +23270,10 @@ type ListProductionDecisionsResponse = api.ProductionDecisionPage
 
 type ListProductionDecisionsErrorResponse = Error
 
+type FinalizeProductionDraftResponse = api.ProductionFinalizationResult
+
+type FinalizeProductionDraftErrorResponse = Error
+
 type ForkProductionDraftResponse = redaction.Draft
 
 type ForkProductionDraftErrorResponse = Error
@@ -22294,13 +23282,33 @@ type EditProductionInstructionsResponse = api.ProductionReceipt
 
 type EditProductionInstructionsErrorResponse = Error
 
+type AdmitProductionJobResponse = api.ProductionJobStatus
+
+type AdmitProductionJobErrorResponse = Error
+
+type GetProductionMapChunkResponse = api.ProductionMapChunk
+
+type GetProductionMapChunkErrorResponse = Error
+
 type ListProductionMembersResponse = api.ProductionMemberPage
 
 type ListProductionMembersErrorResponse = Error
 
+type AppendProductionMembersResponse = api.ProductionReceipt
+
+type AppendProductionMembersErrorResponse = Error
+
 type ReviewProductionMemberResponse = api.ProductionReceipt
 
 type ReviewProductionMemberErrorResponse = Error
+
+type CreateProductionPreviewResponse = api.ProductionPreviewTicket
+
+type CreateProductionPreviewErrorResponse = Error
+
+type ResolveProductionSelectionResponse = api.ProductionResolvedMaskPage
+
+type ResolveProductionSelectionErrorResponse = Error
 
 type SealProductionMembershipResponse = api.ProductionReceipt
 
@@ -23202,6 +24210,8 @@ type PackageTimelineInputPage = api.PackageTimelineInputPage
 
 type PackageVolume = api.PackageVolume
 
+type Page = redaction.Page
+
 type PageBinding = store.PageBinding
 
 type PageFrameV1 = document.PageFrameV1
@@ -23387,11 +24397,25 @@ type ProductionDecision = api.ProductionDecision
 
 type ProductionDecisionPage = api.ProductionDecisionPage
 
+type ProductionFinalizationResult = api.ProductionFinalizationResult
+
+type ProductionFinalizeRequest = api.ProductionFinalizeRequest
+
 type ProductionForkRequest = api.ProductionForkRequest
 
 type ProductionInstructionsRequest = api.ProductionInstructionsRequest
 
+type ProductionJobAdmissionRequest = api.ProductionJobAdmissionRequest
+
+type ProductionJobCancelRequest = api.ProductionJobCancelRequest
+
+type ProductionJobStatus = api.ProductionJobStatus
+
+type ProductionMapChunk = api.ProductionMapChunk
+
 type ProductionMember = api.ProductionMember
+
+type ProductionMemberAppendRequest = api.ProductionMemberAppendRequest
 
 type ProductionMemberPage = api.ProductionMemberPage
 
@@ -23411,11 +24435,21 @@ type ProductionPackageDownloadTicket = api.ProductionPackageDownloadTicket
 
 type ProductionPackageEvidenceReceipt = api.ProductionPackageEvidenceReceipt
 
+type ProductionPackagePublishRequest = api.ProductionPackagePublishRequest
+
+type ProductionPackagePublished = api.ProductionPackagePublished
+
 type ProductionPlayersSnapshotCreateRequest = api.ProductionPlayersSnapshotCreateRequest
 
 type ProductionPolicyCreateRequest = api.ProductionPolicyCreateRequest
 
 type ProductionPolicyPage = api.ProductionPolicyPage
+
+type ProductionPreviewArtifactTicket = api.ProductionPreviewArtifactTicket
+
+type ProductionPreviewRequest = api.ProductionPreviewRequest
+
+type ProductionPreviewTicket = api.ProductionPreviewTicket
 
 type ProductionPrivilegeDraftCreateRequest = api.ProductionPrivilegeDraftCreateRequest
 
@@ -23443,7 +24477,13 @@ type ProductionReproductionCreateRequest = api.ProductionReproductionCreateReque
 
 type ProductionReproductionDeliveryPolicy = api.ProductionReproductionDeliveryPolicy
 
+type ProductionResolveRequest = api.ProductionResolveRequest
+
+type ProductionResolvedMaskPage = api.ProductionResolvedMaskPage
+
 type ProductionSetCreated = api.ProductionSetCreated
+
+type ProductionSetPage = api.ProductionSetPage
 
 type ProductionSupplementRecord = api.ProductionSupplementRecord
 

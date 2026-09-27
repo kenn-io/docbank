@@ -35,17 +35,41 @@ func productionRowsResult(iterationErr, closeErr error) error {
 }
 
 func (s *Store) ApplyProductionChanges(ctx context.Context, actor, setID string, revision int64, request redaction.ApplyRequest) (redaction.Receipt, error) {
+	return s.applyProductionChanges(ctx, actor, setID, revision, request, "apply", false)
+}
+
+// AppendProductionMembers accepts only new member identities. It shares the
+// change transaction while keeping a distinct replay identity from edits.
+func (s *Store) AppendProductionMembers(ctx context.Context, actor, setID string, revision int64, request redaction.ApplyRequest) (redaction.Receipt, error) {
+	if len(request.Changes) == 0 {
+		return redaction.Receipt{}, ErrInvalidProduction
+	}
+	seen := make(map[string]struct{}, len(request.Changes))
+	for _, change := range request.Changes {
+		if change.Kind != "member" || change.Member == nil {
+			return redaction.Receipt{}, ErrInvalidProduction
+		}
+		if _, exists := seen[change.Member.ID]; exists {
+			return redaction.Receipt{}, ErrInvalidProduction
+		}
+		seen[change.Member.ID] = struct{}{}
+	}
+	return s.applyProductionChanges(ctx, actor, setID, revision, request, "append_members", true)
+}
+
+func (s *Store) applyProductionChanges(ctx context.Context, actor, setID string, revision int64,
+	request redaction.ApplyRequest, kind string, appendOnly bool) (redaction.Receipt, error) {
 	if !validProductionActor(actor) || validateUUIDv4(setID) != nil || revision < 1 || redaction.ValidateApplyRequest(request) != nil {
 		return redaction.Receipt{}, ErrInvalidProduction
 	}
-	raw, err := canonicalProductionOperationRequest("apply", setID, revision, request)
+	raw, err := canonicalProductionOperationRequest(kind, setID, revision, request)
 	if err != nil || len(raw) > redaction.MaxCommandBytes {
 		return redaction.Receipt{}, errors.Join(ErrInvalidProduction, err)
 	}
 	requestSHA256 := productionSHA256(raw)
 	var receipt redaction.Receipt
 	err = s.withStorageTx(ctx, func(tx *sql.Tx) error {
-		stored, _, found, err := loadProductionMutationOperationTx(ctx, tx, request.OperationID, "apply", setID, requestSHA256)
+		stored, _, found, err := loadProductionMutationOperationTx(ctx, tx, request.OperationID, kind, setID, requestSHA256)
 		if err != nil {
 			return err
 		}
@@ -60,6 +84,9 @@ func (s *Store) ApplyProductionChanges(ctx context.Context, actor, setID string,
 		existingByID, err := loadProductionTouchedMembersTx(ctx, tx, setID, revision, request.Changes)
 		if err != nil {
 			return err
+		}
+		if appendOnly && len(existingByID) != 0 {
+			return ErrInvalidProduction
 		}
 		if err := stageProductionMemberOrdinalsTx(ctx, tx, setID, revision, request.Changes, existingByID); err != nil {
 			return err
@@ -124,7 +151,7 @@ func (s *Store) ApplyProductionChanges(ctx context.Context, actor, setID string,
 		if err != nil {
 			return err
 		}
-		return recordProductionMutationTx(ctx, tx, actor, "apply", receipt, &storedDraft)
+		return recordProductionMutationTx(ctx, tx, actor, kind, receipt, &storedDraft)
 	})
 	return receipt, err
 }
@@ -341,23 +368,7 @@ func (s *Store) ReviewProductionMember(
 		if target == nil {
 			return ErrInvalidProduction
 		}
-		_, decisionsSHA256, err := redaction.CanonicalDecisions(target.Decisions)
-		if err != nil {
-			return ErrInvalidProduction
-		}
-		_, resolvedSHA256, err := redaction.CanonicalResolved(target.Resolved)
-		if err != nil || target.Resolved.SHA256 != resolvedSHA256 {
-			return ErrInvalidProduction
-		}
-		binding, err := redaction.ReviewBinding(redaction.ReviewInput{
-			SetID: draft.SetID, MemberID: target.Member.ID, VaultID: target.Member.VaultID,
-			SourceVersionID: target.Member.SourceVersionID, Revision: draft.Revision,
-			Ordinal: target.Member.Ordinal, NodeID: target.Member.NodeID, SourceSize: target.Member.SourceSize,
-			PDFSize: target.Member.PDFSize, SourceSHA256: target.Member.SourceSHA256, PDFSHA256: target.Member.PDFSHA256,
-			PageInventorySHA256: target.Member.PageInventorySHA256, MapSHA256: target.Member.MapSHA256,
-			Mode: target.Member.Mode, MemberHash: draft.MemberHash, InstructionsSHA256: draft.InstructionsSHA256,
-			RecipeSHA256: draft.RecipeSHA256, DecisionsSHA256: decisionsSHA256, ResolvedSHA256: resolvedSHA256,
-		})
+		binding, _, err := productionCurrentReviewBinding(draft, target)
 		if err != nil || binding != request.Binding {
 			return ErrProductionRevisionConflict
 		}

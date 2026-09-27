@@ -230,6 +230,7 @@ func NewServer(d Deps) *Server {
 	registerProductionReproductionRoutes(humaAPI, d, g, s.webDownloads)
 	registerProductionWithheldRoutes(humaAPI, d, g)
 	registerProductionPlayersRoutes(humaAPI, d, g)
+	registerProductionPreviewRoutes(humaAPI, d, g, s.webDownloads, s.webSessions)
 	clearLongRunningBodyReadDeadlines(humaAPI)
 	markRevisionPreconditionsRequired(humaAPI)
 	registerDaemonOpenAPI(humaAPI)

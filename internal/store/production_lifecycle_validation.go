@@ -55,7 +55,7 @@ func validateProductionLifecycleOperations(ctx context.Context, q metadataQuerie
 			return err
 		}
 		var receipt redaction.Receipt
-		var receiptRevision int64
+		var expectedRevision int64
 		var encoded []byte
 		switch kind {
 		case productionOperationSupplement:
@@ -69,7 +69,7 @@ func validateProductionLifecycleOperations(ctx context.Context, q metadataQuerie
 			if err != nil || stored != value {
 				return fmt.Errorf("production supplement operation %s is detached", operationID)
 			}
-			receiptRevision = value.Revision
+			expectedRevision = value.Revision
 			encoded, err = canonical.Marshal(value)
 			if err != nil {
 				return err
@@ -82,7 +82,38 @@ func validateProductionLifecycleOperations(ctx context.Context, q metadataQuerie
 				return fmt.Errorf("production create operation %s contradicts stored receipt", operationID)
 			}
 			receipt = value.Receipt
-			receiptRevision = receipt.Revision
+			expectedRevision = receipt.Revision
+			encoded, err = canonical.Marshal(value)
+			if err != nil {
+				return err
+			}
+		case productionOperationFinalizeCommand:
+			value, err := canonical.Decode[productionFinalizeAdmission](raw)
+			if err != nil || validateProductionFinalizeAdmission(value, value.Command) != nil ||
+				value.Command.OperationID != operationID || value.Command.SetID != setID ||
+				!validProductionFinalizeCommand(value.Command) {
+				return fmt.Errorf("production finalize operation %s contradicts stored receipt", operationID)
+			}
+			requestRaw, err := canonical.Marshal(value.Command)
+			if err != nil || digestProductionBytes(requestRaw) != requestSHA {
+				return fmt.Errorf("production finalize operation %s has contradictory request", operationID)
+			}
+			expectedRevision = value.Command.Revision
+			encoded, err = canonical.Marshal(value)
+			if err != nil {
+				return err
+			}
+		case productionOperationPreviewAdmission:
+			value, err := canonical.Decode[ProductionPreviewAdmission](raw)
+			if err != nil || !validProductionPreviewAdmission(value) ||
+				value.Command.OperationID != operationID || value.Command.SetID != setID || value.Actor != actor {
+				return fmt.Errorf("production preview operation %s contradicts stored receipt", operationID)
+			}
+			requestRaw, err := canonical.Marshal(value.Command)
+			if err != nil || digestProductionBytes(requestRaw) != requestSHA {
+				return fmt.Errorf("production preview operation %s has contradictory request", operationID)
+			}
+			expectedRevision = value.Command.Revision
 			encoded, err = canonical.Marshal(value)
 			if err != nil {
 				return err
@@ -94,13 +125,14 @@ func validateProductionLifecycleOperations(ctx context.Context, q metadataQuerie
 				return fmt.Errorf("production operation %s contradicts stored receipt", operationID)
 			}
 			receipt = value.Receipt
-			receiptRevision = receipt.Revision
+			expectedRevision = receipt.Revision
 			encoded, err = canonical.Marshal(value)
 			if err != nil {
 				return err
 			}
 		}
 		if !validProductionActor(actor) || kind != productionOperationSupplement &&
+			kind != productionOperationFinalizeCommand && kind != productionOperationPreviewAdmission &&
 			(redaction.ValidateReceipt(receipt) != nil || receipt.OperationID != operationID ||
 				receipt.SetID != setID || receipt.RequestSHA256 != requestSHA) {
 			return fmt.Errorf("production operation %s contradicts stored receipt", operationID)
@@ -114,7 +146,7 @@ func validateProductionLifecycleOperations(ctx context.Context, q metadataQuerie
 			receipt_sha256,created_at FROM production_audit_evidence WHERE operation_id=?`, operationID).
 			Scan(&auditSetID, &auditRevision, &auditActor, &auditKind, &auditRequestSHA,
 				&auditReceiptSHA, &auditCreatedAt); err != nil ||
-			auditSetID != setID || auditRevision != receiptRevision ||
+			auditSetID != setID || auditRevision != expectedRevision ||
 			auditActor != actor || auditKind != kind || auditRequestSHA != requestSHA ||
 			auditReceiptSHA != digestProductionBytes(raw) || auditCreatedAt != createdAt {
 			return fmt.Errorf("production operation %s has contradictory audit evidence", operationID)

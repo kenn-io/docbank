@@ -156,6 +156,45 @@ func (s *Store) ProductionSet(ctx context.Context, setID string) (redaction.Set,
 	return scanProductionSet(s.db.QueryRowContext(ctx, `SELECT id,name,creator,created_at,head_revision FROM production_sets WHERE id=?`, setID))
 }
 
+// ListProductionSets returns a stable ID-ordered page of retained sets. The
+// opaque cursor binds to this list kind so it cannot be reused for members or
+// decisions of a revision.
+func (s *Store) ListProductionSets(ctx context.Context, cursor string, limit int) ([]redaction.Set, string, error) {
+	if limit < 1 || limit > redaction.MaxProductionPage {
+		return nil, "", ErrInvalidProduction
+	}
+	position, err := decodeProductionListCursor(cursor, "sets", "", 0)
+	if err != nil {
+		return nil, "", err
+	}
+	rows, err := s.db.QueryContext(ctx, `SELECT id,name,creator,created_at,head_revision FROM production_sets
+		WHERE id>? ORDER BY id LIMIT ?`, position.ID, limit+1)
+	if err != nil {
+		return nil, "", err
+	}
+	defer func() { _ = rows.Close() }()
+	items := make([]redaction.Set, 0, limit+1)
+	for rows.Next() {
+		set, err := scanProductionSet(rows)
+		if err != nil {
+			return nil, "", err
+		}
+		items = append(items, set)
+	}
+	if err := errors.Join(rows.Err(), rows.Close()); err != nil {
+		return nil, "", err
+	}
+	next := ""
+	if len(items) > limit {
+		items = items[:limit]
+		next, err = encodeProductionListCursor(productionListCursorV1{Kind: "sets", ID: items[len(items)-1].ID})
+		if err != nil {
+			return nil, "", err
+		}
+	}
+	return items, next, nil
+}
+
 func (s *Store) ProductionDraft(ctx context.Context, setID string, revision int64) (redaction.Draft, error) {
 	if validateUUIDv4(setID) != nil || revision < 1 {
 		return redaction.Draft{}, ErrNotFound

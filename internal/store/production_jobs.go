@@ -22,8 +22,24 @@ import (
 // A passing prepared-input gate is not a finalized draft and is never promoted
 // into one here. The coordinator schema checkpoint supplies this table.
 func (s *Store) LoadFinalizedProduction(ctx context.Context, setID string, revision int64) (productionservice.FinalizedProduction, error) {
+	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	if err != nil {
+		return productionservice.FinalizedProduction{}, err
+	}
+	defer func() { _ = tx.Rollback() }()
+	finalized, err := s.loadFinalizedProductionTx(ctx, tx, setID, revision)
+	if err != nil {
+		return productionservice.FinalizedProduction{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return productionservice.FinalizedProduction{}, ErrInvalidProduction
+	}
+	return finalized, nil
+}
+
+func (s *Store) loadFinalizedProductionTx(ctx context.Context, tx *sql.Tx, setID string, revision int64) (productionservice.FinalizedProduction, error) {
 	var draftRaw, authorityRaw []byte
-	err := s.db.QueryRowContext(ctx, `SELECT draft_json,prepared_input_json
+	err := tx.QueryRowContext(ctx, `SELECT draft_json,prepared_input_json
 		FROM production_finalized_revisions WHERE set_id=? AND revision=?`, setID, revision).Scan(&draftRaw, &authorityRaw)
 	if errors.Is(err, sql.ErrNoRows) {
 		return productionservice.FinalizedProduction{}, ErrNotFound
@@ -51,18 +67,10 @@ func (s *Store) LoadFinalizedProduction(ctx context.Context, setID string, revis
 	if authority.Prepared.SetID != draft.SetID || authority.Prepared.Revision != draft.Revision || authority.Prepared.ETag != draft.ETag || authority.Prepared.MemberHash != draft.MemberHash || authority.Prepared.DecisionsSHA256 != draft.DecisionsSHA256 {
 		return productionservice.FinalizedProduction{}, ErrPackageConflict
 	}
-	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
-	if err != nil {
-		return productionservice.FinalizedProduction{}, err
-	}
-	defer func() { _ = tx.Rollback() }()
 	for _, prepared := range authority.Prepared.Members {
 		if err := s.validateFinalizedProductionMemberTx(ctx, tx, prepared); err != nil {
 			return productionservice.FinalizedProduction{}, ErrInvalidProduction
 		}
-	}
-	if err := tx.Commit(); err != nil {
-		return productionservice.FinalizedProduction{}, ErrInvalidProduction
 	}
 	return productionservice.FinalizedProduction{Draft: draft, Authority: authority}, nil
 }
@@ -379,7 +387,6 @@ func (s *Store) AdmitProductionJob(ctx context.Context, r productionservice.JobR
 	if validateUUIDv4(r.JobID) != nil || validateUUIDv4(r.OperationID) != nil || validateUUIDv4(r.SetID) != nil || r.Revision < 1 || r.ETag < 1 || !canonical.IsSHA256Hex(r.PreparedInputSHA256) || !canonical.IsSHA256Hex(r.RevisionSHA256) || !canonical.IsSHA256Hex(r.NumberingProfileSHA256) {
 		return productionservice.Job{}, ErrPackageConflict
 	}
-	var job productionservice.Job
 	requestRaw, err := canonical.Marshal(r)
 	if err != nil {
 		return productionservice.Job{}, err
@@ -387,34 +394,48 @@ func (s *Store) AdmitProductionJob(ctx context.Context, r productionservice.JobR
 	if len(requestRaw) > maxProductionJobRequestBytes {
 		return productionservice.Job{}, productionservice.ErrJobConflict
 	}
+	var job productionservice.Job
 	err = s.withStorageTx(ctx, func(tx *sql.Tx) error {
-		var existingSHA, existingOperation, existingSet string
-		var existingRevision, existingETag int64
-		var existingRequest []byte
-		var state string
-		err := tx.QueryRowContext(ctx, `SELECT operation_id,set_id,revision,etag,prepared_input_sha256,request_json,state FROM production_jobs WHERE job_id=?`, r.JobID).Scan(&existingOperation, &existingSet, &existingRevision, &existingETag, &existingSHA, &existingRequest, &state)
-		if err == nil {
-			if existingOperation != r.OperationID || existingSet != r.SetID || existingRevision != r.Revision || existingETag != r.ETag || existingSHA != r.PreparedInputSHA256 || !bytes.Equal(existingRequest, requestRaw) {
-				return ErrPackageConflict
-			}
-			job = productionservice.Job{ID: r.JobID, OperationID: r.OperationID, SetID: r.SetID, Revision: r.Revision, ETag: r.ETag, PreparedInputSHA256: existingSHA, RevisionSHA256: r.RevisionSHA256, State: state}
-			return nil
-		}
-		if !errors.Is(err, sql.ErrNoRows) {
-			return err
-		}
-		now := nowRFC3339()
-		_, err = tx.ExecContext(ctx, `INSERT INTO production_jobs(job_id,operation_id,owner,state,set_id,revision,etag,revision_sha256,prepared_input_sha256,receipt_sha256,request_json,claim_epoch,claim_token,claim_owner,cancel_requested,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,0,'','',0,?,?)`, r.JobID, r.OperationID, "production", productionservice.ProductionJobQueued, r.SetID, r.Revision, r.ETag, r.RevisionSHA256, r.PreparedInputSHA256, "", requestRaw, now, now)
-		if s.driver.IsUniqueViolation(err) {
-			return productionservice.ErrJobConflict
-		}
-		if err != nil {
-			return err
-		}
-		job = productionservice.Job{ID: r.JobID, OperationID: r.OperationID, SetID: r.SetID, Revision: r.Revision, ETag: r.ETag, PreparedInputSHA256: r.PreparedInputSHA256, RevisionSHA256: r.RevisionSHA256, State: productionservice.ProductionJobQueued}
-		return nil
+		var err error
+		job, err = s.admitProductionJobTx(ctx, tx, r, requestRaw)
+		return err
 	})
 	return job, err
+}
+
+func (s *Store) admitProductionJobTx(ctx context.Context, tx *sql.Tx, r productionservice.JobRequest,
+	requestRaw []byte) (productionservice.Job, error) {
+	var existingSHA, existingRevisionSHA, existingOperation, existingSet string
+	var existingRevision, existingETag int64
+	var existingRequest []byte
+	var state string
+	err := tx.QueryRowContext(ctx, `SELECT operation_id,set_id,revision,etag,prepared_input_sha256,revision_sha256,request_json,state
+		FROM production_jobs WHERE job_id=?`, r.JobID).Scan(&existingOperation, &existingSet, &existingRevision,
+		&existingETag, &existingSHA, &existingRevisionSHA, &existingRequest, &state)
+	if err == nil {
+		if existingOperation != r.OperationID || existingSet != r.SetID || existingRevision != r.Revision ||
+			existingETag != r.ETag || existingSHA != r.PreparedInputSHA256 ||
+			existingRevisionSHA != r.RevisionSHA256 || !bytes.Equal(existingRequest, requestRaw) {
+			return productionservice.Job{}, ErrPackageConflict
+		}
+		return productionservice.Job{ID: r.JobID, OperationID: r.OperationID, SetID: r.SetID,
+			Revision: r.Revision, ETag: r.ETag, PreparedInputSHA256: existingSHA,
+			RevisionSHA256: existingRevisionSHA, State: state}, nil
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		return productionservice.Job{}, err
+	}
+	now := nowRFC3339()
+	_, err = tx.ExecContext(ctx, `INSERT INTO production_jobs(job_id,operation_id,owner,state,set_id,revision,etag,revision_sha256,prepared_input_sha256,receipt_sha256,request_json,claim_epoch,claim_token,claim_owner,cancel_requested,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,0,'','',0,?,?)`, r.JobID, r.OperationID, "production", productionservice.ProductionJobQueued, r.SetID, r.Revision, r.ETag, r.RevisionSHA256, r.PreparedInputSHA256, "", requestRaw, now, now)
+	if s.driver.IsUniqueViolation(err) {
+		return productionservice.Job{}, productionservice.ErrJobConflict
+	}
+	if err != nil {
+		return productionservice.Job{}, err
+	}
+	return productionservice.Job{ID: r.JobID, OperationID: r.OperationID, SetID: r.SetID,
+		Revision: r.Revision, ETag: r.ETag, PreparedInputSHA256: r.PreparedInputSHA256,
+		RevisionSHA256: r.RevisionSHA256, State: productionservice.ProductionJobQueued}, nil
 }
 
 // RecordProductionJobFailure fences the attempt that failed. Known invalid

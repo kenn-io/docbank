@@ -2,259 +2,280 @@ package docbank
 
 import (
 	"context"
-	"time"
+	"crypto/sha256"
+	"encoding/hex"
+	"errors"
+	"io"
+	"os"
+	"path/filepath"
+	"strings"
 
-	documentproduction "go.kenn.io/docbank/document/production"
 	"go.kenn.io/docbank/document/redaction"
 	"go.kenn.io/docbank/internal/api"
-	productionservice "go.kenn.io/docbank/internal/production"
+	"go.kenn.io/docbank/internal/exporter"
+	"go.kenn.io/docbank/internal/processing"
+	"go.kenn.io/docbank/internal/production"
 	"go.kenn.io/docbank/internal/store"
 )
 
 type ProductionMemberPage = api.ProductionMemberPage
 type ProductionDecisionPage = api.ProductionDecisionPage
+type ProductionSetPage = api.ProductionSetPage
+type ProductionMapChunk = store.ProductionMapChunk
+type ProductionResolvedMaskPage = store.ProductionResolvedMaskPage
+type ProductionFinalizationResult = store.ProductionFinalizationResult
+type ProductionJobStatus = store.ProductionJobStatus
 type ProductionRecipeCatalog = api.ProductionRecipeCatalog
-type ProductionPolicyPage = api.ProductionPolicyPage
-type ProductionApprovalPublic = api.ProductionApprovalPublic
-type ProductionPrivilegePublicPage = api.ProductionPrivilegePublicPage
-type ProductionPrivilegeValidationRequest = api.ProductionPrivilegeValidationRequest
-type ProductionPrivilegeValidation = api.ProductionPrivilegeValidation
-type ProductionPrivilegeExport = productionservice.PrivilegeLogExport
-type ProductionPrivilegeDraftCreateRequest = api.ProductionPrivilegeDraftCreateRequest
-type ProductionPrivilegeRowsReplaceRequest = api.ProductionPrivilegeRowsReplaceRequest
-type ProductionPrivilegeDraftGeneration = api.ProductionPrivilegeDraftGeneration
+type ProductionPackagePublishRequest = api.ProductionPackagePublishRequest
+type ProductionPackagePublished = api.ProductionPackagePublished
 
-// ProductionApprovalRequest names the exact subject and private evidence to
-// record in an embedded vault. It does not contain authentication authority.
-type ProductionApprovalRequest struct {
+func (v *Vault) startProductionWorker(ctx context.Context) {
+	worker := &production.Worker{Store: v.metadata,
+		Source:    processing.ProductionSourceOpener{Catalog: v.metadata, Blobs: v.blobs},
+		Pages:     processing.ProductionPageStageAdapter{Catalog: v.metadata, Blobs: v.blobs},
+		Artifacts: processing.ProductionFinalArtifactAdapter{Catalog: v.metadata, Blobs: v.blobs},
+		WorkerID:  "production-embedded-" + v.metadata.VaultID()}
+	v.startProcessingWorker(ctx, worker.Run)
+}
+
+// PublishProductionPackage retains one verified recipient package from a
+// successful job in this embedded vault. Exact retries reuse its authority.
+func (v *Vault) PublishProductionPackage(ctx context.Context, jobID string,
+	request ProductionPackagePublishRequest) (ProductionPackagePublished, error) {
+	v.lifecycle.RLock()
+	defer v.lifecycle.RUnlock()
+	if v.closed {
+		return ProductionPackagePublished{}, ErrClosed
+	}
+	if !request.Valid() {
+		return ProductionPackagePublished{}, errors.New("invalid production package request")
+	}
+	worker, err := exporter.New(v.metadata, v.blobs, v.vaultRoot, embeddedMutationGate{vault: v})
+	if err != nil {
+		return ProductionPackagePublished{}, err
+	}
+	retained, err := worker.PublishProductionPackage(ctx, request.OperationID, jobID,
+		request.ProfileID, production.PackageLimits{
+			MaxVolumeBytes: request.MaxVolumeBytes, MaxVolumeDocuments: request.MaxVolumeDocuments,
+		})
+	if err != nil {
+		return ProductionPackagePublished{}, err
+	}
+	return ProductionPackagePublished{JobID: jobID, OperationID: request.OperationID,
+		ProfileID: request.ProfileID, VersionID: retained.Archive.Version.ID,
+		ArchiveSHA256:  retained.Archive.Version.BlobHash,
+		EvidenceSHA256: retained.Evidence.SHA256, Size: retained.Archive.Version.Size}, nil
+}
+
+// ProductionPackageReceipt identifies the exact retained archive streamed by
+// an embedded vault. The caller must discard destination bytes on error.
+type ProductionPackageReceipt struct {
+	JobID          string `json:"job_id"`
+	OperationID    string `json:"operation_id"`
+	VersionID      string `json:"version_id"`
+	ArchiveSHA256  string `json:"archive_sha256"`
+	EvidenceSHA256 string `json:"evidence_sha256"`
+	Size           int64  `json:"size"`
+}
+
+// DownloadProductionPackageTo verifies a retained production package in this
+// embedded vault before streaming its recipient archive to destination.
+func (v *Vault) DownloadProductionPackageTo(ctx context.Context, jobID, operationID string,
+	destination io.Writer) (_ ProductionPackageReceipt, retErr error) {
+	v.lifecycle.RLock()
+	defer v.lifecycle.RUnlock()
+	if v.closed {
+		return ProductionPackageReceipt{}, ErrClosed
+	}
+	if destination == nil {
+		return ProductionPackageReceipt{}, errors.New("production package destination is required")
+	}
+	staged, err := processing.PrepareRetainedProductionPackageDownload(ctx, v.metadata, v.blobs,
+		v.vaultRoot, jobID, operationID)
+	if err != nil {
+		return ProductionPackageReceipt{}, err
+	}
+	defer func() { retErr = errors.Join(retErr, staged.Close()) }()
+	file, err := os.Open(staged.ArchivePath)
+	if err != nil {
+		return ProductionPackageReceipt{}, err
+	}
+	defer func() { retErr = errors.Join(retErr, file.Close()) }()
+	archive := staged.Retained.Archive.Version
+	hasher := sha256.New()
+	written, err := io.CopyBuffer(io.MultiWriter(destination, hasher),
+		io.LimitReader(embeddedProductionPackageReader{ctx: ctx, reader: file}, archive.Size+1),
+		make([]byte, 256<<10))
+	if err != nil {
+		return ProductionPackageReceipt{}, err
+	}
+	if written != archive.Size || hex.EncodeToString(hasher.Sum(nil)) != archive.BlobHash {
+		return ProductionPackageReceipt{}, errors.New("production package staged bytes failed verification")
+	}
+	return ProductionPackageReceipt{JobID: jobID, OperationID: operationID,
+		VersionID: archive.ID, ArchiveSHA256: archive.BlobHash,
+		EvidenceSHA256: staged.Retained.Evidence.SHA256, Size: archive.Size}, nil
+}
+
+type embeddedProductionPackageReader struct {
+	ctx    context.Context
+	reader io.Reader
+}
+
+func (r embeddedProductionPackageReader) Read(data []byte) (int, error) {
+	if err := r.ctx.Err(); err != nil {
+		return 0, err
+	}
+	return r.reader.Read(data)
+}
+
+// ProductionPreviewRequest selects one member page and a replay identity.
+type ProductionPreviewRequest struct {
 	OperationID string
-	ApprovalID  string
-	Subject     documentproduction.ApprovalSubject
-	Evidence    string
+	MemberID    string
+	Page        int
 }
 
-// ProductionApprovalAuthentication must be derived by the embedding host from
-// a verified human authentication event. A caller-supplied actor label alone
-// is not proof of approval.
-type ProductionApprovalAuthentication struct {
-	Actor     string
-	Authority documentproduction.ApprovalAuthority
+// ProductionPreviewBytes contains one verified, unnumbered page preview.
+// Text contains only the sanitized output text from the resolved page.
+type ProductionPreviewBytes struct {
+	PreviewInputSHA256 string
+	ResolvedSHA256     string
+	Image              []byte
+	ImageSHA256        string
+	Text               []byte
+	TextSHA256         string
 }
 
-func (v *Vault) ProductionPolicyVersions(ctx context.Context, cursor string, limit int) (ProductionPolicyPage, error) {
+// ProductionPreview renders an exact current draft selection in this embedded
+// vault. Actor is the embedding application's authenticated principal.
+func (v *Vault) ProductionPreview(ctx context.Context, actor, setID string,
+	revision, etag int64, request ProductionPreviewRequest) (ProductionPreviewBytes, error) {
 	v.lifecycle.RLock()
 	defer v.lifecycle.RUnlock()
 	if v.closed {
-		return ProductionPolicyPage{}, ErrClosed
+		return ProductionPreviewBytes{}, ErrClosed
 	}
-	if limit == 0 {
-		limit = 25
-	}
-	page, err := v.metadata.ListProductionPolicies(ctx, cursor, limit)
+	command := store.ProductionPreviewCommand{SetID: setID, Revision: revision, ETag: etag,
+		OperationID: request.OperationID, MemberID: request.MemberID, Page: request.Page}
+	var admitted store.ProductionPreviewAdmission
+	err := embeddedMutationGate{vault: v}.MutateContext(ctx, func() error {
+		var err error
+		admitted, err = v.metadata.AdmitProductionDraftPreview(ctx, actor, command)
+		return err
+	})
 	if err != nil {
-		return ProductionPolicyPage{}, err
+		return ProductionPreviewBytes{}, err
 	}
-	return ProductionPolicyPage{Items: page.Items, NextCursor: page.NextCursor}, nil
-}
-
-// CreateProductionPolicyVersion stores one immutable policy in this embedded vault.
-// Reusing an operation ID with different policy content is a conflict.
-func (v *Vault) CreateProductionPolicyVersion(ctx context.Context, operationID string,
-	policy documentproduction.PolicyVersion) (documentproduction.PolicyVersion, error) {
-	v.lifecycle.RLock()
-	defer v.lifecycle.RUnlock()
-	if v.closed {
-		return documentproduction.PolicyVersion{}, ErrClosed
-	}
-	prepared, err := productionservice.PreparePolicyVersion(operationID, policy)
+	stageDir, err := os.MkdirTemp(v.vaultRoot, ".production-preview-")
 	if err != nil {
-		return documentproduction.PolicyVersion{}, err
+		return ProductionPreviewBytes{}, err
 	}
-	var stored documentproduction.PolicyVersion
+	defer func() { _ = os.RemoveAll(stageDir) }()
+	staged, err := processing.PrepareProductionDraftPreview(ctx, v.metadata, v.blobs,
+		stageDir, command.SetID, command.Revision, command.ETag, command.MemberID, command.Page)
+	if err != nil {
+		return ProductionPreviewBytes{}, err
+	}
+	defer func() { _ = staged.Close() }()
+	if staged.PreviewInputSHA256 != admitted.PreviewInputSHA256 {
+		return ProductionPreviewBytes{}, store.ErrProductionRevisionConflict
+	}
+	image, err := readVerifiedProductionPreviewBytes(staged.Image.File, staged.ImageSize, staged.ImageSHA256, 32<<20)
+	if err != nil {
+		return ProductionPreviewBytes{}, err
+	}
+	text, err := readVerifiedProductionPreviewBytes(staged.Text.File, staged.TextSize, staged.TextSHA256, 16<<20)
+	if err != nil {
+		return ProductionPreviewBytes{}, err
+	}
 	err = embeddedMutationGate{vault: v}.MutateContext(ctx, func() error {
-		var err error
-		stored, err = v.metadata.PutProductionPolicy(ctx, prepared)
-		return err
-	})
-	return stored, err
-}
-
-func (v *Vault) ProductionPolicyVersion(ctx context.Context, policyID string,
-	version int64) (documentproduction.PolicyVersion, error) {
-	v.lifecycle.RLock()
-	defer v.lifecycle.RUnlock()
-	if v.closed {
-		return documentproduction.PolicyVersion{}, ErrClosed
-	}
-	return v.metadata.ProductionPolicy(ctx, policyID, version)
-}
-
-// ProductionApproval returns the public approval projection for this embedded vault.
-func (v *Vault) ProductionApproval(ctx context.Context, approvalID string) (ProductionApprovalPublic, error) {
-	v.lifecycle.RLock()
-	defer v.lifecycle.RUnlock()
-	if v.closed {
-		return ProductionApprovalPublic{}, ErrClosed
-	}
-	grant, events, err := v.metadata.ProductionApprovalPublic(ctx, approvalID)
-	if err != nil {
-		return ProductionApprovalPublic{}, err
-	}
-	return ProductionApprovalPublic{Grant: grant, Events: events}, nil
-}
-
-// ProductionPrivilegeLog reads a bounded page of public rows from one frozen
-// privilege-log revision in this embedded vault.
-func (v *Vault) ProductionPrivilegeLog(ctx context.Context, logID string, revision int64,
-	cursor string, limit int) (ProductionPrivilegePublicPage, error) {
-	v.lifecycle.RLock()
-	defer v.lifecycle.RUnlock()
-	if v.closed {
-		return ProductionPrivilegePublicPage{}, ErrClosed
-	}
-	if limit == 0 {
-		limit = 25
-	}
-	page, err := v.metadata.ProductionPrivilegePublicPage(ctx, logID, revision, cursor, limit)
-	if err != nil {
-		return ProductionPrivilegePublicPage{}, err
-	}
-	return ProductionPrivilegePublicPage{Receipt: page.Receipt,
-		Rows: page.Rows, NextCursor: page.NextCursor}, nil
-}
-
-// ExportProductionPrivilegeLog returns verified public bytes from one frozen
-// log in this embedded vault. Formats are json, csv, xlsx, and pdf.
-func (v *Vault) ExportProductionPrivilegeLog(ctx context.Context, logID string, revision int64,
-	format string) (ProductionPrivilegeExport, error) {
-	v.lifecycle.RLock()
-	defer v.lifecycle.RUnlock()
-	if v.closed {
-		return ProductionPrivilegeExport{}, ErrClosed
-	}
-	return v.metadata.ExportProductionPrivilegeLog(ctx, logID, revision, format)
-}
-
-// CreateProductionPrivilegeLogDraft derives produced members from this vault's
-// sealed revision and stores the supplied private rows in the same transaction.
-func (v *Vault) CreateProductionPrivilegeLogDraft(ctx context.Context, logID string, revision int64,
-	request ProductionPrivilegeDraftCreateRequest) (ProductionPrivilegeDraftGeneration, error) {
-	v.lifecycle.RLock()
-	defer v.lifecycle.RUnlock()
-	if v.closed {
-		return ProductionPrivilegeDraftGeneration{}, ErrClosed
-	}
-	var generation int64
-	err := embeddedMutationGate{vault: v}.MutateContext(ctx, func() error {
-		var err error
-		generation, err = v.metadata.CreateStoredPrivilegeLogDraft(ctx, store.StoredPrivilegeLogDraftRequest{
-			SetID: request.SetID, SetRevision: request.SetRevision,
-			Draft: productionservice.PrivilegeLogDraftRequest{
-				OperationID: request.OperationID, LogID: logID, Revision: revision,
-				PredecessorLogID:         request.PredecessorLogID,
-				PredecessorReceiptSHA256: request.PredecessorReceiptSHA256,
-			},
-			PlayersSHA256: request.PlayersSHA256, Rows: request.Rows,
-		})
-		return err
+		current, err := v.metadata.CurrentProductionDraftPreviewInput(ctx, command)
+		if err != nil {
+			return err
+		}
+		if current != admitted.PreviewInputSHA256 {
+			return store.ErrProductionRevisionConflict
+		}
+		return nil
 	})
 	if err != nil {
-		return ProductionPrivilegeDraftGeneration{}, err
+		return ProductionPreviewBytes{}, err
 	}
-	return ProductionPrivilegeDraftGeneration{LogID: logID, Revision: revision, Generation: generation}, nil
+	return ProductionPreviewBytes{PreviewInputSHA256: admitted.PreviewInputSHA256,
+		ResolvedSHA256: staged.ResolvedSHA256, Image: image, ImageSHA256: staged.ImageSHA256,
+		Text: text, TextSHA256: staged.TextSHA256}, nil
 }
 
-// ReplaceProductionPrivilegeLogRows advances a mutable draft generation and
-// invalidates its prior validation and approval binding.
-func (v *Vault) ReplaceProductionPrivilegeLogRows(ctx context.Context, logID string, revision int64,
-	request ProductionPrivilegeRowsReplaceRequest) (ProductionPrivilegeDraftGeneration, error) {
-	v.lifecycle.RLock()
-	defer v.lifecycle.RUnlock()
-	if v.closed {
-		return ProductionPrivilegeDraftGeneration{}, ErrClosed
+func readVerifiedProductionPreviewBytes(file *os.File, size int64, digest string, maxSize int64) ([]byte, error) {
+	if size < 0 || size > maxSize {
+		return nil, errors.New("production preview exceeds embedded response limit")
 	}
-	var generation int64
-	err := embeddedMutationGate{vault: v}.MutateContext(ctx, func() error {
-		var err error
-		generation, err = v.metadata.ReplacePrivilegeLogRows(ctx, store.PrivilegeLogRowUpdate{
-			OperationID: request.OperationID, LogID: logID, Revision: revision,
-			ExpectedGeneration: request.ExpectedGeneration, Rows: request.Rows,
-		})
-		return err
-	})
+	if _, err := file.Seek(0, io.SeekStart); err != nil {
+		return nil, err
+	}
+	data, err := io.ReadAll(io.LimitReader(file, size+1))
 	if err != nil {
-		return ProductionPrivilegeDraftGeneration{}, err
+		return nil, err
 	}
-	return ProductionPrivilegeDraftGeneration{LogID: logID, Revision: revision, Generation: generation}, nil
+	sum := sha256.Sum256(data)
+	if int64(len(data)) != size || hex.EncodeToString(sum[:]) != digest {
+		return nil, errors.New("production preview staged bytes failed verification")
+	}
+	return data, nil
 }
 
-// ValidateProductionPrivilegeLog checks the stored draft rows and pinned
-// authority in this embedded vault. An exact operation retry returns the same
-// validation; a changed generation or payload conflicts.
-func (v *Vault) ValidateProductionPrivilegeLog(ctx context.Context, logID string, revision int64,
-	request ProductionPrivilegeValidationRequest) (ProductionPrivilegeValidation, error) {
-	v.lifecycle.RLock()
-	defer v.lifecycle.RUnlock()
-	if v.closed {
-		return ProductionPrivilegeValidation{}, ErrClosed
+// The exclusive vault lock is held before this startup sweep runs. Interrupted
+// embedded previews and downloads leave only private, disposable stages.
+func sweepEmbeddedProductionStages(root string) error {
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		return err
 	}
-	validatedAt, err := time.Parse(time.RFC3339Nano, request.ValidatedAt)
-	if err != nil || validatedAt.Location() != time.UTC ||
-		validatedAt.Format(time.RFC3339Nano) != request.ValidatedAt {
-		return ProductionPrivilegeValidation{}, &documentproduction.Problem{
-			Code: documentproduction.ProblemInvalidContract, Detail: "validated_at must be canonical UTC",
+	for _, entry := range entries {
+		if entry.IsDir() && (strings.HasPrefix(entry.Name(), ".production-preview-") ||
+			strings.HasPrefix(entry.Name(), ".production-download-")) {
+			if err := os.RemoveAll(filepath.Join(root, entry.Name())); err != nil {
+				return err
+			}
 		}
 	}
-	serviceRequest := productionservice.PrivilegeLogValidationRequest{
-		OperationID: request.OperationID, LogID: logID, Revision: revision,
-		ExpectedGeneration: request.ExpectedGeneration, ValidatedAt: validatedAt,
-	}
-	var prepared productionservice.PreparedPrivilegeLogValidation
-	err = embeddedMutationGate{vault: v}.MutateContext(ctx, func() error {
-		var err error
-		prepared, err = productionservice.ValidateStoredPrivilegeLog(ctx, v.metadata, serviceRequest)
-		return err
-	})
-	if err != nil {
-		return ProductionPrivilegeValidation{}, err
-	}
-	return ProductionPrivilegeValidation{DraftGeneration: prepared.DraftGeneration,
-		Validation: prepared.Validation}, nil
+	return sweepEmbeddedProductionPackageStages(root)
 }
 
-// RecordProductionApproval stores one immutable approval using the host's
-// verified human authority. Retries with the same operation and subject return
-// the original grant. Only the public grant crosses this API boundary.
-func (v *Vault) RecordProductionApproval(ctx context.Context, request ProductionApprovalRequest,
-	authenticated ProductionApprovalAuthentication) (documentproduction.ApprovalPublicGrant, error) {
-	v.lifecycle.RLock()
-	defer v.lifecycle.RUnlock()
-	if v.closed {
-		return documentproduction.ApprovalPublicGrant{}, ErrClosed
-	}
-	policy, err := v.metadata.ProductionPolicy(ctx, request.Subject.Policy.PolicyID, request.Subject.Policy.Version)
+func sweepEmbeddedProductionPackageStages(root string) (retErr error) {
+	owned, err := os.OpenRoot(root)
 	if err != nil {
-		return documentproduction.ApprovalPublicGrant{}, err
-	}
-	record, err := productionservice.PrepareApprovalRecord(productionservice.RecordApprovalRequest{
-		OperationID: request.OperationID, ApprovalID: request.ApprovalID,
-		Subject: request.Subject, Evidence: request.Evidence,
-	}, policy, productionservice.AuthenticatedApproval{
-		Actor: authenticated.Actor, Authority: authenticated.Authority,
-	}, time.Now().UTC())
-	if err != nil {
-		return documentproduction.ApprovalPublicGrant{}, err
-	}
-	var grant documentproduction.ApprovalGrant
-	err = embeddedMutationGate{vault: v}.MutateContext(ctx, func() error {
-		var err error
-		grant, err = v.metadata.PutProductionApproval(ctx, record)
 		return err
-	})
-	if err != nil {
-		return documentproduction.ApprovalPublicGrant{}, err
 	}
-	return documentproduction.PublicApprovalGrant(grant), nil
+	defer func() { retErr = errors.Join(retErr, owned.Close()) }()
+	info, err := owned.Lstat("export-archives")
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+		return errors.New("embedded export archive directory is not a real directory")
+	}
+	archiveDir, err := owned.Open("export-archives")
+	if err != nil {
+		return err
+	}
+	defer func() { retErr = errors.Join(retErr, archiveDir.Close()) }()
+	entries, err := archiveDir.ReadDir(-1)
+	if err != nil {
+		return err
+	}
+	for _, entry := range entries {
+		if entry.IsDir() && strings.HasPrefix(entry.Name(), ".production-package-") {
+			if err := owned.RemoveAll(filepath.Join("export-archives", entry.Name())); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }
 
 func (v *Vault) ProductionRecipes(ctx context.Context) (ProductionRecipeCatalog, error) {
@@ -291,6 +312,22 @@ func (v *Vault) ProductionSet(ctx context.Context, setID string) (redaction.Set,
 		return redaction.Set{}, ErrClosed
 	}
 	return v.metadata.ProductionSet(ctx, setID)
+}
+
+func (v *Vault) ProductionSets(ctx context.Context, cursor string, limit int) (ProductionSetPage, error) {
+	v.lifecycle.RLock()
+	defer v.lifecycle.RUnlock()
+	if v.closed {
+		return ProductionSetPage{}, ErrClosed
+	}
+	if limit == 0 {
+		limit = 100
+	}
+	items, next, err := v.metadata.ListProductionSets(ctx, cursor, limit)
+	if err != nil {
+		return ProductionSetPage{}, err
+	}
+	return ProductionSetPage{Items: items, NextCursor: next}, nil
 }
 
 func (v *Vault) ProductionDraft(ctx context.Context, setID string, revision int64) (redaction.Draft, error) {
@@ -341,6 +378,13 @@ func (v *Vault) ProductionMembers(ctx context.Context, setID string, revision in
 }
 
 func (v *Vault) ProductionDecisions(ctx context.Context, setID string, revision int64, cursor string, limit int) (ProductionDecisionPage, error) {
+	return v.ProductionDecisionsFiltered(ctx, setID, revision, cursor, limit, nil)
+}
+
+// ProductionDecisionsFiltered pages only decisions matching an optional
+// uncertainty state. Filtered cursors cannot be reused for another view.
+func (v *Vault) ProductionDecisionsFiltered(ctx context.Context, setID string, revision int64,
+	cursor string, limit int, uncertain *bool) (ProductionDecisionPage, error) {
 	v.lifecycle.RLock()
 	defer v.lifecycle.RUnlock()
 	if v.closed {
@@ -349,7 +393,7 @@ func (v *Vault) ProductionDecisions(ctx context.Context, setID string, revision 
 	if limit == 0 {
 		limit = 100
 	}
-	items, next, err := v.metadata.ProductionDecisions(ctx, setID, revision, cursor, limit)
+	items, next, err := v.metadata.ProductionDecisionsFiltered(ctx, setID, revision, cursor, limit, uncertain)
 	if err != nil {
 		return ProductionDecisionPage{}, err
 	}
@@ -358,6 +402,104 @@ func (v *Vault) ProductionDecisions(ctx context.Context, setID string, revision 
 		page.Items[i] = api.ProductionDecision(item)
 	}
 	return page, nil
+}
+
+// ProductionMapChunk reads one bounded page of a retained member map from
+// this embedded vault. The caller verifies the assembled map digest.
+func (v *Vault) ProductionMapChunk(ctx context.Context, setID string, revision int64, memberID, cursor string, limit int) (ProductionMapChunk, error) {
+	v.lifecycle.RLock()
+	defer v.lifecycle.RUnlock()
+	if v.closed {
+		return ProductionMapChunk{}, ErrClosed
+	}
+	if limit == 0 {
+		limit = store.MaxProductionMapChunkBytes
+	}
+	return v.metadata.ProductionMapChunk(ctx, setID, revision, memberID, cursor, limit)
+}
+
+// ResolveProductionSelection reads one ETag-pinned page of a member's final
+// pixel mask and the binding needed to review its complete current plan.
+func (v *Vault) ResolveProductionSelection(ctx context.Context, setID string, revision, etag int64,
+	request api.ProductionResolveRequest) (ProductionResolvedMaskPage, error) {
+	v.lifecycle.RLock()
+	defer v.lifecycle.RUnlock()
+	if v.closed {
+		return ProductionResolvedMaskPage{}, ErrClosed
+	}
+	limit := request.Limit
+	if limit == 0 {
+		limit = 100
+	}
+	return v.metadata.ProductionResolvedMaskPage(ctx, setID, revision, request.MemberID,
+		etag, request.Page, request.Cursor, limit)
+}
+
+// FinalizeProductionDraft gates and locks one reviewed revision in this
+// embedded vault. It does not reserve or allocate production numbers.
+func (v *Vault) FinalizeProductionDraft(ctx context.Context, actor, setID string, revision, etag int64,
+	request api.ProductionFinalizeRequest) (ProductionFinalizationResult, error) {
+	v.lifecycle.RLock()
+	defer v.lifecycle.RUnlock()
+	if v.closed {
+		return ProductionFinalizationResult{}, ErrClosed
+	}
+	var result ProductionFinalizationResult
+	err := embeddedMutationGate{vault: v}.MutateContext(ctx, func() error {
+		var err error
+		result, err = v.metadata.FinalizeProductionDraft(ctx, actor, store.ProductionFinalizeCommand{
+			SetID: setID, Revision: revision, ETag: etag, OperationID: request.OperationID,
+			NamespaceID: request.NamespaceID, SnapshotID: request.SnapshotID, StartAt: request.StartAt})
+		return err
+	})
+	return result, err
+}
+
+func (v *Vault) ProductionJobStatus(ctx context.Context, setID, jobID string) (ProductionJobStatus, error) {
+	v.lifecycle.RLock()
+	defer v.lifecycle.RUnlock()
+	if v.closed {
+		return ProductionJobStatus{}, ErrClosed
+	}
+	return v.metadata.ProductionJobStatus(ctx, setID, jobID)
+}
+
+// AdmitProductionJob pins a finalized revision and enqueues one replay-safe job.
+func (v *Vault) AdmitProductionJob(ctx context.Context, setID string, revision, etag int64,
+	request api.ProductionJobAdmissionRequest) (ProductionJobStatus, error) {
+	v.lifecycle.RLock()
+	defer v.lifecycle.RUnlock()
+	if v.closed {
+		return ProductionJobStatus{}, ErrClosed
+	}
+	var status ProductionJobStatus
+	err := embeddedMutationGate{vault: v}.MutateContext(ctx, func() error {
+		if _, err := v.metadata.AdmitFinalizedProductionJob(ctx, setID, revision, etag,
+			request.JobID, request.OperationID); err != nil {
+			return err
+		}
+		var err error
+		status, err = v.metadata.ProductionJobStatus(ctx, setID, request.JobID)
+		return err
+	})
+	return status, err
+}
+
+// CancelProductionJob records a replay-safe cancellation in this embedded vault.
+func (v *Vault) CancelProductionJob(ctx context.Context, actor, setID, jobID string, etag int64,
+	request api.ProductionJobCancelRequest) (redaction.Receipt, error) {
+	v.lifecycle.RLock()
+	defer v.lifecycle.RUnlock()
+	if v.closed {
+		return redaction.Receipt{}, ErrClosed
+	}
+	var receipt redaction.Receipt
+	err := embeddedMutationGate{vault: v}.MutateContext(ctx, func() error {
+		var err error
+		receipt, err = v.metadata.CancelProductionJobOperation(ctx, actor, setID, jobID, etag, request.OperationID)
+		return err
+	})
+	return receipt, err
 }
 
 func (v *Vault) EditProductionInstructions(ctx context.Context, actor, setID string, revision, etag int64,
@@ -387,6 +529,22 @@ func (v *Vault) ApplyProductionChanges(ctx context.Context, actor, setID string,
 	err := embeddedMutationGate{vault: v}.MutateContext(ctx, func() error {
 		var err error
 		receipt, err = v.metadata.ApplyProductionChanges(ctx, actor, setID, revision, request.Domain(etag))
+		return err
+	})
+	return receipt, err
+}
+
+func (v *Vault) AppendProductionMembers(ctx context.Context, actor, setID string, revision, etag int64,
+	request api.ProductionMemberAppendRequest) (redaction.Receipt, error) {
+	v.lifecycle.RLock()
+	defer v.lifecycle.RUnlock()
+	if v.closed {
+		return redaction.Receipt{}, ErrClosed
+	}
+	var receipt redaction.Receipt
+	err := embeddedMutationGate{vault: v}.MutateContext(ctx, func() error {
+		var err error
+		receipt, err = v.metadata.AppendProductionMembers(ctx, actor, setID, revision, request.Domain(etag))
 		return err
 	})
 	return receipt, err

@@ -134,3 +134,12 @@ func PreparedProductionReproductionHTTPFixture(t *testing.T) (*Store, string, st
 	f.reopen(t)
 	return f.Store, f.root, job.ID, request, policy
 }
+
+// PublishedProductionJobHTTPFixture leaves a synthetic successful render
+// without a recipient package so the public publication route can own it.
+func PublishedProductionJobHTTPFixture(t *testing.T) (*Store, string, production.Job) {
+	t.Helper()
+	f, job := publishedRealRetentionFixture(t)
+	f.reopen(t)
+	return f.Store, f.root, job
+}

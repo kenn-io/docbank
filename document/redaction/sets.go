@@ -12,11 +12,12 @@ import (
 )
 
 const (
-	MaxInstructionsBytes = 64 << 10
-	MaxChangesPerBatch   = 500
-	MaxCommandBytes      = 1 << 20
-	MaxProductionPage    = 200
-	MaxProductionMembers = 100_000
+	MaxInstructionsBytes      = 64 << 10
+	MaxChangesPerBatch        = 500
+	MaxCommandBytes           = 1 << 20
+	MaxProductionPage         = 200
+	MaxProductionDecisionPage = 500
+	MaxProductionMembers      = 100_000
 
 	RecipeID300DPI  = "raster-redaction/v1-300dpi"
 	RecipeID600DPI  = "raster-redaction/v1-600dpi"

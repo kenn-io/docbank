@@ -10,7 +10,8 @@ import (
 	"go.kenn.io/docbank/internal/daemonconn"
 )
 
-var productionPackageCmd = &cobra.Command{Use: "package", Short: "Download verified retained production packages"}
+var productionPackageCmd = &cobra.Command{Use: "package", Aliases: []string{"packages"},
+	Short: "Create, publish and download verified retained production packages"}
 
 type productionPackageDownloadReceipt struct {
 	Destination   string `json:"destination"`

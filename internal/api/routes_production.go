@@ -8,9 +8,11 @@ import (
 	"net/http"
 
 	"github.com/danielgtaylor/huma/v2"
+	documentproduction "go.kenn.io/docbank/document/production"
 	"go.kenn.io/docbank/document/redaction"
 	"go.kenn.io/docbank/internal/canonical"
 	"go.kenn.io/docbank/internal/pdfproduction"
+	productionservice "go.kenn.io/docbank/internal/production"
 	"go.kenn.io/docbank/internal/store"
 )
 
@@ -54,6 +56,11 @@ func QualifiedProductionRecipes() (ProductionRecipeCatalog, error) {
 type ProductionSetCreated struct {
 	Set   redaction.Set   `json:"set"`
 	Draft redaction.Draft `json:"draft"`
+}
+
+type ProductionSetPage struct {
+	Items      []redaction.Set `json:"items"`
+	NextCursor string          `json:"next_cursor"`
 }
 
 // ProductionMember gives this wire shape a distinct OpenAPI component name.
@@ -107,6 +114,49 @@ type ProductionDecisionPage struct {
 	NextCursor string               `json:"next_cursor"`
 }
 
+type ProductionResolveRequest struct {
+	MemberID string `json:"member_id"`
+	Page     int    `json:"page"`
+	Cursor   string `json:"cursor,omitzero"`
+	Limit    int    `json:"limit,omitzero"`
+}
+
+// ProductionResolvedMaskPage is a bounded projection of the current resolved
+// plan, including the server-derived review binding for its full member.
+type ProductionResolvedMaskPage store.ProductionResolvedMaskPage
+
+type ProductionFinalizeRequest struct {
+	OperationID string `json:"operation_id"`
+	NamespaceID string `json:"namespace_id"`
+	SnapshotID  string `json:"snapshot_id"`
+	StartAt     int64  `json:"start_at,omitzero"`
+}
+
+type ProductionFinalizationResult store.ProductionFinalizationResult
+
+// ProductionMapChunk carries one digest-bound page of canonical aligned-map
+// JSON. Its base64 data is binary-safe because pages may split UTF-8 bytes.
+type ProductionMapChunk struct {
+	MapSHA256   string `json:"map_sha256"`
+	Offset      int64  `json:"offset"`
+	TotalBytes  int64  `json:"total_bytes"`
+	Data        string `json:"data"`
+	ChunkSHA256 string `json:"chunk_sha256"`
+	NextCursor  string `json:"next_cursor"`
+}
+
+// ProductionJobStatus is the public, bounded state projection of a retained job.
+type ProductionJobStatus store.ProductionJobStatus
+
+type ProductionJobAdmissionRequest struct {
+	JobID       string `json:"job_id"`
+	OperationID string `json:"operation_id"`
+}
+
+type ProductionJobCancelRequest struct {
+	OperationID string `json:"operation_id"`
+}
+
 type ProductionInstructionsRequest struct {
 	OperationID  string `json:"operation_id"`
 	Instructions string `json:"instructions"`
@@ -120,6 +170,20 @@ func (request ProductionInstructionsRequest) Domain(etag int64) redaction.Instru
 type ProductionChangesRequest struct {
 	OperationID string             `json:"operation_id"`
 	Changes     []ProductionChange `json:"changes"`
+}
+
+type ProductionMemberAppendRequest struct {
+	OperationID string             `json:"operation_id"`
+	Members     []ProductionMember `json:"members"`
+}
+
+func (request ProductionMemberAppendRequest) Domain(etag int64) redaction.ApplyRequest {
+	changes := make([]redaction.Change, len(request.Members))
+	for i, value := range request.Members {
+		member := redaction.Member(value)
+		changes[i] = redaction.Change{Kind: "member", Member: &member}
+	}
+	return redaction.ApplyRequest{OperationID: request.OperationID, ETag: etag, Changes: changes}
 }
 
 type ProductionMembershipSealRequest struct {
@@ -157,6 +221,30 @@ func (request ProductionChangesRequest) Domain(etag int64) redaction.ApplyReques
 }
 
 func productionSetError(err error) error {
+	if problem, ok := errors.AsType[*documentproduction.Problem](err); ok {
+		switch problem.Code {
+		case documentproduction.ProblemChangedPayload, documentproduction.ProblemSourceStale,
+			documentproduction.ProblemApprovalStale, documentproduction.ProblemPrivilegeLogStale,
+			documentproduction.ProblemPolicyUnsatisfied, documentproduction.ProblemApprovalRequired,
+			documentproduction.ProblemPrivilegeLogRequired, documentproduction.ProblemRetentionRequired,
+			documentproduction.ProblemArtifactMissing, documentproduction.ProblemArtifactMismatch:
+			return NewError(http.StatusConflict, string(problem.Code), "production authority needs review before finalization")
+		case documentproduction.ProblemInvalidContract:
+			return NewError(http.StatusUnprocessableEntity, string(problem.Code), "production input is invalid")
+		case documentproduction.ProblemLimit:
+			return NewError(http.StatusRequestEntityTooLarge, string(problem.Code), "production input exceeds a configured limit")
+		}
+	}
+	if problem, ok := errors.AsType[*redaction.Problem](err); ok {
+		switch problem.Code {
+		case "source_stale", "decision_conflict", "selection_expansion_required":
+			return NewError(http.StatusConflict, problem.Code, "production selection cannot resolve against current authority")
+		case "mapping_incomplete", "invalid_mode":
+			return NewError(http.StatusUnprocessableEntity, problem.Code, "production selection is incomplete or invalid")
+		case "render_limit":
+			return NewError(http.StatusRequestEntityTooLarge, problem.Code, "production selection exceeds rendering limits")
+		}
+	}
 	switch {
 	case errors.Is(err, store.ErrNotFound):
 		return FromStoreError(err)
@@ -164,6 +252,10 @@ func productionSetError(err error) error {
 		return NewError(http.StatusConflict, "production_operation_conflict", "operation ID names different production input")
 	case errors.Is(err, store.ErrProductionRevisionConflict):
 		return NewError(http.StatusConflict, "production_revision_conflict", "production revision changed")
+	case errors.Is(err, store.ErrBatesReservationConflict):
+		return NewError(http.StatusConflict, "production_numbering_conflict", "production numbering namespace changed")
+	case errors.Is(err, productionservice.ErrJobConflict):
+		return NewError(http.StatusConflict, "production_job_conflict", "production job cannot be changed")
 	case errors.Is(err, store.ErrInvalidProduction):
 		return NewError(http.StatusUnprocessableEntity, "invalid_production", "production input is invalid")
 	default:
@@ -201,6 +293,22 @@ func registerProductionRoutes(api huma.API, d Deps, g *OperationGate) {
 				return nil, productionSetError(err)
 			}
 			return &struct{ Body ProductionSetCreated }{Body: ProductionSetCreated{Set: set, Draft: draft}}, nil
+		})
+	huma.Register(api, huma.Operation{OperationID: "listProductionSets", Method: http.MethodGet,
+		Path: "/api/v1/productions/sets", Summary: "Page retained production sets"},
+		func(ctx context.Context, in *struct {
+			Cursor string `query:"cursor" maxLength:"2048"`
+			Limit  int    `query:"limit" minimum:"0" maximum:"200"`
+		}) (*struct{ Body ProductionSetPage }, error) {
+			limit := in.Limit
+			if limit == 0 {
+				limit = 100
+			}
+			items, next, err := d.Store.ListProductionSets(ctx, in.Cursor, limit)
+			if err != nil {
+				return nil, productionSetError(err)
+			}
+			return &struct{ Body ProductionSetPage }{Body: ProductionSetPage{Items: items, NextCursor: next}}, nil
 		})
 	huma.Register(api, huma.Operation{OperationID: "getProductionSet", Method: http.MethodGet,
 		Path: "/api/v1/productions/sets/{set_id}", Summary: "Read a production set"},
@@ -250,16 +358,27 @@ func registerProductionRoutes(api huma.API, d Deps, g *OperationGate) {
 	huma.Register(api, huma.Operation{OperationID: "listProductionDecisions", Method: http.MethodGet,
 		Path: "/api/v1/productions/sets/{set_id}/revisions/{revision}/decisions", Summary: "Page exact production decisions"},
 		func(ctx context.Context, in *struct {
-			SetID    string `path:"set_id" format:"uuid"`
-			Revision int64  `path:"revision" minimum:"1"`
-			Cursor   string `query:"cursor"`
-			Limit    int    `query:"limit" minimum:"0" maximum:"200"`
+			SetID     string `path:"set_id" format:"uuid"`
+			Revision  int64  `path:"revision" minimum:"1"`
+			Cursor    string `query:"cursor"`
+			Limit     int    `query:"limit" minimum:"0" maximum:"500"`
+			Uncertain string `query:"uncertain" enum:"true,false"`
 		}) (*struct{ Body ProductionDecisionPage }, error) {
+			var uncertain *bool
+			switch in.Uncertain {
+			case "":
+			case "true":
+				uncertain = new(true)
+			case "false":
+				uncertain = new(false)
+			default:
+				return nil, NewError(http.StatusUnprocessableEntity, "invalid_production", "invalid uncertainty filter")
+			}
 			limit := in.Limit
 			if limit == 0 {
 				limit = 100
 			}
-			items, next, err := d.Store.ProductionDecisions(ctx, in.SetID, in.Revision, in.Cursor, limit)
+			items, next, err := d.Store.ProductionDecisionsFiltered(ctx, in.SetID, in.Revision, in.Cursor, limit, uncertain)
 			if err != nil {
 				return nil, productionSetError(err)
 			}
@@ -268,6 +387,153 @@ func registerProductionRoutes(api huma.API, d Deps, g *OperationGate) {
 				out[i] = ProductionDecision(item)
 			}
 			return &struct{ Body ProductionDecisionPage }{Body: ProductionDecisionPage{Items: out, NextCursor: next}}, nil
+		})
+	huma.Register(api, huma.Operation{OperationID: "getProductionMapChunk", Method: http.MethodGet,
+		Path:    "/api/v1/productions/sets/{set_id}/revisions/{revision}/maps/{member_id}",
+		Summary: "Page the exact retained aligned-text map for one production member"},
+		func(ctx context.Context, in *struct {
+			SetID    string `path:"set_id" format:"uuid"`
+			Revision int64  `path:"revision" minimum:"1"`
+			MemberID string `path:"member_id" format:"uuid"`
+			Cursor   string `query:"cursor" maxLength:"512"`
+			Limit    int    `query:"limit" minimum:"0" maximum:"65536"`
+		}) (*struct{ Body ProductionMapChunk }, error) {
+			limit := in.Limit
+			if limit == 0 {
+				limit = store.MaxProductionMapChunkBytes
+			}
+			chunk, err := d.Store.ProductionMapChunk(ctx, in.SetID, in.Revision, in.MemberID, in.Cursor, limit)
+			if err != nil {
+				return nil, productionSetError(err)
+			}
+			return &struct{ Body ProductionMapChunk }{Body: ProductionMapChunk(chunk)}, nil
+		})
+	huma.Register(api, huma.Operation{OperationID: "resolveProductionSelection", Method: http.MethodPost,
+		Path:    "/api/v1/productions/sets/{set_id}/revisions/{revision}/resolve",
+		Summary: "Preview one member's exact resolved mask and review binding", MaxBodyBytes: 4096},
+		func(ctx context.Context, in *struct {
+			SetID    string `path:"set_id" format:"uuid"`
+			Revision int64  `path:"revision" minimum:"1"`
+			IfMatch  string `header:"If-Match"`
+			Body     ProductionResolveRequest
+		}) (*struct{ Body ProductionResolvedMaskPage }, error) {
+			etag, err := parseIfMatch(in.IfMatch)
+			if err != nil {
+				return nil, err
+			}
+			limit := in.Body.Limit
+			if limit == 0 {
+				limit = 100
+			}
+			page, err := d.Store.ProductionResolvedMaskPage(ctx, in.SetID, in.Revision,
+				in.Body.MemberID, etag, in.Body.Page, in.Body.Cursor, limit)
+			if err != nil {
+				return nil, productionSetError(err)
+			}
+			return &struct{ Body ProductionResolvedMaskPage }{Body: ProductionResolvedMaskPage(page)}, nil
+		})
+	huma.Register(api, huma.Operation{OperationID: "finalizeProductionDraft", Method: http.MethodPost,
+		Path:    "/api/v1/productions/sets/{set_id}/revisions/{revision}/finalize",
+		Summary: "Finalize one reviewed production revision after current input gates", MaxBodyBytes: 4096},
+		func(ctx context.Context, in *struct {
+			SetID    string `path:"set_id" format:"uuid"`
+			Revision int64  `path:"revision" minimum:"1"`
+			IfMatch  string `header:"If-Match"`
+			Body     ProductionFinalizeRequest
+		}) (*struct{ Body ProductionFinalizationResult }, error) {
+			etag, err := parseIfMatch(in.IfMatch)
+			if err != nil {
+				return nil, err
+			}
+			actor, ok := workspaceSnapshotOwner(ctx)
+			if !ok {
+				return nil, NewError(http.StatusUnauthorized, "unauthorized", "authenticated production actor is missing")
+			}
+			var result store.ProductionFinalizationResult
+			err = g.mutate(func() error {
+				var err error
+				result, err = d.Store.FinalizeProductionDraft(ctx, actor, store.ProductionFinalizeCommand{
+					SetID: in.SetID, Revision: in.Revision, ETag: etag,
+					OperationID: in.Body.OperationID, NamespaceID: in.Body.NamespaceID,
+					SnapshotID: in.Body.SnapshotID, StartAt: in.Body.StartAt})
+				return err
+			})
+			if err != nil {
+				return nil, productionSetError(err)
+			}
+			return &struct{ Body ProductionFinalizationResult }{Body: ProductionFinalizationResult(result)}, nil
+		})
+	huma.Register(api, huma.Operation{OperationID: "admitProductionJob", Method: http.MethodPost,
+		Path:    "/api/v1/productions/sets/{set_id}/revisions/{revision}/jobs",
+		Summary: "Admit one production job from finalized authority", DefaultStatus: http.StatusCreated,
+		MaxBodyBytes: 4096},
+		func(ctx context.Context, in *struct {
+			SetID    string `path:"set_id" format:"uuid"`
+			Revision int64  `path:"revision" minimum:"1"`
+			IfMatch  string `header:"If-Match"`
+			Body     ProductionJobAdmissionRequest
+		}) (*struct{ Body ProductionJobStatus }, error) {
+			etag, err := parseIfMatch(in.IfMatch)
+			if err != nil {
+				return nil, err
+			}
+			if _, ok := workspaceSnapshotOwner(ctx); !ok {
+				return nil, NewError(http.StatusUnauthorized, "unauthorized", "authenticated production actor is missing")
+			}
+			var status store.ProductionJobStatus
+			err = g.mutate(func() error {
+				if _, err := d.Store.AdmitFinalizedProductionJob(ctx, in.SetID, in.Revision, etag,
+					in.Body.JobID, in.Body.OperationID); err != nil {
+					return err
+				}
+				status, err = d.Store.ProductionJobStatus(ctx, in.SetID, in.Body.JobID)
+				return err
+			})
+			if err != nil {
+				return nil, productionSetError(err)
+			}
+			return &struct{ Body ProductionJobStatus }{Body: ProductionJobStatus(status)}, nil
+		})
+	huma.Register(api, huma.Operation{OperationID: "getProductionJobStatus", Method: http.MethodGet,
+		Path:    "/api/v1/productions/sets/{set_id}/jobs/{job_id}",
+		Summary: "Read one set-scoped production job status"},
+		func(ctx context.Context, in *struct {
+			SetID string `path:"set_id" format:"uuid"`
+			JobID string `path:"job_id" format:"uuid"`
+		}) (*struct{ Body ProductionJobStatus }, error) {
+			status, err := d.Store.ProductionJobStatus(ctx, in.SetID, in.JobID)
+			if err != nil {
+				return nil, productionSetError(err)
+			}
+			return &struct{ Body ProductionJobStatus }{Body: ProductionJobStatus(status)}, nil
+		})
+	huma.Register(api, huma.Operation{OperationID: "cancelProductionJob", Method: http.MethodPost,
+		Path:    "/api/v1/productions/sets/{set_id}/jobs/{job_id}/cancel",
+		Summary: "Cancel one production job with a replay-safe operation ID", MaxBodyBytes: 4096},
+		func(ctx context.Context, in *struct {
+			SetID   string `path:"set_id" format:"uuid"`
+			JobID   string `path:"job_id" format:"uuid"`
+			IfMatch string `header:"If-Match"`
+			Body    ProductionJobCancelRequest
+		}) (*struct{ Body ProductionReceipt }, error) {
+			etag, err := parseIfMatch(in.IfMatch)
+			if err != nil {
+				return nil, err
+			}
+			actor, ok := workspaceSnapshotOwner(ctx)
+			if !ok {
+				return nil, NewError(http.StatusUnauthorized, "unauthorized", "authenticated production actor is missing")
+			}
+			var receipt redaction.Receipt
+			err = g.mutate(func() error {
+				var err error
+				receipt, err = d.Store.CancelProductionJobOperation(ctx, actor, in.SetID, in.JobID, etag, in.Body.OperationID)
+				return err
+			})
+			if err != nil {
+				return nil, productionSetError(err)
+			}
+			return &struct{ Body ProductionReceipt }{Body: ProductionReceipt(receipt)}, nil
 		})
 	huma.Register(api, huma.Operation{OperationID: "editProductionInstructions", Method: http.MethodPut,
 		Path:         "/api/v1/productions/sets/{set_id}/revisions/{revision}/instructions",
@@ -292,6 +558,35 @@ func registerProductionRoutes(api huma.API, d Deps, g *OperationGate) {
 			err = g.mutate(func() error {
 				var err error
 				receipt, err = d.Store.EditProductionInstructions(ctx, actor, in.SetID, in.Revision, request)
+				return err
+			})
+			if err != nil {
+				return nil, productionSetError(err)
+			}
+			return &struct{ Body ProductionReceipt }{Body: ProductionReceipt(receipt)}, nil
+		})
+	huma.Register(api, huma.Operation{OperationID: "appendProductionMembers", Method: http.MethodPost,
+		Path:         "/api/v1/productions/sets/{set_id}/revisions/{revision}/members",
+		Summary:      "Append new production members to an exact draft revision",
+		MaxBodyBytes: redaction.MaxCommandBytes},
+		func(ctx context.Context, in *struct {
+			SetID    string `path:"set_id" format:"uuid"`
+			Revision int64  `path:"revision" minimum:"1"`
+			IfMatch  string `header:"If-Match"`
+			Body     ProductionMemberAppendRequest
+		}) (*struct{ Body ProductionReceipt }, error) {
+			etag, err := parseIfMatch(in.IfMatch)
+			if err != nil {
+				return nil, err
+			}
+			actor, ok := workspaceSnapshotOwner(ctx)
+			if !ok {
+				return nil, NewError(http.StatusUnauthorized, "unauthorized", "authenticated production actor is missing")
+			}
+			var receipt redaction.Receipt
+			err = g.mutate(func() error {
+				var err error
+				receipt, err = d.Store.AppendProductionMembers(ctx, actor, in.SetID, in.Revision, in.Body.Domain(etag))
 				return err
 			})
 			if err != nil {

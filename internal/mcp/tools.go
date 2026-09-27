@@ -70,6 +70,14 @@ var readToolDefinitions = []toolDefinition{
 	{name: "get_production_supplement", title: "Get production supplement", description: "Read one exact verified production continuation record.", schemas: getProductionSupplementSchemas},
 	{name: "get_production_reproduction", title: "Get production reproduction", description: "Read one exact verified reproduction receipt for a published production.", schemas: getProductionReproductionSchemas},
 	{name: "get_production_package", title: "Get production package", description: "Read one exact verified retained recipient package evidence receipt.", schemas: getProductionPackageSchemas},
+	{name: "list_production_sets", title: "List production sets", description: "Page through bounded production set summaries.", schemas: listProductionSetsSchemas},
+	{name: "get_production_set", title: "Get production set", description: "Read one exact production set.", schemas: getProductionSetSchemas},
+	{name: "get_production_draft", title: "Get production draft", description: "Read one exact production revision and ETag.", schemas: getProductionDraftSchemas},
+	{name: "list_production_members", title: "List production members", description: "Page through bounded member summaries for an exact revision.", schemas: listProductionMembersSchemas},
+	{name: "list_production_decisions", title: "List production decisions", description: "Page through bounded decision summaries for an exact revision.", schemas: listProductionDecisionsSchemas},
+	{name: "get_production_job", title: "Get production job", description: "Read one exact production job status.", schemas: getProductionJobSchemas},
+	{name: "list_production_recipes", title: "List production recipes", description: "Read qualified rendering recipe identities and digests.", schemas: listProductionRecipesSchemas},
+	{name: "resolve_production_selection", title: "Resolve production selection", description: "Read one bounded resolved mask page and its review binding for an exact draft ETag.", schemas: resolveProductionSelectionSchemas},
 }
 
 var processingToolDefinition = toolDefinition{
@@ -204,6 +212,72 @@ var createProductionWithheldSelectionToolDefinition = toolDefinition{
 	schemas:     createProductionWithheldSelectionSchemas, write: true, idempotent: true,
 }
 
+var createProductionSetToolDefinition = toolDefinition{
+	name: "create_production_set", title: "Create production set",
+	description: "Create or replay one production set with an explicit operation UUID.",
+	schemas:     createProductionSetSchemas, write: true, idempotent: true,
+}
+
+var forkProductionDraftToolDefinition = toolDefinition{
+	name: "fork_production_draft", title: "Fork production draft",
+	description: "Create or replay a new editable revision from an exact source revision.",
+	schemas:     forkProductionDraftSchemas, write: true, idempotent: true,
+}
+
+var editProductionInstructionsToolDefinition = toolDefinition{
+	name: "edit_production_instructions", title: "Edit production instructions",
+	description: "Replace revision instructions under an exact ETag and operation UUID.",
+	schemas:     editProductionInstructionsSchemas, write: true, idempotent: true,
+}
+
+var sealProductionMembershipToolDefinition = toolDefinition{
+	name: "seal_production_membership", title: "Seal production membership",
+	description: "Seal the exact member count and digest under an ETag and operation UUID.",
+	schemas:     sealProductionMembershipSchemas, write: true, idempotent: true,
+}
+
+var reviewProductionMemberToolDefinition = toolDefinition{
+	name: "review_production_member", title: "Review production member",
+	description: "Declare a member fully reviewed with the daemon-derived binding.",
+	schemas:     reviewProductionMemberSchemas, write: true, idempotent: true,
+}
+
+var appendProductionMembersToolDefinition = toolDefinition{
+	name: "append_production_members", title: "Append production members",
+	description: "Append a bounded JSON member batch to an exact draft ETag with an operation UUID.",
+	schemas:     appendProductionMembersSchemas, write: true, idempotent: true,
+}
+
+var applyProductionChangesToolDefinition = toolDefinition{
+	name: "apply_production_changes", title: "Apply production changes",
+	description: "Apply a bounded JSON change batch to an exact draft ETag with an operation UUID.",
+	schemas:     applyProductionChangesSchemas, write: true, idempotent: true,
+}
+
+var finalizeProductionDraftToolDefinition = toolDefinition{
+	name: "finalize_production_draft", title: "Finalize production draft",
+	description: "Finalize one fully reviewed revision under its exact ETag and operation UUID.",
+	schemas:     finalizeProductionDraftSchemas, write: true, idempotent: true,
+}
+
+var admitProductionJobToolDefinition = toolDefinition{
+	name: "admit_production_job", title: "Admit production job",
+	description: "Admit or replay one job from finalized authority with explicit job and operation UUIDs.",
+	schemas:     admitProductionJobSchemas, write: true, idempotent: true,
+}
+
+var cancelProductionJobToolDefinition = toolDefinition{
+	name: "cancel_production_job", title: "Cancel production job",
+	description: "Cancel one exact production job with its ETag and operation UUID.",
+	schemas:     cancelProductionJobSchemas, write: true, idempotent: true, destructive: true,
+}
+
+var publishProductionPackageToolDefinition = toolDefinition{
+	name: "publish_production_package", title: "Publish production package",
+	description: "Publish or replay one verified recipient package from a successful job.",
+	schemas:     publishProductionPackageSchemas, write: true, idempotent: true,
+}
+
 func toolCatalog(allowProcessing bool) []*sdkmcp.Tool {
 	definitions := readToolDefinitions
 	if allowProcessing {
@@ -216,7 +290,13 @@ func toolCatalog(allowProcessing bool) []*sdkmcp.Tool {
 			exportProductionPrivilegeLogToolDefinition, downloadProductionPackageToolDefinition,
 			createProductionSupplementToolDefinition, createProductionReproductionToolDefinition,
 			createProductionPackageToolDefinition, createProductionPlayersSnapshotToolDefinition,
-			createProductionWithheldSelectionToolDefinition)
+			createProductionWithheldSelectionToolDefinition,
+			createProductionSetToolDefinition, forkProductionDraftToolDefinition,
+			editProductionInstructionsToolDefinition, sealProductionMembershipToolDefinition,
+			reviewProductionMemberToolDefinition, appendProductionMembersToolDefinition,
+			applyProductionChangesToolDefinition, finalizeProductionDraftToolDefinition,
+			admitProductionJobToolDefinition, cancelProductionJobToolDefinition,
+			publishProductionPackageToolDefinition)
 	}
 	tools := make([]*sdkmcp.Tool, 0, len(definitions))
 	for _, definition := range definitions {
@@ -281,6 +361,18 @@ func registerToolCatalog(
 			handler = createProductionPlayersSnapshotToolHandler(lease, output, logger)
 		case createProductionWithheldSelectionToolDefinition.name:
 			handler = createProductionWithheldSelectionToolHandler(lease, output, logger)
+		case createProductionSetToolDefinition.name, forkProductionDraftToolDefinition.name:
+			handler = productionDraftWriteToolHandler(lease, tool.Name, output, logger)
+		case editProductionInstructionsToolDefinition.name, sealProductionMembershipToolDefinition.name,
+			reviewProductionMemberToolDefinition.name:
+			handler = productionReviewWriteToolHandler(lease, tool.Name, output, logger)
+		case appendProductionMembersToolDefinition.name, applyProductionChangesToolDefinition.name:
+			handler = productionChangesWriteToolHandler(lease, tool.Name, output, logger)
+		case finalizeProductionDraftToolDefinition.name, admitProductionJobToolDefinition.name,
+			cancelProductionJobToolDefinition.name:
+			handler = productionJobWriteToolHandler(lease, tool.Name, output, logger)
+		case publishProductionPackageToolDefinition.name:
+			handler = productionPackagePublishToolHandler(lease, output, logger)
 		default:
 			handler = readToolHandler(lease, plans, tool.Name, output, logger)
 		}
@@ -442,6 +534,8 @@ func stableDomainError(err error) (string, int) {
 		return "consent_required", 0
 	case errors.Is(err, errProcessingOutcomeUnknown):
 		return "processing_outcome_unknown", 0
+	case errors.Is(err, errProductionOutcomeUnknown):
+		return "production_outcome_unknown", 0
 	case errors.Is(err, errBatesOutcomeUnknown):
 		return "bates_outcome_unknown", 0
 	case errors.Is(err, errProductionPolicyOutcomeUnknown):
@@ -513,6 +607,14 @@ func stableDomainError(err error) (string, int) {
 		"production_withheld_conflict", "invalid_production_withheld_selection",
 		"approval_required", "approval_stale":
 		return facts.Code, 0
+	case "production_operation_conflict", "production_revision_conflict", "production_job_conflict",
+		"production_numbering_conflict", "invalid_production", "source_stale", "decision_conflict",
+		"selection_expansion_required", "mapping_incomplete", "invalid_mode", "render_limit",
+		"changed_payload", "policy_unsatisfied", "privilege_log_required", "privilege_log_stale",
+		"retention_required", "artifact_missing", "artifact_mismatch", "invalid_contract", "limit",
+		"production_package_canceled", "production_package_timeout", "production_unavailable",
+		"production_download_failed", "production_download_canceled", "production_download_timeout":
+		return facts.Code, 0
 	default:
 		return "", 0
 	}
@@ -550,6 +652,34 @@ func domainErrorMessage(code string) string {
 		return "The Bates range exceeds the namespace padding."
 	case "bates_outcome_unknown":
 		return "The Bates authority write outcome is unknown; reconcile the namespace or allocation before retrying."
+	case "production_outcome_unknown":
+		return "The production write outcome is unknown; retry only with the same operation ID."
+	case "production_operation_conflict":
+		return "The operation ID names different production input."
+	case "production_revision_conflict":
+		return "The production revision changed. Read its current ETag before editing."
+	case "production_job_conflict":
+		return "The production job cannot be changed in its current state."
+	case "production_numbering_conflict":
+		return "The production numbering authority changed. Review the namespace before retrying."
+	case "source_stale", "changed_payload", "privilege_log_stale", "artifact_missing", "artifact_mismatch":
+		return "Production inputs or required evidence changed. Review current authority."
+	case "policy_unsatisfied", "privilege_log_required", "retention_required":
+		return "The selected production policy requires more evidence before this operation."
+	case "decision_conflict", "selection_expansion_required", "mapping_incomplete", "invalid_mode":
+		return "The production selection needs review before this operation."
+	case "render_limit", "limit":
+		return "The production input exceeds a configured limit."
+	case "invalid_contract", "invalid_production":
+		return "The production input is invalid."
+	case "production_package_canceled", "production_package_timeout":
+		return "Package publication stopped before a result was confirmed. Retry with the same operation ID."
+	case "production_unavailable":
+		return "The production package publisher is unavailable."
+	case "production_download_failed":
+		return "The package download failed verification. No destination file was published."
+	case "production_download_canceled", "production_download_timeout":
+		return "The production package download stopped before a file was published."
 	case "production_policy_conflict":
 		return "The operation ID or policy version conflicts with existing immutable policy authority."
 	case "invalid_production_policy":

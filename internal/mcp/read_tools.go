@@ -120,6 +120,22 @@ func executeReadTool(
 		output, err = getProductionReproduction(ctx, lease, raw)
 	case "get_production_package":
 		output, err = getProductionPackage(ctx, lease, raw)
+	case "list_production_sets":
+		output, err = listProductionSets(ctx, lease, raw)
+	case "get_production_set":
+		output, err = getProductionSet(ctx, lease, raw)
+	case "get_production_draft":
+		output, err = getProductionDraft(ctx, lease, raw)
+	case "list_production_members":
+		output, err = listProductionMembers(ctx, lease, raw)
+	case "list_production_decisions":
+		output, err = listProductionDecisions(ctx, lease, raw)
+	case "get_production_job":
+		output, err = getProductionJob(ctx, lease, raw)
+	case "list_production_recipes":
+		output, err = listProductionRecipes(ctx, lease, raw)
+	case "resolve_production_selection":
+		output, err = resolveProductionSelection(ctx, lease, raw)
 	default:
 		return nil, errors.New("unknown Docbank read tool")
 	}

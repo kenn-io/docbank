@@ -3,15 +3,19 @@ package daemonconn
 import (
 	"context"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"net/url"
 	"strconv"
 
 	"go.kenn.io/docbank/document/redaction"
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/apiclient"
 	"go.kenn.io/docbank/internal/canonical"
+	productionservice "go.kenn.io/docbank/internal/production"
+	"go.kenn.io/docbank/internal/store"
 	"uuid"
 )
 
@@ -70,6 +74,38 @@ func (c *Connection) ProductionSet(ctx context.Context, setID string) (redaction
 	}
 	if result == nil || redaction.ValidateSet(*result) != nil || result.ID != setID {
 		return redaction.Set{}, integrityErrorf("production set response is inconsistent")
+	}
+	return *result, nil
+}
+
+func (c *Connection) ProductionSets(ctx context.Context, cursor string, limit int) (api.ProductionSetPage, error) {
+	if len(cursor) > 2048 || limit < 0 || limit > redaction.MaxProductionPage {
+		return api.ProductionSetPage{}, errors.New("invalid production set page")
+	}
+	query := &apiclient.ListProductionSetsQuery{}
+	if cursor != "" {
+		query.Cursor = &cursor
+	}
+	if limit != 0 {
+		bounded := int64(limit)
+		query.Limit = &bounded
+	} else {
+		limit = 100
+	}
+	result, err := c.API().ListProductionSets(ctx, &apiclient.ListProductionSetsRequestOptions{Query: query})
+	if err != nil {
+		return api.ProductionSetPage{}, err
+	}
+	if result == nil || len(result.Items) > limit || len(result.NextCursor) > 2048 ||
+		result.NextCursor != "" && (len(result.Items) != limit || result.NextCursor == cursor) {
+		return api.ProductionSetPage{}, integrityErrorf("production set page is inconsistent")
+	}
+	previous := ""
+	for _, set := range result.Items {
+		if redaction.ValidateSet(set) != nil || set.ID <= previous {
+			return api.ProductionSetPage{}, integrityErrorf("production set page contains invalid authority")
+		}
+		previous = set.ID
 	}
 	return *result, nil
 }
@@ -140,13 +176,24 @@ func (c *Connection) ProductionMembers(ctx context.Context, setID string, revisi
 }
 
 func (c *Connection) ProductionDecisions(ctx context.Context, setID string, revision int64, cursor string, limit int) (api.ProductionDecisionPage, error) {
+	return c.ProductionDecisionsFiltered(ctx, setID, revision, cursor, limit, nil)
+}
+
+// ProductionDecisionsFiltered pages a single uncertainty view. A cursor is
+// bound to the selected view by the server.
+func (c *Connection) ProductionDecisionsFiltered(ctx context.Context, setID string, revision int64,
+	cursor string, limit int, uncertain *bool) (api.ProductionDecisionPage, error) {
 	parsed, err := productionSetUUID(setID)
-	if err != nil || revision < 1 || limit < 0 || limit > redaction.MaxProductionPage {
+	if err != nil || revision < 1 || len(cursor) > 2048 || limit < 0 || limit > redaction.MaxProductionDecisionPage {
 		return api.ProductionDecisionPage{}, errors.New("invalid production decision page")
 	}
 	query := &apiclient.ListProductionDecisionsQuery{}
 	if cursor != "" {
 		query.Cursor = &cursor
+	}
+	if uncertain != nil {
+		filter := apiclient.ListProductionDecisionsQueryUncertain(strconv.FormatBool(*uncertain))
+		query.Uncertain = &filter
 	}
 	if limit != 0 {
 		bounded := int64(limit)
@@ -159,15 +206,275 @@ func (c *Connection) ProductionDecisions(ctx context.Context, setID string, revi
 	if err != nil {
 		return api.ProductionDecisionPage{}, err
 	}
-	if result == nil || len(result.Items) > limit {
+	if result == nil || len(result.Items) > limit || len(result.NextCursor) > 2048 ||
+		result.NextCursor != "" && (len(result.Items) == 0 || result.NextCursor == cursor) {
 		return api.ProductionDecisionPage{}, integrityErrorf("production decision page is inconsistent")
 	}
+	var priorMemberID, priorID string
 	for _, item := range result.Items {
-		if redaction.ValidateDecision(redaction.Decision(item)) != nil {
+		if redaction.ValidateDecision(redaction.Decision(item)) != nil || item.Revision != revision ||
+			uncertain != nil && item.Uncertain != *uncertain ||
+			item.MemberID < priorMemberID || item.MemberID == priorMemberID && item.ID <= priorID {
 			return api.ProductionDecisionPage{}, integrityErrorf("production decision page contains invalid authority")
+		}
+		priorMemberID, priorID = item.MemberID, item.ID
+	}
+	return *result, nil
+}
+
+// ProductionMapChunk verifies the page digest; callers must also verify the
+// assembled canonical map against MapSHA256 before using selectors from it.
+func (c *Connection) ProductionMapChunk(ctx context.Context, setID string, revision int64, memberID, cursor string, limit int) (api.ProductionMapChunk, error) {
+	parsedSet, err := productionSetUUID(setID)
+	if err != nil || !validUUIDv4(memberID) || revision < 1 || len(cursor) > 512 ||
+		limit < 0 || limit > store.MaxProductionMapChunkBytes {
+		return api.ProductionMapChunk{}, errors.New("invalid production map page")
+	}
+	parsedMember, err := uuid.Parse(memberID)
+	if err != nil {
+		return api.ProductionMapChunk{}, errors.New("invalid production member ID")
+	}
+	query := &apiclient.GetProductionMapChunkQuery{}
+	if cursor != "" {
+		query.Cursor = &cursor
+	}
+	if limit == 0 {
+		limit = store.MaxProductionMapChunkBytes
+	} else {
+		bounded := int64(limit)
+		query.Limit = &bounded
+	}
+	result, err := c.API().GetProductionMapChunk(ctx, &apiclient.GetProductionMapChunkRequestOptions{
+		PathParams: &apiclient.GetProductionMapChunkPath{SetID: parsedSet, Revision: revision, MemberID: parsedMember},
+		Query:      query})
+	if err != nil {
+		return api.ProductionMapChunk{}, err
+	}
+	if result == nil || !canonical.IsSHA256Hex(result.MapSHA256) || !canonical.IsSHA256Hex(result.ChunkSHA256) ||
+		result.Offset < 0 || result.TotalBytes < 1 || result.Offset >= result.TotalBytes || len(result.NextCursor) > 512 {
+		return api.ProductionMapChunk{}, integrityErrorf("production map page is inconsistent")
+	}
+	data, err := base64.StdEncoding.Strict().DecodeString(result.Data)
+	if err != nil || len(data) < 1 || len(data) > limit || result.Offset+int64(len(data)) > result.TotalBytes ||
+		(result.NextCursor == "") != (result.Offset+int64(len(data)) == result.TotalBytes) ||
+		result.NextCursor == cursor {
+		return api.ProductionMapChunk{}, integrityErrorf("production map page data is inconsistent")
+	}
+	digest := sha256.Sum256(data)
+	if hex.EncodeToString(digest[:]) != result.ChunkSHA256 {
+		return api.ProductionMapChunk{}, integrityErrorf("production map page digest is inconsistent")
+	}
+	return *result, nil
+}
+
+// ResolveProductionSelection reads one bounded page of the current final mask.
+// Its binding covers the full member plan, including boxes outside this page.
+func (c *Connection) ResolveProductionSelection(ctx context.Context, setID string, revision, etag int64,
+	request api.ProductionResolveRequest) (api.ProductionResolvedMaskPage, error) {
+	parsed, err := productionSetUUID(setID)
+	if err != nil || revision < 1 || etag < 1 || !validUUIDv4(request.MemberID) ||
+		request.Page < 1 || len(request.Cursor) > 1024 || request.Limit < 0 ||
+		request.Limit > redaction.MaxProductionPage {
+		return api.ProductionResolvedMaskPage{}, errors.New("invalid production resolve request")
+	}
+	limit := request.Limit
+	if limit == 0 {
+		limit = 100
+	}
+	header := strconv.FormatInt(etag, 10)
+	result, err := c.API().ResolveProductionSelection(ctx, &apiclient.ResolveProductionSelectionRequestOptions{
+		PathParams: &apiclient.ResolveProductionSelectionPath{SetID: parsed, Revision: revision},
+		Header:     &apiclient.ResolveProductionSelectionHeaders{IfMatch: &header}, Body: &request})
+	if err != nil {
+		return api.ProductionResolvedMaskPage{}, err
+	}
+	if result == nil || result.SetID != setID || result.Revision != revision || result.ETag != etag ||
+		result.MemberID != request.MemberID || result.Page.Number != request.Page ||
+		!canonical.IsSHA256Hex(result.Page.FrameSHA256) || !canonical.IsSHA256Hex(result.MapSHA256) ||
+		!canonical.IsSHA256Hex(result.RecipeSHA256) || !canonical.IsSHA256Hex(result.ResolvedSHA256) ||
+		!canonical.IsSHA256Hex(result.ReviewBinding) || result.Page.Width < 1 || result.Page.Height < 1 ||
+		result.TotalBoxes < 0 || len(result.Items) > limit || len(result.Items) > result.TotalBoxes ||
+		len(result.NextCursor) > 1024 || result.TotalBoxes > 0 && len(result.Items) == 0 ||
+		result.NextCursor != "" && (result.NextCursor == request.Cursor || len(result.Items) != limit) {
+		return api.ProductionResolvedMaskPage{}, integrityErrorf("production resolved mask page is inconsistent")
+	}
+	for _, box := range result.Items {
+		if box.Page != result.Page.Number || box.FrameSHA256 != result.Page.FrameSHA256 ||
+			box.X0 < 0 || box.Y0 < 0 || box.X1 <= box.X0 || box.Y1 <= box.Y0 ||
+			box.X1 > result.Page.Width || box.Y1 > result.Page.Height {
+			return api.ProductionResolvedMaskPage{}, integrityErrorf("production resolved mask contains an invalid box")
 		}
 	}
 	return *result, nil
+}
+
+// ProductionPreview issues fresh one-use tickets for an exact unnumbered
+// preview. The response carries verified image and sanitized text digests.
+func (c *Connection) ProductionPreview(ctx context.Context, setID string, revision, etag int64,
+	request api.ProductionPreviewRequest) (api.ProductionPreviewTicket, error) {
+	parsed, err := productionSetUUID(setID)
+	if err != nil || revision < 1 || etag < 1 || !validUUIDv4(request.OperationID) ||
+		!validUUIDv4(request.MemberID) || request.Page < 1 {
+		return api.ProductionPreviewTicket{}, errors.New("invalid production preview request")
+	}
+	header := strconv.FormatInt(etag, 10)
+	result, err := c.API().CreateProductionPreview(ctx, &apiclient.CreateProductionPreviewRequestOptions{
+		PathParams: &apiclient.CreateProductionPreviewPath{SetID: parsed, Revision: revision},
+		Header:     &apiclient.CreateProductionPreviewHeaders{IfMatch: &header}, Body: &request})
+	if err != nil {
+		return api.ProductionPreviewTicket{}, err
+	}
+	if result == nil || result.OperationID != request.OperationID ||
+		!canonical.IsSHA256Hex(result.PreviewInputSHA256) ||
+		!canonical.IsSHA256Hex(result.ResolvedSHA256) ||
+		!validProductionPreviewArtifactTicket(result.Image, 32<<20, false) ||
+		!validProductionPreviewArtifactTicket(result.Text, 16<<20, true) ||
+		result.Image.URL == result.Text.URL {
+		return api.ProductionPreviewTicket{}, integrityErrorf("production preview ticket is inconsistent")
+	}
+	return *result, nil
+}
+
+func validProductionPreviewArtifactTicket(ticket api.ProductionPreviewArtifactTicket, maxBytes int64, allowEmpty bool) bool {
+	if !canonical.IsSHA256Hex(ticket.SHA256) || ticket.Size > maxBytes ||
+		(ticket.Size < 1 && !allowEmpty || ticket.Size < 0) {
+		return false
+	}
+	parsed, err := url.Parse(ticket.URL)
+	if err != nil || parsed.Scheme != "" || parsed.Host != "" || parsed.Path != "/api/daemon/web-download/file" ||
+		parsed.Fragment != "" || parsed.RawQuery == "" {
+		return false
+	}
+	query, err := url.ParseQuery(parsed.RawQuery)
+	if err != nil {
+		return false
+	}
+	return len(query) == 1 && len(query["ticket"]) == 1 && len(query["ticket"][0]) == 43
+}
+
+// FinalizeProductionDraft gates and seals one exact reviewed revision without
+// allocating production numbers. Exact retries return the retained result.
+func (c *Connection) FinalizeProductionDraft(ctx context.Context, setID string, revision, etag int64,
+	request api.ProductionFinalizeRequest) (api.ProductionFinalizationResult, error) {
+	parsed, err := productionSetUUID(setID)
+	if err != nil || revision < 1 || etag < 1 || !validUUIDv4(request.OperationID) ||
+		!validUUIDv4(request.NamespaceID) || !validUUIDv4(request.SnapshotID) || request.StartAt < 0 {
+		return api.ProductionFinalizationResult{}, errors.New("invalid production finalization request")
+	}
+	header := strconv.FormatInt(etag, 10)
+	result, err := c.API().FinalizeProductionDraft(ctx, &apiclient.FinalizeProductionDraftRequestOptions{
+		PathParams: &apiclient.FinalizeProductionDraftPath{SetID: parsed, Revision: revision},
+		Header:     &apiclient.FinalizeProductionDraftHeaders{IfMatch: &header}, Body: &request})
+	if err != nil {
+		return api.ProductionFinalizationResult{}, err
+	}
+	if result == nil || redaction.ValidateDraft(result.Draft) != nil ||
+		result.Draft.SetID != setID || result.Draft.Revision != revision ||
+		result.Draft.ETag != etag || result.Draft.State != "finalized" ||
+		result.OperationID != request.OperationID || result.NamespaceID != request.NamespaceID ||
+		result.SnapshotID != request.SnapshotID ||
+		!canonical.IsSHA256Hex(result.PreparedSHA256) || !canonical.IsSHA256Hex(result.ReceiptSHA256) {
+		return api.ProductionFinalizationResult{}, integrityErrorf("production finalization response is inconsistent")
+	}
+	return *result, nil
+}
+
+func (c *Connection) ProductionJobStatus(ctx context.Context, setID, jobID string) (api.ProductionJobStatus, error) {
+	parsedSet, err := productionSetUUID(setID)
+	if err != nil {
+		return api.ProductionJobStatus{}, err
+	}
+	parsedJob, err := productionSetUUID(jobID)
+	if err != nil {
+		return api.ProductionJobStatus{}, err
+	}
+	result, err := c.API().GetProductionJobStatus(ctx, &apiclient.GetProductionJobStatusRequestOptions{
+		PathParams: &apiclient.GetProductionJobStatusPath{SetID: parsedSet, JobID: parsedJob}})
+	if err != nil {
+		return api.ProductionJobStatus{}, err
+	}
+	if result == nil || result.JobID != jobID || result.SetID != setID || result.Revision < 1 ||
+		!canonical.IsSHA256Hex(result.RevisionSHA256) {
+		return api.ProductionJobStatus{}, integrityErrorf("production job status is inconsistent")
+	}
+	switch result.State {
+	case productionservice.ProductionJobQueued, productionservice.ProductionJobRunning,
+		productionservice.ProductionJobFailed, productionservice.ProductionJobCanceled:
+		if result.ReceiptSHA256 != "" {
+			return api.ProductionJobStatus{}, integrityErrorf("production job status has an unexpected receipt")
+		}
+	case productionservice.ProductionJobSucceeded:
+		if !canonical.IsSHA256Hex(result.ReceiptSHA256) {
+			return api.ProductionJobStatus{}, integrityErrorf("production job status is missing its receipt")
+		}
+	default:
+		return api.ProductionJobStatus{}, integrityErrorf("production job status is invalid")
+	}
+	return *result, nil
+}
+
+// AdmitProductionJob submits a finalized revision and returns its bounded status.
+func (c *Connection) AdmitProductionJob(ctx context.Context, setID string, revision, etag int64,
+	request api.ProductionJobAdmissionRequest) (api.ProductionJobStatus, error) {
+	parsedSet, err := productionSetUUID(setID)
+	if err != nil || revision < 1 || etag < 1 || !validUUIDv4(request.JobID) ||
+		!validUUIDv4(request.OperationID) {
+		return api.ProductionJobStatus{}, errors.New("invalid production job admission")
+	}
+	header := strconv.FormatInt(etag, 10)
+	result, err := c.API().AdmitProductionJob(ctx, &apiclient.AdmitProductionJobRequestOptions{
+		PathParams: &apiclient.AdmitProductionJobPath{SetID: parsedSet, Revision: revision},
+		Header:     &apiclient.AdmitProductionJobHeaders{IfMatch: &header}, Body: &request})
+	if err != nil {
+		return api.ProductionJobStatus{}, err
+	}
+	if result == nil || result.JobID != request.JobID || result.SetID != setID ||
+		result.Revision != revision ||
+		!canonical.IsSHA256Hex(result.RevisionSHA256) {
+		return api.ProductionJobStatus{}, integrityErrorf("production admission status is inconsistent")
+	}
+	switch result.State {
+	case productionservice.ProductionJobQueued, productionservice.ProductionJobRunning,
+		productionservice.ProductionJobFailed, productionservice.ProductionJobCanceled:
+		if result.ReceiptSHA256 != "" {
+			return api.ProductionJobStatus{}, integrityErrorf("production admission status is inconsistent")
+		}
+	case productionservice.ProductionJobSucceeded:
+		if !canonical.IsSHA256Hex(result.ReceiptSHA256) {
+			return api.ProductionJobStatus{}, integrityErrorf("production admission status is inconsistent")
+		}
+	default:
+		return api.ProductionJobStatus{}, integrityErrorf("production admission status is inconsistent")
+	}
+	return *result, nil
+}
+
+func (c *Connection) CancelProductionJob(ctx context.Context, setID, jobID string, etag int64,
+	request api.ProductionJobCancelRequest) (redaction.Receipt, error) {
+	parsedSet, err := productionSetUUID(setID)
+	if err != nil || etag < 1 || !validUUIDv4(request.OperationID) {
+		return redaction.Receipt{}, errors.New("invalid production job cancellation")
+	}
+	parsedJob, err := productionSetUUID(jobID)
+	if err != nil {
+		return redaction.Receipt{}, err
+	}
+	header := strconv.FormatInt(etag, 10)
+	result, err := c.API().CancelProductionJob(ctx, &apiclient.CancelProductionJobRequestOptions{
+		PathParams: &apiclient.CancelProductionJobPath{SetID: parsedSet, JobID: parsedJob},
+		Header:     &apiclient.CancelProductionJobHeaders{IfMatch: &header}, Body: &request})
+	if err != nil {
+		return redaction.Receipt{}, err
+	}
+	if result == nil {
+		return redaction.Receipt{}, integrityErrorf("production cancellation receipt is missing")
+	}
+	receipt := redaction.Receipt(*result)
+	if redaction.ValidateReceipt(receipt) != nil || receipt.SetID != setID ||
+		receipt.OperationID != request.OperationID || receipt.ETag != etag {
+		return redaction.Receipt{}, integrityErrorf("production cancellation receipt is inconsistent")
+	}
+	return receipt, nil
 }
 
 func productionSetUUID(value string) (uuid.UUID, error) {
@@ -207,6 +514,22 @@ func (c *Connection) ApplyProductionChanges(ctx context.Context, setID string, r
 	result, err := c.API().ApplyProductionChanges(ctx, &apiclient.ApplyProductionChangesRequestOptions{
 		PathParams: &apiclient.ApplyProductionChangesPath{SetID: parsed, Revision: revision},
 		Header:     &apiclient.ApplyProductionChangesHeaders{IfMatch: &header}, Body: &request})
+	if err != nil {
+		return redaction.Receipt{}, err
+	}
+	return checkedProductionMutationReceipt(result, setID, revision, request.OperationID, etag)
+}
+
+func (c *Connection) AppendProductionMembers(ctx context.Context, setID string, revision, etag int64,
+	request api.ProductionMemberAppendRequest) (redaction.Receipt, error) {
+	parsed, err := productionSetUUID(setID)
+	if err != nil || revision < 1 || redaction.ValidateApplyRequest(request.Domain(etag)) != nil {
+		return redaction.Receipt{}, errors.New("invalid production member append")
+	}
+	header := strconv.FormatInt(etag, 10)
+	result, err := c.API().AppendProductionMembers(ctx, &apiclient.AppendProductionMembersRequestOptions{
+		PathParams: &apiclient.AppendProductionMembersPath{SetID: parsed, Revision: revision},
+		Header:     &apiclient.AppendProductionMembersHeaders{IfMatch: &header}, Body: &request})
 	if err != nil {
 		return redaction.Receipt{}, err
 	}

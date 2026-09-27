@@ -11,8 +11,8 @@ func downloadProductionPackageSchemas() (schema, schema) {
 			productionJobIDField: uuidSchema(), productionOperationIDField: uuidSchema(),
 			"destination_path": stringSchema(maxPathCharacters),
 			"archive_sha256":   sha256Schema(), "version_id": uuidSchema(),
-			"size":           integerSchema(1, 0),
+			schemaSizeField:  integerSchema(1, 0),
 			schemaStateField: enumSchema("published", "published_durability_unknown"),
 		}), cacheRequired(productionJobIDField, productionOperationIDField, "destination_path", "archive_sha256",
-			"version_id", "size", schemaStateField)...)
+			"version_id", schemaSizeField, schemaStateField)...)
 }

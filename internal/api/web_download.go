@@ -60,6 +60,8 @@ type webDownloadTicket struct {
 	archiveFile     *os.File
 	releaseArchive  func()
 	planFingerprint string
+	// Preview artifacts are rehashed immediately before response headers.
+	verifyDigestOnDelivery bool
 }
 
 func (t webDownloadTicket) release() {
@@ -437,6 +439,17 @@ func registerWebDownload(
 			writeError(w, NewError(http.StatusGone, "download_unavailable",
 				"the verified browser download is no longer available"))
 			return
+		}
+		if ticket.verifyDigestOnDelivery {
+			hasher := sha256.New()
+			readSize, hashErr := io.Copy(hasher, file)
+			_, seekErr := file.Seek(0, io.SeekStart)
+			if hashErr != nil || seekErr != nil || readSize != ticket.size ||
+				hex.EncodeToString(hasher.Sum(nil)) != ticket.blobHash || r.Context().Err() != nil {
+				writeError(w, NewError(http.StatusGone, "download_unavailable",
+					"the verified browser download is no longer available"))
+				return
+			}
 		}
 
 		mediaType := ticket.mediaType

@@ -124,6 +124,21 @@ func StoredApprovalSubject(stored StoredProductionInputs) (documentproduction.Ap
 	return prepared.ApprovalSubject, nil
 }
 
+// PrepareProductionPreviewMember derives a complete member projection without
+// issuing a gate receipt. A preview does not certify finalization or approval.
+func PrepareProductionPreviewMember(stored StoredProductionInputs, memberID string) (documentproduction.PreparedMember, bool, error) {
+	prepared, _, err := prepareStoredProduction(stored, time.Unix(0, 0).UTC())
+	if err != nil {
+		return documentproduction.PreparedMember{}, false, err
+	}
+	for _, member := range prepared.Members {
+		if member.Member.ID == memberID {
+			return member, true, nil
+		}
+	}
+	return documentproduction.PreparedMember{}, false, nil
+}
+
 // ReserveAfterPreparedInput is the sole gate-to-numbering handoff. The
 // reservation callback is never invoked for a failed, stale or wrong receipt.
 func ReserveAfterPreparedInput(authority documentproduction.PreparedInputAuthority, reference PreparedInputReference, reserve func(documentproduction.PreparedInputAuthority) error) error {

@@ -250,6 +250,9 @@ func openVaultWithRootOpener(
 	if err := layout.Ensure(); err != nil {
 		return nil, err
 	}
+	if err := sweepEmbeddedProductionStages(layout.Root); err != nil {
+		return nil, err
+	}
 	metadata, err := store.Open(layout.DBPath(), config.SQLite)
 	if err != nil {
 		return nil, err
@@ -416,6 +419,7 @@ func openVaultWithRootOpener(
 	vault.startProcessingWorker(workerContext, packageWorker.Run)
 	vault.startProcessingWorker(workerContext, worker.Run)
 	vault.startProcessingWorker(workerContext, continuation.Run)
+	vault.startProductionWorker(workerContext)
 	if embeddingWorker != nil {
 		vault.startProcessingWorker(workerContext, embeddingWorker.Run)
 	}

@@ -24,10 +24,10 @@ func exportProductionPrivilegeLogSchemas() (schema, schema) {
 				productionservice.PrivilegeLogCSVMediaType, productionservice.PrivilegeLogXLSXMediaType,
 				productionservice.PrivilegeLogPDFMediaType),
 			"receipt_sha256": sha256Schema(), "rows_sha256": sha256Schema(),
-			"content_sha256": sha256Schema(), "size": integerSchema(1, 512<<20),
+			"content_sha256": sha256Schema(), schemaSizeField: integerSchema(1, 512<<20),
 			schemaStateField: enumSchema("published", "published_durability_unknown"),
 		}), cacheRequired(productionPrivilegeLogIDField, productionPrivilegeRevisionField, "format", "destination_path", "media_type",
-			"receipt_sha256", "rows_sha256", "content_sha256", "size", schemaStateField)...)
+			"receipt_sha256", "rows_sha256", "content_sha256", schemaSizeField, schemaStateField)...)
 }
 
 func getProductionPrivilegeLogSchemas() (schema, schema) {

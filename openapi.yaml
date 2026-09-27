@@ -9234,6 +9234,33 @@ components:
       x-go-type-import:
         path: go.kenn.io/docbank/internal/api
         name: api
+    Page:
+      additionalProperties: false
+      properties:
+        frame_sha256:
+          type: string
+        height:
+          format: int64
+          type: integer
+        number:
+          format: int64
+          type: integer
+        span:
+          $ref: "#/components/schemas/Span"
+        width:
+          format: int64
+          type: integer
+      required:
+        - number
+        - frame_sha256
+        - width
+        - height
+        - span
+      type: object
+      x-go-type: redaction.Page
+      x-go-type-import:
+        path: go.kenn.io/docbank/document/redaction
+        name: redaction
     PageBinding:
       additionalProperties: false
       properties:
@@ -11413,6 +11440,68 @@ components:
       x-go-type-import:
         path: go.kenn.io/docbank/internal/api
         name: api
+    ProductionFinalizationResult:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/ProductionFinalizationResult.json
+          format: uri
+          readOnly: true
+          type: string
+        draft:
+          $ref: "#/components/schemas/Draft"
+        namespace_id:
+          type: string
+        operation_id:
+          type: string
+        prepared_sha256:
+          type: string
+        receipt_sha256:
+          type: string
+        snapshot_id:
+          type: string
+      required:
+        - draft
+        - operation_id
+        - namespace_id
+        - snapshot_id
+        - prepared_sha256
+        - receipt_sha256
+      type: object
+      x-go-type: api.ProductionFinalizationResult
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
+    ProductionFinalizeRequest:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/ProductionFinalizeRequest.json
+          format: uri
+          readOnly: true
+          type: string
+        namespace_id:
+          type: string
+        operation_id:
+          type: string
+        snapshot_id:
+          type: string
+        start_at:
+          format: int64
+          type: integer
+      required:
+        - operation_id
+        - namespace_id
+        - snapshot_id
+      type: object
+      x-go-type: api.ProductionFinalizeRequest
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     ProductionForkRequest:
       additionalProperties: false
       properties:
@@ -11451,6 +11540,117 @@ components:
         - instructions
       type: object
       x-go-type: api.ProductionInstructionsRequest
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
+    ProductionJobAdmissionRequest:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/ProductionJobAdmissionRequest.json
+          format: uri
+          readOnly: true
+          type: string
+        job_id:
+          type: string
+        operation_id:
+          type: string
+      required:
+        - job_id
+        - operation_id
+      type: object
+      x-go-type: api.ProductionJobAdmissionRequest
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
+    ProductionJobCancelRequest:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/ProductionJobCancelRequest.json
+          format: uri
+          readOnly: true
+          type: string
+        operation_id:
+          type: string
+      required:
+        - operation_id
+      type: object
+      x-go-type: api.ProductionJobCancelRequest
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
+    ProductionJobStatus:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/ProductionJobStatus.json
+          format: uri
+          readOnly: true
+          type: string
+        job_id:
+          type: string
+        receipt_sha256:
+          type: string
+        revision:
+          format: int64
+          type: integer
+        revision_sha256:
+          type: string
+        set_id:
+          type: string
+        state:
+          type: string
+      required:
+        - job_id
+        - set_id
+        - revision
+        - state
+        - revision_sha256
+      type: object
+      x-go-type: api.ProductionJobStatus
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
+    ProductionMapChunk:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/ProductionMapChunk.json
+          format: uri
+          readOnly: true
+          type: string
+        chunk_sha256:
+          type: string
+        data:
+          type: string
+        map_sha256:
+          type: string
+        next_cursor:
+          type: string
+        offset:
+          format: int64
+          type: integer
+        total_bytes:
+          format: int64
+          type: integer
+      required:
+        - map_sha256
+        - offset
+        - total_bytes
+        - data
+        - chunk_sha256
+        - next_cursor
+      type: object
+      x-go-type: api.ProductionMapChunk
       x-go-type-import:
         path: go.kenn.io/docbank/internal/api
         name: api
@@ -11509,6 +11709,30 @@ components:
         - review_binding
       type: object
       x-go-type: api.ProductionMember
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
+    ProductionMemberAppendRequest:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/ProductionMemberAppendRequest.json
+          format: uri
+          readOnly: true
+          type: string
+        members:
+          items:
+            $ref: "#/components/schemas/ProductionMember"
+          type: array
+        operation_id:
+          type: string
+      required:
+        - operation_id
+        - members
+      type: object
+      x-go-type: api.ProductionMemberAppendRequest
       x-go-type-import:
         path: go.kenn.io/docbank/internal/api
         name: api
@@ -11796,6 +12020,74 @@ components:
       x-go-type-import:
         path: go.kenn.io/docbank/internal/api
         name: api
+    ProductionPackagePublishRequest:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/ProductionPackagePublishRequest.json
+          format: uri
+          readOnly: true
+          type: string
+        max_volume_bytes:
+          format: int64
+          type: integer
+        max_volume_documents:
+          format: int64
+          type: integer
+        operation_id:
+          type: string
+        profile_id:
+          type: string
+      required:
+        - operation_id
+        - profile_id
+        - max_volume_bytes
+        - max_volume_documents
+      type: object
+      x-go-type: api.ProductionPackagePublishRequest
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
+    ProductionPackagePublished:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/ProductionPackagePublished.json
+          format: uri
+          readOnly: true
+          type: string
+        archive_sha256:
+          type: string
+        evidence_sha256:
+          type: string
+        job_id:
+          type: string
+        operation_id:
+          type: string
+        profile_id:
+          type: string
+        size:
+          format: int64
+          type: integer
+        version_id:
+          type: string
+      required:
+        - job_id
+        - operation_id
+        - profile_id
+        - version_id
+        - archive_sha256
+        - evidence_sha256
+        - size
+      type: object
+      x-go-type: api.ProductionPackagePublished
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     ProductionPlayersSnapshotCreateRequest:
       additionalProperties: false
       properties:
@@ -11863,6 +12155,82 @@ components:
         - next_cursor
       type: object
       x-go-type: api.ProductionPolicyPage
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
+    ProductionPreviewArtifactTicket:
+      additionalProperties: false
+      properties:
+        sha256:
+          type: string
+        size:
+          format: int64
+          type: integer
+        url:
+          type: string
+      required:
+        - url
+        - sha256
+        - size
+      type: object
+      x-go-type: api.ProductionPreviewArtifactTicket
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
+    ProductionPreviewRequest:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/ProductionPreviewRequest.json
+          format: uri
+          readOnly: true
+          type: string
+        member_id:
+          type: string
+        operation_id:
+          type: string
+        page:
+          format: int64
+          type: integer
+      required:
+        - operation_id
+        - member_id
+        - page
+      type: object
+      x-go-type: api.ProductionPreviewRequest
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
+    ProductionPreviewTicket:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/ProductionPreviewTicket.json
+          format: uri
+          readOnly: true
+          type: string
+        image:
+          $ref: "#/components/schemas/ProductionPreviewArtifactTicket"
+        operation_id:
+          type: string
+        preview_input_sha256:
+          type: string
+        resolved_sha256:
+          type: string
+        text:
+          $ref: "#/components/schemas/ProductionPreviewArtifactTicket"
+      required:
+        - operation_id
+        - preview_input_sha256
+        - resolved_sha256
+        - image
+        - text
+      type: object
+      x-go-type: api.ProductionPreviewTicket
       x-go-type-import:
         path: go.kenn.io/docbank/internal/api
         name: api
@@ -12247,6 +12615,91 @@ components:
       x-go-type-import:
         path: go.kenn.io/docbank/internal/api
         name: api
+    ProductionResolveRequest:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/ProductionResolveRequest.json
+          format: uri
+          readOnly: true
+          type: string
+        cursor:
+          type: string
+        limit:
+          format: int64
+          type: integer
+        member_id:
+          type: string
+        page:
+          format: int64
+          type: integer
+      required:
+        - member_id
+        - page
+      type: object
+      x-go-type: api.ProductionResolveRequest
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
+    ProductionResolvedMaskPage:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/ProductionResolvedMaskPage.json
+          format: uri
+          readOnly: true
+          type: string
+        etag:
+          format: int64
+          type: integer
+        items:
+          items:
+            $ref: "#/components/schemas/Box"
+          type: array
+        map_sha256:
+          type: string
+        member_id:
+          type: string
+        next_cursor:
+          type: string
+        page:
+          $ref: "#/components/schemas/Page"
+        recipe_sha256:
+          type: string
+        resolved_sha256:
+          type: string
+        review_binding:
+          type: string
+        revision:
+          format: int64
+          type: integer
+        set_id:
+          type: string
+        total_boxes:
+          format: int64
+          type: integer
+      required:
+        - set_id
+        - revision
+        - etag
+        - member_id
+        - page
+        - map_sha256
+        - recipe_sha256
+        - resolved_sha256
+        - review_binding
+        - total_boxes
+        - items
+        - next_cursor
+      type: object
+      x-go-type: api.ProductionResolvedMaskPage
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     ProductionSetCreated:
       additionalProperties: false
       properties:
@@ -12266,6 +12719,30 @@ components:
         - draft
       type: object
       x-go-type: api.ProductionSetCreated
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
+    ProductionSetPage:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/ProductionSetPage.json
+          format: uri
+          readOnly: true
+          type: string
+        items:
+          items:
+            $ref: "#/components/schemas/Set"
+          type: array
+        next_cursor:
+          type: string
+      required:
+        - items
+        - next_cursor
+      type: object
+      x-go-type: api.ProductionSetPage
       x-go-type-import:
         path: go.kenn.io/docbank/internal/api
         name: api
@@ -21759,6 +22236,36 @@ paths:
                 $ref: "#/components/schemas/Error"
           description: Error
       summary: Build and retain a recipient archive from verified published production artifacts
+  /api/v1/productions/jobs/{job_id}/packages/publish:
+    post:
+      operationId: publishProductionPackage
+      parameters:
+        - in: path
+          name: job_id
+          required: true
+          schema:
+            format: uuid
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ProductionPackagePublishRequest"
+        required: true
+      responses:
+        "201":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProductionPackagePublished"
+          description: Created
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: Publish one verified recipient package from a successful production job
   /api/v1/productions/jobs/{job_id}/packages/{operation_id}:
     get:
       operationId: getProductionPackage
@@ -22077,6 +22584,37 @@ paths:
           description: Error
       summary: List qualified production rendering recipes
   /api/v1/productions/sets:
+    get:
+      operationId: listProductionSets
+      parameters:
+        - explode: false
+          in: query
+          name: cursor
+          schema:
+            maxLength: 2048
+            type: string
+        - explode: false
+          in: query
+          name: limit
+          schema:
+            format: int64
+            maximum: 200
+            minimum: 0
+            type: integer
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProductionSetPage"
+          description: OK
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: Page retained production sets
     post:
       operationId: createProductionSet
       requestBody:
@@ -22123,6 +22661,76 @@ paths:
                 $ref: "#/components/schemas/Error"
           description: Error
       summary: Read a production set
+  /api/v1/productions/sets/{set_id}/jobs/{job_id}:
+    get:
+      operationId: getProductionJobStatus
+      parameters:
+        - in: path
+          name: set_id
+          required: true
+          schema:
+            format: uuid
+            type: string
+        - in: path
+          name: job_id
+          required: true
+          schema:
+            format: uuid
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProductionJobStatus"
+          description: OK
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: Read one set-scoped production job status
+  /api/v1/productions/sets/{set_id}/jobs/{job_id}/cancel:
+    post:
+      operationId: cancelProductionJob
+      parameters:
+        - in: path
+          name: set_id
+          required: true
+          schema:
+            format: uuid
+            type: string
+        - in: path
+          name: job_id
+          required: true
+          schema:
+            format: uuid
+            type: string
+        - in: header
+          name: If-Match
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ProductionJobCancelRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProductionReceipt"
+          description: OK
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: Cancel one production job with a replay-safe operation ID
   /api/v1/productions/sets/{set_id}/revisions/{revision}:
     get:
       operationId: getProductionDraft
@@ -22222,9 +22830,17 @@ paths:
           name: limit
           schema:
             format: int64
-            maximum: 200
+            maximum: 500
             minimum: 0
             type: integer
+        - explode: false
+          in: query
+          name: uncertain
+          schema:
+            enum:
+              - "true"
+              - "false"
+            type: string
       responses:
         "200":
           content:
@@ -22239,6 +22855,47 @@ paths:
                 $ref: "#/components/schemas/Error"
           description: Error
       summary: Page exact production decisions
+  /api/v1/productions/sets/{set_id}/revisions/{revision}/finalize:
+    post:
+      operationId: finalizeProductionDraft
+      parameters:
+        - in: path
+          name: set_id
+          required: true
+          schema:
+            format: uuid
+            type: string
+        - in: path
+          name: revision
+          required: true
+          schema:
+            format: int64
+            minimum: 1
+            type: integer
+        - in: header
+          name: If-Match
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ProductionFinalizeRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProductionFinalizationResult"
+          description: OK
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: Finalize one reviewed production revision after current input gates
   /api/v1/productions/sets/{set_id}/revisions/{revision}/fork:
     post:
       operationId: forkProductionDraft
@@ -22317,6 +22974,98 @@ paths:
                 $ref: "#/components/schemas/Error"
           description: Error
       summary: Edit production instructions with an exact draft ETag and replay-safe operation ID
+  /api/v1/productions/sets/{set_id}/revisions/{revision}/jobs:
+    post:
+      operationId: admitProductionJob
+      parameters:
+        - in: path
+          name: set_id
+          required: true
+          schema:
+            format: uuid
+            type: string
+        - in: path
+          name: revision
+          required: true
+          schema:
+            format: int64
+            minimum: 1
+            type: integer
+        - in: header
+          name: If-Match
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ProductionJobAdmissionRequest"
+        required: true
+      responses:
+        "201":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProductionJobStatus"
+          description: Created
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: Admit one production job from finalized authority
+  /api/v1/productions/sets/{set_id}/revisions/{revision}/maps/{member_id}:
+    get:
+      operationId: getProductionMapChunk
+      parameters:
+        - in: path
+          name: set_id
+          required: true
+          schema:
+            format: uuid
+            type: string
+        - in: path
+          name: revision
+          required: true
+          schema:
+            format: int64
+            minimum: 1
+            type: integer
+        - in: path
+          name: member_id
+          required: true
+          schema:
+            format: uuid
+            type: string
+        - explode: false
+          in: query
+          name: cursor
+          schema:
+            maxLength: 512
+            type: string
+        - explode: false
+          in: query
+          name: limit
+          schema:
+            format: int64
+            maximum: 65536
+            minimum: 0
+            type: integer
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProductionMapChunk"
+          description: OK
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: Page the exact retained aligned-text map for one production member
   /api/v1/productions/sets/{set_id}/revisions/{revision}/members:
     get:
       operationId: listProductionMembers
@@ -22361,6 +23110,46 @@ paths:
                 $ref: "#/components/schemas/Error"
           description: Error
       summary: Page exact production members
+    post:
+      operationId: appendProductionMembers
+      parameters:
+        - in: path
+          name: set_id
+          required: true
+          schema:
+            format: uuid
+            type: string
+        - in: path
+          name: revision
+          required: true
+          schema:
+            format: int64
+            minimum: 1
+            type: integer
+        - in: header
+          name: If-Match
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ProductionMemberAppendRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProductionReceipt"
+          description: OK
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: Append new production members to an exact draft revision
   /api/v1/productions/sets/{set_id}/revisions/{revision}/members/{member_id}/review:
     post:
       operationId: reviewProductionMember
@@ -22408,6 +23197,88 @@ paths:
                 $ref: "#/components/schemas/Error"
           description: Error
       summary: Record one exact production member review binding
+  /api/v1/productions/sets/{set_id}/revisions/{revision}/previews:
+    post:
+      operationId: createProductionPreview
+      parameters:
+        - in: path
+          name: set_id
+          required: true
+          schema:
+            format: uuid
+            type: string
+        - in: path
+          name: revision
+          required: true
+          schema:
+            format: int64
+            minimum: 1
+            type: integer
+        - in: header
+          name: If-Match
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ProductionPreviewRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProductionPreviewTicket"
+          description: OK
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: Issue one-use tickets for a verified unnumbered production preview
+  /api/v1/productions/sets/{set_id}/revisions/{revision}/resolve:
+    post:
+      operationId: resolveProductionSelection
+      parameters:
+        - in: path
+          name: set_id
+          required: true
+          schema:
+            format: uuid
+            type: string
+        - in: path
+          name: revision
+          required: true
+          schema:
+            format: int64
+            minimum: 1
+            type: integer
+        - in: header
+          name: If-Match
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ProductionResolveRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProductionResolvedMaskPage"
+          description: OK
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: Preview one member's exact resolved mask and review binding
   /api/v1/productions/sets/{set_id}/revisions/{revision}/seal:
     post:
       operationId: sealProductionMembership

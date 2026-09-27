@@ -1,0 +1,28 @@
+package mcp
+
+func finalizeProductionDraftSchemas() (schema, schema) {
+	input := productionMutationInputSchema(schema{
+		"namespace_id": uuidSchema(), schemaSnapshotIDField: uuidSchema(), "start_at": integerSchema(0, 0),
+	}, "namespace_id", schemaSnapshotIDField)
+	output := rootObjectSchema(withPrivateCache(schema{
+		"draft": productionDraftSchema(), schemaOperationIDField: uuidSchema(),
+		"namespace_id": uuidSchema(), schemaSnapshotIDField: uuidSchema(),
+		"prepared_sha256": sha256Schema(), "receipt_sha256": sha256Schema(),
+	}), cacheRequired("draft", schemaOperationIDField, "namespace_id", schemaSnapshotIDField,
+		"prepared_sha256", "receipt_sha256")...)
+	return input, output
+}
+
+func admitProductionJobSchemas() (schema, schema) {
+	input := productionMutationInputSchema(schema{schemaJobIDField: uuidSchema()}, "job_id")
+	_, output := getProductionJobSchemas()
+	return input, output
+}
+
+func cancelProductionJobSchemas() (schema, schema) {
+	input := rootObjectSchema(schema{
+		schemaSetIDField: uuidSchema(), schemaJobIDField: uuidSchema(),
+		schemaETagField: integerSchema(1, 0), schemaOperationIDField: uuidSchema(),
+	}, schemaSetIDField, "job_id", schemaETagField, schemaOperationIDField)
+	return input, productionReceiptSchema()
+}
