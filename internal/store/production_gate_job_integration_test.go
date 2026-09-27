@@ -95,6 +95,29 @@ func TestProductionStoredGateFinalizesDuplicateOccurrencesAndReservesOnce(t *tes
 	require.Equal(t, reserved.ID, allocation.AllocationID)
 }
 
+func TestProductionJobBatesRequestChecksFrozenGateWithoutAllocating(t *testing.T) {
+	s, finalized, job := unreservedProductionCheckpointFixture(t)
+	request, err := s.productionJobBatesRequest(t.Context(), job, finalized)
+	require.NoError(t, err)
+	require.Equal(t, job.ID, request.OperationID)
+	require.Equal(t, finalized.Draft.NumberingRecipeSHA256, request.RecipeSHA256)
+	require.Len(t, request.Pages, len(finalized.Authority.Prepared.Members))
+	for index, page := range request.Pages {
+		member := finalized.Authority.Prepared.Members[index].Member
+		require.Equal(t, member.ID, page.OccurrenceID)
+		require.Equal(t, member.PDFSHA256, page.UnstampedSHA256)
+	}
+	var allocations int
+	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM bates_allocations`).Scan(&allocations))
+	require.Zero(t, allocations, "preflight must not reserve numbers")
+	changed := job
+	changed.PreparedInputSHA256 = productionHash("different gate receipt")
+	_, err = s.productionJobBatesRequest(t.Context(), changed, finalized)
+	require.ErrorIs(t, err, production.ErrJobConflict)
+	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM bates_allocations`).Scan(&allocations))
+	require.Zero(t, allocations)
+}
+
 func TestProductionFinalizationRejectsChangedRevisionAndSnapshotBeforeNumbering(t *testing.T) {
 	for _, change := range []string{"revision", "snapshot"} {
 		t.Run(change, func(t *testing.T) {

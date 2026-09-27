@@ -546,55 +546,18 @@ func (s *Store) ClaimProductionJob(ctx context.Context, jobID, worker string, le
 // with the finalized revision and delegates allocation to the existing Bates
 // ledger. Caller-supplied allocation IDs are never accepted as authority.
 func (s *Store) ReserveProductionJobNumbers(ctx context.Context, job productionservice.Job, finalized productionservice.FinalizedProduction) (documentproduction.NumberReservation, error) {
-	stored, err := s.LoadFinalizedProduction(ctx, finalized.Draft.SetID, finalized.Draft.Revision)
-	if err != nil {
-		return documentproduction.NumberReservation{}, err
-	}
-	want, err := canonical.Marshal(stored)
-	if err != nil {
-		return documentproduction.NumberReservation{}, err
-	}
-	got, err := canonical.Marshal(finalized)
-	if err != nil || !bytes.Equal(want, got) || stored.Authority.Receipt == nil ||
-		job.SetID != stored.Draft.SetID || job.Revision != stored.Draft.Revision ||
-		job.ETag != stored.Draft.ETag || job.RevisionSHA256 != stored.Authority.Prepared.SHA256 ||
-		job.PreparedInputSHA256 != stored.Authority.Receipt.SHA256 {
-		return documentproduction.NumberReservation{}, errors.Join(productionservice.ErrJobConflict, err)
-	}
-	var admittedSetID, admittedPreparedSHA, admittedRevisionSHA, state string
-	var admittedRevision, admittedETag int64
-	err = s.db.QueryRowContext(ctx, `SELECT set_id,revision,etag,prepared_input_sha256,revision_sha256,state
-		FROM production_jobs WHERE job_id=?`, job.ID).Scan(&admittedSetID, &admittedRevision,
-		&admittedETag, &admittedPreparedSHA, &admittedRevisionSHA, &state)
-	if err != nil || admittedSetID != job.SetID || admittedRevision != job.Revision ||
-		admittedETag != job.ETag || admittedPreparedSHA != job.PreparedInputSHA256 ||
-		admittedRevisionSHA != job.RevisionSHA256 || (state != productionservice.ProductionJobQueued && state != productionservice.ProductionJobRunning) {
-		return documentproduction.NumberReservation{}, errors.Join(productionservice.ErrJobConflict, err)
-	}
-	var namespaceID, snapshotID, recipeSHA string
-	var startAt int64
-	err = s.db.QueryRowContext(ctx, `SELECT numbering_namespace_id,numbering_snapshot_id,numbering_recipe_sha256,numbering_start_at FROM production_finalized_revisions WHERE set_id=? AND revision=?`, finalized.Draft.SetID, finalized.Draft.Revision).Scan(&namespaceID, &snapshotID, &recipeSHA, &startAt)
-	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return documentproduction.NumberReservation{}, ErrNotFound
-		}
-		return documentproduction.NumberReservation{}, err
-	}
-	pages, err := s.SnapshotBatesPages(ctx, snapshotID, MaxSnapshotPages)
+	request, err := s.productionJobBatesRequest(ctx, job, finalized)
 	if err != nil {
 		return documentproduction.NumberReservation{}, err
 	}
 	var a BatesAllocation
-	err = productionservice.ReserveAfterPreparedInput(stored.Authority, productionservice.PreparedInputReference{
-		OperationID:    stored.Authority.Audit.OperationID,
-		PreparedSHA256: stored.Authority.Prepared.SHA256,
-		ReceiptSHA256:  stored.Authority.Receipt.SHA256,
+	err = productionservice.ReserveAfterPreparedInput(finalized.Authority, productionservice.PreparedInputReference{
+		OperationID:    finalized.Authority.Audit.OperationID,
+		PreparedSHA256: finalized.Authority.Prepared.SHA256,
+		ReceiptSHA256:  finalized.Authority.Receipt.SHA256,
 	}, func(documentproduction.PreparedInputAuthority) error {
 		var reserveErr error
-		a, reserveErr = s.ReserveBatesRange(ctx, BatesPlanRequest{
-			OperationID: job.ID, NamespaceID: namespaceID, SnapshotID: snapshotID,
-			RecipeSHA256: recipeSHA, StartAt: startAt, Pages: pages,
-		})
+		a, reserveErr = s.ReserveBatesRange(ctx, request)
 		return reserveErr
 	})
 	if err != nil {
@@ -610,6 +573,52 @@ func (s *Store) ReserveProductionJobNumbers(ctx context.Context, job productions
 		return documentproduction.NumberReservation{}, fmt.Errorf("canonical reservation: %w", err)
 	}
 	return r, nil
+}
+
+// productionJobBatesRequest validates the admitted job against its immutable
+// finalized gate and numbering snapshot without consuming any numbers.
+func (s *Store) productionJobBatesRequest(ctx context.Context, job productionservice.Job, finalized productionservice.FinalizedProduction) (BatesPlanRequest, error) {
+	stored, err := s.LoadFinalizedProduction(ctx, finalized.Draft.SetID, finalized.Draft.Revision)
+	if err != nil {
+		return BatesPlanRequest{}, err
+	}
+	want, err := canonical.Marshal(stored)
+	if err != nil {
+		return BatesPlanRequest{}, err
+	}
+	got, err := canonical.Marshal(finalized)
+	if err != nil || !bytes.Equal(want, got) || stored.Authority.Receipt == nil ||
+		!documentproduction.GateResultsPassed(stored.Authority.GateResults) ||
+		job.SetID != stored.Draft.SetID || job.Revision != stored.Draft.Revision ||
+		job.ETag != stored.Draft.ETag || job.RevisionSHA256 != stored.Authority.Prepared.SHA256 ||
+		job.PreparedInputSHA256 != stored.Authority.Receipt.SHA256 {
+		return BatesPlanRequest{}, errors.Join(productionservice.ErrJobConflict, err)
+	}
+	var admittedSetID, admittedPreparedSHA, admittedRevisionSHA, state string
+	var admittedRevision, admittedETag int64
+	err = s.db.QueryRowContext(ctx, `SELECT set_id,revision,etag,prepared_input_sha256,revision_sha256,state
+		FROM production_jobs WHERE job_id=?`, job.ID).Scan(&admittedSetID, &admittedRevision,
+		&admittedETag, &admittedPreparedSHA, &admittedRevisionSHA, &state)
+	if err != nil || admittedSetID != job.SetID || admittedRevision != job.Revision ||
+		admittedETag != job.ETag || admittedPreparedSHA != job.PreparedInputSHA256 ||
+		admittedRevisionSHA != job.RevisionSHA256 || (state != productionservice.ProductionJobQueued && state != productionservice.ProductionJobRunning) {
+		return BatesPlanRequest{}, errors.Join(productionservice.ErrJobConflict, err)
+	}
+	var namespaceID, snapshotID, recipeSHA string
+	var startAt int64
+	err = s.db.QueryRowContext(ctx, `SELECT numbering_namespace_id,numbering_snapshot_id,numbering_recipe_sha256,numbering_start_at FROM production_finalized_revisions WHERE set_id=? AND revision=?`, finalized.Draft.SetID, finalized.Draft.Revision).Scan(&namespaceID, &snapshotID, &recipeSHA, &startAt)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return BatesPlanRequest{}, ErrNotFound
+		}
+		return BatesPlanRequest{}, err
+	}
+	pages, err := s.SnapshotBatesPages(ctx, snapshotID, MaxSnapshotPages)
+	if err != nil {
+		return BatesPlanRequest{}, err
+	}
+	return BatesPlanRequest{OperationID: job.ID, NamespaceID: namespaceID, SnapshotID: snapshotID,
+		RecipeSHA256: recipeSHA, StartAt: startAt, Pages: pages}, nil
 }
 
 // CancelProductionJob is idempotent and prevents a queued or running job from
