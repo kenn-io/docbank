@@ -3,14 +3,18 @@ package store
 import (
 	"context"
 	"database/sql"
-	"errors"
 	"fmt"
 )
 
-// enrollPhotoCandidatesTx creates a singleton asset for each qualifying,
-// unowned, live file. It never writes a human decision receipt and it is a
-// no-op once audit authority is active.
-func (s *Store) enrollPhotoCandidatesTx(ctx context.Context, tx *sql.Tx, nodeIDs ...int64) error {
+// enrollNewPhotoFileTx creates a singleton asset for a file node created
+// earlier in tx when its media qualifies. A new node is live and unowned, so
+// only its media decides. It never writes a human decision receipt and it is
+// a no-op once audit authority is active.
+func (s *Store) enrollNewPhotoFileTx(ctx context.Context, tx *sql.Tx, created Node) error {
+	facts := photoNodeFacts(created)
+	if !facts.Qualifies {
+		return nil
+	}
 	active, err := auditAuthorityActiveTx(ctx, tx)
 	if err != nil {
 		return err
@@ -18,18 +22,8 @@ func (s *Store) enrollPhotoCandidatesTx(ctx context.Context, tx *sql.Tx, nodeIDs
 	if active {
 		return nil
 	}
-	seen := make(map[int64]struct{}, len(nodeIDs))
-	for _, nodeID := range nodeIDs {
-		if _, ok := seen[nodeID]; ok {
-			continue
-		}
-		seen[nodeID] = struct{}{}
-		_, err := s.photoAssetCreateTx(ctx, tx, nodeID, "", "")
-		if err == nil || errors.Is(err, ErrNotFound) || errors.Is(err, ErrPhotoNodeNotEligible) ||
-			errors.Is(err, ErrPhotoNodeOwned) {
-			continue
-		}
-		return fmt.Errorf("enrolling photo node %d: %w", nodeID, err)
+	if _, err := s.insertPhotoAssetTx(ctx, tx, created.ID, inferPhotoRole(facts), facts.AssetKind); err != nil {
+		return fmt.Errorf("enrolling photo node %d: %w", created.ID, err)
 	}
 	return nil
 }

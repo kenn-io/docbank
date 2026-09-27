@@ -393,17 +393,17 @@ func photoNodeForMutationTx(tx *sql.Tx, nodeID int64) (Node, PhotoNodeFacts, err
 	return node, photoNodeFacts(node), nil
 }
 
+// photoAssetCreateTx creates a singleton asset on an explicit request and
+// reports every refusal as an error.
 func (s *Store) photoAssetCreateTx(ctx context.Context, tx *sql.Tx, nodeID int64, explicitRole, explicitKind string) (PhotoAsset, error) {
-	now := nowRFC3339()
-	node, facts, err := photoNodeForMutationTx(tx, nodeID)
+	_, facts, err := photoNodeForMutationTx(tx, nodeID)
 	if err != nil {
 		return PhotoAsset{}, err
 	}
-	var owned string
-	if err := tx.QueryRowContext(ctx, `SELECT asset_id FROM photo_files WHERE node_id=?`, nodeID).Scan(&owned); err == nil {
-		return PhotoAsset{}, fmt.Errorf("node %d belongs to asset %s: %w", nodeID, owned, ErrPhotoNodeOwned)
-	} else if !errors.Is(err, sql.ErrNoRows) {
-		return PhotoAsset{}, fmt.Errorf("checking photo node ownership: %w", err)
+	if owner, owned, err := photoAssetOwningNodeTx(ctx, tx, nodeID); err != nil {
+		return PhotoAsset{}, err
+	} else if owned {
+		return PhotoAsset{}, fmt.Errorf("node %d belongs to asset %s: %w", nodeID, owner, ErrPhotoNodeOwned)
 	}
 	role := explicitRole
 	if role == "" {
@@ -431,6 +431,13 @@ func (s *Store) photoAssetCreateTx(ctx context.Context, tx *sql.Tx, nodeID int64
 	if err := validatePhotoFileForAsset(kind, role, facts); err != nil {
 		return PhotoAsset{}, err
 	}
+	return s.insertPhotoAssetTx(ctx, tx, nodeID, role, kind)
+}
+
+// insertPhotoAssetTx writes a singleton asset for a node whose eligibility,
+// role, and kind the caller has already settled.
+func (s *Store) insertPhotoAssetTx(ctx context.Context, tx *sql.Tx, nodeID int64, role, kind string) (PhotoAsset, error) {
+	now := nowRFC3339()
 	assetID, err := newUUIDv4()
 	if err != nil {
 		return PhotoAsset{}, fmt.Errorf("allocating photo asset ID: %w", err)
@@ -440,7 +447,7 @@ func (s *Store) photoAssetCreateTx(ctx context.Context, tx *sql.Tx, nodeID int64
 		VALUES(?,?,1,?,?)`, assetID, kind, now, now); err != nil {
 		return PhotoAsset{}, fmt.Errorf("creating photo asset: %w", err)
 	}
-	if err := s.insertPhotoFileTx(ctx, tx, PhotoFile{AssetID: assetID, NodeID: node.ID, Role: role, CreatedAt: now}); err != nil {
+	if err := s.insertPhotoFileTx(ctx, tx, PhotoFile{AssetID: assetID, NodeID: nodeID, Role: role, CreatedAt: now}); err != nil {
 		return PhotoAsset{}, err
 	}
 	files, err := loadPhotoFiles(ctx, tx, assetID)

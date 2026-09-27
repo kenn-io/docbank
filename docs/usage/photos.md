@@ -1,5 +1,5 @@
 ---
-last_edited: 2026-09-22
+last_edited: 2026-09-27
 title: Photo Assets
 description: Group ordinary file nodes into revisioned photo assets.
 ---
@@ -15,6 +15,11 @@ Image files and files with a concrete `video/*` MIME type are enrolled when
 they are created. Audio, generic video, and generic RAW files stay ordinary
 files until an operator promotes or creates an asset explicitly. Enrollment
 is forward-only; adding this feature does not scan older files.
+
+Replacing or reverting a file's content keeps the file in its asset with the
+same role, even when the new media type would not qualify. A file whose new
+content qualifies is not enrolled either. Membership changes only through
+explicit asset operations or permanent node deletion.
 
 An asset can contain `raw`, `image`, `video`, and `sidecar` members. The
 default display order is RAW, image, then video. A vault preference can select

@@ -422,7 +422,7 @@ func (s *Store) CreateFileWithReceipt(
 	err = s.withStorageTx(ctx, func(tx *sql.Tx) error {
 		receipt, err = s.createFileWithReceiptTx(ctx, tx, parentID, name, blobHash, size, mimeType, physical...)
 		if err == nil {
-			err = s.enrollPhotoCandidatesTx(ctx, tx, receipt.Node.ID)
+			err = s.enrollNewPhotoFileTx(ctx, tx, receipt.Node)
 		}
 		return err
 	})
