@@ -34,3 +34,17 @@ func PublishedProductionPackageHTTPFixture(t *testing.T) (*Store, string, produc
 	f.reopen(t)
 	return f.Store, f.root, job, retained
 }
+
+// PublishedProductionSupplementHTTPFixture supplies a real published parent
+// and separately prepared child for the external HTTP route test.
+func PublishedProductionSupplementHTTPFixture(t *testing.T) (*Store, string, production.SupplementRequest) {
+	t.Helper()
+	f, parent := publishedRealRetentionFixture(t)
+	child := supplementChildFixture(t, f, parent)
+	return f.Store, f.root, production.SupplementRequest{
+		OperationID: "78000000-0000-4000-8000-000000000019",
+		ParentJobID: parent.ID, JobID: child.ID,
+		ParentReceiptSHA256: parent.Receipt.SHA256,
+		PreparedSHA256:      child.RevisionSHA256, PreparedInputSHA256: child.PreparedInputSHA256,
+	}
+}

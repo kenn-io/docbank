@@ -9233,6 +9233,99 @@ func (c *Client) CreateProductionWithheldSelection(ctx context.Context, options 
 	return responseParser(ctx, resp)
 }
 
+// CreateProductionSupplement Reserve continuation numbers and record an exact parent-child production link
+func (c *Client) CreateProductionSupplement(ctx context.Context, options *CreateProductionSupplementRequestOptions, reqEditors ...runtime.RequestEditorFn) (*CreateProductionSupplementResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/productions/supplements",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*CreateProductionSupplementResponse, error) {
+		switch resp.StatusCode {
+
+		case 201:
+
+			target := new(CreateProductionSupplementResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "CreateProductionSupplementResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[CreateProductionSupplementErrorResponse](resp, "CreateProductionSupplementErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/productions/supplements")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 201)
+	}
+	return responseParser(ctx, resp)
+}
+
+// GetProductionSupplement Read an exact verified production supplement record
+func (c *Client) GetProductionSupplement(ctx context.Context, options *GetProductionSupplementRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetProductionSupplementResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/productions/supplements/{operation_id}",
+		Method:     "GET",
+		Options:    options,
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*GetProductionSupplementResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(GetProductionSupplementResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "GetProductionSupplementResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[GetProductionSupplementErrorResponse](resp, "GetProductionSupplementErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/productions/supplements/{operation_id}")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
 // PreviewQueryHighlights Preview positive document-text highlight terms
 func (c *Client) PreviewQueryHighlights(ctx context.Context, options *PreviewQueryHighlightsRequestOptions, reqEditors ...runtime.RequestEditorFn) (*PreviewQueryHighlightsResponse, error) {
 	var err error
@@ -17930,6 +18023,65 @@ func (o *CreateProductionWithheldSelectionRequestOptions) GetHeader() (map[strin
 	return nil, nil
 }
 
+// CreateProductionSupplementRequestOptions is the options needed to make a request to CreateProductionSupplement.
+type CreateProductionSupplementRequestOptions struct {
+	Body *CreateProductionSupplementBody
+}
+
+// GetPathParams returns the path params as a map.
+func (o *CreateProductionSupplementRequestOptions) GetPathParams() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetQuery returns the query params as a map.
+func (o *CreateProductionSupplementRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *CreateProductionSupplementRequestOptions) GetBody() any {
+	if o.Body == nil {
+		return nil
+	}
+	return o.Body
+}
+
+// GetHeader returns the headers as a map.
+func (o *CreateProductionSupplementRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
+// GetProductionSupplementRequestOptions is the options needed to make a request to GetProductionSupplement.
+type GetProductionSupplementRequestOptions struct {
+	PathParams *GetProductionSupplementPath
+}
+
+// GetPathParams returns the path params as a map.
+func (o *GetProductionSupplementRequestOptions) GetPathParams() (map[string]any, error) {
+	encoded, err := json.Marshal(o.PathParams, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetQuery returns the query params as a map.
+func (o *GetProductionSupplementRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *GetProductionSupplementRequestOptions) GetBody() any {
+	return nil
+}
+
+// GetHeader returns the headers as a map.
+func (o *GetProductionSupplementRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
 // PreviewQueryHighlightsRequestOptions is the options needed to make a request to PreviewQueryHighlights.
 type PreviewQueryHighlightsRequestOptions struct {
 	Body *PreviewQueryHighlightsBody
@@ -20298,6 +20450,10 @@ type CreateProductionWithheldSelectionPath struct {
 	Revision int64  `json:"revision"`
 }
 
+type GetProductionSupplementPath struct {
+	OperationID uuid.UUID `json:"operation_id"`
+}
+
 type GetDocumentRenditionPath struct {
 	AttachmentID string `json:"attachment_id"`
 }
@@ -20583,6 +20739,8 @@ type ReviewProductionMemberBody = ProductionMemberReviewRequest
 type SealProductionMembershipBody = ProductionMembershipSealRequest
 
 type CreateProductionWithheldSelectionBody = ProductionWithheldSelectionCreateRequest
+
+type CreateProductionSupplementBody = ProductionSupplementRequest
 
 type PreviewQueryHighlightsBody = SavedQueryV1Schema
 
@@ -21796,6 +21954,14 @@ type CreateProductionWithheldSelectionResponse = production.WithheldSelection
 
 type CreateProductionWithheldSelectionErrorResponse = Error
 
+type CreateProductionSupplementResponse = api.ProductionSupplementRecord
+
+type CreateProductionSupplementErrorResponse = Error
+
+type GetProductionSupplementResponse = api.ProductionSupplementRecord
+
+type GetProductionSupplementErrorResponse = Error
+
 type PreviewQueryHighlightsResponse = api.QueryHighlightPreview
 
 type PreviewQueryHighlightsErrorResponse = Error
@@ -22914,6 +23080,10 @@ type ProductionRecipeCatalog = api.ProductionRecipeCatalog
 type ProductionRecipeOption = api.ProductionRecipeOption
 
 type ProductionSetCreated = api.ProductionSetCreated
+
+type ProductionSupplementRecord = api.ProductionSupplementRecord
+
+type ProductionSupplementRequest = api.ProductionSupplementRequest
 
 type ProductionWithheldSelectionCreateRequest = api.ProductionWithheldSelectionCreateRequest
 
