@@ -8175,6 +8175,53 @@ func (c *Client) ExportProductionPrivilegeLog(ctx context.Context, options *Expo
 	return responseParser(ctx, resp)
 }
 
+// ReplaceProductionPrivilegeLogRows Replace private privilege rows at an exact draft generation
+func (c *Client) ReplaceProductionPrivilegeLogRows(ctx context.Context, options *ReplaceProductionPrivilegeLogRowsRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ReplaceProductionPrivilegeLogRowsResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/production-privilege-logs/{log}/revisions/{revision}/rows",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*ReplaceProductionPrivilegeLogRowsResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(ReplaceProductionPrivilegeLogRowsResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "ReplaceProductionPrivilegeLogRowsResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[ReplaceProductionPrivilegeLogRowsErrorResponse](resp, "ReplaceProductionPrivilegeLogRowsErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/production-privilege-logs/{log}/revisions/{revision}/rows")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
 // ValidateProductionPrivilegeLog Validate the stored rows of a privilege-log draft
 func (c *Client) ValidateProductionPrivilegeLog(ctx context.Context, options *ValidateProductionPrivilegeLogRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ValidateProductionPrivilegeLogResponse, error) {
 	var err error
@@ -17011,6 +17058,41 @@ func (o *ExportProductionPrivilegeLogRequestOptions) GetHeader() (map[string]str
 	return nil, nil
 }
 
+// ReplaceProductionPrivilegeLogRowsRequestOptions is the options needed to make a request to ReplaceProductionPrivilegeLogRows.
+type ReplaceProductionPrivilegeLogRowsRequestOptions struct {
+	PathParams *ReplaceProductionPrivilegeLogRowsPath
+	Body       *ReplaceProductionPrivilegeLogRowsBody
+}
+
+// GetPathParams returns the path params as a map.
+func (o *ReplaceProductionPrivilegeLogRowsRequestOptions) GetPathParams() (map[string]any, error) {
+	encoded, err := json.Marshal(o.PathParams, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetQuery returns the query params as a map.
+func (o *ReplaceProductionPrivilegeLogRowsRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *ReplaceProductionPrivilegeLogRowsRequestOptions) GetBody() any {
+	if o.Body == nil {
+		return nil
+	}
+	return o.Body
+}
+
+// GetHeader returns the headers as a map.
+func (o *ReplaceProductionPrivilegeLogRowsRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
 // ValidateProductionPrivilegeLogRequestOptions is the options needed to make a request to ValidateProductionPrivilegeLog.
 type ValidateProductionPrivilegeLogRequestOptions struct {
 	PathParams *ValidateProductionPrivilegeLogPath
@@ -19890,6 +19972,11 @@ type ExportProductionPrivilegeLogPath struct {
 	Format   ExportProductionPrivilegeLogPathFormat `json:"format"`
 }
 
+type ReplaceProductionPrivilegeLogRowsPath struct {
+	Log      string `json:"log"`
+	Revision int64  `json:"revision"`
+}
+
 type ValidateProductionPrivilegeLogPath struct {
 	Log      string `json:"log"`
 	Revision int64  `json:"revision"`
@@ -20209,6 +20296,8 @@ type PlanDocumentProcessingBody = ProcessingPlanRequest
 type ResolveDocumentSourceFenceBody = DocumentSourceFenceResolveRequest
 
 type CreateProductionPrivilegeLogDraftBody = ProductionPrivilegeDraftCreateRequest
+
+type ReplaceProductionPrivilegeLogRowsBody = ProductionPrivilegeRowsReplaceRequest
 
 type ValidateProductionPrivilegeLogBody = ProductionPrivilegeValidationRequest
 
@@ -21351,6 +21440,10 @@ type CreateProductionPrivilegeLogDraftResponse = api.ProductionPrivilegeDraftGen
 type CreateProductionPrivilegeLogDraftErrorResponse = Error
 
 type ExportProductionPrivilegeLogResponse = runtime.File
+
+type ReplaceProductionPrivilegeLogRowsResponse = api.ProductionPrivilegeDraftGeneration
+
+type ReplaceProductionPrivilegeLogRowsErrorResponse = Error
 
 type ValidateProductionPrivilegeLogResponse = api.ProductionPrivilegeValidation
 
@@ -22518,6 +22611,8 @@ type ProductionPrivilegeDraftCreateRequest = api.ProductionPrivilegeDraftCreateR
 type ProductionPrivilegeDraftGeneration = api.ProductionPrivilegeDraftGeneration
 
 type ProductionPrivilegePublicPage = api.ProductionPrivilegePublicPage
+
+type ProductionPrivilegeRowsReplaceRequest = api.ProductionPrivilegeRowsReplaceRequest
 
 type ProductionPrivilegeValidation = api.ProductionPrivilegeValidation
 

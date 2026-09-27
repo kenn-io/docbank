@@ -11796,6 +11796,35 @@ components:
       x-go-type-import:
         path: go.kenn.io/docbank/internal/api
         name: api
+    ProductionPrivilegeRowsReplaceRequest:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/ProductionPrivilegeRowsReplaceRequest.json
+          format: uri
+          readOnly: true
+          type: string
+        expected_generation:
+          format: int64
+          minimum: 1
+          type: integer
+        operation_id:
+          type: string
+        rows:
+          items:
+            $ref: "#/components/schemas/PrivilegeRow"
+          type: array
+      required:
+        - operation_id
+        - expected_generation
+        - rows
+      type: object
+      x-go-type: api.ProductionPrivilegeRowsReplaceRequest
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     ProductionPrivilegeValidation:
       additionalProperties: false
       properties:
@@ -21022,6 +21051,42 @@ paths:
                 pattern: ^[0-9a-f]{64}$
                 type: string
       summary: Download verified public bytes of a frozen privilege log
+  /api/v1/production-privilege-logs/{log}/revisions/{revision}/rows:
+    post:
+      operationId: replaceProductionPrivilegeLogRows
+      parameters:
+        - in: path
+          name: log
+          required: true
+          schema:
+            type: string
+        - in: path
+          name: revision
+          required: true
+          schema:
+            format: int64
+            minimum: 1
+            type: integer
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ProductionPrivilegeRowsReplaceRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProductionPrivilegeDraftGeneration"
+          description: OK
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: Replace private privilege rows at an exact draft generation
   /api/v1/production-privilege-logs/{log}/revisions/{revision}/validate:
     post:
       operationId: validateProductionPrivilegeLog

@@ -59,6 +59,14 @@ type ProductionPrivilegeDraftGeneration struct {
 	Generation int64  `json:"generation"`
 }
 
+// ProductionPrivilegeRowsReplaceRequest replaces all private rows at an exact
+// draft generation. Storage invalidates prior validation and approval binding.
+type ProductionPrivilegeRowsReplaceRequest struct {
+	OperationID        string                            `json:"operation_id"`
+	ExpectedGeneration int64                             `json:"expected_generation" minimum:"1"`
+	Rows               []documentproduction.PrivilegeRow `json:"rows"`
+}
+
 func productionPrivilegeMutationError(err error) error {
 	if errors.Is(err, store.ErrNotFound) {
 		return FromStoreError(err)
@@ -149,6 +157,38 @@ func registerProductionPrivilegeRoutes(mux *http.ServeMux, api huma.API, d Deps,
 			err := g.mutate(func() error {
 				var err error
 				generation, err = d.Store.CreateStoredPrivilegeLogDraft(ctx, request)
+				return err
+			})
+			if err != nil {
+				return nil, productionPrivilegeMutationError(err)
+			}
+			return &struct {
+				Body ProductionPrivilegeDraftGeneration
+			}{Body: ProductionPrivilegeDraftGeneration{
+				LogID: in.Log, Revision: in.Revision, Generation: generation,
+			}}, nil
+		})
+	huma.Register(api, huma.Operation{OperationID: "replaceProductionPrivilegeLogRows", Method: http.MethodPost,
+		Path:         "/api/v1/production-privilege-logs/{log}/revisions/{revision}/rows",
+		Summary:      "Replace private privilege rows at an exact draft generation",
+		MaxBodyBytes: 64 << 20},
+		func(ctx context.Context, in *struct {
+			Log      string `path:"log"`
+			Revision int64  `path:"revision" minimum:"1"`
+			Body     ProductionPrivilegeRowsReplaceRequest
+		}) (*struct {
+			Body ProductionPrivilegeDraftGeneration
+		}, error) {
+			if _, ok := workspaceSnapshotOwner(ctx); !ok {
+				return nil, NewError(http.StatusUnauthorized, "unauthorized", "authenticated production actor is missing")
+			}
+			var generation int64
+			err := g.mutate(func() error {
+				var err error
+				generation, err = d.Store.ReplacePrivilegeLogRows(ctx, store.PrivilegeLogRowUpdate{
+					OperationID: in.Body.OperationID, LogID: in.Log, Revision: in.Revision,
+					ExpectedGeneration: in.Body.ExpectedGeneration, Rows: in.Body.Rows,
+				})
 				return err
 			})
 			if err != nil {

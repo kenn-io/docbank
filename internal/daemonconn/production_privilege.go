@@ -35,6 +35,29 @@ func (c *Connection) CreateProductionPrivilegeLogDraft(ctx context.Context, logI
 	return *result, nil
 }
 
+// ReplaceProductionPrivilegeLogRows replaces private draft rows only when the
+// expected generation still matches.
+func (c *Connection) ReplaceProductionPrivilegeLogRows(ctx context.Context, logID string, revision int64,
+	request api.ProductionPrivilegeRowsReplaceRequest) (api.ProductionPrivilegeDraftGeneration, error) {
+	if logID == "" || revision < 1 || request.OperationID == "" || request.ExpectedGeneration < 1 ||
+		len(request.Rows) == 0 || len(request.Rows) > documentproduction.MaxPrivilegeRows {
+		return api.ProductionPrivilegeDraftGeneration{}, errors.New("invalid production privilege row replacement")
+	}
+	result, err := c.API().ReplaceProductionPrivilegeLogRows(ctx,
+		&apiclient.ReplaceProductionPrivilegeLogRowsRequestOptions{
+			PathParams: &apiclient.ReplaceProductionPrivilegeLogRowsPath{Log: logID, Revision: revision},
+			Body:       &request,
+		})
+	if err != nil {
+		return api.ProductionPrivilegeDraftGeneration{}, err
+	}
+	if result == nil || result.LogID != logID || result.Revision != revision ||
+		result.Generation <= request.ExpectedGeneration {
+		return api.ProductionPrivilegeDraftGeneration{}, integrityErrorf("production privilege row receipt is inconsistent")
+	}
+	return *result, nil
+}
+
 // ValidateProductionPrivilegeLog validates persisted draft authority through
 // the daemon and returns only its digest summary.
 func (c *Connection) ValidateProductionPrivilegeLog(ctx context.Context, logID string, revision int64,

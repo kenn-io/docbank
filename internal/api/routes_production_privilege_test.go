@@ -180,3 +180,55 @@ func TestProductionPrivilegeValidationUsesStoredRowsAndReplays(t *testing.T) {
 		nil, request)
 	require.Equal(t, http.StatusNotFound, response.StatusCode, body)
 }
+
+func TestProductionPrivilegeRowsReplacementFencesGenerationAndPrivatePayload(t *testing.T) {
+	var draft productiontest.PrivilegeDraft
+	ts, _ := newTestServer(t, func(d *api.Deps) { draft = productiontest.SeedPrivilegeLogDraft(t, d.Store) })
+	path := "/api/v1/production-privilege-logs/" + draft.LogID + "/revisions/1/rows"
+	request := api.ProductionPrivilegeRowsReplaceRequest{
+		OperationID: "14141414-1414-4414-8414-141414141414", ExpectedGeneration: draft.Generation,
+		Rows: []documentproduction.PrivilegeRow{{
+			ID:               "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+			WithheldMemberID: "99999999-9999-4999-8999-999999999999",
+			FamilyOrder:      1, SourceVersionID: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+			Basis: "synthetic_basis", PublicDescription: "Updated synthetic public description.",
+			PrivateRationale: "Updated synthetic private rationale.", EvidenceSHA256: strings.Repeat("3", 64),
+			PersonIDs: []string{"55555555-5555-4555-8555-555555555555"},
+			Fields:    []documentproduction.PrivilegeField{{Name: "date", Value: "2026-09-22"}},
+		}, {
+			ID:               "cdcdcdcd-cdcd-4dcd-8dcd-cdcdcdcdcdcd",
+			WithheldMemberID: "abababab-abab-4bab-8bab-abababababab",
+			FamilyOrder:      1, SourceVersionID: "bcbcbcbc-bcbc-4cbc-8cbc-bcbcbcbcbcbc",
+			Basis: "synthetic_basis", PublicDescription: "Second synthetic public description.",
+			PrivateRationale: "Second synthetic private rationale.", EvidenceSHA256: strings.Repeat("5", 64),
+			PersonIDs: []string{"55555555-5555-4555-8555-555555555555"},
+			Fields:    []documentproduction.PrivilegeField{{Name: "date", Value: "2026-09-23"}},
+		}},
+	}
+	response, body := do(t, ts, http.MethodPost, path, map[string]string{"X-Api-Key": ""}, request)
+	require.Equal(t, http.StatusUnauthorized, response.StatusCode, body)
+	response, body = do(t, ts, http.MethodPost, path, nil, request)
+	require.Equal(t, http.StatusOK, response.StatusCode, body)
+	var result api.ProductionPrivilegeDraftGeneration
+	require.NoError(t, json.Unmarshal([]byte(body), &result))
+	require.Equal(t, draft.LogID, result.LogID)
+	require.Equal(t, draft.Generation+1, result.Generation)
+	require.NotContains(t, body, "Updated synthetic private rationale.")
+	response, replay := do(t, ts, http.MethodPost, path, nil, request)
+	require.Equal(t, http.StatusOK, response.StatusCode, replay)
+	require.Equal(t, body, replay)
+	client := daemonconn.New(ts.URL, testAPIKey)
+	clientResult, err := client.ReplaceProductionPrivilegeLogRows(t.Context(), draft.LogID, draft.Revision, request)
+	require.NoError(t, err)
+	require.Equal(t, result, clientResult)
+	changed := request
+	changed.Rows = append([]documentproduction.PrivilegeRow(nil), request.Rows...)
+	changed.Rows[0].PrivateRationale = "Changed again."
+	response, body = do(t, ts, http.MethodPost, path, nil, changed)
+	require.Equal(t, http.StatusConflict, response.StatusCode, body)
+	require.NotContains(t, body, changed.Rows[0].PrivateRationale)
+	stale := request
+	stale.OperationID = "15151515-1515-4515-8515-151515151515"
+	response, body = do(t, ts, http.MethodPost, path, nil, stale)
+	require.Equal(t, http.StatusConflict, response.StatusCode, body)
+}
