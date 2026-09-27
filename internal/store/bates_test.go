@@ -3,6 +3,7 @@ package store
 import (
 	"bytes"
 	"database/sql"
+	"errors"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -11,6 +12,40 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/document"
 )
+
+func TestBatesReservationCanJoinCallerTransaction(t *testing.T) {
+	s := newTestStore(t)
+	snapshot, inputs := batesFixture(t, s)
+	namespace, err := s.EnsureBatesNamespace(t.Context(), "OUR", "", 6)
+	require.NoError(t, err)
+	request := batesRequest(t, namespace, snapshot, inputs)
+	injected := errors.New("synthetic later transaction failure")
+	var staged BatesAllocation
+	var seenInside int
+	err = s.withLogicalTx(t.Context(), func(tx *sql.Tx) error {
+		var reserveErr error
+		staged, reserveErr = s.reserveBatesRangeTx(t.Context(), tx, request)
+		if reserveErr != nil {
+			return reserveErr
+		}
+		if err := tx.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM bates_allocations WHERE allocation_id=?`, staged.AllocationID).Scan(&seenInside); err != nil {
+			return err
+		}
+		return injected
+	})
+	require.ErrorIs(t, err, injected)
+	require.Equal(t, int64(1), staged.StartSequence)
+	require.Equal(t, 1, seenInside, "reservation is visible inside the caller transaction")
+	_, err = s.BatesAllocation(t.Context(), staged.AllocationID)
+	require.ErrorIs(t, err, ErrNotFound)
+	var cursor int64
+	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT next_sequence FROM bates_namespace_cursors WHERE namespace_id=?`, namespace.NamespaceID).Scan(&cursor))
+	require.Equal(t, int64(1), cursor)
+	retried, err := s.ReserveBatesRange(t.Context(), request)
+	require.NoError(t, err)
+	require.Equal(t, int64(1), retried.StartSequence)
+	require.Equal(t, int64(len(inputs)), retried.EndSequence)
+}
 
 func batesFixture(t *testing.T, s *Store) (CollectionSnapshot, []BatesPageInput) {
 	t.Helper()

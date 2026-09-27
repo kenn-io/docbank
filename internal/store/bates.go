@@ -338,6 +338,18 @@ func expectedBatesPagesLimited(ctx context.Context, tx metadataQuerier, snapshot
 }
 
 func (s *Store) ReserveBatesRange(ctx context.Context, r BatesPlanRequest) (BatesAllocation, error) {
+	var allocation BatesAllocation
+	err := s.withLogicalTx(ctx, func(tx *sql.Tx) error {
+		var reserveErr error
+		allocation, reserveErr = s.reserveBatesRangeTx(ctx, tx, r)
+		return reserveErr
+	})
+	return allocation, err
+}
+
+// reserveBatesRangeTx lets a higher-level operation commit its own immutable
+// linkage with the allocation and cursor advance in one transaction.
+func (s *Store) reserveBatesRangeTx(ctx context.Context, tx *sql.Tx, r BatesPlanRequest) (BatesAllocation, error) {
 	if validateUUIDv4(r.OperationID) != nil || validateUUIDv4(r.NamespaceID) != nil || validateUUIDv4(r.SnapshotID) != nil ||
 		!canonical.IsSHA256Hex(r.RecipeSHA256) || r.StartAt < 0 {
 		return BatesAllocation{}, ErrBatesReservationConflict
@@ -347,7 +359,7 @@ func (s *Store) ReserveBatesRange(ctx context.Context, r BatesPlanRequest) (Bate
 		return BatesAllocation{}, err
 	}
 	var allocation BatesAllocation
-	err = s.withLogicalTx(ctx, func(tx *sql.Tx) error {
+	err = func() error {
 		var priorDigest, priorID string
 		err := tx.QueryRowContext(ctx, `SELECT allocation_id,request_sha256 FROM bates_allocations WHERE operation_id=?`, r.OperationID).Scan(&priorID, &priorDigest)
 		if err == nil {
@@ -403,7 +415,7 @@ func (s *Store) ReserveBatesRange(ctx context.Context, r BatesPlanRequest) (Bate
 		}
 		_, err = tx.ExecContext(ctx, `UPDATE bates_namespace_cursors SET next_sequence=? WHERE namespace_id=?`, end+1, r.NamespaceID)
 		return err
-	})
+	}()
 	if err != nil {
 		return BatesAllocation{}, err
 	}
