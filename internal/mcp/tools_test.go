@@ -33,6 +33,7 @@ func TestDefaultToolCatalogIsFixedBoundedAndReadOnly(t *testing.T) {
 		"list_bates_namespaces", "preview_bates_stamp", "get_bates_allocation",
 		"list_bates_exports", "get_bates_export", "find_bates_exports", "find_production_numbers",
 		"find_production_number_candidates",
+		"list_production_policies", "get_production_policy",
 	}
 	require.Len(t, tools, len(wantNames))
 	for index, tool := range tools {
@@ -55,12 +56,12 @@ func TestProcessingToolIsConstructionTimeOptIn(t *testing.T) {
 	enabled := catalogNames(enabledTools)
 	require.Equal(t, append(append([]string{}, readOnly...), "start_processing", "preflight_load_file_package", "start_package_import",
 		"resolve_package_custodian", "assign_package_custodian", "ensure_bates_namespace", "reserve_bates_range", "publish_bates_export",
-		"export_bates_file", "export_load_file_package"), enabled)
+		"export_bates_file", "export_load_file_package", "create_production_policy"), enabled)
 
 	for _, write := range enabledTools[len(readOnly):] {
 		require.NotNil(t, write.Annotations)
 		assert.False(t, write.Annotations.ReadOnlyHint)
-		assert.Equal(t, slices.Contains([]string{"start_package_import", "ensure_bates_namespace", "reserve_bates_range", "publish_bates_export"}, write.Name), write.Annotations.IdempotentHint)
+		assert.Equal(t, slices.Contains([]string{"start_package_import", "ensure_bates_namespace", "reserve_bates_range", "publish_bates_export", "create_production_policy"}, write.Name), write.Annotations.IdempotentHint)
 		assert.Equal(t, new(write.Name == "assign_package_custodian" || write.Name == "export_bates_file" ||
 			write.Name == "export_load_file_package"), write.Annotations.DestructiveHint)
 		assert.Equal(t, new(true), write.Annotations.OpenWorldHint)

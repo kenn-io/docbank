@@ -63,6 +63,8 @@ var readToolDefinitions = []toolDefinition{
 	{name: "find_bates_exports", title: "Find Bates exports", description: "Return bounded candidates for one exact Bates label, custodian label, or canonical person.", schemas: findBatesExportsSchemas},
 	{name: "find_production_numbers", title: "Find production numbers", description: "Resolve an exact published production number or page through a bounded numeric range.", schemas: findProductionNumbersSchemas},
 	{name: "find_production_number_candidates", title: "Find production number candidates", description: "Find verified published outputs for exact, prefix, or substring label text and report ambiguity.", schemas: findProductionNumberCandidatesSchemas},
+	{name: "list_production_policies", title: "List production policies", description: "Page through immutable production policy versions with bounded summaries.", schemas: listProductionPoliciesSchemas},
+	{name: "get_production_policy", title: "Get production policy", description: "Read one exact immutable production policy version.", schemas: getProductionPolicySchemas},
 }
 
 var processingToolDefinition = toolDefinition{
@@ -125,13 +127,19 @@ var exportLoadFilePackageToolDefinition = toolDefinition{
 	schemas:     exportLoadFilePackageSchemas, write: true, destructive: true,
 }
 
+var createProductionPolicyToolDefinition = toolDefinition{
+	name: "create_production_policy", title: "Create production policy",
+	description: "Create or replay one immutable policy version with an explicit operation UUID.",
+	schemas:     createProductionPolicySchemas, write: true, idempotent: true,
+}
+
 func toolCatalog(allowProcessing bool) []*sdkmcp.Tool {
 	definitions := readToolDefinitions
 	if allowProcessing {
 		definitions = append(slices.Clone(definitions), processingToolDefinition, preflightLoadFilePackageToolDefinition,
 			packageImportToolDefinition, resolvePackageCustodianToolDefinition, assignPackageCustodianToolDefinition,
 			ensureBatesNamespaceToolDefinition, reserveBatesRangeToolDefinition, publishBatesExportToolDefinition,
-			exportBatesFileToolDefinition, exportLoadFilePackageToolDefinition)
+			exportBatesFileToolDefinition, exportLoadFilePackageToolDefinition, createProductionPolicyToolDefinition)
 	}
 	tools := make([]*sdkmcp.Tool, 0, len(definitions))
 	for _, definition := range definitions {
@@ -172,6 +180,8 @@ func registerToolCatalog(
 			handler = batesWriteToolHandler(lease, tool.Name, output, logger)
 		case exportLoadFilePackageToolDefinition.name:
 			handler = packageExportToolHandler(lease, output, logger)
+		case createProductionPolicyToolDefinition.name:
+			handler = createProductionPolicyToolHandler(lease, output, logger)
 		default:
 			handler = readToolHandler(lease, plans, tool.Name, output, logger)
 		}
@@ -335,6 +345,8 @@ func stableDomainError(err error) (string, int) {
 		return "processing_outcome_unknown", 0
 	case errors.Is(err, errBatesOutcomeUnknown):
 		return "bates_outcome_unknown", 0
+	case errors.Is(err, errProductionPolicyOutcomeUnknown):
+		return "production_policy_outcome_unknown", 0
 	case errors.Is(err, errDaemonUnavailable):
 		return "daemon_unavailable", 0
 	case errors.Is(err, store.ErrDocumentCursorExpired):
@@ -376,6 +388,8 @@ func stableDomainError(err error) (string, int) {
 		return "invalid_rendition_encoding", 0
 	case "bates_reservation_conflict", "bates_page_count_mismatch", "bates_overflow":
 		return facts.Code, 0
+	case "production_policy_conflict", "invalid_production_policy":
+		return facts.Code, 0
 	default:
 		return "", 0
 	}
@@ -413,6 +427,12 @@ func domainErrorMessage(code string) string {
 		return "The Bates range exceeds the namespace padding."
 	case "bates_outcome_unknown":
 		return "The Bates authority write outcome is unknown; reconcile the namespace or allocation before retrying."
+	case "production_policy_conflict":
+		return "The operation ID or policy version conflicts with existing immutable policy authority."
+	case "invalid_production_policy":
+		return "The production policy input is invalid."
+	case "production_policy_outcome_unknown":
+		return "The policy write outcome is unknown; read the exact version or retry with the same operation ID."
 	default:
 		return "The Docbank operation could not be completed."
 	}

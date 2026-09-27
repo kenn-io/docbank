@@ -105,7 +105,7 @@ func packageImportOutputSchema() schema {
 		"preflight_id": uuidSchema(), schemaStateField: enumSchema("queued", "running", "complete", "partial", "failed", "cancelled"),
 		"committed": integerSchema(0, 100_000), "total": integerSchema(1, 100_000),
 		"gap_count": integerSchema(0, 100_000), "gaps": arraySchema(stringSchema(4096), 100),
-		"created_at": dateTimeSchema(), "updated_at": dateTimeSchema(),
+		"created_at": dateTimeSchema(), "updated_at": dateTimeSchema(), //nolint:goconst // Stable wire field is repeated across tool schemas.
 	}), cacheRequired("operation_id", "job_id", packageIDField, "preflight_id", schemaStateField, "committed", "total", "gap_count", "created_at", "updated_at")...)
 }
 
