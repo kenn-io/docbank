@@ -17,6 +17,10 @@ concurrency:
   group: release-build-${{ github.repository }}-${{ github.ref }}
   cancel-in-progress: false
 
+env:
+  # "|" falls back to the source repo on any proxy error, including HTTP/2 stream resets mid-download.
+  GOPROXY: https://proxy.golang.org|direct
+
 jobs:
   build-frontend:
     name: Build web application
