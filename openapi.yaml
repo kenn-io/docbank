@@ -1,5 +1,54 @@
 components:
   schemas:
+    ApprovalPublicEvent:
+      additionalProperties: false
+      properties:
+        approval_id:
+          type: string
+        effective_at:
+          type: string
+        id:
+          type: string
+        kind:
+          type: string
+        replacement_approval_id:
+          type: string
+      required:
+        - id
+        - approval_id
+        - kind
+        - effective_at
+      type: object
+      x-go-type: production.ApprovalPublicEvent
+      x-go-type-import:
+        path: go.kenn.io/docbank/document/production
+        name: production
+    ApprovalPublicGrant:
+      additionalProperties: false
+      properties:
+        actor:
+          type: string
+        expires_at:
+          type: string
+        granted_at:
+          type: string
+        id:
+          type: string
+        sha256:
+          type: string
+        subject_sha256:
+          type: string
+      required:
+        - id
+        - subject_sha256
+        - actor
+        - granted_at
+        - sha256
+      type: object
+      x-go-type: production.ApprovalPublicGrant
+      x-go-type-import:
+        path: go.kenn.io/docbank/document/production
+        name: production
     ApprovalRequirement:
       additionalProperties: false
       properties:
@@ -10967,6 +11016,30 @@ components:
       x-go-type-import:
         path: go.kenn.io/docbank/internal/api
         name: api
+    ProductionApprovalPublic:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/ProductionApprovalPublic.json
+          format: uri
+          readOnly: true
+          type: string
+        events:
+          items:
+            $ref: "#/components/schemas/ApprovalPublicEvent"
+          type: array
+        grant:
+          $ref: "#/components/schemas/ApprovalPublicGrant"
+      required:
+        - grant
+        - events
+      type: object
+      x-go-type: api.ProductionApprovalPublic
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     ProductionChange:
       additionalProperties: false
       properties:
@@ -20450,6 +20523,29 @@ paths:
                 $ref: "#/components/schemas/Error"
           description: Error
       summary: Resolve exact current live document search authority
+  /api/v1/production-approvals/{approval}:
+    get:
+      operationId: readProductionApproval
+      parameters:
+        - in: path
+          name: approval
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProductionApprovalPublic"
+          description: OK
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: Read a public production approval projection
   /api/v1/productions/jobs/{job_id}/packages/{operation_id}/download:
     post:
       operationId: downloadProductionPackage

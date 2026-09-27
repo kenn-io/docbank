@@ -7983,6 +7983,52 @@ func (c *Client) ResolveDocumentSourceFence(ctx context.Context, options *Resolv
 	return responseParser(ctx, resp)
 }
 
+// ReadProductionApproval Read a public production approval projection
+func (c *Client) ReadProductionApproval(ctx context.Context, options *ReadProductionApprovalRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ReadProductionApprovalResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/production-approvals/{approval}",
+		Method:     "GET",
+		Options:    options,
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*ReadProductionApprovalResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(ReadProductionApprovalResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "ReadProductionApprovalResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[ReadProductionApprovalErrorResponse](resp, "ReadProductionApprovalErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/production-approvals/{approval}")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
 // DownloadProductionPackage Issue a one-use ticket for a verified retained production package
 func (c *Client) DownloadProductionPackage(ctx context.Context, options *DownloadProductionPackageRequestOptions, reqEditors ...runtime.RequestEditorFn) (*DownloadProductionPackageResponse, error) {
 	var err error
@@ -16637,6 +16683,37 @@ func (o *ResolveDocumentSourceFenceRequestOptions) GetHeader() (map[string]strin
 	return nil, nil
 }
 
+// ReadProductionApprovalRequestOptions is the options needed to make a request to ReadProductionApproval.
+type ReadProductionApprovalRequestOptions struct {
+	PathParams *ReadProductionApprovalPath
+}
+
+// GetPathParams returns the path params as a map.
+func (o *ReadProductionApprovalRequestOptions) GetPathParams() (map[string]any, error) {
+	encoded, err := json.Marshal(o.PathParams, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetQuery returns the query params as a map.
+func (o *ReadProductionApprovalRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *ReadProductionApprovalRequestOptions) GetBody() any {
+	return nil
+}
+
+// GetHeader returns the headers as a map.
+func (o *ReadProductionApprovalRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
 // DownloadProductionPackageRequestOptions is the options needed to make a request to DownloadProductionPackage.
 type DownloadProductionPackageRequestOptions struct {
 	PathParams *DownloadProductionPackagePath
@@ -19453,6 +19530,10 @@ type GetDocumentProcessingJobPath struct {
 	ID string `json:"id"`
 }
 
+type ReadProductionApprovalPath struct {
+	Approval string `json:"approval"`
+}
+
 type DownloadProductionPackagePath struct {
 	JobID       uuid.UUID `json:"job_id"`
 	OperationID uuid.UUID `json:"operation_id"`
@@ -20886,6 +20967,10 @@ type ResolveDocumentSourceFenceResponse = api.DocumentSourceFenceResolution
 
 type ResolveDocumentSourceFenceErrorResponse = Error
 
+type ReadProductionApprovalResponse = api.ProductionApprovalPublic
+
+type ReadProductionApprovalErrorResponse = Error
+
 type DownloadProductionPackageResponse = api.ProductionPackageDownloadTicket
 
 type DownloadProductionPackageErrorResponse = Error
@@ -21183,6 +21268,10 @@ type HealthResponse struct {
 	UptimeSeconds int64  `json:"uptime_seconds"`
 	Version       string `json:"version"`
 }
+
+type ApprovalPublicEvent = production.ApprovalPublicEvent
+
+type ApprovalPublicGrant = production.ApprovalPublicGrant
 
 type ApprovalRequirement = production.ApprovalRequirement
 
@@ -21992,6 +22081,8 @@ type ProcessingRuntimeDisclosure = api.ProcessingRuntimeDisclosure
 type ProcessingSelector = api.ProcessingSelector
 
 type ProcessingStatus = api.ProcessingStatus
+
+type ProductionApprovalPublic = api.ProductionApprovalPublic
 
 type ProductionChange = api.ProductionChange
 

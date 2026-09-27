@@ -13,6 +13,7 @@ type ProductionMemberPage = api.ProductionMemberPage
 type ProductionDecisionPage = api.ProductionDecisionPage
 type ProductionRecipeCatalog = api.ProductionRecipeCatalog
 type ProductionPolicyPage = api.ProductionPolicyPage
+type ProductionApprovalPublic = api.ProductionApprovalPublic
 
 func (v *Vault) ProductionPolicyVersions(ctx context.Context, cursor string, limit int) (ProductionPolicyPage, error) {
 	v.lifecycle.RLock()
@@ -60,6 +61,20 @@ func (v *Vault) ProductionPolicyVersion(ctx context.Context, policyID string,
 		return documentproduction.PolicyVersion{}, ErrClosed
 	}
 	return v.metadata.ProductionPolicy(ctx, policyID, version)
+}
+
+// ProductionApproval returns the public approval projection for this embedded vault.
+func (v *Vault) ProductionApproval(ctx context.Context, approvalID string) (ProductionApprovalPublic, error) {
+	v.lifecycle.RLock()
+	defer v.lifecycle.RUnlock()
+	if v.closed {
+		return ProductionApprovalPublic{}, ErrClosed
+	}
+	grant, events, err := v.metadata.ProductionApprovalPublic(ctx, approvalID)
+	if err != nil {
+		return ProductionApprovalPublic{}, err
+	}
+	return ProductionApprovalPublic{Grant: grant, Events: events}, nil
 }
 
 func (v *Vault) ProductionRecipes(ctx context.Context) (ProductionRecipeCatalog, error) {
