@@ -147,6 +147,12 @@ var replaceProductionPrivilegeRowsToolDefinition = toolDefinition{
 	schemas:     replaceProductionPrivilegeRowsSchemas, write: true, idempotent: true,
 }
 
+var createProductionPrivilegeDraftToolDefinition = toolDefinition{
+	name: "create_production_privilege_draft", title: "Create production privilege draft",
+	description: "Create an exact privilege-log draft from sealed authority and a local private row file.",
+	schemas:     createProductionPrivilegeDraftSchemas, write: true, idempotent: true,
+}
+
 var exportProductionPrivilegeLogToolDefinition = toolDefinition{
 	name: "export_production_privilege_log", title: "Export production privilege log",
 	description: "Write verified public bytes of one frozen privilege log to a local file.",
@@ -161,6 +167,7 @@ func toolCatalog(allowProcessing bool) []*sdkmcp.Tool {
 			ensureBatesNamespaceToolDefinition, reserveBatesRangeToolDefinition, publishBatesExportToolDefinition,
 			exportBatesFileToolDefinition, exportLoadFilePackageToolDefinition, createProductionPolicyToolDefinition,
 			validateProductionPrivilegeLogToolDefinition, replaceProductionPrivilegeRowsToolDefinition,
+			createProductionPrivilegeDraftToolDefinition,
 			exportProductionPrivilegeLogToolDefinition)
 	}
 	tools := make([]*sdkmcp.Tool, 0, len(definitions))
@@ -208,6 +215,8 @@ func registerToolCatalog(
 			handler = validateProductionPrivilegeLogToolHandler(lease, output, logger)
 		case replaceProductionPrivilegeRowsToolDefinition.name:
 			handler = replaceProductionPrivilegeRowsToolHandler(lease, output, logger)
+		case createProductionPrivilegeDraftToolDefinition.name:
+			handler = createProductionPrivilegeDraftToolHandler(lease, output, logger)
 		case exportProductionPrivilegeLogToolDefinition.name:
 			handler = exportProductionPrivilegeLogToolHandler(lease, output, logger)
 		default:
