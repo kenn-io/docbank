@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/go-pdf/fpdf"
@@ -393,4 +394,24 @@ func syntheticStampedBatesExport(t *testing.T) ([]byte, api.BatesExport) {
 			SourceBlobSHA256: testProfileID, SourcePage: 1, OutputPage: 1, Label: "OUR000041",
 		}},
 	}
+}
+
+func TestFindBatesExportsHandlesTheLongestPossibleLabel(t *testing.T) {
+	label := strings.Repeat("A", pdfstamp.MaxLabelChars)
+	daemon := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		assert.Equal(t, label, request.URL.Query().Get("bates_label"))
+		writeDaemonJSON(t, response, api.BatesCandidatePage{Items: []api.BatesCandidate{{
+			ArtifactID: testBatesAllocationID, AllocationID: testBatesAllocationID, SnapshotID: testBatesSnapshotID,
+			BlobSHA256: testProfileID, Size: 4096, MediaType: "application/pdf", PageCount: 1,
+			ManifestSHA256: testProfileID, State: "verified", CreatedAt: "2026-09-21T12:00:00Z",
+			Evidence: []api.BatesCandidateEvidence{{Kind: "label", OccurrenceID: strings.Repeat("a", 32),
+				Label: label, OutputPage: 1}},
+		}}})
+	}))
+	t.Cleanup(daemon.Close)
+	server := newBatesToolTestServer(t, daemon.URL, false)
+
+	found := callToolResult(t, server, "find_bates_exports", map[string]any{"bates_label": label, "limit": 10})
+
+	assert.Len(t, objectField(t, found, "structuredContent")["items"], 1)
 }

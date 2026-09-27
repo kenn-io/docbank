@@ -439,7 +439,7 @@ func findBatesExportsSchemas() (schema, schema) {
 		"person_id":       selectorExcludes("bates_label", "custodian_label"),
 	}
 	evidence := objectSchema(schema{
-		"kind": enumSchema("label", "custodian"), "occurrence_id": stringSchema(128), "label": stringSchema(256),
+		"kind": enumSchema("label", "custodian"), "occurrence_id": stringSchema(128), "label": stringSchema(maxBatesLabelChars),
 		"output_page": integerSchema(1, 1_000_000), "assignment_id": uuidSchema(), "scope_kind": enumSchema("package", "collection", "document"),
 		"raw_label": stringSchema(200), "person_id": uuidSchema(), "rank": enumSchema("primary", "additional"),
 		"basis": enumSchema("operator_assigned", "package_column", "transfer_record"), packageIDField: uuidSchema(),
