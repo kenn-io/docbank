@@ -79,6 +79,12 @@ func TestRetainProductionReproductionReplaysWithoutNewNumbers(t *testing.T) {
 		sourceVersionIDs[index] = member.SourceVersionID
 	}
 	require.Equal(t, originalSource.SourceVersionID, sourceVersionIDs[0])
+	label := packageInputs.Reservation.Numbers[0].Text
+	originalNumber, err := s.FindPublishedProductionNumber(t.Context(), label)
+	require.NoError(t, err)
+	require.Equal(t, originalSource.SourceVersionID, originalNumber.SourceVersionID)
+	require.Equal(t, originalReceipt.SHA256, originalNumber.ProductionReceiptSHA256)
+	require.Equal(t, originalManifest.SHA256, originalNumber.ArtifactManifestSHA256)
 	request := documentproduction.ReproductionRequest{
 		Contract:                        documentproduction.ReproductionRequestContractV1,
 		OperationID:                     "88888888-8888-4888-8888-888888888888",
@@ -214,6 +220,12 @@ func TestRetainProductionReproductionReplaysWithoutNewNumbers(t *testing.T) {
 	loaded, err := s.LoadProductionReproduction(t.Context(), job.ID, request.OperationID)
 	require.NoError(t, err)
 	require.Equal(t, first, loaded)
+	lookupAfterReproduction, err := s.FindPublishedProductionNumber(t.Context(), label)
+	require.NoError(t, err)
+	require.Equal(t, originalNumber, lookupAfterReproduction,
+		"a reproduced package must not replace the number's original artifact")
+	require.Equal(t, loaded.OriginalProductionReceiptSHA256, lookupAfterReproduction.ProductionReceiptSHA256)
+	require.Equal(t, loaded.ArtifactManifestSHA256, lookupAfterReproduction.ArtifactManifestSHA256)
 	retained, err := s.LoadRetainedProductionPackage(t.Context(), job.ID, request.OperationID)
 	require.NoError(t, err)
 	require.Equal(t, partialPackage, retained, "retry must reuse the already retained package")
