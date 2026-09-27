@@ -464,3 +464,47 @@ func TestBatesRefusesToReserveASourceTooLargeToStamp(t *testing.T) {
 	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT next_sequence FROM bates_namespace_cursors WHERE namespace_id=?`, ns.NamespaceID).Scan(&cursor))
 	require.Equal(t, int64(1), cursor, "no numbers may be reserved for a source that cannot be stamped")
 }
+
+func TestBatesLedgerValidationRejectsSourcesTooLargeToStamp(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	size := pdfstamp.MaxOutputBytes + 1
+	node, err := s.CreateFile(t.Context(), s.RootID(), "huge.pdf", fakeHash("f1"), size, "application/pdf")
+	require.NoError(t, err)
+	occurrence := strings.Repeat("f", 32)
+	id, err := newUUIDv4()
+	require.NoError(t, err)
+	snapshot, err := s.SealCollectionSnapshot(t.Context(), SnapshotSealRequest{SnapshotID: id, Members: []CollectionSnapshotMember{{
+		Ordinal: 1, OccurrenceID: occurrence, NodeID: node.ID, ContentVersionID: node.CurrentVersionID,
+		BlobSHA256: node.BlobHash, Size: size, FamilyID: occurrence, FamilyOrder: 1, DisplayName: node.Name,
+		FrozenFieldsJSON: "{}", DocumentKind: "other", SourcePageCount: 1, SelectedPDFSHA256: node.BlobHash,
+		Representations: []CollectionSnapshotRepresentation{{OccurrenceID: occurrence, Role: "native",
+			Status: roleAvailable, TextAuthority: "none", ContentVersionID: node.CurrentVersionID,
+			BlobSHA256: node.BlobHash, MediaType: "application/pdf", Size: size, VerifiedPageCount: 1}},
+	}}})
+	require.NoError(t, err)
+	ns, err := s.EnsureBatesNamespace(t.Context(), "BIGSRC", "", 6)
+	require.NoError(t, err)
+	// Normal writes refuse this source, so write its reservation directly.
+	allocationID, err := newUUIDv4()
+	require.NoError(t, err)
+	operationID, err := newUUIDv4()
+	require.NoError(t, err)
+	_, err = s.db.ExecContext(t.Context(), `INSERT INTO bates_allocations(allocation_id,operation_id,namespace_id,snapshot_id,
+		request_sha256,recipe_sha256,start_sequence,end_sequence,state,created_at) VALUES(?,?,?,?,?,?,1,1,?,?)`,
+		allocationID, operationID, ns.NamespaceID, snapshot.SnapshotID, strings.Repeat("a", 64), strings.Repeat("b", 64),
+		batesAllocationStateReserved, nowRFC3339())
+	require.NoError(t, err)
+	_, err = s.db.ExecContext(t.Context(), `INSERT INTO bates_page_labels(allocation_id,ordinal,namespace_id,sequence,
+		occurrence_id,source_page,output_page,label) VALUES(?,1,?,1,?,1,1,?)`, allocationID, ns.NamespaceID, occurrence,
+		batesLabel(ns, 1))
+	require.NoError(t, err)
+	_, err = s.db.ExecContext(t.Context(), `UPDATE bates_namespace_cursors SET next_sequence=2 WHERE namespace_id=?`, ns.NamespaceID)
+	require.NoError(t, err)
+	var encoded bytes.Buffer
+
+	// Backup and restore share this ledger validation.
+	err = s.ExportMetadata(t.Context(), &encoded)
+
+	require.ErrorIs(t, err, ErrBatesSourceTooLarge)
+}

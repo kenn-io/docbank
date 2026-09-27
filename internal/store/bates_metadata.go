@@ -344,7 +344,8 @@ func validateBatesMetadataState(ctx context.Context, q metadataQuerier) error {
 	return nil
 }
 
-// snapshotSelectedPages reads only the sealed page order and source PDF hashes. Restore validation
+// snapshotSelectedPages reads only the sealed page order and source PDF hashes,
+// and refuses sources too large to stamp. Restore validation
 // must not depend on page documents, which can be derived after reservation.
 func snapshotSelectedPages(ctx context.Context, q metadataQuerier, snapshotID string) ([]BatesPageInput, error) {
 	var pages []BatesPageInput
@@ -357,6 +358,11 @@ func snapshotSelectedPages(ctx context.Context, q metadataQuerier, snapshotID st
 			return pages, nil
 		}
 		for _, member := range members {
+			if len(member.SelectedSourcePages) > 0 {
+				if err := checkBatesSourceSize(ctx, q, member.SelectedPDFSHA256); err != nil {
+					return nil, err
+				}
+			}
 			for _, page := range member.SelectedSourcePages {
 				pages = append(pages, BatesPageInput{OccurrenceID: member.OccurrenceID,
 					UnstampedSHA256: member.SelectedPDFSHA256, SourcePage: page})
