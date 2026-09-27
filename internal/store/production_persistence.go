@@ -325,13 +325,35 @@ func (s *Store) PutProductionApprovalEvent(ctx context.Context, record productio
 func (s *Store) CreatePrivilegeLogDraft(ctx context.Context, authority PrivilegeLogDraftAuthority) (int64, error) {
 	var result productionGenerationReceipt
 	prepared := authority.Draft
-	err := s.withStorageTx(ctx, func(tx *sql.Tx) error {
-		if replay, ok, err := productionOperationReplay[productionGenerationReceipt](ctx, tx,
-			prepared.OperationID, productionOperationDraft, prepared.RequestSHA256); err != nil || ok {
-			result = replay
-			return err
+	if err := validatePreparedPrivilegeDraft(prepared); err != nil {
+		return 0, err
+	}
+	rows, rowsDigest, err := normalizePrivilegeRows(authority.Rows)
+	if err != nil {
+		return 0, err
+	}
+	for _, member := range authority.Produced {
+		if err := redaction.ValidateMember(member); err != nil {
+			return 0, invalidProductionStorage("invalid produced privilege member")
 		}
-		if err := validatePreparedPrivilegeDraft(prepared); err != nil {
+	}
+	producedJSON, err := canonical.Marshal(nonNilProduced(authority.Produced))
+	if err != nil {
+		return 0, err
+	}
+	requestDigest, err := digestProductionValue(struct {
+		DraftSHA256    string `json:"draft_sha256"`
+		PlayersSHA256  string `json:"players_sha256"`
+		ProducedSHA256 string `json:"produced_sha256"`
+		RowsSHA256     string `json:"rows_sha256"`
+	}{prepared.RequestSHA256, authority.PlayersSHA256, digestProductionBytes(producedJSON), rowsDigest})
+	if err != nil {
+		return 0, err
+	}
+	err = s.withStorageTx(ctx, func(tx *sql.Tx) error {
+		if replay, ok, err := productionOperationReplay[productionGenerationReceipt](ctx, tx,
+			prepared.OperationID, productionOperationDraft, requestDigest); err != nil || ok {
+			result = replay
 			return err
 		}
 		policy, err := loadProductionPolicyByDigest(ctx, tx, prepared.PolicySHA256)
@@ -348,19 +370,6 @@ func (s *Store) CreatePrivilegeLogDraft(ctx context.Context, authority Privilege
 		}
 		if withheld.PolicySHA256 != policy.SHA256 || documentproduction.ValidateSelectionPartition(authority.Produced, withheld) != nil {
 			return invalidProductionStorage("privilege draft authority is inconsistent")
-		}
-		for _, member := range authority.Produced {
-			if err := redaction.ValidateMember(member); err != nil {
-				return invalidProductionStorage("invalid produced privilege member")
-			}
-		}
-		producedJSON, err := canonical.Marshal(nonNilProduced(authority.Produced))
-		if err != nil {
-			return err
-		}
-		rows, rowsDigest, err := normalizePrivilegeRows(authority.Rows)
-		if err != nil {
-			return err
 		}
 		if prepared.PredecessorLogID != "" {
 			var predecessorID string
@@ -395,7 +404,7 @@ func (s *Store) CreatePrivilegeLogDraft(ctx context.Context, authority Privilege
 		}
 		result.Generation = 1
 		return recordProductionOperation(ctx, tx, prepared.OperationID, productionOperationDraft,
-			prepared.RequestSHA256, result)
+			requestDigest, result)
 	})
 	return result.Generation, err
 }

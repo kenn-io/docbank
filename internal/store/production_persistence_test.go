@@ -419,6 +419,50 @@ type productionPersistenceApproval struct {
 	record productionservice.ApprovalRecord
 }
 
+func TestPrivilegeDraftReplayRejectsChangedPrivateAuthority(t *testing.T) {
+	s, fixture := newProductionPersistenceFixture(t)
+	_, err := s.PutProductionPolicy(t.Context(), fixture.policy)
+	require.NoError(t, err)
+	_, err = s.PutProductionPlayersSnapshot(t.Context(), fixture.players)
+	require.NoError(t, err)
+	_, err = s.PutProductionWithheldSelection(t.Context(), fixture.withheld)
+	require.NoError(t, err)
+	authority := PrivilegeLogDraftAuthority{
+		Draft: fixture.draft, PlayersSHA256: fixture.players.SnapshotSHA256,
+		Produced: []redaction.Member{}, Rows: fixture.rows,
+	}
+	generation, err := s.CreatePrivilegeLogDraft(t.Context(), authority)
+	require.NoError(t, err)
+	require.Equal(t, int64(1), generation)
+	replayed, err := s.CreatePrivilegeLogDraft(t.Context(), authority)
+	require.NoError(t, err)
+	require.Equal(t, generation, replayed)
+
+	changedRows := authority
+	changedRows.Rows = append([]documentproduction.PrivilegeRow(nil), authority.Rows...)
+	changedRows.Rows[0].PublicDescription = "Changed synthetic description."
+	_, err = s.CreatePrivilegeLogDraft(t.Context(), changedRows)
+	requireProductionProblem(t, err, documentproduction.ProblemChangedPayload)
+
+	changedPlayers := authority
+	changedPlayers.PlayersSHA256 = productionPersistenceSHA("a")
+	_, err = s.CreatePrivilegeLogDraft(t.Context(), changedPlayers)
+	requireProductionProblem(t, err, documentproduction.ProblemChangedPayload)
+
+	_, producedMember := seedProductionGateAuthority(t)
+	producedMember.ID = "75757575-7575-4757-8757-757575757575"
+	producedMember.Ordinal = 1
+	require.NoError(t, redaction.ValidateMember(producedMember))
+	changedProduced := authority
+	changedProduced.Produced = []redaction.Member{producedMember}
+	_, err = s.CreatePrivilegeLogDraft(t.Context(), changedProduced)
+	requireProductionProblem(t, err, documentproduction.ProblemChangedPayload)
+
+	rows, err := loadPrivilegeRows(t.Context(), s.db, fixture.draft.LogID, fixture.draft.Revision)
+	require.NoError(t, err)
+	require.Equal(t, fixture.rows, rows)
+}
+
 func newProductionPersistenceFixture(t *testing.T) (*Store, productionPersistenceFixture) {
 	t.Helper()
 	s := newTestStore(t)
