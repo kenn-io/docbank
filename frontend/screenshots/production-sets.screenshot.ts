@@ -187,3 +187,69 @@ test("selects a rectangle on a retained synthetic member PDF through the real da
     await expect(stat(workspace)).rejects.toMatchObject({ code: "ENOENT" });
   }
 });
+
+test("starts a finalized synthetic production job through the real daemon", async ({ page }) => {
+  test.setTimeout(240_000);
+  const workspace = await mkdtemp(path.join(tmpdir(), "docbank-job-admission-screenshot-"));
+  const ready = path.join(workspace, "fixture-ready.json");
+  const done = path.join(workspace, "fixture-done");
+  const vault = path.join(workspace, "vault");
+  const fixture = spawn("go", ["test", "-tags", "fts5", "./internal/store", "-run",
+    "^TestProductionJobAdmissionScreenshotFixture$", "-count=1"], {
+    cwd: repository, env: { ...process.env, GOTOOLCHAIN: "go1.27.0",
+      DOCBANK_PRODUCTION_JOB_ADMISSION_FIXTURE_READY: ready,
+      DOCBANK_PRODUCTION_JOB_ADMISSION_FIXTURE_DONE: done },
+  });
+  let fixtureOutput = "";
+  fixture.stdout.on("data", chunk => { fixtureOutput += String(chunk); });
+  fixture.stderr.on("data", chunk => { fixtureOutput += String(chunk); });
+  const fixtureExit = new Promise<number | null>(resolve => fixture.on("exit", resolve));
+  let daemonStarted = false;
+  const docbank = async (...args: string[]): Promise<string> => (await run(binary, args, {
+    cwd: repository, env: { ...process.env, DOCBANK_HOME: vault }, timeout: 60_000, maxBuffer: 4 * 1024 * 1024,
+  })).stdout.trim();
+  try {
+    await expect.poll(async () => {
+      try { return JSON.parse(await readFile(ready, "utf8")) as { root: string; set_id: string }; }
+      catch { return null; }
+    }, { timeout: 180_000, message: `finalized fixture did not appear: ${fixtureOutput}` }).not.toBeNull();
+    const source = JSON.parse(await readFile(ready, "utf8")) as { root: string; set_id: string };
+    await cp(source.root, vault, { recursive: true });
+    await writeFile(done, "copied", { mode: 0o600 });
+    expect(await fixtureExit, fixtureOutput).toBe(0);
+
+    await mkdir(output!, { recursive: true, mode: 0o700 });
+    const webURL = await docbank("web", "--no-browser");
+    daemonStarted = true;
+    await page.setViewportSize({ width: 1440, height: 1100 });
+    await page.addInitScript(() => localStorage.setItem("docbank-theme", "dark"));
+    const outside: string[] = [];
+    const browserErrors: string[] = [];
+    page.on("request", request => {
+      if (/^https?:/.test(request.url()) && new URL(request.url()).origin !== new URL(webURL).origin) outside.push(request.url());
+    });
+    page.on("pageerror", error => browserErrors.push(error.message));
+    page.on("console", message => { if (message.type() === "error") browserErrors.push(message.text()); });
+    await page.goto(webURL, { waitUntil: "domcontentloaded" });
+    await page.getByRole("button", { name: "Production sets" }).click();
+    const drawer = page.getByRole("dialog", { name: "Production sets" });
+    await drawer.getByRole("button", { name: "Synthetic duplicate production" }).click();
+    await expect(drawer.getByText("finalized", { exact: true })).toBeVisible();
+    const start = drawer.getByRole("button", { name: "Start production job" });
+    await expect(start).toBeDisabled();
+    await drawer.getByRole("checkbox", { name: /ready to run this finalized revision/i }).check();
+    await page.screenshot({ path: path.join(output!, "web-production-job-admission-before.png"),
+      fullPage: true, animations: "disabled" });
+    await start.click();
+    await expect(drawer.getByRole("region", { name: /Status for production job/ })).toBeVisible();
+    await page.screenshot({ path: path.join(output!, "web-production-job-admission-after.png"),
+      fullPage: true, animations: "disabled" });
+    expect(outside).toEqual([]);
+    expect(browserErrors).toEqual([]);
+  } finally {
+    await writeFile(done, "stopped", { mode: 0o600 });
+    if (daemonStarted) await docbank("daemon", "stop");
+    await rm(workspace, { recursive: true, force: true });
+    await expect(stat(workspace)).rejects.toMatchObject({ code: "ENOENT" });
+  }
+});

@@ -227,6 +227,14 @@ export function getProductionJobStatus(session: string, setID: string, jobID: st
     { session, signal });
 }
 
+export function admitProductionJob(session: string, setID: string, revision: number, etag: number,
+  jobID: string, operationID: string, signal?: AbortSignal): Promise<ProductionJobStatus> {
+  return sessionJSON<ProductionJobStatus>(`${setBase}/${encodeURIComponent(setID)}/revisions/${revision}/jobs`, {
+    session, signal, method: "POST", headers: { "Content-Type": "application/json", "If-Match": String(etag) },
+    body: JSON.stringify({ job_id: jobID, operation_id: operationID }),
+  });
+}
+
 export function reviewProductionMember(session: string, setID: string, revision: number, etag: number,
   memberID: string, binding: string, operationID: string, signal?: AbortSignal): Promise<ProductionReceipt> {
   return sessionJSON<ProductionReceipt>(`${setBase}/${encodeURIComponent(setID)}/revisions/${revision}` +

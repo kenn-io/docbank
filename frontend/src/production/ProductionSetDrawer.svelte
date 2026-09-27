@@ -182,7 +182,7 @@
         {/if}
       </Card>
       {#key selected.id}
-        <ProductionJobLookup {session} setID={selected.id}
+        <ProductionJobLookup {session} setID={selected.id} set={selected} draft={draft ?? undefined} onrefresh={() => void refresh()}
           onauthfailure={cause => { onauthfailure(cause); onclose(); }} />
       {/key}
       {#if draft}
