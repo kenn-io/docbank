@@ -12024,6 +12024,36 @@ components:
       x-go-type-import:
         path: go.kenn.io/docbank/internal/api
         name: api
+    ProductionWithheldSelectionCreateRequest:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/ProductionWithheldSelectionCreateRequest.json
+          format: uri
+          readOnly: true
+          type: string
+        members:
+          items:
+            $ref: "#/components/schemas/WithheldMember"
+          type: array
+        operation_id:
+          type: string
+        policy_sha256:
+          type: string
+        selection_id:
+          type: string
+      required:
+        - operation_id
+        - selection_id
+        - policy_sha256
+        - members
+      type: object
+      x-go-type: api.ProductionWithheldSelectionCreateRequest
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     ProvenanceAppendReceipt:
       additionalProperties: false
       properties:
@@ -15334,6 +15364,78 @@ components:
       x-go-type-import:
         path: go.kenn.io/docbank/internal/api
         name: api
+    WithheldMember:
+      additionalProperties: false
+      properties:
+        family:
+          $ref: "#/components/schemas/FamilyContext"
+        family_order:
+          format: int64
+          type: integer
+        id:
+          type: string
+        ordinal:
+          format: int64
+          type: integer
+        source_sha256:
+          type: string
+        source_size:
+          format: int64
+          type: integer
+        source_version_id:
+          type: string
+      required:
+        - id
+        - ordinal
+        - source_version_id
+        - source_sha256
+        - source_size
+        - family_order
+        - family
+      type: object
+      x-go-type: production.WithheldMember
+      x-go-type-import:
+        path: go.kenn.io/docbank/document/production
+        name: production
+    WithheldSelection:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/WithheldSelection.json
+          format: uri
+          readOnly: true
+          type: string
+        contract:
+          type: string
+        id:
+          type: string
+        members:
+          items:
+            $ref: "#/components/schemas/WithheldMember"
+          type: array
+        policy_sha256:
+          type: string
+        revision:
+          format: int64
+          type: integer
+        set_id:
+          type: string
+        sha256:
+          type: string
+      required:
+        - contract
+        - id
+        - set_id
+        - revision
+        - policy_sha256
+        - members
+      type: object
+      x-go-type: production.WithheldSelection
+      x-go-type-import:
+        path: go.kenn.io/docbank/document/production
+        name: production
     WorkspaceFacetValue:
       additionalProperties: false
       properties:
@@ -21723,6 +21825,42 @@ paths:
                 $ref: "#/components/schemas/Error"
           description: Error
       summary: Seal exact production membership before member review
+  /api/v1/productions/sets/{set_id}/revisions/{revision}/withheld-selection:
+    post:
+      operationId: createProductionWithheldSelection
+      parameters:
+        - in: path
+          name: set_id
+          required: true
+          schema:
+            type: string
+        - in: path
+          name: revision
+          required: true
+          schema:
+            format: int64
+            minimum: 1
+            type: integer
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ProductionWithheldSelectionCreateRequest"
+        required: true
+      responses:
+        "201":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WithheldSelection"
+          description: Created
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: Record withheld members from sealed production membership
   /api/v1/queries/highlights:
     post:
       description: Returns only bounded positive text operands from the resolved compiler AST; structured, name-only, and negated operands are excluded.

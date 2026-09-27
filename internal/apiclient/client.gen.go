@@ -9092,6 +9092,53 @@ func (c *Client) SealProductionMembership(ctx context.Context, options *SealProd
 	return responseParser(ctx, resp)
 }
 
+// CreateProductionWithheldSelection Record withheld members from sealed production membership
+func (c *Client) CreateProductionWithheldSelection(ctx context.Context, options *CreateProductionWithheldSelectionRequestOptions, reqEditors ...runtime.RequestEditorFn) (*CreateProductionWithheldSelectionResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/productions/sets/{set_id}/revisions/{revision}/withheld-selection",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*CreateProductionWithheldSelectionResponse, error) {
+		switch resp.StatusCode {
+
+		case 201:
+
+			target := new(CreateProductionWithheldSelectionResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "CreateProductionWithheldSelectionResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[CreateProductionWithheldSelectionErrorResponse](resp, "CreateProductionWithheldSelectionErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/productions/sets/{set_id}/revisions/{revision}/withheld-selection")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 201)
+	}
+	return responseParser(ctx, resp)
+}
+
 // PreviewQueryHighlights Preview positive document-text highlight terms
 func (c *Client) PreviewQueryHighlights(ctx context.Context, options *PreviewQueryHighlightsRequestOptions, reqEditors ...runtime.RequestEditorFn) (*PreviewQueryHighlightsResponse, error) {
 	var err error
@@ -17684,6 +17731,41 @@ func (o *SealProductionMembershipRequestOptions) GetHeader() (map[string]string,
 	return headers, err
 }
 
+// CreateProductionWithheldSelectionRequestOptions is the options needed to make a request to CreateProductionWithheldSelection.
+type CreateProductionWithheldSelectionRequestOptions struct {
+	PathParams *CreateProductionWithheldSelectionPath
+	Body       *CreateProductionWithheldSelectionBody
+}
+
+// GetPathParams returns the path params as a map.
+func (o *CreateProductionWithheldSelectionRequestOptions) GetPathParams() (map[string]any, error) {
+	encoded, err := json.Marshal(o.PathParams, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetQuery returns the query params as a map.
+func (o *CreateProductionWithheldSelectionRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *CreateProductionWithheldSelectionRequestOptions) GetBody() any {
+	if o.Body == nil {
+		return nil
+	}
+	return o.Body
+}
+
+// GetHeader returns the headers as a map.
+func (o *CreateProductionWithheldSelectionRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
 // PreviewQueryHighlightsRequestOptions is the options needed to make a request to PreviewQueryHighlights.
 type PreviewQueryHighlightsRequestOptions struct {
 	Body *PreviewQueryHighlightsBody
@@ -20037,6 +20119,11 @@ type SealProductionMembershipPath struct {
 	Revision int64     `json:"revision"`
 }
 
+type CreateProductionWithheldSelectionPath struct {
+	SetID    string `json:"set_id"`
+	Revision int64  `json:"revision"`
+}
+
 type GetDocumentRenditionPath struct {
 	AttachmentID string `json:"attachment_id"`
 }
@@ -20316,6 +20403,8 @@ type EditProductionInstructionsBody = ProductionInstructionsRequest
 type ReviewProductionMemberBody = ProductionMemberReviewRequest
 
 type SealProductionMembershipBody = ProductionMembershipSealRequest
+
+type CreateProductionWithheldSelectionBody = ProductionWithheldSelectionCreateRequest
 
 type PreviewQueryHighlightsBody = SavedQueryV1Schema
 
@@ -21517,6 +21606,10 @@ type SealProductionMembershipResponse = api.ProductionReceipt
 
 type SealProductionMembershipErrorResponse = Error
 
+type CreateProductionWithheldSelectionResponse = production.WithheldSelection
+
+type CreateProductionWithheldSelectionErrorResponse = Error
+
 type PreviewQueryHighlightsResponse = api.QueryHighlightPreview
 
 type PreviewQueryHighlightsErrorResponse = Error
@@ -22628,6 +22721,8 @@ type ProductionRecipeOption = api.ProductionRecipeOption
 
 type ProductionSetCreated = api.ProductionSetCreated
 
+type ProductionWithheldSelectionCreateRequest = api.ProductionWithheldSelectionCreateRequest
+
 type ProvenanceAppendReceipt = api.ProvenanceAppendReceipt
 
 type ProvenanceAppendRequest = api.ProvenanceAppendRequest
@@ -22964,6 +23059,10 @@ type VersionPruneRequest = api.VersionPruneRequest
 type WatchedInbox = api.WatchedInbox
 
 type WatchedInboxList = api.WatchedInboxList
+
+type WithheldMember = production.WithheldMember
+
+type WithheldSelection = production.WithheldSelection
 
 type WorkspaceFacetValue = api.WorkspaceFacetValue
 
