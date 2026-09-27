@@ -10,6 +10,7 @@
   import { loadProductionSourcePDF } from "./sourcePDF.js";
   import { embedpdfMarqueeBox, type Frame } from "./embedpdfAdapter.js";
   import { loadSelectionFrame } from "./selectionFrame.js";
+  import { loadSelectableTextPage, textSpanForSelection, type SelectableTextPage } from "./textSelection.js";
   import { assessSelectionDecision } from "./decisionCheck.js";
   import ProductionPagePreview from "./ProductionPagePreview.svelte";
   import ProductionMemberReview from "./ProductionMemberReview.svelte";
@@ -52,7 +53,11 @@
   let SourceViewer = $state.raw<typeof import("./SourcePDFViewer.svelte").default | null>(null);
   let selectionLoading = $state(false);
   let selectionError = $state("");
-  let selectedRegion = $state<{ member: ProductionMember; page: number; frame: Frame; selector: ProductionDecision["selector"] } | null>(null);
+  let selectedRegion = $state<{ member: ProductionMember; page: number; frame: Frame;
+    selector: ProductionDecision["selector"]; excerpt?: string } | null>(null);
+  let textPage = $state<SelectableTextPage | null>(null);
+  let textPageChoice = $state(1);
+  let textArea = $state<HTMLTextAreaElement | null>(null);
   let selectionReason = $state("");
   let selectionLabel = $state("");
   let decisionLoading = $state(false);
@@ -111,6 +116,7 @@
     selectionLoading = false;
     selectionError = "";
     selectedRegion = null;
+    textPage = null;
     selectionReason = "";
     selectionLabel = "";
     decisionLoading = false;
@@ -140,6 +146,7 @@
       decisionController.abort();
       sourceEditor = null;
       selectedRegion = null;
+      textPage = null;
       pendingExpansion = null;
       return "";
     }
@@ -202,6 +209,7 @@
     decisionController.abort();
     sourceEditor = null;
     selectedRegion = null;
+    textPage = null;
     pendingExpansion = null;
     selectionLoading = false;
     decisionLoading = false;
@@ -265,6 +273,7 @@
     selectionController.abort();
     decisionController.abort();
     selectedRegion = null;
+    textPage = null;
     pendingExpansion = null;
     selectionLoading = false;
     decisionLoading = false;
@@ -294,6 +303,7 @@
     decisionController.abort();
     sourceEditor = null;
     selectedRegion = null;
+    textPage = null;
     pendingExpansion = null;
     selectionLoading = false;
     decisionLoading = false;
@@ -313,6 +323,7 @@
     selectionLoading = true;
     selectionError = "";
     selectedRegion = null;
+    textPage = null;
     pendingExpansion = null;
     decisionLoading = false;
     selectionReason = "";
@@ -334,6 +345,47 @@
     } finally {
       if (!signal.aborted) selectionLoading = false;
     }
+  }
+
+  async function loadTextSelection(member: ProductionMember): Promise<void> {
+    if (draft.state !== "draft" || stale || sourceEditor?.member.id !== member.id || changing || pendingChange) return;
+    selectionController.abort();
+    decisionController.abort();
+    selectionController = new AbortController();
+    const signal = selectionController.signal;
+    const exact = scope();
+    selectionLoading = true;
+    selectionError = "";
+    selectedRegion = null;
+    textPage = null;
+    pendingExpansion = null;
+    try {
+      const frame = await loadSelectionFrame(exact.session, exact.setID, exact.revision, exact.etag,
+        member.id, member.map_sha256, textPageChoice, signal);
+      const page = await loadSelectableTextPage(exact.session, exact.setID, exact.revision, exact.etag,
+        member.id, member.map_sha256, frame, signal);
+      if (!current(exact, signal) || sourceEditor?.member.id !== member.id) return;
+      textPage = page;
+      await tick();
+      textArea?.focus();
+    } catch (cause) {
+      if (current(exact, signal)) selectionError = fail(cause);
+    } finally {
+      if (!signal.aborted) selectionLoading = false;
+    }
+  }
+
+  function useHighlightedText(member: ProductionMember): void {
+    if (!textPage || !textArea || sourceEditor?.member.id !== member.id || changing || pendingChange) return;
+    try {
+      const span = textSpanForSelection(textPage, textArea.selectionStart, textArea.selectionEnd);
+      selectedRegion = { member, page: textPage.frame.page, frame: textPage.frame,
+        selector: { kind: "text", map_sha256: member.map_sha256, span },
+        excerpt: textPage.text.slice(textArea.selectionStart, textArea.selectionEnd) };
+      selectionError = "";
+      pendingExpansion = null;
+      void tick().then(() => document.getElementById("production-selected-region")?.focus());
+    } catch (cause) { selectionError = fail(cause); }
   }
 
   function clearSelection(): void {
@@ -508,14 +560,35 @@
               {#key sourceEditor.member.id}
                 <SourceViewer bytes={sourceEditor.bytes} memberID={sourceEditor.member.id}
                   highlight={selectedRegion ? { page: selectedRegion.page, frame: selectedRegion.frame,
-                    box: selectedRegion.selector.boxes?.[0], expandedBoxes: pendingExpansion?.decision.selector.boxes } : null}
+                    box: selectedRegion.selector.boxes?.[0], wholePage: selectedRegion.selector.kind === "page",
+                    expandedBoxes: pendingExpansion?.decision.selector.boxes } : null}
                   onmarquee={selection => void selectRegion(sourceEditor!.member, selection.pageIndex + 1, selection)}
                   onpage={page => void selectRegion(sourceEditor!.member, page)} />
               {/key}
+              <div class="text-selection-controls">
+                <label for="production-text-page">Mapped text page
+                  <input id="production-text-page" type="number" min="1" step="1" bind:value={textPageChoice}
+                    oninput={() => { textPage = null; selectedRegion = null; }} />
+                </label>
+                <Button size="sm" surface="soft" disabled={selectionLoading || changing || !!pendingChange}
+                  onclick={() => void loadTextSelection(sourceEditor!.member)}>Load mapped text</Button>
+              </div>
+              {#if textPage}
+                <div class="mapped-text">
+                  <label for="production-verified-text">Verified page text
+                    <textarea id="production-verified-text" bind:this={textArea} readonly value={textPage.text}
+                      rows="5" aria-label="Verified page text"></textarea>
+                  </label>
+                  <small>Highlight text in this retained transcript, then use it for a decision on page {textPage.frame.page}.</small>
+                  <Button size="sm" surface="soft" disabled={changing || !!pendingChange}
+                    onclick={() => useHighlightedText(sourceEditor!.member)}>Use highlighted text</Button>
+                </div>
+              {/if}
             </div>
             {#if selectedRegion}
-              <div id="production-selected-region" class="selected-region" role="region" tabindex="-1" aria-label={`Selected region on page ${selectedRegion.page}`}>
-                <strong>{selectedRegion.selector.kind === "page" ? "Whole page" : "Selected rectangle"} · page {selectedRegion.page}</strong>
+              <div id="production-selected-region" class="selected-region" role="region" tabindex="-1" aria-label={`Selected ${selectedRegion.selector.kind === "text" ? "text" : "region"} on page ${selectedRegion.page}`}>
+                <strong>{selectedRegion.selector.kind === "page" ? "Whole page" : selectedRegion.selector.kind === "text" ? "Selected text" : "Selected rectangle"} · page {selectedRegion.page}</strong>
+                {#if selectedRegion.excerpt}<p class="selected-excerpt"><mark>{selectedRegion.excerpt}</mark></p>{/if}
                 <p>The selection is bound to this member’s retained map and current draft.</p>
                 <label for="production-selected-reason">Private reason for redaction
                   <textarea id="production-selected-reason" bind:value={selectionReason} oninput={() => pendingExpansion = null}
@@ -625,6 +698,10 @@
   .change-error{display:flex;align-items:center;gap:var(--space-2);flex-wrap:wrap;color:var(--accent-red)}
   .decision-actions{display:flex;justify-content:flex-start;gap:var(--space-2);flex-wrap:wrap}
   .source-context{padding:var(--space-3);border:1px solid var(--border-muted);border-radius:var(--radius-md);background:var(--bg-raised);white-space:pre-wrap;overflow-wrap:anywhere}
+  .text-selection-controls{display:flex;align-items:end;gap:var(--space-2);flex-wrap:wrap;margin-block:var(--space-2)}
+  .text-selection-controls input{width:7rem}
+  .mapped-text{display:grid;justify-items:start;gap:var(--space-2);padding:var(--space-3);border:1px solid var(--border-muted);border-radius:var(--radius-md);background:var(--bg-raised)}
+  .mapped-text label{width:100%}.mapped-text textarea{min-height:6rem}
   .source-workspace{display:grid;gap:var(--space-3)}.source-viewer-column{min-width:0}.source-workspace.has-selection{grid-template-columns:minmax(0,1fr) minmax(260px,340px)}
   .selected-region{display:grid;gap:var(--space-2);align-self:start;padding:var(--space-3);border:1px solid var(--border-default);border-radius:var(--radius-md);background:var(--bg-raised)}
   .expansion-review{display:grid;gap:var(--space-2);padding:var(--space-2);border:1px solid var(--accent-amber);border-radius:var(--radius-md);background:color-mix(in srgb,var(--accent-amber) 9%,var(--bg-raised))}

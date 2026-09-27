@@ -99,6 +99,16 @@ test("selects a rectangle on a retained synthetic member PDF through the real da
       throw new Error(`${String(error)}\nBrowser errors: ${browserErrors.join(" | ")}\nViewer DOM: ${dom}`);
     }
     await expect(drawer.getByRole("combobox", { name: "PDF page" })).toBeVisible();
+    await drawer.getByRole("button", { name: "Load mapped text" }).click();
+    const verifiedText = drawer.getByRole("textbox", { name: "Verified page text" });
+    await expect(verifiedText).toHaveValue("x");
+    await verifiedText.evaluate((element: HTMLTextAreaElement) => element.setSelectionRange(0, 1));
+    await drawer.getByRole("button", { name: "Use highlighted text" }).click();
+    await expect(drawer.getByRole("region", { name: "Selected text on page 1" })).toBeVisible();
+    await expect(drawer.locator(".source-selection-overlay")).toHaveCount(0);
+    await page.screenshot({ path: path.join(output!, "web-production-text-selection.png"),
+      fullPage: true, animations: "disabled" });
+    await drawer.getByRole("button", { name: "Clear selection" }).click();
     await drawer.getByRole("button", { name: "Select whole page", exact: true }).click();
     await expect(drawer.getByRole("region", { name: "Selected region on page 1" })).toBeVisible();
     await drawer.getByRole("button", { name: "Clear selection" }).click();

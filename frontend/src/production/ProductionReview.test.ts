@@ -94,6 +94,50 @@ it("opens only verified source bytes and returns focus when closed", async () =>
   expect(screen.queryByRole("region", { name: "Original PDF for member 1" })).toBeNull();
 }, 20_000);
 
+it("sends an exact UTF-8 text span from a verified map through decision preflight", async () => {
+  const map = new TextEncoder().encode(JSON.stringify({ contract: "aligned-text/v1", text: "A😀B",
+    pages: [{ number: 1, frame_sha256: "c".repeat(64), width: 10000, height: 10000,
+      span: { start: 0, end: 6 } }] }));
+  const mapDigest = bytesToHex(sha256(map));
+  const mappedMember = { ...memberA, map_sha256: mapDigest };
+  let checked: { decision: { selector: { span: { start: number; end: number } }; id: string } } | undefined;
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    const url = String(input);
+    if (url === `/api/v1/productions/sets/${set.id}/revisions/2`) return json(draft);
+    if (url.endsWith("/members?limit=50")) return json({ items: [mappedMember], next_cursor: "" });
+    if (url.endsWith("/decisions?limit=50&uncertain=true")) return json({ items: [], next_cursor: "" });
+    if (url.endsWith(`/members/${memberA.id}/pdf`)) return new Response(sourcePDF as BodyInit, { headers: {
+      "Content-Type": "application/pdf", "X-Docbank-Blob-Hash": sourcePDFSHA,
+      "X-Docbank-Blob-Size": String(sourcePDF.length),
+      "Content-Digest": `sha-256=:${Buffer.from(sha256(sourcePDF)).toString("base64")}:`,
+    } });
+    if (url.endsWith("/resolve")) return json({ set_id: set.id, revision: 2, etag: 4,
+      member_id: memberA.id, map_sha256: mapDigest,
+      page: { number: 1, frame_sha256: "c".repeat(64), width: 10000, height: 10000,
+        span: { start: 0, end: 6 } } });
+    if (url.endsWith(`/maps/${memberA.id}?limit=65536`)) return json({ map_sha256: mapDigest,
+      offset: 0, total_bytes: map.length, data: Buffer.from(map).toString("base64"),
+      chunk_sha256: bytesToHex(sha256(map)), next_cursor: "" });
+    if (url.endsWith("/decisions/check")) {
+      checked = JSON.parse(String(init?.body));
+      return json({ set_id: set.id, revision: 2, etag: 4, member_id: memberA.id,
+        decision_id: checked!.decision.id, outcome: "ready" });
+    }
+    if (url.endsWith("/changes")) return json({ operation_id: "synthetic", set_id: set.id, revision: 2, etag: 5 });
+    throw new Error(`unexpected request ${url}`);
+  });
+  render(ProductionReview, { session: "synthetic", set, draft, onrefresh: vi.fn(), onauthfailure: vi.fn(), onclose: vi.fn() });
+  await fireEvent.click(await screen.findByRole("button", { name: "Open original PDF for member 1" }));
+  await fireEvent.click(await screen.findByRole("button", { name: "Load mapped text" }));
+  const passage = await screen.findByRole("textbox", { name: "Verified page text" });
+  (passage as HTMLTextAreaElement).setSelectionRange(1, 3);
+  await fireEvent.click(screen.getByRole("button", { name: "Use highlighted text" }));
+  const selected = await screen.findByRole("region", { name: "Selected text on page 1" });
+  expect(selected.getElementsByTagName("mark")[0]?.textContent).toBe("😀");
+  await fireEvent.click(screen.getByRole("button", { name: "Keep selection" }));
+  await waitFor(() => expect(checked?.decision.selector.span).toEqual({ start: 1, end: 5 }));
+});
+
 it("discards a page when its exact draft ETag changes during the read", async () => {
   const refresh = vi.fn();
   vi.spyOn(globalThis, "fetch").mockImplementation(async input => {

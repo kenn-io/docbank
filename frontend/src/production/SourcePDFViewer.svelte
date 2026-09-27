@@ -17,7 +17,8 @@
 
   let { bytes, memberID, onmarquee, onpage, highlight = null }: { bytes: Uint8Array<ArrayBuffer>; memberID: string;
     onmarquee: (selection: Marquee) => void; onpage: (page: number) => void;
-    highlight?: { page: number; frame: Frame; box?: PhysicalBox; expandedBoxes?: PhysicalBox[] } | null } = $props();
+    highlight?: { page: number; frame: Frame; box?: PhysicalBox; wholePage?: boolean;
+      expandedBoxes?: PhysicalBox[] } | null } = $props();
   // EmbedPDF's worker bundle uses blob workers, which the web CSP does not allow.
   const engine = usePdfiumEngine({ wasmUrl: pdfiumWasmURL, worker: false, fontFallback: null });
   let loadError = $state("");
@@ -80,8 +81,10 @@
                           <div class="source-expansion-overlay" aria-hidden="true"
                             style={`left: ${expandedBox.x0 / highlight.frame.width * 100}%; top: ${expandedBox.y0 / highlight.frame.height * 100}%; width: ${(expandedBox.x1 - expandedBox.x0) / highlight.frame.width * 100}%; height: ${(expandedBox.y1 - expandedBox.y0) / highlight.frame.height * 100}%`}></div>
                         {/each}
-                        <div class="source-selection-overlay" aria-hidden="true"
-                          style={`left: ${box ? box.x0 / highlight.frame.width * 100 : 0}%; top: ${box ? box.y0 / highlight.frame.height * 100 : 0}%; width: ${box ? (box.x1 - box.x0) / highlight.frame.width * 100 : 100}%; height: ${box ? (box.y1 - box.y0) / highlight.frame.height * 100 : 100}%`}></div>
+                        {#if box || highlight.wholePage}
+                          <div class="source-selection-overlay" aria-hidden="true"
+                            style={`left: ${box ? box.x0 / highlight.frame.width * 100 : 0}%; top: ${box ? box.y0 / highlight.frame.height * 100 : 0}%; width: ${box ? (box.x1 - box.x0) / highlight.frame.width * 100 : 100}%; height: ${box ? (box.y1 - box.y0) / highlight.frame.height * 100 : 100}%`}></div>
+                        {/if}
                       {/if}
                     </div>
                   {/snippet}

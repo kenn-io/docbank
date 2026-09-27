@@ -8,19 +8,19 @@ const hashPattern = /^[0-9a-f]{64}$/;
 
 export interface ReviewContext { before: string; selected: string; after: string }
 
-/** Read an exact retained text map; never trust a chunk or viewport excerpt alone. */
-export async function loadReviewContext(session: string, setID: string, revision: number, memberID: string,
-  selector: ProductionDecision["selector"], signal: AbortSignal): Promise<ReviewContext> {
-  if (selector.kind !== "text" || !selector.span || !hashPattern.test(selector.map_sha256))
-    throw new Error("This flagged region needs the original source editor before a decision can be made.");
+export interface VerifiedTextMap { text: string; pages?: unknown }
 
+/** Read an exact retained text map; never trust a chunk or viewport excerpt alone. */
+export async function loadVerifiedTextMap(session: string, setID: string, revision: number, memberID: string,
+  mapSHA256: string, signal: AbortSignal): Promise<VerifiedTextMap> {
+  if (!hashPattern.test(mapSHA256)) throw new Error("The retained text map is invalid.");
   let cursor = "";
   let received = 0;
   let raw: Uint8Array | undefined;
   const seen = new Set<string>();
   for (;;) {
     const chunk = await getProductionMapChunk(session, setID, revision, memberID, cursor, signal);
-    if (chunk.map_sha256 !== selector.map_sha256 || !Number.isSafeInteger(chunk.total_bytes) ||
+    if (chunk.map_sha256 !== mapSHA256 || !Number.isSafeInteger(chunk.total_bytes) ||
         chunk.total_bytes < 1 || chunk.total_bytes > maxReviewMapBytes ||
         !Number.isSafeInteger(chunk.offset) || chunk.offset !== received ||
         !hashPattern.test(chunk.chunk_sha256) || typeof chunk.data !== "string" ||
@@ -42,7 +42,7 @@ export async function loadReviewContext(session: string, setID: string, revision
     seen.add(chunk.next_cursor);
     cursor = chunk.next_cursor;
   }
-  if (!raw || received !== raw.length || bytesToHex(sha256(raw)) !== selector.map_sha256)
+  if (!raw || received !== raw.length || bytesToHex(sha256(raw)) !== mapSHA256)
     throw new Error("The retained text map failed verification.");
 
   let map: unknown;
@@ -51,7 +51,14 @@ export async function loadReviewContext(session: string, setID: string, revision
   if (!map || typeof map !== "object" || (map as { contract?: unknown }).contract !== "aligned-text/v1" ||
       typeof (map as { text?: unknown }).text !== "string")
     throw new Error("The retained text map is invalid.");
-  const text = (map as { text: string }).text;
+  return map as VerifiedTextMap;
+}
+
+export async function loadReviewContext(session: string, setID: string, revision: number, memberID: string,
+  selector: ProductionDecision["selector"], signal: AbortSignal): Promise<ReviewContext> {
+  if (selector.kind !== "text" || !selector.span || !hashPattern.test(selector.map_sha256))
+    throw new Error("This flagged region needs the original source editor before a decision can be made.");
+  const { text } = await loadVerifiedTextMap(session, setID, revision, memberID, selector.map_sha256, signal);
   const bytes = new TextEncoder().encode(text);
   const { start, end } = selector.span;
   if (!Number.isSafeInteger(start) || !Number.isSafeInteger(end) || start < 0 || end <= start ||
