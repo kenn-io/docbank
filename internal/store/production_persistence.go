@@ -41,6 +41,16 @@ type PrivilegeLogDraftAuthority struct {
 	Rows          []documentproduction.PrivilegeRow
 }
 
+// StoredPrivilegeLogDraftRequest identifies a sealed production revision and
+// the private rows to draft. Produced members are loaded from that revision.
+type StoredPrivilegeLogDraftRequest struct {
+	SetID         string
+	SetRevision   int64
+	Draft         productionservice.PrivilegeLogDraftRequest
+	PlayersSHA256 string
+	Rows          []documentproduction.PrivilegeRow
+}
+
 // PrivilegeLogRowUpdate is an optimistic, replay-safe replacement of draft
 // rows. A successful replacement advances Generation and invalidates prior
 // validation and approval bindings.
@@ -323,6 +333,76 @@ func (s *Store) PutProductionApprovalEvent(ctx context.Context, record productio
 }
 
 func (s *Store) CreatePrivilegeLogDraft(ctx context.Context, authority PrivilegeLogDraftAuthority) (int64, error) {
+	var generation int64
+	err := s.withStorageTx(ctx, func(tx *sql.Tx) error {
+		var createErr error
+		generation, createErr = s.createPrivilegeLogDraftTx(ctx, tx, authority)
+		return createErr
+	})
+	return generation, err
+}
+
+// CreateStoredPrivilegeLogDraft derives both sides of the selection from one
+// retained, sealed production revision in the same transaction as the insert.
+func (s *Store) CreateStoredPrivilegeLogDraft(ctx context.Context, request StoredPrivilegeLogDraftRequest) (int64, error) {
+	if validateUUIDv4(request.SetID) != nil || request.SetRevision < 1 {
+		return 0, invalidProductionStorage("invalid production revision for privilege draft")
+	}
+	var generation int64
+	err := s.withStorageTx(ctx, func(tx *sql.Tx) error {
+		stored, err := s.loadProductionInputsTx(ctx, tx, request.SetID, request.SetRevision)
+		if err != nil {
+			return err
+		}
+		if !stored.Draft.MembershipSealed || stored.Withheld == nil {
+			return invalidProductionStorage("privilege draft requires sealed membership and withheld selection")
+		}
+		produced, err := storedPrivilegeProducedMembers(stored.Members, *stored.Withheld)
+		if err != nil {
+			return err
+		}
+		prepared, err := productionservice.PreparePrivilegeLogDraft(request.Draft, *stored.Withheld, stored.Policy)
+		if err != nil {
+			return err
+		}
+		generation, err = s.createPrivilegeLogDraftTx(ctx, tx, PrivilegeLogDraftAuthority{
+			Draft: prepared, PlayersSHA256: request.PlayersSHA256, Produced: produced, Rows: request.Rows,
+		})
+		return err
+	})
+	return generation, err
+}
+
+func storedPrivilegeProducedMembers(
+	members []productionservice.StoredPreparedMember, withheld documentproduction.WithheldSelection,
+) ([]redaction.Member, error) {
+	byID := make(map[string]redaction.Member, len(members))
+	for _, prepared := range members {
+		byID[prepared.Member.ID] = prepared.Member
+	}
+	withheldIDs := make(map[string]struct{}, len(withheld.Members))
+	for _, selected := range withheld.Members {
+		member, ok := byID[selected.ID]
+		if !ok || selected.Ordinal != member.Ordinal || selected.SourceVersionID != member.SourceVersionID ||
+			selected.SourceSHA256 != member.SourceSHA256 || selected.SourceSize != member.SourceSize ||
+			selected.Family != member.Family {
+			return nil, invalidProductionStorage("withheld selection differs from retained production membership")
+		}
+		withheldIDs[selected.ID] = struct{}{}
+	}
+	produced := make([]redaction.Member, 0, len(members)-len(withheldIDs))
+	for _, prepared := range members {
+		if _, withheld := withheldIDs[prepared.Member.ID]; !withheld {
+			produced = append(produced, prepared.Member)
+		}
+	}
+	if err := documentproduction.ValidateSelectionPartition(produced, withheld); err != nil {
+		return nil, err
+	}
+	return produced, nil
+}
+
+func (s *Store) createPrivilegeLogDraftTx(ctx context.Context, tx *sql.Tx, authority PrivilegeLogDraftAuthority) (int64, error) {
 	var result productionGenerationReceipt
 	prepared := authority.Draft
 	if err := validatePreparedPrivilegeDraft(prepared); err != nil {
@@ -350,7 +430,7 @@ func (s *Store) CreatePrivilegeLogDraft(ctx context.Context, authority Privilege
 	if err != nil {
 		return 0, err
 	}
-	err = s.withStorageTx(ctx, func(tx *sql.Tx) error {
+	err = func() error {
 		if replay, ok, err := productionOperationReplay[productionGenerationReceipt](ctx, tx,
 			prepared.OperationID, productionOperationDraft, requestDigest); err != nil || ok {
 			result = replay
@@ -405,7 +485,7 @@ func (s *Store) CreatePrivilegeLogDraft(ctx context.Context, authority Privilege
 		result.Generation = 1
 		return recordProductionOperation(ctx, tx, prepared.OperationID, productionOperationDraft,
 			requestDigest, result)
-	})
+	}()
 	return result.Generation, err
 }
 
