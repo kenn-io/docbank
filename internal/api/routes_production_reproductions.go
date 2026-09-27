@@ -50,7 +50,7 @@ func productionReproductionError(err error) error {
 		"reproduction receipt could not be verified")
 }
 
-func productionReproductionBlobWriter(blobs *blob.Store) store.ProductionPackageBlobWriter {
+func productionPackageBlobWriter(blobs *blob.Store) store.ProductionPackageBlobWriter {
 	return func(ctx context.Context, reader io.Reader) (string, int64, store.BlobPhysical, error) {
 		written, err := blobs.WriteDetailedContext(ctx, reader)
 		if err != nil {
@@ -136,7 +136,7 @@ func registerProductionReproductionRoutes(api huma.API, d Deps, g *OperationGate
 				return g.mutate(func() error {
 					return d.Blobs.WithMutation(ctx, func() error {
 						_, err := d.Store.RetainProductionReproduction(ctx, in.JobID, request, policy,
-							paths, opener, productionReproductionBlobWriter(d.Blobs))
+							paths, opener, productionPackageBlobWriter(d.Blobs))
 						return err
 					})
 				})

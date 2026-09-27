@@ -37,6 +37,15 @@ func PublishedProductionPackageHTTPFixture(t *testing.T) (*Store, string, produc
 	return f.Store, f.root, job, retained
 }
 
+// PreparedProductionPackageHTTPFixture supplies a published synthetic job
+// before any recipient package is retained by the daemon.
+func PreparedProductionPackageHTTPFixture(t *testing.T) (*Store, string, string) {
+	t.Helper()
+	f, job := publishedRealRetentionFixture(t)
+	f.reopen(t)
+	return f.Store, f.root, job.ID
+}
+
 // PublishedProductionSupplementHTTPFixture supplies a real published parent
 // and separately prepared child for the external HTTP route test.
 func PublishedProductionSupplementHTTPFixture(t *testing.T) (*Store, string, production.SupplementRequest) {

@@ -11691,6 +11691,36 @@ components:
       x-go-type-import:
         path: go.kenn.io/docbank/internal/api
         name: api
+    ProductionPackageCreateRequest:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/ProductionPackageCreateRequest.json
+          format: uri
+          readOnly: true
+          type: string
+        max_volume_bytes:
+          format: int64
+          type: integer
+        max_volume_documents:
+          format: int64
+          type: integer
+        operation_id:
+          type: string
+        profile_id:
+          type: string
+      required:
+        - operation_id
+        - profile_id
+        - max_volume_bytes
+        - max_volume_documents
+      type: object
+      x-go-type: api.ProductionPackageCreateRequest
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     ProductionPackageDownloadTicket:
       additionalProperties: false
       properties:
@@ -11717,6 +11747,52 @@ components:
         - version_id
       type: object
       x-go-type: api.ProductionPackageDownloadTicket
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
+    ProductionPackageEvidenceReceipt:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/ProductionPackageEvidenceReceipt.json
+          format: uri
+          readOnly: true
+          type: string
+        archive_sha256:
+          type: string
+        artifact_manifest_sha256:
+          type: string
+        contract:
+          type: string
+        id:
+          type: string
+        job_id:
+          type: string
+        production_receipt_sha256:
+          type: string
+        profile_id:
+          type: string
+        qc_sha256:
+          type: string
+        recipient_manifest_sha256:
+          type: string
+        sha256:
+          type: string
+      required:
+        - contract
+        - id
+        - job_id
+        - production_receipt_sha256
+        - artifact_manifest_sha256
+        - recipient_manifest_sha256
+        - archive_sha256
+        - qc_sha256
+        - profile_id
+        - sha256
+      type: object
+      x-go-type: api.ProductionPackageEvidenceReceipt
       x-go-type-import:
         path: go.kenn.io/docbank/internal/api
         name: api
@@ -21653,6 +21729,66 @@ paths:
                 $ref: "#/components/schemas/Error"
           description: Error
       summary: Validate the stored rows of a privilege-log draft
+  /api/v1/productions/jobs/{job_id}/packages:
+    post:
+      operationId: createProductionPackage
+      parameters:
+        - in: path
+          name: job_id
+          required: true
+          schema:
+            format: uuid
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ProductionPackageCreateRequest"
+        required: true
+      responses:
+        "201":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProductionPackageEvidenceReceipt"
+          description: Created
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: Build and retain a recipient archive from verified published production artifacts
+  /api/v1/productions/jobs/{job_id}/packages/{operation_id}:
+    get:
+      operationId: getProductionPackage
+      parameters:
+        - in: path
+          name: job_id
+          required: true
+          schema:
+            format: uuid
+            type: string
+        - in: path
+          name: operation_id
+          required: true
+          schema:
+            format: uuid
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProductionPackageEvidenceReceipt"
+          description: OK
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: Read the exact verified evidence for a retained recipient package
   /api/v1/productions/jobs/{job_id}/packages/{operation_id}/download:
     post:
       operationId: downloadProductionPackage

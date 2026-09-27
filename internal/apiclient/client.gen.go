@@ -8363,6 +8363,99 @@ func (c *Client) ValidateProductionPrivilegeLog(ctx context.Context, options *Va
 	return responseParser(ctx, resp)
 }
 
+// CreateProductionPackage Build and retain a recipient archive from verified published production artifacts
+func (c *Client) CreateProductionPackage(ctx context.Context, options *CreateProductionPackageRequestOptions, reqEditors ...runtime.RequestEditorFn) (*CreateProductionPackageResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/productions/jobs/{job_id}/packages",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*CreateProductionPackageResponse, error) {
+		switch resp.StatusCode {
+
+		case 201:
+
+			target := new(CreateProductionPackageResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "CreateProductionPackageResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[CreateProductionPackageErrorResponse](resp, "CreateProductionPackageErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/productions/jobs/{job_id}/packages")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 201)
+	}
+	return responseParser(ctx, resp)
+}
+
+// GetProductionPackage Read the exact verified evidence for a retained recipient package
+func (c *Client) GetProductionPackage(ctx context.Context, options *GetProductionPackageRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetProductionPackageResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/productions/jobs/{job_id}/packages/{operation_id}",
+		Method:     "GET",
+		Options:    options,
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*GetProductionPackageResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(GetProductionPackageResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "GetProductionPackageResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[GetProductionPackageErrorResponse](resp, "GetProductionPackageErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/productions/jobs/{job_id}/packages/{operation_id}")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
 // DownloadProductionPackage Issue a one-use ticket for a verified retained production package
 func (c *Client) DownloadProductionPackage(ctx context.Context, options *DownloadProductionPackageRequestOptions, reqEditors ...runtime.RequestEditorFn) (*DownloadProductionPackageResponse, error) {
 	var err error
@@ -17525,6 +17618,72 @@ func (o *ValidateProductionPrivilegeLogRequestOptions) GetHeader() (map[string]s
 	return nil, nil
 }
 
+// CreateProductionPackageRequestOptions is the options needed to make a request to CreateProductionPackage.
+type CreateProductionPackageRequestOptions struct {
+	PathParams *CreateProductionPackagePath
+	Body       *CreateProductionPackageBody
+}
+
+// GetPathParams returns the path params as a map.
+func (o *CreateProductionPackageRequestOptions) GetPathParams() (map[string]any, error) {
+	encoded, err := json.Marshal(o.PathParams, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetQuery returns the query params as a map.
+func (o *CreateProductionPackageRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *CreateProductionPackageRequestOptions) GetBody() any {
+	if o.Body == nil {
+		return nil
+	}
+	return o.Body
+}
+
+// GetHeader returns the headers as a map.
+func (o *CreateProductionPackageRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
+// GetProductionPackageRequestOptions is the options needed to make a request to GetProductionPackage.
+type GetProductionPackageRequestOptions struct {
+	PathParams *GetProductionPackagePath
+}
+
+// GetPathParams returns the path params as a map.
+func (o *GetProductionPackageRequestOptions) GetPathParams() (map[string]any, error) {
+	encoded, err := json.Marshal(o.PathParams, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetQuery returns the query params as a map.
+func (o *GetProductionPackageRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *GetProductionPackageRequestOptions) GetBody() any {
+	return nil
+}
+
+// GetHeader returns the headers as a map.
+func (o *GetProductionPackageRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
 // DownloadProductionPackageRequestOptions is the options needed to make a request to DownloadProductionPackage.
 type DownloadProductionPackageRequestOptions struct {
 	PathParams *DownloadProductionPackagePath
@@ -20549,6 +20708,15 @@ type ValidateProductionPrivilegeLogPath struct {
 	Revision int64  `json:"revision"`
 }
 
+type CreateProductionPackagePath struct {
+	JobID uuid.UUID `json:"job_id"`
+}
+
+type GetProductionPackagePath struct {
+	JobID       uuid.UUID `json:"job_id"`
+	OperationID uuid.UUID `json:"operation_id"`
+}
+
 type DownloadProductionPackagePath struct {
 	JobID       uuid.UUID `json:"job_id"`
 	OperationID uuid.UUID `json:"operation_id"`
@@ -20889,6 +21057,8 @@ type FreezeProductionPrivilegeLogBody = ProductionPrivilegeFreezeRequest
 type ReplaceProductionPrivilegeLogRowsBody = ProductionPrivilegeRowsReplaceRequest
 
 type ValidateProductionPrivilegeLogBody = ProductionPrivilegeValidationRequest
+
+type CreateProductionPackageBody = ProductionPackageCreateRequest
 
 type DownloadProductionPackageBody = DownloadProductionPackageRequest
 
@@ -22051,6 +22221,14 @@ type ReplaceProductionPrivilegeLogRowsErrorResponse = Error
 type ValidateProductionPrivilegeLogResponse = api.ProductionPrivilegeValidation
 
 type ValidateProductionPrivilegeLogErrorResponse = Error
+
+type CreateProductionPackageResponse = api.ProductionPackageEvidenceReceipt
+
+type CreateProductionPackageErrorResponse = Error
+
+type GetProductionPackageResponse = api.ProductionPackageEvidenceReceipt
+
+type GetProductionPackageErrorResponse = Error
 
 type DownloadProductionPackageResponse = api.ProductionPackageDownloadTicket
 
@@ -23227,7 +23405,11 @@ type ProductionNumberPage = api.ProductionNumberPage
 
 type ProductionNumberReference = api.ProductionNumberReference
 
+type ProductionPackageCreateRequest = api.ProductionPackageCreateRequest
+
 type ProductionPackageDownloadTicket = api.ProductionPackageDownloadTicket
+
+type ProductionPackageEvidenceReceipt = api.ProductionPackageEvidenceReceipt
 
 type ProductionPlayersSnapshotCreateRequest = api.ProductionPlayersSnapshotCreateRequest
 

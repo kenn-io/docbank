@@ -219,6 +219,7 @@ func NewServer(d Deps) *Server {
 	registerPackageRoutes(mux, humaAPI, d, g, s.webDownloads, s.webSessions)
 	registerBatesRoutes(mux, humaAPI, d, g, s.webDownloads, s.webSessions, cursorService)
 	registerProductionPackageRoutes(humaAPI, d, s.webDownloads, s.webSessions)
+	registerProductionPackageCreateRoutes(humaAPI, d, g, s.webDownloads)
 	registerProductionNumberRoutes(humaAPI, d)
 	registerProductionRoutes(humaAPI, d, g)
 	registerProductionPolicyRoutes(humaAPI, d, g)
