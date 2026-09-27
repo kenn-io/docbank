@@ -17,6 +17,7 @@ import (
 	"io"
 	"math/big"
 	"os"
+	"runtime/debug"
 	"strconv"
 	"strings"
 	"time"
@@ -118,6 +119,9 @@ func writeFresh(ctx context.Context, out io.Writer, pages PageSequence, recipe r
 		pageCtx, cancel := context.WithTimeout(ctx, time.Duration(recipe.PageTimeoutSeconds)*time.Second)
 		ref, more, err := writeNextPage(pageCtx, w, pages, len(refs)+1, font, recipe)
 		cancel()
+		// Return discarded page rasters to the OS before the next page allocates
+		// against the worker's RSS ceiling, including its reusable WASM backing.
+		debug.FreeOSMemory()
 		if err != nil {
 			return fmt.Errorf("next PDF page: %w", err)
 		}
