@@ -177,6 +177,40 @@ func TestProductionPrivilegeCLIValidatesStoredDraftFromRealDaemon(t *testing.T) 
 	require.Error(t, err)
 }
 
+func TestProductionPrivilegeCLIFreezesValidatedDraftFromRealDaemon(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("DOCBANK_HOME", dir)
+	catalog, err := store.Open(filepath.Join(dir, "docbank.db"))
+	require.NoError(t, err)
+	draft := productiontest.SeedPrivilegeLogDraft(t, catalog)
+	require.NoError(t, catalog.Close())
+	startTestDaemon(t, dir)
+	validated, err := runCLI(t, "production", "privilege-log", "validate", draft.LogID, "1",
+		"--operation-id", "41414141-4141-4414-8414-414141414141",
+		"--generation", "1", "--validated-at", "2026-09-22T14:00:00Z", "--json")
+	require.NoError(t, err)
+	var validation api.ProductionPrivilegeValidation
+	require.NoError(t, json.Unmarshal([]byte(validated), &validation))
+	args := []string{"production", "privilege-log", "freeze", draft.LogID, "1",
+		"--operation-id", "42424242-4242-4424-8424-424242424242",
+		"--generation", "1", "--inputs-sha256", validation.Validation.InputsSHA256,
+		"--frozen-at", "2026-09-22T14:01:00Z", "--json"}
+	out, err := runCLI(t, args...)
+	require.NoError(t, err)
+	var receipt documentproduction.PrivilegeLogReceipt
+	require.NoError(t, json.Unmarshal([]byte(out), &receipt))
+	require.NoError(t, documentproduction.ValidatePrivilegeLogReceipt(receipt))
+	require.Equal(t, draft.LogID, receipt.LogID)
+	require.Equal(t, len(draft.Rows), receipt.RowCount)
+	require.NotContains(t, out, "Synthetic private rationale.")
+	replay, err := runCLI(t, args...)
+	require.NoError(t, err)
+	require.Equal(t, out, replay)
+	args[12] = "2026-09-22T14:02:00Z"
+	_, err = runCLI(t, args...)
+	require.Error(t, err)
+}
+
 func TestProductionPrivilegeCLIReplacesPrivateRowsThroughRealDaemon(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("DOCBANK_HOME", dir)

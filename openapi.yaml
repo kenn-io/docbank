@@ -21299,11 +21299,11 @@ paths:
             Content-Digest:
               schema:
                 type: string
-            X-Docbank-Privilege-Receipt-SHA256:
+            X-Docbank-Privilege-Receipt-Sha256:
               schema:
                 pattern: ^[0-9a-f]{64}$
                 type: string
-            X-Docbank-Privilege-Rows-SHA256:
+            X-Docbank-Privilege-Rows-Sha256:
               schema:
                 pattern: ^[0-9a-f]{64}$
                 type: string

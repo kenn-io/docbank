@@ -15,8 +15,8 @@ import (
 )
 
 const (
-	ProductionPrivilegeReceiptHashHeader = "X-Docbank-Privilege-Receipt-SHA256"
-	ProductionPrivilegeRowsHashHeader    = "X-Docbank-Privilege-Rows-SHA256"
+	ProductionPrivilegeReceiptHashHeader = "X-Docbank-Privilege-Receipt-Sha256"
+	ProductionPrivilegeRowsHashHeader    = "X-Docbank-Privilege-Rows-Sha256"
 	productionPrivilegeHashPattern       = "^[0-9a-f]{64}$"
 	productionPrivilegeBinaryFormat      = "binary"
 )

@@ -19,7 +19,7 @@ import (
 
 const maxProductionPrivilegeRowsFileBytes = 64 << 20
 
-var productionPrivilegeCmd = &cobra.Command{Use: "privilege-log", Short: "Edit and validate drafts, read rows, and export frozen public privilege logs"}
+var productionPrivilegeCmd = &cobra.Command{Use: "privilege-log", Short: "Edit, validate and freeze drafts, then read or export public privilege logs"}
 
 func readProductionPrivilegeRowsFile(path string) ([]documentproduction.PrivilegeRow, error) {
 	reader, err := os.Open(path)
@@ -239,6 +239,51 @@ func newProductionPrivilegeValidateCommand() *cobra.Command {
 	return cmd
 }
 
+func newProductionPrivilegeFreezeCommand() *cobra.Command {
+	var operationID, inputsSHA256, approvalEvaluationSHA256, frozenAt string
+	var generation int64
+	var asJSON bool
+	cmd := &cobra.Command{Use: "freeze <log-id> <revision>", Short: "Freeze a validated stored privilege log after approval recheck",
+		Args: cobra.ExactArgs(2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			revision, err := strconv.ParseInt(args[1], 10, 64)
+			if err != nil || revision < 1 || operationID == "" || generation < 1 ||
+				inputsSHA256 == "" || frozenAt == "" {
+				return usageError(errors.New("log revision, --operation-id, --generation, --inputs-sha256, and --frozen-at are required"))
+			}
+			connection, err := daemonconn.Ensure(cmd.Context())
+			if err != nil {
+				return err
+			}
+			receipt, err := connection.FreezeProductionPrivilegeLog(cmd.Context(), args[0], revision,
+				api.ProductionPrivilegeFreezeRequest{
+					OperationID: operationID, ExpectedGeneration: generation,
+					ExpectedInputsSHA256:             inputsSHA256,
+					ExpectedApprovalEvaluationSHA256: approvalEvaluationSHA256,
+					FrozenAt:                         frozenAt,
+				})
+			if err != nil {
+				return err
+			}
+			if asJSON {
+				return writeCLIJSON(cmd.OutOrStdout(), receipt)
+			}
+			_, err = fmt.Fprintf(cmd.OutOrStdout(), "%s revision=%d sha256=%s rows=%d\n",
+				receipt.LogID, receipt.Revision, receipt.SHA256, receipt.RowCount)
+			if err != nil {
+				return fmt.Errorf("writing privilege freeze receipt: %w", err)
+			}
+			return nil
+		}}
+	cmd.Flags().StringVar(&operationID, "operation-id", "", "stable UUID for exact retries")
+	cmd.Flags().Int64Var(&generation, "generation", 0, "expected validated draft generation")
+	cmd.Flags().StringVar(&inputsSHA256, "inputs-sha256", "", "stored validation inputs SHA-256")
+	cmd.Flags().StringVar(&approvalEvaluationSHA256, "approval-evaluation-sha256", "", "required approval evaluation SHA-256, when policy requires approval")
+	cmd.Flags().StringVar(&frozenAt, "frozen-at", "", "canonical UTC freeze timestamp")
+	cmd.Flags().BoolVar(&asJSON, "json", false, "emit machine-readable receipt JSON")
+	return cmd
+}
+
 func newProductionPrivilegeShowCommand() *cobra.Command {
 	var cursor string
 	var limit int
@@ -293,6 +338,7 @@ func init() {
 	productionPrivilegeCmd.AddCommand(newProductionPrivilegeDraftCommand())
 	productionPrivilegeCmd.AddCommand(rowsCmd)
 	productionPrivilegeCmd.AddCommand(newProductionPrivilegeValidateCommand())
+	productionPrivilegeCmd.AddCommand(newProductionPrivilegeFreezeCommand())
 	productionPrivilegeCmd.AddCommand(newProductionPrivilegeShowCommand())
 	productionPrivilegeCmd.AddCommand(newProductionPrivilegeExportCommand())
 	productionCmd.AddCommand(productionPrivilegeCmd)
