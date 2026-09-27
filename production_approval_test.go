@@ -19,6 +19,7 @@ func TestEmbeddedApprovalUsesHostAuthenticationAndReturnsPublicGrant(t *testing.
 	policy.ID = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
 	policy.Name = "Synthetic approval policy"
 	policy.CreatedAt = "2026-09-22T13:00:00Z"
+	policy.Approval = documentproduction.ApprovalRequirement{Required: true, EvidenceRequired: true}
 	policy.SHA256 = ""
 	policy, err = vault.CreateProductionPolicyVersion(t.Context(),
 		"99999999-9999-4999-8999-999999999999", policy)
@@ -70,7 +71,9 @@ func TestEmbeddedApprovalUsesHostAuthenticationAndReturnsPublicGrant(t *testing.
 
 	request.Evidence = "Changed synthetic evidence"
 	_, err = vault.RecordProductionApproval(t.Context(), request, auth)
-	require.Error(t, err)
+	var problem *documentproduction.Problem
+	require.ErrorAs(t, err, &problem)
+	require.Equal(t, documentproduction.ProblemChangedPayload, problem.Code)
 	_, err = vault.RecordProductionApproval(t.Context(), request, docbank.ProductionApprovalAuthentication{})
 	require.Error(t, err)
 }
