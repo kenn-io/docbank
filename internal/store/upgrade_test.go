@@ -3,8 +3,10 @@ package store
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"database/sql"
 	_ "embed"
+	"encoding/hex"
 	"encoding/json/v2"
 	"errors"
 	"os"
@@ -76,7 +78,7 @@ func TestOpenCutsOverReleasedV090ThroughJSONL(t *testing.T) {
 			assert.Zero(t, preflights)
 			var upgraded bytes.Buffer
 			require.NoError(t, s.ExportMetadata(t.Context(), &upgraded))
-			assertReleasedMetadataWithEmptyLexicalHead(t, fixture.metadata, upgraded.Bytes())
+			assertReleasedMetadataWithEmptyCurrentExtensions(t, fixture.metadata, upgraded.Bytes())
 			var provenance, bindings, eventState int
 			require.NoError(t, s.db.QueryRow(`SELECT
 				(SELECT COUNT(*) FROM provenance),
@@ -897,7 +899,7 @@ func TestOpenCompletesInterruptedReleasedCutover(t *testing.T) {
 	require.NoError(t, err)
 	var metadata bytes.Buffer
 	require.NoError(t, recovered.ExportMetadata(t.Context(), &metadata))
-	assertReleasedMetadataWithEmptyLexicalHead(t, fixture.metadata, metadata.Bytes())
+	assertReleasedMetadataWithEmptyCurrentExtensions(t, fixture.metadata, metadata.Bytes())
 	require.NoError(t, recovered.Close())
 	_, err = os.Stat(stagePath)
 	require.ErrorIs(t, err, os.ErrNotExist)
@@ -1298,22 +1300,37 @@ func assertPhysicalContent(t *testing.T, s *Store, hash string, want PhysicalCon
 	assert.Equal(t, want, got)
 }
 
-func assertReleasedMetadataWithEmptyLexicalHead(t *testing.T, released, current []byte) {
+func assertReleasedMetadataWithEmptyCurrentExtensions(t *testing.T, released, current []byte) {
 	t.Helper()
 	var retained [][]byte
 	var generations []metadataLexicalGeneration
+	var lifecycleManifests []metadataProductionLifecycleManifest
 	for line := range bytes.SplitSeq(bytes.TrimSpace(current), []byte{'\n'}) {
 		var kind struct {
 			Type string `json:"type"`
 		}
 		require.NoError(t, json.Unmarshal(line, &kind))
-		if kind.Type != metadataLexicalGenerationType {
+		switch kind.Type {
+		case "meta":
+			var header metadataHeader
+			require.NoError(t, json.Unmarshal(line, &header))
+			require.True(t, header.ProductionLifecycle)
+			const lifecycleFlag = `,"production_lifecycle":true}`
+			require.True(t, bytes.HasSuffix(line, []byte(lifecycleFlag)))
+			retained = append(retained, append(bytes.Clone(line[:len(line)-len(lifecycleFlag)]), '}'))
+		case metadataLexicalGenerationType:
+			var generation metadataLexicalGeneration
+			require.NoError(t, json.Unmarshal(line, &generation))
+			generations = append(generations, generation)
+		case metadataProductionLifecycleType:
+			t.Fatal("released fixture gained a production lifecycle row")
+		case metadataProductionLifecycleManifestType:
+			var manifest metadataProductionLifecycleManifest
+			require.NoError(t, json.Unmarshal(line, &manifest))
+			lifecycleManifests = append(lifecycleManifests, manifest)
+		default:
 			retained = append(retained, bytes.Clone(line))
-			continue
 		}
-		var generation metadataLexicalGeneration
-		require.NoError(t, json.Unmarshal(line, &generation))
-		generations = append(generations, generation)
 	}
 	require.Len(t, generations, 1)
 	require.NotEmpty(t, generations[0].BuiltAt)
@@ -1327,6 +1344,16 @@ func assertReleasedMetadataWithEmptyLexicalHead(t *testing.T, released, current 
 		BuildDigest:    "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
 		Headed:         true,
 	}, generations[0])
+	require.Len(t, lifecycleManifests, 1)
+	digest := sha256.New()
+	for _, table := range productionLifecycleTables {
+		writeProductionLifecycleDigest(digest, table, "")
+	}
+	require.Equal(t, metadataProductionLifecycleManifest{
+		Type:     metadataProductionLifecycleManifestType,
+		Counts:   make([]int64, len(productionLifecycleTables)),
+		Checksum: hex.EncodeToString(digest.Sum(nil)),
+	}, lifecycleManifests[0])
 	retainedMetadata := append(bytes.Join(retained, []byte{'\n'}), '\n')
 	assert.Equal(t, released, retainedMetadata,
 		"the released logical authority must survive byte-for-byte")
