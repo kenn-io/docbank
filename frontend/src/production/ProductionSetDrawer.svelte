@@ -7,6 +7,7 @@
   import ProductionReview from "./ProductionReview.svelte";
   import ProductionJobLookup from "./ProductionJobLookup.svelte";
   import ProductionFinalization from "./ProductionFinalization.svelte";
+  import ProductionDraftFork from "./ProductionDraftFork.svelte";
 
   interface Props {
     session: string;
@@ -191,6 +192,8 @@
       {#key selected.id}
         {#if draft}
           <ProductionFinalization {session} set={selected} {draft} onrefresh={() => void refresh()}
+            onauthfailure={cause => { onauthfailure(cause); onclose(); }} />
+          <ProductionDraftFork {session} set={selected} {draft} onrefresh={() => void refresh()}
             onauthfailure={cause => { onauthfailure(cause); onclose(); }} />
         {/if}
         <ProductionJobLookup {session} setID={selected.id} set={selected} draft={draft ?? undefined} onrefresh={() => void refresh()}

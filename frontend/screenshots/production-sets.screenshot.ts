@@ -254,7 +254,7 @@ test("starts a finalized synthetic production job through the real daemon", asyn
   }
 });
 
-test("finalizes a reviewed synthetic production through the real daemon", async ({ page }) => {
+test("finalizes and forks a reviewed synthetic production through the real daemon", async ({ page }) => {
   test.setTimeout(240_000);
   const workspace = await mkdtemp(path.join(tmpdir(), "docbank-finalize-screenshot-"));
   const ready = path.join(workspace, "fixture-ready.json");
@@ -318,6 +318,17 @@ test("finalizes a reviewed synthetic production through the real daemon", async 
       .getByText("Finalized revision 1", { exact: true })).toBeVisible();
     await expect(drawer.getByRole("button", { name: "Start production job" })).toBeVisible();
     await page.screenshot({ path: path.join(output!, "web-production-finalization-after.png"),
+      fullPage: true, animations: "disabled" });
+    const fork = drawer.getByRole("button", { name: "Create new draft" });
+    await expect(fork).toBeDisabled();
+    await drawer.getByRole("checkbox", { name: /new editable draft.*finalized revision/i }).check();
+    await page.screenshot({ path: path.join(output!, "web-production-fork-before.png"),
+      fullPage: true, animations: "disabled" });
+    await fork.click();
+    await expect(drawer.getByText("Created draft revision 2", { exact: true })).toBeVisible();
+    await expect(drawer.getByText("Draft revision 2", { exact: true })).toBeVisible();
+    await expect(drawer.getByText("Membership open", { exact: true })).toBeVisible();
+    await page.screenshot({ path: path.join(output!, "web-production-fork-after.png"),
       fullPage: true, animations: "disabled" });
     expect(outside).toEqual([]);
     expect(browserErrors).toEqual([]);

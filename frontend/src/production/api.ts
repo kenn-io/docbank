@@ -255,6 +255,14 @@ export function finalizeProductionDraft(session: string, setID: string, revision
   });
 }
 
+export function forkProductionDraft(session: string, setID: string, revision: number, operationID: string,
+  signal?: AbortSignal): Promise<ProductionDraft> {
+  return sessionJSON<ProductionDraft>(`${setBase}/${encodeURIComponent(setID)}/revisions/${revision}/fork`, {
+    session, signal, method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ operation_id: operationID }),
+  });
+}
+
 export function listProductionNumberingNamespaces(session: string, cursor = "",
   signal?: AbortSignal): Promise<{ items: BatesNamespace[]; total: number; next_cursor?: string }> {
   const params = new URLSearchParams({ limit: "100" });
