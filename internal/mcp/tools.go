@@ -66,6 +66,7 @@ var readToolDefinitions = []toolDefinition{
 	{name: "list_production_policies", title: "List production policies", description: "Page through immutable production policy versions with bounded summaries.", schemas: listProductionPoliciesSchemas},
 	{name: "get_production_policy", title: "Get production policy", description: "Read one exact immutable production policy version.", schemas: getProductionPolicySchemas},
 	{name: "get_production_approval", title: "Get production approval", description: "Read an approval grant and lifecycle events without private evidence or reasons.", schemas: getProductionApprovalSchemas},
+	{name: "get_production_privilege_log", title: "Get production privilege log", description: "Page the public rows of one exact frozen privilege log.", schemas: getProductionPrivilegeLogSchemas},
 }
 
 var processingToolDefinition = toolDefinition{

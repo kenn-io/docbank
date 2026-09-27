@@ -17,12 +17,15 @@ import (
 	"go.kenn.io/docbank/internal/store"
 )
 
-func newProductionPolicyToolDaemon(t *testing.T) *httptest.Server {
+func newProductionPolicyToolDaemon(t *testing.T, seed ...func(*store.Store)) *httptest.Server {
 	t.Helper()
 	root := t.TempDir()
 	catalog, err := store.Open(filepath.Join(root, "docbank.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, catalog.Close()) })
+	for _, prepare := range seed {
+		prepare(catalog)
+	}
 	blobsDir := filepath.Join(root, "blobs")
 	require.NoError(t, os.MkdirAll(filepath.Join(blobsDir, "tmp"), 0o700))
 	blobs, err := blob.New(store.NewPackCatalog(catalog), blobsDir)

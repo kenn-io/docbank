@@ -68,7 +68,7 @@ func listProductionPoliciesSchemas() (schema, schema) {
 		"sha256": sha256Schema(),
 	}, "id", "version", "name", "sha256")
 	return rootObjectSchema(schema{
-			"cursor": stringSchema(60), schemaLimitField: integerSchema(1, store.MaxProductionPolicyPage),
+			schemaCursorField: stringSchema(60), schemaLimitField: integerSchema(1, store.MaxProductionPolicyPage),
 		}), rootObjectSchema(withPrivateCache(schema{
 			"items": arraySchema(summary, store.MaxProductionPolicyPage), "next_cursor": stringSchema(60),
 		}), cacheRequired("items", "next_cursor")...)
