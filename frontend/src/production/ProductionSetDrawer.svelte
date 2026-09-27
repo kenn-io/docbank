@@ -1,11 +1,12 @@
 <script lang="ts">
   import { onDestroy } from "svelte";
   import XIcon from "@lucide/svelte/icons/x";
-  import { Button, Card, Chip, DetailDrawer, EmptyState, IconButton, Spinner, TextInput } from "@kenn-io/kit-ui";
+  import { Button, Card, Checkbox, Chip, DetailDrawer, EmptyState, IconButton, Spinner, TextInput } from "@kenn-io/kit-ui";
   import { APIError } from "../api-transport.js";
   import { createProductionSet, getProductionDraft, getProductionSet, listProductionSets, type ProductionDraft, type ProductionSet } from "./api.js";
   import ProductionReview from "./ProductionReview.svelte";
   import ProductionJobLookup from "./ProductionJobLookup.svelte";
+  import ProductionFinalization from "./ProductionFinalization.svelte";
 
   interface Props {
     session: string;
@@ -20,6 +21,7 @@
   let draft = $state<ProductionDraft | null>(null);
   let name = $state("");
   let instructions = $state("");
+  let numbered = $state(false);
   let loading = $state(true);
   let loadingMore = $state(false);
   let draftLoading = $state(false);
@@ -113,20 +115,23 @@
 
   async function create(): Promise<void> {
     if (creating || !name.trim()) return;
-    const payload = JSON.stringify({ name: name.trim(), instructions });
+    const numberingRecipeID = numbered ? "bates-sequential-v1" : "";
+    const payload = JSON.stringify({ name: name.trim(), instructions, numberingRecipeID });
     if (!pendingCreate || pendingCreate.payload !== payload) {
       pendingCreate = { payload, operationID: crypto.randomUUID() };
     }
     creating = true;
     createError = "";
     try {
-      const created = await createProductionSet(session, name.trim(), instructions, pendingCreate.operationID, listController.signal);
+      const created = await createProductionSet(session, name.trim(), instructions, pendingCreate.operationID,
+        listController.signal, numberingRecipeID);
       if (listController.signal.aborted) return;
       sets = [created.set, ...sets.filter(item => item.id !== created.set.id)];
       selected = created.set;
       draft = created.draft;
       name = "";
       instructions = "";
+      numbered = false;
       pendingCreate = null;
     } catch (cause) {
       if (!listController.signal.aborted) createError = fail(cause);
@@ -150,6 +155,8 @@
       <p>A new set starts with an empty, editable draft. Add members and review decisions before finalization.</p>
       <label for="production-set-name">Set name<TextInput id="production-set-name" ariaLabel="Set name" bind:value={name} disabled={creating} block /></label>
       <label for="production-instructions">Instructions<textarea id="production-instructions" aria-label="Instructions" bind:value={instructions} disabled={creating} rows="3" maxlength="65536"></textarea></label>
+      <Checkbox checked={numbered} onchange={checked => { numbered = checked; }} disabled={creating || !!pendingCreate}
+        label="Use Bates numbering for this production" />
       {#if createError}<p class="error" role="alert">{createError}</p>{/if}
       <Button tone="info" size="sm" disabled={creating || !name.trim()} onclick={() => void create()}>
         {creating ? "Creating…" : createError && pendingCreate ? "Retry create" : "Create draft"}
@@ -176,12 +183,16 @@
         {#if draftLoading}<p class="loading" role="status"><Spinner size={16} /> Loading exact draft…</p>{/if}
         {#if draftError}<p class="error" role="alert">{draftError}</p>{/if}
         {#if draft}
-          <div class="draft-heading"><strong>Draft revision {draft.revision}</strong><Chip size="xs" tone={draft.state === "finalized" ? "success" : "neutral"}>{draft.state}</Chip></div>
+          <div class="draft-heading"><strong>{draft.state === "finalized" ? "Finalized" : "Draft"} revision {draft.revision}</strong><Chip size="xs" tone={draft.state === "finalized" ? "success" : "neutral"}>{draft.state}</Chip></div>
           <dl><div><dt>Change version</dt><dd>{draft.etag}</dd></div><div><dt>Membership</dt><dd>{draft.membership_sealed ? "Membership sealed" : "Membership open"}</dd></div></dl>
           <p>Draft changes and review declarations are bound to this exact revision.</p>
         {/if}
       </Card>
       {#key selected.id}
+        {#if draft}
+          <ProductionFinalization {session} set={selected} {draft} onrefresh={() => void refresh()}
+            onauthfailure={cause => { onauthfailure(cause); onclose(); }} />
+        {/if}
         <ProductionJobLookup {session} setID={selected.id} set={selected} draft={draft ?? undefined} onrefresh={() => void refresh()}
           onauthfailure={cause => { onauthfailure(cause); onclose(); }} />
       {/key}

@@ -1,4 +1,5 @@
 import { sessionJSON } from "../api-transport.js";
+import type { BatesNamespace } from "../bates.js";
 
 export interface ProductionSet {
   id: string;
@@ -15,6 +16,7 @@ export interface ProductionDraft {
   state: string;
   membership_sealed: boolean;
   member_hash: string;
+  numbering_recipe_id?: string;
 }
 
 export interface ProductionSetPage {
@@ -140,6 +142,15 @@ export interface ProductionJobStatus {
   receipt_sha256?: string;
 }
 
+export interface ProductionFinalizationResult {
+  draft: ProductionDraft;
+  operation_id: string;
+  namespace_id: string;
+  snapshot_id: string;
+  prepared_sha256: string;
+  receipt_sha256: string;
+}
+
 const setBase = "/api/v1/productions/sets";
 
 export function listProductionSets(session: string, cursor = "", signal?: AbortSignal): Promise<ProductionSetPage> {
@@ -235,6 +246,23 @@ export function admitProductionJob(session: string, setID: string, revision: num
   });
 }
 
+export function finalizeProductionDraft(session: string, setID: string, revision: number, etag: number,
+  operationID: string, namespaceID: string, snapshotID: string,
+  signal?: AbortSignal): Promise<ProductionFinalizationResult> {
+  return sessionJSON<ProductionFinalizationResult>(`${setBase}/${encodeURIComponent(setID)}/revisions/${revision}/finalize`, {
+    session, signal, method: "POST", headers: { "Content-Type": "application/json", "If-Match": String(etag) },
+    body: JSON.stringify({ operation_id: operationID, namespace_id: namespaceID, snapshot_id: snapshotID, start_at: 0 }),
+  });
+}
+
+export function listProductionNumberingNamespaces(session: string, cursor = "",
+  signal?: AbortSignal): Promise<{ items: BatesNamespace[]; total: number; next_cursor?: string }> {
+  const params = new URLSearchParams({ limit: "100" });
+  if (cursor) params.set("cursor", cursor);
+  return sessionJSON<{ items: BatesNamespace[]; total: number; next_cursor?: string }>(
+    `/api/v1/bates/namespaces?${params}`, { session, signal });
+}
+
 export function reviewProductionMember(session: string, setID: string, revision: number, etag: number,
   memberID: string, binding: string, operationID: string, signal?: AbortSignal): Promise<ProductionReceipt> {
   return sessionJSON<ProductionReceipt>(`${setBase}/${encodeURIComponent(setID)}/revisions/${revision}` +
@@ -253,9 +281,10 @@ export function sealProductionMembership(session: string, setID: string, revisio
 }
 
 export function createProductionSet(session: string, name: string, instructions: string,
-  operationID: string, signal?: AbortSignal): Promise<ProductionSetCreated> {
+  operationID: string, signal?: AbortSignal, numberingRecipeID = ""): Promise<ProductionSetCreated> {
   return sessionJSON<ProductionSetCreated>(setBase, {
     session, signal, method: "POST", headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ operation_id: operationID, name, instructions }),
+    body: JSON.stringify({ operation_id: operationID, name, instructions,
+      ...(numberingRecipeID ? { numbering_recipe_id: numberingRecipeID } : {}) }),
   });
 }

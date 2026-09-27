@@ -73,6 +73,30 @@ it("reuses the exact operation after an uncertain create response", async () => 
   expect(creates[0].id).toMatch(/^[0-9a-f-]{36}$/);
 });
 
+it("creates a numbered draft only when the operator selects Bates numbering", async () => {
+  let posted: Record<string, unknown> | null = null;
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init = {}) => {
+    const url = String(input);
+    if (url === "/api/v1/productions/sets?limit=50") return json({ items: [], next_cursor: "" });
+    if (url === "/api/v1/productions/sets" && init.method === "POST") {
+      posted = JSON.parse(String(init.body));
+      return json({ set: first, draft: { set_id: first.id, revision: 1, etag: 1, state: "draft",
+        membership_sealed: false, numbering_recipe_id: "bates-sequential-v1" } }, 201);
+    }
+    if (url === `/api/v1/productions/sets/${first.id}/revisions/1/members?limit=50` ||
+      url === `/api/v1/productions/sets/${first.id}/revisions/1/decisions?limit=50&uncertain=true`)
+      return json({ items: [], next_cursor: "" });
+    throw new Error(`unexpected request ${url}`);
+  });
+  render(ProductionSetDrawer, { session: "synthetic-session", onclose: vi.fn(), onauthfailure: vi.fn() });
+  await screen.findByText("No production sets yet");
+  await fireEvent.input(screen.getByRole("textbox", { name: "Set name" }), { target: { value: "Synthetic review A" } });
+  await fireEvent.click(screen.getByRole("checkbox", { name: "Use Bates numbering for this production" }));
+  await fireEvent.click(screen.getByRole("button", { name: "Create draft" }));
+  await screen.findByText("Draft revision 1");
+  expect(posted).toMatchObject({ numbering_recipe_id: "bates-sequential-v1", name: "Synthetic review A" });
+});
+
 it("refreshes the exact head after a concurrent draft edit", async () => {
   let draftReads = 0;
   vi.spyOn(globalThis, "fetch").mockImplementation(async input => {
