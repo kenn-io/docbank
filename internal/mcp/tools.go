@@ -65,6 +65,7 @@ var readToolDefinitions = []toolDefinition{
 	{name: "find_production_number_candidates", title: "Find production number candidates", description: "Find verified published outputs for exact, prefix, or substring label text and report ambiguity.", schemas: findProductionNumberCandidatesSchemas},
 	{name: "list_production_policies", title: "List production policies", description: "Page through immutable production policy versions with bounded summaries.", schemas: listProductionPoliciesSchemas},
 	{name: "get_production_policy", title: "Get production policy", description: "Read one exact immutable production policy version.", schemas: getProductionPolicySchemas},
+	{name: "get_production_approval", title: "Get production approval", description: "Read an approval grant and lifecycle events without private evidence or reasons.", schemas: getProductionApprovalSchemas},
 }
 
 var processingToolDefinition = toolDefinition{

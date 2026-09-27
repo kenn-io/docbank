@@ -110,6 +110,8 @@ func executeReadTool(
 		output, err = listProductionPolicies(ctx, lease, raw)
 	case "get_production_policy":
 		output, err = getProductionPolicy(ctx, lease, raw)
+	case "get_production_approval":
+		output, err = getProductionApproval(ctx, lease, raw)
 	default:
 		return nil, errors.New("unknown Docbank read tool")
 	}
