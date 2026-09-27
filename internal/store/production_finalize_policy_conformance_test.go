@@ -10,20 +10,41 @@ import (
 	productionservice "go.kenn.io/docbank/internal/production"
 )
 
-func TestFinalizeProductionDraftRequiresCurrentHumanApprovalBeforeAdmission(t *testing.T) {
+type productionPolicyFinalizationFixture struct {
+	store       *Store
+	first       redaction.Member
+	second      redaction.Member
+	set         redaction.Set
+	draft       redaction.Draft
+	current     redaction.Draft
+	namespaceID string
+}
+
+func newProductionPolicyFinalizationFixture(t *testing.T, approvalRequired, privilegeRequired bool) productionPolicyFinalizationFixture {
+	t.Helper()
 	s, first, second, _, _, originalAuthority := productionDuplicateGateFixture(t)
+	disposition := documentproduction.PolicyDispositionProduce
+	if privilegeRequired {
+		disposition = documentproduction.PolicyDispositionWithhold
+	}
+	privilege := documentproduction.PrivilegeLogRequirement{}
+	if privilegeRequired {
+		privilege = documentproduction.PrivilegeLogRequirement{Required: true, RequireFrozenReceipt: true,
+			RequiredFields: []string{"date"}, AllowedBases: []string{"synthetic_basis"}}
+	}
 	policyValue := documentproduction.PolicyVersion{
 		Contract: documentproduction.PolicyContractV1,
 		ID:       "76000000-0000-4000-8000-000000000001", Version: 1,
-		Name: "Synthetic approved production", CreatedAt: "2026-09-27T00:00:00Z",
+		Name: "Synthetic gated production", CreatedAt: "2026-09-27T00:00:00Z",
 		Rules: []documentproduction.PolicyRule{{
 			ID: "metadata-rule", Kind: documentproduction.PolicyRuleScope,
 			Predicate: documentproduction.PolicyPredicate{Field: "metadata.title",
 				Operator: documentproduction.PolicyOperatorEquals, Values: []string{"Synthetic title"}},
-			Disposition: documentproduction.PolicyDispositionProduce,
+			Disposition: disposition,
 		}},
 		ConflictMode: documentproduction.PolicyConflictReject,
-		Approval:     documentproduction.ApprovalRequirement{Required: true},
+		Approval:     documentproduction.ApprovalRequirement{Required: approvalRequired},
+		PrivilegeLog: privilege,
 	}
 	preparedPolicy, err := productionservice.PreparePolicyVersion(
 		"76000000-0000-4000-8000-000000000002", policyValue)
@@ -32,7 +53,7 @@ func TestFinalizeProductionDraftRequiresCurrentHumanApprovalBeforeAdmission(t *t
 	require.NoError(t, err)
 	set, draft, err := s.CreateProductionSet(t.Context(), "test-agent", redaction.CreateRequest{
 		OperationID: "76000000-0000-4000-8000-000000000003",
-		Name:        "Synthetic approved set", Instructions: "Produce reviewed synthetic pages.",
+		Name:        "Synthetic gated set", Instructions: "Prepare reviewed synthetic pages.",
 		PolicyID: policy.ID, PolicyVersion: policy.Version,
 		NumberingRecipeID: redaction.BatesNumberingRecipeID,
 	})
@@ -68,11 +89,21 @@ func TestFinalizeProductionDraftRequiresCurrentHumanApprovalBeforeAdmission(t *t
 	require.NoError(t, err)
 	current, err = s.ProductionDraft(t.Context(), set.ID, draft.Revision)
 	require.NoError(t, err)
+	return productionPolicyFinalizationFixture{
+		store: s, first: first, second: second, set: set, draft: draft,
+		current: current, namespaceID: namespace.NamespaceID,
+	}
+}
+
+func TestFinalizeProductionDraftRequiresCurrentHumanApprovalBeforeAdmission(t *testing.T) {
+	fixture := newProductionPolicyFinalizationFixture(t, true, false)
+	s, set, draft, current := fixture.store, fixture.set, fixture.draft, fixture.current
+	var err error
 	command := ProductionFinalizeCommand{
 		SetID: set.ID, Revision: draft.Revision, ETag: current.ETag,
 		OperationID: "76000000-0000-4000-8000-000000000010",
 		SnapshotID:  "76000000-0000-4000-8000-000000000011",
-		NamespaceID: namespace.NamespaceID,
+		NamespaceID: fixture.namespaceID,
 	}
 	_, err = s.FinalizeProductionDraft(t.Context(), "test-agent", command)
 	require.ErrorIs(t, err, ErrInvalidProduction)
