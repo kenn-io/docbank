@@ -2,6 +2,7 @@ package docbank
 
 import (
 	"context"
+	"time"
 
 	documentproduction "go.kenn.io/docbank/document/production"
 	"go.kenn.io/docbank/document/redaction"
@@ -14,6 +15,23 @@ type ProductionDecisionPage = api.ProductionDecisionPage
 type ProductionRecipeCatalog = api.ProductionRecipeCatalog
 type ProductionPolicyPage = api.ProductionPolicyPage
 type ProductionApprovalPublic = api.ProductionApprovalPublic
+
+// ProductionApprovalRequest names the exact subject and private evidence to
+// record in an embedded vault. It does not contain authentication authority.
+type ProductionApprovalRequest struct {
+	OperationID string
+	ApprovalID  string
+	Subject     documentproduction.ApprovalSubject
+	Evidence    string
+}
+
+// ProductionApprovalAuthentication must be derived by the embedding host from
+// a verified human authentication event. A caller-supplied actor label alone
+// is not proof of approval.
+type ProductionApprovalAuthentication struct {
+	Actor     string
+	Authority documentproduction.ApprovalAuthority
+}
 
 func (v *Vault) ProductionPolicyVersions(ctx context.Context, cursor string, limit int) (ProductionPolicyPage, error) {
 	v.lifecycle.RLock()
@@ -75,6 +93,41 @@ func (v *Vault) ProductionApproval(ctx context.Context, approvalID string) (Prod
 		return ProductionApprovalPublic{}, err
 	}
 	return ProductionApprovalPublic{Grant: grant, Events: events}, nil
+}
+
+// RecordProductionApproval stores one immutable approval using the host's
+// verified human authority. Retries with the same operation and subject return
+// the original grant. Only the public grant crosses this API boundary.
+func (v *Vault) RecordProductionApproval(ctx context.Context, request ProductionApprovalRequest,
+	authenticated ProductionApprovalAuthentication) (documentproduction.ApprovalPublicGrant, error) {
+	v.lifecycle.RLock()
+	defer v.lifecycle.RUnlock()
+	if v.closed {
+		return documentproduction.ApprovalPublicGrant{}, ErrClosed
+	}
+	policy, err := v.metadata.ProductionPolicy(ctx, request.Subject.Policy.PolicyID, request.Subject.Policy.Version)
+	if err != nil {
+		return documentproduction.ApprovalPublicGrant{}, err
+	}
+	record, err := productionservice.PrepareApprovalRecord(productionservice.RecordApprovalRequest{
+		OperationID: request.OperationID, ApprovalID: request.ApprovalID,
+		Subject: request.Subject, Evidence: request.Evidence,
+	}, policy, productionservice.AuthenticatedApproval{
+		Actor: authenticated.Actor, Authority: authenticated.Authority,
+	}, time.Now().UTC())
+	if err != nil {
+		return documentproduction.ApprovalPublicGrant{}, err
+	}
+	var grant documentproduction.ApprovalGrant
+	err = embeddedMutationGate{vault: v}.MutateContext(ctx, func() error {
+		var err error
+		grant, err = v.metadata.PutProductionApproval(ctx, record)
+		return err
+	})
+	if err != nil {
+		return documentproduction.ApprovalPublicGrant{}, err
+	}
+	return documentproduction.PublicApprovalGrant(grant), nil
 }
 
 func (v *Vault) ProductionRecipes(ctx context.Context) (ProductionRecipeCatalog, error) {
