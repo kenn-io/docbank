@@ -4,12 +4,40 @@ import (
 	"context"
 	"errors"
 	"strconv"
+	"time"
 
 	documentproduction "go.kenn.io/docbank/document/production"
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/apiclient"
 	"go.kenn.io/docbank/internal/store"
 )
+
+// ValidateProductionPrivilegeLog validates persisted draft authority through
+// the daemon and returns only its digest summary.
+func (c *Connection) ValidateProductionPrivilegeLog(ctx context.Context, logID string, revision int64,
+	request api.ProductionPrivilegeValidationRequest) (api.ProductionPrivilegeValidation, error) {
+	validatedAt, err := time.Parse(time.RFC3339Nano, request.ValidatedAt)
+	if logID == "" || revision < 1 || request.OperationID == "" || request.ExpectedGeneration < 1 ||
+		err != nil || validatedAt.Location() != time.UTC ||
+		validatedAt.Format(time.RFC3339Nano) != request.ValidatedAt {
+		return api.ProductionPrivilegeValidation{}, errors.New("invalid production privilege validation request")
+	}
+	result, err := c.API().ValidateProductionPrivilegeLog(ctx,
+		&apiclient.ValidateProductionPrivilegeLogRequestOptions{
+			PathParams: &apiclient.ValidateProductionPrivilegeLogPath{Log: logID, Revision: revision},
+			Body:       &request,
+		})
+	if err != nil {
+		return api.ProductionPrivilegeValidation{}, err
+	}
+	if result == nil || result.DraftGeneration != request.ExpectedGeneration ||
+		result.Validation.Inputs.LogID != logID || result.Validation.Inputs.Revision != revision ||
+		result.Validation.Inputs.ValidatedAt != request.ValidatedAt ||
+		len(result.Validation.InputsSHA256) != 64 || len(result.Validation.RowsSHA256) != 64 {
+		return api.ProductionPrivilegeValidation{}, integrityErrorf("production privilege validation is inconsistent")
+	}
+	return *result, nil
+}
 
 // ProductionPrivilegeLog reads a bounded public page from an exact frozen log.
 func (c *Connection) ProductionPrivilegeLog(ctx context.Context, logID string, revision int64,

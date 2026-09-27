@@ -12,7 +12,13 @@ import (
 	"go.kenn.io/docbank/internal/store"
 )
 
-func SeedFrozenPrivilegeLog(t *testing.T, s *store.Store) {
+type PrivilegeDraft struct {
+	LogID      string
+	Revision   int64
+	Generation int64
+}
+
+func SeedPrivilegeLogDraft(t *testing.T, s *store.Store) PrivilegeDraft {
 	t.Helper()
 	sha := func(char string) string { return strings.Repeat(char, 64) }
 	policy := documentproduction.PolicyVersion{
@@ -86,17 +92,23 @@ func SeedFrozenPrivilegeLog(t *testing.T, s *store.Store) {
 		Draft: draft, PlayersSHA256: players.SnapshotSHA256, Rows: rows,
 	})
 	require.NoError(t, err)
+	return PrivilegeDraft{LogID: draft.LogID, Revision: draft.Revision, Generation: generation}
+}
+
+func SeedFrozenPrivilegeLog(t *testing.T, s *store.Store) {
+	t.Helper()
+	draft := SeedPrivilegeLogDraft(t, s)
 	validation, err := productionservice.ValidateStoredPrivilegeLog(t.Context(), s,
 		productionservice.PrivilegeLogValidationRequest{
 			OperationID: "dddddddd-dddd-4ddd-8ddd-dddddddddddd", LogID: draft.LogID,
-			Revision: 1, ExpectedGeneration: generation,
+			Revision: draft.Revision, ExpectedGeneration: draft.Generation,
 			ValidatedAt: time.Date(2026, 9, 22, 14, 0, 0, 0, time.UTC),
 		})
 	require.NoError(t, err)
 	_, err = productionservice.FreezeStoredPrivilegeLog(t.Context(), s,
 		productionservice.PrivilegeLogFreezeRequest{
 			OperationID: "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee", LogID: draft.LogID,
-			Revision: 1, ExpectedGeneration: generation,
+			Revision: draft.Revision, ExpectedGeneration: draft.Generation,
 			ExpectedInputsSHA256: validation.Validation.InputsSHA256,
 			FrozenAt:             time.Date(2026, 9, 22, 14, 1, 0, 0, time.UTC),
 		})

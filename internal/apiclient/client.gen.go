@@ -8082,6 +8082,53 @@ func (c *Client) ReadProductionPrivilegeLog(ctx context.Context, options *ReadPr
 	return responseParser(ctx, resp)
 }
 
+// ValidateProductionPrivilegeLog Validate the stored rows of a privilege-log draft
+func (c *Client) ValidateProductionPrivilegeLog(ctx context.Context, options *ValidateProductionPrivilegeLogRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ValidateProductionPrivilegeLogResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/production-privilege-logs/{log}/revisions/{revision}/validate",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*ValidateProductionPrivilegeLogResponse, error) {
+		switch resp.StatusCode {
+
+		case 201:
+
+			target := new(ValidateProductionPrivilegeLogResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "ValidateProductionPrivilegeLogResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[ValidateProductionPrivilegeLogErrorResponse](resp, "ValidateProductionPrivilegeLogErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/production-privilege-logs/{log}/revisions/{revision}/validate")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 201)
+	}
+	return responseParser(ctx, resp)
+}
+
 // DownloadProductionPackage Issue a one-use ticket for a verified retained production package
 func (c *Client) DownloadProductionPackage(ctx context.Context, options *DownloadProductionPackageRequestOptions, reqEditors ...runtime.RequestEditorFn) (*DownloadProductionPackageResponse, error) {
 	var err error
@@ -16805,6 +16852,41 @@ func (o *ReadProductionPrivilegeLogRequestOptions) GetHeader() (map[string]strin
 	return nil, nil
 }
 
+// ValidateProductionPrivilegeLogRequestOptions is the options needed to make a request to ValidateProductionPrivilegeLog.
+type ValidateProductionPrivilegeLogRequestOptions struct {
+	PathParams *ValidateProductionPrivilegeLogPath
+	Body       *ValidateProductionPrivilegeLogBody
+}
+
+// GetPathParams returns the path params as a map.
+func (o *ValidateProductionPrivilegeLogRequestOptions) GetPathParams() (map[string]any, error) {
+	encoded, err := json.Marshal(o.PathParams, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetQuery returns the query params as a map.
+func (o *ValidateProductionPrivilegeLogRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *ValidateProductionPrivilegeLogRequestOptions) GetBody() any {
+	if o.Body == nil {
+		return nil
+	}
+	return o.Body
+}
+
+// GetHeader returns the headers as a map.
+func (o *ValidateProductionPrivilegeLogRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
 // DownloadProductionPackageRequestOptions is the options needed to make a request to DownloadProductionPackage.
 type DownloadProductionPackageRequestOptions struct {
 	PathParams *DownloadProductionPackagePath
@@ -19629,6 +19711,11 @@ type ReadProductionPrivilegeLogPath struct {
 	Log string `json:"log"`
 }
 
+type ValidateProductionPrivilegeLogPath struct {
+	Log      string `json:"log"`
+	Revision int64  `json:"revision"`
+}
+
 type DownloadProductionPackagePath struct {
 	JobID       uuid.UUID `json:"job_id"`
 	OperationID uuid.UUID `json:"operation_id"`
@@ -19941,6 +20028,8 @@ type StartDocumentProcessingBody = StartProcessingRequest
 type PlanDocumentProcessingBody = ProcessingPlanRequest
 
 type ResolveDocumentSourceFenceBody = DocumentSourceFenceResolveRequest
+
+type ValidateProductionPrivilegeLogBody = ProductionPrivilegeValidationRequest
 
 type DownloadProductionPackageBody = DownloadProductionPackageRequest
 
@@ -21076,6 +21165,10 @@ type ReadProductionPrivilegeLogResponse = api.ProductionPrivilegePublicPage
 
 type ReadProductionPrivilegeLogErrorResponse = Error
 
+type ValidateProductionPrivilegeLogResponse = api.ProductionPrivilegeValidation
+
+type ValidateProductionPrivilegeLogErrorResponse = Error
+
 type DownloadProductionPackageResponse = api.ProductionPackageDownloadTicket
 
 type DownloadProductionPackageErrorResponse = Error
@@ -22149,9 +22242,13 @@ type PreviewStorageSalvageRequest struct {
 	Store  string  `json:"store"`
 }
 
+type PrivilegeLogInputs = production.PrivilegeLogInputs
+
 type PrivilegeLogReceipt = production.PrivilegeLogReceipt
 
 type PrivilegeLogRequirement = production.PrivilegeLogRequirement
+
+type PrivilegeLogValidation = production.PrivilegeLogValidation
 
 type PrivilegePublicRow = production.PrivilegePublicRow
 
@@ -22226,6 +22323,10 @@ type ProductionPolicyCreateRequest = api.ProductionPolicyCreateRequest
 type ProductionPolicyPage = api.ProductionPolicyPage
 
 type ProductionPrivilegePublicPage = api.ProductionPrivilegePublicPage
+
+type ProductionPrivilegeValidation = api.ProductionPrivilegeValidation
+
+type ProductionPrivilegeValidationRequest = api.ProductionPrivilegeValidationRequest
 
 type ProductionReceipt = api.ProductionReceipt
 

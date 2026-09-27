@@ -16,6 +16,8 @@ type ProductionRecipeCatalog = api.ProductionRecipeCatalog
 type ProductionPolicyPage = api.ProductionPolicyPage
 type ProductionApprovalPublic = api.ProductionApprovalPublic
 type ProductionPrivilegePublicPage = api.ProductionPrivilegePublicPage
+type ProductionPrivilegeValidationRequest = api.ProductionPrivilegeValidationRequest
+type ProductionPrivilegeValidation = api.ProductionPrivilegeValidation
 
 // ProductionApprovalRequest names the exact subject and private evidence to
 // record in an embedded vault. It does not contain authentication authority.
@@ -114,6 +116,40 @@ func (v *Vault) ProductionPrivilegeLog(ctx context.Context, logID string, revisi
 	}
 	return ProductionPrivilegePublicPage{Receipt: page.Receipt,
 		Rows: page.Rows, NextCursor: page.NextCursor}, nil
+}
+
+// ValidateProductionPrivilegeLog checks the stored draft rows and pinned
+// authority in this embedded vault. An exact operation retry returns the same
+// validation; a changed generation or payload conflicts.
+func (v *Vault) ValidateProductionPrivilegeLog(ctx context.Context, logID string, revision int64,
+	request ProductionPrivilegeValidationRequest) (ProductionPrivilegeValidation, error) {
+	v.lifecycle.RLock()
+	defer v.lifecycle.RUnlock()
+	if v.closed {
+		return ProductionPrivilegeValidation{}, ErrClosed
+	}
+	validatedAt, err := time.Parse(time.RFC3339Nano, request.ValidatedAt)
+	if err != nil || validatedAt.Location() != time.UTC ||
+		validatedAt.Format(time.RFC3339Nano) != request.ValidatedAt {
+		return ProductionPrivilegeValidation{}, &documentproduction.Problem{
+			Code: documentproduction.ProblemInvalidContract, Detail: "validated_at must be canonical UTC",
+		}
+	}
+	serviceRequest := productionservice.PrivilegeLogValidationRequest{
+		OperationID: request.OperationID, LogID: logID, Revision: revision,
+		ExpectedGeneration: request.ExpectedGeneration, ValidatedAt: validatedAt,
+	}
+	var prepared productionservice.PreparedPrivilegeLogValidation
+	err = embeddedMutationGate{vault: v}.MutateContext(ctx, func() error {
+		var err error
+		prepared, err = productionservice.ValidateStoredPrivilegeLog(ctx, v.metadata, serviceRequest)
+		return err
+	})
+	if err != nil {
+		return ProductionPrivilegeValidation{}, err
+	}
+	return ProductionPrivilegeValidation{DraftGeneration: prepared.DraftGeneration,
+		Validation: prepared.Validation}, nil
 }
 
 // RecordProductionApproval stores one immutable approval using the host's

@@ -10409,6 +10409,40 @@ components:
         - hash
         - store
       type: object
+    PrivilegeLogInputs:
+      additionalProperties: false
+      properties:
+        contract:
+          type: string
+        log_id:
+          type: string
+        players_sha256:
+          type: string
+        policy_sha256:
+          type: string
+        revision:
+          format: int64
+          type: integer
+        rows_sha256:
+          type: string
+        validated_at:
+          type: string
+        withheld_selection_sha256:
+          type: string
+      required:
+        - contract
+        - log_id
+        - revision
+        - withheld_selection_sha256
+        - policy_sha256
+        - players_sha256
+        - rows_sha256
+        - validated_at
+      type: object
+      x-go-type: production.PrivilegeLogInputs
+      x-go-type-import:
+        path: go.kenn.io/docbank/document/production
+        name: production
     PrivilegeLogReceipt:
       additionalProperties: false
       properties:
@@ -10482,6 +10516,24 @@ components:
         - allowed_bases
       type: object
       x-go-type: production.PrivilegeLogRequirement
+      x-go-type-import:
+        path: go.kenn.io/docbank/document/production
+        name: production
+    PrivilegeLogValidation:
+      additionalProperties: false
+      properties:
+        inputs:
+          $ref: "#/components/schemas/PrivilegeLogInputs"
+        inputs_sha256:
+          type: string
+        rows_sha256:
+          type: string
+      required:
+        - inputs
+        - rows_sha256
+        - inputs_sha256
+      type: object
+      x-go-type: production.PrivilegeLogValidation
       x-go-type-import:
         path: go.kenn.io/docbank/document/production
         name: production
@@ -11616,6 +11668,55 @@ components:
         - next_cursor
       type: object
       x-go-type: api.ProductionPrivilegePublicPage
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
+    ProductionPrivilegeValidation:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/ProductionPrivilegeValidation.json
+          format: uri
+          readOnly: true
+          type: string
+        draft_generation:
+          format: int64
+          type: integer
+        validation:
+          $ref: "#/components/schemas/PrivilegeLogValidation"
+      required:
+        - draft_generation
+        - validation
+      type: object
+      x-go-type: api.ProductionPrivilegeValidation
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
+    ProductionPrivilegeValidationRequest:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/ProductionPrivilegeValidationRequest.json
+          format: uri
+          readOnly: true
+          type: string
+        expected_generation:
+          format: int64
+          type: integer
+        operation_id:
+          type: string
+        validated_at:
+          type: string
+      required:
+        - operation_id
+        - expected_generation
+        - validated_at
+      type: object
+      x-go-type: api.ProductionPrivilegeValidationRequest
       x-go-type-import:
         path: go.kenn.io/docbank/internal/api
         name: api
@@ -20696,6 +20797,42 @@ paths:
                 $ref: "#/components/schemas/Error"
           description: Error
       summary: Page a frozen privilege log's public rows
+  /api/v1/production-privilege-logs/{log}/revisions/{revision}/validate:
+    post:
+      operationId: validateProductionPrivilegeLog
+      parameters:
+        - in: path
+          name: log
+          required: true
+          schema:
+            type: string
+        - in: path
+          name: revision
+          required: true
+          schema:
+            format: int64
+            minimum: 1
+            type: integer
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ProductionPrivilegeValidationRequest"
+        required: true
+      responses:
+        "201":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProductionPrivilegeValidation"
+          description: Created
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: Validate the stored rows of a privilege-log draft
   /api/v1/productions/jobs/{job_id}/packages/{operation_id}/download:
     post:
       operationId: downloadProductionPackage
