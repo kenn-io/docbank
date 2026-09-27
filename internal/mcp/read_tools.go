@@ -118,6 +118,8 @@ func executeReadTool(
 		output, err = getProductionSupplement(ctx, lease, raw)
 	case "get_production_reproduction":
 		output, err = getProductionReproduction(ctx, lease, raw)
+	case "get_production_package":
+		output, err = getProductionPackage(ctx, lease, raw)
 	default:
 		return nil, errors.New("unknown Docbank read tool")
 	}

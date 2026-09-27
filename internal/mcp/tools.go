@@ -69,6 +69,7 @@ var readToolDefinitions = []toolDefinition{
 	{name: "get_production_privilege_log", title: "Get production privilege log", description: "Page the public rows of one exact frozen privilege log.", schemas: getProductionPrivilegeLogSchemas},
 	{name: "get_production_supplement", title: "Get production supplement", description: "Read one exact verified production continuation record.", schemas: getProductionSupplementSchemas},
 	{name: "get_production_reproduction", title: "Get production reproduction", description: "Read one exact verified reproduction receipt for a published production.", schemas: getProductionReproductionSchemas},
+	{name: "get_production_package", title: "Get production package", description: "Read one exact verified retained recipient package evidence receipt.", schemas: getProductionPackageSchemas},
 }
 
 var processingToolDefinition = toolDefinition{
@@ -185,6 +186,12 @@ var createProductionReproductionToolDefinition = toolDefinition{
 	schemas:     createProductionReproductionSchemas, write: true, idempotent: true,
 }
 
+var createProductionPackageToolDefinition = toolDefinition{
+	name: "create_production_package", title: "Create production package",
+	description: "Build and retain a recipient archive from one published production with a stable operation ID.",
+	schemas:     createProductionPackageSchemas, write: true, idempotent: true,
+}
+
 func toolCatalog(allowProcessing bool) []*sdkmcp.Tool {
 	definitions := readToolDefinitions
 	if allowProcessing {
@@ -195,7 +202,8 @@ func toolCatalog(allowProcessing bool) []*sdkmcp.Tool {
 			validateProductionPrivilegeLogToolDefinition, replaceProductionPrivilegeRowsToolDefinition,
 			createProductionPrivilegeDraftToolDefinition, freezeProductionPrivilegeLogToolDefinition,
 			exportProductionPrivilegeLogToolDefinition, downloadProductionPackageToolDefinition,
-			createProductionSupplementToolDefinition, createProductionReproductionToolDefinition)
+			createProductionSupplementToolDefinition, createProductionReproductionToolDefinition,
+			createProductionPackageToolDefinition)
 	}
 	tools := make([]*sdkmcp.Tool, 0, len(definitions))
 	for _, definition := range definitions {
@@ -254,6 +262,8 @@ func registerToolCatalog(
 			handler = createProductionSupplementToolHandler(lease, output, logger)
 		case createProductionReproductionToolDefinition.name:
 			handler = createProductionReproductionToolHandler(lease, output, logger)
+		case createProductionPackageToolDefinition.name:
+			handler = createProductionPackageToolHandler(lease, output, logger)
 		default:
 			handler = readToolHandler(lease, plans, tool.Name, output, logger)
 		}
@@ -425,6 +435,8 @@ func stableDomainError(err error) (string, int) {
 		return "production_supplement_outcome_unknown", 0
 	case errors.Is(err, errProductionReproductionOutcomeUnknown):
 		return "production_reproduction_outcome_unknown", 0
+	case errors.Is(err, errProductionPackageOutcomeUnknown):
+		return "production_package_outcome_unknown", 0
 	case errors.Is(err, errProductionPrivilegeExportDestinationExists):
 		return "destination_exists", 0
 	case errors.Is(err, errProductionPackageDestinationExists):
@@ -475,6 +487,7 @@ func stableDomainError(err error) (string, int) {
 	case "production_policy_conflict", "invalid_production_policy", "production_privilege_conflict", "invalid_production_privilege",
 		"production_supplement_conflict", "production_reproduction_conflict",
 		"invalid_production_reproduction", "production_reproduction_too_large",
+		"production_package_conflict", "invalid_production_package", "production_package_too_large",
 		"approval_required", "approval_stale":
 		return facts.Code, 0
 	default:
@@ -542,6 +555,14 @@ func domainErrorMessage(code string) string {
 		return "The selected reproduction package exceeds the supported retained archive size."
 	case "production_reproduction_outcome_unknown":
 		return "The reproduction outcome is unknown; read the exact job and operation ID before retrying identical input."
+	case "production_package_conflict":
+		return "The recipient package conflicts with the published production or retained evidence."
+	case "invalid_production_package":
+		return "The package operation, profile or volume limits are invalid."
+	case "production_package_too_large":
+		return "The selected recipient package exceeds the supported retained archive size."
+	case "production_package_outcome_unknown":
+		return "The package outcome is unknown; read the exact job and operation ID before retrying identical input."
 	case "destination_exists":
 		return "The export destination already exists; choose another path or explicitly allow overwrite."
 	case "package_download_failed":

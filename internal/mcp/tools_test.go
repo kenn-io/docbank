@@ -35,6 +35,7 @@ func TestDefaultToolCatalogIsFixedBoundedAndReadOnly(t *testing.T) {
 		"find_production_number_candidates",
 		"list_production_policies", "get_production_policy", "get_production_approval",
 		"get_production_privilege_log", "get_production_supplement", "get_production_reproduction",
+		"get_production_package",
 	}
 	require.Len(t, tools, len(wantNames))
 	for index, tool := range tools {
@@ -61,12 +62,12 @@ func TestProcessingToolIsConstructionTimeOptIn(t *testing.T) {
 		"validate_production_privilege_log", "replace_production_privilege_rows",
 		"create_production_privilege_draft", "freeze_production_privilege_log",
 		"export_production_privilege_log", "download_production_package",
-		"create_production_supplement", "create_production_reproduction"), enabled)
+		"create_production_supplement", "create_production_reproduction", "create_production_package"), enabled)
 
 	for _, write := range enabledTools[len(readOnly):] {
 		require.NotNil(t, write.Annotations)
 		assert.False(t, write.Annotations.ReadOnlyHint)
-		assert.Equal(t, slices.Contains([]string{"start_package_import", "ensure_bates_namespace", "reserve_bates_range", "publish_bates_export", "create_production_policy", "validate_production_privilege_log", "replace_production_privilege_rows", "create_production_privilege_draft", "freeze_production_privilege_log", "create_production_supplement", "create_production_reproduction"}, write.Name), write.Annotations.IdempotentHint)
+		assert.Equal(t, slices.Contains([]string{"start_package_import", "ensure_bates_namespace", "reserve_bates_range", "publish_bates_export", "create_production_policy", "validate_production_privilege_log", "replace_production_privilege_rows", "create_production_privilege_draft", "freeze_production_privilege_log", "create_production_supplement", "create_production_reproduction", "create_production_package"}, write.Name), write.Annotations.IdempotentHint)
 		assert.Equal(t, new(write.Name == "assign_package_custodian" || write.Name == "export_bates_file" ||
 			write.Name == "export_load_file_package" || write.Name == "export_production_privilege_log" ||
 			write.Name == "download_production_package"),
