@@ -2,12 +2,39 @@ package mcp
 
 import (
 	documentproduction "go.kenn.io/docbank/document/production"
+	productionservice "go.kenn.io/docbank/internal/production"
 	"go.kenn.io/docbank/internal/store"
 )
 
+func exportProductionPrivilegeLogSchemas() (schema, schema) {
+	const minLengthField = "minLength"
+	path := stringSchema(maxPathCharacters)
+	path[minLengthField] = 1
+	return rootObjectSchema(schema{
+			"log_id": uuidSchema(), "revision": integerSchema(1, 0),
+			"format":           enumSchema("json", "csv", "xlsx", "pdf"),
+			"destination_path": path,
+			"overwrite":        booleanSchema(),
+		}, "log_id", "revision", "format", "destination_path", "overwrite"),
+		rootObjectSchema(withPrivateCache(schema{
+			"log_id": uuidSchema(), "revision": integerSchema(1, 0),
+			"format":           enumSchema("json", "csv", "xlsx", "pdf"),
+			"destination_path": stringSchema(maxPathCharacters),
+			"media_type": enumSchema(productionservice.PrivilegeLogJSONMediaType,
+				productionservice.PrivilegeLogCSVMediaType, productionservice.PrivilegeLogXLSXMediaType,
+				productionservice.PrivilegeLogPDFMediaType),
+			"receipt_sha256": sha256Schema(), "rows_sha256": sha256Schema(),
+			"content_sha256": sha256Schema(), "size": integerSchema(1, 512<<20),
+			schemaStateField: enumSchema("published", "published_durability_unknown"),
+		}), cacheRequired("log_id", "revision", "format", "destination_path", "media_type",
+			"receipt_sha256", "rows_sha256", "content_sha256", "size", schemaStateField)...)
+}
+
 func getProductionPrivilegeLogSchemas() (schema, schema) {
+	receiptContract := stringSchema(0)
+	receiptContract[jsonSchemaConst] = documentproduction.PrivilegeLogReceiptContractV1
 	receipt := objectSchema(schema{
-		"contract": schema{"type": "string", jsonSchemaConst: documentproduction.PrivilegeLogReceiptContractV1}, //nolint:goconst // JSON Schema type vocabulary is intentionally repeated.
+		"contract": receiptContract,
 		"log_id":   uuidSchema(), "revision": integerSchema(1, 0),
 		"state":                     enumSchema(documentproduction.PrivilegeLogStateFrozen),
 		"withheld_selection_sha256": sha256Schema(), "policy_sha256": sha256Schema(),

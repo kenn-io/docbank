@@ -141,6 +141,12 @@ var validateProductionPrivilegeLogToolDefinition = toolDefinition{
 	schemas:     validateProductionPrivilegeLogSchemas, write: true, idempotent: true,
 }
 
+var exportProductionPrivilegeLogToolDefinition = toolDefinition{
+	name: "export_production_privilege_log", title: "Export production privilege log",
+	description: "Write verified public bytes of one frozen privilege log to a local file.",
+	schemas:     exportProductionPrivilegeLogSchemas, write: true, destructive: true,
+}
+
 func toolCatalog(allowProcessing bool) []*sdkmcp.Tool {
 	definitions := readToolDefinitions
 	if allowProcessing {
@@ -148,7 +154,7 @@ func toolCatalog(allowProcessing bool) []*sdkmcp.Tool {
 			packageImportToolDefinition, resolvePackageCustodianToolDefinition, assignPackageCustodianToolDefinition,
 			ensureBatesNamespaceToolDefinition, reserveBatesRangeToolDefinition, publishBatesExportToolDefinition,
 			exportBatesFileToolDefinition, exportLoadFilePackageToolDefinition, createProductionPolicyToolDefinition,
-			validateProductionPrivilegeLogToolDefinition)
+			validateProductionPrivilegeLogToolDefinition, exportProductionPrivilegeLogToolDefinition)
 	}
 	tools := make([]*sdkmcp.Tool, 0, len(definitions))
 	for _, definition := range definitions {
@@ -193,6 +199,8 @@ func registerToolCatalog(
 			handler = createProductionPolicyToolHandler(lease, output, logger)
 		case validateProductionPrivilegeLogToolDefinition.name:
 			handler = validateProductionPrivilegeLogToolHandler(lease, output, logger)
+		case exportProductionPrivilegeLogToolDefinition.name:
+			handler = exportProductionPrivilegeLogToolHandler(lease, output, logger)
 		default:
 			handler = readToolHandler(lease, plans, tool.Name, output, logger)
 		}
@@ -360,6 +368,8 @@ func stableDomainError(err error) (string, int) {
 		return "production_policy_outcome_unknown", 0
 	case errors.Is(err, errProductionPrivilegeOutcomeUnknown):
 		return "production_privilege_outcome_unknown", 0
+	case errors.Is(err, errProductionPrivilegeExportDestinationExists):
+		return "destination_exists", 0
 	case errors.Is(err, errDaemonUnavailable):
 		return "daemon_unavailable", 0
 	case errors.Is(err, store.ErrDocumentCursorExpired):
@@ -452,6 +462,8 @@ func domainErrorMessage(code string) string {
 		return "The privilege-log validation input is invalid."
 	case "production_privilege_outcome_unknown":
 		return "The validation outcome is unknown; retry only with the exact same operation ID and input."
+	case "destination_exists":
+		return "The export destination already exists; choose another path or explicitly allow overwrite."
 	default:
 		return "The Docbank operation could not be completed."
 	}
