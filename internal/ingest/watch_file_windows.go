@@ -3,6 +3,7 @@
 package ingest
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 
@@ -30,6 +31,9 @@ func openWatchLeaf(root *os.Root, name string) (*os.File, error) {
 		0,
 	)
 	if err != nil {
+		if info, statErr := root.Lstat(name); statErr == nil && !info.Mode().IsRegular() {
+			err = errors.Join(ErrSourceChanged, err)
+		}
 		return nil, &os.PathError{Op: "open", Path: path, Err: err}
 	}
 	return os.NewFile(uintptr(handle), path), nil

@@ -5,6 +5,7 @@ package ingest
 import (
 	"io"
 	"log/slog"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -17,6 +18,26 @@ import (
 	"go.kenn.io/docbank/internal/config"
 	"go.kenn.io/docbank/internal/store"
 )
+
+func TestOpenWatchLeafRetriesDirectoryReplacement(t *testing.T) {
+	source := writeTree(t, map[string]string{"document.txt": "ready"})
+	root, err := os.OpenRoot(source)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, root.Close()) })
+
+	// Model the replacement after openWatchFile has checked the regular file.
+	require.NoError(t, root.Remove("document.txt"))
+	require.NoError(t, root.Mkdir("document.txt", 0o700))
+	file, err := openWatchLeaf(root, "document.txt")
+	require.Nil(t, file)
+	require.ErrorIs(t, err, ErrSourceChanged)
+	require.ErrorIs(t, err, windows.ERROR_ACCESS_DENIED)
+
+	file, err = openWatchLeaf(root, "missing.txt")
+	require.Nil(t, file)
+	require.ErrorIs(t, err, os.ErrNotExist)
+	require.NotErrorIs(t, err, ErrSourceChanged)
+}
 
 func TestWatcherImportsLongPath(t *testing.T) {
 	ing := newTestIngester(t)
