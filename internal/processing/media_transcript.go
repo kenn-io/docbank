@@ -7,6 +7,7 @@ import (
 	"encoding/json/v2"
 	"errors"
 	"fmt"
+	"reflect"
 	"strings"
 	"unicode/utf8"
 
@@ -424,7 +425,14 @@ func (service *Service) recheckMediaTranscriptAuthority(
 		return err
 	}
 	if after.ContentVersionID != request.ContentVersionID || after.OccurrenceID != before.OccurrenceID ||
-		after.SourceSHA256 != before.SourceSHA256 || after.SourceBytes != before.SourceBytes {
+		after.SourceSHA256 != before.SourceSHA256 || after.SourceBytes != before.SourceBytes ||
+		!reflect.DeepEqual(after.Receipt, before.Receipt) ||
+		!reflect.DeepEqual(after.ProcessingReceipt, before.ProcessingReceipt) ||
+		!reflect.DeepEqual(after.CoverageReceipt, before.CoverageReceipt) {
+		return ErrMediaTranscriptStale
+	}
+	currentProfile, _ := mediaTranscriptProfile(service, after)
+	if currentProfile != view.Attachment.Profile.Fingerprint {
 		return ErrMediaTranscriptStale
 	}
 	currentVersion, currentNode, err := service.mediaTranscriptNode(ctx, request.ContentVersionID)
@@ -436,7 +444,7 @@ func (service *Service) recheckMediaTranscriptAuthority(
 		currentNode.CurrentVersionID != version.ID || currentNode.TrashedAt != nil {
 		return ErrMediaTranscriptStale
 	}
-	currentView, err := service.catalog.ActiveRendition(ctx, request.ContentVersionID, view.Attachment.Profile.Fingerprint)
+	currentView, err := service.catalog.ActiveRendition(ctx, request.ContentVersionID, currentProfile)
 	if err != nil || currentView.Attachment.ID != view.Attachment.ID || currentView.Build.ID != view.Build.ID {
 		return ErrMediaTranscriptStale
 	}

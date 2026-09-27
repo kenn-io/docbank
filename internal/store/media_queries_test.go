@@ -10,6 +10,7 @@ import (
 )
 
 func TestMediaSourceVersionSelectsTheExactVisibleRevision(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
 	first, err := s.CreateFile(ctx, s.RootID(), "first.wav", fakeHash("a1"), 11, "audio/wav")

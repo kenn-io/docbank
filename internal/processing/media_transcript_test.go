@@ -338,6 +338,91 @@ func TestMediaTranscriptRechecksAuthority(t *testing.T) {
 		t.Fatalf("transcript read did not finish after authority mutation: %v", readCtx.Err())
 	}
 
+	for i, state := range []string{"queued", "succeeded"} {
+		t.Run("different profile "+state+" during read", func(t *testing.T) {
+			retryName, retryProfile, err := NewSuppliedCaptionProfile(fixture.catalog, fixture.blobs, base.principal)
+			require.NoError(t, err)
+			retryProfile.Profile.EvidenceLexical.MaxDocumentChars -= i + 1
+			retryService, err := NewService(ServiceConfig{Catalog: fixture.catalog, Blobs: fixture.blobs,
+				Gate: newWorkerTestGate(), SpoolDirectory: t.TempDir(), Principal: base.principal,
+				Profiles: map[string]ProfileConfig{retryName: retryProfile}})
+			require.NoError(t, err)
+			text := []byte("1\n00:00:00,000 --> 00:00:01,000\ndifferent profile transcript\n")
+			input, err := base.ImportRecordingArtifact(t.Context(), MediaArtifactRequest{
+				OperationID: uuid.New().String(), SourceID: remote.SourceID, OccurrenceID: remote.OccurrenceID,
+				Kind: "caption", Origin: "supplied", Provider: "synthetic", Filename: "retry.srt",
+				MediaType: "application/x-subrip", SHA256: processingSHA256(text), ByteLength: int64(len(text)),
+				Content: bytes.NewReader(text),
+			})
+			require.NoError(t, err)
+			retrySelector := Selector{NodeID: version.NodeID, ContentVersionID: version.ID, Profile: retryName}
+			retryPlan, err := retryService.Plan(t.Context(), retrySelector)
+			require.NoError(t, err)
+			_, err = retryService.GrantConsent(t.Context(), ConsentGrantRequest{Selector: retrySelector, PlanFingerprint: retryPlan.Fingerprint})
+			require.NoError(t, err)
+			before, err := fixture.catalog.MediaSourceVersion(t.Context(), base.principal, request.SourceID, request.SourceVersionID)
+			require.NoError(t, err)
+			require.NotNil(t, before.CoverageReceipt)
+			oldFingerprint := before.CoverageReceipt.ProcessingProfileFingerprint
+			oldView, err := fixture.catalog.ActiveRendition(t.Context(), request.ContentVersionID, oldFingerprint)
+			require.NoError(t, err)
+
+			opened := make(chan struct{})
+			release := make(chan struct{})
+			reader := &mediaTranscriptBarrierReader{delegate: fixture.blobs, opened: opened, release: release}
+			ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+			defer cancel()
+			done := make(chan transcriptReadResult, 1)
+			go func() {
+				value, readErr := service.mediaTranscript(ctx, request, reader)
+				done <- transcriptReadResult{value: value, err: readErr}
+			}()
+			select {
+			case <-opened:
+			case <-ctx.Done():
+				close(release)
+				t.Fatalf("profile retry read did not reach the blob barrier: %v", ctx.Err())
+			}
+			retry, err := retryService.RetryMedia(t.Context(), uuid.New().String(), remote.SourceID,
+				MediaProcessingRequest{Profile: retryName, SuppliedInputID: input.SuppliedInputID})
+			require.NoError(t, err)
+			require.Equal(t, request.SourceVersionID, retry.SourceVersionID)
+			if state == "succeeded" {
+				runLoomRenditionJob(t, retryService, retry.JobID)
+			}
+			after, err := fixture.catalog.MediaSourceVersion(t.Context(), base.principal, request.SourceID, request.SourceVersionID)
+			require.NoError(t, err)
+			require.NotNil(t, after.CoverageReceipt)
+			require.NotNil(t, after.ProcessingReceipt)
+			require.Equal(t, state, after.ProcessingReceipt.OperationState)
+			if state == "succeeded" {
+				require.NotEqual(t, oldFingerprint, after.CoverageReceipt.ProcessingProfileFingerprint)
+			} else {
+				require.Equal(t, before.CoverageReceipt.OperationID, after.CoverageReceipt.OperationID)
+			}
+			unchanged, err := fixture.catalog.ActiveRendition(t.Context(), request.ContentVersionID, oldFingerprint)
+			require.NoError(t, err)
+			require.Equal(t, oldView.Build.ID, unchanged.Build.ID)
+			close(release)
+			select {
+			case result := <-done:
+				require.NoError(t, result.err)
+				require.Equal(t, mediaTranscriptEvidenceStale, result.value.EvidenceState)
+				require.Nil(t, result.value.Transcript)
+			case <-ctx.Done():
+				t.Fatalf("profile retry read did not finish: %v", ctx.Err())
+			}
+			if state == "queued" {
+				runLoomRenditionJob(t, retryService, retry.JobID)
+			}
+			fresh, err := service.MediaTranscript(t.Context(), request)
+			require.NoError(t, err)
+			require.Equal(t, mediaTranscriptEvidenceReady, fresh.EvidenceState)
+			require.NotNil(t, fresh.Transcript)
+			require.Equal(t, "different profile transcript", fresh.Transcript.Units[0].Text)
+		})
+	}
+
 	replacementOpened := make(chan struct{})
 	replacementRelease := make(chan struct{})
 	replacementReader := &mediaTranscriptBarrierReader{delegate: fixture.blobs,
