@@ -5,6 +5,8 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
+	documentproduction "go.kenn.io/docbank/document/production"
+	"go.kenn.io/docbank/internal/canonical"
 	"go.kenn.io/docbank/internal/production"
 )
 
@@ -47,4 +49,48 @@ func PublishedProductionSupplementHTTPFixture(t *testing.T) (*Store, string, pro
 		ParentReceiptSHA256: parent.Receipt.SHA256,
 		PreparedSHA256:      child.RevisionSHA256, PreparedInputSHA256: child.PreparedInputSHA256,
 	}
+}
+
+// PublishedProductionReproductionHTTPFixture supplies a retained verified
+// reproduction and its original job for exact external API readback.
+func PublishedProductionReproductionHTTPFixture(t *testing.T) (*Store, string, string,
+	documentproduction.ReproductionReceipt) {
+	t.Helper()
+	f, job := publishedRealRetentionFixture(t)
+	inputs, err := f.LoadProductionPackageInputs(t.Context(), job.ID)
+	require.NoError(t, err)
+	artifactIDs := make([]string, len(job.Manifest.Artifacts))
+	for i, artifact := range job.Manifest.Artifacts {
+		artifactIDs[i] = artifact.ID
+	}
+	sourceVersionIDs := make([]string, len(inputs.Members))
+	for i, member := range inputs.Members {
+		sourceVersionIDs[i] = member.SourceVersionID
+	}
+	policy := production.PackageDeliveryPolicy{RecipientCode: "synthetic-recipient",
+		AllowedMethods: []string{"offline-media"}}
+	policyRaw, err := canonical.Marshal(policy)
+	require.NoError(t, err)
+	request := documentproduction.ReproductionRequest{
+		Contract:                        documentproduction.ReproductionRequestContractV1,
+		OperationID:                     "88000000-0000-4000-8000-000000000018",
+		OriginalProductionReceiptSHA256: job.Receipt.SHA256,
+		ArtifactIDs:                     artifactIDs, SourceVersionIDs: sourceVersionIDs,
+		DeliveryPolicySHA256: productionHash(string(policyRaw)),
+	}
+	dir := t.TempDir()
+	paths := production.RecipientPackageRequest{
+		JobID: job.ID, ProfileID: "export-dat-opt-images-v1",
+		Limits:          production.PackageLimits{MaxVolumeBytes: 50 << 20, MaxVolumeDocuments: 10},
+		ArchivePath:     filepath.Join(dir, "recipient.zip"),
+		QCPath:          filepath.Join(dir, "qc.json"),
+		TransmittalPath: filepath.Join(dir, "transmittal.json"),
+	}
+	_, err = production.PublishRecipientPackage(t.Context(), f.Store, f, paths)
+	require.NoError(t, err)
+	receipt, err := f.RetainProductionReproduction(t.Context(), job.ID, request, policy,
+		paths, f, restartPackageBlobWriter(f))
+	require.NoError(t, err)
+	f.reopen(t)
+	return f.Store, f.root, job.ID, receipt
 }

@@ -8410,6 +8410,52 @@ func (c *Client) DownloadProductionPackage(ctx context.Context, options *Downloa
 	return responseParser(ctx, resp)
 }
 
+// GetProductionReproduction Read an exact verified reproduction receipt and original production link
+func (c *Client) GetProductionReproduction(ctx context.Context, options *GetProductionReproductionRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetProductionReproductionResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/productions/jobs/{job_id}/reproductions/{operation_id}",
+		Method:     "GET",
+		Options:    options,
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*GetProductionReproductionResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(GetProductionReproductionResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "GetProductionReproductionResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[GetProductionReproductionErrorResponse](resp, "GetProductionReproductionErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/productions/jobs/{job_id}/reproductions/{operation_id}")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
 // FindProductionNumbers Find exact or ranged published production numbers
 func (c *Client) FindProductionNumbers(ctx context.Context, options *FindProductionNumbersRequestOptions, reqEditors ...runtime.RequestEditorFn) (*FindProductionNumbersResponse, error) {
 	var err error
@@ -17467,6 +17513,37 @@ func (o *DownloadProductionPackageRequestOptions) GetHeader() (map[string]string
 	return nil, nil
 }
 
+// GetProductionReproductionRequestOptions is the options needed to make a request to GetProductionReproduction.
+type GetProductionReproductionRequestOptions struct {
+	PathParams *GetProductionReproductionPath
+}
+
+// GetPathParams returns the path params as a map.
+func (o *GetProductionReproductionRequestOptions) GetPathParams() (map[string]any, error) {
+	encoded, err := json.Marshal(o.PathParams, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetQuery returns the query params as a map.
+func (o *GetProductionReproductionRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *GetProductionReproductionRequestOptions) GetBody() any {
+	return nil
+}
+
+// GetHeader returns the headers as a map.
+func (o *GetProductionReproductionRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
 // FindProductionNumbersRequestOptions is the options needed to make a request to FindProductionNumbers.
 type FindProductionNumbersRequestOptions struct {
 	Query *FindProductionNumbersQuery
@@ -20395,6 +20472,11 @@ type DownloadProductionPackagePath struct {
 	OperationID uuid.UUID `json:"operation_id"`
 }
 
+type GetProductionReproductionPath struct {
+	JobID       uuid.UUID `json:"job_id"`
+	OperationID uuid.UUID `json:"operation_id"`
+}
+
 type ReadProductionPolicyVersionPath struct {
 	PolicyID string `json:"policy_id"`
 	Version  int64  `json:"version"`
@@ -21886,6 +21968,10 @@ type DownloadProductionPackageResponse = api.ProductionPackageDownloadTicket
 
 type DownloadProductionPackageErrorResponse = Error
 
+type GetProductionReproductionResponse = production.ReproductionReceipt
+
+type GetProductionReproductionErrorResponse = Error
+
 type FindProductionNumbersResponse = api.ProductionNumberPage
 
 type FindProductionNumbersErrorResponse = Error
@@ -23207,6 +23293,8 @@ type RenditionTextSource struct {
 type RenditionTextWindow = api.RenditionTextWindow
 
 type RenditionWindowRequest = api.RenditionWindowRequest
+
+type ReproductionReceipt = production.ReproductionReceipt
 
 type ResolvedDocumentSourceFence = api.ResolvedDocumentSourceFence
 

@@ -13275,6 +13275,52 @@ components:
       x-go-type-import:
         path: go.kenn.io/docbank/internal/api
         name: api
+    ReproductionReceipt:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/ReproductionReceipt.json
+          format: uri
+          readOnly: true
+          type: string
+        artifact_manifest_sha256:
+          type: string
+        contract:
+          type: string
+        created_at:
+          type: string
+        delivery_policy_sha256:
+          type: string
+        id:
+          type: string
+        number_allocation_count:
+          format: int64
+          type: integer
+        original_number_reservation_sha256:
+          type: string
+        original_production_receipt_sha256:
+          type: string
+        package_qc_sha256:
+          type: string
+        sha256:
+          type: string
+      required:
+        - contract
+        - id
+        - original_production_receipt_sha256
+        - original_number_reservation_sha256
+        - artifact_manifest_sha256
+        - package_qc_sha256
+        - delivery_policy_sha256
+        - number_allocation_count
+        - created_at
+      type: object
+      x-go-type: production.ReproductionReceipt
+      x-go-type-import:
+        path: go.kenn.io/docbank/document/production
+        name: production
     ResolvedDocumentSourceFence:
       additionalProperties: false
       properties:
@@ -21562,6 +21608,36 @@ paths:
                 $ref: "#/components/schemas/Error"
           description: Error
       summary: Issue a one-use ticket for a verified retained production package
+  /api/v1/productions/jobs/{job_id}/reproductions/{operation_id}:
+    get:
+      operationId: getProductionReproduction
+      parameters:
+        - in: path
+          name: job_id
+          required: true
+          schema:
+            format: uuid
+            type: string
+        - in: path
+          name: operation_id
+          required: true
+          schema:
+            format: uuid
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReproductionReceipt"
+          description: OK
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: Read an exact verified reproduction receipt and original production link
   /api/v1/productions/numbers:
     get:
       operationId: findProductionNumbers
