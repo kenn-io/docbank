@@ -67,6 +67,7 @@ var readToolDefinitions = []toolDefinition{
 	{name: "get_production_policy", title: "Get production policy", description: "Read one exact immutable production policy version.", schemas: getProductionPolicySchemas},
 	{name: "get_production_approval", title: "Get production approval", description: "Read an approval grant and lifecycle events without private evidence or reasons.", schemas: getProductionApprovalSchemas},
 	{name: "get_production_privilege_log", title: "Get production privilege log", description: "Page the public rows of one exact frozen privilege log.", schemas: getProductionPrivilegeLogSchemas},
+	{name: "get_production_supplement", title: "Get production supplement", description: "Read one exact verified production continuation record.", schemas: getProductionSupplementSchemas},
 }
 
 var processingToolDefinition = toolDefinition{
@@ -171,6 +172,12 @@ var downloadProductionPackageToolDefinition = toolDefinition{
 	schemas:     downloadProductionPackageSchemas, write: true, destructive: true,
 }
 
+var createProductionSupplementToolDefinition = toolDefinition{
+	name: "create_production_supplement", title: "Create production supplement",
+	description: "Reserve the exact next number range for a prepared child of a published production.",
+	schemas:     createProductionSupplementSchemas, write: true, idempotent: true,
+}
+
 func toolCatalog(allowProcessing bool) []*sdkmcp.Tool {
 	definitions := readToolDefinitions
 	if allowProcessing {
@@ -180,7 +187,8 @@ func toolCatalog(allowProcessing bool) []*sdkmcp.Tool {
 			exportBatesFileToolDefinition, exportLoadFilePackageToolDefinition, createProductionPolicyToolDefinition,
 			validateProductionPrivilegeLogToolDefinition, replaceProductionPrivilegeRowsToolDefinition,
 			createProductionPrivilegeDraftToolDefinition, freezeProductionPrivilegeLogToolDefinition,
-			exportProductionPrivilegeLogToolDefinition, downloadProductionPackageToolDefinition)
+			exportProductionPrivilegeLogToolDefinition, downloadProductionPackageToolDefinition,
+			createProductionSupplementToolDefinition)
 	}
 	tools := make([]*sdkmcp.Tool, 0, len(definitions))
 	for _, definition := range definitions {
@@ -235,6 +243,8 @@ func registerToolCatalog(
 			handler = exportProductionPrivilegeLogToolHandler(lease, output, logger)
 		case downloadProductionPackageToolDefinition.name:
 			handler = downloadProductionPackageToolHandler(lease, output, logger)
+		case createProductionSupplementToolDefinition.name:
+			handler = createProductionSupplementToolHandler(lease, output, logger)
 		default:
 			handler = readToolHandler(lease, plans, tool.Name, output, logger)
 		}
@@ -402,6 +412,8 @@ func stableDomainError(err error) (string, int) {
 		return "production_policy_outcome_unknown", 0
 	case errors.Is(err, errProductionPrivilegeOutcomeUnknown):
 		return "production_privilege_outcome_unknown", 0
+	case errors.Is(err, errProductionSupplementOutcomeUnknown):
+		return "production_supplement_outcome_unknown", 0
 	case errors.Is(err, errProductionPrivilegeExportDestinationExists):
 		return "destination_exists", 0
 	case errors.Is(err, errProductionPackageDestinationExists):
@@ -450,6 +462,7 @@ func stableDomainError(err error) (string, int) {
 	case "bates_reservation_conflict", "bates_page_count_mismatch", "bates_overflow":
 		return facts.Code, 0
 	case "production_policy_conflict", "invalid_production_policy", "production_privilege_conflict", "invalid_production_privilege",
+		"production_supplement_conflict",
 		"approval_required", "approval_stale":
 		return facts.Code, 0
 	default:
@@ -505,6 +518,10 @@ func domainErrorMessage(code string) string {
 		return "The stored human approval no longer matches this privilege-log revision."
 	case "production_privilege_outcome_unknown":
 		return "The privilege-log mutation outcome is unknown; retry only with the exact same operation ID and input."
+	case "production_supplement_conflict":
+		return "The supplement parent, prepared child or operation ID conflicts with current production authority."
+	case "production_supplement_outcome_unknown":
+		return "The supplement write outcome is unknown; read the operation ID or retry only with identical input."
 	case "destination_exists":
 		return "The export destination already exists; choose another path or explicitly allow overwrite."
 	case "package_download_failed":
