@@ -141,6 +141,12 @@ var validateProductionPrivilegeLogToolDefinition = toolDefinition{
 	schemas:     validateProductionPrivilegeLogSchemas, write: true, idempotent: true,
 }
 
+var replaceProductionPrivilegeRowsToolDefinition = toolDefinition{
+	name: "replace_production_privilege_rows", title: "Replace production privilege rows",
+	description: "Replace private rows of an exact draft generation from a local JSON file.",
+	schemas:     replaceProductionPrivilegeRowsSchemas, write: true, idempotent: true,
+}
+
 var exportProductionPrivilegeLogToolDefinition = toolDefinition{
 	name: "export_production_privilege_log", title: "Export production privilege log",
 	description: "Write verified public bytes of one frozen privilege log to a local file.",
@@ -154,7 +160,8 @@ func toolCatalog(allowProcessing bool) []*sdkmcp.Tool {
 			packageImportToolDefinition, resolvePackageCustodianToolDefinition, assignPackageCustodianToolDefinition,
 			ensureBatesNamespaceToolDefinition, reserveBatesRangeToolDefinition, publishBatesExportToolDefinition,
 			exportBatesFileToolDefinition, exportLoadFilePackageToolDefinition, createProductionPolicyToolDefinition,
-			validateProductionPrivilegeLogToolDefinition, exportProductionPrivilegeLogToolDefinition)
+			validateProductionPrivilegeLogToolDefinition, replaceProductionPrivilegeRowsToolDefinition,
+			exportProductionPrivilegeLogToolDefinition)
 	}
 	tools := make([]*sdkmcp.Tool, 0, len(definitions))
 	for _, definition := range definitions {
@@ -199,6 +206,8 @@ func registerToolCatalog(
 			handler = createProductionPolicyToolHandler(lease, output, logger)
 		case validateProductionPrivilegeLogToolDefinition.name:
 			handler = validateProductionPrivilegeLogToolHandler(lease, output, logger)
+		case replaceProductionPrivilegeRowsToolDefinition.name:
+			handler = replaceProductionPrivilegeRowsToolHandler(lease, output, logger)
 		case exportProductionPrivilegeLogToolDefinition.name:
 			handler = exportProductionPrivilegeLogToolHandler(lease, output, logger)
 		default:
@@ -461,7 +470,7 @@ func domainErrorMessage(code string) string {
 	case "invalid_production_privilege":
 		return "The privilege-log validation input is invalid."
 	case "production_privilege_outcome_unknown":
-		return "The validation outcome is unknown; retry only with the exact same operation ID and input."
+		return "The privilege-log mutation outcome is unknown; retry only with the exact same operation ID and input."
 	case "destination_exists":
 		return "The export destination already exists; choose another path or explicitly allow overwrite."
 	default:

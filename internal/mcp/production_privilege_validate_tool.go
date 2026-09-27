@@ -11,7 +11,7 @@ import (
 	"go.kenn.io/docbank/internal/daemonconn"
 )
 
-var errProductionPrivilegeOutcomeUnknown = errors.New("production privilege validation outcome is unknown")
+var errProductionPrivilegeOutcomeUnknown = errors.New("production privilege mutation outcome is unknown")
 
 type productionPrivilegeValidationOutput struct {
 	privateCache
