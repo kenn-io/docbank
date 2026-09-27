@@ -16,7 +16,7 @@ func supplementChildFixture(t *testing.T, f *realRestartFixture, parent producti
 	return supplementChildFixtureWith(t, f, parent, 0, "")
 }
 
-func supplementChildFixtureWith(t *testing.T, f *realRestartFixture, parent production.Job, offset int, namespaceID string) production.Job {
+func supplementChildFixtureWith(t *testing.T, f *realRestartFixture, parent production.Job, offset int, namespaceID string, snapshotOverride ...string) production.Job {
 	t.Helper()
 	id := func(number int) string {
 		return fmt.Sprintf("78000000-0000-4000-8000-%012d", offset+number)
@@ -62,8 +62,12 @@ func supplementChildFixtureWith(t *testing.T, f *realRestartFixture, parent prod
 	require.NoErrorf(t, err, "gate findings: %#v", authority.GateResults)
 	require.NotNil(t, authority.Receipt)
 	snapshotID := id(7)
-	_, err = f.SealProductionNumberingSnapshot(t.Context(), snapshotID, authority.Audit.OperationID)
-	require.NoError(t, err)
+	if len(snapshotOverride) == 0 {
+		_, err = f.SealProductionNumberingSnapshot(t.Context(), snapshotID, authority.Audit.OperationID)
+		require.NoError(t, err)
+	} else {
+		snapshotID = snapshotOverride[0]
+	}
 	parentAllocation, err := f.ProductionNumberingForJob(t.Context(), parent.ID)
 	require.NoError(t, err)
 	if namespaceID == "" {

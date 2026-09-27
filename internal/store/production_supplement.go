@@ -57,7 +57,8 @@ func (s *Store) CreateProductionSupplement(ctx context.Context, actor string, re
 		return bad()
 	}
 	plan, err := s.productionJobBatesRequest(ctx, child, finalized)
-	if err != nil || plan.NamespaceID != parentAllocation.NamespaceID || plan.StartAt != 0 {
+	if err != nil || plan.NamespaceID != parentAllocation.NamespaceID ||
+		plan.SnapshotID == parentAllocation.SnapshotID || plan.StartAt != 0 {
 		return bad()
 	}
 	var result production.SupplementRecord
@@ -220,6 +221,7 @@ func loadProductionSupplement(ctx context.Context, q metadataQuerier, operationI
 	}
 	childAllocation, err := loadBatesAllocation(ctx, q, result.AllocationID)
 	if err != nil || childAllocation.NamespaceID != result.NamespaceID ||
+		childAllocation.SnapshotID == parentAllocation.SnapshotID ||
 		childAllocation.StartSequence != result.StartSequence || childAllocation.EndSequence != result.EndSequence {
 		return production.SupplementRecord{}, production.ErrSupplementConflict
 	}
