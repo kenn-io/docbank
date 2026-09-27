@@ -798,6 +798,15 @@ func validateProductionOperationResponse(ctx context.Context, q metadataQuerier,
 			original.ArtifactManifestSHA256 != value.ArtifactManifestSHA256 {
 			return errors.New("reproduction artifact manifest is detached")
 		}
+	case productionOperationSupplement:
+		value, err := canonical.Decode[productionservice.SupplementRecord](raw)
+		if err != nil || productionservice.ValidateSupplementRecord(value) != nil || value.OperationID != operationID {
+			return errors.New("invalid supplement operation receipt")
+		}
+		stored, err := loadProductionSupplement(ctx, q, operationID)
+		if err != nil || stored != value {
+			return errors.New("supplement operation receipt is detached")
+		}
 	case productionOperationReproductionDelivery:
 		value, err := canonical.Decode[ReproductionDeliveryRecord](raw)
 		if err != nil || !validReproductionDeliveryRecord(value) || value.ID != operationID {
@@ -838,7 +847,8 @@ func knownProductionOperation(kind string) bool {
 		productionOperationPlayers, productionOperationWithheld, productionOperationDraft,
 		productionOperationRows, productionOperationValidation, productionOperationApprovalBind,
 		productionOperationPreparedInputs, productionOperationFreeze, productionOperationAttachment,
-		productionOperationReproduction, productionOperationReproductionDelivery:
+		productionOperationReproduction, productionOperationReproductionDelivery,
+		productionOperationSupplement:
 		return true
 	default:
 		return false
