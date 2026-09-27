@@ -15,6 +15,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/document/emailpdf"
 	"go.kenn.io/docbank/internal/api"
+	"go.kenn.io/docbank/internal/packagetest"
 )
 
 func TestEmailPDFRealDaemonCLI(t *testing.T) {
@@ -35,7 +36,7 @@ func TestEmailPDFRealDaemonCLI(t *testing.T) {
 	invoke := func(ctx context.Context, args ...string) ([]byte, error) {
 		cmd := exec.CommandContext(ctx, binary, args...) //nolint:gosec // Explicit qualification binary; arguments are synthetic test inputs.
 		cmd.Env = []string{"PATH=/usr/local/bin:/usr/bin:/bin", "LANG=C.UTF-8", "DOCBANK_HOME=" + vault}
-		for _, key := range []string{"XDG_RUNTIME_DIR", "DBUS_SESSION_BUS_ADDRESS"} {
+		for _, key := range []string{"XDG_RUNTIME_DIR", "DBUS_SESSION_BUS_ADDRESS", packagetest.LockDirEnv} {
 			if value := os.Getenv(key); value != "" {
 				cmd.Env = append(cmd.Env, key+"="+value)
 			}

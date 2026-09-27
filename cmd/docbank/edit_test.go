@@ -16,6 +16,7 @@ import (
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/apiclient"
 	"go.kenn.io/docbank/internal/daemonconn"
+	"go.kenn.io/docbank/internal/packagetest"
 )
 
 func TestEditCreatesVersionAndSkipsUnchangedContent(t *testing.T) {
@@ -226,7 +227,7 @@ func TestMain(m *testing.M) {
 	if os.Getenv("DOCBANK_EDIT_TEST_HELPER") == "1" {
 		os.Exit(runEditHelper())
 	}
-	os.Exit(m.Run())
+	os.Exit(packagetest.RunWithLockRegistry(m))
 }
 
 func runEditHelper() int {

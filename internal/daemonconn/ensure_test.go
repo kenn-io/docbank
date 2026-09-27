@@ -22,6 +22,7 @@ import (
 
 	"go.kenn.io/docbank/internal/daemon"
 	"go.kenn.io/docbank/internal/daemonauth"
+	"go.kenn.io/docbank/internal/packagetest"
 	"go.kenn.io/docbank/internal/version"
 )
 
@@ -34,7 +35,7 @@ func TestMain(m *testing.M) {
 		time.Sleep(time.Minute) //nolint:kennlint // runs in a child process that stands in for an unready daemon
 		os.Exit(0)
 	}
-	os.Exit(m.Run())
+	os.Exit(packagetest.RunWithLockRegistry(m))
 }
 
 func TestStartCancellationStopsUnreadyChild(t *testing.T) {
