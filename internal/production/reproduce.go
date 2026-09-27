@@ -48,7 +48,10 @@ func PrepareReproduction(ctx context.Context, catalog PublishedPackageCatalog,
 	}
 	inputs, err := catalog.LoadProductionPackageInputs(ctx, jobID)
 	if err != nil {
-		return ReproductionSelection{}, err
+		if canceled := ctx.Err(); canceled != nil {
+			return ReproductionSelection{}, canceled
+		}
+		return bad()
 	}
 	job, reservation := inputs.Job, inputs.Reservation
 	if job.State != ProductionJobSucceeded || job.ID != jobID || job.Receipt.ID != jobID ||

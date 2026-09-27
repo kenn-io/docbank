@@ -3,6 +3,7 @@ package production
 import (
 	"bytes"
 	"context"
+	"errors"
 	"slices"
 	"testing"
 
@@ -12,6 +13,12 @@ import (
 )
 
 type unverifiedReproductionOpener struct{ syntheticPackageOpener }
+
+type leakingReproductionCatalog struct{}
+
+func (leakingReproductionCatalog) LoadProductionPackageInputs(context.Context, string) (PublishedPackageInputs, error) {
+	return PublishedPackageInputs{}, errors.New("private/source/path and private reason")
+}
 
 func (o unverifiedReproductionOpener) OpenVerifiedProductionArtifact(_ context.Context, _ string,
 	artifact documentproduction.Artifact) (packstore.VerifiedReadCloser, int64, error) {
@@ -111,4 +118,12 @@ func TestPrepareReproductionRejectsUnverifiedStream(t *testing.T) {
 	_, err := PrepareReproduction(t.Context(), packageRuntimeCatalog{inputs},
 		unverifiedReproductionOpener{opener}, inputs.Job.ID, request, policy)
 	require.ErrorIs(t, err, ErrReproductionConflict)
+}
+
+func TestPrepareReproductionSanitizesCatalogErrors(t *testing.T) {
+	inputs, opener, request, policy := reproductionFixture(t)
+	_, err := PrepareReproduction(t.Context(), leakingReproductionCatalog{}, opener,
+		inputs.Job.ID, request, policy)
+	require.ErrorIs(t, err, ErrReproductionConflict)
+	require.NotContains(t, err.Error(), "private/source/path")
 }

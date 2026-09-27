@@ -772,6 +772,32 @@ func validateProductionOperationResponse(ctx context.Context, q metadataQuerier,
 		if err := q.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM production_privilege_log_attachments WHERE sha256=?)`, value.SHA256).Scan(&exists); err != nil || !exists {
 			return errors.New("production attachment operation receipt is detached")
 		}
+	case productionOperationReproduction:
+		value, err := canonical.Decode[documentproduction.ReproductionReceipt](raw)
+		if err != nil || documentproduction.ValidateReproductionReceipt(value) != nil || value.ID != operationID {
+			return errors.New("invalid reproduction operation receipt")
+		}
+		var receiptRaw, manifestRaw []byte
+		var reservationSHA string
+		if err := q.QueryRowContext(ctx, `SELECT j.receipt_json,j.artifact_manifest_json,p.reservation_sha256
+			FROM production_jobs j JOIN production_job_render_plans p ON p.job_id=j.job_id
+			WHERE j.state='succeeded' AND j.receipt_sha256=?`,
+			value.OriginalProductionReceiptSHA256).Scan(&receiptRaw, &manifestRaw, &reservationSHA); err != nil {
+			return errors.New("reproduction original production is missing")
+		}
+		original, err := canonical.Decode[documentproduction.ProductionReceipt](receiptRaw)
+		if err != nil || documentproduction.ValidateProductionReceipt(original) != nil ||
+			original.SHA256 != value.OriginalProductionReceiptSHA256 ||
+			original.NumberReservationSHA256 != value.OriginalNumberReservationSHA256 ||
+			reservationSHA != value.OriginalNumberReservationSHA256 {
+			return errors.New("reproduction original receipt is detached")
+		}
+		manifest, err := canonical.Decode[documentproduction.ArtifactManifest](manifestRaw)
+		if err != nil || documentproduction.ValidateArtifactManifest(manifest) != nil ||
+			manifest.SHA256 != value.ArtifactManifestSHA256 ||
+			original.ArtifactManifestSHA256 != value.ArtifactManifestSHA256 {
+			return errors.New("reproduction artifact manifest is detached")
+		}
 	case productionOperationDraft, productionOperationRows, productionOperationApprovalBind:
 		if _, err := canonical.Decode[productionGenerationReceipt](raw); err != nil {
 			return err
@@ -787,7 +813,8 @@ func knownProductionOperation(kind string) bool {
 	case productionOperationPolicy, productionOperationApproval, productionOperationApprovalEvent,
 		productionOperationPlayers, productionOperationWithheld, productionOperationDraft,
 		productionOperationRows, productionOperationValidation, productionOperationApprovalBind,
-		productionOperationPreparedInputs, productionOperationFreeze, productionOperationAttachment:
+		productionOperationPreparedInputs, productionOperationFreeze, productionOperationAttachment,
+		productionOperationReproduction:
 		return true
 	default:
 		return false
