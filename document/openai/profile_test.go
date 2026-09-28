@@ -331,3 +331,9 @@ func hostedJSONResponse(request *http.Request, status int, body string) *http.Re
 		Body: io.NopCloser(bytes.NewBufferString(body)), Request: request,
 	}
 }
+
+func TestPolicyFingerprintPreservesCanonicalIdentity(t *testing.T) {
+	fingerprint, err := PolicyFingerprint(hostedTestProfile(t))
+	require.NoError(t, err)
+	assert.Equal(t, "231b73603641ef7f788625919525bf8b350411752781207932283aff06d93709", fingerprint)
+}

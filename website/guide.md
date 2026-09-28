@@ -66,8 +66,9 @@ the original.
 
 An embedding is a numeric representation used to compare meaning. The Go
 packages split text into bounded inputs and describe the model and settings
-used. Configured daemon workers can process eligible embedding jobs. This does
-not add a semantic mode to the search command.
+used. Configured daemon workers can process eligible embedding jobs. Ordinary search
+is lexical. [Processing search](/docs/usage/search/) supports semantic and hybrid
+retrieval when a processing profile and embedding binding are configured.
 
 [Embedding configuration](/docs/configuration/)
 

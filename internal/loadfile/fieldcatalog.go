@@ -1,6 +1,7 @@
 package loadfile
 
 import (
+	"maps"
 	"slices"
 	"strings"
 
@@ -62,6 +63,15 @@ var packageFieldAliases = map[string][]string{
 	"loadfile.time.modified":        {"TIMEMODIFIED"},
 	"loadfile.time.received":        {"TIMERECEIVED"},
 	"loadfile.time.sent":            {"TIMESENT"},
+}
+
+// FieldCatalogKeys returns the sorted canonical mapping target set.
+func FieldCatalogKeys() []string { return slices.Sorted(maps.Keys(packageFieldAliases)) }
+
+// FieldCatalogKeyAllowed reports whether key is a canonical mapping target.
+func FieldCatalogKeyAllowed(key string) bool {
+	_, found := packageFieldAliases[key]
+	return found
 }
 
 func FieldCatalog() []CatalogEntry {

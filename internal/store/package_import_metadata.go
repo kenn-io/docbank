@@ -78,7 +78,7 @@ func exportPackageImportMetadata(ctx context.Context, q metadataQuerier, write m
 	if err := records.Close(); err != nil {
 		return err
 	}
-	labels, err := q.QueryContext(ctx, `SELECT package_id,provenance,label_set,label,label_sort_key,
+	labels, err := q.QueryContext(ctx, `SELECT package_id,provenance,label_set,label,
 		occurrence_id,content_version_id,COALESCE(artifact_id,''),COALESCE(page_number,0),page_state,endpoint
 		FROM package_labels ORDER BY package_id,provenance,label_set,label,endpoint,occurrence_id,page_number`)
 	if err != nil {
@@ -88,7 +88,7 @@ func exportPackageImportMetadata(ctx context.Context, q metadataQuerier, write m
 	for labels.Next() {
 		var label PackageLabelRow
 		if err := labels.Scan(&label.PackageID, &label.Provenance, &label.LabelSet, &label.Label,
-			&label.LabelSortKey, &label.OccurrenceID, &label.ContentVersionID, &label.ArtifactID,
+			&label.OccurrenceID, &label.ContentVersionID, &label.ArtifactID,
 			&label.PageNumber, &label.PageState, &label.Endpoint); err != nil {
 			_ = labels.Close()
 			return err
@@ -206,9 +206,9 @@ func importPackageImportMetadata(ctx context.Context, tx *sql.Tx, kind string, r
 			return fmt.Errorf("%w: package label %s/%s", ErrPackageConflict, label.PackageID, label.Label)
 		}
 		_, err = tx.ExecContext(ctx, `INSERT INTO package_labels(package_id,provenance,label_set,label,
-			label_sort_key,occurrence_id,content_version_id,artifact_id,page_number,page_state,endpoint)
-			VALUES(?,?,?,?,?,?,?,?,?,?,?)`, label.PackageID, label.Provenance, label.LabelSet, label.Label,
-			label.LabelSortKey, label.OccurrenceID, label.ContentVersionID, nullableString(label.ArtifactID),
+			occurrence_id,content_version_id,artifact_id,page_number,page_state,endpoint)
+			VALUES(?,?,?,?,?,?,?,?,?,?)`, label.PackageID, label.Provenance, label.LabelSet, label.Label,
+			label.OccurrenceID, label.ContentVersionID, nullableString(label.ArtifactID),
 			label.PageNumber, label.PageState, label.Endpoint)
 		return err
 	case metadataPackageImportReceiptType:
@@ -261,7 +261,7 @@ func validatePackageImportMetadataState(ctx context.Context, q metadataQuerier) 
 			WHERE p.direction<>'received' OR p.state='purged')`,
 		`SELECT EXISTS(SELECT 1 FROM package_labels l LEFT JOIN package_records r
 			ON r.package_id=l.package_id AND r.occurrence_id=l.occurrence_id
-			WHERE l.provenance='received' AND (r.row_id IS NULL OR l.label_sort_key<>l.label))`,
+			WHERE l.provenance='received' AND r.row_id IS NULL)`,
 		`SELECT EXISTS(SELECT 1 FROM package_import_receipts r LEFT JOIN package_records p
 			ON p.package_id=r.package_id AND p.row_id=r.record_key
 			WHERE r.state='committed' AND (p.row_id IS NULL OR p.occurrence_id<>r.occurrence_id))`,

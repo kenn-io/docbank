@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/netip"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -139,4 +140,24 @@ type testResolver []netip.Addr
 
 func (resolver testResolver) LookupNetIP(context.Context, string, string) ([]netip.Addr, error) {
 	return append([]netip.Addr(nil), resolver...), nil
+}
+
+func TestPolicyFingerprintPreservesCanonicalIdentity(t *testing.T) {
+	fingerprint, err := PolicyFingerprint(testProfile(t, 640, EncodingBase64, LatencyFast))
+	require.NoError(t, err)
+	assert.Equal(t, "5682b3bc41da707e40fc292d2ff1e9f8440c3ad108604cdb5d2f9cc49becf72b", fingerprint)
+}
+
+func TestPolicyFingerprintPreservesDuplicateEgressDiagnostics(t *testing.T) {
+	profile := testProfile(t, 640, EncodingBase64, LatencyFast)
+	profile.EgressPolicy.AllowedCIDRs = []netip.Prefix{
+		netip.MustParsePrefix("192.0.2.1/24"), netip.MustParsePrefix("192.0.2.2/24"),
+	}
+	_, err := PolicyFingerprint(profile)
+	require.EqualError(t, err, "zeroentropy embed: duplicate egress CIDR")
+
+	profile = testProfile(t, 640, EncodingBase64, LatencyFast)
+	profile.EgressPolicy.TLS.SPKISHA256 = []string{strings.Repeat("a", 64), strings.Repeat("A", 64)}
+	_, err = PolicyFingerprint(profile)
+	require.EqualError(t, err, "zeroentropy embed: duplicate SPKI pin")
 }

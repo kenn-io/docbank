@@ -66,23 +66,23 @@ type Client struct {
 }
 
 type policyIdentity struct {
-	AdapterContract      string                   `json:"adapter_contract"`
-	Origin               string                   `json:"origin"`
-	Route                string                   `json:"route"`
-	ID                   string                   `json:"id"`
-	Model                Model                    `json:"model"`
-	CompatibilityEpoch   string                   `json:"compatibility_epoch"`
-	ModelRevision        string                   `json:"model_revision"`
-	SecretBinding        string                   `json:"secret_binding"`
-	RequestTimeout       int64                    `json:"request_timeout_nanos"`
-	MaxCandidates        int                      `json:"max_candidates"`
-	MaxQueryBytes        int                      `json:"max_query_bytes"`
-	MaxExcerptBytes      int                      `json:"max_excerpt_bytes"`
-	MaxTotalExcerptBytes int64                    `json:"max_total_excerpt_bytes"`
-	MaxRequestBytes      int64                    `json:"max_request_bytes"`
-	MaxResponseBytes     int64                    `json:"max_response_bytes"`
-	MaxTokensPerDocument int                      `json:"max_tokens_per_document"`
-	Egress               cohereapi.EgressIdentity `json:"egress"`
+	AdapterContract      string                      `json:"adapter_contract"`
+	Origin               string                      `json:"origin"`
+	Route                string                      `json:"route"`
+	ID                   string                      `json:"id"`
+	Model                Model                       `json:"model"`
+	CompatibilityEpoch   string                      `json:"compatibility_epoch"`
+	ModelRevision        string                      `json:"model_revision"`
+	SecretBinding        string                      `json:"secret_binding"`
+	RequestTimeout       int64                       `json:"request_timeout_nanos"`
+	MaxCandidates        int                         `json:"max_candidates"`
+	MaxQueryBytes        int                         `json:"max_query_bytes"`
+	MaxExcerptBytes      int                         `json:"max_excerpt_bytes"`
+	MaxTotalExcerptBytes int64                       `json:"max_total_excerpt_bytes"`
+	MaxRequestBytes      int64                       `json:"max_request_bytes"`
+	MaxResponseBytes     int64                       `json:"max_response_bytes"`
+	MaxTokensPerDocument int                         `json:"max_tokens_per_document"`
+	Egress               providerhttp.EgressIdentity `json:"egress"`
 }
 
 func PolicyFingerprint(profile Profile) (string, error) {
@@ -97,7 +97,7 @@ func PolicyFingerprint(profile Profile) (string, error) {
 		MaxQueryBytes: profile.MaxQueryBytes, MaxExcerptBytes: profile.MaxExcerptBytes,
 		MaxTotalExcerptBytes: profile.MaxTotalExcerptBytes, MaxRequestBytes: profile.MaxRequestBytes,
 		MaxResponseBytes: profile.MaxResponseBytes, MaxTokensPerDocument: profile.MaxTokensPerDocument,
-		Egress: cohereapi.IdentifyEgress(profile.EgressPolicy)}, json.Deterministic(true))
+		Egress: providerhttp.IdentifyEgress(profile.EgressPolicy)}, json.Deterministic(true))
 	if err != nil {
 		return "", errors.New("cohere rerank: policy identity encoding failed")
 	}

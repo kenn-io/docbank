@@ -167,3 +167,9 @@ func (staticSecretResolver) ResolveSecret(context.Context, string) (string, erro
 }
 
 var _ bridge.SecretResolver = staticSecretResolver{}
+
+func TestPolicyFingerprintPreservesCanonicalIdentity(t *testing.T) {
+	profile, err := NewProfile(Config{DeploymentID: "operator-unstructured-primary", RuntimeID: "sha256:" + strings.Repeat("a", 64), CredentialBinding: "unstructured-api"})
+	require.NoError(t, err)
+	assert.Equal(t, "92f5af319579573d9d8e1befbe772bab00ef7860d6686b9226051960c978de4e", profile.PolicyFingerprint)
+}

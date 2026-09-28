@@ -269,7 +269,7 @@ func TestPackageLabelCursorContinuesWithMaximumFilters(t *testing.T) {
 	for _, endpoint := range []string{"begin", "end"} {
 		assigned = append(assigned, store.PackageLabelRow{
 			PackageID: pkg.PackageID, Provenance: "assigned", LabelSet: labelSet,
-			Label: label, LabelSortKey: store.LabelSortKey(label), OccurrenceID: occurrenceID,
+			Label: label, OccurrenceID: occurrenceID,
 			ContentVersionID: received[0].ContentVersionID, PageState: "unknown", Endpoint: endpoint,
 		})
 	}
@@ -406,7 +406,7 @@ func seedBrowseReceivedPackage(t *testing.T, catalog *testStore, sensitive bool)
 		OccurrenceID: occurrenceID, RawJSON: raw, RawSHA256: hex.EncodeToString(rawDigest[:]), Sensitive: sensitive,
 	}, []store.PackageLabelRow{{
 		PackageID: pkg.PackageID, Provenance: "received", LabelSet: "sender", Label: "EXT000001",
-		LabelSortKey: store.LabelSortKey("EXT000001"), OccurrenceID: occurrenceID,
+		OccurrenceID:     occurrenceID,
 		ContentVersionID: node.CurrentVersionID, PageState: "unknown", Endpoint: "begin",
 	}}, store.PackageImportReceipt{
 		ReceiptID: uuid.NewString(), PackageID: pkg.PackageID, RecordKey: rowID, OccurrenceID: occurrenceID,

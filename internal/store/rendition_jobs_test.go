@@ -933,17 +933,23 @@ func TestRenditionJobMetadataRoundTripPreservesSealedDurableResumeAuthority(t *t
 	require.NoError(t, err)
 	assert.Equal(t, RenditionJobQueued, restoredJob.State)
 	require.NoError(t, restored.ValidateMetadata(t.Context()))
+	// Re-enqueue uses wall time; restore and validation may outlast the earlier
+	// simulated timeline. Claim after both the re-enqueue and prior transitions.
+	resumeAt := now.Add(7 * time.Second)
+	if current := time.Now().UTC(); current.After(resumeAt) {
+		resumeAt = current
+	}
 	restoredClaim, err = restored.ClaimRenditionJob(
-		t.Context(), job.ID, "worker:restored-resume", now.Add(7*time.Second), time.Minute)
+		t.Context(), job.ID, "worker:restored-resume", resumeAt, time.Minute)
 	require.NoError(t, err)
 	assert.Equal(t, "restored-provider-handle", restoredClaim.ResumeHandle)
 	work, err := restored.RenditionJobWorkByClaim(
-		t.Context(), restoredClaim, now.Add(7*time.Second))
+		t.Context(), restoredClaim, resumeAt)
 	require.NoError(t, err)
 	require.NotNil(t, work.ExecutionSnapshot)
 	assert.Equal(t, snapshot.Authorization, work.ExecutionSnapshot.Authorization)
 	_, err = restored.BeginRenditionProvider(
-		t.Context(), restoredClaim, work.Waiter.ID, now.Add(8*time.Second))
+		t.Context(), restoredClaim, work.Waiter.ID, resumeAt.Add(time.Second))
 	require.NoError(t, err,
 		"fresh consent may authorize only the known durable handle; no new snapshot is accepted")
 }

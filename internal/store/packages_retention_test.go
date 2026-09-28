@@ -90,9 +90,9 @@ func TestPackageLabelAndReceiptRetainHistoricalVersionsDuringPrune(t *testing.T)
 			switch authority {
 			case "label":
 				_, err = s.db.ExecContext(t.Context(), `INSERT INTO package_labels(
-					package_id,provenance,label_set,label,label_sort_key,occurrence_id,content_version_id,
-					page_state,endpoint) VALUES(?,?,?,?,?,?,?,?,?)`, pkg.PackageID, "received", "EXT",
-					"EXT000001", "EXT000001", occurrence, node.CurrentVersionID, "unknown", "begin")
+					package_id,provenance,label_set,label,occurrence_id,content_version_id,
+					page_state,endpoint) VALUES(?,?,?,?,?,?,?,?)`, pkg.PackageID, "received", "EXT",
+					"EXT000001", occurrence, node.CurrentVersionID, "unknown", "begin")
 			case "receipt":
 				receiptID, idErr := newUUIDv4()
 				require.NoError(t, idErr)

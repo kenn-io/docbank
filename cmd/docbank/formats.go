@@ -57,7 +57,7 @@ var formatsCmd = &cobra.Command{
 			}
 		}
 		if len(response.Formats) == 0 && response.Lookup != nil {
-			_, _ = fmt.Fprintln(writer, "QUERY\tMATCH\tOWNER\tDETAIL")
+			_, _ = fmt.Fprintln(writer, "QUERY\tMATCH\tDETAIL")
 			lookup := response.Lookup
 			switch lookup.Match {
 			case document.FormatLookupFormat:
@@ -66,13 +66,13 @@ var formatsCmd = &cobra.Command{
 					detail = fmt.Sprintf("Matched %s in family %s; excluded by --family %s.",
 						lookup.Format.ID, lookup.Format.QueryFamily, formatsFamily)
 				}
-				_, _ = fmt.Fprintf(writer, "%s\t%s\t-\t%s\n", lookup.Query, lookup.Match, detail)
+				_, _ = fmt.Fprintf(writer, "%s\t%s\t%s\n", lookup.Query, lookup.Match, detail)
 			case document.FormatLookupPending:
-				_, _ = fmt.Fprintf(writer, "%s\t%s\t%s\t%s: %s\n",
-					lookup.Query, lookup.Match, lookup.Pending.OwnerSlice,
+				_, _ = fmt.Fprintf(writer, "%s\t%s\t%s: %s\n",
+					lookup.Query, lookup.Match,
 					lookup.Pending.Label, lookup.Pending.Note)
 			case document.FormatLookupUnknown:
-				_, _ = fmt.Fprintf(writer, "%s\t%s\t-\tNo catalog or pending format matched.\n",
+				_, _ = fmt.Fprintf(writer, "%s\t%s\tNo catalog or pending format matched.\n",
 					lookup.Query, lookup.Match)
 			}
 		}

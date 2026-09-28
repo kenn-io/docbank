@@ -4,9 +4,9 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"strconv"
-	"strings"
 	"time"
+
+	"go.kenn.io/docbank/document/providerhttp"
 )
 
 var (
@@ -47,24 +47,9 @@ func statusError(status int, retryAfter string, now time.Time) error {
 	case status == http.StatusRequestTimeout || status == http.StatusTooManyRequests || status >= 500 && status <= 599:
 		kind = ErrTransientResponse
 	}
-	delay, set := parseRetryAfter(retryAfter, now)
+	delay, set := providerhttp.ParseRetryAfter(retryAfter, now)
 	if !errors.Is(kind, ErrTransientResponse) {
 		delay, set = 0, false
 	}
 	return &ProviderError{Kind: kind, StatusCode: status, RetryDelay: delay, RetrySet: set}
-}
-
-func parseRetryAfter(value string, now time.Time) (time.Duration, bool) {
-	value = strings.TrimSpace(value)
-	if seconds, err := strconv.ParseInt(value, 10, 64); err == nil && seconds >= 0 {
-		if seconds >= int64(time.Hour/time.Second) {
-			return time.Hour, true
-		}
-		return time.Duration(seconds) * time.Second, true
-	}
-	when, err := http.ParseTime(value)
-	if err != nil {
-		return 0, false
-	}
-	return min(max(when.Sub(now), 0), time.Hour), true
 }

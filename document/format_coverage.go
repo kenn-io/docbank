@@ -102,7 +102,6 @@ type PendingFormatV1 struct {
 	Extensions []string `json:"extensions"`
 	Label      string   `json:"label"`
 	Note       string   `json:"note"`
-	OwnerSlice string   `json:"owner_slice"`
 }
 
 type CoverageSourcesV1 struct {

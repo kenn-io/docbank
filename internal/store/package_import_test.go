@@ -86,7 +86,7 @@ func TestCommitPackageRecordWithLeaseReplaysExactPayload(t *testing.T) {
 		RowOrdinal: 1, OccurrenceID: occurrence, RawJSON: raw,
 		RawSHA256: hex.EncodeToString(hash[:]), Sensitive: true}
 	labels := []PackageLabelRow{{PackageID: pkg.PackageID, Provenance: packageDirectionReceived, LabelSet: "EXT",
-		Label: "EXT000001", LabelSortKey: LabelSortKey("EXT000001"), OccurrenceID: occurrence,
+		Label: "EXT000001", OccurrenceID: occurrence,
 		ContentVersionID: node.CurrentVersionID, PageState: "unknown", Endpoint: "begin"}}
 	for _, number := range []int{2, 1} {
 		page := labels[0]
@@ -107,9 +107,9 @@ func TestCommitPackageRecordWithLeaseReplaysExactPayload(t *testing.T) {
 		WHERE package_id=? AND endpoint='begin'`, pkg.PackageID)
 	require.Error(t, err, "document labels must retain a unique identity without a page number")
 	_, err = s.db.ExecContext(t.Context(), `INSERT INTO package_labels(
-		package_id,provenance,label_set,label,label_sort_key,occurrence_id,content_version_id,
-		page_state,endpoint) VALUES(?,?,?,?,?,?,?,?,?)`, pkg.PackageID, "assigned", "LOCAL",
-		"OUR000041", "OUR000041", occurrence, node.CurrentVersionID, "unknown", "begin")
+		package_id,provenance,label_set,label,occurrence_id,content_version_id,
+		page_state,endpoint) VALUES(?,?,?,?,?,?,?,?)`, pkg.PackageID, "assigned", "LOCAL",
+		"OUR000041", occurrence, node.CurrentVersionID, "unknown", "begin")
 	require.NoError(t, err)
 	third, err := s.CommitPackageRecordWithLease(t.Context(), job.ID, job.Epoch, job.Token, record, labels, receipt)
 	require.NoError(t, err, "an assigned label cannot change a received-record replay")
@@ -131,7 +131,6 @@ func TestCommitPackageRecordWithLeaseReplaysExactPayload(t *testing.T) {
 	require.ErrorIs(t, err, ErrPackageConflict)
 	changedLabels := append([]PackageLabelRow{}, labels...)
 	changedLabels[0].Label = "EXT000009"
-	changedLabels[0].LabelSortKey = LabelSortKey("EXT000009")
 	_, err = s.CommitPackageRecordWithLease(t.Context(), job.ID, job.Epoch, job.Token, record, changedLabels, receipt)
 	require.ErrorIs(t, err, ErrPackageConflict)
 }
@@ -145,10 +144,10 @@ func TestAssignPackageLabelsIsIdempotentAndSeparateFromReceivedAuthority(t *test
 	occurrence := PackageOccurrenceID(pkg.PackageID, key)
 	commitReceivedLabel(t, s, pkg, node.CurrentVersionID, "EXT000001")
 	received := PackageLabelRow{PackageID: pkg.PackageID, Provenance: packageDirectionReceived,
-		LabelSet: "sender", Label: "EXT000001", LabelSortKey: "EXT000001", OccurrenceID: occurrence,
+		LabelSet: "sender", Label: "EXT000001", OccurrenceID: occurrence,
 		ContentVersionID: node.CurrentVersionID, PageState: "unknown", Endpoint: "begin"}
 	assigned := PackageLabelRow{PackageID: pkg.PackageID, Provenance: "assigned", LabelSet: "CASE",
-		Label: "CASE000001", LabelSortKey: "CASE000001", OccurrenceID: occurrence,
+		Label: "CASE000001", OccurrenceID: occurrence,
 		ContentVersionID: node.CurrentVersionID, PageState: "verified", Endpoint: "begin"}
 	pageOne, pageTwo := assigned, assigned
 	pageOne.Endpoint, pageOne.PageNumber = "page", 1
@@ -174,7 +173,6 @@ func TestAssignPackageLabelsIsIdempotentAndSeparateFromReceivedAuthority(t *test
 	require.Equal(t, original.Bytes(), exported.Bytes())
 	changed := assigned
 	changed.Label = "CASE000002"
-	changed.LabelSortKey = changed.Label
 	require.ErrorIs(t, s.AssignPackageLabels(t.Context(), pkg.PackageID, occurrence,
 		node.CurrentVersionID, []PackageLabelRow{changed}), ErrPackageConflict)
 }
@@ -193,7 +191,7 @@ func commitReceivedLabel(t *testing.T, s *Store, pkg Package, versionID, label s
 		RowOrdinal: 1, OccurrenceID: occurrence, RawJSON: raw,
 		RawSHA256: hex.EncodeToString(hash[:])}
 	labelRow := PackageLabelRow{PackageID: pkg.PackageID, Provenance: packageDirectionReceived,
-		LabelSet: "sender", Label: label, LabelSortKey: LabelSortKey(label),
+		LabelSet: "sender", Label: label,
 		OccurrenceID: occurrence, ContentVersionID: versionID,
 		PageState: "unknown", Endpoint: "begin"}
 	receiptID, err := newUUIDv4()
@@ -257,7 +255,7 @@ func TestReceivedLabelLookupTreatsDocumentAndPageEndpointsAsOneOccurrence(t *tes
 	raw := []byte(`{"BEGBATES":"EXT000001"}`)
 	digest := sha256.Sum256(raw)
 	base := PackageLabelRow{PackageID: pkg.PackageID, Provenance: packageDirectionReceived,
-		LabelSet: "sender", Label: "EXT000001", LabelSortKey: LabelSortKey("EXT000001"),
+		LabelSet: "sender", Label: "EXT000001",
 		OccurrenceID: occurrence, ContentVersionID: node.CurrentVersionID}
 	begin := base
 	begin.Endpoint, begin.PageState = "begin", "unknown"

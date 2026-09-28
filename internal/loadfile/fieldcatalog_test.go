@@ -1,22 +1,13 @@
 package loadfile
 
 import (
-	"slices"
 	"testing"
 
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/document"
 )
 
-func TestFieldCatalogMatchesOwnedKeysAndResolvesAliases(t *testing.T) {
-	entries := FieldCatalog()
-	keys := make([]string, 0, len(entries))
-	for _, entry := range entries {
-		keys = append(keys, entry.Canonical)
-		require.False(t, document.SourceMetadataCanonicalKeyAllowed(entry.Canonical))
-	}
-	slices.Sort(keys)
-	require.Equal(t, fieldCatalogKeys, keys)
+func TestFieldCatalogResolvesAliases(t *testing.T) {
 	for header, want := range map[string]string{
 		"BEGBATES":       "loadfile.label.begin",
 		"Begin Doc":      "loadfile.label.begin",

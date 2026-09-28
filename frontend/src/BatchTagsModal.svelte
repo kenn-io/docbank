@@ -148,7 +148,7 @@
       <p role="alert">Closing loses this browser’s retry request without confirming the result. Refresh the documents before starting new work.</p>
       <Button disabled={busy} onclick={onclose}>Close without confirmation</Button>
     {/if}
-    <p class="hint">{context === "snapshot" ? "Frozen membership, count, and order stay unchanged; validated receipts appear as later observations." : "No query-wide selection or automatic conflict retry. A confirmed receipt describes the original operation; current membership is checked again afterward."}</p>
+    <p class="hint">{context === "snapshot" ? "This snapshot keeps the same documents and order. Tag changes appear below." : "No query-wide selection or automatic conflict retry. A confirmed receipt describes the original operation; current membership is checked again afterward."}</p>
   </div>
   {#snippet footer()}<Button surface="soft" disabled={pending || loading} onclick={close}>Done</Button>{/snippet}
 </Modal>

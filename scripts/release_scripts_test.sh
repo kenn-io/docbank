@@ -5,6 +5,14 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 tmp_root="$(mktemp -d)"
 trap 'rm -rf "$tmp_root"' EXIT
 
+# Fixture Git commands must not inherit the caller's repository or hooks.
+while IFS= read -r git_variable; do
+  unset "$git_variable"
+done < <(compgen -e | sed -n '/^GIT_/p')
+export GIT_CONFIG_GLOBAL="$tmp_root/gitconfig"
+export GIT_CONFIG_NOSYSTEM=1
+: >"$GIT_CONFIG_GLOBAL"
+
 fail() {
   printf 'FAIL: %s\n' "$*" >&2
   exit 1

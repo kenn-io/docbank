@@ -84,8 +84,9 @@ source version that produced them.
 - **Preserve the saved document.** Processing outputs have their own lifecycle.
   Creating or removing a derivative does not replace the saved source version.
 - **Search names and text.** The search command finds document names and extracted
-  text. The [search guide](/docs/usage/searching/) owns the supported filters;
-  the [roadmap](/docs/roadmap/) describes semantic search plans.
+  text with lexical search by default. The [search guide](/docs/usage/searching/)
+  owns the supported filters. Configured [processing search](/docs/usage/search/)
+  also supports semantic and hybrid retrieval.
 
 Read the [Go processing guide](/docs/document-understanding/) for the available
 packages and their contracts.

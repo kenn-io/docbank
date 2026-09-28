@@ -309,7 +309,7 @@
           {#if active.coverage.warnings?.length}<ul>{#each active.coverage.warnings as warning}<li>{warning}</li>{/each}</ul>{/if}
           {#if active.state === "complete" && active.counts}
             <div class="count-table" role="table" aria-label="Search export counts">
-              <div class="count-row header" role="row"><span>Term #</span><span>Terms</span><span>Date Range</span><span>Hits</span><span>Hits Plus Family</span><span>Unique Hits</span><span>Unique Families</span><span>Unique Hits Plus Family</span></div>
+              <div class="count-row header" role="row"><span>Term #</span><span>Terms</span><span>Date Range</span><span>Hits</span><span>Hits Plus Family</span><span>Unique Hits</span><span>Documents in unique families</span><span>Unique Hits Plus Family</span></div>
               {#each active.counts as count, index}<div class="count-row" role="row"><span>{active.terms[index]?.number}</span><span>{active.terms[index]?.expression}</span><span>{active.terms[index]?.dates.start} to {active.terms[index]?.dates.end}</span><span>{count.hits}</span><span>{count.hits_plus_family}</span><span>{count.unique_hits}</span><span>{count.unique_families}</span><span>{count.unique_hits_plus_family}</span></div>{/each}
             </div>
             <div class="actions"><Button disabled={busy} onclick={() => void download("csv")}>{draftChanged ? "Download previous CSV" : "Download CSV"}</Button><Button disabled={busy} onclick={() => void download("bundle")}>{draftChanged ? "Download previous evidence ZIP" : "Download evidence ZIP"}</Button></div>

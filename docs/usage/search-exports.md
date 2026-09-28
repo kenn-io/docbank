@@ -121,7 +121,7 @@ identities, not text occurrences. The first three CSV columns are **Term #**,
 | Hits | Documents that match this term and fall within its date range. |
 | Hits Plus Family | Date-eligible documents in a family with a hit for this term. |
 | Unique Hits | Hits for this term that are not hits for another row. |
-| Unique Families | Date-eligible documents in matching families with no competing row hits among those eligible members. Despite the name, this counts documents, not family groups. |
+| Unique Families | Date-eligible documents in matching families with no competing row hits among those eligible members. The web app labels this count **Documents in unique families**; the CSV keeps the heading **Unique Families**. |
 | Unique Hits Plus Family | Date-eligible documents in a family containing a unique hit for this term. |
 
 Families come from retained email parent/child evidence. A document without a

@@ -904,7 +904,7 @@ func packagePageLabels(packageID, occurrence, contentVersionID, provenance, labe
 			continue
 		}
 		labels = append(labels, store.PackageLabelRow{PackageID: packageID, Provenance: provenance,
-			LabelSet: labelSet, Label: page.Image.ImageKey, LabelSortKey: store.LabelSortKey(page.Image.ImageKey),
+			LabelSet: labelSet, Label: page.Image.ImageKey,
 			OccurrenceID: occurrence, ContentVersionID: contentVersionID, PageNumber: page.Image.PageOrdinal,
 			PageState: "unknown", Endpoint: "page"})
 	}
@@ -1087,7 +1087,7 @@ func packageRecordLabels(packageID, occurrence, versionID string, record loadfil
 			continue
 		}
 		label := store.PackageLabelRow{PackageID: packageID, Provenance: provenance,
-			LabelSet: labelSet, Label: field.Raw, LabelSortKey: store.LabelSortKey(field.Raw),
+			LabelSet: labelSet, Label: field.Raw,
 			OccurrenceID: occurrence, ContentVersionID: versionID, PageState: "unknown", Endpoint: endpoint}
 		if provenance == packageLabelProvenanceAssigned {
 			assigned = append(assigned, label)

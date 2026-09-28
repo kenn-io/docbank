@@ -337,7 +337,7 @@
           {/each}
         </div>
         {#if plan.retained_classes.includes("sanitized_markdown")}
-          <p class="retention-warning">Retained sanitized Markdown becomes durable Docbank authority and is included in future backups.</p>
+          <p class="retention-warning">Extracted text is saved in the vault and included in backups.</p>
         {/if}
         <p class="consent-copy">Consent covers this processing profile and operator scope until revoked or expired. The exact plan fingerprint is still reviewed before each run.</p>
         <Button size="sm" tone="info" disabled={running || loading} onclick={() => void execute()}>
@@ -348,7 +348,7 @@
       </section>
 
       <section aria-label="Reviewed processing scope">
-        <div class="section-heading"><div><span>REVIEWED SCOPE</span><strong>Exact plan and retained authority</strong></div></div>
+        <div class="section-heading"><div><span>REVIEWED SCOPE</span><strong>Exact plan and saved outputs</strong></div></div>
         <div class="fingerprints">
           <div><span>Plan fingerprint</span><code>{plan.fingerprint}</code></div>
           <div><span>Profile fingerprint</span><code>{plan.profile_fingerprint}</code></div>
