@@ -18,7 +18,7 @@ jobs:
   publish:
     name: Publish GitHub release
     needs: build
-    runs-on: ubuntu-latest
+    runs-on: namespace-profile-linux-4cpu
     timeout-minutes: 10
     permissions:
       contents: write # gh release create uploads archives and checksums
