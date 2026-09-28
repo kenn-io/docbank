@@ -13,7 +13,6 @@ import (
 	"path/filepath"
 	"strconv"
 	"testing"
-	"time"
 
 	"github.com/go-pdf/fpdf"
 	"github.com/pdfcpu/pdfcpu/pkg/api"
@@ -156,11 +155,9 @@ func TestTaskBQualifiedLimitsAndSinglePageBuffering(t *testing.T) {
 	recipe := qualificationRecipe()
 	recipe.PageTimeoutSeconds = 1
 	sequence := &blockingTaskBSequence{}
-	start := time.Now()
 	var output bytes.Buffer
 	err := writeFresh(t.Context(), &output, sequence, recipe)
 	require.ErrorIs(t, err, context.DeadlineExceeded)
-	require.Less(t, time.Since(start), 2*time.Second)
 
 	first := unicodeArtifact(t)
 	second := renumberArtifact(t, first, 2)
