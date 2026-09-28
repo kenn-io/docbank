@@ -19,6 +19,7 @@ type ProductionPrivilegeExport = productionservice.PrivilegeLogExport
 type ProductionPrivilegeDraftCreateRequest = api.ProductionPrivilegeDraftCreateRequest
 type ProductionPrivilegeRowsReplaceRequest = api.ProductionPrivilegeRowsReplaceRequest
 type ProductionPrivilegeDraftGeneration = api.ProductionPrivilegeDraftGeneration
+type ProductionPrivilegeFreezeRequest = api.ProductionPrivilegeFreezeRequest
 type ProductionGateSelectionRequest = api.ProductionGateSelectionRequest
 
 // SelectProductionGateAuthority pins existing verified authority to one sealed
@@ -234,6 +235,38 @@ func (v *Vault) ValidateProductionPrivilegeLog(ctx context.Context, logID string
 	}
 	return ProductionPrivilegeValidation{DraftGeneration: prepared.DraftGeneration,
 		Validation: prepared.Validation}, nil
+}
+
+// FreezeProductionPrivilegeLog rechecks the stored draft, validation and
+// approval inside the vault's writer gate before retaining an immutable receipt.
+func (v *Vault) FreezeProductionPrivilegeLog(ctx context.Context, logID string, revision int64,
+	request ProductionPrivilegeFreezeRequest) (documentproduction.PrivilegeLogReceipt, error) {
+	v.lifecycle.RLock()
+	defer v.lifecycle.RUnlock()
+	if v.closed {
+		return documentproduction.PrivilegeLogReceipt{}, ErrClosed
+	}
+	frozenAt, err := time.Parse(time.RFC3339Nano, request.FrozenAt)
+	if err != nil || frozenAt.Location() != time.UTC ||
+		frozenAt.Format(time.RFC3339Nano) != request.FrozenAt {
+		return documentproduction.PrivilegeLogReceipt{}, &documentproduction.Problem{
+			Code: documentproduction.ProblemInvalidContract, Detail: "frozen_at must be canonical UTC",
+		}
+	}
+	serviceRequest := productionservice.PrivilegeLogFreezeRequest{
+		OperationID: request.OperationID, LogID: logID, Revision: revision,
+		ExpectedGeneration:               request.ExpectedGeneration,
+		ExpectedInputsSHA256:             request.ExpectedInputsSHA256,
+		ExpectedApprovalEvaluationSHA256: request.ExpectedApprovalEvaluationSHA256,
+		FrozenAt:                         frozenAt,
+	}
+	var receipt documentproduction.PrivilegeLogReceipt
+	err = embeddedMutationGate{vault: v}.MutateContext(ctx, func() error {
+		var err error
+		receipt, err = productionservice.FreezeStoredPrivilegeLog(ctx, v.metadata, serviceRequest)
+		return err
+	})
+	return receipt, err
 }
 
 // RecordProductionApproval stores one immutable approval using the host's
