@@ -64,8 +64,10 @@ func ReadSnapshotExtraFile(ctx context.Context, repository *backup.Repo, snapsho
 	var entry *backup.ExtrasEntry
 	for i := range tree.Entries {
 		if tree.Entries[i].Path == name {
+			if entry != nil {
+				return fmt.Errorf("snapshot extra %q appears more than once", name)
+			}
 			entry = &tree.Entries[i]
-			break
 		}
 	}
 	if entry == nil {

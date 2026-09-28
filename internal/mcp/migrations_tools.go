@@ -79,9 +79,6 @@ func inventoryFotobank(ctx context.Context, lease *daemonLease, raw []byte) (mig
 	if err != nil {
 		return migrationRunToolOutput{}, err
 	}
-	if run.OwnerMapPath != input.OwnerMapPath {
-		return migrationRunToolOutput{}, errors.New("migration response did not bind the owner-map path")
-	}
 	return migrationRunToolOutput{
 		migrationRunSummary: projectMigrationRun(run),
 		OwnerMapPath:        run.OwnerMapPath,

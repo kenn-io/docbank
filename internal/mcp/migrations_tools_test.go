@@ -3,6 +3,7 @@ package mcp
 import (
 	"context"
 	"encoding/json/v2"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -100,6 +101,39 @@ func TestMigrationMCPUsesDaemon(t *testing.T) {
 	var value map[string]any
 	require.NoError(t, json.Unmarshal(encoded, &value))
 	assertSchemaAccepts(t, catalogMap(toolCatalog(false, false, false, true))["inventory_fotobank"].OutputSchema, value)
+}
+
+func TestMigrationMCPClassifiesInvalidCreateResponseAsUnknownOutcome(t *testing.T) {
+	ownerMapPath := t.TempDir() + "/owner-map.json"
+	run := api.MigrationRun{
+		ID:           "00000000-0000-4000-8000-000000000001",
+		OwnerMapPath: t.TempDir() + "/other-owner-map.json",
+	}
+	var calls int
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		if request.Method != http.MethodPost || request.URL.Path != "/api/v1/migrations/fotobank/inventories" {
+			http.NotFound(response, request)
+			return
+		}
+		calls++
+		response.Header().Set("Content-Type", "application/json")
+		response.WriteHeader(http.StatusCreated)
+		_ = json.MarshalWrite(response, run)
+	}))
+	t.Cleanup(server.Close)
+	lease := newDaemonLeaseWith(func(context.Context) (*daemonconn.Connection, error) {
+		return daemonconn.New(server.URL, "synthetic-key"), nil
+	}, func(*daemonconn.Connection) error { return nil })
+	request, err := json.Marshal(api.FotobankInventoryRequest{CatalogPath: "/source/catalog.sqlite", VaultRoot: "/source/vault", OwnerMapPath: ownerMapPath})
+	require.NoError(t, err)
+
+	_, err = inventoryFotobank(t.Context(), lease, request)
+	require.ErrorIs(t, err, errProcessingOutcomeUnknown)
+	boundary := &daemonBoundaryError{}
+	ok := errors.As(err, &boundary)
+	require.True(t, ok)
+	require.Equal(t, "daemon_invalid_response", boundary.diagnostic)
+	require.Equal(t, 1, calls)
 }
 
 func TestMCPMigrationRunSummariesStayBounded(t *testing.T) {

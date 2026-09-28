@@ -55,6 +55,42 @@ func TestReadSnapshotExtraFile(t *testing.T) {
 	require.ErrorIs(t, err, os.ErrNotExist)
 }
 
+func TestReadSnapshotExtraFileRejectsDuplicateRequestedPath(t *testing.T) {
+	root := t.TempDir()
+	repository, err := backup.Init(filepath.Join(root, "repository"))
+	require.NoError(t, err)
+	known, err := repository.LoadBlobIndex()
+	require.NoError(t, err)
+	appender := backup.NewPackAppender(repository, known, pack.DefaultZstdLevel, nil, packstore.PackExt)
+	firstID, _, err := appender.Add([]byte("first catalog"))
+	require.NoError(t, err)
+	secondID, _, err := appender.Add([]byte("second catalog"))
+	require.NoError(t, err)
+	tree, err := json.Marshal(backup.ExtrasTree{Entries: []backup.ExtrasEntry{
+		{Path: "application/catalog.sqlite", Mode: 0o600, Size: int64(len("first catalog")), Blob: firstID.String()},
+		{Path: "application/catalog.sqlite", Mode: 0o600, Size: int64(len("second catalog")), Blob: secondID.String()},
+	}})
+	require.NoError(t, err)
+	treeID, _, err := appender.Add(tree)
+	require.NoError(t, err)
+	packs, entries, err := appender.Finish()
+	require.NoError(t, err)
+	indexID, err := repository.WriteIndex(entries)
+	require.NoError(t, err)
+	snapshotID, err := repository.WriteManifest(&backup.Manifest{
+		FormatVersion: 4, MinReaderVersion: 4, AppVersion: "backupapp-test",
+		CreatedAt: time.Now().UTC().Truncate(time.Second).Format(time.RFC3339),
+		Extras:    backup.ManifestExtras{Tree: treeID.String()}, NewPacks: packs, NewIndex: indexID,
+	})
+	require.NoError(t, err)
+
+	destination := filepath.Join(root, "out", "catalog.sqlite")
+	err = ReadSnapshotExtraFile(t.Context(), repository, snapshotID, "application/catalog.sqlite", destination)
+	require.ErrorContains(t, err, "appears more than once")
+	_, statErr := os.Stat(destination)
+	require.ErrorIs(t, statErr, os.ErrNotExist)
+}
+
 func TestReadSnapshotExtraFileRejectsOversizedTree(t *testing.T) {
 	destination := filepath.Join(t.TempDir(), "out", "catalog.sqlite")
 	repository, snapshotID := snapshotWithExtrasTree(t, func(string) []byte {
