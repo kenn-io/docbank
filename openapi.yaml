@@ -11521,6 +11521,28 @@ components:
       x-go-type-import:
         path: go.kenn.io/docbank/internal/api
         name: api
+    ProductionGateSelectionRequest:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/ProductionGateSelectionRequest.json
+          format: uri
+          readOnly: true
+          type: string
+        approval_id:
+          type: string
+        privilege_log_id:
+          type: string
+        privilege_log_revision:
+          format: int64
+          type: integer
+      type: object
+      x-go-type: api.ProductionGateSelectionRequest
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     ProductionInstructionsRequest:
       additionalProperties: false
       properties:
@@ -22933,6 +22955,39 @@ paths:
                 $ref: "#/components/schemas/Error"
           description: Error
       summary: Fork a production revision into a new draft
+  /api/v1/productions/sets/{set_id}/revisions/{revision}/gate-authority:
+    put:
+      operationId: selectProductionGateAuthority
+      parameters:
+        - in: path
+          name: set_id
+          required: true
+          schema:
+            format: uuid
+            type: string
+        - in: path
+          name: revision
+          required: true
+          schema:
+            format: int64
+            minimum: 1
+            type: integer
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ProductionGateSelectionRequest"
+        required: true
+      responses:
+        "204":
+          description: No Content
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: Select verified approval and frozen privilege authority for a sealed revision
   /api/v1/productions/sets/{set_id}/revisions/{revision}/instructions:
     put:
       operationId: editProductionInstructions

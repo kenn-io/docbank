@@ -4,11 +4,13 @@ import (
 	"bytes"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/go-pdf/fpdf"
 	"github.com/stretchr/testify/require"
 	documentproduction "go.kenn.io/docbank/document/production"
 	"go.kenn.io/docbank/document/redaction"
+	productionservice "go.kenn.io/docbank/internal/production"
 )
 
 // ProductionFinalizeHTTPFixture has fully reviewed synthetic members and a
@@ -53,4 +55,34 @@ func ProductionRenderDaemonHTTPFixture(t *testing.T) (*Store, string, string, in
 	draft, err := s.ProductionDraft(t.Context(), setID, revision)
 	require.NoError(t, err)
 	return s, root, setID, revision, draft.ETag, namespace.NamespaceID
+}
+
+// ProductionRequiredApprovalHTTPFixture has reviewed synthetic inputs and an
+// exact authenticated-human grant, but leaves selection and finalization to
+// the public API under test.
+func ProductionRequiredApprovalHTTPFixture(t *testing.T) (*Store, string, string, int64, int64, string, string) {
+	t.Helper()
+	fixture := newProductionPolicyFinalizationFixture(t, true, false)
+	stored := loadProductionInputsForTest(t, fixture.store, fixture.set.ID, fixture.draft.Revision)
+	subject, err := productionservice.StoredApprovalSubject(stored)
+	require.NoError(t, err)
+	now := time.Now().UTC()
+	record, err := productionservice.PrepareApprovalRecord(productionservice.RecordApprovalRequest{
+		OperationID: "76000000-0000-4000-8000-000000000022",
+		ApprovalID:  "76000000-0000-4000-8000-000000000023",
+		Subject:     subject, Evidence: "Synthetic approval evidence.",
+	}, stored.Policy, productionservice.AuthenticatedApproval{
+		Actor: "synthetic-reviewer",
+		Authority: documentproduction.ApprovalAuthority{
+			Contract:    documentproduction.ApprovalAuthorityContractV1,
+			Kind:        documentproduction.ApprovalAuthorityAuthenticatedHuman,
+			PrincipalID: "synthetic-principal", AuthenticationMethod: "synthetic-authentication",
+			AuthenticatedAt: now.Format(time.RFC3339Nano), EvidenceSHA256: fakeHash("e5"),
+		},
+	}, now)
+	require.NoError(t, err)
+	grant, err := fixture.store.PutProductionApproval(t.Context(), record)
+	require.NoError(t, err)
+	return fixture.store, filepath.Dir(fixture.store.path), fixture.set.ID, fixture.draft.Revision,
+		fixture.current.ETag, fixture.namespaceID, grant.ID
 }

@@ -19,6 +19,24 @@ type ProductionPrivilegeExport = productionservice.PrivilegeLogExport
 type ProductionPrivilegeDraftCreateRequest = api.ProductionPrivilegeDraftCreateRequest
 type ProductionPrivilegeRowsReplaceRequest = api.ProductionPrivilegeRowsReplaceRequest
 type ProductionPrivilegeDraftGeneration = api.ProductionPrivilegeDraftGeneration
+type ProductionGateSelectionRequest = api.ProductionGateSelectionRequest
+
+// SelectProductionGateAuthority pins existing verified authority to one sealed
+// revision. Approval issuance remains the embedding host's authenticated act.
+func (v *Vault) SelectProductionGateAuthority(ctx context.Context, setID string, revision int64,
+	request ProductionGateSelectionRequest) error {
+	v.lifecycle.RLock()
+	defer v.lifecycle.RUnlock()
+	if v.closed {
+		return ErrClosed
+	}
+	return embeddedMutationGate{vault: v}.MutateContext(ctx, func() error {
+		return v.metadata.SelectProductionRevisionGateAuthority(ctx, setID, revision,
+			store.ProductionRevisionGateSelection{ApprovalID: request.ApprovalID,
+				PrivilegeLogID:       request.PrivilegeLogID,
+				PrivilegeLogRevision: request.PrivilegeLogRevision})
+	})
+}
 
 // ProductionApprovalRequest names the exact subject and private evidence to
 // record in an embedded vault. It does not contain authentication authority.

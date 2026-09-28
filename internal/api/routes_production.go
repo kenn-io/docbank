@@ -134,6 +134,14 @@ type ProductionFinalizeRequest struct {
 
 type ProductionFinalizationResult store.ProductionFinalizationResult
 
+// ProductionGateSelectionRequest names stored, verified gate authority for a
+// sealed revision. The server derives and pins all authority digests.
+type ProductionGateSelectionRequest struct {
+	ApprovalID           string `json:"approval_id,omitzero"`
+	PrivilegeLogID       string `json:"privilege_log_id,omitzero"`
+	PrivilegeLogRevision int64  `json:"privilege_log_revision,omitzero"`
+}
+
 // ProductionMapChunk carries one digest-bound page of canonical aligned-map
 // JSON. Its base64 data is binary-safe because pages may split UTF-8 bytes.
 type ProductionMapChunk struct {
@@ -431,6 +439,29 @@ func registerProductionRoutes(api huma.API, d Deps, g *OperationGate) {
 				return nil, productionSetError(err)
 			}
 			return &struct{ Body ProductionResolvedMaskPage }{Body: ProductionResolvedMaskPage(page)}, nil
+		})
+	huma.Register(api, huma.Operation{OperationID: "selectProductionGateAuthority", Method: http.MethodPut,
+		Path:          "/api/v1/productions/sets/{set_id}/revisions/{revision}/gate-authority",
+		Summary:       "Select verified approval and frozen privilege authority for a sealed revision",
+		DefaultStatus: http.StatusNoContent, MaxBodyBytes: 4096},
+		func(ctx context.Context, in *struct {
+			SetID    string `path:"set_id" format:"uuid"`
+			Revision int64  `path:"revision" minimum:"1"`
+			Body     ProductionGateSelectionRequest
+		}) (*struct{}, error) {
+			if _, ok := workspaceSnapshotOwner(ctx); !ok {
+				return nil, NewError(http.StatusUnauthorized, "unauthorized", "authenticated production actor is missing")
+			}
+			err := g.mutate(func() error {
+				return d.Store.SelectProductionRevisionGateAuthority(ctx, in.SetID, in.Revision,
+					store.ProductionRevisionGateSelection{ApprovalID: in.Body.ApprovalID,
+						PrivilegeLogID:       in.Body.PrivilegeLogID,
+						PrivilegeLogRevision: in.Body.PrivilegeLogRevision})
+			})
+			if err != nil {
+				return nil, productionSetError(err)
+			}
+			return &struct{}{}, nil
 		})
 	huma.Register(api, huma.Operation{OperationID: "finalizeProductionDraft", Method: http.MethodPost,
 		Path:    "/api/v1/productions/sets/{set_id}/revisions/{revision}/finalize",

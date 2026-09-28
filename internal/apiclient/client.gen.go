@@ -9419,6 +9419,47 @@ func (c *Client) ForkProductionDraft(ctx context.Context, options *ForkProductio
 	return responseParser(ctx, resp)
 }
 
+// SelectProductionGateAuthority Select verified approval and frozen privilege authority for a sealed revision
+func (c *Client) SelectProductionGateAuthority(ctx context.Context, options *SelectProductionGateAuthorityRequestOptions, reqEditors ...runtime.RequestEditorFn) (*struct{}, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/productions/sets/{set_id}/revisions/{revision}/gate-authority",
+		Method:      "PUT",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*struct{}, error) {
+		switch resp.StatusCode {
+
+		case 204:
+
+			target := new(struct{})
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[SelectProductionGateAuthorityErrorResponse](resp, "SelectProductionGateAuthorityErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/productions/sets/{set_id}/revisions/{revision}/gate-authority")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 204)
+	}
+	return responseParser(ctx, resp)
+}
+
 // EditProductionInstructions Edit production instructions with an exact draft ETag and replay-safe operation ID
 func (c *Client) EditProductionInstructions(ctx context.Context, options *EditProductionInstructionsRequestOptions, reqEditors ...runtime.RequestEditorFn) (*EditProductionInstructionsResponse, error) {
 	var err error
@@ -18803,6 +18844,41 @@ func (o *ForkProductionDraftRequestOptions) GetHeader() (map[string]string, erro
 	return nil, nil
 }
 
+// SelectProductionGateAuthorityRequestOptions is the options needed to make a request to SelectProductionGateAuthority.
+type SelectProductionGateAuthorityRequestOptions struct {
+	PathParams *SelectProductionGateAuthorityPath
+	Body       *SelectProductionGateAuthorityBody
+}
+
+// GetPathParams returns the path params as a map.
+func (o *SelectProductionGateAuthorityRequestOptions) GetPathParams() (map[string]any, error) {
+	encoded, err := json.Marshal(o.PathParams, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetQuery returns the query params as a map.
+func (o *SelectProductionGateAuthorityRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *SelectProductionGateAuthorityRequestOptions) GetBody() any {
+	if o.Body == nil {
+		return nil
+	}
+	return o.Body
+}
+
+// GetHeader returns the headers as a map.
+func (o *SelectProductionGateAuthorityRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
 // EditProductionInstructionsRequestOptions is the options needed to make a request to EditProductionInstructions.
 type EditProductionInstructionsRequestOptions struct {
 	PathParams *EditProductionInstructionsPath
@@ -21677,6 +21753,11 @@ type ForkProductionDraftPath struct {
 	Revision int64     `json:"revision"`
 }
 
+type SelectProductionGateAuthorityPath struct {
+	SetID    uuid.UUID `json:"set_id"`
+	Revision int64     `json:"revision"`
+}
+
 type EditProductionInstructionsPath struct {
 	SetID    uuid.UUID `json:"set_id"`
 	Revision int64     `json:"revision"`
@@ -22020,6 +22101,8 @@ type ApplyProductionChangesBody = ProductionChangesRequest
 type FinalizeProductionDraftBody = ProductionFinalizeRequest
 
 type ForkProductionDraftBody = ProductionForkRequest
+
+type SelectProductionGateAuthorityBody = ProductionGateSelectionRequest
 
 type EditProductionInstructionsBody = ProductionInstructionsRequest
 
@@ -23278,6 +23361,8 @@ type ForkProductionDraftResponse = redaction.Draft
 
 type ForkProductionDraftErrorResponse = Error
 
+type SelectProductionGateAuthorityErrorResponse = Error
+
 type EditProductionInstructionsResponse = api.ProductionReceipt
 
 type EditProductionInstructionsErrorResponse = Error
@@ -24402,6 +24487,8 @@ type ProductionFinalizationResult = api.ProductionFinalizationResult
 type ProductionFinalizeRequest = api.ProductionFinalizeRequest
 
 type ProductionForkRequest = api.ProductionForkRequest
+
+type ProductionGateSelectionRequest = api.ProductionGateSelectionRequest
 
 type ProductionInstructionsRequest = api.ProductionInstructionsRequest
 
