@@ -12,7 +12,7 @@ import (
 )
 
 const (
-	photoMigrationStorageVersion         = 26
+	photoMigrationStorageVersion         = 27
 	PhotoMigrationDispositionMigrated    = "migrated"
 	PhotoMigrationDispositionQuarantined = "quarantined"
 	PhotoMigrationDispositionRebuildable = "rebuildable"
