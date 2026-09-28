@@ -81,6 +81,49 @@ func TestEmbeddedPrivilegeDraftMutationsUseOwnedVault(t *testing.T) {
 	require.Zero(t, replaced)
 }
 
+func TestEmbeddedPrivilegeInputsUseOwnedVault(t *testing.T) {
+	first, err := docbank.New(t.Context(), docbank.Config{Root: t.TempDir()})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, first.Close()) })
+	second, err := docbank.New(t.Context(), docbank.Config{Root: t.TempDir()})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, second.Close()) })
+	const snapshotID = "86868686-8686-4868-8868-868686868601"
+	request := docbank.ProductionPlayersSnapshotCreateRequest{
+		OperationID: "86868686-8686-4868-8868-868686868602",
+		Players: []documentproduction.Player{{
+			ID: "86868686-8686-4868-8868-868686868603", DisplayName: "Synthetic Person",
+			Aliases:        []string{"Synthetic Alias"},
+			EvidenceSHA256: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+		}},
+	}
+	created, err := first.CreateProductionPlayersSnapshot(t.Context(), snapshotID, 1, request)
+	require.NoError(t, err)
+	require.NoError(t, documentproduction.ValidatePlayersSnapshot(created))
+	replay, err := first.CreateProductionPlayersSnapshot(t.Context(), snapshotID, 1, request)
+	require.NoError(t, err)
+	require.Equal(t, created, replay)
+	changed := request
+	changed.Players = append([]documentproduction.Player(nil), request.Players...)
+	changed.Players[0].DisplayName = "Changed Synthetic Person"
+	_, err = first.CreateProductionPlayersSnapshot(t.Context(), snapshotID, 1, changed)
+	var problem *documentproduction.Problem
+	require.ErrorAs(t, err, &problem)
+	require.Equal(t, documentproduction.ProblemChangedPayload, problem.Code)
+	separate, err := second.CreateProductionPlayersSnapshot(t.Context(), snapshotID, 1, changed)
+	require.NoError(t, err)
+	require.NotEqual(t, created.SHA256, separate.SHA256)
+	_, err = first.CreateProductionWithheldSelection(t.Context(),
+		"86868686-8686-4868-8868-868686868604", 1,
+		docbank.ProductionWithheldSelectionCreateRequest{
+			OperationID:  "86868686-8686-4868-8868-868686868605",
+			SelectionID:  "86868686-8686-4868-8868-868686868606",
+			PolicySHA256: created.SHA256,
+		})
+	require.ErrorIs(t, err, store.ErrNotFound,
+		"withheld selection must use this vault's sealed production membership")
+}
+
 func TestEmbeddedProductionSetsKeepVaultRootsSeparate(t *testing.T) {
 	first, err := docbank.New(t.Context(), docbank.Config{Root: t.TempDir()})
 	require.NoError(t, err)
