@@ -242,6 +242,12 @@ var reviewProductionMemberToolDefinition = toolDefinition{
 	schemas:     reviewProductionMemberSchemas, write: true, idempotent: true,
 }
 
+var selectProductionGateAuthorityToolDefinition = toolDefinition{
+	name: "select_production_gate_authority", title: "Select production gate authority",
+	description: "Pin an existing verified approval and frozen privilege log to a sealed revision.",
+	schemas:     selectProductionGateAuthoritySchemas, write: true, idempotent: true,
+}
+
 var appendProductionMembersToolDefinition = toolDefinition{
 	name: "append_production_members", title: "Append production members",
 	description: "Append a bounded JSON member batch to an exact draft ETag with an operation UUID.",
@@ -294,6 +300,7 @@ func toolCatalog(allowProcessing bool) []*sdkmcp.Tool {
 			createProductionSetToolDefinition, forkProductionDraftToolDefinition,
 			editProductionInstructionsToolDefinition, sealProductionMembershipToolDefinition,
 			reviewProductionMemberToolDefinition, appendProductionMembersToolDefinition,
+			selectProductionGateAuthorityToolDefinition,
 			applyProductionChangesToolDefinition, finalizeProductionDraftToolDefinition,
 			admitProductionJobToolDefinition, cancelProductionJobToolDefinition,
 			publishProductionPackageToolDefinition)
@@ -361,6 +368,8 @@ func registerToolCatalog(
 			handler = createProductionPlayersSnapshotToolHandler(lease, output, logger)
 		case createProductionWithheldSelectionToolDefinition.name:
 			handler = createProductionWithheldSelectionToolHandler(lease, output, logger)
+		case selectProductionGateAuthorityToolDefinition.name:
+			handler = selectProductionGateAuthorityToolHandler(lease, output, logger)
 		case createProductionSetToolDefinition.name, forkProductionDraftToolDefinition.name:
 			handler = productionDraftWriteToolHandler(lease, tool.Name, output, logger)
 		case editProductionInstructionsToolDefinition.name, sealProductionMembershipToolDefinition.name,
@@ -552,6 +561,8 @@ func stableDomainError(err error) (string, int) {
 		return "production_players_outcome_unknown", 0
 	case errors.Is(err, errProductionWithheldOutcomeUnknown):
 		return "production_withheld_outcome_unknown", 0
+	case errors.Is(err, errProductionGateSelectionOutcomeUnknown):
+		return "production_gate_selection_outcome_unknown", 0
 	case errors.Is(err, errProductionPrivilegeExportDestinationExists):
 		return "destination_exists", 0
 	case errors.Is(err, errProductionPackageDestinationExists):
@@ -654,6 +665,8 @@ func domainErrorMessage(code string) string {
 		return "The Bates authority write outcome is unknown; reconcile the namespace or allocation before retrying."
 	case "production_outcome_unknown":
 		return "The production write outcome is unknown; retry only with the same operation ID."
+	case "production_gate_selection_outcome_unknown":
+		return "The gate selection outcome is unknown; read the revision before retrying the same selection."
 	case "production_operation_conflict":
 		return "The operation ID names different production input."
 	case "production_revision_conflict":

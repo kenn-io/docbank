@@ -24,6 +24,7 @@ func TestProductionAgentSurfaceCombinesCoreAndExtendedTools(t *testing.T) {
 	for _, name := range []string{
 		"create_production_set", "fork_production_draft", "append_production_members",
 		"apply_production_changes", "seal_production_membership", "review_production_member",
+		"select_production_gate_authority",
 		"finalize_production_draft", "admit_production_job", "publish_production_package",
 		"create_production_policy", "create_production_players_snapshot",
 		"create_production_withheld_selection", "create_production_privilege_draft",
