@@ -7,7 +7,6 @@ import (
 	"io"
 	"path/filepath"
 	"slices"
-	"strconv"
 	"testing"
 	"time"
 
@@ -127,6 +126,9 @@ func TestLoadFileExportRoundTripsThroughIndependentFreshVault(t *testing.T) {
 		volumes[index] = store.PackageVolume{Ordinal: volume.Ordinal, VolumeName: volume.Name,
 			DeclaredRoot: volume.DeclaredRoot, MappedRoot: volume.DeclaredRoot, ResolvedRootSHA256: binding}
 	}
+	jobJSON, err := canonical.Marshal(packageImportWork{IndexSuppliedText: true,
+		Into: "/", SourceKind: "root", SourceLocator: root, Total: 2})
+	require.NoError(t, err)
 	_, err = freshCatalog.AdmitPackageImport(ctx, run, store.PackageRequest{
 		PackageID: freshPackageID, Direction: "received", PackageName: "fresh-round-trip",
 		ProfileSHA256: verified.Receipt.ProfileSHA256, ProfileJSON: string(profileJSON),
@@ -136,7 +138,7 @@ func TestLoadFileExportRoundTripsThroughIndependentFreshVault(t *testing.T) {
 	}, store.PackageImportJobRequest{
 		ID: uuid.NewString(), Owner: owner, OperationID: uuid.NewString(), RequestSHA256: packageImportTestHash([]byte("fresh-round-trip")),
 		PreflightID: preflightID, PackageID: freshPackageID,
-		JobJSON: []byte(`{"accept_partial":false,"index_supplied_text":true,"into":"/","source_kind":"root","source_locator":"` + root + `","total":2}`),
+		JobJSON: jobJSON,
 	})
 	require.NoError(t, err)
 	freshWorker, err := NewPackageImportWorker(PackageImportConfig{Catalog: freshCatalog, Blobs: freshBlobs,
@@ -356,13 +358,16 @@ func importVerifiedLoadFileArchive(t *testing.T, archive []byte, verified LoadFi
 		volumes[index] = store.PackageVolume{Ordinal: volume.Ordinal, VolumeName: volume.Name,
 			DeclaredRoot: volume.DeclaredRoot, MappedRoot: volume.DeclaredRoot, ResolvedRootSHA256: binding}
 	}
+	jobJSON, err := canonical.Marshal(packageImportWork{IndexSuppliedText: true,
+		Into: "/", SourceKind: "root", SourceLocator: root, Total: verified.Receipt.RecordCount})
+	require.NoError(t, err)
 	_, err = catalog.AdmitPackageImport(ctx, run, store.PackageRequest{PackageID: packageID, Direction: "received",
 		PackageName: "fresh-bates-round-trip", ProfileSHA256: verified.Receipt.ProfileSHA256,
 		ProfileJSON: string(profileJSON), MappingSHA256: verified.Receipt.MappingSHA256, MappingJSON: string(mappingJSON),
 		ManifestSHA256: written.Hash, ManifestBlobSHA256: written.Hash, IngestID: run.ID(), State: "importing", Volumes: volumes},
 		store.PackageImportJobRequest{ID: uuid.NewString(), Owner: owner, OperationID: uuid.NewString(),
 			RequestSHA256: packageImportTestHash([]byte("fresh-bates-round-trip")), PreflightID: preflightID,
-			PackageID: packageID, JobJSON: []byte(`{"accept_partial":false,"index_supplied_text":true,"into":"/","source_kind":"root","source_locator":"` + root + `","total":` + strconv.Itoa(verified.Receipt.RecordCount) + `}`)})
+			PackageID: packageID, JobJSON: jobJSON})
 	require.NoError(t, err)
 	worker, err := NewPackageImportWorker(PackageImportConfig{Catalog: catalog, Blobs: blobs, Owner: "fresh-worker",
 		LeaseDuration: time.Minute, IdleDelay: time.Millisecond, Mutate: func(_ context.Context, fn func() error) error { return fn() }})
