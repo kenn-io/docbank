@@ -303,7 +303,7 @@ func buildPackagePreflightFromRoot(ctx context.Context, d Deps, g PackageMutatio
 	if request.SourceKind == "root" {
 		sourceLocator = resolver.Root
 	}
-	datName, pageMapName, discoveredVolumes, err := resolver.DiscoverPackageFiles(profile.ID)
+	datName, pageMapName, discoveredVolumes, err := resolver.DiscoverPackageFiles(ctx, profile, request.Mapping)
 	if err != nil {
 		return PackagePreflight{}, err
 	}

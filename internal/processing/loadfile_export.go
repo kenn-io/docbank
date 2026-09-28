@@ -260,6 +260,11 @@ func WriteLoadFileExport(ctx context.Context, catalog *store.Store, blobs *blob.
 		if err != nil {
 			return result, err
 		}
+		if len(images) > 0 {
+			// OPT/LFP identifies a document by its first page key. Keep that
+			// key (including received or Bates labels) in the metadata too.
+			documentIDs[member.OccurrenceID] = images[0].ImageKey
+		}
 		entry.Roles = roles
 		available := make([]string, 0, len(roles))
 		for _, role := range roles {
@@ -277,6 +282,19 @@ func WriteLoadFileExport(ctx context.Context, catalog *store.Store, blobs *blob.
 		pageCount += len(images)
 		artifacts = append(artifacts, entries...)
 		crosswalk.Members = append(crosswalk.Members, entry)
+	}
+	seenIDs := make(map[string]bool, len(members))
+	for index, member := range members {
+		docID, parentID := documentIDs[member.OccurrenceID], documentIDs[member.ParentOccurrenceID]
+		if seenIDs[docID] {
+			return result, fmt.Errorf("%w: duplicate exported document identity %q", store.ErrPackageConflict, docID)
+		}
+		seenIDs[docID] = true
+		record := &manifest.Records[index]
+		record.DocID, record.Family.ParentDocID = docID, parentID
+		record.Fields[0].Raw, record.Fields[0].Value.Text = docID, docID
+		record.Fields[1].Raw, record.Fields[1].Value.Text = parentID, parentID
+		crosswalk.Members[index].DocumentID, crosswalk.Members[index].ParentDocumentID = docID, parentID
 	}
 	loadFileBytes, err := serializeLoadFile(manifest.Records, profile)
 	if err != nil {
@@ -504,6 +522,9 @@ func buildLoadFileRecord(ctx context.Context, blobs *blob.Store, exportProfile l
 	}
 	available := availableRepresentations(member)
 	partialPages := member.SelectedSourcePages != nil && len(member.SelectedSourcePages) < member.SourcePageCount
+	if partialPages && slices.Contains(exportProfile.RequiredRoles, "native") {
+		return loadfile.Record{}, nil, nil, nil, nil, fmt.Errorf("%w: profile %s requires a whole native file; document %s selects only part of it", loadfile.ErrUnrepresentable, exportProfile.ID, crosswalk.DocumentID)
+	}
 	// A whole native file would disclose pages outside a partial selection.
 	if slices.Contains(exportProfile.RequiredRoles, "native") ||
 		(slices.Contains(exportProfile.OptionalRoles, "native") && !partialPages) {

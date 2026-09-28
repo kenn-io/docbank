@@ -117,6 +117,36 @@ func TestLoadFileExportUsesFrozenPDFAndSelectedPages(t *testing.T) {
 	}
 }
 
+func TestLoadFileExportNativeRequiresWholeDocument(t *testing.T) {
+	for _, pages := range [][]int{{3, 6, 8}, {1, 2, 3, 4, 5, 6, 7, 8}} {
+		t.Run(fmt.Sprint(pages), func(t *testing.T) {
+			env := newBatesExportFixture(t)
+			allocation, err := env.catalog.BatesAllocation(t.Context(), env.allocationID)
+			require.NoError(t, err)
+			members, err := env.catalog.SnapshotMembers(t.Context(), allocation.SnapshotID, 0, 10)
+			require.NoError(t, err)
+			members[0].SelectedSourcePages = pages
+			snapshot, err := env.catalog.SealCollectionSnapshot(t.Context(), store.SnapshotSealRequest{
+				SnapshotID: uuid.NewString(), Members: members})
+			require.NoError(t, err)
+			var archive bytes.Buffer
+			_, err = WriteLoadFileExport(t.Context(), env.catalog, env.blobs,
+				LoadFileExportRequest{SnapshotID: snapshot.SnapshotID, ProfileID: "export-csv-natives-v1"}, &archive)
+			if len(pages) < 8 {
+				require.ErrorIs(t, err, loadfile.ErrUnrepresentable)
+				require.Empty(t, archive.Bytes(), "reject before writing an archive with excluded pages")
+				return
+			}
+			require.NoError(t, err)
+			verified, err := VerifyLoadFileExport(t.Context(), bytes.NewReader(archive.Bytes()), int64(archive.Len()))
+			require.NoError(t, err)
+			native := readLoadFileZIPEntry(t, archive.Bytes(), "VOL001/NATIVE/DOC000001.pdf")
+			require.Equal(t, members[0].BlobSHA256, sha256HexBytes(native), "native bytes remain unchanged")
+			require.Equal(t, members[0].BlobSHA256, verified.Manifest.Records[0].Files[0].SHA256)
+		})
+	}
+}
+
 func TestLoadFileExportRoundTripsThroughIndependentFreshVault(t *testing.T) {
 	ctx := t.Context()
 	source := newPackageImportTestEnvOptions(t, 2, false, true, true)

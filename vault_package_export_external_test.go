@@ -25,9 +25,9 @@ func TestEmbeddedPackageExportRoundTripsThroughFreshVault(t *testing.T) {
 	require.NoError(t, os.MkdirAll(filepath.Join(production, "VOL001", "NATIVES"), 0o700))
 	require.NoError(t, os.WriteFile(filepath.Join(production, "VOL001", "DATA", "load.dat"), []byte(
 		"þDOCIDþ\x14þPARENTIDþ\x14þNATIVEþ\r\n"+
-			"þDOC-Aþ\x14þþ\x14þNATIVES/DOC-A.txtþ\r\n"+
-			"þDOC-Bþ\x14þDOC-Aþ\x14þNATIVES/DOC-B.txtþ\r\n"), 0o600))
-	require.NoError(t, os.WriteFile(filepath.Join(production, "VOL001", "NATIVES", "DOC-A.txt"), []byte("synthetic parent\n"), 0o600))
+			"þDOC-A.csvþ\x14þþ\x14þNATIVES/DOC-A.csvþ\r\n"+
+			"þDOC-Bþ\x14þDOC-A.csvþ\x14þNATIVES/DOC-B.txtþ\r\n"), 0o600))
+	require.NoError(t, os.WriteFile(filepath.Join(production, "VOL001", "NATIVES", "DOC-A.csv"), []byte("category,value\nsynthetic,42\n"), 0o600))
 	require.NoError(t, os.WriteFile(filepath.Join(production, "VOL001", "NATIVES", "DOC-B.txt"), []byte("synthetic child\n"), 0o600))
 	mapping := []byte(`{"contract":"loadfile-mapping/v1","columns":[{"source":"DOCID","source_ordinal":0,"canonical":"loadfile.document.id"},{"source":"PARENTID","source_ordinal":1,"canonical":"loadfile.family.parent"},{"source":"NATIVE","source_ordinal":2,"canonical":"loadfile.file.native"}]}`)
 	preflight, err := source.PreflightPackage(t.Context(), docbank.PackagePreflightRequest{
@@ -63,6 +63,7 @@ func TestEmbeddedPackageExportRoundTripsThroughFreshVault(t *testing.T) {
 	assert.Equal(t, "DOCID", independent.Rows[0][0])
 	assert.Equal(t, "DOC000001", independent.Rows[1][0])
 	assert.Equal(t, "DOC000001", independent.Rows[2][1])
+	assert.Equal(t, []byte("category,value\nsynthetic,42\n"), independent.Entries["VOL001/NATIVE/DOC000001.csv"])
 
 	extracted := t.TempDir()
 	require.NoError(t, independent.Extract(extracted))
