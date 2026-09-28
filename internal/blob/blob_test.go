@@ -266,7 +266,7 @@ func deterministicIncompressibleBytes(size int) []byte {
 }
 
 func TestStoragePolicyKeepsBlobLimitExplicit(t *testing.T) {
-	assert.Equal(t, MaxIngestBytes, int64(1<<32))
+	assert.Equal(t, MaxIngestBytes, int64(64<<40))
 	assert.Equal(t, MaxPackedBlobBytes, int64(64<<20))
 	assert.Equal(t, MaxPackedBlobBytes, StorageLimits().BlobBytes)
 }

@@ -38,9 +38,9 @@ index, reader cache, recovery state machine, and repacker.
 `kit/packstore` sits above the low-level `kit/pack` format. It provides a mixed
 loose-and-packed content-addressed store, so migration can be gradual and
 interrupted work remains recoverable. Docbank explicitly caps new loose-object
-admission at 4 GiB while keeping packing, packed reads, and packed restore at 64
-MiB. These are application policies rather than inherited Kit defaults, so
-upgrading the shared engine cannot silently raise either one. An admitted object
+admission at 64 TiB while keeping packing, packed reads, and packed restore at 64
+MiB. Admission follows Kit's logical backup-object limit; packing remains an
+independent application policy. An admitted object
 above 64 MiB remains loose, readable, and eligible for backup; pack maintenance
 reports it as deferred instead of attempting to prepare it.
 
@@ -107,8 +107,11 @@ policy. Retired immutable pack bytes are reclaimed only by a later repack pass.
 
 The limits serve different purposes:
 
-- The 4 GiB admission ceiling matches Kit's format-v1 raw-object ceiling. Every
-  admitted object can therefore participate in backup.
+- The 64 TiB admission ceiling matches the largest logical object Kit backup
+  can represent with bounded chunk recipes. Backup splits objects above 64 MiB
+  into chunks and preserves their whole-file hashes. Snapshots using recipes
+  require a version-5 reader; existing snapshots remain readable. Restore writes
+  these large objects as complete loose files.
 - The 64 MiB packed-content limit bounds pack preparation. A 1 GiB pack
   candidate could require about 2.004 GiB of scratch space before frame overhead.
 
