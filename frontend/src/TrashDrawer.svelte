@@ -84,7 +84,7 @@
   {#snippet header()}
     <div class="drawer-heading">
       <div>
-        <span>RECOVERABLE TRASH</span>
+        <span>Recoverable trash</span>
         <strong>Trashed documents</strong>
         <small>
           {#if page}
@@ -232,8 +232,7 @@
   .drawer-heading span {
     color: var(--text-muted);
     font-size: var(--font-size-xs);
-    font-weight: var(--font-weight-bold);
-    letter-spacing: var(--letter-spacing-label, 0.04em);
+    font-weight: var(--font-weight-medium);
   }
 
   .drawer-heading strong {

@@ -255,7 +255,7 @@
 
 <DetailDrawer width="min(900px, 100vw)" ariaLabel="Search exports" onclose={onclose}>
   {#snippet header()}
-    <div class="heading"><div><span>SEARCH EXPORTS</span><strong>Export search counts</strong></div>
+    <div class="heading"><div><span>Search exports</span><strong>Export search counts</strong></div>
       <IconButton size="sm" ariaLabel="Close search exports" onclick={onclose}><XIcon size="16" aria-hidden="true" /></IconButton></div>
   {/snippet}
   <div class="body">
@@ -370,7 +370,7 @@
   .form { grid-template-columns:repeat(2,minmax(0,1fr)); }
   .field { display:grid; gap:var(--space-1); }
   .field label, .review-form label { font-size:var(--font-size-sm); }
-  input:not([type="checkbox"]):not([type="radio"]), select { width:100%; min-width:0; padding:var(--space-2); border:1px solid var(--border-muted); border-radius:var(--radius-md); background:var(--bg-base); color:var(--text-primary); font:inherit; }
+  input:not([type="checkbox"]):not([type="radio"]), select { width:100%; min-width:0; padding:var(--space-2); border:1px solid var(--border-default); border-radius:var(--radius-md); background:var(--bg-surface); color:var(--text-primary); font:inherit; }
   .scope label, .candidate { display:flex; align-items:center; gap:var(--space-2); font-size:var(--font-size-sm); }
   .collection-list { display:grid; gap:var(--space-2); max-height:220px; overflow:auto; padding:var(--space-2); border:1px solid var(--border-muted); border-radius:var(--radius-md); }
   .term, .review-item, .history-item { padding:var(--space-3); border:1px solid var(--border-muted); border-radius:var(--radius-md); background:var(--bg-inset); }

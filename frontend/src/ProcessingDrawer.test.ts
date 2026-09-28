@@ -338,7 +338,7 @@ describe("document processing drawer", () => {
 
     await fireEvent.click(await screen.findByRole("button", { name: "Run processing" }));
     try {
-      expect(await screen.findByText("DURABLE JOB", {}, { timeout: 500 })).toBeTruthy();
+      expect(await screen.findByText("Durable job", {}, { timeout: 500 })).toBeTruthy();
       expect(screen.getByText(jobID)).toBeTruthy();
       expect(screen.getByText("Accepted")).toBeTruthy();
     } finally {
@@ -450,7 +450,7 @@ describe("document processing drawer", () => {
     await fireEvent.click(await screen.findByRole("button", { name: "Consent and run" }));
     expect(screen.getByText("Consent expired")).toBeTruthy();
     expect(await screen.findByText(/consent expired before provider access/i)).toBeTruthy();
-    expect(screen.queryByText("DURABLE JOB")).toBeNull();
+    expect(screen.queryByText("Durable job")).toBeNull();
   });
 
   it("does not render a result revoked from the exact-version consumer fence", async () => {

@@ -216,7 +216,7 @@
 
 <DetailDrawer width="min(720px, 100vw)" ariaLabel="Import mailbox archive" {onclose}>
   {#snippet header()}
-    <div class="drawer-heading"><div><span>EMAIL DOCUMENTS</span><strong>Import mailbox archive</strong><small>{directory.path??"Current folder"}</small></div><IconButton size="sm" ariaLabel="Close mailbox import" onclick={onclose}><XIcon size="14" /></IconButton></div>
+    <div class="drawer-heading"><div><span>Email documents</span><strong>Import mailbox archive</strong><small>{directory.path??"Current folder"}</small></div><IconButton size="sm" ariaLabel="Close mailbox import" onclick={onclose}><XIcon size="14" /></IconButton></div>
   {/snippet}
   <div class="mailbox">
     <p>Keep the original MBOX or Google Takeout ZIP and import each message with its attachments.</p>
@@ -228,7 +228,7 @@
     {#if busy}<div class="progress" aria-live="polite"><Spinner size={16}/><span>{stage} · {formatBytes(processed)} / {formatBytes(total)}</span></div><progress aria-label="Mailbox source upload" value={processed} max={total||1}></progress><Button size="sm" onclick={()=>void cancel()}>Cancel upload</Button>{/if}
     {#if error}<p role="alert" class="error">{error}</p>{/if}
     {#if preview&&container}
-      <Card title="Source verified" eyebrow="IMPORT PREVIEW" padding="md">
+      <Card title="Source verified" eyebrow="Import preview" padding="md">
         <p>{preview.entry_count} mailbox {preview.entry_count===1?"entry":"entries"} · {preview.dialect}</p>
         <p>Previewed {preview.samples.length} {preview.has_more?"initial ":""}messages. Every occurrence is kept, including repeated content and Message-IDs.</p>
         {#if preview.samples.some(sample=>sample.rejection)}<p class="error">Some preview messages exceed the import limits and will be reported as rejected.</p>{/if}
@@ -236,7 +236,7 @@
       </Card>
     {/if}
     {#if job}
-      <Card title={job.state==="complete"?"Import complete":"Mailbox import"} eyebrow="DURABLE IMPORT REPORT" padding="md">
+      <Card title={job.state==="complete"?"Import complete":"Mailbox import"} eyebrow="Durable import report" padding="md">
         {#snippet actions()}{#if job}<Chip size="xs" tone={job.state==="complete"?"success":job.state==="failed"?"danger":"info"}>{job.state}</Chip>{/if}{/snippet}
         <div class="counts" aria-live="polite"><div><strong>{job.imported}</strong><span>Imported</span></div><div><strong>{job.rejected}</strong><span>Rejected</span></div><div><strong>{job.pending??0}</strong><span>Pending</span></div><div><strong>{job.canceled??0}</strong><span>Canceled</span></div></div>
         <p>{job.scanned_tail?"Every message occurrence has been scanned.":"Unscanned messages remain."}</p>
@@ -271,8 +271,7 @@
   .drawer-heading span {
     color: var(--text-muted);
     font-size: var(--font-size-xs);
-    font-weight: var(--font-weight-bold);
-    letter-spacing: var(--letter-spacing-label, 0.04em);
+    font-weight: var(--font-weight-medium);
   }
   .drawer-heading strong {
     color: var(--text-primary);
@@ -298,7 +297,7 @@
   .muted,
   small {
     color: var(--text-secondary);
-    font-size: 12px;
+    font-size: var(--font-size-xs);
   }
   .choice,
   .file-name,
@@ -315,11 +314,11 @@
   .file-label {
     display: grid;
     gap: 12px;
-    font-size: 13px;
+    font-size: var(--font-size-sm);
   }
   .file-name {
     padding: 12px;
-    border: 1px solid var(--border);
+    border: 1px solid var(--border-default);
     border-radius: 8px;
   }
   .file-name strong {
@@ -337,14 +336,14 @@
     gap: 4px;
   }
   .counts strong {
-    font-size: 26px;
+    font-size: var(--font-size-2xl);
   }
   .counts span {
-    font-size: 12px;
+    font-size: var(--font-size-xs);
     color: var(--text-secondary);
   }
   .error {
-    color: var(--danger-text);
+    color: var(--accent-red);
   }
   progress {
     width: 100%;

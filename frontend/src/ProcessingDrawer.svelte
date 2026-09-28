@@ -254,7 +254,7 @@
   {#snippet header()}
     <div class="drawer-heading">
       <div>
-        <span>DOCUMENT PROCESSING</span>
+        <span>Document processing</span>
         <strong>{path}</strong>
         <small>Exact version {node.current_version_id}</small>
       </div>
@@ -275,7 +275,7 @@
     {:else if error && !plan}
       <div class="load-error"><p role="alert">{error}</p><Button size="sm" onclick={() => void loadProfiles()}>Try again</Button></div>
     {:else if profiles.length === 0}
-      <Card level="default" title="No executable processing profiles" eyebrow="NOT CONFIGURED">
+      <Card level="default" title="No executable processing profiles" eyebrow="Not configured">
         <p>The daemon will not advertise a provider flow it cannot execute end to end.</p>
       </Card>
     {:else if plan}
@@ -316,10 +316,10 @@
       </section>
 
       <section aria-label="Reviewed provider flow">
-        <div class="section-heading"><div><span>REVIEWED FLOW</span><strong>What leaves the vault, and what stays</strong></div><Chip size="xs" tone={plan.consent_state === "active" ? "success" : "warning"}>{consentLabel(plan.consent_state)}</Chip></div>
+        <div class="section-heading"><div><span>Reviewed flow</span><strong>What leaves the vault, and what stays</strong></div><Chip size="xs" tone={plan.consent_state === "active" ? "success" : "warning"}>{consentLabel(plan.consent_state)}</Chip></div>
         <div class="flow-list">
           {#each plan.flow as hop}
-            <Card level="default" padding="sm" eyebrow={hop.capability.toUpperCase()} title={hop.provider_id}>
+            <Card level="default" padding="sm" eyebrow={hop.capability.replace(/^./, (char) => char.toUpperCase())} title={hop.provider_id}>
               {#snippet actions()}<Chip size="xs" tone={hop.trust_boundary === "local_process" || hop.trust_boundary === "operator_network" ? "success" : "warning"}>{boundaryLabel(hop.trust_boundary)}</Chip>{/snippet}
               <p>{hop.input_classes.join(", ")}</p>
               {#if hop.disclose_filename}<p>Disclosed filename: {hop.filename}</p>{/if}
@@ -348,7 +348,7 @@
       </section>
 
       <section aria-label="Reviewed processing scope">
-        <div class="section-heading"><div><span>REVIEWED SCOPE</span><strong>Exact plan and saved outputs</strong></div></div>
+        <div class="section-heading"><div><span>Reviewed scope</span><strong>Exact plan and saved outputs</strong></div></div>
         <div class="fingerprints">
           <div><span>Plan fingerprint</span><code>{plan.fingerprint}</code></div>
           <div><span>Profile fingerprint</span><code>{plan.profile_fingerprint}</code></div>
@@ -361,7 +361,7 @@
 
       {#if job}
         <section aria-live="polite">
-          <div class="section-heading"><div><span>DURABLE JOB</span><strong>{status?.state ?? "Accepted"}</strong></div>{#if status}<Chip size="xs" tone={status.state === "completed" ? "success" : "warning"}>{status.phase}</Chip>{/if}</div>
+          <div class="section-heading"><div><span>Durable job</span><strong>{status?.state ?? "Accepted"}</strong></div>{#if status}<Chip size="xs" tone={status.state === "completed" ? "success" : "warning"}>{status.phase}</Chip>{/if}</div>
           <code>{job.id}</code>
           {#if status?.failure_code}<p class="warning">{status.failure_code}</p>{/if}
           {#if status && job.attachment_id}<Button size="sm" surface="soft" onclick={() => onrendition(job!.attachment_id!)}>Read sanitized Markdown</Button>{/if}
@@ -370,7 +370,7 @@
 
       {#if coverage}
         <section aria-label="Document processing coverage">
-          <div class="section-heading"><div><span>COVERAGE</span><strong>{coverage.state}</strong></div></div>
+          <div class="section-heading"><div><span>Coverage</span><strong>{coverage.state}</strong></div></div>
           {#if coverage.state === "rebuilding" && previousGenerationServes(coverage)}<p>Previous complete generation remains available while the rebuild runs.</p>{/if}
           <div class="coverage-list">
             <div><strong>Rendition · {coverage.renditions.state}</strong><span>{coverage.renditions.complete}/{coverage.renditions.total} complete · {coverage.renditions.rebuilding} rebuilding</span></div>
@@ -380,7 +380,7 @@
       {/if}
 
       <section aria-label="Search exact document version">
-        <div class="section-heading"><div><span>RETRIEVAL PROOF</span><strong>Search this exact version</strong></div></div>
+        <div class="section-heading"><div><span>Retrieval proof</span><strong>Search this exact version</strong></div></div>
         <form class="document-search" onsubmit={(event) => { event.preventDefault(); void searchVersion(); }}>
           <SearchInput bind:value={query} ariaLabel="Search this document version" placeholder="Search retained evidence" block />
           <Button type="submit" size="sm" disabled={searching || !query.trim()}><SearchIcon size="14" aria-hidden="true" />Search this version</Button>
@@ -404,31 +404,31 @@
   .drawer-heading, .section-heading, .profile-row, .document-search { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); }
   .drawer-heading { width: 100%; }
   .drawer-heading > div:first-child, .section-heading > div { display: grid; gap: var(--space-1); min-width: 0; }
-  .drawer-heading span, .section-heading span { color: var(--text-muted); font-size: var(--font-size-xs); font-weight: var(--font-weight-bold); letter-spacing: .04em; }
+  .drawer-heading span, .section-heading span { color: var(--text-muted); font-size: var(--font-size-xs); font-weight: var(--font-weight-medium); }
   .drawer-heading strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--font-size-lg); }
   .drawer-heading small, section small { color: var(--text-muted); font-size: var(--font-size-xs); }
   .drawer-actions { display: flex; gap: var(--space-2); }
   .processing-shell { display: grid; gap: var(--space-5); padding: var(--space-5); }
-  section { display: grid; gap: var(--space-3); padding-top: var(--space-4); border-top: 1px solid var(--border-subtle); }
+  section { display: grid; gap: var(--space-3); padding-top: var(--space-4); border-top: 1px solid var(--border-muted); }
   section p, section code, .flow-list p { margin: 0; color: var(--text-secondary); font-size: var(--font-size-sm); }
   .loading { display: flex; align-items: center; gap: var(--space-3); color: var(--text-secondary); }
   .load-error { display: grid; justify-items: start; gap: var(--space-3); }
   .error, .warning, .load-error p { color: var(--accent-red); }
   .profile-row { justify-content: flex-start; }
   .profile-row label { color: var(--text-muted); font-size: var(--font-size-xs); font-weight: var(--font-weight-bold); }
-  select { min-height: 36px; padding: 0 var(--space-3); border: 1px solid var(--border-subtle); border-radius: var(--radius-md); background: var(--surface-raised); color: var(--text-primary); }
+  select { min-height: 36px; padding: 0 var(--space-3); border: 1px solid var(--border-default); border-radius: var(--radius-md); background: var(--bg-surface); color: var(--text-primary); }
   .flow-list { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: var(--space-3); }
   .flow-list p, .flow-list small { overflow-wrap: anywhere; }
   .flow-list small { display: block; }
-  .retention-warning { padding: var(--space-3); border-left: 3px solid var(--accent-amber); background: color-mix(in srgb, var(--accent-amber) 8%, transparent); }
+  .retention-warning { padding: var(--space-3); border: 1px solid color-mix(in srgb, var(--accent-amber) 35%, var(--border-default)); border-radius: var(--radius-md); background: color-mix(in srgb, var(--accent-amber) 8%, transparent); }
   .consent-copy { color: var(--text-muted); }
   .coverage-list { display: grid; gap: var(--space-2); }
-  .coverage-list div { display: flex; justify-content: space-between; gap: var(--space-3); padding: var(--space-3); border: 1px solid var(--border-subtle); border-radius: var(--radius-md); }
+  .coverage-list div { display: flex; justify-content: space-between; gap: var(--space-3); padding: var(--space-3); border: 1px solid var(--border-muted); border-radius: var(--radius-md); }
   .coverage-list span { color: var(--text-muted); font-size: var(--font-size-xs); }
   .document-search :global(.kit-search-input) { flex: 1; }
   .fingerprints { display: grid; gap: var(--space-2); }
   .fingerprints div { display: grid; gap: var(--space-1); }
-  .fingerprints span { color: var(--text-muted); font-size: var(--font-size-xs); font-weight: var(--font-weight-bold); text-transform: uppercase; }
+  .fingerprints span { color: var(--text-muted); font-size: var(--font-size-xs); font-weight: var(--font-weight-medium); }
   code { overflow-wrap: anywhere; }
   @media (max-width: 640px) { .profile-row, .document-search, .coverage-list div { align-items: stretch; flex-direction: column; } }
 </style>

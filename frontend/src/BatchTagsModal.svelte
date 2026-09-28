@@ -157,5 +157,5 @@
   .batch-tags { display: grid; gap: var(--space-4); }
   .batch-tags p { margin: 0; }
   .actions, .loading { display: flex; align-items: center; gap: var(--space-3); flex-wrap: wrap; }
-  .hint { color: var(--text-muted); font-size: var(--text-sm); }
+  .hint { color: var(--text-muted); font-size: var(--font-size-sm); }
 </style>

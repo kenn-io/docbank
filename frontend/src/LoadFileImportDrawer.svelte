@@ -80,7 +80,7 @@
 </script>
 
 <DetailDrawer width="min(720px, 100vw)" ariaLabel="Import load-file package" {onclose}>
-  {#snippet header()}<div class="drawer-heading"><div><span>LOAD-FILE IMPORT</span><strong>Import reviewed package</strong><small>{destination}</small></div><IconButton size="sm" ariaLabel="Close load-file import" onclick={onclose}><XIcon size="14" /></IconButton></div>{/snippet}
+  {#snippet header()}<div class="drawer-heading"><div><span>Load-file import</span><strong>Import reviewed package</strong><small>{destination}</small></div><IconButton size="sm" ariaLabel="Close load-file import" onclick={onclose}><XIcon size="14" /></IconButton></div>{/snippet}
   <div class="content">
     <p>Upload a bounded ZIP, review its records, pages, and diagnostics, then start a resumable import.</p>
     <label class="file-label">Choose load-file ZIP<input type="file" accept=".zip,application/zip" aria-label="Choose load-file ZIP" disabled={busy} onchange={choose} /></label>
@@ -90,7 +90,7 @@
     {#if error}<p role="alert" class="error">{error}</p>{/if}
     {#if preview}
       {@const currentPreview = preview}
-      <Card title="Package preview" eyebrow="SOURCE VERIFIED" padding="md">
+      <Card title="Package preview" eyebrow="Source verified" padding="md">
         {#snippet actions()}<Chip size="xs" tone={currentPreview.blocking?"danger":"success"}>{currentPreview.blocking?"Blocked":"Ready"}</Chip>{/snippet}
         <div class="counts"><div><strong>{currentPreview.records}</strong><span>Records</span></div><div><strong>{currentPreview.pages}</strong><span>Pages</span></div><div><strong>{currentPreview.diagnostic_count}</strong><span>Diagnostics</span></div></div>
         {#each currentPreview.diagnostics as diagnostic}<p class:diagnostic-error={diagnostic.severity==="blocking"}><strong>{diagnostic.code}</strong> {diagnostic.detail}</p>{/each}
@@ -99,10 +99,10 @@
         <Button tone="success" disabled={busy||currentPreview.blocking||!name} onclick={()=>void start()}>Import package</Button>
       </Card>
     {/if}
-    {#if job}{@const currentJob = job}<Card title={currentJob.state==="complete"?"Import complete":"Package import"} eyebrow="DURABLE IMPORT REPORT" padding="md">{#snippet actions()}<Chip size="xs" tone={currentJob.state==="complete"?"success":currentJob.state==="failed"?"danger":"info"}>{currentJob.state}</Chip>{/snippet}<div class="counts"><div><strong>{currentJob.committed}</strong><span>Imported</span></div><div><strong>{currentJob.gap_count}</strong><span>Gaps</span></div><div><strong>{currentJob.total}</strong><span>Total</span></div></div><small>Operation {currentJob.operation_id}</small></Card>{/if}
+    {#if job}{@const currentJob = job}<Card title={currentJob.state==="complete"?"Import complete":"Package import"} eyebrow="Durable import report" padding="md">{#snippet actions()}<Chip size="xs" tone={currentJob.state==="complete"?"success":currentJob.state==="failed"?"danger":"info"}>{currentJob.state}</Chip>{/snippet}<div class="counts"><div><strong>{currentJob.committed}</strong><span>Imported</span></div><div><strong>{currentJob.gap_count}</strong><span>Gaps</span></div><div><strong>{currentJob.total}</strong><span>Total</span></div></div><small>Operation {currentJob.operation_id}</small></Card>{/if}
   </div>
 </DetailDrawer>
 
 <style>
-  .drawer-heading,.file-name,.progress{display:flex;align-items:center;gap:12px}.drawer-heading{justify-content:space-between;width:100%}.drawer-heading>div{display:flex;flex-direction:column;min-width:0}.drawer-heading span,small{color:var(--text-muted);font-size:12px}.drawer-heading strong{font-size:var(--font-size-lg)}.content{display:grid;gap:16px;padding:24px;overflow:auto}.content p{margin:0;line-height:1.5}.file-label,.choices label,.content>label{display:grid;gap:8px;font-size:13px}.choices{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px}.file-name{padding:12px;border:1px solid var(--border);border-radius:8px}.file-name strong{flex:1}.counts{display:flex;gap:24px;margin:12px 0}.counts div{display:grid;gap:4px}.counts strong{font-size:26px}.counts span{color:var(--text-secondary);font-size:12px}.error,.diagnostic-error{color:var(--danger-text)}input{padding:9px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text-primary)}
+  .drawer-heading,.file-name,.progress{display:flex;align-items:center;gap:12px}.drawer-heading{justify-content:space-between;width:100%}.drawer-heading>div{display:flex;flex-direction:column;min-width:0}.drawer-heading span,small{color:var(--text-muted);font-size:var(--font-size-xs)}.drawer-heading strong{font-size:var(--font-size-lg)}.content{display:grid;gap:16px;padding:24px;overflow:auto}.content p{margin:0;line-height:1.5}.file-label,.choices label,.content>label{display:grid;gap:8px;font-size:var(--font-size-sm)}.choices{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px}.file-name{padding:12px;border:1px solid var(--border-default);border-radius:8px}.file-name strong{flex:1}.counts{display:flex;gap:24px;margin:12px 0}.counts div{display:grid;gap:4px}.counts strong{font-size:var(--font-size-2xl)}.counts span{color:var(--text-secondary);font-size:var(--font-size-xs)}.error,.diagnostic-error{color:var(--accent-red)}input{padding:9px;border:1px solid var(--border-default);border-radius:6px;background:var(--bg-surface);color:var(--text-primary)}
 </style>

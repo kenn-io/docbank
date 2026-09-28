@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { ColorLabel, type ColorLabelSize } from "@kenn-io/kit-ui";
+  import type { ColorLabelSize } from "@kenn-io/kit-ui";
   import type { Tag } from "./generated/docbank.js";
   import { presentTag } from "./tagPresentation.js";
 
@@ -17,15 +17,12 @@
 </script>
 
 <span
-  class="tag-label"
+  class="tag-label tag-label--{size}"
   title={title ?? tag.name}
 >
   <span class="tag-label__visual" aria-hidden="true">
-    <ColorLabel
-      name={presented.label}
-      color={presented.color}
-      {size}
-    />
+    <span class="tag-label__dot" style:background={presented.color}></span><span
+      class="tag-label__name">{presented.label}</span>
   </span>
   <span class="kit-sr-only">{tag.name}</span>
 </span>
@@ -39,7 +36,33 @@
 
   .tag-label__visual {
     display: inline-flex;
+    align-items: center;
+    gap: var(--space-3);
     min-width: 0;
     max-width: 100%;
+    padding: 2px var(--space-4) 2px var(--space-3);
+    border: 1px solid var(--border-default);
+    border-radius: 999px;
+    background: var(--bg-surface);
+    color: var(--text-primary);
+    font-size: var(--font-size-sm);
+    line-height: 1.3;
+  }
+
+  .tag-label--sm .tag-label__visual {
+    font-size: var(--font-size-xs);
+  }
+
+  .tag-label__dot {
+    flex: 0 0 auto;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+  }
+
+  .tag-label__name {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 </style>

@@ -365,10 +365,8 @@
     padding: 6px 8px 3px;
     color: var(--text-muted);
     font-size: var(--font-size-2xs);
-    font-weight: var(--font-weight-bold);
-    letter-spacing: 0.05em;
+    font-weight: var(--font-weight-medium);
     overflow-wrap: anywhere;
-    text-transform: uppercase;
   }
 
   .tag-picker__option {

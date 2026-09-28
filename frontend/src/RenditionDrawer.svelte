@@ -56,7 +56,7 @@
   {#snippet header()}
     <div class="drawer-heading">
       <div>
-        <span>SANITIZED MARKDOWN</span>
+        <span>Sanitized markdown</span>
         <strong>{path}</strong>
         <small>Verified retained bytes · active attachment {attachmentID.slice(0, 12)}…</small>
       </div>
@@ -83,16 +83,16 @@
     {:else if rendition}
       {#if error}<p class="error" role="alert">{error}</p>{/if}
       <div class="identity-grid">
-        <Card level="default" padding="sm" eyebrow="COMPLETENESS" title={titleCase(rendition.completeness)}>
+        <Card level="default" padding="sm" eyebrow="Completeness" title={titleCase(rendition.completeness)}>
           {#snippet actions()}<Chip size="xs" tone={rendition?.completeness === "complete" ? "success" : "warning"}>{titleCase(rendition?.completeness ?? "")}</Chip>{/snippet}
           <p>The YAML identity envelope was verified and is hidden from document prose.</p>
         </Card>
-        <Card level="default" padding="sm" eyebrow="BUILD IDENTITY" title="Immutable rendition build">
+        <Card level="default" padding="sm" eyebrow="Build identity" title="Immutable rendition build">
           {#snippet actions()}<FileTextIcon size="18" aria-hidden="true" />{/snippet}
           <code>{rendition.buildID}</code>
           <small>Source version {rendition.contentVersionID}</small>
         </Card>
-        <Card level="default" padding="sm" eyebrow="SOURCE & PROFILE" title={`${rendition.source.format} · ${rendition.source.mediaType}`}>
+        <Card level="default" padding="sm" eyebrow="Source & profile" title={`${rendition.source.format} · ${rendition.source.mediaType}`}>
           <code>{rendition.profileFingerprint}</code>
           <small>Source SHA-256 {rendition.source.sha256}</small>
         </Card>
@@ -127,7 +127,7 @@
 <style>
   .drawer-heading { display: flex; align-items: center; justify-content: space-between; gap: var(--space-4); width: 100%; }
   .drawer-heading > div:first-child { display: grid; gap: var(--space-1); min-width: 0; }
-  .drawer-heading span { color: var(--text-muted); font-size: var(--font-size-xs); font-weight: var(--font-weight-bold); letter-spacing: .04em; }
+  .drawer-heading span { color: var(--text-muted); font-size: var(--font-size-xs); font-weight: var(--font-weight-medium); }
   .drawer-heading strong { overflow: hidden; color: var(--text-primary); font-size: var(--font-size-lg); text-overflow: ellipsis; white-space: nowrap; }
   .drawer-heading small, .identity-grid small { color: var(--text-muted); font-size: var(--font-size-xs); }
   .drawer-actions { display: flex; gap: var(--space-2); }
@@ -139,10 +139,10 @@
   .identity-grid p, .identity-grid code { margin: 0; overflow-wrap: anywhere; color: var(--text-secondary); font-size: var(--font-size-sm); }
   .identity-grid :global(.kit-card-content) { display: grid; gap: var(--space-2); }
   .warnings { display: grid; gap: var(--space-1); padding: var(--space-3); border: 1px solid var(--accent-amber); border-radius: var(--radius-md); color: var(--text-secondary); }
-  .navigation { display: grid; gap: var(--space-2); padding: var(--space-3); border: 1px solid var(--border-subtle); border-radius: var(--radius-md); }
+  .navigation { display: grid; gap: var(--space-2); padding: var(--space-3); border: 1px solid var(--border-muted); border-radius: var(--radius-md); }
   .navigation > div:first-child, .navigation-entry { display: flex; justify-content: space-between; gap: var(--space-3); }
-  .navigation-entry { padding-top: var(--space-2); border-top: 1px solid var(--border-subtle); color: var(--text-secondary); }
-  .rendition-document { min-height: 320px; padding: clamp(1rem, 4vw, 3rem); border: 1px solid var(--border-subtle); border-radius: var(--radius-lg); background: var(--surface-raised); }
-  .rendition-body { margin: 0; overflow-wrap: anywhere; white-space: pre-wrap; color: var(--text-primary); font-family: var(--font-family-sans); font-size: var(--font-size-md); line-height: 1.65; }
+  .navigation-entry { padding-top: var(--space-2); border-top: 1px solid var(--border-muted); color: var(--text-secondary); }
+  .rendition-document { min-height: 320px; padding: clamp(1rem, 4vw, 3rem); border: 1px solid var(--border-muted); border-radius: var(--radius-lg); background: var(--bg-surface); }
+  .rendition-body { margin: 0; overflow-wrap: anywhere; white-space: pre-wrap; color: var(--text-primary); font-family: var(--font-sans); font-size: var(--font-size-md); line-height: 1.65; }
   @media (max-width: 640px) { .identity-grid { grid-template-columns: 1fr; } }
 </style>

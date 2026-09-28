@@ -90,7 +90,7 @@
   {#snippet header()}
     <div class="drawer-heading">
       <div>
-        <span>DOCUMENT PROVENANCE</span>
+        <span>Document provenance</span>
         <strong>{authorityLabel}</strong>
         <code>{authorityCoordinate}</code>
       </div>
@@ -103,7 +103,7 @@
   <div class="provenance-shell">
     <section class="fact-list" aria-label="Immutable origin facts">
       <div class="section-heading">
-        <span>NEWEST INGEST FIRST</span>
+        <span>Newest ingest first</span>
         <strong>{page?.total ?? 0} origin fact{page?.total === 1 ? "" : "s"}</strong>
       </div>
 
@@ -239,8 +239,7 @@
   .section-heading span {
     color: var(--text-muted);
     font-size: var(--font-size-xs);
-    font-weight: var(--font-weight-bold);
-    letter-spacing: var(--letter-spacing-label, 0.04em);
+    font-weight: var(--font-weight-medium);
   }
 
   .drawer-heading strong {
@@ -347,8 +346,6 @@
     color: var(--text-muted);
     font-size: var(--font-size-xs);
     font-weight: var(--font-weight-semibold);
-    letter-spacing: 0.04em;
-    text-transform: uppercase;
   }
 
   dd {

@@ -188,7 +188,7 @@
     display: block;
     height: 100%;
     border-radius: inherit;
-    background: var(--accent);
+    background: var(--accent-blue);
     transition: width 100ms linear;
   }
 </style>

@@ -239,7 +239,7 @@
   {#snippet header()}
     <div class="drawer-heading">
       <div>
-        <span>VERIFIED IMPORT</span>
+        <span>Verified import</span>
         <strong>Upload documents</strong>
         <small>{directory.path ?? `Directory id:${directory.id}`}</small>
       </div>
@@ -251,7 +251,7 @@
 
   <div class="upload">
     <section class="destination" aria-label="Upload destination">
-      <div><span>DESTINATION</span><strong>{directory.path ?? "Moved directory"}</strong></div>
+      <div><span>Destination</span><strong>{directory.path ?? "Moved directory"}</strong></div>
       <Chip size="xs" tone="muted" uppercase={false}>id:{directory.id}</Chip>
     </section>
 
@@ -430,8 +430,7 @@
   .destination span {
     color: var(--text-muted);
     font-size: var(--font-size-xs);
-    font-weight: var(--font-weight-bold);
-    letter-spacing: var(--letter-spacing-label, 0.04em);
+    font-weight: var(--font-weight-medium);
   }
 
   .drawer-heading strong {
@@ -456,7 +455,7 @@
   .destination {
     gap: var(--space-3);
     padding: var(--space-4);
-    border: 1px solid var(--border-subtle);
+    border: 1px solid var(--border-muted);
     border-radius: var(--radius-md);
     background: var(--bg-inset);
   }
@@ -512,7 +511,7 @@
   .queue li {
     display: grid;
     padding: var(--space-3);
-    border: 1px solid var(--border-subtle);
+    border: 1px solid var(--border-default);
     border-radius: var(--radius-md);
     background: var(--bg-surface);
     gap: var(--space-2);
@@ -553,7 +552,7 @@
     display: block;
     height: 100%;
     border-radius: inherit;
-    background: var(--accent);
+    background: var(--accent-blue);
     transition: width 100ms linear;
   }
 
@@ -566,7 +565,7 @@
   }
 
   .item-error {
-    color: var(--danger-text);
+    color: var(--accent-red);
   }
 
   .receipt code {
@@ -576,10 +575,10 @@
   .outcome {
     align-items: flex-start;
     padding: var(--space-3);
-    border: 1px solid var(--success-border);
+    border: 1px solid color-mix(in srgb, var(--accent-green) 35%, var(--border-default));
     border-radius: var(--radius-md);
-    background: var(--success-bg);
-    color: var(--success-text);
+    background: color-mix(in srgb, var(--accent-green) 8%, var(--bg-surface));
+    color: color-mix(in srgb, var(--accent-green) 72%, var(--text-primary));
     font-size: var(--font-size-sm);
     gap: var(--space-2);
   }

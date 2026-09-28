@@ -7,6 +7,15 @@
   import FileIcon from "@lucide/svelte/icons/file";
   import FolderIcon from "@lucide/svelte/icons/folder";
   import FoldersIcon from "@lucide/svelte/icons/folders";
+  import ChevronRightIcon from "@lucide/svelte/icons/chevron-right";
+  import DownloadIcon from "@lucide/svelte/icons/download";
+  import FileSearchIcon from "@lucide/svelte/icons/file-search";
+  import HouseIcon from "@lucide/svelte/icons/house";
+  import LayersIcon from "@lucide/svelte/icons/layers";
+  import LibraryIcon from "@lucide/svelte/icons/library";
+  import MenuIcon from "@lucide/svelte/icons/menu";
+  import SlidersHorizontalIcon from "@lucide/svelte/icons/sliders-horizontal";
+  import StampIcon from "@lucide/svelte/icons/stamp";
   import HardDriveIcon from "@lucide/svelte/icons/hard-drive";
   import LogOutIcon from "@lucide/svelte/icons/log-out";
   import MapPinIcon from "@lucide/svelte/icons/map-pin";
@@ -51,6 +60,7 @@
   import type { ExportInput } from "./exportState.js";
   import CollectionsDrawer from "./CollectionsDrawer.svelte";
   import FacetSidebar from "./FacetSidebar.svelte";
+  import FileTypeIcon, { fileTypeLabel } from "./FileTypeIcon.svelte";
   import JobsDrawer from "./JobsDrawer.svelte";
   import ManageTagsModal from "./ManageTagsModal.svelte";
   import BatchTagsModal from "./BatchTagsModal.svelte";
@@ -1789,6 +1799,40 @@
     return () => { if (activePanel === panel) activePanel = null; };
   }
 
+  let navOpen = $state(false);
+  const breadcrumbs = $derived.by(() => {
+    const parts = (directory?.path ?? "/").split("/").filter(Boolean);
+    return [
+      { name: "All files", path: "/" },
+      ...parts.map((name, index) => ({ name, path: `/${parts.slice(0, index + 1).join("/")}` })),
+    ];
+  });
+
+  async function openPath(path: string): Promise<void> {
+    const request = ++generation;
+    const session = webSession;
+    try {
+      const node = await generated.resolvePath({ path }, { session });
+      if (request !== generation || session !== webSession) return;
+      const load = loadDirectory(node.id, true);
+      // loadDirectory claims the next generation before its first await.
+      const loadRequest = generation;
+      await load;
+      if (loadRequest !== generation || directory?.id !== node.id) return;
+      // Clear only after loadDirectory saved the previous view for Back.
+      searchQuery = "";
+      tagFilterID = "";
+    } catch (cause) {
+      if (request !== generation || session !== webSession) return;
+      handleFailure(cause);
+    }
+  }
+
+  function openPanel(panel: Panel): void {
+    navOpen = false;
+    activePanel = panel;
+  }
+
   function openSavedQueries(): void {
     queryEditorInitial = currentQueryDraft();
     activePanel = { kind: "savedQueries" };
@@ -1812,7 +1856,7 @@
 
 {#if !webSession}
   <main class="unlock-shell">
-    <Card level="raised" title="Open your Docbank" eyebrow="LOCAL VAULT">
+    <Card level="raised" title="Open your Docbank">
       <div class="unlock-copy">
         <p>
           Run <code>docbank web</code> to create a new scoped browser session.
@@ -1825,15 +1869,69 @@
   </main>
 {:else}
   <div class="app-shell">
+    <nav class="app-nav" class:open={navOpen} aria-label="Docbank navigation">
+      <div class="brand">
+        <span class="brand-mark"><LibraryIcon size="15" aria-hidden="true" /></span>
+        Docbank
+      </div>
+      <div class="nav-group">
+        <button type="button" class="nav-item"
+          aria-current={!snapshotActive && !activeQuery && !tagBrowse ? "page" : undefined}
+          onclick={() => { navOpen = false; void openPath("/"); }}>
+          <HouseIcon size="16" aria-hidden="true" />All files
+        </button>
+        <button type="button" class="nav-item" aria-label="Saved queries and highlights"
+          onclick={() => { navOpen = false; openSavedQueries(); }}>
+          <BookmarkIcon size="16" aria-hidden="true" />Saved queries
+        </button>
+        <button type="button" class="nav-item" aria-label="Import collections" onclick={() => openPanel({ kind: "collections" })}>
+          <FoldersIcon size="16" aria-hidden="true" />Collections
+        </button>
+        <button type="button" class="nav-item" aria-label="Recoverable trash" onclick={() => openPanel({ kind: "trash" })}>
+          <Trash2Icon size="16" aria-hidden="true" />Trash
+        </button>
+      </div>
+      <div class="nav-group">
+        <h2>Review and export</h2>
+        <button type="button" class="nav-item" onclick={() => openPanel({ kind: "termReports" })}>
+          <FileSearchIcon size="16" aria-hidden="true" />Search exports
+        </button>
+        <button type="button" class="nav-item" onclick={() => openPanel({ kind: "bates" })}>
+          <StampIcon size="16" aria-hidden="true" />Bates export
+        </button>
+        <button type="button" class="nav-item" disabled={snapshotActive && snapshot.state.status !== "ready"}
+          onclick={() => { navOpen = false; snapshot.actionError = ""; snapshot.actionsOpen = true; }}>
+          <LayersIcon size="16" aria-hidden="true" />Snapshot actions
+        </button>
+      </div>
+      <div class="nav-group">
+        <h2>Vault</h2>
+        <button type="button" class="nav-item" onclick={() => openPanel({ kind: "backups" })}>
+          <ArchiveIcon size="16" aria-hidden="true" />Backup snapshots
+        </button>
+        <button type="button" class="nav-item" aria-label="Storage status" onclick={() => openPanel({ kind: "storage" })}>
+          <HardDriveIcon size="16" aria-hidden="true" />Storage
+        </button>
+        <button type="button" class="nav-item" onclick={() => openPanel({ kind: "jobs" })}>
+          <ActivityIcon size="16" aria-hidden="true" />Background jobs
+        </button>
+        <button type="button" class="nav-item" aria-label="Verify permanent audit evidence" onclick={() => openPanel({ kind: "auditEvidence" })}>
+          <ShieldCheckIcon size="16" aria-hidden="true" />Audit evidence
+        </button>
+      </div>
+    </nav>
+    {#if navOpen}
+      <button type="button" class="nav-scrim" aria-label="Close navigation" onclick={() => (navOpen = false)}></button>
+    {/if}
+
+    <div class="app-main">
     <TopBar class="app-top-bar">
       {#snippet left()}
-        <div class="brand">
-          <span class="brand-mark">D</span>
-          <div>
-            <strong>Docbank</strong>
-            <span>documents for you and your agents</span>
-          </div>
-        </div>
+        <span class="nav-toggle">
+          <IconButton ariaLabel="Open navigation" ariaExpanded={navOpen} onclick={() => (navOpen = !navOpen)}>
+            <MenuIcon size="18" aria-hidden="true" />
+          </IconButton>
+        </span>
       {/snippet}
       {#snippet search()}
         <div class="search-controls">
@@ -1865,84 +1963,29 @@
               </label>
             {/if}
           {/if}
+          <Button size="sm" onclick={() => openQueryEditor()}>
+            <SlidersHorizontalIcon size="14" aria-hidden="true" />Edit query
+          </Button>
         </div>
       {/snippet}
       {#snippet right()}
-        <Button size="sm" disabled={!exportHasJob && (snapshotActive ? (snapshotPage?.total ?? 0) === 0 : visibleDocumentCount === 0)} onclick={() => openExport()}>Export</Button>
-        <Button size="sm" onclick={() => activePanel = { kind: "termReports" }}>Search exports</Button>
-        <Button size="sm" onclick={() => activePanel = { kind: "bates" }}>Bates export</Button>
-        <Button size="sm" onclick={() => openQueryEditor()}>Edit query</Button>
-        <Button size="sm" disabled={snapshotActive && snapshot.state.status !== "ready"}
-          onclick={() => { snapshot.actionError = ""; snapshot.actionsOpen = true; }}>Snapshot actions</Button>
-        <IconButton size="sm" ariaLabel="Saved queries and highlights" onclick={openSavedQueries}>
-          <BookmarkIcon size="14" aria-hidden="true" />
-        </IconButton>
-        <IconButton
-          size="sm"
-          ariaLabel="Import collections"
-          onclick={() => {
-            activePanel = { kind: "collections" };
-          }}
-        >
-          <FoldersIcon size="14" aria-hidden="true" />
-        </IconButton>
-        <IconButton
-          size="sm"
-          ariaLabel="Recoverable trash"
-          onclick={() => {
-            activePanel = { kind: "trash" };
-          }}
-        >
-          <Trash2Icon size="14" aria-hidden="true" />
-        </IconButton>
-        <IconButton
-          size="sm"
-          ariaLabel="Backup snapshots"
-          onclick={() => {
-            activePanel = { kind: "backups" };
-          }}
-        >
-          <ArchiveIcon size="14" aria-hidden="true" />
-        </IconButton>
-        <IconButton
-          size="sm"
-          ariaLabel="Storage status"
-          onclick={() => {
-            activePanel = { kind: "storage" };
-          }}
-        >
-          <HardDriveIcon size="14" aria-hidden="true" />
-        </IconButton>
-        <IconButton
-          size="sm"
-          ariaLabel="Background jobs"
-          onclick={() => {
-            activePanel = { kind: "jobs" };
-          }}
-        >
-          <ActivityIcon size="14" aria-hidden="true" />
-        </IconButton>
-        <IconButton
-          size="sm"
-          ariaLabel="Verify permanent audit evidence"
-          onclick={() => {
-            activePanel = { kind: "auditEvidence" };
-          }}
-        >
-          <ShieldCheckIcon size="14" aria-hidden="true" />
-        </IconButton>
-        <IconButton
-          size="sm"
-          ariaLabel="Keyboard shortcuts and tag hotkeys"
-          title="Keyboard shortcuts and tag hotkeys (?)"
-          onclick={openShortcutHelp}
-        >
-          <KeyboardIcon size="14" aria-hidden="true" />
-        </IconButton>
-        <ThemeToggle size="sm" />
-        <IconButton size="sm" ariaLabel="Lock web session" onclick={() => void lock()}>
-          <LogOutIcon size="14" aria-hidden="true" />
-        </IconButton>
+        <div class="top-actions">
+          <Button size="sm" disabled={!exportHasJob && (snapshotActive ? (snapshotPage?.total ?? 0) === 0 : visibleDocumentCount === 0)} onclick={() => openExport()}>
+            <DownloadIcon size="14" aria-hidden="true" />Export
+          </Button>
+          <span class="divider" aria-hidden="true"></span>
+          <IconButton
+            ariaLabel="Keyboard shortcuts and tag hotkeys"
+            title="Keyboard shortcuts and tag hotkeys (?)"
+            onclick={openShortcutHelp}
+          >
+            <KeyboardIcon size="16" aria-hidden="true" />
+          </IconButton>
+          <ThemeToggle />
+          <IconButton ariaLabel="Lock web session" onclick={() => void lock()}>
+            <LogOutIcon size="16" aria-hidden="true" />
+          </IconButton>
+        </div>
       {/snippet}
     </TopBar>
 
@@ -1961,7 +2004,7 @@
     {/if}
 
     <main class="workspace">
-      <Card class="browser" level="raised" padding="none" ariaLabel="Vault browser">
+      <section class="browser" aria-label="Vault browser">
         {#if snapshotActive}
           <div class="browser-toolbar">
             <div class="location">
@@ -1991,7 +2034,7 @@
                     {#snippet icon()}<SearchIcon size="22" />{/snippet}
                   </EmptyState>
                 {:else}
-                  <Table class="snapshot-table" ariaLabel="Snapshot documents">
+                  <Table class="snapshot-table" ariaLabel="Snapshot documents" zebra={false}>
                     {#snippet header()}
                       <th class="selection-column" scope="col">
                         <Checkbox checked={allVisibleSnapshotRowsSelected}
@@ -2020,8 +2063,8 @@
                             <Checkbox checked={snapshot.selection.has(row.node_id)} ariaLabel={`Select ${row.path}`}
                               onchange={(checked) => snapshot.toggleSelection(row, checked)} />
                           </td>
-                          <td><span class="document-name"><FileIcon size="15" aria-hidden="true" /><span>{row.path}</span></span></td>
-                          <td>{row.mime_type || "File"}</td>
+                          <td><span class="document-name"><FileTypeIcon kind="file" mime={row.mime_type} /><span>{row.path}</span></span></td>
+                          <td class="type-cell" title={row.mime_type || undefined}>{fileTypeLabel("file", row.mime_type)}</td>
                           <td class="numeric">{formatBytes(row.size)}</td>
                           <td>{formatDate(row.modified_at)}</td>
                         </tr>
@@ -2053,19 +2096,43 @@
               <ArrowLeftIcon size="14" aria-hidden="true" />
             </IconButton>
             <div>
-              <span>
+              <span class="location-kind" class:kit-sr-only={!activeQuery && !tagBrowse}>
                 {activeQuery ? "Search results" : tagBrowse ? "Documents tagged" : "Current folder"}
               </span>
-              <strong>
-                {activeQuery
-                  ? `“${activeQuery}”${activeTag ? ` · ${activeTag.name}` : ""}`
-                  : tagBrowse
-                    ? activeTag?.name ?? activeTagID
-                  : directory?.path ?? "/"}
-              </strong>
+              {#if activeQuery || tagBrowse}
+                <strong>
+                  {activeQuery
+                    ? `“${activeQuery}”${activeTag ? ` · ${activeTag.name}` : ""}`
+                    : activeTag?.name ?? activeTagID}
+                </strong>
+              {:else}
+                <nav class="breadcrumbs" aria-label="Folder path">
+                  <ol>
+                    {#each breadcrumbs as crumb, index (crumb.path)}
+                      <li>
+                        {#if index > 0}<ChevronRightIcon size="16" aria-hidden="true" />{/if}
+                        {#if index === breadcrumbs.length - 1}
+                          <span aria-current="page">{crumb.name}</span>
+                        {:else}
+                          <button type="button" onclick={() => void openPath(crumb.path)}>{crumb.name}</button>
+                        {/if}
+                      </li>
+                    {/each}
+                  </ol>
+                </nav>
+              {/if}
             </div>
           </div>
           <div class="toolbar-actions">
+            {#if tagBrowse}
+              <span>
+                {rows.length} live shown
+                {#if taggedTrashed > 0} · {taggedTrashed} trashed omitted{/if}
+                {#if truncated} · first {taggedInspected} of {taggedTotal} assignments{/if}
+              </span>
+            {:else}
+              <span>{rows.length}{truncated ? "+" : ""} item{rows.length === 1 ? "" : "s"}</span>
+            {/if}
             <TagPicker
               value={tagFilterID}
               tags={tagCatalog}
@@ -2087,36 +2154,6 @@
               }}
             >
               <TagsIcon size="14" aria-hidden="true" />
-            </IconButton>
-            {#if tagBrowse}
-              <span>
-                {rows.length} live shown
-                {#if taggedTrashed > 0} · {taggedTrashed} trashed omitted{/if}
-                {#if truncated} · first {taggedInspected} of {taggedTotal} assignments{/if}
-              </span>
-            {:else}
-              <span>{rows.length}{truncated ? "+" : ""} item{rows.length === 1 ? "" : "s"}</span>
-            {/if}
-            <IconButton
-              size="sm"
-              ariaLabel="Upload files to current folder"
-              title={activeQuery || tagBrowse
-                ? "Return to a folder before uploading"
-                : uploadChannelError
-                  ? uploadChannelError
-                  : !uploadChannel
-                    ? "Establishing the verified upload channel"
-                : directory?.path
-                  ? `Upload files to ${directory.path}`
-                  : "Upload files"}
-              disabled={!directory || loading || Boolean(activeQuery) || tagBrowse ||
-                !uploadChannel || Boolean(uploadChannelError)}
-              onclick={() => {
-                if (!directory || activeQuery || tagBrowse) return;
-                activePanel = { kind: "upload", target: directory };
-              }}
-            >
-              <UploadIcon size="14" aria-hidden="true" />
             </IconButton>
             <IconButton
               size="sm"
@@ -2141,6 +2178,30 @@
                 activePanel = { kind: "loadFile", target: directory };
               }}
             >Import load files</Button>
+            <Button
+              size="sm"
+              tone="info"
+              surface="solid"
+              ariaLabel="Upload files to current folder"
+              title={activeQuery || tagBrowse
+                ? "Return to a folder before uploading"
+                : uploadChannelError
+                  ? uploadChannelError
+                  : !uploadChannel
+                    ? "Establishing the verified upload channel"
+                : directory?.path
+                  ? `Upload files to ${directory.path}`
+                  : "Upload files"}
+              disabled={!directory || loading || Boolean(activeQuery) || tagBrowse ||
+                !uploadChannel || Boolean(uploadChannelError)}
+              onclick={() => {
+                if (!directory || activeQuery || tagBrowse) return;
+                activePanel = { kind: "upload", target: directory };
+              }}
+            >
+              <UploadIcon size="14" aria-hidden="true" />
+              Upload
+            </Button>
           </div>
         </div>
 
@@ -2199,7 +2260,7 @@
             {/snippet}
           </EmptyState>
         {:else}
-          <Table ariaLabel="Documents">
+          <Table ariaLabel="Documents" zebra={false}>
             {#snippet header()}
               <th class="selection-column" scope="col">
                 <Checkbox
@@ -2270,20 +2331,16 @@
                   </td>
                   <td>
                     <span class="document-name">
-                      {#if row.node.kind === "dir"}
-                        <FolderIcon size="15" aria-hidden="true" />
-                      {:else}
-                        <FileIcon size="15" aria-hidden="true" />
-                      {/if}
+                      <FileTypeIcon kind={row.node.kind} mime={row.node.mime_type} />
                       <span>{activeQuery || tagBrowse ? row.path : row.node.name}</span>
                     </span>
                     {#if row.naturalMode && row.node.kind === "file"}
                       <span class="search-excerpt">{row.excerpt || directFileEvidenceNote()}</span>
                     {/if}
                   </td>
-                  <td>{row.node.kind === "dir" ? "Folder" : row.node.mime_type || "File"}</td>
+                  <td class="type-cell" title={row.node.mime_type || undefined}>{fileTypeLabel(row.node.kind, row.node.mime_type)}</td>
                   <td class="numeric">{row.node.kind === "dir" ? "—" : formatBytes(row.node.size)}</td>
-                  <td>{formatDate(row.node.modified_at)}</td>
+                  <td class="date-cell">{formatDate(row.node.modified_at)}</td>
                   {#if activeQuery}
                     <td>
                       <div class="search-evidence">
@@ -2307,15 +2364,16 @@
           </Table>
         {/if}
         {/if}
-      </Card>
+      </section>
 
       <aside class="detail" aria-label="Document authority">
         {#if selectedSnapshot}
-          <Card level="raised" padding="sm" ariaLabel={`Frozen snapshot authority for ${selectedSnapshot.name}`}>
+          <section class="inspector" aria-label={`Frozen snapshot authority for ${selectedSnapshot.name}`}>
             <div class="authority-content">
               <header class="authority-header">
-                <div><span>Original snapshot facts</span><Chip size="xs" tone="muted" uppercase={false}>id:{selectedSnapshot.node_id}</Chip></div>
+                <FileTypeIcon kind="file" mime={selectedSnapshot.mime_type} size={22} />
                 <h2>{selectedSnapshot.name}</h2>
+                <div class="authority-kind"><span>Original snapshot facts</span><code>id:{selectedSnapshot.node_id}</code></div>
               </header>
               <dl>
                 <div class="wide-fact"><dt>Path</dt><dd>{selectedSnapshot.path}</dd></div>
@@ -2374,11 +2432,11 @@
                     </ChipStack>
                   {:else}<p>No tags are currently assigned to this node.</p>{/if}
                   <div class="document-actions">
-                    <Button size="sm" surface="soft" onclick={() => (activePanel = { kind: "provenance" })}>
+                    <Button size="sm" onclick={() => (activePanel = { kind: "provenance" })}>
                       <MapPinIcon size="14" aria-hidden="true" /> Current provenance
                     </Button>
                     {#if membership?.protected}
-                      <Button size="sm" surface="soft" onclick={() => (activePanel = { kind: "history" })}>
+                      <Button size="sm" onclick={() => (activePanel = { kind: "history" })}>
                         <HistoryIcon size="14" aria-hidden="true" /> Current audit history
                       </Button>
                     {/if}
@@ -2408,20 +2466,20 @@
                 />
               {/if}
             </div>
-          </Card>
+          </section>
         {:else if !snapshotActive && selected}
-          <Card
-            level="raised"
-            padding="sm"
-            ariaLabel={`${selected.node.kind === "dir" ? "Folder" : "Document authority"} for ${basename(selected.path)}`}
+          <section
+            class="inspector"
+            aria-label={`${selected.node.kind === "dir" ? "Folder" : "Document authority"} for ${basename(selected.path)}`}
           >
             <div class="authority-content">
               <header class="authority-header">
-                <div>
-                  <span>{selected.node.kind === "dir" ? "Folder" : "Current live authority"}</span>
-                  <Chip size="xs" tone="muted" uppercase={false}>id:{selected.node.id}</Chip>
-                </div>
+                <FileTypeIcon kind={selected.node.kind} mime={selected.node.mime_type} size={22} />
                 <h2>{basename(selected.path)}</h2>
+                <div class="authority-kind">
+                  <span>{selected.node.kind === "dir" ? "Folder" : "Current live authority"}</span>
+                  <code>id:{selected.node.id}</code>
+                </div>
               </header>
               <dl>
                 <div class="wide-fact"><dt>Path</dt><dd>{selected.path}</dd></div>
@@ -2468,8 +2526,6 @@
                     {/if}
                     <Button
                       size="sm"
-                      tone="info"
-                      surface="soft"
                       disabled={loading || selectedTagsLoading || selectedTagsError !== "" || pendingTagHotkey !== "" || liveSelectionNeedsRefresh}
                       onclick={() => {
                         if (!loading && selected) manageTagsTarget = selected;
@@ -2505,8 +2561,6 @@
                 <div class="document-actions">
                   <Button
                     size="sm"
-                    tone="info"
-                    surface="soft"
                     disabled={liveSelectionNeedsRefresh}
                     onclick={() => {
                       activePanel = { kind: "versions" };
@@ -2517,7 +2571,6 @@
                   </Button>
                   <Button
                     size="sm"
-                    surface="soft"
                     onclick={() => {
                       activePanel = { kind: "provenance" };
                     }}
@@ -2527,8 +2580,6 @@
                   </Button>
                   <Button
                     size="sm"
-                    tone="info"
-                    surface="soft"
                     disabled={!selected.node.current_version_id || liveSelectionNeedsRefresh}
                     onclick={() => {
                       activePanel = { kind: "processing", target: selected, intent: null,
@@ -2541,7 +2592,6 @@
                   <Button
                     size="sm"
                     tone="danger"
-                    surface="soft"
                     disabled={liveSelectionNeedsRefresh}
                     onclick={() => {
                       activePanel = { kind: "trashNode", target: selected };
@@ -2591,8 +2641,6 @@
                   </p>
                   <Button
                     size="sm"
-                    tone="info"
-                    surface="soft"
                     onclick={() => {
                       activePanel = { kind: "history" };
                     }}
@@ -2615,7 +2663,6 @@
                   <Button
                     size="sm"
                     tone="danger"
-                    surface="soft"
                     onclick={() => {
                       activePanel = { kind: "trashNode", target: selected };
                     }}
@@ -2626,16 +2673,16 @@
                 </div>
               {/if}
             </div>
-          </Card>
+          </section>
         {:else}
-          <Card level="raised" title="Document authority">
+          <div class="inspector-empty">
             <EmptyState
               title="Select a document"
               description="Choose a row to inspect its stable identity, current version, and verified content hash."
             >
               {#snippet icon()}<FileIcon size="22" />{/snippet}
             </EmptyState>
-          </Card>
+          </div>
         {/if}
       </aside>
     </main>
@@ -2668,6 +2715,7 @@
         onexport={() => openExport(true)}
       />
     {/if}
+    </div>
     {#if shortcutHelpOpen}
       <ShortcutHelpModal
         vaultReady={vaultID !== ""}
@@ -2926,32 +2974,30 @@
 {/if}
 
 <style>
-  :global(.browser th.selection-column),
-  :global(.browser td.selection-column) {
-    width: 38px;
-    min-width: 38px;
-    padding: 6px 8px;
-    text-align: center;
+  :global(body .app-shell .browser th.selection-column),
+  :global(body .app-shell .browser td.selection-column) {
+    width: 44px;
+    min-width: 44px;
+    padding-right: 0;
+    text-align: left;
     cursor: default;
   }
 
-  :global(.browser th.selection-column) {
-    background: var(--bg-inset);
+  :global(body .app-shell .browser th.selection-column) {
     border-bottom: 1px solid var(--border-default);
   }
 
-  .shortcut-notice {
-    border-bottom: 1px solid var(--border-muted);
+  .shortcut-notice,
+  .search-note {
     background: var(--bg-inset);
   }
 
   .search-controls {
     display: flex;
-    flex-wrap: wrap;
     align-items: center;
-    gap: 8px;
+    gap: var(--space-4);
     min-width: 0;
-    width: min(760px, 100%);
+    width: min(820px, 100%);
   }
 
   .search-controls .search {
@@ -2959,45 +3005,14 @@
     flex: 1;
   }
 
-  @media (max-width: 900px) {
-    :global(.app-shell .app-top-bar) {
-      height: auto;
-      min-height: var(--header-height, 44px);
-      flex-wrap: wrap;
-      align-items: center;
-      padding-block: var(--space-2);
-    }
-
-    :global(.app-top-bar .kit-top-bar__right) {
-      flex-wrap: wrap;
-      justify-content: flex-end;
-      min-width: 0;
-      max-width: 100%;
-    }
-
-    :global(.app-top-bar .kit-top-bar__search) {
-      order: 3;
-      flex: 1 0 100%;
-      justify-content: stretch;
-      width: 100%;
-      margin: 0;
-      padding-bottom: var(--space-1);
-    }
+  .search-controls :global(.kit-select-dropdown) {
+    flex: 0 0 auto;
   }
 
   @media (max-width: 900px) {
     .search-controls {
+      flex-wrap: wrap;
       width: 100%;
-    }
-  }
-
-  @media (max-width: 640px) {
-    :global(.app-top-bar .kit-top-bar__right) {
-      flex: 1 0 100%;
-      order: 4;
-      justify-content: flex-start;
-      margin-left: 0;
-      padding-top: var(--space-1);
     }
 
     .search-controls .search {
@@ -3008,22 +3023,18 @@
   .rerank-control {
     display: inline-flex;
     align-items: center;
-    gap: 4px;
+    gap: var(--space-2);
     white-space: nowrap;
-    font-size: 12px;
-  }
-
-  .search-note {
-    border-bottom: 1px solid var(--border-muted);
-    background: var(--bg-inset);
+    font-size: var(--font-size-sm);
   }
 
   .search-excerpt {
     display: block;
-    max-width: 52ch;
+    max-width: 60ch;
+    margin: var(--space-1) 0 0 calc(18px + var(--space-5));
     overflow: hidden;
     color: var(--text-muted);
-    font-size: 12px;
+    font-size: var(--font-size-sm);
     text-overflow: ellipsis;
     white-space: nowrap;
   }
@@ -3031,6 +3042,6 @@
   .search-evidence {
     display: flex;
     flex-wrap: wrap;
-    gap: 4px;
+    gap: var(--space-2);
   }
 </style>

@@ -274,7 +274,7 @@
   .recovery p, .recovery h3 { margin: 0; }
   .heading, .actions, .confirmation { display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-3); }
   .heading span { color: var(--text-muted); font-size: var(--font-size-sm); }
-  .warning { padding: var(--space-3); border: 1px solid var(--border-warning); border-radius: var(--radius-md); background: var(--bg-warning-soft); }
+  .warning { padding: var(--space-3); border: 1px solid color-mix(in srgb, var(--accent-amber) 35%, var(--border-default)); border-radius: var(--radius-md); background: color-mix(in srgb, var(--accent-amber) 8%, var(--bg-surface)); }
   dl { display: grid; gap: var(--space-2); margin: 0; }
   dl div { display: grid; grid-template-columns: 90px minmax(0, 1fr); gap: var(--space-3); }
   dt { color: var(--text-muted); }

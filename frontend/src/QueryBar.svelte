@@ -177,13 +177,13 @@
 </section>
 
 <style>
-  .query-bar { display: grid; gap: var(--space-3); padding: var(--space-4); border-bottom: 1px solid var(--border-default); background: var(--bg-raised); }
+  .query-bar { display: grid; gap: var(--space-3); padding: var(--space-4); border-bottom: 1px solid var(--border-default); background: var(--bg-surface); }
   .query-bar p, h2 { margin: 0; }
   h2 { font-size: var(--font-size-md); }
   .heading, .controls, .summaries, .checking { display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; }
   .heading { justify-content: space-between; }
   .controls > span { color: var(--text-muted); font-size: var(--font-size-sm); flex: 1; min-width: 200px; }
-  textarea, input, select { box-sizing: border-box; width: 100%; padding: var(--space-2); border: 1px solid var(--border-default); border-radius: var(--radius-md); background: var(--bg-base); color: var(--text-primary); font-family: var(--font-mono); }
+  textarea, input, select { box-sizing: border-box; width: 100%; padding: var(--space-2); border: 1px solid var(--border-default); border-radius: var(--radius-md); background: var(--bg-surface); color: var(--text-primary); font-family: var(--font-mono); }
   textarea { resize: vertical; }
   label span { color: var(--text-muted); font-size: var(--font-size-xs); }
   .summaries { overflow-wrap: anywhere; }
