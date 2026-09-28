@@ -3,6 +3,7 @@ package store
 import (
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 	documentproduction "go.kenn.io/docbank/document/production"
@@ -52,6 +53,11 @@ func PublishedProductionSupplementHTTPFixture(t *testing.T) (*Store, string, pro
 	t.Helper()
 	f, parent := publishedRealRetentionFixture(t)
 	child := supplementChildFixture(t, f, parent)
+	// A reopened embedded vault starts its worker immediately. Keep this
+	// synthetic child queued until the supplement operation reserves its range.
+	_, err := f.db.ExecContext(t.Context(), `UPDATE production_jobs SET lease_expires_at=? WHERE job_id=?`,
+		time.Now().UTC().Add(time.Hour).Format(time.RFC3339Nano), child.ID)
+	require.NoError(t, err)
 	return f.Store, f.root, production.SupplementRequest{
 		OperationID: "78000000-0000-4000-8000-000000000019",
 		ParentJobID: parent.ID, JobID: child.ID,
