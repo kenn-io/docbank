@@ -271,7 +271,7 @@
   {#snippet header()}
     <div class="drawer-heading">
       <div>
-        <span>IMPORT RUNS</span>
+        <span>Import runs</span>
         <strong>Import collections</strong>
         <small>
           {total} collection{total === 1 ? "" : "s"}
@@ -314,7 +314,7 @@
       <section aria-labelledby="collections-heading">
         <div class="section-heading">
           <div>
-            <span>COLLECTIONS</span>
+            <span>Collections</span>
             <strong id="collections-heading">Import history</strong>
           </div>
           <small>{items.length} shown</small>
@@ -355,7 +355,7 @@
         <section class="label-editor" aria-labelledby="collection-label-heading">
           <div class="section-heading">
             <div>
-              <span>LABEL</span>
+              <span>Label</span>
               <strong id="collection-label-heading">Collection label</strong>
             </div>
             {#if observedLabel}<small>Revision {observedLabel.revision}</small>{/if}
@@ -401,7 +401,7 @@
         <section aria-labelledby="collection-members-heading">
           <div class="section-heading">
             <div>
-              <span>DIRECT MEMBERSHIP</span>
+              <span>Direct membership</span>
               <strong id="collection-members-heading">Documents in this collection</strong>
             </div>
             <small>{displayName(selected)}</small>
@@ -438,7 +438,7 @@
               {#each members as member (member.id)}
                 <Card level="inset" padding="sm" title={member.name} meta={formatBytes(member.size)}>
                   <div class="member-row">
-                    <code>{member.path}</code>
+                    <span class="path">{member.path}</span>
                     <Button
                       size="sm"
                       tone="info"
@@ -480,8 +480,7 @@
   .section-heading span {
     color: var(--text-muted);
     font-size: var(--font-size-xs);
-    font-weight: var(--font-weight-bold);
-    letter-spacing: var(--letter-spacing-label, 0.04em);
+    font-weight: var(--font-weight-medium);
   }
 
   .drawer-heading strong {
@@ -548,7 +547,7 @@
   }
 
   .collection-facts p,
-  .member-row code {
+  .member-row .path {
     overflow-wrap: anywhere;
   }
 
@@ -574,10 +573,10 @@
     flex: 1 1 240px;
   }
 
-  .member-row code {
+  .member-row .path {
     min-width: 0;
     color: var(--text-secondary);
-    font-size: var(--font-size-xs);
+    font-size: var(--font-size-sm);
   }
 
   .loading {

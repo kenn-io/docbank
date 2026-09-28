@@ -274,7 +274,7 @@
 <DetailDrawer width="min(860px, 100vw)" ariaLabel="Bates export" onclose={onclose}>
   {#snippet header()}
     <div class="drawer-heading">
-      <div><span>BATES EXPORT</span><strong>Review, reserve, and publish</strong><small>Sealed selected pages · durable numbering ledger</small></div>
+      <div><span>Bates export</span><strong>Review, reserve, and publish</strong><small>Sealed selected pages · durable numbering ledger</small></div>
       <IconButton size="sm" ariaLabel="Close Bates export" onclick={onclose}><XIcon size="14" aria-hidden="true" /></IconButton>
     </div>
   {/snippet}
@@ -288,14 +288,14 @@
       <EmptyState title="No eligible page package" description="Import a reviewed package with a sealed selected PDF before creating a Bates export." />
     {:else if sources.length > 0}
       <section class="settings" aria-labelledby="bates-source-heading">
-        <div class="section-heading"><div><span>SOURCE</span><strong id="bates-source-heading">Sealed selected pages</strong></div><Chip size="xs" tone="neutral">{selectedSource?.page_count ?? 0} pages</Chip></div>
+        <div class="section-heading"><div><span>Source</span><strong id="bates-source-heading">Sealed selected pages</strong></div><Chip size="xs" tone="neutral">{selectedSource?.page_count ?? 0} pages</Chip></div>
         <SelectDropdown title="Bates source package" value={selectedSource?.package_id ?? ""} options={sourceOptions} disabled={locked} onchange={(value) => { sourceID = value; resetReview(); }} />
         <p>The reservation follows the package’s immutable selected-page order. Live document changes cannot alter it.</p>
         {#if sources.some((item) => !eligible(item))}<p class="muted">Packages over {maxBatesPages} pages cannot be stamped in one Bates export.</p>{/if}
       </section>
 
       <section class="settings" aria-labelledby="bates-namespace-heading">
-        <div class="section-heading"><div><span>NUMBERING</span><strong id="bates-namespace-heading">Namespace and stamp</strong></div></div>
+        <div class="section-heading"><div><span>Numbering</span><strong id="bates-namespace-heading">Namespace and stamp</strong></div></div>
         {#if namespaces.length > 0}
           <SelectDropdown title="Bates namespace" value={selectedNamespace?.namespace_id ?? ""} options={namespaceOptions} disabled={locked} onchange={(value) => { namespaceID = value; resetReview(); }} />
         {:else}<p>Create the first namespace. Prefix and suffix identities cannot later change padding.</p>{/if}
@@ -345,10 +345,10 @@
     {/if}
 
     {#if allocation}
-      <Card level="default" padding="sm" title="Range reserved" eyebrow="DURABLE LEDGER">
+      <Card level="default" padding="sm" title="Range reserved" eyebrow="Durable ledger">
         {#snippet actions()}<Chip size="xs" tone="success">reserved</Chip>{/snippet}
         <dl><div><dt>Labels</dt><dd>{allocation.labels[0]?.label}–{allocation.labels.at(-1)?.label}</dd></div><div><dt>Pages</dt><dd>{allocation.labels.length}</dd></div></dl>
-        <div class="identity"><span>RECIPE SHA-256</span><code>{allocation.recipe_sha256}</code><CopyButton text={allocation.recipe_sha256} ariaLabel="Copy Bates recipe hash" /></div>
+        <div class="identity"><span>Recipe SHA-256</span><code>{allocation.recipe_sha256}</code><CopyButton text={allocation.recipe_sha256} ariaLabel="Copy Bates recipe hash" /></div>
         {#if !activeExport}<Button tone="info" disabled={busy} onclick={() => void start()}>Start Bates export</Button>{/if}
       </Card>
     {/if}
@@ -357,7 +357,7 @@
     {#if viewedExport}{@render exportCard(viewedExport, "Earlier Bates export", "HISTORY", () => viewedExport = null)}{/if}
 
     <section class="history" aria-labelledby="bates-history-heading">
-      <div class="section-heading"><div><span>HISTORY</span><strong id="bates-history-heading">Recent Bates exports</strong></div></div>
+      <div class="section-heading"><div><span>History</span><strong id="bates-history-heading">Recent Bates exports</strong></div></div>
       {#if historyError}<p class="error" role="alert">Publication history is unavailable: {historyError}</p>
       {:else if history.length === 0}<p class="muted">No Bates exports have been published.</p>
       {:else}<fieldset class="history-list" disabled={busy}>{#each history as item (item.allocation_id)}<Card level="default" padding="sm" ariaLabel={`Open Bates export ${item.allocation_id}`} selected={viewedExport?.allocation_id === item.allocation_id} onclick={() => view(item)}><div class="history-row"><span>{formatDate(item.created_at)}</span><strong>{item.page_count} pages</strong><Chip size="xs" tone="success">{item.state}</Chip></div></Card>{/each}</fieldset>{/if}

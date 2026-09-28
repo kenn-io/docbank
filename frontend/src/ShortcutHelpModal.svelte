@@ -77,7 +77,7 @@
   <div class="shortcut-help">
     <section aria-labelledby="browsing-shortcuts-heading">
       <div class="section-heading">
-        <span>BROWSING</span>
+        <span>Browsing</span>
         <strong id="browsing-shortcuts-heading">Loaded-page shortcuts</strong>
       </div>
       <dl class="shortcut-list">
@@ -96,7 +96,7 @@
 
     <section aria-labelledby="tag-shortcuts-heading">
       <div class="section-heading">
-        <span>TAG HOTKEYS</span>
+        <span>Tag hotkeys</span>
         <strong id="tag-shortcuts-heading">Assign digits to vault tags</strong>
       </div>
       <p class="boundary">
@@ -155,7 +155,6 @@
     color: var(--text-muted);
     font-size: var(--font-size-xs);
     font-weight: var(--font-weight-semibold, 600);
-    letter-spacing: var(--letter-spacing-label, 0.08em);
   }
 
   .section-heading strong {

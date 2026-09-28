@@ -91,7 +91,7 @@
   {#snippet header()}
     <div class="drawer-heading">
       <div>
-        <span>RECOVERY POINTS</span>
+        <span>Recovery points</span>
         <strong>Backup snapshots</strong>
         <small>
           {#if report}
@@ -136,7 +136,7 @@
       {#if error}<p class="error" role="alert">{error}</p>{/if}
       <section class="repository" aria-label="Backup repository identity">
         <div>
-          <span>CONFIGURED REPOSITORY</span>
+          <span>Configured repository</span>
           <strong>{report.repository.path}</strong>
         </div>
         <div class="repository-id">
@@ -224,8 +224,7 @@
   .repository span {
     color: var(--text-muted);
     font-size: var(--font-size-xs);
-    font-weight: var(--font-weight-bold);
-    letter-spacing: var(--letter-spacing-label, 0.04em);
+    font-weight: var(--font-weight-medium);
   }
 
   .drawer-heading strong {
@@ -331,8 +330,6 @@
     color: var(--text-muted);
     font-size: var(--font-size-xs);
     font-weight: var(--font-weight-semibold);
-    letter-spacing: 0.04em;
-    text-transform: uppercase;
   }
 
   dd {

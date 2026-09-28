@@ -174,7 +174,7 @@
   .verified-preview { display: grid; gap: var(--space-3); padding-top: var(--space-3); border-top: 1px solid var(--border-default); }
   .tabs { display: flex; gap: var(--space-1); border-bottom: 1px solid var(--border-default); }
   .tabs button { padding: var(--space-2) var(--space-3); border: 0; border-bottom: 2px solid transparent; background: transparent; color: var(--text-muted); cursor: pointer; font: inherit; font-size: var(--font-size-sm); }
-  .tabs button[aria-selected="true"] { border-bottom-color: var(--color-info); color: var(--text-primary); }
+  .tabs button[aria-selected="true"] { border-bottom-color: var(--accent-blue); color: var(--text-primary); }
   .document-navigation { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); color: var(--text-muted); font-size: var(--font-size-xs); }
   .expired { margin: 0; color: var(--text-muted); font-size: var(--font-size-xs); }
   .related-context { flex-direction: column; align-items: stretch; overflow-wrap: anywhere; }

@@ -87,7 +87,7 @@
   {#snippet header()}
     <div class="drawer-heading">
       <div>
-        <span>DAEMON ACTIVITY</span>
+        <span>Daemon activity</span>
         <strong>Background jobs</strong>
         <small>{running} running · {items.length} total</small>
       </div>
@@ -129,7 +129,7 @@
           <Card
             level="default"
             padding="sm"
-            eyebrow="BACKGROUND JOB"
+            eyebrow="Background job"
             title={job.name}
           >
             {#snippet actions()}
@@ -173,8 +173,7 @@
   .drawer-heading span {
     color: var(--text-muted);
     font-size: var(--font-size-xs);
-    font-weight: var(--font-weight-bold);
-    letter-spacing: var(--letter-spacing-label, 0.04em);
+    font-weight: var(--font-weight-medium);
   }
 
   .drawer-heading strong {
@@ -239,8 +238,6 @@
     color: var(--text-muted);
     font-size: var(--font-size-xs);
     font-weight: var(--font-weight-semibold);
-    letter-spacing: 0.04em;
-    text-transform: uppercase;
   }
 
   dd {

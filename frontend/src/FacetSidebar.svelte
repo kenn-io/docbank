@@ -150,7 +150,7 @@
   .facets { display: grid; align-content: start; gap: var(--space-4); min-width: 0; padding: var(--space-4); border-right: 1px solid var(--border-default); background: var(--bg-inset); }
   h2, h3, p { margin: 0; }
   h2 { font-size: var(--font-size-md); }
-  h3 { margin-bottom: var(--space-2); color: var(--text-muted); font-size: var(--font-size-xs); letter-spacing: .04em; text-transform: uppercase; }
+  h3 { margin-bottom: var(--space-2); color: var(--text-muted); font-size: var(--font-size-xs); }
   .values { display: grid; gap: var(--space-1); }
   button { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); width: 100%; min-height: 30px; padding: var(--space-1) var(--space-2); border: 1px solid var(--border-default); border-radius: var(--radius-md); background: var(--bg-surface); color: var(--text-secondary); text-align: left; cursor: pointer; }
   button:hover:not(:disabled), button.selected { border-color: var(--accent-blue); color: var(--text-primary); }

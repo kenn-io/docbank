@@ -93,7 +93,7 @@
   {#snippet header()}
     <div class="drawer-heading">
       <div>
-        <span>PERMANENT AUDIT</span>
+        <span>Permanent audit</span>
         <strong>Independent verification</strong>
         <small>
           {#if report?.enabled && evidence}
@@ -136,7 +136,7 @@
         <div class="failed">
           <TriangleAlertIcon size="24" aria-hidden="true" />
           <div>
-            <span>PROBLEMS FOUND</span>
+            <span>Problems found</span>
             <strong>Protected authority needs attention</strong>
           </div>
         </div>
@@ -144,7 +144,7 @@
       </section>
       <section class="problems" aria-label="Audit verification problems">
         <div class="section-heading">
-          <span>VERIFICATION PROBLEMS</span>
+          <span>Verification problems</span>
           <strong>{metadataProblems.length} issue{metadataProblems.length === 1 ? "" : "s"}</strong>
         </div>
         {#each metadataProblems as problem}
@@ -169,7 +169,7 @@
             <TriangleAlertIcon size="24" aria-hidden="true" />
           {/if}
           <div>
-            <span>{verified ? "VERIFIED" : "PROBLEMS FOUND"}</span>
+            <span>{verified ? "Verified" : "Problems found"}</span>
             <strong>
               {verified
                 ? "Protected history and content agree"
@@ -186,7 +186,7 @@
         <Card
           level="default"
           padding="sm"
-          eyebrow="PROTECTED CONTENT"
+          eyebrow="Protected content"
           title={formatBytes(report.protected_bytes)}
         >
           <p>
@@ -197,7 +197,7 @@
         <Card
           level="default"
           padding="sm"
-          eyebrow="ALLOCATION LINEAGE"
+          eyebrow="Allocation lineage"
           title={`${evidence.allocation_entry_count} entries`}
         >
           <p>
@@ -209,21 +209,21 @@
 
       <section class="authority" aria-label="Verified audit authority">
         <div>
-          <span>VAULT ID</span>
+          <span>Vault ID</span>
           <div class="identity">
             <code>{evidence.vault_id}</code>
             <CopyButton text={evidence.vault_id} ariaLabel="Copy verified vault ID" />
           </div>
         </div>
         <div>
-          <span>LINEAGE ID</span>
+          <span>Lineage ID</span>
           <div class="identity">
             <code>{evidence.lineage_id}</code>
             <CopyButton text={evidence.lineage_id} ariaLabel="Copy verified lineage ID" />
           </div>
         </div>
         <div class="wide">
-          <span>ALLOCATION HEAD</span>
+          <span>Allocation head</span>
           <div class="identity">
             <code>{evidence.allocation_head}</code>
             <CopyButton
@@ -237,7 +237,7 @@
       {#if metadataProblems.length > 0 || contentProblems.length > 0}
         <section class="problems" aria-label="Audit verification problems">
           <div class="section-heading">
-            <span>VERIFICATION PROBLEMS</span>
+            <span>Verification problems</span>
             <strong>{metadataProblems.length + contentProblems.length} issue{metadataProblems.length + contentProblems.length === 1 ? "" : "s"}</strong>
           </div>
           {#each metadataProblems as problem}
@@ -254,7 +254,7 @@
 
       <section class="scopes" aria-label="Verified audit scope heads">
         <div class="section-heading">
-          <span>SCOPE CHAINS</span>
+          <span>Scope chains</span>
           <strong>{evidence.scopes.length} terminal head{evidence.scopes.length === 1 ? "" : "s"}</strong>
         </div>
         <div class="scope-list">
@@ -317,8 +317,7 @@
   .authority > div > span {
     color: var(--text-muted);
     font-size: var(--font-size-xs);
-    font-weight: var(--font-weight-bold);
-    letter-spacing: var(--letter-spacing-label, 0.04em);
+    font-weight: var(--font-weight-medium);
   }
 
   .drawer-heading strong {
@@ -370,9 +369,9 @@
     justify-content: space-between;
     gap: var(--space-4);
     padding: var(--space-4);
-    border: 1px solid color-mix(in srgb, var(--accent-green) 42%, var(--border-subtle));
+    border: 1px solid color-mix(in srgb, var(--accent-green) 42%, var(--border-muted));
     border-radius: var(--radius-lg);
-    background: color-mix(in srgb, var(--accent-green) 8%, var(--bg-raised));
+    background: color-mix(in srgb, var(--accent-green) 8%, var(--bg-surface));
   }
 
   .result-heading > div {
@@ -393,8 +392,7 @@
 
   .result-heading span {
     font-size: var(--font-size-xs);
-    font-weight: var(--font-weight-bold);
-    letter-spacing: var(--letter-spacing-label, 0.04em);
+    font-weight: var(--font-weight-medium);
   }
 
   .result-heading strong {
@@ -418,7 +416,7 @@
 
   .authority {
     padding: var(--space-4);
-    border: 1px solid var(--border-subtle);
+    border: 1px solid var(--border-muted);
     border-radius: var(--radius-lg);
     background: var(--bg-inset);
   }
@@ -470,9 +468,9 @@
 
   .problems {
     padding: var(--space-4);
-    border: 1px solid color-mix(in srgb, var(--accent-red) 45%, var(--border-subtle));
+    border: 1px solid color-mix(in srgb, var(--accent-red) 45%, var(--border-muted));
     border-radius: var(--radius-lg);
-    background: color-mix(in srgb, var(--accent-red) 7%, var(--bg-raised));
+    background: color-mix(in srgb, var(--accent-red) 7%, var(--bg-surface));
   }
 
   .problems p {
@@ -496,7 +494,7 @@
 
   .evidence-note {
     padding: var(--space-4);
-    border: 1px solid var(--border-subtle);
+    border: 1px solid var(--border-muted);
     border-radius: var(--radius-lg);
     background: var(--bg-inset);
   }

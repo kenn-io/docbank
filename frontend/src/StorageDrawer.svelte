@@ -80,7 +80,7 @@
   {#snippet header()}
     <div class="drawer-heading">
       <div>
-        <span>PHYSICAL STORAGE</span>
+        <span>Physical storage</span>
         <strong>Loose and packed content</strong>
         <small>
           {#if status}
@@ -122,7 +122,7 @@
         <Card
           level="default"
           padding="sm"
-          eyebrow="LOOSE CONTENT"
+          eyebrow="Loose content"
           title={formatBytes(status.loose_bytes)}
         >
           {#snippet actions()}<HardDriveIcon size="18" aria-hidden="true" />{/snippet}
@@ -136,7 +136,7 @@
         <Card
           level="default"
           padding="sm"
-          eyebrow="LIVE PACKED CONTENT"
+          eyebrow="Live packed content"
           title={formatBytes(status.packed_stored_bytes)}
         >
           {#snippet actions()}<ArchiveIcon size="18" aria-hidden="true" />{/snippet}
@@ -149,7 +149,7 @@
         <Card
           level="default"
           padding="sm"
-          eyebrow="PACK FILES"
+          eyebrow="Pack files"
           title={formatBytes(status.pack_stored_bytes)}
         >
           {#snippet actions()}<DatabaseIcon size="18" aria-hidden="true" />{/snippet}
@@ -162,7 +162,7 @@
         <Card
           level="default"
           padding="sm"
-          eyebrow="PENDING REPACK"
+          eyebrow="Pending repack"
           title={formatBytes(status.dead_packed_bytes)}
         >
           {#snippet actions()}
@@ -186,7 +186,7 @@
       <section class="stores" aria-label="Content stores">
         <div class="section-heading">
           <div>
-            <span>CONTENT STORES</span>
+            <span>Content stores</span>
             <strong>{stores.length} physical location{stores.length === 1 ? "" : "s"}</strong>
           </div>
           <ServerIcon size="18" aria-hidden="true" />
@@ -270,8 +270,7 @@
   .drawer-heading span {
     color: var(--text-muted);
     font-size: var(--font-size-xs);
-    font-weight: var(--font-weight-bold);
-    letter-spacing: var(--letter-spacing-label, 0.04em);
+    font-weight: var(--font-weight-medium);
   }
 
   .drawer-heading strong {
@@ -346,14 +345,12 @@
     color: var(--text-muted);
     font-size: var(--font-size-xs);
     font-weight: var(--font-weight-semibold);
-    letter-spacing: 0.04em;
-    text-transform: uppercase;
   }
 
   dd {
     margin: 0;
     color: var(--text-secondary);
-    font-family: var(--font-mono);
+    font-variant-numeric: tabular-nums;
     font-size: var(--font-size-sm);
   }
 
@@ -398,7 +395,7 @@
   }
 
   .store {
-    border: 1px solid var(--border-subtle);
+    border: 1px solid var(--border-default);
     border-radius: var(--radius-md);
     background: var(--bg-surface);
     padding: var(--space-4);

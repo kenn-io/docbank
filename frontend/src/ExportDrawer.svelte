@@ -63,13 +63,13 @@
   <DetailDrawer width="min(760px, 100vw)" ariaLabel="Verified export" onclose={close}>
     {#snippet header()}
       <div class="drawer-heading">
-        <div><span>DOCUMENT EXPORT</span><strong>Preview and download</strong><small>Exact versions · verified ZIP archive</small></div>
+        <div><span>Document export</span><strong>Preview and download</strong><small>Exact versions · verified ZIP archive</small></div>
         <IconButton size="sm" ariaLabel="Close export" onclick={close}><XIcon size="16" aria-hidden="true" /></IconButton>
       </div>
     {/snippet}
     <div class="exports">
       <section class="source" aria-label="Export source">
-        <span>SOURCE</span><strong>{admitted?.label ?? input?.label ?? "No source selected"}</strong>
+        <span>Source</span><strong>{admitted?.label ?? input?.label ?? "No source selected"}</strong>
         <p>{(admitted?.plan.total ?? count).toLocaleString()} exact document{(admitted?.plan.total ?? count) === 1 ? "" : "s"}</p>
         {#if !admitted && input && "snapshot" in input}<p>All frozen pages are copied and checked before planning. Changes to the live query do not change this source.</p>{/if}
         {#if !admitted && input && "collectionID" in input}<p>Completed import receipts freeze the original imported versions. Later edits and changes to the live collection do not change this source.</p>{/if}
@@ -159,8 +159,8 @@
             <div><dt>Plan expires</dt><dd>{formatDate(plan.expires_at)}</dd></div>
           </dl>
           <p>Role bytes estimate payload only. The final ZIP size includes metadata and archive overhead.</p>
-          <div class="identity"><span>MEMBER SHA-256</span><code data-testid="export-member-hash">{plan.source.member_hash}</code><CopyButton text={plan.source.member_hash} ariaLabel="Copy export member hash" /></div>
-          <div class="identity"><span>PLAN FINGERPRINT</span><code data-testid="export-plan-fingerprint">{plan.fingerprint}</code><CopyButton text={plan.fingerprint} ariaLabel="Copy export plan fingerprint" /></div>
+          <div class="identity"><span>Member SHA-256</span><code data-testid="export-member-hash">{plan.source.member_hash}</code><CopyButton text={plan.source.member_hash} ariaLabel="Copy export member hash" /></div>
+          <div class="identity"><span>Plan fingerprint</span><code data-testid="export-plan-fingerprint">{plan.fingerprint}</code><CopyButton text={plan.fingerprint} ariaLabel="Copy export plan fingerprint" /></div>
           {#if view.reviewed?.plan.id === plan.id}
             <div class="role-summaries">
               {#each view.reviewed.preview.roles as role (role.role)}
@@ -205,7 +205,7 @@
           {#if admitted.job?.failure}<p class="error">{admitted.job.failure}</p>{/if}
           {#if receipt}
             <dl><div><dt>Final ZIP size</dt><dd data-testid="export-archive-size" data-bytes={receipt.size} title={`${receipt.size.toLocaleString()} bytes`}>{formatBytes(receipt.size)}</dd></div><div><dt>Archive entries</dt><dd>{receipt.entries.toLocaleString()}</dd></div></dl>
-            <div class="identity"><span>ARCHIVE SHA-256</span><code data-testid="export-archive-hash">{receipt.sha256}</code><CopyButton text={receipt.sha256} ariaLabel="Copy archive hash" /></div>
+            <div class="identity"><span>Archive SHA-256</span><code data-testid="export-archive-hash">{receipt.sha256}</code><CopyButton text={receipt.sha256} ariaLabel="Copy archive hash" /></div>
             <Button tone="info" disabled={view.downloading || view.status === "expired"} onclick={() => void controller.download(basename)}>{view.downloading ? "Reverifying download…" : "Download verified ZIP"}</Button>
             <p>{view.downloadOffered ? "Download handed to your browser. Check its download list for completion." : "Docbank verified the server archive. Your browser handles the download; its completion is separate."}</p>
           {/if}

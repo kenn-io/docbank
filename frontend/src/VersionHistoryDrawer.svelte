@@ -101,9 +101,9 @@
   {#snippet header()}
     <div class="drawer-heading">
       <div>
-        <span>IMMUTABLE VERSION HISTORY</span>
+        <span>Immutable version history</span>
         <strong>{basename(path)}</strong>
-        <code>{path} · id:{node.id}</code>
+        <span class="path">{path} · id:{node.id}</span>
       </div>
       <IconButton size="sm" ariaLabel="Close version history" onclick={onclose}>
         <XIcon size="14" aria-hidden="true" />
@@ -114,7 +114,7 @@
   <div class="history-shell">
     <section class="version-list" aria-label="Retained versions">
       <div class="section-heading">
-        <span>NEWEST FIRST</span>
+        <span>Newest first</span>
         <strong>{page?.total ?? 0} retained version{page?.total === 1 ? "" : "s"}</strong>
       </div>
 
@@ -269,8 +269,7 @@
   .section-heading span {
     color: var(--text-muted);
     font-size: var(--font-size-xs);
-    font-weight: var(--font-weight-bold);
-    letter-spacing: var(--letter-spacing-label, 0.04em);
+    font-weight: var(--font-weight-medium);
   }
 
   .drawer-heading strong {
@@ -278,10 +277,10 @@
     font-size: var(--font-size-lg);
   }
 
-  .drawer-heading code {
+  .drawer-heading .path {
     overflow: hidden;
     color: var(--text-muted);
-    font-size: var(--font-size-xs);
+    font-size: var(--font-size-sm);
     text-overflow: ellipsis;
     white-space: nowrap;
   }
@@ -364,8 +363,6 @@
     color: var(--text-muted);
     font-size: var(--font-size-xs);
     font-weight: var(--font-weight-semibold);
-    letter-spacing: 0.04em;
-    text-transform: uppercase;
   }
 
   dd {

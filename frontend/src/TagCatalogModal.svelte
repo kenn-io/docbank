@@ -378,7 +378,7 @@
     gap: var(--space-3);
     min-height: 56px;
     padding: var(--space-3);
-    border-bottom: 1px solid var(--border-subtle);
+    border-bottom: 1px solid var(--border-muted);
   }
 
   .definition-row:last-child {
@@ -387,14 +387,12 @@
 
   .definition-group-heading {
     padding: var(--space-2) var(--space-3);
-    border-bottom: 1px solid var(--border-subtle);
+    border-bottom: 1px solid var(--border-muted);
     background: color-mix(in srgb, var(--bg-surface) 55%, transparent);
     color: var(--text-muted);
     font-size: var(--font-size-2xs);
-    font-weight: var(--font-weight-bold);
-    letter-spacing: 0.05em;
+    font-weight: var(--font-weight-medium);
     overflow-wrap: anywhere;
-    text-transform: uppercase;
   }
 
   .definition-authority {

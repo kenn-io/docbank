@@ -221,10 +221,8 @@
     padding: var(--space-1) var(--space-2) 0;
     color: var(--text-muted);
     font-size: var(--font-size-2xs);
-    font-weight: var(--font-weight-bold);
-    letter-spacing: 0.05em;
+    font-weight: var(--font-weight-medium);
     overflow-wrap: anywhere;
-    text-transform: uppercase;
   }
 
   .assigned-tag {
@@ -233,7 +231,7 @@
     justify-content: space-between;
     gap: var(--space-3);
     padding: var(--space-2) var(--space-3);
-    border: 1px solid var(--border-subtle);
+    border: 1px solid var(--border-muted);
     border-radius: var(--radius-md);
     background: color-mix(in srgb, var(--bg-inset) 75%, transparent);
   }

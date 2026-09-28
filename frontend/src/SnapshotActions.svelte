@@ -140,7 +140,7 @@
   .snapshot-actions section { display: grid; gap: var(--space-3); padding-block-start: var(--space-4); border-top: 1px solid var(--border-default); }
   .snapshot-actions h3 { font-size: var(--font-size-sm); }
   .actions { display: flex; flex-wrap: wrap; gap: var(--space-3); }
-  .warning { padding: var(--space-3); border: 1px solid var(--border-warning); border-radius: var(--radius-md); background: var(--bg-warning-soft); }
+  .warning { padding: var(--space-3); border: 1px solid color-mix(in srgb, var(--accent-amber) 35%, var(--border-default)); border-radius: var(--radius-md); background: color-mix(in srgb, var(--accent-amber) 8%, var(--bg-surface)); }
   .hint { color: var(--text-muted); font-size: var(--font-size-sm); }
   label { display: grid; gap: var(--space-2); font-size: var(--font-size-sm); font-weight: 600; }
   label.disabled { opacity: 0.6; }

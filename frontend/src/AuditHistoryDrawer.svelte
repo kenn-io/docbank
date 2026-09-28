@@ -111,7 +111,7 @@
   {#snippet header()}
     <div class="drawer-heading">
       <div>
-        <span>PERMANENT AUDIT HISTORY</span>
+        <span>Permanent audit history</span>
         <strong>{historyLabel}</strong>
         <code>{historyCoordinate}</code>
       </div>
@@ -128,7 +128,7 @@
     <section class="event-list" aria-label="Recorded events">
       <div class="section-heading">
         <div>
-          <span>NEWEST FIRST</span>
+          <span>Newest first</span>
           <strong>{page?.total ?? 0} recorded event{page?.total === 1 ? "" : "s"}</strong>
         </div>
       </div>
@@ -274,7 +274,7 @@
           {#if selectedEvent.attachment}
             <div class="attachment">
               <div class="attachment-heading">
-                <span>ATTACHED METADATA</span>
+                <span>Attached metadata</span>
                 <Chip size="xs" tone="neutral">{selectedEvent.attachment.kind}</Chip>
               </div>
               <dl>
@@ -369,8 +369,7 @@
   .attachment-heading > span {
     color: var(--text-muted);
     font-size: var(--font-size-xs);
-    font-weight: var(--font-weight-bold);
-    letter-spacing: var(--letter-spacing-label, 0.04em);
+    font-weight: var(--font-weight-medium);
   }
 
   .drawer-heading strong {
@@ -457,8 +456,6 @@
     color: var(--text-muted);
     font-size: var(--font-size-xs);
     font-weight: var(--font-weight-semibold);
-    letter-spacing: 0.04em;
-    text-transform: uppercase;
   }
 
   dd {

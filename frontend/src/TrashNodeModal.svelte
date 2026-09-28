@@ -59,7 +59,7 @@
       <Trash2Icon size="20" aria-hidden="true" />
       <div>
         <strong>{node.name}</strong>
-        <code>{path}</code>
+        <span class="path">{path}</span>
         <span>Stable node id:{node.id} · revision {node.revision}</span>
       </div>
     </div>
@@ -125,10 +125,10 @@
     font-size: var(--font-size-md);
   }
 
-  .target code {
+  .target .path {
     overflow-wrap: anywhere;
     color: var(--text-secondary);
-    font-size: var(--font-size-xs);
+    font-size: var(--font-size-sm);
   }
 
   .target span {
