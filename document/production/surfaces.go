@@ -5,6 +5,7 @@ import "slices"
 const (
 	methodGET  = "GET"
 	methodPOST = "POST"
+	methodPUT  = "PUT"
 )
 
 type SurfaceOperation struct {
@@ -15,44 +16,53 @@ type SurfaceOperation struct {
 	Transport   string `json:"transport"`
 }
 
+// surfaceOperations lists only the production routes registered in the daemon.
+// A blank Tool means the operation has no dedicated MCP tool. Human approval
+// issuance remains an authenticated embedded-host operation, not a daemon route.
 var surfaceOperations = []SurfaceOperation{
-	{"listProductionRecipes", methodGET, "/api/v1/production-sets/recipes", "production_recipes", GeneratedClientTransport},
-	{"createProductionSet", methodPOST, "/api/v1/production-sets", "production_create", GeneratedClientTransport},
-	{"listProductionSets", methodGET, "/api/v1/production-sets", "production_list", GeneratedClientTransport},
-	{"readProductionSet", methodGET, "/api/v1/production-sets/{set}", "production_show", GeneratedClientTransport},
-	{"forkProductionDraft", methodPOST, "/api/v1/production-sets/{set}/revisions", "production_fork", GeneratedClientTransport},
-	{"readProductionRevision", methodGET, "/api/v1/production-sets/{set}/revisions/{revision}", "production_revision_show", GeneratedClientTransport},
-	{"appendProductionMembers", methodPOST, "/api/v1/production-sets/{set}/revisions/{revision}/members", "production_members_add", GeneratedClientTransport},
-	{"sealProductionMembers", methodPOST, "/api/v1/production-sets/{set}/revisions/{revision}/members/seal", "production_members_seal", GeneratedClientTransport},
-	{"listProductionMembers", methodGET, "/api/v1/production-sets/{set}/revisions/{revision}/members", "production_members_list", GeneratedClientTransport},
-	{"setProductionInstructions", methodPOST, "/api/v1/production-sets/{set}/revisions/{revision}/instructions", "production_instructions_set", GeneratedClientTransport},
-	{"applyProductionChanges", methodPOST, "/api/v1/production-sets/{set}/revisions/{revision}/changes", "production_changes_apply", GeneratedClientTransport},
-	{"resolveProductionSelection", methodPOST, "/api/v1/production-sets/{set}/revisions/{revision}/resolve", "production_resolve", GeneratedClientTransport},
-	{"listProductionDecisions", methodGET, "/api/v1/production-sets/{set}/revisions/{revision}/decisions", "production_decisions_list", GeneratedClientTransport},
-	{"readProductionMap", methodGET, "/api/v1/production-sets/{set}/revisions/{revision}/maps/{member}", "production_map", GeneratedClientTransport},
-	{"declareProductionReview", methodPOST, "/api/v1/production-sets/{set}/revisions/{revision}/reviews", "production_review", GeneratedClientTransport},
-	{"createProductionPreview", methodPOST, "/api/v1/production-sets/{set}/revisions/{revision}/previews", "production_preview", GeneratedClientTransport},
-	{"finalizeProduction", methodPOST, "/api/v1/production-sets/{set}/revisions/{revision}/finalize", "production_finalize", GeneratedClientTransport},
-	{"createProductionJob", methodPOST, "/api/v1/production-sets/{set}/revisions/{revision}/jobs", "production_run", GeneratedClientTransport},
-	{"readProductionJob", methodGET, "/api/v1/production-sets/{set}/jobs/{job}", "production_status", GeneratedClientTransport},
-	{"cancelProductionJob", methodPOST, "/api/v1/production-sets/{set}/jobs/{job}/cancel", "production_cancel", GeneratedClientTransport},
-	{"createProductionDownload", methodPOST, "/api/v1/production-sets/{set}/jobs/{job}/download", "production_download", GeneratedClientTransport},
-	{"createProductionPolicyVersion", methodPOST, "/api/v1/productions/policies", "production_policy_create", GeneratedClientTransport},
-	{"listProductionPolicyVersions", methodGET, "/api/v1/productions/policies", "production_policy_list", GeneratedClientTransport},
-	{"readProductionPolicyVersion", methodGET, "/api/v1/productions/policies/{policy_id}/versions/{version}", "production_policy_show", GeneratedClientTransport},
-	{"recordProductionApproval", methodPOST, "/api/v1/production-approvals", "production_approval_record", GeneratedClientTransport},
-	{"readProductionApproval", methodGET, "/api/v1/production-approvals/{approval}", "production_approval_show", GeneratedClientTransport},
-	{"revokeProductionApproval", methodPOST, "/api/v1/production-approvals/{approval}/revocations", "production_approval_revoke", GeneratedClientTransport},
-	{"supersedeProductionApproval", methodPOST, "/api/v1/production-approvals/{approval}/supersessions", "production_approval_supersede", GeneratedClientTransport},
-	{"createProductionPrivilegeLog", methodPOST, "/api/v1/production-privilege-logs", "production_privilege_log_create", GeneratedClientTransport},
-	{"applyProductionPrivilegeRows", methodPOST, "/api/v1/production-privilege-logs/{log}/rows", "production_privilege_log_rows_apply", GeneratedClientTransport},
-	{"readProductionPrivilegeLog", methodGET, "/api/v1/production-privilege-logs/{log}", "production_privilege_log_show", GeneratedClientTransport},
-	{"validateProductionPrivilegeLog", methodPOST, "/api/v1/production-privilege-logs/{log}/validations", "production_privilege_log_validate", GeneratedClientTransport},
-	{"freezeProductionPrivilegeLog", methodPOST, "/api/v1/production-privilege-logs/{log}/freeze", "production_privilege_log_freeze", GeneratedClientTransport},
-	{"exportProductionPrivilegeLog", methodPOST, "/api/v1/production-privilege-logs/{log}/exports", "production_privilege_log_export", GeneratedClientTransport},
-	{"readProductionRetention", methodGET, "/api/v1/production-receipts/{receipt}/retention", "production_retention_show", GeneratedClientTransport},
-	{"createProductionReproduction", methodPOST, "/api/v1/production-receipts/{receipt}/reproductions", "production_reproduce", GeneratedClientTransport},
-	{"readProductionReproduction", methodGET, "/api/v1/production-reproductions/{reproduction}", "production_reproduction_show", GeneratedClientTransport},
+	{"admitProductionJob", methodPOST, "/api/v1/productions/sets/{set_id}/revisions/{revision}/jobs", "admit_production_job", GeneratedClientTransport},
+	{"appendProductionMembers", methodPOST, "/api/v1/productions/sets/{set_id}/revisions/{revision}/members", "append_production_members", GeneratedClientTransport},
+	{"applyProductionChanges", methodPOST, "/api/v1/productions/sets/{set_id}/revisions/{revision}/changes", "apply_production_changes", GeneratedClientTransport},
+	{"cancelProductionJob", methodPOST, "/api/v1/productions/sets/{set_id}/jobs/{job_id}/cancel", "cancel_production_job", GeneratedClientTransport},
+	{"createProductionPackage", methodPOST, "/api/v1/productions/jobs/{job_id}/packages", "create_production_package", GeneratedClientTransport},
+	{"createProductionPlayersSnapshot", methodPOST, "/api/v1/production-player-snapshots/{snapshot_id}/revisions/{revision}", "create_production_players_snapshot", GeneratedClientTransport},
+	{"createProductionPolicyVersion", methodPOST, "/api/v1/productions/policies", "create_production_policy", GeneratedClientTransport},
+	{"createProductionPreview", methodPOST, "/api/v1/productions/sets/{set_id}/revisions/{revision}/previews", "", GeneratedClientTransport},
+	{"createProductionPrivilegeLogDraft", methodPOST, "/api/v1/production-privilege-logs/{log}/revisions/{revision}/draft", "create_production_privilege_draft", GeneratedClientTransport},
+	{"createProductionReproduction", methodPOST, "/api/v1/productions/jobs/{job_id}/reproductions", "create_production_reproduction", GeneratedClientTransport},
+	{"createProductionSet", methodPOST, "/api/v1/productions/sets", "create_production_set", GeneratedClientTransport},
+	{"createProductionSupplement", methodPOST, "/api/v1/productions/supplements", "create_production_supplement", GeneratedClientTransport},
+	{"createProductionWithheldSelection", methodPOST, "/api/v1/productions/sets/{set_id}/revisions/{revision}/withheld-selection", "create_production_withheld_selection", GeneratedClientTransport},
+	{"downloadProductionPackage", methodPOST, "/api/v1/productions/jobs/{job_id}/packages/{operation_id}/download", "download_production_package", GeneratedClientTransport},
+	{"editProductionInstructions", methodPUT, "/api/v1/productions/sets/{set_id}/revisions/{revision}/instructions", "edit_production_instructions", GeneratedClientTransport},
+	{"exportProductionPrivilegeLog", methodGET, "/api/v1/production-privilege-logs/{log}/revisions/{revision}/exports/{format}", "export_production_privilege_log", GeneratedClientTransport},
+	{"finalizeProductionDraft", methodPOST, "/api/v1/productions/sets/{set_id}/revisions/{revision}/finalize", "finalize_production_draft", GeneratedClientTransport},
+	{"findProductionNumberCandidates", methodGET, "/api/v1/productions/numbers/candidates", "find_production_number_candidates", GeneratedClientTransport},
+	{"findProductionNumbers", methodGET, "/api/v1/productions/numbers", "find_production_numbers", GeneratedClientTransport},
+	{"forkProductionDraft", methodPOST, "/api/v1/productions/sets/{set_id}/revisions/{revision}/fork", "fork_production_draft", GeneratedClientTransport},
+	{"freezeProductionPrivilegeLog", methodPOST, "/api/v1/production-privilege-logs/{log}/revisions/{revision}/freeze", "freeze_production_privilege_log", GeneratedClientTransport},
+	{"getProductionDraft", methodGET, "/api/v1/productions/sets/{set_id}/revisions/{revision}", "get_production_draft", GeneratedClientTransport},
+	{"getProductionJobStatus", methodGET, "/api/v1/productions/sets/{set_id}/jobs/{job_id}", "get_production_job", GeneratedClientTransport},
+	{"getProductionMapChunk", methodGET, "/api/v1/productions/sets/{set_id}/revisions/{revision}/maps/{member_id}", "", GeneratedClientTransport},
+	{"getProductionPackage", methodGET, "/api/v1/productions/jobs/{job_id}/packages/{operation_id}", "get_production_package", GeneratedClientTransport},
+	{"getProductionReproduction", methodGET, "/api/v1/productions/jobs/{job_id}/reproductions/{operation_id}", "get_production_reproduction", GeneratedClientTransport},
+	{"getProductionSet", methodGET, "/api/v1/productions/sets/{set_id}", "get_production_set", GeneratedClientTransport},
+	{"getProductionSupplement", methodGET, "/api/v1/productions/supplements/{operation_id}", "get_production_supplement", GeneratedClientTransport},
+	{"listProductionDecisions", methodGET, "/api/v1/productions/sets/{set_id}/revisions/{revision}/decisions", "list_production_decisions", GeneratedClientTransport},
+	{"listProductionMembers", methodGET, "/api/v1/productions/sets/{set_id}/revisions/{revision}/members", "list_production_members", GeneratedClientTransport},
+	{"listProductionPolicyVersions", methodGET, "/api/v1/productions/policies", "list_production_policies", GeneratedClientTransport},
+	{"listProductionRecipes", methodGET, "/api/v1/productions/recipes", "list_production_recipes", GeneratedClientTransport},
+	{"listProductionSets", methodGET, "/api/v1/productions/sets", "list_production_sets", GeneratedClientTransport},
+	{"publishProductionPackage", methodPOST, "/api/v1/productions/jobs/{job_id}/packages/publish", "publish_production_package", GeneratedClientTransport},
+	{"readProductionApproval", methodGET, "/api/v1/production-approvals/{approval}", "get_production_approval", GeneratedClientTransport},
+	{"readProductionPolicyVersion", methodGET, "/api/v1/productions/policies/{policy_id}/versions/{version}", "get_production_policy", GeneratedClientTransport},
+	{"readProductionPrivilegeLog", methodGET, "/api/v1/production-privilege-logs/{log}", "get_production_privilege_log", GeneratedClientTransport},
+	{"replaceProductionPrivilegeLogRows", methodPOST, "/api/v1/production-privilege-logs/{log}/revisions/{revision}/rows", "replace_production_privilege_rows", GeneratedClientTransport},
+	{"resolveProductionSelection", methodPOST, "/api/v1/productions/sets/{set_id}/revisions/{revision}/resolve", "resolve_production_selection", GeneratedClientTransport},
+	{"reviewProductionMember", methodPOST, "/api/v1/productions/sets/{set_id}/revisions/{revision}/members/{member_id}/review", "review_production_member", GeneratedClientTransport},
+	{"sealProductionMembership", methodPOST, "/api/v1/productions/sets/{set_id}/revisions/{revision}/seal", "seal_production_membership", GeneratedClientTransport},
+	{"selectProductionGateAuthority", methodPUT, "/api/v1/productions/sets/{set_id}/revisions/{revision}/gate-authority", "select_production_gate_authority", GeneratedClientTransport},
+	{"validateProductionPrivilegeLog", methodPOST, "/api/v1/production-privilege-logs/{log}/revisions/{revision}/validate", "validate_production_privilege_log", GeneratedClientTransport},
 }
 
 func SurfaceOperations() []SurfaceOperation { return slices.Clone(surfaceOperations) }

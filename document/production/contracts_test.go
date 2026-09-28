@@ -617,13 +617,14 @@ func TestSurfaceAndStorageContractsAreFrozenUniqueAndBounded(t *testing.T) {
 		if operation.Tool != "" {
 			require.False(t, seenTools[operation.Tool], operation.Tool)
 			seenTools[operation.Tool] = true
-			require.True(t, strings.HasPrefix(operation.Tool, "production_"), operation.Tool)
+			require.Contains(t, operation.Tool, "production", operation.Tool)
 		}
 	}
 	require.Contains(t, seenOperations, "createProductionPolicyVersion")
-	require.Contains(t, seenOperations, "recordProductionApproval")
+	require.NotContains(t, seenOperations, "recordProductionApproval")
+	require.Contains(t, seenOperations, "readProductionApproval")
 	require.Contains(t, seenOperations, "freezeProductionPrivilegeLog")
-	require.Contains(t, seenOperations, "readProductionRetention")
+	require.NotContains(t, seenOperations, "readProductionRetention")
 	require.Contains(t, seenOperations, "createProductionReproduction")
 
 	storage := StorageContracts()
