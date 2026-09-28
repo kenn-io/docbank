@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -57,6 +58,18 @@ func TestFotobankInventoryInstall(t *testing.T) {
 	if report.Schema.CatalogVersion != 1 || report.Schema.EmbeddedDocbankVersion != 16 || len(report.Vectors) != 1 ||
 		report.Vectors[0].ID != 1 || report.Vectors[0].Fingerprint != "synthetic" || report.Vectors[0].State != "active" || !report.Vectors[0].Rebuildable {
 		t.Fatalf("unexpected inventory schema: %#v", report)
+	}
+}
+
+func TestFotobankInventoryInstallRejectsSnapshotID(t *testing.T) {
+	fixture := createInventoryFixture(t)
+	request := inventoryRequest(fixture, fixture.OwnerMapPath)
+	request.SnapshotID = "snapshot-1"
+	if _, _, err := Inventory(context.Background(), store.DefaultSQLiteDriver(), request); err == nil || !strings.Contains(err.Error(), "snapshot_id") {
+		t.Fatalf("expected install snapshot_id refusal, got %v", err)
+	}
+	if _, err := os.Stat(fixture.OwnerMapPath); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("snapshot_id refusal left owner-map output behind: %v", err)
 	}
 }
 
@@ -338,6 +351,207 @@ func TestFotobankSchemaMismatch(t *testing.T) {
 	}
 	if _, err := os.Stat(fixture.OwnerMapPath); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("schema refusal left owner-map output behind: %v", err)
+	}
+}
+
+func TestFotobankSchemaObjectMismatch(t *testing.T) {
+	tests := []struct {
+		name       string
+		mutate     func(*sql.DB) error
+		wantObject string
+	}{
+		{
+			name: "inline table constraint",
+			mutate: func(db *sql.DB) error {
+				if _, err := db.Exec("PRAGMA writable_schema=ON"); err != nil {
+					return err
+				}
+				_, err := db.Exec("UPDATE sqlite_master SET sql=replace(sql, 'CHECK (size >= 0)', '') WHERE name='media_files'; PRAGMA writable_schema=OFF")
+				return err
+			},
+			wantObject: "table:media_files",
+		},
+		{
+			name: "removed index",
+			mutate: func(db *sql.DB) error {
+				_, err := db.Exec("DROP INDEX assets_owner_timestamp_idx")
+				return err
+			},
+			wantObject: "index:assets_owner_timestamp_idx",
+		},
+		{
+			name: "changed index predicate",
+			mutate: func(db *sql.DB) error {
+				_, err := db.Exec("PRAGMA writable_schema=ON; UPDATE sqlite_master SET sql=sql || ' /* changed predicate */' WHERE name='assets_visible_idx'; PRAGMA writable_schema=OFF")
+				return err
+			},
+			wantObject: "index:assets_visible_idx",
+		},
+		{
+			name: "removed trigger",
+			mutate: func(db *sql.DB) error {
+				_, err := db.Exec("DROP TRIGGER media_files_coordinate_update")
+				return err
+			},
+			wantObject: "trigger:media_files_coordinate_update",
+		},
+		{
+			name: "changed trigger body",
+			mutate: func(db *sql.DB) error {
+				_, err := db.Exec("PRAGMA writable_schema=ON; UPDATE sqlite_master SET sql=sql || ' /* changed body */' WHERE name='media_files_coordinate_update'; PRAGMA writable_schema=OFF")
+				return err
+			},
+			wantObject: "trigger:media_files_coordinate_update",
+		},
+		{
+			name: "removed FTS cleanup trigger",
+			mutate: func(db *sql.DB) error {
+				_, err := db.Exec("DROP TRIGGER media_fts_cleanup_after_delete")
+				return err
+			},
+			wantObject: "trigger:media_fts_cleanup_after_delete",
+		},
+		{
+			name: "vector shadow trigger",
+			mutate: func(db *sql.DB) error {
+				_, err := db.Exec("PRAGMA writable_schema=ON; UPDATE sqlite_master SET type='trigger', tbl_name='owners', sql='CREATE TRIGGER media_embeddings_g1_chunks AFTER INSERT ON owners BEGIN SELECT 1; END' WHERE name='media_embeddings_g1_chunks'; PRAGMA writable_schema=OFF")
+				return err
+			},
+			wantObject: "trigger:media_embeddings_g1_chunks",
+		},
+		{
+			name: "vector shadow index",
+			mutate: func(db *sql.DB) error {
+				_, err := db.Exec("PRAGMA writable_schema=ON; UPDATE sqlite_master SET type='index', tbl_name='owners', sql='CREATE INDEX media_embeddings_g1_rowids ON owners(hub)' WHERE name='media_embeddings_g1_rowids'; PRAGMA writable_schema=OFF")
+				return err
+			},
+			wantObject: "index:media_embeddings_g1_rowids",
+		},
+		{
+			name: "unknown FTS object",
+			mutate: func(db *sql.DB) error {
+				_, err := db.Exec("CREATE TABLE media_fts_unexpected(value TEXT)")
+				return err
+			},
+			wantObject: "table:media_fts_unexpected",
+		},
+		{
+			name: "sqlite prefix wildcard object",
+			mutate: func(db *sql.DB) error {
+				_, err := db.Exec("CREATE TRIGGER sqliteXaudit AFTER INSERT ON owners BEGIN SELECT 1; END")
+				return err
+			},
+			wantObject: "trigger:sqliteXaudit",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			fixture := createInventoryFixture(t)
+			db, err := store.DefaultSQLiteDriver().Open(fixture.CatalogPath, sqliteWriteOptions())
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := test.mutate(db); err != nil {
+				_ = db.Close()
+				t.Fatal(err)
+			}
+			if err := db.Close(); err != nil {
+				t.Fatal(err)
+			}
+			_, _, err = Inventory(context.Background(), store.DefaultSQLiteDriver(), inventoryRequest(fixture, fixture.OwnerMapPath))
+			if !errors.Is(err, ErrSchemaMismatch) || !strings.Contains(err.Error(), test.wantObject) {
+				t.Fatalf("expected named schema mismatch for %s, got %v", test.wantObject, err)
+			}
+			if _, statErr := os.Stat(fixture.OwnerMapPath); !errors.Is(statErr, os.ErrNotExist) {
+				t.Fatalf("schema refusal left owner-map output behind: %v", statErr)
+			}
+		})
+	}
+}
+
+func TestFotobankIgnoredFTSShadowRequiresTableType(t *testing.T) {
+	if !isIgnoredTable("table", "media_fts_data") {
+		t.Fatal("table FTS shadow should be ignored")
+	}
+	for _, typ := range []string{"index", "trigger"} {
+		if isIgnoredTable(typ, "media_fts_data") {
+			t.Fatalf("%s FTS shadow should be inspected", typ)
+		}
+	}
+}
+
+func TestFotobankVectorSchemaMismatch(t *testing.T) {
+	tests := []struct {
+		name   string
+		mutate func(*sql.DB) error
+		want   string
+	}{
+		{
+			name: "mismatched definition",
+			mutate: func(db *sql.DB) error {
+				_, err := db.Exec("PRAGMA writable_schema=ON; UPDATE sqlite_master SET sql=replace(sql, 'FLOAT[3]', 'FLOAT[4]') WHERE name='media_embeddings_g1'; PRAGMA writable_schema=OFF")
+				return err
+			},
+			want: "media_embeddings_g1",
+		},
+		{
+			name: "ordinary table keeps registered name",
+			mutate: func(db *sql.DB) error {
+				_, err := db.Exec("PRAGMA writable_schema=ON; UPDATE sqlite_master SET sql='CREATE TABLE media_embeddings_g1(note TEXT DEFAULT ''using vec0'', marker TEXT DEFAULT ''FLOAT[3]'')' WHERE name='media_embeddings_g1'; PRAGMA writable_schema=OFF")
+				return err
+			},
+			want: "media_embeddings_g1",
+		},
+		{
+			name: "altered definition",
+			mutate: func(db *sql.DB) error {
+				_, err := db.Exec("PRAGMA writable_schema=ON; UPDATE sqlite_master SET sql='CREATE VIRTUAL TABLE media_embeddings_g1 USING vec0(embedding FLOAT[3])' WHERE name='media_embeddings_g1'; PRAGMA writable_schema=OFF")
+				return err
+			},
+			want: "media_embeddings_g1",
+		},
+		{
+			name: "unregistered vector table",
+			mutate: func(db *sql.DB) error {
+				if _, err := db.Exec("CREATE TABLE media_embeddings_g2(value BLOB)"); err != nil {
+					return err
+				}
+				_, err := db.Exec("PRAGMA writable_schema=ON; UPDATE sqlite_master SET sql='CREATE VIRTUAL TABLE media_embeddings_g2 USING vec0(embedding FLOAT[3])' WHERE name='media_embeddings_g2'; PRAGMA writable_schema=OFF")
+				return err
+			},
+			want: "media_embeddings_g2",
+		},
+		{
+			name: "malformed registered name",
+			mutate: func(db *sql.DB) error {
+				_, err := db.Exec("UPDATE embedding_generations SET vec_table_name='bad_vector_name' WHERE id=1")
+				return err
+			},
+			want: "bad_vector_name",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			fixture := createInventoryFixture(t)
+			db, err := store.DefaultSQLiteDriver().Open(fixture.CatalogPath, sqliteWriteOptions())
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := test.mutate(db); err != nil {
+				_ = db.Close()
+				t.Fatal(err)
+			}
+			if err := db.Close(); err != nil {
+				t.Fatal(err)
+			}
+			_, _, err = Inventory(context.Background(), store.DefaultSQLiteDriver(), inventoryRequest(fixture, fixture.OwnerMapPath))
+			if !errors.Is(err, ErrSchemaMismatch) || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("expected named vector schema mismatch for %s, got %v", test.want, err)
+			}
+			if _, statErr := os.Stat(fixture.OwnerMapPath); !errors.Is(statErr, os.ErrNotExist) {
+				t.Fatalf("schema refusal left owner-map output behind: %v", statErr)
+			}
+		})
 	}
 }
 

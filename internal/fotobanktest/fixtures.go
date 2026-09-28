@@ -46,7 +46,7 @@ func CreateInstall(root string, driver sqlite.Driver) (Install, error) {
 		return Install{}, err
 	}
 	// This marker matches golang-migrate v4.19.1's sqlite3 driver, which Fotobank uses before applying migration 1.
-	if _, err := db.Exec(`CREATE TABLE schema_migrations (version uint64, dirty bool); CREATE UNIQUE INDEX version_unique ON schema_migrations (version); INSERT INTO schema_migrations VALUES(1,0);` + catalogSchemaSQL); err != nil {
+	if _, err := db.Exec(`CREATE TABLE schema_migrations (version uint64,dirty bool); CREATE UNIQUE INDEX version_unique ON schema_migrations (version); INSERT INTO schema_migrations VALUES(1,0);` + catalogSchemaSQL); err != nil {
 		_ = db.Close()
 		return Install{}, fmt.Errorf("create catalog schema: %w", err)
 	}

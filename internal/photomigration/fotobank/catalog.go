@@ -96,18 +96,23 @@ func validateCatalog(ctx context.Context, db *sql.DB) (int64, []tableLayout, err
 	}
 	seen := make(map[string]bool, len(layouts))
 	for _, layout := range layouts {
-		seen[layout.Name] = true
+		seen[objectKey(layout)] = true
 	}
 	var missing, extra []string
-	for name := range catalogTables {
-		if !seen[name] {
-			missing = append(missing, name)
+	for key := range catalogObjectDigests {
+		if !seen[key] {
+			missing = append(missing, key)
 		}
 	}
-	for name := range seen {
-		if _, known := catalogTables[name]; !known && !isIgnoredTable(name) {
-			extra = append(extra, name)
+	for key := range seen {
+		if _, known := catalogObjectDigests[key]; !known {
+			extra = append(extra, key)
 		}
+	}
+	sort.Strings(missing)
+	sort.Strings(extra)
+	if len(missing) > 0 || len(extra) > 0 {
+		return version, nil, fmt.Errorf("%w: missing schema objects %s; extra schema objects %s", ErrSchemaMismatch, strings.Join(missing, ","), strings.Join(extra, ","))
 	}
 	for _, layout := range layouts {
 		if expected, known := catalogTables[layout.Name]; known {
@@ -117,19 +122,12 @@ func validateCatalog(ctx context.Context, db *sql.DB) (int64, []tableLayout, err
 				return version, nil, fmt.Errorf("%w: %s columns %v, expected %v", ErrSchemaMismatch, layout.Name, got, want)
 			}
 		}
-	}
-	sort.Strings(missing)
-	sort.Strings(extra)
-	if len(missing) > 0 || len(extra) > 0 {
-		return version, nil, fmt.Errorf("%w: missing tables %s; extra tables %s", ErrSchemaMismatch, strings.Join(missing, ","), strings.Join(extra, ","))
+		if expected := catalogObjectDigests[objectKey(layout)]; expected != objectDigest(layout) {
+			return version, nil, fmt.Errorf("%w: %s definition digest %s, expected %s", ErrSchemaMismatch, objectKey(layout), objectDigest(layout), expected)
+		}
 	}
 	gotFingerprint := layoutFingerprint(layouts)
 	if gotFingerprint != catalogFingerprint {
-		for _, layout := range layouts {
-			if expected, ok := catalogTableMetadata[layout.Name]; ok && expected != encodeColumns(layout.Columns) {
-				return version, nil, fmt.Errorf("%w: %s column metadata %q, expected %q", ErrSchemaMismatch, layout.Name, encodeColumns(layout.Columns), expected)
-			}
-		}
 		return version, nil, fmt.Errorf("%w: catalog fingerprint %s, expected %s", ErrSchemaMismatch, gotFingerprint, catalogFingerprint)
 	}
 	return version, layouts, nil

@@ -340,10 +340,13 @@ destination-kind/destination-ID mapping and disposition per migrated record.
 It remains empty until Slice 23 creates destinations.
 
 The Fotobank reader checks its pinned catalog layout and the embedded Docbank
-v16 layout before it counts rows. It opens both databases as immutable and
-requires the source lifetime locks. A header-only 32-byte WAL is admitted;
-WAL frames are refused. Archive inventory reads only the verified
-`application/catalog.sqlite` extra and records its metadata format.
+v16 layout before it counts rows. The catalog identity covers each static table
+definition, explicit index, trigger, and declared virtual table. It excludes
+only the recognized FTS and sqlite-vec engine shadow tables. It opens both
+databases as immutable and requires the source lifetime locks. A header-only
+32-byte WAL is admitted; WAL frames are refused. Archive inventory reads only
+the verified `application/catalog.sqlite` extra and records its metadata
+format.
 
 The report counts albums separately from album memberships and checkouts
 separately from checkout entries. Current Fotobank file bytes and unique

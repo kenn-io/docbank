@@ -40,6 +40,9 @@ func Inventory(ctx context.Context, driver docsqlite.Driver, req Request) (photo
 	if err := docsqlite.Validate(driver); err != nil {
 		return photomigration.Report{}, photomigration.OwnerMapTemplate{}, err
 	}
+	if req.SnapshotID != "" && req.ArchiveRoot == "" {
+		return photomigration.Report{}, photomigration.OwnerMapTemplate{}, errors.New("snapshot_id requires archive root")
+	}
 	if req.OwnerMapPath == "" || !filepath.IsAbs(req.OwnerMapPath) {
 		return photomigration.Report{}, photomigration.OwnerMapTemplate{}, errors.New("owner map output path must be absolute")
 	}
