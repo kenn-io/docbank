@@ -433,7 +433,7 @@ func stableDomainError(err error) (string, int) {
 		"bates_source_too_large", "bates_source_unstampable", "bates_label_collision", "invalid_bates_request", "invalid_bates_cursor", "invalid_bates_selector",
 		"stale_bates_cursor":
 		return facts.Code, 0
-	case "stale_revision", "invalid_photo_asset", "photo_node_not_eligible", "photo_node_owned", "audit_mutation_unsupported":
+	case "stale_revision", "invalid_photo_asset", "photo_node_not_eligible", "photo_node_owned", "audit_mutation_unsupported", "package_incomplete":
 		return facts.Code, 0
 	default:
 		return "", 0
@@ -442,6 +442,8 @@ func stableDomainError(err error) (string, int) {
 
 func domainErrorMessage(code string) string {
 	switch code {
+	case "package_incomplete":
+		return "The snapshot is missing a required representation for this export profile."
 	case "not_found":
 		return "The requested Docbank identity was not found."
 	case "stale_version":

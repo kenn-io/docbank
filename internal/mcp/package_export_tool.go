@@ -4,11 +4,11 @@ import (
 	"context"
 	"errors"
 	"log/slog"
-	"os"
 	"path/filepath"
 	"uuid"
 
 	"github.com/google/jsonschema-go/jsonschema"
+	"github.com/modelcontextprotocol/go-sdk/jsonrpc"
 	sdkmcp "github.com/modelcontextprotocol/go-sdk/mcp"
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/daemonconn"
@@ -48,25 +48,13 @@ func exportLoadFilePackage(ctx context.Context, lease *daemonLease, raw []byte) 
 	}
 	if _, err := uuid.Parse(input.SnapshotID); err != nil ||
 		(input.SourcePackageID != "" && !validToolUUID(input.SourcePackageID)) ||
-		(input.BatesAllocationID != "" && !validToolUUID(input.BatesAllocationID)) ||
-		!filepath.IsAbs(input.DestinationPath) || filepath.Clean(input.DestinationPath) != input.DestinationPath {
+		(input.BatesAllocationID != "" && !validToolUUID(input.BatesAllocationID)) {
 		return exportLoadFilePackageOutput{}, invalidToolArgumentsError()
 	}
-	parent := filepath.Dir(input.DestinationPath)
-	info, err := os.Stat(parent)
-	if err != nil || !info.IsDir() {
-		return exportLoadFilePackageOutput{}, invalidToolArgumentsError()
-	}
-	if destination, err := os.Lstat(input.DestinationPath); err == nil {
-		if destination.Mode()&os.ModeSymlink != 0 || !destination.Mode().IsRegular() {
-			return exportLoadFilePackageOutput{}, invalidToolArgumentsError()
-		}
-		if !input.Overwrite {
-			return exportLoadFilePackageOutput{}, os.ErrExist
-		}
-	} else if !errors.Is(err, os.ErrNotExist) {
+	if err := validateExportDestination(input.DestinationPath, input.Overwrite); err != nil {
 		return exportLoadFilePackageOutput{}, err
 	}
+	parent := filepath.Dir(input.DestinationPath)
 	stage, err := filepublish.CreateStage(parent, ".docbank-loadfile-")
 	if err != nil {
 		return exportLoadFilePackageOutput{}, err
@@ -121,6 +109,9 @@ func packageExportToolHandler(
 			logOperationError(logger, exportLoadFilePackageToolDefinition.name, err)
 			if domain, ok := domainToolError(err); ok {
 				return domain, nil
+			}
+			if rpcErr, ok := errors.AsType[*jsonrpc.Error](err); ok && rpcErr.Code == jsonrpc.CodeInvalidParams {
+				return nil, rpcErr
 			}
 			return nil, sanitizedRPCError(err)
 		}

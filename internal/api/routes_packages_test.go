@@ -61,6 +61,29 @@ func TestPackageExportIssuesOneUseVerifiedArchive(t *testing.T) {
 	require.Equal(t, http.StatusNotFound, second.StatusCode)
 }
 
+func TestPackageExportMissingRequiredRepresentation(t *testing.T) {
+	srv, catalog := newPackageTestServer(t)
+	node := createFileWithChecksum(t, catalog, "synthetic.txt", "synthetic content")
+	occurrence := strings.Repeat("d", 32)
+	snapshot, err := catalog.SealCollectionSnapshot(t.Context(), storepkg.SnapshotSealRequest{
+		SnapshotID: uuid.NewString(), Members: []storepkg.CollectionSnapshotMember{{
+			Ordinal: 1, OccurrenceID: occurrence, NodeID: node.ID, ContentVersionID: node.CurrentVersionID,
+			BlobSHA256: node.BlobHash, Size: node.Size, FamilyID: occurrence, FamilyOrder: 1,
+			DisplayName: node.Name, FrozenFieldsJSON: "{}", DocumentKind: "other",
+		}},
+	})
+	require.NoError(t, err)
+	for _, profile := range []string{"export-csv-natives-v1", "export-dat-pdf-v1", "export-dat-opt-images-v1", "export-dat-lfp-images-v1"} {
+		response := srv.call(t, http.MethodPost, "/api/v1/packages/exports", mustPackageJSON(t, api.PackageExportRequest{SnapshotID: snapshot.SnapshotID, ProfileID: profile}), nil)
+		if profile == "export-csv-natives-v1" {
+			require.Equal(t, http.StatusCreated, response.Code)
+		} else {
+			require.Equal(t, http.StatusUnprocessableEntity, response.Code)
+			require.Contains(t, response.Body.String(), `"code":"package_incomplete"`)
+		}
+	}
+}
+
 func TestPackageImportAdmitsFrozenPreflightAndReplaysOperation(t *testing.T) {
 	srv, catalog := newPackageTestServer(t)
 	root := syntheticPackageRoot(t)

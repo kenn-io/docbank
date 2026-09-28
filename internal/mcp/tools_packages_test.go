@@ -13,6 +13,7 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
+	"github.com/modelcontextprotocol/go-sdk/jsonrpc"
 	sdkmcp "github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -197,6 +198,8 @@ func TestExportLoadFilePackageIsAnExactGatedFileWrite(t *testing.T) {
 }
 
 func TestExportLoadFilePackagePublishesIndependentlyVerifiedArchive(t *testing.T) {
+	dataRoot := t.TempDir()
+	t.Setenv("DOCBANK_HOME", dataRoot)
 	ctx := t.Context()
 	root := t.TempDir()
 	catalog, err := store.Open(filepath.Join(root, "docbank.db"))
@@ -256,6 +259,31 @@ func TestExportLoadFilePackagePublishesIndependentlyVerifiedArchive(t *testing.T
 	published, err := os.ReadFile(destination)
 	require.NoError(t, err)
 	require.Equal(t, archive.Bytes(), published)
+
+	require.NoError(t, os.Mkdir(filepath.Join(dataRoot, "packs"), 0o700))
+	destinations := []string{filepath.Join(dataRoot, "docbank.db"), filepath.Join(dataRoot, "packs", "pack.bin")}
+	link := filepath.Join(t.TempDir(), "vault-link")
+	if err := os.Symlink(dataRoot, link); err == nil {
+		destinations = append(destinations, filepath.Join(link, "linked.bin"))
+	} else {
+		t.Logf("symlink case unavailable: %v", err)
+	}
+	server := newBatesToolTestServer(t, daemon.URL, true)
+	for _, destination := range destinations {
+		require.NoError(t, os.WriteFile(destination, []byte("synthetic vault authority"), 0o600))
+		response := exchangeRaw(t, server, requestFor("tools/call", map[string]any{
+			"name": "export_load_file_package", "arguments": map[string]any{
+				"snapshot_id": snapshot.SnapshotID, "profile_id": "export-csv-natives-v1",
+				"destination_path": destination, "overwrite": true,
+			},
+		}))
+		wireErr := decodeWireError(t, response)
+		require.EqualValues(t, jsonrpc.CodeInvalidParams, wireErr.Code)
+		require.Contains(t, wireErr.Message, "outside the Docbank data directory")
+		kept, err := os.ReadFile(destination)
+		require.NoError(t, err)
+		require.Equal(t, "synthetic vault authority", string(kept))
+	}
 }
 
 func catalogTool(t *testing.T, catalog []*sdkmcp.Tool, name string) *sdkmcp.Tool {
@@ -267,4 +295,24 @@ func catalogTool(t *testing.T, catalog []*sdkmcp.Tool, name string) *sdkmcp.Tool
 	}
 	t.Fatalf("tool %s not found", name)
 	return nil
+}
+
+func TestPackageExportMissingRepresentationReturnsMCPDomainError(t *testing.T) {
+	t.Setenv("DOCBANK_HOME", t.TempDir())
+	daemon := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, "/api/v1/packages/exports", r.URL.Path)
+		w.Header().Set("Content-Type", "application/problem+json")
+		w.WriteHeader(http.StatusUnprocessableEntity)
+		_, _ = w.Write([]byte(`{"status":422,"code":"package_incomplete","detail":"missing produced_pdf"}`))
+	}))
+	t.Cleanup(daemon.Close)
+	server := newBatesToolTestServer(t, daemon.URL, true)
+	result := callToolResult(t, server, "export_load_file_package", map[string]any{
+		"snapshot_id": uuid.NewString(), "profile_id": "export-dat-pdf-v1",
+		"destination_path": filepath.Join(t.TempDir(), "output.zip"), "overwrite": false,
+	})
+	require.Equal(t, true, result["isError"])
+	content := objectField(t, result, "structuredContent")
+	require.Equal(t, "package_incomplete", content["code"])
+	require.Contains(t, content["message"], "required")
 }

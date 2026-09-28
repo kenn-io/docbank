@@ -357,25 +357,30 @@ func exportBatesFile(ctx context.Context, lease *daemonLease, raw []byte, logger
 		ManifestSHA256: receipt.ManifestSHA256, Size: receipt.Size, State: state}, nil
 }
 
-func invalidBatesDestination(reason string) *jsonrpc.Error {
+func invalidExportDestination(reason string) *jsonrpc.Error {
 	return &jsonrpc.Error{Code: jsonrpc.CodeInvalidParams, Message: "invalid destination_path: " + reason}
 }
 
 // validateBatesDestination confines exports to new or replaceable regular .pdf
 // files outside the Docbank data directory.
 func validateBatesDestination(destination string, overwrite bool) error {
-	if !filepath.IsAbs(destination) || filepath.Clean(destination) != destination {
-		return invalidBatesDestination("must be an absolute, clean path")
-	}
 	if !strings.EqualFold(filepath.Ext(destination), ".pdf") {
-		return invalidBatesDestination("must end in .pdf")
+		return invalidExportDestination("must end in .pdf")
+	}
+	return validateExportDestination(destination, overwrite)
+}
+
+// validateExportDestination keeps local exports outside the Docbank data directory.
+func validateExportDestination(destination string, overwrite bool) error {
+	if !filepath.IsAbs(destination) || filepath.Clean(destination) != destination {
+		return invalidExportDestination("must be an absolute, clean path")
 	}
 	parent, err := filepath.EvalSymlinks(filepath.Dir(destination))
 	if err != nil {
-		return invalidBatesDestination("parent directory must exist")
+		return invalidExportDestination("parent directory must exist")
 	}
 	if info, err := os.Stat(parent); err != nil || !info.IsDir() {
-		return invalidBatesDestination("parent must be a directory")
+		return invalidExportDestination("parent must be a directory")
 	}
 	layout, err := home.Resolve()
 	if err != nil {
@@ -386,7 +391,7 @@ func validateBatesDestination(destination string, overwrite bool) error {
 		return err
 	}
 	if inside {
-		return invalidBatesDestination("must be outside the Docbank data directory")
+		return invalidExportDestination("must be outside the Docbank data directory")
 	}
 	existing, err := os.Lstat(destination)
 	if errors.Is(err, os.ErrNotExist) {
@@ -396,10 +401,10 @@ func validateBatesDestination(destination string, overwrite bool) error {
 		return err
 	}
 	if !existing.Mode().IsRegular() {
-		return invalidBatesDestination("existing destination must be a regular file, not a symlink or directory")
+		return invalidExportDestination("existing destination must be a regular file, not a symlink or directory")
 	}
 	if !overwrite {
-		return invalidBatesDestination("destination exists; set overwrite to replace it")
+		return invalidExportDestination("destination exists; set overwrite to replace it")
 	}
 	return nil
 }
