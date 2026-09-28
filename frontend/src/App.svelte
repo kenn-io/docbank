@@ -1809,13 +1809,21 @@
   });
 
   async function openPath(path: string): Promise<void> {
+    const request = ++generation;
     const session = webSession;
     try {
       const node = await generated.resolvePath({ path }, { session });
-      if (session !== webSession) return;
+      if (request !== generation || session !== webSession) return;
+      const load = loadDirectory(node.id, true);
+      // loadDirectory claims the next generation before its first await.
+      const loadRequest = generation;
+      await load;
+      if (loadRequest !== generation || directory?.id !== node.id) return;
+      // Clear only after loadDirectory saved the previous view for Back.
       searchQuery = "";
-      await loadDirectory(node.id, true);
+      tagFilterID = "";
     } catch (cause) {
+      if (request !== generation || session !== webSession) return;
       handleFailure(cause);
     }
   }

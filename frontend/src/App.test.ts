@@ -1465,6 +1465,78 @@ it("restores the tag view sort when returning from a tagged folder", async () =>
   expect(screen.getByRole("columnheader", { name: /Size/ }).getAttribute("aria-sort")).toBe("descending");
 });
 
+it("returns to search results after opening All files", async () => {
+  prepareSelectionApp();
+  installSelectionBackend();
+  render(App);
+  await screen.findByRole("cell", { name: "Reports" });
+  const search = screen.getByRole("searchbox", { name: "Search documents" }) as HTMLInputElement;
+  await fireEvent.input(search, { target: { value: "alpha" } });
+  await fireEvent.submit(search.closest("form")!);
+  await screen.findByRole("cell", { name: "/Reports/alpha.txt" });
+
+  const nav = screen.getByRole("navigation", { name: "Docbank navigation" });
+  await fireEvent.click(within(nav).getByRole("button", { name: "All files" }));
+  await screen.findByRole("cell", { name: "Reports" });
+  await waitFor(() => expect(search.value).toBe(""));
+
+  await fireEvent.click(screen.getByRole("button", { name: "Back to previous directory" }));
+  await screen.findByRole("cell", { name: "/Reports/alpha.txt" });
+  expect(search.value).toBe("alpha");
+});
+
+it("clears the tag filter when All files opens and restores it on Back", async () => {
+  prepareSelectionApp();
+  installSelectionBackend();
+  render(App);
+  await screen.findByRole("cell", { name: "Reports" });
+  await fireEvent.click(screen.getByRole("combobox", { name: "Browse or filter by tag: All tags" }));
+  await fireEvent.click(screen.getByRole("option", { name: "tax (3)" }));
+  await screen.findByRole("cell", { name: "/Reports/alpha.txt" });
+
+  const nav = screen.getByRole("navigation", { name: "Docbank navigation" });
+  await fireEvent.click(within(nav).getByRole("button", { name: "All files" }));
+  await screen.findByRole("cell", { name: "Reports" });
+  await screen.findByRole("combobox", { name: "Browse or filter by tag: All tags" });
+
+  await fireEvent.click(screen.getByRole("button", { name: "Back to previous directory" }));
+  await screen.findByRole("cell", { name: "/Reports/alpha.txt" });
+  expect(screen.queryByRole("combobox", { name: "Browse or filter by tag: All tags" })).toBeNull();
+});
+
+it("ignores a folder lookup that finishes after a newer navigation", async () => {
+  prepareSelectionApp();
+  const { fetchMock } = installSelectionBackend();
+  const backend = fetchMock.getMockImplementation()!;
+  let releaseRootLookup!: () => void;
+  let rootLookups = 0;
+  fetchMock.mockImplementation(async (input, init) => {
+    if (String(input) === "/api/v1/path?path=%2F" && ++rootLookups === 2) {
+      await new Promise<void>((resolve) => { releaseRootLookup = resolve; });
+    }
+    return backend(input, init);
+  });
+  const rootListings = () => fetchMock.mock.calls
+    .filter(([url]) => String(url) === "/api/v1/nodes/1/children?limit=1000&offset=0").length;
+  render(App);
+  await fireEvent.dblClick(await screen.findByRole("cell", { name: "Reports" }));
+  await screen.findByRole("cell", { name: "alpha.txt" });
+
+  const breadcrumbs = screen.getByRole("navigation", { name: "Folder path" });
+  await fireEvent.click(within(breadcrumbs).getByRole("button", { name: "All files" }));
+  await waitFor(() => expect(rootLookups).toBe(2));
+  const search = screen.getByRole("searchbox", { name: "Search documents" });
+  await fireEvent.input(search, { target: { value: "alpha" } });
+  await fireEvent.submit(search.closest("form")!);
+  await screen.findByRole("cell", { name: "/Reports/alpha.txt" });
+
+  const listingsBeforeRelease = rootListings();
+  releaseRootLookup();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  expect(rootListings()).toBe(listingsBeforeRelease);
+  expect(screen.getByRole("cell", { name: "/Reports/alpha.txt" })).toBeTruthy();
+});
+
 it("disables select-all in a folder containing only folders", async () => {
   prepareSelectionApp();
   installSelectionBackend(false);
