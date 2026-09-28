@@ -302,7 +302,6 @@ CREATE TABLE IF NOT EXISTS package_labels (
     provenance TEXT NOT NULL,
     label_set TEXT NOT NULL,
     label TEXT NOT NULL,
-    label_sort_key TEXT NOT NULL,
     occurrence_id TEXT NOT NULL,
     content_version_id TEXT NOT NULL REFERENCES content_versions(version_id),
     artifact_id TEXT,

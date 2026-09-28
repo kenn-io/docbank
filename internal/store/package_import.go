@@ -36,7 +36,6 @@ type PackageLabelRow struct {
 	Provenance       string `json:"provenance"`
 	LabelSet         string `json:"label_set"`
 	Label            string `json:"label"`
-	LabelSortKey     string `json:"label_sort_key"`
 	OccurrenceID     string `json:"occurrence_id"`
 	ContentVersionID string `json:"content_version_id"`
 	ArtifactID       string `json:"artifact_id"`
@@ -80,9 +79,6 @@ func PackageOccurrenceID(packageID, recordKey string) string {
 	return hex.EncodeToString(digest[:16])
 }
 
-// LabelSortKey preserves sender spelling; assigned numeric order lives in the ledger.
-func LabelSortKey(label string) string { return label }
-
 func validatePackageRecord(record PackageRecordRow) error {
 	if validateUUIDv4(record.PackageID) != nil || !canonical.IsSHA256Hex(record.RowID) ||
 		record.LoadFile == "" || len(record.LoadFile) > 4096 || !utf8.ValidString(record.LoadFile) ||
@@ -108,7 +104,7 @@ func validatePackageLabel(label PackageLabelRow) error {
 		!slices.Contains([]string{packageDirectionReceived, "assigned"}, label.Provenance) ||
 		label.LabelSet == "" || len(label.LabelSet) > 256 || !utf8.ValidString(label.LabelSet) ||
 		label.Label == "" || len(label.Label) > 256 || !utf8.ValidString(label.Label) ||
-		label.LabelSortKey != LabelSortKey(label.Label) || label.OccurrenceID == "" ||
+		label.OccurrenceID == "" ||
 		validateUUIDv4(label.ContentVersionID) != nil || label.PageNumber < 0 ||
 		!slices.Contains([]string{"unknown", "verified"}, label.PageState) ||
 		!slices.Contains([]string{"begin", "end", "page", "begin_attach", "end_attach"}, label.Endpoint) {
@@ -147,7 +143,7 @@ func loadPackageRecordTx(ctx context.Context, tx metadataQuerier, packageID, row
 }
 
 func loadPackageLabelsTx(ctx context.Context, tx metadataQuerier, packageID, occurrenceID string) ([]PackageLabelRow, error) {
-	rows, err := tx.QueryContext(ctx, `SELECT package_id,provenance,label_set,label,label_sort_key,
+	rows, err := tx.QueryContext(ctx, `SELECT package_id,provenance,label_set,label,
 		occurrence_id,content_version_id,COALESCE(artifact_id,''),COALESCE(page_number,0),page_state,endpoint
 		FROM package_labels WHERE package_id=? AND occurrence_id=? AND provenance='received'
 		ORDER BY provenance,label_set,label,endpoint,occurrence_id,page_number`, packageID, occurrenceID)
@@ -159,7 +155,7 @@ func loadPackageLabelsTx(ctx context.Context, tx metadataQuerier, packageID, occ
 	for rows.Next() {
 		var label PackageLabelRow
 		if err := rows.Scan(&label.PackageID, &label.Provenance, &label.LabelSet, &label.Label,
-			&label.LabelSortKey, &label.OccurrenceID, &label.ContentVersionID, &label.ArtifactID,
+			&label.OccurrenceID, &label.ContentVersionID, &label.ArtifactID,
 			&label.PageNumber, &label.PageState, &label.Endpoint); err != nil {
 			return nil, err
 		}
@@ -296,9 +292,9 @@ func (s *Store) commitPackageRecord(ctx context.Context, record PackageRecordRow
 		}
 		for _, label := range labels {
 			_, err := tx.ExecContext(ctx, `INSERT INTO package_labels(package_id,provenance,label_set,label,
-				label_sort_key,occurrence_id,content_version_id,artifact_id,page_number,page_state,endpoint)
-				VALUES(?,?,?,?,?,?,?,?,?,?,?)`, label.PackageID, label.Provenance, label.LabelSet, label.Label,
-				label.LabelSortKey, label.OccurrenceID, label.ContentVersionID, nullableString(label.ArtifactID),
+				occurrence_id,content_version_id,artifact_id,page_number,page_state,endpoint)
+				VALUES(?,?,?,?,?,?,?,?,?,?)`, label.PackageID, label.Provenance, label.LabelSet, label.Label,
+				label.OccurrenceID, label.ContentVersionID, nullableString(label.ArtifactID),
 				label.PageNumber, label.PageState, label.Endpoint)
 			if err != nil {
 				return err
@@ -379,9 +375,9 @@ func (s *Store) AssignPackageLabels(ctx context.Context, packageID, occurrenceID
 		}
 		for _, label := range labels {
 			if _, err := tx.ExecContext(ctx, `INSERT INTO package_labels(package_id,provenance,label_set,label,
-				label_sort_key,occurrence_id,content_version_id,artifact_id,page_number,page_state,endpoint)
-				VALUES(?,?,?,?,?,?,?,?,?,?,?)`, label.PackageID, label.Provenance, label.LabelSet, label.Label,
-				label.LabelSortKey, label.OccurrenceID, label.ContentVersionID, nullableString(label.ArtifactID),
+				occurrence_id,content_version_id,artifact_id,page_number,page_state,endpoint)
+				VALUES(?,?,?,?,?,?,?,?,?,?)`, label.PackageID, label.Provenance, label.LabelSet, label.Label,
+				label.OccurrenceID, label.ContentVersionID, nullableString(label.ArtifactID),
 				label.PageNumber, label.PageState, label.Endpoint); err != nil {
 				return err
 			}
@@ -391,7 +387,7 @@ func (s *Store) AssignPackageLabels(ctx context.Context, packageID, occurrenceID
 }
 
 func loadAssignedPackageLabels(ctx context.Context, q metadataQuerier, packageID, occurrenceID string) ([]PackageLabelRow, error) {
-	rows, err := q.QueryContext(ctx, `SELECT package_id,provenance,label_set,label,label_sort_key,
+	rows, err := q.QueryContext(ctx, `SELECT package_id,provenance,label_set,label,
 		occurrence_id,content_version_id,COALESCE(artifact_id,''),COALESCE(page_number,0),page_state,endpoint
 		FROM package_labels WHERE package_id=? AND occurrence_id=? AND provenance='assigned'
 		ORDER BY provenance,label_set,label,endpoint,occurrence_id,page_number`, packageID, occurrenceID)
@@ -403,7 +399,7 @@ func loadAssignedPackageLabels(ctx context.Context, q metadataQuerier, packageID
 	for rows.Next() {
 		var label PackageLabelRow
 		if err := rows.Scan(&label.PackageID, &label.Provenance, &label.LabelSet, &label.Label,
-			&label.LabelSortKey, &label.OccurrenceID, &label.ContentVersionID, &label.ArtifactID,
+			&label.OccurrenceID, &label.ContentVersionID, &label.ArtifactID,
 			&label.PageNumber, &label.PageState, &label.Endpoint); err != nil {
 			return nil, err
 		}
@@ -433,7 +429,7 @@ func (s *Store) LookupPackageLabel(ctx context.Context, label, packageID, labelS
 		provenance != "" && !slices.Contains([]string{packageDirectionReceived, "assigned"}, provenance) {
 		return nil, ErrPackageConflict
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT package_id,provenance,label_set,label,label_sort_key,
+	rows, err := s.db.QueryContext(ctx, `SELECT package_id,provenance,label_set,label,
 		occurrence_id,content_version_id,COALESCE(artifact_id,''),COALESCE(page_number,0),page_state,endpoint
 		FROM package_labels WHERE label=? AND (?='' OR package_id=?) AND (?='' OR label_set=?)
 		AND (?='' OR provenance=?) ORDER BY package_id,occurrence_id,artifact_id,page_number,endpoint LIMIT 251`,
@@ -447,7 +443,7 @@ func (s *Store) LookupPackageLabel(ctx context.Context, label, packageID, labelS
 	for rows.Next() {
 		var item PackageLabelRow
 		if err := rows.Scan(&item.PackageID, &item.Provenance, &item.LabelSet, &item.Label,
-			&item.LabelSortKey, &item.OccurrenceID, &item.ContentVersionID, &item.ArtifactID,
+			&item.OccurrenceID, &item.ContentVersionID, &item.ArtifactID,
 			&item.PageNumber, &item.PageState, &item.Endpoint); err != nil {
 			return nil, err
 		}

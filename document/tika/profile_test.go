@@ -190,3 +190,9 @@ func mapKeys(value map[string]any) []string {
 }
 
 var _ bridge.SecretResolver = staticSecretResolver{}
+
+func TestPolicyFingerprintPreservesCanonicalIdentity(t *testing.T) {
+	profile, err := NewProfile(Config{DeploymentID: "operator-tika-primary", RuntimeID: "sha256:" + strings.Repeat("a", 64), CredentialBinding: "tika-api"})
+	require.NoError(t, err)
+	assert.Equal(t, "fbb2372686c64bc459e40bf7dc3ccdfa238098a82e02ce6fb3715470f31757c9", profile.PolicyFingerprint)
+}

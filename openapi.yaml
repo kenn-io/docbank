@@ -9086,8 +9086,6 @@ components:
           type: string
         label_set:
           type: string
-        label_sort_key:
-          type: string
         occurrence_id:
           type: string
         package_id:
@@ -9104,7 +9102,6 @@ components:
         - provenance
         - label_set
         - label
-        - label_sort_key
         - occurrence_id
         - content_version_id
         - artifact_id
@@ -10079,13 +10076,10 @@ components:
           type: string
         note:
           type: string
-        owner_slice:
-          type: string
       required:
         - extensions
         - label
         - note
-        - owner_slice
       type: object
       x-go-type: document.PendingFormatV1
       x-go-type-import:

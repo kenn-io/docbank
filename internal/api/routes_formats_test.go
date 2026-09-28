@@ -56,7 +56,7 @@ func TestFormatCapabilitiesFiltersAndLooksUp(t *testing.T) {
 	require.NotNil(t, pending.Lookup)
 	assert.Equal(t, document.FormatLookupPending, pending.Lookup.Match)
 	require.NotNil(t, pending.Lookup.Pending)
-	assert.Equal(t, "DB-42b", pending.Lookup.Pending.OwnerSlice)
+	assert.Equal(t, "WPD", pending.Lookup.Pending.Label)
 
 	resp, body = get(t, ts, "/api/v1/formats/capabilities?extension=qqq", nil)
 	require.Equal(t, http.StatusOK, resp.StatusCode)

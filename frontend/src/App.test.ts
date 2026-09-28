@@ -1067,6 +1067,61 @@ it("opens an export for the exact page selection without mutation revisions or u
   expect(screen.getByText("1 selected on this page")).toBeTruthy();
 });
 
+it("switches panels while retaining the admitted export and its selected source", async () => {
+  prepareSelectionApp();
+  const { fetchMock } = installSelectionBackend();
+  const original = fetchMock.getMockImplementation()!;
+  const { exportMemberHash } = await import("./exports.js");
+  const hash = "a".repeat(64), future = "2099-01-01T00:00:00Z";
+  const memberHash = await exportMemberHash([{ node_id: 3, version_id: "00000003-1111-4111-8111-111111111111", sha256: "3".repeat(64), size: 30 }]);
+  let source: import("./exports.js").ExportSource;
+  let plan: import("./exports.js").ExportPlan;
+  let job: import("./exports.js").ExportJob;
+  let starts = 0;
+  const json = (value: unknown) => new Response(JSON.stringify(value), { headers: { "Content-Type": "application/json" } });
+  fetchMock.mockImplementation(async (input, init) => {
+    const path = String(input), body = init?.body ? JSON.parse(String(init.body)) : undefined;
+    if (path === "/api/daemon/jobs") return json({ items: [] });
+    if (path === "/api/v1/exports/sources") {
+      source = { id: body.operation_id, request_sha256: hash, kind: "explicit", state: "sealed", member_hash: memberHash, total: 1, source_bytes: 30, created_at: "2026-01-01T00:00:00Z", expires_at: future };
+      return json(source);
+    }
+    if (path === "/api/v1/exports/plans") {
+      plan = { format: "docbank-bundle-v1", id: body.operation_id, vault_id: "11111111-1111-4111-8111-111111111111", toolchain: "go1.27", source, roles: body.roles, fingerprint: hash, total: 1, role_entries: 1, role_bytes: 30, metadata_bytes: 100, created_at: source.created_at, expires_at: future };
+      return json(plan);
+    }
+    if (path === `/api/v1/exports/plans/${plan?.id}/preview`) return json({ plan_id: plan.id, fingerprint: hash, member_hash: memberHash, total: 1, roles: [{ role: "original", available_members: 1, unavailable_members: 0, files: 1, bytes: 30 }] });
+    if (path === "/api/v1/exports/jobs") {
+      starts++;
+      job = { id: body.operation_id, plan_id: plan.id, fingerprint: hash, state: "queued", sequence: 1, completed_roles: 0, completed_bytes: 0, attempt: 0, created_at: source.created_at, deadline: future, expires_at: future };
+      return json(job);
+    }
+    if (path.startsWith(`/api/v1/exports/jobs/${job?.id}/events`)) return new Response("", { headers: { "Content-Type": "application/x-ndjson" } });
+    if (path === `/api/v1/exports/jobs/${job?.id}`) return json(job);
+    return original(input, init);
+  });
+  render(App);
+  await fireEvent.click(await screen.findByRole("checkbox", { name: "Select readme.txt" }));
+  await fireEvent.click(screen.getByRole("button", { name: "Export selection" }));
+  await fireEvent.click(await screen.findByRole("button", { name: "Preview export" }));
+  await fireEvent.click(await screen.findByRole("button", { name: "Start reviewed export" }));
+  await screen.findByRole("region", { name: "Export job" });
+  await screen.findByText("Disconnected — server work may continue");
+  await fireEvent.click(screen.getByRole("button", { name: "Background jobs" }));
+  const jobs = await screen.findByRole("dialog", { name: "Daemon background jobs" });
+  expect(screen.queryByRole("dialog", { name: "Verified export" })).toBeNull();
+  await fireEvent.click(within(jobs).getByRole("button", { name: "Close background jobs" }));
+  await fireEvent.click(screen.getByRole("checkbox", { name: "Select readme.txt" }));
+  await fireEvent.click(screen.getByRole("button", { name: "Export" }));
+  const reopened = await screen.findByRole("dialog", { name: "Verified export" });
+  expect(within(reopened).getByText("Selected documents on this page")).toBeTruthy();
+  expect(within(reopened).getByRole("region", { name: "Export job" })).toBeTruthy();
+  expect(starts).toBe(1);
+  await fireEvent.click(screen.getByRole("button", { name: "Lock web session" }));
+  await screen.findByText("Open your Docbank");
+  expect(screen.queryByRole("dialog", { name: "Verified export" })).toBeNull();
+});
+
 it("opens bounded tag assignment for the exact page selection", async () => {
   prepareSelectionApp();
   installSelectionBackend();

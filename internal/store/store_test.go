@@ -107,8 +107,7 @@ func TestOpenBootstrapsRoot(t *testing.T) {
 	assert.Equal(t, 1, count)
 }
 
-func TestOpenConcurrentBootstrap(t *testing.T) {
-	t.Parallel()
+func TestOpenConcurrentBootstrap(t *testing.T) { //nolint:paralleltest // owns concurrent opens within the five-second bootstrap budget
 	dbPath := filepath.Join(t.TempDir(), "docbank.db")
 
 	const n = 2

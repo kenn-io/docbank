@@ -256,7 +256,7 @@ describe("document processing drawer", () => {
     expect(screen.getByText("Disclosed filename: report.pdf")).toBeTruthy();
     expect(screen.getByText("Local process")).toBeTruthy();
     expect(screen.getByText(/processing profile and operator scope until revoked or expired/i)).toBeTruthy();
-    expect(screen.getByText(/retained sanitized Markdown/i)).toBeTruthy();
+    expect(screen.getByText("Extracted text is saved in the vault and included in backups.")).toBeTruthy();
     expect(screen.getByText(/2 provider calls/i)).toBeTruthy();
     expect(screen.getByText(/1 vector space/i)).toBeTruthy();
     expect(screen.getByText(/retained derivatives enter future backups/i)).toBeTruthy();

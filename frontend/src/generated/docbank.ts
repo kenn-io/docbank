@@ -2812,7 +2812,6 @@ export interface PendingFormatV1 {
   extensions: string[];
   label: string;
   note: string;
-  owner_slice: string;
 }
 
 export interface FormatLookupV1 {
@@ -3635,7 +3634,6 @@ export interface PackageLabelRow {
   endpoint: string;
   label: string;
   label_set: string;
-  label_sort_key: string;
   occurrence_id: string;
   package_id: string;
   page_number: number;

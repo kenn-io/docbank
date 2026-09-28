@@ -189,3 +189,9 @@ type testJar struct{}
 
 func (testJar) SetCookies(*url.URL, []*http.Cookie) {}
 func (testJar) Cookies(*url.URL) []*http.Cookie     { return nil }
+
+func TestPolicyFingerprintPreservesCanonicalIdentity(t *testing.T) {
+	fingerprint, err := PolicyFingerprint(testProfile(t, 1024))
+	require.NoError(t, err)
+	assert.Equal(t, "df83bf261077c1899b1766ff5a64b3f9508a1fc7a191012e55f6c77adf6b2b88", fingerprint)
+}

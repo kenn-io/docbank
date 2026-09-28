@@ -125,5 +125,5 @@ it("identifies a frozen visible selection without promising a snapshot refresh",
     disabled: false, context: "snapshot", onclose: vi.fn(), onchanged: vi.fn(), onauthfailure: vi.fn() } });
 
   expect(screen.getByText(/visible frozen selection/)).toBeTruthy();
-  expect(screen.getByText(/Frozen membership, count, and order stay unchanged/)).toBeTruthy();
+  expect(screen.getByText("This snapshot keeps the same documents and order. Tag changes appear below.")).toBeTruthy();
 });

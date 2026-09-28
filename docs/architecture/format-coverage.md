@@ -74,8 +74,8 @@ an optional `family` filter is applied. Lookup preserves the caller's exact
 query and returns one of:
 
 - `format` with the matching classified format;
-- `pending` with a named owner slice for a recognized format that is not yet in
-  the catalog;
+- `pending` with a support limitation for a recognized format that is not yet
+  in the catalog;
 - `unknown_format` when neither inventory contains the query.
 
 An unknown lookup is a successful read. The HTTP endpoint returns status 200,

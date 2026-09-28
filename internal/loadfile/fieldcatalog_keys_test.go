@@ -57,7 +57,7 @@ func TestFieldCatalogKeysAreTheClosedSpecCatalog(t *testing.T) {
 		"loadfile.time.sent",
 	}
 
-	keys := fieldCatalogKeys
+	keys := FieldCatalogKeys()
 	require.Len(t, keys, 43)
 	assert.Equal(t, want, keys)
 	assert.True(t, sort.StringsAreSorted(keys))

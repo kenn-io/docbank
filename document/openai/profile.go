@@ -7,8 +7,8 @@ import (
 	"encoding/hex"
 	"encoding/json/v2"
 	"errors"
+	"fmt"
 	"net/http"
-	"net/netip"
 	"reflect"
 	"slices"
 	"strings"
@@ -92,19 +92,7 @@ type policyIdentity struct {
 	MaxInputBytes      int64                        `json:"max_input_bytes"`
 	MaxRequestBytes    int64                        `json:"max_request_bytes"`
 	MaxResponseBytes   int64                        `json:"max_response_bytes"`
-	Egress             egressIdentity               `json:"egress"`
-}
-
-type egressIdentity struct {
-	Scheme              string   `json:"scheme"`
-	Host                string   `json:"host"`
-	Port                uint16   `json:"port"`
-	AllowedCIDRs        []string `json:"allowed_cidrs"`
-	ProxyMode           string   `json:"proxy_mode"`
-	ConnectTimeout      int64    `json:"connect_timeout_nanos"`
-	KeepAlive           int64    `json:"keep_alive_nanos"`
-	TLSHandshakeTimeout int64    `json:"tls_handshake_timeout_nanos"`
-	SPKISHA256          []string `json:"spki_sha256,omitempty"`
+	Egress             providerhttp.EgressIdentity  `json:"egress"`
 }
 
 // PolicyFingerprint returns the canonical hosted profile identity.
@@ -119,7 +107,7 @@ func PolicyFingerprint(profile Profile) (string, error) {
 		SecretBinding: normalized.SecretBinding, RequestTimeout: int64(normalized.RequestTimeout),
 		MaxBatchItems: normalized.MaxBatchItems, MaxInputItemBytes: normalized.MaxInputItemBytes,
 		MaxInputBytes: normalized.MaxInputBytes, MaxRequestBytes: normalized.MaxRequestBytes,
-		MaxResponseBytes: normalized.MaxResponseBytes, Egress: profileEgressIdentity(normalized.EgressPolicy),
+		MaxResponseBytes: normalized.MaxResponseBytes, Egress: providerhttp.IdentifyEgress(normalized.EgressPolicy),
 	}, json.Deterministic(true))
 	if err != nil {
 		return "", errors.New("openai: policy identity encoding failed")
@@ -244,59 +232,13 @@ func validateDescriptorContract(descriptor document.EmbeddingDescriptor, epoch s
 }
 
 func normalizeEgress(policy *providerhttp.EgressPolicy) error {
-	if policy.ConnectTimeout == 0 {
-		policy.ConnectTimeout = providerhttp.DefaultConnectTimeout
-	}
-	if policy.KeepAlive == 0 {
-		policy.KeepAlive = providerhttp.DefaultKeepAlive
-	}
-	if policy.TLSHandshakeTimeout == 0 {
-		policy.TLSHandshakeTimeout = providerhttp.DefaultTLSHandshakeTimeout
-	}
-	if policy.ProxyMode == "" {
-		policy.ProxyMode = providerhttp.ProxyDisabled
-	}
-	if policy.Scheme != "https" || policy.Host != host || policy.Port != 443 ||
-		policy.ProxyMode != providerhttp.ProxyDisabled || policy.TLS.RootCAs != nil {
-		return errors.New("openai: egress authority must be exactly api.openai.com:443 with system roots and no proxy")
-	}
-	for index := range policy.AllowedCIDRs {
-		policy.AllowedCIDRs[index] = policy.AllowedCIDRs[index].Masked()
-	}
-	slices.SortFunc(policy.AllowedCIDRs, func(left, right netip.Prefix) int {
-		return strings.Compare(left.String(), right.String())
-	})
-	for index := 1; index < len(policy.AllowedCIDRs); index++ {
-		if policy.AllowedCIDRs[index] == policy.AllowedCIDRs[index-1] {
-			return errors.New("openai: egress policy has a duplicate CIDR")
+	if err := providerhttp.NormalizeHostedEgress(policy, host); err != nil {
+		if errors.Is(err, providerhttp.ErrHostedAuthority) {
+			return errors.New("openai: egress authority must be exactly api.openai.com:443 with system roots and no proxy")
 		}
-	}
-	for index := range policy.TLS.SPKISHA256 {
-		policy.TLS.SPKISHA256[index] = strings.ToLower(policy.TLS.SPKISHA256[index])
-	}
-	slices.Sort(policy.TLS.SPKISHA256)
-	for index := 1; index < len(policy.TLS.SPKISHA256); index++ {
-		if policy.TLS.SPKISHA256[index] == policy.TLS.SPKISHA256[index-1] {
-			return errors.New("openai: egress policy has a duplicate SPKI pin")
-		}
-	}
-	if _, err := providerhttp.NewTransport(*policy, nil); err != nil {
-		return errors.New("openai: sealed egress policy is invalid")
+		return fmt.Errorf("openai: %s", err.Error())
 	}
 	return nil
-}
-
-func profileEgressIdentity(policy providerhttp.EgressPolicy) egressIdentity {
-	cidrs := make([]string, len(policy.AllowedCIDRs))
-	for index, prefix := range policy.AllowedCIDRs {
-		cidrs[index] = prefix.String()
-	}
-	return egressIdentity{
-		Scheme: policy.Scheme, Host: policy.Host, Port: policy.Port, AllowedCIDRs: cidrs,
-		ProxyMode: string(policy.ProxyMode), ConnectTimeout: int64(policy.ConnectTimeout),
-		KeepAlive: int64(policy.KeepAlive), TLSHandshakeTimeout: int64(policy.TLSHandshakeTimeout),
-		SPKISHA256: slices.Clone(policy.TLS.SPKISHA256),
-	}
 }
 
 func validToken(value string) bool {

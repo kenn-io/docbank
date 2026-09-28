@@ -128,3 +128,9 @@ type syntheticResolver []netip.Addr
 func (resolver syntheticResolver) LookupNetIP(context.Context, string, string) ([]netip.Addr, error) {
 	return append([]netip.Addr(nil), resolver...), nil
 }
+
+func TestPolicyFingerprintPreservesCanonicalIdentity(t *testing.T) {
+	fingerprint, err := PolicyFingerprint(geminiTestProfile(t, 128))
+	require.NoError(t, err)
+	assert.Equal(t, "c980a7b1a057736ea0b3332f881bae7dd7e685c93594e4a7d1a8e6b3b9bdb555", fingerprint)
+}

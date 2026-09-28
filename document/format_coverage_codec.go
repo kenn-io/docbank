@@ -187,9 +187,6 @@ func validateFormatCoverageV1(value FormatCoverageV1) error {
 		if err := validateCoverageStringList(pending.Extensions, "pending extension"); err != nil {
 			return fmt.Errorf("pending %q: %w", pending.Label, err)
 		}
-		if err := validateCoverageText(pending.OwnerSlice, "owner slice", false); err != nil {
-			return fmt.Errorf("pending %q: %w", pending.Label, err)
-		}
 		if err := validateBoundedCoverageText(pending.Note, MaxCoverageNoteBytes, "note"); err != nil {
 			return fmt.Errorf("pending %q: %w", pending.Label, err)
 		}

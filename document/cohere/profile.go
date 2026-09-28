@@ -87,7 +87,7 @@ type policyIdentity struct {
 	MaxResponseBytes   int64                        `json:"max_response_bytes"`
 	AcceptedImageTypes []string                     `json:"accepted_image_types"`
 	MediaPolicy        media.Policy                 `json:"media_policy"`
-	Egress             cohereapi.EgressIdentity     `json:"egress"`
+	Egress             providerhttp.EgressIdentity  `json:"egress"`
 }
 
 func PolicyFingerprint(profile Profile) (string, error) {
@@ -102,7 +102,7 @@ func PolicyFingerprint(profile Profile) (string, error) {
 		MaxInputItemBytes: normalized.MaxInputItemBytes, MaxInputBytes: normalized.MaxInputBytes,
 		MaxImageBytes: normalized.MaxImageBytes, MaxRequestBytes: normalized.MaxRequestBytes,
 		MaxResponseBytes: normalized.MaxResponseBytes, AcceptedImageTypes: slices.Clone(acceptedImageFormats),
-		MediaPolicy: normalized.MediaPolicy, Egress: cohereapi.IdentifyEgress(normalized.EgressPolicy),
+		MediaPolicy: normalized.MediaPolicy, Egress: providerhttp.IdentifyEgress(normalized.EgressPolicy),
 	}, json.Deterministic(true))
 	if err != nil {
 		return "", errors.New("cohere embed: policy identity encoding failed")

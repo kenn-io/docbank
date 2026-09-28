@@ -82,7 +82,7 @@
 <section aria-label="Email reader" class="email-reader">
   <div class="heading"><strong>Archived email</strong><span>Exact selected version</span></div>
   <p class="hint">Remote resources and sender scripts are blocked. HTML is a safe reading copy; the original EML remains available below.</p>
-  {#if loading}<p role="status">Verifying email headers and MIME authority…</p>
+  {#if loading}<p role="status">Loading and verifying the email…</p>
   {:else if error}<p role="status">{error}</p>
   {:else if message && metadata}
     <dl aria-label="Decoded email headers">

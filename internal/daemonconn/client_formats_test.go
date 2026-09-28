@@ -36,7 +36,7 @@ func TestClientFormatCapabilitiesValidatesAndPreservesLookup(t *testing.T) {
 	require.NotNil(t, got.Lookup)
 	assert.Equal(t, document.FormatLookupPending, got.Lookup.Match)
 	assert.Equal(t, "wpd", got.Lookup.Query)
-	assert.Equal(t, "DB-42b", got.Lookup.Pending.OwnerSlice)
+	assert.Equal(t, "WPD", got.Lookup.Pending.Label)
 }
 
 func TestClientFormatCapabilitiesAcceptsFamilyExcludedLookup(t *testing.T) {

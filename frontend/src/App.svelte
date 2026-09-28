@@ -91,12 +91,9 @@
   import { orderRows, reconcileSearchView, type SortField } from "./rows.js";
   import { sortTags } from "./tagPresentation.js";
   import { isAppShortcutSuppressed, moveInspection } from "./shortcuts.js";
-  import { applySnapshotReceiptOverlay, snapshotTargetRevision, visibleSnapshotOverlay, type SnapshotReceiptOverlays } from "./snapshotOverlays.js";
-  import { ActionJournal, type PersistedAction } from "./actionJournal.js";
-  import { prepareAction, decodeRecovery } from "./actionRecovery.js";
-  import { readActionVaultID } from "./actionRunner.js";
-  import { SnapshotSession, type SnapshotState } from "./snapshotState.js";
-  import { captureSnapshotTargets, type SnapshotOptions, type SnapshotRow } from "./snapshots.js";
+  import { applySnapshotReceiptOverlay, snapshotTargetRevision, visibleSnapshotOverlay } from "./snapshotOverlays.js";
+  import { SnapshotWorkspace } from "./snapshotWorkspace.svelte.js";
+  import { type SnapshotOptions, type SnapshotRow } from "./snapshots.js";
   import { selectedSourceFromNode, selectedSourceFromSnapshot } from "./selectedSource.js";
   import { listSavedQueries } from "./savedQueries.js";
   import type { RenditionObservation } from "./renditionText.js";
@@ -146,6 +143,13 @@
     sortField: SortField;
     sortDirection: SortDirection;
   };
+
+  type Panel =
+    | { kind: "history" | "versions" | "provenance" | "jobs" | "auditEvidence" | "storage" | "backups" | "bates" | "export" | "termReports" | "savedQueries" | "collections" | "trash" | "tagCatalog" }
+    | { kind: "processing"; target: Row; intent: "similar" | null; scope: string[] }
+    | { kind: "rendition"; target: { attachmentID: string; path: string } }
+    | { kind: "upload" | "mailbox" | "loadFile"; target: Node }
+    | { kind: "trashNode"; target: Row };
 
   let webSession = $state("");
   let uploadChannel = $state<VerifiedUploadChannel | null>(null);
@@ -199,58 +203,29 @@
   let selectedAudit = $state<AuditStatus | null>(null);
   let auditLoading = $state(false);
   let auditError = $state("");
-  let historyOpen = $state(false);
-  let versionsOpen = $state(false);
-  let provenanceOpen = $state(false);
-  let processingTarget = $state<Row | null>(null);
-  let processingIntent = $state<"similar" | null>(null);
-  let processingScope = $state<string[]>([]);
-  let renditionTarget = $state<{ attachmentID: string; path: string } | null>(null);
-  let jobsOpen = $state(false);
-  let auditEvidenceOpen = $state(false);
-  let storageOpen = $state(false);
-  let backupsOpen = $state(false);
-  let batesOpen = $state(false);
-  let exportOpen = $state(false);
-  let termReportsOpen = $state(false);
+
+  let activePanel = $state<Panel | null>(null);
   let exportHasJob = $state(false);
   let exportInput = $state<ExportInput | null>(null);
-  $effect(() => { if (!webSession) { batesOpen = false; exportOpen = false; exportInput = null; exportHasJob = false; termReportsOpen = false; } });
-  let savedQueriesOpen = $state(false);
+  $effect(() => { if (!webSession) { activePanel = null; exportInput = null; exportHasJob = false; } });
+
   let queryBarOpen = $state(false);
   let savedQueryDraft = $state<Query | null>(null);
   let queryEditorInitial = $state<Query>(parseQuery("{}"));
   let queryURLError = $state("");
-  let snapshotState = $state<Readonly<SnapshotState>>({ status: "idle", offset: 0 });
-  let snapshotController: SnapshotSession | undefined;
-  let snapshotEpoch = 0;
-  let selectedSnapshotID = $state<number | undefined>();
-  let snapshotSelection = $state<Set<number>>(new Set());
-  let snapshotOverlays = $state<SnapshotReceiptOverlays>({});
-  let snapshotActionsOpen = $state(false);
-  let snapshotActionBusy = $state(false);
-  let snapshotActionController: AbortController | undefined;
-  let snapshotActionGeneration = 0;
-  let snapshotActionError = $state("");
-  let recoveryJournal = $state<ActionJournal | null>(null);
-  let recoveryAction = $state<PersistedAction | null>(null);
-  let recoveryTag = $state<Tag | null>(null);
-  let recoveryVaultID = $state("");
-  let recoverySnapshotEpoch = 0;
-  let recoverySnapshotID: string | undefined;
-  let collectionsOpen = $state(false);
-  let trashOpen = $state(false);
+  const snapshot = new SnapshotWorkspace(
+    () => webSession,
+    handleFailure,
+    applySnapshotReceipt,
+  );
+
   let manageTagsTarget = $state<Row | null>(null);
   let batchTagsTargets = $state<SelectionTarget[] | null>(null);
   let batchTagsContext = $state<"live" | "snapshot">("live");
   let batchTagsChoice = $state<SnapshotActionChoice>();
   let batchTagsSnapshotID: string | undefined;
   let batchTagsSnapshotEpoch = 0;
-  let tagCatalogOpen = $state(false);
-  let uploadTarget = $state<Node | null>(null);
-  let mailboxTarget = $state<Node | null>(null);
-  let loadFileTarget = $state<Node | null>(null);
-  let trashTarget = $state<Row | null>(null);
+
   let generation = 0;
   let auditGeneration = 0;
   let tagGeneration = 0;
@@ -264,14 +239,14 @@
   let inspectorContentTab = $state<"preview" | "text" | "duplicates" | "attachments" | "email">("preview");
 
   const selected = $derived(rows.find((row) => row.node.id === selectedID));
-  const snapshotActive = $derived(snapshotState.status !== "idle");
-  const snapshotPage = $derived(snapshotState.page);
-  const snapshotQuery = $derived(snapshotState.query);
-  const selectedSnapshot = $derived(snapshotPage?.rows.find((row) => row.node_id === selectedSnapshotID));
-  const selectedSnapshotPageIndex = $derived(snapshotPage?.rows.findIndex((row) => row.node_id === selectedSnapshotID) ?? -1);
-  const selectedSnapshotPosition = $derived(selectedSnapshotPageIndex < 0 ? undefined : snapshotState.offset + selectedSnapshotPageIndex);
-  const snapshotQueryHighlightKey = $derived(snapshotState.firstPage
-    ? `${webSession}:${snapshotState.firstPage.snapshot_id}:${snapshotState.firstPage.query_fingerprint}` : "");
+  const snapshotActive = $derived(snapshot.state.status !== "idle");
+  const snapshotPage = $derived(snapshot.state.page);
+  const snapshotQuery = $derived(snapshot.state.query);
+  const selectedSnapshot = $derived(snapshotPage?.rows.find((row) => row.node_id === snapshot.selectedID));
+  const selectedSnapshotPageIndex = $derived(snapshotPage?.rows.findIndex((row) => row.node_id === snapshot.selectedID) ?? -1);
+  const selectedSnapshotPosition = $derived(selectedSnapshotPageIndex < 0 ? undefined : snapshot.state.offset + selectedSnapshotPageIndex);
+  const snapshotQueryHighlightKey = $derived(snapshot.state.firstPage
+    ? `${webSession}:${snapshot.state.firstPage.snapshot_id}:${snapshot.state.firstPage.query_fingerprint}` : "");
   const selectedRenditionObservation = $derived<RenditionObservation | undefined>(selectedSnapshot && snapshotPage ? {
     configuration: snapshotPage.coverage.configuration,
     ...(snapshotPage.coverage.profile_fingerprint ? { profileFingerprint: snapshotPage.coverage.profile_fingerprint } : {}),
@@ -306,10 +281,10 @@
     ),
   );
   const selectedSnapshotOverlay = $derived(selectedSnapshot ? snapshotOverlay(selectedSnapshot) : undefined);
-  const selectedSnapshotRows = $derived(snapshotPage?.rows.filter((row) => snapshotSelection.has(row.node_id)) ?? []);
+  const selectedSnapshotRows = $derived(snapshotPage?.rows.filter((row) => snapshot.selection.has(row.node_id)) ?? []);
   const snapshotTargets = $derived(selectedSnapshotRows.map((row) => ({
     node_id: row.node_id,
-    revision: snapshotTargetRevision(row, snapshotOverlays),
+    revision: snapshotTargetRevision(row, snapshot.overlays),
   })));
   const allVisibleSnapshotRowsSelected = $derived(
     Boolean(snapshotPage?.rows.length) && selectedSnapshotRows.length === snapshotPage?.rows.length,
@@ -376,7 +351,7 @@
 
   $effect(() => {
     const key = snapshotQueryHighlightKey;
-    const inputs = untrack(() => ({ session: webSession, snapshot: snapshotState.firstPage }));
+    const inputs = untrack(() => ({ session: webSession, snapshot: snapshot.state.firstPage }));
     const controller = new AbortController();
     let current = true;
     void key;
@@ -470,8 +445,7 @@
       return () => {
         channel.close();
         detachShortcuts();
-        snapshotController?.dispose();
-        invalidateSnapshotActions();
+        snapshot.reset();
       };
     }
     return detachShortcuts;
@@ -740,28 +714,13 @@
   function handleFailure(cause: unknown): void {
     if (cause instanceof APIError && cause.status === 401) {
       leaveSnapshotMode();
-      savedQueriesOpen = false;
+      activePanel = null;
       savedQueryDraft = null;
       replaceQueryURL(null);
       uploadChannel?.close();
       webSession = "";
       uploadChannel = null;
-      historyOpen = false;
-      versionsOpen = false;
-      provenanceOpen = false;
-      processingTarget = null;
-      renditionTarget = null;
-      jobsOpen = false;
-      auditEvidenceOpen = false;
-      storageOpen = false;
-      backupsOpen = false;
-      collectionsOpen = false;
-      trashOpen = false;
-      tagCatalogOpen = false;
       shortcutHelpOpen = false;
-      uploadTarget = null;
-      mailboxTarget = null;
-      trashTarget = null;
       tagCatalog = [];
       tagCatalogListed = 0;
       tagCatalogLoading = false;
@@ -1258,11 +1217,7 @@
     inspectorGeneration += 1;
     if (selectedID !== nodeID) {
       invalidateTagHotkeyMutation();
-      historyOpen = false;
-      versionsOpen = false;
-      provenanceOpen = false;
-      processingTarget = null;
-      renditionTarget = null;
+      if (activePanel && ["history", "versions", "provenance", "processing", "rendition"].includes(activePanel.kind)) activePanel = null;
     }
     selectedID = nodeID;
     selectedLiveNode = null;
@@ -1437,7 +1392,7 @@
 
   function handleBatchTagsChanged(_receipt: BatchTagReceipt): void {
     if (batchTagsContext === "snapshot") {
-      if (batchTagsSnapshotEpoch !== snapshotEpoch || batchTagsSnapshotID !== snapshotState.firstPage?.snapshot_id) return;
+      if (batchTagsSnapshotEpoch !== snapshot.epoch || batchTagsSnapshotID !== snapshot.state.firstPage?.snapshot_id) return;
       applySnapshotReceipt(_receipt);
       return;
     }
@@ -1452,12 +1407,11 @@
       naturalProfileDefaultPending?.request === profileGeneration &&
       naturalProfileDefaultPending.session === webSession;
     const acceptedQuery = activeQuery;
-    invalidateSnapshotActions();
+    if (batchTagsContext === "snapshot") batchTagsTargets = null;
     if (!resumeLive) naturalProfileDefaultPending = null;
-    if (snapshotState.status === "idle" && snapshotController === undefined) return;
-    snapshotController?.dispose();
-    snapshotController = undefined;
-    snapshotState = { status: "idle", offset: 0 };
+    const wasActive = snapshot.state.status !== "idle";
+    snapshot.reset();
+    if (!wasActive) return;
     if (deferredProfileDefault) {
       naturalProfileDefaultPending = null;
       const defaultMode: NaturalSearchMode = naturalProfile && naturalQueryBindings(naturalProfile).length ? "auto" : "names";
@@ -1467,30 +1421,10 @@
         void runSearch(selectedID, acceptedQuery);
       }
     }
-    selectedSnapshotID = undefined;
-    snapshotSelection = new Set();
-    snapshotOverlays = {};
-    snapshotActionsOpen = false;
-  }
-
-  function snapshotSession(): SnapshotSession {
-    if (snapshotController) return snapshotController;
-    snapshotController = new SnapshotSession(webSession, (next) => {
-      const prior = snapshotState;
-      snapshotState = next;
-      const page = next.page;
-      if (page !== prior.page) snapshotSelection = new Set();
-      if (next.firstPage?.snapshot_id !== prior.firstPage?.snapshot_id) snapshotOverlays = {};
-      selectedSnapshotID = page?.rows.some((row) => row.node_id === selectedSnapshotID)
-        ? selectedSnapshotID
-        : page?.rows[0]?.node_id;
-      if (next.error instanceof APIError && next.error.status === 401) handleFailure(next.error);
-    });
-    return snapshotController;
   }
 
   function runSnapshot(query: Query, options: SnapshotOptions): void {
-    invalidateSnapshotActions();
+    if (batchTagsContext === "snapshot") batchTagsTargets = null;
     invalidateTagHotkeyMutation();
     generation += 1;
     searchPending = false;
@@ -1498,270 +1432,70 @@
     naturalRerankPending = false;
     naturalProfileDefaultPending = null;
     keepQueryDraft(query);
-    void snapshotSession().run(query, options);
+    void snapshot.run(query, options);
   }
 
   function runSnapshotAgain(): void {
-    if (!snapshotState.query || !snapshotState.options) return;
-    runSnapshot(snapshotState.query, snapshotState.options);
+    if (!snapshot.state.query || !snapshot.state.options) return;
+    runSnapshot(snapshot.state.query, snapshot.state.options);
   }
 
   function changeSnapshotQuery(query: Query): void {
-    if (!snapshotState.options) return;
-    runSnapshot(query, snapshotState.options);
+    if (!snapshot.state.options) return;
+    runSnapshot(query, snapshot.state.options);
   }
 
   function sortSnapshot(field: Query["sort"]["field"]): void {
-    const query = snapshotState.query;
-    if (!query || !snapshotState.options) return;
+    const query = snapshot.state.query;
+    if (!query || !snapshot.state.options) return;
     const direction = query.sort.field === field
       ? query.sort.direction === "asc" ? "desc" : "asc"
       : field === "name" || field === "path" || field === "media_type" ? "asc" : "desc";
     changeSnapshotQuery(parseQuery(JSON.stringify({ ...query, sort: { field, direction } })));
   }
 
-  function pageSnapshot(direction: "previous" | "next"): void {
-    void snapshotController?.page(direction);
-  }
-
-  async function navigateSnapshotDocument(direction: "previous" | "next"): Promise<void> {
-    const page = snapshotState.page;
-    const index = page?.rows.findIndex((row) => row.node_id === selectedSnapshotID) ?? -1;
-    if (!page || index < 0 || snapshotState.status !== "ready") return;
-    const target = direction === "next" ? index + 1 : index - 1;
-    if (target >= 0 && target < page.rows.length) {
-      selectedSnapshotID = page.rows[target]?.node_id;
-      return;
-    }
-    const acceptedSnapshot = page.snapshot_id;
-    if (!await snapshotController?.page(direction)) return;
-    const nextPage = snapshotState.page;
-    if (!nextPage || nextPage.snapshot_id !== acceptedSnapshot || nextPage.rows.length === 0) return;
-    selectedSnapshotID = direction === "next"
-      ? nextPage.rows[0]?.node_id
-      : nextPage.rows.at(-1)?.node_id;
-  }
-
-  function toggleSnapshotSelection(row: SnapshotRow, checked: boolean): void {
-    const next = new Set(snapshotSelection);
-    if (checked) next.add(row.node_id);
-    else next.delete(row.node_id);
-    snapshotSelection = next;
-  }
-
-  function selectVisibleSnapshotRows(checked = true): void {
-    snapshotSelection = checked && snapshotPage
-      ? new Set(snapshotPage.rows.map((row) => row.node_id))
-      : new Set();
-  }
-
   function openExport(selectionOnly = false): void {
-    if (exportHasJob) { exportOpen = true; return; }
+    if (exportHasJob) { activePanel = { kind: "export" }; return; }
     try {
-      if (snapshotActive && snapshotState.firstPage && !selectionOnly) {
-        exportInput = { label: "Whole frozen query", snapshot: snapshotState.firstPage };
+      if (snapshotActive && snapshot.state.firstPage && !selectionOnly) {
+        exportInput = { label: "Whole frozen query", snapshot: snapshot.state.firstPage };
       } else if (snapshotActive && snapshotPage) {
-        exportInput = { label: "Selected documents on frozen page", members: copyExportMembers(snapshotPage.rows.filter(row => snapshotSelection.has(row.node_id))) };
+        exportInput = { label: "Selected documents on frozen page", members: copyExportMembers(snapshotPage.rows.filter(row => snapshot.selection.has(row.node_id))) };
       } else {
         const rows = sortedRows.filter(row => row.node.kind === "file" && (!selectionOnly || bulkSelection.selectedIDs.has(row.node.id)));
         exportInput = { label: selectionOnly ? "Selected documents on this page" : "Documents on this page", members: copyExportMembers(rows.map(({ node }) => ({ node_id: node.id, content_version_id: node.current_version_id ?? "", blob_hash: node.blob_hash ?? "", size: node.size }))) };
       }
-      exportOpen = true;
+      activePanel = { kind: "export" };
     } catch (cause) { handleFailure(cause); }
   }
 
   function snapshotOverlay(row: SnapshotRow) {
-    return visibleSnapshotOverlay(row, snapshotOverlays);
+    return visibleSnapshotOverlay(row, snapshot.overlays);
   }
 
   function applySnapshotReceipt(receipt: BatchTagReceipt): void {
     const tagLabel = tagCatalog.find((tag) => tag.id === receipt.tag_id)?.name ?? receipt.tag_id;
-    snapshotOverlays = applySnapshotReceiptOverlay(snapshotOverlays, receipt, tagLabel);
+    snapshot.overlays = applySnapshotReceiptOverlay(snapshot.overlays, receipt, tagLabel);
     if (selectedSource?.kind === "snapshot" && receipt.nodes.some((node) => node.node_id === selectedSource.nodeID)) {
       inspectorGeneration += 1;
     }
   }
 
-  function closeRecovery(): void {
-    recoveryJournal = null;
-    recoveryAction = null;
-    recoveryTag = null;
-    recoveryVaultID = "";
-  }
-
-  function invalidateSnapshotActions(): void {
-    snapshotEpoch++;
-    cancelSnapshotAction();
-    if (batchTagsContext === "snapshot") batchTagsTargets = null;
-    closeRecovery();
+  function startSnapshotAction(choice: SnapshotActionChoice): void {
+    if (snapshot.actionBusy || snapshot.state.status !== "ready") return;
+    snapshot.actionError = "";
+    if (choice.scope === "selection") openSnapshotBatchTags(choice);
+    else void snapshot.startAction(choice);
   }
 
   function openSnapshotBatchTags(choice?: SnapshotActionChoice): void {
-    if (snapshotState.status !== "ready" || snapshotTargets.length === 0 || snapshotTargets.length > 1000) return;
+    if (snapshot.state.status !== "ready" || snapshotTargets.length === 0 || snapshotTargets.length > 1000) return;
     batchTagsChoice = choice;
     batchTagsContext = "snapshot";
-    batchTagsSnapshotID = snapshotState.firstPage?.snapshot_id;
-    batchTagsSnapshotEpoch = snapshotEpoch;
+    batchTagsSnapshotID = snapshot.state.firstPage?.snapshot_id;
+    batchTagsSnapshotEpoch = snapshot.epoch;
     batchTagsTargets = snapshotTargets.map((target) => ({ ...target }));
-    snapshotActionsOpen = false;
-  }
-
-  function handleRecoveryProgress(action: Readonly<PersistedAction>, receipt?: BatchTagReceipt): void {
-    if (recoverySnapshotEpoch !== snapshotEpoch || recoverySnapshotID !== snapshotState.firstPage?.snapshot_id ||
-        recoveryAction?.action_id !== action.action_id) return;
-    recoveryAction = action;
-    if (receipt && recoverySnapshotID) applySnapshotReceipt(receipt);
-  }
-
-  function cancelSnapshotAction(): void {
-    snapshotActionGeneration++;
-    snapshotActionController?.abort();
-    snapshotActionController = undefined;
-    snapshotActionBusy = false;
-    snapshotActionError = "";
-    snapshotActionsOpen = false;
-  }
-
-  function beginSnapshotAction() {
-    const session = webSession;
-    const request = ++snapshotActionGeneration;
-    const epoch = snapshotEpoch;
-    const snapshotID = snapshotState.firstPage?.snapshot_id;
-    const controller = new AbortController();
-    snapshotActionController = controller;
-    snapshotActionBusy = true;
-    snapshotActionError = "";
-    return { session, signal: controller.signal,
-      current: () => request === snapshotActionGeneration && session === webSession && !controller.signal.aborted &&
-        epoch === snapshotEpoch && snapshotID === snapshotState.firstPage?.snapshot_id };
-  }
-
-  async function showRecovery(
-    journal: ActionJournal,
-    action: PersistedAction,
-    vaultID: string,
-    operation: ReturnType<typeof beginSnapshotAction>,
-  ): Promise<void> {
-    if (!operation.current()) return;
-    const currentTag = await generated.getTag(action.tag_id, { session: operation.session }).catch((cause) => {
-      if (cause instanceof APIError && cause.status === 404) return null;
-      throw cause;
-    });
-    if (!operation.current()) return;
-    recoverySnapshotEpoch = snapshotEpoch;
-    recoverySnapshotID = snapshotState.firstPage?.snapshot_id;
-    recoveryJournal = journal;
-    recoveryAction = action;
-    recoveryTag = currentTag;
-    recoveryVaultID = vaultID;
-    snapshotActionsOpen = false;
-  }
-
-  async function startSnapshotAction(choice: SnapshotActionChoice): Promise<void> {
-    if (snapshotActionBusy || snapshotState.status !== "ready") return;
-    snapshotActionError = "";
-    if (choice.scope === "selection") {
-      openSnapshotBatchTags(choice);
-      return;
-    }
-    const firstPage = snapshotState.firstPage;
-    if (!firstPage || firstPage.total === 0) return;
-    const operation = beginSnapshotAction();
-    try {
-      // Complete enumeration and hash/byte verification happen before random
-      // operation identities are prepared or anything is persisted.
-      const targets = await captureSnapshotTargets(operation.session, firstPage, operation.signal, snapshotOverlays);
-      if (!operation.current()) return;
-      const vaultID = await readActionVaultID(operation.session);
-      if (!operation.current()) return;
-      const journal = await ActionJournal.open(vaultID);
-      const prepared = await prepareAction(vaultID, targets, choice.tagID, choice.assign);
-      if (!operation.current()) return;
-      await journal.prepare(prepared, operation.signal);
-      const action = await journal.load();
-      if (!action) throw new Error("The prepared action was not retained in durable storage.");
-      await showRecovery(journal, action, vaultID, operation);
-    } catch (cause) {
-      if (!operation.current()) return;
-      if (cause instanceof APIError && cause.status === 401) handleFailure(cause);
-      else snapshotActionError = cause instanceof Error ? cause.message : String(cause);
-    } finally {
-      if (operation.current()) {
-        snapshotActionBusy = false;
-        snapshotActionController = undefined;
-      }
-    }
-  }
-
-  async function importSnapshotAction(bytes: Uint8Array): Promise<void> {
-    if (snapshotActionBusy) return;
-    const operation = beginSnapshotAction();
-    try {
-      const prepared = await decodeRecovery(bytes);
-      if (!operation.current()) return;
-      const vaultID = await readActionVaultID(operation.session);
-      if (!operation.current()) return;
-      if (prepared.vault_id !== vaultID) throw new Error("The recovery action belongs to a different vault.");
-      const journal = await ActionJournal.open(vaultID);
-      if (!operation.current()) return;
-      await journal.prepare(prepared, operation.signal);
-      await journal.verifyCheckpoint(bytes);
-      const action = await journal.load();
-      if (!action) throw new Error("The imported action was not retained in durable storage.");
-      await showRecovery(journal, action, vaultID, operation);
-    } catch (cause) {
-      if (!operation.current()) return;
-      if (cause instanceof APIError && cause.status === 401) handleFailure(cause);
-      else snapshotActionError = cause instanceof Error ? cause.message : String(cause);
-    } finally {
-      if (operation.current()) {
-        snapshotActionBusy = false;
-        snapshotActionController = undefined;
-      }
-    }
-  }
-
-  async function resumeSnapshotAction(): Promise<void> {
-    if (snapshotActionBusy) return;
-    const operation = beginSnapshotAction();
-    try {
-      const vaultID = await readActionVaultID(operation.session);
-      if (!operation.current()) return;
-      const journal = await ActionJournal.open(vaultID);
-      const action = await journal.load();
-      if (!action) throw new Error("No retained action is available for this vault. Select a recovery file instead.");
-      await showRecovery(journal, action, vaultID, operation);
-    } catch (cause) {
-      if (!operation.current()) return;
-      if (cause instanceof APIError && cause.status === 401) handleFailure(cause);
-      else snapshotActionError = cause instanceof Error ? cause.message : String(cause);
-    } finally {
-      if (operation.current()) {
-        snapshotActionBusy = false;
-        snapshotActionController = undefined;
-      }
-    }
-  }
-
-  async function abandonSnapshotAction(): Promise<void> {
-    if (snapshotActionBusy) return;
-    const operation = beginSnapshotAction();
-    try {
-      const vaultID = await readActionVaultID(operation.session);
-      if (!operation.current()) return;
-      await ActionJournal.abandon(vaultID);
-      if (!operation.current()) return;
-      snapshotActionsOpen = false;
-    } catch (cause) {
-      if (!operation.current()) return;
-      if (cause instanceof APIError && cause.status === 401) handleFailure(cause);
-      else snapshotActionError = cause instanceof Error ? cause.message : String(cause);
-    } finally {
-      if (operation.current()) {
-        snapshotActionBusy = false;
-        snapshotActionController = undefined;
-      }
-    }
+    snapshot.actionsOpen = false;
   }
 
   async function openCollectionMember(
@@ -1788,12 +1522,11 @@
       throw new Error("The collection member's parent is no longer a live directory.");
     }
     if (!current()) return;
-    collectionsOpen = false;
+    activePanel = null;
     await loadDirectory(parent.id, true, exact.id, false, { node: exact, path });
   }
 
   function handleTrashed(_receipt: Node): void {
-    trashTarget = null;
     selectNode(undefined);
 
     // Cached views may contain the removed node or pre-trash parent revisions.
@@ -1981,7 +1714,7 @@
 
   async function lock(): Promise<void> {
     leaveSnapshotMode();
-    savedQueriesOpen = false;
+    activePanel = null;
     savedQueryDraft = null;
     replaceQueryURL(null);
     generation += 1;
@@ -2013,32 +1746,10 @@
     shortcutError = "";
     auditLoading = false;
     auditError = "";
-    historyOpen = false;
-    versionsOpen = false;
-    provenanceOpen = false;
-    processingTarget = null;
-    renditionTarget = null;
-    jobsOpen = false;
-    auditEvidenceOpen = false;
-    storageOpen = false;
-    backupsOpen = false;
-    collectionsOpen = false;
-    trashOpen = false;
     manageTagsTarget = null;
     batchTagsTargets = null;
     batchTagsContext = "live";
-    snapshotActionsOpen = false;
-    snapshotActionBusy = false;
-    snapshotActionError = "";
-    recoveryJournal = null;
-    recoveryAction = null;
-    recoveryTag = null;
-    recoveryVaultID = "";
-    tagCatalogOpen = false;
     shortcutHelpOpen = false;
-    uploadTarget = null;
-    mailboxTarget = null;
-    trashTarget = null;
     activeQuery = "";
     activeTagID = "";
     taggedInspected = 0;
@@ -2058,7 +1769,7 @@
 
   function currentQueryDraft(): Query {
     if (savedQueryDraft) return savedQueryDraft;
-    if (snapshotState.query) return snapshotState.query;
+    if (snapshot.state.query) return snapshot.state.query;
     return {
       ...parseQuery("{}"),
       text: searchQuery,
@@ -2074,9 +1785,13 @@
     queryURLError = "";
   }
 
+  function closePanel(panel: Panel | null): () => void {
+    return () => { if (activePanel === panel) activePanel = null; };
+  }
+
   function openSavedQueries(): void {
     queryEditorInitial = currentQueryDraft();
-    savedQueriesOpen = true;
+    activePanel = { kind: "savedQueries" };
   }
 
   function openQueryEditor(value?: Query): void {
@@ -2154,11 +1869,11 @@
       {/snippet}
       {#snippet right()}
         <Button size="sm" disabled={!exportHasJob && (snapshotActive ? (snapshotPage?.total ?? 0) === 0 : visibleDocumentCount === 0)} onclick={() => openExport()}>Export</Button>
-        <Button size="sm" onclick={() => termReportsOpen = true}>Search exports</Button>
-        <Button size="sm" onclick={() => batesOpen = true}>Bates export</Button>
+        <Button size="sm" onclick={() => activePanel = { kind: "termReports" }}>Search exports</Button>
+        <Button size="sm" onclick={() => activePanel = { kind: "bates" }}>Bates export</Button>
         <Button size="sm" onclick={() => openQueryEditor()}>Edit query</Button>
-        <Button size="sm" disabled={snapshotActive && snapshotState.status !== "ready"}
-          onclick={() => { snapshotActionError = ""; snapshotActionsOpen = true; }}>Snapshot actions</Button>
+        <Button size="sm" disabled={snapshotActive && snapshot.state.status !== "ready"}
+          onclick={() => { snapshot.actionError = ""; snapshot.actionsOpen = true; }}>Snapshot actions</Button>
         <IconButton size="sm" ariaLabel="Saved queries and highlights" onclick={openSavedQueries}>
           <BookmarkIcon size="14" aria-hidden="true" />
         </IconButton>
@@ -2166,18 +1881,7 @@
           size="sm"
           ariaLabel="Import collections"
           onclick={() => {
-            historyOpen = false;
-            versionsOpen = false;
-            provenanceOpen = false;
-            jobsOpen = false;
-            auditEvidenceOpen = false;
-            storageOpen = false;
-            backupsOpen = false;
-            trashOpen = false;
-            uploadTarget = null;
-            mailboxTarget = null;
-            trashTarget = null;
-            collectionsOpen = true;
+            activePanel = { kind: "collections" };
           }}
         >
           <FoldersIcon size="14" aria-hidden="true" />
@@ -2186,17 +1890,7 @@
           size="sm"
           ariaLabel="Recoverable trash"
           onclick={() => {
-            historyOpen = false;
-            versionsOpen = false;
-            provenanceOpen = false;
-            jobsOpen = false;
-            auditEvidenceOpen = false;
-            storageOpen = false;
-            backupsOpen = false;
-            uploadTarget = null;
-            mailboxTarget = null;
-            trashTarget = null;
-            trashOpen = true;
+            activePanel = { kind: "trash" };
           }}
         >
           <Trash2Icon size="14" aria-hidden="true" />
@@ -2205,16 +1899,7 @@
           size="sm"
           ariaLabel="Backup snapshots"
           onclick={() => {
-            historyOpen = false;
-            versionsOpen = false;
-            provenanceOpen = false;
-            jobsOpen = false;
-            auditEvidenceOpen = false;
-            storageOpen = false;
-            trashOpen = false;
-            backupsOpen = true;
-            uploadTarget = null;
-            mailboxTarget = null;
+            activePanel = { kind: "backups" };
           }}
         >
           <ArchiveIcon size="14" aria-hidden="true" />
@@ -2223,16 +1908,7 @@
           size="sm"
           ariaLabel="Storage status"
           onclick={() => {
-            historyOpen = false;
-            versionsOpen = false;
-            provenanceOpen = false;
-            jobsOpen = false;
-            auditEvidenceOpen = false;
-            backupsOpen = false;
-            trashOpen = false;
-            uploadTarget = null;
-            mailboxTarget = null;
-            storageOpen = true;
+            activePanel = { kind: "storage" };
           }}
         >
           <HardDriveIcon size="14" aria-hidden="true" />
@@ -2241,16 +1917,7 @@
           size="sm"
           ariaLabel="Background jobs"
           onclick={() => {
-            historyOpen = false;
-            versionsOpen = false;
-            provenanceOpen = false;
-            auditEvidenceOpen = false;
-            storageOpen = false;
-            backupsOpen = false;
-            trashOpen = false;
-            uploadTarget = null;
-            mailboxTarget = null;
-            jobsOpen = true;
+            activePanel = { kind: "jobs" };
           }}
         >
           <ActivityIcon size="14" aria-hidden="true" />
@@ -2259,17 +1926,7 @@
           size="sm"
           ariaLabel="Verify permanent audit evidence"
           onclick={() => {
-            historyOpen = false;
-            versionsOpen = false;
-            provenanceOpen = false;
-            jobsOpen = false;
-            storageOpen = false;
-            backupsOpen = false;
-            trashOpen = false;
-            uploadTarget = null;
-            mailboxTarget = null;
-            trashTarget = null;
-            auditEvidenceOpen = true;
+            activePanel = { kind: "auditEvidence" };
           }}
         >
           <ShieldCheckIcon size="14" aria-hidden="true" />
@@ -2298,7 +1955,7 @@
     {/if}
 
     {#if queryBarOpen && savedQueryDraft}
-      <QueryBar session={webSession} query={savedQueryDraft} profile={snapshotState.options?.profile ?? ""}
+      <QueryBar session={webSession} query={savedQueryDraft} profile={snapshot.state.options?.profile ?? ""}
         onchange={keepQueryDraft} onrun={runSnapshot} onsave={openSavedQueries}
         onclose={() => (queryBarOpen = false)} onauthfailure={handleFailure} />
     {/if}
@@ -2314,19 +1971,19 @@
               </div>
             </div>
             <div class="toolbar-actions">
-              {#if snapshotState.options?.profile}<span>Profile: {snapshotState.options.profile}</span>{/if}
-              <Button size="sm" tone="info" disabled={snapshotState.status !== "ready"}
-                onclick={() => { snapshotActionError = ""; snapshotActionsOpen = true; }}>Tag or recover</Button>
+              {#if snapshot.state.options?.profile}<span>Profile: {snapshot.state.options.profile}</span>{/if}
+              <Button size="sm" tone="info" disabled={snapshot.state.status !== "ready"}
+                onclick={() => { snapshot.actionError = ""; snapshot.actionsOpen = true; }}>Tag or recover</Button>
               <Button size="sm" onclick={() => leaveSnapshotMode(true)}>Back to live folder</Button>
             </div>
           </div>
-          {#if snapshotState.error}
-            <div class="banner error" role="alert">{snapshotState.error.message}</div>
+          {#if snapshot.state.error}
+            <div class="banner error" role="alert">{snapshot.state.error.message}</div>
           {/if}
           {#if snapshotPage && snapshotQuery}
             <div class="snapshot-browser">
               <FacetSidebar facets={snapshotPage.facets} query={snapshotQuery}
-                disabled={snapshotState.status !== "ready"} onchange={changeSnapshotQuery} />
+                disabled={snapshot.state.status !== "ready"} onchange={changeSnapshotQuery} />
               <section class="snapshot-results" aria-label="Frozen query results"
                 data-snapshot-id={snapshotPage.snapshot_id} data-member-hash={snapshotPage.member_hash}>
                 {#if snapshotPage.rows.length === 0}
@@ -2339,7 +1996,7 @@
                       <th class="selection-column" scope="col">
                         <Checkbox checked={allVisibleSnapshotRowsSelected}
                           indeterminate={selectedSnapshotRows.length > 0 && !allVisibleSnapshotRowsSelected}
-                          ariaLabel="Select visible frozen documents" onchange={selectVisibleSnapshotRows} />
+                          ariaLabel="Select visible frozen documents" onchange={(checked) => snapshot.selectVisible(checked)} />
                       </th>
                       <TableHeaderCell label="Document" sortable
                         sortDirection={snapshotQuery.sort.field === "name" || snapshotQuery.sort.field === "path" ? snapshotQuery.sort.direction : null}
@@ -2356,12 +2013,12 @@
                     {/snippet}
                     {#snippet children()}
                       {#each snapshotPage.rows as row (`${row.node_id}:${row.content_version_id}`)}
-                        <tr class:selected={row.node_id === selectedSnapshotID} tabindex="0" data-snapshot-node={row.node_id}
-                          aria-selected={row.node_id === selectedSnapshotID} onclick={() => (selectedSnapshotID = row.node_id)}
-                          onkeydown={(event) => { if (event.key === "Enter") selectedSnapshotID = row.node_id; }}>
+                        <tr class:selected={row.node_id === snapshot.selectedID} tabindex="0" data-snapshot-node={row.node_id}
+                          aria-selected={row.node_id === snapshot.selectedID} onclick={() => (snapshot.selectedID = row.node_id)}
+                          onkeydown={(event) => { if (event.key === "Enter") snapshot.selectedID = row.node_id; }}>
                           <td class="selection-column" onclick={(event) => event.stopPropagation()}>
-                            <Checkbox checked={snapshotSelection.has(row.node_id)} ariaLabel={`Select ${row.path}`}
-                              onchange={(checked) => toggleSnapshotSelection(row, checked)} />
+                            <Checkbox checked={snapshot.selection.has(row.node_id)} ariaLabel={`Select ${row.path}`}
+                              onchange={(checked) => snapshot.toggleSelection(row, checked)} />
                           </td>
                           <td><span class="document-name"><FileIcon size="15" aria-hidden="true" /><span>{row.path}</span></span></td>
                           <td>{row.mime_type || "File"}</td>
@@ -2372,16 +2029,16 @@
                     {/snippet}
                   </Table>
                 {/if}
-                <ResultsPager page={snapshotPage} offset={snapshotState.offset} status={snapshotState.status}
-                  onpage={pageSnapshot} onrunagain={runSnapshotAgain} />
+                <ResultsPager page={snapshotPage} offset={snapshot.state.offset} status={snapshot.state.status}
+                  onpage={(direction) => snapshot.page(direction)} onrunagain={runSnapshotAgain} />
               </section>
             </div>
-          {:else if snapshotState.status === "loading"}
+          {:else if snapshot.state.status === "loading"}
             <div class="loading"><Spinner size={16} /> Creating frozen snapshot…</div>
           {:else}
             <div class="snapshot-failure">
               <p>No snapshot results were accepted.</p>
-              {#if snapshotState.query && snapshotState.options}<Button onclick={runSnapshotAgain}>Run again</Button>{/if}
+              {#if snapshot.state.query && snapshot.state.options}<Button onclick={runSnapshotAgain}>Run again</Button>{/if}
             </div>
           {/if}
         {:else}
@@ -2425,18 +2082,8 @@
               disabled={loading || tagCatalogLoading}
               onclick={() => {
                 if (loading || tagCatalogLoading) return;
-                historyOpen = false;
-                versionsOpen = false;
-                provenanceOpen = false;
-                jobsOpen = false;
-                auditEvidenceOpen = false;
-                storageOpen = false;
-                backupsOpen = false;
-                trashOpen = false;
                 manageTagsTarget = null;
-                uploadTarget = null;
-                mailboxTarget = null;
-                tagCatalogOpen = true;
+                activePanel = { kind: "tagCatalog" };
               }}
             >
               <TagsIcon size="14" aria-hidden="true" />
@@ -2466,16 +2113,7 @@
                 !uploadChannel || Boolean(uploadChannelError)}
               onclick={() => {
                 if (!directory || activeQuery || tagBrowse) return;
-                historyOpen = false;
-                versionsOpen = false;
-                provenanceOpen = false;
-                jobsOpen = false;
-                auditEvidenceOpen = false;
-                storageOpen = false;
-                backupsOpen = false;
-                trashOpen = false;
-                uploadTarget = directory;
-                mailboxTarget = null;
+                activePanel = { kind: "upload", target: directory };
               }}
             >
               <UploadIcon size="14" aria-hidden="true" />
@@ -2492,21 +2130,7 @@
               disabled={!directory || loading || !uploadChannel || Boolean(uploadChannelError) || Boolean(activeQuery) || tagBrowse}
               onclick={() => {
                 if (!directory) return;
-                historyOpen = false;
-                versionsOpen = false;
-                provenanceOpen = false;
-                processingTarget = null;
-                renditionTarget = null;
-                jobsOpen = false;
-                auditEvidenceOpen = false;
-                storageOpen = false;
-                backupsOpen = false;
-                collectionsOpen = false;
-                trashOpen = false;
-                tagCatalogOpen = false;
-                uploadTarget = null;
-                loadFileTarget = null;
-                mailboxTarget = directory;
+                activePanel = { kind: "mailbox", target: directory };
               }}
             >Import mailbox</Button>
             <Button
@@ -2514,9 +2138,7 @@
               disabled={!directory || loading || !uploadChannel || Boolean(uploadChannelError) || Boolean(activeQuery) || tagBrowse}
               onclick={() => {
                 if (!directory) return;
-                uploadTarget = null;
-                mailboxTarget = null;
-                loadFileTarget = directory;
+                activePanel = { kind: "loadFile", target: directory };
               }}
             >Import load files</Button>
           </div>
@@ -2674,12 +2296,8 @@
                     {#if row.node.kind === "file" && row.node.current_version_id}
                       <IconButton size="sm" ariaLabel={`Find documents similar to ${row.node.name}`} onclick={(event) => {
                         event.stopPropagation();
-                        historyOpen = false; versionsOpen = false; provenanceOpen = false; jobsOpen = false;
-                        auditEvidenceOpen = false; storageOpen = false; backupsOpen = false; trashOpen = false;
-                        uploadTarget = null; renditionTarget = null;
-                        processingScope = [...new Set(rows.filter((item) => item.node.kind === "file").flatMap((item) => item.node.current_version_id ? [item.node.current_version_id] : []))];
-                        processingIntent = "similar";
-                        processingTarget = row;
+                        activePanel = { kind: "processing", target: row, intent: "similar",
+                          scope: [...new Set(rows.filter((item) => item.node.kind === "file").flatMap((item) => item.node.current_version_id ? [item.node.current_version_id] : []))] };
                       }}><ScanSearchIcon size="14" aria-hidden="true" /></IconButton>
                     {/if}
                   </td>
@@ -2705,12 +2323,12 @@
                 {#if selectedSnapshotOverlay}
                   <div><dt>Confirmed later</dt><dd>Revision {selectedSnapshotOverlay.revision}</dd></div>
                 {/if}
-                <div><dt>Observed</dt><dd>{formatDate(snapshotState.page?.observed_at ?? "")}</dd></div>
+                <div><dt>Observed</dt><dd>{formatDate(snapshot.state.page?.observed_at ?? "")}</dd></div>
                 <div><dt>Size</dt><dd>{formatBytes(selectedSnapshot.size)} ({selectedSnapshot.size} bytes)</dd></div>
                 <div><dt>Media type</dt><dd>{selectedSnapshot.mime_type || "application/octet-stream"}</dd></div>
                 <div class="identity"><dt>Version</dt><dd><code>{selectedSnapshot.content_version_id}</code><CopyButton text={selectedSnapshot.content_version_id} ariaLabel="Copy snapshot version ID" /></dd></div>
                 <div class="identity"><dt>SHA-256</dt><dd><code>{selectedSnapshot.blob_hash}</code><CopyButton text={selectedSnapshot.blob_hash} ariaLabel="Copy snapshot SHA-256" /></dd></div>
-                <div class="identity"><dt>Snapshot</dt><dd><code>{snapshotState.page?.snapshot_id}</code></dd></div>
+                <div class="identity"><dt>Snapshot</dt><dd><code>{snapshot.state.page?.snapshot_id}</code></dd></div>
                 <div class="wide-fact">
                   <dt>Collection at observation</dt>
                   <dd>{selectedSnapshot.display_collection_label ?? selectedSnapshot.display_collection_id ?? "No document-bearing import collection"}</dd>
@@ -2724,7 +2342,7 @@
               </div>
               {#if selectedSnapshotOverlay}
                 <div class="node-tags">
-                  <div class="node-tags-heading"><span><TagIcon size="13" aria-hidden="true" /> Validated receipt overlays</span><span>after frozen observation</span></div>
+                  <div class="node-tags-heading"><span><TagIcon size="13" aria-hidden="true" /> Tag changes since this snapshot</span></div>
                   <div class="snapshot-tags">
                     {#each Object.entries(selectedSnapshotOverlay.assignments) as [tagID, assignment] (tagID)}
                       <Chip size="sm" tone={assignment.assign ? "success" : "muted"} uppercase={false}>
@@ -2756,11 +2374,11 @@
                     </ChipStack>
                   {:else}<p>No tags are currently assigned to this node.</p>{/if}
                   <div class="document-actions">
-                    <Button size="sm" surface="soft" onclick={() => (provenanceOpen = true)}>
+                    <Button size="sm" surface="soft" onclick={() => (activePanel = { kind: "provenance" })}>
                       <MapPinIcon size="14" aria-hidden="true" /> Current provenance
                     </Button>
                     {#if membership?.protected}
-                      <Button size="sm" surface="soft" onclick={() => (historyOpen = true)}>
+                      <Button size="sm" surface="soft" onclick={() => (activePanel = { kind: "history" })}>
                         <HistoryIcon size="14" aria-hidden="true" /> Current audit history
                       </Button>
                     {/if}
@@ -2773,19 +2391,19 @@
                   session={webSession}
                   source={selectedSource}
                   authorizationRevision={currentInspectorNode.revision}
-                  profileName={snapshotState.options?.profile ?? ""}
+                  profileName={snapshot.state.options?.profile ?? ""}
                   observed={selectedRenditionObservation}
                   queryTerms={snapshotQueryTerms}
                   queryHighlightError={snapshotQueryHighlightError}
                   highlightSets={inspectorHighlightSets}
                   snapshotPosition={selectedSnapshotPosition}
                   snapshotTotal={snapshotPage?.total}
-                  canPrevious={snapshotState.status === "ready" && (selectedSnapshotPosition ?? 0) > 0}
-                  canNext={snapshotState.status === "ready" && selectedSnapshotPosition !== undefined &&
+                  canPrevious={snapshot.state.status === "ready" && (selectedSnapshotPosition ?? 0) > 0}
+                  canNext={snapshot.state.status === "ready" && selectedSnapshotPosition !== undefined &&
                     selectedSnapshotPosition + 1 < (snapshotPage?.total ?? 0)}
-                  snapshotExpired={snapshotState.status === "expired"}
-                  onnavigate={navigateSnapshotDocument}
-                  onreturnfocus={() => document.querySelector<HTMLElement>(`tr[data-snapshot-node="${selectedSnapshotID}"]`)?.focus()}
+                  snapshotExpired={snapshot.state.status === "expired"}
+                  onnavigate={(direction) => snapshot.navigateDocument(direction)}
+                  onreturnfocus={() => document.querySelector<HTMLElement>(`tr[data-snapshot-node="${snapshot.selectedID}"]`)?.focus()}
                   onauthfailure={handleFailure}
                 />
               {/if}
@@ -2891,16 +2509,7 @@
                     surface="soft"
                     disabled={liveSelectionNeedsRefresh}
                     onclick={() => {
-                      historyOpen = false;
-                      provenanceOpen = false;
-                      jobsOpen = false;
-                      auditEvidenceOpen = false;
-                      storageOpen = false;
-                      backupsOpen = false;
-                      trashOpen = false;
-                      uploadTarget = null;
-                      mailboxTarget = null;
-                      versionsOpen = true;
+                      activePanel = { kind: "versions" };
                     }}
                   >
                     <HistoryIcon size="14" aria-hidden="true" />
@@ -2910,16 +2519,7 @@
                     size="sm"
                     surface="soft"
                     onclick={() => {
-                      historyOpen = false;
-                      versionsOpen = false;
-                      jobsOpen = false;
-                      auditEvidenceOpen = false;
-                      storageOpen = false;
-                      backupsOpen = false;
-                      trashOpen = false;
-                      uploadTarget = null;
-                      mailboxTarget = null;
-                      provenanceOpen = true;
+                      activePanel = { kind: "provenance" };
                     }}
                   >
                     <MapPinIcon size="14" aria-hidden="true" />
@@ -2931,20 +2531,8 @@
                     surface="soft"
                     disabled={!selected.node.current_version_id || liveSelectionNeedsRefresh}
                     onclick={() => {
-                      historyOpen = false;
-                      versionsOpen = false;
-                      provenanceOpen = false;
-                      jobsOpen = false;
-                      auditEvidenceOpen = false;
-                      storageOpen = false;
-                      backupsOpen = false;
-                      trashOpen = false;
-                      uploadTarget = null;
-                      mailboxTarget = null;
-                      renditionTarget = null;
-                      processingTarget = selected;
-                      processingIntent = null;
-                      processingScope = [...new Set(rows.filter((item) => item.node.kind === "file").flatMap((item) => item.node.current_version_id ? [item.node.current_version_id] : []))];
+                      activePanel = { kind: "processing", target: selected, intent: null,
+                        scope: [...new Set(rows.filter((item) => item.node.kind === "file").flatMap((item) => item.node.current_version_id ? [item.node.current_version_id] : []))] };
                     }}
                   >
                     <ActivityIcon size="14" aria-hidden="true" />
@@ -2956,17 +2544,7 @@
                     surface="soft"
                     disabled={liveSelectionNeedsRefresh}
                     onclick={() => {
-                      historyOpen = false;
-                      versionsOpen = false;
-                      provenanceOpen = false;
-                      jobsOpen = false;
-                      auditEvidenceOpen = false;
-                      storageOpen = false;
-                      backupsOpen = false;
-                      trashOpen = false;
-                      uploadTarget = null;
-                      mailboxTarget = null;
-                      trashTarget = selected;
+                      activePanel = { kind: "trashNode", target: selected };
                     }}
                   >
                     <Trash2Icon size="14" aria-hidden="true" />
@@ -3016,16 +2594,7 @@
                     tone="info"
                     surface="soft"
                     onclick={() => {
-                      jobsOpen = false;
-                      versionsOpen = false;
-                      provenanceOpen = false;
-                      auditEvidenceOpen = false;
-                      storageOpen = false;
-                      backupsOpen = false;
-                      trashOpen = false;
-                      uploadTarget = null;
-                      mailboxTarget = null;
-                      historyOpen = true;
+                      activePanel = { kind: "history" };
                     }}
                   >
                     <HistoryIcon size="14" aria-hidden="true" />
@@ -3048,17 +2617,7 @@
                     tone="danger"
                     surface="soft"
                     onclick={() => {
-                      historyOpen = false;
-                      versionsOpen = false;
-                      provenanceOpen = false;
-                      jobsOpen = false;
-                      auditEvidenceOpen = false;
-                      storageOpen = false;
-                      backupsOpen = false;
-                      trashOpen = false;
-                      uploadTarget = null;
-                      mailboxTarget = null;
-                      trashTarget = selected;
+                      activePanel = { kind: "trashNode", target: selected };
                     }}
                   >
                     <Trash2Icon size="14" aria-hidden="true" />
@@ -3087,11 +2646,11 @@
         truncated={(snapshotPage?.total ?? 0) > (snapshotPage?.rows.length ?? 0)}
         context="snapshot"
         wholeQueryCount={snapshotPage?.total ?? 0}
-        onclear={() => selectVisibleSnapshotRows(false)}
-        onselectvisible={() => selectVisibleSnapshotRows()}
-        tagsDisabled={snapshotState.status !== "ready"}
+        onclear={() => snapshot.selectVisible(false)}
+        onselectvisible={() => snapshot.selectVisible()}
+        tagsDisabled={snapshot.state.status !== "ready"}
         ontags={() => openSnapshotBatchTags()}
-        onwholequerytags={() => { snapshotActionError = ""; snapshotActionsOpen = true; }}
+        onwholequerytags={() => { snapshot.actionError = ""; snapshot.actionsOpen = true; }}
         onexport={() => openExport(true)}
         onexportquery={() => openExport()}
       />
@@ -3119,132 +2678,193 @@
         onclose={() => (shortcutHelpOpen = false)}
       />
     {/if}
-    {#if historyOpen && currentInspectorNode && membership?.protected}
-      {#key `${webSession}:${currentInspectorNode.id}:${currentInspectorNode.revision}:${currentInspectorPath}`}
-        <AuditHistoryDrawer
+    {#each activePanel ? [activePanel] : [] as panel (panel)}
+      {#if panel.kind === "history" && currentInspectorNode && membership?.protected}
+        {#key `${webSession}:${currentInspectorNode.id}:${currentInspectorNode.revision}:${currentInspectorPath}`}
+          <AuditHistoryDrawer
+            session={webSession}
+            node={currentInspectorNode}
+            path={currentInspectorPath}
+            onclose={closePanel(panel)}
+            onauthfailure={handleFailure}
+          />
+        {/key}
+      {/if}
+      {#if !snapshotActive && panel.kind === "versions" && selected?.node.kind === "file"}
+        <VersionHistoryDrawer
+          session={webSession}
+          node={selected.node}
+          path={selected.path}
+          onclose={closePanel(panel)}
+          onauthfailure={handleFailure}
+        />
+      {/if}
+      {#if panel.kind === "provenance" && currentInspectorNode?.kind === "file"}
+        <ProvenanceDrawer
           session={webSession}
           node={currentInspectorNode}
           path={currentInspectorPath}
-          onclose={() => (historyOpen = false)}
+          onclose={closePanel(panel)}
           onauthfailure={handleFailure}
         />
-      {/key}
-    {/if}
-    {#if !snapshotActive && versionsOpen && selected?.node.kind === "file"}
-      <VersionHistoryDrawer
-        session={webSession}
-        node={selected.node}
-        path={selected.path}
-        onclose={() => (versionsOpen = false)}
-        onauthfailure={handleFailure}
-      />
-    {/if}
-    {#if provenanceOpen && currentInspectorNode?.kind === "file"}
-      <ProvenanceDrawer
-        session={webSession}
-        node={currentInspectorNode}
-        path={currentInspectorPath}
-        onclose={() => (provenanceOpen = false)}
-        onauthfailure={handleFailure}
-      />
-    {/if}
-    {#if processingTarget?.node.kind === "file"}
-      {#key `${processingTarget.node.id}:${processingTarget.node.current_version_id}:${processingIntent}`}
-      <ProcessingDrawer
-        session={webSession}
-        node={processingTarget.node}
-        path={processingTarget.path}
-        scopeVersionIDs={processingScope}
-        intent={processingIntent}
-        onclose={() => (processingTarget = null)}
-        onauthfailure={handleFailure}
-        onrendition={(attachmentID) => {
-          if (!processingTarget) return;
-          renditionTarget = { attachmentID, path: processingTarget.path };
-          processingTarget = null;
-        }}
-      />
-      {/key}
-    {/if}
-    {#if renditionTarget}
-      <RenditionDrawer
-        session={webSession}
-        attachmentID={renditionTarget.attachmentID}
-        path={renditionTarget.path}
-        onclose={() => (renditionTarget = null)}
-        onauthfailure={handleFailure}
-      />
-    {/if}
-    {#if jobsOpen}
-      <JobsDrawer
-        session={webSession}
-        onclose={() => (jobsOpen = false)}
-        onauthfailure={handleFailure}
-      />
-    {/if}
-    {#if collectionsOpen}
-      <CollectionsDrawer
-        session={webSession}
-        onclose={() => (collectionsOpen = false)}
-        onauthfailure={handleFailure}
-        onopenmember={openCollectionMember}
-        onqualityquery={(query) => {openQueryEditor(query);collectionsOpen=false;}}
-        onnewquery={(id) => {
-          openQueryEditor(parseQuery(JSON.stringify({filters:{collection_ids:[id]}})));
-          collectionsOpen = false;
-        }}
-      />
-    {/if}
-    {#if auditEvidenceOpen}
-      <AuditEvidenceDrawer
-        session={webSession}
-        onclose={() => (auditEvidenceOpen = false)}
-        onauthfailure={handleFailure}
-      />
-    {/if}
-    {#if savedQueriesOpen}
-      <SavedQueriesDrawer
-        session={webSession}
-        initialQuery={queryEditorInitial}
-        onload={keepQueryDraft}
-        onopenquery={(query) => { openQueryEditor(query); savedQueriesOpen = false; }}
-        onclose={() => (savedQueriesOpen = false)}
-        onauthfailure={handleFailure}
-      />
-    {/if}
-    {#if backupsOpen}
-      <BackupDrawer
-        session={webSession}
-        onclose={() => (backupsOpen = false)}
-        onauthfailure={handleFailure}
-      />
-    {/if}
-    {#if batesOpen}
-      {#key webSession}
-        <BatesExportDrawer session={webSession} onclose={() => batesOpen = false} onauthfailure={handleFailure} />
-      {/key}
-    {/if}
+      {/if}
+      {#if panel.kind === "processing" && panel.target.node.kind === "file"}
+        <ProcessingDrawer
+          session={webSession}
+          node={panel.target.node}
+          path={panel.target.path}
+          scopeVersionIDs={panel.scope}
+          intent={panel.intent}
+          onclose={closePanel(panel)}
+          onauthfailure={handleFailure}
+          onrendition={(attachmentID) => {
+            if (activePanel !== panel) return;
+            activePanel = { kind: "rendition", target: { attachmentID, path: panel.target.path } };
+          }}
+        />
+      {/if}
+      {#if panel.kind === "rendition"}
+        <RenditionDrawer
+          session={webSession}
+          attachmentID={panel.target.attachmentID}
+          path={panel.target.path}
+          onclose={closePanel(panel)}
+          onauthfailure={handleFailure}
+        />
+      {/if}
+      {#if panel.kind === "jobs"}
+        <JobsDrawer
+          session={webSession}
+          onclose={closePanel(panel)}
+          onauthfailure={handleFailure}
+        />
+      {/if}
+      {#if panel.kind === "collections"}
+        <CollectionsDrawer
+          session={webSession}
+          onclose={closePanel(panel)}
+          onauthfailure={handleFailure}
+          onopenmember={openCollectionMember}
+          onqualityquery={(query) => {openQueryEditor(query); closePanel(panel)();}}
+          onnewquery={(id) => {
+            openQueryEditor(parseQuery(JSON.stringify({filters:{collection_ids:[id]}})));
+            closePanel(panel)();
+          }}
+        />
+      {/if}
+      {#if panel.kind === "auditEvidence"}
+        <AuditEvidenceDrawer
+          session={webSession}
+          onclose={closePanel(panel)}
+          onauthfailure={handleFailure}
+        />
+      {/if}
+      {#if panel.kind === "savedQueries"}
+        <SavedQueriesDrawer
+          session={webSession}
+          initialQuery={queryEditorInitial}
+          onload={keepQueryDraft}
+          onopenquery={(query) => { openQueryEditor(query); closePanel(panel)(); }}
+          onclose={closePanel(panel)}
+          onauthfailure={handleFailure}
+        />
+      {/if}
+      {#if panel.kind === "backups"}
+        <BackupDrawer
+          session={webSession}
+          onclose={closePanel(panel)}
+          onauthfailure={handleFailure}
+        />
+      {/if}
+      {#if panel.kind === "bates"}
+        {#key webSession}
+          <BatesExportDrawer session={webSession} onclose={closePanel(panel)} onauthfailure={handleFailure} />
+        {/key}
+      {/if}
+      {#if panel.kind === "termReports"}
+        <TermReportDrawer session={webSession} initialExpression={searchQuery} onclose={closePanel(panel)} onauthfailure={handleFailure} />
+      {/if}
+      {#if panel.kind === "storage"}
+        <StorageDrawer
+          session={webSession}
+          onclose={closePanel(panel)}
+          onauthfailure={handleFailure}
+        />
+      {/if}
+      {#if panel.kind === "trash"}
+        <TrashDrawer
+          session={webSession}
+          onclose={closePanel(panel)}
+          onrestored={handleRestored}
+          onauthfailure={handleFailure}
+        />
+      {/if}
+      {#if panel.kind === "tagCatalog"}
+        <TagCatalogModal
+          session={webSession}
+          catalog={tagCatalog}
+          catalogTotal={tagCatalogTotal}
+          disabled={loading || tagCatalogLoading}
+          onclose={closePanel(panel)}
+          onchanged={handleTagDefinitionChanged}
+          onauthfailure={handleFailure}
+        />
+      {/if}
+      {#if panel.kind === "upload" && uploadChannel}
+        <UploadDrawer
+          channel={uploadChannel}
+          directory={panel.target}
+          disabledReason={uploadChannelError}
+          onclose={closePanel(panel)}
+          oncomplete={async () => {
+            if (activePanel === panel) await loadDirectory(panel.target.id, false);
+          }}
+          onauthfailure={handleFailure}
+        />
+      {/if}
+      {#if panel.kind === "mailbox" && uploadChannel}
+        <MailboxImportDrawer
+          session={webSession}
+          channel={uploadChannel}
+          directory={panel.target}
+          onclose={closePanel(panel)}
+          oncomplete={async () => {
+            if (activePanel === panel) await loadDirectory(panel.target.id, false);
+          }}
+          onauthfailure={handleFailure}
+          onexport={(collectionID, total) => {
+            if (exportHasJob) { activePanel = { kind: "export" }; return; }
+            exportInput = { label: "Completed mailbox import", collectionID, total };
+            activePanel = { kind: "export" };
+          }}
+        />
+      {/if}
+      {#if panel.kind === "loadFile" && uploadChannel}
+        <LoadFileImportDrawer
+          session={webSession}
+          channel={uploadChannel}
+          destination={panel.target.path ?? "/"}
+          onclose={closePanel(panel)}
+          oncomplete={async () => {
+            if (activePanel === panel) await loadDirectory(panel.target.id, false);
+          }}
+          onauthfailure={handleFailure}
+        />
+      {/if}
+      {#if panel.kind === "trashNode"}
+        <TrashNodeModal
+          session={webSession}
+          node={panel.target.node}
+          path={panel.target.path}
+          onclose={closePanel(panel)}
+          ontrashed={(receipt) => { closePanel(panel)(); handleTrashed(receipt); }}
+          onauthfailure={handleFailure}
+        />
+      {/if}
+    {/each}
     {#key webSession}
-      <ExportDrawer session={webSession} open={exportOpen} input={exportInput} onclose={() => exportOpen = false} onauthfailure={handleFailure} onactivechange={active => exportHasJob = active} />
+      <ExportDrawer session={webSession} open={activePanel?.kind === "export"} input={exportInput} onclose={closePanel(activePanel?.kind === "export" ? activePanel : null)} onauthfailure={handleFailure} onactivechange={active => exportHasJob = active} />
     {/key}
-    {#if termReportsOpen}
-      <TermReportDrawer session={webSession} initialExpression={searchQuery} onclose={() => termReportsOpen = false} onauthfailure={handleFailure} />
-    {/if}
-    {#if storageOpen}
-      <StorageDrawer
-        session={webSession}
-        onclose={() => (storageOpen = false)}
-        onauthfailure={handleFailure}
-      />
-    {/if}
-    {#if trashOpen}
-      <TrashDrawer
-        session={webSession}
-        onclose={() => (trashOpen = false)}
-        onrestored={handleRestored}
-        onauthfailure={handleFailure}
-      />
-    {/if}
     {#if manageTagsTarget}
       <ManageTagsModal
         session={webSession}
@@ -3265,7 +2885,7 @@
         targets={batchTagsTargets}
         catalog={tagCatalog}
         catalogTotal={tagCatalogTotal}
-        disabled={loading || (batchTagsContext === "snapshot" && snapshotState.status !== "ready")}
+        disabled={loading || (batchTagsContext === "snapshot" && snapshot.state.status !== "ready")}
         context={batchTagsContext}
         initialChoice={batchTagsChoice}
         onclose={() => (batchTagsTargets = null)}
@@ -3273,97 +2893,35 @@
         onauthfailure={handleFailure}
       />
     {/if}
-    {#if snapshotActionsOpen}
+    {#if snapshot.actionsOpen}
       <SnapshotActions
         selectedCount={snapshotTargets.length}
-        total={snapshotState.firstPage?.total ?? 0}
+        total={snapshot.state.firstPage?.total ?? 0}
         catalog={tagCatalog}
         catalogTotal={tagCatalogTotal}
-        disabled={snapshotActionBusy || (snapshotActive && snapshotState.status !== "ready")}
-        errorMessage={snapshotActionError}
+        disabled={snapshot.actionBusy || (snapshotActive && snapshot.state.status !== "ready")}
+        errorMessage={snapshot.actionError}
         onstart={(choice) => void startSnapshotAction(choice)}
-        onimport={(bytes) => void importSnapshotAction(bytes)}
-        onresume={() => void resumeSnapshotAction()}
-        onabandon={() => void abandonSnapshotAction()}
-        onclose={cancelSnapshotAction}
+        onimport={(bytes) => void snapshot.importAction(bytes)}
+        onresume={() => void snapshot.resumeAction()}
+        onabandon={() => void snapshot.abandonAction()}
+        onclose={() => snapshot.cancelAction()}
       />
     {/if}
-    {#if recoveryJournal && recoveryAction}
+    {#if snapshot.recoveryJournal && snapshot.recoveryAction}
       <ActionRecoveryModal
         session={webSession}
-        sessionVaultID={recoveryVaultID}
-        journal={recoveryJournal}
-        initialAction={recoveryAction}
-        tag={recoveryTag}
-        disabled={snapshotActive && snapshotState.status !== "ready"}
-        onprogress={handleRecoveryProgress}
-        onclose={closeRecovery}
+        sessionVaultID={snapshot.recoveryVaultID}
+        journal={snapshot.recoveryJournal}
+        initialAction={snapshot.recoveryAction}
+        tag={snapshot.recoveryTag}
+        disabled={snapshotActive && snapshot.state.status !== "ready"}
+        onprogress={(action, receipt) => snapshot.handleRecoveryProgress(action, receipt)}
+        onclose={() => snapshot.closeRecovery()}
         onauthfailure={handleFailure}
       />
     {/if}
-    {#if tagCatalogOpen}
-      <TagCatalogModal
-        session={webSession}
-        catalog={tagCatalog}
-        catalogTotal={tagCatalogTotal}
-        disabled={loading || tagCatalogLoading}
-        onclose={() => (tagCatalogOpen = false)}
-        onchanged={handleTagDefinitionChanged}
-        onauthfailure={handleFailure}
-      />
-    {/if}
-    {#if uploadTarget && uploadChannel}
-      <UploadDrawer
-        channel={uploadChannel}
-        directory={uploadTarget}
-        disabledReason={uploadChannelError}
-        onclose={() => (uploadTarget = null)}
-        oncomplete={async () => {
-          if (uploadTarget) await loadDirectory(uploadTarget.id, false);
-        }}
-        onauthfailure={handleFailure}
-      />
-    {/if}
-    {#if mailboxTarget && uploadChannel}
-      <MailboxImportDrawer
-        session={webSession}
-        channel={uploadChannel}
-        directory={mailboxTarget}
-        onclose={() => (mailboxTarget = null)}
-        oncomplete={async () => {
-          if (mailboxTarget) await loadDirectory(mailboxTarget.id, false);
-        }}
-        onauthfailure={handleFailure}
-        onexport={(collectionID, total) => {
-          if (exportHasJob) { exportOpen = true; return; }
-          exportInput = { label: "Completed mailbox import", collectionID, total };
-          mailboxTarget = null;
-          exportOpen = true;
-        }}
-      />
-    {/if}
-    {#if loadFileTarget && uploadChannel}
-      <LoadFileImportDrawer
-        session={webSession}
-        channel={uploadChannel}
-        destination={loadFileTarget.path ?? "/"}
-        onclose={() => (loadFileTarget = null)}
-        oncomplete={async () => {
-          if (loadFileTarget) await loadDirectory(loadFileTarget.id, false);
-        }}
-        onauthfailure={handleFailure}
-      />
-    {/if}
-    {#if trashTarget}
-      <TrashNodeModal
-        session={webSession}
-        node={trashTarget.node}
-        path={trashTarget.path}
-        onclose={() => (trashTarget = null)}
-        ontrashed={handleTrashed}
-        onauthfailure={handleFailure}
-      />
-    {/if}
+
   </div>
 {/if}
 

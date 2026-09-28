@@ -7,8 +7,8 @@ import (
 	"encoding/hex"
 	"encoding/json/v2"
 	"errors"
+	"fmt"
 	"net/http"
-	"net/netip"
 	"reflect"
 	"slices"
 	"strings"
@@ -105,19 +105,7 @@ type policyIdentity struct {
 	MaxInputBytes      int64                        `json:"max_input_bytes"`
 	MaxRequestBytes    int64                        `json:"max_request_bytes"`
 	MaxResponseBytes   int64                        `json:"max_response_bytes"`
-	Egress             egressIdentity               `json:"egress"`
-}
-
-type egressIdentity struct {
-	Scheme              string   `json:"scheme"`
-	Host                string   `json:"host"`
-	Port                uint16   `json:"port"`
-	AllowedCIDRs        []string `json:"allowed_cidrs"`
-	ProxyMode           string   `json:"proxy_mode"`
-	ConnectTimeout      int64    `json:"connect_timeout_nanos"`
-	KeepAlive           int64    `json:"keep_alive_nanos"`
-	TLSHandshakeTimeout int64    `json:"tls_handshake_timeout_nanos"`
-	SPKISHA256          []string `json:"spki_sha256,omitempty"`
+	Egress             providerhttp.EgressIdentity  `json:"egress"`
 }
 
 func PolicyFingerprint(profile Profile) (string, error) {
@@ -134,7 +122,7 @@ func PolicyFingerprint(profile Profile) (string, error) {
 		MaxPollAttempts: normalized.MaxPollAttempts,
 		CleanupTimeout:  int64(normalized.CleanupTimeout),
 		MaxInputBytes:   normalized.MaxInputBytes, MaxRequestBytes: normalized.MaxRequestBytes,
-		MaxResponseBytes: normalized.MaxResponseBytes, Egress: egressPolicyIdentity(normalized.EgressPolicy),
+		MaxResponseBytes: normalized.MaxResponseBytes, Egress: providerhttp.IdentifyEgress(normalized.EgressPolicy),
 	}, json.Deterministic(true))
 	if err != nil {
 		return "", errors.New("gemini embed: policy identity encoding failed")
@@ -302,55 +290,13 @@ func modelInputContract() (document.ModelInputContract, error) {
 }
 
 func normalizeEgress(policy *providerhttp.EgressPolicy) error {
-	if policy.ConnectTimeout == 0 {
-		policy.ConnectTimeout = providerhttp.DefaultConnectTimeout
-	}
-	if policy.KeepAlive == 0 {
-		policy.KeepAlive = providerhttp.DefaultKeepAlive
-	}
-	if policy.TLSHandshakeTimeout == 0 {
-		policy.TLSHandshakeTimeout = providerhttp.DefaultTLSHandshakeTimeout
-	}
-	if policy.ProxyMode == "" {
-		policy.ProxyMode = providerhttp.ProxyDisabled
-	}
-	if policy.Scheme != "https" || policy.Host != host || policy.Port != 443 ||
-		policy.ProxyMode != providerhttp.ProxyDisabled || policy.TLS.RootCAs != nil {
-		return errors.New("gemini embed: egress authority must be exactly generativelanguage.googleapis.com:443")
-	}
-	for index := range policy.AllowedCIDRs {
-		policy.AllowedCIDRs[index] = policy.AllowedCIDRs[index].Masked()
-	}
-	slices.SortFunc(policy.AllowedCIDRs, func(left, right netip.Prefix) int { return strings.Compare(left.String(), right.String()) })
-	for index := 1; index < len(policy.AllowedCIDRs); index++ {
-		if policy.AllowedCIDRs[index] == policy.AllowedCIDRs[index-1] {
-			return errors.New("gemini embed: egress policy has a duplicate CIDR")
+	if err := providerhttp.NormalizeHostedEgress(policy, host); err != nil {
+		if errors.Is(err, providerhttp.ErrHostedAuthority) {
+			return errors.New("gemini embed: egress authority must be exactly generativelanguage.googleapis.com:443")
 		}
-	}
-	for index := range policy.TLS.SPKISHA256 {
-		policy.TLS.SPKISHA256[index] = strings.ToLower(policy.TLS.SPKISHA256[index])
-	}
-	slices.Sort(policy.TLS.SPKISHA256)
-	for index := 1; index < len(policy.TLS.SPKISHA256); index++ {
-		if policy.TLS.SPKISHA256[index] == policy.TLS.SPKISHA256[index-1] {
-			return errors.New("gemini embed: egress policy has a duplicate SPKI pin")
-		}
-	}
-	if _, err := providerhttp.NewTransport(*policy, nil); err != nil {
-		return errors.New("gemini embed: sealed egress policy is invalid")
+		return fmt.Errorf("gemini embed: %s", err.Error())
 	}
 	return nil
-}
-
-func egressPolicyIdentity(policy providerhttp.EgressPolicy) egressIdentity {
-	cidrs := make([]string, len(policy.AllowedCIDRs))
-	for index, prefix := range policy.AllowedCIDRs {
-		cidrs[index] = prefix.String()
-	}
-	return egressIdentity{Scheme: policy.Scheme, Host: policy.Host, Port: policy.Port,
-		AllowedCIDRs: cidrs, ProxyMode: string(policy.ProxyMode), ConnectTimeout: int64(policy.ConnectTimeout),
-		KeepAlive: int64(policy.KeepAlive), TLSHandshakeTimeout: int64(policy.TLSHandshakeTimeout),
-		SPKISHA256: slices.Clone(policy.TLS.SPKISHA256)}
 }
 
 func cloneDescriptor(value document.EmbeddingDescriptor) document.EmbeddingDescriptor {

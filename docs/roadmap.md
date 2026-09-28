@@ -21,7 +21,7 @@ The [changelog](changelog.md) records published releases.
 | --- | --- | --- |
 | Collect documents | Import files and trees, select files with glob patterns, replace existing content deliberately, and watch local inboxes | [Importing](usage/importing.md) |
 | Organize documents | Stable IDs, folders, tags, and atomic batch moves; the web app groups and colors tags | [Organizing](usage/organizing.md) |
-| Find documents | Ranked name and text search, bounded filters without a query, and API storage for named queries and highlight sets | [Searching](usage/searching.md) |
+| Find documents | Ranked name and text search, bounded filters without a query, and saved queries and highlight sets through the web app and API | [Searching](usage/searching.md) |
 | Keep earlier content | Immutable versions, revision checks, reversion, and deliberate history pruning | [Editing and versions](architecture/editing-and-versions.md) |
 | Record origin and evidence | Append-only provenance and permanent audited directory scopes | [Importing](usage/importing.md) and [audited history](usage/audited-history.md) |
 | Recover documents | Recoverable trash, explicit permanent deletion, garbage collection, and pack reclamation | [Trash and GC](usage/trash-and-gc.md) |
@@ -76,8 +76,9 @@ Its operations views show daemon jobs, storage inventory, and configured
 backup recovery points.
 
 Storage placement controls remain an operator or agent API workflow. The web
-and terminal storage views are read-only. Saved queries and highlight sets
-have HTTP APIs; neither client has a management screen for them.
+and terminal storage views are read-only. The web app and HTTP APIs
+[manage saved queries and highlight sets](usage/web.md#saved-queries-and-highlights).
+The terminal browser does not have a management screen for these definitions.
 
 ## What remains planned?
 

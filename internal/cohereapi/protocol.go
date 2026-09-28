@@ -9,11 +9,12 @@ import (
 	"io"
 	"mime"
 	"net/http"
-	"strconv"
 	"strings"
 	"time"
 	"unicode"
 	"unicode/utf8"
+
+	"go.kenn.io/docbank/document/providerhttp"
 )
 
 var ErrResponseRead = errors.New("cohere API response read failed")
@@ -39,24 +40,9 @@ func ClassifyStatus(status int, retryAfter string, now time.Time) StatusResult {
 		result.Kind = StatusCapacity
 	case status == http.StatusRequestTimeout || status == http.StatusTooManyRequests || status >= 500 && status <= 599:
 		result.Kind = StatusTransient
-		result.RetryDelay, result.RetrySet = parseRetryAfter(retryAfter, now)
+		result.RetryDelay, result.RetrySet = providerhttp.ParseRetryAfter(retryAfter, now)
 	}
 	return result
-}
-
-func parseRetryAfter(value string, now time.Time) (time.Duration, bool) {
-	value = strings.TrimSpace(value)
-	if seconds, err := strconv.ParseInt(value, 10, 64); err == nil && seconds >= 0 {
-		if seconds >= int64(time.Hour/time.Second) {
-			return time.Hour, true
-		}
-		return time.Duration(seconds) * time.Second, true
-	}
-	when, err := http.ParseTime(value)
-	if err != nil {
-		return 0, false
-	}
-	return min(max(when.Sub(now), 0), time.Hour), true
 }
 
 func ValidToken(value string, maximumBytes int) bool {

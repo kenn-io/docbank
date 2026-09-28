@@ -113,7 +113,7 @@ func (s *Store) PackageLabels(ctx context.Context, packageID, occurrenceID strin
 	if validateUUIDv4(packageID) != nil || !validPackageOccurrenceID(occurrenceID) {
 		return nil, ErrPackageConflict
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT package_id,provenance,label_set,label,label_sort_key,
+	rows, err := s.db.QueryContext(ctx, `SELECT package_id,provenance,label_set,label,
 		occurrence_id,content_version_id,COALESCE(artifact_id,''),COALESCE(page_number,0),page_state,endpoint
 		FROM package_labels WHERE package_id=? AND occurrence_id=?
 		ORDER BY package_id,provenance,label_set,occurrence_id,COALESCE(artifact_id,''),COALESCE(page_number,0),endpoint`,
@@ -126,7 +126,7 @@ func (s *Store) PackageLabels(ctx context.Context, packageID, occurrenceID strin
 	for rows.Next() {
 		var item PackageLabelRow
 		if err := rows.Scan(&item.PackageID, &item.Provenance, &item.LabelSet, &item.Label,
-			&item.LabelSortKey, &item.OccurrenceID, &item.ContentVersionID, &item.ArtifactID,
+			&item.OccurrenceID, &item.ContentVersionID, &item.ArtifactID,
 			&item.PageNumber, &item.PageState, &item.Endpoint); err != nil {
 			return nil, err
 		}
@@ -213,7 +213,7 @@ func (s *Store) PackageLabelCandidates(ctx context.Context, label, packageID, la
 			return nil, "", ErrPackageConflict
 		}
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT package_id,provenance,label_set,label,label_sort_key,
+	rows, err := s.db.QueryContext(ctx, `SELECT package_id,provenance,label_set,label,
 		occurrence_id,content_version_id,COALESCE(artifact_id,''),COALESCE(page_number,0),page_state,endpoint
 		FROM package_labels WHERE label=? AND (?='' OR package_id=?) AND (?='' OR label_set=?)
 		AND (?='' OR provenance=?) AND (?='' OR (package_id,provenance,label_set,occurrence_id,
@@ -230,7 +230,7 @@ func (s *Store) PackageLabelCandidates(ctx context.Context, label, packageID, la
 	for rows.Next() {
 		var item PackageLabelRow
 		if err := rows.Scan(&item.PackageID, &item.Provenance, &item.LabelSet, &item.Label,
-			&item.LabelSortKey, &item.OccurrenceID, &item.ContentVersionID, &item.ArtifactID,
+			&item.OccurrenceID, &item.ContentVersionID, &item.ArtifactID,
 			&item.PageNumber, &item.PageState, &item.Endpoint); err != nil {
 			return nil, "", err
 		}

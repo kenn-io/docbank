@@ -23,7 +23,7 @@ func TestFormatsCommandJSONAndTable(t *testing.T) {
 	require.NotNil(t, response.Lookup)
 	assert.Equal(t, document.FormatLookupPending, response.Lookup.Match)
 	assert.Equal(t, "wpd", response.Lookup.Query)
-	assert.Equal(t, "DB-42b", response.Lookup.Pending.OwnerSlice)
+	assert.Equal(t, "WPD", response.Lookup.Pending.Label)
 
 	out, err = runCLI(t, "formats", "--format", "zip")
 	require.NoError(t, err)
@@ -37,11 +37,9 @@ func TestFormatsCommandJSONAndTable(t *testing.T) {
 	require.NoError(t, err)
 	assert.Contains(t, out, "QUERY")
 	assert.Contains(t, out, "MATCH")
-	assert.Contains(t, out, "OWNER")
 	assert.Contains(t, out, "wpd")
 	assert.Contains(t, out, "pending")
-	assert.Contains(t, out, "DB-42b")
-	assert.Contains(t, out, "WPD: WordPerfect document support is owned by DB-42b.")
+	assert.Contains(t, out, "WPD: WordPerfect document support is not cataloged.")
 
 	out, err = runCLI(t, "formats", "--extension", "qqq")
 	require.NoError(t, err)
