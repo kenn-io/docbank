@@ -215,7 +215,7 @@ func init() {
 		newProductionDraftDecisionsCommand(), newProductionDraftInstructionsCommand(),
 		newProductionDraftChangesCommand(), newProductionDraftAppendCommand(), newProductionDraftForkCommand(),
 		newProductionDraftSealCommand(), newProductionDraftResolveCommand(), newProductionDraftReviewCommand(),
-		newProductionDraftFinalizeCommand())
+		newProductionDraftGateSelectionCommand(), newProductionDraftFinalizeCommand())
 	jobs := &cobra.Command{Use: "jobs", Short: "Submit and inspect production jobs"}
 	jobs.AddCommand(newProductionJobAdmitCommand(), newProductionJobStatusCommand(), newProductionJobCancelCommand())
 	productionPackageCmd.AddCommand(newProductionPackagePublishCommand())
