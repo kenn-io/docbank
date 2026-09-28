@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 
 	"go.kenn.io/kit/fslink"
 	"go.kenn.io/kit/safefileio"
@@ -892,10 +893,17 @@ func targetLockRegistryPath() (string, error) {
 	return dir, nil
 }
 
+var securedTargetLockRegistries sync.Map
+
 func ensureTargetLockRegistryDir(dir string) error {
+	// Rewriting the DACL on Windows re-walks every lock file, so repair once per process.
+	if _, ok := securedTargetLockRegistries.Load(dir); ok && safefileio.ValidatePrivateDir(dir) == nil {
+		return nil
+	}
 	if err := safefileio.EnsurePrivateDir(dir); err != nil {
 		return fmt.Errorf("securing target-lock registry: %w", err)
 	}
+	securedTargetLockRegistries.Store(dir, struct{}{})
 	return nil
 }
 
