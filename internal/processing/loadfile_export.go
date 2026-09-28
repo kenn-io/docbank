@@ -612,7 +612,12 @@ func buildLoadFileRecord(ctx context.Context, blobs *blob.Store, exportProfile l
 			return loadfile.Record{}, nil, nil, nil, nil, err
 		}
 		for index, rep := range pageRepresentations {
-			relPath := fmt.Sprintf("IMAGES/%s-%06d.tif", crosswalk.DocumentID, index+1)
+			extension := exportMediaExtension(rep.MediaType, "")
+			if !slices.Contains([]string{".tif", ".jpg", ".png"}, extension) ||
+				exportProfile.PageMap == "lfp-ipro-v1" && extension != ".tif" {
+				return loadfile.Record{}, nil, nil, nil, nil, fmt.Errorf("%w: profile %s cannot export page image type %q", loadfile.ErrUnrepresentable, exportProfile.ID, rep.MediaType)
+			}
+			relPath := fmt.Sprintf("IMAGES/%s-%06d%s", crosswalk.DocumentID, index+1, extension)
 			addBlob("page_image", relPath, rep.BlobSHA256, rep.Size, rep.PageNumber, index+1)
 			imageKey := exportPageLabel(labels, rep.PageNumber)
 			if imageKey == "" {
