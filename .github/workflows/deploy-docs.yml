@@ -18,7 +18,7 @@ concurrency:
 jobs:
   validate:
     name: Validate documentation source
-    runs-on: namespace-profile-linux-4cpu
+    runs-on: ubuntu-latest
     outputs:
       release_tag: ${{ steps.release.outputs.release_tag }}
       source_sha: ${{ steps.release.outputs.source_sha }}
@@ -44,7 +44,7 @@ jobs:
   deploy:
     name: Build and promote documentation
     needs: validate
-    runs-on: namespace-profile-linux-4cpu
+    runs-on: ubuntu-latest
     environment: production
     steps:
       - name: Check out the validated source

@@ -20,7 +20,7 @@ concurrency:
 jobs:
   build-frontend:
     name: Build web application
-    runs-on: namespace-profile-linux-8cpu
+    runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
@@ -55,8 +55,8 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { runner: namespace-profile-linux-8cpu, goarch: amd64 }
-          - { runner: nscloud-ubuntu-24.04-arm64-4x8, goarch: arm64 }
+          - { runner: ubuntu-latest, goarch: amd64 }
+          - { runner: ubuntu-24.04-arm, goarch: arm64 }
     runs-on: ${{ matrix.runner }}
     container:
       image: ubuntu:22.04
@@ -190,7 +190,7 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { runner: namespace-profile-windows-8cpu, goarch: amd64 }
+          - { runner: windows-latest, goarch: amd64 }
           - { runner: windows-11-vs2026-arm, goarch: arm64 }
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 25

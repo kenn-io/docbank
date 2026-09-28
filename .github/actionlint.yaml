@@ -5,4 +5,3 @@ self-hosted-runner:
     - namespace-profile-linux-8cpu
     - namespace-profile-linux-16cpu
     - namespace-profile-windows-8cpu
-    - nscloud-ubuntu-24.04-arm64-4x8
