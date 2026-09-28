@@ -4,19 +4,118 @@ import (
 	"archive/zip"
 	"bytes"
 	"context"
+	"fmt"
 	"io"
 	"path/filepath"
 	"slices"
 	"testing"
 	"time"
 
+	"github.com/go-pdf/fpdf"
 	"github.com/google/uuid"
+	pdfapi "github.com/pdfcpu/pdfcpu/pkg/api"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/internal/blob"
 	"go.kenn.io/docbank/internal/canonical"
 	"go.kenn.io/docbank/internal/loadfile"
 	"go.kenn.io/docbank/internal/store"
 )
+
+func TestLoadFileExportUsesFrozenPDFAndSelectedPages(t *testing.T) {
+	for _, test := range []struct {
+		name          string
+		pages         []int
+		withoutReps   bool
+		missingSource bool
+	}{
+		{name: "whole document", pages: []int{1, 2, 3, 4, 5, 6, 7, 8}},
+		{name: "selected pages", pages: []int{3, 6, 8}},
+		{name: "page document without representations", pages: []int{3, 6, 8}, withoutReps: true},
+		{name: "missing frozen source", pages: []int{3, 6, 8}, missingSource: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			env := newBatesExportFixture(t)
+			allocation, err := env.catalog.BatesAllocation(t.Context(), env.allocationID)
+			require.NoError(t, err)
+			members, err := env.catalog.SnapshotMembers(t.Context(), allocation.SnapshotID, 0, 10)
+			require.NoError(t, err)
+			member := members[0]
+			member.SelectedSourcePages = test.pages
+
+			otherPDF := fpdf.New("P", "pt", "A4", "")
+			otherPDF.SetFont("Helvetica", "", 16)
+			for range test.pages {
+				otherPDF.AddPage()
+				otherPDF.Cell(250, 25, "DIFFERENT SYNTHETIC DOCUMENT")
+			}
+			var other bytes.Buffer
+			require.NoError(t, otherPDF.Output(&other))
+			written, err := env.blobs.WriteDetailedContext(t.Context(), bytes.NewReader(other.Bytes()))
+			require.NoError(t, err)
+			require.NoError(t, env.catalog.RecordBlob(t.Context(), written.Hash, written.Size, processingBlobPhysical(t, written)))
+			if !test.withoutReps {
+				member.Representations = []store.CollectionSnapshotRepresentation{
+					{OccurrenceID: member.OccurrenceID, Role: "produced_pdf", Ordinal: 0, Status: "available", TextAuthority: "none",
+						ContentVersionID: member.ContentVersionID, BlobSHA256: written.Hash, Size: written.Size,
+						MediaType: "application/pdf", VerifiedPageCount: len(test.pages)},
+					{OccurrenceID: member.OccurrenceID, Role: "produced_pdf", Ordinal: 1, Status: "available", TextAuthority: "none",
+						ContentVersionID: member.ContentVersionID, BlobSHA256: member.SelectedPDFSHA256, Size: member.Size,
+						MediaType: "application/pdf", VerifiedPageCount: member.SourcePageCount},
+					{OccurrenceID: member.OccurrenceID, Role: "native", Ordinal: 1, Status: "available", TextAuthority: "none",
+						ContentVersionID: member.ContentVersionID, BlobSHA256: written.Hash, Size: written.Size, MediaType: "application/pdf"},
+				}
+			}
+			snapshot, err := env.catalog.SealCollectionSnapshot(t.Context(), store.SnapshotSealRequest{
+				SnapshotID: uuid.NewString(), Members: []store.CollectionSnapshotMember{member}})
+			require.NoError(t, err)
+			if test.missingSource {
+				require.NoError(t, env.blobs.Remove(member.SelectedPDFSHA256))
+			}
+			var archive bytes.Buffer
+			_, err = WriteLoadFileExport(t.Context(), env.catalog, env.blobs,
+				LoadFileExportRequest{SnapshotID: snapshot.SnapshotID, ProfileID: "export-dat-pdf-v1"}, &archive)
+			if test.missingSource {
+				require.Error(t, err, "another available PDF must not replace the missing frozen source")
+				require.Empty(t, archive.Bytes())
+				return
+			}
+			require.NoError(t, err)
+			verified, err := VerifyLoadFileExport(t.Context(), bytes.NewReader(archive.Bytes()), int64(archive.Len()))
+			require.NoError(t, err)
+			require.Equal(t, len(test.pages), verified.Receipt.PageCount)
+			var output []byte
+			for _, file := range verified.Manifest.Files {
+				if file.Role == "produced_pdf" {
+					require.NotEqual(t, written.Hash, file.SHA256)
+					if len(test.pages) == member.SourcePageCount {
+						require.Equal(t, member.SelectedPDFSHA256, file.SHA256, "whole-document exports retain the frozen bytes")
+					}
+					output = readLoadFileZIPEntry(t, archive.Bytes(), file.Volume+"/"+file.RelPath)
+				}
+			}
+			require.NotEmpty(t, output)
+			var contents []string
+			err = pdfapi.ExtractContent(bytes.NewReader(output), nil, func(reader io.Reader, _ int) error {
+				content, err := io.ReadAll(reader)
+				contents = append(contents, string(content))
+				return err
+			}, nil)
+			require.NoError(t, err)
+			require.Len(t, contents, len(test.pages))
+			for index, page := range test.pages {
+				require.Contains(t, contents[index], fmt.Sprintf("SOURCE PAGE %02d", page))
+			}
+			if len(test.pages) < member.SourcePageCount {
+				require.Contains(t, verified.Crosswalk.Members[0].OmittedRoles, "native")
+				entries, err := zip.NewReader(bytes.NewReader(archive.Bytes()), int64(archive.Len()))
+				require.NoError(t, err)
+				for _, entry := range entries.File {
+					require.NotContains(t, entry.Name, "/NATIVE/", "partial exports must not include whole native files")
+				}
+			}
+		})
+	}
+}
 
 func TestLoadFileExportRoundTripsThroughIndependentFreshVault(t *testing.T) {
 	ctx := t.Context()

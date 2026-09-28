@@ -274,14 +274,7 @@ func WriteLoadFileExport(ctx context.Context, catalog *store.Store, blobs *blob.
 		manifest.Records = append(manifest.Records, record)
 		manifest.Files = append(manifest.Files, files...)
 		manifest.Images = append(manifest.Images, images...)
-		if batesMember, ok := batesMembers[member.OccurrenceID]; ok {
-			pageCount += batesMember.pageCount
-		} else if rep := selectedPDFRepresentation(member, availableRepresentations(member)["produced_pdf"]); rep != nil &&
-			slices.Contains(exportProfile.RequiredRoles, "produced_pdf") {
-			pageCount += rep.VerifiedPageCount
-		} else {
-			pageCount += len(images)
-		}
+		pageCount += len(images)
 		artifacts = append(artifacts, entries...)
 		crosswalk.Members = append(crosswalk.Members, entry)
 	}
@@ -510,7 +503,10 @@ func buildLoadFileRecord(ctx context.Context, blobs *blob.Store, exportProfile l
 		entries = append(entries, loadFileArchiveEntry{name: loadFileExportVolume + "/" + relPath, hash: hash, size: size})
 	}
 	available := availableRepresentations(member)
-	if slices.Contains(exportProfile.RequiredRoles, "native") || slices.Contains(exportProfile.OptionalRoles, "native") {
+	partialPages := member.SelectedSourcePages != nil && len(member.SelectedSourcePages) < member.SourcePageCount
+	// A whole native file would disclose pages outside a partial selection.
+	if slices.Contains(exportProfile.RequiredRoles, "native") ||
+		(slices.Contains(exportProfile.OptionalRoles, "native") && !partialPages) {
 		rep := firstRepresentation(available["native"])
 		hash, size := member.BlobSHA256, member.Size
 		extension := safeExportExtension(member.DisplayName, ".bin")
@@ -554,18 +550,38 @@ func buildLoadFileRecord(ctx context.Context, blobs *blob.Store, exportProfile l
 			}
 		} else if rep := selectedPDFRepresentation(member, available["produced_pdf"]); rep != nil {
 			relPath := "PDF/" + crosswalk.DocumentID + ".pdf"
+			pdf := loadFileArchiveEntry{name: loadFileExportVolume + "/" + relPath, hash: rep.BlobSHA256, size: rep.Size}
+			pageCount := rep.VerifiedPageCount
+			if partialPages {
+				data, err := readExportBlob(ctx, blobs, rep.BlobSHA256, rep.Size, pdfstamp.MaxOutputBytes)
+				if err != nil {
+					return loadfile.Record{}, nil, nil, nil, nil, err
+				}
+				var selected bytes.Buffer
+				selection, err := pdfstamp.SelectPagesSupervised(ctx, bytes.NewReader(data), member.SelectedSourcePages, &selected)
+				if err != nil {
+					return loadfile.Record{}, nil, nil, nil, nil, err
+				}
+				pdf.data, pdf.hash, pdf.size = selected.Bytes(), selection.SHA256, selection.Size
+				pageCount = selection.PageCount
+			}
 			values[11] = loadFileExportVolume + "/" + relPath
-			values[12] = strconv.Itoa(rep.VerifiedPageCount)
-			addBlob("produced_pdf", relPath, rep.BlobSHA256, rep.Size, 0, 0)
-			files[len(files)-1].VerifiedPageCount = rep.VerifiedPageCount
-			for page := 1; page <= rep.VerifiedPageCount; page++ {
-				imageKey := exportPageLabel(labels, page)
+			values[12] = strconv.Itoa(pageCount)
+			addBlob("produced_pdf", relPath, pdf.hash, pdf.size, 0, 0)
+			entries[len(entries)-1] = pdf
+			files[len(files)-1].VerifiedPageCount = pageCount
+			for page := 1; page <= pageCount; page++ {
+				sourcePage := page
+				if member.SelectedSourcePages != nil {
+					sourcePage = member.SelectedSourcePages[page-1]
+				}
+				imageKey := exportPageLabel(labels, sourcePage)
 				if imageKey == "" {
 					imageKey = fmt.Sprintf("%s-%06d", crosswalk.DocumentID, page)
 				}
 				images = append(images, loadfile.ImageRef{ImageKey: imageKey, Volume: loadFileExportVolume,
 					RelPath: relPath, DocumentBreak: page == 1, PageOrdinal: page,
-					SourcePage: page, DeclaredPageCount: rep.VerifiedPageCount})
+					SourcePage: page, DeclaredPageCount: pageCount})
 			}
 		}
 	}
@@ -728,12 +744,16 @@ func firstRepresentation(values []store.CollectionSnapshotRepresentation) *store
 }
 
 func selectedPDFRepresentation(member store.CollectionSnapshotMember, values []store.CollectionSnapshotRepresentation) *store.CollectionSnapshotRepresentation {
-	for index := range values {
-		if member.SelectedSourcePages == nil || values[index].VerifiedPageCount == len(member.SelectedSourcePages) {
-			return &values[index]
-		}
+	if member.SelectedSourcePages != nil {
+		// Snapshot sealing binds this full-source PDF to the member's version,
+		// size and page count. Representations cannot substitute another source.
+		return &store.CollectionSnapshotRepresentation{BlobSHA256: member.SelectedPDFSHA256, Size: member.Size,
+			VerifiedPageCount: member.SourcePageCount}
 	}
-	if member.SelectedSourcePages == nil && member.DocumentKind == "pdf" {
+	if len(values) > 0 {
+		return &values[0]
+	}
+	if member.DocumentKind == "pdf" {
 		return &store.CollectionSnapshotRepresentation{BlobSHA256: member.BlobSHA256, Size: member.Size,
 			VerifiedPageCount: member.SourcePageCount}
 	}
