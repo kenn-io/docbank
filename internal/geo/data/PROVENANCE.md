@@ -1,7 +1,7 @@
 # Natural Earth gazetteer — provenance
 
 These GeoJSON files are vendored from Natural Earth 1:10m cultural vectors
-and embedded into the `fotobank` binary by `internal/geo`. Update this
+and embedded into the `docbank` binary by `internal/geo`. Update this
 file every time the data is re-vendored.
 
 ## Release
@@ -34,7 +34,7 @@ and conversion options:
   GPS coords against country/region polygons that are hundreds of km
   thick. Independent per-polygon simplification can leave small slivers
   between adjacent boundaries; border-adjacent photos may resolve to ""
-  and the frontend renders them with coords only.
+  while callers retain the GPS coordinates.
 
 Note on field casing: Natural Earth's admin_1 layer uses lowercase field
 names (`name`, `admin`, `iso_3166_2`) and does not expose an uppercase
@@ -59,8 +59,8 @@ Tested with GDAL v3.12.x.
 
 ## Output checksums
 
-Verified by `internal/geo/geo_test.go::TestEmbeddedDataChecksums` (added
-in a later task — keep these accurate). Update when re-vendoring.
+Verified by `internal/geo/geo_test.go::TestEmbeddedDataChecksums`. Update
+these checksums when re-vendoring.
 
 | File | SHA256 |
 |---|---|

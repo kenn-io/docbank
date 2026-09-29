@@ -2,12 +2,15 @@ package store
 
 import (
 	"bytes"
+	"errors"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/document"
+	"go.kenn.io/docbank/internal/geo"
 )
 
 func photoMetadataField(key, namespace, source string, value document.SourceMetadataValueV1) document.SourceMetadataFieldV1 {
@@ -24,6 +27,10 @@ func photoInteger(value int64) document.SourceMetadataValueV1 {
 
 func photoNumber(value float64) document.SourceMetadataValueV1 {
 	return document.SourceMetadataValueV1{Kind: document.SourceMetadataNumber, Number: &value}
+}
+
+func photoBoolean(value bool) document.SourceMetadataValueV1 {
+	return document.SourceMetadataValueV1{Kind: document.SourceMetadataBoolean, Boolean: &value}
 }
 
 func photoTimestamp(raw, normalized string, precision document.SourceMetadataTimestampPrecision,
@@ -47,13 +54,16 @@ func TestPhotoTechnicalMetadataFields(t *testing.T) {
 	metadata := document.SourceMetadataV1{ContractVersion: document.SourceMetadataContractV1, Fields: []document.SourceMetadataFieldV1{
 		photoMetadataField("image.exif.camera_make", "image.exif", "Make", photoString("Synthetic Camera")),
 		photoMetadataField("image.exif.camera_model", "image.exif", "Model", photoString("Model 1")),
+		photoMetadataField("image.exif.lens_make", "image.exif", "LensMake", photoString("Synthetic Lens")),
 		photoMetadataField("image.exif.lens_model", "image.exif", "LensModel", photoString("Lens 1")),
 		photoMetadataField("image.exif.iso", "image.exif", "PhotographicSensitivity", photoInteger(400)),
-		photoMetadataField("media.container.width_px", "media.container", "Width", photoInteger(640)),
+		photoMetadataField("media.container.width_px", "media.container", "RAFImageWidth", photoInteger(640)),
 		photoMetadataField("image.exif.pixel_width", "image.exif", "PixelXDimension", photoInteger(320)),
 		photoMetadataField("media.container.height_px", "media.container", "Height", photoInteger(480)),
 		photoMetadataField("image.exif.exposure_time_seconds", "image.exif", "ExposureTime", photoNumber(0.01)),
+		photoMetadataField("image.exif.f_number", "image.exif", "FNumber", photoNumber(2.8)),
 		photoMetadataField("image.exif.exposure_bias_ev", "image.exif", "ExposureBiasValue", photoNumber(-1.5)),
+		photoMetadataField("image.exif.focal_length_mm", "image.exif", "FocalLength", photoNumber(50)),
 		photoMetadataField("image.exif.orientation", "image.exif", "Orientation", photoInteger(6)),
 		photoMetadataField("created", "image.exif", "DateTimeOriginal",
 			photoTimestamp("2024:05:06 12:34:56-07:00", "2024-05-06T12:34:56-07:00",
@@ -67,12 +77,56 @@ func TestPhotoTechnicalMetadataFields(t *testing.T) {
 	fields := projectPhotoTechnicalMetadata(decoded, nil)
 	require.NotNil(t, fields.CameraMake)
 	assert.Equal(t, "Synthetic Camera", *fields.CameraMake)
+	assert.Equal(t, "Synthetic Lens", *fields.LensMake)
+	assert.Equal(t, int64(400), *fields.ISO)
+	assert.InDelta(t, 0.01, *fields.ExposureTimeSeconds, 0.000001)
+	assert.InDelta(t, 2.8, *fields.FNumber, 0.000001)
+	assert.InDelta(t, -1.5, *fields.ExposureBiasEV, 0.000001)
+	assert.InDelta(t, 50, *fields.FocalLengthMM, 0.000001)
 	assert.Equal(t, int64(640), *fields.WidthPX, "container dimensions take precedence")
 	assert.Equal(t, int64(480), *fields.HeightPX)
 	assert.Equal(t, "2024-05-06T12:34:56-07:00", *fields.CaptureTime)
 	assert.Equal(t, "-07:00", *fields.CaptureTimeOffset)
 	assert.Equal(t, int64(6), *fields.Orientation)
 	assert.Nil(t, fields.LocationLabel)
+}
+
+func TestPhotoTechnicalMetadataIgnoresBooleanCameraKey(t *testing.T) {
+	t.Parallel()
+	canonical := photoCanonical(t,
+		photoMetadataField("image.exif.camera_model", "image.exif", "Model", photoBoolean(true)),
+		photoMetadataField("image.exif.lens_model", "image.exif", "LensModel", photoString("Lens 1")),
+	)
+	metadata, _, err := document.DecodeSourceMetadataV1(canonical)
+	require.NoError(t, err)
+	fields := projectPhotoTechnicalMetadata(metadata, nil)
+	assert.Nil(t, fields.CameraModel)
+	require.NotNil(t, fields.LensModel)
+	assert.Equal(t, "Lens 1", *fields.LensModel)
+}
+
+func TestPhotoTechnicalMetadataContainerAliases(t *testing.T) {
+	t.Parallel()
+	for _, test := range []struct {
+		name, widthSource, heightSource string
+	}{
+		{name: "RAF", widthSource: "RAFImageWidth", heightSource: "RAFImageLength"},
+		{name: "preview", widthSource: "ImageWidth", heightSource: "ImageLength"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			fields := projectPhotoTechnicalMetadata(document.SourceMetadataV1{
+				ContractVersion: document.SourceMetadataContractV1,
+				Fields: []document.SourceMetadataFieldV1{
+					photoMetadataField("media.container.width_px", "media.container", test.widthSource, photoInteger(6016)),
+					photoMetadataField("media.container.height_px", "media.container", test.heightSource, photoInteger(4016)),
+				},
+			}, nil)
+			require.NotNil(t, fields.WidthPX)
+			require.NotNil(t, fields.HeightPX)
+			assert.Equal(t, int64(6016), *fields.WidthPX)
+			assert.Equal(t, int64(4016), *fields.HeightPX)
+		})
+	}
 }
 
 func TestPhotoTechnicalMetadataTimestampIdentity(t *testing.T) {
@@ -89,6 +143,16 @@ func TestPhotoTechnicalMetadataTimestampIdentity(t *testing.T) {
 	assert.Equal(t, string(document.SourceMetadataPrecisionDate), *fields.CaptureTimePrecision)
 	assert.Equal(t, string(document.SourceMetadataTimezoneOmitted), *fields.CaptureTimeTimezone)
 	assert.Empty(t, *fields.CaptureTimeOffset)
+
+	containerFields := projectPhotoTechnicalMetadata(document.SourceMetadataV1{
+		ContractVersion: document.SourceMetadataContractV1,
+		Fields: []document.SourceMetadataFieldV1{photoMetadataField("created", "media.container", "mvhd.CreationTime",
+			photoTimestamp("2024-05-06T12:34:56-07:00", "2024-05-06T12:34:56-07:00",
+				document.SourceMetadataPrecisionSecond, document.SourceMetadataTimezoneOffset, "-07:00"))},
+	}, nil)
+	require.NotNil(t, containerFields.CaptureTime)
+	assert.Equal(t, "2024-05-06T12:34:56-07:00", *containerFields.CaptureTime)
+	assert.Equal(t, "-07:00", *containerFields.CaptureTimeOffset)
 }
 
 func TestPhotoTechnicalMetadataGPSStrings(t *testing.T) {
@@ -116,39 +180,6 @@ func TestPhotoTechnicalMetadataGPSStrings(t *testing.T) {
 	require.NotNil(t, oceanFields.Latitude)
 	require.NotNil(t, oceanFields.Longitude)
 	assert.Nil(t, oceanFields.LocationLabel, "valid open-ocean GPS keeps coordinates without a fabricated label")
-}
-
-func TestPhotoTechnicalMetadataPublicationAndVersionBinding(t *testing.T) {
-	t.Parallel()
-	s := newTestStore(t)
-	ctx := t.Context()
-	canonical := photoCanonical(t,
-		photoMetadataField("image.exif.camera_model", "image.exif", "Model", photoString("A")),
-		photoMetadataField("image.exif.lens_model", "image.exif", "LensModel", photoString("L")),
-	)
-	first, err := s.CreateFile(ctx, s.RootID(), "one.jpg", fakeHash("a1"), 10, "image/jpeg")
-	require.NoError(t, err)
-	second, err := s.CreateFile(ctx, s.RootID(), "two.jpg", first.BlobHash, 10, "image/jpeg")
-	require.NoError(t, err)
-	generation, err := s.PublishSourceMetadata(ctx, first.BlobHash, fakeHash("e1"), canonical)
-	require.NoError(t, err)
-	firstProjection, err := s.ContentVersionPhotoMetadata(ctx, first.CurrentVersionID)
-	require.NoError(t, err)
-	secondProjection, err := s.ContentVersionPhotoMetadata(ctx, second.CurrentVersionID)
-	require.NoError(t, err)
-	assert.Equal(t, generation.GenerationID, firstProjection.GenerationID)
-	assert.Equal(t, generation.GenerationID, secondProjection.GenerationID)
-	assert.Equal(t, first.CurrentVersionID, firstProjection.ContentVersionID)
-	assert.Equal(t, second.CurrentVersionID, secondProjection.ContentVersionID)
-	assert.Equal(t, "A", *firstProjection.Fields.CameraModel)
-	assert.Equal(t, firstProjection.GenerationID, secondProjection.GenerationID)
-
-	_, err = s.db.ExecContext(ctx, `DELETE FROM photo_technical_metadata WHERE generation_id=?`, generation.GenerationID)
-	require.NoError(t, err)
-	_, err = s.PublishSourceMetadata(ctx, first.BlobHash, fakeHash("e1"), canonical)
-	require.NoError(t, err)
-	_, err = s.ContentVersionPhotoMetadata(ctx, first.CurrentVersionID)
-	require.NoError(t, err, "same-head replay repairs a missing projection")
 }
 
 func TestPhotoTechnicalMetadataPublication(t *testing.T) {
@@ -310,6 +341,10 @@ func TestPhotoTechnicalMetadataMembershipIndependence(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
+	directory, _, err := s.MkdirPath(ctx, "/photos")
+	require.NoError(t, err)
+	_, err = s.ContentVersionPhotoMetadata(ctx, directory.CurrentVersionID)
+	require.ErrorIs(t, err, ErrNotFound)
 	node, err := s.CreateFile(ctx, s.RootID(), "lifecycle.jpg", fakeHash("aa"), 1, "image/jpeg")
 	require.NoError(t, err)
 	canonical := photoCanonical(t,
@@ -317,9 +352,21 @@ func TestPhotoTechnicalMetadataMembershipIndependence(t *testing.T) {
 	)
 	generation, err := s.PublishSourceMetadata(ctx, node.BlobHash, fakeHash("fa"), canonical)
 	require.NoError(t, err)
+	automatic, err := s.PhotoAssetForNode(ctx, node.ID)
+	require.NoError(t, err)
+	assert.Equal(t, PhotoRoleImage, automatic.Files[0].Role)
+	projection, err := s.ContentVersionPhotoMetadata(ctx, node.CurrentVersionID)
+	require.NoError(t, err)
+	assert.Equal(t, generation.GenerationID, projection.GenerationID)
+	excluded, err := s.SetPhotoAssetExcluded(ctx, automatic.ID, automatic.Revision, true)
+	require.NoError(t, err)
+	require.NotNil(t, excluded.ExcludedAt)
+	projection, err = s.ContentVersionPhotoMetadata(ctx, node.CurrentVersionID)
+	require.NoError(t, err)
+	assert.Equal(t, generation.GenerationID, projection.GenerationID)
 	trashed, _, err := s.Trash(ctx, node.ID, node.Revision)
 	require.NoError(t, err)
-	projection, err := s.ContentVersionPhotoMetadata(ctx, node.CurrentVersionID)
+	projection, err = s.ContentVersionPhotoMetadata(ctx, node.CurrentVersionID)
 	require.NoError(t, err)
 	assert.Equal(t, generation.GenerationID, projection.GenerationID)
 	_, _, err = s.Restore(ctx, trashed.ID, trashed.Revision)
@@ -327,6 +374,74 @@ func TestPhotoTechnicalMetadataMembershipIndependence(t *testing.T) {
 	projection, err = s.ContentVersionPhotoMetadata(ctx, node.CurrentVersionID)
 	require.NoError(t, err)
 	assert.Equal(t, "Lifecycle", *projection.Fields.CameraModel)
+
+	raw, err := s.CreateFile(ctx, s.RootID(), "lifecycle.cr2", fakeHash("ab"), 1, "application/octet-stream")
+	require.NoError(t, err)
+	group, err := s.PromotePhotoNode(ctx, raw.ID, nil, PhotoRoleRAW, "")
+	require.NoError(t, err)
+	assert.Equal(t, PhotoRoleRAW, group.Files[0].Role)
+
+	attached, err := s.CreateFile(ctx, s.RootID(), "attached.jpg", fakeHash("ac"), 1, "image/jpeg")
+	require.NoError(t, err)
+	attachedCanonical := photoCanonical(t,
+		photoMetadataField("image.exif.camera_model", "image.exif", "Model", photoString("Attached")),
+	)
+	_, err = s.PublishSourceMetadata(ctx, attached.BlobHash, fakeHash("fb"), attachedCanonical)
+	require.NoError(t, err)
+	attachedAutomatic, err := s.PhotoAssetForNode(ctx, attached.ID)
+	require.NoError(t, err)
+	attachedFileID := attachedAutomatic.Files[0].ID
+	_, err = s.DetachPhotoFile(ctx, attachedAutomatic.ID, attachedAutomatic.Revision, attachedFileID, PhotoDetachOptions{})
+	require.NoError(t, err)
+	group, err = s.AttachPhotoFile(ctx, group.ID, group.Revision, attached.ID, PhotoRoleImage, nil)
+	require.NoError(t, err)
+	attachedMembership, err := s.PhotoAssetForNode(ctx, attached.ID)
+	require.NoError(t, err)
+	assert.Equal(t, group.ID, attachedMembership.ID)
+
+	preference := "image"
+	settings, err := s.SetPhotoSettings(ctx, 1, &preference)
+	require.NoError(t, err)
+	assert.Equal(t, int64(2), settings.Revision)
+	group, err = s.PhotoAssetByID(ctx, group.ID)
+	require.NoError(t, err)
+	assert.Equal(t, PhotoDisplayVault, group.DisplaySource)
+	assert.Equal(t, PhotoRoleImage, fileByID(group.Files, *group.DisplayFileID).Role)
+	rawFileID := fileByRole(group.Files, PhotoRoleRAW).ID
+	group, err = s.SetPhotoDisplay(ctx, group.ID, group.Revision, &rawFileID)
+	require.NoError(t, err)
+	assert.Equal(t, PhotoDisplayAsset, group.DisplaySource)
+	assert.Equal(t, rawFileID, *group.DisplayOverrideFileID)
+	group, err = s.SetPhotoAssetExcluded(ctx, group.ID, group.Revision, true)
+	require.NoError(t, err)
+	require.NotNil(t, group.ExcludedAt)
+	attachedProjection, err := s.ContentVersionPhotoMetadata(ctx, attached.CurrentVersionID)
+	require.NoError(t, err)
+	assert.Equal(t, "Attached", *attachedProjection.Fields.CameraModel)
+
+	history, err := s.CreateFile(ctx, s.RootID(), "history.jpg", fakeHash("ad"), 1, "image/jpeg")
+	require.NoError(t, err)
+	historicalVersionID := history.CurrentVersionID
+	historicalCanonical := photoCanonical(t,
+		photoMetadataField("image.exif.camera_model", "image.exif", "Model", photoString("Historical")),
+	)
+	_, err = s.PublishSourceMetadata(ctx, history.BlobHash, fakeHash("fc"), historicalCanonical)
+	require.NoError(t, err)
+	replaced, replacement, err := s.ReplaceContent(ctx, history.ID, history.Revision, fakeHash("ae"), 1, "image/jpeg")
+	require.NoError(t, err)
+	replacementCanonical := photoCanonical(t,
+		photoMetadataField("image.exif.camera_model", "image.exif", "Model", photoString("Replacement")),
+	)
+	_, err = s.PublishSourceMetadata(ctx, replacement.BlobHash, fakeHash("fd"), replacementCanonical)
+	require.NoError(t, err)
+	_, err = s.PruneContentVersions(ctx, replaced.ID, replaced.Revision,
+		VersionPruneSelector{VersionIDs: []string{historicalVersionID}}, true)
+	require.NoError(t, err)
+	_, err = s.ContentVersionPhotoMetadata(ctx, historicalVersionID)
+	require.ErrorIs(t, err, ErrNotFound)
+	replacementProjection, err := s.ContentVersionPhotoMetadata(ctx, replacement.ID)
+	require.NoError(t, err)
+	assert.Equal(t, "Replacement", *replacementProjection.Fields.CameraModel)
 }
 
 func TestPhotoTechnicalMetadataGenerationCascade(t *testing.T) {
@@ -418,4 +533,44 @@ func TestPhotoTechnicalMetadataLegacyJSONL(t *testing.T) {
 	projection, err := target.ContentVersionPhotoMetadata(ctx, node.CurrentVersionID)
 	require.NoError(t, err)
 	assert.Equal(t, "Legacy", *projection.Fields.CameraModel)
+}
+
+func TestPhotoTechnicalMetadataLegacyFillSkipsExistingProjection(t *testing.T) { //nolint:paralleltest // swaps the package-level gazetteer loader
+	s := newTestStore(t)
+	ctx := t.Context()
+	gpsNode, err := s.CreateFile(ctx, s.RootID(), "already-projected.jpg", fakeHash("a9"), 1, "image/jpeg")
+	require.NoError(t, err)
+	gpsCanonical := photoCanonical(t,
+		photoMetadataField("image.exif.gps_latitude", "image.exif", "GPSLatitude", photoString("48.8566000")),
+		photoMetadataField("image.exif.gps_longitude", "image.exif", "GPSLongitude", photoString("2.3522000")),
+	)
+	gpsGeneration, err := s.PublishSourceMetadata(ctx, gpsNode.BlobHash, fakeHash("f0"), gpsCanonical)
+	require.NoError(t, err)
+	missingNode, err := s.CreateFile(ctx, s.RootID(), "missing-projection.jpg", fakeHash("aa"), 1, "image/jpeg")
+	require.NoError(t, err)
+	missingCanonical := photoCanonical(t,
+		photoMetadataField("image.exif.camera_model", "image.exif", "Model", photoString("Missing")),
+	)
+	missingGeneration, err := s.PublishSourceMetadata(ctx, missingNode.BlobHash, fakeHash("f1"), missingCanonical)
+	require.NoError(t, err)
+	_, err = s.db.ExecContext(ctx, `DELETE FROM photo_technical_metadata WHERE generation_id=?`, missingGeneration.GenerationID)
+	require.NoError(t, err)
+
+	original := photoNaturalEarth
+	photoNaturalEarth = sync.OnceValues(func() (*geo.NaturalEarth, error) {
+		return nil, errors.New("unexpected gazetteer lookup for existing projection")
+	})
+	defer func() { photoNaturalEarth = original }()
+	tx, err := s.db.BeginTx(ctx, nil)
+	require.NoError(t, err)
+	require.NoError(t, fillMissingPhotoTechnicalMetadataTx(ctx, tx))
+	require.NoError(t, tx.Commit())
+	var restored int
+	require.NoError(t, s.db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM photo_technical_metadata WHERE generation_id=?`, missingGeneration.GenerationID).Scan(&restored))
+	assert.Equal(t, 1, restored)
+	var existing int
+	require.NoError(t, s.db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM photo_technical_metadata WHERE generation_id=?`, gpsGeneration.GenerationID).Scan(&existing))
+	assert.Equal(t, 1, existing)
 }

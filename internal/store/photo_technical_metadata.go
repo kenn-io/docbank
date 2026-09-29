@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"math"
-	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -21,8 +20,6 @@ import (
 const PhotoTechnicalProjectionRecipe = "photo-technical/v1"
 
 const photoTechnicalMetadataSchemaVersion = 27
-
-var photoTechnicalOffsetPattern = regexp.MustCompile(`^[+-](0[0-9]|1[0-4]):[0-5][0-9]$`)
 
 // PhotoTechnicalFields are typed facts projected from one source-metadata
 // generation. Nil values mean that the source did not provide a valid fact.
@@ -262,46 +259,6 @@ func insertPhotoTechnicalMetadataTx(
 	return err
 }
 
-func scanPhotoTechnicalFields(row interface{ Scan(dest ...any) error }) (PhotoTechnicalFields, error) {
-	var fields PhotoTechnicalFields
-	var cameraMake, cameraModel, lensMake, lensModel sql.NullString
-	var iso sql.NullInt64
-	var exposureTime, fNumber, exposureBias, focalLength sql.NullFloat64
-	var width, height sql.NullInt64
-	var captureTime, captureRaw, capturePrecision, captureTimezone, captureOffset sql.NullString
-	var orientation sql.NullInt64
-	var latitude, longitude sql.NullFloat64
-	var locationLabel sql.NullString
-	err := row.Scan(&cameraMake, &cameraModel, &lensMake, &lensModel, &iso, &exposureTime,
-		&fNumber, &exposureBias, &focalLength, &width, &height, &captureTime, &captureRaw,
-		&capturePrecision, &captureTimezone, &captureOffset, &orientation, &latitude, &longitude,
-		&locationLabel)
-	if err != nil {
-		return PhotoTechnicalFields{}, err
-	}
-	fields.CameraMake = photoNullableString(cameraMake)
-	fields.CameraModel = photoNullableString(cameraModel)
-	fields.LensMake = photoNullableString(lensMake)
-	fields.LensModel = photoNullableString(lensModel)
-	fields.ISO = photoNullableInt64(iso)
-	fields.ExposureTimeSeconds = photoNullableFloat64(exposureTime)
-	fields.FNumber = photoNullableFloat64(fNumber)
-	fields.ExposureBiasEV = photoNullableFloat64(exposureBias)
-	fields.FocalLengthMM = photoNullableFloat64(focalLength)
-	fields.WidthPX = photoNullableInt64(width)
-	fields.HeightPX = photoNullableInt64(height)
-	fields.CaptureTime = photoNullableString(captureTime)
-	fields.CaptureTimeRaw = photoNullableString(captureRaw)
-	fields.CaptureTimePrecision = photoNullableString(capturePrecision)
-	fields.CaptureTimeTimezone = photoNullableString(captureTimezone)
-	fields.CaptureTimeOffset = photoNullableString(captureOffset)
-	fields.Orientation = photoNullableInt64(orientation)
-	fields.Latitude = photoNullableFloat64(latitude)
-	fields.Longitude = photoNullableFloat64(longitude)
-	fields.LocationLabel = photoNullableString(locationLabel)
-	return fields, validatePhotoTechnicalFields(fields)
-}
-
 func photoNullableString(value sql.NullString) *string {
 	if !value.Valid {
 		return nil
@@ -379,25 +336,6 @@ func validatePhotoTechnicalFields(fields PhotoTechnicalFields) error {
 				return errors.New("photo technical capture timestamp is incomplete")
 			}
 		}
-		if *fields.CaptureTimePrecision != string(document.SourceMetadataPrecisionDate) &&
-			*fields.CaptureTimePrecision != string(document.SourceMetadataPrecisionHour) &&
-			*fields.CaptureTimePrecision != string(document.SourceMetadataPrecisionMinute) &&
-			*fields.CaptureTimePrecision != string(document.SourceMetadataPrecisionSecond) &&
-			*fields.CaptureTimePrecision != string(document.SourceMetadataPrecisionFraction) {
-			return errors.New("photo technical timestamp precision is invalid")
-		}
-		switch *fields.CaptureTimeTimezone {
-		case string(document.SourceMetadataTimezoneOmitted), string(document.SourceMetadataTimezoneUTC):
-			if *fields.CaptureTimeOffset != "" {
-				return errors.New("photo technical timestamp offset is inconsistent")
-			}
-		case string(document.SourceMetadataTimezoneOffset):
-			if !photoTechnicalOffsetPattern.MatchString(*fields.CaptureTimeOffset) {
-				return errors.New("photo technical timestamp offset is invalid")
-			}
-		default:
-			return errors.New("photo technical timestamp timezone is invalid")
-		}
 		_, _, err := document.MarshalSourceMetadataV1(document.SourceMetadataV1{
 			ContractVersion: document.SourceMetadataContractV1,
 			Fields: []document.SourceMetadataFieldV1{{
@@ -442,29 +380,22 @@ func (s *Store) ContentVersionPhotoMetadata(ctx context.Context, versionID strin
 		ContentVersionID: version.ID, GenerationID: generation.GenerationID,
 		ExtractorFingerprint: generation.ExtractorFingerprint, SourceChecksum: generation.Checksum,
 	}
-	if err := tx.QueryRowContext(ctx,
-		`SELECT projection_recipe FROM photo_technical_metadata WHERE generation_id=?`, generation.GenerationID).
-		Scan(&result.ProjectionRecipe); err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return PhotoTechnicalMetadata{}, fmt.Errorf("photo technical metadata for content version %q: %w", versionID, ErrNotFound)
-		}
-		return PhotoTechnicalMetadata{}, fmt.Errorf("reading photo technical metadata recipe: %w", err)
-	}
-	fields, err := scanPhotoTechnicalFields(tx.QueryRowContext(ctx, `SELECT
-		camera_make,camera_model,lens_make,lens_model,iso,exposure_time_seconds,f_number,
-		exposure_bias_ev,focal_length_mm,width_px,height_px,capture_time,capture_time_raw,
-		capture_time_precision,capture_time_timezone,capture_time_offset,orientation,latitude,
-		longitude,location_label FROM photo_technical_metadata WHERE generation_id=?`, generation.GenerationID))
+	record, err := scanPhotoTechnicalRecord(tx.QueryRowContext(ctx, `SELECT
+		generation_id,projection_recipe,camera_make,camera_model,lens_make,lens_model,iso,
+		exposure_time_seconds,f_number,exposure_bias_ev,focal_length_mm,width_px,height_px,
+		capture_time,capture_time_raw,capture_time_precision,capture_time_timezone,capture_time_offset,
+		orientation,latitude,longitude,location_label FROM photo_technical_metadata WHERE generation_id=?`, generation.GenerationID))
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return PhotoTechnicalMetadata{}, fmt.Errorf("photo technical metadata for content version %q: %w", versionID, ErrNotFound)
 		}
 		return PhotoTechnicalMetadata{}, fmt.Errorf("reading photo technical metadata: %w", err)
 	}
-	result.Fields = fields
-	if err := validatePhotoTechnicalRecipe(result.ProjectionRecipe); err != nil {
+	if err := validatePhotoTechnicalMetadataRecord(record); err != nil {
 		return PhotoTechnicalMetadata{}, err
 	}
+	result.ProjectionRecipe = record.ProjectionRecipe
+	result.Fields = record.fields()
 	if err := tx.Commit(); err != nil {
 		return PhotoTechnicalMetadata{}, fmt.Errorf("closing photo metadata snapshot: %w", err)
 	}

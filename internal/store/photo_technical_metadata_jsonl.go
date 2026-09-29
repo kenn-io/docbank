@@ -193,8 +193,11 @@ func fillMissingPhotoTechnicalMetadataTx(ctx context.Context, tx *sql.Tx) error 
 		canonical    []byte
 	}
 	readPage := func(after string) ([]sourceRow, error) {
-		rows, err := tx.QueryContext(ctx, `SELECT generation_id,canonical_json
-			FROM source_metadata_generations WHERE generation_id>? ORDER BY generation_id LIMIT 100`, after)
+		rows, err := tx.QueryContext(ctx, `SELECT g.generation_id,g.canonical_json
+			FROM source_metadata_generations g
+			LEFT JOIN photo_technical_metadata p ON p.generation_id=g.generation_id
+			WHERE p.generation_id IS NULL AND g.generation_id>?
+			ORDER BY g.generation_id LIMIT 100`, after)
 		if err != nil {
 			return nil, fmt.Errorf("reading source metadata for photo projections: %w", err)
 		}

@@ -173,7 +173,7 @@ func (n *NaturalEarth) Resolve(lat, lon float64) (string, bool) {
 	if lat < -90 || lat > 90 || lon < -180 || lon > 180 {
 		return "", false
 	}
-	pt := orb.Point{lon, lat} // §6.4 — NOT {lat, lon}
+	pt := orb.Point{lon, lat} // GeoJSON and orb use [longitude, latitude].
 
 	country := pointInPolygonName(pt, n.countries)
 	if country == "" {
@@ -214,9 +214,8 @@ func pointInPolygonName(pt orb.Point, fs []boundedFeature) string {
 	return ""
 }
 
-// nearestCity scans cities linearly. Honors the §6.5 gates: distance
-// ≤ cityMaxDistanceKm, same country, same admin_1 (when admin_1
-// resolved). Returns "" if no city qualifies.
+// nearestCity scans cities linearly, applying the distance, country and
+// region gates. Returns "" if no city qualifies.
 func nearestCity(pt orb.Point, cities []cityFeature, country, region string) string {
 	bestName := ""
 	bestKm := cityMaxDistanceKm + 1
@@ -251,9 +250,3 @@ func haversineKm(a, b orb.Point) float64 {
 }
 
 func deg2rad(d float64) float64 { return d * math.Pi / 180 }
-
-// The compile-time guard that *NaturalEarth implements
-// ingest.PlaceResolver lives in geo_ingest_test.go — geo's production
-// code must not import ingest, but a test-package file can, which lets
-// the guard pin against the real interface rather than a re-declared
-// shape.

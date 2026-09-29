@@ -117,6 +117,19 @@ func TestNaturalEarthSameCountryGate(t *testing.T) {
 	r.NotContains(label, "United States")
 }
 
+func TestNaturalEarthCountryPolygonHole(t *testing.T) {
+	r := require.New(t)
+	g, err := geo.NewNaturalEarth()
+	r.NoError(err)
+
+	// This point falls inside a Spanish enclave cut out of the France polygon.
+	// Ignoring polygon holes would return France because it sorts before Spain.
+	label, ok := g.Resolve(42.46277, 1.96382)
+	r.True(ok)
+	r.Contains(label, "Spain")
+	r.NotContains(label, "France")
+}
+
 // TestEmbeddedDataChecksums verifies the three embedded GeoJSON files
 // match the SHA256s in PROVENANCE.md. Catches accidental re-vendoring
 // of a different release — see Task 1.
