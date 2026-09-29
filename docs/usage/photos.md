@@ -78,11 +78,12 @@ docbank photos imports cancel <import-id> [--json]
 
 Files with the same folder and name, such as `IMG_0001.ARW`, `IMG_0001.JPG`,
 and `IMG_0001.XMP`, become one photo. The XMP sidecar attaches to the RAW, or
-to the JPEG when there is no RAW. A file that arrives in a later import joins
-the photo already made from its same-name files. A video always becomes its
-own photo. Each photo commits in one transaction, so a failure leaves no half
-photo behind, and running the same import again skips content already in the
-vault.
+to the JPEG when there is no RAW. An XMP with no same-name RAW or JPEG imports
+as a plain file, and joins the photo once an import finds its image. A file
+that arrives in a later import joins the photo already made from its same-name
+files. A video always becomes its own photo. Each photo commits in one
+transaction, so a failure leaves no half photo behind, and running the same
+import again skips content already in the vault.
 
 The import leaves a group unpaired and lists it in `imports show` when:
 
@@ -90,12 +91,16 @@ The import leaves a group unpaired and lists it in `imports show` when:
   RAW and JPEG becomes its own photo and the sidecar stays a plain file;
 - same-name files already sit in separate photos: nothing is merged.
 
-Pair them yourself with `photos assets detach` and `photos assets attach`.
+Pair them yourself: `photos assets inspect <asset-id>` shows file IDs,
+`photos assets detach` frees a file, and `photos assets attach` adds it to the
+other photo. A paired group drops off the list on the next import.
+`imports show` lists the first 100 groups and says how many more there are.
 
-Every file must stay unchanged for one second before it is read. Progress and
-cancel appear in the web Jobs drawer. Cancel takes effect before the next
-group. A daemon restart resumes an unfinished import by scanning the folder
-again.
+The import waits one second after listing the folder. A group whose files
+change after that is skipped and counted as skipped; import again to pick it
+up. Progress and cancel appear in the web Jobs drawer. Cancel takes effect
+before the next group. A daemon restart resumes an unfinished import by
+scanning the folder again.
 
 ## HTTP and JSONL
 
