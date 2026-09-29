@@ -1,3 +1,9 @@
+---
+last_edited: 2026-09-29
+title: People
+description: List and edit canonical people through the daemon API, CLI, and MCP.
+---
+
 # People
 
 Docbank keeps one canonical person record for each person in the vault. The
