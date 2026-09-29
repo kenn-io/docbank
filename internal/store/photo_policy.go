@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"path/filepath"
 	"slices"
 	"strings"
 
@@ -26,6 +27,60 @@ const (
 	PhotoDisplayNone    = "none"
 	PhotoMaxFiles       = 256
 )
+
+// PhotoSourceKind is the extension-level classification used by grouped
+// camera imports. MIME sniffing cannot identify most RAW files reliably.
+type PhotoSourceKind string
+
+const (
+	PhotoSourceUnsupported PhotoSourceKind = "unsupported"
+	PhotoSourceRAW         PhotoSourceKind = "raw"
+	PhotoSourceImage       PhotoSourceKind = "image"
+	PhotoSourceVideo       PhotoSourceKind = "video"
+	PhotoSourceSidecar     PhotoSourceKind = "sidecar"
+)
+
+// PhotoSource describes the stable policy for one source filename.
+type PhotoSource struct {
+	Kind      PhotoSourceKind
+	Extension string
+	MediaType string
+	Role      string
+	AssetKind string
+}
+
+var photoSourceExtensions = map[string]PhotoSource{
+	".arw":  {Kind: PhotoSourceRAW, MediaType: "image/x-sony-arw", Role: PhotoRoleRAW, AssetKind: PhotoKindPhoto},
+	".raf":  {Kind: PhotoSourceRAW, MediaType: "image/x-fuji-raf", Role: PhotoRoleRAW, AssetKind: PhotoKindPhoto},
+	".dng":  {Kind: PhotoSourceRAW, MediaType: "image/x-adobe-dng", Role: PhotoRoleRAW, AssetKind: PhotoKindPhoto},
+	".cr2":  {Kind: PhotoSourceRAW, MediaType: "image/x-canon-cr2", Role: PhotoRoleRAW, AssetKind: PhotoKindPhoto},
+	".nef":  {Kind: PhotoSourceRAW, MediaType: "image/x-nikon-nef", Role: PhotoRoleRAW, AssetKind: PhotoKindPhoto},
+	".jpg":  {Kind: PhotoSourceImage, MediaType: "image/jpeg", Role: PhotoRoleImage, AssetKind: PhotoKindPhoto},
+	".jpeg": {Kind: PhotoSourceImage, MediaType: "image/jpeg", Role: PhotoRoleImage, AssetKind: PhotoKindPhoto},
+	".png":  {Kind: PhotoSourceImage, MediaType: "image/png", Role: PhotoRoleImage, AssetKind: PhotoKindPhoto},
+	".gif":  {Kind: PhotoSourceImage, MediaType: "image/gif", Role: PhotoRoleImage, AssetKind: PhotoKindPhoto},
+	".webp": {Kind: PhotoSourceImage, MediaType: "image/webp", Role: PhotoRoleImage, AssetKind: PhotoKindPhoto},
+	".heic": {Kind: PhotoSourceImage, MediaType: "image/heic", Role: PhotoRoleImage, AssetKind: PhotoKindPhoto},
+	".mp4":  {Kind: PhotoSourceVideo, MediaType: "video/mp4", Role: PhotoRoleVideo, AssetKind: PhotoKindVideo},
+	".mov":  {Kind: PhotoSourceVideo, MediaType: "video/quicktime", Role: PhotoRoleVideo, AssetKind: PhotoKindVideo},
+	".m4v":  {Kind: PhotoSourceVideo, MediaType: "video/x-m4v", Role: PhotoRoleVideo, AssetKind: PhotoKindVideo},
+	".avi":  {Kind: PhotoSourceVideo, MediaType: "video/x-msvideo", Role: PhotoRoleVideo, AssetKind: PhotoKindVideo},
+	".mpg":  {Kind: PhotoSourceVideo, MediaType: "video/mpeg", Role: PhotoRoleVideo, AssetKind: PhotoKindVideo},
+	".mp2":  {Kind: PhotoSourceVideo, MediaType: "video/mpeg", Role: PhotoRoleVideo, AssetKind: PhotoKindVideo},
+	".xmp":  {Kind: PhotoSourceSidecar, MediaType: "application/rdf+xml", Role: PhotoRoleSidecar, AssetKind: PhotoKindPhoto},
+}
+
+// ClassifyPhotoSource classifies a source by its final extension. It returns
+// unsupported for names that the grouped photo importer must leave alone.
+func ClassifyPhotoSource(name string) PhotoSource {
+	extension := strings.ToLower(filepath.Ext(name))
+	source, ok := photoSourceExtensions[extension]
+	if !ok {
+		return PhotoSource{Kind: PhotoSourceUnsupported, Extension: extension}
+	}
+	source.Extension = extension
+	return source
+}
 
 // PhotoNodeFacts contains the identity and classification inputs used by the
 // enrollment policy. It deliberately contains no copied bytes or hashes.
@@ -95,6 +150,14 @@ func classifyPhotoMedia(mediaType, filename string) (family, normalized string, 
 }
 
 func photoNodeFacts(n Node) PhotoNodeFacts {
+	source := ClassifyPhotoSource(n.Name)
+	if (source.Kind == PhotoSourceRAW || source.Kind == PhotoSourceImage || source.Kind == PhotoSourceVideo) &&
+		query.NormalizeMediaType(n.MimeType) == source.MediaType {
+		return PhotoNodeFacts{
+			Node: n, MediaFamily: "image", MediaType: source.MediaType,
+			Qualifies: true, AssetKind: source.AssetKind,
+		}
+	}
 	family, mediaType, qualifies, kind := classifyPhotoMedia(n.MimeType, n.Name)
 	return PhotoNodeFacts{Node: n, MediaFamily: family, MediaType: mediaType, Qualifies: qualifies, AssetKind: kind}
 }
@@ -120,6 +183,10 @@ func isPhotoCameraRawMedia(mediaType string) bool {
 	default:
 		return false
 	}
+}
+
+func photoSidecarTargetRole(role string) bool {
+	return role == PhotoRoleRAW || role == PhotoRoleImage
 }
 
 // isVideoExtension reports whether the format catalog types a filename's
@@ -336,7 +403,7 @@ func validatePhotoAssetPointers(asset PhotoAsset, files []PhotoFile) error {
 		}
 		byID[file.ID] = file
 		if file.Role == PhotoRoleSidecar && file.SidecarOfID == nil {
-			return fmt.Errorf("%w: sidecar %s must point to same-asset raw", ErrInvalidPhotoAsset, file.ID)
+			return fmt.Errorf("%w: sidecar %s must point to a same-asset source", ErrInvalidPhotoAsset, file.ID)
 		}
 		if file.SidecarOfID != nil {
 			target, ok := byID[*file.SidecarOfID]
@@ -348,8 +415,8 @@ func validatePhotoAssetPointers(asset PhotoAsset, files []PhotoFile) error {
 					}
 				}
 			}
-			if file.Role != PhotoRoleSidecar || !ok || target.AssetID != asset.ID || target.Role != PhotoRoleRAW {
-				return fmt.Errorf("%w: sidecar %s must point to same-asset raw", ErrInvalidPhotoAsset, file.ID)
+			if file.Role != PhotoRoleSidecar || !ok || target.AssetID != asset.ID || !photoSidecarTargetRole(target.Role) {
+				return fmt.Errorf("%w: sidecar %s must point to a same-asset RAW or image", ErrInvalidPhotoAsset, file.ID)
 			}
 		}
 	}

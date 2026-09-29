@@ -914,7 +914,8 @@ children. Processing metadata does not make its source an email child.
 resolved display pointer, its source (`asset`, `vault`, `default`, or `none`),
 and the asset ETag. The default order is RAW, image, then video; the vault
 `image` preference moves image before RAW, and an asset override wins. A
-sidecar must point at a same-asset RAW member and is never displayable.
+sidecar must point at a same-asset RAW or image member and is never
+displayable.
 
 Create and promote operate on live file nodes. Attach, detach, exclude,
 display, and settings mutations require `If-Match`; the store checks the
@@ -923,13 +924,18 @@ decision writes one bounded immutable photo receipt. No-op decisions preserve
 the revision and write no receipt. Permanent node deletion repairs affected
 graphs and preserves an empty asset identity.
 
-Photo assets, file memberships, settings, and receipts are included in the
-deterministic metadata JSONL stream and are validated as one graph on restore.
+Photo assets, file memberships, settings, receipts, and durable import runs are
+included in the deterministic metadata JSONL stream and are validated as one
+graph on restore. Active import runs restore as interrupted and never resume
+host filesystem reads.
 Older supported metadata streams restore an empty photo authority. Audit-active
 vaults skip automatic enrollment and refuse explicit photo mutations while
 preserving any graph that existed before audit was enabled. Display and
 settings writes are available through HTTP and the CLI; MCP exposes them only
-as reads in this slice.
+as reads in this slice. Grouped photo import has typed `POST /photos/imports`,
+list/get, and `If-Match` cancel routes. A unique same-folder/stem RAW and
+image pair is committed in either arrival order; multiple RAW candidates
+produce an `ambiguous` durable run for an explicit choice-bound rerun.
 
 Every node carries a `revision` that bumps on each mutation (directories
 bump when their contents change). The granularity is deliberate: a
@@ -1521,8 +1527,8 @@ bearer is resolved from a named credential binding and cannot equal the
 daemon's configured, ephemeral, or runtime-discovered API key. The daemon API
 key is never accepted as an inbound MCP credential.
 
-MCP exposes ten bounded read tools, including photo inspection, plus optional
-processing enqueue and opt-in photo mutation tools. The
+MCP exposes bounded photo import status reads, including photo inspection,
+plus optional processing enqueue and opt-in photo mutation and import tools. The
 enqueue preserves the daemon's existing consent and plan-fingerprint checks;
 it cannot grant consent or replay an ambiguous start. Rendition resources bind
 the stable vault, node, content-version, and attachment tuple and expose only

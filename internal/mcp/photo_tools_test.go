@@ -44,6 +44,23 @@ func TestPhotoMCPWorkflowAndWriteOptIn(t *testing.T) {
 	assert.Equal(t, catalogInstructions(false, false, true), discovery["instructions"])
 }
 
+func TestPhotoImportClients(t *testing.T) {
+	readOnly := catalogMap(toolCatalog(false, false, false))
+	assert.NotContains(t, readOnly, "start_photo_import")
+	assert.NotContains(t, readOnly, "cancel_photo_import")
+
+	withWrites := catalogMap(toolCatalog(false, false, true))
+	for _, name := range []string{"start_photo_import", "cancel_photo_import"} {
+		tool := withWrites[name]
+		require.NotNil(t, tool, name)
+		require.NotNil(t, tool.Annotations, name)
+		assert.False(t, tool.Annotations.ReadOnlyHint, name)
+		assertSchemaContract(t, tool.InputSchema)
+		assertSchemaContract(t, tool.OutputSchema)
+	}
+	assert.Contains(t, catalogInstructions(false, false, true), "ambiguous RAW matches")
+}
+
 func TestPhotoWriteNoReplay(t *testing.T) {
 	var requests atomic.Int32
 	disconnected := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, _ *http.Request) {

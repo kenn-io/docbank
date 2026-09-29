@@ -3036,6 +3036,8 @@ export const JobStatus = {
 } as const;
 
 export interface Job {
+  can_cancel?: boolean;
+  cancel_requested?: boolean;
   completed_objects?: number;
   error?: string;
   finished_at?: string;
@@ -4150,6 +4152,87 @@ export interface PhotoAsset {
   /** @minimum 1 */
   revision: number;
   updated_at: string;
+}
+
+export interface PhotoImportCandidate {
+  asset_id: string;
+  /** @pattern ^[0-9a-f]{64}$ */
+  blob_hash: string;
+  file_id: string;
+  /** @minimum 1 */
+  node_id: number;
+  /** @minimum 1 */
+  revision: number;
+  source_path?: string;
+}
+
+export interface PhotoImportAmbiguity {
+  /** @maxItems 32 */
+  candidates: PhotoImportCandidate[];
+  group_key: string;
+}
+
+export interface PhotoImportChoice {
+  /** @minimum 1 */
+  asset_revision?: number;
+  group_key?: string;
+  raw_asset_id?: string;
+  /** @pattern ^[0-9a-f]{64}$ */
+  raw_blob_hash?: string;
+  raw_file_id?: string;
+  /** @maxLength 4096 */
+  raw_source_path?: string;
+}
+
+export interface PhotoImportRun {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  /** @minimum 0 */
+  added_groups: number;
+  ambiguities?: PhotoImportAmbiguity[];
+  /** @minimum 0 */
+  ambiguous_groups: number;
+  cancel_requested: boolean;
+  /** @minimum 0 */
+  completed_groups: number;
+  destination: string;
+  error?: string;
+  /** @minimum 0 */
+  failed_groups: number;
+  finished_at?: string;
+  id: string;
+  /** @minimum 1 */
+  revision: number;
+  /** @minimum 0 */
+  skipped_groups: number;
+  source_root?: string;
+  started_at: string;
+  state: string;
+  /** @minimum 0 */
+  total_groups: number;
+  updated_at: string;
+}
+
+export interface PhotoImportRunList {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  items: PhotoImportRun[];
+}
+
+export interface PhotoImportStartRequest {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  choice?: PhotoImportChoice;
+  /**
+     * @minLength 1
+     * @maxLength 4096
+     */
+  destination: string;
+  /**
+     * @minLength 1
+     * @maxLength 4096
+     */
+  source_root: string;
 }
 
 /**
@@ -6588,6 +6671,10 @@ clear_dependent_sidecars?: boolean;
 };
 
 export type DetachPhotoFileHeaders = {
+'If-Match': string;
+};
+
+export type CancelPhotoImportHeaders = {
 'If-Match': string;
 };
 
@@ -12753,6 +12840,131 @@ return sessionJSON<PhotoAsset>(getDetachPhotoFileUrl(assetId,fileId,params),
   {
     ...options,
     method: 'DELETE',
+    headers: { ...headers, ...getHeaders(options?.headers) }
+
+  }
+);}
+
+
+
+export const getListPhotoImportsUrl = () => {
+
+
+
+
+  return `/api/v1/photos/imports`
+}
+
+/**
+ * @summary List durable grouped photo import runs
+ */
+export const listPhotoImports = async ( options?: Parameters<typeof sessionJSON>[1]): Promise<PhotoImportRunList> => {
+
+  return sessionJSON<PhotoImportRunList>(getListPhotoImportsUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+export const getStartPhotoImportUrl = () => {
+
+
+
+
+  return `/api/v1/photos/imports`
+}
+
+/**
+ * @summary Import grouped camera files from a daemon-host folder
+ */
+export const startPhotoImport = async (photoImportStartRequest: NonReadonly<PhotoImportStartRequest>, options?: Parameters<typeof sessionJSON>[1]): Promise<PhotoImportRun> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return sessionJSON<PhotoImportRun>(getStartPhotoImportUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(photoImportStartRequest)
+  }
+);}
+
+
+
+export const getGetPhotoImportUrl = (runId: string,) => {
+
+
+
+
+  return `/api/v1/photos/imports/${encodeURIComponent(String(runId))}`
+}
+
+/**
+ * @summary Inspect one durable grouped photo import run
+ */
+export const getPhotoImport = async (runId: string, options?: Parameters<typeof sessionJSON>[1]): Promise<PhotoImportRun> => {
+
+  return sessionJSON<PhotoImportRun>(getGetPhotoImportUrl(runId),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+export const getCancelPhotoImportUrl = (runId: string,) => {
+
+
+
+
+  return `/api/v1/photos/imports/${encodeURIComponent(String(runId))}/cancel`
+}
+
+/**
+ * @summary Request cancellation at the next photo group
+ */
+export const cancelPhotoImport = async (runId: string,
+    headers: CancelPhotoImportHeaders, options?: Parameters<typeof sessionJSON>[1]): Promise<PhotoImportRun> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return sessionJSON<PhotoImportRun>(getCancelPhotoImportUrl(runId),
+  {
+    ...options,
+    method: 'POST',
     headers: { ...headers, ...getHeaders(options?.headers) }
 
   }

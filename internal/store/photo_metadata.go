@@ -273,6 +273,8 @@ func importPhotoMetadataRecord(ctx context.Context, tx *sql.Tx, kind string, raw
 		}
 		_, err := tx.ExecContext(ctx, `INSERT INTO photo_change_receipts(receipt_id,operation,asset_id,settings_key,before_revision,after_revision,before_json,after_json,created_at) VALUES(?,?,?,?,?,?,?,?,?)`, v.ReceiptID, v.Operation, v.AssetID, v.SettingsKey, v.BeforeRevision, v.AfterRevision, v.BeforeJSON, v.AfterJSON, v.CreatedAt)
 		return err
+	case metadataPhotoImportRunType:
+		return importPhotoImportMetadataRecord(ctx, tx, raw)
 	default:
 		return fmt.Errorf("unknown photo metadata record %q", kind)
 	}

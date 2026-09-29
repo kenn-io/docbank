@@ -29,6 +29,7 @@
   let items = $state<Job[]>([]);
   let loading = $state(true);
   let error = $state("");
+  let cancelling = $state(new Set<string>());
   let generation = 0;
 
   const running = $derived(
@@ -49,7 +50,9 @@
     try {
       const next = await generated.listJobs({ session }).then((result) => result.items);
       if (request !== generation) return;
-      items = next;
+      items = next.sort((a, b) =>
+        Number(b.kind === "photo-import") - Number(a.kind === "photo-import"),
+      );
     } catch (cause) {
       if (request !== generation) return;
       if (cause instanceof APIError && cause.status === 401) {
@@ -60,6 +63,23 @@
       error = cause instanceof Error ? cause.message : String(cause);
     } finally {
       if (request === generation) loading = false;
+    }
+  }
+
+  async function cancelPhotoImport(job: Job): Promise<void> {
+    if (job.kind !== "photo-import" || !job.operation_id || !job.can_cancel) return;
+    const runId = job.operation_id;
+    cancelling = new Set(cancelling).add(runId);
+    try {
+      const run = await generated.getPhotoImport(runId, { session });
+      await generated.cancelPhotoImport(runId, { "If-Match": `"${run.revision}"` }, { session });
+      await refresh();
+    } catch (cause) {
+      error = cause instanceof Error ? cause.message : String(cause);
+    } finally {
+      const next = new Set(cancelling);
+      next.delete(runId);
+      cancelling = next;
     }
   }
 
@@ -133,9 +153,16 @@
             title={job.name}
           >
             {#snippet actions()}
-              <Chip size="xs" tone={statusTone(job.status)} dot={job.status === "running"}>
-                {job.status}
-              </Chip>
+              <div class="job-actions">
+                <Chip size="xs" tone={statusTone(job.status)} dot={job.status === "running"}>
+                  {job.status}
+                </Chip>
+                {#if job.kind === "photo-import" && job.can_cancel}
+                  <Button size="sm" disabled={cancelling.has(job.operation_id ?? "")} onclick={() => void cancelPhotoImport(job)}>
+                    Cancel
+                  </Button>
+                {/if}
+              </div>
             {/snippet}
             <dl>
               <div><dt>Started</dt><dd>{formatDate(job.started_at)}</dd></div>
@@ -144,6 +171,12 @@
                 <dd>{job.finished_at ? formatDate(job.finished_at) : "Still running"}</dd>
               </div>
             </dl>
+            {#if job.total_objects !== undefined}
+              <div class="progress" aria-label="Photo import progress">
+                <span>{job.completed_objects ?? 0}/{job.total_objects} groups</span>
+                {#if job.cancel_requested}<span>Cancellation requested</span>{/if}
+              </div>
+            {/if}
             {#if job.error}
               <p class="job-error" role="alert">{job.error}</p>
             {/if}
@@ -255,5 +288,19 @@
     font-family: var(--font-mono);
     font-size: var(--font-size-xs);
     overflow-wrap: anywhere;
+  }
+
+  .job-actions,
+  .progress {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+  }
+
+  .progress {
+    justify-content: space-between;
+    margin-top: var(--space-3);
+    color: var(--text-muted);
+    font-size: var(--font-size-xs);
   }
 </style>

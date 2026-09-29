@@ -168,6 +168,9 @@ func runServe(ctx context.Context) (retErr error) {
 		return err
 	}
 	defer func() { _ = s.Close() }()
+	if err := s.MarkPhotoImportRunsInterrupted(ctx); err != nil {
+		return fmt.Errorf("marking interrupted photo imports: %w", err)
+	}
 	catalogStores, err := s.BlobStores(sigCtx)
 	if err != nil {
 		return err

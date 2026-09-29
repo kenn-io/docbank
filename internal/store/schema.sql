@@ -2194,6 +2194,28 @@ CREATE TABLE IF NOT EXISTS photo_change_receipts (
 CREATE INDEX IF NOT EXISTS photo_change_receipts_asset
     ON photo_change_receipts(asset_id, receipt_id);
 
+CREATE TABLE IF NOT EXISTS photo_import_runs (
+    run_id              TEXT PRIMARY KEY,
+    revision            INTEGER NOT NULL DEFAULT 1,
+    state               TEXT NOT NULL,
+    source_root         TEXT NOT NULL,
+    destination         TEXT NOT NULL,
+    total_groups        INTEGER NOT NULL DEFAULT 0,
+    completed_groups    INTEGER NOT NULL DEFAULT 0,
+    added_groups        INTEGER NOT NULL DEFAULT 0,
+    skipped_groups      INTEGER NOT NULL DEFAULT 0,
+    failed_groups       INTEGER NOT NULL DEFAULT 0,
+    ambiguous_groups    INTEGER NOT NULL DEFAULT 0,
+    cancel_requested    INTEGER NOT NULL DEFAULT 0,
+    error               TEXT,
+    ambiguity_json      TEXT,
+    started_at          TEXT NOT NULL,
+    updated_at          TEXT NOT NULL,
+    finished_at         TEXT
+);
+
+CREATE INDEX IF NOT EXISTS photo_import_runs_state ON photo_import_runs(state, run_id);
+
 CREATE TABLE IF NOT EXISTS persons (
     person_id TEXT PRIMARY KEY NOT NULL,
     display_name TEXT NOT NULL,
