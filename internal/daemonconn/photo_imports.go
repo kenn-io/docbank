@@ -13,7 +13,7 @@ import (
 func validatePhotoImportRun(run api.PhotoImportRun) error {
 	if !validUUIDv4(run.ID) || run.Destination == "" ||
 		run.TotalGroups < 0 || run.CompletedGroups < 0 || run.AddedGroups < 0 ||
-		run.SkippedGroups < 0 || run.FailedGroups < 0 || run.AmbiguousGroups < 0 {
+		run.SkippedGroups < 0 || run.ChangedGroups < 0 || run.FailedGroups < 0 || run.AmbiguousGroups < 0 {
 		return errors.New("photo import response has invalid identity or counters")
 	}
 	active := run.State == "queued" || run.State == "running"
