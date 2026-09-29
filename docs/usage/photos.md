@@ -76,9 +76,8 @@ It reports multiple RAW matches as `ambiguous` and continues with other
 groups. An interactive `imports show` can select every unresolved candidate
 in turn and start choice-bound reruns. The non-interactive output lists each
 group key and candidate path. Automation passes that printable group key with
-one of `--raw-asset-id`, `--raw-file-id`, `--raw-source-path`, or
-`--raw-blob-hash` to `photos import`; include `--revision` when selecting an
-existing RAW asset.
+`--raw-source-path` and `--raw-blob-hash` for a new RAW, or
+`--raw-asset-id`, `--raw-file-id`, and `--revision` for an existing RAW.
 
 All commands emit bounded JSON. Exit code 4 means the revision is stale: an
 explicit `--revision` no longer matched, or the one automatic retry lost to

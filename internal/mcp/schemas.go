@@ -830,15 +830,15 @@ func photoImportCandidateSchema() schema {
 	return objectSchema(schema{
 		"asset_id": uuidSchema(), "file_id": uuidSchema(), "node_id": integerSchema(1, 0),
 		schemaRevisionField: integerSchema(1, 0), "source_path": stringSchema(maxPathBytes), "blob_hash": sha256Schema(),
-	}, "asset_id", "file_id", "node_id", schemaRevisionField, "blob_hash")
+	}, "blob_hash")
 }
 
-func photoImportRunSchema() schema {
+func photoImportRunProperties() schema {
 	ambiguity := objectSchema(schema{
 		"group_key":  stringSchema(maxPathBytes),
-		"candidates": arraySchema(photoImportCandidateSchema(), 32),
+		"candidates": arraySchema(photoImportCandidateSchema(), 0),
 	}, "group_key", "candidates")
-	return rootObjectSchema(withPrivateCache(schema{
+	return schema{
 		"id": uuidSchema(), schemaRevisionField: integerSchema(1, 0),
 		"state":       enumSchema("running", "cancel-requested", "completed", "cancelled", "failed", "interrupted", "ambiguous"),
 		"source_root": stringSchema(maxPathBytes), "destination": stringSchema(maxPathBytes),
@@ -846,9 +846,13 @@ func photoImportRunSchema() schema {
 		"added_groups": integerSchema(0, 0), "skipped_groups": integerSchema(0, 0),
 		"failed_groups": integerSchema(0, 0), "ambiguous_groups": integerSchema(0, 0),
 		"cancel_requested": booleanSchema(), "error": stringSchema(maxToolErrorBytes),
-		"ambiguities": arraySchema(ambiguity, 32), "started_at": dateTimeSchema(),
+		"ambiguities": arraySchema(ambiguity, 0), "started_at": dateTimeSchema(),
 		"updated_at": dateTimeSchema(), "finished_at": dateTimeSchema(),
-	}), "id", schemaRevisionField, "state", "source_root", "destination", "total_groups", "completed_groups",
+	}
+}
+
+func photoImportRunSchema() schema {
+	return rootObjectSchema(withPrivateCache(photoImportRunProperties()), "id", schemaRevisionField, "state", "source_root", "destination", "total_groups", "completed_groups",
 		"added_groups", "skipped_groups", "failed_groups", "ambiguous_groups", "cancel_requested",
 		"started_at", "updated_at", "ttlMs", "cacheScope")
 }
@@ -859,7 +863,7 @@ func getPhotoImportSchemas() (schema, schema) {
 
 func listPhotoImportsSchemas() (schema, schema) {
 	return rootObjectSchema(schema{}), rootObjectSchema(withPrivateCache(schema{
-		"items": arraySchema(photoImportRunSchema(), 1000),
+		"items": arraySchema(objectSchema(photoImportRunProperties(), "id", schemaRevisionField, "state", "source_root", "destination", "total_groups", "completed_groups", "added_groups", "skipped_groups", "failed_groups", "ambiguous_groups", "cancel_requested", "started_at", "updated_at"), 1000),
 	}), "items", "ttlMs", "cacheScope")
 }
 

@@ -59,6 +59,24 @@ func TestPhotoImportClients(t *testing.T) {
 		assertSchemaContract(t, tool.OutputSchema)
 	}
 	assert.Contains(t, catalogInstructions(false, false, true), "ambiguous RAW matches")
+	run := map[string]any{
+		"id": "00000000-0000-4000-8000-000000000001", "revision": float64(2),
+		"state": "ambiguous", "source_root": "/camera", "destination": "/photos",
+		"total_groups": float64(1), "completed_groups": float64(1),
+		"added_groups": float64(0), "skipped_groups": float64(0),
+		"failed_groups": float64(0), "ambiguous_groups": float64(1),
+		"cancel_requested": false, "started_at": "2026-09-29T00:00:00Z",
+		"updated_at": "2026-09-29T00:00:01Z",
+		"ambiguities": []any{map[string]any{
+			"group_key": "photo-group", "candidates": []any{map[string]any{
+				"source_path": "/camera/IMG.ARW", "blob_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+			}},
+		}},
+	}
+	list := map[string]any{"items": []any{run}, "ttlMs": float64(0), "cacheScope": "private"}
+	require.NoError(t, mustResolveSchema(withWrites["list_photo_imports"].OutputSchema).Validate(&list))
+	run["ttlMs"], run["cacheScope"] = float64(0), "private"
+	require.NoError(t, mustResolveSchema(withWrites["get_photo_import"].OutputSchema).Validate(&run))
 }
 
 func TestPhotoWriteNoReplay(t *testing.T) {

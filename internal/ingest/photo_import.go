@@ -97,8 +97,8 @@ func photoImportChoiceMatchesMember(choice *store.PhotoImportChoice, member stor
 	if choice == nil {
 		return false
 	}
-	return choice.RawSourcePath != "" && filepath.Clean(choice.RawSourcePath) == filepath.Clean(member.OriginalPath) ||
-		choice.RawBlobHash != "" && choice.RawBlobHash == member.BlobHash
+	return choice.RawSourcePath != "" && filepath.Clean(choice.RawSourcePath) == filepath.Clean(member.OriginalPath) &&
+		(member.BlobHash == "" || choice.RawBlobHash == "" || choice.RawBlobHash == member.BlobHash)
 }
 
 func partitionPhotoImportGroup(group PhotoImportGroup, choice *store.PhotoImportChoice) []PhotoImportGroup {
@@ -127,6 +127,9 @@ func partitionPhotoImportGroup(group PhotoImportGroup, choice *store.PhotoImport
 		standalone.Stem = filepath.Base(raw[0].Path)
 		standalone.Isolated = true
 		standalone.Members = raw
+		if len(primary.Members) == 0 {
+			return []PhotoImportGroup{standalone}
+		}
 		return []PhotoImportGroup{primary, standalone}
 	}
 	if len(raw) < 2 {
@@ -142,17 +145,23 @@ func partitionPhotoImportGroup(group PhotoImportGroup, choice *store.PhotoImport
 		}
 		chosen = index
 	}
-	if chosen < 0 {
+	if chosen < 0 && (choice.RawAssetID == "" || choice.RawFileID == "") {
 		return []PhotoImportGroup{group}
 	}
 	primary := group
-	primary.Members = []PhotoImportCandidate{group.Members[chosen]}
+	primary.Members = nil
+	if chosen >= 0 {
+		primary.Members = append(primary.Members, group.Members[chosen])
+	}
 	for index, member := range group.Members {
 		if index != chosen && member.Kind != store.PhotoSourceRAW {
 			primary.Members = append(primary.Members, member)
 		}
 	}
-	groups := []PhotoImportGroup{primary}
+	var groups []PhotoImportGroup
+	if len(primary.Members) > 0 {
+		groups = append(groups, primary)
+	}
 	for index, member := range group.Members {
 		if index == chosen || member.Kind != store.PhotoSourceRAW {
 			continue
@@ -266,6 +275,9 @@ func settlePhotoImportCandidate(ctx context.Context, ing *Ingester, candidate Ph
 }
 
 func (ing *Ingester) ImportPhotoDirectory(ctx context.Context, root, destination string, opts PhotoImportOptions) (report PhotoImportReport, retErr error) {
+	if err := store.ValidatePhotoImportChoice(opts.Choice); err != nil {
+		return report, err
+	}
 	mutate := func(mutationCtx context.Context, fn func() error) error {
 		if opts.Mutate != nil {
 			return opts.Mutate(mutationCtx, fn)
@@ -275,12 +287,13 @@ func (ing *Ingester) ImportPhotoDirectory(ctx context.Context, root, destination
 	runMutation := func(fn func() error) error { return mutate(ctx, fn) }
 	finalMutation := func(fn func() error) error { return mutate(context.Background(), fn) }
 	finishEarly := func(err error) (PhotoImportReport, error) {
+		var finishErr error
 		if opts.RunID != "" {
 			state := store.PhotoImportStateFailed
 			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 				state = store.PhotoImportStateCancelled
 			}
-			_ = finalMutation(func() error {
+			finishErr = finalMutation(func() error {
 				_, finishErr := ing.Store.FinishPhotoImportRun(context.Background(), opts.RunID, state, err.Error())
 				return finishErr
 			})
@@ -288,7 +301,7 @@ func (ing *Ingester) ImportPhotoDirectory(ctx context.Context, root, destination
 				report.Run = final
 			}
 		}
-		return report, err
+		return report, errors.Join(err, finishErr)
 	}
 	candidates, err := discoverPhotoCandidates(ctx, root)
 	if err != nil {
@@ -368,11 +381,11 @@ func (ing *Ingester) ImportPhotoDirectory(ctx context.Context, root, destination
 		}
 	}
 	report.Errors = make([]FileError, 0)
-	updateProgress := func(added, skipped, failed, ambiguous int64, detail *store.PhotoImportAmbiguity) {
+	updateProgress := func(added, skipped, failed, ambiguous int64, detail *store.PhotoImportAmbiguity) error {
 		if opts.RunID == "" {
-			return
+			return nil
 		}
-		_ = runMutation(func() error {
+		return runMutation(func() error {
 			_, err := ing.Store.UpdatePhotoImportProgress(ctx, opts.RunID, added, skipped, failed, ambiguous, detail)
 			return err
 		})
@@ -454,9 +467,9 @@ func (ing *Ingester) ImportPhotoDirectory(ctx context.Context, root, destination
 			if opts.RunID != "" {
 				ambiguityErr, ok := errors.AsType[*store.PhotoImportAmbiguityError](err)
 				if ok {
-					updateProgress(0, 0, 0, 1, &ambiguityErr.PhotoImportAmbiguity)
+					retErr = updateProgress(0, 0, 0, 1, &ambiguityErr.PhotoImportAmbiguity)
 				} else {
-					updateProgress(0, 0, 0, 1, nil)
+					retErr = updateProgress(0, 0, 0, 1, nil)
 				}
 			}
 		default:
@@ -465,7 +478,7 @@ func (ing *Ingester) ImportPhotoDirectory(ctx context.Context, root, destination
 				report.Errors = append(report.Errors, FileError{Path: group.Members[0].Path, Err: err})
 			}
 			if opts.RunID != "" {
-				updateProgress(0, 0, 1, 0, nil)
+				retErr = updateProgress(0, 0, 1, 0, nil)
 			}
 		}
 		if opts.Progress != nil {
@@ -475,26 +488,28 @@ func (ing *Ingester) ImportPhotoDirectory(ctx context.Context, root, destination
 			break
 		}
 	}
-	finishRun := func(state, errorText string) {
+	finishRun := func(state, errorText string) error {
 		if opts.RunID == "" {
-			return
+			return nil
 		}
-		_ = finalMutation(func() error {
+		return finalMutation(func() error {
 			_, err := ing.Store.FinishPhotoImportRun(context.Background(), opts.RunID, state, errorText)
 			return err
 		})
 	}
+	var finishErr error
 	if retErr != nil && errors.Is(retErr, context.Canceled) {
-		finishRun(store.PhotoImportStateCancelled, retErr.Error())
+		finishErr = finishRun(store.PhotoImportStateCancelled, retErr.Error())
 	} else if retErr != nil {
-		finishRun(store.PhotoImportStateFailed, retErr.Error())
+		finishErr = finishRun(store.PhotoImportStateFailed, retErr.Error())
 	} else if report.Ambiguous > 0 {
-		finishRun(store.PhotoImportStateAmbiguous, "")
+		finishErr = finishRun(store.PhotoImportStateAmbiguous, "")
 	} else if report.Failed > 0 {
-		finishRun(store.PhotoImportStateFailed, report.Errors[0].Err.Error())
+		finishErr = finishRun(store.PhotoImportStateFailed, report.Errors[0].Err.Error())
 	} else {
-		finishRun(store.PhotoImportStateCompleted, "")
+		finishErr = finishRun(store.PhotoImportStateCompleted, "")
 	}
+	retErr = errors.Join(retErr, finishErr)
 	if final, readErr := ing.Store.PhotoImportRun(context.Background(), opts.RunID); readErr == nil {
 		report.Run = final
 	}
