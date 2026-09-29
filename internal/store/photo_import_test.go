@@ -638,6 +638,71 @@ func TestPhotoImportRefusesAuditedVault(t *testing.T) {
 	require.ErrorIs(t, err, ErrAuditMutationUnsupported)
 }
 
+func TestPhotoImportDestinationCreatesAndReusesPath(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := t.Context()
+
+	created, err := s.EnsurePhotoImportDestination(ctx, "/photos/2027")
+	require.NoError(t, err)
+	assert.True(t, created.IsDir())
+
+	reused, err := s.EnsurePhotoImportDestination(ctx, "/photos/2027/")
+	require.NoError(t, err)
+	assert.Equal(t, created.ID, reused.ID)
+
+	root, err := s.EnsurePhotoImportDestination(ctx, "/")
+	require.NoError(t, err)
+	assert.Equal(t, s.RootID(), root.ID)
+
+	_, err = s.CreateFile(ctx, s.RootID(), "file", fakeHash("photo-import-destination-file"), 4, "text/plain")
+	require.NoError(t, err)
+	_, err = s.EnsurePhotoImportDestination(ctx, "/file/child")
+	require.ErrorIs(t, err, ErrNotDir)
+}
+
+func TestPhotoImportDestinationRollsBackOnInvalidComponent(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := t.Context()
+	before, err := s.NodeByID(ctx, s.RootID())
+	require.NoError(t, err)
+
+	_, err = s.EnsurePhotoImportDestination(ctx, "/rollback/.")
+	require.ErrorIs(t, err, ErrInvalidName)
+
+	_, err = s.NodeByPath(ctx, "/rollback")
+	require.ErrorIs(t, err, ErrNotFound)
+	after, err := s.NodeByID(ctx, s.RootID())
+	require.NoError(t, err)
+	assert.Equal(t, before.Revision, after.Revision)
+}
+
+func TestPhotoImportDestinationRejectsAuditActivatedAfterPreflight(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := t.Context()
+	parent, err := s.Mkdir(ctx, s.RootID(), "audited")
+	require.NoError(t, err)
+	before, err := s.NodeByID(ctx, parent.ID)
+	require.NoError(t, err)
+	require.NoError(t, s.EnsurePhotoImportAllowed(ctx))
+	plan, err := s.PreviewInitialAudit(ctx, parent.ID, "api", nil)
+	require.NoError(t, err)
+	_, err = s.EnableInitialAudit(ctx, plan)
+	require.NoError(t, err)
+
+	_, err = s.EnsurePhotoImportDestination(ctx, "/audited/new/nested")
+	require.ErrorIs(t, err, ErrAuditMutationUnsupported)
+	_, err = s.NodeByPath(ctx, "/audited/new")
+	require.ErrorIs(t, err, ErrNotFound)
+	_, err = s.NodeByPath(ctx, "/audited/new/nested")
+	require.ErrorIs(t, err, ErrNotFound)
+	after, err := s.NodeByID(ctx, parent.ID)
+	require.NoError(t, err)
+	assert.Equal(t, before.Revision, after.Revision)
+}
+
 func mustPhotoAsset(t *testing.T, s *Store, nodeID int64) PhotoAsset {
 	t.Helper()
 	asset, err := s.PhotoAssetForNode(t.Context(), nodeID)
