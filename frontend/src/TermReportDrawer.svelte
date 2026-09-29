@@ -5,23 +5,25 @@
   import { APIError } from "./api-transport.js";
   import { collections, type Collection } from "./collections.js";
   import * as api from "./generated/docbank.js";
-  import type { DateCandidate, DateChoice, DateReviewMember, Request, Summary, Term, TermReportHistory } from "./generated/docbank.js";
+  import type { DateCandidate, DateChoice, DateReviewMember, Identity, Request, Summary, Term, TermReportHistory } from "./generated/docbank.js";
   import { formatDate } from "./format.js";
 
   interface Props {
     session: string;
     initialExpression: string;
+    initialDocuments?: readonly Identity[];
     onclose: () => void;
     onauthfailure: (cause: unknown) => void;
   }
-  let { session, initialExpression, onclose, onauthfailure }: Props = $props();
+  let { session, initialExpression, initialDocuments, onclose, onauthfailure }: Props = $props();
 
   const today = new Date().toISOString().slice(0, 10);
   const zone = "UTC";
   function newTerm(number: number, expression = ""): Term {
     return { number, expression, syntax: "simple", dates: { start: "2000-01-01", end: today } };
   }
-  let draft = $state<Request>({ version: 1, all_documents: true, timezone: zone,
+  let draft = $state<Request>({ version: 1, all_documents: untrack(() => initialDocuments === undefined),
+    selected_documents: untrack(() => initialDocuments === undefined ? undefined : { documents: initialDocuments.map(id => ({ ...id })) }), timezone: zone,
     coverage_mode: "strict", terms: [newTerm(1, untrack(() => initialExpression))] });
   let history = $state<TermReportHistory[]>([]);
   let historyTotal = $state(0);
@@ -57,7 +59,9 @@
       onclose();
       return;
     }
-    error = cause instanceof Error ? cause.message : String(cause);
+    error = cause instanceof APIError && cause.code === "report_selection_changed"
+      ? "Selected documents changed. Refresh the workspace and reselect the intended current versions."
+      : cause instanceof Error ? cause.message : String(cause);
   }
 
   async function loadHistory(currentSession = session, reset = false): Promise<void> {
@@ -110,6 +114,7 @@
   function useHistory(item: TermReportHistory): void {
     const source = item.request;
     draft = { ...source, collection_ids: [...(source.collection_ids ?? [])],
+      selected_documents: source.selected_documents == null ? undefined : { documents: source.selected_documents.documents?.map(id => ({ ...id })) },
       terms: source.terms.map(term => ({ ...term, dates: { ...term.dates } })), date_choices: [] };
     active = null;
     submittedDraft = null;
@@ -117,14 +122,20 @@
     reviewLoaded = false;
     choices = {};
     error = "";
-    notice = `Loaded the ${formatDate(item.summary.observed_at)} request. Edit its scope or dates, then run it on current data.`;
+    notice = `Loaded the ${formatDate(item.summary.observed_at)} request. ${source.selected_documents
+      ? "Its document selection is fixed. A new run checks that these versions are still current."
+      : "Edit its scope or dates, then run it on current data."}`;
   }
 
   async function run(): Promise<void> {
     if (busy) return;
     error = "";
     notice = "";
-    if (!draft.all_documents && !(draft.collection_ids?.length)) {
+    if (draft.selected_documents && !draft.selected_documents.documents?.length) {
+      error = "Select at least one current document in the workspace.";
+      return;
+    }
+    if (!draft.selected_documents && !draft.all_documents && !(draft.collection_ids?.length)) {
       error = "Select at least one collection, or use all documents.";
       return;
     }
@@ -273,6 +284,10 @@
       </div>
       <section class="scope" aria-label="Export source scope">
         <strong>Sources</strong>
+        {#if draft.selected_documents}
+          <strong>Selected documents ({draft.selected_documents.documents?.length ?? 0})</strong>
+          <p>This selection is fixed. Date eligibility can reduce the counted scope. Family relationship evidence may reference unselected documents.</p>
+        {:else}
         <label><input type="radio" name="report-scope" checked={draft.all_documents} onchange={() => draft.all_documents = true} /> All documents</label>
         <label><input type="radio" name="report-scope" checked={!draft.all_documents} onchange={() => draft.all_documents = false} /> Selected collections</label>
         {#if !draft.all_documents}
@@ -284,6 +299,7 @@
             {#if collectionItems.length < collectionTotal}<Button size="sm" disabled={collectionLoading} onclick={() => void loadCollections()}>{collectionLoading ? "Loading…" : "More collections"}</Button>{/if}
             {#if !collectionItems.length && collectionLoading}<span><Spinner size={14} /> Loading collections…</span>{/if}
           </div>
+        {/if}
         {/if}
       </section>
       <section class="terms" aria-label="Export search queries">
@@ -352,7 +368,7 @@
         {#if !history.length && historyLoading}<p><Spinner size={14} /> Loading history…</p>{/if}
         {#if !history.length && !historyLoading}<p>No searches have been exported yet.</p>{/if}
         {#each history as item (item.summary.id)}
-          <div class="history-item"><div><strong>{formatDate(item.summary.observed_at)}</strong><span>{item.summary.state === "complete" ? "Counts ready" : "Date review needed"} · {item.request.terms.length} term{item.request.terms.length === 1 ? "" : "s"} · {item.request.all_documents ? "All documents" : `${item.request.collection_ids?.length ?? 0} collection${item.request.collection_ids?.length === 1 ? "" : "s"}`}</span>
+          <div class="history-item"><div><strong>{formatDate(item.summary.observed_at)}</strong><span>{item.summary.state === "complete" ? "Counts ready" : "Date review needed"} · {item.request.terms.length} term{item.request.terms.length === 1 ? "" : "s"} · {item.request.selected_documents ? `Selected documents (${item.request.selected_documents.documents?.length ?? 0})` : item.request.all_documents ? "All documents" : `${item.request.collection_ids?.length ?? 0} collection${item.request.collection_ids?.length === 1 ? "" : "s"}`}</span>
               <small>{item.request.terms.map(term => term.expression).join(" · ")}</small></div><Button size="sm" onclick={() => useHistory(item)}>Use as draft</Button></div>
         {/each}
         {#if history.length < historyTotal}<Button size="sm" disabled={historyLoading} onclick={() => void loadHistory()}>{historyLoading ? "Loading…" : "Older runs"}</Button>{/if}

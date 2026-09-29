@@ -14,6 +14,7 @@
     wholeQueryCount?: number;
     onwholequerytags?: () => void;
     onexport?: () => void;
+    onreport?: () => void;
     onexportquery?: () => void;
   }
 
@@ -30,6 +31,7 @@
     wholeQueryCount = 0,
     onwholequerytags,
     onexport,
+    onreport,
     onexportquery,
   }: Props = $props();
 </script>
@@ -68,6 +70,7 @@
       <Button size="sm" tone="info" disabled={tagsDisabled} onclick={onwholequerytags}>Tag whole query</Button>
     {/if}
     {#if oncsv}<Button size="sm" onclick={oncsv}>Export page CSV</Button>{/if}
+    {#if onreport}<Button size="sm" onclick={onreport}>Report selected documents</Button>{/if}
     {#if onexport}<Button size="sm" onclick={onexport}>Export selection</Button>{/if}
     {#if context === "snapshot" && onexportquery}<Button size="sm" onclick={onexportquery}>Export frozen query</Button>{/if}
   </div>
