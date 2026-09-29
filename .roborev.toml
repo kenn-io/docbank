@@ -167,8 +167,7 @@ Key assumptions reviewers MUST account for:
    referential integrity so a corrupted file fails loudly. It does not
    defend against the owner editing their own backup. Receipts record
    past decisions; restore checks that they reference existing records,
-   not that they replay into current state. Photo import ambiguity candidates
-   are past observations; rerun choices are checked against the live graph.
+   not that they replay into current state.
 
 18. THE DAEMON IS THE POLICY AUTHORITY: the CLI, MCP, and daemonconn talk
    to the owner's own daemon over its keyed loopback API. The store makes

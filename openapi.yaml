@@ -10863,72 +10863,42 @@ components:
     PhotoImportAmbiguity:
       additionalProperties: false
       properties:
-        candidates:
+        files:
           items:
-            $ref: "#/components/schemas/PhotoImportCandidate"
+            $ref: "#/components/schemas/PhotoImportAmbiguousFile"
           type: array
-        group_key:
+        reason:
+          enum:
+            - multiple_raw
+            - separate_photos
           type: string
       required:
-        - group_key
-        - candidates
+        - reason
+        - files
       type: object
       x-go-type: api.PhotoImportAmbiguity
       x-go-type-import:
         path: go.kenn.io/docbank/internal/api
         name: api
-    PhotoImportCandidate:
+    PhotoImportAmbiguousFile:
       additionalProperties: false
       properties:
         asset_id:
-          format: uuid
-          type: string
-        blob_hash:
-          pattern: ^[0-9a-f]{64}$
-          type: string
-        file_id:
           format: uuid
           type: string
         node_id:
           format: int64
           minimum: 1
           type: integer
-        revision:
-          format: int64
-          minimum: 1
-          type: integer
+        role:
+          type: string
         source_path:
           type: string
       required:
-        - blob_hash
+        - node_id
+        - role
       type: object
-      x-go-type: api.PhotoImportCandidate
-      x-go-type-import:
-        path: go.kenn.io/docbank/internal/api
-        name: api
-    PhotoImportChoice:
-      additionalProperties: false
-      properties:
-        asset_revision:
-          format: int64
-          minimum: 1
-          type: integer
-        group_key:
-          type: string
-        raw_asset_id:
-          format: uuid
-          type: string
-        raw_blob_hash:
-          pattern: ^[0-9a-f]{64}$
-          type: string
-        raw_file_id:
-          format: uuid
-          type: string
-        raw_source_path:
-          maxLength: 4096
-          type: string
-      type: object
-      x-go-type: api.PhotoImportChoice
+      x-go-type: api.PhotoImportAmbiguousFile
       x-go-type-import:
         path: go.kenn.io/docbank/internal/api
         name: api
@@ -10973,10 +10943,6 @@ components:
         id:
           format: uuid
           type: string
-        revision:
-          format: int64
-          minimum: 1
-          type: integer
         skipped_groups:
           format: int64
           minimum: 0
@@ -10986,6 +10952,12 @@ components:
         started_at:
           type: string
         state:
+          enum:
+            - queued
+            - running
+            - completed
+            - failed
+            - cancelled
           type: string
         total_groups:
           format: int64
@@ -10995,7 +10967,6 @@ components:
           type: string
       required:
         - id
-        - revision
         - state
         - destination
         - total_groups
@@ -11043,8 +11014,6 @@ components:
           format: uri
           readOnly: true
           type: string
-        choice:
-          $ref: "#/components/schemas/PhotoImportChoice"
         destination:
           maxLength: 4096
           minLength: 1
@@ -21505,7 +21474,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/Error"
           description: Error
-      summary: List durable grouped photo import runs
+      summary: List photo imports, newest first
     post:
       operationId: startPhotoImport
       requestBody:
@@ -21521,10 +21490,6 @@ paths:
               schema:
                 $ref: "#/components/schemas/PhotoImportRun"
           description: Accepted
-          headers:
-            ETag:
-              schema:
-                type: string
         default:
           content:
             application/problem+json:
@@ -21548,28 +21513,19 @@ paths:
               schema:
                 $ref: "#/components/schemas/PhotoImportRun"
           description: OK
-          headers:
-            ETag:
-              schema:
-                type: string
         default:
           content:
             application/problem+json:
               schema:
                 $ref: "#/components/schemas/Error"
           description: Error
-      summary: Inspect one durable grouped photo import run
+      summary: Inspect one photo import and its ambiguous groups
   /api/v1/photos/imports/{run_id}/cancel:
     post:
       operationId: cancelPhotoImport
       parameters:
         - in: path
           name: run_id
-          required: true
-          schema:
-            type: string
-        - in: header
-          name: If-Match
           required: true
           schema:
             type: string
@@ -21580,17 +21536,13 @@ paths:
               schema:
                 $ref: "#/components/schemas/PhotoImportRun"
           description: OK
-          headers:
-            ETag:
-              schema:
-                type: string
         default:
           content:
             application/problem+json:
               schema:
                 $ref: "#/components/schemas/Error"
           description: Error
-      summary: Request cancellation at the next photo group
+      summary: Request cancellation before the next photo group
   /api/v1/photos/nodes/{node_id}/asset:
     get:
       operationId: getPhotoAssetByNode

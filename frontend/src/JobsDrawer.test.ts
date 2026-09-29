@@ -61,11 +61,11 @@ describe("background jobs drawer", () => {
 
   it("shows photo import progress, destination, and a demoted job ID", async () => {
     const id = "f6730699-23b5-458a-b6d9-11b140ac1f92";
-    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async () =>
       jobsResponse([
         {
-          name: `photo-import:${id}`,
-          kind: "photo-import",
+          name: `storage:${id}`,
+          kind: "photo_import",
           operation_id: id,
           status: "running",
           started_at: "2026-07-23T12:00:00Z",
@@ -92,8 +92,12 @@ describe("background jobs drawer", () => {
     expect(screen.getByText("25%")).toBeTruthy();
     expect(screen.getByText("Into /Photos/Trip")).toBeTruthy();
     expect(screen.getByText(id)).toBeTruthy();
-    expect(screen.queryByText(`photo-import:${id}`)).toBeNull();
-    expect(screen.getByRole("button", { name: "Cancel photo import" })).toBeTruthy();
+    expect(screen.queryByText(`storage:${id}`)).toBeNull();
     expect(screen.getByText("1 operation running · 0 workers")).toBeTruthy();
+
+    await fireEvent.click(screen.getByRole("button", { name: "Cancel photo import" }));
+    const cancel = fetchSpy.mock.calls.find(([url]) => String(url).endsWith(`/api/v1/photos/imports/${id}/cancel`));
+    expect(cancel).toBeTruthy();
+    expect(new Headers(cancel?.[1]?.headers).has("If-Match")).toBe(false);
   });
 });

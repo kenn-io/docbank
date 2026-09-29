@@ -202,40 +202,6 @@ func exportBackupMetadata(t *testing.T, metadata *store.Store) []byte {
 	return data
 }
 
-func TestPhotoImportMetadata(t *testing.T) {
-	fixture := newArchiveFixture(t)
-	run, err := fixture.metadata.StartPhotoImportRun(t.Context(), filepath.Join(fixture.root, "camera"), "/photos", 1)
-	require.NoError(t, err)
-	_, err = fixture.metadata.FinishPhotoImportRun(t.Context(), run.ID, store.PhotoImportStateCompleted, "")
-	require.NoError(t, err)
-	metadata := exportBackupMetadata(t, fixture.metadata)
-	assert.Contains(t, string(metadata), `"type":"photo_import_run"`)
-
-	repo, err := backup.Init(filepath.Join(t.TempDir(), "repo"))
-	require.NoError(t, err)
-	_, err = backupapp.Create(t.Context(), repo, "photo-import", fixture.metadata, fixture.blobs, backup.CreateOptions{})
-	require.NoError(t, err)
-	target := filepath.Join(t.TempDir(), "restored")
-	_, err = backupapp.Restore(t.Context(), repo, "photo-import", backup.RestoreOptions{TargetDir: target})
-	require.NoError(t, err)
-	restored, err := store.Open(filepath.Join(target, "docbank.db"))
-	require.NoError(t, err)
-	restoredRun, err := restored.PhotoImportRun(t.Context(), run.ID)
-	require.NoError(t, err)
-	assert.Equal(t, store.PhotoImportStateCompleted, restoredRun.State)
-	require.NoError(t, restored.Close())
-
-	malformed := strings.Replace(string(metadata), `"state":"completed"`, `"state":"not-a-state"`, 1)
-	badRepo, err := backup.Init(filepath.Join(t.TempDir(), "bad-repo"))
-	require.NoError(t, err)
-	_, err = backup.Create(t.Context(), badRepo, backupapp.New("malformed-photo-import"), backup.CreateOptions{
-		MetadataSource: rawMetadataSource{metadata: []byte(malformed)},
-	})
-	require.NoError(t, err)
-	_, err = backupapp.Restore(t.Context(), badRepo, "malformed-photo-import", backup.RestoreOptions{TargetDir: filepath.Join(t.TempDir(), "bad-restored")})
-	require.ErrorContains(t, err, "invalid photo import run")
-}
-
 func markRestoreTarget(t *testing.T, target string) string {
 	t.Helper()
 	seedOwnedVault(t, target)

@@ -515,11 +515,6 @@ func exportMetadataSnapshotWithVaultIdentity(
 		if err := exportPhotoMetadata(ctx, tx, write); err != nil {
 			return err
 		}
-		if layout.schemaVersion >= 27 {
-			if err := exportPhotoImportMetadata(ctx, tx, write); err != nil {
-				return err
-			}
-		}
 	}
 	return exportDerivativePurgeSuppressions(ctx, tx, write)
 }
@@ -1064,8 +1059,7 @@ func requirePristineMetadataTarget(ctx context.Context, tx *sql.Tx) error {
 		    + (SELECT COUNT(*) FROM photo_assets)
 		    + (SELECT COUNT(*) FROM photo_files)
 		    + (SELECT COUNT(*) FROM photo_library_settings)
-			+ (SELECT COUNT(*) FROM photo_change_receipts)
-			+ (SELECT COUNT(*) FROM photo_import_runs)
+		    + (SELECT COUNT(*) FROM photo_change_receipts)
 		    + (SELECT COUNT(*) FROM mailbox_containers)
 		    + (SELECT COUNT(*) FROM mailbox_chunks)
 		    + (SELECT COUNT(*) FROM mailbox_archives)
@@ -1618,7 +1612,6 @@ const (
 	metadataPhotoFileType                 = "photo_file"
 	metadataPhotoSettingsType             = "photo_library_settings"
 	metadataPhotoReceiptType              = "photo_change_receipt"
-	metadataPhotoImportRunType            = "photo_import_run"
 )
 
 var metadataHeaderFields = []string{metadataTypeField, "format", "version", auditVaultIDField, "node_sequence"}
@@ -1657,7 +1650,6 @@ var metadataRequiredFields = map[string][]string{
 	metadataPhotoFileType:                        {metadataTypeField, "file_id", "asset_id", metadataNodeIDField, "role", "sidecar_of_file_id", metadataCreatedAtField},
 	metadataPhotoSettingsType:                    {metadataTypeField, "preference", metadataRevisionField, metadataUpdatedAtField},
 	metadataPhotoReceiptType:                     {metadataTypeField, "receipt_id", "operation", "asset_id", "settings_key", "before_revision", "after_revision", "before_json", "after_json", metadataCreatedAtField},
-	metadataPhotoImportRunType:                   {metadataTypeField, "run_id", metadataRevisionField, "state", "source_root", "destination", "total_groups", "completed_groups", "added_groups", "skipped_groups", "failed_groups", "ambiguous_groups", "cancel_requested", "error", "ambiguity_json", "started_at", "updated_at", "finished_at"},
 	metadataCollectionSnapshotType:               {metadataTypeField, "snapshot_id", "vault_id", metadataCanonicalJSONField, metadataPageChecksumField},
 	metadataCollectionSnapshotMemberType:         {metadataTypeField, "snapshot_id", "ordinal", metadataCanonicalJSONField, metadataPageChecksumField},
 	metadataCollectionSnapshotRepresentationType: {metadataTypeField, "snapshot_id", "occurrence_id", "role", "ordinal", metadataCanonicalJSONField, metadataPageChecksumField},
@@ -1734,7 +1726,6 @@ var metadataNullableFields = map[string]map[string]bool{
 	metadataPhotoFileType:       {"sidecar_of_file_id": true},
 	metadataPhotoSettingsType:   {"preference": true},
 	metadataPhotoReceiptType:    {"asset_id": true, "settings_key": true},
-	metadataPhotoImportRunType:  {"error": true, "ambiguity_json": true, "finished_at": true},
 	metadataSavedQueryRunType: {
 		"previous_run_id": true, "previous_member_hash": true,
 		"previous_total": true, "previous_query_fingerprint": true,
@@ -2157,11 +2148,6 @@ func validateMetadataStateWithVaultIdentity(
 		if layout.schemaVersion >= 25 {
 			if err := validatePhotoMetadataState(ctx, tx); err != nil {
 				return err
-			}
-			if layout.schemaVersion >= 27 {
-				if err := validatePhotoImportMetadataState(ctx, tx); err != nil {
-					return err
-				}
 			}
 		}
 	}

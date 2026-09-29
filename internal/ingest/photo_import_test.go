@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -20,23 +21,11 @@ func TestPhotoImportGrouping(t *testing.T) {
 		{Path: filepath.Join(root, "IMG_0001.ARW"), Kind: store.PhotoSourceRAW},
 		{Path: filepath.Join(root, "IMG_0001.JPG"), Kind: store.PhotoSourceImage},
 		{Path: filepath.Join(root, "IMG_0001.XMP"), Kind: store.PhotoSourceSidecar},
-		{Path: filepath.Join(root, "CLIP.MP4"), Kind: store.PhotoSourceVideo},
+		{Path: filepath.Join(root, "IMG_0001.MP4"), Kind: store.PhotoSourceVideo},
 	})
 	require.Len(t, grouped, 2)
 	assert.Len(t, grouped[0].Members, 3)
 	assert.Len(t, grouped[1].Members, 1)
-
-	for _, name := range []string{"IMG_0001.ARW", "IMG_0001.DNG"} {
-		require.NoError(t, os.WriteFile(filepath.Join(root, name), []byte(name), 0o600))
-	}
-	ing := newTestIngester(t)
-	report, err := ing.ImportPhotoDirectory(t.Context(), root, "/photos", PhotoImportOptions{})
-	require.NoError(t, err)
-	assert.Equal(t, 1, report.Ambiguous)
-	require.Len(t, report.Run.Ambiguities, 1)
-	require.Len(t, report.Run.Ambiguities[0].Candidates, 2)
-	assert.NotEmpty(t, report.Run.Ambiguities[0].Candidates[0].SourcePath)
-	assert.NotEmpty(t, report.Run.Ambiguities[0].Candidates[0].BlobHash)
 }
 
 func TestPhotoImportAmbiguity(t *testing.T) {
@@ -47,151 +36,63 @@ func TestPhotoImportAmbiguity(t *testing.T) {
 	ing := newTestIngester(t)
 	first, err := ing.ImportPhotoDirectory(t.Context(), root, "/photos", PhotoImportOptions{})
 	require.NoError(t, err)
-	require.Len(t, first.Run.Ambiguities, 1)
-	choice := first.Run.Ambiguities[0].Candidates[0]
-	second, err := ing.ImportPhotoDirectory(t.Context(), root, "/photos", PhotoImportOptions{Choice: &store.PhotoImportChoice{
-		GroupKey: first.Run.Ambiguities[0].GroupKey, RawSourcePath: choice.SourcePath, RawBlobHash: choice.BlobHash,
-	}})
-	require.NoError(t, err)
-	assert.Equal(t, 2, second.Added)
-	assert.Zero(t, second.Ambiguous)
-	firstAsset, err := ing.Store.PhotoAssetForNode(t.Context(), nodeByName(t, ing, "/photos/IMG_0001.ARW").ID)
-	require.NoError(t, err)
-	secondAsset, err := ing.Store.PhotoAssetForNode(t.Context(), nodeByName(t, ing, "/photos/IMG_0001.DNG").ID)
-	require.NoError(t, err)
-	assert.NotEqual(t, firstAsset.ID, secondAsset.ID)
-	assert.Len(t, firstAsset.Files, 2)
-	assert.Len(t, secondAsset.Files, 1)
+	assert.Equal(t, int64(1), first.Receipt.Ambiguous)
+	require.Len(t, first.Receipt.Ambiguities, 1)
+	ambiguity := first.Receipt.Ambiguities[0]
+	assert.Equal(t, store.PhotoImportMultipleRAW, ambiguity.Reason)
+	require.Len(t, ambiguity.Files, 3)
+	for _, name := range []string{"IMG_0001.ARW", "IMG_0001.DNG", "IMG_0001.JPG"} {
+		asset, err := ing.Store.PhotoAssetForNode(t.Context(), nodeByName(t, ing, "/photos/"+name).ID)
+		require.NoError(t, err, name)
+		assert.Len(t, asset.Files, 1, name)
+	}
+
 	repeated, err := ing.ImportPhotoDirectory(t.Context(), root, "/photos", PhotoImportOptions{})
 	require.NoError(t, err)
-	assert.Zero(t, repeated.Ambiguous)
-	assert.Equal(t, 1, repeated.Skipped)
-	assert.Equal(t, int64(1), repeated.Run.SkippedGroups)
+	assert.Equal(t, int64(1), repeated.Receipt.Ambiguous)
+	assert.Zero(t, repeated.Receipt.Added)
 }
 
-func TestPhotoImportAmbiguityWithExistingRaw(t *testing.T) {
+func TestPhotoImportLateJPEGJoinsEarlierRAW(t *testing.T) {
 	root := t.TempDir()
-	rawOne := filepath.Join(root, "IMG_0001.ARW")
-	require.NoError(t, os.WriteFile(rawOne, []byte("raw-one"), 0o600))
+	require.NoError(t, os.WriteFile(filepath.Join(root, "IMG_0001.ARW"), []byte("raw"), 0o600))
 	ing := newTestIngester(t)
 	first, err := ing.ImportPhotoDirectory(t.Context(), root, "/photos", PhotoImportOptions{})
 	require.NoError(t, err)
-	require.Equal(t, 1, first.Added)
-	rawTwo := filepath.Join(root, "IMG_0001.DNG")
-	require.NoError(t, os.WriteFile(rawTwo, []byte("raw-two"), 0o600))
+	require.Equal(t, int64(1), first.Receipt.Added)
 	require.NoError(t, os.WriteFile(filepath.Join(root, "IMG_0001.JPG"), []byte("jpeg"), 0o600))
-	ambiguous, err := ing.ImportPhotoDirectory(t.Context(), root, "/photos", PhotoImportOptions{})
+	require.NoError(t, os.WriteFile(filepath.Join(root, "IMG_0001.XMP"), []byte("xmp"), 0o600))
+	second, err := ing.ImportPhotoDirectory(t.Context(), root, "/photos", PhotoImportOptions{})
 	require.NoError(t, err)
-	require.Equal(t, 1, ambiguous.Ambiguous)
-	require.Len(t, ambiguous.Run.Ambiguities[0].Candidates, 2)
-	choice := ambiguous.Run.Ambiguities[0].Candidates[0]
-	if choice.SourcePath != rawOne {
-		choice = ambiguous.Run.Ambiguities[0].Candidates[1]
-	}
-	resolved, err := ing.ImportPhotoDirectory(t.Context(), root, "/photos", PhotoImportOptions{Choice: &store.PhotoImportChoice{
-		GroupKey: ambiguous.Run.Ambiguities[0].GroupKey, RawAssetID: choice.AssetID,
-		RawFileID: choice.FileID, AssetRevision: choice.Revision,
-	}})
+	assert.Equal(t, int64(1), second.Receipt.Added)
+	asset, err := ing.Store.PhotoAssetForNode(t.Context(), nodeByName(t, ing, "/photos/IMG_0001.JPG").ID)
 	require.NoError(t, err)
-	assert.Equal(t, 2, resolved.Added)
-	assert.Zero(t, resolved.Ambiguous)
-	firstAsset, err := ing.Store.PhotoAssetForNode(t.Context(), nodeByName(t, ing, "/photos/IMG_0001.ARW").ID)
+	assert.Len(t, asset.Files, 3)
+	raw, err := ing.Store.PhotoAssetForNode(t.Context(), nodeByName(t, ing, "/photos/IMG_0001.ARW").ID)
 	require.NoError(t, err)
-	secondAsset, err := ing.Store.PhotoAssetForNode(t.Context(), nodeByName(t, ing, "/photos/IMG_0001.DNG").ID)
+	assert.Equal(t, raw.ID, asset.ID)
+
+	third, err := ing.ImportPhotoDirectory(t.Context(), root, "/photos", PhotoImportOptions{})
 	require.NoError(t, err)
-	assert.NotEqual(t, firstAsset.ID, secondAsset.ID)
-	assert.Len(t, firstAsset.Files, 2)
-	assert.Len(t, secondAsset.Files, 1)
+	assert.Equal(t, int64(1), third.Receipt.Skipped)
+	assert.Zero(t, third.Receipt.Added)
 }
 
-func TestPhotoImportRawOnlyChoiceDoesNotReappear(t *testing.T) {
+func TestPhotoImportAmbiguityListIsCapped(t *testing.T) {
 	root := t.TempDir()
-	firstPath := filepath.Join(root, "IMG_0001.ARW")
-	secondPath := filepath.Join(root, "IMG_0001.DNG")
-	require.NoError(t, os.WriteFile(firstPath, []byte("raw-one"), 0o600))
-	require.NoError(t, os.WriteFile(secondPath, []byte("raw-two"), 0o600))
-	ing := newTestIngester(t)
-	first, err := ing.ImportPhotoDirectory(t.Context(), root, "/photos", PhotoImportOptions{})
-	require.NoError(t, err)
-	require.Len(t, first.Run.Ambiguities, 1)
-	choice := first.Run.Ambiguities[0].Candidates[0]
-	resolved, err := ing.ImportPhotoDirectory(t.Context(), root, "/photos", PhotoImportOptions{Choice: &store.PhotoImportChoice{
-		GroupKey: first.Run.Ambiguities[0].GroupKey, RawSourcePath: choice.SourcePath, RawBlobHash: choice.BlobHash,
-	}})
-	require.NoError(t, err)
-	assert.Equal(t, 2, resolved.Added)
-	repeated, err := ing.ImportPhotoDirectory(t.Context(), root, "/photos", PhotoImportOptions{})
-	require.NoError(t, err)
-	assert.Zero(t, repeated.Ambiguous)
-	assert.Equal(t, 1, repeated.Skipped)
-}
-
-func TestPhotoImportChoiceRequiresVerifiableIdentity(t *testing.T) {
-	root := t.TempDir()
-	path := filepath.Join(root, "IMG.ARW")
-	require.NoError(t, os.WriteFile(path, []byte("raw"), 0o600))
-	ing := newTestIngester(t)
-	_, err := ing.ImportPhotoDirectory(t.Context(), root, "/photos", PhotoImportOptions{Choice: &store.PhotoImportChoice{
-		GroupKey: store.PhotoImportGroupKey(path, store.PhotoSourceRAW), RawBlobHash: "unverified",
-	}})
-	require.ErrorContains(t, err, "source path and blob hash")
-}
-
-func TestPhotoImportChoicePreservesExistingPair(t *testing.T) {
-	root := t.TempDir()
-	raw := filepath.Join(root, "IMG.ARW")
-	jpeg := filepath.Join(root, "IMG.JPG")
-	dng := filepath.Join(root, "IMG.DNG")
-	require.NoError(t, os.WriteFile(raw, []byte("first raw"), 0o600))
-	require.NoError(t, os.WriteFile(jpeg, []byte("jpeg"), 0o600))
-	ing := newTestIngester(t)
-	_, err := ing.ImportPhotoDirectory(t.Context(), root, "/photos", PhotoImportOptions{})
-	require.NoError(t, err)
-	old, err := ing.Store.PhotoAssetForNode(t.Context(), nodeByName(t, ing, "/photos/IMG.ARW").ID)
-	require.NoError(t, err)
-	require.Len(t, old.Files, 2)
-	require.NoError(t, os.WriteFile(dng, []byte("second raw"), 0o600))
-	ambiguous, err := ing.ImportPhotoDirectory(t.Context(), root, "/photos", PhotoImportOptions{})
-	require.NoError(t, err)
-	require.Len(t, ambiguous.Run.Ambiguities, 1)
-	var choice store.PhotoImportCandidate
-	for _, candidate := range ambiguous.Run.Ambiguities[0].Candidates {
-		if candidate.SourcePath == dng {
-			choice = candidate
-		}
-	}
-	require.Equal(t, dng, choice.SourcePath)
-	resolved, err := ing.ImportPhotoDirectory(t.Context(), root, "/photos", PhotoImportOptions{Choice: &store.PhotoImportChoice{
-		GroupKey: ambiguous.Run.Ambiguities[0].GroupKey, RawSourcePath: choice.SourcePath, RawBlobHash: choice.BlobHash,
-	}})
-	require.NoError(t, err)
-	assert.Equal(t, store.PhotoImportStateFailed, resolved.Run.State)
-	require.ErrorContains(t, resolved.Errors[0].Err, "JPEG already belongs to another RAW")
-	_, err = ing.Store.NodeByPath(t.Context(), "/photos/IMG.DNG")
-	require.ErrorIs(t, err, store.ErrNotFound)
-	stillPaired, err := ing.Store.PhotoAssetForNode(t.Context(), nodeByName(t, ing, "/photos/IMG.JPG").ID)
-	require.NoError(t, err)
-	assert.Equal(t, old.ID, stillPaired.ID)
-	assert.Len(t, stillPaired.Files, 2)
-}
-
-func TestPhotoImportAmbiguityLimitFailsRunExplicitly(t *testing.T) {
-	root := t.TempDir()
-	for i := range 90 {
-		folder := filepath.Join(root, fmt.Sprintf("camera-%03d-with-a-long-folder-name", i))
+	for i := range store.PhotoImportMaxAmbiguities + 1 {
+		folder := filepath.Join(root, fmt.Sprintf("camera-%03d", i))
 		require.NoError(t, os.Mkdir(folder, 0o700))
 		for _, ext := range []string{"ARW", "DNG"} {
-			require.NoError(t, os.WriteFile(filepath.Join(folder, "IMG."+ext), []byte(ext), 0o600))
+			require.NoError(t, os.WriteFile(filepath.Join(folder, "IMG."+ext), []byte(folder+ext), 0o600))
 		}
 	}
 	ing := newTestIngester(t)
 	report, err := ing.ImportPhotoDirectory(t.Context(), root, "/photos", PhotoImportOptions{})
-	require.ErrorContains(t, err, "ambiguity summary is too large")
-	assert.Equal(t, store.PhotoImportStateFailed, report.Run.State)
-	assert.Less(t, report.Run.CompletedGroups, report.Run.TotalGroups)
-	assert.Equal(t, report.Run.CompletedGroups, report.Run.AmbiguousGroups)
+	require.NoError(t, err)
+	assert.Equal(t, int64(store.PhotoImportMaxAmbiguities+1), report.Receipt.Ambiguous)
+	assert.Len(t, report.Receipt.Ambiguities, store.PhotoImportMaxAmbiguities)
 }
-
 func nodeByName(t *testing.T, ing *Ingester, path string) store.Node {
 	t.Helper()
 	node, err := ing.Store.NodeByPath(t.Context(), path)
@@ -303,7 +204,7 @@ func TestPhotoImportPublishedBytes(t *testing.T) {
 	ing := newTestIngester(t)
 	report, err := ing.ImportPhotoDirectory(t.Context(), root, "/photos", PhotoImportOptions{})
 	require.NoError(t, err)
-	require.Equal(t, 1, report.Added)
+	require.Equal(t, int64(1), report.Receipt.Added)
 	node, err := ing.Store.NodeByPath(t.Context(), "/photos/capture.JPG")
 	require.NoError(t, err)
 	reader, err := ing.Blobs.Open(node.BlobHash)
@@ -313,39 +214,76 @@ func TestPhotoImportPublishedBytes(t *testing.T) {
 	assert.Equal(t, got, content)
 }
 
-func TestPhotoImportGateAndActivity(t *testing.T) {
+func TestPhotoImportSettlesOnceOutsideTheGate(t *testing.T) {
 	root := t.TempDir()
-	require.NoError(t, os.WriteFile(filepath.Join(root, "activity.JPG"), []byte("activity"), 0o600))
+	for i := range 6 {
+		require.NoError(t, os.WriteFile(filepath.Join(root, fmt.Sprintf("IMG_%d.JPG", i)), []byte(fmt.Sprint("jpeg-", i)), 0o600))
+	}
 	ing := newTestIngester(t)
 	begin, end := 0, 0
-	mutations := 0
+	interval := 500 * time.Millisecond
+	var entered, left []time.Time
+	started := time.Now()
 	report, err := ing.ImportPhotoDirectory(t.Context(), root, "/photos", PhotoImportOptions{
-		ActivityBegin: func() { begin++ },
-		ActivityEnd:   func() { end++ },
-		Mutate: func(ctx context.Context, fn func() error) error {
-			mutations++
+		SettleInterval: interval,
+		ActivityBegin:  func() { begin++ },
+		ActivityEnd:    func() { end++ },
+		Mutate: func(_ context.Context, fn func() error) error {
+			entered = append(entered, time.Now())
+			defer func() { left = append(left, time.Now()) }()
 			return fn()
 		},
 	})
+	elapsed := time.Since(started)
 	require.NoError(t, err)
-	assert.Equal(t, 1, report.Added)
+	assert.Equal(t, int64(6), report.Receipt.Added)
 	assert.Equal(t, 1, begin)
 	assert.Equal(t, 1, end)
-	assert.Greater(t, mutations, 1)
+	require.Len(t, entered, 7)
+	// The only wait sits between destination setup and the first group, outside the gate.
+	assert.GreaterOrEqual(t, entered[1].Sub(left[0]), interval)
+	var held time.Duration
+	for i := range entered {
+		held += left[i].Sub(entered[i])
+	}
+	assert.Less(t, elapsed-held, 6*interval)
 }
-
-func TestPhotoImportCancellationFinishesRunAfterContextCancel(t *testing.T) {
+func TestPhotoImportRunnerCancelsAndResumes(t *testing.T) {
 	ing := newTestIngester(t)
 	root := t.TempDir()
-	run, err := ing.Store.StartPhotoImportRun(t.Context(), root, "/photos", 0)
+	for i := range 3 {
+		require.NoError(t, os.WriteFile(filepath.Join(root, fmt.Sprintf("IMG_%d.JPG", i)), []byte(fmt.Sprint("jpeg-", i)), 0o600))
+	}
+	request := fmt.Sprintf(`{"source_root":%q,"destination":"/photos"}`, root)
+	runner := PhotoImportRunner{Ingester: ing}
+
+	stopped, stop := context.WithCancel(t.Context())
+	shutdown := runner
+	shutdown.Options.Mutate = func(ctx context.Context, _ func() error) error {
+		stop()
+		return ctx.Err()
+	}
+	interrupted, err := ing.Store.CreateLocalOperation(t.Context(), store.StorageOperationKindPhotoImport, request)
 	require.NoError(t, err)
-	ctx, cancel := context.WithCancel(t.Context())
-	cancel()
-	_, err = ing.ImportPhotoDirectory(ctx, root, "/photos", PhotoImportOptions{RunID: run.ID, Mutate: func(ctx context.Context, fn func() error) error {
-		return fn()
-	}})
-	require.ErrorIs(t, err, context.Canceled)
-	finished, err := ing.Store.PhotoImportRun(t.Context(), run.ID)
+	require.ErrorIs(t, shutdown.Run(stopped, interrupted.ID), context.Canceled)
+	resumable, err := ing.Store.ResumableStorageOperations(t.Context())
 	require.NoError(t, err)
-	assert.Equal(t, store.PhotoImportStateCancelled, finished.State)
+	require.Len(t, resumable, 1)
+	assert.Equal(t, store.StorageOperationRunning, resumable[0].State)
+	require.NoError(t, runner.Run(t.Context(), interrupted.ID))
+	completed, err := ing.Store.StorageOperation(t.Context(), interrupted.ID)
+	require.NoError(t, err)
+	assert.Equal(t, store.StorageOperationCompleted, completed.State)
+	assert.Equal(t, int64(3), completed.TotalObjects)
+	assert.Equal(t, int64(3), completed.CompletedObjects)
+	assert.JSONEq(t, `{"added":3,"skipped":0,"failed":0,"ambiguous":0}`, completed.ReceiptJSON)
+
+	cancelled, err := ing.Store.CreateLocalOperation(t.Context(), store.StorageOperationKindPhotoImport, request)
+	require.NoError(t, err)
+	require.NoError(t, ing.Store.RequestStorageOperationCancel(t.Context(), cancelled.ID))
+	require.NoError(t, runner.Run(t.Context(), cancelled.ID))
+	finished, err := ing.Store.StorageOperation(t.Context(), cancelled.ID)
+	require.NoError(t, err)
+	assert.Equal(t, store.StorageOperationCancelled, finished.State)
+	assert.Zero(t, finished.CompletedObjects)
 }

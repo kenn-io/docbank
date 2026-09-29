@@ -8283,7 +8283,7 @@ func (c *Client) DetachPhotoFile(ctx context.Context, options *DetachPhotoFileRe
 	return responseParser(ctx, resp)
 }
 
-// ListPhotoImports List durable grouped photo import runs
+// ListPhotoImports List photo imports, newest first
 func (c *Client) ListPhotoImports(ctx context.Context, reqEditors ...runtime.RequestEditorFn) (*ListPhotoImportsResponse, error) {
 	var err error
 	reqParams := runtime.RequestOptionsParameters{
@@ -8375,7 +8375,7 @@ func (c *Client) StartPhotoImport(ctx context.Context, options *StartPhotoImport
 	return responseParser(ctx, resp)
 }
 
-// GetPhotoImport Inspect one durable grouped photo import run
+// GetPhotoImport Inspect one photo import and its ambiguous groups
 func (c *Client) GetPhotoImport(ctx context.Context, options *GetPhotoImportRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetPhotoImportResponse, error) {
 	var err error
 	reqParams := runtime.RequestOptionsParameters{
@@ -8421,7 +8421,7 @@ func (c *Client) GetPhotoImport(ctx context.Context, options *GetPhotoImportRequ
 	return responseParser(ctx, resp)
 }
 
-// CancelPhotoImport Request cancellation at the next photo group
+// CancelPhotoImport Request cancellation before the next photo group
 func (c *Client) CancelPhotoImport(ctx context.Context, options *CancelPhotoImportRequestOptions, reqEditors ...runtime.RequestEditorFn) (*CancelPhotoImportResponse, error) {
 	var err error
 	reqParams := runtime.RequestOptionsParameters{
@@ -17684,7 +17684,6 @@ func (o *GetPhotoImportRequestOptions) GetHeader() (map[string]string, error) {
 // CancelPhotoImportRequestOptions is the options needed to make a request to CancelPhotoImport.
 type CancelPhotoImportRequestOptions struct {
 	PathParams *CancelPhotoImportPath
-	Header     *CancelPhotoImportHeaders
 }
 
 // GetPathParams returns the path params as a map.
@@ -17710,13 +17709,7 @@ func (o *CancelPhotoImportRequestOptions) GetBody() any {
 
 // GetHeader returns the headers as a map.
 func (o *CancelPhotoImportRequestOptions) GetHeader() (map[string]string, error) {
-	encoded, err := json.Marshal(o.Header, json.StringifyNumbers(true))
-	if err != nil {
-		return nil, err
-	}
-	var headers map[string]string
-	err = json.Unmarshal(encoded, &headers)
-	return headers, err
+	return nil, nil
 }
 
 // GetPhotoAssetByNodeRequestOptions is the options needed to make a request to GetPhotoAssetByNode.
@@ -20226,10 +20219,6 @@ type AttachPhotoFileHeaders struct {
 }
 
 type DetachPhotoFileHeaders struct {
-	IfMatch string `json:"If-Match"`
-}
-
-type CancelPhotoImportHeaders struct {
 	IfMatch string `json:"If-Match"`
 }
 
@@ -23182,9 +23171,7 @@ type PhotoFile = api.PhotoFile
 
 type PhotoImportAmbiguity = api.PhotoImportAmbiguity
 
-type PhotoImportCandidate = api.PhotoImportCandidate
-
-type PhotoImportChoice = api.PhotoImportChoice
+type PhotoImportAmbiguousFile = api.PhotoImportAmbiguousFile
 
 type PhotoImportRun = api.PhotoImportRun
 

@@ -96,19 +96,11 @@
   }
 
   async function cancelPhotoImport(job: Job): Promise<void> {
-    if (job.kind !== "photo-import" || !job.operation_id || !job.can_cancel) return;
+    if (job.kind !== "photo_import" || !job.operation_id || !job.can_cancel) return;
     const runId = job.operation_id;
     cancelling = new Set(cancelling).add(runId);
     try {
-      for (let attempt = 0; attempt < 3; attempt += 1) {
-        const run = await generated.getPhotoImport(runId, { session });
-        try {
-          await generated.cancelPhotoImport(runId, { "If-Match": `"${run.revision}"` }, { session });
-          break;
-        } catch (cause) {
-          if (!(cause instanceof APIError && cause.status === 412 && attempt < 2)) throw cause;
-        }
-      }
+      await generated.cancelPhotoImport(runId, { session });
       await refresh();
     } catch (cause) {
       error = cause instanceof Error ? cause.message : String(cause);
@@ -124,7 +116,7 @@
   }
 
   const operationTitles: Record<string, string> = {
-    "photo-import": "Photo import",
+    photo_import: "Photo import",
     place: "Storage placement",
     evacuate: "Store evacuation",
     repair: "Storage repair",
@@ -197,7 +189,7 @@
   }
 
   function unit(job: Job): string {
-    return job.kind === "photo-import" ? "groups" : "objects";
+    return job.kind === "photo_import" ? "groups" : "objects";
   }
 
   function percentLabel(job: Job): string {
@@ -288,7 +280,7 @@
                             {statusLabel(job)}
                           </Chip>
                         </div>
-                        {#if job.kind === "photo-import" && job.can_cancel && !job.cancel_requested}
+                        {#if job.kind === "photo_import" && job.can_cancel && !job.cancel_requested}
                           <Button
                             size="sm"
                             ariaLabel={`Cancel ${title.toLowerCase()}`}

@@ -48,41 +48,20 @@ func registerJobRoutes(api huma.API, d Deps) {
 				if redactErrors && errorDetail != "" {
 					errorDetail = "storage operation failed; inspect with the Docbank CLI for details"
 				}
-				out.Body.Items = append(out.Body.Items, Job{
+				job := Job{
 					Name: name, Status: string(operation.State),
 					StartedAt: operation.CreatedAt.Format(time.RFC3339Nano),
 					Error:     errorDetail, OperationID: operation.ID, Kind: operation.Kind,
 					CompletedObjects: operation.CompletedObjects,
 					TotalObjects:     operation.TotalObjects,
 					FinishedAt:       storageOperationAPI(operation).FinishedAt,
-				})
-			}
-			photoRuns, err := d.Store.ListPhotoImportRuns(ctx, 1000)
-			if err != nil {
-				return nil, FromStoreError(err)
-			}
-			for _, run := range photoRuns {
-				status := run.State
-				switch status {
-				case store.PhotoImportStateCancelRequested:
-					status = "running"
-				case store.PhotoImportStateInterrupted, store.PhotoImportStateAmbiguous:
-					status = "failed"
+					CancelRequested:  operation.CancelRequested,
 				}
-				errorDetail := run.Error
-				if run.State == store.PhotoImportStateAmbiguous {
-					errorDetail = "photo import has ambiguous groups"
+				if operation.Kind == store.StorageOperationKindPhotoImport {
+					job.CanCancel = operation.State == store.StorageOperationQueued || operation.State == store.StorageOperationRunning
+					job.Destination = photoImportRequest(operation).Destination
 				}
-				if redactErrors && errorDetail != "" {
-					errorDetail = "photo import failed; inspect with the Docbank CLI for details"
-				}
-				operationNames["photo-import:"+run.ID] = struct{}{}
-				canCancel := run.State == store.PhotoImportStateRunning || run.State == store.PhotoImportStateCancelRequested
-				out.Body.Items = append(out.Body.Items, Job{Name: "photo-import:" + run.ID, Status: status,
-					StartedAt: run.StartedAt, FinishedAt: run.FinishedAt, Error: errorDetail,
-					OperationID: run.ID, Kind: "photo-import", CompletedObjects: run.CompletedGroups,
-					TotalObjects: run.TotalGroups, CanCancel: canCancel,
-					CancelRequested: run.CancelRequested, Destination: run.Destination})
+				out.Body.Items = append(out.Body.Items, job)
 			}
 		}
 		if d.Jobs != nil {

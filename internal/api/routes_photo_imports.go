@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"net/http"
@@ -14,24 +15,40 @@ import (
 )
 
 type photoImportRunOutput struct {
-	ETag string `header:"ETag"`
 	Body PhotoImportRun
 }
 
-func photoImportError(err error) error {
-	if err == nil {
-		return nil
+// NewPhotoImportRunner builds the runner the daemon uses for new and resumed
+// photo import operations.
+func NewPhotoImportRunner(d Deps) ingest.PhotoImportRunner {
+	runner := ingest.PhotoImportRunner{
+		Ingester: &ingest.Ingester{Store: d.Store, Blobs: d.Blobs},
+		Options:  ingest.PhotoImportOptions{SettleInterval: ingest.DefaultPhotoImportSettleInterval},
 	}
-	if errors.Is(err, store.ErrPhotoImportAmbiguous) {
-		return NewError(http.StatusConflict, "photo_import_ambiguous", err.Error())
+	if d.Gate != nil {
+		runner.Options.Mutate = d.Gate.MutateContext
 	}
-	if errors.Is(err, store.ErrStorageOperationTerminal) {
-		return NewError(http.StatusConflict, "photo_import_terminal", err.Error())
+	if d.Tracker != nil {
+		runner.Options.ActivityBegin = d.Tracker.Begin
+		runner.Options.ActivityEnd = d.Tracker.End
 	}
-	return FromStoreError(err)
+	return runner
+}
+
+func photoImportOperation(ctx context.Context, d Deps, id string) (store.StorageOperation, error) {
+	operation, err := d.Store.StorageOperation(ctx, id)
+	if err != nil {
+		return store.StorageOperation{}, FromStoreError(err)
+	}
+	if operation.Kind != store.StorageOperationKindPhotoImport {
+		return store.StorageOperation{}, FromStoreError(store.ErrNotFound)
+	}
+	return operation, nil
 }
 
 func registerPhotoImportRoutes(api huma.API, d Deps, g *gate) {
+	runnerDeps := d
+	runnerDeps.Gate = g
 	huma.Register(api, huma.Operation{
 		OperationID: "startPhotoImport", Method: http.MethodPost,
 		Path: "/api/v1/photos/imports", Summary: "Import grouped camera files from a daemon-host folder",
@@ -43,108 +60,74 @@ func registerPhotoImportRoutes(api huma.API, d Deps, g *gate) {
 		if in.Body.Destination == "" || in.Body.Destination[0] != '/' {
 			return nil, NewError(http.StatusUnprocessableEntity, "validation", "destination must be an absolute vault path")
 		}
-		if choice := in.Body.Choice; choice != nil {
-			if err := store.ValidatePhotoImportChoice(fromStorePhotoImportChoice(choice)); err != nil {
-				return nil, NewError(http.StatusUnprocessableEntity, "validation", err.Error())
-			}
-		}
-		var run store.PhotoImportRun
-		var err error
-		mutate := func() error {
-			var startErr error
-			run, startErr = d.Store.StartPhotoImportRun(ctx, in.Body.SourceRoot, in.Body.Destination, 0)
-			return startErr
-		}
-		if g != nil {
-			err = g.mutate(mutate)
-		} else {
-			err = mutate()
-		}
+		request, err := json.Marshal(store.PhotoImportRequest{SourceRoot: in.Body.SourceRoot, Destination: in.Body.Destination})
 		if err != nil {
-			return nil, photoImportError(err)
+			return nil, err
 		}
-		worker := func(runCtx context.Context) error {
-			ing := &ingest.Ingester{Store: d.Store, Blobs: d.Blobs}
-			opts := ingest.PhotoImportOptions{
-				RunID: run.ID, Choice: fromStorePhotoImportChoice(in.Body.Choice),
-				SettleInterval: ingest.DefaultPhotoImportSettleInterval,
-			}
-			if g != nil {
-				opts.Mutate = g.MutateContext
-			}
-			if d.Tracker != nil {
-				opts.ActivityBegin = d.Tracker.Begin
-				opts.ActivityEnd = d.Tracker.End
-			}
-			_, importErr := ing.ImportPhotoDirectory(runCtx, in.Body.SourceRoot, in.Body.Destination, opts)
-			return importErr
+		operation, err := d.Store.CreateLocalOperation(ctx, store.StorageOperationKindPhotoImport, string(request))
+		if err != nil {
+			return nil, FromStoreError(err)
 		}
-		if d.Jobs != nil {
-			if err := d.Jobs.Start("photo-import:"+run.ID, worker); err != nil {
-				_, _ = d.Store.FinishPhotoImportRun(context.Background(), run.ID, store.PhotoImportStateFailed, err.Error())
-				return nil, fmt.Errorf("starting photo import worker: %w", err)
-			}
-		} else {
-			go func() { _ = worker(context.WithoutCancel(ctx)) }()
+		runner := NewPhotoImportRunner(runnerDeps)
+		if d.Jobs == nil {
+			go func() { _ = runner.Run(context.WithoutCancel(ctx), operation.ID) }()
+		} else if err := runner.Start(d.Jobs, operation.ID); err != nil {
+			return nil, NewError(http.StatusServiceUnavailable, "photo_import_unavailable",
+				fmt.Sprintf("photo import is queued but could not start: %v", err))
 		}
-		return &photoImportRunOutput{ETag: revisionETag(run.Revision), Body: fromStorePhotoImportRun(run, false)}, nil
+		return &photoImportRunOutput{Body: fromStorePhotoImport(operation, false)}, nil
 	})
 
 	huma.Register(api, huma.Operation{
 		OperationID: "listPhotoImports", Method: http.MethodGet,
-		Path: "/api/v1/photos/imports", Summary: "List durable grouped photo import runs",
+		Path: "/api/v1/photos/imports", Summary: "List photo imports, newest first",
 	}, func(ctx context.Context, _ *struct{}) (*struct{ Body PhotoImportRunList }, error) {
-		runs, err := d.Store.ListPhotoImportRuns(ctx, 100)
+		operations, err := d.Store.StorageOperations(ctx, 1000)
 		if err != nil {
-			return nil, photoImportError(err)
+			return nil, FromStoreError(err)
 		}
 		browser := browserSessionRequest(ctx)
-		items := make([]PhotoImportRun, 0, len(runs))
-		for _, run := range runs {
-			items = append(items, fromStorePhotoImportRun(run, browser))
+		items := make([]PhotoImportRun, 0)
+		for _, operation := range operations {
+			if operation.Kind == store.StorageOperationKindPhotoImport {
+				items = append(items, fromStorePhotoImport(operation, browser))
+			}
 		}
 		return &struct{ Body PhotoImportRunList }{Body: PhotoImportRunList{Items: items}}, nil
 	})
 
 	huma.Register(api, huma.Operation{
 		OperationID: "getPhotoImport", Method: http.MethodGet,
-		Path: "/api/v1/photos/imports/{run_id}", Summary: "Inspect one durable grouped photo import run",
+		Path: "/api/v1/photos/imports/{run_id}", Summary: "Inspect one photo import and its ambiguous groups",
 	}, func(ctx context.Context, in *struct {
 		RunID string `path:"run_id"`
 	}) (*photoImportRunOutput, error) {
-		run, err := d.Store.PhotoImportRun(ctx, in.RunID)
+		operation, err := photoImportOperation(ctx, d, in.RunID)
 		if err != nil {
-			return nil, photoImportError(err)
+			return nil, err
 		}
-		browser := browserSessionRequest(ctx)
-		return &photoImportRunOutput{ETag: revisionETag(run.Revision), Body: fromStorePhotoImportRun(run, browser)}, nil
+		return &photoImportRunOutput{Body: fromStorePhotoImport(operation, browserSessionRequest(ctx))}, nil
 	})
 
 	huma.Register(api, huma.Operation{
 		OperationID: "cancelPhotoImport", Method: http.MethodPost,
-		Path: "/api/v1/photos/imports/{run_id}/cancel", Summary: "Request cancellation at the next photo group",
+		Path: "/api/v1/photos/imports/{run_id}/cancel", Summary: "Request cancellation before the next photo group",
 	}, func(ctx context.Context, in *struct {
-		RunID   string `path:"run_id"`
-		IfMatch string `header:"If-Match"`
+		RunID string `path:"run_id"`
 	}) (*photoImportRunOutput, error) {
-		revision, err := parseIfMatch(in.IfMatch)
+		if _, err := photoImportOperation(ctx, d, in.RunID); err != nil {
+			return nil, err
+		}
+		if err := d.Store.RequestStorageOperationCancel(ctx, in.RunID); err != nil {
+			if errors.Is(err, store.ErrStorageOperationTerminal) {
+				return nil, NewError(http.StatusConflict, "photo_import_terminal", err.Error())
+			}
+			return nil, FromStoreError(err)
+		}
+		operation, err := photoImportOperation(ctx, d, in.RunID)
 		if err != nil {
 			return nil, err
 		}
-		var run store.PhotoImportRun
-		mutate := func() error {
-			var callErr error
-			run, callErr = d.Store.RequestPhotoImportCancel(ctx, in.RunID, revision)
-			return callErr
-		}
-		if g != nil {
-			err = g.mutate(mutate)
-		} else {
-			err = mutate()
-		}
-		if err != nil {
-			return nil, photoImportError(err)
-		}
-		return &photoImportRunOutput{ETag: revisionETag(run.Revision), Body: fromStorePhotoImportRun(run, browserSessionRequest(ctx))}, nil
+		return &photoImportRunOutput{Body: fromStorePhotoImport(operation, browserSessionRequest(ctx))}, nil
 	})
 }

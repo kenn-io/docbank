@@ -1,40 +1,33 @@
 package api
 
-import "go.kenn.io/docbank/internal/store"
+import (
+	"encoding/json/v2"
+	"time"
+
+	"go.kenn.io/docbank/internal/store"
+)
 
 type PhotoImportStartRequest struct {
-	SourceRoot  string             `json:"source_root" minLength:"1" maxLength:"4096"`
-	Destination string             `json:"destination" minLength:"1" maxLength:"4096"`
-	Choice      *PhotoImportChoice `json:"choice,omitzero"`
+	SourceRoot  string `json:"source_root" minLength:"1" maxLength:"4096"`
+	Destination string `json:"destination" minLength:"1" maxLength:"4096"`
 }
 
-type PhotoImportChoice struct {
-	GroupKey      string `json:"group_key,omitzero"`
-	RawAssetID    string `json:"raw_asset_id,omitzero" format:"uuid"`
-	RawFileID     string `json:"raw_file_id,omitzero" format:"uuid"`
-	AssetRevision int64  `json:"asset_revision,omitzero" minimum:"1"`
-	RawSourcePath string `json:"raw_source_path,omitzero" maxLength:"4096"`
-	RawBlobHash   string `json:"raw_blob_hash,omitzero" pattern:"^[0-9a-f]{64}$"`
-}
-
-type PhotoImportCandidate struct {
-	AssetID    string `json:"asset_id,omitzero" format:"uuid"`
-	FileID     string `json:"file_id,omitzero" format:"uuid"`
-	NodeID     int64  `json:"node_id,omitzero" minimum:"1"`
-	Revision   int64  `json:"revision,omitzero" minimum:"1"`
-	SourcePath string `json:"source_path,omitzero"`
-	BlobHash   string `json:"blob_hash" pattern:"^[0-9a-f]{64}$"`
-}
-
+// PhotoImportAmbiguity lists same-name files the import left unpaired.
 type PhotoImportAmbiguity struct {
-	GroupKey   string                 `json:"group_key"`
-	Candidates []PhotoImportCandidate `json:"candidates"`
+	Reason string                     `json:"reason" enum:"multiple_raw,separate_photos"`
+	Files  []PhotoImportAmbiguousFile `json:"files"`
+}
+
+type PhotoImportAmbiguousFile struct {
+	SourcePath string `json:"source_path,omitzero"`
+	NodeID     int64  `json:"node_id" minimum:"1"`
+	AssetID    string `json:"asset_id,omitzero" format:"uuid"`
+	Role       string `json:"role"`
 }
 
 type PhotoImportRun struct {
 	ID              string                 `json:"id" format:"uuid"`
-	Revision        int64                  `json:"revision" minimum:"1"`
-	State           string                 `json:"state"`
+	State           string                 `json:"state" enum:"queued,running,completed,failed,cancelled"`
 	SourceRoot      string                 `json:"source_root,omitzero"`
 	Destination     string                 `json:"destination"`
 	TotalGroups     int64                  `json:"total_groups" minimum:"0"`
@@ -55,39 +48,41 @@ type PhotoImportRunList struct {
 	Items []PhotoImportRun `json:"items"`
 }
 
-func fromStorePhotoImportChoice(choice *PhotoImportChoice) *store.PhotoImportChoice {
-	if choice == nil {
-		return nil
-	}
-	return &store.PhotoImportChoice{GroupKey: choice.GroupKey, RawAssetID: choice.RawAssetID,
-		RawFileID: choice.RawFileID, AssetRevision: choice.AssetRevision,
-		RawSourcePath: choice.RawSourcePath, RawBlobHash: choice.RawBlobHash}
+// photoImportRequest decodes an operation's request, returning the zero
+// request for a malformed row so listing never fails on one bad record.
+func photoImportRequest(operation store.StorageOperation) store.PhotoImportRequest {
+	var request store.PhotoImportRequest
+	_ = json.Unmarshal([]byte(operation.RequestJSON), &request)
+	return request
 }
 
-func fromStorePhotoImportRun(run store.PhotoImportRun, browser bool) PhotoImportRun {
-	out := PhotoImportRun{ID: run.ID, Revision: run.Revision, State: run.State,
-		Destination: run.Destination, TotalGroups: run.TotalGroups,
-		CompletedGroups: run.CompletedGroups, AddedGroups: run.AddedGroups,
-		SkippedGroups: run.SkippedGroups, FailedGroups: run.FailedGroups,
-		AmbiguousGroups: run.AmbiguousGroups, CancelRequested: run.CancelRequested,
-		StartedAt: run.StartedAt, UpdatedAt: run.UpdatedAt, FinishedAt: run.FinishedAt}
-	if !browser {
-		out.SourceRoot = run.SourceRoot
-		out.Error = run.Error
+// fromStorePhotoImport projects a photo_import operation. A browser session
+// sees no source paths or raw error text.
+func fromStorePhotoImport(operation store.StorageOperation, browser bool) PhotoImportRun {
+	request := photoImportRequest(operation)
+	var receipt store.PhotoImportReceipt
+	_ = json.Unmarshal([]byte(operation.ReceiptJSON), &receipt)
+	out := PhotoImportRun{ID: operation.ID, State: string(operation.State),
+		Destination: request.Destination, TotalGroups: operation.TotalObjects,
+		CompletedGroups: operation.CompletedObjects, AddedGroups: receipt.Added,
+		SkippedGroups: receipt.Skipped, FailedGroups: receipt.Failed,
+		AmbiguousGroups: receipt.Ambiguous, CancelRequested: operation.CancelRequested,
+		StartedAt: operation.CreatedAt.Format(time.RFC3339Nano), UpdatedAt: operation.UpdatedAt.Format(time.RFC3339Nano)}
+	if operation.FinishedAt != nil {
+		out.FinishedAt = operation.FinishedAt.Format(time.RFC3339Nano)
 	}
-	for _, ambiguity := range run.Ambiguities {
-		item := PhotoImportAmbiguity{GroupKey: ambiguity.GroupKey}
-		if browser {
-			item.GroupKey = ""
-		}
-		for _, candidate := range ambiguity.Candidates {
-			sourcePath := candidate.SourcePath
-			if browser {
-				sourcePath = ""
+	if !browser {
+		out.SourceRoot = request.SourceRoot
+		out.Error = operation.Error
+	}
+	for _, ambiguity := range receipt.Ambiguities {
+		item := PhotoImportAmbiguity{Reason: ambiguity.Reason, Files: make([]PhotoImportAmbiguousFile, 0, len(ambiguity.Files))}
+		for _, file := range ambiguity.Files {
+			entry := PhotoImportAmbiguousFile{NodeID: file.NodeID, AssetID: file.AssetID, Role: file.Role}
+			if !browser {
+				entry.SourcePath = file.SourcePath
 			}
-			item.Candidates = append(item.Candidates, PhotoImportCandidate{AssetID: candidate.AssetID,
-				FileID: candidate.FileID, NodeID: candidate.NodeID, Revision: candidate.Revision,
-				SourcePath: sourcePath, BlobHash: candidate.BlobHash})
+			item.Files = append(item.Files, entry)
 		}
 		out.Ambiguities = append(out.Ambiguities, item)
 	}

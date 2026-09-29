@@ -5,7 +5,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
-	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -106,13 +105,11 @@ func TestPhotoNodeAddressedResponsesMustContainTheNode(t *testing.T) {
 
 func TestPhotoImportClients(t *testing.T) {
 	runID := "00000000-0000-4000-8000-000000000021"
-	run := api.PhotoImportRun{ID: runID, Revision: 1, State: "running", SourceRoot: `C:\camera`, Destination: "/photos",
+	run := api.PhotoImportRun{ID: runID, State: "running", SourceRoot: `C:\camera`, Destination: "/photos",
 		TotalGroups: 2, StartedAt: "2026-09-22T00:00:00Z", UpdatedAt: "2026-09-22T00:00:00Z"}
-	var selected *api.PhotoImportChoice
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		write := func(value any, status int, revision int64) {
-			w.Header().Set("ETag", `"`+string(rune('0'+revision))+`"`)
+		write := func(value any, status int) {
 			w.WriteHeader(status)
 			body, err := json.Marshal(value)
 			if err != nil {
@@ -123,26 +120,15 @@ func TestPhotoImportClients(t *testing.T) {
 		}
 		switch {
 		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/photos/imports":
-			var request api.PhotoImportStartRequest
-			if err := json.UnmarshalRead(r.Body, &request); err != nil {
-				http.Error(w, err.Error(), http.StatusBadRequest)
-				return
-			}
-			selected = request.Choice
-			write(run, http.StatusAccepted, run.Revision)
+			write(run, http.StatusAccepted)
 		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/photos/imports":
-			write(api.PhotoImportRunList{Items: []api.PhotoImportRun{run}}, http.StatusOK, run.Revision)
+			write(api.PhotoImportRunList{Items: []api.PhotoImportRun{run}}, http.StatusOK)
 		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/photos/imports/"+runID:
-			write(run, http.StatusOK, run.Revision)
+			write(run, http.StatusOK)
 		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/photos/imports/"+runID+"/cancel":
-			if r.Header.Get("If-Match") != `"1"` {
-				http.Error(w, "missing If-Match", http.StatusPreconditionRequired)
-				return
-			}
-			run.Revision = 2
-			run.State = "cancel-requested"
+			assert.Empty(t, r.Header.Get("If-Match"))
 			run.CancelRequested = true
-			write(run, http.StatusOK, run.Revision)
+			write(run, http.StatusOK)
 		default:
 			http.NotFound(w, r)
 		}
@@ -150,20 +136,20 @@ func TestPhotoImportClients(t *testing.T) {
 	t.Cleanup(server.Close)
 	client := New(server.URL, "synthetic-key")
 	sourceRoot := filepath.Join(t.TempDir(), "camera")
-	choice := &api.PhotoImportChoice{GroupKey: "photo\x00camera\x00capture", RawSourcePath: filepath.Join(sourceRoot, "capture.ARW")}
-	started, err := client.StartPhotoImport(t.Context(), sourceRoot, "/photos", choice)
+	started, err := client.StartPhotoImport(t.Context(), sourceRoot, "/photos")
 	require.NoError(t, err)
 	assert.Equal(t, runID, started.ID)
-	require.NotNil(t, selected)
-	assert.Equal(t, choice.GroupKey, selected.GroupKey)
 	runs, err := client.PhotoImports(t.Context())
 	require.NoError(t, err)
 	require.Len(t, runs, 1)
 	fetched, err := client.PhotoImport(t.Context(), runID)
 	require.NoError(t, err)
 	assert.Equal(t, runID, fetched.ID)
-	cancelled, err := client.CancelPhotoImport(t.Context(), runID, fetched.Revision)
+	cancelled, err := client.CancelPhotoImport(t.Context(), runID)
 	require.NoError(t, err)
 	assert.True(t, cancelled.CancelRequested)
-	assert.True(t, strings.HasPrefix(cancelled.State, "cancel"))
+
+	run.State = "completed"
+	_, err = client.PhotoImport(t.Context(), runID)
+	require.Error(t, err)
 }

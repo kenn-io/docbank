@@ -24,7 +24,7 @@ test("photo import progress and cancellation are visible", async ({ page }) => {
     await mkdir(path.join(source, "trip"), { recursive: true, mode: 0o700 });
     await writeFile(path.join(source, "trip", "IMG_0001.JPG"), Buffer.from("synthetic-jpeg"), { mode: 0o600 });
     await writeFile(path.join(source, "trip", "IMG_0001.ARW"), Buffer.from("synthetic-raw"), { mode: 0o600 });
-    for (let index = 2; index <= 300; index += 1) {
+    for (let index = 2; index <= 2000; index += 1) {
       await writeFile(path.join(source, "trip", `IMG_${String(index).padStart(4, "0")}.JPG`), Buffer.from(`synthetic-jpeg-${index}`), { mode: 0o600 });
     }
     const webURL = await run("web", "--no-browser");

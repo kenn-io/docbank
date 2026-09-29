@@ -4275,34 +4275,37 @@ export interface PhotoAsset {
   updated_at: string;
 }
 
-export interface PhotoImportCandidate {
+export type PhotoImportAmbiguityReason = typeof PhotoImportAmbiguityReason[keyof typeof PhotoImportAmbiguityReason];
+
+
+export const PhotoImportAmbiguityReason = {
+  multiple_raw: 'multiple_raw',
+  separate_photos: 'separate_photos',
+} as const;
+
+export interface PhotoImportAmbiguousFile {
   asset_id?: string;
-  /** @pattern ^[0-9a-f]{64}$ */
-  blob_hash: string;
-  file_id?: string;
   /** @minimum 1 */
-  node_id?: number;
-  /** @minimum 1 */
-  revision?: number;
+  node_id: number;
+  role: string;
   source_path?: string;
 }
 
 export interface PhotoImportAmbiguity {
-  candidates: PhotoImportCandidate[];
-  group_key: string;
+  files: PhotoImportAmbiguousFile[];
+  reason: PhotoImportAmbiguityReason;
 }
 
-export interface PhotoImportChoice {
-  /** @minimum 1 */
-  asset_revision?: number;
-  group_key?: string;
-  raw_asset_id?: string;
-  /** @pattern ^[0-9a-f]{64}$ */
-  raw_blob_hash?: string;
-  raw_file_id?: string;
-  /** @maxLength 4096 */
-  raw_source_path?: string;
-}
+export type PhotoImportRunState = typeof PhotoImportRunState[keyof typeof PhotoImportRunState];
+
+
+export const PhotoImportRunState = {
+  queued: 'queued',
+  running: 'running',
+  completed: 'completed',
+  failed: 'failed',
+  cancelled: 'cancelled',
+} as const;
 
 export interface PhotoImportRun {
   /** A URL to the JSON Schema for this object. */
@@ -4321,13 +4324,11 @@ export interface PhotoImportRun {
   failed_groups: number;
   finished_at?: string;
   id: string;
-  /** @minimum 1 */
-  revision: number;
   /** @minimum 0 */
   skipped_groups: number;
   source_root?: string;
   started_at: string;
-  state: string;
+  state: PhotoImportRunState;
   /** @minimum 0 */
   total_groups: number;
   updated_at: string;
@@ -4342,7 +4343,6 @@ export interface PhotoImportRunList {
 export interface PhotoImportStartRequest {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
-  choice?: PhotoImportChoice;
   /**
      * @minLength 1
      * @maxLength 4096
@@ -6832,10 +6832,6 @@ clear_dependent_sidecars?: boolean;
 };
 
 export type DetachPhotoFileHeaders = {
-'If-Match': string;
-};
-
-export type CancelPhotoImportHeaders = {
 'If-Match': string;
 };
 
@@ -13238,7 +13234,7 @@ export const getListPhotoImportsUrl = () => {
 }
 
 /**
- * @summary List durable grouped photo import runs
+ * @summary List photo imports, newest first
  */
 export const listPhotoImports = async ( options?: Parameters<typeof sessionJSON>[1]): Promise<PhotoImportRunList> => {
 
@@ -13300,7 +13296,7 @@ export const getGetPhotoImportUrl = (runId: string,) => {
 }
 
 /**
- * @summary Inspect one durable grouped photo import run
+ * @summary Inspect one photo import and its ambiguous groups
  */
 export const getPhotoImport = async (runId: string, options?: Parameters<typeof sessionJSON>[1]): Promise<PhotoImportRun> => {
 
@@ -13324,30 +13320,15 @@ export const getCancelPhotoImportUrl = (runId: string,) => {
 }
 
 /**
- * @summary Request cancellation at the next photo group
+ * @summary Request cancellation before the next photo group
  */
-export const cancelPhotoImport = async (runId: string,
-    headers: CancelPhotoImportHeaders, options?: Parameters<typeof sessionJSON>[1]): Promise<PhotoImportRun> => {
+export const cancelPhotoImport = async (runId: string, options?: Parameters<typeof sessionJSON>[1]): Promise<PhotoImportRun> => {
 
-    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
-    if (!h) return {};
-    if (h instanceof Headers) return Object.fromEntries(h.entries());
-    if (Symbol.iterator in h) {
-      return Object.fromEntries(
-        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
-      );
-    }
-    const headers: Record<string, string | readonly string[]> = {};
-    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
-      if (value !== undefined) headers[name] = value;
-    }
-    return headers;
-  };
-return sessionJSON<PhotoImportRun>(getCancelPhotoImportUrl(runId),
+  return sessionJSON<PhotoImportRun>(getCancelPhotoImportUrl(runId),
   {
     ...options,
-    method: 'POST',
-    headers: { ...headers, ...getHeaders(options?.headers) }
+    method: 'POST'
+
 
   }
 );}

@@ -167,26 +167,9 @@ func TestWithPhotoRevisionRetriesOnceOnlyWhenInferred(t *testing.T) {
 	assert.Equal(t, []int64{7}, writes)
 }
 
-func TestPhotoImportClients(t *testing.T) {
-	command, _, err := rootCmd.Find([]string{"photos", "import"})
-	require.NoError(t, err)
-	require.NotNil(t, command)
-	assert.NotNil(t, command.Flags().Lookup("group-key"))
-	assert.NotNil(t, command.Flags().Lookup("raw-source-path"))
-
-	previousGroupKey, previousPath := photoImportGroupKey, photoImportRawPath
-	t.Cleanup(func() {
-		photoImportGroupKey, photoImportRawPath = previousGroupKey, previousPath
-	})
-	photoImportGroupKey = "photo-group"
-	photoImportRawPath = filepath.Join(t.TempDir(), "capture.ARW")
-	choice := photoImportChoiceFromFlags()
-	require.NotNil(t, choice)
-	assert.Equal(t, photoImportGroupKey, choice.GroupKey)
-	assert.Equal(t, photoImportRawPath, choice.RawSourcePath)
-
+func TestPhotoImportCommands(t *testing.T) {
 	for _, path := range [][]string{
-		{"photos", "imports", "show"}, {"photos", "imports", "cancel"},
+		{"photos", "import"}, {"photos", "imports", "show"}, {"photos", "imports", "cancel"},
 	} {
 		command, _, err := rootCmd.Find(path)
 		require.NoError(t, err, path)
@@ -194,7 +177,7 @@ func TestPhotoImportClients(t *testing.T) {
 	}
 }
 
-func TestPhotoImportOutputListsPrintableAmbiguityChoices(t *testing.T) {
+func TestPhotoImportOutputListsAmbiguousGroups(t *testing.T) {
 	previousJSON := photoImportJSON
 	photoImportJSON = false
 	t.Cleanup(func() { photoImportJSON = previousJSON })
@@ -202,12 +185,15 @@ func TestPhotoImportOutputListsPrintableAmbiguityChoices(t *testing.T) {
 	command := &cobra.Command{}
 	command.SetOut(&output)
 	run := api.PhotoImportRun{
-		ID: "run", State: "ambiguous", TotalGroups: 1, CompletedGroups: 1, AmbiguousGroups: 1,
-		Ambiguities: []api.PhotoImportAmbiguity{{GroupKey: "cGhvdG8", Candidates: []api.PhotoImportCandidate{{
-			SourcePath: filepath.Join(t.TempDir(), "capture.ARW"),
+		ID: "run", State: "completed", TotalGroups: 1, CompletedGroups: 1, AmbiguousGroups: 1,
+		Ambiguities: []api.PhotoImportAmbiguity{{Reason: "multiple_raw", Files: []api.PhotoImportAmbiguousFile{{
+			SourcePath: filepath.Join(t.TempDir(), "capture.ARW"), NodeID: 7, Role: "raw",
+			AssetID: "00000000-0000-4000-8000-000000000001",
 		}}}},
 	}
 	require.NoError(t, writePhotoImportOutput(command, run))
-	assert.Contains(t, output.String(), "group-key: cGhvdG8")
+	assert.Contains(t, output.String(), "ambiguous group 1 (multiple_raw)")
+	assert.Contains(t, output.String(), "id:7 raw 00000000-0000-4000-8000-000000000001")
 	assert.Contains(t, output.String(), "capture.ARW")
+	assert.Contains(t, output.String(), "photos assets attach")
 }
