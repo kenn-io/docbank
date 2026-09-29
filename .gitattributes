@@ -21,6 +21,8 @@ document/testdata/chunks-*.golden.json -text
 # The format coverage fixtures are byte-for-byte oracles, not text files.
 document/testdata/format_roster.json -text
 document/testdata/format_coverage.json -text
+# The embedded map hashes require identical bytes on every platform.
+internal/geo/data/*.geojson -text
 # Scan-assessment fixtures and frozen seeds must retain their exact bytes.
 document/testdata/scanassessment/* -text
 document/internal/scanfixture/testdata/* -text
