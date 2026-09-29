@@ -80,12 +80,11 @@ client registration, scopes, or token refresh. A client may connect locally or
 through a trusted tunnel, but it must be able to set the Authorization header;
 clients that require the MCP HTTP OAuth flow are unsupported.
 
-Both transports have the fixed read catalog described below.
+Both transports have the fixed 20-tool read catalog described below.
 `--allow-processing` adds only guarded processing start.
 `--allow-package-writes` separately permits load-file preflight, import, and
 custodian changes. `--allow-photo-edits` separately permits photo asset
-mutations and grouped photo import start/cancel. Enable any combination of
-flags when starting the process.
+mutations. Enable any combination of flags when starting the process.
 
 ## Exact protocol contract
 
@@ -156,8 +155,6 @@ links, is capped at 1 MiB.
 | `get_package_record` | Reads one immutable sender row by its package-scoped record key. |
 | `lookup_bates_label` | Finds bounded package-scoped matches for an exact received or assigned label. |
 | `get_photo_asset` | Reads one photo asset by asset UUID or positive node ID. The response has at most 256 files and includes the selected display source. |
-| `list_photo_imports` | Lists durable grouped photo import runs and bounded counters. |
-| `get_photo_import` | Reads one durable run, including bounded RAW ambiguity candidates. |
 
 Starting the server with `--allow-photo-edits` adds these write tools:
 
@@ -168,8 +165,6 @@ Starting the server with `--allow-photo-edits` adds these write tools:
 | `detach_photo_file` | Detaches one member at an expected asset revision. |
 | `exclude_photo_asset` | Changes inclusion at an expected asset revision. |
 | `promote_photo_asset` | Explicitly creates an asset for one live file node. |
-| `start_photo_import` | Starts a daemon-host folder scan. Same-folder, same-stem JPEG and RAW files pair in either arrival order; the worker reports ambiguous RAW matches without waiting. |
-| `cancel_photo_import` | Requests cancellation at the next group boundary with the run revision. |
 
 Photo writes make one daemon request. An ambiguous transport failure returns
 `processing_outcome_unknown`; inspect the asset before retrying. Display and

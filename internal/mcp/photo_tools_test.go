@@ -5,7 +5,6 @@ import (
 	"encoding/json/v2"
 	"net/http"
 	"net/http/httptest"
-	"strings"
 	"sync/atomic"
 	"testing"
 
@@ -43,48 +42,6 @@ func TestPhotoMCPWorkflowAndWriteOptIn(t *testing.T) {
 	server := newServerWithOptions(testImplementation(), ServerOptions{AllowPhotoEdits: true})
 	discovery := decodeResult(t, exchangeRaw(t, server, requestFor("server/discover", nil)))
 	assert.Equal(t, catalogInstructions(false, false, true), discovery["instructions"])
-}
-
-func TestPhotoImportClients(t *testing.T) {
-	readOnly := catalogMap(toolCatalog(false, false, false))
-	assert.NotContains(t, readOnly, "start_photo_import")
-	assert.NotContains(t, readOnly, "cancel_photo_import")
-
-	withWrites := catalogMap(toolCatalog(false, false, true))
-	for _, name := range []string{"start_photo_import", "cancel_photo_import"} {
-		tool := withWrites[name]
-		require.NotNil(t, tool, name)
-		require.NotNil(t, tool.Annotations, name)
-		assert.False(t, tool.Annotations.ReadOnlyHint, name)
-		assertSchemaContract(t, tool.InputSchema)
-		assertSchemaContract(t, tool.OutputSchema)
-	}
-	assert.Contains(t, catalogInstructions(false, false, true), "ambiguous RAW matches")
-	run := map[string]any{
-		"id": "00000000-0000-4000-8000-000000000001", "revision": float64(2),
-		"state": "ambiguous", "source_root": "/camera", "destination": "/photos",
-		"total_groups": float64(1), "completed_groups": float64(1),
-		"added_groups": float64(0), "skipped_groups": float64(0),
-		"failed_groups": float64(0), "ambiguous_groups": float64(1),
-		"cancel_requested": false, "started_at": "2026-09-29T00:00:00Z",
-		"updated_at": "2026-09-29T00:00:01Z",
-		"ambiguities": []any{map[string]any{
-			"group_key": "photo-group", "candidates": []any{map[string]any{
-				"source_path": "/camera/IMG.ARW", "blob_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-			}},
-		}},
-	}
-	list := map[string]any{"items": []any{run}, "ttlMs": float64(0), "cacheScope": "private"}
-	require.NoError(t, mustResolveSchema(withWrites["list_photo_imports"].OutputSchema).Validate(&list))
-	run["ttlMs"], run["cacheScope"] = float64(0), "private"
-	require.NoError(t, mustResolveSchema(withWrites["get_photo_import"].OutputSchema).Validate(&run))
-	run["error"] = strings.Repeat("é", 7_000)
-	delete(run, "ttlMs")
-	delete(run, "cacheScope")
-	list = map[string]any{"items": []any{run}, "ttlMs": float64(0), "cacheScope": "private"}
-	require.NoError(t, mustResolveSchema(withWrites["list_photo_imports"].OutputSchema).Validate(&list))
-	run["ttlMs"], run["cacheScope"] = float64(0), "private"
-	require.NoError(t, mustResolveSchema(withWrites["get_photo_import"].OutputSchema).Validate(&run))
 }
 
 func TestPhotoWriteNoReplay(t *testing.T) {
