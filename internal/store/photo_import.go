@@ -574,13 +574,7 @@ func (s *Store) IngestPhotoGroup(ctx context.Context, run IngestRun, group Photo
 		return result, errors.New("photo import group has no source folder or stem")
 	}
 	return result, s.withLogicalTx(ctx, func(tx *sql.Tx) error {
-		auditActive, err := auditAuthorityActiveTx(ctx, tx)
-		if err != nil {
-			return err
-		}
-		if auditActive {
-			return ErrAuditMutationUnsupported
-		}
+		var err error
 		var candidates []photoImportCandidateRow
 		for _, member := range group.Members {
 			role, _, _, roleErr := photoImportMemberRole(member)
