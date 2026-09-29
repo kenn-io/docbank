@@ -103,6 +103,36 @@ func (l Layout) BlobTmpDir() string       { return filepath.Join(l.Root, "blobs"
 func (l Layout) EmailPDFSpoolDir() string { return filepath.Join(l.Root, "email-pdf-spool") }
 func (l Layout) LogsDir() string          { return filepath.Join(l.Root, "logs") }
 
+// ContainsDirectory reports whether dir resolves to the vault root or a
+// descendant. File identities also account for case-insensitive spellings.
+func (l Layout) ContainsDirectory(dir string) (bool, error) {
+	dir, err := filepath.EvalSymlinks(dir)
+	if err != nil {
+		return false, err
+	}
+	rootInfo, err := os.Stat(l.Root)
+	if errors.Is(err, os.ErrNotExist) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	for {
+		info, err := os.Stat(dir)
+		if err != nil {
+			return false, err
+		}
+		if os.SameFile(info, rootInfo) {
+			return true, nil
+		}
+		up := filepath.Dir(dir)
+		if up == dir {
+			return false, nil
+		}
+		dir = up
+	}
+}
+
 // Ensure creates the directory layout if missing and enforces owner-private
 // storage: Unix uses 0700 directories and a 0600 database; Windows applies an
 // owner-restricted DACL. MkdirAll alone would trust a pre-existing public root.

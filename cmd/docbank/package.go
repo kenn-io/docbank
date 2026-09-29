@@ -13,6 +13,7 @@ import (
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/apiclient"
 	"go.kenn.io/docbank/internal/daemonconn"
+	"go.kenn.io/docbank/internal/home"
 )
 
 var (
@@ -176,6 +177,17 @@ var packageExportCmd = &cobra.Command{
 		destination, err := prepareGetDestination(args[1], packageExportOverwrite)
 		if err != nil {
 			return err
+		}
+		layout, err := home.Resolve()
+		if err != nil {
+			return err
+		}
+		inside, err := layout.ContainsDirectory(filepath.Dir(destination))
+		if err != nil {
+			return err
+		}
+		if inside {
+			return usageError(errors.New("export destination must be outside the Docbank data directory"))
 		}
 		connection, err := daemonconn.Ensure(cmd.Context())
 		if err != nil {

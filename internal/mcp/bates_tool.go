@@ -386,7 +386,7 @@ func validateExportDestination(destination string, overwrite bool) error {
 	if err != nil {
 		return err
 	}
-	inside, err := withinDirectory(parent, layout.Root)
+	inside, err := layout.ContainsDirectory(parent)
 	if err != nil {
 		return err
 	}
@@ -407,32 +407,6 @@ func validateExportDestination(destination string, overwrite bool) error {
 		return invalidExportDestination("destination exists; set overwrite to replace it")
 	}
 	return nil
-}
-
-// withinDirectory reports whether dir is root or one of its descendants. It
-// compares file identities so case-insensitive spellings cannot evade it.
-func withinDirectory(dir, root string) (bool, error) {
-	rootInfo, err := os.Stat(root)
-	if errors.Is(err, os.ErrNotExist) {
-		return false, nil
-	}
-	if err != nil {
-		return false, err
-	}
-	for {
-		info, err := os.Stat(dir)
-		if err != nil {
-			return false, err
-		}
-		if os.SameFile(info, rootInfo) {
-			return true, nil
-		}
-		up := filepath.Dir(dir)
-		if up == dir {
-			return false, nil
-		}
-		dir = up
-	}
 }
 
 func batesWriteToolHandler(
