@@ -6420,6 +6420,12 @@ components:
           type: string
         id:
           type: string
+        photo_no_owner:
+          type: boolean
+        photo_owner_bound:
+          type: boolean
+        photo_owner_id:
+          type: string
         plan_id:
           type: string
         receipt:
@@ -13370,6 +13376,12 @@ components:
         kind:
           type: string
         member_hash:
+          type: string
+        photo_no_owner:
+          type: boolean
+        photo_owner_bound:
+          type: boolean
+        photo_owner_id:
           type: string
         query_fingerprint:
           type: string

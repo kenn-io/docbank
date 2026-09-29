@@ -2763,6 +2763,9 @@ export interface ExportJob {
   failure?: string;
   fingerprint: string;
   id: string;
+  photo_no_owner?: boolean;
+  photo_owner_bound?: boolean;
+  photo_owner_id?: string;
   plan_id: string;
   receipt?: Receipt;
   sequence: number;
@@ -4220,6 +4223,9 @@ export interface Source {
   id: string;
   kind: string;
   member_hash: string;
+  photo_no_owner?: boolean;
+  photo_owner_bound?: boolean;
+  photo_owner_id?: string;
   query_fingerprint?: string;
   request_sha256: string;
   saved_query_id?: string;
