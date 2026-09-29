@@ -137,6 +137,44 @@ func TestPhotoImportChoiceRequiresVerifiableIdentity(t *testing.T) {
 	require.ErrorContains(t, err, "source path and blob hash")
 }
 
+func TestPhotoImportChoicePreservesExistingPair(t *testing.T) {
+	root := t.TempDir()
+	raw := filepath.Join(root, "IMG.ARW")
+	jpeg := filepath.Join(root, "IMG.JPG")
+	dng := filepath.Join(root, "IMG.DNG")
+	require.NoError(t, os.WriteFile(raw, []byte("first raw"), 0o600))
+	require.NoError(t, os.WriteFile(jpeg, []byte("jpeg"), 0o600))
+	ing := newTestIngester(t)
+	_, err := ing.ImportPhotoDirectory(t.Context(), root, "/photos", PhotoImportOptions{})
+	require.NoError(t, err)
+	old, err := ing.Store.PhotoAssetForNode(t.Context(), nodeByName(t, ing, "/photos/IMG.ARW").ID)
+	require.NoError(t, err)
+	require.Len(t, old.Files, 2)
+	require.NoError(t, os.WriteFile(dng, []byte("second raw"), 0o600))
+	ambiguous, err := ing.ImportPhotoDirectory(t.Context(), root, "/photos", PhotoImportOptions{})
+	require.NoError(t, err)
+	require.Len(t, ambiguous.Run.Ambiguities, 1)
+	var choice store.PhotoImportCandidate
+	for _, candidate := range ambiguous.Run.Ambiguities[0].Candidates {
+		if candidate.SourcePath == dng {
+			choice = candidate
+		}
+	}
+	require.Equal(t, dng, choice.SourcePath)
+	resolved, err := ing.ImportPhotoDirectory(t.Context(), root, "/photos", PhotoImportOptions{Choice: &store.PhotoImportChoice{
+		GroupKey: ambiguous.Run.Ambiguities[0].GroupKey, RawSourcePath: choice.SourcePath, RawBlobHash: choice.BlobHash,
+	}})
+	require.NoError(t, err)
+	assert.Equal(t, store.PhotoImportStateFailed, resolved.Run.State)
+	require.ErrorContains(t, resolved.Errors[0].Err, "JPEG already belongs to another RAW")
+	_, err = ing.Store.NodeByPath(t.Context(), "/photos/IMG.DNG")
+	require.ErrorIs(t, err, store.ErrNotFound)
+	stillPaired, err := ing.Store.PhotoAssetForNode(t.Context(), nodeByName(t, ing, "/photos/IMG.JPG").ID)
+	require.NoError(t, err)
+	assert.Equal(t, old.ID, stillPaired.ID)
+	assert.Len(t, stillPaired.Files, 2)
+}
+
 func TestPhotoImportAmbiguityLimitFailsRunExplicitly(t *testing.T) {
 	root := t.TempDir()
 	for i := range 90 {
@@ -167,9 +205,10 @@ func TestPhotoImportDiscovery(t *testing.T) {
 	require.NoError(t, os.WriteFile(keep, []byte("jpeg"), 0o600))
 	require.NoError(t, os.WriteFile(filepath.Join(root, ".DS_Store"), []byte("junk"), 0o600))
 	require.NoError(t, os.WriteFile(filepath.Join(root, "notes.txt"), []byte("skip"), 0o600))
-	ignored := filepath.Join(root, ".Spotlight-V100")
-	require.NoError(t, os.Mkdir(ignored, 0o700))
-	require.NoError(t, os.WriteFile(filepath.Join(ignored, "hidden.JPG"), []byte("skip"), 0o600))
+	folder := filepath.Join(root, ".Spotlight-V100")
+	require.NoError(t, os.Mkdir(folder, 0o700))
+	hidden := filepath.Join(folder, "hidden.JPG")
+	require.NoError(t, os.WriteFile(hidden, []byte("photo"), 0o600))
 	linkTarget := filepath.Join(root, "linked.JPG")
 	require.NoError(t, os.WriteFile(linkTarget, []byte("linked"), 0o600))
 	link := filepath.Join(root, "descendant.JPG")
@@ -178,8 +217,8 @@ func TestPhotoImportDiscovery(t *testing.T) {
 	}
 	candidates, err := discoverPhotoCandidates(t.Context(), root)
 	require.NoError(t, err)
-	require.Len(t, candidates, 2)
-	assert.ElementsMatch(t, []string{keep, linkTarget}, []string{candidates[0].Path, candidates[1].Path})
+	require.Len(t, candidates, 3)
+	assert.ElementsMatch(t, []string{keep, linkTarget, hidden}, []string{candidates[0].Path, candidates[1].Path, candidates[2].Path})
 
 	rootLink := filepath.Join(t.TempDir(), "camera-link")
 	if err := os.Symlink(root, rootLink); err != nil {
