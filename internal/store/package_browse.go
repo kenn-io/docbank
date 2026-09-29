@@ -96,8 +96,13 @@ func (s *Store) PackageRecordByOccurrence(ctx context.Context, packageID, occurr
 	if validateUUIDv4(packageID) != nil || !validPackageOccurrenceID(occurrenceID) {
 		return PackageRecordRow{}, ErrPackageConflict
 	}
+	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	if err != nil {
+		return PackageRecordRow{}, err
+	}
+	defer func() { _ = tx.Rollback() }()
 	var rowID string
-	err := s.db.QueryRowContext(ctx, `SELECT row_id FROM package_records WHERE package_id=? AND occurrence_id=?`,
+	err = tx.QueryRowContext(ctx, `SELECT row_id FROM package_records WHERE package_id=? AND occurrence_id=?`,
 		packageID, occurrenceID).Scan(&rowID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return PackageRecordRow{}, ErrNotFound
@@ -105,10 +110,11 @@ func (s *Store) PackageRecordByOccurrence(ctx context.Context, packageID, occurr
 	if err != nil {
 		return PackageRecordRow{}, err
 	}
-	if err := packageOccurrenceVisibility(ctx, s.db, packageID, occurrenceID); err != nil {
+	record, err := loadVisiblePackageRecordTx(ctx, tx, packageID, rowID)
+	if err != nil {
 		return PackageRecordRow{}, err
 	}
-	return loadPackageRecordTx(ctx, s.db, packageID, rowID)
+	return record, tx.Commit()
 }
 
 // PackageLabels returns every received and assigned label for one occurrence.
@@ -157,9 +163,14 @@ func (s *Store) PackageTimelineInputs(ctx context.Context, packageID, afterRowID
 	if validateUUIDv4(packageID) != nil || afterRowID != "" && !canonical.IsSHA256Hex(afterRowID) || limit < 1 || limit > 250 {
 		return nil, ErrPackageConflict
 	}
+	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = tx.Rollback() }()
 	var profileJSON []byte
 	var producedOn string
-	err := s.db.QueryRowContext(ctx, `SELECT profile_json,COALESCE(produced_on,'') FROM packages WHERE package_id=?`, packageID).
+	err = tx.QueryRowContext(ctx, `SELECT profile_json,COALESCE(produced_on,'') FROM packages WHERE package_id=?`, packageID).
 		Scan(&profileJSON, &producedOn)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
@@ -173,7 +184,7 @@ func (s *Store) PackageTimelineInputs(ctx context.Context, packageID, afterRowID
 	}
 	afterOrdinal := 0
 	if afterRowID != "" {
-		err = s.db.QueryRowContext(ctx, `SELECT row_ordinal FROM package_records WHERE package_id=? AND row_id=?`,
+		err = tx.QueryRowContext(ctx, `SELECT row_ordinal FROM package_records WHERE package_id=? AND row_id=?`,
 			packageID, afterRowID).Scan(&afterOrdinal)
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, ErrPackageConflict
@@ -185,7 +196,7 @@ func (s *Store) PackageTimelineInputs(ctx context.Context, packageID, afterRowID
 	inputs := make([]PackageTimelineInput, 0)
 	for len(inputs) < limit {
 		requested := limit - len(inputs)
-		rows, err := s.db.QueryContext(ctx, `SELECT row_ordinal,occurrence_id,row_id,raw_json FROM package_records
+		rows, err := tx.QueryContext(ctx, `SELECT row_ordinal,occurrence_id,row_id,raw_json FROM package_records
 			WHERE package_id=? AND (row_ordinal>? OR (row_ordinal=? AND row_id>?))
 			ORDER BY row_ordinal,row_id LIMIT ?`, packageID, afterOrdinal, afterOrdinal, afterRowID, requested)
 		if err != nil {
@@ -202,7 +213,7 @@ func (s *Store) PackageTimelineInputs(ctx context.Context, packageID, afterRowID
 			}
 			afterOrdinal, afterRowID = ordinal, input.RowID
 			batch++
-			if err := packageOccurrenceVisibility(ctx, s.db, packageID, input.OccurrenceID); err != nil {
+			if err := packageRecordVisibility(ctx, tx, packageID, input.RowID, input.OccurrenceID); err != nil {
 				if errors.Is(err, ErrNotFound) {
 					continue
 				}
@@ -220,7 +231,7 @@ func (s *Store) PackageTimelineInputs(ctx context.Context, packageID, afterRowID
 			break
 		}
 	}
-	return inputs, nil
+	return inputs, tx.Commit()
 }
 
 // PackageLabelCandidates returns a bounded stable page without collapsing
@@ -308,15 +319,31 @@ func (s *Store) PackageLabelCandidates(ctx context.Context, label, packageID, la
 	return items, base64.RawURLEncoding.EncodeToString(encoded), nil
 }
 
-func packageOccurrenceVisibility(ctx context.Context, q metadataQuerier, packageID, occurrenceID string) error {
-	var versionID string
-	err := q.QueryRowContext(ctx, `SELECT content_version_id FROM package_labels
-		WHERE package_id=? AND occurrence_id=? ORDER BY provenance,label_set,label LIMIT 1`, packageID, occurrenceID).Scan(&versionID)
-	if errors.Is(err, sql.ErrNoRows) {
-		return nil
+func packageRecordVisibility(ctx context.Context, q metadataQuerier, packageID, rowID, occurrenceID string) error {
+	receipt, err := loadPackageImportHeadTx(ctx, q, packageID, rowID)
+	if errors.Is(err, ErrNotFound) {
+		// A retained row without a receipt has no trustworthy committed
+		// identity. Treat it as unavailable instead of as an unfulfilled row.
+		return ErrNotFound
 	}
 	if err != nil {
 		return err
 	}
-	return photoVersionVisibilityCheckTx(ctx, q, versionID)
+	if receipt.RecordKey != rowID || receipt.OccurrenceID != occurrenceID {
+		return ErrPackageConflict
+	}
+	switch receipt.State {
+	case "committed":
+		if receipt.ContentVersionID == "" {
+			return ErrPackageConflict
+		}
+		return photoVersionVisibilityCheckTx(ctx, q, receipt.ContentVersionID)
+	case packageReceiptRejected, "skipped":
+		if receipt.ContentVersionID != "" {
+			return ErrPackageConflict
+		}
+		return nil
+	default:
+		return ErrPackageConflict
+	}
 }

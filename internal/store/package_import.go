@@ -419,7 +419,29 @@ func (s *Store) PackageRecord(ctx context.Context, packageID, rowID string) (Pac
 	if validateUUIDv4(packageID) != nil || !canonical.IsSHA256Hex(rowID) {
 		return PackageRecordRow{}, ErrPackageConflict
 	}
-	return loadPackageRecordTx(ctx, s.db, packageID, rowID)
+	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	if err != nil {
+		return PackageRecordRow{}, err
+	}
+	defer func() { _ = tx.Rollback() }()
+	record, err := loadVisiblePackageRecordTx(ctx, tx, packageID, rowID)
+	if err != nil {
+		return PackageRecordRow{}, err
+	}
+	return record, tx.Commit()
+}
+
+// loadVisiblePackageRecordTx authorizes the public record reader against the
+// committed import identity before returning any retained row fields.
+func loadVisiblePackageRecordTx(ctx context.Context, tx metadataQuerier, packageID, rowID string) (PackageRecordRow, error) {
+	record, err := loadPackageRecordTx(ctx, tx, packageID, rowID)
+	if err != nil {
+		return PackageRecordRow{}, err
+	}
+	if err := packageRecordVisibility(ctx, tx, packageID, record.RowID, record.OccurrenceID); err != nil {
+		return PackageRecordRow{}, err
+	}
+	return record, nil
 }
 
 // LookupPackageLabel requires the caller to scope a reused sender label.

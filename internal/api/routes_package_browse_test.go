@@ -110,6 +110,192 @@ func TestPackageRecordRouteWithholdsSensitiveRowsFromBrowserSessions(t *testing.
 	assert.Empty(t, redacted.RawJSON)
 }
 
+func TestPhotoVisibilityPackageRecords(t *testing.T) {
+	srv, catalog := newPackageTestServer(t)
+	fixture := seedBrowsePhotoPackage(t, catalog)
+	ownerAHeaders := map[string]string{"X-Api-Key": "", api.WebSessionHeader: issuePhotoOwnerSession(t, srv.ts, fixture.ownerA.ID)}
+	ownerBHeaders := map[string]string{"X-Api-Key": "", api.WebSessionHeader: issuePhotoOwnerSession(t, srv.ts, fixture.ownerB.ID)}
+
+	unlabeled := fixture.rows[1]
+	head, err := catalog.PackageImportHead(t.Context(), fixture.pkg.PackageID, unlabeled.record.RowID)
+	require.NoError(t, err)
+	assert.Equal(t, unlabeled.versionID, head.ContentVersionID)
+	labels, err := catalog.PackageLabels(t.Context(), fixture.pkg.PackageID, unlabeled.record.OccurrenceID)
+	require.NoError(t, err)
+	assert.Empty(t, labels, "the committed receipt, rather than an optional label, is the owner authority")
+
+	for _, row := range fixture.rows[:2] {
+		path := "/api/v1/packages/by-id/" + fixture.pkg.PackageID + "/records/" + row.record.RowID
+		response, body := get(t, srv.ts, path, ownerBHeaders)
+		require.Equal(t, http.StatusNotFound, response.StatusCode, body)
+		for _, secret := range []string{row.record.RowID, row.record.OccurrenceID, row.record.LoadFile, row.record.RawSHA256} {
+			assert.NotContains(t, body, secret)
+		}
+
+		response, body = get(t, srv.ts, path, ownerAHeaders)
+		require.Equal(t, http.StatusOK, response.StatusCode, body)
+		var visible api.PackageRecord
+		require.NoError(t, json.Unmarshal([]byte(body), &visible))
+		assert.Equal(t, row.record.RowID, visible.RowID)
+		assert.Equal(t, row.record.OccurrenceID, visible.OccurrenceID)
+		if row.record.Sensitive {
+			assert.Empty(t, visible.RawJSON)
+		} else {
+			assert.Equal(t, row.record.RawJSON, visible.RawJSON)
+		}
+
+		response, body = get(t, srv.ts, path, map[string]string{"X-Docbank-Owner": fixture.ownerB.ID})
+		require.Equal(t, http.StatusNotFound, response.StatusCode, body)
+		response, body = get(t, srv.ts, path, map[string]string{"X-Docbank-Owner": fixture.ownerA.ID})
+		require.Equal(t, http.StatusOK, response.StatusCode, body)
+	}
+
+	// The omitted master owner resolves to the default owner, which is owner A.
+	response, body := get(t, srv.ts, "/api/v1/packages/by-id/"+fixture.pkg.PackageID+"/records/"+fixture.rows[0].record.RowID, nil)
+	require.Equal(t, http.StatusOK, response.StatusCode, body)
+
+	for _, owner := range []store.PhotoOwner{fixture.ownerA, fixture.ownerB} {
+		ctx := store.WithPhotoOwner(t.Context(), owner.ID)
+		_, err := catalog.PackageRecordByOccurrence(ctx, fixture.pkg.PackageID, fixture.rows[1].record.OccurrenceID)
+		if owner.ID == fixture.ownerA.ID {
+			require.NoError(t, err)
+		} else {
+			require.ErrorIs(t, err, store.ErrNotFound)
+		}
+	}
+
+	// Foreign rows are skipped before page selection, so owner B can still
+	// reach the ordinary imported control after the two owner A photos.
+	bMaster := map[string]string{"X-Docbank-Owner": fixture.ownerB.ID}
+	response, body = get(t, srv.ts, "/api/v1/packages/by-id/"+fixture.pkg.PackageID+"/timeline-inputs?limit=1", bMaster)
+	require.Equal(t, http.StatusOK, response.StatusCode, body)
+	var bTimeline api.PackageTimelineInputPage
+	require.NoError(t, json.Unmarshal([]byte(body), &bTimeline))
+	require.Len(t, bTimeline.Items, 1)
+	assert.Equal(t, fixture.rows[2].record.RowID, bTimeline.Items[0].RowID)
+	assert.Equal(t, fixture.rows[2].record.RawJSON, bTimeline.Items[0].RawJSON)
+
+	aMaster := map[string]string{"X-Docbank-Owner": fixture.ownerA.ID}
+	response, body = get(t, srv.ts, "/api/v1/packages/by-id/"+fixture.pkg.PackageID+"/timeline-inputs?limit=1", aMaster)
+	require.Equal(t, http.StatusOK, response.StatusCode, body)
+	var aTimeline api.PackageTimelineInputPage
+	require.NoError(t, json.Unmarshal([]byte(body), &aTimeline))
+	require.Len(t, aTimeline.Items, 1)
+	assert.Equal(t, fixture.rows[0].record.RowID, aTimeline.Items[0].RowID)
+	require.NotEmpty(t, aTimeline.NextAfterRowID)
+	response, body = get(t, srv.ts, "/api/v1/packages/by-id/"+fixture.pkg.PackageID+"/timeline-inputs?limit=1&after_row_id="+aTimeline.NextAfterRowID, aMaster)
+	require.Equal(t, http.StatusOK, response.StatusCode, body)
+	require.NoError(t, json.Unmarshal([]byte(body), &aTimeline))
+	require.Len(t, aTimeline.Items, 1)
+	assert.Equal(t, fixture.rows[1].record.RowID, aTimeline.Items[0].RowID)
+
+	response, body = get(t, srv.ts, "/api/v1/packages/by-id/"+fixture.pkg.PackageID+"/timeline-inputs?limit=1", ownerBHeaders)
+	assert.Equal(t, http.StatusForbidden, response.StatusCode, body)
+}
+
+type browsePhotoPackageFixture struct {
+	pkg    store.Package
+	ownerA store.PhotoOwner
+	ownerB store.PhotoOwner
+	rows   []browsePhotoPackageRow
+}
+
+type browsePhotoPackageRow struct {
+	record    store.PackageRecordRow
+	versionID string
+}
+
+func seedBrowsePhotoPackage(t *testing.T, catalog *testStore) browsePhotoPackageFixture {
+	t.Helper()
+	ctx := t.Context()
+	ownerA, err := catalog.EnsureDefaultPhotoOwner(ctx)
+	require.NoError(t, err)
+	ownerB, err := catalog.CreatePhotoOwner(ctx, "Package browser B")
+	require.NoError(t, err)
+	profile, err := loadfile.ReadProfile("dat-concordance-v1")
+	require.NoError(t, err)
+	profile.DeclaredTimezone = "UTC"
+	profileJSON, err := canonical.Marshal(profile)
+	require.NoError(t, err)
+	profileDigest := sha256.Sum256(profileJSON)
+	mappingJSON := []byte("{}")
+	mappingDigest := sha256.Sum256(mappingJSON)
+	manifestHash, manifestSize, err := catalog.Blobs.Write(strings.NewReader("synthetic photo package manifest"))
+	require.NoError(t, err)
+	require.NoError(t, catalog.RecordBlob(ctx, manifestHash, manifestSize,
+		store.BlobPhysical{Encoding: "raw", StoredBytes: manifestSize}))
+	run, err := catalog.BeginIngest(ctx, "package:loadfile", "synthetic owner-bound package")
+	require.NoError(t, err)
+	photo := func(owner store.PhotoOwner, name, seed string) store.Node {
+		hash := testHash(seed)
+		node, ingestErr := catalog.IngestFileExact(store.WithPhotoOwner(ctx, owner.ID), run, catalog.RootID(), name,
+			hash, int64(len(seed)), "image/jpeg", name, "")
+		require.NoError(t, ingestErr)
+		return node
+	}
+	firstNode := photo(ownerA, "package-a-labeled.jpg", "package-a-labeled")
+	secondNode := photo(ownerA, "package-a-unlabeled.jpg", "package-a-unlabeled")
+	ordinaryHash := testHash("package-ordinary")
+	ordinaryNode, err := catalog.IngestFileExact(ctx, run, catalog.RootID(), "package-ordinary.txt",
+		ordinaryHash, int64(len("package-ordinary")), "text/plain", "package-ordinary.txt", "")
+	require.NoError(t, err)
+	request := store.PackageRequest{
+		PackageID: uuid.NewString(), Direction: "received", PackageName: "owner-bound-001",
+		PartyLabel: "Synthetic owner sender", ProfileJSON: string(profileJSON),
+		ProfileSHA256: hex.EncodeToString(profileDigest[:]), MappingJSON: string(mappingJSON),
+		MappingSHA256: hex.EncodeToString(mappingDigest[:]), ManifestSHA256: manifestHash,
+		ManifestBlobSHA256: manifestHash, IngestID: run.ID(), ProducedOn: "2026-09-21T00:00:00Z",
+		State: "importing", Volumes: []store.PackageVolume{{Ordinal: 1, VolumeName: "VOL001",
+			DeclaredRoot: "VOL001", MappedRoot: "VOL001", ResolvedRootSHA256: testHash("owner-bound-root")}},
+	}
+	preflightID := uuid.NewString()
+	jobOwner := "synthetic-owner-operator"
+	_, err = catalog.PutPackagePreflight(ctx, store.PackagePreflightRecord{
+		PreflightID: preflightID, Owner: jobOwner, SourceKind: "root", SourceRef: "synthetic-owner-root",
+		SourceLocator: "synthetic-owner-root", ProfileJSON: request.ProfileJSON, MappingJSON: request.MappingJSON,
+		ProfileSHA256: request.ProfileSHA256, MappingSHA256: request.MappingSHA256,
+		ManifestSHA256: request.ManifestSHA256, ManifestBlobSHA256: request.ManifestBlobSHA256,
+		CanonicalJSON: []byte(`{}`), DiagnosticsJSON: []byte(`[]`),
+	})
+	require.NoError(t, err)
+	_, err = catalog.AdmitPackageImport(ctx, run, request, store.PackageImportJobRequest{
+		ID: uuid.NewString(), Owner: jobOwner, OperationID: uuid.NewString(), RequestSHA256: testHash("owner-bound-import"),
+		PreflightID: preflightID, PackageID: request.PackageID,
+		JobJSON: []byte(`{"source_kind":"root","source_locator":"synthetic-owner-root"}`),
+	})
+	require.NoError(t, err)
+	pkg, err := catalog.Package(ctx, request.PackageID)
+	require.NoError(t, err)
+	job, err := catalog.ClaimPackageImportJob(ctx, "owner-bound-worker", time.Minute)
+	require.NoError(t, err)
+	commit := func(node store.Node, ordinal int, docID string, raw []byte, sensitive bool, label string) browsePhotoPackageRow {
+		rowID, keyErr := store.PackageRecordKey("VOL001/DATA/owner-bound.dat", ordinal, docID)
+		require.NoError(t, keyErr)
+		occurrenceID := store.PackageOccurrenceID(pkg.PackageID, rowID)
+		digest := sha256.Sum256(raw)
+		var labels []store.PackageLabelRow
+		if label != "" {
+			labels = []store.PackageLabelRow{{PackageID: pkg.PackageID, Provenance: "received", LabelSet: "sender", Label: label,
+				OccurrenceID: occurrenceID, ContentVersionID: node.CurrentVersionID, PageState: "unknown", Endpoint: "begin"}}
+		}
+		_, commitErr := catalog.CommitPackageRecordWithLease(ctx, job.ID, job.Epoch, job.Token, store.PackageRecordRow{
+			PackageID: pkg.PackageID, RowID: rowID, LoadFile: "VOL001/DATA/owner-bound.dat", RowOrdinal: ordinal,
+			OccurrenceID: occurrenceID, RawJSON: raw, RawSHA256: hex.EncodeToString(digest[:]), Sensitive: sensitive,
+		}, labels, store.PackageImportReceipt{ReceiptID: uuid.NewString(), PackageID: pkg.PackageID, RecordKey: rowID,
+			OccurrenceID: occurrenceID, ContentVersionID: node.CurrentVersionID, State: "committed", ReceiptJSON: []byte(`{}`)})
+		require.NoError(t, commitErr)
+		return browsePhotoPackageRow{record: store.PackageRecordRow{PackageID: pkg.PackageID, RowID: rowID,
+			LoadFile: "VOL001/DATA/owner-bound.dat", RowOrdinal: ordinal, OccurrenceID: occurrenceID,
+			RawJSON: raw, RawSHA256: hex.EncodeToString(digest[:]), Sensitive: sensitive}, versionID: node.CurrentVersionID}
+	}
+	rows := []browsePhotoPackageRow{
+		commit(firstNode, 1, "PHOTO-A-LABELED", []byte(`{"BEGBATES":"PHOTO-A-LABELED"}`), true, "PHOTO-A-LABELED"),
+		commit(secondNode, 2, "PHOTO-A-UNLABELED", []byte(`{"DOCDATE":"2026-09-21"}`), false, ""),
+		commit(ordinaryNode, 3, "ORDINARY-CONTROL", []byte(`{"DOCDATE":"2026-09-22"}`), false, ""),
+	}
+	return browsePhotoPackageFixture{pkg: pkg, ownerA: ownerA, ownerB: ownerB, rows: rows}
+}
+
 func TestPackageBrowseRoutesEnforceBoundsAndIdentity(t *testing.T) {
 	srv, _ := newPackageTestServer(t)
 	for _, path := range []string{
