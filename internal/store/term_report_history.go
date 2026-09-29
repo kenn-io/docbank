@@ -159,7 +159,12 @@ func (s *Store) ListTermReportHistory(ctx context.Context, offset, limit int) (T
 		return TermReportHistoryPage{}, errors.New("invalid report history page")
 	}
 	var page TermReportHistoryPage
-	err := s.withStorageTx(ctx, func(tx *sql.Tx) error {
+	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	if err != nil {
+		return TermReportHistoryPage{}, fmt.Errorf("beginning report history read: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	err = func() error {
 		ownerID, bound, noOwner, err := photoOwnerBindingTx(ctx, tx)
 		if err != nil {
 			return err
@@ -222,9 +227,12 @@ func (s *Store) ListTermReportHistory(ctx context.Context, offset, limit int) (T
 		}
 		page.Total = eligible
 		return nil
-	})
+	}()
 	if err != nil {
 		return TermReportHistoryPage{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return TermReportHistoryPage{}, fmt.Errorf("committing report history read: %w", err)
 	}
 	return page, nil
 }
