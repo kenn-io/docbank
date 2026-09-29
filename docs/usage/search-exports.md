@@ -1,14 +1,15 @@
 ---
-last_edited: 2026-09-21
+last_edited: 2026-09-29
 title: Search exports
 description: Export dated search counts as CSV, review date evidence, and verify a frozen evidence ZIP.
 ---
 
 # Search exports
 
-Export search counts for a date range from all live documents or selected
-import collections. Each export freezes the current document versions, search
-matches, family relationships, date evidence, and processing profile. Later
+Export search counts for a date range from all live documents, selected
+import collections, or exact document versions selected in the workspace. Each
+export freezes the current document versions, search matches, family
+relationships, date evidence, and processing profile. Later
 vault changes do not change that export.
 
 The CSV contains counts. The evidence ZIP contains the calculation inputs and
@@ -17,10 +18,13 @@ or complete retained text, use [document export bundles](export-bundles.md).
 
 ## Create an export in the browser
 
-1. Open **Search exports** in the top bar.
-2. Choose all documents or select import collections. Select a processing
-   profile when more than one is configured. Exporting uses existing text;
-   it does not start document processing.
+1. Open **Search exports** in the sidebar, or select documents on the displayed
+   workspace or query-result page and choose **Report selected documents**.
+2. From the sidebar, choose all documents or import collections. A workspace
+   selection opens a fixed **Selected documents (N)** scope; it uses only those
+   displayed versions, without adding other query matches or attachments.
+   Select a processing profile when more than one is configured. Exporting uses
+   existing text; it does not start document processing.
 3. Add search expressions and an inclusive start and end date for each row.
    Choose **Simple** or **Advanced** [query syntax](searching.md).
 4. Choose the export timezone and coverage policy, then **Create export**.
@@ -31,9 +35,13 @@ or complete retained text, use [document export bundles](export-bundles.md).
 
 **Recent exports** automatically keeps the latest 100 requests and compact
 outcomes in the vault. **Use as draft** copies the request without its old date
-choices and runs against current data. This history has no naming or deletion
-controls. Use [Saved queries and highlights](web.md#saved-queries-and-highlights)
-to manage named search definitions.
+choices. Selected-document drafts keep their exact version identities, even if
+the workspace refreshes. A new run checks those versions again. If any changed
+or disappeared, refresh the workspace and explicitly reselect the documents.
+A rename or move alone does not invalidate their content identity. This history
+has no naming or deletion controls. Use
+[Saved queries and highlights](web.md#saved-queries-and-highlights) to manage
+named search definitions.
 
 ## Create an export from the CLI
 
@@ -84,7 +92,7 @@ and optional controls are:
 | Field | Meaning |
 | --- | --- |
 | `version` | Must be `1`. |
-| `all_documents`, `collection_ids` | Set `all_documents: true` without collection IDs, or `false` with at least one existing collection ID. |
+| `all_documents`, `collection_ids`, `selected_documents` | Choose exactly one scope: `all_documents: true`, a nonempty collection ID list, or the selected-document object below. Use `all_documents: false` for either list scope. |
 | `profile` | Configured processing profile name. Required when several profiles exist; omission returns `invalid_profile`. A sole configured profile is selected automatically. |
 | `timezone` | Required IANA timezone, such as `UTC` or `America/New_York`. `Local` is rejected. Cutoffs are literal calendar dates in this zone. |
 | `source_timezone` | Optional source timezone for timestamps that omit one. |
@@ -92,6 +100,38 @@ and optional controls are:
 | `coverage_mode` | `strict` (default) rejects incomplete search or family coverage in the date ranges. `available_only` retains the gaps in coverage totals. |
 | `terms` | 1–128 rows. Each has a unique positive `number`, nonempty `expression` of at most 8,192 Unicode characters, `syntax` (`simple` or `advanced`), and `dates.start` / `dates.end` in `YYYY-MM-DD` form. |
 | `date_choices` | Optional evidence-bound choices for captured documents. A reused history request omits these. |
+
+For exact documents, copy each current file's node ID, version ID, and content
+hash from the workspace/API. Replace the example request's all-document scope
+with this synthetic selection:
+
+```json
+{
+  "all_documents": false,
+  "selected_documents": {
+    "documents": [{
+      "node_id": 42,
+      "version_id": "20000000-0000-4000-8000-000000000002",
+      "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    }]
+  }
+}
+```
+
+The selection requires 1–50,000 distinct positive node IDs, canonical lowercase
+UUIDv4 version IDs, and 64-character lowercase hexadecimal hashes. The whole
+request must fit within 8 MiB. Historical versions and selected pages are not
+supported. Omitted or null `selected_documents` means no selected scope; an
+object with a missing, null, or empty `documents` list is invalid.
+
+Malformed or mixed scope, repeated nodes, invalid identity values, and a wrong
+hash for a current version return `422 invalid_report_request`. A missing,
+trashed, or replaced version returns `409 report_selection_changed`, without
+a conflicting-member list. Even a new version with identical bytes conflicts.
+More than 50,000 selected identities returns `413 report_limit`; the existing
+50,000-collection limit returns 422. These application errors apply after HTTP
+schema validation; wrong JSON types or missing required fields use the API's
+ordinary schema errors.
 
 A choice identifies the exact `document` (`node_id`, `version_id`, `sha256`),
 `candidate_id`, and `evidence_sha256` returned by the date page. Copy those
@@ -129,9 +169,11 @@ family is a singleton. Family expansion stays within the selected source
 scope and each row's date range.
 
 The ZIP retains relationship groups connected to selected documents, including
-connected documents outside the selected collections when needed to preserve
-grouping. It omits unrelated relationship groups and their warnings. Documents
-outside the selected scope do not contribute to counts.
+connected documents outside the selected scope when needed to preserve
+grouping. An unselected attachment can connect two selected parents; it remains
+a relationship reference, without member rows, text bindings, or date evidence.
+The ZIP omits unrelated relationship groups and their warnings. Documents outside
+the selected scope do not contribute to counts.
 
 Date selection prefers source evidence appropriate to the document kind,
 then labeled document dates, then source metadata and recorded import or vault
@@ -142,7 +184,10 @@ creation dates. Coarse or unusable dates are not silently made precise.
 Coverage reports scoped documents, searchable documents, missing text,
 incomplete families, and fallback dates for each row and across the union of
 the date ranges. `available_only` can omit documents without a usable selected
-date. Missing evidence does not prove that a document has no relevant content.
+date from coverage while retaining them as packet members. **Selected documents
+(N)** is the input population; `scoped` counts only documents inside at least one
+term's date range with a usable date. Missing evidence does not prove that a
+document has no relevant content.
 Keep the coverage receipt with the CSV when sharing counts.
 
 ## Evidence and retention limits
@@ -150,7 +195,9 @@ Keep the coverage receipt with the CSV when sharing counts.
 The ZIP format marker is `search-export-v1`. Its fixed entries are `hits.csv`,
 `manifest.json`, `members.jsonl`, `families.jsonl`, and `dates.jsonl`. The
 manifest binds sizes and SHA-256 digests; verification also checks date
-selections, hit bits, counts, and coverage against the retained evidence.
+selections, hit bits, counts, and coverage against the retained evidence. For
+selected scope, the packet members must equal the requested identities exactly;
+omitted, extra, duplicate, or substituted members fail verification.
 The packet includes document identities and date quotes, so review it before
 sharing it.
 
@@ -164,6 +211,15 @@ are lost on daemon restart. Handles belong to the requesting API or browser
 session; ending a browser session invalidates its handles. Download the ZIP
 before expiry. History receipts survive backup and restore, but neither
 history nor a backup of history restores live artifacts or date-review pages.
+Source replacement, trash, or pruning does not invalidate an already captured
+report or extend its lifetime. History remains readable after source deletion
+and restore; rerunning a saved selection requires its versions to be live and
+current again.
+
+Large selections enlarge durable history: 100 requests near the 8 MiB ceiling
+can approach 800 MiB of request JSON, also carried by metadata export. History
+pages stop at 16 MiB; automation must advance its offset by the returned item
+count, which can be smaller than the requested limit.
 
 Each build has a 60-second deadline and shares a 1 GiB accounted memory budget
 with other cached exports. Limits include 50,000 documents, 100,000 family
