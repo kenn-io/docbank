@@ -391,6 +391,11 @@ func exportMetadataSnapshotWithVaultIdentity(
 		if err := exportSourceMetadata(ctx, tx, write, backupScoped); err != nil {
 			return err
 		}
+		if layout.schemaVersion >= photoTechnicalMetadataSchemaVersion {
+			if err := exportPhotoTechnicalMetadata(ctx, tx, write, backupScoped); err != nil {
+				return err
+			}
+		}
 	}
 	if err := exportNodes(ctx, tx, write); err != nil {
 		return err
@@ -1011,6 +1016,9 @@ func (s *Store) importMetadata(ctx context.Context, r io.Reader) error {
 		if err != nil {
 			return err
 		}
+		if err := fillMissingPhotoTechnicalMetadataTx(ctx, tx); err != nil {
+			return err
+		}
 		if _, err := tx.ExecContext(ctx,
 			`UPDATE vault_metadata SET vault_uid = ? WHERE singleton = 1`, header.VaultID,
 		); err != nil {
@@ -1069,6 +1077,7 @@ func requirePristineMetadataTarget(ctx context.Context, tx *sql.Tx) error {
 		    + (SELECT COUNT(*) FROM mailbox_occurrences)
 		    + (SELECT COUNT(*) FROM source_metadata_generations)
 		    + (SELECT COUNT(*) FROM source_metadata_heads)
+		    + (SELECT COUNT(*) FROM photo_technical_metadata)
 		    + (SELECT COUNT(*) FROM visual_preview_generations)
 		    + (SELECT COUNT(*) FROM visual_preview_heads)
 		    + (SELECT COUNT(*) FROM page_documents)
@@ -1271,6 +1280,9 @@ func (s *Store) importMetadataRecord(
 	}
 	if err := requireMetadataFields(raw, required, metadataNullableFields[kind]); err != nil {
 		return err
+	}
+	if kind == metadataPhotoTechnicalType {
+		return importPhotoTechnicalMetadataRecord(ctx, tx, raw)
 	}
 	if strings.HasPrefix(kind, "photo_") {
 		return importPhotoMetadataRecord(ctx, tx, kind, raw)
@@ -1644,6 +1656,7 @@ var metadataRequiredFields = map[string][]string{
 	metadataBlobChecksumType:                     {metadataTypeField, "blob_sha256", "md5"},
 	metadataSourceMetadataGenerationType:         {metadataTypeField, metadataGenerationIDField, columnSourceSHA256, "contract_version", "extractor_fingerprint", "canonical_json", "checksum", metadataCreatedAtField},
 	metadataSourceMetadataHeadType:               {metadataTypeField, columnSourceSHA256, metadataGenerationIDField, "published_at"},
+	metadataPhotoTechnicalType:                   {metadataTypeField, metadataGenerationIDField, "projection_recipe", "camera_make", "camera_model", "lens_make", "lens_model", "iso", "exposure_time_seconds", "f_number", "exposure_bias_ev", "focal_length_mm", "width_px", "height_px", "capture_time", "capture_time_raw", "capture_time_precision", "capture_time_timezone", "capture_time_offset", "orientation", "latitude", "longitude", "location_label"},
 	metadataVisualPreviewGenerationType:          {metadataTypeField, metadataGenerationIDField, auditVaultIDField, metadataContentVersionIDField, columnSourceSHA256, "contract_version", "recipe_fingerprint", "canonical_result", "checksum", metadataCreatedAtField},
 	metadataVisualPreviewHeadType:                {metadataTypeField, metadataContentVersionIDField, metadataGenerationIDField, "published_at"},
 	metadataPhotoAssetType:                       {metadataTypeField, "asset_id", "kind", metadataRevisionField, "excluded_at", "display_file_id", "display_override_file_id", metadataCreatedAtField, metadataUpdatedAtField},
@@ -1726,6 +1739,7 @@ var metadataNullableFields = map[string]map[string]bool{
 	metadataPhotoFileType:       {"sidecar_of_file_id": true},
 	metadataPhotoSettingsType:   {"preference": true},
 	metadataPhotoReceiptType:    {"asset_id": true, "settings_key": true},
+	metadataPhotoTechnicalType:  {"camera_make": true, "camera_model": true, "lens_make": true, "lens_model": true, "iso": true, "exposure_time_seconds": true, "f_number": true, "exposure_bias_ev": true, "focal_length_mm": true, "width_px": true, "height_px": true, "capture_time": true, "capture_time_raw": true, "capture_time_precision": true, "capture_time_timezone": true, "capture_time_offset": true, "orientation": true, "latitude": true, "longitude": true, "location_label": true},
 	metadataSavedQueryRunType: {
 		"previous_run_id": true, "previous_member_hash": true,
 		"previous_total": true, "previous_query_fingerprint": true,
@@ -2147,6 +2161,11 @@ func validateMetadataStateWithVaultIdentity(
 		}
 		if layout.schemaVersion >= 25 {
 			if err := validatePhotoMetadataState(ctx, tx); err != nil {
+				return err
+			}
+		}
+		if layout.schemaVersion >= photoTechnicalMetadataSchemaVersion {
+			if err := validatePhotoTechnicalMetadataState(ctx, tx); err != nil {
 				return err
 			}
 		}

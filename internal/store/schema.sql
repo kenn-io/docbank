@@ -514,6 +514,45 @@ BEFORE UPDATE ON source_metadata_generations BEGIN
     SELECT RAISE(ABORT, 'source metadata generations are immutable');
 END;
 
+-- One derived technical projection belongs to each immutable source
+-- generation. Content versions bind to it through their blob and source head.
+CREATE TABLE IF NOT EXISTS photo_technical_metadata (
+    generation_id          TEXT PRIMARY KEY
+        REFERENCES source_metadata_generations(generation_id) ON DELETE CASCADE,
+    projection_recipe      TEXT NOT NULL,
+    camera_make            TEXT,
+    camera_model           TEXT,
+    lens_make              TEXT,
+    lens_model             TEXT,
+    iso                    INTEGER,
+    exposure_time_seconds  REAL,
+    f_number               REAL,
+    exposure_bias_ev       REAL,
+    focal_length_mm        REAL,
+    width_px               INTEGER,
+    height_px              INTEGER,
+    capture_time           TEXT,
+    capture_time_raw       TEXT,
+    capture_time_precision TEXT,
+    capture_time_timezone  TEXT,
+    capture_time_offset    TEXT,
+    orientation            INTEGER,
+    latitude               REAL,
+    longitude              REAL,
+    location_label         TEXT
+);
+
+CREATE INDEX IF NOT EXISTS photo_technical_metadata_camera
+    ON photo_technical_metadata(camera_make, camera_model);
+CREATE INDEX IF NOT EXISTS photo_technical_metadata_lens
+    ON photo_technical_metadata(lens_make, lens_model);
+CREATE INDEX IF NOT EXISTS photo_technical_metadata_iso
+    ON photo_technical_metadata(iso);
+CREATE INDEX IF NOT EXISTS photo_technical_metadata_capture_time
+    ON photo_technical_metadata(capture_time);
+CREATE INDEX IF NOT EXISTS photo_technical_metadata_location
+    ON photo_technical_metadata(latitude, longitude);
+
 CREATE TABLE IF NOT EXISTS document_event_state (
     singleton INTEGER PRIMARY KEY CHECK (singleton = 1), contract_version TEXT NOT NULL,
     deriver_fingerprint TEXT NOT NULL, input_epoch INTEGER NOT NULL CHECK (input_epoch > 0),

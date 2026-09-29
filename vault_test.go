@@ -221,6 +221,14 @@ func TestVaultEnsureSourceMetadataProcessesExactVersion(t *testing.T) {
 	retry, err := vault.EnsureSourceMetadata(t.Context(), first.Version.ID)
 	require.NoError(t, err)
 	assert.Equal(t, metadata, retry)
+	projection, err := vault.metadata.ContentVersionPhotoMetadata(t.Context(), first.Version.ID)
+	require.NoError(t, err)
+	assert.Equal(t, first.Version.ID, projection.ContentVersionID)
+	assert.Equal(t, metadata.ExtractorFingerprint, projection.ExtractorFingerprint)
+	assert.NotEmpty(t, projection.GenerationID)
+	retryProjection, err := vault.metadata.ContentVersionPhotoMetadata(t.Context(), first.Version.ID)
+	require.NoError(t, err)
+	assert.Equal(t, projection, retryProjection)
 }
 
 func TestVaultEnsureSourceMetadataRefreshesOldExtractorGeneration(t *testing.T) {

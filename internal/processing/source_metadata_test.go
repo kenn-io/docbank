@@ -1327,6 +1327,29 @@ func TestBackfillSourceMetadataPublishesOnlyAfterVerifiedEOF(t *testing.T) {
 	assert.Equal(t, 1, catalog.published)
 }
 
+func TestSourceMetadataPublishesPhotoTechnicalProjection(t *testing.T) {
+	t.Parallel()
+	ctx := t.Context()
+	s, err := store.Open(filepath.Join(t.TempDir(), "docbank.db"))
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, s.Close()) })
+	payload := syntheticRichExifTIFF()
+	digest := sha256.Sum256(payload)
+	sourceSHA256 := hex.EncodeToString(digest[:])
+	node, err := s.CreateFile(ctx, s.RootID(), "photo.tiff", sourceSHA256, int64(len(payload)), "image/tiff")
+	require.NoError(t, err)
+	completed, err := BackfillSourceMetadataTargets(ctx, s, &sourceMetadataReaderStub{payload: payload},
+		sourceMetadataTestSpool(t), []store.SourceMetadataTarget{{SourceSHA256: sourceSHA256, Size: int64(len(payload))}})
+	require.NoError(t, err)
+	assert.Equal(t, 1, completed)
+	projection, err := s.ContentVersionPhotoMetadata(ctx, node.CurrentVersionID)
+	require.NoError(t, err)
+	require.NotNil(t, projection.Fields.CameraMake)
+	assert.Equal(t, "Fiction Camera Co.", *projection.Fields.CameraMake)
+	assert.Equal(t, int64(6000), *projection.Fields.WidthPX)
+	assert.Equal(t, store.PhotoTechnicalProjectionRecipe, projection.ProjectionRecipe)
+}
+
 func sourceMetadataTestSpool(t *testing.T) string {
 	t.Helper()
 	root, err := filepath.EvalSymlinks(t.TempDir())

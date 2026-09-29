@@ -335,6 +335,28 @@ local pointers, sidecar targets, selected display state, enum-like text,
 revisions, receipt JSON, and the complete graph before commit. Released
 metadata streams remain readable and restore an empty photo authority.
 
+### Photo technical projection
+
+`photo_technical_metadata` stores one derived row for each source metadata
+generation. The row keeps typed camera, lens, exposure, dimension, capture,
+orientation, GPS, and coarse place fields. Its foreign key cascades with the
+generation, so it never becomes a second blob or version authority.
+
+An exact content-version read first follows `content_versions.blob_hash` to
+the selected `source_metadata_heads` generation, validates that generation's
+canonical checksum, and then reads the matching projection. Two versions that
+share bytes therefore share one projection while retaining their own version
+IDs. A node move, replacement, revert, display choice, exclusion, or photo
+membership change does not rewrite the row.
+
+Source publication builds the projection before its existing generation and
+head transaction commits. JSONL exports projections after their source
+generations in generation-ID order. Backup export filters projections through
+the same authorized blob set as source generations. Restore accepts explicit
+rows, then fills rows absent from older JSONL using retained canonical source
+evidence. A valid GPS pair can have no label when the embedded Natural Earth
+map has no matching country or simplified boundary.
+
 SQLite is Docbank's runtime query and transaction engine, but its historical
 page layout is not the intended long-lived backup contract. The logical
 boundary is deterministic JSONL headed by `docbank-metadata` and an integer

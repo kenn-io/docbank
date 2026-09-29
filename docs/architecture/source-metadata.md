@@ -108,6 +108,27 @@ ensures reuse that active generation. The daemon backfill only processes
 originals missing a generation for its fingerprint, so it does not reactivate
 already-recorded evidence by itself.
 
+Each generation also has one indexed photo technical projection. It maps the
+existing camera, lens, exposure, dimension, capture-time, orientation, and GPS
+claims into nullable typed columns. The projection records the fixed
+`photo-technical/v1` recipe separately from the extractor fingerprint because
+the mapping and embedded map can change without changing the source evidence.
+Reads bind the projection to the requested content version through its blob
+hash and active source head, then validate the canonical source checksum.
+This keeps historical version reads exact and lets duplicate versions share one
+generation row.
+
+Capture timestamps retain normalized text, raw text, precision, timezone kind,
+and offset. A date-only value keeps its omitted timezone. The GPS adapter
+accepts only a finite, bounded latitude and longitude pair and keeps those
+coordinates when the offline Natural Earth resolver returns no label. Labels
+are coarse country, region, and nearby-city text. Ocean coordinates and gaps
+between simplified borders remain unlabeled.
+
+Projection rows travel in metadata JSONL after their source generations.
+Older streams without those rows derive them from the retained canonical
+evidence during restore; no original blob read is needed.
+
 The HTTP node and content-version detail surfaces return the active generation.
 Embedded applications call `Vault.EnsureSourceMetadata` with an immutable
 content version ID to run the current local extractor synchronously for those
