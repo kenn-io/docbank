@@ -10926,6 +10926,10 @@ components:
           type: integer
         cancel_requested:
           type: boolean
+        changed_groups:
+          format: int64
+          minimum: 0
+          type: integer
         completed_groups:
           format: int64
           minimum: 0
@@ -10973,6 +10977,7 @@ components:
         - completed_groups
         - added_groups
         - skipped_groups
+        - changed_groups
         - failed_groups
         - ambiguous_groups
         - cancel_requested

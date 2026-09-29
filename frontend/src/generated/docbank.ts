@@ -4317,6 +4317,8 @@ export interface PhotoImportRun {
   ambiguous_groups: number;
   cancel_requested: boolean;
   /** @minimum 0 */
+  changed_groups: number;
+  /** @minimum 0 */
   completed_groups: number;
   destination: string;
   error?: string;

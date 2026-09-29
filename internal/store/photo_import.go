@@ -74,6 +74,7 @@ type PhotoImportRequest struct {
 type PhotoImportReceipt struct {
 	Added       int64                  `json:"added"`
 	Skipped     int64                  `json:"skipped"`
+	Changed     int64                  `json:"changed"`
 	Failed      int64                  `json:"failed"`
 	Ambiguous   int64                  `json:"ambiguous"`
 	Ambiguities []PhotoImportAmbiguity `json:"ambiguities,omitzero"`

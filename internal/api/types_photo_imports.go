@@ -34,6 +34,7 @@ type PhotoImportRun struct {
 	CompletedGroups int64                  `json:"completed_groups" minimum:"0"`
 	AddedGroups     int64                  `json:"added_groups" minimum:"0"`
 	SkippedGroups   int64                  `json:"skipped_groups" minimum:"0"`
+	ChangedGroups   int64                  `json:"changed_groups" minimum:"0"`
 	FailedGroups    int64                  `json:"failed_groups" minimum:"0"`
 	AmbiguousGroups int64                  `json:"ambiguous_groups" minimum:"0"`
 	CancelRequested bool                   `json:"cancel_requested"`
@@ -65,7 +66,7 @@ func fromStorePhotoImport(operation store.StorageOperation, browser bool) PhotoI
 	out := PhotoImportRun{ID: operation.ID, State: string(operation.State),
 		Destination: request.Destination, TotalGroups: operation.TotalObjects,
 		CompletedGroups: operation.CompletedObjects, AddedGroups: receipt.Added,
-		SkippedGroups: receipt.Skipped, FailedGroups: receipt.Failed,
+		SkippedGroups: receipt.Skipped, ChangedGroups: receipt.Changed, FailedGroups: receipt.Failed,
 		AmbiguousGroups: receipt.Ambiguous, CancelRequested: operation.CancelRequested,
 		StartedAt: operation.CreatedAt.Format(time.RFC3339Nano), UpdatedAt: operation.UpdatedAt.Format(time.RFC3339Nano)}
 	if operation.FinishedAt != nil {

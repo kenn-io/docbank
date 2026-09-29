@@ -81,8 +81,8 @@ func writePhotoImportOutput(cmd *cobra.Command, run api.PhotoImportRun) error {
 		return writeCLIJSON(cmd.OutOrStdout(), run)
 	}
 	out := cmd.OutOrStdout()
-	if _, err := fmt.Fprintf(out, "import: %s\nstate: %s\nprogress: %d/%d groups\nadded: %d\nskipped: %d\nfailed: %d\nambiguous: %d\n",
-		run.ID, run.State, run.CompletedGroups, run.TotalGroups, run.AddedGroups, run.SkippedGroups, run.FailedGroups, run.AmbiguousGroups); err != nil {
+	if _, err := fmt.Fprintf(out, "import: %s\nstate: %s\nprogress: %d/%d groups\nadded: %d\nskipped: %d\nchanged during import: %d\nfailed: %d\nambiguous: %d\n",
+		run.ID, run.State, run.CompletedGroups, run.TotalGroups, run.AddedGroups, run.SkippedGroups, run.ChangedGroups, run.FailedGroups, run.AmbiguousGroups); err != nil {
 		return fmt.Errorf("writing photo import output: %w", err)
 	}
 	if run.Error != "" {
@@ -110,8 +110,8 @@ func writePhotoImportOutput(cmd *cobra.Command, run api.PhotoImportRun) error {
 		}
 	}
 	if len(run.Ambiguities) > 0 {
-		if _, err := fmt.Fprintln(out, "To pair a group: 'docbank photos assets inspect <asset-id>' shows its file IDs, "+
-			"'docbank photos assets detach <asset-id> <file-id>' frees a file, and 'docbank photos assets attach <asset-id> id:<node>' adds it to the other photo."); err != nil {
+		if _, err := fmt.Fprintln(out, "To pair a group, move its RAW and JPEG files into one photo: 'docbank photos assets inspect <asset-id>' shows file IDs, "+
+			"'docbank photos assets detach <asset-id> <file-id>' frees a file, and 'docbank photos assets attach <asset-id> id:<node>' adds it. The sidecar follows on the next import."); err != nil {
 			return fmt.Errorf("writing photo import output: %w", err)
 		}
 	}

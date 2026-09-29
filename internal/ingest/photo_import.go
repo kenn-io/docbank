@@ -141,7 +141,7 @@ func (ing *Ingester) readPhotoImportMember(ctx context.Context, candidate PhotoI
 // destination, one group transaction at a time. Files settle once for the
 // whole scan outside the mutation gate; each group holds the gate only while
 // it rechecks, publishes bytes, and commits. A group whose files changed
-// since the scan counts as skipped.
+// since the scan counts as changed.
 func (ing *Ingester) ImportPhotoDirectory(ctx context.Context, root, destination string, opts PhotoImportOptions) (report PhotoImportReport, retErr error) {
 	mutate := func(fn func() error) error {
 		if opts.Mutate != nil {
@@ -226,7 +226,7 @@ func (ing *Ingester) ImportPhotoDirectory(ctx context.Context, root, destination
 			return report, ctx.Err()
 		case errors.Is(groupErr, ErrSourceChanged):
 			// A file that changed since the scan waits for the next run.
-			report.Receipt.Skipped++
+			report.Receipt.Changed++
 		case groupErr != nil:
 			report.Receipt.Failed++
 			report.Errors = append(report.Errors, FileError{Path: group.Members[0].Path, Err: groupErr})

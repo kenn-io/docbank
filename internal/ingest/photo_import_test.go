@@ -198,7 +198,8 @@ func TestPhotoImportSkipsGroupChangedAfterScan(t *testing.T) {
 	require.NoError(t, err)
 	assert.Empty(t, report.Errors)
 	assert.Equal(t, int64(1), report.Receipt.Added)
-	assert.Equal(t, int64(1), report.Receipt.Skipped)
+	assert.Equal(t, int64(1), report.Receipt.Changed)
+	assert.Zero(t, report.Receipt.Skipped)
 
 	rerun, err := ing.ImportPhotoDirectory(t.Context(), root, "/photos", PhotoImportOptions{})
 	require.NoError(t, err)
@@ -303,7 +304,7 @@ func TestPhotoImportRunnerCancelsAndResumes(t *testing.T) {
 	assert.Equal(t, store.StorageOperationCompleted, completed.State)
 	assert.Equal(t, int64(3), completed.TotalObjects)
 	assert.Equal(t, int64(3), completed.CompletedObjects)
-	assert.JSONEq(t, `{"added":3,"skipped":0,"failed":0,"ambiguous":0}`, completed.ReceiptJSON)
+	assert.JSONEq(t, `{"added":3,"skipped":0,"changed":0,"failed":0,"ambiguous":0}`, completed.ReceiptJSON)
 
 	cancelled, err := ing.Store.CreateLocalOperation(t.Context(), store.StorageOperationKindPhotoImport, request)
 	require.NoError(t, err)

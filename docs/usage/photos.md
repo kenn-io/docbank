@@ -91,13 +91,14 @@ The import leaves a group unpaired and lists it in `imports show` when:
   RAW and JPEG becomes its own photo and the sidecar stays a plain file;
 - same-name files already sit in separate photos: nothing is merged.
 
-Pair them yourself: `photos assets inspect <asset-id>` shows file IDs,
-`photos assets detach` frees a file, and `photos assets attach` adds it to the
-other photo. A paired group drops off the list on the next import.
+Pair the RAW and JPEG files yourself: `photos assets inspect <asset-id>` shows
+file IDs, `photos assets detach` frees a file, and `photos assets attach` adds
+it to the other photo. The sidecar follows on the next import, and the paired
+group drops off the list.
 `imports show` lists the first 100 groups and says how many more there are.
 
 The import waits one second after listing the folder. A group whose files
-change after that is skipped and counted as skipped; import again to pick it
+change after that is left out and counted as changed; import again to pick it
 up. Progress and cancel appear in the web Jobs drawer. Cancel takes effect
 before the next group. A daemon restart resumes an unfinished import by
 scanning the folder again.
