@@ -171,9 +171,10 @@ func TestPhotoImportSeparatePhotosAreReported(t *testing.T) {
 	image := photoImportTestMember(filepath.Join(root, "IMG.JPG"), PhotoRoleImage, fakeHash("separate-image"), "image/jpeg")
 	rawResult, err := s.IngestPhotoGroup(ctx, run, photoImportTestGroup(raw))
 	require.NoError(t, err)
-	imageGroup := photoImportTestGroup(image)
-	imageGroup.Isolated = true
-	imageResult, err := s.IngestPhotoGroup(ctx, run, imageGroup)
+	// The same JPEG bytes first seen elsewhere become their own photo.
+	elsewhere := image
+	elsewhere.OriginalPath = filepath.Join(t.TempDir(), "IMG.JPG")
+	imageResult, err := s.IngestPhotoGroup(ctx, run, photoImportTestGroup(elsewhere))
 	require.NoError(t, err)
 	require.NotEqual(t, rawResult.Asset.ID, imageResult.Asset.ID)
 
@@ -248,6 +249,57 @@ func TestPhotoImportMultipleRAWsImportAlone(t *testing.T) {
 	alone, err := s.PhotoAssetForNode(ctx, reported.Nodes[0].ID)
 	require.NoError(t, err)
 	assert.Len(t, alone.Files, 1)
+}
+
+func TestPhotoImportLoneSidecarWaitsForItsImage(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := t.Context()
+	run, err := s.BeginIngest(ctx, "photo-import", t.TempDir())
+	require.NoError(t, err)
+	root := filepath.Join(t.TempDir(), "camera")
+	xmp := photoImportTestMember(filepath.Join(root, "IMG.XMP"), PhotoRoleSidecar, fakeHash("lone-xmp"), "application/rdf+xml")
+	alone, err := s.IngestPhotoGroup(ctx, run, photoImportTestGroup(xmp))
+	require.NoError(t, err)
+	assert.True(t, alone.Added)
+	require.Len(t, alone.Nodes, 1)
+	_, err = s.PhotoAssetForNode(ctx, alone.Nodes[0].ID)
+	require.ErrorIs(t, err, ErrNotFound)
+
+	again, err := s.IngestPhotoGroup(ctx, run, photoImportTestGroup(xmp))
+	require.NoError(t, err)
+	assert.True(t, again.Skipped)
+
+	jpeg := photoImportTestMember(filepath.Join(root, "IMG.JPG"), PhotoRoleImage, fakeHash("lone-jpeg"), "image/jpeg")
+	paired, err := s.IngestPhotoGroup(ctx, run, photoImportTestGroup(jpeg, xmp))
+	require.NoError(t, err)
+	require.Len(t, paired.Asset.Files, 2)
+	assert.Equal(t, alone.Nodes[0].ID, fileByRole(paired.Asset.Files, PhotoRoleSidecar).NodeID)
+}
+
+func TestPhotoImportOperatorPairedRAWsAreSettled(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := t.Context()
+	run, err := s.BeginIngest(ctx, "photo-import", t.TempDir())
+	require.NoError(t, err)
+	root := t.TempDir()
+	arw := photoImportTestMember(filepath.Join(root, "IMG.ARW"), PhotoRoleRAW, fakeHash("paired-arw"), "image/x-sony-arw")
+	dng := photoImportTestMember(filepath.Join(root, "IMG.DNG"), PhotoRoleRAW, fakeHash("paired-dng"), "image/x-adobe-dng")
+	first, err := s.IngestPhotoGroup(ctx, run, photoImportTestGroup(arw, dng))
+	require.NoError(t, err)
+	require.NotNil(t, first.Ambiguity)
+	target := mustPhotoAsset(t, s, first.Nodes[0].ID)
+	other := mustPhotoAsset(t, s, first.Nodes[1].ID)
+	_, err = s.DetachPhotoFile(ctx, other.ID, other.Revision, other.Files[0].ID, PhotoDetachOptions{})
+	require.NoError(t, err)
+	_, err = s.AttachPhotoFile(ctx, target.ID, target.Revision, first.Nodes[1].ID, PhotoRoleRAW, nil)
+	require.NoError(t, err)
+
+	rerun, err := s.IngestPhotoGroup(ctx, run, photoImportTestGroup(arw, dng))
+	require.NoError(t, err)
+	assert.Nil(t, rerun.Ambiguity)
+	assert.True(t, rerun.Skipped)
 }
 
 func TestPhotoImportDedupObservation(t *testing.T) {

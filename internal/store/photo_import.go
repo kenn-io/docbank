@@ -32,7 +32,6 @@ type PhotoImportGroup struct {
 	SourceFolder  string
 	Stem          string
 	DestinationID int64
-	Isolated      bool
 	Members       []PhotoImportMember
 }
 
@@ -309,7 +308,8 @@ func (s *Store) photoImportCurrentDuplicateTx(
 // IngestPhotoGroup publishes one group of already-durable bytes and commits
 // its nodes, provenance, and photo membership in one logical transaction.
 // One RAW and at most one existing photo pair automatically; anything more is
-// left unpaired and reported for the operator.
+// left unpaired and reported for the operator. A lone sidecar stays a plain
+// file until a same-name RAW or image arrives.
 func (s *Store) IngestPhotoGroup(ctx context.Context, run IngestRun, group PhotoImportGroup) (result PhotoImportResult, retErr error) {
 	if err := requireOperationalIngestRun(run); err != nil {
 		return result, err
@@ -329,7 +329,7 @@ func (s *Store) IngestPhotoGroup(ctx context.Context, run IngestRun, group Photo
 		roles := make([]string, count)
 		kinds := make([]string, count)
 		owners := make([]string, count)
-		added := false
+		added, isolated := false, false
 		for i, member := range group.Members {
 			role, mediaType, kind, err := photoImportMemberRole(member)
 			if err != nil {
@@ -339,7 +339,7 @@ func (s *Store) IngestPhotoGroup(ctx context.Context, run IngestRun, group Photo
 				if count != 1 {
 					return errors.New("video import must have one member")
 				}
-				group.Isolated = true
+				isolated = true
 			}
 			if member.BlobHash == "" || member.Size < 0 || member.OriginalPath == "" {
 				return fmt.Errorf("photo import member %q lacks a verified source identity", member.Name)
@@ -370,7 +370,7 @@ func (s *Store) IngestPhotoGroup(ctx context.Context, run IngestRun, group Photo
 		result.Nodes = nodes
 
 		var earlier []photoImportCandidateRow
-		if !group.Isolated {
+		if !isolated {
 			var err error
 			if earlier, err = s.photoImportCandidatesTx(ctx, tx, group.SourceFolder, group.Stem); err != nil {
 				return err
@@ -378,12 +378,14 @@ func (s *Store) IngestPhotoGroup(ctx context.Context, run IngestRun, group Photo
 		}
 		assets := make(map[string]struct{})
 		raws := make(map[int64]struct{})
+		unownedRAW := false
 		for i := range nodes {
 			if owners[i] != "" {
 				assets[owners[i]] = struct{}{}
 			}
 			if roles[i] == PhotoRoleRAW {
 				raws[nodes[i].ID] = struct{}{}
+				unownedRAW = unownedRAW || owners[i] == ""
 			}
 		}
 		for _, candidate := range earlier {
@@ -402,7 +404,8 @@ func (s *Store) IngestPhotoGroup(ctx context.Context, run IngestRun, group Photo
 		}
 		reason := ""
 		switch {
-		case len(raws) > 1:
+		// RAWs the operator already paired into one photo are settled.
+		case len(raws) > 1 && (unownedRAW || len(assets) > 1):
 			reason = PhotoImportMultipleRAW
 		case len(assets) > 1:
 			reason = PhotoImportSeparatePhotos
@@ -431,7 +434,8 @@ func (s *Store) IngestPhotoGroup(ctx context.Context, run IngestRun, group Photo
 				}
 			}
 			if primary < 0 {
-				return errors.New("photo import group has no primary media")
+				result.Added, result.Skipped = added, !added
+				return nil
 			}
 			created, err := s.createPhotoAssetWithReceiptTx(ctx, tx, nodes[primary].ID, roles[primary], kinds[primary], "create")
 			if err != nil {
