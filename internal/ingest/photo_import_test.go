@@ -242,7 +242,7 @@ func TestPhotoImportSourceStability(t *testing.T) {
 		}},
 		{name: "same-size replacement", edit: func(t *testing.T, path string, before localFileFingerprint) {
 			t.Helper()
-			require.NoError(t, os.Remove(path))
+			require.NoError(t, os.Rename(path, path+".old"))
 			require.NoError(t, os.WriteFile(path, []byte("same"), 0o600))
 			require.NoError(t, os.Chtimes(path, before.info.ModTime(), before.info.ModTime()))
 		}},

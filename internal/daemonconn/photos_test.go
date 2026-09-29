@@ -4,6 +4,7 @@ import (
 	"encoding/json/v2"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -148,8 +149,9 @@ func TestPhotoImportClients(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 	client := New(server.URL, "synthetic-key")
-	choice := &api.PhotoImportChoice{GroupKey: "photo\x00camera\x00capture", RawSourcePath: `C:\camera\capture.ARW`}
-	started, err := client.StartPhotoImport(t.Context(), `C:\camera`, "/photos", choice)
+	sourceRoot := filepath.Join(t.TempDir(), "camera")
+	choice := &api.PhotoImportChoice{GroupKey: "photo\x00camera\x00capture", RawSourcePath: filepath.Join(sourceRoot, "capture.ARW")}
+	started, err := client.StartPhotoImport(t.Context(), sourceRoot, "/photos", choice)
 	require.NoError(t, err)
 	assert.Equal(t, runID, started.ID)
 	require.NotNil(t, selected)

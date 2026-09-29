@@ -135,13 +135,6 @@ func registerPhotoImportRoutes(api huma.API, d Deps, g *gate) {
 		mutate := func() error {
 			var callErr error
 			run, callErr = d.Store.RequestPhotoImportCancel(ctx, in.RunID, revision)
-			if errors.Is(callErr, store.ErrStaleRevision) {
-				current, getErr := d.Store.PhotoImportRun(ctx, in.RunID)
-				if getErr != nil {
-					return getErr
-				}
-				run, callErr = d.Store.RequestPhotoImportCancel(ctx, in.RunID, current.Revision)
-			}
 			return callErr
 		}
 		if g != nil {
