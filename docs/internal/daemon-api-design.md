@@ -210,8 +210,7 @@ must never enter logs or error strings.
 The daemon exposes the person store through `/api/v1/people`. The existing
 list route searches active names by folded prefix. The new `/by-id/` family
 avoids overlap with document-people rebuild routes. Reads return one person
-snapshot with identities and external UIDs, or page active custodian
-assignments. The page cursor is bound to the requested person ID.
+snapshot with identities and external UIDs.
 
 Create, rename, retire, merge, and split remain daemon-only. Rename, retire,
 merge, and split require `If-Match`. Merge also carries the absorbed

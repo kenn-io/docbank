@@ -120,14 +120,12 @@ func TestPeopleRoutesWorkflow(t *testing.T) {
 	changedSplitResponse, changedSplitRaw := do(t, ts, http.MethodPost, path+"/split", map[string]string{"If-Match": strconv.Quote("4")}, changedSplitBody)
 	require.Equal(t, http.StatusConflict, changedSplitResponse.StatusCode, changedSplitRaw)
 	require.Equal(t, "person_merge_conflict", decodeProblem(t, changedSplitRaw).Code)
-	custodianResponse, custodianRaw := get(t, ts, "/api/v1/people/by-id/"+split.NewPersonID+"/custodians?limit=1", nil)
-	require.Equal(t, http.StatusOK, custodianResponse.StatusCode, custodianRaw)
-	var custodianPage api.CustodianPage
-	require.NoError(t, json.Unmarshal([]byte(custodianRaw), &custodianPage))
-	require.Len(t, custodianPage.Items, 1)
-	require.Equal(t, assignment.AssignmentID, custodianPage.Items[0].AssignmentID)
-	require.Equal(t, node.ID, custodianPage.Items[0].NodeID)
-	require.Equal(t, node.CurrentVersionID, custodianPage.Items[0].ContentVersionID)
+	custodians, _, err := fixture.Custodians(t.Context(), store.CustodianScope{Kind: "document", NodeID: node.ID, ContentVersionID: node.CurrentVersionID}, false, 1, 0)
+	require.NoError(t, err)
+	require.Len(t, custodians, 1)
+	require.Equal(t, assignment.AssignmentID, custodians[0].AssignmentID)
+	require.NotNil(t, custodians[0].PersonID)
+	require.Equal(t, split.NewPersonID, *custodians[0].PersonID)
 	coverageResponse, coverageRaw = get(t, ts, "/api/v1/people/coverage", nil)
 	require.Equal(t, http.StatusOK, coverageResponse.StatusCode, coverageRaw)
 	var afterSplitCoverage api.PeopleCoverage
@@ -150,59 +148,6 @@ func TestPeopleRoutesWorkflow(t *testing.T) {
 	require.Equal(t, http.StatusOK, listedResponse.StatusCode, listedBody)
 	require.NoError(t, json.Unmarshal([]byte(listedBody), &page))
 	require.Empty(t, page.Items)
-}
-
-func TestPeopleRouteCustodiansPreserveAllScopeCoordinates(t *testing.T) {
-	ts, fixture := newTestServer(t, nil)
-	createdResponse, createdBody := do(t, ts, http.MethodPost, "/api/v1/people", nil, map[string]string{"display_name": "Synthetic coordinates"})
-	require.Equal(t, http.StatusCreated, createdResponse.StatusCode, createdBody)
-	var person api.Person
-	require.NoError(t, json.Unmarshal([]byte(createdBody), &person))
-	collection, err := fixture.BeginIngest(t.Context(), "cli", "synthetic collection")
-	require.NoError(t, err)
-	_, err = fixture.IngestFileExact(t.Context(), collection, fixture.RootID(), "collection.txt", testHash("synthetic collection"), int64(len("synthetic collection")), "text/plain", "collection.txt", "")
-	require.NoError(t, err)
-	collectionAssignment, err := fixture.SetCustodian(t.Context(), store.CustodianRequest{
-		Scope: store.CustodianScope{Kind: "collection", IngestID: collection.ID()}, PersonID: person.PersonID,
-		RawLabel: "Collection owner", Rank: "primary", Basis: "operator_assigned", SourceRef: "synthetic-collection", IfMatchRevision: 1,
-	})
-	require.NoError(t, err)
-	pkg, _, _ := seedBrowseReceivedPackage(t, fixture, false)
-	packageAssignment, err := fixture.SetCustodian(t.Context(), store.CustodianRequest{
-		Scope: store.CustodianScope{Kind: "package", PackageID: pkg.PackageID}, PersonID: person.PersonID,
-		RawLabel: "Package owner", Rank: "primary", Basis: "operator_assigned", SourceRef: "synthetic-package", IfMatchRevision: 1,
-	})
-	require.NoError(t, err)
-	node := createFileWithContent(t, ts, fixture, "/coordinates.txt", "synthetic coordinates")
-	documentAssignment, err := fixture.SetCustodian(t.Context(), store.CustodianRequest{
-		Scope: store.CustodianScope{Kind: "document", NodeID: node.ID, ContentVersionID: node.CurrentVersionID}, PersonID: person.PersonID,
-		RawLabel: "Document owner", Rank: "primary", Basis: "operator_assigned", SourceRef: "synthetic-document", IfMatchRevision: 1,
-	})
-	require.NoError(t, err)
-
-	response, body := get(t, ts, "/api/v1/people/by-id/"+person.PersonID+"/custodians?limit=10", nil)
-	require.Equal(t, http.StatusOK, response.StatusCode, body)
-	var page api.CustodianPage
-	require.NoError(t, json.Unmarshal([]byte(body), &page))
-	require.EqualValues(t, 3, page.Total)
-	require.Len(t, page.Items, 3)
-	byID := make(map[string]api.CustodianAssignment, len(page.Items))
-	for _, item := range page.Items {
-		byID[item.AssignmentID] = item
-	}
-	collectionOutput := byID[collectionAssignment.AssignmentID]
-	require.Equal(t, collection.ID(), collectionOutput.IngestID)
-	require.Empty(t, collectionOutput.PackageID)
-	require.Zero(t, collectionOutput.NodeID)
-	packageOutput := byID[packageAssignment.AssignmentID]
-	require.Equal(t, pkg.PackageID, packageOutput.PackageID)
-	require.Empty(t, packageOutput.IngestID)
-	require.Zero(t, packageOutput.NodeID)
-	documentOutput := byID[documentAssignment.AssignmentID]
-	require.Equal(t, node.ID, documentOutput.NodeID)
-	require.Equal(t, node.CurrentVersionID, documentOutput.ContentVersionID)
-	require.Empty(t, documentOutput.IngestID)
-	require.Empty(t, documentOutput.PackageID)
 }
 
 func TestPeopleRoutesUseInheritedBodyLimit(t *testing.T) {
@@ -332,18 +277,16 @@ func TestPeopleRouteSplitAllowsTwoHundredOneAssignments(t *testing.T) {
 	var wire map[string]any
 	require.NoError(t, json.Unmarshal([]byte(raw), &wire))
 	require.IsType(t, []any{}, wire["moved_identity_ids"])
-	items, total, err := fixture.CustodiansForPerson(t.Context(), receipt.NewPersonID, 250, 0)
+	items, total, err := fixture.Custodians(t.Context(), store.CustodianScope{}, false, 250, 0)
 	require.NoError(t, err)
 	require.EqualValues(t, 201, total)
-	require.Len(t, items, 201)
-	movedIDs := make([]string, len(items))
-	for index, item := range items {
-		movedIDs[index] = item.AssignmentID
+	movedIDs := make([]string, 0, len(items))
+	for _, item := range items {
+		require.NotNil(t, item.PersonID)
+		require.Equal(t, receipt.NewPersonID, *item.PersonID)
+		movedIDs = append(movedIDs, item.AssignmentID)
 	}
 	require.ElementsMatch(t, assignmentIDs, movedIDs)
-	_, sourceTotal, err := fixture.CustodiansForPerson(t.Context(), person.PersonID, 250, 0)
-	require.NoError(t, err)
-	require.Zero(t, sourceTotal)
 }
 
 func TestPeopleRouteSplitExternalOnlyReturnsEmptyIdentityArray(t *testing.T) {

@@ -62,7 +62,6 @@ var readToolDefinitions = []toolDefinition{
 	{name: "list_package_custodians", title: "List package custodians", description: "Page through active custodian claims for an exact package scope.", schemas: listPackageCustodiansSchemas},
 	{name: "find_people", title: "Find people", description: "Find bounded active canonical people by folded name prefix.", schemas: findPeopleSchemas},
 	{name: "get_person", title: "Get person", description: "Read one canonical person and its split selectors.", schemas: getPersonSchemas},
-	{name: "list_person_custodians", title: "List person custodians", description: "Page through active custodian assignments for one person.", schemas: listPersonCustodiansSchemas},
 	{name: "list_packages", title: "List packages", description: "Page through received and produced load-file packages.", schemas: listPackagesSchemas},
 	{name: "get_package", title: "Get package", description: "Read one load-file package and its retained source authority.", schemas: getPackageSchemas},
 	{name: "list_package_members", title: "List package members", description: "Page through one package's immutable document occurrences.", schemas: listPackageMembersSchemas},

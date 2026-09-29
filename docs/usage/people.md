@@ -27,10 +27,8 @@ Create an operator-owned person with `docbank people create "Ada Lovelace"`.
 Read it with `docbank people show <person-id>` or
 `GET /api/v1/people/by-id/{person_id}`. The detail response includes identity
 IDs, external UIDs, the current revision, and the ID used to reach a merged
-person. Use `docbank people custodians <person-id>` to page active custodian
-assignments. Each assignment includes the coordinates for its scope: an
-ingest ID for a collection, package IDs for a package, or a node ID and
-content version ID for a document.
+person. Custodian assignment IDs for split come from the existing custodian
+listing for a scope, such as `list_package_custodians` in MCP.
 
 ## Edit people
 

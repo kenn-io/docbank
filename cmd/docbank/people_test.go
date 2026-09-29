@@ -3,7 +3,6 @@ package main
 import (
 	"encoding/json/v2"
 	"strconv"
-	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -14,7 +13,7 @@ import (
 )
 
 func TestPeopleCLIWorkflow(t *testing.T) {
-	for _, name := range []string{"list", "show", "custodians", "create", "rename", "retire", "merge", "split"} {
+	for _, name := range []string{"list", "show", "create", "rename", "retire", "merge", "split"} {
 		command, _, err := peopleCmd.Find([]string{name})
 		require.NoError(t, err)
 		require.Equal(t, name, command.Name())
@@ -31,15 +30,6 @@ func TestPeopleCLIWorkflow(t *testing.T) {
 		EvidenceKind: "operator_assertion", EvidenceID: "synthetic-cli", Confidence: "operator_asserted",
 	})
 	require.NoError(t, err)
-	run, err := catalog.BeginIngest(t.Context(), "cli", "synthetic CLI collection")
-	require.NoError(t, err)
-	node, err := catalog.IngestFileExact(t.Context(), run, catalog.RootID(), "cli-document.txt", strings.Repeat("a", 64), int64(len("synthetic CLI document")), "text/plain", "cli-document.txt", "")
-	require.NoError(t, err)
-	assignment, err := catalog.SetCustodian(t.Context(), store.CustodianRequest{
-		Scope: store.CustodianScope{Kind: "document", NodeID: node.ID, ContentVersionID: node.CurrentVersionID}, PersonID: seed.PersonID,
-		RawLabel: "Synthetic seed", Rank: "primary", Basis: "operator_assigned", SourceRef: "synthetic-cli", IfMatchRevision: 1,
-	})
-	require.NoError(t, err)
 	require.NoError(t, catalog.Close())
 	startTestDaemon(t, dir)
 
@@ -54,14 +44,6 @@ func TestPeopleCLIWorkflow(t *testing.T) {
 	var shown api.PersonDetail
 	require.NoError(t, json.Unmarshal([]byte(showOutput), &shown))
 	assert.Equal(t, created.PersonID, shown.PersonID)
-	custodiansOutput, err := runCLI(t, "people", "custodians", seed.PersonID)
-	require.NoError(t, err)
-	var custodians api.CustodianPage
-	require.NoError(t, json.Unmarshal([]byte(custodiansOutput), &custodians))
-	require.Len(t, custodians.Items, 1)
-	assert.Equal(t, assignment.AssignmentID, custodians.Items[0].AssignmentID)
-	assert.Equal(t, node.ID, custodians.Items[0].NodeID)
-	assert.Equal(t, node.CurrentVersionID, custodians.Items[0].ContentVersionID)
 
 	renamedOutput, err := runCLI(t, "people", "rename", created.PersonID, "Renamed Ada", "--revision", strconv.FormatInt(created.Revision, 10))
 	require.NoError(t, err)

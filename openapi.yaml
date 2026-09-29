@@ -3200,14 +3200,6 @@ components:
           type: string
         basis:
           type: string
-        content_version_id:
-          type: string
-        ingest_id:
-          type: string
-        node_id:
-          format: int64
-          minimum: 1
-          type: integer
         package_id:
           type: string
         package_record_id:
@@ -20904,44 +20896,6 @@ paths:
                 $ref: "#/components/schemas/Error"
           description: Error
       summary: Rename one canonical person
-  /api/v1/people/by-id/{person_id}/custodians:
-    get:
-      operationId: listPersonCustodians
-      parameters:
-        - in: path
-          name: person_id
-          required: true
-          schema:
-            format: uuid
-            type: string
-        - explode: false
-          in: query
-          name: limit
-          schema:
-            default: 100
-            format: int64
-            maximum: 250
-            minimum: 1
-            type: integer
-        - explode: false
-          in: query
-          name: cursor
-          schema:
-            type: string
-      responses:
-        "200":
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/CustodianPage"
-          description: OK
-        default:
-          content:
-            application/problem+json:
-              schema:
-                $ref: "#/components/schemas/Error"
-          description: Error
-      summary: List active custodian assignments for one person
   /api/v1/people/by-id/{person_id}/merge:
     post:
       operationId: mergePerson

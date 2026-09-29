@@ -69,23 +69,6 @@ var peopleShowCmd = &cobra.Command{
 	},
 }
 
-var peopleCustodiansCmd = &cobra.Command{
-	Use:   "custodians <person-id>",
-	Short: "List active custodian assignments for one person",
-	Args:  cobra.ExactArgs(1),
-	RunE: func(cmd *cobra.Command, args []string) error {
-		c, err := daemonconn.Ensure(cmd.Context())
-		if err != nil {
-			return err
-		}
-		page, err := c.PersonCustodians(cmd.Context(), args[0], peopleCursor, peopleLimit)
-		if err != nil {
-			return err
-		}
-		return writeCLIJSON(cmd.OutOrStdout(), page)
-	},
-}
-
 var peopleCreateCmd = &cobra.Command{
 	Use:   "create <display-name>",
 	Short: "Create one canonical person",
@@ -219,13 +202,11 @@ func requirePeopleRevision() error {
 }
 
 func init() {
-	peopleCmd.AddCommand(peopleListCmd, peopleShowCmd, peopleCustodiansCmd, peopleCreateCmd, peopleRenameCmd,
+	peopleCmd.AddCommand(peopleListCmd, peopleShowCmd, peopleCreateCmd, peopleRenameCmd,
 		peopleRetireCmd, peopleMergeCmd, peopleSplitCmd)
 	rootCmd.AddCommand(peopleCmd)
-	for _, command := range []*cobra.Command{peopleListCmd, peopleCustodiansCmd} {
-		command.Flags().IntVar(&peopleLimit, "limit", 100, "maximum number of results")
-		command.Flags().StringVar(&peopleCursor, "cursor", "", "opaque continuation cursor")
-	}
+	peopleListCmd.Flags().IntVar(&peopleLimit, "limit", 100, "maximum number of results")
+	peopleListCmd.Flags().StringVar(&peopleCursor, "cursor", "", "opaque continuation cursor")
 	for _, command := range []*cobra.Command{peopleRenameCmd, peopleRetireCmd, peopleMergeCmd, peopleSplitCmd} {
 		command.Flags().Int64Var(&peopleRevision, "revision", 0, "expected person revision")
 		_ = command.MarkFlagRequired("revision")

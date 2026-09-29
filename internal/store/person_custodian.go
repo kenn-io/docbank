@@ -426,23 +426,6 @@ func scanCustodianRows(rows *sql.Rows) (_ []CustodianAssignment, retErr error) {
 	return assignments, rows.Err()
 }
 
-func custodiansPageTx(ctx context.Context, q metadataQuerier, where string, args []any, limit, offset int) ([]CustodianAssignment, int64, error) {
-	var total int64
-	if err := q.QueryRowContext(ctx, `SELECT COUNT(*) FROM custodian_assignments WHERE `+where, args...).Scan(&total); err != nil {
-		return nil, 0, err
-	}
-	pageArgs := append(slices.Clone(args), limit, offset)
-	rows, err := q.QueryContext(ctx, `SELECT `+custodianColumns+` FROM custodian_assignments WHERE `+where+` ORDER BY recorded_at,assignment_id LIMIT ? OFFSET ?`, pageArgs...)
-	if err != nil {
-		return nil, 0, err
-	}
-	items, err := scanCustodianRows(rows)
-	if err != nil {
-		return nil, 0, err
-	}
-	return items, total, nil
-}
-
 func (s *Store) Custodians(ctx context.Context, scope CustodianScope, unresolvedOnly bool, limit, offset int) ([]CustodianAssignment, int64, error) {
 	if scope.Kind != "" {
 		if err := validateCustodianScope(scope); err != nil {
@@ -485,35 +468,16 @@ func (s *Store) Custodians(ctx context.Context, scope CustodianScope, unresolved
 	}
 	defer func() { _ = tx.Rollback() }()
 	clause := strings.Join(where, " AND ")
-	items, total, err := custodiansPageTx(ctx, tx, clause, args, limit, offset)
+	var total int64
+	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM custodian_assignments WHERE `+clause, args...).Scan(&total); err != nil {
+		return nil, 0, err
+	}
+	pageArgs := append(slices.Clone(args), limit, offset)
+	rows, err := tx.QueryContext(ctx, `SELECT `+custodianColumns+` FROM custodian_assignments WHERE `+clause+` ORDER BY recorded_at,assignment_id LIMIT ? OFFSET ?`, pageArgs...)
 	if err != nil {
 		return nil, 0, err
 	}
-	if err := tx.Commit(); err != nil {
-		return nil, 0, err
-	}
-	return items, total, nil
-}
-
-// CustodiansForPerson returns active assignments for a canonical person in a
-// single read snapshot. Merged IDs resolve to the survivor.
-func (s *Store) CustodiansForPerson(ctx context.Context, personID string, limit, offset int) ([]CustodianAssignment, int64, error) {
-	if limit == 0 {
-		limit = 100
-	}
-	if limit < 1 || limit > 250 || offset < 0 {
-		return nil, 0, ErrInvalidPerson
-	}
-	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
-	if err != nil {
-		return nil, 0, err
-	}
-	defer func() { _ = tx.Rollback() }()
-	person, _, err := personByIDTx(ctx, tx, personID)
-	if err != nil {
-		return nil, 0, err
-	}
-	items, total, err := custodiansPageTx(ctx, tx, "retired_at IS NULL AND person_id=?", []any{person.PersonID}, limit, offset)
+	items, err := scanCustodianRows(rows)
 	if err != nil {
 		return nil, 0, err
 	}

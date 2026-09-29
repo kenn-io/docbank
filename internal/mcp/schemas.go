@@ -178,8 +178,7 @@ func custodianAssignmentSchema() schema {
 func custodianAssignmentProperties() schema {
 	return schema{
 		"assignment_id": uuidSchema(), "scope_kind": enumSchema("package", "collection", "document"),
-		"ingest_id": uuidSchema(), packageIDField: uuidSchema(), "package_record_id": sha256Schema(),
-		"node_id": integerSchema(1, 0), "content_version_id": uuidSchema(), personIDField: uuidSchema(), //nolint:goconst // Shared wire fields are repeated across tools.
+		packageIDField: uuidSchema(), "package_record_id": sha256Schema(), personIDField: uuidSchema(),
 		"raw_label": stringSchema(200), "rank": enumSchema("primary", "additional"),
 		"basis":      enumSchema("operator_assigned", "package_column", "transfer_record"),
 		"source_ref": stringSchema(512), "revision": integerSchema(1, 0), "recorded_at": dateTimeSchema(),
@@ -248,10 +247,6 @@ func personDetailProperties() schema {
 func getPersonSchemas() (schema, schema) {
 	return rootObjectSchema(schema{personIDField: uuidSchema()}, personIDField), rootObjectSchema(withPrivateCache(personDetailProperties()), cacheRequired(
 		personIDField, "display_name", "origin", "state", "revision", "created_at", "updated_at", "identities", "external_identities")...)
-}
-
-func listPersonCustodiansSchemas() (schema, schema) {
-	return rootObjectSchema(schema{personIDField: uuidSchema(), "cursor": stringSchema(maxCursorCharacters), schemaLimitField: integerSchema(1, 250)}, personIDField), custodianPageOutputSchema()
 }
 
 func resolvePackageCustodianSchemas() (schema, schema) {
@@ -563,8 +558,8 @@ func renditionIdentitySchema() schema {
 
 func documentSummarySchema() schema {
 	return objectSchema(schema{
-		"node_id":                 integerSchema(1, 0),
-		"content_version_id":      uuidSchema(),
+		"node_id":                 integerSchema(1, 0), //nolint:goconst // Stable wire field is repeated across tools.
+		"content_version_id":      uuidSchema(),        //nolint:goconst // Stable wire field is repeated across tools.
 		"path":                    schema{"type": "string", "minLength": 1, "maxLength": maxPathCharacters, "pattern": "^/"},
 		"name":                    schema{"type": "string", "minLength": 1, "maxLength": store.MaxDocumentCatalogNameCharacters},
 		"media_type":              stringSchema(255),

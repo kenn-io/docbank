@@ -126,10 +126,6 @@ type personSplitOutput struct {
 	Body PersonSplitReceipt
 }
 
-type personCustodianPageOutput struct {
-	Body CustodianPage
-}
-
 func fromStorePerson(value store.Person, reachedThrough string) Person {
 	return Person{PersonID: value.PersonID, DisplayName: value.DisplayName, Origin: value.Origin, State: value.State,
 		Revision: value.Revision, CreatedAt: value.CreatedAt, UpdatedAt: value.UpdatedAt, ReachedThroughPersonID: reachedThrough}

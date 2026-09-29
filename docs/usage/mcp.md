@@ -149,7 +149,6 @@ links, is capped at 1 MiB.
 | `list_package_custodians` | Pages through active custodian claims for an exact package scope. |
 | `find_people` | Finds bounded active canonical people by folded display-name prefix. |
 | `get_person` | Reads one person, its identities, and its external UIDs. |
-| `list_person_custodians` | Pages active custodian assignments for one person. |
 | `list_packages` | Pages through received and produced load-file packages. |
 | `get_package` | Reads one package and its retained source authority. |
 | `list_package_members` | Pages through a package's immutable document occurrences. |

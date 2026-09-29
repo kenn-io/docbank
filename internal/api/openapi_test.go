@@ -35,7 +35,7 @@ func TestOpenAPIDocumentOffline(t *testing.T) {
 		"storageStatus", "storagePack", "storageRepack", "ingest", "uploadFile", "listTrash", "emptyTrash", "gc", "verify", "appendNodeProvenance",
 		"createPhotoAsset", "getPhotoAsset", "getPhotoAssetByNode", "attachPhotoFile", "detachPhotoFile",
 		"excludePhotoAsset", "promotePhotoNode", "setPhotoDisplay", "getPhotoSettings", "setPhotoSettings",
-		"createPerson", "getPerson", "listPersonCustodians", "renamePerson", "retirePerson", "mergePerson", "splitPerson",
+		"createPerson", "getPerson", "renamePerson", "retirePerson", "mergePerson", "splitPerson",
 		"initBackupRepository", "createBackupSnapshot", "listBackupSnapshots", "listJobs"} {
 		assert.Contains(t, doc, op, "operation missing from OpenAPI doc")
 	}
@@ -203,13 +203,6 @@ func TestOpenAPIPeopleRoutesAreRevisionFenced(t *testing.T) {
 	}
 	for _, parameter := range create.Parameters {
 		assert.False(t, parameter.In == "header" && parameter.Name == "If-Match")
-	}
-	custodians := doc.Paths["/api/v1/people/by-id/{person_id}/custodians"].Get
-	require.NotNil(t, custodians)
-	custodianPage := resolveOpenAPISchema(t, schemas, custodians.Responses["200"].Content["application/json"].Schema)
-	custodianItem := resolveOpenAPISchema(t, schemas, custodianPage.Properties["items"].Items)
-	for _, field := range []string{"ingest_id", "package_id", "package_record_id", "node_id", "content_version_id"} {
-		assert.Contains(t, custodianItem.Properties, field)
 	}
 	split := doc.Paths["/api/v1/people/by-id/{person_id}/split"].Post
 	splitResponse := resolveOpenAPISchema(t, schemas, split.Responses["200"].Content["application/json"].Schema)

@@ -7720,58 +7720,6 @@ func (c *Client) RenamePerson(ctx context.Context, options *RenamePersonRequestO
 	return responseParser(ctx, resp)
 }
 
-// ListPersonCustodians List active custodian assignments for one person
-func (c *Client) ListPersonCustodians(ctx context.Context, options *ListPersonCustodiansRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ListPersonCustodiansResponse, error) {
-	var err error
-
-	queryEncoding := map[string]runtime.QueryEncoding{
-		"cursor": {Style: "form", Explode: &[]bool{false}[0]},
-		"limit":  {Style: "form", Explode: &[]bool{false}[0]},
-	}
-	reqParams := runtime.RequestOptionsParameters{
-		RequestURL:    c.apiClient.GetBaseURL() + "/api/v1/people/by-id/{person_id}/custodians",
-		Method:        "GET",
-		Options:       options,
-		QueryEncoding: queryEncoding,
-	}
-
-	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
-	if err != nil {
-		return nil, fmt.Errorf("error creating request: %w", err)
-	}
-
-	responseParser := func(_ context.Context, resp *runtime.Response) (*ListPersonCustodiansResponse, error) {
-		switch resp.StatusCode {
-
-		case 200:
-
-			target := new(ListPersonCustodiansResponse)
-			if err := json.Unmarshal(resp.Content, target); err != nil {
-				return nil, &runtime.ResponseDecodeError{
-					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
-					ContentLength: len(resp.Content), TargetType: "ListPersonCustodiansResponse", Body: resp.Content, Err: err,
-				}
-			}
-
-			return target, nil
-
-		default:
-
-			return nil, decodeAPIError[ListPersonCustodiansErrorResponse](resp, "ListPersonCustodiansErrorResponse")
-
-		}
-	}
-
-	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/people/by-id/{person_id}/custodians")
-	if err != nil {
-		return nil, fmt.Errorf("error executing request: %w", err)
-	}
-	if resp.Streaming {
-		return nil, c.acceptStream(resp, 200)
-	}
-	return responseParser(ctx, resp)
-}
-
 // MergePerson Merge one person into another
 func (c *Client) MergePerson(ctx context.Context, options *MergePersonRequestOptions, reqEditors ...runtime.RequestEditorFn) (*MergePersonResponse, error) {
 	var err error
@@ -17079,44 +17027,6 @@ func (o *RenamePersonRequestOptions) GetHeader() (map[string]string, error) {
 	return headers, err
 }
 
-// ListPersonCustodiansRequestOptions is the options needed to make a request to ListPersonCustodians.
-type ListPersonCustodiansRequestOptions struct {
-	PathParams *ListPersonCustodiansPath
-	Query      *ListPersonCustodiansQuery
-}
-
-// GetPathParams returns the path params as a map.
-func (o *ListPersonCustodiansRequestOptions) GetPathParams() (map[string]any, error) {
-	encoded, err := json.Marshal(o.PathParams, json.StringifyNumbers(true))
-	if err != nil {
-		return nil, err
-	}
-	var params map[string]any
-	err = json.Unmarshal(encoded, &params)
-	return params, err
-}
-
-// GetQuery returns the query params as a map.
-func (o *ListPersonCustodiansRequestOptions) GetQuery() (map[string]any, error) {
-	encoded, err := json.Marshal(o.Query, json.StringifyNumbers(true))
-	if err != nil {
-		return nil, err
-	}
-	var params map[string]any
-	err = json.Unmarshal(encoded, &params)
-	return params, err
-}
-
-// GetBody returns the payload in any type that can be marshalled to JSON by the client.
-func (o *ListPersonCustodiansRequestOptions) GetBody() any {
-	return nil
-}
-
-// GetHeader returns the headers as a map.
-func (o *ListPersonCustodiansRequestOptions) GetHeader() (map[string]string, error) {
-	return nil, nil
-}
-
 // MergePersonRequestOptions is the options needed to make a request to MergePerson.
 type MergePersonRequestOptions struct {
 	PathParams *MergePersonPath
@@ -20411,10 +20321,6 @@ type RenamePersonPath struct {
 	PersonID uuid.UUID `json:"person_id"`
 }
 
-type ListPersonCustodiansPath struct {
-	PersonID uuid.UUID `json:"person_id"`
-}
-
 type MergePersonPath struct {
 	PersonID uuid.UUID `json:"person_id"`
 }
@@ -21063,11 +20969,6 @@ type ResolvePathQuery struct {
 type ListPeopleQuery struct {
 	Query  *string `json:"query,omitempty"`
 	Limit  *int    `json:"limit,omitempty"`
-	Cursor *string `json:"cursor,omitempty"`
-}
-
-type ListPersonCustodiansQuery struct {
-	Limit  *int64  `json:"limit,omitempty"`
 	Cursor *string `json:"cursor,omitempty"`
 }
 
@@ -21848,10 +21749,6 @@ type GetPersonErrorResponse = Error
 type RenamePersonResponse = api.Person
 
 type RenamePersonErrorResponse = Error
-
-type ListPersonCustodiansResponse = api.CustodianPage
-
-type ListPersonCustodiansErrorResponse = Error
 
 type MergePersonResponse = api.PersonMergeReceipt
 

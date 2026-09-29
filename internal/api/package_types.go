@@ -94,20 +94,17 @@ type PersonPage struct {
 }
 
 type CustodianAssignment struct {
-	AssignmentID     string `json:"assignment_id"`
-	ScopeKind        string `json:"scope_kind"`
-	IngestID         string `json:"ingest_id,omitzero"`
-	PackageID        string `json:"package_id,omitzero"`
-	PackageRecordID  string `json:"package_record_id,omitzero"`
-	NodeID           int64  `json:"node_id,omitzero" minimum:"1"`
-	ContentVersionID string `json:"content_version_id,omitzero"`
-	PersonID         string `json:"person_id,omitzero"`
-	RawLabel         string `json:"raw_label"`
-	Rank             string `json:"rank"`
-	Basis            string `json:"basis"`
-	SourceRef        string `json:"source_ref"`
-	Revision         int64  `json:"revision"`
-	RecordedAt       string `json:"recorded_at"`
+	AssignmentID    string `json:"assignment_id"`
+	ScopeKind       string `json:"scope_kind"`
+	PackageID       string `json:"package_id,omitzero"`
+	PackageRecordID string `json:"package_record_id,omitzero"`
+	PersonID        string `json:"person_id,omitzero"`
+	RawLabel        string `json:"raw_label"`
+	Rank            string `json:"rank"`
+	Basis           string `json:"basis"`
+	SourceRef       string `json:"source_ref"`
+	Revision        int64  `json:"revision"`
+	RecordedAt      string `json:"recorded_at"`
 }
 
 type CustodianPage struct {

@@ -9,9 +9,6 @@ import (
 	"go.kenn.io/docbank/internal/store"
 )
 
-// personCustodianCursorScope marks the row slot so a person cursor, bound to its person ID, never reads as a package cursor.
-const personCustodianCursorScope = "person"
-
 func registerPeopleRoutes(api huma.API, d Deps, g *gate) {
 	huma.Register(api, huma.Operation{
 		OperationID: "createPerson", Method: http.MethodPost, Path: "/api/v1/people",
@@ -41,36 +38,6 @@ func registerPeopleRoutes(api huma.API, d Deps, g *gate) {
 		}
 		out := fromStorePersonDetail(person)
 		return &personDetailOutput{ETag: revisionETag(out.Revision), Body: out}, nil
-	})
-
-	huma.Register(api, huma.Operation{
-		OperationID: "listPersonCustodians", Method: http.MethodGet, Path: "/api/v1/people/by-id/{person_id}/custodians",
-		Summary: "List active custodian assignments for one person",
-	}, func(ctx context.Context, in *struct {
-		PersonID string `path:"person_id" format:"uuid"`
-		Limit    int    `query:"limit" default:"100" minimum:"1" maximum:"250"`
-		Cursor   string `query:"cursor"`
-	}) (*personCustodianPageOutput, error) {
-		limit := in.Limit
-		if limit == 0 {
-			limit = 100
-		}
-		offset, err := decodeCustodianCursor(in.Cursor, in.PersonID, personCustodianCursorScope, false)
-		if err != nil {
-			return nil, NewError(http.StatusUnprocessableEntity, "validation", "invalid person custodian cursor")
-		}
-		assignments, total, err := d.Store.CustodiansForPerson(ctx, in.PersonID, limit, offset)
-		if err != nil {
-			return nil, FromStoreError(err)
-		}
-		out := CustodianPage{Items: make([]CustodianAssignment, len(assignments)), Total: total}
-		for index, assignment := range assignments {
-			out.Items[index] = packageCustodianOutput(assignment)
-		}
-		if offset+len(assignments) < int(total) {
-			out.NextCursor = encodeCustodianCursor(in.PersonID, personCustodianCursorScope, false, offset+len(assignments))
-		}
-		return &personCustodianPageOutput{Body: out}, nil
 	})
 
 	huma.Register(api, huma.Operation{

@@ -194,7 +194,6 @@ backup and restore.
 ```text
 docbank people list [query] [--limit N] [--cursor C]
 docbank people show <person-id>
-docbank people custodians <person-id> [--limit N] [--cursor C]
 docbank people create <display-name>
 docbank people rename <person-id> <display-name> --revision REV
 docbank people retire <person-id> --revision REV

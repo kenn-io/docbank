@@ -1461,10 +1461,6 @@ export interface CustodianAssignment {
   readonly $schema?: string;
   assignment_id: string;
   basis: string;
-  content_version_id?: string;
-  ingest_id?: string;
-  /** @minimum 1 */
-  node_id?: number;
   package_id?: string;
   package_record_id?: string;
   person_id?: string;
@@ -6722,15 +6718,6 @@ cursor?: string;
 
 export type RenamePersonHeaders = {
 'If-Match': string;
-};
-
-export type ListPersonCustodiansParams = {
-/**
- * @minimum 1
- * @maximum 250
- */
-limit?: number;
-cursor?: string;
 };
 
 export type MergePersonHeaders = {
@@ -12713,39 +12700,6 @@ return sessionJSON<Person>(getRenamePersonUrl(personId),
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json',...headers, ...getHeaders(options?.headers) },
     body: JSON.stringify(renamePersonRequest)
-  }
-);}
-
-
-
-export const getListPersonCustodiansUrl = (personId: string,
-    params?: ListPersonCustodiansParams,) => {
-  const normalizedParams = new URLSearchParams();
-
-  Object.entries(params || {}).forEach(([key, value]) => {
-
-    if (value !== undefined) {
-      normalizedParams.append(key, value === null ? 'null' : String(value))
-    }
-  });
-
-  const stringifiedParams = normalizedParams.toString();
-
-  return stringifiedParams.length > 0 ? `/api/v1/people/by-id/${encodeURIComponent(String(personId))}/custodians?${stringifiedParams}` : `/api/v1/people/by-id/${encodeURIComponent(String(personId))}/custodians`
-}
-
-/**
- * @summary List active custodian assignments for one person
- */
-export const listPersonCustodians = async (personId: string,
-    params?: ListPersonCustodiansParams, options?: Parameters<typeof sessionJSON>[1]): Promise<CustodianPage> => {
-
-  return sessionJSON<CustodianPage>(getListPersonCustodiansUrl(personId,params),
-  {
-    ...options,
-    method: 'GET'
-
-
   }
 );}
 
