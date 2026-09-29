@@ -17,14 +17,19 @@ For an install, supply the absolute path to Fotobank's `fotobank.sqlite` catalog
 the absolute embedded Docbank vault root:
 
 ```bash
-docbank photos migrate fotobank inventory   --catalog-path /path/to/fotobank.sqlite   --vault-root /path/to/fotobank-vault   --output-dir /path/to/fotobank-inventory
+docbank photos migrate fotobank inventory \
+  --catalog-path /path/to/fotobank.sqlite \
+  --vault-root /path/to/fotobank-vault \
+  --output-dir /path/to/fotobank-inventory
 ```
 
 For a recovery archive, supply its repository root. Docbank reads the latest
 snapshot:
 
 ```bash
-docbank photos migrate fotobank inventory   --archive-root /path/to/recovery-repository   --output-dir /path/to/fotobank-inventory
+docbank photos migrate fotobank inventory \
+  --archive-root /path/to/recovery-repository \
+  --output-dir /path/to/fotobank-inventory
 ```
 
 The output directory must be absolute and sit outside the source and the
@@ -55,7 +60,8 @@ larger. Embedding generations are marked rebuildable because Docbank will
 construct its own vector index after migration.
 
 The owner-map template lists each source owner. The later migration step
-will fill destination owner IDs in the map; inventory leaves them empty. The command prints the report and both file paths as JSON.
+will fill destination owner IDs in the map; inventory leaves them empty.
+The command prints the report and both file paths as JSON.
 
 ## HTTP
 

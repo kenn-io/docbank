@@ -192,7 +192,9 @@ backup and restore.
 ### docbank photos migrate
 
 ```text
-docbank photos migrate fotobank inventory   (--catalog-path <path> --vault-root <path> | --archive-root <path>)   --output-dir <path>
+docbank photos migrate fotobank inventory \
+  (--catalog-path <path> --vault-root <path> | --archive-root <path>) \
+  --output-dir <path>
 ```
 
 `fotobank inventory` reads a stopped install or a recovery archive and writes

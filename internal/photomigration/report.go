@@ -198,9 +198,6 @@ func WriteInventoryFiles(dir string, report Report, template OwnerMapTemplate, s
 			}
 		}
 	}
-	if len(template.Entries) > MaxOwnerMapBytes {
-		return "", "", errors.New("owner map has too many entries")
-	}
 	for _, entry := range template.Entries {
 		if err := ValidateMapEntry(entry); err != nil {
 			return "", "", err

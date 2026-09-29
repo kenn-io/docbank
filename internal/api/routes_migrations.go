@@ -9,7 +9,6 @@ import (
 	"github.com/danielgtaylor/huma/v2"
 
 	"go.kenn.io/docbank/internal/photomigration/fotobank"
-	"go.kenn.io/docbank/internal/store"
 )
 
 func registerMigrationRoutes(api huma.API, d Deps) {
@@ -48,7 +47,7 @@ func registerMigrationRoutes(api huma.API, d Deps) {
 }
 
 func inventoryError(err error) error {
-	var code, status = "inventory_failed", http.StatusUnprocessableEntity
+	code := "inventory_failed"
 	switch {
 	case errors.Is(err, fotobank.ErrSourceRunning):
 		code = "fotobank_running"
@@ -58,8 +57,6 @@ func inventoryError(err error) error {
 		code = "fotobank_schema_mismatch"
 	case errors.Is(err, fotobank.ErrEmbeddedSchemaMismatch):
 		code = "embedded_docbank_schema_mismatch"
-	case errors.Is(err, store.ErrNotFound):
-		status = http.StatusNotFound
 	}
-	return NewError(status, code, err.Error())
+	return NewError(http.StatusUnprocessableEntity, code, err.Error())
 }

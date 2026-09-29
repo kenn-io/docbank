@@ -252,12 +252,16 @@ func loopbackMiddleware(next http.Handler) http.Handler {
 				"server-side path ingest is loopback-only; remote clients use POST /api/v1/uploads"))
 			return
 		}
+		if r.Method == http.MethodPost && r.URL.Path == "/api/v1/migrations/fotobank/inventories" && !isLoopbackRemote(r.RemoteAddr) {
+			writeError(w, NewError(http.StatusForbidden, "loopback_only", "Fotobank inventory reads server paths and is loopback-only"))
+			return
+		}
 		next.ServeHTTP(w, r)
 	})
 }
 
 func isServerPathIngestRoute(path string) bool {
-	return path == "/api/v1/ingest" || path == "/api/v1/ingest/stream" || path == "/api/v1/ingest/preflight" || path == "/api/v1/packages/preflights" || path == "/api/v1/migrations/fotobank/inventories"
+	return path == "/api/v1/ingest" || path == "/api/v1/ingest/stream" || path == "/api/v1/ingest/preflight" || path == "/api/v1/packages/preflights"
 }
 
 func isLoopbackRemote(remoteAddr string) bool {
