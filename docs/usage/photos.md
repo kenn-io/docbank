@@ -78,6 +78,8 @@ in turn and start choice-bound reruns. The non-interactive output lists each
 group key and candidate path. Automation passes that printable group key with
 `--raw-source-path` and `--raw-blob-hash` for a new RAW, or
 `--raw-asset-id`, `--raw-file-id`, and `--revision` for an existing RAW.
+An import choice cannot move a JPEG already paired with another RAW. Use the
+revision-checked detach and attach commands to change that pairing.
 
 All commands emit bounded JSON. Exit code 4 means the revision is stale: an
 explicit `--revision` no longer matched, or the one automatic retry lost to

@@ -271,6 +271,36 @@ func TestPhotoImportVideoWithSameNameJPEG(t *testing.T) {
 	assert.Len(t, clip.Asset.Files, 1)
 }
 
+func TestPhotoImportExistingRAWChoicePreservesOtherPair(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := t.Context()
+	run, err := s.BeginIngest(ctx, "photo-import", t.TempDir())
+	require.NoError(t, err)
+	root := t.TempDir()
+	raw := photoImportTestMember(filepath.Join(root, "IMG.ARW"), PhotoRoleRAW, fakeHash("raw"), "image/x-sony-arw")
+	jpeg := photoImportTestMember(filepath.Join(root, "IMG.JPG"), PhotoRoleImage, fakeHash("jpeg"), "image/jpeg")
+	dng := photoImportTestMember(filepath.Join(root, "IMG.DNG"), PhotoRoleRAW, fakeHash("dng"), "image/x-adobe-dng")
+	paired, err := s.IngestPhotoGroup(ctx, run, photoImportTestGroup(raw, jpeg))
+	require.NoError(t, err)
+	isolated := photoImportTestGroup(dng)
+	isolated.Isolated = true
+	second, err := s.IngestPhotoGroup(ctx, run, isolated)
+	require.NoError(t, err)
+	group := photoImportTestGroup(dng, jpeg)
+	group.Key = PhotoImportGroupKey(dng.OriginalPath, PhotoSourceRAW)
+	group.Choice = &PhotoImportChoice{GroupKey: group.Key, RawAssetID: second.Asset.ID,
+		RawFileID: second.Asset.Files[0].ID, AssetRevision: second.Asset.Revision}
+	_, err = s.IngestPhotoGroup(ctx, run, group)
+	require.ErrorContains(t, err, "JPEG already belongs to another RAW")
+	old, err := s.PhotoAssetByID(ctx, paired.Asset.ID)
+	require.NoError(t, err)
+	assert.Len(t, old.Files, 2)
+	newAsset, err := s.PhotoAssetByID(ctx, second.Asset.ID)
+	require.NoError(t, err)
+	assert.Len(t, newAsset.Files, 1)
+}
+
 func TestPhotoImportSidecarDedupStaysWithinSourceGroup(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)

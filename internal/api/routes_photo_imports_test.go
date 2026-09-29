@@ -165,13 +165,18 @@ func TestPhotoImportGateAndActivity(t *testing.T) {
 	}()
 	<-entered
 	ctx, cancel := context.WithCancel(t.Context())
+	attempted := make(chan struct{})
 	mutationDone := make(chan error, 1)
 	go func() {
 		_, err := importer.ImportPhotoDirectory(ctx, root, "/photos", ingest.PhotoImportOptions{
-			Mutate: gate.MutateContext, ActivityBegin: tracker.Begin, ActivityEnd: tracker.End,
+			Mutate: func(ctx context.Context, fn func() error) error {
+				close(attempted)
+				return gate.MutateContext(ctx, fn)
+			}, ActivityBegin: tracker.Begin, ActivityEnd: tracker.End,
 		})
 		mutationDone <- err
 	}()
+	<-attempted
 	select {
 	case err := <-mutationDone:
 		t.Fatalf("import crossed maintenance gate: %v", err)
@@ -187,9 +192,42 @@ func TestPhotoImportGateAndActivity(t *testing.T) {
 	_, err := catalog.NodeByPath(t.Context(), "/photos/IMG.ARW")
 	require.ErrorIs(t, err, store.ErrNotFound)
 
-	report, err := importer.ImportPhotoDirectory(t.Context(), root, "/photos", ingest.PhotoImportOptions{
-		Mutate: gate.MutateContext, ActivityBegin: tracker.Begin, ActivityEnd: tracker.End,
-	})
+	groupReady := make(chan struct{})
+	continueGroup := make(chan struct{})
+	type importResult struct {
+		report ingest.PhotoImportReport
+		err    error
+	}
+	completed := make(chan importResult, 1)
+	go func() {
+		calls := 0
+		report, importErr := importer.ImportPhotoDirectory(t.Context(), root, "/photos", ingest.PhotoImportOptions{
+			Mutate: func(ctx context.Context, fn func() error) error {
+				calls++
+				return gate.MutateContext(ctx, func() error {
+					if calls == 5 {
+						close(groupReady)
+						<-continueGroup
+					}
+					return fn()
+				})
+			}, ActivityBegin: tracker.Begin, ActivityEnd: tracker.End,
+		})
+		completed <- importResult{report, importErr}
+	}()
+	<-groupReady
+	var captured bytes.Buffer
+	var finished importResult
+	require.NoError(t, gate.CaptureContext(t.Context(), func() error {
+		if err := catalog.ExportMetadata(t.Context(), &captured); err != nil {
+			return err
+		}
+		close(continueGroup)
+		finished = <-completed
+		return nil
+	}))
+	assert.NotContains(t, captured.String(), "IMG.ARW")
+	report, err := finished.report, finished.err
 	require.NoError(t, err)
 	assert.Equal(t, 1, report.Added)
 	var after bytes.Buffer

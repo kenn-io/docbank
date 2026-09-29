@@ -5,6 +5,7 @@ import (
 	"encoding/json/v2"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync/atomic"
 	"testing"
 
@@ -74,6 +75,13 @@ func TestPhotoImportClients(t *testing.T) {
 		}},
 	}
 	list := map[string]any{"items": []any{run}, "ttlMs": float64(0), "cacheScope": "private"}
+	require.NoError(t, mustResolveSchema(withWrites["list_photo_imports"].OutputSchema).Validate(&list))
+	run["ttlMs"], run["cacheScope"] = float64(0), "private"
+	require.NoError(t, mustResolveSchema(withWrites["get_photo_import"].OutputSchema).Validate(&run))
+	run["error"] = strings.Repeat("é", 7_000)
+	delete(run, "ttlMs")
+	delete(run, "cacheScope")
+	list = map[string]any{"items": []any{run}, "ttlMs": float64(0), "cacheScope": "private"}
 	require.NoError(t, mustResolveSchema(withWrites["list_photo_imports"].OutputSchema).Validate(&list))
 	run["ttlMs"], run["cacheScope"] = float64(0), "private"
 	require.NoError(t, mustResolveSchema(withWrites["get_photo_import"].OutputSchema).Validate(&run))

@@ -8,7 +8,6 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
-	"strings"
 	"time"
 
 	"go.kenn.io/docbank/internal/store"
@@ -176,27 +175,6 @@ func partitionPhotoImportGroup(group PhotoImportGroup, choice *store.PhotoImport
 	return groups
 }
 
-func photoImportSkipFile(name string) bool {
-	if strings.HasPrefix(name, "._") {
-		return true
-	}
-	switch name {
-	case ".DS_Store", "Thumbs.db", "desktop.ini":
-		return true
-	default:
-		return false
-	}
-}
-
-func photoImportSkipDir(name string) bool {
-	switch name {
-	case ".Trashes", ".Spotlight-V100", ".fseventsd", ".DocumentRevisions-V100", ".TemporaryItems":
-		return true
-	default:
-		return strings.EqualFold(name, "$RECYCLE.BIN") || strings.EqualFold(name, "System Volume Information")
-	}
-}
-
 func discoverPhotoCandidates(ctx context.Context, root string) ([]PhotoImportCandidate, error) {
 	if root == "" {
 		return nil, errors.New("photo import root is empty")
@@ -224,12 +202,6 @@ func discoverPhotoCandidates(ctx context.Context, root string) ([]PhotoImportCan
 			return walkErr
 		}
 		if entry.IsDir() {
-			if path != absRoot && photoImportSkipDir(entry.Name()) {
-				return filepath.SkipDir
-			}
-			return nil
-		}
-		if photoImportSkipFile(entry.Name()) {
 			return nil
 		}
 		if entry.Type()&fs.ModeSymlink != 0 || !entry.Type().IsRegular() {

@@ -862,6 +862,16 @@ func (s *Store) IngestPhotoGroup(ctx context.Context, run IngestRun, group Photo
 		if err != nil {
 			return err
 		}
+		for i, role := range roles {
+			if role != PhotoRoleRAW {
+				continue
+			}
+			for _, existing := range target.Files {
+				if existing.Role == PhotoRoleRAW && existing.NodeID != nodes[i].ID {
+					return fmt.Errorf("JPEG already belongs to another RAW: %w", ErrInvalidPhotoAsset)
+				}
+			}
+		}
 		beforeTarget := target
 		for i, node := range nodes {
 			ownerID, owned, ownerErr := photoAssetOwningNodeTx(ctx, tx, node.ID)
@@ -962,6 +972,16 @@ func (s *Store) mergePhotoAssetsTxWithContext(ctx context.Context, tx *sql.Tx, s
 	}
 	if source.Kind != target.Kind || source.ExcludedAt != nil && target.ExcludedAt == nil || source.ExcludedAt == nil && target.ExcludedAt != nil || source.DisplayOverrideFileID != nil && target.DisplayOverrideFileID != nil {
 		return fmt.Errorf("photo assets %s and %s have conflicting decisions: %w", sourceID, targetID, ErrPhotoImportAmbiguous)
+	}
+	for _, sourceFile := range source.Files {
+		if sourceFile.Role != PhotoRoleRAW {
+			continue
+		}
+		for _, targetFile := range target.Files {
+			if targetFile.Role == PhotoRoleRAW && targetFile.NodeID != sourceFile.NodeID {
+				return fmt.Errorf("JPEG already belongs to another RAW: %w", ErrInvalidPhotoAsset)
+			}
+		}
 	}
 	if _, err := tx.ExecContext(ctx, `UPDATE photo_files SET asset_id=? WHERE asset_id=?`, targetID, sourceID); err != nil {
 		return fmt.Errorf("moving photo members from %s to %s: %w", sourceID, targetID, err)

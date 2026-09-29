@@ -845,7 +845,7 @@ func photoImportRunProperties() schema {
 		"total_groups": integerSchema(0, 0), "completed_groups": integerSchema(0, 0),
 		"added_groups": integerSchema(0, 0), "skipped_groups": integerSchema(0, 0),
 		"failed_groups": integerSchema(0, 0), "ambiguous_groups": integerSchema(0, 0),
-		"cancel_requested": booleanSchema(), "error": stringSchema(maxToolErrorBytes),
+		"cancel_requested": booleanSchema(), "error": stringSchema(16 << 10),
 		"ambiguities": arraySchema(ambiguity, 0), "started_at": dateTimeSchema(),
 		"updated_at": dateTimeSchema(), "finished_at": dateTimeSchema(),
 	}
