@@ -5,8 +5,10 @@ import (
 	"net/http"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/internal/api"
+	"go.kenn.io/docbank/internal/store"
 )
 
 func TestBatchTagsHTTPReplayAndStaleAtomicity(t *testing.T) {
@@ -68,6 +70,65 @@ func TestBatchTagsHTTPReplayAndStaleAtomicity(t *testing.T) {
 	resp, body = do(t, ts, http.MethodPost, "/api/v1/batch/tags", nil, request)
 	require.Equal(t, http.StatusConflict, resp.StatusCode, body)
 	require.Contains(t, body, "batch_tag_operation_conflict")
+}
+
+func TestPhotoOwnerBatchTagReplay(t *testing.T) {
+	ts, s := newTestServer(t, nil)
+	ctx := t.Context()
+	defaultOwner, err := s.EnsureDefaultPhotoOwner(ctx)
+	require.NoError(t, err)
+	otherOwner, err := s.CreatePhotoOwner(ctx, "Other")
+	require.NoError(t, err)
+	private, err := s.CreateFile(store.WithPhotoOwner(ctx, defaultOwner.ID), s.RootID(), "batch-private.jpg", testHash("batch-private"), 5, "image/jpeg")
+	require.NoError(t, err)
+	tag, err := s.CreateTag(ctx, "Batch replay")
+	require.NoError(t, err)
+	assigned, err := s.AssignTag(store.WithPhotoOwner(ctx, defaultOwner.ID), tag.ID, private.ID, private.Revision)
+	require.NoError(t, err)
+	ordinary, err := s.Mkdir(ctx, s.RootID(), "batch-ordinary")
+	require.NoError(t, err)
+	request := map[string]any{
+		"operation_id": "abababab-abab-4aba-8aba-abababababab", "tag_id": tag.ID, "assign": true,
+		"nodes": []map[string]any{{"node_id": ordinary.ID, "revision": ordinary.Revision}},
+	}
+	response, body := do(t, ts, http.MethodPost, "/api/v1/batch/tags", nil, request)
+	require.Equal(t, http.StatusOK, response.StatusCode, body)
+	var original api.BatchTagReceipt
+	require.NoError(t, json.Unmarshal([]byte(body), &original))
+	assert.Equal(t, assigned.Tag.AssignmentCount+1, original.AssignmentCount)
+
+	extra, err := s.CreateFile(store.WithPhotoOwner(ctx, defaultOwner.ID), s.RootID(), "batch-extra.jpg", testHash("batch-extra"), 5, "image/jpeg")
+	require.NoError(t, err)
+	_, err = s.AssignTag(store.WithPhotoOwner(ctx, defaultOwner.ID), tag.ID, extra.ID, extra.Revision)
+	require.NoError(t, err)
+	browserB := map[string]string{api.WebSessionHeader: issuePhotoOwnerSession(t, ts, defaultOwner.ID), "X-Api-Key": ""}
+	response, replay := do(t, ts, http.MethodPost, "/api/v1/batch/tags", browserB, request)
+	require.Equal(t, http.StatusOK, response.StatusCode, replay)
+	assert.JSONEq(t, body, replay)
+
+	response, replay = do(t, ts, http.MethodPost, "/api/v1/batch/tags", map[string]string{"X-Docbank-Owner": otherOwner.ID}, request)
+	assert.Equal(t, http.StatusNotFound, response.StatusCode, replay)
+	browserOther := map[string]string{api.WebSessionHeader: issuePhotoOwnerSession(t, ts, otherOwner.ID), "X-Api-Key": ""}
+	response, replay = do(t, ts, http.MethodPost, "/api/v1/batch/tags", browserOther, request)
+	assert.Equal(t, http.StatusNotFound, response.StatusCode, replay)
+
+	ordinaryAfter, err := s.NodeByID(ctx, ordinary.ID)
+	require.NoError(t, err)
+	_, err = s.UnassignTag(ctx, tag.ID, ordinary.ID, ordinaryAfter.Revision)
+	require.NoError(t, err)
+	currentTag, err := s.TagByID(ctx, tag.ID)
+	require.NoError(t, err)
+	_, err = s.DeleteTag(ctx, tag.ID, currentTag.Revision)
+	require.NoError(t, err)
+	ordinaryAfter, err = s.NodeByID(ctx, ordinary.ID)
+	require.NoError(t, err)
+	_, _, err = s.Trash(ctx, ordinary.ID, ordinaryAfter.Revision)
+	require.NoError(t, err)
+	_, err = s.TrashEmpty(ctx, 0, true)
+	require.NoError(t, err)
+	response, replay = do(t, ts, http.MethodPost, "/api/v1/batch/tags", browserB, request)
+	require.Equal(t, http.StatusOK, response.StatusCode, replay)
+	assert.JSONEq(t, body, replay)
 }
 
 func TestBatchTagsHTTPValidationAndPreview(t *testing.T) {

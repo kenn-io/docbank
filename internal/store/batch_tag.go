@@ -86,6 +86,17 @@ type batchTagTargetState struct {
 	assigned bool
 }
 
+type batchTagReceiptAuthority struct {
+	PhotoOwnerID    string
+	PhotoOwnerBound bool
+	PhotoNoOwner    bool
+}
+
+type batchTagReceiptRecord struct {
+	Receipt   BatchTagReceiptV1
+	Authority batchTagReceiptAuthority
+}
+
 // BatchTags atomically applies one tag assignment choice to an exact bounded
 // set of live, revision-fenced nodes. A committed operation ID replays its
 // original immutable receipt without consulting current node or tag state.
@@ -97,28 +108,34 @@ func (s *Store) BatchTags(ctx context.Context, request BatchTagRequest) (BatchTa
 
 	var receipt BatchTagReceiptV1
 	err = s.withStorageTx(ctx, func(tx *sql.Tx) error {
+		ownerID, ownerBound, noOwner, err := photoOwnerBindingTx(ctx, tx)
+		if err != nil {
+			return err
+		}
+		requestAuthority := batchTagReceiptAuthority{
+			PhotoOwnerID: ownerID, PhotoOwnerBound: ownerBound, PhotoNoOwner: noOwner,
+		}
+		boundCtx := WithPhotoOwnerBinding(ctx, ownerID, ownerBound, noOwner)
 		stored, found, err := loadBatchTagReceiptTx(ctx, tx, request.OperationID)
 		if err != nil {
 			return err
 		}
 		if found {
-			if stored.RequestDigest != digest {
+			replayCtx, err := authorizeBatchTagReplay(ctx, stored.Authority, requestAuthority)
+			if err != nil {
+				return err
+			}
+			if stored.Receipt.RequestDigest != digest {
 				return fmt.Errorf("operation %s: %w", request.OperationID, ErrBatchTagOperationConflict)
 			}
-			if authority, ok := photoVisibilityFromContext(ctx); ok && authority.Enforce && !authority.Trusted {
-				for _, node := range stored.Nodes {
-					if err := photoNodeVisibilityCheckTx(ctx, tx, node.NodeID); err != nil {
-						return err
-					}
-				}
-				if authority.OwnerID != "" || authority.NoPhotoOwner {
-					stored.AssignmentCount, err = tagAssignmentCount(ctx, tx, request.TagID)
-					if err != nil {
+			if stored.Authority.PhotoOwnerBound && !isTrustedPhotoVisibility(ctx) {
+				for _, node := range stored.Receipt.Nodes {
+					if err := photoNodeVisibilityCheckTx(replayCtx, tx, node.NodeID); err != nil {
 						return err
 					}
 				}
 			}
-			receipt = stored
+			receipt = stored.Receipt
 			return nil
 		}
 
@@ -126,11 +143,11 @@ func (s *Store) BatchTags(ctx context.Context, request BatchTagRequest) (BatchTa
 		if err != nil {
 			return err
 		}
-		states, err := loadBatchTagTargetsTx(ctx, tx, request.TagID, targets)
+		states, err := loadBatchTagTargetsTx(boundCtx, tx, request.TagID, targets)
 		if err != nil {
 			return err
 		}
-		results, err := s.applyBatchTagsTx(ctx, tx, request, tag, states, nowRFC3339())
+		results, err := s.applyBatchTagsTx(boundCtx, tx, request, tag, states, nowRFC3339())
 		if err != nil {
 			return err
 		}
@@ -138,7 +155,7 @@ func (s *Store) BatchTags(ctx context.Context, request BatchTagRequest) (BatchTa
 		if err != nil {
 			return err
 		}
-		assignmentCount, err := tagAssignmentCount(ctx, tx, request.TagID)
+		assignmentCount, err := tagAssignmentCount(boundCtx, tx, request.TagID)
 		if err != nil {
 			return err
 		}
@@ -148,13 +165,16 @@ func (s *Store) BatchTags(ctx context.Context, request BatchTagRequest) (BatchTa
 			TagRevision: finalTag.Revision, AssignmentCount: assignmentCount,
 			CompletedAt: nowRFC3339(), Nodes: results,
 		}
+		record := batchTagReceiptRecord{Receipt: receipt, Authority: requestAuthority}
 		receiptJSON, err := canonicalBatchTagReceiptV1JSON(receipt)
 		if err != nil {
 			return fmt.Errorf("encoding batch tag receipt: %w", err)
 		}
 		if _, err := tx.ExecContext(ctx, `INSERT INTO batch_tag_receipts(
-			operation_id,request_digest,receipt_json) VALUES(?,?,?)`,
-			request.OperationID, digest, receiptJSON); err != nil {
+			operation_id,request_digest,photo_owner_id,photo_owner_bound,photo_no_owner,receipt_json
+			) VALUES(?,?,?,?,?,?)`,
+			request.OperationID, digest, record.Authority.PhotoOwnerID, record.Authority.PhotoOwnerBound,
+			record.Authority.PhotoNoOwner, receiptJSON); err != nil {
 			return fmt.Errorf("persisting batch tag receipt %s: %w", request.OperationID, err)
 		}
 		return nil
@@ -381,25 +401,68 @@ func (s *Store) persistBatchTagAuditTx(
 
 func loadBatchTagReceiptTx(
 	ctx context.Context, tx *sql.Tx, operationID string,
-) (BatchTagReceiptV1, bool, error) {
+) (batchTagReceiptRecord, bool, error) {
+	var record batchTagReceiptRecord
 	var requestDigest string
 	var receiptJSON []byte
-	err := tx.QueryRowContext(ctx, `SELECT request_digest,receipt_json
-		FROM batch_tag_receipts WHERE operation_id=?`, operationID).Scan(&requestDigest, &receiptJSON)
+	err := tx.QueryRowContext(ctx, `SELECT request_digest,photo_owner_id,photo_owner_bound,photo_no_owner,receipt_json
+		FROM batch_tag_receipts WHERE operation_id=?`, operationID).Scan(
+		&requestDigest, &record.Authority.PhotoOwnerID, &record.Authority.PhotoOwnerBound,
+		&record.Authority.PhotoNoOwner, &receiptJSON)
 	if errors.Is(err, sql.ErrNoRows) {
-		return BatchTagReceiptV1{}, false, nil
+		return batchTagReceiptRecord{}, false, nil
 	}
 	if err != nil {
-		return BatchTagReceiptV1{}, false, fmt.Errorf("loading batch tag receipt %s: %w", operationID, err)
+		return batchTagReceiptRecord{}, false, fmt.Errorf("loading batch tag receipt %s: %w", operationID, err)
 	}
 	receipt, err := decodeBatchTagReceiptV1(receiptJSON)
 	if err != nil {
-		return BatchTagReceiptV1{}, false, fmt.Errorf("validating batch tag receipt %s: %w", operationID, err)
+		return batchTagReceiptRecord{}, false, fmt.Errorf("validating batch tag receipt %s: %w", operationID, err)
 	}
 	if receipt.OperationID != operationID || receipt.RequestDigest != requestDigest {
-		return BatchTagReceiptV1{}, false, fmt.Errorf("batch tag receipt %s identity does not match its row", operationID)
+		return batchTagReceiptRecord{}, false, fmt.Errorf("batch tag receipt %s identity does not match its row", operationID)
 	}
-	return receipt, true, nil
+	record.Receipt = receipt
+	if err := validateBatchTagReceiptAuthority(record.Authority); err != nil {
+		return batchTagReceiptRecord{}, false, fmt.Errorf("validating batch tag receipt %s authority: %w", operationID, err)
+	}
+	return record, true, nil
+}
+
+func validateBatchTagReceiptAuthority(authority batchTagReceiptAuthority) error {
+	if !authority.PhotoOwnerBound {
+		if authority.PhotoOwnerID != "" || authority.PhotoNoOwner {
+			return fmt.Errorf("unbound receipt has owner authority: %w", ErrInvalidBatchTag)
+		}
+		return nil
+	}
+	if authority.PhotoNoOwner {
+		if authority.PhotoOwnerID != "" {
+			return fmt.Errorf("ownerless receipt has an owner ID: %w", ErrInvalidBatchTag)
+		}
+		return nil
+	}
+	if validateUUIDv4(authority.PhotoOwnerID) != nil {
+		return fmt.Errorf("bound receipt has an invalid owner ID: %w", ErrInvalidBatchTag)
+	}
+	return nil
+}
+
+func isTrustedPhotoVisibility(ctx context.Context) bool {
+	authority, ok := photoVisibilityFromContext(ctx)
+	return ok && authority.Trusted
+}
+
+func authorizeBatchTagReplay(
+	ctx context.Context, stored, request batchTagReceiptAuthority,
+) (context.Context, error) {
+	if isTrustedPhotoVisibility(ctx) {
+		return ctx, nil
+	}
+	if stored != request {
+		return nil, ErrNotFound
+	}
+	return WithPhotoOwnerBinding(ctx, stored.PhotoOwnerID, stored.PhotoOwnerBound, stored.PhotoNoOwner), nil
 }
 
 func canonicalBatchTagReceiptV1JSON(receipt BatchTagReceiptV1) ([]byte, error) {

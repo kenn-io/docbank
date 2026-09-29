@@ -74,6 +74,9 @@ func TestBatchTagReceiptMetadataRejectsTamperingTransactionally(t *testing.T) {
 	unknownField := mutateBatchTagMetadataLine(t, exported.Bytes(), func(fields map[string]jsontext.Value) {
 		fields["unexpected"] = jsontext.Value(`true`)
 	})
+	partialAuthority := mutateBatchTagMetadataLine(t, exported.Bytes(), func(fields map[string]jsontext.Value) {
+		delete(fields, "photo_no_owner")
+	})
 	mismatchedOperation := mutateBatchTagMetadata(t, exported.Bytes(), func(record *metadataBatchTagReceipt) {
 		record.OperationID = "dddddddd-dddd-4ddd-8ddd-dddddddddddd"
 	})
@@ -98,6 +101,7 @@ func TestBatchTagReceiptMetadataRejectsTamperingTransactionally(t *testing.T) {
 		{name: "duplicate", input: duplicate},
 		{name: "missing field", input: missingField},
 		{name: "unknown field", input: unknownField},
+		{name: "partial owner authority", input: partialAuthority},
 		{name: "mismatched operation", input: mismatchedOperation},
 		{name: "mismatched digest", input: mismatchedDigest},
 		{name: "noncanonical receipt", input: noncanonicalReceipt},
@@ -117,6 +121,37 @@ func TestBatchTagReceiptMetadataRejectsTamperingTransactionally(t *testing.T) {
 			assert.Zero(t, receipts)
 		})
 	}
+}
+
+func TestBatchTagReceiptLegacyMetadataImportsUnbound(t *testing.T) {
+	t.Parallel()
+	source := newTestStore(t)
+	node, err := source.Mkdir(t.Context(), source.RootID(), "legacy")
+	require.NoError(t, err)
+	tag, err := source.CreateTag(t.Context(), "Legacy")
+	require.NoError(t, err)
+	request := BatchTagRequest{
+		OperationID: "dededede-dede-4ded-8ded-dededededede", TagID: tag.ID, Assign: true,
+		Nodes: []BatchTagTarget{{NodeID: node.ID, Revision: node.Revision}},
+	}
+	_, err = source.BatchTags(t.Context(), request)
+	require.NoError(t, err)
+	var exported bytes.Buffer
+	require.NoError(t, source.ExportMetadata(t.Context(), &exported))
+	legacy := mutateBatchTagMetadataLine(t, exported.Bytes(), func(fields map[string]jsontext.Value) {
+		delete(fields, "photo_owner_id")
+		delete(fields, "photo_owner_bound")
+		delete(fields, "photo_no_owner")
+	})
+	target := newTestStore(t)
+	require.NoError(t, target.ImportMetadata(t.Context(), bytes.NewReader(legacy)))
+	replayed, err := target.BatchTags(t.Context(), request)
+	require.NoError(t, err)
+	assert.Equal(t, 1, replayed.AssignmentCount)
+	owner, err := target.CreatePhotoOwner(t.Context(), "Owner")
+	require.NoError(t, err)
+	_, err = target.BatchTags(WithPhotoOwner(t.Context(), owner.ID), request)
+	require.ErrorIs(t, err, ErrNotFound)
 }
 
 func TestBatchTagReceiptStateValidationRejectsCorruptStoredBytes(t *testing.T) {

@@ -16,6 +16,80 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestPhotoOwnerBatchTagReplay(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := t.Context()
+	defaultOwner, err := s.EnsureDefaultPhotoOwner(ctx)
+	require.NoError(t, err)
+	otherOwner, err := s.CreatePhotoOwner(ctx, "Other")
+	require.NoError(t, err)
+	private, err := s.CreateFile(WithPhotoOwner(ctx, defaultOwner.ID), s.RootID(), "private.jpg", fakeHash("babe"), 5, "image/jpeg")
+	require.NoError(t, err)
+	tag, err := s.CreateTag(ctx, "Batch replay")
+	require.NoError(t, err)
+	assigned, err := s.AssignTag(WithPhotoOwner(ctx, defaultOwner.ID), tag.ID, private.ID, private.Revision)
+	require.NoError(t, err)
+	ordinary, err := s.Mkdir(ctx, s.RootID(), "ordinary")
+	require.NoError(t, err)
+	request := BatchTagRequest{
+		OperationID: "abababab-abab-4aba-8aba-abababababab", TagID: tag.ID, Assign: true,
+		Nodes: []BatchTagTarget{{NodeID: ordinary.ID, Revision: ordinary.Revision}},
+	}
+	first, err := s.BatchTags(WithPhotoOwner(ctx, ""), request)
+	require.NoError(t, err)
+	assert.Equal(t, assigned.Tag.AssignmentCount+1, first.AssignmentCount)
+
+	extra, err := s.CreateFile(WithPhotoOwner(ctx, defaultOwner.ID), s.RootID(), "private-extra.jpg", fakeHash("cafe"), 5, "image/jpeg")
+	require.NoError(t, err)
+	_, err = s.AssignTag(WithPhotoOwner(ctx, defaultOwner.ID), tag.ID, extra.ID, extra.Revision)
+	require.NoError(t, err)
+	explicitReplay, err := s.BatchTags(WithPhotoOwner(ctx, defaultOwner.ID), request)
+	require.NoError(t, err)
+	assert.Equal(t, first, explicitReplay)
+	omittedReplay, err := s.BatchTags(WithPhotoOwner(ctx, ""), request)
+	require.NoError(t, err)
+	assert.Equal(t, first, omittedReplay)
+
+	_, err = s.db.Exec(`UPDATE photo_library_settings SET default_owner_id=? WHERE singleton=1`, otherOwner.ID)
+	require.NoError(t, err)
+	_, err = s.BatchTags(WithPhotoOwner(ctx, ""), request)
+	require.ErrorIs(t, err, ErrNotFound)
+	_, err = s.BatchTags(WithPhotoOwner(ctx, otherOwner.ID), request)
+	require.ErrorIs(t, err, ErrNotFound)
+
+	ordinaryAfter, err := s.NodeByID(ctx, ordinary.ID)
+	require.NoError(t, err)
+	_, err = s.UnassignTag(ctx, tag.ID, ordinary.ID, ordinaryAfter.Revision)
+	require.NoError(t, err)
+	currentTag, err := s.TagByID(ctx, tag.ID)
+	require.NoError(t, err)
+	_, err = s.DeleteTag(ctx, tag.ID, currentTag.Revision)
+	require.NoError(t, err)
+	ordinaryAfter, err = s.NodeByID(ctx, ordinary.ID)
+	require.NoError(t, err)
+	_, _, err = s.Trash(ctx, ordinary.ID, ordinaryAfter.Revision)
+	require.NoError(t, err)
+	_, err = s.TrashEmpty(ctx, 0, true)
+	require.NoError(t, err)
+	historicalReplay, err := s.BatchTags(WithPhotoOwner(ctx, defaultOwner.ID), request)
+	require.NoError(t, err)
+	assert.Equal(t, first, historicalReplay)
+
+	var exported bytes.Buffer
+	require.NoError(t, s.ExportMetadata(ctx, &exported))
+	restored, err := Open(filepath.Join(t.TempDir(), "restored.db"))
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, restored.Close()) })
+	require.NoError(t, restored.ImportMetadata(ctx, bytes.NewReader(exported.Bytes())))
+	restoredReplay, err := restored.BatchTags(WithPhotoOwner(ctx, defaultOwner.ID), request)
+	require.NoError(t, err)
+	assert.Equal(t, first, restoredReplay)
+	var reexported bytes.Buffer
+	require.NoError(t, restored.ExportMetadata(ctx, &reexported))
+	assert.Equal(t, exported.Bytes(), reexported.Bytes())
+}
+
 func TestBatchTagsReplayAfterInterveningChange(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)

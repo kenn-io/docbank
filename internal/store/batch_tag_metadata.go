@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"encoding/json/jsontext"
 	"errors"
 	"fmt"
 )
@@ -10,16 +11,19 @@ import (
 const metadataBatchTagReceiptType = "batch_tag_receipt"
 
 type metadataBatchTagReceipt struct {
-	Type          string `json:"type"`
-	OperationID   string `json:"operation_id"`
-	RequestDigest string `json:"request_digest"`
-	ReceiptJSON   []byte `json:"receipt_json" format:"byte"`
+	Type            string `json:"type"`
+	OperationID     string `json:"operation_id"`
+	RequestDigest   string `json:"request_digest"`
+	PhotoOwnerID    string `json:"photo_owner_id"`
+	PhotoOwnerBound bool   `json:"photo_owner_bound"`
+	PhotoNoOwner    bool   `json:"photo_no_owner"`
+	ReceiptJSON     []byte `json:"receipt_json" format:"byte"`
 }
 
 func exportBatchTagReceipts(
 	ctx context.Context, tx metadataQuerier, write metadataWrite,
 ) error {
-	rows, err := tx.QueryContext(ctx, `SELECT operation_id,request_digest,receipt_json
+	rows, err := tx.QueryContext(ctx, `SELECT operation_id,request_digest,photo_owner_id,photo_owner_bound,photo_no_owner,receipt_json
 		FROM batch_tag_receipts ORDER BY operation_id`)
 	if err != nil {
 		return fmt.Errorf("exporting batch tag receipts: %w", err)
@@ -28,7 +32,8 @@ func exportBatchTagReceipts(
 	for rows.Next() {
 		record := metadataBatchTagReceipt{Type: metadataBatchTagReceiptType}
 		if err := rows.Scan(
-			&record.OperationID, &record.RequestDigest, &record.ReceiptJSON,
+			&record.OperationID, &record.RequestDigest, &record.PhotoOwnerID, &record.PhotoOwnerBound,
+			&record.PhotoNoOwner, &record.ReceiptJSON,
 		); err != nil {
 			return fmt.Errorf("scanning batch tag receipt metadata: %w", err)
 		}
@@ -49,8 +54,9 @@ func importBatchTagReceipt(
 		return err
 	}
 	_, err := tx.ExecContext(ctx, `INSERT INTO batch_tag_receipts(
-		operation_id,request_digest,receipt_json) VALUES(?,?,?)`,
-		record.OperationID, record.RequestDigest, record.ReceiptJSON)
+		operation_id,request_digest,photo_owner_id,photo_owner_bound,photo_no_owner,receipt_json
+		) VALUES(?,?,?,?,?,?)`, record.OperationID, record.RequestDigest, record.PhotoOwnerID,
+		record.PhotoOwnerBound, record.PhotoNoOwner, record.ReceiptJSON)
 	return err
 }
 
@@ -67,6 +73,26 @@ func validateBatchTagMetadataRecord(record metadataBatchTagReceipt) error {
 	}
 	if receipt.OperationID != record.OperationID || receipt.RequestDigest != record.RequestDigest {
 		return errors.New("batch tag receipt metadata identity does not match receipt JSON")
+	}
+	return validateBatchTagReceiptAuthority(batchTagReceiptAuthority{
+		PhotoOwnerID: record.PhotoOwnerID, PhotoOwnerBound: record.PhotoOwnerBound,
+		PhotoNoOwner: record.PhotoNoOwner,
+	})
+}
+
+func validateBatchTagMetadataAuthorityFields(raw jsontext.Value) error {
+	fields, err := decodeMetadataFields(raw)
+	if err != nil {
+		return err
+	}
+	present := 0
+	for _, field := range []string{"photo_owner_id", "photo_owner_bound", "photo_no_owner"} {
+		if _, ok := fields[field]; ok {
+			present++
+		}
+	}
+	if present != 0 && present != 3 {
+		return errors.New("batch tag receipt owner authority fields must be present together")
 	}
 	return nil
 }

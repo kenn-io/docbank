@@ -1871,6 +1871,9 @@ CREATE INDEX IF NOT EXISTS node_tags_tag ON node_tags(tag_id);
 CREATE TABLE IF NOT EXISTS batch_tag_receipts (
     operation_id  TEXT PRIMARY KEY,
     request_digest TEXT NOT NULL,
+    photo_owner_id TEXT NOT NULL,
+    photo_owner_bound INTEGER NOT NULL,
+    photo_no_owner INTEGER NOT NULL,
     receipt_json  BLOB NOT NULL
 );
 

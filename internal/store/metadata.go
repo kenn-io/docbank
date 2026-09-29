@@ -1269,7 +1269,12 @@ func (s *Store) importMetadataRecord(
 	if !ok {
 		return fmt.Errorf("unknown record type %q", kind)
 	}
-	if err := requireMetadataFields(raw, required, metadataNullableFields[kind]); err != nil {
+	if kind == metadataBatchTagReceiptType {
+		if err := validateBatchTagMetadataAuthorityFields(raw); err != nil {
+			return err
+		}
+	}
+	if err := requireMetadataFields(raw, required, metadataNullableFields[kind], metadataOptionalFields[kind]); err != nil {
 		return err
 	}
 	if strings.HasPrefix(kind, "photo_") {
@@ -1715,6 +1720,12 @@ var metadataRequiredFields = map[string][]string{
 	metadataTermReportHistoryType:                {metadataTypeField, "id", "parent_id", "observed_at", "request_json", "summary_json", "photo_owner_id", "photo_owner_bound", "photo_no_owner", "members_json"},
 }
 
+var metadataOptionalFields = map[string]map[string]bool{
+	metadataBatchTagReceiptType: {
+		"photo_owner_id": true, "photo_owner_bound": true, "photo_no_owner": true,
+	},
+}
+
 var metadataNullableFields = map[string]map[string]bool{
 	"email_body_result": {"part_path": true, "rendition_attachment_id": true, "reason": true},
 	"node": {
@@ -1757,7 +1768,7 @@ func decodeMetadataRecord(raw jsontext.Value, dst any) error {
 	return json.Unmarshal(raw, dst, json.RejectUnknownMembers(true))
 }
 
-func requireMetadataFields(raw jsontext.Value, required []string, nullable map[string]bool) error {
+func requireMetadataFields(raw jsontext.Value, required []string, nullable map[string]bool, optional ...map[string]bool) error {
 	fields, err := decodeMetadataFields(raw)
 	if err != nil {
 		return err
@@ -1770,6 +1781,16 @@ func requireMetadataFields(raw jsontext.Value, required []string, nullable map[s
 			return fmt.Errorf("metadata record lacks required field %q", field)
 		}
 		if bytes.Equal(bytes.TrimSpace(value), []byte("null")) && !nullable[field] {
+			return fmt.Errorf("metadata field %q cannot be null", field)
+		}
+	}
+	var optionalFields map[string]bool
+	if len(optional) != 0 {
+		optionalFields = optional[0]
+	}
+	for field := range optionalFields {
+		allowed[field] = true
+		if value, ok := fields[field]; ok && bytes.Equal(bytes.TrimSpace(value), []byte("null")) && !nullable[field] {
 			return fmt.Errorf("metadata field %q cannot be null", field)
 		}
 	}
