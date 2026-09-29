@@ -56,7 +56,7 @@ func TestPeopleCLIWorkflow(t *testing.T) {
 	assert.Equal(t, created.PersonID, shown.PersonID)
 	custodiansOutput, err := runCLI(t, "people", "custodians", seed.PersonID)
 	require.NoError(t, err)
-	var custodians api.PersonCustodianPage
+	var custodians api.CustodianPage
 	require.NoError(t, json.Unmarshal([]byte(custodiansOutput), &custodians))
 	require.Len(t, custodians.Items, 1)
 	assert.Equal(t, assignment.AssignmentID, custodians.Items[0].AssignmentID)

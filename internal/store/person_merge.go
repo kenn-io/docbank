@@ -64,8 +64,10 @@ type PersonMergeReceipt struct {
 
 type PersonSplitReceipt struct {
 	OperationID, SourcePersonID, NewPersonID string
-	MovedIdentityIDs                         []string
-	CreatedAt                                string
+	// SourceRevisionAfter is derived from the fenced request so stored receipts keep their shape.
+	SourceRevisionAfter int64 `json:"-"`
+	MovedIdentityIDs    []string
+	CreatedAt           string
 }
 
 type PersonSplitRequest struct {
@@ -397,7 +399,11 @@ func (s *Store) SplitPerson(ctx context.Context, request PersonSplitRequest) (Pe
 			if storedHash != requestHash {
 				return ErrPersonMergeConflict
 			}
-			return json.Unmarshal(raw, &receipt, json.RejectUnknownMembers(true))
+			if err := json.Unmarshal(raw, &receipt, json.RejectUnknownMembers(true)); err != nil {
+				return err
+			}
+			receipt.SourceRevisionAfter = request.Revision + 1
+			return nil
 		}
 		if !errors.Is(err, sql.ErrNoRows) {
 			return err
@@ -468,7 +474,7 @@ func (s *Store) SplitPerson(ctx context.Context, request PersonSplitRequest) (Pe
 		if err := advancePersonBindingEpochTx(ctx, tx); err != nil {
 			return err
 		}
-		receipt = PersonSplitReceipt{OperationID: request.OperationID, SourcePersonID: request.PersonID, NewPersonID: newID, MovedIdentityIDs: slices.Clone(request.IdentityIDs), CreatedAt: now}
+		receipt = PersonSplitReceipt{OperationID: request.OperationID, SourcePersonID: request.PersonID, NewPersonID: newID, SourceRevisionAfter: request.Revision + 1, MovedIdentityIDs: slices.Clone(request.IdentityIDs), CreatedAt: now}
 		raw, err = canonical.Marshal(receipt)
 		if err != nil {
 			return err

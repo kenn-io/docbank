@@ -100,29 +100,29 @@ func (c *Connection) Person(ctx context.Context, id string) (api.PersonDetail, e
 	return *detail, nil
 }
 
-func (c *Connection) PersonCustodians(ctx context.Context, id, cursor string, limit int) (api.PersonCustodianPage, error) {
+func (c *Connection) PersonCustodians(ctx context.Context, id, cursor string, limit int) (api.CustodianPage, error) {
 	pathID, err := parsePersonID(id)
 	if err != nil {
-		return api.PersonCustodianPage{}, err
+		return api.CustodianPage{}, err
 	}
 	if limit < 1 || limit > 250 {
-		return api.PersonCustodianPage{}, errors.New("person custodian limit must be between 1 and 250")
+		return api.CustodianPage{}, errors.New("person custodian limit must be between 1 and 250")
 	}
 	page, err := c.API().ListPersonCustodians(ctx, &apiclient.ListPersonCustodiansRequestOptions{
 		PathParams: &apiclient.ListPersonCustodiansPath{PersonID: pathID},
 		Query:      &apiclient.ListPersonCustodiansQuery{Limit: new(int64(limit)), Cursor: &cursor},
 	})
 	if err != nil {
-		return api.PersonCustodianPage{}, err
+		return api.CustodianPage{}, err
 	}
 	if page == nil {
-		return api.PersonCustodianPage{}, &responseDecodeError{err: errors.New("person custodian response is incomplete")}
+		return api.CustodianPage{}, &responseDecodeError{err: errors.New("person custodian response is incomplete")}
 	}
-	if len(page.Items) > limit {
-		return api.PersonCustodianPage{}, &responseDecodeError{err: errors.New("person custodian page exceeds requested bound")}
+	if len(page.Items) > limit || page.Total < int64(len(page.Items)) {
+		return api.CustodianPage{}, &responseDecodeError{err: errors.New("person custodian page exceeds requested bound")}
 	}
 	if page.Items == nil {
-		page.Items = []api.PersonCustodianAssignment{}
+		page.Items = []api.CustodianAssignment{}
 	}
 	return *page, nil
 }

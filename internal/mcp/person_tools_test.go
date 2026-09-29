@@ -4,12 +4,9 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json/v2"
-	"net/http"
 	"net/http/httptest"
 	"path/filepath"
 	"strings"
-	"sync/atomic"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -21,23 +18,16 @@ import (
 	"go.kenn.io/docbank/internal/store"
 )
 
-func TestPeopleMCPWriteOptIn(t *testing.T) {
-	readOnly := catalogMap(toolCatalog(false, false, false, false))
+func TestPeopleMCPToolsAreReads(t *testing.T) {
+	readOnly := catalogMap(toolCatalog(false, false, false))
 	for _, name := range []string{"get_person", "list_person_custodians"} {
-		assert.Contains(t, readOnly, name)
+		tool := readOnly[name]
+		require.NotNil(t, tool, name)
+		assert.True(t, tool.Annotations.ReadOnlyHint, name)
 	}
+	withWrites := catalogMap(toolCatalog(true, true, true))
 	for _, name := range []string{"create_person", "rename_person", "retire_person", "merge_people", "split_person"} {
-		assert.NotContains(t, readOnly, name)
-	}
-
-	withWrites := catalogMap(toolCatalog(false, false, false, true))
-	for _, name := range []string{"create_person", "rename_person", "retire_person", "merge_people", "split_person"} {
-		tool := withWrites[name]
-		require.NotNil(t, tool)
-		require.NotNil(t, tool.Annotations)
-		assert.False(t, tool.Annotations.ReadOnlyHint)
-		assertSchemaContract(t, tool.InputSchema)
-		assertSchemaContract(t, tool.OutputSchema)
+		assert.NotContains(t, withWrites, name)
 	}
 	assertSchemaAccepts(t, readOnly["list_person_custodians"].OutputSchema, map[string]any{
 		"items": []any{
@@ -46,12 +36,9 @@ func TestPeopleMCPWriteOptIn(t *testing.T) {
 			map[string]any{"assignment_id": "00000000-0000-4000-8000-000000000003", "scope_kind": "document", "node_id": 1, "content_version_id": "00000000-0000-4000-8000-000000000013", "raw_label": "Document", "rank": "primary", "basis": "operator_assigned", "source_ref": "synthetic", "revision": 1, "recorded_at": "2026-09-29T00:00:00Z"},
 		}, "total": 3, "ttlMs": 0, "cacheScope": "private",
 	})
-	server := newServerWithOptions(testImplementation(), ServerOptions{AllowPersonEdits: true})
-	discovery := decodeResult(t, exchangeRaw(t, server, requestFor("server/discover", nil)))
-	assert.Equal(t, catalogInstructions(false, false, false, true), discovery["instructions"])
 }
 
-func TestPeopleMCPWorkflow(t *testing.T) {
+func TestPeopleMCPReads(t *testing.T) {
 	vault := t.TempDir()
 	catalog, err := store.Open(filepath.Join(vault, "docbank.db"))
 	require.NoError(t, err)
@@ -70,7 +57,7 @@ func TestPeopleMCPWorkflow(t *testing.T) {
 	lease := newDaemonLeaseWith(func(context.Context) (*daemonconn.Connection, error) {
 		return connection, nil
 	}, func(*daemonconn.Connection) error { return nil })
-	server := newServerWithOptionsAndDaemon(testImplementation(), ServerOptions{AllowPersonEdits: true}, lease)
+	server := newServerWithOptionsAndDaemon(testImplementation(), ServerOptions{}, lease)
 
 	call := func(name string, arguments map[string]any) map[string]any {
 		t.Helper()
@@ -80,30 +67,32 @@ func TestPeopleMCPWorkflow(t *testing.T) {
 		require.NotEqual(t, true, result["isError"], "%s returned an error: %v", name, result)
 		return objectField(t, result, "structuredContent")
 	}
-	callError := func(name string, arguments map[string]any, code string) {
-		t.Helper()
-		result := decodeResult(t, exchangeRaw(t, server, requestFor("tools/call", map[string]any{
-			"name": name, "arguments": arguments,
-		})))
-		require.Equal(t, true, result["isError"], "%s unexpectedly succeeded: %v", name, result)
-		assert.Equal(t, code, objectField(t, result, "structuredContent")["code"])
-	}
-	created := call("create_person", map[string]any{"display_name": "Survivor"})
-	survivorID, ok := created["person_id"].(string)
+	survivor, err := catalog.CreatePerson(t.Context(), "Survivor", "operator")
+	require.NoError(t, err)
+	absorbed, err := catalog.CreatePerson(t.Context(), "Absorbed", "operator")
+	require.NoError(t, err)
+	identity, err := catalog.AddPersonIdentity(t.Context(), absorbed.PersonID, absorbed.Revision, store.PersonIdentity{
+		Kind: "email", ValueDisplay: "absorbed@example.test", Origin: "operator",
+		EvidenceKind: "operator_assertion", EvidenceID: "mcp-workflow", Confidence: "operator_asserted",
+	})
+	require.NoError(t, err)
+	absorbedDetail := call("get_person", map[string]any{"person_id": absorbed.PersonID})
+	assert.Equal(t, "Absorbed", absorbedDetail["display_name"])
+	absorbedIdentities, ok := absorbedDetail["identities"].([]any)
 	require.True(t, ok)
-	assert.Equal(t, "Survivor", created["display_name"])
-	assert.EqualValues(t, 1, created["revision"])
-	absorbed := call("create_person", map[string]any{"display_name": "Absorbed"})
-	absorbedID, ok := absorbed["person_id"].(string)
+	require.Len(t, absorbedIdentities, 1)
+	absorbedIdentity, ok := absorbedIdentities[0].(map[string]any)
 	require.True(t, ok)
-	assert.Equal(t, "Absorbed", absorbed["display_name"])
-	assert.EqualValues(t, 1, absorbed["revision"])
+	assert.Equal(t, identity.IdentityID, absorbedIdentity["identity_id"])
+	absorbedRevision, ok := absorbedDetail["revision"].(float64)
+	require.True(t, ok)
+
 	collection, err := catalog.BeginIngest(t.Context(), "mcp", "synthetic collection")
 	require.NoError(t, err)
 	node, err := catalog.IngestFileExact(t.Context(), collection, catalog.RootID(), "mcp-document.txt", strings.Repeat("a", 64), 16, "text/plain", "mcp-document.txt", "")
 	require.NoError(t, err)
 	_, err = catalog.SetCustodian(t.Context(), store.CustodianRequest{
-		Scope: store.CustodianScope{Kind: "collection", IngestID: collection.ID()}, PersonID: survivorID,
+		Scope: store.CustodianScope{Kind: "collection", IngestID: collection.ID()}, PersonID: survivor.PersonID,
 		RawLabel: "Collection owner", Rank: "primary", Basis: "operator_assigned", SourceRef: "mcp-collection", IfMatchRevision: 1,
 	})
 	require.NoError(t, err)
@@ -121,105 +110,36 @@ func TestPeopleMCPWorkflow(t *testing.T) {
 	})
 	require.NoError(t, err)
 	_, err = catalog.SetCustodian(t.Context(), store.CustodianRequest{
-		Scope: store.CustodianScope{Kind: "package", PackageID: pkg.PackageID}, PersonID: survivorID,
+		Scope: store.CustodianScope{Kind: "package", PackageID: pkg.PackageID}, PersonID: survivor.PersonID,
 		RawLabel: "Package owner", Rank: "primary", Basis: "operator_assigned", SourceRef: "mcp-package", IfMatchRevision: 1,
 	})
 	require.NoError(t, err)
 	_, err = catalog.SetCustodian(t.Context(), store.CustodianRequest{
-		Scope: store.CustodianScope{Kind: "document", NodeID: node.ID, ContentVersionID: node.CurrentVersionID}, PersonID: survivorID,
+		Scope: store.CustodianScope{Kind: "document", NodeID: node.ID, ContentVersionID: node.CurrentVersionID}, PersonID: survivor.PersonID,
 		RawLabel: "Document owner", Rank: "primary", Basis: "operator_assigned", SourceRef: "mcp-document", IfMatchRevision: 1,
 	})
 	require.NoError(t, err)
-	renamed := call("rename_person", map[string]any{"person_id": absorbedID, "if_match_revision": 1, "display_name": "Absorbed Renamed"})
-	assert.Equal(t, absorbedID, renamed["person_id"])
-	assert.Equal(t, "Absorbed Renamed", renamed["display_name"])
-	assert.EqualValues(t, 2, renamed["revision"])
-	found := call("find_people", map[string]any{"query": "Survivor", "limit": 10})
-	people, ok := found["items"].([]any)
-	require.True(t, ok)
-	require.Len(t, people, 1)
-	personSummary, ok := people[0].(map[string]any)
-	require.True(t, ok)
-	assert.Equal(t, survivorID, personSummary["person_id"])
-	assert.Equal(t, "Survivor", personSummary["display_name"])
 
-	identity, err := catalog.AddPersonIdentity(t.Context(), absorbedID, 2, store.PersonIdentity{
-		Kind: "email", ValueDisplay: "absorbed@example.test", Origin: "operator",
-		EvidenceKind: "operator_assertion", EvidenceID: "mcp-workflow", Confidence: "operator_asserted",
-	})
+	_, err = catalog.MergePersons(t.Context(), survivor.PersonID, absorbed.PersonID, "00000000-0000-4000-8000-000000000004",
+		survivor.Revision, int64(absorbedRevision))
 	require.NoError(t, err)
-	absorbedDetail := call("get_person", map[string]any{"person_id": absorbedID})
-	assert.Equal(t, absorbedID, absorbedDetail["person_id"])
-	assert.Equal(t, "Absorbed Renamed", absorbedDetail["display_name"])
-	assert.EqualValues(t, 3, absorbedDetail["revision"])
-	absorbedIdentities, ok := absorbedDetail["identities"].([]any)
+	merged := call("get_person", map[string]any{"person_id": survivor.PersonID})
+	assert.EqualValues(t, survivor.Revision+1, merged["revision"])
+	mergedIdentities, ok := merged["identities"].([]any)
 	require.True(t, ok)
-	require.Len(t, absorbedIdentities, 1)
-	absorbedIdentity, ok := absorbedIdentities[0].(map[string]any)
-	require.True(t, ok)
-	assert.Equal(t, identity.IdentityID, absorbedIdentity["identity_id"])
+	require.Len(t, mergedIdentities, 1)
 
-	mergeID := "00000000-0000-4000-8000-000000000004"
-	merged := call("merge_people", map[string]any{
-		"survivor_person_id": survivorID, "survivor_revision": 1,
-		"absorbed_person_id": absorbedID, "absorbed_revision": 3, "operation_id": mergeID,
-	})
-	assert.Equal(t, survivorID, merged["survivor_person_id"])
-	assert.Equal(t, absorbedID, merged["absorbed_person_id"])
-	assert.Equal(t, "Absorbed Renamed", merged["absorbed_display_name"])
-	assert.EqualValues(t, 1, merged["survivor_revision_before"])
-	assert.EqualValues(t, 2, merged["survivor_revision_after"])
-	moved := objectField(t, merged, "moved")
-	assert.EqualValues(t, 1, moved["identities"])
-	callError("rename_person", map[string]any{"person_id": survivorID, "if_match_revision": 1, "display_name": "Rejected"}, "stale_revision")
-
-	survivor := call("get_person", map[string]any{"person_id": survivorID})
-	assert.Equal(t, survivorID, survivor["person_id"])
-	assert.EqualValues(t, 2, survivor["revision"])
-	identities, ok := survivor["identities"].([]any)
-	require.True(t, ok)
-	require.Len(t, identities, 1)
-	survivorIdentity, ok := identities[0].(map[string]any)
-	require.True(t, ok)
-	assert.Equal(t, identity.IdentityID, survivorIdentity["identity_id"])
-
-	splitID := "00000000-0000-4000-8000-000000000005"
-	split := call("split_person", map[string]any{
-		"person_id": survivorID, "if_match_revision": 2, "operation_id": splitID,
-		"display_name": "Separated", "identity_ids": []string{identity.IdentityID},
-	})
-	assert.Equal(t, splitID, split["operation_id"])
-	assert.Equal(t, survivorID, split["source_person_id"])
-	assert.EqualValues(t, 3, split["source_revision_after"])
-	newPersonID, ok := split["new_person_id"].(string)
-	require.True(t, ok)
-	assert.NotEqual(t, survivorID, newPersonID)
-	assert.Equal(t, []any{identity.IdentityID}, split["moved_identity_ids"])
-	sourceRename := call("rename_person", map[string]any{"person_id": survivorID, "if_match_revision": 3, "display_name": "Survivor after split"})
-	assert.EqualValues(t, 4, sourceRename["revision"])
-
-	separated := call("get_person", map[string]any{"person_id": newPersonID})
-	assert.Equal(t, "Separated", separated["display_name"])
-	assert.EqualValues(t, 1, separated["revision"])
-	separatedIdentities, ok := separated["identities"].([]any)
-	require.True(t, ok)
-	require.Len(t, separatedIdentities, 1)
-	separatedIdentity, ok := separatedIdentities[0].(map[string]any)
-	require.True(t, ok)
-	assert.Equal(t, identity.IdentityID, separatedIdentity["identity_id"])
-	callError("split_person", map[string]any{
-		"person_id": survivorID, "if_match_revision": 3, "operation_id": "00000000-0000-4000-8000-000000000006",
-		"display_name": "Empty",
-	}, "invalid_person")
-	retired := call("retire_person", map[string]any{"person_id": newPersonID, "if_match_revision": 1})
-	assert.Equal(t, newPersonID, retired["person_id"])
-	assert.Equal(t, "retired", retired["state"])
-	assert.EqualValues(t, 2, retired["revision"])
-	callError("get_person", map[string]any{"person_id": newPersonID}, "not_found")
-	page := call("list_person_custodians", map[string]any{"person_id": survivorID, "limit": 10})
+	page := call("list_person_custodians", map[string]any{"person_id": survivor.PersonID, "limit": 2})
 	assert.EqualValues(t, 3, page["total"])
 	items, ok := page["items"].([]any)
 	require.True(t, ok)
+	require.Len(t, items, 2)
+	cursor, ok := page["next_cursor"].(string)
+	require.True(t, ok)
+	rest := call("list_person_custodians", map[string]any{"person_id": survivor.PersonID, "cursor": cursor})
+	restItems, ok := rest["items"].([]any)
+	require.True(t, ok)
+	items = append(items, restItems...)
 	require.Len(t, items, 3)
 	bySource := make(map[string]map[string]any, len(items))
 	for _, raw := range items {
@@ -242,83 +162,4 @@ func TestPeopleMCPWorkflow(t *testing.T) {
 	require.Equal(t, node.CurrentVersionID, documentOutput["content_version_id"])
 	require.NotContains(t, documentOutput, "ingest_id")
 	require.NotContains(t, documentOutput, "package_id")
-	assignmentID, ok := documentOutput["assignment_id"].(string)
-	require.True(t, ok)
-	assignmentSplit := call("split_person", map[string]any{
-		"person_id": survivorID, "if_match_revision": 4, "operation_id": "00000000-0000-4000-8000-000000000007",
-		"display_name": "Assignment only", "assignment_ids": []string{assignmentID},
-	})
-	assert.EqualValues(t, 5, assignmentSplit["source_revision_after"])
-	require.Equal(t, []any{}, assignmentSplit["moved_identity_ids"])
-
-	externalSource := call("create_person", map[string]any{"display_name": "External source"})
-	externalSourceID, ok := externalSource["person_id"].(string)
-	require.True(t, ok)
-	_, err = catalog.LinkExternalIdentity(t.Context(), store.PersonExternalIdentity{
-		PersonID: externalSourceID, System: "msgvault", ArchiveID: "synthetic", UID: "uid-1", UIDKind: "vcard_uid", UIDState: "current",
-	}, 1)
-	require.NoError(t, err)
-	externalSplit := call("split_person", map[string]any{
-		"person_id": externalSourceID, "if_match_revision": 2, "operation_id": "00000000-0000-4000-8000-000000000008",
-		"display_name": "External only", "external_identities": []map[string]string{{"system": "msgvault", "archive_id": "synthetic", "uid": "uid-1"}},
-	})
-	assert.EqualValues(t, 3, externalSplit["source_revision_after"])
-	require.Equal(t, []any{}, externalSplit["moved_identity_ids"])
-}
-
-func TestPersonWriteTreatsMalformedSuccessAsUnknown(t *testing.T) {
-	const personID = "00000000-0000-4000-8000-000000000001"
-	var requests atomic.Int32
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		requests.Add(1)
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusCreated)
-		_ = json.MarshalWrite(w, api.Person{PersonID: personID, DisplayName: "Synthetic", Origin: "operator", State: "curated", Revision: 1,
-			CreatedAt: "2026-09-28T00:00:00Z", UpdatedAt: "2026-09-28T00:00:00Z"})
-	}))
-	t.Cleanup(server.Close)
-	lease := newDaemonLeaseWith(func(context.Context) (*daemonconn.Connection, error) {
-		return daemonconn.New(server.URL, "synthetic-key"), nil
-	}, func(*daemonconn.Connection) error { return nil })
-	validator := mustResolveSchema(catalogMap(toolCatalog(false, false, false, true))["create_person"].OutputSchema)
-	_, err := executePersonWriteTool(t.Context(), lease, "create_person", validator, []byte(`{"display_name":"Synthetic"}`))
-	require.ErrorIs(t, err, errProcessingOutcomeUnknown)
-	assert.Equal(t, int32(1), requests.Load())
-}
-
-func TestPersonSplitWriteTreatsMalformedFenceAsUnknown(t *testing.T) {
-	const (
-		personID    = "00000000-0000-4000-8000-000000000001"
-		newPersonID = "00000000-0000-4000-8000-000000000002"
-		operationID = "00000000-0000-4000-8000-000000000003"
-	)
-	for _, test := range []struct {
-		name, etag string
-		revision   int64
-	}{
-		{name: "missing revision", etag: `"2"`},
-		{name: "missing etag", revision: 2},
-		{name: "mismatched etag", revision: 2, etag: `"1"`},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			var requests atomic.Int32
-			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-				requests.Add(1)
-				w.Header().Set("Content-Type", "application/json")
-				if test.etag != "" {
-					w.Header().Set("ETag", test.etag)
-				}
-				_ = json.MarshalWrite(w, api.PersonSplitReceipt{OperationID: operationID, SourcePersonID: personID, NewPersonID: newPersonID,
-					SourceRevisionAfter: test.revision, MovedIdentityIDs: []string{}, CreatedAt: "2026-09-28T00:00:00Z"})
-			}))
-			t.Cleanup(server.Close)
-			lease := newDaemonLeaseWith(func(context.Context) (*daemonconn.Connection, error) {
-				return daemonconn.New(server.URL, "synthetic-key"), nil
-			}, func(*daemonconn.Connection) error { return nil })
-			validator := mustResolveSchema(catalogMap(toolCatalog(false, false, false, true))["split_person"].OutputSchema)
-			_, err := executePersonWriteTool(t.Context(), lease, "split_person", validator, []byte(`{"person_id":"00000000-0000-4000-8000-000000000001","if_match_revision":1,"operation_id":"00000000-0000-4000-8000-000000000003","display_name":"Synthetic split"}`))
-			require.ErrorIs(t, err, errProcessingOutcomeUnknown)
-			require.Equal(t, int32(1), requests.Load())
-		})
-	}
 }

@@ -127,30 +127,7 @@ type personSplitOutput struct {
 }
 
 type personCustodianPageOutput struct {
-	Body PersonCustodianPage
-}
-
-type PersonCustodianAssignment struct {
-	AssignmentID     string `json:"assignment_id"`
-	ScopeKind        string `json:"scope_kind"`
-	IngestID         string `json:"ingest_id,omitzero"`
-	PackageID        string `json:"package_id,omitzero"`
-	PackageRecordID  string `json:"package_record_id,omitzero"`
-	NodeID           int64  `json:"node_id,omitzero" minimum:"1"`
-	ContentVersionID string `json:"content_version_id,omitzero"`
-	PersonID         string `json:"person_id,omitzero"`
-	RawLabel         string `json:"raw_label"`
-	Rank             string `json:"rank"`
-	Basis            string `json:"basis"`
-	SourceRef        string `json:"source_ref"`
-	Revision         int64  `json:"revision"`
-	RecordedAt       string `json:"recorded_at"`
-}
-
-type PersonCustodianPage struct {
-	Items      []PersonCustodianAssignment `json:"items"`
-	Total      int64                       `json:"total"`
-	NextCursor string                      `json:"next_cursor,omitzero"`
+	Body CustodianPage
 }
 
 func fromStorePerson(value store.Person, reachedThrough string) Person {
@@ -193,31 +170,6 @@ func fromStorePersonMergeReceipt(value store.PersonMergeReceipt) PersonMergeRece
 }
 
 func fromStorePersonSplitReceipt(value store.PersonSplitReceipt) PersonSplitReceipt {
-	return PersonSplitReceipt{OperationID: value.OperationID, SourcePersonID: value.SourcePersonID, NewPersonID: value.NewPersonID,
+	return PersonSplitReceipt{OperationID: value.OperationID, SourcePersonID: value.SourcePersonID, NewPersonID: value.NewPersonID, SourceRevisionAfter: value.SourceRevisionAfter,
 		MovedIdentityIDs: append([]string{}, value.MovedIdentityIDs...), CreatedAt: value.CreatedAt}
-}
-
-func fromStorePersonCustodian(value store.CustodianAssignment) PersonCustodianAssignment {
-	out := PersonCustodianAssignment{AssignmentID: value.AssignmentID, ScopeKind: value.ScopeKind,
-		RawLabel: value.RawLabel, Rank: value.Rank, Basis: value.Basis, SourceRef: value.SourceRef,
-		Revision: value.Revision, RecordedAt: value.RecordedAt}
-	if value.IngestID != nil {
-		out.IngestID = *value.IngestID
-	}
-	if value.PackageID != nil {
-		out.PackageID = *value.PackageID
-	}
-	if value.PackageRecordID != nil {
-		out.PackageRecordID = *value.PackageRecordID
-	}
-	if value.NodeID != nil {
-		out.NodeID = *value.NodeID
-	}
-	if value.ContentVersionID != nil {
-		out.ContentVersionID = *value.ContentVersionID
-	}
-	if value.PersonID != nil {
-		out.PersonID = *value.PersonID
-	}
-	return out
 }

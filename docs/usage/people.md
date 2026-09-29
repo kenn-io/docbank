@@ -59,6 +59,5 @@ Every successful person edit advances the document-person binding epoch.
 Document links go stale until the daemon backfill republishes them. The
 authority rows remain available during that rebuild.
 
-MCP reads are always available. Start the MCP server with
-`--allow-person-edits` to expose person writes. The CLI and MCP use the
-daemon, so they never open the vault directly.
+MCP offers the person reads only; edit people through the CLI or HTTP API.
+The CLI and MCP use the daemon, so they never open the vault directly.

@@ -218,9 +218,8 @@ merge, and split require `If-Match`. Merge also carries the absorbed
 revision in the body. Merge and split operation UUIDs replay their stored
 receipts. The store owns alias resolution, membership validation, revision
 fences, and binding-epoch changes. Browser sessions stay denied by default.
-MCP always exposes reads; writes require
-`docbank mcp --allow-person-edits` and treat malformed success responses as
-unknown outcomes.
+MCP exposes the person reads only.
+Edits stay on HTTP and the CLI.
 
 ## Ingest boundary
 

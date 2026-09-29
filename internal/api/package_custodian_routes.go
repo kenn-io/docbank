@@ -185,6 +185,15 @@ func packageCustodianOutput(value store.CustodianAssignment) CustodianAssignment
 	out := CustodianAssignment{AssignmentID: value.AssignmentID, ScopeKind: value.ScopeKind,
 		RawLabel: value.RawLabel, Rank: value.Rank, Basis: value.Basis, SourceRef: value.SourceRef,
 		Revision: value.Revision, RecordedAt: value.RecordedAt}
+	if value.IngestID != nil {
+		out.IngestID = *value.IngestID
+	}
+	if value.NodeID != nil {
+		out.NodeID = *value.NodeID
+	}
+	if value.ContentVersionID != nil {
+		out.ContentVersionID = *value.ContentVersionID
+	}
 	if value.PackageID != nil {
 		out.PackageID = *value.PackageID
 	}

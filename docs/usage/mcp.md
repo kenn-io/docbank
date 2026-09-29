@@ -171,20 +171,6 @@ Photo writes make one daemon request. An ambiguous transport failure returns
 `processing_outcome_unknown`; inspect the asset before retrying. Display and
 vault settings writes remain HTTP and CLI operations.
 
-Starting the server with `--allow-person-edits` adds these write tools:
-
-| Tool | Contract and important bounds |
-| --- | --- |
-| `create_person` | Creates one operator-owned canonical person. |
-| `rename_person` | Renames a person at `if_match_revision`. |
-| `retire_person` | Retires a person at `if_match_revision`. |
-| `merge_people` | Merges two people with survivor and absorbed revisions plus an operation UUID. |
-| `split_person` | Moves explicit identities, assignments, or external UIDs at an expected revision. |
-
-Person writes send one daemon request. Merge and split replay by operation
-UUID. A malformed success response returns `processing_outcome_unknown`;
-inspect the people records before retrying.
-
 `list_documents` uses live keyset pagination, not a snapshot. A mutation between
 pages can change later membership or order. Each opaque cursor is at most 32 KiB of ASCII, expires after 15 minutes, and
 authenticates the normalized prefix, sort, direction, page size, position, and

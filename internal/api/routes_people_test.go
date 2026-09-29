@@ -122,7 +122,7 @@ func TestPeopleRoutesWorkflow(t *testing.T) {
 	require.Equal(t, "person_merge_conflict", decodeProblem(t, changedSplitRaw).Code)
 	custodianResponse, custodianRaw := get(t, ts, "/api/v1/people/by-id/"+split.NewPersonID+"/custodians?limit=1", nil)
 	require.Equal(t, http.StatusOK, custodianResponse.StatusCode, custodianRaw)
-	var custodianPage api.PersonCustodianPage
+	var custodianPage api.CustodianPage
 	require.NoError(t, json.Unmarshal([]byte(custodianRaw), &custodianPage))
 	require.Len(t, custodianPage.Items, 1)
 	require.Equal(t, assignment.AssignmentID, custodianPage.Items[0].AssignmentID)
@@ -182,11 +182,11 @@ func TestPeopleRouteCustodiansPreserveAllScopeCoordinates(t *testing.T) {
 
 	response, body := get(t, ts, "/api/v1/people/by-id/"+person.PersonID+"/custodians?limit=10", nil)
 	require.Equal(t, http.StatusOK, response.StatusCode, body)
-	var page api.PersonCustodianPage
+	var page api.CustodianPage
 	require.NoError(t, json.Unmarshal([]byte(body), &page))
 	require.EqualValues(t, 3, page.Total)
 	require.Len(t, page.Items, 3)
-	byID := make(map[string]api.PersonCustodianAssignment, len(page.Items))
+	byID := make(map[string]api.CustodianAssignment, len(page.Items))
 	for _, item := range page.Items {
 		byID[item.AssignmentID] = item
 	}

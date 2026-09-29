@@ -1461,6 +1461,10 @@ export interface CustodianAssignment {
   readonly $schema?: string;
   assignment_id: string;
   basis: string;
+  content_version_id?: string;
+  ingest_id?: string;
+  /** @minimum 1 */
+  node_id?: number;
   package_id?: string;
   package_record_id?: string;
   person_id?: string;
@@ -4107,32 +4111,6 @@ export interface Person {
   revision: number;
   state: string;
   updated_at: string;
-}
-
-export interface PersonCustodianAssignment {
-  assignment_id: string;
-  basis: string;
-  content_version_id?: string;
-  ingest_id?: string;
-  /** @minimum 1 */
-  node_id?: number;
-  package_id?: string;
-  package_record_id?: string;
-  person_id?: string;
-  rank: string;
-  raw_label: string;
-  recorded_at: string;
-  revision: number;
-  scope_kind: string;
-  source_ref: string;
-}
-
-export interface PersonCustodianPage {
-  /** A URL to the JSON Schema for this object. */
-  readonly $schema?: string;
-  items: PersonCustodianAssignment[];
-  next_cursor?: string;
-  total: number;
 }
 
 export interface PersonExternalIdentity {
@@ -12760,9 +12738,9 @@ export const getListPersonCustodiansUrl = (personId: string,
  * @summary List active custodian assignments for one person
  */
 export const listPersonCustodians = async (personId: string,
-    params?: ListPersonCustodiansParams, options?: Parameters<typeof sessionJSON>[1]): Promise<PersonCustodianPage> => {
+    params?: ListPersonCustodiansParams, options?: Parameters<typeof sessionJSON>[1]): Promise<CustodianPage> => {
 
-  return sessionJSON<PersonCustodianPage>(getListPersonCustodiansUrl(personId,params),
+  return sessionJSON<CustodianPage>(getListPersonCustodiansUrl(personId,params),
   {
     ...options,
     method: 'GET'

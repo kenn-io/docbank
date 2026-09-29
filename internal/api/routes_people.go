@@ -2,16 +2,15 @@ package api
 
 import (
 	"context"
-	"encoding/base64"
-	"errors"
 	"net/http"
-	"strconv"
-	"strings"
 
 	"github.com/danielgtaylor/huma/v2"
 
 	"go.kenn.io/docbank/internal/store"
 )
+
+// personCustodianCursorScope marks the row slot so a person cursor, bound to its person ID, never reads as a package cursor.
+const personCustodianCursorScope = "person"
 
 func registerPeopleRoutes(api huma.API, d Deps, g *gate) {
 	huma.Register(api, huma.Operation{
@@ -56,7 +55,7 @@ func registerPeopleRoutes(api huma.API, d Deps, g *gate) {
 		if limit == 0 {
 			limit = 100
 		}
-		offset, err := decodePersonCustodianCursor(in.Cursor, in.PersonID)
+		offset, err := decodeCustodianCursor(in.Cursor, in.PersonID, personCustodianCursorScope, false)
 		if err != nil {
 			return nil, NewError(http.StatusUnprocessableEntity, "validation", "invalid person custodian cursor")
 		}
@@ -64,12 +63,12 @@ func registerPeopleRoutes(api huma.API, d Deps, g *gate) {
 		if err != nil {
 			return nil, FromStoreError(err)
 		}
-		out := PersonCustodianPage{Items: make([]PersonCustodianAssignment, len(assignments)), Total: total}
+		out := CustodianPage{Items: make([]CustodianAssignment, len(assignments)), Total: total}
 		for index, assignment := range assignments {
-			out.Items[index] = fromStorePersonCustodian(assignment)
+			out.Items[index] = packageCustodianOutput(assignment)
 		}
 		if offset+len(assignments) < int(total) {
-			out.NextCursor = encodePersonCustodianCursor(in.PersonID, offset+len(assignments))
+			out.NextCursor = encodeCustodianCursor(in.PersonID, personCustodianCursorScope, false, offset+len(assignments))
 		}
 		return &personCustodianPageOutput{Body: out}, nil
 	})
@@ -169,30 +168,9 @@ func registerPeopleRoutes(api huma.API, d Deps, g *gate) {
 				return FromStoreError(callErr)
 			}
 			body := fromStorePersonSplitReceipt(receipt)
-			body.SourceRevisionAfter = revision + 1
 			out = &personSplitOutput{ETag: revisionETag(body.SourceRevisionAfter), Body: body}
 			return nil
 		})
 		return out, err
 	})
-}
-
-func encodePersonCustodianCursor(personID string, offset int) string {
-	return base64.RawURLEncoding.EncodeToString([]byte(personID + "\x00" + strconv.Itoa(offset)))
-}
-
-func decodePersonCustodianCursor(cursor, personID string) (int, error) {
-	if cursor == "" {
-		return 0, nil
-	}
-	raw, err := base64.RawURLEncoding.DecodeString(cursor)
-	parts := strings.Split(string(raw), "\x00")
-	if err != nil || len(parts) != 2 || parts[0] != personID {
-		return 0, errors.New("invalid cursor")
-	}
-	offset, err := strconv.Atoi(parts[1])
-	if err != nil || offset < 0 {
-		return 0, errors.New("invalid cursor")
-	}
-	return offset, nil
 }
