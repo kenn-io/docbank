@@ -3,6 +3,7 @@ package api_test
 import (
 	"bytes"
 	"encoding/json/v2"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -183,34 +184,48 @@ func TestTermReportNativeTextLimitReturnsClientError(t *testing.T) {
 }
 
 func TestTermReportOldDownloadStaysFrozenAfterSourceChange(t *testing.T) {
-	ts, s := newTestServer(t, nil)
-	node := createFileWithContent(t, ts, s, "/alpha.txt", "synthetic original")
-	request := report.Request{Version: 1, AllDocuments: true, Timezone: "UTC",
-		CoverageMode: "available_only", Terms: []report.Term{{Number: 1, Expression: "alpha",
-			Syntax: "simple", Dates: report.DateRange{Start: "2026-01-01", End: "2026-12-31"}}}}
-	encoded, err := json.Marshal(request)
-	require.NoError(t, err)
-	create := func() report.Summary {
-		response, body := rawJSONRequest(t, ts.URL, http.MethodPost, "/api/v1/search-exports",
-			map[string]string{"X-Api-Key": testAPIKey}, string(encoded))
-		require.Equal(t, http.StatusOK, response.StatusCode, body)
-		var summary report.Summary
-		require.NoError(t, json.Unmarshal([]byte(body), &summary))
-		return summary
+	for _, selected := range []bool{false, true} {
+		t.Run(fmt.Sprintf("selected=%t", selected), func(t *testing.T) {
+			ts, s := newTestServer(t, nil)
+			node := createFileWithContent(t, ts, s, "/alpha.txt", "synthetic original")
+			request := report.Request{Version: 1, AllDocuments: true, Timezone: "UTC",
+				CoverageMode: "available_only", Terms: []report.Term{{Number: 1, Expression: "alpha",
+					Syntax: "simple", Dates: report.DateRange{Start: "2026-01-01", End: "2026-12-31"}}}}
+			if selected {
+				request.AllDocuments = false
+				request.SelectedDocuments = &report.SelectedDocuments{Documents: []report.Identity{{NodeID: node.ID, VersionID: node.CurrentVersionID, SHA256: node.BlobHash}}}
+			}
+			encoded, err := json.Marshal(request)
+			require.NoError(t, err)
+			create := func() report.Summary {
+				response, body := rawJSONRequest(t, ts.URL, http.MethodPost, "/api/v1/search-exports",
+					map[string]string{"X-Api-Key": testAPIKey}, string(encoded))
+				require.Equal(t, http.StatusOK, response.StatusCode, body)
+				var summary report.Summary
+				require.NoError(t, json.Unmarshal([]byte(body), &summary))
+				return summary
+			}
+			first := create()
+			require.Equal(t, int64(1), first.Counts[0].Hits)
+			response, frozenBundle := get(t, ts, "/api/v1/search-exports/"+first.ID+"/bundle", nil)
+			require.Equal(t, http.StatusOK, response.StatusCode)
+			_, _, err = s.Trash(t.Context(), node.ID, node.Revision)
+			require.NoError(t, err)
+			createFileWithContent(t, ts, s, "/beta.txt", "synthetic replacement")
+			if selected {
+				response, body := rawJSONRequest(t, ts.URL, http.MethodPost, "/api/v1/search-exports", map[string]string{"X-Api-Key": testAPIKey}, string(encoded))
+				require.Equal(t, 409, response.StatusCode, body)
+				require.Contains(t, body, "report_selection_changed")
+			} else {
+				second := create()
+				require.NotEqual(t, first.ID, second.ID)
+				require.Zero(t, second.Counts[0].Hits)
+			}
+			response, stillFrozen := get(t, ts, "/api/v1/search-exports/"+first.ID+"/bundle", nil)
+			require.Equal(t, http.StatusOK, response.StatusCode)
+			require.Equal(t, frozenBundle, stillFrozen)
+		})
 	}
-	first := create()
-	require.Equal(t, int64(1), first.Counts[0].Hits)
-	response, frozenBundle := get(t, ts, "/api/v1/search-exports/"+first.ID+"/bundle", nil)
-	require.Equal(t, http.StatusOK, response.StatusCode)
-	_, _, err = s.Trash(t.Context(), node.ID, node.Revision)
-	require.NoError(t, err)
-	createFileWithContent(t, ts, s, "/beta.txt", "synthetic replacement")
-	second := create()
-	require.NotEqual(t, first.ID, second.ID)
-	require.Zero(t, second.Counts[0].Hits)
-	response, stillFrozen := get(t, ts, "/api/v1/search-exports/"+first.ID+"/bundle", nil)
-	require.Equal(t, http.StatusOK, response.StatusCode)
-	require.Equal(t, frozenBundle, stillFrozen)
 }
 
 func TestTermReportBrowserTicketIsOneUseAndOwnerBound(t *testing.T) {
@@ -271,4 +286,81 @@ func TestTermReportBrowserTicketIsOneUseAndOwnerBound(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, http.StatusNotFound, second.StatusCode)
 	require.NoError(t, second.Body.Close())
+}
+
+func TestTermReportSelectedRequestContract(t *testing.T) {
+	ts, s := newTestServer(t, nil)
+	node := createFileWithContent(t, ts, s, "/alpha.txt", "synthetic alpha")
+	createFileWithContent(t, ts, s, "/unselected-alpha.txt", "another alpha")
+	id := report.Identity{NodeID: node.ID, VersionID: node.CurrentVersionID, SHA256: node.BlobHash}
+	encodedID, err := json.Marshal(id)
+	require.NoError(t, err)
+	selected := `"selected_documents":{"documents":[` + string(encodedID) + `]}`
+	largeIDs := make([]report.Identity, 50001)
+	collections := make([]string, 50001)
+	for i := range largeIDs {
+		largeIDs[i] = report.Identity{NodeID: int64(i + 1), VersionID: fmt.Sprintf("20000000-0000-4000-8000-%012d", i+1), SHA256: strings.Repeat("a", 64)}
+		collections[i] = fmt.Sprintf("c%d", i)
+	}
+	largeJSON, err := json.Marshal(largeIDs)
+	require.NoError(t, err)
+	collectionJSON, err := json.Marshal(collections)
+	require.NoError(t, err)
+	cases := []struct {
+		name, scope string
+		status      int
+		code        string
+		hits        int64
+	}{
+		{"omitted", `"all_documents":true`, 200, "", 2},
+		{"null", `"all_documents":true,"selected_documents":null`, 200, "", 2},
+		{"selected", `"all_documents":false,` + selected, 200, "", 1},
+		{"empty object", `"all_documents":false,"selected_documents":{}`, 422, "invalid_report_request", 0},
+		{"null list", `"all_documents":false,"selected_documents":{"documents":null}`, 422, "invalid_report_request", 0},
+		{"empty list", `"all_documents":false,"selected_documents":{"documents":[]}`, 422, "invalid_report_request", 0},
+		{"mixed", `"all_documents":true,` + selected, 422, "invalid_report_request", 0},
+		{"duplicate", `"all_documents":false,"selected_documents":{"documents":[` + string(encodedID) + `,` + string(encodedID) + `]}`, 422, "invalid_report_request", 0},
+		{"invalid value", `"all_documents":false,` + strings.Replace(selected, id.VersionID, "v1", 1), 422, "invalid_report_request", 0},
+		{"wrong hash", `"all_documents":false,` + strings.Replace(selected, id.SHA256, strings.Repeat("a", 64), 1), 422, "invalid_report_request", 0},
+		{"selected limit", `"all_documents":false,"selected_documents":{"documents":` + string(largeJSON) + `}`, 413, "report_limit", 0},
+		{"collection limit", `"all_documents":false,"collection_ids":` + string(collectionJSON), 422, "invalid_report_request", 0},
+		{"wrong type", `"all_documents":false,"selected_documents":[]`, 422, "", 0},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			before, err := s.ListTermReportHistory(t.Context(), 0, 50)
+			require.NoError(t, err)
+			body := `{"version":1,"timezone":"UTC","coverage_mode":"available_only","terms":[{"number":1,"expression":"alpha","syntax":"simple","dates":{"start":"2026-01-01","end":"2026-12-31"}}],` + tc.scope + `}`
+			require.Less(t, len(body), 8<<20)
+			response, payload := rawJSONRequest(t, ts.URL, http.MethodPost, "/api/v1/search-exports", map[string]string{"X-Api-Key": testAPIKey}, body)
+			require.Equal(t, tc.status, response.StatusCode, payload)
+			if tc.code != "" {
+				require.Contains(t, payload, tc.code)
+			}
+			after, err := s.ListTermReportHistory(t.Context(), 0, 50)
+			require.NoError(t, err)
+			if tc.status == 200 {
+				var summary report.Summary
+				require.NoError(t, json.Unmarshal([]byte(payload), &summary))
+				require.Equal(t, tc.hits, summary.Counts[0].Hits)
+				require.Equal(t, before.Total+1, after.Total)
+			} else {
+				require.Equal(t, before.Total, after.Total)
+			}
+		})
+	}
+	before, err := s.ListTermReportHistory(t.Context(), 0, 50)
+	require.NoError(t, err)
+	replacement, _, err := s.ReplaceContent(t.Context(), node.ID, node.Revision, node.BlobHash, node.Size, "text/plain")
+	require.NoError(t, err)
+	require.NotEqual(t, node.CurrentVersionID, replacement.CurrentVersionID)
+	request := report.Request{Version: 1, AllDocuments: false, Timezone: "UTC", CoverageMode: "available_only", Terms: before.Items[0].Request.Terms, SelectedDocuments: &report.SelectedDocuments{Documents: []report.Identity{id}}}
+	encoded, err := json.Marshal(request)
+	require.NoError(t, err)
+	response, payload := rawJSONRequest(t, ts.URL, http.MethodPost, "/api/v1/search-exports", map[string]string{"X-Api-Key": testAPIKey}, string(encoded))
+	require.Equal(t, 409, response.StatusCode, payload)
+	require.Contains(t, payload, "report_selection_changed")
+	after, err := s.ListTermReportHistory(t.Context(), 0, 50)
+	require.NoError(t, err)
+	require.Equal(t, before.Total, after.Total)
 }

@@ -238,6 +238,9 @@ func (s *Service) Finalize(ctx context.Context, prepared report.Frame, choices [
 
 func cloneFrame(frame report.Frame) report.Frame {
 	clone := frame
+	if selected := frame.Request.SelectedDocuments; selected != nil {
+		clone.Request.SelectedDocuments = &report.SelectedDocuments{Documents: slices.Clone(selected.Documents)}
+	}
 	clone.Members = make([]report.Member, len(frame.Members))
 	for i, member := range frame.Members {
 		clone.Members[i] = member

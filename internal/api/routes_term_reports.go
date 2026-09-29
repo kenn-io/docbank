@@ -49,6 +49,10 @@ func termReportError(err error) *Error {
 		return NewError(http.StatusServiceUnavailable, "report_timeout", "The report did not finish within its time limit.")
 	case errors.Is(err, store.ErrInvalidCoverageSelection):
 		return NewError(http.StatusUnprocessableEntity, "invalid_profile", "Select a configured processing profile.")
+	case errors.Is(err, store.ErrReportSelectionChanged):
+		return NewError(http.StatusConflict, "report_selection_changed", "Selected documents changed. Refresh the workspace and select the intended current versions.")
+	case errors.Is(err, report.ErrInvalidSelection):
+		return NewError(http.StatusUnprocessableEntity, "invalid_report_request", err.Error())
 	case errors.Is(err, store.ErrUnknownReportCollection):
 		return NewError(http.StatusUnprocessableEntity, "invalid_report_scope", "Select an existing collection.")
 	default:
@@ -97,7 +101,7 @@ func registerTermReportRoutes(api huma.API, d Deps, gate *OperationGate, cache *
 		}
 		request, err := report.NormalizeRequest(in.Body)
 		if err != nil {
-			if errors.Is(err, report.ErrInvalidChoice) {
+			if errors.Is(err, report.ErrInvalidChoice) || errors.Is(err, report.ErrReportLimit) {
 				return nil, termReportError(err)
 			}
 			return nil, NewError(http.StatusUnprocessableEntity, "invalid_report_request", err.Error())

@@ -22596,6 +22596,8 @@ type SearchHit = api.SearchHit
 
 type SearchReport = api.SearchReport
 
+type SelectedDocuments = report.SelectedDocuments
+
 type SetCollectionLabelRequest struct {
 	// Schema A URL to the JSON Schema for this object.
 	Schema *string `json:"$schema,omitempty"`

@@ -15,6 +15,8 @@ import (
 	"go.kenn.io/docbank/report"
 )
 
+var ErrReportSelectionChanged = errors.New("report selection changed")
+
 var ErrUnknownReportCollection = errors.New("unknown report collection")
 
 type termReportVersion struct {
@@ -69,6 +71,24 @@ func (s *Store) MaterializeTermReportFrame(
 		versions, versionInfo, err := readTermReportMembers(ctx, q, request, witnesses, budget, &frame)
 		if err != nil {
 			return err
+		}
+		if selected := request.SelectedDocuments; selected != nil {
+			if len(selected.Documents) != len(frame.Members) {
+				return ErrReportSelectionChanged
+			}
+			// Both lists are in node order. Check availability for the whole set
+			// before classifying a wrong hash on an otherwise current version.
+			for i, id := range selected.Documents {
+				current := frame.Members[i].Identity
+				if id.NodeID != current.NodeID || id.VersionID != current.VersionID {
+					return ErrReportSelectionChanged
+				}
+			}
+			for i, id := range selected.Documents {
+				if id.SHA256 != frame.Members[i].Identity.SHA256 {
+					return fmt.Errorf("%w: hash does not match current version", report.ErrInvalidSelection)
+				}
+			}
 		}
 		for row, term := range request.Terms {
 			if err := ctx.Err(); err != nil {
@@ -146,7 +166,7 @@ func (s *Store) MaterializeTermReportFrame(
 
 func reportCollectionWitnesses(ctx context.Context, q metadataQuerier, request report.Request, budget report.Budget) (map[int64][]report.CollectionWitness, error) {
 	result := make(map[int64][]report.CollectionWitness)
-	if request.AllDocuments {
+	if len(request.CollectionIDs) == 0 {
 		return result, nil
 	}
 	collectionIDs, err := json.Marshal(request.CollectionIDs)
@@ -210,8 +230,14 @@ func readTermReportMembers(ctx context.Context, q metadataQuerier, request repor
 	var args []any
 	if !request.AllDocuments {
 		nodeIDs := make([]int64, 0, len(witnesses))
-		for nodeID := range witnesses {
-			nodeIDs = append(nodeIDs, nodeID)
+		if request.SelectedDocuments != nil {
+			for _, id := range request.SelectedDocuments.Documents {
+				nodeIDs = append(nodeIDs, id.NodeID)
+			}
+		} else {
+			for nodeID := range witnesses {
+				nodeIDs = append(nodeIDs, nodeID)
+			}
 		}
 		encoded, err := json.Marshal(nodeIDs)
 		if err != nil {
