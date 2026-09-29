@@ -14,7 +14,7 @@ concurrency:
 jobs:
   docs:
     name: Public documentation
-    runs-on: ${{ github.repository == 'kenn-io/docbank' && (github.event_name == 'push' && github.ref == 'refs/heads/main' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.base.repo.full_name == github.repository)) && 'kenn-linux-x64-public' || 'ubuntu-latest' }}
+    runs-on: namespace-profile-linux-4cpu
     steps:
       - name: Check out full repository history
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
@@ -26,7 +26,6 @@ jobs:
         uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
         with:
           go-version-file: go.mod
-          cache: ${{ github.repository == 'kenn-io/docbank' && (github.event_name == 'push' && github.ref == 'refs/heads/main' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.base.repo.full_name == github.repository)) && 'false' || 'true' }}
 
       - name: Set up Node.js
         uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
@@ -63,8 +62,7 @@ jobs:
 
   frontend:
     name: Web application
-    # Keep web checks here until self-hosted Node/npm provisioning is reliable.
-    runs-on: ubuntu-latest
+    runs-on: namespace-profile-linux-8cpu
     steps:
       - name: Check out repository
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
@@ -83,7 +81,7 @@ jobs:
 
   test:
     name: Linux tests
-    runs-on: ${{ github.repository == 'kenn-io/docbank' && (github.event_name == 'push' && github.ref == 'refs/heads/main' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.base.repo.full_name == github.repository)) && 'kenn-linux-x64-public' || 'ubuntu-latest' }}
+    runs-on: namespace-profile-linux-16cpu
     steps:
       - name: Check out repository
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
@@ -94,7 +92,6 @@ jobs:
         uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
         with:
           go-version-file: go.mod
-          cache: ${{ github.repository == 'kenn-io/docbank' && (github.event_name == 'push' && github.ref == 'refs/heads/main' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.base.repo.full_name == github.repository)) && 'false' || 'true' }}
 
       - name: Check Unix installer
         run: sh -n scripts/install.sh
@@ -164,7 +161,7 @@ jobs:
 
   purego:
     name: Pure-Go SQLite
-    runs-on: ${{ github.repository == 'kenn-io/docbank' && (github.event_name == 'push' && github.ref == 'refs/heads/main' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.base.repo.full_name == github.repository)) && 'kenn-linux-x64-public' || 'ubuntu-latest' }}
+    runs-on: namespace-profile-linux-16cpu
     env:
       CGO_ENABLED: "0"
     steps:
@@ -177,7 +174,6 @@ jobs:
         uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
         with:
           go-version-file: go.mod
-          cache: ${{ github.repository == 'kenn-io/docbank' && (github.event_name == 'push' && github.ref == 'refs/heads/main' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.base.repo.full_name == github.repository)) && 'false' || 'true' }}
 
       - name: Vet
         run: go vet -tags fts5 ./...
@@ -187,7 +183,7 @@ jobs:
 
   lint:
     name: golangci-lint
-    runs-on: ${{ github.repository == 'kenn-io/docbank' && (github.event_name == 'push' && github.ref == 'refs/heads/main' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.base.repo.full_name == github.repository)) && 'kenn-linux-x64-public' || 'ubuntu-latest' }}
+    runs-on: namespace-profile-linux-8cpu
     steps:
       - name: Check out repository
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
@@ -198,7 +194,6 @@ jobs:
         uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
         with:
           go-version-file: go.mod
-          cache: ${{ github.repository == 'kenn-io/docbank' && (github.event_name == 'push' && github.ref == 'refs/heads/main' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.base.repo.full_name == github.repository)) && 'false' || 'true' }}
 
       - name: Run golangci-lint
         uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9.3.0
@@ -218,9 +213,9 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { runner: windows-latest, goarch: amd64 }
+          - { runner: namespace-profile-windows-8cpu, goarch: amd64 }
           - { runner: windows-11-vs2026-arm, goarch: arm64 }
-    runs-on: ${{ contains(fromJSON('["ubuntu-latest","ubuntu-24.04","ubuntu-22.04"]'), matrix.runner) && github.repository == 'kenn-io/docbank' && (github.event_name == 'push' && github.ref == 'refs/heads/main' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.base.repo.full_name == github.repository)) && 'kenn-linux-x64-public' || matrix.runner }}
+    runs-on: ${{ matrix.runner }}
     steps:
       - name: Check out repository
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
@@ -231,7 +226,6 @@ jobs:
         uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
         with:
           go-version-file: go.mod
-          cache: ${{ contains(fromJSON('["ubuntu-latest","ubuntu-24.04","ubuntu-22.04"]'), matrix.runner) && github.repository == 'kenn-io/docbank' && (github.event_name == 'push' && github.ref == 'refs/heads/main' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.base.repo.full_name == github.repository)) && 'false' || 'true' }}
 
       - name: Check PowerShell installer
         if: matrix.goarch == 'amd64'
