@@ -940,18 +940,20 @@ decision writes one bounded immutable photo receipt. No-op decisions preserve
 the revision and write no receipt. Permanent node deletion repairs affected
 graphs and preserves an empty asset identity.
 
-Photo assets, file memberships, settings, receipts, and durable import runs are
-included in the deterministic metadata JSONL stream and are validated as one
-graph on restore. Active import runs restore as interrupted and never resume
-host filesystem reads.
+Photo assets, file memberships, settings, and receipts are included in the
+deterministic metadata JSONL stream and are validated as one graph on restore.
 Older supported metadata streams restore an empty photo authority. Audit-active
 vaults skip automatic enrollment and refuse explicit photo mutations while
 preserving any graph that existed before audit was enabled. Display and
 settings writes are available through HTTP and the CLI; MCP exposes them only
-as reads in this slice. Grouped photo import has typed `POST /photos/imports`,
-list/get, and `If-Match` cancel routes. A unique same-folder/stem RAW and
-image pair is committed in either arrival order; multiple RAW candidates
-produce an `ambiguous` durable run for an explicit choice-bound rerun.
+as reads in this slice.
+
+`POST /photos/imports` starts a folder import from a daemon-host path and
+returns `202`. The import is a durable job of kind `photo_import` in the jobs
+list: `GET /photos/imports` and `GET /photos/imports/{id}` report group
+counts and the groups left unpaired, and `POST /photos/imports/{id}/cancel`
+stops it before the next group. Browser sessions can read and cancel imports;
+source paths and raw errors are redacted for them.
 
 Person reads return the canonical row and, for `GET /people/by-id/{person_id}`,
 the identities and external UIDs used by split. Rename, retire, merge, and
@@ -1559,8 +1561,8 @@ bearer is resolved from a named credential binding and cannot equal the
 daemon's configured, ephemeral, or runtime-discovered API key. The daemon API
 key is never accepted as an inbound MCP credential.
 
-MCP exposes bounded photo import status reads, including photo inspection,
-plus optional processing enqueue and opt-in photo mutation and import tools. The
+MCP exposes ten bounded read tools, including photo inspection, plus optional
+processing enqueue and opt-in photo mutation tools. The
 enqueue preserves the daemon's existing consent and plan-fingerprint checks;
 it cannot grant consent or replay an ambiguous start. Rendition resources bind
 the stable vault, node, content-version, and attachment tuple and expose only

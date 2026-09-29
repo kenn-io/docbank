@@ -329,9 +329,8 @@ overrides remain unchanged. Human graph, display, exclusion, and preference
 changes append bounded immutable `photo_change_receipts` rows. No-op mutations
 keep their revision and append no receipt.
 
-Schema version 27 exports assets, files, settings, receipts, and durable photo
-import runs in stable JSONL order. Active imported runs restore as interrupted;
-they never resume host filesystem reads. Restore requires a pristine target and validates node ownership,
+Schema version 25 exports assets, files, settings, and receipts in stable
+JSONL order. Restore requires a pristine target and validates node ownership,
 local pointers, sidecar targets, selected display state, enum-like text,
 revisions, receipt JSON, and the complete graph before commit. Released
 metadata streams remain readable and restore an empty photo authority.

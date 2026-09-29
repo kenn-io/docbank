@@ -157,16 +157,13 @@ opt-in through `docbank mcp --allow-photo-edits`; each write makes one daemon
 request and treats ambiguous transport failure as an unknown outcome. Display
 and settings writes remain HTTP and CLI operations.
 
-Grouped camera imports use `POST /api/v1/photos/imports` with a daemon-host
-absolute source root and a virtual destination. The worker discovers
-same-folder, same-stem groups, publishes bytes, and commits one graph
-transaction per group. `GET /api/v1/photos/imports` and
-`GET /api/v1/photos/imports/{run_id}` expose durable counters; cancellation is
-an `If-Match` mutation at `/cancel`. A unique RAW/image match pairs in either
-arrival order. Multiple RAW matches finish as `ambiguous` and carry bounded
-candidates for a choice-bound rerun. Browser sessions can list, inspect, and
-cancel these runs; host paths and raw errors are redacted there. MCP exposes
-read tools for run status and opt-in write tools for start and cancel.
+Grouped camera imports run as `storage_operations` rows of kind
+`photo_import`. `POST /api/v1/photos/imports` records the source root and
+virtual destination as the request and starts a supervised worker. The worker
+settles every discovered file once, then holds the mutation gate per group
+while it publishes bytes and commits the group transaction. Progress, the
+receipt of added, skipped, failed, and ambiguous groups, cancel, retention,
+and restart resume all come from the storage operation lifecycle.
 
 Similar-document reads use the processing service and store authority through
 `POST /api/v1/search/similar`. Keep query encoding and provider authorization

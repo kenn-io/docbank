@@ -60,31 +60,42 @@ docbank photos settings set image [--revision REV]
 docbank photos settings reset [--revision REV]
 ```
 
-Grouped camera imports pair a same-folder, same-stem JPEG and RAW in either
-arrival order. A video stays in its own group. Use the daemon-host source path
-and a virtual destination:
-
-```text
-docbank photos import <source-root> [destination] [--json]
-docbank photos import <source-root> [destination] [--group-key KEY] [--raw-asset-id ID] [--raw-file-id ID] [--raw-source-path PATH] [--raw-blob-hash HASH] [--revision REV]
-docbank photos imports show <run-id> [--json]
-docbank photos imports cancel <run-id> [--revision REV] [--json]
-```
-
-The worker commits each group atomically and records durable group progress.
-It reports multiple RAW matches as `ambiguous` and continues with other
-groups. An interactive `imports show` can select every unresolved candidate
-in turn and start choice-bound reruns. The non-interactive output lists each
-group key and candidate path. Automation passes that printable group key with
-`--raw-source-path` and `--raw-blob-hash` for a new RAW, or
-`--raw-asset-id`, `--raw-file-id`, and `--revision` for an existing RAW.
-An import choice cannot move a JPEG already paired with another RAW. Use the
-revision-checked detach and attach commands to change that pairing.
-
 All commands emit bounded JSON. Exit code 4 means the revision is stale: an
 explicit `--revision` no longer matched, or the one automatic retry lost to
 another write. Read the asset or settings again before retrying. The daemon performs role,
 ownership, sidecar, display, and audit checks.
+
+## Import a camera folder
+
+`photos import` reads a folder on the daemon host and imports its photos into a
+vault folder:
+
+```text
+docbank photos import <source-root> [destination] [--json]
+docbank photos imports show <import-id> [--json]
+docbank photos imports cancel <import-id> [--json]
+```
+
+Files with the same folder and name, such as `IMG_0001.ARW`, `IMG_0001.JPG`,
+and `IMG_0001.XMP`, become one photo. The XMP sidecar attaches to the RAW, or
+to the JPEG when there is no RAW. A file that arrives in a later import joins
+the photo already made from its same-name files. A video always becomes its
+own photo. Each photo commits in one transaction, so a failure leaves no half
+photo behind, and running the same import again skips content already in the
+vault.
+
+The import leaves a group unpaired and lists it in `imports show` when:
+
+- two RAW files share a name, such as `IMG_0001.ARW` and `IMG_0001.DNG`: each
+  RAW and JPEG becomes its own photo and the sidecar stays a plain file;
+- same-name files already sit in separate photos: nothing is merged.
+
+Pair them yourself with `photos assets detach` and `photos assets attach`.
+
+Every file must stay unchanged for one second before it is read. Progress and
+cancel appear in the web Jobs drawer. Cancel takes effect before the next
+group. A daemon restart resumes an unfinished import by scanning the folder
+again.
 
 ## HTTP and JSONL
 
@@ -93,9 +104,8 @@ attach, detach, exclude, promote, display, and settings operations under
 `/api/v1/photos`. Existing-asset and settings mutations require `If-Match`.
 Responses carry the new revision in both the body and the `ETag` header.
 
-Photo assets, file memberships, the singleton settings row, change receipts,
-and photo import runs are part of the deterministic metadata JSONL stream.
-Restore checks
+Photo assets, file memberships, the singleton settings row, and change
+receipts are part of the deterministic metadata JSONL stream. Restore checks
 node ownership, local pointers, sidecar targets, display selection, enum
 values, revisions, receipt JSON, and the complete graph before commit. Older
 supported metadata streams restore an empty photo authority.
@@ -109,5 +119,5 @@ an empty asset identity.
 Automatic enrollment and explicit graph writes are skipped or refused when
 audit authority is active, according to the existing audit boundary. The
 preexisting graph is preserved and becomes read-only when audit is enabled.
-Import grouping uses source observations without reviving trash or changing
-display decisions. Browser status redacts daemon-host paths and raw errors.
+Browsing and query predicates, technical photo metadata, owners, and browser
+UI belong to later slices.
