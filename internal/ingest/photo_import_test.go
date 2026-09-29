@@ -1,6 +1,7 @@
 package ingest
 
 import (
+	"context"
 	"errors"
 	"io"
 	"os"
@@ -60,6 +61,11 @@ func TestPhotoImportAmbiguity(t *testing.T) {
 	assert.NotEqual(t, firstAsset.ID, secondAsset.ID)
 	assert.Len(t, firstAsset.Files, 2)
 	assert.Len(t, secondAsset.Files, 1)
+	repeated, err := ing.ImportPhotoDirectory(t.Context(), root, "/photos", PhotoImportOptions{})
+	require.NoError(t, err)
+	assert.Zero(t, repeated.Ambiguous)
+	assert.Equal(t, 1, repeated.Skipped)
+	assert.Equal(t, int64(1), repeated.Run.SkippedGroups)
 }
 
 func TestPhotoImportAmbiguityWithExistingRaw(t *testing.T) {
@@ -94,6 +100,28 @@ func TestPhotoImportAmbiguityWithExistingRaw(t *testing.T) {
 	assert.NotEqual(t, firstAsset.ID, secondAsset.ID)
 	assert.Len(t, firstAsset.Files, 2)
 	assert.Len(t, secondAsset.Files, 1)
+}
+
+func TestPhotoImportRawOnlyChoiceDoesNotReappear(t *testing.T) {
+	root := t.TempDir()
+	firstPath := filepath.Join(root, "IMG_0001.ARW")
+	secondPath := filepath.Join(root, "IMG_0001.DNG")
+	require.NoError(t, os.WriteFile(firstPath, []byte("raw-one"), 0o600))
+	require.NoError(t, os.WriteFile(secondPath, []byte("raw-two"), 0o600))
+	ing := newTestIngester(t)
+	first, err := ing.ImportPhotoDirectory(t.Context(), root, "/photos", PhotoImportOptions{})
+	require.NoError(t, err)
+	require.Len(t, first.Run.Ambiguities, 1)
+	choice := first.Run.Ambiguities[0].Candidates[0]
+	resolved, err := ing.ImportPhotoDirectory(t.Context(), root, "/photos", PhotoImportOptions{Choice: &store.PhotoImportChoice{
+		GroupKey: first.Run.Ambiguities[0].GroupKey, RawSourcePath: choice.SourcePath, RawBlobHash: choice.BlobHash,
+	}})
+	require.NoError(t, err)
+	assert.Equal(t, 2, resolved.Added)
+	repeated, err := ing.ImportPhotoDirectory(t.Context(), root, "/photos", PhotoImportOptions{})
+	require.NoError(t, err)
+	assert.Zero(t, repeated.Ambiguous)
+	assert.Equal(t, 1, repeated.Skipped)
 }
 
 func nodeByName(t *testing.T, ing *Ingester, path string) store.Node {
@@ -204,12 +232,34 @@ func TestPhotoImportGateAndActivity(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(root, "activity.JPG"), []byte("activity"), 0o600))
 	ing := newTestIngester(t)
 	begin, end := 0, 0
+	mutations := 0
 	report, err := ing.ImportPhotoDirectory(t.Context(), root, "/photos", PhotoImportOptions{
 		ActivityBegin: func() { begin++ },
 		ActivityEnd:   func() { end++ },
+		Mutate: func(ctx context.Context, fn func() error) error {
+			mutations++
+			return fn()
+		},
 	})
 	require.NoError(t, err)
 	assert.Equal(t, 1, report.Added)
 	assert.Equal(t, 1, begin)
 	assert.Equal(t, 1, end)
+	assert.Greater(t, mutations, 1)
+}
+
+func TestPhotoImportCancellationFinishesRunAfterContextCancel(t *testing.T) {
+	ing := newTestIngester(t)
+	root := t.TempDir()
+	run, err := ing.Store.StartPhotoImportRun(t.Context(), root, "/photos", 0)
+	require.NoError(t, err)
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	_, err = ing.ImportPhotoDirectory(ctx, root, "/photos", PhotoImportOptions{RunID: run.ID, Mutate: func(ctx context.Context, fn func() error) error {
+		return fn()
+	}})
+	require.ErrorIs(t, err, context.Canceled)
+	finished, err := ing.Store.PhotoImportRun(t.Context(), run.ID)
+	require.NoError(t, err)
+	assert.Equal(t, store.PhotoImportStateCancelled, finished.State)
 }

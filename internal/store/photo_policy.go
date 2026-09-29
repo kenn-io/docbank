@@ -153,8 +153,12 @@ func photoNodeFacts(n Node) PhotoNodeFacts {
 	source := ClassifyPhotoSource(n.Name)
 	if (source.Kind == PhotoSourceRAW || source.Kind == PhotoSourceImage || source.Kind == PhotoSourceVideo) &&
 		query.NormalizeMediaType(n.MimeType) == source.MediaType {
+		family := "image"
+		if source.Kind == PhotoSourceVideo {
+			family = "audio_video"
+		}
 		return PhotoNodeFacts{
-			Node: n, MediaFamily: "image", MediaType: source.MediaType,
+			Node: n, MediaFamily: family, MediaType: source.MediaType,
 			Qualifies: true, AssetKind: source.AssetKind,
 		}
 	}
@@ -176,13 +180,12 @@ func photoKindValid(kind string) bool {
 }
 
 func isPhotoCameraRawMedia(mediaType string) bool {
-	switch mediaType {
-	case "image/x-sony-arw", "image/x-fuji-raf", "image/x-adobe-dng",
-		"image/x-canon-cr2", "image/x-nikon-nef":
-		return true
-	default:
-		return false
+	for _, source := range photoSourceExtensions {
+		if source.Kind == PhotoSourceRAW && source.MediaType == mediaType {
+			return true
+		}
 	}
+	return false
 }
 
 func photoSidecarTargetRole(role string) bool {

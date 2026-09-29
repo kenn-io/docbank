@@ -77,6 +77,9 @@ func fromStorePhotoImportRun(run store.PhotoImportRun, browser bool) PhotoImport
 	}
 	for _, ambiguity := range run.Ambiguities {
 		item := PhotoImportAmbiguity{GroupKey: ambiguity.GroupKey}
+		if browser {
+			item.GroupKey = ""
+		}
 		for _, candidate := range ambiguity.Candidates {
 			sourcePath := candidate.SourcePath
 			if browser {

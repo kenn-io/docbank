@@ -71,8 +71,15 @@
     const runId = job.operation_id;
     cancelling = new Set(cancelling).add(runId);
     try {
-      const run = await generated.getPhotoImport(runId, { session });
-      await generated.cancelPhotoImport(runId, { "If-Match": `"${run.revision}"` }, { session });
+      for (let attempt = 0; attempt < 3; attempt += 1) {
+        const run = await generated.getPhotoImport(runId, { session });
+        try {
+          await generated.cancelPhotoImport(runId, { "If-Match": `"${run.revision}"` }, { session });
+          break;
+        } catch (cause) {
+          if (!(cause instanceof APIError && cause.status === 412 && attempt < 2)) throw cause;
+        }
+      }
       await refresh();
     } catch (cause) {
       error = cause instanceof Error ? cause.message : String(cause);
