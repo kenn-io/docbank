@@ -8283,6 +8283,190 @@ func (c *Client) DetachPhotoFile(ctx context.Context, options *DetachPhotoFileRe
 	return responseParser(ctx, resp)
 }
 
+// ListPhotoImports List durable grouped photo import runs
+func (c *Client) ListPhotoImports(ctx context.Context, reqEditors ...runtime.RequestEditorFn) (*ListPhotoImportsResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/photos/imports",
+		Method:     "GET",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*ListPhotoImportsResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(ListPhotoImportsResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "ListPhotoImportsResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[ListPhotoImportsErrorResponse](resp, "ListPhotoImportsErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/photos/imports")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
+// StartPhotoImport Import grouped camera files from a daemon-host folder
+func (c *Client) StartPhotoImport(ctx context.Context, options *StartPhotoImportRequestOptions, reqEditors ...runtime.RequestEditorFn) (*StartPhotoImportResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/photos/imports",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*StartPhotoImportResponse, error) {
+		switch resp.StatusCode {
+
+		case 202:
+
+			target := new(StartPhotoImportResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "StartPhotoImportResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[StartPhotoImportErrorResponse](resp, "StartPhotoImportErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/photos/imports")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 202)
+	}
+	return responseParser(ctx, resp)
+}
+
+// GetPhotoImport Inspect one durable grouped photo import run
+func (c *Client) GetPhotoImport(ctx context.Context, options *GetPhotoImportRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetPhotoImportResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/photos/imports/{run_id}",
+		Method:     "GET",
+		Options:    options,
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*GetPhotoImportResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(GetPhotoImportResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "GetPhotoImportResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[GetPhotoImportErrorResponse](resp, "GetPhotoImportErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/photos/imports/{run_id}")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
+// CancelPhotoImport Request cancellation at the next photo group
+func (c *Client) CancelPhotoImport(ctx context.Context, options *CancelPhotoImportRequestOptions, reqEditors ...runtime.RequestEditorFn) (*CancelPhotoImportResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/photos/imports/{run_id}/cancel",
+		Method:     "POST",
+		Options:    options,
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*CancelPhotoImportResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(CancelPhotoImportResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "CancelPhotoImportResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[CancelPhotoImportErrorResponse](resp, "CancelPhotoImportErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/photos/imports/{run_id}/cancel")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
 // GetPhotoAssetByNode Inspect the photo asset containing one node
 func (c *Client) GetPhotoAssetByNode(ctx context.Context, options *GetPhotoAssetByNodeRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetPhotoAssetByNodeResponse, error) {
 	var err error
@@ -17438,6 +17622,103 @@ func (o *DetachPhotoFileRequestOptions) GetHeader() (map[string]string, error) {
 	return headers, err
 }
 
+// StartPhotoImportRequestOptions is the options needed to make a request to StartPhotoImport.
+type StartPhotoImportRequestOptions struct {
+	Body *StartPhotoImportBody
+}
+
+// GetPathParams returns the path params as a map.
+func (o *StartPhotoImportRequestOptions) GetPathParams() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetQuery returns the query params as a map.
+func (o *StartPhotoImportRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *StartPhotoImportRequestOptions) GetBody() any {
+	if o.Body == nil {
+		return nil
+	}
+	return o.Body
+}
+
+// GetHeader returns the headers as a map.
+func (o *StartPhotoImportRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
+// GetPhotoImportRequestOptions is the options needed to make a request to GetPhotoImport.
+type GetPhotoImportRequestOptions struct {
+	PathParams *GetPhotoImportPath
+}
+
+// GetPathParams returns the path params as a map.
+func (o *GetPhotoImportRequestOptions) GetPathParams() (map[string]any, error) {
+	encoded, err := json.Marshal(o.PathParams, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetQuery returns the query params as a map.
+func (o *GetPhotoImportRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *GetPhotoImportRequestOptions) GetBody() any {
+	return nil
+}
+
+// GetHeader returns the headers as a map.
+func (o *GetPhotoImportRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
+// CancelPhotoImportRequestOptions is the options needed to make a request to CancelPhotoImport.
+type CancelPhotoImportRequestOptions struct {
+	PathParams *CancelPhotoImportPath
+	Header     *CancelPhotoImportHeaders
+}
+
+// GetPathParams returns the path params as a map.
+func (o *CancelPhotoImportRequestOptions) GetPathParams() (map[string]any, error) {
+	encoded, err := json.Marshal(o.PathParams, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetQuery returns the query params as a map.
+func (o *CancelPhotoImportRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *CancelPhotoImportRequestOptions) GetBody() any {
+	return nil
+}
+
+// GetHeader returns the headers as a map.
+func (o *CancelPhotoImportRequestOptions) GetHeader() (map[string]string, error) {
+	encoded, err := json.Marshal(o.Header, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var headers map[string]string
+	err = json.Unmarshal(encoded, &headers)
+	return headers, err
+}
+
 // GetPhotoAssetByNodeRequestOptions is the options needed to make a request to GetPhotoAssetByNode.
 type GetPhotoAssetByNodeRequestOptions struct {
 	PathParams *GetPhotoAssetByNodePath
@@ -19948,6 +20229,10 @@ type DetachPhotoFileHeaders struct {
 	IfMatch string `json:"If-Match"`
 }
 
+type CancelPhotoImportHeaders struct {
+	IfMatch string `json:"If-Match"`
+}
+
 type PromotePhotoNodeHeaders struct {
 	IfMatch *string `json:"If-Match,omitempty"`
 }
@@ -20358,6 +20643,14 @@ type DetachPhotoFilePath struct {
 	FileID  string `json:"file_id"`
 }
 
+type GetPhotoImportPath struct {
+	RunID string `json:"run_id"`
+}
+
+type CancelPhotoImportPath struct {
+	RunID string `json:"run_id"`
+}
+
 type GetPhotoAssetByNodePath struct {
 	NodeID int64 `json:"node_id"`
 }
@@ -20655,6 +20948,8 @@ type SetPhotoDisplayBody = SetPhotoDisplayRequest
 type ExcludePhotoAssetBody = SetPhotoExcludedRequest
 
 type AttachPhotoFileBody = AttachPhotoFileRequest
+
+type StartPhotoImportBody = PhotoImportStartRequest
 
 type PromotePhotoNodeBody = PromotePhotoNodeRequest
 
@@ -21798,6 +22093,22 @@ type DetachPhotoFileResponse = api.PhotoAsset
 
 type DetachPhotoFileErrorResponse = Error
 
+type ListPhotoImportsResponse = api.PhotoImportRunList
+
+type ListPhotoImportsErrorResponse = Error
+
+type StartPhotoImportResponse = api.PhotoImportRun
+
+type StartPhotoImportErrorResponse = Error
+
+type GetPhotoImportResponse = api.PhotoImportRun
+
+type GetPhotoImportErrorResponse = Error
+
+type CancelPhotoImportResponse = api.PhotoImportRun
+
+type CancelPhotoImportErrorResponse = Error
+
 type GetPhotoAssetByNodeResponse = api.PhotoAsset
 
 type GetPhotoAssetByNodeErrorResponse = Error
@@ -22868,6 +23179,18 @@ type PersonSummary = api.PersonSummary
 type PhotoAsset = api.PhotoAsset
 
 type PhotoFile = api.PhotoFile
+
+type PhotoImportAmbiguity = api.PhotoImportAmbiguity
+
+type PhotoImportCandidate = api.PhotoImportCandidate
+
+type PhotoImportChoice = api.PhotoImportChoice
+
+type PhotoImportRun = api.PhotoImportRun
+
+type PhotoImportRunList = api.PhotoImportRunList
+
+type PhotoImportStartRequest = api.PhotoImportStartRequest
 
 type PhotoSettings = api.PhotoSettings
 

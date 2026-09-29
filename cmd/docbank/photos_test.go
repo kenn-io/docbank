@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json/v2"
 	"fmt"
+	"path/filepath"
 	"strconv"
 	"testing"
 
@@ -163,4 +164,31 @@ func TestWithPhotoRevisionRetriesOnceOnlyWhenInferred(t *testing.T) {
 	require.ErrorIs(t, err, store.ErrStaleRevision)
 	assert.Zero(t, reads)
 	assert.Equal(t, []int64{7}, writes)
+}
+
+func TestPhotoImportClients(t *testing.T) {
+	command, _, err := rootCmd.Find([]string{"photos", "import"})
+	require.NoError(t, err)
+	require.NotNil(t, command)
+	assert.NotNil(t, command.Flags().Lookup("group-key"))
+	assert.NotNil(t, command.Flags().Lookup("raw-source-path"))
+
+	previousGroupKey, previousPath := photoImportGroupKey, photoImportRawPath
+	t.Cleanup(func() {
+		photoImportGroupKey, photoImportRawPath = previousGroupKey, previousPath
+	})
+	photoImportGroupKey = "photo-group"
+	photoImportRawPath = filepath.Join(t.TempDir(), "capture.ARW")
+	choice := photoImportChoiceFromFlags()
+	require.NotNil(t, choice)
+	assert.Equal(t, photoImportGroupKey, choice.GroupKey)
+	assert.Equal(t, photoImportRawPath, choice.RawSourcePath)
+
+	for _, path := range [][]string{
+		{"photos", "imports", "show"}, {"photos", "imports", "cancel"},
+	} {
+		command, _, err := rootCmd.Find(path)
+		require.NoError(t, err, path)
+		assert.NotNil(t, command.Flags().Lookup("json"), path)
+	}
 }

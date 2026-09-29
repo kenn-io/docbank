@@ -57,6 +57,33 @@ func registerJobRoutes(api huma.API, d Deps) {
 					FinishedAt:       storageOperationAPI(operation).FinishedAt,
 				})
 			}
+			photoRuns, err := d.Store.ListPhotoImportRuns(ctx, 1000)
+			if err != nil {
+				return nil, FromStoreError(err)
+			}
+			for _, run := range photoRuns {
+				status := run.State
+				switch status {
+				case store.PhotoImportStateCancelRequested:
+					status = "running"
+				case store.PhotoImportStateInterrupted, store.PhotoImportStateAmbiguous:
+					status = "failed"
+				}
+				errorDetail := run.Error
+				if run.State == store.PhotoImportStateAmbiguous {
+					errorDetail = "photo import has ambiguous groups"
+				}
+				if redactErrors && errorDetail != "" {
+					errorDetail = "photo import failed; inspect with the Docbank CLI for details"
+				}
+				operationNames["photo-import:"+run.ID] = struct{}{}
+				canCancel := run.State == store.PhotoImportStateRunning || run.State == store.PhotoImportStateCancelRequested
+				out.Body.Items = append(out.Body.Items, Job{Name: "photo-import:" + run.ID, Status: status,
+					StartedAt: run.StartedAt, FinishedAt: run.FinishedAt, Error: errorDetail,
+					OperationID: run.ID, Kind: "photo-import", CompletedObjects: run.CompletedGroups,
+					TotalObjects: run.TotalGroups, CanCancel: canCancel,
+					CancelRequested: run.CancelRequested})
+			}
 		}
 		if d.Jobs != nil {
 			for _, snapshot := range d.Jobs.Snapshot() {

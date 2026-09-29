@@ -7127,6 +7127,10 @@ components:
     Job:
       additionalProperties: false
       properties:
+        can_cancel:
+          type: boolean
+        cancel_requested:
+          type: boolean
         completed_objects:
           format: int64
           type: integer
@@ -10851,6 +10855,212 @@ components:
         - created_at
       type: object
       x-go-type: api.PhotoFile
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
+    PhotoImportAmbiguity:
+      additionalProperties: false
+      properties:
+        candidates:
+          items:
+            $ref: "#/components/schemas/PhotoImportCandidate"
+          maxItems: 32
+          type: array
+        group_key:
+          type: string
+      required:
+        - group_key
+        - candidates
+      type: object
+      x-go-type: api.PhotoImportAmbiguity
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
+    PhotoImportCandidate:
+      additionalProperties: false
+      properties:
+        asset_id:
+          format: uuid
+          type: string
+        blob_hash:
+          pattern: ^[0-9a-f]{64}$
+          type: string
+        file_id:
+          format: uuid
+          type: string
+        node_id:
+          format: int64
+          minimum: 1
+          type: integer
+        revision:
+          format: int64
+          minimum: 1
+          type: integer
+        source_path:
+          type: string
+      required:
+        - asset_id
+        - file_id
+        - node_id
+        - revision
+        - blob_hash
+      type: object
+      x-go-type: api.PhotoImportCandidate
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
+    PhotoImportChoice:
+      additionalProperties: false
+      properties:
+        asset_revision:
+          format: int64
+          minimum: 1
+          type: integer
+        group_key:
+          type: string
+        raw_asset_id:
+          format: uuid
+          type: string
+        raw_blob_hash:
+          pattern: ^[0-9a-f]{64}$
+          type: string
+        raw_file_id:
+          format: uuid
+          type: string
+        raw_source_path:
+          maxLength: 4096
+          type: string
+      type: object
+      x-go-type: api.PhotoImportChoice
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
+    PhotoImportRun:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/PhotoImportRun.json
+          format: uri
+          readOnly: true
+          type: string
+        added_groups:
+          format: int64
+          minimum: 0
+          type: integer
+        ambiguities:
+          items:
+            $ref: "#/components/schemas/PhotoImportAmbiguity"
+          type: array
+        ambiguous_groups:
+          format: int64
+          minimum: 0
+          type: integer
+        cancel_requested:
+          type: boolean
+        completed_groups:
+          format: int64
+          minimum: 0
+          type: integer
+        destination:
+          type: string
+        error:
+          type: string
+        failed_groups:
+          format: int64
+          minimum: 0
+          type: integer
+        finished_at:
+          type: string
+        id:
+          format: uuid
+          type: string
+        revision:
+          format: int64
+          minimum: 1
+          type: integer
+        skipped_groups:
+          format: int64
+          minimum: 0
+          type: integer
+        source_root:
+          type: string
+        started_at:
+          type: string
+        state:
+          type: string
+        total_groups:
+          format: int64
+          minimum: 0
+          type: integer
+        updated_at:
+          type: string
+      required:
+        - id
+        - revision
+        - state
+        - destination
+        - total_groups
+        - completed_groups
+        - added_groups
+        - skipped_groups
+        - failed_groups
+        - ambiguous_groups
+        - cancel_requested
+        - started_at
+        - updated_at
+      type: object
+      x-go-type: api.PhotoImportRun
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
+    PhotoImportRunList:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/PhotoImportRunList.json
+          format: uri
+          readOnly: true
+          type: string
+        items:
+          items:
+            $ref: "#/components/schemas/PhotoImportRun"
+          type: array
+      required:
+        - items
+      type: object
+      x-go-type: api.PhotoImportRunList
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
+    PhotoImportStartRequest:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/PhotoImportStartRequest.json
+          format: uri
+          readOnly: true
+          type: string
+        choice:
+          $ref: "#/components/schemas/PhotoImportChoice"
+        destination:
+          maxLength: 4096
+          minLength: 1
+          type: string
+        source_root:
+          maxLength: 4096
+          minLength: 1
+          type: string
+      required:
+        - source_root
+        - destination
+      type: object
+      x-go-type: api.PhotoImportStartRequest
       x-go-type-import:
         path: go.kenn.io/docbank/internal/api
         name: api
@@ -21282,6 +21492,108 @@ paths:
                 $ref: "#/components/schemas/Error"
           description: Error
       summary: Detach one file from a photo asset
+  /api/v1/photos/imports:
+    get:
+      operationId: listPhotoImports
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PhotoImportRunList"
+          description: OK
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: List durable grouped photo import runs
+    post:
+      operationId: startPhotoImport
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PhotoImportStartRequest"
+        required: true
+      responses:
+        "202":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PhotoImportRun"
+          description: Accepted
+          headers:
+            ETag:
+              schema:
+                type: string
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: Import grouped camera files from a daemon-host folder
+  /api/v1/photos/imports/{run_id}:
+    get:
+      operationId: getPhotoImport
+      parameters:
+        - in: path
+          name: run_id
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PhotoImportRun"
+          description: OK
+          headers:
+            ETag:
+              schema:
+                type: string
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: Inspect one durable grouped photo import run
+  /api/v1/photos/imports/{run_id}/cancel:
+    post:
+      operationId: cancelPhotoImport
+      parameters:
+        - in: path
+          name: run_id
+          required: true
+          schema:
+            type: string
+        - in: header
+          name: If-Match
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PhotoImportRun"
+          description: OK
+          headers:
+            ETag:
+              schema:
+                type: string
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: Request cancellation at the next photo group
   /api/v1/photos/nodes/{node_id}/asset:
     get:
       operationId: getPhotoAssetByNode

@@ -31,7 +31,7 @@ func catalogInstructions(allowProcessing, allowPackageWrites, allowPhotoEdits bo
 		instructions += " Package writes can preflight local sources, import packages, assign or resolve custodians, and publish or export Bates PDFs. Bates reservation does not stamp or publish files."
 	}
 	if allowPhotoEdits {
-		instructions += " Photo edits change one asset at an expected revision."
+		instructions += " Photo edits change one asset at an expected revision; grouped photo imports run asynchronously and require an explicit choice only for ambiguous RAW matches."
 	}
 	return instructions
 }
@@ -74,6 +74,8 @@ var readToolDefinitions = []toolDefinition{
 	{name: "get_bates_export", title: "Get Bates export", description: "Read one exact verified Bates export receipt.", schemas: getBatesExportSchemas},
 	{name: "find_bates_exports", title: "Find Bates exports", description: "Return bounded candidates for one exact Bates label, custodian label, or canonical person.", schemas: findBatesExportsSchemas},
 	{name: "get_photo_asset", title: "Get photo asset", description: "Read one bounded photo asset by asset or node identity.", schemas: getPhotoAssetSchemas},
+	{name: "list_photo_imports", title: "List photo imports", description: "List durable grouped photo import runs.", schemas: listPhotoImportsSchemas},
+	{name: "get_photo_import", title: "Get photo import", description: "Read one durable grouped photo import run.", schemas: getPhotoImportSchemas},
 }
 
 var processingToolDefinition = toolDefinition{
@@ -142,6 +144,8 @@ var photoWriteToolDefinitions = []toolDefinition{
 	{name: "detach_photo_file", title: "Detach photo file", description: "Detach one file from a photo asset at an expected revision.", schemas: detachPhotoFileSchemas, write: true},
 	{name: "exclude_photo_asset", title: "Exclude photo asset", description: "Set a photo asset's exclusion state at an expected revision.", schemas: excludePhotoAssetSchemas, write: true},
 	{name: "promote_photo_asset", title: "Promote photo asset", description: "Promote one file node into a photo asset.", schemas: promotePhotoNodeSchemas, write: true},
+	{name: "start_photo_import", title: "Start photo import", description: "Start a daemon-host grouped photo import. The worker reports ambiguity without waiting for a choice.", schemas: startPhotoImportSchemas, write: true},
+	{name: "cancel_photo_import", title: "Cancel photo import", description: "Request cancellation before the next grouped photo commit.", schemas: cancelPhotoImportSchemas, write: true},
 }
 
 func toolCatalog(allowProcessing, allowPackageWrites, allowPhotoEdits bool) []*sdkmcp.Tool {
@@ -198,6 +202,8 @@ func registerToolCatalog(
 			handler = batesWriteToolHandler(lease, tool.Name, output, logger)
 		case exportLoadFilePackageToolDefinition.name:
 			handler = packageExportToolHandler(lease, output, logger)
+		case "start_photo_import", "cancel_photo_import":
+			handler = photoImportWriteToolHandler(lease, tool.Name, output, logger)
 		default:
 			if photoWriteTool(tool.Name) {
 				handler = photoWriteToolHandler(lease, tool.Name, output, logger)
@@ -249,6 +255,20 @@ func decodeToolArguments(raw jsontext.Value) (map[string]any, error) {
 
 func validToolSemantics(name string, arguments map[string]any) bool {
 	switch name {
+	case "start_photo_import":
+		choice, ok := arguments["choice"].(map[string]any)
+		if !ok {
+			return arguments["choice"] == nil
+		}
+		if value, ok := choice["group_key"].(string); !ok || value == "" {
+			return false
+		}
+		for _, field := range []string{"raw_asset_id", "raw_file_id", "raw_source_path", "raw_blob_hash"} {
+			if value, ok := choice[field].(string); ok && value != "" {
+				return true
+			}
+		}
+		return false
 	case "get_photo_asset":
 		assetID, assetPresent := arguments["asset_id"]
 		nodeID, nodePresent := arguments["node_id"]
@@ -403,6 +423,8 @@ func stableDomainError(err error) (string, int) {
 		return "invalid_bates_cursor", 0
 	case errors.Is(err, store.ErrInvalidBatesSelector):
 		return "invalid_bates_selector", 0
+	case errors.Is(err, store.ErrPhotoImportAmbiguous):
+		return "photo_import_ambiguous", 0
 	}
 	facts, ok := daemonProblemFacts(err)
 	if !ok {
@@ -434,7 +456,7 @@ func stableDomainError(err error) (string, int) {
 		"bates_source_too_large", "bates_source_unstampable", "bates_label_collision", "invalid_bates_request", "invalid_bates_cursor", "invalid_bates_selector",
 		"stale_bates_cursor":
 		return facts.Code, 0
-	case "stale_revision", "invalid_photo_asset", "photo_node_not_eligible", "photo_node_owned", "audit_mutation_unsupported", "package_incomplete":
+	case "stale_revision", "invalid_photo_asset", "photo_node_not_eligible", "photo_node_owned", "audit_mutation_unsupported", "package_incomplete", "photo_import_ambiguous", "photo_import_terminal":
 		return facts.Code, 0
 	default:
 		return "", 0
@@ -501,6 +523,10 @@ func domainErrorMessage(code string) string {
 		return "The revision is stale; read the current state and retry with its revision."
 	case "audit_mutation_unsupported":
 		return "This mutation is unavailable while audit mode is active."
+	case "photo_import_ambiguous":
+		return "The grouped photo import has multiple RAW candidates; choose one and rerun it."
+	case "photo_import_terminal":
+		return "The photo import run has already finished."
 	default:
 		return "The Docbank operation could not be completed."
 	}

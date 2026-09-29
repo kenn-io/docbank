@@ -17,6 +17,7 @@ const (
 	schemaStateField      = "state"
 	schemaLimitField      = "limit"
 	schemaCreatedAtField  = "created_at"
+	schemaRevisionField   = "revision"
 	jsonSchemaConst       = "const"
 	maxToolResponseBytes  = 1 << 20
 	maxToolErrorBytes     = 1024
@@ -172,7 +173,7 @@ func listPackagePreflightDiagnosticsSchemas() (schema, schema) {
 }
 
 func custodianAssignmentSchema() schema {
-	return objectSchema(custodianAssignmentProperties(), "assignment_id", "scope_kind", "raw_label", "rank", "basis", "source_ref", "revision", "recorded_at")
+	return objectSchema(custodianAssignmentProperties(), "assignment_id", "scope_kind", "raw_label", "rank", "basis", "source_ref", schemaRevisionField, "recorded_at")
 }
 
 func custodianAssignmentProperties() schema {
@@ -181,7 +182,7 @@ func custodianAssignmentProperties() schema {
 		packageIDField: uuidSchema(), "package_record_id": sha256Schema(), personIDField: uuidSchema(),
 		"raw_label": stringSchema(200), "rank": enumSchema("primary", "additional"),
 		"basis":      enumSchema("operator_assigned", "package_column", "transfer_record"),
-		"source_ref": stringSchema(512), "revision": integerSchema(1, 0), "recorded_at": dateTimeSchema(),
+		"source_ref": stringSchema(512), schemaRevisionField: integerSchema(1, 0), "recorded_at": dateTimeSchema(),
 	}
 }
 
@@ -262,7 +263,7 @@ func assignPackageCustodianSchemas() (schema, schema) {
 			"raw_label": schema{"type": "string", "minLength": 1, "maxLength": document.MaxPersonDisplayNameBytes}, personIDField: uuidSchema(),
 			"if_match_revision": integerSchema(1, 0),
 		}, packageIDField, "raw_label", "if_match_revision"), rootObjectSchema(withPrivateCache(custodianAssignmentProperties()),
-			cacheRequired("assignment_id", "scope_kind", "raw_label", "rank", "basis", "source_ref", "revision", "recorded_at")...)
+			cacheRequired("assignment_id", "scope_kind", "raw_label", "rank", "basis", "source_ref", schemaRevisionField, "recorded_at")...)
 }
 
 func listPackagesSchemas() (schema, schema) {
@@ -841,7 +842,7 @@ func photoAssetOutputSchema() schema {
 	return rootObjectSchema(withPrivateCache(schema{
 		"id":                       uuidSchema(),
 		"kind":                     enumSchema("photo", "video"),
-		"revision":                 integerSchema(1, 0),
+		schemaRevisionField:        integerSchema(1, 0),
 		"excluded_at":              dateTimeSchema(),
 		"display_file_id":          uuidSchema(),
 		"display_override_file_id": uuidSchema(),
@@ -849,7 +850,7 @@ func photoAssetOutputSchema() schema {
 		schemaCreatedAtField:       dateTimeSchema(),
 		"updated_at":               dateTimeSchema(),
 		"files":                    arraySchema(photoFileSchema(), 256),
-	}), "id", "kind", "revision", "display_source", schemaCreatedAtField, "updated_at", "files", "ttlMs", "cacheScope")
+	}), "id", "kind", schemaRevisionField, "display_source", schemaCreatedAtField, "updated_at", "files", "ttlMs", "cacheScope")
 }
 
 func photoAssetMutationSchemas(properties schema, required ...string) (schema, schema) {
@@ -864,6 +865,57 @@ func getPhotoAssetSchemas() (schema, schema) {
 	})
 }
 
+func photoImportCandidateSchema() schema {
+	return objectSchema(schema{
+		"asset_id": uuidSchema(), "file_id": uuidSchema(), "node_id": integerSchema(1, 0),
+		schemaRevisionField: integerSchema(1, 0), "source_path": stringSchema(maxPathBytes), "blob_hash": sha256Schema(),
+	}, "asset_id", "file_id", "node_id", schemaRevisionField, "blob_hash")
+}
+
+func photoImportRunSchema() schema {
+	ambiguity := objectSchema(schema{
+		"group_key":  stringSchema(maxPathBytes),
+		"candidates": arraySchema(photoImportCandidateSchema(), 32),
+	}, "group_key", "candidates")
+	return rootObjectSchema(withPrivateCache(schema{
+		"id": uuidSchema(), schemaRevisionField: integerSchema(1, 0),
+		"state":       enumSchema("running", "cancel-requested", "completed", "cancelled", "failed", "interrupted", "ambiguous"),
+		"source_root": stringSchema(maxPathBytes), "destination": stringSchema(maxPathBytes),
+		"total_groups": integerSchema(0, 0), "completed_groups": integerSchema(0, 0),
+		"added_groups": integerSchema(0, 0), "skipped_groups": integerSchema(0, 0),
+		"failed_groups": integerSchema(0, 0), "ambiguous_groups": integerSchema(0, 0),
+		"cancel_requested": booleanSchema(), "error": stringSchema(maxToolErrorBytes),
+		"ambiguities": arraySchema(ambiguity, 32), "started_at": dateTimeSchema(),
+		"updated_at": dateTimeSchema(), "finished_at": dateTimeSchema(),
+	}), "id", schemaRevisionField, "state", "source_root", "destination", "total_groups", "completed_groups",
+		"added_groups", "skipped_groups", "failed_groups", "ambiguous_groups", "cancel_requested",
+		"started_at", "updated_at", "ttlMs", "cacheScope")
+}
+
+func getPhotoImportSchemas() (schema, schema) {
+	return rootObjectSchema(schema{"run_id": uuidSchema()}, "run_id"), photoImportRunSchema()
+}
+
+func listPhotoImportsSchemas() (schema, schema) {
+	return rootObjectSchema(schema{}), rootObjectSchema(withPrivateCache(schema{
+		"items": arraySchema(photoImportRunSchema(), 1000),
+	}), "items", "ttlMs", "cacheScope")
+}
+
+func startPhotoImportSchemas() (schema, schema) {
+	choice := objectSchema(schema{
+		"group_key": stringSchema(maxPathBytes), "raw_asset_id": uuidSchema(), "raw_file_id": uuidSchema(),
+		"asset_revision": integerSchema(1, 0), "raw_source_path": stringSchema(maxPathBytes), "raw_blob_hash": sha256Schema(),
+	}, "group_key")
+	return rootObjectSchema(schema{
+		"source_root": stringSchema(maxPathBytes), "destination": stringSchema(maxPathBytes), "choice": choice,
+	}, "source_root", "destination"), photoImportRunSchema()
+}
+
+func cancelPhotoImportSchemas() (schema, schema) {
+	return rootObjectSchema(schema{"run_id": uuidSchema(), schemaRevisionField: integerSchema(1, 0)}, "run_id", schemaRevisionField), photoImportRunSchema()
+}
+
 func createPhotoAssetSchemas() (schema, schema) {
 	return photoAssetMutationSchemas(schema{
 		"node_id": integerSchema(1, 0),
@@ -875,35 +927,35 @@ func createPhotoAssetSchemas() (schema, schema) {
 func attachPhotoFileSchemas() (schema, schema) {
 	return photoAssetMutationSchemas(schema{
 		"asset_id":           uuidSchema(),
-		"revision":           integerSchema(1, 0),
+		schemaRevisionField:  integerSchema(1, 0),
 		"node_id":            integerSchema(1, 0),
 		"role":               enumSchema("raw", "image", "video", "sidecar"),
 		"sidecar_of_file_id": uuidSchema(),
-	}, "asset_id", "revision", "node_id")
+	}, "asset_id", schemaRevisionField, "node_id")
 }
 
 func detachPhotoFileSchemas() (schema, schema) {
 	return photoAssetMutationSchemas(schema{
 		"asset_id":                 uuidSchema(),
-		"revision":                 integerSchema(1, 0),
+		schemaRevisionField:        integerSchema(1, 0),
 		"file_id":                  uuidSchema(),
 		"clear_dependent_sidecars": booleanSchema(),
-	}, "asset_id", "revision", "file_id")
+	}, "asset_id", schemaRevisionField, "file_id")
 }
 
 func excludePhotoAssetSchemas() (schema, schema) {
 	return photoAssetMutationSchemas(schema{
-		"asset_id": uuidSchema(),
-		"revision": integerSchema(1, 0),
-		"excluded": booleanSchema(),
-	}, "asset_id", "revision", "excluded")
+		"asset_id":          uuidSchema(),
+		schemaRevisionField: integerSchema(1, 0),
+		"excluded":          booleanSchema(),
+	}, "asset_id", schemaRevisionField, "excluded")
 }
 
 func promotePhotoNodeSchemas() (schema, schema) {
 	return photoAssetMutationSchemas(schema{
-		"node_id":  integerSchema(1, 0),
-		"revision": integerSchema(1, 0),
-		"kind":     enumSchema("photo", "video"),
-		"role":     enumSchema("raw", "image", "video", "sidecar"),
+		"node_id":           integerSchema(1, 0),
+		schemaRevisionField: integerSchema(1, 0),
+		"kind":              enumSchema("photo", "video"),
+		"role":              enumSchema("raw", "image", "video", "sidecar"),
 	}, "node_id")
 }
