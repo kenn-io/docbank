@@ -2,6 +2,7 @@ package api_test
 
 import (
 	"encoding/json/v2"
+	"fmt"
 	"net/http"
 	"strconv"
 	"testing"
@@ -103,23 +104,34 @@ func TestPeopleRoutesWorkflow(t *testing.T) {
 	var split api.PersonSplitReceipt
 	require.NoError(t, json.Unmarshal([]byte(splitRaw), &split))
 	require.Equal(t, created.PersonID, split.SourcePersonID)
+	require.Equal(t, int64(5), split.SourceRevisionAfter)
+	require.Equal(t, strconv.Quote("5"), splitResponse.Header.Get("ETag"))
+	renameAfterSplitResponse, renameAfterSplitRaw := do(t, ts, http.MethodPatch, path, map[string]string{"If-Match": strconv.Quote("5")}, map[string]string{"display_name": "Renamed after split"})
+	require.Equal(t, http.StatusOK, renameAfterSplitResponse.StatusCode, renameAfterSplitRaw)
 	splitReplayBody := map[string]any{"operation_id": splitBody["operation_id"], "display_name": splitBody["display_name"], "identity_ids": splitBody["identity_ids"], "assignment_ids": splitBody["assignment_ids"], "external_identities": []any{}}
 	splitReplayResponse, splitReplayRaw := do(t, ts, http.MethodPost, path+"/split", map[string]string{"If-Match": strconv.Quote("4")}, splitReplayBody)
 	require.Equal(t, http.StatusOK, splitReplayResponse.StatusCode, splitReplayRaw)
 	require.JSONEq(t, splitRaw, splitReplayRaw)
+	require.Equal(t, strconv.Quote("5"), splitReplayResponse.Header.Get("ETag"))
+	changedSplitBody := map[string]any{"operation_id": splitBody["operation_id"], "display_name": "Changed split", "identity_ids": splitBody["identity_ids"], "assignment_ids": splitBody["assignment_ids"]}
+	changedSplitResponse, changedSplitRaw := do(t, ts, http.MethodPost, path+"/split", map[string]string{"If-Match": strconv.Quote("4")}, changedSplitBody)
+	require.Equal(t, http.StatusConflict, changedSplitResponse.StatusCode, changedSplitRaw)
+	require.Equal(t, "person_merge_conflict", decodeProblem(t, changedSplitRaw).Code)
 	custodianResponse, custodianRaw := get(t, ts, "/api/v1/people/by-id/"+split.NewPersonID+"/custodians?limit=1", nil)
 	require.Equal(t, http.StatusOK, custodianResponse.StatusCode, custodianRaw)
-	var custodianPage api.CustodianPage
+	var custodianPage api.PersonCustodianPage
 	require.NoError(t, json.Unmarshal([]byte(custodianRaw), &custodianPage))
 	require.Len(t, custodianPage.Items, 1)
 	require.Equal(t, assignment.AssignmentID, custodianPage.Items[0].AssignmentID)
+	require.Equal(t, node.ID, custodianPage.Items[0].NodeID)
+	require.Equal(t, node.CurrentVersionID, custodianPage.Items[0].ContentVersionID)
 	coverageResponse, coverageRaw = get(t, ts, "/api/v1/people/coverage", nil)
 	require.Equal(t, http.StatusOK, coverageResponse.StatusCode, coverageRaw)
 	var afterSplitCoverage api.PeopleCoverage
 	require.NoError(t, json.Unmarshal([]byte(coverageRaw), &afterSplitCoverage))
 	require.Greater(t, afterSplitCoverage.BindingEpoch, afterMergeCoverage.BindingEpoch)
 
-	retiredResponse, retiredBody := do(t, ts, http.MethodPost, path+"/retire", map[string]string{"If-Match": strconv.Quote("5")}, nil)
+	retiredResponse, retiredBody := do(t, ts, http.MethodPost, path+"/retire", map[string]string{"If-Match": strconv.Quote("6")}, nil)
 	require.Equal(t, http.StatusOK, retiredResponse.StatusCode, retiredBody)
 	var retired api.Person
 	require.NoError(t, json.Unmarshal([]byte(retiredBody), &retired))
@@ -127,7 +139,7 @@ func TestPeopleRoutesWorkflow(t *testing.T) {
 	retiredGetResponse, retiredGetRaw := get(t, ts, path, nil)
 	require.Equal(t, http.StatusNotFound, retiredGetResponse.StatusCode, retiredGetRaw)
 	require.Equal(t, "not_found", decodeProblem(t, retiredGetRaw).Code)
-	retiredRenameResponse, retiredRenameRaw := do(t, ts, http.MethodPatch, path, map[string]string{"If-Match": strconv.Quote("5")}, map[string]string{"display_name": "Retired rename"})
+	retiredRenameResponse, retiredRenameRaw := do(t, ts, http.MethodPatch, path, map[string]string{"If-Match": strconv.Quote("6")}, map[string]string{"display_name": "Retired rename"})
 	require.Equal(t, http.StatusConflict, retiredRenameResponse.StatusCode, retiredRenameRaw)
 	require.Equal(t, "person_retired", decodeProblem(t, retiredRenameRaw).Code)
 
@@ -135,6 +147,78 @@ func TestPeopleRoutesWorkflow(t *testing.T) {
 	require.Equal(t, http.StatusOK, listedResponse.StatusCode, listedBody)
 	require.NoError(t, json.Unmarshal([]byte(listedBody), &page))
 	require.Empty(t, page.Items)
+}
+
+func TestPeopleRouteCustodiansPreserveAllScopeCoordinates(t *testing.T) {
+	ts, fixture := newTestServer(t, nil)
+	createdResponse, createdBody := do(t, ts, http.MethodPost, "/api/v1/people", nil, map[string]string{"display_name": "Synthetic coordinates"})
+	require.Equal(t, http.StatusCreated, createdResponse.StatusCode, createdBody)
+	var person api.Person
+	require.NoError(t, json.Unmarshal([]byte(createdBody), &person))
+	collection, err := fixture.BeginIngest(t.Context(), "cli", "synthetic collection")
+	require.NoError(t, err)
+	_, err = fixture.IngestFileExact(t.Context(), collection, fixture.RootID(), "collection.txt", testHash("synthetic collection"), int64(len("synthetic collection")), "text/plain", "collection.txt", "")
+	require.NoError(t, err)
+	collectionAssignment, err := fixture.SetCustodian(t.Context(), store.CustodianRequest{
+		Scope: store.CustodianScope{Kind: "collection", IngestID: collection.ID()}, PersonID: person.PersonID,
+		RawLabel: "Collection owner", Rank: "primary", Basis: "operator_assigned", SourceRef: "synthetic-collection", IfMatchRevision: 1,
+	})
+	require.NoError(t, err)
+	pkg, _, _ := seedBrowseReceivedPackage(t, fixture, false)
+	packageAssignment, err := fixture.SetCustodian(t.Context(), store.CustodianRequest{
+		Scope: store.CustodianScope{Kind: "package", PackageID: pkg.PackageID}, PersonID: person.PersonID,
+		RawLabel: "Package owner", Rank: "primary", Basis: "operator_assigned", SourceRef: "synthetic-package", IfMatchRevision: 1,
+	})
+	require.NoError(t, err)
+	node := createFileWithContent(t, ts, fixture, "/coordinates.txt", "synthetic coordinates")
+	documentAssignment, err := fixture.SetCustodian(t.Context(), store.CustodianRequest{
+		Scope: store.CustodianScope{Kind: "document", NodeID: node.ID, ContentVersionID: node.CurrentVersionID}, PersonID: person.PersonID,
+		RawLabel: "Document owner", Rank: "primary", Basis: "operator_assigned", SourceRef: "synthetic-document", IfMatchRevision: 1,
+	})
+	require.NoError(t, err)
+
+	response, body := get(t, ts, "/api/v1/people/by-id/"+person.PersonID+"/custodians?limit=10", nil)
+	require.Equal(t, http.StatusOK, response.StatusCode, body)
+	var page api.PersonCustodianPage
+	require.NoError(t, json.Unmarshal([]byte(body), &page))
+	require.EqualValues(t, 3, page.Total)
+	require.Len(t, page.Items, 3)
+	byID := make(map[string]api.PersonCustodianAssignment, len(page.Items))
+	for _, item := range page.Items {
+		byID[item.AssignmentID] = item
+	}
+	collectionOutput := byID[collectionAssignment.AssignmentID]
+	require.Equal(t, collection.ID(), collectionOutput.IngestID)
+	require.Empty(t, collectionOutput.PackageID)
+	require.Zero(t, collectionOutput.NodeID)
+	packageOutput := byID[packageAssignment.AssignmentID]
+	require.Equal(t, pkg.PackageID, packageOutput.PackageID)
+	require.Empty(t, packageOutput.IngestID)
+	require.Zero(t, packageOutput.NodeID)
+	documentOutput := byID[documentAssignment.AssignmentID]
+	require.Equal(t, node.ID, documentOutput.NodeID)
+	require.Equal(t, node.CurrentVersionID, documentOutput.ContentVersionID)
+	require.Empty(t, documentOutput.IngestID)
+	require.Empty(t, documentOutput.PackageID)
+}
+
+func TestPeopleRoutesUseInheritedBodyLimit(t *testing.T) {
+	ts, fixture := newTestServer(t, nil)
+	createdResponse, createdBody := do(t, ts, http.MethodPost, "/api/v1/people", nil, map[string]string{"display_name": "Synthetic body limit"})
+	require.Equal(t, http.StatusCreated, createdResponse.StatusCode, createdBody)
+	var person api.Person
+	require.NoError(t, json.Unmarshal([]byte(createdBody), &person))
+	assignments := make([]string, 100000)
+	for index := range assignments {
+		assignments[index] = fmt.Sprintf("00000000-0000-4000-8000-%012x", index+1)
+	}
+	response, body := do(t, ts, http.MethodPost, "/api/v1/people/by-id/"+person.PersonID+"/split", map[string]string{"If-Match": strconv.Quote("1")}, map[string]any{
+		"operation_id": "00000000-0000-4000-8000-000000000001", "display_name": "Oversized split", "assignment_ids": assignments,
+	})
+	require.Equal(t, http.StatusRequestEntityTooLarge, response.StatusCode, body)
+	current, _, err := fixture.PersonByID(t.Context(), person.PersonID)
+	require.NoError(t, err)
+	require.Equal(t, int64(1), current.Revision)
 }
 
 func TestPeopleRoutesEnforceIfMatch(t *testing.T) {

@@ -21849,7 +21849,7 @@ type RenamePersonResponse = api.Person
 
 type RenamePersonErrorResponse = Error
 
-type ListPersonCustodiansResponse = api.CustodianPage
+type ListPersonCustodiansResponse = api.PersonCustodianPage
 
 type ListPersonCustodiansErrorResponse = Error
 
@@ -22949,6 +22949,10 @@ type PeopleCoverage = api.PeopleCoverage
 type PeopleRebuildRequest = api.PeopleRebuildRequest
 
 type Person = api.Person
+
+type PersonCustodianAssignment = api.PersonCustodianAssignment
+
+type PersonCustodianPage = api.PersonCustodianPage
 
 type PersonDetail = api.PersonDetail
 

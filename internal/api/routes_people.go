@@ -64,9 +64,9 @@ func registerPeopleRoutes(api huma.API, d Deps, g *gate) {
 		if err != nil {
 			return nil, FromStoreError(err)
 		}
-		out := CustodianPage{Items: make([]CustodianAssignment, len(assignments)), Total: total}
+		out := PersonCustodianPage{Items: make([]PersonCustodianAssignment, len(assignments)), Total: total}
 		for index, assignment := range assignments {
-			out.Items[index] = packageCustodianOutput(assignment)
+			out.Items[index] = fromStorePersonCustodian(assignment)
 		}
 		if offset+len(assignments) < int(total) {
 			out.NextCursor = encodePersonCustodianCursor(in.PersonID, offset+len(assignments))
@@ -168,7 +168,9 @@ func registerPeopleRoutes(api huma.API, d Deps, g *gate) {
 			if callErr != nil {
 				return FromStoreError(callErr)
 			}
-			out = &personSplitOutput{Body: fromStorePersonSplitReceipt(receipt)}
+			body := fromStorePersonSplitReceipt(receipt)
+			body.SourceRevisionAfter = revision + 1
+			out = &personSplitOutput{ETag: revisionETag(body.SourceRevisionAfter), Body: body}
 			return nil
 		})
 		return out, err

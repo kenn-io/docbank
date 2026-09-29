@@ -36,6 +36,11 @@ type personSplitToolOutput struct {
 	api.PersonSplitReceipt
 }
 
+type personCustodianPageOutput struct {
+	privateCache
+	api.PersonCustodianPage
+}
+
 type personArguments map[string]jsontext.Value
 
 func decodePersonArguments(raw []byte) (personArguments, error) {
@@ -114,40 +119,40 @@ func getPerson(ctx context.Context, lease *daemonLease, raw []byte) (personDetai
 	return personDetailToolOutput{privateCache: newPrivateCache(), PersonDetail: detail}, nil
 }
 
-func listPersonCustodians(ctx context.Context, lease *daemonLease, raw []byte) (custodianPageOutput, error) {
+func listPersonCustodians(ctx context.Context, lease *daemonLease, raw []byte) (personCustodianPageOutput, error) {
 	arguments, err := decodePersonArguments(raw)
 	if err != nil {
-		return custodianPageOutput{}, err
+		return personCustodianPageOutput{}, err
 	}
 	id, err := personArgumentString(arguments, "person_id")
 	if err != nil {
-		return custodianPageOutput{}, err
+		return personCustodianPageOutput{}, err
 	}
 	if _, err := uuid.Parse(id); err != nil {
-		return custodianPageOutput{}, invalidToolArgumentsError()
+		return personCustodianPageOutput{}, invalidToolArgumentsError()
 	}
 	cursor := ""
 	if value, ok := arguments["cursor"]; ok {
 		if err := json.Unmarshal(value, &cursor); err != nil {
-			return custodianPageOutput{}, invalidToolArgumentsError()
+			return personCustodianPageOutput{}, invalidToolArgumentsError()
 		}
 	}
 	limit := int64(100)
 	if value, ok := arguments["limit"]; ok {
 		if err := json.Unmarshal(value, &limit); err != nil || limit < 1 || limit > 250 {
-			return custodianPageOutput{}, invalidToolArgumentsError()
+			return personCustodianPageOutput{}, invalidToolArgumentsError()
 		}
 	}
-	page, err := daemonRead(ctx, lease, func(ctx context.Context, c *daemonconn.Connection) (api.CustodianPage, error) {
+	page, err := daemonRead(ctx, lease, func(ctx context.Context, c *daemonconn.Connection) (api.PersonCustodianPage, error) {
 		return c.PersonCustodians(ctx, id, cursor, int(limit))
 	})
 	if err != nil {
-		return custodianPageOutput{}, err
+		return personCustodianPageOutput{}, err
 	}
 	if page.Total < int64(len(page.Items)) {
-		return custodianPageOutput{}, errors.New("person custodian page exceeded its requested bound")
+		return personCustodianPageOutput{}, errors.New("person custodian page exceeded its requested bound")
 	}
-	return custodianPageOutput{CustodianPage: page, privateCache: newPrivateCache()}, nil
+	return personCustodianPageOutput{PersonCustodianPage: page, privateCache: newPrivateCache()}, nil
 }
 
 func personWriteToolHandler(

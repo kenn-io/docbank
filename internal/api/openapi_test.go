@@ -177,6 +177,7 @@ func TestOpenAPISavedQueriesAreStructuredAndRevisionFenced(t *testing.T) {
 
 func TestOpenAPIPeopleRoutesAreRevisionFenced(t *testing.T) {
 	doc := api.NewOfflineServer().API().OpenAPI()
+	schemas := doc.Components.Schemas.Map()
 	create := doc.Paths["/api/v1/people"].Post
 	require.NotNil(t, create)
 	item := doc.Paths["/api/v1/people/by-id/{person_id}"]
@@ -203,6 +204,17 @@ func TestOpenAPIPeopleRoutesAreRevisionFenced(t *testing.T) {
 	for _, parameter := range create.Parameters {
 		assert.False(t, parameter.In == "header" && parameter.Name == "If-Match")
 	}
+	custodians := doc.Paths["/api/v1/people/by-id/{person_id}/custodians"].Get
+	require.NotNil(t, custodians)
+	custodianPage := resolveOpenAPISchema(t, schemas, custodians.Responses["200"].Content["application/json"].Schema)
+	custodianItem := resolveOpenAPISchema(t, schemas, custodianPage.Properties["items"].Items)
+	for _, field := range []string{"ingest_id", "package_id", "package_record_id", "node_id", "content_version_id"} {
+		assert.Contains(t, custodianItem.Properties, field)
+	}
+	split := doc.Paths["/api/v1/people/by-id/{person_id}/split"].Post
+	splitResponse := resolveOpenAPISchema(t, schemas, split.Responses["200"].Content["application/json"].Schema)
+	assert.Contains(t, splitResponse.Properties, "source_revision_after")
+	assert.Contains(t, split.Responses["200"].Headers, "ETag")
 }
 
 func TestOpenAPIWorkspaceSnapshotsExposeStrictBoundedAuthority(t *testing.T) {

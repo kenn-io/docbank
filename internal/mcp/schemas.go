@@ -181,13 +181,31 @@ func custodianAssignmentProperties() schema {
 		packageIDField: uuidSchema(), "package_record_id": sha256Schema(), personIDField: uuidSchema(),
 		"raw_label": stringSchema(200), "rank": enumSchema("primary", "additional"),
 		"basis":      enumSchema("operator_assigned", "package_column", "transfer_record"),
-		"source_ref": stringSchema(512), "revision": integerSchema(1, 0), "recorded_at": dateTimeSchema(),
+		"source_ref": stringSchema(512), "revision": integerSchema(1, 0), "recorded_at": dateTimeSchema(), //nolint:goconst // Shared wire field is repeated across tools.
 	}
 }
 
 func custodianPageOutputSchema() schema {
 	return rootObjectSchema(withPrivateCache(schema{
 		"items": arraySchema(custodianAssignmentSchema(), 250), "total": integerSchema(0, 0),
+		"next_cursor": stringSchema(maxCursorCharacters),
+	}), cacheRequired("items", "total")...)
+}
+
+func personCustodianAssignmentSchema() schema {
+	return objectSchema(schema{
+		"assignment_id": uuidSchema(), "scope_kind": enumSchema("package", "collection", "document"),
+		"ingest_id": uuidSchema(), packageIDField: uuidSchema(), "package_record_id": sha256Schema(),
+		"node_id": integerSchema(1, 0), "content_version_id": uuidSchema(), personIDField: uuidSchema(), //nolint:goconst // Shared wire fields are repeated across tools.
+		"raw_label": stringSchema(200), "rank": enumSchema("primary", "additional"),
+		"basis":      enumSchema("operator_assigned", "package_column", "transfer_record"),
+		"source_ref": stringSchema(512), "revision": integerSchema(1, 0), "recorded_at": dateTimeSchema(),
+	}, "assignment_id", "scope_kind", "raw_label", "rank", "basis", "source_ref", "revision", "recorded_at")
+}
+
+func personCustodianPageOutputSchema() schema {
+	return rootObjectSchema(withPrivateCache(schema{
+		"items": arraySchema(personCustodianAssignmentSchema(), 250), "total": integerSchema(0, 0),
 		"next_cursor": stringSchema(maxCursorCharacters),
 	}), cacheRequired("items", "total")...)
 }
@@ -252,7 +270,7 @@ func getPersonSchemas() (schema, schema) {
 }
 
 func listPersonCustodiansSchemas() (schema, schema) {
-	return rootObjectSchema(schema{personIDField: uuidSchema(), "cursor": stringSchema(maxCursorCharacters), schemaLimitField: integerSchema(1, 250)}, personIDField), custodianPageOutputSchema()
+	return rootObjectSchema(schema{personIDField: uuidSchema(), "cursor": stringSchema(maxCursorCharacters), schemaLimitField: integerSchema(1, 250)}, personIDField), personCustodianPageOutputSchema()
 }
 
 func personExternalUIDSchema() schema {
@@ -273,7 +291,7 @@ func personMergeReceiptProperties() schema {
 
 func personSplitReceiptProperties() schema {
 	return schema{"operation_id": uuidSchema(), "source_person_id": uuidSchema(), "new_person_id": uuidSchema(),
-		"moved_identity_ids": arraySchema(uuidSchema(), document.MaxPersonIdentitiesPerPerson), "created_at": dateTimeSchema()}
+		"source_revision_after": integerSchema(1, 0), "moved_identity_ids": arraySchema(uuidSchema(), document.MaxPersonIdentitiesPerPerson), "created_at": dateTimeSchema()}
 }
 
 func createPersonSchemas() (schema, schema) {
@@ -306,7 +324,7 @@ func splitPersonSchemas() (schema, schema) {
 			"display_name": schema{"type": "string", "minLength": 1, "maxLength": document.MaxPersonDisplayNameBytes}, "identity_ids": arraySchema(uuidSchema(), document.MaxPersonIdentitiesPerPerson),
 			"assignment_ids": arraySchema(uuidSchema(), 0), "external_identities": arraySchema(personExternalUIDSchema(), document.MaxPersonExternalIdentities)},
 			personIDField, "if_match_revision", "operation_id", "display_name"), rootObjectSchema(withPrivateCache(personSplitReceiptProperties()),
-			cacheRequired("operation_id", "source_person_id", "new_person_id", "moved_identity_ids", "created_at")...)
+			cacheRequired("operation_id", "source_person_id", "new_person_id", "source_revision_after", "moved_identity_ids", "created_at")...)
 }
 
 func resolvePackageCustodianSchemas() (schema, schema) {
@@ -618,8 +636,8 @@ func renditionIdentitySchema() schema {
 
 func documentSummarySchema() schema {
 	return objectSchema(schema{
-		"node_id":                 integerSchema(1, 0), //nolint:goconst // Stable wire field is repeated across tools.
-		"content_version_id":      uuidSchema(),        //nolint:goconst // Stable wire field is repeated across tools.
+		"node_id":                 integerSchema(1, 0),
+		"content_version_id":      uuidSchema(),
 		"path":                    schema{"type": "string", "minLength": 1, "maxLength": maxPathCharacters, "pattern": "^/"},
 		"name":                    schema{"type": "string", "minLength": 1, "maxLength": store.MaxDocumentCatalogNameCharacters},
 		"media_type":              stringSchema(255),

@@ -98,11 +98,12 @@ type PersonMergeReceipt struct {
 }
 
 type PersonSplitReceipt struct {
-	OperationID      string   `json:"operation_id" format:"uuid"`
-	SourcePersonID   string   `json:"source_person_id" format:"uuid"`
-	NewPersonID      string   `json:"new_person_id" format:"uuid"`
-	MovedIdentityIDs []string `json:"moved_identity_ids"`
-	CreatedAt        string   `json:"created_at" format:"date-time"`
+	OperationID         string   `json:"operation_id" format:"uuid"`
+	SourcePersonID      string   `json:"source_person_id" format:"uuid"`
+	NewPersonID         string   `json:"new_person_id" format:"uuid"`
+	SourceRevisionAfter int64    `json:"source_revision_after" minimum:"1"`
+	MovedIdentityIDs    []string `json:"moved_identity_ids"`
+	CreatedAt           string   `json:"created_at" format:"date-time"`
 }
 
 type personOutput struct {
@@ -121,11 +122,35 @@ type personMergeOutput struct {
 }
 
 type personSplitOutput struct {
+	ETag string `header:"ETag"`
 	Body PersonSplitReceipt
 }
 
 type personCustodianPageOutput struct {
-	Body CustodianPage
+	Body PersonCustodianPage
+}
+
+type PersonCustodianAssignment struct {
+	AssignmentID     string `json:"assignment_id"`
+	ScopeKind        string `json:"scope_kind"`
+	IngestID         string `json:"ingest_id,omitzero"`
+	PackageID        string `json:"package_id,omitzero"`
+	PackageRecordID  string `json:"package_record_id,omitzero"`
+	NodeID           int64  `json:"node_id,omitzero" minimum:"1"`
+	ContentVersionID string `json:"content_version_id,omitzero"`
+	PersonID         string `json:"person_id,omitzero"`
+	RawLabel         string `json:"raw_label"`
+	Rank             string `json:"rank"`
+	Basis            string `json:"basis"`
+	SourceRef        string `json:"source_ref"`
+	Revision         int64  `json:"revision"`
+	RecordedAt       string `json:"recorded_at"`
+}
+
+type PersonCustodianPage struct {
+	Items      []PersonCustodianAssignment `json:"items"`
+	Total      int64                       `json:"total"`
+	NextCursor string                      `json:"next_cursor,omitzero"`
 }
 
 func fromStorePerson(value store.Person, reachedThrough string) Person {
@@ -170,4 +195,29 @@ func fromStorePersonMergeReceipt(value store.PersonMergeReceipt) PersonMergeRece
 func fromStorePersonSplitReceipt(value store.PersonSplitReceipt) PersonSplitReceipt {
 	return PersonSplitReceipt{OperationID: value.OperationID, SourcePersonID: value.SourcePersonID, NewPersonID: value.NewPersonID,
 		MovedIdentityIDs: append([]string(nil), value.MovedIdentityIDs...), CreatedAt: value.CreatedAt}
+}
+
+func fromStorePersonCustodian(value store.CustodianAssignment) PersonCustodianAssignment {
+	out := PersonCustodianAssignment{AssignmentID: value.AssignmentID, ScopeKind: value.ScopeKind,
+		RawLabel: value.RawLabel, Rank: value.Rank, Basis: value.Basis, SourceRef: value.SourceRef,
+		Revision: value.Revision, RecordedAt: value.RecordedAt}
+	if value.IngestID != nil {
+		out.IngestID = *value.IngestID
+	}
+	if value.PackageID != nil {
+		out.PackageID = *value.PackageID
+	}
+	if value.PackageRecordID != nil {
+		out.PackageRecordID = *value.PackageRecordID
+	}
+	if value.NodeID != nil {
+		out.NodeID = *value.NodeID
+	}
+	if value.ContentVersionID != nil {
+		out.ContentVersionID = *value.ContentVersionID
+	}
+	if value.PersonID != nil {
+		out.PersonID = *value.PersonID
+	}
+	return out
 }

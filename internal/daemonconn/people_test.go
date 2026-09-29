@@ -113,8 +113,9 @@ func TestSplitPersonAllowsTwoHundredOneAssignments(t *testing.T) {
 		}
 		assignmentCount.Store(int32(len(request.AssignmentIDs)))
 		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("ETag", `"2"`)
 		w.WriteHeader(http.StatusOK)
-		_ = json.MarshalWrite(w, api.PersonSplitReceipt{OperationID: operationID, SourcePersonID: sourceID, NewPersonID: newPersonID, MovedIdentityIDs: []string{}, CreatedAt: "2026-09-28T00:00:00Z"})
+		_ = json.MarshalWrite(w, api.PersonSplitReceipt{OperationID: operationID, SourcePersonID: sourceID, NewPersonID: newPersonID, SourceRevisionAfter: 2, MovedIdentityIDs: []string{}, CreatedAt: "2026-09-28T00:00:00Z"})
 	}))
 	t.Cleanup(server.Close)
 
@@ -124,4 +125,48 @@ func TestSplitPersonAllowsTwoHundredOneAssignments(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, int32(len(assignments)), assignmentCount.Load())
 	require.Equal(t, operationID, receipt.OperationID)
+}
+
+func TestSplitPersonValidatesHistoricalFence(t *testing.T) {
+	const (
+		sourceID    = "00000000-0000-4000-8000-000000000001"
+		newPersonID = "00000000-0000-4000-8000-000000000002"
+		operationID = "00000000-0000-4000-8000-000000000003"
+	)
+	for _, test := range []struct {
+		name, etag string
+		revision   int64
+		wantError  bool
+	}{
+		{name: "missing revision", etag: `"1"`, revision: 0, wantError: true},
+		{name: "missing etag", revision: 2, wantError: true},
+		{name: "malformed etag", etag: "not-an-etag", revision: 2, wantError: true},
+		{name: "mismatched etag", etag: `"1"`, revision: 2, wantError: true},
+		{name: "valid", etag: `"2"`, revision: 2},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			var requests atomic.Int32
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				requests.Add(1)
+				w.Header().Set("Content-Type", "application/json")
+				if test.etag != "" {
+					w.Header().Set("ETag", test.etag)
+				}
+				_ = json.MarshalWrite(w, api.PersonSplitReceipt{OperationID: operationID, SourcePersonID: sourceID, NewPersonID: newPersonID,
+					SourceRevisionAfter: test.revision, MovedIdentityIDs: []string{}, CreatedAt: "2026-09-28T00:00:00Z"})
+			}))
+			t.Cleanup(server.Close)
+
+			receipt, err := New(server.URL, "synthetic-key").SplitPerson(t.Context(), sourceID, 1, api.SplitPersonRequest{OperationID: operationID, DisplayName: "Synthetic split"})
+			if test.wantError {
+				require.Error(t, err)
+				require.True(t, IsResponseDecodeError(err))
+				require.Empty(t, receipt.OperationID)
+			} else {
+				require.NoError(t, err)
+				require.Equal(t, int64(2), receipt.SourceRevisionAfter)
+			}
+			require.Equal(t, int32(1), requests.Load())
+		})
+	}
 }

@@ -36,6 +36,13 @@ func TestPeopleMCPWriteOptIn(t *testing.T) {
 		assertSchemaContract(t, tool.InputSchema)
 		assertSchemaContract(t, tool.OutputSchema)
 	}
+	assertSchemaAccepts(t, readOnly["list_person_custodians"].OutputSchema, map[string]any{
+		"items": []any{
+			map[string]any{"assignment_id": "00000000-0000-4000-8000-000000000001", "scope_kind": "collection", "ingest_id": "00000000-0000-4000-8000-000000000011", "raw_label": "Collection", "rank": "primary", "basis": "operator_assigned", "source_ref": "synthetic", "revision": 1, "recorded_at": "2026-09-29T00:00:00Z"},
+			map[string]any{"assignment_id": "00000000-0000-4000-8000-000000000002", "scope_kind": "package", "package_id": "00000000-0000-4000-8000-000000000012", "raw_label": "Package", "rank": "primary", "basis": "package_column", "source_ref": "synthetic", "revision": 1, "recorded_at": "2026-09-29T00:00:00Z"},
+			map[string]any{"assignment_id": "00000000-0000-4000-8000-000000000003", "scope_kind": "document", "node_id": 1, "content_version_id": "00000000-0000-4000-8000-000000000013", "raw_label": "Document", "rank": "primary", "basis": "operator_assigned", "source_ref": "synthetic", "revision": 1, "recorded_at": "2026-09-29T00:00:00Z"},
+		}, "total": 3, "ttlMs": 0, "cacheScope": "private",
+	})
 	server := newServerWithOptions(testImplementation(), ServerOptions{AllowPersonEdits: true})
 	discovery := decodeResult(t, exchangeRaw(t, server, requestFor("server/discover", nil)))
 	assert.Equal(t, catalogInstructions(false, false, false, true), discovery["instructions"])
@@ -148,10 +155,13 @@ func TestPeopleMCPWorkflow(t *testing.T) {
 	})
 	assert.Equal(t, splitID, split["operation_id"])
 	assert.Equal(t, survivorID, split["source_person_id"])
+	assert.EqualValues(t, 3, split["source_revision_after"])
 	newPersonID, ok := split["new_person_id"].(string)
 	require.True(t, ok)
 	assert.NotEqual(t, survivorID, newPersonID)
 	assert.Equal(t, []any{identity.IdentityID}, split["moved_identity_ids"])
+	sourceRename := call("rename_person", map[string]any{"person_id": survivorID, "if_match_revision": 3, "display_name": "Survivor after split"})
+	assert.EqualValues(t, 4, sourceRename["revision"])
 
 	separated := call("get_person", map[string]any{"person_id": newPersonID})
 	assert.Equal(t, "Separated", separated["display_name"])
@@ -194,4 +204,41 @@ func TestPersonWriteTreatsMalformedSuccessAsUnknown(t *testing.T) {
 	_, err := executePersonWriteTool(t.Context(), lease, "create_person", validator, []byte(`{"display_name":"Synthetic"}`))
 	require.ErrorIs(t, err, errProcessingOutcomeUnknown)
 	assert.Equal(t, int32(1), requests.Load())
+}
+
+func TestPersonSplitWriteTreatsMalformedFenceAsUnknown(t *testing.T) {
+	const (
+		personID    = "00000000-0000-4000-8000-000000000001"
+		newPersonID = "00000000-0000-4000-8000-000000000002"
+		operationID = "00000000-0000-4000-8000-000000000003"
+	)
+	for _, test := range []struct {
+		name, etag string
+		revision   int64
+	}{
+		{name: "missing revision", etag: `"2"`},
+		{name: "missing etag", revision: 2},
+		{name: "mismatched etag", revision: 2, etag: `"1"`},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			var requests atomic.Int32
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				requests.Add(1)
+				w.Header().Set("Content-Type", "application/json")
+				if test.etag != "" {
+					w.Header().Set("ETag", test.etag)
+				}
+				_ = json.MarshalWrite(w, api.PersonSplitReceipt{OperationID: operationID, SourcePersonID: personID, NewPersonID: newPersonID,
+					SourceRevisionAfter: test.revision, MovedIdentityIDs: []string{}, CreatedAt: "2026-09-28T00:00:00Z"})
+			}))
+			t.Cleanup(server.Close)
+			lease := newDaemonLeaseWith(func(context.Context) (*daemonconn.Connection, error) {
+				return daemonconn.New(server.URL, "synthetic-key"), nil
+			}, func(*daemonconn.Connection) error { return nil })
+			validator := mustResolveSchema(catalogMap(toolCatalog(false, false, false, true))["split_person"].OutputSchema)
+			_, err := executePersonWriteTool(t.Context(), lease, "split_person", validator, []byte(`{"person_id":"00000000-0000-4000-8000-000000000001","if_match_revision":1,"operation_id":"00000000-0000-4000-8000-000000000003","display_name":"Synthetic split"}`))
+			require.ErrorIs(t, err, errProcessingOutcomeUnknown)
+			require.Equal(t, int32(1), requests.Load())
+		})
+	}
 }

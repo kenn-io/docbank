@@ -28,7 +28,9 @@ Read it with `docbank people show <person-id>` or
 `GET /api/v1/people/by-id/{person_id}`. The detail response includes identity
 IDs, external UIDs, the current revision, and the ID used to reach a merged
 person. Use `docbank people custodians <person-id>` to page active custodian
-assignments.
+assignments. Each assignment includes the coordinates for its scope: an
+ingest ID for a collection, package IDs for a package, or a node ID and
+content version ID for a document.
 
 ## Edit people
 
@@ -44,7 +46,14 @@ returns `person_merge_conflict`.
 
 Split moves only the identity IDs, custodian assignment IDs, or external UIDs
 listed in the request. The new display name is required. The store validates
-that every selected member belongs to the source person.
+that every selected member belongs to the source person. HTTP applies Huma's
+inherited 1 MiB request body limit before decoding; larger bodies return 413.
+Valid finite selections within that limit remain supported.
+
+The split response includes `source_revision_after` and an ETag for that
+revision. Use this fence for the next source edit. Replaying the same split
+request returns the original fence, even after a later source edit. Stored
+split receipts keep their existing JSON fields.
 
 Every successful person edit advances the document-person binding epoch.
 Document links go stale until the daemon backfill republishes them. The
