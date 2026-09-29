@@ -242,6 +242,28 @@ func TestPeopleMCPWorkflow(t *testing.T) {
 	require.Equal(t, node.CurrentVersionID, documentOutput["content_version_id"])
 	require.NotContains(t, documentOutput, "ingest_id")
 	require.NotContains(t, documentOutput, "package_id")
+	assignmentID, ok := documentOutput["assignment_id"].(string)
+	require.True(t, ok)
+	assignmentSplit := call("split_person", map[string]any{
+		"person_id": survivorID, "if_match_revision": 4, "operation_id": "00000000-0000-4000-8000-000000000007",
+		"display_name": "Assignment only", "assignment_ids": []string{assignmentID},
+	})
+	assert.EqualValues(t, 5, assignmentSplit["source_revision_after"])
+	require.Equal(t, []any{}, assignmentSplit["moved_identity_ids"])
+
+	externalSource := call("create_person", map[string]any{"display_name": "External source"})
+	externalSourceID, ok := externalSource["person_id"].(string)
+	require.True(t, ok)
+	_, err = catalog.LinkExternalIdentity(t.Context(), store.PersonExternalIdentity{
+		PersonID: externalSourceID, System: "msgvault", ArchiveID: "synthetic", UID: "uid-1", UIDKind: "vcard_uid", UIDState: "current",
+	}, 1)
+	require.NoError(t, err)
+	externalSplit := call("split_person", map[string]any{
+		"person_id": externalSourceID, "if_match_revision": 2, "operation_id": "00000000-0000-4000-8000-000000000008",
+		"display_name": "External only", "external_identities": []map[string]string{{"system": "msgvault", "archive_id": "synthetic", "uid": "uid-1"}},
+	})
+	assert.EqualValues(t, 3, externalSplit["source_revision_after"])
+	require.Equal(t, []any{}, externalSplit["moved_identity_ids"])
 }
 
 func TestPersonWriteTreatsMalformedSuccessAsUnknown(t *testing.T) {

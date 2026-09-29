@@ -327,6 +327,11 @@ func TestPeopleRouteSplitAllowsTwoHundredOneAssignments(t *testing.T) {
 	var receipt api.PersonSplitReceipt
 	require.NoError(t, json.Unmarshal([]byte(raw), &receipt))
 	require.Equal(t, int64(2), receipt.SourceRevisionAfter)
+	require.NotNil(t, receipt.MovedIdentityIDs)
+	require.Empty(t, receipt.MovedIdentityIDs)
+	var wire map[string]any
+	require.NoError(t, json.Unmarshal([]byte(raw), &wire))
+	require.IsType(t, []any{}, wire["moved_identity_ids"])
 	items, total, err := fixture.CustodiansForPerson(t.Context(), receipt.NewPersonID, 250, 0)
 	require.NoError(t, err)
 	require.EqualValues(t, 201, total)
@@ -339,6 +344,32 @@ func TestPeopleRouteSplitAllowsTwoHundredOneAssignments(t *testing.T) {
 	_, sourceTotal, err := fixture.CustodiansForPerson(t.Context(), person.PersonID, 250, 0)
 	require.NoError(t, err)
 	require.Zero(t, sourceTotal)
+}
+
+func TestPeopleRouteSplitExternalOnlyReturnsEmptyIdentityArray(t *testing.T) {
+	ts, fixture := newTestServer(t, nil)
+	created, body := do(t, ts, http.MethodPost, "/api/v1/people", nil, map[string]string{"display_name": "Synthetic external source"})
+	require.Equal(t, http.StatusCreated, created.StatusCode, body)
+	var person api.Person
+	require.NoError(t, json.Unmarshal([]byte(body), &person))
+	_, err := fixture.LinkExternalIdentity(t.Context(), store.PersonExternalIdentity{
+		PersonID: person.PersonID, System: "msgvault", ArchiveID: "synthetic", UID: "uid-1", UIDKind: "vcard_uid", UIDState: "current",
+	}, person.Revision)
+	require.NoError(t, err)
+	response, raw := do(t, ts, http.MethodPost, "/api/v1/people/by-id/"+person.PersonID+"/split",
+		map[string]string{"If-Match": strconv.Quote("2")}, map[string]any{
+			"operation_id": "00000000-0000-4000-8000-000000000203", "display_name": "Synthetic external result",
+			"external_identities": []map[string]string{{"system": "msgvault", "archive_id": "synthetic", "uid": "uid-1"}},
+		})
+	require.Equal(t, http.StatusOK, response.StatusCode, raw)
+	var receipt api.PersonSplitReceipt
+	require.NoError(t, json.Unmarshal([]byte(raw), &receipt))
+	require.Equal(t, int64(3), receipt.SourceRevisionAfter)
+	require.NotNil(t, receipt.MovedIdentityIDs)
+	require.Empty(t, receipt.MovedIdentityIDs)
+	var wire map[string]any
+	require.NoError(t, json.Unmarshal([]byte(raw), &wire))
+	require.IsType(t, []any{}, wire["moved_identity_ids"])
 }
 
 func TestPeopleRoutesEnforceIfMatch(t *testing.T) {

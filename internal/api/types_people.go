@@ -194,7 +194,7 @@ func fromStorePersonMergeReceipt(value store.PersonMergeReceipt) PersonMergeRece
 
 func fromStorePersonSplitReceipt(value store.PersonSplitReceipt) PersonSplitReceipt {
 	return PersonSplitReceipt{OperationID: value.OperationID, SourcePersonID: value.SourcePersonID, NewPersonID: value.NewPersonID,
-		MovedIdentityIDs: append([]string(nil), value.MovedIdentityIDs...), CreatedAt: value.CreatedAt}
+		MovedIdentityIDs: append([]string{}, value.MovedIdentityIDs...), CreatedAt: value.CreatedAt}
 }
 
 func fromStorePersonCustodian(value store.CustodianAssignment) PersonCustodianAssignment {
