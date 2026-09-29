@@ -101,20 +101,44 @@ func TestNaturalEarthAntimeridian(t *testing.T) {
 
 // TestNaturalEarthSameCountryGate makes sure the city-threshold gate
 // drops a populated-place from a different country than the resolved
-// admin_0. Pick a coord just over a border: e.g., a point inside Mexico
-// near the US border should NOT pull in El Paso; the label should be
-// region+country (Mexico), not "El Paso, Texas, United States".
+// admin_0. Tijuana and San Diego are both within the city threshold, but
+// only Tijuana shares the resolved country's label.
 func TestNaturalEarthSameCountryGate(t *testing.T) {
 	r := require.New(t)
 	g, err := geo.NewNaturalEarth()
 	r.NoError(err)
 
-	// Ciudad Juárez sits right across from El Paso, TX. The resolved
-	// label must contain "Mexico" and must NOT contain "United States".
-	label, ok := g.Resolve(31.6904, -106.4245)
+	label, ok := g.Resolve(32.52, -117.03)
 	r.True(ok)
-	r.Contains(label, "Mexico")
+	r.Equal("Tijuana, Baja California, Mexico", label)
+	r.NotContains(label, "San Diego")
 	r.NotContains(label, "United States")
+}
+
+func TestNaturalEarthRegionGate(t *testing.T) {
+	r := require.New(t)
+	g, err := geo.NewNaturalEarth()
+	r.NoError(err)
+
+	// This point is in Basel-Landschaft, where Basel is closer than Liestal.
+	// The city must still come from the resolved admin_1 region.
+	label, ok := g.Resolve(47.54, 7.61)
+	r.True(ok)
+	r.Equal("Liestal, Basel-Landschaft, Switzerland", label)
+	r.NotContains(label, "Basel, Basel-Stadt")
+}
+
+func TestNaturalEarthCityDistanceGate(t *testing.T) {
+	r := require.New(t)
+	g, err := geo.NewNaturalEarth()
+	r.NoError(err)
+
+	// Alice Springs is about 28 km away, so the 25 km city limit leaves only
+	// the containing region and country in the label.
+	label, ok := g.Resolve(-23.45, 133.88)
+	r.True(ok)
+	r.Equal("Northern Territory, Australia", label)
+	r.NotContains(label, "Alice Springs")
 }
 
 func TestNaturalEarthCountryPolygonHole(t *testing.T) {

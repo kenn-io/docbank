@@ -2,6 +2,7 @@ package store
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
 	"strings"
 	"sync"
@@ -89,6 +90,18 @@ func TestPhotoTechnicalMetadataFields(t *testing.T) {
 	assert.Equal(t, "-07:00", *fields.CaptureTimeOffset)
 	assert.Equal(t, int64(6), *fields.Orientation)
 	assert.Nil(t, fields.LocationLabel)
+}
+
+func TestPhotoTechnicalMetadataISOAlias(t *testing.T) {
+	t.Parallel()
+	fields := projectPhotoTechnicalMetadata(document.SourceMetadataV1{
+		ContractVersion: document.SourceMetadataContractV1,
+		Fields: []document.SourceMetadataFieldV1{
+			photoMetadataField("image.exif.iso", "image.exif", "ISO", photoInteger(800)),
+		},
+	}, nil)
+	require.NotNil(t, fields.ISO)
+	assert.Equal(t, int64(800), *fields.ISO)
 }
 
 func TestPhotoTechnicalMetadataIgnoresBooleanCameraKey(t *testing.T) {
@@ -314,6 +327,131 @@ func TestPhotoTechnicalMetadataJSONLRejectsMalformed(t *testing.T) {
 	require.ErrorContains(t, rejectedDuplicate.ImportMetadata(ctx, strings.NewReader(duplicate)), "duplicate photo technical metadata")
 	require.NoError(t, rejectedDuplicate.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM nodes`).Scan(&nodeCount))
 	assert.Equal(t, 1, nodeCount, "a duplicate projection must roll back the entire import")
+}
+
+func TestPhotoTechnicalMetadataJSONLRejectsInvalidFieldsAndRollsBack(t *testing.T) {
+	t.Parallel()
+	ctx := t.Context()
+	source := newTestStore(t)
+	node, err := source.CreateFile(ctx, source.RootID(), "invalid-fields.jpg", fakeHash("a8"), 1, "image/jpeg")
+	require.NoError(t, err)
+	canonical := photoCanonical(t,
+		photoMetadataField("image.exif.camera_model", "image.exif", "Model", photoString("Generated")),
+		photoMetadataField("image.exif.gps_latitude", "image.exif", "GPSLatitude", photoString("48.8566000")),
+		photoMetadataField("image.exif.gps_longitude", "image.exif", "GPSLongitude", photoString("2.3522000")),
+		photoMetadataField("created", "image.exif", "DateTimeOriginal",
+			photoTimestamp("2024:05:06 12:34:56-07:00", "2024-05-06T12:34:56-07:00",
+				document.SourceMetadataPrecisionSecond, document.SourceMetadataTimezoneOffset, "-07:00")),
+	)
+	_, err = source.PublishSourceMetadata(ctx, node.BlobHash, fakeHash("e8"), canonical)
+	require.NoError(t, err)
+	var exported bytes.Buffer
+	require.NoError(t, source.ExportMetadata(ctx, &exported))
+	cases := []struct {
+		name   string
+		mutate func(*metadataPhotoTechnical)
+		want   string
+	}{
+		{
+			name: "incomplete GPS",
+			mutate: func(record *metadataPhotoTechnical) {
+				record.Longitude = nil
+			},
+			want: "GPS coordinates must be a complete pair",
+		},
+		{
+			name: "out-of-range GPS",
+			mutate: func(record *metadataPhotoTechnical) {
+				latitude := 91.0
+				record.Latitude = &latitude
+			},
+			want: "GPS coordinates are invalid",
+		},
+		{
+			name: "incomplete capture timestamp",
+			mutate: func(record *metadataPhotoTechnical) {
+				record.CaptureTimeOffset = nil
+			},
+			want: "capture timestamp is incomplete",
+		},
+		{
+			name: "inconsistent capture timestamp",
+			mutate: func(record *metadataPhotoTechnical) {
+				captureTime := "2024-05-06T12:34:56Z"
+				record.CaptureTime = &captureTime
+			},
+			want: "capture timestamp is invalid",
+		},
+	}
+	for _, test := range cases {
+		t.Run(test.name, func(t *testing.T) {
+			malformed := rewritePhotoTechnicalProjection(t, exported.String(), test.mutate)
+			target := newTestStore(t)
+			err := target.ImportMetadata(ctx, strings.NewReader(malformed))
+			require.ErrorContains(t, err, test.want)
+			assertPhotoTechnicalImportRolledBack(t, target)
+		})
+	}
+}
+
+func TestPhotoTechnicalMetadataJSONLPreservesExplicitProjection(t *testing.T) {
+	t.Parallel()
+	ctx := t.Context()
+	source := newTestStore(t)
+	node, err := source.CreateFile(ctx, source.RootID(), "owner-projection.jpg", fakeHash("a9"), 1, "image/jpeg")
+	require.NoError(t, err)
+	canonical := photoCanonical(t,
+		photoMetadataField("image.exif.camera_model", "image.exif", "Model", photoString("Generated")),
+	)
+	_, err = source.PublishSourceMetadata(ctx, node.BlobHash, fakeHash("e9"), canonical)
+	require.NoError(t, err)
+	var exported bytes.Buffer
+	require.NoError(t, source.ExportMetadata(ctx, &exported))
+	ownerSupplied := rewritePhotoTechnicalProjection(t, exported.String(), func(record *metadataPhotoTechnical) {
+		record.ProjectionRecipe = "owner/photo/v9"
+		cameraModel := "Owner supplied"
+		record.CameraModel = &cameraModel
+	})
+	target := newTestStore(t)
+	require.NoError(t, target.ImportMetadata(ctx, strings.NewReader(ownerSupplied)))
+	projection, err := target.ContentVersionPhotoMetadata(ctx, node.CurrentVersionID)
+	require.NoError(t, err)
+	assert.Equal(t, "owner/photo/v9", projection.ProjectionRecipe)
+	require.NotNil(t, projection.Fields.CameraModel)
+	assert.Equal(t, "Owner supplied", *projection.Fields.CameraModel)
+}
+
+func rewritePhotoTechnicalProjection(
+	t *testing.T, exported string, mutate func(*metadataPhotoTechnical),
+) string {
+	t.Helper()
+	for line := range strings.SplitSeq(exported, "\n") {
+		if !strings.Contains(line, `"type":"photo_technical_metadata"`) {
+			continue
+		}
+		var record metadataPhotoTechnical
+		require.NoError(t, json.Unmarshal([]byte(line), &record))
+		mutate(&record)
+		rewritten, err := json.Marshal(record)
+		require.NoError(t, err)
+		return strings.Replace(exported, line, string(rewritten), 1)
+	}
+	t.Fatal("photo technical metadata projection not found")
+	return ""
+}
+
+func assertPhotoTechnicalImportRolledBack(t *testing.T, s *Store) {
+	t.Helper()
+	ctx := t.Context()
+	var nodes, generations, projections int
+	require.NoError(t, s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM nodes`).Scan(&nodes))
+	require.NoError(t, s.db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM source_metadata_generations`).Scan(&generations))
+	require.NoError(t, s.db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM photo_technical_metadata`).Scan(&projections))
+	assert.Equal(t, 1, nodes)
+	assert.Zero(t, generations)
+	assert.Zero(t, projections)
 }
 
 func TestPhotoTechnicalMetadataBackupScope(t *testing.T) {
