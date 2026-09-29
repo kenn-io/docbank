@@ -10864,7 +10864,6 @@ components:
         candidates:
           items:
             $ref: "#/components/schemas/PhotoImportCandidate"
-          maxItems: 32
           type: array
         group_key:
           type: string
@@ -10899,10 +10898,6 @@ components:
         source_path:
           type: string
       required:
-        - asset_id
-        - file_id
-        - node_id
-        - revision
         - blob_hash
       type: object
       x-go-type: api.PhotoImportCandidate

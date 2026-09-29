@@ -3,6 +3,7 @@ package ingest
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -88,7 +89,8 @@ func TestPhotoImportAmbiguityWithExistingRaw(t *testing.T) {
 		choice = ambiguous.Run.Ambiguities[0].Candidates[1]
 	}
 	resolved, err := ing.ImportPhotoDirectory(t.Context(), root, "/photos", PhotoImportOptions{Choice: &store.PhotoImportChoice{
-		GroupKey: ambiguous.Run.Ambiguities[0].GroupKey, RawSourcePath: choice.SourcePath, RawBlobHash: choice.BlobHash,
+		GroupKey: ambiguous.Run.Ambiguities[0].GroupKey, RawAssetID: choice.AssetID,
+		RawFileID: choice.FileID, AssetRevision: choice.Revision,
 	}})
 	require.NoError(t, err)
 	assert.Equal(t, 2, resolved.Added)
@@ -122,6 +124,34 @@ func TestPhotoImportRawOnlyChoiceDoesNotReappear(t *testing.T) {
 	require.NoError(t, err)
 	assert.Zero(t, repeated.Ambiguous)
 	assert.Equal(t, 1, repeated.Skipped)
+}
+
+func TestPhotoImportChoiceRequiresVerifiableIdentity(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "IMG.ARW")
+	require.NoError(t, os.WriteFile(path, []byte("raw"), 0o600))
+	ing := newTestIngester(t)
+	_, err := ing.ImportPhotoDirectory(t.Context(), root, "/photos", PhotoImportOptions{Choice: &store.PhotoImportChoice{
+		GroupKey: store.PhotoImportGroupKey(path, store.PhotoSourceRAW), RawBlobHash: "unverified",
+	}})
+	require.ErrorContains(t, err, "source path and blob hash")
+}
+
+func TestPhotoImportAmbiguityLimitFailsRunExplicitly(t *testing.T) {
+	root := t.TempDir()
+	for i := range 90 {
+		folder := filepath.Join(root, fmt.Sprintf("camera-%03d-with-a-long-folder-name", i))
+		require.NoError(t, os.Mkdir(folder, 0o700))
+		for _, ext := range []string{"ARW", "DNG"} {
+			require.NoError(t, os.WriteFile(filepath.Join(folder, "IMG."+ext), []byte(ext), 0o600))
+		}
+	}
+	ing := newTestIngester(t)
+	report, err := ing.ImportPhotoDirectory(t.Context(), root, "/photos", PhotoImportOptions{})
+	require.ErrorContains(t, err, "ambiguity summary is too large")
+	assert.Equal(t, store.PhotoImportStateFailed, report.Run.State)
+	assert.Less(t, report.Run.CompletedGroups, report.Run.TotalGroups)
+	assert.Equal(t, report.Run.CompletedGroups, report.Run.AmbiguousGroups)
 }
 
 func nodeByName(t *testing.T, ing *Ingester, path string) store.Node {

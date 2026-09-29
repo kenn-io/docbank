@@ -4275,19 +4275,18 @@ export interface PhotoAsset {
 }
 
 export interface PhotoImportCandidate {
-  asset_id: string;
+  asset_id?: string;
   /** @pattern ^[0-9a-f]{64}$ */
   blob_hash: string;
-  file_id: string;
+  file_id?: string;
   /** @minimum 1 */
-  node_id: number;
+  node_id?: number;
   /** @minimum 1 */
-  revision: number;
+  revision?: number;
   source_path?: string;
 }
 
 export interface PhotoImportAmbiguity {
-  /** @maxItems 32 */
   candidates: PhotoImportCandidate[];
   group_key: string;
 }

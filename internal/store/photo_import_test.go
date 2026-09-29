@@ -229,6 +229,48 @@ func TestPhotoImportDedupObservation(t *testing.T) {
 	assert.Equal(t, 1, observations)
 }
 
+func TestPhotoImportDuplicateRawPairsWithEarlierJPEG(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := t.Context()
+	run, err := s.BeginIngest(ctx, "photo-import", t.TempDir())
+	require.NoError(t, err)
+	first := filepath.Join(t.TempDir(), "first")
+	second := filepath.Join(t.TempDir(), "second")
+	raw := photoImportTestMember(filepath.Join(first, "IMG.ARW"), PhotoRoleRAW, fakeHash("same-raw"), "image/x-sony-arw")
+	jpeg := photoImportTestMember(filepath.Join(second, "IMG.JPG"), PhotoRoleImage, fakeHash("same-jpg"), "image/jpeg")
+	_, err = s.IngestPhotoGroup(ctx, run, photoImportTestGroup(raw))
+	require.NoError(t, err)
+	jpegResult, err := s.IngestPhotoGroup(ctx, run, photoImportTestGroup(jpeg))
+	require.NoError(t, err)
+	duplicate := photoImportTestMember(filepath.Join(second, "IMG.ARW"), PhotoRoleRAW, raw.BlobHash, raw.MediaType)
+	paired, err := s.IngestPhotoGroup(ctx, run, photoImportTestGroup(duplicate))
+	require.NoError(t, err)
+	assert.NotEqual(t, jpegResult.Asset.ID, paired.Asset.ID)
+	assert.Len(t, paired.Asset.Files, 2)
+	oldJPEG, err := s.PhotoAssetByID(ctx, jpegResult.Asset.ID)
+	require.NoError(t, err)
+	assert.Empty(t, oldJPEG.Files)
+}
+
+func TestPhotoImportVideoWithSameNameJPEG(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := t.Context()
+	run, err := s.BeginIngest(ctx, "photo-import", t.TempDir())
+	require.NoError(t, err)
+	root := t.TempDir()
+	jpeg := photoImportTestMember(filepath.Join(root, "IMG.JPG"), PhotoRoleImage, fakeHash("jpg"), "image/jpeg")
+	image, err := s.IngestPhotoGroup(ctx, run, photoImportTestGroup(jpeg))
+	require.NoError(t, err)
+	video := photoImportTestMember(filepath.Join(root, "IMG.MOV"), PhotoRoleVideo, fakeHash("mov"), "video/quicktime")
+	clip, err := s.IngestPhotoGroup(ctx, run, photoImportTestGroup(video))
+	require.NoError(t, err)
+	assert.NotEqual(t, image.Asset.ID, clip.Asset.ID)
+	assert.Equal(t, PhotoKindVideo, clip.Asset.Kind)
+	assert.Len(t, clip.Asset.Files, 1)
+}
+
 func TestPhotoImportSidecarDedupStaysWithinSourceGroup(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)

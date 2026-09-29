@@ -2,6 +2,7 @@ package api_test
 
 import (
 	"bytes"
+	"context"
 	"encoding/json/v2"
 	"net/http"
 	"net/http/httptest"
@@ -14,6 +15,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/internal/api"
+	"go.kenn.io/docbank/internal/ingest"
 	"go.kenn.io/docbank/internal/store"
 )
 
@@ -65,6 +67,29 @@ func TestPhotoImportRoutes(t *testing.T) {
 	remoteRequest.Header.Set("X-Api-Key", testAPIKey)
 	catalog.Server.Handler().ServeHTTP(remote, remoteRequest)
 	assert.Equal(t, http.StatusForbidden, remote.Code)
+}
+
+func TestPhotoImportChoiceAndUncommittedCandidateRoute(t *testing.T) {
+	ts, catalog := newTestServer(t, nil)
+	root := filepath.Join(t.TempDir(), "camera")
+	invalid := api.PhotoImportStartRequest{SourceRoot: root, Destination: "/photos", Choice: &api.PhotoImportChoice{
+		GroupKey: "group", RawBlobHash: strings.Repeat("a", 64),
+	}}
+	response, body := do(t, ts, http.MethodPost, "/api/v1/photos/imports", nil, invalid)
+	assert.Equal(t, http.StatusUnprocessableEntity, response.StatusCode, body)
+
+	run, err := catalog.StartPhotoImportRun(t.Context(), root, "/photos", 1)
+	require.NoError(t, err)
+	ambiguity := store.PhotoImportAmbiguity{GroupKey: "group", Candidates: []store.PhotoImportCandidate{{
+		SourcePath: filepath.Join(root, "IMG.ARW"), BlobHash: strings.Repeat("a", 64),
+	}}}
+	_, err = catalog.UpdatePhotoImportProgress(t.Context(), run.ID, 0, 0, 0, 1, &ambiguity)
+	require.NoError(t, err)
+	response, body = do(t, ts, http.MethodGet, "/api/v1/photos/imports/"+run.ID, nil, nil)
+	require.Equal(t, http.StatusOK, response.StatusCode, body)
+	assert.NotContains(t, body, `"asset_id"`)
+	assert.NotContains(t, body, `"file_id"`)
+	assert.Contains(t, body, `"source_path"`)
 }
 
 func TestPhotoImportCancelRetriesStaleRevision(t *testing.T) {
@@ -122,6 +147,10 @@ func TestPhotoImportBrowserRedactsRunAndAllowsOnlyReadCancel(t *testing.T) {
 }
 
 func TestPhotoImportGateAndActivity(t *testing.T) {
+	_, catalog := newTestServer(t, nil)
+	root := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(root, "IMG.ARW"), []byte("raw"), 0o600))
+	importer := &ingest.Ingester{Store: catalog.Store, Blobs: catalog.Blobs}
 	gate := api.NewOperationGate()
 	tracker := api.NewActivityTracker()
 	entered := make(chan struct{})
@@ -135,21 +164,36 @@ func TestPhotoImportGateAndActivity(t *testing.T) {
 		})
 	}()
 	<-entered
-
-	tracker.Begin()
+	ctx, cancel := context.WithCancel(t.Context())
 	mutationDone := make(chan error, 1)
 	go func() {
-		mutationDone <- gate.MutateContext(t.Context(), func() error { return nil })
+		_, err := importer.ImportPhotoDirectory(ctx, root, "/photos", ingest.PhotoImportOptions{
+			Mutate: gate.MutateContext, ActivityBegin: tracker.Begin, ActivityEnd: tracker.End,
+		})
+		mutationDone <- err
 	}()
-	assert.Zero(t, tracker.IdleFor())
 	select {
 	case err := <-mutationDone:
-		t.Fatalf("mutation crossed maintenance gate: %v", err)
+		t.Fatalf("import crossed maintenance gate: %v", err)
 	default:
 	}
+	var before bytes.Buffer
+	require.NoError(t, catalog.ExportMetadata(t.Context(), &before))
+	assert.NotContains(t, before.String(), "IMG.ARW")
+	cancel()
 	close(release)
 	require.NoError(t, <-maintenanceDone)
-	require.NoError(t, <-mutationDone)
-	tracker.End()
+	require.ErrorIs(t, <-mutationDone, context.Canceled)
+	_, err := catalog.NodeByPath(t.Context(), "/photos/IMG.ARW")
+	require.ErrorIs(t, err, store.ErrNotFound)
+
+	report, err := importer.ImportPhotoDirectory(t.Context(), root, "/photos", ingest.PhotoImportOptions{
+		Mutate: gate.MutateContext, ActivityBegin: tracker.Begin, ActivityEnd: tracker.End,
+	})
+	require.NoError(t, err)
+	assert.Equal(t, 1, report.Added)
+	var after bytes.Buffer
+	require.NoError(t, catalog.ExportMetadata(t.Context(), &after))
+	assert.Contains(t, after.String(), "IMG.ARW")
 	assert.GreaterOrEqual(t, tracker.IdleFor(), time.Duration(0))
 }

@@ -44,8 +44,8 @@ func registerPhotoImportRoutes(api huma.API, d Deps, g *gate) {
 			return nil, NewError(http.StatusUnprocessableEntity, "validation", "destination must be an absolute vault path")
 		}
 		if choice := in.Body.Choice; choice != nil {
-			if choice.GroupKey == "" || choice.RawAssetID == "" && choice.RawFileID == "" && choice.RawSourcePath == "" && choice.RawBlobHash == "" {
-				return nil, NewError(http.StatusUnprocessableEntity, "validation", "photo import choices need a group key and RAW identity")
+			if err := store.ValidatePhotoImportChoice(fromStorePhotoImportChoice(choice)); err != nil {
+				return nil, NewError(http.StatusUnprocessableEntity, "validation", err.Error())
 			}
 		}
 		var run store.PhotoImportRun

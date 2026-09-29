@@ -270,6 +270,26 @@ func choiceMatchesCandidate(choice *PhotoImportChoice, candidate PhotoImportCand
 	return choice.RawAssetID != "" || choice.RawFileID != "" || choice.RawSourcePath != "" || choice.RawBlobHash != ""
 }
 
+// ValidatePhotoImportChoice accepts the two identities an import can verify.
+func ValidatePhotoImportChoice(choice *PhotoImportChoice) error {
+	if choice == nil {
+		return nil
+	}
+	if choice.GroupKey == "" {
+		return errors.New("photo import choice needs a group key")
+	}
+	if choice.RawAssetID != "" || choice.RawFileID != "" || choice.AssetRevision != 0 {
+		if choice.RawAssetID == "" || choice.RawFileID == "" || choice.AssetRevision < 1 {
+			return errors.New("existing RAW choice needs asset ID, file ID, and revision")
+		}
+		return nil
+	}
+	if choice.RawSourcePath == "" || choice.RawBlobHash == "" {
+		return errors.New("new RAW choice needs source path and blob hash")
+	}
+	return nil
+}
+
 func photoImportMemberMatchesCandidate(member PhotoImportMember, candidate PhotoImportCandidate) bool {
 	if member.OriginalPath != "" && candidate.SourcePath != "" {
 		return filepath.Clean(member.OriginalPath) == filepath.Clean(candidate.SourcePath)
@@ -532,6 +552,9 @@ func (s *Store) IngestPhotoGroup(ctx context.Context, run IngestRun, group Photo
 	if len(group.Members) == 0 {
 		return result, errors.New("photo import group has no members")
 	}
+	if err := ValidatePhotoImportChoice(group.Choice); err != nil {
+		return result, err
+	}
 	group.Key = photoImportGroupKey(group)
 	if group.Key == "" {
 		return result, errors.New("photo import group has no source identity")
@@ -559,17 +582,16 @@ func (s *Store) IngestPhotoGroup(ctx context.Context, run IngestRun, group Photo
 			return ErrAuditMutationUnsupported
 		}
 		var candidates []photoImportCandidateRow
-		if !group.Isolated {
-			var candidateErr error
-			candidates, candidateErr = s.photoImportCandidatesTx(ctx, tx, group.SourceFolder, group.Stem)
-			if candidateErr != nil {
-				return candidateErr
+		for _, member := range group.Members {
+			role, _, _, roleErr := photoImportMemberRole(member)
+			if roleErr != nil {
+				return roleErr
 			}
-		}
-		var rawCandidates []PhotoImportCandidate
-		for _, candidate := range candidates {
-			if candidate.Role == PhotoRoleRAW {
-				rawCandidates = append(rawCandidates, candidate.Candidate)
+			if role == PhotoRoleVideo {
+				if len(group.Members) != 1 {
+					return errors.New("video import must have one member")
+				}
+				group.Isolated = true
 			}
 		}
 		var rawMembers []PhotoImportMember
@@ -582,11 +604,6 @@ func (s *Store) IngestPhotoGroup(ctx context.Context, run IngestRun, group Photo
 				rawMembers = append(rawMembers, member)
 			}
 		}
-		effectiveChoice := group.Choice
-		if effectiveChoice == nil {
-			effectiveChoice = photoImportResolvedChoice(candidates, group.Members)
-		}
-
 		var nodes []Node
 		var roles []string
 		var kinds []string
@@ -632,9 +649,22 @@ func (s *Store) IngestPhotoGroup(ctx context.Context, run IngestRun, group Photo
 			kinds = append(kinds, kind)
 		}
 		result.Nodes = nodes
-		allOwned := true
+		if !group.Isolated {
+			candidates, err = s.photoImportCandidatesTx(ctx, tx, group.SourceFolder, group.Stem)
+			if err != nil {
+				return err
+			}
+		}
+		var rawCandidates []PhotoImportCandidate
+		rawAssets := make(map[string]struct{})
+		for _, candidate := range candidates {
+			if candidate.Role == PhotoRoleRAW {
+				rawCandidates = append(rawCandidates, candidate.Candidate)
+				rawAssets[candidate.Candidate.AssetID] = struct{}{}
+			}
+		}
+		allOwned := allExisting
 		var ownedAssetID string
-		ownedCounts := make(map[string]int)
 		for _, node := range nodes {
 			assetID, owned, ownerErr := photoAssetOwningNodeTx(ctx, tx, node.ID)
 			if ownerErr != nil {
@@ -647,34 +677,56 @@ func (s *Store) IngestPhotoGroup(ctx context.Context, run IngestRun, group Photo
 			if ownedAssetID == "" {
 				ownedAssetID = assetID
 			}
-			ownedCounts[assetID]++
 		}
-		completeAsset := false
-		for _, count := range ownedCounts {
-			if count > 1 {
-				completeAsset = true
-				break
+		if allOwned && len(rawAssets) > 0 {
+			for _, candidate := range candidates {
+				if candidate.Role == PhotoRoleImage {
+					if _, paired := rawAssets[candidate.Candidate.AssetID]; !paired {
+						allOwned = false
+						break
+					}
+				}
 			}
 		}
-		rawOnly := len(roles) > 0
-		for _, role := range roles {
-			if role != PhotoRoleRAW {
-				rawOnly = false
-				break
+		if allOwned {
+			if group.Choice != nil {
+				chosenAssetID := ""
+				for _, candidate := range rawCandidates {
+					if choiceMatchesCandidate(group.Choice, candidate) {
+						if err := validatePhotoImportChoice(group.Choice, candidate); err != nil {
+							return err
+						}
+						if chosenAssetID != "" && chosenAssetID != candidate.AssetID {
+							return fmt.Errorf("photo import choice matches multiple RAWs: %w", ErrPhotoImportAmbiguous)
+						}
+						chosenAssetID = candidate.AssetID
+					}
+				}
+				if chosenAssetID == "" {
+					return fmt.Errorf("photo import choice does not identify a RAW: %w", ErrPhotoImportAmbiguous)
+				}
+				for _, candidate := range candidates {
+					if candidate.Role == PhotoRoleImage && candidate.Candidate.AssetID != chosenAssetID {
+						allOwned = false
+						break
+					}
+				}
 			}
 		}
-		if allExisting && allOwned && (completeAsset || rawOnly) && ownedAssetID != "" {
+		if allOwned {
 			result.Asset, err = photoAssetByIDQuery(ctx, tx, ownedAssetID)
 			if err != nil {
 				return err
 			}
 			result.Skipped = true
 			if group.RunID != "" {
-				if err := updatePhotoImportRunTx(ctx, tx, group.RunID, 0, 1, 0, 0, nil); err != nil {
-					return err
-				}
+				return updatePhotoImportRunTx(ctx, tx, group.RunID, 0, 1, 0, 0, nil)
 			}
 			return nil
+		}
+		effectiveChoice := group.Choice
+		if effectiveChoice == nil {
+			effectiveChoice = photoImportResolvedChoice(candidates, group.Members)
 		}
 		allRawCandidates := append([]PhotoImportCandidate(nil), rawCandidates...)
 		for _, member := range rawMembers {
@@ -717,13 +769,6 @@ func (s *Store) IngestPhotoGroup(ctx context.Context, run IngestRun, group Photo
 				}
 			} else if !choiceMatchesCandidate(effectiveChoice, chosen) {
 				return fmt.Errorf("photo import choice does not identify incoming RAW: %w", ErrPhotoImportAmbiguous)
-			}
-		}
-		if !group.Isolated {
-			var candidateErr error
-			candidates, candidateErr = s.photoImportCandidatesTx(ctx, tx, group.SourceFolder, group.Stem)
-			if candidateErr != nil {
-				return candidateErr
 			}
 		}
 		candidates = photoImportCandidatesForIncomingChoice(candidates, group.Members, effectiveChoice)

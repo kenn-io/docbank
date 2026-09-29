@@ -18,17 +18,17 @@ type PhotoImportChoice struct {
 }
 
 type PhotoImportCandidate struct {
-	AssetID    string `json:"asset_id" format:"uuid"`
-	FileID     string `json:"file_id" format:"uuid"`
-	NodeID     int64  `json:"node_id" minimum:"1"`
-	Revision   int64  `json:"revision" minimum:"1"`
+	AssetID    string `json:"asset_id,omitzero" format:"uuid"`
+	FileID     string `json:"file_id,omitzero" format:"uuid"`
+	NodeID     int64  `json:"node_id,omitzero" minimum:"1"`
+	Revision   int64  `json:"revision,omitzero" minimum:"1"`
 	SourcePath string `json:"source_path,omitzero"`
 	BlobHash   string `json:"blob_hash" pattern:"^[0-9a-f]{64}$"`
 }
 
 type PhotoImportAmbiguity struct {
 	GroupKey   string                 `json:"group_key"`
-	Candidates []PhotoImportCandidate `json:"candidates" maxItems:"32"`
+	Candidates []PhotoImportCandidate `json:"candidates"`
 }
 
 type PhotoImportRun struct {
