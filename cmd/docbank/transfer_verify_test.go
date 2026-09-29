@@ -66,6 +66,10 @@ func TestTransferVerifyReportsSpoolFailureAsRuntimeError(t *testing.T) {
 	for _, variable := range []string{"TMPDIR", "TMP", "TEMP"} {
 		t.Setenv(variable, missing)
 	}
+	if os.TempDir() != missing {
+		// Windows ignores TMP and TEMP for SYSTEM processes (GetTempPath2), so the spool can't be pointed at a missing directory.
+		t.Skipf("temp directory %q ignores TMP/TEMP overrides", os.TempDir())
+	}
 	var stdout, stderr bytes.Buffer
 	resetFlags(rootCmd)
 	code := runProcess([]string{"transfer", "verify", path}, &stdout, &stderr)
