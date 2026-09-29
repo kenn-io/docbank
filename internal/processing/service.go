@@ -137,6 +137,16 @@ type Service struct {
 	mediaTokenKey       [32]byte
 }
 
+// requestPrincipal binds provider consent to the authenticated photo owner
+// when the request carries one. Detached worker contexts intentionally fall
+// back to the configured application principal.
+func (service *Service) requestPrincipal(ctx context.Context) string {
+	if ownerID, ok := store.PhotoOwnerFromContext(ctx); ok {
+		return "owner:" + ownerID
+	}
+	return service.principal
+}
+
 type mediaOriginObservation struct {
 	Evidence MediaOriginEvidence
 	ProbedAt time.Time
@@ -637,7 +647,8 @@ func (service *Service) Plan(ctx context.Context, selector Selector) (Plan, erro
 	// Current grants are advisory; execution checks them again. Grant changes
 	// do not change the reviewed source, disclosure, or plan fingerprint.
 	plan.ConsentState = "active"
-	for _, request := range service.profileConsentRequests(profile) {
+	principal := service.requestPrincipal(ctx)
+	for _, request := range service.profileConsentRequests(profile, principal, service.scope) {
 		_, err := service.catalog.AuthorizeProviderOperation(ctx, request)
 		switch {
 		case err == nil:
@@ -770,12 +781,12 @@ func (service *Service) StartWithProgress(ctx context.Context, request StartRequ
 	if request.PlanFingerprint == "" || request.PlanFingerprint != plan.Fingerprint {
 		return Job{}, ErrPlanChanged
 	}
+	principal, scope := service.requestPrincipal(ctx), service.scope
 	if request.Consent {
-		if err := service.grantProfileConsent(ctx, profile, nil); err != nil {
+		if err := service.grantProfileConsent(ctx, profile, nil, principal, scope); err != nil {
 			return Job{}, err
 		}
 	}
-	principal, scope := service.principal, service.scope
 	processingJobID, renditionJobID, attachmentID, consentSetGrantID := "", "", "", ""
 	announced := Job{}
 	notify := func(job Job) {
@@ -799,14 +810,14 @@ func (service *Service) StartWithProgress(ctx context.Context, request StartRequ
 		var renditionRun renditionRun
 		renditionRun, err = service.runRendition(ctx, node, version, request.Selector.Profile, profile, principal, scope, renditionProgress)
 		if announced.ID != "" {
-			ctx = service.lifecycle
+			ctx = store.WithPhotoOwnerPrincipal(service.lifecycle, principal)
 		}
 		if err != nil {
 			if errors.Is(err, ErrConsentRequired) {
 				// Durable job failures record the consent category, not its original
 				// cause. Report this caller's current authority; a renewed grant must
 				// not turn previously denied work into a successful result.
-				_, consentErr := service.catalog.AuthorizeProviderOperation(ctx, service.renditionConsentRequest(profile))
+				_, consentErr := service.catalog.AuthorizeProviderOperation(ctx, service.renditionConsentRequest(profile, principal, scope))
 				if consentErr != nil {
 					err = consentErr
 				}
@@ -870,7 +881,7 @@ func (service *Service) GrantConsent(ctx context.Context, request ConsentGrantRe
 	if request.ExpiresAt != nil && !request.ExpiresAt.After(service.clock()) {
 		return ConsentGrant{}, fmt.Errorf("%w: expiry must be in the future", ErrInvalidConsentExpiry)
 	}
-	if err := service.grantProfileConsent(ctx, profile, request.ExpiresAt); err != nil {
+	if err := service.grantProfileConsent(ctx, profile, request.ExpiresAt, service.requestPrincipal(ctx), service.scope); err != nil {
 		return ConsentGrant{}, err
 	}
 	return ConsentGrant{PlanFingerprint: plan.Fingerprint, ProfileFingerprint: profile.record.Fingerprint,
@@ -881,7 +892,7 @@ func (service *Service) RevokeConsent(ctx context.Context) (ConsentRevocation, e
 	var result ConsentRevocation
 	err := service.gate.MutateContext(ctx, func() error {
 		revocation, err := service.catalog.RevokeConsent(ctx, store.ProcessingConsentRevocationRequest{
-			Principal: service.principal, Scope: service.scope})
+			Principal: service.requestPrincipal(ctx), Scope: service.scope})
 		result.RevokedAt = revocation.RevokedAt
 		return err
 	})
@@ -1004,23 +1015,30 @@ func normalizeDerivativePurgeRequest(request DerivativePurgeRequest) (Derivative
 	return request, err
 }
 
-func (service *Service) renditionConsentRequest(profile configuredProfile) store.ProviderOperationAuthorizationRequest {
+func (service *Service) renditionConsentRequest(profile configuredProfile, identity ...string) store.ProviderOperationAuthorizationRequest {
+	principal, scope := service.principal, service.scope
+	if len(identity) > 0 {
+		principal = identity[0]
+	}
+	if len(identity) > 1 {
+		scope = identity[1]
+	}
 	return store.ProviderOperationAuthorizationRequest{
-		Principal: service.principal, Scope: service.scope, ProfileFingerprint: profile.record.Fingerprint,
+		Principal: principal, Scope: scope, ProfileFingerprint: profile.record.Fingerprint,
 		DisclosureFingerprint:   profile.record.RenditionDisclosureFingerprint,
 		InputClasses:            []string{string(document.RenditionInputOriginalFile)},
 		RetainedArtifactClasses: retainedRenditionClasses(profile.portable),
 	}
 }
 
-func (service *Service) profileConsentRequests(profile configuredProfile) []store.ProviderOperationAuthorizationRequest {
+func (service *Service) profileConsentRequests(profile configuredProfile, principal, scope string) []store.ProviderOperationAuthorizationRequest {
 	var requests []store.ProviderOperationAuthorizationRequest
 	if profile.portable.Rendition != nil {
-		requests = append(requests, service.renditionConsentRequest(profile))
+		requests = append(requests, service.renditionConsentRequest(profile, principal, scope))
 	}
 	for _, binding := range profile.portable.Embeddings {
 		request := store.ProviderOperationAuthorizationRequest{
-			Principal: service.principal, Scope: service.scope, ProfileFingerprint: profile.record.Fingerprint,
+			Principal: principal, Scope: scope, ProfileFingerprint: profile.record.Fingerprint,
 			DisclosureFingerprint: binding.DisclosureFingerprint, InputClasses: []string{string(binding.InputKind)},
 			RetainedArtifactClasses: []string{"embedding_vector_set"},
 		}
@@ -1033,7 +1051,7 @@ func (service *Service) profileConsentRequests(profile configuredProfile) []stor
 	}
 	if profile.rerankingProvider != nil {
 		requests = append(requests, store.ProviderOperationAuthorizationRequest{
-			Principal: service.principal, Scope: service.scope,
+			Principal: principal, Scope: scope,
 			ProfileFingerprint:    profile.record.Fingerprint,
 			DisclosureFingerprint: profile.rerankingDisclosure.Deployment,
 			InputClasses:          []string{string(retrieval.ProviderInputQueryAndExcerpt)},
@@ -1042,9 +1060,9 @@ func (service *Service) profileConsentRequests(profile configuredProfile) []stor
 	return requests
 }
 
-func (service *Service) grantProfileConsent(ctx context.Context, profile configuredProfile, expiresAt *time.Time) error {
+func (service *Service) grantProfileConsent(ctx context.Context, profile configuredProfile, expiresAt *time.Time, principal, scope string) error {
 	return service.gate.MutateContext(ctx, func() error {
-		requests := service.profileConsentRequests(profile)
+		requests := service.profileConsentRequests(profile, principal, scope)
 		grants := make([]store.ProcessingConsentGrantRequest, len(requests))
 		for index, request := range requests {
 			grants[index] = store.ProcessingConsentGrantRequest{
@@ -1066,7 +1084,7 @@ func (service *Service) runRendition(ctx context.Context, node store.Node, versi
 	if _, supplied := suppliedInputKind(profileName); supplied {
 		var err error
 		source.sourceID, source.sourceVersionID, err = service.catalog.MediaSourceBindingForContentVersion(
-			ctx, service.principal, version.ID)
+			ctx, service.requestPrincipal(ctx), version.ID)
 		if err != nil {
 			return renditionRun{}, err
 		}
@@ -1087,7 +1105,7 @@ func (service *Service) runRendition(ctx context.Context, node store.Node, versi
 	}
 	if onEnqueued != nil {
 		onEnqueued(renditionRun{jobID: job.ID, waiterID: waiter.ID, attachmentID: waiter.AttachmentID})
-		ctx = service.lifecycle
+		ctx = store.WithPhotoOwnerPrincipal(service.lifecycle, principal)
 	}
 	return service.runRenditionJob(ctx, job.ID, waiter.ID)
 }
@@ -1285,13 +1303,14 @@ func (service *Service) renditionFromView(ctx context.Context, node store.Node, 
 		return Rendition{}, err
 	}
 	if inputBinding != "" {
+		principal := service.requestPrincipal(ctx)
 		sourceID, sourceVersionID, bindingErr := service.catalog.MediaSourceBindingForContentVersion(
-			ctx, service.principal, contentVersionID)
+			ctx, principal, contentVersionID)
 		if bindingErr != nil {
 			return Rendition{}, bindingErr
 		}
 		visible, bindingErr := service.catalog.MediaInputBindingVisible(
-			ctx, service.principal, sourceID, sourceVersionID, inputBinding)
+			ctx, principal, sourceID, sourceVersionID, inputBinding)
 		if bindingErr != nil || !visible {
 			return Rendition{}, store.ErrNotFound
 		}
@@ -1411,7 +1430,7 @@ func (service *Service) Search(ctx context.Context, request SearchRequest) (retr
 	if err != nil {
 		return retrieval.Report{}, err
 	}
-	prepared, err := service.prepareSearch(request, profile)
+	prepared, err := service.prepareSearch(request, profile, service.requestPrincipal(ctx))
 	if err != nil {
 		return retrieval.Report{}, err
 	}
@@ -1421,7 +1440,7 @@ func (service *Service) Search(ctx context.Context, request SearchRequest) (retr
 			return retrieval.Report{}, err
 		}
 		_, fence, err := service.catalog.BeginProviderEgress(ctx, store.ProviderOperationAuthorizationRequest{
-			Principal: service.principal, Scope: service.scope,
+			Principal: service.requestPrincipal(ctx), Scope: service.scope,
 			ProfileFingerprint: profile.record.Fingerprint, DisclosureFingerprint: binding.DisclosureFingerprint,
 			InputClasses: []string{"query_text"}, RetainedArtifactClasses: []string{},
 		})
@@ -1450,7 +1469,7 @@ func (service *Service) ValidateSearch(ctx context.Context, request SearchReques
 	if !ok {
 		return ErrProfileNotConfigured
 	}
-	_, err := service.prepareSearch(request, profile)
+	_, err := service.prepareSearch(request, profile, service.principal)
 	return err
 }
 
@@ -1464,7 +1483,7 @@ type preparedSearch struct {
 }
 
 func (service *Service) prepareSearch(
-	request SearchRequest, profile configuredProfile,
+	request SearchRequest, profile configuredProfile, principal string,
 ) (preparedSearch, error) {
 	if strings.TrimSpace(request.Query) == "" {
 		return preparedSearch{}, store.ErrSearchQueryRequired
@@ -1501,7 +1520,7 @@ func (service *Service) prepareSearch(
 	}
 	var rerankingAuth *rerankingAuthorizer
 	if request.Rerank {
-		rerankingAuth = &rerankingAuthorizer{catalog: service.catalog, principal: service.principal,
+		rerankingAuth = &rerankingAuthorizer{catalog: service.catalog, principal: principal,
 			scope: service.scope, profileFingerprint: profile.record.Fingerprint,
 			disclosureFingerprint: profile.rerankingDisclosure.Deployment}
 		searcherConfig.Reranking = retrieval.RerankingConfig{Enabled: true,
@@ -1580,7 +1599,7 @@ func (service *Service) runEmbeddings(ctx context.Context, version store.Content
 		jobIDs = append(jobIDs, job.ID)
 		if len(jobIDs) == 1 && onEnqueued != nil {
 			onEnqueued(slices.Clone(jobIDs))
-			ctx = service.lifecycle
+			ctx = store.WithPhotoOwnerPrincipal(service.lifecycle, principal)
 		}
 	}
 	for index, jobID := range jobIDs {

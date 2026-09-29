@@ -86,7 +86,47 @@ func (s *Store) ExportPlan(ctx context.Context, owner, id string) (bundle.Plan, 
 	if p.Fingerprint == "" {
 		return p, bundle.ErrConflict
 	}
+	if err := s.CheckExportPlanPhotoVisibility(ctx, id); err != nil {
+		return bundle.Plan{}, err
+	}
 	return p, nil
+}
+
+// CheckExportPlanPhotoVisibility revalidates every exact member before a
+// frozen export projection or archive can be served.
+func (s *Store) CheckExportPlanPhotoVisibility(ctx context.Context, id string) error {
+	var raw []byte
+	if err := s.db.QueryRowContext(ctx, `SELECT canonical_json FROM export_plans WHERE id=?`, id).Scan(&raw); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrNotFound
+		}
+		return err
+	}
+	var plan bundle.Plan
+	if err := json.Unmarshal(raw, &plan, json.RejectUnknownMembers(true)); err != nil {
+		return err
+	}
+	ctx = WithPhotoOwnerBinding(ctx, plan.Source.PhotoOwnerID, plan.Source.PhotoOwnerBound, plan.Source.PhotoNoOwner)
+	rows, err := s.db.QueryContext(ctx, `SELECT m.node_id,m.version_id FROM export_members m
+		JOIN export_plans p ON p.source_id=m.source_id WHERE p.id=? ORDER BY m.node_id,m.version_id`, id)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = rows.Close() }()
+	for rows.Next() {
+		var nodeID int64
+		var versionID string
+		if err := rows.Scan(&nodeID, &versionID); err != nil {
+			return err
+		}
+		if err := photoNodeVisibilityCheckTx(ctx, s.db, nodeID); err != nil {
+			return err
+		}
+		if err := photoVersionVisibilityCheckTx(ctx, s.db, versionID); err != nil {
+			return err
+		}
+	}
+	return rows.Err()
 }
 
 func (s *Store) CreateExportPlan(ctx context.Context, owner string, r bundle.PlanRequest) (bundle.Plan, error) {
@@ -389,6 +429,12 @@ func exportPlanFingerprint(ctx context.Context, q metadataQuerier, p bundle.Plan
 }
 
 func resolveExportDocument(ctx context.Context, q metadataQuerier, m bundle.Member, policies []bundle.RolePolicy, generation string) (bundle.Document, error) {
+	if err := photoNodeVisibilityCheckTx(ctx, q, m.NodeID); err != nil {
+		return bundle.Document{}, err
+	}
+	if err := photoVersionVisibilityCheckTx(ctx, q, m.VersionID); err != nil {
+		return bundle.Document{}, err
+	}
 	d := bundle.Document{Member: m, Roles: []bundle.Role{}}
 	var revision int64
 	var trash sql.NullString

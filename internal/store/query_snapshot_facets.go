@@ -133,6 +133,9 @@ func materializeSnapshotFacet(
 	if err != nil {
 		return SnapshotFacet{}, err
 	}
+	if err := applyPhotoVisibilityPopulation(ctx, q, &population); err != nil {
+		return SnapshotFacet{}, err
+	}
 	statement, args, err := bindQueryPopulation(population, coverage, generationID)
 	if err != nil {
 		return SnapshotFacet{}, err
@@ -140,7 +143,12 @@ func materializeSnapshotFacet(
 	ctes, join, key, label := "", "", `''`, `''`
 	switch dimension {
 	case "collections":
-		ctes = `, ` + CollectionMembershipCTE
+		membershipCTE, membershipArgs, membershipErr := scopedCollectionMembershipCTE(ctx, q)
+		if membershipErr != nil {
+			return SnapshotFacet{}, membershipErr
+		}
+		ctes = `, ` + membershipCTE
+		args = append(args, membershipArgs...)
 		join = `LEFT JOIN collection_members cm ON cm.node_id=n.id LEFT JOIN collection_labels cl ON cl.ingest_id=cm.ingest_id`
 		key, label = `COALESCE(cm.ingest_id,'')`, `COALESCE(cl.label,cm.ingest_id,'')`
 	case snapshotFacetTags:
@@ -152,7 +160,12 @@ func materializeSnapshotFacet(
 		key, label = `pc.state`, `pc.state`
 		args = append(args, coverage.ProfileFingerprint, generationID)
 	case "duplicates":
-		ctes = `, ` + CurrentContentMembershipCTE
+		membershipCTE, membershipArgs, membershipErr := scopedCurrentContentMembershipCTE(ctx, q)
+		if membershipErr != nil {
+			return SnapshotFacet{}, membershipErr
+		}
+		ctes = `, ` + membershipCTE
+		args = append(args, membershipArgs...)
 		key = `CASE WHEN EXISTS(SELECT 1 FROM current_content_members peer WHERE peer.blob_hash=cv.blob_hash AND peer.node_id<>n.id) THEN 'duplicate' ELSE 'unique' END`
 		label = key
 	}

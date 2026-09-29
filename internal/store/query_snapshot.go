@@ -302,6 +302,9 @@ func materializeSnapshotRows(
 	if err != nil {
 		return err
 	}
+	if err := applyPhotoVisibilityPopulation(ctx, q, &population); err != nil {
+		return err
+	}
 	statement, args, err := bindQueryPopulation(population, coverage, generationID)
 	if err != nil {
 		return err

@@ -41,6 +41,20 @@ func registerAuditRoutes(
 			return nil, NewError(http.StatusUnprocessableEntity, "validation",
 				fmt.Sprintf("path %q must be absolute (start with /)", in.Body.Path))
 		}
+		if in.Body.Path != "" {
+			node, err := d.Store.NodeByPath(ctx, in.Body.Path)
+			if err != nil {
+				return nil, FromStoreError(err)
+			}
+			if err := d.Store.CheckPhotoVisibilityForNode(ctx, node.ID); err != nil {
+				return nil, FromStoreError(err)
+			}
+		}
+		if in.Body.NodeID != 0 {
+			if err := d.Store.CheckPhotoVisibilityForNode(ctx, in.Body.NodeID); err != nil {
+				return nil, FromStoreError(err)
+			}
+		}
 		var label *string
 		if in.Body.AgentLabel != "" {
 			label = &in.Body.AgentLabel
@@ -124,8 +138,18 @@ func registerAuditRoutes(
 		var err error
 		switch {
 		case in.Path != "":
+			node, nodeErr := d.Store.NodeByPath(ctx, in.Path)
+			if nodeErr != nil {
+				return nil, FromStoreError(nodeErr)
+			}
+			if nodeErr = d.Store.CheckPhotoVisibilityForNode(ctx, node.ID); nodeErr != nil {
+				return nil, FromStoreError(nodeErr)
+			}
 			status, err = d.Store.AuditStatusPath(ctx, in.Path)
 		case in.NodeID != 0:
+			if err := d.Store.CheckPhotoVisibilityForNode(ctx, in.NodeID); err != nil {
+				return nil, FromStoreError(err)
+			}
 			status, err = d.Store.AuditStatus(ctx, &in.NodeID)
 		default:
 			status, err = d.Store.AuditStatus(ctx, nil)
@@ -226,6 +250,20 @@ func registerAuditRoutes(
 		if in.Path != "" && !strings.HasPrefix(in.Path, "/") {
 			return nil, NewError(http.StatusUnprocessableEntity, "validation",
 				fmt.Sprintf("path %q must be absolute (start with /)", in.Path))
+		}
+		if in.Path != "" {
+			node, nodeErr := d.Store.NodeByPath(ctx, in.Path)
+			if nodeErr != nil {
+				return nil, FromStoreError(nodeErr)
+			}
+			if nodeErr = d.Store.CheckPhotoVisibilityForNode(ctx, node.ID); nodeErr != nil {
+				return nil, FromStoreError(nodeErr)
+			}
+		}
+		if in.NodeID != 0 {
+			if err := d.Store.CheckPhotoVisibilityForNode(ctx, in.NodeID); err != nil {
+				return nil, FromStoreError(err)
+			}
 		}
 		var page store.AuditEventPage
 		var err error

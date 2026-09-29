@@ -2002,8 +2002,13 @@ func (s *Store) SearchPageWithOptions(
 		return s.searchFilterPage(ctx, limit, opts)
 	}
 	filterSQL, filterArgs := searchFilterSQL(opts)
+	visibilitySQL, visibilityArgs, err := photoNodeVisibilitySQL(ctx, s.db)
+	if err != nil {
+		return nil, false, err
+	}
 	nameArgs := []any{fq}
 	nameArgs = append(nameArgs, filterArgs...)
+	nameArgs = append(nameArgs, visibilityArgs...)
 	nameArgs = append(nameArgs, fq, limit+1)
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT `+nodeCols+`
@@ -2011,6 +2016,7 @@ func (s *Store) SearchPageWithOptions(
 		WHERE n.id IN (SELECT rowid FROM nodes_fts WHERE nodes_fts MATCH ?)
 		  AND n.trashed_at IS NULL
 		  `+filterSQL+`
+		  AND `+visibilitySQL+`
 		ORDER BY (SELECT rank FROM nodes_fts WHERE rowid = n.id AND nodes_fts MATCH ?),
 		         n.name, n.id
 		LIMIT ?`, nameArgs...)
@@ -2035,6 +2041,10 @@ func (s *Store) SearchPageWithOptions(
 	var contentHits []SearchHit
 	queryContent := func(queryer metadataQuerier, generationID string) error {
 		contentArgs := []any{fq}
+		contentVisibilitySQL, contentVisibilityArgs, visibilityErr := photoNodeVisibilitySQL(ctx, queryer)
+		if visibilityErr != nil {
+			return visibilityErr
+		}
 		contentQuery := `
 			WITH matched_blobs AS (
 			  SELECT blob_hash, MIN(rank) AS best_rank
@@ -2047,6 +2057,7 @@ func (s *Store) SearchPageWithOptions(
 			JOIN text_searchable_versions tsv ON tsv.version_id = cv.version_id
 			WHERE n.trashed_at IS NULL
 			  ` + filterSQL + `
+			  AND ` + contentVisibilitySQL + `
 			ORDER BY mb.best_rank, n.name, n.id
 			LIMIT ?`
 		if generationID != "" {
@@ -2072,11 +2083,13 @@ func (s *Store) SearchPageWithOptions(
 				JOIN matched_versions mv ON mv.version_id=cv.version_id
 				WHERE n.trashed_at IS NULL
 				  ` + filterSQL + `
+				  AND ` + contentVisibilitySQL + `
 				ORDER BY mv.best_rank,n.name,n.id
 				LIMIT ?`
 			contentArgs = append(contentArgs, generationID)
 		}
 		contentArgs = append(contentArgs, filterArgs...)
+		contentArgs = append(contentArgs, contentVisibilityArgs...)
 		contentArgs = append(contentArgs, remaining+len(nameHits)+1)
 		rows, err := queryer.QueryContext(ctx, contentQuery, contentArgs...)
 		if err != nil {
@@ -2185,6 +2198,11 @@ func (s *Store) searchFilterPage(
 	ctx context.Context, limit int, opts SearchOptions,
 ) ([]SearchHit, bool, error) {
 	filterSQL, args := searchFilterSQL(opts)
+	visibilitySQL, visibilityArgs, err := photoNodeVisibilitySQL(ctx, s.db)
+	if err != nil {
+		return nil, false, err
+	}
+	args = append(args, visibilityArgs...)
 	args = append(args, limit+1)
 	rows, err := s.db.QueryContext(ctx, `
 		WITH RECURSIVE page AS (
@@ -2192,6 +2210,7 @@ func (s *Store) searchFilterPage(
 			FROM `+nodeFrom+`
 			WHERE n.trashed_at IS NULL AND n.parent_id IS NOT NULL
 			  `+filterSQL+`
+			  AND `+visibilitySQL+`
 			ORDER BY n.modified_at DESC, n.name, n.id
 			LIMIT ?
 		), ancestry(node_id, id, parent_id, path) AS (

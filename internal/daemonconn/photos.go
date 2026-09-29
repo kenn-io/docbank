@@ -228,7 +228,7 @@ func (c *Connection) SetPhotoDisplay(ctx context.Context, assetID string, revisi
 
 func (c *Connection) PhotoSettings(ctx context.Context) (api.PhotoSettings, error) {
 	var response *http.Response
-	settings, err := c.apiWithResponse(&response).GetPhotoSettings(ctx)
+	settings, err := c.apiWithResponse(&response).GetPhotoSettings(ctx, &apiclient.GetPhotoSettingsRequestOptions{})
 	if err != nil {
 		return api.PhotoSettings{}, err
 	}

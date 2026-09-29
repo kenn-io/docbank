@@ -448,6 +448,7 @@ func (worker *RenditionWorker) runClaim(ctx context.Context,
 	if err != nil {
 		return true, worker.classifyAuthorityError(ctx, claim, err)
 	}
+	ctx = store.WithPhotoOwnerPrincipal(ctx, work.Principal)
 	claim.Phase = work.Job.Phase
 
 	switch work.Job.Phase {

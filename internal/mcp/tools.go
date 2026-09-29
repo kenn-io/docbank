@@ -143,6 +143,13 @@ var photoWriteToolDefinitions = []toolDefinition{
 	{name: "promote_photo_asset", title: "Promote photo asset", description: "Promote one file node into a photo asset.", schemas: promotePhotoNodeSchemas, write: true},
 }
 
+var photoOwnerToolDefinitions = []toolDefinition{
+	{name: "list_photo_owners", title: "List photo owners", description: "List durable photo owners.", schemas: listPhotoOwnersSchemas},
+	{name: "add_photo_owner", title: "Add photo owner", description: "Add one durable photo owner.", schemas: addPhotoOwnerSchemas, write: true},
+	{name: "rename_photo_owner", title: "Rename photo owner", description: "Rename one durable photo owner at an expected revision.", schemas: renamePhotoOwnerSchemas, write: true},
+	{name: "remove_photo_owner", title: "Remove photo owner", description: "Remove one unreferenced durable photo owner at an expected revision.", schemas: removePhotoOwnerSchemas, write: true},
+}
+
 func toolCatalog(allowProcessing, allowPackageWrites, allowPhotoEdits bool) []*sdkmcp.Tool {
 	definitions := slices.Clone(readToolDefinitions)
 	if allowProcessing {
@@ -156,6 +163,7 @@ func toolCatalog(allowProcessing, allowPackageWrites, allowPhotoEdits bool) []*s
 	}
 	if allowPhotoEdits {
 		definitions = append(definitions, photoWriteToolDefinitions...)
+		definitions = append(definitions, photoOwnerToolDefinitions...)
 	}
 	tools := make([]*sdkmcp.Tool, 0, len(definitions))
 	for _, definition := range definitions {
@@ -197,6 +205,8 @@ func registerToolCatalog(
 			handler = batesWriteToolHandler(lease, tool.Name, output, logger)
 		case exportLoadFilePackageToolDefinition.name:
 			handler = packageExportToolHandler(lease, output, logger)
+		case "list_photo_owners", "add_photo_owner", "rename_photo_owner", "remove_photo_owner":
+			handler = photoOwnerToolHandler(lease, tool.Name, output, logger)
 		default:
 			if photoWriteTool(tool.Name) {
 				handler = photoWriteToolHandler(lease, tool.Name, output, logger)

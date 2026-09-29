@@ -62,6 +62,19 @@ func termReportError(err error) *Error {
 func registerTermReportRoutes(api huma.API, d Deps, gate *OperationGate, cache *reporting.Cache,
 	downloads *webDownloadRegistry, sessions *webSessionRegistry,
 ) {
+	checkReportVisibility := func(ctx context.Context, owner, id string) error {
+		if cache == nil || d.Store == nil {
+			return reporting.ErrUnavailable
+		}
+		return cache.Validate(ctx, owner, id, func(ctx context.Context, frame report.Frame) error {
+			for _, member := range frame.Members {
+				if err := d.Store.CheckPhotoVisibilityForVersion(ctx, member.Identity.VersionID); err != nil {
+					return err
+				}
+			}
+			return nil
+		})
+	}
 	termReportOwner := func(ctx context.Context) (string, error) {
 		owner, ok := workspaceSnapshotOwner(ctx)
 		if !ok {
@@ -142,6 +155,9 @@ func registerTermReportRoutes(api huma.API, d Deps, gate *OperationGate, cache *
 			if err != nil {
 				return nil, err
 			}
+			if err := checkReportVisibility(ctx, owner, in.ID); err != nil {
+				return nil, termReportError(err)
+			}
 			summary, err := cache.Summary(owner, in.ID)
 			if err != nil {
 				return nil, termReportError(err)
@@ -157,6 +173,9 @@ func registerTermReportRoutes(api huma.API, d Deps, gate *OperationGate, cache *
 		owner, err := termReportOwner(ctx)
 		if err != nil {
 			return nil, err
+		}
+		if err := checkReportVisibility(ctx, owner, in.ID); err != nil {
+			return nil, termReportError(err)
 		}
 		page, err := cache.Dates(ctx, owner, in.ID, in.Body)
 		if err != nil {
@@ -175,6 +194,9 @@ func registerTermReportRoutes(api huma.API, d Deps, gate *OperationGate, cache *
 		owner, err := termReportOwner(ctx)
 		if err != nil {
 			return nil, err
+		}
+		if err := checkReportVisibility(ctx, owner, in.ID); err != nil {
+			return nil, termReportError(err)
 		}
 		request, err := cache.Request(owner, in.ID)
 		if err != nil {
@@ -214,6 +236,9 @@ func registerTermReportRoutes(api huma.API, d Deps, gate *OperationGate, cache *
 		if err != nil {
 			return nil, err
 		}
+		if err := checkReportVisibility(ctx, owner, in.ID); err != nil {
+			return nil, termReportError(err)
+		}
 		if !browserSessionRequest(ctx) {
 			return nil, NewError(http.StatusForbidden, "browser_session_required", "Use an active browser session for a download ticket.")
 		}
@@ -227,6 +252,11 @@ func registerTermReportRoutes(api huma.API, d Deps, gate *OperationGate, cache *
 		_ = reader.Close()
 		ticket := webDownloadTicket{owner: owner, reportID: in.ID, reportFormat: in.Body.Format,
 			name: "search-export.csv", mediaType: "text/csv; charset=utf-8"}
+		photoOwnerID, photoBound, photoNoOwner, ownerErr := d.Store.PhotoOwnerForRequest(ctx)
+		if ownerErr != nil {
+			return nil, termReportError(ownerErr)
+		}
+		ticket.photoOwnerID, ticket.photoOwnerBound, ticket.photoNoOwner = photoOwnerID, photoBound, photoNoOwner
 		if in.Body.Format == "bundle" {
 			ticket.name, ticket.mediaType = "search-export.zip", "application/zip"
 		}
@@ -267,6 +297,9 @@ func registerTermReportRoutes(api huma.API, d Deps, gate *OperationGate, cache *
 				owner, err := termReportOwner(ctx)
 				if err != nil {
 					return nil, err
+				}
+				if err := checkReportVisibility(ctx, owner, in.ID); err != nil {
+					return nil, termReportError(err)
 				}
 				if browserSessionRequest(ctx) {
 					return nil, NewError(http.StatusForbidden, "report_ticket_required", "Browser downloads require a one-use ticket.")

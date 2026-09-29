@@ -121,6 +121,9 @@ func registerPageRoutes(humaAPI huma.API, d Deps, g *OperationGate) {
 			"image/png": {Schema: &huma.Schema{Type: openAPIStringType, Format: openAPIBinaryFormat}},
 		}}},
 	}, func(ctx context.Context, in *PageImageRequest) (*huma.StreamResponse, error) {
+		if err := d.Store.CheckPhotoVisibilityForVersion(ctx, in.VersionID); err != nil {
+			return nil, pageError(err)
+		}
 		view, err := d.Store.PageImage(ctx, in.Binding(), in.RecipeSHA256, in.Page)
 		if err != nil {
 			return nil, pageError(err)

@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"errors"
 	"github.com/danielgtaylor/huma/v2"
 	"go.kenn.io/docbank/document"
@@ -13,6 +14,20 @@ import (
 )
 
 const emailDocumentJSONMediaType = "application/json"
+
+func checkEmailDocumentVisibility(ctx context.Context, d Deps, receipt document.EmailDocumentPublicationReceipt) error {
+	for _, relation := range receipt.Relations {
+		if err := d.Store.CheckPhotoVisibilityForVersion(ctx, relation.Parent.VersionID); err != nil {
+			return err
+		}
+		if relation.Child != nil {
+			if err := d.Store.CheckPhotoVisibilityForVersion(ctx, relation.Child.VersionID); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
 
 func readEmailDocumentJSON(w http.ResponseWriter, r *http.Request, out any) bool {
 	media, _, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
@@ -50,6 +65,9 @@ func registerEmailDocumentRoutes(mux *http.ServeMux, api huma.API, d Deps, g *ga
 		}
 		var receipt document.EmailDocumentPublicationReceipt
 		err := g.mutate(func() error {
+			if err := d.Store.CheckPhotoVisibilityForVersion(r.Context(), request.Parent.VersionID); err != nil {
+				return err
+			}
 			if d.PublishEmailDocuments == nil {
 				return errors.New("email document publication is not configured")
 			}
@@ -59,6 +77,10 @@ func registerEmailDocumentRoutes(mux *http.ServeMux, api huma.API, d Deps, g *ga
 		})
 		w.Header().Set("Cache-Control", "no-store")
 		if err != nil {
+			writeEmailStoreError(w, err)
+			return
+		}
+		if err := checkEmailDocumentVisibility(r.Context(), d, receipt); err != nil {
 			writeEmailStoreError(w, err)
 			return
 		}
@@ -72,6 +94,10 @@ func registerEmailDocumentRoutes(mux *http.ServeMux, api huma.API, d Deps, g *ga
 		receipt, err := d.Store.EmailDocumentPublication(r.Context(), r.PathValue("operation_id"))
 		w.Header().Set("Cache-Control", "no-store")
 		if err != nil {
+			writeEmailStoreError(w, err)
+			return
+		}
+		if err := checkEmailDocumentVisibility(r.Context(), d, receipt); err != nil {
 			writeEmailStoreError(w, err)
 			return
 		}
@@ -90,6 +116,13 @@ func registerEmailDocumentRoutes(mux *http.ServeMux, api huma.API, d Deps, g *ga
 			return
 		}
 		err := g.mutate(func() error {
+			receipt, err := d.Store.EmailDocumentPublication(r.Context(), r.PathValue("operation_id"))
+			if err != nil {
+				return err
+			}
+			if err := checkEmailDocumentVisibility(r.Context(), d, receipt); err != nil {
+				return err
+			}
 			return d.Store.RemoveEmailDocumentPublication(r.Context(), r.PathValue("operation_id"), request.RequestDigest)
 		})
 		if err != nil {
@@ -140,6 +173,18 @@ func registerEmailDocumentRoutes(mux *http.ServeMux, api huma.API, d Deps, g *ga
 			writeEmailStoreError(w, err)
 			return
 		}
+		for _, item := range page.Items {
+			if err := d.Store.CheckPhotoVisibilityForVersion(r.Context(), item.Relation.Parent.VersionID); err != nil {
+				writeEmailStoreError(w, err)
+				return
+			}
+			if item.Relation.Child != nil {
+				if err := d.Store.CheckPhotoVisibilityForVersion(r.Context(), item.Relation.Child.VersionID); err != nil {
+					writeEmailStoreError(w, err)
+					return
+				}
+			}
+		}
 		writeJSON(w, http.StatusOK, page)
 	})
 	registerEmailDocumentRoute(mux, api, huma.Operation{
@@ -155,6 +200,12 @@ func registerEmailDocumentRoutes(mux *http.ServeMux, api huma.API, d Deps, g *ga
 			writeEmailStoreError(w, processingUnavailable())
 			return
 		}
+		principal, principalErr := bindProcessingPrincipal(r.Context(), d.Store, request.Principal)
+		if principalErr != nil {
+			writeEmailStoreError(w, principalErr)
+			return
+		}
+		request.Principal = principal
 		receipt, err := d.Processing.EnqueueEmailDocumentProcessing(r.Context(), request)
 		if err != nil {
 			if errors.Is(err, processing.ErrProfileNotConfigured) {

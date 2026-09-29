@@ -116,7 +116,7 @@ func topologyRecord(row auditTopologyRow) (audit.Record, error) {
 	return audit.Record{Kind: "topology_node", Fields: []audit.Field{
 		{Name: metadataNodeIDField, Value: audit.Unsigned(nodeID)},
 		{Name: "parent_id", Value: parent},
-		{Name: "name", Value: audit.Bytes([]byte(row.name))},
+		{Name: string(DocumentCatalogSortName), Value: audit.Bytes([]byte(row.name))},
 		{Name: "node_kind", Value: kindValue},
 		{Name: auditStateField, Value: stateValue},
 		{Name: auditOriginField, Value: origin},

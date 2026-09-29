@@ -8096,12 +8096,192 @@ func (c *Client) PromotePhotoNode(ctx context.Context, options *PromotePhotoNode
 	return responseParser(ctx, resp)
 }
 
+// ListPhotoOwners List photo owners
+func (c *Client) ListPhotoOwners(ctx context.Context, reqEditors ...runtime.RequestEditorFn) (*ListPhotoOwnersResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/photos/owners",
+		Method:     "GET",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*ListPhotoOwnersResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(ListPhotoOwnersResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "ListPhotoOwnersResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[ListPhotoOwnersErrorResponse](resp, "ListPhotoOwnersErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/photos/owners")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
+// CreatePhotoOwner Create a photo owner
+func (c *Client) CreatePhotoOwner(ctx context.Context, options *CreatePhotoOwnerRequestOptions, reqEditors ...runtime.RequestEditorFn) (*CreatePhotoOwnerResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/photos/owners",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*CreatePhotoOwnerResponse, error) {
+		switch resp.StatusCode {
+
+		case 201:
+
+			target := new(CreatePhotoOwnerResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "CreatePhotoOwnerResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[CreatePhotoOwnerErrorResponse](resp, "CreatePhotoOwnerErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/photos/owners")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 201)
+	}
+	return responseParser(ctx, resp)
+}
+
+// RemovePhotoOwner Remove a photo owner
+func (c *Client) RemovePhotoOwner(ctx context.Context, options *RemovePhotoOwnerRequestOptions, reqEditors ...runtime.RequestEditorFn) (*struct{}, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/photos/owners/{owner_id}",
+		Method:     "DELETE",
+		Options:    options,
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*struct{}, error) {
+		switch resp.StatusCode {
+
+		case 204:
+
+			target := new(struct{})
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[RemovePhotoOwnerErrorResponse](resp, "RemovePhotoOwnerErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/photos/owners/{owner_id}")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 204)
+	}
+	return responseParser(ctx, resp)
+}
+
+// RenamePhotoOwner Rename a photo owner
+func (c *Client) RenamePhotoOwner(ctx context.Context, options *RenamePhotoOwnerRequestOptions, reqEditors ...runtime.RequestEditorFn) (*RenamePhotoOwnerResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/photos/owners/{owner_id}",
+		Method:      "PATCH",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*RenamePhotoOwnerResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(RenamePhotoOwnerResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "RenamePhotoOwnerResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[RenamePhotoOwnerErrorResponse](resp, "RenamePhotoOwnerErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/photos/owners/{owner_id}")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
 // GetPhotoSettings Inspect the photo display preference
-func (c *Client) GetPhotoSettings(ctx context.Context, reqEditors ...runtime.RequestEditorFn) (*GetPhotoSettingsResponse, error) {
+func (c *Client) GetPhotoSettings(ctx context.Context, options *GetPhotoSettingsRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetPhotoSettingsResponse, error) {
 	var err error
 	reqParams := runtime.RequestOptionsParameters{
 		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/photos/settings",
 		Method:     "GET",
+		Options:    options,
 	}
 
 	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
@@ -16707,7 +16887,8 @@ func (o *GetPeopleRebuildRequestOptions) GetHeader() (map[string]string, error) 
 
 // CreatePhotoAssetRequestOptions is the options needed to make a request to CreatePhotoAsset.
 type CreatePhotoAssetRequestOptions struct {
-	Body *CreatePhotoAssetBody
+	Body   *CreatePhotoAssetBody
+	Header *CreatePhotoAssetHeaders
 }
 
 // GetPathParams returns the path params as a map.
@@ -16730,12 +16911,19 @@ func (o *CreatePhotoAssetRequestOptions) GetBody() any {
 
 // GetHeader returns the headers as a map.
 func (o *CreatePhotoAssetRequestOptions) GetHeader() (map[string]string, error) {
-	return nil, nil
+	encoded, err := json.Marshal(o.Header, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var headers map[string]string
+	err = json.Unmarshal(encoded, &headers)
+	return headers, err
 }
 
 // GetPhotoAssetRequestOptions is the options needed to make a request to GetPhotoAsset.
 type GetPhotoAssetRequestOptions struct {
 	PathParams *GetPhotoAssetPath
+	Header     *GetPhotoAssetHeaders
 }
 
 // GetPathParams returns the path params as a map.
@@ -16761,7 +16949,13 @@ func (o *GetPhotoAssetRequestOptions) GetBody() any {
 
 // GetHeader returns the headers as a map.
 func (o *GetPhotoAssetRequestOptions) GetHeader() (map[string]string, error) {
-	return nil, nil
+	encoded, err := json.Marshal(o.Header, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var headers map[string]string
+	err = json.Unmarshal(encoded, &headers)
+	return headers, err
 }
 
 // SetPhotoDisplayRequestOptions is the options needed to make a request to SetPhotoDisplay.
@@ -16938,6 +17132,7 @@ func (o *DetachPhotoFileRequestOptions) GetHeader() (map[string]string, error) {
 // GetPhotoAssetByNodeRequestOptions is the options needed to make a request to GetPhotoAssetByNode.
 type GetPhotoAssetByNodeRequestOptions struct {
 	PathParams *GetPhotoAssetByNodePath
+	Header     *GetPhotoAssetByNodeHeaders
 }
 
 // GetPathParams returns the path params as a map.
@@ -16963,7 +17158,13 @@ func (o *GetPhotoAssetByNodeRequestOptions) GetBody() any {
 
 // GetHeader returns the headers as a map.
 func (o *GetPhotoAssetByNodeRequestOptions) GetHeader() (map[string]string, error) {
-	return nil, nil
+	encoded, err := json.Marshal(o.Header, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var headers map[string]string
+	err = json.Unmarshal(encoded, &headers)
+	return headers, err
 }
 
 // PromotePhotoNodeRequestOptions is the options needed to make a request to PromotePhotoNode.
@@ -16999,6 +17200,145 @@ func (o *PromotePhotoNodeRequestOptions) GetBody() any {
 
 // GetHeader returns the headers as a map.
 func (o *PromotePhotoNodeRequestOptions) GetHeader() (map[string]string, error) {
+	encoded, err := json.Marshal(o.Header, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var headers map[string]string
+	err = json.Unmarshal(encoded, &headers)
+	return headers, err
+}
+
+// CreatePhotoOwnerRequestOptions is the options needed to make a request to CreatePhotoOwner.
+type CreatePhotoOwnerRequestOptions struct {
+	Body *CreatePhotoOwnerBody
+}
+
+// GetPathParams returns the path params as a map.
+func (o *CreatePhotoOwnerRequestOptions) GetPathParams() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetQuery returns the query params as a map.
+func (o *CreatePhotoOwnerRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *CreatePhotoOwnerRequestOptions) GetBody() any {
+	if o.Body == nil {
+		return nil
+	}
+	return o.Body
+}
+
+// GetHeader returns the headers as a map.
+func (o *CreatePhotoOwnerRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
+// RemovePhotoOwnerRequestOptions is the options needed to make a request to RemovePhotoOwner.
+type RemovePhotoOwnerRequestOptions struct {
+	PathParams *RemovePhotoOwnerPath
+	Header     *RemovePhotoOwnerHeaders
+}
+
+// GetPathParams returns the path params as a map.
+func (o *RemovePhotoOwnerRequestOptions) GetPathParams() (map[string]any, error) {
+	encoded, err := json.Marshal(o.PathParams, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetQuery returns the query params as a map.
+func (o *RemovePhotoOwnerRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *RemovePhotoOwnerRequestOptions) GetBody() any {
+	return nil
+}
+
+// GetHeader returns the headers as a map.
+func (o *RemovePhotoOwnerRequestOptions) GetHeader() (map[string]string, error) {
+	encoded, err := json.Marshal(o.Header, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var headers map[string]string
+	err = json.Unmarshal(encoded, &headers)
+	return headers, err
+}
+
+// RenamePhotoOwnerRequestOptions is the options needed to make a request to RenamePhotoOwner.
+type RenamePhotoOwnerRequestOptions struct {
+	PathParams *RenamePhotoOwnerPath
+	Body       *RenamePhotoOwnerBody
+	Header     *RenamePhotoOwnerHeaders
+}
+
+// GetPathParams returns the path params as a map.
+func (o *RenamePhotoOwnerRequestOptions) GetPathParams() (map[string]any, error) {
+	encoded, err := json.Marshal(o.PathParams, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetQuery returns the query params as a map.
+func (o *RenamePhotoOwnerRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *RenamePhotoOwnerRequestOptions) GetBody() any {
+	if o.Body == nil {
+		return nil
+	}
+	return o.Body
+}
+
+// GetHeader returns the headers as a map.
+func (o *RenamePhotoOwnerRequestOptions) GetHeader() (map[string]string, error) {
+	encoded, err := json.Marshal(o.Header, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var headers map[string]string
+	err = json.Unmarshal(encoded, &headers)
+	return headers, err
+}
+
+// GetPhotoSettingsRequestOptions is the options needed to make a request to GetPhotoSettings.
+type GetPhotoSettingsRequestOptions struct {
+	Header *GetPhotoSettingsHeaders
+}
+
+// GetPathParams returns the path params as a map.
+func (o *GetPhotoSettingsRequestOptions) GetPathParams() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetQuery returns the query params as a map.
+func (o *GetPhotoSettingsRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *GetPhotoSettingsRequestOptions) GetBody() any {
+	return nil
+}
+
+// GetHeader returns the headers as a map.
+func (o *GetPhotoSettingsRequestOptions) GetHeader() (map[string]string, error) {
 	encoded, err := json.Marshal(o.Header, json.StringifyNumbers(true))
 	if err != nil {
 		return nil, err
@@ -19413,28 +19753,58 @@ type UploadPackageChunkHeaders struct {
 	XDocbankBlobSize int64  `json:"X-Docbank-Blob-Size"`
 }
 
+type CreatePhotoAssetHeaders struct {
+	XDocbankOwner *string `json:"X-Docbank-Owner,omitempty"`
+}
+
+type GetPhotoAssetHeaders struct {
+	XDocbankOwner *string `json:"X-Docbank-Owner,omitempty"`
+}
+
 type SetPhotoDisplayHeaders struct {
-	IfMatch string `json:"If-Match"`
+	XDocbankOwner *string `json:"X-Docbank-Owner,omitempty"`
+	IfMatch       string  `json:"If-Match"`
 }
 
 type ExcludePhotoAssetHeaders struct {
-	IfMatch string `json:"If-Match"`
+	XDocbankOwner *string `json:"X-Docbank-Owner,omitempty"`
+	IfMatch       string  `json:"If-Match"`
 }
 
 type AttachPhotoFileHeaders struct {
-	IfMatch string `json:"If-Match"`
+	XDocbankOwner *string `json:"X-Docbank-Owner,omitempty"`
+	IfMatch       string  `json:"If-Match"`
 }
 
 type DetachPhotoFileHeaders struct {
-	IfMatch string `json:"If-Match"`
+	XDocbankOwner *string `json:"X-Docbank-Owner,omitempty"`
+	IfMatch       string  `json:"If-Match"`
+}
+
+type GetPhotoAssetByNodeHeaders struct {
+	XDocbankOwner *string `json:"X-Docbank-Owner,omitempty"`
 }
 
 type PromotePhotoNodeHeaders struct {
-	IfMatch *string `json:"If-Match,omitempty"`
+	XDocbankOwner *string `json:"X-Docbank-Owner,omitempty"`
+	IfMatch       *string `json:"If-Match,omitempty"`
+}
+
+type RemovePhotoOwnerHeaders struct {
+	IfMatch string `json:"If-Match"`
+}
+
+type RenamePhotoOwnerHeaders struct {
+	IfMatch string `json:"If-Match"`
+}
+
+type GetPhotoSettingsHeaders struct {
+	XDocbankOwner *string `json:"X-Docbank-Owner,omitempty"`
 }
 
 type SetPhotoSettingsHeaders struct {
-	IfMatch string `json:"If-Match"`
+	XDocbankOwner *string `json:"X-Docbank-Owner,omitempty"`
+	IfMatch       string  `json:"If-Match"`
 }
 
 type GetDocumentRenditionHeaders struct {
@@ -19827,6 +20197,14 @@ type PromotePhotoNodePath struct {
 	NodeID int64 `json:"node_id"`
 }
 
+type RemovePhotoOwnerPath struct {
+	OwnerID string `json:"owner_id"`
+}
+
+type RenamePhotoOwnerPath struct {
+	OwnerID string `json:"owner_id"`
+}
+
 type GetDocumentProcessingJobPath struct {
 	ID string `json:"id"`
 }
@@ -20110,6 +20488,10 @@ type ExcludePhotoAssetBody = SetPhotoExcludedRequest
 type AttachPhotoFileBody = AttachPhotoFileRequest
 
 type PromotePhotoNodeBody = PromotePhotoNodeRequest
+
+type CreatePhotoOwnerBody = PhotoOwnerRequest
+
+type RenamePhotoOwnerBody = PhotoOwnerRequest
 
 type SetPhotoSettingsBody = SetPhotoSettingsRequest
 
@@ -21235,6 +21617,20 @@ type PromotePhotoNodeResponse = api.PhotoAsset
 
 type PromotePhotoNodeErrorResponse = Error
 
+type ListPhotoOwnersResponse []PhotoOwner
+
+type ListPhotoOwnersErrorResponse = Error
+
+type CreatePhotoOwnerResponse = api.PhotoOwner
+
+type CreatePhotoOwnerErrorResponse = Error
+
+type RemovePhotoOwnerErrorResponse = Error
+
+type RenamePhotoOwnerResponse = api.PhotoOwner
+
+type RenamePhotoOwnerErrorResponse = Error
+
 type GetPhotoSettingsResponse = api.PhotoSettings
 
 type GetPhotoSettingsErrorResponse = Error
@@ -22277,6 +22673,10 @@ type PersonSummary = api.PersonSummary
 type PhotoAsset = api.PhotoAsset
 
 type PhotoFile = api.PhotoFile
+
+type PhotoOwner = api.PhotoOwner
+
+type PhotoOwnerRequest = api.PhotoOwnerRequest
 
 type PhotoSettings = api.PhotoSettings
 

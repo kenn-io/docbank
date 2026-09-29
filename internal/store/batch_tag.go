@@ -268,6 +268,9 @@ func loadBatchTagTargetsTx(
 		if n.ID != target.NodeID || n.TrashedAt != nil {
 			return nil, fmt.Errorf("batch tag target %d is missing or trashed: %w", target.NodeID, ErrNotFound)
 		}
+		if err := photoNodeVisibilityCheckTx(ctx, tx, n.ID); err != nil {
+			return nil, err
+		}
 		if n.Revision != target.Revision {
 			return nil, fmt.Errorf("node %d revision is %d, expected %d: %w",
 				n.ID, n.Revision, target.Revision, ErrStaleRevision)

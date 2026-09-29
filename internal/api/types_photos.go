@@ -17,6 +17,8 @@ type PhotoAsset struct {
 	ID                    string      `json:"id" format:"uuid"`
 	Kind                  string      `json:"kind" enum:"photo,video"`
 	Revision              int64       `json:"revision" minimum:"1"`
+	OwnerID               *string     `json:"owner_id,omitzero" format:"uuid"`
+	HiddenAt              *string     `json:"hidden_at,omitzero" format:"date-time"`
 	ExcludedAt            *string     `json:"excluded_at,omitzero" format:"date-time"`
 	DisplayFileID         *string     `json:"display_file_id,omitzero" format:"uuid"`
 	DisplayOverrideFileID *string     `json:"display_override_file_id,omitzero" format:"uuid"`
@@ -27,9 +29,10 @@ type PhotoAsset struct {
 }
 
 type PhotoSettings struct {
-	Preference *string `json:"preference,omitzero" enum:"raw,image"`
-	Revision   int64   `json:"revision" minimum:"1"`
-	UpdatedAt  string  `json:"updated_at,omitzero" format:"date-time"`
+	DefaultOwnerID *string `json:"default_owner_id,omitzero" format:"uuid"`
+	Preference     *string `json:"preference,omitzero" enum:"raw,image"`
+	Revision       int64   `json:"revision" minimum:"1"`
+	UpdatedAt      string  `json:"updated_at,omitzero" format:"date-time"`
 }
 
 type CreatePhotoAssetRequest struct {
@@ -56,6 +59,27 @@ type SetPhotoSettingsRequest struct {
 	Preference *string `json:"preference,omitzero" enum:"raw,image"`
 }
 
+type PhotoOwner struct {
+	ID        string `json:"id" format:"uuid"`
+	Name      string `json:"name" minLength:"1" maxLength:"256"`
+	Revision  int64  `json:"revision" minimum:"1"`
+	CreatedAt string `json:"created_at" format:"date-time"`
+	UpdatedAt string `json:"updated_at" format:"date-time"`
+}
+
+type PhotoOwnerRequest struct {
+	Name string `json:"name" minLength:"1" maxLength:"256"`
+}
+
+type photoOwnerOutput struct {
+	ETag string `header:"ETag"`
+	Body PhotoOwner
+}
+
+type photoOwnersOutput struct {
+	Body []PhotoOwner
+}
+
 type photoAssetOutput struct {
 	ETag string `header:"ETag"`
 	Body PhotoAsset
@@ -75,9 +99,13 @@ func fromStorePhotoAsset(asset store.PhotoAsset) PhotoAsset {
 	for _, file := range asset.Files {
 		files = append(files, fromStorePhotoFile(file))
 	}
-	return PhotoAsset{ID: asset.ID, Kind: asset.Kind, Revision: asset.Revision, ExcludedAt: asset.ExcludedAt, DisplayFileID: asset.DisplayFileID, DisplayOverrideFileID: asset.DisplayOverrideFileID, DisplaySource: asset.DisplaySource, CreatedAt: asset.CreatedAt, UpdatedAt: asset.UpdatedAt, Files: files}
+	return PhotoAsset{ID: asset.ID, Kind: asset.Kind, Revision: asset.Revision, OwnerID: asset.OwnerID, HiddenAt: asset.HiddenAt, ExcludedAt: asset.ExcludedAt, DisplayFileID: asset.DisplayFileID, DisplayOverrideFileID: asset.DisplayOverrideFileID, DisplaySource: asset.DisplaySource, CreatedAt: asset.CreatedAt, UpdatedAt: asset.UpdatedAt, Files: files}
 }
 
 func fromStorePhotoSettings(settings store.PhotoSettings) PhotoSettings {
-	return PhotoSettings{Preference: settings.Preference, Revision: settings.Revision, UpdatedAt: settings.UpdatedAt}
+	return PhotoSettings{DefaultOwnerID: settings.DefaultOwnerID, Preference: settings.Preference, Revision: settings.Revision, UpdatedAt: settings.UpdatedAt}
+}
+
+func fromStorePhotoOwner(owner store.PhotoOwner) PhotoOwner {
+	return PhotoOwner{ID: owner.ID, Name: owner.Name, Revision: owner.Revision, CreatedAt: owner.CreatedAt, UpdatedAt: owner.UpdatedAt}
 }

@@ -152,6 +152,8 @@ func (w *Worker) RunOne(ctx context.Context) (bool, error) {
 	timed, stopDeadline := context.WithDeadline(ctx, deadline)
 	defer stopDeadline()
 	work, stopWork := context.WithCancelCause(timed)
+	// Reattach the durable owner before reading the frozen plan or any blob.
+	work = store.WithPhotoOwnerBinding(work, claim.Job.PhotoOwnerID, claim.Job.PhotoOwnerBound, claim.Job.PhotoNoOwner)
 	cancel := func() { stopWork(context.Canceled) }
 	defer cancel()
 	w.activeMu.Lock()
@@ -316,6 +318,10 @@ func (w *Worker) Lease(ctx context.Context, owner, id string) (*os.File, bundle.
 	if job.State != "completed" || job.Receipt == nil {
 		release()
 		return nil, bundle.Receipt{}, nil, bundle.ErrConflict
+	}
+	if err := w.catalog.CheckExportPlanPhotoVisibility(ctx, job.PlanID); err != nil {
+		release()
+		return nil, bundle.Receipt{}, nil, err
 	}
 	file, err = os.Open(filepath.Join(w.dir, id+".zip"))
 	if err != nil {

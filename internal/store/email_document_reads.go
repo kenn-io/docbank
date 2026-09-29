@@ -25,11 +25,24 @@ func (s *Store) EmailDocumentRelations(ctx context.Context, query document.Email
 		where = "r.child_version_id=?"
 		id = query.ChildVersionID
 	}
-	from := ` FROM email_document_relations r JOIN email_document_publications p ON p.operation_id=r.operation_id WHERE ` + where
-	if err = tx.QueryRowContext(ctx, `SELECT count(*)`+from, id).Scan(&page.Total); err != nil {
+	parentVisibility, parentArgs, err := photoVersionVisibilitySQL(ctx, tx, "p.parent_version_id")
+	if err != nil {
 		return page, err
 	}
-	rows, err := tx.QueryContext(ctx, `SELECT r.operation_id,r.occurrence_order`+from+` AND (r.operation_id>? OR (r.operation_id=? AND r.occurrence_order>?)) ORDER BY r.operation_id,r.occurrence_order LIMIT ?`, id, query.AfterOperationID, query.AfterOperationID, query.AfterOrder, query.Limit+1)
+	childVisibility, childArgs, err := photoVersionVisibilitySQL(ctx, tx, "r.child_version_id")
+	if err != nil {
+		return page, err
+	}
+	from := ` FROM email_document_relations r JOIN email_document_publications p ON p.operation_id=r.operation_id WHERE ` + where +
+		` AND ` + parentVisibility + ` AND ` + childVisibility
+	visibilityArgs := append(append([]any{}, parentArgs...), childArgs...)
+	countArgs := append(append([]any{}, id), visibilityArgs...)
+	if err = tx.QueryRowContext(ctx, `SELECT count(*)`+from, countArgs...).Scan(&page.Total); err != nil {
+		return page, err
+	}
+	pageArgs := append(append([]any{}, id), visibilityArgs...)
+	pageArgs = append(pageArgs, query.AfterOperationID, query.AfterOperationID, query.AfterOrder, query.Limit+1)
+	rows, err := tx.QueryContext(ctx, `SELECT r.operation_id,r.occurrence_order`+from+` AND (r.operation_id>? OR (r.operation_id=? AND r.occurrence_order>?)) ORDER BY r.operation_id,r.occurrence_order LIMIT ?`, pageArgs...)
 	if err != nil {
 		return page, err
 	}

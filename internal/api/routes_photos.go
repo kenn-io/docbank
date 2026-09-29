@@ -13,7 +13,10 @@ func registerPhotoRoutes(api huma.API, d Deps, g *gate) {
 		OperationID: "createPhotoAsset", Method: http.MethodPost,
 		Path: "/api/v1/photos/assets", Summary: "Create a photo asset for one file",
 		DefaultStatus: http.StatusCreated,
-	}, func(ctx context.Context, in *struct{ Body CreatePhotoAssetRequest }) (*photoAssetOutput, error) {
+	}, func(ctx context.Context, in *struct {
+		OwnerID string `header:"X-Docbank-Owner"`
+		Body    CreatePhotoAssetRequest
+	}) (*photoAssetOutput, error) {
 		var out *photoAssetOutput
 		err := g.mutate(func() error {
 			asset, err := d.Store.CreatePhotoAsset(ctx, in.Body.NodeID, in.Body.Role, in.Body.Kind)
@@ -31,6 +34,7 @@ func registerPhotoRoutes(api huma.API, d Deps, g *gate) {
 		Path: "/api/v1/photos/assets/{asset_id}", Summary: "Inspect one photo asset",
 	}, func(ctx context.Context, in *struct {
 		AssetID string `path:"asset_id"`
+		OwnerID string `header:"X-Docbank-Owner"`
 	}) (*photoAssetOutput, error) {
 		asset, err := d.Store.PhotoAssetByID(ctx, in.AssetID)
 		if err != nil {
@@ -43,7 +47,8 @@ func registerPhotoRoutes(api huma.API, d Deps, g *gate) {
 		OperationID: "getPhotoAssetByNode", Method: http.MethodGet,
 		Path: "/api/v1/photos/nodes/{node_id}/asset", Summary: "Inspect the photo asset containing one node",
 	}, func(ctx context.Context, in *struct {
-		NodeID int64 `path:"node_id"`
+		NodeID  int64  `path:"node_id"`
+		OwnerID string `header:"X-Docbank-Owner"`
 	}) (*photoAssetOutput, error) {
 		asset, err := d.Store.PhotoAssetForNode(ctx, in.NodeID)
 		if err != nil {
@@ -57,6 +62,7 @@ func registerPhotoRoutes(api huma.API, d Deps, g *gate) {
 		Path: "/api/v1/photos/assets/{asset_id}/files", Summary: "Attach one node to a photo asset",
 	}, func(ctx context.Context, in *struct {
 		AssetID string `path:"asset_id"`
+		OwnerID string `header:"X-Docbank-Owner"`
 		IfMatch string `header:"If-Match"`
 		Body    AttachPhotoFileRequest
 	}) (*photoAssetOutput, error) {
@@ -82,6 +88,7 @@ func registerPhotoRoutes(api huma.API, d Deps, g *gate) {
 	}, func(ctx context.Context, in *struct {
 		AssetID                string `path:"asset_id"`
 		FileID                 string `path:"file_id"`
+		OwnerID                string `header:"X-Docbank-Owner"`
 		IfMatch                string `header:"If-Match"`
 		ClearDependentSidecars bool   `query:"clear_dependent_sidecars"`
 	}) (*photoAssetOutput, error) {
@@ -106,6 +113,7 @@ func registerPhotoRoutes(api huma.API, d Deps, g *gate) {
 		Path: "/api/v1/photos/assets/{asset_id}/exclude", Summary: "Exclude or include a photo asset",
 	}, func(ctx context.Context, in *struct {
 		AssetID string `path:"asset_id"`
+		OwnerID string `header:"X-Docbank-Owner"`
 		IfMatch string `header:"If-Match"`
 		Body    SetPhotoExcludedRequest
 	}) (*photoAssetOutput, error) {
@@ -130,6 +138,7 @@ func registerPhotoRoutes(api huma.API, d Deps, g *gate) {
 		Path: "/api/v1/photos/nodes/{node_id}/promote", Summary: "Promote one node into a photo asset",
 	}, func(ctx context.Context, in *struct {
 		NodeID  int64  `path:"node_id"`
+		OwnerID string `header:"X-Docbank-Owner"`
 		IfMatch string `header:"If-Match"`
 		Body    struct {
 			Role string `json:"role,omitzero" enum:"raw,image,video,sidecar"`
@@ -161,6 +170,7 @@ func registerPhotoRoutes(api huma.API, d Deps, g *gate) {
 		Path: "/api/v1/photos/assets/{asset_id}/display", Summary: "Set or reset a photo display override",
 	}, func(ctx context.Context, in *struct {
 		AssetID string `path:"asset_id"`
+		OwnerID string `header:"X-Docbank-Owner"`
 		IfMatch string `header:"If-Match"`
 		Body    SetPhotoDisplayRequest
 	}) (*photoAssetOutput, error) {
@@ -183,7 +193,9 @@ func registerPhotoRoutes(api huma.API, d Deps, g *gate) {
 	huma.Register(api, huma.Operation{
 		OperationID: "getPhotoSettings", Method: http.MethodGet,
 		Path: "/api/v1/photos/settings", Summary: "Inspect the photo display preference",
-	}, func(ctx context.Context, _ *struct{}) (*photoSettingsOutput, error) {
+	}, func(ctx context.Context, in *struct {
+		OwnerID string `header:"X-Docbank-Owner"`
+	}) (*photoSettingsOutput, error) {
 		settings, err := d.Store.PhotoSettings(ctx)
 		if err != nil {
 			return nil, FromStoreError(err)
@@ -195,6 +207,7 @@ func registerPhotoRoutes(api huma.API, d Deps, g *gate) {
 		OperationID: "setPhotoSettings", Method: http.MethodPut,
 		Path: "/api/v1/photos/settings", Summary: "Set or reset the photo display preference",
 	}, func(ctx context.Context, in *struct {
+		OwnerID string `header:"X-Docbank-Owner"`
 		IfMatch string `header:"If-Match"`
 		Body    SetPhotoSettingsRequest
 	}) (*photoSettingsOutput, error) {

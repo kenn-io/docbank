@@ -232,6 +232,9 @@ func (s *Store) EmbeddingJobByID(ctx context.Context, id string) (EmbeddingJobSt
 	if err != nil {
 		return EmbeddingJobStatus{}, fmt.Errorf("reading embedding job status: %w", err)
 	}
+	if err := photoVersionVisibilityCheckTx(ctx, s.db, status.ContentVersionID); err != nil {
+		return EmbeddingJobStatus{}, fmt.Errorf("embedding job %s: %w", id, err)
+	}
 	if failure.Valid {
 		status.FailureCode = EmbeddingFailureCode(failure.String)
 	}
@@ -268,6 +271,9 @@ func (s *Store) embeddingJobsForVersionProfile(ctx context.Context, versionID,
 ) ([]EmbeddingJobStatus, error) {
 	if err := validateUUIDv4(versionID); err != nil {
 		return nil, ErrNotFound
+	}
+	if err := photoVersionVisibilityCheckTx(ctx, s.db, versionID); err != nil {
+		return nil, err
 	}
 	if err := validateCatalogSHA256(profileFingerprint, "processing profile fingerprint"); err != nil {
 		return nil, ErrNotFound
@@ -703,6 +709,9 @@ func loadEmbeddingJobWorkTx(ctx context.Context, tx *sql.Tx, vaultID, jobID stri
 	if err := tx.QueryRowContext(ctx, `SELECT v.blob_hash,v.size,n.name,COALESCE(v.mime_type,'')
 		FROM content_versions v JOIN nodes n ON n.id=v.node_id WHERE v.version_id=?`, versionID).
 		Scan(&sourceHash, &sourceBytes, &filename, &mediaType); err != nil {
+		return EmbeddingJobWork{}, err
+	}
+	if err := photoVersionVisibilityCheckTx(WithPhotoOwnerPrincipal(ctx, principal), tx, versionID); err != nil {
 		return EmbeddingJobWork{}, err
 	}
 	return EmbeddingJobWork{VaultID: vaultID, ContentVersionID: versionID, ProcessingProfile: profile,

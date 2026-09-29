@@ -89,7 +89,7 @@ func (service *Service) EnqueueAuthorized(
 	if planFingerprint == "" || planFingerprint != plan.Fingerprint {
 		return Job{}, ErrPlanChanged
 	}
-	want := service.renditionConsentRequest(profile)
+	want := service.renditionConsentRequest(profile, service.requestPrincipal(ctx), service.scope)
 	if !sameMediaAuthorization(authorization, want) {
 		return Job{}, ErrPlanChanged
 	}
@@ -151,14 +151,15 @@ func (service *Service) resolveMediaInputBinding(
 	if source.sourceID == "" {
 		return "", store.ErrNotFound
 	}
+	principal := service.requestPrincipal(ctx)
 	var input store.SuppliedTranscriptInput
 	var err error
 	if source.sourceVersionID != "" {
 		input, err = service.catalog.SuppliedTranscriptForSourceVersion(
-			ctx, service.principal, kind, source.sourceID, source.sourceVersionID, inputID)
+			ctx, principal, kind, source.sourceID, source.sourceVersionID, inputID)
 	} else {
 		input, err = service.catalog.SuppliedTranscriptForSourceID(
-			ctx, service.principal, kind, source.sourceID, sourceSHA256, inputID)
+			ctx, principal, kind, source.sourceID, sourceSHA256, inputID)
 	}
 	if err != nil {
 		return "", err
@@ -205,7 +206,7 @@ func (worker *MediaContinuationWorker) RunOne(ctx context.Context) (bool, error)
 		return false, errors.New("media continuation service is required")
 	}
 	service := worker.Service
-	continuations, err := service.catalog.MediaProcessingContinuations(ctx, 250, service.principal)
+	continuations, err := service.catalog.MediaProcessingContinuations(ctx, 250)
 	if err != nil || len(continuations) == 0 {
 		return false, err
 	}
@@ -222,12 +223,14 @@ func (worker *MediaContinuationWorker) runContinuation(
 	ctx context.Context, continuation store.MediaPublicationReceipt,
 ) (bool, error) {
 	service := worker.Service
+	principal := continuation.ProcessingPrincipal
+	ctx = store.WithPhotoOwnerPrincipal(ctx, principal)
 	profile, err := service.mediaProcessingProfile(continuation.ProcessingProfile)
 	if err != nil {
 		return worker.failContinuation(ctx, continuation, err)
 	}
-	want := service.renditionConsentRequest(profile)
-	if continuation.ProcessingPrincipal != service.principal ||
+	want := service.renditionConsentRequest(profile, principal, continuation.ProcessingScope)
+	if principal == "" ||
 		continuation.ProcessingScope != service.scope ||
 		continuation.ProcessingProfileFingerprint != profile.record.Fingerprint ||
 		!sameMediaAuthorization(continuation.ProcessingAuthorization, want) ||

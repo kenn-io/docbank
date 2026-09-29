@@ -19,6 +19,10 @@ type emailPDFJobState struct {
 
 func registerEmailPDFRoutes(mux *http.ServeMux, api huma.API, d Deps, g *gate) {
 	mux.HandleFunc("GET /api/v1/email-pdfs/{version_id}", func(w http.ResponseWriter, r *http.Request) {
+		if err := d.Store.CheckPhotoVisibilityForVersion(r.Context(), r.PathValue("version_id")); err != nil {
+			writeEmailStoreError(w, err)
+			return
+		}
 		receipts, err := d.Store.EmailPDFReceipts(r.Context(), r.PathValue("version_id"))
 		if err != nil {
 			writeEmailStoreError(w, err)
@@ -54,6 +58,10 @@ func registerEmailPDFRoutes(mux *http.ServeMux, api huma.API, d Deps, g *gate) {
 		writeJSON(w, http.StatusOK, out)
 	})
 	mux.HandleFunc("GET /api/v1/email-pdfs/{version_id}/{profile}", func(w http.ResponseWriter, r *http.Request) {
+		if err := d.Store.CheckPhotoVisibilityForVersion(r.Context(), r.PathValue("version_id")); err != nil {
+			writeEmailStoreError(w, err)
+			return
+		}
 		receipt, err := d.Store.EmailPDFReceipt(r.Context(), r.PathValue("version_id"), r.PathValue("profile"))
 		if err != nil {
 			writeEmailStoreError(w, err)
@@ -72,6 +80,10 @@ func registerEmailPDFRoutes(mux *http.ServeMux, api huma.API, d Deps, g *gate) {
 		writeJSON(w, http.StatusOK, emailPDFJobState{string(job.State)})
 	})
 	mux.HandleFunc("GET /api/v1/email-pdfs/{version_id}/{profile}/content", func(w http.ResponseWriter, r *http.Request) {
+		if err := d.Store.CheckPhotoVisibilityForVersion(r.Context(), r.PathValue("version_id")); err != nil {
+			writeEmailStoreError(w, err)
+			return
+		}
 		receipt, err := d.Store.EmailPDFReceipt(r.Context(), r.PathValue("version_id"), r.PathValue("profile"))
 		if err != nil {
 			writeEmailStoreError(w, err)

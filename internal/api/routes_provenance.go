@@ -29,6 +29,9 @@ func registerProvenanceRoutes(api huma.API, d Deps, g *gate) {
 		Limit  int   `query:"limit" default:"100" minimum:"1" maximum:"1000"`
 		Offset int   `query:"offset" default:"0" minimum:"0"`
 	}) (*provenancePageOutput, error) {
+		if err := d.Store.CheckPhotoVisibilityForNode(ctx, in.ID); err != nil {
+			return nil, FromStoreError(err)
+		}
 		page, err := d.Store.NodeProvenance(ctx, in.ID, in.Limit, in.Offset)
 		if err != nil {
 			return nil, FromStoreError(err)
@@ -62,6 +65,9 @@ func registerProvenanceRoutes(api huma.API, d Deps, g *gate) {
 		}
 		var result *provenanceAppendOutput
 		err = g.mutate(func() error {
+			if err := d.Store.CheckPhotoVisibilityForNode(ctx, in.ID); err != nil {
+				return FromStoreError(err)
+			}
 			appended, appendErr := d.Store.AppendNodeProvenance(ctx, store.ProvenanceAppendInput{
 				NodeID: in.ID, IfRevision: revision, SourceKind: in.Body.SourceKind,
 				SourceDescription: in.Body.SourceDescription, OriginalPath: in.Body.OriginalPath,

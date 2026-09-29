@@ -134,6 +134,7 @@ type RenditionJobWork struct {
 	VaultID                string
 	Job                    RenditionJob
 	Waiter                 RenditionJobWaiter
+	Principal              string
 	Profile                ProcessingProfileRecord
 	CapturedArtifactPolicy jsontext.Value
 	ExecutionIdentity      document.RenditionExecutionIdentityV1
@@ -459,6 +460,17 @@ func (s *Store) RenditionJobByID(ctx context.Context, id string) (RenditionJob, 
 	if err != nil {
 		return RenditionJob{}, fmt.Errorf("rendition job %s: %w", id, err)
 	}
+	var versionID sql.NullString
+	if err := s.db.QueryRowContext(ctx, `SELECT w.content_version_id
+		FROM rendition_jobs j LEFT JOIN rendition_job_waiters w ON w.waiter_id=j.selected_waiter_id
+		WHERE j.job_id=?`, id).Scan(&versionID); err != nil {
+		return RenditionJob{}, fmt.Errorf("reading rendition job source: %w", err)
+	}
+	if versionID.Valid {
+		if err := photoVersionVisibilityCheckTx(ctx, s.db, versionID.String); err != nil {
+			return RenditionJob{}, fmt.Errorf("rendition job %s: %w", id, err)
+		}
+	}
 	return job, nil
 }
 
@@ -487,6 +499,9 @@ func (s *Store) RenditionJobWaiterByID(ctx context.Context, id string) (Renditio
 	}
 	waiter, err := loadRenditionJobWaiterTx(ctx, s.db, id)
 	if err != nil {
+		return RenditionJobWaiter{}, fmt.Errorf("rendition waiter %s: %w", id, err)
+	}
+	if err := photoVersionVisibilityCheckTx(ctx, s.db, waiter.ContentVersionID); err != nil {
 		return RenditionJobWaiter{}, fmt.Errorf("rendition waiter %s: %w", id, err)
 	}
 	return waiter, nil
@@ -712,11 +727,16 @@ func (s *Store) RenditionJobWorkByClaim(
 			if err != nil {
 				return err
 			}
-			if _, err := renditionWaiterAuthorizationTx(ctx, tx, job, waiter.ID); err != nil {
+			authorization, err := renditionWaiterAuthorizationTx(ctx, tx, job, waiter.ID)
+			if err != nil {
+				return err
+			}
+			ownerCtx := WithPhotoOwnerPrincipal(ctx, authorization.Principal)
+			if err := photoVersionVisibilityCheckTx(ownerCtx, tx, waiter.ContentVersionID); err != nil {
 				return err
 			}
 			work = RenditionJobWork{
-				VaultID: s.vaultID, Job: job, Waiter: waiter, Profile: profile,
+				VaultID: s.vaultID, Job: job, Waiter: waiter, Principal: authorization.Principal, Profile: profile,
 				CapturedArtifactPolicy: jsontext.Value(policy), ExecutionIdentity: executionIdentity,
 				ExecutionSnapshot: executionSnapshot,
 			}

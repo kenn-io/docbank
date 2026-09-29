@@ -14,6 +14,8 @@ import (
 	"strings"
 	"sync"
 
+	"go.kenn.io/docbank/internal/store"
+
 	"github.com/coder/websocket"
 )
 
@@ -40,6 +42,7 @@ type webSessionRegistry struct {
 
 type webSessionState struct {
 	uploadSecret [sha256.Size]byte
+	photoOwnerID string
 	upload       *websocket.Conn
 	ctx          context.Context
 	cancel       context.CancelFunc
@@ -57,6 +60,10 @@ func newWebSessionRegistry(onRevoke ...func(string)) *webSessionRegistry {
 }
 
 func (r *webSessionRegistry) issue() (string, string, error) {
+	return r.issueForOwner("")
+}
+
+func (r *webSessionRegistry) issueForOwner(photoOwnerID string) (string, string, error) {
 	raw := make([]byte, 32)
 	if _, err := rand.Read(raw); err != nil {
 		return "", "", fmt.Errorf("generating browser session: %w", err)
@@ -74,9 +81,20 @@ func (r *webSessionRegistry) issue() (string, string, error) {
 		cancel()
 		return "", "", errors.New("browser sessions are shutting down")
 	}
-	r.tokens[digest] = webSessionState{uploadSecret: uploadSecret, ctx: sessionCtx, cancel: cancel}
+	r.tokens[digest] = webSessionState{uploadSecret: uploadSecret, photoOwnerID: photoOwnerID, ctx: sessionCtx, cancel: cancel}
 	r.mu.Unlock()
 	return token, base64.RawURLEncoding.EncodeToString(uploadSecret[:]), nil
+}
+
+func (r *webSessionRegistry) photoOwner(token string) (string, bool) {
+	if r == nil || token == "" {
+		return "", false
+	}
+	r.mu.Lock()
+	state, ok := r.tokens[sha256.Sum256([]byte(token))]
+	closing := r.closing
+	r.mu.Unlock()
+	return state.photoOwnerID, ok && !closing
 }
 
 func (r *webSessionRegistry) authenticate(token string) (string, context.Context, bool) {
@@ -537,15 +555,38 @@ func registerWebSession(
 	mux *http.ServeMux,
 	enabled bool,
 	webURL string,
+	storeDB *store.Store,
 	sessions *webSessionRegistry,
 ) {
-	mux.HandleFunc("POST "+webSessionPath, func(w http.ResponseWriter, _ *http.Request) {
+	mux.HandleFunc("POST "+webSessionPath, func(w http.ResponseWriter, r *http.Request) {
 		if !enabled || webURL == "" {
 			writeError(w, NewError(http.StatusServiceUnavailable, "web_unavailable",
 				"this daemon is not serving the compiled web application"))
 			return
 		}
-		token, uploadSecret, err := sessions.issue()
+		// The master caller selects the durable photo identity once. The
+		// default pointer is read without creating it, so opening the browser
+		// cannot mutate an otherwise ordinary vault.
+		photoOwnerID := strings.TrimSpace(r.Header.Get("X-Docbank-Owner"))
+		if storeDB != nil {
+			if photoOwnerID != "" {
+				if _, err := storeDB.PhotoOwner(r.Context(), photoOwnerID); err != nil {
+					writeEmailStoreError(w, err)
+					return
+				}
+			} else {
+				settings, err := storeDB.PhotoSettings(r.Context())
+				if err != nil {
+					writeError(w, NewError(http.StatusInternalServerError, "internal",
+						"could not read photo settings"))
+					return
+				}
+				if settings.DefaultOwnerID != nil {
+					photoOwnerID = *settings.DefaultOwnerID
+				}
+			}
+		}
+		token, uploadSecret, err := sessions.issueForOwner(photoOwnerID)
 		if err != nil {
 			writeError(w, NewError(http.StatusInternalServerError, "internal",
 				"could not create a browser session"))

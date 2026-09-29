@@ -20,6 +20,25 @@ const CollectionMembershipCTE = `collection_members AS (
       AND NOT EXISTS (SELECT 1 FROM provenance later WHERE later.supersedes = p.identity)
 )`
 
+func scopedCollectionMembershipCTE(ctx context.Context, q interface {
+	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
+}) (string, []any, error) {
+	predicate, args, err := photoNodeVisibilitySQL(ctx, q)
+	if err != nil {
+		return "", nil, err
+	}
+	return `collection_members AS (
+    SELECT DISTINCT p.ingest_id, p.node_id
+    FROM provenance p
+    JOIN ingests i ON i.id = p.ingest_id
+    JOIN nodes n ON n.id = p.node_id
+    WHERE i.source_kind NOT LIKE 'embedded:%'
+      AND n.kind = 'file' AND n.trashed_at IS NULL
+      AND NOT EXISTS (SELECT 1 FROM provenance later WHERE later.supersedes = p.identity)
+      AND ` + predicate + `
+)`, args, nil
+}
+
 // Collection is one document-bearing operational ingest and its current
 // membership summary. LabelRevision advances independently of membership.
 type Collection struct {
@@ -62,7 +81,13 @@ func scanCollection(row interface{ Scan(args ...any) error }) (Collection, error
 func collectionSummaryByID(
 	ctx context.Context, q rowQuerier, id string,
 ) (Collection, error) {
-	collection, err := scanCollection(q.QueryRowContext(ctx, `WITH `+CollectionMembershipCTE+`
+	cte, cteArgs, err := scopedCollectionMembershipCTE(ctx, q)
+	if err != nil {
+		return Collection{}, err
+	}
+	args := append([]any{}, cteArgs...)
+	args = append(args, id)
+	collection, err := scanCollection(q.QueryRowContext(ctx, `WITH `+cte+`
 		SELECT `+collectionColumns+`
 		FROM ingests i
 		LEFT JOIN collection_members cm ON cm.ingest_id=i.id
@@ -72,7 +97,7 @@ func collectionSummaryByID(
 		WHERE i.id=? AND i.source_kind NOT LIKE 'embedded:%'
 		GROUP BY i.id, i.source_kind, i.source_desc, i.started_at,
 			l.ingest_id, l.label, l.revision, l.updated_at
-		HAVING COUNT(cm.node_id)>0 OR l.ingest_id IS NOT NULL`, id))
+		HAVING COUNT(cm.node_id)>0 OR l.ingest_id IS NOT NULL`, args...))
 	if err != nil {
 		return Collection{}, fmt.Errorf("collection %q: %w", id, err)
 	}
@@ -93,12 +118,16 @@ func (s *Store) Collections(
 	}
 	defer func() { _ = tx.Rollback() }()
 
+	cte, cteArgs, err := scopedCollectionMembershipCTE(ctx, tx)
+	if err != nil {
+		return nil, 0, err
+	}
 	var total int
-	if err := tx.QueryRowContext(ctx, `WITH `+CollectionMembershipCTE+`
-		SELECT COUNT(DISTINCT ingest_id) FROM collection_members`).Scan(&total); err != nil {
+	if err := tx.QueryRowContext(ctx, `WITH `+cte+`
+		SELECT COUNT(DISTINCT ingest_id) FROM collection_members`, cteArgs...).Scan(&total); err != nil {
 		return nil, 0, fmt.Errorf("counting collections: %w", err)
 	}
-	rows, err := tx.QueryContext(ctx, `WITH `+CollectionMembershipCTE+`
+	rows, err := tx.QueryContext(ctx, `WITH `+cte+`
 		SELECT `+collectionColumns+`
 		FROM ingests i
 		JOIN collection_members cm ON cm.ingest_id=i.id
@@ -108,7 +137,7 @@ func (s *Store) Collections(
 		GROUP BY i.id, i.source_kind, i.source_desc, i.started_at,
 			l.label, l.revision, l.updated_at
 		ORDER BY i.started_at DESC, i.id
-		LIMIT ? OFFSET ?`, limit, offset)
+		LIMIT ? OFFSET ?`, append(append([]any{}, cteArgs...), limit, offset)...)
 	if err != nil {
 		return nil, 0, fmt.Errorf("listing collections: %w", err)
 	}
@@ -164,13 +193,17 @@ func (s *Store) CollectionMembers(
 	if err != nil {
 		return CollectionMemberPage{}, err
 	}
-	rows, err := tx.QueryContext(ctx, `WITH `+CollectionMembershipCTE+`
+	cte, cteArgs, err := scopedCollectionMembershipCTE(ctx, tx)
+	if err != nil {
+		return CollectionMemberPage{}, err
+	}
+	rows, err := tx.QueryContext(ctx, `WITH `+cte+`
 		SELECT `+nodeCols+`
 		FROM `+nodeFrom+`
 		JOIN collection_members cm ON cm.node_id=n.id
 		WHERE cm.ingest_id=?
 		ORDER BY n.name, n.id
-		LIMIT ? OFFSET ?`, id, limit, offset)
+		LIMIT ? OFFSET ?`, append(append([]any{}, cteArgs...), id, limit, offset)...)
 	if err != nil {
 		return CollectionMemberPage{}, fmt.Errorf("listing collection %q members: %w", id, err)
 	}

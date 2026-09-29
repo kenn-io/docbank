@@ -136,6 +136,9 @@ func (s *Store) planBatchMove(
 				"batch move item %d repeats node %d: %w", index, source.id, ErrInvalidBatchMove,
 			)
 		}
+		if err := photoSubtreeVisibilityCheckTx(ctx, tx, source.id); err != nil {
+			return batchMovePlan{}, fmt.Errorf("batch move item %d: %w", index, err)
+		}
 		seen[source.id] = true
 		destinationPath, err := canonicalBatchMoveDestination(request.DestinationPath)
 		if err != nil {

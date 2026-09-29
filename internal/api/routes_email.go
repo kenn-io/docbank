@@ -40,6 +40,10 @@ func registerEmailRoutes(mux *http.ServeMux, api huma.API, d Deps, g *gate) {
 }
 
 func handleEmailMetadata(w http.ResponseWriter, r *http.Request, d Deps) {
+	if err := d.Store.CheckPhotoVisibilityForVersion(r.Context(), r.PathValue("version_id")); err != nil {
+		writeEmailStoreError(w, err)
+		return
+	}
 	view, err := d.Store.EmailMetadata(r.Context(), r.PathValue("version_id"))
 	w.Header().Set("Cache-Control", "no-store")
 	if errors.Is(err, store.ErrEmailPending) {
@@ -104,6 +108,10 @@ func handleEnsureEmailMetadata(w http.ResponseWriter, r *http.Request, d Deps, g
 }
 
 func handleEmailMetadataGeneration(w http.ResponseWriter, r *http.Request, d Deps) {
+	if err := d.Store.CheckPhotoVisibilityForVersion(r.Context(), r.PathValue("version_id")); err != nil {
+		writeEmailStoreError(w, err)
+		return
+	}
 	view, err := d.Store.EmailMetadataGeneration(
 		r.Context(), r.PathValue("version_id"), r.PathValue("generation_id"),
 	)
@@ -118,6 +126,10 @@ func handleEmailMetadataGeneration(w http.ResponseWriter, r *http.Request, d Dep
 func handleEmailPart(w http.ResponseWriter, r *http.Request, d Deps) {
 	ctx := r.Context()
 	versionID, generationID := r.PathValue("version_id"), r.PathValue("generation_id")
+	if err := d.Store.CheckPhotoVisibilityForVersion(ctx, versionID); err != nil {
+		writeEmailStoreError(w, err)
+		return
+	}
 	partPath, role := r.PathValue("part_path"), r.PathValue("role")
 	if err := document.ValidateEmailPartPath(partPath); err != nil || !emailArtifactRole(role) {
 		writeEmailStoreError(w, store.ErrInvalidEmailPart)

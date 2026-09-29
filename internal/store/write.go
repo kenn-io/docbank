@@ -527,6 +527,12 @@ func (s *Store) Move(
 	var moved Node
 	var movedPath string
 	err := s.withStorageTx(ctx, func(tx *sql.Tx) error {
+		if err := photoSubtreeVisibilityCheckTx(ctx, tx, id); err != nil {
+			return err
+		}
+		if err := photoSubtreeVisibilityCheckTx(ctx, tx, newParentID); err != nil {
+			return err
+		}
 		var err error
 		active, err := auditAuthorityActiveTx(ctx, tx)
 		if err != nil {
@@ -569,6 +575,9 @@ func (s *Store) MovePathRevision(
 		if err != nil {
 			return fmt.Errorf("resolving %q: %w", srcPath, err)
 		}
+		if err := photoSubtreeVisibilityCheckTx(ctx, tx, src.ID); err != nil {
+			return err
+		}
 		moved, movedPath, err = s.moveNodeToPathTx(
 			ctx, tx, src, ifRev, destPath,
 		)
@@ -593,6 +602,9 @@ func (s *Store) MoveToPath(
 		if err != nil {
 			return err
 		}
+		if err := photoSubtreeVisibilityCheckTx(ctx, tx, src.ID); err != nil {
+			return err
+		}
 		moved, movedPath, err = s.moveNodeToPathTx(ctx, tx, src, ifRev, destPath)
 		return err
 	})
@@ -607,6 +619,9 @@ func (s *Store) moveNodeToPathTx(
 ) (Node, string, error) {
 	if src.ID == s.rootID {
 		return Node{}, "", ErrIsRoot
+	}
+	if err := photoSubtreeVisibilityCheckTx(ctx, tx, src.ID); err != nil {
+		return Node{}, "", err
 	}
 	newParentID, newName, err := s.resolveMoveTargetTx(ctx, tx, destPath, src.Name)
 	if err != nil {

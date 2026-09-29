@@ -13,11 +13,22 @@ type metadataPhotoAsset struct {
 	AssetID               string  `json:"asset_id"`
 	Kind                  string  `json:"kind"`
 	Revision              int64   `json:"revision"`
+	OwnerID               *string `json:"owner_id"`
+	HiddenAt              *string `json:"hidden_at"`
 	ExcludedAt            *string `json:"excluded_at"`
 	DisplayFileID         *string `json:"display_file_id"`
 	DisplayOverrideFileID *string `json:"display_override_file_id"`
 	CreatedAt             string  `json:"created_at"`
 	UpdatedAt             string  `json:"updated_at"`
+}
+
+type metadataPhotoOwner struct {
+	Type      string `json:"type"`
+	OwnerID   string `json:"owner_id"`
+	Name      string `json:"name"`
+	Revision  int64  `json:"revision"`
+	CreatedAt string `json:"created_at"`
+	UpdatedAt string `json:"updated_at"`
 }
 
 type metadataPhotoFile struct {
@@ -31,10 +42,11 @@ type metadataPhotoFile struct {
 }
 
 type metadataPhotoSettings struct {
-	Type       string  `json:"type"`
-	Preference *string `json:"preference"`
-	Revision   int64   `json:"revision"`
-	UpdatedAt  string  `json:"updated_at"`
+	Type           string  `json:"type"`
+	DefaultOwnerID *string `json:"default_owner_id"`
+	Preference     *string `json:"preference"`
+	Revision       int64   `json:"revision"`
+	UpdatedAt      string  `json:"updated_at"`
 }
 
 type metadataPhotoReceipt struct {
@@ -52,7 +64,36 @@ type metadataPhotoReceipt struct {
 
 func exportPhotoMetadata(ctx context.Context, tx metadataQuerier, write metadataWrite) error {
 	rows, err := tx.QueryContext(ctx, `
-		SELECT asset_id, kind, revision, excluded_at, display_file_id,
+		SELECT owner_id, name, revision, created_at, updated_at
+		FROM photo_owners ORDER BY owner_id`)
+	if err != nil {
+		return fmt.Errorf("exporting photo owners: %w", err)
+	}
+	for rows.Next() {
+		var record metadataPhotoOwner
+		if err := rows.Scan(&record.OwnerID, &record.Name, &record.Revision, &record.CreatedAt, &record.UpdatedAt); err != nil {
+			_ = rows.Close() //nolint:sqlclosecheck // close before returning the scan error.
+			return err
+		}
+		record.Type = metadataPhotoOwnerType
+		if err := validatePhotoOwnerMetadataRecord(record); err != nil {
+			_ = rows.Close()
+			return err
+		}
+		if err := write(record); err != nil {
+			_ = rows.Close()
+			return err
+		}
+	}
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		return err
+	}
+	if err := rows.Close(); err != nil {
+		return err
+	}
+	rows, err = tx.QueryContext(ctx, `
+		SELECT asset_id, kind, revision, owner_id, hidden_at, excluded_at, display_file_id,
 		       display_override_file_id, created_at, updated_at
 		FROM photo_assets ORDER BY asset_id`)
 	if err != nil {
@@ -60,7 +101,7 @@ func exportPhotoMetadata(ctx context.Context, tx metadataQuerier, write metadata
 	}
 	for rows.Next() {
 		var record metadataPhotoAsset
-		if err := rows.Scan(&record.AssetID, &record.Kind, &record.Revision, &record.ExcludedAt, &record.DisplayFileID, &record.DisplayOverrideFileID, &record.CreatedAt, &record.UpdatedAt); err != nil {
+		if err := rows.Scan(&record.AssetID, &record.Kind, &record.Revision, &record.OwnerID, &record.HiddenAt, &record.ExcludedAt, &record.DisplayFileID, &record.DisplayOverrideFileID, &record.CreatedAt, &record.UpdatedAt); err != nil {
 			_ = rows.Close() //nolint:sqlclosecheck // close before returning the scan error.
 			return err
 		}
@@ -112,11 +153,15 @@ func exportPhotoMetadata(ctx context.Context, tx metadataQuerier, write metadata
 	}
 	var settings metadataPhotoSettings
 	var preference sql.NullString
-	err = tx.QueryRowContext(ctx, `SELECT preference, revision, updated_at FROM photo_library_settings WHERE singleton=1`).Scan(&preference, &settings.Revision, &settings.UpdatedAt)
+	var defaultOwner sql.NullString
+	err = tx.QueryRowContext(ctx, `SELECT default_owner_id, preference, revision, updated_at FROM photo_library_settings WHERE singleton=1`).Scan(&defaultOwner, &preference, &settings.Revision, &settings.UpdatedAt)
 	if err == nil {
 		settings.Type = metadataPhotoSettingsType
 		if preference.Valid {
 			settings.Preference = new(preference.String)
+		}
+		if defaultOwner.Valid {
+			settings.DefaultOwnerID = new(defaultOwner.String)
 		}
 		if err := validatePhotoSettingsMetadataRecord(settings); err != nil {
 			return err
@@ -168,6 +213,14 @@ func validatePhotoAssetMetadataRecord(v metadataPhotoAsset) error {
 	if v.Type != metadataPhotoAssetType || validateUUIDv4(v.AssetID) != nil || !photoKindValid(v.Kind) || v.Revision < 1 {
 		return errors.New("invalid photo asset metadata")
 	}
+	if v.OwnerID != nil && validateUUIDv4(*v.OwnerID) != nil {
+		return errors.New("invalid photo asset owner")
+	}
+	if v.HiddenAt != nil {
+		if err := validateMetadataTime("photo asset hidden_at", *v.HiddenAt); err != nil {
+			return err
+		}
+	}
 	if v.ExcludedAt != nil {
 		if err := validateMetadataTime("photo asset excluded_at", *v.ExcludedAt); err != nil {
 			return err
@@ -177,6 +230,19 @@ func validatePhotoAssetMetadataRecord(v metadataPhotoAsset) error {
 		return err
 	}
 	return validateMetadataTime("photo asset updated_at", v.UpdatedAt)
+}
+
+func validatePhotoOwnerMetadataRecord(v metadataPhotoOwner) error {
+	if v.Type != metadataPhotoOwnerType || validateUUIDv4(v.OwnerID) != nil || v.Revision < 1 {
+		return errors.New("invalid photo owner metadata")
+	}
+	if err := validatePhotoOwnerName(v.Name); err != nil {
+		return err
+	}
+	if err := validateMetadataTime("photo owner created_at", v.CreatedAt); err != nil {
+		return err
+	}
+	return validateMetadataTime("photo owner updated_at", v.UpdatedAt)
 }
 
 func validatePhotoFileMetadataRecord(v metadataPhotoFile) error {
@@ -195,6 +261,9 @@ func validatePhotoFileMetadataRecord(v metadataPhotoFile) error {
 func validatePhotoSettingsMetadataRecord(v metadataPhotoSettings) error {
 	if v.Type != metadataPhotoSettingsType || v.Revision < 1 || !photoPreferenceValid(v.Preference) {
 		return errors.New("invalid photo settings metadata")
+	}
+	if v.DefaultOwnerID != nil && validateUUIDv4(*v.DefaultOwnerID) != nil {
+		return errors.New("invalid default photo owner metadata")
 	}
 	if v.UpdatedAt != "" {
 		return validateMetadataTime("photo settings updated_at", v.UpdatedAt)
@@ -233,6 +302,16 @@ func validatePhotoReceiptMetadataRecord(v metadataPhotoReceipt) error {
 
 func importPhotoMetadataRecord(ctx context.Context, tx *sql.Tx, kind string, raw jsontext.Value) error {
 	switch kind {
+	case metadataPhotoOwnerType:
+		var v metadataPhotoOwner
+		if err := decodeMetadataRecord(raw, &v); err != nil {
+			return err
+		}
+		if err := validatePhotoOwnerMetadataRecord(v); err != nil {
+			return err
+		}
+		_, err := tx.ExecContext(ctx, `INSERT INTO photo_owners(owner_id,name,revision,created_at,updated_at) VALUES(?,?,?,?,?)`, v.OwnerID, v.Name, v.Revision, v.CreatedAt, v.UpdatedAt)
+		return err
 	case metadataPhotoAssetType:
 		var v metadataPhotoAsset
 		if err := decodeMetadataRecord(raw, &v); err != nil {
@@ -241,7 +320,7 @@ func importPhotoMetadataRecord(ctx context.Context, tx *sql.Tx, kind string, raw
 		if err := validatePhotoAssetMetadataRecord(v); err != nil {
 			return err
 		}
-		_, err := tx.ExecContext(ctx, `INSERT INTO photo_assets(asset_id,kind,revision,excluded_at,display_file_id,display_override_file_id,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?)`, v.AssetID, v.Kind, v.Revision, v.ExcludedAt, v.DisplayFileID, v.DisplayOverrideFileID, v.CreatedAt, v.UpdatedAt)
+		_, err := tx.ExecContext(ctx, `INSERT INTO photo_assets(asset_id,kind,revision,owner_id,hidden_at,excluded_at,display_file_id,display_override_file_id,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?)`, v.AssetID, v.Kind, v.Revision, v.OwnerID, v.HiddenAt, v.ExcludedAt, v.DisplayFileID, v.DisplayOverrideFileID, v.CreatedAt, v.UpdatedAt)
 		return err
 	case metadataPhotoFileType:
 		var v metadataPhotoFile
@@ -261,7 +340,7 @@ func importPhotoMetadataRecord(ctx context.Context, tx *sql.Tx, kind string, raw
 		if err := validatePhotoSettingsMetadataRecord(v); err != nil {
 			return err
 		}
-		_, err := tx.ExecContext(ctx, `INSERT INTO photo_library_settings(singleton,preference,revision,updated_at) VALUES(1,?,?,?)`, v.Preference, v.Revision, v.UpdatedAt)
+		_, err := tx.ExecContext(ctx, `INSERT INTO photo_library_settings(singleton,default_owner_id,preference,revision,updated_at) VALUES(1,?,?,?,?)`, v.DefaultOwnerID, v.Preference, v.Revision, v.UpdatedAt)
 		return err
 	case metadataPhotoReceiptType:
 		var v metadataPhotoReceipt
@@ -279,6 +358,19 @@ func importPhotoMetadataRecord(ctx context.Context, tx *sql.Tx, kind string, raw
 }
 
 func validatePhotoMetadataState(ctx context.Context, tx metadataQuerier) error {
+	var broken int
+	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM photo_assets a LEFT JOIN photo_owners o ON o.owner_id=a.owner_id WHERE a.owner_id IS NOT NULL AND o.owner_id IS NULL`).Scan(&broken); err != nil {
+		return fmt.Errorf("checking photo owner references: %w", err)
+	}
+	if broken > 0 {
+		return fmt.Errorf("%w: photo assets reference missing owners", ErrInvalidPhotoOwner)
+	}
+	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM photo_library_settings s LEFT JOIN photo_owners o ON o.owner_id=s.default_owner_id WHERE s.default_owner_id IS NOT NULL AND o.owner_id IS NULL`).Scan(&broken); err != nil {
+		return fmt.Errorf("checking default photo owner reference: %w", err)
+	}
+	if broken > 0 {
+		return fmt.Errorf("%w: default owner is missing", ErrInvalidPhotoOwner)
+	}
 	if err := validatePhotoGraph(ctx, tx); err != nil {
 		return err
 	}

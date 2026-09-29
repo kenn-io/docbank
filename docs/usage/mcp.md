@@ -153,7 +153,7 @@ links, is capped at 1 MiB.
 | `list_package_members` | Pages through a package's immutable document occurrences. |
 | `get_package_record` | Reads one immutable sender row by its package-scoped record key. |
 | `lookup_bates_label` | Finds bounded package-scoped matches for an exact received or assigned label. |
-| `get_photo_asset` | Reads one photo asset by asset UUID or positive node ID. The response has at most 256 files and includes the selected display source. |
+| `get_photo_asset` | Reads one photo asset by asset UUID or positive node ID. The response has at most 256 files and includes the selected display source. Pass `owner_id` to select an owner. |
 
 Starting the server with `--allow-photo-edits` adds these write tools:
 
@@ -164,6 +164,10 @@ Starting the server with `--allow-photo-edits` adds these write tools:
 | `detach_photo_file` | Detaches one member at an expected asset revision. |
 | `exclude_photo_asset` | Changes inclusion at an expected asset revision. |
 | `promote_photo_asset` | Explicitly creates an asset for one live file node. |
+| `list_photo_owners` | Lists durable photo owners. |
+| `add_photo_owner` | Adds one durable photo owner. |
+| `rename_photo_owner` | Renames one owner at an expected revision. |
+| `remove_photo_owner` | Removes one unreferenced owner at an expected revision. |
 
 Photo writes make one daemon request. An ambiguous transport failure returns
 `processing_outcome_unknown`; inspect the asset before retrying. Display and

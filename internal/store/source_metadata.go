@@ -248,6 +248,9 @@ func (s *Store) ContentVersionSourceMetadata(ctx context.Context, versionID stri
 	if err != nil {
 		return SourceMetadataView{}, err
 	}
+	if err := photoNodeVisibilityCheckTx(ctx, tx, node.ID); err != nil {
+		return SourceMetadataView{}, err
+	}
 	view, err := sourceMetadataViewForVersion(ctx, tx, version, node, "")
 	if err != nil {
 		return SourceMetadataView{}, err
@@ -321,6 +324,9 @@ func (s *Store) nodeSourceMetadataView(
 
 	node, err := resolve(tx)
 	if err != nil {
+		return NodeSourceMetadataView{}, err
+	}
+	if err := photoNodeVisibilityCheckTx(ctx, tx, node.ID); err != nil {
 		return NodeSourceMetadataView{}, err
 	}
 	nodeView, err := nodeViewForNode(ctx, tx, node)

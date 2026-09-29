@@ -1,6 +1,7 @@
 package store
 
 import (
+	"context"
 	"fmt"
 	"strings"
 )
@@ -18,6 +19,27 @@ func matchedPopulation(
 		return compiledQueryFragment{}, err
 	}
 	return selectCompiledPopulation(predicate, compiled.Query.Filters.CollapseDuplicates), nil
+}
+
+// applyPhotoVisibilityPopulation adds the request's owner predicate before
+// any population consumer applies ranking, duplicate collapse, limits, or
+// facets.
+func applyPhotoVisibilityPopulation(ctx context.Context, q metadataQuerier, population *compiledQueryFragment) error {
+	predicate, args, err := photoNodeVisibilitySQL(ctx, q)
+	if err != nil {
+		return err
+	}
+	if predicate == "1=1" {
+		return nil
+	}
+	where := strings.Index(strings.ToUpper(population.sql), "WHERE")
+	if where < 0 {
+		return nil
+	}
+	whereEnd := where + len("WHERE")
+	population.sql = population.sql[:whereEnd] + " " + predicate + " AND " + population.sql[whereEnd:]
+	population.args = append(args, population.args...)
+	return nil
 }
 
 func selectCompiledPopulation(predicate compiledQueryFragment, collapseDuplicates bool) compiledQueryFragment {

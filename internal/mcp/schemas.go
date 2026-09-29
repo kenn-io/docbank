@@ -13,6 +13,7 @@ const (
 	jsonSchemaDraft       = "https://json-schema.org/draft/2020-12/schema"
 	packageIDField        = "package_id"
 	schemaStateField      = "state"
+	schemaRevisionField   = "revision"
 	schemaLimitField      = "limit"
 	schemaCreatedAtField  = "created_at"
 	jsonSchemaConst       = "const"
@@ -170,7 +171,7 @@ func listPackagePreflightDiagnosticsSchemas() (schema, schema) {
 }
 
 func custodianAssignmentSchema() schema {
-	return objectSchema(custodianAssignmentProperties(), "assignment_id", "scope_kind", "raw_label", "rank", "basis", "source_ref", "revision", "recorded_at")
+	return objectSchema(custodianAssignmentProperties(), "assignment_id", "scope_kind", "raw_label", "rank", "basis", "source_ref", schemaRevisionField, "recorded_at")
 }
 
 func custodianAssignmentProperties() schema {
@@ -179,7 +180,7 @@ func custodianAssignmentProperties() schema {
 		packageIDField: uuidSchema(), "package_record_id": sha256Schema(), "person_id": uuidSchema(),
 		"raw_label": stringSchema(200), "rank": enumSchema("primary", "additional"),
 		"basis":      enumSchema("operator_assigned", "package_column", "transfer_record"),
-		"source_ref": stringSchema(512), "revision": integerSchema(1, 0), "recorded_at": dateTimeSchema(),
+		"source_ref": stringSchema(512), schemaRevisionField: integerSchema(1, 0), "recorded_at": dateTimeSchema(),
 	}
 }
 
@@ -201,8 +202,8 @@ func listPackageCustodiansSchemas() (schema, schema) {
 func findPeopleSchemas() (schema, schema) {
 	person := objectSchema(schema{
 		"person_id": uuidSchema(), "display_name": stringSchema(200), schemaStateField: enumSchema("provisional", "curated"),
-		"revision": integerSchema(1, 0),
-	}, "person_id", "display_name", schemaStateField, "revision")
+		schemaRevisionField: integerSchema(1, 0),
+	}, "person_id", "display_name", schemaStateField, schemaRevisionField)
 	return rootObjectSchema(schema{
 			"query": stringSchema(200), "cursor": stringSchema(maxCursorCharacters), schemaLimitField: integerSchema(1, 250),
 		}), rootObjectSchema(withPrivateCache(schema{
@@ -214,7 +215,7 @@ func resolvePackageCustodianSchemas() (schema, schema) {
 	return rootObjectSchema(schema{
 			"assignment_id": uuidSchema(), "person_id": uuidSchema(), "if_match_revision": integerSchema(1, 0),
 		}, "assignment_id", "person_id", "if_match_revision"), rootObjectSchema(withPrivateCache(custodianAssignmentProperties()),
-			cacheRequired("assignment_id", "scope_kind", "raw_label", "rank", "basis", "source_ref", "revision", "recorded_at")...)
+			cacheRequired("assignment_id", "scope_kind", "raw_label", "rank", "basis", "source_ref", schemaRevisionField, "recorded_at")...)
 }
 
 func assignPackageCustodianSchemas() (schema, schema) {
@@ -223,7 +224,7 @@ func assignPackageCustodianSchemas() (schema, schema) {
 			"raw_label": schema{"type": "string", "minLength": 1, "maxLength": 200}, "person_id": uuidSchema(),
 			"if_match_revision": integerSchema(1, 0),
 		}, packageIDField, "raw_label", "if_match_revision"), rootObjectSchema(withPrivateCache(custodianAssignmentProperties()),
-			cacheRequired("assignment_id", "scope_kind", "raw_label", "rank", "basis", "source_ref", "revision", "recorded_at")...)
+			cacheRequired("assignment_id", "scope_kind", "raw_label", "rank", "basis", "source_ref", schemaRevisionField, "recorded_at")...)
 }
 
 func listPackagesSchemas() (schema, schema) {
@@ -801,8 +802,10 @@ func photoFileSchema() schema {
 func photoAssetOutputSchema() schema {
 	return rootObjectSchema(withPrivateCache(schema{
 		"id":                       uuidSchema(),
+		"owner_id":                 uuidSchema(),
+		"hidden_at":                dateTimeSchema(),
 		"kind":                     enumSchema("photo", "video"),
-		"revision":                 integerSchema(1, 0),
+		schemaRevisionField:        integerSchema(1, 0),
 		"excluded_at":              dateTimeSchema(),
 		"display_file_id":          uuidSchema(),
 		"display_override_file_id": uuidSchema(),
@@ -810,7 +813,7 @@ func photoAssetOutputSchema() schema {
 		schemaCreatedAtField:       dateTimeSchema(),
 		"updated_at":               dateTimeSchema(),
 		"files":                    arraySchema(photoFileSchema(), 256),
-	}), "id", "kind", "revision", "display_source", schemaCreatedAtField, "updated_at", "files", "ttlMs", "cacheScope")
+	}), "id", "kind", schemaRevisionField, "display_source", schemaCreatedAtField, "updated_at", "files", "ttlMs", "cacheScope")
 }
 
 func photoAssetMutationSchemas(properties schema, required ...string) (schema, schema) {
@@ -822,49 +825,84 @@ func getPhotoAssetSchemas() (schema, schema) {
 	return photoAssetMutationSchemas(schema{
 		"asset_id": uuidSchema(),
 		"node_id":  integerSchema(1, 0),
+		"owner_id": uuidSchema(),
 	})
 }
 
 func createPhotoAssetSchemas() (schema, schema) {
 	return photoAssetMutationSchemas(schema{
-		"node_id": integerSchema(1, 0),
-		"kind":    enumSchema("photo", "video"),
-		"role":    enumSchema("raw", "image", "video", "sidecar"),
+		"node_id":  integerSchema(1, 0),
+		"kind":     enumSchema("photo", "video"),
+		"role":     enumSchema("raw", "image", "video", "sidecar"),
+		"owner_id": uuidSchema(),
 	}, "node_id")
 }
 
 func attachPhotoFileSchemas() (schema, schema) {
 	return photoAssetMutationSchemas(schema{
 		"asset_id":           uuidSchema(),
-		"revision":           integerSchema(1, 0),
+		schemaRevisionField:  integerSchema(1, 0),
 		"node_id":            integerSchema(1, 0),
 		"role":               enumSchema("raw", "image", "video", "sidecar"),
 		"sidecar_of_file_id": uuidSchema(),
-	}, "asset_id", "revision", "node_id")
+		"owner_id":           uuidSchema(),
+	}, "asset_id", schemaRevisionField, "node_id")
 }
 
 func detachPhotoFileSchemas() (schema, schema) {
 	return photoAssetMutationSchemas(schema{
 		"asset_id":                 uuidSchema(),
-		"revision":                 integerSchema(1, 0),
+		schemaRevisionField:        integerSchema(1, 0),
 		"file_id":                  uuidSchema(),
 		"clear_dependent_sidecars": booleanSchema(),
-	}, "asset_id", "revision", "file_id")
+		"owner_id":                 uuidSchema(),
+	}, "asset_id", schemaRevisionField, "file_id")
 }
 
 func excludePhotoAssetSchemas() (schema, schema) {
 	return photoAssetMutationSchemas(schema{
-		"asset_id": uuidSchema(),
-		"revision": integerSchema(1, 0),
-		"excluded": booleanSchema(),
-	}, "asset_id", "revision", "excluded")
+		"asset_id":          uuidSchema(),
+		schemaRevisionField: integerSchema(1, 0),
+		"excluded":          booleanSchema(),
+		"owner_id":          uuidSchema(),
+	}, "asset_id", schemaRevisionField, "excluded")
 }
 
 func promotePhotoNodeSchemas() (schema, schema) {
 	return photoAssetMutationSchemas(schema{
-		"node_id":  integerSchema(1, 0),
-		"revision": integerSchema(1, 0),
-		"kind":     enumSchema("photo", "video"),
-		"role":     enumSchema("raw", "image", "video", "sidecar"),
+		"node_id":           integerSchema(1, 0),
+		schemaRevisionField: integerSchema(1, 0),
+		"kind":              enumSchema("photo", "video"),
+		"role":              enumSchema("raw", "image", "video", "sidecar"),
+		"owner_id":          uuidSchema(),
 	}, "node_id")
+}
+
+func photoOwnerOutputSchema() schema {
+	return rootObjectSchema(withPrivateCache(schema{
+		"id": uuidSchema(), "name": schema{"type": "string", "minLength": 1, "maxLength": 256},
+		schemaRevisionField: integerSchema(1, 0), "created_at": dateTimeSchema(), "updated_at": dateTimeSchema(),
+	}), "id", "name", schemaRevisionField, "created_at", "updated_at", "ttlMs", "cacheScope")
+}
+
+func photoOwnerMutationSchemas(properties schema, required ...string) (schema, schema) {
+	return rootObjectSchema(properties, required...), photoOwnerOutputSchema()
+}
+
+func listPhotoOwnersSchemas() (schema, schema) {
+	return rootObjectSchema(nil), rootObjectSchema(withPrivateCache(schema{
+		"owners": arraySchema(photoOwnerOutputSchema(), 256),
+	}), "owners", "ttlMs", "cacheScope")
+}
+
+func addPhotoOwnerSchemas() (schema, schema) {
+	return photoOwnerMutationSchemas(schema{"name": schema{"type": "string", "minLength": 1, "maxLength": 256}}, "name")
+}
+
+func renamePhotoOwnerSchemas() (schema, schema) {
+	return photoOwnerMutationSchemas(schema{"owner_id": uuidSchema(), schemaRevisionField: integerSchema(1, 0), "name": schema{"type": "string", "minLength": 1, "maxLength": 256}}, "owner_id", schemaRevisionField, "name")
+}
+
+func removePhotoOwnerSchemas() (schema, schema) {
+	return rootObjectSchema(schema{"owner_id": uuidSchema(), schemaRevisionField: integerSchema(1, 0)}, "owner_id", schemaRevisionField), rootObjectSchema(withPrivateCache(schema{"id": uuidSchema()}), "id", "ttlMs", "cacheScope")
 }

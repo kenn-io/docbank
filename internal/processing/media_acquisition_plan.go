@@ -142,7 +142,8 @@ func (service *Service) PlanMediaAcquisition(
 	referenceSHA256 := hex.EncodeToString(referenceDigest[:])
 	consentProfileFingerprint := stableHash(
 		"docbank/media-acquisition-consent/v1", configuration, referenceSHA256)
-	claim := mediaAcquisitionClaim{Version: "v1", Principal: service.principal,
+	principal := service.requestPrincipal(ctx)
+	claim := mediaAcquisitionClaim{Version: "v1", Principal: principal,
 		IncarnationID: incarnation.ID, OriginID: policy.OriginID, Provider: policy.Provider,
 		ReferenceSHA256: referenceSHA256, ConfigurationFingerprint: configuration,
 		ProfileFingerprint: consentProfileFingerprint, DisclosureFingerprint: policy.DisclosureFingerprint,
@@ -158,7 +159,7 @@ func (service *Service) PlanMediaAcquisition(
 	}
 	planDigest := sha256.Sum256(body)
 	grantState := "required"
-	_, authErr := service.catalog.AuthorizeProviderOperation(ctx, mediaAcquisitionAuthorization(service, claim, nil))
+	_, authErr := service.catalog.AuthorizeProviderOperation(ctx, mediaAcquisitionAuthorization(claim, nil))
 	if authErr == nil {
 		grantState = "granted"
 	} else if !errors.Is(authErr, store.ErrProcessingConsentRequired) &&
@@ -188,7 +189,8 @@ func (service *Service) GrantMediaAcquisition(
 		return store.MediaConsentReceipt{}, err
 	}
 	requestDigest := sha256.Sum256(requestIdentity)
-	op := store.MediaOperation{ID: operationID, Principal: service.principal,
+	principal := service.requestPrincipal(ctx)
+	op := store.MediaOperation{ID: operationID, Principal: principal,
 		Verb: "grant_media_acquisition", RequestSHA256: hex.EncodeToString(requestDigest[:])}
 	if replay, replayErr := service.catalog.MediaOperationReceipt(ctx, op); replayErr == nil {
 		return canonical.Decode[store.MediaConsentReceipt]([]byte(replay))
@@ -203,7 +205,7 @@ func (service *Service) GrantMediaAcquisition(
 		return store.MediaConsentReceipt{}, err
 	}
 	return service.catalog.GrantMediaAcquisitionConsent(ctx, op, policy.OriginID, store.ProcessingConsentGrantRequest{
-		Principal: service.principal, Scope: mediaAcquisitionScope(policy.OriginID),
+		Principal: claim.Principal, Scope: mediaAcquisitionScope(policy.OriginID),
 		ProfileFingerprint: claim.ProfileFingerprint, DisclosureFingerprint: claim.DisclosureFingerprint,
 		InputClasses: claim.InputClasses, RetainedArtifactClasses: claim.RetainedClasses, ExpiresAt: expiresAt,
 	})
@@ -216,7 +218,8 @@ func (service *Service) RevokeMediaAcquisition(
 		return store.MediaConsentReceipt{}, ErrMediaCapabilityUnavailable
 	}
 	digest := sha256.Sum256([]byte(originID))
-	op := store.MediaOperation{ID: operationID, Principal: service.principal,
+	principal := service.requestPrincipal(ctx)
+	op := store.MediaOperation{ID: operationID, Principal: principal,
 		Verb: "revoke_media_acquisition", RequestSHA256: hex.EncodeToString(digest[:])}
 	if replay, replayErr := service.catalog.MediaOperationReceipt(ctx, op); replayErr == nil {
 		return canonical.Decode[store.MediaConsentReceipt]([]byte(replay))
@@ -231,7 +234,7 @@ func (service *Service) RevokeMediaAcquisition(
 		return store.MediaConsentReceipt{}, ErrMediaCapabilityUnavailable
 	}
 	return service.catalog.RevokeMediaAcquisitionConsent(ctx, op, originID, store.ProcessingConsentRevocationRequest{
-		Principal: service.principal, Scope: mediaAcquisitionScope(originID),
+		Principal: principal, Scope: mediaAcquisitionScope(originID),
 	})
 }
 
@@ -266,7 +269,7 @@ func (service *Service) verifyCurrentMediaPlan(
 	configuration, fingerprintErr := mediaOriginFingerprint(policy)
 	wantConsentProfile := stableHash(
 		"docbank/media-acquisition-consent/v1", configuration, claim.ReferenceSHA256)
-	if fingerprintErr != nil || !ok || claim.Principal != service.principal || claim.IncarnationID != incarnation.ID ||
+	if fingerprintErr != nil || !ok || claim.Principal != service.requestPrincipal(ctx) || claim.IncarnationID != incarnation.ID ||
 		claim.Provider != policy.Provider || claim.ConfigurationFingerprint != configuration ||
 		claim.ProfileFingerprint != wantConsentProfile || claim.DisclosureFingerprint != policy.DisclosureFingerprint ||
 		!slices.Equal(claim.InputClasses, policy.InputClasses) || !slices.Equal(claim.RetainedClasses, policy.RetainedClasses) {
@@ -313,9 +316,9 @@ func mediaOriginFingerprint(policy MediaOriginPolicy) (string, error) {
 	return hex.EncodeToString(digest[:]), nil
 }
 
-func mediaAcquisitionAuthorization(service *Service, claim mediaAcquisitionClaim, expiresAt *time.Time) store.ProviderOperationAuthorizationRequest {
+func mediaAcquisitionAuthorization(claim mediaAcquisitionClaim, expiresAt *time.Time) store.ProviderOperationAuthorizationRequest {
 	_ = expiresAt
-	return store.ProviderOperationAuthorizationRequest{Principal: service.principal,
+	return store.ProviderOperationAuthorizationRequest{Principal: claim.Principal,
 		Scope: mediaAcquisitionScope(claim.OriginID), ProfileFingerprint: claim.ProfileFingerprint,
 		DisclosureFingerprint: claim.DisclosureFingerprint, InputClasses: slices.Clone(claim.InputClasses),
 		RetainedArtifactClasses: slices.Clone(claim.RetainedClasses)}

@@ -72,9 +72,15 @@ func (s *Store) EmailDocumentProcessingChild(
 	if receipt.RequestDigest != r.RequestDigest || r.Order > len(receipt.Relations) {
 		return document.EmailDocumentIdentity{}, ErrEmailDocumentConflict
 	}
+	if err := photoVersionVisibilityCheckTx(ctx, s.db, receipt.Relations[r.Order-1].Parent.VersionID); err != nil {
+		return document.EmailDocumentIdentity{}, err
+	}
 	child := receipt.Relations[r.Order-1].Child
 	if child == nil {
 		return document.EmailDocumentIdentity{}, ErrEmailPartUnavailable
+	}
+	if err := photoVersionVisibilityCheckTx(ctx, s.db, child.VersionID); err != nil {
+		return document.EmailDocumentIdentity{}, err
 	}
 	if r.ExecutionIdentity.Upload.SHA256 != child.SHA256 || r.ExecutionIdentity.Upload.ByteLength != child.Size {
 		return document.EmailDocumentIdentity{}, ErrEmailDocumentConflict

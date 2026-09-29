@@ -53,6 +53,8 @@ type PhotoAsset struct {
 	ID                    string      `json:"id"`
 	Kind                  string      `json:"kind"`
 	Revision              int64       `json:"revision"`
+	OwnerID               *string     `json:"owner_id,omitzero"`
+	HiddenAt              *string     `json:"hidden_at,omitzero"`
 	ExcludedAt            *string     `json:"excluded_at,omitzero"`
 	DisplayFileID         *string     `json:"display_file_id,omitzero"`
 	DisplayOverrideFileID *string     `json:"display_override_file_id,omitzero"`
@@ -65,9 +67,10 @@ type PhotoAsset struct {
 // PhotoSettings is the vault preference fence. A missing row is the virtual
 // RAW preference at revision one; a stored nil preference is a reset value.
 type PhotoSettings struct {
-	Preference *string `json:"preference,omitzero"`
-	Revision   int64   `json:"revision"`
-	UpdatedAt  string  `json:"updated_at"`
+	DefaultOwnerID *string `json:"default_owner_id,omitzero"`
+	Preference     *string `json:"preference,omitzero"`
+	Revision       int64   `json:"revision"`
+	UpdatedAt      string  `json:"updated_at"`
 }
 
 // PhotoDetachOptions controls the only destructive dependent-member action.

@@ -83,12 +83,17 @@ func (s *Store) DuplicateGroupByHash(ctx context.Context, hash string, size int6
 	}
 	defer func() { _ = tx.Rollback() }()
 	group := DuplicateGroup{Hash: hash, Size: size, References: make([]DuplicateReference, 0)}
-	err = tx.QueryRowContext(ctx, `WITH `+CurrentContentMembershipCTE+`
+	cte, cteArgs, err := scopedCurrentContentMembershipCTE(ctx, tx)
+	if err != nil {
+		return DuplicateGroup{}, err
+	}
+	args := append(append([]any{}, cteArgs...), hash, size, hash, size)
+	err = tx.QueryRowContext(ctx, `WITH `+cte+`
 		SELECT COUNT(DISTINCT node_id),
 		       (SELECT node_id FROM current_content_members
 		        WHERE blob_hash=? AND size=? ORDER BY `+DuplicateRepresentativeOrder+` LIMIT 1)
 		FROM current_content_members WHERE blob_hash=? AND size=?
-		HAVING COUNT(DISTINCT node_id) >= 2`, hash, size, hash, size,
+		HAVING COUNT(DISTINCT node_id) >= 2`, args...,
 	).Scan(&group.ReferenceCount, &group.RepresentativeNodeID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return DuplicateGroup{}, ErrNotFound
@@ -132,7 +137,11 @@ func (s *Store) Duplicates(
 	}
 	defer func() { _ = tx.Rollback() }()
 
-	groupsSQL := `WITH ` + CurrentContentMembershipCTE + `,
+	cte, cteArgs, err := scopedCurrentContentMembershipCTE(ctx, tx)
+	if err != nil {
+		return DuplicatePage{}, err
+	}
+	groupsSQL := `WITH ` + cte + `,
 		duplicate_groups AS (
 			SELECT blob_hash, size, COUNT(DISTINCT node_id) AS reference_count
 			FROM current_content_members
@@ -141,7 +150,7 @@ func (s *Store) Duplicates(
 		)`
 	if err := tx.QueryRowContext(ctx, groupsSQL+`
 		SELECT COUNT(*), COALESCE(SUM(reference_count), 0)
-		FROM duplicate_groups`).Scan(&page.Total, &page.TotalReferences); err != nil {
+		FROM duplicate_groups`, cteArgs...).Scan(&page.Total, &page.TotalReferences); err != nil {
 		return DuplicatePage{}, fmt.Errorf("counting duplicate content: %w", err)
 	}
 
@@ -152,7 +161,7 @@ func (s *Store) Duplicates(
 		        ORDER BY `+DuplicateRepresentativeOrder+` LIMIT 1)
 		FROM duplicate_groups g
 		ORDER BY g.blob_hash ASC
-		LIMIT ? OFFSET ?`, limit, offset)
+		LIMIT ? OFFSET ?`, append(append([]any{}, cteArgs...), limit, offset)...)
 	if err != nil {
 		return DuplicatePage{}, fmt.Errorf("listing duplicate content: %w", err)
 	}
@@ -197,12 +206,16 @@ type duplicateReferenceIdentity struct {
 func duplicateReferences(
 	ctx context.Context, tx *sql.Tx, group DuplicateGroup,
 ) ([]DuplicateReference, error) {
-	rows, err := tx.QueryContext(ctx, `WITH `+CurrentContentMembershipCTE+`
+	cte, cteArgs, err := scopedCurrentContentMembershipCTE(ctx, tx)
+	if err != nil {
+		return nil, err
+	}
+	rows, err := tx.QueryContext(ctx, `WITH `+cte+`
 		SELECT node_id, version_id
 		FROM current_content_members
 		WHERE blob_hash = ? AND size = ?
 		ORDER BY `+DuplicateRepresentativeOrder+`
-		LIMIT ?`, group.Hash, group.Size, maxDuplicatePageReferences)
+		LIMIT ?`, append(append([]any{}, cteArgs...), group.Hash, group.Size, maxDuplicatePageReferences)...)
 	if err != nil {
 		return nil, fmt.Errorf("listing references for duplicate %s: %w", group.Hash, err)
 	}
@@ -257,18 +270,22 @@ func duplicateReferences(
 func duplicateCollections(
 	ctx context.Context, tx *sql.Tx, nodeID int64,
 ) ([]DuplicateCollection, int, error) {
+	cte, cteArgs, err := scopedCollectionMembershipCTE(ctx, tx)
+	if err != nil {
+		return nil, 0, err
+	}
 	var total int
-	if err := tx.QueryRowContext(ctx, `WITH `+CollectionMembershipCTE+`
-		SELECT COUNT(*) FROM collection_members WHERE node_id=?`, nodeID).Scan(&total); err != nil {
+	if err := tx.QueryRowContext(ctx, `WITH `+cte+`
+		SELECT COUNT(*) FROM collection_members WHERE node_id=?`, append(append([]any{}, cteArgs...), nodeID)...).Scan(&total); err != nil {
 		return nil, 0, fmt.Errorf("counting collections for duplicate node %d: %w", nodeID, err)
 	}
-	rows, err := tx.QueryContext(ctx, `WITH `+CollectionMembershipCTE+`
+	rows, err := tx.QueryContext(ctx, `WITH `+cte+`
 		SELECT cm.ingest_id, l.label
 		FROM collection_members cm
 		LEFT JOIN collection_labels l ON l.ingest_id=cm.ingest_id
 		WHERE cm.node_id=?
 		ORDER BY cm.ingest_id ASC
-		LIMIT ?`, nodeID, maxDuplicateCollections)
+		LIMIT ?`, append(append([]any{}, cteArgs...), nodeID, maxDuplicateCollections)...)
 	if err != nil {
 		return nil, 0, fmt.Errorf("listing collections for duplicate node %d: %w", nodeID, err)
 	}

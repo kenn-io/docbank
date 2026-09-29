@@ -26,6 +26,8 @@ import (
 	"time"
 
 	"go.kenn.io/docbank/internal/reporting"
+	"go.kenn.io/docbank/internal/store"
+	"go.kenn.io/docbank/report"
 	"go.kenn.io/kit/safefileio"
 )
 
@@ -49,20 +51,25 @@ type webDownloadRegistry struct {
 }
 
 type webDownloadTicket struct {
-	reportID        string
-	reportFormat    string
-	path            string
-	name            string
-	mediaType       string
-	versionID       string
-	blobHash        string
-	size            int64
-	owner           string
-	expiresAt       time.Time
-	timer           *time.Timer
-	archiveFile     *os.File
-	releaseArchive  func()
-	planFingerprint string
+	reportID          string
+	reportFormat      string
+	path              string
+	name              string
+	mediaType         string
+	versionID         string
+	blobHash          string
+	size              int64
+	owner             string
+	photoOwnerID      string
+	photoOwnerBound   bool
+	photoNoOwner      bool
+	planID            string
+	batesAllocationID string
+	expiresAt         time.Time
+	timer             *time.Timer
+	archiveFile       *os.File
+	releaseArchive    func()
+	planFingerprint   string
 }
 
 func (t webDownloadTicket) release() {
@@ -287,6 +294,11 @@ func registerWebDownload(
 				"the download request has no authenticated owner"))
 			return
 		}
+		photoOwnerID, _, _, ownerErr := d.Store.PhotoOwnerForRequest(r.Context())
+		if ownerErr != nil {
+			writeError(w, webDownloadProblem(ownerErr))
+			return
+		}
 
 		stream, streamSize, err := d.Blobs.OpenStreamContext(r.Context(), contentHash)
 		if err != nil {
@@ -363,6 +375,7 @@ func registerWebDownload(
 		ticket := webDownloadTicket{
 			path: stagedPath, name: contentName, mediaType: contentType,
 			versionID: version.ID, blobHash: contentHash, size: contentSize, owner: owner,
+			photoOwnerID: photoOwnerID,
 		}
 		var token string
 		if browserSessionRequest(r.Context()) {
@@ -423,6 +436,26 @@ func registerWebDownload(
 				writeError(w, NewError(http.StatusGone, "report_unavailable", "This report handle is no longer available."))
 				return
 			}
+			visibilityCtx := r.Context()
+			if ticket.photoOwnerBound {
+				if ticket.photoNoOwner {
+					visibilityCtx = store.WithNoPhotoOwner(visibilityCtx)
+				} else {
+					visibilityCtx = store.WithPhotoOwner(visibilityCtx, ticket.photoOwnerID)
+				}
+			}
+			if err := reports.Validate(visibilityCtx, ticket.owner, ticket.reportID,
+				func(ctx context.Context, frame report.Frame) error {
+					for _, member := range frame.Members {
+						if err := d.Store.CheckPhotoVisibilityForVersion(ctx, member.Identity.VersionID); err != nil {
+							return err
+						}
+					}
+					return nil
+				}); err != nil {
+				writeError(w, termReportError(err))
+				return
+			}
 			reader, size, digest, err := reports.Acquire(r.Context(), ticket.owner, ticket.reportID, ticket.reportFormat)
 			if err != nil {
 				writeError(w, termReportError(err))
@@ -440,6 +473,51 @@ func registerWebDownload(
 			w.WriteHeader(http.StatusOK)
 			_, _ = io.Copy(w, reader)
 			return
+		}
+		if ticket.versionID != "" {
+			visibilityCtx := r.Context()
+			if ticket.photoOwnerID != "" {
+				visibilityCtx = store.WithPhotoOwner(visibilityCtx, ticket.photoOwnerID)
+			} else {
+				visibilityCtx = store.WithNoPhotoOwner(visibilityCtx)
+			}
+			if err := d.Store.CheckPhotoVisibilityForVersion(visibilityCtx, ticket.versionID); err != nil {
+				writeError(w, NewError(http.StatusNotFound, "download_not_found",
+					"the document is no longer available to this photo owner"))
+				return
+			}
+		}
+		if ticket.planID != "" {
+			visibilityCtx := r.Context()
+			if ticket.photoOwnerID != "" {
+				visibilityCtx = store.WithPhotoOwner(visibilityCtx, ticket.photoOwnerID)
+			} else {
+				visibilityCtx = store.WithNoPhotoOwner(visibilityCtx)
+			}
+			job, err := d.Store.ExportJob(visibilityCtx, ticket.owner, ticket.planID)
+			if err != nil {
+				writeError(w, NewError(http.StatusNotFound, "download_not_found",
+					"the export is no longer available to this photo owner"))
+				return
+			}
+			if err := d.Store.CheckExportPlanPhotoVisibility(visibilityCtx, job.PlanID); err != nil {
+				writeError(w, NewError(http.StatusNotFound, "download_not_found",
+					"the export is no longer available to this photo owner"))
+				return
+			}
+		}
+		if ticket.batesAllocationID != "" {
+			visibilityCtx := r.Context()
+			if ticket.photoOwnerID != "" {
+				visibilityCtx = store.WithPhotoOwner(visibilityCtx, ticket.photoOwnerID)
+			} else {
+				visibilityCtx = store.WithNoPhotoOwner(visibilityCtx)
+			}
+			if _, err := d.Store.BatesArtifact(visibilityCtx, ticket.batesAllocationID); err != nil {
+				writeError(w, NewError(http.StatusNotFound, "download_not_found",
+					"the Bates export is no longer available to this photo owner"))
+				return
+			}
 		}
 
 		file := ticket.archiveFile

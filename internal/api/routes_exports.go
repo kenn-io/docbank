@@ -298,6 +298,9 @@ func registerExportRoutes(mux *http.ServeMux, api huma.API, d Deps, g *Operation
 		if err != nil {
 			return nil, exportProblem(err)
 		}
+		if err := d.Store.CheckExportPlanPhotoVisibility(ctx, j.PlanID); err != nil {
+			return nil, exportProblem(err)
+		}
 		return &jobOutput{Body: j}, nil
 	})
 	huma.Register(api, huma.Operation{OperationID: "cancelExportJob", Method: http.MethodPost, Path: "/api/v1/exports/jobs/{id}/cancel", Summary: "Cancel and fence a running export", MaxBodyBytes: 1024}, func(ctx context.Context, in *struct {
@@ -338,11 +341,22 @@ func registerExportRoutes(mux *http.ServeMux, api huma.API, d Deps, g *Operation
 		if err != nil {
 			return nil, NewError(400, "validation", err.Error())
 		}
+		job, err := d.Store.ExportJob(ctx, owner, in.ID)
+		if err != nil {
+			return nil, exportProblem(err)
+		}
+		if err := d.Store.CheckExportPlanPhotoVisibility(ctx, job.PlanID); err != nil {
+			return nil, exportProblem(err)
+		}
+		photoOwnerID, _, _, err := d.Store.PhotoOwnerForRequest(ctx)
+		if err != nil {
+			return nil, exportProblem(err)
+		}
 		file, receipt, release, err := d.Exports.Lease(ctx, owner, in.ID)
 		if err != nil {
 			return nil, exportProblem(err)
 		}
-		ticket := webDownloadTicket{name: name, mediaType: "application/zip", blobHash: receipt.SHA256, size: receipt.Size, owner: owner, archiveFile: file, releaseArchive: release, planFingerprint: receipt.PlanFingerprint}
+		ticket := webDownloadTicket{name: name, mediaType: "application/zip", blobHash: receipt.SHA256, size: receipt.Size, owner: owner, photoOwnerID: photoOwnerID, archiveFile: file, releaseArchive: release, planFingerprint: receipt.PlanFingerprint, planID: in.ID}
 		var token string
 		if browserSessionRequest(ctx) {
 			active, e := sessions.withActiveOwner(owner, func() error { var e error; token, e = downloads.issue(ticket); return e })
@@ -391,6 +405,10 @@ func registerExportRoutes(mux *http.ServeMux, api huma.API, d Deps, g *Operation
 			writeError(w, exportProblem(err))
 			return
 		}
+		if err := d.Store.CheckExportPlanPhotoVisibility(r.Context(), job.PlanID); err != nil {
+			writeError(w, exportProblem(err))
+			return
+		}
 		after := int64(0)
 		if value := r.URL.Query().Get("after"); value != "" {
 			after, err = strconv.ParseInt(value, 10, 64)
@@ -428,6 +446,9 @@ func registerExportRoutes(mux *http.ServeMux, api huma.API, d Deps, g *Operation
 			case <-ticker.C:
 				next, err := d.Store.ExportJob(r.Context(), owner, id)
 				if err != nil {
+					return
+				}
+				if err := d.Store.CheckExportPlanPhotoVisibility(r.Context(), next.PlanID); err != nil {
 					return
 				}
 				if next.Sequence != job.Sequence {

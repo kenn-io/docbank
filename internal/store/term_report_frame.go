@@ -89,6 +89,9 @@ func (s *Store) MaterializeTermReportFrame(
 			if err != nil {
 				return err
 			}
+			if err := applyPhotoVisibilityPopulation(ctx, q, &population); err != nil {
+				return err
+			}
 			statement, args, err := bindQueryPopulation(population, coverage, generation.ID)
 			if err != nil {
 				return err

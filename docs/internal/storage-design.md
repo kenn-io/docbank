@@ -310,7 +310,9 @@ revise this envelope.
 
 Photo tables index ordinary file nodes; they do not copy blob hashes, sizes,
 MIME data, or content versions. `photo_assets` owns asset kind, exclusion,
-revision, and selected or overridden display pointers. `photo_files` owns the
+revision, owner, hidden state, and selected or overridden display pointers.
+`photo_owners` owns durable owner identity and the settings singleton points at
+the default owner. `photo_files` owns the
 role and same-asset sidecar relationship for each node. A sidecar never
 becomes a display member, and its source must be a RAW member in the same
 asset.
@@ -329,7 +331,7 @@ overrides remain unchanged. Human graph, display, exclusion, and preference
 changes append bounded immutable `photo_change_receipts` rows. No-op mutations
 keep their revision and append no receipt.
 
-Schema version 25 exports assets, files, settings, and receipts in stable
+Schema version 27 exports owners, assets, files, settings, and receipts in stable
 JSONL order. Restore requires a pristine target and validates node ownership,
 local pointers, sidecar targets, selected display state, enum-like text,
 revisions, receipt JSON, and the complete graph before commit. Released

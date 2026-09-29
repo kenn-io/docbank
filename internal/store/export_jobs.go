@@ -23,7 +23,14 @@ func (s *Store) ExportPlanForClaim(ctx context.Context, claim ExportClaim) (bund
 	if err := s.CheckExportClaim(ctx, claim); err != nil {
 		return bundle.Plan{}, err
 	}
-	return loadExportPlan(ctx, s.db, claim.Job.PlanID)
+	plan, err := loadExportPlan(ctx, s.db, claim.Job.PlanID)
+	if err != nil {
+		return bundle.Plan{}, err
+	}
+	if claim.Job.PhotoOwnerBound != plan.Source.PhotoOwnerBound || claim.Job.PhotoNoOwner != plan.Source.PhotoNoOwner || claim.Job.PhotoOwnerID != plan.Source.PhotoOwnerID {
+		return bundle.Plan{}, bundle.ErrConflict
+	}
+	return plan, nil
 }
 
 func loadExportJob(ctx context.Context, q metadataQuerier, id string) (bundle.Job, error) {
@@ -120,6 +127,9 @@ func (s *Store) QueueExportJob(ctx context.Context, owner string, r bundle.JobRe
 			return bundle.ErrLimit
 		}
 		job = bundle.Job{ID: r.OperationID, PlanID: r.PlanID, Fingerprint: r.Fingerprint, State: "queued", Sequence: 1, CreatedAt: nowRFC3339(), Deadline: exportDeadline(2 * time.Hour)}
+		job.PhotoOwnerID = plan.Source.PhotoOwnerID
+		job.PhotoOwnerBound = plan.Source.PhotoOwnerBound
+		job.PhotoNoOwner = plan.Source.PhotoNoOwner
 		job.ExpiresAt = job.Deadline
 		raw, e := canonical.Marshal(job)
 		if e != nil {

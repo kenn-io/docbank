@@ -152,6 +152,12 @@ media, choose displays, validate sidecar locality, or repair purge state.
 Those decisions belong to the store policy. Generated clients validate
 identity, ETags, and response bounds without reproducing the policy.
 
+Authenticated master requests may select a durable owner with
+`X-Docbank-Owner`. Browser sessions carry their owner binding from issuance,
+and ordinary document routes apply the same predicate before returning a
+photo-backed node or its bytes. Owner administration is master-only and uses
+revision ETags.
+
 MCP always exposes photo inspection. Photo mutations are construction-time
 opt-in through `docbank mcp --allow-photo-edits`; each write makes one daemon
 request and treats ambiguous transport failure as an unknown outcome. Display

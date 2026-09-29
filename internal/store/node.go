@@ -85,6 +85,9 @@ func nodeByIDQuery(ctx context.Context, queryer rowQuerier, id int64) (Node, err
 	if err != nil {
 		return Node{}, fmt.Errorf("node %d: %w", id, err)
 	}
+	if err := photoNodeVisibilityCheckTx(ctx, queryer, id); err != nil {
+		return Node{}, fmt.Errorf("node %d: %w", id, err)
+	}
 	return n, nil
 }
 
@@ -115,6 +118,9 @@ func (s *Store) nodeView(
 
 	node, err := resolve(tx)
 	if err != nil {
+		return NodeView{}, err
+	}
+	if err := photoNodeVisibilityCheckTx(ctx, tx, node.ID); err != nil {
 		return NodeView{}, err
 	}
 	view, err := nodeViewForNode(ctx, tx, node)
@@ -178,6 +184,9 @@ func nodeByPath(ctx context.Context, q rowQuerier, rootID int64, path string) (N
 			return Node{}, fmt.Errorf("path %q: %w", path, err)
 		}
 	}
+	if err := photoNodeVisibilityCheckTx(ctx, q, n.ID); err != nil {
+		return Node{}, fmt.Errorf("path %q: %w", path, err)
+	}
 	return n, nil
 }
 
@@ -190,10 +199,14 @@ func (s *Store) Children(ctx context.Context, dirID int64) ([]Node, error) {
 	if !dir.IsDir() {
 		return nil, fmt.Errorf("node %d: %w", dirID, ErrNotDir)
 	}
+	visibilityFilter, visibilityArgs, err := photoNodeVisibilitySQL(ctx, s.db)
+	if err != nil {
+		return nil, err
+	}
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT `+nodeCols+` FROM `+nodeFrom+`
-		 WHERE n.parent_id = ? AND n.trashed_at IS NULL
-		 ORDER BY n.kind = 'file', n.name`, dirID)
+		 WHERE n.parent_id = ? AND n.trashed_at IS NULL AND `+visibilityFilter+`
+		 ORDER BY n.kind = 'file', n.name`, append([]any{dirID}, visibilityArgs...)...)
 	if err != nil {
 		return nil, fmt.Errorf("listing children of %d: %w", dirID, err)
 	}
@@ -249,6 +262,9 @@ func (s *Store) DirectoryChildrenPage(
 	if err != nil {
 		return DirectoryPageView{}, err
 	}
+	if err := photoNodeVisibilityCheckTx(ctx, tx, dirID); err != nil {
+		return DirectoryPageView{}, err
+	}
 	if dir.TrashedAt != nil {
 		return DirectoryPageView{}, fmt.Errorf("node %d: %w", dirID, ErrNotFound)
 	}
@@ -259,19 +275,23 @@ func (s *Store) DirectoryChildrenPage(
 	if err != nil {
 		return DirectoryPageView{}, err
 	}
+	visibilityFilter, visibilityArgs, err := photoNodeVisibilitySQL(ctx, tx)
+	if err != nil {
+		return DirectoryPageView{}, err
+	}
 
 	var total int
 	if err := tx.QueryRowContext(ctx,
-		`SELECT COUNT(*) FROM nodes WHERE parent_id = ? AND trashed_at IS NULL`,
-		dirID,
+		`SELECT COUNT(*) FROM nodes n WHERE n.parent_id = ? AND n.trashed_at IS NULL AND `+visibilityFilter,
+		append([]any{dirID}, visibilityArgs...)...,
 	).Scan(&total); err != nil {
 		return DirectoryPageView{}, fmt.Errorf("counting children of %d: %w", dirID, err)
 	}
 	rows, err := tx.QueryContext(ctx,
 		`SELECT `+nodeCols+` FROM `+nodeFrom+`
-		 WHERE n.parent_id = ? AND n.trashed_at IS NULL
+		 WHERE n.parent_id = ? AND n.trashed_at IS NULL AND `+visibilityFilter+`
 		 ORDER BY n.kind = 'file', n.name
-		 LIMIT ? OFFSET ?`, dirID, limit, offset)
+		 LIMIT ? OFFSET ?`, append(append([]any{dirID}, visibilityArgs...), limit, offset)...)
 	if err != nil {
 		return DirectoryPageView{}, fmt.Errorf("listing children of %d: %w", dirID, err)
 	}

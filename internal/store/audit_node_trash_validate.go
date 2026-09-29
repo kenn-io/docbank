@@ -348,7 +348,7 @@ func expectedNodeTrashPost(
 	origin := audit.Record{Kind: "known_origin", Fields: []audit.Field{
 		{Name: metadataNodeIDField, Value: audit.Unsigned(nodeID)},
 		{Name: "parent_id", Value: audit.Unsigned(originParent)},
-		{Name: "name", Value: audit.Bytes(name)},
+		{Name: string(DocumentCatalogSortName), Value: audit.Bytes(name)},
 	}}
 	expected, err = replaceAuditRecordField(expected, "parent_id", audit.Unsigned(vaultRoot))
 	if err != nil {

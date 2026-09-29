@@ -523,14 +523,35 @@ func (s *Store) SnapshotMembers(ctx context.Context, id string, afterOrdinal, li
 		return nil, err
 	}
 	defer func() { _ = tx.Rollback() }()
-	members, err := loadSnapshotMemberRows(ctx, tx, id, afterOrdinal, limit)
-	if err != nil {
-		return nil, err
-	}
-	for i := range members {
-		members[i].Representations, err = loadSnapshotRepresentationRows(ctx, tx, id, members[i].OccurrenceID)
+	members := make([]CollectionSnapshotMember, 0, limit)
+	cursor := afterOrdinal
+	for len(members) < limit {
+		batch, err := loadSnapshotMemberRows(ctx, tx, id, cursor, limit)
 		if err != nil {
 			return nil, err
+		}
+		if len(batch) == 0 {
+			break
+		}
+		for _, member := range batch {
+			cursor = member.Ordinal
+			if err := photoVersionVisibilityCheckTx(ctx, tx, member.ContentVersionID); err != nil {
+				if errors.Is(err, ErrNotFound) {
+					continue
+				}
+				return nil, err
+			}
+			member.Representations, err = loadSnapshotRepresentationRows(ctx, tx, id, member.OccurrenceID)
+			if err != nil {
+				return nil, err
+			}
+			members = append(members, member)
+			if len(members) == limit {
+				break
+			}
+		}
+		if len(batch) < limit {
+			break
 		}
 	}
 	return members, tx.Commit()

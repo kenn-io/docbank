@@ -347,6 +347,29 @@ func (c *Cache) Summary(owner, id string) (report.Summary, error) {
 	return cloneSummary(entry.summary), nil
 }
 
+// Validate rechecks a frozen frame before a caller serves its receipt or
+// artifact. A failed check drops the complete entry so its totals cannot be
+// mistaken for a still-authorized projection.
+func (c *Cache) Validate(ctx context.Context, owner, id string, check func(context.Context, report.Frame) error) error {
+	if check == nil {
+		return ErrUnavailable
+	}
+	c.mu.Lock()
+	c.sweepExpiredLocked()
+	entry, err := c.lookupLocked(owner, id)
+	if err != nil {
+		c.mu.Unlock()
+		return err
+	}
+	frame := entry.frame.value
+	c.mu.Unlock()
+	if err := check(ctx, frame); err != nil {
+		c.Drop(owner, id)
+		return ErrUnavailable
+	}
+	return nil
+}
+
 // Request returns the reusable shape of a frozen run. Reviewed evidence is
 // deliberately omitted because it belongs to that observation only.
 func (c *Cache) Request(owner, id string) (report.Request, error) {

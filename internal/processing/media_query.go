@@ -54,11 +54,12 @@ type mediaPageClaim struct {
 }
 
 func (service *Service) ListMediaSources(ctx context.Context, options MediaListOptions) (MediaSourcePage, error) {
+	principal := service.requestPrincipal(ctx)
 	offset, fence, err := service.mediaPage(ctx, "sources", options)
 	if err != nil {
 		return MediaSourcePage{}, err
 	}
-	items, total, err := service.catalog.MediaSources(ctx, service.principal, offset, options.Limit)
+	items, total, err := service.catalog.MediaSources(ctx, principal, offset, options.Limit)
 	if err != nil {
 		return MediaSourcePage{}, err
 	}
@@ -83,14 +84,15 @@ func (service *Service) ListMediaSources(ctx context.Context, options MediaListO
 	}
 	if offset+len(items) < total {
 		result.NextCursor, err = service.signMediaPage(mediaPageClaim{Version: "v1",
-			Principal: service.principal, Kind: "sources",
+			Principal: principal, Kind: "sources",
 			Fence: fence, Offset: offset + len(items), Limit: options.Limit})
 	}
 	return result, err
 }
 
 func (service *Service) MediaStatus(ctx context.Context, sourceID string) (MediaReceipt, error) {
-	item, err := service.catalog.MediaSource(ctx, service.principal, sourceID)
+	principal := service.requestPrincipal(ctx)
+	item, err := service.catalog.MediaSource(ctx, principal, sourceID)
 	if err != nil {
 		return MediaReceipt{}, err
 	}
@@ -126,7 +128,7 @@ func (service *Service) mediaSourceReceipt(
 	}
 	receipt.CoverageState = coverage.CoverageState
 	if coverage.SuppliedInputID != "" {
-		visible, err := service.catalog.MediaInputBindingVisible(ctx, service.principal,
+		visible, err := service.catalog.MediaInputBindingVisible(ctx, service.requestPrincipal(ctx),
 			item.SourceID, coverage.SourceVersionID, coverage.SuppliedInputID)
 		if err != nil {
 			return MediaReceipt{}, err
@@ -139,11 +141,12 @@ func (service *Service) mediaSourceReceipt(
 }
 
 func (service *Service) ListMediaOccurrences(ctx context.Context, options MediaListOptions) (MediaOccurrencePage, error) {
+	principal := service.requestPrincipal(ctx)
 	offset, fence, err := service.mediaPage(ctx, "occurrences", options)
 	if err != nil {
 		return MediaOccurrencePage{}, err
 	}
-	items, total, err := service.catalog.MediaOccurrences(ctx, service.principal, options.SourceID, offset, options.Limit)
+	items, total, err := service.catalog.MediaOccurrences(ctx, principal, options.SourceID, offset, options.Limit)
 	if err != nil {
 		return MediaOccurrencePage{}, err
 	}
@@ -160,7 +163,7 @@ func (service *Service) ListMediaOccurrences(ctx context.Context, options MediaL
 	}
 	if offset+len(items) < total {
 		result.NextCursor, err = service.signMediaPage(mediaPageClaim{Version: "v1",
-			Principal: service.principal, Kind: "occurrences", SourceID: options.SourceID,
+			Principal: principal, Kind: "occurrences", SourceID: options.SourceID,
 			Fence: fence, Offset: offset + len(items), Limit: options.Limit})
 	}
 	return result, err
@@ -181,7 +184,8 @@ func (service *Service) DeclareMediaOccurrence(
 		return MediaReceipt{}, err
 	}
 	digest := sha256.Sum256(identity)
-	op := store.MediaOperation{ID: operationID, Principal: service.principal,
+	principal := service.requestPrincipal(ctx)
+	op := store.MediaOperation{ID: operationID, Principal: principal,
 		Verb: "declare_occurrence", RequestSHA256: hex.EncodeToString(digest[:]), SourceID: sourceID}
 	if replay, replayErr := service.catalog.MediaOperationReceipt(ctx, op); replayErr == nil {
 		stored, decodeErr := canonical.Decode[store.MediaPublicationReceipt]([]byte(replay))
@@ -189,16 +193,16 @@ func (service *Service) DeclareMediaOccurrence(
 	} else if !errors.Is(replayErr, store.ErrNotFound) {
 		return MediaReceipt{}, replayErr
 	}
-	current, err := service.catalog.MediaSource(ctx, service.principal, sourceID)
+	current, err := service.catalog.MediaSource(ctx, principal, sourceID)
 	if err != nil {
 		return MediaReceipt{}, err
 	}
-	id := mediaOccurrenceID(service.principal, occurrence.Ref, occurrence.Revision)
+	id := mediaOccurrenceID(principal, occurrence.Ref, occurrence.Revision)
 	var stored store.MediaPublicationReceipt
 	err = service.mediaMutation(ctx, func() error {
 		var recordErr error
 		stored, recordErr = service.catalog.RecordMediaOccurrence(ctx, op, store.MediaOccurrenceInput{ID: id, SourceID: sourceID,
-			SourceVersionID: current.SourceVersionID, Principal: service.principal, Ref: occurrence.Ref,
+			SourceVersionID: current.SourceVersionID, Principal: principal, Ref: occurrence.Ref,
 			Revision: occurrence.Revision, Filename: occurrence.Filename, PersonRef: occurrence.PersonRef,
 			SpeakerLabel: occurrence.SpeakerLabel, MessageJSON: string(message)})
 		return recordErr
@@ -210,7 +214,8 @@ func (service *Service) RevokeMediaOccurrence(
 	ctx context.Context, operationID, occurrenceID, expectedRevision string,
 ) (MediaReceipt, error) {
 	digest := sha256.Sum256([]byte(occurrenceID + "\x00" + expectedRevision))
-	op := store.MediaOperation{ID: operationID, Principal: service.principal, Verb: "revoke_occurrence",
+	principal := service.requestPrincipal(ctx)
+	op := store.MediaOperation{ID: operationID, Principal: principal, Verb: "revoke_occurrence",
 		RequestSHA256: hex.EncodeToString(digest[:])}
 	if replay, replayErr := service.catalog.MediaOperationReceipt(ctx, op); replayErr == nil {
 		stored, decodeErr := canonical.Decode[store.MediaPublicationReceipt]([]byte(replay))
@@ -236,7 +241,8 @@ func (service *Service) mediaPage(
 	if options.Limit < 1 || options.Limit > 250 {
 		return 0, 0, errors.New("media page limit must be between 1 and 250")
 	}
-	fence, err := service.catalog.MediaVisibilityFence(ctx, service.principal)
+	principal := service.requestPrincipal(ctx)
+	fence, err := service.catalog.MediaVisibilityFence(ctx, principal)
 	if err != nil {
 		return 0, 0, err
 	}
@@ -244,7 +250,7 @@ func (service *Service) mediaPage(
 		return 0, fence, nil
 	}
 	claim, err := service.verifyMediaPage(options.Cursor)
-	if err != nil || claim.Version != "v1" || claim.Principal != service.principal || claim.Kind != kind ||
+	if err != nil || claim.Version != "v1" || claim.Principal != principal || claim.Kind != kind ||
 		claim.SourceID != options.SourceID ||
 		claim.Limit != options.Limit || claim.Fence != fence || claim.Offset < 0 {
 		return 0, 0, ErrMediaCursorInvalid

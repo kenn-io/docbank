@@ -177,7 +177,15 @@ docbank photos assets display <asset-id> [file-id] [--revision REV]
 docbank photos settings show
 docbank photos settings set raw|image [--revision REV]
 docbank photos settings reset [--revision REV]
+docbank photos owners add <name>
+docbank photos owners list
+docbank photos owners rename <owner-id> <name> --revision REV
+docbank photos owners remove <owner-id> --revision REV
 ```
+
+Pass `--owner OWNER_UUID` to photo asset and settings commands. The owner
+selector is sent to the daemon; owner administration always uses the master
+credential.
 
 Photo commands emit JSON through the daemon. Image and concrete video files
 are enrolled when created; generic RAW files require explicit promotion.
@@ -186,8 +194,8 @@ once if another write changes it first. Pass `--revision` to fail with exit
 code 4 instead. `inspect` also accepts an `id:N` or path selector for a
 member file; `id:N` also finds a trashed member. Sidecars must point at a same-asset RAW member and never become
 the display member.
-Photo assets, settings, and bounded decision receipts are included in JSONL
-backup and restore.
+Photo owners, assets, settings, and bounded decision receipts are included in
+JSONL backup and restore.
 
 ## docbank stat
 

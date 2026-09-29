@@ -97,6 +97,9 @@ type querySnapshotServiceOptions struct {
 type cachedQuerySnapshot struct {
 	id              string
 	owner           string
+	photoOwner      string
+	photoBound      bool
+	photoNoOwner    bool
 	metadata        []byte
 	rows            [][]byte
 	created         time.Time
@@ -355,8 +358,13 @@ func (s *QuerySnapshotService) prepareSnapshot(
 		return preparedQuerySnapshot{}, err
 	}
 	now := s.now().UTC()
+	photoOwner, photoBound, photoNoOwner, err := s.store.PhotoOwnerForRequest(buildCtx)
+	if err != nil {
+		return preparedQuerySnapshot{}, err
+	}
 	cached := &cachedQuerySnapshot{
-		id: snapshotID, owner: owner, metadata: metadata, rows: encodedRows,
+		id: snapshotID, owner: owner, photoOwner: photoOwner, photoBound: photoBound,
+		photoNoOwner: photoNoOwner, metadata: metadata, rows: encodedRows,
 		created: now, lastUsed: now, bytes: actualBytes,
 		serializedBytes: projection.SerializedBytes,
 	}
@@ -410,6 +418,9 @@ func (s *QuerySnapshotService) Page(
 	if err != nil {
 		return SnapshotPage{}, err
 	}
+	if err := s.validateCachedPhotoVisibility(ctx, cached); err != nil {
+		return SnapshotPage{}, err
+	}
 	payload, err := s.decodeCursor(owner, cursor)
 	if err != nil {
 		return SnapshotPage{}, err
@@ -442,6 +453,9 @@ func (s *QuerySnapshotService) CopyMembersBounded(ctx context.Context, owner, sn
 	if err != nil {
 		return nil, err
 	}
+	if err := s.validateCachedPhotoVisibility(ctx, cached); err != nil {
+		return nil, err
+	}
 	if limit < 1 || len(cached.rows) > limit {
 		return nil, ErrQuerySnapshotTooLarge
 	}
@@ -467,6 +481,29 @@ func (s *QuerySnapshotService) CopyMembersBounded(ctx context.Context, owner, sn
 		return nil, errors.New("cached query snapshot membership failed validation")
 	}
 	return members, nil
+}
+
+func (s *QuerySnapshotService) validateCachedPhotoVisibility(ctx context.Context, cached cachedQuerySnapshot) error {
+	if !cached.photoBound {
+		return nil
+	}
+	owner, bound, noPhotoOwner, err := s.store.PhotoOwnerForRequest(ctx)
+	if err != nil {
+		return err
+	}
+	if !bound || noPhotoOwner != cached.photoNoOwner || owner != cached.photoOwner {
+		return ErrSnapshotGone
+	}
+	for _, encoded := range cached.rows {
+		var row SnapshotRow
+		if err := json.Unmarshal(encoded, &row); err != nil {
+			return fmt.Errorf("decoding cached query snapshot row: %w", err)
+		}
+		if err := s.store.CheckPhotoVisibilityForNode(ctx, row.NodeID); err != nil {
+			return ErrSnapshotGone
+		}
+	}
+	return nil
 }
 
 func (s *QuerySnapshotService) Revoke(owner string) {

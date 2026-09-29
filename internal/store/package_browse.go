@@ -105,6 +105,9 @@ func (s *Store) PackageRecordByOccurrence(ctx context.Context, packageID, occurr
 	if err != nil {
 		return PackageRecordRow{}, err
 	}
+	if err := packageOccurrenceVisibility(ctx, s.db, packageID, occurrenceID); err != nil {
+		return PackageRecordRow{}, err
+	}
 	return loadPackageRecordTx(ctx, s.db, packageID, rowID)
 }
 
@@ -128,6 +131,12 @@ func (s *Store) PackageLabels(ctx context.Context, packageID, occurrenceID strin
 		if err := rows.Scan(&item.PackageID, &item.Provenance, &item.LabelSet, &item.Label,
 			&item.OccurrenceID, &item.ContentVersionID, &item.ArtifactID,
 			&item.PageNumber, &item.PageState, &item.Endpoint); err != nil {
+			return nil, err
+		}
+		if err := photoVersionVisibilityCheckTx(ctx, s.db, item.ContentVersionID); err != nil {
+			if errors.Is(err, ErrNotFound) {
+				continue
+			}
 			return nil, err
 		}
 		items = append(items, item)
@@ -173,22 +182,45 @@ func (s *Store) PackageTimelineInputs(ctx context.Context, packageID, afterRowID
 			return nil, err
 		}
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT occurrence_id,row_id,raw_json FROM package_records
-		WHERE package_id=? AND (row_ordinal>? OR (row_ordinal=? AND row_id>?))
-		ORDER BY row_ordinal,row_id LIMIT ?`, packageID, afterOrdinal, afterOrdinal, afterRowID, limit)
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = rows.Close() }()
 	inputs := make([]PackageTimelineInput, 0)
-	for rows.Next() {
-		input := PackageTimelineInput{PackageID: packageID, DeclaredTimezone: profile.DeclaredTimezone, ProducedOn: producedOn}
-		if err := rows.Scan(&input.OccurrenceID, &input.RowID, &input.RawJSON); err != nil {
+	for len(inputs) < limit {
+		requested := limit - len(inputs)
+		rows, err := s.db.QueryContext(ctx, `SELECT row_ordinal,occurrence_id,row_id,raw_json FROM package_records
+			WHERE package_id=? AND (row_ordinal>? OR (row_ordinal=? AND row_id>?))
+			ORDER BY row_ordinal,row_id LIMIT ?`, packageID, afterOrdinal, afterOrdinal, afterRowID, requested)
+		if err != nil {
 			return nil, err
 		}
-		inputs = append(inputs, input)
+		batch := 0
+		for rows.Next() {
+			var ordinal int
+			var input PackageTimelineInput
+			input.PackageID, input.DeclaredTimezone, input.ProducedOn = packageID, profile.DeclaredTimezone, producedOn
+			if err := rows.Scan(&ordinal, &input.OccurrenceID, &input.RowID, &input.RawJSON); err != nil {
+				_ = rows.Close() //nolint:sqlclosecheck // close before returning the scan error.
+				return nil, err
+			}
+			afterOrdinal, afterRowID = ordinal, input.RowID
+			batch++
+			if err := packageOccurrenceVisibility(ctx, s.db, packageID, input.OccurrenceID); err != nil {
+				if errors.Is(err, ErrNotFound) {
+					continue
+				}
+				_ = rows.Close()
+				return nil, err
+			}
+			inputs = append(inputs, input)
+		}
+		rowsErr := rows.Err()
+		_ = rows.Close()
+		if rowsErr != nil {
+			return nil, rowsErr
+		}
+		if batch < requested {
+			break
+		}
 	}
-	return inputs, rows.Err()
+	return inputs, nil
 }
 
 // PackageLabelCandidates returns a bounded stable page without collapsing
@@ -213,31 +245,53 @@ func (s *Store) PackageLabelCandidates(ctx context.Context, label, packageID, la
 			return nil, "", ErrPackageConflict
 		}
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT package_id,provenance,label_set,label,
-		occurrence_id,content_version_id,COALESCE(artifact_id,''),COALESCE(page_number,0),page_state,endpoint
-		FROM package_labels WHERE label=? AND (?='' OR package_id=?) AND (?='' OR label_set=?)
-		AND (?='' OR provenance=?) AND (?='' OR (package_id,provenance,label_set,occurrence_id,
-		COALESCE(artifact_id,''),COALESCE(page_number,0),endpoint)>(?,?,?,?,?,?,?))
-		ORDER BY package_id,provenance,label_set,occurrence_id,COALESCE(artifact_id,''),COALESCE(page_number,0),endpoint
-		LIMIT ?`, label, packageID, packageID, labelSet, labelSet, provenance, provenance,
-		after, cursor.PackageID, cursor.Provenance, cursor.LabelSet, cursor.OccurrenceID,
-		cursor.ArtifactID, cursor.PageNumber, cursor.Endpoint, limit+1)
-	if err != nil {
-		return nil, "", err
-	}
-	defer func() { _ = rows.Close() }()
 	items := make([]PackageLabelRow, 0, limit+1)
-	for rows.Next() {
-		var item PackageLabelRow
-		if err := rows.Scan(&item.PackageID, &item.Provenance, &item.LabelSet, &item.Label,
-			&item.OccurrenceID, &item.ContentVersionID, &item.ArtifactID,
-			&item.PageNumber, &item.PageState, &item.Endpoint); err != nil {
+	for len(items) <= limit {
+		rows, err := s.db.QueryContext(ctx, `SELECT package_id,provenance,label_set,label,
+			occurrence_id,content_version_id,COALESCE(artifact_id,''),COALESCE(page_number,0),page_state,endpoint
+			FROM package_labels WHERE label=? AND (?='' OR package_id=?) AND (?='' OR label_set=?)
+			AND (?='' OR provenance=?) AND (?='' OR (package_id,provenance,label_set,occurrence_id,
+			COALESCE(artifact_id,''),COALESCE(page_number,0),endpoint)>(?,?,?,?,?,?,?))
+			ORDER BY package_id,provenance,label_set,occurrence_id,COALESCE(artifact_id,''),COALESCE(page_number,0),endpoint
+			LIMIT ?`, label, packageID, packageID, labelSet, labelSet, provenance, provenance,
+			after, cursor.PackageID, cursor.Provenance, cursor.LabelSet, cursor.OccurrenceID,
+			cursor.ArtifactID, cursor.PageNumber, cursor.Endpoint, limit+1)
+		if err != nil {
 			return nil, "", err
 		}
-		items = append(items, item)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, "", err
+		batch := 0
+		for rows.Next() {
+			var item PackageLabelRow
+			if err := rows.Scan(&item.PackageID, &item.Provenance, &item.LabelSet, &item.Label,
+				&item.OccurrenceID, &item.ContentVersionID, &item.ArtifactID,
+				&item.PageNumber, &item.PageState, &item.Endpoint); err != nil {
+				_ = rows.Close() //nolint:sqlclosecheck // close before returning the scan error.
+				return nil, "", err
+			}
+			batch++
+			cursor.PackageID, cursor.Provenance, cursor.LabelSet = item.PackageID, item.Provenance, item.LabelSet
+			cursor.OccurrenceID, cursor.ArtifactID, cursor.PageNumber, cursor.Endpoint = item.OccurrenceID, item.ArtifactID, item.PageNumber, item.Endpoint
+			if err := photoVersionVisibilityCheckTx(ctx, s.db, item.ContentVersionID); err != nil {
+				if errors.Is(err, ErrNotFound) {
+					continue
+				}
+				_ = rows.Close()
+				return nil, "", err
+			}
+			items = append(items, item)
+			if len(items) > limit {
+				break
+			}
+		}
+		rowsErr := rows.Err()
+		_ = rows.Close()
+		if rowsErr != nil {
+			return nil, "", rowsErr
+		}
+		if batch < limit+1 || len(items) > limit {
+			break
+		}
+		after = "1"
 	}
 	if len(items) <= limit {
 		return items, "", nil
@@ -252,4 +306,17 @@ func (s *Store) PackageLabelCandidates(ctx context.Context, label, packageID, la
 		return nil, "", err
 	}
 	return items, base64.RawURLEncoding.EncodeToString(encoded), nil
+}
+
+func packageOccurrenceVisibility(ctx context.Context, q metadataQuerier, packageID, occurrenceID string) error {
+	var versionID string
+	err := q.QueryRowContext(ctx, `SELECT content_version_id FROM package_labels
+		WHERE package_id=? AND occurrence_id=? ORDER BY provenance,label_set,label LIMIT 1`, packageID, occurrenceID).Scan(&versionID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	return photoVersionVisibilityCheckTx(ctx, q, versionID)
 }

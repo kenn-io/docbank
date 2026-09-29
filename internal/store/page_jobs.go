@@ -85,6 +85,9 @@ func pageSourceTx(ctx context.Context, q metadataQuerier, b PageBinding) error {
 	if b.NodeID < 1 || b.Revision < 1 || b.Source.Validate() != nil {
 		return ErrPageFenced
 	}
+	if err := photoNodeVisibilityCheckTx(ctx, q, b.NodeID); err != nil {
+		return err
+	}
 	var revision int64
 	var trashed sql.NullString
 	err := q.QueryRowContext(ctx, `SELECT revision,trashed_at FROM nodes WHERE id=?`, b.NodeID).Scan(&revision, &trashed)

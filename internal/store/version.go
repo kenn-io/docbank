@@ -62,6 +62,9 @@ func (s *Store) ContentVersionByID(ctx context.Context, id string) (ContentVersi
 	if err != nil {
 		return ContentVersion{}, fmt.Errorf("content version %q: %w", id, err)
 	}
+	if err := photoNodeVisibilityCheckTx(ctx, s.db, v.NodeID); err != nil {
+		return ContentVersion{}, fmt.Errorf("content version %q: %w", id, err)
+	}
 	return v, nil
 }
 
@@ -83,6 +86,9 @@ func (s *Store) ContentVersionViewByID(
 
 	node, err := nodeByIDTx(tx, nodeID)
 	if err != nil {
+		return ContentVersionView{}, err
+	}
+	if err := photoNodeVisibilityCheckTx(ctx, tx, nodeID); err != nil {
 		return ContentVersionView{}, err
 	}
 	version, err := scanContentVersion(tx.QueryRowContext(ctx,
@@ -110,6 +116,9 @@ func (s *Store) ContentVersions(
 	}
 	if offset < 0 {
 		return nil, 0, errors.New("content-version offset must not be negative")
+	}
+	if err := photoNodeVisibilityCheckTx(ctx, s.db, nodeID); err != nil {
+		return nil, 0, err
 	}
 	// Existence, kind, total, and page are deliberately one statement so a
 	// concurrent trash-empty observes either side of deletion, never a mixture.
@@ -202,6 +211,9 @@ func (s *Store) ReplaceContentWithReceipt(
 		if err != nil {
 			return err
 		}
+		if err := photoNodeVisibilityCheckTx(ctx, tx, nodeID); err != nil {
+			return err
+		}
 		receipt.Node, receipt.Version, err = s.replaceContentTx(
 			ctx, tx, n, ifRev, blobHash, size, mimeType, physical...,
 		)
@@ -234,6 +246,9 @@ func (s *Store) ConfirmContentWithReceipt(
 	err := s.withStorageTx(ctx, func(tx *sql.Tx) error {
 		n, err := nodeByIDTx(tx, nodeID)
 		if err != nil {
+			return err
+		}
+		if err := photoNodeVisibilityCheckTx(ctx, tx, nodeID); err != nil {
 			return err
 		}
 		receipt, err = s.confirmContentWithReceiptTx(
@@ -272,6 +287,9 @@ func (s *Store) ConfirmIngestedContentWithReceipt(
 	err := s.withStorageTx(ctx, func(tx *sql.Tx) error {
 		n, err := nodeByIDTx(tx, nodeID)
 		if err != nil {
+			return err
+		}
+		if err := photoNodeVisibilityCheckTx(ctx, tx, nodeID); err != nil {
 			return err
 		}
 		receipt, err = s.confirmContentWithReceiptTx(
@@ -341,6 +359,9 @@ func (s *Store) ReplaceContentForIngest(
 	err = s.withStorageTx(ctx, func(tx *sql.Tx) error {
 		prior, err := nodeByIDTx(tx, nodeID)
 		if err != nil {
+			return err
+		}
+		if err := photoNodeVisibilityCheckTx(ctx, tx, nodeID); err != nil {
 			return err
 		}
 		if prior.BlobHash == blobHash && prior.Size == size {
@@ -577,6 +598,9 @@ func (s *Store) RevertContent(
 		if err != nil {
 			return err
 		}
+		if err := photoNodeVisibilityCheckTx(ctx, tx, nodeID); err != nil {
+			return err
+		}
 		if err := validateContentReplacementTarget(n, ifRev); err != nil {
 			return err
 		}
@@ -708,6 +732,9 @@ func (s *Store) CheckContentReplacementTarget(ctx context.Context, nodeID, ifRev
 	return s.withStorageTx(ctx, func(tx *sql.Tx) error {
 		n, err := nodeByIDTx(tx, nodeID)
 		if err != nil {
+			return err
+		}
+		if err := photoNodeVisibilityCheckTx(ctx, tx, nodeID); err != nil {
 			return err
 		}
 		if err := validateContentReplacementTarget(n, ifRev); err != nil {

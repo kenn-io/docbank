@@ -305,7 +305,7 @@ func validateBatesPages(ctx context.Context, tx *sql.Tx, r BatesPlanRequest) err
 	if len(r.Pages) == 0 {
 		return ErrBatesPageCountMismatch
 	}
-	expected, err := expectedBatesPagesLimited(ctx, tx, r.SnapshotID, MaxBatesExportPages)
+	expected, err := expectedBatesPagesLimited(ctx, tx, r.SnapshotID)
 	if err != nil {
 		return err
 	}
@@ -346,10 +346,10 @@ func (s *Store) SnapshotBatesPages(ctx context.Context, snapshotID string) ([]Ba
 	if validateUUIDv4(snapshotID) != nil {
 		return nil, invalidBatesRequest("snapshot_id must be a UUID")
 	}
-	return expectedBatesPagesLimited(ctx, s.db, snapshotID, MaxBatesExportPages)
+	return expectedBatesPagesLimited(ctx, s.db, snapshotID)
 }
 
-func expectedBatesPagesLimited(ctx context.Context, tx metadataQuerier, snapshotID string, limit int) ([]BatesPageInput, error) {
+func expectedBatesPagesLimited(ctx context.Context, tx metadataQuerier, snapshotID string) ([]BatesPageInput, error) {
 	var expected []BatesPageInput
 	for after := 0; ; {
 		members, err := loadSnapshotMemberRows(ctx, tx, snapshotID, after, 250)
@@ -360,6 +360,9 @@ func expectedBatesPagesLimited(ctx context.Context, tx metadataQuerier, snapshot
 			break
 		}
 		for _, member := range members {
+			if err := photoVersionVisibilityCheckTx(ctx, tx, member.ContentVersionID); err != nil {
+				return nil, err
+			}
 			member.Representations, err = loadSnapshotRepresentationRows(ctx, tx, snapshotID, member.OccurrenceID)
 			if err != nil {
 				return nil, err
@@ -385,7 +388,7 @@ func expectedBatesPagesLimited(ctx context.Context, tx metadataQuerier, snapshot
 			}
 			for _, page := range member.SelectedSourcePages {
 				expected = append(expected, BatesPageInput{member.OccurrenceID, member.SelectedPDFSHA256, page, member.SourcePageCount})
-				if len(expected) > limit {
+				if len(expected) > MaxBatesExportPages {
 					return nil, ErrBatesPageLimit
 				}
 			}

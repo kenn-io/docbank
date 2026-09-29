@@ -10402,6 +10402,11 @@ components:
             $ref: "#/components/schemas/PhotoFile"
           maxItems: 256
           type: array
+        hidden_at:
+          format: date-time
+          type:
+            - string
+            - "null"
         id:
           format: uuid
           type: string
@@ -10410,6 +10415,11 @@ components:
             - photo
             - video
           type: string
+        owner_id:
+          format: uuid
+          type:
+            - string
+            - "null"
         revision:
           format: int64
           minimum: 1
@@ -10469,6 +10479,65 @@ components:
       x-go-type-import:
         path: go.kenn.io/docbank/internal/api
         name: api
+    PhotoOwner:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/PhotoOwner.json
+          format: uri
+          readOnly: true
+          type: string
+        created_at:
+          format: date-time
+          type: string
+        id:
+          format: uuid
+          type: string
+        name:
+          maxLength: 256
+          minLength: 1
+          type: string
+        revision:
+          format: int64
+          minimum: 1
+          type: integer
+        updated_at:
+          format: date-time
+          type: string
+      required:
+        - id
+        - name
+        - revision
+        - created_at
+        - updated_at
+      type: object
+      x-go-type: api.PhotoOwner
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
+    PhotoOwnerRequest:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/PhotoOwnerRequest.json
+          format: uri
+          readOnly: true
+          type: string
+        name:
+          maxLength: 256
+          minLength: 1
+          type: string
+      required:
+        - name
+      type: object
+      x-go-type: api.PhotoOwnerRequest
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     PhotoSettings:
       additionalProperties: false
       properties:
@@ -10479,6 +10548,11 @@ components:
           format: uri
           readOnly: true
           type: string
+        default_owner_id:
+          format: uuid
+          type:
+            - string
+            - "null"
         preference:
           enum:
             - raw
@@ -20415,6 +20489,11 @@ paths:
   /api/v1/photos/assets:
     post:
       operationId: createPhotoAsset
+      parameters:
+        - in: header
+          name: X-Docbank-Owner
+          schema:
+            type: string
       requestBody:
         content:
           application/json:
@@ -20448,6 +20527,10 @@ paths:
           required: true
           schema:
             type: string
+        - in: header
+          name: X-Docbank-Owner
+          schema:
+            type: string
       responses:
         "200":
           content:
@@ -20473,6 +20556,10 @@ paths:
         - in: path
           name: asset_id
           required: true
+          schema:
+            type: string
+        - in: header
+          name: X-Docbank-Owner
           schema:
             type: string
         - in: header
@@ -20514,6 +20601,10 @@ paths:
           schema:
             type: string
         - in: header
+          name: X-Docbank-Owner
+          schema:
+            type: string
+        - in: header
           name: If-Match
           required: true
           schema:
@@ -20549,6 +20640,10 @@ paths:
         - in: path
           name: asset_id
           required: true
+          schema:
+            type: string
+        - in: header
+          name: X-Docbank-Owner
           schema:
             type: string
         - in: header
@@ -20595,6 +20690,10 @@ paths:
           schema:
             type: string
         - in: header
+          name: X-Docbank-Owner
+          schema:
+            type: string
+        - in: header
           name: If-Match
           required: true
           schema:
@@ -20632,6 +20731,10 @@ paths:
           schema:
             format: int64
             type: integer
+        - in: header
+          name: X-Docbank-Owner
+          schema:
+            type: string
       responses:
         "200":
           content:
@@ -20661,6 +20764,10 @@ paths:
             format: int64
             type: integer
         - in: header
+          name: X-Docbank-Owner
+          schema:
+            type: string
+        - in: header
           name: If-Match
           schema:
             type: string
@@ -20688,9 +20795,120 @@ paths:
                 $ref: "#/components/schemas/Error"
           description: Error
       summary: Promote one node into a photo asset
+  /api/v1/photos/owners:
+    get:
+      operationId: listPhotoOwners
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                items:
+                  $ref: "#/components/schemas/PhotoOwner"
+                type: array
+          description: OK
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: List photo owners
+    post:
+      operationId: createPhotoOwner
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PhotoOwnerRequest"
+        required: true
+      responses:
+        "201":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PhotoOwner"
+          description: Created
+          headers:
+            ETag:
+              schema:
+                type: string
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: Create a photo owner
+  /api/v1/photos/owners/{owner_id}:
+    delete:
+      operationId: removePhotoOwner
+      parameters:
+        - in: path
+          name: owner_id
+          required: true
+          schema:
+            type: string
+        - in: header
+          name: If-Match
+          required: true
+          schema:
+            type: string
+      responses:
+        "204":
+          description: No Content
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: Remove a photo owner
+    patch:
+      operationId: renamePhotoOwner
+      parameters:
+        - in: path
+          name: owner_id
+          required: true
+          schema:
+            type: string
+        - in: header
+          name: If-Match
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PhotoOwnerRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PhotoOwner"
+          description: OK
+          headers:
+            ETag:
+              schema:
+                type: string
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: Rename a photo owner
   /api/v1/photos/settings:
     get:
       operationId: getPhotoSettings
+      parameters:
+        - in: header
+          name: X-Docbank-Owner
+          schema:
+            type: string
       responses:
         "200":
           content:
@@ -20712,6 +20930,10 @@ paths:
     put:
       operationId: setPhotoSettings
       parameters:
+        - in: header
+          name: X-Docbank-Owner
+          schema:
+            type: string
         - in: header
           name: If-Match
           required: true

@@ -34,6 +34,10 @@ func (s *Store) ContentReferencesByHash(
 	if offset < 0 {
 		return nil, 0, errors.New("content-reference offset must not be negative")
 	}
+	visibility, visibilityArgs, err := photoNodeVisibilitySQL(ctx, s.db)
+	if err != nil {
+		return nil, 0, err
+	}
 
 	// Totals and page are one statement so concurrent replacement, trash, or
 	// trash-empty is observed entirely before or after the mutation. The
@@ -57,7 +61,7 @@ func (s *Store) ContentReferencesByHash(
 			JOIN nodes n ON n.id = v.node_id
 			LEFT JOIN content_versions current
 			  ON current.node_id = n.id AND current.version_id = n.current_version_id
-			WHERE v.blob_hash = ?
+			WHERE v.blob_hash = ? AND `+visibility+`
 		), page AS (
 			SELECT * FROM matching
 			ORDER BY trashed_sort, historical_sort, node_id, node_revision DESC, version_id
@@ -94,7 +98,8 @@ func (s *Store) ContentReferencesByHash(
 		FROM totals LEFT JOIN page ON true
 		LEFT JOIN paths ON paths.version_id = page.version_id
 		ORDER BY page.trashed_sort, page.historical_sort, page.node_id,
-		         page.node_revision DESC, page.version_id`, hash, limit, offset)
+		         page.node_revision DESC, page.version_id`,
+		append([]any{hash}, append(visibilityArgs, limit, offset)...)...)
 	if err != nil {
 		return nil, 0, fmt.Errorf("looking up content hash %s: %w", hash, err)
 	}

@@ -230,6 +230,7 @@ func NewServer(d Deps) *Server {
 	registerMediaRoutes(mux, humaAPI, d, g)
 	registerPackageRoutes(mux, humaAPI, d, g, s.webDownloads, s.webSessions)
 	registerBatesRoutes(mux, humaAPI, d, g, s.webDownloads, s.webSessions, cursorService)
+	registerPhotoOwnerRoutes(humaAPI, d, g)
 	registerPhotoRoutes(humaAPI, d, g)
 	clearLongRunningBodyReadDeadlines(humaAPI)
 	markRevisionPreconditionsRequired(humaAPI)
@@ -241,12 +242,12 @@ func NewServer(d Deps) *Server {
 	s.registerChallenge(mux)
 	s.registerShutdown(mux)
 	registerWeb(mux, d.Cfg.Web.Enabled, d.WebURL)
-	registerWebSession(mux, d.Cfg.Web.Enabled, d.WebURL, s.webSessions)
+	registerWebSession(mux, d.Cfg.Web.Enabled, d.WebURL, d.Store, s.webSessions)
 	registerWebUpload(mux, d.Cfg.Web.Enabled, d.WebURL, d, g, s.webSessions)
 	registerWebDownload(mux, d.Cfg.Web.Enabled, d, s.webDownloads, s.webSessions, s.termReports)
 
 	h := http.Handler(mux)
-	h = authMiddleware(h, d.Cfg.Server.APIKey, s.webSessions, s.masterOwner)
+	h = authMiddleware(h, d.Cfg.Server.APIKey, s.webSessions, s.masterOwner, d.Store)
 	h = loopbackMiddleware(h)
 	h = timeoutMiddleware(h)
 	h = recoverMiddleware(h, d.Logger)
@@ -348,6 +349,8 @@ func markRevisionPreconditionsRequired(api huma.API) {
 		{"/api/v1/photos/assets/{asset_id}/exclude", http.MethodPost},
 		{"/api/v1/photos/assets/{asset_id}/display", http.MethodPut},
 		{"/api/v1/photos/settings", http.MethodPut},
+		{"/api/v1/photos/owners/{owner_id}", http.MethodPatch},
+		{"/api/v1/photos/owners/{owner_id}", http.MethodDelete},
 	} {
 		markDocumentedHeaderRequired(api, route.path, route.method, "If-Match")
 	}

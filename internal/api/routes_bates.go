@@ -224,6 +224,10 @@ func registerBatesRoutes(mux *http.ServeMux, api huma.API, d Deps, g *gate, down
 		if err != nil {
 			return nil, FromStoreError(err)
 		}
+		photoOwnerID, _, _, err := d.Store.PhotoOwnerForRequest(ctx)
+		if err != nil {
+			return nil, FromStoreError(err)
+		}
 		file, path, err := downloads.createStagingFile()
 		if err != nil {
 			return nil, FromStoreError(err)
@@ -246,7 +250,8 @@ func registerBatesRoutes(mux *http.ServeMux, api huma.API, d Deps, g *gate, down
 		}
 		name := fmt.Sprintf("bates-%s.pdf", artifact.AllocationID)
 		ticket := webDownloadTicket{path: path, name: name, mediaType: "application/pdf",
-			blobHash: artifact.BlobSHA256, size: artifact.Size, owner: owner, archiveFile: file,
+			blobHash: artifact.BlobSHA256, size: artifact.Size, owner: owner, photoOwnerID: photoOwnerID,
+			batesAllocationID: artifact.AllocationID, archiveFile: file,
 			releaseArchive: func() { _ = file.Close(); _ = os.Remove(path) }}
 		var token string
 		if browserSessionRequest(ctx) {

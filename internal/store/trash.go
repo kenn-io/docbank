@@ -29,6 +29,9 @@ func (s *Store) Trash(ctx context.Context, id, ifRev int64) (Node, string, error
 		if err != nil {
 			return err
 		}
+		if err := photoSubtreeVisibilityCheckTx(ctx, tx, id); err != nil {
+			return err
+		}
 		active, err := auditAuthorityActiveTx(ctx, tx)
 		if err != nil {
 			return err
@@ -80,6 +83,9 @@ func (s *Store) TrashPathRevision(
 		}
 		if n.ID == s.rootID {
 			return ErrIsRoot
+		}
+		if err := photoSubtreeVisibilityCheckTx(ctx, tx, n.ID); err != nil {
+			return err
 		}
 		active, err := auditAuthorityActiveTx(ctx, tx)
 		if err != nil {
@@ -170,6 +176,9 @@ func (s *Store) Restore(ctx context.Context, id, ifRev int64) (Node, string, err
 	err := s.withStorageTx(ctx, func(tx *sql.Tx) error {
 		n, err := nodeByIDTx(tx, id)
 		if err != nil {
+			return err
+		}
+		if err := photoSubtreeVisibilityCheckTx(ctx, tx, id); err != nil {
 			return err
 		}
 		active, err := auditAuthorityActiveTx(ctx, tx)
@@ -277,9 +286,13 @@ func (s *Store) restoreNodeTx(
 
 // TrashedRoots lists restorable trash roots, newest first.
 func (s *Store) TrashedRoots(ctx context.Context) ([]Node, error) {
-	rows, err := s.db.QueryContext(ctx,
-		`SELECT `+nodeCols+` FROM `+nodeFrom+`
-		 WHERE n.trash_name IS NOT NULL ORDER BY n.trashed_at DESC`)
+	cte, cteArgs, err := scopedTrashRootsCTE(ctx, s.db)
+	if err != nil {
+		return nil, err
+	}
+	rows, err := s.db.QueryContext(ctx, cte+`
+		SELECT `+nodeCols+` FROM `+nodeFrom+`
+		 WHERE n.id IN (SELECT root_id FROM visible_trash_roots) ORDER BY n.trashed_at DESC`, cteArgs...)
 	if err != nil {
 		return nil, fmt.Errorf("listing trash: %w", err)
 	}
@@ -316,18 +329,22 @@ func (s *Store) TrashedRootsPage(
 		return nil, 0, fmt.Errorf("starting trash snapshot: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }()
+	cte, cteArgs, err := scopedTrashRootsCTE(ctx, tx)
+	if err != nil {
+		return nil, 0, err
+	}
 
 	var total int
 	if err := tx.QueryRowContext(ctx,
-		`SELECT COUNT(*) FROM nodes WHERE trash_name IS NOT NULL`,
+		cte+` SELECT COUNT(*) FROM visible_trash_roots`, cteArgs...,
 	).Scan(&total); err != nil {
 		return nil, 0, fmt.Errorf("counting trash: %w", err)
 	}
 	rows, err := tx.QueryContext(ctx,
-		`SELECT `+nodeCols+` FROM `+nodeFrom+`
-		 WHERE n.trash_name IS NOT NULL
+		cte+` SELECT `+nodeCols+` FROM `+nodeFrom+`
+		 WHERE n.id IN (SELECT root_id FROM visible_trash_roots)
 		 ORDER BY n.trashed_at DESC, n.id DESC LIMIT ? OFFSET ?`,
-		limit, offset)
+		append(append([]any{}, cteArgs...), limit, offset)...)
 	if err != nil {
 		return nil, 0, fmt.Errorf("listing trash page: %w", err)
 	}

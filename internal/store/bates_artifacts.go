@@ -42,7 +42,7 @@ func (s *Store) BatesPublicationPlan(ctx context.Context, allocationID string) (
 	if err != nil {
 		return BatesAllocation{}, nil, err
 	}
-	inputs, err := expectedBatesPagesLimited(ctx, s.db, allocation.SnapshotID, MaxBatesExportPages)
+	inputs, err := expectedBatesPagesLimited(ctx, s.db, allocation.SnapshotID)
 	if err != nil {
 		return BatesAllocation{}, nil, err
 	}
@@ -176,6 +176,16 @@ func (s *Store) BatesArtifact(ctx context.Context, allocationID string) (BatesAr
 	if errors.Is(err, sql.ErrNoRows) {
 		return BatesArtifact{}, ErrNotFound
 	}
+	if err != nil {
+		return BatesArtifact{}, err
+	}
+	allocation, err := loadBatesAllocation(ctx, s.db, artifact.AllocationID)
+	if err != nil {
+		return BatesArtifact{}, err
+	}
+	if _, err := expectedBatesPagesLimited(ctx, s.db, allocation.SnapshotID); err != nil {
+		return BatesArtifact{}, err
+	}
 	return artifact, err
 }
 
@@ -218,7 +228,10 @@ func (s *Store) BatesArtifacts(ctx context.Context, after string, limit int) ([]
 	}
 	artifacts := make([]BatesArtifact, 0, len(ids))
 	for _, id := range ids {
-		artifact, err := loadBatesArtifact(ctx, s.db, id)
+		artifact, err := s.BatesArtifact(ctx, id)
+		if errors.Is(err, ErrNotFound) {
+			continue
+		}
 		if err != nil {
 			return nil, err
 		}
@@ -228,9 +241,26 @@ func (s *Store) BatesArtifacts(ctx context.Context, after string, limit int) ([]
 }
 
 func (s *Store) BatesArtifactCount(ctx context.Context) (int, error) {
-	var count int
-	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM bates_artifacts`).Scan(&count); err != nil {
+	rows, err := s.db.QueryContext(ctx, `SELECT allocation_id FROM bates_artifacts ORDER BY allocation_id`)
+	if err != nil {
 		return 0, fmt.Errorf("counting Bates artifacts: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	count := 0
+	for rows.Next() {
+		var allocationID string
+		if err := rows.Scan(&allocationID); err != nil {
+			return 0, err
+		}
+		if _, err := s.BatesArtifact(ctx, allocationID); errors.Is(err, ErrNotFound) {
+			continue
+		} else if err != nil {
+			return 0, err
+		}
+		count++
+	}
+	if err := rows.Err(); err != nil {
+		return 0, err
 	}
 	return count, nil
 }

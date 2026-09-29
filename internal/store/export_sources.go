@@ -198,6 +198,10 @@ func (s *Store) createExportSource(ctx context.Context, owner string, r bundle.S
 			state = "uploading"
 		}
 		source = bundle.Source{ID: r.OperationID, RequestSHA256: digest, Kind: r.Kind, State: state, Total: r.Total, MemberHash: r.MemberHash, CreatedAt: nowRFC3339(), ExpiresAt: exportDeadline(10 * time.Minute)}
+		source.PhotoOwnerID, source.PhotoOwnerBound, source.PhotoNoOwner, err = photoOwnerBindingTx(ctx, tx)
+		if err != nil {
+			return err
+		}
 		source.SavedQueryID = r.SavedQueryID
 		source.CollectionID = r.CollectionID
 		source.SavedQueryRevision = r.SavedQueryRevision
@@ -335,6 +339,12 @@ func sealExportMembers(ctx context.Context, tx *sql.Tx, owner string, source *bu
 		if nodeID != m.NodeID || hash != m.SHA256 || size != m.Size || m.Revision != 0 && m.Revision != revision {
 			return bundle.ErrConflict
 		}
+		if err := photoNodeVisibilityCheckTx(ctx, tx, m.NodeID); err != nil {
+			return err
+		}
+		if err := photoVersionVisibilityCheckTx(ctx, tx, m.VersionID); err != nil {
+			return err
+		}
 		raw, e := canonical.Marshal(m)
 		if e != nil {
 			return e
@@ -392,6 +402,14 @@ func (s *Store) PutExportChunk(ctx context.Context, owner, id string, index int,
 		}
 		if source.State != "uploading" {
 			return bundle.ErrConflict
+		}
+		for _, member := range members {
+			if err := photoNodeVisibilityCheckTx(ctx, tx, member.NodeID); err != nil {
+				return err
+			}
+			if err := photoVersionVisibilityCheckTx(ctx, tx, member.VersionID); err != nil {
+				return err
+			}
 		}
 		_, err = tx.ExecContext(ctx, `INSERT INTO export_chunks(source_id,chunk_index,canonical_json) VALUES(?,?,?)`, id, index, raw)
 		return err

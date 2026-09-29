@@ -87,7 +87,8 @@ func (service *Service) SubmitRemoteRecording(
 	if err != nil {
 		return MediaReceipt{}, err
 	}
-	operation := store.MediaOperation{ID: request.OperationID, Principal: service.principal,
+	principal := service.requestPrincipal(ctx)
+	operation := store.MediaOperation{ID: request.OperationID, Principal: principal,
 		Verb: "submit_remote_recording", RequestSHA256: requestSHA}
 	if replay, replayErr := service.catalog.MediaOperationReceipt(ctx, operation); replayErr == nil {
 		stored, decodeErr := canonical.Decode[store.MediaPublicationReceipt]([]byte(replay))
@@ -153,7 +154,7 @@ func (service *Service) SubmitRemoteRecording(
 	if err != nil {
 		return MediaReceipt{}, err
 	}
-	occurrenceID := mediaOccurrenceID(service.principal, request.Occurrence.Ref, request.Occurrence.Revision)
+	occurrenceID := mediaOccurrenceID(principal, request.Occurrence.Ref, request.Occurrence.Revision)
 	var stored store.MediaPublicationReceipt
 	err = service.mediaMutation(ctx, func() error {
 		var retainErr error
@@ -161,7 +162,7 @@ func (service *Service) SubmitRemoteRecording(
 			Operation: operation,
 			Provider:  provider, OriginScope: originScope, IdentitySHA256: sourceID, Outcome: outcome,
 			Occurrence: store.MediaOccurrenceInput{ID: occurrenceID, SourceID: sourceID,
-				Principal: service.principal, Ref: request.Occurrence.Ref, Revision: request.Occurrence.Revision,
+				Principal: principal, Ref: request.Occurrence.Ref, Revision: request.Occurrence.Revision,
 				Filename: request.Occurrence.Filename, PersonRef: request.Occurrence.PersonRef,
 				SpeakerLabel: request.Occurrence.SpeakerLabel, MessageJSON: string(message)},
 		})
@@ -341,7 +342,8 @@ func (service *Service) SubmitSuppliedMedia(
 	if err != nil {
 		return MediaReceipt{}, err
 	}
-	operation := store.MediaOperation{ID: request.OperationID, Principal: service.principal,
+	principal := service.requestPrincipal(ctx)
+	operation := store.MediaOperation{ID: request.OperationID, Principal: principal,
 		Verb: "submit_supplied_media", RequestSHA256: hex.EncodeToString(requestDigest[:]), SourceID: sourceID}
 	if replay, replayErr := service.catalog.MediaOperationReceipt(ctx, operation); replayErr == nil {
 		stored, decodeErr := canonical.Decode[store.MediaPublicationReceipt]([]byte(replay))
@@ -363,7 +365,7 @@ func (service *Service) SubmitSuppliedMedia(
 			return MediaReceipt{}, bindingErr
 		}
 		request.Processing.SuppliedInputID = binding
-		processingAuthorization = service.renditionConsentRequest(processingProfile)
+		processingAuthorization = service.renditionConsentRequest(processingProfile, service.requestPrincipal(ctx), service.scope)
 		authorized, authorizeErr := service.catalog.AuthorizeProviderOperation(ctx, processingAuthorization)
 		if authorizeErr != nil {
 			return MediaReceipt{}, processingConsentBoundaryError(authorizeErr)
@@ -376,7 +378,7 @@ func (service *Service) SubmitSuppliedMedia(
 	}
 	processingPrincipal, processingScope, processingFingerprint := "", "", ""
 	if mediaProcessingRequested(request.Processing) {
-		processingPrincipal, processingScope = service.principal, service.scope
+		processingPrincipal, processingScope = service.requestPrincipal(ctx), service.scope
 		processingFingerprint = processingProfile.record.Fingerprint
 	}
 	publication := store.MediaPublicationRequest{
@@ -388,7 +390,7 @@ func (service *Service) SubmitSuppliedMedia(
 		ProcessingPrincipal: processingPrincipal, ProcessingScope: processingScope,
 		ProcessingProfileFingerprint: processingFingerprint,
 		ProcessingAuthorization:      processingAuthorization,
-		Occurrence: store.MediaOccurrenceInput{SourceID: sourceID, Principal: service.principal,
+		Occurrence: store.MediaOccurrenceInput{SourceID: sourceID, Principal: principal,
 			Ref: request.Occurrence.Ref, Revision: request.Occurrence.Revision, Filename: filename,
 			PersonRef: request.Occurrence.PersonRef, SpeakerLabel: request.Occurrence.SpeakerLabel,
 			MessageJSON: string(messageJSON)},

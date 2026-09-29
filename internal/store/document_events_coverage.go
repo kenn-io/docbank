@@ -47,6 +47,10 @@ func (s *Store) DocumentEventCoverageReport(ctx context.Context) (DocumentEventC
 		ContractVersion: state.ContractVersion, DeriverFingerprint: state.DeriverFingerprint,
 		InputEpoch: state.InputEpoch, PublicationEpoch: state.PublicationEpoch,
 	}
+	visibility, visibilityArgs, err := photoNodeVisibilitySQL(ctx, tx)
+	if err != nil {
+		return DocumentEventCoverage{}, err
+	}
 	const freshIndexed = `a.input_epoch=? AND a.input_revision=COALESCE(d.revision,0)
 		AND a.state='indexed' AND h.input_epoch=a.input_epoch
 		AND g.inputs_sha256=a.inputs_sha256 AND g.contract_version=?
@@ -79,13 +83,15 @@ func (s *Store) DocumentEventCoverageReport(ctx context.Context) (DocumentEventC
 		LEFT JOIN document_event_attempts a ON a.content_version_id=cv.version_id
 		LEFT JOIN document_event_heads h ON h.content_version_id=cv.version_id
 		LEFT JOIN document_event_generations g ON g.generation_id=h.generation_id
-		WHERE n.kind='file'`
-	err = tx.QueryRowContext(ctx, query,
+		WHERE n.kind='file' AND ` + visibility + ``
+	args := append([]any{},
 		state.InputEpoch, state.ContractVersion, state.DeriverFingerprint,
 		state.InputEpoch, state.InputEpoch,
 		document.SourceMetadataContractV1,
 		state.InputEpoch, state.ContractVersion, state.DeriverFingerprint,
-	).Scan(&coverage.Selected, &coverage.Indexed, &coverage.Failed, &coverage.Unavailable,
+	)
+	args = append(args, visibilityArgs...)
+	err = tx.QueryRowContext(ctx, query, args...).Scan(&coverage.Selected, &coverage.Indexed, &coverage.Failed, &coverage.Unavailable,
 		&coverage.MissingMetadata, &coverage.UnboundProvenance, &coverage.OperationalFallbacks)
 	if err != nil {
 		return DocumentEventCoverage{}, fmt.Errorf("counting document event coverage: %w", err)
@@ -94,7 +100,7 @@ func (s *Store) DocumentEventCoverageReport(ctx context.Context) (DocumentEventC
 	if coverage.Pending < 0 {
 		return DocumentEventCoverage{}, fmt.Errorf("document event coverage counters: %w", ErrDocumentEventsCorrupt)
 	}
-	if err := countSafeInvalidDateDiagnostics(ctx, tx, state, &coverage); err != nil {
+	if err := countSafeInvalidDateDiagnostics(ctx, tx, state, visibility, visibilityArgs, &coverage); err != nil {
 		return DocumentEventCoverage{}, err
 	}
 	if err := tx.Commit(); err != nil {
@@ -104,7 +110,7 @@ func (s *Store) DocumentEventCoverageReport(ctx context.Context) (DocumentEventC
 }
 
 func countSafeInvalidDateDiagnostics(
-	ctx context.Context, tx *sql.Tx, state DocumentEventState, coverage *DocumentEventCoverage,
+	ctx context.Context, tx *sql.Tx, state DocumentEventState, visibility string, visibilityArgs []any, coverage *DocumentEventCoverage,
 ) error {
 	rows, err := tx.QueryContext(ctx, `SELECT a.diagnostic_json
 		FROM nodes n JOIN content_versions cv ON cv.version_id=n.current_version_id
@@ -112,12 +118,12 @@ func countSafeInvalidDateDiagnostics(
 		LEFT JOIN document_event_dirty d ON d.content_version_id=cv.version_id
 		LEFT JOIN document_event_heads h ON h.content_version_id=cv.version_id
 		LEFT JOIN document_event_generations g ON g.generation_id=h.generation_id
-		WHERE n.kind='file' AND a.input_epoch=?
+		WHERE n.kind='file' AND `+visibility+` AND a.input_epoch=?
 		AND a.input_revision=COALESCE(d.revision,0) AND (
 			a.state IN ('failed','unavailable') OR (a.state='indexed'
 			AND h.input_epoch=a.input_epoch AND g.inputs_sha256=a.inputs_sha256
 			AND g.contract_version=? AND g.deriver_fingerprint=?))`,
-		state.InputEpoch, state.ContractVersion, state.DeriverFingerprint)
+		append(append([]any{}, visibilityArgs...), state.InputEpoch, state.ContractVersion, state.DeriverFingerprint)...)
 	if err != nil {
 		return fmt.Errorf("listing document event diagnostics: %w", err)
 	}

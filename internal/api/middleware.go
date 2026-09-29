@@ -14,6 +14,7 @@ import (
 	"github.com/danielgtaylor/huma/v2"
 
 	"go.kenn.io/docbank/internal/daemonauth"
+	"go.kenn.io/docbank/internal/store"
 )
 
 const requestTimeout = 60 * time.Second
@@ -204,7 +205,11 @@ func writeError(w http.ResponseWriter, e *Error) {
 // keyless bypass: NewServer refuses to build a server with an empty key
 // (the offline OpenAPI-document path is the only caller that doesn't serve
 // requests, and it supplies a placeholder key), so key is always set here.
-func authMiddleware(next http.Handler, key string, sessions *webSessionRegistry, masterOwner string) http.Handler {
+func authMiddleware(next http.Handler, key string, sessions *webSessionRegistry, masterOwner string, photoStores ...*store.Store) http.Handler {
+	var photoStore *store.Store
+	if len(photoStores) > 0 {
+		photoStore = photoStores[0]
+	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if authExempt(r.URL.Path) {
 			next.ServeHTTP(w, r)
@@ -217,6 +222,7 @@ func authMiddleware(next http.Handler, key string, sessions *webSessionRegistry,
 		if subtle.ConstantTimeCompare([]byte(got), []byte(key)) == 1 {
 			ctx := context.WithValue(r.Context(), authenticationContextKey{}, "master")
 			ctx = context.WithValue(ctx, workspaceSnapshotOwnerContextKey{}, masterOwner)
+			ctx = store.WithPhotoOwnerAuthority(ctx, r.Header.Get("X-Docbank-Owner"))
 			next.ServeHTTP(w, r.WithContext(ctx))
 			return
 		}
@@ -233,6 +239,17 @@ func authMiddleware(next http.Handler, key string, sessions *webSessionRegistry,
 			defer cancel()
 			ctx = context.WithValue(ctx, authenticationContextKey{}, "browser")
 			ctx = context.WithValue(ctx, workspaceSnapshotOwnerContextKey{}, owner)
+			if photoOwner, ok := sessions.photoOwner(webToken); ok && photoOwner != "" {
+				if photoStore != nil {
+					if _, ownerErr := photoStore.PhotoOwner(ctx, photoOwner); ownerErr != nil {
+						writeError(w, NewError(http.StatusUnauthorized, "unauthorized", "browser session owner is unavailable"))
+						return
+					}
+				}
+				ctx = store.WithPhotoOwner(ctx, photoOwner)
+			} else {
+				ctx = store.WithNoPhotoOwner(ctx)
+			}
 			next.ServeHTTP(w, r.WithContext(ctx))
 			return
 		}

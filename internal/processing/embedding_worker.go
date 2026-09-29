@@ -460,6 +460,7 @@ func (worker *EmbeddingWorker) RunJob(ctx context.Context, jobID string) (bool, 
 }
 
 func (worker *EmbeddingWorker) processClaim(ctx context.Context, claim EmbeddingWorkClaim, work EmbeddingWork) (retErr error) {
+	ctx = store.WithPhotoOwnerPrincipal(ctx, work.Consent.Principal)
 	started := worker.clock().UTC()
 	receipt := EmbeddingAttemptReceipt{AttemptID: claim.AttemptID, ProviderFingerprint: work.Descriptor.Fingerprint,
 		ProfileFingerprint: work.ProcessingProfile.Fingerprint, BindingID: work.Binding.Name,

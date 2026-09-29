@@ -145,6 +145,10 @@ func (s *Store) AuditScopeHistory(
 	if err != nil {
 		return AuditScopeEventPage{}, fmt.Errorf("starting audit-scope-history snapshot: %w", err)
 	}
+	if err := checkAuditScopePhotoVisibilityTx(ctx, tx, scopeID); err != nil {
+		_ = tx.Rollback()
+		return AuditScopeEventPage{}, err
+	}
 	page, err := auditScopeHistoryPageTx(ctx, tx, scopeID, limit, cursor, decoded)
 	if err != nil {
 		_ = tx.Rollback()
@@ -154,6 +158,34 @@ func (s *Store) AuditScopeHistory(
 		return AuditScopeEventPage{}, fmt.Errorf("closing audit-scope-history snapshot: %w", err)
 	}
 	return page, nil
+}
+
+func checkAuditScopePhotoVisibilityTx(ctx context.Context, tx *sql.Tx, scopeID string) error {
+	var targetID int64
+	if err := tx.QueryRowContext(ctx, `SELECT target_node_id FROM audit_scopes WHERE scope_id=?`, scopeID).Scan(&targetID); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return fmt.Errorf("audit scope %s: %w", scopeID, ErrNotFound)
+		}
+		return err
+	}
+	if err := photoNodeVisibilityCheckTx(ctx, tx, targetID); err != nil {
+		return err
+	}
+	rows, err := tx.QueryContext(ctx, `SELECT node_id FROM audit_records WHERE kind='event' AND scope_id=? AND node_id IS NOT NULL`, scopeID)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = rows.Close() }()
+	for rows.Next() {
+		var nodeID int64
+		if err := rows.Scan(&nodeID); err != nil {
+			return err
+		}
+		if err := photoNodeVisibilityCheckTx(ctx, tx, nodeID); err != nil {
+			return err
+		}
+	}
+	return rows.Err()
 }
 
 func auditScopeHistoryPageTx(
@@ -270,6 +302,10 @@ func (s *Store) auditHistorySnapshot(
 	}
 	node, err := resolve(tx)
 	if err != nil {
+		_ = tx.Rollback()
+		return AuditEventPage{}, err
+	}
+	if err := photoNodeVisibilityCheckTx(ctx, tx, node.ID); err != nil {
 		_ = tx.Rollback()
 		return AuditEventPage{}, err
 	}

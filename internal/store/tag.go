@@ -537,6 +537,10 @@ func (s *Store) taggedNodes(
 	if liveOnly {
 		pageFilter = " WHERE trashed_at IS NULL"
 	}
+	visibility, visibilityArgs, err := photoNodeVisibilitySQL(ctx, s.db)
+	if err != nil {
+		return nil, 0, 0, err
+	}
 	rows, err := s.db.QueryContext(ctx, `
 		WITH RECURSIVE target AS (SELECT id FROM tags WHERE id = ?),
 		matching AS (
@@ -548,7 +552,7 @@ func (s *Store) taggedNodes(
 		         n.revision AS revision, n.created_at AS created_at,
 		         n.modified_at AS modified_at, n.trashed_at AS trashed_at
 		  FROM `+nodeFrom+` JOIN node_tags nt ON nt.node_id = n.id
-		  WHERE nt.tag_id = ?
+		  WHERE nt.tag_id = ? AND `+visibility+`
 		),
 		page AS (
 		  SELECT * FROM matching`+pageFilter+` ORDER BY id LIMIT ? OFFSET ?
@@ -575,7 +579,7 @@ func (s *Store) taggedNodes(
 		       COALESCE(paths.path, '')
 		FROM target CROSS JOIN totals LEFT JOIN page ON true
 		LEFT JOIN paths ON paths.node_id = page.id ORDER BY page.id`,
-		tagID, tagID, limit, offset)
+		append([]any{tagID, tagID}, append(visibilityArgs, limit, offset)...)...)
 	if err != nil {
 		return nil, 0, 0, fmt.Errorf("listing nodes for tag %s: %w", tagID, err)
 	}

@@ -209,6 +209,9 @@ func registerRenditionTextRoutes(api huma.API, d Deps) {
 			BuildID            string `query:"build_id" pattern:"^[0-9a-f]{64}$"`
 			ArtifactID         string `query:"artifact_id" maxLength:"128"`
 		}) (*huma.StreamResponse, error) {
+			if err := d.Store.CheckPhotoVisibilityForNode(ctx, in.NodeID); err != nil {
+				return nil, FromStoreError(err)
+			}
 			view, err := d.Store.ResolveRenditionText(ctx, store.RenditionTextBinding{NodeID: in.NodeID,
 				NodeRevision: in.Revision, ContentVersionID: in.VersionID, SourceSHA256: in.BlobHash,
 				SourceSize: in.Size, ProfileFingerprint: in.ProfileFingerprint,

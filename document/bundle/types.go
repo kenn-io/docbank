@@ -70,6 +70,9 @@ type Source struct {
 	SavedQueryRevision int64  `json:"saved_query_revision,omitzero"`
 	QueryFingerprint   string `json:"query_fingerprint,omitzero"`
 	CollectionID       string `json:"collection_id,omitzero"`
+	PhotoOwnerID       string `json:"photo_owner_id,omitzero"`
+	PhotoOwnerBound    bool   `json:"photo_owner_bound,omitzero"`
+	PhotoNoOwner       bool   `json:"photo_no_owner,omitzero"`
 }
 
 type RolePolicy struct {
@@ -205,19 +208,22 @@ type Receipt struct {
 }
 
 type ExportJob struct {
-	ID             string   `json:"id"`
-	PlanID         string   `json:"plan_id"`
-	Fingerprint    string   `json:"fingerprint"`
-	State          string   `json:"state"`
-	Sequence       int64    `json:"sequence"`
-	CompletedRoles int      `json:"completed_roles"`
-	CompletedBytes int64    `json:"completed_bytes"`
-	Attempt        int64    `json:"attempt"`
-	Failure        string   `json:"failure,omitzero"`
-	CreatedAt      string   `json:"created_at"`
-	Deadline       string   `json:"deadline"`
-	ExpiresAt      string   `json:"expires_at"`
-	Receipt        *Receipt `json:"receipt,omitzero"`
+	ID              string   `json:"id"`
+	PlanID          string   `json:"plan_id"`
+	Fingerprint     string   `json:"fingerprint"`
+	State           string   `json:"state"`
+	Sequence        int64    `json:"sequence"`
+	CompletedRoles  int      `json:"completed_roles"`
+	CompletedBytes  int64    `json:"completed_bytes"`
+	Attempt         int64    `json:"attempt"`
+	Failure         string   `json:"failure,omitzero"`
+	CreatedAt       string   `json:"created_at"`
+	Deadline        string   `json:"deadline"`
+	ExpiresAt       string   `json:"expires_at"`
+	Receipt         *Receipt `json:"receipt,omitzero"`
+	PhotoOwnerID    string   `json:"photo_owner_id,omitzero"`
+	PhotoOwnerBound bool     `json:"photo_owner_bound,omitzero"`
+	PhotoNoOwner    bool     `json:"photo_no_owner,omitzero"`
 }
 
 type Job = ExportJob

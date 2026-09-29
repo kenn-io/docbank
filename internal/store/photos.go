@@ -16,17 +16,34 @@ func photoAssetByIDQuery(ctx context.Context, q metadataQuerier, id string) (Pho
 		return PhotoAsset{}, fmt.Errorf("photo asset %q: %w", id, ErrNotFound)
 	}
 	var asset PhotoAsset
-	var display, override sql.NullString
+	var ownerID, hiddenAt, display, override sql.NullString
 	if err := q.QueryRowContext(ctx, `
-		SELECT asset_id, kind, revision, excluded_at, display_file_id,
+		SELECT asset_id, kind, revision, owner_id, hidden_at, excluded_at, display_file_id,
 		       display_override_file_id, created_at, updated_at
 		FROM photo_assets WHERE asset_id=?`, id).Scan(
-		&asset.ID, &asset.Kind, &asset.Revision, &asset.ExcludedAt, &display,
+		&asset.ID, &asset.Kind, &asset.Revision, &ownerID, &hiddenAt, &asset.ExcludedAt, &display,
 		&override, &asset.CreatedAt, &asset.UpdatedAt,
 	); errors.Is(err, sql.ErrNoRows) {
 		return PhotoAsset{}, ErrNotFound
 	} else if err != nil {
 		return PhotoAsset{}, fmt.Errorf("reading photo asset %q: %w", id, err)
+	}
+	if ownerID.Valid {
+		asset.OwnerID = new(ownerID.String)
+	}
+	if hiddenAt.Valid {
+		asset.HiddenAt = new(hiddenAt.String)
+	}
+	if ownerID.Valid {
+		if _, ownerErr := photoOwnerByIDTx(ctx, q, ownerID.String); ownerErr != nil {
+			if errors.Is(ownerErr, ErrNotFound) {
+				return PhotoAsset{}, fmt.Errorf("%w: asset %s references missing owner", ErrInvalidPhotoOwner, id)
+			}
+			return PhotoAsset{}, ownerErr
+		}
+	}
+	if err := photoVisibilityCheckTx(ctx, q, ownerID.String, asset.HiddenAt); err != nil {
+		return PhotoAsset{}, err
 	}
 	if display.Valid {
 		asset.DisplayFileID = new(display.String)
@@ -71,11 +88,11 @@ func (s *Store) photoReadTx(ctx context.Context, fn func(*sql.Tx) error) error {
 
 func photoSettingsTx(ctx context.Context, q metadataQuerier) (PhotoSettings, error) {
 	var settings PhotoSettings
-	var preference sql.NullString
+	var defaultOwner, preference sql.NullString
 	err := q.QueryRowContext(ctx, `
-		SELECT preference, revision, updated_at
+		SELECT default_owner_id, preference, revision, updated_at
 		FROM photo_library_settings WHERE singleton=1`).Scan(
-		&preference, &settings.Revision, &settings.UpdatedAt,
+		&defaultOwner, &preference, &settings.Revision, &settings.UpdatedAt,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
 		return PhotoSettings{Revision: 1, UpdatedAt: ""}, nil
@@ -85,6 +102,9 @@ func photoSettingsTx(ctx context.Context, q metadataQuerier) (PhotoSettings, err
 	}
 	if preference.Valid {
 		settings.Preference = new(preference.String)
+	}
+	if defaultOwner.Valid {
+		settings.DefaultOwnerID = new(defaultOwner.String)
 	}
 	if !photoPreferenceValid(settings.Preference) || settings.Revision < 1 {
 		return PhotoSettings{}, fmt.Errorf("%w: invalid settings row", ErrInvalidPhotoAsset)
@@ -159,6 +179,8 @@ type photoReceiptAssetState struct {
 	ID                    string                     `json:"id"`
 	Kind                  string                     `json:"kind"`
 	Revision              int64                      `json:"revision"`
+	OwnerID               *string                    `json:"owner_id"`
+	HiddenAt              *string                    `json:"hidden_at"`
 	ExcludedAt            *string                    `json:"excluded_at"`
 	DisplayFileID         *string                    `json:"display_file_id"`
 	DisplayOverrideFileID *string                    `json:"display_override_file_id"`
@@ -211,6 +233,7 @@ func photoAssetMemberChanges(before, after PhotoAsset) []photoReceiptMemberChang
 func photoAssetState(asset PhotoAsset, changes []photoReceiptMemberChange) any {
 	state := photoReceiptAssetState{
 		ID: asset.ID, Kind: asset.Kind, Revision: asset.Revision,
+		OwnerID: asset.OwnerID, HiddenAt: asset.HiddenAt,
 		ExcludedAt: asset.ExcludedAt, DisplayFileID: asset.DisplayFileID,
 		DisplayOverrideFileID: asset.DisplayOverrideFileID, FileCount: len(asset.Files),
 		ChangedMemberCount: len(changes),
@@ -382,9 +405,12 @@ func photoAssetForMutationTx(ctx context.Context, tx *sql.Tx, assetID string, re
 	return asset, nil
 }
 
-func photoNodeForMutationTx(tx *sql.Tx, nodeID int64) (Node, PhotoNodeFacts, error) {
+func photoNodeForMutationTx(ctx context.Context, tx *sql.Tx, nodeID int64) (Node, PhotoNodeFacts, error) {
 	node, err := nodeByIDTx(tx, nodeID)
 	if err != nil {
+		return Node{}, PhotoNodeFacts{}, err
+	}
+	if err := photoNodeVisibilityCheckTx(ctx, tx, nodeID); err != nil {
 		return Node{}, PhotoNodeFacts{}, err
 	}
 	if node.Kind != nodeKindFile || node.TrashedAt != nil {
@@ -396,7 +422,7 @@ func photoNodeForMutationTx(tx *sql.Tx, nodeID int64) (Node, PhotoNodeFacts, err
 // photoAssetCreateTx creates a singleton asset on an explicit request and
 // reports every refusal as an error.
 func (s *Store) photoAssetCreateTx(ctx context.Context, tx *sql.Tx, nodeID int64, explicitRole, explicitKind string) (PhotoAsset, error) {
-	_, facts, err := photoNodeForMutationTx(tx, nodeID)
+	_, facts, err := photoNodeForMutationTx(ctx, tx, nodeID)
 	if err != nil {
 		return PhotoAsset{}, err
 	}
@@ -442,9 +468,13 @@ func (s *Store) insertPhotoAssetTx(ctx context.Context, tx *sql.Tx, nodeID int64
 	if err != nil {
 		return PhotoAsset{}, fmt.Errorf("allocating photo asset ID: %w", err)
 	}
+	ownerID, err := photoOwnerForMutationTx(ctx, tx)
+	if err != nil {
+		return PhotoAsset{}, err
+	}
 	if _, err := tx.ExecContext(ctx, `
-		INSERT INTO photo_assets(asset_id,kind,revision,created_at,updated_at)
-		VALUES(?,?,1,?,?)`, assetID, kind, now, now); err != nil {
+		INSERT INTO photo_assets(asset_id,kind,revision,owner_id,hidden_at,created_at,updated_at)
+		VALUES(?,?,1,?,?,?,?)`, assetID, kind, nullablePhotoOwner(ownerID), nil, now, now); err != nil {
 		return PhotoAsset{}, fmt.Errorf("creating photo asset: %w", err)
 	}
 	if err := s.insertPhotoFileTx(ctx, tx, PhotoFile{AssetID: assetID, NodeID: nodeID, Role: role, CreatedAt: now}); err != nil {
@@ -455,6 +485,9 @@ func (s *Store) insertPhotoAssetTx(ctx context.Context, tx *sql.Tx, nodeID int64
 		return PhotoAsset{}, err
 	}
 	asset := PhotoAsset{ID: assetID, Kind: kind, Revision: 1, CreatedAt: now, UpdatedAt: now, Files: files}
+	if ownerID != "" {
+		asset.OwnerID = new(ownerID)
+	}
 	settings, err := photoSettingsTx(ctx, tx)
 	if err != nil {
 		return PhotoAsset{}, err
@@ -642,7 +675,7 @@ func (s *Store) PromotePhotoNode(ctx context.Context, nodeID int64, expectedRevi
 			if kind != "" && asset.Kind != kind {
 				return false, fmt.Errorf("%w: existing asset kind is %s, requested %s", ErrInvalidPhotoAsset, asset.Kind, kind)
 			}
-			if _, _, err := photoNodeForMutationTx(tx, nodeID); err != nil {
+			if _, _, err := photoNodeForMutationTx(ctx, tx, nodeID); err != nil {
 				return false, err
 			}
 			if asset.ExcludedAt == nil {
@@ -668,7 +701,7 @@ func (s *Store) AttachPhotoFile(ctx context.Context, assetID string, revision, n
 		return PhotoAsset{}, fmt.Errorf("%w: unknown role %q", ErrInvalidPhotoAsset, role)
 	}
 	return s.mutatePhotoAsset(ctx, assetID, revision, "attach", func(tx *sql.Tx, asset *PhotoAsset) (bool, error) {
-		node, facts, err := photoNodeForMutationTx(tx, nodeID)
+		node, facts, err := photoNodeForMutationTx(ctx, tx, nodeID)
 		if err != nil {
 			return false, err
 		}
@@ -808,8 +841,8 @@ func (s *Store) SetPhotoSettings(ctx context.Context, revision int64, preference
 		if err != nil {
 			return err
 		}
-		next := PhotoSettings{Preference: preference, Revision: current.Revision + 1, UpdatedAt: nowRFC3339()}
-		if _, err := tx.ExecContext(ctx, `INSERT INTO photo_library_settings(singleton,preference,revision,updated_at) VALUES(1,?,?,?) ON CONFLICT(singleton) DO UPDATE SET preference=excluded.preference, revision=excluded.revision, updated_at=excluded.updated_at`, nullablePhotoString(preference), next.Revision, next.UpdatedAt); err != nil {
+		next := PhotoSettings{DefaultOwnerID: current.DefaultOwnerID, Preference: preference, Revision: current.Revision + 1, UpdatedAt: nowRFC3339()}
+		if _, err := tx.ExecContext(ctx, `INSERT INTO photo_library_settings(singleton,default_owner_id,preference,revision,updated_at) VALUES(1,?,?,?,?) ON CONFLICT(singleton) DO UPDATE SET preference=excluded.preference, revision=excluded.revision, updated_at=excluded.updated_at`, nullablePhotoStringFromPtr(current.DefaultOwnerID), nullablePhotoString(preference), next.Revision, next.UpdatedAt); err != nil {
 			return err
 		}
 		if err := writePhotoReceiptTx(ctx, tx, photoReceipt{

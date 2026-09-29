@@ -28,6 +28,13 @@ Sidecars never display and must point at a RAW member in the same asset.
 Removing the selected member chooses another displayable member atomically,
 or stores a null display when none remains. Assets are limited to 256 files.
 
+Each asset belongs to a durable photo owner. A request with
+`X-Docbank-Owner: OWNER_UUID` can see and change that owner's assets; ordinary
+unowned files remain visible to every authenticated caller. The daemon applies
+the same owner filter to document paths, content, catalogs, search, and
+exports. Browser sessions bind the owner selected when the session is issued;
+the browser cannot replace that binding.
+
 ## CLI
 
 Inspect the asset created for a node or use a stable asset UUID:
@@ -57,7 +64,15 @@ docbank photos settings show
 docbank photos settings set raw [--revision REV]
 docbank photos settings set image [--revision REV]
 docbank photos settings reset [--revision REV]
+docbank photos owners add <name>
+docbank photos owners list
+docbank photos owners rename <owner-id> <name> --revision REV
+docbank photos owners remove <owner-id> --revision REV
 ```
+
+Use `--owner OWNER_UUID` on asset and settings commands to select an owner.
+Owner administration uses the master daemon credential and refuses removal
+while any asset still refers to the owner.
 
 All commands emit bounded JSON. Exit code 4 means the revision is stale: an
 explicit `--revision` no longer matched, or the one automatic retry lost to
@@ -71,7 +86,7 @@ attach, detach, exclude, promote, display, and settings operations under
 `/api/v1/photos`. Existing-asset and settings mutations require `If-Match`.
 Responses carry the new revision in both the body and the `ETag` header.
 
-Photo assets, file memberships, the singleton settings row, and change
+Photo owners, assets, file memberships, the singleton settings row, and change
 receipts are part of the deterministic metadata JSONL stream. Restore checks
 node ownership, local pointers, sidecar targets, display selection, enum
 values, revisions, receipt JSON, and the complete graph before commit. Older
@@ -86,5 +101,5 @@ an empty asset identity.
 Automatic enrollment and explicit graph writes are skipped or refused when
 audit authority is active, according to the existing audit boundary. The
 preexisting graph is preserved and becomes read-only when audit is enabled.
-Import grouping, browsing and query predicates, technical photo metadata,
-owners, and browser UI belong to later slices.
+Import grouping, browsing and query predicates, technical photo metadata, and
+browser UI belong to later slices.

@@ -81,6 +81,7 @@ Endpoints are filesystem-shaped, under `/api/v1`:
 | `POST /photos/assets` · `POST /photos/assets/{asset_id}/files` · `DELETE /photos/assets/{asset_id}/files/{file_id}` | create, attach, or detach photo membership | Implemented |
 | `POST /photos/assets/{asset_id}/exclude` · `POST /photos/nodes/{node_id}/promote` | change exclusion or explicitly promote a live file | Implemented |
 | `PUT /photos/assets/{asset_id}/display` · `GET\|PUT /photos/settings` | set an asset display override or vault preference | Implemented |
+| `GET\|POST /photos/owners` · `PATCH\|DELETE /photos/owners/{owner_id}` | list and administer durable photo owners | Implemented |
 | `GET /versions/{version_id}` · `GET /versions/{version_id}/content` | inspect or stream one immutable version by stable UUID | Implemented |
 | `GET\|POST /versions/{version_id}/email` | read or synchronously ensure canonical email metadata for one immutable version | Implemented |
 | `GET /versions/{version_id}/email/generations/{generation_id}` | read one immutable email generation attached to the exact version | Implemented |

@@ -188,11 +188,16 @@ func (s *Store) ResolveDocumentSummaries(
 
 	values := make([]string, len(identities))
 	args := documentCatalogArgs(s.rootID, "/")
+	visibilityCTE, visibilityArgs, err := documentCatalogCTEForVisibility(ctx, tx)
+	if err != nil {
+		return nil, err
+	}
+	args = append(args, visibilityArgs...)
 	for index, identity := range identities {
 		values[index] = "(?,?,?,?)"
 		args = append(args, index, identity.NodeID, identity.ContentVersionID, identity.Path)
 	}
-	rows, err := tx.QueryContext(ctx, documentCatalogCTE+`, requested(ordinal,node_id,content_version_id,path) AS (
+	rows, err := tx.QueryContext(ctx, visibilityCTE+`, requested(ordinal,node_id,content_version_id,path) AS (
 		VALUES `+strings.Join(values, ",")+`
 	)
 	SELECT r.ordinal,d.node_id,d.content_version_id,d.path,d.name,d.media_type,d.size,d.modified_at,
@@ -338,11 +343,17 @@ func (s *Store) queryDocumentCatalogPage(
 	ctx context.Context, tx *sql.Tx, query DocumentCatalogQuery,
 	boundary *DocumentCatalogPosition, traversal DocumentCatalogTraversal, args []any,
 ) ([]DocumentSummary, error) {
+	visibilityCTE, visibilityArgs, err := documentCatalogCTEForVisibility(ctx, tx)
+	if err != nil {
+		return nil, err
+	}
 	where, boundaryArgs := documentCatalogBoundary(query, boundary, traversal)
 	order := documentCatalogOrder(query, traversal)
 	args = append(slices.Clone(args), boundaryArgs...)
+	args = append(args[:len(args)-len(boundaryArgs)], visibilityArgs...)
+	args = append(args, boundaryArgs...)
 	args = append(args, query.PageSize)
-	rows, err := tx.QueryContext(ctx, documentCatalogCTE+`, page AS (
+	rows, err := tx.QueryContext(ctx, visibilityCTE+`, page AS (
   SELECT * FROM documents `+where+` ORDER BY `+order+` LIMIT ?
  )
  SELECT COALESCE(d.node_id,0),COALESCE(d.content_version_id,''),COALESCE(d.path,''),
@@ -399,10 +410,15 @@ func (s *Store) documentCatalogHasRows(
 ) (bool, error) {
 	// ponytail: continuation checks rescan the bounded prefix subtree; share one
 	// materialized catalog per page if repeated scans become a measured bottleneck.
+	visibilityCTE, visibilityArgs, err := documentCatalogCTEForVisibility(ctx, tx)
+	if err != nil {
+		return false, err
+	}
 	where, boundaryArgs := documentCatalogBoundary(query, &position, traversal)
-	args = append(slices.Clone(args), boundaryArgs...)
+	args = append(slices.Clone(args), visibilityArgs...)
+	args = append(args, boundaryArgs...)
 	var one int
-	err := tx.QueryRowContext(ctx, documentCatalogCTE+`
+	err = tx.QueryRowContext(ctx, visibilityCTE+`
   SELECT 1 FROM documents `+where+` LIMIT 1`, args...).Scan(&one)
 	if errors.Is(err, sql.ErrNoRows) {
 		return false, nil
@@ -411,6 +427,14 @@ func (s *Store) documentCatalogHasRows(
 		return false, fmt.Errorf("checking document catalog continuation: %w", err)
 	}
 	return true, nil
+}
+
+func documentCatalogCTEForVisibility(ctx context.Context, tx *sql.Tx) (string, []any, error) {
+	predicate, args, err := photoNodeVisibilitySQL(ctx, tx)
+	if err != nil {
+		return "", nil, err
+	}
+	return strings.Replace(documentCatalogCTE, " WHERE n.kind='file' AND l.path IS NOT NULL", " WHERE "+predicate+" AND n.kind='file' AND l.path IS NOT NULL", 1), args, nil
 }
 
 func documentCatalogBoundary(

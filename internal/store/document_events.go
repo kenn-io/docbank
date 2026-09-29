@@ -376,6 +376,9 @@ func (s *Store) DocumentEventsForVersion(
 	if err != nil {
 		return DocumentEventView{}, fmt.Errorf("reading document event version: %w", err)
 	}
+	if err := photoNodeVisibilityCheckTx(ctx, tx, view.Version.NodeID); err != nil {
+		return DocumentEventView{}, err
+	}
 	view.Events, _, err = document.DecodeDocumentEventsV1(view.Generation.CanonicalJSON)
 	if err != nil {
 		return DocumentEventView{}, documentEventCorruption(view.Generation.GenerationID, err)
