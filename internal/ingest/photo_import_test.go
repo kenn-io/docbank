@@ -278,6 +278,23 @@ func TestPhotoImportSourceStability(t *testing.T) {
 	assert.Error(t, err)
 }
 
+func TestPhotoImportAuditedVaultDoesNotCreateDestination(t *testing.T) {
+	ing := newTestIngester(t)
+	ctx := t.Context()
+	audited, err := ing.Store.Mkdir(ctx, ing.Store.RootID(), "audited")
+	require.NoError(t, err)
+	plan, err := ing.Store.PreviewInitialAudit(ctx, audited.ID, "api", nil)
+	require.NoError(t, err)
+	_, err = ing.Store.EnableInitialAudit(ctx, plan)
+	require.NoError(t, err)
+	source := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(source, "IMG.JPG"), []byte("synthetic-jpeg"), 0o600))
+	_, err = ing.ImportPhotoDirectory(ctx, source, "/audited/new/nested", PhotoImportOptions{})
+	require.ErrorIs(t, err, store.ErrAuditMutationUnsupported)
+	_, err = ing.Store.NodeByPath(ctx, "/audited/new")
+	require.ErrorIs(t, err, store.ErrNotFound)
+}
+
 func TestPhotoImportPublishedBytes(t *testing.T) {
 	root := t.TempDir()
 	path := filepath.Join(root, "capture.JPG")
