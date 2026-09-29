@@ -36,14 +36,19 @@ func createInventoryFixture(t *testing.T) fotobanktest.Install {
 	return fixture
 }
 
-func inventoryRequest(fixture fotobanktest.Install, ownerMap string) Request {
+func inventoryRequest(fixture fotobanktest.Install, outputDir string) Request {
 	return Request{CatalogPath: fixture.CatalogPath, VaultRoot: fixture.VaultRoot,
-		OwnerMapPath: ownerMap, DestinationRoot: filepath.Join(filepath.Dir(fixture.Root), "destination")}
+		OutputDir: outputDir, DestinationRoot: filepath.Join(filepath.Dir(fixture.Root), "destination")}
+}
+
+func inventoryReport(req Request) (photomigration.Report, error) {
+	result, err := Inventory(context.Background(), store.DefaultSQLiteDriver(), req)
+	return result.Report, err
 }
 
 func TestFotobankInventoryInstall(t *testing.T) {
 	fixture := createInventoryFixture(t)
-	report, _, err := Inventory(context.Background(), store.DefaultSQLiteDriver(), inventoryRequest(fixture, fixture.OwnerMapPath))
+	report, err := inventoryReport(inventoryRequest(fixture, fixture.OutputDir))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -58,18 +63,6 @@ func TestFotobankInventoryInstall(t *testing.T) {
 	if report.Schema.CatalogVersion != 1 || report.Schema.EmbeddedDocbankVersion != 16 || len(report.Vectors) != 1 ||
 		report.Vectors[0].ID != 1 || report.Vectors[0].Fingerprint != "synthetic" || report.Vectors[0].State != "active" || !report.Vectors[0].Rebuildable {
 		t.Fatalf("unexpected inventory schema: %#v", report)
-	}
-}
-
-func TestFotobankInventoryInstallRejectsSnapshotID(t *testing.T) {
-	fixture := createInventoryFixture(t)
-	request := inventoryRequest(fixture, fixture.OwnerMapPath)
-	request.SnapshotID = "snapshot-1"
-	if _, _, err := Inventory(context.Background(), store.DefaultSQLiteDriver(), request); err == nil || !strings.Contains(err.Error(), "snapshot_id") {
-		t.Fatalf("expected install snapshot_id refusal, got %v", err)
-	}
-	if _, err := os.Stat(fixture.OwnerMapPath); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("snapshot_id refusal left owner-map output behind: %v", err)
 	}
 }
 
@@ -90,7 +83,7 @@ func TestFotobankInventoryCountsRetainedDocbankVersions(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	report, _, err := Inventory(context.Background(), store.DefaultSQLiteDriver(), inventoryRequest(fixture, fixture.OwnerMapPath))
+	report, err := inventoryReport(inventoryRequest(fixture, fixture.OutputDir))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -112,7 +105,7 @@ func TestFotobankInventorySourceUnchanged(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := Inventory(context.Background(), store.DefaultSQLiteDriver(), inventoryRequest(fixture, fixture.OwnerMapPath)); err != nil {
+	if _, err := Inventory(context.Background(), store.DefaultSQLiteDriver(), inventoryRequest(fixture, fixture.OutputDir)); err != nil {
 		t.Fatal(err)
 	}
 	after, err := fixture.Digest()
@@ -138,15 +131,15 @@ func TestFotobankInventoryLocks(t *testing.T) {
 				path = fixture.VaultRoot
 			}
 			holdInventoryLock(t, test.mode, path)
-			_, _, err := Inventory(context.Background(), store.DefaultSQLiteDriver(), inventoryRequest(fixture, fixture.OwnerMapPath))
+			_, err := Inventory(context.Background(), store.DefaultSQLiteDriver(), inventoryRequest(fixture, fixture.OutputDir))
 			if err == nil {
 				t.Fatal("expected running-source refusal")
 			}
 			if test.mode == "catalog" && !errors.Is(err, ErrSourceRunning) {
 				t.Fatalf("expected typed running-source refusal, got %v", err)
 			}
-			if _, statErr := os.Stat(fixture.OwnerMapPath); !errors.Is(statErr, os.ErrNotExist) {
-				t.Fatalf("refusal left owner-map output behind: %v", statErr)
+			if _, statErr := os.Stat(fixture.OutputDir); !errors.Is(statErr, os.ErrNotExist) {
+				t.Fatalf("refusal left inventory output behind: %v", statErr)
 			}
 		})
 	}
@@ -156,12 +149,12 @@ func TestFotobankInventoryLocks(t *testing.T) {
 		if err := os.Remove(fixture.CatalogLock); err != nil {
 			t.Fatal(err)
 		}
-		_, _, err := Inventory(context.Background(), store.DefaultSQLiteDriver(), inventoryRequest(fixture, fixture.OwnerMapPath))
+		_, err := Inventory(context.Background(), store.DefaultSQLiteDriver(), inventoryRequest(fixture, fixture.OutputDir))
 		if !errors.Is(err, ErrSourceRunning) {
 			t.Fatalf("expected refusal for absent catalog lock, got %v", err)
 		}
-		if _, statErr := os.Stat(fixture.OwnerMapPath); !errors.Is(statErr, os.ErrNotExist) {
-			t.Fatalf("refusal left owner-map output behind: %v", statErr)
+		if _, statErr := os.Stat(fixture.OutputDir); !errors.Is(statErr, os.ErrNotExist) {
+			t.Fatalf("refusal left inventory output behind: %v", statErr)
 		}
 	})
 }
@@ -256,14 +249,14 @@ func TestFotobankInventoryWAL(t *testing.T) {
 	if err := os.WriteFile(wal, make([]byte, 32), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := Inventory(context.Background(), store.DefaultSQLiteDriver(), inventoryRequest(fixture, fixture.OwnerMapPath)); err != nil {
+	if _, err := Inventory(context.Background(), store.DefaultSQLiteDriver(), inventoryRequest(fixture, fixture.OutputDir)); err != nil {
 		t.Fatalf("32-byte WAL header should be admitted: %v", err)
 	}
-	_ = os.Remove(fixture.OwnerMapPath)
+	_ = os.RemoveAll(fixture.OutputDir)
 	if err := os.WriteFile(wal, make([]byte, 33), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	_, _, err := Inventory(context.Background(), store.DefaultSQLiteDriver(), inventoryRequest(fixture, fixture.OwnerMapPath))
+	_, err := Inventory(context.Background(), store.DefaultSQLiteDriver(), inventoryRequest(fixture, fixture.OutputDir))
 	if !errors.Is(err, ErrSourceWAL) {
 		t.Fatalf("expected WAL refusal at 33 bytes, got %v", err)
 	}
@@ -276,10 +269,10 @@ func TestFotobankInventoryVaultSidecars(t *testing.T) {
 	if err := os.WriteFile(headerOnlyWAL, make([]byte, 32), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := Inventory(context.Background(), store.DefaultSQLiteDriver(), inventoryRequest(fixture, fixture.OwnerMapPath)); err != nil {
+	if _, err := Inventory(context.Background(), store.DefaultSQLiteDriver(), inventoryRequest(fixture, fixture.OutputDir)); err != nil {
 		t.Fatalf("32-byte embedded-database WAL header should be admitted: %v", err)
 	}
-	if err := os.Remove(fixture.OwnerMapPath); err != nil {
+	if err := os.RemoveAll(fixture.OutputDir); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.Remove(headerOnlyWAL); err != nil {
@@ -298,12 +291,12 @@ func TestFotobankInventoryVaultSidecars(t *testing.T) {
 			if err := os.WriteFile(sidecar, test.data, 0o600); err != nil {
 				t.Fatal(err)
 			}
-			_, _, err := Inventory(context.Background(), store.DefaultSQLiteDriver(), inventoryRequest(fixture, fixture.OwnerMapPath))
+			_, err := Inventory(context.Background(), store.DefaultSQLiteDriver(), inventoryRequest(fixture, fixture.OutputDir))
 			if !errors.Is(err, ErrSourceWAL) {
 				t.Fatalf("expected embedded database sidecar refusal, got %v", err)
 			}
-			if _, statErr := os.Stat(fixture.OwnerMapPath); !errors.Is(statErr, os.ErrNotExist) {
-				t.Fatalf("sidecar refusal left owner-map output behind: %v", statErr)
+			if _, statErr := os.Stat(fixture.OutputDir); !errors.Is(statErr, os.ErrNotExist) {
+				t.Fatalf("sidecar refusal left inventory output behind: %v", statErr)
 			}
 			if err := os.Remove(sidecar); err != nil {
 				t.Fatal(err)
@@ -316,7 +309,7 @@ func TestFotobankInventoryVaultSidecars(t *testing.T) {
 			t.Fatal(err)
 		}
 		defer func() { _ = os.Remove(wal) }()
-		_, _, err := Inventory(context.Background(), store.DefaultSQLiteDriver(), inventoryRequest(fixture, fixture.OwnerMapPath))
+		_, err := Inventory(context.Background(), store.DefaultSQLiteDriver(), inventoryRequest(fixture, fixture.OutputDir))
 		if !errors.Is(err, ErrSourceWAL) {
 			t.Fatalf("expected non-regular sidecar refusal, got %v", err)
 		}
@@ -325,7 +318,7 @@ func TestFotobankInventoryVaultSidecars(t *testing.T) {
 
 func TestFotobankCatalogFingerprint(t *testing.T) {
 	fixture := createInventoryFixture(t)
-	report, _, err := Inventory(context.Background(), store.DefaultSQLiteDriver(), inventoryRequest(fixture, fixture.OwnerMapPath))
+	report, err := inventoryReport(inventoryRequest(fixture, fixture.OutputDir))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -345,12 +338,12 @@ func TestFotobankSchemaMismatch(t *testing.T) {
 		t.Fatal(err)
 	}
 	_ = db.Close()
-	_, _, err = Inventory(context.Background(), store.DefaultSQLiteDriver(), inventoryRequest(fixture, fixture.OwnerMapPath))
+	_, err = Inventory(context.Background(), store.DefaultSQLiteDriver(), inventoryRequest(fixture, fixture.OutputDir))
 	if !errors.Is(err, ErrSchemaMismatch) || !strings.Contains(err.Error(), "unexpected_table") {
 		t.Fatalf("expected named schema mismatch, got %v", err)
 	}
-	if _, err := os.Stat(fixture.OwnerMapPath); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("schema refusal left owner-map output behind: %v", err)
+	if _, err := os.Stat(fixture.OutputDir); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("schema refusal left inventory output behind: %v", err)
 	}
 }
 
@@ -458,12 +451,12 @@ func TestFotobankSchemaObjectMismatch(t *testing.T) {
 			if err := db.Close(); err != nil {
 				t.Fatal(err)
 			}
-			_, _, err = Inventory(context.Background(), store.DefaultSQLiteDriver(), inventoryRequest(fixture, fixture.OwnerMapPath))
+			_, err = Inventory(context.Background(), store.DefaultSQLiteDriver(), inventoryRequest(fixture, fixture.OutputDir))
 			if !errors.Is(err, ErrSchemaMismatch) || !strings.Contains(err.Error(), test.wantObject) {
 				t.Fatalf("expected named schema mismatch for %s, got %v", test.wantObject, err)
 			}
-			if _, statErr := os.Stat(fixture.OwnerMapPath); !errors.Is(statErr, os.ErrNotExist) {
-				t.Fatalf("schema refusal left owner-map output behind: %v", statErr)
+			if _, statErr := os.Stat(fixture.OutputDir); !errors.Is(statErr, os.ErrNotExist) {
+				t.Fatalf("schema refusal left inventory output behind: %v", statErr)
 			}
 		})
 	}
@@ -544,12 +537,12 @@ func TestFotobankVectorSchemaMismatch(t *testing.T) {
 			if err := db.Close(); err != nil {
 				t.Fatal(err)
 			}
-			_, _, err = Inventory(context.Background(), store.DefaultSQLiteDriver(), inventoryRequest(fixture, fixture.OwnerMapPath))
+			_, err = Inventory(context.Background(), store.DefaultSQLiteDriver(), inventoryRequest(fixture, fixture.OutputDir))
 			if !errors.Is(err, ErrSchemaMismatch) || !strings.Contains(err.Error(), test.want) {
 				t.Fatalf("expected named vector schema mismatch for %s, got %v", test.want, err)
 			}
-			if _, statErr := os.Stat(fixture.OwnerMapPath); !errors.Is(statErr, os.ErrNotExist) {
-				t.Fatalf("schema refusal left owner-map output behind: %v", statErr)
+			if _, statErr := os.Stat(fixture.OutputDir); !errors.Is(statErr, os.ErrNotExist) {
+				t.Fatalf("schema refusal left inventory output behind: %v", statErr)
 			}
 		})
 	}
@@ -566,12 +559,12 @@ func TestEmbeddedDocbankSourceSchema(t *testing.T) {
 		t.Fatal(err)
 	}
 	_ = db.Close()
-	_, _, err = Inventory(context.Background(), store.DefaultSQLiteDriver(), inventoryRequest(fixture, fixture.OwnerMapPath))
+	_, err = Inventory(context.Background(), store.DefaultSQLiteDriver(), inventoryRequest(fixture, fixture.OutputDir))
 	if !errors.Is(err, ErrEmbeddedSchemaMismatch) || !strings.Contains(err.Error(), "17") {
 		t.Fatalf("expected embedded schema mismatch, got %v", err)
 	}
-	if _, err := os.Stat(fixture.OwnerMapPath); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("schema refusal left owner-map output behind: %v", err)
+	if _, err := os.Stat(fixture.OutputDir); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("schema refusal left inventory output behind: %v", err)
 	}
 }
 
@@ -586,27 +579,27 @@ func TestEmbeddedDocbankColumnMismatch(t *testing.T) {
 		t.Fatal(err)
 	}
 	_ = db.Close()
-	_, _, err = Inventory(context.Background(), store.DefaultSQLiteDriver(), inventoryRequest(fixture, fixture.OwnerMapPath))
+	_, err = Inventory(context.Background(), store.DefaultSQLiteDriver(), inventoryRequest(fixture, fixture.OutputDir))
 	if !errors.Is(err, ErrEmbeddedSchemaMismatch) || !strings.Contains(err.Error(), "blobs columns") {
 		t.Fatalf("expected embedded column mismatch, got %v", err)
 	}
-	if _, err := os.Stat(fixture.OwnerMapPath); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("schema refusal left owner-map output behind: %v", err)
+	if _, err := os.Stat(fixture.OutputDir); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("schema refusal left inventory output behind: %v", err)
 	}
 }
 
-func TestFotobankInventoryRefusesTemplateInsideSource(t *testing.T) {
+func TestFotobankInventoryRefusesOutputInsideSource(t *testing.T) {
 	fixture := createInventoryFixture(t)
 	before, err := fixture.Digest()
 	if err != nil {
 		t.Fatal(err)
 	}
-	request := inventoryRequest(fixture, filepath.Join(filepath.Dir(fixture.CatalogPath), "owner-map.json"))
-	_, _, err = Inventory(context.Background(), store.DefaultSQLiteDriver(), request)
+	request := inventoryRequest(fixture, filepath.Join(filepath.Dir(fixture.CatalogPath), "inventory"))
+	_, err = Inventory(context.Background(), store.DefaultSQLiteDriver(), request)
 	if err == nil {
-		t.Fatal("expected owner-map path inside catalog source tree to be refused")
+		t.Fatal("expected output directory inside catalog source tree to be refused")
 	}
-	if _, statErr := os.Stat(request.OwnerMapPath); !errors.Is(statErr, os.ErrNotExist) {
+	if _, statErr := os.Stat(request.OutputDir); !errors.Is(statErr, os.ErrNotExist) {
 		t.Fatalf("refusal wrote into source tree: %v", statErr)
 	}
 	after, err := fixture.Digest()
@@ -620,26 +613,25 @@ func TestFotobankInventoryRefusesTemplateInsideSource(t *testing.T) {
 
 func TestFotobankInventoryRejectsRelativeSourcePaths(t *testing.T) {
 	fixture := createInventoryFixture(t)
-	request := inventoryRequest(fixture, fixture.OwnerMapPath)
+	request := inventoryRequest(fixture, fixture.OutputDir)
 	request.CatalogPath = filepath.Base(request.CatalogPath)
-	if _, _, err := Inventory(context.Background(), store.DefaultSQLiteDriver(), request); err == nil || !strings.Contains(err.Error(), "absolute") {
+	if _, err := Inventory(context.Background(), store.DefaultSQLiteDriver(), request); err == nil || !strings.Contains(err.Error(), "absolute") {
 		t.Fatalf("expected relative catalog path refusal, got %v", err)
 	}
-	request = inventoryRequest(fixture, fixture.OwnerMapPath)
+	request = inventoryRequest(fixture, fixture.OutputDir)
 	request.VaultRoot = filepath.Base(request.VaultRoot)
-	if _, _, err := Inventory(context.Background(), store.DefaultSQLiteDriver(), request); err == nil || !strings.Contains(err.Error(), "absolute") {
+	if _, err := Inventory(context.Background(), store.DefaultSQLiteDriver(), request); err == nil || !strings.Contains(err.Error(), "absolute") {
 		t.Fatalf("expected relative vault root refusal, got %v", err)
 	}
-	if _, err := os.Stat(fixture.OwnerMapPath); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("relative path refusal left owner-map output behind: %v", err)
+	if _, err := os.Stat(fixture.OutputDir); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("relative path refusal left inventory output behind: %v", err)
 	}
 }
 
 func TestFotobankInventoryArchive(t *testing.T) {
 	fixture := createInventoryFixture(t)
 	archiveRoot, snapshotID := createInventoryArchive(t, fixture.CatalogPath)
-	ownerMap := filepath.Join(t.TempDir(), "owner-map.json")
-	request := Request{ArchiveRoot: archiveRoot, SnapshotID: snapshotID, OwnerMapPath: ownerMap,
+	request := Request{ArchiveRoot: archiveRoot, OutputDir: filepath.Join(t.TempDir(), "inventory"),
 		DestinationRoot: filepath.Join(filepath.Dir(archiveRoot), "destination")}
 
 	before, err := fixture.Digest()
@@ -650,7 +642,7 @@ func TestFotobankInventoryArchive(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	report, _, err := Inventory(context.Background(), store.DefaultSQLiteDriver(), request)
+	report, err := inventoryReport(request)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -682,8 +674,8 @@ func TestFotobankInventoryArchive(t *testing.T) {
 	}
 	relativeRequest := request
 	relativeRequest.ArchiveRoot = filepath.Base(archiveRoot)
-	relativeRequest.OwnerMapPath = filepath.Join(t.TempDir(), "relative-archive-owner-map.json")
-	if _, _, err := Inventory(context.Background(), store.DefaultSQLiteDriver(), relativeRequest); err == nil || !strings.Contains(err.Error(), "absolute") {
+	relativeRequest.OutputDir = filepath.Join(t.TempDir(), "relative-archive-inventory")
+	if _, err := Inventory(context.Background(), store.DefaultSQLiteDriver(), relativeRequest); err == nil || !strings.Contains(err.Error(), "absolute") {
 		t.Fatalf("expected relative archive path refusal, got %v", err)
 	}
 }
@@ -697,9 +689,8 @@ func TestFotobankInventoryPinnedRecoveryArchive(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ownerMap := filepath.Join(t.TempDir(), "owner-map.json")
-	report, _, err := Inventory(context.Background(), store.DefaultSQLiteDriver(), Request{
-		ArchiveRoot: archiveRoot, OwnerMapPath: ownerMap,
+	report, err := inventoryReport(Request{
+		ArchiveRoot: archiveRoot, OutputDir: filepath.Join(t.TempDir(), "inventory"),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -760,7 +751,7 @@ func createInventoryArchive(t *testing.T, catalogPath string) (string, string) {
 		Metadata:  &kitbackup.ManifestMetadata{Format: backupapp.MetadataFormat, Blob: metadataID.String(), Bytes: int64(len(metadata))},
 		Extras:    kitbackup.ManifestExtras{Tree: treeID.String()},
 		NewPacks:  packs, NewIndex: indexID,
-		Attachments: kitbackup.ManifestAttachments{Layout: []string{}, Recipes: []string{}, Lists: []string{}},
+		Attachments: kitbackup.ManifestAttachments{Layout: []string{}, BlobBytes: 10, Recipes: []string{}, Lists: []string{}},
 		Excluded:    []string{}, Stats: json.RawMessage(`{}`),
 	}
 	snapshotID, err := repo.WriteManifest(manifest)

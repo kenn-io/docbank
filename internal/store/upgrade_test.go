@@ -224,15 +224,7 @@ func TestFreshStoresRecordCurrentStorageSchemaVersion(t *testing.T) {
 			var version int
 			require.NoError(t, s.db.QueryRow(`
 				SELECT schema_version FROM vault_metadata WHERE singleton = 1`).Scan(&version))
-			assert.Equal(t, 27, version)
-			for _, table := range []string{"photo_migration_runs", "photo_migration_map"} {
-				var found bool
-				require.NoError(t, s.db.QueryRow(`
-					SELECT EXISTS(
-						SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?
-					)`, table).Scan(&found), table)
-				assert.True(t, found, table)
-			}
+			assert.Equal(t, currentStorageSchemaVersion, version)
 		})
 	}
 }
@@ -280,11 +272,10 @@ func TestOpenRejectsUnreleasedSchemaWithoutCutover(t *testing.T) {
 			path := filepath.Join(t.TempDir(), "docbank.db")
 			s, err := Open(path, test.driver)
 			require.NoError(t, err)
-			_, err = s.db.Exec(`DROP TABLE photo_migration_map`)
+			_, err = s.db.Exec(`DROP TABLE provenance_version_bindings`)
 			require.NoError(t, err)
-			_, err = s.db.Exec(`DROP TABLE photo_migration_runs`)
-			require.NoError(t, err)
-			_, err = s.db.Exec(`UPDATE vault_metadata SET schema_version=26 WHERE singleton=1`)
+			_, err = s.db.Exec(`UPDATE vault_metadata SET schema_version=? WHERE singleton=1`,
+				currentStorageSchemaVersion-1)
 			require.NoError(t, err)
 			require.NoError(t, s.Close())
 			reopened, err := Open(path, test.driver)

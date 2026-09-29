@@ -3,7 +3,6 @@
 package photomigration
 
 import (
-	"bytes"
 	"errors"
 	"fmt"
 	"os"
@@ -23,6 +22,8 @@ const (
 	SourceArchive    = "archive"
 	MaxReportBytes   = 4 << 20
 	MaxOwnerMapBytes = 4 << 20
+	ReportFileName   = "report.json"
+	OwnerMapFileName = "owner-map.json"
 )
 
 type Source struct {
@@ -102,20 +103,6 @@ func EncodeReport(report Report) ([]byte, error) {
 	return raw, nil
 }
 
-func DecodeReport(raw []byte) (Report, error) {
-	if len(raw) == 0 || len(raw) > MaxReportBytes {
-		return Report{}, errors.New("migration report has invalid size")
-	}
-	report, err := canonical.Decode[Report](raw)
-	if err != nil {
-		return Report{}, fmt.Errorf("decode migration report: %w", err)
-	}
-	if err := ValidateReport(report); err != nil {
-		return Report{}, err
-	}
-	return report, nil
-}
-
 func ValidateReport(report Report) error {
 	if report.Source.Kind != SourceInstall && report.Source.Kind != SourceArchive {
 		return fmt.Errorf("migration report has unsupported source kind %q", report.Source.Kind)
@@ -178,27 +165,6 @@ func NewOwnerMapTemplate(report Report, entries []MapEntry) (OwnerMapTemplate, e
 	return template, nil
 }
 
-func ValidateOwnerMapTemplate(template OwnerMapTemplate) error {
-	if template.Source.Kind != SourceInstall && template.Source.Kind != SourceArchive {
-		return errors.New("owner map template has unsupported source kind")
-	}
-	if template.Source.Identity == "" || strings.ContainsAny(template.Source.Identity, "/\\:\x00\r\n") {
-		return errors.New("owner map template has no source identity")
-	}
-	previous := ""
-	for _, entry := range template.Entries {
-		if err := ValidateMapEntry(entry); err != nil {
-			return err
-		}
-		key := entry.SourceHub + "\x00" + entry.SourceUserID + "\x00" + entry.StorageKey
-		if key <= previous && previous != "" {
-			return errors.New("owner map entries are not sorted")
-		}
-		previous = key
-	}
-	return nil
-}
-
 func ValidateMapEntry(entry MapEntry) error {
 	if entry.SourceHub == "" || entry.SourceUserID == "" || entry.StorageKey == "" {
 		return errors.New("owner map entry requires source hub, user ID and storage key")
@@ -209,88 +175,76 @@ func ValidateMapEntry(entry MapEntry) error {
 	return nil
 }
 
-func WriteOwnerMapTemplate(path string, template OwnerMapTemplate, sourceRoots ...string) error {
-	if path == "" || !filepath.IsAbs(path) {
-		return errors.New("owner map path must be absolute")
+// WriteInventoryFiles writes the owner map and the report into dir as new
+// private files. On failure it removes any file it created.
+func WriteInventoryFiles(dir string, report Report, template OwnerMapTemplate, sourceRoots ...string) (reportPath, ownerMapPath string, err error) {
+	if dir == "" || !filepath.IsAbs(dir) {
+		return "", "", errors.New("output directory must be absolute")
 	}
-	if len(template.Entries) > MaxReportBytes {
-		return errors.New("owner map has too many entries")
-	}
-	for _, entry := range template.Entries {
-		if err := ValidateMapEntry(entry); err != nil {
-			return err
-		}
-	}
-	cleanPath, err := filepath.Abs(path)
-	if err != nil {
-		return err
-	}
+	dir = filepath.Clean(dir)
+	reportPath = filepath.Join(dir, ReportFileName)
+	ownerMapPath = filepath.Join(dir, OwnerMapFileName)
 	for _, root := range sourceRoots {
 		if root == "" {
 			continue
 		}
-		within, err := pathWithin(cleanPath, root)
-		if err != nil {
-			return fmt.Errorf("resolve owner map source boundary: %w", err)
+		for _, path := range []string{reportPath, ownerMapPath} {
+			within, err := pathWithin(path, root)
+			if err != nil {
+				return "", "", fmt.Errorf("resolve output source boundary: %w", err)
+			}
+			if within {
+				return "", "", errors.New("output directory overlaps a source tree")
+			}
 		}
-		if within {
-			return errors.New("owner map path overlaps a source tree")
+	}
+	if len(template.Entries) > MaxOwnerMapBytes {
+		return "", "", errors.New("owner map has too many entries")
+	}
+	for _, entry := range template.Entries {
+		if err := ValidateMapEntry(entry); err != nil {
+			return "", "", err
 		}
 	}
-	raw, err := canonical.Marshal(template)
+	rawMap, err := canonical.Marshal(template)
 	if err != nil {
-		return fmt.Errorf("encode owner map template: %w", err)
+		return "", "", fmt.Errorf("encode owner map template: %w", err)
 	}
-	if len(raw) > MaxOwnerMapBytes {
-		return fmt.Errorf("owner map template exceeds %d bytes", MaxOwnerMapBytes)
+	if len(rawMap) > MaxOwnerMapBytes {
+		return "", "", fmt.Errorf("owner map template exceeds %d bytes", MaxOwnerMapBytes)
 	}
-	f, err := safefileio.CreatePrivateFile(cleanPath)
+	rawReport, err := EncodeReport(report)
 	if err != nil {
-		return fmt.Errorf("create owner map template: %w", err)
+		return "", "", err
 	}
-	if _, writeErr := f.Write(append(raw, '\n')); writeErr != nil {
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return "", "", fmt.Errorf("create output directory: %w", err)
+	}
+	if err := writePrivateFile(ownerMapPath, rawMap); err != nil {
+		return "", "", fmt.Errorf("write owner map template: %w", err)
+	}
+	if err := writePrivateFile(reportPath, rawReport); err != nil {
+		_ = os.Remove(ownerMapPath)
+		return "", "", fmt.Errorf("write migration report: %w", err)
+	}
+	return reportPath, ownerMapPath, nil
+}
+
+func writePrivateFile(path string, raw []byte) error {
+	f, err := safefileio.CreatePrivateFile(path)
+	if err != nil {
+		return fmt.Errorf("create private file: %w", err)
+	}
+	if _, err := f.Write(append(raw, '\n')); err != nil {
 		_ = f.Close()
-		_ = os.Remove(cleanPath)
-		return fmt.Errorf("write owner map template: %w", writeErr)
+		_ = os.Remove(path)
+		return err
 	}
-	if closeErr := f.Close(); closeErr != nil {
-		_ = os.Remove(cleanPath)
-		return fmt.Errorf("close owner map template: %w", closeErr)
+	if err := f.Close(); err != nil {
+		_ = os.Remove(path)
+		return err
 	}
 	return nil
-}
-
-func EncodeOwnerMapTemplate(template OwnerMapTemplate) ([]byte, error) {
-	if err := ValidateOwnerMapTemplate(template); err != nil {
-		return nil, err
-	}
-	raw, err := canonical.Marshal(template)
-	if err != nil {
-		return nil, fmt.Errorf("encode owner map template: %w", err)
-	}
-	if len(raw) > MaxOwnerMapBytes {
-		return nil, fmt.Errorf("owner map template exceeds %d bytes", MaxOwnerMapBytes)
-	}
-	return raw, nil
-}
-
-func DecodeOwnerMapTemplate(raw []byte) (OwnerMapTemplate, error) {
-	if len(raw) == 0 || len(raw) > MaxOwnerMapBytes+1 {
-		return OwnerMapTemplate{}, errors.New("owner map template has invalid size")
-	}
-	raw = bytes.TrimSuffix(raw, []byte{'\n'})
-	var template OwnerMapTemplate
-	decoded, err := canonical.Decode[OwnerMapTemplate](raw)
-	if err != nil {
-		return template, err
-	}
-	if decoded.Source.Kind != SourceInstall && decoded.Source.Kind != SourceArchive || decoded.Source.Identity == "" {
-		return template, errors.New("owner map template has invalid source")
-	}
-	if err := ValidateOwnerMapTemplate(decoded); err != nil {
-		return template, err
-	}
-	return decoded, nil
 }
 
 func pathWithin(path, root string) (bool, error) {

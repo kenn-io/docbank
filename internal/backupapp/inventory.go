@@ -10,7 +10,6 @@ import (
 	"path/filepath"
 	"strings"
 
-	"go.kenn.io/docbank/internal/store"
 	"go.kenn.io/kit/backup"
 	"go.kenn.io/kit/pack"
 	"go.kenn.io/kit/packstore"
@@ -102,36 +101,4 @@ func ReadSnapshotExtraFile(ctx context.Context, repository *backup.Repo, snapsho
 		return fmt.Errorf("read extra %q: %w", name, err)
 	}
 	return nil
-}
-
-// SnapshotUniqueBlobBytes reads verified logical blob metadata without
-// restoring the snapshot or opening a destination store.
-func SnapshotUniqueBlobBytes(ctx context.Context, repository *backup.Repo, manifest *backup.Manifest) (total int64, retErr error) {
-	if repository == nil || manifest == nil || manifest.Metadata == nil || manifest.Metadata.Format != MetadataFormat {
-		return 0, errors.New("snapshot has unsupported Docbank metadata")
-	}
-	metadataID, err := pack.ParseBlobID(manifest.Metadata.Blob)
-	if err != nil {
-		return 0, fmt.Errorf("parse metadata blob: %w", err)
-	}
-	known, err := repository.LoadBlobIndex()
-	if err != nil {
-		return 0, fmt.Errorf("load metadata blob index: %w", err)
-	}
-	stream, err := repository.OpenBlob(ctx, known, metadataID, nil, packstore.PackExt)
-	if err != nil {
-		return 0, fmt.Errorf("open metadata blob: %w", err)
-	}
-	defer func() { retErr = errors.Join(retErr, stream.Close()) }()
-	if stream.Size() != manifest.Metadata.Bytes {
-		return 0, fmt.Errorf("metadata blob size is %d, expected %d", stream.Size(), manifest.Metadata.Bytes)
-	}
-	total, err = store.MetadataUniqueBlobBytes(stream)
-	if err != nil {
-		return 0, err
-	}
-	if err := stream.Verify(); err != nil {
-		return 0, fmt.Errorf("verify metadata blob: %w", err)
-	}
-	return total, nil
 }

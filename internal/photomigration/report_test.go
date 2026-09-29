@@ -21,16 +21,12 @@ func testReport() Report {
 	}
 }
 
-func TestReportCanonicalRoundTrip(t *testing.T) {
+func TestReportCanonicalEncodingIsStable(t *testing.T) {
 	raw, err := EncodeReport(testReport())
 	if err != nil {
 		t.Fatal(err)
 	}
-	decoded, err := DecodeReport(raw)
-	if err != nil {
-		t.Fatal(err)
-	}
-	other, err := EncodeReport(decoded)
+	other, err := EncodeReport(testReport())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -42,16 +38,8 @@ func TestReportCanonicalRoundTrip(t *testing.T) {
 func TestReportAllowsRetainedVersionsToExceedCurrentFileBytes(t *testing.T) {
 	report := testReport()
 	report.Capacity = Capacity{SourceBytes: 10, UniqueBlobBytes: 20, MinimumContentBytes: 20}
-	raw, err := EncodeReport(report)
-	if err != nil {
-		t.Fatal(err)
-	}
-	decoded, err := DecodeReport(raw)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if decoded.Capacity != report.Capacity {
-		t.Fatalf("retained-version capacity changed: got %#v, want %#v", decoded.Capacity, report.Capacity)
+	if err := ValidateReport(report); err != nil {
+		t.Fatalf("rejected retained-version capacity: %v", err)
 	}
 }
 
@@ -68,9 +56,8 @@ func TestReportRejectsNegativeRelationshipCounts(t *testing.T) {
 	}
 }
 
-func TestOwnerMapTemplate(t *testing.T) {
-	report := testReport()
-	template, err := NewOwnerMapTemplate(report, []MapEntry{
+func TestOwnerMapTemplateSortsEntries(t *testing.T) {
+	template, err := NewOwnerMapTemplate(testReport(), []MapEntry{
 		{SourceHub: "hub", SourceUserID: "b", StorageKey: "key-b"},
 		{SourceHub: "hub", SourceUserID: "a", StorageKey: "key-a"},
 	})
@@ -80,34 +67,63 @@ func TestOwnerMapTemplate(t *testing.T) {
 	if template.Entries[0].SourceUserID != "a" || template.Entries[0].DocbankOwnerID != "" {
 		t.Fatalf("owner map was not sorted or blank: %#v", template.Entries)
 	}
-	path := filepath.Join(t.TempDir(), "owner-map.json")
-	if err := WriteOwnerMapTemplate(path, template, t.TempDir()); err != nil {
-		t.Fatal(err)
-	}
-	privateFile, err := safefileio.OpenCurrentUserFile(path)
+}
+
+func TestWriteInventoryFiles(t *testing.T) {
+	report := testReport()
+	template, err := NewOwnerMapTemplate(report, []MapEntry{{SourceHub: "hub", SourceUserID: "a", StorageKey: "key-a"}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := safefileio.ValidatePrivateCurrentUserFile(privateFile); err != nil {
-		_ = privateFile.Close()
-		t.Fatalf("owner map is not private: %v", err)
-	}
-	if err := privateFile.Close(); err != nil {
-		t.Fatal(err)
-	}
-	raw, err := os.ReadFile(path)
+	dir := filepath.Join(t.TempDir(), "inventory")
+	reportPath, ownerMapPath, err := WriteInventoryFiles(dir, report, template, t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := DecodeOwnerMapTemplate(raw); err != nil {
-		t.Fatal(err)
+	if reportPath != filepath.Join(dir, ReportFileName) || ownerMapPath != filepath.Join(dir, OwnerMapFileName) {
+		t.Fatalf("unexpected output paths %q %q", reportPath, ownerMapPath)
 	}
-	if err := WriteOwnerMapTemplate(path, template); err == nil {
-		t.Fatal("owner map creation was not exclusive")
+	first := map[string][]byte{}
+	for _, path := range []string{reportPath, ownerMapPath} {
+		privateFile, err := safefileio.OpenCurrentUserFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := safefileio.ValidatePrivateCurrentUserFile(privateFile); err != nil {
+			_ = privateFile.Close()
+			t.Fatalf("%s is not private: %v", path, err)
+		}
+		if err := privateFile.Close(); err != nil {
+			t.Fatal(err)
+		}
+		if first[path], err = os.ReadFile(path); err != nil {
+			t.Fatal(err)
+		}
+	}
+	changed := report
+	changed.Counts.Owners = 9
+	if _, _, err := WriteInventoryFiles(dir, changed, template); err == nil {
+		t.Fatal("second write into the same directory was not refused")
+	}
+	for path, want := range first {
+		got, err := os.ReadFile(path)
+		if err != nil || !bytes.Equal(got, want) {
+			t.Fatalf("%s changed after refused second write: %v", path, err)
+		}
+	}
+
+	badDir := filepath.Join(t.TempDir(), "bad")
+	badReport := report
+	badReport.CreatedAt = ""
+	if _, _, err := WriteInventoryFiles(badDir, badReport, template); err == nil {
+		t.Fatal("accepted an invalid report")
+	}
+	if _, err := os.Stat(filepath.Join(badDir, OwnerMapFileName)); !os.IsNotExist(err) {
+		t.Fatalf("report encode failure left an owner map: %v", err)
 	}
 }
 
-func TestOwnerMapTemplateRejectsSourceAlias(t *testing.T) {
+func TestWriteInventoryFilesRejectsSourceAlias(t *testing.T) {
 	sourceRoot := filepath.Join(t.TempDir(), "source")
 	if err := os.Mkdir(sourceRoot, 0o700); err != nil {
 		t.Fatal(err)
@@ -120,12 +136,11 @@ func TestOwnerMapTemplateRejectsSourceAlias(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	output := filepath.Join(aliasRoot, "nested", "owner-map.json")
-	err = WriteOwnerMapTemplate(output, template, sourceRoot)
+	_, _, err = WriteInventoryFiles(filepath.Join(aliasRoot, "nested"), testReport(), template, sourceRoot)
 	if err == nil || !strings.Contains(err.Error(), "overlaps a source tree") {
 		t.Fatalf("expected alias to source tree to be refused, got %v", err)
 	}
-	if _, err := os.Stat(filepath.Join(sourceRoot, "nested", "owner-map.json")); !os.IsNotExist(err) {
-		t.Fatalf("source tree contains owner-map output: %v", err)
+	if _, err := os.Stat(filepath.Join(sourceRoot, "nested")); !os.IsNotExist(err) {
+		t.Fatalf("source tree contains inventory output: %v", err)
 	}
 }

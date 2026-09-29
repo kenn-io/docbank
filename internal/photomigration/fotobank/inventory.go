@@ -31,20 +31,23 @@ type Request struct {
 	CatalogPath     string
 	VaultRoot       string
 	ArchiveRoot     string
-	SnapshotID      string
-	OwnerMapPath    string
+	OutputDir       string
 	DestinationRoot string
 }
 
-func Inventory(ctx context.Context, driver docsqlite.Driver, req Request) (photomigration.Report, photomigration.OwnerMapTemplate, error) {
+// Result is the inventory report plus the two files written for it.
+type Result struct {
+	Report       photomigration.Report
+	ReportPath   string
+	OwnerMapPath string
+}
+
+func Inventory(ctx context.Context, driver docsqlite.Driver, req Request) (Result, error) {
 	if err := docsqlite.Validate(driver); err != nil {
-		return photomigration.Report{}, photomigration.OwnerMapTemplate{}, err
+		return Result{}, err
 	}
-	if req.SnapshotID != "" && req.ArchiveRoot == "" {
-		return photomigration.Report{}, photomigration.OwnerMapTemplate{}, errors.New("snapshot_id requires archive root")
-	}
-	if req.OwnerMapPath == "" || !filepath.IsAbs(req.OwnerMapPath) {
-		return photomigration.Report{}, photomigration.OwnerMapTemplate{}, errors.New("owner map output path must be absolute")
+	if req.OutputDir == "" || !filepath.IsAbs(req.OutputDir) {
+		return Result{}, errors.New("output directory must be absolute")
 	}
 	var report photomigration.Report
 	var template photomigration.OwnerMapTemplate
@@ -52,34 +55,35 @@ func Inventory(ctx context.Context, driver docsqlite.Driver, req Request) (photo
 	var err error
 	if req.ArchiveRoot != "" {
 		if req.CatalogPath != "" || req.VaultRoot != "" {
-			return photomigration.Report{}, photomigration.OwnerMapTemplate{}, errors.New("archive inventory cannot include install paths")
+			return Result{}, errors.New("archive inventory cannot include install paths")
 		}
 		archiveRoot, pathErr := absoluteDir(req.ArchiveRoot, "archive root")
 		if pathErr != nil {
-			return photomigration.Report{}, photomigration.OwnerMapTemplate{}, pathErr
+			return Result{}, pathErr
 		}
-		report, template, err = inventoryArchive(ctx, driver, req, archiveRoot)
+		report, template, err = inventoryArchive(ctx, driver, archiveRoot)
 		sourceRoots = []string{archiveRoot}
 	} else {
 		catalog, pathErr := absoluteRegular(req.CatalogPath, "catalog")
 		if pathErr != nil {
-			return photomigration.Report{}, photomigration.OwnerMapTemplate{}, pathErr
+			return Result{}, pathErr
 		}
 		vaultRoot, pathErr := absoluteDir(req.VaultRoot, "vault root")
 		if pathErr != nil {
-			return photomigration.Report{}, photomigration.OwnerMapTemplate{}, pathErr
+			return Result{}, pathErr
 		}
 		report, template, err = inventoryInstall(ctx, driver, catalog, vaultRoot)
 		sourceRoots = []string{filepath.Dir(catalog), vaultRoot}
 	}
 	if err != nil {
-		return photomigration.Report{}, photomigration.OwnerMapTemplate{}, err
+		return Result{}, err
 	}
 	sourceRoots = append(sourceRoots, req.DestinationRoot)
-	if err := photomigration.WriteOwnerMapTemplate(req.OwnerMapPath, template, sourceRoots...); err != nil {
-		return photomigration.Report{}, photomigration.OwnerMapTemplate{}, err
+	reportPath, ownerMapPath, err := photomigration.WriteInventoryFiles(req.OutputDir, report, template, sourceRoots...)
+	if err != nil {
+		return Result{}, err
 	}
-	return report, template, nil
+	return Result{Report: report, ReportPath: reportPath, OwnerMapPath: ownerMapPath}, nil
 }
 
 func inventoryInstall(ctx context.Context, driver docsqlite.Driver, catalog, vaultRoot string) (photomigration.Report, photomigration.OwnerMapTemplate, error) {
@@ -138,22 +142,19 @@ func inventoryInstall(ctx context.Context, driver docsqlite.Driver, catalog, vau
 	return report, template, nil
 }
 
-func inventoryArchive(ctx context.Context, driver docsqlite.Driver, req Request, archiveRoot string) (photomigration.Report, photomigration.OwnerMapTemplate, error) {
+func inventoryArchive(ctx context.Context, driver docsqlite.Driver, archiveRoot string) (photomigration.Report, photomigration.OwnerMapTemplate, error) {
 	repo, err := kitbackup.Open(archiveRoot)
 	if err != nil {
 		return photomigration.Report{}, photomigration.OwnerMapTemplate{}, fmt.Errorf("open Fotobank recovery archive: %w", err)
 	}
-	snapshotID := req.SnapshotID
-	if snapshotID == "" {
-		latest, latestErr := repo.LatestSnapshot()
-		if latestErr != nil || latest == nil {
-			if latestErr == nil {
-				latestErr = errors.New("archive has no snapshots")
-			}
-			return photomigration.Report{}, photomigration.OwnerMapTemplate{}, latestErr
+	latest, err := repo.LatestSnapshot()
+	if err != nil || latest == nil {
+		if err == nil {
+			err = errors.New("archive has no snapshots")
 		}
-		snapshotID = latest.SnapshotID
+		return photomigration.Report{}, photomigration.OwnerMapTemplate{}, err
 	}
+	snapshotID := latest.SnapshotID
 	scratch, err := os.MkdirTemp("", "docbank-fotobank-inventory-")
 	if err != nil {
 		return photomigration.Report{}, photomigration.OwnerMapTemplate{}, err
@@ -191,9 +192,9 @@ func inventoryArchive(ctx context.Context, driver docsqlite.Driver, req Request,
 		}
 		return photomigration.Report{}, photomigration.OwnerMapTemplate{}, fmt.Errorf("%w: archive metadata format %q, expected %q", ErrSchemaMismatch, format, backupapp.MetadataFormat)
 	}
-	uniqueBlobBytes, err := backupapp.SnapshotUniqueBlobBytes(ctx, repo, manifest)
-	if err != nil {
-		return photomigration.Report{}, photomigration.OwnerMapTemplate{}, fmt.Errorf("read archive metadata: %w", err)
+	uniqueBlobBytes := manifest.Attachments.BlobBytes
+	if uniqueBlobBytes < 0 {
+		return photomigration.Report{}, photomigration.OwnerMapTemplate{}, fmt.Errorf("archive manifest records negative blob bytes %d", uniqueBlobBytes)
 	}
 	report.Capacity.UniqueBlobBytes = uniqueBlobBytes
 	report.Capacity.MinimumContentBytes = uniqueBlobBytes

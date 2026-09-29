@@ -14,10 +14,7 @@ var (
 	migrationCatalogPath string
 	migrationVaultRoot   string
 	migrationArchiveRoot string
-	migrationSnapshotID  string
-	migrationOwnerMap    string
-	migrationRunOffset   int
-	migrationRunLimit    int
+	migrationOutputDir   string
 )
 
 var photosMigrateCmd = &cobra.Command{
@@ -47,55 +44,11 @@ var migrateFotobankInventoryCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		run, err := connection.CreateFotobankInventory(cmd.Context(), request)
+		inventory, err := connection.CreateFotobankInventory(cmd.Context(), request)
 		if err != nil {
 			return err
 		}
-		return writeCLIJSON(cmd.OutOrStdout(), run)
-	},
-}
-
-var migrateRunsCmd = &cobra.Command{
-	Use:   "runs",
-	Short: "Read photo migration inventories",
-	Args:  cobra.NoArgs,
-	RunE:  func(cmd *cobra.Command, _ []string) error { return cmd.Help() },
-}
-
-var migrateRunsListCmd = &cobra.Command{
-	Use:   "list",
-	Short: "List completed migration inventories",
-	Args:  cobra.NoArgs,
-	RunE: func(cmd *cobra.Command, _ []string) error {
-		if migrationRunOffset < 0 || migrationRunLimit < 1 || migrationRunLimit > 50 {
-			return usageError(errors.New("--offset must be non-negative and --limit must be between 1 and 50"))
-		}
-		connection, err := daemonconn.Ensure(cmd.Context())
-		if err != nil {
-			return err
-		}
-		page, err := connection.ListMigrationRuns(cmd.Context(), migrationRunOffset, migrationRunLimit)
-		if err != nil {
-			return err
-		}
-		return writeCLIJSON(cmd.OutOrStdout(), page)
-	},
-}
-
-var migrateRunsShowCmd = &cobra.Command{
-	Use:   "show <run-id>",
-	Short: "Show one completed migration inventory",
-	Args:  cobra.ExactArgs(1),
-	RunE: func(cmd *cobra.Command, args []string) error {
-		connection, err := daemonconn.Ensure(cmd.Context())
-		if err != nil {
-			return err
-		}
-		run, err := connection.MigrationRun(cmd.Context(), args[0])
-		if err != nil {
-			return err
-		}
-		return writeCLIJSON(cmd.OutOrStdout(), run)
+		return writeCLIJSON(cmd.OutOrStdout(), inventory)
 	},
 }
 
@@ -111,11 +64,11 @@ func migrationInventoryRequest() (api.FotobankInventoryRequest, error) {
 	if archive && migrationCatalogPath != "" || archive && migrationVaultRoot != "" {
 		return api.FotobankInventoryRequest{}, errors.New("archive inventory cannot include install paths")
 	}
-	if strings.TrimSpace(migrationOwnerMap) == "" {
-		return api.FotobankInventoryRequest{}, errors.New("--owner-map-path is required")
+	if strings.TrimSpace(migrationOutputDir) == "" {
+		return api.FotobankInventoryRequest{}, errors.New("--output-dir is required")
 	}
-	if !filepath.IsAbs(migrationOwnerMap) {
-		return api.FotobankInventoryRequest{}, errors.New("--owner-map-path must be absolute")
+	if !filepath.IsAbs(migrationOutputDir) {
+		return api.FotobankInventoryRequest{}, errors.New("--output-dir must be absolute")
 	}
 	if install && (!filepath.IsAbs(migrationCatalogPath) || !filepath.IsAbs(migrationVaultRoot)) {
 		return api.FotobankInventoryRequest{}, errors.New("--catalog-path and --vault-root must be absolute")
@@ -125,22 +78,17 @@ func migrationInventoryRequest() (api.FotobankInventoryRequest, error) {
 	}
 	return api.FotobankInventoryRequest{
 		CatalogPath: migrationCatalogPath, VaultRoot: migrationVaultRoot,
-		ArchiveRoot: migrationArchiveRoot, SnapshotID: migrationSnapshotID,
-		OwnerMapPath: migrationOwnerMap,
+		ArchiveRoot: migrationArchiveRoot, OutputDir: migrationOutputDir,
 	}, nil
 }
 
 func init() {
 	migrateFotobankCmd.AddCommand(migrateFotobankInventoryCmd)
-	migrateRunsCmd.AddCommand(migrateRunsListCmd, migrateRunsShowCmd)
-	photosMigrateCmd.AddCommand(migrateFotobankCmd, migrateRunsCmd)
+	photosMigrateCmd.AddCommand(migrateFotobankCmd)
 	photosCmd.AddCommand(photosMigrateCmd)
 
 	migrateFotobankInventoryCmd.Flags().StringVar(&migrationCatalogPath, "catalog-path", "", "absolute Fotobank catalog path")
 	migrateFotobankInventoryCmd.Flags().StringVar(&migrationVaultRoot, "vault-root", "", "absolute embedded Docbank vault root")
 	migrateFotobankInventoryCmd.Flags().StringVar(&migrationArchiveRoot, "archive-root", "", "absolute Fotobank recovery archive root")
-	migrateFotobankInventoryCmd.Flags().StringVar(&migrationSnapshotID, "snapshot-id", "", "archive snapshot ID (defaults to latest)")
-	migrateFotobankInventoryCmd.Flags().StringVar(&migrationOwnerMap, "owner-map-path", "", "absolute exclusive owner-map output path")
-	migrateRunsListCmd.Flags().IntVar(&migrationRunOffset, "offset", 0, "number of runs to skip")
-	migrateRunsListCmd.Flags().IntVar(&migrationRunLimit, "limit", 50, "number of runs to return (1-50)")
+	migrateFotobankInventoryCmd.Flags().StringVar(&migrationOutputDir, "output-dir", "", "absolute directory for report.json and owner-map.json")
 }

@@ -34,11 +34,10 @@ type Server struct {
 // ServerOptions fixes process-wide capabilities before the MCP server starts.
 // The catalog never changes during the lifetime of a server.
 type ServerOptions struct {
-	AllowProcessing      bool
-	AllowPackageWrites   bool
-	AllowPhotoEdits      bool
-	AllowMigrationWrites bool
-	Logger               *slog.Logger
+	AllowProcessing    bool
+	AllowPackageWrites bool
+	AllowPhotoEdits    bool
+	Logger             *slog.Logger
 }
 
 // NewServer creates an exact-version Docbank MCP server.
@@ -80,10 +79,10 @@ func newServerWithOptionsAndDaemon(
 			Resources: &sdkmcp.ResourceCapabilities{},
 			Tools:     &sdkmcp.ToolCapabilities{},
 		},
-		Instructions: catalogInstructions(options.AllowProcessing, options.AllowPackageWrites, options.AllowPhotoEdits, options.AllowMigrationWrites),
+		Instructions: catalogInstructions(options.AllowProcessing, options.AllowPackageWrites, options.AllowPhotoEdits),
 	})
 	plans := newProcessingPlanRegistry()
-	registerToolCatalog(sdk, options.AllowProcessing, options.AllowPackageWrites, options.AllowPhotoEdits, options.AllowMigrationWrites, daemon, plans, logger)
+	registerToolCatalog(sdk, options.AllowProcessing, options.AllowPackageWrites, options.AllowPhotoEdits, daemon, plans, logger)
 	registerResourceSurface(sdk, daemon, logger)
 	sdk.AddReceivingMiddleware(normalizeDiscovery)
 	sdk.AddReceivingMiddleware(normalizeToolCatalog)

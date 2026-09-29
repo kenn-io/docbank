@@ -19,11 +19,11 @@ import (
 // Install is a complete synthetic Fotobank installation with a stopped
 // catalog lifetime lock and an embedded schema-16 Docbank database.
 type Install struct {
-	Root         string
-	CatalogPath  string
-	VaultRoot    string
-	OwnerMapPath string
-	CatalogLock  string
+	Root        string
+	CatalogPath string
+	VaultRoot   string
+	OutputDir   string
+	CatalogLock string
 }
 
 // CreateInstall creates a source tree containing one owner, asset, file,
@@ -73,7 +73,7 @@ func CreateInstall(root string, driver sqlite.Driver) (Install, error) {
 		return Install{}, err
 	}
 	return Install{Root: root, CatalogPath: catalogPath, VaultRoot: vaultRoot,
-		OwnerMapPath: filepath.Join(filepath.Dir(root), "owner-map.json"), CatalogLock: lockPath}, nil
+		OutputDir: filepath.Join(filepath.Dir(root), "inventory"), CatalogLock: lockPath}, nil
 }
 
 func seedCatalog(db *sql.DB) error {

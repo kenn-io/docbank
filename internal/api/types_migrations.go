@@ -1,16 +1,12 @@
 package api
 
-import (
-	"go.kenn.io/docbank/internal/photomigration"
-	"go.kenn.io/docbank/internal/store"
-)
+import "go.kenn.io/docbank/internal/photomigration"
 
 type FotobankInventoryRequest struct {
-	CatalogPath  string `json:"catalog_path,omitzero"`
-	VaultRoot    string `json:"vault_root,omitzero"`
-	ArchiveRoot  string `json:"archive_root,omitzero"`
-	SnapshotID   string `json:"snapshot_id,omitzero"`
-	OwnerMapPath string `json:"owner_map_path"`
+	CatalogPath string `json:"catalog_path,omitzero"`
+	VaultRoot   string `json:"vault_root,omitzero"`
+	ArchiveRoot string `json:"archive_root,omitzero"`
+	OutputDir   string `json:"output_dir"`
 }
 
 type MigrationSource struct {
@@ -61,39 +57,13 @@ type MigrationReport struct {
 	CreatedAt string                      `json:"created_at" format:"date-time"`
 }
 
-type MigrationMapEntry struct {
-	SourceHub      string `json:"source_hub"`
-	SourceUserID   string `json:"source_user_id"`
-	StorageKey     string `json:"storage_key"`
-	DocbankOwnerID string `json:"docbank_owner_id,omitzero"`
+type FotobankInventory struct {
+	Report       MigrationReport `json:"report"`
+	ReportPath   string          `json:"report_path"`
+	OwnerMapPath string          `json:"owner_map_path"`
 }
 
-type MigrationOwnerMap struct {
-	Source  MigrationSource     `json:"source"`
-	Entries []MigrationMapEntry `json:"entries"`
-}
-
-type MigrationRun struct {
-	ID           string            `json:"id" format:"uuid"`
-	Source       MigrationSource   `json:"source"`
-	CreatedAt    string            `json:"created_at" format:"date-time"`
-	Report       MigrationReport   `json:"report"`
-	OwnerMap     MigrationOwnerMap `json:"owner_map"`
-	OwnerMapPath string            `json:"owner_map_path,omitzero"`
-}
-
-type MigrationRunPage struct {
-	Total int            `json:"total"`
-	Items []MigrationRun `json:"items"`
-}
-
-type migrationRunOutput struct{ Body MigrationRun }
-type migrationRunPageOutput struct{ Body MigrationRunPage }
-
-func fromPhotoMigrationRun(run store.PhotoMigrationRun) MigrationRun {
-	return MigrationRun{ID: run.ID, Source: MigrationSource{Kind: run.Source.Kind, Identity: run.Source.Identity}, CreatedAt: run.CreatedAt,
-		Report: fromPhotoMigrationReport(run.Report), OwnerMap: fromPhotoMigrationMap(run.OwnerMap)}
-}
+type fotobankInventoryOutput struct{ Body FotobankInventory }
 
 func fromPhotoMigrationReport(report photomigration.Report) MigrationReport {
 	result := MigrationReport{Source: MigrationSource{Kind: report.Source.Kind, Identity: report.Source.Identity},
@@ -102,14 +72,6 @@ func fromPhotoMigrationReport(report photomigration.Report) MigrationReport {
 		Capacity: MigrationCapacity{SourceBytes: report.Capacity.SourceBytes, UniqueBlobBytes: report.Capacity.UniqueBlobBytes, MinimumContentBytes: report.Capacity.MinimumContentBytes}, CreatedAt: report.CreatedAt}
 	for _, vector := range report.Vectors {
 		result.Vectors = append(result.Vectors, MigrationVectorGeneration{ID: vector.ID, Fingerprint: vector.Fingerprint, State: vector.State, Rebuildable: vector.Rebuildable})
-	}
-	return result
-}
-
-func fromPhotoMigrationMap(template photomigration.OwnerMapTemplate) MigrationOwnerMap {
-	result := MigrationOwnerMap{Source: MigrationSource{Kind: template.Source.Kind, Identity: template.Source.Identity}}
-	for _, entry := range template.Entries {
-		result.Entries = append(result.Entries, MigrationMapEntry{SourceHub: entry.SourceHub, SourceUserID: entry.SourceUserID, StorageKey: entry.StorageKey, DocbankOwnerID: entry.DocbankOwnerID})
 	}
 	return result
 }
