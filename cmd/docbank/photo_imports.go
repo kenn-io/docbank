@@ -104,8 +104,14 @@ func writePhotoImportOutput(cmd *cobra.Command, run api.PhotoImportRun) error {
 			}
 		}
 	}
+	if more := run.AmbiguousGroups - int64(len(run.Ambiguities)); more > 0 {
+		if _, err := fmt.Fprintf(out, "%d more ambiguous groups not listed; pair these and import again to list them.\n", more); err != nil {
+			return fmt.Errorf("writing photo import output: %w", err)
+		}
+	}
 	if len(run.Ambiguities) > 0 {
-		if _, err := fmt.Fprintln(out, "Pair a file with 'docbank photos assets detach' and 'docbank photos assets attach <asset-id> id:<node>'."); err != nil {
+		if _, err := fmt.Fprintln(out, "To pair a group: 'docbank photos assets inspect <asset-id>' shows its file IDs, "+
+			"'docbank photos assets detach <asset-id> <file-id>' frees a file, and 'docbank photos assets attach <asset-id> id:<node>' adds it to the other photo."); err != nil {
 			return fmt.Errorf("writing photo import output: %w", err)
 		}
 	}

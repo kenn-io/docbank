@@ -185,7 +185,7 @@ func TestPhotoImportOutputListsAmbiguousGroups(t *testing.T) {
 	command := &cobra.Command{}
 	command.SetOut(&output)
 	run := api.PhotoImportRun{
-		ID: "run", State: "completed", TotalGroups: 1, CompletedGroups: 1, AmbiguousGroups: 1,
+		ID: "run", State: "completed", TotalGroups: 3, CompletedGroups: 3, AmbiguousGroups: 3,
 		Ambiguities: []api.PhotoImportAmbiguity{{Reason: "multiple_raw", Files: []api.PhotoImportAmbiguousFile{{
 			SourcePath: filepath.Join(t.TempDir(), "capture.ARW"), NodeID: 7, Role: "raw",
 			AssetID: "00000000-0000-4000-8000-000000000001",
@@ -196,4 +196,6 @@ func TestPhotoImportOutputListsAmbiguousGroups(t *testing.T) {
 	assert.Contains(t, output.String(), "id:7 raw 00000000-0000-4000-8000-000000000001")
 	assert.Contains(t, output.String(), "capture.ARW")
 	assert.Contains(t, output.String(), "photos assets attach")
+	assert.Contains(t, output.String(), "photos assets inspect <asset-id>")
+	assert.Contains(t, output.String(), "2 more ambiguous groups not listed")
 }
