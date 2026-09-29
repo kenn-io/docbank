@@ -66,15 +66,19 @@ and a virtual destination:
 
 ```text
 docbank photos import <source-root> [destination] [--json]
+docbank photos import <source-root> [destination] [--group-key KEY] [--raw-asset-id ID] [--raw-file-id ID] [--raw-source-path PATH] [--raw-blob-hash HASH] [--revision REV]
 docbank photos imports show <run-id> [--json]
 docbank photos imports cancel <run-id> [--revision REV] [--json]
 ```
 
 The worker commits each group atomically and records durable group progress.
 It reports multiple RAW matches as `ambiguous` and continues with other
-groups. An interactive `imports show` can select a candidate and start a
-choice-bound rerun; automation supplies `--raw-asset-id`, `--raw-file-id`,
-`--raw-source-path`, or `--raw-blob-hash` to `photos import`.
+groups. An interactive `imports show` can select every unresolved candidate
+in turn and start choice-bound reruns. The non-interactive output lists each
+group key and candidate path. Automation passes that printable group key with
+one of `--raw-asset-id`, `--raw-file-id`, `--raw-source-path`, or
+`--raw-blob-hash` to `photos import`; include `--revision` when selecting an
+existing RAW asset.
 
 All commands emit bounded JSON. Exit code 4 means the revision is stale: an
 explicit `--revision` no longer matched, or the one automatic retry lost to

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json/v2"
 	"fmt"
 	"path/filepath"
@@ -191,4 +192,22 @@ func TestPhotoImportClients(t *testing.T) {
 		require.NoError(t, err, path)
 		assert.NotNil(t, command.Flags().Lookup("json"), path)
 	}
+}
+
+func TestPhotoImportOutputListsPrintableAmbiguityChoices(t *testing.T) {
+	previousJSON := photoImportJSON
+	photoImportJSON = false
+	t.Cleanup(func() { photoImportJSON = previousJSON })
+	var output bytes.Buffer
+	command := &cobra.Command{}
+	command.SetOut(&output)
+	run := api.PhotoImportRun{
+		ID: "run", State: "ambiguous", TotalGroups: 1, CompletedGroups: 1, AmbiguousGroups: 1,
+		Ambiguities: []api.PhotoImportAmbiguity{{GroupKey: "cGhvdG8", Candidates: []api.PhotoImportCandidate{{
+			SourcePath: filepath.Join(t.TempDir(), "capture.ARW"),
+		}}}},
+	}
+	require.NoError(t, writePhotoImportOutput(command, run))
+	assert.Contains(t, output.String(), "group-key: cGhvdG8")
+	assert.Contains(t, output.String(), "capture.ARW")
 }

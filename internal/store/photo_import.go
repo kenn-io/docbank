@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"path/filepath"
@@ -113,6 +114,28 @@ func photoImportSourceKey(path string) (folder, stem string) {
 	return strings.ToLower(norm.NFC.String(filepath.Clean(filepath.Dir(clean)))), strings.ToLower(norm.NFC.String(stem))
 }
 
+// PhotoImportSourceKey returns the normalized source folder and stem used by
+// grouped imports.
+func PhotoImportSourceKey(path string) (folder, stem string) {
+	return photoImportSourceKey(path)
+}
+
+// PhotoImportGroupKeyParts returns the printable identity for a photo group.
+func PhotoImportGroupKeyParts(folder, stem string) string {
+	value := "photo\x00" + strings.ToLower(norm.NFC.String(filepath.Clean(folder))) + "\x00" +
+		strings.ToLower(norm.NFC.String(stem))
+	return base64.RawURLEncoding.EncodeToString([]byte(value))
+}
+
+// PhotoImportGroupKey returns the printable identity for one discovered source.
+func PhotoImportGroupKey(path string, kind PhotoSourceKind) string {
+	if kind == PhotoSourceVideo {
+		return base64.RawURLEncoding.EncodeToString([]byte("video\x00" + filepath.Clean(path)))
+	}
+	folder, stem := photoImportSourceKey(path)
+	return PhotoImportGroupKeyParts(folder, stem)
+}
+
 func photoImportMemberRole(member PhotoImportMember) (string, string, string, error) {
 	source := ClassifyPhotoSource(member.Name)
 	role := member.Role
@@ -141,6 +164,9 @@ func photoImportNodeFacts(node Node, member PhotoImportMember, role string) Phot
 	source := ClassifyPhotoSource(member.Name)
 	if source.Role == role && source.AssetKind != "" {
 		facts.MediaFamily = "image"
+		if source.Kind == PhotoSourceVideo {
+			facts.MediaFamily = "audio_video"
+		}
 		facts.MediaType = source.MediaType
 		facts.Qualifies = role != PhotoRoleSidecar
 		facts.AssetKind = source.AssetKind
@@ -153,29 +179,39 @@ func photoImportGroupKey(group PhotoImportGroup) string {
 		return group.Key
 	}
 	if group.SourceFolder != "" || group.Stem != "" {
-		return strings.ToLower(norm.NFC.String(filepath.Clean(group.SourceFolder))) + "\x00" + strings.ToLower(norm.NFC.String(group.Stem))
+		return PhotoImportGroupKeyParts(group.SourceFolder, group.Stem)
 	}
 	for _, member := range group.Members {
 		if member.OriginalPath != "" {
-			folder, stem := photoImportSourceKey(member.OriginalPath)
-			return folder + "\x00" + stem
+			return PhotoImportGroupKey(member.OriginalPath, ClassifyPhotoSource(member.Name).Kind)
 		}
 	}
 	return ""
 }
 
 func (s *Store) photoImportCandidatesTx(ctx context.Context, tx *sql.Tx, folder, stem string) ([]photoImportCandidateRow, error) {
+	folder = strings.ToLower(filepath.Clean(folder))
+	filter := ""
+	args := []any{PhotoRoleRAW, PhotoRoleImage}
+	if isASCIIPhotoImportFolder(folder) {
+		prefix := folder
+		if !strings.HasSuffix(prefix, string(filepath.Separator)) {
+			prefix += string(filepath.Separator)
+		}
+		filter = " AND p.original_path LIKE ? ESCAPE '!'"
+		args = append(args, strings.NewReplacer("!", "!!", "%", "!%", "_", "!_").Replace(prefix)+"%")
+	}
 	rows, err := tx.QueryContext(ctx, `
 		SELECT pf.file_id, pf.asset_id, pf.node_id, pf.role, a.revision,
 		       n.name, cv.blob_hash, p.original_path
-		FROM photo_files pf
+		FROM provenance p INDEXED BY provenance_original_path_nocase
+		JOIN photo_files pf ON pf.node_id=p.node_id
 		JOIN photo_assets a ON a.asset_id=pf.asset_id
 		JOIN nodes n ON n.id=pf.node_id AND n.trashed_at IS NULL
 		JOIN content_versions cv ON cv.version_id=n.current_version_id
-		JOIN provenance p ON p.node_id=n.id
 		WHERE pf.role IN (?, ?)
-		  AND NOT EXISTS (SELECT 1 FROM provenance successor WHERE successor.supersedes=p.identity)
-		ORDER BY pf.file_id, p.identity`, PhotoRoleRAW, PhotoRoleImage)
+		  AND NOT EXISTS (SELECT 1 FROM provenance successor WHERE successor.supersedes=p.identity)`+
+		filter+` ORDER BY pf.file_id, p.identity`, args...)
 	if err != nil {
 		return nil, fmt.Errorf("reading photo import candidates: %w", err)
 	}
@@ -206,6 +242,15 @@ func (s *Store) photoImportCandidatesTx(ctx context.Context, tx *sql.Tx, folder,
 	return result, nil
 }
 
+func isASCIIPhotoImportFolder(folder string) bool {
+	for _, r := range folder {
+		if r > 127 {
+			return false
+		}
+	}
+	return true
+}
+
 func choiceMatchesCandidate(choice *PhotoImportChoice, candidate PhotoImportCandidate) bool {
 	if choice == nil {
 		return false
@@ -225,11 +270,65 @@ func choiceMatchesCandidate(choice *PhotoImportChoice, candidate PhotoImportCand
 	return choice.RawAssetID != "" || choice.RawFileID != "" || choice.RawSourcePath != "" || choice.RawBlobHash != ""
 }
 
-func photoImportRawMemberMatchesCandidate(member PhotoImportMember, candidate PhotoImportCandidate) bool {
+func photoImportMemberMatchesCandidate(member PhotoImportMember, candidate PhotoImportCandidate) bool {
 	if member.OriginalPath != "" && candidate.SourcePath != "" {
 		return filepath.Clean(member.OriginalPath) == filepath.Clean(candidate.SourcePath)
 	}
 	return member.BlobHash != "" && candidate.BlobHash != "" && member.BlobHash == candidate.BlobHash
+}
+
+func photoImportResolvedChoice(candidates []photoImportCandidateRow, members []PhotoImportMember) *PhotoImportChoice {
+	assets := make(map[string]struct{})
+	matchedMedia := false
+	for _, member := range members {
+		role, _, _, err := photoImportMemberRole(member)
+		if err != nil || role == PhotoRoleSidecar {
+			continue
+		}
+		var match *photoImportCandidateRow
+		for index := range candidates {
+			candidate := &candidates[index]
+			if candidate.Role == role && photoImportMemberMatchesCandidate(member, candidate.Candidate) {
+				if match != nil && match.Candidate.AssetID != candidate.Candidate.AssetID {
+					return nil
+				}
+				match = candidate
+			}
+		}
+		if match == nil {
+			return nil
+		}
+		matchedMedia = true
+		assets[match.Candidate.AssetID] = struct{}{}
+	}
+	if !matchedMedia || len(assets) != 1 {
+		return nil
+	}
+	var raw *photoImportCandidateRow
+	for index := range candidates {
+		candidate := &candidates[index]
+		if candidate.Role != PhotoRoleRAW {
+			continue
+		}
+		if _, ok := assets[candidate.Candidate.AssetID]; !ok {
+			continue
+		}
+		if raw != nil {
+			return nil
+		}
+		raw = candidate
+	}
+	if raw == nil {
+		return nil
+	}
+	return &PhotoImportChoice{
+		GroupKey:      "",
+		RawAssetID:    raw.Candidate.AssetID,
+		RawFileID:     raw.Candidate.FileID,
+		AssetRevision: raw.Candidate.Revision,
+		RawSourcePath: raw.Candidate.SourcePath,
+		RawBlobHash:   raw.Candidate.BlobHash,
+	}
 }
 
 func photoImportCandidatesForIncomingChoice(candidates []photoImportCandidateRow, members []PhotoImportMember, choice *PhotoImportChoice) []photoImportCandidateRow {
@@ -280,23 +379,60 @@ func validatePhotoImportChoice(choice *PhotoImportChoice, candidate PhotoImportC
 }
 
 func (s *Store) photoImportCurrentDuplicateTx(
-	ctx context.Context, tx *sql.Tx, run IngestRun, member PhotoImportMember, role string,
+	ctx context.Context, tx *sql.Tx, run IngestRun, member PhotoImportMember, role, sourceFolder, sourceStem string,
 ) (Node, bool, error) {
 	var node Node
-	err := tx.QueryRowContext(ctx, `
+	if role == PhotoRoleSidecar {
+		rows, err := tx.QueryContext(ctx, `
+			SELECT `+nodeCols+`, p.original_path
+			FROM `+nodeFrom+`
+			JOIN photo_files pf ON pf.node_id=n.id AND pf.role=?
+			JOIN provenance p ON p.node_id=n.id
+			WHERE n.trashed_at IS NULL AND cv.blob_hash=?
+			  AND NOT EXISTS (SELECT 1 FROM provenance successor WHERE successor.supersedes=p.identity)
+			ORDER BY n.id, p.identity`, role, member.BlobHash)
+		if err != nil {
+			return Node{}, false, fmt.Errorf("finding duplicate photo sidecar: %w", err)
+		}
+		defer func() { _ = rows.Close() }()
+		found := false
+		for rows.Next() {
+			var sourcePath string
+			if err := rows.Scan(
+				&node.ID, &node.ParentID, &node.Name, &node.Kind, &node.CurrentVersionID,
+				&node.BlobHash, &node.MD5, &node.Size, &node.MimeType, &node.Revision,
+				&node.CreatedAt, &node.ModifiedAt, &node.TrashedAt, &sourcePath,
+			); err != nil {
+				return Node{}, false, fmt.Errorf("scanning duplicate photo sidecar: %w", err)
+			}
+			folder, stem := photoImportSourceKey(sourcePath)
+			if folder == sourceFolder && stem == sourceStem {
+				found = true
+				break
+			}
+		}
+		if err := rows.Err(); err != nil {
+			return Node{}, false, fmt.Errorf("reading duplicate photo sidecars: %w", err)
+		}
+		if !found {
+			return Node{}, false, nil
+		}
+	} else {
+		err := tx.QueryRowContext(ctx, `
 		SELECT `+nodeCols+`
 		FROM `+nodeFrom+`
 		JOIN photo_files pf ON pf.node_id=n.id AND pf.role=?
 		WHERE n.trashed_at IS NULL AND cv.blob_hash=?
 		ORDER BY n.id LIMIT 1`, role, member.BlobHash).Scan(
-		&node.ID, &node.ParentID, &node.Name, &node.Kind, &node.CurrentVersionID,
-		&node.BlobHash, &node.MD5, &node.Size, &node.MimeType, &node.Revision,
-		&node.CreatedAt, &node.ModifiedAt, &node.TrashedAt)
-	if errors.Is(err, sql.ErrNoRows) {
-		return Node{}, false, nil
-	}
-	if err != nil {
-		return Node{}, false, fmt.Errorf("finding duplicate photo member: %w", err)
+			&node.ID, &node.ParentID, &node.Name, &node.Kind, &node.CurrentVersionID,
+			&node.BlobHash, &node.MD5, &node.Size, &node.MimeType, &node.Revision,
+			&node.CreatedAt, &node.ModifiedAt, &node.TrashedAt)
+		if errors.Is(err, sql.ErrNoRows) {
+			return Node{}, false, nil
+		}
+		if err != nil {
+			return Node{}, false, fmt.Errorf("finding duplicate photo member: %w", err)
+		}
 	}
 	inserted, err := s.ensureIngestRunForMutationTx(ctx, tx, run)
 	if err != nil {
@@ -446,53 +582,15 @@ func (s *Store) IngestPhotoGroup(ctx context.Context, run IngestRun, group Photo
 				rawMembers = append(rawMembers, member)
 			}
 		}
-		allRawCandidates := append([]PhotoImportCandidate(nil), rawCandidates...)
-		for _, member := range rawMembers {
-			matched := false
-			for _, candidate := range rawCandidates {
-				if photoImportRawMemberMatchesCandidate(member, candidate) {
-					matched = true
-					break
-				}
-			}
-			if !matched {
-				allRawCandidates = append(allRawCandidates, PhotoImportCandidate{SourcePath: member.OriginalPath, BlobHash: member.BlobHash})
-			}
-		}
-		if len(allRawCandidates) > 1 {
-			chosen := PhotoImportCandidate{}
-			for _, candidate := range allRawCandidates {
-				if choiceMatchesCandidate(group.Choice, candidate) {
-					if chosen.FileID != "" || chosen.SourcePath != "" {
-						return fmt.Errorf("photo import choice matches multiple RAW candidates: %w", ErrPhotoImportAmbiguous)
-					}
-					chosen = candidate
-				}
-			}
-			if chosen.FileID == "" && chosen.SourcePath == "" {
-				ambiguity := PhotoImportAmbiguity{GroupKey: group.Key, Candidates: allRawCandidates}
-				result.Ambiguity = &ambiguity
-				return &PhotoImportAmbiguityError{PhotoImportAmbiguity: ambiguity}
-			}
-			if chosen.FileID != "" {
-				if err := validatePhotoImportChoice(group.Choice, chosen); err != nil {
-					return err
-				}
-			}
-		} else if len(allRawCandidates) == 1 && group.Choice != nil {
-			chosen := allRawCandidates[0]
-			if chosen.FileID != "" {
-				if err := validatePhotoImportChoice(group.Choice, chosen); err != nil {
-					return err
-				}
-			} else if !choiceMatchesCandidate(group.Choice, chosen) {
-				return fmt.Errorf("photo import choice does not identify incoming RAW: %w", ErrPhotoImportAmbiguous)
-			}
+		effectiveChoice := group.Choice
+		if effectiveChoice == nil {
+			effectiveChoice = photoImportResolvedChoice(candidates, group.Members)
 		}
 
 		var nodes []Node
 		var roles []string
 		var kinds []string
+		allExisting := true
 		for _, member := range group.Members {
 			role, mediaType, kind, roleErr := photoImportMemberRole(member)
 			if roleErr != nil {
@@ -505,11 +603,22 @@ func (s *Store) IngestPhotoGroup(ctx context.Context, run IngestRun, group Photo
 			if member.Physical.Encoding != "" {
 				physical = []BlobPhysical{member.Physical}
 			}
-			node, duplicate, duplicateErr := s.photoImportCurrentDuplicateTx(ctx, tx, run, member, role)
+			sourceFolder, sourceStem := group.SourceFolder, group.Stem
+			if member.OriginalPath != "" {
+				memberFolder, memberStem := photoImportSourceKey(member.OriginalPath)
+				if sourceFolder == "" {
+					sourceFolder = memberFolder
+				}
+				if sourceStem == "" {
+					sourceStem = memberStem
+				}
+			}
+			node, duplicate, duplicateErr := s.photoImportCurrentDuplicateTx(ctx, tx, run, member, role, sourceFolder, sourceStem)
 			if duplicateErr != nil {
 				return duplicateErr
 			}
 			if !duplicate {
+				allExisting = false
 				receipt, _, _, ingestErr := s.ingestFileTx(ctx, tx, run, group.DestinationID,
 					member.Name, member.BlobHash, member.Size, mediaType, member.OriginalPath,
 					member.OriginalMtime, ingestFileOptions{observeMembership: true, deferPhotoEnrollment: true}, physical...)
@@ -523,6 +632,93 @@ func (s *Store) IngestPhotoGroup(ctx context.Context, run IngestRun, group Photo
 			kinds = append(kinds, kind)
 		}
 		result.Nodes = nodes
+		allOwned := true
+		var ownedAssetID string
+		ownedCounts := make(map[string]int)
+		for _, node := range nodes {
+			assetID, owned, ownerErr := photoAssetOwningNodeTx(ctx, tx, node.ID)
+			if ownerErr != nil {
+				return ownerErr
+			}
+			if !owned {
+				allOwned = false
+				break
+			}
+			if ownedAssetID == "" {
+				ownedAssetID = assetID
+			}
+			ownedCounts[assetID]++
+		}
+		completeAsset := false
+		for _, count := range ownedCounts {
+			if count > 1 {
+				completeAsset = true
+				break
+			}
+		}
+		rawOnly := len(roles) > 0
+		for _, role := range roles {
+			if role != PhotoRoleRAW {
+				rawOnly = false
+				break
+			}
+		}
+		if allExisting && allOwned && (completeAsset || rawOnly) && ownedAssetID != "" {
+			result.Asset, err = photoAssetByIDQuery(ctx, tx, ownedAssetID)
+			if err != nil {
+				return err
+			}
+			result.Skipped = true
+			if group.RunID != "" {
+				if err := updatePhotoImportRunTx(ctx, tx, group.RunID, 0, 1, 0, 0, nil); err != nil {
+					return err
+				}
+			}
+			return nil
+		}
+		allRawCandidates := append([]PhotoImportCandidate(nil), rawCandidates...)
+		for _, member := range rawMembers {
+			matched := false
+			for _, candidate := range rawCandidates {
+				if photoImportMemberMatchesCandidate(member, candidate) {
+					matched = true
+					break
+				}
+			}
+			if !matched {
+				allRawCandidates = append(allRawCandidates, PhotoImportCandidate{SourcePath: member.OriginalPath, BlobHash: member.BlobHash})
+			}
+		}
+		if len(allRawCandidates) > 1 {
+			chosen := PhotoImportCandidate{}
+			for _, candidate := range allRawCandidates {
+				if choiceMatchesCandidate(effectiveChoice, candidate) {
+					if chosen.FileID != "" || chosen.SourcePath != "" {
+						return fmt.Errorf("photo import choice matches multiple RAW candidates: %w", ErrPhotoImportAmbiguous)
+					}
+					chosen = candidate
+				}
+			}
+			if chosen.FileID == "" && chosen.SourcePath == "" {
+				ambiguity := PhotoImportAmbiguity{GroupKey: group.Key, Candidates: allRawCandidates}
+				result.Ambiguity = &ambiguity
+				return &PhotoImportAmbiguityError{PhotoImportAmbiguity: ambiguity}
+			}
+			if chosen.FileID != "" {
+				if err := validatePhotoImportChoice(effectiveChoice, chosen); err != nil {
+					return err
+				}
+			}
+		} else if len(allRawCandidates) == 1 && effectiveChoice != nil {
+			chosen := allRawCandidates[0]
+			if chosen.FileID != "" {
+				if err := validatePhotoImportChoice(effectiveChoice, chosen); err != nil {
+					return err
+				}
+			} else if !choiceMatchesCandidate(effectiveChoice, chosen) {
+				return fmt.Errorf("photo import choice does not identify incoming RAW: %w", ErrPhotoImportAmbiguous)
+			}
+		}
 		if !group.Isolated {
 			var candidateErr error
 			candidates, candidateErr = s.photoImportCandidatesTx(ctx, tx, group.SourceFolder, group.Stem)
@@ -530,8 +726,8 @@ func (s *Store) IngestPhotoGroup(ctx context.Context, run IngestRun, group Photo
 				return candidateErr
 			}
 		}
-		candidates = photoImportCandidatesForIncomingChoice(candidates, group.Members, group.Choice)
-		targetAssetID, targetRawFileID, candidateAssets, candidateErr := photoImportCandidateAssets(candidates, group.Choice)
+		candidates = photoImportCandidatesForIncomingChoice(candidates, group.Members, effectiveChoice)
+		targetAssetID, targetRawFileID, candidateAssets, candidateErr := photoImportCandidateAssets(candidates, effectiveChoice)
 		if candidateErr != nil {
 			allCandidates := make([]PhotoImportCandidate, 0, len(candidates))
 			for _, candidate := range candidates {
@@ -541,11 +737,20 @@ func (s *Store) IngestPhotoGroup(ctx context.Context, run IngestRun, group Photo
 			result.Ambiguity = &ambiguity
 			return &PhotoImportAmbiguityError{PhotoImportAmbiguity: ambiguity}
 		}
+		touchedAssets := make(map[string]struct{}, len(candidateAssets)+1)
+		for assetID := range candidateAssets {
+			if assetID != "" {
+				touchedAssets[assetID] = struct{}{}
+			}
+		}
 		assetChanged := false
 		for i, node := range nodes {
 			assetID, owned, ownerErr := photoAssetOwningNodeTx(ctx, tx, node.ID)
 			if ownerErr != nil {
 				return ownerErr
+			}
+			if owned {
+				touchedAssets[assetID] = struct{}{}
 			}
 			if owned && roles[i] == PhotoRoleRAW {
 				targetAssetID = assetID
@@ -561,6 +766,9 @@ func (s *Store) IngestPhotoGroup(ctx context.Context, run IngestRun, group Photo
 				assetID, owned, ownerErr := photoAssetOwningNodeTx(ctx, tx, node.ID)
 				if ownerErr != nil {
 					return ownerErr
+				}
+				if owned {
+					touchedAssets[assetID] = struct{}{}
 				}
 				if owned && (roles[i] == PhotoRoleImage || roles[i] == PhotoRoleVideo) {
 					targetAssetID = assetID
@@ -592,8 +800,10 @@ func (s *Store) IngestPhotoGroup(ctx context.Context, run IngestRun, group Photo
 				return createErr
 			}
 			targetAssetID = asset.ID
+			touchedAssets[targetAssetID] = struct{}{}
 			result.Added = true
 		}
+		touchedAssets[targetAssetID] = struct{}{}
 		for assetID := range candidateAssets {
 			if assetID == targetAssetID {
 				continue
@@ -614,6 +824,7 @@ func (s *Store) IngestPhotoGroup(ctx context.Context, run IngestRun, group Photo
 				return ownerErr
 			}
 			if owned {
+				touchedAssets[ownerID] = struct{}{}
 				if ownerID != targetAssetID {
 					if err := s.mergePhotoAssetsTxWithContext(ctx, tx, ownerID, targetAssetID); err != nil {
 						return err
@@ -662,11 +873,13 @@ func (s *Store) IngestPhotoGroup(ctx context.Context, run IngestRun, group Photo
 			target = updated
 			result.Added = true
 		}
-		if err := validatePhotoGraph(ctx, tx); err != nil {
-			return err
+		for assetID := range touchedAssets {
+			if err := validatePhotoAssetGraph(ctx, tx, assetID); err != nil {
+				return err
+			}
 		}
 		result.Asset = target
-		result.Paired = len(nodes) > 1 || assetChanged
+		result.Paired = assetChanged
 		result.Skipped = !result.Added && !result.Paired
 		if group.RunID != "" {
 			if err := updatePhotoImportRunTx(ctx, tx, group.RunID, int64(boolInt(result.Added)), int64(boolInt(result.Skipped)), 0, 0, nil); err != nil {

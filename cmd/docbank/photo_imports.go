@@ -2,11 +2,13 @@ package main
 
 import (
 	"bufio"
+	"context"
 	"errors"
 	"fmt"
 	"os"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
@@ -120,38 +122,76 @@ func writePhotoImportOutput(cmd *cobra.Command, run api.PhotoImportRun) error {
 	if err != nil {
 		return fmt.Errorf("writing photo import output: %w", err)
 	}
+	for index, ambiguity := range run.Ambiguities {
+		if _, err := fmt.Fprintf(cmd.OutOrStdout(), "ambiguity %d group-key: %s\n", index+1, ambiguity.GroupKey); err != nil {
+			return fmt.Errorf("writing photo import ambiguity: %w", err)
+		}
+		for candidateIndex, candidate := range ambiguity.Candidates {
+			if _, err := fmt.Fprintf(cmd.OutOrStdout(), "  %d) %s\n", candidateIndex+1, candidate.SourcePath); err != nil {
+				return fmt.Errorf("writing photo import candidate: %w", err)
+			}
+		}
+	}
 	return nil
 }
 
 func maybeChoosePhotoImport(cmd *cobra.Command, connection *daemonconn.Connection, run *api.PhotoImportRun) error {
-	if run.State != "ambiguous" || len(run.Ambiguities) == 0 || !photoImportInteractive(cmd) {
+	if !photoImportInteractive(cmd) {
 		return nil
 	}
-	ambiguity := run.Ambiguities[0]
-	_, _ = fmt.Fprintln(cmd.OutOrStdout(), "Choose a RAW to pair:")
-	for index, candidate := range ambiguity.Candidates {
-		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "%d) %s\n", index+1, candidate.SourcePath)
+	for run.State == "ambiguous" && len(run.Ambiguities) > 0 {
+		ambiguity := run.Ambiguities[0]
+		_, _ = fmt.Fprintln(cmd.OutOrStdout(), "Choose a RAW to pair:")
+		for index, candidate := range ambiguity.Candidates {
+			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "%d) %s\n", index+1, candidate.SourcePath)
+		}
+		_, _ = fmt.Fprint(cmd.OutOrStdout(), "RAW number: ")
+		choiceReader := bufio.NewReader(cmd.InOrStdin())
+		line, err := choiceReader.ReadString('\n')
+		if err != nil {
+			return fmt.Errorf("reading photo import choice: %w", err)
+		}
+		selection, err := strconv.Atoi(strings.TrimSpace(line))
+		if err != nil || selection < 1 || selection > len(ambiguity.Candidates) {
+			return errors.New("photo import RAW choice is out of range")
+		}
+		candidate := ambiguity.Candidates[selection-1]
+		choice := &api.PhotoImportChoice{GroupKey: ambiguity.GroupKey, RawAssetID: candidate.AssetID,
+			RawFileID: candidate.FileID, AssetRevision: candidate.Revision,
+			RawSourcePath: candidate.SourcePath, RawBlobHash: candidate.BlobHash}
+		newRun, err := connection.StartPhotoImport(cmd.Context(), run.SourceRoot, run.Destination, choice)
+		if err != nil {
+			return err
+		}
+		*run = newRun
+		if err := waitPhotoImportRun(cmd.Context(), connection, run); err != nil {
+			return err
+		}
 	}
-	_, _ = fmt.Fprint(cmd.OutOrStdout(), "RAW number: ")
-	choiceReader := bufio.NewReader(cmd.InOrStdin())
-	line, err := choiceReader.ReadString('\n')
-	if err != nil {
-		return fmt.Errorf("reading photo import choice: %w", err)
-	}
-	selection, err := strconv.Atoi(strings.TrimSpace(line))
-	if err != nil || selection < 1 || selection > len(ambiguity.Candidates) {
-		return errors.New("photo import RAW choice is out of range")
-	}
-	candidate := ambiguity.Candidates[selection-1]
-	choice := &api.PhotoImportChoice{GroupKey: ambiguity.GroupKey, RawAssetID: candidate.AssetID,
-		RawFileID: candidate.FileID, AssetRevision: candidate.Revision,
-		RawSourcePath: candidate.SourcePath, RawBlobHash: candidate.BlobHash}
-	newRun, err := connection.StartPhotoImport(cmd.Context(), run.SourceRoot, run.Destination, choice)
-	if err != nil {
-		return err
-	}
-	*run = newRun
 	return nil
+}
+
+func waitPhotoImportRun(ctx context.Context, connection *daemonconn.Connection, run *api.PhotoImportRun) error {
+	if run.FinishedAt != "" {
+		return nil
+	}
+	ticker := time.NewTicker(100 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-ticker.C:
+			latest, err := connection.PhotoImport(ctx, run.ID)
+			if err != nil {
+				return err
+			}
+			*run = latest
+			if run.FinishedAt != "" {
+				return nil
+			}
+		}
+	}
 }
 
 func photoImportInteractive(cmd *cobra.Command) bool {

@@ -115,23 +115,7 @@ func exportPhotoImportMetadata(ctx context.Context, tx metadataQuerier, write me
 	}
 	defer func() { _ = rows.Close() }()
 	for rows.Next() {
-		var run PhotoImportRun
-		var cancel int64
-		var errorText, ambiguityJSON, finished sql.NullString
-		if err := rows.Scan(&run.ID, &run.Revision, &run.State, &run.SourceRoot, &run.Destination,
-			&run.TotalGroups, &run.CompletedGroups, &run.AddedGroups, &run.SkippedGroups,
-			&run.FailedGroups, &run.AmbiguousGroups, &cancel, &errorText, &ambiguityJSON,
-			&run.StartedAt, &run.UpdatedAt, &finished); err != nil {
-			return err
-		}
-		run.CancelRequested = cancel != 0
-		if errorText.Valid {
-			run.Error = errorText.String
-		}
-		if finished.Valid {
-			run.FinishedAt = finished.String
-		}
-		run.Ambiguities, err = unmarshalPhotoImportAmbiguities(ambiguityJSON)
+		run, err := scanPhotoImportRun(rows)
 		if err != nil {
 			return err
 		}
@@ -197,23 +181,7 @@ func validatePhotoImportMetadataState(ctx context.Context, tx metadataQuerier) e
 	}
 	defer func() { _ = rows.Close() }()
 	for rows.Next() {
-		var run PhotoImportRun
-		var cancel int64
-		var errorText, ambiguityJSON, finished sql.NullString
-		if err := rows.Scan(&run.ID, &run.Revision, &run.State, &run.SourceRoot, &run.Destination,
-			&run.TotalGroups, &run.CompletedGroups, &run.AddedGroups, &run.SkippedGroups,
-			&run.FailedGroups, &run.AmbiguousGroups, &cancel, &errorText, &ambiguityJSON,
-			&run.StartedAt, &run.UpdatedAt, &finished); err != nil {
-			return err
-		}
-		run.CancelRequested = cancel != 0
-		if errorText.Valid {
-			run.Error = errorText.String
-		}
-		if finished.Valid {
-			run.FinishedAt = finished.String
-		}
-		run.Ambiguities, err = unmarshalPhotoImportAmbiguities(ambiguityJSON)
+		run, err := scanPhotoImportRun(rows)
 		if err != nil {
 			return err
 		}

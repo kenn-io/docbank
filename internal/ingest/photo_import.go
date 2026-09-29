@@ -11,8 +11,6 @@ import (
 	"strings"
 	"time"
 
-	"golang.org/x/text/unicode/norm"
-
 	"go.kenn.io/docbank/internal/store"
 )
 
@@ -40,6 +38,9 @@ type PhotoImportOptions struct {
 	Progress       func(PhotoImportProgress)
 }
 
+// DefaultPhotoImportSettleInterval keeps a source file stable before reading.
+const DefaultPhotoImportSettleInterval = time.Second
+
 type PhotoImportProgress struct {
 	Done      int
 	Total     int
@@ -59,30 +60,8 @@ type PhotoImportReport struct {
 	Errors    []FileError
 }
 
-func photoImportFolderStem(path string) (folder, stem string) {
-	path = filepath.Clean(path)
-	base := filepath.Base(path)
-	stem = strings.TrimSuffix(base, filepath.Ext(base))
-	for {
-		source := store.ClassifyPhotoSource(stem)
-		if source.Kind != store.PhotoSourceRAW && source.Kind != store.PhotoSourceImage && source.Kind != store.PhotoSourceSidecar {
-			break
-		}
-		next := strings.TrimSuffix(stem, filepath.Ext(stem))
-		if next == stem {
-			break
-		}
-		stem = next
-	}
-	return strings.ToLower(norm.NFC.String(filepath.Clean(filepath.Dir(path)))), strings.ToLower(norm.NFC.String(stem))
-}
-
 func photoImportGroupKey(candidate PhotoImportCandidate) string {
-	if candidate.Kind == store.PhotoSourceVideo {
-		return "video\x00" + filepath.Clean(candidate.Path)
-	}
-	folder, stem := photoImportFolderStem(candidate.Path)
-	return "photo\x00" + folder + "\x00" + stem
+	return store.PhotoImportGroupKey(candidate.Path, candidate.Kind)
 }
 
 // GroupPhotoCandidates returns deterministic same-folder, same-stem groups.
@@ -94,7 +73,7 @@ func GroupPhotoCandidates(candidates []PhotoImportCandidate) []PhotoImportGroup 
 		key := photoImportGroupKey(candidate)
 		group := grouped[key]
 		if group == nil {
-			folder, stem := photoImportFolderStem(candidate.Path)
+			folder, stem := store.PhotoImportSourceKey(candidate.Path)
 			group = &PhotoImportGroup{Key: key, Folder: folder, Stem: stem}
 			grouped[key] = group
 		}
@@ -144,7 +123,7 @@ func partitionPhotoImportGroup(group PhotoImportGroup, choice *store.PhotoImport
 			}
 		}
 		standalone := group
-		standalone.Key = group.Key + "\x00raw\x00" + filepath.Clean(raw[0].Path)
+		standalone.Key = group.Key + "|raw|" + filepath.Clean(raw[0].Path)
 		standalone.Stem = filepath.Base(raw[0].Path)
 		standalone.Isolated = true
 		standalone.Members = raw
@@ -179,7 +158,7 @@ func partitionPhotoImportGroup(group PhotoImportGroup, choice *store.PhotoImport
 			continue
 		}
 		standalone := group
-		standalone.Key = group.Key + "\x00raw\x00" + filepath.Clean(member.Path)
+		standalone.Key = group.Key + "|raw|" + filepath.Clean(member.Path)
 		standalone.Stem = filepath.Base(member.Path)
 		standalone.Isolated = true
 		standalone.Members = []PhotoImportCandidate{member}
@@ -287,13 +266,24 @@ func settlePhotoImportCandidate(ctx context.Context, ing *Ingester, candidate Ph
 }
 
 func (ing *Ingester) ImportPhotoDirectory(ctx context.Context, root, destination string, opts PhotoImportOptions) (report PhotoImportReport, retErr error) {
+	mutate := func(mutationCtx context.Context, fn func() error) error {
+		if opts.Mutate != nil {
+			return opts.Mutate(mutationCtx, fn)
+		}
+		return fn()
+	}
+	runMutation := func(fn func() error) error { return mutate(ctx, fn) }
+	finalMutation := func(fn func() error) error { return mutate(context.Background(), fn) }
 	finishEarly := func(err error) (PhotoImportReport, error) {
 		if opts.RunID != "" {
 			state := store.PhotoImportStateFailed
 			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 				state = store.PhotoImportStateCancelled
 			}
-			_, _ = ing.Store.FinishPhotoImportRun(context.Background(), opts.RunID, state, err.Error())
+			_ = finalMutation(func() error {
+				_, finishErr := ing.Store.FinishPhotoImportRun(context.Background(), opts.RunID, state, err.Error())
+				return finishErr
+			})
 			if final, readErr := ing.Store.PhotoImportRun(context.Background(), opts.RunID); readErr == nil {
 				report.Run = final
 			}
@@ -313,17 +303,31 @@ func (ing *Ingester) ImportPhotoDirectory(ctx context.Context, root, destination
 	if destination == "" {
 		destination = "/"
 	}
-	dest, err := ing.Store.MkdirAll(ctx, destination)
+	var dest store.Node
+	err = runMutation(func() error {
+		var mkdirErr error
+		dest, mkdirErr = ing.Store.MkdirAll(ctx, destination)
+		return mkdirErr
+	})
 	if err != nil {
 		return finishEarly(fmt.Errorf("resolving photo import destination: %w", err))
 	}
 	if opts.RunID == "" {
-		run, startErr := ing.Store.StartPhotoImportRun(ctx, root, destination, int64(len(groups)))
+		var startErr error
+		startedRun, startErr := func() (store.PhotoImportRun, error) {
+			var started store.PhotoImportRun
+			err := runMutation(func() error {
+				var createErr error
+				started, createErr = ing.Store.StartPhotoImportRun(ctx, root, destination, int64(len(groups)))
+				return createErr
+			})
+			return started, err
+		}()
 		if startErr != nil {
 			return report, startErr
 		}
-		report.Run = run
-		opts.RunID = run.ID
+		report.Run = startedRun
+		opts.RunID = startedRun.ID
 	} else {
 		report.Run, err = ing.Store.PhotoImportRun(ctx, opts.RunID)
 		if err != nil {
@@ -331,15 +335,27 @@ func (ing *Ingester) ImportPhotoDirectory(ctx context.Context, root, destination
 		}
 	}
 	if report.Run.TotalGroups != int64(len(groups)) {
-		if report.Run, err = ing.Store.SetPhotoImportTotalGroups(ctx, opts.RunID, int64(len(groups))); err != nil {
+		var updated store.PhotoImportRun
+		err = runMutation(func() error {
+			var updateErr error
+			updated, updateErr = ing.Store.SetPhotoImportTotalGroups(ctx, opts.RunID, int64(len(groups)))
+			return updateErr
+		})
+		if err != nil {
 			return finishEarly(err)
 		}
+		report.Run = updated
 	}
-	run, err := ing.Store.BeginIngest(ctx, "photo-import", root)
+	var run store.IngestRun
+	err = runMutation(func() error {
+		var beginErr error
+		run, beginErr = ing.Store.BeginIngest(ctx, "photo-import", root)
+		return beginErr
+	})
 	if err != nil {
 		return finishEarly(err)
 	}
-	if err := ing.Store.EnsurePhotoImportAllowed(ctx); err != nil {
+	if err := runMutation(func() error { return ing.Store.EnsurePhotoImportAllowed(ctx) }); err != nil {
 		return finishEarly(err)
 	}
 	if opts.SettleInterval < 0 {
@@ -352,6 +368,15 @@ func (ing *Ingester) ImportPhotoDirectory(ctx context.Context, root, destination
 		}
 	}
 	report.Errors = make([]FileError, 0)
+	updateProgress := func(added, skipped, failed, ambiguous int64, detail *store.PhotoImportAmbiguity) {
+		if opts.RunID == "" {
+			return
+		}
+		_ = runMutation(func() error {
+			_, err := ing.Store.UpdatePhotoImportProgress(ctx, opts.RunID, added, skipped, failed, ambiguous, detail)
+			return err
+		})
+	}
 	for index, group := range groups {
 		if err := ctx.Err(); err != nil {
 			retErr = err
@@ -429,9 +454,9 @@ func (ing *Ingester) ImportPhotoDirectory(ctx context.Context, root, destination
 			if opts.RunID != "" {
 				ambiguityErr, ok := errors.AsType[*store.PhotoImportAmbiguityError](err)
 				if ok {
-					_, _ = ing.Store.UpdatePhotoImportProgress(ctx, opts.RunID, 0, 0, 0, 1, &ambiguityErr.PhotoImportAmbiguity)
+					updateProgress(0, 0, 0, 1, &ambiguityErr.PhotoImportAmbiguity)
 				} else {
-					_, _ = ing.Store.UpdatePhotoImportProgress(ctx, opts.RunID, 0, 0, 0, 1, nil)
+					updateProgress(0, 0, 0, 1, nil)
 				}
 			}
 		default:
@@ -440,7 +465,7 @@ func (ing *Ingester) ImportPhotoDirectory(ctx context.Context, root, destination
 				report.Errors = append(report.Errors, FileError{Path: group.Members[0].Path, Err: err})
 			}
 			if opts.RunID != "" {
-				_, _ = ing.Store.UpdatePhotoImportProgress(ctx, opts.RunID, 0, 0, 1, 0, nil)
+				updateProgress(0, 0, 1, 0, nil)
 			}
 		}
 		if opts.Progress != nil {
@@ -450,16 +475,25 @@ func (ing *Ingester) ImportPhotoDirectory(ctx context.Context, root, destination
 			break
 		}
 	}
+	finishRun := func(state, errorText string) {
+		if opts.RunID == "" {
+			return
+		}
+		_ = finalMutation(func() error {
+			_, err := ing.Store.FinishPhotoImportRun(context.Background(), opts.RunID, state, errorText)
+			return err
+		})
+	}
 	if retErr != nil && errors.Is(retErr, context.Canceled) {
-		_, _ = ing.Store.FinishPhotoImportRun(context.Background(), opts.RunID, store.PhotoImportStateCancelled, retErr.Error())
+		finishRun(store.PhotoImportStateCancelled, retErr.Error())
 	} else if retErr != nil {
-		_, _ = ing.Store.FinishPhotoImportRun(context.Background(), opts.RunID, store.PhotoImportStateFailed, retErr.Error())
+		finishRun(store.PhotoImportStateFailed, retErr.Error())
 	} else if report.Ambiguous > 0 {
-		_, _ = ing.Store.FinishPhotoImportRun(context.Background(), opts.RunID, store.PhotoImportStateAmbiguous, "")
+		finishRun(store.PhotoImportStateAmbiguous, "")
 	} else if report.Failed > 0 {
-		_, _ = ing.Store.FinishPhotoImportRun(context.Background(), opts.RunID, store.PhotoImportStateFailed, report.Errors[0].Err.Error())
+		finishRun(store.PhotoImportStateFailed, report.Errors[0].Err.Error())
 	} else {
-		_, _ = ing.Store.FinishPhotoImportRun(context.Background(), opts.RunID, store.PhotoImportStateCompleted, "")
+		finishRun(store.PhotoImportStateCompleted, "")
 	}
 	if final, readErr := ing.Store.PhotoImportRun(context.Background(), opts.RunID); readErr == nil {
 		report.Run = final

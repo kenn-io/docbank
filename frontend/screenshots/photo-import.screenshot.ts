@@ -24,7 +24,7 @@ test("photo import progress and cancellation are visible", async ({ page }) => {
     await mkdir(path.join(source, "trip"), { recursive: true, mode: 0o700 });
     await writeFile(path.join(source, "trip", "IMG_0001.JPG"), Buffer.from("synthetic-jpeg"), { mode: 0o600 });
     await writeFile(path.join(source, "trip", "IMG_0001.ARW"), Buffer.from("synthetic-raw"), { mode: 0o600 });
-    for (let index = 2; index <= 150; index += 1) {
+    for (let index = 2; index <= 300; index += 1) {
       await writeFile(path.join(source, "trip", `IMG_${String(index).padStart(4, "0")}.JPG`), Buffer.from(`synthetic-jpeg-${index}`), { mode: 0o600 });
     }
     const webURL = await run("web", "--no-browser");
@@ -33,8 +33,13 @@ test("photo import progress and cancellation are visible", async ({ page }) => {
     await run("photos", "import", source, "/");
     await page.getByRole("button", { name: "Refresh background jobs" }).click();
     await expect(page.getByText(/photo-import:/)).toBeVisible();
-    await expect(page.getByLabel("Photo import progress")).toBeVisible();
+    const progress = page.getByLabel("Photo import progress");
+    await expect(progress).toBeVisible();
     await expect(page.getByRole("button", { name: "Cancel", exact: true })).toBeVisible();
+    await expect.poll(async () => {
+      await page.getByRole("button", { name: "Refresh background jobs" }).click();
+      return Number((await progress.innerText()).split("/")[0]);
+    }).toBeGreaterThan(0);
     const drawer = page.getByLabel("Daemon background jobs");
     await drawer.screenshot({ path: path.join(output, "web-photo-import-dark.png") });
     const bounds = await drawer.boundingBox();
@@ -43,6 +48,8 @@ test("photo import progress and cancellation are visible", async ({ page }) => {
       path: path.join(output, "docbank-465-2-after.png"),
       clip: { x: bounds.x, y: bounds.y, width: bounds.width, height: 248 },
     });
+    await page.getByRole("button", { name: "Cancel", exact: true }).click();
+    await expect(page.getByText(/Cancellation requested|cancelled/)).toBeVisible();
     await page.emulateMedia({ colorScheme: "light" });
     await drawer.screenshot({ path: path.join(output, "web-photo-import-light.png") });
     if (process.env.DOCBANK_RENDER_LINT_SNIPPET) {

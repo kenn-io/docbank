@@ -65,7 +65,10 @@ func registerPhotoImportRoutes(api huma.API, d Deps, g *gate) {
 		}
 		worker := func(runCtx context.Context) error {
 			ing := &ingest.Ingester{Store: d.Store, Blobs: d.Blobs}
-			opts := ingest.PhotoImportOptions{RunID: run.ID, Choice: fromStorePhotoImportChoice(in.Body.Choice)}
+			opts := ingest.PhotoImportOptions{
+				RunID: run.ID, Choice: fromStorePhotoImportChoice(in.Body.Choice),
+				SettleInterval: ingest.DefaultPhotoImportSettleInterval,
+			}
 			if g != nil {
 				opts.Mutate = g.MutateContext
 			}
@@ -132,6 +135,13 @@ func registerPhotoImportRoutes(api huma.API, d Deps, g *gate) {
 		mutate := func() error {
 			var callErr error
 			run, callErr = d.Store.RequestPhotoImportCancel(ctx, in.RunID, revision)
+			if errors.Is(callErr, store.ErrStaleRevision) {
+				current, getErr := d.Store.PhotoImportRun(ctx, in.RunID)
+				if getErr != nil {
+					return getErr
+				}
+				run, callErr = d.Store.RequestPhotoImportCancel(ctx, in.RunID, current.Revision)
+			}
 			return callErr
 		}
 		if g != nil {

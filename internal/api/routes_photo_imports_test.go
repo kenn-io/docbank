@@ -7,12 +7,14 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/internal/api"
+	"go.kenn.io/docbank/internal/store"
 )
 
 func TestPhotoImportRoutes(t *testing.T) {
@@ -34,7 +36,7 @@ func TestPhotoImportRoutes(t *testing.T) {
 	require.NotEmpty(t, response.Header.Get("ETag"))
 
 	var latest api.PhotoImportRun
-	for range 100 {
+	for range 300 {
 		get, getErr := ts.Client().Get(ts.URL + "/api/v1/photos/imports/" + started.ID)
 		require.NoError(t, getErr)
 		var output api.PhotoImportRun
@@ -63,6 +65,60 @@ func TestPhotoImportRoutes(t *testing.T) {
 	remoteRequest.Header.Set("X-Api-Key", testAPIKey)
 	catalog.Server.Handler().ServeHTTP(remote, remoteRequest)
 	assert.Equal(t, http.StatusForbidden, remote.Code)
+}
+
+func TestPhotoImportCancelRetriesStaleRevision(t *testing.T) {
+	ts, catalog := newTestServer(t, nil)
+	run, err := catalog.StartPhotoImportRun(t.Context(), filepath.Join(t.TempDir(), "camera"), "/photos", 0)
+	require.NoError(t, err)
+	_, err = catalog.SetPhotoImportTotalGroups(t.Context(), run.ID, 1)
+	require.NoError(t, err)
+	response, body := do(t, ts, http.MethodPost, "/api/v1/photos/imports/"+run.ID+"/cancel",
+		map[string]string{"If-Match": "\"1\""}, nil)
+	require.Equal(t, http.StatusOK, response.StatusCode, body)
+	var cancelled api.PhotoImportRun
+	require.NoError(t, json.Unmarshal([]byte(body), &cancelled))
+	assert.Equal(t, run.ID, cancelled.ID)
+	assert.Equal(t, "cancel-requested", cancelled.State)
+	assert.True(t, cancelled.CancelRequested)
+}
+
+func TestPhotoImportBrowserRedactsRunAndAllowsOnlyReadCancel(t *testing.T) {
+	ts, catalog := newTestServer(t, nil)
+	ambiguousRun, err := catalog.StartPhotoImportRun(t.Context(), filepath.Join(t.TempDir(), "camera"), "/photos", 1)
+	require.NoError(t, err)
+	ambiguity := store.PhotoImportAmbiguity{GroupKey: "cGhvdG8vcHJpdmF0ZQ", Candidates: []store.PhotoImportCandidate{{
+		AssetID: "00000000-0000-4000-8000-000000000001", FileID: "00000000-0000-4000-8000-000000000002",
+		NodeID: 1, Revision: 1, SourcePath: filepath.Join(t.TempDir(), "private.ARW"), BlobHash: strings.Repeat("a", 64),
+	}}}
+	_, err = catalog.UpdatePhotoImportProgress(t.Context(), ambiguousRun.ID, 0, 0, 0, 1, &ambiguity)
+	require.NoError(t, err)
+	_, err = catalog.FinishPhotoImportRun(t.Context(), ambiguousRun.ID, store.PhotoImportStateAmbiguous, "private error")
+	require.NoError(t, err)
+
+	browserToken := issueWebSession(t, ts)
+	response, body := do(t, ts, http.MethodGet, "/api/v1/photos/imports/"+ambiguousRun.ID,
+		map[string]string{"X-Api-Key": "", api.WebSessionHeader: browserToken}, nil)
+	require.Equal(t, http.StatusOK, response.StatusCode, body)
+	var browserRun api.PhotoImportRun
+	require.NoError(t, json.Unmarshal([]byte(body), &browserRun))
+	assert.Empty(t, browserRun.SourceRoot)
+	assert.Empty(t, browserRun.Error)
+	require.Len(t, browserRun.Ambiguities, 1)
+	assert.Empty(t, browserRun.Ambiguities[0].GroupKey)
+	assert.Empty(t, browserRun.Ambiguities[0].Candidates[0].SourcePath)
+
+	startBody, err := json.Marshal(api.PhotoImportStartRequest{SourceRoot: filepath.Join(t.TempDir(), "camera"), Destination: "/photos"})
+	require.NoError(t, err)
+	startRequest, err := http.NewRequestWithContext(t.Context(), http.MethodPost, ts.URL+"/api/v1/photos/imports", bytes.NewReader(startBody))
+	require.NoError(t, err)
+	startRequest.Header.Set("Content-Type", "application/json")
+	startRequest.Header.Set("X-Api-Key", "")
+	startRequest.Header.Set(api.WebSessionHeader, browserToken)
+	startResponse, err := ts.Client().Do(startRequest)
+	require.NoError(t, err)
+	defer func() { _ = startResponse.Body.Close() }()
+	assert.Equal(t, http.StatusForbidden, startResponse.StatusCode)
 }
 
 func TestPhotoImportGateAndActivity(t *testing.T) {
