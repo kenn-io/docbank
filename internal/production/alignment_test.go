@@ -657,6 +657,9 @@ func TestRenderTextRenditionReleasesCompletedPages(t *testing.T) {
 	defer debug.SetGCPercent(debug.SetGCPercent(-1))
 	text := strings.Repeat("Speaker 1 [00:00:01] café 給与 line with deterministic wrapping.\n", 900)
 	for range 2 {
+		// Collect the previous rendition's discarded map and validation data.
+		// Only cleanup between pages is under test with automatic GC disabled.
+		debug.FreeOSMemory()
 		_, textMap, err := RenderTextRendition(t.Context(), text, nil)
 		require.NoError(t, err)
 		require.Equal(t, text, textMap.Text)

@@ -226,6 +226,40 @@ func TestTermReportSharedChildJoinsExactVersionFamily(t *testing.T) {
 	require.Equal(t, families[view.Version.NodeID], families[child.NodeID])
 	require.Equal(t, families[other.ID], families[child.NodeID])
 
+	t.Run("selected parents through unselected child", func(t *testing.T) {
+		request := termFrameRequest()
+		request.AllDocuments = false
+		request.Terms = request.Terms[:1]
+		request.Terms[0].Expression = "parent"
+		request.SelectedDocuments = &report.SelectedDocuments{Documents: []report.Identity{
+			{NodeID: parentNode.ID, VersionID: parentNode.CurrentVersionID, SHA256: parentNode.BlobHash},
+			{NodeID: other.ID, VersionID: other.CurrentVersionID, SHA256: other.BlobHash},
+		}}
+		svc := reporting.Service{Source: s, Budget: budget}
+		selectedFrame, err := svc.Prepare(t.Context(), request)
+		require.NoError(t, err)
+		require.Len(t, selectedFrame.Members, 2)
+		require.Len(t, selectedFrame.Relations, 2)
+		require.Equal(t, selectedFrame.Members[0].FamilyID, selectedFrame.Members[1].FamilyID)
+		for _, m := range selectedFrame.Members {
+			require.NotEqual(t, child.NodeID, m.Identity.NodeID)
+		}
+		for _, text := range selectedFrame.Texts {
+			require.NotEqual(t, child.NodeID, text.Document.NodeID)
+		}
+		for _, field := range selectedFrame.RawDateFields {
+			require.NotEqual(t, child.NodeID, field.Document.NodeID)
+		}
+		result, err := svc.Finalize(t.Context(), selectedFrame, nil)
+		require.NoError(t, err)
+		require.Equal(t, int64(2), result.Counts[0].Hits)
+		require.Equal(t, int64(2), result.Counts[0].HitsPlusFamily)
+		packet, err := report.BuildBundle(t.Context(), budget, result)
+		require.NoError(t, err)
+		_, err = report.VerifyBundle(t.Context(), budget, bytes.NewReader(packet), int64(len(packet)))
+		require.NoError(t, err)
+	})
+
 	unrelated := createCollectionRun(t, s, "alpha.txt", "ab")
 	for _, tc := range []struct {
 		name, collectionID, familyID string
@@ -403,4 +437,66 @@ func TestTermReportCapturesExactRenditionBinding(t *testing.T) {
 	require.Equal(t, catalogMarkdownBlobHash, binding.ArtifactSHA256)
 	require.Equal(t, int64(len(catalogBlobContents[catalogMarkdownBlobHash])), binding.Size)
 	require.Equal(t, report.StateComplete, frame.Members[0].Coverage.SearchState)
+}
+
+func TestTermReportSelectedAdmission(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := t.Context()
+	alpha, err := s.CreateFile(ctx, s.RootID(), "alpha.txt", testSHA256([]byte("selected-alpha")), 10, "text/plain")
+	require.NoError(t, err)
+	beta, err := s.CreateFile(ctx, s.RootID(), "beta.txt", testSHA256([]byte("selected-beta")), 10, "text/plain")
+	require.NoError(t, err)
+	_, err = s.CreateFile(ctx, s.RootID(), "unselected-alpha.txt", testSHA256([]byte("unselected-alpha")), 10, "text/plain")
+	require.NoError(t, err)
+	first := report.Identity{NodeID: alpha.ID, VersionID: alpha.CurrentVersionID, SHA256: alpha.BlobHash}
+	second := report.Identity{NodeID: beta.ID, VersionID: beta.CurrentVersionID, SHA256: beta.BlobHash}
+	request := termFrameRequest()
+	request.AllDocuments = false
+	request.SelectedDocuments = &report.SelectedDocuments{Documents: []report.Identity{second, first}}
+	budget := report.NewBudget(16 << 20)
+	defer func() { _ = budget.Close() }()
+	capture := func(r report.Request) (report.Frame, error) {
+		return s.MaterializeTermReportFrame(ctx, r, report.CoverageSelection{Configuration: "unconfigured"}, budget, budget)
+	}
+	frame, err := capture(request)
+	require.NoError(t, err)
+	require.Len(t, frame.Members, 2)
+	require.Equal(t, first, frame.Members[0].Identity)
+	require.Equal(t, second, frame.Members[1].Identity)
+	require.Equal(t, []bool{true, false}, frame.Members[0].RawMatches)
+	// Renaming and moving changes metadata, but not the selected content identity.
+	folder, err := s.Mkdir(ctx, s.RootID(), "archive")
+	require.NoError(t, err)
+	alpha, _, err = s.Move(ctx, alpha.ID, folder.ID, "renamed.txt", alpha.Revision)
+	require.NoError(t, err)
+	renamed, err := capture(request)
+	require.NoError(t, err)
+	require.Equal(t, first, renamed.Members[0].Identity)
+	for _, tc := range []struct {
+		name     string
+		identity report.Identity
+		want     error
+	}{
+		{"missing", report.Identity{NodeID: 99999, VersionID: first.VersionID, SHA256: first.SHA256}, ErrReportSelectionChanged},
+		{"noncurrent", report.Identity{NodeID: first.NodeID, VersionID: second.VersionID, SHA256: first.SHA256}, ErrReportSelectionChanged},
+		{"wrong hash", report.Identity{NodeID: first.NodeID, VersionID: first.VersionID, SHA256: second.SHA256}, report.ErrInvalidSelection},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			bad := request
+			bad.SelectedDocuments = &report.SelectedDocuments{Documents: []report.Identity{tc.identity, second}}
+			_, err := capture(bad)
+			require.ErrorIs(t, err, tc.want)
+		})
+	}
+	_, _, err = s.ReplaceContent(ctx, alpha.ID, alpha.Revision, alpha.BlobHash, alpha.Size, "text/plain")
+	require.NoError(t, err)
+	_, err = capture(request)
+	require.ErrorIs(t, err, ErrReportSelectionChanged)
+	require.Equal(t, []bool{true, false}, frame.Members[0].RawMatches)
+	request.SelectedDocuments = &report.SelectedDocuments{Documents: []report.Identity{second}}
+	_, _, err = s.Trash(ctx, beta.ID, beta.Revision)
+	require.NoError(t, err)
+	_, err = capture(request)
+	require.ErrorIs(t, err, ErrReportSelectionChanged)
 }

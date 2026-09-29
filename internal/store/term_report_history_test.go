@@ -29,6 +29,29 @@ func TestTermReportHistoryRetainsReusableRequestAcrossMetadataRoundTrip(t *testi
 	require.Equal(t, 1, page.Total)
 	require.Equal(t, item, page.Items[0])
 
+	for index, name := range []string{"removed-alpha.txt", "live-alpha.txt"} {
+		node, err := s.CreateFile(ctx, s.RootID(), name, testSHA256([]byte(name)), 10, "text/plain")
+		require.NoError(t, err)
+		receipt := item
+		receipt.Request.AllDocuments = false
+		receipt.Request.CoverageMode = "available_only"
+		receipt.Request.SelectedDocuments = &report.SelectedDocuments{Documents: []report.Identity{{NodeID: node.ID, VersionID: node.CurrentVersionID, SHA256: node.BlobHash}}}
+		receipt.Summary.ID = fmt.Sprintf("%048x", index+1)
+		receipt.Summary.ObservedAt = now.Add(time.Duration(index+1) * time.Second)
+		receipt.Summary.ExpiresAt = receipt.Summary.ObservedAt.Add(30 * time.Minute)
+		require.NoError(t, s.SaveTermReportHistory(ctx, receipt))
+		if index == 0 {
+			_, _, err = s.Trash(ctx, node.ID, node.Revision)
+			require.NoError(t, err)
+			deleted, err := s.TrashEmpty(ctx, 0, true)
+			require.NoError(t, err)
+			require.Equal(t, int64(1), deleted.Deleted)
+		}
+	}
+	page, err = s.ListTermReportHistory(ctx, 0, 50)
+	require.NoError(t, err)
+	require.Equal(t, 3, page.Total)
+
 	var exported bytes.Buffer
 	require.NoError(t, s.ExportMetadata(ctx, &exported))
 	require.Contains(t, exported.String(), `"type":"term_report_history"`)
@@ -37,6 +60,21 @@ func TestTermReportHistoryRetainsReusableRequestAcrossMetadataRoundTrip(t *testi
 	restoredPage, err := restored.ListTermReportHistory(ctx, 0, 50)
 	require.NoError(t, err)
 	require.Equal(t, page, restoredPage)
+	budget := report.NewBudget(8 << 20)
+	defer func() { _ = budget.Close() }()
+	for _, receipt := range restoredPage.Items {
+		if receipt.Request.SelectedDocuments == nil {
+			continue
+		}
+		frame, err := restored.MaterializeTermReportFrame(ctx, receipt.Request, report.CoverageSelection{Configuration: "unconfigured"}, budget, budget)
+		if receipt.Summary.ID == fmt.Sprintf("%048x", 1) {
+			require.ErrorIs(t, err, ErrReportSelectionChanged)
+		} else {
+			require.NoError(t, err)
+			require.Len(t, frame.Members, 1)
+			require.Equal(t, receipt.Request.SelectedDocuments.Documents[0], frame.Members[0].Identity)
+		}
+	}
 }
 
 func TestTermReportHistoryBoundsRetentionAcrossRestore(t *testing.T) {

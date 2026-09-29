@@ -147,3 +147,35 @@ it("loads a prior request, changes its source, and sends a fresh run without old
     { target: { value: "beta" } });
   expect(await screen.findByText(/Draft changed; the counts and downloads below belong to the previous frozen run/)).toBeTruthy();
 });
+
+it("keeps selected history fixed, clears review choices, and explains date-scoped counts and conflicts", async () => {
+  vi.stubGlobal("ResizeObserver", class { observe() {} unobserve() {} disconnect() {} });
+  const documents = [
+    { node_id: 1, version_id: "20000000-0000-4000-8000-000000000001", sha256: "a".repeat(64) },
+    { node_id: 2, version_id: "20000000-0000-4000-8000-000000000002", sha256: "b".repeat(64) },
+  ];
+  const submitted: unknown[] = [];
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (url, init) => {
+    if (String(url).startsWith("/api/v1/collections?")) return json({ items: [], total: 0 });
+    if (init?.method === "GET") return json({ items: [{ request: { ...original, all_documents: false,
+      selected_documents: { documents }, date_choices: [{ action: "select" }] }, summary: oldSummary }], total: 1 });
+    submitted.push(JSON.parse(String(init?.body)));
+    return submitted.length === 1 ? json(oldSummary) : new Response(JSON.stringify({ code: "report_selection_changed", detail: "Selection changed" }),
+      { status: 409, headers: { "Content-Type": "application/problem+json" } });
+  });
+  render(TermReportDrawer, { session: "session", initialExpression: "", onclose: vi.fn(), onauthfailure: vi.fn() });
+  await fireEvent.click(await screen.findByRole("button", { name: "Use as draft" }));
+  expect(screen.getAllByText(/Selected documents \(2\)/).length).toBeGreaterThan(0);
+  expect(screen.queryByRole("radio", { name: "All documents" })).toBeNull();
+  await fireEvent.click(screen.getByRole("button", { name: "Create export" }));
+  await waitFor(() => expect(submitted).toHaveLength(1));
+  expect(submitted[0]).toMatchObject({ all_documents: false, selected_documents: { documents }, date_choices: [] });
+  expect(await screen.findByText(/1 scoped · 1 searchable/)).toBeTruthy();
+  expect(screen.getByText(/Date eligibility can reduce the counted scope/)).toBeTruthy();
+  await fireEvent.input(screen.getByRole("textbox", { name: "Expression for term 1" }), { target: { value: "beta" } });
+  expect(await screen.findByText(/Draft changed; the counts and downloads below belong to the previous frozen run/)).toBeTruthy();
+  await waitFor(() => expect(screen.getByRole("button", { name: "Create export" }).hasAttribute("disabled")).toBe(false));
+  await fireEvent.click(screen.getByRole("button", { name: "Create export" }));
+  expect(await screen.findByRole("alert")).toHaveProperty("textContent", "Selected documents changed. Refresh the workspace and reselect the intended current versions.");
+  expect(submitted).toHaveLength(2);
+});

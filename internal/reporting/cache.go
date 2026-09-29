@@ -361,6 +361,9 @@ func (c *Cache) Request(owner, id string) (report.Request, error) {
 	request.CollectionIDs = slices.Clone(request.CollectionIDs)
 	request.Terms = slices.Clone(request.Terms)
 	request.DateChoices = nil
+	if selected := request.SelectedDocuments; selected != nil {
+		request.SelectedDocuments = &report.SelectedDocuments{Documents: slices.Clone(selected.Documents)}
+	}
 	return request, nil
 }
 

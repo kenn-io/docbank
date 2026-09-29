@@ -5051,6 +5051,10 @@ export interface RenditionWindowRequest {
   vault_id: string;
 }
 
+export interface SelectedDocuments {
+  documents?: Identity[];
+}
+
 export interface Term {
   dates: DateRange;
   expression: string;
@@ -5067,6 +5071,7 @@ export interface Request {
   date_choices?: DateChoice[];
   numeric_date_order?: string;
   profile?: string;
+  selected_documents?: SelectedDocuments;
   source_timezone?: string;
   terms: Term[];
   timezone: string;

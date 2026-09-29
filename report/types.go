@@ -16,6 +16,11 @@ type Identity struct {
 	SHA256    string `json:"sha256"`
 }
 
+// SelectedDocuments fixes report scope to exact current document versions.
+type SelectedDocuments struct {
+	Documents []Identity `json:"documents,omitempty"`
+}
+
 // DateRange is an inclusive pair of literal YYYY-MM-DD dates in the report timezone.
 type DateRange struct {
 	Start string `json:"start"`
@@ -46,23 +51,24 @@ type DateChoice struct {
 
 // Request is the durable v1 search-export request shared by recent export history, run
 // receipts, and offline bundles. Version must be 1. Exactly one scope is required:
-// AllDocuments or a nonempty CollectionIDs list. Timezone is an explicit IANA
+// AllDocuments, a nonempty CollectionIDs list, or SelectedDocuments. Timezone is an explicit IANA
 // timezone; SourceTimezone and NumericDateOrder (MDY or DMY) resolve missing source
 // timezone and numeric-date ambiguity. CoverageMode defaults to strict, while
 // available_only permits incomplete evidence. Terms retain caller order and fixed
 // date cutoffs. DateChoices bind reviewed decisions to the captured evidence.
 // NormalizeRequest validates this contract without consulting a vault.
 type Request struct {
-	Version          int          `json:"version"`
-	Profile          string       `json:"profile,omitempty"`
-	AllDocuments     bool         `json:"all_documents"`
-	CollectionIDs    []string     `json:"collection_ids,omitempty"`
-	Timezone         string       `json:"timezone"`
-	SourceTimezone   string       `json:"source_timezone,omitempty"`
-	NumericDateOrder string       `json:"numeric_date_order,omitempty"`
-	CoverageMode     string       `json:"coverage_mode"`
-	Terms            []Term       `json:"terms"`
-	DateChoices      []DateChoice `json:"date_choices,omitempty"`
+	SelectedDocuments *SelectedDocuments `json:"selected_documents,omitempty"`
+	Version           int                `json:"version"`
+	Profile           string             `json:"profile,omitempty"`
+	AllDocuments      bool               `json:"all_documents"`
+	CollectionIDs     []string           `json:"collection_ids,omitempty"`
+	Timezone          string             `json:"timezone"`
+	SourceTimezone    string             `json:"source_timezone,omitempty"`
+	NumericDateOrder  string             `json:"numeric_date_order,omitempty"`
+	CoverageMode      string             `json:"coverage_mode"`
+	Terms             []Term             `json:"terms"`
+	DateChoices       []DateChoice       `json:"date_choices,omitempty"`
 }
 
 // Locator identifies retained date evidence. Text offsets are zero-based bytes

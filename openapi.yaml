@@ -12484,6 +12484,8 @@ components:
           type: string
         profile:
           type: string
+        selected_documents:
+          $ref: "#/components/schemas/SelectedDocuments"
         source_timezone:
           type: string
         terms:
@@ -13182,6 +13184,18 @@ components:
       x-go-type-import:
         path: go.kenn.io/docbank/internal/api
         name: api
+    SelectedDocuments:
+      additionalProperties: false
+      properties:
+        documents:
+          items:
+            $ref: "#/components/schemas/Identity"
+          type: array
+      type: object
+      x-go-type: report.SelectedDocuments
+      x-go-type-import:
+        path: go.kenn.io/docbank/report
+        name: report
     SetCollectionLabelRequest:
       additionalProperties: false
       properties:

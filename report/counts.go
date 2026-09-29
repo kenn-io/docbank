@@ -34,6 +34,9 @@ func Calculate(ctx context.Context, budget Budget, frame Frame) (_ Result, err e
 	if err != nil {
 		return Result{}, err
 	}
+	if err := validateSelectedMembers(request, frame.Members); err != nil {
+		return Result{}, err
+	}
 	if len(frame.Members) > 50000 || len(frame.Relations) > 100000 {
 		return Result{}, fmt.Errorf("%w: report population exceeds limit", ErrReportLimit)
 	}
@@ -99,7 +102,7 @@ func Calculate(ctx context.Context, budget Budget, frame Frame) (_ Result, err e
 		if len(member.RawMatches) != terms {
 			return Result{}, fmt.Errorf("member %d has %d match bits, need %d", index, len(member.RawMatches), terms)
 		}
-		if !request.AllDocuments {
+		if len(request.CollectionIDs) > 0 {
 			matched := false
 			for _, witness := range member.CollectionWitnesses {
 				if selectedCollections[witness.CollectionID] && witness.MembershipID != "" && validSHA256(witness.MembershipSHA256) {

@@ -618,6 +618,18 @@ All paths below start with `/api/v1/search-exports` and require authentication.
 | `GET /{id}/bundle` | API-key download of `search-export.zip`. |
 | `POST /{id}/download` | Browser-session JSON `{"format":"csv"}` or `{"format":"bundle"}`; returns a one-use download `url`. |
 
+Create accepts all-document, collection, or exact current-document scope. The
+selected identities are admitted together in the same read observation as the
+report. Stale selection returns `409 report_selection_changed`; malformed
+selection or a wrong hash for a current version returns
+`422 invalid_report_request`. Selected-member overflow returns `413 report_limit`,
+while collection-count overflow retains 422. See the guide for null/empty
+semantics and identity requirements.
+
+History pages are also bounded to 16 MiB; advance `offset` by the number of
+returned items when the byte limit shortens a page. Source deletion does not
+remove a receipt or revoke an already captured report.
+
 The create and history paths have no trailing slash. Date pages are limited to
 1,000 candidates and 1 MiB even when the requested member limit is larger.
 Direct downloads include `Content-Length` and `X-Docbank-Report-SHA256` for the

@@ -155,7 +155,8 @@
   };
 
   type Panel =
-    | { kind: "history" | "versions" | "provenance" | "jobs" | "auditEvidence" | "storage" | "backups" | "bates" | "export" | "termReports" | "savedQueries" | "collections" | "trash" | "tagCatalog" }
+    | { kind: "history" | "versions" | "provenance" | "jobs" | "auditEvidence" | "storage" | "backups" | "bates" | "export" | "savedQueries" | "collections" | "trash" | "tagCatalog" }
+    | { kind: "termReports"; documents?: generated.Identity[] }
     | { kind: "processing"; target: Row; intent: "similar" | null; scope: string[] }
     | { kind: "rendition"; target: { attachmentID: string; path: string } }
     | { kind: "upload" | "mailbox" | "loadFile"; target: Node }
@@ -1464,6 +1465,18 @@
     changeSnapshotQuery(parseQuery(JSON.stringify({ ...query, sort: { field, direction } })));
   }
 
+  function openSelectedReport(): void {
+    const documents = snapshotActive
+      ? (snapshotPage?.rows.filter(row => snapshot.selection.has(row.node_id)) ?? []).map(row => ({ node_id: row.node_id, version_id: row.content_version_id, sha256: row.blob_hash }))
+      : sortedRows.filter(row => bulkSelection.selectedIDs.has(row.node.id)).map(({ node }) => ({ node_id: node.id, version_id: node.kind === "file" ? node.current_version_id ?? "" : "", sha256: node.blob_hash ?? "" }));
+    const selectedCount = snapshotActive ? snapshot.selection.size : bulkSelection.selectedIDs.size;
+    if (!documents.length || documents.length !== selectedCount || documents.some(id => id.node_id <= 0 || !id.version_id || !id.sha256)) {
+      handleFailure(new Error("Select current documents with complete version identities, then try again."));
+      return;
+    }
+    activePanel = { kind: "termReports", documents };
+  }
+
   function openExport(selectionOnly = false): void {
     if (exportHasJob) { activePanel = { kind: "export" }; return; }
     try {
@@ -2699,6 +2712,7 @@
         ontags={() => openSnapshotBatchTags()}
         onwholequerytags={() => { snapshot.actionError = ""; snapshot.actionsOpen = true; }}
         onexport={() => openExport(true)}
+        onreport={openSelectedReport}
         onexportquery={() => openExport()}
       />
     {/if}
@@ -2713,6 +2727,7 @@
         tagsDisabled={loading || pendingTagHotkey !== ""}
         oncsv={exportPageCSV}
         onexport={() => openExport(true)}
+        onreport={openSelectedReport}
       />
     {/if}
     </div>
@@ -2830,7 +2845,7 @@
         {/key}
       {/if}
       {#if panel.kind === "termReports"}
-        <TermReportDrawer session={webSession} initialExpression={searchQuery} onclose={closePanel(panel)} onauthfailure={handleFailure} />
+        <TermReportDrawer session={webSession} initialExpression={searchQuery} initialDocuments={panel.documents} onclose={closePanel(panel)} onauthfailure={handleFailure} />
       {/if}
       {#if panel.kind === "storage"}
         <StorageDrawer

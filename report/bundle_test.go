@@ -313,3 +313,49 @@ func resealBundle(t *testing.T, packet []byte, edit func(map[string][]byte, *pac
 	}
 	return changed.Bytes()
 }
+
+func TestVerifyBundleSelectedMembership(t *testing.T) {
+	for _, change := range []string{"unchanged", "missing", "extra", "substituted"} {
+		t.Run(change, func(t *testing.T) {
+			budget := NewBudget(4 << 20)
+			defer func() { _ = budget.Close() }()
+			f := selectedFrame()
+			original := f.Request
+			switch change {
+			case "missing":
+				f.Members = f.Members[:1]
+			case "extra":
+				m := f.Members[1]
+				m.Identity.NodeID = 3
+				m.Identity.VersionID = "20000000-0000-4000-8000-000000000003"
+				f.Members = append(f.Members, m)
+			case "substituted":
+				f.Members[1].Identity.VersionID = "20000000-0000-4000-8000-000000000003"
+			}
+			f.Request.SelectedDocuments = &SelectedDocuments{}
+			for _, m := range f.Members {
+				f.Request.SelectedDocuments.Documents = append(f.Request.SelectedDocuments.Documents, m.Identity)
+			}
+			result, err := Calculate(t.Context(), budget, f)
+			if err != nil {
+				t.Fatal(err)
+			}
+			packet, err := BuildBundle(t.Context(), budget, result)
+			if err != nil {
+				t.Fatal(err)
+			}
+			// Counts, CSV and evidence describe the changed population. Only the fixed
+			// manifest selection disagrees; resealing makes all inventory digests valid.
+			packet = resealBundle(t, packet, func(_ map[string][]byte, m *packetManifest) { m.Request = original })
+			_, verifyErr := VerifyBundle(t.Context(), budget, bytes.NewReader(packet), int64(len(packet)))
+			csv, extractErr := ExtractVerifiedCSV(t.Context(), budget, bytes.NewReader(packet), int64(len(packet)))
+			if change == "unchanged" {
+				if verifyErr != nil || extractErr != nil || len(csv) == 0 {
+					t.Fatalf("valid packet: %v %v", verifyErr, extractErr)
+				}
+			} else if !errors.Is(verifyErr, ErrInvalidPacket) || !errors.Is(extractErr, ErrInvalidPacket) || csv != nil {
+				t.Fatalf("unequal selection accepted: verify=%v extract=%v", verifyErr, extractErr)
+			}
+		})
+	}
+}

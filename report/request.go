@@ -1,12 +1,18 @@
 package report
 
 import (
+	"cmp"
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 	"unicode/utf8"
+
+	"github.com/google/uuid"
+
+	"go.kenn.io/docbank/internal/canonical"
 )
 
 const (
@@ -14,6 +20,8 @@ const (
 	maxExpressionRunes = 8192
 	maxChoices         = 50000
 )
+
+var ErrInvalidSelection = errors.New("invalid report selection")
 
 // NormalizeRequest validates all request-level bounds without changing the
 // caller's row order, expressions, or date cutoffs. Store-dependent identities
@@ -25,8 +33,25 @@ func NormalizeRequest(r Request) (Request, error) {
 	if len(r.Profile) > 128 || strings.TrimSpace(r.Profile) != r.Profile {
 		return Request{}, errors.New("invalid report processing profile")
 	}
-	if r.AllDocuments == (len(r.CollectionIDs) > 0) {
-		return Request{}, errors.New("select all documents or at least one collection")
+	scopes := 0
+	if r.AllDocuments {
+		scopes++
+	}
+	if len(r.CollectionIDs) > 0 {
+		scopes++
+	}
+	if r.SelectedDocuments != nil {
+		scopes++
+	}
+	if scopes != 1 {
+		return Request{}, errors.New("select all documents, collections, or exact documents")
+	}
+	if r.SelectedDocuments != nil {
+		selected, err := normalizeSelectedDocuments(r.SelectedDocuments.Documents)
+		if err != nil {
+			return Request{}, err
+		}
+		r.SelectedDocuments = selected
 	}
 	if len(r.CollectionIDs) > 50000 {
 		return Request{}, errors.New("too many collections")
@@ -99,6 +124,27 @@ func NormalizeRequest(r Request) (Request, error) {
 	return r, nil
 }
 
+func normalizeSelectedDocuments(documents []Identity) (*SelectedDocuments, error) {
+	if len(documents) > 50000 {
+		return nil, fmt.Errorf("%w: too many selected documents", ErrReportLimit)
+	}
+	if len(documents) == 0 {
+		return nil, fmt.Errorf("%w: select at least one document", ErrInvalidSelection)
+	}
+	seen := make(map[int64]bool, len(documents))
+	for _, id := range documents {
+		version, err := uuid.Parse(id.VersionID)
+		if id.NodeID <= 0 || seen[id.NodeID] || err != nil || version.String() != id.VersionID ||
+			version.Version() != 4 || version.Variant() != uuid.RFC4122 || !canonical.IsSHA256Hex(id.SHA256) {
+			return nil, fmt.Errorf("%w: invalid or repeated document identity", ErrInvalidSelection)
+		}
+		seen[id.NodeID] = true
+	}
+	selected := &SelectedDocuments{Documents: slices.Clone(documents)}
+	slices.SortFunc(selected.Documents, func(a, b Identity) int { return cmp.Compare(a.NodeID, b.NodeID) })
+	return selected, nil
+}
+
 func validateTimezone(zone string) error {
 	if zone == "" || zone == "Local" || strings.TrimSpace(zone) != zone {
 		return fmt.Errorf("invalid timezone %q", zone)
@@ -163,4 +209,26 @@ func validSHA256(value string) bool {
 	}
 	_, err := hex.DecodeString(value)
 	return err == nil
+}
+
+// validateSelectedMembers requires the whole normalized selection exactly once.
+func validateSelectedMembers(request Request, members []Member) error {
+	if request.SelectedDocuments == nil {
+		return nil
+	}
+	documents := request.SelectedDocuments.Documents
+	if len(documents) != len(members) {
+		return fmt.Errorf("%w: selected member count differs", ErrInvalidSelection)
+	}
+	remaining := make(map[Identity]bool, len(documents))
+	for _, id := range documents {
+		remaining[id] = true
+	}
+	for _, member := range members {
+		if !remaining[member.Identity] {
+			return fmt.Errorf("%w: selected member identity differs", ErrInvalidSelection)
+		}
+		delete(remaining, member.Identity)
+	}
+	return nil
 }

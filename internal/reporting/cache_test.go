@@ -13,6 +13,7 @@ import (
 
 func cacheFixture(now time.Time, reads *int) *Service {
 	member := testMember()
+	member.Identity.VersionID = "20000000-0000-4000-8000-000000000001"
 	member.Candidates = []report.DateCandidate{{
 		ID: "date", Document: member.Identity, Role: "imported", SourceClass: "vault_addition",
 		Value: "2024-05-06", Precision: "date",
@@ -60,9 +61,30 @@ func TestCacheOwnerBoundImmutableRevisionAndExpiry(t *testing.T) {
 	cache := NewCache(func() time.Time { return clock }, budget)
 	reads := 0
 	svc := cacheFixture(now, &reads)
-	summary, err := cache.Create(context.Background(), "owner-a", svc, testRequest())
+	request := testRequest()
+	request.AllDocuments = false
+	capturedIdentity := report.Identity{NodeID: 1, VersionID: "20000000-0000-4000-8000-000000000001", SHA256: strings.Repeat("a", 64)}
+	request.SelectedDocuments = &report.SelectedDocuments{Documents: []report.Identity{capturedIdentity}}
+	summary, err := cache.Create(context.Background(), "owner-a", svc, request)
 	if err != nil || summary.State != "complete" || len(summary.Counts) != 1 || summary.Counts[0].Hits != 1 {
 		t.Fatalf("summary=%+v err=%v", summary, err)
+	}
+	request.SelectedDocuments.Documents[0].NodeID = 99
+	reusable, err := cache.Request("owner-a", summary.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reusable.SelectedDocuments.Documents[0] != capturedIdentity {
+		t.Fatal("caller changed captured selection")
+	}
+	reusable.SelectedDocuments.Documents[0].NodeID = 88
+	reusable.SelectedDocuments.Documents = nil
+	reread, err := cache.Request("owner-a", summary.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(reread.SelectedDocuments.Documents) != 1 || reread.SelectedDocuments.Documents[0] != capturedIdentity {
+		t.Fatal("returned request changed captured selection")
 	}
 	if _, err := cache.Summary("owner-b", summary.ID); !errors.Is(err, ErrUnavailable) {
 		t.Fatalf("cross-owner lookup: %v", err)
