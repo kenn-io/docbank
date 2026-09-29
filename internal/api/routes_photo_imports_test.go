@@ -92,7 +92,7 @@ func TestPhotoImportChoiceAndUncommittedCandidateRoute(t *testing.T) {
 	assert.Contains(t, body, `"source_path"`)
 }
 
-func TestPhotoImportCancelRetriesStaleRevision(t *testing.T) {
+func TestPhotoImportCancelRejectsStaleRevision(t *testing.T) {
 	ts, catalog := newTestServer(t, nil)
 	run, err := catalog.StartPhotoImportRun(t.Context(), filepath.Join(t.TempDir(), "camera"), "/photos", 0)
 	require.NoError(t, err)
@@ -100,12 +100,11 @@ func TestPhotoImportCancelRetriesStaleRevision(t *testing.T) {
 	require.NoError(t, err)
 	response, body := do(t, ts, http.MethodPost, "/api/v1/photos/imports/"+run.ID+"/cancel",
 		map[string]string{"If-Match": "\"1\""}, nil)
-	require.Equal(t, http.StatusOK, response.StatusCode, body)
-	var cancelled api.PhotoImportRun
-	require.NoError(t, json.Unmarshal([]byte(body), &cancelled))
-	assert.Equal(t, run.ID, cancelled.ID)
-	assert.Equal(t, "cancel-requested", cancelled.State)
-	assert.True(t, cancelled.CancelRequested)
+	require.Equal(t, http.StatusPreconditionFailed, response.StatusCode, body)
+	current, err := catalog.PhotoImportRun(t.Context(), run.ID)
+	require.NoError(t, err)
+	assert.Equal(t, store.PhotoImportStateRunning, current.State)
+	assert.False(t, current.CancelRequested)
 }
 
 func TestPhotoImportBrowserRedactsRunAndAllowsOnlyReadCancel(t *testing.T) {
