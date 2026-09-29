@@ -51,25 +51,26 @@ type webDownloadRegistry struct {
 }
 
 type webDownloadTicket struct {
-	reportID          string
-	reportFormat      string
-	path              string
-	name              string
-	mediaType         string
-	versionID         string
-	blobHash          string
-	size              int64
-	owner             string
-	photoOwnerID      string
-	photoOwnerBound   bool
-	photoNoOwner      bool
-	planID            string
-	batesAllocationID string
-	expiresAt         time.Time
-	timer             *time.Timer
-	archiveFile       *os.File
-	releaseArchive    func()
-	planFingerprint   string
+	reportID                string
+	reportFormat            string
+	path                    string
+	name                    string
+	mediaType               string
+	versionID               string
+	blobHash                string
+	size                    int64
+	owner                   string
+	photoOwnerID            string
+	photoOwnerBound         bool
+	photoNoOwner            bool
+	planID                  string
+	batesAllocationID       string
+	packageExportVersionIDs []string
+	expiresAt               time.Time
+	timer                   *time.Timer
+	archiveFile             *os.File
+	releaseArchive          func()
+	planFingerprint         string
 }
 
 func (t webDownloadTicket) release() {
@@ -517,6 +518,26 @@ func registerWebDownload(
 				writeError(w, NewError(http.StatusNotFound, "download_not_found",
 					"the Bates export is no longer available to this photo owner"))
 				return
+			}
+		}
+		if len(ticket.packageExportVersionIDs) > 0 {
+			visibilityCtx := r.Context()
+			if ticket.photoOwnerBound {
+				visibilityCtx = store.WithPhotoOwnerBinding(visibilityCtx, ticket.photoOwnerID,
+					ticket.photoOwnerBound, ticket.photoNoOwner || ticket.photoOwnerID == "")
+			} else {
+				visibilityCtx = store.WithNoPhotoOwner(visibilityCtx)
+			}
+			for _, versionID := range ticket.packageExportVersionIDs {
+				if err := d.Store.CheckPhotoVisibilityForVersion(visibilityCtx, versionID); err != nil {
+					if errors.Is(err, store.ErrNotFound) {
+						writeError(w, NewError(http.StatusNotFound, "download_not_found",
+							"the package export is no longer available to this photo owner"))
+					} else {
+						writeError(w, webDownloadProblem(err))
+					}
+					return
+				}
 			}
 		}
 

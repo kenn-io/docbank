@@ -61,6 +61,78 @@ func TestPackageExportIssuesOneUseVerifiedArchive(t *testing.T) {
 	require.Equal(t, http.StatusNotFound, second.StatusCode)
 }
 
+func TestPhotoVisibilityPackageExportTicket(t *testing.T) {
+	srv, catalog := newPackageTestServer(t)
+	ctx := t.Context()
+	ownerA, err := catalog.EnsureDefaultPhotoOwner(ctx)
+	require.NoError(t, err)
+	ownerB, err := catalog.CreatePhotoOwner(ctx, "Package export B")
+	require.NoError(t, err)
+	create := func(fileCtx context.Context, name, content, mediaType string) storepkg.Node {
+		hash, size, writeErr := catalog.Blobs.Write(strings.NewReader(content))
+		require.NoError(t, writeErr)
+		node, createErr := catalog.CreateFile(fileCtx, catalog.RootID(), name, hash, size, mediaType)
+		require.NoError(t, createErr)
+		return node
+	}
+	rawA := create(storepkg.WithPhotoOwner(ctx, ownerA.ID), "package-export-a.cr2", "raw A", "application/octet-stream")
+	_, err = catalog.PromotePhotoNode(storepkg.WithPhotoOwner(ctx, ownerA.ID), rawA.ID, nil, storepkg.PhotoRoleRAW, "")
+	require.NoError(t, err)
+	rawB := create(storepkg.WithPhotoOwner(ctx, ownerB.ID), "package-export-b.cr2", "raw B", "application/octet-stream")
+	assetB, err := catalog.PromotePhotoNode(storepkg.WithPhotoOwner(ctx, ownerB.ID), rawB.ID, nil, storepkg.PhotoRoleRAW, "")
+	require.NoError(t, err)
+	sidecar := create(ctx, "package-export-shared.xmp", "sidecar", "application/xml")
+	occurrence := strings.Repeat("e", 32)
+	snapshot, err := catalog.SealCollectionSnapshot(ctx, storepkg.SnapshotSealRequest{
+		SnapshotID: uuid.NewString(), Members: []storepkg.CollectionSnapshotMember{
+			{Ordinal: 1, OccurrenceID: occurrence, NodeID: rawA.ID, ContentVersionID: rawA.CurrentVersionID,
+				BlobSHA256: rawA.BlobHash, Size: rawA.Size, FamilyID: occurrence, FamilyOrder: 1,
+				DisplayName: rawA.Name, FrozenFieldsJSON: "{}", DocumentKind: "other"},
+			{Ordinal: 2, OccurrenceID: occurrence + "-sidecar", ParentOccurrenceID: occurrence,
+				NodeID: sidecar.ID, ContentVersionID: sidecar.CurrentVersionID, BlobSHA256: sidecar.BlobHash,
+				Size: sidecar.Size, FamilyID: occurrence, FamilyOrder: 2, DisplayName: sidecar.Name,
+				FrozenFieldsJSON: "{}", DocumentKind: "other"},
+		},
+	})
+	require.NoError(t, err)
+	ownerHeaders := map[string]string{"X-Docbank-Owner": ownerA.ID}
+	settings, err := catalog.PhotoSettings(ctx)
+	require.NoError(t, err)
+	require.NotNil(t, settings.DefaultOwnerID)
+	require.Equal(t, ownerA.ID, *settings.DefaultOwnerID)
+	issue := func(headers map[string]string) api.PackageExportTicket {
+		created := srv.call(t, http.MethodPost, "/api/v1/packages/exports", mustPackageJSON(t, api.PackageExportRequest{
+			SnapshotID: snapshot.SnapshotID, ProfileID: "export-csv-natives-v1",
+		}), headers)
+		require.Equal(t, http.StatusCreated, created.Code, created.Body.String())
+		var ticket api.PackageExportTicket
+		require.NoError(t, json.Unmarshal(created.Body.Bytes(), &ticket))
+		require.Equal(t, 2, ticket.Records)
+		return ticket
+	}
+
+	unchanged := issue(ownerHeaders)
+	response, body := do(t, srv.ts, http.MethodGet, unchanged.URL, nil, nil)
+	require.Equal(t, http.StatusOK, response.StatusCode, body)
+	require.NotEmpty(t, response.Header.Get("Content-Digest"))
+
+	delayed := issue(nil)
+	rawFileID := assetB.Files[0].ID
+	_, err = catalog.AttachPhotoFile(storepkg.WithPhotoOwner(ctx, ownerB.ID), assetB.ID, assetB.Revision,
+		sidecar.ID, storepkg.PhotoRoleSidecar, &rawFileID)
+	require.NoError(t, err)
+	require.ErrorIs(t, catalog.CheckPhotoVisibilityForVersion(storepkg.WithPhotoOwner(ctx, ownerA.ID), sidecar.CurrentVersionID), storepkg.ErrNotFound)
+	response, body = do(t, srv.ts, http.MethodGet, delayed.URL, nil, nil)
+	require.Equal(t, http.StatusNotFound, response.StatusCode, body)
+	assert.Empty(t, response.Header.Get("Content-Digest"))
+	assert.Empty(t, response.Header.Get(api.BlobHashHeader))
+	assert.NotContains(t, body, "PK")
+
+	entries, err := os.ReadDir(filepath.Join(filepath.Dir(catalog.DBPath), "web-downloads"))
+	require.NoError(t, err)
+	assert.Empty(t, entries)
+}
+
 func TestPackageExportMissingRequiredRepresentation(t *testing.T) {
 	srv, catalog := newPackageTestServer(t)
 	node := createFileWithChecksum(t, catalog, "synthetic.txt", "synthetic content")

@@ -660,6 +660,7 @@ func TestPhotoVisibilityRouteCoverage(t *testing.T) {
 		"assignPackageCustodian":             "TestPackageCustodianAndPeopleRoutesReturnCandidatesBeforeExactMutation",
 		"listPackageCustodians":              "TestPackageCustodianAndPeopleRoutesReturnCandidatesBeforeExactMutation",
 		"listPackageMembers":                 "TestPackageBrowseRoutesPreserveScopedAuthority",
+		"createPackageExport":                "TestPhotoVisibilityPackageExportTicket",
 		"getPackageRecord":                   "TestPhotoVisibilityPackageRecords",
 		"listPackageTimelineInputs":          "TestPhotoVisibilityPackageRecords",
 		"beginPackageContainer":              "TestPackageContainerHTTPUploadAndSeal",
@@ -801,6 +802,8 @@ func TestPhotoVisibilityRouteCoverage(t *testing.T) {
 		{name: "package-records", helper: "TestPhotoVisibilityPackageRecords",
 			operations: []string{"getPackageRecord", "listPackageTimelineInputs"},
 			run:        TestPhotoVisibilityPackageRecords},
+		{name: "package-export-ticket", helper: "TestPhotoVisibilityPackageExportTicket",
+			operations: []string{"createPackageExport"}, run: TestPhotoVisibilityPackageExportTicket},
 	} {
 		t.Run("fixture/"+fixtureCase.name, func(t *testing.T) {
 			for _, operationID := range fixtureCase.operations {

@@ -9,6 +9,7 @@ import (
 
 	"github.com/danielgtaylor/huma/v2"
 	"go.kenn.io/docbank/internal/processing"
+	"go.kenn.io/docbank/internal/store"
 )
 
 func registerPackageExportRoute(api huma.API, d Deps, downloads *webDownloadRegistry, sessions *webSessionRegistry) {
@@ -21,6 +22,14 @@ func registerPackageExportRoute(api huma.API, d Deps, downloads *webDownloadRegi
 		if err != nil {
 			return nil, err
 		}
+		photoOwnerID, photoOwnerBound, photoNoOwner, err := d.Store.PhotoOwnerForRequest(ctx)
+		if err != nil {
+			return nil, FromStoreError(err)
+		}
+		if photoOwnerBound && photoOwnerID == "" && !photoNoOwner {
+			photoNoOwner = true
+		}
+		visibilityCtx := store.WithPhotoOwnerBinding(ctx, photoOwnerID, photoOwnerBound, photoNoOwner)
 		file, stagedPath, err := downloads.createStagingFile()
 		if err != nil {
 			return nil, FromStoreError(err)
@@ -32,7 +41,7 @@ func registerPackageExportRoute(api huma.API, d Deps, downloads *webDownloadRegi
 				_ = os.Remove(stagedPath)
 			}
 		}()
-		built, err := processing.WriteLoadFileExport(ctx, d.Store, d.Blobs, processing.LoadFileExportRequest{
+		built, err := processing.WriteLoadFileExport(visibilityCtx, d.Store, d.Blobs, processing.LoadFileExportRequest{
 			SnapshotID: in.Body.SnapshotID, ProfileID: in.Body.ProfileID,
 			SourcePackageID: in.Body.SourcePackageID, BatesAllocationID: in.Body.BatesAllocationID,
 		}, file)
@@ -49,9 +58,18 @@ func registerPackageExportRoute(api huma.API, d Deps, downloads *webDownloadRegi
 		if _, err = file.Seek(0, io.SeekStart); err != nil {
 			return nil, FromStoreError(err)
 		}
+		if len(verified.Crosswalk.Members) == 0 {
+			return nil, FromStoreError(store.ErrPackageConflict)
+		}
 		name := fmt.Sprintf("loadfile-%s.zip", in.Body.SnapshotID)
+		memberVersions := make([]string, 0, len(verified.Crosswalk.Members))
+		for _, member := range verified.Crosswalk.Members {
+			memberVersions = append(memberVersions, member.ContentVersionID)
+		}
 		ticket := webDownloadTicket{path: stagedPath, name: name, mediaType: "application/zip",
-			blobHash: verified.Receipt.ArchiveSHA256, size: verified.Receipt.Size, owner: owner, archiveFile: file,
+			blobHash: verified.Receipt.ArchiveSHA256, size: verified.Receipt.Size, owner: owner,
+			photoOwnerID: photoOwnerID, photoOwnerBound: photoOwnerBound, photoNoOwner: photoNoOwner,
+			packageExportVersionIDs: memberVersions, archiveFile: file,
 			releaseArchive: func() { _ = file.Close(); _ = os.Remove(stagedPath) }}
 		var token string
 		if browserSessionRequest(ctx) {
