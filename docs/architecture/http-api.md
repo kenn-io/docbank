@@ -948,10 +948,8 @@ settings writes are available through HTTP and the CLI; MCP exposes them only
 as reads in this slice.
 
 Person reads return the canonical row and, for `GET /people/by-id/{person_id}`,
-the identities and external UIDs used by split. The custodian page resolves a
-merged ID to its survivor in one read transaction and returns the collection,
-package, or document coordinates for each assignment. Rename, retire, merge,
-and split check the person revision inside the store transaction. Merge checks
+the identities and external UIDs used by split. Rename, retire, merge, and
+split check the person revision inside the store transaction. Merge checks
 the absorbed revision from the body. A successful merge or split advances the
 document-people binding epoch, so the daemon backfill republishes derived links.
 Split returns `source_revision_after` and an ETag for that accepted revision.
