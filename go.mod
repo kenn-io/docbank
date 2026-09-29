@@ -32,7 +32,7 @@ require (
 	github.com/tdewolff/parse/v2 v2.8.16
 	github.com/tetratelabs/wazero v1.12.0
 	github.com/yuin/goldmark v1.8.5
-	go.kenn.io/kit v0.27.1-0.20260929001348-c14047245f63
+	go.kenn.io/kit v0.27.1-0.20260929005841-176de1487b2e
 	golang.org/x/image v0.44.0
 	golang.org/x/net v0.59.0
 	golang.org/x/sync v0.23.0
