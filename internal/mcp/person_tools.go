@@ -144,11 +144,8 @@ func listPersonCustodians(ctx context.Context, lease *daemonLease, raw []byte) (
 	if err != nil {
 		return custodianPageOutput{}, err
 	}
-	if len(page.Items) > int(limit) || page.Total < int64(len(page.Items)) {
+	if page.Total < int64(len(page.Items)) {
 		return custodianPageOutput{}, errors.New("person custodian page exceeded its requested bound")
-	}
-	if page.Items == nil {
-		page.Items = []api.CustodianAssignment{}
 	}
 	return custodianPageOutput{CustodianPage: page, privateCache: newPrivateCache()}, nil
 }

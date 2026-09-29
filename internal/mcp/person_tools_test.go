@@ -16,7 +16,7 @@ import (
 )
 
 func TestPeopleMCPWriteOptIn(t *testing.T) {
-	readOnly := catalogMap(toolCatalog(false, false, false))
+	readOnly := catalogMap(toolCatalog(false, false, false, false))
 	for _, name := range []string{"get_person", "list_person_custodians"} {
 		assert.Contains(t, readOnly, name)
 	}

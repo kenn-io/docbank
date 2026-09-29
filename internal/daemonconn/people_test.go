@@ -57,6 +57,39 @@ func TestPeopleClientValidatesIdentityAndETag(t *testing.T) {
 	require.True(t, IsResponseDecodeError(err))
 }
 
+func TestPeopleClientRejectsMismatchedPersonAndMergeReceipt(t *testing.T) {
+	const (
+		requestedID  = "00000000-0000-4000-8000-000000000001"
+		otherID      = "00000000-0000-4000-8000-000000000002"
+		absorbedID   = "00000000-0000-4000-8000-000000000003"
+		operationID  = "00000000-0000-4000-8000-000000000004"
+		returnedOpID = "00000000-0000-4000-8000-000000000005"
+		mergeID      = "00000000-0000-4000-8000-000000000006"
+	)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("ETag", `"2"`)
+		switch r.URL.Path {
+		case "/api/v1/people/by-id/" + requestedID:
+			badPerson := api.Person{PersonID: otherID, DisplayName: "Other", Origin: "operator", State: "curated", Revision: 2}
+			badDetail := api.PersonDetail{Person: badPerson, Identities: []api.PersonIdentity{}, ExternalIdentities: []api.PersonExternalIdentity{}}
+			_ = json.MarshalWrite(w, badDetail)
+		case "/api/v1/people/by-id/" + requestedID + "/merge":
+			_ = json.MarshalWrite(w, api.PersonMergeReceipt{MergeID: mergeID, OperationID: returnedOpID, SurvivorPersonID: requestedID, AbsorbedPersonID: absorbedID, SurvivorRevisionAfter: 2})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(server.Close)
+	client := New(server.URL, "synthetic-key")
+	_, err := client.Person(t.Context(), requestedID)
+	require.Error(t, err)
+	require.True(t, IsResponseDecodeError(err))
+	_, err = client.MergePerson(t.Context(), requestedID, 1, absorbedID, 1, operationID)
+	require.Error(t, err)
+	require.True(t, IsResponseDecodeError(err))
+}
+
 func TestSplitPersonAllowsTwoHundredOneAssignments(t *testing.T) {
 	const (
 		sourceID    = "00000000-0000-4000-8000-000000000001"

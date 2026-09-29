@@ -4,33 +4,98 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 )
 
 func TestCustodiansForPersonPagesActiveAssignments(t *testing.T) {
 	t.Parallel()
+	ctx := t.Context()
 	s := newTestStore(t)
-	person, err := s.CreatePerson(t.Context(), "Synthetic custodian", "operator")
+	person, err := s.CreatePerson(ctx, "Synthetic custodian", "operator")
 	require.NoError(t, err)
+	absorbed, err := s.CreatePerson(ctx, "Synthetic absorbed", "operator")
+	require.NoError(t, err)
+	assignments := make([]CustodianAssignment, 0, 2)
 	for _, label := range []string{"First record", "Second record"} {
 		nodeID, versionID := seedPeopleVersion(t, s)
-		_, err = s.SetCustodian(t.Context(), CustodianRequest{
+		assignment, setErr := s.SetCustodian(ctx, CustodianRequest{
 			Scope:    CustodianScope{Kind: "document", NodeID: nodeID, ContentVersionID: versionID},
 			PersonID: person.PersonID, RawLabel: label, Rank: "primary", Basis: "operator_assigned", SourceRef: label,
 			IfMatchRevision: 1,
 		})
-		require.NoError(t, err)
+		require.NoError(t, setErr)
+		assignments = append(assignments, assignment)
 	}
-	first, total, err := s.CustodiansForPerson(t.Context(), person.PersonID, 1, 0)
+	require.NoError(t, s.RetireCustodian(ctx, assignments[0].AssignmentID, assignments[0].Revision))
+	operationID, err := newUUIDv4()
 	require.NoError(t, err)
-	require.EqualValues(t, 2, total)
+	_, err = s.MergePersons(ctx, person.PersonID, absorbed.PersonID, operationID, person.Revision, absorbed.Revision)
+	require.NoError(t, err)
+	first, total, err := s.CustodiansForPerson(ctx, absorbed.PersonID, 1, 0)
+	require.NoError(t, err)
+	require.EqualValues(t, 1, total)
 	require.Len(t, first, 1)
-	second, total, err := s.CustodiansForPerson(t.Context(), person.PersonID, 1, 1)
+	second, total, err := s.CustodiansForPerson(ctx, absorbed.PersonID, 1, 1)
 	require.NoError(t, err)
-	require.EqualValues(t, 2, total)
-	require.Len(t, second, 1)
-	require.NotEqual(t, first[0].AssignmentID, second[0].AssignmentID)
+	require.EqualValues(t, 1, total)
+	require.Empty(t, second)
+	third, total, err := s.CustodiansForPerson(ctx, absorbed.PersonID, 2, 0)
+	require.NoError(t, err)
+	require.EqualValues(t, 1, total)
+	require.Len(t, third, 1)
+	require.Equal(t, assignments[1].AssignmentID, first[0].AssignmentID)
+	require.Equal(t, first[0].AssignmentID, third[0].AssignmentID)
+}
+
+func TestCustodiansForPersonConcurrentMergeBoundary(t *testing.T) {
+	t.Parallel()
+	ctx := t.Context()
+	s := newTestStore(t)
+	survivor, err := s.CreatePerson(ctx, "Synthetic survivor", "operator")
+	require.NoError(t, err)
+	absorbed, err := s.CreatePerson(ctx, "Synthetic absorbed", "operator")
+	require.NoError(t, err)
+	nodeID, versionID := seedPeopleVersion(t, s)
+	assignment, err := s.SetCustodian(ctx, CustodianRequest{
+		Scope:    CustodianScope{Kind: "document", NodeID: nodeID, ContentVersionID: versionID},
+		PersonID: survivor.PersonID, RawLabel: survivor.DisplayName, Rank: "primary", Basis: "operator_assigned",
+		SourceRef: "concurrent-boundary", IfMatchRevision: 1,
+	})
+	require.NoError(t, err)
+	operationID, err := newUUIDv4()
+	require.NoError(t, err)
+	mergeDone := make(chan error, 1)
+	go func() {
+		_, mergeErr := s.MergePersons(ctx, survivor.PersonID, absorbed.PersonID, operationID, survivor.Revision, absorbed.Revision)
+		mergeDone <- mergeErr
+	}()
+	observedActive := false
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		items, total, readErr := s.CustodiansForPerson(ctx, absorbed.PersonID, 10, 0)
+		if readErr != nil {
+			require.ErrorIs(t, readErr, ErrNotFound)
+			continue
+		}
+		require.LessOrEqual(t, int64(len(items)), total)
+		if total == 1 {
+			observedActive = true
+			require.Len(t, items, 1)
+			require.Equal(t, assignment.AssignmentID, items[0].AssignmentID)
+			break
+		}
+		require.Zero(t, total)
+		require.Empty(t, items)
+	}
+	require.NoError(t, <-mergeDone)
+	require.True(t, observedActive)
+	items, total, err := s.CustodiansForPerson(ctx, absorbed.PersonID, 10, 0)
+	require.NoError(t, err)
+	require.EqualValues(t, 1, total)
+	require.Len(t, items, 1)
+	require.Equal(t, assignment.AssignmentID, items[0].AssignmentID)
 }
 
 func TestCustodianScopeRejectsMixedCoordinates(t *testing.T) {

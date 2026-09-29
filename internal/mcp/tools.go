@@ -19,8 +19,7 @@ import (
 
 const toolCatalogTTLMs = 60_000
 
-func catalogInstructions(allowProcessing, allowPackageWrites, allowPhotoEdits bool, personFlags ...bool) string {
-	allowPersonEdits := len(personFlags) > 0 && personFlags[0]
+func catalogInstructions(allowProcessing, allowPackageWrites, allowPhotoEdits, allowPersonEdits bool) string {
 	if !allowProcessing && !allowPackageWrites && !allowPhotoEdits && !allowPersonEdits {
 		return "Docbank exposes a bounded read-only document and package surface."
 	}
@@ -157,8 +156,7 @@ var personWriteToolDefinitions = []toolDefinition{
 	{name: "split_person", title: "Split person", description: "Move explicit person members into a new person at an expected revision.", schemas: splitPersonSchemas, write: true, destructive: true, idempotent: true},
 }
 
-func toolCatalog(allowProcessing, allowPackageWrites, allowPhotoEdits bool, personFlags ...bool) []*sdkmcp.Tool {
-	allowPersonEdits := len(personFlags) > 0 && personFlags[0]
+func toolCatalog(allowProcessing, allowPackageWrites, allowPhotoEdits, allowPersonEdits bool) []*sdkmcp.Tool {
 	definitions := slices.Clone(readToolDefinitions)
 	if allowProcessing {
 		definitions = append(definitions, processingToolDefinition)

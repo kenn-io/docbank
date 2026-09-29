@@ -3,6 +3,7 @@ package mcp
 import (
 	"maps"
 
+	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/loadfile"
 	"go.kenn.io/docbank/internal/pdfstamp"
@@ -201,11 +202,11 @@ func listPackageCustodiansSchemas() (schema, schema) {
 
 func findPeopleSchemas() (schema, schema) {
 	person := objectSchema(schema{
-		personIDField: uuidSchema(), "display_name": stringSchema(200), schemaStateField: enumSchema("provisional", "curated"),
+		personIDField: uuidSchema(), "display_name": stringSchema(document.MaxPersonDisplayNameBytes), schemaStateField: enumSchema("provisional", "curated"),
 		"revision": integerSchema(1, 0),
 	}, personIDField, "display_name", schemaStateField, "revision")
 	return rootObjectSchema(schema{
-			"query": stringSchema(200), "cursor": stringSchema(maxCursorCharacters), schemaLimitField: integerSchema(1, 250),
+			"query": stringSchema(document.MaxPersonDisplayNameBytes), "cursor": stringSchema(maxCursorCharacters), schemaLimitField: integerSchema(1, 250),
 		}), rootObjectSchema(withPrivateCache(schema{
 			"items": arraySchema(person, 250), "next_cursor": stringSchema(maxCursorCharacters),
 		}), cacheRequired("items")...)
@@ -213,7 +214,7 @@ func findPeopleSchemas() (schema, schema) {
 
 func personSchemaProperties() schema {
 	return schema{
-		personIDField: uuidSchema(), "display_name": stringSchema(200), "origin": stringSchema(64),
+		personIDField: uuidSchema(), "display_name": stringSchema(document.MaxPersonDisplayNameBytes), "origin": stringSchema(64),
 		"state": stringSchema(64), "revision": integerSchema(1, 0), "created_at": dateTimeSchema(),
 		"updated_at": dateTimeSchema(), "reached_through_person_id": uuidSchema(),
 	}
@@ -221,27 +222,27 @@ func personSchemaProperties() schema {
 
 func personIdentitySchema() schema {
 	return objectSchema(schema{
-		"identity_id": uuidSchema(), "kind": stringSchema(64), "value_display": stringSchema(4096),
-		"value_normalized": stringSchema(4096), "scope_kind": stringSchema(64), "scope_value": stringSchema(4096),
+		"identity_id": uuidSchema(), "kind": stringSchema(64), "value_display": stringSchema(document.MaxPersonIdentityValueBytes),
+		"value_normalized": stringSchema(document.MaxPersonIdentityValueBytes), "scope_kind": stringSchema(document.MaxPersonIdentityScopeKindBytes), "scope_value": stringSchema(document.MaxPersonIdentityScopeValueBytes),
 		"normalization": stringSchema(64), "origin": stringSchema(64), "evidence_kind": stringSchema(128),
-		"evidence_id": stringSchema(4096), "confidence": stringSchema(64), "recorded_at": dateTimeSchema(),
+		"evidence_id": stringSchema(document.MaxPersonEvidenceIDBytes), "confidence": stringSchema(64), "recorded_at": dateTimeSchema(),
 	}, "identity_id", "kind", "value_display", "value_normalized", "normalization", "origin", "evidence_kind", "evidence_id", "confidence", "recorded_at")
 }
 
 func personExternalIdentitySchema() schema {
 	return objectSchema(schema{
-		"system": stringSchema(64), "archive_id": stringSchema(256), "uid": stringSchema(4096),
+		"system": stringSchema(64), "archive_id": stringSchema(document.MaxPersonArchiveIDBytes), "uid": stringSchema(document.MaxPersonExternalUIDBytes),
 		"uid_kind": stringSchema(64), "uid_state": stringSchema(64), "last_seen_revision": integerSchema(0, 0),
-		"display_name_snapshot": stringSchema(200), "linked_at": dateTimeSchema(), "updated_at": dateTimeSchema(),
+		"display_name_snapshot": stringSchema(document.MaxPersonDisplayNameSnapshotBytes), "linked_at": dateTimeSchema(), "updated_at": dateTimeSchema(),
 	}, "system", "archive_id", "uid", "uid_kind", "uid_state", "display_name_snapshot", "linked_at", "updated_at")
 }
 
 func personDetailProperties() schema {
 	return schema{
-		personIDField: uuidSchema(), "display_name": stringSchema(200), "origin": stringSchema(64),
+		personIDField: uuidSchema(), "display_name": stringSchema(document.MaxPersonDisplayNameBytes), "origin": stringSchema(64),
 		"state": stringSchema(64), "revision": integerSchema(1, 0), "created_at": dateTimeSchema(),
 		"updated_at": dateTimeSchema(), "reached_through_person_id": uuidSchema(),
-		"identities": arraySchema(personIdentitySchema(), 200), "external_identities": arraySchema(personExternalIdentitySchema(), 64),
+		"identities": arraySchema(personIdentitySchema(), document.MaxPersonIdentitiesPerPerson), "external_identities": arraySchema(personExternalIdentitySchema(), document.MaxPersonExternalIdentities),
 	}
 }
 
@@ -255,13 +256,13 @@ func listPersonCustodiansSchemas() (schema, schema) {
 }
 
 func personExternalUIDSchema() schema {
-	return objectSchema(schema{"system": stringSchema(64), "archive_id": stringSchema(256), "uid": stringSchema(4096)}, "system", "archive_id", "uid")
+	return objectSchema(schema{"system": stringSchema(64), "archive_id": stringSchema(document.MaxPersonArchiveIDBytes), "uid": stringSchema(document.MaxPersonExternalUIDBytes)}, "system", "archive_id", "uid")
 }
 
 func personMergeReceiptProperties() schema {
 	return schema{
 		"merge_id": uuidSchema(), "operation_id": uuidSchema(), "survivor_person_id": uuidSchema(), "absorbed_person_id": uuidSchema(),
-		"absorbed_display_name": stringSchema(200), "survivor_revision_before": integerSchema(1, 0), "survivor_revision_after": integerSchema(1, 0),
+		"absorbed_display_name": stringSchema(document.MaxPersonDisplayNameBytes), "survivor_revision_before": integerSchema(1, 0), "survivor_revision_after": integerSchema(1, 0),
 		"created_at": dateTimeSchema(), "moved": objectSchema(schema{
 			"assertions": integerSchema(0, 0), "deduplicated_assertions": integerSchema(0, 0), "superseded_candidates": integerSchema(0, 0),
 			"identities": integerSchema(0, 0), "deduplicated_identities": integerSchema(0, 0), "external_uids": integerSchema(0, 0),
@@ -272,16 +273,16 @@ func personMergeReceiptProperties() schema {
 
 func personSplitReceiptProperties() schema {
 	return schema{"operation_id": uuidSchema(), "source_person_id": uuidSchema(), "new_person_id": uuidSchema(),
-		"moved_identity_ids": arraySchema(uuidSchema(), 200), "created_at": dateTimeSchema()}
+		"moved_identity_ids": arraySchema(uuidSchema(), document.MaxPersonIdentitiesPerPerson), "created_at": dateTimeSchema()}
 }
 
 func createPersonSchemas() (schema, schema) {
-	return rootObjectSchema(schema{"display_name": schema{"type": "string", "minLength": 1, "maxLength": 200}}, "display_name"),
+	return rootObjectSchema(schema{"display_name": schema{"type": "string", "minLength": 1, "maxLength": document.MaxPersonDisplayNameBytes}}, "display_name"),
 		rootObjectSchema(withPrivateCache(personSchemaProperties()), cacheRequired(personIDField, "display_name", "origin", "state", "revision", "created_at", "updated_at")...)
 }
 
 func renamePersonSchemas() (schema, schema) {
-	return rootObjectSchema(schema{personIDField: uuidSchema(), "if_match_revision": integerSchema(1, 0), "display_name": schema{"type": "string", "minLength": 1, "maxLength": 200}},
+	return rootObjectSchema(schema{personIDField: uuidSchema(), "if_match_revision": integerSchema(1, 0), "display_name": schema{"type": "string", "minLength": 1, "maxLength": document.MaxPersonDisplayNameBytes}},
 		personIDField, "if_match_revision", "display_name"), createPersonSchemasOutput()
 }
 
@@ -302,8 +303,8 @@ func mergePeopleSchemas() (schema, schema) {
 
 func splitPersonSchemas() (schema, schema) {
 	return rootObjectSchema(schema{personIDField: uuidSchema(), "if_match_revision": integerSchema(1, 0), "operation_id": uuidSchema(),
-			"display_name": schema{"type": "string", "minLength": 1, "maxLength": 200}, "identity_ids": arraySchema(uuidSchema(), 200),
-			"assignment_ids": arraySchema(uuidSchema(), 0), "external_identities": arraySchema(personExternalUIDSchema(), 64)},
+			"display_name": schema{"type": "string", "minLength": 1, "maxLength": document.MaxPersonDisplayNameBytes}, "identity_ids": arraySchema(uuidSchema(), document.MaxPersonIdentitiesPerPerson),
+			"assignment_ids": arraySchema(uuidSchema(), 0), "external_identities": arraySchema(personExternalUIDSchema(), document.MaxPersonExternalIdentities)},
 			personIDField, "if_match_revision", "operation_id", "display_name"), rootObjectSchema(withPrivateCache(personSplitReceiptProperties()),
 			cacheRequired("operation_id", "source_person_id", "new_person_id", "moved_identity_ids", "created_at")...)
 }
@@ -318,7 +319,7 @@ func resolvePackageCustodianSchemas() (schema, schema) {
 func assignPackageCustodianSchemas() (schema, schema) {
 	return rootObjectSchema(schema{
 			packageIDField: uuidSchema(), "row_id": schema{"type": "string", "minLength": 64, "maxLength": 64, "pattern": "^[0-9a-f]{64}$"},
-			"raw_label": schema{"type": "string", "minLength": 1, "maxLength": 200}, personIDField: uuidSchema(),
+			"raw_label": schema{"type": "string", "minLength": 1, "maxLength": document.MaxPersonDisplayNameBytes}, personIDField: uuidSchema(),
 			"if_match_revision": integerSchema(1, 0),
 		}, packageIDField, "raw_label", "if_match_revision"), rootObjectSchema(withPrivateCache(custodianAssignmentProperties()),
 			cacheRequired("assignment_id", "scope_kind", "raw_label", "rank", "basis", "source_ref", "revision", "recorded_at")...)

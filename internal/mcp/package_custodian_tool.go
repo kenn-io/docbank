@@ -87,12 +87,6 @@ func findPeople(ctx context.Context, lease *daemonLease, raw []byte) (personPage
 	if err != nil {
 		return personPageOutput{}, err
 	}
-	if len(page.Items) > input.Limit {
-		return personPageOutput{}, errors.New("people page exceeded its requested bound")
-	}
-	if page.Items == nil {
-		page.Items = []api.PersonSummary{}
-	}
 	return personPageOutput{PersonPage: page, privateCache: newPrivateCache()}, nil
 }
 

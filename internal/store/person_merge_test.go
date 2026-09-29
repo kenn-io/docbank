@@ -219,6 +219,11 @@ func TestSplitPersonMovesOnlyExplicitIdentitiesAndReplays(t *testing.T) {
 	replayed, err := s.SplitPerson(t.Context(), request)
 	require.NoError(t, err)
 	require.Equal(t, receipt, replayed)
+	request.AssignmentIDs = []string{}
+	request.External = []PersonExternalUID{}
+	replayed, err = s.SplitPerson(t.Context(), request)
+	require.NoError(t, err)
+	require.Equal(t, receipt, replayed)
 }
 
 func TestSplitPersonMovesCustodianAndExternalUID(t *testing.T) {

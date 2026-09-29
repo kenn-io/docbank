@@ -8,6 +8,7 @@ import (
 
 	"uuid"
 
+	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/apiclient"
 )
@@ -37,7 +38,7 @@ func validatePersonDetailResponse(detail api.PersonDetail, etag, requestedID str
 	if err := validatePersonResponse(detail.Person, etag, requestedID); err != nil {
 		return err
 	}
-	if len(detail.Identities) > 200 || len(detail.ExternalIdentities) > 64 {
+	if len(detail.Identities) > document.MaxPersonIdentitiesPerPerson || len(detail.ExternalIdentities) > document.MaxPersonExternalIdentities {
 		return errors.New("person response exceeds identity bound")
 	}
 	for _, identity := range detail.Identities {
@@ -161,14 +162,6 @@ func (c *Connection) MergePerson(ctx context.Context, survivorID string, survivo
 	survivor, err := parsePersonID(survivorID)
 	if err != nil || !validUUIDv4(absorbedID) || !validUUIDv4(operationID) || survivorRevision < 1 || absorbedRevision < 1 {
 		return api.PersonMergeReceipt{}, errors.New("invalid person merge identity or revision")
-	}
-	_, err = uuid.Parse(absorbedID)
-	if err != nil {
-		return api.PersonMergeReceipt{}, fmt.Errorf("parse absorbed person ID: %w", err)
-	}
-	_, err = uuid.Parse(operationID)
-	if err != nil {
-		return api.PersonMergeReceipt{}, fmt.Errorf("parse operation ID: %w", err)
 	}
 	var response *http.Response
 	receipt, err := c.apiWithResponse(&response).MergePerson(ctx, &apiclient.MergePersonRequestOptions{

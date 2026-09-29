@@ -14,6 +14,10 @@ import (
 
 func TestPeopleRoutesWorkflow(t *testing.T) {
 	ts, fixture := newTestServer(t, nil)
+	coverageResponse, coverageRaw := get(t, ts, "/api/v1/people/coverage", nil)
+	require.Equal(t, http.StatusOK, coverageResponse.StatusCode, coverageRaw)
+	var beforeCoverage api.PeopleCoverage
+	require.NoError(t, json.Unmarshal([]byte(coverageRaw), &beforeCoverage))
 
 	createdResponse, createdBody := do(t, ts, http.MethodPost, "/api/v1/people", nil, map[string]string{"display_name": "Synthetic Ada"})
 	require.Equal(t, http.StatusCreated, createdResponse.StatusCode, createdBody)
@@ -49,16 +53,32 @@ func TestPeopleRoutesWorkflow(t *testing.T) {
 		EvidenceKind: "operator_assertion", EvidenceID: "synthetic-workflow", Confidence: "operator_asserted",
 	})
 	require.NoError(t, err)
+	node := createFileWithContent(t, ts, fixture, "/people-workflow.txt", "synthetic person record")
+	assignment, err := fixture.SetCustodian(t.Context(), store.CustodianRequest{
+		Scope:    store.CustodianScope{Kind: "document", NodeID: node.ID, ContentVersionID: node.CurrentVersionID},
+		PersonID: created.PersonID, RawLabel: "Renamed Ada", Rank: "primary", Basis: "operator_assigned",
+		SourceRef: "api-workflow", IfMatchRevision: 1,
+	})
+	require.NoError(t, err)
 	absorbedResponse, absorbedBody := do(t, ts, http.MethodPost, "/api/v1/people", nil, map[string]string{"display_name": "Synthetic absorbed"})
 	require.Equal(t, http.StatusCreated, absorbedResponse.StatusCode, absorbedBody)
 	var absorbed api.Person
 	require.NoError(t, json.Unmarshal([]byte(absorbedBody), &absorbed))
 	mergeBody := map[string]any{"absorbed_person_id": absorbed.PersonID, "absorbed_revision": absorbed.Revision, "operation_id": "00000000-0000-4000-8000-000000000003"}
+	staleAbsorbedBody := map[string]any{"absorbed_person_id": absorbed.PersonID, "absorbed_revision": absorbed.Revision + 1, "operation_id": "00000000-0000-4000-8000-000000000007"}
+	staleAbsorbedResponse, staleAbsorbedRaw := do(t, ts, http.MethodPost, path+"/merge", map[string]string{"If-Match": strconv.Quote("3")}, staleAbsorbedBody)
+	require.Equal(t, http.StatusPreconditionFailed, staleAbsorbedResponse.StatusCode, staleAbsorbedRaw)
+	require.Equal(t, "stale_revision", decodeProblem(t, staleAbsorbedRaw).Code)
 	mergeResponse, mergeRaw := do(t, ts, http.MethodPost, path+"/merge", map[string]string{"If-Match": strconv.Quote("3")}, mergeBody)
 	require.Equal(t, http.StatusOK, mergeResponse.StatusCode, mergeRaw)
 	var merge api.PersonMergeReceipt
 	require.NoError(t, json.Unmarshal([]byte(mergeRaw), &merge))
 	require.Equal(t, int64(4), merge.SurvivorRevisionAfter)
+	require.Equal(t, strconv.Quote(strconv.FormatInt(merge.SurvivorRevisionAfter, 10)), mergeResponse.Header.Get("ETag"))
+	conflictMergeBody := map[string]any{"absorbed_person_id": absorbed.PersonID, "absorbed_revision": absorbed.Revision + 1, "operation_id": "00000000-0000-4000-8000-000000000003"}
+	conflictMergeResponse, conflictMergeRaw := do(t, ts, http.MethodPost, path+"/merge", map[string]string{"If-Match": strconv.Quote("3")}, conflictMergeBody)
+	require.Equal(t, http.StatusConflict, conflictMergeResponse.StatusCode, conflictMergeRaw)
+	require.Equal(t, "person_merge_conflict", decodeProblem(t, conflictMergeRaw).Code)
 	replayResponse, replayRaw := do(t, ts, http.MethodPost, path+"/merge", map[string]string{"If-Match": strconv.Quote("3")}, mergeBody)
 	require.Equal(t, http.StatusOK, replayResponse.StatusCode, replayRaw)
 	require.JSONEq(t, mergeRaw, replayRaw)
@@ -68,21 +88,48 @@ func TestPeopleRoutesWorkflow(t *testing.T) {
 	require.NoError(t, json.Unmarshal([]byte(aliasRaw), &alias))
 	require.Equal(t, created.PersonID, alias.PersonID)
 	require.Equal(t, absorbed.PersonID, alias.ReachedThroughPersonID)
-	splitBody := map[string]any{"operation_id": "00000000-0000-4000-8000-000000000004", "display_name": "Split Ada", "identity_ids": []string{identity.IdentityID}}
+	coverageResponse, coverageRaw = get(t, ts, "/api/v1/people/coverage", nil)
+	require.Equal(t, http.StatusOK, coverageResponse.StatusCode, coverageRaw)
+	var afterMergeCoverage api.PeopleCoverage
+	require.NoError(t, json.Unmarshal([]byte(coverageRaw), &afterMergeCoverage))
+	require.Greater(t, afterMergeCoverage.BindingEpoch, beforeCoverage.BindingEpoch)
+	emptySplitBody := map[string]any{"operation_id": "00000000-0000-4000-8000-000000000008", "display_name": "Empty split"}
+	emptySplitResponse, emptySplitRaw := do(t, ts, http.MethodPost, path+"/split", map[string]string{"If-Match": strconv.Quote("4")}, emptySplitBody)
+	require.Equal(t, http.StatusUnprocessableEntity, emptySplitResponse.StatusCode, emptySplitRaw)
+	require.Equal(t, "invalid_person", decodeProblem(t, emptySplitRaw).Code)
+	splitBody := map[string]any{"operation_id": "00000000-0000-4000-8000-000000000004", "display_name": "Split Ada", "identity_ids": []string{identity.IdentityID}, "assignment_ids": []string{assignment.AssignmentID}}
 	splitResponse, splitRaw := do(t, ts, http.MethodPost, path+"/split", map[string]string{"If-Match": strconv.Quote("4")}, splitBody)
 	require.Equal(t, http.StatusOK, splitResponse.StatusCode, splitRaw)
 	var split api.PersonSplitReceipt
 	require.NoError(t, json.Unmarshal([]byte(splitRaw), &split))
 	require.Equal(t, created.PersonID, split.SourcePersonID)
-	splitReplayResponse, splitReplayRaw := do(t, ts, http.MethodPost, path+"/split", map[string]string{"If-Match": strconv.Quote("4")}, splitBody)
+	splitReplayBody := map[string]any{"operation_id": splitBody["operation_id"], "display_name": splitBody["display_name"], "identity_ids": splitBody["identity_ids"], "assignment_ids": splitBody["assignment_ids"], "external_identities": []any{}}
+	splitReplayResponse, splitReplayRaw := do(t, ts, http.MethodPost, path+"/split", map[string]string{"If-Match": strconv.Quote("4")}, splitReplayBody)
 	require.Equal(t, http.StatusOK, splitReplayResponse.StatusCode, splitReplayRaw)
 	require.JSONEq(t, splitRaw, splitReplayRaw)
+	custodianResponse, custodianRaw := get(t, ts, "/api/v1/people/by-id/"+split.NewPersonID+"/custodians?limit=1", nil)
+	require.Equal(t, http.StatusOK, custodianResponse.StatusCode, custodianRaw)
+	var custodianPage api.CustodianPage
+	require.NoError(t, json.Unmarshal([]byte(custodianRaw), &custodianPage))
+	require.Len(t, custodianPage.Items, 1)
+	require.Equal(t, assignment.AssignmentID, custodianPage.Items[0].AssignmentID)
+	coverageResponse, coverageRaw = get(t, ts, "/api/v1/people/coverage", nil)
+	require.Equal(t, http.StatusOK, coverageResponse.StatusCode, coverageRaw)
+	var afterSplitCoverage api.PeopleCoverage
+	require.NoError(t, json.Unmarshal([]byte(coverageRaw), &afterSplitCoverage))
+	require.Greater(t, afterSplitCoverage.BindingEpoch, afterMergeCoverage.BindingEpoch)
 
 	retiredResponse, retiredBody := do(t, ts, http.MethodPost, path+"/retire", map[string]string{"If-Match": strconv.Quote("5")}, nil)
 	require.Equal(t, http.StatusOK, retiredResponse.StatusCode, retiredBody)
 	var retired api.Person
 	require.NoError(t, json.Unmarshal([]byte(retiredBody), &retired))
 	require.Equal(t, "retired", retired.State)
+	retiredGetResponse, retiredGetRaw := get(t, ts, path, nil)
+	require.Equal(t, http.StatusNotFound, retiredGetResponse.StatusCode, retiredGetRaw)
+	require.Equal(t, "not_found", decodeProblem(t, retiredGetRaw).Code)
+	retiredRenameResponse, retiredRenameRaw := do(t, ts, http.MethodPatch, path, map[string]string{"If-Match": strconv.Quote("5")}, map[string]string{"display_name": "Retired rename"})
+	require.Equal(t, http.StatusConflict, retiredRenameResponse.StatusCode, retiredRenameRaw)
+	require.Equal(t, "person_retired", decodeProblem(t, retiredRenameRaw).Code)
 
 	listedResponse, listedBody = get(t, ts, "/api/v1/people?query=Renamed", nil)
 	require.Equal(t, http.StatusOK, listedResponse.StatusCode, listedBody)
