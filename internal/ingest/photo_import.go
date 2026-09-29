@@ -290,6 +290,9 @@ func (ing *Ingester) ImportPhotoDirectory(ctx context.Context, root, destination
 	}
 	var dest store.Node
 	err = runMutation(func() error {
+		if err := ing.Store.EnsurePhotoImportAllowed(ctx); err != nil {
+			return err
+		}
 		var mkdirErr error
 		dest, mkdirErr = ing.Store.MkdirAll(ctx, destination)
 		return mkdirErr
