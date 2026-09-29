@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -253,10 +254,35 @@ func TestPhotoVisibilityCachedResources(t *testing.T) {
 	t.Cleanup(func() { require.NoError(t, snapshots.Close()) })
 	value, err := query.Parse([]byte(`{"v":1,"filters":{}}`))
 	require.NoError(t, err)
-	page, err := snapshots.Create(WithPhotoOwner(f.ctx, f.first.ID), "resource", SnapshotRequest{Query: value})
-	require.NoError(t, err)
+	for index := range 51 {
+		_, err = f.s.CreateFile(f.ctx, f.s.RootID(), fmt.Sprintf("cached-%02d.txt", index), fakeHash(fmt.Sprintf("cached-%02d", index)), 20, "text/plain")
+		require.NoError(t, err)
+	}
 	_, _, err = f.s.Move(f.ctx, f.ordinary.ID, f.s.RootID(), "ordinary-renamed.txt", f.ordinary.Revision)
 	require.NoError(t, err)
+	var contentRevision, nodeRevision int64
+	require.NoError(t, f.s.db.QueryRowContext(t.Context(), `SELECT node_revision FROM content_versions WHERE version_id=?`, f.ordinary.CurrentVersionID).Scan(&contentRevision))
+	require.NoError(t, f.s.db.QueryRowContext(t.Context(), `SELECT revision FROM nodes WHERE id=?`, f.ordinary.ID).Scan(&nodeRevision))
+	assert.Greater(t, nodeRevision, contentRevision)
+	page, err := snapshots.Create(WithPhotoOwner(f.ctx, f.first.ID), "resource", SnapshotRequest{Query: value, PageSize: 50})
+	require.NoError(t, err)
+	require.NotEmpty(t, page.NextCursor)
+	var ordinaryRow SnapshotRow
+	for _, row := range page.Rows {
+		if row.NodeID == f.ordinary.ID {
+			ordinaryRow = row
+			break
+		}
+	}
+	nextPage, err := snapshots.Page(WithPhotoOwner(f.ctx, f.first.ID), "resource", page.SnapshotID, page.NextCursor)
+	require.NoError(t, err)
+	for _, row := range nextPage.Rows {
+		if row.NodeID == f.ordinary.ID {
+			ordinaryRow = row
+			break
+		}
+	}
+	require.Equal(t, nodeRevision, ordinaryRow.Revision)
 	_, err = snapshots.CopyMembers(WithPhotoOwner(f.ctx, f.first.ID), "resource", page.SnapshotID, page.MemberHash)
 	require.NoError(t, err)
 	_, err = f.s.db.Exec(`UPDATE photo_assets SET owner_id=? WHERE asset_id=?`, f.second.ID, f.firstAsset.ID)

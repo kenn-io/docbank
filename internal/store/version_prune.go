@@ -81,6 +81,9 @@ func (s *Store) PruneContentVersions(
 		runTx = s.withLogicalTx
 	}
 	err := runTx(ctx, func(tx *sql.Tx) error {
+		if err := photoNodeVisibilityCheckTx(ctx, tx, nodeID); err != nil {
+			return err
+		}
 		node, err := nodeByIDTx(tx, nodeID)
 		if err != nil {
 			return err

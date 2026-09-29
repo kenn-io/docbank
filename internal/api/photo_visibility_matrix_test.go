@@ -345,6 +345,47 @@ func TestPhotoVisibilityHistoryRoutes(t *testing.T) {
 	assert.Equal(t, http.StatusNotFound, response.StatusCode, body)
 }
 
+func exercisePhotoVisibilityPruneVersions(t *testing.T) {
+	t.Helper()
+	f := newPhotoRouteFixture(t)
+	oldVersionID := f.firstNode.CurrentVersionID
+	updated, _, err := f.s.ReplaceContent(store.WithPhotoOwner(t.Context(), f.first.ID), f.firstNode.ID, f.firstNode.Revision,
+		testHash("prune-current"), 14, "image/jpeg")
+	require.NoError(t, err)
+	path := "/api/v1/nodes/" + strconv.FormatInt(f.firstNode.ID, 10) + "/versions/prune"
+	foreignBody := map[string]any{"version_ids": []string{oldVersionID}}
+	foreignHeaders := map[string]string{"X-Docbank-Owner": f.second.ID, "If-Match": strconv.Quote(strconv.FormatInt(updated.Revision, 10))}
+	ownerHeaders := map[string]string{"X-Docbank-Owner": f.first.ID, "If-Match": strconv.Quote(strconv.FormatInt(updated.Revision, 10))}
+	response, body := do(t, f.ts, http.MethodPost, path, foreignHeaders, foreignBody)
+	assert.Equal(t, http.StatusNotFound, response.StatusCode, body)
+	response, body = do(t, f.ts, http.MethodPost, path, foreignHeaders, map[string]any{"version_ids": []string{oldVersionID}, "run": true})
+	assert.Equal(t, http.StatusNotFound, response.StatusCode, body)
+	after, err := f.s.NodeByID(t.Context(), f.firstNode.ID)
+	require.NoError(t, err)
+	assert.Equal(t, updated.Revision, after.Revision)
+	_, err = f.s.ContentVersionByID(t.Context(), oldVersionID)
+	require.NoError(t, err)
+	response, body = do(t, f.ts, http.MethodPost, path, ownerHeaders, foreignBody)
+	assert.Equal(t, http.StatusOK, response.StatusCode, body)
+	response, body = do(t, f.ts, http.MethodPost, path, ownerHeaders, map[string]any{"version_ids": []string{oldVersionID}, "run": true})
+	assert.Equal(t, http.StatusOK, response.StatusCode, body)
+	_, err = f.s.ContentVersionByID(t.Context(), oldVersionID)
+	require.ErrorIs(t, err, store.ErrNotFound)
+	ordinary, err := f.s.CreateFile(t.Context(), f.s.RootID(), "prune-ordinary.txt", testHash("prune-ordinary-old"), 19, "text/plain")
+	require.NoError(t, err)
+	ordinaryNext, _, err := f.s.ReplaceContent(t.Context(), ordinary.ID, ordinary.Revision, testHash("prune-ordinary-new"), 20, "text/plain")
+	require.NoError(t, err)
+	ordinaryPath := "/api/v1/nodes/" + strconv.FormatInt(ordinary.ID, 10) + "/versions/prune"
+	ordinaryHeaders := map[string]string{"X-Docbank-Owner": f.first.ID, "If-Match": strconv.Quote(strconv.FormatInt(ordinaryNext.Revision, 10))}
+	response, body = do(t, f.ts, http.MethodPost, ordinaryPath, ordinaryHeaders, map[string]any{"all_prior": true, "run": true})
+	assert.Equal(t, http.StatusOK, response.StatusCode, body)
+	assert.Contains(t, body, ordinaryNext.CurrentVersionID)
+}
+
+func TestPhotoVisibilityPruneVersions(t *testing.T) {
+	exercisePhotoVisibilityPruneVersions(t)
+}
+
 func TestPhotoVisibilityMutationAtomicity(t *testing.T) {
 	f := newPhotoRouteFixture(t)
 	headers := map[string]string{"X-Docbank-Owner": f.second.ID, "If-Match": strconv.Quote("1")}
@@ -613,7 +654,7 @@ func TestPhotoVisibilityRouteCoverage(t *testing.T) {
 		"trashNode":                          "TestPhotoVisibilityMutationAtomicity",
 		"verifyNodeContent":                  "TestPhotoVisibilityHistoryRoutes",
 		"listContentVersions":                "TestPhotoVisibilityReadRoutes and TestPhotoVisibilityPopulations",
-		"pruneNodeContentVersions":           "TestPhotoVisibilityHistoryRoutes",
+		"pruneNodeContentVersions":           "exercisePhotoVisibilityPruneVersions",
 		"listPackages":                       "package member visibility fixtures",
 		"getPackage":                         "package member visibility fixtures",
 		"assignPackageCustodian":             "package member visibility fixtures",
@@ -689,14 +730,14 @@ func TestPhotoVisibilityRouteCoverage(t *testing.T) {
 		"runSavedQuery":                      "TestPhotoVisibilityCachedResources and TestPhotoVisibilityAggregateRoutes",
 		"search":                             "TestPhotoVisibilityCachedResources and TestPhotoVisibilityAggregateRoutes",
 		"searchDocuments":                    "TestPhotoVisibilityCachedResources and TestPhotoVisibilityAggregateRoutes",
-		"listTermReportHistory":              "TestPhotoVisibilityHistoryRoutes",
-		"createTermReport":                   "TestPhotoVisibilityHistoryRoutes",
-		"getTermReport":                      "TestPhotoVisibilityHistoryRoutes",
-		"downloadTermReportbundle":           "TestPhotoVisibilityHistoryRoutes",
-		"downloadTermReportcsv":              "TestPhotoVisibilityHistoryRoutes",
-		"getTermReportDates":                 "TestPhotoVisibilityHistoryRoutes",
-		"issueTermReportDownload":            "TestPhotoVisibilityHistoryRoutes",
-		"reviseTermReport":                   "TestPhotoVisibilityHistoryRoutes",
+		"listTermReportHistory":              "exerciseTermReportRoutes",
+		"createTermReport":                   "exerciseTermReportRoutes",
+		"getTermReport":                      "exerciseTermReportRoutes",
+		"downloadTermReportbundle":           "exerciseTermReportRoutes",
+		"downloadTermReportcsv":              "exerciseTermReportRoutes",
+		"getTermReportDates":                 "exerciseTermReportRoutes",
+		"issueTermReportDownload":            "exerciseTermReportBrowserTicket",
+		"reviseTermReport":                   "exerciseTermReportRoutes",
 		"findSimilarDocuments":               "TestPhotoVisibilityCachedResources and TestPhotoVisibilityAggregateRoutes",
 		"validateDocumentSearch":             "TestPhotoVisibilityCachedResources and TestPhotoVisibilityAggregateRoutes",
 		"storageStatus":                      "master-only whole-vault capability; no photo-specific source is selected",
@@ -722,9 +763,9 @@ func TestPhotoVisibilityRouteCoverage(t *testing.T) {
 		"getTag":                             "TestPhotoVisibilityReadRoutes and TestPhotoVisibilityPopulations",
 		"renameTag":                          "TestPhotoVisibilityReadRoutes and TestPhotoVisibilityPopulations",
 		"listTagNodes":                       "TestPhotoVisibilityReadRoutes and TestPhotoVisibilityPopulations",
-		"readTimelineCoverage":               "TestPhotoVisibilityHistoryRoutes",
-		"createTimelineRebuild":              "TestPhotoVisibilityHistoryRoutes",
-		"readTimelineRebuild":                "TestPhotoVisibilityHistoryRoutes",
+		"readTimelineCoverage":               "exerciseTimelineRoutes",
+		"createTimelineRebuild":              "exerciseTimelineRoutes",
+		"readTimelineRebuild":                "exerciseTimelineRoutes",
 		"listTrash":                          "TestPhotoVisibilityReadRoutes and TestPhotoVisibilityPopulations",
 		"emptyTrash":                         "TestPhotoVisibilityMutationAtomicity",
 		"uploadFile":                         "ingest and mailbox handlers do not return an existing photo source",
@@ -738,6 +779,31 @@ func TestPhotoVisibilityRouteCoverage(t *testing.T) {
 		"listWatchedInboxes":                 "TestPhotoVisibilityReadRoutes and TestPhotoVisibilityPopulations",
 		"createWorkspaceQuery":               "TestPhotoVisibilityCachedResources and TestPhotoVisibilityAggregateRoutes",
 		"readWorkspaceQueryPage":             "TestPhotoVisibilityCachedResources and TestPhotoVisibilityAggregateRoutes",
+	}
+	for _, fixtureCase := range []struct {
+		name       string
+		helper     string
+		operations []string
+		run        func(*testing.T)
+	}{
+		{name: "prune", helper: "exercisePhotoVisibilityPruneVersions",
+			operations: []string{"pruneNodeContentVersions"}, run: exercisePhotoVisibilityPruneVersions},
+		{name: "term-report", helper: "exerciseTermReportRoutes",
+			operations: []string{"listTermReportHistory", "createTermReport", "getTermReport",
+				"downloadTermReportbundle", "downloadTermReportcsv", "getTermReportDates", "reviseTermReport"},
+			run: exerciseTermReportRoutes},
+		{name: "term-report-download", helper: "exerciseTermReportBrowserTicket",
+			operations: []string{"issueTermReportDownload"}, run: exerciseTermReportBrowserTicket},
+		{name: "timeline", helper: "exerciseTimelineRoutes",
+			operations: []string{"readTimelineCoverage", "createTimelineRebuild", "readTimelineRebuild"},
+			run:        exerciseTimelineRoutes},
+	} {
+		t.Run("fixture/"+fixtureCase.name, func(t *testing.T) {
+			for _, operationID := range fixtureCase.operations {
+				require.Equal(t, fixtureCase.helper, expected[operationID], operationID)
+			}
+			fixtureCase.run(t)
+		})
 	}
 	for operationID, disposition := range expected {
 		require.NotEmpty(t, disposition, operationID+" needs a photo visibility disposition")

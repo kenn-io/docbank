@@ -253,18 +253,18 @@ func (s *Store) FinishExportJob(ctx context.Context, c ExportClaim, receipt *bun
 		if err != nil {
 			return err
 		}
-		if j.PhotoOwnerBound {
-			boundCtx := WithPhotoOwnerBinding(ctx, j.PhotoOwnerID, true, j.PhotoNoOwner)
-			if err := checkExportPlanPhotoVisibilityTx(boundCtx, tx, j.PlanID); err != nil {
-				return err
-			}
-		}
 		j.Sequence++
 		if receipt == nil {
 			j.State = exportFailedState
 			j.Failure = failure
 			j.ExpiresAt = exportDeadline(10 * time.Minute)
 		} else {
+			if j.PhotoOwnerBound {
+				boundCtx := WithPhotoOwnerBinding(ctx, j.PhotoOwnerID, true, j.PhotoNoOwner)
+				if err := checkExportPlanPhotoVisibilityTx(boundCtx, tx, j.PlanID); err != nil {
+					return err
+				}
+			}
 			if receipt.Format != bundle.Format || receipt.PlanFingerprint != j.Fingerprint || !canonical.IsSHA256Hex(receipt.SHA256) || receipt.Size < 1 || receipt.Size > bundle.MaxArchiveBytes || archiveName != j.ID+".zip" {
 				return bundle.ErrConflict
 			}

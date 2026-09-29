@@ -38,7 +38,8 @@ func TestTermReportRoutesWithoutStoreReturnUnavailable(t *testing.T) {
 	}
 }
 
-func TestTermReportRoutesFreezeSummaryDatesAndDownload(t *testing.T) {
+func exerciseTermReportRoutes(t *testing.T) {
+	t.Helper()
 	ts, s := newTestServer(t, nil)
 	createFileWithContent(t, ts, s, "/synthetic-alpha.txt", "synthetic alpha")
 	request := report.Request{Version: 1, AllDocuments: true, Timezone: "UTC",
@@ -74,6 +75,11 @@ func TestTermReportRoutesFreezeSummaryDatesAndDownload(t *testing.T) {
 	require.Len(t, history.Items, 1)
 	require.Equal(t, request, history.Items[0].Request)
 	require.Equal(t, summary, history.Items[0].Summary)
+	resp, body = get(t, ts, endpoint+"/"+summary.ID, nil)
+	require.Equal(t, http.StatusOK, resp.StatusCode, body)
+	var fetched report.Summary
+	require.NoError(t, json.Unmarshal([]byte(body), &fetched))
+	require.Equal(t, summary, fetched)
 
 	resp, body = rawJSONRequest(t, ts.URL, http.MethodPost, endpoint+"/"+summary.ID+"/dates",
 		map[string]string{"X-Api-Key": testAPIKey}, `{}`)
@@ -82,6 +88,23 @@ func TestTermReportRoutesFreezeSummaryDatesAndDownload(t *testing.T) {
 	require.NoError(t, json.Unmarshal([]byte(body), &page))
 	require.Len(t, page.Members, 1)
 	require.NotEmpty(t, page.Members[0].Candidates)
+	candidate := page.Members[0].Candidates[0]
+	choices, err := json.Marshal(struct {
+		Choices []report.DateChoice `json:"choices"`
+	}{Choices: []report.DateChoice{{
+		Document:       page.Members[0].Document,
+		CandidateID:    candidate.ID,
+		EvidenceSHA256: candidate.Locator.EvidenceSHA256,
+		Reason:         "Reviewed synthetic date",
+		Action:         "select",
+	}}})
+	require.NoError(t, err)
+	resp, body = rawJSONRequest(t, ts.URL, http.MethodPost, endpoint+"/"+summary.ID+"/revisions",
+		map[string]string{"X-Api-Key": testAPIKey}, string(choices))
+	require.Equal(t, http.StatusOK, resp.StatusCode, body)
+	var revised report.Summary
+	require.NoError(t, json.Unmarshal([]byte(body), &revised))
+	require.Equal(t, summary.ID, revised.ParentID)
 
 	resp, body = get(t, ts, endpoint+"/"+summary.ID+"/csv", nil)
 	require.Equal(t, http.StatusOK, resp.StatusCode, body)
@@ -97,6 +120,10 @@ func TestTermReportRoutesFreezeSummaryDatesAndDownload(t *testing.T) {
 
 	resp, body = get(t, ts, endpoint+"/"+summary.ID+"-wrong", nil)
 	require.Equal(t, http.StatusGone, resp.StatusCode, body)
+}
+
+func TestTermReportRoutesFreezeSummaryDatesAndDownload(t *testing.T) {
+	exerciseTermReportRoutes(t)
 }
 
 func TestTermReportRejectsInvalidRequestAsClientError(t *testing.T) {
@@ -213,7 +240,8 @@ func TestTermReportOldDownloadStaysFrozenAfterSourceChange(t *testing.T) {
 	require.Equal(t, frozenBundle, stillFrozen)
 }
 
-func TestTermReportBrowserTicketIsOneUseAndOwnerBound(t *testing.T) {
+func exerciseTermReportBrowserTicket(t *testing.T) {
+	t.Helper()
 	ts, s := newTestServer(t, nil)
 	createFileWithContent(t, ts, s, "/synthetic-alpha.txt", "synthetic alpha")
 	sessionRequest, err := http.NewRequest(http.MethodPost, ts.URL+"/api/daemon/web-session", nil)
@@ -271,4 +299,8 @@ func TestTermReportBrowserTicketIsOneUseAndOwnerBound(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, http.StatusNotFound, second.StatusCode)
 	require.NoError(t, second.Body.Close())
+}
+
+func TestTermReportBrowserTicketIsOneUseAndOwnerBound(t *testing.T) {
+	exerciseTermReportBrowserTicket(t)
 }

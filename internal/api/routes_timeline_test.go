@@ -46,7 +46,8 @@ func TestTimelineRebuildRejectsNonCanonicalUUIDv4BeforeStore(t *testing.T) {
 		"rejected operation IDs must not create state or rebuild receipts")
 }
 
-func TestTimelineRebuildIsIdempotentByOperationID(t *testing.T) {
+func exerciseTimelineRoutes(t *testing.T) {
+	t.Helper()
 	ts, _ := newTestServer(t, nil)
 	const operationID = "10000000-0000-4000-8000-000000000001"
 	requestBody := `{"operation_id":"` + operationID + `"}`
@@ -117,6 +118,10 @@ func TestTimelineRebuildIsIdempotentByOperationID(t *testing.T) {
 
 	require.NoError(t, err)
 	assert.Equal(t, coverage, *clientCoverage)
+}
+
+func TestTimelineRebuildIsIdempotentByOperationID(t *testing.T) {
+	exerciseTimelineRoutes(t)
 }
 
 func TestTimelineCoverageRouteDoesNotInitializeState(t *testing.T) {

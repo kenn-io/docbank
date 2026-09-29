@@ -66,6 +66,78 @@ func workerFixture(t *testing.T, gate exporter.Gate) (*exporter.Worker, *store.S
 	return worker, catalog, job, driver, path
 }
 
+func TestPhotoOwnerExportAccessLoss(t *testing.T) {
+	baseGate := api.NewOperationGate()
+	var catalog *store.Store
+	var ownerBContext context.Context
+	var asset store.PhotoAsset
+	var sidecarNodeID int64
+	calls := 0
+	attached := false
+	worker, catalog, fixtureJob, _, _ := workerFixture(t, mutationFunc(func(ctx context.Context, fn func() error) error {
+		calls++
+		if calls == 4 {
+			var err error
+			asset, err = catalog.AttachPhotoFile(ownerBContext, asset.ID, asset.Revision, sidecarNodeID, store.PhotoRoleSidecar, &asset.Files[0].ID)
+			if err != nil {
+				return err
+			}
+			attached = true
+		}
+		return baseGate.MutateContext(ctx, fn)
+	}))
+	ctx := t.Context()
+	require.NoError(t, catalog.CancelExportJob(ctx, "master", fixtureJob.ID))
+	ownerA, err := catalog.CreatePhotoOwner(ctx, "Export owner A")
+	require.NoError(t, err)
+	ownerB, err := catalog.CreatePhotoOwner(ctx, "Export owner B")
+	require.NoError(t, err)
+	ownerAContext := store.WithPhotoOwner(ctx, ownerA.ID)
+	ownerBContext = store.WithPhotoOwner(ctx, ownerB.ID)
+	ordinary, err := catalog.NodeByPath(ctx, "/synthetic.txt")
+	require.NoError(t, err)
+	sidecarNodeID = ordinary.ID
+	raw, err := catalog.CreateFile(ownerBContext, catalog.RootID(), "capture.cr2", ordinary.BlobHash, ordinary.Size, "application/octet-stream")
+	require.NoError(t, err)
+	asset, err = catalog.PromotePhotoNode(ownerBContext, raw.ID, nil, store.PhotoRoleRAW, "")
+	require.NoError(t, err)
+	valid, err := catalog.CreateFile(ownerAContext, catalog.RootID(), "valid.txt", ordinary.BlobHash, ordinary.Size, "text/plain")
+	require.NoError(t, err)
+	makeExport := func(node store.Node) bundle.Job {
+		source, err := catalog.CreateExportSource(ownerAContext, "worker-owner", bundle.SourceRequest{
+			OperationID: uuid.New().String(), Kind: "explicit",
+			Members: []bundle.Member{{NodeID: node.ID, VersionID: node.CurrentVersionID, SHA256: node.BlobHash, Size: node.Size}},
+		}, nil)
+		require.NoError(t, err)
+		plan, err := catalog.CreateExportPlan(ownerAContext, "worker-owner", bundle.PlanRequest{
+			OperationID: uuid.New().String(), SourceID: source.ID, MemberHash: source.MemberHash,
+			Roles: []bundle.RolePolicy{{Role: "original"}},
+		})
+		require.NoError(t, err)
+		job, err := catalog.QueueExportJob(ownerAContext, "worker-owner", bundle.JobRequest{
+			OperationID: uuid.New().String(), PlanID: plan.ID, Fingerprint: plan.Fingerprint,
+		})
+		require.NoError(t, err)
+		return job
+	}
+	firstJob := makeExport(ordinary)
+	secondJob := makeExport(valid)
+	processed, err := worker.RunOne(ctx)
+	require.NoError(t, err)
+	require.True(t, processed)
+	require.True(t, attached)
+	failed, err := catalog.ExportJob(ctx, "worker-owner", firstJob.ID)
+	require.NoError(t, err)
+	require.Equal(t, "failed", failed.State)
+	require.Equal(t, "archive_failed", failed.Failure)
+	processed, err = worker.RunOne(ctx)
+	require.NoError(t, err)
+	require.True(t, processed)
+	completed, err := catalog.ExportJob(ctx, "worker-owner", secondJob.ID)
+	require.NoError(t, err)
+	require.Equal(t, "completed", completed.State)
+}
+
 func TestWorkerRetriesCatalogContention(t *testing.T) {
 	for _, phase := range []string{"startup", "cleanup", "claim", "progress", "finish"} {
 		t.Run(phase, func(t *testing.T) {
