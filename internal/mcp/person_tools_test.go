@@ -2,10 +2,13 @@ package mcp
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json/v2"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strings"
 	"sync/atomic"
 	"testing"
 
@@ -95,6 +98,38 @@ func TestPeopleMCPWorkflow(t *testing.T) {
 	require.True(t, ok)
 	assert.Equal(t, "Absorbed", absorbed["display_name"])
 	assert.EqualValues(t, 1, absorbed["revision"])
+	collection, err := catalog.BeginIngest(t.Context(), "mcp", "synthetic collection")
+	require.NoError(t, err)
+	node, err := catalog.IngestFileExact(t.Context(), collection, catalog.RootID(), "mcp-document.txt", strings.Repeat("a", 64), 16, "text/plain", "mcp-document.txt", "")
+	require.NoError(t, err)
+	_, err = catalog.SetCustodian(t.Context(), store.CustodianRequest{
+		Scope: store.CustodianScope{Kind: "collection", IngestID: collection.ID()}, PersonID: survivorID,
+		RawLabel: "Collection owner", Rank: "primary", Basis: "operator_assigned", SourceRef: "mcp-collection", IfMatchRevision: 1,
+	})
+	require.NoError(t, err)
+	profileJSON := "{}"
+	profileDigest := sha256.Sum256([]byte(profileJSON))
+	manifestHash, manifestSize, err := blobs.Write(strings.NewReader("synthetic manifest"))
+	require.NoError(t, err)
+	require.NoError(t, catalog.RecordBlob(t.Context(), manifestHash, manifestSize, store.BlobPhysical{Encoding: "raw", StoredBytes: manifestSize}))
+	pkg, err := catalog.CreatePackage(t.Context(), store.PackageRequest{
+		PackageID: "00000000-0000-4000-8000-000000000101", Direction: "received", PackageName: "mcp-package",
+		ProfileSHA256: hex.EncodeToString(profileDigest[:]), ProfileJSON: profileJSON,
+		MappingSHA256: hex.EncodeToString(profileDigest[:]), MappingJSON: profileJSON,
+		ManifestSHA256: manifestHash, ManifestBlobSHA256: manifestHash,
+		IngestID: collection.ID(), State: "importing",
+	})
+	require.NoError(t, err)
+	_, err = catalog.SetCustodian(t.Context(), store.CustodianRequest{
+		Scope: store.CustodianScope{Kind: "package", PackageID: pkg.PackageID}, PersonID: survivorID,
+		RawLabel: "Package owner", Rank: "primary", Basis: "operator_assigned", SourceRef: "mcp-package", IfMatchRevision: 1,
+	})
+	require.NoError(t, err)
+	_, err = catalog.SetCustodian(t.Context(), store.CustodianRequest{
+		Scope: store.CustodianScope{Kind: "document", NodeID: node.ID, ContentVersionID: node.CurrentVersionID}, PersonID: survivorID,
+		RawLabel: "Document owner", Rank: "primary", Basis: "operator_assigned", SourceRef: "mcp-document", IfMatchRevision: 1,
+	})
+	require.NoError(t, err)
 	renamed := call("rename_person", map[string]any{"person_id": absorbedID, "if_match_revision": 1, "display_name": "Absorbed Renamed"})
 	assert.Equal(t, absorbedID, renamed["person_id"])
 	assert.Equal(t, "Absorbed Renamed", renamed["display_name"])
@@ -182,8 +217,31 @@ func TestPeopleMCPWorkflow(t *testing.T) {
 	assert.EqualValues(t, 2, retired["revision"])
 	callError("get_person", map[string]any{"person_id": newPersonID}, "not_found")
 	page := call("list_person_custodians", map[string]any{"person_id": survivorID, "limit": 10})
-	assert.EqualValues(t, 0, page["total"])
-	assert.Equal(t, []any{}, page["items"])
+	assert.EqualValues(t, 3, page["total"])
+	items, ok := page["items"].([]any)
+	require.True(t, ok)
+	require.Len(t, items, 3)
+	bySource := make(map[string]map[string]any, len(items))
+	for _, raw := range items {
+		item, ok := raw.(map[string]any)
+		require.True(t, ok)
+		sourceRef, ok := item["source_ref"].(string)
+		require.True(t, ok)
+		bySource[sourceRef] = item
+	}
+	collectionOutput := bySource["mcp-collection"]
+	require.Equal(t, collection.ID(), collectionOutput["ingest_id"])
+	require.NotContains(t, collectionOutput, "package_id")
+	require.NotContains(t, collectionOutput, "node_id")
+	packageOutput := bySource["mcp-package"]
+	require.Equal(t, pkg.PackageID, packageOutput["package_id"])
+	require.NotContains(t, packageOutput, "ingest_id")
+	require.NotContains(t, packageOutput, "node_id")
+	documentOutput := bySource["mcp-document"]
+	require.EqualValues(t, node.ID, documentOutput["node_id"])
+	require.Equal(t, node.CurrentVersionID, documentOutput["content_version_id"])
+	require.NotContains(t, documentOutput, "ingest_id")
+	require.NotContains(t, documentOutput, "package_id")
 }
 
 func TestPersonWriteTreatsMalformedSuccessAsUnknown(t *testing.T) {

@@ -1,10 +1,13 @@
 package api_test
 
 import (
+	"bytes"
+	"encoding/base64"
 	"encoding/json/v2"
 	"fmt"
 	"net/http"
 	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -219,6 +222,123 @@ func TestPeopleRoutesUseInheritedBodyLimit(t *testing.T) {
 	current, _, err := fixture.PersonByID(t.Context(), person.PersonID)
 	require.NoError(t, err)
 	require.Equal(t, int64(1), current.Revision)
+}
+
+func TestPeopleSplitReplayAfterLegacyReceiptRestore(t *testing.T) {
+	sourceServer, source := newTestServer(t, nil)
+	createdResponse, createdBody := do(t, sourceServer, http.MethodPost, "/api/v1/people", nil, map[string]string{"display_name": "Synthetic restore"})
+	require.Equal(t, http.StatusCreated, createdResponse.StatusCode, createdBody)
+	var person api.Person
+	require.NoError(t, json.Unmarshal([]byte(createdBody), &person))
+	identity, err := source.AddPersonIdentity(t.Context(), person.PersonID, person.Revision, store.PersonIdentity{
+		Kind: "email", ValueDisplay: "restore@example.test", Origin: "operator", EvidenceKind: "operator_assertion",
+		EvidenceID: "legacy-receipt", Confidence: "operator_asserted",
+	})
+	require.NoError(t, err)
+	storedPerson, _, err := source.PersonByID(t.Context(), person.PersonID)
+	require.NoError(t, err)
+	splitBody := map[string]any{
+		"operation_id": "00000000-0000-4000-8000-000000000201", "display_name": "Restored split",
+		"identity_ids": []string{identity.IdentityID},
+	}
+	sourceResponse, sourceRaw := do(t, sourceServer, http.MethodPost, "/api/v1/people/by-id/"+person.PersonID+"/split",
+		map[string]string{"If-Match": strconv.Quote(strconv.FormatInt(storedPerson.Revision, 10))}, splitBody)
+	require.Equal(t, http.StatusOK, sourceResponse.StatusCode, sourceRaw)
+	var sourceReceipt api.PersonSplitReceipt
+	require.NoError(t, json.Unmarshal([]byte(sourceRaw), &sourceReceipt))
+	sourceETag := sourceResponse.Header.Get("ETag")
+	require.Equal(t, strconv.Quote(strconv.FormatInt(sourceReceipt.SourceRevisionAfter, 10)), sourceETag)
+
+	var exported bytes.Buffer
+	require.NoError(t, source.ExportMetadata(t.Context(), &exported))
+	receiptFields := legacySplitReceiptFields(t, exported.String())
+	require.ElementsMatch(t, []string{"CreatedAt", "MovedIdentityIDs", "NewPersonID", "OperationID", "SourcePersonID"}, receiptFields)
+	require.NotContains(t, exported.String(), "source_revision_after")
+
+	restoredServer, restored := newTestServer(t, nil)
+	require.NoError(t, restored.ImportMetadata(t.Context(), bytes.NewReader(exported.Bytes())))
+	var roundTrip bytes.Buffer
+	require.NoError(t, restored.ExportMetadata(t.Context(), &roundTrip))
+	require.Equal(t, exported.Bytes(), roundTrip.Bytes())
+	replayResponse, replayRaw := do(t, restoredServer, http.MethodPost, "/api/v1/people/by-id/"+person.PersonID+"/split",
+		map[string]string{"If-Match": strconv.Quote(strconv.FormatInt(storedPerson.Revision, 10))}, splitBody)
+	require.Equal(t, http.StatusOK, replayResponse.StatusCode, replayRaw)
+	var replayReceipt api.PersonSplitReceipt
+	require.NoError(t, json.Unmarshal([]byte(replayRaw), &replayReceipt))
+	require.Equal(t, sourceReceipt, replayReceipt)
+	require.Equal(t, sourceETag, replayResponse.Header.Get("ETag"))
+}
+
+func legacySplitReceiptFields(t *testing.T, metadata string) []string {
+	t.Helper()
+	for line := range strings.SplitSeq(strings.TrimSpace(metadata), "\n") {
+		var record map[string]any
+		require.NoError(t, json.Unmarshal([]byte(line), &record))
+		if record["type"] != "person_split" {
+			continue
+		}
+		encoded, ok := record["receipt_json"].(string)
+		require.True(t, ok)
+		receiptJSON, err := base64.StdEncoding.DecodeString(encoded)
+		require.NoError(t, err)
+		var receipt map[string]any
+		require.NoError(t, json.Unmarshal(receiptJSON, &receipt))
+		fields := make([]string, 0, len(receipt))
+		for field := range receipt {
+			fields = append(fields, field)
+		}
+		return fields
+	}
+	t.Fatal("person_split metadata record not found")
+	return nil
+}
+
+func TestPeopleRouteSplitAllowsTwoHundredOneAssignments(t *testing.T) {
+	ts, fixture := newTestServer(t, nil)
+	createdResponse, createdBody := do(t, ts, http.MethodPost, "/api/v1/people", nil, map[string]string{"display_name": "Synthetic many assignments"})
+	require.Equal(t, http.StatusCreated, createdResponse.StatusCode, createdBody)
+	var person api.Person
+	require.NoError(t, json.Unmarshal([]byte(createdBody), &person))
+	run, err := fixture.BeginIngest(t.Context(), "mcp", "synthetic split assignments")
+	require.NoError(t, err)
+	assignmentIDs := make([]string, 201)
+	for index := range assignmentIDs {
+		node, ingestErr := fixture.IngestFileExact(t.Context(), run, fixture.RootID(), fmt.Sprintf("split-%03d.txt", index), fmt.Sprintf("%064x", index+1), int64(index+1), "text/plain", fmt.Sprintf("split-%03d.txt", index), "")
+		require.NoError(t, ingestErr)
+		rank := "additional"
+		if index == 0 {
+			rank = "primary"
+		}
+		assignment, setErr := fixture.SetCustodian(t.Context(), store.CustodianRequest{
+			Scope: store.CustodianScope{Kind: "document", NodeID: node.ID, ContentVersionID: node.CurrentVersionID}, PersonID: person.PersonID,
+			RawLabel: fmt.Sprintf("Synthetic assignment %03d", index), Rank: rank, Basis: "operator_assigned",
+			SourceRef: fmt.Sprintf("synthetic-assignment-%03d", index), IfMatchRevision: 1,
+		})
+		require.NoError(t, setErr)
+		assignmentIDs[index] = assignment.AssignmentID
+	}
+	body := map[string]any{
+		"operation_id": "00000000-0000-4000-8000-000000000202", "display_name": "Many assignments",
+		"assignment_ids": assignmentIDs,
+	}
+	response, raw := do(t, ts, http.MethodPost, "/api/v1/people/by-id/"+person.PersonID+"/split",
+		map[string]string{"If-Match": strconv.Quote("1")}, body)
+	require.Equal(t, http.StatusOK, response.StatusCode, raw)
+	var receipt api.PersonSplitReceipt
+	require.NoError(t, json.Unmarshal([]byte(raw), &receipt))
+	require.Equal(t, int64(2), receipt.SourceRevisionAfter)
+	items, total, err := fixture.CustodiansForPerson(t.Context(), receipt.NewPersonID, 250, 0)
+	require.NoError(t, err)
+	require.EqualValues(t, 201, total)
+	require.Len(t, items, 201)
+	movedIDs := make([]string, len(items))
+	for index, item := range items {
+		movedIDs[index] = item.AssignmentID
+	}
+	require.ElementsMatch(t, assignmentIDs, movedIDs)
+	_, sourceTotal, err := fixture.CustodiansForPerson(t.Context(), person.PersonID, 250, 0)
+	require.NoError(t, err)
+	require.Zero(t, sourceTotal)
 }
 
 func TestPeopleRoutesEnforceIfMatch(t *testing.T) {
