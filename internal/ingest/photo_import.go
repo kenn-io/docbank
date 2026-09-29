@@ -140,7 +140,8 @@ func (ing *Ingester) readPhotoImportMember(ctx context.Context, candidate PhotoI
 // ImportPhotoDirectory imports every supported camera file under root into
 // destination, one group transaction at a time. Files settle once for the
 // whole scan outside the mutation gate; each group holds the gate only while
-// it publishes bytes and commits.
+// it rechecks, publishes bytes, and commits. A group whose files changed
+// since the scan counts as skipped.
 func (ing *Ingester) ImportPhotoDirectory(ctx context.Context, root, destination string, opts PhotoImportOptions) (report PhotoImportReport, retErr error) {
 	mutate := func(fn func() error) error {
 		if opts.Mutate != nil {
@@ -223,6 +224,9 @@ func (ing *Ingester) ImportPhotoDirectory(ctx context.Context, root, destination
 		switch {
 		case groupErr != nil && ctx.Err() != nil:
 			return report, ctx.Err()
+		case errors.Is(groupErr, ErrSourceChanged):
+			// A file that changed since the scan waits for the next run.
+			report.Receipt.Skipped++
 		case groupErr != nil:
 			report.Receipt.Failed++
 			report.Errors = append(report.Errors, FileError{Path: group.Members[0].Path, Err: groupErr})

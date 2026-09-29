@@ -179,6 +179,33 @@ func TestPhotoImportSourceStability(t *testing.T) {
 	assert.Error(t, err)
 }
 
+func TestPhotoImportSkipsGroupChangedAfterScan(t *testing.T) {
+	root := t.TempDir()
+	changed := filepath.Join(root, "IMG_0.JPG")
+	require.NoError(t, os.WriteFile(changed, []byte("jpeg-0"), 0o600))
+	require.NoError(t, os.WriteFile(filepath.Join(root, "IMG_1.JPG"), []byte("jpeg-1"), 0o600))
+	ing := newTestIngester(t)
+	calls := 0
+	report, err := ing.ImportPhotoDirectory(t.Context(), root, "/photos", PhotoImportOptions{
+		Mutate: func(_ context.Context, fn func() error) error {
+			// Call 1 sets up the destination; call 2 is the first group, after the scan.
+			if calls++; calls == 2 {
+				require.NoError(t, os.WriteFile(changed, []byte("jpeg-0-edited"), 0o600))
+			}
+			return fn()
+		},
+	})
+	require.NoError(t, err)
+	assert.Empty(t, report.Errors)
+	assert.Equal(t, int64(1), report.Receipt.Added)
+	assert.Equal(t, int64(1), report.Receipt.Skipped)
+
+	rerun, err := ing.ImportPhotoDirectory(t.Context(), root, "/photos", PhotoImportOptions{})
+	require.NoError(t, err)
+	assert.Equal(t, int64(1), rerun.Receipt.Added)
+	nodeByName(t, ing, "/photos/IMG_0.JPG")
+}
+
 func TestPhotoImportAuditedVaultDoesNotCreateDestination(t *testing.T) {
 	ing := newTestIngester(t)
 	ctx := t.Context()
