@@ -13,6 +13,7 @@ import (
 
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/daemonconn"
+	"go.kenn.io/docbank/internal/store"
 )
 
 func TestTimelineRebuildRejectsNonCanonicalUUIDv4BeforeStore(t *testing.T) {
@@ -48,11 +49,41 @@ func TestTimelineRebuildRejectsNonCanonicalUUIDv4BeforeStore(t *testing.T) {
 
 func exerciseTimelineRoutes(t *testing.T) {
 	t.Helper()
-	ts, _ := newTestServer(t, nil)
+	ts, s := newTestServer(t, nil)
+	ownerA, err := s.CreatePhotoOwner(t.Context(), "Timeline owner A")
+	require.NoError(t, err)
+	ownerB, err := s.CreatePhotoOwner(t.Context(), "Timeline owner B")
+	require.NoError(t, err)
+	write := func(owner *string, name string) {
+		hash, size, writeErr := s.Blobs.Write(strings.NewReader("timeline " + name))
+		require.NoError(t, writeErr)
+		var createErr error
+		if owner == nil {
+			_, createErr = s.CreateFile(t.Context(), s.RootID(), name, hash, size, "text/plain")
+		} else {
+			_, createErr = s.CreateFile(store.WithPhotoOwner(t.Context(), *owner), s.RootID(), name, hash, size, "image/jpeg")
+		}
+		require.NoError(t, createErr)
+	}
+	write(&ownerA.ID, "timeline-a.jpg")
+	write(&ownerB.ID, "timeline-b.jpg")
+	write(nil, "timeline-ordinary.txt")
+	firstSession := issuePhotoOwnerSession(t, ts, ownerA.ID)
+	for _, owner := range []string{ownerA.ID, ownerB.ID} {
+		response, body := rawJSONRequest(t, ts.URL, http.MethodGet, "/api/v1/timeline/coverage",
+			map[string]string{"X-Api-Key": testAPIKey, "X-Docbank-Owner": owner}, "")
+		require.Equal(t, http.StatusOK, response.StatusCode, body)
+		var coverage api.DocumentEventCoverage
+		require.NoError(t, json.Unmarshal([]byte(body), &coverage))
+		assert.Equal(t, int64(2), coverage.Selected)
+	}
 	const operationID = "10000000-0000-4000-8000-000000000001"
 	requestBody := `{"operation_id":"` + operationID + `"}`
+	response, body := rawJSONRequest(t, ts.URL, http.MethodPost, "/api/v1/timeline/rebuilds",
+		map[string]string{"X-Api-Key": "", api.WebSessionHeader: firstSession}, requestBody)
+	assert.Equal(t, http.StatusForbidden, response.StatusCode, body)
 
-	response, body := rawJSONRequest(t, ts.URL, http.MethodPost,
+	response, body = rawJSONRequest(t, ts.URL, http.MethodPost,
 		"/api/v1/timeline/rebuilds", map[string]string{"X-Api-Key": testAPIKey}, requestBody)
 	require.Equal(t, http.StatusAccepted, response.StatusCode, body)
 	var first api.TimelineBuild

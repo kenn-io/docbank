@@ -1923,11 +1923,15 @@ CREATE INDEX IF NOT EXISTS saved_query_runs_definition
 -- Report history stores the reusable request and a small receipt. The frozen
 -- observation and downloadable evidence remain daemon-local and expire.
 CREATE TABLE IF NOT EXISTS term_report_history (
-    id           TEXT PRIMARY KEY NOT NULL,
-    parent_id    TEXT NOT NULL,
-    observed_at  TEXT NOT NULL,
-    request_json BLOB NOT NULL,
-    summary_json BLOB NOT NULL
+    id              TEXT PRIMARY KEY NOT NULL,
+    parent_id       TEXT NOT NULL,
+    observed_at     TEXT NOT NULL,
+    request_json    BLOB NOT NULL,
+    summary_json    BLOB NOT NULL,
+    photo_owner_id  TEXT NOT NULL,
+    photo_owner_bound INTEGER NOT NULL,
+    photo_no_owner  INTEGER NOT NULL,
+    members_json    BLOB NOT NULL
 );
 
 CREATE INDEX IF NOT EXISTS term_report_history_recent

@@ -8,14 +8,19 @@ import (
 	"errors"
 	"fmt"
 
+	"go.kenn.io/docbank/internal/canonical"
 	"go.kenn.io/docbank/report"
 )
 
 // TermReportHistory retains only a reusable request and run receipt. Report
 // artifacts and date-evidence pages are deliberately excluded.
 type TermReportHistory struct {
-	Request report.Request `json:"request"`
-	Summary report.Summary `json:"summary"`
+	Request         report.Request    `json:"request"`
+	Summary         report.Summary    `json:"summary"`
+	PhotoOwnerID    string            `json:"-"`
+	PhotoOwnerBound bool              `json:"-"`
+	PhotoNoOwner    bool              `json:"-"`
+	Members         []report.Identity `json:"-"`
 }
 
 type TermReportHistoryPage struct {
@@ -26,12 +31,16 @@ type TermReportHistoryPage struct {
 const metadataTermReportHistoryType = "term_report_history"
 
 type metadataTermReportHistory struct {
-	Type        string `json:"type"`
-	ID          string `json:"id"`
-	ParentID    string `json:"parent_id"`
-	ObservedAt  string `json:"observed_at"`
-	RequestJSON []byte `json:"request_json" format:"byte"`
-	SummaryJSON []byte `json:"summary_json" format:"byte"`
+	Type            string `json:"type"`
+	ID              string `json:"id"`
+	ParentID        string `json:"parent_id"`
+	ObservedAt      string `json:"observed_at"`
+	RequestJSON     []byte `json:"request_json" format:"byte"`
+	SummaryJSON     []byte `json:"summary_json" format:"byte"`
+	PhotoOwnerID    string `json:"photo_owner_id"`
+	PhotoOwnerBound bool   `json:"photo_owner_bound"`
+	PhotoNoOwner    bool   `json:"photo_no_owner"`
+	MembersJSON     []byte `json:"members_json" format:"byte"`
 }
 
 const (
@@ -61,6 +70,31 @@ func validateTermReportHistory(item TermReportHistory) error {
 	if !s.ExpiresAt.After(s.ObservedAt) {
 		return errors.New("invalid report history expiry")
 	}
+	return validateTermReportHistoryAuthority(item)
+}
+
+func validateTermReportHistoryAuthority(item TermReportHistory) error {
+	if !item.PhotoOwnerBound {
+		if item.PhotoOwnerID != "" || item.PhotoNoOwner || len(item.Members) != 0 {
+			return errors.New("unbound report history has owner authority")
+		}
+		return nil
+	}
+	if item.PhotoNoOwner {
+		if item.PhotoOwnerID != "" {
+			return errors.New("ownerless report history has an owner ID")
+		}
+	} else if item.PhotoOwnerID == "" || validateUUIDv4(item.PhotoOwnerID) != nil {
+		return errors.New("bound report history has an invalid owner ID")
+	}
+	if len(item.Members) > 50000 {
+		return errors.New("report history has too many members")
+	}
+	for _, member := range item.Members {
+		if member.NodeID <= 0 || member.VersionID == "" || !canonical.IsSHA256Hex(member.SHA256) {
+			return errors.New("report history has an invalid member identity")
+		}
+	}
 	return nil
 }
 
@@ -87,14 +121,29 @@ func (s *Store) SaveTermReportHistory(ctx context.Context, item TermReportHistor
 	if err != nil {
 		return err
 	}
-	if len(requestJSON) > report.MaxRequestSummaryJSONBytes || len(summaryJSON) > report.MaxRequestSummaryJSONBytes {
+	membersJSON, err := json.Marshal(item.Members)
+	if err != nil {
+		return err
+	}
+	if len(requestJSON) > report.MaxRequestSummaryJSONBytes || len(summaryJSON) > report.MaxRequestSummaryJSONBytes ||
+		len(membersJSON) > report.MaxRequestSummaryJSONBytes {
 		return errors.New("report history receipt exceeds limit")
 	}
 	return s.withStorageTx(ctx, func(tx *sql.Tx) error {
+		visibilityCtx := WithPhotoOwnerBinding(ctx, item.PhotoOwnerID, item.PhotoOwnerBound, item.PhotoNoOwner)
+		if item.PhotoOwnerBound {
+			for _, member := range item.Members {
+				if err := photoVersionVisibilityCheckTx(visibilityCtx, tx, member.VersionID); err != nil {
+					return fmt.Errorf("saving report history member %s: %w", member.VersionID, err)
+				}
+			}
+		}
 		if _, err := tx.ExecContext(ctx, `INSERT INTO term_report_history(
-			id,parent_id,observed_at,request_json,summary_json
-		) VALUES(?,?,?,?,?)`, item.Summary.ID, item.Summary.ParentID,
-			item.Summary.ObservedAt.UTC().Format(timestampLayout), requestJSON, summaryJSON); err != nil {
+			id,parent_id,observed_at,request_json,summary_json,
+			photo_owner_id,photo_owner_bound,photo_no_owner,members_json
+		) VALUES(?,?,?,?,?,?,?,?,?)`, item.Summary.ID, item.Summary.ParentID,
+			item.Summary.ObservedAt.UTC().Format(timestampLayout), requestJSON, summaryJSON,
+			item.PhotoOwnerID, item.PhotoOwnerBound, item.PhotoNoOwner, membersJSON); err != nil {
 			return fmt.Errorf("saving report history: %w", err)
 		}
 		_, err := tx.ExecContext(ctx, `DELETE FROM term_report_history WHERE id IN (
@@ -110,45 +159,93 @@ func (s *Store) ListTermReportHistory(ctx context.Context, offset, limit int) (T
 		return TermReportHistoryPage{}, errors.New("invalid report history page")
 	}
 	var page TermReportHistoryPage
-	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM term_report_history`).Scan(&page.Total); err != nil {
-		return page, err
-	}
-	rows, err := s.db.QueryContext(ctx, `SELECT id,parent_id,observed_at,request_json,summary_json
-		FROM term_report_history ORDER BY observed_at DESC,id DESC LIMIT ? OFFSET ?`, limit, offset)
-	if err != nil {
-		return page, err
-	}
-	defer func() { _ = rows.Close() }()
-	page.Items = make([]TermReportHistory, 0, limit)
-	pageBytes := 0
-	for rows.Next() {
-		var id, parentID, observedAt string
-		var requestJSON, summaryJSON []byte
-		if err := rows.Scan(&id, &parentID, &observedAt, &requestJSON, &summaryJSON); err != nil {
-			return TermReportHistoryPage{}, err
-		}
-		itemBytes := len(requestJSON) + len(summaryJSON)
-		if len(page.Items) != 0 && pageBytes+itemBytes > maxTermReportHistoryPage {
-			break
-		}
-		item, err := decodeTermReportHistory(id, parentID, observedAt, requestJSON, summaryJSON)
+	err := s.withStorageTx(ctx, func(tx *sql.Tx) error {
+		ownerID, bound, noOwner, err := photoOwnerBindingTx(ctx, tx)
 		if err != nil {
-			return TermReportHistoryPage{}, err
+			return err
 		}
-		page.Items = append(page.Items, item)
-		pageBytes += itemBytes
+		rows, err := tx.QueryContext(ctx, `SELECT id,parent_id,observed_at,request_json,summary_json,
+			photo_owner_id,photo_owner_bound,photo_no_owner,members_json
+			FROM term_report_history ORDER BY observed_at DESC,id DESC`)
+		if err != nil {
+			return err
+		}
+		defer func() { _ = rows.Close() }()
+		page.Items = make([]TermReportHistory, 0, limit)
+		pageBytes := 0
+		eligible := 0
+		for rows.Next() {
+			var id, parentID, observedAt, rowOwnerID string
+			var requestJSON, summaryJSON, membersJSON []byte
+			var rowBound, rowNoOwner bool
+			if err := rows.Scan(&id, &parentID, &observedAt, &requestJSON, &summaryJSON,
+				&rowOwnerID, &rowBound, &rowNoOwner, &membersJSON); err != nil {
+				return err
+			}
+			if bound && (!rowBound || rowNoOwner != noOwner || !noOwner && rowOwnerID != ownerID) {
+				continue
+			}
+			item, err := decodeTermReportHistory(id, parentID, observedAt, requestJSON, summaryJSON,
+				rowOwnerID, rowBound, rowNoOwner, membersJSON)
+			if err != nil {
+				return err
+			}
+			if bound {
+				visibilityCtx := WithPhotoOwnerBinding(ctx, ownerID, true, noOwner)
+				visible := true
+				for _, member := range item.Members {
+					if err := photoVersionVisibilityCheckTx(visibilityCtx, tx, member.VersionID); err != nil {
+						if errors.Is(err, ErrNotFound) {
+							visible = false
+							break
+						}
+						return err
+					}
+				}
+				if !visible {
+					continue
+				}
+			}
+			eligible++
+			if eligible <= offset || len(page.Items) >= limit {
+				continue
+			}
+			itemBytes := len(requestJSON) + len(summaryJSON) + len(membersJSON)
+			if len(page.Items) != 0 && pageBytes+itemBytes > maxTermReportHistoryPage {
+				continue
+			}
+			page.Items = append(page.Items, item)
+			pageBytes += itemBytes
+		}
+		if err := rows.Err(); err != nil {
+			return err
+		}
+		page.Total = eligible
+		return nil
+	})
+	if err != nil {
+		return TermReportHistoryPage{}, err
 	}
-	return page, rows.Err()
+	return page, nil
 }
 
-func decodeTermReportHistory(id, parentID, observedAt string, requestJSON, summaryJSON []byte) (TermReportHistory, error) {
+func decodeTermReportHistory(id, parentID, observedAt string, requestJSON, summaryJSON []byte,
+	photoOwnerID string, photoOwnerBound, photoNoOwner bool, membersJSON []byte,
+) (TermReportHistory, error) {
 	var item TermReportHistory
 	if len(requestJSON) > report.MaxRequestSummaryJSONBytes || len(summaryJSON) > report.MaxRequestSummaryJSONBytes ||
-		json.Unmarshal(requestJSON, &item.Request) != nil || json.Unmarshal(summaryJSON, &item.Summary) != nil {
+		len(membersJSON) > report.MaxRequestSummaryJSONBytes || json.Unmarshal(requestJSON, &item.Request) != nil ||
+		json.Unmarshal(summaryJSON, &item.Summary) != nil || json.Unmarshal(membersJSON, &item.Members) != nil {
 		return item, errors.New("invalid report history JSON")
 	}
+	item.PhotoOwnerID = photoOwnerID
+	item.PhotoOwnerBound = photoOwnerBound
+	item.PhotoNoOwner = photoNoOwner
 	if err := validateTermReportHistory(item); err != nil {
 		return item, err
+	}
+	if len(item.Members) == 0 {
+		item.Members = nil
 	}
 	if item.Summary.ID != id || item.Summary.ParentID != parentID ||
 		item.Summary.ObservedAt.UTC().Format(timestampLayout) != observedAt {
@@ -158,7 +255,8 @@ func decodeTermReportHistory(id, parentID, observedAt string, requestJSON, summa
 }
 
 func exportTermReportHistory(ctx context.Context, q metadataQuerier, write metadataWrite) error {
-	rows, err := q.QueryContext(ctx, `SELECT id,parent_id,observed_at,request_json,summary_json
+	rows, err := q.QueryContext(ctx, `SELECT id,parent_id,observed_at,request_json,summary_json,
+		photo_owner_id,photo_owner_bound,photo_no_owner,members_json
 		FROM term_report_history ORDER BY observed_at,id`)
 	if err != nil {
 		return err
@@ -169,11 +267,13 @@ func exportTermReportHistory(ctx context.Context, q metadataQuerier, write metad
 		var record metadataTermReportHistory
 		record.Type = metadataTermReportHistoryType
 		if err := rows.Scan(&record.ID, &record.ParentID, &record.ObservedAt,
-			&record.RequestJSON, &record.SummaryJSON); err != nil {
+			&record.RequestJSON, &record.SummaryJSON, &record.PhotoOwnerID, &record.PhotoOwnerBound,
+			&record.PhotoNoOwner, &record.MembersJSON); err != nil {
 			return err
 		}
 		if _, err := decodeTermReportHistory(record.ID, record.ParentID,
-			record.ObservedAt, record.RequestJSON, record.SummaryJSON); err != nil {
+			record.ObservedAt, record.RequestJSON, record.SummaryJSON, record.PhotoOwnerID,
+			record.PhotoOwnerBound, record.PhotoNoOwner, record.MembersJSON); err != nil {
 			return err
 		}
 		if err := write(record); err != nil {
@@ -192,12 +292,15 @@ func importTermReportHistory(ctx context.Context, tx *sql.Tx, record metadataTer
 		return errors.New("invalid report history record type")
 	}
 	if _, err := decodeTermReportHistory(record.ID, record.ParentID, record.ObservedAt,
-		record.RequestJSON, record.SummaryJSON); err != nil {
+		record.RequestJSON, record.SummaryJSON, record.PhotoOwnerID, record.PhotoOwnerBound,
+		record.PhotoNoOwner, record.MembersJSON); err != nil {
 		return err
 	}
 	_, err := tx.ExecContext(ctx, `INSERT INTO term_report_history(
-		id,parent_id,observed_at,request_json,summary_json
-	) VALUES(?,?,?,?,?)`, record.ID, record.ParentID, record.ObservedAt,
-		record.RequestJSON, record.SummaryJSON)
+		id,parent_id,observed_at,request_json,summary_json,
+		photo_owner_id,photo_owner_bound,photo_no_owner,members_json
+	) VALUES(?,?,?,?,?,?,?,?,?)`, record.ID, record.ParentID, record.ObservedAt,
+		record.RequestJSON, record.SummaryJSON, record.PhotoOwnerID, record.PhotoOwnerBound,
+		record.PhotoNoOwner, record.MembersJSON)
 	return err
 }

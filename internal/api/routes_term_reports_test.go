@@ -122,6 +122,160 @@ func exerciseTermReportRoutes(t *testing.T) {
 	require.Equal(t, http.StatusGone, resp.StatusCode, body)
 }
 
+func exercisePhotoVisibilityTermReportHistory(t *testing.T) {
+	t.Helper()
+	exerciseTermReportRoutes(t)
+	exerciseTermReportBrowserTicket(t)
+	ts, s := newTestServer(t, nil)
+	ctx := t.Context()
+	first, err := s.CreatePhotoOwner(ctx, "Report owner A")
+	require.NoError(t, err)
+	second, err := s.CreatePhotoOwner(ctx, "Report owner B")
+	require.NoError(t, err)
+	writeDocument := func(owner *store.PhotoOwner, name, content string) store.Node {
+		hash, size, writeErr := s.Blobs.Write(strings.NewReader(content))
+		require.NoError(t, writeErr)
+		if owner == nil {
+			node, createErr := s.CreateFile(ctx, s.RootID(), name, hash, size, "text/plain")
+			require.NoError(t, createErr)
+			return node
+		}
+		node, createErr := s.CreateFile(store.WithPhotoOwner(ctx, owner.ID), s.RootID(), name, hash, size, "text/plain")
+		require.NoError(t, createErr)
+		return node
+	}
+	writeDocument(&first, "owner-a-alpha.txt", "alpha source A")
+	writeDocument(&second, "owner-b-beta.txt", "beta source B")
+	writeDocument(nil, "ordinary-alpha.txt", "alpha ordinary")
+	firstSession := issuePhotoOwnerSession(t, ts, first.ID)
+	secondSession := issuePhotoOwnerSession(t, ts, second.ID)
+	webRequest := func(token, method, path, body string) (*http.Response, string) {
+		t.Helper()
+		request, requestErr := http.NewRequest(method, ts.URL+path, strings.NewReader(body))
+		require.NoError(t, requestErr)
+		request.Header.Set("X-Api-Key", "")
+		request.Header.Set(api.WebSessionHeader, token)
+		if body != "" {
+			request.Header.Set("Content-Type", "application/json")
+		}
+		response, requestErr := ts.Client().Do(request)
+		require.NoError(t, requestErr)
+		content, requestErr := io.ReadAll(response.Body)
+		require.NoError(t, requestErr)
+		require.NoError(t, response.Body.Close())
+		return response, string(content)
+	}
+	makeRequest := func(term string) string {
+		t.Helper()
+		request := report.Request{Version: 1, AllDocuments: true, Timezone: "UTC",
+			CoverageMode: "available_only", Terms: []report.Term{{Number: 1,
+				Expression: term, Syntax: "simple", Dates: report.DateRange{Start: "2026-01-01", End: "2026-12-31"}}}}
+		encoded, marshalErr := json.Marshal(request)
+		require.NoError(t, marshalErr)
+		return string(encoded)
+	}
+	create := func(token, term string) report.Summary {
+		t.Helper()
+		response, body := webRequest(token, http.MethodPost, "/api/v1/search-exports", makeRequest(term))
+		require.Equal(t, http.StatusOK, response.StatusCode, body)
+		var summary report.Summary
+		require.NoError(t, json.Unmarshal([]byte(body), &summary))
+		require.NotEmpty(t, summary.ID)
+		return summary
+	}
+	type historyPage struct {
+		Items []struct {
+			Summary report.Summary `json:"summary"`
+		} `json:"items"`
+		Total int `json:"total"`
+	}
+	list := func(token string) historyPage {
+		t.Helper()
+		response, body := webRequest(token, http.MethodGet, "/api/v1/search-exports", "")
+		require.Equal(t, http.StatusOK, response.StatusCode, body)
+		var page historyPage
+		require.NoError(t, json.Unmarshal([]byte(body), &page))
+		return page
+	}
+	firstSummary := create(firstSession, "owner")
+	page := list(firstSession)
+	require.Equal(t, 1, page.Total)
+	require.Len(t, page.Items, 1)
+	require.Equal(t, firstSummary.ID, page.Items[0].Summary.ID)
+	page = list(secondSession)
+	require.Zero(t, page.Total)
+	require.Empty(t, page.Items)
+	secondSummary := create(secondSession, "beta")
+	page = list(secondSession)
+	require.Equal(t, 1, page.Total)
+	require.Len(t, page.Items, 1)
+	require.Equal(t, secondSummary.ID, page.Items[0].Summary.ID)
+	page = list(firstSession)
+	require.Equal(t, 1, page.Total)
+	require.Len(t, page.Items, 1)
+	require.Equal(t, firstSummary.ID, page.Items[0].Summary.ID)
+	sidecarOne := writeDocument(nil, "report-history-one.txt", "alpha sidecar one")
+	sidecarTwo := writeDocument(nil, "report-history-two.txt", "alpha sidecar two")
+	sidecarThree := writeDocument(nil, "report-history-three.txt", "alpha sidecar three")
+
+	rawHash, rawSize := testHash("report-history-raw"), int64(len("raw photo"))
+	raw, err := s.CreateFile(store.WithPhotoOwner(ctx, second.ID), s.RootID(), "report-history.cr2", rawHash, rawSize, "application/octet-stream")
+	require.NoError(t, err)
+	asset, err := s.PromotePhotoNode(store.WithPhotoOwner(ctx, second.ID), raw.ID, nil, store.PhotoRoleRAW, "")
+	require.NoError(t, err)
+	rawFileID := asset.Files[0].ID
+	attachSidecar := func(node store.Node) {
+		var attachErr error
+		asset, attachErr = s.AttachPhotoFile(store.WithPhotoOwner(ctx, second.ID), asset.ID, asset.Revision,
+			node.ID, store.PhotoRoleSidecar, &rawFileID)
+		require.NoError(t, attachErr)
+		require.ErrorIs(t, s.CheckPhotoVisibilityForVersion(store.WithPhotoOwner(ctx, first.ID), node.CurrentVersionID), store.ErrNotFound)
+	}
+	staleSummary := create(firstSession, "alpha")
+	attachSidecar(sidecarOne)
+	response, body := webRequest(firstSession, http.MethodGet, "/api/v1/search-exports/"+staleSummary.ID, "")
+	require.Equal(t, http.StatusGone, response.StatusCode, body)
+	page = list(firstSession)
+	require.Equal(t, 1, page.Total)
+	for _, item := range page.Items {
+		require.NotEqual(t, staleSummary.ID, item.Summary.ID)
+	}
+
+	staleSummary = create(firstSession, "alpha")
+	attachSidecar(sidecarTwo)
+	response, body = webRequest(firstSession, http.MethodPost,
+		"/api/v1/search-exports/"+staleSummary.ID+"/revisions", `{"choices":[]}`)
+	require.Equal(t, http.StatusGone, response.StatusCode, body)
+	page = list(firstSession)
+	require.Equal(t, 1, page.Total)
+	for _, item := range page.Items {
+		require.NotEqual(t, staleSummary.ID, item.Summary.ID)
+	}
+
+	staleSummary = create(firstSession, "alpha")
+	response, body = webRequest(firstSession, http.MethodPost,
+		"/api/v1/search-exports/"+staleSummary.ID+"/download", `{"format":"csv"}`)
+	require.Equal(t, http.StatusOK, response.StatusCode, body)
+	var ticket struct {
+		URL string `json:"url"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(body), &ticket))
+	attachSidecar(sidecarThree)
+	download, err := http.Get(ts.URL + ticket.URL)
+	require.NoError(t, err)
+	require.Equal(t, http.StatusGone, download.StatusCode)
+	require.NoError(t, download.Body.Close())
+	page = list(firstSession)
+	require.Equal(t, 1, page.Total)
+	for _, item := range page.Items {
+		require.NotEqual(t, staleSummary.ID, item.Summary.ID)
+	}
+}
+
+func TestPhotoVisibilityTermReportHistory(t *testing.T) {
+	exercisePhotoVisibilityTermReportHistory(t)
+}
+
 func TestTermReportRoutesFreezeSummaryDatesAndDownload(t *testing.T) {
 	exerciseTermReportRoutes(t)
 }

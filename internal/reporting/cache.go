@@ -347,6 +347,24 @@ func (c *Cache) Summary(owner, id string) (report.Summary, error) {
 	return cloneSummary(entry.summary), nil
 }
 
+// HistoryMembers returns the exact identities captured by a retained report.
+// The store persists these witnesses so history remains authorized after the
+// in-memory frame expires.
+func (c *Cache) HistoryMembers(owner, id string) ([]report.Identity, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.sweepExpiredLocked()
+	entry, err := c.lookupLocked(owner, id)
+	if err != nil {
+		return nil, err
+	}
+	members := make([]report.Identity, len(entry.frame.value.Members))
+	for index, member := range entry.frame.value.Members {
+		members[index] = member.Identity
+	}
+	return members, nil
+}
+
 // Validate rechecks a frozen frame before a caller serves its receipt or
 // artifact. A failed check drops the complete entry so its totals cannot be
 // mistaken for a still-authorized projection.

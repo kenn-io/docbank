@@ -85,6 +85,26 @@ func registerTermReportRoutes(api huma.API, d Deps, gate *OperationGate, cache *
 		}
 		return owner, nil
 	}
+	termReportHistoryContext := func(ctx context.Context) (context.Context, string, bool, bool, error) {
+		ownerID, bound, noOwner, err := d.Store.PhotoOwnerForRequest(ctx)
+		if err != nil {
+			return nil, "", false, false, err
+		}
+		if bound && ownerID == "" && !noOwner {
+			noOwner = true
+		}
+		return store.WithPhotoOwnerBinding(ctx, ownerID, bound, noOwner), ownerID, bound, noOwner, nil
+	}
+	termReportHistory := func(owner string, request report.Request,
+		summary report.Summary, ownerID string, bound, noOwner bool,
+	) (store.TermReportHistory, error) {
+		members, err := cache.HistoryMembers(owner, summary.ID)
+		if err != nil {
+			return store.TermReportHistory{}, err
+		}
+		return store.TermReportHistory{Request: request, Summary: summary, PhotoOwnerID: ownerID,
+			PhotoOwnerBound: bound, PhotoNoOwner: noOwner, Members: members}, nil
+	}
 	serviceFor := func(profile string) *reporting.Service {
 		return &reporting.Service{Source: d.Store,
 			Text: reporting.CapturedTextReader{Open: d.Blobs.OpenStreamContext},
@@ -115,12 +135,21 @@ func registerTermReportRoutes(api huma.API, d Deps, gate *OperationGate, cache *
 			}
 			return nil, NewError(http.StatusUnprocessableEntity, "invalid_report_request", err.Error())
 		}
-		summary, err := cache.Create(ctx, owner, serviceFor(request.Profile), request)
+		historyCtx, ownerID, bound, noOwner, err := termReportHistoryContext(ctx)
 		if err != nil {
 			return nil, termReportError(err)
 		}
+		summary, err := cache.Create(historyCtx, owner, serviceFor(request.Profile), request)
+		if err != nil {
+			return nil, termReportError(err)
+		}
+		history, err := termReportHistory(owner, request, summary, ownerID, bound, noOwner)
+		if err != nil {
+			cache.Drop(owner, summary.ID)
+			return nil, termReportError(err)
+		}
 		if err := gate.MutateContext(ctx, func() error {
-			return d.Store.SaveTermReportHistory(ctx, store.TermReportHistory{Request: request, Summary: summary})
+			return d.Store.SaveTermReportHistory(historyCtx, history)
 		}); err != nil {
 			cache.Drop(owner, summary.ID)
 			return nil, FromStoreError(err)
@@ -136,11 +165,15 @@ func registerTermReportRoutes(api huma.API, d Deps, gate *OperationGate, cache *
 			if _, err := termReportOwner(ctx); err != nil {
 				return nil, err
 			}
+			historyCtx, _, _, _, err := termReportHistoryContext(ctx)
+			if err != nil {
+				return nil, termReportError(err)
+			}
 			limit := in.Limit
 			if limit == 0 {
 				limit = 20
 			}
-			page, err := d.Store.ListTermReportHistory(ctx, in.Offset, limit)
+			page, err := d.Store.ListTermReportHistory(historyCtx, in.Offset, limit)
 			if err != nil {
 				return nil, FromStoreError(err)
 			}
@@ -198,6 +231,10 @@ func registerTermReportRoutes(api huma.API, d Deps, gate *OperationGate, cache *
 		if err := checkReportVisibility(ctx, owner, in.ID); err != nil {
 			return nil, termReportError(err)
 		}
+		historyCtx, ownerID, bound, noOwner, err := termReportHistoryContext(ctx)
+		if err != nil {
+			return nil, termReportError(err)
+		}
 		request, err := cache.Request(owner, in.ID)
 		if err != nil {
 			return nil, termReportError(err)
@@ -207,13 +244,18 @@ func registerTermReportRoutes(api huma.API, d Deps, gate *OperationGate, cache *
 			return nil, NewError(http.StatusBadRequest, "invalid_report_choice", err.Error())
 		}
 		// The cache reuses the parent frame; configuration is already frozen.
-		summary, err := cache.Revise(ctx, owner, in.ID, serviceFor(""), in.Body.Choices)
+		summary, err := cache.Revise(historyCtx, owner, in.ID, serviceFor(""), in.Body.Choices)
 		if err != nil {
 			return nil, termReportError(err)
 		}
 		request.DateChoices = nil
+		history, err := termReportHistory(owner, request, summary, ownerID, bound, noOwner)
+		if err != nil {
+			cache.Drop(owner, summary.ID)
+			return nil, termReportError(err)
+		}
 		if err := gate.MutateContext(ctx, func() error {
-			return d.Store.SaveTermReportHistory(ctx, store.TermReportHistory{Request: request, Summary: summary})
+			return d.Store.SaveTermReportHistory(historyCtx, history)
 		}); err != nil {
 			cache.Drop(owner, summary.ID)
 			return nil, FromStoreError(err)

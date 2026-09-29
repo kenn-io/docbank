@@ -39,6 +39,49 @@ func TestTermReportHistoryRetainsReusableRequestAcrossMetadataRoundTrip(t *testi
 	require.Equal(t, page, restoredPage)
 }
 
+func TestTermReportHistoryPhotoOwnerRoundTripAndFiltering(t *testing.T) {
+	t.Parallel()
+	f := newPhotoVisibilityFixture(t)
+	request := report.Request{Version: 1, AllDocuments: true, Timezone: "UTC", CoverageMode: "strict",
+		Terms: []report.Term{{Number: 1, Expression: "photo", Syntax: "simple",
+			Dates: report.DateRange{Start: "2024-01-01", End: "2026-12-31"}}}}
+	member := func(node Node) report.Identity {
+		return report.Identity{NodeID: node.ID, VersionID: node.CurrentVersionID, SHA256: node.BlobHash}
+	}
+	now := time.Date(2026, 9, 20, 17, 0, 0, 0, time.UTC)
+	first := TermReportHistory{Request: request, Summary: report.Summary{
+		ID: strings.Repeat("1", 48), State: report.StateComplete, ObservedAt: now,
+		ExpiresAt: now.Add(30 * time.Minute), Terms: request.Terms, Counts: []report.Counts{{Hits: 1}},
+	}, PhotoOwnerID: f.first.ID, PhotoOwnerBound: true,
+		Members: []report.Identity{member(f.firstNode), member(f.ordinary)}}
+	second := TermReportHistory{Request: request, Summary: report.Summary{
+		ID: strings.Repeat("2", 48), State: report.StateComplete, ObservedAt: now.Add(time.Second),
+		ExpiresAt: now.Add(30*time.Minute + time.Second), Terms: request.Terms, Counts: []report.Counts{{Hits: 1}},
+	}, PhotoOwnerID: f.second.ID, PhotoOwnerBound: true,
+		Members: []report.Identity{member(f.secondNode), member(f.ordinary)}}
+	require.NoError(t, f.s.SaveTermReportHistory(WithPhotoOwner(f.ctx, f.first.ID), first))
+	require.NoError(t, f.s.SaveTermReportHistory(WithPhotoOwner(f.ctx, f.second.ID), second))
+	firstPage, err := f.s.ListTermReportHistory(WithPhotoOwner(f.ctx, f.first.ID), 0, 50)
+	require.NoError(t, err)
+	require.Equal(t, TermReportHistoryPage{Items: []TermReportHistory{first}, Total: 1}, firstPage)
+	secondPage, err := f.s.ListTermReportHistory(WithPhotoOwner(f.ctx, f.second.ID), 0, 50)
+	require.NoError(t, err)
+	require.Equal(t, TermReportHistoryPage{Items: []TermReportHistory{second}, Total: 1}, secondPage)
+
+	var exported bytes.Buffer
+	require.NoError(t, f.s.ExportMetadata(f.ctx, &exported))
+	require.Contains(t, exported.String(), `"photo_owner_id"`)
+	require.Contains(t, exported.String(), `"members_json"`)
+	restored := newTestStore(t)
+	require.NoError(t, restored.ImportMetadata(t.Context(), bytes.NewReader(exported.Bytes())))
+	restoredFirst, err := restored.ListTermReportHistory(WithPhotoOwner(t.Context(), f.first.ID), 0, 50)
+	require.NoError(t, err)
+	require.Equal(t, firstPage, restoredFirst)
+	restoredSecond, err := restored.ListTermReportHistory(WithPhotoOwner(t.Context(), f.second.ID), 0, 50)
+	require.NoError(t, err)
+	require.Equal(t, secondPage, restoredSecond)
+}
+
 func TestTermReportHistoryBoundsRetentionAcrossRestore(t *testing.T) {
 	t.Parallel()
 	ctx := t.Context()

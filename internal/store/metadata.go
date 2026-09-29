@@ -1712,7 +1712,7 @@ var metadataRequiredFields = map[string][]string{
 	metadataEmbeddingSetType:                     embeddingMetadataRequiredFields[metadataEmbeddingSetType],
 	metadataEmbeddingHeadType:                    embeddingMetadataRequiredFields[metadataEmbeddingHeadType],
 	metadataEmbeddingFailureType:                 embeddingMetadataRequiredFields[metadataEmbeddingFailureType],
-	metadataTermReportHistoryType:                {metadataTypeField, "id", "parent_id", "observed_at", "request_json", "summary_json"},
+	metadataTermReportHistoryType:                {metadataTypeField, "id", "parent_id", "observed_at", "request_json", "summary_json", "photo_owner_id", "photo_owner_bound", "photo_no_owner", "members_json"},
 }
 
 var metadataNullableFields = map[string]map[string]bool{

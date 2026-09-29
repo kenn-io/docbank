@@ -81,7 +81,7 @@ func photoOwnerBindingTx(ctx context.Context, q interface {
 		return "", true, false, err
 	}
 	if ownerID == "" {
-		return "", false, false, nil
+		return "", true, true, nil
 	}
 	return ownerID, true, false, nil
 }
