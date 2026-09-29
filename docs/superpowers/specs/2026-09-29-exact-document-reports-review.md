@@ -1,17 +1,19 @@
 # Exact-document reports: review follow-up
 
 This records the author's source checks and revisions after the supplied
-adversarial review of `5a301f2d`. It is not an independent re-review or a test
+adversarial reviews through `942eec0f`. It is not an independent re-review or a test
 of implemented behavior. Selected-document scope remains proposed.
 
 ## Reviewed input
 
 - Spec: [Reports for selected document versions](2026-09-29-exact-document-reports-design.md).
-- Revised spec SHA-256: `d07afa304fe79187cc4e9a53124bf5c0501a3e5c6e99b433ba82b6452319719c`.
-- Prior reviewed spec: commit `5a301f2dde3b3bf0f1d8e4c2f238782e09579e3d`,
+- Revised spec SHA-256: `d9a63a3d70e369826541207d7402b42adb93e6006c22917203ca66f65965c17f`.
+- Prior reviewed spec: commit `942eec0ff1da1004ede5274d3c0d14f6116cbafd`,
+  SHA-256 `d07afa304fe79187cc4e9a53124bf5c0501a3e5c6e99b433ba82b6452319719c`.
+- Original reviewed spec: commit `5a301f2dde3b3bf0f1d8e4c2f238782e09579e3d`,
   SHA-256 `bf89ba48ea368aceacf0e057a67ebcc808a1c8f915eafb078c577f1fd248c538`.
 - Repository: `kenn-io/docbank` at `b184ebfc4888f8f4cb6a59dbbb52573134a6bf39`.
-- Working state: clean at `5a301f2d` before revision; only these two documents
+- Working state: clean at `942eec0f` before revision; only these two tracked documents
   changed during follow-up. Product sources, dependencies, and generated
   clients still match the source baseline. No Git submodules/gitlinks.
 - Constraints: root `AGENTS.md`, `docs/README.md`, the two maintainer decisions
@@ -25,22 +27,25 @@ reusing any conclusion.
 
 ## Findings
 
-The supplied review found no High issues and four Medium issues. All four
-have corresponding changes in the revised spec. No additional High or Medium
-issue was identified in this source recheck; the revised contract still needs
-maintainer review.
+The latest review corrected its earlier null-rejection finding and identified
+one High issue in the resulting spec, with no Medium issues. That contradiction
+and the optional-list tag omission are corrected below. The earlier vault-ID,
+coverage, error-mapping, and Low-item resolutions remain in place.
 
-### Medium findings addressed
+### Findings addressed
 
-1. **Omission, null, and schema validation.** Spec lines 108 and 125 require
-   omission when unused, reject explicit null at both HTTP and CLI input
-   boundaries, and keep value/count checks in `NormalizeRequest`. Huma
-   `schema.go:929` makes the optional pointer non-nullable; `:612` rejects
-   nullable object references. `huma.go:2021` validates before calling the
-   handler, and `:2057` produces 422 for schema errors. Spec line 206 explicitly
-   separates these errors from application error codes. Making the new document
-   list schema-optional lets an empty object reach normalization; existing
-   required identity fields keep their ordinary schema behavior.
+1. **High: null behavior; Low: optional list tag.** Spec lines 108 and 315
+   treat an omitted or null selection as absent on both HTTP and CLI paths.
+   Huma `validate.go:681` skips null values for non-required fields before
+   validating the property's schema. The earlier inference from `schema.go:929`
+   and `:612` was wrong: those control schema construction, not this validator
+   branch. `cmd/docbank/report.go:66` uses ordinary JSON decoding; there is no
+   need for a CLI null-rejection pass. Spec line 127 names
+   `json:"documents,omitempty"`; Huma `schema.go:880` makes that list optional,
+   allowing `{}` to reach `NormalizeRequest` and return `invalid_report_request`.
+   Wrong JSON types and missing required identity fields retain their ordinary
+   schema errors. These conclusions come from source inspection; the supplied
+   scratch reproduction was reported by the reviewer, not rerun here.
 2. **Unnecessary client vault ID.** Spec line 155 removes the request field,
    asynchronous lookup, wrong-vault response, and extra verifier comparison.
    `internal/store/identity.go:12` and `version.go:650` generate random version
@@ -123,7 +128,7 @@ Try to falsify these contracts against the pinned source and proposed design:
    nested slice silently replace selected identities?
 6. Does an implementation add snapshot export jobs, provider work, database
    policy, or a new selection abstraction that this outcome does not need?
-7. Do real HTTP and CLI input paths honor omission-only scope and preserve the
+7. Do real HTTP and CLI input paths treat null selection as omitted and preserve the
    distinction between schema errors, application 422, selected-member 413,
    and version-change 409? Does a collection-limit request still return 422?
 
@@ -132,7 +137,7 @@ None were executed as selected-scope tests in this documentation-only change.
 
 ## Verdict
 
-Ready for re-review of the revised specification. The four Medium findings and
-four Low comments have explicit resolutions in the design. Implementation and
-planning remain pending written-spec approval; this source review does not
-claim that the proposed behavior is implemented or tested.
+The corrected spec matches the inspected optional-null validator path and
+names the required optional-field tag. The maintainer requested this correction
+and continuation into implementation planning. Product implementation awaits
+review of that plan; this source review does not claim implemented behavior.

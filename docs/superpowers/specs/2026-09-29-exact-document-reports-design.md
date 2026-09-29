@@ -106,12 +106,12 @@ one exact version:
 ```
 
 Exactly one scope must be active: `all_documents: true`, a nonempty
-`collection_ids` list, or a `selected_documents` object. Omit
-`selected_documents` when unused; explicit JSON `null` is invalid. Huma rejects
-it during HTTP schema validation. The CLI create-input boundary must also
-reject explicit null before decoding it into an absent optional field. An
-object with a missing or empty document list is invalid. Never infer all
-documents from an empty selection.
+`collection_ids` list, or a nonnull `selected_documents` object.
+Omission or null means no selected-document scope. HTTP validation and CLI
+JSON decoding already treat an optional null selection as absent; keep that
+behavior without a special null-rejection pass. An object with a missing,
+null, or empty document list is invalid. Never infer all documents from an
+empty selection; absent selection still requires another active scope.
 
 Selected scope requires 1–50,000 document identities, positive node IDs,
 canonical lowercase UUIDv4 version IDs, and 64-character lowercase hexadecimal
@@ -123,8 +123,8 @@ The existing 8 MiB request limit also applies; the member limit is a ceiling,
 not a guarantee that every request of that count fits.
 
 Keep these value, cardinality, and scope checks in `NormalizeRequest`, not
-Huma validation tags such as `format`, `pattern`, or `maxItems`. Make the new
-object's document list schema-optional so a missing list reaches normalization.
+Huma validation tags such as `format`, `pattern`, or `maxItems`. Tag the new
+object's list `json:"documents,omitempty"` so a missing list reaches normalization.
 Keep Huma's ordinary JSON types and existing required identity fields; their
 schema errors are distinct from the application errors below.
 
@@ -205,7 +205,7 @@ does not introduce a delegated-access or redaction boundary.
 
 The table applies to requests that pass HTTP schema validation. JSON decoding,
 schema, and transport-size failures keep the API's existing handling. For
-example, explicit null, wrong JSON types, or missing required identity fields
+example, wrong JSON types or missing required identity fields
 receive Huma's response rather than an application `invalid_report_request`.
 
 For more than 50,000 selected identities, `NormalizeRequest` must return an
@@ -312,7 +312,7 @@ claims about the current code:
   packet member fails verification, even after recomputing digests and CSV.
 - A valid current version with a wrong hash returns 422. A version that is no
   longer current returns 409 without a member list. Both reject the whole run.
-- Explicit null is rejected at HTTP and CLI JSON input boundaries. Empty or
+- At HTTP and CLI JSON input boundaries, null is treated as omitted. Empty or
   mixed scope reaches application validation when its JSON passes the schema.
   More than 50,000 selected identities returns 413 through the HTTP route;
   more than 50,000 collections retains its existing 422.
