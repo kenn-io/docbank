@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strconv"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -133,7 +134,7 @@ func TestResolverDiscoversLoadFilesAndEnforcesVolumeBound(t *testing.T) {
 	resolver, err := NewResolver(t.Context(), root, nil)
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, resolver.Close()) })
-	dat, opt, volumes, err := resolver.DiscoverPackageFiles()
+	dat, opt, volumes, err := resolver.DiscoverPackageFiles(t.Context(), mustProfile(t, "dat-concordance-v1"), nil)
 	require.ErrorIs(t, err, ErrLoadfileLimit)
 	assert.Empty(t, dat)
 	assert.Empty(t, opt)
@@ -146,7 +147,7 @@ func TestResolverDiscoversLoadFilesAndEnforcesVolumeBound(t *testing.T) {
 	bounded, err := NewResolver(t.Context(), boundedRoot, nil)
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, bounded.Close()) })
-	dat, opt, volumes, err = bounded.DiscoverPackageFiles()
+	dat, opt, volumes, err = bounded.DiscoverPackageFiles(t.Context(), mustProfile(t, "dat-concordance-v1"), nil)
 	require.NoError(t, err)
 	assert.Equal(t, "DISC001/package.dat", dat)
 	assert.Equal(t, "DISC001/pages.opt", opt)
@@ -165,7 +166,7 @@ func TestDiscoveryExplainsRootLoadFilesAndRejectsCompetingPageMaps(t *testing.T)
 	require.NoError(t, os.WriteFile(filepath.Join(root, "package.dat"), []byte("synthetic"), 0o600))
 	resolver, err := NewResolver(t.Context(), root, nil)
 	require.NoError(t, err)
-	dat, pageMap, volumes, err := resolver.DiscoverPackageFiles()
+	dat, pageMap, volumes, err := resolver.DiscoverPackageFiles(t.Context(), mustProfile(t, "dat-concordance-v1"), nil)
 	assert.Empty(t, dat)
 	assert.Empty(t, pageMap)
 	assert.Empty(t, volumes)
@@ -176,9 +177,89 @@ func TestDiscoveryExplainsRootLoadFilesAndRejectsCompetingPageMaps(t *testing.T)
 	resolver, err = NewResolver(t.Context(), root, nil)
 	require.NoError(t, err)
 	defer func() { require.NoError(t, resolver.Close()) }()
-	dat, pageMap, volumes, err = resolver.DiscoverPackageFiles()
+	dat, pageMap, volumes, err = resolver.DiscoverPackageFiles(t.Context(), mustProfile(t, "dat-concordance-v1"), nil)
 	assert.Empty(t, dat)
 	assert.Empty(t, pageMap)
 	assert.Empty(t, volumes)
 	require.ErrorIs(t, err, ErrMalformedInput)
+}
+
+func TestResolverSelectsLoadFileForDeclaredDialect(t *testing.T) {
+	root := t.TempDir()
+	require.NoError(t, os.Mkdir(filepath.Join(root, "VOL001"), 0o700))
+	require.NoError(t, os.WriteFile(filepath.Join(root, "VOL001", "package.dat"), []byte("DOCID\nDOC-A\n"), 0o600))
+	require.NoError(t, os.WriteFile(filepath.Join(root, "VOL001", "metadata.csv"), []byte("DOCID\nDOC-A\n"), 0o600))
+	resolver, err := NewResolver(t.Context(), root, nil)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, resolver.Close()) })
+	dat, _, _, err := resolver.DiscoverPackageFiles(t.Context(), mustProfile(t, "dat-concordance-v1"), nil)
+	require.NoError(t, err)
+	assert.Equal(t, "VOL001/package.dat", dat)
+	csv, _, _, err := resolver.DiscoverPackageFiles(t.Context(), mustProfile(t, "csv-rfc4180-v1"), nil)
+	require.NoError(t, err)
+	assert.Equal(t, "VOL001/metadata.csv", csv)
+}
+
+func TestDiscoveryDistinguishesNativeCSVFromCompetingMetadata(t *testing.T) {
+	for _, mapped := range []bool{false, true} {
+		t.Run(strconv.FormatBool(mapped), func(t *testing.T) {
+			root := t.TempDir()
+			base := "VOL001"
+			metadata := "DOCID,NATIVE\nDOC-A,NATIVE/source.csv\n"
+			var mapping []byte
+			if mapped {
+				base = "DELIVERY/DISC"
+				metadata = "Identifier,Original\nDOC-A,D/NATIVE/source.csv\n"
+				mapping = []byte(`{"contract":"loadfile-mapping/v1","columns":[{"source":"Identifier","canonical":"loadfile.document.id"},{"source":"Original","canonical":"loadfile.file.native"}],"volume_roots":{"D":"DELIVERY/DISC"}}`)
+			}
+			for name, data := range map[string]string{
+				base + "/review/metadata.csv": metadata,
+				base + "/NATIVE/source.csv":   "category,value\nsynthetic,42\n",
+			} {
+				file := filepath.Join(root, filepath.FromSlash(name))
+				require.NoError(t, os.MkdirAll(filepath.Dir(file), 0o700))
+				require.NoError(t, os.WriteFile(file, []byte(data), 0o600))
+			}
+			resolver, err := NewResolver(t.Context(), root, nil)
+			require.NoError(t, err)
+			metadataPath, _, _, err := resolver.DiscoverPackageFiles(t.Context(), mustProfile(t, "csv-rfc4180-v1"), mapping)
+			require.NoError(t, resolver.Close())
+			require.NoError(t, err)
+			require.Equal(t, base+"/review/metadata.csv", metadataPath)
+
+			require.NoError(t, os.WriteFile(filepath.Join(root, filepath.FromSlash(base), "competing.csv"), []byte(metadata), 0o600))
+			resolver, err = NewResolver(t.Context(), root, nil)
+			require.NoError(t, err)
+			_, _, _, err = resolver.DiscoverPackageFiles(t.Context(), mustProfile(t, "csv-rfc4180-v1"), mapping)
+			require.NoError(t, resolver.Close())
+			require.ErrorIs(t, err, ErrMalformedInput)
+
+			// Content that resembles metadata cannot hide a competing load file.
+			native := "DOCID,NATIVE\nNATIVE-ROW,competing.csv\n"
+			if mapped {
+				native = "Identifier,Original\nNATIVE-ROW,D/competing.csv\n"
+			}
+			require.NoError(t, os.WriteFile(filepath.Join(root, filepath.FromSlash(base), "NATIVE", "source.csv"), []byte(native), 0o600))
+			resolver, err = NewResolver(t.Context(), root, nil)
+			require.NoError(t, err)
+			_, _, _, err = resolver.DiscoverPackageFiles(t.Context(), mustProfile(t, "csv-rfc4180-v1"), mapping)
+			require.NoError(t, resolver.Close())
+			require.ErrorIs(t, err, ErrMalformedInput)
+		})
+	}
+}
+
+func TestDiscoveryCSVMetadataInDATWithNativeCSV(t *testing.T) {
+	root := t.TempDir()
+	require.NoError(t, os.Mkdir(filepath.Join(root, "VOL001"), 0o700))
+	require.NoError(t, os.WriteFile(filepath.Join(root, "VOL001", "metadata.dat"), []byte("DOCID,NATIVE\nDOC-A,native.csv\n"), 0o600))
+	for _, content := range []string{"category,value\nsynthetic,42\n", "", "DOCID\n"} {
+		require.NoError(t, os.WriteFile(filepath.Join(root, "VOL001", "native.csv"), []byte(content), 0o600))
+		resolver, err := NewResolver(t.Context(), root, nil)
+		require.NoError(t, err)
+		metadata, _, _, err := resolver.DiscoverPackageFiles(t.Context(), mustProfile(t, "csv-rfc4180-v1"), nil)
+		require.NoError(t, resolver.Close())
+		require.NoError(t, err)
+		require.Equal(t, "VOL001/metadata.dat", metadata)
+	}
 }

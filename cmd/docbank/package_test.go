@@ -16,7 +16,7 @@ import (
 )
 
 func TestPackagePreflightCLIUsesDaemonAndReturnsTypedResult(t *testing.T) {
-	_ = setupVaultHome(t)
+	dataRoot := setupVaultHome(t)
 	root := t.TempDir()
 	const documentID = "DOC-\x1b[31mFORGED\x1b[0m"
 	const loadFile = "a\u202e.dat"
@@ -78,6 +78,34 @@ func TestPackagePreflightCLIUsesDaemonAndReturnsTypedResult(t *testing.T) {
 	var detail api.PackageDetail
 	require.NoError(t, json.Unmarshal([]byte(out), &detail))
 	assert.Equal(t, status.PackageID, detail.PackageID)
+	t.Run("export destinations", func(t *testing.T) {
+		destination := filepath.Join(t.TempDir(), "export.zip")
+		require.NoError(t, os.WriteFile(destination, []byte("replace me"), 0o600))
+		_, err := runCLI(t, "package", "export", detail.SnapshotID, destination, "--profile", "export-csv-natives-v1", "--overwrite")
+		require.NoError(t, err)
+		archive, err := os.ReadFile(destination)
+		require.NoError(t, err)
+		require.True(t, strings.HasPrefix(string(archive), "PK"))
+
+		nested := filepath.Join(dataRoot, "blobs", "synthetic-authority")
+		require.NoError(t, os.WriteFile(nested, []byte("synthetic authority"), 0o600))
+		destinations := []string{filepath.Join(dataRoot, "docbank.db"), nested}
+		link := filepath.Join(t.TempDir(), "vault-link")
+		if err := os.Symlink(dataRoot, link); err == nil {
+			destinations = append(destinations, filepath.Join(link, "docbank.db"))
+		} else {
+			t.Logf("symlink case unavailable: %v", err)
+		}
+		for _, destination := range destinations {
+			before, err := os.ReadFile(destination)
+			require.NoError(t, err)
+			_, err = runCLI(t, "package", "export", detail.SnapshotID, destination, "--profile", "export-csv-natives-v1", "--overwrite")
+			require.ErrorContains(t, err, "outside the Docbank data directory")
+			after, err := os.ReadFile(destination)
+			require.NoError(t, err)
+			require.Equal(t, before, after)
+		}
+	})
 
 	out, err = runCLI(t, "package", "members", status.PackageID, "--limit", "50", "--json")
 	require.NoError(t, err)

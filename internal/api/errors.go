@@ -165,6 +165,7 @@ var storeErrCodes = []struct {
 	{packstore.ErrPhysicalMissing, http.StatusServiceUnavailable, "content_missing"},
 	{packstore.ErrPhysicalCorrupt, http.StatusInternalServerError, "content_corrupt"},
 	{packstore.ErrPhysicalAuthorityMissing, http.StatusInternalServerError, "physical_authority_missing"},
+	{loadfile.ErrPackageIncomplete, http.StatusUnprocessableEntity, "package_incomplete"},
 	{loadfile.ErrInvalidProfile, http.StatusUnprocessableEntity, "invalid_package_profile"},
 	{loadfile.ErrInvalidMapping, http.StatusUnprocessableEntity, "invalid_package_mapping"},
 	{loadfile.ErrMappingAmbiguous, http.StatusUnprocessableEntity, "package_mapping_ambiguous"},

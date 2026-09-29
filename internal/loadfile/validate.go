@@ -81,6 +81,7 @@ func Validate(ctx context.Context, in ValidateInput) ([]FileRef, []Diagnostic, e
 			}
 			volume, exists := volumes[fileRef.Volume]
 			var checkPDF func(io.ReadSeeker) error
+			var verifiedPageCount int
 			if in.PageCount != nil && (fileRef.Role == "native" || fileRef.Role == "produced_pdf") && strings.EqualFold(filepath.Ext(fileRef.RelPath), ".pdf") {
 				checkPDF = func(file io.ReadSeeker) error {
 					actual, countErr := in.PageCount(file)
@@ -90,7 +91,7 @@ func Validate(ctx context.Context, in ValidateInput) ([]FileRef, []Diagnostic, e
 					if declared := declaredPages[record.DocID]; declared > 0 && actual != declared {
 						return addDiagnostic(packageDiagnostic("page_count_mismatch", record, fmt.Sprintf("declared %d pages; source has %d", declared, actual)))
 					}
-					fileRef.VerifiedPageCount = actual
+					verifiedPageCount = actual
 					return nil
 				}
 			}
@@ -109,6 +110,7 @@ func Validate(ctx context.Context, in ValidateInput) ([]FileRef, []Diagnostic, e
 					return files, diagnostics, err
 				}
 			}
+			fileRef.VerifiedPageCount = verifiedPageCount
 			files = append(files, *fileRef)
 		}
 	}

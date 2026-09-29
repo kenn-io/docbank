@@ -214,10 +214,18 @@ func (r *Resolver) walkInventory(ctx context.Context, visit func(string, fs.File
 	return walk(".")
 }
 
-// DiscoverPackageFiles derives the load-file layout from the cached confined
-// inventory without traversing or reopening the caller's tree.
-func (r *Resolver) DiscoverPackageFiles() (string, string, []Volume, error) {
-	var datFiles, optFiles []string
+// DiscoverPackageFiles uses the confined inventory and mapped file references
+// to distinguish metadata from document content with a load-file extension.
+func (r *Resolver) DiscoverPackageFiles(ctx context.Context, profile Profile, mappingJSON []byte) (string, string, []Volume, error) {
+	csvProfile := false
+	switch profile.ID {
+	case "dat-concordance-v1":
+	case "csv-rfc4180-v1":
+		csvProfile = true
+	default:
+		return "", "", nil, ErrInvalidProfile
+	}
+	var datFiles, csvFiles, optFiles []string
 	volumeNames := make(map[string]bool)
 	for name, info := range r.inventory {
 		if !info.Mode().IsRegular() {
@@ -226,7 +234,7 @@ func (r *Resolver) DiscoverPackageFiles() (string, string, []Volume, error) {
 		volume, _, found := strings.Cut(name, "/")
 		if !found {
 			switch strings.ToLower(path.Ext(name)) {
-			case ".dat", ".opt", ".lfp":
+			case ".dat", ".csv", ".opt", ".lfp":
 				return "", "", nil, fmt.Errorf("%w: load files must be inside a volume directory, not directly in the package root", ErrMalformedInput)
 			}
 			continue
@@ -238,15 +246,12 @@ func (r *Resolver) DiscoverPackageFiles() (string, string, []Volume, error) {
 		switch strings.ToLower(path.Ext(name)) {
 		case ".dat":
 			datFiles = append(datFiles, name)
+		case ".csv":
+			csvFiles = append(csvFiles, name)
 		case ".opt", ".lfp":
 			optFiles = append(optFiles, name)
 		}
 	}
-	if len(datFiles) != 1 || len(optFiles) > 1 {
-		return "", "", nil, fmt.Errorf("%w: package root must contain exactly one DAT and at most one OPT or LFP page map", ErrMalformedInput)
-	}
-	slices.Sort(datFiles)
-	slices.Sort(optFiles)
 	names := make([]string, 0, len(volumeNames))
 	for name := range volumeNames {
 		names = append(names, name)
@@ -256,11 +261,117 @@ func (r *Resolver) DiscoverPackageFiles() (string, string, []Volume, error) {
 	for index, name := range names {
 		volumes[index] = Volume{Name: name, DeclaredRoot: name, Ordinal: index + 1}
 	}
-	opt := ""
-	if len(optFiles) == 1 {
-		opt = optFiles[0]
+	metadata := slices.Clone(datFiles)
+	if csvProfile {
+		metadata = append(metadata, csvFiles...)
 	}
-	return datFiles[0], opt, volumes, nil
+	var selected, pageMap string
+	for _, name := range metadata {
+		var refs map[string]bool
+		if len(metadata)+len(optFiles) > 1 {
+			var err error
+			refs, err = r.metadataFileReferences(ctx, name, profile, mappingJSON, volumes)
+			if err != nil && !errors.Is(err, ErrMalformedInput) {
+				return "", "", nil, err
+			}
+			if err != nil && len(metadata) > 1 {
+				continue
+			}
+		}
+		// Only this candidate's declarations can identify its document content.
+		// A native CSV's own rows cannot hide a competing metadata file.
+		datCount, csvCount, mapCount := len(datFiles), len(csvFiles), len(optFiles)
+		for ref := range refs {
+			switch strings.ToLower(path.Ext(ref)) {
+			case ".dat":
+				datCount--
+			case ".csv":
+				csvCount--
+			case ".opt", ".lfp":
+				mapCount--
+			}
+		}
+		count, extension := datCount, ".dat"
+		if csvProfile && csvCount > 0 {
+			count, extension = csvCount, ".csv"
+		}
+		if count != 1 || mapCount > 1 || refs[name] || !strings.EqualFold(path.Ext(name), extension) {
+			continue
+		}
+		if selected != "" {
+			return "", "", nil, fmt.Errorf("%w: package has competing metadata files", ErrMalformedInput)
+		}
+		selected = name
+		for _, candidate := range optFiles {
+			if !refs[candidate] {
+				pageMap = candidate
+			}
+		}
+	}
+	if selected == "" {
+		return "", "", nil, fmt.Errorf("%w: package root must contain exactly one metadata load file and at most one OPT or LFP page map", ErrMalformedInput)
+	}
+	return selected, pageMap, volumes, nil
+}
+
+func (r *Resolver) metadataFileReferences(ctx context.Context, name string, profile Profile, mappingJSON []byte, volumes []Volume) (map[string]bool, error) {
+	volume, relative, _ := strings.Cut(name, "/")
+	file, err := r.Open(Volume{Name: volume, DeclaredRoot: volume}, relative)
+	if err != nil {
+		return nil, err
+	}
+	scan := ScanDAT
+	if profile.ID == "csv-rfc4180-v1" {
+		scan = ScanCSV
+	}
+	referenced := make(map[string]bool)
+	mapping := Mapping{Contract: MappingContractV1}
+	first := true
+	diagnostics, scanErr := scan(file, profile, func(record Record) error {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if first {
+			first = false
+			if len(mappingJSON) > 0 {
+				mapping, _, err = DecodeMapping(mappingJSON, record.ColumnOrder)
+				if err != nil {
+					return err
+				}
+			}
+			if len(mapping.VolumeRoots) > 0 {
+				volumes = make([]Volume, 0, len(mapping.VolumeRoots))
+				for logical, root := range mapping.VolumeRoots {
+					volumes = append(volumes, Volume{Name: logical, DeclaredRoot: root})
+				}
+			}
+		}
+		records := []Record{record}
+		diagnostics, err := ApplyMapping(records, mapping, profile, func(int64) error { return nil })
+		if err != nil || Blocking(diagnostics) || records[0].DocID == "" {
+			return errors.Join(err, ErrMalformedInput)
+		}
+		NormalizeFileReferences(records, volumes)
+		for _, ref := range records[0].Files {
+			for _, volume := range volumes {
+				if ref.Volume == volume.Name {
+					if name, err := r.nameFor(volume, ref.RelPath); err == nil && r.inventory[name].Mode().IsRegular() {
+						referenced[name] = true
+					}
+				}
+			}
+		}
+		return nil
+	})
+	if err := errors.Join(file.Close(), ctx.Err()); err != nil {
+		return nil, err
+	}
+	// A native CSV need not parse as metadata. It still counts as a competing
+	// file unless another metadata candidate explicitly references it.
+	if scanErr != nil || Blocking(diagnostics) || first {
+		return nil, errors.Join(ErrMalformedInput, scanErr)
+	}
+	return referenced, nil
 }
 
 func (r *Resolver) nameFor(volume Volume, relPath string) (string, error) {

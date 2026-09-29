@@ -129,6 +129,12 @@ var exportBatesFileToolDefinition = toolDefinition{
 	schemas:     exportBatesFileSchemas, write: true, destructive: true,
 }
 
+var exportLoadFilePackageToolDefinition = toolDefinition{
+	name: "export_load_file_package", title: "Export load-file package",
+	description: "Write one exact verified load-file package to a local path.",
+	schemas:     exportLoadFilePackageSchemas, write: true, destructive: true,
+}
+
 var photoWriteToolDefinitions = []toolDefinition{
 	{name: "create_photo_asset", title: "Create photo asset", description: "Create an asset for one file node.", schemas: createPhotoAssetSchemas, write: true},
 	{name: "attach_photo_file", title: "Attach photo file", description: "Attach one file node to a photo asset at an expected revision.", schemas: attachPhotoFileSchemas, write: true},
@@ -146,7 +152,7 @@ func toolCatalog(allowProcessing, allowPackageWrites, allowPhotoEdits bool) []*s
 		definitions = append(definitions, preflightLoadFilePackageToolDefinition, packageImportToolDefinition,
 			resolvePackageCustodianToolDefinition, assignPackageCustodianToolDefinition,
 			ensureBatesNamespaceToolDefinition, reserveBatesRangeToolDefinition, publishBatesExportToolDefinition,
-			exportBatesFileToolDefinition)
+			exportBatesFileToolDefinition, exportLoadFilePackageToolDefinition)
 	}
 	if allowPhotoEdits {
 		definitions = append(definitions, photoWriteToolDefinitions...)
@@ -189,6 +195,8 @@ func registerToolCatalog(
 		case ensureBatesNamespaceToolDefinition.name, reserveBatesRangeToolDefinition.name,
 			publishBatesExportToolDefinition.name, exportBatesFileToolDefinition.name:
 			handler = batesWriteToolHandler(lease, tool.Name, output, logger)
+		case exportLoadFilePackageToolDefinition.name:
+			handler = packageExportToolHandler(lease, output, logger)
 		default:
 			if photoWriteTool(tool.Name) {
 				handler = photoWriteToolHandler(lease, tool.Name, output, logger)
@@ -425,7 +433,7 @@ func stableDomainError(err error) (string, int) {
 		"bates_source_too_large", "bates_source_unstampable", "bates_label_collision", "invalid_bates_request", "invalid_bates_cursor", "invalid_bates_selector",
 		"stale_bates_cursor":
 		return facts.Code, 0
-	case "stale_revision", "invalid_photo_asset", "photo_node_not_eligible", "photo_node_owned", "audit_mutation_unsupported":
+	case "stale_revision", "invalid_photo_asset", "photo_node_not_eligible", "photo_node_owned", "audit_mutation_unsupported", "package_incomplete":
 		return facts.Code, 0
 	default:
 		return "", 0
@@ -434,6 +442,8 @@ func stableDomainError(err error) (string, int) {
 
 func domainErrorMessage(code string) string {
 	switch code {
+	case "package_incomplete":
+		return "The snapshot is missing a required representation for this export profile."
 	case "not_found":
 		return "The requested Docbank identity was not found."
 	case "stale_version":

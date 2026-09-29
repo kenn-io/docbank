@@ -1,8 +1,10 @@
 package mcp
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -11,11 +13,15 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
+	"github.com/modelcontextprotocol/go-sdk/jsonrpc"
 	sdkmcp "github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/internal/api"
+	"go.kenn.io/docbank/internal/blob"
 	"go.kenn.io/docbank/internal/daemonconn"
+	"go.kenn.io/docbank/internal/processing"
+	"go.kenn.io/docbank/internal/store"
 )
 
 func TestPackageReadToolsArePublishedAsBoundedReads(t *testing.T) {
@@ -164,6 +170,122 @@ func TestPackageCustodianToolsExposeCandidatesAndExactWrites(t *testing.T) {
 	})
 }
 
+func TestExportLoadFilePackageIsAnExactGatedFileWrite(t *testing.T) {
+	readOnly := catalogMap(toolCatalog(false, false, false))
+	assert.NotContains(t, readOnly, "export_load_file_package")
+	assert.NotContains(t, catalogMap(toolCatalog(true, false, false)), "export_load_file_package")
+	tool := catalogMap(toolCatalog(false, true, false))["export_load_file_package"]
+	require.NotNil(t, tool)
+	assert.False(t, tool.Annotations.ReadOnlyHint)
+	assert.False(t, tool.Annotations.IdempotentHint)
+	assert.Equal(t, new(true), tool.Annotations.DestructiveHint)
+	assertSchemaAccepts(t, tool.InputSchema, map[string]any{
+		"snapshot_id": "11111111-1111-4111-8111-111111111111", "source_package_id": "22222222-2222-4222-8222-222222222222",
+		"bates_allocation_id": "33333333-3333-4333-8333-333333333333", "profile_id": "export-dat-pdf-v1",
+		"destination_path": "/tmp/synthetic-production.zip", "overwrite": false,
+	})
+	assertSchemaRejects(t, tool.InputSchema, map[string]any{
+		"snapshot_id": "11111111-1111-4111-8111-111111111111", "profile_id": "unknown",
+		"destination_path": "/tmp/synthetic-production.zip", "overwrite": false,
+	})
+	lease := newDaemonLeaseWith(func(context.Context) (*daemonconn.Connection, error) {
+		return nil, errors.New("daemon must not be acquired")
+	}, func(*daemonconn.Connection) error { return nil })
+	_, err := exportLoadFilePackage(t.Context(), lease, []byte(`{
+		"snapshot_id":"11111111-1111-4111-8111-111111111111",
+		"profile_id":"export-csv-natives-v1","destination_path":"relative.zip","overwrite":false}`))
+	require.Error(t, err)
+}
+
+func TestExportLoadFilePackagePublishesIndependentlyVerifiedArchive(t *testing.T) {
+	dataRoot := t.TempDir()
+	t.Setenv("DOCBANK_HOME", dataRoot)
+	ctx := t.Context()
+	root := t.TempDir()
+	catalog, err := store.Open(filepath.Join(root, "docbank.db"))
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, catalog.Close()) })
+	blobs, err := blob.New(store.NewPackCatalog(catalog), filepath.Join(root, "blobs"))
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, blobs.Close()) })
+	written, err := blobs.WriteDetailedContext(ctx, strings.NewReader("synthetic native\n"))
+	require.NoError(t, err)
+	encoding, err := written.EncodingName()
+	require.NoError(t, err)
+	physical := store.BlobPhysical{Encoding: encoding, StoredBytes: written.StoredSize,
+		PackEligible: written.PackEligible, MD5: written.MD5, Created: written.Created}
+	node, err := catalog.CreateFile(ctx, catalog.RootID(), "synthetic.txt", written.Hash, written.Size, "text/plain", physical)
+	require.NoError(t, err)
+	occurrence := strings.Repeat("a", 32)
+	snapshot, err := catalog.SealCollectionSnapshot(ctx, store.SnapshotSealRequest{SnapshotID: uuid.NewString(),
+		Members: []store.CollectionSnapshotMember{{Ordinal: 1, OccurrenceID: occurrence, NodeID: node.ID,
+			ContentVersionID: node.CurrentVersionID, BlobSHA256: written.Hash, Size: written.Size,
+			FamilyID: occurrence, FamilyOrder: 1, DisplayName: node.Name, FrozenFieldsJSON: "{}", DocumentKind: "file",
+			Representations: []store.CollectionSnapshotRepresentation{{OccurrenceID: occurrence, Role: "native",
+				Ordinal: 1, BlobSHA256: written.Hash, Size: written.Size, MediaType: "text/plain", Status: "available",
+				TextAuthority: "none"}}}}})
+	require.NoError(t, err)
+	var archive bytes.Buffer
+	built, err := processing.WriteLoadFileExport(ctx, catalog, blobs, processing.LoadFileExportRequest{
+		SnapshotID: snapshot.SnapshotID, ProfileID: "export-csv-natives-v1",
+	}, &archive)
+	require.NoError(t, err)
+	daemon := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v1/packages/exports":
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusCreated)
+			assert.NoError(t, json.NewEncoder(w).Encode(api.PackageExportTicket{URL: "/download", Name: "production.zip",
+				SnapshotID: snapshot.SnapshotID, ProfileID: "export-csv-natives-v1",
+				ArchiveSHA256: built.Receipt.ArchiveSHA256, ManifestSHA256: built.Receipt.ManifestSHA256,
+				CrosswalkSHA256: built.Receipt.CrosswalkSHA256, Size: built.Receipt.Size,
+				Records: built.Receipt.RecordCount, Pages: built.Receipt.PageCount}))
+		case "/download":
+			_, _ = w.Write(archive.Bytes())
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(daemon.Close)
+	lease := newDaemonLeaseWith(func(context.Context) (*daemonconn.Connection, error) {
+		return daemonconn.New(daemon.URL, "synthetic-key"), nil
+	}, func(*daemonconn.Connection) error { return nil })
+	destination := filepath.Join(t.TempDir(), "production.zip")
+	result, err := exportLoadFilePackage(ctx, lease, []byte(`{"snapshot_id":"`+snapshot.SnapshotID+
+		`","profile_id":"export-csv-natives-v1","destination_path":`+mustJSONString(t, destination)+`,"overwrite":false}`))
+	require.NoError(t, err)
+	require.Equal(t, "published", result.State)
+	require.Equal(t, built.Receipt.ArchiveSHA256, result.ArchiveSHA256)
+	published, err := os.ReadFile(destination)
+	require.NoError(t, err)
+	require.Equal(t, archive.Bytes(), published)
+
+	require.NoError(t, os.Mkdir(filepath.Join(dataRoot, "packs"), 0o700))
+	destinations := []string{filepath.Join(dataRoot, "docbank.db"), filepath.Join(dataRoot, "packs", "pack.bin")}
+	link := filepath.Join(t.TempDir(), "vault-link")
+	if err := os.Symlink(dataRoot, link); err == nil {
+		destinations = append(destinations, filepath.Join(link, "linked.bin"))
+	} else {
+		t.Logf("symlink case unavailable: %v", err)
+	}
+	server := newBatesToolTestServer(t, daemon.URL, true)
+	for _, destination := range destinations {
+		require.NoError(t, os.WriteFile(destination, []byte("synthetic vault authority"), 0o600))
+		response := exchangeRaw(t, server, requestFor("tools/call", map[string]any{
+			"name": "export_load_file_package", "arguments": map[string]any{
+				"snapshot_id": snapshot.SnapshotID, "profile_id": "export-csv-natives-v1",
+				"destination_path": destination, "overwrite": true,
+			},
+		}))
+		wireErr := decodeWireError(t, response)
+		require.EqualValues(t, jsonrpc.CodeInvalidParams, wireErr.Code)
+		require.Contains(t, wireErr.Message, "outside the Docbank data directory")
+		kept, err := os.ReadFile(destination)
+		require.NoError(t, err)
+		require.Equal(t, "synthetic vault authority", string(kept))
+	}
+}
+
 func catalogTool(t *testing.T, catalog []*sdkmcp.Tool, name string) *sdkmcp.Tool {
 	t.Helper()
 	for _, tool := range catalog {
@@ -173,4 +295,24 @@ func catalogTool(t *testing.T, catalog []*sdkmcp.Tool, name string) *sdkmcp.Tool
 	}
 	t.Fatalf("tool %s not found", name)
 	return nil
+}
+
+func TestPackageExportMissingRepresentationReturnsMCPDomainError(t *testing.T) {
+	t.Setenv("DOCBANK_HOME", t.TempDir())
+	daemon := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, "/api/v1/packages/exports", r.URL.Path)
+		w.Header().Set("Content-Type", "application/problem+json")
+		w.WriteHeader(http.StatusUnprocessableEntity)
+		_, _ = w.Write([]byte(`{"status":422,"code":"package_incomplete","detail":"missing produced_pdf"}`))
+	}))
+	t.Cleanup(daemon.Close)
+	server := newBatesToolTestServer(t, daemon.URL, true)
+	result := callToolResult(t, server, "export_load_file_package", map[string]any{
+		"snapshot_id": uuid.NewString(), "profile_id": "export-dat-pdf-v1",
+		"destination_path": filepath.Join(t.TempDir(), "output.zip"), "overwrite": false,
+	})
+	require.Equal(t, true, result["isError"])
+	content := objectField(t, result, "structuredContent")
+	require.Equal(t, "package_incomplete", content["code"])
+	require.Contains(t, content["message"], "required")
 }

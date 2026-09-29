@@ -58,8 +58,8 @@ type ImageRef struct {
 	DocumentBreak     bool   `json:"document_break"`
 	FolderBreak       bool   `json:"folder_break"`
 	BoxBreak          bool   `json:"box_break"`
-	PageOrdinal       int    `json:"page_ordinal"`
-	SourcePage        int    `json:"source_page"`
+	PageOrdinal       int    `json:"page_ordinal"` // One-based position within the package document.
+	SourcePage        int    `json:"source_page"`  // Original source-document page number; zero when unknown.
 	DeclaredPageCount int    `json:"declared_page_count"`
 	Boundary          string `json:"boundary"`
 	Rotation          int    `json:"rotation"`
