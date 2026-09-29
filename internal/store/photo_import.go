@@ -952,6 +952,45 @@ func (s *Store) EnsurePhotoImportAllowed(ctx context.Context) error {
 	})
 }
 
+// EnsurePhotoImportDestination resolves or creates the complete destination
+// while the photo import admission check still owns the same transaction.
+func (s *Store) EnsurePhotoImportDestination(ctx context.Context, path string) (Node, error) {
+	var destination Node
+	err := s.withLogicalTx(ctx, func(tx *sql.Tx) error {
+		var err error
+		destination, err = liveDirTx(tx, s.rootID)
+		if err != nil {
+			return err
+		}
+		for _, segment := range splitPath(path) {
+			name, normalizeErr := NormalizeName(segment)
+			if normalizeErr != nil {
+				return fmt.Errorf("photo import destination %q: %w", path, normalizeErr)
+			}
+			next, childErr := childByName(ctx, tx, destination.ID, name)
+			switch {
+			case childErr == nil:
+				if !next.IsDir() {
+					return fmt.Errorf("%q is a file: %w", name, ErrNotDir)
+				}
+				destination = next
+			case errors.Is(childErr, ErrNotFound):
+				destination, err = s.mkdirTx(tx, destination.ID, name, nowRFC3339())
+				if err != nil {
+					return err
+				}
+			default:
+				return childErr
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		return Node{}, err
+	}
+	return destination, nil
+}
+
 func (s *Store) mergePhotoAssetsTxWithContext(ctx context.Context, tx *sql.Tx, sourceID, targetID string) error {
 	if sourceID == targetID {
 		return nil
