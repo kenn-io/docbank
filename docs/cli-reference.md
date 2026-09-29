@@ -189,6 +189,19 @@ the display member.
 Photo assets, settings, and bounded decision receipts are included in JSONL
 backup and restore.
 
+### docbank photos migrate
+
+```text
+docbank photos migrate fotobank inventory   (--catalog-path <path> --vault-root <path> | --archive-root <path>)   --output-dir <path>
+```
+
+`fotobank inventory` reads a stopped install or a recovery archive and writes
+`report.json` and `owner-map.json` into the absolute output directory. Both
+files are new and private; the command fails if either already exists. It
+sends the request through the daemon, so the CLI never opens either source
+database. An archive uses its latest snapshot. The JSON response holds the
+report and the two file paths.
+
 ## docbank stat
 
 ```

@@ -825,6 +825,22 @@ The CLI resolves a relative `--repo` against its own working directory before
 sending it. API clients over an SSH tunnel must reason about the daemon host's
 filesystem, not the caller's. Every endpoint requires the daemon API key.
 
+### Fotobank migration inventory
+
+`POST /api/v1/migrations/fotobank/inventories` inspects a stopped Fotobank
+source and writes two new files into the request's absolute `output_dir`:
+`report.json` and `owner-map.json`. It requires the daemon API key, the
+loopback boundary, and an operator request. Browser sessions are refused.
+
+The request names either an install (`catalog_path` and `vault_root`) or a
+recovery archive (`archive_root`). Install inventory reads the catalog and
+embedded Docbank database with immutable connections after acquiring the
+source lifetime locks. Archive inventory reads only the verified
+`application/catalog.sqlite` extra from the latest Kit snapshot. The output
+directory must sit outside every source tree and the live vault. The route
+answers `201` with the report and both file paths. It writes nothing to the
+vault.
+
 ### Audit expected-evidence verification
 
 `POST /audit/verify` accepts an empty body for a fresh proof. To prove ancestry,

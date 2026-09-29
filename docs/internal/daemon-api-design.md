@@ -157,6 +157,15 @@ opt-in through `docbank mcp --allow-photo-edits`; each write makes one daemon
 request and treats ambiguous transport failure as an unknown outcome. Display
 and settings writes remain HTTP and CLI operations.
 
+### Photo migration inventory route
+
+`POST /api/v1/migrations/fotobank/inventories` is an operator-only route.
+Its request selects either a stopped install (`catalog_path` and
+`vault_root`) or a recovery archive (`archive_root`) and supplies an absolute
+`output_dir`. The reader writes `report.json` and `owner-map.json` there as
+new private files and returns the report and both paths. The route stores
+nothing and does not take the mutation gate. Browser sessions cannot call it.
+
 Similar-document reads use the processing service and store authority through
 `POST /api/v1/search/similar`. Keep query encoding and provider authorization
 outside that call path. The store owns source validation, fenced membership,
