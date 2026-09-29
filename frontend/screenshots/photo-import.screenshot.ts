@@ -30,35 +30,37 @@ test("photo import progress and cancellation are visible", async ({ page }) => {
     const webURL = await run("web", "--no-browser");
     await page.goto(webURL, { waitUntil: "domcontentloaded" });
     await page.getByRole("button", { name: "Background jobs", exact: true }).click();
-    await run("photos", "import", source, "/");
+    await run("photos", "import", source, "/Photos/Trip");
     await page.getByRole("button", { name: "Refresh background jobs" }).click();
-    await expect(page.getByText(/photo-import:/)).toBeVisible();
-    const progress = page.getByLabel("Photo import progress");
+    const progress = page.getByRole("progressbar", { name: "Photo import progress" });
     await expect(progress).toBeVisible();
-    await expect(page.getByRole("button", { name: "Cancel", exact: true })).toBeVisible();
+    const cancel = page.getByRole("button", { name: "Cancel photo import" });
+    await expect(cancel).toBeVisible();
     await expect.poll(async () => {
       await page.getByRole("button", { name: "Refresh background jobs" }).click();
-      return Number((await progress.innerText()).split("/")[0]);
+      return Number(await progress.getAttribute("aria-valuenow"));
     }).toBeGreaterThan(0);
     const drawer = page.getByLabel("Daemon background jobs");
     await drawer.screenshot({ path: path.join(output, "web-photo-import-dark.png") });
     const bounds = await drawer.boundingBox();
-    if (!bounds) throw new Error("Background jobs drawer has no visible bounds");
+    const card = await drawer.getByRole("region", { name: "Operations" }).boundingBox();
+    if (!bounds || !card) throw new Error("Background jobs drawer has no visible bounds");
     await page.screenshot({
       path: path.join(output, "docbank-465-2-after.png"),
-      clip: { x: bounds.x, y: bounds.y, width: bounds.width, height: 248 },
+      clip: { x: bounds.x, y: bounds.y, width: bounds.width, height: card.y + card.height + 16 - bounds.y },
     });
-    await page.getByRole("button", { name: "Cancel", exact: true }).click();
-    await expect(page.getByText(/Cancellation requested|cancelled/)).toBeVisible();
+    await cancel.click();
+    await expect(page.getByText(/^(Stopping|Cancelled)$/)).toBeVisible();
     await page.emulateMedia({ colorScheme: "light" });
     await drawer.screenshot({ path: path.join(output, "web-photo-import-light.png") });
     if (process.env.DOCBANK_RENDER_LINT_SNIPPET) {
       const snippet = await readFile(process.env.DOCBANK_RENDER_LINT_SNIPPET, "utf8");
       for (const width of [1440, 1280, 768, 400]) {
         await page.setViewportSize({ width, height: 960 });
-        const violations = await page.evaluate(snippet) as Array<{ type: string; detail: string; rects: Array<{ left: number; right: number }> }>;
+        const violations = await page.evaluate(snippet) as Array<{ type: string; detail: string; elements: string[]; rects: Array<{ left: number; right: number; top: number; bottom: number }> }>;
         const horizontal = violations.filter((item) => item.type === "container-escape" && item.rects[0]?.right > width + 6);
         console.log(`render-lint ${width}: ${violations.length} total, ${horizontal.length} horizontal escapes`);
+        for (const item of violations) console.log(`  ${item.type}: ${item.detail} [${item.elements.join(" | ")}] ${JSON.stringify(item.rects)}`);
         expect(horizontal).toEqual([]);
         if (width === 400) {
           await page.emulateMedia({ colorScheme: "dark" });

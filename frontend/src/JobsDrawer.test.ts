@@ -12,28 +12,30 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
+function jobsResponse(items: unknown[]): Response {
+  return new Response(JSON.stringify({ items }), {
+    status: 200,
+    headers: { "Content-Type": "application/json" },
+  });
+}
+
 describe("background jobs drawer", () => {
   it("distinguishes running work from a terminal failure", async () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
-      new Response(
-        JSON.stringify({
-          items: [
-            {
-              name: "extract:plain-text",
-              status: "running",
-              started_at: "2026-07-23T12:00:00Z",
-            },
-            {
-              name: "watch:inbox",
-              status: "failed",
-              started_at: "2026-07-23T11:00:00Z",
-              finished_at: "2026-07-23T11:02:00Z",
-              error: "source is unavailable",
-            },
-          ],
-        }),
-        { status: 200, headers: { "Content-Type": "application/json" } },
-      ),
+      jobsResponse([
+        {
+          name: "extract:plain-text",
+          status: "running",
+          started_at: "2026-07-23T12:00:00Z",
+        },
+        {
+          name: "watch:inbox",
+          status: "failed",
+          started_at: "2026-07-23T11:00:00Z",
+          finished_at: "2026-07-23T11:02:00Z",
+          error: "source is unavailable",
+        },
+      ]),
     );
     const close = vi.fn();
 
@@ -43,14 +45,55 @@ describe("background jobs drawer", () => {
       onauthfailure: vi.fn(),
     });
 
-    expect(await screen.findByText("extract:plain-text")).toBeTruthy();
+    expect(await screen.findByText("Plain-text extraction")).toBeTruthy();
+    expect(screen.getByText("extract:plain-text")).toBeTruthy();
+    expect(screen.getByText("Inbox watcher")).toBeTruthy();
     expect(screen.getByText("watch:inbox")).toBeTruthy();
-    expect(screen.getByText("Still running")).toBeTruthy();
+    expect(screen.getByText("Failed")).toBeTruthy();
     expect(screen.getByText("source is unavailable")).toBeTruthy();
+    expect(screen.getByText("No operations running · 2 workers · 1 failed")).toBeTruthy();
 
     await fireEvent.click(
       screen.getByRole("button", { name: "Close background jobs" }),
     );
     expect(close).toHaveBeenCalledOnce();
+  });
+
+  it("shows photo import progress, destination, and a demoted job ID", async () => {
+    const id = "f6730699-23b5-458a-b6d9-11b140ac1f92";
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      jobsResponse([
+        {
+          name: `photo-import:${id}`,
+          kind: "photo-import",
+          operation_id: id,
+          status: "running",
+          started_at: "2026-07-23T12:00:00Z",
+          completed_objects: 75,
+          total_objects: 300,
+          can_cancel: true,
+          destination: "/Photos/Trip",
+        },
+      ]),
+    );
+
+    render(JobsDrawer, {
+      session: "short-lived",
+      onclose: vi.fn(),
+      onauthfailure: vi.fn(),
+    });
+
+    const progress = await screen.findByRole("progressbar", { name: "Photo import progress" });
+    expect(progress.getAttribute("aria-valuenow")).toBe("75");
+    expect(progress.getAttribute("aria-valuemax")).toBe("300");
+    expect(screen.getByText("Photo import")).toBeTruthy();
+    expect(screen.getByText("Running")).toBeTruthy();
+    expect(screen.getByText("75 of 300 groups")).toBeTruthy();
+    expect(screen.getByText("25%")).toBeTruthy();
+    expect(screen.getByText("Into /Photos/Trip")).toBeTruthy();
+    expect(screen.getByText(id)).toBeTruthy();
+    expect(screen.queryByText(`photo-import:${id}`)).toBeNull();
+    expect(screen.getByRole("button", { name: "Cancel photo import" })).toBeTruthy();
+    expect(screen.getByText("1 operation running · 0 workers")).toBeTruthy();
   });
 });

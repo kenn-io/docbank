@@ -7134,6 +7134,8 @@ components:
         completed_objects:
           format: int64
           type: integer
+        destination:
+          type: string
         error:
           type: string
         finished_at:

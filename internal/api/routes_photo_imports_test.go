@@ -105,6 +105,15 @@ func TestPhotoImportCancelRejectsStaleRevision(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, store.PhotoImportStateRunning, current.State)
 	assert.False(t, current.CancelRequested)
+
+	response, body = do(t, ts, http.MethodGet, "/api/v1/jobs", nil, nil)
+	require.Equal(t, http.StatusOK, response.StatusCode, body)
+	var jobs api.JobList
+	require.NoError(t, json.Unmarshal([]byte(body), &jobs))
+	require.Len(t, jobs.Items, 1)
+	assert.Equal(t, api.Job{Name: "photo-import:" + run.ID, Status: "running", StartedAt: run.StartedAt,
+		OperationID: run.ID, Kind: "photo-import", TotalObjects: 1, CanCancel: true, Destination: "/photos"}, jobs.Items[0])
+	assert.NotContains(t, body, "camera")
 }
 
 func TestPhotoImportBrowserRedactsRunAndAllowsOnlyReadCancel(t *testing.T) {

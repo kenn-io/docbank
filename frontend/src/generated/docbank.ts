@@ -3046,6 +3046,7 @@ export interface Job {
   can_cancel?: boolean;
   cancel_requested?: boolean;
   completed_objects?: number;
+  destination?: string;
   error?: string;
   finished_at?: string;
   kind?: string;

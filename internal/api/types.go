@@ -1178,6 +1178,7 @@ type Job struct {
 	TotalObjects     int64  `json:"total_objects,omitzero"`
 	CanCancel        bool   `json:"can_cancel,omitzero"`
 	CancelRequested  bool   `json:"cancel_requested,omitzero"`
+	Destination      string `json:"destination,omitzero"`
 }
 
 // JobList is returned as an object so the contract can gain aggregate state

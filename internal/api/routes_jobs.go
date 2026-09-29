@@ -82,7 +82,7 @@ func registerJobRoutes(api huma.API, d Deps) {
 					StartedAt: run.StartedAt, FinishedAt: run.FinishedAt, Error: errorDetail,
 					OperationID: run.ID, Kind: "photo-import", CompletedObjects: run.CompletedGroups,
 					TotalObjects: run.TotalGroups, CanCancel: canCancel,
-					CancelRequested: run.CancelRequested})
+					CancelRequested: run.CancelRequested, Destination: run.Destination})
 			}
 		}
 		if d.Jobs != nil {
