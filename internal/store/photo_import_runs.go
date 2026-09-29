@@ -72,6 +72,9 @@ func validatePhotoImportRun(run PhotoImportRun) error {
 	if len(run.Error) > maxPhotoImportTextBytes {
 		return errors.New("photo import run error is too large")
 	}
+	if err := validatePhotoImportAmbiguities(run.Ambiguities); err != nil {
+		return err
+	}
 	if err := validateMetadataTime("photo import run started_at", run.StartedAt); err != nil {
 		return err
 	}
@@ -107,16 +110,34 @@ func unmarshalPhotoImportAmbiguities(raw sql.NullString) ([]PhotoImportAmbiguity
 	if !raw.Valid || raw.String == "" {
 		return []PhotoImportAmbiguity(nil), nil
 	}
+	if len(raw.String) > maxPhotoImportTextBytes {
+		return nil, errors.New("photo import ambiguity summary is too large")
+	}
 	var values []PhotoImportAmbiguity
 	if err := json.Unmarshal([]byte(raw.String), &values); err != nil {
 		return nil, fmt.Errorf("decoding photo import ambiguities: %w", err)
 	}
+	return values, nil
+}
+
+func validatePhotoImportAmbiguities(values []PhotoImportAmbiguity) error {
 	for _, value := range values {
-		if value.GroupKey == "" || len(value.Candidates) == 0 {
-			return nil, errors.New("invalid photo import ambiguity")
+		if value.GroupKey == "" || len(value.GroupKey) > maxPhotoImportTextBytes || len(value.Candidates) == 0 {
+			return errors.New("invalid photo import ambiguity")
+		}
+		for _, candidate := range value.Candidates {
+			if candidate.SourcePath == "" || !mailboxHash(candidate.BlobHash) {
+				return errors.New("invalid photo import candidate")
+			}
+			if candidate.AssetID == "" && candidate.FileID == "" && candidate.NodeID == 0 && candidate.Revision == 0 {
+				continue
+			}
+			if validateUUIDv4(candidate.AssetID) != nil || validateUUIDv4(candidate.FileID) != nil || candidate.NodeID < 1 || candidate.Revision < 1 {
+				return errors.New("invalid photo import candidate")
+			}
 		}
 	}
-	return values, nil
+	return nil
 }
 
 func scanPhotoImportRun(row interface {
@@ -257,13 +278,16 @@ func (s *Store) ListPhotoImportRuns(ctx context.Context, limit int) ([]PhotoImpo
 }
 
 func (s *Store) RequestPhotoImportCancel(ctx context.Context, id string, revision int64) (PhotoImportRun, error) {
+	if revision < 1 {
+		return PhotoImportRun{}, errors.New("photo import cancellation requires a positive revision")
+	}
 	var run PhotoImportRun
 	err := s.withLogicalTx(ctx, func(tx *sql.Tx) error {
 		current, err := s.photoImportRunTx(ctx, tx, id)
 		if err != nil {
 			return err
 		}
-		if revision > 0 && current.Revision != revision {
+		if current.Revision != revision {
 			return fmt.Errorf("photo import run at revision %d, expected %d: %w", current.Revision, revision, ErrStaleRevision)
 		}
 		if photoImportStateTerminal(current.State) {
@@ -359,7 +383,7 @@ func (s *Store) FinishPhotoImportRun(ctx context.Context, id, state, errorText s
 }
 
 func (s *Store) MarkPhotoImportRunsInterrupted(ctx context.Context) error {
-	return s.withLogicalTx(ctx, func(tx *sql.Tx) error {
+	return s.withStorageTx(ctx, func(tx *sql.Tx) error {
 		now := nowRFC3339()
 		_, err := tx.ExecContext(ctx, `UPDATE photo_import_runs SET revision=revision+1,state=?,finished_at=?,updated_at=? WHERE state IN (?,?)`, PhotoImportStateInterrupted, now, now, PhotoImportStateRunning, PhotoImportStateCancelRequested)
 		return err
