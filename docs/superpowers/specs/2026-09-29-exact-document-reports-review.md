@@ -1,20 +1,23 @@
-# Exact-document reports: adversarial self-review
+# Exact-document reports: review follow-up
 
-This is the spec author's source review, not an independent review or a test
-of implemented behavior. The proposed selected-document scope does not exist
-in the reviewed product code.
+This records the author's source checks and revisions after the supplied
+adversarial review of `5a301f2d`. It is not an independent re-review or a test
+of implemented behavior. Selected-document scope remains proposed.
 
 ## Reviewed input
 
 - Spec: [Reports for selected document versions](2026-09-29-exact-document-reports-design.md).
-- Exact spec SHA-256: `bf89ba48ea368aceacf0e057a67ebcc808a1c8f915eafb078c577f1fd248c538`.
+- Revised spec SHA-256: `d07afa304fe79187cc4e9a53124bf5c0501a3e5c6e99b433ba82b6452319719c`.
+- Prior reviewed spec: commit `5a301f2dde3b3bf0f1d8e4c2f238782e09579e3d`,
+  SHA-256 `bf89ba48ea368aceacf0e057a67ebcc808a1c8f915eafb078c577f1fd248c538`.
 - Repository: `kenn-io/docbank` at `b184ebfc4888f8f4cb6a59dbbb52573134a6bf39`.
-- Working state during review: the new spec was untracked; product sources,
-  dependencies, and generated clients matched that commit. This review is the
-  second new documentation file. There were no Git submodules/gitlinks.
+- Working state: clean at `5a301f2d` before revision; only these two documents
+  changed during follow-up. Product sources, dependencies, and generated
+  clients still match the source baseline. No Git submodules/gitlinks.
 - Constraints: root `AGENTS.md`, `docs/README.md`, the two maintainer decisions
   recorded in the spec, and the existing search-export guide. No dependency
-  upgrade or third-party behavior change is proposed.
+  upgrade or third-party behavior change is proposed. Huma `v2.38.0`, pinned
+  by `go.mod:16`, was read directly from the Go module cache.
 
 Source paths and line numbers below refer to that repository revision. A later
 review must compare both the exact spec bytes and these source paths before
@@ -22,27 +25,60 @@ reusing any conclusion.
 
 ## Findings
 
-No unresolved High or Medium design findings in this self-review. This is a
-source-backed assessment of the proposed approach, not evidence that the new
-behavior passes tests.
+The supplied review found no High issues and four Medium issues. All four
+have corresponding changes in the revised spec. No additional High or Medium
+issue was identified in this source recheck; the revised contract still needs
+maintainer review.
 
-The author corrected two draft gaps before recording the spec hash:
+### Medium findings addressed
 
-- **Preserve the existing request error.** Spec line 181 uses 422
-  `invalid_report_request` for malformed scope, matching the create route at
-  `internal/api/routes_term_reports.go:98`. The draft had proposed a needless
-  new error distinction. The 413 member-limit response must also be handled
-  at this initial normalization boundary, before its generic 422 fallback.
-- **Carry selection through the actual web flow.** Spec lines 52 and 64 now
-  cover asynchronous vault-ID lookup and selected-scope history wording.
-  `frontend/src/actionRunner.ts:18` already provides the lookup;
-  `frontend/src/TermReportDrawer.svelte:119` and `:355` currently assume editable
-  all-document/collection scope. Copy rows before awaiting the lookup and
-  discard an action whose session changes.
+1. **Omission, null, and schema validation.** Spec lines 108 and 125 require
+   omission when unused, reject explicit null at both HTTP and CLI input
+   boundaries, and keep value/count checks in `NormalizeRequest`. Huma
+   `schema.go:929` makes the optional pointer non-nullable; `:612` rejects
+   nullable object references. `huma.go:2021` validates before calling the
+   handler, and `:2057` produces 422 for schema errors. Spec line 206 explicitly
+   separates these errors from application error codes. Making the new document
+   list schema-optional lets an empty object reach normalization; existing
+   required identity fields keep their ordinary schema behavior.
+2. **Unnecessary client vault ID.** Spec line 155 removes the request field,
+   asynchronous lookup, wrong-vault response, and extra verifier comparison.
+   `internal/store/identity.go:12` and `version.go:650` generate random version
+   identities; `internal/store/metadata.go:1016` preserves vault identity on
+   restore. The existing node/version/hash comparison is sufficient for this
+   workflow. The frame still records its vault at `term_report_frame.go:59`.
+   This is not a claim that a UUID cryptographically binds a version to a vault.
+3. **Packet membership versus coverage.** Spec lines 59, 165, and 299
+   distinguish selected members from date-eligible counts.
+   `report/counts.go:125` skips unusable dates before charging coverage;
+   `:136` charges only eligible dates, as `docs/usage/search-exports.md:144`
+   describes. Available-only examples now preserve packet membership without
+   requiring changes to `scoped`. The drawer must explain the count difference.
+4. **Member-limit response.** Spec line 211 requires the new selected-member
+   limit to wrap `report.ErrReportLimit` and requires the create route to handle
+   it before the current 422 fallback at `internal/api/routes_term_reports.go:98`.
+   The existing collection-limit error at `report/request.go:31` stays 422.
+
+### Low findings resolved as design choices
+
+- Spec line 217 deliberately omits a conflicting-member list from the 409,
+  consistent with the simple conflict response at `internal/api/routes_pages.go:61`.
+- Spec lines 145 and 202 classify a wrong hash on a matching current version
+  as 422. `internal/store/version.go:663` installs a version with its blob;
+  its immutable version identity is not a cue to retry with another hash.
+- Spec line 120 makes lowercase hashes intentional for selected scope only.
+  `report/request.go:162` continues to accept either hex case elsewhere.
+- Spec line 260 records the possible history/export size: up to 100 requests
+  near the 8 MiB request ceiling. `internal/store/term_report_history.go:38`
+  limits history to 100, `:90` enforces per-record JSON bounds, `:108` bounds
+  each page by bytes, and `:160` exports the retained records. A page bound
+  does not cap the total history or its metadata export.
 
 ## Verified
 
-Twelve load-bearing claims were checked against the baseline:
+The original twelve source claims remain valid with the removed vault check
+and revised limits wording below. The follow-up also checked the Huma schema
+path and coverage calculation described above:
 
 | Spec claim | Source evidence and consequence |
 | --- | --- |
@@ -52,7 +88,7 @@ Twelve load-bearing claims were checked against the baseline:
 | Keep capture protection, without permanent source retention | `internal/api/gate.go:116` holds the preservation gate for capture. `internal/reporting/service.go:41` wraps preparation with it and reads captured text. No report-lifetime source lookup or new retention reference is required by the design. |
 | Existing scope checks need deliberate changes | `report/counts.go:102` and `report/verify.go:82` both demand collection witnesses whenever `AllDocuments` is false. Merely adding a request field and SQL filter would leave selected scope unusable. |
 | Family evidence can reference unselected documents | `internal/store/term_report_families.go:66` traverses relationships through current related versions outside the population. `report/counts.go:159` derives hit counts from members. Preserve the relation graph while keeping exact selected membership. |
-| Packet verification already recomputes report consistency | `report/bundle.go:82` validates evidence and calculated results; `report/verify.go:227` reconstructs the packet. Add selected-set equality and vault binding there. At `:356`, verification explicitly reports `SourceVerified: false`. |
+| Packet verification already recomputes report consistency | `report/bundle.go:82` validates evidence and calculated results; `report/verify.go:227` reconstructs the packet. Add selected-set equality there. At `:356`, verification explicitly reports `SourceVerified: false`. |
 | Date revisions retain the captured observation and deadline | `internal/reporting/cache.go:145` takes the parent's shared frame; `:220` derives expiry from its observation plus 30 minutes. `:352` returns a copied request without choices. Extend nested copying; do not re-admit sources on revision. |
 | History stores JSON and does not require live sources | `internal/store/term_report_history.go:42` structurally validates request/summary; `:77` saves JSON and drops date choices; `:190` imports a validated record. The 100-record bound is at `:38`. The optional request field does not require another table. |
 | Restore preserves the authority needed by a future run | `internal/store/metadata.go:997` imports logical records and installs the saved vault ID. Its node/version record import retains identities. This supports rerunning still-live selections; it does not restore cached report handles. |
@@ -62,10 +98,12 @@ Twelve load-bearing claims were checked against the baseline:
 Also inspected for these conclusions: `report/request.go`, the remaining
 bundle/calculation/verification flows, `internal/reporting/service.go` and
 `cache.go`, `internal/store/term_report_history.go` and metadata restore,
-`frontend/src/actionRunner.ts`, `docs/usage/search-exports.md`, `go.mod`,
+`document/bundle/types.go`, `docs/usage/search-exports.md`, `go.mod`,
 `frontend/package-lock.json` state, and the documentation build entry points.
-All implementation references are local project code; this review makes no
-new claim about an external library's behavior.
+The Huma references above mean `github.com/danielgtaylor/huma/v2@v2.38.0`.
+Its source establishes the schema behavior; no new dependency behavior is
+assumed or proposed. Product and dependency diffs from the source baseline
+were empty; changed spec claims and all supplied findings were rechecked.
 
 ## Challenges for the next reviewer
 
@@ -85,13 +123,16 @@ Try to falsify these contracts against the pinned source and proposed design:
    nested slice silently replace selected identities?
 6. Does an implementation add snapshot export jobs, provider work, database
    policy, or a new selection abstraction that this outcome does not need?
+7. Do real HTTP and CLI input paths honor omission-only scope and preserve the
+   distinction between schema errors, application 422, selected-member 413,
+   and version-change 409? Does a collection-limit request still return 422?
 
 Use the behavioral examples in the spec to assess a later implementation.
 None were executed as selected-scope tests in this documentation-only change.
 
 ## Verdict
 
-Ready for maintainer review of the written specification. The source supports
-extending the existing reporting path without another subsystem. Implementation
-and its plan remain pending written-spec approval; this review does not grant
-merge authority or claim product completion.
+Ready for re-review of the revised specification. The four Medium findings and
+four Low comments have explicit resolutions in the design. Implementation and
+planning remain pending written-spec approval; this source review does not
+claim that the proposed behavior is implemented or tested.

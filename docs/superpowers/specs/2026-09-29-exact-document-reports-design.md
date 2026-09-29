@@ -49,22 +49,24 @@ snapshot can supply row identities; its ID is not a report scope and does not
 authorize reporting historical content. Folders or rows without complete
 identities prevent the action rather than being silently omitted.
 
-Copy the row identities when the operator invokes the action, before awaiting
-the existing authenticated vault-ID lookup. Discard the pending action if its
-browser session changes. Background
+Copy the row identities when the operator invokes the action. Background
 refreshes and later workspace selections must not replace them. Show
 “Selected documents (N)” as a fixed scope for that draft. The operator can
 start a different draft from the sidebar or a new workspace selection. A
 conflict asks them to refresh the workspace and reselect; it must not offer a
 retry that silently binds current versions.
 
+The selected-document count is the input population, not the result's `scoped`
+coverage count. Explain that date eligibility can reduce the counted scope;
+do not label the two counts as interchangeable.
+
 Keep the drawer's existing distinction between edited input and the last
 submitted result. **Use as draft** from history copies the exact selected
 identities and clears date choices. It does not replace them with current
 identities. History labels show the selected-document count, and the draft
 notice explains that this scope is fixed. Running that draft takes a new
-observation and can fail because
-the documents have changed. It can also produce different results when
+observation and can fail because the documents have changed. It can also
+produce different results when
 metadata, family relationships, or processing evidence have changed.
 
 Automation uses `docbank search-export create --input request.json --output
@@ -82,7 +84,6 @@ one exact version:
   "version": 1,
   "all_documents": false,
   "selected_documents": {
-    "vault_id": "10000000-0000-4000-8000-000000000001",
     "documents": [
       {
         "node_id": 42,
@@ -105,16 +106,27 @@ one exact version:
 ```
 
 Exactly one scope must be active: `all_documents: true`, a nonempty
-`collection_ids` list, or a nonnull `selected_documents` object. Omission or
-null means no selected-document scope; an object with an empty document list
-is invalid. Never infer all documents from an empty selection.
+`collection_ids` list, or a `selected_documents` object. Omit
+`selected_documents` when unused; explicit JSON `null` is invalid. Huma rejects
+it during HTTP schema validation. The CLI create-input boundary must also
+reject explicit null before decoding it into an absent optional field. An
+object with a missing or empty document list is invalid. Never infer all
+documents from an empty selection.
 
-Selected scope requires a canonical lowercase UUIDv4 vault ID, 1–50,000
-document identities, positive node IDs, canonical lowercase UUIDv4 version
-IDs, and 64-character lowercase hexadecimal SHA-256 hashes. Reject repeated
+Selected scope requires 1–50,000 document identities, positive node IDs,
+canonical lowercase UUIDv4 version IDs, and 64-character lowercase hexadecimal
+SHA-256 hashes. Reject repeated
 node IDs, including identical repetitions or multiple versions of one node.
+Lowercase hashes are intentional for this new scope; do not tighten the
+existing hash validator or change accepted hashes in other report fields.
 The existing 8 MiB request limit also applies; the member limit is a ceiling,
 not a guarantee that every request of that count fits.
+
+Keep these value, cardinality, and scope checks in `NormalizeRequest`, not
+Huma validation tags such as `format`, `pattern`, or `maxItems`. Make the new
+object's document list schema-optional so a missing list reaches normalization.
+Keep Huma's ordinary JSON types and existing required identity fields; their
+schema errors are distinct from the application errors below.
 
 `NormalizeRequest` validates structure without reading a vault. It must own
 the nested selection object and document slice, just as it already copies
@@ -126,17 +138,23 @@ may alter a captured report.
 ## Capture and counting
 
 Admission occurs within `MaterializeTermReportFrame`'s existing lexical
-generation and SQLite read snapshot. Match the request vault ID and resolve
-every selected identity against a live file's current version in that same
-observation. The complete requested set must equal the captured member set.
+generation and SQLite read snapshot. Resolve every selected identity against
+a live file's current version in that same observation. The complete requested
+set must equal the captured member set.
 
-One missing, trashed, replaced, or hash-mismatched member rejects the entire
-request. A version with the same bytes but a different version ID still
-conflicts. A rename, move, or tag change alone does not invalidate content
-identity; metadata and query dependencies are observed at capture time.
+Missing, trashed, or replaced members reject the entire request as a changed
+selection. For a matching live current version, a wrong hash instead rejects
+the request as invalid: the immutable version already identifies its blob.
+A version with the same bytes but a different version ID still conflicts.
+A rename, move, or tag change alone does not invalidate content identity;
+metadata and query dependencies are observed at capture time.
 Do not validate through a separate preflight read and then capture latest
 versions. Do not drop unavailable members or turn a conflict into an empty
 successful report.
+
+No client vault ID or preliminary vault lookup is needed. Random version IDs
+identify the selected versions; ordinary restore preserves them. The captured
+frame continues to record its server-observed vault ID as provenance.
 
 Keep the existing capture gate while reading retained evidence. It already
 protects physical authority during preparation; it does not freeze all vault
@@ -147,13 +165,15 @@ No report retention reference may prevent a later source deletion or prune.
 Use the existing search, date, coverage, and family calculations. Selected
 scope changes the report population, not search syntax or date semantics.
 Missing search/date evidence follows existing `strict` and `available_only`
-rules. In the latter mode, the member remains in the evidence packet with its
-coverage diagnostics even when it cannot contribute a count. Identity
-conflicts fail in both modes. No processing provider is invoked to fill gaps.
+rules. In the latter mode, the document remains a packet member even when it
+has no usable date. Coverage counts only date-eligible members: a document
+without a usable date or outside every term's date range can be absent from
+`scoped` and the aggregate coverage counts. Identity conflicts fail in both
+modes. No processing provider is invoked to fill gaps.
 
 Both `report.Calculate` and offline `verifyFrameEvidence` currently treat
 every non-all-document scope as a collection scope. They must distinguish
-the new scope explicitly and enforce its exact set and vault binding.
+the new scope explicitly and enforce its exact identity set.
 Collection witnesses remain required only for collection scope. Keep the
 existing all-document and collection behavior.
 
@@ -178,12 +198,27 @@ does not introduce a delegated-access or redaction boundary.
 
 | Condition | HTTP response | Operator action |
 | --- | --- | --- |
-| Missing/mixed scope, empty selected object, malformed identity, duplicate node | 422 `invalid_report_request` | Correct the request or selection. |
-| Wrong vault, unavailable node, or version/hash mismatch at capture | 409 `report_selection_changed` | Refresh and explicitly select the intended current versions. |
+| Missing/mixed scope, empty selected object/list, malformed identity values, duplicate node | 422 `invalid_report_request` | Correct the request or selection. |
+| Wrong hash for an otherwise matching live current version | 422 `invalid_report_request` | Correct the supplied hash. |
+| Unavailable node or noncurrent version at capture | 409 `report_selection_changed` | Refresh and explicitly select the intended current versions. |
 | More than 50,000 selected identities or other report resource limit | 413 `report_limit` | Narrow the selection. |
 
-Transport JSON-size/decoding failures keep the API's existing handling.
-Existing collection, coverage, date-review, expiry, and capacity errors remain unchanged.
+The table applies to requests that pass HTTP schema validation. JSON decoding,
+schema, and transport-size failures keep the API's existing handling. For
+example, explicit null, wrong JSON types, or missing required identity fields
+receive Huma's response rather than an application `invalid_report_request`.
+
+For more than 50,000 selected identities, `NormalizeRequest` must return an
+error wrapping `report.ErrReportLimit`. The create route must recognize that
+error and call `termReportError` before its generic normalization-error 422
+fallback. Keep the existing more-than-50,000-collections error at 422; do not
+reclassify it as a resource error.
+
+The 409 intentionally returns no conflicting-member list. Automation must
+refresh its intended selection; this scope does not add bulk diagnostics or
+a retry that substitutes current versions.
+Existing collection, coverage, date-review, expiry, and capacity errors remain
+unchanged.
 New scope validation must not fall through to a generic server error. Failed
 admission creates neither a reusable report handle nor a successful history
 receipt. Do not invent a report-specific retry or partial-success protocol.
@@ -197,9 +232,8 @@ extension; older binaries need not understand the new scope. Current binaries
 must continue to read existing packets and history without that field.
 
 Offline verification must establish equality of the manifest's selected
-identity set and its member identity set, and equality of the request's vault
-ID and the frame's vault ID. Checking only that each member is allowed would
-miss a packet that omitted selected documents. Reject extra, missing,
+identity set and its member identity set. Checking only that each member is
+allowed would miss a packet that omitted selected documents. Reject extra, missing,
 duplicate, or substituted members even if ZIP digests and CSV counts have
 been recomputed. Family references remain subject to their existing graph
 checks and are not additional members.
@@ -223,7 +257,12 @@ History keeps the existing maximum of 100 request/summary receipts and
 existing size bounds. It retains exact selection and summary, but not full
 source text, live artifacts, or date-review choices. No new table, foreign key
 to selected source versions, SQLite constraint, or storage migration is needed
-for the proposed optional field in the existing request JSON.
+for the proposed optional field in the existing request JSON. Large selections
+make history size material: 100 near-limit requests can approach 800 MiB in
+request JSON alone, and metadata export carries those requests. Keep the
+existing 16 MiB history-page bound; clients must continue by returned item
+count when the byte bound shortens a requested page. No new compression or
+storage policy is part of this change.
 
 Reading history and importing metadata validate request structure, not whether
 its sources still exist or remain current. A historical receipt must survive
@@ -259,8 +298,9 @@ claims about the current code:
 
 - With two selected documents and an unselected matching document, both selected
   identities appear in the packet; only their eligible hits affect counts.
-  A selected document with missing evidence remains visible in available-only
-  coverage rather than disappearing from the population.
+  In available-only mode, a selected document without a usable date remains
+  a packet member but contributes neither hits nor `scoped` coverage. A usable
+  date outside every term's date range also contributes no `scoped` coverage.
 - Replacing or trashing either selected document before capture rejects the
   whole request. Replacing it after capture leaves the captured counts and
   download unchanged. A metadata-only edit is observed without rebinding the
@@ -270,7 +310,12 @@ claims about the current code:
   evidence, and its own search hits never contribute.
 - Keeping the selected request fixed while removing, adding, or swapping a
   packet member fails verification, even after recomputing digests and CSV.
-  A packet vault-ID mismatch also fails.
+- A valid current version with a wrong hash returns 422. A version that is no
+  longer current returns 409 without a member list. Both reject the whole run.
+- Explicit null is rejected at HTTP and CLI JSON input boundaries. Empty or
+  mixed scope reaches application validation when its JSON passes the schema.
+  More than 50,000 selected identities returns 413 through the HTTP route;
+  more than 50,000 collections retains its existing 422.
 - Date revisions keep original identities and expiry. History drafts keep
   identities but clear date choices. Caller edits to nested request data after
   capture cannot mutate the report.
