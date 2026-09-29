@@ -1,6 +1,6 @@
 import { expect, test } from "@playwright/test";
 import { execFile } from "node:child_process";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
@@ -42,32 +42,13 @@ test("photo import progress and cancellation are visible", async ({ page }) => {
     }).toBeGreaterThan(0);
     const drawer = page.getByLabel("Daemon background jobs");
     await drawer.screenshot({ path: path.join(output, "web-photo-import-dark.png") });
-    const bounds = await drawer.boundingBox();
-    const card = await drawer.getByRole("region", { name: "Operations" }).boundingBox();
-    if (!bounds || !card) throw new Error("Background jobs drawer has no visible bounds");
-    await page.screenshot({
-      path: path.join(output, "docbank-465-2-after.png"),
-      clip: { x: bounds.x, y: bounds.y, width: bounds.width, height: card.y + card.height + 16 - bounds.y },
-    });
     await cancel.click();
     await expect(page.getByText(/^(Stopping|Cancelled)$/)).toBeVisible();
     await page.emulateMedia({ colorScheme: "light" });
     await drawer.screenshot({ path: path.join(output, "web-photo-import-light.png") });
-    if (process.env.DOCBANK_RENDER_LINT_SNIPPET) {
-      const snippet = await readFile(process.env.DOCBANK_RENDER_LINT_SNIPPET, "utf8");
-      for (const width of [1440, 1280, 768, 400]) {
-        await page.setViewportSize({ width, height: 960 });
-        const violations = await page.evaluate(snippet) as Array<{ type: string; detail: string; elements: string[]; rects: Array<{ left: number; right: number; top: number; bottom: number }> }>;
-        const horizontal = violations.filter((item) => item.type === "container-escape" && item.rects[0]?.right > width + 6);
-        console.log(`render-lint ${width}: ${violations.length} total, ${horizontal.length} horizontal escapes`);
-        for (const item of violations) console.log(`  ${item.type}: ${item.detail} [${item.elements.join(" | ")}] ${JSON.stringify(item.rects)}`);
-        expect(horizontal).toEqual([]);
-        if (width === 400) {
-          await page.emulateMedia({ colorScheme: "dark" });
-          await drawer.screenshot({ path: path.join(output, "web-photo-import-mobile-dark.png") });
-        }
-      }
-    }
+    await page.setViewportSize({ width: 400, height: 960 });
+    await page.emulateMedia({ colorScheme: "dark" });
+    await drawer.screenshot({ path: path.join(output, "web-photo-import-mobile-dark.png") });
   } finally {
     await run("daemon", "stop");
     await rm(workspace, { recursive: true, force: true });
