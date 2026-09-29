@@ -3,16 +3,19 @@ package mcp
 import (
 	"context"
 	"encoding/json/v2"
-	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"sync/atomic"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/internal/api"
+	"go.kenn.io/docbank/internal/blob"
+	"go.kenn.io/docbank/internal/config"
 	"go.kenn.io/docbank/internal/daemonconn"
+	"go.kenn.io/docbank/internal/store"
 )
 
 func TestPeopleMCPWriteOptIn(t *testing.T) {
@@ -39,68 +42,138 @@ func TestPeopleMCPWriteOptIn(t *testing.T) {
 }
 
 func TestPeopleMCPWorkflow(t *testing.T) {
-	const (
-		survivorID  = "00000000-0000-4000-8000-000000000001"
-		absorbedID  = "00000000-0000-4000-8000-000000000002"
-		newPersonID = "00000000-0000-4000-8000-000000000003"
-		operationID = "00000000-0000-4000-8000-000000000004"
-		createdAt   = "2026-09-28T00:00:00Z"
-	)
-	person := api.Person{PersonID: survivorID, DisplayName: "Synthetic", Origin: "operator", State: "curated", Revision: 1, CreatedAt: createdAt, UpdatedAt: createdAt}
-	var requests atomic.Int32
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		requests.Add(1)
-		w.Header().Set("Content-Type", "application/json")
-		switch {
-		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/people":
-			w.Header().Set("ETag", `"1"`)
-			w.WriteHeader(http.StatusCreated)
-			_ = json.MarshalWrite(w, person)
-		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/people/by-id/"+survivorID:
-			w.Header().Set("ETag", fmt.Sprintf(`"%d"`, person.Revision))
-			_ = json.MarshalWrite(w, api.PersonDetail{Person: person, Identities: []api.PersonIdentity{}, ExternalIdentities: []api.PersonExternalIdentity{}})
-		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/people/by-id/"+survivorID+"/custodians":
-			_ = json.MarshalWrite(w, api.CustodianPage{Items: []api.CustodianAssignment{}, Total: 0})
-		case r.Method == http.MethodPatch && r.URL.Path == "/api/v1/people/by-id/"+survivorID:
-			person.Revision = 2
-			person.DisplayName = "Renamed"
-			w.Header().Set("ETag", `"2"`)
-			_ = json.MarshalWrite(w, person)
-		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/people/by-id/"+survivorID+"/retire":
-			person.Revision = 3
-			person.State = "retired"
-			w.Header().Set("ETag", `"3"`)
-			_ = json.MarshalWrite(w, person)
-		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/people/by-id/"+survivorID+"/merge":
-			w.Header().Set("ETag", `"4"`)
-			_ = json.MarshalWrite(w, api.PersonMergeReceipt{MergeID: newPersonID, OperationID: operationID, SurvivorPersonID: survivorID, AbsorbedPersonID: absorbedID, AbsorbedDisplayName: "Absorbed", SurvivorRevisionBefore: 3, SurvivorRevisionAfter: 4, CreatedAt: createdAt, Moved: api.PersonMergeMovedCounts{}})
-		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/people/by-id/"+survivorID+"/split":
-			_ = json.MarshalWrite(w, api.PersonSplitReceipt{OperationID: operationID, SourcePersonID: survivorID, NewPersonID: newPersonID, MovedIdentityIDs: []string{}, CreatedAt: createdAt})
-		default:
-			http.NotFound(w, r)
-		}
-	}))
-	t.Cleanup(server.Close)
+	vault := t.TempDir()
+	catalog, err := store.Open(filepath.Join(vault, "docbank.db"))
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, catalog.Close()) })
+	blobs, err := blob.New(store.NewPackCatalog(catalog), filepath.Join(vault, "blobs"))
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, blobs.Close()) })
+	cfg := config.Default()
+	cfg.Server.APIKey = "synthetic-person-mcp-key"
+	daemon := api.NewServer(api.Deps{Store: catalog, Blobs: blobs, VaultRoot: vault, Cfg: cfg})
+	t.Cleanup(daemon.Close)
+	httpServer := httptest.NewServer(daemon.Handler())
+	t.Cleanup(httpServer.Close)
+	connection := daemonconn.New(httpServer.URL, cfg.Server.APIKey)
+	t.Cleanup(func() { require.NoError(t, connection.Close()) })
 	lease := newDaemonLeaseWith(func(context.Context) (*daemonconn.Connection, error) {
-		return daemonconn.New(server.URL, "synthetic-key"), nil
+		return connection, nil
 	}, func(*daemonconn.Connection) error { return nil })
-	tools := catalogMap(toolCatalog(false, false, false, true))
-	call := func(name string, raw string) {
+	server := newServerWithOptionsAndDaemon(testImplementation(), ServerOptions{AllowPersonEdits: true}, lease)
+
+	call := func(name string, arguments map[string]any) map[string]any {
 		t.Helper()
-		validator := mustResolveSchema(tools[name].OutputSchema)
-		_, err := executePersonWriteTool(t.Context(), lease, name, validator, []byte(raw))
-		require.NoError(t, err)
+		result := decodeResult(t, exchangeRaw(t, server, requestFor("tools/call", map[string]any{
+			"name": name, "arguments": arguments,
+		})))
+		require.NotEqual(t, true, result["isError"], "%s returned an error: %v", name, result)
+		return objectField(t, result, "structuredContent")
 	}
-	call("create_person", `{"display_name":"Synthetic"}`)
-	call("rename_person", `{"person_id":"`+survivorID+`","if_match_revision":1,"display_name":"Renamed"}`)
-	call("retire_person", `{"person_id":"`+survivorID+`","if_match_revision":2}`)
-	call("merge_people", `{"survivor_person_id":"`+survivorID+`","survivor_revision":3,"absorbed_person_id":"`+absorbedID+`","absorbed_revision":1,"operation_id":"`+operationID+`"}`)
-	call("split_person", `{"person_id":"`+survivorID+`","if_match_revision":4,"operation_id":"`+operationID+`","display_name":"Split"}`)
-	_, err := getPerson(t.Context(), lease, []byte(`{"person_id":"`+survivorID+`"}`))
+	callError := func(name string, arguments map[string]any, code string) {
+		t.Helper()
+		result := decodeResult(t, exchangeRaw(t, server, requestFor("tools/call", map[string]any{
+			"name": name, "arguments": arguments,
+		})))
+		require.Equal(t, true, result["isError"], "%s unexpectedly succeeded: %v", name, result)
+		assert.Equal(t, code, objectField(t, result, "structuredContent")["code"])
+	}
+	created := call("create_person", map[string]any{"display_name": "Survivor"})
+	survivorID, ok := created["person_id"].(string)
+	require.True(t, ok)
+	assert.Equal(t, "Survivor", created["display_name"])
+	assert.EqualValues(t, 1, created["revision"])
+	absorbed := call("create_person", map[string]any{"display_name": "Absorbed"})
+	absorbedID, ok := absorbed["person_id"].(string)
+	require.True(t, ok)
+	assert.Equal(t, "Absorbed", absorbed["display_name"])
+	assert.EqualValues(t, 1, absorbed["revision"])
+	renamed := call("rename_person", map[string]any{"person_id": absorbedID, "if_match_revision": 1, "display_name": "Absorbed Renamed"})
+	assert.Equal(t, absorbedID, renamed["person_id"])
+	assert.Equal(t, "Absorbed Renamed", renamed["display_name"])
+	assert.EqualValues(t, 2, renamed["revision"])
+	found := call("find_people", map[string]any{"query": "Survivor", "limit": 10})
+	people, ok := found["items"].([]any)
+	require.True(t, ok)
+	require.Len(t, people, 1)
+	personSummary, ok := people[0].(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, survivorID, personSummary["person_id"])
+	assert.Equal(t, "Survivor", personSummary["display_name"])
+
+	identity, err := catalog.AddPersonIdentity(t.Context(), absorbedID, 2, store.PersonIdentity{
+		Kind: "email", ValueDisplay: "absorbed@example.test", Origin: "operator",
+		EvidenceKind: "operator_assertion", EvidenceID: "mcp-workflow", Confidence: "operator_asserted",
+	})
 	require.NoError(t, err)
-	_, err = listPersonCustodians(t.Context(), lease, []byte(`{"person_id":"`+survivorID+`"}`))
-	require.NoError(t, err)
-	require.Equal(t, int32(7), requests.Load())
+	absorbedDetail := call("get_person", map[string]any{"person_id": absorbedID})
+	assert.Equal(t, absorbedID, absorbedDetail["person_id"])
+	assert.Equal(t, "Absorbed Renamed", absorbedDetail["display_name"])
+	assert.EqualValues(t, 3, absorbedDetail["revision"])
+	absorbedIdentities, ok := absorbedDetail["identities"].([]any)
+	require.True(t, ok)
+	require.Len(t, absorbedIdentities, 1)
+	absorbedIdentity, ok := absorbedIdentities[0].(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, identity.IdentityID, absorbedIdentity["identity_id"])
+
+	mergeID := "00000000-0000-4000-8000-000000000004"
+	merged := call("merge_people", map[string]any{
+		"survivor_person_id": survivorID, "survivor_revision": 1,
+		"absorbed_person_id": absorbedID, "absorbed_revision": 3, "operation_id": mergeID,
+	})
+	assert.Equal(t, survivorID, merged["survivor_person_id"])
+	assert.Equal(t, absorbedID, merged["absorbed_person_id"])
+	assert.Equal(t, "Absorbed Renamed", merged["absorbed_display_name"])
+	assert.EqualValues(t, 1, merged["survivor_revision_before"])
+	assert.EqualValues(t, 2, merged["survivor_revision_after"])
+	moved := objectField(t, merged, "moved")
+	assert.EqualValues(t, 1, moved["identities"])
+	callError("rename_person", map[string]any{"person_id": survivorID, "if_match_revision": 1, "display_name": "Rejected"}, "stale_revision")
+
+	survivor := call("get_person", map[string]any{"person_id": survivorID})
+	assert.Equal(t, survivorID, survivor["person_id"])
+	assert.EqualValues(t, 2, survivor["revision"])
+	identities, ok := survivor["identities"].([]any)
+	require.True(t, ok)
+	require.Len(t, identities, 1)
+	survivorIdentity, ok := identities[0].(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, identity.IdentityID, survivorIdentity["identity_id"])
+
+	splitID := "00000000-0000-4000-8000-000000000005"
+	split := call("split_person", map[string]any{
+		"person_id": survivorID, "if_match_revision": 2, "operation_id": splitID,
+		"display_name": "Separated", "identity_ids": []string{identity.IdentityID},
+	})
+	assert.Equal(t, splitID, split["operation_id"])
+	assert.Equal(t, survivorID, split["source_person_id"])
+	newPersonID, ok := split["new_person_id"].(string)
+	require.True(t, ok)
+	assert.NotEqual(t, survivorID, newPersonID)
+	assert.Equal(t, []any{identity.IdentityID}, split["moved_identity_ids"])
+
+	separated := call("get_person", map[string]any{"person_id": newPersonID})
+	assert.Equal(t, "Separated", separated["display_name"])
+	assert.EqualValues(t, 1, separated["revision"])
+	separatedIdentities, ok := separated["identities"].([]any)
+	require.True(t, ok)
+	require.Len(t, separatedIdentities, 1)
+	separatedIdentity, ok := separatedIdentities[0].(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, identity.IdentityID, separatedIdentity["identity_id"])
+	callError("split_person", map[string]any{
+		"person_id": survivorID, "if_match_revision": 3, "operation_id": "00000000-0000-4000-8000-000000000006",
+		"display_name": "Empty",
+	}, "invalid_person")
+	retired := call("retire_person", map[string]any{"person_id": newPersonID, "if_match_revision": 1})
+	assert.Equal(t, newPersonID, retired["person_id"])
+	assert.Equal(t, "retired", retired["state"])
+	assert.EqualValues(t, 2, retired["revision"])
+	callError("get_person", map[string]any{"person_id": newPersonID}, "not_found")
+	page := call("list_person_custodians", map[string]any{"person_id": survivorID, "limit": 10})
+	assert.EqualValues(t, 0, page["total"])
+	assert.Equal(t, []any{}, page["items"])
 }
 
 func TestPersonWriteTreatsMalformedSuccessAsUnknown(t *testing.T) {

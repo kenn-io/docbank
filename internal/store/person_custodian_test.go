@@ -3,8 +3,8 @@ package store
 import (
 	"fmt"
 	"strings"
+	"sync"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/require"
 )
@@ -60,37 +60,50 @@ func TestCustodiansForPersonConcurrentMergeBoundary(t *testing.T) {
 	nodeID, versionID := seedPeopleVersion(t, s)
 	assignment, err := s.SetCustodian(ctx, CustodianRequest{
 		Scope:    CustodianScope{Kind: "document", NodeID: nodeID, ContentVersionID: versionID},
-		PersonID: survivor.PersonID, RawLabel: survivor.DisplayName, Rank: "primary", Basis: "operator_assigned",
+		PersonID: absorbed.PersonID, RawLabel: absorbed.DisplayName, Rank: "primary", Basis: "operator_assigned",
 		SourceRef: "concurrent-boundary", IfMatchRevision: 1,
 	})
 	require.NoError(t, err)
 	operationID, err := newUUIDv4()
 	require.NoError(t, err)
+	const concurrentReads = 8
+	start := make(chan struct{})
+	ready := make(chan struct{}, concurrentReads+1)
+	type pageResult struct {
+		items []CustodianAssignment
+		total int64
+		err   error
+	}
+	results := make(chan pageResult, concurrentReads)
+	var readers sync.WaitGroup
+	for range concurrentReads {
+		readers.Go(func() {
+			ready <- struct{}{}
+			<-start
+			items, total, readErr := s.CustodiansForPerson(ctx, absorbed.PersonID, 10, 0)
+			results <- pageResult{items: items, total: total, err: readErr}
+		})
+	}
 	mergeDone := make(chan error, 1)
 	go func() {
+		ready <- struct{}{}
+		<-start
 		_, mergeErr := s.MergePersons(ctx, survivor.PersonID, absorbed.PersonID, operationID, survivor.Revision, absorbed.Revision)
 		mergeDone <- mergeErr
 	}()
-	observedActive := false
-	deadline := time.Now().Add(2 * time.Second)
-	for time.Now().Before(deadline) {
-		items, total, readErr := s.CustodiansForPerson(ctx, absorbed.PersonID, 10, 0)
-		if readErr != nil {
-			require.ErrorIs(t, readErr, ErrNotFound)
-			continue
-		}
-		require.LessOrEqual(t, int64(len(items)), total)
-		if total == 1 {
-			observedActive = true
-			require.Len(t, items, 1)
-			require.Equal(t, assignment.AssignmentID, items[0].AssignmentID)
-			break
-		}
-		require.Zero(t, total)
-		require.Empty(t, items)
+	for range concurrentReads + 1 {
+		<-ready
 	}
+	close(start)
+	readers.Wait()
 	require.NoError(t, <-mergeDone)
-	require.True(t, observedActive)
+	close(results)
+	for result := range results {
+		require.NoError(t, result.err)
+		require.EqualValues(t, 1, result.total)
+		require.Len(t, result.items, 1)
+		require.Equal(t, assignment.AssignmentID, result.items[0].AssignmentID)
+	}
 	items, total, err := s.CustodiansForPerson(ctx, absorbed.PersonID, 10, 0)
 	require.NoError(t, err)
 	require.EqualValues(t, 1, total)

@@ -384,9 +384,6 @@ func (s *Store) SplitPerson(ctx context.Context, request PersonSplitRequest) (Pe
 		}
 		return PersonSplitReceipt{}, err
 	}
-	request.IdentityIDs = append([]string{}, request.IdentityIDs...)
-	request.AssignmentIDs = append([]string{}, request.AssignmentIDs...)
-	request.External = append([]PersonExternalUID{}, request.External...)
 	requestHash, err := requestDigest(request)
 	if err != nil {
 		return PersonSplitReceipt{}, err
