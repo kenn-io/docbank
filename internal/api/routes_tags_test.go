@@ -3,6 +3,7 @@ package api_test
 import (
 	"encoding/json/v2"
 	"fmt"
+	"maps"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -12,7 +13,124 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"go.kenn.io/docbank/internal/api"
+	"go.kenn.io/docbank/internal/store"
 )
+
+func TestPhotoVisibilityTags(t *testing.T) {
+	ts, s := newTestServer(t, nil)
+	ownerA, err := s.CreatePhotoOwner(t.Context(), "Tag owner A")
+	require.NoError(t, err)
+	ownerB, err := s.CreatePhotoOwner(t.Context(), "Tag owner B")
+	require.NoError(t, err)
+	photoA, err := s.CreateFile(store.WithPhotoOwner(t.Context(), ownerA.ID), s.RootID(), "tag-a.jpg", testHash("tag-a"), 5, "image/jpeg")
+	require.NoError(t, err)
+	photoB, err := s.CreateFile(store.WithPhotoOwner(t.Context(), ownerB.ID), s.RootID(), "tag-b.jpg", testHash("tag-b"), 5, "image/jpeg")
+	require.NoError(t, err)
+	ordinary, err := s.CreateFile(t.Context(), s.RootID(), "tag-ordinary.txt", testHash("tag-ordinary"), 5, "text/plain")
+	require.NoError(t, err)
+	tag, err := s.CreateTag(t.Context(), "photo-visible")
+	require.NoError(t, err)
+
+	ownerAHeaders := map[string]string{api.WebSessionHeader: issuePhotoOwnerSession(t, ts, ownerA.ID), "X-Api-Key": ""}
+	ownerBHeaders := map[string]string{api.WebSessionHeader: issuePhotoOwnerSession(t, ts, ownerB.ID), "X-Api-Key": ""}
+	assignmentPath := func(nodeID int64) string {
+		return fmt.Sprintf("/api/v1/nodes/%d/tags/%s", nodeID, tag.ID)
+	}
+	ifMatch := func(revision int64) map[string]string {
+		return map[string]string{"If-Match": strconv.Quote(strconv.FormatInt(revision, 10))}
+	}
+
+	response, body := do(t, ts, http.MethodPut, assignmentPath(photoA.ID), mergeHeaders(ownerAHeaders, ifMatch(photoA.Revision)), nil)
+	require.Equal(t, http.StatusOK, response.StatusCode, body)
+	var receipt api.TagAssignmentReceipt
+	require.NoError(t, json.Unmarshal([]byte(body), &receipt))
+	assert.True(t, receipt.Changed)
+	assert.Equal(t, 1, receipt.Tag.AssignmentCount)
+	assert.Equal(t, photoA.Revision+1, receipt.Node.Revision)
+
+	response, body = do(t, ts, http.MethodPut, assignmentPath(photoA.ID), mergeHeaders(ownerBHeaders, ifMatch(receipt.Node.Revision)), nil)
+	assert.Equal(t, http.StatusNotFound, response.StatusCode, body)
+	response, body = do(t, ts, http.MethodDelete, assignmentPath(photoA.ID), mergeHeaders(ownerBHeaders, ifMatch(receipt.Node.Revision)), nil)
+	assert.Equal(t, http.StatusNotFound, response.StatusCode, body)
+	afterForeign, err := s.NodeByID(t.Context(), photoA.ID)
+	require.NoError(t, err)
+	assert.Equal(t, receipt.Node.Revision, afterForeign.Revision)
+
+	response, body = do(t, ts, http.MethodPut, assignmentPath(photoB.ID), mergeHeaders(ownerBHeaders, ifMatch(photoB.Revision)), nil)
+	require.Equal(t, http.StatusOK, response.StatusCode, body)
+	require.NoError(t, json.Unmarshal([]byte(body), &receipt))
+	assert.Equal(t, 1, receipt.Tag.AssignmentCount)
+
+	response, body = do(t, ts, http.MethodPut, assignmentPath(ordinary.ID), mergeHeaders(ownerBHeaders, ifMatch(ordinary.Revision)), nil)
+	require.Equal(t, http.StatusOK, response.StatusCode, body)
+	require.NoError(t, json.Unmarshal([]byte(body), &receipt))
+	assert.Equal(t, 2, receipt.Tag.AssignmentCount)
+
+	assertTagCount := func(headers map[string]string, count int) {
+		t.Helper()
+		response, body := get(t, ts, "/api/v1/tags?limit=10&offset=0", headers)
+		require.Equal(t, http.StatusOK, response.StatusCode, body)
+		var page api.TagPage
+		require.NoError(t, json.Unmarshal([]byte(body), &page))
+		require.Equal(t, 1, page.Total)
+		require.Len(t, page.Items, 1)
+		assert.Equal(t, count, page.Items[0].AssignmentCount)
+
+		response, body = get(t, ts, "/api/v1/tags/by-name?name=photo-visible", headers)
+		require.Equal(t, http.StatusOK, response.StatusCode, body)
+		var resolved api.Tag
+		require.NoError(t, json.Unmarshal([]byte(body), &resolved))
+		assert.Equal(t, count, resolved.AssignmentCount)
+
+		response, body = get(t, ts, "/api/v1/tags/"+tag.ID, headers)
+		require.Equal(t, http.StatusOK, response.StatusCode, body)
+		require.NoError(t, json.Unmarshal([]byte(body), &resolved))
+		assert.Equal(t, count, resolved.AssignmentCount)
+	}
+	assertTagCount(ownerAHeaders, 2)
+	assertTagCount(ownerBHeaders, 2)
+
+	response, body = get(t, ts, fmt.Sprintf("/api/v1/nodes/%d/tags?limit=10&offset=0", ordinary.ID), ownerBHeaders)
+	require.Equal(t, http.StatusOK, response.StatusCode, body)
+	var ordinaryTags api.TagPage
+	require.NoError(t, json.Unmarshal([]byte(body), &ordinaryTags))
+	require.Equal(t, 1, ordinaryTags.Total)
+	require.Len(t, ordinaryTags.Items, 1)
+	assert.Equal(t, 2, ordinaryTags.Items[0].AssignmentCount)
+
+	response, body = get(t, ts, fmt.Sprintf("/api/v1/nodes/%d/tags?limit=10&offset=0", photoA.ID), ownerBHeaders)
+	assert.Equal(t, http.StatusNotFound, response.StatusCode, body)
+	response, body = get(t, ts, "/api/v1/tags/"+tag.ID+"/nodes?limit=10&offset=0", ownerAHeaders)
+	require.Equal(t, http.StatusOK, response.StatusCode, body)
+	var ownerATagged api.TaggedNodePage
+	require.NoError(t, json.Unmarshal([]byte(body), &ownerATagged))
+	assert.Equal(t, 2, ownerATagged.Total)
+	assert.Len(t, ownerATagged.Items, 2)
+	response, body = get(t, ts, "/api/v1/tags/"+tag.ID+"/nodes?limit=10&offset=0", ownerBHeaders)
+	require.Equal(t, http.StatusOK, response.StatusCode, body)
+	var ownerBTagged api.TaggedNodePage
+	require.NoError(t, json.Unmarshal([]byte(body), &ownerBTagged))
+	assert.Equal(t, 2, ownerBTagged.Total)
+	assert.Len(t, ownerBTagged.Items, 2)
+
+	response, body = do(t, ts, http.MethodDelete, assignmentPath(photoB.ID), mergeHeaders(ownerBHeaders, ifMatch(receipt.Node.Revision)), nil)
+	require.Equal(t, http.StatusOK, response.StatusCode, body)
+	require.NoError(t, json.Unmarshal([]byte(body), &receipt))
+	assert.True(t, receipt.Changed)
+	assert.Equal(t, 1, receipt.Tag.AssignmentCount)
+	response, body = do(t, ts, http.MethodDelete, assignmentPath(photoA.ID), mergeHeaders(ownerAHeaders, ifMatch(afterForeign.Revision)), nil)
+	require.Equal(t, http.StatusOK, response.StatusCode, body)
+	require.NoError(t, json.Unmarshal([]byte(body), &receipt))
+	assert.True(t, receipt.Changed)
+	assert.Equal(t, 1, receipt.Tag.AssignmentCount)
+}
+
+func mergeHeaders(base, extra map[string]string) map[string]string {
+	merged := make(map[string]string, len(base)+len(extra))
+	maps.Copy(merged, base)
+	maps.Copy(merged, extra)
+	return merged
+}
 
 func TestTagLifecycleHTTP(t *testing.T) {
 	ts, s := newTestServer(t, nil)

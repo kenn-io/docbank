@@ -105,6 +105,19 @@ func (s *Store) BatchTags(ctx context.Context, request BatchTagRequest) (BatchTa
 			if stored.RequestDigest != digest {
 				return fmt.Errorf("operation %s: %w", request.OperationID, ErrBatchTagOperationConflict)
 			}
+			if authority, ok := photoVisibilityFromContext(ctx); ok && authority.Enforce && !authority.Trusted {
+				for _, node := range stored.Nodes {
+					if err := photoNodeVisibilityCheckTx(ctx, tx, node.NodeID); err != nil {
+						return err
+					}
+				}
+				if authority.OwnerID != "" || authority.NoPhotoOwner {
+					stored.AssignmentCount, err = tagAssignmentCount(ctx, tx, request.TagID)
+					if err != nil {
+						return err
+					}
+				}
+			}
 			receipt = stored
 			return nil
 		}
@@ -125,10 +138,14 @@ func (s *Store) BatchTags(ctx context.Context, request BatchTagRequest) (BatchTa
 		if err != nil {
 			return err
 		}
+		assignmentCount, err := tagAssignmentCount(ctx, tx, request.TagID)
+		if err != nil {
+			return err
+		}
 		receipt = BatchTagReceiptV1{
 			Version: batchTagReceiptV1Version, OperationID: request.OperationID,
 			RequestDigest: digest, TagID: request.TagID, Assign: request.Assign,
-			TagRevision: finalTag.Revision, AssignmentCount: finalTag.AssignmentCount,
+			TagRevision: finalTag.Revision, AssignmentCount: assignmentCount,
 			CompletedAt: nowRFC3339(), Nodes: results,
 		}
 		receiptJSON, err := canonicalBatchTagReceiptV1JSON(receipt)

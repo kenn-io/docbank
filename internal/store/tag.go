@@ -67,6 +67,24 @@ func scanTag(row interface{ Scan(args ...any) error }) (Tag, error) {
 	return tag, nil
 }
 
+func tagAssignmentCount(ctx context.Context, q rowQuerier, tagID string) (int, error) {
+	visibility, visibilityArgs, err := photoNodeVisibilitySQL(ctx, q)
+	if err != nil {
+		return 0, err
+	}
+	args := make([]any, 0, len(visibilityArgs)+1)
+	args = append(args, tagID)
+	args = append(args, visibilityArgs...)
+	var count int
+	if err := q.QueryRowContext(ctx, `
+		SELECT COUNT(*)
+		FROM node_tags nt JOIN nodes n ON n.id=nt.node_id
+		WHERE nt.tag_id=? AND `+visibility, args...).Scan(&count); err != nil {
+		return 0, fmt.Errorf("counting assignments for tag %s: %w", tagID, err)
+	}
+	return count, nil
+}
+
 // CreateTag defines a tag with a fresh stable identity.
 func (s *Store) CreateTag(ctx context.Context, name string) (Tag, error) {
 	name, err := NormalizeTagName(name)
@@ -109,10 +127,16 @@ func tagByIDQuery(ctx context.Context, queryer rowQuerier, id string) (Tag, erro
 	if err := validateUUIDv4(id); err != nil {
 		return Tag{}, fmt.Errorf("tag %q: %w", id, ErrNotFound)
 	}
+	visibility, visibilityArgs, err := photoNodeVisibilitySQL(ctx, queryer)
+	if err != nil {
+		return Tag{}, err
+	}
+	args := append(append([]any{}, visibilityArgs...), id)
 	tag, err := scanTag(queryer.QueryRowContext(ctx, `
-		SELECT t.id, t.name, t.revision, COUNT(nt.node_id)
-		FROM tags t LEFT JOIN node_tags nt ON nt.tag_id = t.id
-		WHERE t.id = ? GROUP BY t.id, t.name, t.revision`, id))
+		SELECT t.id, t.name, t.revision,
+			(SELECT COUNT(*) FROM node_tags nt JOIN nodes n ON n.id=nt.node_id
+			 WHERE nt.tag_id=t.id AND `+visibility+`)
+		FROM tags t WHERE t.id = ?`, args...))
 	if err != nil {
 		return Tag{}, fmt.Errorf("tag %q: %w", id, err)
 	}
@@ -125,10 +149,16 @@ func (s *Store) TagByName(ctx context.Context, name string) (Tag, error) {
 	if err != nil {
 		return Tag{}, err
 	}
+	visibility, visibilityArgs, err := photoNodeVisibilitySQL(ctx, s.db)
+	if err != nil {
+		return Tag{}, err
+	}
+	args := append(append([]any{}, visibilityArgs...), name)
 	tag, err := scanTag(s.db.QueryRowContext(ctx, `
-		SELECT t.id, t.name, t.revision, COUNT(nt.node_id)
-		FROM tags t LEFT JOIN node_tags nt ON nt.tag_id = t.id
-		WHERE t.name = ? GROUP BY t.id, t.name, t.revision`, name))
+		SELECT t.id, t.name, t.revision,
+			(SELECT COUNT(*) FROM node_tags nt JOIN nodes n ON n.id=nt.node_id
+			 WHERE nt.tag_id=t.id AND `+visibility+`)
+		FROM tags t WHERE t.name = ?`, args...))
 	if err != nil {
 		return Tag{}, fmt.Errorf("tag %q: %w", name, err)
 	}
@@ -140,16 +170,22 @@ func (s *Store) Tags(ctx context.Context, limit, offset int) ([]Tag, int, error)
 	if err := validatePage(limit, offset); err != nil {
 		return nil, 0, err
 	}
+	visibility, visibilityArgs, err := photoNodeVisibilitySQL(ctx, s.db)
+	if err != nil {
+		return nil, 0, err
+	}
+	args := append(append([]any{}, visibilityArgs...), limit, offset)
 	rows, err := s.db.QueryContext(ctx, `
 		WITH page AS (
-		  SELECT t.id, t.name, t.revision, COUNT(nt.node_id) AS assignments
-		  FROM tags t LEFT JOIN node_tags nt ON nt.tag_id = t.id
-		  GROUP BY t.id, t.name, t.revision ORDER BY t.name, t.id LIMIT ? OFFSET ?
+		  SELECT t.id, t.name, t.revision,
+		    (SELECT COUNT(*) FROM node_tags nt JOIN nodes n ON n.id=nt.node_id
+		     WHERE nt.tag_id=t.id AND `+visibility+`) AS assignments
+		  FROM tags t ORDER BY t.name, t.id LIMIT ? OFFSET ?
 		), totals AS (SELECT COUNT(*) AS total FROM tags)
 		SELECT totals.total, COALESCE(page.id, ''), COALESCE(page.name, ''),
 		       COALESCE(page.revision, 0),
 		       COALESCE(page.assignments, 0)
-		FROM totals LEFT JOIN page ON true ORDER BY page.name, page.id`, limit, offset)
+		FROM totals LEFT JOIN page ON true ORDER BY page.name, page.id`, args...)
 	if err != nil {
 		return nil, 0, fmt.Errorf("listing tags: %w", err)
 	}
@@ -194,7 +230,9 @@ func (s *Store) RenameTag(ctx context.Context, id string, ifRev int64, name stri
 		}
 		if current.Name == name {
 			renamed = current
-			return nil
+			var countErr error
+			renamed.AssignmentCount, countErr = tagAssignmentCount(ctx, tx, id)
+			return countErr
 		}
 		active, err := auditAuthorityActiveTx(ctx, tx)
 		if err != nil {
@@ -202,9 +240,13 @@ func (s *Store) RenameTag(ctx context.Context, id string, ifRev int64, name stri
 		}
 		if active {
 			renamed, err = s.renameAuditedTagTx(ctx, tx, current, name)
+		} else {
+			renamed, err = s.renameTagTx(tx, current, name, nowRFC3339())
+		}
+		if err != nil {
 			return err
 		}
-		renamed, err = s.renameTagTx(tx, current, name, nowRFC3339())
+		renamed.AssignmentCount, err = tagAssignmentCount(ctx, tx, id)
 		return err
 	})
 	if err != nil {
@@ -253,16 +295,24 @@ func (s *Store) DeleteTag(ctx context.Context, id string, ifRev int64) (Tag, err
 		if err := checkTagRevision(current, ifRev); err != nil {
 			return err
 		}
+		visibleCount, err := tagAssignmentCount(ctx, tx, id)
+		if err != nil {
+			return err
+		}
 		active, err := auditAuthorityActiveTx(ctx, tx)
 		if err != nil {
 			return err
 		}
 		if active {
 			deleted, err = s.deleteAuditedTagTx(ctx, tx, current)
+		} else {
+			deleted, err = deleteTagTx(tx, current, nowRFC3339())
+		}
+		if err != nil {
 			return err
 		}
-		deleted, err = deleteTagTx(tx, current, nowRFC3339())
-		return err
+		deleted.AssignmentCount = visibleCount
+		return nil
 	})
 	if err != nil {
 		return Tag{}, err
@@ -397,6 +447,9 @@ func changeTagAssignmentTx(
 	assign bool,
 	recordedAt string,
 ) (TagAssignmentChange, error) {
+	if err := photoNodeVisibilityCheckTx(ctx, tx, node.ID); err != nil {
+		return TagAssignmentChange{}, err
+	}
 	tag, err := tagByIDTx(tx, tagID)
 	if err != nil {
 		return TagAssignmentChange{}, err
@@ -461,6 +514,10 @@ func changeTagAssignmentTx(
 			return TagAssignmentChange{}, err
 		}
 	}
+	result.Tag.AssignmentCount, err = tagAssignmentCount(ctx, tx, tagID)
+	if err != nil {
+		return TagAssignmentChange{}, err
+	}
 	return result, nil
 }
 
@@ -469,11 +526,19 @@ func (s *Store) NodeTags(ctx context.Context, nodeID int64, limit, offset int) (
 	if err := validatePage(limit, offset); err != nil {
 		return nil, 0, err
 	}
+	visibility, visibilityArgs, err := photoNodeVisibilitySQL(ctx, s.db)
+	if err != nil {
+		return nil, 0, err
+	}
+	args := []any{nodeID}
+	args = append(args, visibilityArgs...)
+	args = append(args, nodeID, limit, offset, nodeID)
 	rows, err := s.db.QueryContext(ctx, `
 		WITH target AS (SELECT id FROM nodes WHERE id = ?),
 		page AS (
 		  SELECT t.id, t.name, t.revision,
-		         (SELECT COUNT(*) FROM node_tags all_nt WHERE all_nt.tag_id = t.id) AS assignments
+		         (SELECT COUNT(*) FROM node_tags all_nt JOIN nodes n ON n.id=all_nt.node_id
+		          WHERE all_nt.tag_id = t.id AND `+visibility+`) AS assignments
 		  FROM tags t JOIN node_tags nt ON nt.tag_id = t.id
 		  WHERE nt.node_id = ? ORDER BY t.name, t.id LIMIT ? OFFSET ?
 		), totals AS (SELECT COUNT(*) AS total FROM node_tags WHERE node_id = ?)
@@ -481,7 +546,7 @@ func (s *Store) NodeTags(ctx context.Context, nodeID int64, limit, offset int) (
 		       COALESCE(page.revision, 0),
 		       COALESCE(page.assignments, 0)
 		FROM target CROSS JOIN totals LEFT JOIN page ON true ORDER BY page.name, page.id`,
-		nodeID, nodeID, limit, offset, nodeID)
+		args...)
 	if err != nil {
 		return nil, 0, fmt.Errorf("listing tags of node %d: %w", nodeID, err)
 	}
