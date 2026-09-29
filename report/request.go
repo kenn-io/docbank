@@ -11,6 +11,8 @@ import (
 	"unicode/utf8"
 
 	"github.com/google/uuid"
+
+	"go.kenn.io/docbank/internal/canonical"
 )
 
 const (
@@ -45,23 +47,11 @@ func NormalizeRequest(r Request) (Request, error) {
 		return Request{}, errors.New("select all documents, collections, or exact documents")
 	}
 	if r.SelectedDocuments != nil {
-		documents := r.SelectedDocuments.Documents
-		if len(documents) > 50000 {
-			return Request{}, fmt.Errorf("%w: too many selected documents", ErrReportLimit)
+		selected, err := normalizeSelectedDocuments(r.SelectedDocuments.Documents)
+		if err != nil {
+			return Request{}, err
 		}
-		if len(documents) == 0 {
-			return Request{}, fmt.Errorf("%w: select at least one document", ErrInvalidSelection)
-		}
-		seen := make(map[int64]bool, len(documents))
-		for _, id := range documents {
-			version, err := uuid.Parse(id.VersionID)
-			if id.NodeID <= 0 || seen[id.NodeID] || err != nil || version.String() != id.VersionID || version.Version() != 4 || version.Variant() != uuid.RFC4122 || !validSHA256(id.SHA256) || strings.ToLower(id.SHA256) != id.SHA256 {
-				return Request{}, fmt.Errorf("%w: invalid or repeated document identity", ErrInvalidSelection)
-			}
-			seen[id.NodeID] = true
-		}
-		r.SelectedDocuments = &SelectedDocuments{Documents: slices.Clone(documents)}
-		slices.SortFunc(r.SelectedDocuments.Documents, func(a, b Identity) int { return cmp.Compare(a.NodeID, b.NodeID) })
+		r.SelectedDocuments = selected
 	}
 	if len(r.CollectionIDs) > 50000 {
 		return Request{}, errors.New("too many collections")
@@ -132,6 +122,27 @@ func NormalizeRequest(r Request) (Request, error) {
 	r.Terms = append([]Term(nil), r.Terms...)
 	r.DateChoices = append([]DateChoice(nil), r.DateChoices...)
 	return r, nil
+}
+
+func normalizeSelectedDocuments(documents []Identity) (*SelectedDocuments, error) {
+	if len(documents) > 50000 {
+		return nil, fmt.Errorf("%w: too many selected documents", ErrReportLimit)
+	}
+	if len(documents) == 0 {
+		return nil, fmt.Errorf("%w: select at least one document", ErrInvalidSelection)
+	}
+	seen := make(map[int64]bool, len(documents))
+	for _, id := range documents {
+		version, err := uuid.Parse(id.VersionID)
+		if id.NodeID <= 0 || seen[id.NodeID] || err != nil || version.String() != id.VersionID ||
+			version.Version() != 4 || version.Variant() != uuid.RFC4122 || !canonical.IsSHA256Hex(id.SHA256) {
+			return nil, fmt.Errorf("%w: invalid or repeated document identity", ErrInvalidSelection)
+		}
+		seen[id.NodeID] = true
+	}
+	selected := &SelectedDocuments{Documents: slices.Clone(documents)}
+	slices.SortFunc(selected.Documents, func(a, b Identity) int { return cmp.Compare(a.NodeID, b.NodeID) })
+	return selected, nil
 }
 
 func validateTimezone(zone string) error {

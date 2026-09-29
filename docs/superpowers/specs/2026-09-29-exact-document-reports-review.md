@@ -1,13 +1,15 @@
 # Exact-document reports: review follow-up
 
-This records the author's source checks and revisions after the supplied
-adversarial reviews through `942eec0f`. It is not an independent re-review or a test
-of implemented behavior. Selected-document scope remains proposed.
+Selected-document scope is implemented in [PR #726](https://github.com/kenn-io/docbank/pull/726).
+The record below preserves the author's source checks and revisions after the
+supplied adversarial reviews through `942eec0f`, before implementation. It is
+not an independent re-review or a test of implemented behavior.
 
 ## Reviewed input
 
 - Spec: [Reports for selected document versions](2026-09-29-exact-document-reports-design.md).
-- Revised spec SHA-256: `d9a63a3d70e369826541207d7402b42adb93e6006c22917203ca66f65965c17f`.
+- Revised spec at `a3d47a2f`, before the implementation-status update:
+  SHA-256 `d9a63a3d70e369826541207d7402b42adb93e6006c22917203ca66f65965c17f`.
 - Prior reviewed spec: commit `942eec0ff1da1004ede5274d3c0d14f6116cbafd`,
   SHA-256 `d07afa304fe79187cc4e9a53124bf5c0501a3e5c6e99b433ba82b6452319719c`.
 - Original reviewed spec: commit `5a301f2dde3b3bf0f1d8e4c2f238782e09579e3d`,
@@ -137,7 +139,7 @@ None were executed as selected-scope tests in this documentation-only change.
 
 ## Verdict
 
-The corrected spec matches the inspected optional-null validator path and
-names the required optional-field tag. The maintainer requested this correction
-and continuation into implementation planning. Product implementation awaits
-review of that plan; this source review does not claim implemented behavior.
+The corrected spec matched the inspected optional-null validator path and
+named the required optional-field tag. This source review supported
+continuation into implementation planning; it does not assess the
+implementation linked above.

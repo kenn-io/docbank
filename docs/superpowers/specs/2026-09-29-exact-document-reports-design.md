@@ -1,9 +1,9 @@
 # Reports for selected document versions
 
-> **Proposed design; not implemented.** The maintainer has confirmed current,
-> whole-document selection and preservation of captured reports after source
-> changes. The interface and protocol below are proposed for adversarial review.
-> Source baseline: `b184ebfc4888f8f4cb6a59dbbb52573134a6bf39`.
+> **Implemented in [PR #726](https://github.com/kenn-io/docbank/pull/726).**
+> This design records the approved contract for current, whole-document
+> selection and preservation of captured reports after source changes.
+> Original design baseline: `b184ebfc4888f8f4cb6a59dbbb52573134a6bf39`.
 
 ## Purpose and scope
 
@@ -15,7 +15,7 @@ report against a silently substituted version.
 
 This is one bounded outcome from [the backlog umbrella](https://github.com/kenn-io/docbank/issues/719).
 [The merged export work](https://github.com/kenn-io/docbank/pull/403) already
-covers sealed snapshot load-file packages. This proposal extends search
+covers sealed snapshot load-file packages. This feature extends search
 exports; it does not combine those two export systems.
 
 The maintainer selected two rules:
@@ -257,7 +257,7 @@ History keeps the existing maximum of 100 request/summary receipts and
 existing size bounds. It retains exact selection and summary, but not full
 source text, live artifacts, or date-review choices. No new table, foreign key
 to selected source versions, SQLite constraint, or storage migration is needed
-for the proposed optional field in the existing request JSON. Large selections
+for the optional field in the existing request JSON. Large selections
 make history size material: 100 near-limit requests can approach 800 MiB in
 request JSON alone, and metadata export carries those requests. Keep the
 existing 16 MiB history-page bound; clients must continue by returned item
@@ -272,7 +272,7 @@ selected sources are live/current and its evidence satisfies the requested
 coverage policy. History never restores old handles or guarantees identical
 results from a fresh run. Keep metadata JSONL at version 1.
 
-## Existing components to extend
+## Owning components
 
 | Concern | Owning code |
 | --- | --- |
@@ -288,13 +288,12 @@ The web's mutation selection type carries node/revision pairs, which are not
 content identities. Copy version/hash fields from displayed document or query
 rows, following the existing export action's pattern. Do not inherit the
 separate package export's larger member limit or add its job machinery.
-Update the owning search-export guide and HTTP reference when behavior ships;
-this proposed spec stays outside public navigation and site output.
+The search-export guide and HTTP reference describe the operator-facing
+behavior. This design stays outside public navigation and site output.
 
 ## Behavioral examples for review
 
-These are contract examples for the eventual implementation, not verification
-claims about the current code:
+These are contract examples for reviewing the implementation, not a test report:
 
 - With two selected documents and an unselected matching document, both selected
   identities appear in the packet; only their eligible hits affect counts.
