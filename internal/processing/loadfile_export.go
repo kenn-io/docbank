@@ -539,15 +539,15 @@ func buildLoadFileRecord(ctx context.Context, blobs *blob.Store, exportProfile l
 		values[9] = loadFileExportVolume + "/" + relPath
 		addBlob("native", relPath, hash, size, 0, 0)
 	}
-	textBytes, textSourceRole, err := selectedTextBytes(ctx, blobs, member, available)
+	textBytes, textSourceRole, err := selectedTextBytes(ctx, blobs, member, available, exportProfile.OptionalRoles)
 	if err != nil {
 		return loadfile.Record{}, nil, nil, nil, nil, err
 	}
-	if len(textBytes) > 0 && (slices.Contains(exportProfile.OptionalRoles, "supplied_text") ||
-		slices.Contains(exportProfile.OptionalRoles, "rendition_text")) {
+	if len(textBytes) > 0 {
 		relPath := "TEXT/" + crosswalk.DocumentID + ".txt"
 		hash := sha256HexBytes(textBytes)
 		values[10] = loadFileExportVolume + "/" + relPath
+		// TEXT is supplied text to the recipient; the crosswalk retains its source role.
 		files = append(files, loadfile.FileRef{Role: "supplied_text", Volume: loadFileExportVolume,
 			RelPath: relPath, Declared: values[10], SHA256: hash, Size: int64(len(textBytes)), Status: packageStateAvailable})
 		roles = append(roles, LoadFileExportRole{Role: textSourceRole, RelPath: relPath, SHA256: hash, Size: int64(len(textBytes))})
@@ -802,12 +802,15 @@ func selectedPageRepresentations(member store.CollectionSnapshotMember, values [
 }
 
 func selectedTextBytes(ctx context.Context, blobs *blob.Store, member store.CollectionSnapshotMember,
-	available map[string][]store.CollectionSnapshotRepresentation,
+	available map[string][]store.CollectionSnapshotRepresentation, allowedRoles []string,
 ) ([]byte, string, error) {
-	role := "supplied_text"
-	values := available[role]
-	if len(values) == 0 {
-		role, values = "rendition_text", available["rendition_text"]
+	var role string
+	var values []store.CollectionSnapshotRepresentation
+	for _, candidate := range []string{"supplied_text", "rendition_text"} {
+		if slices.Contains(allowedRoles, candidate) && len(available[candidate]) > 0 {
+			role, values = candidate, available[candidate]
+			break
+		}
 	}
 	if len(values) == 0 {
 		return nil, "", nil

@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 
 	"github.com/go-pdf/fpdf"
@@ -202,6 +203,99 @@ func TestPackageExportSelectedPDFThroughPublicImport(t *testing.T) {
 				require.ElementsMatch(t, []string{"SYN000001", "SYN000002", "SYN000003"}, assigned)
 			}
 		})
+	}
+}
+
+func TestPackageExportSelectsOnlyProfileTextRoles(t *testing.T) {
+	source, catalog := newPackageTestServer(t)
+	_, members := importExportFixture(t, source, catalog, syntheticPackageRoot(t), "dat-concordance-v1", nil)
+	textContents := map[string]string{
+		"supplied_text":  "Supplied text from the sender.\n",
+		"rendition_text": "Text extracted from the document.\n",
+	}
+	textRepresentations := make(map[string]store.CollectionSnapshotRepresentation)
+	for role, content := range textContents {
+		hash, size, err := catalog.Blobs.Write(bytes.NewBufferString(content))
+		require.NoError(t, err)
+		require.NoError(t, catalog.RecordBlob(t.Context(), hash, size, store.BlobPhysical{Encoding: "raw", StoredBytes: size}))
+		textRepresentations[role] = store.CollectionSnapshotRepresentation{
+			OccurrenceID: members[0].OccurrenceID, ContentVersionID: members[0].ContentVersionID,
+			Role: role, Status: "available", TextAuthority: "none", BlobSHA256: hash, Size: size, MediaType: "text/plain",
+		}
+	}
+	for _, profile := range []struct {
+		id   string
+		want [3]string // supplied only, rendition only, both
+	}{
+		{"export-dat-pdf-v1", [3]string{"supplied_text", "rendition_text", "supplied_text"}},
+		{"export-dat-opt-images-v1", [3]string{"", "rendition_text", "rendition_text"}},
+		{"export-csv-natives-v1", [3]string{"", "rendition_text", "rendition_text"}},
+		{"export-dat-lfp-images-v1", [3]string{"supplied_text", "", "supplied_text"}},
+	} {
+		for index, roles := range [][]string{{"supplied_text"}, {"rendition_text"}, {"supplied_text", "rendition_text"}} {
+			t.Run(fmt.Sprintf("%s/%v", profile.id, roles), func(t *testing.T) {
+				member := members[0]
+				member.Representations = slices.DeleteFunc(slices.Clone(member.Representations), func(rep store.CollectionSnapshotRepresentation) bool {
+					return rep.Role == "supplied_text" || rep.Role == "rendition_text"
+				})
+				for _, role := range roles {
+					member.Representations = append(member.Representations, textRepresentations[role])
+				}
+				snapshot, err := catalog.SealCollectionSnapshot(t.Context(), store.SnapshotSealRequest{
+					SnapshotID: uuid.NewString(), SourceCollectionIDs: member.SourceCollectionIDs, Members: []store.CollectionSnapshotMember{member},
+				})
+				require.NoError(t, err)
+				var archive bytes.Buffer
+				_, err = processing.WriteLoadFileExport(t.Context(), catalog.Store, catalog.Blobs,
+					processing.LoadFileExportRequest{SnapshotID: snapshot.SnapshotID, ProfileID: profile.id}, &archive)
+				require.NoError(t, err)
+				verified, err := processing.VerifyLoadFileExport(t.Context(), bytes.NewReader(archive.Bytes()), int64(archive.Len()))
+				require.NoError(t, err)
+				extracted, err := loadfile.ExtractZIP(t.Context(), bytes.NewReader(archive.Bytes()), int64(archive.Len()))
+				require.NoError(t, err)
+				t.Cleanup(func() { require.NoError(t, loadfile.RemoveExtractedZIP(extracted)) })
+				textFiles, err := filepath.Glob(filepath.Join(extracted, "VOL001", "TEXT", "*.txt"))
+				require.NoError(t, err)
+				wantRole := profile.want[index]
+				var exportedRoles []string
+				for _, role := range verified.Crosswalk.Members[0].Roles {
+					if role.Role == "supplied_text" || role.Role == "rendition_text" {
+						exportedRoles = append(exportedRoles, role.Role)
+					}
+				}
+				if wantRole == "" {
+					require.Empty(t, textFiles)
+					require.Empty(t, exportedRoles)
+				} else {
+					require.Len(t, textFiles, 1)
+					content, err := os.ReadFile(textFiles[0])
+					require.NoError(t, err)
+					require.Equal(t, textContents[wantRole], string(content))
+					require.Equal(t, []string{wantRole}, exportedRoles)
+				}
+				mapping, err := canonical.Marshal(verified.Receipt.Mapping)
+				require.NoError(t, err)
+				fresh, freshCatalog := newPackageTestServer(t)
+				_, imported := importExportFixture(t, fresh, freshCatalog, extracted, verified.Receipt.Profile.ID, mapping)
+				require.Len(t, imported, 1)
+				var importedText []string
+				for _, rep := range imported[0].Representations {
+					if rep.Role == "supplied_text" && rep.Status == "available" {
+						reader, err := freshCatalog.Blobs.Open(rep.BlobSHA256)
+						require.NoError(t, err)
+						content, err := io.ReadAll(reader)
+						require.NoError(t, err)
+						require.NoError(t, reader.Close())
+						importedText = append(importedText, string(content))
+					}
+				}
+				if wantRole == "" {
+					require.Empty(t, importedText)
+				} else {
+					require.Equal(t, []string{textContents[wantRole]}, importedText)
+				}
+			})
+		}
 	}
 }
 
