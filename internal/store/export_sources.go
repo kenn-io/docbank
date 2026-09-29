@@ -123,6 +123,12 @@ func (s *Store) ExportSource(ctx context.Context, owner, id string) (bundle.Sour
 	if err == nil && exportExpired(source.ExpiresAt) {
 		err = bundle.ErrExpired
 	}
+	if err == nil {
+		err = s.CheckExportSourcePhotoVisibility(ctx, id)
+	}
+	if err != nil {
+		return bundle.Source{}, err
+	}
 	return source, err
 }
 

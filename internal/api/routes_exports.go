@@ -311,6 +311,13 @@ func registerExportRoutes(mux *http.ServeMux, api huma.API, d Deps, g *Operation
 		if err != nil {
 			return nil, err
 		}
+		job, err := d.Store.ExportJob(ctx, owner, in.ID)
+		if err != nil {
+			return nil, exportProblem(err)
+		}
+		if err := d.Store.CheckExportPlanPhotoVisibility(ctx, job.PlanID); err != nil {
+			return nil, exportProblem(err)
+		}
 		if err = g.MutateContext(ctx, func() error { return d.Store.CancelExportJob(ctx, owner, in.ID) }); err != nil {
 			return nil, exportProblem(err)
 		}

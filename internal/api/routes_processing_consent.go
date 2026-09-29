@@ -2,7 +2,7 @@ package api
 
 import (
 	"context"
-	"errors"
+	"fmt"
 	"github.com/danielgtaylor/huma/v2"
 	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/internal/store"
@@ -10,23 +10,21 @@ import (
 	"reflect"
 )
 
-func bindProcessingPrincipal(ctx context.Context, catalog *store.Store, supplied string) (string, error) {
+func bindProcessingPrincipal(ctx context.Context, catalog *store.Store, expected, supplied string) (string, error) {
 	ownerID, bound, noPhotoOwner, err := catalog.PhotoOwnerForRequest(ctx)
 	if err != nil {
 		return "", err
 	}
-	if !bound {
-		return supplied, nil
-	}
 	if noPhotoOwner {
 		return "", store.ErrNotFound
 	}
-	if ownerID == "" {
-		return supplied, nil
+	if ownerID != "" {
+		expected = "owner:" + ownerID
+	} else if !bound && expected == "" {
+		return "", store.ErrInvalidProcessingConsentRequest
 	}
-	expected := "owner:" + ownerID
 	if supplied != "" && supplied != expected {
-		return "", errors.New("processing consent principal does not match the authenticated photo owner")
+		return "", fmt.Errorf("%w: processing consent principal does not match the authenticated photo owner", store.ErrInvalidProcessingConsentRequest)
 	}
 	return expected, nil
 }
@@ -40,7 +38,16 @@ func registerProcessingConsentRoutes(mux *http.ServeMux, api huma.API, d Deps, g
 		if !readEmailDocumentJSON(w, r, &request) {
 			return
 		}
-		principal, principalErr := bindProcessingPrincipal(r.Context(), d.Store, request.Principal)
+		expected := ""
+		if d.Processing != nil {
+			var expectedErr error
+			expected, expectedErr = d.Processing.PrincipalForRequest(r.Context())
+			if expectedErr != nil {
+				writeEmailStoreError(w, expectedErr)
+				return
+			}
+		}
+		principal, principalErr := bindProcessingPrincipal(r.Context(), d.Store, expected, request.Principal)
 		if principalErr != nil {
 			writeEmailStoreError(w, principalErr)
 			return
@@ -67,7 +74,16 @@ func registerProcessingConsentRoutes(mux *http.ServeMux, api huma.API, d Deps, g
 		if !readEmailDocumentJSON(w, r, &request) {
 			return
 		}
-		principal, principalErr := bindProcessingPrincipal(r.Context(), d.Store, request.Principal)
+		expected := ""
+		if d.Processing != nil {
+			var expectedErr error
+			expected, expectedErr = d.Processing.PrincipalForRequest(r.Context())
+			if expectedErr != nil {
+				writeEmailStoreError(w, expectedErr)
+				return
+			}
+		}
+		principal, principalErr := bindProcessingPrincipal(r.Context(), d.Store, expected, request.Principal)
 		if principalErr != nil {
 			writeEmailStoreError(w, principalErr)
 			return

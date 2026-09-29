@@ -172,6 +172,28 @@ func TestBrowserUploadUsesAuthenticatedPinnedChannel(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, reader.Close())
 	assert.Equal(t, content, stored)
+
+	photo := []byte("fresh browser photo")
+	photoDigest := sha256.Sum256(photo)
+	const photoRequestID = "browser-photo"
+	require.NoError(t, wsjson.Write(t.Context(), conn, map[string]any{
+		"type": "begin", "request_id": photoRequestID, "parent_id": destination.ID,
+		"name": "fresh.jpg", "mime_type": "image/jpeg",
+		"expected_hash": hex.EncodeToString(photoDigest[:]), "expected_size": len(photo),
+	}))
+	require.NoError(t, wsjson.Read(t.Context(), conn, &message))
+	require.Equal(t, "ready", message.Type)
+	require.NoError(t, conn.Write(t.Context(), websocket.MessageBinary, photo))
+	require.NoError(t, wsjson.Write(t.Context(), conn, map[string]any{"type": "end", "request_id": photoRequestID}))
+	require.NoError(t, wsjson.Read(t.Context(), conn, &message))
+	require.Equal(t, "receipt", message.Type)
+	require.Equal(t, "added", message.Receipt.Status)
+	settings, err := s.PhotoSettings(t.Context())
+	require.NoError(t, err)
+	require.NotNil(t, settings.DefaultOwnerID)
+	asset, err := s.PhotoAssetForNode(store.WithPhotoOwner(t.Context(), *settings.DefaultOwnerID), message.Receipt.Node.ID)
+	require.NoError(t, err)
+	require.Equal(t, *settings.DefaultOwnerID, *asset.OwnerID)
 }
 
 func TestServerShutdownDrainsActiveBrowserUpload(t *testing.T) {

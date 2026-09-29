@@ -14,37 +14,22 @@ import (
 func matchedPopulation(
 	compiled CompiledQuery, generationID string, profileFingerprint *string,
 ) (compiledQueryFragment, error) {
+	return matchedPopulationWithVisibility(compiled, generationID, profileFingerprint, trueCompiledFragment())
+}
+
+func matchedPopulationWithVisibility(
+	compiled CompiledQuery, generationID string, profileFingerprint *string, visibility compiledQueryFragment,
+) (compiledQueryFragment, error) {
 	predicate, err := compiled.bind(generationID, profileFingerprint)
 	if err != nil {
 		return compiledQueryFragment{}, err
 	}
-	return selectCompiledPopulation(predicate, compiled.Query.Filters.CollapseDuplicates), nil
+	return selectCompiledPopulation(predicate, compiled.Query.Filters.CollapseDuplicates, visibility), nil
 }
 
-// applyPhotoVisibilityPopulation adds the request's owner predicate before
-// any population consumer applies ranking, duplicate collapse, limits, or
-// facets.
-func applyPhotoVisibilityPopulation(ctx context.Context, q metadataQuerier, population *compiledQueryFragment) error {
-	predicate, args, err := photoNodeVisibilitySQL(ctx, q)
-	if err != nil {
-		return err
-	}
-	if predicate == "1=1" {
-		return nil
-	}
-	where := strings.Index(strings.ToUpper(population.sql), "WHERE")
-	if where < 0 {
-		return nil
-	}
-	whereEnd := where + len("WHERE")
-	population.sql = population.sql[:whereEnd] + " " + predicate + " AND " + population.sql[whereEnd:]
-	population.args = append(args, population.args...)
-	return nil
-}
-
-func selectCompiledPopulation(predicate compiledQueryFragment, collapseDuplicates bool) compiledQueryFragment {
+func selectCompiledPopulation(predicate compiledQueryFragment, collapseDuplicates bool, visibility compiledQueryFragment) compiledQueryFragment {
 	predicate = joinCompiledFragments([]compiledQueryFragment{
-		compiledLiveCurrentPredicate(), predicate,
+		compiledLiveCurrentPredicate(), visibility, predicate,
 	}, ` AND `)
 	matched := `SELECT n.id AS node_id,cv.version_id AS content_version_id,
 		cv.blob_hash,n.modified_at
@@ -71,12 +56,17 @@ func selectCompiledPopulation(predicate compiledQueryFragment, collapseDuplicate
 // generation arguments inside compiled predicates are already bound by
 // matchedPopulation.
 func bindQueryPopulation(
-	population compiledQueryFragment, selection CoverageSelection, generationID string,
+	ctx context.Context, q metadataQuerier, population compiledQueryFragment, selection CoverageSelection, generationID string,
 ) (string, []any, error) {
 	var ctes []string
 	args := make([]any, 0, len(population.args)+2)
 	if population.relations&(compiledRelationCurrentContent|compiledRelationProcessingCoverage) != 0 {
-		ctes = append(ctes, CurrentContentMembershipCTE)
+		membershipCTE, membershipArgs, err := scopedCurrentContentMembershipCTE(ctx, q)
+		if err != nil {
+			return "", nil, err
+		}
+		ctes = append(ctes, membershipCTE)
+		args = append(args, membershipArgs...)
 	}
 	if population.relations&compiledRelationProcessingCoverage != 0 {
 		normalized, err := normalizeCoverageSelection(selection)

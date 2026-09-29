@@ -49,6 +49,10 @@ func (s *Store) QMDExportSources(ctx context.Context, limit int) (_ []QMDExportS
 	if limit < 1 || limit > maxQMDExportSources {
 		return nil, fmt.Errorf("QMD export source limit must be between 1 and %d", maxQMDExportSources)
 	}
+	visibilitySQL, visibilityArgs, err := photoNodeVisibilitySQL(ctx, s.db)
+	if err != nil {
+		return nil, err
+	}
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT a.vault_uid,n.id,h.content_version_id,h.profile_fingerprint,
 		       a.attachment_id,a.build_id,artifact.artifact_id,artifact.blob_hash,
@@ -59,9 +63,9 @@ func (s *Store) QMDExportSources(ctx context.Context, limit int) (_ []QMDExportS
 		JOIN rendition_builds b ON b.build_id=a.build_id AND b.vault_uid=a.vault_uid
 		JOIN rendition_artifacts artifact ON artifact.build_id=b.build_id
 		WHERE n.kind='file' AND n.trashed_at IS NULL
-		  AND artifact.role='sanitized_markdown'
+		  AND artifact.role='sanitized_markdown' AND `+visibilitySQL+`
 		ORDER BY n.id,h.profile_fingerprint,a.attachment_id,artifact.artifact_id
-		LIMIT ?`, limit+1)
+		LIMIT ?`, append(visibilityArgs, limit+1)...)
 	if err != nil {
 		return nil, fmt.Errorf("listing QMD export sources: %w", err)
 	}
@@ -112,13 +116,17 @@ func (s *Store) RevalidateQMDExportCandidates(ctx context.Context, candidates []
 	result := make([]QMDExportLiveCandidate, 0, len(candidates))
 	err = s.withStorageTx(ctx, func(tx *sql.Tx) error {
 		filterSQL, filterArgs := searchFilterSQL(normalized)
+		visibilitySQL, visibilityArgs, err := photoNodeVisibilitySQL(ctx, tx)
+		if err != nil {
+			return err
+		}
 		for _, candidate := range candidates {
 			args := []any{candidate.NodeID, candidate.ContentVersionID,
 				candidate.ProcessingProfileFingerprint, candidate.AttachmentID,
 				candidate.VaultUID, candidate.BuildID, candidate.ArtifactID,
 				candidate.BlobSHA256, candidate.BlobSize, candidate.ArtifactChecksum,
 				candidate.MarkdownChecksum}
-			args = append(append([]any(nil), filterArgs...), args...)
+			args = append(append(append([]any(nil), filterArgs...), args...), visibilityArgs...)
 			var live QMDExportLiveCandidate
 			err := tx.QueryRowContext(ctx, `SELECT n.id,n.revision,cv.version_id,CASE WHEN 1=1 `+filterSQL+` THEN 1 ELSE 0 END
 				FROM nodes n
@@ -132,7 +140,8 @@ func (s *Store) RevalidateQMDExportCandidates(ctx context.Context, candidates []
 					AND a.vault_uid=? AND a.build_id=? AND artifact.artifact_id=?
 					AND artifact.role='sanitized_markdown'
 					AND artifact.blob_hash=? AND artifact.size=? AND artifact.checksum=?
-					AND b.markdown_checksum=? AND n.kind='file' AND n.trashed_at IS NULL `,
+					AND b.markdown_checksum=? AND n.kind='file' AND n.trashed_at IS NULL
+                    AND `+visibilitySQL,
 				args...).Scan(&live.NodeID, &live.NodeRevision, &live.ContentVersionID, &live.InScope)
 			if errors.Is(err, sql.ErrNoRows) {
 				return ErrQMDExportAuthorityStale

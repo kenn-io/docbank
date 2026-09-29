@@ -12,18 +12,6 @@ const (
 	maxDuplicateCollections    = 16
 )
 
-// CurrentContentMembershipCTE is the shared live-current content relation for
-// duplicate discovery and later matched-content features. It intentionally
-// omits WITH so callers can compose it with other CTEs.
-const CurrentContentMembershipCTE = `current_content_members AS (
-    SELECT n.id AS node_id, v.version_id, v.blob_hash, b.size, n.modified_at
-    FROM nodes n
-    JOIN content_versions v
-      ON v.node_id = n.id AND v.version_id = n.current_version_id
-    JOIN blobs b ON b.hash = v.blob_hash AND b.size = v.size
-    WHERE n.kind = 'file' AND n.trashed_at IS NULL
-)`
-
 // DuplicateRepresentativeOrder is the exact stable order for choosing a
 // representative from a matched population. Future matched-content callers
 // must apply it after establishing their population, not to a global

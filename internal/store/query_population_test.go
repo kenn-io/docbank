@@ -93,7 +93,7 @@ func (fixture queryPopulationFixture) MatchedPopulation(
 		if err != nil {
 			return err
 		}
-		statement, args, err := bindQueryPopulation(population, selection, generation.ID)
+		statement, args, err := bindQueryPopulation(t.Context(), q, population, selection, generation.ID)
 		if err != nil {
 			return err
 		}
@@ -281,7 +281,7 @@ func TestQueryPopulationCoverageUsesConfiguredProfile(t *testing.T) {
 		require.NoError(t, err)
 		population, err := matchedPopulation(compiled, generation.ID, nil)
 		require.NoError(t, err)
-		_, _, err = bindQueryPopulation(population, CoverageSelection{}, generation.ID)
+		_, _, err = bindQueryPopulation(t.Context(), q, population, CoverageSelection{}, generation.ID)
 		require.ErrorIs(t, err, ErrInvalidCoverageSelection)
 		return nil
 	})

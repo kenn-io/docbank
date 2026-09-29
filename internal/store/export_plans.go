@@ -92,23 +92,23 @@ func (s *Store) ExportPlan(ctx context.Context, owner, id string) (bundle.Plan, 
 	return p, nil
 }
 
-// CheckExportPlanPhotoVisibility revalidates every exact member before a
-// frozen export projection or archive can be served.
-func (s *Store) CheckExportPlanPhotoVisibility(ctx context.Context, id string) error {
-	var raw []byte
-	if err := s.db.QueryRowContext(ctx, `SELECT canonical_json FROM export_plans WHERE id=?`, id).Scan(&raw); err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return ErrNotFound
-		}
+func (s *Store) checkExportPhotoBinding(ctx context.Context, ownerID string, bound, noOwner bool) error {
+	if !bound {
+		return nil
+	}
+	requestOwner, requestBound, requestNoOwner, err := s.PhotoOwnerForRequest(ctx)
+	if err != nil {
 		return err
 	}
-	var plan bundle.Plan
-	if err := json.Unmarshal(raw, &plan, json.RejectUnknownMembers(true)); err != nil {
-		return err
+	if !requestBound || requestNoOwner != noOwner || !noOwner && requestOwner != ownerID {
+		return ErrNotFound
 	}
-	ctx = WithPhotoOwnerBinding(ctx, plan.Source.PhotoOwnerID, plan.Source.PhotoOwnerBound, plan.Source.PhotoNoOwner)
+	return nil
+}
+
+func (s *Store) checkExportMembersPhotoVisibility(ctx context.Context, sourceID string) error {
 	rows, err := s.db.QueryContext(ctx, `SELECT m.node_id,m.version_id FROM export_members m
-		JOIN export_plans p ON p.source_id=m.source_id WHERE p.id=? ORDER BY m.node_id,m.version_id`, id)
+		WHERE m.source_id=? ORDER BY m.node_id,m.version_id`, sourceID)
 	if err != nil {
 		return err
 	}
@@ -127,6 +127,46 @@ func (s *Store) CheckExportPlanPhotoVisibility(ctx context.Context, id string) e
 		}
 	}
 	return rows.Err()
+}
+
+// CheckExportSourcePhotoVisibility compares the request authority with the
+// source's durable owner binding before revalidating every exact member.
+func (s *Store) CheckExportSourcePhotoVisibility(ctx context.Context, id string) error {
+	var raw []byte
+	if err := s.db.QueryRowContext(ctx, `SELECT canonical_json FROM export_sources WHERE id=?`, id).Scan(&raw); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrNotFound
+		}
+		return err
+	}
+	var source bundle.Source
+	if err := json.Unmarshal(raw, &source, json.RejectUnknownMembers(true)); err != nil {
+		return err
+	}
+	if err := s.checkExportPhotoBinding(ctx, source.PhotoOwnerID, source.PhotoOwnerBound, source.PhotoNoOwner); err != nil {
+		return err
+	}
+	return s.checkExportMembersPhotoVisibility(ctx, id)
+}
+
+// CheckExportPlanPhotoVisibility revalidates every exact member before a
+// frozen export projection or archive can be served.
+func (s *Store) CheckExportPlanPhotoVisibility(ctx context.Context, id string) error {
+	var raw []byte
+	if err := s.db.QueryRowContext(ctx, `SELECT canonical_json FROM export_plans WHERE id=?`, id).Scan(&raw); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrNotFound
+		}
+		return err
+	}
+	var plan bundle.Plan
+	if err := json.Unmarshal(raw, &plan, json.RejectUnknownMembers(true)); err != nil {
+		return err
+	}
+	if err := s.checkExportPhotoBinding(ctx, plan.Source.PhotoOwnerID, plan.Source.PhotoOwnerBound, plan.Source.PhotoNoOwner); err != nil {
+		return err
+	}
+	return s.checkExportMembersPhotoVisibility(ctx, plan.Source.ID)
 }
 
 func (s *Store) CreateExportPlan(ctx context.Context, owner string, r bundle.PlanRequest) (bundle.Plan, error) {

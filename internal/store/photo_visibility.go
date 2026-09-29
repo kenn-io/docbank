@@ -38,14 +38,6 @@ func WithPhotoOwnerPrincipal(ctx context.Context, principal string) context.Cont
 	return WithPhotoOwner(ctx, ownerID)
 }
 
-// WithPhotoOwnerAuthority marks a request as owner-aware. An empty owner ID
-// uses the vault's default owner, if one exists.
-func WithPhotoOwnerAuthority(ctx context.Context, ownerID string) context.Context {
-	return context.WithValue(ctx, photoVisibilityContextKey{}, PhotoVisibility{
-		OwnerID: ownerID, Enforce: true,
-	})
-}
-
 // WithNoPhotoOwner allows ordinary document access while refusing all owned
 // photo assets. It is used for browser sessions issued before first photo use.
 func WithNoPhotoOwner(ctx context.Context) context.Context {
@@ -62,7 +54,7 @@ func WithPhotoOwnerBinding(ctx context.Context, ownerID string, bound, noOwner b
 	if noOwner {
 		return WithNoPhotoOwner(ctx)
 	}
-	return WithPhotoOwnerAuthority(ctx, ownerID)
+	return WithPhotoOwner(ctx, ownerID)
 }
 
 func photoOwnerBinding(ctx context.Context) (string, bool, bool) {
@@ -89,7 +81,7 @@ func photoOwnerBindingTx(ctx context.Context, q interface {
 		return "", true, false, err
 	}
 	if ownerID == "" {
-		return "", true, true, nil
+		return "", false, false, nil
 	}
 	return ownerID, true, false, nil
 }
@@ -152,6 +144,36 @@ func (s *Store) CheckPhotoVisibilityForVersion(ctx context.Context, versionID st
 	return photoVersionVisibilityCheckTx(ctx, s.db, versionID)
 }
 
+// checkPhotoVisibilityForSnapshotMember revalidates the exact live member a
+// cached query captured before it serves the frozen row again.
+func (s *Store) checkPhotoVisibilityForSnapshotMember(ctx context.Context, nodeID int64, versionID string, revision int64) error {
+	var versionNodeID, versionRevision int64
+	err := s.db.QueryRowContext(ctx, `
+		SELECT node_id, node_revision FROM content_versions WHERE version_id=?`, versionID).
+		Scan(&versionNodeID, &versionRevision)
+	if errors.Is(err, sql.ErrNoRows) {
+		return ErrNotFound
+	}
+	if err != nil {
+		return err
+	}
+	if versionNodeID != nodeID || versionRevision != revision {
+		return ErrNotFound
+	}
+	var trashedAt sql.NullString
+	err = s.db.QueryRowContext(ctx, `SELECT trashed_at FROM nodes WHERE id=?`, nodeID).Scan(&trashedAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return ErrNotFound
+	}
+	if err != nil {
+		return err
+	}
+	if trashedAt.Valid {
+		return ErrNotFound
+	}
+	return photoVersionVisibilityCheckTx(ctx, s.db, versionID)
+}
+
 func photoVersionVisibilityCheckTx(ctx context.Context, q interface {
 	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
 }, versionID string) error {
@@ -169,14 +191,17 @@ func photoVersionVisibilityCheckTx(ctx context.Context, q interface {
 // unlocking never overrides an owner mismatch.
 func PhotoVisibilityDecision(assetOwnerID, requestOwnerID string, hiddenAt *string, hiddenUnlocked bool) bool {
 	if assetOwnerID == "" || assetOwnerID != requestOwnerID {
-		return assetOwnerID == ""
+		return false
 	}
 	return hiddenAt == nil || hiddenUnlocked
 }
 
 func photoVisibilityAllows(authority PhotoVisibility, effectiveOwner string, assetOwnerID string, hiddenAt *string) bool {
-	if authority.Trusted || assetOwnerID == "" {
+	if authority.Trusted {
 		return true
+	}
+	if assetOwnerID == "" {
+		return false
 	}
 	if authority.NoPhotoOwner {
 		return false
@@ -240,13 +265,14 @@ func photoNodeVisibilityCheckTx(ctx context.Context, q interface {
 	if err != nil {
 		return fmt.Errorf("checking photo visibility for node %d: %w", nodeID, err)
 	}
-	if ownerID.Valid {
-		if _, ownerErr := photoOwnerByIDTx(ctx, q, ownerID.String); ownerErr != nil {
-			if errors.Is(ownerErr, ErrNotFound) {
-				return fmt.Errorf("node %d: %w", nodeID, ErrInvalidPhotoOwner)
-			}
-			return ownerErr
+	if !ownerID.Valid || ownerID.String == "" {
+		return fmt.Errorf("node %d: %w", nodeID, ErrInvalidPhotoOwner)
+	}
+	if _, ownerErr := photoOwnerByIDTx(ctx, q, ownerID.String); ownerErr != nil {
+		if errors.Is(ownerErr, ErrNotFound) {
+			return fmt.Errorf("node %d: %w", nodeID, ErrInvalidPhotoOwner)
 		}
+		return ownerErr
 	}
 	var hidden *string
 	if hiddenAt.Valid {
@@ -266,9 +292,9 @@ func photoAssetVisibilitySQL(ctx context.Context, q interface {
 	if err != nil {
 		return "", nil, err
 	}
-	visible := alias + ".owner_id IS NULL"
+	visible := "0=1"
 	if ownerID != "" && !authority.NoPhotoOwner {
-		visible += " OR (" + alias + ".owner_id=?"
+		visible = "(EXISTS (SELECT 1 FROM photo_owners po WHERE po.owner_id=" + alias + ".owner_id) AND " + alias + ".owner_id=?"
 		args := []any{ownerID}
 		if !authority.HiddenUnlocked {
 			visible += " AND " + alias + ".hidden_at IS NULL"
@@ -334,13 +360,14 @@ func photoSubtreeVisibilityCheckTx(ctx context.Context, q interface {
 		if err := rows.Scan(&nodeID, &ownerID, &hiddenAt); err != nil {
 			return fmt.Errorf("checking photo visibility for subtree %d: %w", rootID, err)
 		}
-		if ownerID.Valid {
-			if _, ownerErr := photoOwnerByIDTx(ctx, q, ownerID.String); ownerErr != nil {
-				if errors.Is(ownerErr, ErrNotFound) {
-					return fmt.Errorf("node %d: %w", nodeID, ErrInvalidPhotoOwner)
-				}
-				return ownerErr
+		if !ownerID.Valid || ownerID.String == "" {
+			return fmt.Errorf("node %d: %w", nodeID, ErrInvalidPhotoOwner)
+		}
+		if _, ownerErr := photoOwnerByIDTx(ctx, q, ownerID.String); ownerErr != nil {
+			if errors.Is(ownerErr, ErrNotFound) {
+				return fmt.Errorf("node %d: %w", nodeID, ErrInvalidPhotoOwner)
 			}
+			return ownerErr
 		}
 		var hidden *string
 		if hiddenAt.Valid {
@@ -399,7 +426,7 @@ func scopedTrashRootsCTE(ctx context.Context, q interface {
 func photoOwnerForMutationTx(ctx context.Context, tx *sql.Tx) (string, error) {
 	authority, ok := photoVisibilityFromContext(ctx)
 	if ok && authority.Trusted {
-		return "", nil
+		return "", ErrInvalidPhotoOwner
 	}
 	if ok && authority.NoPhotoOwner {
 		return "", ErrNotFound
@@ -418,13 +445,6 @@ func photoOwnerForMutationTx(ctx context.Context, tx *sql.Tx) (string, error) {
 		return "", err
 	}
 	return owner.ID, nil
-}
-
-func nullablePhotoOwner(value string) any {
-	if value == "" {
-		return nil
-	}
-	return value
 }
 
 func nullablePhotoStringFromPtr(value *string) any {

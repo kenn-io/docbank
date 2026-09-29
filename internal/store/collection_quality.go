@@ -185,12 +185,17 @@ func collectionQualityCensusTx(ctx context.Context, q metadataQuerier, id string
 	if err != nil {
 		return collectionQualityCensus{}, err
 	}
-	cte := `WITH ` + membershipCTE + `,` + CurrentContentMembershipCTE + `,
+	currentMembershipCTE, currentMembershipArgs, err := scopedCurrentContentMembershipCTE(ctx, q)
+	if err != nil {
+		return collectionQualityCensus{}, err
+	}
+	cte := `WITH ` + membershipCTE + `,` + currentMembershipCTE + `,
  coverage_members AS (SELECT node_id FROM collection_members WHERE ingest_id=?),
  ` + processingCoverageCTE() + `,
  duplicate_counts AS (SELECT blob_hash,COUNT(*) references_count FROM current_content_members GROUP BY blob_hash),
  ` + qualityProjectionCTE
 	args := append([]any{}, membershipArgs...)
+	args = append(args, currentMembershipArgs...)
 	args = append(args, id, selection.ProfileFingerprint, collection.Coverage.GenerationID)
 	var projectedBytes int64
 	if err := q.QueryRowContext(ctx, cte+` SELECT COALESCE(SUM(`+qualityProjectionBytes+`),0) FROM quality_projection`, args...).Scan(&projectedBytes); err != nil {

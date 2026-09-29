@@ -298,14 +298,16 @@ func materializeSnapshotRows(
 	if err := chargeSnapshotMaterialization(options, &projection.SerializedBytes, 0, 2); err != nil {
 		return err
 	}
-	population, err := matchedPopulation(compiled, generationID, nil)
+	visibilitySQL, visibilityArgs, err := photoNodeVisibilitySQL(ctx, q)
 	if err != nil {
 		return err
 	}
-	if err := applyPhotoVisibilityPopulation(ctx, q, &population); err != nil {
+	population, err := matchedPopulationWithVisibility(compiled, generationID, nil,
+		compiledQueryFragment{sql: visibilitySQL, args: visibilityArgs})
+	if err != nil {
 		return err
 	}
-	statement, args, err := bindQueryPopulation(population, coverage, generationID)
+	statement, args, err := bindQueryPopulation(ctx, q, population, coverage, generationID)
 	if err != nil {
 		return err
 	}

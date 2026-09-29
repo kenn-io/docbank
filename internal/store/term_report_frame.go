@@ -85,14 +85,16 @@ func (s *Store) MaterializeTermReportFrame(
 					Kind: string(dependency.Kind), ID: dependency.ID, Revision: dependency.Revision,
 				})
 			}
-			population, err := matchedPopulation(compiled, generation.ID, &coverage.ProfileFingerprint)
+			visibilitySQL, visibilityArgs, err := photoNodeVisibilitySQL(ctx, q)
 			if err != nil {
 				return err
 			}
-			if err := applyPhotoVisibilityPopulation(ctx, q, &population); err != nil {
+			population, err := matchedPopulationWithVisibility(compiled, generation.ID, &coverage.ProfileFingerprint,
+				compiledQueryFragment{sql: visibilitySQL, args: visibilityArgs})
+			if err != nil {
 				return err
 			}
-			statement, args, err := bindQueryPopulation(population, coverage, generation.ID)
+			statement, args, err := bindQueryPopulation(ctx, q, population, coverage, generation.ID)
 			if err != nil {
 				return err
 			}
@@ -165,13 +167,18 @@ func reportCollectionWitnesses(ctx context.Context, q metadataQuerier, request r
 	if found != len(request.CollectionIDs) {
 		return nil, ErrUnknownReportCollection
 	}
+	visibility, visibilityArgs, err := photoNodeVisibilitySQL(ctx, q)
+	if err != nil {
+		return nil, err
+	}
 	rows, err := q.QueryContext(ctx, `SELECT p.ingest_id,p.node_id,p.identity,p.original_path,
 		COALESCE(p.original_mtime,''),COALESCE(p.supersedes,'')
 		FROM provenance p JOIN ingests i ON i.id=p.ingest_id JOIN nodes n ON n.id=p.node_id
 		WHERE i.source_kind NOT LIKE 'embedded:%' AND n.kind='file' AND n.trashed_at IS NULL
+		AND `+visibility+`
 		AND p.ingest_id IN (SELECT value FROM json_each(?))
 		AND NOT EXISTS (SELECT 1 FROM provenance later WHERE later.supersedes=p.identity)
-		ORDER BY p.node_id,p.ingest_id,p.identity`, string(collectionIDs))
+		ORDER BY p.node_id,p.ingest_id,p.identity`, append(visibilityArgs, string(collectionIDs))...)
 	if err != nil {
 		return nil, err
 	}
@@ -211,6 +218,11 @@ func readTermReportMembers(ctx context.Context, q metadataQuerier, request repor
 	versions := make([]termReportVersion, 0)
 	var scope string
 	var args []any
+	visibility, visibilityArgs, err := photoNodeVisibilitySQL(ctx, q)
+	if err != nil {
+		return nil, nil, err
+	}
+	args = append(args, visibilityArgs...)
 	if !request.AllDocuments {
 		nodeIDs := make([]int64, 0, len(witnesses))
 		for nodeID := range witnesses {
@@ -228,7 +240,7 @@ func readTermReportMembers(ctx context.Context, q metadataQuerier, request repor
 		(SELECT MIN(old.recorded_at) FROM content_versions old WHERE old.node_id=n.id),n.name,
 		EXISTS(SELECT 1 FROM source_metadata_heads h WHERE h.source_sha256=cv.blob_hash)
 		FROM nodes n JOIN content_versions cv ON cv.node_id=n.id AND cv.version_id=n.current_version_id
-		WHERE n.kind='file' AND n.trashed_at IS NULL`+scope+` ORDER BY n.id`, args...)
+		WHERE n.kind='file' AND n.trashed_at IS NULL AND `+visibility+scope+` ORDER BY n.id`, args...)
 	if err != nil {
 		return nil, nil, err
 	}

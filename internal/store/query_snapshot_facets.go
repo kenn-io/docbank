@@ -129,14 +129,16 @@ func materializeSnapshotFacet(
 	if err != nil {
 		return SnapshotFacet{}, err
 	}
-	population, err := matchedPopulation(facetCompiled, generationID, nil)
+	visibilitySQL, visibilityArgs, err := photoNodeVisibilitySQL(ctx, q)
 	if err != nil {
 		return SnapshotFacet{}, err
 	}
-	if err := applyPhotoVisibilityPopulation(ctx, q, &population); err != nil {
+	population, err := matchedPopulationWithVisibility(facetCompiled, generationID, nil,
+		compiledQueryFragment{sql: visibilitySQL, args: visibilityArgs})
+	if err != nil {
 		return SnapshotFacet{}, err
 	}
-	statement, args, err := bindQueryPopulation(population, coverage, generationID)
+	statement, args, err := bindQueryPopulation(ctx, q, population, coverage, generationID)
 	if err != nil {
 		return SnapshotFacet{}, err
 	}

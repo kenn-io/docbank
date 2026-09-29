@@ -87,7 +87,10 @@ func (service *Service) SubmitRemoteRecording(
 	if err != nil {
 		return MediaReceipt{}, err
 	}
-	principal := service.requestPrincipal(ctx)
+	principal, err := service.requestPrincipal(ctx)
+	if err != nil {
+		return MediaReceipt{}, err
+	}
 	operation := store.MediaOperation{ID: request.OperationID, Principal: principal,
 		Verb: "submit_remote_recording", RequestSHA256: requestSHA}
 	if replay, replayErr := service.catalog.MediaOperationReceipt(ctx, operation); replayErr == nil {
@@ -342,7 +345,10 @@ func (service *Service) SubmitSuppliedMedia(
 	if err != nil {
 		return MediaReceipt{}, err
 	}
-	principal := service.requestPrincipal(ctx)
+	principal, err := service.requestPrincipal(ctx)
+	if err != nil {
+		return MediaReceipt{}, err
+	}
 	operation := store.MediaOperation{ID: request.OperationID, Principal: principal,
 		Verb: "submit_supplied_media", RequestSHA256: hex.EncodeToString(requestDigest[:]), SourceID: sourceID}
 	if replay, replayErr := service.catalog.MediaOperationReceipt(ctx, operation); replayErr == nil {
@@ -365,7 +371,7 @@ func (service *Service) SubmitSuppliedMedia(
 			return MediaReceipt{}, bindingErr
 		}
 		request.Processing.SuppliedInputID = binding
-		processingAuthorization = service.renditionConsentRequest(processingProfile, service.requestPrincipal(ctx), service.scope)
+		processingAuthorization = service.renditionConsentRequest(processingProfile, principal, service.scope)
 		authorized, authorizeErr := service.catalog.AuthorizeProviderOperation(ctx, processingAuthorization)
 		if authorizeErr != nil {
 			return MediaReceipt{}, processingConsentBoundaryError(authorizeErr)
@@ -378,7 +384,7 @@ func (service *Service) SubmitSuppliedMedia(
 	}
 	processingPrincipal, processingScope, processingFingerprint := "", "", ""
 	if mediaProcessingRequested(request.Processing) {
-		processingPrincipal, processingScope = service.requestPrincipal(ctx), service.scope
+		processingPrincipal, processingScope = principal, service.scope
 		processingFingerprint = processingProfile.record.Fingerprint
 	}
 	publication := store.MediaPublicationRequest{

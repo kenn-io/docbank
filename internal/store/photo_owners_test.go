@@ -3,6 +3,7 @@ package store
 import (
 	"bytes"
 	"context"
+	"sync"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -17,7 +18,7 @@ func TestPhotoVisibilityDecision(t *testing.T) {
 		assetOwner, requestOwner      string
 		hidden, unlocked, wantVisible bool
 	}{
-		{name: "unowned", wantVisible: true},
+		{name: "unowned"},
 		{name: "matching owner", assetOwner: "owner", requestOwner: "owner", wantVisible: true},
 		{name: "mismatched owner", assetOwner: "owner", requestOwner: "other"},
 		{name: "hidden owner", assetOwner: "owner", requestOwner: "owner", hidden: true},
@@ -41,8 +42,33 @@ func TestPhotoOwnersDefaultLifecycle(t *testing.T) {
 	owners, err := s.PhotoOwners(ctx)
 	require.NoError(t, err)
 	assert.Empty(t, owners)
-	first, err := s.EnsureDefaultPhotoOwner(ctx)
-	require.NoError(t, err)
+	type ownerResult struct {
+		owner PhotoOwner
+		err   error
+	}
+	ownerResults := make(chan ownerResult, 16)
+	var group sync.WaitGroup
+	for range 16 {
+		group.Go(func() {
+			owner, err := s.EnsureDefaultPhotoOwner(ctx)
+			ownerResults <- ownerResult{owner: owner, err: err}
+		})
+	}
+	group.Wait()
+	close(ownerResults)
+	var first PhotoOwner
+	count := 0
+	for result := range ownerResults {
+		require.NoError(t, result.err)
+		owner := result.owner
+		count++
+		if first.ID == "" {
+			first = owner
+		}
+		require.Equal(t, first.ID, owner.ID)
+	}
+	require.Equal(t, 16, count)
+	require.NotEmpty(t, first.ID)
 	second, err := s.EnsureDefaultPhotoOwner(ctx)
 	require.NoError(t, err)
 	assert.Equal(t, first, second)
@@ -65,6 +91,8 @@ func TestPhotoOwnersCRUD(t *testing.T) {
 	noOp, err := s.RenamePhotoOwner(ctx, owner.ID, renamed.Revision, "Alice Smith")
 	require.NoError(t, err)
 	assert.Equal(t, renamed, noOp)
+	_, err = s.RenamePhotoOwner(ctx, owner.ID, renamed.Revision-1, "Stale")
+	require.ErrorIs(t, err, ErrStaleRevision)
 
 	image, err := s.CreateFile(WithPhotoOwner(ctx, owner.ID), s.RootID(), "alice.jpg", fakeHash("owner-a"), 4, "image/jpeg")
 	require.NoError(t, err)
@@ -72,6 +100,12 @@ func TestPhotoOwnersCRUD(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, owner.ID, *asset.OwnerID)
 	err = s.RemovePhotoOwner(ctx, owner.ID, noOp.Revision)
+	require.ErrorIs(t, err, ErrPhotoOwnerReferenced)
+	renamedAgain, err := s.RenamePhotoOwner(ctx, owner.ID, renamed.Revision, "Alice Again")
+	require.NoError(t, err)
+	err = s.RemovePhotoOwner(ctx, owner.ID, renamed.Revision)
+	require.ErrorIs(t, err, ErrStaleRevision)
+	err = s.RemovePhotoOwner(ctx, owner.ID, renamedAgain.Revision)
 	require.ErrorIs(t, err, ErrPhotoOwnerReferenced)
 
 	_, err = s.PhotoAssetForNode(WithPhotoOwner(ctx, "00000000-0000-4000-8000-000000000000"), image.ID)
@@ -110,5 +144,22 @@ func TestPhotoOwnersMetadataRoundTrip(t *testing.T) {
 	invalid := newTestStore(t)
 	err = invalid.ImportMetadata(ctx, bytes.NewReader(bad))
 	require.Error(t, err)
-	assert.NotErrorIs(t, err, ErrNotFound)
+	require.NotErrorIs(t, err, ErrNotFound)
+	missingOwnerLines := bytes.Split(exported.Bytes(), []byte("\n"))
+	for index, line := range missingOwnerLines {
+		if bytes.Contains(line, []byte(`"type":"photo_asset"`)) {
+			missingOwnerLines[index] = bytes.Replace(line, []byte(`"owner_id":"`+owner.ID+`"`), []byte(`"owner_id":null`), 1)
+			break
+		}
+	}
+	missingOwner := newTestStore(t)
+	require.Error(t, missingOwner.ImportMetadata(ctx, bytes.NewReader(bytes.Join(missingOwnerLines, []byte("\n")))))
+}
+
+func TestPhotoAssetOwnerIsRequiredBySchema(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	_, err := s.db.ExecContext(t.Context(), `INSERT INTO photo_assets(asset_id,kind,revision,owner_id,created_at,updated_at) VALUES(?,?,1,NULL,?,?)`,
+		"00000000-0000-4000-8000-000000000099", PhotoKindPhoto, nowRFC3339(), nowRFC3339())
+	require.Error(t, err)
 }

@@ -205,11 +205,7 @@ func writeError(w http.ResponseWriter, e *Error) {
 // keyless bypass: NewServer refuses to build a server with an empty key
 // (the offline OpenAPI-document path is the only caller that doesn't serve
 // requests, and it supplies a placeholder key), so key is always set here.
-func authMiddleware(next http.Handler, key string, sessions *webSessionRegistry, masterOwner string, photoStores ...*store.Store) http.Handler {
-	var photoStore *store.Store
-	if len(photoStores) > 0 {
-		photoStore = photoStores[0]
-	}
+func authMiddleware(next http.Handler, key string, sessions *webSessionRegistry, masterOwner string, photoStore *store.Store) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if authExempt(r.URL.Path) {
 			next.ServeHTTP(w, r)
@@ -222,12 +218,17 @@ func authMiddleware(next http.Handler, key string, sessions *webSessionRegistry,
 		if subtle.ConstantTimeCompare([]byte(got), []byte(key)) == 1 {
 			ctx := context.WithValue(r.Context(), authenticationContextKey{}, "master")
 			ctx = context.WithValue(ctx, workspaceSnapshotOwnerContextKey{}, masterOwner)
-			ctx = store.WithPhotoOwnerAuthority(ctx, r.Header.Get("X-Docbank-Owner"))
+			ctx = store.WithPhotoOwner(ctx, r.Header.Get("X-Docbank-Owner"))
 			next.ServeHTTP(w, r.WithContext(ctx))
 			return
 		}
 		webToken := r.Header.Get(WebSessionHeader)
 		if owner, sessionCtx, ok := sessions.authenticate(webToken); sessions != nil && ok {
+			if strings.TrimSpace(r.Header.Get("X-Docbank-Owner")) != "" {
+				writeError(w, NewError(http.StatusForbidden, "forbidden",
+					"browser sessions cannot override their durable photo owner"))
+				return
+			}
 			if !webSessionRequestAllowed(r) {
 				writeError(w, NewError(http.StatusForbidden, "web_session_read_only",
 					"browser sessions cannot use this endpoint"))

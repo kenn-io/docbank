@@ -78,6 +78,9 @@ func (s *Store) QueueExportJob(ctx context.Context, owner string, r bundle.JobRe
 	if owner == "" || validateUUIDv4(r.OperationID) != nil || validateUUIDv4(r.PlanID) != nil || !canonical.IsSHA256Hex(r.Fingerprint) {
 		return bundle.Job{}, bundle.ErrConflict
 	}
+	if err := s.CheckExportPlanPhotoVisibility(ctx, r.PlanID); err != nil {
+		return bundle.Job{}, err
+	}
 	raw, err := canonical.Marshal(r)
 	if err != nil {
 		return bundle.Job{}, err

@@ -94,11 +94,17 @@ func (s *Store) SearchExplainedLexicalCandidates(ctx context.Context, query stri
 		return nil, false, nil
 	}
 	filterSQL, filterArgs := searchFilterSQL(opts)
+	visibilitySQL, visibilityArgs, err := photoNodeVisibilitySQL(ctx, s.db)
+	if err != nil {
+		return nil, false, err
+	}
 	nameArgs := append([]any{fq}, filterArgs...)
+	nameArgs = append(nameArgs, visibilityArgs...)
 	nameArgs = append(nameArgs, fq, limit+1)
 	rows, err := s.db.QueryContext(ctx, `SELECT `+nodeCols+` FROM `+nodeFrom+`
 		WHERE n.id IN (SELECT rowid FROM nodes_fts WHERE nodes_fts MATCH ?)
 		  AND n.kind='file' AND cv.version_id IS NOT NULL AND n.trashed_at IS NULL `+filterSQL+`
+		  AND `+visibilitySQL+`
 		ORDER BY (SELECT rank FROM nodes_fts WHERE rowid=n.id AND nodes_fts MATCH ?),n.name,n.id
 		LIMIT ?`, nameArgs...)
 	if err != nil {
@@ -133,6 +139,7 @@ func (s *Store) SearchExplainedLexicalCandidates(ctx context.Context, query stri
 			JOIN content_versions cv ON cv.version_id=matched_cv.version_id
 			JOIN text_searchable_versions tsv ON tsv.version_id=matched_cv.version_id
 			WHERE content_fts MATCH ? AND n.trashed_at IS NULL ` + filterSQL + `
+			 AND ` + visibilitySQL + `
 			ORDER BY content_fts.rank,n.name,n.id,content_fts.rowid`
 		if generationID != "" {
 			contentQuery = `SELECT ` + nodeCols + `,rendition_lexical_fts.build_id,
@@ -151,11 +158,13 @@ func (s *Store) SearchExplainedLexicalCandidates(ctx context.Context, query stri
 				JOIN nodes n ON n.id=cv.node_id AND n.current_version_id=cv.version_id
 				WHERE rendition_lexical_fts MATCH ? AND gb.generation_id=?
 				 AND n.trashed_at IS NULL ` + filterSQL + `
+				 AND ` + visibilitySQL + `
 				ORDER BY rendition_lexical_fts.rank,n.name,n.id,
 				 rendition_lexical_fts.build_id,rendition_lexical_fts.segment_id`
 			args = append(args, generationID)
 		}
 		args = append(args, filterArgs...)
+		args = append(args, visibilityArgs...)
 		rows, err := queryer.QueryContext(ctx, contentQuery, args...)
 		if err != nil {
 			return err
@@ -370,6 +379,10 @@ func (s *Store) RevalidateSearchCandidates(ctx context.Context, candidates []Sea
 	var result SearchCandidateRevalidation
 	var allowedPositions []int
 	err = s.withStorageTx(ctx, func(tx *sql.Tx) error {
+		visibilitySQL, visibilityArgs, visibilityErr := photoNodeVisibilitySQL(ctx, tx)
+		if visibilityErr != nil {
+			return visibilityErr
+		}
 		if semanticProfileFingerprint != "" || semanticBindingID != "" {
 			if semanticProfileFingerprint == "" || semanticBindingID == "" {
 				return errors.New("semantic search coverage authority is incomplete")
@@ -427,6 +440,7 @@ func (s *Store) RevalidateSearchCandidates(ctx context.Context, candidates []Sea
 			}
 		}
 		args := append([]any{string(encoded)}, filterArgs...)
+		args = append(args, visibilityArgs...)
 		args = append(args, semanticProfileFingerprint, semanticBindingID)
 		rows, queryErr := tx.QueryContext(ctx, `WITH requested AS (
 			SELECT CAST(key AS INTEGER) AS position,
@@ -441,6 +455,7 @@ func (s *Store) RevalidateSearchCandidates(ctx context.Context, candidates []Sea
 			JOIN content_versions cv ON cv.node_id=n.id AND cv.version_id=n.current_version_id
 			 AND cv.version_id=requested.version_id
 			WHERE n.kind='file' AND n.revision=requested.node_revision AND n.trashed_at IS NULL `+filterSQL+`
+			 AND `+visibilitySQL+`
 		)
 		SELECT scoped.position FROM scoped
 		WHERE NOT EXISTS (
@@ -639,6 +654,12 @@ func (s *Store) semanticSearchAuthorityFence(ctx context.Context, profileFingerp
 			return err
 		}
 		filterSQL, filterArgs := searchFilterSQL(opts)
+		visibilitySQL, visibilityArgs, visibilityErr := photoNodeVisibilitySQL(ctx, tx)
+		if visibilityErr != nil {
+			return visibilityErr
+		}
+		filterSQL += ` AND ` + visibilitySQL
+		filterArgs = append(filterArgs, visibilityArgs...)
 		eligible, err := loadSemanticEligibility(ctx, tx, profileFingerprint, bindingID,
 			inputKind, vectorSpaceID, filterSQL, filterArgs)
 		if err != nil {
@@ -667,14 +688,20 @@ func semanticSearchCoverageTx(ctx context.Context, tx metadataQuerier, profileFi
 	inputKind document.EmbeddingInputKind, vectorSpaceID string, opts SearchOptions,
 ) (required, complete int, retErr error) {
 	filterSQL, filterArgs := searchFilterSQL(opts)
+	visibilitySQL, visibilityArgs, err := photoNodeVisibilitySQL(ctx, tx)
+	if err != nil {
+		return 0, 0, err
+	}
 	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM `+nodeFrom+`
-		WHERE n.kind='file' AND n.trashed_at IS NULL AND cv.version_id IS NOT NULL `+filterSQL,
-		filterArgs...).Scan(&required); err != nil {
+		WHERE n.kind='file' AND n.trashed_at IS NULL AND cv.version_id IS NOT NULL `+filterSQL+`
+		 AND `+visibilitySQL,
+		append(filterArgs, visibilityArgs...)...).Scan(&required); err != nil {
 		return 0, 0, err
 	}
 	args := []any{profileFingerprint, bindingID, inputKind, vectorSpaceID}
 	args = append(args, filterArgs...)
-	err := tx.QueryRowContext(ctx, `SELECT COUNT(DISTINCT n.id) FROM `+nodeFrom+`
+	args = append(args, visibilityArgs...)
+	err = tx.QueryRowContext(ctx, `SELECT COUNT(DISTINCT n.id) FROM `+nodeFrom+`
 		JOIN embedding_heads eh ON eh.content_version_id=cv.version_id
 		JOIN embedding_sets es ON es.embedding_set_id=eh.embedding_set_id
 		 AND es.content_version_id=eh.content_version_id AND es.binding_id=eh.binding_id
@@ -684,7 +711,8 @@ func semanticSearchCoverageTx(ctx context.Context, tx metadataQuerier, profileFi
 		WHERE n.kind='file' AND n.trashed_at IS NULL
 		  AND eh.profile_fingerprint=? AND eh.binding_id=? AND eh.input_kind=?
 		  AND eh.vector_space_id=?
-		  AND (es.input_kind='original_file' OR `+currentRenditionChunkAuthoritySQL+`) `+filterSQL,
+		  AND (es.input_kind='original_file' OR `+currentRenditionChunkAuthoritySQL+`) `+filterSQL+`
+		  AND `+visibilitySQL,
 		args...).Scan(&complete)
 	return required, complete, err
 }
@@ -711,6 +739,12 @@ func (s *Store) ResolveSemanticCandidates(ctx context.Context, profileFingerprin
 	filterSQL, filterArgs := searchFilterSQL(normalized)
 	var result SemanticSearchResolution
 	err = s.withStorageTx(ctx, func(tx *sql.Tx) error {
+		visibilitySQL, visibilityArgs, visibilityErr := photoNodeVisibilitySQL(ctx, tx)
+		if visibilityErr != nil {
+			return visibilityErr
+		}
+		filterSQL := filterSQL + ` AND ` + visibilitySQL
+		filterArgs := append(append([]any{}, filterArgs...), visibilityArgs...)
 		current, captureErr := captureVectorIndexSourceTx(ctx, tx, vectorSpaceID)
 		if captureErr != nil {
 			if errors.Is(captureErr, ErrNotFound) {

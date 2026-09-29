@@ -16,6 +16,9 @@ func (s *Store) ExportAttachmentPublications(ctx context.Context, owner, id stri
 	if owner == "" || validateUUIDv4(id) != nil || after < 0 || after > bundle.MaxRoles {
 		return out, bundle.ErrConflict
 	}
+	if err := s.CheckExportSourcePhotoVisibility(ctx, id); err != nil {
+		return out, err
+	}
 	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
 	if err != nil {
 		return out, err

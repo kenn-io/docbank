@@ -34,10 +34,15 @@ func validateSimilarSource(ctx context.Context, tx metadataQuerier, source Simil
 	if !slices.Contains(opts.ContentVersionIDs, source.ContentVersionID) {
 		return ErrInvalidProcessingSourceFence
 	}
+	visibility, visibilityArgs, err := photoNodeVisibilitySQL(ctx, tx)
+	if err != nil {
+		return err
+	}
 	var id int64
-	err := tx.QueryRowContext(ctx, `SELECT n.id FROM `+nodeFrom+`
-		WHERE n.id=? AND n.kind='file' AND n.trashed_at IS NULL AND cv.version_id=?`,
-		source.NodeID, source.ContentVersionID).Scan(&id)
+	args := append([]any{source.NodeID, source.ContentVersionID}, visibilityArgs...)
+	err = tx.QueryRowContext(ctx, `SELECT n.id FROM `+nodeFrom+`
+		WHERE n.id=? AND n.kind='file' AND n.trashed_at IS NULL AND cv.version_id=? AND `+visibility,
+		args...).Scan(&id)
 	if errors.Is(err, sql.ErrNoRows) {
 		return ErrNotFound
 	}
@@ -50,8 +55,13 @@ func (source *similarSourceCapture) load(ctx context.Context, tx metadataQuerier
 	if err := validateSimilarSource(ctx, tx, source.SimilarSource, opts); err != nil {
 		return err
 	}
+	visibility, visibilityArgs, err := photoNodeVisibilitySQL(ctx, tx)
+	if err != nil {
+		return err
+	}
 	eligible, err := loadSemanticEligibility(ctx, tx, profile, binding, kind, space,
-		" AND n.id=? AND cv.version_id=?", []any{source.NodeID, source.ContentVersionID})
+		" AND n.id=? AND cv.version_id=? AND "+visibility,
+		append([]any{source.NodeID, source.ContentVersionID}, visibilityArgs...))
 	if err != nil {
 		return err
 	}
@@ -153,6 +163,12 @@ func (s *Store) ResolveSimilarCandidates(ctx context.Context, profile, binding s
 			return err
 		}
 		filter, args := searchFilterSQL(opts)
+		visibility, visibilityArgs, err := photoNodeVisibilitySQL(ctx, tx)
+		if err != nil {
+			return err
+		}
+		filter += ` AND ` + visibility
+		args = append(args, visibilityArgs...)
 		eligible, err := loadSemanticMemberships(ctx, tx, profile, binding, kind, space, filter, args)
 		if err != nil {
 			return err
@@ -170,10 +186,14 @@ func (s *Store) ResolveSimilarCandidates(ctx context.Context, profile, binding s
 				byNode[member.NodeID] = member
 			}
 		}
-		rows, err := tx.QueryContext(ctx, `WITH `+CurrentContentMembershipCTE+`
+		membershipCTE, membershipArgs, err := scopedCurrentContentMembershipCTE(ctx, tx)
+		if err != nil {
+			return err
+		}
+		rows, err := tx.QueryContext(ctx, `WITH `+membershipCTE+`
 			SELECT node_id,blob_hash FROM (SELECT m.* FROM `+nodeFrom+` JOIN current_content_members m ON n.id=m.node_id
 			WHERE n.id<>? `+filter+`) ORDER BY blob_hash, `+DuplicateRepresentativeOrder,
-			append([]any{source.NodeID}, args...)...)
+			append(append(membershipArgs, source.NodeID), args...)...)
 		if err != nil {
 			return err
 		}

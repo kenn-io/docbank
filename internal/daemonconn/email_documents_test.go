@@ -41,9 +41,11 @@ func TestClientEmailDocumentProcessingConsentErrors(t *testing.T) {
 
 func TestClientEmailDocumentsExplicitConsent(t *testing.T) {
 	c, s := newClient(t, serverKey)
-	r := document.ProcessingConsentRequest{Principal: "operator:synthetic", Scope: "attachment:synthetic", ProfileFingerprint: fmtHash(sha256.Sum256([]byte("profile"))), DisclosureFingerprint: fmtHash(sha256.Sum256([]byte("disclosure"))), InputClasses: []string{"original_source"}}
+	owner, err := s.EnsureDefaultPhotoOwner(t.Context())
+	require.NoError(t, err)
+	r := document.ProcessingConsentRequest{Principal: "owner:" + owner.ID, Scope: "attachment:synthetic", ProfileFingerprint: fmtHash(sha256.Sum256([]byte("profile"))), DisclosureFingerprint: fmtHash(sha256.Sum256([]byte("disclosure"))), InputClasses: []string{"original_source"}}
 	a := store.ProviderOperationAuthorizationRequest{Principal: r.Principal, Scope: r.Scope, ProfileFingerprint: r.ProfileFingerprint, DisclosureFingerprint: r.DisclosureFingerprint, InputClasses: r.InputClasses}
-	_, err := s.AuthorizeProviderOperation(t.Context(), a)
+	_, err = s.AuthorizeProviderOperation(t.Context(), a)
 	require.ErrorIs(t, err, store.ErrProcessingConsentRequired)
 	grant, err := c.GrantScopedProcessingConsent(t.Context(), r)
 	require.NoError(t, err)

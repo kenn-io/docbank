@@ -28,19 +28,18 @@ func photoAssetByIDQuery(ctx context.Context, q metadataQuerier, id string) (Pho
 	} else if err != nil {
 		return PhotoAsset{}, fmt.Errorf("reading photo asset %q: %w", id, err)
 	}
-	if ownerID.Valid {
-		asset.OwnerID = new(ownerID.String)
+	if !ownerID.Valid || ownerID.String == "" {
+		return PhotoAsset{}, fmt.Errorf("%w: asset %s has no owner", ErrInvalidPhotoOwner, id)
 	}
+	asset.OwnerID = new(ownerID.String)
 	if hiddenAt.Valid {
 		asset.HiddenAt = new(hiddenAt.String)
 	}
-	if ownerID.Valid {
-		if _, ownerErr := photoOwnerByIDTx(ctx, q, ownerID.String); ownerErr != nil {
-			if errors.Is(ownerErr, ErrNotFound) {
-				return PhotoAsset{}, fmt.Errorf("%w: asset %s references missing owner", ErrInvalidPhotoOwner, id)
-			}
-			return PhotoAsset{}, ownerErr
+	if _, ownerErr := photoOwnerByIDTx(ctx, q, ownerID.String); ownerErr != nil {
+		if errors.Is(ownerErr, ErrNotFound) {
+			return PhotoAsset{}, fmt.Errorf("%w: asset %s references missing owner", ErrInvalidPhotoOwner, id)
 		}
+		return PhotoAsset{}, ownerErr
 	}
 	if err := photoVisibilityCheckTx(ctx, q, ownerID.String, asset.HiddenAt); err != nil {
 		return PhotoAsset{}, err
@@ -472,9 +471,12 @@ func (s *Store) insertPhotoAssetTx(ctx context.Context, tx *sql.Tx, nodeID int64
 	if err != nil {
 		return PhotoAsset{}, err
 	}
+	if ownerID == "" {
+		return PhotoAsset{}, ErrInvalidPhotoOwner
+	}
 	if _, err := tx.ExecContext(ctx, `
 		INSERT INTO photo_assets(asset_id,kind,revision,owner_id,hidden_at,created_at,updated_at)
-		VALUES(?,?,1,?,?,?,?)`, assetID, kind, nullablePhotoOwner(ownerID), nil, now, now); err != nil {
+		VALUES(?,?,1,?,?,?,?)`, assetID, kind, ownerID, nil, now, now); err != nil {
 		return PhotoAsset{}, fmt.Errorf("creating photo asset: %w", err)
 	}
 	if err := s.insertPhotoFileTx(ctx, tx, PhotoFile{AssetID: assetID, NodeID: nodeID, Role: role, CreatedAt: now}); err != nil {
@@ -485,9 +487,7 @@ func (s *Store) insertPhotoAssetTx(ctx context.Context, tx *sql.Tx, nodeID int64
 		return PhotoAsset{}, err
 	}
 	asset := PhotoAsset{ID: assetID, Kind: kind, Revision: 1, CreatedAt: now, UpdatedAt: now, Files: files}
-	if ownerID != "" {
-		asset.OwnerID = new(ownerID)
-	}
+	asset.OwnerID = new(ownerID)
 	settings, err := photoSettingsTx(ctx, tx)
 	if err != nil {
 		return PhotoAsset{}, err

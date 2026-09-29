@@ -113,6 +113,9 @@ func registerTagRoutes(api huma.API, d Deps, g *gate) {
 		Limit  int   `query:"limit" default:"100" minimum:"1" maximum:"1000"`
 		Offset int   `query:"offset" default:"0" minimum:"0"`
 	}) (*tagPageOutput, error) {
+		if err := d.Store.CheckPhotoVisibilityForNode(ctx, in.ID); err != nil {
+			return nil, FromStoreError(err)
+		}
 		tags, total, err := d.Store.NodeTags(ctx, in.ID, in.Limit, in.Offset)
 		if err != nil {
 			return nil, FromStoreError(err)

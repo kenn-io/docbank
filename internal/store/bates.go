@@ -255,7 +255,14 @@ func (s *Store) BatesAllocation(ctx context.Context, id string) (BatesAllocation
 	if validateUUIDv4(id) != nil {
 		return BatesAllocation{}, ErrNotFound
 	}
-	return loadBatesAllocation(ctx, s.db, id)
+	allocation, err := loadBatesAllocation(ctx, s.db, id)
+	if err != nil {
+		return BatesAllocation{}, err
+	}
+	if _, err := expectedBatesPagesLimited(ctx, s.db, allocation.SnapshotID); err != nil {
+		return BatesAllocation{}, err
+	}
+	return allocation, nil
 }
 
 func (s *Store) BatesNamespace(ctx context.Context, id, prefix, suffix string, padding int) (BatesNamespace, error) {

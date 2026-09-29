@@ -19,6 +19,7 @@ import (
 
 	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/internal/store"
+	"go.kenn.io/docbank/sqlite"
 )
 
 func TestProcessingServiceSourceFenceIsBoundedCanonicalAuthority(t *testing.T) {
@@ -191,6 +192,57 @@ func TestProcessingServiceWaitsForEmbeddingRetryAndHonorsCancellation(t *testing
 	status, err := fixture.catalog.EmbeddingJobByID(t.Context(), jobs[0])
 	require.NoError(t, err)
 	require.Equal(t, "completed", status.State)
+}
+
+func TestProcessingServiceOwnerResolutionFailureStopsProviderEgress(t *testing.T) {
+	fixture, fake, _, request := newRealEmbeddingWorker(t, document.EmbeddingInputOriginalFile)
+	var portable document.ProcessingProfileV1
+	require.NoError(t, json.Unmarshal(request.Profile.CanonicalProfile, &portable))
+	portable.Rendition = nil
+	portable.RetentionDisclosure.RetainSanitizedMarkdown = false
+	portable.RetentionDisclosure.RetainProviderMarkdown = false
+	_, fingerprints, err := document.CanonicalProfile(portable)
+	require.NoError(t, err)
+	binding := portable.Embeddings[0]
+	provider := &embeddingWorkerProvider{runtime: fake.runtime, binding: binding.Name, descriptor: fake.descriptor}
+	service, err := NewService(ServiceConfig{
+		Catalog: fixture.catalog, Blobs: fixture.blobs, Gate: newWorkerTestGate(),
+		SpoolDirectory: t.TempDir(), Principal: "daemon:operator", Scope: "owner-resolution-test",
+		Profiles: map[string]ProfileConfig{"search": {
+			Profile:            portable,
+			EmbeddingProviders: map[string]document.EmbeddingProvider{binding.Name: provider},
+		}},
+	})
+	require.NoError(t, err)
+	t.Cleanup(service.Stop)
+	_, err = fixture.catalog.GrantConsent(t.Context(), store.ProcessingConsentGrantRequest{
+		Principal: "daemon:operator", Scope: "owner-resolution-test",
+		ProfileFingerprint:      fingerprints.Profile,
+		DisclosureFingerprint:   binding.DisclosureFingerprint,
+		InputClasses:            []string{string(binding.InputKind)},
+		RetainedArtifactClasses: []string{"embedding_vector_set"},
+	})
+	require.NoError(t, err)
+	version, err := fixture.catalog.ContentVersionByID(t.Context(), request.ContentVersionID)
+	require.NoError(t, err)
+	selector := Selector{NodeID: version.NodeID, ContentVersionID: version.ID, Profile: "search"}
+	plan, err := service.Plan(t.Context(), selector)
+	require.NoError(t, err)
+
+	db, err := store.DefaultSQLiteDriver().Open(fixture.dbPath, sqlite.OpenOptions{
+		Access: sqlite.ReadWriteExisting, TransactionMode: sqlite.Deferred,
+	})
+	require.NoError(t, err)
+	_, err = db.ExecContext(t.Context(), `DROP TABLE photo_library_settings`)
+	require.NoError(t, err)
+	require.NoError(t, db.Close())
+
+	_, err = service.Start(store.WithPhotoOwner(t.Context(), ""), StartRequest{
+		Selector: selector, PlanFingerprint: plan.Fingerprint,
+	})
+	require.Error(t, err)
+	require.ErrorContains(t, err, "photo_library_settings")
+	assert.Zero(t, fake.runtime.calls(), "owner resolution failure must not reach provider egress")
 }
 
 func TestProcessingServiceCompletesEmbeddingAfterWorkerStops(t *testing.T) {

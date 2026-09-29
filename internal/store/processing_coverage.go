@@ -75,6 +75,10 @@ func (s *Store) ProcessingCoverage(ctx context.Context, scope ProcessingCoverage
 	}
 	result := ProcessingCoverageSnapshot{Renditions: ProcessingClassCoverage{Name: "rendition", Total: len(opts.ContentVersionIDs)}}
 	filterSQL, filterArgs := searchFilterSQL(opts)
+	visibilitySQL, visibilityArgs, err := photoNodeVisibilitySQL(ctx, tx)
+	if err != nil {
+		return ProcessingCoverageSnapshot{}, err
+	}
 	rows, err := tx.QueryContext(ctx, `SELECT COALESCE(h.attachment_id,''),
 		EXISTS(SELECT 1 FROM rendition_job_waiters w
 			JOIN rendition_jobs j ON j.job_id=w.job_id
@@ -82,8 +86,9 @@ func (s *Store) ProcessingCoverage(ctx context.Context, scope ProcessingCoverage
 			AND j.state IN ('queued','running','retry_wait'))
 		FROM `+nodeFrom+`
 		LEFT JOIN rendition_heads h ON h.content_version_id=cv.version_id AND h.profile_fingerprint=?
-		WHERE n.kind='file' AND n.trashed_at IS NULL AND cv.version_id IS NOT NULL `+filterSQL,
-		append([]any{scope.ProcessingProfileFingerprint, scope.ProcessingProfileFingerprint}, filterArgs...)...)
+		WHERE n.kind='file' AND n.trashed_at IS NULL AND cv.version_id IS NOT NULL `+filterSQL+`
+		 AND `+visibilitySQL,
+		append(append([]any{scope.ProcessingProfileFingerprint, scope.ProcessingProfileFingerprint}, filterArgs...), visibilityArgs...)...)
 	if err != nil {
 		return ProcessingCoverageSnapshot{}, err
 	}
@@ -137,8 +142,9 @@ func (s *Store) ProcessingCoverage(ctx context.Context, scope ProcessingCoverage
 				AND j.input_kind=? AND j.vector_space_id=? AND j.state IN ('queued','running','retry_wait')
 				AND (j.input_kind='original_file' OR EXISTS (
 					SELECT 1 FROM rendition_heads h WHERE h.content_version_id=j.content_version_id
-					AND h.profile_fingerprint=j.profile_fingerprint AND h.attachment_id=g.attachment_id)) `+filterSQL,
-				append([]any{scope.ProcessingProfileFingerprint, binding.Name, binding.InputKind, vectorSpace}, filterArgs...)...)
+					AND h.profile_fingerprint=j.profile_fingerprint AND h.attachment_id=g.attachment_id)) `+filterSQL+`
+				AND `+visibilitySQL,
+				append(append([]any{scope.ProcessingProfileFingerprint, binding.Name, binding.InputKind, vectorSpace}, filterArgs...), visibilityArgs...)...)
 			if err != nil {
 				return ProcessingCoverageSnapshot{}, err
 			}

@@ -142,7 +142,10 @@ func (service *Service) PlanMediaAcquisition(
 	referenceSHA256 := hex.EncodeToString(referenceDigest[:])
 	consentProfileFingerprint := stableHash(
 		"docbank/media-acquisition-consent/v1", configuration, referenceSHA256)
-	principal := service.requestPrincipal(ctx)
+	principal, err := service.requestPrincipal(ctx)
+	if err != nil {
+		return MediaAcquisitionPlan{}, err
+	}
 	claim := mediaAcquisitionClaim{Version: "v1", Principal: principal,
 		IncarnationID: incarnation.ID, OriginID: policy.OriginID, Provider: policy.Provider,
 		ReferenceSHA256: referenceSHA256, ConfigurationFingerprint: configuration,
@@ -189,7 +192,10 @@ func (service *Service) GrantMediaAcquisition(
 		return store.MediaConsentReceipt{}, err
 	}
 	requestDigest := sha256.Sum256(requestIdentity)
-	principal := service.requestPrincipal(ctx)
+	principal, err := service.requestPrincipal(ctx)
+	if err != nil {
+		return store.MediaConsentReceipt{}, err
+	}
 	op := store.MediaOperation{ID: operationID, Principal: principal,
 		Verb: "grant_media_acquisition", RequestSHA256: hex.EncodeToString(requestDigest[:])}
 	if replay, replayErr := service.catalog.MediaOperationReceipt(ctx, op); replayErr == nil {
@@ -218,7 +224,10 @@ func (service *Service) RevokeMediaAcquisition(
 		return store.MediaConsentReceipt{}, ErrMediaCapabilityUnavailable
 	}
 	digest := sha256.Sum256([]byte(originID))
-	principal := service.requestPrincipal(ctx)
+	principal, err := service.requestPrincipal(ctx)
+	if err != nil {
+		return store.MediaConsentReceipt{}, err
+	}
 	op := store.MediaOperation{ID: operationID, Principal: principal,
 		Verb: "revoke_media_acquisition", RequestSHA256: hex.EncodeToString(digest[:])}
 	if replay, replayErr := service.catalog.MediaOperationReceipt(ctx, op); replayErr == nil {
@@ -265,11 +274,15 @@ func (service *Service) verifyCurrentMediaPlan(
 	if err != nil {
 		return mediaAcquisitionClaim{}, MediaOriginPolicy{}, err
 	}
+	principal, err := service.requestPrincipal(ctx)
+	if err != nil {
+		return mediaAcquisitionClaim{}, MediaOriginPolicy{}, err
+	}
 	policy, ok := service.mediaOrigins[claim.OriginID]
 	configuration, fingerprintErr := mediaOriginFingerprint(policy)
 	wantConsentProfile := stableHash(
 		"docbank/media-acquisition-consent/v1", configuration, claim.ReferenceSHA256)
-	if fingerprintErr != nil || !ok || claim.Principal != service.requestPrincipal(ctx) || claim.IncarnationID != incarnation.ID ||
+	if fingerprintErr != nil || !ok || claim.Principal != principal || claim.IncarnationID != incarnation.ID ||
 		claim.Provider != policy.Provider || claim.ConfigurationFingerprint != configuration ||
 		claim.ProfileFingerprint != wantConsentProfile || claim.DisclosureFingerprint != policy.DisclosureFingerprint ||
 		!slices.Equal(claim.InputClasses, policy.InputClasses) || !slices.Equal(claim.RetainedClasses, policy.RetainedClasses) {

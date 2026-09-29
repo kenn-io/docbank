@@ -281,7 +281,7 @@ func compileSavedPredicate(expression *query.ResolvedExpression) (compiledQueryF
 	if !expression.Saved.Query.Filters.CollapseDuplicates {
 		return nested, nil
 	}
-	population := selectCompiledPopulation(nested, true)
+	population := selectCompiledPopulation(nested, true, trueCompiledFragment())
 	return compiledQueryFragment{
 		sql: `EXISTS (SELECT 1 FROM (` + population.sql + `) saved_population
 			WHERE saved_population.node_id=n.id

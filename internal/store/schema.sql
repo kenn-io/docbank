@@ -2153,7 +2153,7 @@ CREATE TABLE IF NOT EXISTS photo_assets (
     asset_id                  TEXT PRIMARY KEY,
     kind                      TEXT NOT NULL,
     revision                  INTEGER NOT NULL DEFAULT 1,
-    owner_id                  TEXT REFERENCES photo_owners(owner_id),
+    owner_id                  TEXT NOT NULL REFERENCES photo_owners(owner_id),
     hidden_at                 TEXT,
     excluded_at               TEXT,
     display_file_id           TEXT,

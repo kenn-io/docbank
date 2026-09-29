@@ -91,15 +91,20 @@ func (s *Store) resolveExplicitProcessingSourceFence(
 	if err != nil {
 		return ProcessingSourceFenceResolution{}, fmt.Errorf("encoding source-fence identities: %w", err)
 	}
+	visibilitySQL, visibilityArgs, err := photoNodeVisibilitySQL(ctx, tx)
+	if err != nil {
+		return ProcessingSourceFenceResolution{}, err
+	}
 	rows, err := tx.QueryContext(ctx, `
 		WITH requested(version_id) AS (SELECT value FROM json_each(?))
 		SELECT requested.version_id,
 		       cv.version_id IS NOT NULL,
-		       COALESCE(n.current_version_id=requested.version_id AND n.trashed_at IS NULL,0)
+		       COALESCE(n.current_version_id=requested.version_id AND n.trashed_at IS NULL,0),
+		       `+visibilitySQL+`
 		FROM requested
 		LEFT JOIN content_versions cv ON cv.version_id=requested.version_id
 		LEFT JOIN nodes n ON n.id=cv.node_id
-		ORDER BY requested.version_id`, string(encoded))
+		ORDER BY requested.version_id`, append([]any{string(encoded)}, visibilityArgs...)...)
 	if err != nil {
 		return ProcessingSourceFenceResolution{}, fmt.Errorf("resolving source-fence identities: %w", err)
 	}
@@ -107,13 +112,16 @@ func (s *Store) resolveExplicitProcessingSourceFence(
 	observed := 0
 	for rows.Next() {
 		var id string
-		var exists, currentLive bool
-		if err := rows.Scan(&id, &exists, &currentLive); err != nil {
+		var exists, currentLive, visible bool
+		if err := rows.Scan(&id, &exists, &currentLive, &visible); err != nil {
 			return ProcessingSourceFenceResolution{}, fmt.Errorf("reading source-fence identities: %w", err)
 		}
 		observed++
 		if !exists {
 			return ProcessingSourceFenceResolution{}, fmt.Errorf("content version: %w", ErrNotFound)
+		}
+		if !visible {
+			return ProcessingSourceFenceResolution{}, ErrNotFound
 		}
 		if !currentLive {
 			return ProcessingSourceFenceResolution{}, ErrProcessingSourceFenceStaleVersion
@@ -161,6 +169,12 @@ func (s *Store) resolveFilteredProcessingSourceFenceSnapshot(
 			ErrInvalidProcessingSourceFence, err)
 	}
 	filterSQL, args := searchFilterSQL(normalized)
+	visibilitySQL, visibilityArgs, err := photoNodeVisibilitySQL(ctx, snapshot)
+	if err != nil {
+		return ProcessingSourceFenceResolution{}, err
+	}
+	filterSQL += ` AND ` + visibilitySQL
+	args = append(args, visibilityArgs...)
 	var observed int
 	if err := snapshot.QueryRowContext(ctx, `SELECT COUNT(*) FROM `+nodeFrom+`
 		WHERE n.kind='file' AND n.trashed_at IS NULL `+filterSQL, args...).Scan(&observed); err != nil {

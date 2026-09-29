@@ -499,7 +499,7 @@ func (s *QuerySnapshotService) validateCachedPhotoVisibility(ctx context.Context
 		if err := json.Unmarshal(encoded, &row); err != nil {
 			return fmt.Errorf("decoding cached query snapshot row: %w", err)
 		}
-		if err := s.store.CheckPhotoVisibilityForNode(ctx, row.NodeID); err != nil {
+		if err := s.store.checkPhotoVisibilityForSnapshotMember(ctx, row.NodeID, row.ContentVersionID, row.Revision); err != nil {
 			return ErrSnapshotGone
 		}
 	}

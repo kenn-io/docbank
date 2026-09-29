@@ -564,9 +564,9 @@ func registerWebSession(
 				"this daemon is not serving the compiled web application"))
 			return
 		}
-		// The master caller selects the durable photo identity once. The
-		// default pointer is read without creating it, so opening the browser
-		// cannot mutate an otherwise ordinary vault.
+		// A browser session needs a durable owner before its first photo write.
+		// Audited vaults reject this logical enrollment and remain deliberately
+		// ownerless until an operator performs an approved owner setup.
 		photoOwnerID := strings.TrimSpace(r.Header.Get("X-Docbank-Owner"))
 		if storeDB != nil {
 			if photoOwnerID != "" {
@@ -582,7 +582,19 @@ func registerWebSession(
 					return
 				}
 				if settings.DefaultOwnerID != nil {
+					if _, ownerErr := storeDB.PhotoOwner(r.Context(), *settings.DefaultOwnerID); ownerErr != nil {
+						writeEmailStoreError(w, ownerErr)
+						return
+					}
 					photoOwnerID = *settings.DefaultOwnerID
+				} else {
+					owner, ensureErr := storeDB.EnsureDefaultPhotoOwner(r.Context())
+					if ensureErr == nil {
+						photoOwnerID = owner.ID
+					} else if !errors.Is(ensureErr, store.ErrAuditMutationUnsupported) {
+						writeEmailStoreError(w, ensureErr)
+						return
+					}
 				}
 			}
 		}

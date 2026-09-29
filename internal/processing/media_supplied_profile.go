@@ -37,12 +37,19 @@ type retainedTranscriptSource struct {
 	principal string
 }
 
+func (source retainedTranscriptSource) principalForRequest(ctx context.Context) string {
+	if ownerID, ok := store.PhotoOwnerFromContext(ctx); ok {
+		return "owner:" + ownerID
+	}
+	return source.principal
+}
+
 var errSuppliedInputInvalid = errors.New("supplied transcript bytes are invalid")
 
 func (source retainedTranscriptSource) Transcript(
 	ctx context.Context, sealedAudioSHA256 string,
 ) (document.SuppliedTranscript, error) {
-	input, err := source.catalog.SuppliedTranscriptForSource(ctx, source.principal, sealedAudioSHA256)
+	input, err := source.catalog.SuppliedTranscriptForSource(ctx, source.principalForRequest(ctx), sealedAudioSHA256)
 	if errors.Is(err, store.ErrNotFound) {
 		return document.SuppliedTranscript{}, nil
 	}
@@ -56,7 +63,7 @@ func (source retainedTranscriptSource) TranscriptForBinding(
 	ctx context.Context, sealedAudioSHA256, binding string,
 ) (document.SuppliedTranscript, error) {
 	input, err := source.catalog.SuppliedTranscriptBindingForSource(
-		ctx, source.principal, store.MediaInputTranscript, sealedAudioSHA256, binding)
+		ctx, source.principalForRequest(ctx), store.MediaInputTranscript, sealedAudioSHA256, binding)
 	if errors.Is(err, store.ErrNotFound) {
 		classified, classifyErr := document.NewRenditionProviderError(
 			document.RenditionErrorPolicyRejected, 0, store.ErrNotFound)
@@ -114,7 +121,7 @@ func (source retainedTranscriptSource) CaptionForBinding(
 	ctx context.Context, sealedSourceSHA256, binding string,
 ) (suppliedtranscript.Caption, error) {
 	input, err := source.catalog.SuppliedTranscriptBindingForSource(
-		ctx, source.principal, store.MediaInputCaption, sealedSourceSHA256, binding)
+		ctx, source.principalForRequest(ctx), store.MediaInputCaption, sealedSourceSHA256, binding)
 	if errors.Is(err, store.ErrNotFound) {
 		classified, classifyErr := document.NewRenditionProviderError(
 			document.RenditionErrorPolicyRejected, 0, store.ErrNotFound)

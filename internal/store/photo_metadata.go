@@ -13,7 +13,7 @@ type metadataPhotoAsset struct {
 	AssetID               string  `json:"asset_id"`
 	Kind                  string  `json:"kind"`
 	Revision              int64   `json:"revision"`
-	OwnerID               *string `json:"owner_id"`
+	OwnerID               string  `json:"owner_id"`
 	HiddenAt              *string `json:"hidden_at"`
 	ExcludedAt            *string `json:"excluded_at"`
 	DisplayFileID         *string `json:"display_file_id"`
@@ -213,7 +213,7 @@ func validatePhotoAssetMetadataRecord(v metadataPhotoAsset) error {
 	if v.Type != metadataPhotoAssetType || validateUUIDv4(v.AssetID) != nil || !photoKindValid(v.Kind) || v.Revision < 1 {
 		return errors.New("invalid photo asset metadata")
 	}
-	if v.OwnerID != nil && validateUUIDv4(*v.OwnerID) != nil {
+	if validateUUIDv4(v.OwnerID) != nil {
 		return errors.New("invalid photo asset owner")
 	}
 	if v.HiddenAt != nil {
@@ -359,7 +359,7 @@ func importPhotoMetadataRecord(ctx context.Context, tx *sql.Tx, kind string, raw
 
 func validatePhotoMetadataState(ctx context.Context, tx metadataQuerier) error {
 	var broken int
-	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM photo_assets a LEFT JOIN photo_owners o ON o.owner_id=a.owner_id WHERE a.owner_id IS NOT NULL AND o.owner_id IS NULL`).Scan(&broken); err != nil {
+	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM photo_assets a LEFT JOIN photo_owners o ON o.owner_id=a.owner_id WHERE a.owner_id IS NULL OR o.owner_id IS NULL`).Scan(&broken); err != nil {
 		return fmt.Errorf("checking photo owner references: %w", err)
 	}
 	if broken > 0 {

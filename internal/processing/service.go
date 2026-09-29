@@ -138,13 +138,36 @@ type Service struct {
 }
 
 // requestPrincipal binds provider consent to the authenticated photo owner
-// when the request carries one. Detached worker contexts intentionally fall
-// back to the configured application principal.
-func (service *Service) requestPrincipal(ctx context.Context) string {
+// when an owner-aware request resolves one. Unbound in-process callers and
+// detached jobs use the configured application principal.
+func (service *Service) requestPrincipal(ctx context.Context) (string, error) {
 	if ownerID, ok := store.PhotoOwnerFromContext(ctx); ok {
-		return "owner:" + ownerID
+		return "owner:" + ownerID, nil
 	}
-	return service.principal
+	ownerID, bound, noPhotoOwner, err := service.catalog.PhotoOwnerForRequest(ctx)
+	if err != nil {
+		return "", err
+	}
+	if bound && !noPhotoOwner {
+		if ownerID == "" {
+			owner, ensureErr := service.catalog.EnsureDefaultPhotoOwner(ctx)
+			if ensureErr == nil {
+				ownerID = owner.ID
+			} else if !errors.Is(ensureErr, store.ErrAuditMutationUnsupported) {
+				return "", ensureErr
+			}
+		}
+		if ownerID != "" {
+			return "owner:" + ownerID, nil
+		}
+	}
+	return service.principal, nil
+}
+
+// PrincipalForRequest exposes the same principal resolver to the HTTP consent
+// route so a body-supplied principal cannot select a different authority.
+func (service *Service) PrincipalForRequest(ctx context.Context) (string, error) {
+	return service.requestPrincipal(ctx)
 }
 
 type mediaOriginObservation struct {
@@ -647,7 +670,10 @@ func (service *Service) Plan(ctx context.Context, selector Selector) (Plan, erro
 	// Current grants are advisory; execution checks them again. Grant changes
 	// do not change the reviewed source, disclosure, or plan fingerprint.
 	plan.ConsentState = "active"
-	principal := service.requestPrincipal(ctx)
+	principal, err := service.requestPrincipal(ctx)
+	if err != nil {
+		return Plan{}, err
+	}
 	for _, request := range service.profileConsentRequests(profile, principal, service.scope) {
 		_, err := service.catalog.AuthorizeProviderOperation(ctx, request)
 		switch {
@@ -781,7 +807,11 @@ func (service *Service) StartWithProgress(ctx context.Context, request StartRequ
 	if request.PlanFingerprint == "" || request.PlanFingerprint != plan.Fingerprint {
 		return Job{}, ErrPlanChanged
 	}
-	principal, scope := service.requestPrincipal(ctx), service.scope
+	principal, err := service.requestPrincipal(ctx)
+	if err != nil {
+		return Job{}, err
+	}
+	scope := service.scope
 	if request.Consent {
 		if err := service.grantProfileConsent(ctx, profile, nil, principal, scope); err != nil {
 			return Job{}, err
@@ -881,7 +911,11 @@ func (service *Service) GrantConsent(ctx context.Context, request ConsentGrantRe
 	if request.ExpiresAt != nil && !request.ExpiresAt.After(service.clock()) {
 		return ConsentGrant{}, fmt.Errorf("%w: expiry must be in the future", ErrInvalidConsentExpiry)
 	}
-	if err := service.grantProfileConsent(ctx, profile, request.ExpiresAt, service.requestPrincipal(ctx), service.scope); err != nil {
+	principal, err := service.requestPrincipal(ctx)
+	if err != nil {
+		return ConsentGrant{}, err
+	}
+	if err := service.grantProfileConsent(ctx, profile, request.ExpiresAt, principal, service.scope); err != nil {
 		return ConsentGrant{}, err
 	}
 	return ConsentGrant{PlanFingerprint: plan.Fingerprint, ProfileFingerprint: profile.record.Fingerprint,
@@ -890,9 +924,13 @@ func (service *Service) GrantConsent(ctx context.Context, request ConsentGrantRe
 
 func (service *Service) RevokeConsent(ctx context.Context) (ConsentRevocation, error) {
 	var result ConsentRevocation
-	err := service.gate.MutateContext(ctx, func() error {
+	principal, err := service.requestPrincipal(ctx)
+	if err != nil {
+		return result, err
+	}
+	err = service.gate.MutateContext(ctx, func() error {
 		revocation, err := service.catalog.RevokeConsent(ctx, store.ProcessingConsentRevocationRequest{
-			Principal: service.requestPrincipal(ctx), Scope: service.scope})
+			Principal: principal, Scope: service.scope})
 		result.RevokedAt = revocation.RevokedAt
 		return err
 	})
@@ -1015,14 +1053,7 @@ func normalizeDerivativePurgeRequest(request DerivativePurgeRequest) (Derivative
 	return request, err
 }
 
-func (service *Service) renditionConsentRequest(profile configuredProfile, identity ...string) store.ProviderOperationAuthorizationRequest {
-	principal, scope := service.principal, service.scope
-	if len(identity) > 0 {
-		principal = identity[0]
-	}
-	if len(identity) > 1 {
-		scope = identity[1]
-	}
+func (service *Service) renditionConsentRequest(profile configuredProfile, principal, scope string) store.ProviderOperationAuthorizationRequest {
 	return store.ProviderOperationAuthorizationRequest{
 		Principal: principal, Scope: scope, ProfileFingerprint: profile.record.Fingerprint,
 		DisclosureFingerprint:   profile.record.RenditionDisclosureFingerprint,
@@ -1083,8 +1114,12 @@ func (service *Service) runRendition(ctx context.Context, node store.Node, versi
 	var source mediaSourceBinding
 	if _, supplied := suppliedInputKind(profileName); supplied {
 		var err error
+		principal, principalErr := service.requestPrincipal(ctx)
+		if principalErr != nil {
+			return renditionRun{}, principalErr
+		}
 		source.sourceID, source.sourceVersionID, err = service.catalog.MediaSourceBindingForContentVersion(
-			ctx, service.requestPrincipal(ctx), version.ID)
+			ctx, principal, version.ID)
 		if err != nil {
 			return renditionRun{}, err
 		}
@@ -1303,7 +1338,10 @@ func (service *Service) renditionFromView(ctx context.Context, node store.Node, 
 		return Rendition{}, err
 	}
 	if inputBinding != "" {
-		principal := service.requestPrincipal(ctx)
+		principal, principalErr := service.requestPrincipal(ctx)
+		if principalErr != nil {
+			return Rendition{}, principalErr
+		}
 		sourceID, sourceVersionID, bindingErr := service.catalog.MediaSourceBindingForContentVersion(
 			ctx, principal, contentVersionID)
 		if bindingErr != nil {
@@ -1430,7 +1468,11 @@ func (service *Service) Search(ctx context.Context, request SearchRequest) (retr
 	if err != nil {
 		return retrieval.Report{}, err
 	}
-	prepared, err := service.prepareSearch(request, profile, service.requestPrincipal(ctx))
+	principal, err := service.requestPrincipal(ctx)
+	if err != nil {
+		return retrieval.Report{}, err
+	}
+	prepared, err := service.prepareSearch(request, profile, principal)
 	if err != nil {
 		return retrieval.Report{}, err
 	}
@@ -1440,7 +1482,7 @@ func (service *Service) Search(ctx context.Context, request SearchRequest) (retr
 			return retrieval.Report{}, err
 		}
 		_, fence, err := service.catalog.BeginProviderEgress(ctx, store.ProviderOperationAuthorizationRequest{
-			Principal: service.requestPrincipal(ctx), Scope: service.scope,
+			Principal: principal, Scope: service.scope,
 			ProfileFingerprint: profile.record.Fingerprint, DisclosureFingerprint: binding.DisclosureFingerprint,
 			InputClasses: []string{"query_text"}, RetainedArtifactClasses: []string{},
 		})

@@ -89,7 +89,11 @@ func (service *Service) EnqueueAuthorized(
 	if planFingerprint == "" || planFingerprint != plan.Fingerprint {
 		return Job{}, ErrPlanChanged
 	}
-	want := service.renditionConsentRequest(profile, service.requestPrincipal(ctx), service.scope)
+	principal, err := service.requestPrincipal(ctx)
+	if err != nil {
+		return Job{}, err
+	}
+	want := service.renditionConsentRequest(profile, principal, service.scope)
 	if !sameMediaAuthorization(authorization, want) {
 		return Job{}, ErrPlanChanged
 	}
@@ -151,9 +155,11 @@ func (service *Service) resolveMediaInputBinding(
 	if source.sourceID == "" {
 		return "", store.ErrNotFound
 	}
-	principal := service.requestPrincipal(ctx)
+	principal, err := service.requestPrincipal(ctx)
+	if err != nil {
+		return "", err
+	}
 	var input store.SuppliedTranscriptInput
-	var err error
 	if source.sourceVersionID != "" {
 		input, err = service.catalog.SuppliedTranscriptForSourceVersion(
 			ctx, principal, kind, source.sourceID, source.sourceVersionID, inputID)

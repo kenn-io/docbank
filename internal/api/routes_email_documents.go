@@ -65,8 +65,10 @@ func registerEmailDocumentRoutes(mux *http.ServeMux, api huma.API, d Deps, g *ga
 		}
 		var receipt document.EmailDocumentPublicationReceipt
 		err := g.mutate(func() error {
-			if err := d.Store.CheckPhotoVisibilityForVersion(r.Context(), request.Parent.VersionID); err != nil {
-				return err
+			if request.Parent.VersionID != "" {
+				if err := d.Store.CheckPhotoVisibilityForVersion(r.Context(), request.Parent.VersionID); err != nil {
+					return err
+				}
 			}
 			if d.PublishEmailDocuments == nil {
 				return errors.New("email document publication is not configured")
@@ -200,7 +202,12 @@ func registerEmailDocumentRoutes(mux *http.ServeMux, api huma.API, d Deps, g *ga
 			writeEmailStoreError(w, processingUnavailable())
 			return
 		}
-		principal, principalErr := bindProcessingPrincipal(r.Context(), d.Store, request.Principal)
+		expected, principalErr := d.Processing.PrincipalForRequest(r.Context())
+		if principalErr != nil {
+			writeEmailStoreError(w, principalErr)
+			return
+		}
+		principal, principalErr := bindProcessingPrincipal(r.Context(), d.Store, expected, request.Principal)
 		if principalErr != nil {
 			writeEmailStoreError(w, principalErr)
 			return

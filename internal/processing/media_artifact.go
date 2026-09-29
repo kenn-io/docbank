@@ -44,7 +44,10 @@ func (service *Service) PrepareMediaArtifactUpload(
 	if request.ByteLength < 1 || request.SHA256 == "" || request.OperationID == "" {
 		return MediaReceipt{}, 0, false, errors.New("media artifact requires content and exact identity")
 	}
-	principal := service.requestPrincipal(ctx)
+	principal, err := service.requestPrincipal(ctx)
+	if err != nil {
+		return MediaReceipt{}, 0, false, err
+	}
 	operation, err := service.mediaArtifactOperation(request, principal)
 	if err != nil {
 		return MediaReceipt{}, 0, false, err
@@ -128,7 +131,10 @@ func (service *Service) ImportRecordingArtifact(
 	if request.ByteLength > limit {
 		return MediaReceipt{}, errors.New("byte_limit")
 	}
-	principal := service.requestPrincipal(ctx)
+	principal, err := service.requestPrincipal(ctx)
+	if err != nil {
+		return MediaReceipt{}, err
+	}
 	operation, err := service.mediaArtifactOperation(request, principal)
 	if err != nil {
 		return MediaReceipt{}, err
@@ -267,7 +273,10 @@ func (service *Service) RetryMedia(
 		return MediaReceipt{}, err
 	}
 	digest := sha256.Sum256(identity)
-	principal := service.requestPrincipal(ctx)
+	principal, err := service.requestPrincipal(ctx)
+	if err != nil {
+		return MediaReceipt{}, err
+	}
 	operation := store.MediaOperation{ID: operationID, Principal: principal,
 		Verb: "retry_media", RequestSHA256: hex.EncodeToString(digest[:]), SourceID: sourceID}
 	if replay, replayErr := service.catalog.MediaOperationReceipt(ctx, operation); replayErr == nil {
@@ -300,7 +309,7 @@ func (service *Service) RetryMedia(
 	if err != nil {
 		return MediaReceipt{}, err
 	}
-	authorization := service.renditionConsentRequest(profile, service.requestPrincipal(ctx), service.scope)
+	authorization := service.renditionConsentRequest(profile, principal, service.scope)
 	authorized, err := service.catalog.AuthorizeProviderOperation(ctx, authorization)
 	if err != nil {
 		return MediaReceipt{}, processingConsentBoundaryError(err)

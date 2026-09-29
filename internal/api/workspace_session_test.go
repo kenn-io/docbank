@@ -33,7 +33,7 @@ func TestAuthenticatedSnapshotOwnerIsExplicitAndBrowserRevocationCancelsRequest(
 			entered <- owner
 			<-r.Context().Done()
 			close(canceled)
-		}), "master-key", sessions, "master-owner")
+		}), "master-key", sessions, "master-owner", nil)
 		req := httptest.NewRequest(http.MethodPost, "/api/v1/workspace/queries", nil)
 		req.Header.Set(WebSessionHeader, token)
 		done := make(chan struct{})

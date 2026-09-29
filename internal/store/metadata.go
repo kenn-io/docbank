@@ -1724,7 +1724,7 @@ var metadataNullableFields = map[string]map[string]bool{
 	"content_version":           {"mime_type": true, auditSourceVersionIDField: true},
 	metadataProvenanceType:      {"original_mtime": true, "supersedes": true},
 	metadataCollectionLabelType: {"label": true},
-	metadataPhotoAssetType:      {"owner_id": true, "hidden_at": true, "excluded_at": true, "display_file_id": true, "display_override_file_id": true},
+	metadataPhotoAssetType:      {"hidden_at": true, "excluded_at": true, "display_file_id": true, "display_override_file_id": true},
 	metadataPhotoFileType:       {"sidecar_of_file_id": true},
 	metadataPhotoSettingsType:   {"default_owner_id": true, "preference": true},
 	metadataPhotoReceiptType:    {"asset_id": true, "settings_key": true},
