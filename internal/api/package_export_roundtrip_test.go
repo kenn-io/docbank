@@ -152,6 +152,12 @@ func TestPackageExportSelectedPDFThroughPublicImport(t *testing.T) {
 			require.NoError(t, err)
 			verified, err := processing.VerifyLoadFileExport(t.Context(), bytes.NewReader(archive.Bytes()), int64(archive.Len()))
 			require.NoError(t, err)
+			var sourcePages []int
+			for index, page := range verified.Manifest.Images {
+				require.Equal(t, index+1, page.PageOrdinal)
+				sourcePages = append(sourcePages, page.SourcePage)
+			}
+			require.Equal(t, test.pages, sourcePages)
 			extracted, err := loadfile.ExtractZIP(t.Context(), bytes.NewReader(archive.Bytes()), int64(archive.Len()))
 			require.NoError(t, err)
 			t.Cleanup(func() { require.NoError(t, loadfile.RemoveExtractedZIP(extracted)) })

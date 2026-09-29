@@ -567,7 +567,7 @@ func buildLoadFileRecord(ctx context.Context, blobs *blob.Store, exportProfile l
 			for index, page := range bates.pageMap {
 				images = append(images, loadfile.ImageRef{ImageKey: page.Label, Volume: loadFileExportVolume,
 					RelPath: relPath, DocumentBreak: index == 0, PageOrdinal: index + 1,
-					SourcePage: index + 1, DeclaredPageCount: bates.pageCount})
+					SourcePage: page.SourcePage, DeclaredPageCount: bates.pageCount})
 			}
 		} else if rep := selectedPDFRepresentation(member, available["produced_pdf"]); rep != nil {
 			relPath := "PDF/" + crosswalk.DocumentID + ".pdf"
@@ -602,7 +602,7 @@ func buildLoadFileRecord(ctx context.Context, blobs *blob.Store, exportProfile l
 				}
 				images = append(images, loadfile.ImageRef{ImageKey: imageKey, Volume: loadFileExportVolume,
 					RelPath: relPath, DocumentBreak: page == 1, PageOrdinal: page,
-					SourcePage: page, DeclaredPageCount: pageCount})
+					SourcePage: sourcePage, DeclaredPageCount: pageCount})
 			}
 		}
 	}
