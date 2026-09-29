@@ -171,10 +171,10 @@ func TestPackageCustodianToolsExposeCandidatesAndExactWrites(t *testing.T) {
 }
 
 func TestExportLoadFilePackageIsAnExactGatedFileWrite(t *testing.T) {
-	readOnly := catalogMap(toolCatalog(false, false, false))
+	readOnly := catalogMap(toolCatalog(false, false, false, false))
 	assert.NotContains(t, readOnly, "export_load_file_package")
-	assert.NotContains(t, catalogMap(toolCatalog(true, false, false)), "export_load_file_package")
-	tool := catalogMap(toolCatalog(false, true, false))["export_load_file_package"]
+	assert.NotContains(t, catalogMap(toolCatalog(true, false, false, false)), "export_load_file_package")
+	tool := catalogMap(toolCatalog(false, true, false, false))["export_load_file_package"]
 	require.NotNil(t, tool)
 	assert.False(t, tool.Annotations.ReadOnlyHint)
 	assert.False(t, tool.Annotations.IdempotentHint)
