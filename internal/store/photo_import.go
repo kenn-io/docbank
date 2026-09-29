@@ -353,14 +353,14 @@ func (s *Store) IngestPhotoGroup(ctx context.Context, run IngestRun, group Photo
 				if member.Physical.Encoding != "" {
 					physical = []BlobPhysical{member.Physical}
 				}
-				receipt, _, _, err := s.ingestFileTx(ctx, tx, run, group.DestinationID,
+				receipt, created, _, err := s.ingestFileTx(ctx, tx, run, group.DestinationID,
 					member.Name, member.BlobHash, member.Size, mediaType, member.OriginalPath,
 					member.OriginalMtime, ingestFileOptions{observeMembership: true, deferPhotoEnrollment: true}, physical...)
 				if err != nil {
 					return err
 				}
 				node = receipt.Node
-				added = true
+				added = added || created
 			}
 			nodes[i], roles[i], kinds[i] = node, role, kind
 			if owners[i], _, err = photoAssetOwningNodeTx(ctx, tx, node.ID); err != nil {

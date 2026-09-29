@@ -220,6 +220,15 @@ func TestPhotoImportMultipleRAWsImportAlone(t *testing.T) {
 	_, err = s.PhotoAssetForNode(ctx, result.Nodes[3].ID)
 	require.ErrorIs(t, err, ErrNotFound)
 	assert.Empty(t, result.Ambiguity.Files[3].AssetID)
+	var files int
+	require.NoError(t, s.db.QueryRow(`SELECT COUNT(*) FROM nodes WHERE kind='file'`).Scan(&files))
+	rerun, err := s.IngestPhotoGroup(ctx, run, photoImportTestGroup(arw, dng, jpeg, xmp))
+	require.NoError(t, err)
+	assert.True(t, rerun.Skipped)
+	require.NotNil(t, rerun.Ambiguity)
+	var after int
+	require.NoError(t, s.db.QueryRow(`SELECT COUNT(*) FROM nodes WHERE kind='file'`).Scan(&after))
+	assert.Equal(t, files, after)
 
 	// A second RAW arriving later leaves the established pair untouched.
 	later := t.TempDir()
