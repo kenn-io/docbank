@@ -533,6 +533,53 @@ func TestPhotoImportRunLifecycle(t *testing.T) {
 	assert.Equal(t, PhotoImportStateCompleted, completed.State)
 }
 
+func TestPhotoImportCancelRequiresCurrentPositiveRevision(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	run, err := s.StartPhotoImportRun(t.Context(), filepath.Join(t.TempDir(), "camera"), "/photos", 1)
+	require.NoError(t, err)
+	for _, revision := range []int64{0, -1, run.Revision + 1} {
+		_, err = s.RequestPhotoImportCancel(t.Context(), run.ID, revision)
+		require.Error(t, err)
+	}
+	current, err := s.PhotoImportRun(t.Context(), run.ID)
+	require.NoError(t, err)
+	assert.Equal(t, run.Revision, current.Revision)
+	assert.False(t, current.CancelRequested)
+}
+
+func TestPhotoImportAmbiguityMetadataRejectsInvalidCandidate(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	run, err := s.StartPhotoImportRun(t.Context(), filepath.Join(t.TempDir(), "camera"), "/photos", 1)
+	require.NoError(t, err)
+	record, err := metadataPhotoImportRunFromStore(run)
+	require.NoError(t, err)
+	for _, raw := range []string{
+		`[{"group_key":"group","candidates":[{"source_path":"capture.ARW"}]}]`,
+		`[{"group_key":"group","candidates":[{"source_path":"capture.ARW","blob_hash":"abcd"}]}]`,
+		`[{"group_key":"group","candidates":[{"asset_id":"00000000-0000-4000-8000-000000000001","source_path":"capture.ARW","blob_hash":"` + fakeHash("raw") + `"}]}]`,
+	} {
+		record.AmbiguityJSON = &raw
+		require.Error(t, validatePhotoImportMetadataRecord(record))
+	}
+}
+
+func TestPhotoImportStartupBookkeepingAllowsAuditedVault(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := t.Context()
+	run, err := s.StartPhotoImportRun(ctx, filepath.Join(t.TempDir(), "camera"), "/photos", 1)
+	require.NoError(t, err)
+	destination, _, err := s.MkdirPath(ctx, "/audited")
+	require.NoError(t, err)
+	seedInitialAuditAuthority(t, s, destination.ID)
+	require.NoError(t, s.MarkPhotoImportRunsInterrupted(ctx))
+	interrupted, err := s.PhotoImportRun(ctx, run.ID)
+	require.NoError(t, err)
+	assert.Equal(t, PhotoImportStateInterrupted, interrupted.State)
+}
+
 func TestPhotoImportSkippedGroupUpdatesDurableProgress(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
