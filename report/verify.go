@@ -45,6 +45,9 @@ func verifyFrameEvidence(ctx context.Context, budget Budget, frame Frame) error 
 	if err != nil {
 		return err
 	}
+	if err := validateSelectedMembers(request, frame.Members); err != nil {
+		return fmt.Errorf("%w: %w", ErrInvalidPacket, err)
+	}
 	if frame.VaultID == "" || frame.GenerationKind != "native" && frame.GenerationKind != "rendition" ||
 		frame.ObservedAt.IsZero() || len(frame.Members) > 50000 || len(frame.Relations) > 100000 {
 		return ErrInvalidPacket
@@ -79,7 +82,7 @@ func verifyFrameEvidence(ctx context.Context, budget Budget, frame Frame) error 
 		}
 		identities[member.Identity.NodeID] = member.Identity
 		memberIndex[member.Identity] = i
-		if !request.AllDocuments {
+		if len(request.CollectionIDs) > 0 {
 			witnessed := false
 			for _, witness := range member.CollectionWitnesses {
 				if witness.MembershipID == "" || witness.OriginalPath == "" ||

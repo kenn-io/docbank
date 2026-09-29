@@ -145,3 +145,55 @@ func TestCountsEmptyPopulationIsZero(t *testing.T) {
 		t.Fatalf("counts=%+v err=%v", got.Counts, err)
 	}
 }
+
+// selectedFrame reuses the date evidence fixture with canonical version identities.
+func selectedFrame() Frame {
+	f := oracleFrame()
+	f.Members = f.Members[:2]
+	f.Relations = nil
+	f.Request.AllDocuments = false
+	f.Request.CoverageMode = "available_only"
+	f.Request.Terms = f.Request.Terms[:1]
+	f.Request.Terms[0].Expression = "alpha"
+	f.Request.SelectedDocuments = &SelectedDocuments{}
+	for i := range f.Members {
+		m := &f.Members[i]
+		m.Identity.VersionID = fmt.Sprintf("20000000-0000-4000-8000-%012d", i+1)
+		m.FamilyID = ""
+		m.Candidates[0].Document = m.Identity
+		m.RawMatches = []bool{true}
+		f.Request.SelectedDocuments.Documents = append(f.Request.SelectedDocuments.Documents, m.Identity)
+	}
+	f.Members[1].Candidates = nil
+	f.Members[1].Selection = DateSelection{}
+	return f
+}
+
+func TestSelectedReportCountsAndMembership(t *testing.T) {
+	budget := NewBudget(4 << 20)
+	defer func() { _ = budget.Close() }()
+	got, err := Calculate(t.Context(), budget, selectedFrame())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Frame.Members) != 2 || got.Counts[0].Hits != 1 || got.Frame.Coverage.Scoped != 1 {
+		t.Fatalf("members=%d counts=%+v coverage=%+v", len(got.Frame.Members), got.Counts, got.Frame.Coverage)
+	}
+	for _, tc := range []struct {
+		name string
+		edit func(*Frame)
+	}{
+		{"missing", func(f *Frame) { f.Members = f.Members[:1] }},
+		{"extra", func(f *Frame) { m := f.Members[1]; m.Identity.NodeID = 3; f.Members = append(f.Members, m) }},
+		{"repeated node", func(f *Frame) { f.Members[1].Identity = f.Members[0].Identity }},
+		{"substituted version", func(f *Frame) { f.Members[1].Identity.VersionID = "20000000-0000-4000-8000-000000000003" }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := selectedFrame()
+			tc.edit(&f)
+			if _, err := Calculate(t.Context(), budget, f); err == nil {
+				t.Fatal("accepted unequal member set")
+			}
+		})
+	}
+}
