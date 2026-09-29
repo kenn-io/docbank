@@ -71,7 +71,7 @@ func TestPeopleCLIWorkflow(t *testing.T) {
 	assert.Equal(t, exitStale, commandExitCode(staleErr, true))
 
 	invalidSplitOutput, invalidSplitErr := runCLI(t, "people", "split", created.PersonID, "--revision", strconv.FormatInt(merge.SurvivorRevisionAfter, 10),
-		"--display-name", "Invalid split", "--identity", "00000000-0000-4000-8000-000000000004")
+		"--display-name", "Invalid split", "--identity", identity.IdentityID, "--identity", identity.IdentityID)
 	require.ErrorIs(t, invalidSplitErr, store.ErrInvalidPerson, invalidSplitOutput)
 	assert.Equal(t, exitUsage, commandExitCode(invalidSplitErr, true))
 
