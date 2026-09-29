@@ -55,6 +55,60 @@ func TestRenditionJobsDeduplicateSharedBuildAndFenceLeaseTheft(t *testing.T) {
 	)
 }
 
+func TestRenditionJobStatusUsesAnyVisibleWaiter(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	first, err := s.CreatePhotoOwner(t.Context(), "first")
+	require.NoError(t, err)
+	second, err := s.CreatePhotoOwner(t.Context(), "second")
+	require.NoError(t, err)
+	third, err := s.CreatePhotoOwner(t.Context(), "third")
+	require.NoError(t, err)
+	shared := fakeHash("a1b2c3d4")
+	firstNode, err := s.CreateFile(WithPhotoOwner(t.Context(), first.ID), s.RootID(), "rendition-first.jpg", shared, 20, "image/jpeg")
+	require.NoError(t, err)
+	secondNode, err := s.CreateFile(WithPhotoOwner(t.Context(), second.ID), s.RootID(), "rendition-second.jpg", shared, 20, "image/jpeg")
+	require.NoError(t, err)
+	profile := catalogProcessingProfile(t, false)
+	requestFor := func(node Node, owner string) RenditionJobRequest {
+		request := renditionJobTestRequest(node.CurrentVersionID, profile)
+		request.ExecutionIdentity.Upload.SHA256 = node.BlobHash
+		request.ExecutionIdentity.Authorization.SourceSHA256 = node.BlobHash
+		request.Authorization.Principal = "owner:" + owner
+		return request
+	}
+	firstRequest := requestFor(firstNode, first.ID)
+	secondRequest := requestFor(secondNode, second.ID)
+	grantRenditionJobConsent(t, s, firstRequest)
+	grantRenditionJobConsent(t, s, secondRequest)
+	job, firstWaiter, err := s.EnqueueRenditionJob(t.Context(), firstRequest)
+	require.NoError(t, err)
+	joined, secondWaiter, err := s.EnqueueRenditionJob(t.Context(), secondRequest)
+	require.NoError(t, err)
+	require.Equal(t, job.ID, joined.ID)
+	_, err = s.RenditionJobByID(WithPhotoOwner(t.Context(), third.ID), job.ID)
+	require.ErrorIs(t, err, ErrNotFound)
+	status, err := s.RenditionJobByID(WithPhotoOwner(t.Context(), second.ID), job.ID)
+	require.NoError(t, err)
+	assert.Equal(t, job.ID, status.ID)
+	now := time.Now().UTC().Add(time.Second)
+	claim, err := s.ClaimRenditionJob(t.Context(), job.ID, "status-test-worker", now, time.Minute)
+	require.NoError(t, err)
+	_, err = s.RenditionJobWorkByClaim(t.Context(), claim, now)
+	require.NoError(t, err)
+	var selected string
+	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT selected_waiter_id FROM rendition_jobs WHERE job_id=?`, job.ID).Scan(&selected))
+	otherOwner := second.ID
+	if selected == secondWaiter.ID {
+		otherOwner = first.ID
+	}
+	if selected != firstWaiter.ID && selected != secondWaiter.ID {
+		t.Fatalf("selected waiter %q is not one of %q or %q", selected, firstWaiter.ID, secondWaiter.ID)
+	}
+	_, err = s.RenditionJobByID(WithPhotoOwner(t.Context(), otherOwner), job.ID)
+	require.NoError(t, err)
+}
+
 func TestRenditionJobWaiterCannotAdoptReplacementConsent(t *testing.T) {
 	t.Parallel()
 	s, versions := newRenditionCatalogFixture(t)

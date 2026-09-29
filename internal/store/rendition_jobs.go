@@ -460,18 +460,38 @@ func (s *Store) RenditionJobByID(ctx context.Context, id string) (RenditionJob, 
 	if err != nil {
 		return RenditionJob{}, fmt.Errorf("rendition job %s: %w", id, err)
 	}
-	var versionID sql.NullString
-	if err := s.db.QueryRowContext(ctx, `SELECT w.content_version_id
-		FROM rendition_jobs j LEFT JOIN rendition_job_waiters w ON w.waiter_id=j.selected_waiter_id
-		WHERE j.job_id=?`, id).Scan(&versionID); err != nil {
-		return RenditionJob{}, fmt.Errorf("reading rendition job source: %w", err)
+	if _, bound, _ := photoOwnerBinding(ctx); !bound {
+		// Catalog maintenance and retention callers have no serving principal;
+		// preserve their aggregate view while HTTP callers always carry a bind.
+		return job, nil
 	}
-	if versionID.Valid {
-		if err := photoVersionVisibilityCheckTx(ctx, s.db, versionID.String); err != nil {
+	var versionIDs []string
+	err = func() error {
+		rows, err := s.db.QueryContext(ctx, `SELECT content_version_id FROM rendition_job_waiters WHERE job_id=?`, id)
+		if err != nil {
+			return err
+		}
+		defer func() { _ = rows.Close() }()
+		for rows.Next() {
+			var versionID string
+			if err := rows.Scan(&versionID); err != nil {
+				return fmt.Errorf("reading rendition job source: %w", err)
+			}
+			versionIDs = append(versionIDs, versionID)
+		}
+		return rows.Err()
+	}()
+	if err != nil {
+		return RenditionJob{}, fmt.Errorf("reading rendition job sources: %w", err)
+	}
+	for _, versionID := range versionIDs {
+		if err := photoVersionVisibilityCheckTx(ctx, s.db, versionID); err == nil {
+			return job, nil
+		} else if !errors.Is(err, ErrNotFound) {
 			return RenditionJob{}, fmt.Errorf("rendition job %s: %w", id, err)
 		}
 	}
-	return job, nil
+	return RenditionJob{}, fmt.Errorf("rendition job %s: %w", id, ErrNotFound)
 }
 
 // RenditionInputBinding returns the exact auxiliary input frozen into one

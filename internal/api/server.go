@@ -242,7 +242,7 @@ func NewServer(d Deps) *Server {
 	s.registerChallenge(mux)
 	s.registerShutdown(mux)
 	registerWeb(mux, d.Cfg.Web.Enabled, d.WebURL)
-	registerWebSession(mux, d.Cfg.Web.Enabled, d.WebURL, d.Store, s.webSessions)
+	registerWebSession(mux, d.Cfg.Web.Enabled, d.WebURL, d.Store, s.webSessions, g)
 	registerWebUpload(mux, d.Cfg.Web.Enabled, d.WebURL, d, g, s.webSessions)
 	registerWebDownload(mux, d.Cfg.Web.Enabled, d, s.webDownloads, s.webSessions, s.termReports)
 

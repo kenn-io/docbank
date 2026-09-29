@@ -5,6 +5,7 @@ import (
 	"slices"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/internal/query"
 )
@@ -203,6 +204,62 @@ func TestQueryPopulationSavedCollapseStaysInsideOperand(t *testing.T) {
 	require.ElementsMatch(t, []int64{
 		fixture.nodes["alpha-beta"].ID, fixture.nodes["alpha-copy"].ID,
 	}, queryPopulationNodeIDs(members))
+}
+
+func TestQueryPopulationSavedCollapseAppliesPhotoVisibilityBeforeRanking(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	first, err := s.CreatePhotoOwner(t.Context(), "first")
+	require.NoError(t, err)
+	second, err := s.CreatePhotoOwner(t.Context(), "second")
+	require.NoError(t, err)
+	shared := fakeHash("saved-photo-shared")
+	firstNode, err := s.CreateFile(WithPhotoOwner(t.Context(), first.ID), s.RootID(), "shared-first.jpg", shared, 12, "image/jpeg")
+	require.NoError(t, err)
+	secondNode, err := s.CreateFile(WithPhotoOwner(t.Context(), second.ID), s.RootID(), "shared-second.jpg", shared, 12, "image/jpeg")
+	require.NoError(t, err)
+	_, err = s.CreateSavedQuery(t.Context(), "Collapsed shared photos", "", SavedQueryKindQuery,
+		[]byte(`{"syntax":"advanced","text":"name:shared","filters":{"collapse_duplicates":true}}`))
+	require.NoError(t, err)
+	value := queryPopulationQuery(t, `saved:"Collapsed shared photos"`, query.Filters{})
+	var members []queryPopulationMember
+	ownerCtx := WithPhotoOwner(t.Context(), second.ID)
+	err = s.withLexicalGenerationRead(t.Context(), func(q metadataQuerier, generation LexicalGeneration) error {
+		compiled, err := compileQuery(t.Context(), value, queryResolver{q: q})
+		if err != nil {
+			return err
+		}
+		visibilitySQL, visibilityArgs, err := photoNodeVisibilitySQL(ownerCtx, q)
+		if err != nil {
+			return err
+		}
+		population, err := matchedPopulationWithVisibility(compiled, generation.ID, nil,
+			compiledQueryFragment{sql: visibilitySQL, args: visibilityArgs})
+		if err != nil {
+			return err
+		}
+		statement, args, err := bindQueryPopulation(ownerCtx, q, population, CoverageSelection{}, generation.ID)
+		if err != nil {
+			return err
+		}
+		rows, err := q.QueryContext(t.Context(), statement, args...)
+		if err != nil {
+			return err
+		}
+		defer func() { _ = rows.Close() }()
+		for rows.Next() {
+			var nodeID int64
+			var versionID string
+			if err := rows.Scan(&nodeID, &versionID); err != nil {
+				return err
+			}
+			members = append(members, queryPopulationMember{NodeID: nodeID, ContentVersionID: versionID})
+		}
+		return rows.Err()
+	})
+	require.NoError(t, err)
+	require.Equal(t, []queryPopulationMember{{NodeID: secondNode.ID, ContentVersionID: secondNode.CurrentVersionID}}, members)
+	assert.NotEqual(t, firstNode.ID, members[0].NodeID)
 }
 
 func TestQueryPopulationSavedCollapseUsesOnlyLiveCurrentVersions(t *testing.T) {

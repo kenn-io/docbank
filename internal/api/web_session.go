@@ -557,6 +557,7 @@ func registerWebSession(
 	webURL string,
 	storeDB *store.Store,
 	sessions *webSessionRegistry,
+	g *gate,
 ) {
 	mux.HandleFunc("POST "+webSessionPath, func(w http.ResponseWriter, r *http.Request) {
 		if !enabled || webURL == "" {
@@ -588,7 +589,12 @@ func registerWebSession(
 					}
 					photoOwnerID = *settings.DefaultOwnerID
 				} else {
-					owner, ensureErr := storeDB.EnsureDefaultPhotoOwner(r.Context())
+					var owner store.PhotoOwner
+					ensureErr := g.mutate(func() error {
+						var err error
+						owner, err = storeDB.EnsureDefaultPhotoOwner(r.Context())
+						return err
+					})
 					if ensureErr == nil {
 						photoOwnerID = owner.ID
 					} else if !errors.Is(ensureErr, store.ErrAuditMutationUnsupported) {

@@ -530,9 +530,6 @@ func (s *Store) Move(
 		if err := photoSubtreeVisibilityCheckTx(ctx, tx, id); err != nil {
 			return err
 		}
-		if err := photoSubtreeVisibilityCheckTx(ctx, tx, newParentID); err != nil {
-			return err
-		}
 		var err error
 		active, err := auditAuthorityActiveTx(ctx, tx)
 		if err != nil {

@@ -150,7 +150,12 @@ func (service *Service) requestPrincipal(ctx context.Context) (string, error) {
 	}
 	if bound && !noPhotoOwner {
 		if ownerID == "" {
-			owner, ensureErr := service.catalog.EnsureDefaultPhotoOwner(ctx)
+			var owner store.PhotoOwner
+			ensureErr := service.gate.MutateContext(ctx, func() error {
+				var err error
+				owner, err = service.catalog.EnsureDefaultPhotoOwner(ctx)
+				return err
+			})
 			if ensureErr == nil {
 				ownerID = owner.ID
 			} else if !errors.Is(ensureErr, store.ErrAuditMutationUnsupported) {

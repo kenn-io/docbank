@@ -1,8 +1,11 @@
 package api_test
 
 import (
+	"bytes"
 	"encoding/json/v2"
 	"fmt"
+	"image"
+	"image/png"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -10,11 +13,16 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/go-pdf/fpdf"
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/daemonconn"
+	"go.kenn.io/docbank/internal/processing"
 	"go.kenn.io/docbank/internal/store"
 )
 
@@ -251,12 +259,77 @@ func TestPhotoVisibilityDerivedRoutes(t *testing.T) {
 	assert.Equal(t, http.StatusNotFound, response.StatusCode, body)
 	response, body = get(t, f.ts, "/api/v1/versions/"+f.firstNode.CurrentVersionID+"/content", f.secondHeaders)
 	assert.Equal(t, http.StatusNotFound, response.StatusCode, body)
+	sourceBytes := []byte("synthetic photo source")
+	sourceHash, sourceSize, err := f.s.Blobs.Write(bytes.NewReader(sourceBytes))
+	require.NoError(t, err)
+	pageNode, err := f.s.CreateFile(store.WithPhotoOwner(t.Context(), f.first.ID), f.s.RootID(), "derived.jpg", sourceHash, sourceSize, "image/jpeg")
+	require.NoError(t, err)
+	selected := document.PageSource{VersionID: pageNode.CurrentVersionID, SHA256: pageNode.BlobHash, Size: pageNode.Size}
+	pageJobID := uuid.New().String()
+	_, err = f.s.QueuePageJob(t.Context(), pageJobID, store.PageJobRequest{NodeID: pageNode.ID, Revision: pageNode.Revision, Source: selected, Pages: []int{1}, DPI: 72, RuntimeFingerprint: testHash("derived-page-runtime")})
+	require.NoError(t, err)
+	pageClaim, err := f.s.ClaimPageJob(t.Context())
+	require.NoError(t, err)
+	frame, err := document.NewPDFPageFrame(selected, 1, [4]float64{0, 0, 72, 72}, [4]float64{0, 0, 72, 72}, 0)
+	require.NoError(t, err)
+	require.NoError(t, f.s.PublishPageFrames(t.Context(), pageClaim, []document.PageFrameV1{frame}))
+	recipe := document.PageRecipeV1{Contract: document.PageImageContractV1, DPI: 72, Format: "png", RendererIdentity: document.PageRendererIdentity{Executable: "synthetic-renderer", Version: "1", Options: []string{"crop-visible"}}}
+	_, frameHash, err := document.MarshalPageFrameV1(frame)
+	require.NoError(t, err)
+	_, recipeHash, err := document.MarshalPageRecipeV1(recipe)
+	require.NoError(t, err)
+	var imageBytes bytes.Buffer
+	require.NoError(t, png.Encode(&imageBytes, image.NewRGBA(image.Rect(0, 0, 72, 72))))
+	imageHash, imageSize, err := f.s.Blobs.Write(bytes.NewReader(imageBytes.Bytes()))
+	require.NoError(t, err)
+	require.NoError(t, f.s.PublishPageImage(t.Context(), pageClaim, document.PageImageV1{Contract: document.PageImageContractV1, Source: selected, Page: 1, FrameSHA256: frameHash, RecipeSHA256: recipeHash, SHA256: imageHash, Size: imageSize, Width: 72, Height: 72}, recipe, &store.BlobPhysical{Encoding: "raw", StoredBytes: imageSize}))
+	require.NoError(t, f.s.FinishPageJob(t.Context(), pageClaim, store.PageJobCompleted, ""))
 	pageURL := fmt.Sprintf("/api/v1/pages/image?node_id=%d&revision=%d&version_id=%s&source_sha256=%s&source_size=%d&page=1&recipe_sha256=%s&frame_sha256=%s&image_sha256=%s",
-		f.firstNode.ID, f.firstNode.Revision, f.firstNode.CurrentVersionID, f.firstNode.BlobHash, f.firstNode.Size,
-		testHash("derived-recipe"), testHash("derived-frame"), testHash("derived-image"))
+		pageNode.ID, pageNode.Revision, pageNode.CurrentVersionID, pageNode.BlobHash, pageNode.Size, recipeHash, frameHash, imageHash)
+	response, body = get(t, f.ts, pageURL, f.firstHeaders)
+	assert.Equal(t, http.StatusOK, response.StatusCode, body)
 	response, body = get(t, f.ts, pageURL, f.secondHeaders)
 	assert.Equal(t, http.StatusNotFound, response.StatusCode, body)
-	response, body = get(t, f.ts, "/api/v1/email-pdfs/"+f.firstNode.CurrentVersionID+"/private/content", f.secondHeaders)
+
+	pdf := fpdf.New("P", "mm", "A4", "")
+	pdf.AddPage()
+	pdf.SetFont("Helvetica", "", 12)
+	pdf.Text(20, 20, "Synthetic matrix PDF")
+	var pdfBytes bytes.Buffer
+	require.NoError(t, pdf.Output(&pdfBytes))
+	var runtime *processing.EmailPDFRuntime
+	gate := api.NewOperationGate()
+	emailTS, emailS := newTestServer(t, func(d *api.Deps) {
+		runtime = &processing.EmailPDFRuntime{
+			Catalog: d.Store, Blobs: d.Blobs, Renderer: emailPDFTestRenderer(pdfBytes.Bytes()), Spool: t.TempDir(),
+			Recipe: document.EmailPDFRecipeV1{Contract: document.EmailPDFContract, RendererVersion: "synthetic", RendererSHA256: strings.Repeat("a", 64), WorkerSHA256: strings.Repeat("b", 64), BubblewrapSHA256: strings.Repeat("d", 64), FontsSHA256: strings.Repeat("c", 64), Paper: "A4"},
+		}
+		d.Gate = gate
+		d.RequestEmailPDF = runtime.Submit
+	})
+	emailOwner, err := emailS.CreatePhotoOwner(t.Context(), "Email matrix owner")
+	require.NoError(t, err)
+	emailHash, emailSize, err := emailS.Blobs.Write(strings.NewReader("Subject: Matrix\r\nContent-Type: text/plain\r\n\r\nbody"))
+	require.NoError(t, err)
+	emailNode, err := emailS.CreateFile(store.WithPhotoOwner(t.Context(), emailOwner.ID), emailS.RootID(), "matrix.eml", emailHash, emailSize, "image/jpeg")
+	require.NoError(t, err)
+	response, body = do(t, emailTS, http.MethodPost, "/api/v1/email-pdfs", map[string]string{"X-Docbank-Owner": emailOwner.ID}, document.EmailPDFRequest{VersionID: emailNode.CurrentVersionID, Paper: "A4"})
+	require.Equal(t, http.StatusOK, response.StatusCode, body)
+	var emailJob document.EmailPDFJob
+	require.NoError(t, json.Unmarshal([]byte(body), &emailJob))
+	worker, err := processing.NewRenditionWorker(processing.RenditionWorkerConfig{Catalog: emailS.Store, Blobs: emailS.Blobs, Runtime: runtime, Gate: gate, Owner: "matrix-email-pdf", LeaseDuration: time.Minute, IdleDelay: time.Millisecond})
+	require.NoError(t, err)
+	_, err = worker.RunJob(t.Context(), emailJob.JobID)
+	require.NoError(t, err)
+	emailReceipt, err := emailS.EmailPDFReceipt(t.Context(), emailNode.CurrentVersionID, emailJob.ProfileFingerprint)
+	require.NoError(t, err)
+	emailPath := "/api/v1/email-pdfs/" + emailNode.CurrentVersionID + "/" + emailJob.ProfileFingerprint + "/content"
+	response, body = get(t, emailTS, emailPath, map[string]string{"X-Docbank-Owner": emailOwner.ID})
+	assert.Equal(t, http.StatusOK, response.StatusCode, body)
+	assert.Equal(t, emailReceipt.Output.PDFSHA256, response.Header.Get(api.BlobHashHeader))
+	otherEmailOwner, err := emailS.CreatePhotoOwner(t.Context(), "Email matrix other")
+	require.NoError(t, err)
+	response, body = get(t, emailTS, emailPath, map[string]string{"X-Docbank-Owner": otherEmailOwner.ID})
 	assert.Equal(t, http.StatusNotFound, response.StatusCode, body)
 }
 
@@ -405,6 +478,9 @@ func TestPhotoOwnerMaintenanceGateRoute(t *testing.T) {
 	response, body := do(t, ts, http.MethodPost, "/api/v1/photos/owners", nil, map[string]string{"name": "blocked"})
 	assert.Equal(t, http.StatusServiceUnavailable, response.StatusCode, body)
 	assert.Contains(t, body, "maintenance_busy")
+	response, body = do(t, ts, http.MethodPost, "/api/daemon/web-session", nil, nil)
+	assert.Equal(t, http.StatusServiceUnavailable, response.StatusCode, body)
+	assert.Contains(t, body, "maintenance_busy")
 	close(release)
 	require.NoError(t, <-done)
 }
@@ -414,254 +490,257 @@ func TestPhotoVisibilityRouteCoverage(t *testing.T) {
 		d.ShutdownToken = "route-probe-token"
 		configureProcessingTestService(t)(d)
 	})
-	expected := map[string]struct{}{
-		"cancelWebDownload":                  {},
-		"prepareWebDownload":                 {},
-		"revokeWebSession":                   {},
-		"createWebSession":                   {},
-		"enableAudit":                        {},
-		"auditNodeHistory":                   {},
-		"previewAuditEnrollment":             {},
-		"auditScopeHistory":                  {},
-		"auditStatus":                        {},
-		"verifyAudit":                        {},
-		"initBackupRepository":               {},
-		"restoreBackupSnapshot":              {},
-		"streamBackupSnapshotRestore":        {},
-		"listBackupSnapshots":                {},
-		"createBackupSnapshot":               {},
-		"streamBackupSnapshotCreation":       {},
-		"verifyBackupRepository":             {},
-		"streamBackupRepositoryVerification": {},
-		"batchMove":                          {},
-		"changeBatchTags":                    {},
-		"previewBatchTags":                   {},
-		"reserveBatesRange":                  {},
-		"readBatesAllocation":                {},
-		"listBatesExports":                   {},
-		"publishBatesExport":                 {},
-		"findBatesExports":                   {},
-		"readBatesExport":                    {},
-		"downloadBatesExportContent":         {},
-		"downloadBatesExport":                {},
-		"listBatesNamespaces":                {},
-		"createBatesNamespace":               {},
-		"planBatesStamp":                     {},
-		"listCollections":                    {},
-		"getCollection":                      {},
-		"getCollectionLabel":                 {},
-		"setCollectionLabel":                 {},
-		"listCollectionMembers":              {},
-		"getCollectionQuality":               {},
-		"lookupContentReferences":            {},
-		"getDocumentProcessingCoverage":      {},
-		"runDerivativePurge":                 {},
-		"planDerivativePurge":                {},
-		"listDocuments":                      {},
-		"resolveDocumentSummaries":           {},
-		"listDuplicateContent":               {},
-		"getDuplicateContentByHash":          {},
-		"requestEmailDocumentProcessing":     {},
-		"publishEmailDocuments":              {},
-		"removeEmailDocumentPublication":     {},
-		"getEmailDocumentPublication":        {},
-		"listEmailDocumentRelations":         {},
-		"getEmailPDFJob":                     {},
-		"renderEmailPDF":                     {},
-		"listEmailPDFs":                      {},
-		"getEmailPDF":                        {},
-		"downloadEmailPDF":                   {},
-		"createExportJob":                    {},
-		"getExportJob":                       {},
-		"cancelExportJob":                    {},
-		"downloadExportArchive":              {},
-		"getExportJobEvents":                 {},
-		"createExportPlan":                   {},
-		"getExportPlan":                      {},
-		"getExportPlanPreview":               {},
-		"getExportOutputProblems":            {},
-		"createExportSource":                 {},
-		"getExportAttachmentPublications":    {},
-		"putExportChunk":                     {},
-		"getExportEmailPDFRecipes":           {},
-		"sealExportSource":                   {},
-		"readFormatCapabilities":             {},
-		"gc":                                 {},
-		"vaultInfo":                          {},
-		"ingest":                             {},
-		"preflightIngest":                    {},
-		"streamIngest":                       {},
-		"listJobs":                           {},
-		"getStorageOperation":                {},
-		"cancelStorageOperation":             {},
-		"registerMailboxArchive":             {},
-		"beginMailboxContainer":              {},
-		"abortMailboxContainer":              {},
-		"getMailboxContainer":                {},
-		"uploadMailboxChunk":                 {},
-		"previewMailboxContainer":            {},
-		"sealMailboxContainer":               {},
-		"listMailboxJobs":                    {},
-		"beginMailboxJob":                    {},
-		"getMailboxJob":                      {},
-		"cancelMailboxJob":                   {},
-		"mailboxEvents":                      {},
-		"mailboxOccurrences":                 {},
-		"resumeMailboxJob":                   {},
-		"transferMailboxEML":                 {},
-		"planMediaAcquisition":               {},
-		"grantMediaAcquisitionConsent":       {},
-		"revokeMediaAcquisitionConsent":      {},
-		"listMediaOccurrences":               {},
-		"declareMediaOccurrence":             {},
-		"revokeMediaOccurrence":              {},
-		"listMediaOrigins":                   {},
-		"listMediaSources":                   {},
-		"submitMediaSource":                  {},
-		"getMediaSource":                     {},
-		"importMediaArtifact":                {},
-		"retryMediaSource":                   {},
-		"createNode":                         {},
-		"getNode":                            {},
-		"moveNode":                           {},
-		"listChildren":                       {},
-		"getNodeContent":                     {},
-		"replaceNodeContent":                 {},
-		"listNodeProvenance":                 {},
-		"appendNodeProvenance":               {},
-		"restoreNode":                        {},
-		"revertNodeContent":                  {},
-		"listNodeTags":                       {},
-		"unassignTag":                        {},
-		"assignTag":                          {},
-		"trashNode":                          {},
-		"verifyNodeContent":                  {},
-		"listContentVersions":                {},
-		"pruneNodeContentVersions":           {},
-		"listPackages":                       {},
-		"getPackage":                         {},
-		"assignPackageCustodian":             {},
-		"listPackageCustodians":              {},
-		"listPackageMembers":                 {},
-		"getPackageRecord":                   {},
-		"listPackageTimelineInputs":          {},
-		"beginPackageContainer":              {},
-		"abortPackageContainer":              {},
-		"getPackageContainer":                {},
-		"uploadPackageChunk":                 {},
-		"preflightPackageContainer":          {},
-		"sealPackageContainer":               {},
-		"resolvePackageCustodian":            {},
-		"listPackageFieldCatalog":            {},
-		"createPackageImport":                {},
-		"readPackageImport":                  {},
-		"cancelPackageImport":                {},
-		"listPackageLabelCandidates":         {},
-		"createPackagePreflight":             {},
-		"readPackagePreflight":               {},
-		"readPackagePreflightDiagnostics":    {},
-		"readPageImage":                      {},
-		"pageInventory":                      {},
-		"createPageRenderJob":                {},
-		"getPageRenderJob":                   {},
-		"cancelPageRenderJob":                {},
-		"resolvePath":                        {},
-		"mkdirPath":                          {},
-		"movePath":                           {},
-		"unassignTagPath":                    {},
-		"assignTagPath":                      {},
-		"trashPath":                          {},
-		"listPeople":                         {},
-		"getPeopleCoverage":                  {},
-		"rebuildDocumentPeople":              {},
-		"getPeopleRebuild":                   {},
-		"createPhotoAsset":                   {},
-		"getPhotoAsset":                      {},
-		"setPhotoDisplay":                    {},
-		"excludePhotoAsset":                  {},
-		"attachPhotoFile":                    {},
-		"detachPhotoFile":                    {},
-		"getPhotoAssetByNode":                {},
-		"promotePhotoNode":                   {},
-		"listPhotoOwners":                    {},
-		"createPhotoOwner":                   {},
-		"removePhotoOwner":                   {},
-		"renamePhotoOwner":                   {},
-		"getPhotoSettings":                   {},
-		"setPhotoSettings":                   {},
-		"grantDocumentProcessingConsent":     {},
-		"revokeDocumentProcessingConsent":    {},
-		"grantProcessingConsent":             {},
-		"revokeProcessingConsent":            {},
-		"startDocumentProcessing":            {},
-		"getDocumentProcessingJob":           {},
-		"planDocumentProcessing":             {},
-		"listDocumentProcessingProfiles":     {},
-		"resolveDocumentSourceFence":         {},
-		"previewQueryHighlights":             {},
-		"parseQuery":                         {},
-		"readDocumentRenditionBySelector":    {},
-		"resolveRenditionText":               {},
-		"readRenditionText":                  {},
-		"readDocumentRenditionWindow":        {},
-		"getDocumentRendition":               {},
-		"listSavedQueries":                   {},
-		"createSavedQuery":                   {},
-		"deleteSavedQuery":                   {},
-		"getSavedQuery":                      {},
-		"updateSavedQuery":                   {},
-		"runSavedQuery":                      {},
-		"search":                             {},
-		"searchDocuments":                    {},
-		"listTermReportHistory":              {},
-		"createTermReport":                   {},
-		"getTermReport":                      {},
-		"downloadTermReportbundle":           {},
-		"downloadTermReportcsv":              {},
-		"getTermReportDates":                 {},
-		"issueTermReportDownload":            {},
-		"reviseTermReport":                   {},
-		"findSimilarDocuments":               {},
-		"validateDocumentSearch":             {},
-		"storageStatus":                      {},
-		"startStorageEvacuation":             {},
-		"previewStorageEvacuation":           {},
-		"storagePack":                        {},
-		"startStoragePlacement":              {},
-		"previewStoragePlacement":            {},
-		"storageRepack":                      {},
-		"startStorageRepair":                 {},
-		"previewStorageRepair":               {},
-		"startStorageSalvage":                {},
-		"previewStorageSalvage":              {},
-		"listBlobStores":                     {},
-		"registerBlobStore":                  {},
-		"previewBlobStoreRegistration":       {},
-		"unregisterBlobStore":                {},
-		"detachBlobStore":                    {},
-		"listTags":                           {},
-		"createTag":                          {},
-		"resolveTagByName":                   {},
-		"deleteTag":                          {},
-		"getTag":                             {},
-		"renameTag":                          {},
-		"listTagNodes":                       {},
-		"readTimelineCoverage":               {},
-		"createTimelineRebuild":              {},
-		"readTimelineRebuild":                {},
-		"listTrash":                          {},
-		"emptyTrash":                         {},
-		"uploadFile":                         {},
-		"verify":                             {},
-		"getContentVersion":                  {},
-		"getContentVersionBytes":             {},
-		"getEmailMetadata":                   {},
-		"ensureEmailMetadata":                {},
-		"getEmailMetadataGeneration":         {},
-		"getEmailPart":                       {},
-		"listWatchedInboxes":                 {},
-		"createWorkspaceQuery":               {},
-		"readWorkspaceQueryPage":             {},
+	expected := map[string]string{
+		"cancelWebDownload":                  "TestWebSessionPhotoOwner and TestPhotoOwnerRoutes",
+		"prepareWebDownload":                 "TestWebSessionPhotoOwner and TestPhotoOwnerRoutes",
+		"revokeWebSession":                   "TestWebSessionPhotoOwner and TestPhotoOwnerRoutes",
+		"createWebSession":                   "TestWebSessionPhotoOwner and TestPhotoOwnerRoutes",
+		"enableAudit":                        "TestPhotoVisibilityHistoryRoutes",
+		"auditNodeHistory":                   "TestPhotoVisibilityHistoryRoutes",
+		"previewAuditEnrollment":             "TestPhotoVisibilityHistoryRoutes",
+		"auditScopeHistory":                  "TestPhotoVisibilityHistoryRoutes",
+		"auditStatus":                        "TestPhotoVisibilityHistoryRoutes",
+		"verifyAudit":                        "TestPhotoVisibilityHistoryRoutes",
+		"initBackupRepository":               "master-only whole-vault capability; no photo-specific source is selected",
+		"restoreBackupSnapshot":              "master-only whole-vault capability; no photo-specific source is selected",
+		"streamBackupSnapshotRestore":        "master-only whole-vault capability; no photo-specific source is selected",
+		"listBackupSnapshots":                "master-only whole-vault capability; no photo-specific source is selected",
+		"createBackupSnapshot":               "master-only whole-vault capability; no photo-specific source is selected",
+		"streamBackupSnapshotCreation":       "master-only whole-vault capability; no photo-specific source is selected",
+		"verifyBackupRepository":             "master-only whole-vault capability; no photo-specific source is selected",
+		"streamBackupRepositoryVerification": "master-only whole-vault capability; no photo-specific source is selected",
+		"batchMove":                          "TestPhotoVisibilityMutationAtomicity",
+		"changeBatchTags":                    "TestPhotoVisibilityMutationAtomicity",
+		"previewBatchTags":                   "TestPhotoVisibilityMutationAtomicity",
+		"reserveBatesRange":                  "TestPhotoVisibilityBatesArtifactIDs",
+		"readBatesAllocation":                "TestPhotoVisibilityBatesArtifactIDs",
+		"listBatesExports":                   "TestPhotoVisibilityBatesArtifactIDs",
+		"publishBatesExport":                 "TestPhotoVisibilityBatesArtifactIDs",
+		"findBatesExports":                   "TestPhotoVisibilityBatesArtifactIDs",
+		"readBatesExport":                    "TestPhotoVisibilityBatesArtifactIDs",
+		"downloadBatesExportContent":         "TestPhotoVisibilityBatesArtifactIDs",
+		"downloadBatesExport":                "TestPhotoVisibilityBatesArtifactIDs",
+		"listBatesNamespaces":                "TestPhotoVisibilityBatesArtifactIDs",
+		"createBatesNamespace":               "TestPhotoVisibilityBatesArtifactIDs",
+		"planBatesStamp":                     "TestPhotoVisibilityBatesArtifactIDs",
+		"listCollections":                    "TestPhotoVisibilityReadRoutes and TestPhotoVisibilityPopulations",
+		"getCollection":                      "TestPhotoVisibilityReadRoutes and TestPhotoVisibilityPopulations",
+		"getCollectionLabel":                 "TestPhotoVisibilityReadRoutes and TestPhotoVisibilityPopulations",
+		"setCollectionLabel":                 "TestPhotoVisibilityReadRoutes and TestPhotoVisibilityPopulations",
+		"listCollectionMembers":              "TestPhotoVisibilityReadRoutes and TestPhotoVisibilityPopulations",
+		"getCollectionQuality":               "TestPhotoVisibilityReadRoutes and TestPhotoVisibilityPopulations",
+		"lookupContentReferences":            "TestPhotoVisibilityReadRoutes and TestPhotoVisibilityPopulations",
+		"getDocumentProcessingCoverage":      "TestPhotoVisibilityReadRoutes and TestPhotoVisibilityPopulations",
+		"runDerivativePurge":                 "TestPhotoVisibilityReadRoutes and TestPhotoVisibilityPopulations",
+		"planDerivativePurge":                "TestPhotoVisibilityReadRoutes and TestPhotoVisibilityPopulations",
+		"listDocuments":                      "TestPhotoVisibilityReadRoutes and TestPhotoVisibilityPopulations",
+		"resolveDocumentSummaries":           "TestPhotoVisibilityReadRoutes and TestPhotoVisibilityPopulations",
+		"listDuplicateContent":               "TestPhotoVisibilityReadRoutes and TestPhotoVisibilityPopulations",
+		"getDuplicateContentByHash":          "TestPhotoVisibilityReadRoutes and TestPhotoVisibilityPopulations",
+		"requestEmailDocumentProcessing":     "TestPhotoVisibilityDerivedRoutes",
+		"publishEmailDocuments":              "TestPhotoVisibilityDerivedRoutes",
+		"removeEmailDocumentPublication":     "TestPhotoVisibilityDerivedRoutes",
+		"getEmailDocumentPublication":        "TestPhotoVisibilityDerivedRoutes",
+		"listEmailDocumentRelations":         "TestPhotoVisibilityDerivedRoutes",
+		"getEmailPDFJob":                     "TestPhotoVisibilityDerivedRoutes",
+		"renderEmailPDF":                     "TestPhotoVisibilityDerivedRoutes",
+		"listEmailPDFs":                      "TestPhotoVisibilityDerivedRoutes",
+		"getEmailPDF":                        "TestPhotoVisibilityDerivedRoutes",
+		"downloadEmailPDF":                   "TestPhotoVisibilityDerivedRoutes",
+		"createExportJob":                    "TestPhotoVisibilityExports",
+		"getExportJob":                       "TestPhotoVisibilityExports",
+		"cancelExportJob":                    "TestPhotoVisibilityExports",
+		"downloadExportArchive":              "TestPhotoVisibilityExports",
+		"getExportJobEvents":                 "TestPhotoVisibilityExports",
+		"createExportPlan":                   "TestPhotoVisibilityExports",
+		"getExportPlan":                      "TestPhotoVisibilityExports",
+		"getExportPlanPreview":               "TestPhotoVisibilityExports",
+		"getExportOutputProblems":            "TestPhotoVisibilityExports",
+		"createExportSource":                 "TestPhotoVisibilityExports",
+		"getExportAttachmentPublications":    "TestPhotoVisibilityExports",
+		"putExportChunk":                     "TestPhotoVisibilityExports",
+		"getExportEmailPDFRecipes":           "TestPhotoVisibilityExports",
+		"sealExportSource":                   "TestPhotoVisibilityExports",
+		"readFormatCapabilities":             "master-only whole-vault capability; no photo-specific source is selected",
+		"gc":                                 "master-only whole-vault capability; no photo-specific source is selected",
+		"vaultInfo":                          "master-only whole-vault capability; no photo-specific source is selected",
+		"ingest":                             "ingest and mailbox handlers do not return an existing photo source",
+		"preflightIngest":                    "ingest and mailbox handlers do not return an existing photo source",
+		"streamIngest":                       "ingest and mailbox handlers do not return an existing photo source",
+		"listJobs":                           "master-only whole-vault capability; no photo-specific source is selected",
+		"getStorageOperation":                "master-only whole-vault capability; no photo-specific source is selected",
+		"cancelStorageOperation":             "master-only whole-vault capability; no photo-specific source is selected",
+		"registerMailboxArchive":             "ingest and mailbox handlers do not return an existing photo source",
+		"beginMailboxContainer":              "ingest and mailbox handlers do not return an existing photo source",
+		"abortMailboxContainer":              "ingest and mailbox handlers do not return an existing photo source",
+		"getMailboxContainer":                "ingest and mailbox handlers do not return an existing photo source",
+		"uploadMailboxChunk":                 "ingest and mailbox handlers do not return an existing photo source",
+		"previewMailboxContainer":            "ingest and mailbox handlers do not return an existing photo source",
+		"sealMailboxContainer":               "ingest and mailbox handlers do not return an existing photo source",
+		"listMailboxJobs":                    "ingest and mailbox handlers do not return an existing photo source",
+		"beginMailboxJob":                    "ingest and mailbox handlers do not return an existing photo source",
+		"getMailboxJob":                      "ingest and mailbox handlers do not return an existing photo source",
+		"cancelMailboxJob":                   "ingest and mailbox handlers do not return an existing photo source",
+		"mailboxEvents":                      "ingest and mailbox handlers do not return an existing photo source",
+		"mailboxOccurrences":                 "ingest and mailbox handlers do not return an existing photo source",
+		"resumeMailboxJob":                   "ingest and mailbox handlers do not return an existing photo source",
+		"transferMailboxEML":                 "ingest and mailbox handlers do not return an existing photo source",
+		"planMediaAcquisition":               "TestProcessingPhotoOwnerConsent",
+		"grantMediaAcquisitionConsent":       "TestProcessingPhotoOwnerConsent",
+		"revokeMediaAcquisitionConsent":      "TestProcessingPhotoOwnerConsent",
+		"listMediaOccurrences":               "TestProcessingPhotoOwnerConsent",
+		"declareMediaOccurrence":             "TestProcessingPhotoOwnerConsent",
+		"revokeMediaOccurrence":              "TestProcessingPhotoOwnerConsent",
+		"listMediaOrigins":                   "TestProcessingPhotoOwnerConsent",
+		"listMediaSources":                   "TestProcessingPhotoOwnerConsent",
+		"submitMediaSource":                  "TestProcessingPhotoOwnerConsent",
+		"getMediaSource":                     "TestProcessingPhotoOwnerConsent",
+		"importMediaArtifact":                "TestProcessingPhotoOwnerConsent",
+		"retryMediaSource":                   "TestProcessingPhotoOwnerConsent",
+		"createNode":                         "TestPhotoVisibilityHistoryRoutes",
+		"getNode":                            "TestPhotoVisibilityReadRoutes and TestPhotoVisibilityPopulations",
+		"moveNode":                           "TestPhotoVisibilityMutationAtomicity",
+		"listChildren":                       "TestPhotoVisibilityReadRoutes and TestPhotoVisibilityPopulations",
+		"getNodeContent":                     "TestPhotoVisibilityReadRoutes and TestPhotoVisibilityPopulations",
+		"replaceNodeContent":                 "TestPhotoVisibilityMutationAtomicity",
+		"listNodeProvenance":                 "TestPhotoVisibilityHistoryRoutes",
+		"appendNodeProvenance":               "TestPhotoVisibilityHistoryRoutes",
+		"restoreNode":                        "TestPhotoVisibilityMutationAtomicity",
+		"revertNodeContent":                  "TestPhotoVisibilityMutationAtomicity",
+		"listNodeTags":                       "TestPhotoVisibilityReadRoutes and TestPhotoVisibilityPopulations",
+		"unassignTag":                        "TestPhotoVisibilityMutationAtomicity",
+		"assignTag":                          "TestPhotoVisibilityMutationAtomicity",
+		"trashNode":                          "TestPhotoVisibilityMutationAtomicity",
+		"verifyNodeContent":                  "TestPhotoVisibilityHistoryRoutes",
+		"listContentVersions":                "TestPhotoVisibilityReadRoutes and TestPhotoVisibilityPopulations",
+		"pruneNodeContentVersions":           "TestPhotoVisibilityHistoryRoutes",
+		"listPackages":                       "package member visibility fixtures",
+		"getPackage":                         "package member visibility fixtures",
+		"assignPackageCustodian":             "package member visibility fixtures",
+		"listPackageCustodians":              "package member visibility fixtures",
+		"listPackageMembers":                 "package member visibility fixtures",
+		"getPackageRecord":                   "package member visibility fixtures",
+		"listPackageTimelineInputs":          "package member visibility fixtures",
+		"beginPackageContainer":              "package member visibility fixtures",
+		"abortPackageContainer":              "package member visibility fixtures",
+		"getPackageContainer":                "package member visibility fixtures",
+		"uploadPackageChunk":                 "package member visibility fixtures",
+		"preflightPackageContainer":          "package member visibility fixtures",
+		"sealPackageContainer":               "package member visibility fixtures",
+		"resolvePackageCustodian":            "package member visibility fixtures",
+		"listPackageFieldCatalog":            "package member visibility fixtures",
+		"createPackageImport":                "package member visibility fixtures",
+		"readPackageImport":                  "package member visibility fixtures",
+		"cancelPackageImport":                "package member visibility fixtures",
+		"listPackageLabelCandidates":         "package member visibility fixtures",
+		"createPackagePreflight":             "package member visibility fixtures",
+		"readPackagePreflight":               "package member visibility fixtures",
+		"readPackagePreflightDiagnostics":    "package member visibility fixtures",
+		"readPageImage":                      "TestPhotoVisibilityDerivedRoutes",
+		"pageInventory":                      "TestPhotoVisibilityDerivedRoutes",
+		"createPageRenderJob":                "TestPhotoVisibilityDerivedRoutes",
+		"getPageRenderJob":                   "TestPhotoVisibilityDerivedRoutes",
+		"cancelPageRenderJob":                "TestPhotoVisibilityDerivedRoutes",
+		"resolvePath":                        "TestPhotoVisibilityReadRoutes and TestPhotoVisibilityPopulations",
+		"mkdirPath":                          "TestPhotoVisibilityMutationAtomicity",
+		"movePath":                           "TestPhotoVisibilityMutationAtomicity",
+		"unassignTagPath":                    "TestPhotoVisibilityMutationAtomicity",
+		"assignTagPath":                      "TestPhotoVisibilityMutationAtomicity",
+		"trashPath":                          "TestPhotoVisibilityMutationAtomicity",
+		"listPeople":                         "TestPhotoVisibilityReadRoutes and TestPhotoVisibilityPopulations",
+		"getPeopleCoverage":                  "TestPhotoVisibilityReadRoutes and TestPhotoVisibilityPopulations",
+		"rebuildDocumentPeople":              "TestPhotoVisibilityReadRoutes and TestPhotoVisibilityPopulations",
+		"getPeopleRebuild":                   "TestPhotoVisibilityReadRoutes and TestPhotoVisibilityPopulations",
+		"createPhotoAsset":                   "TestPhotoOwnerRoutes",
+		"getPhotoAsset":                      "TestPhotoOwnerRoutes",
+		"setPhotoDisplay":                    "TestPhotoOwnerRoutes",
+		"excludePhotoAsset":                  "TestPhotoOwnerRoutes",
+		"attachPhotoFile":                    "TestPhotoOwnerRoutes",
+		"detachPhotoFile":                    "TestPhotoOwnerRoutes",
+		"getPhotoAssetByNode":                "TestPhotoOwnerRoutes",
+		"promotePhotoNode":                   "TestPhotoOwnerRoutes",
+		"listPhotoOwners":                    "TestWebSessionPhotoOwner and TestPhotoOwnerRoutes",
+		"createPhotoOwner":                   "TestWebSessionPhotoOwner and TestPhotoOwnerRoutes",
+		"removePhotoOwner":                   "TestWebSessionPhotoOwner and TestPhotoOwnerRoutes",
+		"renamePhotoOwner":                   "TestWebSessionPhotoOwner and TestPhotoOwnerRoutes",
+		"getPhotoSettings":                   "TestWebSessionPhotoOwner and TestPhotoOwnerRoutes",
+		"setPhotoSettings":                   "TestWebSessionPhotoOwner and TestPhotoOwnerRoutes",
+		"grantDocumentProcessingConsent":     "TestProcessingPhotoOwnerConsent",
+		"revokeDocumentProcessingConsent":    "TestProcessingPhotoOwnerConsent",
+		"grantProcessingConsent":             "TestProcessingPhotoOwnerConsent",
+		"revokeProcessingConsent":            "TestProcessingPhotoOwnerConsent",
+		"startDocumentProcessing":            "TestProcessingPhotoOwnerConsent",
+		"getDocumentProcessingJob":           "TestProcessingPhotoOwnerConsent",
+		"planDocumentProcessing":             "TestProcessingPhotoOwnerConsent",
+		"listDocumentProcessingProfiles":     "TestProcessingPhotoOwnerConsent",
+		"resolveDocumentSourceFence":         "TestProcessingPhotoOwnerConsent",
+		"previewQueryHighlights":             "TestPhotoVisibilityDerivedRoutes",
+		"parseQuery":                         "TestPhotoVisibilityDerivedRoutes",
+		"readDocumentRenditionBySelector":    "TestPhotoVisibilityDerivedRoutes",
+		"resolveRenditionText":               "TestPhotoVisibilityDerivedRoutes",
+		"readRenditionText":                  "TestPhotoVisibilityDerivedRoutes",
+		"readDocumentRenditionWindow":        "TestPhotoVisibilityDerivedRoutes",
+		"getDocumentRendition":               "TestPhotoVisibilityDerivedRoutes",
+		"listSavedQueries":                   "TestPhotoVisibilityCachedResources and TestPhotoVisibilityAggregateRoutes",
+		"createSavedQuery":                   "TestPhotoVisibilityCachedResources and TestPhotoVisibilityAggregateRoutes",
+		"deleteSavedQuery":                   "TestPhotoVisibilityCachedResources and TestPhotoVisibilityAggregateRoutes",
+		"getSavedQuery":                      "TestPhotoVisibilityCachedResources and TestPhotoVisibilityAggregateRoutes",
+		"updateSavedQuery":                   "TestPhotoVisibilityCachedResources and TestPhotoVisibilityAggregateRoutes",
+		"runSavedQuery":                      "TestPhotoVisibilityCachedResources and TestPhotoVisibilityAggregateRoutes",
+		"search":                             "TestPhotoVisibilityCachedResources and TestPhotoVisibilityAggregateRoutes",
+		"searchDocuments":                    "TestPhotoVisibilityCachedResources and TestPhotoVisibilityAggregateRoutes",
+		"listTermReportHistory":              "TestPhotoVisibilityHistoryRoutes",
+		"createTermReport":                   "TestPhotoVisibilityHistoryRoutes",
+		"getTermReport":                      "TestPhotoVisibilityHistoryRoutes",
+		"downloadTermReportbundle":           "TestPhotoVisibilityHistoryRoutes",
+		"downloadTermReportcsv":              "TestPhotoVisibilityHistoryRoutes",
+		"getTermReportDates":                 "TestPhotoVisibilityHistoryRoutes",
+		"issueTermReportDownload":            "TestPhotoVisibilityHistoryRoutes",
+		"reviseTermReport":                   "TestPhotoVisibilityHistoryRoutes",
+		"findSimilarDocuments":               "TestPhotoVisibilityCachedResources and TestPhotoVisibilityAggregateRoutes",
+		"validateDocumentSearch":             "TestPhotoVisibilityCachedResources and TestPhotoVisibilityAggregateRoutes",
+		"storageStatus":                      "master-only whole-vault capability; no photo-specific source is selected",
+		"startStorageEvacuation":             "master-only whole-vault capability; no photo-specific source is selected",
+		"previewStorageEvacuation":           "master-only whole-vault capability; no photo-specific source is selected",
+		"storagePack":                        "master-only whole-vault capability; no photo-specific source is selected",
+		"startStoragePlacement":              "master-only whole-vault capability; no photo-specific source is selected",
+		"previewStoragePlacement":            "master-only whole-vault capability; no photo-specific source is selected",
+		"storageRepack":                      "master-only whole-vault capability; no photo-specific source is selected",
+		"startStorageRepair":                 "master-only whole-vault capability; no photo-specific source is selected",
+		"previewStorageRepair":               "master-only whole-vault capability; no photo-specific source is selected",
+		"startStorageSalvage":                "master-only whole-vault capability; no photo-specific source is selected",
+		"previewStorageSalvage":              "master-only whole-vault capability; no photo-specific source is selected",
+		"listBlobStores":                     "master-only whole-vault capability; no photo-specific source is selected",
+		"registerBlobStore":                  "master-only whole-vault capability; no photo-specific source is selected",
+		"previewBlobStoreRegistration":       "master-only whole-vault capability; no photo-specific source is selected",
+		"unregisterBlobStore":                "master-only whole-vault capability; no photo-specific source is selected",
+		"detachBlobStore":                    "master-only whole-vault capability; no photo-specific source is selected",
+		"listTags":                           "TestPhotoVisibilityReadRoutes and TestPhotoVisibilityPopulations",
+		"createTag":                          "TestPhotoVisibilityReadRoutes and TestPhotoVisibilityPopulations",
+		"resolveTagByName":                   "TestPhotoVisibilityReadRoutes and TestPhotoVisibilityPopulations",
+		"deleteTag":                          "TestPhotoVisibilityReadRoutes and TestPhotoVisibilityPopulations",
+		"getTag":                             "TestPhotoVisibilityReadRoutes and TestPhotoVisibilityPopulations",
+		"renameTag":                          "TestPhotoVisibilityReadRoutes and TestPhotoVisibilityPopulations",
+		"listTagNodes":                       "TestPhotoVisibilityReadRoutes and TestPhotoVisibilityPopulations",
+		"readTimelineCoverage":               "TestPhotoVisibilityHistoryRoutes",
+		"createTimelineRebuild":              "TestPhotoVisibilityHistoryRoutes",
+		"readTimelineRebuild":                "TestPhotoVisibilityHistoryRoutes",
+		"listTrash":                          "TestPhotoVisibilityReadRoutes and TestPhotoVisibilityPopulations",
+		"emptyTrash":                         "TestPhotoVisibilityMutationAtomicity",
+		"uploadFile":                         "ingest and mailbox handlers do not return an existing photo source",
+		"verify":                             "TestPhotoVisibilityMutationAtomicity",
+		"getContentVersion":                  "TestPhotoVisibilityReadRoutes and TestPhotoVisibilityPopulations",
+		"getContentVersionBytes":             "TestPhotoVisibilityReadRoutes and TestPhotoVisibilityPopulations",
+		"getEmailMetadata":                   "TestPhotoVisibilityReadRoutes and TestPhotoVisibilityPopulations",
+		"ensureEmailMetadata":                "TestPhotoVisibilityReadRoutes and TestPhotoVisibilityPopulations",
+		"getEmailMetadataGeneration":         "TestPhotoVisibilityReadRoutes and TestPhotoVisibilityPopulations",
+		"getEmailPart":                       "TestPhotoVisibilityReadRoutes and TestPhotoVisibilityPopulations",
+		"listWatchedInboxes":                 "TestPhotoVisibilityReadRoutes and TestPhotoVisibilityPopulations",
+		"createWorkspaceQuery":               "TestPhotoVisibilityCachedResources and TestPhotoVisibilityAggregateRoutes",
+		"readWorkspaceQueryPage":             "TestPhotoVisibilityCachedResources and TestPhotoVisibilityAggregateRoutes",
+	}
+	for operationID, disposition := range expected {
+		require.NotEmpty(t, disposition, operationID+" needs a photo visibility disposition")
 	}
 	seen := make(map[string]string, len(expected))
 	inspect := func(method, path, operationID string) {

@@ -2,11 +2,15 @@ package store
 
 import (
 	"context"
+	"database/sql"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/document/bundle"
+	"go.kenn.io/docbank/internal/canonical"
 	"go.kenn.io/docbank/internal/query"
 	"uuid"
 )
@@ -112,6 +116,20 @@ func TestPhotoVisibilityDisplay(t *testing.T) {
 	require.NoError(t, err)
 	_, err = f.s.PhotoAssetByID(WithPhotoOwner(f.ctx, f.second.ID), asset.ID)
 	require.ErrorIs(t, err, ErrNotFound)
+	raw, err := f.s.CreateFile(WithPhotoOwner(f.ctx, f.first.ID), f.s.RootID(), "capture.cr2", fakeHash("display-raw"), 14, "application/octet-stream")
+	require.NoError(t, err)
+	asset, err = f.s.PromotePhotoNode(WithPhotoOwner(f.ctx, f.first.ID), raw.ID, nil, PhotoRoleRAW, "")
+	require.NoError(t, err)
+	sidecar, err := f.s.CreateFile(WithPhotoOwner(f.ctx, f.first.ID), f.s.RootID(), "capture.xmp", fakeHash("display-sidecar"), 15, "application/octet-stream")
+	require.NoError(t, err)
+	rawFile := fileByRole(asset.Files, PhotoRoleRAW)
+	asset, err = f.s.AttachPhotoFile(WithPhotoOwner(f.ctx, f.first.ID), asset.ID, asset.Revision, sidecar.ID, PhotoRoleSidecar, &rawFile.ID)
+	require.NoError(t, err)
+	asset, err = f.s.SetPhotoDisplay(WithPhotoOwner(f.ctx, f.first.ID), asset.ID, asset.Revision, &rawFile.ID)
+	require.NoError(t, err)
+	assert.Len(t, asset.Files, 2)
+	assert.Equal(t, rawFile.ID, *asset.DisplayOverrideFileID)
+	assert.Equal(t, rawFile.ID, *asset.DisplayFileID)
 }
 
 func TestPhotoVisibilityNodeStates(t *testing.T) {
@@ -137,12 +155,21 @@ func TestPhotoVisibilityNodeStates(t *testing.T) {
 		require.NoError(t, f.s.CheckPhotoVisibilityForNode(WithPhotoOwner(f.ctx, f.first.ID), child.ID))
 	})
 	t.Run("deleted", func(t *testing.T) {
-		_, err := f.s.PhotoAssetForNode(WithPhotoOwner(f.ctx, f.first.ID), f.firstNode.ID)
+		deleted, err := f.s.CreateFile(WithPhotoOwner(f.ctx, f.first.ID), f.s.RootID(), "deleted.jpg", fakeHash("deleted-photo"), 16, "image/jpeg")
 		require.NoError(t, err)
-		_, err = f.s.db.Exec(`DELETE FROM photo_files WHERE node_id=?`, f.firstNode.ID)
+		deletedAsset, err := f.s.PhotoAssetForNode(WithPhotoOwner(f.ctx, f.first.ID), deleted.ID)
 		require.NoError(t, err)
-		_, err = f.s.PhotoAssetForNode(WithPhotoOwner(f.ctx, f.first.ID), f.firstNode.ID)
+		_, _, err = f.s.Trash(WithPhotoOwner(f.ctx, f.first.ID), deleted.ID, deleted.Revision)
+		require.NoError(t, err)
+		_, err = f.s.TrashEmpty(f.ctx, 0, true)
+		require.NoError(t, err)
+		_, err = f.s.NodeByID(WithPhotoOwner(f.ctx, f.first.ID), deleted.ID)
 		require.ErrorIs(t, err, ErrNotFound)
+		_, err = f.s.ContentVersionByID(WithPhotoOwner(f.ctx, f.first.ID), deleted.CurrentVersionID)
+		require.ErrorIs(t, err, ErrNotFound)
+		asset, err := f.s.PhotoAssetByID(WithPhotoOwner(f.ctx, f.first.ID), deletedAsset.ID)
+		require.NoError(t, err)
+		assert.Empty(t, asset.Files)
 	})
 }
 
@@ -154,17 +181,33 @@ func TestPhotoVisibilityContentVersions(t *testing.T) {
 	require.NoError(t, f.s.CheckPhotoVisibilityForVersion(WithPhotoOwner(f.ctx, f.first.ID), version.ID))
 	require.ErrorIs(t, f.s.CheckPhotoVisibilityForVersion(WithPhotoOwner(f.ctx, f.second.ID), version.ID), ErrNotFound)
 	sharedHash := fakeHash("abc123")
-	shared, err := f.s.CreateFile(WithPhotoOwner(f.ctx, f.second.ID), f.s.RootID(), "shared.jpg", sharedHash, 17, "image/jpeg")
+	firstShared, err := f.s.CreateFile(WithPhotoOwner(f.ctx, f.first.ID), f.s.RootID(), "shared-first.jpg", sharedHash, 17, "image/jpeg")
+	require.NoError(t, err)
+	secondShared, err := f.s.CreateFile(WithPhotoOwner(f.ctx, f.second.ID), f.s.RootID(), "shared-second.jpg", sharedHash, 17, "image/jpeg")
 	require.NoError(t, err)
 	references, total, err := f.s.ContentReferencesByHash(WithPhotoOwner(f.ctx, f.first.ID), sharedHash, 20, 0)
 	require.NoError(t, err)
-	assert.Zero(t, total)
-	assert.Empty(t, references)
+	assert.Equal(t, 1, total)
+	require.Len(t, references, 1)
+	assert.Equal(t, firstShared.ID, references[0].Node.ID)
 	references, total, err = f.s.ContentReferencesByHash(WithPhotoOwner(f.ctx, f.second.ID), sharedHash, 20, 0)
 	require.NoError(t, err)
 	assert.Equal(t, 1, total)
 	require.Len(t, references, 1)
-	assert.Equal(t, shared.ID, references[0].Node.ID)
+	assert.Equal(t, secondShared.ID, references[0].Node.ID)
+	historicalID := firstShared.CurrentVersionID
+	updated, _, err := f.s.ReplaceContent(WithPhotoOwner(f.ctx, f.first.ID), firstShared.ID, firstShared.Revision, fakeHash("historical-photo"), 18, "image/jpeg")
+	require.NoError(t, err)
+	require.NoError(t, f.s.CheckPhotoVisibilityForVersion(WithPhotoOwner(f.ctx, f.first.ID), historicalID))
+	require.ErrorIs(t, f.s.CheckPhotoVisibilityForVersion(WithPhotoOwner(f.ctx, f.second.ID), historicalID), ErrNotFound)
+	versions, total, err := f.s.ContentVersions(WithPhotoOwner(f.ctx, f.first.ID), updated.ID, 20, 0)
+	require.NoError(t, err)
+	assert.Equal(t, 2, total)
+	assert.Len(t, versions, 2)
+	_, err = f.s.PruneContentVersions(WithPhotoOwner(f.ctx, f.first.ID), updated.ID, updated.Revision,
+		VersionPruneSelector{VersionIDs: []string{historicalID}}, true)
+	require.NoError(t, err)
+	require.ErrorIs(t, f.s.CheckPhotoVisibilityForVersion(WithPhotoOwner(f.ctx, f.first.ID), historicalID), ErrNotFound)
 }
 
 func TestPhotoVisibilityPopulations(t *testing.T) {
@@ -212,6 +255,10 @@ func TestPhotoVisibilityCachedResources(t *testing.T) {
 	require.NoError(t, err)
 	page, err := snapshots.Create(WithPhotoOwner(f.ctx, f.first.ID), "resource", SnapshotRequest{Query: value})
 	require.NoError(t, err)
+	_, _, err = f.s.Move(f.ctx, f.ordinary.ID, f.s.RootID(), "ordinary-renamed.txt", f.ordinary.Revision)
+	require.NoError(t, err)
+	_, err = snapshots.CopyMembers(WithPhotoOwner(f.ctx, f.first.ID), "resource", page.SnapshotID, page.MemberHash)
+	require.NoError(t, err)
 	_, err = f.s.db.Exec(`UPDATE photo_assets SET owner_id=? WHERE asset_id=?`, f.second.ID, f.firstAsset.ID)
 	require.NoError(t, err)
 	_, err = snapshots.CopyMembers(WithPhotoOwner(f.ctx, f.first.ID), "resource", page.SnapshotID, page.MemberHash)
@@ -241,15 +288,24 @@ func TestPhotoVisibilityMutationAtomicity(t *testing.T) {
 	after, err := f.s.NodeByID(f.ctx, f.secondNode.ID)
 	require.NoError(t, err)
 	assert.Equal(t, "second.jpg", after.Name)
+	moved, _, err := f.s.Move(WithPhotoOwner(f.ctx, f.first.ID), f.ordinary.ID, f.s.RootID(), "ordinary-moved.txt", f.ordinary.Revision)
+	require.NoError(t, err)
+	assert.Equal(t, "ordinary-moved.txt", moved.Name)
 }
 
 func TestPhotoVisibilityExports(t *testing.T) {
 	t.Parallel()
 	f := newPhotoVisibilityFixture(t)
-	source, err := f.s.CreateExportSource(WithPhotoOwner(f.ctx, f.first.ID), "owner", bundle.SourceRequest{OperationID: uuid.New().String(), Kind: "explicit", Members: []bundle.Member{{NodeID: f.firstNode.ID, VersionID: f.firstNode.CurrentVersionID, SHA256: f.firstNode.BlobHash, Size: f.firstNode.Size}}}, nil)
+	sourceRequest := bundle.SourceRequest{OperationID: uuid.New().String(), Kind: "explicit", Members: []bundle.Member{{NodeID: f.firstNode.ID, VersionID: f.firstNode.CurrentVersionID, SHA256: f.firstNode.BlobHash, Size: f.firstNode.Size}}}
+	source, err := f.s.CreateExportSource(WithPhotoOwner(f.ctx, f.first.ID), "owner", sourceRequest, nil)
 	require.NoError(t, err)
-	plan, err := f.s.CreateExportPlan(WithPhotoOwner(f.ctx, f.first.ID), "owner", bundle.PlanRequest{OperationID: uuid.New().String(), SourceID: source.ID, MemberHash: source.MemberHash, Roles: []bundle.RolePolicy{{Role: "original"}}})
+	_, err = f.s.CreateExportSource(WithPhotoOwner(f.ctx, f.second.ID), "owner", sourceRequest, nil)
+	require.ErrorIs(t, err, ErrNotFound)
+	planRequest := bundle.PlanRequest{OperationID: uuid.New().String(), SourceID: source.ID, MemberHash: source.MemberHash, Roles: []bundle.RolePolicy{{Role: "original"}}}
+	plan, err := f.s.CreateExportPlan(WithPhotoOwner(f.ctx, f.first.ID), "owner", planRequest)
 	require.NoError(t, err)
+	_, err = f.s.CreateExportPlan(WithPhotoOwner(f.ctx, f.second.ID), "owner", planRequest)
+	require.ErrorIs(t, err, ErrNotFound)
 	job, err := f.s.QueueExportJob(WithPhotoOwner(f.ctx, f.first.ID), "owner", bundle.JobRequest{OperationID: uuid.New().String(), PlanID: plan.ID, Fingerprint: plan.Fingerprint})
 	require.NoError(t, err)
 	assert.Equal(t, f.first.ID, job.PhotoOwnerID)
@@ -266,6 +322,62 @@ func TestPhotoVisibilityExports(t *testing.T) {
 	require.ErrorIs(t, f.s.CheckExportPlanPhotoVisibility(f.ctx, plan.ID), ErrNotFound)
 }
 
+func TestPhotoVisibilityBatesArtifactIDs(t *testing.T) {
+	t.Parallel()
+	f := newPhotoVisibilityFixture(t)
+	source := document.PageSource{VersionID: f.firstNode.CurrentVersionID, SHA256: f.firstNode.BlobHash, Size: f.firstNode.Size}
+	frame, err := document.NewPDFPageFrame(source, 1, [4]float64{0, 0, 72, 72}, [4]float64{0, 0, 72, 72}, 0)
+	require.NoError(t, err)
+	require.NoError(t, f.s.withStorageTx(t.Context(), func(tx *sql.Tx) error {
+		return putPageDocument(t.Context(), tx, document.PageDocumentV1{Contract: document.PageFrameContractV1, Source: source, PageCount: 1, Frames: []document.PageFrameV1{frame}})
+	}))
+	occurrence := strings.Repeat("c", 32)
+	snapshot, err := f.s.SealCollectionSnapshot(WithPhotoOwner(f.ctx, f.first.ID), SnapshotSealRequest{
+		SnapshotID: uuid.New().String(), Members: []CollectionSnapshotMember{{
+			Ordinal: 1, OccurrenceID: occurrence, NodeID: f.firstNode.ID, ContentVersionID: f.firstNode.CurrentVersionID,
+			BlobSHA256: f.firstNode.BlobHash, Size: f.firstNode.Size, FamilyID: occurrence, FamilyOrder: 1,
+			DisplayName: "first.jpg", FrozenFieldsJSON: "{}", DocumentKind: "other", SourcePageCount: 1,
+			SelectedPDFSHA256: f.firstNode.BlobHash,
+		}},
+	})
+	require.NoError(t, err)
+	namespace, err := f.s.EnsureBatesNamespace(t.Context(), "OWN", "", 6)
+	require.NoError(t, err)
+	recipe, err := canonical.Marshal(map[string]any{"contract": "bates-stamp/v1"})
+	require.NoError(t, err)
+	allocation, err := f.s.ReserveBatesRange(WithPhotoOwner(f.ctx, f.first.ID), BatesPlanRequest{
+		OperationID: uuid.New().String(), NamespaceID: namespace.NamespaceID, SnapshotID: snapshot.SnapshotID,
+		RecipeSHA256: digestCatalogJSON(recipe), StartAt: 1,
+		Pages: []BatesPageInput{{OccurrenceID: occurrence, UnstampedSHA256: f.firstNode.BlobHash, SourcePage: 1, VerifiedPageCount: 1}},
+	})
+	require.NoError(t, err)
+	artifactID := uuid.New().String()
+	artifact, err := f.s.PublishBatesArtifact(WithPhotoOwner(f.ctx, f.first.ID), BatesArtifactPublication{
+		ArtifactID: artifactID, AllocationID: allocation.AllocationID, BlobSHA256: fakeHash("bada"), Size: 10,
+		PageCount: 1, RecipeJSON: recipe, Pages: []BatesArtifactPage{{Ordinal: 1, OccurrenceID: occurrence, SourceBlobSHA256: f.firstNode.BlobHash, SourcePage: 1, OutputPage: 1, Label: allocation.Labels[0].Label}},
+	}, BlobPhysical{Encoding: "raw", StoredBytes: 10, Created: true})
+	require.NoError(t, err)
+	require.Equal(t, artifactID, artifact.ArtifactID)
+	read, err := f.s.BatesArtifact(WithPhotoOwner(f.ctx, f.first.ID), allocation.AllocationID)
+	require.NoError(t, err)
+	require.Equal(t, artifactID, read.ArtifactID)
+	listed, err := f.s.BatesArtifacts(WithPhotoOwner(f.ctx, f.first.ID), "", 10)
+	require.NoError(t, err)
+	require.Len(t, listed, 1)
+	require.Equal(t, artifactID, listed[0].ArtifactID)
+	count, err := f.s.BatesArtifactCount(WithPhotoOwner(f.ctx, f.first.ID))
+	require.NoError(t, err)
+	require.Equal(t, 1, count)
+	_, err = f.s.BatesArtifact(WithPhotoOwner(f.ctx, f.second.ID), allocation.AllocationID)
+	require.ErrorIs(t, err, ErrNotFound)
+	listed, err = f.s.BatesArtifacts(WithPhotoOwner(f.ctx, f.second.ID), "", 10)
+	require.NoError(t, err)
+	require.Empty(t, listed)
+	count, err = f.s.BatesArtifactCount(WithPhotoOwner(f.ctx, f.second.ID))
+	require.NoError(t, err)
+	require.Zero(t, count)
+}
+
 func TestPhotoOwnerAsyncPropagation(t *testing.T) {
 	t.Parallel()
 	f := newPhotoVisibilityFixture(t)
@@ -275,6 +387,30 @@ func TestPhotoOwnerAsyncPropagation(t *testing.T) {
 	assert.Equal(t, f.first.ID, owner)
 	assert.True(t, bound)
 	assert.False(t, noOwner)
+	source, err := f.s.CreateExportSource(ctx, "detached-owner", bundle.SourceRequest{
+		OperationID: uuid.New().String(), Kind: "explicit",
+		Members: []bundle.Member{{NodeID: f.firstNode.ID, VersionID: f.firstNode.CurrentVersionID, SHA256: f.firstNode.BlobHash, Size: f.firstNode.Size}},
+	}, nil)
+	require.NoError(t, err)
+	plan, err := f.s.CreateExportPlan(ctx, "detached-owner", bundle.PlanRequest{
+		OperationID: uuid.New().String(), SourceID: source.ID, MemberHash: source.MemberHash,
+		Roles: []bundle.RolePolicy{{Role: "original"}},
+	})
+	require.NoError(t, err)
+	job, err := f.s.QueueExportJob(ctx, "detached-owner", bundle.JobRequest{
+		OperationID: uuid.New().String(), PlanID: plan.ID, Fingerprint: plan.Fingerprint,
+	})
+	require.NoError(t, err)
+	claim, err := f.s.ClaimExportJob(context.Background())
+	require.NoError(t, err)
+	require.Equal(t, job.ID, claim.Job.ID)
+	detached := WithPhotoOwnerBinding(context.Background(), claim.Job.PhotoOwnerID, claim.Job.PhotoOwnerBound, claim.Job.PhotoNoOwner)
+	_, err = f.s.ExportPlanForClaim(detached, claim)
+	require.NoError(t, err)
+	wrongClaim := claim
+	wrongClaim.Job.PhotoOwnerID = f.second.ID
+	_, err = f.s.ExportPlanForClaim(WithPhotoOwnerBinding(context.Background(), f.second.ID, true, false), wrongClaim)
+	require.ErrorIs(t, err, ErrNotFound)
 }
 
 func TestPhotoOwnersAuditGate(t *testing.T) {

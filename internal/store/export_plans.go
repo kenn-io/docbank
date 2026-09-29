@@ -92,11 +92,11 @@ func (s *Store) ExportPlan(ctx context.Context, owner, id string) (bundle.Plan, 
 	return p, nil
 }
 
-func (s *Store) checkExportPhotoBinding(ctx context.Context, ownerID string, bound, noOwner bool) error {
+func checkExportPhotoBindingTx(ctx context.Context, q metadataQuerier, ownerID string, bound, noOwner bool) error {
 	if !bound {
 		return nil
 	}
-	requestOwner, requestBound, requestNoOwner, err := s.PhotoOwnerForRequest(ctx)
+	requestOwner, requestBound, requestNoOwner, err := photoOwnerBindingTx(ctx, q)
 	if err != nil {
 		return err
 	}
@@ -106,8 +106,8 @@ func (s *Store) checkExportPhotoBinding(ctx context.Context, ownerID string, bou
 	return nil
 }
 
-func (s *Store) checkExportMembersPhotoVisibility(ctx context.Context, sourceID string) error {
-	rows, err := s.db.QueryContext(ctx, `SELECT m.node_id,m.version_id FROM export_members m
+func checkExportMembersPhotoVisibilityTx(ctx context.Context, q metadataQuerier, sourceID string) error {
+	rows, err := q.QueryContext(ctx, `SELECT m.node_id,m.version_id FROM export_members m
 		WHERE m.source_id=? ORDER BY m.node_id,m.version_id`, sourceID)
 	if err != nil {
 		return err
@@ -119,10 +119,10 @@ func (s *Store) checkExportMembersPhotoVisibility(ctx context.Context, sourceID 
 		if err := rows.Scan(&nodeID, &versionID); err != nil {
 			return err
 		}
-		if err := photoNodeVisibilityCheckTx(ctx, s.db, nodeID); err != nil {
+		if err := photoNodeVisibilityCheckTx(ctx, q, nodeID); err != nil {
 			return err
 		}
-		if err := photoVersionVisibilityCheckTx(ctx, s.db, versionID); err != nil {
+		if err := photoVersionVisibilityCheckTx(ctx, q, versionID); err != nil {
 			return err
 		}
 	}
@@ -132,8 +132,12 @@ func (s *Store) checkExportMembersPhotoVisibility(ctx context.Context, sourceID 
 // CheckExportSourcePhotoVisibility compares the request authority with the
 // source's durable owner binding before revalidating every exact member.
 func (s *Store) CheckExportSourcePhotoVisibility(ctx context.Context, id string) error {
+	return checkExportSourcePhotoVisibilityTx(ctx, s.db, id)
+}
+
+func checkExportSourcePhotoVisibilityTx(ctx context.Context, q metadataQuerier, id string) error {
 	var raw []byte
-	if err := s.db.QueryRowContext(ctx, `SELECT canonical_json FROM export_sources WHERE id=?`, id).Scan(&raw); err != nil {
+	if err := q.QueryRowContext(ctx, `SELECT canonical_json FROM export_sources WHERE id=?`, id).Scan(&raw); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return ErrNotFound
 		}
@@ -143,17 +147,21 @@ func (s *Store) CheckExportSourcePhotoVisibility(ctx context.Context, id string)
 	if err := json.Unmarshal(raw, &source, json.RejectUnknownMembers(true)); err != nil {
 		return err
 	}
-	if err := s.checkExportPhotoBinding(ctx, source.PhotoOwnerID, source.PhotoOwnerBound, source.PhotoNoOwner); err != nil {
+	if err := checkExportPhotoBindingTx(ctx, q, source.PhotoOwnerID, source.PhotoOwnerBound, source.PhotoNoOwner); err != nil {
 		return err
 	}
-	return s.checkExportMembersPhotoVisibility(ctx, id)
+	return checkExportMembersPhotoVisibilityTx(ctx, q, id)
 }
 
 // CheckExportPlanPhotoVisibility revalidates every exact member before a
 // frozen export projection or archive can be served.
 func (s *Store) CheckExportPlanPhotoVisibility(ctx context.Context, id string) error {
+	return checkExportPlanPhotoVisibilityTx(ctx, s.db, id)
+}
+
+func checkExportPlanPhotoVisibilityTx(ctx context.Context, q metadataQuerier, id string) error {
 	var raw []byte
-	if err := s.db.QueryRowContext(ctx, `SELECT canonical_json FROM export_plans WHERE id=?`, id).Scan(&raw); err != nil {
+	if err := q.QueryRowContext(ctx, `SELECT canonical_json FROM export_plans WHERE id=?`, id).Scan(&raw); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return ErrNotFound
 		}
@@ -163,10 +171,10 @@ func (s *Store) CheckExportPlanPhotoVisibility(ctx context.Context, id string) e
 	if err := json.Unmarshal(raw, &plan, json.RejectUnknownMembers(true)); err != nil {
 		return err
 	}
-	if err := s.checkExportPhotoBinding(ctx, plan.Source.PhotoOwnerID, plan.Source.PhotoOwnerBound, plan.Source.PhotoNoOwner); err != nil {
+	if err := checkExportPhotoBindingTx(ctx, q, plan.Source.PhotoOwnerID, plan.Source.PhotoOwnerBound, plan.Source.PhotoNoOwner); err != nil {
 		return err
 	}
-	return s.checkExportMembersPhotoVisibility(ctx, plan.Source.ID)
+	return checkExportMembersPhotoVisibilityTx(ctx, q, plan.Source.ID)
 }
 
 func (s *Store) CreateExportPlan(ctx context.Context, owner string, r bundle.PlanRequest) (bundle.Plan, error) {
@@ -221,13 +229,16 @@ func (s *Store) CreateExportPlan(ctx context.Context, owner string, r bundle.Pla
 			if plan.Fingerprint == "" {
 				return bundle.ErrConflict
 			}
-			return nil
+			return checkExportPlanPhotoVisibilityTx(ctx, tx, r.OperationID)
 		}
 		if !errors.Is(e, sql.ErrNoRows) {
 			return e
 		}
 		source, e := loadExportSource(ctx, tx, owner, r.SourceID)
 		if e != nil {
+			return e
+		}
+		if e = checkExportSourcePhotoVisibilityTx(ctx, tx, r.SourceID); e != nil {
 			return e
 		}
 		if exportExpired(source.ExpiresAt) {

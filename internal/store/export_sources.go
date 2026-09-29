@@ -179,6 +179,9 @@ func (s *Store) createExportSource(ctx context.Context, owner string, r bundle.S
 			if exportExpired(previous.ExpiresAt) {
 				return bundle.ErrExpired
 			}
+			if e = checkExportSourcePhotoVisibilityTx(ctx, tx, r.OperationID); e != nil {
+				return e
+			}
 			source = previous
 			return nil
 		}
@@ -305,6 +308,9 @@ func sealExportMembers(ctx context.Context, tx *sql.Tx, owner string, source *bu
 	if err != nil {
 		return err
 	}
+	if err := checkExportSourcePhotoVisibilityTx(ctx, tx, source.ID); err != nil {
+		return err
+	}
 	if current.State != "resolving" && current.State != "uploading" {
 		return bundle.ErrConflict
 	}
@@ -387,6 +393,9 @@ func (s *Store) PutExportChunk(ctx context.Context, owner, id string, index int,
 	return s.withStorageTx(ctx, func(tx *sql.Tx) error {
 		source, err := loadExportSource(ctx, tx, owner, id)
 		if err != nil {
+			return err
+		}
+		if err := checkExportSourcePhotoVisibilityTx(ctx, tx, id); err != nil {
 			return err
 		}
 		if exportExpired(source.ExpiresAt) {

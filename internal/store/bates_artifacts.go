@@ -179,14 +179,21 @@ func (s *Store) BatesArtifact(ctx context.Context, allocationID string) (BatesAr
 	if err != nil {
 		return BatesArtifact{}, err
 	}
+	if err := s.checkBatesArtifactVisibility(ctx, artifact); err != nil {
+		return BatesArtifact{}, err
+	}
+	return artifact, nil
+}
+
+func (s *Store) checkBatesArtifactVisibility(ctx context.Context, artifact BatesArtifact) error {
 	allocation, err := loadBatesAllocation(ctx, s.db, artifact.AllocationID)
 	if err != nil {
-		return BatesArtifact{}, err
+		return err
 	}
 	if _, err := expectedBatesPagesLimited(ctx, s.db, allocation.SnapshotID); err != nil {
-		return BatesArtifact{}, err
+		return err
 	}
-	return artifact, err
+	return nil
 }
 
 func (s *Store) BatesArtifacts(ctx context.Context, after string, limit int) ([]BatesArtifact, error) {
@@ -197,7 +204,7 @@ func (s *Store) BatesArtifacts(ctx context.Context, after string, limit int) ([]
 		return nil, ErrInvalidBatesCursor
 	}
 	query := `SELECT artifact_id FROM bates_artifacts ORDER BY created_at,artifact_id LIMIT ?`
-	args := []any{limit}
+	args := []any{250}
 	if after != "" {
 		var createdAt string
 		if err := s.db.QueryRowContext(ctx, `SELECT created_at FROM bates_artifacts WHERE artifact_id=?`, after).Scan(&createdAt); err != nil {
@@ -208,59 +215,99 @@ func (s *Store) BatesArtifacts(ctx context.Context, after string, limit int) ([]
 		}
 		query = `SELECT artifact_id FROM bates_artifacts
 			WHERE created_at>? OR (created_at=? AND artifact_id>?) ORDER BY created_at,artifact_id LIMIT ?`
-		args = []any{createdAt, createdAt, after, limit}
+		args = []any{createdAt, createdAt, after, 250}
 	}
-	rows, err := s.db.QueryContext(ctx, query, args...)
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = rows.Close() }()
-	var ids []string
-	for rows.Next() {
-		var id string
-		if err := rows.Scan(&id); err != nil {
-			return nil, err
-		}
-		ids = append(ids, id)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	artifacts := make([]BatesArtifact, 0, len(ids))
-	for _, id := range ids {
-		artifact, err := s.BatesArtifact(ctx, id)
-		if errors.Is(err, ErrNotFound) {
-			continue
-		}
+	artifacts := make([]BatesArtifact, 0, limit)
+	for len(artifacts) < limit {
+		var ids []string
+		err := func() error {
+			rows, err := s.db.QueryContext(ctx, query, args...)
+			if err != nil {
+				return err
+			}
+			defer func() { _ = rows.Close() }()
+			for rows.Next() {
+				var id string
+				if err := rows.Scan(&id); err != nil {
+					return err
+				}
+				ids = append(ids, id)
+			}
+			return rows.Err()
+		}()
 		if err != nil {
 			return nil, err
 		}
-		artifacts = append(artifacts, artifact)
+		if len(ids) == 0 {
+			break
+		}
+		for _, id := range ids {
+			artifact, err := loadBatesArtifact(ctx, s.db, id)
+			if errors.Is(err, sql.ErrNoRows) {
+				continue
+			}
+			if err != nil {
+				return nil, err
+			}
+			if err := s.checkBatesArtifactVisibility(ctx, artifact); errors.Is(err, ErrNotFound) {
+				continue
+			} else if err != nil {
+				return nil, err
+			}
+			artifacts = append(artifacts, artifact)
+			if len(artifacts) == limit {
+				break
+			}
+		}
+		last := ids[len(ids)-1]
+		var createdAt string
+		if err := s.db.QueryRowContext(ctx, `SELECT created_at FROM bates_artifacts WHERE artifact_id=?`, last).Scan(&createdAt); err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				break
+			}
+			return nil, err
+		}
+		query = `SELECT artifact_id FROM bates_artifacts
+			WHERE created_at>? OR (created_at=? AND artifact_id>?) ORDER BY created_at,artifact_id LIMIT ?`
+		args = []any{createdAt, createdAt, last, 250}
 	}
 	return artifacts, nil
 }
 
 func (s *Store) BatesArtifactCount(ctx context.Context) (int, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT allocation_id FROM bates_artifacts ORDER BY allocation_id`)
+	var ids []string
+	err := func() error {
+		rows, err := s.db.QueryContext(ctx, `SELECT artifact_id FROM bates_artifacts ORDER BY allocation_id`)
+		if err != nil {
+			return fmt.Errorf("counting Bates artifacts: %w", err)
+		}
+		defer func() { _ = rows.Close() }()
+		for rows.Next() {
+			var artifactID string
+			if err := rows.Scan(&artifactID); err != nil {
+				return err
+			}
+			ids = append(ids, artifactID)
+		}
+		return rows.Err()
+	}()
 	if err != nil {
-		return 0, fmt.Errorf("counting Bates artifacts: %w", err)
+		return 0, err
 	}
-	defer func() { _ = rows.Close() }()
 	count := 0
-	for rows.Next() {
-		var allocationID string
-		if err := rows.Scan(&allocationID); err != nil {
+	for _, artifactID := range ids {
+		artifact, err := loadBatesArtifact(ctx, s.db, artifactID)
+		if errors.Is(err, sql.ErrNoRows) || errors.Is(err, ErrNotFound) {
+			continue
+		} else if err != nil {
 			return 0, err
 		}
-		if _, err := s.BatesArtifact(ctx, allocationID); errors.Is(err, ErrNotFound) {
+		if err := s.checkBatesArtifactVisibility(ctx, artifact); errors.Is(err, ErrNotFound) {
 			continue
 		} else if err != nil {
 			return 0, err
 		}
 		count++
-	}
-	if err := rows.Err(); err != nil {
-		return 0, err
 	}
 	return count, nil
 }

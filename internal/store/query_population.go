@@ -51,6 +51,14 @@ func selectCompiledPopulation(predicate compiledQueryFragment, collapseDuplicate
 	}
 }
 
+func scopedCurrentContentVisibility() compiledQueryFragment {
+	return compiledQueryFragment{
+		sql: `EXISTS (SELECT 1 FROM current_content_members visible_member
+			WHERE visible_member.node_id=n.id AND visible_member.version_id=cv.version_id)`,
+		relations: compiledRelationCurrentContent,
+	}
+}
+
 // bindQueryPopulation supplies every shared relation requested by a population
 // fragment. Processing coverage has a distinct configured-profile binding;
 // generation arguments inside compiled predicates are already bound by

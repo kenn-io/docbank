@@ -146,18 +146,18 @@ func (s *Store) CheckPhotoVisibilityForVersion(ctx context.Context, versionID st
 
 // checkPhotoVisibilityForSnapshotMember revalidates the exact live member a
 // cached query captured before it serves the frozen row again.
-func (s *Store) checkPhotoVisibilityForSnapshotMember(ctx context.Context, nodeID int64, versionID string, revision int64) error {
-	var versionNodeID, versionRevision int64
+func (s *Store) checkPhotoVisibilityForSnapshotMember(ctx context.Context, nodeID int64, versionID string) error {
+	var versionNodeID int64
 	err := s.db.QueryRowContext(ctx, `
-		SELECT node_id, node_revision FROM content_versions WHERE version_id=?`, versionID).
-		Scan(&versionNodeID, &versionRevision)
+		SELECT node_id FROM content_versions WHERE version_id=?`, versionID).
+		Scan(&versionNodeID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return ErrNotFound
 	}
 	if err != nil {
 		return err
 	}
-	if versionNodeID != nodeID || versionRevision != revision {
+	if versionNodeID != nodeID {
 		return ErrNotFound
 	}
 	var trashedAt sql.NullString

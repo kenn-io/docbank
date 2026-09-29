@@ -255,6 +255,11 @@ func (w *Worker) openRole(ctx context.Context, claim store.ExportClaim, role bun
 			if err := w.retryCatalog(ctx, func() error { return w.catalog.CheckExportClaim(ctx, claim) }); err != nil {
 				return err
 			}
+			if claim.Job.PhotoOwnerBound {
+				if err := w.retryCatalog(ctx, func() error { return w.catalog.CheckExportPlanPhotoVisibility(ctx, claim.Job.PlanID) }); err != nil {
+					return err
+				}
+			}
 			stream, size, err := w.blobs.OpenStreamContext(ctx, role.SHA256)
 			if err != nil {
 				return err

@@ -27,6 +27,12 @@ func (s *Store) ExportPlanForClaim(ctx context.Context, claim ExportClaim) (bund
 	if err != nil {
 		return bundle.Plan{}, err
 	}
+	if claim.Job.PhotoOwnerBound {
+		boundCtx := WithPhotoOwnerBinding(ctx, claim.Job.PhotoOwnerID, true, claim.Job.PhotoNoOwner)
+		if err := checkExportPlanPhotoVisibilityTx(boundCtx, s.db, claim.Job.PlanID); err != nil {
+			return bundle.Plan{}, err
+		}
+	}
 	if claim.Job.PhotoOwnerBound != plan.Source.PhotoOwnerBound || claim.Job.PhotoNoOwner != plan.Source.PhotoNoOwner || claim.Job.PhotoOwnerID != plan.Source.PhotoOwnerID {
 		return bundle.Plan{}, bundle.ErrConflict
 	}
@@ -101,6 +107,9 @@ func (s *Store) QueueExportJob(ctx context.Context, owner string, r bundle.JobRe
 			if e == nil && exportExpired(job.ExpiresAt) {
 				e = bundle.ErrExpired
 			}
+			if e == nil {
+				e = checkExportPlanPhotoVisibilityTx(ctx, tx, r.PlanID)
+			}
 			return e
 		}
 		if !errors.Is(e, sql.ErrNoRows) {
@@ -114,6 +123,9 @@ func (s *Store) QueueExportJob(ctx context.Context, owner string, r bundle.JobRe
 		}
 		plan, e := loadExportPlan(ctx, tx, r.PlanID)
 		if e != nil {
+			return e
+		}
+		if e = checkExportPlanPhotoVisibilityTx(ctx, tx, r.PlanID); e != nil {
 			return e
 		}
 		if exportExpired(plan.ExpiresAt) {
@@ -216,6 +228,12 @@ func (s *Store) AdvanceExportJob(ctx context.Context, c ExportClaim, roles int, 
 		if err != nil {
 			return err
 		}
+		if j.PhotoOwnerBound {
+			boundCtx := WithPhotoOwnerBinding(ctx, j.PhotoOwnerID, true, j.PhotoNoOwner)
+			if err := checkExportPlanPhotoVisibilityTx(boundCtx, tx, j.PlanID); err != nil {
+				return err
+			}
+		}
 		if roles < j.CompletedRoles || bytes < j.CompletedBytes || roles > bundle.MaxRoles || bytes > bundle.MaxRoleBytes {
 			return bundle.ErrConflict
 		}
@@ -234,6 +252,12 @@ func (s *Store) FinishExportJob(ctx context.Context, c ExportClaim, receipt *bun
 		j, err := loadExportJob(ctx, tx, c.Job.ID)
 		if err != nil {
 			return err
+		}
+		if j.PhotoOwnerBound {
+			boundCtx := WithPhotoOwnerBinding(ctx, j.PhotoOwnerID, true, j.PhotoNoOwner)
+			if err := checkExportPlanPhotoVisibilityTx(boundCtx, tx, j.PlanID); err != nil {
+				return err
+			}
 		}
 		j.Sequence++
 		if receipt == nil {
