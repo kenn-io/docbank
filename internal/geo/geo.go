@@ -144,8 +144,8 @@ func loadCities(g *NaturalEarth) error {
 		if name == "" {
 			continue
 		}
-		country, _ := f.Properties["ADM0NAME"].(string)
-		admin1, _ := f.Properties["ADM1NAME"].(string)
+		country := pointInPolygonName(pt, g.countries)
+		admin1 := pointInPolygonName(pt, g.regions)
 		g.cities = append(g.cities, cityFeature{
 			name: name, country: country, admin1: admin1, point: pt,
 		})
@@ -220,10 +220,10 @@ func nearestCity(pt orb.Point, cities []cityFeature, country, region string) str
 	bestName := ""
 	bestKm := cityMaxDistanceKm + 1
 	for _, c := range cities {
-		if country != "" && c.country != "" && c.country != country {
+		if country != "" && c.country != country {
 			continue
 		}
-		if region != "" && c.admin1 != "" && c.admin1 != region {
+		if region != "" && c.admin1 != region {
 			continue
 		}
 		km := haversineKm(pt, c.point)

@@ -1,43 +1,50 @@
-package geo_test
+package geo
 
 import (
 	"crypto/sha256"
 	"encoding/hex"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
+	"github.com/paulmach/orb"
 	"github.com/stretchr/testify/require"
-
-	"go.kenn.io/docbank/internal/geo"
 )
 
 func TestNaturalEarthResolveKnownCities(t *testing.T) {
 	r := require.New(t)
-	g, err := geo.NewNaturalEarth()
+	g, err := NewNaturalEarth()
 	r.NoError(err)
 
 	type tc struct {
 		name           string
 		lat, lon       float64
+		cityPrefix     string
 		mustContain    []string
 		mustNotContain []string
 	}
 	cases := []tc{
-		{"Paris", 48.8566, 2.3522, []string{"France"}, nil},
+		{"Paris", 48.8566, 2.3522, "", []string{"France"}, nil},
 		// "Manhattan" is a borough, not a populated_places city, so it
 		// must NEVER appear in the label — locks the field-selection
 		// contract (NAMEASCII → NAME, not e.g. an ADM2-style sub-name).
-		{"NYC", 40.7128, -74.0060, []string{"New York", "United States"}, []string{"Manhattan"}},
-		{"Tokyo", 35.6762, 139.6503, []string{"Japan"}, nil},
-		{"Sydney", -33.8688, 151.2093, []string{"Australia"}, nil},
-		{"Cape Town", -33.9249, 18.4241, []string{"South Africa"}, nil},
+		{"NYC", 40.7128, -74.0060, "", []string{"New York", "United States"}, []string{"Manhattan"}},
+		{"Tokyo", 35.6762, 139.6503, "", []string{"Japan"}, nil},
+		{"Sydney", -33.8688, 151.2093, "", []string{"Australia"}, nil},
+		{"Cape Town", -33.9249, 18.4241, "", []string{"South Africa"}, nil},
+		{"George Town", 19.294748, -81.371570, "George Town", []string{"Cayman Is."}, nil},
+		{"Willemstad", 12.112290, -68.872356, "Willemstad", []string{"Curaçao"}, nil},
+		{"Linares", 38.083320, -3.633355, "Linares", []string{"Jaén", "Spain"}, nil},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			r := require.New(t)
 			label, ok := g.Resolve(c.lat, c.lon)
 			r.True(ok, "expected resolve to succeed; got label=%q ok=%v", label, ok)
+			if c.cityPrefix != "" {
+				r.True(strings.HasPrefix(label, c.cityPrefix+", "), "label %q does not start with city %q", label, c.cityPrefix)
+			}
 			for _, sub := range c.mustContain {
 				r.Contains(label, sub, "label %q missing %q", label, sub)
 			}
@@ -56,7 +63,7 @@ func TestNaturalEarthResolveKnownCities(t *testing.T) {
 // which lands in the Indian Ocean / Somalia.
 func TestNaturalEarthCoordOrderFootgun(t *testing.T) {
 	r := require.New(t)
-	g, err := geo.NewNaturalEarth()
+	g, err := NewNaturalEarth()
 	r.NoError(err)
 	label, _ := g.Resolve(2.3522, 48.8566)
 	r.NotContains(label, "France",
@@ -67,7 +74,7 @@ func TestNaturalEarthCoordOrderFootgun(t *testing.T) {
 
 func TestNaturalEarthOpenOceanReturnsFalse(t *testing.T) {
 	r := require.New(t)
-	g, err := geo.NewNaturalEarth()
+	g, err := NewNaturalEarth()
 	r.NoError(err)
 	_, ok := g.Resolve(0, -30) // mid-Atlantic
 	r.False(ok)
@@ -75,7 +82,7 @@ func TestNaturalEarthOpenOceanReturnsFalse(t *testing.T) {
 
 func TestNaturalEarthSouthPole(t *testing.T) {
 	r := require.New(t)
-	g, err := geo.NewNaturalEarth()
+	g, err := NewNaturalEarth()
 	r.NoError(err)
 	label, ok := g.Resolve(-89.9, 0)
 	r.True(ok)
@@ -84,7 +91,7 @@ func TestNaturalEarthSouthPole(t *testing.T) {
 
 func TestNaturalEarthAntimeridian(t *testing.T) {
 	r := require.New(t)
-	g, err := geo.NewNaturalEarth()
+	g, err := NewNaturalEarth()
 	r.NoError(err)
 
 	// Russian Far East: Petropavlovsk-Kamchatsky-ish.
@@ -105,7 +112,7 @@ func TestNaturalEarthAntimeridian(t *testing.T) {
 // only Tijuana shares the resolved country's label.
 func TestNaturalEarthSameCountryGate(t *testing.T) {
 	r := require.New(t)
-	g, err := geo.NewNaturalEarth()
+	g, err := NewNaturalEarth()
 	r.NoError(err)
 
 	label, ok := g.Resolve(32.52, -117.03)
@@ -117,7 +124,7 @@ func TestNaturalEarthSameCountryGate(t *testing.T) {
 
 func TestNaturalEarthRegionGate(t *testing.T) {
 	r := require.New(t)
-	g, err := geo.NewNaturalEarth()
+	g, err := NewNaturalEarth()
 	r.NoError(err)
 
 	// This point is in Basel-Landschaft, where Basel is closer than Liestal.
@@ -128,9 +135,75 @@ func TestNaturalEarthRegionGate(t *testing.T) {
 	r.NotContains(label, "Basel, Basel-Stadt")
 }
 
+func TestNearestCityMembershipGates(t *testing.T) {
+	tests := []struct {
+		name    string
+		country string
+		region  string
+		cities  []cityFeature
+		want    string
+	}{
+		{
+			name:    "unknown country",
+			country: "A",
+			region:  "R",
+			cities: []cityFeature{
+				{name: "unknown", country: "", admin1: "R", point: orb.Point{0.01, 0}},
+				{name: "valid", country: "A", admin1: "R", point: orb.Point{0.02, 0}},
+			},
+			want: "valid",
+		},
+		{
+			name:    "unknown region",
+			country: "A",
+			region:  "R",
+			cities: []cityFeature{
+				{name: "unknown", country: "A", admin1: "", point: orb.Point{0.01, 0}},
+				{name: "valid", country: "A", admin1: "R", point: orb.Point{0.02, 0}},
+			},
+			want: "valid",
+		},
+		{
+			name:    "different country",
+			country: "A",
+			region:  "R",
+			cities: []cityFeature{
+				{name: "other", country: "B", admin1: "R", point: orb.Point{0.01, 0}},
+				{name: "valid", country: "A", admin1: "R", point: orb.Point{0.02, 0}},
+			},
+			want: "valid",
+		},
+		{
+			name:    "different region",
+			country: "A",
+			region:  "R",
+			cities: []cityFeature{
+				{name: "other", country: "A", admin1: "B", point: orb.Point{0.01, 0}},
+				{name: "valid", country: "A", admin1: "R", point: orb.Point{0.02, 0}},
+			},
+			want: "valid",
+		},
+		{
+			name:    "query without region",
+			country: "A",
+			cities: []cityFeature{
+				{name: "other region", country: "A", admin1: "B", point: orb.Point{0.01, 0}},
+				{name: "farther", country: "A", admin1: "R", point: orb.Point{0.02, 0}},
+			},
+			want: "other region",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := nearestCity(orb.Point{0, 0}, tt.cities, tt.country, tt.region)
+			require.Equal(t, tt.want, got)
+		})
+	}
+}
+
 func TestNaturalEarthCityDistanceGate(t *testing.T) {
 	r := require.New(t)
-	g, err := geo.NewNaturalEarth()
+	g, err := NewNaturalEarth()
 	r.NoError(err)
 
 	// Alice Springs is about 28 km away, so the 25 km city limit leaves only
@@ -143,7 +216,7 @@ func TestNaturalEarthCityDistanceGate(t *testing.T) {
 
 func TestNaturalEarthCountryPolygonHole(t *testing.T) {
 	r := require.New(t)
-	g, err := geo.NewNaturalEarth()
+	g, err := NewNaturalEarth()
 	r.NoError(err)
 
 	// This point falls inside a Spanish enclave cut out of the France polygon.
@@ -180,7 +253,7 @@ func TestEmbeddedDataChecksums(t *testing.T) {
 func BenchmarkNewNaturalEarth(b *testing.B) {
 	r := require.New(b)
 	for range b.N {
-		_, err := geo.NewNaturalEarth()
+		_, err := NewNaturalEarth()
 		r.NoError(err)
 	}
 }
