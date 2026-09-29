@@ -11,6 +11,24 @@ import (
 	"go.kenn.io/docbank/internal/canonical"
 )
 
+func TestPersonAuthorityLifecycleRoundTripsJSONL(t *testing.T) {
+	t.Parallel()
+	source := newTestStore(t)
+	person, err := source.CreatePerson(t.Context(), "Synthetic Person", "operator")
+	require.NoError(t, err)
+	person, err = source.UpdatePerson(t.Context(), person.PersonID, person.Revision, "Renamed Person")
+	require.NoError(t, err)
+	_, err = source.RetirePerson(t.Context(), person.PersonID, person.Revision)
+	require.NoError(t, err)
+	var exported bytes.Buffer
+	require.NoError(t, source.ExportMetadata(t.Context(), &exported))
+	target := newTestStore(t)
+	require.NoError(t, target.ImportMetadata(t.Context(), bytes.NewReader(exported.Bytes())))
+	var repeated bytes.Buffer
+	require.NoError(t, target.ExportMetadata(t.Context(), &repeated))
+	require.Equal(t, exported.Bytes(), repeated.Bytes())
+}
+
 func TestExternalIdentityWritesRemainExportable(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {

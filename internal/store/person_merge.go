@@ -78,13 +78,13 @@ type PersonSplitRequest struct {
 func validatePersonSplitRequest(request PersonSplitRequest) error {
 	if validateUUIDv4(request.PersonID) != nil || validateUUIDv4(request.OperationID) != nil || request.Revision < 1 ||
 		len(request.IdentityIDs)+len(request.AssignmentIDs)+len(request.External) == 0 {
-		return errors.New("split requires fenced explicit membership")
+		return fmt.Errorf("%w: split requires fenced explicit membership", ErrInvalidPerson)
 	}
 	for _, ids := range [][]string{request.IdentityIDs, request.AssignmentIDs} {
 		seen := map[string]bool{}
 		for _, id := range ids {
 			if validateUUIDv4(id) != nil || seen[id] {
-				return errors.New("invalid or repeated split identity")
+				return fmt.Errorf("%w: invalid or repeated split identity", ErrInvalidPerson)
 			}
 			seen[id] = true
 		}
@@ -93,7 +93,7 @@ func validatePersonSplitRequest(request PersonSplitRequest) error {
 	for _, identity := range request.External {
 		key := identity.System + "\x00" + identity.ArchiveID + "\x00" + identity.UID
 		if !validExternalTuple(identity.System, identity.ArchiveID, identity.UID) || seenExternal[key] {
-			return errors.New("invalid or repeated split external identity")
+			return fmt.Errorf("%w: invalid or repeated split external identity", ErrInvalidPerson)
 		}
 		seenExternal[key] = true
 	}

@@ -189,6 +189,26 @@ the display member.
 Photo assets, settings, and bounded decision receipts are included in JSONL
 backup and restore.
 
+## docbank people
+
+```text
+docbank people list [query] [--limit N] [--cursor C]
+docbank people show <person-id>
+docbank people custodians <person-id> [--limit N] [--cursor C]
+docbank people create <display-name>
+docbank people rename <person-id> <display-name> --revision REV
+docbank people retire <person-id> --revision REV
+docbank people merge <survivor-id> <absorbed-id> --revision REV --absorbed-revision REV
+docbank people split <person-id> --revision REV --display-name NAME [--identity ID] [--assignment ID] [--external JSON]
+```
+
+Person commands use the daemon API and emit the same JSON records as the HTTP
+client. List accepts a folded display-name prefix. `show` includes identity,
+external UID, and revision data needed to choose split members. Mutations use
+the explicit revision supplied by the caller. The merge and split operation
+IDs make retries replayable. The CLI generates an operation ID when you omit
+one. A split needs at least one identity, assignment, or external UID.
+
 ## docbank stat
 
 ```

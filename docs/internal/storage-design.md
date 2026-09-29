@@ -416,6 +416,31 @@ small-file benefit, require transient duplicate disk capacity, and leak
 physical-format selection into the product. Do not add one without a concrete
 recovery workflow that cannot be served by verified backup/restore.
 
+### Person authority
+
+The `persons` row owns a canonical display name, origin, lifecycle state, and
+revision. `person_aliases` resolves merged IDs to the surviving row. Identity,
+external UID, custodian assignment, document assertion, and match-candidate
+records refer to that canonical ID and are exported as JSONL. The store checks
+the expected revision inside each committing transaction and advances the
+document-people binding epoch after every successful person edit.
+
+The person merge and split receipts bind their operation UUID and request
+members. Replaying the same request returns the stored receipt. A different
+request with the same operation UUID is a merge conflict. Retired people stay
+in history but cannot receive new assignments or assertions. The derived
+`document_people` generations, heads, and state tables stay out of JSONL and
+rebuild after restore. An audited vault refuses ordinary person mutations
+until audit-aware mutation records exist.
+
+!!! info "Planned"
+    The People view will join one canonical person to current document edges,
+    operator assertions, and photo face assignments. Document edges are valid
+    only for the current binding epoch and generation. Photo visibility comes
+    from the photo resolver. Review queues use open document match candidates
+    and face-person suggestions. Merge and split will move both evidence kinds
+    when the photo authority lands.
+
 ## Released schema policy
 
 Store startup runs the embedded idempotent schema in one immediate transaction

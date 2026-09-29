@@ -8,6 +8,31 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestCustodiansForPersonPagesActiveAssignments(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	person, err := s.CreatePerson(t.Context(), "Synthetic custodian", "operator")
+	require.NoError(t, err)
+	for _, label := range []string{"First record", "Second record"} {
+		nodeID, versionID := seedPeopleVersion(t, s)
+		_, err = s.SetCustodian(t.Context(), CustodianRequest{
+			Scope:    CustodianScope{Kind: "document", NodeID: nodeID, ContentVersionID: versionID},
+			PersonID: person.PersonID, RawLabel: label, Rank: "primary", Basis: "operator_assigned", SourceRef: label,
+			IfMatchRevision: 1,
+		})
+		require.NoError(t, err)
+	}
+	first, total, err := s.CustodiansForPerson(t.Context(), person.PersonID, 1, 0)
+	require.NoError(t, err)
+	require.EqualValues(t, 2, total)
+	require.Len(t, first, 1)
+	second, total, err := s.CustodiansForPerson(t.Context(), person.PersonID, 1, 1)
+	require.NoError(t, err)
+	require.EqualValues(t, 2, total)
+	require.Len(t, second, 1)
+	require.NotEqual(t, first[0].AssignmentID, second[0].AssignmentID)
+}
+
 func TestCustodianScopeRejectsMixedCoordinates(t *testing.T) {
 	t.Parallel()
 	require.NoError(t, validateCustodianScope(CustodianScope{Kind: "collection", IngestID: "ingest-a"}))

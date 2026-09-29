@@ -19,8 +19,9 @@ import (
 
 const toolCatalogTTLMs = 60_000
 
-func catalogInstructions(allowProcessing, allowPackageWrites, allowPhotoEdits bool) string {
-	if !allowProcessing && !allowPackageWrites && !allowPhotoEdits {
+func catalogInstructions(allowProcessing, allowPackageWrites, allowPhotoEdits bool, personFlags ...bool) string {
+	allowPersonEdits := len(personFlags) > 0 && personFlags[0]
+	if !allowProcessing && !allowPackageWrites && !allowPhotoEdits && !allowPersonEdits {
 		return "Docbank exposes a bounded read-only document and package surface."
 	}
 	instructions := "Docbank exposes bounded document and package reads."
@@ -32,6 +33,9 @@ func catalogInstructions(allowProcessing, allowPackageWrites, allowPhotoEdits bo
 	}
 	if allowPhotoEdits {
 		instructions += " Photo edits change one asset at an expected revision."
+	}
+	if allowPersonEdits {
+		instructions += " Person edits change one person at an expected revision; merge and split replay by operation ID."
 	}
 	return instructions
 }
@@ -60,7 +64,9 @@ var readToolDefinitions = []toolDefinition{
 	{name: "get_package_preflight", title: "Get package preflight", description: "Read one exact retained load-file package preflight.", schemas: getPackagePreflightSchemas},
 	{name: "list_package_preflight_diagnostics", title: "List package preflight diagnostics", description: "Page through bounded diagnostics for one retained package preflight.", schemas: listPackagePreflightDiagnosticsSchemas},
 	{name: "list_package_custodians", title: "List package custodians", description: "Page through active custodian claims for an exact package scope.", schemas: listPackageCustodiansSchemas},
-	{name: "find_people", title: "Find people", description: "Find bounded canonical person candidates before resolving a custodian claim.", schemas: findPeopleSchemas},
+	{name: "find_people", title: "Find people", description: "Find bounded active canonical people by folded name prefix.", schemas: findPeopleSchemas},
+	{name: "get_person", title: "Get person", description: "Read one canonical person and its split selectors.", schemas: getPersonSchemas},
+	{name: "list_person_custodians", title: "List person custodians", description: "Page through active custodian assignments for one person.", schemas: listPersonCustodiansSchemas},
 	{name: "list_packages", title: "List packages", description: "Page through received and produced load-file packages.", schemas: listPackagesSchemas},
 	{name: "get_package", title: "Get package", description: "Read one load-file package and its retained source authority.", schemas: getPackageSchemas},
 	{name: "list_package_members", title: "List package members", description: "Page through one package's immutable document occurrences.", schemas: listPackageMembersSchemas},
@@ -143,7 +149,16 @@ var photoWriteToolDefinitions = []toolDefinition{
 	{name: "promote_photo_asset", title: "Promote photo asset", description: "Promote one file node into a photo asset.", schemas: promotePhotoNodeSchemas, write: true},
 }
 
-func toolCatalog(allowProcessing, allowPackageWrites, allowPhotoEdits bool) []*sdkmcp.Tool {
+var personWriteToolDefinitions = []toolDefinition{
+	{name: "create_person", title: "Create person", description: "Create one canonical person.", schemas: createPersonSchemas, write: true},
+	{name: "rename_person", title: "Rename person", description: "Rename one person at an expected revision.", schemas: renamePersonSchemas, write: true},
+	{name: "retire_person", title: "Retire person", description: "Retire one person at an expected revision.", schemas: retirePersonSchemas, write: true, destructive: true},
+	{name: "merge_people", title: "Merge people", description: "Merge one person into another at both expected revisions.", schemas: mergePeopleSchemas, write: true, destructive: true, idempotent: true},
+	{name: "split_person", title: "Split person", description: "Move explicit person members into a new person at an expected revision.", schemas: splitPersonSchemas, write: true, destructive: true, idempotent: true},
+}
+
+func toolCatalog(allowProcessing, allowPackageWrites, allowPhotoEdits bool, personFlags ...bool) []*sdkmcp.Tool {
+	allowPersonEdits := len(personFlags) > 0 && personFlags[0]
 	definitions := slices.Clone(readToolDefinitions)
 	if allowProcessing {
 		definitions = append(definitions, processingToolDefinition)
@@ -156,6 +171,9 @@ func toolCatalog(allowProcessing, allowPackageWrites, allowPhotoEdits bool) []*s
 	}
 	if allowPhotoEdits {
 		definitions = append(definitions, photoWriteToolDefinitions...)
+	}
+	if allowPersonEdits {
+		definitions = append(definitions, personWriteToolDefinitions...)
 	}
 	tools := make([]*sdkmcp.Tool, 0, len(definitions))
 	for _, definition := range definitions {
@@ -175,10 +193,10 @@ func toolCatalog(allowProcessing, allowPackageWrites, allowPhotoEdits bool) []*s
 }
 
 func registerToolCatalog(
-	server *sdkmcp.Server, allowProcessing, allowPackageWrites, allowPhotoEdits bool,
+	server *sdkmcp.Server, allowProcessing, allowPackageWrites, allowPhotoEdits, allowPersonEdits bool,
 	lease *daemonLease, plans *processingPlanRegistry, logger *slog.Logger,
 ) {
-	tools := toolCatalog(allowProcessing, allowPackageWrites, allowPhotoEdits)
+	tools := toolCatalog(allowProcessing, allowPackageWrites, allowPhotoEdits, allowPersonEdits)
 	server.AddReceivingMiddleware(validateToolInputs(tools))
 	for _, tool := range tools {
 		output := mustResolveSchema(tool.OutputSchema)
@@ -198,7 +216,9 @@ func registerToolCatalog(
 		case exportLoadFilePackageToolDefinition.name:
 			handler = packageExportToolHandler(lease, output, logger)
 		default:
-			if photoWriteTool(tool.Name) {
+			if personWriteTool(tool.Name) {
+				handler = personWriteToolHandler(lease, tool.Name, output, logger)
+			} else if photoWriteTool(tool.Name) {
 				handler = photoWriteToolHandler(lease, tool.Name, output, logger)
 			} else {
 				handler = readToolHandler(lease, plans, tool.Name, output, logger)
@@ -433,7 +453,7 @@ func stableDomainError(err error) (string, int) {
 		"bates_source_too_large", "bates_source_unstampable", "bates_label_collision", "invalid_bates_request", "invalid_bates_cursor", "invalid_bates_selector",
 		"stale_bates_cursor":
 		return facts.Code, 0
-	case "stale_revision", "invalid_photo_asset", "photo_node_not_eligible", "photo_node_owned", "audit_mutation_unsupported", "package_incomplete":
+	case "stale_revision", "invalid_photo_asset", "photo_node_not_eligible", "photo_node_owned", "invalid_person", "person_retired", "person_merge_conflict", "audit_mutation_unsupported", "package_incomplete":
 		return facts.Code, 0
 	default:
 		return "", 0
@@ -500,6 +520,12 @@ func domainErrorMessage(code string) string {
 		return "The revision is stale; read the current state and retry with its revision."
 	case "audit_mutation_unsupported":
 		return "This mutation is unavailable while audit mode is active."
+	case "invalid_person":
+		return "The person request or selected members are invalid."
+	case "person_retired":
+		return "The person is retired and cannot accept this mutation."
+	case "person_merge_conflict":
+		return "The person merge conflicts with an existing operation or authority state."
 	default:
 		return "The Docbank operation could not be completed."
 	}

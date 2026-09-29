@@ -73,6 +73,41 @@ func TestPersonMutationsAdvanceBindingEpoch(t *testing.T) {
 	require.ErrorIs(t, err, ErrPersonRetired)
 }
 
+func TestPersonMutationReturnsCommittedRevision(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	created, err := s.CreatePerson(t.Context(), "Synthetic", "operator")
+	require.NoError(t, err)
+	require.Equal(t, int64(1), created.Revision)
+	updated, err := s.UpdatePerson(t.Context(), created.PersonID, created.Revision, "Renamed synthetic")
+	require.NoError(t, err)
+	require.Equal(t, created.Revision+1, updated.Revision)
+	persisted, _, err := s.PersonByID(t.Context(), created.PersonID)
+	require.NoError(t, err)
+	require.Equal(t, updated, persisted)
+}
+
+func TestPersonDetailResolvesAliasAndReadsOneSnapshot(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := t.Context()
+	survivor, err := s.CreatePerson(ctx, "Ada", "operator")
+	require.NoError(t, err)
+	absorbed, err := s.CreatePerson(ctx, "Ada old", "operator")
+	require.NoError(t, err)
+	absorbed, identity := addTestPersonIdentity(t, s, absorbed, "name_alias", "Ada old", "synthetic-alias")
+	operationID, err := newUUIDv4()
+	require.NoError(t, err)
+	_, err = s.MergePersons(ctx, survivor.PersonID, absorbed.PersonID, operationID, survivor.Revision, absorbed.Revision)
+	require.NoError(t, err)
+	detail, err := s.PersonDetail(ctx, absorbed.PersonID)
+	require.NoError(t, err)
+	require.Equal(t, survivor.PersonID, detail.PersonID)
+	require.Equal(t, absorbed.PersonID, detail.ReachedThrough)
+	require.Len(t, detail.Identities, 1)
+	require.Equal(t, identity.IdentityID, detail.Identities[0].IdentityID)
+}
+
 func TestPersonAuthorityRejectsInvalidInputs(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)

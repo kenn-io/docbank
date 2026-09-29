@@ -7580,6 +7580,338 @@ func (c *Client) ListPeople(ctx context.Context, options *ListPeopleRequestOptio
 	return responseParser(ctx, resp)
 }
 
+// CreatePerson Create one canonical person
+func (c *Client) CreatePerson(ctx context.Context, options *CreatePersonRequestOptions, reqEditors ...runtime.RequestEditorFn) (*CreatePersonResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/people",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*CreatePersonResponse, error) {
+		switch resp.StatusCode {
+
+		case 201:
+
+			target := new(CreatePersonResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "CreatePersonResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[CreatePersonErrorResponse](resp, "CreatePersonErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/people")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 201)
+	}
+	return responseParser(ctx, resp)
+}
+
+// GetPerson Inspect one canonical person
+func (c *Client) GetPerson(ctx context.Context, options *GetPersonRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetPersonResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/people/by-id/{person_id}",
+		Method:     "GET",
+		Options:    options,
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*GetPersonResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(GetPersonResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "GetPersonResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[GetPersonErrorResponse](resp, "GetPersonErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/people/by-id/{person_id}")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
+// RenamePerson Rename one canonical person
+func (c *Client) RenamePerson(ctx context.Context, options *RenamePersonRequestOptions, reqEditors ...runtime.RequestEditorFn) (*RenamePersonResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/people/by-id/{person_id}",
+		Method:      "PATCH",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*RenamePersonResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(RenamePersonResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "RenamePersonResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[RenamePersonErrorResponse](resp, "RenamePersonErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/people/by-id/{person_id}")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
+// ListPersonCustodians List active custodian assignments for one person
+func (c *Client) ListPersonCustodians(ctx context.Context, options *ListPersonCustodiansRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ListPersonCustodiansResponse, error) {
+	var err error
+
+	queryEncoding := map[string]runtime.QueryEncoding{
+		"cursor": {Style: "form", Explode: &[]bool{false}[0]},
+		"limit":  {Style: "form", Explode: &[]bool{false}[0]},
+	}
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:    c.apiClient.GetBaseURL() + "/api/v1/people/by-id/{person_id}/custodians",
+		Method:        "GET",
+		Options:       options,
+		QueryEncoding: queryEncoding,
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*ListPersonCustodiansResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(ListPersonCustodiansResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "ListPersonCustodiansResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[ListPersonCustodiansErrorResponse](resp, "ListPersonCustodiansErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/people/by-id/{person_id}/custodians")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
+// MergePerson Merge one person into another
+func (c *Client) MergePerson(ctx context.Context, options *MergePersonRequestOptions, reqEditors ...runtime.RequestEditorFn) (*MergePersonResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/people/by-id/{person_id}/merge",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*MergePersonResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(MergePersonResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "MergePersonResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[MergePersonErrorResponse](resp, "MergePersonErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/people/by-id/{person_id}/merge")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
+// RetirePerson Retire one canonical person
+func (c *Client) RetirePerson(ctx context.Context, options *RetirePersonRequestOptions, reqEditors ...runtime.RequestEditorFn) (*RetirePersonResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/people/by-id/{person_id}/retire",
+		Method:     "POST",
+		Options:    options,
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*RetirePersonResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(RetirePersonResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "RetirePersonResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[RetirePersonErrorResponse](resp, "RetirePersonErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/people/by-id/{person_id}/retire")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
+// SplitPerson Split selected members into a new person
+func (c *Client) SplitPerson(ctx context.Context, options *SplitPersonRequestOptions, reqEditors ...runtime.RequestEditorFn) (*SplitPersonResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/people/by-id/{person_id}/split",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*SplitPersonResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(SplitPersonResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "SplitPersonResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[SplitPersonErrorResponse](resp, "SplitPersonErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/people/by-id/{person_id}/split")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
 // GetPeopleCoverage Read current-file person attribution coverage
 func (c *Client) GetPeopleCoverage(ctx context.Context, reqEditors ...runtime.RequestEditorFn) (*GetPeopleCoverageResponse, error) {
 	var err error
@@ -16646,6 +16978,267 @@ func (o *ListPeopleRequestOptions) GetHeader() (map[string]string, error) {
 	return nil, nil
 }
 
+// CreatePersonRequestOptions is the options needed to make a request to CreatePerson.
+type CreatePersonRequestOptions struct {
+	Body *CreatePersonBody
+}
+
+// GetPathParams returns the path params as a map.
+func (o *CreatePersonRequestOptions) GetPathParams() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetQuery returns the query params as a map.
+func (o *CreatePersonRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *CreatePersonRequestOptions) GetBody() any {
+	if o.Body == nil {
+		return nil
+	}
+	return o.Body
+}
+
+// GetHeader returns the headers as a map.
+func (o *CreatePersonRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
+// GetPersonRequestOptions is the options needed to make a request to GetPerson.
+type GetPersonRequestOptions struct {
+	PathParams *GetPersonPath
+}
+
+// GetPathParams returns the path params as a map.
+func (o *GetPersonRequestOptions) GetPathParams() (map[string]any, error) {
+	encoded, err := json.Marshal(o.PathParams, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetQuery returns the query params as a map.
+func (o *GetPersonRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *GetPersonRequestOptions) GetBody() any {
+	return nil
+}
+
+// GetHeader returns the headers as a map.
+func (o *GetPersonRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
+// RenamePersonRequestOptions is the options needed to make a request to RenamePerson.
+type RenamePersonRequestOptions struct {
+	PathParams *RenamePersonPath
+	Body       *RenamePersonBody
+	Header     *RenamePersonHeaders
+}
+
+// GetPathParams returns the path params as a map.
+func (o *RenamePersonRequestOptions) GetPathParams() (map[string]any, error) {
+	encoded, err := json.Marshal(o.PathParams, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetQuery returns the query params as a map.
+func (o *RenamePersonRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *RenamePersonRequestOptions) GetBody() any {
+	if o.Body == nil {
+		return nil
+	}
+	return o.Body
+}
+
+// GetHeader returns the headers as a map.
+func (o *RenamePersonRequestOptions) GetHeader() (map[string]string, error) {
+	encoded, err := json.Marshal(o.Header, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var headers map[string]string
+	err = json.Unmarshal(encoded, &headers)
+	return headers, err
+}
+
+// ListPersonCustodiansRequestOptions is the options needed to make a request to ListPersonCustodians.
+type ListPersonCustodiansRequestOptions struct {
+	PathParams *ListPersonCustodiansPath
+	Query      *ListPersonCustodiansQuery
+}
+
+// GetPathParams returns the path params as a map.
+func (o *ListPersonCustodiansRequestOptions) GetPathParams() (map[string]any, error) {
+	encoded, err := json.Marshal(o.PathParams, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetQuery returns the query params as a map.
+func (o *ListPersonCustodiansRequestOptions) GetQuery() (map[string]any, error) {
+	encoded, err := json.Marshal(o.Query, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *ListPersonCustodiansRequestOptions) GetBody() any {
+	return nil
+}
+
+// GetHeader returns the headers as a map.
+func (o *ListPersonCustodiansRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
+// MergePersonRequestOptions is the options needed to make a request to MergePerson.
+type MergePersonRequestOptions struct {
+	PathParams *MergePersonPath
+	Body       *MergePersonBody
+	Header     *MergePersonHeaders
+}
+
+// GetPathParams returns the path params as a map.
+func (o *MergePersonRequestOptions) GetPathParams() (map[string]any, error) {
+	encoded, err := json.Marshal(o.PathParams, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetQuery returns the query params as a map.
+func (o *MergePersonRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *MergePersonRequestOptions) GetBody() any {
+	if o.Body == nil {
+		return nil
+	}
+	return o.Body
+}
+
+// GetHeader returns the headers as a map.
+func (o *MergePersonRequestOptions) GetHeader() (map[string]string, error) {
+	encoded, err := json.Marshal(o.Header, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var headers map[string]string
+	err = json.Unmarshal(encoded, &headers)
+	return headers, err
+}
+
+// RetirePersonRequestOptions is the options needed to make a request to RetirePerson.
+type RetirePersonRequestOptions struct {
+	PathParams *RetirePersonPath
+	Header     *RetirePersonHeaders
+}
+
+// GetPathParams returns the path params as a map.
+func (o *RetirePersonRequestOptions) GetPathParams() (map[string]any, error) {
+	encoded, err := json.Marshal(o.PathParams, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetQuery returns the query params as a map.
+func (o *RetirePersonRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *RetirePersonRequestOptions) GetBody() any {
+	return nil
+}
+
+// GetHeader returns the headers as a map.
+func (o *RetirePersonRequestOptions) GetHeader() (map[string]string, error) {
+	encoded, err := json.Marshal(o.Header, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var headers map[string]string
+	err = json.Unmarshal(encoded, &headers)
+	return headers, err
+}
+
+// SplitPersonRequestOptions is the options needed to make a request to SplitPerson.
+type SplitPersonRequestOptions struct {
+	PathParams *SplitPersonPath
+	Body       *SplitPersonBody
+	Header     *SplitPersonHeaders
+}
+
+// GetPathParams returns the path params as a map.
+func (o *SplitPersonRequestOptions) GetPathParams() (map[string]any, error) {
+	encoded, err := json.Marshal(o.PathParams, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetQuery returns the query params as a map.
+func (o *SplitPersonRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *SplitPersonRequestOptions) GetBody() any {
+	if o.Body == nil {
+		return nil
+	}
+	return o.Body
+}
+
+// GetHeader returns the headers as a map.
+func (o *SplitPersonRequestOptions) GetHeader() (map[string]string, error) {
+	encoded, err := json.Marshal(o.Header, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var headers map[string]string
+	err = json.Unmarshal(encoded, &headers)
+	return headers, err
+}
+
 // RebuildDocumentPeopleRequestOptions is the options needed to make a request to RebuildDocumentPeople.
 type RebuildDocumentPeopleRequestOptions struct {
 	Body *RebuildDocumentPeopleBody
@@ -19413,6 +20006,22 @@ type UploadPackageChunkHeaders struct {
 	XDocbankBlobSize int64  `json:"X-Docbank-Blob-Size"`
 }
 
+type RenamePersonHeaders struct {
+	IfMatch string `json:"If-Match"`
+}
+
+type MergePersonHeaders struct {
+	IfMatch string `json:"If-Match"`
+}
+
+type RetirePersonHeaders struct {
+	IfMatch string `json:"If-Match"`
+}
+
+type SplitPersonHeaders struct {
+	IfMatch string `json:"If-Match"`
+}
+
 type SetPhotoDisplayHeaders struct {
 	IfMatch string `json:"If-Match"`
 }
@@ -19794,6 +20403,30 @@ type AssignTagPathPath struct {
 	TagID string `json:"tag_id"`
 }
 
+type GetPersonPath struct {
+	PersonID uuid.UUID `json:"person_id"`
+}
+
+type RenamePersonPath struct {
+	PersonID uuid.UUID `json:"person_id"`
+}
+
+type ListPersonCustodiansPath struct {
+	PersonID uuid.UUID `json:"person_id"`
+}
+
+type MergePersonPath struct {
+	PersonID uuid.UUID `json:"person_id"`
+}
+
+type RetirePersonPath struct {
+	PersonID uuid.UUID `json:"person_id"`
+}
+
+type SplitPersonPath struct {
+	PersonID uuid.UUID `json:"person_id"`
+}
+
 type GetPeopleRebuildPath struct {
 	OperationID uuid.UUID `json:"operation_id"`
 }
@@ -20098,6 +20731,14 @@ type UnassignTagPathBody = UnassignTagPathRequest
 type AssignTagPathBody = AssignTagPathRequest
 
 type TrashPathBody = TrashPathRequest
+
+type CreatePersonBody = CreatePersonRequest
+
+type RenamePersonBody = RenamePersonRequest
+
+type MergePersonBody = MergePersonRequest
+
+type SplitPersonBody = SplitPersonRequest
 
 type RebuildDocumentPeopleBody = PeopleRebuildRequest
 
@@ -20422,6 +21063,11 @@ type ResolvePathQuery struct {
 type ListPeopleQuery struct {
 	Query  *string `json:"query,omitempty"`
 	Limit  *int    `json:"limit,omitempty"`
+	Cursor *string `json:"cursor,omitempty"`
+}
+
+type ListPersonCustodiansQuery struct {
+	Limit  *int64  `json:"limit,omitempty"`
 	Cursor *string `json:"cursor,omitempty"`
 }
 
@@ -21191,6 +21837,34 @@ type ListPeopleErrorResponseApplicationProblemPlusJSON422 api.Error
 
 type ListPeopleErrorResponseApplicationProblemPlusJSON500 api.Error
 
+type CreatePersonResponse = api.Person
+
+type CreatePersonErrorResponse = Error
+
+type GetPersonResponse = api.PersonDetail
+
+type GetPersonErrorResponse = Error
+
+type RenamePersonResponse = api.Person
+
+type RenamePersonErrorResponse = Error
+
+type ListPersonCustodiansResponse = api.CustodianPage
+
+type ListPersonCustodiansErrorResponse = Error
+
+type MergePersonResponse = api.PersonMergeReceipt
+
+type MergePersonErrorResponse = Error
+
+type RetirePersonResponse = api.Person
+
+type RetirePersonErrorResponse = Error
+
+type SplitPersonResponse = api.PersonSplitReceipt
+
+type SplitPersonErrorResponse = Error
+
 type GetPeopleCoverageResponse = api.PeopleCoverage
 
 type GetPeopleCoverageErrorResponse = Error
@@ -21760,6 +22434,8 @@ type CreateNodeRequest struct {
 	ParentID int64                 `json:"parent_id"`
 }
 
+type CreatePersonRequest = api.CreatePersonRequest
+
 type CreatePhotoAssetRequest = api.CreatePhotoAssetRequest
 
 type CreateTagRequest struct {
@@ -22139,6 +22815,8 @@ type MediaTimestamp = api.MediaTimestamp
 
 type Member = bundle.Member
 
+type MergePersonRequest = api.MergePersonRequest
+
 type Message = mailbox.Message
 
 type MkdirPathRequest struct {
@@ -22270,7 +22948,23 @@ type PeopleCoverage = api.PeopleCoverage
 
 type PeopleRebuildRequest = api.PeopleRebuildRequest
 
+type Person = api.Person
+
+type PersonDetail = api.PersonDetail
+
+type PersonExternalIdentity = api.PersonExternalIdentity
+
+type PersonExternalUID = api.PersonExternalUID
+
+type PersonIdentity = api.PersonIdentity
+
+type PersonMergeMovedCounts = api.PersonMergeMovedCounts
+
+type PersonMergeReceipt = api.PersonMergeReceipt
+
 type PersonPage = api.PersonPage
+
+type PersonSplitReceipt = api.PersonSplitReceipt
 
 type PersonSummary = api.PersonSummary
 
@@ -22437,6 +23131,8 @@ type RemoveRequest struct {
 	Schema        *string `json:"$schema,omitempty"`
 	RequestDigest string  `json:"request_digest"`
 }
+
+type RenamePersonRequest = api.RenamePersonRequest
 
 type RenameTagRequest struct {
 	// Schema A URL to the JSON Schema for this object.
@@ -22627,6 +23323,8 @@ type SourceMetadataValueV1 = document.SourceMetadataValueV1
 type SourceMetadataWarningV1 = document.SourceMetadataWarningV1
 
 type SourceRequest = bundle.SourceRequest
+
+type SplitPersonRequest = api.SplitPersonRequest
 
 type StartProcessingRequest = api.StartProcessingRequest
 

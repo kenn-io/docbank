@@ -231,6 +231,7 @@ func NewServer(d Deps) *Server {
 	registerPackageRoutes(mux, humaAPI, d, g, s.webDownloads, s.webSessions)
 	registerBatesRoutes(mux, humaAPI, d, g, s.webDownloads, s.webSessions, cursorService)
 	registerPhotoRoutes(humaAPI, d, g)
+	registerPeopleRoutes(humaAPI, d, g)
 	clearLongRunningBodyReadDeadlines(humaAPI)
 	markRevisionPreconditionsRequired(humaAPI)
 	registerDaemonOpenAPI(humaAPI)
@@ -348,6 +349,10 @@ func markRevisionPreconditionsRequired(api huma.API) {
 		{"/api/v1/photos/assets/{asset_id}/exclude", http.MethodPost},
 		{"/api/v1/photos/assets/{asset_id}/display", http.MethodPut},
 		{"/api/v1/photos/settings", http.MethodPut},
+		{"/api/v1/people/by-id/{person_id}", http.MethodPatch},
+		{"/api/v1/people/by-id/{person_id}/retire", http.MethodPost},
+		{"/api/v1/people/by-id/{person_id}/merge", http.MethodPost},
+		{"/api/v1/people/by-id/{person_id}/split", http.MethodPost},
 	} {
 		markDocumentedHeaderRequired(api, route.path, route.method, "If-Match")
 	}

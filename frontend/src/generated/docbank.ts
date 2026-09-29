@@ -1415,6 +1415,13 @@ export interface CreateNodeRequest {
   parent_id: number;
 }
 
+export interface CreatePersonRequest {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  /** @minLength 1 */
+  display_name: string;
+}
+
 export type CreatePhotoAssetRequestKind = typeof CreatePhotoAssetRequestKind[keyof typeof CreatePhotoAssetRequestKind];
 
 
@@ -3424,6 +3431,15 @@ export interface Member {
   version_id: string;
 }
 
+export interface MergePersonRequest {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  absorbed_person_id: string;
+  /** @minimum 1 */
+  absorbed_revision: number;
+  operation_id: string;
+}
+
 export interface Message {
   eml_sha256: string;
   eml_size: number;
@@ -4079,6 +4095,98 @@ export interface PeopleRebuildRequest {
   operation_id: string;
 }
 
+export interface Person {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  created_at: string;
+  display_name: string;
+  origin: string;
+  person_id: string;
+  reached_through_person_id?: string;
+  /** @minimum 1 */
+  revision: number;
+  state: string;
+  updated_at: string;
+}
+
+export interface PersonExternalIdentity {
+  archive_id: string;
+  display_name_snapshot: string;
+  /** @nullable */
+  last_seen_revision?: number | null;
+  linked_at: string;
+  system: string;
+  uid: string;
+  uid_kind: string;
+  uid_state: string;
+  updated_at: string;
+}
+
+export interface PersonIdentity {
+  confidence: string;
+  evidence_id: string;
+  evidence_kind: string;
+  identity_id: string;
+  kind: string;
+  normalization: string;
+  origin: string;
+  recorded_at: string;
+  scope_kind?: string;
+  scope_value?: string;
+  value_display: string;
+  value_normalized: string;
+}
+
+export interface PersonDetail {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  created_at: string;
+  display_name: string;
+  /** @maxItems 64 */
+  external_identities: PersonExternalIdentity[];
+  /** @maxItems 200 */
+  identities: PersonIdentity[];
+  origin: string;
+  person_id: string;
+  reached_through_person_id?: string;
+  /** @minimum 1 */
+  revision: number;
+  state: string;
+  updated_at: string;
+}
+
+export interface PersonExternalUID {
+  archive_id: string;
+  system: string;
+  uid: string;
+}
+
+export interface PersonMergeMovedCounts {
+  assertions: number;
+  custodian_assignments: number;
+  deduplicated_assertions: number;
+  deduplicated_identities: number;
+  external_uids: number;
+  identities: number;
+  superseded_candidates: number;
+}
+
+export interface PersonMergeReceipt {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  absorbed_display_name: string;
+  absorbed_person_id: string;
+  created_at: string;
+  merge_id: string;
+  moved: PersonMergeMovedCounts;
+  operation_id: string;
+  survivor_person_id: string;
+  /** @minimum 1 */
+  survivor_revision_after: number;
+  /** @minimum 1 */
+  survivor_revision_before: number;
+}
+
 export interface PersonSummary {
   display_name: string;
   person_id: string;
@@ -4091,6 +4199,16 @@ export interface PersonPage {
   readonly $schema?: string;
   items: PersonSummary[];
   next_cursor?: string;
+}
+
+export interface PersonSplitReceipt {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  created_at: string;
+  moved_identity_ids: string[];
+  new_person_id: string;
+  operation_id: string;
+  source_person_id: string;
 }
 
 export type PhotoAssetDisplaySource = typeof PhotoAssetDisplaySource[keyof typeof PhotoAssetDisplaySource];
@@ -4852,6 +4970,13 @@ export interface RemoveRequest {
   request_digest: string;
 }
 
+export interface RenamePersonRequest {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  /** @minLength 1 */
+  display_name: string;
+}
+
 export interface RenameTagRequest {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
@@ -5452,6 +5577,19 @@ export interface SourceRequest {
   saved_query_revision?: number;
   snapshot_id?: string;
   total?: number;
+}
+
+export interface SplitPersonRequest {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  assignment_ids?: string[];
+  /** @minLength 1 */
+  display_name: string;
+  /** @maxItems 64 */
+  external_identities?: PersonExternalUID[];
+  /** @maxItems 200 */
+  identity_ids?: string[];
+  operation_id: string;
 }
 
 export interface StartProcessingRequest {
@@ -6574,6 +6712,31 @@ query?: string;
  */
 limit?: number;
 cursor?: string;
+};
+
+export type RenamePersonHeaders = {
+'If-Match': string;
+};
+
+export type ListPersonCustodiansParams = {
+/**
+ * @minimum 1
+ * @maximum 250
+ */
+limit?: number;
+cursor?: string;
+};
+
+export type MergePersonHeaders = {
+'If-Match': string;
+};
+
+export type RetirePersonHeaders = {
+'If-Match': string;
+};
+
+export type SplitPersonHeaders = {
+'If-Match': string;
 };
 
 export type SetPhotoDisplayHeaders = {
@@ -12442,6 +12605,260 @@ export const listPeople = async (params?: ListPeopleParams, options?: Parameters
     method: 'GET'
 
 
+  }
+);}
+
+
+
+export const getCreatePersonUrl = () => {
+
+
+
+
+  return `/api/v1/people`
+}
+
+/**
+ * @summary Create one canonical person
+ */
+export const createPerson = async (createPersonRequest: NonReadonly<CreatePersonRequest>, options?: Parameters<typeof sessionJSON>[1]): Promise<Person> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return sessionJSON<Person>(getCreatePersonUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(createPersonRequest)
+  }
+);}
+
+
+
+export const getGetPersonUrl = (personId: string,) => {
+
+
+
+
+  return `/api/v1/people/by-id/${encodeURIComponent(String(personId))}`
+}
+
+/**
+ * @summary Inspect one canonical person
+ */
+export const getPerson = async (personId: string, options?: Parameters<typeof sessionJSON>[1]): Promise<PersonDetail> => {
+
+  return sessionJSON<PersonDetail>(getGetPersonUrl(personId),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+export const getRenamePersonUrl = (personId: string,) => {
+
+
+
+
+  return `/api/v1/people/by-id/${encodeURIComponent(String(personId))}`
+}
+
+/**
+ * @summary Rename one canonical person
+ */
+export const renamePerson = async (personId: string,
+    renamePersonRequest: NonReadonly<RenamePersonRequest>,
+    headers: RenamePersonHeaders, options?: Parameters<typeof sessionJSON>[1]): Promise<Person> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return sessionJSON<Person>(getRenamePersonUrl(personId),
+  {
+    ...options,
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json',...headers, ...getHeaders(options?.headers) },
+    body: JSON.stringify(renamePersonRequest)
+  }
+);}
+
+
+
+export const getListPersonCustodiansUrl = (personId: string,
+    params?: ListPersonCustodiansParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/v1/people/by-id/${encodeURIComponent(String(personId))}/custodians?${stringifiedParams}` : `/api/v1/people/by-id/${encodeURIComponent(String(personId))}/custodians`
+}
+
+/**
+ * @summary List active custodian assignments for one person
+ */
+export const listPersonCustodians = async (personId: string,
+    params?: ListPersonCustodiansParams, options?: Parameters<typeof sessionJSON>[1]): Promise<CustodianPage> => {
+
+  return sessionJSON<CustodianPage>(getListPersonCustodiansUrl(personId,params),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+export const getMergePersonUrl = (personId: string,) => {
+
+
+
+
+  return `/api/v1/people/by-id/${encodeURIComponent(String(personId))}/merge`
+}
+
+/**
+ * @summary Merge one person into another
+ */
+export const mergePerson = async (personId: string,
+    mergePersonRequest: NonReadonly<MergePersonRequest>,
+    headers: MergePersonHeaders, options?: Parameters<typeof sessionJSON>[1]): Promise<PersonMergeReceipt> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return sessionJSON<PersonMergeReceipt>(getMergePersonUrl(personId),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json',...headers, ...getHeaders(options?.headers) },
+    body: JSON.stringify(mergePersonRequest)
+  }
+);}
+
+
+
+export const getRetirePersonUrl = (personId: string,) => {
+
+
+
+
+  return `/api/v1/people/by-id/${encodeURIComponent(String(personId))}/retire`
+}
+
+/**
+ * @summary Retire one canonical person
+ */
+export const retirePerson = async (personId: string,
+    headers: RetirePersonHeaders, options?: Parameters<typeof sessionJSON>[1]): Promise<Person> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return sessionJSON<Person>(getRetirePersonUrl(personId),
+  {
+    ...options,
+    method: 'POST',
+    headers: { ...headers, ...getHeaders(options?.headers) }
+
+  }
+);}
+
+
+
+export const getSplitPersonUrl = (personId: string,) => {
+
+
+
+
+  return `/api/v1/people/by-id/${encodeURIComponent(String(personId))}/split`
+}
+
+/**
+ * @summary Split selected members into a new person
+ */
+export const splitPerson = async (personId: string,
+    splitPersonRequest: NonReadonly<SplitPersonRequest>,
+    headers: SplitPersonHeaders, options?: Parameters<typeof sessionJSON>[1]): Promise<PersonSplitReceipt> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return sessionJSON<PersonSplitReceipt>(getSplitPersonUrl(personId),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json',...headers, ...getHeaders(options?.headers) },
+    body: JSON.stringify(splitPersonRequest)
   }
 );}
 

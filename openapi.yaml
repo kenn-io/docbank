@@ -3117,6 +3117,26 @@ components:
         - name
         - kind
       type: object
+    CreatePersonRequest:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/CreatePersonRequest.json
+          format: uri
+          readOnly: true
+          type: string
+        display_name:
+          minLength: 1
+          type: string
+      required:
+        - display_name
+      type: object
+      x-go-type: api.CreatePersonRequest
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     CreatePhotoAssetRequest:
       additionalProperties: false
       properties:
@@ -8337,6 +8357,35 @@ components:
       x-go-type-import:
         path: go.kenn.io/docbank/document/bundle
         name: bundle
+    MergePersonRequest:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/MergePersonRequest.json
+          format: uri
+          readOnly: true
+          type: string
+        absorbed_person_id:
+          format: uuid
+          type: string
+        absorbed_revision:
+          format: int64
+          minimum: 1
+          type: integer
+        operation_id:
+          format: uuid
+          type: string
+      required:
+        - absorbed_person_id
+        - absorbed_revision
+        - operation_id
+      type: object
+      x-go-type: api.MergePersonRequest
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     Message:
       additionalProperties: false
       properties:
@@ -10317,6 +10366,300 @@ components:
       x-go-type-import:
         path: go.kenn.io/docbank/internal/api
         name: api
+    Person:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/Person.json
+          format: uri
+          readOnly: true
+          type: string
+        created_at:
+          format: date-time
+          type: string
+        display_name:
+          type: string
+        origin:
+          type: string
+        person_id:
+          format: uuid
+          type: string
+        reached_through_person_id:
+          format: uuid
+          type: string
+        revision:
+          format: int64
+          minimum: 1
+          type: integer
+        state:
+          type: string
+        updated_at:
+          format: date-time
+          type: string
+      required:
+        - person_id
+        - display_name
+        - origin
+        - state
+        - revision
+        - created_at
+        - updated_at
+      type: object
+      x-go-type: api.Person
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
+    PersonDetail:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/PersonDetail.json
+          format: uri
+          readOnly: true
+          type: string
+        created_at:
+          format: date-time
+          type: string
+        display_name:
+          type: string
+        external_identities:
+          items:
+            $ref: "#/components/schemas/PersonExternalIdentity"
+          maxItems: 64
+          type: array
+        identities:
+          items:
+            $ref: "#/components/schemas/PersonIdentity"
+          maxItems: 200
+          type: array
+        origin:
+          type: string
+        person_id:
+          format: uuid
+          type: string
+        reached_through_person_id:
+          format: uuid
+          type: string
+        revision:
+          format: int64
+          minimum: 1
+          type: integer
+        state:
+          type: string
+        updated_at:
+          format: date-time
+          type: string
+      required:
+        - identities
+        - external_identities
+        - person_id
+        - display_name
+        - origin
+        - state
+        - revision
+        - created_at
+        - updated_at
+      type: object
+      x-go-type: api.PersonDetail
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
+    PersonExternalIdentity:
+      additionalProperties: false
+      properties:
+        archive_id:
+          type: string
+        display_name_snapshot:
+          type: string
+        last_seen_revision:
+          format: int64
+          type:
+            - integer
+            - "null"
+        linked_at:
+          format: date-time
+          type: string
+        system:
+          type: string
+        uid:
+          type: string
+        uid_kind:
+          type: string
+        uid_state:
+          type: string
+        updated_at:
+          format: date-time
+          type: string
+      required:
+        - system
+        - archive_id
+        - uid
+        - uid_kind
+        - uid_state
+        - display_name_snapshot
+        - linked_at
+        - updated_at
+      type: object
+      x-go-type: api.PersonExternalIdentity
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
+    PersonExternalUID:
+      additionalProperties: false
+      properties:
+        archive_id:
+          type: string
+        system:
+          type: string
+        uid:
+          type: string
+      required:
+        - system
+        - archive_id
+        - uid
+      type: object
+      x-go-type: api.PersonExternalUID
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
+    PersonIdentity:
+      additionalProperties: false
+      properties:
+        confidence:
+          type: string
+        evidence_id:
+          type: string
+        evidence_kind:
+          type: string
+        identity_id:
+          format: uuid
+          type: string
+        kind:
+          type: string
+        normalization:
+          type: string
+        origin:
+          type: string
+        recorded_at:
+          format: date-time
+          type: string
+        scope_kind:
+          type: string
+        scope_value:
+          type: string
+        value_display:
+          type: string
+        value_normalized:
+          type: string
+      required:
+        - identity_id
+        - kind
+        - value_display
+        - value_normalized
+        - normalization
+        - origin
+        - evidence_kind
+        - evidence_id
+        - confidence
+        - recorded_at
+      type: object
+      x-go-type: api.PersonIdentity
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
+    PersonMergeMovedCounts:
+      additionalProperties: false
+      properties:
+        assertions:
+          format: int64
+          type: integer
+        custodian_assignments:
+          format: int64
+          type: integer
+        deduplicated_assertions:
+          format: int64
+          type: integer
+        deduplicated_identities:
+          format: int64
+          type: integer
+        external_uids:
+          format: int64
+          type: integer
+        identities:
+          format: int64
+          type: integer
+        superseded_candidates:
+          format: int64
+          type: integer
+      required:
+        - assertions
+        - deduplicated_assertions
+        - superseded_candidates
+        - identities
+        - deduplicated_identities
+        - external_uids
+        - custodian_assignments
+      type: object
+      x-go-type: api.PersonMergeMovedCounts
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
+    PersonMergeReceipt:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/PersonMergeReceipt.json
+          format: uri
+          readOnly: true
+          type: string
+        absorbed_display_name:
+          type: string
+        absorbed_person_id:
+          format: uuid
+          type: string
+        created_at:
+          format: date-time
+          type: string
+        merge_id:
+          format: uuid
+          type: string
+        moved:
+          $ref: "#/components/schemas/PersonMergeMovedCounts"
+        operation_id:
+          format: uuid
+          type: string
+        survivor_person_id:
+          format: uuid
+          type: string
+        survivor_revision_after:
+          format: int64
+          minimum: 1
+          type: integer
+        survivor_revision_before:
+          format: int64
+          minimum: 1
+          type: integer
+      required:
+        - merge_id
+        - operation_id
+        - survivor_person_id
+        - absorbed_person_id
+        - absorbed_display_name
+        - survivor_revision_before
+        - survivor_revision_after
+        - created_at
+        - moved
+      type: object
+      x-go-type: api.PersonMergeReceipt
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     PersonPage:
       additionalProperties: false
       properties:
@@ -10337,6 +10680,43 @@ components:
         - items
       type: object
       x-go-type: api.PersonPage
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
+    PersonSplitReceipt:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/PersonSplitReceipt.json
+          format: uri
+          readOnly: true
+          type: string
+        created_at:
+          format: date-time
+          type: string
+        moved_identity_ids:
+          items:
+            type: string
+          type: array
+        new_person_id:
+          format: uuid
+          type: string
+        operation_id:
+          format: uuid
+          type: string
+        source_person_id:
+          format: uuid
+          type: string
+      required:
+        - operation_id
+        - source_person_id
+        - new_person_id
+        - moved_identity_ids
+        - created_at
+      type: object
+      x-go-type: api.PersonSplitReceipt
       x-go-type-import:
         path: go.kenn.io/docbank/internal/api
         name: api
@@ -11933,6 +12313,26 @@ components:
       required:
         - request_digest
       type: object
+    RenamePersonRequest:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/RenamePersonRequest.json
+          format: uri
+          readOnly: true
+          type: string
+        display_name:
+          minLength: 1
+          type: string
+      required:
+        - display_name
+      type: object
+      x-go-type: api.RenamePersonRequest
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     RenameTagRequest:
       additionalProperties: false
       properties:
@@ -13555,6 +13955,44 @@ components:
       x-go-type-import:
         path: go.kenn.io/docbank/document/bundle
         name: bundle
+    SplitPersonRequest:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/SplitPersonRequest.json
+          format: uri
+          readOnly: true
+          type: string
+        assignment_ids:
+          items:
+            type: string
+          type: array
+        display_name:
+          minLength: 1
+          type: string
+        external_identities:
+          items:
+            $ref: "#/components/schemas/PersonExternalUID"
+          maxItems: 64
+          type: array
+        identity_ids:
+          items:
+            type: string
+          maxItems: 200
+          type: array
+        operation_id:
+          format: uuid
+          type: string
+      required:
+        - operation_id
+        - display_name
+      type: object
+      x-go-type: api.SplitPersonRequest
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     StartProcessingRequest:
       additionalProperties: false
       properties:
@@ -20361,6 +20799,243 @@ paths:
                 $ref: "#/components/schemas/Error"
           description: Error
       summary: Find active canonical people
+    post:
+      operationId: createPerson
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreatePersonRequest"
+        required: true
+      responses:
+        "201":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Person"
+          description: Created
+          headers:
+            ETag:
+              schema:
+                type: string
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: Create one canonical person
+  /api/v1/people/by-id/{person_id}:
+    get:
+      operationId: getPerson
+      parameters:
+        - in: path
+          name: person_id
+          required: true
+          schema:
+            format: uuid
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PersonDetail"
+          description: OK
+          headers:
+            ETag:
+              schema:
+                type: string
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: Inspect one canonical person
+    patch:
+      operationId: renamePerson
+      parameters:
+        - in: path
+          name: person_id
+          required: true
+          schema:
+            format: uuid
+            type: string
+        - in: header
+          name: If-Match
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RenamePersonRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Person"
+          description: OK
+          headers:
+            ETag:
+              schema:
+                type: string
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: Rename one canonical person
+  /api/v1/people/by-id/{person_id}/custodians:
+    get:
+      operationId: listPersonCustodians
+      parameters:
+        - in: path
+          name: person_id
+          required: true
+          schema:
+            format: uuid
+            type: string
+        - explode: false
+          in: query
+          name: limit
+          schema:
+            default: 100
+            format: int64
+            maximum: 250
+            minimum: 1
+            type: integer
+        - explode: false
+          in: query
+          name: cursor
+          schema:
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CustodianPage"
+          description: OK
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: List active custodian assignments for one person
+  /api/v1/people/by-id/{person_id}/merge:
+    post:
+      operationId: mergePerson
+      parameters:
+        - in: path
+          name: person_id
+          required: true
+          schema:
+            format: uuid
+            type: string
+        - in: header
+          name: If-Match
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MergePersonRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PersonMergeReceipt"
+          description: OK
+          headers:
+            ETag:
+              schema:
+                type: string
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: Merge one person into another
+  /api/v1/people/by-id/{person_id}/retire:
+    post:
+      operationId: retirePerson
+      parameters:
+        - in: path
+          name: person_id
+          required: true
+          schema:
+            format: uuid
+            type: string
+        - in: header
+          name: If-Match
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Person"
+          description: OK
+          headers:
+            ETag:
+              schema:
+                type: string
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: Retire one canonical person
+  /api/v1/people/by-id/{person_id}/split:
+    post:
+      operationId: splitPerson
+      parameters:
+        - in: path
+          name: person_id
+          required: true
+          schema:
+            format: uuid
+            type: string
+        - in: header
+          name: If-Match
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SplitPersonRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PersonSplitReceipt"
+          description: OK
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: Split selected members into a new person
   /api/v1/people/coverage:
     get:
       operationId: getPeopleCoverage

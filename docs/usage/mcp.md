@@ -147,7 +147,9 @@ links, is capped at 1 MiB.
 | `get_package_preflight` | Reads one retained preflight by its exact identity. |
 | `list_package_preflight_diagnostics` | Pages through bounded diagnostics for a retained preflight. |
 | `list_package_custodians` | Pages through active custodian claims for an exact package scope. |
-| `find_people` | Finds bounded canonical person candidates for custodian resolution. |
+| `find_people` | Finds bounded active canonical people by folded display-name prefix. |
+| `get_person` | Reads one person, its identities, and its external UIDs. |
+| `list_person_custodians` | Pages active custodian assignments for one person. |
 | `list_packages` | Pages through received and produced load-file packages. |
 | `get_package` | Reads one package and its retained source authority. |
 | `list_package_members` | Pages through a package's immutable document occurrences. |
@@ -168,6 +170,20 @@ Starting the server with `--allow-photo-edits` adds these write tools:
 Photo writes make one daemon request. An ambiguous transport failure returns
 `processing_outcome_unknown`; inspect the asset before retrying. Display and
 vault settings writes remain HTTP and CLI operations.
+
+Starting the server with `--allow-person-edits` adds these write tools:
+
+| Tool | Contract and important bounds |
+| --- | --- |
+| `create_person` | Creates one operator-owned canonical person. |
+| `rename_person` | Renames a person at `if_match_revision`. |
+| `retire_person` | Retires a person at `if_match_revision`. |
+| `merge_people` | Merges two people with survivor and absorbed revisions plus an operation UUID. |
+| `split_person` | Moves explicit identities, assignments, or external UIDs at an expected revision. |
+
+Person writes send one daemon request. Merge and split replay by operation
+UUID. A malformed success response returns `processing_outcome_unknown`;
+inspect the people records before retrying.
 
 `list_documents` uses live keyset pagination, not a snapshot. A mutation between
 pages can change later membership or order. Each opaque cursor is at most 32 KiB of ASCII, expires after 15 minutes, and

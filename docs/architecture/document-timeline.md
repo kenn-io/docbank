@@ -174,6 +174,10 @@ The rebuild counts every retained version. Missing event data and retryable
 failures keep it running; terminal unavailable results finish the receipt as
 `failed`.
 
+Person rename, retire, merge, and split edits invalidate derived document
+links by advancing the binding epoch; the daemon backfill republishes them
+after the authority change.
+
 Embedded callers run `Vault.RebuildDocumentEvents` before
 `Vault.RebuildDocumentPeople` and read coverage with `Vault.DocumentPeopleCoverage`.
 An incomplete rebuild returns its receipt and an error. Retry with the same
