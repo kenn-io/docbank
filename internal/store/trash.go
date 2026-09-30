@@ -458,6 +458,9 @@ func (s *Store) trashEmpty(
 		SELECT n.parent_id FROM nodes n JOIN retained r ON n.id=r.id WHERE n.parent_id IS NOT NULL
 	) SELECT id FROM retained`
 	deletable += ` AND id NOT IN (` + emailRetainedNodes + `)`
+	// An owner folder outlives the trash roots trashed out of it, so they keep their owner.
+	deletable += ` AND NOT (EXISTS (SELECT 1 FROM nodes pof WHERE pof.id=nodes.id AND ` + photoOwnerFolderSQL() + `)
+		AND EXISTS (SELECT 1 FROM nodes orphan WHERE orphan.trash_name IS NOT NULL AND orphan.trash_parent=nodes.id))`
 	selection := `SELECT id FROM nodes WHERE ` + deletable + ` ORDER BY trashed_at ASC, id ASC`
 	selectionArgs := append([]any(nil), args...)
 	if maxRoots > 0 {

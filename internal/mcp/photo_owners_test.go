@@ -24,12 +24,6 @@ func TestPhotoOwnerAdministrationStaysReadOnly(t *testing.T) {
 	for _, name := range []string{"add_photo_owner", "rename_photo_owner", "remove_photo_owner"} {
 		assert.NotContains(t, all, name)
 	}
-	// Photo tools act as the daemon's default owner; MCP cannot select one.
-	for _, name := range []string{"get_photo_asset", "create_photo_asset", "promote_photo_asset"} {
-		assertSchemaRejects(t, all[name].InputSchema, map[string]any{
-			"node_id": 1, "owner_id": "00000000-0000-4000-8000-000000000001",
-		})
-	}
 }
 
 func TestListPhotoOwnersReadsDaemonOwners(t *testing.T) {

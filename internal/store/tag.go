@@ -109,10 +109,11 @@ func tagByIDQuery(ctx context.Context, queryer rowQuerier, id string) (Tag, erro
 	if err := validateUUIDv4(id); err != nil {
 		return Tag{}, fmt.Errorf("tag %q: %w", id, ErrNotFound)
 	}
+	visible, visibleArgs := photoNodeVisibleSQL(ctx, "nt.node_id")
 	tag, err := scanTag(queryer.QueryRowContext(ctx, `
 		SELECT t.id, t.name, t.revision, COUNT(nt.node_id)
-		FROM tags t LEFT JOIN node_tags nt ON nt.tag_id = t.id
-		WHERE t.id = ? GROUP BY t.id, t.name, t.revision`, id))
+		FROM tags t LEFT JOIN node_tags nt ON nt.tag_id = t.id AND `+visible+`
+		WHERE t.id = ? GROUP BY t.id, t.name, t.revision`, append(visibleArgs, id)...))
 	if err != nil {
 		return Tag{}, fmt.Errorf("tag %q: %w", id, err)
 	}
@@ -125,10 +126,11 @@ func (s *Store) TagByName(ctx context.Context, name string) (Tag, error) {
 	if err != nil {
 		return Tag{}, err
 	}
+	visible, visibleArgs := photoNodeVisibleSQL(ctx, "nt.node_id")
 	tag, err := scanTag(s.db.QueryRowContext(ctx, `
 		SELECT t.id, t.name, t.revision, COUNT(nt.node_id)
-		FROM tags t LEFT JOIN node_tags nt ON nt.tag_id = t.id
-		WHERE t.name = ? GROUP BY t.id, t.name, t.revision`, name))
+		FROM tags t LEFT JOIN node_tags nt ON nt.tag_id = t.id AND `+visible+`
+		WHERE t.name = ? GROUP BY t.id, t.name, t.revision`, append(visibleArgs, name)...))
 	if err != nil {
 		return Tag{}, fmt.Errorf("tag %q: %w", name, err)
 	}

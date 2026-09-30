@@ -21,7 +21,7 @@ func revisionHeaders(headers map[string]string, revision int64) map[string]strin
 
 func trashPageNames(t *testing.T, f photoRouteFixture, headers map[string]string) ([]string, int) {
 	t.Helper()
-	response, body := get(t, f.ts, "/api/v1/trash", headers)
+	response, body := get(t, f.ts, "/api/v1/trash?limit=1000&offset=0", headers)
 	require.Equal(t, http.StatusOK, response.StatusCode, body)
 	var page api.TrashPage
 	require.NoError(t, json.Unmarshal([]byte(body), &page))
@@ -68,13 +68,12 @@ func TestPhotoOwnerFolderTrash(t *testing.T) {
 	})
 
 	t.Run("trash_listing", func(t *testing.T) {
-		// Browser sessions cannot list trash, so the master key selects each owner.
-		names, total := trashPageNames(t, f, ownerHeader(f.bob))
+		names, total := trashPageNames(t, f, bob)
 		assert.NotContains(t, names, "alice.jpg")
 		assert.NotContains(t, names, f.alice.ID)
 		assert.Zero(t, total)
 		t.Logf("bob roots=%v total=%d", names, total)
-		names, total = trashPageNames(t, f, ownerHeader(f.alice))
+		names, total = trashPageNames(t, f, alice)
 		assert.ElementsMatch(t, []string{"alice.jpg", f.alice.ID}, names)
 		assert.Equal(t, 2, total)
 		t.Logf("alice roots=%v total=%d", names, total)

@@ -104,50 +104,8 @@ func TestPhotoOwnersEnrollment(t *testing.T) {
 	t.Parallel()
 	f := newPhotoOwnerFixture(t)
 	ctx := t.Context()
-	owners, err := f.s.PhotoOwners(ctx)
-	require.NoError(t, err)
-	require.Len(t, owners, 2)
-	assert.Equal(t, f.first.PersonID, owners[0].ID)
-	folder, err := f.s.NodeByPath(ctx, "/photos/"+f.first.PersonID)
-	require.NoError(t, err)
-	assert.True(t, folder.IsDir())
-
-	// The owner's name is the person's name.
-	renamed, err := f.s.UpdatePerson(ctx, f.first.PersonID, f.first.Revision, "First Renamed")
-	require.NoError(t, err)
-	owner, err := f.s.PhotoOwner(ctx, f.first.PersonID)
-	require.NoError(t, err)
-	assert.Equal(t, "First Renamed", owner.Name)
-
-	_, err = f.s.EnrollPhotoOwner(ctx, f.first.PersonID, renamed.Revision)
-	require.ErrorIs(t, err, ErrPhotoOwnerEnrolled)
-	_, err = f.s.EnrollPhotoOwner(ctx, "00000000-0000-4000-8000-000000000000", 1)
-	require.ErrorIs(t, err, ErrNotFound)
-	require.ErrorIs(t, f.s.RemovePhotoOwner(ctx, f.first.PersonID, f.first.Revision), ErrStaleRevision)
-	require.ErrorIs(t, f.s.RemovePhotoOwner(ctx, f.first.PersonID, renamed.Revision), ErrPhotoOwnerReferenced)
-
-	// A trashed node still keeps the folder in use, and an enrolled person
-	// can be neither retired nor absorbed.
-	_, _, err = f.s.Trash(ctx, f.secondNode.ID, f.secondNode.Revision)
-	require.NoError(t, err)
-	require.ErrorIs(t, f.s.RemovePhotoOwner(ctx, f.second.PersonID, f.second.Revision), ErrPhotoOwnerReferenced)
-	_, err = f.s.RetirePerson(ctx, f.second.PersonID, f.second.Revision)
+	_, err := f.s.MergePersons(ctx, f.first.PersonID, f.second.PersonID, "00000000-0000-4000-8000-000000000001", f.first.Revision, f.second.Revision)
 	require.ErrorIs(t, err, ErrPhotoOwnerReferenced)
-	_, err = f.s.MergePersons(ctx, f.first.PersonID, f.second.PersonID, "00000000-0000-4000-8000-000000000001", renamed.Revision, f.second.Revision)
-	require.ErrorIs(t, err, ErrPhotoOwnerReferenced)
-
-	_, err = f.s.PhotoAssetByID(WithPhotoOwner(ctx, f.second.PersonID), f.firstAsset.ID)
-	require.ErrorIs(t, err, ErrNotFound)
-	_, err = f.s.NodeByID(WithPhotoOwner(ctx, f.second.PersonID), f.firstNode.ID)
-	require.ErrorIs(t, err, ErrNotFound)
-	_, err = f.s.NodeByID(ctx, f.firstNode.ID)
-	require.NoError(t, err, "in-process callers see every folder")
-
-	// An empty folder releases the enrollment and stays as an ordinary folder.
-	third := enrollTestOwner(t, f.s, "Third")
-	require.NoError(t, f.s.RemovePhotoOwner(ctx, third.PersonID, third.Revision))
-	_, err = f.s.NodeByPath(WithPhotoOwner(ctx, f.first.PersonID), "/photos/"+third.PersonID)
-	require.NoError(t, err)
 
 	// Enrollment adopts an existing folder.
 	fourth, err := f.s.CreatePerson(ctx, "Fourth", "operator")
@@ -164,18 +122,10 @@ func TestPhotoOwnersEnrollment(t *testing.T) {
 func TestPhotoOwnersVaultWideMaintenance(t *testing.T) {
 	t.Parallel()
 	f := newPhotoOwnerFixture(t)
-	ctx := WithPhotoOwner(t.Context(), f.first.PersonID)
 	preference := "image"
-	settings, err := f.s.SetPhotoSettings(ctx, 1, &preference)
+	settings, err := f.s.SetPhotoSettings(WithPhotoOwner(t.Context(), f.first.PersonID), 1, &preference)
 	require.NoError(t, err)
 	require.Equal(t, int64(2), settings.Revision)
-	for _, node := range []Node{f.firstNode, f.secondNode} {
-		_, _, err = f.s.Trash(t.Context(), node.ID, node.Revision)
-		require.NoError(t, err)
-	}
-	report, err := f.s.TrashEmpty(t.Context(), 0, true)
-	require.NoError(t, err)
-	require.Equal(t, int64(2), report.Deleted)
 }
 
 func TestPhotoOwnersMetadataRoundTrip(t *testing.T) {

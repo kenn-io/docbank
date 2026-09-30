@@ -94,22 +94,23 @@ func (s *Store) Collections(
 	}
 	defer func() { _ = tx.Rollback() }()
 
+	visible, visibleArgs := photoNodeVisibleSQL(ctx, "cm.node_id")
 	var total int
 	if err := tx.QueryRowContext(ctx, `WITH `+CollectionMembershipCTE+`
-		SELECT COUNT(DISTINCT ingest_id) FROM collection_members`).Scan(&total); err != nil {
+		SELECT COUNT(DISTINCT cm.ingest_id) FROM collection_members cm WHERE `+visible, visibleArgs...).Scan(&total); err != nil {
 		return nil, 0, fmt.Errorf("counting collections: %w", err)
 	}
 	rows, err := tx.QueryContext(ctx, `WITH `+CollectionMembershipCTE+`
 		SELECT `+collectionColumns+`
 		FROM ingests i
-		JOIN collection_members cm ON cm.ingest_id=i.id
+		JOIN collection_members cm ON cm.ingest_id=i.id AND `+visible+`
 		JOIN nodes n ON n.id=cm.node_id
 		JOIN content_versions cv ON cv.version_id=n.current_version_id
 		LEFT JOIN collection_labels l ON l.ingest_id=i.id
 		GROUP BY i.id, i.source_kind, i.source_desc, i.started_at,
 			l.label, l.revision, l.updated_at
 		ORDER BY i.started_at DESC, i.id
-		LIMIT ? OFFSET ?`, limit, offset)
+		LIMIT ? OFFSET ?`, append(visibleArgs, limit, offset)...)
 	if err != nil {
 		return nil, 0, fmt.Errorf("listing collections: %w", err)
 	}
@@ -201,18 +202,8 @@ func (s *Store) CollectionMembers(
 		}
 		items = append(items, NodeView{Node: node, Path: path})
 	}
-	total := int(collection.FileCount)
-	if _, ok := PhotoOwnerFromContext(ctx); ok {
-		err = tx.QueryRowContext(ctx, `WITH `+CollectionMembershipCTE+`
-			SELECT COUNT(*) FROM `+nodeFrom+`
-			JOIN collection_members cm ON cm.node_id=n.id
-			WHERE cm.ingest_id=? AND `+visible, append([]any{id}, visibleArgs...)...).Scan(&total)
-		if err != nil {
-			return CollectionMemberPage{}, fmt.Errorf("counting collection %q members: %w", id, err)
-		}
-	}
 	if err := tx.Commit(); err != nil {
 		return CollectionMemberPage{}, fmt.Errorf("closing collection member snapshot: %w", err)
 	}
-	return CollectionMemberPage{Collection: collection, Items: items, Total: total}, nil
+	return CollectionMemberPage{Collection: collection, Items: items, Total: int(collection.FileCount)}, nil
 }

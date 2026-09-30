@@ -15,9 +15,6 @@ func registerPhotoOwnerRoutes(api huma.API, d Deps, g *gate, sessions *webSessio
 		OperationID: "listPhotoOwners", Method: http.MethodGet,
 		Path: "/api/v1/photos/owners", Summary: "List photo owners",
 	}, func(ctx context.Context, _ *struct{}) (*photoOwnersOutput, error) {
-		if browserSessionRequest(ctx) {
-			return nil, FromStoreError(store.ErrNotFound)
-		}
 		owners, err := d.Store.PhotoOwners(ctx)
 		if err != nil {
 			return nil, FromStoreError(err)
@@ -37,9 +34,6 @@ func registerPhotoOwnerRoutes(api huma.API, d Deps, g *gate, sessions *webSessio
 		IfMatch string `header:"If-Match" doc:"The person's current revision"`
 		Body    EnrollPhotoOwnerRequest
 	}) (*photoOwnerOutput, error) {
-		if browserSessionRequest(ctx) {
-			return nil, FromStoreError(store.ErrNotFound)
-		}
 		revision, err := parseIfMatch(in.IfMatch)
 		if err != nil {
 			return nil, err
@@ -69,9 +63,6 @@ func registerPhotoOwnerRoutes(api huma.API, d Deps, g *gate, sessions *webSessio
 		PersonID string `path:"person_id"`
 		IfMatch  string `header:"If-Match" doc:"The person's current revision"`
 	}) (*struct{}, error) {
-		if browserSessionRequest(ctx) {
-			return nil, FromStoreError(store.ErrNotFound)
-		}
 		revision, err := parseIfMatch(in.IfMatch)
 		if err != nil {
 			return nil, err

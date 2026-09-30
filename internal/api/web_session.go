@@ -582,7 +582,6 @@ func registerWebSession(
 	webURL string,
 	storeDB *store.Store,
 	sessions *webSessionRegistry,
-	g *gate,
 ) {
 	mux.HandleFunc("POST "+webSessionPath, func(w http.ResponseWriter, r *http.Request) {
 		if !enabled || webURL == "" {
@@ -591,35 +590,43 @@ func registerWebSession(
 			return
 		}
 		// The session binds to one owner for its lifetime. Once the vault has
-		// owners it must name one; the gate orders this with enrollment.
-		var token, uploadSecret string
-		err := g.mutate(func() error {
-			photoOwnerID, selected := store.PhotoOwnerFromContext(r.Context())
-			if selected {
-				if _, err := storeDB.PhotoOwner(r.Context(), photoOwnerID); err != nil {
-					return err
-				}
-			} else {
-				owners, err := storeDB.PhotoOwners(r.Context())
-				if err != nil {
-					return err
-				}
-				if len(owners) != 0 {
-					return NewError(http.StatusUnprocessableEntity, "validation",
-						"this vault has photo owners; open the web app for one with docbank web --owner <person id>")
-				}
-			}
-			var err error
-			token, uploadSecret, err = sessions.issue(photoOwnerID)
+		// owners it must name one.
+		ownersExist := func() error {
+			owners, err := storeDB.PhotoOwners(r.Context())
 			if err != nil {
-				return NewError(http.StatusInternalServerError, "internal",
-					"could not create a browser session")
+				return err
+			}
+			if len(owners) != 0 {
+				return NewError(http.StatusUnprocessableEntity, "validation",
+					"this vault has photo owners; open the web app for one with docbank web --owner <person id>")
 			}
 			return nil
-		})
+		}
+		photoOwnerID, selected := store.PhotoOwnerFromContext(r.Context())
+		var err error
+		if selected {
+			_, err = storeDB.PhotoOwner(r.Context(), photoOwnerID)
+		} else {
+			err = ownersExist()
+		}
 		if err != nil {
 			writeEmailStoreError(w, err)
 			return
+		}
+		token, uploadSecret, err := sessions.issue(photoOwnerID)
+		if err != nil {
+			writeError(w, NewError(http.StatusInternalServerError, "internal",
+				"could not create a browser session"))
+			return
+		}
+		if !selected {
+			// An enrollment that ran between the check and the issue revoked
+			// nothing, so recheck and withdraw this session.
+			if err := ownersExist(); err != nil {
+				sessions.revoke(token)
+				writeEmailStoreError(w, err)
+				return
+			}
 		}
 		w.Header().Set("Cache-Control", "no-store")
 		writeJSON(w, http.StatusCreated, struct {
