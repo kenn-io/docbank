@@ -400,17 +400,25 @@ func (s *Store) IngestPhotoGroup(ctx context.Context, run IngestRun, group Photo
 				if member.Physical.Encoding != "" {
 					physical = []BlobPhysical{member.Physical}
 				}
-				name, options := member.Name, ingestFileOptions{observeMembership: true, deferPhotoEnrollment: true}
-				if role == PhotoRoleSidecar {
-					// Generic reuse matches by basename alone, so another folder's identical sidecar gets its own name.
-					var err error
-					if name, err = NormalizeName(name); err != nil {
+				options := ingestFileOptions{observeMembership: true, deferPhotoEnrollment: true}
+				name, err := NormalizeName(member.Name)
+				if err != nil {
+					return err
+				}
+				// Generic reuse matches by basename alone, so another folder's identical sidecar gets its own name.
+				options.exact = role == PhotoRoleSidecar
+				if !options.exact {
+					_, existingID, reuse, err := resolveIngestNameTx(tx, group.DestinationID, name, member.BlobHash, run.record.SourceKind)
+					if err != nil {
 						return err
 					}
+					// Name reuse can hand back a node another member of this group already holds.
+					options.exact = reuse && claimed[existingID]
+				}
+				if options.exact {
 					if name, _, _, err = resolveIngestNameTx(tx, group.DestinationID, name, "", run.record.SourceKind); err != nil {
 						return err
 					}
-					options.exact = true
 				}
 				receipt, created, _, err := s.ingestFileTx(ctx, tx, run, group.DestinationID,
 					name, member.BlobHash, member.Size, mediaTypes[i], member.OriginalPath,
