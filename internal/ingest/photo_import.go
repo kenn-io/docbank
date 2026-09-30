@@ -127,7 +127,7 @@ func discoverPhotoCandidates(ctx context.Context, root string) ([]PhotoImportCan
 func (ing *Ingester) readPhotoImportMember(ctx context.Context, candidate PhotoImportCandidate, fingerprint localFileFingerprint) (store.PhotoImportMember, error) {
 	content, err := ing.readLocalFile(ctx, candidate.Path, candidate.Path, nil, &fingerprint)
 	if err != nil {
-		return store.PhotoImportMember{}, err
+		return store.PhotoImportMember{}, photoSourceGone(candidate.Path, err)
 	}
 	source := store.ClassifyPhotoSource(candidate.Path)
 	return store.PhotoImportMember{
@@ -135,6 +135,17 @@ func (ing *Ingester) readPhotoImportMember(ctx context.Context, candidate PhotoI
 		BlobHash: content.hash, Size: content.size, MediaType: source.MediaType,
 		OriginalPath: candidate.Path, OriginalMtime: content.mtime, Physical: content.physical,
 	}, nil
+}
+
+// photoSourceGone counts a file deleted since the scan as changed, like any
+// other change since the scan; other read failures stay failures.
+func photoSourceGone(path string, err error) error {
+	if errors.Is(err, fs.ErrNotExist) {
+		if _, statErr := os.Lstat(path); errors.Is(statErr, fs.ErrNotExist) {
+			return errors.Join(ErrSourceChanged, err)
+		}
+	}
+	return err
 }
 
 // ImportPhotoDirectory imports every supported camera file under root into
@@ -253,7 +264,7 @@ func (ing *Ingester) importPhotoGroup(
 ) (store.PhotoImportResult, error) {
 	for _, candidate := range group.Members {
 		if err := observeErrors[candidate.Path]; err != nil {
-			return store.PhotoImportResult{}, err
+			return store.PhotoImportResult{}, photoSourceGone(candidate.Path, err)
 		}
 	}
 	var result store.PhotoImportResult
