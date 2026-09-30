@@ -224,7 +224,7 @@ func isASCIIPhotoImportFolder(folder string) bool {
 }
 
 func (s *Store) photoImportCurrentDuplicateTx(
-	ctx context.Context, tx *sql.Tx, run IngestRun, member PhotoImportMember, role string,
+	ctx context.Context, tx *sql.Tx, run IngestRun, member PhotoImportMember, role, target string, claimed map[int64]bool,
 ) (Node, bool, error) {
 	var node Node
 	if role == PhotoRoleSidecar {
@@ -259,6 +259,13 @@ func (s *Store) photoImportCurrentDuplicateTx(
 		}
 		if err := rows.Err(); err != nil {
 			return Node{}, false, fmt.Errorf("reading duplicate photo sidecars: %w", err)
+		}
+		_ = rows.Close()
+		if !found && target != "" {
+			// A moved or re-cased folder changes the path, but the photo already holding these bytes is the same shot.
+			if node, found, err = photoImportTargetSidecarTx(ctx, tx, target, member.BlobHash, claimed); err != nil {
+				return Node{}, false, err
+			}
 		}
 		if !found {
 			return Node{}, false, nil
@@ -311,6 +318,38 @@ func (s *Store) photoImportCurrentDuplicateTx(
 	return observed, true, nil
 }
 
+func photoImportTargetSidecarTx(
+	ctx context.Context, tx *sql.Tx, assetID, blobHash string, claimed map[int64]bool,
+) (Node, bool, error) {
+	rows, err := tx.QueryContext(ctx, `
+		SELECT `+nodeCols+`
+		FROM `+nodeFrom+`
+		JOIN photo_files pf ON pf.node_id=n.id AND pf.asset_id=? AND pf.role=?
+		WHERE n.trashed_at IS NULL AND cv.blob_hash=?
+		ORDER BY n.id`, assetID, PhotoRoleSidecar, blobHash)
+	if err != nil {
+		return Node{}, false, fmt.Errorf("finding photo sidecar by content: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	for rows.Next() {
+		var node Node
+		if err := rows.Scan(
+			&node.ID, &node.ParentID, &node.Name, &node.Kind, &node.CurrentVersionID,
+			&node.BlobHash, &node.MD5, &node.Size, &node.MimeType, &node.Revision,
+			&node.CreatedAt, &node.ModifiedAt, &node.TrashedAt,
+		); err != nil {
+			return Node{}, false, fmt.Errorf("scanning photo sidecar by content: %w", err)
+		}
+		if !claimed[node.ID] {
+			return node, true, nil
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return Node{}, false, fmt.Errorf("reading photo sidecars by content: %w", err)
+	}
+	return Node{}, false, nil
+}
+
 // IngestPhotoGroup publishes one group of already-durable bytes and commits
 // its nodes, provenance, and photo membership in one logical transaction.
 // One RAW and at most one existing photo pair automatically; anything more is
@@ -335,6 +374,7 @@ func (s *Store) IngestPhotoGroup(ctx context.Context, run IngestRun, group Photo
 		roles := make([]string, count)
 		kinds := make([]string, count)
 		owners := make([]string, count)
+		mediaTypes := make([]string, count)
 		added, isolated := false, false
 		for i, member := range group.Members {
 			role, mediaType, kind, err := photoImportMemberRole(member)
@@ -350,10 +390,12 @@ func (s *Store) IngestPhotoGroup(ctx context.Context, run IngestRun, group Photo
 			if member.BlobHash == "" || member.Size < 0 || member.OriginalPath == "" {
 				return fmt.Errorf("photo import member %q lacks a verified source identity", member.Name)
 			}
-			node, duplicate, err := s.photoImportCurrentDuplicateTx(ctx, tx, run, member, role)
-			if err != nil {
-				return err
-			}
+			roles[i], kinds[i], mediaTypes[i] = role, kind, mediaType
+		}
+		decided := make([]bool, count)
+		claimed := make(map[int64]bool, count)
+		settle := func(i int, node Node, duplicate bool) error {
+			member, role := group.Members[i], roles[i]
 			if !duplicate {
 				physical := []BlobPhysical(nil)
 				if member.Physical.Encoding != "" {
@@ -362,6 +404,7 @@ func (s *Store) IngestPhotoGroup(ctx context.Context, run IngestRun, group Photo
 				name, options := member.Name, ingestFileOptions{observeMembership: true, deferPhotoEnrollment: true}
 				if role == PhotoRoleSidecar {
 					// Generic reuse matches by basename alone, so another folder's identical sidecar gets its own name.
+					var err error
 					if name, err = NormalizeName(name); err != nil {
 						return err
 					}
@@ -371,7 +414,7 @@ func (s *Store) IngestPhotoGroup(ctx context.Context, run IngestRun, group Photo
 					options.exact = true
 				}
 				receipt, created, _, err := s.ingestFileTx(ctx, tx, run, group.DestinationID,
-					name, member.BlobHash, member.Size, mediaType, member.OriginalPath,
+					name, member.BlobHash, member.Size, mediaTypes[i], member.OriginalPath,
 					member.OriginalMtime, options, physical...)
 				if err != nil {
 					return err
@@ -379,8 +422,59 @@ func (s *Store) IngestPhotoGroup(ctx context.Context, run IngestRun, group Photo
 				node = receipt.Node
 				added = added || created
 			}
-			nodes[i], roles[i], kinds[i] = node, role, kind
-			if owners[i], _, err = photoAssetOwningNodeTx(ctx, tx, node.ID); err != nil {
+			nodes[i], decided[i], claimed[node.ID] = node, true, true
+			var err error
+			owners[i], _, err = photoAssetOwningNodeTx(ctx, tx, node.ID)
+			return err
+		}
+		// RAW and image files settle first so sidecars can see which photo the group joins,
+		// then sidecars matched by their own path, then the rest against that photo.
+		for i, member := range group.Members {
+			if roles[i] == PhotoRoleSidecar {
+				continue
+			}
+			node, duplicate, err := s.photoImportCurrentDuplicateTx(ctx, tx, run, member, roles[i], "", nil)
+			if err != nil {
+				return err
+			}
+			if err := settle(i, node, duplicate); err != nil {
+				return err
+			}
+		}
+		for i, member := range group.Members {
+			if roles[i] != PhotoRoleSidecar {
+				continue
+			}
+			node, duplicate, err := s.photoImportCurrentDuplicateTx(ctx, tx, run, member, roles[i], "", nil)
+			if err != nil {
+				return err
+			}
+			if duplicate {
+				if err := settle(i, node, true); err != nil {
+					return err
+				}
+			}
+		}
+		joined := ""
+		for i := range owners {
+			if !decided[i] || owners[i] == "" || owners[i] == joined {
+				continue
+			}
+			if joined != "" {
+				joined = ""
+				break
+			}
+			joined = owners[i]
+		}
+		for i, member := range group.Members {
+			if decided[i] {
+				continue
+			}
+			node, duplicate, err := s.photoImportCurrentDuplicateTx(ctx, tx, run, member, roles[i], joined, claimed)
+			if err != nil {
+				return err
+			}
+			if err := settle(i, node, duplicate); err != nil {
 				return err
 			}
 		}
