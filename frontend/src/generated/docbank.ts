@@ -8840,6 +8840,30 @@ return sessionResponse<ExportJob>(getCreateExportJobWithBlobUrl(),
 
 
 
+export const getReleaseExportJobUrl = (id: string,) => {
+
+
+
+
+  return `/api/v1/exports/jobs/${encodeURIComponent(String(id))}`
+}
+
+/**
+ * @summary Release a finished export and its retained archive
+ */
+export const releaseExportJob = async (id: string, options?: Parameters<typeof sessionJSON>[1]): Promise<void> => {
+
+  return sessionJSON<void>(getReleaseExportJobUrl(id),
+  {
+    ...options,
+    method: 'DELETE'
+
+
+  }
+);}
+
+
+
 export const getGetExportJobUrl = (id: string,) => {
 
 

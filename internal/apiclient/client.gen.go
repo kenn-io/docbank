@@ -2833,6 +2833,46 @@ func (c *Client) CreateExportJob(ctx context.Context, options *CreateExportJobRe
 	return responseParser(ctx, resp)
 }
 
+// ReleaseExportJob Release a finished export and its retained archive
+func (c *Client) ReleaseExportJob(ctx context.Context, options *ReleaseExportJobRequestOptions, reqEditors ...runtime.RequestEditorFn) (*struct{}, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/exports/jobs/{id}",
+		Method:     "DELETE",
+		Options:    options,
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*struct{}, error) {
+		switch resp.StatusCode {
+
+		case 204:
+
+			target := new(struct{})
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[ReleaseExportJobErrorResponse](resp, "ReleaseExportJobErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/exports/jobs/{id}")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 204)
+	}
+	return responseParser(ctx, resp)
+}
+
 // GetExportJob Read current durable export progress and receipt
 func (c *Client) GetExportJob(ctx context.Context, options *GetExportJobRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetExportJobResponse, error) {
 	var err error
@@ -13447,6 +13487,37 @@ func (o *CreateExportJobRequestOptions) GetHeader() (map[string]string, error) {
 	return nil, nil
 }
 
+// ReleaseExportJobRequestOptions is the options needed to make a request to ReleaseExportJob.
+type ReleaseExportJobRequestOptions struct {
+	PathParams *ReleaseExportJobPath
+}
+
+// GetPathParams returns the path params as a map.
+func (o *ReleaseExportJobRequestOptions) GetPathParams() (map[string]any, error) {
+	encoded, err := json.Marshal(o.PathParams, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetQuery returns the query params as a map.
+func (o *ReleaseExportJobRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *ReleaseExportJobRequestOptions) GetBody() any {
+	return nil
+}
+
+// GetHeader returns the headers as a map.
+func (o *ReleaseExportJobRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
 // GetExportJobRequestOptions is the options needed to make a request to GetExportJob.
 type GetExportJobRequestOptions struct {
 	PathParams *GetExportJobPath
@@ -19535,6 +19606,10 @@ type DownloadEmailPDFPath struct {
 	Profile   string    `json:"profile"`
 }
 
+type ReleaseExportJobPath struct {
+	ID string `json:"id"`
+}
+
 type GetExportJobPath struct {
 	ID string `json:"id"`
 }
@@ -20708,6 +20783,8 @@ type GetEmailPDFResponse = document.EmailPDFReceiptV1
 type CreateExportJobResponse = bundle.ExportJob
 
 type CreateExportJobErrorResponse = Error
+
+type ReleaseExportJobErrorResponse = Error
 
 type GetExportJobResponse = bundle.ExportJob
 

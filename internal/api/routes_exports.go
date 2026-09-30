@@ -300,6 +300,24 @@ func registerExportRoutes(mux *http.ServeMux, api huma.API, d Deps, g *Operation
 		}
 		return &jobOutput{Body: j}, nil
 	})
+	huma.Register(api, huma.Operation{
+		OperationID: "releaseExportJob", Method: http.MethodDelete, Path: "/api/v1/exports/jobs/{id}",
+		Summary: "Release a finished export and its retained archive", DefaultStatus: http.StatusNoContent,
+	}, func(ctx context.Context, in *struct {
+		ID string `path:"id"`
+	}) (*struct{}, error) {
+		owner, err := exportOwner(ctx)
+		if err != nil {
+			return nil, err
+		}
+		if d.Exports == nil {
+			return nil, NewError(503, "export_unavailable", "export worker unavailable")
+		}
+		if err := d.Exports.Release(ctx, owner, in.ID); err != nil {
+			return nil, exportProblem(err)
+		}
+		return &struct{}{}, nil
+	})
 	huma.Register(api, huma.Operation{OperationID: "cancelExportJob", Method: http.MethodPost, Path: "/api/v1/exports/jobs/{id}/cancel", Summary: "Cancel and fence a running export", MaxBodyBytes: 1024}, func(ctx context.Context, in *struct {
 		ID   string `path:"id"`
 		Body struct{}

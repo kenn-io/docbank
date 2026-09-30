@@ -16993,6 +16993,24 @@ paths:
           description: Error
       summary: Admit a durable verified export job
   /api/v1/exports/jobs/{id}:
+    delete:
+      operationId: releaseExportJob
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      responses:
+        "204":
+          description: No Content
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: Release a finished export and its retained archive
     get:
       operationId: getExportJob
       parameters:

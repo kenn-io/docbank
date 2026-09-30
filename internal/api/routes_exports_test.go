@@ -215,6 +215,22 @@ func TestExportAPIWorkerVerifiedTicketPreservesRetainedArchive(t *testing.T) {
 		require.Equal(t, http.StatusNotFound, resp.StatusCode)
 		require.NoError(t, resp.Body.Close())
 	}
+	ticket, err := client.DownloadExportArchive(t.Context(), &apiclient.DownloadExportArchiveRequestOptions{
+		PathParams: &apiclient.DownloadExportArchivePath{ID: job.ID}, Body: &bundle.DownloadRequest{},
+	})
+	require.NoError(t, err)
+	response, body = do(t, ts, http.MethodDelete, "/api/v1/exports/jobs/"+job.ID, nil, nil)
+	require.Equal(t, http.StatusConflict, response.StatusCode, body)
+	require.Contains(t, body, "export_retained")
+	resp, err := ts.Client().Get(ts.URL + ticket.URL)
+	require.NoError(t, err)
+	_, err = io.Copy(io.Discard, resp.Body)
+	require.NoError(t, err)
+	require.NoError(t, resp.Body.Close())
+	response, body = do(t, ts, http.MethodDelete, "/api/v1/exports/jobs/"+job.ID, nil, nil)
+	require.Equal(t, http.StatusNoContent, response.StatusCode, body)
+	_, err = client.GetExportJob(t.Context(), &apiclient.GetExportJobRequestOptions{PathParams: &apiclient.GetExportJobPath{ID: job.ID}})
+	require.ErrorIs(t, err, store.ErrNotFound)
 }
 
 func TestExportSavedQueryRetryDoesNotRerunChangedDefinition(t *testing.T) {
