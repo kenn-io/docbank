@@ -97,8 +97,8 @@ just to distinguish null from omitted scalar values: ordinary decoding applies.
 Before contacting the daemon, check both operation IDs and all decoded members
 for the value rules below, duplicate node/version pairs, and combined original
 bytes above `bundle.MaxRoleBytes`. Report a usage error naming the first invalid
-field, including the zero-based member index where applicable. Use standard
-`uuid.Parse` plus canonical spelling/version/variant checks and
+field, including the zero-based member index where applicable. Use the existing
+`daemonconn.IsCanonicalUUIDv4` check and
 `canonical.IsSHA256Hex`; do not add another hex parser or use a page-source
 validator with different size rules. These cheap checks prevent malformed
 requests from reserving a failed source record. Live identity and revision
@@ -259,7 +259,8 @@ The release contract is:
 Filesystem removal and the store transaction are not atomic. If removal fails,
 leave the row and its retention in place. If the subsequent transaction fails,
 the archive may already be gone while the row still occupies a slot: report the
-error and let the caller retry release. The retry tolerates the missing archive.
+error and let the caller retry release. Download of that missing archive returns
+`410 export_expired` with a retry-release hint. The retry tolerates the missing archive.
 If the success response is lost, status/not-found can establish that the job is
 no longer accessible; repeated release does not recreate it. Do not introduce
 tombstones or a second job state machine for release retries.

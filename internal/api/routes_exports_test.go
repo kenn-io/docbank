@@ -227,6 +227,24 @@ func TestExportAPIWorkerVerifiedTicketPreservesRetainedArchive(t *testing.T) {
 	_, err = io.Copy(io.Discard, resp.Body)
 	require.NoError(t, err)
 	require.NoError(t, resp.Body.Close())
+	// Cancellation after unlink rolls back the row. Download must explain how
+	// to recover that retained job, rather than report an unexplained 500.
+	releaseCtx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	err = s.ReleaseExportJob(releaseCtx, "master", job.ID, func() error {
+		archive := filepath.Join(filepath.Dir(s.DBPath), "export-archives", job.ID+".zip")
+		if err := os.Remove(archive); err != nil {
+			return err
+		}
+		cancel()
+		return nil
+	})
+	require.ErrorIs(t, err, context.Canceled)
+	response, body = do(t, ts, http.MethodPost,
+		"/api/v1/exports/jobs/"+job.ID+"/download", nil, bundle.DownloadRequest{})
+	require.Equal(t, http.StatusGone, response.StatusCode, body)
+	require.Contains(t, body, "export_expired")
+	require.Contains(t, body, "retry release")
 	response, body = do(t, ts, http.MethodDelete, "/api/v1/exports/jobs/"+job.ID, nil, nil)
 	require.Equal(t, http.StatusNoContent, response.StatusCode, body)
 	_, err = client.GetExportJob(t.Context(), &apiclient.GetExportJobRequestOptions{PathParams: &apiclient.GetExportJobPath{ID: job.ID}})

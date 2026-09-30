@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"errors"
 
 	"go.kenn.io/docbank/document/bundle"
 )
@@ -10,11 +11,14 @@ import (
 // ReleaseExportJob authorizes a terminal job before removing its archive.
 // The caller excludes new archive leases until this transaction finishes.
 // Archive removal must tolerate a retry after a rolled-back transaction.
-func (s *Store) ReleaseExportJob(ctx context.Context, owner, id string, removeArchive func() error) error {
+func (s *Store) ReleaseExportJob(
+	ctx context.Context, owner, id string, removeArchive func() error,
+) error {
 	return s.withStorageTx(ctx, func(tx *sql.Tx) error {
 		var actual string
-		if err := tx.QueryRowContext(ctx, `SELECT owner FROM export_jobs WHERE id=?`, id).Scan(&actual); err != nil {
-			if err == sql.ErrNoRows {
+		if err := tx.QueryRowContext(ctx,
+			`SELECT owner FROM export_jobs WHERE id=?`, id).Scan(&actual); err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
 				return ErrNotFound
 			}
 			return err

@@ -101,6 +101,11 @@ func TestReleaseRetriesAfterArchiveRemovalAndStoreFailure(t *testing.T) {
 	require.NoFileExists(t, filepath.Join(filepath.Dir(dbPath), "export-archives", job.ID+".zip"))
 	_, err = s.ExportJob(t.Context(), "master", job.ID)
 	require.NoError(t, err, "a failed transaction leaves a retryable job")
+	_, _, unlease, err := w.Lease(t.Context(), "master", job.ID)
+	if unlease != nil {
+		t.Cleanup(unlease)
+	}
+	require.ErrorIs(t, err, bundle.ErrExpired)
 	_, err = db.Exec(`DROP TRIGGER fail_release`)
 	require.NoError(t, err)
 	require.NoError(t, w.Release(t.Context(), "master", job.ID))

@@ -10,7 +10,7 @@ the proposed commands. The maintainer approved explicit release and inline execu
 ## Reviewed input
 
 - Spec: [CLI exports of selected original files](2026-09-29-cli-native-exports-design.md).
-- Revised spec SHA-256: `0245eb2d31aac00f2d41e552014fdd77c2b015b32e19fc3dde243c1064853853`.
+- Revised spec SHA-256: `eadae959264ff986b9bddd7225dbe2bf4b37095a0daceed46916f858c08be7d7`.
 - Prior reviewed spec: commit `65cd4296d3fb1a239a3f08903ae0d0eb21af6add`,
   SHA-256 `5ee0207acf6fa13642e29e5dc2debdf98a2ee607251ec0cfe32ff24c2cacefd9`.
 - Clean source baseline: `0af2361e6ed8d79ef7997a778389c19936d36126`.

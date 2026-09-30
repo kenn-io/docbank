@@ -100,6 +100,10 @@ downloads and source documents unchanged. Active jobs must be canceled first.
 
 An active download or unused ticket blocks release with `export_retained`;
 unused tickets expire after two minutes. Release does not interrupt a download.
+Even `download && release` can briefly return `export_retained` while the server
+finishes releasing the download lease. Retry release after a short delay.
+If release is interrupted after removing the archive, download returns
+`410 export_expired` with a hint to retry release and free the retained slot.
 If release fails, retry it. If its response was lost, a not-found status confirms
 the job is gone. Repeated release returns not found. Do not reuse a released
 job's operation ID: its replay protection has been removed.

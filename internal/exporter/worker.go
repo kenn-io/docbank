@@ -320,6 +320,11 @@ func (w *Worker) Lease(ctx context.Context, owner, id string) (*os.File, bundle.
 	file, err = os.Open(filepath.Join(w.dir, id+".zip"))
 	if err != nil {
 		release()
+		if errors.Is(err, os.ErrNotExist) {
+			return nil, bundle.Receipt{}, nil, fmt.Errorf(
+				"archive is no longer available; retry release to free this job: %w",
+				bundle.ErrExpired)
+		}
 		return nil, bundle.Receipt{}, nil, err
 	}
 	info, err := file.Stat()

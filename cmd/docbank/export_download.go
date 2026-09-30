@@ -12,8 +12,10 @@ import (
 )
 
 var exportDownloadCmd = &cobra.Command{
-	Use: "download <job-id> <local-file>", Short: "Verify and save a completed export", Args: cobra.ExactArgs(2),
-	RunE: downloadNativeExport,
+	Use:   "download <job-id> <local-file>",
+	Short: "Verify and save a completed export",
+	Args:  cobra.ExactArgs(2),
+	RunE:  downloadNativeExport,
 }
 
 func downloadNativeExport(cmd *cobra.Command, args []string) (retErr error) {
@@ -33,7 +35,8 @@ func downloadNativeExport(cmd *cobra.Command, args []string) (retErr error) {
 		return err
 	}
 	if inside {
-		return usageError(errors.New("export destination must be outside the Docbank data directory"))
+		return usageError(errors.New(
+			"export destination must be outside the Docbank data directory"))
 	}
 	stage, err := filepublish.CreateStage(filepath.Dir(destination), "docbank-native-export-")
 	if err != nil {
@@ -67,7 +70,11 @@ func downloadNativeExport(cmd *cobra.Command, args []string) (retErr error) {
 	if exportJSON {
 		return writeCLIJSON(cmd.OutOrStdout(), receipt)
 	}
-	_, err = fmt.Fprintf(cmd.OutOrStdout(), "verified export saved to %s · %d bytes · SHA-256 %s\nRun docbank export release %s when the retained archive is no longer needed; release frees its shared job slot.\n", destination, receipt.Size, receipt.SHA256, args[0])
+	_, err = fmt.Fprintf(cmd.OutOrStdout(),
+		"verified export saved to %s · %d bytes · SHA-256 %s\n"+
+			"Run docbank export release %s when the retained archive is no longer needed; "+
+			"release frees its shared job slot.\n",
+		destination, receipt.Size, receipt.SHA256, args[0])
 	if err != nil {
 		return fmt.Errorf("writing export receipt: %w", err)
 	}

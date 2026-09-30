@@ -6,10 +6,10 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"uuid"
 
 	"go.kenn.io/docbank/document/bundle"
 	"go.kenn.io/docbank/internal/canonical"
+	"go.kenn.io/docbank/internal/daemonconn"
 )
 
 type exportPreviewRequest struct {
@@ -19,8 +19,7 @@ type exportPreviewRequest struct {
 }
 
 func validateExportID(field, value string) error {
-	id, err := uuid.Parse(value)
-	if err != nil || id.String() != value || id[6]>>4 != 4 || id[8]>>6 != 2 {
+	if !daemonconn.IsCanonicalUUIDv4(value) {
 		return usageError(fmt.Errorf("%s must be a canonical UUIDv4", field))
 	}
 	return nil
@@ -73,7 +72,8 @@ func validateExportRequest(request exportPreviewRequest) error {
 			return err
 		}
 		if !canonical.IsSHA256Hex(member.SHA256) {
-			return usageError(fmt.Errorf("%s.sha256 must be 64 lowercase hexadecimal characters", field))
+			return usageError(fmt.Errorf(
+				"%s.sha256 must be 64 lowercase hexadecimal characters", field))
 		}
 		if member.Size < 0 {
 			return usageError(fmt.Errorf("%s.size must be nonnegative", field))
@@ -82,7 +82,8 @@ func validateExportRequest(request exportPreviewRequest) error {
 			return usageError(fmt.Errorf("%s.revision must be nonnegative", field))
 		}
 		if member.Size > bundle.MaxRoleBytes-total {
-			return usageError(fmt.Errorf("%s.size exceeds the 50 GiB combined original bytes limit", field))
+			return usageError(fmt.Errorf(
+				"%s.size exceeds the 50 GiB combined original bytes limit", field))
 		}
 		total += member.Size
 		key := struct {
