@@ -36,13 +36,14 @@ func collectionLabelTx(
 	var startedAt string
 	var label, updatedAt, retained sql.NullString
 	var revision sql.NullInt64
+	visible, visibleArgs := photoNodeVisibleSQL(ctx, "cm.node_id")
 	err := q.QueryRowContext(ctx, `WITH `+CollectionMembershipCTE+`
 		SELECT i.started_at, l.label, l.revision, l.updated_at, l.ingest_id
 		FROM ingests i LEFT JOIN collection_labels l ON l.ingest_id=i.id
 		WHERE i.id=? AND i.source_kind NOT LIKE 'embedded:%'
 		  AND (l.ingest_id IS NOT NULL OR EXISTS(
-			SELECT 1 FROM collection_members cm WHERE cm.ingest_id=i.id
-		  ))`, ingestID).Scan(&startedAt, &label, &revision, &updatedAt, &retained)
+			SELECT 1 FROM collection_members cm WHERE cm.ingest_id=i.id AND `+visible+`
+		  ))`, append([]any{ingestID}, visibleArgs...)...).Scan(&startedAt, &label, &revision, &updatedAt, &retained)
 	if errors.Is(err, sql.ErrNoRows) {
 		return CollectionLabel{}, false, ErrNotFound
 	}
