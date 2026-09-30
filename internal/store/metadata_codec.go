@@ -27,10 +27,10 @@ type metadataRecordCodec interface {
 // metadataTable describes one backup record kind by its struct tags. A regular
 // kind is declared by `db` tags plus a registration: `json` order is wire order,
 // a `db:"column"` tag names the column (`db:"column,json"` stores the field as
-// JSON text), and pointer fields are nullable. An `omitempty` field is outside
-// the required and nullable lists, so an import line that carries it is refused
-// as an unknown field. A `json:"-"` field with a `db` tag is a constant column
-// set by the template. Irregular kinds set hooks and keep their own code.
+// JSON text), and pointer fields are nullable. An `omitempty` pointer field is
+// nullable but not required, so an import line may carry it or leave it out. A
+// `json:"-"` field with a `db` tag is a constant column set by the template.
+// Irregular kinds set hooks and keep their own code.
 type metadataTable[T any] struct {
 	record      T      // template: Type plus constant fields; import decodes into a copy
 	table       string // empty only when insert is set
@@ -95,10 +95,12 @@ func metadataColumnPlanFor(recordType reflect.Type) *metadataColumnPlan {
 			plan.columns = append(plan.columns, metadataColumn{index: index, name: name, json: option == "json"})
 		}
 		wire, options, _ := strings.Cut(field.Tag.Get("json"), ",")
-		if wire == "" || wire == "-" || strings.Contains(options, "omitempty") {
+		if wire == "" || wire == "-" {
 			continue
 		}
-		plan.required = append(plan.required, wire)
+		if !strings.Contains(options, "omitempty") {
+			plan.required = append(plan.required, wire)
+		}
 		if field.Type.Kind() == reflect.Pointer {
 			plan.nullable[wire] = true
 		}
