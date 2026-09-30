@@ -20,7 +20,7 @@ func TestAuthenticatedSnapshotOwnerIsExplicitAndBrowserRevocationCancelsRequest(
 	synctest.Test(t, func(t *testing.T) {
 		revoked := make(chan string, 1)
 		sessions := newWebSessionRegistry(func(owner string) { revoked <- owner })
-		token, _, err := sessions.issue()
+		token, _, err := sessions.issue("")
 		require.NoError(t, err)
 		entered := make(chan string, 1)
 		canceled := make(chan struct{})

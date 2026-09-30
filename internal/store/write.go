@@ -26,8 +26,8 @@ func bumpRevisionTx(tx *sql.Tx, id int64, now string) error {
 }
 
 // liveDirTx loads id and errors unless it is a live directory.
-func liveDirTx(tx *sql.Tx, id int64) (Node, error) {
-	n, err := nodeByIDTx(tx, id)
+func liveDirTx(ctx context.Context, tx *sql.Tx, id int64) (Node, error) {
+	n, err := nodeByIDQuery(ctx, tx, id)
 	if err != nil {
 		return Node{}, err
 	}
@@ -121,9 +121,9 @@ func (s *Store) mkdirNodeTx(
 		return Node{}, err
 	}
 	if !active {
-		return s.mkdirTx(tx, parentID, name, nowRFC3339())
+		return s.mkdirTx(ctx, tx, parentID, name, nowRFC3339())
 	}
-	priorParent, err := liveDirTx(tx, parentID)
+	priorParent, err := liveDirTx(ctx, tx, parentID)
 	if err != nil {
 		return Node{}, err
 	}
@@ -136,7 +136,7 @@ func (s *Store) mkdirNodeTx(
 		return Node{}, err
 	}
 	recordedAt := nowRFC3339()
-	created, err := s.mkdirTx(tx, parentID, name, recordedAt)
+	created, err := s.mkdirTx(ctx, tx, parentID, name, recordedAt)
 	if err != nil {
 		return Node{}, err
 	}
@@ -152,9 +152,9 @@ func (s *Store) mkdirNodeTx(
 }
 
 func (s *Store) mkdirTx(
-	tx *sql.Tx, parentID int64, name, recordedAt string,
+	ctx context.Context, tx *sql.Tx, parentID int64, name, recordedAt string,
 ) (Node, error) {
-	if _, err := liveDirTx(tx, parentID); err != nil {
+	if _, err := liveDirTx(ctx, tx, parentID); err != nil {
 		return Node{}, err
 	}
 	res, err := tx.Exec(
@@ -345,7 +345,7 @@ func (s *Store) createFileWithOperationTx(
 	if err := validateUTF8Field("content MIME type", mimeType); err != nil {
 		return Node{}, ContentVersion{}, err
 	}
-	if _, err := liveDirTx(tx, parentID); err != nil {
+	if _, err := liveDirTx(ctx, tx, parentID); err != nil {
 		return Node{}, ContentVersion{}, err
 	}
 	if err := s.EnsureBlobTx(tx, blobHash, size, physical...); err != nil {
@@ -448,7 +448,7 @@ func (s *Store) createFileWithReceiptTx(
 			ctx, tx, parentID, name, blobHash, size, mimeType, physical...,
 		)
 	} else {
-		priorParent, err := liveDirTx(tx, parentID)
+		priorParent, err := liveDirTx(ctx, tx, parentID)
 		if err != nil {
 			return ContentWriteReceipt{}, err
 		}
@@ -527,7 +527,6 @@ func (s *Store) Move(
 	var moved Node
 	var movedPath string
 	err := s.withStorageTx(ctx, func(tx *sql.Tx) error {
-		var err error
 		active, err := auditAuthorityActiveTx(ctx, tx)
 		if err != nil {
 			return err
@@ -535,7 +534,7 @@ func (s *Store) Move(
 		if active {
 			moved, err = s.moveAuditedTx(ctx, tx, id, newParentID, newName, ifRev)
 		} else {
-			moved, err = s.moveTx(tx, id, newParentID, newName, ifRev)
+			moved, err = s.moveTx(ctx, tx, id, newParentID, newName, ifRev)
 		}
 		if err == nil {
 			movedPath, err = pathOf(ctx, tx, moved.ID)
@@ -589,7 +588,7 @@ func (s *Store) MoveToPath(
 	var moved Node
 	var movedPath string
 	err := s.withStorageTx(ctx, func(tx *sql.Tx) error {
-		src, err := nodeByIDTx(tx, id)
+		src, err := nodeByIDQuery(ctx, tx, id)
 		if err != nil {
 			return err
 		}
@@ -620,7 +619,7 @@ func (s *Store) moveNodeToPathTx(
 	if active {
 		moved, err = s.moveAuditedTx(ctx, tx, src.ID, newParentID, newName, ifRev)
 	} else {
-		moved, err = s.moveTx(tx, src.ID, newParentID, newName, ifRev)
+		moved, err = s.moveTx(ctx, tx, src.ID, newParentID, newName, ifRev)
 	}
 	if err != nil {
 		return Node{}, "", err
@@ -666,12 +665,12 @@ func (s *Store) resolveMoveTargetTx(
 	return parent.ID, segs[len(segs)-1], nil
 }
 
-func (s *Store) moveTx(tx *sql.Tx, id, newParentID int64, newName string, ifRev int64) (Node, error) {
-	return s.moveAtTx(tx, id, newParentID, newName, ifRev, nowRFC3339())
+func (s *Store) moveTx(ctx context.Context, tx *sql.Tx, id, newParentID int64, newName string, ifRev int64) (Node, error) {
+	return s.moveAtTx(ctx, tx, id, newParentID, newName, ifRev, nowRFC3339())
 }
 
 func (s *Store) moveAtTx(
-	tx *sql.Tx, id, newParentID int64, newName string, ifRev int64, recordedAt string,
+	ctx context.Context, tx *sql.Tx, id, newParentID int64, newName string, ifRev int64, recordedAt string,
 ) (Node, error) {
 	if id == s.rootID {
 		return Node{}, ErrIsRoot
@@ -680,7 +679,7 @@ func (s *Store) moveAtTx(
 	if err != nil {
 		return Node{}, err
 	}
-	n, err := nodeByIDTx(tx, id)
+	n, err := nodeByIDQuery(ctx, tx, id)
 	if err != nil {
 		return Node{}, err
 	}
@@ -691,7 +690,7 @@ func (s *Store) moveAtTx(
 		return Node{}, fmt.Errorf("node %d at revision %d, expected %d: %w",
 			id, n.Revision, ifRev, ErrStaleRevision)
 	}
-	if _, err := liveDirTx(tx, newParentID); err != nil {
+	if _, err := liveDirTx(ctx, tx, newParentID); err != nil {
 		return Node{}, err
 	}
 	if *n.ParentID == newParentID && n.Name == newName {

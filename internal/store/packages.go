@@ -515,6 +515,10 @@ func (s *Store) CollectionSnapshot(ctx context.Context, id string) (CollectionSn
 }
 
 func (s *Store) SnapshotMembers(ctx context.Context, id string, afterOrdinal, limit int) ([]CollectionSnapshotMember, error) {
+	return s.snapshotMembers(ctx, id, afterOrdinal, limit, false)
+}
+
+func (s *Store) snapshotMembers(ctx context.Context, id string, afterOrdinal, limit int, visibleOnly bool) ([]CollectionSnapshotMember, error) {
 	if validateUUIDv4(id) != nil || afterOrdinal < 0 || limit < 1 || limit > 250 {
 		return nil, ErrPackageConflict
 	}
@@ -523,7 +527,7 @@ func (s *Store) SnapshotMembers(ctx context.Context, id string, afterOrdinal, li
 		return nil, err
 	}
 	defer func() { _ = tx.Rollback() }()
-	members, err := loadSnapshotMemberRows(ctx, tx, id, afterOrdinal, limit)
+	members, err := loadSnapshotMemberRows(ctx, tx, id, afterOrdinal, limit, visibleOnly)
 	if err != nil {
 		return nil, err
 	}
@@ -532,13 +536,44 @@ func (s *Store) SnapshotMembers(ctx context.Context, id string, afterOrdinal, li
 		if err != nil {
 			return nil, err
 		}
+		if visibleOnly {
+			if members[i].Representations, err = visibleSnapshotRepresentations(ctx, tx, members[i].Representations); err != nil {
+				return nil, err
+			}
+		}
 	}
 	return members, tx.Commit()
 }
 
-func loadSnapshotMemberRows(ctx context.Context, tx metadataQuerier, id string, afterOrdinal, limit int) ([]CollectionSnapshotMember, error) {
+// visibleSnapshotRepresentations drops representations whose version belongs
+// to a photo the request may not see, such as another owner's page images.
+func visibleSnapshotRepresentations(ctx context.Context, tx *sql.Tx, reps []CollectionSnapshotRepresentation) ([]CollectionSnapshotRepresentation, error) {
+	visible := reps[:0]
+	for _, rep := range reps {
+		if rep.ContentVersionID != "" {
+			err := checkPhotoVersionVisibleTx(ctx, tx, rep.ContentVersionID)
+			if errors.Is(err, ErrNotFound) {
+				continue
+			}
+			if err != nil {
+				return nil, err
+			}
+		}
+		visible = append(visible, rep)
+	}
+	return visible, nil
+}
+
+// loadSnapshotMemberRows pages frozen members. A browse listing omits members
+// the request may not see; exports and Bates keep what the snapshot captured.
+func loadSnapshotMemberRows(ctx context.Context, tx metadataQuerier, id string, afterOrdinal, limit int, visibleOnly bool) ([]CollectionSnapshotMember, error) {
+	visible, visibleArgs := "1=1", []any(nil)
+	if visibleOnly {
+		visible, visibleArgs = photoNodeVisibleSQL(ctx, "collection_snapshot_members.node_id")
+	}
 	rows, err := tx.QueryContext(ctx, `SELECT canonical_json,checksum,selected_source_pages_json FROM collection_snapshot_members
-		WHERE snapshot_id=? AND ordinal>? ORDER BY ordinal LIMIT ?`, id, afterOrdinal, limit)
+		WHERE snapshot_id=? AND ordinal>? AND `+visible+` ORDER BY ordinal LIMIT ?`,
+		append(append([]any{id, afterOrdinal}, visibleArgs...), limit)...)
 	if err != nil {
 		return nil, err
 	}

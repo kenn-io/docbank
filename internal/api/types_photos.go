@@ -17,6 +17,8 @@ type PhotoAsset struct {
 	ID                    string      `json:"id" format:"uuid"`
 	Kind                  string      `json:"kind" enum:"photo,video"`
 	Revision              int64       `json:"revision" minimum:"1"`
+	OwnerID               *string     `json:"owner_id,omitzero" format:"uuid"`
+	HiddenAt              *string     `json:"hidden_at,omitzero" format:"date-time"`
 	ExcludedAt            *string     `json:"excluded_at,omitzero" format:"date-time"`
 	DisplayFileID         *string     `json:"display_file_id,omitzero" format:"uuid"`
 	DisplayOverrideFileID *string     `json:"display_override_file_id,omitzero" format:"uuid"`
@@ -56,6 +58,25 @@ type SetPhotoSettingsRequest struct {
 	Preference *string `json:"preference,omitzero" enum:"raw,image"`
 }
 
+// PhotoOwner is a person enrolled as a photo owner, named by the person.
+type PhotoOwner struct {
+	ID         string `json:"id" format:"uuid"`
+	Name       string `json:"name"`
+	EnrolledAt string `json:"enrolled_at" format:"date-time"`
+}
+
+type EnrollPhotoOwnerRequest struct {
+	PersonID string `json:"person_id" format:"uuid"`
+}
+
+type photoOwnerOutput struct {
+	Body PhotoOwner
+}
+
+type photoOwnersOutput struct {
+	Body []PhotoOwner
+}
+
 type photoAssetOutput struct {
 	ETag string `header:"ETag"`
 	Body PhotoAsset
@@ -75,9 +96,13 @@ func fromStorePhotoAsset(asset store.PhotoAsset) PhotoAsset {
 	for _, file := range asset.Files {
 		files = append(files, fromStorePhotoFile(file))
 	}
-	return PhotoAsset{ID: asset.ID, Kind: asset.Kind, Revision: asset.Revision, ExcludedAt: asset.ExcludedAt, DisplayFileID: asset.DisplayFileID, DisplayOverrideFileID: asset.DisplayOverrideFileID, DisplaySource: asset.DisplaySource, CreatedAt: asset.CreatedAt, UpdatedAt: asset.UpdatedAt, Files: files}
+	return PhotoAsset{ID: asset.ID, Kind: asset.Kind, Revision: asset.Revision, OwnerID: asset.OwnerID, HiddenAt: asset.HiddenAt, ExcludedAt: asset.ExcludedAt, DisplayFileID: asset.DisplayFileID, DisplayOverrideFileID: asset.DisplayOverrideFileID, DisplaySource: asset.DisplaySource, CreatedAt: asset.CreatedAt, UpdatedAt: asset.UpdatedAt, Files: files}
 }
 
 func fromStorePhotoSettings(settings store.PhotoSettings) PhotoSettings {
 	return PhotoSettings{Preference: settings.Preference, Revision: settings.Revision, UpdatedAt: settings.UpdatedAt}
+}
+
+func fromStorePhotoOwner(owner store.PhotoOwner) PhotoOwner {
+	return PhotoOwner{ID: owner.ID, Name: owner.Name, EnrolledAt: owner.EnrolledAt}
 }

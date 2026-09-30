@@ -56,7 +56,7 @@ func (s *Store) NodeProvenance(
 	defer func() { _ = tx.Rollback() }()
 
 	page := NodeProvenancePage{Items: []ProvenanceFact{}, Limit: limit, Offset: offset}
-	page.Node, err = nodeByIDTx(tx, nodeID)
+	page.Node, err = nodeByIDQuery(ctx, tx, nodeID)
 	if err != nil {
 		return NodeProvenancePage{}, err
 	}

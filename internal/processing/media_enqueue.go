@@ -89,7 +89,7 @@ func (service *Service) EnqueueAuthorized(
 	if planFingerprint == "" || planFingerprint != plan.Fingerprint {
 		return Job{}, ErrPlanChanged
 	}
-	want := service.renditionConsentRequest(profile)
+	want := service.renditionConsentRequest(profile, service.principal)
 	if !sameMediaAuthorization(authorization, want) {
 		return Job{}, ErrPlanChanged
 	}
@@ -226,7 +226,7 @@ func (worker *MediaContinuationWorker) runContinuation(
 	if err != nil {
 		return worker.failContinuation(ctx, continuation, err)
 	}
-	want := service.renditionConsentRequest(profile)
+	want := service.renditionConsentRequest(profile, service.principal)
 	if continuation.ProcessingPrincipal != service.principal ||
 		continuation.ProcessingScope != service.scope ||
 		continuation.ProcessingProfileFingerprint != profile.record.Fingerprint ||

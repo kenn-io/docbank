@@ -62,6 +62,9 @@ func (s *Store) ContentVersionByID(ctx context.Context, id string) (ContentVersi
 	if err != nil {
 		return ContentVersion{}, fmt.Errorf("content version %q: %w", id, err)
 	}
+	if err := checkPhotoNodeVisibleTx(ctx, s.db, v.NodeID); err != nil {
+		return ContentVersion{}, fmt.Errorf("content version %q: %w", id, err)
+	}
 	return v, nil
 }
 
@@ -81,7 +84,7 @@ func (s *Store) ContentVersionViewByID(
 	}
 	defer func() { _ = tx.Rollback() }()
 
-	node, err := nodeByIDTx(tx, nodeID)
+	node, err := nodeByIDQuery(ctx, tx, nodeID)
 	if err != nil {
 		return ContentVersionView{}, err
 	}
@@ -110,6 +113,9 @@ func (s *Store) ContentVersions(
 	}
 	if offset < 0 {
 		return nil, 0, errors.New("content-version offset must not be negative")
+	}
+	if err := checkPhotoNodeVisibleTx(ctx, s.db, nodeID); err != nil {
+		return nil, 0, fmt.Errorf("node %d: %w", nodeID, err)
 	}
 	// Existence, kind, total, and page are deliberately one statement so a
 	// concurrent trash-empty observes either side of deletion, never a mixture.
@@ -198,7 +204,7 @@ func (s *Store) ReplaceContentWithReceipt(
 	}
 	var receipt ContentWriteReceipt
 	err := s.withStorageTx(ctx, func(tx *sql.Tx) error {
-		n, err := nodeByIDTx(tx, nodeID)
+		n, err := nodeByIDQuery(ctx, tx, nodeID)
 		if err != nil {
 			return err
 		}
@@ -232,7 +238,7 @@ func (s *Store) ConfirmContentWithReceipt(
 	}
 	var receipt ContentWriteReceipt
 	err := s.withStorageTx(ctx, func(tx *sql.Tx) error {
-		n, err := nodeByIDTx(tx, nodeID)
+		n, err := nodeByIDQuery(ctx, tx, nodeID)
 		if err != nil {
 			return err
 		}
@@ -270,7 +276,7 @@ func (s *Store) ConfirmIngestedContentWithReceipt(
 	storedSourceKind := callerSuppliedSourceKindPrefix + sourceKind
 	var receipt ContentWriteReceipt
 	err := s.withStorageTx(ctx, func(tx *sql.Tx) error {
-		n, err := nodeByIDTx(tx, nodeID)
+		n, err := nodeByIDQuery(ctx, tx, nodeID)
 		if err != nil {
 			return err
 		}
@@ -339,7 +345,7 @@ func (s *Store) ReplaceContentForIngest(
 		changed bool
 	)
 	err = s.withStorageTx(ctx, func(tx *sql.Tx) error {
-		prior, err := nodeByIDTx(tx, nodeID)
+		prior, err := nodeByIDQuery(ctx, tx, nodeID)
 		if err != nil {
 			return err
 		}
@@ -573,7 +579,7 @@ func (s *Store) RevertContent(
 		source  ContentVersion
 	)
 	err := s.withStorageTx(ctx, func(tx *sql.Tx) error {
-		n, err := nodeByIDTx(tx, nodeID)
+		n, err := nodeByIDQuery(ctx, tx, nodeID)
 		if err != nil {
 			return err
 		}
@@ -706,7 +712,7 @@ func installContentVersionWithOperationTx(
 // because this preflight is an optimization rather than mutation authority.
 func (s *Store) CheckContentReplacementTarget(ctx context.Context, nodeID, ifRev int64) error {
 	return s.withStorageTx(ctx, func(tx *sql.Tx) error {
-		n, err := nodeByIDTx(tx, nodeID)
+		n, err := nodeByIDQuery(ctx, tx, nodeID)
 		if err != nil {
 			return err
 		}

@@ -1,11 +1,23 @@
 package api
 
 import (
+	"context"
+	"fmt"
 	"github.com/danielgtaylor/huma/v2"
 	"go.kenn.io/docbank/document"
+	"go.kenn.io/docbank/internal/store"
 	"net/http"
 	"reflect"
 )
+
+// checkProcessingPrincipal refuses a consent principal other than the photo
+// owner a request selected by header or browser session.
+func checkProcessingPrincipal(ctx context.Context, principal string) error {
+	if ownerID, _ := store.PhotoOwnerFromContext(ctx); ownerID != "" && principal != "owner:"+ownerID {
+		return fmt.Errorf("%w: principal must be the authenticated photo owner", store.ErrInvalidProcessingConsentRequest)
+	}
+	return nil
+}
 
 func registerProcessingConsentRoutes(mux *http.ServeMux, api huma.API, d Deps, g *gate) {
 	registerEmailDocumentRoute(mux, api, huma.Operation{
@@ -14,6 +26,10 @@ func registerProcessingConsentRoutes(mux *http.ServeMux, api huma.API, d Deps, g
 	}, reflect.TypeFor[document.ProcessingConsentRequest](), reflect.TypeFor[document.ProcessingConsentReceipt](), func(w http.ResponseWriter, r *http.Request) {
 		var request document.ProcessingConsentRequest
 		if !readEmailDocumentJSON(w, r, &request) {
+			return
+		}
+		if err := checkProcessingPrincipal(r.Context(), request.Principal); err != nil {
+			writeEmailStoreError(w, err)
 			return
 		}
 		var receipt document.ProcessingConsentReceipt
@@ -35,6 +51,10 @@ func registerProcessingConsentRoutes(mux *http.ServeMux, api huma.API, d Deps, g
 	}, reflect.TypeFor[document.ProcessingConsentRevocationRequest](), reflect.TypeFor[document.ProcessingConsentRevocationReceipt](), func(w http.ResponseWriter, r *http.Request) {
 		var request document.ProcessingConsentRevocationRequest
 		if !readEmailDocumentJSON(w, r, &request) {
+			return
+		}
+		if err := checkProcessingPrincipal(r.Context(), request.Principal); err != nil {
+			writeEmailStoreError(w, err)
 			return
 		}
 		var receipt document.ProcessingConsentRevocationReceipt

@@ -722,7 +722,7 @@ func auditStatusTx(
 func auditMembershipStatusTx(
 	ctx context.Context, tx *sql.Tx, nodeID int64,
 ) (AuditMembershipStatus, error) {
-	node, err := nodeByIDTx(tx, nodeID)
+	node, err := nodeByIDQuery(ctx, tx, nodeID)
 	if err != nil {
 		return AuditMembershipStatus{}, err
 	}

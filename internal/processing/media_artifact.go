@@ -297,7 +297,7 @@ func (service *Service) RetryMedia(
 	if err != nil {
 		return MediaReceipt{}, err
 	}
-	authorization := service.renditionConsentRequest(profile)
+	authorization := service.renditionConsentRequest(profile, service.principal)
 	authorized, err := service.catalog.AuthorizeProviderOperation(ctx, authorization)
 	if err != nil {
 		return MediaReceipt{}, processingConsentBoundaryError(err)

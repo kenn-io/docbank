@@ -182,13 +182,15 @@ func reportCollectionWitnesses(ctx context.Context, q metadataQuerier, request r
 	if found != len(request.CollectionIDs) {
 		return nil, ErrUnknownReportCollection
 	}
+	visible, visibleArgs := photoNodeVisibleSQL(ctx, "n.id")
 	rows, err := q.QueryContext(ctx, `SELECT p.ingest_id,p.node_id,p.identity,p.original_path,
 		COALESCE(p.original_mtime,''),COALESCE(p.supersedes,'')
 		FROM provenance p JOIN ingests i ON i.id=p.ingest_id JOIN nodes n ON n.id=p.node_id
 		WHERE i.source_kind NOT LIKE 'embedded:%' AND n.kind='file' AND n.trashed_at IS NULL
 		AND p.ingest_id IN (SELECT value FROM json_each(?))
 		AND NOT EXISTS (SELECT 1 FROM provenance later WHERE later.supersedes=p.identity)
-		ORDER BY p.node_id,p.ingest_id,p.identity`, string(collectionIDs))
+		AND `+visible+`
+		ORDER BY p.node_id,p.ingest_id,p.identity`, append([]any{string(collectionIDs)}, visibleArgs...)...)
 	if err != nil {
 		return nil, err
 	}
@@ -246,6 +248,9 @@ func readTermReportMembers(ctx context.Context, q metadataQuerier, request repor
 		scope = ` AND n.id IN (SELECT value FROM json_each(?))`
 		args = append(args, string(encoded))
 	}
+	visible, visibleArgs := photoNodeVisibleSQL(ctx, "n.id")
+	scope += " AND " + visible
+	args = append(args, visibleArgs...)
 	rows, err := q.QueryContext(ctx, `SELECT n.id,cv.version_id,cv.blob_hash,cv.size,COALESCE(cv.mime_type,''),
 		n.revision,n.created_at,cv.recorded_at,
 		(SELECT MIN(old.recorded_at) FROM content_versions old WHERE old.node_id=n.id),n.name,

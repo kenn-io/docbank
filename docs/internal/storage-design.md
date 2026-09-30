@@ -310,7 +310,9 @@ revise this envelope.
 
 Photo tables index ordinary file nodes; they do not copy blob hashes, sizes,
 MIME data, or content versions. `photo_assets` owns asset kind, exclusion,
-revision, and selected or overridden display pointers. `photo_files` owns the
+revision, owner, hidden state, and selected or overridden display pointers.
+`photo_owners` enrolls `persons` rows as owners; the earliest enrollment is the
+default, with no stored pointer, and the name comes from the person. `photo_files` owns the
 role and same-asset sidecar relationship for each node. A sidecar never
 becomes a display member, and its source must be a RAW or image member in the
 same asset.
@@ -329,11 +331,19 @@ overrides remain unchanged. Human graph, display, exclusion, and preference
 changes append bounded immutable `photo_change_receipts` rows. No-op mutations
 keep their revision and append no receipt.
 
-Schema version 25 exports assets, files, settings, and receipts in stable
-JSONL order. Restore requires a pristine target and validates node ownership,
+Schema version 28 exports owners, then assets with `owner_id` and `hidden_at`,
+files, settings, and receipts in stable JSONL order. Restore requires a
+pristine target and validates node ownership,
 local pointers, sidecar targets, selected display state, enum-like text,
 revisions, receipt JSON, and the complete graph before commit. Released
 metadata streams remain readable and restore an empty photo authority.
+
+Owners filter what a route returns; they are not stored on derived results.
+Exports, query snapshots, reports, Bates artifacts, and batch-tag receipts keep
+what they captured, and totals without photo identity stay vault-wide. Restore
+refuses an enrollment naming a missing person and an asset naming an unenrolled
+owner. Removing an enrollment refuses while any asset row names the owner, and
+retiring or absorbing an enrolled person refuses.
 
 SQLite is Docbank's runtime query and transaction engine, but its historical
 page layout is not the intended long-lived backup contract. The logical

@@ -352,7 +352,7 @@ func (s *Store) SnapshotBatesPages(ctx context.Context, snapshotID string) ([]Ba
 func expectedBatesPagesLimited(ctx context.Context, tx metadataQuerier, snapshotID string, limit int) ([]BatesPageInput, error) {
 	var expected []BatesPageInput
 	for after := 0; ; {
-		members, err := loadSnapshotMemberRows(ctx, tx, snapshotID, after, 250)
+		members, err := loadSnapshotMemberRows(ctx, tx, snapshotID, after, 250, false)
 		if err != nil {
 			return nil, err
 		}

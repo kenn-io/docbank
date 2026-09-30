@@ -42,6 +42,13 @@ func newPackageImportTestEnv(t *testing.T, count int, acceptPartial bool, withPa
 
 func newPackageImportTestEnvOptions(t *testing.T, count int, acceptPartial, withPages, indexText bool, families ...loadfile.Family) *packageImportTestEnv {
 	t.Helper()
+	return newPackageImportTestEnvForOwner(t, nil, count, acceptPartial, withPages, indexText, families...)
+}
+
+// newPackageImportTestEnvForOwner admits the job under the photo owner that
+// photoOwner registers in the fresh catalog.
+func newPackageImportTestEnvForOwner(t *testing.T, photoOwner func(*store.Store) string, count int, acceptPartial, withPages, indexText bool, families ...loadfile.Family) *packageImportTestEnv {
+	t.Helper()
 	ctx := t.Context()
 	vault := t.TempDir()
 	catalog, err := store.Open(filepath.Join(vault, "docbank.db"))
@@ -158,8 +165,12 @@ func newPackageImportTestEnvOptions(t *testing.T, count int, acceptPartial, with
 		IngestID: run.ID(), State: "importing", Volumes: []store.PackageVolume{{Ordinal: 1, VolumeName: "VOL001",
 			DeclaredRoot: "VOL001", MappedRoot: "VOL001", ResolvedRootSHA256: rootBinding}}}
 	operationID := uuid.NewString()
-	jobJSON, err := canonical.Marshal(packageImportWork{AcceptPartial: acceptPartial,
-		IndexSuppliedText: indexText, Into: "/", SourceKind: "root", SourceLocator: root, Total: count})
+	work := packageImportWork{AcceptPartial: acceptPartial,
+		IndexSuppliedText: indexText, Into: "/", SourceKind: "root", SourceLocator: root, Total: count}
+	if photoOwner != nil {
+		work.PhotoOwnerID = photoOwner(catalog)
+	}
+	jobJSON, err := canonical.Marshal(work)
 	require.NoError(t, err)
 	job := store.PackageImportJobRequest{ID: uuid.NewString(), Owner: owner, OperationID: operationID,
 		RequestSHA256: packageImportTestHash([]byte("synthetic request")), PreflightID: preflightID,

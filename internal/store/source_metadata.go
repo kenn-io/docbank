@@ -248,6 +248,9 @@ func (s *Store) ContentVersionSourceMetadata(ctx context.Context, versionID stri
 	if err != nil {
 		return SourceMetadataView{}, err
 	}
+	if err := checkPhotoNodeVisibleTx(ctx, tx, node.ID); err != nil {
+		return SourceMetadataView{}, fmt.Errorf("content version %q: %w", versionID, err)
+	}
 	view, err := sourceMetadataViewForVersion(ctx, tx, version, node, "")
 	if err != nil {
 		return SourceMetadataView{}, err
@@ -297,7 +300,7 @@ func sourceMetadataViewForVersion(
 // NodeSourceMetadataViewByID returns one node detail from a single read snapshot.
 func (s *Store) NodeSourceMetadataViewByID(ctx context.Context, id int64) (NodeSourceMetadataView, error) {
 	return s.nodeSourceMetadataView(ctx, func(tx *sql.Tx) (Node, error) {
-		return nodeByIDTx(tx, id)
+		return nodeByIDQuery(ctx, tx, id)
 	})
 }
 

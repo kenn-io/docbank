@@ -41,9 +41,10 @@ import (
 )
 
 type Connection struct {
-	base string
-	key  string
-	hc   *http.Client
+	base         string
+	key          string
+	photoOwnerID string
+	hc           *http.Client
 }
 
 // WebSessionURL asks the ownership-proven daemon for a daemon-lifetime,
@@ -324,6 +325,12 @@ func (s *ContentStream) copyVerified(w io.Writer, maxBytes int64) (int64, error)
 
 func New(baseURL, apiKey string) *Connection {
 	return &Connection{base: baseURL, key: apiKey, hc: &http.Client{Timeout: 0}}
+}
+
+// WithPhotoOwner returns a connection that selects one photo owner on every
+// request through the owner header.
+func (c *Connection) WithPhotoOwner(ownerID string) *Connection {
+	return &Connection{base: c.base, key: c.key, photoOwnerID: ownerID, hc: c.hc}
 }
 
 // APIKeyExclusionPolicy is an opaque, fixed policy that refuses one API key.

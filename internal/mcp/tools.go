@@ -74,6 +74,7 @@ var readToolDefinitions = []toolDefinition{
 	{name: "get_bates_export", title: "Get Bates export", description: "Read one exact verified Bates export receipt.", schemas: getBatesExportSchemas},
 	{name: "find_bates_exports", title: "Find Bates exports", description: "Return bounded candidates for one exact Bates label, custodian label, or canonical person.", schemas: findBatesExportsSchemas},
 	{name: "get_photo_asset", title: "Get photo asset", description: "Read one bounded photo asset by asset or node identity.", schemas: getPhotoAssetSchemas},
+	{name: "list_photo_owners", title: "List photo owners", description: "List the vault's photo owners.", schemas: listPhotoOwnersSchemas},
 }
 
 var processingToolDefinition = toolDefinition{

@@ -55,6 +55,8 @@ func compileQuery(
 	if err != nil {
 		return CompiledQuery{}, err
 	}
+	visible, visibleArgs := photoNodeVisibleSQL(ctx, "n.id")
+	predicate = joinCompiledFragments([]compiledQueryFragment{{sql: visible, args: visibleArgs}, predicate}, ` AND `)
 	compiled := CompiledQuery{
 		Query: resolved.Query, Dependencies: resolved.Dependencies,
 		predicate:         predicate,

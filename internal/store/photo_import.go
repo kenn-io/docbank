@@ -409,7 +409,7 @@ func (s *Store) IngestPhotoGroup(ctx context.Context, run IngestRun, group Photo
 				// Generic reuse matches by basename alone, so another folder's identical sidecar gets its own name.
 				options.exact = role == PhotoRoleSidecar
 				if !options.exact {
-					_, existingID, reuse, err := resolveIngestNameTx(tx, group.DestinationID, name, member.BlobHash, run.record.SourceKind)
+					_, existingID, reuse, err := resolveIngestNameTx(ctx, tx, group.DestinationID, name, member.BlobHash, run.record.SourceKind)
 					if err != nil {
 						return err
 					}
@@ -417,7 +417,7 @@ func (s *Store) IngestPhotoGroup(ctx context.Context, run IngestRun, group Photo
 					options.exact = reuse && claimed[existingID]
 				}
 				if options.exact {
-					if name, _, _, err = resolveIngestNameTx(tx, group.DestinationID, name, "", run.record.SourceKind); err != nil {
+					if name, _, _, err = resolveIngestNameTx(ctx, tx, group.DestinationID, name, "", run.record.SourceKind); err != nil {
 						return err
 					}
 				}
@@ -664,7 +664,7 @@ func (s *Store) EnsurePhotoImportDestination(ctx context.Context, path string) (
 	var destination Node
 	err := s.withLogicalTx(ctx, func(tx *sql.Tx) error {
 		var err error
-		destination, err = liveDirTx(tx, s.rootID)
+		destination, err = liveDirTx(ctx, tx, s.rootID)
 		if err != nil {
 			return err
 		}
@@ -681,7 +681,7 @@ func (s *Store) EnsurePhotoImportDestination(ctx context.Context, path string) (
 				}
 				destination = next
 			case errors.Is(childErr, ErrNotFound):
-				destination, err = s.mkdirTx(tx, destination.ID, name, nowRFC3339())
+				destination, err = s.mkdirTx(ctx, tx, destination.ID, name, nowRFC3339())
 				if err != nil {
 					return err
 				}

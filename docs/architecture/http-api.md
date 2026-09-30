@@ -85,6 +85,7 @@ Endpoints are filesystem-shaped, under `/api/v1`:
 | `GET /people/by-id/{person_id}` | inspect one person, its identities, and its external UIDs | Implemented |
 | `PATCH /people/by-id/{person_id}` · `POST /people/by-id/{person_id}/retire` | rename or retire one person under `If-Match` | Implemented |
 | `POST /people/by-id/{person_id}/merge` · `POST /people/by-id/{person_id}/split` | merge or split person authority under revision and operation fences | Implemented |
+| `GET\|POST /photos/owners` · `DELETE /photos/owners/{person_id}` | list, enroll, or remove people as photo owners under the person's `If-Match` | Implemented |
 | `GET /versions/{version_id}` · `GET /versions/{version_id}/content` | inspect or stream one immutable version by stable UUID | Implemented |
 | `GET\|POST /versions/{version_id}/email` | read or synchronously ensure canonical email metadata for one immutable version | Implemented |
 | `GET /versions/{version_id}/email/generations/{generation_id}` | read one immutable email generation attached to the exact version | Implemented |

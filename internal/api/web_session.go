@@ -14,12 +14,16 @@ import (
 	"strings"
 	"sync"
 
+	"go.kenn.io/docbank/internal/store"
+
 	"github.com/coder/websocket"
 )
 
 const (
 	webSessionPath   = "/api/daemon/web-session"
 	WebSessionHeader = "X-Docbank-Web-Session"
+	// PhotoOwnerHeader selects a photo owner on master-key requests.
+	PhotoOwnerHeader = "X-Docbank-Owner"
 	webLimitQuery    = "limit"
 )
 
@@ -40,6 +44,7 @@ type webSessionRegistry struct {
 
 type webSessionState struct {
 	uploadSecret [sha256.Size]byte
+	photoOwnerID string
 	upload       *websocket.Conn
 	ctx          context.Context
 	cancel       context.CancelFunc
@@ -56,7 +61,7 @@ func newWebSessionRegistry(onRevoke ...func(string)) *webSessionRegistry {
 	return r
 }
 
-func (r *webSessionRegistry) issue() (string, string, error) {
+func (r *webSessionRegistry) issue(photoOwnerID string) (string, string, error) {
 	raw := make([]byte, 32)
 	if _, err := rand.Read(raw); err != nil {
 		return "", "", fmt.Errorf("generating browser session: %w", err)
@@ -74,9 +79,19 @@ func (r *webSessionRegistry) issue() (string, string, error) {
 		cancel()
 		return "", "", errors.New("browser sessions are shutting down")
 	}
-	r.tokens[digest] = webSessionState{uploadSecret: uploadSecret, ctx: sessionCtx, cancel: cancel}
+	r.tokens[digest] = webSessionState{uploadSecret: uploadSecret, photoOwnerID: photoOwnerID, ctx: sessionCtx, cancel: cancel}
 	r.mu.Unlock()
 	return token, base64.RawURLEncoding.EncodeToString(uploadSecret[:]), nil
+}
+
+// photoOwner returns the photo owner a session was bound to at issuance, and
+// false once the session is gone so a revoked request never falls back to the
+// default owner.
+func (r *webSessionRegistry) photoOwner(token string) (string, bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	state, ok := r.tokens[sha256.Sum256([]byte(token))]
+	return state.photoOwnerID, ok
 }
 
 func (r *webSessionRegistry) authenticate(token string) (string, context.Context, bool) {
@@ -547,15 +562,32 @@ func registerWebSession(
 	mux *http.ServeMux,
 	enabled bool,
 	webURL string,
+	storeDB *store.Store,
 	sessions *webSessionRegistry,
+	g *gate,
 ) {
-	mux.HandleFunc("POST "+webSessionPath, func(w http.ResponseWriter, _ *http.Request) {
+	mux.HandleFunc("POST "+webSessionPath, func(w http.ResponseWriter, r *http.Request) {
 		if !enabled || webURL == "" {
 			writeError(w, NewError(http.StatusServiceUnavailable, "web_unavailable",
 				"this daemon is not serving the compiled web application"))
 			return
 		}
-		token, uploadSecret, err := sessions.issue()
+		// The session binds to one owner for its lifetime. Audited vaults cannot
+		// register the default owner, so their sessions see documents only.
+		// Only creating the default owner needs the mutation gate.
+		photoOwnerID, resolved, err := storeDB.ResolvePhotoOwner(r.Context())
+		if err == nil && !resolved {
+			err = g.mutate(func() error {
+				var err error
+				photoOwnerID, err = storeDB.PhotoOwnerForWrite(r.Context())
+				return err
+			})
+		}
+		if err != nil {
+			writeEmailStoreError(w, err)
+			return
+		}
+		token, uploadSecret, err := sessions.issue(photoOwnerID)
 		if err != nil {
 			writeError(w, NewError(http.StatusInternalServerError, "internal",
 				"could not create a browser session"))

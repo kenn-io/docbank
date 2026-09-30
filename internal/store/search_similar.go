@@ -34,10 +34,12 @@ func validateSimilarSource(ctx context.Context, tx metadataQuerier, source Simil
 	if !slices.Contains(opts.ContentVersionIDs, source.ContentVersionID) {
 		return ErrInvalidProcessingSourceFence
 	}
+	visibility, visibilityArgs := photoNodeVisibleSQL(ctx, "n.id")
 	var id int64
+	args := append([]any{source.NodeID, source.ContentVersionID}, visibilityArgs...)
 	err := tx.QueryRowContext(ctx, `SELECT n.id FROM `+nodeFrom+`
-		WHERE n.id=? AND n.kind='file' AND n.trashed_at IS NULL AND cv.version_id=?`,
-		source.NodeID, source.ContentVersionID).Scan(&id)
+		WHERE n.id=? AND n.kind='file' AND n.trashed_at IS NULL AND cv.version_id=? AND `+visibility,
+		args...).Scan(&id)
 	if errors.Is(err, sql.ErrNoRows) {
 		return ErrNotFound
 	}
@@ -153,6 +155,9 @@ func (s *Store) ResolveSimilarCandidates(ctx context.Context, profile, binding s
 			return err
 		}
 		filter, args := searchFilterSQL(opts)
+		visibility, visibilityArgs := photoNodeVisibleSQL(ctx, "n.id")
+		filter += ` AND ` + visibility
+		args = append(args, visibilityArgs...)
 		eligible, err := loadSemanticMemberships(ctx, tx, profile, binding, kind, space, filter, args)
 		if err != nil {
 			return err

@@ -2743,6 +2743,12 @@ export interface EnableAuditRequest {
   preview_token: string;
 }
 
+export interface EnrollPhotoOwnerRequest {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  person_id: string;
+}
+
 export interface Entry {
   index: number;
   name: string;
@@ -4268,8 +4274,12 @@ export interface PhotoAsset {
   excluded_at?: string | null;
   /** @maxItems 256 */
   files: PhotoFile[];
+  /** @nullable */
+  hidden_at?: string | null;
   id: string;
   kind: PhotoAssetKind;
+  /** @nullable */
+  owner_id?: string | null;
   /** @minimum 1 */
   revision: number;
   updated_at: string;
@@ -4355,6 +4365,14 @@ export interface PhotoImportStartRequest {
      * @maxLength 4096
      */
   source_root: string;
+}
+
+export interface PhotoOwner {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  enrolled_at: string;
+  id: string;
+  name: string;
 }
 
 /**
@@ -6839,6 +6857,20 @@ export type DetachPhotoFileHeaders = {
 
 export type PromotePhotoNodeHeaders = {
 'If-Match'?: string;
+};
+
+export type EnrollPhotoOwnerHeaders = {
+/**
+ * The person's current revision
+ */
+'If-Match': string;
+};
+
+export type RemovePhotoOwnerHeaders = {
+/**
+ * The person's current revision
+ */
+'If-Match': string;
 };
 
 export type SetPhotoSettingsHeaders = {
@@ -13396,6 +13428,108 @@ return sessionJSON<PhotoAsset>(getPromotePhotoNodeUrl(nodeId),
     method: 'POST',
     headers: { 'Content-Type': 'application/json',...headers, ...getHeaders(options?.headers) },
     body: JSON.stringify(promotePhotoNodeRequest)
+  }
+);}
+
+
+
+export const getListPhotoOwnersUrl = () => {
+
+
+
+
+  return `/api/v1/photos/owners`
+}
+
+/**
+ * @summary List photo owners
+ */
+export const listPhotoOwners = async ( options?: Parameters<typeof sessionJSON>[1]): Promise<PhotoOwner[]> => {
+
+  return sessionJSON<PhotoOwner[]>(getListPhotoOwnersUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+export const getEnrollPhotoOwnerUrl = () => {
+
+
+
+
+  return `/api/v1/photos/owners`
+}
+
+/**
+ * @summary Enroll a person as a photo owner
+ */
+export const enrollPhotoOwner = async (enrollPhotoOwnerRequest: NonReadonly<EnrollPhotoOwnerRequest>,
+    headers: EnrollPhotoOwnerHeaders, options?: Parameters<typeof sessionJSON>[1]): Promise<PhotoOwner> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return sessionJSON<PhotoOwner>(getEnrollPhotoOwnerUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json',...headers, ...getHeaders(options?.headers) },
+    body: JSON.stringify(enrollPhotoOwnerRequest)
+  }
+);}
+
+
+
+export const getRemovePhotoOwnerUrl = (personId: string,) => {
+
+
+
+
+  return `/api/v1/photos/owners/${encodeURIComponent(String(personId))}`
+}
+
+/**
+ * @summary Remove a photo owner enrollment
+ */
+export const removePhotoOwner = async (personId: string,
+    headers: RemovePhotoOwnerHeaders, options?: Parameters<typeof sessionJSON>[1]): Promise<void> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return sessionJSON<void>(getRemovePhotoOwnerUrl(personId),
+  {
+    ...options,
+    method: 'DELETE',
+    headers: { ...headers, ...getHeaders(options?.headers) }
+
   }
 );}
 

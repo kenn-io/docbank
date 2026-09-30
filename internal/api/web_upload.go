@@ -137,7 +137,12 @@ func handleWebUploadConnection(
 		return
 	}
 	defer sessions.releaseUpload(auth.Token, conn)
-	ctx, cancel := context.WithCancel(ctx)
+	photoOwnerID, live := sessions.photoOwner(auth.Token)
+	if !live {
+		_ = conn.Close(websocket.StatusPolicyViolation, "upload session unavailable")
+		return
+	}
+	ctx, cancel := context.WithCancel(store.WithPhotoOwner(ctx, photoOwnerID))
 	stop := context.AfterFunc(sessionCtx, cancel)
 	defer stop()
 	defer cancel()

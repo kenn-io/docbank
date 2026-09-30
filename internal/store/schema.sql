@@ -2142,10 +2142,17 @@ CREATE INDEX IF NOT EXISTS email_document_relations_child ON email_document_rela
 
 -- Photo grouping is an index over ordinary file nodes. Nodes and content
 -- versions remain the only byte and document identities.
+CREATE TABLE IF NOT EXISTS photo_owners (
+    person_id   TEXT PRIMARY KEY REFERENCES persons(person_id),
+    enrolled_at TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS photo_assets (
     asset_id                  TEXT PRIMARY KEY,
     kind                      TEXT NOT NULL,
     revision                  INTEGER NOT NULL DEFAULT 1,
+    owner_id                  TEXT NOT NULL REFERENCES photo_owners(person_id),
+    hidden_at                 TEXT,
     excluded_at               TEXT,
     display_file_id           TEXT,
     display_override_file_id  TEXT,

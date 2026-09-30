@@ -34,7 +34,7 @@ func (s *Store) moveAuditedTx(
 		return snapshot.priorSubtree[id], nil
 	}
 	moved, err := s.moveAtTx(
-		tx, id, newParentID, normalizedName, ifRev, snapshot.recordedAt,
+		ctx, tx, id, newParentID, normalizedName, ifRev, snapshot.recordedAt,
 	)
 	if err != nil {
 		return Node{}, err
@@ -79,7 +79,7 @@ func (s *Store) prepareAuditedMove(
 	if err != nil {
 		return snapshot, "", false, err
 	}
-	moved, err := nodeByIDTx(tx, id)
+	moved, err := nodeByIDQuery(ctx, tx, id)
 	if err != nil {
 		return snapshot, "", false, err
 	}
@@ -91,7 +91,7 @@ func (s *Store) prepareAuditedMove(
 			"node %d at revision %d, expected %d: %w", id, moved.Revision, ifRev, ErrStaleRevision,
 		)
 	}
-	if _, err := liveDirTx(tx, newParentID); err != nil {
+	if _, err := liveDirTx(ctx, tx, newParentID); err != nil {
 		return snapshot, "", false, err
 	}
 	inCycle, err := isAncestorTx(tx, id, newParentID)

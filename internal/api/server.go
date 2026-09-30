@@ -230,6 +230,7 @@ func NewServer(d Deps) *Server {
 	registerMediaRoutes(mux, humaAPI, d, g)
 	registerPackageRoutes(mux, humaAPI, d, g, s.webDownloads, s.webSessions)
 	registerBatesRoutes(mux, humaAPI, d, g, s.webDownloads, s.webSessions, cursorService)
+	registerPhotoOwnerRoutes(humaAPI, d, g)
 	registerPhotoRoutes(humaAPI, d, g)
 	registerPeopleRoutes(humaAPI, d, g)
 	registerPhotoImportRoutes(humaAPI, d, g)
@@ -243,7 +244,7 @@ func NewServer(d Deps) *Server {
 	s.registerChallenge(mux)
 	s.registerShutdown(mux)
 	registerWeb(mux, d.Cfg.Web.Enabled, d.WebURL)
-	registerWebSession(mux, d.Cfg.Web.Enabled, d.WebURL, s.webSessions)
+	registerWebSession(mux, d.Cfg.Web.Enabled, d.WebURL, d.Store, s.webSessions, g)
 	registerWebUpload(mux, d.Cfg.Web.Enabled, d.WebURL, d, g, s.webSessions)
 	registerWebDownload(mux, d.Cfg.Web.Enabled, d, s.webDownloads, s.webSessions, s.termReports)
 
@@ -354,6 +355,8 @@ func markRevisionPreconditionsRequired(api huma.API) {
 		{"/api/v1/people/by-id/{person_id}/retire", http.MethodPost},
 		{"/api/v1/people/by-id/{person_id}/merge", http.MethodPost},
 		{"/api/v1/people/by-id/{person_id}/split", http.MethodPost},
+		{"/api/v1/photos/owners", http.MethodPost},
+		{"/api/v1/photos/owners/{person_id}", http.MethodDelete},
 	} {
 		markDocumentedHeaderRequired(api, route.path, route.method, "If-Match")
 	}

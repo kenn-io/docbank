@@ -490,6 +490,13 @@ func (s *Store) ActiveRenditionByAttachment(ctx context.Context, attachmentID st
 	if err != nil {
 		return RenditionView{}, fmt.Errorf("reading active rendition attachment key: %w", err)
 	}
+	// A rendition of a photo the request may not see answers like a missing attachment.
+	if err := checkPhotoVersionVisibleTx(ctx, s.db, contentVersionID); err != nil {
+		if errors.Is(err, ErrNotFound) {
+			return RenditionView{}, ErrNotFound
+		}
+		return RenditionView{}, err
+	}
 	view, err := s.ActiveRendition(ctx, contentVersionID, profileFingerprint)
 	if err != nil {
 		return RenditionView{}, err

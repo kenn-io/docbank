@@ -29,6 +29,22 @@ asset.
 Removing the selected member chooses another displayable member atomically,
 or stores a null display when none remains. Assets are limited to 256 files.
 
+Each asset belongs to one photo owner: a person enrolled as an owner, named by
+the person's current display name. A request sees and changes only its owner's
+photos; other owners' photos are absent from listings and answer like a missing
+one when addressed by node, path, version, or asset. Files that are not photos
+look the same to every caller. The earliest enrollment is the default owner; when none
+exists, the first photo or browser session enrolls an operator person named
+"Default".
+Master requests select an owner with `X-Docbank-Owner: OWNER_UUID` and use the
+default without it. Browser sessions keep the owner they were issued with and
+get 403 if they send the header.
+
+Owners filter what a route shows at request time. Exports, query snapshots,
+reports, Bates artifacts, and other delayed results keep what they captured
+when they were created. Tag counts, coverage, storage, and other totals stay
+vault-wide.
+
 ## CLI
 
 Inspect the asset created for a node or use a stable asset UUID:
@@ -58,7 +74,16 @@ docbank photos settings show
 docbank photos settings set raw [--revision REV]
 docbank photos settings set image [--revision REV]
 docbank photos settings reset [--revision REV]
+docbank photos owners list
+docbank photos owners enroll <person-id> --revision REV
+docbank photos owners remove <person-id> --revision REV
 ```
+
+Use `--owner PERSON_UUID` on photo commands to select an owner. Enrolling and
+removing take the person's revision and use the master daemon credential.
+Removal is refused while any asset, including an excluded one or one whose
+files are in trash, still refers to the owner. Rename an owner with `docbank
+people rename`; retiring or merging away an enrolled person is refused.
 
 All commands emit bounded JSON. Exit code 4 means the revision is stale: an
 explicit `--revision` no longer matched, or the one automatic retry lost to
@@ -110,7 +135,7 @@ attach, detach, exclude, promote, display, and settings operations under
 `/api/v1/photos`. Existing-asset and settings mutations require `If-Match`.
 Responses carry the new revision in both the body and the `ETag` header.
 
-Photo assets, file memberships, the singleton settings row, and change
+Photo owners, assets, file memberships, the singleton settings row, and change
 receipts are part of the deterministic metadata JSONL stream. Restore checks
 node ownership, local pointers, sidecar targets, display selection, enum
 values, revisions, receipt JSON, and the complete graph before commit. Older
@@ -125,5 +150,5 @@ an empty asset identity.
 Automatic enrollment and explicit graph writes are skipped or refused when
 audit authority is active, according to the existing audit boundary. The
 preexisting graph is preserved and becomes read-only when audit is enabled.
-Browsing and query predicates, technical photo metadata, owners, and browser
-UI belong to later slices.
+Browsing and query predicates, technical photo metadata, and browser UI belong
+to later slices.

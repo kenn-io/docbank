@@ -95,7 +95,7 @@ func exportPackageMetadata(ctx context.Context, q metadataQuerier, write metadat
 		}
 		ordinal := 0
 		for {
-			members, err := loadSnapshotMemberRows(ctx, q, id, ordinal, 250)
+			members, err := loadSnapshotMemberRows(ctx, q, id, ordinal, 250, false)
 			if err != nil {
 				return err
 			}
@@ -373,7 +373,7 @@ func validateSnapshotMetadataRows(ctx context.Context, q metadataQuerier, snapsh
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		batch, err := loadSnapshotMemberRows(ctx, q, snapshot.SnapshotID, count, 250)
+		batch, err := loadSnapshotMemberRows(ctx, q, snapshot.SnapshotID, count, 250, false)
 		if err != nil {
 			return err
 		}

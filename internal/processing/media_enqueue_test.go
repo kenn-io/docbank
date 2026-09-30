@@ -88,7 +88,7 @@ func TestMediaEnqueueAuthorizedReturnsBeforeProvider(t *testing.T) {
 	selector := Selector{NodeID: version.NodeID, ContentVersionID: version.ID, Profile: "speech"}
 	plan, err := service.Plan(t.Context(), selector)
 	require.NoError(t, err)
-	authorization := service.renditionConsentRequest(service.profiles["speech"])
+	authorization := service.renditionConsentRequest(service.profiles["speech"], service.principal)
 
 	_, err = service.EnqueueAuthorized(t.Context(), selector, mediaSourceBinding{}, plan.Fingerprint, authorization, "")
 	require.ErrorIs(t, err, ErrConsentRequired)

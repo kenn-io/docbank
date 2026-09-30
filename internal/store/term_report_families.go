@@ -64,6 +64,8 @@ func readTermReportFamilies(ctx context.Context, q metadataQuerier, budget repor
 	}
 	// Traverse both directions so shared children retain connected parents outside
 	// the selected collection. Historical or trashed versions cannot connect groups.
+	visible, visibleArgs := photoNodeVisibleSQL(ctx, "n.id")
+	familyArgs := append(append([]any{string(selected)}, visibleArgs...), visibleArgs...)
 	rows, err := q.QueryContext(ctx, `WITH RECURSIVE family_versions(version_id) AS (
 		SELECT value FROM json_each(?)
 		UNION
@@ -72,18 +74,18 @@ func readTermReportFamilies(ctx context.Context, q metadataQuerier, budget repor
 		JOIN email_document_relations r ON r.operation_id=p.operation_id
 		JOIN content_versions cv ON cv.version_id=r.child_version_id
 		JOIN nodes n ON n.id=cv.node_id AND n.current_version_id=cv.version_id
-		WHERE n.kind='file' AND n.trashed_at IS NULL
+		WHERE n.kind='file' AND n.trashed_at IS NULL AND `+visible+`
 		UNION
 		SELECT p.parent_version_id FROM family_versions f
 		JOIN email_document_relations r ON r.child_version_id=f.version_id
 		JOIN email_document_publications p ON p.operation_id=r.operation_id
 		JOIN content_versions cv ON cv.version_id=p.parent_version_id
 		JOIN nodes n ON n.id=cv.node_id AND n.current_version_id=cv.version_id
-		WHERE n.kind='file' AND n.trashed_at IS NULL
+		WHERE n.kind='file' AND n.trashed_at IS NULL AND `+visible+`
 	) SELECT p.operation_id,COALESCE(r.occurrence_order,0),r.child_version_id,r.operation_id IS NOT NULL
 		FROM family_versions f JOIN email_document_publications p ON p.parent_version_id=f.version_id
 		LEFT JOIN email_document_relations r ON r.operation_id=p.operation_id
-		ORDER BY p.operation_id,r.occurrence_order`, string(selected))
+		ORDER BY p.operation_id,r.occurrence_order`, familyArgs...)
 	if err != nil {
 		return err
 	}
@@ -229,10 +231,11 @@ func currentTermRelationIdentity(ctx context.Context, q metadataQuerier,
 	nodeID int64, versionID, sha string,
 ) (report.Identity, bool, error) {
 	var actual string
+	visible, visibleArgs := photoNodeVisibleSQL(ctx, "n.id")
 	err := q.QueryRowContext(ctx, `SELECT cv.blob_hash FROM nodes n JOIN content_versions cv
 		ON cv.node_id=n.id AND cv.version_id=n.current_version_id
-		WHERE n.id=? AND n.current_version_id=? AND n.kind='file' AND n.trashed_at IS NULL`,
-		nodeID, versionID).Scan(&actual)
+		WHERE n.id=? AND n.current_version_id=? AND n.kind='file' AND n.trashed_at IS NULL AND `+visible,
+		append([]any{nodeID, versionID}, visibleArgs...)...).Scan(&actual)
 	if errors.Is(err, sql.ErrNoRows) {
 		return report.Identity{}, false, nil
 	}

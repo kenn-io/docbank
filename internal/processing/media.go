@@ -363,7 +363,7 @@ func (service *Service) SubmitSuppliedMedia(
 			return MediaReceipt{}, bindingErr
 		}
 		request.Processing.SuppliedInputID = binding
-		processingAuthorization = service.renditionConsentRequest(processingProfile)
+		processingAuthorization = service.renditionConsentRequest(processingProfile, service.principal)
 		authorized, authorizeErr := service.catalog.AuthorizeProviderOperation(ctx, processingAuthorization)
 		if authorizeErr != nil {
 			return MediaReceipt{}, processingConsentBoundaryError(authorizeErr)

@@ -25,7 +25,7 @@ func (s *Store) Trash(ctx context.Context, id, ifRev int64) (Node, string, error
 	var trashed Node
 	var origPath string
 	err := s.withStorageTx(ctx, func(tx *sql.Tx) error {
-		n, err := nodeByIDTx(tx, id)
+		n, err := nodeByIDQuery(ctx, tx, id)
 		if err != nil {
 			return err
 		}
@@ -168,7 +168,7 @@ func (s *Store) Restore(ctx context.Context, id, ifRev int64) (Node, string, err
 	var restored Node
 	var restoredPath string
 	err := s.withStorageTx(ctx, func(tx *sql.Tx) error {
-		n, err := nodeByIDTx(tx, id)
+		n, err := nodeByIDQuery(ctx, tx, id)
 		if err != nil {
 			return err
 		}
@@ -186,7 +186,7 @@ func (s *Store) Restore(ctx context.Context, id, ifRev int64) (Node, string, err
 				return fmt.Errorf("node %d at revision %d, expected %d: %w",
 					id, n.Revision, ifRev, ErrStaleRevision)
 			}
-			target, targetErr := s.restoreTargetTx(tx, n)
+			target, targetErr := s.restoreTargetTx(ctx, tx, n)
 			if targetErr != nil {
 				return targetErr
 			}
@@ -210,7 +210,7 @@ type restoreTarget struct {
 	finalName      string
 }
 
-func (s *Store) restoreTargetTx(tx *sql.Tx, node Node) (restoreTarget, error) {
+func (s *Store) restoreTargetTx(ctx context.Context, tx *sql.Tx, node Node) (restoreTarget, error) {
 	var trashParent sql.NullInt64
 	var trashName sql.NullString
 	if err := tx.QueryRow(
@@ -225,7 +225,7 @@ func (s *Store) restoreTargetTx(tx *sql.Tx, node Node) (restoreTarget, error) {
 	if trashParent.Valid {
 		originParentID := trashParent.Int64
 		target.originParentID = &originParentID
-		if _, err := liveDirTx(tx, originParentID); err == nil {
+		if _, err := liveDirTx(ctx, tx, originParentID); err == nil {
 			target.destID = originParentID
 		} else if !errors.Is(err, ErrNotFound) && !errors.Is(err, ErrNotDir) {
 			return restoreTarget{}, err
@@ -277,9 +277,10 @@ func (s *Store) restoreNodeTx(
 
 // TrashedRoots lists restorable trash roots, newest first.
 func (s *Store) TrashedRoots(ctx context.Context) ([]Node, error) {
+	visible, visibleArgs := photoNodeVisibleSQL(ctx, "n.id")
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT `+nodeCols+` FROM `+nodeFrom+`
-		 WHERE n.trash_name IS NOT NULL ORDER BY n.trashed_at DESC`)
+		 WHERE n.trash_name IS NOT NULL AND `+visible+` ORDER BY n.trashed_at DESC`, visibleArgs...)
 	if err != nil {
 		return nil, fmt.Errorf("listing trash: %w", err)
 	}
@@ -317,17 +318,18 @@ func (s *Store) TrashedRootsPage(
 	}
 	defer func() { _ = tx.Rollback() }()
 
+	visible, visibleArgs := photoNodeVisibleSQL(ctx, "n.id")
 	var total int
 	if err := tx.QueryRowContext(ctx,
-		`SELECT COUNT(*) FROM nodes WHERE trash_name IS NOT NULL`,
+		`SELECT COUNT(*) FROM nodes n WHERE n.trash_name IS NOT NULL AND `+visible, visibleArgs...,
 	).Scan(&total); err != nil {
 		return nil, 0, fmt.Errorf("counting trash: %w", err)
 	}
 	rows, err := tx.QueryContext(ctx,
 		`SELECT `+nodeCols+` FROM `+nodeFrom+`
-		 WHERE n.trash_name IS NOT NULL
+		 WHERE n.trash_name IS NOT NULL AND `+visible+`
 		 ORDER BY n.trashed_at DESC, n.id DESC LIMIT ? OFFSET ?`,
-		limit, offset)
+		append(visibleArgs, limit, offset)...)
 	if err != nil {
 		return nil, 0, fmt.Errorf("listing trash page: %w", err)
 	}

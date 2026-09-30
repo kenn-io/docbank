@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
 )
 
 const (
@@ -23,6 +24,13 @@ const CurrentContentMembershipCTE = `current_content_members AS (
     JOIN blobs b ON b.hash = v.blob_hash AND b.size = v.size
     WHERE n.kind = 'file' AND n.trashed_at IS NULL
 )`
+
+// visibleCurrentContentMembershipCTE limits duplicate listings to the
+// request's visible nodes, so groups, counts and members agree.
+func visibleCurrentContentMembershipCTE(ctx context.Context) (string, []any) {
+	predicate, args := photoNodeVisibleSQL(ctx, "n.id")
+	return strings.Replace(CurrentContentMembershipCTE, "n.trashed_at IS NULL", "n.trashed_at IS NULL AND "+predicate, 1), args
+}
 
 // DuplicateRepresentativeOrder is the exact stable order for choosing a
 // representative from a matched population. Future matched-content callers
@@ -83,12 +91,13 @@ func (s *Store) DuplicateGroupByHash(ctx context.Context, hash string, size int6
 	}
 	defer func() { _ = tx.Rollback() }()
 	group := DuplicateGroup{Hash: hash, Size: size, References: make([]DuplicateReference, 0)}
-	err = tx.QueryRowContext(ctx, `WITH `+CurrentContentMembershipCTE+`
+	cte, args := visibleCurrentContentMembershipCTE(ctx)
+	err = tx.QueryRowContext(ctx, `WITH `+cte+`
 		SELECT COUNT(DISTINCT node_id),
 		       (SELECT node_id FROM current_content_members
 		        WHERE blob_hash=? AND size=? ORDER BY `+DuplicateRepresentativeOrder+` LIMIT 1)
 		FROM current_content_members WHERE blob_hash=? AND size=?
-		HAVING COUNT(DISTINCT node_id) >= 2`, hash, size, hash, size,
+		HAVING COUNT(DISTINCT node_id) >= 2`, append(args, hash, size, hash, size)...,
 	).Scan(&group.ReferenceCount, &group.RepresentativeNodeID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return DuplicateGroup{}, ErrNotFound
@@ -132,7 +141,8 @@ func (s *Store) Duplicates(
 	}
 	defer func() { _ = tx.Rollback() }()
 
-	groupsSQL := `WITH ` + CurrentContentMembershipCTE + `,
+	cte, cteArgs := visibleCurrentContentMembershipCTE(ctx)
+	groupsSQL := `WITH ` + cte + `,
 		duplicate_groups AS (
 			SELECT blob_hash, size, COUNT(DISTINCT node_id) AS reference_count
 			FROM current_content_members
@@ -141,7 +151,7 @@ func (s *Store) Duplicates(
 		)`
 	if err := tx.QueryRowContext(ctx, groupsSQL+`
 		SELECT COUNT(*), COALESCE(SUM(reference_count), 0)
-		FROM duplicate_groups`).Scan(&page.Total, &page.TotalReferences); err != nil {
+		FROM duplicate_groups`, cteArgs...).Scan(&page.Total, &page.TotalReferences); err != nil {
 		return DuplicatePage{}, fmt.Errorf("counting duplicate content: %w", err)
 	}
 
@@ -152,7 +162,7 @@ func (s *Store) Duplicates(
 		        ORDER BY `+DuplicateRepresentativeOrder+` LIMIT 1)
 		FROM duplicate_groups g
 		ORDER BY g.blob_hash ASC
-		LIMIT ? OFFSET ?`, limit, offset)
+		LIMIT ? OFFSET ?`, append(cteArgs, limit, offset)...)
 	if err != nil {
 		return DuplicatePage{}, fmt.Errorf("listing duplicate content: %w", err)
 	}
@@ -197,12 +207,13 @@ type duplicateReferenceIdentity struct {
 func duplicateReferences(
 	ctx context.Context, tx *sql.Tx, group DuplicateGroup,
 ) ([]DuplicateReference, error) {
-	rows, err := tx.QueryContext(ctx, `WITH `+CurrentContentMembershipCTE+`
+	cte, args := visibleCurrentContentMembershipCTE(ctx)
+	rows, err := tx.QueryContext(ctx, `WITH `+cte+`
 		SELECT node_id, version_id
 		FROM current_content_members
 		WHERE blob_hash = ? AND size = ?
 		ORDER BY `+DuplicateRepresentativeOrder+`
-		LIMIT ?`, group.Hash, group.Size, maxDuplicatePageReferences)
+		LIMIT ?`, append(args, group.Hash, group.Size, maxDuplicatePageReferences)...)
 	if err != nil {
 		return nil, fmt.Errorf("listing references for duplicate %s: %w", group.Hash, err)
 	}

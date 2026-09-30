@@ -85,13 +85,16 @@ func nodeByIDQuery(ctx context.Context, queryer rowQuerier, id int64) (Node, err
 	if err != nil {
 		return Node{}, fmt.Errorf("node %d: %w", id, err)
 	}
+	if err := checkPhotoNodeVisibleTx(ctx, queryer, id); err != nil {
+		return Node{}, fmt.Errorf("node %d: %w", id, err)
+	}
 	return n, nil
 }
 
 // NodeViewByID returns a node and its live path from one read transaction.
 func (s *Store) NodeViewByID(ctx context.Context, id int64) (NodeView, error) {
 	return s.nodeView(ctx, func(tx *sql.Tx) (Node, error) {
-		return nodeByIDTx(tx, id)
+		return nodeByIDQuery(ctx, tx, id)
 	})
 }
 
@@ -178,6 +181,9 @@ func nodeByPath(ctx context.Context, q rowQuerier, rootID int64, path string) (N
 			return Node{}, fmt.Errorf("path %q: %w", path, err)
 		}
 	}
+	if err := checkPhotoNodeVisibleTx(ctx, q, n.ID); err != nil {
+		return Node{}, fmt.Errorf("path %q: %w", path, err)
+	}
 	return n, nil
 }
 
@@ -190,10 +196,11 @@ func (s *Store) Children(ctx context.Context, dirID int64) ([]Node, error) {
 	if !dir.IsDir() {
 		return nil, fmt.Errorf("node %d: %w", dirID, ErrNotDir)
 	}
+	visibilityFilter, visibilityArgs := photoNodeVisibleSQL(ctx, "n.id")
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT `+nodeCols+` FROM `+nodeFrom+`
-		 WHERE n.parent_id = ? AND n.trashed_at IS NULL
-		 ORDER BY n.kind = 'file', n.name`, dirID)
+		 WHERE n.parent_id = ? AND n.trashed_at IS NULL AND `+visibilityFilter+`
+		 ORDER BY n.kind = 'file', n.name`, append([]any{dirID}, visibilityArgs...)...)
 	if err != nil {
 		return nil, fmt.Errorf("listing children of %d: %w", dirID, err)
 	}
@@ -245,7 +252,7 @@ func (s *Store) DirectoryChildrenPage(
 	}
 	defer func() { _ = tx.Rollback() }()
 
-	dir, err := nodeByIDTx(tx, dirID)
+	dir, err := nodeByIDQuery(ctx, tx, dirID)
 	if err != nil {
 		return DirectoryPageView{}, err
 	}
@@ -259,19 +266,20 @@ func (s *Store) DirectoryChildrenPage(
 	if err != nil {
 		return DirectoryPageView{}, err
 	}
+	visibilityFilter, visibilityArgs := photoNodeVisibleSQL(ctx, "n.id")
 
 	var total int
 	if err := tx.QueryRowContext(ctx,
-		`SELECT COUNT(*) FROM nodes WHERE parent_id = ? AND trashed_at IS NULL`,
-		dirID,
+		`SELECT COUNT(*) FROM nodes n WHERE n.parent_id = ? AND n.trashed_at IS NULL AND `+visibilityFilter,
+		append([]any{dirID}, visibilityArgs...)...,
 	).Scan(&total); err != nil {
 		return DirectoryPageView{}, fmt.Errorf("counting children of %d: %w", dirID, err)
 	}
 	rows, err := tx.QueryContext(ctx,
 		`SELECT `+nodeCols+` FROM `+nodeFrom+`
-		 WHERE n.parent_id = ? AND n.trashed_at IS NULL
+		 WHERE n.parent_id = ? AND n.trashed_at IS NULL AND `+visibilityFilter+`
 		 ORDER BY n.kind = 'file', n.name
-		 LIMIT ? OFFSET ?`, dirID, limit, offset)
+		 LIMIT ? OFFSET ?`, append(append([]any{dirID}, visibilityArgs...), limit, offset)...)
 	if err != nil {
 		return DirectoryPageView{}, fmt.Errorf("listing children of %d: %w", dirID, err)
 	}

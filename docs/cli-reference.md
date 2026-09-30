@@ -180,7 +180,15 @@ docbank photos settings reset [--revision REV]
 docbank photos import <source-root> [destination] [--json]
 docbank photos imports show <import-id> [--json]
 docbank photos imports cancel <import-id> [--json]
+docbank photos owners list
+docbank photos owners enroll <person-id> --revision REV
+docbank photos owners remove <person-id> --revision REV
 ```
+
+An owner is an enrolled person; `--revision` is the person's revision. Pass
+`--owner PERSON_UUID` to photo commands to act as that owner; without it the
+daemon uses the default owner, the earliest enrollment. Removing an owner fails
+while any asset refers to it. Rename owners with `docbank people rename`.
 
 Photo commands emit JSON through the daemon. Image and concrete video files
 are enrolled when created; generic RAW files require explicit promotion.
@@ -189,8 +197,8 @@ once if another write changes it first. Pass `--revision` to fail with exit
 code 4 instead. `inspect` also accepts an `id:N` or path selector for a
 member file; `id:N` also finds a trashed member. Sidecars must point at a same-asset RAW or image member and never become
 the display member.
-Photo assets, settings, and bounded decision receipts are included in JSONL
-backup and restore.
+Photo owners, assets, settings, and bounded decision receipts are included in
+JSONL backup and restore.
 `photos import` imports a daemon-host folder, one photo per same-folder,
 same-name group; `imports show` lists groups it left unpaired. See
 [Photos](usage/photos.md#import-a-camera-folder).

@@ -16,6 +16,8 @@ type photoAssetToolOutput struct {
 	privateCache
 
 	ID                    string          `json:"id"`
+	OwnerID               *string         `json:"owner_id,omitzero"`
+	HiddenAt              *string         `json:"hidden_at,omitzero"`
 	Kind                  string          `json:"kind"`
 	Revision              int64           `json:"revision"`
 	ExcludedAt            *string         `json:"excluded_at,omitzero"`
@@ -63,6 +65,8 @@ func photoAssetOutput(asset api.PhotoAsset) photoAssetToolOutput {
 	return photoAssetToolOutput{
 		privateCache:          newPrivateCache(),
 		ID:                    asset.ID,
+		OwnerID:               asset.OwnerID,
+		HiddenAt:              asset.HiddenAt,
 		Kind:                  asset.Kind,
 		Revision:              asset.Revision,
 		ExcludedAt:            asset.ExcludedAt,
@@ -174,4 +178,34 @@ func executePhotoWriteTool(
 			fmt.Errorf("photo mutation response failed output validation: %w", err))
 	}
 	return result, nil
+}
+
+type photoOwnerItem struct {
+	ID         string `json:"id"`
+	Name       string `json:"name"`
+	EnrolledAt string `json:"enrolled_at"`
+}
+
+type photoOwnersToolOutput struct {
+	privateCache
+
+	Owners []photoOwnerItem `json:"owners"`
+}
+
+func listPhotoOwners(ctx context.Context, lease *daemonLease, raw []byte) (photoOwnersToolOutput, error) {
+	var input struct{}
+	if err := decodeReadArguments(raw, &input); err != nil {
+		return photoOwnersToolOutput{}, err
+	}
+	owners, err := daemonRead(ctx, lease, func(ctx context.Context, c *daemonconn.Connection) ([]api.PhotoOwner, error) {
+		return c.PhotoOwners(ctx)
+	})
+	if err != nil {
+		return photoOwnersToolOutput{}, err
+	}
+	items := make([]photoOwnerItem, len(owners))
+	for i, owner := range owners {
+		items[i] = photoOwnerItem{ID: owner.ID, Name: owner.Name, EnrolledAt: owner.EnrolledAt}
+	}
+	return photoOwnersToolOutput{privateCache: newPrivateCache(), Owners: items}, nil
 }

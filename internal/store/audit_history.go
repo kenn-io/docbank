@@ -115,7 +115,7 @@ func (s *Store) AuditHistory(
 	ctx context.Context, nodeID int64, limit int, cursor string,
 ) (AuditEventPage, error) {
 	return s.auditHistorySnapshot(ctx, limit, cursor, func(tx *sql.Tx) (Node, error) {
-		return nodeByIDTx(tx, nodeID)
+		return nodeByIDQuery(ctx, tx, nodeID)
 	})
 }
 

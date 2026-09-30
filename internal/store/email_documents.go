@@ -56,7 +56,7 @@ func (s *Store) publishEmailDocumentsTx(
 		if err != nil {
 			return err
 		}
-		dir, err := liveDirTx(tx, request.DestinationID)
+		dir, err := liveDirTx(ctx, tx, request.DestinationID)
 		if err != nil {
 			return err
 		}

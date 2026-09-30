@@ -6254,6 +6254,26 @@ components:
       x-go-type-import:
         path: go.kenn.io/docbank/internal/pdfstamp
         name: pdfstamp
+    EnrollPhotoOwnerRequest:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/EnrollPhotoOwnerRequest.json
+          format: uri
+          readOnly: true
+          type: string
+        person_id:
+          format: uuid
+          type: string
+      required:
+        - person_id
+      type: object
+      x-go-type: api.EnrollPhotoOwnerRequest
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     Entry:
       additionalProperties: false
       properties:
@@ -10793,6 +10813,11 @@ components:
             $ref: "#/components/schemas/PhotoFile"
           maxItems: 256
           type: array
+        hidden_at:
+          format: date-time
+          type:
+            - string
+            - "null"
         id:
           format: uuid
           type: string
@@ -10801,6 +10826,11 @@ components:
             - photo
             - video
           type: string
+        owner_id:
+          format: uuid
+          type:
+            - string
+            - "null"
         revision:
           format: int64
           minimum: 1
@@ -11032,6 +11062,33 @@ components:
         - destination
       type: object
       x-go-type: api.PhotoImportStartRequest
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
+    PhotoOwner:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/PhotoOwner.json
+          format: uri
+          readOnly: true
+          type: string
+        enrolled_at:
+          format: date-time
+          type: string
+        id:
+          format: uuid
+          type: string
+        name:
+          type: string
+      required:
+        - id
+        - name
+        - enrolled_at
+      type: object
+      x-go-type: api.PhotoOwner
       x-go-type-import:
         path: go.kenn.io/docbank/internal/api
         name: api
@@ -21614,6 +21671,81 @@ paths:
                 $ref: "#/components/schemas/Error"
           description: Error
       summary: Promote one node into a photo asset
+  /api/v1/photos/owners:
+    get:
+      operationId: listPhotoOwners
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                items:
+                  $ref: "#/components/schemas/PhotoOwner"
+                type: array
+          description: OK
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: List photo owners
+    post:
+      operationId: enrollPhotoOwner
+      parameters:
+        - description: The person's current revision
+          in: header
+          name: If-Match
+          required: true
+          schema:
+            description: The person's current revision
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/EnrollPhotoOwnerRequest"
+        required: true
+      responses:
+        "201":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PhotoOwner"
+          description: Created
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: Enroll a person as a photo owner
+  /api/v1/photos/owners/{person_id}:
+    delete:
+      operationId: removePhotoOwner
+      parameters:
+        - in: path
+          name: person_id
+          required: true
+          schema:
+            type: string
+        - description: The person's current revision
+          in: header
+          name: If-Match
+          required: true
+          schema:
+            description: The person's current revision
+            type: string
+      responses:
+        "204":
+          description: No Content
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: Remove a photo owner enrollment
   /api/v1/photos/settings:
     get:
       operationId: getPhotoSettings

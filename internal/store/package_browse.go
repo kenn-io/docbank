@@ -53,7 +53,7 @@ func (s *Store) PackageMembers(ctx context.Context, packageID string, afterOrdin
 	if !snapshotID.Valid || snapshotID.String == "" {
 		return nil, nil
 	}
-	return s.SnapshotMembers(ctx, snapshotID.String, afterOrdinal, limit)
+	return s.snapshotMembers(ctx, snapshotID.String, afterOrdinal, limit, true)
 }
 
 // PackageRecordRowIDs maps each occurrence on one member page to its retained

@@ -81,7 +81,7 @@ func (s *Store) PruneContentVersions(
 		runTx = s.withLogicalTx
 	}
 	err := runTx(ctx, func(tx *sql.Tx) error {
-		node, err := nodeByIDTx(tx, nodeID)
+		node, err := nodeByIDQuery(ctx, tx, nodeID)
 		if err != nil {
 			return err
 		}

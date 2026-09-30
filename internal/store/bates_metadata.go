@@ -373,7 +373,7 @@ func validateBatesCommitsHaveArtifacts(ctx context.Context, q metadataQuerier) e
 func snapshotSelectedPages(ctx context.Context, q metadataQuerier, snapshotID string) ([]BatesPageInput, error) {
 	var pages []BatesPageInput
 	for after := 0; ; {
-		members, err := loadSnapshotMemberRows(ctx, q, snapshotID, after, 250)
+		members, err := loadSnapshotMemberRows(ctx, q, snapshotID, after, 250, false)
 		if err != nil {
 			return nil, err
 		}

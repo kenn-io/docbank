@@ -94,11 +94,14 @@ func (s *Store) SearchExplainedLexicalCandidates(ctx context.Context, query stri
 		return nil, false, nil
 	}
 	filterSQL, filterArgs := searchFilterSQL(opts)
+	visibilitySQL, visibilityArgs := photoNodeVisibleSQL(ctx, "n.id")
 	nameArgs := append([]any{fq}, filterArgs...)
+	nameArgs = append(nameArgs, visibilityArgs...)
 	nameArgs = append(nameArgs, fq, limit+1)
 	rows, err := s.db.QueryContext(ctx, `SELECT `+nodeCols+` FROM `+nodeFrom+`
 		WHERE n.id IN (SELECT rowid FROM nodes_fts WHERE nodes_fts MATCH ?)
 		  AND n.kind='file' AND cv.version_id IS NOT NULL AND n.trashed_at IS NULL `+filterSQL+`
+		  AND `+visibilitySQL+`
 		ORDER BY (SELECT rank FROM nodes_fts WHERE rowid=n.id AND nodes_fts MATCH ?),n.name,n.id
 		LIMIT ?`, nameArgs...)
 	if err != nil {
@@ -133,6 +136,7 @@ func (s *Store) SearchExplainedLexicalCandidates(ctx context.Context, query stri
 			JOIN content_versions cv ON cv.version_id=matched_cv.version_id
 			JOIN text_searchable_versions tsv ON tsv.version_id=matched_cv.version_id
 			WHERE content_fts MATCH ? AND n.trashed_at IS NULL ` + filterSQL + `
+			 AND ` + visibilitySQL + `
 			ORDER BY content_fts.rank,n.name,n.id,content_fts.rowid`
 		if generationID != "" {
 			contentQuery = `SELECT ` + nodeCols + `,rendition_lexical_fts.build_id,
@@ -151,11 +155,13 @@ func (s *Store) SearchExplainedLexicalCandidates(ctx context.Context, query stri
 				JOIN nodes n ON n.id=cv.node_id AND n.current_version_id=cv.version_id
 				WHERE rendition_lexical_fts MATCH ? AND gb.generation_id=?
 				 AND n.trashed_at IS NULL ` + filterSQL + `
+				 AND ` + visibilitySQL + `
 				ORDER BY rendition_lexical_fts.rank,n.name,n.id,
 				 rendition_lexical_fts.build_id,rendition_lexical_fts.segment_id`
 			args = append(args, generationID)
 		}
 		args = append(args, filterArgs...)
+		args = append(args, visibilityArgs...)
 		rows, err := queryer.QueryContext(ctx, contentQuery, args...)
 		if err != nil {
 			return err
@@ -370,6 +376,7 @@ func (s *Store) RevalidateSearchCandidates(ctx context.Context, candidates []Sea
 	var result SearchCandidateRevalidation
 	var allowedPositions []int
 	err = s.withStorageTx(ctx, func(tx *sql.Tx) error {
+		visibilitySQL, visibilityArgs := photoNodeVisibleSQL(ctx, "n.id")
 		if semanticProfileFingerprint != "" || semanticBindingID != "" {
 			if semanticProfileFingerprint == "" || semanticBindingID == "" {
 				return errors.New("semantic search coverage authority is incomplete")
@@ -427,6 +434,7 @@ func (s *Store) RevalidateSearchCandidates(ctx context.Context, candidates []Sea
 			}
 		}
 		args := append([]any{string(encoded)}, filterArgs...)
+		args = append(args, visibilityArgs...)
 		args = append(args, semanticProfileFingerprint, semanticBindingID)
 		rows, queryErr := tx.QueryContext(ctx, `WITH requested AS (
 			SELECT CAST(key AS INTEGER) AS position,
@@ -441,6 +449,7 @@ func (s *Store) RevalidateSearchCandidates(ctx context.Context, candidates []Sea
 			JOIN content_versions cv ON cv.node_id=n.id AND cv.version_id=n.current_version_id
 			 AND cv.version_id=requested.version_id
 			WHERE n.kind='file' AND n.revision=requested.node_revision AND n.trashed_at IS NULL `+filterSQL+`
+			 AND `+visibilitySQL+`
 		)
 		SELECT scoped.position FROM scoped
 		WHERE NOT EXISTS (
@@ -711,6 +720,9 @@ func (s *Store) ResolveSemanticCandidates(ctx context.Context, profileFingerprin
 	filterSQL, filterArgs := searchFilterSQL(normalized)
 	var result SemanticSearchResolution
 	err = s.withStorageTx(ctx, func(tx *sql.Tx) error {
+		visibilitySQL, visibilityArgs := photoNodeVisibleSQL(ctx, "n.id")
+		filterSQL := filterSQL + ` AND ` + visibilitySQL
+		filterArgs := append(append([]any{}, filterArgs...), visibilityArgs...)
 		current, captureErr := captureVectorIndexSourceTx(ctx, tx, vectorSpaceID)
 		if captureErr != nil {
 			if errors.Is(captureErr, ErrNotFound) {
@@ -2002,8 +2014,10 @@ func (s *Store) SearchPageWithOptions(
 		return s.searchFilterPage(ctx, limit, opts)
 	}
 	filterSQL, filterArgs := searchFilterSQL(opts)
+	visibilitySQL, visibilityArgs := photoNodeVisibleSQL(ctx, "n.id")
 	nameArgs := []any{fq}
 	nameArgs = append(nameArgs, filterArgs...)
+	nameArgs = append(nameArgs, visibilityArgs...)
 	nameArgs = append(nameArgs, fq, limit+1)
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT `+nodeCols+`
@@ -2011,6 +2025,7 @@ func (s *Store) SearchPageWithOptions(
 		WHERE n.id IN (SELECT rowid FROM nodes_fts WHERE nodes_fts MATCH ?)
 		  AND n.trashed_at IS NULL
 		  `+filterSQL+`
+		  AND `+visibilitySQL+`
 		ORDER BY (SELECT rank FROM nodes_fts WHERE rowid = n.id AND nodes_fts MATCH ?),
 		         n.name, n.id
 		LIMIT ?`, nameArgs...)
@@ -2035,6 +2050,7 @@ func (s *Store) SearchPageWithOptions(
 	var contentHits []SearchHit
 	queryContent := func(queryer metadataQuerier, generationID string) error {
 		contentArgs := []any{fq}
+		contentVisibilitySQL, contentVisibilityArgs := photoNodeVisibleSQL(ctx, "n.id")
 		contentQuery := `
 			WITH matched_blobs AS (
 			  SELECT blob_hash, MIN(rank) AS best_rank
@@ -2047,6 +2063,7 @@ func (s *Store) SearchPageWithOptions(
 			JOIN text_searchable_versions tsv ON tsv.version_id = cv.version_id
 			WHERE n.trashed_at IS NULL
 			  ` + filterSQL + `
+			  AND ` + contentVisibilitySQL + `
 			ORDER BY mb.best_rank, n.name, n.id
 			LIMIT ?`
 		if generationID != "" {
@@ -2072,11 +2089,13 @@ func (s *Store) SearchPageWithOptions(
 				JOIN matched_versions mv ON mv.version_id=cv.version_id
 				WHERE n.trashed_at IS NULL
 				  ` + filterSQL + `
+				  AND ` + contentVisibilitySQL + `
 				ORDER BY mv.best_rank,n.name,n.id
 				LIMIT ?`
 			contentArgs = append(contentArgs, generationID)
 		}
 		contentArgs = append(contentArgs, filterArgs...)
+		contentArgs = append(contentArgs, contentVisibilityArgs...)
 		contentArgs = append(contentArgs, remaining+len(nameHits)+1)
 		rows, err := queryer.QueryContext(ctx, contentQuery, contentArgs...)
 		if err != nil {
@@ -2185,6 +2204,8 @@ func (s *Store) searchFilterPage(
 	ctx context.Context, limit int, opts SearchOptions,
 ) ([]SearchHit, bool, error) {
 	filterSQL, args := searchFilterSQL(opts)
+	visibilitySQL, visibilityArgs := photoNodeVisibleSQL(ctx, "n.id")
+	args = append(args, visibilityArgs...)
 	args = append(args, limit+1)
 	rows, err := s.db.QueryContext(ctx, `
 		WITH RECURSIVE page AS (
@@ -2192,6 +2213,7 @@ func (s *Store) searchFilterPage(
 			FROM `+nodeFrom+`
 			WHERE n.trashed_at IS NULL AND n.parent_id IS NOT NULL
 			  `+filterSQL+`
+			  AND `+visibilitySQL+`
 			ORDER BY n.modified_at DESC, n.name, n.id
 			LIMIT ?
 		), ancestry(node_id, id, parent_id, path) AS (

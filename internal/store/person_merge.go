@@ -135,6 +135,9 @@ func (s *Store) MergePersons(ctx context.Context, survivorID, absorbedID, operat
 		if err := fencePersonTx(ctx, tx, absorbedID, absorbedRevision); err != nil {
 			return err
 		}
+		if err := refuseEnrolledPersonTx(ctx, tx, absorbedID); err != nil {
+			return err
+		}
 		var absorbedName string
 		if err := tx.QueryRowContext(ctx, `SELECT display_name FROM persons WHERE person_id=?`, absorbedID).Scan(&absorbedName); err != nil {
 			return err

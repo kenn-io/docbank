@@ -94,6 +94,10 @@ func pageSourceTx(ctx context.Context, q metadataQuerier, b PageBinding) error {
 	if err != nil {
 		return err
 	}
+	// A hidden photo answers like a missing node, before its revision or trash state.
+	if err := checkPhotoNodeVisibleTx(ctx, q, b.NodeID); err != nil {
+		return err
+	}
 	if revision != b.Revision || trashed.Valid {
 		return ErrPageFenced
 	}

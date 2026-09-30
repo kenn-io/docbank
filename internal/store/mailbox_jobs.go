@@ -281,7 +281,7 @@ func (s *Store) BeginMailboxJob(ctx context.Context, owner string, r MailboxJobR
 		if c.State != mailboxContainerSealed || c.SHA256 != r.ContainerSHA256 {
 			return ErrMailboxConflict
 		}
-		if _, err = liveDirTx(tx, r.Settings.DestinationID); err != nil {
+		if _, err = liveDirTx(ctx, tx, r.Settings.DestinationID); err != nil {
 			return err
 		}
 		if err = validateMailboxLabelTagsTx(tx, r.Settings.LabelTags); err != nil {

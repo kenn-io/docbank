@@ -91,15 +91,16 @@ func (s *Store) resolveExplicitProcessingSourceFence(
 	if err != nil {
 		return ProcessingSourceFenceResolution{}, fmt.Errorf("encoding source-fence identities: %w", err)
 	}
+	visible, visibleArgs := photoNodeVisibleSQL(ctx, "n.id")
 	rows, err := tx.QueryContext(ctx, `
 		WITH requested(version_id) AS (SELECT value FROM json_each(?))
 		SELECT requested.version_id,
-		       cv.version_id IS NOT NULL,
+		       cv.version_id IS NOT NULL AND `+visible+`,
 		       COALESCE(n.current_version_id=requested.version_id AND n.trashed_at IS NULL,0)
 		FROM requested
 		LEFT JOIN content_versions cv ON cv.version_id=requested.version_id
 		LEFT JOIN nodes n ON n.id=cv.node_id
-		ORDER BY requested.version_id`, string(encoded))
+		ORDER BY requested.version_id`, append([]any{string(encoded)}, visibleArgs...)...)
 	if err != nil {
 		return ProcessingSourceFenceResolution{}, fmt.Errorf("resolving source-fence identities: %w", err)
 	}
@@ -161,6 +162,9 @@ func (s *Store) resolveFilteredProcessingSourceFenceSnapshot(
 			ErrInvalidProcessingSourceFence, err)
 	}
 	filterSQL, args := searchFilterSQL(normalized)
+	visible, visibleArgs := photoNodeVisibleSQL(ctx, "n.id")
+	filterSQL += " AND " + visible
+	args = append(args, visibleArgs...)
 	var observed int
 	if err := snapshot.QueryRowContext(ctx, `SELECT COUNT(*) FROM `+nodeFrom+`
 		WHERE n.kind='file' AND n.trashed_at IS NULL `+filterSQL, args...).Scan(&observed); err != nil {

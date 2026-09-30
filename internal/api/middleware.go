@@ -14,6 +14,7 @@ import (
 	"github.com/danielgtaylor/huma/v2"
 
 	"go.kenn.io/docbank/internal/daemonauth"
+	"go.kenn.io/docbank/internal/store"
 )
 
 const requestTimeout = 60 * time.Second
@@ -217,14 +218,26 @@ func authMiddleware(next http.Handler, key string, sessions *webSessionRegistry,
 		if subtle.ConstantTimeCompare([]byte(got), []byte(key)) == 1 {
 			ctx := context.WithValue(r.Context(), authenticationContextKey{}, "master")
 			ctx = context.WithValue(ctx, workspaceSnapshotOwnerContextKey{}, masterOwner)
+			ctx = store.WithPhotoOwner(ctx, r.Header.Get(PhotoOwnerHeader))
 			next.ServeHTTP(w, r.WithContext(ctx))
 			return
 		}
 		webToken := r.Header.Get(WebSessionHeader)
 		if owner, sessionCtx, ok := sessions.authenticate(webToken); sessions != nil && ok {
+			if r.Header.Get(PhotoOwnerHeader) != "" {
+				writeError(w, NewError(http.StatusForbidden, "forbidden",
+					"browser sessions cannot select a photo owner"))
+				return
+			}
 			if !webSessionRequestAllowed(r) {
 				writeError(w, NewError(http.StatusForbidden, "web_session_read_only",
 					"browser sessions cannot use this endpoint"))
+				return
+			}
+			photoOwnerID, live := sessions.photoOwner(webToken)
+			if !live {
+				writeError(w, NewError(http.StatusUnauthorized, "unauthorized",
+					"missing or invalid API key or browser session"))
 				return
 			}
 			ctx, cancel := context.WithCancel(r.Context())
@@ -233,6 +246,7 @@ func authMiddleware(next http.Handler, key string, sessions *webSessionRegistry,
 			defer cancel()
 			ctx = context.WithValue(ctx, authenticationContextKey{}, "browser")
 			ctx = context.WithValue(ctx, workspaceSnapshotOwnerContextKey{}, owner)
+			ctx = store.WithPhotoOwner(ctx, photoOwnerID)
 			next.ServeHTTP(w, r.WithContext(ctx))
 			return
 		}

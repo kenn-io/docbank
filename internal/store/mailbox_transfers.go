@@ -255,7 +255,7 @@ func (s *Store) publishMailboxTransferTx(ctx context.Context, tx *sql.Tx, p Mail
 	if view.Evidence.Inventory == nil {
 		return MailboxTransferReceipt{}, ErrMailboxInvalid
 	}
-	dir, err := liveDirTx(tx, p.Request.DestinationID)
+	dir, err := liveDirTx(ctx, tx, p.Request.DestinationID)
 	if err != nil {
 		return MailboxTransferReceipt{}, err
 	}

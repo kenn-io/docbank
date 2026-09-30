@@ -71,7 +71,7 @@ func (s *Store) ResolveRenditionText(
 	}
 	defer func() { _ = tx.Rollback() }()
 
-	node, err := nodeByIDTx(tx, binding.NodeID)
+	node, err := nodeByIDQuery(ctx, tx, binding.NodeID)
 	if err != nil {
 		return RenditionTextView{}, err
 	}

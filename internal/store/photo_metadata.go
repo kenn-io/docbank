@@ -13,11 +13,19 @@ type metadataPhotoAsset struct {
 	AssetID               string  `json:"asset_id"`
 	Kind                  string  `json:"kind"`
 	Revision              int64   `json:"revision"`
+	OwnerID               string  `json:"owner_id"`
+	HiddenAt              *string `json:"hidden_at"`
 	ExcludedAt            *string `json:"excluded_at"`
 	DisplayFileID         *string `json:"display_file_id"`
 	DisplayOverrideFileID *string `json:"display_override_file_id"`
 	CreatedAt             string  `json:"created_at"`
 	UpdatedAt             string  `json:"updated_at"`
+}
+
+type metadataPhotoOwner struct {
+	Type       string `json:"type"`
+	PersonID   string `json:"person_id"`
+	EnrolledAt string `json:"enrolled_at"`
 }
 
 type metadataPhotoFile struct {
@@ -52,7 +60,35 @@ type metadataPhotoReceipt struct {
 
 func exportPhotoMetadata(ctx context.Context, tx metadataQuerier, write metadataWrite) error {
 	rows, err := tx.QueryContext(ctx, `
-		SELECT asset_id, kind, revision, excluded_at, display_file_id,
+		SELECT person_id, enrolled_at FROM photo_owners ORDER BY enrolled_at, rowid`)
+	if err != nil {
+		return fmt.Errorf("exporting photo owners: %w", err)
+	}
+	for rows.Next() {
+		var record metadataPhotoOwner
+		if err := rows.Scan(&record.PersonID, &record.EnrolledAt); err != nil {
+			_ = rows.Close() //nolint:sqlclosecheck // close before returning the scan error.
+			return err
+		}
+		record.Type = metadataPhotoOwnerType
+		if err := validatePhotoOwnerMetadataRecord(record); err != nil {
+			_ = rows.Close()
+			return err
+		}
+		if err := write(record); err != nil {
+			_ = rows.Close()
+			return err
+		}
+	}
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		return err
+	}
+	if err := rows.Close(); err != nil {
+		return err
+	}
+	rows, err = tx.QueryContext(ctx, `
+		SELECT asset_id, kind, revision, owner_id, hidden_at, excluded_at, display_file_id,
 		       display_override_file_id, created_at, updated_at
 		FROM photo_assets ORDER BY asset_id`)
 	if err != nil {
@@ -60,7 +96,7 @@ func exportPhotoMetadata(ctx context.Context, tx metadataQuerier, write metadata
 	}
 	for rows.Next() {
 		var record metadataPhotoAsset
-		if err := rows.Scan(&record.AssetID, &record.Kind, &record.Revision, &record.ExcludedAt, &record.DisplayFileID, &record.DisplayOverrideFileID, &record.CreatedAt, &record.UpdatedAt); err != nil {
+		if err := rows.Scan(&record.AssetID, &record.Kind, &record.Revision, &record.OwnerID, &record.HiddenAt, &record.ExcludedAt, &record.DisplayFileID, &record.DisplayOverrideFileID, &record.CreatedAt, &record.UpdatedAt); err != nil {
 			_ = rows.Close() //nolint:sqlclosecheck // close before returning the scan error.
 			return err
 		}
@@ -168,6 +204,14 @@ func validatePhotoAssetMetadataRecord(v metadataPhotoAsset) error {
 	if v.Type != metadataPhotoAssetType || validateUUIDv4(v.AssetID) != nil || !photoKindValid(v.Kind) || v.Revision < 1 {
 		return errors.New("invalid photo asset metadata")
 	}
+	if validateUUIDv4(v.OwnerID) != nil {
+		return errors.New("invalid photo asset owner")
+	}
+	if v.HiddenAt != nil {
+		if err := validateMetadataTime("photo asset hidden_at", *v.HiddenAt); err != nil {
+			return err
+		}
+	}
 	if v.ExcludedAt != nil {
 		if err := validateMetadataTime("photo asset excluded_at", *v.ExcludedAt); err != nil {
 			return err
@@ -177,6 +221,13 @@ func validatePhotoAssetMetadataRecord(v metadataPhotoAsset) error {
 		return err
 	}
 	return validateMetadataTime("photo asset updated_at", v.UpdatedAt)
+}
+
+func validatePhotoOwnerMetadataRecord(v metadataPhotoOwner) error {
+	if v.Type != metadataPhotoOwnerType || validateUUIDv4(v.PersonID) != nil {
+		return errors.New("invalid photo owner metadata")
+	}
+	return validateMetadataTime("photo owner enrolled_at", v.EnrolledAt)
 }
 
 func validatePhotoFileMetadataRecord(v metadataPhotoFile) error {
@@ -233,6 +284,16 @@ func validatePhotoReceiptMetadataRecord(v metadataPhotoReceipt) error {
 
 func importPhotoMetadataRecord(ctx context.Context, tx *sql.Tx, kind string, raw jsontext.Value) error {
 	switch kind {
+	case metadataPhotoOwnerType:
+		var v metadataPhotoOwner
+		if err := decodeMetadataRecord(raw, &v); err != nil {
+			return err
+		}
+		if err := validatePhotoOwnerMetadataRecord(v); err != nil {
+			return err
+		}
+		_, err := tx.ExecContext(ctx, `INSERT INTO photo_owners(person_id,enrolled_at) VALUES(?,?)`, v.PersonID, v.EnrolledAt)
+		return err
 	case metadataPhotoAssetType:
 		var v metadataPhotoAsset
 		if err := decodeMetadataRecord(raw, &v); err != nil {
@@ -241,7 +302,7 @@ func importPhotoMetadataRecord(ctx context.Context, tx *sql.Tx, kind string, raw
 		if err := validatePhotoAssetMetadataRecord(v); err != nil {
 			return err
 		}
-		_, err := tx.ExecContext(ctx, `INSERT INTO photo_assets(asset_id,kind,revision,excluded_at,display_file_id,display_override_file_id,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?)`, v.AssetID, v.Kind, v.Revision, v.ExcludedAt, v.DisplayFileID, v.DisplayOverrideFileID, v.CreatedAt, v.UpdatedAt)
+		_, err := tx.ExecContext(ctx, `INSERT INTO photo_assets(asset_id,kind,revision,owner_id,hidden_at,excluded_at,display_file_id,display_override_file_id,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?)`, v.AssetID, v.Kind, v.Revision, v.OwnerID, v.HiddenAt, v.ExcludedAt, v.DisplayFileID, v.DisplayOverrideFileID, v.CreatedAt, v.UpdatedAt)
 		return err
 	case metadataPhotoFileType:
 		var v metadataPhotoFile
@@ -279,6 +340,15 @@ func importPhotoMetadataRecord(ctx context.Context, tx *sql.Tx, kind string, raw
 }
 
 func validatePhotoMetadataState(ctx context.Context, tx metadataQuerier) error {
+	var broken bool
+	if err := tx.QueryRowContext(ctx, `SELECT
+		EXISTS(SELECT 1 FROM photo_owners o LEFT JOIN persons p ON p.person_id=o.person_id WHERE p.person_id IS NULL) OR
+		EXISTS(SELECT 1 FROM photo_assets a LEFT JOIN photo_owners o ON o.person_id=a.owner_id WHERE o.person_id IS NULL)`).Scan(&broken); err != nil {
+		return fmt.Errorf("checking photo owner references: %w", err)
+	}
+	if broken {
+		return fmt.Errorf("%w: an enrollment names a missing person or an asset an unenrolled owner", ErrInvalidPhotoOwner)
+	}
 	if err := validatePhotoGraph(ctx, tx); err != nil {
 		return err
 	}

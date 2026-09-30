@@ -164,13 +164,14 @@ func (s *Store) CollectionMembers(
 	if err != nil {
 		return CollectionMemberPage{}, err
 	}
+	visible, visibleArgs := photoNodeVisibleSQL(ctx, "n.id")
 	rows, err := tx.QueryContext(ctx, `WITH `+CollectionMembershipCTE+`
 		SELECT `+nodeCols+`
 		FROM `+nodeFrom+`
 		JOIN collection_members cm ON cm.node_id=n.id
-		WHERE cm.ingest_id=?
+		WHERE cm.ingest_id=? AND `+visible+`
 		ORDER BY n.name, n.id
-		LIMIT ? OFFSET ?`, id, limit, offset)
+		LIMIT ? OFFSET ?`, append(append([]any{id}, visibleArgs...), limit, offset)...)
 	if err != nil {
 		return CollectionMemberPage{}, fmt.Errorf("listing collection %q members: %w", id, err)
 	}
@@ -199,10 +200,18 @@ func (s *Store) CollectionMembers(
 		}
 		items = append(items, NodeView{Node: node, Path: path})
 	}
+	total := int(collection.FileCount)
+	if _, ok := PhotoOwnerFromContext(ctx); ok {
+		err = tx.QueryRowContext(ctx, `WITH `+CollectionMembershipCTE+`
+			SELECT COUNT(*) FROM `+nodeFrom+`
+			JOIN collection_members cm ON cm.node_id=n.id
+			WHERE cm.ingest_id=? AND `+visible, append([]any{id}, visibleArgs...)...).Scan(&total)
+		if err != nil {
+			return CollectionMemberPage{}, fmt.Errorf("counting collection %q members: %w", id, err)
+		}
+	}
 	if err := tx.Commit(); err != nil {
 		return CollectionMemberPage{}, fmt.Errorf("closing collection member snapshot: %w", err)
 	}
-	return CollectionMemberPage{
-		Collection: collection, Items: items, Total: int(collection.FileCount),
-	}, nil
+	return CollectionMemberPage{Collection: collection, Items: items, Total: total}, nil
 }

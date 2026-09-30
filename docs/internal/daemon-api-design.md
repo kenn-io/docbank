@@ -152,6 +152,20 @@ media, choose displays, validate sidecar locality, or repair purge state.
 Those decisions belong to the store policy. Generated clients validate
 identity, ETags, and response bounds without reproducing the policy.
 
+Photo owners are a view filter applied where a route serves photos. Master
+requests select an owner with `X-Docbank-Owner` and fall back to the default
+owner, the earliest registered; browser sessions bind one owner at issuance and
+get 403 for the header. In-process work carries no owner and sees every photo.
+Node, path, version, asset, listing, search, and query loaders apply one
+predicate, and a hidden or foreign photo answers like a missing one.
+Delayed results keep the visibility they had when created under the existing
+resource-owner checks. Package imports record the admitting owner in their
+work payload. Owners are enrolled people; rename and retire stay on the person
+routes. Processing consent for a request that selects an owner, by
+header or browser session, uses the principal `owner:<uuid>`; other requests
+keep the configured principal. Owner administration is master-only and uses
+revision ETags.
+
 MCP always exposes photo inspection. Photo mutations are construction-time
 opt-in through `docbank mcp --allow-photo-edits`; each write makes one daemon
 request and treats ambiguous transport failure as an unknown outcome. Display

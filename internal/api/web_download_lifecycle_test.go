@@ -13,7 +13,7 @@ import (
 func TestWebDownloadSessionRevocationFencesTicketIssuance(t *testing.T) {
 	downloads := newWebDownloadRegistry(t.TempDir())
 	sessions := newWebSessionRegistry(downloads.revokeOwner)
-	token, _, err := sessions.issue()
+	token, _, err := sessions.issue("")
 	require.NoError(t, err)
 	owner, _, ok := sessions.authenticate(token)
 	require.True(t, ok)
@@ -49,7 +49,7 @@ func TestArchiveTicketExpiryReleasesLeaseWithoutRemovingArchive(t *testing.T) {
 func TestWebDownloadConcurrentRevocationRemovesTicketIssuedBeforeRevokeWins(t *testing.T) {
 	downloads := newWebDownloadRegistry(t.TempDir())
 	sessions := newWebSessionRegistry(downloads.revokeOwner)
-	token, _, err := sessions.issue()
+	token, _, err := sessions.issue("")
 	require.NoError(t, err)
 	owner, _, ok := sessions.authenticate(token)
 	require.True(t, ok)

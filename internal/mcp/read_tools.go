@@ -106,6 +106,8 @@ func executeReadTool(
 		output, err = findBatesExports(ctx, lease, raw)
 	case "get_photo_asset":
 		output, err = getPhotoAsset(ctx, lease, raw)
+	case "list_photo_owners":
+		output, err = listPhotoOwners(ctx, lease, raw)
 	default:
 		return nil, errors.New("unknown Docbank read tool")
 	}

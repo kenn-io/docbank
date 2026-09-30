@@ -36,7 +36,7 @@ func TestLegacyAuditedIngestCreationRoundTripsWithoutBindings(t *testing.T) {
 	}
 	var created Node
 	require.NoError(t, s.withStorageTx(t.Context(), func(tx *sql.Tx) error {
-		prior, err := liveDirTx(tx, scope.ID)
+		prior, err := liveDirTx(t.Context(), tx, scope.ID)
 		if err != nil {
 			return err
 		}

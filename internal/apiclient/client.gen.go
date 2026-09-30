@@ -8560,6 +8560,138 @@ func (c *Client) PromotePhotoNode(ctx context.Context, options *PromotePhotoNode
 	return responseParser(ctx, resp)
 }
 
+// ListPhotoOwners List photo owners
+func (c *Client) ListPhotoOwners(ctx context.Context, reqEditors ...runtime.RequestEditorFn) (*ListPhotoOwnersResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/photos/owners",
+		Method:     "GET",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*ListPhotoOwnersResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(ListPhotoOwnersResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "ListPhotoOwnersResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[ListPhotoOwnersErrorResponse](resp, "ListPhotoOwnersErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/photos/owners")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
+// EnrollPhotoOwner Enroll a person as a photo owner
+func (c *Client) EnrollPhotoOwner(ctx context.Context, options *EnrollPhotoOwnerRequestOptions, reqEditors ...runtime.RequestEditorFn) (*EnrollPhotoOwnerResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/photos/owners",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*EnrollPhotoOwnerResponse, error) {
+		switch resp.StatusCode {
+
+		case 201:
+
+			target := new(EnrollPhotoOwnerResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "EnrollPhotoOwnerResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[EnrollPhotoOwnerErrorResponse](resp, "EnrollPhotoOwnerErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/photos/owners")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 201)
+	}
+	return responseParser(ctx, resp)
+}
+
+// RemovePhotoOwner Remove a photo owner enrollment
+func (c *Client) RemovePhotoOwner(ctx context.Context, options *RemovePhotoOwnerRequestOptions, reqEditors ...runtime.RequestEditorFn) (*struct{}, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/photos/owners/{person_id}",
+		Method:     "DELETE",
+		Options:    options,
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*struct{}, error) {
+		switch resp.StatusCode {
+
+		case 204:
+
+			target := new(struct{})
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[RemovePhotoOwnerErrorResponse](resp, "RemovePhotoOwnerErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/photos/owners/{person_id}")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 204)
+	}
+	return responseParser(ctx, resp)
+}
+
 // GetPhotoSettings Inspect the photo display preference
 func (c *Client) GetPhotoSettings(ctx context.Context, reqEditors ...runtime.RequestEditorFn) (*GetPhotoSettingsResponse, error) {
 	var err error
@@ -17785,6 +17917,79 @@ func (o *PromotePhotoNodeRequestOptions) GetHeader() (map[string]string, error) 
 	return headers, err
 }
 
+// EnrollPhotoOwnerRequestOptions is the options needed to make a request to EnrollPhotoOwner.
+type EnrollPhotoOwnerRequestOptions struct {
+	Body   *EnrollPhotoOwnerBody
+	Header *EnrollPhotoOwnerHeaders
+}
+
+// GetPathParams returns the path params as a map.
+func (o *EnrollPhotoOwnerRequestOptions) GetPathParams() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetQuery returns the query params as a map.
+func (o *EnrollPhotoOwnerRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *EnrollPhotoOwnerRequestOptions) GetBody() any {
+	if o.Body == nil {
+		return nil
+	}
+	return o.Body
+}
+
+// GetHeader returns the headers as a map.
+func (o *EnrollPhotoOwnerRequestOptions) GetHeader() (map[string]string, error) {
+	encoded, err := json.Marshal(o.Header, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var headers map[string]string
+	err = json.Unmarshal(encoded, &headers)
+	return headers, err
+}
+
+// RemovePhotoOwnerRequestOptions is the options needed to make a request to RemovePhotoOwner.
+type RemovePhotoOwnerRequestOptions struct {
+	PathParams *RemovePhotoOwnerPath
+	Header     *RemovePhotoOwnerHeaders
+}
+
+// GetPathParams returns the path params as a map.
+func (o *RemovePhotoOwnerRequestOptions) GetPathParams() (map[string]any, error) {
+	encoded, err := json.Marshal(o.PathParams, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetQuery returns the query params as a map.
+func (o *RemovePhotoOwnerRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *RemovePhotoOwnerRequestOptions) GetBody() any {
+	return nil
+}
+
+// GetHeader returns the headers as a map.
+func (o *RemovePhotoOwnerRequestOptions) GetHeader() (map[string]string, error) {
+	encoded, err := json.Marshal(o.Header, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var headers map[string]string
+	err = json.Unmarshal(encoded, &headers)
+	return headers, err
+}
+
 // SetPhotoSettingsRequestOptions is the options needed to make a request to SetPhotoSettings.
 type SetPhotoSettingsRequestOptions struct {
 	Body   *SetPhotoSettingsBody
@@ -20226,6 +20431,16 @@ type PromotePhotoNodeHeaders struct {
 	IfMatch *string `json:"If-Match,omitempty"`
 }
 
+type EnrollPhotoOwnerHeaders struct {
+	// IfMatch The person's current revision
+	IfMatch string `json:"If-Match"`
+}
+
+type RemovePhotoOwnerHeaders struct {
+	// IfMatch The person's current revision
+	IfMatch string `json:"If-Match"`
+}
+
 type SetPhotoSettingsHeaders struct {
 	IfMatch string `json:"If-Match"`
 }
@@ -20648,6 +20863,10 @@ type PromotePhotoNodePath struct {
 	NodeID int64 `json:"node_id"`
 }
 
+type RemovePhotoOwnerPath struct {
+	PersonID string `json:"person_id"`
+}
+
 type GetDocumentProcessingJobPath struct {
 	ID string `json:"id"`
 }
@@ -20941,6 +21160,8 @@ type AttachPhotoFileBody = AttachPhotoFileRequest
 type StartPhotoImportBody = PhotoImportStartRequest
 
 type PromotePhotoNodeBody = PromotePhotoNodeRequest
+
+type EnrollPhotoOwnerBody = EnrollPhotoOwnerRequest
 
 type SetPhotoSettingsBody = SetPhotoSettingsRequest
 
@@ -22106,6 +22327,16 @@ type PromotePhotoNodeResponse = api.PhotoAsset
 
 type PromotePhotoNodeErrorResponse = Error
 
+type ListPhotoOwnersResponse []PhotoOwner
+
+type ListPhotoOwnersErrorResponse = Error
+
+type EnrollPhotoOwnerResponse = api.PhotoOwner
+
+type EnrollPhotoOwnerErrorResponse = Error
+
+type RemovePhotoOwnerErrorResponse = Error
+
 type GetPhotoSettingsResponse = api.PhotoSettings
 
 type GetPhotoSettingsErrorResponse = Error
@@ -22850,6 +23081,8 @@ type EnableAuditRequest struct {
 
 type EngineIdentity = pdfstamp.EngineIdentity
 
+type EnrollPhotoOwnerRequest = api.EnrollPhotoOwnerRequest
+
 type Entry = mailbox.Entry
 
 type Error = api.Error
@@ -23178,6 +23411,8 @@ type PhotoImportRun = api.PhotoImportRun
 type PhotoImportRunList = api.PhotoImportRunList
 
 type PhotoImportStartRequest = api.PhotoImportStartRequest
+
+type PhotoOwner = api.PhotoOwner
 
 type PhotoSettings = api.PhotoSettings
 

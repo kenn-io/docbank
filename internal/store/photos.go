@@ -16,17 +16,21 @@ func photoAssetByIDQuery(ctx context.Context, q metadataQuerier, id string) (Pho
 		return PhotoAsset{}, fmt.Errorf("photo asset %q: %w", id, ErrNotFound)
 	}
 	var asset PhotoAsset
-	var display, override sql.NullString
+	var ownerID, hiddenAt, display, override sql.NullString
 	if err := q.QueryRowContext(ctx, `
-		SELECT asset_id, kind, revision, excluded_at, display_file_id,
+		SELECT asset_id, kind, revision, owner_id, hidden_at, excluded_at, display_file_id,
 		       display_override_file_id, created_at, updated_at
 		FROM photo_assets WHERE asset_id=?`, id).Scan(
-		&asset.ID, &asset.Kind, &asset.Revision, &asset.ExcludedAt, &display,
+		&asset.ID, &asset.Kind, &asset.Revision, &ownerID, &hiddenAt, &asset.ExcludedAt, &display,
 		&override, &asset.CreatedAt, &asset.UpdatedAt,
 	); errors.Is(err, sql.ErrNoRows) {
 		return PhotoAsset{}, ErrNotFound
 	} else if err != nil {
 		return PhotoAsset{}, fmt.Errorf("reading photo asset %q: %w", id, err)
+	}
+	asset.OwnerID = new(ownerID.String)
+	if hiddenAt.Valid {
+		asset.HiddenAt = new(hiddenAt.String)
 	}
 	if display.Valid {
 		asset.DisplayFileID = new(display.String)
@@ -97,7 +101,7 @@ func (s *Store) PhotoAssetByID(ctx context.Context, id string) (PhotoAsset, erro
 	var asset PhotoAsset
 	if err := s.photoReadTx(ctx, func(tx *sql.Tx) error {
 		var err error
-		asset, err = photoAssetByIDQuery(ctx, tx, id)
+		asset, err = visiblePhotoAssetTx(ctx, tx, id)
 		return err
 	}); err != nil {
 		return PhotoAsset{}, err
@@ -119,7 +123,10 @@ func (s *Store) PhotoAssetForNode(ctx context.Context, nodeID int64) (PhotoAsset
 			return fmt.Errorf("finding photo asset for node %d: %w", nodeID, err)
 		}
 		var err error
-		asset, err = photoAssetByIDQuery(ctx, tx, id)
+		asset, err = visiblePhotoAssetTx(ctx, tx, id)
+		if errors.Is(err, ErrNotFound) {
+			return ErrNotFound // same answer as a node with no asset; the asset id stays hidden
+		}
 		return err
 	}); err != nil {
 		return PhotoAsset{}, err
@@ -372,7 +379,7 @@ func (s *Store) classifyPhotoFileInsertError(err error) error {
 }
 
 func photoAssetForMutationTx(ctx context.Context, tx *sql.Tx, assetID string, revision int64) (PhotoAsset, error) {
-	asset, err := photoAssetByIDQuery(ctx, tx, assetID)
+	asset, err := visiblePhotoAssetTx(ctx, tx, assetID)
 	if err != nil {
 		return PhotoAsset{}, err
 	}
@@ -382,8 +389,8 @@ func photoAssetForMutationTx(ctx context.Context, tx *sql.Tx, assetID string, re
 	return asset, nil
 }
 
-func photoNodeForMutationTx(tx *sql.Tx, nodeID int64) (Node, PhotoNodeFacts, error) {
-	node, err := nodeByIDTx(tx, nodeID)
+func photoNodeForMutationTx(ctx context.Context, tx *sql.Tx, nodeID int64) (Node, PhotoNodeFacts, error) {
+	node, err := nodeByIDQuery(ctx, tx, nodeID)
 	if err != nil {
 		return Node{}, PhotoNodeFacts{}, err
 	}
@@ -396,7 +403,7 @@ func photoNodeForMutationTx(tx *sql.Tx, nodeID int64) (Node, PhotoNodeFacts, err
 // photoAssetCreateTx creates a singleton asset on an explicit request and
 // reports every refusal as an error.
 func (s *Store) photoAssetCreateTx(ctx context.Context, tx *sql.Tx, nodeID int64, explicitRole, explicitKind string) (PhotoAsset, error) {
-	_, facts, err := photoNodeForMutationTx(tx, nodeID)
+	_, facts, err := photoNodeForMutationTx(ctx, tx, nodeID)
 	if err != nil {
 		return PhotoAsset{}, err
 	}
@@ -442,9 +449,13 @@ func (s *Store) insertPhotoAssetTx(ctx context.Context, tx *sql.Tx, nodeID int64
 	if err != nil {
 		return PhotoAsset{}, fmt.Errorf("allocating photo asset ID: %w", err)
 	}
+	ownerID, err := photoOwnerForCreateTx(ctx, tx)
+	if err != nil {
+		return PhotoAsset{}, err
+	}
 	if _, err := tx.ExecContext(ctx, `
-		INSERT INTO photo_assets(asset_id,kind,revision,created_at,updated_at)
-		VALUES(?,?,1,?,?)`, assetID, kind, now, now); err != nil {
+		INSERT INTO photo_assets(asset_id,kind,revision,owner_id,created_at,updated_at)
+		VALUES(?,?,1,?,?,?)`, assetID, kind, ownerID, now, now); err != nil {
 		return PhotoAsset{}, fmt.Errorf("creating photo asset: %w", err)
 	}
 	if err := s.insertPhotoFileTx(ctx, tx, PhotoFile{AssetID: assetID, NodeID: nodeID, Role: role, CreatedAt: now}); err != nil {
@@ -455,6 +466,7 @@ func (s *Store) insertPhotoAssetTx(ctx context.Context, tx *sql.Tx, nodeID int64
 		return PhotoAsset{}, err
 	}
 	asset := PhotoAsset{ID: assetID, Kind: kind, Revision: 1, CreatedAt: now, UpdatedAt: now, Files: files}
+	asset.OwnerID = new(ownerID)
 	settings, err := photoSettingsTx(ctx, tx)
 	if err != nil {
 		return PhotoAsset{}, err
@@ -619,6 +631,13 @@ func (s *Store) PromotePhotoNode(ctx context.Context, nodeID int64, expectedRevi
 	}
 	var result PhotoAsset
 	err := s.withLogicalTx(ctx, func(tx *sql.Tx) error {
+		if err := checkPhotoNodeVisibleTx(ctx, tx, nodeID); err != nil {
+			// Answer a hidden photo exactly as this call answers a missing node.
+			if errors.Is(err, ErrNotFound) && expectedRevision != nil {
+				return fmt.Errorf("node %d does not own an asset at expected revision %d: %w", nodeID, *expectedRevision, ErrStaleRevision)
+			}
+			return fmt.Errorf("node %d: %w", nodeID, err)
+		}
 		ownedID, owned, err := photoAssetOwningNodeTx(ctx, tx, nodeID)
 		if err != nil {
 			return err
@@ -642,7 +661,7 @@ func (s *Store) PromotePhotoNode(ctx context.Context, nodeID int64, expectedRevi
 			if kind != "" && asset.Kind != kind {
 				return false, fmt.Errorf("%w: existing asset kind is %s, requested %s", ErrInvalidPhotoAsset, asset.Kind, kind)
 			}
-			if _, _, err := photoNodeForMutationTx(tx, nodeID); err != nil {
+			if _, _, err := photoNodeForMutationTx(ctx, tx, nodeID); err != nil {
 				return false, err
 			}
 			if asset.ExcludedAt == nil {
@@ -668,7 +687,7 @@ func (s *Store) AttachPhotoFile(ctx context.Context, assetID string, revision, n
 		return PhotoAsset{}, fmt.Errorf("%w: unknown role %q", ErrInvalidPhotoAsset, role)
 	}
 	return s.mutatePhotoAsset(ctx, assetID, revision, "attach", func(tx *sql.Tx, asset *PhotoAsset) (bool, error) {
-		node, facts, err := photoNodeForMutationTx(tx, nodeID)
+		node, facts, err := photoNodeForMutationTx(ctx, tx, nodeID)
 		if err != nil {
 			return false, err
 		}

@@ -222,7 +222,7 @@ func ensureIngestRunTx(ctx context.Context, tx *sql.Tx, run IngestRun) (bool, er
 // is a distinct file, not a re-import. Otherwise returns the smallest free
 // candidate name.
 func resolveIngestNameTx(
-	tx *sql.Tx, parentID int64, name, blobHash, sourceKind string,
+	ctx context.Context, tx *sql.Tx, parentID int64, name, blobHash, sourceKind string,
 ) (string, int64, bool, error) {
 	base, ext := splitSuffix(name)
 	rows, err := tx.Query(
@@ -259,6 +259,12 @@ func resolveIngestNameTx(
 		return "", 0, false, fmt.Errorf("listing siblings for %q: %w", name, err)
 	}
 	for _, candidate := range sameHash {
+		// A photo the request may not see is never adopted; its name stays taken.
+		if err := checkPhotoNodeVisibleTx(ctx, tx, candidate.nodeID); errors.Is(err, ErrNotFound) {
+			continue
+		} else if err != nil {
+			return "", 0, false, err
+		}
 		imported, err := sameOriginTx(
 			tx, candidate.nodeID, name, candidate.inNameFamily, sourceKind,
 		)
@@ -466,7 +472,7 @@ func (s *Store) ingestFileTx(
 		var existingID int64
 		var skip bool
 		finalName, existingID, skip, err = resolveIngestNameTx(
-			tx, parentID, name, blobHash, run.record.SourceKind,
+			ctx, tx, parentID, name, blobHash, run.record.SourceKind,
 		)
 		if err != nil {
 			return ContentWriteReceipt{}, false, IngestDirectoryResolution{}, err
@@ -520,7 +526,7 @@ func (s *Store) ingestFileTx(
 		prior     Node
 	)
 	if active {
-		prior, err = liveDirTx(tx, parentID)
+		prior, err = liveDirTx(ctx, tx, parentID)
 		if err != nil {
 			return ContentWriteReceipt{}, false, IngestDirectoryResolution{}, err
 		}

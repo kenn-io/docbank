@@ -21,6 +21,7 @@ type packageImportBinding struct {
 	AcceptPartial     bool   `json:"accept_partial"`
 	IndexSuppliedText bool   `json:"index_supplied_text"`
 	Total             int    `json:"total"`
+	PhotoOwnerID      string `json:"photo_owner_id,omitzero"`
 }
 
 // PackageMutationGate coordinates package writes with the owning vault.
@@ -108,9 +109,18 @@ func AdmitPackageImport(ctx context.Context, d Deps, g PackageMutationGate, owne
 		volumes[i] = store.PackageVolume{Ordinal: volume.Ordinal, VolumeName: volume.VolumeName,
 			DeclaredRoot: volume.DeclaredRoot, MappedRoot: mapped, ResolvedRootSHA256: rootBinding}
 	}
+	// Admission fixes the owner the worker enrolls imported photos under.
+	var photoOwnerID string
+	if err := g.MutateContext(ctx, func() error {
+		var err error
+		photoOwnerID, err = d.Store.PhotoOwnerForWrite(ctx)
+		return err
+	}); err != nil {
+		return PackageImportJob{}, err
+	}
 	binding := packageImportBinding{SourceKind: preview.SourceKind, SourceLocator: preview.SourceLocator,
 		Into: request.Into, AcceptPartial: request.AcceptPartial,
-		IndexSuppliedText: request.IndexSuppliedText, Total: summary.Records}
+		IndexSuppliedText: request.IndexSuppliedText, Total: summary.Records, PhotoOwnerID: photoOwnerID}
 	jobJSON, err := canonical.Marshal(binding)
 	if err != nil {
 		return PackageImportJob{}, err

@@ -17,6 +17,8 @@ var (
 	photoExcluded               bool
 	photoSidecarOf              string
 	photoClearDependentSidecars bool
+	photoOwnerID                string
+	photoOwnerRevision          int64
 )
 
 var photosCmd = &cobra.Command{
@@ -31,6 +33,61 @@ var photoAssetsCmd = &cobra.Command{
 	Short: "Inspect and mutate photo assets",
 	Args:  cobra.NoArgs,
 	RunE:  func(cmd *cobra.Command, _ []string) error { return cmd.Help() },
+}
+
+var photoOwnersCmd = &cobra.Command{
+	Use: "owners", Short: "Manage photo owners", Args: cobra.NoArgs,
+	RunE: func(cmd *cobra.Command, _ []string) error { return cmd.Help() },
+}
+
+var photoOwnerListCmd = &cobra.Command{
+	Use: "list", Short: "List photo owners", Args: cobra.NoArgs,
+	RunE: func(cmd *cobra.Command, _ []string) error {
+		c, err := daemonconn.Ensure(cmd.Context())
+		if err != nil {
+			return err
+		}
+		owners, err := c.PhotoOwners(cmd.Context())
+		if err != nil {
+			return err
+		}
+		return writeCLIJSON(cmd.OutOrStdout(), owners)
+	},
+}
+
+var photoOwnerEnrollCmd = &cobra.Command{
+	Use: "enroll <person-id>", Short: "Enroll a person as a photo owner", Args: cobra.ExactArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		if photoOwnerRevision < 1 {
+			return usageError(errors.New("--revision must be the person's positive revision"))
+		}
+		c, err := daemonconn.Ensure(cmd.Context())
+		if err != nil {
+			return err
+		}
+		owner, err := c.EnrollPhotoOwner(cmd.Context(), args[0], photoOwnerRevision)
+		if err != nil {
+			return err
+		}
+		return writeCLIJSON(cmd.OutOrStdout(), owner)
+	},
+}
+
+var photoOwnerRemoveCmd = &cobra.Command{
+	Use: "remove <person-id>", Short: "Remove a photo owner enrollment", Args: cobra.ExactArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		if photoOwnerRevision < 1 {
+			return usageError(errors.New("--revision must be the person's positive revision"))
+		}
+		c, err := daemonconn.Ensure(cmd.Context())
+		if err != nil {
+			return err
+		}
+		if err := c.RemovePhotoOwner(cmd.Context(), args[0], photoOwnerRevision); err != nil {
+			return err
+		}
+		return writeCLIJSON(cmd.OutOrStdout(), map[string]string{"id": args[0]})
+	},
 }
 
 var photoCreateCmd = &cobra.Command{
@@ -65,7 +122,7 @@ var photoInspectCmd = &cobra.Command{
 			if selector, err = parseNodeSelector(args[0]); err != nil {
 				return err
 			}
-			if c, err = daemonconn.Ensure(cmd.Context()); err != nil {
+			if c, err = photoConnection(cmd); err != nil {
 				return err
 			}
 			// Read-only: a stable ID may still name a trashed member file.
@@ -73,7 +130,7 @@ var photoInspectCmd = &cobra.Command{
 			if node, err = selector.resolveIncludingTrash(cmd.Context(), c); err == nil {
 				asset, err = c.PhotoAssetForNode(cmd.Context(), node.ID)
 			}
-		} else if c, err = daemonconn.Ensure(cmd.Context()); err == nil {
+		} else if c, err = photoConnection(cmd); err == nil {
 			asset, err = c.PhotoAsset(cmd.Context(), args[0])
 		}
 		if err != nil {
@@ -117,7 +174,7 @@ var photoDetachCmd = &cobra.Command{
 		if err := checkPhotoRevisionFlag(cmd); err != nil {
 			return err
 		}
-		c, err := daemonconn.Ensure(cmd.Context())
+		c, err := photoConnection(cmd)
 		if err != nil {
 			return err
 		}
@@ -139,7 +196,7 @@ var photoExcludeCmd = &cobra.Command{
 		if err := checkPhotoRevisionFlag(cmd); err != nil {
 			return err
 		}
-		c, err := daemonconn.Ensure(cmd.Context())
+		c, err := photoConnection(cmd)
 		if err != nil {
 			return err
 		}
@@ -193,7 +250,7 @@ var photoDisplayCmd = &cobra.Command{
 		if err := checkPhotoRevisionFlag(cmd); err != nil {
 			return err
 		}
-		c, err := daemonconn.Ensure(cmd.Context())
+		c, err := photoConnection(cmd)
 		if err != nil {
 			return err
 		}
@@ -223,7 +280,7 @@ var photoSettingsShowCmd = &cobra.Command{
 	Short: "Show the display preference",
 	Args:  cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, _ []string) error {
-		c, err := daemonconn.Ensure(cmd.Context())
+		c, err := photoConnection(cmd)
 		if err != nil {
 			return err
 		}
@@ -263,7 +320,7 @@ var photoSettingsResetCmd = &cobra.Command{
 }
 
 func writePhotoSettings(cmd *cobra.Command, preference *string) error {
-	c, err := daemonconn.Ensure(cmd.Context())
+	c, err := photoConnection(cmd)
 	if err != nil {
 		return err
 	}
@@ -288,7 +345,7 @@ func photoNode(cmd *cobra.Command, raw string) (*daemonconn.Connection, api.Node
 	if err != nil {
 		return nil, api.Node{}, err
 	}
-	c, err := daemonconn.Ensure(cmd.Context())
+	c, err := photoConnection(cmd)
 	if err != nil {
 		return nil, api.Node{}, err
 	}
@@ -297,6 +354,17 @@ func photoNode(cmd *cobra.Command, raw string) (*daemonconn.Connection, api.Node
 		return nil, api.Node{}, err
 	}
 	return c, node, nil
+}
+
+func photoConnection(cmd *cobra.Command) (*daemonconn.Connection, error) {
+	c, err := daemonconn.Ensure(cmd.Context())
+	if err != nil {
+		return nil, err
+	}
+	if photoOwnerID != "" {
+		c = c.WithPhotoOwner(photoOwnerID)
+	}
+	return c, nil
 }
 
 func checkPhotoRevisionFlag(cmd *cobra.Command) error {
@@ -341,8 +409,12 @@ func init() {
 	photoAssetsCmd.AddCommand(photoCreateCmd, photoInspectCmd, photoAttachCmd, photoDetachCmd,
 		photoExcludeCmd, photoPromoteCmd, photoDisplayCmd)
 	photoSettingsCmd.AddCommand(photoSettingsShowCmd, photoSettingsSetCmd, photoSettingsResetCmd)
-	photosCmd.AddCommand(photoAssetsCmd, photoSettingsCmd)
+	photoOwnersCmd.AddCommand(photoOwnerListCmd, photoOwnerEnrollCmd, photoOwnerRemoveCmd)
+	photosCmd.AddCommand(photoAssetsCmd, photoSettingsCmd, photoOwnersCmd)
 	rootCmd.AddCommand(photosCmd)
+	photosCmd.PersistentFlags().StringVar(&photoOwnerID, "owner", "", "owner UUID for photo commands")
+	photoOwnerEnrollCmd.Flags().Int64Var(&photoOwnerRevision, "revision", 0, "expected person revision")
+	photoOwnerRemoveCmd.Flags().Int64Var(&photoOwnerRevision, "revision", 0, "expected person revision")
 
 	for _, command := range []*cobra.Command{photoCreateCmd, photoPromoteCmd} {
 		command.Flags().StringVar(&photoKind, "kind", "", "asset kind: photo or video")

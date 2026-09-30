@@ -59,7 +59,7 @@ func (s *Store) AppendNodeProvenance(
 	}
 	var result ProvenanceAppendResult
 	err = s.withStorageTx(ctx, func(tx *sql.Tx) error {
-		prior, err := nodeByIDTx(tx, input.NodeID)
+		prior, err := nodeByIDQuery(ctx, tx, input.NodeID)
 		if err != nil {
 			return err
 		}

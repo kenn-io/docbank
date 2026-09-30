@@ -1057,6 +1057,7 @@ func requirePristineMetadataTarget(ctx context.Context, tx *sql.Tx) error {
 		    + (SELECT COUNT(*) FROM email_document_publications)
 		    + (SELECT COUNT(*) FROM email_document_relations)
 		    + (SELECT COUNT(*) FROM photo_assets)
+		    + (SELECT COUNT(*) FROM photo_owners)
 		    + (SELECT COUNT(*) FROM photo_files)
 		    + (SELECT COUNT(*) FROM photo_library_settings)
 		    + (SELECT COUNT(*) FROM photo_change_receipts)
@@ -1609,6 +1610,7 @@ const (
 	metadataVisualPreviewGenerationType   = "visual_preview_generation"
 	metadataVisualPreviewHeadType         = "visual_preview_head"
 	metadataPhotoAssetType                = "photo_asset"
+	metadataPhotoOwnerType                = "photo_owner"
 	metadataPhotoFileType                 = "photo_file"
 	metadataPhotoSettingsType             = "photo_library_settings"
 	metadataPhotoReceiptType              = "photo_change_receipt"
@@ -1646,7 +1648,8 @@ var metadataRequiredFields = map[string][]string{
 	metadataSourceMetadataHeadType:               {metadataTypeField, columnSourceSHA256, metadataGenerationIDField, "published_at"},
 	metadataVisualPreviewGenerationType:          {metadataTypeField, metadataGenerationIDField, auditVaultIDField, metadataContentVersionIDField, columnSourceSHA256, "contract_version", "recipe_fingerprint", "canonical_result", "checksum", metadataCreatedAtField},
 	metadataVisualPreviewHeadType:                {metadataTypeField, metadataContentVersionIDField, metadataGenerationIDField, "published_at"},
-	metadataPhotoAssetType:                       {metadataTypeField, "asset_id", "kind", metadataRevisionField, "excluded_at", "display_file_id", "display_override_file_id", metadataCreatedAtField, metadataUpdatedAtField},
+	metadataPhotoAssetType:                       {metadataTypeField, "asset_id", "kind", metadataRevisionField, "owner_id", "hidden_at", "excluded_at", "display_file_id", "display_override_file_id", metadataCreatedAtField, metadataUpdatedAtField},
+	metadataPhotoOwnerType:                       {metadataTypeField, "person_id", "enrolled_at"},
 	metadataPhotoFileType:                        {metadataTypeField, "file_id", "asset_id", metadataNodeIDField, "role", "sidecar_of_file_id", metadataCreatedAtField},
 	metadataPhotoSettingsType:                    {metadataTypeField, "preference", metadataRevisionField, metadataUpdatedAtField},
 	metadataPhotoReceiptType:                     {metadataTypeField, "receipt_id", "operation", "asset_id", "settings_key", "before_revision", "after_revision", "before_json", "after_json", metadataCreatedAtField},
@@ -1722,7 +1725,7 @@ var metadataNullableFields = map[string]map[string]bool{
 	"content_version":           {"mime_type": true, auditSourceVersionIDField: true},
 	metadataProvenanceType:      {"original_mtime": true, "supersedes": true},
 	metadataCollectionLabelType: {"label": true},
-	metadataPhotoAssetType:      {"excluded_at": true, "display_file_id": true, "display_override_file_id": true},
+	metadataPhotoAssetType:      {"hidden_at": true, "excluded_at": true, "display_file_id": true, "display_override_file_id": true},
 	metadataPhotoFileType:       {"sidecar_of_file_id": true},
 	metadataPhotoSettingsType:   {"preference": true},
 	metadataPhotoReceiptType:    {"asset_id": true, "settings_key": true},

@@ -109,12 +109,19 @@ func (s *Store) ListTermReportHistory(ctx context.Context, offset, limit int) (T
 	if offset < 0 || offset > termReportHistoryLimit || limit < 1 || limit > 50 {
 		return TermReportHistoryPage{}, errors.New("invalid report history page")
 	}
+	// Selected-document requests name node identities, so an entry naming a
+	// photo the request may not see is left out.
+	visible, visibleArgs := photoNodeVisibleSQL(ctx, "json_extract(selected.value,'$.node_id')")
+	filter := `NOT EXISTS (SELECT 1 FROM json_each(term_report_history.request_json,'$.selected_documents.documents') selected
+		WHERE NOT (` + visible + `))`
 	var page TermReportHistoryPage
-	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM term_report_history`).Scan(&page.Total); err != nil {
+	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM term_report_history WHERE `+filter,
+		visibleArgs...).Scan(&page.Total); err != nil {
 		return page, err
 	}
 	rows, err := s.db.QueryContext(ctx, `SELECT id,parent_id,observed_at,request_json,summary_json
-		FROM term_report_history ORDER BY observed_at DESC,id DESC LIMIT ? OFFSET ?`, limit, offset)
+		FROM term_report_history WHERE `+filter+` ORDER BY observed_at DESC,id DESC LIMIT ? OFFSET ?`,
+		append(append([]any(nil), visibleArgs...), limit, offset)...)
 	if err != nil {
 		return page, err
 	}

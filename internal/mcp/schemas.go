@@ -840,6 +840,8 @@ func photoFileSchema() schema {
 func photoAssetOutputSchema() schema {
 	return rootObjectSchema(withPrivateCache(schema{
 		"id":                       uuidSchema(),
+		"owner_id":                 uuidSchema(),
+		"hidden_at":                dateTimeSchema(),
 		"kind":                     enumSchema("photo", "video"),
 		"revision":                 integerSchema(1, 0),
 		"excluded_at":              dateTimeSchema(),
@@ -906,4 +908,13 @@ func promotePhotoNodeSchemas() (schema, schema) {
 		"kind":     enumSchema("photo", "video"),
 		"role":     enumSchema("raw", "image", "video", "sidecar"),
 	}, "node_id")
+}
+
+func listPhotoOwnersSchemas() (schema, schema) {
+	owner := objectSchema(schema{
+		"id": uuidSchema(), "name": schema{"type": "string", "minLength": 1}, "enrolled_at": dateTimeSchema(),
+	}, "id", "name", "enrolled_at")
+	return rootObjectSchema(nil), rootObjectSchema(withPrivateCache(schema{
+		"owners": arraySchema(owner, 0),
+	}), "owners", "ttlMs", "cacheScope")
 }
