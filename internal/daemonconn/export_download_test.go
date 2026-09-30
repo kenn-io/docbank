@@ -21,8 +21,7 @@ import (
 	"go.kenn.io/docbank/internal/daemonconn"
 )
 
-func nativeArchive(t *testing.T) ([]byte, bundle.Receipt) {
-	t.Helper()
+func TestNativeExportDownloadVerifiesArchiveAndReceipts(t *testing.T) {
 	body := []byte("synthetic original\n")
 	h := sha256.Sum256(body)
 	d := bundle.Document{NodeID: 2, VersionID: "c0a7ac5a-a410-44ee-9ad1-17200487e37b", SHA256: hex.EncodeToString(h[:]), Size: int64(len(body)), Name: "synthetic.txt", Path: "/synthetic.txt", MediaType: "text/plain"}
@@ -40,11 +39,7 @@ func nativeArchive(t *testing.T) ([]byte, bundle.Receipt) {
 	require.NoError(t, f.Close())
 	raw, err := os.ReadFile(f.Name())
 	require.NoError(t, err)
-	return raw, receipt
-}
 
-func TestNativeExportDownloadVerifiesArchiveAndReceipts(t *testing.T) {
-	raw, receipt := nativeArchive(t)
 	for _, name := range []string{"valid", "wrong fingerprint", "ticket receipt", "truncated", "extra bytes", "corrupt", "invalid URL", "wrong job", "unfinished", "closed file", "canceled", "transport"} {
 		t.Run(name, func(t *testing.T) {
 			job := bundle.Job{ID: "c0a7ac5a-a410-44ee-9ad1-17200487e37b", State: "completed", Fingerprint: receipt.PlanFingerprint, Receipt: new(receipt)}

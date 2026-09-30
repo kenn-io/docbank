@@ -1,12 +1,12 @@
 # CLI exports of selected original files
 
-Status: approved design; implementation in progress. The maintainer selected
+Status: implemented in this branch. The maintainer selected
 explicit release and inline execution on 2026-09-29. This extends the existing export
 workflow in [#719](https://github.com/kenn-io/docbank/issues/719).
 
 Source baseline: `0af2361e6ed8d79ef7997a778389c19936d36126`, after #726.
 The [native export guide](../../usage/export-bundles.md) describes the existing
-engine; this document describes the proposed CLI interface.
+engine; this document records the approved CLI and release contract.
 
 ## Outcome and scope
 

@@ -937,6 +937,23 @@ identical content, and reports how many other eligible copies each group has.
 Missing source embeddings return `unavailable`. Query text, `--mode`,
 `--explain`, `--rerank`, and lexical filters cannot accompany `--similar-to`.
 
+## docbank export
+
+Export exact original document versions as verified ZIP bundles through the daemon.
+
+| Command | Purpose |
+| --- | --- |
+| `preview --request selection.json` | Freeze and review up to 1,000 exact document versions. |
+| `start <plan-id> --fingerprint <sha256> --operation-id <job-id>` | Admit a job without waiting for completion. |
+| `status <job-id>` | Read the current job state once. |
+| `cancel <job-id>` | Request cancellation of active work. |
+| `download <job-id> <local-file> [--overwrite]` | Verify a completed ZIP before saving it locally. |
+| `release <job-id>` | Remove a finished job and its retained archive to free a slot. |
+
+Every command accepts `--json`. Download never releases automatically. See
+[Verified export bundles](usage/export-bundles.md) for the request format,
+retry rules, publication behavior, and shared capacity limits.
+
 ## docbank search-export
 
 Export dated search counts and retain the evidence needed to check them.

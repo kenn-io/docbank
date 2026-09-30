@@ -2,6 +2,7 @@ package exporter_test
 
 import (
 	"encoding/json/v2"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -12,6 +13,34 @@ import (
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/store"
 )
+
+func TestReleaseRacesArchiveLease(t *testing.T) {
+	w, s, job, _, _ := workerFixture(t, api.NewOperationGate())
+	_, err := w.RunOne(t.Context())
+	require.NoError(t, err)
+	start := make(chan struct{})
+	released := make(chan error, 1)
+	go func() {
+		<-start
+		released <- w.Release(t.Context(), "master", job.ID)
+	}()
+	close(start)
+	file, _, unlease, leaseErr := w.Lease(t.Context(), "master", job.ID)
+	releaseErr := <-released
+	if errors.Is(leaseErr, store.ErrNotFound) {
+		require.NoError(t, releaseErr)
+	} else {
+		require.NoError(t, leaseErr)
+		t.Cleanup(unlease)
+		require.ErrorIs(t, releaseErr, bundle.ErrRetained)
+		_, err := file.Stat()
+		require.NoError(t, err, "a winning lease keeps its open archive")
+		unlease()
+		require.NoError(t, w.Release(t.Context(), "master", job.ID))
+	}
+	_, err = s.ExportJob(t.Context(), "master", job.ID)
+	require.ErrorIs(t, err, store.ErrNotFound)
+}
 
 func TestReleaseReclaimsCapacityWithoutRemovingLeasedArchives(t *testing.T) {
 	w, s, first, driver, dbPath := workerFixture(t, api.NewOperationGate())

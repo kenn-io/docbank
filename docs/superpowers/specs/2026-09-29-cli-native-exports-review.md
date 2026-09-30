@@ -1,5 +1,8 @@
 # CLI native exports: review follow-up
 
+Historical design review: the CLI and explicit release are now implemented.
+The checks below describe the pre-implementation source baseline.
+
 This records the spec author's source checks and response to the supplied
 adversarial review of `65cd4296`. It is not an independent re-review or a test of
 the proposed commands. The maintainer approved explicit release and inline execution on 2026-09-29.
@@ -7,7 +10,7 @@ the proposed commands. The maintainer approved explicit release and inline execu
 ## Reviewed input
 
 - Spec: [CLI exports of selected original files](2026-09-29-cli-native-exports-design.md).
-- Revised spec SHA-256: `0dd9b9f80c46b7f72d14843a2d203e8c64d3ce51cf84eb992857117d23f9cb02`.
+- Revised spec SHA-256: `0245eb2d31aac00f2d41e552014fdd77c2b015b32e19fc3dde243c1064853853`.
 - Prior reviewed spec: commit `65cd4296d3fb1a239a3f08903ae0d0eb21af6add`,
   SHA-256 `5ee0207acf6fa13642e29e5dc2debdf98a2ee607251ec0cfe32ff24c2cacefd9`.
 - Clean source baseline: `0af2361e6ed8d79ef7997a778389c19936d36126`.
@@ -140,7 +143,7 @@ proposed CLI: `TestExportSourceRetryFreezesHistoricalMembershipAndProtectsPrune`
 `TestExportDerivedRolesFreezeReceiptsAcrossHeadReplacement` in
 `internal/api/routes_exports_test.go`; generated-client composition in
 `internal/daemonconn/exports_test.go`; and the file publication helper/tests.
-The CLI examples in the design have not been implemented or executed.
+At that review, the CLI examples had not been implemented or executed.
 
 ## Adversarial review prompt
 
@@ -177,5 +180,6 @@ Try to falsify these contracts:
 ## Verdict
 
 The maintainer approved explicit release and inline execution after this review.
-The three Low findings are addressed in the design. Implementation and its
-lease/cleanup interaction remain subject to code review and behavioral tests.
+The three Low findings are addressed in the design. Implementation now has behavioral coverage for release, lease protection,
+verified downloads, and the real-daemon CLI workflow. This historical design
+review is not an independent implementation review.
