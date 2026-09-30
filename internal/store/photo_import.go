@@ -224,7 +224,8 @@ func isASCIIPhotoImportFolder(folder string) bool {
 }
 
 func (s *Store) photoImportCurrentDuplicateTx(
-	ctx context.Context, tx *sql.Tx, run IngestRun, member PhotoImportMember, role, target string, claimed map[int64]bool,
+	ctx context.Context, tx *sql.Tx, run IngestRun, member PhotoImportMember, role, target string,
+	fallback bool, claimed map[int64]bool,
 ) (Node, bool, error) {
 	var node Node
 	// Plain nodes count only for sidecars: a lone sidecar was imported as a plain file.
@@ -245,7 +246,7 @@ func (s *Store) photoImportCurrentDuplicateTx(
 	}
 	defer func() { _ = rows.Close() }()
 	source := photoImportSourcePath(member.OriginalPath)
-	found, fallback := false, Node{}
+	found, content := false, Node{}
 	for rows.Next() {
 		var row Node
 		var sourcePath string
@@ -264,8 +265,8 @@ func (s *Store) photoImportCurrentDuplicateTx(
 			node, found = row, true
 			break
 		}
-		if fallback.ID == 0 {
-			fallback = row
+		if content.ID == 0 {
+			content = row
 		}
 	}
 	if err := rows.Err(); err != nil {
@@ -273,10 +274,10 @@ func (s *Store) photoImportCurrentDuplicateTx(
 	}
 	_ = rows.Close()
 	switch {
-	case found:
-	case role != PhotoRoleSidecar && fallback.ID != 0:
+	case found, !fallback:
+	case role != PhotoRoleSidecar && content.ID != 0:
 		// RAW and image files skip duplicates by content across folders; only the same source file is a sidecar's duplicate.
-		node, found = fallback, true
+		node, found = content, true
 	case role == PhotoRoleSidecar && target != "":
 		// A moved or re-cased folder changes the path, but the photo already holding these bytes is the same shot.
 		if node, found, err = photoImportTargetSidecarTx(ctx, tx, target, member.BlobHash, claimed); err != nil {
@@ -434,25 +435,10 @@ func (s *Store) IngestPhotoGroup(ctx context.Context, run IngestRun, group Photo
 			owners[i], _, err = photoAssetOwningNodeTx(ctx, tx, node.ID)
 			return err
 		}
-		// RAW and image files settle first so sidecars can see which photo the group joins,
-		// then sidecars matched by their own path, then the rest against that photo.
+		// Every member first takes the node it was imported as, so no other member's content match can take it.
+		// RAW and image files then settle by content so sidecars can see which photo the group joins.
 		for i, member := range group.Members {
-			if roles[i] == PhotoRoleSidecar {
-				continue
-			}
-			node, duplicate, err := s.photoImportCurrentDuplicateTx(ctx, tx, run, member, roles[i], "", claimed)
-			if err != nil {
-				return err
-			}
-			if err := settle(i, node, duplicate); err != nil {
-				return err
-			}
-		}
-		for i, member := range group.Members {
-			if roles[i] != PhotoRoleSidecar {
-				continue
-			}
-			node, duplicate, err := s.photoImportCurrentDuplicateTx(ctx, tx, run, member, roles[i], "", claimed)
+			node, duplicate, err := s.photoImportCurrentDuplicateTx(ctx, tx, run, member, roles[i], "", false, claimed)
 			if err != nil {
 				return err
 			}
@@ -460,6 +446,18 @@ func (s *Store) IngestPhotoGroup(ctx context.Context, run IngestRun, group Photo
 				if err := settle(i, node, true); err != nil {
 					return err
 				}
+			}
+		}
+		for i, member := range group.Members {
+			if decided[i] || roles[i] == PhotoRoleSidecar {
+				continue
+			}
+			node, duplicate, err := s.photoImportCurrentDuplicateTx(ctx, tx, run, member, roles[i], "", true, claimed)
+			if err != nil {
+				return err
+			}
+			if err := settle(i, node, duplicate); err != nil {
+				return err
 			}
 		}
 		joined := ""
@@ -477,7 +475,7 @@ func (s *Store) IngestPhotoGroup(ctx context.Context, run IngestRun, group Photo
 			if decided[i] {
 				continue
 			}
-			node, duplicate, err := s.photoImportCurrentDuplicateTx(ctx, tx, run, member, roles[i], joined, claimed)
+			node, duplicate, err := s.photoImportCurrentDuplicateTx(ctx, tx, run, member, roles[i], joined, true, claimed)
 			if err != nil {
 				return err
 			}
