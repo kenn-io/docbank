@@ -3,7 +3,6 @@ package store
 import (
 	"context"
 	"database/sql"
-	"encoding/json/jsontext"
 	"errors"
 )
 
@@ -61,65 +60,55 @@ func exportMailboxMetadata(ctx context.Context, q metadataQuerier, write metadat
 		}
 	}
 }
-func importMailboxMetadataRecord(ctx context.Context, tx *sql.Tx, kind string, raw jsontext.Value) error {
-	switch kind {
-	case "mailbox_job":
-		var r metadataMailboxJob
-		if err := decodeMetadataRecord(raw, &r); err != nil {
-			return err
-		}
-		return saveMailboxJob(ctx, tx, r.Job, true)
-	case "mailbox_occurrence":
-		var r metadataMailboxOccurrence
-		if err := decodeMetadataRecord(raw, &r); err != nil {
-			return err
-		}
-		return insertMailboxOccurrence(ctx, tx, r.Occurrence)
-	case "mailbox_archive":
-		var r metadataMailboxArchive
-		if err := decodeMetadataRecord(raw, &r); err != nil {
-			return err
-		}
-		a := r.Archive
-		if !mailboxText(a.ID, 128) || !mailboxText(a.Owner, 256) || !mailboxText(a.Description, 1024) {
-			return ErrMailboxInvalid
-		}
-		_, err := tx.ExecContext(ctx, `INSERT INTO mailbox_archives(id,owner,description) VALUES(?,?,?)`, a.ID, a.Owner, a.Description)
-		return err
-	case "mailbox_transfer_receipt":
-		var r metadataMailboxTransfer
-		if err := decodeMetadataRecord(raw, &r); err != nil {
-			return err
-		}
-		return insertMailboxTransferReceipt(ctx, tx, r.Receipt)
-	case "mailbox_transfer_head":
-		var r metadataMailboxTransferHead
-		if err := decodeMetadataRecord(raw, &r); err != nil {
-			return err
-		}
-		_, err := tx.ExecContext(ctx, `INSERT INTO mailbox_transfer_heads(archive_id,source_ref,receipt_id) VALUES(?,?,?)`, r.ArchiveID, r.Reference, r.ReceiptID)
-		return err
-	case "mailbox_container":
-		var r metadataMailboxContainer
-		if err := decodeMetadataRecord(raw, &r); err != nil {
-			return err
-		}
-		c := r.Container
-		if err := validateRetainedMailboxContainer(ctx, tx, c); err != nil {
-			return err
-		}
-		if _, err := tx.ExecContext(ctx, `INSERT INTO mailbox_containers(id,owner,sha256,size,format,state,created_at,manifest_sha256) VALUES(?,?,?,?,?,?,?,?)`, c.ID, c.Owner, c.SHA256, c.Size, c.Format, c.State, c.CreatedAt, c.ManifestSHA256); err != nil {
-			return err
-		}
-		for _, ch := range c.Chunks {
-			if _, err := tx.ExecContext(ctx, `INSERT INTO mailbox_chunks(container_id,chunk_index,blob_hash,size) VALUES(?,?,?,?)`, c.ID, ch.Index, ch.SHA256, ch.Size); err != nil {
-				return err
-			}
-		}
-		return nil
-	default:
+
+// mailboxMetadataTables registers the mailbox records for import. Their keyset
+// exporters stay in exportMailboxMetadata and exportMailboxJobs.
+var mailboxMetadataTables = []metadataRecordCodec{
+	newMetadataTable(metadataTable[metadataMailboxJob]{record: metadataMailboxJob{Type: "mailbox_job"}, table: "mailbox_jobs",
+		insert: func(ctx context.Context, tx *sql.Tx, r metadataMailboxJob) error {
+			return saveMailboxJob(ctx, tx, r.Job, true)
+		}}),
+	newMetadataTable(metadataTable[metadataMailboxOccurrence]{
+		record: metadataMailboxOccurrence{Type: "mailbox_occurrence"}, table: "mailbox_occurrences",
+		insert: func(ctx context.Context, tx *sql.Tx, r metadataMailboxOccurrence) error {
+			return insertMailboxOccurrence(ctx, tx, r.Occurrence)
+		}}),
+	newMetadataTable(metadataTable[metadataMailboxArchive]{record: metadataMailboxArchive{Type: "mailbox_archive"},
+		table: "mailbox_archives", insert: importMailboxArchive}),
+	newMetadataTable(metadataTable[metadataMailboxTransfer]{
+		record: metadataMailboxTransfer{Type: "mailbox_transfer_receipt"}, table: "mailbox_transfer_receipts",
+		insert: func(ctx context.Context, tx *sql.Tx, r metadataMailboxTransfer) error {
+			return insertMailboxTransferReceipt(ctx, tx, r.Receipt)
+		}}),
+	newMetadataTable(metadataTable[metadataMailboxTransferHead]{
+		record: metadataMailboxTransferHead{Type: "mailbox_transfer_head"}, table: "mailbox_transfer_heads"}),
+	newMetadataTable(metadataTable[metadataMailboxContainer]{record: metadataMailboxContainer{Type: "mailbox_container"},
+		table: "mailbox_containers", insert: importMailboxContainer}),
+}
+
+func importMailboxArchive(ctx context.Context, tx *sql.Tx, r metadataMailboxArchive) error {
+	a := r.Archive
+	if !mailboxText(a.ID, 128) || !mailboxText(a.Owner, 256) || !mailboxText(a.Description, 1024) {
 		return ErrMailboxInvalid
 	}
+	_, err := tx.ExecContext(ctx, `INSERT INTO mailbox_archives(id,owner,description) VALUES(?,?,?)`, a.ID, a.Owner, a.Description)
+	return err
+}
+
+func importMailboxContainer(ctx context.Context, tx *sql.Tx, r metadataMailboxContainer) error {
+	c := r.Container
+	if err := validateRetainedMailboxContainer(ctx, tx, c); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `INSERT INTO mailbox_containers(id,owner,sha256,size,format,state,created_at,manifest_sha256) VALUES(?,?,?,?,?,?,?,?)`, c.ID, c.Owner, c.SHA256, c.Size, c.Format, c.State, c.CreatedAt, c.ManifestSHA256); err != nil {
+		return err
+	}
+	for _, ch := range c.Chunks {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO mailbox_chunks(container_id,chunk_index,blob_hash,size) VALUES(?,?,?,?)`, c.ID, ch.Index, ch.SHA256, ch.Size); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 type metadataMailboxArchive struct {
@@ -132,9 +121,9 @@ type metadataMailboxTransfer struct {
 }
 type metadataMailboxTransferHead struct {
 	Type      string `json:"type"`
-	ArchiveID string `json:"archive_id"`
-	Reference string `json:"reference"`
-	ReceiptID string `json:"receipt_id"`
+	ArchiveID string `json:"archive_id" db:"archive_id"`
+	Reference string `json:"reference" db:"source_ref"`
+	ReceiptID string `json:"receipt_id" db:"receipt_id"`
 }
 
 func exportMailboxTransfers(ctx context.Context, q metadataQuerier, write metadataWrite) error {

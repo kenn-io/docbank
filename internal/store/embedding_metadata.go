@@ -3,7 +3,6 @@ package store
 import (
 	"context"
 	"database/sql"
-	"encoding/json/jsontext"
 	"errors"
 	"fmt"
 	"reflect"
@@ -26,20 +25,20 @@ const (
 
 type metadataEmbeddingVectorSpace struct {
 	Type                  string `json:"type"`
-	ID                    string `json:"vector_space_id"`
-	ContractVersion       string `json:"contract_version"`
-	DescriptorJSON        []byte `json:"descriptor_json"`
-	ProviderDescriptor    string `json:"provider_descriptor"`
-	ProviderRevision      string `json:"provider_revision"`
-	DescriptorFingerprint string `json:"descriptor_fingerprint"`
-	CompatibilityID       string `json:"compatibility_id"`
-	Dimensions            int    `json:"dimensions"`
-	Metric                string `json:"metric"`
-	Normalization         string `json:"normalization"`
-	ScalarEncoding        string `json:"scalar_encoding"`
-	DocumentFormatter     string `json:"document_formatter"`
-	QueryFormatter        string `json:"query_formatter"`
-	ModelInputFingerprint string `json:"model_input_fingerprint"`
+	ID                    string `json:"vector_space_id" db:"vector_space_id"`
+	ContractVersion       string `json:"contract_version" db:"contract_version"`
+	DescriptorJSON        []byte `json:"descriptor_json" db:"descriptor_json"`
+	ProviderDescriptor    string `json:"provider_descriptor" db:"provider_descriptor"`
+	ProviderRevision      string `json:"provider_revision" db:"provider_revision"`
+	DescriptorFingerprint string `json:"descriptor_fingerprint" db:"descriptor_fingerprint"`
+	CompatibilityID       string `json:"compatibility_id" db:"compatibility_id"`
+	Dimensions            int    `json:"dimensions" db:"dimensions"`
+	Metric                string `json:"metric" db:"metric"`
+	Normalization         string `json:"normalization" db:"normalization"`
+	ScalarEncoding        string `json:"scalar_encoding" db:"scalar_encoding"`
+	DocumentFormatter     string `json:"document_formatter" db:"document_formatter"`
+	QueryFormatter        string `json:"query_formatter" db:"query_formatter"`
+	ModelInputFingerprint string `json:"model_input_fingerprint" db:"model_input_fingerprint"`
 }
 
 type metadataEmbeddingGeneration struct {
@@ -62,121 +61,126 @@ type metadataEmbeddingGeneration struct {
 
 type metadataEmbeddingInput struct {
 	Type             string `json:"type"`
-	GenerationID     string `json:"generation_id"`
-	InputID          string `json:"input_id"`
-	Order            int    `json:"order"`
-	RenderedChecksum string `json:"rendered_checksum"`
+	GenerationID     string `json:"generation_id" db:"generation_id"`
+	InputID          string `json:"input_id" db:"input_id"`
+	Order            int    `json:"order" db:"input_order"`
+	RenderedChecksum string `json:"rendered_checksum" db:"rendered_checksum"`
 }
 
 type metadataEmbeddingVectorSet struct {
 	Type             string `json:"type"`
-	ID               string `json:"vector_set_id"`
-	ContractVersion  string `json:"contract_version"`
-	VectorSpaceID    string `json:"vector_space_id"`
-	PayloadBlobHash  string `json:"payload_blob_hash"`
-	PayloadSize      int64  `json:"payload_size"`
-	PayloadChecksum  string `json:"payload_checksum"`
-	ManifestChecksum string `json:"manifest_checksum"`
-	RowCount         int    `json:"row_count"`
-	Dimensions       int    `json:"dimensions"`
+	ID               string `json:"vector_set_id" db:"vector_set_id"`
+	ContractVersion  string `json:"contract_version" db:"contract_version"`
+	VectorSpaceID    string `json:"vector_space_id" db:"vector_space_id"`
+	PayloadBlobHash  string `json:"payload_blob_hash" db:"payload_blob_hash"`
+	PayloadSize      int64  `json:"payload_size" db:"payload_size"`
+	PayloadChecksum  string `json:"payload_checksum" db:"payload_checksum"`
+	ManifestChecksum string `json:"manifest_checksum" db:"manifest_checksum"`
+	RowCount         int    `json:"row_count" db:"row_count"`
+	Dimensions       int    `json:"dimensions" db:"dimensions"`
 }
 
 type metadataEmbeddingVectorRow struct {
 	Type        string `json:"type"`
-	VectorSetID string `json:"vector_set_id"`
-	RowID       string `json:"row_id"`
-	Order       int    `json:"order"`
-	InputID     string `json:"input_id"`
-	Dimensions  int    `json:"dimensions"`
-	Checksum    string `json:"checksum"`
+	VectorSetID string `json:"vector_set_id" db:"vector_set_id"`
+	RowID       string `json:"row_id" db:"row_id"`
+	Order       int    `json:"order" db:"row_order"`
+	InputID     string `json:"input_id" db:"input_id"`
+	Dimensions  int    `json:"dimensions" db:"dimensions"`
+	Checksum    string `json:"checksum" db:"checksum"`
 }
 
 type metadataEmbeddingSet struct {
 	Type               string             `json:"type"`
-	ID                 string             `json:"embedding_set_id"`
-	VaultID            string             `json:"vault_id"`
-	BindingID          string             `json:"binding_id"`
-	InputKind          EmbeddingInputKind `json:"input_kind"`
-	ContentVersionID   string             `json:"content_version_id"`
-	ProfileFingerprint string             `json:"profile_fingerprint"`
-	InputFingerprint   string             `json:"embedding_input_fingerprint"`
-	VectorSpaceID      string             `json:"vector_space_id"`
-	GenerationID       string             `json:"generation_id"`
-	VectorSetID        string             `json:"vector_set_id"`
-	CreatedAt          string             `json:"created_at"`
+	ID                 string             `json:"embedding_set_id" db:"embedding_set_id"`
+	VaultID            string             `json:"vault_id" db:"vault_uid"`
+	BindingID          string             `json:"binding_id" db:"binding_id"`
+	InputKind          EmbeddingInputKind `json:"input_kind" db:"input_kind"`
+	ContentVersionID   string             `json:"content_version_id" db:"content_version_id"`
+	ProfileFingerprint string             `json:"profile_fingerprint" db:"profile_fingerprint"`
+	InputFingerprint   string             `json:"embedding_input_fingerprint" db:"embedding_input_fingerprint"`
+	VectorSpaceID      string             `json:"vector_space_id" db:"vector_space_id"`
+	GenerationID       string             `json:"generation_id" db:"input_generation_id"`
+	VectorSetID        string             `json:"vector_set_id" db:"vector_set_id"`
+	CreatedAt          string             `json:"created_at" db:"created_at"`
 }
 
 type metadataEmbeddingHead struct {
 	Type               string             `json:"type"`
-	ContentVersionID   string             `json:"content_version_id"`
-	BindingID          string             `json:"binding_id"`
-	InputKind          EmbeddingInputKind `json:"input_kind"`
-	SetID              string             `json:"embedding_set_id"`
-	VectorSpaceID      string             `json:"vector_space_id"`
-	ProfileFingerprint string             `json:"profile_fingerprint"`
-	PublishedAt        string             `json:"published_at"`
-	FencingToken       int64              `json:"fencing_token"`
+	ContentVersionID   string             `json:"content_version_id" db:"content_version_id"`
+	BindingID          string             `json:"binding_id" db:"binding_id"`
+	InputKind          EmbeddingInputKind `json:"input_kind" db:"input_kind"`
+	SetID              string             `json:"embedding_set_id" db:"embedding_set_id"`
+	VectorSpaceID      string             `json:"vector_space_id" db:"vector_space_id"`
+	ProfileFingerprint string             `json:"profile_fingerprint" db:"profile_fingerprint"`
+	PublishedAt        string             `json:"published_at" db:"published_at"`
+	FencingToken       int64              `json:"fencing_token" db:"fencing_token"`
 }
 
 type metadataEmbeddingFailure struct {
 	Type               string               `json:"type"`
-	ContentVersionID   string               `json:"content_version_id"`
-	ProfileFingerprint string               `json:"profile_fingerprint"`
-	BindingID          string               `json:"binding_id"`
-	InputKind          EmbeddingInputKind   `json:"input_kind"`
-	FailureCode        EmbeddingFailureCode `json:"failure_code"`
-	FailedAt           string               `json:"failed_at"`
-	FencingToken       int64                `json:"fencing_token"`
-	AttachmentID       string               `json:"attachment_id"`
+	ContentVersionID   string               `json:"content_version_id" db:"content_version_id"`
+	ProfileFingerprint string               `json:"profile_fingerprint" db:"profile_fingerprint"`
+	BindingID          string               `json:"binding_id" db:"binding_id"`
+	InputKind          EmbeddingInputKind   `json:"input_kind" db:"input_kind"`
+	FailureCode        EmbeddingFailureCode `json:"failure_code" db:"failure_code"`
+	FailedAt           string               `json:"failed_at" db:"failed_at"`
+	FencingToken       int64                `json:"fencing_token" db:"fencing_token"`
+	AttachmentID       string               `json:"attachment_id" db:"attachment_id"`
 }
 
-var embeddingMetadataRequiredFields = map[string][]string{
-	metadataEmbeddingVectorSpaceType: {metadataTypeField, metadataEmbeddingVectorSpaceIDField, "contract_version", "descriptor_json", "provider_descriptor", "provider_revision", "descriptor_fingerprint", "compatibility_id", "dimensions", "metric", "normalization", "scalar_encoding", "document_formatter", "query_formatter", "model_input_fingerprint"},
-	metadataEmbeddingGenerationType:  {metadataTypeField, metadataGenerationIDField, "generation_blob_hash", "generation_encoded_size", "generation_checksum", auditSourceVersionIDField, metadataEmbeddingProfileField, "evidence_fingerprint", "tokenizer_fingerprint", "chunk_policy_fingerprint", "formatter_fingerprint", "attachment_context_fingerprint", "attachment_id", "input_count", metadataCreatedAtField},
-	metadataEmbeddingInputType:       {metadataTypeField, metadataGenerationIDField, "input_id", "order", "rendered_checksum"},
-	metadataEmbeddingVectorSetType:   {metadataTypeField, "vector_set_id", "contract_version", metadataEmbeddingVectorSpaceIDField, "payload_blob_hash", "payload_size", "payload_checksum", "manifest_checksum", "row_count", "dimensions"},
-	metadataEmbeddingVectorRowType:   {metadataTypeField, "vector_set_id", "row_id", "order", "input_id", "dimensions", "checksum"},
-	metadataEmbeddingSetType:         {metadataTypeField, "embedding_set_id", auditVaultIDField, "binding_id", "input_kind", metadataContentVersionIDField, metadataEmbeddingProfileField, "embedding_input_fingerprint", metadataEmbeddingVectorSpaceIDField, metadataGenerationIDField, "vector_set_id", metadataCreatedAtField},
-	metadataEmbeddingHeadType:        {metadataTypeField, metadataContentVersionIDField, "binding_id", "input_kind", "embedding_set_id", metadataEmbeddingVectorSpaceIDField, metadataEmbeddingProfileField, "published_at", "fencing_token"},
-	metadataEmbeddingFailureType:     {metadataTypeField, metadataContentVersionIDField, metadataEmbeddingProfileField, "binding_id", "input_kind", "failure_code", "failed_at", "fencing_token", "attachment_id"},
-}
-
-func exportEmbeddingMetadata(ctx context.Context, tx metadataQuerier, write metadataWrite) error {
-	exports := []func(context.Context, metadataQuerier, metadataWrite) error{
-		exportEmbeddingVectorSpaces, exportEmbeddingGenerations, exportEmbeddingInputs,
-		exportEmbeddingVectorSets, exportEmbeddingVectorRows, exportEmbeddingSets,
-		exportEmbeddingHeads, exportEmbeddingFailures,
-	}
-	for _, export := range exports {
-		if err := export(ctx, tx, write); err != nil {
+// embeddingMetadataTables exports the embedding records in dependency order.
+var embeddingMetadataTables = []metadataRecordCodec{
+	newMetadataTable(metadataTable[metadataEmbeddingVectorSpace]{
+		record: metadataEmbeddingVectorSpace{Type: metadataEmbeddingVectorSpaceType}, table: "embedding_vector_spaces",
+		suffix: "ORDER BY vector_space_id",
+		validate: func(value metadataEmbeddingVectorSpace) error {
+			_, err := decodeCanonicalEmbeddingDescriptor(value.DescriptorJSON)
 			return err
-		}
-	}
-	return nil
-}
-
-func exportEmbeddingVectorSpaces(ctx context.Context, tx metadataQuerier, write metadataWrite) error {
-	rows, err := tx.QueryContext(ctx, `SELECT vector_space_id,contract_version,descriptor_json,provider_descriptor,
-		provider_revision,descriptor_fingerprint,compatibility_id,dimensions,metric,
-		normalization,scalar_encoding,document_formatter,query_formatter,model_input_fingerprint
-		FROM embedding_vector_spaces ORDER BY vector_space_id`)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = rows.Close() }()
-	for rows.Next() {
-		value := metadataEmbeddingVectorSpace{Type: metadataEmbeddingVectorSpaceType}
-		if err := rows.Scan(&value.ID, &value.ContractVersion, &value.DescriptorJSON, &value.ProviderDescriptor,
-			&value.ProviderRevision, &value.DescriptorFingerprint, &value.CompatibilityID,
-			&value.Dimensions, &value.Metric, &value.Normalization, &value.ScalarEncoding,
-			&value.DocumentFormatter, &value.QueryFormatter, &value.ModelInputFingerprint); err != nil {
-			return err
-		}
-		if err := write(value); err != nil {
-			return err
-		}
-	}
-	return rows.Err()
+		}}),
+	newMetadataTable(metadataTable[metadataEmbeddingGeneration]{
+		record: metadataEmbeddingGeneration{Type: metadataEmbeddingGenerationType}, table: "embedding_input_generations",
+		validate: validateMetadataEmbeddingGeneration, exportAll: exportEmbeddingGenerations,
+		insert: importMetadataEmbeddingGeneration}),
+	newMetadataTable(metadataTable[metadataEmbeddingInput]{
+		record: metadataEmbeddingInput{Type: metadataEmbeddingInputType}, table: "embedding_generation_inputs",
+		suffix: "ORDER BY generation_id,input_order",
+		validate: func(value metadataEmbeddingInput) error {
+			if value.Order < 0 || value.Order >= maxEmbeddingCatalogRows {
+				return errors.New("embedding input order exceeds bounds")
+			}
+			return nil
+		}}),
+	newMetadataTable(metadataTable[metadataEmbeddingVectorSet]{
+		record: metadataEmbeddingVectorSet{Type: metadataEmbeddingVectorSetType}, table: "embedding_vector_sets",
+		suffix: "ORDER BY vector_set_id", validate: validateMetadataEmbeddingVectorSet}),
+	newMetadataTable(metadataTable[metadataEmbeddingVectorRow]{
+		record: metadataEmbeddingVectorRow{Type: metadataEmbeddingVectorRowType}, table: "embedding_vector_rows",
+		suffix: "ORDER BY vector_set_id,row_order",
+		validate: func(value metadataEmbeddingVectorRow) error {
+			if value.Order < 0 || value.Order >= maxEmbeddingCatalogRows {
+				return errors.New("embedding vector row order exceeds bounds")
+			}
+			return nil
+		}}),
+	newMetadataTable(metadataTable[metadataEmbeddingSet]{
+		record: metadataEmbeddingSet{Type: metadataEmbeddingSetType}, table: "embedding_sets",
+		suffix: "ORDER BY embedding_set_id",
+		validate: func(value metadataEmbeddingSet) error {
+			return validateMetadataTime("embedding set created_at", value.CreatedAt)
+		}}),
+	newMetadataTable(metadataTable[metadataEmbeddingHead]{
+		record: metadataEmbeddingHead{Type: metadataEmbeddingHeadType}, table: "embedding_heads",
+		suffix: "ORDER BY content_version_id,profile_fingerprint,binding_id,input_kind",
+		validate: func(value metadataEmbeddingHead) error {
+			return validateMetadataTime("embedding head published_at", value.PublishedAt)
+		}}),
+	newMetadataTable(metadataTable[metadataEmbeddingFailure]{
+		record: metadataEmbeddingFailure{Type: metadataEmbeddingFailureType}, table: "embedding_failures",
+		suffix: "ORDER BY content_version_id,profile_fingerprint,binding_id,input_kind",
+		validate: func(value metadataEmbeddingFailure) error {
+			return validateMetadataTime("embedding failure failed_at", value.FailedAt)
+		}}),
 }
 
 func exportEmbeddingGenerations(ctx context.Context, tx metadataQuerier, write metadataWrite) error {
@@ -212,238 +216,34 @@ func exportEmbeddingGenerations(ctx context.Context, tx metadataQuerier, write m
 	return rows.Err()
 }
 
-func exportEmbeddingInputs(ctx context.Context, tx metadataQuerier, write metadataWrite) error {
-	rows, err := tx.QueryContext(ctx, `SELECT generation_id,input_id,input_order,rendered_checksum
-		FROM embedding_generation_inputs ORDER BY generation_id,input_order`)
-	if err != nil {
-		return err
+func validateMetadataEmbeddingGeneration(value metadataEmbeddingGeneration) error {
+	if value.InputCount < 1 || value.InputCount > maxEmbeddingCatalogRows {
+		return errors.New("embedding input count exceeds bounds")
 	}
-	defer func() { _ = rows.Close() }()
-	for rows.Next() {
-		value := metadataEmbeddingInput{Type: metadataEmbeddingInputType}
-		if err := rows.Scan(&value.GenerationID, &value.InputID, &value.Order, &value.RenderedChecksum); err != nil {
-			return err
-		}
-		if err := write(value); err != nil {
-			return err
-		}
+	if (value.GenerationBlobHash == "") != (value.GenerationEncodedSize == 0) ||
+		value.GenerationEncodedSize < 0 || value.GenerationEncodedSize > 64<<20 {
+		return errors.New("embedding generation artifact reference exceeds bounds")
 	}
-	return rows.Err()
+	return validateMetadataTime("input-generation created_at", value.CreatedAt)
 }
 
-func exportEmbeddingVectorSets(ctx context.Context, tx metadataQuerier, write metadataWrite) error {
-	rows, err := tx.QueryContext(ctx, `SELECT vector_set_id,contract_version,vector_space_id,payload_blob_hash,
-		payload_size,payload_checksum,manifest_checksum,row_count,dimensions FROM embedding_vector_sets ORDER BY vector_set_id`)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = rows.Close() }()
-	for rows.Next() {
-		value := metadataEmbeddingVectorSet{Type: metadataEmbeddingVectorSetType}
-		if err := rows.Scan(&value.ID, &value.ContractVersion, &value.VectorSpaceID, &value.PayloadBlobHash, &value.PayloadSize,
-			&value.PayloadChecksum, &value.ManifestChecksum, &value.RowCount, &value.Dimensions); err != nil {
-			return err
-		}
-		if err := write(value); err != nil {
-			return err
-		}
-	}
-	return rows.Err()
-}
-
-func exportEmbeddingVectorRows(ctx context.Context, tx metadataQuerier, write metadataWrite) error {
-	rows, err := tx.QueryContext(ctx, `SELECT vector_set_id,row_id,row_order,input_id,dimensions,checksum
-		FROM embedding_vector_rows ORDER BY vector_set_id,row_order`)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = rows.Close() }()
-	for rows.Next() {
-		value := metadataEmbeddingVectorRow{Type: metadataEmbeddingVectorRowType}
-		if err := rows.Scan(&value.VectorSetID, &value.RowID, &value.Order, &value.InputID,
-			&value.Dimensions, &value.Checksum); err != nil {
-			return err
-		}
-		if err := write(value); err != nil {
-			return err
-		}
-	}
-	return rows.Err()
-}
-
-func exportEmbeddingSets(ctx context.Context, tx metadataQuerier, write metadataWrite) error {
-	rows, err := tx.QueryContext(ctx, `SELECT embedding_set_id,vault_uid,binding_id,input_kind,
-		content_version_id,profile_fingerprint,embedding_input_fingerprint,vector_space_id,input_generation_id,
-		vector_set_id,created_at FROM embedding_sets ORDER BY embedding_set_id`)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = rows.Close() }()
-	for rows.Next() {
-		value := metadataEmbeddingSet{Type: metadataEmbeddingSetType}
-		if err := rows.Scan(&value.ID, &value.VaultID, &value.BindingID, &value.InputKind,
-			&value.ContentVersionID, &value.ProfileFingerprint, &value.InputFingerprint, &value.VectorSpaceID,
-			&value.GenerationID, &value.VectorSetID, &value.CreatedAt); err != nil {
-			return err
-		}
-		if err := write(value); err != nil {
-			return err
-		}
-	}
-	return rows.Err()
-}
-
-func exportEmbeddingHeads(ctx context.Context, tx metadataQuerier, write metadataWrite) error {
-	rows, err := tx.QueryContext(ctx, `SELECT content_version_id,binding_id,input_kind,
-		embedding_set_id,vector_space_id,profile_fingerprint,published_at,fencing_token
-		FROM embedding_heads ORDER BY content_version_id,profile_fingerprint,binding_id,input_kind`)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = rows.Close() }()
-	for rows.Next() {
-		value := metadataEmbeddingHead{Type: metadataEmbeddingHeadType}
-		if err := rows.Scan(&value.ContentVersionID, &value.BindingID, &value.InputKind,
-			&value.SetID, &value.VectorSpaceID, &value.ProfileFingerprint, &value.PublishedAt, &value.FencingToken); err != nil {
-			return err
-		}
-		if err := write(value); err != nil {
-			return err
-		}
-	}
-	return rows.Err()
-}
-
-func exportEmbeddingFailures(ctx context.Context, tx metadataQuerier, write metadataWrite) error {
-	rows, err := tx.QueryContext(ctx, `SELECT content_version_id,profile_fingerprint,binding_id,
-		input_kind,failure_code,failed_at,fencing_token,attachment_id FROM embedding_failures
-		ORDER BY content_version_id,profile_fingerprint,binding_id,input_kind`)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = rows.Close() }()
-	for rows.Next() {
-		value := metadataEmbeddingFailure{Type: metadataEmbeddingFailureType}
-		if err := rows.Scan(&value.ContentVersionID, &value.ProfileFingerprint, &value.BindingID,
-			&value.InputKind, &value.FailureCode, &value.FailedAt, &value.FencingToken, &value.AttachmentID); err != nil {
-			return err
-		}
-		if err := write(value); err != nil {
-			return err
-		}
-	}
-	return rows.Err()
-}
-
-func importEmbeddingMetadataRecord(ctx context.Context, tx *sql.Tx, kind string, raw jsontext.Value) error {
-	switch kind {
-	case metadataEmbeddingVectorSpaceType:
-		var value metadataEmbeddingVectorSpace
-		if err := decodeMetadataRecord(raw, &value); err != nil {
-			return err
-		}
-		if _, err := decodeCanonicalEmbeddingDescriptor(value.DescriptorJSON); err != nil {
-			return err
-		}
-		return execEmbeddingImport(ctx, tx, `INSERT INTO embedding_vector_spaces(
-			vector_space_id,contract_version,descriptor_json,provider_descriptor,provider_revision,
-			descriptor_fingerprint,compatibility_id,dimensions,metric,normalization,scalar_encoding,
-			document_formatter,query_formatter,model_input_fingerprint) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, value.ID, value.ContractVersion, value.DescriptorJSON, value.ProviderDescriptor, value.ProviderRevision, value.DescriptorFingerprint, value.CompatibilityID, value.Dimensions, value.Metric, value.Normalization, value.ScalarEncoding, value.DocumentFormatter, value.QueryFormatter, value.ModelInputFingerprint)
-	case metadataEmbeddingGenerationType:
-		var value metadataEmbeddingGeneration
-		if err := decodeMetadataRecord(raw, &value); err != nil {
-			return err
-		}
-		if value.InputCount < 1 || value.InputCount > maxEmbeddingCatalogRows {
-			return errors.New("embedding input count exceeds bounds")
-		}
-		if (value.GenerationBlobHash == "") != (value.GenerationEncodedSize == 0) ||
-			value.GenerationEncodedSize < 0 || value.GenerationEncodedSize > 64<<20 {
-			return errors.New("embedding generation artifact reference exceeds bounds")
-		}
-		if err := validateMetadataTime("input-generation created_at", value.CreatedAt); err != nil {
-			return err
-		}
-		return execEmbeddingImport(ctx, tx, `INSERT INTO embedding_input_generations(
-			generation_id,generation_blob_hash,generation_encoded_size,generation_checksum,source_version_id,profile_fingerprint,evidence_fingerprint,
-			tokenizer_fingerprint,chunk_policy_fingerprint,formatter_fingerprint,
-			attachment_context_fingerprint,attachment_id,input_count,created_at)
-			VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, value.ID, nullableCatalogString(value.GenerationBlobHash), value.GenerationEncodedSize, value.GenerationChecksum, value.SourceVersionID, value.ProfileFingerprint, value.EvidenceFingerprint, value.TokenizerFingerprint, value.ChunkPolicyFingerprint, value.FormatterFingerprint, value.AttachmentContextFingerprint, value.AttachmentID, value.InputCount, value.CreatedAt)
-	case metadataEmbeddingInputType:
-		var value metadataEmbeddingInput
-		if err := decodeMetadataRecord(raw, &value); err != nil {
-			return err
-		}
-		if value.Order < 0 || value.Order >= maxEmbeddingCatalogRows {
-			return errors.New("embedding input order exceeds bounds")
-		}
-		return execEmbeddingImport(ctx, tx, `INSERT INTO embedding_generation_inputs VALUES(?,?,?,?)`, value.GenerationID, value.InputID, value.Order, value.RenderedChecksum)
-	case metadataEmbeddingVectorSetType:
-		var value metadataEmbeddingVectorSet
-		if err := decodeMetadataRecord(raw, &value); err != nil {
-			return err
-		}
-		if value.RowCount < 1 || value.RowCount > maxEmbeddingCatalogRows {
-			return errors.New("embedding vector row count exceeds bounds")
-		}
-		if value.PayloadSize < 1 || value.PayloadSize > 64<<20 {
-			return errors.New("embedding vector payload size exceeds bounds")
-		}
-		return execEmbeddingImport(ctx, tx, `INSERT INTO embedding_vector_sets(
-			vector_set_id,contract_version,vector_space_id,payload_blob_hash,payload_size,payload_checksum,
-			manifest_checksum,row_count,dimensions) VALUES(?,?,?,?,?,?,?,?,?)`, value.ID, value.ContractVersion, value.VectorSpaceID, value.PayloadBlobHash, value.PayloadSize, value.PayloadChecksum, value.ManifestChecksum, value.RowCount, value.Dimensions)
-	case metadataEmbeddingVectorRowType:
-		var value metadataEmbeddingVectorRow
-		if err := decodeMetadataRecord(raw, &value); err != nil {
-			return err
-		}
-		if value.Order < 0 || value.Order >= maxEmbeddingCatalogRows {
-			return errors.New("embedding vector row order exceeds bounds")
-		}
-		return execEmbeddingImport(ctx, tx, `INSERT INTO embedding_vector_rows VALUES(?,?,?,?,?,?)`, value.VectorSetID, value.RowID, value.Order, value.InputID, value.Dimensions, value.Checksum)
-	case metadataEmbeddingSetType:
-		var value metadataEmbeddingSet
-		if err := decodeMetadataRecord(raw, &value); err != nil {
-			return err
-		}
-		if err := validateMetadataTime("embedding set created_at", value.CreatedAt); err != nil {
-			return err
-		}
-		return execEmbeddingImport(ctx, tx, `INSERT INTO embedding_sets(
-			embedding_set_id,vault_uid,binding_id,input_kind,content_version_id,profile_fingerprint,
-			embedding_input_fingerprint,vector_space_id,input_generation_id,vector_set_id,created_at)
-			VALUES(?,?,?,?,?,?,?,?,?,?,?)`, value.ID, value.VaultID, value.BindingID, value.InputKind, value.ContentVersionID, value.ProfileFingerprint, value.InputFingerprint, value.VectorSpaceID, value.GenerationID, value.VectorSetID, value.CreatedAt)
-	case metadataEmbeddingHeadType:
-		var value metadataEmbeddingHead
-		if err := decodeMetadataRecord(raw, &value); err != nil {
-			return err
-		}
-		if err := validateMetadataTime("embedding head published_at", value.PublishedAt); err != nil {
-			return err
-		}
-		return execEmbeddingImport(ctx, tx, `INSERT INTO embedding_heads VALUES(?,?,?,?,?,?,?,?)`, value.ContentVersionID, value.BindingID, value.InputKind, value.SetID, value.VectorSpaceID, value.ProfileFingerprint, value.PublishedAt, value.FencingToken)
-	case metadataEmbeddingFailureType:
-		var value metadataEmbeddingFailure
-		if err := decodeMetadataRecord(raw, &value); err != nil {
-			return err
-		}
-		if err := validateMetadataTime("embedding failure failed_at", value.FailedAt); err != nil {
-			return err
-		}
-		return execEmbeddingImport(ctx, tx, `INSERT INTO embedding_failures VALUES(?,?,?,?,?,?,?,?)`, value.ContentVersionID, value.ProfileFingerprint, value.BindingID, value.InputKind, value.FailureCode, value.FailedAt, value.FencingToken, value.AttachmentID)
-	default:
-		return fmt.Errorf("unknown embedding metadata type %q", kind)
-	}
-}
-
-func execEmbeddingImport(ctx context.Context, tx *sql.Tx, query string, args ...any) error {
-	_, err := tx.ExecContext(ctx, query, args...)
+func importMetadataEmbeddingGeneration(ctx context.Context, tx *sql.Tx, value metadataEmbeddingGeneration) error {
+	_, err := tx.ExecContext(ctx, `INSERT INTO embedding_input_generations(
+		generation_id,generation_blob_hash,generation_encoded_size,generation_checksum,source_version_id,profile_fingerprint,evidence_fingerprint,
+		tokenizer_fingerprint,chunk_policy_fingerprint,formatter_fingerprint,
+		attachment_context_fingerprint,attachment_id,input_count,created_at)
+		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, value.ID, nullableCatalogString(value.GenerationBlobHash), value.GenerationEncodedSize, value.GenerationChecksum, value.SourceVersionID, value.ProfileFingerprint, value.EvidenceFingerprint, value.TokenizerFingerprint, value.ChunkPolicyFingerprint, value.FormatterFingerprint, value.AttachmentContextFingerprint, value.AttachmentID, value.InputCount, value.CreatedAt)
 	return err
 }
 
-func isEmbeddingMetadataType(kind string) bool {
-	_, ok := embeddingMetadataRequiredFields[kind]
-	return ok
+func validateMetadataEmbeddingVectorSet(value metadataEmbeddingVectorSet) error {
+	if value.RowCount < 1 || value.RowCount > maxEmbeddingCatalogRows {
+		return errors.New("embedding vector row count exceeds bounds")
+	}
+	if value.PayloadSize < 1 || value.PayloadSize > 64<<20 {
+		return errors.New("embedding vector payload size exceeds bounds")
+	}
+	return nil
 }
 
 func validateEmbeddingMetadataState(ctx context.Context, tx metadataQuerier) (retErr error) {

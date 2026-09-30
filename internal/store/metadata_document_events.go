@@ -2,7 +2,6 @@ package store
 
 import (
 	"context"
-	"database/sql"
 	"errors"
 	"fmt"
 
@@ -11,50 +10,16 @@ import (
 
 type metadataProvenanceVersionBinding struct {
 	Type               string `json:"type"`
-	ProvenanceIdentity string `json:"provenance_identity"`
-	ContentVersionID   string `json:"content_version_id"`
-	ObservedAt         string `json:"observed_at"`
-	BasisRef           string `json:"basis_ref"`
+	ProvenanceIdentity string `json:"provenance_identity" db:"provenance_identity"`
+	ContentVersionID   string `json:"content_version_id" db:"content_version_id"`
+	ObservedAt         string `json:"observed_at" db:"observed_at"`
+	BasisRef           string `json:"basis_ref" db:"basis_ref"`
 }
 
-func exportProvenanceVersionBindings(
-	ctx context.Context, tx metadataQuerier, write metadataWrite,
-) error {
-	rows, err := tx.QueryContext(ctx, `SELECT provenance_identity,content_version_id,
-		observed_at,basis_ref FROM provenance_version_bindings
-		ORDER BY provenance_identity,content_version_id`)
-	if err != nil {
-		return fmt.Errorf("exporting provenance version bindings: %w", err)
-	}
-	defer func() { _ = rows.Close() }()
-	for rows.Next() {
-		record := metadataProvenanceVersionBinding{Type: metadataProvenanceVersionBindingType}
-		if err := rows.Scan(&record.ProvenanceIdentity, &record.ContentVersionID,
-			&record.ObservedAt, &record.BasisRef); err != nil {
-			return fmt.Errorf("scanning provenance version binding metadata: %w", err)
-		}
-		if err := validateProvenanceVersionBindingRecord(record); err != nil {
-			return fmt.Errorf("validating provenance version binding metadata for export: %w", err)
-		}
-		if err := write(record); err != nil {
-			return err
-		}
-	}
-	return rowsError(metadataProvenanceVersionBindingType, rows)
-}
-
-func importProvenanceVersionBinding(
-	ctx context.Context, tx *sql.Tx, record metadataProvenanceVersionBinding,
-) error {
-	if err := validateProvenanceVersionBindingRecord(record); err != nil {
-		return err
-	}
-	_, err := tx.ExecContext(ctx, `INSERT INTO provenance_version_bindings(
-		provenance_identity,content_version_id,observed_at,basis_ref
-	) VALUES(?,?,?,?)`, record.ProvenanceIdentity, record.ContentVersionID,
-		record.ObservedAt, record.BasisRef)
-	return err
-}
+var provenanceVersionBindingMetadata = newMetadataTable(metadataTable[metadataProvenanceVersionBinding]{
+	record: metadataProvenanceVersionBinding{Type: metadataProvenanceVersionBindingType},
+	table:  "provenance_version_bindings", suffix: "ORDER BY provenance_identity,content_version_id",
+	validate: validateProvenanceVersionBindingRecord, checkExport: true})
 
 func validateProvenanceVersionBindingRecord(record metadataProvenanceVersionBinding) error {
 	if record.Type != metadataProvenanceVersionBindingType {

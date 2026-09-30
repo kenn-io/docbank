@@ -383,6 +383,14 @@ lexicographically. The exception is provenance `original_mtime`: it records an
 external filesystem value using canonical UTC `RFC3339Nano`, matching ordinary
 ingestion, and is never used as a retention cutoff.
 
+Every backup record except the media records is described once by its Go
+struct: `json` tags give wire names and order, `db` tags give columns, and
+pointer fields are nullable. The shared codec in
+`internal/store/metadata_codec.go` builds each record's export query, INSERT
+and field checks from those tags, and its registry also supplies the tables a
+restore target must have empty. Records that need paging, joins, extra queries
+or import side effects register their own export or insert.
+
 Trash roots remain detached beneath the tree root in portable metadata. Their
 saved `trash_parent` may be absent when the original directory was hard-deleted;
 `trash_name` remains authoritative and restore then falls back to the tree root.

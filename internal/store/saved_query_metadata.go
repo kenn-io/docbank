@@ -2,63 +2,26 @@ package store
 
 import (
 	"bytes"
-	"context"
-	"database/sql"
 	"errors"
 	"fmt"
 )
 
 type metadataSavedQuery struct {
 	Type        string `json:"type"`
-	ID          string `json:"saved_query_id"`
-	Name        string `json:"name"`
-	Description string `json:"description"`
-	Kind        string `json:"kind"`
-	Payload     []byte `json:"payload" format:"byte"`
-	Fingerprint string `json:"fingerprint"`
-	Revision    int64  `json:"revision"`
-	CreatedAt   string `json:"created_at"`
-	UpdatedAt   string `json:"updated_at"`
+	ID          string `json:"saved_query_id" db:"id"`
+	Name        string `json:"name" db:"name"`
+	Description string `json:"description" db:"description"`
+	Kind        string `json:"kind" db:"kind"`
+	Payload     []byte `json:"payload" format:"byte" db:"payload"`
+	Fingerprint string `json:"fingerprint" db:"fingerprint"`
+	Revision    int64  `json:"revision" db:"revision"`
+	CreatedAt   string `json:"created_at" db:"created_at"`
+	UpdatedAt   string `json:"updated_at" db:"updated_at"`
 }
 
-func exportSavedQueries(ctx context.Context, tx metadataQuerier, write metadataWrite) error {
-	rows, err := tx.QueryContext(ctx, `SELECT
-		id,name,description,kind,payload,fingerprint,revision,created_at,updated_at
-		FROM saved_queries ORDER BY id`)
-	if err != nil {
-		return fmt.Errorf("exporting saved queries: %w", err)
-	}
-	defer func() { _ = rows.Close() }()
-	for rows.Next() {
-		record := metadataSavedQuery{Type: metadataSavedQueryType}
-		if err := rows.Scan(&record.ID, &record.Name, &record.Description, &record.Kind,
-			&record.Payload, &record.Fingerprint, &record.Revision, &record.CreatedAt,
-			&record.UpdatedAt); err != nil {
-			return fmt.Errorf("scanning saved query metadata: %w", err)
-		}
-		if err := validateSavedQueryMetadataRecord(record); err != nil {
-			return fmt.Errorf("validating saved query metadata for export: %w", err)
-		}
-		if err := write(record); err != nil {
-			return err
-		}
-	}
-	return rowsError("saved query", rows)
-}
-
-func importSavedQueryMetadata(
-	ctx context.Context, tx *sql.Tx, rawRecord metadataSavedQuery,
-) error {
-	if err := validateSavedQueryMetadataRecord(rawRecord); err != nil {
-		return err
-	}
-	_, err := tx.ExecContext(ctx, `INSERT INTO saved_queries(
-		id,name,description,kind,payload,fingerprint,revision,created_at,updated_at
-	) VALUES(?,?,?,?,?,?,?,?,?)`, rawRecord.ID, rawRecord.Name, rawRecord.Description,
-		rawRecord.Kind, rawRecord.Payload, rawRecord.Fingerprint, rawRecord.Revision,
-		rawRecord.CreatedAt, rawRecord.UpdatedAt)
-	return err
-}
+var savedQueryMetadata = newMetadataTable(metadataTable[metadataSavedQuery]{
+	record: metadataSavedQuery{Type: metadataSavedQueryType}, table: "saved_queries",
+	suffix: "ORDER BY id", validate: validateSavedQueryMetadataRecord, checkExport: true})
 
 func validateSavedQueryMetadataRecord(record metadataSavedQuery) error {
 	if record.Type != metadataSavedQueryType || record.Revision < 1 {

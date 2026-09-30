@@ -3,7 +3,6 @@ package store
 import (
 	"bytes"
 	"context"
-	"database/sql"
 	"encoding/json/v2"
 	"errors"
 	"fmt"
@@ -28,399 +27,157 @@ const (
 
 type metadataPerson struct {
 	Type              string `json:"type"`
-	PersonID          string `json:"person_id"`
-	DisplayName       string `json:"display_name"`
-	DisplayNameFolded string `json:"display_name_folded"`
-	Origin            string `json:"origin"`
-	State             string `json:"state"`
-	Revision          int64  `json:"revision"`
-	CreatedAt         string `json:"created_at"`
-	UpdatedAt         string `json:"updated_at"`
+	PersonID          string `json:"person_id" db:"person_id"`
+	DisplayName       string `json:"display_name" db:"display_name"`
+	DisplayNameFolded string `json:"display_name_folded" db:"display_name_folded"`
+	Origin            string `json:"origin" db:"origin"`
+	State             string `json:"state" db:"state"`
+	Revision          int64  `json:"revision" db:"revision"`
+	CreatedAt         string `json:"created_at" db:"created_at"`
+	UpdatedAt         string `json:"updated_at" db:"updated_at"`
 }
 
 type metadataPersonIdentity struct {
 	Type            string `json:"type"`
-	IdentityID      string `json:"identity_id"`
-	PersonID        string `json:"person_id"`
-	Kind            string `json:"kind"`
-	ValueNormalized string `json:"value_normalized"`
-	ValueDisplay    string `json:"value_display"`
-	ScopeKind       string `json:"scope_kind"`
-	ScopeValue      string `json:"scope_value"`
-	Normalization   string `json:"normalization"`
-	Origin          string `json:"origin"`
-	EvidenceKind    string `json:"evidence_kind"`
-	EvidenceID      string `json:"evidence_id"`
-	Confidence      string `json:"confidence"`
-	RecordedAt      string `json:"recorded_at"`
+	IdentityID      string `json:"identity_id" db:"identity_id"`
+	PersonID        string `json:"person_id" db:"person_id"`
+	Kind            string `json:"kind" db:"kind"`
+	ValueNormalized string `json:"value_normalized" db:"value_normalized"`
+	ValueDisplay    string `json:"value_display" db:"value_display"`
+	ScopeKind       string `json:"scope_kind" db:"scope_kind"`
+	ScopeValue      string `json:"scope_value" db:"scope_value"`
+	Normalization   string `json:"normalization" db:"normalization"`
+	Origin          string `json:"origin" db:"origin"`
+	EvidenceKind    string `json:"evidence_kind" db:"evidence_kind"`
+	EvidenceID      string `json:"evidence_id" db:"evidence_id"`
+	Confidence      string `json:"confidence" db:"confidence"`
+	RecordedAt      string `json:"recorded_at" db:"recorded_at"`
 }
 
 type metadataPersonExternalIdentity struct {
 	Type                string `json:"type"`
-	PersonID            string `json:"person_id"`
-	System              string `json:"system"`
-	ArchiveID           string `json:"archive_id"`
-	UID                 string `json:"uid"`
-	UIDKind             string `json:"uid_kind"`
-	UIDState            string `json:"uid_state"`
-	LastSeenRevision    *int64 `json:"last_seen_revision"`
-	DisplayNameSnapshot string `json:"display_name_snapshot"`
-	LinkedAt            string `json:"linked_at"`
-	UpdatedAt           string `json:"updated_at"`
+	PersonID            string `json:"person_id" db:"person_id"`
+	System              string `json:"system" db:"system"`
+	ArchiveID           string `json:"archive_id" db:"archive_id"`
+	UID                 string `json:"uid" db:"uid"`
+	UIDKind             string `json:"uid_kind" db:"uid_kind"`
+	UIDState            string `json:"uid_state" db:"uid_state"`
+	LastSeenRevision    *int64 `json:"last_seen_revision" db:"last_seen_revision"`
+	DisplayNameSnapshot string `json:"display_name_snapshot" db:"display_name_snapshot"`
+	LinkedAt            string `json:"linked_at" db:"linked_at"`
+	UpdatedAt           string `json:"updated_at" db:"updated_at"`
 }
 
 type metadataPersonExternalUIDAlias struct {
 	Type         string `json:"type"`
-	System       string `json:"system"`
-	ArchiveID    string `json:"archive_id"`
-	RetiredUID   string `json:"retired_uid"`
-	SurvivingUID string `json:"surviving_uid"`
-	ObservedAt   string `json:"observed_at"`
+	System       string `json:"system" db:"system"`
+	ArchiveID    string `json:"archive_id" db:"archive_id"`
+	RetiredUID   string `json:"retired_uid" db:"retired_uid"`
+	SurvivingUID string `json:"surviving_uid" db:"surviving_uid"`
+	ObservedAt   string `json:"observed_at" db:"observed_at"`
 }
 
 type metadataPersonAlias struct {
 	Type              string  `json:"type"`
-	RetiredPersonID   string  `json:"retired_person_id"`
-	SurvivingPersonID *string `json:"surviving_person_id"`
-	Reason            string  `json:"reason"`
-	RetiredAt         string  `json:"retired_at"`
+	RetiredPersonID   string  `json:"retired_person_id" db:"retired_person_id"`
+	SurvivingPersonID *string `json:"surviving_person_id" db:"surviving_person_id"`
+	Reason            string  `json:"reason" db:"reason"`
+	RetiredAt         string  `json:"retired_at" db:"retired_at"`
 }
 
 type metadataPersonMerge struct {
 	Type                   string `json:"type"`
-	MergeID                string `json:"merge_id"`
-	OperationID            string `json:"operation_id"`
-	RequestSHA256          string `json:"request_sha256"`
-	SurvivorPersonID       string `json:"survivor_person_id"`
-	AbsorbedPersonID       string `json:"absorbed_person_id"`
-	AbsorbedDisplayName    string `json:"absorbed_display_name"`
-	MovedJSON              []byte `json:"moved_json"`
-	SurvivorRevisionBefore int64  `json:"survivor_revision_before"`
-	SurvivorRevisionAfter  int64  `json:"survivor_revision_after"`
-	CreatedAt              string `json:"created_at"`
+	MergeID                string `json:"merge_id" db:"merge_id"`
+	OperationID            string `json:"operation_id" db:"operation_id"`
+	RequestSHA256          string `json:"request_sha256" db:"request_sha256"`
+	SurvivorPersonID       string `json:"survivor_person_id" db:"survivor_person_id"`
+	AbsorbedPersonID       string `json:"absorbed_person_id" db:"absorbed_person_id"`
+	AbsorbedDisplayName    string `json:"absorbed_display_name" db:"absorbed_display_name"`
+	MovedJSON              []byte `json:"moved_json" db:"moved_json"`
+	SurvivorRevisionBefore int64  `json:"survivor_revision_before" db:"survivor_revision_before"`
+	SurvivorRevisionAfter  int64  `json:"survivor_revision_after" db:"survivor_revision_after"`
+	CreatedAt              string `json:"created_at" db:"created_at"`
 }
 
 type metadataPersonSplit struct {
 	Type          string `json:"type"`
-	OperationID   string `json:"operation_id"`
-	RequestSHA256 string `json:"request_sha256"`
-	ReceiptJSON   []byte `json:"receipt_json"`
-	CreatedAt     string `json:"created_at"`
+	OperationID   string `json:"operation_id" db:"operation_id"`
+	RequestSHA256 string `json:"request_sha256" db:"request_sha256"`
+	ReceiptJSON   []byte `json:"receipt_json" db:"receipt_json"`
+	CreatedAt     string `json:"created_at" db:"created_at"`
 }
 
 type metadataCustodianAssignment struct {
 	Type             string  `json:"type"`
-	AssignmentID     string  `json:"assignment_id"`
-	ScopeKind        string  `json:"scope_kind"`
-	IngestID         *string `json:"ingest_id"`
-	PackageID        *string `json:"package_id"`
-	PackageRecordID  *string `json:"package_record_id"`
-	NodeID           *int64  `json:"node_id"`
-	ContentVersionID *string `json:"content_version_id"`
-	PersonID         *string `json:"person_id"`
-	RawLabel         string  `json:"raw_label"`
-	RawLabelFolded   string  `json:"raw_label_folded"`
-	Rank             string  `json:"rank"`
-	Basis            string  `json:"basis"`
-	SourceRef        string  `json:"source_ref"`
-	Revision         int64   `json:"revision"`
-	RecordedAt       string  `json:"recorded_at"`
-	RetiredAt        *string `json:"retired_at"`
+	AssignmentID     string  `json:"assignment_id" db:"assignment_id"`
+	ScopeKind        string  `json:"scope_kind" db:"scope_kind"`
+	IngestID         *string `json:"ingest_id" db:"ingest_id"`
+	PackageID        *string `json:"package_id" db:"package_id"`
+	PackageRecordID  *string `json:"package_record_id" db:"package_record_id"`
+	NodeID           *int64  `json:"node_id" db:"node_id"`
+	ContentVersionID *string `json:"content_version_id" db:"content_version_id"`
+	PersonID         *string `json:"person_id" db:"person_id"`
+	RawLabel         string  `json:"raw_label" db:"raw_label"`
+	RawLabelFolded   string  `json:"raw_label_folded" db:"raw_label_folded"`
+	Rank             string  `json:"rank" db:"rank"`
+	Basis            string  `json:"basis" db:"basis"`
+	SourceRef        string  `json:"source_ref" db:"source_ref"`
+	Revision         int64   `json:"revision" db:"revision"`
+	RecordedAt       string  `json:"recorded_at" db:"recorded_at"`
+	RetiredAt        *string `json:"retired_at" db:"retired_at"`
 }
 
 type metadataPersonDocumentAssertion struct {
 	Type             string `json:"type"`
-	AssertionID      string `json:"assertion_id"`
-	ContentVersionID string `json:"content_version_id"`
-	PersonID         string `json:"person_id"`
-	Role             string `json:"role"`
-	Action           string `json:"action"`
-	Note             string `json:"note"`
-	RecordedAt       string `json:"recorded_at"`
-	Revision         int64  `json:"revision"`
+	AssertionID      string `json:"assertion_id" db:"assertion_id"`
+	ContentVersionID string `json:"content_version_id" db:"content_version_id"`
+	PersonID         string `json:"person_id" db:"person_id"`
+	Role             string `json:"role" db:"role"`
+	Action           string `json:"action" db:"action"`
+	Note             string `json:"note" db:"note"`
+	RecordedAt       string `json:"recorded_at" db:"recorded_at"`
+	Revision         int64  `json:"revision" db:"revision"`
 }
 
 type metadataPersonMatchCandidate struct {
 	Type              string  `json:"type"`
-	CandidateID       string  `json:"candidate_id"`
-	ActorKey          string  `json:"actor_key"`
-	DisplayName       string  `json:"display_name"`
-	SuggestedPersonID *string `json:"suggested_person_id"`
-	Reason            string  `json:"reason"`
-	EvidenceJSON      []byte  `json:"evidence_json"`
-	EvidenceSHA256    string  `json:"evidence_sha256"`
-	OccurrenceCount   int64   `json:"occurrence_count"`
-	Revision          int64   `json:"revision"`
-	State             string  `json:"state"`
-	DecidedPersonID   *string `json:"decided_person_id"`
-	CreatedAt         string  `json:"created_at"`
-	DecidedAt         *string `json:"decided_at"`
+	CandidateID       string  `json:"candidate_id" db:"candidate_id"`
+	ActorKey          string  `json:"actor_key" db:"actor_key"`
+	DisplayName       string  `json:"display_name" db:"display_name"`
+	SuggestedPersonID *string `json:"suggested_person_id" db:"suggested_person_id"`
+	Reason            string  `json:"reason" db:"reason"`
+	EvidenceJSON      []byte  `json:"evidence_json" db:"evidence_json"`
+	EvidenceSHA256    string  `json:"evidence_sha256" db:"evidence_sha256"`
+	OccurrenceCount   int64   `json:"occurrence_count" db:"occurrence_count"`
+	Revision          int64   `json:"revision" db:"revision"`
+	State             string  `json:"state" db:"state"`
+	DecidedPersonID   *string `json:"decided_person_id" db:"decided_person_id"`
+	CreatedAt         string  `json:"created_at" db:"created_at"`
+	DecidedAt         *string `json:"decided_at" db:"decided_at"`
 }
 
-var personMetadataRequiredFields = map[string][]string{
-	metadataPersonType:              {metadataTypeField, "person_id", "display_name", "display_name_folded", "origin", "state", metadataRevisionField, metadataCreatedAtField, "updated_at"},
-	metadataPersonIdentityType:      {metadataTypeField, "identity_id", "person_id", "kind", "value_normalized", "value_display", "scope_kind", "scope_value", "normalization", "origin", "evidence_kind", "evidence_id", "confidence", "recorded_at"},
-	metadataPersonExternalType:      {metadataTypeField, "person_id", "system", "archive_id", "uid", "uid_kind", "uid_state", "last_seen_revision", "display_name_snapshot", "linked_at", "updated_at"},
-	metadataPersonExternalAliasType: {metadataTypeField, "system", "archive_id", "retired_uid", "surviving_uid", "observed_at"},
-	metadataPersonAliasType:         {metadataTypeField, "retired_person_id", "surviving_person_id", "reason", "retired_at"},
-	metadataPersonMergeType:         {metadataTypeField, "merge_id", "operation_id", "request_sha256", "survivor_person_id", "absorbed_person_id", "absorbed_display_name", "moved_json", "survivor_revision_before", "survivor_revision_after", metadataCreatedAtField},
-	metadataPersonSplitType:         {metadataTypeField, "operation_id", "request_sha256", "receipt_json", metadataCreatedAtField},
-	metadataCustodianAssignmentType: {metadataTypeField, "assignment_id", "scope_kind", metadataIngestIDField, "package_id", "package_record_id", "node_id", metadataContentVersionIDField, "person_id", "raw_label", "raw_label_folded", "rank", "basis", "source_ref", metadataRevisionField, "recorded_at", "retired_at"},
-	metadataPersonAssertionType:     {metadataTypeField, "assertion_id", metadataContentVersionIDField, "person_id", "role", "action", "note", "recorded_at", metadataRevisionField},
-	metadataPersonCandidateType:     {metadataTypeField, "candidate_id", "actor_key", "display_name", "suggested_person_id", "reason", "evidence_json", "evidence_sha256", "occurrence_count", metadataRevisionField, "state", "decided_person_id", metadataCreatedAtField, "decided_at"},
-}
-
-var personMetadataNullableFields = map[string]map[string]bool{
-	metadataPersonExternalType: {"last_seen_revision": true},
-	metadataPersonAliasType:    {"surviving_person_id": true},
-	metadataCustodianAssignmentType: {
-		metadataIngestIDField: true, "package_id": true, "package_record_id": true,
-		"node_id": true, metadataContentVersionIDField: true, "person_id": true, "retired_at": true,
-	},
-	metadataPersonCandidateType: {
-		"suggested_person_id": true, "decided_person_id": true, "decided_at": true,
-	},
-}
-
-func isPersonMetadataType(kind string) bool {
-	_, ok := personMetadataRequiredFields[kind]
-	return ok
-}
-
-func exportPersonMetadata(ctx context.Context, q metadataQuerier, write metadataWrite) error {
-	exporters := []func(context.Context, metadataQuerier, metadataWrite) error{
-		exportPersons, exportPersonIdentities, exportPersonExternalIdentities,
-		exportPersonExternalUIDAliases, exportPersonAliases, exportPersonMerges,
-		exportPersonSplits, exportCustodianAssignments, exportPersonAssertions,
-		exportPersonCandidates,
-	}
-	for _, export := range exporters {
-		if err := export(ctx, q, write); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-func exportPersons(ctx context.Context, q metadataQuerier, write metadataWrite) error {
-	rows, err := q.QueryContext(ctx, `SELECT person_id,display_name,display_name_folded,origin,state,revision,created_at,updated_at FROM persons ORDER BY person_id`)
-	if err != nil {
-		return fmt.Errorf("exporting persons: %w", err)
-	}
-	defer func() { _ = rows.Close() }()
-	for rows.Next() {
-		r := metadataPerson{Type: metadataPersonType}
-		if err := rows.Scan(&r.PersonID, &r.DisplayName, &r.DisplayNameFolded, &r.Origin, &r.State, &r.Revision, &r.CreatedAt, &r.UpdatedAt); err != nil {
-			return err
-		}
-		if err := validateMetadataPerson(r); err != nil {
-			return err
-		}
-		if err := write(r); err != nil {
-			return err
-		}
-	}
-	return rows.Err()
-}
-
-func exportPersonIdentities(ctx context.Context, q metadataQuerier, write metadataWrite) error {
-	rows, err := q.QueryContext(ctx, `SELECT identity_id,person_id,kind,value_normalized,value_display,scope_kind,scope_value,normalization,origin,evidence_kind,evidence_id,confidence,recorded_at FROM person_identities ORDER BY identity_id`)
-	if err != nil {
-		return fmt.Errorf("exporting person identities: %w", err)
-	}
-	defer func() { _ = rows.Close() }()
-	for rows.Next() {
-		r := metadataPersonIdentity{Type: metadataPersonIdentityType}
-		if err := rows.Scan(&r.IdentityID, &r.PersonID, &r.Kind, &r.ValueNormalized, &r.ValueDisplay, &r.ScopeKind, &r.ScopeValue, &r.Normalization, &r.Origin, &r.EvidenceKind, &r.EvidenceID, &r.Confidence, &r.RecordedAt); err != nil {
-			return err
-		}
-		if err := validateMetadataPersonIdentity(r); err != nil {
-			return err
-		}
-		if err := write(r); err != nil {
-			return err
-		}
-	}
-	return rows.Err()
-}
-
-func exportPersonExternalIdentities(ctx context.Context, q metadataQuerier, write metadataWrite) error {
-	rows, err := q.QueryContext(ctx, `SELECT person_id,system,archive_id,uid,uid_kind,uid_state,last_seen_revision,display_name_snapshot,linked_at,updated_at FROM person_external_identities ORDER BY system,archive_id,uid`)
-	if err != nil {
-		return fmt.Errorf("exporting person external identities: %w", err)
-	}
-	defer func() { _ = rows.Close() }()
-	for rows.Next() {
-		r := metadataPersonExternalIdentity{Type: metadataPersonExternalType}
-		var revision sql.NullInt64
-		if err := rows.Scan(&r.PersonID, &r.System, &r.ArchiveID, &r.UID, &r.UIDKind, &r.UIDState, &revision, &r.DisplayNameSnapshot, &r.LinkedAt, &r.UpdatedAt); err != nil {
-			return err
-		}
-		r.LastSeenRevision = int64Ptr(revision)
-		if err := validateMetadataPersonExternalIdentity(r); err != nil {
-			return err
-		}
-		if err := write(r); err != nil {
-			return err
-		}
-	}
-	return rows.Err()
-}
-
-func exportPersonExternalUIDAliases(ctx context.Context, q metadataQuerier, write metadataWrite) error {
-	rows, err := q.QueryContext(ctx, `SELECT system,archive_id,retired_uid,surviving_uid,observed_at FROM person_external_uid_aliases ORDER BY system,archive_id,retired_uid`)
-	if err != nil {
-		return fmt.Errorf("exporting person external UID aliases: %w", err)
-	}
-	defer func() { _ = rows.Close() }()
-	for rows.Next() {
-		r := metadataPersonExternalUIDAlias{Type: metadataPersonExternalAliasType}
-		if err := rows.Scan(&r.System, &r.ArchiveID, &r.RetiredUID, &r.SurvivingUID, &r.ObservedAt); err != nil {
-			return err
-		}
-		if err := validateMetadataPersonExternalUIDAlias(r); err != nil {
-			return err
-		}
-		if err := write(r); err != nil {
-			return err
-		}
-	}
-	return rows.Err()
-}
-
-func exportPersonAliases(ctx context.Context, q metadataQuerier, write metadataWrite) error {
-	rows, err := q.QueryContext(ctx, `SELECT retired_person_id,surviving_person_id,reason,retired_at FROM person_aliases ORDER BY retired_person_id`)
-	if err != nil {
-		return fmt.Errorf("exporting person aliases: %w", err)
-	}
-	defer func() { _ = rows.Close() }()
-	for rows.Next() {
-		r := metadataPersonAlias{Type: metadataPersonAliasType}
-		var survivor sql.NullString
-		if err := rows.Scan(&r.RetiredPersonID, &survivor, &r.Reason, &r.RetiredAt); err != nil {
-			return err
-		}
-		r.SurvivingPersonID = stringPtr(survivor)
-		if err := validateMetadataPersonAlias(r); err != nil {
-			return err
-		}
-		if err := write(r); err != nil {
-			return err
-		}
-	}
-	return rows.Err()
-}
-
-func exportPersonMerges(ctx context.Context, q metadataQuerier, write metadataWrite) error {
-	rows, err := q.QueryContext(ctx, `SELECT merge_id,operation_id,request_sha256,survivor_person_id,absorbed_person_id,absorbed_display_name,moved_json,survivor_revision_before,survivor_revision_after,created_at FROM person_merges ORDER BY merge_id`)
-	if err != nil {
-		return fmt.Errorf("exporting person merges: %w", err)
-	}
-	defer func() { _ = rows.Close() }()
-	for rows.Next() {
-		r := metadataPersonMerge{Type: metadataPersonMergeType}
-		if err := rows.Scan(&r.MergeID, &r.OperationID, &r.RequestSHA256, &r.SurvivorPersonID, &r.AbsorbedPersonID, &r.AbsorbedDisplayName, &r.MovedJSON, &r.SurvivorRevisionBefore, &r.SurvivorRevisionAfter, &r.CreatedAt); err != nil {
-			return err
-		}
-		if err := validateMetadataPersonMerge(r); err != nil {
-			return err
-		}
-		if err := write(r); err != nil {
-			return err
-		}
-	}
-	return rows.Err()
-}
-
-func exportPersonSplits(ctx context.Context, q metadataQuerier, write metadataWrite) error {
-	rows, err := q.QueryContext(ctx, `SELECT operation_id,request_sha256,receipt_json,created_at FROM person_splits ORDER BY operation_id`)
-	if err != nil {
-		return fmt.Errorf("exporting person splits: %w", err)
-	}
-	defer func() { _ = rows.Close() }()
-	for rows.Next() {
-		r := metadataPersonSplit{Type: metadataPersonSplitType}
-		if err := rows.Scan(&r.OperationID, &r.RequestSHA256, &r.ReceiptJSON, &r.CreatedAt); err != nil {
-			return err
-		}
-		if err := validateMetadataPersonSplit(r); err != nil {
-			return err
-		}
-		if err := write(r); err != nil {
-			return err
-		}
-	}
-	return rows.Err()
-}
-
-func exportCustodianAssignments(ctx context.Context, q metadataQuerier, write metadataWrite) error {
-	rows, err := q.QueryContext(ctx, `SELECT assignment_id,scope_kind,ingest_id,package_id,package_record_id,node_id,content_version_id,person_id,raw_label,raw_label_folded,rank,basis,source_ref,revision,recorded_at,retired_at FROM custodian_assignments ORDER BY assignment_id`)
-	if err != nil {
-		return fmt.Errorf("exporting custodian assignments: %w", err)
-	}
-	defer func() { _ = rows.Close() }()
-	for rows.Next() {
-		r := metadataCustodianAssignment{Type: metadataCustodianAssignmentType}
-		var ingest, packageID, packageRecord, version, person, retired sql.NullString
-		var node sql.NullInt64
-		if err := rows.Scan(&r.AssignmentID, &r.ScopeKind, &ingest, &packageID, &packageRecord, &node, &version, &person, &r.RawLabel, &r.RawLabelFolded, &r.Rank, &r.Basis, &r.SourceRef, &r.Revision, &r.RecordedAt, &retired); err != nil {
-			return err
-		}
-		r.IngestID, r.PackageID, r.PackageRecordID = stringPtr(ingest), stringPtr(packageID), stringPtr(packageRecord)
-		r.NodeID, r.ContentVersionID, r.PersonID = int64Ptr(node), stringPtr(version), stringPtr(person)
-		r.RetiredAt = stringPtr(retired)
-		if err := validateMetadataCustodianAssignment(r); err != nil {
-			return err
-		}
-		if err := write(r); err != nil {
-			return err
-		}
-	}
-	return rows.Err()
-}
-
-func exportPersonAssertions(ctx context.Context, q metadataQuerier, write metadataWrite) error {
-	rows, err := q.QueryContext(ctx, `SELECT assertion_id,content_version_id,person_id,role,action,note,recorded_at,revision FROM person_document_assertions ORDER BY assertion_id`)
-	if err != nil {
-		return fmt.Errorf("exporting person assertions: %w", err)
-	}
-	defer func() { _ = rows.Close() }()
-	for rows.Next() {
-		r := metadataPersonDocumentAssertion{Type: metadataPersonAssertionType}
-		if err := rows.Scan(&r.AssertionID, &r.ContentVersionID, &r.PersonID, &r.Role, &r.Action, &r.Note, &r.RecordedAt, &r.Revision); err != nil {
-			return err
-		}
-		if err := validateMetadataPersonAssertion(r); err != nil {
-			return err
-		}
-		if err := write(r); err != nil {
-			return err
-		}
-	}
-	return rows.Err()
-}
-
-func exportPersonCandidates(ctx context.Context, q metadataQuerier, write metadataWrite) error {
-	rows, err := q.QueryContext(ctx, `SELECT candidate_id,actor_key,display_name,suggested_person_id,reason,evidence_json,evidence_sha256,occurrence_count,revision,state,decided_person_id,created_at,decided_at FROM person_match_candidates ORDER BY candidate_id`)
-	if err != nil {
-		return fmt.Errorf("exporting person candidates: %w", err)
-	}
-	defer func() { _ = rows.Close() }()
-	for rows.Next() {
-		r := metadataPersonMatchCandidate{Type: metadataPersonCandidateType}
-		var suggested, decided, decidedAt sql.NullString
-		if err := rows.Scan(&r.CandidateID, &r.ActorKey, &r.DisplayName, &suggested, &r.Reason, &r.EvidenceJSON, &r.EvidenceSHA256, &r.OccurrenceCount, &r.Revision, &r.State, &decided, &r.CreatedAt, &decidedAt); err != nil {
-			return err
-		}
-		r.SuggestedPersonID, r.DecidedPersonID, r.DecidedAt = stringPtr(suggested), stringPtr(decided), stringPtr(decidedAt)
-		if err := validateMetadataPersonCandidate(r); err != nil {
-			return err
-		}
-		if err := write(r); err != nil {
-			return err
-		}
-	}
-	return rows.Err()
+// personMetadataTables exports the person records in dependency order.
+var personMetadataTables = []metadataRecordCodec{
+	newMetadataTable(metadataTable[metadataPerson]{record: metadataPerson{Type: metadataPersonType}, table: "persons",
+		suffix: "ORDER BY person_id", validate: validateMetadataPerson, checkExport: true}),
+	newMetadataTable(metadataTable[metadataPersonIdentity]{record: metadataPersonIdentity{Type: metadataPersonIdentityType}, table: "person_identities",
+		suffix: "ORDER BY identity_id", validate: validateMetadataPersonIdentity, checkExport: true}),
+	newMetadataTable(metadataTable[metadataPersonExternalIdentity]{record: metadataPersonExternalIdentity{Type: metadataPersonExternalType}, table: "person_external_identities",
+		suffix: "ORDER BY system,archive_id,uid", validate: validateMetadataPersonExternalIdentity, checkExport: true}),
+	newMetadataTable(metadataTable[metadataPersonExternalUIDAlias]{record: metadataPersonExternalUIDAlias{Type: metadataPersonExternalAliasType}, table: "person_external_uid_aliases",
+		suffix: "ORDER BY system,archive_id,retired_uid", validate: validateMetadataPersonExternalUIDAlias, checkExport: true}),
+	newMetadataTable(metadataTable[metadataPersonAlias]{record: metadataPersonAlias{Type: metadataPersonAliasType}, table: "person_aliases",
+		suffix: "ORDER BY retired_person_id", validate: validateMetadataPersonAlias, checkExport: true}),
+	newMetadataTable(metadataTable[metadataPersonMerge]{record: metadataPersonMerge{Type: metadataPersonMergeType}, table: "person_merges",
+		suffix: "ORDER BY merge_id", validate: validateMetadataPersonMerge, checkExport: true}),
+	newMetadataTable(metadataTable[metadataPersonSplit]{record: metadataPersonSplit{Type: metadataPersonSplitType}, table: "person_splits",
+		suffix: "ORDER BY operation_id", validate: validateMetadataPersonSplit, checkExport: true}),
+	newMetadataTable(metadataTable[metadataCustodianAssignment]{record: metadataCustodianAssignment{Type: metadataCustodianAssignmentType}, table: "custodian_assignments",
+		suffix: "ORDER BY assignment_id", validate: validateMetadataCustodianAssignment, checkExport: true}),
+	newMetadataTable(metadataTable[metadataPersonDocumentAssertion]{record: metadataPersonDocumentAssertion{Type: metadataPersonAssertionType}, table: "person_document_assertions",
+		suffix: "ORDER BY assertion_id", validate: validateMetadataPersonAssertion, checkExport: true}),
+	newMetadataTable(metadataTable[metadataPersonMatchCandidate]{record: metadataPersonMatchCandidate{Type: metadataPersonCandidateType}, table: "person_match_candidates",
+		suffix: "ORDER BY candidate_id", validate: validateMetadataPersonCandidate, checkExport: true}),
 }
 
 func validateMetadataPerson(r metadataPerson) error {
@@ -676,123 +433,11 @@ func validateUniqueMetadataUUIDs(ids []string) error {
 	return nil
 }
 
-func importPersonMetadataRecord(ctx context.Context, tx *sql.Tx, kind string, raw []byte) error {
-	switch kind {
-	case metadataPersonType:
-		var r metadataPerson
-		if err := decodeMetadataRecord(raw, &r); err != nil {
-			return err
-		}
-		if err := validateMetadataPerson(r); err != nil {
-			return err
-		}
-		_, err := tx.ExecContext(ctx, `INSERT INTO persons(person_id,display_name,display_name_folded,origin,state,revision,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?)`, r.PersonID, r.DisplayName, r.DisplayNameFolded, r.Origin, r.State, r.Revision, r.CreatedAt, r.UpdatedAt)
-		return err
-	case metadataPersonIdentityType:
-		var r metadataPersonIdentity
-		if err := decodeMetadataRecord(raw, &r); err != nil {
-			return err
-		}
-		if err := validateMetadataPersonIdentity(r); err != nil {
-			return err
-		}
-		_, err := tx.ExecContext(ctx, `INSERT INTO person_identities(identity_id,person_id,kind,value_normalized,value_display,scope_kind,scope_value,normalization,origin,evidence_kind,evidence_id,confidence,recorded_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)`, r.IdentityID, r.PersonID, r.Kind, r.ValueNormalized, r.ValueDisplay, r.ScopeKind, r.ScopeValue, r.Normalization, r.Origin, r.EvidenceKind, r.EvidenceID, r.Confidence, r.RecordedAt)
-		return err
-	case metadataPersonExternalType:
-		var r metadataPersonExternalIdentity
-		if err := decodeMetadataRecord(raw, &r); err != nil {
-			return err
-		}
-		if err := validateMetadataPersonExternalIdentity(r); err != nil {
-			return err
-		}
-		_, err := tx.ExecContext(ctx, `INSERT INTO person_external_identities(person_id,system,archive_id,uid,uid_kind,uid_state,last_seen_revision,display_name_snapshot,linked_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?)`, r.PersonID, r.System, r.ArchiveID, r.UID, r.UIDKind, r.UIDState, r.LastSeenRevision, r.DisplayNameSnapshot, r.LinkedAt, r.UpdatedAt)
-		return err
-	case metadataPersonExternalAliasType:
-		var r metadataPersonExternalUIDAlias
-		if err := decodeMetadataRecord(raw, &r); err != nil {
-			return err
-		}
-		if err := validateMetadataPersonExternalUIDAlias(r); err != nil {
-			return err
-		}
-		_, err := tx.ExecContext(ctx, `INSERT INTO person_external_uid_aliases(system,archive_id,retired_uid,surviving_uid,observed_at) VALUES(?,?,?,?,?)`, r.System, r.ArchiveID, r.RetiredUID, r.SurvivingUID, r.ObservedAt)
-		return err
-	case metadataPersonAliasType:
-		var r metadataPersonAlias
-		if err := decodeMetadataRecord(raw, &r); err != nil {
-			return err
-		}
-		if err := validateMetadataPersonAlias(r); err != nil {
-			return err
-		}
-		_, err := tx.ExecContext(ctx, `INSERT INTO person_aliases(retired_person_id,surviving_person_id,reason,retired_at) VALUES(?,?,?,?)`, r.RetiredPersonID, r.SurvivingPersonID, r.Reason, r.RetiredAt)
-		return err
-	default:
-		return importPersonDecisionMetadataRecord(ctx, tx, kind, raw)
-	}
-}
-
-func importPersonDecisionMetadataRecord(ctx context.Context, tx *sql.Tx, kind string, raw []byte) error {
-	switch kind {
-	case metadataPersonMergeType:
-		var r metadataPersonMerge
-		if err := decodeMetadataRecord(raw, &r); err != nil {
-			return err
-		}
-		if err := validateMetadataPersonMerge(r); err != nil {
-			return err
-		}
-		_, err := tx.ExecContext(ctx, `INSERT INTO person_merges(merge_id,operation_id,request_sha256,survivor_person_id,absorbed_person_id,absorbed_display_name,moved_json,survivor_revision_before,survivor_revision_after,created_at) VALUES(?,?,?,?,?,?,?,?,?,?)`, r.MergeID, r.OperationID, r.RequestSHA256, r.SurvivorPersonID, r.AbsorbedPersonID, r.AbsorbedDisplayName, r.MovedJSON, r.SurvivorRevisionBefore, r.SurvivorRevisionAfter, r.CreatedAt)
-		return err
-	case metadataPersonSplitType:
-		var r metadataPersonSplit
-		if err := decodeMetadataRecord(raw, &r); err != nil {
-			return err
-		}
-		if err := validateMetadataPersonSplit(r); err != nil {
-			return err
-		}
-		_, err := tx.ExecContext(ctx, `INSERT INTO person_splits(operation_id,request_sha256,receipt_json,created_at) VALUES(?,?,?,?)`, r.OperationID, r.RequestSHA256, r.ReceiptJSON, r.CreatedAt)
-		return err
-	case metadataCustodianAssignmentType:
-		var r metadataCustodianAssignment
-		if err := decodeMetadataRecord(raw, &r); err != nil {
-			return err
-		}
-		if err := validateMetadataCustodianAssignment(r); err != nil {
-			return err
-		}
-		_, err := tx.ExecContext(ctx, `INSERT INTO custodian_assignments(assignment_id,scope_kind,ingest_id,package_id,package_record_id,node_id,content_version_id,person_id,raw_label,raw_label_folded,rank,basis,source_ref,revision,recorded_at,retired_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, r.AssignmentID, r.ScopeKind, r.IngestID, r.PackageID, r.PackageRecordID, r.NodeID, r.ContentVersionID, r.PersonID, r.RawLabel, r.RawLabelFolded, r.Rank, r.Basis, r.SourceRef, r.Revision, r.RecordedAt, r.RetiredAt)
-		return err
-	case metadataPersonAssertionType:
-		var r metadataPersonDocumentAssertion
-		if err := decodeMetadataRecord(raw, &r); err != nil {
-			return err
-		}
-		if err := validateMetadataPersonAssertion(r); err != nil {
-			return err
-		}
-		_, err := tx.ExecContext(ctx, `INSERT INTO person_document_assertions(assertion_id,content_version_id,person_id,role,action,note,recorded_at,revision) VALUES(?,?,?,?,?,?,?,?)`, r.AssertionID, r.ContentVersionID, r.PersonID, r.Role, r.Action, r.Note, r.RecordedAt, r.Revision)
-		return err
-	case metadataPersonCandidateType:
-		var r metadataPersonMatchCandidate
-		if err := decodeMetadataRecord(raw, &r); err != nil {
-			return err
-		}
-		if err := validateMetadataPersonCandidate(r); err != nil {
-			return err
-		}
-		_, err := tx.ExecContext(ctx, `INSERT INTO person_match_candidates(candidate_id,actor_key,display_name,suggested_person_id,reason,evidence_json,evidence_sha256,occurrence_count,revision,state,decided_person_id,created_at,decided_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)`, r.CandidateID, r.ActorKey, r.DisplayName, r.SuggestedPersonID, r.Reason, r.EvidenceJSON, r.EvidenceSHA256, r.OccurrenceCount, r.Revision, r.State, r.DecidedPersonID, r.CreatedAt, r.DecidedAt)
-		return err
-	default:
-		return fmt.Errorf("unknown person metadata type %q", kind)
-	}
-}
-
 func validatePersonMetadataState(ctx context.Context, q metadataQuerier) error {
-	if err := exportPersonMetadata(ctx, q, func(any) error { return nil }); err != nil {
-		return fmt.Errorf("validating person metadata records: %w", err)
+	for _, table := range personMetadataTables {
+		if err := table.validateRows(ctx, q); err != nil {
+			return fmt.Errorf("validating person metadata records: %w", err)
+		}
 	}
 	// Receipts and candidate evidence describe past edits. Later merges, retirement,
 	// identity removal, or version deletion do not invalidate retained history.
