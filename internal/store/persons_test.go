@@ -147,7 +147,7 @@ func TestPersonMutationReturnsCommittedRevision(t *testing.T) {
 	require.Equal(t, int64(2), updatedResult.person.Revision)
 }
 
-func TestPersonDetailResolvesAliasAndReadsOneSnapshot(t *testing.T) {
+func TestPersonDetailResolvesAlias(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()

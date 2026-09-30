@@ -262,8 +262,12 @@ func (s *Store) ResolveExternalPersonUID(ctx context.Context, system, archiveID,
 	return result, tx.Commit()
 }
 
-func personExternalIdentitiesTx(ctx context.Context, q metadataQuerier, personID string) ([]PersonExternalIdentity, error) {
-	rows, err := q.QueryContext(ctx, `SELECT person_id,system,archive_id,uid,uid_kind,uid_state,last_seen_revision,display_name_snapshot,linked_at,updated_at FROM person_external_identities WHERE person_id=? ORDER BY system,archive_id,uid`, personID)
+func (s *Store) PersonExternalIdentities(ctx context.Context, personID string) ([]PersonExternalIdentity, error) {
+	person, _, err := s.PersonByID(ctx, personID)
+	if err != nil {
+		return nil, err
+	}
+	rows, err := s.db.QueryContext(ctx, `SELECT person_id,system,archive_id,uid,uid_kind,uid_state,last_seen_revision,display_name_snapshot,linked_at,updated_at FROM person_external_identities WHERE person_id=? ORDER BY system,archive_id,uid`, person.PersonID)
 	if err != nil {
 		return nil, err
 	}
@@ -281,14 +285,6 @@ func personExternalIdentitiesTx(ctx context.Context, q metadataQuerier, personID
 		items = append(items, item)
 	}
 	return items, rows.Err()
-}
-
-func (s *Store) PersonExternalIdentities(ctx context.Context, personID string) ([]PersonExternalIdentity, error) {
-	person, _, err := personByIDTx(ctx, s.db, personID)
-	if err != nil {
-		return nil, err
-	}
-	return personExternalIdentitiesTx(ctx, s.db, person.PersonID)
 }
 
 func (s *Store) ActorKeysForPerson(ctx context.Context, request PersonActorKeysRequest) (PersonActorKeyPage, error) {
