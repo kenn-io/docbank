@@ -197,16 +197,17 @@ docbank people show <person-id>
 docbank people create <display-name>
 docbank people rename <person-id> <display-name> --revision REV
 docbank people retire <person-id> --revision REV
-docbank people merge <survivor-id> <absorbed-id> --revision REV --absorbed-revision REV
-docbank people split <person-id> --revision REV --display-name NAME [--identity ID] [--assignment ID] [--external JSON]
+docbank people merge <survivor-id> <absorbed-id> --revision REV --absorbed-revision REV [--operation-id UUID]
+docbank people split <person-id> --revision REV --display-name NAME [--identity ID] [--assignment ID] [--external JSON] [--operation-id UUID]
 ```
 
 Person commands use the daemon API and emit the same JSON records as the HTTP
 client. List accepts a folded display-name prefix. `show` includes identity,
 external UID, and revision data needed to choose split members. Mutations use
 the explicit revision supplied by the caller. The merge and split operation
-IDs make retries replayable. The CLI generates an operation ID when you omit
-one. A split needs at least one identity, assignment, or external UID.
+IDs make retries replayable. When you omit one, the CLI generates it and
+prints it to stderr before the request. A split needs at least one identity,
+assignment, or external UID.
 
 ## docbank stat
 

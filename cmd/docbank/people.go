@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json/v2"
 	"errors"
+	"fmt"
 	"uuid"
 
 	"github.com/spf13/cobra"
@@ -140,6 +141,10 @@ var peopleMergeCmd = &cobra.Command{
 		operationID := peopleMergeOperationID
 		if operationID == "" {
 			operationID = uuid.NewV4().String()
+			// Printed before the request so a retry after a lost response can replay the receipt.
+			if _, err := fmt.Fprintf(cmd.ErrOrStderr(), "operation ID %s (pass --operation-id %s to retry)\n", operationID, operationID); err != nil {
+				return fmt.Errorf("writing merge operation ID: %w", err)
+			}
 		}
 		c, err := daemonconn.Ensure(cmd.Context())
 		if err != nil {
@@ -178,6 +183,10 @@ var peopleSplitCmd = &cobra.Command{
 		operationID := peopleSplitOperationID
 		if operationID == "" {
 			operationID = uuid.NewV4().String()
+			// Printed before the request so a retry after a lost response can replay the receipt.
+			if _, err := fmt.Fprintf(cmd.ErrOrStderr(), "operation ID %s (pass --operation-id %s to retry)\n", operationID, operationID); err != nil {
+				return fmt.Errorf("writing split operation ID: %w", err)
+			}
 		}
 		c, err := daemonconn.Ensure(cmd.Context())
 		if err != nil {
