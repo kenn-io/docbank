@@ -12,6 +12,7 @@ import (
 	"io"
 	"mime"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"sync/atomic"
@@ -195,8 +196,13 @@ func TestExportAPIWorkerVerifiedTicketPreservesRetainedArchive(t *testing.T) {
 		ticket, err := client.DownloadExportArchive(t.Context(), &apiclient.DownloadExportArchiveRequestOptions{PathParams: &apiclient.DownloadExportArchivePath{ID: job.ID}, Body: &bundle.DownloadRequest{Basename: name}})
 		require.NoError(t, err)
 		require.Equal(t, job.Receipt, &ticket.Receipt)
-		resp, err := ts.Client().Get(ts.URL + ticket.URL)
-		require.NoError(t, err)
+		// Finish the handler and its lease cleanup before later removing the
+		// archive. Reading the HTTP body alone does not wait for server defers.
+		request := httptest.NewRequest(http.MethodGet, ts.URL+ticket.URL, nil)
+		request.RemoteAddr = "127.0.0.1:12345"
+		recorder := httptest.NewRecorder()
+		s.Server.Handler().ServeHTTP(recorder, request)
+		resp := recorder.Result()
 		_, params, err := mime.ParseMediaType(resp.Header.Get("Content-Disposition"))
 		require.NoError(t, err)
 		if name == "" {
@@ -222,8 +228,12 @@ func TestExportAPIWorkerVerifiedTicketPreservesRetainedArchive(t *testing.T) {
 	response, body = do(t, ts, http.MethodDelete, "/api/v1/exports/jobs/"+job.ID, nil, nil)
 	require.Equal(t, http.StatusConflict, response.StatusCode, body)
 	require.Contains(t, body, "export_retained")
-	resp, err := ts.Client().Get(ts.URL + ticket.URL)
-	require.NoError(t, err)
+	request := httptest.NewRequest(http.MethodGet, ts.URL+ticket.URL, nil)
+	request.RemoteAddr = "127.0.0.1:12345"
+	recorder := httptest.NewRecorder()
+	s.Server.Handler().ServeHTTP(recorder, request)
+	resp := recorder.Result()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
 	_, err = io.Copy(io.Discard, resp.Body)
 	require.NoError(t, err)
 	require.NoError(t, resp.Body.Close())
