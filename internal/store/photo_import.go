@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
-	"slices"
 	"strings"
 
 	"golang.org/x/text/unicode/norm"
@@ -106,6 +105,10 @@ func photoImportSourceKey(path string) (folder, stem string) {
 		stem = next
 	}
 	return norm.NFC.String(filepath.Clean(filepath.Dir(clean))), norm.NFC.String(stem)
+}
+
+func photoImportSourcePath(path string) string {
+	return norm.NFC.String(filepath.Clean(path))
 }
 
 // PhotoImportSourceKey returns the normalized source folder and stem used by
@@ -221,8 +224,7 @@ func isASCIIPhotoImportFolder(folder string) bool {
 }
 
 func (s *Store) photoImportCurrentDuplicateTx(
-	ctx context.Context, tx *sql.Tx, run IngestRun, member PhotoImportMember, role, sourceFolder, sourceStem string,
-	claimed []Node,
+	ctx context.Context, tx *sql.Tx, run IngestRun, member PhotoImportMember, role string,
 ) (Node, bool, error) {
 	var node Node
 	if role == PhotoRoleSidecar {
@@ -238,6 +240,7 @@ func (s *Store) photoImportCurrentDuplicateTx(
 			return Node{}, false, fmt.Errorf("finding duplicate photo sidecar: %w", err)
 		}
 		defer func() { _ = rows.Close() }()
+		source := photoImportSourcePath(member.OriginalPath)
 		found := false
 		for rows.Next() {
 			var sourcePath string
@@ -248,16 +251,8 @@ func (s *Store) photoImportCurrentDuplicateTx(
 			); err != nil {
 				return Node{}, false, fmt.Errorf("scanning duplicate photo sidecar: %w", err)
 			}
-			folder, stem := photoImportSourceKey(sourcePath)
-			// A sidecar this group already published is a sibling, not an earlier import.
-			if slices.ContainsFunc(claimed, func(n Node) bool { return n.ID == node.ID }) {
-				continue
-			}
-			// A plain file sharing the stem, such as IMG.xmp.bak, is not this sidecar.
-			if ClassifyPhotoSource(sourcePath).Kind != PhotoSourceSidecar {
-				continue
-			}
-			if folder == sourceFolder && stem == sourceStem {
+			// Same bytes is not enough for a sidecar: only the same source file is a duplicate.
+			if photoImportSourcePath(sourcePath) == source {
 				found = true
 				break
 			}
@@ -355,7 +350,7 @@ func (s *Store) IngestPhotoGroup(ctx context.Context, run IngestRun, group Photo
 			if member.BlobHash == "" || member.Size < 0 || member.OriginalPath == "" {
 				return fmt.Errorf("photo import member %q lacks a verified source identity", member.Name)
 			}
-			node, duplicate, err := s.photoImportCurrentDuplicateTx(ctx, tx, run, member, role, group.SourceFolder, group.Stem, nodes[:i])
+			node, duplicate, err := s.photoImportCurrentDuplicateTx(ctx, tx, run, member, role)
 			if err != nil {
 				return err
 			}
