@@ -104,7 +104,7 @@ func photoImportSourceKey(path string) (folder, stem string) {
 		}
 		stem = next
 	}
-	return strings.ToLower(norm.NFC.String(filepath.Clean(filepath.Dir(clean)))), strings.ToLower(norm.NFC.String(stem))
+	return norm.NFC.String(filepath.Clean(filepath.Dir(clean))), norm.NFC.String(stem)
 }
 
 // PhotoImportSourceKey returns the normalized source folder and stem used by
@@ -164,7 +164,7 @@ func photoImportNodeFacts(node Node, member PhotoImportMember, role string) Phot
 // photoImportCandidatesTx finds RAW and image files already in photos whose
 // current source observation shares the group's folder and stem.
 func (s *Store) photoImportCandidatesTx(ctx context.Context, tx *sql.Tx, folder, stem string) ([]photoImportCandidateRow, error) {
-	folder = strings.ToLower(filepath.Clean(folder))
+	folder = filepath.Clean(folder)
 	filter := ""
 	args := []any{PhotoRoleRAW, PhotoRoleImage}
 	if isASCIIPhotoImportFolder(folder) {
