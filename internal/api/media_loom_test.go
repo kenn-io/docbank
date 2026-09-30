@@ -51,6 +51,7 @@ func configureLoomManualTestService(t *testing.T) func(*api.Deps) {
 }
 
 func TestLoomManualExportHTTP(t *testing.T) {
+	t.Parallel()
 	ts, catalog := newTestServer(t, configureLoomManualTestService(t))
 	client := daemonconn.New(ts.URL, testAPIKey)
 	remote, err := client.SubmitRemoteRecording(t.Context(), api.MediaReferenceBody{
@@ -136,6 +137,7 @@ func TestLoomManualExportHTTP(t *testing.T) {
 }
 
 func TestLoomManualExportHTTPRejectsOversizeVideoBeforeStaging(t *testing.T) {
+	t.Parallel()
 	blockedSpool := filepath.Join(t.TempDir(), "spool-file")
 	require.NoError(t, os.WriteFile(blockedSpool, []byte("not a directory"), 0o600))
 	ts, _ := newTestServer(t, func(deps *api.Deps) {
@@ -166,6 +168,7 @@ func TestLoomManualExportHTTPRejectsOversizeVideoBeforeStaging(t *testing.T) {
 }
 
 func TestLoomManualExportHTTPReplaysArtifactAfterRevocation(t *testing.T) {
+	t.Parallel()
 	ts, _ := newTestServer(t, configureLoomManualTestService(t))
 	client := daemonconn.New(ts.URL, testAPIKey)
 	remote, err := client.SubmitRemoteRecording(t.Context(), api.MediaReferenceBody{

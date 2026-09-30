@@ -10,6 +10,7 @@ import (
 )
 
 func TestEmailViewerBrowserReadsRejectBroaderAuthority(t *testing.T) {
+	t.Parallel()
 	base := "/api/v1/versions/11111111-1111-4111-8111-111111111111/email"
 	generation := base + "/generations/" + strings.Repeat("a", 64)
 	for _, path := range []string{base, generation, generation + "/parts/1.2/body_utf8", generation + "/parts/1/raw_headers", generation + "/parts/1.3/decoded_payload"} {

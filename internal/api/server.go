@@ -117,7 +117,6 @@ func NewServer(d Deps) *Server {
 	if d.Store != nil && d.VaultRoot == "" {
 		panic("api: NewServer requires VaultRoot when serving a store")
 	}
-	installErrorFormatter()
 	if d.Logger == nil {
 		d.Logger = slog.Default()
 	}

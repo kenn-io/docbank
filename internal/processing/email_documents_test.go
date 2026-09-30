@@ -15,6 +15,7 @@ func pipelineDocumentRequest(t *testing.T, f emailPipelineFixture, view store.Em
 	return document.EmailDocumentPublicationRequest{OperationID: id, Parent: document.EmailDocumentIdentity{NodeID: view.Version.NodeID, VersionID: view.Version.ID, SHA256: view.Version.BlobHash, Size: view.Version.Size}, GenerationID: view.Generation.ID, AttachmentID: view.Attachment.ID, DestinationID: dir.ID, DestinationRevision: dir.Revision, Reuse: []document.EmailDocumentReuse{}}
 }
 func TestEmailDocumentsVerifiedPublicationAndCanceledAttempt(t *testing.T) {
+	t.Parallel()
 	f := newEmailPipelineFixture(t)
 	target := f.add(t, "source.eml", emailPipelineSource, "message/rfc822")
 	view, err := EnsureEmailTarget(t.Context(), f.catalog, f.blobs, f.spool, target)

@@ -21,7 +21,7 @@ import (
 	"go.kenn.io/docbank/internal/store"
 )
 
-func TestLoadFileExportUsesFrozenPDFAndSelectedPages(t *testing.T) {
+func TestLoadFileExportUsesFrozenPDFAndSelectedPages(t *testing.T) { //nolint:paralleltest // pdfcpu default configuration initializes process-wide state
 	for _, test := range []struct {
 		name          string
 		pages         []int
@@ -118,6 +118,7 @@ func TestLoadFileExportUsesFrozenPDFAndSelectedPages(t *testing.T) {
 }
 
 func TestLoadFileExportNativeRequiresWholeDocument(t *testing.T) {
+	t.Parallel()
 	for _, pages := range [][]int{{3, 6, 8}, {1, 2, 3, 4, 5, 6, 7, 8}} {
 		t.Run(fmt.Sprint(pages), func(t *testing.T) {
 			env := newBatesExportFixture(t)
@@ -148,6 +149,7 @@ func TestLoadFileExportNativeRequiresWholeDocument(t *testing.T) {
 }
 
 func TestLoadFileExportRoundTripsThroughIndependentFreshVault(t *testing.T) {
+	t.Parallel()
 	ctx := t.Context()
 	source := newPackageImportTestEnvOptions(t, 2, false, true, true)
 	worker, err := NewPackageImportWorker(source.config())
@@ -305,6 +307,7 @@ func TestLoadFileExportRoundTripsThroughIndependentFreshVault(t *testing.T) {
 }
 
 func TestLoadFileExportReusesCommittedBatesArtifactWithoutAllocatingLabels(t *testing.T) {
+	t.Parallel()
 	env := newBatesExportFixture(t)
 	ctx := t.Context()
 	artifact, err := PublishBatesExport(ctx, env.catalog, env.blobs, env.allocationID, env.recipe)
@@ -354,6 +357,7 @@ func TestLoadFileExportReusesCommittedBatesArtifactWithoutAllocatingLabels(t *te
 }
 
 func TestLoadFileExportBatesProductionRoundTripsThroughFreshVault(t *testing.T) {
+	t.Parallel()
 	ctx := t.Context()
 	env := newBatesExportFixture(t)
 	allocation, err := env.catalog.BatesAllocation(ctx, env.allocationID)
@@ -512,6 +516,7 @@ func importVerifiedLoadFileArchive(t *testing.T, archive []byte, verified LoadFi
 }
 
 func TestLoadFileExportCustodianPrecedenceAndOmissionDisclosure(t *testing.T) {
+	t.Parallel()
 	ctx := t.Context()
 	env := newPackageImportTestEnvOptions(t, 1, false, true, true)
 	worker, err := NewPackageImportWorker(env.config())
@@ -619,6 +624,7 @@ func readLoadFileZIPEntry(t *testing.T, source []byte, name string) []byte {
 }
 
 func TestSafeExportExtensionPreservesASCIIAlphanumericSuffixes(t *testing.T) {
+	t.Parallel()
 	for name, want := range map[string]string{
 		"clip.mp4": ".mp4", "archive.7z": ".7z", "scan.g4": ".g4", "unsafe.my file": ".bin",
 	} {
@@ -627,6 +633,7 @@ func TestSafeExportExtensionPreservesASCIIAlphanumericSuffixes(t *testing.T) {
 }
 
 func TestApplyLoadFileExportLabelsKeepsEndpointsInOneAssignedSet(t *testing.T) {
+	t.Parallel()
 	values := make([]string, 13)
 	applyLoadFileExportLabels(values, []LoadFileExportLabel{
 		{Provenance: "assigned", LabelSet: "REVIEW", Label: "REV000001", Endpoint: "begin"},

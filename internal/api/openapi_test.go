@@ -12,6 +12,7 @@ import (
 )
 
 func TestOpenAPIDocumentOffline(t *testing.T) {
+	t.Parallel()
 	// No store, no blobs, no listener: registration must not touch deps.
 	out, err := api.OpenAPIYAML()
 	require.NoError(t, err)
@@ -60,6 +61,7 @@ func TestOpenAPIDocumentOffline(t *testing.T) {
 }
 
 func TestOpenAPISavedQueriesAreStructuredAndRevisionFenced(t *testing.T) {
+	t.Parallel()
 	doc := api.NewOfflineServer().API().OpenAPI()
 	collection := doc.Paths["/api/v1/saved-queries"]
 	require.NotNil(t, collection.Get)
@@ -175,6 +177,7 @@ func TestOpenAPISavedQueriesAreStructuredAndRevisionFenced(t *testing.T) {
 }
 
 func TestOpenAPIWorkspaceSnapshotsExposeStrictBoundedAuthority(t *testing.T) {
+	t.Parallel()
 	doc := api.NewOfflineServer().API().OpenAPI()
 	create := doc.Paths["/api/v1/workspace/queries"].Post
 	page := doc.Paths["/api/v1/workspace/queries/{id}/pages"].Post
@@ -240,6 +243,7 @@ func resolveOpenAPISchema(
 }
 
 func TestOpenAPIDeclaresEmailMetadataAndBinaryParts(t *testing.T) {
+	t.Parallel()
 	doc := api.NewOfflineServer().API().OpenAPI()
 	metadata := doc.Paths["/api/v1/versions/{version_id}/email"]
 	require.NotNil(t, metadata)
@@ -273,6 +277,7 @@ func TestOpenAPIDeclaresEmailMetadataAndBinaryParts(t *testing.T) {
 }
 
 func TestOpenAPIDeclaresPackagePreflightContract(t *testing.T) {
+	t.Parallel()
 	doc := api.NewOfflineServer().API().OpenAPI()
 	schemas := doc.Components.Schemas.Map()
 	create := doc.Paths["/api/v1/packages/preflights"].Post
@@ -333,6 +338,7 @@ func TestOpenAPIDeclaresPackagePreflightContract(t *testing.T) {
 }
 
 func TestOpenAPIDeclaresPackageContainerContract(t *testing.T) {
+	t.Parallel()
 	doc := api.NewOfflineServer().API().OpenAPI()
 	require.NotNil(t, doc.Paths["/api/v1/packages/containers"].Post)
 	require.NotNil(t, doc.Paths["/api/v1/packages/containers/{id}"].Get)
@@ -343,6 +349,7 @@ func TestOpenAPIDeclaresPackageContainerContract(t *testing.T) {
 }
 
 func TestOpenAPIDeclaresPackageBrowseContract(t *testing.T) {
+	t.Parallel()
 	doc := api.NewOfflineServer().API().OpenAPI()
 	for path, operationID := range map[string]string{
 		"/api/v1/packages":                                    "listPackages",
@@ -397,6 +404,7 @@ func openAPISchemaBlock(t *testing.T, doc, schema string) string {
 }
 
 func TestProcessingMutationRoutesClearBodyReadDeadline(t *testing.T) {
+	t.Parallel()
 	doc := api.NewOfflineServer().API().OpenAPI()
 	for _, operation := range []*huma.Operation{
 		doc.Paths["/api/v1/processing/jobs"].Post,
@@ -408,6 +416,7 @@ func TestProcessingMutationRoutesClearBodyReadDeadline(t *testing.T) {
 }
 
 func TestOpenAPIDeclaresSecurity(t *testing.T) {
+	t.Parallel()
 	// Generated clients must learn from the document alone that every
 	// operation needs credentials (X-Api-Key header or bearer token).
 	out, err := api.OpenAPIYAML()
@@ -420,6 +429,7 @@ func TestOpenAPIDeclaresSecurity(t *testing.T) {
 }
 
 func TestOpenAPISearchQueryIsOptional(t *testing.T) {
+	t.Parallel()
 	doc := api.NewOfflineServer().API().OpenAPI()
 	op := doc.Paths["/api/v1/search"].Get
 	require.NotNil(t, op)
@@ -433,6 +443,7 @@ func TestOpenAPISearchQueryIsOptional(t *testing.T) {
 }
 
 func TestLongRunningBackupRoutesClearBodyReadDeadline(t *testing.T) {
+	t.Parallel()
 	doc := api.NewOfflineServer().API().OpenAPI()
 	for _, operation := range []*huma.Operation{
 		doc.Paths["/api/v1/backup/snapshots"].Post,
@@ -448,6 +459,7 @@ func TestLongRunningBackupRoutesClearBodyReadDeadline(t *testing.T) {
 }
 
 func TestOpenAPIAuditEnableDisclosesCompleteRetention(t *testing.T) {
+	t.Parallel()
 	doc := api.NewOfflineServer().API().OpenAPI()
 	op := doc.Paths["/api/v1/audit/enable"].Post
 	require.NotNil(t, op)
@@ -457,6 +469,7 @@ func TestOpenAPIAuditEnableDisclosesCompleteRetention(t *testing.T) {
 }
 
 func TestOpenAPIDeclaresDigestCheckedUpload(t *testing.T) {
+	t.Parallel()
 	doc := api.NewOfflineServer().API().OpenAPI()
 	op := doc.Paths["/api/v1/uploads"].Post
 	require.NotNil(t, op)
@@ -490,6 +503,7 @@ func TestOpenAPIDeclaresDigestCheckedUpload(t *testing.T) {
 }
 
 func TestOpenAPIDeclaresMediaSubmissionBodies(t *testing.T) {
+	t.Parallel()
 	doc := api.NewOfflineServer().API().OpenAPI()
 	schemas := doc.Components.Schemas.Map()
 	for _, test := range []struct {
@@ -548,6 +562,7 @@ func TestOpenAPIDeclaresMediaSubmissionBodies(t *testing.T) {
 }
 
 func TestOpenAPIDeclaresMutationPreconditions(t *testing.T) {
+	t.Parallel()
 	doc := api.NewOfflineServer().API().OpenAPI()
 	pruneRequest := doc.Components.Schemas.Map()["VersionPruneRequest"]
 	require.NotNil(t, pruneRequest)
@@ -589,6 +604,7 @@ func TestOpenAPIDeclaresMutationPreconditions(t *testing.T) {
 }
 
 func TestOpenAPICollectionContractIsBoundedAndLabelSpecific(t *testing.T) {
+	t.Parallel()
 	doc := api.NewOfflineServer().API().OpenAPI()
 	list := doc.Paths["/api/v1/collections"].Get
 	members := doc.Paths["/api/v1/collections/{id}/members"].Get
@@ -654,6 +670,7 @@ func TestOpenAPICollectionContractIsBoundedAndLabelSpecific(t *testing.T) {
 }
 
 func TestOpenAPIProvenanceMTimeUsesDateTimeFormat(t *testing.T) {
+	t.Parallel()
 	doc := api.NewOfflineServer().API().OpenAPI()
 	for _, name := range []string{"ProvenanceAppendRequest", "ProvenanceFact"} {
 		schema := doc.Components.Schemas.Map()[name]

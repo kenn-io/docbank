@@ -21,6 +21,7 @@ import (
 )
 
 func TestEmailPendingAndIneligible(t *testing.T) {
+	t.Parallel()
 	ts, s := newTestServer(t, nil)
 	for _, tc := range []struct {
 		name   string
@@ -43,6 +44,7 @@ func TestEmailPendingAndIneligible(t *testing.T) {
 }
 
 func TestEmailEnsureExactGenerationAndPartBytes(t *testing.T) {
+	t.Parallel()
 	ts, s := newTestServer(t, nil)
 	raw := "Subject: Synthetic\r\nBcc: Hidden Person <hidden@example.test>\r\n" +
 		"Content-Type: text/plain; charset=utf-8\r\n\r\nemail-api-marker"
@@ -86,6 +88,7 @@ func TestEmailEnsureExactGenerationAndPartBytes(t *testing.T) {
 }
 
 func TestEmailRoutesRejectUnknownInputAndInvalidSelections(t *testing.T) {
+	t.Parallel()
 	ts, s := newTestServer(t, nil)
 	raw := "Content-Type: multipart/mixed; boundary=x\r\n\r\n--x\r\nContent-Type: text/plain\r\n\r\nbody\r\n--x--\r\n"
 	version := createEmailVersion(t, s, "multipart.eml", raw)
@@ -117,6 +120,7 @@ func TestEmailRoutesRejectUnknownInputAndInvalidSelections(t *testing.T) {
 }
 
 func TestEmailMalformedMIMEPublishesRetrievableEvidence(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name, headers, body string
 		code                document.EmailDiagnosticCode
@@ -163,6 +167,7 @@ func TestEmailMalformedMIMEPublishesRetrievableEvidence(t *testing.T) {
 }
 
 func TestEmailEnsureRejectsOversizeBodyBeforeDecoding(t *testing.T) {
+	t.Parallel()
 	ts, s := newTestServer(t, nil)
 	version := createEmailVersion(t, s, "mail.eml", "Content-Type: text/plain\r\n\r\nbody")
 	path := "/api/v1/versions/" + version.ID + "/email"
@@ -174,6 +179,7 @@ func TestEmailEnsureRejectsOversizeBodyBeforeDecoding(t *testing.T) {
 }
 
 func TestEmailEnsurePreservesMaintenanceBusy(t *testing.T) {
+	t.Parallel()
 	gate := api.NewOperationGate()
 	ts, s := newTestServer(t, func(d *api.Deps) { d.Gate = gate })
 	version := createEmailVersion(t, s, "mail.eml", "Content-Type: text/plain\r\n\r\nbody")
@@ -200,6 +206,7 @@ func TestEmailEnsurePreservesMaintenanceBusy(t *testing.T) {
 }
 
 func TestEmailGenerationRequiresActualVersionAttachment(t *testing.T) {
+	t.Parallel()
 	ts, s := newTestServer(t, nil)
 	first := createEmailVersion(t, s, "first.eml", "Content-Type: text/plain\r\n\r\nfirst")
 	second := createEmailVersion(t, s, "second.eml", "Content-Type: text/plain\r\n\r\nsecond")
@@ -215,6 +222,7 @@ func TestEmailGenerationRequiresActualVersionAttachment(t *testing.T) {
 }
 
 func TestEmailPartCorruptPhysicalBytesReturnIntegrityError(t *testing.T) {
+	t.Parallel()
 	ts, s := newTestServer(t, nil)
 	version := createEmailVersion(t, s, "mail.eml", "Content-Type: text/plain\r\n\r\ncorrupt-me")
 	path := "/api/v1/versions/" + version.ID + "/email"
@@ -238,6 +246,7 @@ func TestEmailPartCorruptPhysicalBytesReturnIntegrityError(t *testing.T) {
 }
 
 func TestEmailBrowserSessionReadsRetainedMetadataWithoutDecoding(t *testing.T) {
+	t.Parallel()
 	ts, s := newTestServer(t, nil)
 	version := createEmailVersion(t, s, "mail.eml", "Bcc: hidden@example.test\r\nContent-Type: text/plain\r\n\r\nbody")
 	path := "/api/v1/versions/" + version.ID + "/email"

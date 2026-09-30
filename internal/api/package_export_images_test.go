@@ -20,6 +20,7 @@ import (
 )
 
 func TestPackageExportPreservesPageImageFormats(t *testing.T) {
+	t.Parallel()
 	for _, format := range []struct{ name, extension string }{{"tiff", ".tif"}, {"jpeg", ".jpg"}, {"png", ".png"}} {
 		t.Run(format.name, func(t *testing.T) {
 			img := image.NewRGBA(image.Rect(0, 0, 3, 3))

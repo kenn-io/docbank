@@ -15,6 +15,7 @@ import (
 )
 
 func TestTagLifecycleHTTP(t *testing.T) {
+	t.Parallel()
 	ts, s := newTestServer(t, nil)
 	node, err := s.Mkdir(t.Context(), s.RootID(), "records")
 	require.NoError(t, err)
@@ -135,6 +136,7 @@ func TestTagLifecycleHTTP(t *testing.T) {
 }
 
 func TestTagAssignmentRejectsStaleRevisionAndInvalidName(t *testing.T) {
+	t.Parallel()
 	ts, s := newTestServer(t, nil)
 	node, err := s.Mkdir(t.Context(), s.RootID(), "node")
 	require.NoError(t, err)
@@ -175,6 +177,7 @@ func TestTagAssignmentRejectsStaleRevisionAndInvalidName(t *testing.T) {
 }
 
 func TestSharedAuditedTagDefinitionChangesHTTP(t *testing.T) {
+	t.Parallel()
 	ts, s := newTestServer(t, nil)
 	first, err := s.Mkdir(t.Context(), s.RootID(), "taxes")
 	require.NoError(t, err)
@@ -218,6 +221,7 @@ func TestSharedAuditedTagDefinitionChangesHTTP(t *testing.T) {
 }
 
 func TestTagPathAssignmentUsesCurrentTopology(t *testing.T) {
+	t.Parallel()
 	ts, s := newTestServer(t, nil)
 	left, err := s.Mkdir(t.Context(), s.RootID(), "left")
 	require.NoError(t, err)

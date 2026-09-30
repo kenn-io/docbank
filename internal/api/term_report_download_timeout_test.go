@@ -19,6 +19,7 @@ import (
 )
 
 func TestTermReportDirectDownloadsOutliveRequestTimeout(t *testing.T) {
+	t.Parallel()
 	ts, catalog := newTestServer(t, nil)
 	createFileWithContent(t, ts, catalog, "/synthetic.txt", "synthetic report")
 	request := report.Request{Version: 1, AllDocuments: true, Timezone: "UTC", CoverageMode: "available_only"}

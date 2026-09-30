@@ -12,6 +12,7 @@ import (
 )
 
 func TestEmailBodyPreservesFullSupportedText(t *testing.T) {
+	t.Parallel()
 	text := strings.Repeat("x", (16<<20)-12) + "final-marker"
 	profile, err := document.EmailBodyProfileV1(emailmime.Recipe())
 	require.NoError(t, err)
@@ -37,6 +38,7 @@ func TestEmailBodyPreservesFullSupportedText(t *testing.T) {
 }
 
 func TestEmailBodyLiteralUnicodeAndLimits(t *testing.T) {
+	t.Parallel()
 	for _, text := range []string{"<script>literalanglemarker</script> ``` & [x](javascript:alert(1))", strings.Repeat("`", 1<<20), strings.Repeat("a", (1<<20)-1) + "🌍尾"} {
 		units, err := bodyUnits(t.Context(), text)
 		require.NoError(t, err)
@@ -74,6 +76,7 @@ func TestEmailBodyLiteralUnicodeAndLimits(t *testing.T) {
 	require.ErrorIs(t, err, context.Canceled)
 }
 func TestEmailBodyStructuralText(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct{ input, want string }{
 		{"<p>A &amp; B</p><div>C<br>D</div>", "A & B\n\nC\nD"},
 		{"<script>scriptsecret</script><style>stylesecret</style><noscript>nosecret</noscript><template>hidden<template>inner</template>stillhidden</template><p>visible</p>", "visible"},
@@ -92,6 +95,7 @@ func TestEmailBodyStructuralText(t *testing.T) {
 }
 
 func TestEmailBodyRenderTruncationRefused(t *testing.T) {
+	t.Parallel()
 	ep, err := document.NewEvidencePolicy(1000)
 	require.NoError(t, err)
 	units, err := bodyUnits(t.Context(), strings.Repeat("before after tail ", 10))
@@ -108,6 +112,7 @@ func TestEmailBodyRenderTruncationRefused(t *testing.T) {
 }
 
 func TestEmailBodyFullUnicodeNeedsSeventeenUnits(t *testing.T) {
+	t.Parallel()
 	text := strings.Repeat("€", (16<<20)/3) + "x"
 	units, err := bodyUnits(t.Context(), text)
 	require.NoError(t, err)

@@ -43,6 +43,7 @@ func admittedPackageWorkerJob(t *testing.T) (*testStore, api.PackageImportJob) {
 }
 
 func TestPackageImportWorkerClaimWaitsForMaintenance(t *testing.T) {
+	t.Parallel()
 	catalog, job := admittedPackageWorkerJob(t)
 	synctest.Test(t, func(t *testing.T) {
 		gate := api.NewOperationGate()
@@ -75,6 +76,7 @@ func TestPackageImportWorkerClaimWaitsForMaintenance(t *testing.T) {
 }
 
 func TestPackageImportWorkerRenewalAndReleaseWaitForMaintenance(t *testing.T) {
+	t.Parallel()
 	for _, holdUntilTimeout := range []bool{false, true} {
 		name := "release_after_maintenance"
 		if holdUntilTimeout {

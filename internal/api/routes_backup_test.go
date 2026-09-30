@@ -69,6 +69,7 @@ func decodeBackupRestoreEvents(t *testing.T, body string) []api.BackupRestoreEve
 }
 
 func TestBackupInitCreateListRoundTrip(t *testing.T) {
+	t.Parallel()
 	repoPath := filepath.Join(t.TempDir(), "repo")
 	ts, s := newTestServer(t, func(d *api.Deps) { d.Cfg.Backup.Repo = repoPath })
 	createFileWithContent(t, ts, s, "/contract.txt", "backup through the daemon")
@@ -116,6 +117,7 @@ func TestBackupInitCreateListRoundTrip(t *testing.T) {
 }
 
 func TestBackupRoutesValidateRepositoryAndReportLock(t *testing.T) {
+	t.Parallel()
 	ts, _ := newTestServer(t, nil)
 	resp, body := get(t, ts, "/api/v1/backup/snapshots", nil)
 	assert.Equal(t, http.StatusUnprocessableEntity, resp.StatusCode)
@@ -164,6 +166,7 @@ func TestBackupRoutesValidateRepositoryAndReportLock(t *testing.T) {
 }
 
 func TestBackupCreateProgressStreamEndsWithResult(t *testing.T) {
+	t.Parallel()
 	repoPath := filepath.Join(t.TempDir(), "repo")
 	ts, s := newTestServer(t, func(d *api.Deps) { d.Cfg.Backup.Repo = repoPath })
 	createFileWithContent(t, ts, s, "/stream.txt", "visible work")
@@ -196,7 +199,7 @@ func TestBackupCreateProgressStreamEndsWithResult(t *testing.T) {
 	assert.Equal(t, int64(1), terminal.Snapshot.Files)
 }
 
-func TestBackupVerifySelectionAndProgressStream(t *testing.T) {
+func TestBackupVerifySelectionAndProgressStream(t *testing.T) { //nolint:paralleltest // locks the per-user target-lock registry that every docbank process shares
 	repoPath := filepath.Join(t.TempDir(), "repo")
 	ts, s := newTestServer(t, func(d *api.Deps) { d.Cfg.Backup.Repo = repoPath })
 	createFileWithContent(t, ts, s, "/verified.txt", "read every byte")
@@ -279,7 +282,7 @@ func TestBackupVerifySelectionAndProgressStream(t *testing.T) {
 		"corrupt source must not publish a restored database")
 }
 
-func TestBackupRestoreProgressProofAndConfinement(t *testing.T) {
+func TestBackupRestoreProgressProofAndConfinement(t *testing.T) { //nolint:paralleltest // locks the per-user target-lock registry that every docbank process shares
 	repoPath := filepath.Join(t.TempDir(), "repo")
 	ts, live := newTestServer(t, func(d *api.Deps) { d.Cfg.Backup.Repo = repoPath })
 	createFileWithContent(t, ts, live, "/restored.txt", "packed recovery proof")

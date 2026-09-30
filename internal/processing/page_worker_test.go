@@ -54,6 +54,7 @@ func pageWorkerRuntime(t *testing.T) *pagerender.Runtime {
 }
 
 func TestRealPageWorkerPublishesVerifiedImagesAndResumesExactJobs(t *testing.T) {
+	t.Parallel()
 	engine := pageWorkerRuntime(t)
 	root := t.TempDir()
 	catalog, err := store.Open(filepath.Join(root, "vault.db"))

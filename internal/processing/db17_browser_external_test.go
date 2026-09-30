@@ -21,6 +21,7 @@ import (
 )
 
 func TestDB17RealPDFBrowserProof(t *testing.T) {
+	t.Parallel()
 	screenshotDir := os.Getenv("DOCBANK_VERIFIED_INSPECTOR_SCREENSHOT_DIR")
 	if screenshotDir == "" {
 		t.Skip("PR-only real PDF browser proof")

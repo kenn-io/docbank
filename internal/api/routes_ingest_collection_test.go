@@ -18,6 +18,7 @@ import (
 )
 
 func TestIngestLabelReceiptNamesCommittedRun(t *testing.T) {
+	t.Parallel()
 	ts, s := newTestServer(t, nil)
 	source := filepath.Join(t.TempDir(), "note.txt")
 	require.NoError(t, os.WriteFile(source, []byte("synthetic"), 0o600))
@@ -40,6 +41,7 @@ func TestIngestLabelReceiptNamesCommittedRun(t *testing.T) {
 }
 
 func TestIngestReceiptRecordsRepeatedAndReplacementMembership(t *testing.T) {
+	t.Parallel()
 	ts, s := newTestServer(t, nil)
 	source := filepath.Join(t.TempDir(), "record.txt")
 	require.NoError(t, os.WriteFile(source, []byte("first"), 0o600))
@@ -88,6 +90,7 @@ func TestIngestReceiptRecordsRepeatedAndReplacementMembership(t *testing.T) {
 }
 
 func TestIngestRepeatedPathWithinRunKeepsOneObservation(t *testing.T) {
+	t.Parallel()
 	ts, s := newTestServer(t, nil)
 	source := filepath.Join(t.TempDir(), "repeated.txt")
 	require.NoError(t, os.WriteFile(source, []byte("one observation"), 0o600))
@@ -108,6 +111,7 @@ func TestIngestRepeatedPathWithinRunKeepsOneObservation(t *testing.T) {
 }
 
 func TestIngestLabelCollisionRollsBackRunAndDocument(t *testing.T) {
+	t.Parallel()
 	ts, s := newTestServer(t, nil)
 	dir := t.TempDir()
 	firstSource := filepath.Join(dir, "first.txt")
@@ -136,6 +140,7 @@ func TestIngestLabelCollisionRollsBackRunAndDocument(t *testing.T) {
 }
 
 func TestIngestReceiptsRequireCommittedDocumentAuthority(t *testing.T) {
+	t.Parallel()
 	ts, s := newTestServer(t, nil)
 	dir := t.TempDir()
 	valid := filepath.Join(dir, "valid.txt")
@@ -177,6 +182,7 @@ func TestIngestReceiptsRequireCommittedDocumentAuthority(t *testing.T) {
 }
 
 func TestIngestStreamTerminalReceiptNamesPartialCommittedRun(t *testing.T) {
+	t.Parallel()
 	ts, s := newTestServer(t, nil)
 	dir := t.TempDir()
 	valid := filepath.Join(dir, "stream.txt")
@@ -197,6 +203,7 @@ func TestIngestStreamTerminalReceiptNamesPartialCommittedRun(t *testing.T) {
 }
 
 func TestIngestRejectsInvalidLabelWithoutAuthority(t *testing.T) {
+	t.Parallel()
 	ts, s := newTestServer(t, nil)
 	source := filepath.Join(t.TempDir(), "invalid.txt")
 	require.NoError(t, os.WriteFile(source, []byte("invalid label"), 0o600))
@@ -216,6 +223,7 @@ func TestIngestRejectsInvalidLabelWithoutAuthority(t *testing.T) {
 }
 
 func TestIngestStreamRejectsInvalidLabelWithoutAuthority(t *testing.T) {
+	t.Parallel()
 	ts, s := newTestServer(t, nil)
 	source := filepath.Join(t.TempDir(), "invalid.txt")
 	require.NoError(t, os.WriteFile(source, []byte("invalid label"), 0o600))
@@ -241,6 +249,7 @@ func TestIngestStreamRejectsInvalidLabelWithoutAuthority(t *testing.T) {
 }
 
 func TestIngestInitialLabelAuditRejectionHasNoReceiptOrAuthority(t *testing.T) {
+	t.Parallel()
 	for _, route := range []string{"/api/v1/ingest", "/api/v1/ingest/stream"} {
 		t.Run(route, func(t *testing.T) {
 			ts, s := newTestServer(t, nil)
@@ -270,6 +279,7 @@ func TestIngestInitialLabelAuditRejectionHasNoReceiptOrAuthority(t *testing.T) {
 }
 
 func TestIngestLabelCollisionLeavesMissingDestinationAndSourceTreeAbsent(t *testing.T) {
+	t.Parallel()
 	for _, route := range []string{"/api/v1/ingest", "/api/v1/ingest/stream"} {
 		t.Run(route, func(t *testing.T) {
 			ts, s := newTestServer(t, nil)

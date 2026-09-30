@@ -24,6 +24,7 @@ import (
 )
 
 func TestPackageExportProfilesThroughPublicPreflightAndImport(t *testing.T) {
+	t.Parallel()
 	source, catalog := newPackageTestServer(t)
 	root := syntheticPackageRoot(t)
 	require.NoError(t, os.WriteFile(filepath.Join(root, "VOL001", "DATA", "ab-package.dat"), []byte(
@@ -89,7 +90,7 @@ func TestPackageExportProfilesThroughPublicPreflightAndImport(t *testing.T) {
 	}
 }
 
-func TestPackageExportSelectedPDFThroughPublicImport(t *testing.T) {
+func TestPackageExportSelectedPDFThroughPublicImport(t *testing.T) { //nolint:paralleltest // pdfcpu default configuration initializes process-wide state
 	source, catalog := newPackageTestServer(t)
 	root := t.TempDir()
 	require.NoError(t, os.MkdirAll(filepath.Join(root, "VOL001"), 0o700))
@@ -213,6 +214,7 @@ func TestPackageExportSelectedPDFThroughPublicImport(t *testing.T) {
 }
 
 func TestPackageExportSelectsOnlyProfileTextRoles(t *testing.T) {
+	t.Parallel()
 	source, catalog := newPackageTestServer(t)
 	_, members := importExportFixture(t, source, catalog, syntheticPackageRoot(t), "dat-concordance-v1", nil)
 	textContents := map[string]string{

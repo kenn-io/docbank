@@ -17,6 +17,7 @@ import (
 )
 
 func TestAuthenticatedSnapshotOwnerIsExplicitAndBrowserRevocationCancelsRequest(t *testing.T) {
+	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {
 		revoked := make(chan string, 1)
 		sessions := newWebSessionRegistry(func(owner string) { revoked <- owner })
@@ -55,6 +56,7 @@ func TestAuthenticatedSnapshotOwnerIsExplicitAndBrowserRevocationCancelsRequest(
 }
 
 func TestServerShutdownStartsSnapshotCancellationWhenSessionDrainTimesOut(t *testing.T) {
+	t.Parallel()
 	catalog, err := store.Open(filepath.Join(t.TempDir(), "docbank.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, catalog.Close()) })
@@ -80,12 +82,14 @@ func TestServerShutdownStartsSnapshotCancellationWhenSessionDrainTimesOut(t *tes
 }
 
 func TestAuthenticatedSnapshotOwnerHasNoMissingContextMasterFallback(t *testing.T) {
+	t.Parallel()
 	owner, ok := workspaceSnapshotOwner(t.Context())
 	assert.Empty(t, owner)
 	assert.False(t, ok)
 }
 
 func TestWorkspaceFacetResponseRetainsSelectedValueBeyondTopFifty(t *testing.T) {
+	t.Parallel()
 	value, err := query.Parse([]byte(`{}`))
 	require.NoError(t, err)
 	values := make([]store.SnapshotFacetValue, 51)

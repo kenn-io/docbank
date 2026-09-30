@@ -8,6 +8,7 @@ import (
 )
 
 func TestLexicalGenerationRebuildRemainsUnreachableUntilPublication(t *testing.T) {
+	t.Parallel()
 	// Mutation caught: rebuilding a generation must not flip the lexical head;
 	// only the later atomic attachment/rendition/lexical publication may do so.
 	fixture := newPublicationFixture(t)

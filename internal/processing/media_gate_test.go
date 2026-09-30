@@ -10,6 +10,7 @@ import (
 )
 
 func TestMediaMutationsWaitForMaintenance(t *testing.T) {
+	t.Parallel()
 	for _, operation := range []string{"submit", "declare", "revoke"} {
 		t.Run(operation, func(t *testing.T) {
 			fixture := newPublicationFixture(t)

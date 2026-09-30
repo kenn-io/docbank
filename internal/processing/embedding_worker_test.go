@@ -28,6 +28,7 @@ import (
 )
 
 func TestEmbeddingWorkerPublishesBindingsAndInputKindsIndependently(t *testing.T) {
+	t.Parallel()
 	fixture := newEmbeddingWorkerFixture(t)
 	chunk := fixture.work("chunks-a", document.EmbeddingInputRenditionChunk, "chunk-a")
 	second := fixture.work("chunks-b", document.EmbeddingInputRenditionChunk, "chunk-b")
@@ -45,6 +46,7 @@ func TestEmbeddingWorkerPublishesBindingsAndInputKindsIndependently(t *testing.T
 }
 
 func TestEmbeddingWorkerFailureDoesNotDisturbSiblingPublication(t *testing.T) {
+	t.Parallel()
 	fixture := newEmbeddingWorkerFixture(t)
 	good := fixture.work("good", document.EmbeddingInputRenditionChunk, "good")
 	retrying := fixture.work("retry", document.EmbeddingInputRenditionChunk, "retry")
@@ -64,6 +66,7 @@ func TestEmbeddingWorkerFailureDoesNotDisturbSiblingPublication(t *testing.T) {
 }
 
 func TestEmbeddingWorkerRejectsMalformedProviderResultsWithoutPublishing(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name   string
 		mutate func(document.EmbeddingResult) document.EmbeddingResult
@@ -105,6 +108,7 @@ func TestEmbeddingWorkerRejectsMalformedProviderResultsWithoutPublishing(t *test
 }
 
 func TestEmbeddingWorkerRejectsMissingExactE2ArtifactBeforeProviderCall(t *testing.T) {
+	t.Parallel()
 	fixture := newEmbeddingWorkerFixture(t)
 	work := fixture.work("missing-e2-artifact", document.EmbeddingInputRenditionChunk, "semantic")
 	work.InputGeneration.GenerationBlobHash = workerHash("canonical-e2-artifact")
@@ -120,6 +124,7 @@ func TestEmbeddingWorkerRejectsMissingExactE2ArtifactBeforeProviderCall(t *testi
 }
 
 func TestEmbeddingWorkerNormalizesValidIndexedResultsIntoInputOrder(t *testing.T) {
+	t.Parallel()
 	fixture := newEmbeddingWorkerFixture(t)
 	work := fixture.work("indexed-order", document.EmbeddingInputRenditionChunk, "semantic")
 	fixture.runtime.mutate[work.Binding.Name] = func(value document.EmbeddingResult) document.EmbeddingResult {
@@ -146,6 +151,7 @@ func TestEmbeddingWorkerNormalizesValidIndexedResultsIntoInputOrder(t *testing.T
 }
 
 func TestEmbeddingWorkerAttemptDeadlineCoversProviderAndPersistence(t *testing.T) {
+	t.Parallel()
 	fixture := newEmbeddingWorkerFixture(t)
 	work := fixture.work("deadline", document.EmbeddingInputRenditionChunk, "semantic")
 	fixture.catalog.enqueue(work)
@@ -158,6 +164,7 @@ func TestEmbeddingWorkerAttemptDeadlineCoversProviderAndPersistence(t *testing.T
 }
 
 func TestEmbeddingWorkerReopensAuthorizedOriginalForEveryRetry(t *testing.T) {
+	t.Parallel()
 	fixture := newEmbeddingWorkerFixture(t)
 	work := fixture.work("direct-retry", document.EmbeddingInputOriginalFile, "direct")
 	fixture.runtime.failures[work.Binding.Name] = []error{embeddingTransientError{}}
@@ -174,6 +181,7 @@ func TestEmbeddingWorkerReopensAuthorizedOriginalForEveryRetry(t *testing.T) {
 }
 
 func TestProviderEmbeddingRuntimeReopensAndReauthorizesOriginalEveryPrepare(t *testing.T) {
+	t.Parallel()
 	fixture := newEmbeddingWorkerFixture(t)
 	work := fixture.work("production-direct", document.EmbeddingInputOriginalFile, "direct")
 	data := mediatest.PNG(2, 2, color.White)
@@ -198,6 +206,7 @@ func TestProviderEmbeddingRuntimeReopensAndReauthorizesOriginalEveryPrepare(t *t
 }
 
 func TestProviderEmbeddingRuntimeRejectsUnboundedOriginalAuthority(t *testing.T) {
+	t.Parallel()
 	fixture := newEmbeddingWorkerFixture(t)
 	work := fixture.work("production-direct-bound", document.EmbeddingInputOriginalFile, "direct")
 	data := mediatest.PNG(2, 2, color.White)
@@ -218,6 +227,7 @@ func TestProviderEmbeddingRuntimeRejectsUnboundedOriginalAuthority(t *testing.T)
 }
 
 func TestEmbeddingWorkerFencesLeaseConsentAndAuthorityDrift(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name string
 		hook func(*embeddingWorkerFakeCatalog)
@@ -247,6 +257,7 @@ func TestEmbeddingWorkerFencesLeaseConsentAndAuthorityDrift(t *testing.T) {
 }
 
 func TestEmbeddingWorkerContinuesAfterClaimLosesPublicationFence(t *testing.T) {
+	t.Parallel()
 	fixture := newEmbeddingWorkerFixture(t)
 	first := fixture.work("lost-publication-fence", document.EmbeddingInputRenditionChunk, "first")
 	second := fixture.work("after-lost-publication-fence", document.EmbeddingInputRenditionChunk, "second")
@@ -262,6 +273,7 @@ func TestEmbeddingWorkerContinuesAfterClaimLosesPublicationFence(t *testing.T) {
 }
 
 func TestEmbeddingWorkerContinuesAfterClaimLosesStageOrFinishFence(t *testing.T) {
+	t.Parallel()
 	for _, phase := range []string{"stage", "finish"} {
 		t.Run(phase, func(t *testing.T) {
 			fixture := newEmbeddingWorkerFixture(t)
@@ -284,6 +296,7 @@ func TestEmbeddingWorkerContinuesAfterClaimLosesStageOrFinishFence(t *testing.T)
 }
 
 func TestEmbeddingWorkerResumesAfterLeaseExpiryAndDeduplicatesScan(t *testing.T) {
+	t.Parallel()
 	fixture := newEmbeddingWorkerFixture(t)
 	work := fixture.work("resume", document.EmbeddingInputRenditionChunk, "semantic")
 	fixture.catalog.enqueue(work, work)
@@ -301,6 +314,7 @@ func TestEmbeddingWorkerResumesAfterLeaseExpiryAndDeduplicatesScan(t *testing.T)
 }
 
 func TestEmbeddingWorkerBoundsRetriesAndRejectsCapacity(t *testing.T) {
+	t.Parallel()
 	fixture := newEmbeddingWorkerFixture(t)
 	retry := fixture.work("retry-bounds", document.EmbeddingInputRenditionChunk, "retry")
 	capacity := fixture.work("capacity", document.EmbeddingInputRenditionChunk, "capacity")
@@ -322,6 +336,7 @@ func TestEmbeddingWorkerBoundsRetriesAndRejectsCapacity(t *testing.T) {
 }
 
 func TestEmbeddingWorkerSplitsBatchesByBytesAndMultiItemCapacity(t *testing.T) {
+	t.Parallel()
 	fixture := newEmbeddingWorkerFixture(t)
 	bytesWork := fixture.work("byte-batches", document.EmbeddingInputRenditionChunk, "byte-batches")
 	bytesWork = mutateEmbeddingWorkerBinding(t, bytesWork, func(binding *document.EmbeddingBindingV1) {
@@ -343,6 +358,7 @@ func TestEmbeddingWorkerSplitsBatchesByBytesAndMultiItemCapacity(t *testing.T) {
 }
 
 func TestEmbeddingWorkerCapacityBisectionReachesSingleItemBatch(t *testing.T) {
+	t.Parallel()
 	fixture := newEmbeddingWorkerFixture(t)
 	work := fixture.work("capacity-deep-bisect", document.EmbeddingInputRenditionChunk, "capacity-deep-bisect")
 	work.Inputs = nil
@@ -368,7 +384,7 @@ func TestEmbeddingWorkerCapacityBisectionReachesSingleItemBatch(t *testing.T) {
 	assert.Equal(t, []int{8, 4, 2, 1, 1, 1, 1, 1, 1, 1, 1}, fixture.runtime.batchSizes(work.Binding.Name))
 }
 
-func TestEmbeddingWorkerCancellationDuringProviderAndPersistenceIsPrompt(t *testing.T) {
+func TestEmbeddingWorkerCancellationDuringProviderAndPersistenceIsPrompt(t *testing.T) { //nolint:paralleltest // asserts cancellation returns within one second of real time
 	for _, phase := range []string{"provider", "persistence"} {
 		t.Run(phase, func(t *testing.T) {
 			fixture := newEmbeddingWorkerFixture(t)
@@ -392,6 +408,7 @@ func TestEmbeddingWorkerCancellationDuringProviderAndPersistenceIsPrompt(t *test
 }
 
 func TestEmbeddingWorkerRejectsCorruptOrPartiallyPersistedVectorSet(t *testing.T) {
+	t.Parallel()
 	for _, phase := range []string{"checksum", "blob", "catalog"} {
 		t.Run(phase, func(t *testing.T) {
 			fixture := newEmbeddingWorkerFixture(t)
@@ -418,6 +435,7 @@ func TestEmbeddingWorkerRejectsCorruptOrPartiallyPersistedVectorSet(t *testing.T
 }
 
 func TestEmbeddingRuntimeRegistryAndRunLifecycle(t *testing.T) {
+	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {
 		registry := NewEmbeddingRuntimeRegistry()
 		assert.False(t, registry.Ready())
@@ -440,6 +458,7 @@ func TestEmbeddingRuntimeRegistryAndRunLifecycle(t *testing.T) {
 }
 
 func TestEmbeddingWorkerClaimsOnlyAfterMutationGateAdmission(t *testing.T) {
+	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {
 		fixture := newEmbeddingWorkerFixture(t)
 		work := fixture.work("gate-admission", document.EmbeddingInputRenditionChunk, "semantic")
@@ -472,6 +491,7 @@ func TestEmbeddingWorkerClaimsOnlyAfterMutationGateAdmission(t *testing.T) {
 }
 
 func TestEmbeddingWorkerReconcilesDurableAuthorityBeforeClaim(t *testing.T) {
+	t.Parallel()
 	fixture := newEmbeddingWorkerFixture(t)
 	fixture.catalog.enqueue(fixture.work("reconcile-before-claim", document.EmbeddingInputRenditionChunk, "semantic"))
 	processed, err := fixture.worker(t).ScanOnce(t.Context())
@@ -481,6 +501,7 @@ func TestEmbeddingWorkerReconcilesDurableAuthorityBeforeClaim(t *testing.T) {
 }
 
 func TestEmbeddingRuntimeRegistryClassifiesWithExactExecutingRuntime(t *testing.T) {
+	t.Parallel()
 	fixture := newEmbeddingWorkerFixture(t)
 	work := fixture.work("exact-classifier", document.EmbeddingInputRenditionChunk, "semantic")
 	fixture.runtime.failures[work.Binding.Name] = []error{embeddingPermanentError{}}
@@ -498,6 +519,7 @@ func TestEmbeddingRuntimeRegistryClassifiesWithExactExecutingRuntime(t *testing.
 }
 
 func TestEmbeddingRuntimeRegistryClassifiesPerProfileBinding(t *testing.T) {
+	t.Parallel()
 	fixture := newEmbeddingWorkerFixture(t)
 	work := fixture.work("profile-binding-classifier", document.EmbeddingInputRenditionChunk, "semantic")
 	registry := NewEmbeddingRuntimeRegistry()
@@ -1108,6 +1130,7 @@ func receiptText(receipts []EmbeddingAttemptReceipt) string {
 }
 
 func TestEmbeddingWorkerPublishesThroughRealCatalogAndBlobStore(t *testing.T) {
+	t.Parallel()
 	for _, kind := range []document.EmbeddingInputKind{document.EmbeddingInputOriginalFile, document.EmbeddingInputRenditionChunk} {
 		t.Run(string(kind), func(t *testing.T) {
 			fixture, fake, worker, request := newRealEmbeddingWorker(t, kind)
@@ -1277,6 +1300,7 @@ func newRealEmbeddingWorker(t *testing.T, kind document.EmbeddingInputKind, addi
 }
 
 func TestEmbeddingWorkerReleasesMaintenanceGateDuringProviderCall(t *testing.T) {
+	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {
 		fixture := newEmbeddingWorkerFixture(t)
 		fixture.catalog.enqueue(fixture.work("maintenance", document.EmbeddingInputRenditionChunk, "semantic"))
@@ -1312,7 +1336,7 @@ func (catalog *observedEmbeddingCatalog) BeginEmbeddingProviderEgress(ctx contex
 	return auth, fence, err
 }
 
-func TestEmbeddingWorkerFencesConsentThroughProviderCall(t *testing.T) {
+func TestEmbeddingWorkerFencesConsentThroughProviderCall(t *testing.T) { //nolint:paralleltest // proves the fence holds by waiting 100ms of real time
 	fixture, fake, worker, request := newRealEmbeddingWorker(t, document.EmbeddingInputOriginalFile)
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
@@ -1356,6 +1380,7 @@ func TestEmbeddingWorkerFencesConsentThroughProviderCall(t *testing.T) {
 }
 
 func TestEmbeddingWorkerRejectsConsentRevokedBeforeProviderCall(t *testing.T) {
+	t.Parallel()
 	fixture, fake, worker, request := newRealEmbeddingWorker(t, document.EmbeddingInputOriginalFile)
 	_, err := fixture.catalog.RevokeConsent(t.Context(), store.ProcessingConsentRevocationRequest{Principal: request.Authorization.Principal, Scope: request.Authorization.Scope})
 	require.NoError(t, err)
@@ -1379,6 +1404,7 @@ func (runtime afterEmbeddingPrepare) Prepare(ctx context.Context, work Embedding
 }
 
 func TestEmbeddingWorkerTargetReportsSourceFence(t *testing.T) {
+	t.Parallel()
 	fixture, fake, worker, request := newRealEmbeddingWorker(t, document.EmbeddingInputOriginalFile)
 	version, err := fixture.catalog.ContentVersionByID(t.Context(), request.ContentVersionID)
 	require.NoError(t, err)
@@ -1400,6 +1426,7 @@ func TestEmbeddingWorkerTargetReportsSourceFence(t *testing.T) {
 }
 
 func TestEmbeddingWorkerAbandonsReplacedRendition(t *testing.T) {
+	t.Parallel()
 	for _, duringProvider := range []bool{false, true} {
 		t.Run(fmt.Sprintf("during-provider=%t", duringProvider), func(t *testing.T) {
 			fixture, fake, worker, request := newRealEmbeddingWorker(t, document.EmbeddingInputRenditionChunk)
@@ -1463,6 +1490,7 @@ func (c *embeddingWorkerFakeCatalog) ReleaseEmbeddingWork(context.Context, Embed
 }
 
 func TestEmbeddingWorkerReleasesMaintenanceGateDuringRetryDelay(t *testing.T) {
+	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {
 		fixture := newEmbeddingWorkerFixture(t)
 		work := fixture.work("retry-maintenance", document.EmbeddingInputRenditionChunk, "semantic")
@@ -1483,6 +1511,7 @@ func TestEmbeddingWorkerReleasesMaintenanceGateDuringRetryDelay(t *testing.T) {
 }
 
 func TestEmbeddingWorkerRetriesTimedOutAttemptAndPublishesSibling(t *testing.T) {
+	t.Parallel()
 	fixture, fake, worker, request := newRealEmbeddingWorker(t, document.EmbeddingInputOriginalFile)
 	worker.attemptLifetime = 3 * time.Second
 	// Only the first provider call waits for its attempt deadline.
@@ -1561,6 +1590,7 @@ func (a afterEmbeddingStageAuthority) StageEmbeddingSetWithLease(ctx context.Con
 	return nil
 }
 func TestEmbeddingWorkerRecoversConsentRevokedBeforePublication(t *testing.T) {
+	t.Parallel()
 	for _, revoke := range []bool{false, true} {
 		t.Run(strconv.FormatBool(revoke), func(t *testing.T) {
 			fixture, _, worker, request := newRealEmbeddingWorker(t, document.EmbeddingInputOriginalFile)
@@ -1661,6 +1691,7 @@ func (s *unavailableEmbeddingStore) PublishEmbeddingWork(ctx context.Context, cl
 }
 
 func TestEmbeddingWorkerCancellationDuringClaimPreservesQueuedWork(t *testing.T) {
+	t.Parallel()
 	fixture, _, worker, request := newRealEmbeddingWorker(t, document.EmbeddingInputOriginalFile)
 	job, err := fixture.catalog.EnqueueEmbeddingJob(t.Context(), request)
 	require.NoError(t, err)
@@ -1677,6 +1708,7 @@ func TestEmbeddingWorkerCancellationDuringClaimPreservesQueuedWork(t *testing.T)
 }
 
 func TestEmbeddingWorkerReportsCancellationAndCleanupFailure(t *testing.T) {
+	t.Parallel()
 	for _, test := range []struct{ targeted, cleanupFails bool }{
 		{false, false}, {false, true}, {true, false}, {true, true},
 	} {
@@ -1711,6 +1743,7 @@ func TestEmbeddingWorkerReportsCancellationAndCleanupFailure(t *testing.T) {
 }
 
 func TestEmbeddingWorkerStorageErrorsLeaveClaimsRecoverable(t *testing.T) {
+	t.Parallel()
 	for _, phase := range []string{"validation", "renewal", "publication"} {
 		t.Run(phase, func(t *testing.T) {
 			fixture, fake, worker, _ := newRealEmbeddingWorker(t, document.EmbeddingInputOriginalFile)
@@ -1746,6 +1779,7 @@ func TestEmbeddingWorkerStorageErrorsLeaveClaimsRecoverable(t *testing.T) {
 	}
 }
 func TestEmbeddingWorkerBoundsStorageRetries(t *testing.T) {
+	t.Parallel()
 	for _, recover := range []bool{false, true} {
 		t.Run(strconv.FormatBool(recover), func(t *testing.T) {
 			fixture := newEmbeddingWorkerFixture(t)
@@ -1782,6 +1816,7 @@ func TestEmbeddingWorkerBoundsStorageRetries(t *testing.T) {
 	}
 }
 func TestEmbeddingWorkerRecoversProviderAuthorization(t *testing.T) {
+	t.Parallel()
 	fixture, fake, worker, request := newRealEmbeddingWorker(t, document.EmbeddingInputOriginalFile)
 	fake.runtime.failures[request.BindingID] = []error{errors.New("synthetic credential unavailable")}
 	runtime, err := NewProviderEmbeddingRuntime(&embeddingWorkerProvider{runtime: fake.runtime, binding: request.BindingID, descriptor: fake.descriptor}, fixture.blobs, t.TempDir(), func(error) (EmbeddingProviderFailure, time.Duration) { return EmbeddingProviderAuthorization, 0 })
@@ -1803,6 +1838,7 @@ func TestEmbeddingWorkerRecoversProviderAuthorization(t *testing.T) {
 }
 
 func TestEmbeddingWorkerRetainsAuthorizedInputsWhenProviderMutatesBatch(t *testing.T) {
+	t.Parallel()
 	fixture := newEmbeddingWorkerFixture(t)
 	work := fixture.work("input-ownership", document.EmbeddingInputRenditionChunk, "chunks")
 	fixture.catalog.enqueue(work)
@@ -1816,6 +1852,7 @@ func TestEmbeddingWorkerRetainsAuthorizedInputsWhenProviderMutatesBatch(t *testi
 }
 
 func TestEmbeddingWorkerSealsUploadsAndClosesOriginalAfterProviderReplacesInput(t *testing.T) {
+	t.Parallel()
 	for _, corruptSource := range []bool{false, true} {
 		t.Run(strconv.FormatBool(corruptSource), func(t *testing.T) {
 			fixture := newEmbeddingWorkerFixture(t)
@@ -1846,6 +1883,7 @@ func TestEmbeddingWorkerSealsUploadsAndClosesOriginalAfterProviderReplacesInput(
 }
 
 func TestEmbeddingWorkerRejectsOversizedInputBeforeProvider(t *testing.T) {
+	t.Parallel()
 	fixture := newEmbeddingWorkerFixture(t)
 	work := fixture.work("oversized-original", document.EmbeddingInputOriginalFile, "direct")
 	work = mutateEmbeddingWorkerBinding(t, work, func(binding *document.EmbeddingBindingV1) { binding.MaxInputBytes = 1 })
@@ -1866,6 +1904,7 @@ func TestEmbeddingWorkerRejectsOversizedInputBeforeProvider(t *testing.T) {
 }
 
 func TestEmbeddingWorkerPreservesPreparationFailureKinds(t *testing.T) {
+	t.Parallel()
 	for _, test := range []struct {
 		name        string
 		preparation error
@@ -1899,6 +1938,7 @@ func TestEmbeddingWorkerPreservesPreparationFailureKinds(t *testing.T) {
 }
 
 func TestEmbeddingWorkerClassifiesOriginalMetadataAndBlobErrors(t *testing.T) {
+	t.Parallel()
 	for _, test := range []struct {
 		name, mediaType string
 		blobErr         error
@@ -1937,6 +1977,7 @@ func TestEmbeddingWorkerClassifiesOriginalMetadataAndBlobErrors(t *testing.T) {
 }
 
 func TestEmbeddingWorkerRecordsClassifiedInvalidProviderResponse(t *testing.T) {
+	t.Parallel()
 	fixture, fake, worker, request := newRealEmbeddingWorker(t, document.EmbeddingInputOriginalFile)
 	fake.runtime.failures[request.BindingID] = []error{errors.New("synthetic malformed provider response")}
 	runtime, err := NewProviderEmbeddingRuntime(&embeddingWorkerProvider{runtime: fake.runtime, binding: request.BindingID, descriptor: fake.descriptor}, fixture.blobs, t.TempDir(), func(error) (EmbeddingProviderFailure, time.Duration) { return EmbeddingProviderInvalidResponse, 0 })
@@ -1952,6 +1993,7 @@ func TestEmbeddingWorkerRecordsClassifiedInvalidProviderResponse(t *testing.T) {
 }
 
 func TestEmbeddingWorkerSpacesReconciliationWithoutDelayingQueuedWork(t *testing.T) {
+	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {
 		fixture := newEmbeddingWorkerFixture(t)
 		worker := fixture.worker(t)

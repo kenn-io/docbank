@@ -15,6 +15,7 @@ import (
 )
 
 func TestPhotoRoutesEnforceIfMatch(t *testing.T) {
+	t.Parallel()
 	ts, fixture := newTestServer(t, nil)
 	hash, size, err := fixture.Blobs.Write(strings.NewReader("jpeg"))
 	require.NoError(t, err)
@@ -46,6 +47,7 @@ func TestPhotoRoutesEnforceIfMatch(t *testing.T) {
 }
 
 func TestPhotoRoutesCreatePromoteAndConcurrentRevisionWinner(t *testing.T) {
+	t.Parallel()
 	ts, fixture := newTestServer(t, nil)
 	hash, size, err := fixture.Blobs.Write(strings.NewReader("raw"))
 	require.NoError(t, err)
@@ -118,6 +120,7 @@ func TestPhotoRoutesCreatePromoteAndConcurrentRevisionWinner(t *testing.T) {
 }
 
 func TestPhotoRoutesAndClientTraversal(t *testing.T) {
+	t.Parallel()
 	ts, fixture := newTestServer(t, nil)
 	hash, size, err := fixture.Blobs.Write(strings.NewReader("jpeg"))
 	require.NoError(t, err)

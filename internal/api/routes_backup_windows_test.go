@@ -16,6 +16,7 @@ import (
 )
 
 func TestBackupRestoreRejectsWindowsCaseEquivalentRepositoryAlias(t *testing.T) {
+	t.Parallel()
 	parent := t.TempDir()
 	repoPath := filepath.Join(parent, "CaseSensitiveRepo")
 	ts, _ := newTestServer(t, func(d *api.Deps) { d.Cfg.Backup.Repo = repoPath })
@@ -36,6 +37,7 @@ func TestBackupRestoreRejectsWindowsCaseEquivalentRepositoryAlias(t *testing.T) 
 }
 
 func TestBackupRestoreRejectsWindowsRepositoryReparseAlias(t *testing.T) {
+	t.Parallel()
 	repoPath := filepath.Join(t.TempDir(), "repo")
 	ts, _ := newTestServer(t, func(d *api.Deps) { d.Cfg.Backup.Repo = repoPath })
 	resp, body := do(t, ts, http.MethodPost, "/api/v1/backup/init", nil, map[string]any{})
@@ -52,6 +54,7 @@ func TestBackupRestoreRejectsWindowsRepositoryReparseAlias(t *testing.T) {
 }
 
 func TestBackupRestoreOpenRootPreventsWindowsTargetSwap(t *testing.T) {
+	t.Parallel()
 	base := t.TempDir()
 	target := filepath.Join(base, "target")
 	require.NoError(t, os.Mkdir(target, 0o700))

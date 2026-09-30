@@ -8,6 +8,7 @@ import (
 )
 
 func TestCalendarOrganizerParametersKeepActor(t *testing.T) {
+	t.Parallel()
 	for _, sourceField := range []string{"ORGANIZER", "ORGANIZER;CN=Alice", "organizer;cn=Alice"} {
 		t.Run(sourceField, func(t *testing.T) {
 			payload := []byte("BEGIN:VCALENDAR\r\nBEGIN:VEVENT\r\n" + sourceField +
@@ -28,6 +29,7 @@ func TestCalendarOrganizerParametersKeepActor(t *testing.T) {
 }
 
 func TestF10ActorsKeepEvidenceWithoutInventingDates(t *testing.T) {
+	t.Parallel()
 	creator := document.SourceMetadataFieldV1{
 		Key: "creators", Namespace: "pdf.info", SourceField: "Author",
 		Value: document.SourceMetadataValueV1{

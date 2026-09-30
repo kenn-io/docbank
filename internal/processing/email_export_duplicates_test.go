@@ -19,6 +19,7 @@ import (
 )
 
 func TestExportExplicitCollapsePreservesAllOccurrenceReceipts(t *testing.T) {
+	t.Parallel()
 	f := newEmailPipelineFixture(t)
 	var nodes []int64
 	for _, name := range []string{"first.eml", "second.eml"} {

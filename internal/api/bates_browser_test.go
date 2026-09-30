@@ -9,6 +9,7 @@ import (
 )
 
 func TestBatesBrowserRuleAllowsOnlyReviewedWorkflow(t *testing.T) {
+	t.Parallel()
 	for _, request := range []struct{ method, path string }{
 		{http.MethodGet, "/api/v1/bates/namespaces?limit=250"},
 		{http.MethodPost, "/api/v1/bates/namespaces"},

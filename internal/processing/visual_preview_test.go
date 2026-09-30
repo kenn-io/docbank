@@ -24,6 +24,7 @@ import (
 )
 
 func TestProduceVisualPreviewAppliesEXIFOrientation(t *testing.T) {
+	t.Parallel()
 	tiff := syntheticTIFF(42,
 		[]syntheticTIFFEntry{tiffShort(0x0112, 6)},
 		[]syntheticTIFFEntry{tiffShort(0xa001, 1)},
@@ -47,6 +48,7 @@ func TestProduceVisualPreviewAppliesEXIFOrientation(t *testing.T) {
 }
 
 func TestVisualPreviewPreservesHighDensityDetail(t *testing.T) {
+	t.Parallel()
 	recipe := CurrentVisualPreviewRecipe()
 	assert.Equal(t, 4096, recipe.MaxEdgePixels)
 	width, height := boundedVisualPreviewDimensions(6000, 4000)
@@ -55,6 +57,7 @@ func TestVisualPreviewPreservesHighDensityDetail(t *testing.T) {
 }
 
 func TestProduceVisualPreviewRejectsEmbeddedICCProfile(t *testing.T) {
+	t.Parallel()
 	tiff := syntheticTIFF(42, nil, []syntheticTIFFEntry{tiffShort(0xa001, 1)})
 	source := syntheticJPEGSegment(t, mediatest.JPEG(3, 2, color.White), 0xe1,
 		append([]byte("Exif\x00\x00"), tiff...))
@@ -73,6 +76,7 @@ func TestProduceVisualPreviewRejectsEmbeddedICCProfile(t *testing.T) {
 }
 
 func TestProduceVisualPreviewAcceptsJPEGMediaTypeParameters(t *testing.T) {
+	t.Parallel()
 	source := mediatest.JPEG(3, 2, color.White)
 	digest := sha256.Sum256(source)
 
@@ -87,6 +91,7 @@ func TestProduceVisualPreviewAcceptsJPEGMediaTypeParameters(t *testing.T) {
 }
 
 func TestProduceVisualPreviewAcceptsPNGAndFlattensTransparency(t *testing.T) {
+	t.Parallel()
 	canvas := image.NewNRGBA(image.Rect(0, 0, 64, 32))
 	for y := range 32 {
 		for x := range 64 {
@@ -124,6 +129,7 @@ func TestProduceVisualPreviewAcceptsPNGAndFlattensTransparency(t *testing.T) {
 }
 
 func TestProduceVisualPreviewAppliesPNGEXIFOrientation(t *testing.T) {
+	t.Parallel()
 	source := syntheticPNGChunk(t, mediatest.PNG(3, 2, color.White), "eXIf",
 		syntheticTIFF(42, []syntheticTIFFEntry{tiffShort(0x0112, 6)}, nil))
 	digest := sha256.Sum256(source)
@@ -139,6 +145,7 @@ func TestProduceVisualPreviewAppliesPNGEXIFOrientation(t *testing.T) {
 }
 
 func TestProduceVisualPreviewUsesGIFPrimaryFrame(t *testing.T) {
+	t.Parallel()
 	palette := color.Palette{color.Black, color.White}
 	primary := image.NewPaletted(image.Rect(16, 8, 48, 24), palette)
 	later := image.NewPaletted(image.Rect(0, 0, 64, 32), palette)
@@ -175,6 +182,7 @@ func TestProduceVisualPreviewUsesGIFPrimaryFrame(t *testing.T) {
 }
 
 func TestProduceVisualPreviewAcceptsWebP(t *testing.T) {
+	t.Parallel()
 	source := mustDecodeWebP(t)
 	digest := sha256.Sum256(source)
 
@@ -190,6 +198,7 @@ func TestProduceVisualPreviewAcceptsWebP(t *testing.T) {
 }
 
 func TestProduceVisualPreviewAcceptsTIFFCameraRAW(t *testing.T) {
+	t.Parallel()
 	preview := mediatest.JPEG(3, 2, color.White)
 	source := syntheticRAWPreviewTIFF(6, preview)
 	digest := sha256.Sum256(source)
@@ -214,6 +223,7 @@ func TestProduceVisualPreviewAcceptsTIFFCameraRAW(t *testing.T) {
 }
 
 func TestProduceVisualPreviewAcceptsSingleStripDNGPreview(t *testing.T) {
+	t.Parallel()
 	preview := mediatest.JPEG(3, 2, color.White)
 	source := syntheticRAWPreviewTIFFCandidates(1, syntheticRAWPreviewCandidate{
 		data: preview, singleStrip: true,
@@ -231,6 +241,7 @@ func TestProduceVisualPreviewAcceptsSingleStripDNGPreview(t *testing.T) {
 }
 
 func TestProduceVisualPreviewFallsBackToSmallerUsableCameraRAWPreview(t *testing.T) {
+	t.Parallel()
 	preview := mediatest.JPEG(3, 2, color.White)
 	invalid := make([]byte, len(preview)+1)
 	source := syntheticRAWPreviewTIFF(1, preview, invalid)
@@ -247,6 +258,7 @@ func TestProduceVisualPreviewFallsBackToSmallerUsableCameraRAWPreview(t *testing
 }
 
 func TestProduceVisualPreviewUsesCandidateCameraRAWOrientation(t *testing.T) {
+	t.Parallel()
 	preview := mediatest.JPEG(4, 3, color.White)
 	source := syntheticRAWPreviewTIFFCandidates(6, syntheticRAWPreviewCandidate{
 		data: preview, orientation: 1,
@@ -264,6 +276,7 @@ func TestProduceVisualPreviewUsesCandidateCameraRAWOrientation(t *testing.T) {
 }
 
 func TestProduceVisualPreviewAcceptsRAF(t *testing.T) {
+	t.Parallel()
 	source := syntheticRAF()
 	digest := sha256.Sum256(source)
 
@@ -278,6 +291,7 @@ func TestProduceVisualPreviewAcceptsRAF(t *testing.T) {
 }
 
 func TestProduceVisualPreviewRecordsMissingCameraRAWPreview(t *testing.T) {
+	t.Parallel()
 	source := syntheticTIFFRoot([]syntheticTIFFEntry{tiffShort(0x0112, 1)})
 	digest := sha256.Sum256(source)
 
@@ -291,6 +305,7 @@ func TestProduceVisualPreviewRecordsMissingCameraRAWPreview(t *testing.T) {
 }
 
 func TestProduceVisualPreviewRecordsInvalidCameraRAWPreviewRange(t *testing.T) {
+	t.Parallel()
 	source := syntheticRAWPreviewTIFF(1, mediatest.JPEG(3, 2, color.White))
 	previewIFD := int(binary.LittleEndian.Uint32(source[22:26]))
 	binary.LittleEndian.PutUint32(source[previewIFD+10:previewIFD+14], uint32(len(source)+1))
@@ -306,6 +321,7 @@ func TestProduceVisualPreviewRecordsInvalidCameraRAWPreviewRange(t *testing.T) {
 }
 
 func TestProduceVisualPreviewAppliesWebPEXIFOrientation(t *testing.T) {
+	t.Parallel()
 	source := mustDecodeWebP(t)
 	source = syntheticExtendedWebP(t, source, 75, 100, visualPreviewWebPEXIF, "EXIF",
 		syntheticTIFF(42, []syntheticTIFFEntry{tiffShort(0x0112, 6)}, nil))
@@ -322,6 +338,7 @@ func TestProduceVisualPreviewAppliesWebPEXIFOrientation(t *testing.T) {
 }
 
 func TestProduceVisualPreviewRejectsWebPICCProfile(t *testing.T) {
+	t.Parallel()
 	source, err := base64.StdEncoding.DecodeString(
 		"UklGRiIAAABXRUJQVlA4IBYAAAAwAQCdASoBAAEADsD+JaQAA3AAAAAA",
 	)
@@ -339,6 +356,7 @@ func TestProduceVisualPreviewRejectsWebPICCProfile(t *testing.T) {
 }
 
 func TestProduceVisualPreviewRejectsPNGICCProfile(t *testing.T) {
+	t.Parallel()
 	source := syntheticPNGChunk(t, mediatest.PNG(3, 2, color.White), "iCCP", []byte("profile"))
 	digest := sha256.Sum256(source)
 
@@ -352,6 +370,7 @@ func TestProduceVisualPreviewRejectsPNGICCProfile(t *testing.T) {
 }
 
 func TestProduceVisualPreviewRecordsTruncatedPNGFailure(t *testing.T) {
+	t.Parallel()
 	complete := mediatest.PNG(64, 48, color.White)
 	source := complete[:len(complete)-1]
 	digest := sha256.Sum256(source)
@@ -367,6 +386,7 @@ func TestProduceVisualPreviewRecordsTruncatedPNGFailure(t *testing.T) {
 }
 
 func TestProduceVisualPreviewRecordsCorruptPNGCompressionFailure(t *testing.T) {
+	t.Parallel()
 	source := mediatest.PNG(4, 3, color.White)
 	corrupted := false
 	for offset := 8; offset+12 <= len(source); {
@@ -395,6 +415,7 @@ func TestProduceVisualPreviewRecordsCorruptPNGCompressionFailure(t *testing.T) {
 }
 
 func TestProduceVisualPreviewRejectsOversizedPNGDimensionsBeforeDecode(t *testing.T) {
+	t.Parallel()
 	source := mediatest.PNG(1, 1, color.White)
 	binary.BigEndian.PutUint32(source[16:20], 10001)
 	binary.BigEndian.PutUint32(source[20:24], 10001)
@@ -411,6 +432,7 @@ func TestProduceVisualPreviewRejectsOversizedPNGDimensionsBeforeDecode(t *testin
 }
 
 func TestProduceVisualPreviewRecordsMalformedJPEGFailure(t *testing.T) {
+	t.Parallel()
 	source := []byte{0xff, 0xd8, 0xff, 0xd9}
 	digest := sha256.Sum256(source)
 
@@ -425,6 +447,7 @@ func TestProduceVisualPreviewRecordsMalformedJPEGFailure(t *testing.T) {
 }
 
 func TestProduceVisualPreviewRecordsTruncatedJPEGFailure(t *testing.T) {
+	t.Parallel()
 	complete := mediatest.JPEG(64, 48, color.RGBA{R: 220, G: 40, B: 20, A: 255})
 	source := complete[:len(complete)-1]
 	digest := sha256.Sum256(source)
@@ -440,6 +463,7 @@ func TestProduceVisualPreviewRecordsTruncatedJPEGFailure(t *testing.T) {
 }
 
 func TestProduceVisualPreviewRecordsMalformedGIFFailure(t *testing.T) {
+	t.Parallel()
 	source := []byte("GIF89a")
 	digest := sha256.Sum256(source)
 
@@ -454,6 +478,7 @@ func TestProduceVisualPreviewRecordsMalformedGIFFailure(t *testing.T) {
 }
 
 func TestProduceVisualPreviewRecordsMalformedWebPFailure(t *testing.T) {
+	t.Parallel()
 	source := []byte("RIFF\x04\x00\x00\x00WEBP")
 	digest := sha256.Sum256(source)
 
@@ -467,6 +492,7 @@ func TestProduceVisualPreviewRecordsMalformedWebPFailure(t *testing.T) {
 }
 
 func TestVisualPreviewJPEGColorPolicyRejectsCMYK(t *testing.T) {
+	t.Parallel()
 	assert.True(t, visualPreviewJPEGColorModelSupported(color.GrayModel))
 	assert.True(t, visualPreviewJPEGColorModelSupported(color.YCbCrModel))
 	assert.True(t, visualPreviewJPEGColorModelSupported(color.RGBAModel))
@@ -474,6 +500,7 @@ func TestVisualPreviewJPEGColorPolicyRejectsCMYK(t *testing.T) {
 }
 
 func TestProduceVisualPreviewKeepsImageReadErrorsRetryable(t *testing.T) {
+	t.Parallel()
 	readErr := errors.New("injected read failure")
 	sources := []struct {
 		name, mediaType string
@@ -514,6 +541,7 @@ func TestProduceVisualPreviewKeepsImageReadErrorsRetryable(t *testing.T) {
 }
 
 func TestProduceVisualPreviewKeepsCameraRAWReadErrorsRetryable(t *testing.T) {
+	t.Parallel()
 	readErr := errors.New("injected read failure")
 	source := syntheticRAWPreviewTIFF(1, mediatest.JPEG(3, 2, color.White))
 	digest := sha256.Sum256(source)
@@ -530,6 +558,7 @@ func TestProduceVisualPreviewKeepsCameraRAWReadErrorsRetryable(t *testing.T) {
 }
 
 func TestVisualPreviewJPEGUnsupportedFeatureIsTerminal(t *testing.T) {
+	t.Parallel()
 	product, err := visualPreviewJPEGDecodeResult(
 		document.VisualPreviewV1{}, "malformed", jpeg.UnsupportedError("test feature"),
 	)

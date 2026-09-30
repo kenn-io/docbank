@@ -27,6 +27,7 @@ import (
 )
 
 func TestGateFreezerBlocksMutationOnlyUntilEnd(t *testing.T) {
+	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {
 		g := NewOperationGate()
 		freezer := &gateFreezer{gate: g}
@@ -59,6 +60,7 @@ func TestGateFreezerBlocksMutationOnlyUntilEnd(t *testing.T) {
 }
 
 func TestBackupCaptureBlocksPlacementAuthorityCommit(t *testing.T) {
+	t.Parallel()
 	g := NewOperationGate()
 	captureStarted := make(chan struct{})
 	releaseCapture := make(chan struct{})
@@ -96,6 +98,7 @@ func TestBackupCaptureBlocksPlacementAuthorityCommit(t *testing.T) {
 }
 
 func TestQueuedMaintenanceRejectsRouteMutation(t *testing.T) {
+	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {
 		g := NewOperationGate()
 		captureEntered := make(chan struct{})
@@ -138,6 +141,7 @@ func TestQueuedMaintenanceRejectsRouteMutation(t *testing.T) {
 }
 
 func TestDaemonLogicalMutationDoesNotFailCloseRouteMutations(t *testing.T) {
+	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {
 		g := NewOperationGate()
 		entered := make(chan struct{})
@@ -155,6 +159,7 @@ func TestDaemonLogicalMutationDoesNotFailCloseRouteMutations(t *testing.T) {
 }
 
 func TestCanceledQueuedMaintenanceStopsRejectingRouteMutation(t *testing.T) {
+	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {
 		g := NewOperationGate()
 		captureEntered := make(chan struct{})
@@ -195,6 +200,7 @@ func TestCanceledQueuedMaintenanceStopsRejectingRouteMutation(t *testing.T) {
 }
 
 func TestScheduledPackDeadlineClearsAdmissionAfterBackupCapture(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	metadata, err := store.Open(filepath.Join(root, "docbank.db"))
 	require.NoError(t, err)
@@ -333,6 +339,7 @@ func TestScheduledPackDeadlineClearsAdmissionAfterBackupCapture(t *testing.T) {
 }
 
 func TestBackupCaptureBlocksGCButAllowsLiveDeletion(t *testing.T) {
+	t.Parallel()
 	ctx := t.Context()
 	root := t.TempDir()
 	metadata, err := store.Open(filepath.Join(root, "docbank.db"))

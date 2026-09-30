@@ -23,6 +23,7 @@ func documentCursorTestRequest() documentCursorRequest {
 }
 
 func TestDocumentCursorPagingHasNoProcessWideCapacity(t *testing.T) {
+	t.Parallel()
 	now := time.Date(2026, 8, 28, 10, 0, 0, 0, time.UTC)
 	service := newDocumentCursorTestService(&now)
 	query, request := documentCursorTestQuery(), documentCursorTestRequest()
@@ -37,6 +38,7 @@ func TestDocumentCursorPagingHasNoProcessWideCapacity(t *testing.T) {
 }
 
 func TestDocumentCursorIsSelfContained(t *testing.T) {
+	t.Parallel()
 	now := time.Date(2026, 8, 28, 10, 0, 0, 0, time.UTC)
 	query, request := documentCursorTestQuery(), documentCursorTestRequest()
 	first, second := newDocumentCursorTestService(&now), newDocumentCursorTestService(&now)

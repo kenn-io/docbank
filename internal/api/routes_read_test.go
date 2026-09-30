@@ -25,6 +25,7 @@ import (
 )
 
 func TestStatByIDAndPath(t *testing.T) {
+	t.Parallel()
 	ts, s := newTestServer(t, nil)
 	ctx := t.Context()
 	d, err := s.Mkdir(ctx, s.RootID(), "docs")
@@ -56,6 +57,7 @@ func TestStatByIDAndPath(t *testing.T) {
 }
 
 func TestStatAndContentVersionDetailExposeActiveSourceMetadata(t *testing.T) {
+	t.Parallel()
 	ts, s := newTestServer(t, nil)
 	node, err := s.CreateFile(t.Context(), s.RootID(), "report.pdf", testHash("metadata"), 9, "application/pdf")
 	require.NoError(t, err)
@@ -97,6 +99,7 @@ func TestStatAndContentVersionDetailExposeActiveSourceMetadata(t *testing.T) {
 }
 
 func TestStatTrashedNodeHasNoLivePath(t *testing.T) {
+	t.Parallel()
 	ts, s := newTestServer(t, nil)
 	ctx := t.Context()
 	node, err := s.Mkdir(ctx, s.RootID(), "archived")
@@ -114,6 +117,7 @@ func TestStatTrashedNodeHasNoLivePath(t *testing.T) {
 }
 
 func TestChildrenPagination(t *testing.T) {
+	t.Parallel()
 	ts, s := newTestServer(t, nil)
 	ctx := t.Context()
 	for i := range 5 {
@@ -135,6 +139,7 @@ func TestChildrenPagination(t *testing.T) {
 }
 
 func TestChildrenRefreshReturnsCurrentDirectoryAuthority(t *testing.T) {
+	t.Parallel()
 	ts, s := newTestServer(t, nil)
 	ctx := t.Context()
 	dir, err := s.Mkdir(ctx, s.RootID(), "old")
@@ -164,6 +169,7 @@ func TestChildrenRefreshReturnsCurrentDirectoryAuthority(t *testing.T) {
 }
 
 func TestContentStreamsBlob(t *testing.T) {
+	t.Parallel()
 	ts, s := newTestServer(t, nil)
 	// Write a real blob through the test server's blob dir, then link it.
 	n := createFileWithContent(t, ts, s, "/hello.txt", "hello world")
@@ -181,6 +187,7 @@ func TestContentStreamsBlob(t *testing.T) {
 }
 
 func TestFileNodeExposesBlobIdentity(t *testing.T) {
+	t.Parallel()
 	ts, s := newTestServer(t, nil)
 	n := createFileWithChecksum(t, s, "identity.txt", "identity")
 	resp, body := get(t, ts, fmt.Sprintf("/api/v1/nodes/%d", n.ID), nil)
@@ -195,6 +202,7 @@ func TestFileNodeExposesBlobIdentity(t *testing.T) {
 }
 
 func TestContentVersionListMetadataAndPackedBytes(t *testing.T) {
+	t.Parallel()
 	ts, s := newTestServer(t, nil)
 	n := createFileWithChecksum(t, s, "versioned.txt", "stable version bytes")
 	require.NotEmpty(t, n.CurrentVersionID)
@@ -253,6 +261,7 @@ func createFileWithChecksum(t *testing.T, s *testStore, name, content string) st
 }
 
 func TestContentReferenceLookupIsLogicalPaginatedAndRepresentationNeutral(t *testing.T) {
+	t.Parallel()
 	ts, s := newTestServer(t, nil)
 	ctx := t.Context()
 	wantedHash, wantedSize, err := s.Blobs.Write(strings.NewReader("shared content"))
@@ -317,6 +326,7 @@ func TestContentReferenceLookupIsLogicalPaginatedAndRepresentationNeutral(t *tes
 }
 
 func TestVerifyNodeContentBindsRevisionAndReadsStoredBytes(t *testing.T) {
+	t.Parallel()
 	ts, s := newTestServer(t, nil)
 	n := createFileWithContent(t, ts, s, "/evidence.txt", "evidence")
 	_, etag := etagOf(t, ts, n.ID)
@@ -366,6 +376,7 @@ func TestVerifyNodeContentBindsRevisionAndReadsStoredBytes(t *testing.T) {
 }
 
 func TestVerifyNodeContentRejectsDirectory(t *testing.T) {
+	t.Parallel()
 	ts, s := newTestServer(t, nil)
 	d, err := s.Mkdir(t.Context(), s.RootID(), "directory")
 	require.NoError(t, err)
@@ -377,6 +388,7 @@ func TestVerifyNodeContentRejectsDirectory(t *testing.T) {
 }
 
 func TestContentOnDirIs422(t *testing.T) {
+	t.Parallel()
 	ts, s := newTestServer(t, nil)
 	d, err := s.Mkdir(t.Context(), s.RootID(), "d")
 	require.NoError(t, err)
@@ -386,6 +398,7 @@ func TestContentOnDirIs422(t *testing.T) {
 }
 
 func TestSearch(t *testing.T) {
+	t.Parallel()
 	ts, s := newTestServer(t, nil)
 	var insuranceNodes []store.Node
 	for i, name := range []string{"insurance-a.pdf", "insurance-b.pdf"} {

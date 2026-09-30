@@ -51,6 +51,7 @@ func configureRemoteManualTestService(t *testing.T) func(*api.Deps) {
 }
 
 func TestRemoteRecordingManualHTTP(t *testing.T) {
+	t.Parallel()
 	ts, catalog := newTestServer(t, configureRemoteManualTestService(t))
 	c := daemonconn.New(ts.URL, testAPIKey)
 	protectedPrefix := "https://private.invalid/share/http?token="
@@ -157,6 +158,7 @@ func TestRemoteRecordingManualHTTP(t *testing.T) {
 }
 
 func TestRemoteRecordingManualHTTPRejectsExtraArtifactPart(t *testing.T) {
+	t.Parallel()
 	ts, _ := newTestServer(t, configureRemoteManualTestService(t))
 	c := daemonconn.New(ts.URL, testAPIKey)
 	remote, err := c.SubmitRemoteRecording(t.Context(), api.MediaReferenceBody{
@@ -199,6 +201,7 @@ func TestRemoteRecordingManualHTTPRejectsExtraArtifactPart(t *testing.T) {
 }
 
 func TestMediaAcquisitionPlanRejectsOversizedCanonicalURLWithoutEcho(t *testing.T) {
+	t.Parallel()
 	ts, _ := newTestServer(t, configureMediaTestService(t))
 	secret := strings.Repeat("c", 8193)
 	body := `{"operation_id":"00000000-0000-0000-0000-000000000460","reference_url":"https://recordings.invalid/call","canonical_url":"` + secret + `"}`
@@ -210,6 +213,7 @@ func TestMediaAcquisitionPlanRejectsOversizedCanonicalURLWithoutEcho(t *testing.
 }
 
 func TestMediaAcquisitionPlanRejectsOversizedReferenceURLWithoutEcho(t *testing.T) {
+	t.Parallel()
 	ts, _ := newTestServer(t, configureMediaTestService(t))
 	secret := strings.Repeat("r", 8193)
 	body := `{"operation_id":"00000000-0000-0000-0000-000000000461","reference_url":"` + secret + `","canonical_url":"https://recordings.invalid/call"}`

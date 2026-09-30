@@ -24,6 +24,7 @@ import (
 )
 
 func TestWebDownloadVerifiesBeforeOneUseBrowserHandoff(t *testing.T) {
+	t.Parallel()
 	ts, s := newTestServer(t, nil)
 	const content = "synthetic quarterly report\n"
 	document := createFileWithContent(t, ts, s, "/quarterly-report.txt", content)
@@ -133,6 +134,7 @@ func TestWebDownloadVerifiesBeforeOneUseBrowserHandoff(t *testing.T) {
 }
 
 func TestWebDownloadPreparesOneRetainedVersion(t *testing.T) {
+	t.Parallel()
 	ts, s := newTestServer(t, nil)
 	const historicalContent = "synthetic first edition\n"
 	document := createFileWithContent(t, ts, s, "/report.txt", historicalContent)
@@ -201,6 +203,7 @@ func TestWebDownloadPreparesOneRetainedVersion(t *testing.T) {
 }
 
 func TestWebDownloadRejectsAStaleSelectionBeforeStaging(t *testing.T) {
+	t.Parallel()
 	ts, s := newTestServer(t, nil)
 	document := createFileWithContent(t, ts, s, "/report.txt", "report")
 
@@ -227,6 +230,7 @@ func TestWebDownloadRejectsAStaleSelectionBeforeStaging(t *testing.T) {
 }
 
 func TestWebPreviewRejectsIneligibleAndOversizedSourcesBeforeStaging(t *testing.T) {
+	t.Parallel()
 	t.Run("active document MIME", func(t *testing.T) {
 		ts, s := newTestServer(t, nil)
 		hash, size, err := s.Blobs.Write(strings.NewReader("<script>top.location='https://example.invalid'</script>"))
@@ -268,6 +272,7 @@ func TestWebPreviewRejectsIneligibleAndOversizedSourcesBeforeStaging(t *testing.
 }
 
 func TestWebPreviewTicketCancellationIsOwnerScopedAndSessionRevoked(t *testing.T) {
+	t.Parallel()
 	ts, s := newTestServer(t, nil)
 	document := createFileWithContent(t, ts, s, "/report.txt", "selected preview\n")
 	firstSession := issueWebSession(t, ts)
@@ -311,6 +316,7 @@ func TestWebPreviewTicketCancellationIsOwnerScopedAndSessionRevoked(t *testing.T
 }
 
 func TestWebPreviewRejectsRasterDimensionsBeforePublishingTicket(t *testing.T) {
+	t.Parallel()
 	ts, s := newTestServer(t, nil)
 	content := oversizedPNGHeader(100_000, 100_000)
 	hash, size, err := s.Blobs.Write(bytes.NewReader(content))

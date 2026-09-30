@@ -10,6 +10,7 @@ import (
 )
 
 func TestBackupRestoreReportGroupsFallbacksDeterministically(t *testing.T) {
+	t.Parallel()
 	storage := &StorageStatus{
 		LooseBlobs: 2, LooseBytes: 21, Packs: 1, PackStoredBytes: 55,
 		PackedBlobs: 1, PackedRawBytes: 13, PackedStoredBytes: 11,

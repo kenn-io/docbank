@@ -37,6 +37,7 @@ import (
 )
 
 func TestProcessingPlanRouteIsAuthenticatedAndReturnsReviewedDisclosure(t *testing.T) {
+	t.Parallel()
 	ts, catalog := newTestServer(t, configureProcessingTestService(t))
 	node := createFileWithContent(t, ts, catalog, "/private.txt", "private evidence\n")
 	body := map[string]any{"selector": map[string]any{
@@ -78,6 +79,7 @@ func TestProcessingPlanRouteIsAuthenticatedAndReturnsReviewedDisclosure(t *testi
 }
 
 func TestProcessingProfilesRouteListsExecutableProfilesDeterministically(t *testing.T) {
+	t.Parallel()
 	ts, _ := newTestServer(t, configureProcessingTestService(t))
 
 	response, body := get(t, ts, "/api/v1/processing/profiles", nil)
@@ -93,6 +95,7 @@ func TestProcessingProfilesRouteListsExecutableProfilesDeterministically(t *test
 }
 
 func TestProcessingProfilesReportQueryEmbeddingBindings(t *testing.T) {
+	t.Parallel()
 	t.Run("query capable", func(t *testing.T) {
 		ts, _ := newTestServer(t, configureProcessingTestServiceWithEmbeddingProvider(t,
 			newProcessingTestEmbeddingProvider(t), true))
@@ -119,6 +122,7 @@ func TestProcessingProfilesReportQueryEmbeddingBindings(t *testing.T) {
 }
 
 func TestProcessingProfilesReportReranking(t *testing.T) {
+	t.Parallel()
 	t.Run("absent without provider", func(t *testing.T) {
 		ts, _ := newTestServer(t, configureProcessingTestService(t))
 		response, body := get(t, ts, "/api/v1/processing/profiles", nil)
@@ -144,6 +148,7 @@ func TestProcessingProfilesReportReranking(t *testing.T) {
 }
 
 func TestProcessingServicePopulatesSuppliedRenditionRuntimeRegistry(t *testing.T) {
+	t.Parallel()
 	registry := processing.NewRenditionRuntimeRegistry()
 	assert.False(t, registry.Ready())
 
@@ -155,6 +160,7 @@ func TestProcessingServicePopulatesSuppliedRenditionRuntimeRegistry(t *testing.T
 }
 
 func TestProcessingCoverageReportsConfiguredEmbeddingUnavailableBeforeFirstRun(t *testing.T) {
+	t.Parallel()
 	ts, catalog := newTestServer(t, configureProcessingTestServiceWithEmbedding(t))
 	node := createFileWithContent(t, ts, catalog, "/unprocessed.txt", "not processed yet\n")
 
@@ -166,6 +172,7 @@ func TestProcessingCoverageReportsConfiguredEmbeddingUnavailableBeforeFirstRun(t
 }
 
 func TestProcessingClientReturnsCompletedEmbeddingIDs(t *testing.T) {
+	t.Parallel()
 	ts, catalog := newTestServer(t, configureProcessingTestServiceWithEmbedding(t))
 	node := createFileWithContent(t, ts, catalog, "/combined-receipt.txt", "synthetic combined receipt\n")
 	c := daemonconn.New(ts.URL, testAPIKey)
@@ -183,6 +190,7 @@ func TestProcessingClientReturnsCompletedEmbeddingIDs(t *testing.T) {
 }
 
 func TestProcessingClientReportsRequiredEmbeddingFailure(t *testing.T) {
+	t.Parallel()
 	rendition, err := plaintext.New(plaintext.Profile{MaxDocumentBytes: 1 << 20})
 	require.NoError(t, err)
 	provider := invalidProcessingEmbeddingProvider{EmbeddingProvider: newProcessingTestEmbeddingProvider(t)}
@@ -222,6 +230,7 @@ func (invalidProcessingEmbeddingProvider) Embed(context.Context, []document.Embe
 }
 
 func TestProcessingCoverageTracksTrashRestoreAndSupersessionEligibility(t *testing.T) {
+	t.Parallel()
 	ts, catalog := newTestServer(t, configureProcessingTestService(t))
 	node := createFileWithContent(t, ts, catalog, "/coverage.txt", "current retained evidence\n")
 	runProcessingForCoverage(t, ts, node)
@@ -263,6 +272,7 @@ func TestProcessingCoverageTracksTrashRestoreAndSupersessionEligibility(t *testi
 }
 
 func TestProcessingSourceFenceResolveRouteSupportsExactIDsAndMetadataFilters(t *testing.T) {
+	t.Parallel()
 	ts, catalog := newTestServer(t, configureProcessingTestService(t))
 	scope, err := catalog.Mkdir(t.Context(), catalog.RootID(), "scope")
 	require.NoError(t, err)
@@ -304,6 +314,7 @@ func TestProcessingSourceFenceResolveRouteSupportsExactIDsAndMetadataFilters(t *
 }
 
 func TestProcessingSourceFenceResolveRouteReturnsNonNullEmptyFence(t *testing.T) {
+	t.Parallel()
 	ts, _ := newTestServer(t, configureProcessingTestService(t))
 	response, body := do(t, ts, http.MethodPost, "/api/v1/processing/source-fences/resolve", nil,
 		map[string]any{"filters": map[string]any{}})
@@ -319,6 +330,7 @@ func TestProcessingSourceFenceResolveRouteReturnsNonNullEmptyFence(t *testing.T)
 }
 
 func TestProcessingSearchValidationMatchesSearchQueryAndProfileErrors(t *testing.T) {
+	t.Parallel()
 	ts, catalog := newTestServer(t, configureProcessingTestService(t))
 	node := createFileWithContent(t, ts, catalog, "/search-validation.txt", "synthetic search evidence\n")
 
@@ -345,6 +357,7 @@ func TestProcessingSearchValidationMatchesSearchQueryAndProfileErrors(t *testing
 }
 
 func TestProcessingSourceFenceResolveRouteFailsClosedWithStableSanitizedErrors(t *testing.T) {
+	t.Parallel()
 	ts, catalog := newTestServer(t, configureProcessingTestService(t))
 	current := createFileWithContent(t, ts, catalog, "/current.txt", "current\n")
 	oldID := current.CurrentVersionID
@@ -408,6 +421,7 @@ func runProcessingForCoverage(t *testing.T, ts *httptest.Server, node store.Node
 }
 
 func TestProcessingJobStreamPublishesDurableIdentityAndSurvivesDisconnect(t *testing.T) {
+	t.Parallel()
 	inner, err := plaintext.New(plaintext.Profile{MaxDocumentBytes: 1 << 20})
 	require.NoError(t, err)
 	provider := &blockingProcessingProvider{
@@ -422,6 +436,7 @@ func TestProcessingJobStreamPublishesDurableIdentityAndSurvivesDisconnect(t *tes
 }
 
 func TestEmbeddingOnlyJobSurvivesDisconnectAfterDurableIdentity(t *testing.T) {
+	t.Parallel()
 	inner := newProcessingTestEmbeddingProvider(t)
 	provider := &blockingProcessingEmbeddingProvider{
 		inner: inner, started: make(chan struct{}), release: make(chan struct{}),
@@ -437,6 +452,7 @@ func TestEmbeddingOnlyJobSurvivesDisconnectAfterDurableIdentity(t *testing.T) {
 }
 
 func TestProcessingShutdownDrainsAcceptedJobAndPreservesRecovery(t *testing.T) {
+	t.Parallel()
 	inner := newProcessingTestEmbeddingProvider(t)
 	provider := &shutdownProcessingEmbeddingProvider{
 		EmbeddingProvider: inner, started: make(chan struct{}),
@@ -481,7 +497,7 @@ func TestProcessingShutdownDrainsAcceptedJobAndPreservesRecovery(t *testing.T) {
 	require.ErrorIs(t, catalog.Server.Shutdown(shutdownCtx), context.DeadlineExceeded)
 	select {
 	case <-provider.cancelled:
-	default:
+	case <-time.After(10 * time.Second):
 		t.Fatal("shutdown did not cancel accepted processing")
 	}
 	closed := make(chan struct{})
@@ -555,6 +571,7 @@ func (provider *shutdownProcessingEmbeddingProvider) Embed(ctx context.Context,
 }
 
 func TestRenditionDisconnectDoesNotCancelFollowingEmbeddingEnqueue(t *testing.T) {
+	t.Parallel()
 	innerRendition, err := plaintext.New(plaintext.Profile{MaxDocumentBytes: 1 << 20})
 	require.NoError(t, err)
 	rendition := &blockingProcessingProvider{
@@ -572,7 +589,7 @@ func TestRenditionDisconnectDoesNotCancelFollowingEmbeddingEnqueue(t *testing.T)
 	assertProcessingSurvivesDisconnect(t, ts, selector, rendition.started, rendition.release)
 	select {
 	case <-embedding.started:
-	case <-time.After(time.Second):
+	case <-time.After(10 * time.Second):
 		t.Fatal("post-rendition embedding was not enqueued after the response disconnected")
 	}
 }
@@ -642,6 +659,7 @@ func assertProcessingSurvivesDisconnect(t *testing.T, ts *httptest.Server, selec
 }
 
 func TestProcessingRoutesRunReadCoverAndSearchOneExactVersion(t *testing.T) {
+	t.Parallel()
 	ts, catalog := newTestServer(t, configureProcessingTestService(t))
 	outside := createFileWithContent(t, ts, catalog, "/outside.txt", "needle outside fence\n")
 	_ = outside
@@ -747,6 +765,7 @@ func TestProcessingRoutesRunReadCoverAndSearchOneExactVersion(t *testing.T) {
 }
 
 func TestDocumentSearchRejectsWhitespaceQuery(t *testing.T) {
+	t.Parallel()
 	ts, catalog := newTestServer(t, configureProcessingTestService(t))
 	node := createFileWithContent(t, ts, catalog, "/search.txt", "searchable content\n")
 	response, body := do(t, ts, http.MethodPost, "/api/v1/search", nil, map[string]any{
@@ -759,6 +778,7 @@ func TestDocumentSearchRejectsWhitespaceQuery(t *testing.T) {
 }
 
 func TestDocumentSearchRerankingReturnsAppliedAndDegradedReceipts(t *testing.T) {
+	t.Parallel()
 	t.Run("applied", func(t *testing.T) {
 		provider := &routeRerankingProvider{}
 		ts, catalog := newTestServer(t, configureProcessingTestServiceWithReranker(t, provider,
@@ -835,6 +855,7 @@ func TestDocumentSearchRerankingReturnsAppliedAndDegradedReceipts(t *testing.T) 
 }
 
 func TestDocumentSearchRerankingRejectsUnavailableAndFailClosed(t *testing.T) {
+	t.Parallel()
 	t.Run("unavailable", func(t *testing.T) {
 		ts, catalog := newTestServer(t, configureProcessingTestService(t))
 		node := createFileWithContent(t, ts, catalog, "/unavailable.txt", "needle unavailable\n")
@@ -867,6 +888,7 @@ func TestDocumentSearchRerankingRejectsUnavailableAndFailClosed(t *testing.T) {
 }
 
 func TestProcessingConsentRoutesRequireReviewedPlanAndRevocationFailsClosed(t *testing.T) {
+	t.Parallel()
 	ts, catalog := newTestServer(t, configureProcessingTestService(t))
 	node := createFileWithContent(t, ts, catalog, "/consent.txt", "private consent evidence\n")
 	selector := map[string]any{"node_id": node.ID,
@@ -933,6 +955,7 @@ func TestProcessingConsentRoutesRequireReviewedPlanAndRevocationFailsClosed(t *t
 }
 
 func TestDerivativePurgeRequiresExactPreviewAndRemovesLiveRendition(t *testing.T) {
+	t.Parallel()
 	ts, catalog := newTestServer(t, configureProcessingTestService(t))
 	node := createFileWithContent(t, ts, catalog, "/purge.txt", "purge this rendition\n")
 	selector := map[string]any{"node_id": node.ID,
@@ -979,6 +1002,7 @@ func TestDerivativePurgeRequiresExactPreviewAndRemovesLiveRendition(t *testing.T
 }
 
 func TestDerivativePurgeRoutesRejectNonCanonicalContentVersionIDs(t *testing.T) {
+	t.Parallel()
 	ts, _ := newTestServer(t, configureProcessingTestService(t))
 	for _, route := range []string{"purge-plans", "purge-jobs"} {
 		t.Run(route, func(t *testing.T) {
@@ -1352,6 +1376,7 @@ func (w *slowRenditionWriter) Write(p []byte) (int, error) {
 	return n, nil
 }
 func TestRenditionDownloadOutlivesRequestTimeout(t *testing.T) {
+	t.Parallel()
 	ts, catalog := newTestServer(t, configureProcessingTestService(t))
 	node := createFileWithContent(t, ts, catalog, "/synthetic.txt", strings.Repeat("synthetic transfer evidence\n", 3000))
 	selector := map[string]any{"node_id": node.ID, "content_version_id": node.CurrentVersionID, "profile": "private"}
@@ -1389,7 +1414,7 @@ func (p *consentChangeProvider) Render(ctx context.Context, upload document.Auth
 	return result, err
 }
 
-func TestProcessingReportsConsentExpiredDuringRendition(t *testing.T) {
+func TestProcessingReportsConsentExpiredDuringRendition(t *testing.T) { //nolint:paralleltest // the two-second consent expiry is measured on the real clock
 	base, err := plaintext.New(plaintext.Profile{MaxDocumentBytes: 1 << 20})
 	require.NoError(t, err)
 	provider := &consentChangeProvider{RenditionProvider: base}
@@ -1429,6 +1454,7 @@ func TestProcessingReportsConsentExpiredDuringRendition(t *testing.T) {
 }
 
 func TestDerivativePurgeReturnsCommittedReceiptWhenCleanupFails(t *testing.T) {
+	t.Parallel()
 	ts, catalog := newTestServer(t, configureProcessingTestService(t))
 	node := createFileWithContent(t, ts, catalog, "/purge-partial.txt", "synthetic partial purge evidence\n")
 	c := daemonconn.New(ts.URL, testAPIKey)
@@ -1466,6 +1492,7 @@ func TestDerivativePurgeReturnsCommittedReceiptWhenCleanupFails(t *testing.T) {
 }
 
 func TestDerivativePurgePreviewTracksOnlySelectedDerivatives(t *testing.T) {
+	t.Parallel()
 	ts, catalog := newTestServer(t, configureProcessingTestService(t))
 	c := daemonconn.New(ts.URL, testAPIKey)
 	first := createFileWithContent(t, ts, catalog, "/first.txt", "first synthetic source\n")

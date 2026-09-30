@@ -48,8 +48,12 @@ func NewError(status int, code, detail string) *Error {
 	return &Error{Title: http.StatusText(status), Status: status, Code: code, Detail: detail}
 }
 
+// The hook is a package-level huma variable that every huma registration
+// reads, so it is installed once at init rather than by each NewServer.
+func init() { installErrorFormatter() }
+
 // installErrorFormatter routes huma's own errors (request validation,
-// parsing) through the same envelope. Called once from NewServer.
+// parsing) through the same envelope.
 func installErrorFormatter() {
 	huma.NewError = func(status int, msg string, errs ...error) huma.StatusError {
 		code := "validation"
