@@ -15,7 +15,7 @@ import (
 	"strings"
 	"sync"
 
-	"go.kenn.io/kit/pack"
+	"go.kenn.io/kit/backup"
 	"go.kenn.io/kit/packstore"
 )
 
@@ -24,9 +24,9 @@ var ErrInvalidHash = packstore.ErrInvalidHash
 
 const (
 	// MaxIngestBytes is docbank's admission policy for a new loose object. It
-	// matches the format-v1 raw-object ceiling so every admitted object remains
-	// eligible for backup.
-	MaxIngestBytes int64 = int64(pack.MaxRawLen)
+	// is independent of the pack-frame ceiling. Kit backup represents larger
+	// objects with bounded chunk recipes, up to this 64 TiB limit.
+	MaxIngestBytes int64 = backup.MaxObjectBytes
 
 	// MaxPackedBlobBytes is docbank's policy for packing, packed reads, and
 	// packed restore. Larger admitted objects remain authoritative loose blobs.

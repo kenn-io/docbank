@@ -263,11 +263,13 @@ func TestPackageImportPreservesRepeatedImageKeysAcrossPages(t *testing.T) {
 	require.Empty(t, cursor)
 }
 
-func TestPackagePreflightRejectsObjectAboveIngestBound(t *testing.T) {
+// Keep the fixture at the former 4 GiB boundary; the new 64 TiB admission
+// limit must not require a filesystem capable of creating a file that large.
+func TestPackagePreflightAdmitsObjectAboveFormerBound(t *testing.T) {
 	t.Parallel()
 	srv, catalog := newPackageTestServer(t)
 	root := syntheticPackageRoot(t)
-	path := filepath.Join(root, "VOL001", "oversized.pdf")
+	path := filepath.Join(root, "VOL001", "large.pdf")
 	file, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY, 0o600)
 	require.NoError(t, err)
 	require.NoError(t, file.Truncate(1<<32+1))
@@ -275,8 +277,8 @@ func TestPackagePreflightRejectsObjectAboveIngestBound(t *testing.T) {
 	response := srv.post(t, mustPackageJSON(t, api.PackagePreflightRequest{
 		Profile: "dat-concordance-v1", Encoding: "utf-8", SourceKind: "root", SourceRef: root,
 	}))
-	require.Equal(t, http.StatusRequestEntityTooLarge, response.Code, response.Body.String())
-	require.Zero(t, tableCounts(t, catalog).packagePreflights)
+	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+	require.Equal(t, 1, tableCounts(t, catalog).packagePreflights)
 }
 
 func TestPackagePreflightRejectsRecordAboveReceiptBound(t *testing.T) {

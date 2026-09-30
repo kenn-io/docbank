@@ -1117,11 +1117,12 @@ func TestPreflightSizePolicyBoundaries(t *testing.T) {
 	types := make(map[string]FileType)
 	report.addFile("packed.bin", blob.MaxPackedBlobBytes, false, types)
 	report.addFile("loose.bin", blob.MaxPackedBlobBytes+1, false, types)
+	report.addFile("large.bin", int64(4<<30)+1, false, types)
 	report.addFile("limit.bin", blob.MaxIngestBytes, false, types)
 	report.addFile("rejected.bin", blob.MaxIngestBytes+1, false, types)
 
 	assert.Equal(t, int64(1), report.PackEligible.Files)
-	assert.Equal(t, int64(2), report.LooseOnly.Files)
+	assert.Equal(t, int64(3), report.LooseOnly.Files)
 	assert.Equal(t, int64(1), report.Rejected.Files)
 	assert.Equal(t, int64(0), report.CloudPlaceholders.Files)
 }

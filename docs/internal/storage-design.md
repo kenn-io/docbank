@@ -215,7 +215,7 @@ that terminal boundary; existence probes retain the buffered open-and-close
 path because they ask about catalog authority, not fresh byte evidence.
 
 Docbank deliberately separates two policies. New local and remote writes may
-admit one loose object through 4 GiB, matching the format-v1 backup ceiling.
+admit one loose object through 64 TiB, matching the chunked-backup ceiling.
 Kit's packed-read, maintenance, and packed-restore `BlobBytes` limit remains
 64 MiB. Kit v0.8 keeps
 catalog-authorized larger loose objects available through the same verified
@@ -294,9 +294,9 @@ The 1 GiB benchmarks exercise a representative large object through Docbank's
 production admission path, Kit's durable loose writer, the mutation and SQLite
 authority boundary, native
 verified `OpenStream`, and the real backup adapters. They do not admit the
-object to packing. They are bounded-memory evidence supporting the current
-4 GiB loose-ingestion ceiling while packed maintenance stays at 64 MiB, not a
-measurement of the ceiling itself or a performance guarantee. A large object
+object to packing. They demonstrate bounded streaming above the 64 MiB packed
+limit, not maximum-object-size performance. The 64 TiB admission bound comes
+from the backup recipe representation, not a measurement at that size. A large object
 still needs roughly its raw size for live storage, repository storage, and a
 simultaneous restore target in the incompressible case.
 
