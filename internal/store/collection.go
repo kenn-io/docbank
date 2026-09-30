@@ -76,7 +76,7 @@ func collectionSummaryByID(
 		GROUP BY i.id, i.source_kind, i.source_desc, i.started_at,
 			l.ingest_id, l.label, l.revision, l.updated_at
 		HAVING COUNT(cm.node_id)>0 OR (l.ingest_id IS NOT NULL AND NOT EXISTS(
-			SELECT 1 FROM collection_members hm WHERE hm.ingest_id=i.id AND NOT (`+hiddenMember+`)))`, args...))
+			SELECT 1 FROM provenance hm WHERE hm.ingest_id=i.id AND NOT (`+hiddenMember+`)))`, args...))
 	if err != nil {
 		return Collection{}, fmt.Errorf("collection %q: %w", id, err)
 	}

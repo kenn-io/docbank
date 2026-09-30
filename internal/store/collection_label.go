@@ -44,7 +44,7 @@ func collectionLabelTx(
 		FROM ingests i LEFT JOIN collection_labels l ON l.ingest_id=i.id
 		WHERE i.id=? AND i.source_kind NOT LIKE 'embedded:%'
 		  AND ((l.ingest_id IS NOT NULL AND NOT EXISTS(
-			SELECT 1 FROM collection_members hm WHERE hm.ingest_id=i.id AND NOT (`+hiddenMember+`)
+			SELECT 1 FROM provenance hm WHERE hm.ingest_id=i.id AND NOT (`+hiddenMember+`)
 		  )) OR EXISTS(
 			SELECT 1 FROM collection_members cm WHERE cm.ingest_id=i.id AND `+visible+`
 		  ))`, append(args, visibleArgs...)...).Scan(&startedAt, &label, &revision, &updatedAt, &retained)
