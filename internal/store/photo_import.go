@@ -179,6 +179,7 @@ func (s *Store) photoImportCandidatesTx(ctx context.Context, tx *sql.Tx, folder,
 		filter = " AND p.original_path LIKE ? ESCAPE '!'"
 		args = append(args, strings.NewReplacer("!", "!!", "%", "!%", "_", "!_").Replace(prefix)+"%")
 	}
+	visible, visibleArgs := photoNodeVisibleSQL(ctx, "pf.node_id")
 	rows, err := tx.QueryContext(ctx, `
 		SELECT pf.node_id, pf.asset_id, pf.role, p.original_path
 		FROM provenance p INDEXED BY provenance_original_path_nocase
@@ -186,7 +187,7 @@ func (s *Store) photoImportCandidatesTx(ctx context.Context, tx *sql.Tx, folder,
 		JOIN nodes n ON n.id=pf.node_id AND n.trashed_at IS NULL
 		WHERE pf.role IN (?, ?)
 		  AND NOT EXISTS (SELECT 1 FROM provenance successor WHERE successor.supersedes=p.identity)`+
-		filter+` ORDER BY pf.node_id, p.identity`, args...)
+		filter+` AND `+visible+` ORDER BY pf.node_id, p.identity`, append(args, visibleArgs...)...)
 	if err != nil {
 		return nil, fmt.Errorf("reading photo import candidates: %w", err)
 	}
@@ -230,6 +231,7 @@ func (s *Store) photoImportCurrentDuplicateTx(
 	var node Node
 	// Plain nodes count only for sidecars: a lone sidecar was imported as a plain file.
 	photoFilter := "pf.role=?"
+	visible, visibleArgs := photoNodeVisibleSQL(ctx, "n.id")
 	if role == PhotoRoleSidecar {
 		photoFilter = "(pf.node_id IS NULL OR pf.role=?)"
 	}
@@ -239,8 +241,8 @@ func (s *Store) photoImportCurrentDuplicateTx(
 		LEFT JOIN photo_files pf ON pf.node_id=n.id
 		LEFT JOIN provenance p ON p.node_id=n.id
 		  AND NOT EXISTS (SELECT 1 FROM provenance successor WHERE successor.supersedes=p.identity)
-		WHERE n.trashed_at IS NULL AND `+photoFilter+` AND cv.blob_hash=?
-		ORDER BY n.id, p.identity`, role, member.BlobHash)
+		WHERE n.trashed_at IS NULL AND `+photoFilter+` AND cv.blob_hash=? AND `+visible+`
+		ORDER BY n.id, p.identity`, append([]any{role, member.BlobHash}, visibleArgs...)...)
 	if err != nil {
 		return Node{}, false, fmt.Errorf("finding duplicate photo member: %w", err)
 	}
@@ -321,12 +323,13 @@ func (s *Store) photoImportCurrentDuplicateTx(
 func photoImportTargetSidecarTx(
 	ctx context.Context, tx *sql.Tx, assetID, blobHash string, claimed map[int64]bool,
 ) (Node, bool, error) {
+	visible, visibleArgs := photoNodeVisibleSQL(ctx, "n.id")
 	rows, err := tx.QueryContext(ctx, `
 		SELECT `+nodeCols+`
 		FROM `+nodeFrom+`
 		JOIN photo_files pf ON pf.node_id=n.id AND pf.asset_id=? AND pf.role=?
-		WHERE n.trashed_at IS NULL AND cv.blob_hash=?
-		ORDER BY n.id`, assetID, PhotoRoleSidecar, blobHash)
+		WHERE n.trashed_at IS NULL AND cv.blob_hash=? AND `+visible+`
+		ORDER BY n.id`, append([]any{assetID, PhotoRoleSidecar, blobHash}, visibleArgs...)...)
 	if err != nil {
 		return Node{}, false, fmt.Errorf("finding photo sidecar by content: %w", err)
 	}

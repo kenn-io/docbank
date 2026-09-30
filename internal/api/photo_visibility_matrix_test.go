@@ -409,7 +409,7 @@ func TestPhotoVisibilityRouteCoverage(t *testing.T) {
 		},
 		"applies the visibility rule inline in its own store query": {
 			"resolveDocumentSourceFence", "createTermReport", "listTermReportHistory", "listPackageMembers",
-			"listCollections", "getCollection", "getTag", "resolveTagByName",
+			"listCollections", "getCollection", "getTag", "resolveTagByName", "renameTag", "deleteTag",
 		},
 		"uses the node, version, path, asset, catalog or query loader of a covered route": {
 			"resolveDocumentSummaries", "findSimilarDocuments", "runSavedQuery", "validateDocumentSearch",
@@ -430,7 +430,7 @@ func TestPhotoVisibilityRouteCoverage(t *testing.T) {
 		},
 		"vault-wide: settings and maintenance return no photo identity": {
 			"getPhotoSettings", "setPhotoSettings", "createTag",
-			"renameTag", "deleteTag", "getCollectionLabel",
+			"getCollectionLabel",
 			"setCollectionLabel", "createTimelineRebuild", "readTimelineRebuild",
 			"rebuildDocumentPeople", "getPeopleRebuild", "listPeople", "emptyTrash", "verify", "gc",
 			"vaultInfo", "listBlobStores",

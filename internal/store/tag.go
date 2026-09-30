@@ -189,7 +189,7 @@ func (s *Store) RenameTag(ctx context.Context, id string, ifRev int64, name stri
 	}
 	var renamed Tag
 	err = s.withStorageTx(ctx, func(tx *sql.Tx) error {
-		current, err := tagByIDTx(tx, id)
+		current, err := tagByIDQuery(ctx, tx, id)
 		if err != nil {
 			return err
 		}
@@ -250,7 +250,7 @@ func (s *Store) renameTagDefinitionTx(tx *sql.Tx, current Tag, name string) (Tag
 func (s *Store) DeleteTag(ctx context.Context, id string, ifRev int64) (Tag, error) {
 	var deleted Tag
 	err := s.withStorageTx(ctx, func(tx *sql.Tx) error {
-		current, err := tagByIDTx(tx, id)
+		current, err := tagByIDQuery(ctx, tx, id)
 		if err != nil {
 			return err
 		}
@@ -401,7 +401,7 @@ func changeTagAssignmentTx(
 	assign bool,
 	recordedAt string,
 ) (TagAssignmentChange, error) {
-	tag, err := tagByIDTx(tx, tagID)
+	tag, err := tagByIDQuery(ctx, tx, tagID)
 	if err != nil {
 		return TagAssignmentChange{}, err
 	}

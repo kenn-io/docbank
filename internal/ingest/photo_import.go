@@ -181,6 +181,14 @@ func (ing *Ingester) ImportPhotoDirectory(ctx context.Context, root, destination
 	if destination == "" {
 		destination = "/"
 	}
+	// An import into an owner's folder matches duplicates only within that owner's view.
+	ownerID, err := ing.Store.PathPhotoOwner(ctx, destination)
+	if err != nil {
+		return report, err
+	}
+	if ownerID != "" {
+		ctx = store.WithPhotoOwner(ctx, ownerID)
+	}
 	var dest store.Node
 	var run store.IngestRun
 	err = mutate(func() error {

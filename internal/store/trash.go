@@ -458,11 +458,19 @@ func (s *Store) trashEmpty(
 		SELECT n.parent_id FROM nodes n JOIN retained r ON n.id=r.id WHERE n.parent_id IS NOT NULL
 	) SELECT id FROM retained`
 	deletable += ` AND id NOT IN (` + emailRetainedNodes + `)`
-	// An owner folder outlives the trash roots trashed out of it, so they keep their owner.
-	deletable += ` AND NOT (EXISTS (SELECT 1 FROM nodes pof WHERE pof.id=nodes.id AND ` + photoOwnerFolderSQL() + `)
-		AND EXISTS (SELECT 1 FROM nodes orphan WHERE orphan.trash_name IS NOT NULL AND orphan.trash_parent=nodes.id))`
+	// A trash root this run keeps must still reach its owner's folder through its
+	// origin chain, so every node on a chain that ends in an owner folder stays.
+	ownerChains := `WITH RECURSIVE kept_chain(id, seed) AS (
+		SELECT id, id FROM nodes WHERE trash_name IS NOT NULL AND NOT (` + deletable + `)
+		UNION
+		SELECT parent.id, kept_chain.seed FROM kept_chain JOIN nodes child ON child.id=kept_chain.id
+		JOIN nodes parent ON parent.id=` + photoTrashAwareParentSQL("child") + `
+	) SELECT chain.id FROM kept_chain chain WHERE EXISTS (SELECT 1 FROM kept_chain owner
+		JOIN nodes pof ON pof.id=owner.id WHERE owner.seed=chain.seed AND ` + photoOwnerFolderSQL() + `)`
+	deletable += ` AND id NOT IN (` + ownerChains + `)`
+	deletableArgs := append(append([]any(nil), args...), args...)
 	selection := `SELECT id FROM nodes WHERE ` + deletable + ` ORDER BY trashed_at ASC, id ASC`
-	selectionArgs := append([]any(nil), args...)
+	selectionArgs := append([]any(nil), deletableArgs...)
 	if maxRoots > 0 {
 		selection += ` LIMIT ?`
 		selectionArgs = append(selectionArgs, maxRoots)
@@ -479,7 +487,7 @@ func (s *Store) trashEmpty(
 			return fmt.Errorf("counting trash-empty candidates: %w", err)
 		}
 		if maxRoots > 0 {
-			moreArgs := append(append([]any(nil), args...), maxRoots)
+			moreArgs := append(append([]any(nil), deletableArgs...), maxRoots)
 			if err := tx.QueryRow(
 				`SELECT EXISTS(SELECT 1 FROM nodes WHERE `+deletable+` ORDER BY trashed_at ASC, id ASC LIMIT 1 OFFSET ?)`,
 				moreArgs...,
