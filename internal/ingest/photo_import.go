@@ -166,6 +166,12 @@ func (ing *Ingester) ImportPhotoDirectory(ctx context.Context, root, destination
 		}
 		return opts.Progress(ctx, done, report.Total, report.Receipt)
 	}
+	if opts.ActivityBegin != nil {
+		opts.ActivityBegin()
+		if opts.ActivityEnd != nil {
+			defer opts.ActivityEnd()
+		}
+	}
 	candidates, err := discoverPhotoCandidates(ctx, root)
 	if err != nil {
 		return report, err
@@ -190,12 +196,6 @@ func (ing *Ingester) ImportPhotoDirectory(ctx context.Context, root, destination
 	}
 	if err := progress(0); err != nil {
 		return report, err
-	}
-	if opts.ActivityBegin != nil {
-		opts.ActivityBegin()
-		if opts.ActivityEnd != nil {
-			defer opts.ActivityEnd()
-		}
 	}
 	fingerprints := make(map[string]localFileFingerprint, len(candidates))
 	observeErrors := make(map[string]error)
