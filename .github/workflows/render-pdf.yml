@@ -14,6 +14,10 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
+env:
+  # "|" falls back to the source repo on any proxy error, including HTTP/2 stream resets mid-download.
+  GOPROXY: https://proxy.golang.org|direct
+
 jobs:
   libreoffice-owner:
     name: LibreOffice owner proof
