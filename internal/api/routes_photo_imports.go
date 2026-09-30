@@ -69,9 +69,7 @@ func registerPhotoImportRoutes(api huma.API, d Deps, g *gate) {
 			return nil, FromStoreError(err)
 		}
 		runner := NewPhotoImportRunner(runnerDeps)
-		if d.Jobs == nil {
-			go func() { _ = runner.Run(context.WithoutCancel(ctx), operation.ID) }()
-		} else if err := runner.Start(d.Jobs, operation.ID); err != nil {
+		if err := runner.Start(d.Jobs, operation.ID); err != nil {
 			return nil, NewError(http.StatusServiceUnavailable, "photo_import_unavailable",
 				fmt.Sprintf("photo import is queued but could not start: %v", err))
 		}
