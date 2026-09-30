@@ -108,8 +108,6 @@ type PhotoAsset struct {
 	ID                    string      `json:"id"`
 	Kind                  string      `json:"kind"`
 	Revision              int64       `json:"revision"`
-	OwnerID               *string     `json:"owner_id,omitzero"`
-	HiddenAt              *string     `json:"hidden_at,omitzero"`
 	ExcludedAt            *string     `json:"excluded_at,omitzero"`
 	DisplayFileID         *string     `json:"display_file_id,omitzero"`
 	DisplayOverrideFileID *string     `json:"display_override_file_id,omitzero"`

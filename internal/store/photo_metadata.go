@@ -13,8 +13,6 @@ type metadataPhotoAsset struct {
 	AssetID               string  `json:"asset_id"`
 	Kind                  string  `json:"kind"`
 	Revision              int64   `json:"revision"`
-	OwnerID               string  `json:"owner_id"`
-	HiddenAt              *string `json:"hidden_at"`
 	ExcludedAt            *string `json:"excluded_at"`
 	DisplayFileID         *string `json:"display_file_id"`
 	DisplayOverrideFileID *string `json:"display_override_file_id"`
@@ -88,7 +86,7 @@ func exportPhotoMetadata(ctx context.Context, tx metadataQuerier, write metadata
 		return err
 	}
 	rows, err = tx.QueryContext(ctx, `
-		SELECT asset_id, kind, revision, owner_id, hidden_at, excluded_at, display_file_id,
+		SELECT asset_id, kind, revision, excluded_at, display_file_id,
 		       display_override_file_id, created_at, updated_at
 		FROM photo_assets ORDER BY asset_id`)
 	if err != nil {
@@ -96,7 +94,7 @@ func exportPhotoMetadata(ctx context.Context, tx metadataQuerier, write metadata
 	}
 	for rows.Next() {
 		var record metadataPhotoAsset
-		if err := rows.Scan(&record.AssetID, &record.Kind, &record.Revision, &record.OwnerID, &record.HiddenAt, &record.ExcludedAt, &record.DisplayFileID, &record.DisplayOverrideFileID, &record.CreatedAt, &record.UpdatedAt); err != nil {
+		if err := rows.Scan(&record.AssetID, &record.Kind, &record.Revision, &record.ExcludedAt, &record.DisplayFileID, &record.DisplayOverrideFileID, &record.CreatedAt, &record.UpdatedAt); err != nil {
 			_ = rows.Close() //nolint:sqlclosecheck // close before returning the scan error.
 			return err
 		}
@@ -204,14 +202,6 @@ func validatePhotoAssetMetadataRecord(v metadataPhotoAsset) error {
 	if v.Type != metadataPhotoAssetType || validateUUIDv4(v.AssetID) != nil || !photoKindValid(v.Kind) || v.Revision < 1 {
 		return errors.New("invalid photo asset metadata")
 	}
-	if validateUUIDv4(v.OwnerID) != nil {
-		return errors.New("invalid photo asset owner")
-	}
-	if v.HiddenAt != nil {
-		if err := validateMetadataTime("photo asset hidden_at", *v.HiddenAt); err != nil {
-			return err
-		}
-	}
 	if v.ExcludedAt != nil {
 		if err := validateMetadataTime("photo asset excluded_at", *v.ExcludedAt); err != nil {
 			return err
@@ -302,7 +292,7 @@ func importPhotoMetadataRecord(ctx context.Context, tx *sql.Tx, kind string, raw
 		if err := validatePhotoAssetMetadataRecord(v); err != nil {
 			return err
 		}
-		_, err := tx.ExecContext(ctx, `INSERT INTO photo_assets(asset_id,kind,revision,owner_id,hidden_at,excluded_at,display_file_id,display_override_file_id,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?)`, v.AssetID, v.Kind, v.Revision, v.OwnerID, v.HiddenAt, v.ExcludedAt, v.DisplayFileID, v.DisplayOverrideFileID, v.CreatedAt, v.UpdatedAt)
+		_, err := tx.ExecContext(ctx, `INSERT INTO photo_assets(asset_id,kind,revision,excluded_at,display_file_id,display_override_file_id,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?)`, v.AssetID, v.Kind, v.Revision, v.ExcludedAt, v.DisplayFileID, v.DisplayOverrideFileID, v.CreatedAt, v.UpdatedAt)
 		return err
 	case metadataPhotoFileType:
 		var v metadataPhotoFile
@@ -342,12 +332,11 @@ func importPhotoMetadataRecord(ctx context.Context, tx *sql.Tx, kind string, raw
 func validatePhotoMetadataState(ctx context.Context, tx metadataQuerier) error {
 	var broken bool
 	if err := tx.QueryRowContext(ctx, `SELECT
-		EXISTS(SELECT 1 FROM photo_owners o LEFT JOIN persons p ON p.person_id=o.person_id WHERE p.person_id IS NULL) OR
-		EXISTS(SELECT 1 FROM photo_assets a LEFT JOIN photo_owners o ON o.person_id=a.owner_id WHERE o.person_id IS NULL)`).Scan(&broken); err != nil {
+		EXISTS(SELECT 1 FROM photo_owners o LEFT JOIN persons p ON p.person_id=o.person_id WHERE p.person_id IS NULL)`).Scan(&broken); err != nil {
 		return fmt.Errorf("checking photo owner references: %w", err)
 	}
 	if broken {
-		return fmt.Errorf("%w: an enrollment names a missing person or an asset an unenrolled owner", ErrInvalidPhotoOwner)
+		return errors.New("a photo owner enrollment names a missing person")
 	}
 	if err := validatePhotoGraph(ctx, tx); err != nil {
 		return err

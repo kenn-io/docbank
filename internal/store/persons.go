@@ -55,19 +55,6 @@ func (s *Store) CreatePerson(ctx context.Context, displayName, origin string) (P
 	if !validPersonName(displayName) || !validPersonOrigin(origin) {
 		return Person{}, ErrInvalidPerson
 	}
-	var created Person
-	err := s.withLogicalTx(ctx, func(tx *sql.Tx) error {
-		var err error
-		created, err = insertPersonTx(ctx, tx, displayName, origin)
-		return err
-	})
-	if err != nil {
-		return Person{}, err
-	}
-	return created, nil
-}
-
-func insertPersonTx(ctx context.Context, tx *sql.Tx, displayName, origin string) (Person, error) {
 	state := "provisional"
 	if origin == "operator" {
 		state = "curated"
@@ -77,16 +64,22 @@ func insertPersonTx(ctx context.Context, tx *sql.Tx, displayName, origin string)
 		return Person{}, err
 	}
 	now := nowRFC3339()
-	if _, err := tx.ExecContext(ctx, `INSERT INTO persons(person_id,display_name,display_name_folded,origin,state,created_at,updated_at) VALUES(?,?,?,?,?,?,?)`, id, displayName, document.FoldPersonName(displayName), origin, state, now, now); err != nil {
-		return Person{}, err
-	}
 	var created Person
-	if err := tx.QueryRowContext(ctx, `SELECT person_id,display_name,display_name_folded,origin,state,revision,created_at,updated_at FROM persons WHERE person_id=?`, id).Scan(
-		&created.PersonID, &created.DisplayName, &created.DisplayNameFolded, &created.Origin, &created.State,
-		&created.Revision, &created.CreatedAt, &created.UpdatedAt); err != nil {
+	err = s.withLogicalTx(ctx, func(tx *sql.Tx) error {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO persons(person_id,display_name,display_name_folded,origin,state,created_at,updated_at) VALUES(?,?,?,?,?,?,?)`, id, displayName, document.FoldPersonName(displayName), origin, state, now, now); err != nil {
+			return err
+		}
+		if err := tx.QueryRowContext(ctx, `SELECT person_id,display_name,display_name_folded,origin,state,revision,created_at,updated_at FROM persons WHERE person_id=?`, id).Scan(
+			&created.PersonID, &created.DisplayName, &created.DisplayNameFolded, &created.Origin, &created.State,
+			&created.Revision, &created.CreatedAt, &created.UpdatedAt); err != nil {
+			return err
+		}
+		return advancePersonBindingEpochTx(ctx, tx)
+	})
+	if err != nil {
 		return Person{}, err
 	}
-	return created, advancePersonBindingEpochTx(ctx, tx)
+	return created, nil
 }
 
 func (s *Store) UpdatePerson(ctx context.Context, id string, revision int64, name string) (Person, error) {

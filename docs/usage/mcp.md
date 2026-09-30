@@ -155,7 +155,7 @@ links, is capped at 1 MiB.
 | `get_package_record` | Reads one immutable sender row by its package-scoped record key. |
 | `lookup_bates_label` | Finds bounded package-scoped matches for an exact received or assigned label. |
 | `get_photo_asset` | Reads one photo asset by asset UUID or positive node ID. The response has at most 256 files and includes the selected display source. |
-| `list_photo_owners` | Lists enrolled photo owners with person ID, display name, and enrollment time. Every MCP request acts as the default owner, because the MCP daemon connection sends no owner header; enrolling and removing owners stay on the CLI and HTTP API. |
+| `list_photo_owners` | Lists enrolled photo owners with person ID, display name, and enrollment time. The MCP daemon connection sends no owner header, so it sees every owner's folder; enrolling and removing owners stay on the CLI and HTTP API. |
 
 Starting the server with `--allow-photo-edits` adds these write tools:
 

@@ -29,21 +29,30 @@ asset.
 Removing the selected member chooses another displayable member atomically,
 or stores a null display when none remains. Assets are limited to 256 files.
 
-Each asset belongs to one photo owner: a person enrolled as an owner, named by
-the person's current display name. A request sees and changes only its owner's
-photos; other owners' photos are absent from listings and answer like a missing
-one when addressed by node, path, version, or asset. Files that are not photos
-look the same to every caller. The earliest enrollment is the default owner; when none
-exists, the first photo or browser session enrolls an operator person named
-"Default".
-Master requests select an owner with `X-Docbank-Owner: OWNER_UUID` and use the
-default without it. Browser sessions keep the owner they were issued with and
+## Owners
+
+A photo owner is a person enrolled as an owner, named by the person's current
+display name. Enrolling creates the owner's private folder,
+`/photos/PERSON_UUID`. Everything in it belongs to that owner: other owners
+don't see the folder at all, and addressing anything inside it answers like a
+missing node. Everything outside owner folders, photos included, is visible to
+every owner like any document.
+
+Master requests act as an owner with `X-Docbank-Owner: OWNER_UUID`; without
+the header the master key sees every folder. Only the master key moves nodes,
+including between owners' folders. An owner can't trash `/photos` or an owner
+folder. A photo import run as an owner (`docbank photos --owner PERSON_UUID
+import ...`) must name a destination inside that owner's folder.
+
+Before any owner is enrolled, `docbank web` opens the whole vault. After that
+it needs `--owner PERSON_UUID`, and enrolling an owner ends browser sessions
+opened without one. Browser sessions keep the owner they were issued with and
 get 403 if they send the header.
 
-Owners filter what a route shows at request time. Exports, query snapshots,
-reports, Bates artifacts, and other delayed results keep what they captured
-when they were created. Tag counts, coverage, storage, and other totals stay
-vault-wide.
+An owner's listing totals, tag counts, collection quality and processing
+coverage count only what that owner can see. Storage bytes stay a vault
+figure. Exports, query snapshots, reports and other delayed results keep what
+they captured when they were created.
 
 ## CLI
 
@@ -81,8 +90,8 @@ docbank photos owners remove <person-id> --revision REV
 
 Use `--owner PERSON_UUID` on photo commands to select an owner. Enrolling and
 removing take the person's revision and use the master daemon credential.
-Removal is refused while any asset, including an excluded one or one whose
-files are in trash, still refers to the owner. Rename an owner with `docbank
+Removal is refused while anything, live or trashed, is in the owner's folder;
+the empty folder stays as an ordinary folder. Rename an owner with `docbank
 people rename`; retiring or merging away an enrolled person is refused.
 
 All commands emit bounded JSON. Exit code 4 means the revision is stale: an

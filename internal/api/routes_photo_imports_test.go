@@ -247,3 +247,85 @@ func TestPhotoImportGateAndActivity(t *testing.T) {
 	assert.Contains(t, after.String(), "IMG.ARW")
 	assert.GreaterOrEqual(t, tracker.IdleFor(), time.Duration(0))
 }
+
+// TestPhotoImportStaysInOwnerFolder confines an owner's import to its folder
+// and hides runs aimed at another owner's folder.
+func TestPhotoImportStaysInOwnerFolder(t *testing.T) {
+	root := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(root, "capture.JPG"), []byte("photo"), 0o600))
+	ts, catalog := newTestServer(t, func(d *api.Deps) {
+		d.Jobs = jobs.New(t.Context(), nil)
+		t.Cleanup(d.Jobs.Stop)
+	})
+	alice, bob := enrollPhotoOwner(t, catalog, "Alice"), enrollPhotoOwner(t, catalog, "Bob")
+	start := func(headers map[string]string, destination string) (*http.Response, string) {
+		return do(t, ts, http.MethodPost, "/api/v1/photos/imports", headers,
+			api.PhotoImportStartRequest{SourceRoot: root, Destination: destination})
+	}
+
+	t.Run("destination_confined", func(t *testing.T) {
+		for _, destination := range []string{"/Trip", "/photos/" + alice.ID + "/../x", "/photos/" + bob.ID + "/Trip"} {
+			response, body := start(ownerHeader(alice), destination)
+			assert.Equal(t, http.StatusUnprocessableEntity, response.StatusCode, destination+": "+body)
+		}
+		response, body := start(map[string]string{api.PhotoOwnerHeader: missingPhotoUUID}, "/photos/"+missingPhotoUUID)
+		assert.Equal(t, http.StatusNotFound, response.StatusCode, body)
+	})
+
+	var runID string
+	t.Run("lands_in_owner_folder", func(t *testing.T) {
+		destination := "/photos/" + alice.ID + "/Trip"
+		response, body := start(ownerHeader(alice), destination)
+		require.Equal(t, http.StatusAccepted, response.StatusCode, body)
+		var run api.PhotoImportRun
+		require.NoError(t, json.Unmarshal([]byte(body), &run))
+		runID = run.ID
+		for range 300 {
+			response, body = get(t, ts, "/api/v1/photos/imports/"+runID, ownerHeader(alice))
+			require.Equal(t, http.StatusOK, response.StatusCode, body)
+			require.NoError(t, json.Unmarshal([]byte(body), &run))
+			if run.FinishedAt != "" {
+				break
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+		require.Equal(t, "completed", run.State)
+		node, err := catalog.NodeByPath(t.Context(), destination+"/capture.JPG")
+		require.NoError(t, err)
+		t.Logf("imported %s/%s", destination, node.Name)
+	})
+
+	// A run whose destination folder does not exist yet still belongs to Alice.
+	later, err := json.Marshal(store.PhotoImportRequest{SourceRoot: root, Destination: "/photos/" + alice.ID + "/Later"})
+	require.NoError(t, err)
+	pending, err := catalog.CreateLocalOperation(t.Context(), store.StorageOperationKindPhotoImport, string(later))
+	require.NoError(t, err)
+	t.Run("runs_hidden_from_other_owner", func(t *testing.T) {
+		list := func(headers map[string]string) []string {
+			response, body := get(t, ts, "/api/v1/photos/imports", headers)
+			require.Equal(t, http.StatusOK, response.StatusCode, body)
+			var runs api.PhotoImportRunList
+			require.NoError(t, json.Unmarshal([]byte(body), &runs))
+			ids := make([]string, 0, len(runs.Items))
+			for _, run := range runs.Items {
+				ids = append(ids, run.ID)
+			}
+			return ids
+		}
+		assert.Empty(t, list(issuePhotoOwnerSession(t, ts, ownerHeader(bob))))
+		assert.ElementsMatch(t, []string{runID, pending.ID}, list(ownerHeader(alice)))
+		for _, id := range []string{runID, pending.ID} {
+			response, body := get(t, ts, "/api/v1/photos/imports/"+id, ownerHeader(bob))
+			assert.Equal(t, http.StatusNotFound, response.StatusCode, body)
+		}
+		response, body := do(t, ts, http.MethodPost, "/api/v1/photos/imports/"+pending.ID+"/cancel", ownerHeader(bob), nil)
+		assert.Equal(t, http.StatusNotFound, response.StatusCode, body)
+		response, body = get(t, ts, "/api/v1/jobs", ownerHeader(bob))
+		require.Equal(t, http.StatusOK, response.StatusCode, body)
+		assert.NotContains(t, body, runID)
+		assert.NotContains(t, body, pending.ID)
+		response, body = get(t, ts, "/api/v1/jobs", ownerHeader(alice))
+		require.Equal(t, http.StatusOK, response.StatusCode, body)
+		assert.Contains(t, body, pending.ID)
+	})
+}

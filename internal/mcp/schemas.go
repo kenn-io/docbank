@@ -840,8 +840,6 @@ func photoFileSchema() schema {
 func photoAssetOutputSchema() schema {
 	return rootObjectSchema(withPrivateCache(schema{
 		"id":                       uuidSchema(),
-		"owner_id":                 uuidSchema(),
-		"hidden_at":                dateTimeSchema(),
 		"kind":                     enumSchema("photo", "video"),
 		"revision":                 integerSchema(1, 0),
 		"excluded_at":              dateTimeSchema(),

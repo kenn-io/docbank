@@ -10813,11 +10813,6 @@ components:
             $ref: "#/components/schemas/PhotoFile"
           maxItems: 256
           type: array
-        hidden_at:
-          format: date-time
-          type:
-            - string
-            - "null"
         id:
           format: uuid
           type: string
@@ -10826,11 +10821,6 @@ components:
             - photo
             - video
           type: string
-        owner_id:
-          format: uuid
-          type:
-            - string
-            - "null"
         revision:
           format: int64
           minimum: 1

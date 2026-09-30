@@ -75,6 +75,10 @@ func (s *Store) ProcessingCoverage(ctx context.Context, scope ProcessingCoverage
 	}
 	result := ProcessingCoverageSnapshot{Renditions: ProcessingClassCoverage{Name: "rendition", Total: len(opts.ContentVersionIDs)}}
 	filterSQL, filterArgs := searchFilterSQL(opts)
+	// A version the request cannot see gets no head and counts like an unknown id.
+	visibilitySQL, visibilityArgs := photoNodeVisibleSQL(ctx, "n.id")
+	filterSQL += ` AND ` + visibilitySQL
+	filterArgs = append(filterArgs, visibilityArgs...)
 	rows, err := tx.QueryContext(ctx, `SELECT COALESCE(h.attachment_id,''),
 		EXISTS(SELECT 1 FROM rendition_job_waiters w
 			JOIN rendition_jobs j ON j.job_id=w.job_id

@@ -89,12 +89,10 @@ var (
 	ErrPhotoNodeNotEligible = errors.New("photo node is not eligible")
 	// ErrPhotoNodeOwned means a node already belongs to another photo asset.
 	ErrPhotoNodeOwned = errors.New("node already belongs to a photo asset")
-	// ErrInvalidPhotoOwner marks a photo asset or enrollment without a valid owner.
-	ErrInvalidPhotoOwner = errors.New("invalid photo owner")
 	// ErrPhotoOwnerEnrolled refuses enrolling a person twice.
 	ErrPhotoOwnerEnrolled = errors.New("person is already a photo owner")
-	// ErrPhotoOwnerReferenced refuses removing an owner that still owns assets,
-	// or retiring or absorbing a person that is enrolled.
+	// ErrPhotoOwnerReferenced refuses removing an owner whose folder still holds
+	// nodes, or retiring or absorbing a person that is enrolled.
 	ErrPhotoOwnerReferenced = errors.New("photo owner is still referenced")
 )
 

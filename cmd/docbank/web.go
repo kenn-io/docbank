@@ -16,7 +16,10 @@ import (
 	docweb "go.kenn.io/docbank/internal/web"
 )
 
-var webNoBrowser bool
+var (
+	webNoBrowser bool
+	webOwnerID   string
+)
 
 var webCmd = &cobra.Command{
 	Use:   "web",
@@ -52,7 +55,11 @@ browser credentials: do not paste it into logs, issue trackers, or chat.`,
 			return err
 		}
 		defer func() { _ = c.Close() }()
-		return runWeb(cmd.Context(), cmd.OutOrStdout(), layout.Root, c, webNoBrowser, openWebBrowser)
+		session := c
+		if webOwnerID != "" {
+			session = c.WithPhotoOwner(webOwnerID)
+		}
+		return runWeb(cmd.Context(), cmd.OutOrStdout(), layout.Root, session, webNoBrowser, openWebBrowser)
 	},
 }
 
@@ -105,5 +112,6 @@ func validateWebLaunchURL(rawURL string) error {
 func init() {
 	webCmd.Flags().BoolVar(&webNoBrowser, "no-browser", false,
 		"print the authenticated URL instead of opening it (contains browser credentials)")
+	webCmd.Flags().StringVar(&webOwnerID, "owner", "", "photo owner UUID the browser session belongs to")
 	rootCmd.AddCommand(webCmd)
 }

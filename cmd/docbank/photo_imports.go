@@ -7,7 +7,6 @@ import (
 	"github.com/spf13/cobra"
 
 	"go.kenn.io/docbank/internal/api"
-	"go.kenn.io/docbank/internal/daemonconn"
 )
 
 var (
@@ -28,7 +27,7 @@ var photoImportCmd = &cobra.Command{
 		if err != nil {
 			return fmt.Errorf("resolving %q: %w", args[0], err)
 		}
-		connection, err := daemonconn.Ensure(cmd.Context())
+		connection, err := photoConnection(cmd)
 		if err != nil {
 			return err
 		}
@@ -52,7 +51,7 @@ var photoImportShowCmd = &cobra.Command{
 	Short: "Show one photo import and its ambiguous groups",
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		connection, err := daemonconn.Ensure(cmd.Context())
+		connection, err := photoConnection(cmd)
 		if err != nil {
 			return err
 		}
@@ -69,7 +68,7 @@ var photoImportCancelCmd = &cobra.Command{
 	Short: "Stop a photo import before its next group",
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		connection, err := daemonconn.Ensure(cmd.Context())
+		connection, err := photoConnection(cmd)
 		if err != nil {
 			return err
 		}

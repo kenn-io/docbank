@@ -124,20 +124,9 @@ func (s *Store) planBatchMove(
 	plan := batchMovePlan{nodes: nodes, priorPaths: priorPaths, recordedAt: nowRFC3339()}
 	seen := make(map[int64]bool, len(requests))
 	for index, request := range requests {
-		// A hidden photo answers like a missing source, before its revision is compared.
-		if request.SourcePath == "" && request.NodeID > 0 {
-			if err := checkPhotoNodeVisibleTx(ctx, tx, request.NodeID); err != nil {
-				return batchMovePlan{}, fmt.Errorf("batch move item %d: node %d: %w", index, request.NodeID, err)
-			}
-		}
 		source, err := resolveBatchMoveSource(request, initialNodes, pathIDs)
 		if err != nil {
 			return batchMovePlan{}, fmt.Errorf("batch move item %d: %w", index, err)
-		}
-		if request.SourcePath != "" {
-			if err := checkPhotoNodeVisibleTx(ctx, tx, source.id); err != nil {
-				return batchMovePlan{}, fmt.Errorf("batch move item %d: source path %q: %w", index, request.SourcePath, err)
-			}
 		}
 		if source.id == s.rootID {
 			return batchMovePlan{}, fmt.Errorf("batch move item %d: %w", index, ErrIsRoot)
@@ -338,8 +327,9 @@ func plannedBatchMovePaths(
 			return nil, nil, err
 		}
 		if prior := pathIDs[path]; prior != 0 && prior != id {
-			// The occupant may be a photo the request can't see, so name only the path.
-			return nil, nil, fmt.Errorf("batch move destination %q is occupied: %w", path, ErrExists)
+			return nil, nil, fmt.Errorf(
+				"batch move nodes %d and %d collide at %q: %w", prior, id, path, ErrExists,
+			)
 		}
 		pathIDs[path] = id
 	}
@@ -373,7 +363,7 @@ func validateBatchMoveTopology(nodes map[int64]batchMoveNode) error {
 		}
 		key := fmt.Sprintf("%d\x00%s", *node.parentID, node.name)
 		if prior := siblings[key]; prior != 0 && prior != id {
-			return fmt.Errorf("batch move name %q collides in directory %d: %w", node.name, *node.parentID, ErrExists)
+			return fmt.Errorf("batch move nodes %d and %d collide at %q: %w", prior, id, node.name, ErrExists)
 		}
 		siblings[key] = id
 	}

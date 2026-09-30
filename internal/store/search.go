@@ -676,6 +676,9 @@ func semanticSearchCoverageTx(ctx context.Context, tx metadataQuerier, profileFi
 	inputKind document.EmbeddingInputKind, vectorSpaceID string, opts SearchOptions,
 ) (required, complete int, retErr error) {
 	filterSQL, filterArgs := searchFilterSQL(opts)
+	visibilitySQL, visibilityArgs := photoNodeVisibleSQL(ctx, "n.id")
+	filterSQL += ` AND ` + visibilitySQL
+	filterArgs = append(filterArgs, visibilityArgs...)
 	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM `+nodeFrom+`
 		WHERE n.kind='file' AND n.trashed_at IS NULL AND cv.version_id IS NOT NULL `+filterSQL,
 		filterArgs...).Scan(&required); err != nil {

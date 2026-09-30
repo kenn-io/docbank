@@ -185,10 +185,11 @@ docbank photos owners enroll <person-id> --revision REV
 docbank photos owners remove <person-id> --revision REV
 ```
 
-An owner is an enrolled person; `--revision` is the person's revision. Pass
-`--owner PERSON_UUID` to photo commands to act as that owner; without it the
-daemon uses the default owner, the earliest enrollment. Removing an owner fails
-while any asset refers to it. Rename owners with `docbank people rename`.
+An owner is an enrolled person; `--revision` is the person's revision.
+Enrolling creates the owner's folder, `/photos/PERSON_UUID`. Pass `--owner
+PERSON_UUID` to photo commands to act as that owner; without it the master key
+sees every folder. Removing an owner fails while anything, live or trashed, is
+in the folder. Rename owners with `docbank people rename`.
 
 Photo commands emit JSON through the daemon. Image and concrete video files
 are enrolled when created; generic RAW files require explicit promotion.
@@ -1056,7 +1057,7 @@ capability boundary.
 ## docbank web
 
 ```
-docbank web [--no-browser]
+docbank web [--no-browser] [--owner PERSON_UUID]
 ```
 
 Opens the embedded web application, starting or reconnecting to a compatible
@@ -1074,6 +1075,10 @@ address bar before requests and keeps it only in page memory.
 `--no-browser` prints that authenticated URL instead of opening it. The output
 contains a live scoped browser session and must be handled as a secret. See the
 [web application guide](usage/web.md) for its capabilities and trust boundary.
+
+`--owner` opens the session as that photo owner. Before any owner is enrolled
+the session sees the whole vault; once owners exist, `--owner` is required.
+Enrolling an owner ends sessions opened without one.
 
 ## docbank mcp
 

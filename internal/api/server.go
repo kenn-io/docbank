@@ -230,7 +230,7 @@ func NewServer(d Deps) *Server {
 	registerMediaRoutes(mux, humaAPI, d, g)
 	registerPackageRoutes(mux, humaAPI, d, g, s.webDownloads, s.webSessions)
 	registerBatesRoutes(mux, humaAPI, d, g, s.webDownloads, s.webSessions, cursorService)
-	registerPhotoOwnerRoutes(humaAPI, d, g)
+	registerPhotoOwnerRoutes(humaAPI, d, g, s.webSessions)
 	registerPhotoRoutes(humaAPI, d, g)
 	registerPeopleRoutes(humaAPI, d, g)
 	registerPhotoImportRoutes(humaAPI, d, g)

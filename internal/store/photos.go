@@ -16,21 +16,17 @@ func photoAssetByIDQuery(ctx context.Context, q metadataQuerier, id string) (Pho
 		return PhotoAsset{}, fmt.Errorf("photo asset %q: %w", id, ErrNotFound)
 	}
 	var asset PhotoAsset
-	var ownerID, hiddenAt, display, override sql.NullString
+	var display, override sql.NullString
 	if err := q.QueryRowContext(ctx, `
-		SELECT asset_id, kind, revision, owner_id, hidden_at, excluded_at, display_file_id,
+		SELECT asset_id, kind, revision, excluded_at, display_file_id,
 		       display_override_file_id, created_at, updated_at
 		FROM photo_assets WHERE asset_id=?`, id).Scan(
-		&asset.ID, &asset.Kind, &asset.Revision, &ownerID, &hiddenAt, &asset.ExcludedAt, &display,
+		&asset.ID, &asset.Kind, &asset.Revision, &asset.ExcludedAt, &display,
 		&override, &asset.CreatedAt, &asset.UpdatedAt,
 	); errors.Is(err, sql.ErrNoRows) {
 		return PhotoAsset{}, ErrNotFound
 	} else if err != nil {
 		return PhotoAsset{}, fmt.Errorf("reading photo asset %q: %w", id, err)
-	}
-	asset.OwnerID = new(ownerID.String)
-	if hiddenAt.Valid {
-		asset.HiddenAt = new(hiddenAt.String)
 	}
 	if display.Valid {
 		asset.DisplayFileID = new(display.String)
@@ -449,13 +445,9 @@ func (s *Store) insertPhotoAssetTx(ctx context.Context, tx *sql.Tx, nodeID int64
 	if err != nil {
 		return PhotoAsset{}, fmt.Errorf("allocating photo asset ID: %w", err)
 	}
-	ownerID, err := photoOwnerForCreateTx(ctx, tx)
-	if err != nil {
-		return PhotoAsset{}, err
-	}
 	if _, err := tx.ExecContext(ctx, `
-		INSERT INTO photo_assets(asset_id,kind,revision,owner_id,created_at,updated_at)
-		VALUES(?,?,1,?,?,?)`, assetID, kind, ownerID, now, now); err != nil {
+		INSERT INTO photo_assets(asset_id,kind,revision,created_at,updated_at)
+		VALUES(?,?,1,?,?)`, assetID, kind, now, now); err != nil {
 		return PhotoAsset{}, fmt.Errorf("creating photo asset: %w", err)
 	}
 	if err := s.insertPhotoFileTx(ctx, tx, PhotoFile{AssetID: assetID, NodeID: nodeID, Role: role, CreatedAt: now}); err != nil {
@@ -466,7 +458,6 @@ func (s *Store) insertPhotoAssetTx(ctx context.Context, tx *sql.Tx, nodeID int64
 		return PhotoAsset{}, err
 	}
 	asset := PhotoAsset{ID: assetID, Kind: kind, Revision: 1, CreatedAt: now, UpdatedAt: now, Files: files}
-	asset.OwnerID = new(ownerID)
 	settings, err := photoSettingsTx(ctx, tx)
 	if err != nil {
 		return PhotoAsset{}, err

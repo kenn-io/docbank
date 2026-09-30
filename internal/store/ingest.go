@@ -225,7 +225,7 @@ func resolveIngestNameTx(
 	ctx context.Context, tx *sql.Tx, parentID int64, name, blobHash, sourceKind string,
 ) (string, int64, bool, error) {
 	base, ext := splitSuffix(name)
-	rows, err := tx.Query(
+	rows, err := tx.QueryContext(ctx,
 		`SELECT n.id, n.name, cv.blob_hash FROM nodes AS n
 		 JOIN content_versions AS cv ON cv.version_id = n.current_version_id
 		 WHERE n.parent_id = ? AND n.trashed_at IS NULL AND n.kind = 'file'`, parentID)
@@ -259,12 +259,6 @@ func resolveIngestNameTx(
 		return "", 0, false, fmt.Errorf("listing siblings for %q: %w", name, err)
 	}
 	for _, candidate := range sameHash {
-		// A photo the request may not see is never adopted; its name stays taken.
-		if err := checkPhotoNodeVisibleTx(ctx, tx, candidate.nodeID); errors.Is(err, ErrNotFound) {
-			continue
-		} else if err != nil {
-			return "", 0, false, err
-		}
 		imported, err := sameOriginTx(
 			tx, candidate.nodeID, name, candidate.inNameFamily, sourceKind,
 		)

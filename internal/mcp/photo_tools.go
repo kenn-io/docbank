@@ -16,8 +16,6 @@ type photoAssetToolOutput struct {
 	privateCache
 
 	ID                    string          `json:"id"`
-	OwnerID               *string         `json:"owner_id,omitzero"`
-	HiddenAt              *string         `json:"hidden_at,omitzero"`
 	Kind                  string          `json:"kind"`
 	Revision              int64           `json:"revision"`
 	ExcludedAt            *string         `json:"excluded_at,omitzero"`
@@ -65,8 +63,6 @@ func photoAssetOutput(asset api.PhotoAsset) photoAssetToolOutput {
 	return photoAssetToolOutput{
 		privateCache:          newPrivateCache(),
 		ID:                    asset.ID,
-		OwnerID:               asset.OwnerID,
-		HiddenAt:              asset.HiddenAt,
 		Kind:                  asset.Kind,
 		Revision:              asset.Revision,
 		ExcludedAt:            asset.ExcludedAt,

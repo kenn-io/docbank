@@ -44,6 +44,15 @@ func registerJobRoutes(api huma.API, d Deps) {
 			for _, operation := range operations {
 				name := "storage:" + operation.ID
 				operationNames[name] = struct{}{}
+				if operation.Kind == store.StorageOperationKindPhotoImport {
+					visible, err := photoImportRunVisible(ctx, d, operation)
+					if err != nil {
+						return nil, FromStoreError(err)
+					}
+					if !visible {
+						continue
+					}
+				}
 				errorDetail := operation.Error
 				if redactErrors && errorDetail != "" {
 					errorDetail = "storage operation failed; inspect with the Docbank CLI for details"

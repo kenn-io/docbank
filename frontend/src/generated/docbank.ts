@@ -4274,12 +4274,8 @@ export interface PhotoAsset {
   excluded_at?: string | null;
   /** @maxItems 256 */
   files: PhotoFile[];
-  /** @nullable */
-  hidden_at?: string | null;
   id: string;
   kind: PhotoAssetKind;
-  /** @nullable */
-  owner_id?: string | null;
   /** @minimum 1 */
   revision: number;
   updated_at: string;

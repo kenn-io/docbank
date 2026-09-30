@@ -140,16 +140,18 @@ func (s *Store) Tags(ctx context.Context, limit, offset int) ([]Tag, int, error)
 	if err := validatePage(limit, offset); err != nil {
 		return nil, 0, err
 	}
+	visible, visibleArgs := photoNodeVisibleSQL(ctx, "nt.node_id")
 	rows, err := s.db.QueryContext(ctx, `
 		WITH page AS (
 		  SELECT t.id, t.name, t.revision, COUNT(nt.node_id) AS assignments
-		  FROM tags t LEFT JOIN node_tags nt ON nt.tag_id = t.id
+		  FROM tags t LEFT JOIN node_tags nt ON nt.tag_id = t.id AND `+visible+`
 		  GROUP BY t.id, t.name, t.revision ORDER BY t.name, t.id LIMIT ? OFFSET ?
 		), totals AS (SELECT COUNT(*) AS total FROM tags)
 		SELECT totals.total, COALESCE(page.id, ''), COALESCE(page.name, ''),
 		       COALESCE(page.revision, 0),
 		       COALESCE(page.assignments, 0)
-		FROM totals LEFT JOIN page ON true ORDER BY page.name, page.id`, limit, offset)
+		FROM totals LEFT JOIN page ON true ORDER BY page.name, page.id`,
+		append(visibleArgs, limit, offset)...)
 	if err != nil {
 		return nil, 0, fmt.Errorf("listing tags: %w", err)
 	}
@@ -469,11 +471,15 @@ func (s *Store) NodeTags(ctx context.Context, nodeID int64, limit, offset int) (
 	if err := validatePage(limit, offset); err != nil {
 		return nil, 0, err
 	}
+	targetVisible, targetArgs := photoNodeVisibleSQL(ctx, "n.id")
+	countVisible, countArgs := photoNodeVisibleSQL(ctx, "all_nt.node_id")
+	args := append([]any{nodeID}, targetArgs...)
+	args = append(args, countArgs...)
 	rows, err := s.db.QueryContext(ctx, `
-		WITH target AS (SELECT id FROM nodes WHERE id = ?),
+		WITH target AS (SELECT id FROM nodes n WHERE n.id = ? AND `+targetVisible+`),
 		page AS (
 		  SELECT t.id, t.name, t.revision,
-		         (SELECT COUNT(*) FROM node_tags all_nt WHERE all_nt.tag_id = t.id) AS assignments
+		         (SELECT COUNT(*) FROM node_tags all_nt WHERE all_nt.tag_id = t.id AND `+countVisible+`) AS assignments
 		  FROM tags t JOIN node_tags nt ON nt.tag_id = t.id
 		  WHERE nt.node_id = ? ORDER BY t.name, t.id LIMIT ? OFFSET ?
 		), totals AS (SELECT COUNT(*) AS total FROM node_tags WHERE node_id = ?)
@@ -481,7 +487,7 @@ func (s *Store) NodeTags(ctx context.Context, nodeID int64, limit, offset int) (
 		       COALESCE(page.revision, 0),
 		       COALESCE(page.assignments, 0)
 		FROM target CROSS JOIN totals LEFT JOIN page ON true ORDER BY page.name, page.id`,
-		nodeID, nodeID, limit, offset, nodeID)
+		append(args, nodeID, limit, offset, nodeID)...)
 	if err != nil {
 		return nil, 0, fmt.Errorf("listing tags of node %d: %w", nodeID, err)
 	}

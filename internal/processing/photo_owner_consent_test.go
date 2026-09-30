@@ -12,6 +12,15 @@ import (
 	"go.kenn.io/docbank/internal/store"
 )
 
+func enrollPhotoOwner(t *testing.T, catalog *store.Store, name string) string {
+	t.Helper()
+	person, err := catalog.CreatePerson(t.Context(), name, "operator")
+	require.NoError(t, err)
+	_, err = catalog.EnrollPhotoOwner(t.Context(), person.PersonID, person.Revision)
+	require.NoError(t, err)
+	return person.PersonID
+}
+
 func TestConsentBelongsToTheRequestPhotoOwner(t *testing.T) {
 	fixture := newPublicationFixture(t)
 	descriptor, err := document.NewRenditionDescriptor(document.RenditionDescriptor{

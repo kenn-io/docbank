@@ -49,7 +49,6 @@ type packageImportWork struct {
 	Total             int    `json:"total"`
 	AcceptPartial     bool   `json:"accept_partial"`
 	IndexSuppliedText bool   `json:"index_supplied_text"`
-	PhotoOwnerID      string `json:"photo_owner_id,omitzero"`
 }
 
 type packageImportReceiptData struct {
@@ -193,19 +192,16 @@ func (w *PackageImportWorker) keepPackageImportLease(ctx context.Context,
 }
 
 func (w *PackageImportWorker) processClaim(ctx context.Context, job store.PackageImportJob) (retErr error) {
-	var work packageImportWork
-	if err := json.Unmarshal(job.JobJSON, &work, json.RejectUnknownMembers(true)); err != nil {
-		return fmt.Errorf("decode admitted package work: %w", err)
-	}
-	if work.PhotoOwnerID != "" {
-		ctx = store.WithPhotoOwner(ctx, work.PhotoOwnerID)
-	}
 	pkg, err := w.cfg.Catalog.Package(ctx, job.PackageID)
 	if err != nil {
 		return err
 	}
 	if pkg.Direction != packageDirectionReceived || pkg.State != "importing" || pkg.IngestID == "" {
 		return store.ErrPackageConflict
+	}
+	var work packageImportWork
+	if err := json.Unmarshal(job.JobJSON, &work, json.RejectUnknownMembers(true)); err != nil {
+		return fmt.Errorf("decode admitted package work: %w", err)
 	}
 	if work.SourceLocator == "" || (work.SourceKind != "root" && work.SourceKind != "container") {
 		return store.ErrPackageConflict

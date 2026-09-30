@@ -218,7 +218,9 @@ func authMiddleware(next http.Handler, key string, sessions *webSessionRegistry,
 		if subtle.ConstantTimeCompare([]byte(got), []byte(key)) == 1 {
 			ctx := context.WithValue(r.Context(), authenticationContextKey{}, "master")
 			ctx = context.WithValue(ctx, workspaceSnapshotOwnerContextKey{}, masterOwner)
-			ctx = store.WithPhotoOwner(ctx, r.Header.Get(PhotoOwnerHeader))
+			if photoOwnerID := r.Header.Get(PhotoOwnerHeader); photoOwnerID != "" {
+				ctx = store.WithPhotoOwner(ctx, photoOwnerID)
+			}
 			next.ServeHTTP(w, r.WithContext(ctx))
 			return
 		}
@@ -246,7 +248,9 @@ func authMiddleware(next http.Handler, key string, sessions *webSessionRegistry,
 			defer cancel()
 			ctx = context.WithValue(ctx, authenticationContextKey{}, "browser")
 			ctx = context.WithValue(ctx, workspaceSnapshotOwnerContextKey{}, owner)
-			ctx = store.WithPhotoOwner(ctx, photoOwnerID)
+			if photoOwnerID != "" {
+				ctx = store.WithPhotoOwner(ctx, photoOwnerID)
+			}
 			next.ServeHTTP(w, r.WithContext(ctx))
 			return
 		}

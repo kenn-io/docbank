@@ -3,38 +3,61 @@ package store
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 )
 
+// photoOwnerFoldersName names the top-level folder whose children named for
+// enrolled owners are those owners' private folders.
+const photoOwnerFoldersName = "photos"
+
 type photoOwnerContextKey struct{}
 
-// WithPhotoOwner selects the photo owner a request sees. An empty id selects
-// the default owner. A context without a selection sees every photo.
+// WithPhotoOwner selects the photo owner a request acts as. A context without
+// a selection sees every node.
 func WithPhotoOwner(ctx context.Context, ownerID string) context.Context {
 	return context.WithValue(ctx, photoOwnerContextKey{}, ownerID)
 }
 
-// PhotoOwnerFromContext returns the selected owner id, empty for the default
-// owner, and whether the context selects an owner at all.
+// PhotoOwnerFromContext returns the selected owner id and whether the context
+// selects an owner at all.
 func PhotoOwnerFromContext(ctx context.Context) (string, bool) {
 	ownerID, ok := ctx.Value(photoOwnerContextKey{}).(string)
 	return ownerID, ok
 }
 
-// photoNodeVisibleSQL is the one visibility rule: a node is visible unless a
-// photo asset owned by someone else, or hidden, contains it. The node
+// photoTrashAwareParentSQL is a node's parent for ownership: a trash root's
+// origin, otherwise its parent.
+func photoTrashAwareParentSQL(alias string) string {
+	return `CASE WHEN ` + alias + `.trash_name IS NOT NULL THEN ` + alias + `.trash_parent ELSE ` + alias + `.parent_id END`
+}
+
+// photoOwnerFolderSQL matches a node aliased pof that is an owner folder: a
+// direct child of the top-level photos folder named for an enrolled owner.
+func photoOwnerFolderSQL() string {
+	return `pof.name IN (SELECT person_id FROM photo_owners)
+		AND EXISTS (SELECT 1 FROM nodes pot JOIN nodes por ON por.id=` + photoTrashAwareParentSQL("pot") + `
+			WHERE pot.id=` + photoTrashAwareParentSQL("pof") + ` AND pot.name='` + photoOwnerFoldersName + `' AND por.parent_id IS NULL)`
+}
+
+// photoNodeVisibleSQL is the one visibility rule: with an owner selected, a
+// node is hidden when it lies in another owner's folder. The node
 // expression's own arguments must precede the returned ones.
 func photoNodeVisibleSQL(ctx context.Context, nodeExpr string) (string, []any) {
 	ownerID, ok := PhotoOwnerFromContext(ctx)
 	if !ok {
 		return "1=1", nil
 	}
-	owner, args := "?", []any{ownerID}
-	if ownerID == "" {
-		owner, args = defaultPhotoOwnerSQL, nil
-	}
-	return `NOT EXISTS (SELECT 1 FROM photo_files pvf JOIN photo_assets pva ON pva.asset_id=pvf.asset_id
-		WHERE pvf.node_id=` + nodeExpr + ` AND (pva.owner_id IS NOT ` + owner + ` OR pva.hidden_at IS NOT NULL))`, args
+	return `NOT EXISTS (
+		WITH RECURSIVE photo_owner_walk(id) AS (
+			SELECT pvn.id FROM nodes pvn WHERE pvn.id=` + nodeExpr + `
+			UNION ALL
+			SELECT pvp.id FROM photo_owner_walk pvc JOIN nodes pvc_n ON pvc_n.id=pvc.id
+			JOIN nodes pvp ON pvp.id=` + photoTrashAwareParentSQL("pvc_n") + `
+		)
+		SELECT 1 FROM photo_owner_walk pw JOIN nodes pof ON pof.id=pw.id
+		WHERE pof.name<>? AND ` + photoOwnerFolderSQL() + `
+	)`, []any{ownerID}
 }
 
 // checkPhotoNodeVisibleTx returns ErrNotFound when the request may not see
@@ -63,44 +86,48 @@ func checkPhotoVisibleTx(ctx context.Context, q rowQuerier, nodeExpr string, id 
 	return nil
 }
 
-// CheckPhotoNodeVisible applies the request's owner rule to one node that a
-// route addresses outside the store's node loaders.
-func (s *Store) CheckPhotoNodeVisible(ctx context.Context, nodeID int64) error {
-	if err := checkPhotoNodeVisibleTx(ctx, s.db, nodeID); err != nil {
-		return fmt.Errorf("node %d: %w", nodeID, err)
+// PathVisible reports whether the request may see path's deepest existing
+// node. It walks without the owner rule, so a hidden folder's missing
+// descendants still answer false.
+func (s *Store) PathVisible(ctx context.Context, p string) (bool, error) {
+	if _, ok := PhotoOwnerFromContext(ctx); !ok {
+		return true, nil
 	}
-	return nil
-}
-
-// photoOwnerForCreateTx picks the owner of a new photo asset: the request's
-// explicit owner, or the default owner, created on first use.
-func photoOwnerForCreateTx(ctx context.Context, tx *sql.Tx) (string, error) {
-	if ownerID, _ := PhotoOwnerFromContext(ctx); ownerID != "" {
-		if _, err := photoOwnerByIDTx(ctx, tx, ownerID); err != nil {
-			return "", err
+	nodeID := s.rootID
+	for _, segment := range splitPath(p) {
+		name, err := NormalizeName(segment)
+		if err != nil {
+			break
 		}
-		return ownerID, nil
+		next, err := childByName(ctx, s.db, nodeID, name)
+		if errors.Is(err, ErrNotFound) {
+			break
+		}
+		if err != nil {
+			return false, err
+		}
+		nodeID = next.ID
 	}
-	owner, err := ensureDefaultPhotoOwnerTx(ctx, tx)
-	return owner.ID, err
+	err := checkPhotoNodeVisibleTx(ctx, s.db, nodeID)
+	if errors.Is(err, ErrNotFound) {
+		return false, nil
+	}
+	return err == nil, err
 }
 
-// visiblePhotoAssetTx loads an asset for a route, applying the owner rule to
-// the asset row itself so a memberless asset stays with its owner.
+// visiblePhotoAssetTx loads an asset for a route. An asset is hidden when any
+// member node is; an asset without members stays visible.
 func visiblePhotoAssetTx(ctx context.Context, tx *sql.Tx, assetID string) (PhotoAsset, error) {
-	if ownerID, ok := PhotoOwnerFromContext(ctx); ok && validateUUIDv4(assetID) == nil {
-		owner, args := "?", []any{assetID, ownerID}
-		if ownerID == "" {
-			owner, args = defaultPhotoOwnerSQL, []any{assetID}
-		}
-		var visible bool
-		err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM photo_assets
-			WHERE asset_id=? AND owner_id IS `+owner+` AND hidden_at IS NULL)`, args...).Scan(&visible)
+	if _, ok := PhotoOwnerFromContext(ctx); ok {
+		predicate, args := photoNodeVisibleSQL(ctx, "pvf.node_id")
+		var hidden bool
+		err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM photo_files pvf
+			WHERE pvf.asset_id=? AND NOT `+predicate+`)`, append([]any{assetID}, args...)...).Scan(&hidden)
 		if err != nil {
 			return PhotoAsset{}, fmt.Errorf("checking photo asset visibility: %w", err)
 		}
-		if !visible {
-			return PhotoAsset{}, fmt.Errorf("photo asset %q: %w", assetID, ErrNotFound)
+		if hidden {
+			return PhotoAsset{}, ErrNotFound // the answer a missing asset gets
 		}
 	}
 	return photoAssetByIDQuery(ctx, tx, assetID)

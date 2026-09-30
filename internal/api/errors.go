@@ -133,7 +133,6 @@ var storeErrCodes = []struct {
 	{store.ErrInvalidPhotoAsset, http.StatusUnprocessableEntity, "invalid_photo_asset"},
 	{store.ErrPhotoNodeNotEligible, http.StatusUnprocessableEntity, "photo_node_not_eligible"},
 	{store.ErrPhotoNodeOwned, http.StatusConflict, "photo_node_owned"},
-	{store.ErrInvalidPhotoOwner, http.StatusUnprocessableEntity, "invalid_photo_owner"},
 	{store.ErrPhotoOwnerEnrolled, http.StatusConflict, "photo_owner_enrolled"},
 	{store.ErrPhotoOwnerReferenced, http.StatusConflict, "photo_owner_referenced"},
 	{store.ErrEmailNotSupported, http.StatusUnprocessableEntity, "email_not_supported"},

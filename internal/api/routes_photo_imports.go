@@ -6,7 +6,9 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"path"
 	"path/filepath"
+	"strings"
 
 	"github.com/danielgtaylor/huma/v2"
 
@@ -43,7 +45,23 @@ func photoImportOperation(ctx context.Context, d Deps, id string) (store.Storage
 	if operation.Kind != store.StorageOperationKindPhotoImport {
 		return store.StorageOperation{}, FromStoreError(store.ErrNotFound)
 	}
+	visible, err := photoImportRunVisible(ctx, d, operation)
+	if err != nil {
+		return store.StorageOperation{}, FromStoreError(err)
+	}
+	if !visible {
+		return store.StorageOperation{}, FromStoreError(store.ErrNotFound)
+	}
 	return operation, nil
+}
+
+// photoImportRunVisible hides a run whose destination lies in another
+// owner's folder, even before that folder exists.
+func photoImportRunVisible(ctx context.Context, d Deps, operation store.StorageOperation) (bool, error) {
+	if _, ok := store.PhotoOwnerFromContext(ctx); !ok {
+		return true, nil
+	}
+	return d.Store.PathVisible(ctx, photoImportRequest(operation).Destination)
 }
 
 func registerPhotoImportRoutes(api huma.API, d Deps, g *gate) {
@@ -59,6 +77,15 @@ func registerPhotoImportRoutes(api huma.API, d Deps, g *gate) {
 		}
 		if in.Body.Destination == "" || in.Body.Destination[0] != '/' {
 			return nil, NewError(http.StatusUnprocessableEntity, "validation", "destination must be an absolute vault path")
+		}
+		if ownerID, ok := store.PhotoOwnerFromContext(ctx); ok {
+			if _, err := d.Store.PhotoOwner(ctx, ownerID); err != nil {
+				return nil, FromStoreError(err)
+			}
+			root := "/photos/" + ownerID
+			if dest := path.Clean(in.Body.Destination); dest != root && !strings.HasPrefix(dest, root+"/") {
+				return nil, NewError(http.StatusUnprocessableEntity, "validation", "destination must stay inside the owner's folder")
+			}
 		}
 		request, err := json.Marshal(store.PhotoImportRequest{SourceRoot: in.Body.SourceRoot, Destination: in.Body.Destination})
 		if err != nil {
@@ -87,7 +114,14 @@ func registerPhotoImportRoutes(api huma.API, d Deps, g *gate) {
 		browser := browserSessionRequest(ctx)
 		items := make([]PhotoImportRun, 0)
 		for _, operation := range operations {
-			if operation.Kind == store.StorageOperationKindPhotoImport {
+			if operation.Kind != store.StorageOperationKindPhotoImport {
+				continue
+			}
+			visible, err := photoImportRunVisible(ctx, d, operation)
+			if err != nil {
+				return nil, FromStoreError(err)
+			}
+			if visible {
 				items = append(items, fromStorePhotoImport(operation, browser))
 			}
 		}

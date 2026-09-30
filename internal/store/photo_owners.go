@@ -18,9 +18,6 @@ type PhotoOwner struct {
 const photoOwnerColumns = `o.person_id, p.display_name, o.enrolled_at
 	FROM photo_owners o JOIN persons p ON p.person_id=o.person_id`
 
-// defaultPhotoOwnerSQL selects the default owner: the earliest enrollment.
-const defaultPhotoOwnerSQL = `(SELECT person_id FROM photo_owners ORDER BY enrolled_at, rowid LIMIT 1)`
-
 func scanPhotoOwner(row interface{ Scan(args ...any) error }) (PhotoOwner, error) {
 	var owner PhotoOwner
 	err := row.Scan(&owner.ID, &owner.Name, &owner.EnrolledAt)
@@ -37,15 +34,11 @@ func photoOwnerByIDTx(ctx context.Context, q rowQuerier, id string) (PhotoOwner,
 	return scanPhotoOwner(q.QueryRowContext(ctx, `SELECT `+photoOwnerColumns+` WHERE o.person_id=?`, id))
 }
 
-func defaultPhotoOwnerTx(ctx context.Context, q rowQuerier) (PhotoOwner, error) {
-	return scanPhotoOwner(q.QueryRowContext(ctx, `SELECT `+photoOwnerColumns+` WHERE o.person_id=`+defaultPhotoOwnerSQL))
-}
-
 func (s *Store) PhotoOwner(ctx context.Context, id string) (PhotoOwner, error) {
 	return photoOwnerByIDTx(ctx, s.db, id)
 }
 
-// PhotoOwners lists owners by enrollment, so the default owner comes first.
+// PhotoOwners lists owners by enrollment.
 func (s *Store) PhotoOwners(ctx context.Context) ([]PhotoOwner, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT `+photoOwnerColumns+` ORDER BY o.enrolled_at, o.rowid`)
 	if err != nil {
@@ -63,75 +56,11 @@ func (s *Store) PhotoOwners(ctx context.Context) ([]PhotoOwner, error) {
 	return owners, rows.Err()
 }
 
-// ensureDefaultPhotoOwnerTx enrolls an operator person named "Default" on
-// first use inside the caller's logical transaction.
-func ensureDefaultPhotoOwnerTx(ctx context.Context, tx *sql.Tx) (PhotoOwner, error) {
-	owner, err := defaultPhotoOwnerTx(ctx, tx)
-	if !errors.Is(err, ErrNotFound) {
-		return owner, err
-	}
-	person, err := insertPersonTx(ctx, tx, "Default", "operator")
-	if err != nil {
-		return PhotoOwner{}, err
-	}
-	return enrollPhotoOwnerTx(ctx, tx, person.PersonID)
-}
-
 func enrollPhotoOwnerTx(ctx context.Context, tx *sql.Tx, personID string) (PhotoOwner, error) {
 	if _, err := tx.ExecContext(ctx, `INSERT INTO photo_owners(person_id,enrolled_at) VALUES(?,?)`, personID, nowRFC3339()); err != nil {
 		return PhotoOwner{}, fmt.Errorf("enrolling photo owner: %w", err)
 	}
 	return photoOwnerByIDTx(ctx, tx, personID)
-}
-
-// EnsureDefaultPhotoOwner registers the default owner under the logical
-// mutation gate when the vault has none.
-func (s *Store) EnsureDefaultPhotoOwner(ctx context.Context) (PhotoOwner, error) {
-	owner, err := defaultPhotoOwnerTx(ctx, s.db)
-	if !errors.Is(err, ErrNotFound) {
-		return owner, err
-	}
-	err = s.withLogicalTx(ctx, func(tx *sql.Tx) error {
-		var err error
-		owner, err = ensureDefaultPhotoOwnerTx(ctx, tx)
-		return err
-	})
-	return owner, err
-}
-
-// ResolvePhotoOwner resolves the request's owner without writing. It
-// reports false when the default owner has not been created yet and can be.
-func (s *Store) ResolvePhotoOwner(ctx context.Context) (string, bool, error) {
-	if ownerID, _ := PhotoOwnerFromContext(ctx); ownerID != "" {
-		_, err := s.PhotoOwner(ctx, ownerID)
-		return ownerID, true, err
-	}
-	owner, err := defaultPhotoOwnerTx(ctx, s.db)
-	if errors.Is(err, ErrNotFound) {
-		// Audited vaults can never register the default owner, so they resolve to no owner.
-		var audited bool
-		if err := s.db.QueryRowContext(ctx,
-			`SELECT EXISTS(SELECT 1 FROM audit_authority WHERE singleton=1)`,
-		).Scan(&audited); err != nil {
-			return "", false, fmt.Errorf("checking audit authority: %w", err)
-		}
-		return "", audited, nil
-	}
-	return owner.ID, true, err
-}
-
-// PhotoOwnerForWrite resolves the request's owner for work that will create
-// photos later, registering the default owner on first use. Audited vaults
-// cannot register one and get an empty id, which matches no owner.
-func (s *Store) PhotoOwnerForWrite(ctx context.Context) (string, error) {
-	if ownerID, ok, err := s.ResolvePhotoOwner(ctx); ok || err != nil {
-		return ownerID, err
-	}
-	owner, err := s.EnsureDefaultPhotoOwner(ctx)
-	if errors.Is(err, ErrAuditMutationUnsupported) {
-		return "", nil
-	}
-	return owner.ID, err
 }
 
 // EnrollPhotoOwner enrolls an active person at its current revision.
@@ -146,6 +75,9 @@ func (s *Store) EnrollPhotoOwner(ctx context.Context, personID string, revision 
 		if _, err := photoOwnerByIDTx(ctx, tx, personID); err == nil {
 			return fmt.Errorf("person %s: %w", personID, ErrPhotoOwnerEnrolled)
 		}
+		if err := s.ensureOwnerFolderTx(ctx, tx, personID); err != nil {
+			return err
+		}
 		var err error
 		owner, err = enrollPhotoOwnerTx(ctx, tx, personID)
 		return err
@@ -153,7 +85,47 @@ func (s *Store) EnrollPhotoOwner(ctx context.Context, personID string, revision 
 	return owner, err
 }
 
-// RemovePhotoOwner ends an enrollment that no photo asset references.
+// ensureOwnerFolderTx creates /photos/{personID}, adopting any existing
+// directory along the way.
+func (s *Store) ensureOwnerFolderTx(ctx context.Context, tx *sql.Tx, personID string) error {
+	dir, err := liveDirTx(ctx, tx, s.rootID)
+	if err != nil {
+		return err
+	}
+	for _, name := range []string{photoOwnerFoldersName, personID} {
+		next, err := childByName(ctx, tx, dir.ID, name)
+		switch {
+		case err == nil:
+			if !next.IsDir() {
+				return fmt.Errorf("%q is a file: %w", name, ErrNotDir)
+			}
+			dir = next
+		case errors.Is(err, ErrNotFound):
+			if dir, err = s.mkdirTx(ctx, tx, dir.ID, name, nowRFC3339()); err != nil {
+				return err
+			}
+		default:
+			return err
+		}
+	}
+	return nil
+}
+
+// ownerFolderHasContentTx reports whether a live or trashed node sits in
+// personID's owner folder.
+func ownerFolderHasContentTx(ctx context.Context, tx *sql.Tx, personID string) (bool, error) {
+	var found bool
+	err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM nodes pof JOIN nodes child
+		ON child.parent_id=pof.id OR child.trash_parent=pof.id
+		WHERE pof.name=? AND `+photoOwnerFolderSQL()+`)`, personID).Scan(&found)
+	if err != nil {
+		return false, fmt.Errorf("checking photo owner folder: %w", err)
+	}
+	return found, nil
+}
+
+// RemovePhotoOwner ends an enrollment whose folder is empty. The folder
+// stays as an ordinary folder.
 func (s *Store) RemovePhotoOwner(ctx context.Context, personID string, revision int64) error {
 	return s.withLogicalTx(ctx, func(tx *sql.Tx) error {
 		if _, err := photoOwnerByIDTx(ctx, tx, personID); err != nil {
@@ -162,8 +134,10 @@ func (s *Store) RemovePhotoOwner(ctx context.Context, personID string, revision 
 		if err := fencePersonTx(ctx, tx, personID, revision); err != nil {
 			return err
 		}
-		if err := refusePhotoOwnerReferencedTx(ctx, tx, `SELECT 1 FROM photo_assets WHERE owner_id=?`, personID); err != nil {
+		if found, err := ownerFolderHasContentTx(ctx, tx, personID); err != nil {
 			return err
+		} else if found {
+			return fmt.Errorf("person %s: %w", personID, ErrPhotoOwnerReferenced)
 		}
 		_, err := tx.ExecContext(ctx, `DELETE FROM photo_owners WHERE person_id=?`, personID)
 		return err

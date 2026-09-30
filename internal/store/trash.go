@@ -29,6 +29,9 @@ func (s *Store) Trash(ctx context.Context, id, ifRev int64) (Node, string, error
 		if err != nil {
 			return err
 		}
+		if err := refuseOwnerStructureTx(ctx, tx, n); err != nil {
+			return err
+		}
 		active, err := auditAuthorityActiveTx(ctx, tx)
 		if err != nil {
 			return err
@@ -81,6 +84,9 @@ func (s *Store) TrashPathRevision(
 		if n.ID == s.rootID {
 			return ErrIsRoot
 		}
+		if err := refuseOwnerStructureTx(ctx, tx, n); err != nil {
+			return err
+		}
 		active, err := auditAuthorityActiveTx(ctx, tx)
 		if err != nil {
 			return err
@@ -108,6 +114,26 @@ func (s *Store) TrashPathRevision(
 		return Node{}, "", err
 	}
 	return trashed, origPath, nil
+}
+
+// refuseOwnerStructureTx keeps a request bound to an owner from trashing the
+// top-level photos folder or an owner folder, which would sweep up other
+// owners' photos.
+func refuseOwnerStructureTx(ctx context.Context, q rowQuerier, n Node) error {
+	if _, ok := PhotoOwnerFromContext(ctx); !ok {
+		return nil
+	}
+	var structural bool
+	if err := q.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM nodes pof WHERE pof.id=? AND `+photoOwnerFolderSQL()+`)
+		OR EXISTS(SELECT 1 FROM nodes pot JOIN nodes por ON por.id=pot.parent_id
+			WHERE pot.id=? AND pot.name=? AND pot.trash_name IS NULL AND por.parent_id IS NULL)`,
+		n.ID, n.ID, photoOwnerFoldersName).Scan(&structural); err != nil {
+		return fmt.Errorf("checking photo owner folders: %w", err)
+	}
+	if structural {
+		return fmt.Errorf("node %d: %w", n.ID, ErrIsRoot)
+	}
+	return nil
 }
 
 // trashNodeTx trashes a live node n (pre-checked by the caller) and its live

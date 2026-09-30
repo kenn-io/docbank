@@ -176,22 +176,7 @@ Key assumptions reviewers MUST account for:
    malformed success as an unknown outcome; they do not re-derive the
    store's decisions from the response.
 
-19. PHOTO OWNERS ARE A VIEW FILTER: photo owners filter what a route shows
-   inside one trusted vault. Delayed results and receipts keep the
-   visibility they were created with under the existing resource-owner
-   checks, and totals without photo identity stay vault-wide. Directories
-   carry no owner, so trash, restore, and move act on a whole subtree,
-   other owners' photos included, as they do for documents; the addressed
-   node must be visible, and trashed photos stay restorable.
-   A folder holds one live item per name whatever its owner, so creating,
-   moving, or ingesting onto or through a name another owner's photo holds
-   fails as it would for any file of that name, not_dir for a path segment
-   included; only that a file takes the name shows, never that photo's
-   content, metadata, or identity.
-   The master key is the vault operator. A master request that selects no
-   owner keeps the configured consent principal, as it did before owners
-   existed, and may name any principal; a request that selects an owner,
-   by header or browser session, consents only as that owner.
+19. Photo owner folders are a view inside one trusted vault, so the master key without X-Docbank-Owner sees every folder.
 
 Do NOT flag issues that only apply to public-facing, multi-tenant, or
 internet-exposed services. Focus on bugs, logic errors, data corruption

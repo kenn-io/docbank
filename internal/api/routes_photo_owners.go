@@ -10,7 +10,7 @@ import (
 
 // registerPhotoOwnerRoutes enrolls people as photo owners. Renaming and
 // retiring stay on the person routes; all three routes are master-only.
-func registerPhotoOwnerRoutes(api huma.API, d Deps, g *gate) {
+func registerPhotoOwnerRoutes(api huma.API, d Deps, g *gate, sessions *webSessionRegistry) {
 	huma.Register(api, huma.Operation{
 		OperationID: "listPhotoOwners", Method: http.MethodGet,
 		Path: "/api/v1/photos/owners", Summary: "List photo owners",
@@ -48,7 +48,12 @@ func registerPhotoOwnerRoutes(api huma.API, d Deps, g *gate) {
 		err = g.mutate(func() error {
 			var err error
 			owner, err = d.Store.EnrollPhotoOwner(ctx, in.Body.PersonID, revision)
-			return FromStoreError(err)
+			if err != nil {
+				return FromStoreError(err)
+			}
+			// A vault with owners has no ownerless browser sessions.
+			sessions.revokeOwnerless()
+			return nil
 		})
 		if err != nil {
 			return nil, err

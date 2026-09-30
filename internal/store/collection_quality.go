@@ -181,12 +181,16 @@ func collectionQualityCensusTx(ctx context.Context, q metadataQuerier, id string
 		collection.Coverage.GenerationID = generation
 		collection.Coverage.Counts = &CoverageCounts{}
 	}
+	memberVisible, memberArgs := photoNodeVisibleSQL(ctx, "cm.node_id")
+	duplicateVisible, duplicateArgs := photoNodeVisibleSQL(ctx, "ccm.node_id")
 	cte := `WITH ` + CollectionMembershipCTE + `,` + CurrentContentMembershipCTE + `,
- coverage_members AS (SELECT node_id FROM collection_members WHERE ingest_id=?),
+ coverage_members AS (SELECT cm.node_id FROM collection_members cm WHERE cm.ingest_id=? AND ` + memberVisible + `),
  ` + processingCoverageCTE() + `,
- duplicate_counts AS (SELECT blob_hash,COUNT(*) references_count FROM current_content_members GROUP BY blob_hash),
+ duplicate_counts AS (SELECT blob_hash,COUNT(*) references_count FROM current_content_members ccm WHERE ` + duplicateVisible + ` GROUP BY blob_hash),
  ` + qualityProjectionCTE
-	args := []any{id, selection.ProfileFingerprint, collection.Coverage.GenerationID}
+	args := append([]any{id}, memberArgs...)
+	args = append(args, selection.ProfileFingerprint, collection.Coverage.GenerationID)
+	args = append(args, duplicateArgs...)
 	var projectedBytes int64
 	if err := q.QueryRowContext(ctx, cte+` SELECT COALESCE(SUM(`+qualityProjectionBytes+`),0) FROM quality_projection`, args...).Scan(&projectedBytes); err != nil {
 		return collectionQualityCensus{}, err

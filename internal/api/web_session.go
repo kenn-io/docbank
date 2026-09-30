@@ -85,8 +85,7 @@ func (r *webSessionRegistry) issue(photoOwnerID string) (string, string, error) 
 }
 
 // photoOwner returns the photo owner a session was bound to at issuance, and
-// false once the session is gone so a revoked request never falls back to the
-// default owner.
+// false once the session is gone.
 func (r *webSessionRegistry) photoOwner(token string) (string, bool) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -190,7 +189,26 @@ func (r *webSessionRegistry) releaseUpload(token string, conn *websocket.Conn) {
 }
 
 func (r *webSessionRegistry) revoke(token string) {
-	digest := sha256.Sum256([]byte(token))
+	r.revokeDigest(sha256.Sum256([]byte(token)))
+}
+
+// revokeOwnerless ends every session issued without a photo owner, once the
+// vault has owners.
+func (r *webSessionRegistry) revokeOwnerless() {
+	r.mu.Lock()
+	var digests [][sha256.Size]byte
+	for digest, state := range r.tokens {
+		if state.photoOwnerID == "" {
+			digests = append(digests, digest)
+		}
+	}
+	r.mu.Unlock()
+	for _, digest := range digests {
+		r.revokeDigest(digest)
+	}
+}
+
+func (r *webSessionRegistry) revokeDigest(digest [sha256.Size]byte) {
 	r.mu.Lock()
 	state, ok := r.tokens[digest]
 	delete(r.tokens, digest)
@@ -572,25 +590,35 @@ func registerWebSession(
 				"this daemon is not serving the compiled web application"))
 			return
 		}
-		// The session binds to one owner for its lifetime. Audited vaults cannot
-		// register the default owner, so their sessions see documents only.
-		// Only creating the default owner needs the mutation gate.
-		photoOwnerID, resolved, err := storeDB.ResolvePhotoOwner(r.Context())
-		if err == nil && !resolved {
-			err = g.mutate(func() error {
-				var err error
-				photoOwnerID, err = storeDB.PhotoOwnerForWrite(r.Context())
-				return err
-			})
-		}
+		// The session binds to one owner for its lifetime. Once the vault has
+		// owners it must name one; the gate orders this with enrollment.
+		var token, uploadSecret string
+		err := g.mutate(func() error {
+			photoOwnerID, selected := store.PhotoOwnerFromContext(r.Context())
+			if selected {
+				if _, err := storeDB.PhotoOwner(r.Context(), photoOwnerID); err != nil {
+					return err
+				}
+			} else {
+				owners, err := storeDB.PhotoOwners(r.Context())
+				if err != nil {
+					return err
+				}
+				if len(owners) != 0 {
+					return NewError(http.StatusUnprocessableEntity, "validation",
+						"this vault has photo owners; open the web app for one with docbank web --owner <person id>")
+				}
+			}
+			var err error
+			token, uploadSecret, err = sessions.issue(photoOwnerID)
+			if err != nil {
+				return NewError(http.StatusInternalServerError, "internal",
+					"could not create a browser session")
+			}
+			return nil
+		})
 		if err != nil {
 			writeEmailStoreError(w, err)
-			return
-		}
-		token, uploadSecret, err := sessions.issue(photoOwnerID)
-		if err != nil {
-			writeError(w, NewError(http.StatusInternalServerError, "internal",
-				"could not create a browser session"))
 			return
 		}
 		w.Header().Set("Cache-Control", "no-store")
