@@ -5,6 +5,7 @@ import (
 	"context"
 	"database/sql"
 	"log/slog"
+	"os"
 	"path/filepath"
 	"testing"
 	"time"
@@ -26,21 +27,26 @@ func TestMailboxWorkerLogsJobFailureAndProcessesNextJob(t *testing.T) {
 	r.ID = "second-job"
 	_, err := f.Store.BeginMailboxJob(t.Context(), "one", r)
 	require.NoError(t, err)
-	var output bytes.Buffer
-	f.Logger = slog.New(slog.NewTextHandler(&output, nil))
+	output, err := os.CreateTemp(t.TempDir(), "worker.log")
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, output.Close()) })
+	f.Logger = slog.New(slog.NewTextHandler(output, nil))
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 	done := make(chan error, 1)
 	go func() { done <- f.RunWorker(ctx) }()
+	// The database records failure before the worker writes its error log.
 	require.Eventually(t, func() bool {
-		j, err := f.Store.MailboxJob(t.Context(), "one", r.ID)
-		return err == nil && j.State == "failed"
+		data, err := os.ReadFile(output.Name())
+		return err == nil && bytes.Contains(data, []byte("job=second-job"))
 	}, 3*time.Second, 10*time.Millisecond)
 	cancel()
 	require.ErrorIs(t, <-done, context.Canceled)
-	require.Contains(t, output.String(), "mailbox job failed")
-	require.Contains(t, output.String(), "job=job")
-	require.Contains(t, output.String(), "job=second-job")
+	data, err := os.ReadFile(output.Name())
+	require.NoError(t, err)
+	require.Contains(t, string(data), "mailbox job failed")
+	require.Contains(t, string(data), "job=job")
+	require.Contains(t, string(data), "job=second-job")
 }
 
 func (d *contentionDriver) Open(path string, options docsqlite.OpenOptions) (*sql.DB, error) {
