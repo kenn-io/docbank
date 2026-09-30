@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"golang.org/x/text/unicode/norm"
@@ -221,6 +222,7 @@ func isASCIIPhotoImportFolder(folder string) bool {
 
 func (s *Store) photoImportCurrentDuplicateTx(
 	ctx context.Context, tx *sql.Tx, run IngestRun, member PhotoImportMember, role, sourceFolder, sourceStem string,
+	claimed []Node,
 ) (Node, bool, error) {
 	var node Node
 	if role == PhotoRoleSidecar {
@@ -247,6 +249,10 @@ func (s *Store) photoImportCurrentDuplicateTx(
 				return Node{}, false, fmt.Errorf("scanning duplicate photo sidecar: %w", err)
 			}
 			folder, stem := photoImportSourceKey(sourcePath)
+			// A sidecar this group already published is a sibling, not an earlier import.
+			if slices.ContainsFunc(claimed, func(n Node) bool { return n.ID == node.ID }) {
+				continue
+			}
 			if folder == sourceFolder && stem == sourceStem {
 				found = true
 				break
@@ -345,7 +351,7 @@ func (s *Store) IngestPhotoGroup(ctx context.Context, run IngestRun, group Photo
 			if member.BlobHash == "" || member.Size < 0 || member.OriginalPath == "" {
 				return fmt.Errorf("photo import member %q lacks a verified source identity", member.Name)
 			}
-			node, duplicate, err := s.photoImportCurrentDuplicateTx(ctx, tx, run, member, role, group.SourceFolder, group.Stem)
+			node, duplicate, err := s.photoImportCurrentDuplicateTx(ctx, tx, run, member, role, group.SourceFolder, group.Stem, nodes[:i])
 			if err != nil {
 				return err
 			}
