@@ -63,9 +63,11 @@ func TestTransferVerifyReportsSpoolFailureAsRuntimeError(t *testing.T) {
 		Blobs:    map[string][]byte{},
 	})
 	missing := filepath.Join(t.TempDir(), "missing")
-	for _, variable := range []string{"TMPDIR", "TMP", "TEMP"} {
+	// GetTempPath2 uses SystemTemp for Windows SYSTEM processes.
+	for _, variable := range []string{"TMPDIR", "TMP", "TEMP", "SystemTemp"} {
 		t.Setenv(variable, missing)
 	}
+	require.Equal(t, missing, os.TempDir())
 	var stdout, stderr bytes.Buffer
 	resetFlags(rootCmd)
 	code := runProcess([]string{"transfer", "verify", path}, &stdout, &stderr)

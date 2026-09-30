@@ -534,6 +534,10 @@ func TestRenditionWorkerRetriesUnclassifiedResumeFailure(t *testing.T) {
 }
 
 func TestRenditionWorkerResubmitsDefinitiveTransientWithFreshSealedAuthority(t *testing.T) {
+	synctest.Test(t, resubmitsDefinitiveTransientWithFreshSealedAuthority)
+}
+
+func resubmitsDefinitiveTransientWithFreshSealedAuthority(t *testing.T) {
 	fixture := newPublicationFixture(t)
 	provider := newWorkerProvider(t)
 	providerErr, err := document.NewRenditionProviderError(
@@ -548,7 +552,6 @@ func TestRenditionWorkerResubmitsDefinitiveTransientWithFreshSealedAuthority(t *
 	grantWorkerConsent(t, fixture.catalog, request)
 	job, _, err := fixture.catalog.EnqueueRenditionJob(t.Context(), request)
 	require.NoError(t, err)
-	now := time.Now().UTC()
 	prepareCalls := 0
 	var uploadCloseCalls atomic.Int32
 	runtime := &countingWorkerRuntime{
@@ -558,7 +561,7 @@ func TestRenditionWorkerResubmitsDefinitiveTransientWithFreshSealedAuthority(t *
 		Catalog: fixture.catalog, Blobs: fixture.blobs,
 		Runtime: runtime, Gate: newTestOperationGate(),
 		Owner: "rendition-worker-definitive-retry", LeaseDuration: time.Minute,
-		IdleDelay: time.Millisecond, Clock: func() time.Time { return now },
+		IdleDelay: time.Millisecond,
 	})
 	require.NoError(t, err)
 
@@ -572,7 +575,7 @@ func TestRenditionWorkerResubmitsDefinitiveTransientWithFreshSealedAuthority(t *
 	assert.Equal(t, int32(1), uploadCloseCalls.Load())
 
 	provider.renderErr = nil
-	now = now.Add(time.Nanosecond)
+	time.Sleep(time.Nanosecond)
 	processed, err = worker.RunOne(t.Context())
 	require.NoError(t, err)
 	assert.True(t, processed)
