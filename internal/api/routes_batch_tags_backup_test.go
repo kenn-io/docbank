@@ -12,7 +12,7 @@ import (
 	"go.kenn.io/docbank/internal/store"
 )
 
-func TestBatchTagReceiptSurvivesPhysicalBackupRestore(t *testing.T) {
+func TestBatchTagReceiptSurvivesPhysicalBackupRestore(t *testing.T) { //nolint:paralleltest // locks the per-user target-lock registry that every docbank process shares
 	for _, driver := range collectionBackupDrivers() {
 		t.Run(driver.Name(), func(t *testing.T) {
 			ts, live := newCollectionBackupServer(t, driver, filepath.Join(t.TempDir(), "repository"))

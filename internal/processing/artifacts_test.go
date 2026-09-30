@@ -30,6 +30,7 @@ import (
 var errInjectedPublication = errors.New("injected publication failure")
 
 func TestPublishRenditionPublishesVerifiedArtifactsAndHeads(t *testing.T) {
+	t.Parallel()
 	// Mutation caught: omitting physical membership or either head publication
 	// would leave the successful result unreadable through its public stores.
 	fixture := newPublicationFixture(t)
@@ -77,6 +78,7 @@ func TestPublishRenditionPublishesVerifiedArtifactsAndHeads(t *testing.T) {
 }
 
 func TestPublishRenditionExactRetryIgnoresDerivedMD5(t *testing.T) {
+	t.Parallel()
 	// Mutation caught: loading the first publication hydrates the Markdown MD5,
 	// which must not change the immutable build declaration used by a retry.
 	fixture := newPublicationFixture(t)
@@ -95,6 +97,7 @@ func TestPublishRenditionExactRetryIgnoresDerivedMD5(t *testing.T) {
 }
 
 func TestPublishRenditionAcceptsNilBuildWarnings(t *testing.T) {
+	t.Parallel()
 	// Mutation caught: exact slice comparison rejects a warning-free build
 	// when one representation uses nil and the other uses an empty slice.
 	fixture := newPublicationFixture(t)
@@ -111,6 +114,7 @@ func TestPublishRenditionAcceptsNilBuildWarnings(t *testing.T) {
 }
 
 func TestAuxiliaryChecksumBackfillResumesAndReadsPackedOnlyContent(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	catalog, err := store.Open(filepath.Join(root, "docbank.db"))
 	require.NoError(t, err)
@@ -181,6 +185,7 @@ func (r *cancelOnSecondChecksumOpen) OpenStreamContext(
 }
 
 func TestPublishRenditionRejectsLexicalSegmentLimitOutsideCanonicalProfile(t *testing.T) {
+	t.Parallel()
 	fixture := newPublicationFixture(t)
 	publisher, err := NewArtifactPublisher(fixture.catalog, fixture.blobs)
 	require.NoError(t, err)
@@ -197,6 +202,7 @@ func TestPublishRenditionRejectsLexicalSegmentLimitOutsideCanonicalProfile(t *te
 }
 
 func TestPublishRenditionRejectsArtifactReceiptMismatchBeforeCatalogAuthority(t *testing.T) {
+	t.Parallel()
 	// Mutation caught: trusting declared size instead of the verified CAS
 	// receipt would grant catalog authority to bytes from a rejected candidate.
 	fixture := newPublicationFixture(t)
@@ -228,6 +234,7 @@ func TestPublishRenditionRejectsArtifactReceiptMismatchBeforeCatalogAuthority(t 
 }
 
 func TestPublishRenditionRejectsRetentionAndConcreteProfileBoundsBeforeWriting(t *testing.T) {
+	t.Parallel()
 	for _, testCase := range []struct {
 		name   string
 		want   string
@@ -315,6 +322,7 @@ func TestPublishRenditionRejectsRetentionAndConcreteProfileBoundsBeforeWriting(t
 }
 
 func TestPublishRenditionStopsReadingArtifactPastDeclaredSize(t *testing.T) {
+	t.Parallel()
 	fixture := newPublicationFixture(t)
 	publisher, err := NewArtifactPublisher(fixture.catalog, fixture.blobs)
 	require.NoError(t, err)
@@ -330,6 +338,7 @@ func TestPublishRenditionStopsReadingArtifactPastDeclaredSize(t *testing.T) {
 }
 
 func TestPublishRenditionRejectsForgedProducerGraph(t *testing.T) {
+	t.Parallel()
 	// Mutation caught: trusting caller-supplied rendition, unit, and segment
 	// checksums allows unrelated evidence, Markdown, and searchable text to be
 	// staged as one immutable build.
@@ -449,6 +458,7 @@ func TestPublishRenditionRejectsForgedProducerGraph(t *testing.T) {
 }
 
 func TestPublishRenditionFailureAfterBlobClosePreservesPriorHeads(t *testing.T) {
+	t.Parallel()
 	// Mutation caught: continuing after a blob writer reports a terminal-close
 	// failure would make an unverified retained payload reachable.
 	fixture := newPublicationFixture(t)
@@ -470,6 +480,7 @@ func TestPublishRenditionFailureAfterBlobClosePreservesPriorHeads(t *testing.T) 
 }
 
 func TestPublishRenditionFailureAfterCatalogStagePreservesPriorHeads(t *testing.T) {
+	t.Parallel()
 	// Mutation caught: treating a staged immutable build as published would let
 	// catalog membership bypass version-scoped attachment and head authority.
 	fixture := newPublicationFixture(t)
@@ -495,6 +506,7 @@ func TestPublishRenditionFailureAfterCatalogStagePreservesPriorHeads(t *testing.
 }
 
 func TestPublishRenditionExcludesDerivativePurgeAcrossEveryStagingBoundary(t *testing.T) {
+	t.Parallel()
 	for _, boundary := range []string{"receipt", "build", "lexical"} {
 		t.Run(boundary, func(t *testing.T) {
 			fixture := newPublicationFixture(t)
@@ -524,7 +536,7 @@ func TestPublishRenditionExcludesDerivativePurgeAcrossEveryStagingBoundary(t *te
 				defer cancel()
 				return errors.Is(fixture.blobs.WithMutation(probeCtx, func() error { return nil }),
 					context.DeadlineExceeded)
-			}, time.Second, time.Millisecond,
+			}, 10*time.Second, time.Millisecond,
 				"purge must queue exclusive maintenance behind the in-flight publication")
 			select {
 			case purgeErr := <-purgeDone:

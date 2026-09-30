@@ -16,6 +16,7 @@ import (
 )
 
 func TestNodeProvenanceEndpointReturnsOriginAuthority(t *testing.T) {
+	t.Parallel()
 	ts, s := newTestServer(t, nil)
 	run, err := s.BeginIngest(t.Context(), "watch", "agent-sessions")
 	require.NoError(t, err)
@@ -47,6 +48,7 @@ func TestNodeProvenanceEndpointReturnsOriginAuthority(t *testing.T) {
 }
 
 func TestNodeProvenanceEndpointMapsInvalidTargets(t *testing.T) {
+	t.Parallel()
 	ts, s := newTestServer(t, nil)
 	resp, body := get(t, ts, fmt.Sprintf("/api/v1/nodes/%d/provenance", s.RootID()), nil)
 	assert.Equal(t, http.StatusUnprocessableEntity, resp.StatusCode, body)
@@ -65,6 +67,7 @@ func TestNodeProvenanceEndpointMapsInvalidTargets(t *testing.T) {
 }
 
 func TestAppendNodeProvenanceEndpointFencesAndReturnsReceipt(t *testing.T) {
+	t.Parallel()
 	ts, s := newTestServer(t, nil)
 	node := createFileWithContent(t, ts, s, "/report.txt", "report")
 	request := api.ProvenanceAppendRequest{
@@ -95,6 +98,7 @@ func TestAppendNodeProvenanceEndpointFencesAndReturnsReceipt(t *testing.T) {
 }
 
 func TestAppendNodeProvenanceEndpointMapsProvenanceMismatch(t *testing.T) {
+	t.Parallel()
 	ts, s := newTestServer(t, nil)
 	node := createFileWithContent(t, ts, s, "/report.txt", "report")
 	missing := strings.Repeat("ef", 32)
@@ -110,6 +114,7 @@ func TestAppendNodeProvenanceEndpointMapsProvenanceMismatch(t *testing.T) {
 }
 
 func TestAppendNodeProvenanceEndpointRejectsInvalidOriginalMTime(t *testing.T) {
+	t.Parallel()
 	ts, s := newTestServer(t, nil)
 	node := createFileWithContent(t, ts, s, "/report.txt", "report")
 	for _, test := range []struct {
@@ -134,6 +139,7 @@ func TestAppendNodeProvenanceEndpointRejectsInvalidOriginalMTime(t *testing.T) {
 }
 
 func TestAppendNodeProvenanceEndpointRejectsMaintenanceAndBrowserSessions(t *testing.T) {
+	t.Parallel()
 	gate := api.NewOperationGate()
 	ts, s := newTestServer(t, func(d *api.Deps) { d.Gate = gate })
 	node := createFileWithContent(t, ts, s, "/report.txt", "report")
@@ -174,6 +180,7 @@ func TestAppendNodeProvenanceEndpointRejectsMaintenanceAndBrowserSessions(t *tes
 }
 
 func TestAppendNodeProvenanceEndpointRequestBodyLimit(t *testing.T) {
+	t.Parallel()
 	for _, size := range []int{(1 << 20) - 1, 1 << 20, (1 << 20) + 1} {
 		t.Run(fmt.Sprintf("%d bytes", size), func(t *testing.T) {
 			ts, s := newTestServer(t, nil)

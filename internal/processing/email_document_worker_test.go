@@ -99,6 +99,7 @@ func grantEmailProcessingConsent(t *testing.T, s *store.Store, r document.EmailD
 }
 
 func TestEmailDocumentsRemoteConsentBindingAndRevocation(t *testing.T) {
+	t.Parallel()
 	f := newEmailPipelineFixture(t)
 	target := f.add(t, "remote.eml", attachmentCSVSource, "message/rfc822")
 	view, err := EnsureEmailTarget(t.Context(), f.catalog, f.blobs, f.spool, target)
@@ -156,6 +157,7 @@ func TestEmailDocumentsRemoteConsentBindingAndRevocation(t *testing.T) {
 // MAIL04: real spreadsheet bytes go through the shipped local provider and
 // worker; only its completed exact rendition may explain the search match.
 func TestEmailDocumentsRealCSVProviderSearchAndConsent(t *testing.T) {
+	t.Parallel()
 	f := newEmailPipelineFixture(t)
 	target := f.add(t, "source.eml", attachmentCSVSource, "message/rfc822")
 	view, err := EnsureEmailTarget(t.Context(), f.catalog, f.blobs, f.spool, target)

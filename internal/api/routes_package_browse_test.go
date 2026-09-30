@@ -20,6 +20,7 @@ import (
 )
 
 func TestPackageBrowseRoutesPreserveScopedAuthority(t *testing.T) {
+	t.Parallel()
 	srv, catalog := newPackageTestServer(t)
 	received, rowID, raw := seedBrowseReceivedPackage(t, catalog, false)
 	produced := seedBrowseProducedPackage(t, catalog)
@@ -91,6 +92,7 @@ func TestPackageBrowseRoutesPreserveScopedAuthority(t *testing.T) {
 }
 
 func TestPackageRecordRouteWithholdsSensitiveRowsFromBrowserSessions(t *testing.T) {
+	t.Parallel()
 	srv, catalog := newPackageTestServer(t)
 	received, rowID, raw := seedBrowseReceivedPackage(t, catalog, true)
 
@@ -111,6 +113,7 @@ func TestPackageRecordRouteWithholdsSensitiveRowsFromBrowserSessions(t *testing.
 }
 
 func TestPackageBrowseRoutesEnforceBoundsAndIdentity(t *testing.T) {
+	t.Parallel()
 	srv, _ := newPackageTestServer(t)
 	for _, path := range []string{
 		"/api/v1/packages?limit=251",
@@ -128,6 +131,7 @@ func TestPackageBrowseRoutesEnforceBoundsAndIdentity(t *testing.T) {
 }
 
 func TestPackageCustodianAndPeopleRoutesReturnCandidatesBeforeExactMutation(t *testing.T) {
+	t.Parallel()
 	srv, catalog := newPackageTestServer(t)
 	pkg, rowID, _ := seedBrowseReceivedPackage(t, catalog, false)
 	person, err := catalog.CreatePerson(t.Context(), "Synthetic Custodian", "operator")
@@ -176,6 +180,7 @@ func TestPackageCustodianAndPeopleRoutesReturnCandidatesBeforeExactMutation(t *t
 }
 
 func TestPackageCustodianResolveRejectsOtherScopes(t *testing.T) {
+	t.Parallel()
 	srv, catalog := newPackageTestServer(t)
 	pkg, _, _ := seedBrowseReceivedPackage(t, catalog, false)
 	run, err := catalog.BeginIngest(t.Context(), "manual", "synthetic collection")
@@ -224,6 +229,7 @@ func TestPackageCustodianResolveRejectsOtherScopes(t *testing.T) {
 }
 
 func TestPeopleCursorRejectsChangedQuery(t *testing.T) {
+	t.Parallel()
 	srv, catalog := newPackageTestServer(t)
 	for _, name := range []string{"Ada One", "Ada Two", "Beth Three"} {
 		_, err := catalog.CreatePerson(t.Context(), name, "operator")
@@ -258,6 +264,7 @@ func TestPeopleCursorRejectsChangedQuery(t *testing.T) {
 }
 
 func TestPackageLabelCursorContinuesWithMaximumFilters(t *testing.T) {
+	t.Parallel()
 	srv, catalog := newPackageTestServer(t)
 	pkg, rowID, _ := seedBrowseReceivedPackage(t, catalog, false)
 	occurrenceID := store.PackageOccurrenceID(pkg.PackageID, rowID)
@@ -294,6 +301,7 @@ func TestPackageLabelCursorContinuesWithMaximumFilters(t *testing.T) {
 }
 
 func TestPackageCustodianCursorRejectsChangedFilters(t *testing.T) {
+	t.Parallel()
 	srv, catalog := newPackageTestServer(t)
 	pkg, rowID, _ := seedBrowseReceivedPackage(t, catalog, false)
 	person, err := catalog.CreatePerson(t.Context(), "Synthetic Resolved Owner", "operator")

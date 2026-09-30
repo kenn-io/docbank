@@ -18,6 +18,7 @@ import (
 )
 
 func TestMailboxUploadBodyLimits(t *testing.T) {
+	t.Parallel()
 	for _, kind := range []string{"chunk", "transfer"} {
 		for _, variant := range []string{"exact", "short", "changed", "extra"} {
 			t.Run(kind+"/"+variant, func(t *testing.T) {
@@ -70,6 +71,7 @@ func TestMailboxUploadBodyLimits(t *testing.T) {
 }
 
 func TestMailboxUploadsOutliveRequestTimeout(t *testing.T) {
+	t.Parallel()
 	for _, kind := range []string{"chunk", "transfer"} {
 		t.Run(kind, func(t *testing.T) {
 			_, catalog := newTestServer(t, nil)

@@ -19,6 +19,7 @@ import (
 )
 
 func TestConsumerSourceFence(t *testing.T) {
+	t.Parallel()
 	// Mutation caught: passing an unfenced scope to any retrieval/provider stage
 	// would admit the revoked source version to an external consumer.
 	allowed := retrieval.DocumentIdentity{VaultID: "123e4567-e89b-42d3-a456-426614174001", NodeID: 41,

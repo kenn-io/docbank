@@ -11,6 +11,7 @@ import (
 )
 
 func TestShutdownClosesReportsAfterContextExpires(t *testing.T) {
+	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {
 		budget := report.NewBudget(1 << 20)
 		t.Cleanup(func() { require.NoError(t, budget.Close()) })

@@ -25,6 +25,7 @@ import (
 // Missing attachment expansion must fail this test: each published occurrence
 // gets its own bounded receipt row and independently checked archive bytes.
 func TestExportOriginalAttachmentOccurrences(t *testing.T) {
+	t.Parallel()
 	f := newEmailPipelineFixture(t)
 	target := f.add(t, "source.eml", emailPipelineSource, "message/rfc822")
 	view, err := EnsureEmailTarget(t.Context(), f.catalog, f.blobs, f.spool, target)
@@ -117,6 +118,7 @@ func TestExportOriginalAttachmentOccurrences(t *testing.T) {
 }
 
 func TestExportAttachmentVolumeJobRetryAndReadback(t *testing.T) {
+	t.Parallel()
 	f := newEmailPipelineFixture(t)
 	target := f.add(t, "volumes.eml", emailPipelineSource, "message/rfc822")
 	view, err := EnsureEmailTarget(t.Context(), f.catalog, f.blobs, f.spool, target)
@@ -162,6 +164,7 @@ func TestExportAttachmentVolumeJobRetryAndReadback(t *testing.T) {
 }
 
 func TestExportQualifiedAttachmentPDFAndUnsupportedChild(t *testing.T) {
+	t.Parallel()
 	f := newEmailPipelineFixture(t)
 	raw := "Subject: Parent\r\nContent-Type: multipart/mixed; boundary=m\r\n\r\n--m\r\nContent-Type: text/plain\r\n\r\nParent body\r\n--m\r\nContent-Type: message/rfc822\r\nContent-Disposition: attachment; filename=child.eml\r\n\r\nSubject: Nested child\r\nContent-Type: text/plain\r\n\r\nNested child body\r\n--m\r\nContent-Type: text/plain\r\nContent-Disposition: attachment; filename=note.txt\r\n\r\nUnsupported plain text child\r\n--m--\r\n"
 	target := f.add(t, "parent.eml", raw, "message/rfc822")
@@ -227,6 +230,7 @@ func TestExportQualifiedAttachmentPDFAndUnsupportedChild(t *testing.T) {
 }
 
 func TestExportAttachmentEmptyMissingAndAmbiguousPublication(t *testing.T) {
+	t.Parallel()
 	f := newEmailPipelineFixture(t)
 	target := f.add(t, "empty.eml", "Subject: Empty\r\nContent-Type: text/plain\r\n\r\nNo attachments.\r\n", "message/rfc822")
 	view, err := EnsureEmailTarget(t.Context(), f.catalog, f.blobs, f.spool, target)
@@ -263,6 +267,7 @@ func TestExportAttachmentEmptyMissingAndAmbiguousPublication(t *testing.T) {
 }
 
 func TestExportAttachmentInventoryLargerThanOneMember(t *testing.T) {
+	t.Parallel()
 	f := newEmailPipelineFixture(t)
 	var sourceText strings.Builder
 	sourceText.WriteString("Subject: Many attachments\r\nContent-Type: multipart/mixed; boundary=m\r\n\r\n--m\r\nContent-Type: text/plain\r\n\r\nBody\r\n")

@@ -246,4 +246,4 @@ linters:
 
       # Only the storage tests run in parallel so far.
       - linters: [paralleltest]
-        path-except: internal/store/
+        path-except: internal/(store|api|processing)/

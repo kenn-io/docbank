@@ -38,6 +38,7 @@ func postContentRevert(
 }
 
 func TestContentRevertAdoptsPackedPriorVersionWithoutCopyingBlob(t *testing.T) {
+	t.Parallel()
 	ts, s := newTestServer(t, nil)
 	blobs := s.Blobs
 	created := createFileWithContent(t, ts, s, "/report.txt", "original")
@@ -83,6 +84,7 @@ func TestContentRevertAdoptsPackedPriorVersionWithoutCopyingBlob(t *testing.T) {
 }
 
 func TestContentRevertRejectsStaleAndInvalidSources(t *testing.T) {
+	t.Parallel()
 	ts, s := newTestServer(t, nil)
 	first := createFileWithContent(t, ts, s, "/first.txt", "first")
 	second := createFileWithContent(t, ts, s, "/second.txt", "second")

@@ -16,6 +16,7 @@ import (
 // TestMediaAcquisitionPlanRejectsTamperingAndDifferentKey catches unsigned
 // claim changes and daemon-restart token replay.
 func TestMediaAcquisitionPlanRejectsTamperingAndDifferentKey(t *testing.T) {
+	t.Parallel()
 	var key [32]byte
 	key[0] = 1
 	body := []byte(`{"origin_id":"synthetic","principal":"operator"}`)
@@ -35,6 +36,7 @@ func TestMediaAcquisitionPlanRejectsTamperingAndDifferentKey(t *testing.T) {
 }
 
 func TestMediaAcquisitionPlanBindsCurrentPolicyPrincipalIncarnationAndExpiry(t *testing.T) {
+	t.Parallel()
 	fixture := newPublicationFixture(t)
 	now := time.Date(2026, 9, 13, 12, 0, 0, 0, time.UTC)
 	var key [32]byte
@@ -129,6 +131,7 @@ func TestMediaAcquisitionPlanBindsCurrentPolicyPrincipalIncarnationAndExpiry(t *
 }
 
 func TestRemoteRecordingReplaysBeforeOriginAdmission(t *testing.T) {
+	t.Parallel()
 	fixture := newPublicationFixture(t)
 	policy := MediaOriginPolicy{OriginID: "original", Provider: "synthetic",
 		ReferencePrefixes: []string{"https://recordings.invalid/"}}
@@ -202,6 +205,7 @@ func TestRemoteRecordingReplaysBeforeOriginAdmission(t *testing.T) {
 }
 
 func TestRemoteRecordingAcquireUnavailable(t *testing.T) {
+	t.Parallel()
 	fixture := newPublicationFixture(t)
 	service := newRemoteRecordingTestService(t, fixture, "operator:acquire", 0,
 		remoteRecordingTestOrigins())

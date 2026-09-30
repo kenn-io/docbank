@@ -19,6 +19,7 @@ import (
 )
 
 func TestDocumentCatalogRouteReturnsNormalizedBoundedPages(t *testing.T) {
+	t.Parallel()
 	now := time.Date(2026, 8, 28, 10, 0, 0, 0, time.UTC)
 	key := []byte("0123456789abcdef0123456789abcdef")
 	ts, s := newTestServer(t, func(deps *api.Deps) {
@@ -64,6 +65,7 @@ func TestDocumentCatalogRouteReturnsNormalizedBoundedPages(t *testing.T) {
 }
 
 func TestDocumentCatalogRoutePaginatesMaximumLegalPath(t *testing.T) {
+	t.Parallel()
 	now := time.Date(2026, 8, 28, 10, 0, 0, 0, time.UTC)
 	ts, s := newTestServer(t, func(deps *api.Deps) {
 		deps.DocumentCursorKey = []byte("0123456789abcdef0123456789abcdef")
@@ -124,6 +126,7 @@ func TestDocumentCatalogRoutePaginatesMaximumLegalPath(t *testing.T) {
 }
 
 func TestDocumentCatalogRouteRejectsInvalidAndExpiredCursors(t *testing.T) {
+	t.Parallel()
 	now := time.Date(2026, 8, 28, 10, 0, 0, 0, time.UTC)
 	key := []byte("0123456789abcdef0123456789abcdef")
 	ts, s := newTestServer(t, func(deps *api.Deps) {
@@ -181,6 +184,7 @@ func TestDocumentCatalogRouteRejectsInvalidAndExpiredCursors(t *testing.T) {
 }
 
 func TestDocumentCatalogRouteAppliesDefaultAndMaximumPageSizes(t *testing.T) {
+	t.Parallel()
 	ts, _ := newTestServer(t, nil)
 	resp, body := get(t, ts, "/api/v1/documents", nil)
 	require.Equal(t, http.StatusOK, resp.StatusCode, body)
@@ -193,6 +197,7 @@ func TestDocumentCatalogRouteAppliesDefaultAndMaximumPageSizes(t *testing.T) {
 }
 
 func TestDocumentSummaryResolveReportsStaleIdentity(t *testing.T) {
+	t.Parallel()
 	ts, s := newTestServer(t, nil)
 	node, err := s.CreateFile(t.Context(), s.RootID(), "current.txt", testHash("summary"), 1, "text/plain")
 	require.NoError(t, err)
@@ -244,6 +249,7 @@ func nonCanonicalDocumentCursor(t *testing.T, cursor string) string {
 }
 
 func TestDocumentSummaryResolveRejectsDuplicateIdentity(t *testing.T) {
+	t.Parallel()
 	ts, s := newTestServer(t, nil)
 	node, err := s.CreateFile(t.Context(), s.RootID(), "current.txt", testHash("duplicate-summary"), 1, "text/plain")
 	require.NoError(t, err)

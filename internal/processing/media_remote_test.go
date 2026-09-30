@@ -56,6 +56,7 @@ func remoteRecordingTestArtifact(
 }
 
 func TestRemoteRecordingManualReference(t *testing.T) {
+	t.Parallel()
 	fixture := newPublicationFixture(t)
 	service := newRemoteRecordingTestService(t, fixture, "operator:remote", 0, nil)
 	reference := "https://private.invalid/share/call?token=synthetic-secret"
@@ -115,6 +116,7 @@ func TestRemoteRecordingManualReference(t *testing.T) {
 // Canonicalization is permanent source identity, so equivalent URL spellings
 // must select the same source before any recording is imported.
 func TestRemoteRecordingCanonicalURLIdentity(t *testing.T) {
+	t.Parallel()
 	fixture := newPublicationFixture(t)
 	service := newRemoteRecordingTestService(t, fixture, "operator:canonical", 0, nil)
 	for _, tc := range []struct {
@@ -147,6 +149,7 @@ func TestRemoteRecordingCanonicalURLIdentity(t *testing.T) {
 }
 
 func TestRemoteRecordingManualImport(t *testing.T) {
+	t.Parallel()
 	fixture := newPublicationFixture(t)
 	service := newRemoteRecordingTestService(t, fixture, "operator:manual", 0, remoteRecordingTestOrigins())
 	request := remoteRecordingTestRequest(uuid.New().String(),
@@ -215,6 +218,7 @@ func TestRemoteRecordingManualImport(t *testing.T) {
 }
 
 func TestRemoteRecordingManualIsolation(t *testing.T) {
+	t.Parallel()
 	fixture := newPublicationFixture(t)
 	service := newRemoteRecordingTestService(t, fixture, "operator:isolation", 0, remoteRecordingTestOrigins())
 	retained, err := service.SubmitRemoteRecording(t.Context(), remoteRecordingTestRequest(
@@ -295,6 +299,7 @@ func TestRemoteRecordingManualIsolation(t *testing.T) {
 }
 
 func TestRemoteRecordingManualBounds(t *testing.T) {
+	t.Parallel()
 	wav := mediatest.WAV()
 	mp3 := mediatest.MP3()
 	maximum := int64(max(len(wav), len(mp3)))
@@ -369,6 +374,7 @@ func TestRemoteRecordingManualBounds(t *testing.T) {
 }
 
 func TestRemoteRecordingManualStatus(t *testing.T) {
+	t.Parallel()
 	fixture := newPublicationFixture(t)
 	service := newRemoteRecordingTestService(t, fixture, "operator:status-remote", 0,
 		remoteRecordingTestOrigins())
@@ -431,6 +437,7 @@ func TestRemoteRecordingManualStatus(t *testing.T) {
 }
 
 func TestRemoteRecordingEqualBytesKeepTranscriptBindingsBySource(t *testing.T) {
+	t.Parallel()
 	fixture := newPublicationFixture(t)
 	service := newRemoteRecordingTestService(t, fixture, "operator:equal-bytes", 0, nil)
 	raw := mediatest.WAV()

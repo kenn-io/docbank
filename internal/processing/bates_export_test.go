@@ -22,6 +22,7 @@ import (
 )
 
 func TestBatesExportPublishesSelectedPagesBeforeCommittingAllocation(t *testing.T) {
+	t.Parallel()
 	ctx := t.Context()
 	vault := t.TempDir()
 	dbPath := filepath.Join(vault, "docbank.db")
@@ -165,6 +166,7 @@ func TestBatesExportPublishesSelectedPagesBeforeCommittingAllocation(t *testing.
 }
 
 func TestConcurrentBatesExportRetriesConvergeOnOneArtifact(t *testing.T) {
+	t.Parallel()
 	env := newBatesExportFixture(t)
 	var artifacts [2]store.BatesArtifact
 	var errs [2]error
@@ -184,6 +186,7 @@ func TestConcurrentBatesExportRetriesConvergeOnOneArtifact(t *testing.T) {
 }
 
 func TestBatesExportNormalizesDefaultedRecipeBeforeStoringIt(t *testing.T) {
+	t.Parallel()
 	env := newBatesExportFixture(t)
 	defaulted := env.recipe
 	defaulted.Position = ""
@@ -296,6 +299,7 @@ func batesExportRecipe(namespace store.BatesNamespace, start int) pdfstamp.Recip
 }
 
 func TestBatesExportRejectsRestamp(t *testing.T) {
+	t.Parallel()
 	env := newBatesExportFixture(t)
 	restamp := env.recipe
 	restamp.Restamp = true
@@ -308,6 +312,7 @@ func TestBatesExportRejectsRestamp(t *testing.T) {
 }
 
 func TestCheckBatesSourcesRefusesPDFsTheStamperRejects(t *testing.T) {
+	t.Parallel()
 	env := newBatesExportFixture(t)
 	_, pages, err := env.catalog.BatesPublicationPlan(t.Context(), env.allocationID)
 	require.NoError(t, err)

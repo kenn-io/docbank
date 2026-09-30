@@ -12,7 +12,7 @@ import (
 	"go.kenn.io/docbank/internal/home"
 )
 
-func TestBackupRestoreCoordinatorExcludesRestoreAndDaemon(t *testing.T) {
+func TestBackupRestoreCoordinatorExcludesRestoreAndDaemon(t *testing.T) { //nolint:paralleltest // locks the per-user target-lock registry that every docbank process shares
 	target := filepath.Join(t.TempDir(), "restore-target")
 	require.NoError(t, os.MkdirAll(target, 0o700))
 	root, err := os.OpenRoot(target)
@@ -42,7 +42,7 @@ func TestBackupRestoreCoordinatorExcludesRestoreAndDaemon(t *testing.T) {
 	assert.True(t, lockInfo.Mode().IsRegular())
 }
 
-func TestRetainedRestoreTargetCoordinatorHoldsThroughInspection(t *testing.T) {
+func TestRetainedRestoreTargetCoordinatorHoldsThroughInspection(t *testing.T) { //nolint:paralleltest // locks the per-user target-lock registry that every docbank process shares
 	target := filepath.Join(t.TempDir(), "restore-target")
 	require.NoError(t, os.MkdirAll(target, 0o700))
 	root, err := os.OpenRoot(target)
@@ -68,7 +68,7 @@ func TestRetainedRestoreTargetCoordinatorHoldsThroughInspection(t *testing.T) {
 	require.NoError(t, daemonLock.Release())
 }
 
-func TestBackupRestoreCoordinatorPinsTargetAcrossPathSwap(t *testing.T) {
+func TestBackupRestoreCoordinatorPinsTargetAcrossPathSwap(t *testing.T) { //nolint:paralleltest // locks the per-user target-lock registry that every docbank process shares
 	if runtime.GOOS == "windows" {
 		t.Skip("Windows prevents renaming the directory while its restore root is open")
 	}
@@ -99,7 +99,7 @@ func TestBackupRestoreCoordinatorPinsTargetAcrossPathSwap(t *testing.T) {
 		"writes through Kit's borrowed root must not follow the replaced pathname")
 }
 
-func TestBackupRestoreCoordinatorRejectsSwapBeforeAcquisition(t *testing.T) {
+func TestBackupRestoreCoordinatorRejectsSwapBeforeAcquisition(t *testing.T) { //nolint:paralleltest // locks the per-user target-lock registry that every docbank process shares
 	if runtime.GOOS == "windows" {
 		t.Skip("Windows prevents renaming the directory while its restore root is open")
 	}
@@ -127,7 +127,7 @@ func TestBackupRestoreCoordinatorRejectsSwapBeforeAcquisition(t *testing.T) {
 		"rejected replacement must not receive lock or restore files")
 }
 
-func TestBackupRestoreCoordinatorRejectsTargetBelowAnotherActiveVault(t *testing.T) {
+func TestBackupRestoreCoordinatorRejectsTargetBelowAnotherActiveVault(t *testing.T) { //nolint:paralleltest // locks the per-user target-lock registry that every docbank process shares
 	vault := filepath.Join(t.TempDir(), "other-vault")
 	target := filepath.Join(vault, "nested-restore")
 	require.NoError(t, os.MkdirAll(target, 0o700))
@@ -145,7 +145,7 @@ func TestBackupRestoreCoordinatorRejectsTargetBelowAnotherActiveVault(t *testing
 	assert.Equal(t, "backup_restore_target_active", problem.Code)
 }
 
-func TestBackupRestoreCoordinatorExcludesOverlappingTargets(t *testing.T) {
+func TestBackupRestoreCoordinatorExcludesOverlappingTargets(t *testing.T) { //nolint:paralleltest // locks the per-user target-lock registry that every docbank process shares
 	parent := filepath.Join(t.TempDir(), "restore")
 	child := filepath.Join(parent, "nested")
 	require.NoError(t, os.MkdirAll(child, 0o700))
@@ -171,7 +171,7 @@ func TestBackupRestoreCoordinatorExcludesOverlappingTargets(t *testing.T) {
 	assertRestoreTargetActive(t, err)
 }
 
-func TestBackupRestoreCoordinatorRejectsMissingDescendantBeforeCreation(t *testing.T) {
+func TestBackupRestoreCoordinatorRejectsMissingDescendantBeforeCreation(t *testing.T) { //nolint:paralleltest // locks the per-user target-lock registry that every docbank process shares
 	parent := filepath.Join(t.TempDir(), "active-restore")
 	descendant := filepath.Join(parent, "docbank.db")
 	require.NoError(t, os.Mkdir(parent, 0o700))

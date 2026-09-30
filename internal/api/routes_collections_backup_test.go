@@ -65,7 +65,7 @@ func newCollectionBackupServer(
 	}
 }
 
-func TestCollectionAuthoritySurvivesPhysicalBackupRestore(t *testing.T) {
+func TestCollectionAuthoritySurvivesPhysicalBackupRestore(t *testing.T) { //nolint:paralleltest // locks the per-user target-lock registry that every docbank process shares
 	for _, driver := range collectionBackupDrivers() {
 		t.Run(driver.Name(), func(t *testing.T) {
 			repoPath := filepath.Join(t.TempDir(), "repo")

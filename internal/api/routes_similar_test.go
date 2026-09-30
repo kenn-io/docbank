@@ -30,6 +30,7 @@ func (p *similarCountingProvider) Embed(ctx context.Context, inputs []document.E
 }
 
 func TestSimilarDocumentsRouteGroupsCopiesAndNeverEmbeds(t *testing.T) {
+	t.Parallel()
 	provider := &similarCountingProvider{processingTestEmbeddingProvider: newProcessingTestEmbeddingProvider(t)}
 	ts, catalog := newTestServer(t, configureProcessingTestServiceWithEmbeddingProvider(t, provider, true))
 	c := daemonconn.New(ts.URL, testAPIKey)
@@ -101,6 +102,7 @@ func TestSimilarDocumentsRouteGroupsCopiesAndNeverEmbeds(t *testing.T) {
 }
 
 func TestSimilarMissingCoverageRequiresSourceFenceAndCurrentIdentity(t *testing.T) {
+	t.Parallel()
 	ts, catalog := newTestServer(t, configureProcessingTestServiceWithEmbedding(t))
 	node := createFileWithContent(t, ts, catalog, "/unembedded.txt", "synthetic missing head")
 	c := daemonconn.New(ts.URL, testAPIKey)

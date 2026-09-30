@@ -14,6 +14,7 @@ import (
 )
 
 func TestVectorIndexFailedReadReleasesBuildClaim(t *testing.T) {
+	t.Parallel()
 	fixture, _, embedding, _ := newRealEmbeddingWorker(t, document.EmbeddingInputOriginalFile)
 	_, err := embedding.ScanOnce(t.Context())
 	require.NoError(t, err)
@@ -40,6 +41,7 @@ func TestVectorIndexFailedReadReleasesBuildClaim(t *testing.T) {
 }
 
 func TestVectorIndexRebuildWaitsForMaintenanceAdmission(t *testing.T) {
+	t.Parallel()
 	fixture, _, embedding, _ := newRealEmbeddingWorker(t, document.EmbeddingInputOriginalFile)
 	_, err := embedding.ScanOnce(t.Context())
 	require.NoError(t, err)
@@ -70,6 +72,7 @@ func TestVectorIndexRebuildWaitsForMaintenanceAdmission(t *testing.T) {
 }
 
 func TestVectorIndexWorkerRetiresTrashedSource(t *testing.T) {
+	t.Parallel()
 	fixture, _, embedding, _ := newRealEmbeddingWorker(t, document.EmbeddingInputOriginalFile)
 	_, err := embedding.ScanOnce(t.Context())
 	require.NoError(t, err)
@@ -96,6 +99,7 @@ func TestVectorIndexWorkerRetiresTrashedSource(t *testing.T) {
 }
 
 func TestVectorIndexMaintenanceCanRunDuringPayloadRead(t *testing.T) {
+	t.Parallel()
 	fixture, _, embedding, _ := newRealEmbeddingWorker(t, document.EmbeddingInputOriginalFile)
 	_, err := embedding.ScanOnce(t.Context())
 	require.NoError(t, err)
@@ -106,7 +110,7 @@ func TestVectorIndexMaintenanceCanRunDuringPayloadRead(t *testing.T) {
 	worker, err := vectorworker.NewIndexWorker(vectorworker.IndexWorkerConfig{
 		Catalog: fixture.catalog, Mutate: gate.MutateContext, Owner: "index-worker", BuildLease: time.Minute, ReaderLease: time.Minute, IdleDelay: time.Millisecond,
 		ReadVectorSet: func(ctx context.Context, member store.VectorIndexMember) ([]byte, error) {
-			maintenanceCtx, cancel := context.WithTimeout(ctx, 100*time.Millisecond)
+			maintenanceCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 			defer cancel()
 			if err := gate.MaintainContext(maintenanceCtx, func() error { return nil }); err != nil {
 				return nil, err
@@ -120,6 +124,7 @@ func TestVectorIndexMaintenanceCanRunDuringPayloadRead(t *testing.T) {
 }
 
 func TestVectorIndexMissingPayloadWaitsForMaintenanceBeforeAbandoning(t *testing.T) {
+	t.Parallel()
 	fixture, _, embedding, _ := newRealEmbeddingWorker(t, document.EmbeddingInputOriginalFile)
 	_, err := embedding.ScanOnce(t.Context())
 	require.NoError(t, err)

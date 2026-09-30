@@ -28,6 +28,7 @@ import (
 )
 
 func TestExtractSourceMetadataFromSyntheticFormats(t *testing.T) {
+	t.Parallel()
 	ooxml := syntheticOOXML(t)
 	for _, testCase := range []struct {
 		name      string
@@ -67,6 +68,7 @@ func TestExtractSourceMetadataFromSyntheticFormats(t *testing.T) {
 }
 
 func TestExtractSourceMetadataReadsVisualContainerFacts(t *testing.T) {
+	t.Parallel()
 	for _, testCase := range []struct {
 		name       string
 		payload    []byte
@@ -112,6 +114,7 @@ func TestExtractSourceMetadataReadsVisualContainerFacts(t *testing.T) {
 }
 
 func TestExtractSourceMetadataReadsMP4CreationTime(t *testing.T) {
+	t.Parallel()
 	payload := mediatest.MP4(640, 368, 3500)
 	mvhd := bytes.Index(payload, []byte("mvhd"))
 	require.GreaterOrEqual(t, mvhd, 4)
@@ -128,6 +131,7 @@ func TestExtractSourceMetadataReadsMP4CreationTime(t *testing.T) {
 }
 
 func TestExtractSourceMetadataReadsTIFFPhotoFacts(t *testing.T) {
+	t.Parallel()
 	metadata, err := ExtractSourceMetadata(t.Context(), sourceMetadataTestSpool(t), syntheticRichExifTIFF())
 	require.NoError(t, err)
 	for key, want := range map[string]string{
@@ -170,6 +174,7 @@ func TestExtractSourceMetadataReadsTIFFPhotoFacts(t *testing.T) {
 }
 
 func TestExtractSourceMetadataReadsRawTIFFVariants(t *testing.T) {
+	t.Parallel()
 	for _, testCase := range []struct {
 		name, format string
 		magic        uint16
@@ -212,6 +217,7 @@ func TestExtractSourceMetadataReadsRawTIFFVariants(t *testing.T) {
 }
 
 func TestExtractSourceMetadataReadsRAFPhotoFacts(t *testing.T) {
+	t.Parallel()
 	metadata, err := ExtractSourceMetadata(t.Context(), sourceMetadataTestSpool(t), syntheticRAF())
 	require.NoError(t, err)
 	for key, want := range map[string]string{
@@ -237,6 +243,7 @@ func TestExtractSourceMetadataReadsRAFPhotoFacts(t *testing.T) {
 }
 
 func TestExtractSourceMetadataReadsCR3PhotoFacts(t *testing.T) {
+	t.Parallel()
 	metadata, err := ExtractSourceMetadata(t.Context(), sourceMetadataTestSpool(t), syntheticCR3())
 	require.NoError(t, err)
 	for key, want := range map[string]string{
@@ -279,6 +286,7 @@ func TestExtractSourceMetadataReadsCR3PhotoFacts(t *testing.T) {
 }
 
 func TestExtractSourceMetadataOmitsIncompleteOrInvalidGPSCoordinates(t *testing.T) {
+	t.Parallel()
 	validLatitude := []syntheticTIFFEntry{
 		tiffASCII(0x0001, "N"),
 		tiffRationals(0x0002, [][2]uint32{{41, 1}, {52, 1}, {30, 1}}),
@@ -335,6 +343,7 @@ func TestExtractSourceMetadataOmitsIncompleteOrInvalidGPSCoordinates(t *testing.
 }
 
 func TestExtractSourceMetadataOmitsIncompleteGPSTimestamp(t *testing.T) {
+	t.Parallel()
 	metadata, err := ExtractSourceMetadata(t.Context(), sourceMetadataTestSpool(t), syntheticCR3WithDirectories(
 		syntheticBMFFBox("CMT1", syntheticCR3CMT1()),
 		syntheticBMFFBox("CMT4", syntheticTIFFRoot([]syntheticTIFFEntry{
@@ -349,6 +358,7 @@ func TestExtractSourceMetadataOmitsIncompleteGPSTimestamp(t *testing.T) {
 }
 
 func TestExtractSourceMetadataWarnsForMalformedGPSDirectory(t *testing.T) {
+	t.Parallel()
 	metadata, err := ExtractSourceMetadata(t.Context(), sourceMetadataTestSpool(t), syntheticTIFF(42,
 		[]syntheticTIFFEntry{
 			tiffLong(0x0100, 6000),
@@ -363,6 +373,7 @@ func TestExtractSourceMetadataWarnsForMalformedGPSDirectory(t *testing.T) {
 }
 
 func TestExtractSourceMetadataWarnsForDuplicateCR3Directory(t *testing.T) {
+	t.Parallel()
 	cmt1 := syntheticCR3CMT1()
 	metadata, err := ExtractSourceMetadata(t.Context(), sourceMetadataTestSpool(t), syntheticCR3WithDirectories(
 		syntheticBMFFBox("CMT1", cmt1),
@@ -377,6 +388,7 @@ func TestExtractSourceMetadataWarnsForDuplicateCR3Directory(t *testing.T) {
 }
 
 func TestExtractSourceMetadataWarnsForMalformedRAFOffsets(t *testing.T) {
+	t.Parallel()
 	payload := syntheticRAF()
 	binary.BigEndian.PutUint32(payload[sourceMetadataRAFDirectoryOffset:], uint32(len(payload)+1))
 
@@ -389,6 +401,7 @@ func TestExtractSourceMetadataWarnsForMalformedRAFOffsets(t *testing.T) {
 }
 
 func TestExtractSourceMetadataKeepsRAFDirectoryInsideDeclaredBounds(t *testing.T) {
+	t.Parallel()
 	payload := syntheticRAF()
 	binary.BigEndian.PutUint32(payload[sourceMetadataRAFDirectoryLength:], 4)
 
@@ -400,6 +413,7 @@ func TestExtractSourceMetadataKeepsRAFDirectoryInsideDeclaredBounds(t *testing.T
 }
 
 func TestExtractSourceMetadataRejectsOverlappingRAFMetadataRegions(t *testing.T) {
+	t.Parallel()
 	payload := syntheticRAF()
 	jpegOffset := int(binary.BigEndian.Uint32(payload[sourceMetadataRAFJPEGOffset:]))
 	directoryOffset := jpegOffset + 2
@@ -416,6 +430,7 @@ func TestExtractSourceMetadataRejectsOverlappingRAFMetadataRegions(t *testing.T)
 }
 
 func TestExtractSourceMetadataReadsOOXMLAppProperties(t *testing.T) {
+	t.Parallel()
 	metadata, err := ExtractSourceMetadata(t.Context(), sourceMetadataTestSpool(t), syntheticOOXML(t))
 	require.NoError(t, err)
 	pages, found := sourceMetadataInteger(metadata, "page_count")
@@ -427,16 +442,19 @@ func TestExtractSourceMetadataReadsOOXMLAppProperties(t *testing.T) {
 }
 
 func TestExtractSourceMetadataFromSyntheticDOCX(t *testing.T) {
+	t.Parallel()
 	assertQualifiedOOXMLMetadata(t, "docx", "word/document.xml",
 		"TestExtractSourceMetadataFromSyntheticDOCX")
 }
 
 func TestExtractSourceMetadataFromSyntheticPPTX(t *testing.T) {
+	t.Parallel()
 	assertQualifiedOOXMLMetadata(t, "pptx", "ppt/presentation.xml",
 		"TestExtractSourceMetadataFromSyntheticPPTX")
 }
 
 func TestExtractSourceMetadataFromSyntheticXLSX(t *testing.T) {
+	t.Parallel()
 	assertQualifiedOOXMLMetadata(t, "xlsx", "xl/workbook.xml",
 		"TestExtractSourceMetadataFromSyntheticXLSX")
 }
@@ -460,6 +478,7 @@ func assertQualifiedOOXMLMetadata(t *testing.T, catalogID, familyPart, evidence 
 }
 
 func TestExtractSourceMetadataUsesVerifiedPDFPageTree(t *testing.T) {
+	t.Parallel()
 	metadata, err := ExtractSourceMetadata(t.Context(), sourceMetadataTestSpool(t), syntheticMetadataPDF(2))
 	require.NoError(t, err)
 	pageCount, found := sourceMetadataInteger(metadata, "page_count")
@@ -475,6 +494,7 @@ func TestExtractSourceMetadataUsesVerifiedPDFPageTree(t *testing.T) {
 }
 
 func TestExtractSourceMetadataUsesAuthoritativePDFInfo(t *testing.T) {
+	t.Parallel()
 	metadata, err := ExtractSourceMetadata(t.Context(), sourceMetadataTestSpool(t), syntheticMetadataPDF(1))
 	require.NoError(t, err)
 	title, found := sourceMetadataString(metadata, "title")
@@ -483,6 +503,7 @@ func TestExtractSourceMetadataUsesAuthoritativePDFInfo(t *testing.T) {
 }
 
 func TestExtractSourceMetadataPreservesPDFPagesWhenInfoFieldIsMalformed(t *testing.T) {
+	t.Parallel()
 	metadata, err := ExtractSourceMetadata(t.Context(), sourceMetadataTestSpool(t), syntheticMetadataPDFWithInfo(2,
 		"<< /Title 42 /Author (Ada) /Subject (Synthetic) >>"))
 	require.NoError(t, err)
@@ -497,6 +518,7 @@ func TestExtractSourceMetadataPreservesPDFPagesWhenInfoFieldIsMalformed(t *testi
 }
 
 func TestExtractSourceMetadataPreservesPDFPagesWhenXMPIsMalformed(t *testing.T) {
+	t.Parallel()
 	metadata, err := ExtractSourceMetadata(t.Context(), sourceMetadataTestSpool(t), syntheticMetadataPDFWithInfoAndMetadata(2,
 		"<< /Title (Quarterly report) >>",
 		"<< /Type /Metadata /Subtype /XML /Filter /FlateDecode /Length 4 >>\nstream\nnope\nendstream"))
@@ -512,6 +534,7 @@ func TestExtractSourceMetadataPreservesPDFPagesWhenXMPIsMalformed(t *testing.T) 
 }
 
 func TestExtractID3TextEncodingsAndFrameBoundary(t *testing.T) {
+	t.Parallel()
 	for _, testCase := range []struct {
 		name     string
 		version  byte
@@ -540,6 +563,7 @@ func TestExtractID3TextEncodingsAndFrameBoundary(t *testing.T) {
 }
 
 func TestExtractXMLTextDoesNotCopyWrittenFrames(t *testing.T) {
+	t.Parallel()
 	collector := metadataCollector{record: new(emptySourceMetadata()), seen: map[string]bool{}}
 	require.NotPanics(t, func() {
 		collector.extractXMLText([]byte(`<root>prefix<group><title>Synthetic</title></group></root>`), "office.core")
@@ -557,6 +581,7 @@ func TestExtractXMLTextDoesNotCopyWrittenFrames(t *testing.T) {
 }
 
 func TestExtractXMLTextReadsXMPAttributesAndRDFCollections(t *testing.T) {
+	t.Parallel()
 	const xmp = `<x:xmpmeta xmlns:x="adobe:ns:meta/" xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#" xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:xmp="http://ns.adobe.com/xap/1.0/">
 		<rdf:RDF><rdf:Description xmp:CreateDate="2024-01-02T03:04:05Z">
 			<dc:title><rdf:Alt><rdf:li xml:lang="fr">Rapport</rdf:li><rdf:li xml:lang="x-default">Synthetic report</rdf:li></rdf:Alt></dc:title>
@@ -586,6 +611,7 @@ func TestExtractXMLTextReadsXMPAttributesAndRDFCollections(t *testing.T) {
 }
 
 func TestExtractXMLTextSkipsXMPStructureAndUnknownNamespaces(t *testing.T) {
+	t.Parallel()
 	t.Run("RDF structure", func(t *testing.T) {
 		metadata := emptySourceMetadata()
 		collector := metadataCollector{record: &metadata, seen: map[string]bool{}}
@@ -603,6 +629,7 @@ func TestExtractXMLTextSkipsXMPStructureAndUnknownNamespaces(t *testing.T) {
 }
 
 func TestExtractImageIgnoresMetadataLikeEntropyBytes(t *testing.T) {
+	t.Parallel()
 	data := append([]byte{0xff, 0xd8, 0xff, 0xda, 0x00, 0x02}, []byte("ImageDescription=Fabricated entropy\x00")...)
 	data = append(data, 0xff, 0xd9)
 	metadata, err := ExtractSourceMetadata(t.Context(), sourceMetadataTestSpool(t), data)
@@ -612,6 +639,7 @@ func TestExtractImageIgnoresMetadataLikeEntropyBytes(t *testing.T) {
 }
 
 func TestMalformedXMLMetadataEmitsWarnings(t *testing.T) {
+	t.Parallel()
 	t.Run("generic", func(t *testing.T) {
 		metadata := emptySourceMetadata()
 		collector := metadataCollector{record: &metadata, seen: map[string]bool{}}
@@ -633,6 +661,7 @@ func TestMalformedXMLMetadataEmitsWarnings(t *testing.T) {
 }
 
 func TestExtractCalendarRetainsUnsupportedNamedTimezone(t *testing.T) {
+	t.Parallel()
 	metadata, err := ExtractSourceMetadata(t.Context(), sourceMetadataTestSpool(t), []byte("BEGIN:VCALENDAR\r\nBEGIN:VEVENT\r\nDTSTART;TZID=America/New_York:20240102T030405\r\nEND:VEVENT\r\nEND:VCALENDAR"))
 	require.NoError(t, err)
 	raw, found := sourceMetadataString(metadata, "calendar.start.raw")
@@ -644,6 +673,7 @@ func TestExtractCalendarRetainsUnsupportedNamedTimezone(t *testing.T) {
 }
 
 func TestMetadataCollectorBoundsLabelsAndAggregateValues(t *testing.T) {
+	t.Parallel()
 	metadata := emptySourceMetadata()
 	collector := metadataCollector{record: &metadata, seen: map[string]bool{}}
 	collector.extractOfficeCustom([]byte(`<Properties><property name="` +
@@ -659,6 +689,7 @@ func TestMetadataCollectorBoundsLabelsAndAggregateValues(t *testing.T) {
 }
 
 func TestCanonicalSourceMetadataResultPublishesWarningForInvalidExtraction(t *testing.T) {
+	t.Parallel()
 	metadata := emptySourceMetadata()
 	metadata.Fields = append(metadata.Fields, document.SourceMetadataFieldV1{
 		Key: "forbidden", Namespace: "xmp", SourceField: "Synthetic",
@@ -674,6 +705,7 @@ func TestCanonicalSourceMetadataResultPublishesWarningForInvalidExtraction(t *te
 }
 
 func TestExtractSourceMetadataUsesSharedEmailInterpretation(t *testing.T) {
+	t.Parallel()
 	for _, zone := range []string{"XYZ", "-0700", "GMT", ""} {
 		t.Run(zone, func(t *testing.T) {
 			date := strings.TrimSpace("Tue, 2 Jan 2024 03:04:05 " + zone)
@@ -721,6 +753,7 @@ func TestExtractSourceMetadataUsesSharedEmailInterpretation(t *testing.T) {
 }
 
 func TestExtractSourceMetadataWarnsForUndecodableEmailFields(t *testing.T) {
+	t.Parallel()
 	for _, header := range []string{"From", "To", "Cc", "Bcc", "Subject"} {
 		metadata, err := ExtractSourceMetadata(t.Context(), sourceMetadataTestSpool(t), []byte(header+": \xff\r\n\r\nbody"))
 		require.NoError(t, err)
@@ -736,6 +769,7 @@ func TestExtractSourceMetadataWarnsForUndecodableEmailFields(t *testing.T) {
 }
 
 func TestExtractSourceMetadataRequiresEmailHeaders(t *testing.T) {
+	t.Parallel()
 	for _, payload := range []string{"", "plain text\r\n\r\nbody", "\r\nFrom: body@example.test\r\n"} {
 		metadata, err := ExtractSourceMetadata(t.Context(), sourceMetadataTestSpool(t), []byte(payload))
 		require.NoError(t, err)
@@ -744,7 +778,7 @@ func TestExtractSourceMetadataRequiresEmailHeaders(t *testing.T) {
 	}
 }
 
-func TestExtractSourceMetadataOwnsEmailSpool(t *testing.T) {
+func TestExtractSourceMetadataOwnsEmailSpool(t *testing.T) { //nolint:paralleltest // t.Setenv rewrites TMPDIR, TMP, and TEMP
 	spool := sourceMetadataTestSpool(t)
 	for _, key := range []string{"TMPDIR", "TMP", "TEMP"} {
 		t.Setenv(key, filepath.Join(spool, "missing"))
@@ -761,6 +795,7 @@ func TestExtractSourceMetadataOwnsEmailSpool(t *testing.T) {
 }
 
 func TestExtractSourceMetadataParsesMultipartAttachmentHeaders(t *testing.T) {
+	t.Parallel()
 	payload := strings.Join([]string{
 		"From: Ada <ada@example.test>",
 		"Subject: Attachments",
@@ -1004,6 +1039,7 @@ func syntheticRichExifTIFF() []byte {
 }
 
 func TestTopLevelBoxWalkersCapBoxCount(t *testing.T) {
+	t.Parallel()
 	padding := func(count int) []byte {
 		free := syntheticBMFFBox("free", nil)
 		out := make([]byte, 0, count*len(free))
@@ -1282,6 +1318,7 @@ func syntheticOOXMLFamily(t *testing.T, familyPart string) []byte {
 }
 
 func TestParseSourceTimestampPreservesExplicitZeroOffset(t *testing.T) {
+	t.Parallel()
 	stamp, ok := parseSourceTimestamp("2024-01-02T03:04:05+00:00")
 	require.True(t, ok)
 	assert.Equal(t, document.SourceMetadataTimezoneOffset, stamp.Timezone)
@@ -1296,6 +1333,7 @@ func TestParseSourceTimestampPreservesExplicitZeroOffset(t *testing.T) {
 }
 
 func TestInvalidCompactDateDoesNotDiscardOtherMetadata(t *testing.T) {
+	t.Parallel()
 	metadata := emptySourceMetadata()
 	collector := metadataCollector{record: &metadata, seen: map[string]bool{}}
 	collector.string("title", "pdf.info", "Title", "Synthetic report", false)
@@ -1312,6 +1350,7 @@ func TestInvalidCompactDateDoesNotDiscardOtherMetadata(t *testing.T) {
 }
 
 func TestBackfillSourceMetadataPublishesOnlyAfterVerifiedEOF(t *testing.T) {
+	t.Parallel()
 	payload := []byte("%PDF-1.7 /Title (Verified report)")
 	target := store.SourceMetadataTarget{SourceSHA256: processingHash("a1"), Size: int64(len(payload))}
 	catalog := &sourceMetadataCatalogStub{targets: []store.SourceMetadataTarget{target}}
@@ -1334,7 +1373,7 @@ func sourceMetadataTestSpool(t *testing.T) string {
 	return root
 }
 
-func TestBackfillSourceMetadataRetriesEmailSpoolFailure(t *testing.T) {
+func TestBackfillSourceMetadataRetriesEmailSpoolFailure(t *testing.T) { //nolint:paralleltest // t.Setenv rewrites TMPDIR, TMP, and TEMP
 	f := newEmailPipelineFixture(t)
 	target := f.add(t, "message.eml", "Subject: Synthetic message\r\n\r\nbody", "message/rfc822")
 	targets, err := f.catalog.MissingSourceMetadataTargetsAfter(t.Context(), SourceMetadataExtractorFingerprint, "", 10)
@@ -1363,6 +1402,7 @@ func TestBackfillSourceMetadataRetriesEmailSpoolFailure(t *testing.T) {
 }
 
 func TestBackfillSourceMetadataContinuesPastUnreadableTarget(t *testing.T) {
+	t.Parallel()
 	payload := []byte("%PDF-1.7 /Title (Verified report)")
 	targets := []store.SourceMetadataTarget{{SourceSHA256: processingHash("a1"), Size: int64(len(payload))}, {SourceSHA256: processingHash("b2"), Size: int64(len(payload))}}
 	catalog := &sourceMetadataCatalogStub{targets: targets}
@@ -1374,6 +1414,7 @@ func TestBackfillSourceMetadataContinuesPastUnreadableTarget(t *testing.T) {
 }
 
 func TestLargeMP4SourceMetadataSkipsPayloadWithoutBufferingIt(t *testing.T) {
+	t.Parallel()
 	reader := syntheticSparseLargeMP4()
 	hasher := sha256.New()
 	_, err := io.Copy(hasher, reader.clone())
@@ -1400,6 +1441,7 @@ func TestLargeMP4SourceMetadataSkipsPayloadWithoutBufferingIt(t *testing.T) {
 }
 
 func TestLargeMP4SourceMetadataMalformedBoxWarnsInsteadOfRetrying(t *testing.T) {
+	t.Parallel()
 	reader := syntheticSparseLargeMP4()
 	binary.BigEndian.PutUint64(reader.segments[1].data[8:16], 8)
 	hasher := sha256.New()
@@ -1416,6 +1458,7 @@ func TestLargeMP4SourceMetadataMalformedBoxWarnsInsteadOfRetrying(t *testing.T) 
 }
 
 func TestLargeRAFSourceMetadataUsesBoundedContainerReads(t *testing.T) {
+	t.Parallel()
 	reader := syntheticSparseLargeRAF()
 	require.Greater(t, reader.size, int64(maxSourceMetadataOriginalBytes))
 
@@ -1434,6 +1477,7 @@ func TestLargeRAFSourceMetadataUsesBoundedContainerReads(t *testing.T) {
 }
 
 func TestLargeCR3SourceMetadataUsesBoundedContainerReads(t *testing.T) {
+	t.Parallel()
 	payload := syntheticCR3()
 	reader := &sparseSourceMetadataReader{
 		size: maxSourceMetadataOriginalBytes + 1024,

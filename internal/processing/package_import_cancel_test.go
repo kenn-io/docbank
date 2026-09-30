@@ -13,6 +13,7 @@ import (
 )
 
 func TestPackageImportCancellationRemovesOnlyUnreceiptedDocuments(t *testing.T) {
+	t.Parallel()
 	for _, afterText := range []bool{false, true} {
 		t.Run(fmt.Sprintf("after_text_publication_%t", afterText), func(t *testing.T) {
 			env := newPackageImportTestEnvOptions(t, 2, false, false, true)

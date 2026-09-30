@@ -11,6 +11,7 @@ import (
 )
 
 func TestDuplicatesHTTPCurrentIdentityAndHistoricalBoundary(t *testing.T) {
+	t.Parallel()
 	ts, s := newTestServer(t, nil)
 	first := createFileWithContent(t, ts, s, "/first.txt", "same synthetic content")
 	second := createFileWithContent(t, ts, s, "/second.txt", "same synthetic content")
@@ -76,6 +77,7 @@ func TestDuplicatesHTTPCurrentIdentityAndHistoricalBoundary(t *testing.T) {
 }
 
 func TestDuplicateByHashHTTPReturnsOnlyTheExactCurrentGroup(t *testing.T) {
+	t.Parallel()
 	ts, s := newTestServer(t, nil)
 	first := createFileWithContent(t, ts, s, "/exact-a.txt", "same exact bytes")
 	second := createFileWithContent(t, ts, s, "/exact-b.txt", "same exact bytes")
@@ -97,6 +99,7 @@ func TestDuplicateByHashHTTPReturnsOnlyTheExactCurrentGroup(t *testing.T) {
 }
 
 func TestDuplicatesHTTPPreviewBoundsAndExhaustion(t *testing.T) {
+	t.Parallel()
 	ts, s := newTestServer(t, nil)
 	for i := range 17 {
 		createFileWithContent(t, ts, s, fmt.Sprintf("/copy-%02d.txt", i), "shared bytes")
@@ -129,6 +132,7 @@ func TestDuplicatesHTTPPreviewBoundsAndExhaustion(t *testing.T) {
 }
 
 func TestDuplicatesHTTPAuthenticationAndBounds(t *testing.T) {
+	t.Parallel()
 	ts, _ := newTestServer(t, nil)
 	resp, body := get(t, ts, "/api/v1/duplicates", map[string]string{"X-Api-Key": ""})
 	require.Equal(t, http.StatusUnauthorized, resp.StatusCode, body)
@@ -155,6 +159,7 @@ func TestDuplicatesHTTPAuthenticationAndBounds(t *testing.T) {
 }
 
 func TestDuplicatesHTTPCollectionLabelsKeepImportIdentity(t *testing.T) {
+	t.Parallel()
 	ts, _ := newTestServer(t, nil)
 	label := "Synthetic review"
 	first := importCollection(t, ts.URL, ts.Client(), "alpha.txt", "shared import content", &label)
@@ -179,6 +184,7 @@ func TestDuplicatesHTTPCollectionLabelsKeepImportIdentity(t *testing.T) {
 }
 
 func TestDuplicatesHTTPEmptyPopulationAndBackendFailure(t *testing.T) {
+	t.Parallel()
 	ts, s := newTestServer(t, nil)
 	resp, body := get(t, ts, "/api/v1/duplicates", nil)
 	require.Equal(t, http.StatusOK, resp.StatusCode, body)

@@ -179,6 +179,7 @@ func (f emailStoreFixture) publisher(t *testing.T, adapt func(*emailStoreAdapter
 }
 
 func TestEmailStoreBodyPublisherAtomicRetryAndAssociation(t *testing.T) {
+	t.Parallel()
 	f := newEmailStoreFixture(t)
 	_, err := f.publisher(t, func(a *emailStoreAdapter) { a.fail = true }).PublishRendition(t.Context(), f.bodyStage(t))
 	require.ErrorContains(t, err, "transient")
@@ -253,6 +254,7 @@ func TestEmailStoreBodyPublisherAtomicRetryAndAssociation(t *testing.T) {
 }
 
 func TestEmailStoreRejectsReceiptTamperingBeforeHeadPublication(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []string{"source", "source_size", "generation", "email_checksum", "body", "body_size", "output", "operation", "authorization", "build"} {
 		t.Run(tc, func(t *testing.T) {
 			f := newEmailStoreFixture(t)
@@ -300,6 +302,7 @@ func TestEmailStoreRejectsReceiptTamperingBeforeHeadPublication(t *testing.T) {
 }
 
 func TestEmailStoreChangedInventoryRetiresOnlyItsServingBody(t *testing.T) {
+	t.Parallel()
 	f := newEmailStoreFixture(t)
 	_, err := f.publisher(t, nil).PublishRendition(t.Context(), f.bodyStage(t))
 	require.NoError(t, err)
@@ -326,6 +329,7 @@ func TestEmailStoreChangedInventoryRetiresOnlyItsServingBody(t *testing.T) {
 }
 
 func TestEmailStoreFinalPublicationRechecksInventoryPurge(t *testing.T) {
+	t.Parallel()
 	f := newEmailStoreFixture(t)
 	_, err := f.publisher(t, func(a *emailStoreAdapter) {
 		a.mutate = func(_ *store.EmailBodyPublication) {

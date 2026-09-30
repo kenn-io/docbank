@@ -13,6 +13,7 @@ import (
 )
 
 func TestReferencedMediaUsesUploadEligibilityAndLimit(t *testing.T) {
+	t.Parallel()
 	for _, test := range []struct {
 		name, filename, mediaType, retainedType string
 		content                                 []byte
@@ -69,6 +70,7 @@ func TestReferencedMediaUsesUploadEligibilityAndLimit(t *testing.T) {
 }
 
 func TestMediaRejectsMissingProfileAndConsentBeforeSealing(t *testing.T) {
+	t.Parallel()
 	fixture := newPublicationFixture(t)
 	provider := newWorkerProvider(t)
 	record := workerProcessingProfile(t, provider.Descriptor())
@@ -97,6 +99,7 @@ func TestMediaRejectsMissingProfileAndConsentBeforeSealing(t *testing.T) {
 }
 
 func TestMediaEnqueueRejectsEmbeddingOnlyProfile(t *testing.T) {
+	t.Parallel()
 	fixture, fake, _, original := newRealEmbeddingWorker(t, document.EmbeddingInputOriginalFile)
 	var profile document.ProcessingProfileV1
 	require.NoError(t, json.Unmarshal(original.Profile.CanonicalProfile, &profile))

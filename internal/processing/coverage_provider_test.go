@@ -16,6 +16,7 @@ import (
 )
 
 func TestSyntheticMarkdownPDFOutput(t *testing.T) {
+	t.Parallel()
 	descriptor := syntheticMarkdownCoverageDescriptor(t)
 	source := []byte("%PDF-1.7\nsynthetic coverage fixture\n")
 	digest := sha256.Sum256(source)

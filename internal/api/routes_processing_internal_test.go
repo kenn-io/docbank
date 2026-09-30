@@ -14,6 +14,7 @@ import (
 )
 
 func TestDocumentSearchResponsePreservesTimedEvidence(t *testing.T) {
+	t.Parallel()
 	report := processing.SearchReport{Results: []retrieval.Result{{
 		Evidence: []retrieval.EvidenceReference{
 			{Kind: "rendition_segment", TimeSpan: &retrieval.MediaTimeSpan{StartMS: 0, EndMS: 1000}},
@@ -33,6 +34,7 @@ func TestDocumentSearchResponsePreservesTimedEvidence(t *testing.T) {
 }
 
 func TestProcessingTerminalEventSeparatesStatusReadFailure(t *testing.T) {
+	t.Parallel()
 	job := processing.Job{ID: strings.Repeat("a", 64), AttachmentID: strings.Repeat("b", 64),
 		EmbeddingJobIDs: []string{strings.Repeat("c", 64)}}
 	// A failed observation does not change the outcome of completed processing.

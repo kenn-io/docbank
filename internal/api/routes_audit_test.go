@@ -20,6 +20,7 @@ import (
 )
 
 func TestAuditPreviewEnableAndStatusLifecycle(t *testing.T) {
+	t.Parallel()
 	ts, s := newTestServer(t, nil)
 	taxes, err := s.Mkdir(t.Context(), s.RootID(), "Taxes")
 	require.NoError(t, err)
@@ -197,6 +198,7 @@ func TestAuditPreviewEnableAndStatusLifecycle(t *testing.T) {
 }
 
 func TestAuditAddsASecondDisjointScope(t *testing.T) {
+	t.Parallel()
 	ts, s := newTestServer(t, nil)
 	taxes, err := s.Mkdir(t.Context(), s.RootID(), "Taxes")
 	require.NoError(t, err)
@@ -240,6 +242,7 @@ func TestAuditAddsASecondDisjointScope(t *testing.T) {
 }
 
 func TestAdditionalAuditPreviewBecomesStaleAfterAuditedMutation(t *testing.T) {
+	t.Parallel()
 	ts, s := newTestServer(t, nil)
 	taxes, err := s.Mkdir(t.Context(), s.RootID(), "Taxes")
 	require.NoError(t, err)
@@ -260,6 +263,7 @@ func TestAdditionalAuditPreviewBecomesStaleAfterAuditedMutation(t *testing.T) {
 }
 
 func TestAuditVerifyReturnsStableEvidenceAndChecksProtectedBytes(t *testing.T) {
+	t.Parallel()
 	ts, s := newTestServer(t, nil)
 	c := daemonconn.New(ts.URL, testAPIKey)
 	req, err := http.NewRequestWithContext(t.Context(), http.MethodPost,
@@ -341,6 +345,7 @@ func TestAuditVerifyReturnsStableEvidenceAndChecksProtectedBytes(t *testing.T) {
 }
 
 func TestAuditVerifyReturnsOnlyMetadataProblemsForMalformedPhysicalAuthority(t *testing.T) {
+	t.Parallel()
 	ts, s := newTestServer(t, nil)
 	c := daemonconn.New(ts.URL, testAPIKey)
 	file := createFileWithContent(t, ts, s, "/record.txt", "protected content")
@@ -373,6 +378,7 @@ func TestAuditVerifyReturnsOnlyMetadataProblemsForMalformedPhysicalAuthority(t *
 }
 
 func TestAuditEnableRejectsPreviewAfterVaultMutation(t *testing.T) {
+	t.Parallel()
 	ts, s := newTestServer(t, nil)
 	taxes, err := s.Mkdir(t.Context(), s.RootID(), "Taxes")
 	require.NoError(t, err)
@@ -393,6 +399,7 @@ func TestAuditEnableRejectsPreviewAfterVaultMutation(t *testing.T) {
 }
 
 func TestAuditEnableReportsStaleWhenTargetIsTrashedOrDeleted(t *testing.T) {
+	t.Parallel()
 	for _, hardDelete := range []bool{false, true} {
 		name := "trashed"
 		if hardDelete {
@@ -421,6 +428,7 @@ func TestAuditEnableReportsStaleWhenTargetIsTrashedOrDeleted(t *testing.T) {
 }
 
 func TestAuditPreviewRequiresOneTarget(t *testing.T) {
+	t.Parallel()
 	ts, _ := newTestServer(t, nil)
 	for _, body := range []map[string]any{
 		{},
@@ -435,6 +443,7 @@ func TestAuditPreviewRequiresOneTarget(t *testing.T) {
 }
 
 func TestAuditRoutesRejectRelativePaths(t *testing.T) {
+	t.Parallel()
 	ts, _ := newTestServer(t, nil)
 	tests := []struct {
 		name   string
@@ -467,6 +476,7 @@ func TestAuditRoutesRejectRelativePaths(t *testing.T) {
 }
 
 func TestAuditPreviewRejectsMissingAndNonDirectoryTargets(t *testing.T) {
+	t.Parallel()
 	ts, s := newTestServer(t, nil)
 	file, err := s.CreateFile(t.Context(), s.RootID(), "return.txt", testHash("return"), 6, "text/plain")
 	require.NoError(t, err)
@@ -498,6 +508,7 @@ func TestAuditPreviewRejectsMissingAndNonDirectoryTargets(t *testing.T) {
 }
 
 func TestAuditPreviewTokenIsDaemonLocal(t *testing.T) {
+	t.Parallel()
 	ts, s := newTestServer(t, nil)
 	taxes, err := s.Mkdir(t.Context(), s.RootID(), "Taxes")
 	require.NoError(t, err)

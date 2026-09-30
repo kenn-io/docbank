@@ -89,6 +89,7 @@ func (p coverageProvider) Render(ctx context.Context, upload document.Authorized
 }
 
 func TestCollectionCoverageConfiguredPDFWorkerToSearch(t *testing.T) {
+	t.Parallel()
 	// Blank provider output is rejected by the existing worker. The store suite
 	// separately proves that an activated empty build is classified as none.
 	for _, mode := range []string{"complete", "partial", "blank", "failed"} {

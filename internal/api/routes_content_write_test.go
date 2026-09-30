@@ -39,6 +39,7 @@ func sendContentReplacement(
 }
 
 func TestContentReplacementCreatesVerifiedImmutableHead(t *testing.T) {
+	t.Parallel()
 	ts, s := newTestServer(t, nil)
 	created := createFileWithContent(t, ts, s, "/report.bin", "old content")
 	oldVersion := created.CurrentVersionID
@@ -86,6 +87,7 @@ func TestContentReplacementCreatesVerifiedImmutableHead(t *testing.T) {
 }
 
 func TestContentReplacementRejectsMismatchWithoutChangingAuthority(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name         string
 		revision     func(store.Node) int64
@@ -138,6 +140,7 @@ func TestContentReplacementRejectsMismatchWithoutChangingAuthority(t *testing.T)
 }
 
 func TestContentReplacementRequiresPreconditionAndFileTarget(t *testing.T) {
+	t.Parallel()
 	ts, s := newTestServer(t, nil)
 	content := []byte("replacement")
 	hash := uploadIdentity(content)

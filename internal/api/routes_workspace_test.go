@@ -20,6 +20,7 @@ import (
 )
 
 func TestWorkspaceQueryRoutesCreateAndPageFrozenResults(t *testing.T) {
+	t.Parallel()
 	ts, s := newTestServer(t, nil)
 	for i := range 51 {
 		createFileWithContent(t, ts, s, fmt.Sprintf("/%02d.txt", i), fmt.Sprintf("synthetic-%02d", i))
@@ -83,6 +84,7 @@ func TestWorkspaceQueryRoutesCreateAndPageFrozenResults(t *testing.T) {
 }
 
 func TestWorkspaceQueryRoutesStrictBodiesAndStableErrors(t *testing.T) {
+	t.Parallel()
 	ts, _ := newTestServer(t, nil)
 	headers := map[string]string{"X-Api-Key": testAPIKey}
 	for _, test := range []struct {
@@ -121,6 +123,7 @@ func TestWorkspaceQueryRoutesStrictBodiesAndStableErrors(t *testing.T) {
 }
 
 func TestWorkspaceQueryErrorsOnlyPositionExpressionOperands(t *testing.T) {
+	t.Parallel()
 	ts, _ := newTestServer(t, nil)
 	for _, payload := range []string{
 		`{"text":"alpha","filters":{"paths":["relative"]}}`,
@@ -139,6 +142,7 @@ func TestWorkspaceQueryErrorsOnlyPositionExpressionOperands(t *testing.T) {
 }
 
 func TestQueryRoutesRejectScalarPrefixWildcards(t *testing.T) {
+	t.Parallel()
 	ts, _ := newTestServer(t, nil)
 	for _, text := range []string{`text_coverage:complete*`, `has_duplicates:true*`} {
 		for _, path := range []string{queryParsePath, "/api/v1/workspace/queries"} {
@@ -161,6 +165,7 @@ func TestQueryRoutesRejectScalarPrefixWildcards(t *testing.T) {
 }
 
 func TestWorkspaceQueryRoutesReportCanceledAndExpiredRequests(t *testing.T) {
+	t.Parallel()
 	ts, s := newTestServer(t, nil)
 	saved, _ := createSavedQuery(t, ts.URL, "Canceled synthetic query", `{}`)
 	for _, test := range []struct{ name, detail string }{
@@ -195,6 +200,7 @@ func TestWorkspaceQueryRoutesReportCanceledAndExpiredRequests(t *testing.T) {
 }
 
 func TestWorkspaceQueryRoutesBindMasterAndRevocableBrowserOwners(t *testing.T) {
+	t.Parallel()
 	ts, s := newTestServer(t, nil)
 	for i := range 51 {
 		_, err := s.CreateFile(t.Context(), s.RootID(), fmt.Sprintf("owner-%02d.txt", i),
@@ -250,6 +256,7 @@ func TestWorkspaceQueryRoutesBindMasterAndRevocableBrowserOwners(t *testing.T) {
 }
 
 func TestSavedQueryRunRouteRequiresRevisionAndUsesSavedDefinition(t *testing.T) {
+	t.Parallel()
 	ts, s := newTestServer(t, nil)
 	createFileWithContent(t, ts, s, "/matching.txt", "needle")
 	resp, body := rawJSONRequest(t, ts.URL, http.MethodPost, "/api/v1/saved-queries/not-a-uuid/runs",
@@ -283,6 +290,7 @@ func TestSavedQueryRunRouteRequiresRevisionAndUsesSavedDefinition(t *testing.T) 
 }
 
 func TestSavedQueryRunRouteConcealsMissingAndHighlightDefinitions(t *testing.T) {
+	t.Parallel()
 	ts, _ := newTestServer(t, nil)
 	resp, body := rawJSONRequest(t, ts.URL, http.MethodPost, "/api/v1/saved-queries",
 		map[string]string{"X-Api-Key": testAPIKey},
@@ -301,6 +309,7 @@ func TestSavedQueryRunRouteConcealsMissingAndHighlightDefinitions(t *testing.T) 
 }
 
 func TestWorkspaceQueryServerShutdownClearsSnapshotAuthority(t *testing.T) {
+	t.Parallel()
 	ts, s := newTestServer(t, nil)
 	for i := range 51 {
 		_, err := s.CreateFile(t.Context(), s.RootID(), fmt.Sprintf("shutdown-%02d.txt", i),
@@ -314,7 +323,7 @@ func TestWorkspaceQueryServerShutdownClearsSnapshotAuthority(t *testing.T) {
 	require.NoError(t, json.Unmarshal([]byte(body), &page))
 	require.NotEmpty(t, page.NextCursor)
 
-	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 	defer cancel()
 	require.NoError(t, s.Server.Shutdown(ctx))
 
@@ -329,6 +338,7 @@ func TestWorkspaceQueryServerShutdownClearsSnapshotAuthority(t *testing.T) {
 }
 
 func TestWorkspaceQueryPageKeepsFrozenVersionAcrossConcurrentReplacement(t *testing.T) {
+	t.Parallel()
 	ts, s := newTestServer(t, nil)
 	for i := range 51 {
 		_, err := s.CreateFile(t.Context(), s.RootID(), fmt.Sprintf("cross-%02d.txt", i),

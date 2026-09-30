@@ -18,6 +18,7 @@ import (
 )
 
 func TestListWatchedInboxesReturnsEffectiveConfigAndRunnerState(t *testing.T) {
+	t.Parallel()
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 	supervisor := jobs.New(ctx, slog.New(slog.DiscardHandler))
@@ -76,6 +77,7 @@ func TestListWatchedInboxesReturnsEffectiveConfigAndRunnerState(t *testing.T) {
 }
 
 func TestListWatchedInboxesReturnsEmptyObject(t *testing.T) {
+	t.Parallel()
 	ts, _ := newTestServer(t, nil)
 	resp, body := get(t, ts, "/api/v1/watches", nil)
 	require.Equal(t, http.StatusOK, resp.StatusCode, body)

@@ -14,6 +14,7 @@ import (
 )
 
 func TestWebUploadInactivityReleasesMutationGate(t *testing.T) {
+	t.Parallel()
 	g := NewOperationGate()
 	result := make(chan error, 1)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

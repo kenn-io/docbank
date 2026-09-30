@@ -15,6 +15,7 @@ const queryParsePath = "/api/v1/queries/parse"
 const queryHighlightsPath = "/api/v1/queries/highlights"
 
 func TestQueryCompilePreviewRetainsIntentAndDependencies(t *testing.T) {
+	t.Parallel()
 	ts, _ := newTestServer(t, nil)
 	saved, _ := createSavedQuery(t, ts.URL, "Choice", `{"syntax":"advanced","text":"alpha OR beta"}`)
 	resp, body := rawJSONRequest(t, ts.URL, http.MethodPost, queryParsePath,
@@ -46,6 +47,7 @@ func TestQueryCompilePreviewRetainsIntentAndDependencies(t *testing.T) {
 }
 
 func TestQueryCompilePreviewErrorsAndAuthentication(t *testing.T) {
+	t.Parallel()
 	ts, s := newTestServer(t, nil)
 	resp, body := rawJSONRequest(t, ts.URL, http.MethodPost, queryParsePath, nil, `{}`)
 	require.Equal(t, http.StatusUnauthorized, resp.StatusCode, body)
@@ -87,6 +89,7 @@ func TestQueryCompilePreviewErrorsAndAuthentication(t *testing.T) {
 }
 
 func TestQueryCompilePreviewFilterErrorsHaveNoExpressionPosition(t *testing.T) {
+	t.Parallel()
 	ts, _ := newTestServer(t, nil)
 	for _, field := range []string{"tag_ids", "exclude_tag_ids", "collection_ids", "exclude_collection_ids"} {
 		for _, text := range []string{"alpha", ""} {
@@ -105,6 +108,7 @@ func TestQueryCompilePreviewFilterErrorsHaveNoExpressionPosition(t *testing.T) {
 }
 
 func TestQueryCompilePreviewBrowserCapability(t *testing.T) {
+	t.Parallel()
 	ts, _ := newTestServer(t, nil)
 	resp, body := do(t, ts, http.MethodPost, "/api/daemon/web-session", nil, nil)
 	require.Equal(t, http.StatusCreated, resp.StatusCode, body)
@@ -120,6 +124,7 @@ func TestQueryCompilePreviewBrowserCapability(t *testing.T) {
 }
 
 func TestQueryHighlightPreviewReturnsOnlyCompilerDerivedPositiveTextTerms(t *testing.T) {
+	t.Parallel()
 	ts, _ := newTestServer(t, nil)
 	saved, _ := createSavedQuery(t, ts.URL, "Choice",
 		`{"syntax":"advanced","text":"nested OR NOT excluded OR name:caption"}`)
@@ -148,6 +153,7 @@ func TestQueryHighlightPreviewReturnsOnlyCompilerDerivedPositiveTextTerms(t *tes
 }
 
 func TestQueryHighlightPreviewIsAvailableToBoundedBrowserSessions(t *testing.T) {
+	t.Parallel()
 	ts, _ := newTestServer(t, nil)
 	resp, body := do(t, ts, http.MethodPost, "/api/daemon/web-session", nil, nil)
 	require.Equal(t, http.StatusCreated, resp.StatusCode, body)

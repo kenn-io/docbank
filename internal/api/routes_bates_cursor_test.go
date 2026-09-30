@@ -9,6 +9,7 @@ import (
 )
 
 func TestBatesCandidateCursorsAreSignedSelectorBoundAndSupportEvidenceContinuation(t *testing.T) {
+	t.Parallel()
 	now := time.Date(2026, 9, 21, 12, 0, 0, 0, time.UTC)
 	service := newDocumentCursorTestService(&now)
 	position := store.BatesArtifactPosition{CreatedAt: now.Format(time.RFC3339Nano),

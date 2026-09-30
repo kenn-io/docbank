@@ -7,6 +7,7 @@ import (
 )
 
 func TestPackageImportDigestIncludesConsentAndDestination(t *testing.T) {
+	t.Parallel()
 	first := PackageImportRequest{PreflightID: "preview", Into: "/received", Name: "synthetic"}
 	a, err := packageImportRequestHash(first)
 	require.NoError(t, err)

@@ -11,6 +11,7 @@ import (
 )
 
 func TestWebDownloadSessionRevocationFencesTicketIssuance(t *testing.T) {
+	t.Parallel()
 	downloads := newWebDownloadRegistry(t.TempDir())
 	sessions := newWebSessionRegistry(downloads.revokeOwner)
 	token, _, err := sessions.issue()
@@ -30,6 +31,7 @@ func TestWebDownloadSessionRevocationFencesTicketIssuance(t *testing.T) {
 }
 
 func TestArchiveTicketExpiryReleasesLeaseWithoutRemovingArchive(t *testing.T) {
+	t.Parallel()
 	downloads := newWebDownloadRegistry(t.TempDir())
 	path := filepath.Join(t.TempDir(), "retained.zip")
 	require.NoError(t, os.WriteFile(path, []byte("synthetic archive"), 0600))
@@ -47,6 +49,7 @@ func TestArchiveTicketExpiryReleasesLeaseWithoutRemovingArchive(t *testing.T) {
 }
 
 func TestWebDownloadConcurrentRevocationRemovesTicketIssuedBeforeRevokeWins(t *testing.T) {
+	t.Parallel()
 	downloads := newWebDownloadRegistry(t.TempDir())
 	sessions := newWebSessionRegistry(downloads.revokeOwner)
 	token, _, err := sessions.issue()

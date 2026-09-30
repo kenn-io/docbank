@@ -23,6 +23,7 @@ func init() {
 }
 
 func TestVectorIndexRestoreRebuildsRealPublishedEmbeddings(t *testing.T) {
+	t.Parallel()
 	for _, kind := range []document.EmbeddingInputKind{
 		document.EmbeddingInputOriginalFile,
 		document.EmbeddingInputRenditionChunk,

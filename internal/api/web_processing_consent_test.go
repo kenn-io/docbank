@@ -11,6 +11,7 @@ import (
 )
 
 func TestWebSessionCanRevokeAndRenewProcessingConsent(t *testing.T) {
+	t.Parallel()
 	ts, catalog := newTestServer(t, configureProcessingTestService(t))
 	node := createFileWithContent(t, ts, catalog, "/browser-consent.txt", "synthetic browser consent\n")
 	response, body := do(t, ts, http.MethodPost, "/api/daemon/web-session", nil, nil)

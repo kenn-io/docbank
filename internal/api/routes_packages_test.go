@@ -32,6 +32,7 @@ import (
 )
 
 func TestPackageExportIssuesOneUseVerifiedArchive(t *testing.T) {
+	t.Parallel()
 	srv, catalog := newPackageTestServer(t)
 	node := createFileWithChecksum(t, catalog, "synthetic.txt", "synthetic package export")
 	occurrence := strings.Repeat("d", 32)
@@ -62,6 +63,7 @@ func TestPackageExportIssuesOneUseVerifiedArchive(t *testing.T) {
 }
 
 func TestPackageExportMissingRequiredRepresentation(t *testing.T) {
+	t.Parallel()
 	srv, catalog := newPackageTestServer(t)
 	node := createFileWithChecksum(t, catalog, "synthetic.txt", "synthetic content")
 	occurrence := strings.Repeat("d", 32)
@@ -85,6 +87,7 @@ func TestPackageExportMissingRequiredRepresentation(t *testing.T) {
 }
 
 func TestPackageImportAdmitsFrozenPreflightAndReplaysOperation(t *testing.T) {
+	t.Parallel()
 	srv, catalog := newPackageTestServer(t)
 	root := syntheticPackageRoot(t)
 	previewResponse := srv.post(t, mustPackageJSON(t, api.PackagePreflightRequest{
@@ -130,6 +133,7 @@ func TestPackageImportAdmitsFrozenPreflightAndReplaysOperation(t *testing.T) {
 }
 
 func TestPackageImportCancellationAroundSnapshotPublication(t *testing.T) {
+	t.Parallel()
 	for _, afterPublication := range []bool{false, true} {
 		t.Run(fmt.Sprintf("after_publication_%t", afterPublication), func(t *testing.T) {
 			gate := api.NewOperationGate()
@@ -216,6 +220,7 @@ func TestPackageImportCancellationAroundSnapshotPublication(t *testing.T) {
 }
 
 func TestPackageImportPreservesRepeatedImageKeysAcrossPages(t *testing.T) {
+	t.Parallel()
 	srv, catalog := newPackageTestServer(t)
 	response := srv.post(t, mustPackageJSON(t, api.PackagePreflightRequest{
 		Profile: "dat-concordance-v1", Encoding: "utf-8", SourceKind: "root", SourceRef: syntheticPackageRoot(t),
@@ -259,6 +264,7 @@ func TestPackageImportPreservesRepeatedImageKeysAcrossPages(t *testing.T) {
 }
 
 func TestPackagePreflightRejectsObjectAboveIngestBound(t *testing.T) {
+	t.Parallel()
 	srv, catalog := newPackageTestServer(t)
 	root := syntheticPackageRoot(t)
 	path := filepath.Join(root, "VOL001", "oversized.pdf")
@@ -274,6 +280,7 @@ func TestPackagePreflightRejectsObjectAboveIngestBound(t *testing.T) {
 }
 
 func TestPackagePreflightRejectsRecordAboveReceiptBound(t *testing.T) {
+	t.Parallel()
 	srv, catalog := newPackageTestServer(t)
 	root := syntheticPackageRoot(t)
 	var header, row []string
@@ -294,6 +301,7 @@ func TestPackagePreflightRejectsRecordAboveReceiptBound(t *testing.T) {
 }
 
 func TestSealedZIPPackagePreflightRetainsContainerBinding(t *testing.T) {
+	t.Parallel()
 	srv, catalog := newPackageTestServer(t)
 	root := syntheticPackageRoot(t)
 	var archive bytes.Buffer
@@ -353,6 +361,7 @@ func TestSealedZIPPackagePreflightRetainsContainerBinding(t *testing.T) {
 }
 
 func TestPreflightPersistsOneExpiringRowAndMutatesNothingElse(t *testing.T) {
+	t.Parallel()
 	srv, store := newPackageTestServer(t)
 	before := tableCounts(t, store)
 	root := syntheticPackageRoot(t)
@@ -387,6 +396,7 @@ func TestPreflightPersistsOneExpiringRowAndMutatesNothingElse(t *testing.T) {
 }
 
 func TestPreflightRejectsUnknownMembersAndOversizeBodies(t *testing.T) {
+	t.Parallel()
 	srv, store := newPackageTestServer(t)
 	unknown := srv.post(t, `{"profile":"dat-concordance-v1","encoding":"utf-8","source_kind":"root","source_ref":"/tmp","surprise":true}`)
 	assert.Equal(t, 422, unknown.Code)
@@ -395,7 +405,7 @@ func TestPreflightRejectsUnknownMembersAndOversizeBodies(t *testing.T) {
 	assert.Equal(t, 0, tableCounts(t, store).packagePreflights)
 }
 
-func TestPreflightRejectsEmptySource(t *testing.T) {
+func TestPreflightRejectsEmptySource(t *testing.T) { //nolint:paralleltest // t.Chdir changes the process working directory
 	root := syntheticPackageRoot(t)
 	t.Chdir(root)
 	srv, store := newPackageTestServer(t)
@@ -408,6 +418,7 @@ func TestPreflightRejectsEmptySource(t *testing.T) {
 }
 
 func TestPreflightSelectsOPTPageCountProfile(t *testing.T) {
+	t.Parallel()
 	root := syntheticPackageRoot(t)
 	pageMap := "DOC-A,VOL001,IMAGES\\001\\DOC-A-1.tif,Y,2,,\r\nDOC-A,VOL001,IMAGES\\001\\DOC-A-2.tif,,,,\r\nDOC-B,VOL001,IMAGES\\001\\DOC-B-1.tif,Y,1,,\r\n"
 	require.NoError(t, os.WriteFile(filepath.Join(root, "VOL001", "DATA", "ab-package.opt"), []byte(pageMap), 0o600))
@@ -430,6 +441,7 @@ func TestPreflightSelectsOPTPageCountProfile(t *testing.T) {
 }
 
 func TestPreflightReportsBlockingDiagnosticsWithoutRefusingTheRequest(t *testing.T) {
+	t.Parallel()
 	srv, _ := newPackageTestServer(t)
 	response := srv.post(t, blockingPreflightBody(t))
 	require.Equal(t, 200, response.Code, response.Body.String())
@@ -441,6 +453,7 @@ func TestPreflightReportsBlockingDiagnosticsWithoutRefusingTheRequest(t *testing
 }
 
 func TestPreflightManifestBindsSameSizeSourceByteChanges(t *testing.T) {
+	t.Parallel()
 	srv, _ := newPackageTestServer(t)
 	root := syntheticPackageRoot(t)
 	request := func() api.PackagePreflight {
@@ -460,6 +473,7 @@ func TestPreflightManifestBindsSameSizeSourceByteChanges(t *testing.T) {
 }
 
 func TestPreflightDiagnosticsAreCountedAndPaged(t *testing.T) {
+	t.Parallel()
 	srv, _ := newPackageTestServer(t)
 	root := syntheticPackageRoot(t)
 	var opt strings.Builder
@@ -498,6 +512,7 @@ func TestPreflightDiagnosticsAreCountedAndPaged(t *testing.T) {
 }
 
 func TestPreflightAppliesConfirmedMappingAndNestedVolumeRoot(t *testing.T) {
+	t.Parallel()
 	srv, _ := newPackageTestServer(t)
 	root := syntheticPackageRoot(t)
 	require.NoError(t, os.Mkdir(filepath.Join(root, "DELIVERY"), 0o700))
@@ -524,6 +539,7 @@ func TestPreflightAppliesConfirmedMappingAndNestedVolumeRoot(t *testing.T) {
 }
 
 func TestPreflightCountsPDFPagesThroughTheConfinedHandle(t *testing.T) {
+	t.Parallel()
 	srv, _ := newPackageTestServer(t)
 	root := syntheticPackageRoot(t)
 	optPath := filepath.Join(root, "VOL001", "DATA", "ab-package.opt")
@@ -550,6 +566,7 @@ func TestPreflightCountsPDFPagesThroughTheConfinedHandle(t *testing.T) {
 }
 
 func TestPreflightUsesSingleDeclaredVolumeWithoutNameHeuristics(t *testing.T) {
+	t.Parallel()
 	srv, _ := newPackageTestServer(t)
 	root := syntheticPackageRoot(t)
 	require.NoError(t, os.Rename(filepath.Join(root, "VOL001"), filepath.Join(root, "DISC001")))
@@ -568,6 +585,7 @@ func TestPreflightUsesSingleDeclaredVolumeWithoutNameHeuristics(t *testing.T) {
 }
 
 func TestPreflightReportsCorrectableInputErrors(t *testing.T) {
+	t.Parallel()
 	srv, _ := newPackageTestServer(t)
 	for _, tc := range []struct {
 		name    string
@@ -608,6 +626,7 @@ func TestPreflightReportsCorrectableInputErrors(t *testing.T) {
 }
 
 func TestPreflightRejectsIncompleteVolumeMapping(t *testing.T) {
+	t.Parallel()
 	srv, _ := newPackageTestServer(t)
 	root := syntheticPackageRoot(t)
 	require.NoError(t, os.Mkdir(filepath.Join(root, "VOL002"), 0o700))
@@ -622,6 +641,7 @@ func TestPreflightRejectsIncompleteVolumeMapping(t *testing.T) {
 }
 
 func TestPreflightReadsLFPPageMap(t *testing.T) {
+	t.Parallel()
 	srv, _ := newPackageTestServer(t)
 	root := syntheticPackageRoot(t)
 	require.NoError(t, os.Remove(filepath.Join(root, "VOL001", "DATA", "ab-package.opt")))
@@ -642,6 +662,7 @@ func TestPreflightReadsLFPPageMap(t *testing.T) {
 }
 
 func TestPreflightRequiresFirstPageDocumentBoundary(t *testing.T) {
+	t.Parallel()
 	srv, _ := newPackageTestServer(t)
 	for extension, pageMap := range map[string]string{
 		"opt": "DOC-A,VOL001,IMAGES\\001\\DOC-A-1.tif,,,,\nDOC-B,VOL001,IMAGES\\001\\DOC-B-1.tif,Y,,,1\n",
@@ -668,6 +689,7 @@ func TestPreflightRequiresFirstPageDocumentBoundary(t *testing.T) {
 }
 
 func TestPreflightHashesExactEncodedLoadFileBytes(t *testing.T) {
+	t.Parallel()
 	srv, catalog := newPackageTestServer(t)
 	for extension, pageMap := range map[string]string{
 		"opt": "DOC-A,VOL001,IMAGES\\001\\DOC-A-1.tif,Y,,,2\r\n",
@@ -726,6 +748,7 @@ func TestPreflightHashesExactEncodedLoadFileBytes(t *testing.T) {
 }
 
 func TestPreflightCancellationDoesNotPersistReceipt(t *testing.T) {
+	t.Parallel()
 	srv, catalog := newPackageTestServer(t)
 	body, err := json.Marshal(api.PackagePreflightRequest{Profile: "dat-concordance-v1", Encoding: "utf-8", SourceKind: "root", SourceRef: syntheticPackageRoot(t)})
 	require.NoError(t, err)
@@ -741,6 +764,7 @@ func TestPreflightCancellationDoesNotPersistReceipt(t *testing.T) {
 }
 
 func TestPreflightBlocksEveryRecordWithoutDocumentID(t *testing.T) {
+	t.Parallel()
 	srv, _ := newPackageTestServer(t)
 	for header, values := range map[string]string{"DOCID": "þþ\nþþ\n", "UNMAPPED": "SOURCE-A\nSOURCE-B\n"} {
 		t.Run(header, func(t *testing.T) {
@@ -768,6 +792,7 @@ func TestPreflightBlocksEveryRecordWithoutDocumentID(t *testing.T) {
 }
 
 func TestPreflightUsesCSVNormalizationForQuotedMultilineFields(t *testing.T) {
+	t.Parallel()
 	srv, catalog := newPackageTestServer(t)
 	root := t.TempDir()
 	require.NoError(t, os.Mkdir(filepath.Join(root, "VOL001"), 0o700))

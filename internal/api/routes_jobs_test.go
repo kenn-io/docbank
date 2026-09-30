@@ -18,6 +18,7 @@ import (
 )
 
 func TestListJobsReturnsStableObservableState(t *testing.T) {
+	t.Parallel()
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 	supervisor := jobs.New(ctx, slog.New(slog.DiscardHandler))
@@ -59,6 +60,7 @@ func TestListJobsReturnsStableObservableState(t *testing.T) {
 }
 
 func TestListJobsWithoutSupervisorReturnsEmptyObject(t *testing.T) {
+	t.Parallel()
 	ts, _ := newTestServer(t, nil)
 	resp, body := get(t, ts, "/api/v1/jobs", nil)
 	require.Equal(t, http.StatusOK, resp.StatusCode, body)
@@ -68,6 +70,7 @@ func TestListJobsWithoutSupervisorReturnsEmptyObject(t *testing.T) {
 }
 
 func TestBrowserJobListRedactsPrivateBackendErrors(t *testing.T) {
+	t.Parallel()
 	ts, live := newTestServer(t, nil)
 	privateFailure := `opening /Users/example/private/archive: s3 endpoint https://private.example.invalid`
 	operation, err := live.CreateStorageOperation(t.Context(), store.StorageOperationCreate{

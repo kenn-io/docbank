@@ -73,6 +73,7 @@ func seedBatesSnapshotWith(t *testing.T, s *testStore, pdfWithPages func(*testin
 }
 
 func TestBatesPlanPreviewsWithoutStampingAnything(t *testing.T) {
+	t.Parallel()
 	srv, s := newPackageTestServer(t)
 	snapshot, pages := seedBatesSnapshot(t, s)
 	nsBody, err := json.Marshal(api.BatesNamespaceRequest{Prefix: "OUR", Padding: 6})
@@ -204,6 +205,7 @@ func batesAnnotatedPDF(t *testing.T, pages int) []byte {
 }
 
 func TestBatesReserveRefusesSourcesTheStamperRejects(t *testing.T) {
+	t.Parallel()
 	srv, s := newPackageTestServer(t)
 	snapshot, pages := seedBatesSnapshotWith(t, s, batesAnnotatedPDF)
 	created := srv.call(t, http.MethodPost, "/api/v1/bates/namespaces", `{"prefix":"ANN","padding":6}`, nil)
@@ -243,6 +245,7 @@ func decodeBatesAllocation(t *testing.T, body []byte) api.BatesAllocation {
 }
 
 func TestBatesExportRouteRejectsAnUnboundRun(t *testing.T) {
+	t.Parallel()
 	srv, _ := newPackageTestServer(t)
 	response := srv.call(t, http.MethodPost, "/api/v1/bates/exports", `{}`, nil)
 	require.Equal(t, http.StatusUnprocessableEntity, response.Code, response.Body.String())
@@ -250,6 +253,7 @@ func TestBatesExportRouteRejectsAnUnboundRun(t *testing.T) {
 }
 
 func TestBatesDownloadAcceptsBrowserEmptyObjectBody(t *testing.T) {
+	t.Parallel()
 	srv, _ := newPackageTestServer(t)
 	response := srv.call(t, http.MethodPost,
 		"/api/v1/bates/exports/11111111-1111-4111-8111-111111111111/download", `{}`, nil)
@@ -257,6 +261,7 @@ func TestBatesDownloadAcceptsBrowserEmptyObjectBody(t *testing.T) {
 }
 
 func TestBatesExportHistoryRejectsInvalidAndUnknownCursors(t *testing.T) {
+	t.Parallel()
 	srv, _ := newPackageTestServer(t)
 	invalid := srv.get(t, "/api/v1/bates/exports?after=not-a-cursor&limit=1")
 	require.Equal(t, http.StatusUnprocessableEntity, invalid.Code, invalid.Body.String())
@@ -267,6 +272,7 @@ func TestBatesExportHistoryRejectsInvalidAndUnknownCursors(t *testing.T) {
 }
 
 func TestBatesInputErrorsAreValidationFailures(t *testing.T) {
+	t.Parallel()
 	srv, _ := newPackageTestServer(t)
 	cursor := srv.get(t, "/api/v1/bates/namespaces?cursor=not-a-uuid")
 	require.Equal(t, http.StatusUnprocessableEntity, cursor.Code, cursor.Body.String())
@@ -284,6 +290,7 @@ func TestBatesInputErrorsAreValidationFailures(t *testing.T) {
 }
 
 func TestBatesCandidateRouteAcceptsTheLongestPossibleLabel(t *testing.T) {
+	t.Parallel()
 	srv, _ := newPackageTestServer(t)
 	longest := srv.get(t, "/api/v1/bates/exports/candidates?limit=10&bates_label="+strings.Repeat("A", pdfstamp.MaxLabelChars))
 	require.Equal(t, http.StatusOK, longest.Code, longest.Body.String())
@@ -292,6 +299,7 @@ func TestBatesCandidateRouteAcceptsTheLongestPossibleLabel(t *testing.T) {
 }
 
 func TestBatesCandidateRouteRequiresOneSelectorAndReturnsBoundedCandidates(t *testing.T) {
+	t.Parallel()
 	srv, _ := newPackageTestServer(t)
 	missing := srv.get(t, "/api/v1/bates/exports/candidates?limit=10")
 	require.Equal(t, http.StatusUnprocessableEntity, missing.Code, missing.Body.String())

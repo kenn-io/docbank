@@ -22,17 +22,20 @@ const (
 )
 
 func TestVisualPreviewProcessorFingerprintIsPinned(t *testing.T) {
+	t.Parallel()
 	assert.Equal(t, pinnedVisualPreviewProcessorFingerprint,
 		CurrentVisualPreviewRecipe().ProcessorFingerprint)
 }
 
 func TestVisualPreviewRecipeFingerprintIsPinned(t *testing.T) {
+	t.Parallel()
 	_, fingerprint, err := document.MarshalVisualPreviewRecipeV1(CurrentVisualPreviewRecipe())
 	require.NoError(t, err)
 	assert.Equal(t, pinnedVisualPreviewRecipeFingerprint, fingerprint)
 }
 
 func TestProducedVisualPreviewCarriesPinnedRecipe(t *testing.T) {
+	t.Parallel()
 	source := mediatest.JPEG(3, 2, color.White)
 	digest := sha256.Sum256(source)
 
@@ -52,6 +55,7 @@ func TestProducedVisualPreviewCarriesPinnedRecipe(t *testing.T) {
 }
 
 func TestVisualPreviewDescriptorTracksLinkedDependenciesAndPolicy(t *testing.T) {
+	t.Parallel()
 	info, ok := debug.ReadBuildInfo()
 	require.True(t, ok)
 

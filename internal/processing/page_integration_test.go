@@ -74,6 +74,7 @@ func pageProofPNG() []byte {
 }
 
 func TestRealPageAPIBackupRestoreAndGC(t *testing.T) {
+	t.Parallel()
 	engine := pageWorkerRuntime(t)
 	root := t.TempDir()
 	catalog, err := store.Open(filepath.Join(root, "docbank.db"))
