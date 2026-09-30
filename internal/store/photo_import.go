@@ -227,9 +227,9 @@ func (s *Store) photoImportCurrentDuplicateTx(
 		rows, err := tx.QueryContext(ctx, `
 			SELECT `+nodeCols+`, p.original_path
 			FROM `+nodeFrom+`
-			JOIN photo_files pf ON pf.node_id=n.id AND pf.role=?
+			LEFT JOIN photo_files pf ON pf.node_id=n.id
 			JOIN provenance p ON p.node_id=n.id
-			WHERE n.trashed_at IS NULL AND cv.blob_hash=?
+			WHERE n.trashed_at IS NULL AND (pf.node_id IS NULL OR pf.role=?) AND cv.blob_hash=?
 			  AND NOT EXISTS (SELECT 1 FROM provenance successor WHERE successor.supersedes=p.identity)
 			ORDER BY n.id, p.identity`, role, member.BlobHash)
 		if err != nil {
@@ -354,9 +354,20 @@ func (s *Store) IngestPhotoGroup(ctx context.Context, run IngestRun, group Photo
 				if member.Physical.Encoding != "" {
 					physical = []BlobPhysical{member.Physical}
 				}
+				name, options := member.Name, ingestFileOptions{observeMembership: true, deferPhotoEnrollment: true}
+				if role == PhotoRoleSidecar {
+					// Generic reuse matches by basename alone, so another folder's identical sidecar gets its own name.
+					if name, err = NormalizeName(name); err != nil {
+						return err
+					}
+					if name, _, _, err = resolveIngestNameTx(tx, group.DestinationID, name, "", run.record.SourceKind); err != nil {
+						return err
+					}
+					options.exact = true
+				}
 				receipt, created, _, err := s.ingestFileTx(ctx, tx, run, group.DestinationID,
-					member.Name, member.BlobHash, member.Size, mediaType, member.OriginalPath,
-					member.OriginalMtime, ingestFileOptions{observeMembership: true, deferPhotoEnrollment: true}, physical...)
+					name, member.BlobHash, member.Size, mediaType, member.OriginalPath,
+					member.OriginalMtime, options, physical...)
 				if err != nil {
 					return err
 				}
