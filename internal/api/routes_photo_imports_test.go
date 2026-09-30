@@ -19,6 +19,7 @@ import (
 )
 
 func TestPhotoImportRoutes(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	require.NoError(t, os.WriteFile(filepath.Join(root, "capture.JPG"), []byte("photo"), 0o600))
 	ts, catalog := newTestServer(t, nil)
@@ -70,6 +71,7 @@ func TestPhotoImportRoutes(t *testing.T) {
 }
 
 func TestPhotoImportCancelAndJobsCard(t *testing.T) {
+	t.Parallel()
 	ts, catalog := newTestServer(t, nil)
 	operation, err := catalog.CreateLocalOperation(t.Context(), store.StorageOperationKindPhotoImport,
 		`{"source_root":"/private/camera","destination":"/photos"}`)
@@ -103,6 +105,7 @@ func TestPhotoImportCancelAndJobsCard(t *testing.T) {
 }
 
 func TestPhotoImportBrowserRedactsRunAndAllowsOnlyReadCancel(t *testing.T) {
+	t.Parallel()
 	ts, catalog := newTestServer(t, nil)
 	source := filepath.Join(t.TempDir(), "camera")
 	request, err := json.Marshal(store.PhotoImportRequest{SourceRoot: source, Destination: "/photos"})
@@ -151,6 +154,7 @@ func TestPhotoImportBrowserRedactsRunAndAllowsOnlyReadCancel(t *testing.T) {
 	assert.Equal(t, http.StatusForbidden, startResponse.StatusCode)
 }
 func TestPhotoImportGateAndActivity(t *testing.T) {
+	t.Parallel()
 	_, catalog := newTestServer(t, nil)
 	root := t.TempDir()
 	require.NoError(t, os.WriteFile(filepath.Join(root, "IMG.ARW"), []byte("raw"), 0o600))
