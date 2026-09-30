@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"path/filepath"
 
 	"github.com/spf13/cobra"
 
@@ -23,11 +24,15 @@ var photoImportCmd = &cobra.Command{
 		if len(args) == 2 {
 			destination = args[1]
 		}
+		root, err := filepath.Abs(args[0])
+		if err != nil {
+			return fmt.Errorf("resolving %q: %w", args[0], err)
+		}
 		connection, err := daemonconn.Ensure(cmd.Context())
 		if err != nil {
 			return err
 		}
-		run, err := connection.StartPhotoImport(cmd.Context(), args[0], destination)
+		run, err := connection.StartPhotoImport(cmd.Context(), root, destination)
 		if err != nil {
 			return err
 		}
