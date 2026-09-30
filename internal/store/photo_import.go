@@ -253,6 +253,10 @@ func (s *Store) photoImportCurrentDuplicateTx(
 			if slices.ContainsFunc(claimed, func(n Node) bool { return n.ID == node.ID }) {
 				continue
 			}
+			// A plain file sharing the stem, such as IMG.xmp.bak, is not this sidecar.
+			if ClassifyPhotoSource(sourcePath).Kind != PhotoSourceSidecar {
+				continue
+			}
 			if folder == sourceFolder && stem == sourceStem {
 				found = true
 				break
