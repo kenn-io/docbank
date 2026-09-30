@@ -339,7 +339,11 @@ func (r PhotoImportRunner) Run(ctx context.Context, operationID string) error {
 	}
 	var request store.PhotoImportRequest
 	var report PhotoImportReport
-	importErr := json.Unmarshal([]byte(operation.RequestJSON), &request)
+	// A resumed pass recounts every group, so clear the interrupted pass's count and receipt together.
+	importErr := metadata.AdvanceStorageOperation(ctx, operationID, "", 0, 0, 0, "{}")
+	if importErr == nil {
+		importErr = json.Unmarshal([]byte(operation.RequestJSON), &request)
+	}
 	if importErr == nil {
 		report, importErr = r.Ingester.ImportPhotoDirectory(ctx, request.SourceRoot, request.Destination, opts)
 	}
