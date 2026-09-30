@@ -159,10 +159,12 @@ func (s *Store) MergePersons(ctx context.Context, survivorID, absorbedID, operat
 		if _, err := tx.ExecContext(ctx, `DELETE FROM person_identities WHERE person_id=? AND EXISTS(SELECT 1 FROM person_identities keep WHERE keep.person_id=? AND keep.kind=person_identities.kind AND keep.value_normalized=person_identities.value_normalized AND (person_identities.kind='name_alias' OR (keep.scope_kind=person_identities.scope_kind AND keep.scope_value=person_identities.scope_value)))`, absorbedID, survivorID); err != nil {
 			return err
 		}
-		for _, table := range []string{"person_identities", "person_external_identities"} {
-			if _, err := tx.ExecContext(ctx, fmt.Sprintf(`UPDATE %s SET person_id=? WHERE person_id=?`, table), survivorID, absorbedID); err != nil {
-				return err
-			}
+		now := nowRFC3339()
+		if _, err := tx.ExecContext(ctx, `UPDATE person_identities SET person_id=? WHERE person_id=?`, survivorID, absorbedID); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `UPDATE person_external_identities SET person_id=?,updated_at=? WHERE person_id=?`, survivorID, now, absorbedID); err != nil {
+			return err
 		}
 		if _, err := tx.ExecContext(ctx, `UPDATE custodian_assignments SET person_id=?,revision=revision+1 WHERE person_id=?`, survivorID, absorbedID); err != nil {
 			return err
@@ -189,7 +191,6 @@ func (s *Store) MergePersons(ctx context.Context, survivorID, absorbedID, operat
 		if _, err := tx.ExecContext(ctx, `DELETE FROM persons WHERE person_id=?`, absorbedID); err != nil {
 			return err
 		}
-		now := nowRFC3339()
 		if _, err := tx.ExecContext(ctx, `INSERT INTO person_aliases(retired_person_id,surviving_person_id,reason,retired_at) VALUES(?,?,?,?)`, absorbedID, survivorID, "merged", now); err != nil {
 			return err
 		}
