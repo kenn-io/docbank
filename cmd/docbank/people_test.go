@@ -76,7 +76,7 @@ func TestPeopleCLIWorkflow(t *testing.T) {
 	assert.Equal(t, exitUsage, commandExitCode(invalidSplitErr, true))
 
 	splitOutput, err := runCLI(t, "people", "split", created.PersonID, "--revision", strconv.FormatInt(merge.SurvivorRevisionAfter, 10),
-		"--display-name", "Split Ada", "--identity", identity.IdentityID)
+		"--display-name", "Split Ada", "--identity", identity.IdentityID, "--operation-id", "00000000-0000-4000-8000-000000000004")
 	require.NoError(t, err)
 	var split api.PersonSplitReceipt
 	require.NoError(t, json.Unmarshal([]byte(splitOutput), &split))
