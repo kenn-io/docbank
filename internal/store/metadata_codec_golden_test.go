@@ -258,7 +258,8 @@ func TestMetadataCodecCorruptWaiterFailsExport(t *testing.T) {
 	var exported bytes.Buffer
 	err = s.ExportMetadata(t.Context(), &exported)
 	require.ErrorContains(t, err, "invalid rendition job waiter metadata")
-	t.Logf("bytes written before failure: %d", exported.Len())
+	// The waiter is checked mid-stream, after earlier records are written.
+	require.Positive(t, exported.Len())
 }
 
 func seedMetadataCodecGoldenVault(t *testing.T) *Store {

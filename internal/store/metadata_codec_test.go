@@ -189,12 +189,10 @@ func TestMetadataCodecCheckedExportKinds(t *testing.T) {
 func TestMetadataCodecGoldenCoversEveryKind(t *testing.T) {
 	t.Parallel()
 	kinds := map[string]bool{}
-	for _, path := range []string{metadataCodecGoldenPath} {
-		golden, err := os.ReadFile(path)
-		require.NoError(t, err)
-		for line := range bytes.SplitSeq(bytes.TrimSpace(golden), []byte{'\n'}) {
-			kinds[metadataCodecGoldenLineType(t, line)] = true
-		}
+	golden, err := os.ReadFile(metadataCodecGoldenPath)
+	require.NoError(t, err)
+	for line := range bytes.SplitSeq(bytes.TrimSpace(golden), []byte{'\n'}) {
+		kinds[metadataCodecGoldenLineType(t, line)] = true
 	}
 	for kind := range metadataCodecs {
 		assert.True(t, kinds[kind], "golden lacks %s", kind)
