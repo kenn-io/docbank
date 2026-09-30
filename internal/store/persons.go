@@ -23,8 +23,8 @@ type Person struct {
 	CreatedAt, UpdatedAt                                    string
 }
 
-// PersonDetail contains a person and the selectors needed to choose explicit
-// members for a split.
+// PersonDetail contains one snapshot of a person and the selectors needed to
+// choose explicit members for a split.
 type PersonDetail struct {
 	Person
 
@@ -181,9 +181,9 @@ func resolvePersonIDTx(ctx context.Context, tx *sql.Tx, id string) (string, erro
 	return id, nil
 }
 
-func (s *Store) PersonByID(ctx context.Context, id string) (Person, string, error) {
+func personByIDTx(ctx context.Context, q metadataQuerier, id string) (Person, string, error) {
 	var person Person
-	err := s.db.QueryRowContext(ctx, `SELECT person_id,display_name,display_name_folded,origin,state,revision,created_at,updated_at
+	err := q.QueryRowContext(ctx, `SELECT person_id,display_name,display_name_folded,origin,state,revision,created_at,updated_at
 		FROM persons WHERE person_id=COALESCE((SELECT surviving_person_id FROM person_aliases WHERE retired_person_id=?),?)
 		AND state<>'retired'`, id, id).Scan(&person.PersonID, &person.DisplayName, &person.DisplayNameFolded, &person.Origin,
 		&person.State, &person.Revision, &person.CreatedAt, &person.UpdatedAt)
@@ -198,6 +198,10 @@ func (s *Store) PersonByID(ctx context.Context, id string) (Person, string, erro
 		reachedThrough = id
 	}
 	return person, reachedThrough, nil
+}
+
+func (s *Store) PersonByID(ctx context.Context, id string) (Person, string, error) {
+	return personByIDTx(ctx, s.db, id)
 }
 
 // PeopleByDisplayName returns active people in stable folded-name order.
@@ -306,12 +310,8 @@ func (s *Store) RemovePersonIdentity(ctx context.Context, personID, identityID s
 	})
 }
 
-func (s *Store) PersonIdentities(ctx context.Context, personID string) ([]PersonIdentity, error) {
-	person, _, err := s.PersonByID(ctx, personID)
-	if err != nil {
-		return nil, err
-	}
-	rows, err := s.db.QueryContext(ctx, `SELECT identity_id,person_id,kind,value_normalized,value_display,normalization,origin,evidence_kind,evidence_id,confidence,recorded_at,scope_kind,scope_value FROM person_identities WHERE person_id=? ORDER BY kind,value_normalized,identity_id`, person.PersonID)
+func personIdentitiesTx(ctx context.Context, q metadataQuerier, personID string) ([]PersonIdentity, error) {
+	rows, err := q.QueryContext(ctx, `SELECT identity_id,person_id,kind,value_normalized,value_display,normalization,origin,evidence_kind,evidence_id,confidence,recorded_at,scope_kind,scope_value FROM person_identities WHERE person_id=? ORDER BY kind,value_normalized,identity_id`, personID)
 	if err != nil {
 		return nil, err
 	}
@@ -327,18 +327,33 @@ func (s *Store) PersonIdentities(ctx context.Context, personID string) ([]Person
 	return identities, rows.Err()
 }
 
-// PersonDetail reads sequentially; split's revision fence rejects a stale read.
+func (s *Store) PersonIdentities(ctx context.Context, personID string) ([]PersonIdentity, error) {
+	person, _, err := personByIDTx(ctx, s.db, personID)
+	if err != nil {
+		return nil, err
+	}
+	return personIdentitiesTx(ctx, s.db, person.PersonID)
+}
+
 func (s *Store) PersonDetail(ctx context.Context, personID string) (PersonDetail, error) {
-	person, reachedThrough, err := s.PersonByID(ctx, personID)
+	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
 	if err != nil {
 		return PersonDetail{}, err
 	}
-	identities, err := s.PersonIdentities(ctx, person.PersonID)
+	defer func() { _ = tx.Rollback() }()
+	person, reachedThrough, err := personByIDTx(ctx, tx, personID)
 	if err != nil {
 		return PersonDetail{}, err
 	}
-	external, err := s.PersonExternalIdentities(ctx, person.PersonID)
+	identities, err := personIdentitiesTx(ctx, tx, person.PersonID)
 	if err != nil {
+		return PersonDetail{}, err
+	}
+	external, err := personExternalIdentitiesTx(ctx, tx, person.PersonID)
+	if err != nil {
+		return PersonDetail{}, err
+	}
+	if err := tx.Commit(); err != nil {
 		return PersonDetail{}, err
 	}
 	return PersonDetail{Person: person, ReachedThrough: reachedThrough, Identities: identities, External: external}, nil
