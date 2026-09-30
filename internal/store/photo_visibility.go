@@ -48,7 +48,23 @@ func photoNodeVisibleSQL(ctx context.Context, nodeExpr string) (string, []any) {
 	if !ok {
 		return "1=1", nil
 	}
-	return `NOT EXISTS (
+	return `NOT ` + photoOwnerFolderWalkSQL(nodeExpr, "<>"), []any{ownerID}
+}
+
+// photoNodeInOwnerFolderSQL requires the node to lie inside the selected
+// owner's folder; with no owner selected it matches every node.
+func photoNodeInOwnerFolderSQL(ctx context.Context, nodeExpr string) (string, []any) {
+	ownerID, ok := PhotoOwnerFromContext(ctx)
+	if !ok {
+		return "1=1", nil
+	}
+	return photoOwnerFolderWalkSQL(nodeExpr, "="), []any{ownerID}
+}
+
+// photoOwnerFolderWalkSQL is true when nodeExpr, walking up its trash-aware
+// parents, passes an owner folder whose name compares to one argument.
+func photoOwnerFolderWalkSQL(nodeExpr, comparison string) string {
+	return `EXISTS (
 		WITH RECURSIVE photo_owner_walk(id) AS (
 			SELECT pvn.id FROM nodes pvn WHERE pvn.id=` + nodeExpr + `
 			UNION ALL
@@ -56,8 +72,8 @@ func photoNodeVisibleSQL(ctx context.Context, nodeExpr string) (string, []any) {
 			JOIN nodes pvp ON pvp.id=` + photoTrashAwareParentSQL("pvc_n") + `
 		)
 		SELECT 1 FROM photo_owner_walk pw JOIN nodes pof ON pof.id=pw.id
-		WHERE pof.name<>? AND ` + photoOwnerFolderSQL() + `
-	)`, []any{ownerID}
+		WHERE pof.name` + comparison + `? AND ` + photoOwnerFolderSQL() + `
+	)`
 }
 
 // checkPhotoNodeVisibleTx returns ErrNotFound when the request may not see

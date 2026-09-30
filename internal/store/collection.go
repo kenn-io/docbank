@@ -63,6 +63,8 @@ func collectionSummaryByID(
 	ctx context.Context, q rowQuerier, id string,
 ) (Collection, error) {
 	visible, visibleArgs := photoNodeVisibleSQL(ctx, "cm.node_id")
+	hiddenMember, hiddenArgs := photoNodeVisibleSQL(ctx, "hm.node_id")
+	args := append(append(visibleArgs, id), hiddenArgs...)
 	collection, err := scanCollection(q.QueryRowContext(ctx, `WITH `+CollectionMembershipCTE+`
 		SELECT `+collectionColumns+`
 		FROM ingests i
@@ -73,7 +75,8 @@ func collectionSummaryByID(
 		WHERE i.id=? AND i.source_kind NOT LIKE 'embedded:%'
 		GROUP BY i.id, i.source_kind, i.source_desc, i.started_at,
 			l.ingest_id, l.label, l.revision, l.updated_at
-		HAVING COUNT(cm.node_id)>0 OR l.ingest_id IS NOT NULL`, append(visibleArgs, id)...))
+		HAVING COUNT(cm.node_id)>0 OR (l.ingest_id IS NOT NULL AND NOT EXISTS(
+			SELECT 1 FROM collection_members hm WHERE hm.ingest_id=i.id AND NOT (`+hiddenMember+`)))`, args...))
 	if err != nil {
 		return Collection{}, fmt.Errorf("collection %q: %w", id, err)
 	}

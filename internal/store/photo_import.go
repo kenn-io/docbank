@@ -179,7 +179,7 @@ func (s *Store) photoImportCandidatesTx(ctx context.Context, tx *sql.Tx, folder,
 		filter = " AND p.original_path LIKE ? ESCAPE '!'"
 		args = append(args, strings.NewReplacer("!", "!!", "%", "!%", "_", "!_").Replace(prefix)+"%")
 	}
-	visible, visibleArgs := photoNodeVisibleSQL(ctx, "pf.node_id")
+	visible, visibleArgs := photoNodeInOwnerFolderSQL(ctx, "pf.node_id")
 	rows, err := tx.QueryContext(ctx, `
 		SELECT pf.node_id, pf.asset_id, pf.role, p.original_path
 		FROM provenance p INDEXED BY provenance_original_path_nocase
@@ -231,7 +231,7 @@ func (s *Store) photoImportCurrentDuplicateTx(
 	var node Node
 	// Plain nodes count only for sidecars: a lone sidecar was imported as a plain file.
 	photoFilter := "pf.role=?"
-	visible, visibleArgs := photoNodeVisibleSQL(ctx, "n.id")
+	visible, visibleArgs := photoNodeInOwnerFolderSQL(ctx, "n.id")
 	if role == PhotoRoleSidecar {
 		photoFilter = "(pf.node_id IS NULL OR pf.role=?)"
 	}
@@ -323,7 +323,7 @@ func (s *Store) photoImportCurrentDuplicateTx(
 func photoImportTargetSidecarTx(
 	ctx context.Context, tx *sql.Tx, assetID, blobHash string, claimed map[int64]bool,
 ) (Node, bool, error) {
-	visible, visibleArgs := photoNodeVisibleSQL(ctx, "n.id")
+	visible, visibleArgs := photoNodeInOwnerFolderSQL(ctx, "n.id")
 	rows, err := tx.QueryContext(ctx, `
 		SELECT `+nodeCols+`
 		FROM `+nodeFrom+`
