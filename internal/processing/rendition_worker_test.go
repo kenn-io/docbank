@@ -534,58 +534,60 @@ func TestRenditionWorkerRetriesUnclassifiedResumeFailure(t *testing.T) {
 }
 
 func TestRenditionWorkerResubmitsDefinitiveTransientWithFreshSealedAuthority(t *testing.T) {
-	synctest.Test(t, func(t *testing.T) {
-		fixture := newPublicationFixture(t)
-		provider := newWorkerProvider(t)
-		providerErr, err := document.NewRenditionProviderError(
-			document.RenditionErrorTransient, time.Nanosecond,
-			errors.New("private cause"),
-		)
-		require.NoError(t, err)
-		provider.renderErr = providerErr
-		profile := workerProcessingProfile(t, provider.Descriptor())
-		fixture.profile = profile
-		request := workerJobRequest(fixture.versionID, profile, provider.Descriptor())
-		grantWorkerConsent(t, fixture.catalog, request)
-		job, _, err := fixture.catalog.EnqueueRenditionJob(t.Context(), request)
-		require.NoError(t, err)
-		prepareCalls := 0
-		var uploadCloseCalls atomic.Int32
-		runtime := &countingWorkerRuntime{
-			provider: provider, prepareCalls: &prepareCalls, uploadCloseCalls: &uploadCloseCalls,
-		}
-		worker, err := NewRenditionWorker(RenditionWorkerConfig{
-			Catalog: fixture.catalog, Blobs: fixture.blobs,
-			Runtime: runtime, Gate: newTestOperationGate(),
-			Owner: "rendition-worker-definitive-retry", LeaseDuration: time.Minute,
-			IdleDelay: time.Millisecond,
-		})
-		require.NoError(t, err)
+	synctest.Test(t, resubmitsDefinitiveTransientWithFreshSealedAuthority)
+}
 
-		processed, err := worker.RunOne(t.Context())
-		require.NoError(t, err)
-		assert.True(t, processed)
-		current, err := fixture.catalog.RenditionJobByID(t.Context(), job.ID)
-		require.NoError(t, err)
-		assert.Equal(t, store.RenditionJobRetryWait, current.State)
-		assert.Equal(t, 1, current.ProviderAttempts)
-		assert.Equal(t, int32(1), uploadCloseCalls.Load())
-
-		provider.renderErr = nil
-		time.Sleep(time.Nanosecond)
-		processed, err = worker.RunOne(t.Context())
-		require.NoError(t, err)
-		assert.True(t, processed)
-		assert.Equal(t, 2, provider.calls)
-		assert.Equal(t, 2, prepareCalls,
-			"a definitive no-handle retry is a new sealed submission, not a resume")
-		assert.Equal(t, int32(2), uploadCloseCalls.Load(),
-			"each fresh upload transfers to the renderer and is closed exactly once")
-		current, err = fixture.catalog.RenditionJobByID(t.Context(), job.ID)
-		require.NoError(t, err)
-		assert.Equal(t, store.RenditionJobCompleted, current.State)
-		assert.Equal(t, 2, current.ProviderAttempts)
+func resubmitsDefinitiveTransientWithFreshSealedAuthority(t *testing.T) {
+	fixture := newPublicationFixture(t)
+	provider := newWorkerProvider(t)
+	providerErr, err := document.NewRenditionProviderError(
+		document.RenditionErrorTransient, time.Nanosecond,
+		errors.New("private cause"),
+	)
+	require.NoError(t, err)
+	provider.renderErr = providerErr
+	profile := workerProcessingProfile(t, provider.Descriptor())
+	fixture.profile = profile
+	request := workerJobRequest(fixture.versionID, profile, provider.Descriptor())
+	grantWorkerConsent(t, fixture.catalog, request)
+	job, _, err := fixture.catalog.EnqueueRenditionJob(t.Context(), request)
+	require.NoError(t, err)
+	prepareCalls := 0
+	var uploadCloseCalls atomic.Int32
+	runtime := &countingWorkerRuntime{
+		provider: provider, prepareCalls: &prepareCalls, uploadCloseCalls: &uploadCloseCalls,
+	}
+	worker, err := NewRenditionWorker(RenditionWorkerConfig{
+		Catalog: fixture.catalog, Blobs: fixture.blobs,
+		Runtime: runtime, Gate: newTestOperationGate(),
+		Owner: "rendition-worker-definitive-retry", LeaseDuration: time.Minute,
+		IdleDelay: time.Millisecond,
 	})
+	require.NoError(t, err)
+
+	processed, err := worker.RunOne(t.Context())
+	require.NoError(t, err)
+	assert.True(t, processed)
+	current, err := fixture.catalog.RenditionJobByID(t.Context(), job.ID)
+	require.NoError(t, err)
+	assert.Equal(t, store.RenditionJobRetryWait, current.State)
+	assert.Equal(t, 1, current.ProviderAttempts)
+	assert.Equal(t, int32(1), uploadCloseCalls.Load())
+
+	provider.renderErr = nil
+	time.Sleep(time.Nanosecond)
+	processed, err = worker.RunOne(t.Context())
+	require.NoError(t, err)
+	assert.True(t, processed)
+	assert.Equal(t, 2, provider.calls)
+	assert.Equal(t, 2, prepareCalls,
+		"a definitive no-handle retry is a new sealed submission, not a resume")
+	assert.Equal(t, int32(2), uploadCloseCalls.Load(),
+		"each fresh upload transfers to the renderer and is closed exactly once")
+	current, err = fixture.catalog.RenditionJobByID(t.Context(), job.ID)
+	require.NoError(t, err)
+	assert.Equal(t, store.RenditionJobCompleted, current.State)
+	assert.Equal(t, 2, current.ProviderAttempts)
 }
 
 func TestRenditionWorkerTreatsSealTimeExpiryAsTransient(t *testing.T) {
